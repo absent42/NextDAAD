@@ -8,10 +8,14 @@
 main:
     di
     ld sp, STACK_TOP
-    ld a, 4                 ; green border = boot reached main
-    out ($FE), a
+    call hw_init
+    call dbg_cls
+    call boot_banner
 idle:
     jr idle
+
+    INCLUDE "hardware.asm"
+    INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT
 
