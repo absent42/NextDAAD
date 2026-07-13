@@ -1,0 +1,9 @@
+.claude/
+CLAUDE.md
+docs/
+tools/
+build/
+sd/*.DDB
+sd/*.ddb
+tests/out/
+.superpowers/
