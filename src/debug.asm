@@ -107,8 +107,10 @@ dbg_hex8:
 
 ; HL = word, prints four hex digits
 dbg_hex16:
+    push hl                 ; dbg_hex8 corrupts HL via dbg_putc
     ld a, h
     call dbg_hex8
+    pop hl
     ld a, l
     jr dbg_hex8
 
