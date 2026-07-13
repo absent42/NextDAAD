@@ -240,6 +240,46 @@ bank_selftest:
     pop af
     jp dbg_hex8
 
+ddb_diag:
+    ld b, 5
+    ld c, 0
+    call dbg_at
+    ld hl, msgDdb
+    call dbg_puts
+    ld hl, (ddbSize)
+    call dbg_hex16
+    ld b, 6
+    ld c, 0
+    call dbg_at
+    ld hl, msgVer
+    call dbg_puts
+    ld a, (ddbHeader+0)
+    call dbg_hex8
+    ld hl, msgTgt
+    call dbg_puts
+    ld a, (ddbHeader+1)
+    call dbg_hex8
+    ld b, 7
+    ld c, 0
+    call dbg_at
+    ld hl, ddbHeader+8      ; 13 pointer words, wrap fills rows 7-9
+    ld b, 13
+.ptr:
+    push bc
+    push hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl
+    call dbg_hex16
+    call dbg_space
+    pop hl
+    inc hl
+    inc hl
+    pop bc
+    djnz .ptr
+    ret
+
 dbg_font:
     INCBIN "../tools/DAAD-READY/ASSETS/CHARSET/AD8x8.CHR"   ; 2048 bytes, 256 glyphs
 
@@ -251,6 +291,9 @@ msgRam2M:     db "RAM 1792K FREE ", 0
 msgRam1M:     db "RAM 768K FREE ", 0
 msgBanksOk:   db "BANKS OK", 0
 msgBanksFail: db "BANKS FAIL ", 0
+msgDdb:      db "GAME.DDB SIZE ", 0
+msgVer:      db "VER ", 0
+msgTgt:      db " TGT ", 0
 
  ELSE
 
@@ -265,9 +308,14 @@ dbg_space:
 boot_banner:
 ram_diag:
 bank_selftest:
+ddb_diag:
     ret
 
  ENDIF
+
+msgMissing:  db "ERROR: GAME.DDB NOT FOUND", 0
+msgOversize: db "ERROR: GAME.DDB TOO BIG", 0
+msgBadHdr:   db "ERROR: GAME.DDB BAD HEADER", 0
 
 dbgX: db 0
 dbgY: db 0

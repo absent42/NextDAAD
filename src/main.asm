@@ -16,6 +16,26 @@ main:
     call bank_table_init
     call ram_diag
     call bank_selftest
+    call ddb_load
+    or a
+    jr z, .loaded
+    dec a
+    jr z, .missing
+    dec a
+    jr z, .oversize
+    ld a, ERR_BORDER_BADHDR
+    ld hl, msgBadHdr
+    jp fatal
+.missing:
+    ld a, ERR_BORDER_MISSING
+    ld hl, msgMissing
+    jp fatal
+.oversize:
+    ld a, ERR_BORDER_OVERSIZE
+    ld hl, msgOversize
+    jp fatal
+.loaded:
+    call ddb_diag
 idle:
  IFDEF DEBUG
     ld b, 3
@@ -31,6 +51,7 @@ idle:
     INCLUDE "hardware.asm"
     INCLUDE "interrupts.asm"
     INCLUDE "banks.asm"
+    INCLUDE "file.asm"
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT
