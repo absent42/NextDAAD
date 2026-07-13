@@ -50,6 +50,7 @@ ddb_load:
     ld hl, 0
     ld (ddbSize), hl
     xor a
+    ld (ddbSizeHi), a       ; size is 24-bit: ddbSizeHi:ddbSize (max 128K)
     ld (ddbBankIdx), a
 .chunk:
     ld a, (ddbBankIdx)
@@ -65,6 +66,10 @@ ddb_load:
     ld hl, (ddbSize)
     add hl, bc
     ld (ddbSize), hl
+    jr nc, .nocarry
+    ld hl, ddbSizeHi        ; carry into the third size byte
+    inc (hl)
+.nocarry:
     ld a, b
     cp $40
     jr nz, .loaded          ; short read = end of file
@@ -93,11 +98,15 @@ ddb_load:
     ld bc, DDB_HEADER_SIZE
     ldir
     call bank_window_restore
+    ld a, (ddbSizeHi)       ; 64K+ is always more than a header
+    or a
+    jr nz, .sizeok
     ld hl, (ddbSize)        ; must be at least a whole header
     ld de, DDB_HEADER_SIZE
     or a
     sbc hl, de
     jr c, .badhdr
+.sizeok:
     ld a, (ddbHeader+0)
     cp DDB_VERSION
     jr nz, .badhdr
@@ -144,5 +153,6 @@ ddbName:     db "GAME.DDB", 0
 ddbHandle:   db $FF
 ddbBankIdx:  db 0
 ddbSize:     dw 0
+ddbSizeHi:   db 0           ; third byte of the 24-bit size
 scratchByte: db 0
 ddbHeader:   ds DDB_HEADER_SIZE

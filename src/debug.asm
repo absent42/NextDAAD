@@ -246,6 +246,8 @@ ddb_diag:
     call dbg_at
     ld hl, msgDdb
     call dbg_puts
+    ld a, (ddbSizeHi)       ; six hex digits: full 24-bit size
+    call dbg_hex8
     ld hl, (ddbSize)
     call dbg_hex16
     ld b, 6
