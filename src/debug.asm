@@ -143,6 +143,103 @@ boot_banner:
     call nr_read
     jp dbg_hex8
 
+SELFTEST_FREE_2MB equ 86    ; 14,15 + 28-47 + 48-111
+SELFTEST_FREE_1MB equ 22    ; 14,15 + 28-47
+
+ram_diag:
+    ld b, 2
+    ld c, 0
+    call dbg_at
+    ld a, (ramExpanded)
+    or a
+    jr z, .base
+    ld hl, msgRam2M
+    jr .print
+.base:
+    ld hl, msgRam1M
+.print:
+    call dbg_puts
+    call bank_count_free
+    jp dbg_hex8
+
+; Exercises the allocator. Prints BANKS OK on row 10, or
+; BANKS FAIL nn where nn is the failing check number.
+; Relies on helpers not touching D (expected free count).
+bank_selftest:
+    ld b, 10
+    ld c, 0
+    call dbg_at
+    ld a, (ramExpanded)
+    or a
+    jr z, .exp1mb
+    ld d, SELFTEST_FREE_2MB
+    jr .check1
+.exp1mb:
+    ld d, SELFTEST_FREE_1MB
+.check1:
+    call bank_count_free    ; check 1: initial free count
+    cp d
+    ld a, 1
+    jr nz, .fail
+    call bank_alloc         ; check 2: first alloc is bank 14
+    cp BANK_POOL_A
+    ld a, 2
+    jr nz, .fail
+    call bank_alloc         ; check 3: then bank 15
+    cp BANK_POOL_A_END
+    ld a, 3
+    jr nz, .fail
+    call bank_alloc         ; check 4: then bank 28
+    cp BANK_POOL_B
+    ld a, 4
+    jr nz, .fail
+    ld a, BANK_POOL_A_END   ; check 5: freed bank is reused first
+    call bank_free
+    call bank_alloc
+    cp BANK_POOL_A_END
+    ld a, 5
+    jr nz, .fail
+    call bank_window_save   ; checks 6,7: write/read through window
+    ld a, BANK_POOL_A
+    call bank_map_c000
+    ld hl, WINDOW_ADDR
+    ld (hl), $AA
+    inc hl
+    ld (hl), $55
+    dec hl
+    ld a, (hl)
+    cp $AA
+    ld a, 6
+    jr nz, .failrestore
+    inc hl
+    ld a, (hl)
+    cp $55
+    ld a, 7
+    jr nz, .failrestore
+    call bank_window_restore
+    ld a, BANK_POOL_A       ; check 8: count restored after frees
+    call bank_free
+    ld a, BANK_POOL_A_END
+    call bank_free
+    ld a, BANK_POOL_B
+    call bank_free
+    call bank_count_free
+    cp d
+    ld a, 8
+    jr nz, .fail
+    ld hl, msgBanksOk
+    jp dbg_puts
+.failrestore:
+    push af
+    call bank_window_restore
+    pop af
+.fail:
+    push af
+    ld hl, msgBanksFail
+    call dbg_puts
+    pop af
+    jp dbg_hex8
+
 dbg_font:
     INCBIN "../tools/DAAD-READY/ASSETS/CHARSET/AD8x8.CHR"   ; 2048 bytes, 256 glyphs
 
@@ -150,6 +247,10 @@ msgTitle:   db "NEXTDAAD FOUNDATION", 0
 msgCore:    db "CORE ", 0
 msgMachine: db " MACHINE ", 0
 msgFrames:  db "FRAMES ", 0
+msgRam2M:     db "RAM 1792K FREE ", 0
+msgRam1M:     db "RAM 768K FREE ", 0
+msgBanksOk:   db "BANKS OK", 0
+msgBanksFail: db "BANKS FAIL ", 0
 
  ELSE
 
@@ -162,6 +263,8 @@ dbg_hex8:
 dbg_hex16:
 dbg_space:
 boot_banner:
+ram_diag:
+bank_selftest:
     ret
 
  ENDIF

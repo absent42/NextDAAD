@@ -12,6 +12,10 @@ main:
     call im2_init
     call dbg_cls
     call boot_banner
+    call ram_detect
+    call bank_table_init
+    call ram_diag
+    call bank_selftest
 idle:
  IFDEF DEBUG
     ld b, 3
@@ -26,6 +30,7 @@ idle:
 
     INCLUDE "hardware.asm"
     INCLUDE "interrupts.asm"
+    INCLUDE "banks.asm"
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT
