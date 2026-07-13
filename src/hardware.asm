@@ -19,7 +19,7 @@ ula_cls:
     ld hl, $5800
     ld de, $5801
     ld bc, $02FF
-    ld (hl), $38
+    ld (hl), $07                    ; paper 0 (black), ink 7 (white)
     ldir
     ret
 
