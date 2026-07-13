@@ -149,6 +149,7 @@ dbg_font:
 msgTitle:   db "NEXTDAAD FOUNDATION", 0
 msgCore:    db "CORE ", 0
 msgMachine: db " MACHINE ", 0
+msgFrames:  db "FRAMES ", 0
 
  ELSE
 

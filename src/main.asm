@@ -9,12 +9,23 @@ main:
     di
     ld sp, STACK_TOP
     call hw_init
+    call im2_init
     call dbg_cls
     call boot_banner
 idle:
+ IFDEF DEBUG
+    ld b, 3
+    ld c, 0
+    call dbg_at
+    ld hl, msgFrames
+    call dbg_puts
+    ld hl, (frameCounter)
+    call dbg_hex16
+ ENDIF
     jr idle
 
     INCLUDE "hardware.asm"
+    INCLUDE "interrupts.asm"
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT
