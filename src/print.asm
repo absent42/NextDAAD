@@ -7,7 +7,7 @@
 print_msg:
     push af
     push de
-    call bank_window_save
+    call data_save
     pop de
     pop af
     call msg_seek
@@ -20,7 +20,7 @@ print_msg:
     call prn_decoded
     jr .loop
 .done:
-    jp bank_window_restore
+    jp data_restore
 .badnum:
  IFDEF DEBUG
     ld c, '?'
@@ -32,7 +32,7 @@ print_msg:
     ld c, 'G'
     call prn_char
  ENDIF
-    jp bank_window_restore
+    jp data_restore
 
 ; A = decoded character. Dispatches escapes, prints the rest.
 prn_decoded:
@@ -106,8 +106,8 @@ win_newline_only:
     jp win_newline
 
 ; Fire the More... prompt when the window's printed lines reach h-1.
-; Corrupts all registers. Preserves the outer reader, rd_save slots and
-; physical MMU state around the nested SM32 print.
+; Corrupts all registers. Preserves the outer reader, its in-flight
+; push depth and physical MMU state around the nested SM32 print.
 prn_more_check:
     ld a, (moreLock)
     or a
@@ -127,27 +127,21 @@ prn_more_check:
     cp e
     ret c
     ld (hl), 0                  ; reset the counter
-    ; preserve outer reader and outer MMU-save slots
-    ld a, (rdBank)
-    ld (moreSaveBank), a
+    ; preserve the outer reader position and in-flight push depth
+    ; (a nested SM32 token print may push/pop the reader stack)
+    ld a, (rdPage)
+    ld (moreSaveRdSv), a
     ld hl, (rdPtr)
-    ld (moreSavePtr), hl
+    ld (moreSaveRdSv+1), hl
+    ld a, (rdSaveSP)
+    ld (moreSaveRdSv+3), a
+    ; preserve the outer MMU-save shadow (the nested print_msg overwrites it)
     ld a, (savedMMU6)
     ld (moreSaveMMU), a
-    ld a, (savedMMU7)
-    ld (moreSaveMMU+1), a
-    ; preserve the outer rd_save slots (a nested SM32 token corrupts them)
-    ld a, (rdSaveBank)
-    ld (moreSaveRdSv), a
-    ld hl, (rdSavePtr)
-    ld (moreSaveRdSv+1), hl
-    ; preserve the physical MMU slots exactly as mapped pre-fire
+    ; preserve the physical MMU slot exactly as mapped pre-fire
     ld e, NR_MMU6
     call nr_read
-    ld (morePhysMMU), a
-    ld e, NR_MMU7
-    call nr_read
-    ld (morePhysMMU+1), a
+    ld (morePhysMMU6), a
     ld a, 1
     ld (moreLock), a
     ld a, 0                     ; SM32 through the normal pipeline
@@ -179,26 +173,20 @@ prn_more_check:
     ld d, 1
     ld a, GLYPH_SPACE
     call tm_fill_rect
-    ; restore outer MMU-save slots (savedMMU6/savedMMU7 shadow vars)
+    ; restore the outer MMU-save shadow (savedMMU6)
     ld a, (moreSaveMMU)
     ld (savedMMU6), a
-    ld a, (moreSaveMMU+1)
-    ld (savedMMU7), a
-    ; restore the outer rd_save slots
+    ; restore reader position and push depth (variables only - no
+    ; physical remap here)
     ld a, (moreSaveRdSv)
-    ld (rdSaveBank), a
+    ld (rdPage), a
     ld hl, (moreSaveRdSv+1)
-    ld (rdSavePtr), hl
-    ; restore reader position (variables only - no physical remap here)
-    ld a, (moreSaveBank)
-    ld (rdBank), a
-    ld hl, (moreSavePtr)
     ld (rdPtr), hl
-    ; restore the physical MMU slots exactly as they were pre-fire
-    ld a, (morePhysMMU)
+    ld a, (moreSaveRdSv+3)
+    ld (rdSaveSP), a
+    ; restore the physical MMU slot exactly as it was pre-fire
+    ld a, (morePhysMMU6)
     nextreg NR_MMU6, a
-    ld a, (morePhysMMU+1)
-    nextreg NR_MMU7, a
     ret
 
 ; Token characters route here via prn_char_vec. C = char.
@@ -237,6 +225,10 @@ wait_key:
 ; $0C escape: wait for a key, then the pause restarts the page count.
 wait_key_reset:
     call wait_key
+    jr prn_reset_lines
+
+; Reset the current window's printed-line counter (the More... pager).
+prn_reset_lines:
     ld a, WIN_LINES
     call win_field
     ld (hl), 0
@@ -248,8 +240,6 @@ objname_stub:
 chsGfx:       db 0
 moreLock:     db 0
 objname_hook: dw objname_stub
-moreSaveBank: db 0
-moreSavePtr:  dw 0
-moreSaveMMU:  dw 0
-morePhysMMU:  dw 0
-moreSaveRdSv: ds 3
+moreSaveMMU:  db 0
+morePhysMMU6: db 0
+moreSaveRdSv: ds 4

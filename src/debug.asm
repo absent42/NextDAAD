@@ -221,8 +221,8 @@ boot_banner:
     call nr_read
     jp dbg_hex8
 
-SELFTEST_FREE_2MB equ 86    ; 14,15 + 28-47 + 48-111
-SELFTEST_FREE_1MB equ 22    ; 14,15 + 28-47
+SELFTEST_FREE_2MB equ 85    ; 14,15 + 29-47 + 48-111
+SELFTEST_FREE_1MB equ 21    ; 14,15 + 29-47
 
 ram_diag:
     ld b, 2
@@ -277,10 +277,10 @@ bank_selftest:
     cp BANK_POOL_A_END
     ld a, 5
     jr nz, .fail
-    call bank_window_save   ; checks 6,7: write/read through window
-    ld a, BANK_POOL_A
-    call bank_map_c000
-    ld hl, WINDOW_ADDR
+    call data_save           ; checks 6,7: write/read through the window
+    ld a, BANK_POOL_A*2
+    call data_map_page
+    ld hl, DATA_WINDOW
     ld (hl), $AA
     inc hl
     ld (hl), $55
@@ -294,7 +294,7 @@ bank_selftest:
     cp $55
     ld a, 7
     jr nz, .failrestore
-    call bank_window_restore
+    call data_restore
     ld a, BANK_POOL_A       ; check 8: count restored after frees
     call bank_free
     ld a, BANK_POOL_A_END
@@ -309,7 +309,7 @@ bank_selftest:
     jp dbg_puts
 .failrestore:
     push af
-    call bank_window_restore
+    call data_restore
     pop af
 .fail:
     push af

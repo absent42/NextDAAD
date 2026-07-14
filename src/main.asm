@@ -38,6 +38,21 @@ main:
     call ddb_diag
     call txt_init
     call dbg_engage_tilemap
+ IFDEF DEBUG
+    ; Task 1 probe - removed in Task 2
+    ld a, OVL0_PAGE
+    call ovl_map_page
+    call ovl0_probe
+    ld c, a
+    ld b, 13
+    push bc
+    ld b, 26
+    ld c, 0
+    call dbg_at
+    pop bc
+    ld a, c
+    call dbg_putc               ; a V at row 26 proves slot-7 dispatch
+ ENDIF
     call windows_init
     ld hl, prn_char_tok
     ld (prn_char_vec), hl
@@ -124,6 +139,8 @@ demoString:
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT
+
+    INCLUDE "overlay0.asm"
 
     CSPECTMAP "build/nextdaad.map"
     SAVENEX OPEN "build/nextdaad.nex", main, STACK_TOP

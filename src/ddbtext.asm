@@ -1,8 +1,8 @@
 ; DDB text access: pointer rebase, bank-crossing stream reader, token
 ; expansion. DDB pointers are absolute for the classic $8400 base:
-; offset = pointer - $8400, bank = BANK_DDB_FIRST + offset/16K.
+; offset = pointer - $8400, 8K page = DDB_PAGE_FIRST + offset/8K.
 
-; HL = absolute DDB pointer. Maps the bank, sets rdPtr.
+; HL = absolute DDB pointer. Maps the page, sets rdPtr in slot 6.
 ; Ends with 'or' - CF clear; msg_seek's success contract relies on this.
 rd_seek:
     ld de, DDB_ZX_BASE
@@ -11,18 +11,19 @@ rd_seek:
     ld a, h
     rlca
     rlca
-    and 3                       ; offset >> 14
-    add a, BANK_DDB_FIRST
-    ld (rdBank), a
-    call bank_map_c000
+    rlca
+    and 7                       ; offset >> 13 (0..15)
+    add a, DDB_PAGE_FIRST
+    ld (rdPage), a
+    call data_map_page
     ld a, h
-    and $3F
-    or high WINDOW_ADDR
-    ld h, a                     ; window address
+    and $1F
+    or high DATA_WINDOW         ; $C0 | (offset>>8 AND $1F)
+    ld h, a
     ld (rdPtr), hl
     ret
 
-; Out: A = next byte. Remaps when the pointer wraps past $FFFF.
+; Out: A = next byte. Remaps at the 8K boundary ($DFFF -> next page).
 ; Preserves BC, DE, HL.
 rd_next:
     push hl
@@ -32,33 +33,69 @@ rd_next:
     ld (rdPtr), hl
     push af
     ld a, h
-    or l
-    jr nz, .done                ; no wrap
-    ld a, (rdBank)
+    cp high DATA_WINDOW + $20   ; wrapped past $DFFF?
+    jr c, .done
+    ld a, (rdPage)
     inc a
-    ld (rdBank), a
-    call bank_map_c000
-    ld hl, WINDOW_ADDR
+    ld (rdPage), a
+    call data_map_page
+    ld hl, DATA_WINDOW
     ld (rdPtr), hl
 .done:
     pop af
     pop hl
     ret
 
-rd_save:
+; Two-level reader save stack (object-name printing runs inside token
+; expansion). Depth overflow is a coding error: fatal, border 2.
+rd_push:
+    ld a, (rdSaveSP)
+    cp 2
+    jr nc, rd_stack_fatal
+    or a
+    jr nz, .slot1
+    ld a, (rdPage)
+    ld (rdSaveA), a
     ld hl, (rdPtr)
-    ld (rdSavePtr), hl
-    ld a, (rdBank)
-    ld (rdSaveBank), a
+    ld (rdSaveA+1), hl
+    jr .done
+.slot1:
+    ld a, (rdPage)
+    ld (rdSaveB), a
+    ld hl, (rdPtr)
+    ld (rdSaveB+1), hl
+.done:
+    ld hl, rdSaveSP
+    inc (hl)
     ret
 
-rd_restore:
-    ld a, (rdSaveBank)
-    ld (rdBank), a
-    call bank_map_c000
-    ld hl, (rdSavePtr)
+rd_pop:
+    ld a, (rdSaveSP)
+    or a
+    jr z, rd_stack_fatal
+    dec a
+    ld (rdSaveSP), a
+    jr nz, .slot1               ; SP was 2 -> restore slot B
+    ld a, (rdSaveA)
+    ld (rdPage), a
+    call data_map_page
+    ld hl, (rdSaveA+1)
     ld (rdPtr), hl
     ret
+.slot1:
+    ld a, (rdSaveB)
+    ld (rdPage), a
+    call data_map_page
+    ld hl, (rdSaveB+1)
+    ld (rdPtr), hl
+    ret
+
+rd_stack_fatal:
+    ld a, 2                     ; red border - reader stack misuse
+    ld hl, msgRdStack
+    jp fatal
+
+msgRdStack: db "RD STACK", 0
 
 ; A = kind 0-3, E = number. CF set if number >= count for that kind.
 ; Kind k: count byte at ddbHeader+6-k, table pointer at ddbHeader+$12-2k.
@@ -101,7 +138,7 @@ msg_seek:
 ; 255-complemented. Saves/restores the reader around itself.
 tok_print:
     push af
-    call rd_save
+    call rd_push
     ld hl, (ddbHeader+8)        ; tokensPos, absolute
     call rd_seek
     pop af
@@ -121,14 +158,15 @@ tok_print:
     pop af
     bit 7, a
     jr z, .emit
-    jp rd_restore
+    jp rd_pop
 
 prn_vec_call:
     ld hl, (prn_char_vec)
     jp (hl)
 
-rdBank:       db 0
+rdPage:       db 0
 rdPtr:        dw 0
-rdSaveBank:   db 0
-rdSavePtr:    dw 0
+rdSaveSP:     db 0
+rdSaveA:      ds 3
+rdSaveB:      ds 3
 prn_char_vec: dw 0

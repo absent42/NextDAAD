@@ -34,10 +34,10 @@ esx_fclose:
     db ESX_F_CLOSE
     ret
 
-; Load GAME.DDB into banks BANK_DDB_FIRST.. via the window.
+; Load GAME.DDB into 8K pages DDB_PAGE_FIRST.. via slot 6.
 ; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE or DDB_E_HDR.
 ddb_load:
-    call bank_window_save
+    call data_save
     ld a, $FF
     ld (ddbHandle), a       ; $FF = no open handle
     call esx_getsetdrv
@@ -52,16 +52,16 @@ ddb_load:
     ld (ddbSize), hl
     xor a
     ld (ddbSizeHi), a       ; size is 24-bit: ddbSizeHi:ddbSize (max 128K)
-    ld (ddbBankIdx), a
+    ld (ddbChunk), a
 .chunk:
-    ld a, (ddbBankIdx)
-    cp DDB_MAX_BANKS
-    jr z, .checkover        ; 8 banks full; any more data is oversize
-    add a, BANK_DDB_FIRST
-    call bank_map_c000
+    ld a, (ddbChunk)
+    cp DDB_MAX_BANKS*2
+    jr z, .checkover        ; 16 chunks full; any more data is oversize
+    add a, DDB_PAGE_FIRST
+    call data_map_page
     ld a, (ddbHandle)
-    ld ix, WINDOW_ADDR
-    ld bc, $4000
+    ld ix, DATA_WINDOW
+    ld bc, $2000
     call esx_fread
     jr c, .efile
     ld hl, (ddbSize)
@@ -72,11 +72,11 @@ ddb_load:
     inc (hl)
 .nocarry:
     ld a, b
-    cp $40
+    cp $20
     jr nz, .loaded          ; short read = end of file
-    ld a, (ddbBankIdx)
+    ld a, (ddbChunk)
     inc a
-    ld (ddbBankIdx), a
+    ld (ddbChunk), a
     jr .chunk
 .checkover:
     ld a, (ddbHandle)
@@ -92,13 +92,13 @@ ddb_load:
     call esx_fclose
     ld a, $FF
     ld (ddbHandle), a
-    ld a, BANK_DDB_FIRST    ; copy header to resident buffer
-    call bank_map_c000
-    ld hl, WINDOW_ADDR
+    ld a, DDB_PAGE_FIRST     ; copy header to resident buffer
+    call data_map_page
+    ld hl, DATA_WINDOW
     ld de, ddbHeader
     ld bc, DDB_HEADER_SIZE
     ldir
-    call bank_window_restore
+    call data_restore
     ld a, (ddbSizeHi)       ; 64K+ is always more than a header
     or a
     jr nz, .sizeok
@@ -131,7 +131,7 @@ ddb_load:
     jr z, .noclose
     call esx_fclose
 .noclose:
-    call bank_window_restore
+    call data_restore
     pop af
     ret
 
@@ -152,7 +152,7 @@ fatal:
 
 ddbName:     db "GAME.DDB", 0
 ddbHandle:   db $FF
-ddbBankIdx:  db 0
+ddbChunk:    db 0
 ddbSize:     dw 0
 ddbSizeHi:   db 0           ; third byte of the 24-bit size
 scratchByte: db 0

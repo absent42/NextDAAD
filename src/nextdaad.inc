@@ -35,7 +35,7 @@ BANK_DDB_FIRST  equ 16      ; 16-23 DDB, 128K maximum
 BANK_DDB_LAST   equ 23
 BANK_AUDIO_FIRST equ 24     ; 24-27 reserved for music and SFX
 BANK_AUDIO_LAST equ 27
-BANK_POOL_B     equ 28      ; 28-47 allocator pool (base model ends at 47)
+BANK_POOL_B     equ 29      ; 28-47 allocator pool (base model ends at 47); bank 28 withdrawn for overlay 0
 BANK_BASE_LAST  equ 47
 BANK_EXP_FIRST  equ 48      ; 48-111 expansion pool when detected
 BANK_EXP_LAST   equ 111
@@ -90,6 +90,14 @@ TM_COLS         equ 80
 TM_ROWS         equ 32
 GLYPH_SPACE     equ $20
 ULA_OFF         equ $80     ; NR_ULA_CTRL bit 7
+
+; --- Banking skeleton (sub-project 3) ---
+DDB_PAGE_FIRST  equ 32      ; DDB bank 16 = 8K pages 32..47
+BANK_OVL0       equ 28      ; overlay page 0 lives in bank 28 (lower 8K)
+OVL0_PAGE       equ 56      ; = BANK_OVL0*2
+OVL_ORG         equ $E000
+OVL_LIMIT       equ $F800   ; overlay ASSERT bound (512 bytes spare)
+DATA_WINDOW     equ $C000   ; slot 6 window base (8K)
 
 ; --- Window system (sub-project 2) ---
 WIN_X           equ 0

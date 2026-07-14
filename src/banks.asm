@@ -1,31 +1,29 @@
 ; Bank allocator and MMU paging helpers.
 ; Static map (see nextdaad.inc): 0-8 system, 9-13 Layer 2, 14-15 pool,
-; 16-23 DDB, 24-27 audio, 28-47 pool, 48-111 expansion pool if present.
+; 16-23 DDB, 24-27 audio, 28 overlay 0, 29-47 pool, 48-111 expansion
+; pool if present.
 
-; Map 16K bank A into $C000-$FFFF via MMU slots 6 and 7.
-; Corrupts AF only. Never touches D (bank_selftest relies on it).
-bank_map_c000:
-    add a, a                ; 8K page = bank*2
+; Map 8K physical page A into slot 6 ($C000-$DFFF).
+; Corrupts AF only. Never touches D.
+data_map_page:
     nextreg NR_MMU6, a
-    inc a
-    nextreg NR_MMU7, a
     ret
 
-; Corrupts AF, E. Never touches D.
-bank_window_save:
+; Save/restore slot 6 only. Never touch D.
+data_save:
     ld e, NR_MMU6
     call nr_read
     ld (savedMMU6), a
-    ld e, NR_MMU7
-    call nr_read
-    ld (savedMMU7), a
     ret
 
-; Corrupts AF. Never touches D.
-bank_window_restore:
+data_restore:
     ld a, (savedMMU6)
     nextreg NR_MMU6, a
-    ld a, (savedMMU7)
+    ret
+
+; Map 8K page A into slot 7 (code overlay). DISPATCHER/ISR ONLY.
+; Corrupts AF only. Never touches D.
+ovl_map_page:
     nextreg NR_MMU7, a
     ret
 
@@ -38,10 +36,10 @@ ram_detect:
     ld (ramExpanded), a
     ret
  ELSE
-    call bank_window_save
-    ld a, BANK_EXP_FIRST
-    call bank_map_c000
-    ld hl, WINDOW_ADDR
+    call data_save
+    ld a, BANK_EXP_FIRST*2
+    call data_map_page
+    ld hl, DATA_WINDOW
     ld a, (hl)
     ld c, a                 ; original byte
     ld a, $A5
@@ -61,7 +59,7 @@ ram_detect:
 .store:
     ld (ramExpanded), a
     ld (hl), c              ; restore probed byte
-    call bank_window_restore
+    call data_restore
     ret
  ENDIF
 
@@ -152,6 +150,5 @@ bank_count_free:
     ret
 
 savedMMU6:   db 0
-savedMMU7:   db 0
 ramExpanded: db 0
 bankTable:   ds BANK_TABLE_SIZE
