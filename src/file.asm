@@ -42,6 +42,7 @@ ddb_load:
     ld (ddbHandle), a       ; $FF = no open handle
     call esx_getsetdrv
     jp c, .efile
+    ; A = default drive from esx_getsetdrv, consumed by esx_fopen - keep A intact
     ld ix, ddbName
     ld b, ESX_MODE_READ
     call esx_fopen

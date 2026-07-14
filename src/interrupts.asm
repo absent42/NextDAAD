@@ -25,6 +25,9 @@ im2_init:
 im2_isr:
     push af
     push hl
+    ; Music playback hooks here in sub-project 7.
+    ; ISR invariants: touches only AF, HL and frameCounter - never MMU,
+    ; esxDOS or the $C000 window. ddb_load's safety depends on this.
     ld hl, (frameCounter)
     inc hl
     ld (frameCounter), hl

@@ -3,6 +3,7 @@
 ; 16-23 DDB, 24-27 audio, 28-47 pool, 48-111 expansion pool if present.
 
 ; Map 16K bank A into $C000-$FFFF via MMU slots 6 and 7.
+; Corrupts AF only. Never touches D (bank_selftest relies on it).
 bank_map_c000:
     add a, a                ; 8K page = bank*2
     nextreg NR_MMU6, a
@@ -10,6 +11,7 @@ bank_map_c000:
     nextreg NR_MMU7, a
     ret
 
+; Corrupts AF, E. Never touches D.
 bank_window_save:
     ld e, NR_MMU6
     call nr_read
@@ -19,6 +21,7 @@ bank_window_save:
     ld (savedMMU7), a
     ret
 
+; Corrupts AF. Never touches D.
 bank_window_restore:
     ld a, (savedMMU6)
     nextreg NR_MMU6, a
@@ -92,7 +95,7 @@ bank_table_init:
     ret
 
 ; Allocate the lowest free bank. Out: A = bank, CF clear.
-; CF set when nothing is free.
+; CF set when nothing is free - A is then undefined. Never touches D.
 bank_alloc:
     ld hl, bankTable
     ld b, BANK_TABLE_SIZE
@@ -114,6 +117,7 @@ bank_alloc:
     ret
 
 ; Free bank A.
+; No bounds check - bankTable is followed by code; an out-of-range free corrupts it. Never touches D.
 bank_free:
     push hl
     push de
@@ -127,6 +131,7 @@ bank_free:
     ret
 
 ; Out: A = number of free banks.
+; Corrupts AF. Never touches D.
 bank_count_free:
     push hl
     push bc

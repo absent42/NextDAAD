@@ -141,6 +141,11 @@ boot_banner:
     call dbg_puts
     ld e, NR_MACHINE_ID
     call nr_read
+    call dbg_hex8
+    ld hl, msgSpeed
+    call dbg_puts
+    ld e, NR_CPU_SPEED
+    call nr_read
     jp dbg_hex8
 
 SELFTEST_FREE_2MB equ 86    ; 14,15 + 28-47 + 48-111
@@ -288,6 +293,7 @@ dbg_font:
 msgTitle:   db "NEXTDAAD FOUNDATION", 0
 msgCore:    db "CORE ", 0
 msgMachine: db " MACHINE ", 0
+msgSpeed:   db " SPD ", 0
 msgFrames:  db "FRAMES ", 0
 msgRam2M:     db "RAM 1792K FREE ", 0
 msgRam1M:     db "RAM 768K FREE ", 0
