@@ -111,4 +111,51 @@ ALL   20  noun
         MES "04 OK#n"
         SKIP 1
 > _ _   MES "04 F#n"
+; ---- suite 1: comparisons, indirection, decimal ----
+> _ _   LET 101 7
+        GT 101 6
+        LT 101 8
+        NOTEQ 101 9
+        MES "05 OK#n"
+        SKIP 1
+> _ _   MES "05 F#n"
+> _ _   LET 102 7
+        SAME 101 102
+        MES "06 OK#n"
+        SKIP 1
+> _ _   MES "06 F#n"
+> _ _   LET 103 101
+        LET @103 42
+        EQ 101 42
+        MES "07 OK#n"
+        SKIP 1
+> _ _   MES "07 F#n"
+> _ _   SET 104
+        EQ 104 255
+        CLEAR 104
+        ZERO 104
+        MES "08 OK#n"
+        SKIP 1
+> _ _   MES "08 F#n"
+> _ _   LET 105 200
+        LET 106 100
+        ADD 105 106
+        EQ 106 255
+        BIGGER 106 105
+        SMALLER 105 106
+        MES "09 OK#n"
+        SKIP 1
+> _ _   MES "09 F#n"
+> _ _   RANDOM 107
+        NOTZERO 107
+        MES "10 OK#n"
+        SKIP 1
+> _ _   MES "10 F#n"
+> _ _   LET 108 123
+        MES "11 PRINT:"
+        PRINT 108
+        NEWLINE
+        MES "11 OK#n"
+        SKIP 1
+> _ _   MES "11 F#n"
 /END

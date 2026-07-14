@@ -24,6 +24,16 @@ eng_init_game:
     ld (procSP), a
     ld a, $FF
     ld (doallObj), a
+    ld a, r
+    ld l, a
+    ld a, (frameCounter)
+    ld h, a
+    ld a, h
+    or l
+    jr nz, .seedok
+    ld hl, $A5C3
+.seedok:
+    ld (rngState), hl
     ret
 
 ; Populate objTable: locations from objLocLst, attribs from objAttrPos,
@@ -580,24 +590,24 @@ cprops:
 cdisp:
     ; 128 rows in condact order. Task 2: all DC h_unimpl except the
     ; pilot set; later tasks repoint rows as handlers land.
-    DC h_unimpl                 ; 0   AT
-    DC h_unimpl                 ; 1   NOTAT
-    DC h_unimpl                 ; 2   ATGT
-    DC h_unimpl                 ; 3   ATLT
+    DC h_at                      ; 0   AT
+    DC h_notat                   ; 1   NOTAT
+    DC h_atgt                    ; 2   ATGT
+    DC h_atlt                    ; 3   ATLT
     DC h_unimpl                 ; 4   PRESENT
     DC h_unimpl                 ; 5   ABSENT
     DC h_unimpl                 ; 6   WORN
     DC h_unimpl                 ; 7   NOTWORN
     DC h_unimpl                 ; 8   CARRIED
     DC h_unimpl                 ; 9   NOTCARR
-    DC h_unimpl                 ; 10  CHANCE
+    DC h_chance                 ; 10  CHANCE
     DC h_zero                   ; 11  ZERO
     DC h_notzero                ; 12  NOTZERO
     DC h_eq                     ; 13  EQ
-    DC h_unimpl                 ; 14  GT
-    DC h_unimpl                 ; 15  LT
-    DC h_unimpl                 ; 16  ADJECT1
-    DC h_unimpl                 ; 17  ADVERB
+    DC h_gt                     ; 14  GT
+    DC h_lt                     ; 15  LT
+    DC h_adject1                ; 16  ADJECT1
+    DC h_adverb                 ; 17  ADVERB
     DC h_unimpl                 ; 18  SFX
     DC h_unimpl                 ; 19  DESC
     DC h_unimpl                 ; 20  QUIT
@@ -607,7 +617,7 @@ cdisp:
     DC h_unimpl                 ; 24  ANYKEY
     DC h_unimpl                 ; 25  SAVE
     DC h_unimpl                 ; 26  LOAD
-    DC h_unimpl                 ; 27  DPRINT
+    DC h_dprint                 ; 27  DPRINT
     DC h_unimpl                 ; 28  DISPLAY
     DC h_cls                    ; 29  CLS
     DC h_unimpl                 ; 30  DROPALL
@@ -627,19 +637,19 @@ cdisp:
     DC h_unimpl                 ; 44  CREATE
     DC h_unimpl                 ; 45  SWAP
     DC h_unimpl                 ; 46  PLACE
-    DC h_unimpl                 ; 47  SET
-    DC h_unimpl                 ; 48  CLEAR
+    DC h_set                    ; 47  SET
+    DC h_clear                  ; 48  CLEAR
     DC h_plus                   ; 49  PLUS
     DC h_minus                  ; 50  MINUS
     DC h_let                    ; 51  LET
     DC h_newline                ; 52  NEWLINE
-    DC h_unimpl                 ; 53  PRINT
+    DC h_print                  ; 53  PRINT
     DC h_sysmess                ; 54  SYSMESS
     DC h_unimpl                 ; 55  ISAT
     DC h_unimpl                 ; 56  SETCO
-    DC h_unimpl                 ; 57  SPACE
-    DC h_unimpl                 ; 58  HASAT
-    DC h_unimpl                 ; 59  HASNAT
+    DC h_space                  ; 57  SPACE
+    DC h_hasat                  ; 58  HASAT
+    DC h_hasnat                 ; 59  HASNAT
     DC h_unimpl                 ; 60  LISTOBJ
     DC h_unimpl                 ; 61  EXTERN
     DC h_unimpl                 ; 62  RAMSAVE
@@ -648,19 +658,19 @@ cdisp:
     DC h_unimpl                 ; 65  PAPER
     DC h_unimpl                 ; 66  INK
     DC h_unimpl                 ; 67  BORDER
-    DC h_unimpl                 ; 68  PREP
-    DC h_unimpl                 ; 69  NOUN2
-    DC h_unimpl                 ; 70  ADJECT2
-    DC h_unimpl                 ; 71  ADD
-    DC h_unimpl                 ; 72  SUB
+    DC h_prep                   ; 68  PREP
+    DC h_noun2                  ; 69  NOUN2
+    DC h_adject2                ; 70  ADJECT2
+    DC h_add                    ; 71  ADD
+    DC h_sub                    ; 72  SUB
     DC h_parse                  ; 73  PARSE
     DC h_unimpl                 ; 74  LISTAT
     DC h_process                ; 75  PROCESS
-    DC h_unimpl                 ; 76  SAME
+    DC h_same                   ; 76  SAME
     DC h_mes                    ; 77  MES
     DC h_unimpl                 ; 78  WINDOW
-    DC h_unimpl                 ; 79  NOTEQ
-    DC h_unimpl                 ; 80  NOTSAME
+    DC h_noteq                  ; 79  NOTEQ
+    DC h_notsame                ; 80  NOTSAME
     DC h_unimpl                 ; 81  MODE
     DC h_unimpl                 ; 82  WINAT
     DC h_unimpl                 ; 83  TIME
@@ -675,7 +685,7 @@ cdisp:
     DC h_unimpl                 ; 92  NEWTEXT
     DC h_unimpl                 ; 93  ABILITY
     DC h_unimpl                 ; 94  WEIGHT
-    DC h_unimpl                 ; 95  RANDOM
+    DC h_random                 ; 95  RANDOM
     DC h_unimpl                 ; 96  INPUT
     DC h_unimpl                 ; 97  SAVEAT
     DC h_unimpl                 ; 98  BACKAT
@@ -692,8 +702,8 @@ cdisp:
     DC h_unimpl                 ; 109 CENTRE
     DC h_unimpl                 ; 110 EXIT
     DC h_unimpl                 ; 111 INKEY
-    DC h_unimpl                 ; 112 BIGGER
-    DC h_unimpl                 ; 113 SMALLER
+    DC h_bigger                 ; 112 BIGGER
+    DC h_smaller                ; 113 SMALLER
     DC h_unimpl                 ; 114 ISDONE
     DC h_unimpl                 ; 115 ISNDONE
     DC h_skip                   ; 116 SKIP
@@ -705,8 +715,8 @@ cdisp:
     DC h_unimpl                 ; 122 (unused)
     DC h_unimpl                 ; 123 COPYFO
     DC h_unimpl                 ; 124 (unused)
-    DC h_unimpl                 ; 125 COPYFF
-    DC h_unimpl                 ; 126 COPYBF
+    DC h_copyff                 ; 125 COPYFF
+    DC h_copybf                 ; 126 COPYBF
     DC h_unimpl                 ; 127 RESET
 
 ; --- engine data (flags 256-aligned) ---

@@ -237,6 +237,47 @@ prn_reset_lines:
 objname_stub:
     ret
 
+; A = byte -> decimal via prn_char, no leading zeros ("0" for zero).
+prn_dec8:
+    ld l, a
+    ld h, 0
+; HL = word -> decimal via prn_char. Corrupts all.
+prn_dec16:
+    ld e, 0                     ; digits-started flag
+    ld bc, -10000
+    call prn_dec_digit
+    ld bc, -1000
+    call prn_dec_digit
+    ld bc, -100
+    call prn_dec_digit
+    ld bc, -10
+    call prn_dec_digit
+    ld a, l
+    add a, '0'
+    ld c, a
+    jp prn_char
+
+prn_dec_digit:
+    ld a, '0'-1
+.sub:
+    inc a
+    add hl, bc
+    jr c, .sub
+    sbc hl, bc                  ; undo the overshoot
+    cp '0'
+    jr nz, .emit
+    bit 0, e
+    ret z                       ; suppress leading zero
+.emit:
+    ld e, 1
+    push hl
+    push de
+    ld c, a
+    call prn_char
+    pop de
+    pop hl
+    ret
+
 chsGfx:       db 0
 moreLock:     db 0
 objname_hook: dw objname_stub
