@@ -20,6 +20,11 @@ dbg_at:
 
 ; A = character. 13 = newline. Corrupts AF, BC, DE, HL.
 dbg_putc:
+    ld l, a                     ; keep the char across the flag test
+    ld a, (dbgTilemap)
+    or a
+    ld a, l
+    jp nz, dbg_putc_tm
     cp 13
     jr nz, .print
 .newline:
@@ -74,6 +79,72 @@ dbg_putc:
 .setx:
     ld (dbgX), a
     ret
+
+; Tilemap debug output: raw glyphs, white on black, 80 columns.
+dbg_putc_tm:
+    cp 13
+    jr nz, .char
+    xor a
+    ld (dbgX), a
+    ld a, (dbgY)
+    inc a
+    cp TM_ROWS
+    jr c, .sety
+    ld a, TM_ROWS-1
+.sety:
+    ld (dbgY), a
+    ret
+.char:
+    push af
+    ld a, (dbgX)
+    ld c, a
+    ld a, (dbgY)
+    ld b, a
+    ld e, 7*2                   ; white on black, always
+    pop af
+    call tm_putc_at
+    ld a, (dbgX)
+    inc a
+    cp TM_COLS
+    jr c, .setx
+    xor a
+    ld (dbgX), a
+    ld a, (dbgY)
+    inc a
+    cp TM_ROWS
+    jr c, .sety2
+    ld a, TM_ROWS-1
+.sety2:
+    ld (dbgY), a
+    ret
+.setx:
+    ld (dbgX), a
+    ret
+
+; Flip dbg output to the tilemap and re-print the boot diagnostics.
+dbg_engage_tilemap:
+    ld a, 1
+    ld (dbgTilemap), a
+    call boot_banner
+    call ram_diag
+    call ddb_diag
+    ld a, (chrStatus)
+    or a
+    ret z
+    ld b, 11
+    ld c, 0
+    call dbg_at
+    dec a
+    jr nz, .bad
+    ld hl, msgChrOverride
+    jp dbg_puts
+.bad:
+    ld hl, msgChrBad
+    jp dbg_puts
+
+msgChrOverride: db "CHR OVERRIDE", 0
+msgChrBad:      db "CHR BAD", 0
+dbgTilemap:     db 0
 
 ; HL = ASCIIZ string
 dbg_puts:
@@ -317,6 +388,7 @@ boot_banner:
 ram_diag:
 bank_selftest:
 ddb_diag:
+dbg_engage_tilemap:
     ret
 
  ENDIF
