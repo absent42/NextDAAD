@@ -99,6 +99,53 @@ OVL_ORG         equ $E000
 OVL_LIMIT       equ $F800   ; overlay ASSERT bound (512 bytes spare)
 DATA_WINDOW     equ $C000   ; slot 6 window base (8K)
 
+; --- Engine (sub-project 3) ---
+PROC_DEPTH      equ 10
+PREC_SIZE       equ 6       ; proc(1) entryPtr(2) condactPtr(2) done(1)
+OBJ_SIZE        equ 6
+OBJ_NOT_CREATED equ 252
+OBJ_WORN        equ 253
+OBJ_CARRIED     equ 254
+LOC_HERE        equ 255
+FLAG_CARRIED_CT equ 1
+FLAG_VERB       equ 33
+FLAG_NOUN1      equ 34
+FLAG_ADJ1       equ 35
+FLAG_ADVERB     equ 36
+FLAG_MAXCARR    equ 37
+FLAG_PLAYER     equ 38
+FLAG_PREP       equ 43
+FLAG_NOUN2      equ 44
+FLAG_ADJ2       equ 45
+FLAG_DOALL      equ 50
+FLAG_CUROBJ     equ 51
+FLAG_STRENGTH   equ 52
+FLAG_OFLAGS     equ 53
+FLAG_COLOC      equ 54
+FLAG_COWEI      equ 55
+FLAG_COCON      equ 56
+FLAG_COWR       equ 57
+FLAG_COATT      equ 58
+FLAG_KEY1       equ 60
+; header field offsets (resident ddbHeader)
+HDR_NUMOBJ      equ 3
+HDR_NUMLOC      equ 4
+HDR_NUMMSG      equ 5
+HDR_NUMSYS      equ 6
+HDR_NUMPRC      equ 7
+HDR_TOKENS      equ 8
+HDR_PROCLST     equ 10
+HDR_OBJLST      equ 12
+HDR_LOCLST      equ 14
+HDR_MSGLST      equ 16
+HDR_SYSLST      equ 18
+HDR_CONLST      equ 20
+HDR_VOCAB       equ 22
+HDR_OBJLOC      equ 24
+HDR_OBJNAME     equ 26
+HDR_OBJATTR     equ 28
+HDR_OBJEXTR     equ 30
+
 ; --- Window system (sub-project 2) ---
 WIN_X           equ 0
 WIN_Y           equ 1

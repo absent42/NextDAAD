@@ -1,0 +1,114 @@
+/CTL
+_
+/VOC
+NORTH  2  noun
+SOUTH  3  noun
+GET   100 verb
+DROP  101 verb
+BOX   50  noun
+LAMP  51  noun
+COIN  52  noun
+ALL   20  noun
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "I didn't understand."
+/7  "I can't go in that direction."
+/8  "I can't do that."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 "Press any key."
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+/MTX
+/0 "NEXTDAAD CONDACT SUITE#n"
+/OTX
+/0 "a brass lamp"
+/1 "an old box"
+/2 "a gold coin"
+/LTX
+/0 "Suite arena."
+/CON
+/0
+/OBJ
+/0    CARRIED     1   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   LAMP _
+/1    0           2   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   BOX  _
+/2    NOT_CREATED 1   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   COIN _
+/PRO 0
+> _ _   CLS
+        MESSAGE 0
+        PROCESS 1
+> _ _   PARSE 0
+/PRO 1
+; ---- suite 0: pilot flags ----
+> _ _   LET 100 5
+        EQ 100 5
+        MES "01 OK#n"
+        SKIP 1
+> _ _   MES "01 F#n"
+> _ _   PLUS 100 250
+        EQ 100 255
+        MES "02 OK#n"
+        SKIP 1
+> _ _   MES "02 F#n"
+> _ _   MINUS 100 255
+        ZERO 100
+        MES "03 OK#n"
+        SKIP 1
+> _ _   MES "03 F#n"
+> _ _   NOTZERO 37
+        MES "04 OK#n"
+        SKIP 1
+> _ _   MES "04 F#n"
+/END

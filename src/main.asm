@@ -38,26 +38,11 @@ main:
     call ddb_diag
     call txt_init
     call dbg_engage_tilemap
- IFDEF DEBUG
-    ; Task 1 probe - removed in Task 2
-    ld a, OVL0_PAGE
-    call ovl_map_page
-    call ovl0_probe
-    ld c, a
-    ld b, 13
-    push bc
-    ld b, 26
-    ld c, 0
-    call dbg_at
-    pop bc
-    ld a, c
-    call dbg_putc               ; a V at row 26 proves slot-7 dispatch
- ENDIF
     call windows_init
     ld hl, prn_char_tok
     ld (prn_char_vec), hl
  IFDEF DEBUG
-    call demo
+    call demo_or_suite
  ENDIF
 idle:
  IFDEF DEBUG
@@ -72,6 +57,17 @@ idle:
     jr idle
 
  IFDEF DEBUG
+; Runs the SP2 demo for the template DDB, or the engine for the
+; condact-suite DDB (numLocDsc == 1 marks the suite database).
+demo_or_suite:
+    ld a, (ddbHeader+HDR_NUMLOC)
+    cp 1
+    jr z, .suite
+    jp demo
+.suite:
+    call eng_init_game
+    jp eng_run
+
 ; Exit-criteria demo: two coloured windows, every declared system
 ; message with More... paging, a location description, escape tests.
 demo:
@@ -136,6 +132,8 @@ demoString:
     INCLUDE "windows.asm"
     INCLUDE "ddbtext.asm"
     INCLUDE "print.asm"
+    INCLUDE "engine.asm"
+    INCLUDE "errors.asm"
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT
