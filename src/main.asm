@@ -37,21 +37,50 @@ main:
 .loaded:
     call ddb_diag
     call txt_init
+    call windows_init
  IFDEF DEBUG
-    ; Temporary probe - replaced by the window probe in the next task
-    ld b, 2
-    ld c, 4
-    ld a, 'A'
-    ld e, 7*2                   ; pair 7: white on black
-    call tm_putc_at
-    ld c, 6
-    ld a, 'B'
-    ld e, (6*8+2)*2             ; pair 50: red ink on yellow paper
-    call tm_putc_at
-    ld c, 8
-    ld a, 'C'
-    ld e, (1*8+6)*2             ; pair 14: yellow ink on blue paper
-    call tm_putc_at
+    ; Temporary probe - replaced by the message probe in the next task
+    ld a, 1
+    call win_select
+    ld b, 1
+    ld c, 2
+    ld d, 5
+    ld e, 20                    ; window 1: 20 wide, 5 high at (2,1)
+    call win_set_geom
+    ld d, 1
+    ld e, 6                     ; yellow ink on blue paper
+    call win_set_colour
+    call win_cls
+    ld b, 30
+.probe1:
+    push bc
+    ld a, 'X'
+    call win_putc
+    call c, win_newline         ; honour the wrap signal
+    pop bc
+    djnz .probe1
+    call win_newline
+    ld a, 'Y'
+    call win_putc
+    ld a, 2
+    call win_select
+    ld b, 10
+    ld c, 40
+    ld d, 4
+    ld e, 12                    ; window 2: 12 wide, 4 high at (40,10)
+    call win_set_geom
+    ld d, 4
+    ld e, 0                     ; black ink on green paper
+    call win_set_colour
+    call win_cls
+    ld b, 8
+.probe2:
+    push bc
+    ld a, 'Z'
+    call win_putc
+    call win_newline
+    pop bc
+    djnz .probe2
  ENDIF
 idle:
  IFDEF DEBUG
@@ -70,6 +99,7 @@ idle:
     INCLUDE "banks.asm"
     INCLUDE "file.asm"
     INCLUDE "tilemap.asm"
+    INCLUDE "windows.asm"
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT
