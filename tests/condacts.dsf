@@ -8,6 +8,7 @@ DROP  101 verb
 BOX   50  noun
 LAMP  51  noun
 COIN  52  noun
+HAT   53  noun
 ALL   20  noun
 /STX
 /0  "It's too dark to see anything."
@@ -77,14 +78,18 @@ ALL   20  noun
 /0 "a brass lamp"
 /1 "an old box"
 /2 "a gold coin"
+/3 "a felt hat"
 /LTX
 /0 "Suite arena."
+/1 ""
 /CON
 /0
+/1
 /OBJ
-/0    CARRIED     1   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   LAMP _
+/0    CARRIED     1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   LAMP _
 /1    0           2   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   BOX  _
-/2    NOT_CREATED 1   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   COIN _
+/2    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   COIN _
+/3    0           1   _ Y  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   HAT  _
 /PRO 0
 > _ _   CLS
         MESSAGE 0
@@ -206,4 +211,83 @@ ALL   20  noun
         MES "18 OK#n"
         SKIP 1
 > _ _   MES "18 F#n"
+; ---- suite 3: carry mechanics ----
+> _ _   ABILITY 2 10
+        PLACE 0 0
+        PLACE 2 0
+        GET 0
+        CARRIED 0
+        EQ 1 1
+        MES "19 OK#n"
+        SKIP 1
+> _ _   MES "19 F#n"
+> _ _   GET 2
+        CARRIED 2
+        EQ 1 2
+        MES "20 OK#n"
+        SKIP 1
+> _ _   MES "20 F#n"
+> _ _   PROCESS 2
+        NOTCARR 3
+        EQ 1 2
+        MES "21 OK#n"
+        SKIP 1
+> _ _   MES "21 F#n"
+> _ _   DROP 0
+        ISAT 0 0
+        EQ 1 1
+        MES "22 OK#n"
+        SKIP 1
+> _ _   MES "22 F#n"
+> _ _   PLACE 3 254
+        WEAR 3
+        WORN 3
+        EQ 1 1
+        MES "23 OK#n"
+        SKIP 1
+> _ _   MES "23 F#n"
+> _ _   REMOVE 3
+        CARRIED 3
+        MES "24 OK#n"
+        SKIP 1
+> _ _   MES "24 F#n"
+> _ _   LET 34 53
+        LET 35 255
+        AUTOD
+        ISAT 3 0
+        MES "25 OK#n"
+        SKIP 1
+> _ _   MES "25 F#n"
+> _ _   PUTIN 2 1
+        ISAT 2 1
+        EQ 1 1
+        MES "26 OK#n"
+        SKIP 1
+> _ _   MES "26 F#n"
+> _ _   WEIGH 1 112
+        EQ 112 3
+        MES "27 OK#n"
+        SKIP 1
+> _ _   MES "27 F#n"
+> _ _   TAKEOUT 2 1
+        CARRIED 2
+        MES "28 OK#n"
+        SKIP 1
+> _ _   MES "28 F#n"
+> _ _   DROPALL
+        ZERO 1
+        ISAT 2 0
+        MES "29 OK#n"
+        SKIP 1
+> _ _   MES "29 F#n"
+> _ _   RESET
+        CARRIED 0
+        ISAT 1 0
+        ABSENT 2
+        EQ 1 1
+        MES "30 OK#n"
+        SKIP 1
+> _ _   MES "30 F#n"
+/PRO 2
+> _ _   GET 3
 /END

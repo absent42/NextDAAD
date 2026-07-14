@@ -648,4 +648,406 @@ obj_find_n1:
     ld d, $FE
     jp obj_find_pass
 
+; E = system message: print + newline, exit the table as DONE.
+refuse:
+    ld a, 0
+    call print_msg
+    call prn_newline
+    ld a, 1
+    jp eng_exit_table
+
+h_ok:                           ; 23: SM15 then DONE - refuse IS that
+    ld e, 15
+    jp refuse
+
+h_get:                          ; 40
+    ld a, b
+    call obj_set_refs
+    ld a, b
+    call obj_ptr
+    ld a, (hl)
+    cp OBJ_CARRIED
+    jr z, .have
+    cp OBJ_WORN
+    jr z, .have
+    ld e, a
+    ld a, (flags+FLAG_PLAYER)
+    cp e
+    jr nz, .nothere
+    ld a, (flags+FLAG_MAXCARR)
+    ld e, a
+    ld a, (flags+FLAG_CARRIED_CT)
+    cp e
+    jr c, .cap
+    ld e, 27
+    jp refuse
+.cap:
+    ld a, b
+    push bc
+    call obj_weight_of
+    pop bc
+    ld d, a
+    push bc
+    push de
+    call weight_total
+    pop de
+    pop bc
+    add a, d
+    ld e, a
+    ld a, (flags+FLAG_STRENGTH)
+    cp e
+    jr nc, .take
+    ld e, 43
+    jp refuse
+.take:
+    ld a, b
+    ld c, OBJ_CARRIED
+    jp obj_move
+.have:
+    ld e, 25
+    jp refuse
+.nothere:
+    ld e, 26
+    jp refuse
+
+h_drop:                         ; 41
+    ld a, b
+    call obj_set_refs
+    ld a, b
+    call obj_ptr
+    ld a, (hl)
+    cp OBJ_WORN
+    jr z, .worn
+    cp OBJ_CARRIED
+    jr nz, .nothave
+    ld a, (flags+FLAG_PLAYER)
+    ld c, a
+    ld a, b
+    jp obj_move
+.worn:
+    ld e, 24
+    jp refuse
+.nothave:
+    ld e, 28
+    jp refuse
+
+h_wear:                         ; 42
+    ld a, b
+    call obj_set_refs
+    ld a, b
+    call obj_ptr
+    ld d, (hl)
+    inc hl
+    bit 7, (hl)
+    jr z, .cant
+    ld a, d
+    cp OBJ_WORN
+    jr z, .already
+    cp OBJ_CARRIED
+    jr nz, .nothave
+    ld a, b
+    ld c, OBJ_WORN
+    jp obj_move
+.cant:
+    ld e, 40
+    jp refuse
+.already:
+    ld e, 29
+    jp refuse
+.nothave:
+    ld e, 28
+    jp refuse
+
+h_remove:                       ; 39
+    ld a, b
+    call obj_set_refs
+    ld a, b
+    call obj_ptr
+    ld d, (hl)
+    inc hl
+    bit 7, (hl)
+    jr z, .cant
+    ld a, d
+    cp OBJ_WORN
+    jr nz, .notworn
+    ld a, (flags+FLAG_MAXCARR)
+    ld e, a
+    ld a, (flags+FLAG_CARRIED_CT)
+    cp e
+    jr c, .rem
+    ld e, 42
+    jp refuse
+.rem:
+    ld a, b
+    ld c, OBJ_CARRIED
+    jp obj_move
+.cant:
+    ld e, 41
+    jp refuse
+.notworn:
+    ld e, 50
+    jp refuse
+
+; AUTO*: resolve Noun1 with the classic priority, delegate.
+h_autog:                        ; 31: here, carried, worn
+    ld a, (flags+FLAG_PLAYER)
+    ld d, a
+    call obj_find_pass
+    jr nc, .go
+    ld d, OBJ_CARRIED
+    call obj_find_pass
+    jr nc, .go
+    ld d, OBJ_WORN
+    call obj_find_pass
+    jr nc, .go
+    ld e, 26
+    jp refuse
+.go:
+    ld b, a
+    jp h_get
+h_autod:                        ; 32: carried, worn, here
+    call auto_cwh
+    jr nc, .go
+    ld e, 28
+    jp refuse
+.go:
+    ld b, a
+    jp h_drop
+h_autow:                        ; 33: carried, worn, here
+    call auto_cwh
+    jr nc, .go
+    ld e, 28
+    jp refuse
+.go:
+    ld b, a
+    jp h_wear
+h_autor:                        ; 34: worn, carried, here
+    ld d, OBJ_WORN
+    call obj_find_pass
+    jr nc, .go
+    ld d, OBJ_CARRIED
+    call obj_find_pass
+    jr nc, .go
+    ld a, (flags+FLAG_PLAYER)
+    ld d, a
+    call obj_find_pass
+    jr nc, .go
+    ld e, 23
+    jp refuse
+.go:
+    ld b, a
+    jp h_remove
+auto_cwh:                       ; carried, worn, here ordering
+    ld d, OBJ_CARRIED
+    call obj_find_pass
+    ret nc
+    ld d, OBJ_WORN
+    call obj_find_pass
+    ret nc
+    ld a, (flags+FLAG_PLAYER)
+    ld d, a
+    jp obj_find_pass
+
+h_dropall:                      ; 30
+    ld b, 0
+.scan:
+    ld a, (numObj)
+    cp b
+    ret z
+    ld a, b
+    push bc
+    call obj_ptr
+    ld a, (hl)
+    pop bc
+    cp OBJ_CARRIED
+    jr z, .drop
+    cp OBJ_WORN
+    jr nz, .next
+.drop:
+    push bc
+    ld a, (flags+FLAG_PLAYER)
+    ld c, a
+    ld a, b
+    call obj_move
+    pop bc
+.next:
+    inc b
+    jr .scan
+
+h_putin:                        ; 90: carried obj B -> container loc C
+    ld a, b
+    call obj_set_refs
+    ld a, b
+    call obj_ptr
+    ld a, (hl)
+    cp OBJ_CARRIED
+    jr nz, .nothave
+    ld a, b
+    jp obj_move
+.nothave:
+    ld e, 28
+    jp refuse
+h_takeout:                      ; 91: obj B out of container loc C
+    ld a, b
+    call obj_set_refs
+    ld a, b
+    call obj_ptr
+    ld a, (hl)
+    cp c
+    jr nz, .notin
+    ld a, (flags+FLAG_MAXCARR)
+    ld e, a
+    ld a, (flags+FLAG_CARRIED_CT)
+    cp e
+    jr nc, .full
+    ld a, b
+    ld c, OBJ_CARRIED
+    jp obj_move
+.full:
+    ld e, 27
+    jp refuse
+.notin:
+    ld e, 52
+    jp refuse
+h_autop:                        ; 104: B = container loc; find Noun1
+    call auto_cwh
+    jr c, .none
+    ld c, b                     ; C = container loc, B = object
+    ld b, a
+    jp h_putin
+.none:
+    ld e, 28
+    jp refuse
+h_autot:                        ; 105: container first, then usual
+    ld d, b
+    call obj_find_pass
+    jr nc, .found
+    call obj_find_n1
+    jr c, .none
+.found:
+    ld c, b
+    ld b, a
+    jp h_takeout
+.none:
+    ld e, 52
+    jp refuse
+
+; A = obj number -> A = true weight including container contents.
+; Recursive core with an explicit depth budget in E.
+obj_weight_of:
+    ld e, 10
+owf_core:
+    push bc
+    push de
+    ld c, a                     ; C = this object's number
+    call obj_ptr
+    inc hl
+    ld d, (hl)                  ; attrib byte
+    ld a, d
+    and $3F
+    ld b, a                     ; B = running total
+    bit 6, d
+    jr z, .fin
+    pop de
+    push de
+    ld a, e
+    dec a
+    jr z, .fin                  ; depth exhausted
+    ld e, a
+    ld d, 0                     ; D = child index
+.scan:
+    ld a, (numObj)
+    cp d
+    jr z, .fin
+    ld a, d
+    push bc
+    push de
+    call obj_ptr
+    ld a, (hl)
+    pop de
+    pop bc
+    cp c                        ; located "at" this container's number?
+    jr nz, .next
+    push bc
+    push de
+    ld a, d
+    call owf_core
+    pop de
+    pop bc
+    add a, b
+    jr nc, .acc
+    ld a, 255
+.acc:
+    ld b, a
+.next:
+    inc d
+    jr .scan
+.fin:
+    ld a, b
+    pop de
+    pop bc
+    ret
+
+; Total carried+worn weight.
+weight_total:
+    ld b, 0
+    ld c, 0
+.scan:
+    ld a, (numObj)
+    cp b
+    jr z, .done
+    ld a, b
+    push bc
+    call obj_ptr
+    ld a, (hl)
+    pop bc
+    cp OBJ_CARRIED
+    jr z, .add
+    cp OBJ_WORN
+    jr nz, .next
+.add:
+    push bc
+    ld a, b
+    call obj_weight_of
+    pop bc
+    add a, c
+    jr nc, .st
+    ld a, 255
+.st:
+    ld c, a
+.next:
+    inc b
+    jr .scan
+.done:
+    ld a, c
+    ret
+
+h_weigh:                        ; 89: flags[C] = weight of obj B
+    ld a, b
+    push bc
+    call obj_weight_of
+    pop bc
+    ld d, a
+    ld b, c
+    call fptr
+    ld (hl), d
+    ret
+h_weight:                       ; 94: flags[B] = carried+worn total
+    push bc
+    call weight_total
+    pop bc
+    ld d, a
+    call fptr
+    ld (hl), d
+    ret
+h_ability:                      ; 93
+    ld a, b
+    ld (flags+FLAG_MAXCARR), a
+    ld a, c
+    ld (flags+FLAG_STRENGTH), a
+    ret
+h_reset:                        ; 127: initial positions
+    ld c, 1
+    jp eng_load_objects
+
     ASSERT $ <= OVL_LIMIT

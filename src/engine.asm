@@ -16,6 +16,7 @@ eng_init_game:
     ld (flags+FLAG_STRENGTH), a
     ld a, (ddbHeader+HDR_NUMOBJ)
     ld (numObj), a
+    ld c, 0
     call eng_load_objects
     xor a
     call win_select
@@ -613,26 +614,26 @@ cdisp:
     DC h_unimpl                 ; 20  QUIT
     DC h_unimpl                 ; 21  END
     DC h_done                   ; 22  DONE
-    DC h_unimpl                 ; 23  OK
+    DC h_ok                     ; 23  OK
     DC h_unimpl                 ; 24  ANYKEY
     DC h_unimpl                 ; 25  SAVE
     DC h_unimpl                 ; 26  LOAD
     DC h_dprint                 ; 27  DPRINT
     DC h_unimpl                 ; 28  DISPLAY
     DC h_cls                    ; 29  CLS
-    DC h_unimpl                 ; 30  DROPALL
-    DC h_unimpl                 ; 31  AUTOG
-    DC h_unimpl                 ; 32  AUTOD
-    DC h_unimpl                 ; 33  AUTOW
-    DC h_unimpl                 ; 34  AUTOR
+    DC h_dropall                 ; 30  DROPALL
+    DC h_autog                   ; 31  AUTOG
+    DC h_autod                   ; 32  AUTOD
+    DC h_autow                   ; 33  AUTOW
+    DC h_autor                   ; 34  AUTOR
     DC h_unimpl                 ; 35  PAUSE
     DC h_unimpl                 ; 36  SYNONYM
     DC h_unimpl                 ; 37  GOTO
     DC h_message                ; 38  MESSAGE
-    DC h_unimpl                 ; 39  REMOVE
-    DC h_unimpl                 ; 40  GET
-    DC h_unimpl                 ; 41  DROP
-    DC h_unimpl                 ; 42  WEAR
+    DC h_remove                  ; 39  REMOVE
+    DC h_get                     ; 40  GET
+    DC h_drop                    ; 41  DROP
+    DC h_wear                    ; 42  WEAR
     DC h_destroy                 ; 43  DESTROY
     DC h_create                  ; 44  CREATE
     DC h_swap                    ; 45  SWAP
@@ -679,12 +680,12 @@ cdisp:
     DC h_unimpl                 ; 86  MOUSE
     DC h_unimpl                 ; 87  GFX
     DC h_isnotat                 ; 88  ISNOTAT
-    DC h_unimpl                 ; 89  WEIGH
-    DC h_unimpl                 ; 90  PUTIN
-    DC h_unimpl                 ; 91  TAKEOUT
+    DC h_weigh                   ; 89  WEIGH
+    DC h_putin                   ; 90  PUTIN
+    DC h_takeout                 ; 91  TAKEOUT
     DC h_unimpl                 ; 92  NEWTEXT
-    DC h_unimpl                 ; 93  ABILITY
-    DC h_unimpl                 ; 94  WEIGHT
+    DC h_ability                 ; 93  ABILITY
+    DC h_weight                  ; 94  WEIGHT
     DC h_random                 ; 95  RANDOM
     DC h_unimpl                 ; 96  INPUT
     DC h_unimpl                 ; 97  SAVEAT
@@ -694,8 +695,8 @@ cdisp:
     DC h_unimpl                 ; 101 CALL
     DC h_puto                    ; 102 PUTO
     DC h_notdone                ; 103 NOTDONE
-    DC h_unimpl                 ; 104 AUTOP
-    DC h_unimpl                 ; 105 AUTOT
+    DC h_autop                   ; 104 AUTOP
+    DC h_autot                   ; 105 AUTOT
     DC h_unimpl                 ; 106 MOVE
     DC h_unimpl                 ; 107 WINSIZE
     DC h_unimpl                 ; 108 REDO
@@ -717,7 +718,7 @@ cdisp:
     DC h_unimpl                 ; 124 (unused)
     DC h_copyff                 ; 125 COPYFF
     DC h_copybf                 ; 126 COPYBF
-    DC h_unimpl                 ; 127 RESET
+    DC h_reset                   ; 127 RESET
 
 ; --- engine data (flags 256-aligned) ---
     ALIGN 256
