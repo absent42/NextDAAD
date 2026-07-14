@@ -410,4 +410,242 @@ rng_next:
     ret
 rngState: dw $A5C3
 
+; A = obj, C = new location. Flag 1 bookkeeping; error 2 on loc 255.
+obj_move:
+    ld e, a
+    ld a, c
+    cp 255
+    jr nz, .legal
+    ld a, 2
+    jp err_raise
+.legal:
+    ld a, e
+    call obj_ptr
+    ld a, (hl)
+    cp OBJ_CARRIED
+    jr nz, .oldnc
+    ld a, (flags+FLAG_CARRIED_CT)
+    dec a
+    ld (flags+FLAG_CARRIED_CT), a
+.oldnc:
+    ld (hl), c
+    ld a, c
+    cp OBJ_CARRIED
+    ret nz
+    ld a, (flags+FLAG_CARRIED_CT)
+    inc a
+    ld (flags+FLAG_CARRIED_CT), a
+    ret
+
+; A = obj: update flags 51, 54..59.
+obj_set_refs:
+    ld (flags+FLAG_CUROBJ), a
+    call obj_ptr
+    ld a, (hl)
+    ld (flags+FLAG_COLOC), a
+    inc hl
+    ld d, (hl)
+    ld a, d
+    and $3F
+    ld (flags+FLAG_COWEI), a
+    xor a
+    bit 6, d
+    jr z, .ncon
+    ld a, 128
+.ncon:
+    ld (flags+FLAG_COCON), a
+    xor a
+    bit 7, d
+    jr z, .nwr
+    ld a, 128
+.nwr:
+    ld (flags+FLAG_COWR), a
+    inc hl
+    ld a, (hl)
+    ld (flags+FLAG_COATT), a
+    inc hl
+    ld a, (hl)
+    ld (flags+FLAG_COATT+1), a
+    ret
+
+h_present:                      ; 4
+    ld a, b
+    call obj_ptr
+    ld a, (hl)
+    cp OBJ_CARRIED
+    jp z, c_true
+    cp OBJ_WORN
+    jp z, c_true
+    ld e, a
+    ld a, (flags+FLAG_PLAYER)
+    cp e
+    jp z, c_true
+    jp c_false
+h_absent:                       ; 5
+    call h_present
+    ccf
+    ret
+h_worn:                         ; 6
+    ld a, b
+    call obj_ptr
+    ld a, (hl)
+    cp OBJ_WORN
+    jp z, c_true
+    jp c_false
+h_notworn:                      ; 7
+    call h_worn
+    ccf
+    ret
+h_carried:                      ; 8
+    ld a, b
+    call obj_ptr
+    ld a, (hl)
+    cp OBJ_CARRIED
+    jp z, c_true
+    jp c_false
+h_notcarr:                      ; 9
+    call h_carried
+    ccf
+    ret
+h_isat:                         ; 55: obj B at loc C (255 = player's)
+    ld a, b
+    call obj_ptr
+    ld a, c
+    cp LOC_HERE
+    jr nz, .fixed
+    ld a, (flags+FLAG_PLAYER)
+.fixed:
+    cp (hl)
+    jp z, c_true
+    jp c_false
+h_isnotat:                      ; 88
+    call h_isat
+    ccf
+    ret
+h_destroy:                      ; 43
+    ld a, b
+    ld c, OBJ_NOT_CREATED
+    jp obj_move
+h_create:                       ; 44
+    ld a, (flags+FLAG_PLAYER)
+    ld c, a
+    ld a, b
+    jp obj_move
+h_place:                        ; 46: obj B to loc C
+    ld a, b
+    jp obj_move
+h_swap:                         ; 45: exchange locations, flag-1 safe
+    ld a, b
+    call obj_ptr
+    ld a, (hl)                  ; A = loc(B)
+    push af                     ; obj_ptr corrupts AF/DE; stash across
+    ld a, c                     ; the second call rather than trust D
+    call obj_ptr
+    ld e, (hl)                  ; E = loc(C)
+    pop af
+    ld d, a                     ; D = loc(B)
+    push bc
+    push de
+    ld a, b
+    ld c, e
+    call obj_move               ; B -> old loc(C)
+    pop de
+    pop bc
+    ld a, c
+    ld c, d
+    jp obj_move                 ; C -> old loc(B)
+h_setco:                        ; 56
+    ld a, b
+    jp obj_set_refs
+h_puto:                         ; 102: current object -> loc B
+    ld a, (flags+FLAG_CUROBJ)
+    ld c, b
+    jp obj_move
+h_copyof:                       ; 119: flags[C] = loc(obj B)
+    ld a, b
+    call obj_ptr
+    ld d, (hl)
+    ld b, c
+    call fptr
+    ld (hl), d
+    ret
+h_copyoo:                       ; 121: loc(obj C) = loc(obj B)
+    ld a, b
+    call obj_ptr
+    ld d, (hl)
+    ld a, c
+    ld c, d
+    jp obj_move
+h_copyfo:                       ; 123: loc(obj C) = flags[B]
+    call fptr
+    ld d, (hl)
+    ld a, c
+    ld c, d
+    jp obj_move
+h_whato:                        ; 100: find by Noun1/Adj1
+    call obj_find_n1
+    jr c, .none
+    jp obj_set_refs
+.none:
+    ld a, $FF
+    ld (flags+FLAG_CUROBJ), a
+    ret
+
+; D = location to scan ($FE = anywhere). Matcher on Noun1/Adj1.
+; Out: A = object CF clear, else CF set. Preserves D.
+obj_find_pass:
+    ld b, 0
+.scan:
+    ld a, (numObj)
+    cp b
+    jr z, .miss
+    ld a, b
+    push bc
+    push de
+    call obj_ptr
+    pop de
+    pop bc
+    ld a, d
+    cp $FE
+    jr z, .anyloc
+    cp (hl)
+    jr nz, .next
+.anyloc:
+    push hl
+    pop iy
+    ld a, (flags+FLAG_NOUN1)
+    cp (iy+4)
+    jr nz, .next
+    ld a, (flags+FLAG_ADJ1)
+    cp (iy+5)
+    jr z, .hit
+    ld a, (iy+5)
+    cp 255
+    jr nz, .next
+.hit:
+    ld a, b
+    or a
+    ret
+.next:
+    inc b
+    jr .scan
+.miss:
+    scf
+    ret
+
+; Standard ordering: carried, worn, here, anywhere.
+obj_find_n1:
+    ld d, OBJ_CARRIED
+    call obj_find_pass
+    ret nc
+    ld d, OBJ_WORN
+    call obj_find_pass
+    ret nc
+    ld a, (flags+FLAG_PLAYER)
+    ld d, a
+    call obj_find_pass
+    ret nc
+    ld d, $FE
+    jp obj_find_pass
+
     ASSERT $ <= OVL_LIMIT

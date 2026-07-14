@@ -158,4 +158,52 @@ ALL   20  noun
         MES "11 OK#n"
         SKIP 1
 > _ _   MES "11 F#n"
+; ---- suite 2: object model ----
+> _ _   CARRIED 0
+        ISAT 1 0
+        ABSENT 2
+        MES "12 OK#n"
+        SKIP 1
+> _ _   MES "12 F#n"
+> _ _   CREATE 2
+        ISAT 2 255
+        PRESENT 2
+        MES "13 OK#n"
+        SKIP 1
+> _ _   MES "13 F#n"
+> _ _   SWAP 0 2
+        ISAT 0 0
+        CARRIED 2
+        EQ 1 1
+        MES "14 OK#n"
+        SKIP 1
+> _ _   MES "14 F#n"
+> _ _   SETCO 0
+        EQ 51 0
+        EQ 54 0
+        EQ 55 1
+        MES "15 OK#n"
+        SKIP 1
+> _ _   MES "15 F#n"
+> _ _   COPYOF 2 110
+        EQ 110 254
+        LET 111 0
+        COPYFO 111 2
+        ISAT 2 0
+        EQ 1 0
+        MES "16 OK#n"
+        SKIP 1
+> _ _   MES "16 F#n"
+> _ _   LET 34 51
+        LET 35 255
+        WHATO
+        EQ 51 0
+        MES "17 OK#n"
+        SKIP 1
+> _ _   MES "17 F#n"
+> _ _   DESTROY 2
+        ABSENT 2
+        MES "18 OK#n"
+        SKIP 1
+> _ _   MES "18 F#n"
 /END

@@ -594,12 +594,12 @@ cdisp:
     DC h_notat                   ; 1   NOTAT
     DC h_atgt                    ; 2   ATGT
     DC h_atlt                    ; 3   ATLT
-    DC h_unimpl                 ; 4   PRESENT
-    DC h_unimpl                 ; 5   ABSENT
-    DC h_unimpl                 ; 6   WORN
-    DC h_unimpl                 ; 7   NOTWORN
-    DC h_unimpl                 ; 8   CARRIED
-    DC h_unimpl                 ; 9   NOTCARR
+    DC h_present                 ; 4   PRESENT
+    DC h_absent                  ; 5   ABSENT
+    DC h_worn                    ; 6   WORN
+    DC h_notworn                 ; 7   NOTWORN
+    DC h_carried                 ; 8   CARRIED
+    DC h_notcarr                 ; 9   NOTCARR
     DC h_chance                 ; 10  CHANCE
     DC h_zero                   ; 11  ZERO
     DC h_notzero                ; 12  NOTZERO
@@ -633,10 +633,10 @@ cdisp:
     DC h_unimpl                 ; 40  GET
     DC h_unimpl                 ; 41  DROP
     DC h_unimpl                 ; 42  WEAR
-    DC h_unimpl                 ; 43  DESTROY
-    DC h_unimpl                 ; 44  CREATE
-    DC h_unimpl                 ; 45  SWAP
-    DC h_unimpl                 ; 46  PLACE
+    DC h_destroy                 ; 43  DESTROY
+    DC h_create                  ; 44  CREATE
+    DC h_swap                    ; 45  SWAP
+    DC h_place                   ; 46  PLACE
     DC h_set                    ; 47  SET
     DC h_clear                  ; 48  CLEAR
     DC h_plus                   ; 49  PLUS
@@ -645,8 +645,8 @@ cdisp:
     DC h_newline                ; 52  NEWLINE
     DC h_print                  ; 53  PRINT
     DC h_sysmess                ; 54  SYSMESS
-    DC h_unimpl                 ; 55  ISAT
-    DC h_unimpl                 ; 56  SETCO
+    DC h_isat                    ; 55  ISAT
+    DC h_setco                   ; 56  SETCO
     DC h_space                  ; 57  SPACE
     DC h_hasat                  ; 58  HASAT
     DC h_hasnat                 ; 59  HASNAT
@@ -678,7 +678,7 @@ cdisp:
     DC h_unimpl                 ; 85  DOALL
     DC h_unimpl                 ; 86  MOUSE
     DC h_unimpl                 ; 87  GFX
-    DC h_unimpl                 ; 88  ISNOTAT
+    DC h_isnotat                 ; 88  ISNOTAT
     DC h_unimpl                 ; 89  WEIGH
     DC h_unimpl                 ; 90  PUTIN
     DC h_unimpl                 ; 91  TAKEOUT
@@ -690,9 +690,9 @@ cdisp:
     DC h_unimpl                 ; 97  SAVEAT
     DC h_unimpl                 ; 98  BACKAT
     DC h_unimpl                 ; 99  PRINTAT
-    DC h_unimpl                 ; 100 WHATO
+    DC h_whato                   ; 100 WHATO
     DC h_unimpl                 ; 101 CALL
-    DC h_unimpl                 ; 102 PUTO
+    DC h_puto                    ; 102 PUTO
     DC h_notdone                ; 103 NOTDONE
     DC h_unimpl                 ; 104 AUTOP
     DC h_unimpl                 ; 105 AUTOT
@@ -709,11 +709,11 @@ cdisp:
     DC h_skip                   ; 116 SKIP
     DC h_unimpl                 ; 117 RESTART
     DC h_unimpl                 ; 118 TAB
-    DC h_unimpl                 ; 119 COPYOF
+    DC h_copyof                  ; 119 COPYOF
     DC h_unimpl                 ; 120 (unused)
-    DC h_unimpl                 ; 121 COPYOO
+    DC h_copyoo                  ; 121 COPYOO
     DC h_unimpl                 ; 122 (unused)
-    DC h_unimpl                 ; 123 COPYFO
+    DC h_copyfo                  ; 123 COPYFO
     DC h_unimpl                 ; 124 (unused)
     DC h_copyff                 ; 125 COPYFF
     DC h_copybf                 ; 126 COPYBF
