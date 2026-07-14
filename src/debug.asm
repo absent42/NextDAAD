@@ -131,9 +131,11 @@ dbg_engage_tilemap:
     ld a, (chrStatus)
     or a
     ret z
+    push af                     ; dbg_at leaves A = C, preserve chrStatus
     ld b, 11
     ld c, 0
     call dbg_at
+    pop af
     dec a
     jr nz, .bad
     ld hl, msgChrOverride
