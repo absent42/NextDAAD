@@ -39,48 +39,23 @@ main:
     call txt_init
     call windows_init
  IFDEF DEBUG
-    ; Temporary probe - replaced by the message probe in the next task
-    ld a, 1
+    ; Temporary probe - replaced by the demo in the next task.
+    ld hl, probe_putc
+    ld (prn_char_vec), hl
+    xor a
     call win_select
-    ld b, 1
-    ld c, 2
-    ld d, 5
-    ld e, 20                    ; window 1: 20 wide, 5 high at (2,1)
-    call win_set_geom
-    ld d, 1
-    ld e, 6                     ; yellow ink on blue paper
-    call win_set_colour
     call win_cls
-    ld b, 30
-.probe1:
-    push bc
-    ld a, 'X'
-    call win_putc
-    call c, win_newline         ; honour the wrap signal
-    pop bc
-    djnz .probe1
+    call bank_window_save
+    ld a, 0                     ; kind system
+    ld e, 32
+    call msg_seek
+    call nc, probe_msg
     call win_newline
-    ld a, 'Y'
-    call win_putc
-    ld a, 2
-    call win_select
-    ld b, 10
-    ld c, 40
-    ld d, 4
-    ld e, 12                    ; window 2: 12 wide, 4 high at (40,10)
-    call win_set_geom
-    ld d, 4
-    ld e, 0                     ; black ink on green paper
-    call win_set_colour
-    call win_cls
-    ld b, 8
-.probe2:
-    push bc
-    ld a, 'Z'
-    call win_putc
-    call win_newline
-    pop bc
-    djnz .probe2
+    ld a, 0
+    ld e, 0
+    call msg_seek
+    call nc, probe_msg
+    call bank_window_restore
  ENDIF
 idle:
  IFDEF DEBUG
@@ -94,12 +69,43 @@ idle:
  ENDIF
     jr idle
 
+ IFDEF DEBUG
+; Minimal decode loop: terminator, newline and tokens only.
+probe_msg:
+    call rd_next
+    cpl                         ; decode = 255 - byte
+    cp $0A
+    ret z
+    cp $0D
+    jr z, .nl
+    bit 7, a
+    jr z, .plain
+    and $7F
+    call tok_print
+    jr probe_msg
+.nl:
+    call win_newline
+    jr probe_msg
+.plain:
+    ld c, a
+    call probe_putc
+    jr probe_msg
+
+; C = char. The probe's prn_char_vec target.
+probe_putc:
+    ld a, c
+    call win_putc
+    call c, win_newline
+    ret
+ ENDIF
+
     INCLUDE "hardware.asm"
     INCLUDE "interrupts.asm"
     INCLUDE "banks.asm"
     INCLUDE "file.asm"
     INCLUDE "tilemap.asm"
     INCLUDE "windows.asm"
+    INCLUDE "ddbtext.asm"
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT
