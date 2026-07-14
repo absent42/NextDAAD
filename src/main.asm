@@ -36,6 +36,23 @@ main:
     jp fatal
 .loaded:
     call ddb_diag
+    call txt_init
+ IFDEF DEBUG
+    ; Temporary probe - replaced by the window probe in the next task
+    ld b, 2
+    ld c, 4
+    ld a, 'A'
+    ld e, 7*2                   ; pair 7: white on black
+    call tm_putc_at
+    ld c, 6
+    ld a, 'B'
+    ld e, (6*8+2)*2             ; pair 50: red ink on yellow paper
+    call tm_putc_at
+    ld c, 8
+    ld a, 'C'
+    ld e, (1*8+6)*2             ; pair 14: yellow ink on blue paper
+    call tm_putc_at
+ ENDIF
 idle:
  IFDEF DEBUG
     ld b, 3
@@ -52,6 +69,7 @@ idle:
     INCLUDE "interrupts.asm"
     INCLUDE "banks.asm"
     INCLUDE "file.asm"
+    INCLUDE "tilemap.asm"
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT

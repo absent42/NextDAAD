@@ -72,3 +72,36 @@ ESX_F_READ      equ $9D
 ESX_F_WRITE     equ $9E
 ESX_F_SEEK      equ $9F
 ESX_MODE_READ   equ $01
+
+; --- Tilemap text mode (sub-project 2) ---
+NR_TM_CTRL      equ $6B
+NR_TM_MAP_BASE  equ $6E     ; MSB of map offset in bank 5
+NR_TM_DEF_BASE  equ $6F     ; MSB of tile definitions offset in bank 5
+NR_PAL_INDEX    equ $40
+NR_PAL_VALUE    equ $41     ; 8-bit RRRGGGBB, auto-increment via $43
+NR_PAL_CTRL     equ $43
+TM_CTRL_ON      equ %11001000   ; enable, 80x32, attributes, text mode
+PAL_TM_FIRST    equ $30     ; auto-increment on, tilemap first palette
+TM_MAP          equ $6000   ; 80x32x2 = 5120 bytes, $6000-$73FF
+TM_MAP_MSB      equ $20     ; ($6000-$4000)>>8
+TM_DEFS         equ $7400   ; 256 glyphs x 8 = 2048 bytes
+TM_DEFS_MSB     equ $34     ; ($7400-$4000)>>8
+TM_COLS         equ 80
+TM_ROWS         equ 32
+GLYPH_SPACE     equ $20
+ULA_OFF         equ $80     ; NR_ULA_CTRL bit 7
+
+; --- Window system (sub-project 2) ---
+WIN_X           equ 0
+WIN_Y           equ 1
+WIN_W           equ 2
+WIN_H           equ 3
+WIN_CURX        equ 4
+WIN_CURY        equ 5
+WIN_FLAGS       equ 6       ; bit 0 force upper charset, bit 1 disable More
+WIN_INK         equ 7
+WIN_PAPER       equ 8
+WIN_LASTPIC     equ 9
+WIN_LINES       equ 10      ; lines printed since last pause
+WIN_SIZE        equ 11
+WINDOW_COUNT    equ 8
