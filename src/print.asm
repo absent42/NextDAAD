@@ -46,7 +46,7 @@ prn_decoded:
     cp $0B
     jp z, win_cls
     cp $0C
-    jp z, wait_key
+    jp z, wait_key_reset
     cp $0E
     jr z, .gfxon
     cp $0F
@@ -106,9 +106,8 @@ win_newline_only:
     jp win_newline
 
 ; Fire the More... prompt when the window's printed lines reach h-1.
-; Preserves nothing. Safe to call between messages or mid-message:
-; it preserves the outer reader position AND the outer MMU save slots
-; around the nested SM32 print.
+; Corrupts all registers. Preserves the outer reader, rd_save slots and
+; physical MMU state around the nested SM32 print.
 prn_more_check:
     ld a, (moreLock)
     or a
@@ -137,6 +136,18 @@ prn_more_check:
     ld (moreSaveMMU), a
     ld a, (savedMMU7)
     ld (moreSaveMMU+1), a
+    ; preserve the outer rd_save slots (a nested SM32 token corrupts them)
+    ld a, (rdSaveBank)
+    ld (moreSaveRdSv), a
+    ld hl, (rdSavePtr)
+    ld (moreSaveRdSv+1), hl
+    ; preserve the physical MMU slots exactly as mapped pre-fire
+    ld e, NR_MMU6
+    call nr_read
+    ld (morePhysMMU), a
+    ld e, NR_MMU7
+    call nr_read
+    ld (morePhysMMU+1), a
     ld a, 1
     ld (moreLock), a
     ld a, 0                     ; SM32 through the normal pipeline
@@ -168,16 +179,26 @@ prn_more_check:
     ld d, 1
     ld a, GLYPH_SPACE
     call tm_fill_rect
-    ; restore outer MMU-save slots and reader position
+    ; restore outer MMU-save slots (savedMMU6/savedMMU7 shadow vars)
     ld a, (moreSaveMMU)
     ld (savedMMU6), a
     ld a, (moreSaveMMU+1)
     ld (savedMMU7), a
+    ; restore the outer rd_save slots
+    ld a, (moreSaveRdSv)
+    ld (rdSaveBank), a
+    ld hl, (moreSaveRdSv+1)
+    ld (rdSavePtr), hl
+    ; restore reader position (variables only - no physical remap here)
     ld a, (moreSaveBank)
     ld (rdBank), a
-    call bank_map_c000
     ld hl, (moreSavePtr)
     ld (rdPtr), hl
+    ; restore the physical MMU slots exactly as they were pre-fire
+    ld a, (morePhysMMU)
+    nextreg NR_MMU6, a
+    ld a, (morePhysMMU+1)
+    nextreg NR_MMU7, a
     ret
 
 ; Token characters route here via prn_char_vec. C = char.
@@ -213,6 +234,14 @@ wait_key:
     jr nz, .release
     ret
 
+; $0C escape: wait for a key, then the pause restarts the page count.
+wait_key_reset:
+    call wait_key
+    ld a, WIN_LINES
+    call win_field
+    ld (hl), 0
+    ret
+
 objname_stub:
     ret
 
@@ -222,3 +251,5 @@ objname_hook: dw objname_stub
 moreSaveBank: db 0
 moreSavePtr:  dw 0
 moreSaveMMU:  dw 0
+morePhysMMU:  dw 0
+moreSaveRdSv: ds 3

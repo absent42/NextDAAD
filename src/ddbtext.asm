@@ -3,6 +3,7 @@
 ; offset = pointer - $8400, bank = BANK_DDB_FIRST + offset/16K.
 
 ; HL = absolute DDB pointer. Maps the bank, sets rdPtr.
+; Ends with 'or' - CF clear; msg_seek's success contract relies on this.
 rd_seek:
     ld de, DDB_ZX_BASE
     or a
