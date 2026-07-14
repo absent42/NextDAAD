@@ -38,24 +38,10 @@ main:
     call ddb_diag
     call txt_init
     call windows_init
- IFDEF DEBUG
-    ; Temporary probe - replaced by the demo in the next task.
-    ld hl, probe_putc
+    ld hl, prn_char_tok
     ld (prn_char_vec), hl
-    xor a
-    call win_select
-    call win_cls
-    call bank_window_save
-    ld a, 0                     ; kind system
-    ld e, 32
-    call msg_seek
-    call nc, probe_msg
-    call win_newline
-    ld a, 0
-    ld e, 0
-    call msg_seek
-    call nc, probe_msg
-    call bank_window_restore
+ IFDEF DEBUG
+    call demo
  ENDIF
 idle:
  IFDEF DEBUG
@@ -70,33 +56,60 @@ idle:
     jr idle
 
  IFDEF DEBUG
-; Minimal decode loop: terminator, newline and tokens only.
-probe_msg:
-    call rd_next
-    cpl                         ; decode = 255 - byte
-    cp $0A
-    ret z
-    cp $0D
-    jr z, .nl
-    bit 7, a
-    jr z, .plain
-    and $7F
-    call tok_print
-    jr probe_msg
-.nl:
-    call win_newline
-    jr probe_msg
-.plain:
-    ld c, a
-    call probe_putc
-    jr probe_msg
+; Exit-criteria demo: two coloured windows, every declared system
+; message with More... paging, a location description, escape tests.
+demo:
+    ld a, 2
+    call win_select
+    ld b, 24
+    ld c, 0
+    ld d, 8
+    ld e, TM_COLS               ; window 2: rows 24-31, full width
+    call win_set_geom
+    ld d, 1
+    ld e, 6                     ; yellow ink on blue paper
+    call win_set_colour
+    call win_cls
+    ld a, 2                     ; kind location
+    ld e, 0
+    call print_msg
+    ld a, 1
+    call win_select
+    ld b, 0
+    ld c, 0
+    ld d, 24
+    ld e, TM_COLS               ; window 1: rows 0-23, white on black
+    call win_set_geom
+    ld d, 0
+    ld e, 7
+    call win_set_colour
+    call win_cls
+    ld e, 0                     ; system message counter
+.msgs:
+    push de
+    ld a, 0
+    call print_msg
+    call prn_newline
+    pop de
+    inc e
+    ld a, (ddbHeader+6)         ; numSysMsg
+    cp e
+    jr nz, .msgs
+    ld hl, demoString
+    jp prn_encoded
 
-; C = char. The probe's prn_char_vec target.
-probe_putc:
-    ld a, c
-    call win_putc
-    call c, win_newline
-    ret
+demoString:
+    db 255-'E', 255-'S', 255-'C', 255-':', 255-' ', 255-'L', 255-'1'
+    db 255-$0D                  ; newline escape
+    db 255-'E', 255-'X', 255-'T', 255-' '
+    db 255-$10, 255-$11, 255-$12, 255-$13, 255-$14, 255-$15, 255-$16, 255-$17
+    db 255-$18, 255-$19, 255-$1A, 255-$1B, 255-$1C, 255-$1D, 255-$1E, 255-$1F
+    db 255-$0D
+    db 255-'K', 255-'E', 255-'Y', 255-'?'
+    db 255-$0C                  ; wait-key escape
+    db 255-$0B                  ; clear-window escape
+    db 255-'C', 255-'L', 255-'E', 255-'A', 255-'R', 255-'E', 255-'D'
+    db 255-$0A                  ; terminator
  ENDIF
 
     INCLUDE "hardware.asm"
@@ -106,6 +119,7 @@ probe_putc:
     INCLUDE "tilemap.asm"
     INCLUDE "windows.asm"
     INCLUDE "ddbtext.asm"
+    INCLUDE "print.asm"
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT
