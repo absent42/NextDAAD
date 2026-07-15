@@ -1143,9 +1143,9 @@ h_parse:                        ; 73: condition-like. B = option.
 .edit:
     call inp_edit
     jr nc, .got
-    ; timeout during input: fail as condition + done
-    call eng_set_done
-    jp ovl1_false
+    ; timeout during input: PARSE PASSES (the entry remainder is the
+    ; invalid-input/timeout handler; flag 49 bit 7 tells it why)
+    jp ovl1_true
 .got:
     ; post-edit input options (flag 49): bit 3 clear window,
     ; bit 4 reprint the line in the current stream
@@ -1198,17 +1198,21 @@ h_parse:                        ; 73: condition-like. B = option.
     ; consume the trailing separator and compact inpPending to the
     ; remainder (the next order), so the next PARSE reads it
     call pending_compact
-    ; success = verb or noun1 present
+    ; DAAD PARSE condact semantics are INVERTED from the naive reading
+    ; (jdaad _PARSE: condactResult = !result): a VALID logical sentence
+    ; makes the condact FAIL - aborting the entry, whose remainder is
+    ; the game's invalid-input handler - and marks done. No verb AND
+    ; no noun1 -> the condact PASSES so that handler runs.
     ld a, (flags+FLAG_VERB)
     inc a
-    jr nz, .ok
+    jr nz, .valid
     ld a, (flags+FLAG_NOUN1)
     inc a
-    jr nz, .ok
-    call eng_set_done           ; original quirk: failed parse is done
+    jr nz, .valid
+    jp ovl1_true                ; unparseable: run the entry remainder
+.valid:
+    call eng_set_done
     jp ovl1_false
-.ok:
-    jp ovl1_true
 
 ; Shift the unconsumed remainder of inpPending (from inpPtr, skipping
 ; one leading separator and spaces) to the front of inpPending.

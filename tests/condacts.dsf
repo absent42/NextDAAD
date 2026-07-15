@@ -483,10 +483,17 @@ NORTH 0
         SKIP 1
 > _ _   MES "50 F#n"
 ; ---- interactive parser checks (owner types at each prompt) ----
+; DAAD PARSE semantics: a VALID sentence makes PARSE fail as a
+; condition (aborting the entry - the remainder of a PARSE entry is
+; the game's invalid-input/timeout path) and marks done; unparseable
+; input or a timeout makes PARSE pass. Assertions therefore live in
+; the entry AFTER each PARSE.
 ; 51 basic verb+noun
 > _ _   MES "51 TYPE: get lamp#n"
         PARSE 0
-        EQ 33 100
+        MES "51 F#n"
+        SKIP 2
+> _ _   EQ 33 100
         EQ 34 51
         EQ 35 255
         MES "51 OK#n"
@@ -495,14 +502,18 @@ NORTH 0
 ; 52 adjective + compound second order parses independently
 > _ _   MES "52 TYPE: get small lamp and drop hat#n"
         PARSE 0
-        EQ 33 100
+        MES "52A F#n"
+        SKIP 2
+> _ _   EQ 33 100
         EQ 34 51
         EQ 35 202
         MES "52A OK#n"
         SKIP 1
 > _ _   MES "52A F#n"
 > _ _   PARSE 0
-        EQ 33 101
+        MES "52B F#n"
+        SKIP 2
+> _ _   EQ 33 101
         EQ 34 53
         MES "52B OK#n"
         SKIP 1
@@ -510,8 +521,12 @@ NORTH 0
 ; 53 compound implicit verb (previousVerb)
 > _ _   MES "53 TYPE: get lamp and hat#n"
         PARSE 0
-        PARSE 0
-        EQ 33 100
+        MES "53 F#n"
+        SKIP 3
+> _ _   PARSE 0
+        MES "53 F#n"
+        SKIP 2
+> _ _   EQ 33 100
         EQ 34 53
         MES "53 OK#n"
         SKIP 1
@@ -519,9 +534,13 @@ NORTH 0
 ; 54 pronoun: LAMP (id 51 >= 50) remembered, IT substitutes
 > _ _   MES "54 TYPE: examine lamp#n"
         PARSE 0
-        MES "54 TYPE: get it#n"
+        MES "54 F#n"
+        SKIP 3
+> _ _   MES "54 TYPE: get it#n"
         PARSE 0
-        EQ 33 100
+        MES "54 F#n"
+        SKIP 2
+> _ _   EQ 33 100
         EQ 34 51
         MES "54 OK#n"
         SKIP 1
@@ -529,14 +548,18 @@ NORTH 0
 ; 55 noun-as-verb (NORTH noun id 2 < 20)
 > _ _   MES "55 TYPE: north#n"
         PARSE 0
-        EQ 33 2
+        MES "55 F#n"
+        SKIP 2
+> _ _   EQ 33 2
         MES "55 OK#n"
         SKIP 1
 > _ _   MES "55 F#n"
 ; 56 unknown word skipped
 > _ _   MES "56 TYPE: get xyzzy lamp#n"
         PARSE 0
-        EQ 33 100
+        MES "56 F#n"
+        SKIP 2
+> _ _   EQ 33 100
         EQ 34 51
         MES "56 OK#n"
         SKIP 1
@@ -546,7 +569,9 @@ NORTH 0
 > _ _   MES "57 TYPE: get lamp in box#n"
         GOTO 0
         PARSE 0
-        EQ 43 203
+        MES "57 F#n"
+        SKIP 2
+> _ _   EQ 43 203
         EQ 44 50
         EQ 25 1
         EQ 26 128
@@ -554,16 +579,11 @@ NORTH 0
         MES "57 OK#n"
         SKIP 1
 > _ _   MES "57 F#n"
-; 58 input timeout: wait without typing (about 2 seconds).
-; TIME 2 0 zeroes flag 49 first, so after a timeout with an empty
-; line flag 49 is exactly 128 (bit 7 only). PARSE failing on timeout
-; aborts THIS entry; the next entry asserts and prints OK. If the
-; owner types instead, PARSE passes and SKIP 1 lands on the F entry.
+; 58 input timeout: PARSE passes on timeout, flag 49 = 128 exactly
 > _ _   MES "58 WAIT - DO NOT TYPE#n"
         TIME 2 0
         PARSE 0
-        SKIP 1
-> _ _   EQ 49 128
+        EQ 49 128
         TIME 0 0
         MES "58 OK#n"
         SKIP 1
