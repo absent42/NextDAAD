@@ -89,7 +89,7 @@ NORTH 0
 /OBJ
 /0    CARRIED     1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   LAMP _
 /1    0           2   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   BOX  _
-/2    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   COIN _
+/2    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ Y   COIN _
 /3    0           1   _ Y  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   HAT  _
 /PRO 0
 > _ _   CLS
@@ -410,6 +410,69 @@ NORTH 0
         MES "44 OK#n"
         SKIP 1
 > _ _   MES "44 F#n"
+; ---- final-review fix wave (checks 45-50) ----
+; 45 REDO: sub-process PRO 16 self-restarts once, guarded by flag 113.
+; Pins that REDO stores a coherent entry pointer (finding 1): the entry
+; runs exactly twice, so counter 113 ends at 2.
+> _ _   LET 113 0
+        PROCESS 16
+        EQ 113 2
+        MES "45 OK#n"
+        SKIP 1
+> _ _   MES "45 F#n"
+; 46 HASAT special values: pins the descending flag map (finding 3).
+; WEARABLE 23 -> flag 57 bit 7, CONTAINER 31 -> flag 56 bit 7.
+> _ _   SETCO 3                 ; hat: wearable, not container
+        HASAT 23
+        HASNAT 31
+        SETCO 1                 ; box: container, not wearable
+        HASAT 31
+        HASNAT 23
+        MES "46 OK#n"
+        SKIP 1
+> _ _   MES "46 F#n"
+; 47 HASAT extended-attribute byte order: object 2 has attr 0 set in
+; /OBJ. Attr 0-7 land in flag 59, 8-15 in flag 58. HASAT 0 true and
+; HASNAT 8 true together pin the low/high byte assignment (finding 3).
+> _ _   SETCO 2
+        HASAT 0
+        HASNAT 1
+        HASNAT 8
+        MES "47 OK#n"
+        SKIP 1
+> _ _   MES "47 F#n"
+; 48 PLACE 255 -> HERE (finding 7): coin placed at 255 must land at the
+; player's location (flag 38), not raise error 2.
+> _ _   RESET
+        GOTO 0
+        PLACE 2 255
+        COPYOF 2 114
+        SAME 114 38
+        ISAT 2 0
+        MES "48 OK#n"
+        SKIP 1
+> _ _   MES "48 F#n"
+; 49 GET capacity refusal cancels DOALL (finding 5): with MAXCARR 0,
+; every GET refuses SM27. DOALL over loc 0 (box + hat) must stop after
+; the first refusal, so counter 115 stays at 1 (without the fix it
+; iterates every object).
+> _ _   RESET
+        LET 37 0                ; MAXCARR = 0 -> hands always full
+        LET 44 255              ; Noun2/Adj2 clear of any object
+        LET 45 255
+        LET 115 0
+        GOTO 0
+        PROCESS 17
+        EQ 115 1
+        MES "49 OK#n"
+        SKIP 1
+> _ _   MES "49 F#n"
+; 50 QUIT (owner-interactive): SM12 prompt. Press Y -> "50 OK";
+; press N (or any non-Y) -> "50 F" then continues. Kept last.
+> _ _   QUIT
+        MES "50 OK#n"
+        SKIP 1
+> _ _   MES "50 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5
@@ -442,4 +505,17 @@ NORTH 0
 /PRO 15
 > _ _   DOALL 0
         PLUS 113 1
+/PRO 16
+; REDO check (45): restart this table once, guarded by flag 113.
+> _ _   PLUS 113 1
+        EQ 113 1
+        REDO
+> _ _   DONE
+/PRO 17
+; DOALL capacity-cancel check (49): GET each object at loc 0. AUTOG
+; refuses SM27 (MAXCARR 0) and cancels the DOALL after object 1.
+> _ _   DOALL 0
+        PLUS 115 1
+        AUTOG
+        DONE
 /END
