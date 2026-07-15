@@ -66,9 +66,8 @@ The toolchain (not included in repo) lives in tools/
 - sd/ - staged as the CSpect MMC filesystem
 - tests/ - test adventure sources (template, condact suite, DOALL
   nesting demo), DDB build script and decoder
-- tools/ - Not included in repo but needed to build and run test
+- tools/ - not included in repo but needed to build and run tests
     - tools/CSpect
     - tools/sjasmplus
     - tools/DAAD-READY
     - tools/Rabenstein-master (used for tests)
-
