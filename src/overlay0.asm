@@ -1356,6 +1356,22 @@ key_scan:
     in a, (c)
     cpl
     and $1F
+    ; held shift keys must be invisible: caps is row $FE bit 0, symbol
+    ; shift row $7F bit 1. A capital typed as a caps+letter chord
+    ; otherwise wins the scan as the caps key itself (char 0), so
+    ; QUIT/END's Y/N confirm rejected shifted replies.
+    ld e, a
+    ld a, b
+    cp $FE
+    jr nz, .n1
+    res 0, e
+.n1:
+    cp $7F
+    jr nz, .n2
+    res 1, e
+.n2:
+    ld a, e
+    or a
     jr nz, .hit
     ld bc, 5
     add hl, bc
