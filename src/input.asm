@@ -15,5 +15,7 @@ inpStartY:  db 0                ; editor: window cursor y at entry
 inpFromBuf: db 0                ; 1 = current order came from inpPending
 prevVerb:   db 255              ; previousVerb for compound sentences
 inpTOFrames: dw 0               ; timeout countdown, frames remaining
+inpTOFrm:   db 0                ; editor countdown: last seen frame low byte
 inpRepKey:  db 0                ; autorepeat: last raw key code
 inpRepCnt:  db 0                ; autorepeat: frames until next repeat
+inpRepFrm:  db 0                ; autorepeat: last seen frame low byte

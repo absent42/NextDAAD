@@ -147,7 +147,8 @@ prn_more_check:
     ld a, 0                     ; SM32 through the normal pipeline
     ld e, 32
     call print_msg
-    call wait_key
+    ld e, $02                   ; More... timeout arm bit
+    call wait_key_timeout
     xor a
     ld (moreLock), a
     ; erase the prompt line and return the cursor to its start
@@ -218,6 +219,65 @@ wait_key:
     and $1F
     cp $1F
     jr nz, .release
+    ret
+
+; Wait for a key press then release, honouring the DAAD input timeout
+; when armed. E = arm mask against flag 49 ($02 More..., $04 ANYKEY).
+; Returns early with flag 49 bit 7 set if flag 48 seconds elapse
+; before a press. A normal keypress leaves bit 7 untouched.
+; Corrupts AF, BC, DE, HL.
+wait_key_timeout:
+    ld a, (flags+FLAG_TIMEOUT)
+    or a
+    jp z, wait_key              ; no duration -> plain wait
+    ld a, (flags+FLAG_TIMECTL)
+    and e
+    jp z, wait_key              ; this context not armed -> plain wait
+    ; frames = flag48 * 50
+    ld a, (flags+FLAG_TIMEOUT)
+    ld l, a
+    ld h, 0
+    add hl, hl                  ; *2
+    push hl
+    add hl, hl                  ; *4
+    add hl, hl                  ; *8
+    add hl, hl                  ; *16
+    push hl
+    add hl, hl                  ; *32
+    pop de
+    add hl, de                  ; *48
+    pop de
+    add hl, de                  ; *50
+    ld (inpTOFrames), hl
+    ld a, (frameCounter)
+    ld d, a                     ; D = last seen frame low byte
+.poll:
+    xor a
+    in a, ($FE)
+    and $1F
+    cp $1F
+    jr nz, .press               ; a key is down
+    ld a, (frameCounter)
+    cp d
+    jr z, .poll                 ; same frame
+    ld d, a
+    ld hl, (inpTOFrames)
+    dec hl
+    ld (inpTOFrames), hl
+    ld a, h
+    or l
+    jr nz, .poll
+    ; timeout
+    ld a, (flags+FLAG_TIMECTL)
+    or $80
+    ld (flags+FLAG_TIMECTL), a
+    ret
+.press:
+    xor a
+    in a, ($FE)
+    and $1F
+    cp $1F
+    jr nz, .press               ; wait for release
     ret
 
 ; $0C escape: wait for a key, then the pause restarts the page count.

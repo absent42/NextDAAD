@@ -1427,7 +1427,8 @@ h_anykey:                       ; 24
     ld e, 16
     ld a, 0
     call print_msg
-    call key_wait_char
+    ld e, $04                   ; ANYKEY timeout arm bit
+    call wait_key_timeout
     jp prn_reset_lines
 h_pause:                        ; 35: B frames, 0 = 256
     ld a, (frameCounter)
