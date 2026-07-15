@@ -84,42 +84,55 @@ if ($Rab) {
     Copy-Item "$root\tools\Rabenstein-master\MLV_NEXT.BIN" "$dr\MLV_NEXT.BIN" -Force
     Push-Location $dr
     try {
-        # Deviation: Rabenstein's DSF was built against an older DRC that still
-        # treated XPICTURE/XSAVE/XLOAD/XNEXTCLS/XNEXTRST/XNEXTSPEED as live
-        # condacts. The DRC bundled here (TOOLS\DRC) deprecates all of them -
-        # DRB.PHP hard-errors (exit 2) on the first one it meets, and DRF
-        # doesn't even recognise XNEXTSPEED as a token. Patch the local copy
-        # only (never tools\Rabenstein-master\rabenstein.dsf) to the modern
-        # equivalents before compiling. Mapping (see task-5-report.md):
-        #   XNEXTSPEED 2        -> removed (cosmetic Maluva print-speed tweak,
-        #                          no standard-condact equivalent)
-        #   XNEXTCLS + XNEXTRST -> EXIT 0 (the two "next"-only termination
-        #                          sites; matches the EXIT 0 the non-"next"
-        #                          branches already use at the same spots)
-        #   XNEXTCLS (solo)     -> CLS (screen-clear-only site)
-        #   XSAVE 0 / XLOAD 0   -> SAVE 0 / LOAD 0 (DRF's own error message
-        #                          names these as the direct replacements)
-        #   XPICTURE n          -> PICTURE n / DISPLAY 0 (documented MALUVA
-        #                          expansion)
+        # Rabenstein's DSF was built against an older DRC that still treated
+        # the MALUVA X-condacts as live. The DRC bundled here (TOOLS\DRC)
+        # rejects them - DRB.PHP hard-errors (exit 2) on XPICTURE/XSAVE/
+        # XLOAD/XNEXTCLS/XNEXTRST, and DRF doesn't even recognise XNEXTSPEED
+        # as a token. Patch the local copy only (never
+        # tools\Rabenstein-master\rabenstein.dsf) before compiling.
+        #
+        # Re-map every X-condact to its MALUVA EXTERN equivalent (one table
+        # below). This is a semantic fix, not just a compile fix: EXTERN is
+        # an ACTION (h_extern -> extVec -> ext_stub -> h_unimpl; the stub's
+        # CF is ignored for actions) so an unimplemented X-condact NO-OPS and
+        # the entry CONTINUES. The prior mapping used real condacts (XPICTURE
+        # -> PICTURE/DISPLAY, XSAVE -> SAVE, XLOAD -> LOAD); wrong, because
+        # PICTURE is a CONDITION-typed stub here (h_unimpl returns CF set) and
+        # so ABORTED the whole entry - the MESSAGE 14 intro and every
+        # post-move picture-redraw chain silently died.
+        #
+        # EXTERN function numbers (arg count per each condact's real use in
+        # this DSF; all route through extVec's 16 stub slots to h_unimpl):
+        #   XPICTURE x   -> EXTERN x 0    standard MALUVA
+        #   XSAVE 0      -> EXTERN 0 1    standard MALUVA
+        #   XLOAD 0      -> EXTERN 0 2    standard MALUVA
+        #   XNEXTSPEED n -> EXTERN n 8    next-only, unused stub vector 8
+        #   XNEXTCLS     -> EXTERN 0 9    next-only, 0-arg, stub vector 9
+        #   XNEXTRST     -> EXTERN 0 10   next-only, 0-arg, stub vector 10
+        #   XSPLITSCR n  -> EXTERN n 11   c64/cpc-only (dead for "next", but
+        #                                 mapped so no X-condact token
+        #                                 survives the grep gate); vector 11
+        # (STUB markers at runtime will read as EXTERN vectors 0/8/9/10/11;
+        # SAVE/LOAD stubs only if the player types SAVE/LOAD, which now stay
+        # real SAVE/LOAD verbs untouched by this table.)
         $content = [System.IO.File]::ReadAllText("$dr\NDRAB.DSF")
 
-        $speedBlock = "#ifdef ""next""`r`n>`r`n_       _       AT 0`r`n                XNEXTSPEED 2`r`n#endif`r`n"
-        if ($content -notmatch [regex]::Escape($speedBlock)) { throw "Rabenstein patch: XNEXTSPEED block not found - source may have changed" }
-        $content = $content.Replace($speedBlock, "")
+        $content = [regex]::Replace($content, '\bXPICTURE[ \t]+(\S+)',   'EXTERN $1 0')
+        $content = [regex]::Replace($content, '\bXSAVE[ \t]+(\S+)',      'EXTERN $1 1')
+        $content = [regex]::Replace($content, '\bXLOAD[ \t]+(\S+)',      'EXTERN $1 2')
+        $content = [regex]::Replace($content, '\bXNEXTSPEED[ \t]+(\S+)', 'EXTERN $1 8')
+        $content = [regex]::Replace($content, '\bXSPLITSCR[ \t]+(\S+)',  'EXTERN $1 11')
+        $content = $content -replace '\bXNEXTCLS\b', 'EXTERN 0 9'
+        $content = $content -replace '\bXNEXTRST\b', 'EXTERN 0 10'
 
-        $pair1 = "XNEXTCLS`r`nXNEXTRST  ; Next cleanup and machine reset`r`n"
-        $pair2 = "                XNEXTCLS`r`n                XNEXTRST          ; Next cleanup and machine reset`r`n"
-        if ($content -notmatch [regex]::Escape($pair1)) { throw "Rabenstein patch: XNEXTCLS/XNEXTRST pair 1 not found" }
-        if ($content -notmatch [regex]::Escape($pair2)) { throw "Rabenstein patch: XNEXTCLS/XNEXTRST pair 2 not found" }
-        $content = $content.Replace($pair1, "EXIT 0`r`n")
-        $content = $content.Replace($pair2, "                EXIT 0`r`n")
-
-        if (([regex]::Matches($content, 'XNEXTCLS')).Count -ne 1) { throw "Rabenstein patch: expected exactly one standalone XNEXTCLS left" }
-        $content = $content -replace 'XNEXTCLS', 'CLS'
-
-        $content = $content -replace 'XSAVE 0', 'SAVE 0'
-        $content = $content -replace 'XLOAD 0', 'LOAD 0'
-        $content = [regex]::Replace($content, '(?m)^(.*?)XPICTURE[ \t]+(\S+)([ \t]*(?:;.*)?)\r$', "`$1PICTURE `$2`$3`r`n                DISPLAY 0`r")
+        # Fail loudly if any X-condact token slipped through (whole family,
+        # not just the ones above): a survivor means DRF/DRB will abort or an
+        # entry silently mis-behaves.
+        $xLeft = [regex]::Matches($content, '\bX(PICTURE|SAVE|LOAD|PART|MES|MESSAGE|BEEP|PLAY|UNDONE|SPLITSCR|NEXTSPEED|NEXTCLS|NEXTRST)\b')
+        if ($xLeft.Count -ne 0) {
+            $names = ($xLeft | ForEach-Object { $_.Value } | Select-Object -Unique) -join ', '
+            throw "Rabenstein patch: $($xLeft.Count) X-condact(s) still present after remap: $names"
+        }
 
         [System.IO.File]::WriteAllText("$dr\NDRAB.DSF", $content)
 
