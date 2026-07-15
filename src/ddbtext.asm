@@ -152,7 +152,10 @@ txt_next_decoded:
     cp $0A
     jr z, .end
     bit 7, a
-    ret z                       ; plain char, CF already clear
+    jr nz, .tokref
+    or a                        ; cp left CF set for chars $00-$09
+    ret                         ; plain char, CF now clear
+.tokref:
     ; token reference: skip (index+1) entries, first entry is unused
     and $7F
     push bc
