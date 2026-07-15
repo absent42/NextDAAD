@@ -798,9 +798,10 @@ ingest_line:
     jr c, .done
     push de
     call voc_find
-    pop de
+    ld a, e                     ; word type - read BEFORE the pop, which
+    pop de                      ; restores the word-start pointer over
+                                ; voc_find's returned DE
     jr c, .scan                 ; unknown word: leave it
-    ld a, e
     cp 5                        ; conjunction?
     jr nz, .scan
     ; overwrite: find the word start (skip spaces from DE), write '.'
