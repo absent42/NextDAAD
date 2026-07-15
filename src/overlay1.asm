@@ -816,7 +816,14 @@ ingest_line:
     push hl                     ; word start candidate (pre-space skip)
     call word_next
     pop de
-    jr c, .done
+    jr nc, .word
+    or a                        ; CF with A=0 is the NUL - done; any
+    jr z, .done                 ; other terminator is a user separator:
+    ld hl, (inpPtr)             ; step past it and keep scanning the
+    inc hl                      ; rest of the line for conjunctions
+    ld (inpPtr), hl
+    jr .scan
+.word:
     push de
     call voc_find
     ld a, e                     ; word type - read BEFORE the pop, which
