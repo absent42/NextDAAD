@@ -36,6 +36,8 @@ windows_init:
     ld (hl), a                  ; lines
     inc hl
     djnz .win
+    ld a, 1
+    ld (tmUp), a
     xor a
     ; fall through to win_select
 

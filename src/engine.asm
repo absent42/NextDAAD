@@ -588,6 +588,10 @@ cprops:
     db OVL0_PAGE
     dw addr
     ENDM
+    MACRO DC1 addr
+    db OVL1_PAGE
+    dw addr
+    ENDM
 cdisp:
     ; 128 rows in condact order. Task 2: all DC h_unimpl except the
     ; pilot set; later tasks repoint rows as handlers land.
@@ -674,7 +678,7 @@ cdisp:
     DC h_notsame                ; 80  NOTSAME
     DC h_mode                   ; 81  MODE
     DC h_winat                  ; 82  WINAT
-    DC h_time                   ; 83  TIME
+    DC1 h_time                  ; 83  TIME
     DC h_unimpl                 ; 84  PICTURE
     DC h_doall                  ; 85  DOALL
     DC h_unimpl                 ; 86  MOUSE
@@ -687,7 +691,7 @@ cdisp:
     DC h_ability                 ; 93  ABILITY
     DC h_weight                  ; 94  WEIGHT
     DC h_random                 ; 95  RANDOM
-    DC h_input                  ; 96  INPUT
+    DC1 h_input                 ; 96  INPUT
     DC h_saveat                 ; 97  SAVEAT
     DC h_backat                 ; 98  BACKAT
     DC h_printat                ; 99  PRINTAT

@@ -26,6 +26,8 @@ finally {
     Pop-Location
 }
 
+& "$PSScriptRoot\check-cprops.ps1"
+
 New-Item -ItemType Directory -Force "$root\tests\out" | Out-Null
 
 Copy-Item "$PSScriptRoot\condacts.dsf" "$dr\NDSUITE.DSF" -Force

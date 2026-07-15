@@ -1601,16 +1601,6 @@ h_synonym:                      ; 36
     ret
 h_newtext:                      ; 92: real in SP4
     ret
-h_time:                         ; 83: store; semantics SP4
-    ld a, b
-    ld (flags+48), a
-    ld a, c
-    ld (flags+49), a
-    ret
-h_input:                        ; 96: store; semantics SP4
-    ld a, b
-    ld (flags+41), a
-    ret
 h_extern:                       ; 61: fn C via vector, A = B on entry
     ld a, c
     cp 16

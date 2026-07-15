@@ -138,6 +138,19 @@ ddb_load:
 ; A = border colour, HL = ASCIIZ message. Never returns.
 fatal:
     out ($FE), a
+    ld a, (tmUp)
+    or a
+    jr z, .halt0
+    push hl
+    ld a, 62                    ; pair 31: magenta paper, white ink
+    ld (tmAttr), a
+    ld b, 0
+    ld c, 0
+    ld d, 1
+    ld e, TM_COLS
+    ld a, GLYPH_SPACE
+    call tm_fill_rect
+    pop hl
  IFDEF DEBUG
     push hl
     ld b, 23
@@ -146,6 +159,7 @@ fatal:
     pop hl
     call dbg_puts
  ENDIF
+.halt0:
     di
 .halt:
     jr .halt
@@ -156,4 +170,5 @@ ddbChunk:    db 0
 ddbSize:     dw 0
 ddbSizeHi:   db 0           ; third byte of the 24-bit size
 scratchByte: db 0
+tmUp:        db 0           ; 1 once windows_init has run (tilemap live)
 ddbHeader:   ds DDB_HEADER_SIZE

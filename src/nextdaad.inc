@@ -94,6 +94,7 @@ BANK_OVL0       equ 28      ; overlay page 0 lives in bank 28 (lower 8K)
 OVL0_PAGE       equ 56      ; = BANK_OVL0*2
 OVL_ORG         equ $E000
 OVL_LIMIT       equ $F800   ; overlay ASSERT bound (512 bytes spare)
+OVL1_PAGE       equ 57      ; overlay page 1: upper 8K of bank 28
 DATA_WINDOW     equ $C000   ; slot 6 window base (8K)
 
 ; --- Engine (sub-project 3) ---
@@ -125,6 +126,16 @@ FLAG_COWR       equ 57
 FLAG_COATT      equ 58
 FLAG_KEY1       equ 60
 FLAG_CURWIN     equ 63
+FLAG_O2NUM      equ 25
+FLAG_O2CON      equ 26
+FLAG_O2LOC      equ 27
+FLAG_O2ATT      equ 39
+FLAG_INPUTSTREAM equ 41
+FLAG_PROMPT     equ 42
+FLAG_CPNOUN     equ 46
+FLAG_CPADJ      equ 47
+FLAG_TIMEOUT    equ 48
+FLAG_TIMECTL    equ 49
 ; header field offsets (resident ddbHeader)
 HDR_NUMOBJ      equ 3
 HDR_NUMLOC      equ 4

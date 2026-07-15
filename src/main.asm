@@ -65,6 +65,7 @@ idle:
     INCLUDE "windows.asm"
     INCLUDE "ddbtext.asm"
     INCLUDE "print.asm"
+    INCLUDE "input.asm"
     INCLUDE "engine.asm"
     INCLUDE "errors.asm"
     INCLUDE "objname.asm"
@@ -73,6 +74,7 @@ idle:
     ASSERT $ <= RESIDENT_LIMIT
 
     INCLUDE "overlay0.asm"
+    INCLUDE "overlay1.asm"
 
     CSPECTMAP "build/nextdaad.map"
     SAVENEX OPEN "build/nextdaad.nex", main, STACK_TOP
