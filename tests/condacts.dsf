@@ -89,7 +89,7 @@ NORTH 0
 /OBJ
 /0    CARRIED     1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   LAMP _
 /1    0           2   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   BOX  _
-/2    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ Y   COIN _
+/2    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ Y _ _ _ _ _ _ _ _   COIN _
 /3    0           1   _ Y  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   HAT  _
 /PRO 0
 > _ _   CLS
@@ -434,6 +434,10 @@ NORTH 0
 ; 47 HASAT extended-attribute byte order: object 2 has attr 0 set in
 ; /OBJ. Attr 0-7 land in flag 59, 8-15 in flag 58. HASAT 0 true and
 ; HASNAT 8 true together pin the low/high byte assignment (finding 3).
+; NOTE: the 16 /OBJ attribute columns are per-byte MSB-first, i.e.
+; attrs 7..0 then 15..8 left to right, so attr 0 is the 8th column
+; (verified against DRC output: 8th-column Y compiles to extAttr word
+; $0100, whose second byte is flag 59 = attrs 0-7, matching msx2daad).
 > _ _   SETCO 2
         HASAT 0
         HASNAT 1
