@@ -288,6 +288,39 @@ ALL   20  noun
         MES "30 OK#n"
         SKIP 1
 > _ _   MES "30 F#n"
+; ---- AUTO-family coverage (IDs A1-A5; keeps 31+ free for suite 4).
+> _ _   LET 34 53               ; Noun1 = HAT
+        LET 35 255
+        AUTOG                   ; hat is here - taken
+        CARRIED 3
+        EQ 1 2
+        MES "A1 OK#n"
+        SKIP 1
+> _ _   MES "A1 F#n"
+> _ _   AUTOW                   ; carried hat - worn
+        WORN 3
+        EQ 1 1
+        MES "A2 OK#n"
+        SKIP 1
+> _ _   MES "A2 F#n"
+> _ _   AUTOR                   ; worn hat - removed to carried
+        CARRIED 3
+        EQ 1 2
+        MES "A3 OK#n"
+        SKIP 1
+> _ _   MES "A3 F#n"
+> _ _   AUTOP 1                 ; carried hat into the box
+        ISAT 3 1
+        EQ 1 1
+        MES "A4 OK#n"
+        SKIP 1
+> _ _   MES "A4 F#n"
+> _ _   AUTOT 1                 ; hat out of the box
+        CARRIED 3
+        EQ 1 2
+        MES "A5 OK#n"
+        SKIP 1
+> _ _   MES "A5 F#n"
 /PRO 2
 > _ _   GET 3
 /END

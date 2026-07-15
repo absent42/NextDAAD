@@ -909,23 +909,29 @@ h_takeout:                      ; 91: obj B out of container loc C
 .notin:
     ld e, 52
     jp refuse
-h_autop:                        ; 104: B = container loc; find Noun1
-    call auto_cwh
+h_autop:                        ; 104: B = container loc; find Noun1.
+    push bc                     ; obj_find_pass clobbers B (its loop
+    call auto_cwh               ; counter) - preserve the container
+    pop de                      ; D = container location (flags kept)
     jr c, .none
-    ld c, b                     ; C = container loc, B = object
+    ld c, d                     ; C = container loc, B = object
     ld b, a
     jp h_putin
 .none:
     ld e, 28
     jp refuse
 h_autot:                        ; 105: container first, then usual
+    push bc
     ld d, b
-    call obj_find_pass
+    call obj_find_pass          ; preserves D, clobbers B
+    pop de                      ; D = container location
     jr nc, .found
-    call obj_find_n1
+    push de
+    call obj_find_n1            ; loads D per pass - bracket it
+    pop de
     jr c, .none
 .found:
-    ld c, b
+    ld c, d
     ld b, a
     jp h_takeout
 .none:
