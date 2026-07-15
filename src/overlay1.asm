@@ -1126,20 +1126,32 @@ h_parse:                        ; 73: condition-like. B = option.
     jr nz, .fixed
     ld a, (frameCounter)
     and 3
-    add a, 2                    ; SM2..SM5
+    add a, 2                    ; SM2..SM5 (animated cursor prompt)
     jr .prompt
 .fixed:
     ld e, a
     ld a, (ddbHeader+HDR_NUMSYS)
     cp e
-    jr c, .edit                 ; out of range: no prompt
-    jr z, .edit
+    jr c, .prompt33             ; flag 42 out of range: skip it, still SM33
+    jr z, .prompt33
     ld a, e
 .prompt:
     ld e, a
     ld a, 0
     call print_msg
-    call prn_newline
+.prompt33:
+    ; The classic DAAD input prompt is SM33 (jdaad getPlayerOrders ->
+    ; readText). It prints on the SAME line as the input - no trailing
+    ; newline. Rabenstein's SM33 is "#n>", so it supplies its own leading
+    ; line break and the ">" the editor then types after. The old
+    ; prn_newline here put input on a blank line below an empty SM2..5
+    ; prompt, hiding the ">".
+    ld a, (ddbHeader+HDR_NUMSYS)
+    cp 34                       ; SM33 present only when numSys > 33
+    jr c, .edit
+    ld e, 33
+    ld a, 0
+    call print_msg
 .edit:
     call inp_edit
     jr nc, .got
