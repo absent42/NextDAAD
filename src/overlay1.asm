@@ -986,13 +986,16 @@ parse_order:
     ld a, (flags+FLAG_ADJ1)
     ld (flags+FLAG_CPADJ), a
 .p5:
-    ; 5. previousVerb update
+    ; 5. previousVerb update (only when a verb is present)
     ld a, (flags+FLAG_VERB)
     inc a
-    ret z
+    jr z, .p6
     dec a
     ld (prevVerb), a
-    ; 6. object-2 resolution when noun2 present
+.p6:
+    ; 6. object-2 resolution when noun2 present - unconditional on the
+    ; verb, matching jdaad/msx2daad (a verbless "lamp in box" order
+    ; must still resolve flags 25-27/39-40)
     ld a, (flags+FLAG_NOUN2)
     inc a
     ret z
