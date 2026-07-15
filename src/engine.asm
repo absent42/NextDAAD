@@ -501,15 +501,16 @@ eng_doall_next:
     ld (flags+FLAG_NOUN1), a
     ld a, (iy+5)
     ld (flags+FLAG_ADJ1), a
-    ; restart the DOALL level's table at its stored entry
-    ld a, (doallEntryL)
+    ; restart the DOALL level's table at its stored resume point
+    ; (entry AND condact pointers, so a REDO/SKIP position mid-entry
+    ; survives across DOALL iterations)
     call eng_top_ix
-    ld (ix+1), a
-    ld a, (doallEntryH)
-    ld (ix+2), a
-    xor a
-    ld (ix+3), a
-    ld (ix+4), a
+    ld hl, (doallResE)
+    ld (ix+1), l
+    ld (ix+2), h
+    ld hl, (doallResC)
+    ld (ix+3), l
+    ld (ix+4), h
     ret
 .next:
     inc b
@@ -676,7 +677,7 @@ cdisp:
     DC h_unimpl                 ; 82  WINAT
     DC h_unimpl                 ; 83  TIME
     DC h_unimpl                 ; 84  PICTURE
-    DC h_unimpl                 ; 85  DOALL
+    DC h_doall                  ; 85  DOALL
     DC h_unimpl                 ; 86  MOUSE
     DC h_unimpl                 ; 87  GFX
     DC h_isnotat                 ; 88  ISNOTAT
@@ -699,16 +700,16 @@ cdisp:
     DC h_autot                   ; 105 AUTOT
     DC h_unimpl                 ; 106 MOVE
     DC h_unimpl                 ; 107 WINSIZE
-    DC h_unimpl                 ; 108 REDO
+    DC h_redo                   ; 108 REDO
     DC h_unimpl                 ; 109 CENTRE
     DC h_unimpl                 ; 110 EXIT
     DC h_unimpl                 ; 111 INKEY
     DC h_bigger                 ; 112 BIGGER
     DC h_smaller                ; 113 SMALLER
-    DC h_unimpl                 ; 114 ISDONE
-    DC h_unimpl                 ; 115 ISNDONE
+    DC h_isdone                 ; 114 ISDONE
+    DC h_isndone                ; 115 ISNDONE
     DC h_skip                   ; 116 SKIP
-    DC h_unimpl                 ; 117 RESTART
+    DC h_restart                ; 117 RESTART
     DC h_unimpl                 ; 118 TAB
     DC h_copyof                  ; 119 COPYOF
     DC h_unimpl                 ; 120 (unused)
@@ -735,5 +736,5 @@ curProps:   db 0
 doallObj:   db $FF
 doallLoc:   db 0
 doallLevel: db 0
-doallEntryL: db 0
-doallEntryH: db 0
+doallResE:  dw 0
+doallResC:  dw 0

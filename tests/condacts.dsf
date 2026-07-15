@@ -321,6 +321,60 @@ ALL   20  noun
         MES "A5 OK#n"
         SKIP 1
 > _ _   MES "A5 F#n"
+; ---- suite 4: control flow ----
+> _ _   PROCESS 3
+        ISDONE
+        MES "31 OK#n"
+        SKIP 1
+> _ _   MES "31 F#n"
+> _ _   PROCESS 4
+        ISNDONE
+        MES "32 OK#n"
+        SKIP 1
+> _ _   MES "32 F#n"
+> _ _   SKIP 1
+> _ _   MES "33 F#n"
+        SKIP 1
+> _ _   MES "33 OK#n"
+> _ _   PLACE 0 0
+        PLACE 1 0
+        PLACE 3 0
+        LET 113 0
+        PROCESS 15
+        EQ 113 3
+        MES "34 OK#n"
+        SKIP 1
+> _ _   MES "34 F#n"
+> _ _   MES "SUITES DONE - KEY FOR E03#n"
+        ANYKEY
+        PROCESS 5
 /PRO 2
 > _ _   GET 3
+/PRO 3
+> _ _   DONE
+/PRO 4
+> _ _   NOTDONE
+/PRO 5
+> _ _   PROCESS 6
+/PRO 6
+> _ _   PROCESS 7
+/PRO 7
+> _ _   PROCESS 8
+/PRO 8
+> _ _   PROCESS 9
+/PRO 9
+> _ _   PROCESS 10
+/PRO 10
+> _ _   PROCESS 11
+/PRO 11
+> _ _   PROCESS 12
+/PRO 12
+> _ _   PROCESS 13
+/PRO 13
+> _ _   PROCESS 14
+/PRO 14
+> _ _   MES "E03 UNREACHED F#n"
+/PRO 15
+> _ _   DOALL 0
+        PLUS 113 1
 /END

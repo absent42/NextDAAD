@@ -1,0 +1,84 @@
+/CTL
+_
+/VOC
+NORTH  2  noun
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "I didn't understand."
+/7  "I can't go in that direction."
+/8  "I can't do that."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 "Press any key."
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+/MTX
+/0 "E04 TEST#n"
+/OTX
+/0 "a thing"
+/LTX
+/0 "Arena."
+/CON
+/0
+/OBJ
+/0    0   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   NORTH _
+/PRO 0
+> _ _   CLS
+        MESSAGE 0
+        DOALL 0
+        PROCESS 1
+/PRO 1
+> _ _   DOALL 0
+/END

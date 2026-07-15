@@ -154,6 +154,72 @@ h_skip:                         ; 116: jump B (signed) + 1 entries on.
     ld (ix+4), a
     ret
 
+h_isdone:                       ; 114: lastDone != 0
+    ld a, (lastDone)
+    or a
+    jp nz, c_true
+    jp c_false
+h_isndone:                      ; 115: lastDone == 0
+    ld a, (lastDone)
+    or a
+    jp z, c_true
+    jp c_false
+
+h_redo:                         ; 108: restart the top table from its
+    call eng_top_ix             ; first entry (own process number)
+    ld a, (ix+0)
+    add a, a
+    ld e, a
+    ld d, 0
+    ld hl, (ddbHeader+HDR_PROCLST)
+    add hl, de
+    call data_save
+    call rd_seek
+    call rd_next
+    ld e, a
+    call rd_next
+    ld d, a
+    call data_restore
+    call eng_top_ix
+    ld (ix+1), e
+    ld (ix+2), d
+    xor a
+    ld (ix+3), a
+    ld (ix+4), a
+    ret
+
+h_restart:                      ; 117: wipe the process stack and the
+    xor a                       ; DOALL state; eng_step re-pushes PRO 0
+    ld (procSP), a              ; from an empty stack
+    ld (doallLevel), a
+    ld a, $FF
+    ld (doallObj), a
+    ret
+
+h_doall:                        ; 85: B = location (255 = here). Error
+    ld a, (doallObj)            ; 4 if a DOALL is already active on
+    inc a                       ; this process (nesting not supported).
+    jr z, .fresh
+    ld a, 4
+    jp err_raise
+.fresh:
+    ld a, b
+    ld (doallLoc), a
+    ld a, (procSP)
+    ld (doallLevel), a
+    call eng_top_ix
+    ld a, (ix+1)
+    ld (doallResE), a
+    ld a, (ix+2)
+    ld (doallResE+1), a
+    ld a, (ix+3)
+    ld (doallResC), a
+    ld a, (ix+4)
+    ld (doallResC+1), a
+    ld a, $FF
+    ld (doallObj), a
+    jp eng_doall_next
+
 h_parse:                        ; 73: SP3 halt latch
     ld a, 1
     ld (parseHalt), a
