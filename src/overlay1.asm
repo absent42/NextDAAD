@@ -132,8 +132,12 @@ kbMapSym:                       ; symbol shift: classic punctuation
     db  13, '=','+','-','^',  ' ',  0, '.',',','*'
 
 ; kb_char: A = decoded character/control code, or 0 if nothing usable
-; is pressed. Applies autorepeat (initial 35 frames, repeat 5).
-; Corrupts AF, BC, DE, HL.
+; is pressed. New keys settle for 2 frames before the first emit so a
+; chord's shift bit is always sampled together with the key (CSpect
+; delivers PC Backspace as Caps+0 with the bits landing on different
+; frames - emitting on first contact printed '0' from the plain map).
+; Autorepeat: first emit after the settle, then 35-frame delay, then
+; every 5 frames. Corrupts AF, BC, DE, HL.
 kb_char:
     call kb_raw
     cp $FF
@@ -146,14 +150,17 @@ kb_char:
     ld a, (inpRepKey)
     cp c
     jr z, .held
-    ; new key: start the repeat clock
+    ; new key: settle before the first emit
     ld a, c
     ld (inpRepKey), a
-    ld a, 35
+    ld a, 2
     ld (inpRepCnt), a
+    ld a, 1
+    ld (inpRepFirst), a
     ld a, (frameCounter)
     ld (inpRepFrm), a           ; seed the per-frame tick baseline
-    jr .emit
+    xor a
+    ret
 .held:
     ld a, (frameCounter)
     ld e, a
@@ -166,7 +173,17 @@ kb_char:
     dec a
     ld (inpRepCnt), a
     jr nz, .nochar
-    ld a, 5
+    ; counter expired: emit, then load the next interval
+    ld a, (inpRepFirst)
+    or a
+    jr z, .rep
+    xor a
+    ld (inpRepFirst), a
+    ld a, 35                    ; settle emit -> full repeat delay next
+    jr .reload
+.rep:
+    ld a, 5                     ; repeating
+.reload:
     ld (inpRepCnt), a
     jr .emit
 .nochar:
