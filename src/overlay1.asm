@@ -1191,22 +1191,6 @@ h_parse:                        ; 73: condition-like. B = option.
     ld (flags+FLAG_NOUN2), a
     ld (flags+FLAG_ADJ2), a
     call parse_order
- IFDEF DEBUG
-    ; parser diagnostic: LS <verb> <noun1> <last word scanned>, row 29
-    ld b, 29
-    ld c, 0
-    call dbg_at
-    ld hl, msgLsDbg
-    call dbg_puts
-    ld a, (flags+FLAG_VERB)
-    call dbg_hex8
-    call dbg_space
-    ld a, (flags+FLAG_NOUN1)
-    call dbg_hex8
-    call dbg_space
-    ld hl, inpWord
-    call dbg_puts
- ENDIF
     ; consume the trailing separator and compact inpPending to the
     ; remainder (the next order), so the next PARSE reads it
     call pending_compact
@@ -1283,9 +1267,5 @@ inp_to_load:
     ld a, (frameCounter)
     ld (inpTOFrm), a
     ret
-
- IFDEF DEBUG
-msgLsDbg: db "LS ", 0
- ENDIF
 
     ASSERT $ <= OVL_LIMIT
