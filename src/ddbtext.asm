@@ -46,25 +46,22 @@ rd_next:
     pop hl
     ret
 
-; Two-level reader save stack (object-name printing runs inside token
-; expansion). Depth overflow is a coding error: fatal, border 2.
+; Three-level reader save stack (worst case: object name inside token
+; expansion when More... fires and SM32 itself starts with a token).
+; Depth overflow is a coding error: fatal, border 2.
 rd_push:
     ld a, (rdSaveSP)
-    cp 2
+    cp 3
     jr nc, rd_stack_fatal
-    or a
-    jr nz, .slot1
+    call rd_slot                ; HL -> slot for level A
     ld a, (rdPage)
-    ld (rdSaveA), a
-    ld hl, (rdPtr)
-    ld (rdSaveA+1), hl
-    jr .done
-.slot1:
-    ld a, (rdPage)
-    ld (rdSaveB), a
-    ld hl, (rdPtr)
-    ld (rdSaveB+1), hl
-.done:
+    ld (hl), a
+    inc hl
+    ld a, (rdPtr)
+    ld (hl), a
+    inc hl
+    ld a, (rdPtr+1)
+    ld (hl), a
     ld hl, rdSaveSP
     inc (hl)
     ret
@@ -75,19 +72,26 @@ rd_pop:
     jr z, rd_stack_fatal
     dec a
     ld (rdSaveSP), a
-    jr nz, .slot1               ; SP was 2 -> restore slot B
-    ld a, (rdSaveA)
+    call rd_slot
+    ld a, (hl)
     ld (rdPage), a
     call data_map_page
-    ld hl, (rdSaveA+1)
-    ld (rdPtr), hl
+    inc hl
+    ld a, (hl)
+    ld (rdPtr), a
+    inc hl
+    ld a, (hl)
+    ld (rdPtr+1), a
     ret
-.slot1:
-    ld a, (rdSaveB)
-    ld (rdPage), a
-    call data_map_page
-    ld hl, (rdSaveB+1)
-    ld (rdPtr), hl
+
+; A = level 0-2 -> HL = rdSave + A*3. Corrupts DE.
+rd_slot:
+    ld hl, rdSave
+    ld e, a
+    ld d, 0
+    add hl, de
+    add hl, de
+    add hl, de
     ret
 
 rd_stack_fatal:
@@ -132,41 +136,62 @@ msg_seek:
     call rd_next
     ld h, a
     jp rd_seek                  ; leaves the reader at the message text
-; A = token 0-127. Skips (A+1) entries from tokensPos (the first entry
-; is unused per the DDB format), then emits chars via prn_char_vec
-; until the bit-7-terminated last char. Chars are raw 7-bit, NOT
-; 255-complemented. Saves/restores the reader around itself.
-tok_print:
+
+; A = next decoded character from the current reader stream, expanding
+; token references inline. CF set = end of message (decoded $0A).
+; Message bytes are 255-complemented; token bytes are raw 7-bit with
+; bit 7 terminating the token. Callers must zero tokActive before the
+; first call on a freshly-seeked stream. Preserves BC.
+txt_next_decoded:
+    ld a, (tokActive)
+    or a
+    jr nz, .intok
+.msg:
+    call rd_next
+    cpl                         ; decode = 255 - byte
+    cp $0A
+    jr z, .end
+    bit 7, a
+    ret z                       ; plain char, CF already clear
+    ; token reference: skip (index+1) entries, first entry is unused
+    and $7F
+    push bc
     push af
     call rd_push
-    ld hl, (ddbHeader+8)        ; tokensPos, absolute
+    ld hl, (ddbHeader+HDR_TOKENS)
     call rd_seek
     pop af
     inc a
-    ld b, a                     ; entries to skip
+    ld b, a
 .skip:
     call rd_next
     bit 7, a
     jr z, .skip
     djnz .skip
-.emit:
+    pop bc
+    ld a, 1
+    ld (tokActive), a
+.intok:
     call rd_next
-    push af
-    and $7F
-    ld c, a
-    call prn_vec_call
-    pop af
     bit 7, a
-    jr z, .emit
-    jp rd_pop
-
-prn_vec_call:
-    ld hl, (prn_char_vec)
-    jp (hl)
+    jr z, .have
+    push af                     ; final token char: leave token mode
+    xor a
+    ld (tokActive), a
+    push bc
+    call rd_pop
+    pop bc
+    pop af
+.have:
+    and $7F
+    or a                        ; CF clear
+    ret
+.end:
+    scf
+    ret
 
 rdPage:       db 0
 rdPtr:        dw 0
 rdSaveSP:     db 0
-rdSaveA:      ds 3
-rdSaveB:      ds 3
-prn_char_vec: dw 0
+rdSave:       ds 9              ; 3 levels x (page, ptr lo, ptr hi)
+tokActive:    db 0              ; txt_next_decoded: inside a token

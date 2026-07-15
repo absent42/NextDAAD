@@ -12,11 +12,11 @@ print_msg:
     pop af
     call msg_seek
     jr c, .badnum
+    xor a
+    ld (tokActive), a           ; fresh stream
 .loop:
-    call rd_next
-    cpl                         ; decode = 255 - byte
-    cp $0A
-    jr z, .done
+    call txt_next_decoded
+    jr c, .done
     call prn_decoded
     jr .loop
 .done:
@@ -34,13 +34,9 @@ print_msg:
  ENDIF
     jp data_restore
 
-; A = decoded character. Dispatches escapes, prints the rest.
+; A = decoded 7-bit character. Dispatches escapes, prints the rest.
+; Token references are resolved by txt_next_decoded before this runs.
 prn_decoded:
-    bit 7, a
-    jr z, .notok
-    and $7F
-    jp tok_print                ; token chars re-enter via prn_char_vec
-.notok:
     cp $0D
     jp z, prn_newline
     cp $0B
@@ -135,6 +131,10 @@ prn_more_check:
     ld (moreSaveRdSv+1), hl
     ld a, (rdSaveSP)
     ld (moreSaveRdSv+3), a
+    ld a, (tokActive)
+    ld (moreSaveRdSv+4), a
+    xor a
+    ld (tokActive), a           ; SM32 starts its own fresh stream
     ; preserve the outer MMU-save shadow (the nested print_msg overwrites it)
     ld a, (savedMMU6)
     ld (moreSaveMMU), a
@@ -184,14 +184,12 @@ prn_more_check:
     ld (rdPtr), hl
     ld a, (moreSaveRdSv+3)
     ld (rdSaveSP), a
+    ld a, (moreSaveRdSv+4)
+    ld (tokActive), a
     ; restore the physical MMU slot exactly as it was pre-fire
     ld a, (morePhysMMU6)
     nextreg NR_MMU6, a
     ret
-
-; Token characters route here via prn_char_vec. C = char.
-prn_char_tok:
-    jp prn_char
 
 ; HL = resident encoded string (255-complemented), terminated by an
 ; encoded $0A (byte $F5). Same escapes as messages, no tokens.
@@ -283,4 +281,4 @@ moreLock:     db 0
 objname_hook: dw objname_stub
 moreSaveMMU:  db 0
 morePhysMMU6: db 0
-moreSaveRdSv: ds 4
+moreSaveRdSv: ds 5

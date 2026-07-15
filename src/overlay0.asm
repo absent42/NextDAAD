@@ -1442,9 +1442,9 @@ h_pause:                        ; 35: B frames, 0 = 256
 
 ; E = SM number -> D = first decoded character (token-aware).
 sm_first_char:
-    call rd_push
-    push de                     ; data_save clobbers E (ld e, NR_MMU6);
-    call data_save              ; msg_seek needs E = SM number
+    push de                     ; rd_push (rd_slot) and data_save both
+    call rd_push                ; clobber E; msg_seek needs E = SM number
+    call data_save
     pop de
     ld a, 0
     call msg_seek
@@ -1470,11 +1470,17 @@ sm_first_char:
 .plain:
     ld d, a
     call data_restore
-    jp rd_pop                   ; rd_pop preserves D
+    push de
+    call rd_pop
+    pop de
+    ret
 .none:
     ld d, 'Y'
     call data_restore
-    jp rd_pop
+    push de
+    call rd_pop
+    pop de
+    ret
 
 ; Shared confirmation: prints SM E, waits, folds case, compares to the
 ; first char of SM C. In: E = prompt SM, C = compare SM. Out: ZF set =

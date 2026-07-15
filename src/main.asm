@@ -39,8 +39,6 @@ main:
     call txt_init
     call dbg_engage_tilemap
     call windows_init
-    ld hl, prn_char_tok
-    ld (prn_char_vec), hl
     ld hl, objname_print
     ld (objname_hook), hl
     ld c, 0

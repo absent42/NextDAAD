@@ -1,9 +1,11 @@
 ; Object-name printing (_/@ escapes) and the shared list engine.
 
 ; A = '_' or '@'. Prints flag-51's OTX with the leading article word
-; stripped; '@' capitalises the first emitted letter. Runs inside
-; token expansion: reader bracketed by rd_push/rd_pop, window by
-; data_save/data_restore. No referenced object ($FF) prints nothing.
+; stripped; '@' capitalises the first emitted letter. Reader bracketed
+; by rd_push/rd_pop, window by data_save/data_restore. No referenced
+; object ($FF) prints nothing. Tokens are expanded by the iterator, so
+; the article state machine sees every real character - a token
+; spanning the article boundary is handled correctly.
 objname_print:
     ld c, a
     ld a, (flags+FLAG_CUROBJ)
@@ -22,14 +24,18 @@ objname_print:
     ld a, 3
     call msg_seek
     jr c, .out
+    ld a, (tokActive)
+    push af                     ; may run nested inside another stream
+    xor a
+    ld (tokActive), a
     ld d, 0                     ; 0 in-article, 1 begun, 2 emitting
 .loop:
-    call rd_next
-    cpl
-    cp $0A
-    jr z, .out
-    bit 7, a
-    jr nz, .tok
+    push bc
+    push de
+    call txt_next_decoded
+    pop de
+    pop bc
+    jr c, .fin
     cp ' '
     jr nz, .chr
     ld a, d
@@ -72,20 +78,9 @@ objname_print:
     pop de
     pop bc
     jr .loop
-.tok:
-    and $7F
-    push bc
-    push de
-    call tok_print
-    pop de
-    pop bc
-    ld a, d
-    or a
-    jr nz, .tokd
-    jr .loop
-.tokd:
-    ld d, 2
-    jr .loop
+.fin:
+    pop af
+    ld (tokActive), a
 .out:
     call data_restore
     jp rd_pop
