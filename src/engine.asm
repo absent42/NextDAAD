@@ -520,7 +520,6 @@ eng_doall_next:
     ld (doallObj), a
     xor a
     ld (doallLevel), a
-    jp .plainpop2
 .plainpop2:
     ; complete as DONE: plain pop
     ld a, (procSP)
@@ -571,17 +570,17 @@ cprops:
     db 2,2                      ; 79-80 NOTEQ NOTSAME (C,2)
     db $81,$82,$82              ; 81-83 MODE WINAT TIME
     db 1                        ; 84    PICTURE (C,1 - fail-entry stub)
-    db $81,$81,$82              ; 85-87 DOALL MOUSE GFX
+    db $81,$82,$82              ; 85-87 DOALL MOUSE GFX (MOUSE argc 2)
     db 2                        ; 88    ISNOTAT (C,2)
     db $82,$82,$82,$80,$82,$81  ; 89-94 WEIGH PUTIN TAKEOUT NEWTEXT ABILITY WEIGHT
     db $81,$82,$80,$80,$82      ; 95-99 RANDOM INPUT SAVEAT BACKAT PRINTAT
-    db $80,$81,$81,$80,$81,$81  ; 100-105 WHATO CALL PUTO NOTDONE AUTOP AUTOT
+    db $80,$82,$81,$80,$81,$81  ; 100-105 WHATO CALL PUTO NOTDONE AUTOP AUTOT (CALL argc 2)
     db 1                        ; 106   MOVE (C,1 - condition-like)
     db $82,$80,$80,$81          ; 107-110 WINSIZE REDO CENTRE EXIT
     db 0                        ; 111   INKEY (C,0)
     db 2,2,0,0                  ; 112-115 BIGGER SMALLER ISDONE ISNDONE (C)
     db $81,$80,$81              ; 116-118 SKIP RESTART TAB
-    db $82,0,$82,0,$82,0        ; 119-124 COPYOF (120) COPYOO (122) COPYFO (124)
+    db $82,0,$82,0,$82,0        ; 119-124 COPYOF (119) COPYOO (121) COPYFO (123); 120/122/124 illegal
     db $82,$82,$80              ; 125-127 COPYFF COPYBF RESET
 
 ; --- dispatch table: 3 bytes per condact (page, addr lo, addr hi) ---
@@ -738,3 +737,6 @@ doallLoc:   db 0
 doallLevel: db 0
 doallResE:  dw 0
 doallResC:  dw 0
+rngState:   dw $A5C3            ; xorshift seed (resident: overlay page
+                                ; contents are only valid while page 56
+                                ; is mapped in SP7)

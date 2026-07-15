@@ -12,7 +12,7 @@ rd_seek:
     rlca
     rlca
     rlca
-    and 7                       ; offset >> 13 (0..15)
+    and 7                       ; offset >> 13 (0..7)
     add a, DDB_PAGE_FIRST
     ld (rdPage), a
     call data_map_page

@@ -22,9 +22,6 @@ IM2_TABLE       equ $BD00   ; 257 bytes $BD00-$BE00
 IM2_VECTOR_BYTE equ $BE
 IM2_STUB        equ $BEBE   ; 3-byte JP written at runtime
 
-; --- Paging window ---
-WINDOW_ADDR     equ $C000
-
 ; --- Physical bank map (16K banks) ---
 BANK_SYS_LAST   equ 8       ; 0-8 reserved: system, ULA bank 5, code bank 2
 BANK_L2_FIRST   equ 9       ; 9-13 Layer 2 (5 banks covers 320x256)
@@ -127,6 +124,7 @@ FLAG_COCON      equ 56
 FLAG_COWR       equ 57
 FLAG_COATT      equ 58
 FLAG_KEY1       equ 60
+FLAG_CURWIN     equ 63
 ; header field offsets (resident ddbHeader)
 HDR_NUMOBJ      equ 3
 HDR_NUMLOC      equ 4

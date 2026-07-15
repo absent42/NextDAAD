@@ -179,10 +179,9 @@ h_redo:                         ; 108: restart the top table from its
     ld e, a
     call rd_next
     ld d, a
-    call data_restore
-    call eng_top_ix
-    ld (ix+1), e
-    ld (ix+2), d
+    call data_restore           ; IX from the first eng_top_ix survives
+    ld (ix+1), e                ; data_save/rd_seek/rd_next/data_restore;
+    ld (ix+2), d                ; a second call would clobber DE first
     xor a
     ld (ix+3), a
     ld (ix+4), a
@@ -409,17 +408,23 @@ h_hasnat:                       ; 59
     and (hl)
     jp z, c_true
     jp c_false
-; B = param -> HL = flags + B/8, A = 1 << (B mod 8). Corrupts AF, E.
+; B = param -> HL = flags + (59 - B/8), A = 1 << (B mod 8).
+; DAAD numbers attributes DOWN from flag 59: attr 0-7 -> flag 59,
+; 8-15 -> flag 58, WEARABLE 23 -> flag 57 bit 7, MOUSE 240 -> flag 29
+; bit 0 (manual 1062-1069). Corrupts AF, E.
 hasat_ptr:
     ld a, b
     and 7
-    ld e, a
+    ld e, a                     ; E = bit index = B mod 8
     ld a, b
     rrca
     rrca
     rrca
-    and $1F
+    and $1F                     ; A = B / 8 (0..31)
     ld b, a
+    ld a, 59
+    sub b
+    ld b, a                     ; B = 59 - B/8
     call fptr
     ld a, 1
 .shift:
@@ -474,7 +479,6 @@ rng_next:
     pop hl
     pop bc
     ret
-rngState: dw $A5C3
 
 ; A = obj, C = new location. Flag 1 bookkeeping; error 2 on loc 255.
 obj_move:
@@ -597,7 +601,13 @@ h_create:                       ; 44
     ld c, a
     ld a, b
     jp obj_move
-h_place:                        ; 46: obj B to loc C
+h_place:                        ; 46: obj B to loc C (255 = HERE)
+    ld a, c
+    inc a                       ; C == 255?
+    jr nz, .go
+    ld a, (flags+FLAG_PLAYER)
+    ld c, a
+.go:
     ld a, b
     jp obj_move
 h_swap:                         ; 45: exchange locations, flag-1 safe
@@ -623,7 +633,13 @@ h_swap:                         ; 45: exchange locations, flag-1 safe
 h_setco:                        ; 56
     ld a, b
     jp obj_set_refs
-h_puto:                         ; 102: current object -> loc B
+h_puto:                         ; 102: current object -> loc B (255 = HERE)
+    ld a, b
+    inc a                       ; B == 255?
+    jr nz, .go
+    ld a, (flags+FLAG_PLAYER)
+    ld b, a
+.go:
     ld a, (flags+FLAG_CUROBJ)
     ld c, b
     jp obj_move
@@ -722,6 +738,16 @@ refuse:
     ld a, 1
     jp eng_exit_table
 
+; Cancel any active DOALL loop (GET/TAKEOUT SM27 capacity refusal,
+; manual 1137-1140, 1270-1273). Mirrors the DOALL-completion clear in
+; eng_doall_next. Corrupts AF.
+doall_cancel:
+    xor a
+    ld (doallLevel), a
+    dec a                       ; $FF
+    ld (doallObj), a
+    ret
+
 h_ok:                           ; 23: SM15 then DONE - refuse IS that
     ld e, 15
     jp refuse
@@ -745,6 +771,7 @@ h_get:                          ; 40
     ld a, (flags+FLAG_CARRIED_CT)
     cp e
     jr c, .cap
+    call doall_cancel           ; SM27 refusal cancels any DOALL
     ld e, 27
     jp refuse
 .cap:
@@ -759,6 +786,9 @@ h_get:                          ; 40
     pop de
     pop bc
     add a, d
+    jr nc, .noovf
+    ld a, 255                   ; carried+object > 255: saturate so an
+.noovf:                         ; overloaded total cannot pass the check
     ld e, a
     ld a, (flags+FLAG_STRENGTH)
     cp e
@@ -970,6 +1000,7 @@ h_takeout:                      ; 91: obj B out of container loc C
     ld c, OBJ_CARRIED
     jp obj_move
 .full:
+    call doall_cancel           ; SM27 refusal cancels any DOALL
     ld e, 27
     jp refuse
 .notin:
@@ -1147,7 +1178,7 @@ h_listat:                       ; 74: B = location (arg1; DRC only
 h_window:                       ; 78
     ld a, b
     and 7
-    ld (flags+63), a
+    ld (flags+FLAG_CURWIN), a
     jp win_select
 h_mode:                         ; 81
     ld a, WIN_FLAGS
@@ -1412,7 +1443,9 @@ h_pause:                        ; 35: B frames, 0 = 256
 ; E = SM number -> D = first decoded character (token-aware).
 sm_first_char:
     call rd_push
-    call data_save
+    push de                     ; data_save clobbers E (ld e, NR_MMU6);
+    call data_save              ; msg_seek needs E = SM number
+    pop de
     ld a, 0
     call msg_seek
     jr c, .none
@@ -1443,17 +1476,22 @@ sm_first_char:
     call data_restore
     jp rd_pop
 
-; Shared Y-confirmation: prints SM E, waits, folds case, compares to
-; SM30's first char. Out: ZF set = confirmed. Corrupts all.
+; Shared confirmation: prints SM E, waits, folds case, compares to the
+; first char of SM C. In: E = prompt SM, C = compare SM. Out: ZF set =
+; reply starts with SM C's first char. Corrupts all.
 confirm:
+    push bc                     ; C = compare SM survives print/key/reset
     ld a, 0
     call print_msg
     call prn_newline
     call key_wait_char
-    push af
+    push af                     ; save key
     call prn_reset_lines
-    ld e, 30
-    call sm_first_char
+    pop af                      ; A = key
+    pop bc                      ; C = compare SM
+    ld e, c
+    push af
+    call sm_first_char          ; D = compare SM's first char
     pop af
     cp 'a'
     jr c, .cmp
@@ -1464,16 +1502,18 @@ confirm:
     cp d
     ret
 
-h_quit:                         ; 20: condition
+h_quit:                         ; 20: condition - Y (SM30) confirms quit
     ld e, 12
+    ld c, 30
     call confirm
     jp nz, c_false
     call eng_set_done
     jp c_true
-h_end:                          ; 21: yes = fresh game, no = reset
-    ld e, 13
+h_end:                          ; 21: reply N (SM31) = exit to OS, any
+    ld e, 13                    ; other key = restart (manual 2004-2010)
+    ld c, 31
     call confirm
-    jr nz, .off
+    jr z, .off
     ld c, 0
     call eng_init_game
     xor a
