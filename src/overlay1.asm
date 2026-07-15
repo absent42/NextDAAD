@@ -227,6 +227,7 @@ inp_edit:
 .fresh:
     ld a, 1
     ld (moreLock), a
+    ld (wrapLock), a            ; editor echo bypasses word buffering
     ; timeout countdown init (0 = disarmed)
     ld hl, 0
     ld (inpTOFrames), hl
@@ -284,6 +285,7 @@ inp_edit:
     ld (flags+FLAG_TIMECTL), a
     xor a
     ld (moreLock), a
+    ld (wrapLock), a
     scf
     ret
 .key:
@@ -345,6 +347,7 @@ inp_edit:
     ld (flags+FLAG_TIMECTL), a
     xor a
     ld (moreLock), a
+    ld (wrapLock), a
     call win_newline            ; raw newline (moreLock off, single line safe)
     or a                        ; CF clear = normal submit
     ret
