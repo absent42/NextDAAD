@@ -611,7 +611,7 @@ cdisp:
     DC h_adject1                ; 16  ADJECT1
     DC h_adverb                 ; 17  ADVERB
     DC h_unimpl                 ; 18  SFX
-    DC h_unimpl                 ; 19  DESC
+    DC h_desc                   ; 19  DESC
     DC h_unimpl                 ; 20  QUIT
     DC h_unimpl                 ; 21  END
     DC h_done                   ; 22  DONE
@@ -620,7 +620,7 @@ cdisp:
     DC h_unimpl                 ; 25  SAVE
     DC h_unimpl                 ; 26  LOAD
     DC h_dprint                 ; 27  DPRINT
-    DC h_unimpl                 ; 28  DISPLAY
+    DC h_display                ; 28  DISPLAY
     DC h_cls                    ; 29  CLS
     DC h_dropall                 ; 30  DROPALL
     DC h_autog                   ; 31  AUTOG
@@ -652,29 +652,29 @@ cdisp:
     DC h_space                  ; 57  SPACE
     DC h_hasat                  ; 58  HASAT
     DC h_hasnat                 ; 59  HASNAT
-    DC h_unimpl                 ; 60  LISTOBJ
+    DC h_listobj                ; 60  LISTOBJ
     DC h_unimpl                 ; 61  EXTERN
     DC h_unimpl                 ; 62  RAMSAVE
     DC h_unimpl                 ; 63  RAMLOAD
     DC h_unimpl                 ; 64  BEEP
-    DC h_unimpl                 ; 65  PAPER
-    DC h_unimpl                 ; 66  INK
-    DC h_unimpl                 ; 67  BORDER
+    DC h_paper                  ; 65  PAPER
+    DC h_ink                    ; 66  INK
+    DC h_border                 ; 67  BORDER
     DC h_prep                   ; 68  PREP
     DC h_noun2                  ; 69  NOUN2
     DC h_adject2                ; 70  ADJECT2
     DC h_add                    ; 71  ADD
     DC h_sub                    ; 72  SUB
     DC h_parse                  ; 73  PARSE
-    DC h_unimpl                 ; 74  LISTAT
+    DC h_listat                 ; 74  LISTAT
     DC h_process                ; 75  PROCESS
     DC h_same                   ; 76  SAME
     DC h_mes                    ; 77  MES
-    DC h_unimpl                 ; 78  WINDOW
+    DC h_window                 ; 78  WINDOW
     DC h_noteq                  ; 79  NOTEQ
     DC h_notsame                ; 80  NOTSAME
-    DC h_unimpl                 ; 81  MODE
-    DC h_unimpl                 ; 82  WINAT
+    DC h_mode                   ; 81  MODE
+    DC h_winat                  ; 82  WINAT
     DC h_unimpl                 ; 83  TIME
     DC h_unimpl                 ; 84  PICTURE
     DC h_doall                  ; 85  DOALL
@@ -689,9 +689,9 @@ cdisp:
     DC h_weight                  ; 94  WEIGHT
     DC h_random                 ; 95  RANDOM
     DC h_unimpl                 ; 96  INPUT
-    DC h_unimpl                 ; 97  SAVEAT
-    DC h_unimpl                 ; 98  BACKAT
-    DC h_unimpl                 ; 99  PRINTAT
+    DC h_saveat                 ; 97  SAVEAT
+    DC h_backat                 ; 98  BACKAT
+    DC h_printat                ; 99  PRINTAT
     DC h_whato                   ; 100 WHATO
     DC h_unimpl                 ; 101 CALL
     DC h_puto                    ; 102 PUTO
@@ -699,9 +699,9 @@ cdisp:
     DC h_autop                   ; 104 AUTOP
     DC h_autot                   ; 105 AUTOT
     DC h_unimpl                 ; 106 MOVE
-    DC h_unimpl                 ; 107 WINSIZE
+    DC h_winsize                ; 107 WINSIZE
     DC h_redo                   ; 108 REDO
-    DC h_unimpl                 ; 109 CENTRE
+    DC h_centre                 ; 109 CENTRE
     DC h_unimpl                 ; 110 EXIT
     DC h_unimpl                 ; 111 INKEY
     DC h_bigger                 ; 112 BIGGER
@@ -710,7 +710,7 @@ cdisp:
     DC h_isndone                ; 115 ISNDONE
     DC h_skip                   ; 116 SKIP
     DC h_restart                ; 117 RESTART
-    DC h_unimpl                 ; 118 TAB
+    DC h_tab                    ; 118 TAB
     DC h_copyof                  ; 119 COPYOF
     DC h_unimpl                 ; 120 (unused)
     DC h_copyoo                  ; 121 COPYOO

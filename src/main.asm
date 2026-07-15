@@ -41,6 +41,8 @@ main:
     call windows_init
     ld hl, prn_char_tok
     ld (prn_char_vec), hl
+    ld hl, objname_print
+    ld (objname_hook), hl
  IFDEF DEBUG
     call demo_or_suite
  ENDIF
@@ -137,6 +139,7 @@ demoString:
     INCLUDE "print.asm"
     INCLUDE "engine.asm"
     INCLUDE "errors.asm"
+    INCLUDE "objname.asm"
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT

@@ -1122,4 +1122,210 @@ h_reset:                        ; 127: initial positions
     ld c, 1
     jp eng_load_objects
 
+h_desc:                         ; 19: location B, checked
+    ld a, (ddbHeader+HDR_NUMLOC)
+    dec a
+    cp b
+    jr nc, .ok
+    ld a, 7
+    jp err_raise
+.ok:
+    ld e, b
+    ld a, 2
+    jp print_msg
+h_listobj:                      ; 60
+    ld a, LOC_HERE
+    ld c, 1
+    jp list_at
+h_listat:                       ; 74: B = location (arg1; DRC only
+                                 ; accepts a flag-sourced location via
+                                 ; @flag, which the dispatcher's generic
+                                 ; indirection already resolves into B)
+    ld a, b
+    ld c, 0
+    jp list_at
+h_window:                       ; 78
+    ld a, b
+    and 7
+    ld (flags+63), a
+    jp win_select
+h_mode:                         ; 81
+    ld a, WIN_FLAGS
+    call win_field
+    ld (hl), b
+    ret
+h_winat:                        ; 82: line B, col C, clamped; size
+                                 ; re-clamped against the new origin
+    ld a, b
+    cp TM_ROWS
+    jr c, .rok
+    ld a, TM_ROWS-1
+.rok:
+    ld b, a
+    ld a, c
+    cp TM_COLS
+    jr c, .cok
+    ld a, TM_COLS-1
+.cok:
+    ld c, a
+    ld a, WIN_X
+    call win_field
+    ld (hl), c
+    inc hl
+    ld (hl), b
+    ld a, TM_COLS
+    sub c
+    ld e, a
+    ld a, WIN_W
+    call win_field
+    ld a, (hl)
+    cp e
+    jr c, .wok
+    ld (hl), e
+.wok:
+    ld a, TM_ROWS
+    sub b
+    ld e, a
+    ld a, WIN_H
+    call win_field
+    ld a, (hl)
+    cp e
+    jr c, .hok
+    ld (hl), e
+.hok:
+    jp win_home
+h_winsize:                      ; 107: height B, width C, min 1, clamped
+    ld a, b
+    or a
+    jr nz, .h1
+    inc a
+.h1:
+    ld b, a
+    ld a, c
+    or a
+    jr nz, .w1
+    inc a
+.w1:
+    ld c, a
+    ld a, WIN_Y
+    call win_field
+    ld e, (hl)
+    ld a, TM_ROWS
+    sub e
+    cp b
+    jr nc, .hok
+    ld b, a
+.hok:
+    ld a, WIN_X
+    call win_field
+    ld e, (hl)
+    ld a, TM_COLS
+    sub e
+    cp c
+    jr nc, .wok
+    ld c, a
+.wok:
+    ld a, WIN_W
+    call win_field
+    ld (hl), c
+    inc hl
+    ld (hl), b
+    jp win_home
+h_saveat:                       ; 97
+    ld a, WIN_CURX
+    call win_field
+    ld a, (hl)
+    ld (savedCurX), a
+    inc hl
+    ld a, (hl)
+    ld (savedCurY), a
+    ret
+h_backat:                       ; 98
+    ld a, WIN_CURX
+    call win_field
+    ld a, (savedCurX)
+    ld (hl), a
+    inc hl
+    ld a, (savedCurY)
+    ld (hl), a
+    ret
+h_printat:                      ; 99: line B, col C inside the window
+    ld a, WIN_H
+    call win_field
+    ld a, (hl)
+    dec a
+    cp b
+    jr nc, .rok
+    ld b, a
+.rok:
+    ld a, WIN_W
+    call win_field
+    ld a, (hl)
+    dec a
+    cp c
+    jr nc, .cok
+    ld c, a
+.cok:
+    ld a, WIN_CURX
+    call win_field
+    ld (hl), c
+    inc hl
+    ld (hl), b
+    ret
+h_tab:                          ; 118: column B, row kept
+    ld c, b
+    ld a, WIN_W
+    call win_field
+    ld a, (hl)
+    dec a
+    cp c
+    jr nc, .cok
+    ld c, a
+.cok:
+    ld a, WIN_CURX
+    call win_field
+    ld (hl), c
+    ret
+h_centre:                       ; 109
+    ld a, WIN_W
+    call win_field
+    ld a, TM_COLS
+    sub (hl)
+    srl a
+    ld e, a
+    ld a, WIN_X
+    call win_field
+    ld (hl), e
+    ret
+h_paper:                        ; 65
+    ld a, b
+    cp 8
+    jp nc, h_unimpl             ; 8/9 semantics: marker-ignore this SP
+    ld a, WIN_PAPER
+    call win_field
+    ld (hl), b
+    ret
+h_ink:                          ; 66
+    ld a, b
+    cp 8
+    jp nc, h_unimpl
+    ld a, WIN_INK
+    call win_field
+    ld (hl), b
+    ret
+h_border:                       ; 67
+    ld a, b
+    and 7
+    out ($FE), a
+    ret
+h_display:                      ; 28: 0 = picture (stub), else clear
+    ld a, b
+    or a
+    jp z, h_unimpl
+    call win_cls
+    jp prn_reset_lines
+
+savedCurX: db 0
+savedCurY: db 0
+
     ASSERT $ <= OVL_LIMIT

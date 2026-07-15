@@ -345,6 +345,37 @@ ALL   20  noun
         MES "34 OK#n"
         SKIP 1
 > _ _   MES "34 F#n"
+; ---- suite 5: printing, lists, windows ----
+> _ _   RESET
+        SETCO 0
+        MES "35:"
+        MES "_"
+        NEWLINE
+        MES "35 OK#n"
+        SKIP 1
+> _ _   MES "35 F#n"
+> _ _   LET 121 0
+        MES "36:"
+        LISTAT @121
+        MES "36 OK#n"
+        SKIP 1
+> _ _   MES "36 F#n"
+> _ _   PAPER 2
+        INK 6
+        MES "37 COLOUR#n"
+        PAPER 0
+        INK 7
+        MES "37 OK#n"
+        SKIP 1
+> _ _   MES "37 F#n"
+> _ _   SAVEAT
+        PRINTAT 20 40
+        MES "AT-20-40"
+        BACKAT
+        NEWLINE
+        MES "38 OK#n"
+        SKIP 1
+> _ _   MES "38 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5
