@@ -588,6 +588,38 @@ NORTH 0
         MES "58 OK#n"
         SKIP 1
 > _ _   MES "58 F#n"
+; 59 NEWTEXT discards the pending tail
+> _ _   MES "59 TYPE: get lamp and drop hat#n"
+        PARSE 0
+        MES "59 F#n"
+        SKIP 3
+> _ _   NEWTEXT
+        MES "59 TYPE: north#n"
+        PARSE 0
+        MES "59 F#n"
+        SKIP 2
+> _ _   EQ 33 2
+        MES "59 OK#n"
+        SKIP 1
+> _ _   MES "59 F#n"
+; 60 conjunctions neutralised beyond the first separator
+> _ _   MES "60 TYPE: get lamp, drop hat and get box#n"
+        PARSE 0
+        MES "60 F#n"
+        SKIP 4
+> _ _   PARSE 0
+        MES "60 F#n"
+        SKIP 3
+> _ _   EQ 33 101
+        EQ 34 53
+        PARSE 0
+        MES "60 F#n"
+        SKIP 2
+> _ _   EQ 33 100
+        EQ 34 50
+        MES "60 OK#n"
+        SKIP 1
+> _ _   MES "60 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5
