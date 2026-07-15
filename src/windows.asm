@@ -43,7 +43,10 @@ windows_init:
 
 ; A = window number 0-7.
 win_select:
-    and 7
+    push af
+    call prn_flush              ; flush the old window's pending word
+    pop af                      ; before the switch (wrapBuf is window-
+    and 7                       ; relative); no-op when nothing buffered
     ld hl, winTable
     or a
     jr z, .done

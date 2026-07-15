@@ -20,6 +20,7 @@ print_msg:
     call prn_decoded
     jr .loop
 .done:
+    call prn_flush              ; emit any pending word (no newline added)
     jp data_restore
 .badnum:
  IFDEF DEBUG
@@ -32,6 +33,7 @@ print_msg:
     ld c, 'G'
     call prn_char
  ENDIF
+    call prn_flush              ; flush the ?MSG marker / any pending word
     jp data_restore
 
 ; A = decoded 7-bit character. Dispatches escapes, prints the rest.
@@ -40,7 +42,7 @@ prn_decoded:
     cp $0D
     jp z, prn_newline
     cp $0B
-    jp z, win_cls
+    jp z, prn_cls
     cp $0C
     jp z, wait_key_reset
     cp $0E
@@ -65,9 +67,49 @@ prn_decoded:
     ld hl, (objname_hook)
     jp (hl)
 
+; C = printable decoded char. Word-buffering layer over prn_char_raw:
+; printable non-space chars accumulate in wrapBuf so whole words wrap at
+; the window edge; a space flushes the pending word. wrapLock (held by
+; the input editor) bypasses buffering so echo stays immediate.
+prn_char:
+    ld a, (wrapLock)
+    or a
+    jr nz, prn_char_raw         ; editor: immediate echo, no buffering
+    ld a, c
+    cp ' '
+    jr z, .space
+    ; printable non-space: append C to wrapBuf[wrapLen]
+    ld a, (wrapLen)
+    ld e, a
+    ld d, 0
+    ld hl, wrapBuf
+    add hl, de
+    ld (hl), c
+    ld a, (wrapLen)
+    inc a
+    ld (wrapLen), a
+    ld c, a                     ; C = new wrapLen (win_field preserves BC)
+    ld a, WIN_W
+    call win_field
+    ld a, (hl)                  ; A = WIN_W of the current window
+    cp c
+    jr c, .full                 ; WIN_W < wrapLen: past the window, flush
+    ret nz                      ; WIN_W > wrapLen: keep buffering
+.full:                          ; wrapLen reached WIN_W: hard-flush
+    jp prn_flush
+.space:
+    call prn_flush              ; place the pending word first
+    ld a, WIN_CURX
+    call win_field
+    ld a, (hl)
+    or a
+    ret z                       ; cursor at column 0: swallow the space
+    ld c, ' '
+    ; fall through to prn_char_raw
+
 ; C = printable decoded char. Applies the charset offset ($20-$7F only),
 ; prints, and runs the More... check when the print wrapped the line.
-prn_char:
+prn_char_raw:
     ld a, c
     cp $20
     jr c, .have                 ; $10-$1F extended glyphs print direct
@@ -91,8 +133,65 @@ prn_char:
     call win_newline_only       ; complete the wrap's line advance
     jr prn_more_check
 
-; Explicit newline with paging.
+; Emit the buffered word through prn_char_raw. If the word overflows the
+; line remainder but still fits the window, newline (+ More check) first
+; so the whole word moves down together. No-op while wrapLock is held
+; (the buffer belongs to a suspended outer context, e.g. the SM32 More
+; prompt) or while the buffer is empty. Corrupts all registers.
+prn_flush:
+    ld a, (wrapLock)
+    or a
+    ret nz
+    ld a, (wrapLen)
+    or a
+    ret z
+    ld a, WIN_W
+    call win_field
+    ld c, (hl)                  ; C = WIN_W
+    ld a, WIN_CURX
+    call win_field
+    ld a, (hl)
+    ld b, a                     ; B = WIN_CURX
+    ld a, c
+    sub b                       ; A = remaining = WIN_W - WIN_CURX
+    ld b, a                     ; B = remaining
+    ld a, (wrapLen)
+    cp b
+    jr c, .emit                 ; wrapLen < remaining: fits as-is
+    jr z, .emit                 ; wrapLen == remaining: fills exactly
+    ld a, (wrapLen)             ; wrapLen > remaining
+    cp c
+    jr nc, .emit                ; wrapLen >= WIN_W: too wide, char-wrap
+    call prn_newline_raw        ; word fits the window: wrap it down first
+.emit:
+    xor a
+    ld (wrapIdx), a
+.eloop:
+    ld a, (wrapIdx)
+    ld hl, wrapLen
+    cp (hl)
+    jr nc, .edone
+    ld e, a
+    ld d, 0
+    ld hl, wrapBuf
+    add hl, de
+    ld c, (hl)
+    ld a, (wrapIdx)
+    inc a
+    ld (wrapIdx), a
+    call prn_char_raw
+    jr .eloop
+.edone:
+    xor a
+    ld (wrapLen), a
+    ret
+
+; Explicit newline with paging. Flushes the pending word first; the
+; flush's own conditional wrap uses prn_newline_raw, so this cannot
+; recurse back into the flush.
 prn_newline:
+    call prn_flush
+prn_newline_raw:
     call win_newline_only
     jr prn_more_check
 
@@ -100,6 +199,11 @@ prn_newline:
 ; clarity at call sites in this module.
 win_newline_only:
     jp win_newline
+
+; $0B cls escape: flush the pending word, then clear the window.
+prn_cls:
+    call prn_flush
+    jp win_cls
 
 ; Fire the More... prompt when the window's printed lines reach h-1.
 ; Corrupts all registers. Preserves the outer reader, its in-flight
@@ -144,9 +248,13 @@ prn_more_check:
     ld (morePhysMMU6), a
     ld a, 1
     ld (moreLock), a
+    ld (wrapLock), a            ; SM32 echoes immediately, never buffers -
+                                ; this protects the outer word in wrapBuf
     ld a, 0                     ; SM32 through the normal pipeline
     ld e, 32
     call print_msg
+    xor a
+    ld (wrapLock), a            ; restore buffering for the outer word
     ld e, $02                   ; More... timeout arm bit
     call wait_key_timeout
     xor a
@@ -199,7 +307,7 @@ prn_encoded:
     inc hl
     cpl
     cp $0A
-    ret z
+    jp z, prn_flush             ; terminator: flush the pending word, ret
     push hl
     call prn_decoded
     pop hl
@@ -282,6 +390,7 @@ wait_key_timeout:
 
 ; $0C escape: wait for a key, then the pause restarts the page count.
 wait_key_reset:
+    call prn_flush              ; place the pending word before pausing
     call wait_key
     jr prn_reset_lines
 
@@ -342,3 +451,7 @@ objname_hook: dw objname_stub
 moreSaveMMU:  db 0
 morePhysMMU6: db 0
 moreSaveRdSv: ds 5
+wrapBuf:      ds 80             ; pending word (word-wrap), max = WIN_W
+wrapLen:      db 0             ; chars buffered in wrapBuf
+wrapLock:     db 0             ; non-zero: bypass buffering (editor/SM32)
+wrapIdx:      db 0             ; prn_flush emit-loop cursor
