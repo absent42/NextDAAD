@@ -57,12 +57,15 @@ idle:
     jr idle
 
  IFDEF DEBUG
-; Runs the SP2 demo for the template DDB, or the engine for the
-; condact-suite DDB (numLocDsc == 1 marks the suite database).
+; Runs the SP2 demo ONLY for the template DDB (numLocDsc == 3);
+; anything else gets the engine. DRC's location count for the suite
+; DSF drifts as sections grow (observed 1 then 2), so the template's
+; known count is the stable discriminator. Scaffolding - Task 9
+; deletes this router entirely.
 demo_or_suite:
     ld a, (ddbHeader+HDR_NUMLOC)
-    cp 1
-    jr z, .suite
+    cp 3
+    jr nz, .suite
     jp demo
 .suite:
     call eng_init_game
