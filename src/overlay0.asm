@@ -1325,7 +1325,271 @@ h_display:                      ; 28: 0 = picture (stub), else clear
     call win_cls
     jp prn_reset_lines
 
+; --- key decoder ---
+; Half-row scan -> ASCII. Unshifted; letters lowercase; digits; space;
+; enter = 13. 0 = nothing pressed. Corrupts AF, BC, DE, HL.
+key_scan:
+    ld hl, keyRows
+    ld d, 8
+.row:
+    ld a, (hl)
+    inc hl
+    ld b, a
+    ld c, $FE
+    in a, (c)
+    cpl
+    and $1F
+    jr nz, .hit
+    ld bc, 5
+    add hl, bc
+    dec d
+    jr nz, .row
+    xor a
+    ret
+.hit:
+    ld e, a
+.bit:
+    srl e
+    jr c, .found
+    inc hl
+    jr .bit
+.found:
+    ld a, (hl)
+    ret
+
+keyRows:                        ; port MSB, then bits 0-4's chars
+    db $FE, 0,  'z','x','c','v'
+    db $FD, 'a','s','d','f','g'
+    db $FB, 'q','w','e','r','t'
+    db $F7, '1','2','3','4','5'
+    db $EF, '0','9','8','7','6'
+    db $DF, 'p','o','i','u','y'
+    db $BF, 13, 'l','k','j','h'
+    db $7F, ' ', 0, 'm','n','b'
+
+; Block for a fresh press (waits for prior release first).
+key_wait_char:
+.settle:
+    call key_scan
+    or a
+    jr nz, .settle
+.press:
+    call key_scan
+    or a
+    jr z, .press
+    ld e, a
+.release:
+    call key_scan
+    or a
+    jr nz, .release
+    ld a, e
+    ret
+
+; --- interaction / movement / stub condacts ---
+h_inkey:                        ; 111: condition; key -> flag 60
+    call key_scan
+    ld (flags+FLAG_KEY1), a
+    or a
+    jp nz, c_true
+    jp c_false
+h_anykey:                       ; 24
+    ld e, 16
+    ld a, 0
+    call print_msg
+    call key_wait_char
+    jp prn_reset_lines
+h_pause:                        ; 35: B frames, 0 = 256
+    ld a, (frameCounter)
+    ld e, a
+.wait:
+    ld a, (frameCounter)
+    cp e
+    jr z, .wait
+    ld e, a
+    djnz .wait
+    jp prn_reset_lines
+
+; E = SM number -> D = first decoded character (token-aware).
+sm_first_char:
+    call rd_push
+    call data_save
+    ld a, 0
+    call msg_seek
+    jr c, .none
+    call rd_next
+    cpl
+    bit 7, a
+    jr z, .plain
+    and $7F
+    push af
+    ld hl, (ddbHeader+HDR_TOKENS)
+    call rd_seek
+    pop af
+    inc a
+    ld b, a
+.skip:
+    call rd_next
+    bit 7, a
+    jr z, .skip
+    djnz .skip
+    call rd_next
+    and $7F
+.plain:
+    ld d, a
+    call data_restore
+    jp rd_pop                   ; rd_pop preserves D
+.none:
+    ld d, 'Y'
+    call data_restore
+    jp rd_pop
+
+; Shared Y-confirmation: prints SM E, waits, folds case, compares to
+; SM30's first char. Out: ZF set = confirmed. Corrupts all.
+confirm:
+    ld a, 0
+    call print_msg
+    call prn_newline
+    call key_wait_char
+    push af
+    call prn_reset_lines
+    ld e, 30
+    call sm_first_char
+    pop af
+    cp 'a'
+    jr c, .cmp
+    cp 'z'+1
+    jr nc, .cmp
+    sub 32
+.cmp:
+    cp d
+    ret
+
+h_quit:                         ; 20: condition
+    ld e, 12
+    call confirm
+    jp nz, c_false
+    call eng_set_done
+    jp c_true
+h_end:                          ; 21: yes = fresh game, no = reset
+    ld e, 13
+    call confirm
+    jr nz, .off
+    ld c, 0
+    call eng_init_game
+    xor a
+    ld (procSP), a
+    ret
+.off:
+    nextreg 2, 1
+    jr $
+h_exit:                         ; 110: 0 = reset, else XPART stub
+    ld a, b
+    or a
+    jp nz, h_unimpl
+    nextreg 2, 1
+    jr $
+h_goto:                         ; 37
+    ld a, b
+    ld (flags+FLAG_PLAYER), a
+    ret
+h_move:                         ; 106: condition-like action. B = flag
+                                 ; holding the location to search (in/out);
+                                 ; verb comes from flag 33. Verb is stashed
+                                 ; to moveVerb (not kept live in D) because
+                                 ; rd_seek clobbers DE across the two seeks
+                                 ; below; rd_next (used in .pair) preserves
+                                 ; DE, so D is safe once reloaded after the
+                                 ; last rd_seek.
+    ld a, (flags+FLAG_VERB)
+    cp 14
+    jp nc, c_false
+    ld (moveVerb), a
+    call fptr                   ; HL = flags + B
+    ld a, (hl)                  ; A = flags[B] (location to search)
+    push hl                     ; save flags+B pointer for the write-back
+    ld hl, (ddbHeader+HDR_CONLST)
+    ld e, a
+    ld d, 0
+    add hl, de
+    add hl, de                  ; HL = HDR_CONLST + location*2
+    call data_save
+    call rd_seek
+    call rd_next
+    ld e, a
+    call rd_next
+    ld d, a                     ; DE = absolute connection-list pointer
+    ex de, hl
+    call rd_seek
+    ld a, (moveVerb)
+    ld d, a                     ; D = verb, safe now (only rd_next below)
+.pair:
+    call rd_next
+    cp $FF
+    jr z, .nomatch
+    cp d
+    jr z, .match
+    call rd_next
+    jr .pair
+.match:
+    call rd_next
+    ld c, a                     ; C = destination location
+    call data_restore
+    pop hl                      ; HL = flags+B pointer
+    ld (hl), c
+    call eng_set_done
+    jp c_true
+.nomatch:
+    call data_restore
+    pop hl
+    jp c_false
+h_synonym:                      ; 36
+    ld a, b
+    cp 255
+    jr z, .noun
+    ld (flags+FLAG_VERB), a
+.noun:
+    ld a, c
+    cp 255
+    ret z
+    ld (flags+FLAG_NOUN1), a
+    ret
+h_newtext:                      ; 92: real in SP4
+    ret
+h_time:                         ; 83: store; semantics SP4
+    ld a, b
+    ld (flags+48), a
+    ld a, c
+    ld (flags+49), a
+    ret
+h_input:                        ; 96: store; semantics SP4
+    ld a, b
+    ld (flags+41), a
+    ret
+h_extern:                       ; 61: fn C via vector, A = B on entry
+    ld a, c
+    cp 16
+    jp nc, h_unimpl
+    ld l, c
+    ld h, 0
+    add hl, hl
+    ld de, extVec
+    add hl, de
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ld a, b
+    ex de, hl
+    jp (hl)
+ext_stub:
+    jp h_unimpl
+extVec:
+    dw ext_stub, ext_stub, ext_stub, ext_stub
+    dw ext_stub, ext_stub, ext_stub, ext_stub
+    dw ext_stub, ext_stub, ext_stub, ext_stub
+    dw ext_stub, ext_stub, ext_stub, ext_stub
+
 savedCurX: db 0
 savedCurY: db 0
+moveVerb:  db 0
 
     ASSERT $ <= OVL_LIMIT

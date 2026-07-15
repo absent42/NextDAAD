@@ -612,11 +612,11 @@ cdisp:
     DC h_adverb                 ; 17  ADVERB
     DC h_unimpl                 ; 18  SFX
     DC h_desc                   ; 19  DESC
-    DC h_unimpl                 ; 20  QUIT
-    DC h_unimpl                 ; 21  END
+    DC h_quit                   ; 20  QUIT
+    DC h_end                    ; 21  END
     DC h_done                   ; 22  DONE
     DC h_ok                     ; 23  OK
-    DC h_unimpl                 ; 24  ANYKEY
+    DC h_anykey                 ; 24  ANYKEY
     DC h_unimpl                 ; 25  SAVE
     DC h_unimpl                 ; 26  LOAD
     DC h_dprint                 ; 27  DPRINT
@@ -627,9 +627,9 @@ cdisp:
     DC h_autod                   ; 32  AUTOD
     DC h_autow                   ; 33  AUTOW
     DC h_autor                   ; 34  AUTOR
-    DC h_unimpl                 ; 35  PAUSE
-    DC h_unimpl                 ; 36  SYNONYM
-    DC h_unimpl                 ; 37  GOTO
+    DC h_pause                  ; 35  PAUSE
+    DC h_synonym                ; 36  SYNONYM
+    DC h_goto                   ; 37  GOTO
     DC h_message                ; 38  MESSAGE
     DC h_remove                  ; 39  REMOVE
     DC h_get                     ; 40  GET
@@ -653,7 +653,7 @@ cdisp:
     DC h_hasat                  ; 58  HASAT
     DC h_hasnat                 ; 59  HASNAT
     DC h_listobj                ; 60  LISTOBJ
-    DC h_unimpl                 ; 61  EXTERN
+    DC h_extern                 ; 61  EXTERN
     DC h_unimpl                 ; 62  RAMSAVE
     DC h_unimpl                 ; 63  RAMLOAD
     DC h_unimpl                 ; 64  BEEP
@@ -675,7 +675,7 @@ cdisp:
     DC h_notsame                ; 80  NOTSAME
     DC h_mode                   ; 81  MODE
     DC h_winat                  ; 82  WINAT
-    DC h_unimpl                 ; 83  TIME
+    DC h_time                   ; 83  TIME
     DC h_unimpl                 ; 84  PICTURE
     DC h_doall                  ; 85  DOALL
     DC h_unimpl                 ; 86  MOUSE
@@ -684,11 +684,11 @@ cdisp:
     DC h_weigh                   ; 89  WEIGH
     DC h_putin                   ; 90  PUTIN
     DC h_takeout                 ; 91  TAKEOUT
-    DC h_unimpl                 ; 92  NEWTEXT
+    DC h_newtext                ; 92  NEWTEXT
     DC h_ability                 ; 93  ABILITY
     DC h_weight                  ; 94  WEIGHT
     DC h_random                 ; 95  RANDOM
-    DC h_unimpl                 ; 96  INPUT
+    DC h_input                  ; 96  INPUT
     DC h_saveat                 ; 97  SAVEAT
     DC h_backat                 ; 98  BACKAT
     DC h_printat                ; 99  PRINTAT
@@ -698,12 +698,12 @@ cdisp:
     DC h_notdone                ; 103 NOTDONE
     DC h_autop                   ; 104 AUTOP
     DC h_autot                   ; 105 AUTOT
-    DC h_unimpl                 ; 106 MOVE
+    DC h_move                   ; 106 MOVE
     DC h_winsize                ; 107 WINSIZE
     DC h_redo                   ; 108 REDO
     DC h_centre                 ; 109 CENTRE
-    DC h_unimpl                 ; 110 EXIT
-    DC h_unimpl                 ; 111 INKEY
+    DC h_exit                   ; 110 EXIT
+    DC h_inkey                  ; 111 INKEY
     DC h_bigger                 ; 112 BIGGER
     DC h_smaller                ; 113 SMALLER
     DC h_isdone                 ; 114 ISDONE

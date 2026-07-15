@@ -84,6 +84,7 @@ ALL   20  noun
 /1 ""
 /CON
 /0
+NORTH 0
 /1
 /OBJ
 /0    CARRIED     1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   LAMP _
@@ -376,6 +377,39 @@ ALL   20  noun
         MES "38 OK#n"
         SKIP 1
 > _ _   MES "38 F#n"
+; ---- suite 6: movement, synonym, stubs ----
+> _ _   LET 33 2
+        LET 121 0
+        MOVE 121
+        EQ 121 0
+        MES "39 OK#n"
+        SKIP 1
+> _ _   MES "39 F#n"
+> _ _   LET 33 3
+        LET 122 0
+        MOVE 122
+        MES "40 F#n"
+        SKIP 1
+> _ _   MES "40 OK#n"
+> _ _   SYNONYM GET LAMP        ; GET=verb 100, LAMP=noun 51
+        EQ 33 100
+        EQ 34 51
+        MES "41 OK#n"
+        SKIP 1
+> _ _   MES "41 F#n"
+> _ _   GOTO 0
+        AT 0
+        MES "42 OK#n"
+        SKIP 1
+> _ _   MES "42 F#n"
+> _ _   BEEP 10 60
+        MES "43 OK#n"
+        SKIP 1
+> _ _   MES "43 F#n"
+> _ _   EXTERN 5 3
+        MES "44 OK#n"
+        SKIP 1
+> _ _   MES "44 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5
