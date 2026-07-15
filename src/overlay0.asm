@@ -1359,18 +1359,19 @@ key_scan:
     ; held shift keys must be invisible: caps is row $FE bit 0, symbol
     ; shift row $7F bit 1. A capital typed as a caps+letter chord
     ; otherwise wins the scan as the caps key itself (char 0), so
-    ; QUIT/END's Y/N confirm rejected shifted replies.
-    ld e, a
+    ; QUIT/END's Y/N confirm rejected shifted replies. Scratch in C
+    ; (reloaded per row) - E must survive no-hit scans for callers.
+    ld c, a
     ld a, b
     cp $FE
     jr nz, .n1
-    res 0, e
+    res 0, c
 .n1:
     cp $7F
     jr nz, .n2
-    res 1, e
+    res 1, c
 .n2:
-    ld a, e
+    ld a, c
     or a
     jr nz, .hit
     ld bc, 5
@@ -1410,13 +1411,14 @@ key_wait_char:
     call key_scan
     or a
     jr z, .press
-    ld e, a
-.release:
-    call key_scan
-    or a
+    ld (kwcChar), a             ; NOT a register: key_scan's hit path
+.release:                       ; shreds E on every pass while the key
+    call key_scan               ; is still held, so the old ld e, a
+    or a                        ; stash read back 0 after release
     jr nz, .release
-    ld a, e
+    ld a, (kwcChar)
     ret
+kwcChar: db 0
 
 ; --- interaction / movement / stub condacts ---
 h_inkey:                        ; 111: condition; key -> flag 60
