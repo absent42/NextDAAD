@@ -1317,7 +1317,9 @@ h_centre:                       ; 109
 h_paper:                        ; 65
     ld a, b
     cp 8
-    jp nc, h_unimpl             ; 8/9 semantics: marker-ignore this SP
+    ret nc                      ; 8 = no change, 9 = contrast: real 8/9
+                                ; palette semantics are SP6's concern -
+                                ; ignore silently, games use them freely
     ld a, WIN_PAPER
     call win_field
     ld (hl), b
@@ -1325,7 +1327,7 @@ h_paper:                        ; 65
 h_ink:                          ; 66
     ld a, b
     cp 8
-    jp nc, h_unimpl
+    ret nc                      ; 8/9: SP6 (graphics/palette) semantics
     ld a, WIN_INK
     call win_field
     ld (hl), b
