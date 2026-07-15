@@ -19,3 +19,6 @@ inpTOFrm:   db 0                ; editor countdown: last seen frame low byte
 inpRepKey:  db 0                ; autorepeat: last raw key code
 inpRepCnt:  db 0                ; autorepeat: frames until next repeat
 inpRepFrm:  db 0                ; autorepeat: last seen frame low byte
+inpPtr:     dw 0                ; parser: read cursor into inpPending
+prnSeen:    db 0                ; parser: pronoun already seen this order
+o2Pass:     db 0                ; parser: obj2_resolve pass (1 or 0)

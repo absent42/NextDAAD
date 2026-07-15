@@ -21,7 +21,6 @@ eng_init_game:
     xor a
     call win_select
     xor a
-    ld (parseHalt), a
     ld (procSP), a
     ld a, $FF
     ld (doallObj), a
@@ -137,14 +136,14 @@ obj_ptr:
     xor a                       ; error 0: invalid object
     jp err_raise
 
-; Push process A and run to completion or the PARSE latch.
+; Push process A and run the game loop forever (eng_step restarts
+; PRO 0 whenever the process stack fully unwinds - see its stack-empty
+; case). PARSE blocks synchronously inside inp_edit, so this busy loop
+; only advances once real input (or a timeout) is available.
 eng_run:
     ld a, 0
     call eng_push_proc
 .loop:
-    ld a, (parseHalt)
-    or a
-    ret nz
     call eng_step
     jr .loop
 
@@ -544,7 +543,9 @@ eng_doall_next:
     ret
 
 ; --- condact properties: bit 7 = action, bits 0-1 = argc ---
-; QUIT 20, MOVE 106, PICTURE 84 deliberately typed as conditions.
+; QUIT 20, MOVE 106, PICTURE 84, PARSE 73 deliberately typed as
+; conditions (PARSE: CF gates entry continuation - see check 58, which
+; relies on a failed/timed-out PARSE aborting its entry).
 cprops:
     db 1,1,1,1, 1,1,1,1         ; 0-7   AT..NOTWORN (C,1)
     db 1,1,1,1, 1,2,2,2         ; 8-15  CARRIED..LT (EQ/GT/LT C,2)
@@ -565,7 +566,7 @@ cprops:
     db $80,$82,$80,$81          ; 60-63 LISTOBJ EXTERN RAMSAVE RAMLOAD
     db $82,$81,$81,$81          ; 64-67 BEEP PAPER INK BORDER
     db 1,1,1                    ; 68-70 PREP NOUN2 ADJECT2 (C,1)
-    db $82,$82,$81,$81,$81      ; 71-75 ADD SUB PARSE LISTAT PROCESS
+    db $82,$82,1,$81,$81        ; 71-75 ADD SUB PARSE(C) LISTAT PROCESS
     db 2,$81,$81                ; 76-78 SAME(C,2) MES WINDOW
     db 2,2                      ; 79-80 NOTEQ NOTSAME (C,2)
     db $81,$82,$82              ; 81-83 MODE WINAT TIME
@@ -668,7 +669,7 @@ cdisp:
     DC h_adject2                ; 70  ADJECT2
     DC h_add                    ; 71  ADD
     DC h_sub                    ; 72  SUB
-    DC h_parse                  ; 73  PARSE
+    DC1 h_parse                 ; 73  PARSE
     DC h_listat                 ; 74  LISTAT
     DC h_process                ; 75  PROCESS
     DC h_same                   ; 76  SAME
@@ -732,7 +733,6 @@ numObj:     db 0
 procStack:  ds PROC_DEPTH*PREC_SIZE
 procSP:     db 0
 lastDone:   db 0
-parseHalt:  db 0
 curOpcode:  db 0
 curCondact: db 0
 curProps:   db 0

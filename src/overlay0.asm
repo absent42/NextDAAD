@@ -219,20 +219,6 @@ h_doall:                        ; 85: B = location (255 = here). Error
     ld (doallObj), a
     jp eng_doall_next
 
-h_parse:                        ; 73: SP3 halt latch
-    ld a, 1
-    ld (parseHalt), a
- IFDEF DEBUG
-    ld b, 31
-    ld c, 20
-    call dbg_at
-    ld hl, msgParse
-    call dbg_puts
- ENDIF
-    ld a, 1                     ; exit as done; eng_run stops on the
-    jp eng_exit_table           ; latch before any further step
-msgParse: db "PARSE", 0
-
 h_at:                           ; 0: flags[38] == B
     ld a, (flags+FLAG_PLAYER)
     cp b

@@ -44,7 +44,8 @@ main:
     ld c, 0
     call eng_init_game
     call eng_run
-    ; PARSE latch: idle below (SP4 replaces this hand-off)
+    ; eng_run only returns if a game runs off the end of PRO 0 with no
+    ; PARSE loop - idle then.
 idle:
  IFDEF DEBUG
     ld b, 31

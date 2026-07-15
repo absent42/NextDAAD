@@ -641,6 +641,571 @@ inp_cursor_put:
     call tm_putc_at             ; B row, C col, E attr, A glyph
     ret
 
+; --- vocabulary ---
+; In: inpWord = 5 chars, uppercase, space-padded, NUL at [5].
+; Out: CF set = not found; else D = word id, E = word type.
+; Vocab entries are 7 bytes: 5 chars stored 255-complemented (spaces
+; pad short words), id, type. Table ends at raw byte 0.
+voc_find:
+    call data_save
+    ld hl, (ddbHeader+HDR_VOCAB)
+    call rd_seek
+.entry:
+    call rd_next
+    or a
+    jr z, .miss                 ; raw 0 = end of table
+    ; compare 5 encoded chars against inpWord
+    ld hl, inpWord
+    ld b, 5
+.cmp:
+    cpl                         ; decode vocab char
+    cp (hl)
+    jr nz, .skip
+    inc hl
+    djnz .cmpnext
+    jr .matched
+.cmpnext:
+    call rd_next
+    jr .cmp
+.skip:
+    ; consume the rest of this entry: we have read (6-B) chars so far
+    ; including the mismatch; read the remaining (B-1) chars + id + type
+    ld a, b
+    dec a
+    add a, 2                    ; remaining chars + id + type
+    ld b, a
+.drain:
+    call rd_next
+    djnz .drain
+    jr .entry
+.matched:
+    call rd_next
+    ld d, a                     ; id
+    call rd_next
+    ld e, a                     ; type
+    call data_restore
+    or a
+    ret
+.miss:
+    call data_restore
+    scf
+    ret
+
+; Scan the ASCIIZ order at (inpPtr) for the next word: fills inpWord
+; (5 chars uppercase space-padded), advances inpPtr past the word.
+; Out: CF set = no more words (hit NUL or separator char); A = the
+; terminator when CF set (0 or the separator). Separator chars end the
+; ORDER, not just the word - inpPtr is left ON the separator (h_parse
+; consumes it).
+word_next:
+    ld hl, (inpPtr)
+.skipsp:
+    ld a, (hl)
+    or a
+    jr z, .end
+    cp ' '
+    jr nz, .chk
+    inc hl
+    jr .skipsp
+.chk:
+    call is_separator
+    jr z, .end
+    ; start of a word: fill inpWord
+    ld de, inpWord
+    ld b, 5
+.fill:
+    ld a, (hl)
+    or a
+    jr z, .pad
+    cp ' '
+    jr z, .pad
+    call is_separator
+    jr z, .pad
+    call to_upper
+    ld (de), a
+    inc de
+    inc hl
+    djnz .fill
+    ; word longer than 5: consume the excess
+.excess:
+    ld a, (hl)
+    or a
+    jr z, .fin
+    cp ' '
+    jr z, .fin
+    call is_separator
+    jr z, .fin
+    inc hl
+    jr .excess
+.pad:
+    ld a, ' '
+.padl:
+    ld (de), a
+    inc de
+    djnz .padl
+.fin:
+    xor a
+    ld (inpWord+5), a
+    ld (inpPtr), hl
+    or a                        ; CF clear: got a word
+    ret
+.end:
+    ld (inpPtr), hl
+    scf
+    ret
+
+; A = char: ZF set if order separator (. , ; :). Preserves A.
+is_separator:
+    cp '.'
+    ret z
+    cp ','
+    ret z
+    cp ';'
+    ret z
+    cp ':'
+    ret
+
+; A = char -> uppercase.
+to_upper:
+    cp 'a'
+    ret c
+    cp 'z'+1
+    ret nc
+    sub 32
+    ret
+
+; Copy inpLine to inpPending, replacing any whole word of vocabulary
+; type 5 (conjunction) with '.'. Case is preserved for echo purposes;
+; matching in word_next/voc_find uppercases as it goes.
+; Corrupts AF, BC, DE, HL.
+ingest_line:
+    ld hl, inpLine
+    ld de, inpPending
+.copy:
+    ld a, (hl)
+    ldi                         ; copy byte, HL++, DE++
+    or a
+    jr nz, .copy
+    ; conjunction pass: walk inpPending word by word; when voc_find
+    ; says type 5, overwrite the word's chars in place with '.' + spaces
+    ld hl, inpPending
+    ld (inpPtr), hl
+.scan:
+    ld hl, (inpPtr)
+    push hl                     ; word start candidate (pre-space skip)
+    call word_next
+    pop de
+    jr c, .done
+    push de
+    call voc_find
+    pop de
+    jr c, .scan                 ; unknown word: leave it
+    ld a, e
+    cp 5                        ; conjunction?
+    jr nz, .scan
+    ; overwrite: find the word start (skip spaces from DE), write '.'
+    ; then spaces up to (inpPtr)
+    ex de, hl
+.sksp:
+    ld a, (hl)
+    cp ' '
+    jr nz, .at
+    inc hl
+    jr .sksp
+.at:
+    ld (hl), '.'
+    inc hl
+.blank:
+    push hl
+    ld de, (inpPtr)
+    or a
+    sbc hl, de
+    pop hl
+    jr nc, .scan                ; reached the scan point
+    ld (hl), ' '
+    inc hl
+    jr .blank
+.done:
+    ret
+
+; Parse one order from (inpPtr) into the LS flags. Assumes flags were
+; reset by the caller (h_parse). Out: nothing (flags speak).
+parse_order:
+    xor a
+    ld (prnSeen), a             ; pronoun-in-sentence marker
+.word:
+    call word_next
+    jp c, .post                 ; out of jr range
+    call voc_find
+    jr c, .word                 ; unknown word: skip
+    ; slot-fill by type, first free slot only
+    ld a, e
+    or a
+    jr z, .verb
+    cp 2
+    jr z, .noun
+    cp 3
+    jr z, .adj
+    cp 4
+    jr z, .prep
+    cp 1
+    jr z, .adv
+    cp 6
+    jr z, .pron
+    jr .word                    ; conjunctions were neutralised; other
+                                 ; types ignored
+.verb:
+    ld a, (flags+FLAG_VERB)
+    inc a                       ; 255 -> 0?
+    jr nz, .word
+    ld a, d
+    ld (flags+FLAG_VERB), a
+    jr .word
+.noun:
+    ld a, (flags+FLAG_NOUN1)
+    inc a
+    jr nz, .noun2
+    ld a, d
+    ld (flags+FLAG_NOUN1), a
+    jr .word
+.noun2:
+    ld a, (flags+FLAG_NOUN2)
+    inc a
+    jr nz, .word
+    ld a, d
+    ld (flags+FLAG_NOUN2), a
+    jr .word
+.adj:
+    ld a, (flags+FLAG_ADJ1)
+    inc a
+    jr nz, .adj2
+    ld a, d
+    ld (flags+FLAG_ADJ1), a
+    jr .word
+.adj2:
+    ld a, (flags+FLAG_ADJ2)
+    inc a
+    jr nz, .word
+    ld a, d
+    ld (flags+FLAG_ADJ2), a
+    jr .word
+.prep:
+    ld a, (flags+FLAG_PREP)
+    inc a
+    jr nz, .word
+    ld a, d
+    ld (flags+FLAG_PREP), a
+    jr .word
+.adv:
+    ld a, (flags+FLAG_ADVERB)
+    inc a
+    jr nz, .word
+    ld a, d
+    ld (flags+FLAG_ADVERB), a
+    jr .word
+.pron:
+    ld a, (prnSeen)
+    or a
+    jr nz, .word                ; only the first pronoun acts
+    inc a
+    ld (prnSeen), a
+    ld a, (flags+FLAG_NOUN1)
+    inc a
+    jp nz, .word                ; noun1 already set: pronoun ignored (jr range)
+    ld a, (flags+FLAG_CPNOUN)
+    ld (flags+FLAG_NOUN1), a
+    ld a, (flags+FLAG_CPADJ)
+    ld (flags+FLAG_ADJ1), a
+    jp .word                    ; out of jr range
+.post:
+    ; 1. convertible noun: verb empty, noun1 < 20 -> verb = noun1
+    ;    (noun1 keeps its value - both hold the same code)
+    ld a, (flags+FLAG_VERB)
+    inc a
+    jr nz, .p2
+    ld a, (flags+FLAG_NOUN1)
+    cp 20
+    jr nc, .p2
+    ld (flags+FLAG_VERB), a
+.p2:
+    ; 2. previousVerb: order came from the buffer, verb empty,
+    ;    noun1 present -> inherit
+    ld a, (inpFromBuf)
+    or a
+    jr z, .p3
+    ld a, (flags+FLAG_VERB)
+    inc a
+    jr nz, .p3
+    ld a, (flags+FLAG_NOUN1)
+    inc a
+    jr z, .p3
+    ld a, (prevVerb)
+    ld (flags+FLAG_VERB), a
+.p3:
+    ; 3. late pronoun apply: noun1 still empty but a pronoun was seen
+    ld a, (flags+FLAG_NOUN1)
+    inc a
+    jr nz, .p4
+    ld a, (prnSeen)
+    or a
+    jr z, .p4
+    ld a, (flags+FLAG_CPNOUN)
+    inc a
+    jr z, .p4
+    dec a
+    ld (flags+FLAG_NOUN1), a
+    ld a, (flags+FLAG_CPADJ)
+    ld (flags+FLAG_ADJ1), a
+.p4:
+    ; 4. pronoun memory update: real noun1 >= 50
+    ld a, (flags+FLAG_NOUN1)
+    inc a
+    jr z, .p5
+    dec a
+    cp 50
+    jr c, .p5
+    ld (flags+FLAG_CPNOUN), a
+    ld a, (flags+FLAG_ADJ1)
+    ld (flags+FLAG_CPADJ), a
+.p5:
+    ; 5. previousVerb update
+    ld a, (flags+FLAG_VERB)
+    inc a
+    ret z
+    dec a
+    ld (prevVerb), a
+    ; 6. object-2 resolution when noun2 present
+    ld a, (flags+FLAG_NOUN2)
+    inc a
+    ret z
+    jp obj2_resolve
+
+; Resolve flags 44/45 to an object: flag 25 num, 26 container, 27 loc,
+; 39/40 extended attributes (crossed order, as SETCO). Preference:
+; pass 1 = objects present (carried, worn, or at the player's
+; location); pass 2 = anywhere. Not found: 25/27 = 252, 26/39/40 = 0.
+obj2_resolve:
+    ld a, 1
+    ld (o2Pass), a
+    call .pass
+    ret nc                      ; found in pass 1
+    xor a
+    ld (o2Pass), a
+    call .pass
+    ret nc
+    ld a, 252
+    ld (flags+FLAG_O2NUM), a
+    ld (flags+FLAG_O2LOC), a
+    xor a
+    ld (flags+FLAG_O2CON), a
+    ld (flags+FLAG_O2ATT), a
+    ld (flags+FLAG_O2ATT+1), a
+    ret
+.pass:
+    ld b, 0                     ; object number
+.next:
+    ld a, (numObj)
+    cp b
+    jr z, .miss
+    ; HL -> objTable entry (6 bytes/obj): loc,attr,ext lo,ext hi,noun,adj
+    push bc
+    ld a, b
+    ld l, a
+    ld h, 0
+    add hl, hl                  ; *2
+    ld e, l
+    ld d, h
+    add hl, hl                  ; *4
+    add hl, de                  ; *6
+    ld de, objTable
+    add hl, de
+    pop bc
+    push hl
+    ld de, 4
+    add hl, de
+    ld a, (flags+FLAG_NOUN2)
+    cp (hl)                     ; object noun match?
+    jr nz, .no
+    inc hl
+    ld a, (hl)                  ; object adjective
+    cp 255
+    jr z, .adjok                ; object has no adjective: matches
+    ld e, a
+    ld a, (flags+FLAG_ADJ2)
+    cp 255
+    jr z, .adjok                ; player gave no adjective: matches
+    cp e
+    jr nz, .no
+.adjok:
+    ; presence filter on pass 1
+    ld a, (o2Pass)
+    or a
+    jr z, .take
+    pop hl
+    push hl
+    ld a, (hl)                  ; location
+    cp OBJ_CARRIED
+    jr z, .take
+    cp OBJ_WORN
+    jr z, .take
+    ld e, a
+    ld a, (flags+FLAG_PLAYER)
+    cp e
+    jr nz, .no
+.take:
+    pop hl
+    ld a, b
+    ld (flags+FLAG_O2NUM), a
+    ld a, (hl)                  ; loc
+    ld (flags+FLAG_O2LOC), a
+    inc hl
+    ld a, (hl)                  ; attribs
+    and $40
+    jr z, .ncon
+    ld a, 128
+.ncon:
+    ld (flags+FLAG_O2CON), a
+    inc hl
+    ld a, (hl)                  ; extAttr first byte -> flag 39
+    ld (flags+FLAG_O2ATT), a
+    inc hl
+    ld a, (hl)                  ; extAttr second byte -> flag 40
+    ld (flags+FLAG_O2ATT+1), a
+    or a                        ; CF clear = found
+    ret
+.no:
+    pop hl
+    inc b
+    jr .next
+.miss:
+    scf
+    ret
+
+h_parse:                        ; 73: condition-like. B = option.
+    ld a, b
+    or a
+    jr z, .p0
+    ; PARSE 1+ (quoted strings): deferred - fail as condition + done
+    call eng_set_done
+    jp ovl1_false
+.p0:
+    ; pending buffer empty?
+    ld a, (inpPending)
+    or a
+    jr nz, .frombuf
+    ; fresh input: prompt, then edit
+    xor a
+    ld (inpFromBuf), a
+    ld a, (flags+FLAG_PROMPT)
+    or a
+    jr nz, .fixed
+    ld a, (frameCounter)
+    and 3
+    add a, 2                    ; SM2..SM5
+    jr .prompt
+.fixed:
+    ld e, a
+    ld a, (ddbHeader+HDR_NUMSYS)
+    cp e
+    jr c, .edit                 ; out of range: no prompt
+    jr z, .edit
+    ld a, e
+.prompt:
+    ld e, a
+    ld a, 0
+    call print_msg
+    call prn_newline
+.edit:
+    call inp_edit
+    jr nc, .got
+    ; timeout during input: fail as condition + done
+    call eng_set_done
+    jp ovl1_false
+.got:
+    ; post-edit input options (flag 49): bit 3 clear window,
+    ; bit 4 reprint the line in the current stream
+    ld a, (flags+FLAG_TIMECTL)
+    bit 3, a
+    jr z, .nocls
+    call win_cls
+.nocls:
+    ld a, (flags+FLAG_TIMECTL)
+    bit 4, a
+    jr z, .noecho
+    call inp_reprint            ; prn_char each inpLine char + newline
+.noecho:
+    call ingest_line
+    ld hl, inpPending
+    ld (inpPtr), hl
+    jr .extract
+.frombuf:
+    ld a, 1
+    ld (inpFromBuf), a
+    ld hl, inpPending
+    ld (inpPtr), hl
+.extract:
+    ; reset the LS flags
+    ld a, 255
+    ld (flags+FLAG_VERB), a
+    ld (flags+FLAG_NOUN1), a
+    ld (flags+FLAG_ADJ1), a
+    ld (flags+FLAG_ADVERB), a
+    ld (flags+FLAG_PREP), a
+    ld (flags+FLAG_NOUN2), a
+    ld (flags+FLAG_ADJ2), a
+    call parse_order
+    ; consume the trailing separator and compact inpPending to the
+    ; remainder (the next order), so the next PARSE reads it
+    call pending_compact
+    ; success = verb or noun1 present
+    ld a, (flags+FLAG_VERB)
+    inc a
+    jr nz, .ok
+    ld a, (flags+FLAG_NOUN1)
+    inc a
+    jr nz, .ok
+    call eng_set_done           ; original quirk: failed parse is done
+    jp ovl1_false
+.ok:
+    jp ovl1_true
+
+; Shift the unconsumed remainder of inpPending (from inpPtr, skipping
+; one leading separator and spaces) to the front of inpPending.
+pending_compact:
+    ld hl, (inpPtr)
+    ld a, (hl)
+    or a
+    jr z, .empty
+    call is_separator
+    jr nz, .copy                ; safety: not on a separator
+    inc hl
+.copy:
+    ld de, inpPending
+.mv:
+    ld a, (hl)
+    ldi
+    or a
+    jr nz, .mv
+    ret
+.empty:
+    xor a
+    ld (inpPending), a
+    ret
+
+; Echo inpLine into the current window (flag 49 bit 4).
+inp_reprint:
+    ld hl, inpLine
+.l:
+    ld a, (hl)
+    or a
+    jp z, prn_newline
+    push hl
+    ld c, a
+    call prn_char
+    pop hl
+    inc hl
+    jr .l
+
 ; HL = flag48*50 -> inpTOFrames; seed the editor's frame baseline.
 inp_to_load:
     ld a, (flags+FLAG_TIMEOUT)
