@@ -260,7 +260,7 @@ ALL   20  noun
 > _ _   MES "25 F#n"
 > _ _   PUTIN 2 1
         ISAT 2 1
-        EQ 1 1
+        EQ 1 0        ; the coin was the only carried object
         MES "26 OK#n"
         SKIP 1
 > _ _   MES "26 F#n"

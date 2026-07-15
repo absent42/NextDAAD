@@ -46,8 +46,8 @@ main:
  ENDIF
 idle:
  IFDEF DEBUG
-    ld b, 25
-    ld c, 0
+    ld b, 31
+    ld c, 60
     call dbg_at
     ld hl, msgFrames
     call dbg_puts
