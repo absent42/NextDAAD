@@ -217,6 +217,10 @@ inp_edit:
     ld (inpLen), a
     ld (inpCur), a
     ld (inpLine), a
+    ld a, 1                     ; locks BEFORE any echo, including the
+    ld (moreLock), a            ; auto-recall below (Task 3 review
+    ld (wrapLock), a            ; deferred edge, now load-bearing:
+                                ; recalled echo must not word-buffer)
     ; auto-recall after timeout: flag 49 bit 5 requests it, bit 6 says
     ; preserved data exists (set when a timeout interrupted typing)
     ld a, (flags+FLAG_TIMECTL)
@@ -225,9 +229,6 @@ inp_edit:
     jr nz, .fresh
     call inp_recall_last        ; preload and echo inpLast
 .fresh:
-    ld a, 1
-    ld (moreLock), a
-    ld (wrapLock), a            ; editor echo bypasses word buffering
     ; timeout countdown init (0 = disarmed)
     ld hl, 0
     ld (inpTOFrames), hl
