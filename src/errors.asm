@@ -1,9 +1,15 @@
 ; DAAD runtime errors 0-8. Debug: classic diagnostic on row 30.
-; Release: border 3, halt. Never returns.
+; Both build types paint a magenta bar across tilemap row 0 - the
+; classic border is INVISIBLE behind the full-coverage 640x256
+; tilemap, so the border write alone signals nothing once the
+; engine display is active (owner-discovered). The border write is
+; kept for completeness. Never returns.
 ; Codes raised in SP3: 0 (obj_ptr), 2 (obj_move to 255), 3 (PROCESS
 ; depth), 4 (nested DOALL), 5 (illegal opcode), 6 (bad process),
 ; 7 (bad message/location number). Codes 1 and 8 are defined for
 ; parity and first raised by later sub-projects.
+; Bar: tm_fill_rect row 0, full width, space glyph, pair 31
+; (paper 3 magenta, ink 7) = attr 62 via tmAttr.
 err_raise:
     ld (errCode), a
  IFDEF DEBUG
@@ -37,8 +43,16 @@ err_raise:
     ld a, (curCondact)
     call dbg_hex8
  ENDIF
-    ld a, 3                     ; magenta border = runtime error
-    out ($FE), a
+    ld a, 62                    ; pair 31: magenta paper, white ink
+    ld (tmAttr), a
+    ld b, 0
+    ld c, 0
+    ld d, 1
+    ld e, TM_COLS               ; magenta bar across row 0
+    ld a, GLYPH_SPACE
+    call tm_fill_rect
+    ld a, 3                     ; border too (invisible under the
+    out ($FE), a                ; tilemap, correct elsewhere)
     di
 .halt:
     jr .halt
