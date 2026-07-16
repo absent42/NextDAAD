@@ -584,21 +584,31 @@ l2_dbg_hook:
     ret
 
 ; --- Round 8: bare-metal isolation ladder ---
-; The card renders correctly for a flash then goes permanently grey
-; every round so far. Rather than guess further, prove which
-; subsystem does it by building the display up from nothing: hold P
+; Built to find why the card rendered correctly for a flash then went
+; permanently grey every round through round 7. It found the answer:
+; stage 0 (below) came back flat BLACK, not the testcard - proof Layer
+; 2 was rendering but sitting BEHIND CSpect's opaque zero-filled ULA
+; screen at the NR $15 priority in use at the time. See l2_enable's
+; header comment (overlay2.asm) for the architecture fix that came out
+; of this (Layer 2 now on top, transparent outside the art). Kept as a
+; general-purpose diagnostic for future Layer 2 regressions: hold P
 ; from power-on (checked here, at the very top of main:, BEFORE
 ; hw_init/im2_init/txt_init/anything else runs) for a 4-stage ladder,
 ; each stage adding exactly one more piece and redrawing:
 ;   Stage 0: hw_init only. No im2_init (interrupts stay off - main:
 ;            already did `di` before this runs; the ISR never fires).
 ;            No txt_init (no tilemap at all). Just the L2 recipe
-;            (mode+clip+scroll+enable+priority) and the gradient/
-;            marker draw, 1 marker block, top-left. If stable HERE,
-;            the recipe itself is validated with everything else off.
+;            (mode+clip+scroll+enable+priority+transparency) and the
+;            gradient/marker draw, 1 marker block, top-left. Expected
+;            appearance NOW: the card's drawable area (see tc_gradient_
+;            320's header comment on 320 mode's 240-line bound), with
+;            hw_init's ULA black showing through Layer 2's transparent
+;            fill everywhere outside it (no txt_init yet to disable
+;            the ULA output or clear it to anything else) - that black
+;            border is expected here, not a fault.
 ;   Stage 1: + im2_init (also does EI - the ISR is now live and
-;            ticking frameCounter every frame). Still no tilemap.
-;            2 marker blocks.
+;            ticking frameCounter every frame). Still no tilemap, same
+;            expected black surround. 2 marker blocks.
 ;   Stage 2: + txt_init (tilemap on) + tm_clear_transparent over the
 ;            card area + one status line. 3 marker blocks (belt and
 ;            braces - costs nothing, tilemap text is the real stage
