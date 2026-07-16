@@ -658,8 +658,8 @@ cdisp:
     DC h_hasnat                 ; 59  HASNAT
     DC h_listobj                ; 60  LISTOBJ
     DC h_extern                 ; 61  EXTERN
-    DC h_unimpl                 ; 62  RAMSAVE
-    DC h_unimpl                 ; 63  RAMLOAD
+    DC1 h_ramsave                ; 62  RAMSAVE
+    DC1 h_ramload                ; 63  RAMLOAD
     DC h_unimpl                 ; 64  BEEP
     DC h_paper                  ; 65  PAPER
     DC h_ink                    ; 66  INK

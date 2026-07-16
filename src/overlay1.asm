@@ -1325,4 +1325,55 @@ h_load:                         ; 26: arg ignored
 
 savTimeStash: db 0
 
+h_ramsave:                      ; 62: flags + object locations -> buffer
+    ld hl, flags
+    ld de, ramSaveBuf
+    ld bc, 256
+    ldir                         ; DE left at ramSaveBuf+256
+    ld hl, objTable
+    ld a, (numObj)
+    or a
+    jr z, .mark
+    ld b, a
+.g:
+    ld a, (hl)
+    ld (de), a
+    inc de
+    add hl, OBJ_SIZE
+    djnz .g
+.mark:
+    ld a, 1
+    ld (ramSaveOk), a
+    ret
+
+h_ramload:                      ; 63: restore locs + flags 0..B inclusive
+    ld a, (ramSaveOk)
+    or a
+    ret z                       ; nothing saved: no-op
+    ; object locations first (buffer offset 256)
+    ld hl, ramSaveBuf+256
+    ld de, objTable
+    ld a, (numObj)
+    or a
+    jr z, .flags
+    push bc                     ; preserve arg1 (B): .s below uses B as
+                                 ; its own djnz counter
+    ld b, a
+.s:
+    ld a, (hl)
+    ld (de), a
+    inc hl
+    add de, OBJ_SIZE
+    djnz .s
+    pop bc                      ; restore the original arg1
+.flags:
+    ; flags 0..B inclusive = B+1 bytes (B=255 -> 256, no overflow)
+    ld hl, ramSaveBuf
+    ld de, flags
+    ld c, b
+    ld b, 0
+    inc bc                      ; BC = arg1 + 1
+    ldir
+    ret
+
     ASSERT $ <= OVL_LIMIT

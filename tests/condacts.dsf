@@ -620,6 +620,48 @@ NORTH 0
         MES "60 OK#n"
         SKIP 1
 > _ _   MES "60 F#n"
+; ---- persistence checks ----
+; A6 RAMLOAD with nothing saved: no-op
+> _ _   LET 120 7
+        RAMLOAD 200
+        EQ 120 7
+        MES "A6 OK#n"
+        SKIP 1
+> _ _   MES "A6 F#n"
+; 61 RAMSAVE/RAMLOAD partial restore (inclusive bound)
+> _ _   LET 116 11
+        LET 117 22
+        PLACE 2 1               ; coin into the box
+        RAMSAVE
+        LET 116 99
+        LET 117 88
+        PLACE 2 0
+        RAMLOAD 116
+        EQ 116 11               ; flag 116 <= bound: restored
+        EQ 117 88               ; flag 117 above bound: preserved
+        ISAT 2 1                ; object location restored
+        MES "61 OK#n"
+        SKIP 1
+> _ _   MES "61 F#n"
+; 62 SAVE then LOAD round-trip (owner types the same name twice)
+> _ _   MES "62 TYPE NAME: t1#n"
+        LET 118 77
+        SAVE 0
+        LET 118 5
+        MES "62 TYPE NAME: t1#n"
+        LOAD 0
+        EQ 118 77
+        MES "62 OK#n"
+        SKIP 1
+> _ _   MES "62 F#n"
+; 63 LOAD of a missing file: SM57, no engine error, flags untouched
+> _ _   LET 119 42
+        MES "63 TYPE NAME: nofile#n"
+        LOAD 0
+        EQ 119 42
+        MES "63 OK#n"
+        SKIP 1
+> _ _   MES "63 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5
