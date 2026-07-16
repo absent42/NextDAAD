@@ -452,6 +452,10 @@ moreSaveMMU:  db 0
 morePhysMMU6: db 0
 moreSaveRdSv: ds 5
 wrapBuf:      ds 80             ; pending word (word-wrap), max = WIN_W
+    ASSERT TM_COLS <= 80        ; wrapBuf sizing relies on the WINAT/
+                                 ; WINSIZE clamps bounding WIN_W by
+                                 ; TM_COLS; a wider tilemap needs a
+                                 ; bigger buffer
 wrapLen:      db 0             ; chars buffered in wrapBuf
 wrapLock:     db 0             ; non-zero: bypass buffering (editor/SM32)
 wrapIdx:      db 0             ; prn_flush emit-loop cursor

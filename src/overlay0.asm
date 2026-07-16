@@ -124,7 +124,8 @@ h_notdone:                      ; 103
     jp eng_exit_table
 
 h_cls:                          ; 29 (pilot: the driver clears the
-    call win_cls                ; boot diagnostics before the suite)
+    call prn_flush               ; boot diagnostics before the suite)
+    call win_cls
     jp prn_reset_lines
 
 h_process:                      ; 75 (pilot: the driver nests PRO 1)
@@ -373,14 +374,16 @@ h_copybf:                       ; 126: flags[B] = flags[C]
 h_print:                        ; 53: flags[B] as decimal
     call fptr
     ld a, (hl)
-    jp prn_dec8
+    call prn_dec8
+    jp prn_flush
 h_dprint:                       ; 27: 16-bit from flags[B], flags[B+1]
     call fptr
     ld a, (hl)
     inc l                       ; flags is 256-aligned: L wrap-safe
     ld h, (hl)
     ld l, a
-    jp prn_dec16
+    call prn_dec16
+    jp prn_flush
 h_space:                        ; 57
     ld c, ' '
     jp prn_char
@@ -1258,6 +1261,7 @@ h_saveat:                       ; 97
     ld (savedCurY), a
     ret
 h_backat:                       ; 98
+    call prn_flush
     ld a, WIN_CURX
     call win_field
     ld a, (savedCurX)
@@ -1267,6 +1271,9 @@ h_backat:                       ; 98
     ld (hl), a
     ret
 h_printat:                      ; 99: line B, col C inside the window
+    push bc                     ; prn_flush corrupts all regs; B/C are
+    call prn_flush               ; still needed below
+    pop bc
     ld a, WIN_H
     call win_field
     ld a, (hl)
@@ -1290,6 +1297,9 @@ h_printat:                      ; 99: line B, col C inside the window
     ld (hl), b
     ret
 h_tab:                          ; 118: column B, row kept
+    push bc                     ; prn_flush corrupts all regs; B is
+    call prn_flush               ; still needed below
+    pop bc
     ld c, b
     ld a, WIN_W
     call win_field
@@ -1339,6 +1349,7 @@ h_display:                      ; 28: 0 = picture (stub), else clear
     ld a, b
     or a
     jp z, h_unimpl
+    call prn_flush
     call win_cls
     jp prn_reset_lines
 
@@ -1447,8 +1458,8 @@ h_pause:                        ; 35: B frames, 0 = 256
 
 ; E = SM number -> D = first decoded character (token-aware).
 sm_first_char:
-    push de                     ; rd_push (rd_slot) and data_save both
-    call rd_push                ; clobber E; msg_seek needs E = SM number
+    push de                     ; rd_push and data_save both preserve DE
+    call rd_push                ; now; bracket kept but redundant
     call data_save
     pop de
     ld a, 0

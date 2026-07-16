@@ -44,8 +44,8 @@ main:
     ld c, 0
     call eng_init_game
     call eng_run
-    ; eng_run only returns if a game runs off the end of PRO 0 with no
-    ; PARSE loop - idle then.
+    ; eng_run never returns (eng_step re-pushes PRO 0 on an empty stack);
+    ; this loop is a dead safety net and the DEBUG FRAMES display.
 idle:
  IFDEF DEBUG
     ld b, 31

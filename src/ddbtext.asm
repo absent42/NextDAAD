@@ -46,12 +46,12 @@ rd_next:
     pop hl
     ret
 
-; Three-level reader save stack (worst case: object name inside token
-; expansion when More... fires and SM32 itself starts with a token).
-; Depth overflow is a coding error: fatal, border 2.
+; Four-level reader save stack (worst case: message token -> objname ->
+; name token -> More... fires -> tokenized SM32). Depth overflow is a
+; coding error: fatal, border 2. Preserves DE.
 rd_push:
     ld a, (rdSaveSP)
-    cp 3
+    cp 4
     jr nc, rd_stack_fatal
     call rd_slot                ; HL -> slot for level A
     ld a, (rdPage)
@@ -66,6 +66,7 @@ rd_push:
     inc (hl)
     ret
 
+; Preserves DE. Corrupts HL, A.
 rd_pop:
     ld a, (rdSaveSP)
     or a
@@ -84,14 +85,16 @@ rd_pop:
     ld (rdPtr+1), a
     ret
 
-; A = level 0-2 -> HL = rdSave + A*3. Corrupts DE.
+; A = level 0-3 -> HL = rdSave + A*3. Preserves DE.
 rd_slot:
+    push de
     ld hl, rdSave
     ld e, a
     ld d, 0
     add hl, de
     add hl, de
     add hl, de
+    pop de
     ret
 
 rd_stack_fatal:
@@ -196,5 +199,5 @@ txt_next_decoded:
 rdPage:       db 0
 rdPtr:        dw 0
 rdSaveSP:     db 0
-rdSave:       ds 9              ; 3 levels x (page, ptr lo, ptr hi)
+rdSave:       ds 12             ; 4 levels x (page, ptr lo, ptr hi)
 tokActive:    db 0              ; txt_next_decoded: inside a token
