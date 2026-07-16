@@ -24,16 +24,19 @@ IM2_STUB        equ $BEBE   ; 3-byte JP written at runtime
 
 ; --- Physical bank map (16K banks) ---
 BANK_SYS_LAST   equ 8       ; 0-8 reserved: system, ULA bank 5, code bank 2
-BANK_L2_FIRST   equ 9       ; 9-13 Layer 2 (5 banks covers 320x256)
-BANK_L2_LAST    equ 13
+BANK_L2_FIRST   equ 9       ; 9-13 Layer 2 boot FRONT surface (5 banks covers
+BANK_L2_LAST    equ 13      ; 320x256); flips swap roles with 30-34
 BANK_POOL_A     equ 14      ; 14-15 allocator pool
 BANK_POOL_A_END equ 15
 BANK_DDB_FIRST  equ 16      ; 16-23 DDB, 128K maximum
 BANK_DDB_LAST   equ 23
 BANK_AUDIO_FIRST equ 24     ; 24-27 reserved for music and SFX
 BANK_AUDIO_LAST equ 27
-BANK_POOL_B     equ 30      ; 30-47 allocator pool (base model ends at 47); bank 28
-                            ; withdrawn for overlay 0/1, bank 29 for overlay 2
+BANK_L2BACK_FIRST equ 30    ; 30-34 Layer 2 boot BACK surface (double buffer:
+BANK_L2BACK_LAST equ 34     ; gfx_blit renders here, then flips NR $12)
+BANK_POOL_B     equ 35      ; 35-47 allocator pool (base model ends at 47); bank 28
+                            ; withdrawn for overlay 0/1, bank 29 for overlay 2,
+                            ; banks 30-34 for the Layer 2 back surface
 BANK_BASE_LAST  equ 47
 BANK_EXP_FIRST  equ 48      ; 48-111 expansion pool when detected
 BANK_EXP_LAST   equ 111

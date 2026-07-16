@@ -1,7 +1,7 @@
 ; Bank allocator and MMU paging helpers.
-; Static map (see nextdaad.inc): 0-8 system, 9-13 Layer 2, 14-15 pool,
-; 16-23 DDB, 24-27 audio, 28 overlay 0/1, 29 overlay 2, 30-47 pool,
-; 48-111 expansion pool if present.
+; Static map (see nextdaad.inc): 0-8 system, 9-13 Layer 2 front,
+; 14-15 pool, 16-23 DDB, 24-27 audio, 28 overlay 0/1, 29 overlay 2,
+; 30-34 Layer 2 back, 35-47 pool, 48-111 expansion pool if present.
 
 ; Map 8K physical page A into slot 6 ($C000-$DFFF).
 ; Corrupts AF only. Never touches D.

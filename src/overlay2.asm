@@ -25,14 +25,18 @@ ovl2_false:
 ; A = 0 (256x192 256-colour) or 1 (320x256 256-colour) on entry.
 ; Programs the resolution (NR $70 bits 5-4, guide 728-744: 00 =
 ; 256x192, 01 = 320x256), the Layer 2 start bank (NR $12, guide
-; 586-599: 16K units, BANK_L2_FIRST = bank 9, guide line 41 "only use
-; 16K banks 9 or greater"), and the global transparent index (NR $14 =
-; TM_TRANSP_ATTR): with Layer 2 on top (l2_enable) a pixel equal to
-; this index falls through to the tilemap/ULA below, so the L2 recipe
-; sets it itself. txt_init programs the same register/value for the
-; tilemap - shared, harmless, last writer wins with an identical value.
-; Then the clip window and scroll offset via l2_clip_set. Remembers the
-; mode in l2Mode for l2_clear/l2_testcard. Corrupts AF.
+; 586-599: 16K units, guide line 41 "only use 16K banks 9 or
+; greater") from l2FrontBank - the double-buffer flip (l2_flip_swap)
+; swaps the surface roles FIRST and then calls here, so the
+; resolution and the new front bank land back-to-back (see
+; l2_flip_swap's header for the glitch-window math) - and the global
+; transparent colour (NR $14 = TM_TRANSP_ATTR): with Layer 2 on top
+; (l2_enable) a pixel whose palette output equals this colour falls
+; through to the tilemap/ULA below, so the L2 recipe sets it itself.
+; txt_init programs the same register/value for the tilemap - shared,
+; harmless, last writer wins with an identical value. Then the clip
+; window and scroll offset via l2_clip_set. Remembers the mode in
+; l2Mode for l2_clear/l2_testcard. Corrupts AF.
 l2_mode_set:
     ld (l2Mode), a
     push af
@@ -44,7 +48,8 @@ l2_mode_set:
     xor a                        ; NR $70: bits5-4=00 (256x192, 8bpp)
 .set:
     nextreg NR_L2_CTRL, a
-    nextreg NR_L2_BANK, BANK_L2_FIRST
+    ld a, (l2FrontBank)
+    nextreg NR_L2_BANK, a
     nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
     pop af
     jp l2_clip_set                ; also zeroes the scroll offset, then ret
@@ -129,17 +134,31 @@ l2_disable:
     nextreg NR_DISPLAY_CTRL, a
     ret
 
-; Fill the active surface (per the last l2_mode_set) with the current
-; NR $14 transparent index (guide 616-620) - read back rather than
-; assumed, though l2_mode_set always programs it to TM_TRANSP_ATTR
-; first. With Layer 2 on top (l2_enable) a pixel at this index lets the
-; tilemap/ULA below show through. 256x192 = 6 x 8K pages, 320x256 = 10 x
-; 8K pages (guide 160/306), both from 8K page BANK_L2_FIRST*2 (guide
-; 599). A flat memset works for both regardless of the row-/column-major
-; layout, since every byte gets the same value. Brackets the remap with
-; data_save/data_restore so slot 6 is left as the caller found it.
-; Corrupts AF, BC, DE, HL.
+; Fill a Layer 2 surface with the current NR $14 transparent colour
+; (guide 616-620) - read back rather than assumed, though l2_mode_set
+; always programs it to TM_TRANSP_ATTR first. With Layer 2 on top
+; (l2_enable) a pixel whose palette output equals that colour lets the
+; tilemap/ULA below show through. Page count per l2Mode: 256x192 = 6 x
+; 8K pages, 320x256 = 10 x 8K pages (guide 160/306). A flat memset
+; works for both regardless of the row-/column-major layout, since
+; every byte gets the same value. Brackets the remap with data_save/
+; data_restore so slot 6 is left as the caller found it. Three entry
+; points - all corrupt AF, BC, DE, HL:
+;   l2_clear      - the FRONT (displayed) surface: DEBUG diagnostics,
+;                   which have no flip step;
+;   l2_clear_back - the BACK (render target) surface: gfx_blit's
+;                   pre-clear and h_display's instant clear, both
+;                   invisible until the flip;
+;   l2_clear_at   - A = first 8K page of any surface (internal).
 l2_clear:
+    ld a, (l2FrontBank)
+    add a, a
+    jr l2_clear_at
+l2_clear_back:
+    ld a, (l2BackBank)
+    add a, a
+l2_clear_at:
+    ld (l2PageCur), a
     call data_save
     ld e, NR_L2_TRANSP
     call nr_read
@@ -153,8 +172,6 @@ l2_clear:
     ld a, 10
 .cnt:
     ld (l2PageCnt), a
-    ld a, BANK_L2_FIRST*2
-    ld (l2PageCur), a
 .loop:
     ld a, (l2PageCur)
     call data_map_page
@@ -268,6 +285,25 @@ h_picture:
     jp c, ovl2_false
     jp ovl2_true
 
+; Swap the front/back Layer 2 surface roles - VARIABLES ONLY, no
+; hardware write. The caller owns the NR $12 update: gfx_blit swaps
+; and then calls l2_mode_set, so the resolution (NR $70) and the new
+; front bank (NR $12) land back-to-back - two nextreg writes one
+; register load apart, ~40 T-states = ~1.4us at 28MHz, so the worst
+; case is the raster catching a sub-scanline sliver of the old
+; surface in the new mode (one scanline is 64us), versus a full frame
+; of wrong-mode flash if either register changed alone with the other
+; waiting a frame; h_display's clear path writes NR $12
+; directly (no mode change, no window at all). Corrupts AF, B.
+l2_flip_swap:
+    ld a, (l2FrontBank)
+    ld b, a
+    ld a, (l2BackBank)
+    ld (l2FrontBank), a
+    ld a, b
+    ld (l2BackBank), a
+    ret
+
 ; 28 DISPLAY (action): B = 0 draws the staged picture, B != 0 clears
 ; the picture plane. Semantics pinned against jdaad _DISPLAY
 ; (jdaad.js 2750-2754): jdaad IGNORES its argument entirely - it
@@ -278,16 +314,25 @@ h_picture:
 ; area". Pinned here: B = 0 follows both (blit the stage, no-op when
 ; empty, per the jdaad line above); B != 0 follows the DAAD
 ; reference, with "window area" read as the picture plane - the
-; Layer 2 surface is cleared to the transparent index so the tilemap
+; Layer 2 surface is cleared to the transparent colour so the tilemap
 ; text underneath shows through. (The old overlay0 stub's text-window
 ; CLS for non-zero was wrong on this architecture: pictures never
 ; occupy the text plane, so DISPLAY must never destroy text.)
-; Corrupts everything.
+; The clear goes through the BACK surface + flip rather than clearing
+; the front in place: one NR $12 write makes it instantaneous, where
+; a front clear would wipe 48-80K through the visible surface -
+; exactly the progressive-paint artifact double buffering exists to
+; kill. Mode, clip and palette are left as they stand. Corrupts
+; everything.
 h_display:
     ld a, b
     or a
-    jp nz, l2_clear
-    jp gfx_blit
+    jp z, gfx_blit
+    call l2_clear_back
+    call l2_flip_swap
+    ld a, (l2FrontBank)
+    nextreg NR_L2_BANK, a
+    ret
 
 ; A = picture number. Ensure its palette+pixels are in cache banks
 ; and stage it for DISPLAY 0. Cache hit: cache_touch + stage, no SD
@@ -633,11 +678,19 @@ gfx_load_rollback:
     djnz .free
     ret
 
-; Draw the staged cache entry: program the staged mode, clear the
-; whole surface to the transparent index (which also pre-clears the
-; remainder below a short picture to $FE), load the file's embedded
-; 512-byte 9-bit palette, copy the pixel rows top-aligned, then
-; enable Layer 2. No-op when nothing is staged. Corrupts everything.
+; Draw the staged cache entry, double-buffered: everything renders to
+; the BACK surface (invisible - the old picture stays intact on the
+; front throughout), then the surfaces flip. Sequence: stage the mode
+; in l2Mode (variable only - the hardware keeps displaying the old
+; picture in the old mode), clear the back surface to the transparent
+; colour (also pre-clears the remainder below a short picture to
+; $FE), copy the pixel rows top-aligned, load the file's embedded
+; 512-byte 9-bit palette (deliberately LAST before the flip: the
+; palette is global, so the old picture wears the new colours only
+; for the ~1ms the load takes instead of the whole render), then
+; l2_flip_swap + l2_mode_set - resolution and new front bank land
+; back-to-back, no wrong-mode flash (see l2_flip_swap) - and
+; l2_enable. No-op when nothing is staged. Corrupts everything.
 ;
 ; Walk order: SOURCE-ROWS-SCATTER, chosen over dest-columns-gather.
 ; The source stream is row-major (Gfx2Next emits rows sequentially);
@@ -655,16 +708,22 @@ gfx_load_rollback:
 ;                   src maps force it every column) = ~9; 320 columns
 ;                   -> ~2890 remaps, AND a 16-bit stride-add with a
 ;                   page-crossing test per pixel in the inner loop.
-; Scatter wins on both remap count and inner-loop cost. (DMA upgrade
-; noted as an SP8 rider.) 256-wide mode is trivially linear-to-linear
-; (row-major both sides): 2 remaps per row.
+; Scatter wins on both remap count and inner-loop cost. With the back-
+; buffer render the paint is no longer visible mid-blit - a DMA upgrade
+; (SP8 rider) would now only shorten the redraw latency, not fix an
+; artifact. 256-wide mode is trivially linear-to-linear (row-major
+; both sides): 2 remaps per row.
 gfx_blit:
     ld a, (stagedEntry)
     cp GFX_EMPTY
     ret z
     ld a, (stagedMode)
-    call l2_mode_set
-    call l2_clear               ; own data_save/restore - run BEFORE ours
+    ld (l2Mode), a              ; variable only - sizes l2_clear_back's
+                                ; page count; NR $70/$12 wait for the flip
+    ld a, (l2BackBank)
+    add a, a
+    ld (gfxSurfPage), a         ; render target = the back surface
+    call l2_clear_back          ; own data_save/restore - run BEFORE ours
     call data_save
     ; source stream = the entry's bank-list run, from its first page
     ld a, (stagedEntry)
@@ -673,13 +732,9 @@ gfx_blit:
     ld a, (hl)                  ; GCE_FIRST
     ld (gfxSrcIdx), a
     xor a
-    ld (gfxSrcHalf), a
-    call gfx_src_remap
-    ld hl, DATA_WINDOW          ; palette: stream offset 0, 512 bytes,
-    ld b, 1                     ; wholly inside the first page; format 1
-    call l2_palette_load        ; = 256 x 2-byte 9-bit entries
-    ld hl, DATA_WINDOW+512
-    ld (gfxSrcPtr), hl
+    ld (gfxSrcHalf), a          ; (no remap needed here - gfx_row_fetch
+    ld hl, DATA_WINDOW+512      ; re-asserts the source mapping itself)
+    ld (gfxSrcPtr), hl          ; skip the palette (loaded after the rows)
     ld a, (stagedMode)
     or a
     ld de, 256
@@ -687,7 +742,7 @@ gfx_blit:
     ld de, 320
 .width:
     ld (gfxWidth), de
-    ld a, BANK_L2_FIRST*2       ; 256-wide linear dest stream init
+    ld a, (gfxSurfPage)         ; 256-wide linear dest stream init
     ld (gfxDstPage), a          ; (320-wide scatter reinitialises
     ld hl, DATA_WINDOW          ; gfxDstPage itself every row)
     ld (gfxDstPtr), hl
@@ -710,7 +765,26 @@ gfx_blit:
     ld hl, gfxRowsLeft
     dec (hl)
     jr nz, .row
+    ; rows done: rewind the source stream to the file's 512-byte
+    ; palette (offset 0, wholly inside the run's first page) and load
+    ; it now, as late as possible before the flip (header comment)
+    ld a, (stagedEntry)
+    call gce_ptr
+    inc hl
+    ld a, (hl)                  ; GCE_FIRST again
+    ld (gfxSrcIdx), a
+    xor a
+    ld (gfxSrcHalf), a
+    call gfx_src_remap
+    ld hl, DATA_WINDOW
+    ld b, 1                     ; format 1 = 256 x 2-byte 9-bit entries
+    call l2_palette_load
     call data_restore
+    ; flip: swap surface roles, then program resolution + new front
+    ; bank back-to-back via l2_mode_set (see l2_flip_swap header)
+    call l2_flip_swap
+    ld a, (stagedMode)
+    call l2_mode_set
     jp l2_enable
 
 ; Map the current source page (gfxBankList[gfxSrcIdx]*2 + gfxSrcHalf)
@@ -823,7 +897,7 @@ gfx_row_copy256:
     ret
 
 ; Write the staged row to the column-major 320-wide surface. Dest
-; address of pixel (x, y): 8K page BANK_L2_FIRST*2 + (x >> 5), in-page
+; address of pixel (x, y): 8K page gfxSurfPage + (x >> 5), in-page
 ; offset (x & 31)*256 + y - so with D = $C0 + (x & 31) and E = y, a
 ; step of +1 in x is INC D, and the page advances every 32 pixels:
 ; ten page runs per row. Reuses gfxDstPage as its page cursor (the
@@ -831,7 +905,7 @@ gfx_row_copy256:
 ; Corrupts AF, BC, DE, HL.
 gfx_row_scatter320:
     ld hl, gfxRowBuf
-    ld a, BANK_L2_FIRST*2
+    ld a, (gfxSurfPage)
     ld (gfxDstPage), a
     ld c, 10
 .page:
@@ -879,6 +953,8 @@ gfxExtPtr:     dw 0              ; chain walk cursor
 gfxSrcIdx:     db 0              ; blit source: arena index of current bank
 gfxSrcHalf:    db 0              ; 0 = lower 8K page, 1 = upper
 gfxSrcPtr:     dw 0              ; blit source: window-relative read cursor
+gfxSurfPage:   db 0              ; blit dest: first 8K page of the BACK
+                                 ; surface, latched at blit start
 gfxDstPage:    db 0              ; blit dest: current 8K Layer 2 page
 gfxDstPtr:     dw 0              ; blit dest: linear cursor (256-wide mode)
 gfxRowY:       db 0              ; current pixel row
@@ -894,6 +970,14 @@ gfxRowBuf:     ds 320            ; row bounce buffer: slot 6 can only hold
 ; l2_dbg_hook (holding T at boot, see that file for the key protocol).
 ; Not reached from anywhere else; safe to strip along with the rest
 ; of the IFDEF DEBUG block for a release build.
+;
+; Double-buffer split: these diagnostics draw to the CURRENT FRONT
+; surface directly (l2FrontBank - immediately visible, no flip step);
+; gfx_blit alone renders to the back surface and flips. Both boot
+; hooks run before any game blit, so front here is always banks 9-13
+; in practice - the variable (rather than the constant) just keeps a
+; warm re-entry with a stale flip state coherent until boot_data_init
+; resets it.
 
  IFDEF DEBUG
 
@@ -945,13 +1029,14 @@ l2_bareprobe_draw:
 ; TC_MARK_COLOUR, side by side (20px stride) in the top-left corner -
 ; the only way to show the stage number when stages 0-1 of the ladder
 ; have no tilemap. Works in both modes: a square block near the origin
-; fits inside 8K page BANK_L2_FIRST*2 whether the surface is row- or
-; column-major (see tc_mark). Corrupts everything.
+; fits inside the front surface's first 8K page whether the surface
+; is row- or column-major (see tc_mark). Corrupts everything.
 l2_bareprobe_marker:
     inc a                        ; stage -> block count (1-4)
     ld (l2BpBlockCnt), a
     call data_save
-    ld a, BANK_L2_FIRST*2
+    ld a, (l2FrontBank)
+    add a, a
     call data_map_page
     ld hl, DATA_WINDOW
 .block:
@@ -985,9 +1070,9 @@ l2_bareprobe_marker:
 l2BpBlockCnt: db 0
 l2BpRowCnt:   db 0
 
-; Read back byte 0 of Layer 2 8K page BANK_L2_FIRST*2 (18, i.e. bank
-; 9) - where both modes' top-left corner marker lands (tc_mark_256/
-; tc_mark_320 both write TC_MARK_COLOUR there). Lets the boot hook
+; Read back byte 0 of the front surface's first 8K page - where both
+; modes' top-left corner marker lands (tc_mark_256/tc_mark_320 both
+; write TC_MARK_COLOUR there). Lets the boot hook
 ; distinguish "content never made it into the banks" (reads back the
 ; transparent fill byte or garbage) from "the banks are right but
 ; another layer is hiding them" (reads back TC_MARK_COLOUR, $FF, even
@@ -995,7 +1080,8 @@ l2BpRowCnt:   db 0
 ; shows. Out: A = the byte read. Corrupts AF only.
 l2_peek_marker:
     call data_save
-    ld a, BANK_L2_FIRST*2
+    ld a, (l2FrontBank)
+    add a, a
     call data_map_page
     ld a, (DATA_WINDOW)
     push af
@@ -1009,7 +1095,8 @@ l2_peek_marker:
 ; Corrupts AF, BC, DE, HL.
 tc_gradient_256:
     call data_save
-    ld a, BANK_L2_FIRST*2
+    ld a, (l2FrontBank)
+    add a, a
     ld (l2PageCur), a
     ld b, 6
 .page:
@@ -1052,7 +1139,8 @@ tc_gradient_256:
 ; of being covered by opaque gradient. Corrupts AF, BC, DE, HL.
 tc_gradient_320:
     call data_save
-    ld a, BANK_L2_FIRST*2
+    ld a, (l2FrontBank)
+    add a, a
     ld (l2PageCur), a
     xor a
     ld (l2GradCol), a
@@ -1117,19 +1205,25 @@ tc_mark:
 ; Corrupts AF, BC, DE, HL.
 tc_mark_256:
     call data_save
-    ld a, BANK_L2_FIRST*2
+    ld a, (l2FrontBank)
+    add a, a
     ld hl, DATA_WINDOW                   ; TL
     ld c, TC_MARK_COLOUR
     call tc_mark
-    ld a, BANK_L2_FIRST*2
+    ld a, (l2FrontBank)
+    add a, a
     ld hl, DATA_WINDOW+252               ; TR
     ld c, TC_MARK_COLOUR
     call tc_mark
-    ld a, BANK_L2_FIRST*2+5
+    ld a, (l2FrontBank)
+    add a, a
+    add a, 5
     ld hl, DATA_WINDOW+28*256            ; BL
     ld c, TC_MARK_COLOUR
     call tc_mark
-    ld a, BANK_L2_FIRST*2+5
+    ld a, (l2FrontBank)
+    add a, a
+    add a, 5
     ld hl, DATA_WINDOW+28*256+252        ; BR
     ld c, TC_MARK_COLOUR
     call tc_mark
@@ -1148,19 +1242,25 @@ tc_mark_256:
 ; through). Corrupts AF, BC, DE, HL.
 tc_mark_320:
     call data_save
-    ld a, BANK_L2_FIRST*2
+    ld a, (l2FrontBank)
+    add a, a
     ld hl, DATA_WINDOW                   ; TL
     ld c, TC_MARK_COLOUR
     call tc_mark
-    ld a, BANK_L2_FIRST*2+9
+    ld a, (l2FrontBank)
+    add a, a
+    add a, 9
     ld hl, DATA_WINDOW+28*256            ; TR
     ld c, TC_MARK_COLOUR
     call tc_mark
-    ld a, BANK_L2_FIRST*2
+    ld a, (l2FrontBank)
+    add a, a
     ld hl, DATA_WINDOW+236               ; BL
     ld c, TC_MARK_COLOUR
     call tc_mark
-    ld a, BANK_L2_FIRST*2+9
+    ld a, (l2FrontBank)
+    add a, a
+    add a, 9
     ld hl, DATA_WINDOW+28*256+236        ; BR
     ld c, TC_MARK_COLOUR
     call tc_mark

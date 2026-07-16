@@ -221,8 +221,9 @@ boot_banner:
     call nr_read
     jp dbg_hex8
 
-SELFTEST_FREE_2MB equ 84    ; 14,15 + 30-47 + 48-111 (29 withdrawn for overlay 2)
-SELFTEST_FREE_1MB equ 20    ; 14,15 + 30-47 (29 withdrawn for overlay 2)
+SELFTEST_FREE_2MB equ 79    ; 14,15 + 35-47 + 48-111 (29 withdrawn for overlay
+                            ; 2, 30-34 for the Layer 2 back surface)
+SELFTEST_FREE_1MB equ 15    ; 14,15 + 35-47 (same withdrawals)
 
 ram_diag:
     ld b, 2
@@ -267,7 +268,8 @@ bank_selftest:
     cp BANK_POOL_A_END
     ld a, 3
     jr nz, .fail
-    call bank_alloc         ; check 4: then bank 30 (29 withdrawn for overlay 2)
+    call bank_alloc         ; check 4: then bank 35 (29 withdrawn for
+                            ; overlay 2, 30-34 for the L2 back surface)
     cp BANK_POOL_B
     ld a, 4
     jr nz, .fail

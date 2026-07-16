@@ -153,6 +153,13 @@ gfxName:      db "000.NX2", 0    ; picture filename scratch - RESIDENT so the
                                  ; path esxDOS reads sits in always-mapped RAM
                                  ; like ddbName/savName, not an overlay page
 
+; Layer 2 double-buffer surface state (resident so boot_data_init can
+; reset it via gfx_cache_reset before any overlay is mapped). Front =
+; the surface NR $12 points at (displayed); back = the render target.
+; gfx_blit and h_display's clear flip the roles (overlay2.asm).
+l2FrontBank:  db BANK_L2_FIRST
+l2BackBank:   db BANK_L2BACK_FIRST
+
 gfxBankList: ds GFX_BANKLIST_MAX
 
 ; Reset the whole picture cache to cold state: every slot empty, the
@@ -171,6 +178,10 @@ gfx_cache_reset:
     ld (stagedMode), a
     ld (stagedHeight), a
     ld (gfxBankNext), a
+    ld a, BANK_L2_FIRST          ; double-buffer roles back to boot state
+    ld (l2FrontBank), a
+    ld a, BANK_L2BACK_FIRST
+    ld (l2BackBank), a
     ld hl, gfxCache
     ld b, GFX_CACHE_MAX
 .slot:
