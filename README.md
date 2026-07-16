@@ -8,7 +8,7 @@ The engine boots, loads and validates a DAAD DDB from SD, and runs it -
 object model, process/DOALL dispatch, windows, printing, colour,
 carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
 PARSE), file-backed save/load, and Layer 2 location graphics
-(PICTURE/DISPLAY) are implemented. 124 of the 128 condacts are
+(PICTURE/DISPLAY) are implemented. 123 of the 128 condacts are
 implemented; the rest (SFX, BEEP, MOUSE, GFX, CALL) are stubbed
 pending implementation.
 
