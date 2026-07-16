@@ -11,6 +11,23 @@
 ; win_attr masks paper to 0-7 (a paper 8-15 renders as its base hue).
 ; dadPalette holds the 16 DAAD colours; entry 2k = dadPalette[paper],
 ; entry 2k+1 = dadPalette[ink].
+;
+; Text-mode transparency (chapter-next-tilemap.tex line 357) is NOT
+; the normal tilemap mode's NR $4C - it's checked against NR $14
+; (NR_L2_TRANSP), the SAME register Layer 2/ULA/LoRes use. Since the
+; 128-pair scheme above already covers all 256 tilemap palette entries
+; with real paper/ink combinations, one combo - pair 127 (paper 7,
+; ink 15, "bright white on white": unreadable anyway, so losing it as
+; an opaque option costs nothing in practice) - is reserved as the
+; transparent marker (see TM_TRANSP_PAIR/TM_TRANSP_ATTR, nextdaad.inc).
+; txt_init programs NR $14 = TM_TRANSP_ATTR (pair 127's even/paper
+; index, 254); tm_clear_transparent below writes that attribute with
+; GLYPH_SPACE (all-zero bitmap, verified in font.chr - every pixel
+; then reads the pair's even index, matching NR $14 exactly) so the
+; whole cell shows Layer 2 (or whatever's beneath) through untouched.
+; A custom GAME.CHR that redefines glyph 32 with non-zero pixels would
+; reintroduce ink-coloured specks in "transparent" cells - out of
+; scope here, flagged for whoever wires up Task 4's picture display.
 
 ; Switch the display to tilemap text mode. Corrupts all registers.
 txt_init:
@@ -27,6 +44,9 @@ txt_init:
     ld a, GLYPH_SPACE
     call tm_fill_rect
     nextreg NR_ULA_CTRL, ULA_OFF
+    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR  ; text-mode tilemap transparency
+                                 ; compare index (also Layer 2's - shared
+                                 ; register, see the header comment above)
     nextreg NR_TM_CTRL, TM_CTRL_ON
     ret
 
@@ -182,6 +202,19 @@ tm_fill_rect:
     dec d
     jr nz, .rows
     ret
+
+; B=top, C=left, D=height, E=width. General display-pipeline primitive:
+; fill the rect with GLYPH_SPACE at the reserved transparent attribute
+; (TM_TRANSP_ATTR), so Layer 2 (or whatever's beneath) shows through
+; every cell. Task 4's DISPLAY integration should route any "clear the
+; picture area of the tilemap" step through this rather than
+; tm_fill_rect + GLYPH_SPACE with an opaque attribute, which paints
+; solid paper instead of exposing Layer 2. Corrupts all registers.
+tm_clear_transparent:
+    ld a, TM_TRANSP_ATTR
+    ld (tmAttr), a
+    ld a, GLYPH_SPACE
+    jp tm_fill_rect
 
 ; B=top, C=left, D=height, E=width. Scrolls the rect up one row and
 ; blanks the freed bottom row (space + tmAttr). Height 1 just blanks.

@@ -92,6 +92,21 @@ TM_COLS         equ 80
 TM_ROWS         equ 32
 GLYPH_SPACE     equ $20
 ULA_OFF         equ $80     ; NR_ULA_CTRL bit 7
+NR_TM_TRANSP    equ $4C     ; normal tilemap mode's transparent index -
+                            ; NOT what we use: text mode (TM_CTRL_ON bit3)
+                            ; checks NR_L2_TRANSP ($14) instead - see
+                            ; chapter-next-tilemap.tex line 357
+TM_TRANSP_PAIR  equ 127     ; reserved SP6 pair (paper=7, ink=15) - the
+                            ; one (paper,ink) combo sacrificed as the
+                            ; transparent-cell marker (bright-white-on-
+                            ; white is unreadable anyway, so losing it as
+                            ; an opaque combo costs nothing practical)
+TM_TRANSP_ATTR  equ TM_TRANSP_PAIR*2  ; = 254: attribute byte for a
+                            ; transparent cell (paired with GLYPH_SPACE,
+                            ; whose all-zero bitmap keeps every pixel on
+                            ; the pair's even/paper index) AND the value
+                            ; programmed into NR_L2_TRANSP so hardware
+                            ; treats that exact index as transparent
 
 ; --- Banking skeleton (sub-project 3) ---
 DDB_PAGE_FIRST  equ 32      ; DDB bank 16 = 8K pages 32..47

@@ -158,15 +158,29 @@ l2PageCnt:  db 0
 
 TC_MARK_COLOUR equ 255           ; distinct from the gradient's low end
 
-; A = 0 (256x192) or 1 (320x256) on entry. Selects the mode, enables
-; Layer 2 with the tilemap kept on top (l2_enable), clears to
-; transparent, paints an X-indexed gradient - relying on the Next's
+; A = 0 (256x192) or 1 (320x256) on entry. Clears the tilemap over the
+; card area to the reserved transparent attribute (resident
+; tm_clear_transparent, tilemap.asm - the bottom row is left alone for
+; debug.asm's status line), then selects the mode, enables Layer 2
+; with the tilemap kept on top (l2_enable), clears the Layer 2 surface
+; to transparent, paints an X-indexed gradient - relying on the Next's
 ; default identity Layer 2 palette (index N reads back as colour N
 ; out of reset, guide line "initialized with default values, so they
 ; are usable out of the box" - chapter-next-palette.tex line 18) so no
 ; palette load is needed for the bring-up check - then stamps a 4x4
-; marker block at all four visual corners. Corrupts everything.
+; marker block at all four visual corners. Without the tilemap clear,
+; every cell of the (opaque, white-on-black) boot text tilemap sits in
+; front of Layer 2 and the card is invisible regardless of what's
+; drawn to it - this was the Task 2 review finding that sent the card
+; back for rework. Corrupts everything.
 l2_testcard:
+    push af
+    ld b, 0
+    ld c, 0
+    ld d, TM_ROWS-1               ; card area only; bottom row is the
+    ld e, TM_COLS                 ; hook's status line, left opaque
+    call tm_clear_transparent
+    pop af
     push af
     call l2_mode_set
     call l2_enable

@@ -370,12 +370,34 @@ ddb_diag:
 ; those live in an overlay this resident code has no reason to page
 ; in just to poll one key.
 
-; ZF set if T is currently held (row $FB, bit 4 - see kbRows/keyRows
-; in overlay0/overlay1 for the same matrix layout). Corrupts AF, BC.
+; ZF set if T was seen held on any of up to 10 consecutive frame ticks
+; (row $FB, bit 4 - see kbRows/keyRows in overlay0/overlay1 for the
+; same matrix layout). A single-shot port read is timing-sensitive -
+; it can land on a frame where the matrix read races the border/
+; interrupt work CSpect or real hardware are doing that instant, and a
+; boot-time check only gets one shot at a key the owner is holding
+; from power-on. Polling across ~10 frames (roughly 200ms at 50Hz),
+; returning the instant a held frame is seen, makes a false "not
+; held" verdict far less likely while a genuinely-released key still
+; correctly reports not held (it never samples as pressed on any of
+; the 10 frames). Corrupts AF, BC, DE.
 l2dbg_t_held:
+    ld d, 10
+.frame:
     ld bc, $FBFE
     in a, (c)
     bit 4, a
+    ret z                        ; held on this sample: done, ZF set
+    ld a, (frameCounter)
+    ld e, a
+.tick:
+    ld a, (frameCounter)
+    cp e
+    jr z, .tick                  ; wait for the next frame before resampling
+    dec d
+    jr nz, .frame
+    ld a, 1
+    or a                         ; guarantee ZF clear: not held on any sample
     ret
 
 l2dbg_wait_release:
@@ -387,21 +409,67 @@ l2dbg_wait_press:
     jr nz, l2dbg_wait_press
     ret
 
+; Blank the bottom tilemap row (TM_ROWS-1, left opaque by overlay2's
+; l2_testcard) with plain white-on-black spaces, then print the
+; ASCIIZ string at HL there via the existing dbg_puts/dbg_at console -
+; a fixed clear-then-print avoids stale trailing characters when a new
+; status line is shorter than the one it replaces. Corrupts everything.
+l2dbg_status:
+    push hl
+    ld b, TM_ROWS-1
+    ld c, 0
+    ld d, 1
+    ld e, TM_COLS
+    ld a, 7*2                    ; pair 7: white ink on black paper
+    ld (tmAttr), a
+    ld a, GLYPH_SPACE
+    call tm_fill_rect
+    ld b, TM_ROWS-1
+    ld c, 0
+    call dbg_at
+    pop hl
+    jp dbg_puts
+
+msgTestcardHold: db "TESTCARD - HOLD T", 0
+msgTestcard256:  db "TESTCARD 256x192 - RELEASE THEN PRESS T FOR NEXT", 0
+msgTestcard320:  db "TESTCARD 320x256 - RELEASE THEN PRESS T TO EXIT", 0
+msgTestcardDone: db "TESTCARD DONE", 0
+
 ; Corrupts everything (drives overlay2's l2_testcard/l2_disable).
 l2_dbg_hook:
     call l2dbg_t_held
     ret nz                       ; T not held: leave boot untouched
+    ld hl, msgTestcardHold        ; proves the hook fired, BEFORE any
+    call l2dbg_status             ; Layer 2 register is touched
     ld a, OVL2_PAGE
     call ovl_map_page
     xor a                        ; 256x192 first
     call l2_testcard
+    ld hl, msgTestcard256
+    call l2dbg_status
     call l2dbg_wait_release
     call l2dbg_wait_press
     ld a, 1                      ; then 320x256
     call l2_testcard
+    ld hl, msgTestcard320
+    call l2dbg_status
     call l2dbg_wait_release
     call l2dbg_wait_press
     call l2_disable
+    ld hl, msgTestcardDone
+    call l2dbg_status
+    ; restore the whole tilemap to a normal opaque blank (undoing the
+    ; card-area transparent clear) so anything the game doesn't
+    ; immediately overwrite reads as a plain blank screen, not a
+    ; black hole where Layer 2 used to show through
+    ld b, 0
+    ld c, 0
+    ld d, TM_ROWS
+    ld e, TM_COLS
+    ld a, 7*2                    ; pair 7: white ink on black paper
+    ld (tmAttr), a
+    ld a, GLYPH_SPACE
+    call tm_fill_rect
     ret
 
 dbg_font:
