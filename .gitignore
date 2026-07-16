@@ -6,5 +6,7 @@ tools/
 build/
 sd/*.DDB
 sd/*.ddb
+sd/*.SAV
+sd/*.sav
 tests/out/
 .superpowers/
