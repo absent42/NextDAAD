@@ -15,10 +15,8 @@ pending implementation.
 ## Features
 
 - Layer 2 location graphics: 256x192 and 320x256 256-colour pictures
-  from Gfx2Next files, per-picture palettes, real PICTURE/DISPLAY
-  condacts, bank-allocated picture cache
-- Tilemap-based 80x32 text mode driver with per-character colour and a
-  custom font
+  from Gfx2Next files, per-picture palettes, bank-allocated picture cache, and double-buffered draw
+- 80 column tilemap-based 80x32 text mode driver with per-character colour and a custom 80 column font
 - DDB loading and validation from SD card (esxDOS), with header/size
   error handling
 - Full RAM detection and 8K bank allocator across the Next's extended
