@@ -575,7 +575,8 @@ cprops:
     db 2,$81,$81                ; 76-78 SAME(C,2) MES WINDOW
     db 2,2                      ; 79-80 NOTEQ NOTSAME (C,2)
     db $81,$82,$82              ; 81-83 MODE WINAT TIME
-    db 1                        ; 84    PICTURE (C,1 - fail-entry stub)
+    db 1                        ; 84    PICTURE (C,1 - fails the entry when
+                                ;       no loadable art exists, like jdaad)
     db $81,$82,$82              ; 85-87 DOALL MOUSE GFX (MOUSE argc 2)
     db 2                        ; 88    ISNOTAT (C,2)
     db $82,$82,$82,$80,$82,$81  ; 89-94 WEIGH PUTIN TAKEOUT NEWTEXT ABILITY WEIGHT
@@ -633,7 +634,7 @@ cdisp:
     DC1 h_save                  ; 25  SAVE
     DC1 h_load                  ; 26  LOAD
     DC h_dprint                 ; 27  DPRINT
-    DC h_display                ; 28  DISPLAY
+    DC2 h_display               ; 28  DISPLAY
     DC h_cls                    ; 29  CLS
     DC h_dropall                 ; 30  DROPALL
     DC h_autog                   ; 31  AUTOG
@@ -689,7 +690,7 @@ cdisp:
     DC h_mode                   ; 81  MODE
     DC h_winat                  ; 82  WINAT
     DC1 h_time                  ; 83  TIME
-    DC h_unimpl                 ; 84  PICTURE
+    DC2 h_picture               ; 84  PICTURE
     DC h_doall                  ; 85  DOALL
     DC h_unimpl                 ; 86  MOUSE
     DC h_unimpl                 ; 87  GFX

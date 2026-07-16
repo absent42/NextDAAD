@@ -13,9 +13,8 @@ c_false:
     ret
 
 ; Unimplemented / future-sub-project condact: debug marker, no-op.
-; Returns CF SET so stub conditions (INKEY until Task 8, PICTURE
-; forever this SP) fail safely; harmless for actions (the engine
-; ignores CF on actions).
+; Returns CF SET so stub conditions (INKEY until Task 8) fail
+; safely; harmless for actions (the engine ignores CF on actions).
 h_unimpl:
  IFDEF DEBUG
     push bc
@@ -1345,14 +1344,6 @@ h_border:                       ; 67
     and 7
     out ($FE), a
     ret
-h_display:                      ; 28: 0 = picture (stub), else clear
-    ld a, b
-    or a
-    jp z, h_unimpl
-    call prn_flush
-    call win_cls
-    jp prn_reset_lines
-
 ; --- key decoder ---
 ; Half-row scan -> ASCII. Unshifted; letters lowercase; digits; space;
 ; enter = 13. 0 = nothing pressed. Corrupts AF, BC, DE, HL.

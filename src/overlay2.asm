@@ -211,6 +211,649 @@ l2FillByte: db 0
 l2PageCur:  db 0
 l2PageCnt:  db 0
 
+; --- picture loader / blitter / PICTURE / DISPLAY (Task 4) ---
+; File format (Gfx2Next -pal-embed): 512-byte palette (256 x 2-byte
+; 9-bit entries, NR $44 order) followed by width*height pixel bytes,
+; emitted row by row. NNN.NX2 = 320 wide, NNN.NXI = 256 wide; the
+; height is whatever the file size says: (size - 512) / width.
+
+GFX_SRC_END equ DATA_WINDOW+$2000   ; first address past the slot 6 window
+
+; 84 PICTURE (condition): stage picture B for a later DISPLAY 0.
+; Semantics pinned against jdaad _PICTURE (jdaad.js 3505-3529): it
+; stages only - "imageBufferID = Parameter1" on success, nothing is
+; drawn; a missing image clears the stage ("imageBufferID = false")
+; and fails the condition (condactResult = false). CF mirrors
+; condactResult through ovl2_false. jdaad's fallback probe of
+; jDAADSounds is not carried over - sampled SFX are a separate
+; subsystem here. Corrupts everything.
+h_picture:
+    ld a, b
+    call gfx_load
+    jp c, ovl2_false
+    jp ovl2_true
+
+; 28 DISPLAY (action): B = 0 draws the staged picture, B != 0 clears
+; the picture plane. Semantics pinned against jdaad _DISPLAY
+; (jdaad.js 2750-2754): jdaad IGNORES its argument entirely - it
+; always draws the staged imageBufferID, and silently no-ops when
+; nothing is staged ("if (imageBufferID === false) return;"). The
+; DAAD reference (condacts table, row 28) is what gives the argument
+; meaning: "If 0: show buffered picture. If non-0: clear window
+; area". Pinned here: B = 0 follows both (blit the stage, no-op when
+; empty, per the jdaad line above); B != 0 follows the DAAD
+; reference, with "window area" read as the picture plane - the
+; Layer 2 surface is cleared to the transparent index so the tilemap
+; text underneath shows through. (The old overlay0 stub's text-window
+; CLS for non-zero was wrong on this architecture: pictures never
+; occupy the text plane, so DISPLAY must never destroy text.)
+; Corrupts everything.
+h_display:
+    ld a, b
+    or a
+    jp nz, l2_clear
+    jp gfx_blit
+
+; A = picture number. Ensure its palette+pixels are in cache banks
+; and stage it for DISPLAY 0. Cache hit: cache_touch + stage, no SD
+; access. Miss: reserve a cache slot, probe the extension chain
+; (gfxExtTab order - Task 5 prepends its ZX0-compressed probes there),
+; stream the file into freshly allocated 16K banks with count-checked
+; reads, derive the height from the byte total, then commit the entry
+; and stage it. Out: CF clear = staged. CF set = failed (no file, no
+; free slot/bank/arena room, malformed size): every partially
+; allocated bank is freed, the arena cursor rewound, and the stage
+; cleared - jdaad unstages on a failed PICTURE too. Eviction when the
+; pool is full is Task 6; this task fails such loads cleanly instead.
+; Corrupts everything.
+gfx_load:
+    ld (gfxPicNum), a
+    cp GFX_EMPTY                ; 255 = the empty-slot sentinel; passing it
+    jr z, .failclean            ; to cache_find would false-match every
+                                ; unused slot, so it is simply unloadable
+    call cache_find
+    jr c, .miss
+    ld (gfxEntryIdx), a         ; hit: A = entry index
+    call cache_touch
+    jr .stage
+.miss:
+    call gfx_find_empty         ; reserve a slot; not written until the
+    jr c, .failclean            ; load has fully verified
+    ld (gfxEntryIdx), a
+    call gfx_open_chain
+    jr c, .failclean
+    call gfx_read_banks         ; closes the file on every path
+    jr c, .failbanks
+    call gfx_derive_height
+    jr c, .failbanks
+    ; everything verified: commit the cache entry
+    ld a, (gfxEntryIdx)
+    call gce_ptr
+    ld a, (gfxPicNum)
+    ld (hl), a                  ; GCE_PIC
+    inc hl
+    ld a, (gfxArenaStart)
+    ld (hl), a                  ; GCE_FIRST
+    inc hl
+    ld a, (gfxBankCount)
+    ld (hl), a                  ; GCE_COUNT
+    inc hl
+    ld a, (gfxMode)
+    ld (hl), a                  ; GCE_MODE
+    inc hl
+    ld a, (gfxHeight)
+    ld (hl), a                  ; GCE_HEIGHT (0 encodes 256)
+    ld a, (gfxEntryIdx)
+    call cache_touch
+.stage:
+    ld a, (gfxEntryIdx)
+    call gce_ptr
+    ld bc, GCE_MODE
+    add hl, bc
+    ld a, (hl)
+    ld (stagedMode), a
+    inc hl
+    ld a, (hl)                  ; GCE_HEIGHT
+    ld (stagedHeight), a
+    ld a, (gfxPicNum)
+    ld (stagedPic), a
+    ld a, (gfxEntryIdx)
+    ld (stagedEntry), a
+    or a
+    ret
+.failbanks:
+    call gfx_load_rollback
+.failclean:
+    ld a, GFX_EMPTY
+    ld (stagedPic), a
+    ld (stagedEntry), a
+    scf
+    ret
+
+; Find the first empty cache slot. Out: CF clear + A = entry index;
+; CF set when every slot is in use (eviction is Task 6). Corrupts
+; AF, B, DE, HL.
+gfx_find_empty:
+    ld hl, gfxCache
+    ld de, GFX_ENTRY_SIZE
+    ld b, 0
+.scan:
+    ld a, (hl)
+    cp GFX_EMPTY
+    jr z, .got
+    add hl, de
+    inc b
+    ld a, b
+    cp GFX_CACHE_MAX
+    jr c, .scan
+    scf
+    ret
+.got:
+    ld a, b
+    or a
+    ret
+
+; Build gfxName's "NNN" digits from gfxPicNum (3-digit zero-padded
+; decimal, the project's repeated-subtraction decade idiom - see
+; prn_dec_digit, print.asm), then probe the extension chain: each
+; gfxExtTab row is tried with esx_fopen until one opens. Out: CF
+; clear with the handle in gfxHandle and gfxMode/gfxWidth set from
+; the matching row; CF set when no candidate exists on SD. Corrupts
+; everything.
+gfx_open_chain:
+    ld a, (gfxPicNum)
+    ld hl, gfxName
+    ld b, '0'-1
+.hund:
+    inc b
+    sub 100
+    jr nc, .hund
+    add a, 100
+    ld (hl), b
+    inc hl
+    ld b, '0'-1
+.tens:
+    inc b
+    sub 10
+    jr nc, .tens
+    add a, 10
+    ld (hl), b
+    inc hl
+    add a, '0'
+    ld (hl), a
+    ld hl, gfxExtTab
+.row:
+    ld (gfxExtPtr), hl
+    ld de, gfxName+4            ; past "NNN."
+    ldi                         ; 3 extension characters
+    ldi
+    ldi
+    ld a, (hl)                  ; row's mode byte
+    ld (gfxMode), a
+    or a
+    ld de, 256
+    jr z, .width
+    ld de, 320
+.width:
+    ld (gfxWidth), de
+    call esx_getsetdrv          ; A = default drive for esx_fopen
+    jr c, .next
+    ld ix, gfxName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .opened
+.next:
+    ld hl, (gfxExtPtr)
+    ld de, GFX_EXT_ROW
+    add hl, de
+    push hl
+    ld de, gfxExtEnd
+    or a
+    sbc hl, de
+    pop hl
+    jr nz, .row
+    scf                         ; chain exhausted
+    ret
+.opened:
+    ld (gfxHandle), a
+    or a
+    ret
+
+; Stream the open gfxHandle file into freshly allocated 16K cache
+; banks through slot 6, 8K per esx_fread. Every read is count-checked
+; against BC-out (esxDOS clears CF on a short/EOF read; only a real
+; error sets CF), a short read being EOF. Bank numbers are appended
+; to gfxBankList at gfxBankNext. The file is CLOSED on every path.
+; Out: CF clear with gfxArenaStart/gfxBankCount/gfxSize* filled
+; (an EOF landing exactly on a bank boundary can leave one appended
+; bank empty - harmless, the blitter only reads height*width bytes);
+; CF set on error or oversize, allocated banks NOT yet freed - the
+; caller's rollback owns that, the arena cursor still covers them.
+; Brackets slot 6 with data_save/data_restore. Corrupts everything.
+gfx_read_banks:
+    call data_save
+    ld a, (gfxBankNext)
+    ld (gfxArenaStart), a
+    xor a
+    ld (gfxBankCount), a
+    ld (gfxSizeHi), a
+    ld hl, 0
+    ld (gfxSizeLo), hl
+.bank:
+    ; the largest acceptable file, a 320x256 NX2 (512 + 81920 =
+    ; 82432 bytes), fits in 6 banks; needing a 7th means this is not
+    ; a picture this interpreter accepts
+    ld a, (gfxBankCount)
+    cp 6
+    jr nc, .fail
+    ld a, (gfxBankNext)
+    cp GFX_BANKLIST_MAX
+    jr nc, .fail                ; bank-list arena full
+    call bank_alloc             ; out: A = 16K bank, CF = none free
+    jr c, .fail
+    ld e, a
+    ld hl, gfxBankList
+    ld a, (gfxBankNext)
+    add hl, a
+    ld (hl), e                  ; append the bank
+    inc a
+    ld (gfxBankNext), a
+    ld hl, gfxBankCount
+    inc (hl)
+    ld a, e
+    add a, a                    ; lower 8K page of the bank
+    ld (gfxCurPage), a
+    call gfx_read_page
+    jr c, .fail
+    jr nz, .eof                 ; short read = end of file
+    ld hl, gfxCurPage
+    inc (hl)                    ; upper 8K page
+    ld a, (hl)
+    call gfx_read_page
+    jr c, .fail
+    jr nz, .eof
+    jr .bank
+.eof:
+    ld a, (gfxHandle)
+    call esx_fclose
+    ld a, $FF
+    ld (gfxHandle), a
+    call data_restore
+    or a
+    ret
+.fail:
+    ld a, (gfxHandle)
+    cp $FF
+    jr z, .noclose
+    call esx_fclose
+    ld a, $FF
+    ld (gfxHandle), a
+.noclose:
+    call data_restore
+    scf
+    ret
+
+; A = 8K page: map it into slot 6 and esx_fread up to $2000 bytes
+; into the window, accumulating the actual count into the 24-bit
+; gfxSizeHi:gfxSizeLo. Out: CF set = esxDOS error; else ZF clear =
+; short read (EOF), ZF set = full page read. Corrupts everything
+; (esxDOS makes no register promises); the caller keeps its own
+; state in memory.
+gfx_read_page:
+    call data_map_page
+    ld a, (gfxHandle)
+    ld ix, DATA_WINDOW
+    ld bc, $2000
+    call esx_fread              ; out: BC = ACTUAL bytes read
+    ret c
+    ld hl, (gfxSizeLo)
+    add hl, bc
+    ld (gfxSizeLo), hl
+    jr nc, .nocarry
+    ld hl, gfxSizeHi
+    inc (hl)
+.nocarry:
+    ld hl, $2000
+    or a
+    sbc hl, bc                  ; ZF = full read (CF impossible, BC <= $2000)
+    ret
+
+; Derive the pixel-row count: rows = (24-bit total - 512) / gfxWidth
+; by repeated subtraction (at most 256 rounds - the tallest legal
+; picture is one full 256-row surface). Out: CF clear + gfxHeight
+; (0 encodes 256 rows, the GCE_HEIGHT convention); CF set when the
+; size is malformed - shorter than the palette, zero rows, a partial
+; trailing row, or taller than the mode's surface (192 rows in
+; 256-wide mode, 256 rows in 320-wide mode). Corrupts everything.
+gfx_derive_height:
+    ld hl, (gfxSizeLo)
+    ld de, 512
+    or a
+    sbc hl, de
+    ld a, (gfxSizeHi)
+    sbc a, 0
+    jr c, .bad                  ; shorter than the palette
+    ld c, a                     ; C:HL = pixel byte count
+    or h
+    or l
+    jr z, .bad                  ; no pixel data at all
+    ld de, (gfxWidth)
+    ld b, 0                     ; completed rows, mod 256
+.row:
+    and a                       ; clear CF (A holds scan junk)
+    sbc hl, de
+    jr nc, .noborrow
+    dec c
+.noborrow:
+    ld a, c                     ; C legitimately reaches at most 1
+    inc a                       ; ($14000 = 320*256 pixels), so $FF can
+    jr z, .bad                  ; only mean a partial trailing row
+    inc b
+    ld a, h
+    or l
+    or c
+    jr z, .done
+    ld a, b
+    or a
+    jr nz, .row
+    jr .bad                     ; 256 rows consumed, bytes remain
+.done:
+    ld a, (gfxMode)
+    or a
+    jr nz, .m320                ; 320-wide surface: any row count fits
+    ld a, b                     ; 256-wide surface holds 192 rows
+    or a
+    jr z, .bad                  ; B = 0 encodes 256 rows
+    cp 193
+    jr nc, .bad
+.m320:
+    ld a, b
+    ld (gfxHeight), a
+    or a
+    ret
+.bad:
+    scf
+    ret
+
+; Free the banks a failed load appended (arena indices gfxArenaStart
+; .. gfxBankNext-1) and rewind the arena cursor. The reserved cache
+; slot was never written, so it is still empty - nothing else to
+; drop. Corrupts AF, B, HL.
+gfx_load_rollback:
+    ld a, (gfxBankNext)
+    ld hl, gfxArenaStart
+    sub (hl)
+    ld b, a                     ; banks to free
+    ld a, (hl)
+    ld (gfxBankNext), a         ; rewind
+    ld hl, gfxBankList
+    add hl, a
+    ld a, b
+    or a
+    ret z
+.free:
+    ld a, (hl)
+    call bank_free              ; preserves BC, DE, HL (banks.asm)
+    inc hl
+    djnz .free
+    ret
+
+; Draw the staged cache entry: program the staged mode, clear the
+; whole surface to the transparent index (which also pre-clears the
+; remainder below a short picture to $FE), load the file's embedded
+; 512-byte 9-bit palette, copy the pixel rows top-aligned, then
+; enable Layer 2. No-op when nothing is staged. Corrupts everything.
+;
+; Walk order: SOURCE-ROWS-SCATTER, chosen over dest-columns-gather.
+; The source stream is row-major (Gfx2Next emits rows sequentially);
+; the 320-wide surface is column-major (dest = x*256 + y). Slot 6
+; remaps per 320x200 picture:
+;   rows-scatter:   per row 1 src remap (the 320-byte row crosses an
+;                   8K page every 8192/320 = 25.6 rows, +1 then) +
+;                   10 dest remaps (page = x>>5 changes every 32
+;                   pixels) = ~11.04; 200 rows -> ~2210 remaps, and
+;                   both the fetch (LDIR) and the scatter (fixed row
+;                   in E, INC D per pixel) are straight-line walks.
+;   columns-gather: per column a stride-320 walk of the whole 64000-
+;                   byte pixel area = ceil(64000/8192) = 8 src remaps
+;                   + 1 dest remap (amortised 1/32 but the alternating
+;                   src maps force it every column) = ~9; 320 columns
+;                   -> ~2890 remaps, AND a 16-bit stride-add with a
+;                   page-crossing test per pixel in the inner loop.
+; Scatter wins on both remap count and inner-loop cost. (DMA upgrade
+; noted as an SP8 rider.) 256-wide mode is trivially linear-to-linear
+; (row-major both sides): 2 remaps per row.
+gfx_blit:
+    ld a, (stagedEntry)
+    cp GFX_EMPTY
+    ret z
+    ld a, (stagedMode)
+    call l2_mode_set
+    call l2_clear               ; own data_save/restore - run BEFORE ours
+    call data_save
+    ; source stream = the entry's bank-list run, from its first page
+    ld a, (stagedEntry)
+    call gce_ptr
+    inc hl
+    ld a, (hl)                  ; GCE_FIRST
+    ld (gfxSrcIdx), a
+    xor a
+    ld (gfxSrcHalf), a
+    call gfx_src_remap
+    ld hl, DATA_WINDOW          ; palette: stream offset 0, 512 bytes,
+    ld b, 1                     ; wholly inside the first page; format 1
+    call l2_palette_load        ; = 256 x 2-byte 9-bit entries
+    ld hl, DATA_WINDOW+512
+    ld (gfxSrcPtr), hl
+    ld a, (stagedMode)
+    or a
+    ld de, 256
+    jr z, .width
+    ld de, 320
+.width:
+    ld (gfxWidth), de
+    ld a, BANK_L2_FIRST*2       ; 256-wide linear dest stream init
+    ld (gfxDstPage), a          ; (320-wide scatter reinitialises
+    ld hl, DATA_WINDOW          ; gfxDstPage itself every row)
+    ld (gfxDstPtr), hl
+    xor a
+    ld (gfxRowY), a
+    ld a, (stagedHeight)
+    ld (gfxRowsLeft), a         ; 0 = 256 rows (djnz-style wrap)
+.row:
+    call gfx_row_fetch
+    ld a, (stagedMode)
+    or a
+    jr z, .linear
+    call gfx_row_scatter320
+    jr .next
+.linear:
+    call gfx_row_copy256
+.next:
+    ld hl, gfxRowY
+    inc (hl)
+    ld hl, gfxRowsLeft
+    dec (hl)
+    jr nz, .row
+    call data_restore
+    jp l2_enable
+
+; Map the current source page (gfxBankList[gfxSrcIdx]*2 + gfxSrcHalf)
+; into slot 6 - the row writers leave slot 6 on a Layer 2 page, so
+; each fetch re-asserts the source mapping. Corrupts AF, HL.
+gfx_src_remap:
+    ld hl, gfxBankList
+    ld a, (gfxSrcIdx)
+    add hl, a
+    ld a, (hl)
+    add a, a
+    ld hl, gfxSrcHalf
+    add a, (hl)
+    jp data_map_page
+
+; Advance the source stream to its next 8K page (the bank's upper
+; half, then the next bank in the arena run), map it, and rewind
+; gfxSrcPtr to the window base. Corrupts AF, HL.
+gfx_src_advance:
+    ld hl, gfxSrcHalf
+    ld a, (hl)
+    xor 1
+    ld (hl), a
+    jr nz, .map                 ; 0 -> 1: same bank, upper page
+    ld hl, gfxSrcIdx
+    inc (hl)                    ; 1 -> 0: next bank
+.map:
+    call gfx_src_remap
+    ld hl, DATA_WINDOW
+    ld (gfxSrcPtr), hl
+    ret
+
+; Stage one source row (gfxWidth bytes) from the cache-bank stream
+; into gfxRowBuf, crossing 8K page boundaries as needed. Corrupts
+; AF, BC, DE, HL.
+gfx_row_fetch:
+    call gfx_src_remap
+    ld de, gfxRowBuf
+    ld bc, (gfxWidth)           ; BC = bytes still to stage
+.chunk:
+    ld hl, (gfxSrcPtr)
+    ld a, h
+    cp high GFX_SRC_END
+    jr c, .have
+    call gfx_src_advance        ; previous row drained the page exactly
+    ld hl, (gfxSrcPtr)          ; = DATA_WINDOW
+.have:
+    ; does the whole remainder fit before the window end?
+    push hl
+    add hl, bc                  ; HL = end = src + remaining (cannot
+    ld a, h                     ; carry: src < $E000, remaining <= 320)
+    cp high GFX_SRC_END
+    jr c, .fits                 ; end < $E000
+    jr nz, .nofit               ; end >= $E100
+    ld a, l
+    or a
+    jr z, .fits                 ; end == $E000 exactly: still one page
+.nofit:
+    pop hl                      ; HL = src
+.split:
+    ; copy only what this page still holds, then advance
+    push bc                     ; remaining
+    push de                     ; dest
+    ex de, hl
+    ld hl, GFX_SRC_END
+    or a
+    sbc hl, de                  ; HL = bytes left in the page (>= 1)
+    ld b, h
+    ld c, l
+    ex de, hl                   ; HL = src
+    pop de                      ; dest
+    push bc                     ; left
+    ldir
+    pop hl                      ; HL = left
+    pop bc                      ; BC = remaining
+    ld a, c                     ; remaining -= left
+    sub l
+    ld c, a
+    ld a, b
+    sbc a, h
+    ld b, a
+    call gfx_src_advance        ; preserves BC, DE
+    jr .chunk
+.fits:
+    pop hl                      ; HL = src
+    ldir
+    ld (gfxSrcPtr), hl          ; may land exactly on GFX_SRC_END -
+    ret                         ; the next fetch's .chunk check handles it
+
+; Write the staged row to the row-major 256-wide surface: one LDIR to
+; the linear destination stream, advancing the dest page every 32
+; rows (8192/256; a 256-byte row never splits across pages). Corrupts
+; AF, BC, DE, HL.
+gfx_row_copy256:
+    ld a, (gfxDstPage)
+    call data_map_page
+    ld hl, gfxRowBuf
+    ld de, (gfxDstPtr)
+    ld bc, 256
+    ldir
+    ld a, d
+    cp high GFX_SRC_END
+    jr c, .store
+    ld a, (gfxDstPage)
+    inc a
+    ld (gfxDstPage), a
+    ld de, DATA_WINDOW
+.store:
+    ld (gfxDstPtr), de
+    ret
+
+; Write the staged row to the column-major 320-wide surface. Dest
+; address of pixel (x, y): 8K page BANK_L2_FIRST*2 + (x >> 5), in-page
+; offset (x & 31)*256 + y - so with D = $C0 + (x & 31) and E = y, a
+; step of +1 in x is INC D, and the page advances every 32 pixels:
+; ten page runs per row. Reuses gfxDstPage as its page cursor (the
+; linear 256-wide walk and this one never mix within a blit).
+; Corrupts AF, BC, DE, HL.
+gfx_row_scatter320:
+    ld hl, gfxRowBuf
+    ld a, BANK_L2_FIRST*2
+    ld (gfxDstPage), a
+    ld c, 10
+.page:
+    ld a, (gfxDstPage)
+    call data_map_page
+    ld a, (gfxRowY)
+    ld e, a
+    ld d, high DATA_WINDOW
+    ld b, 32
+.px:
+    ld a, (hl)
+    inc hl
+    ld (de), a
+    inc d
+    djnz .px
+    ld a, (gfxDstPage)
+    inc a
+    ld (gfxDstPage), a
+    dec c
+    jr nz, .page
+    ret
+
+; Extension probe chain, tried in gfx_open_chain order. Row = 3 ASCII
+; extension characters + the mode byte (0 = 256-wide row-major, 1 =
+; 320-wide column-major; mirrors l2Mode's encoding). Task 5 PREPENDS
+; its ZX0-compressed probe rows here so compressed art wins over raw.
+gfxExtTab:
+    db "NX2", 1
+    db "NXI", 0
+gfxExtEnd:
+GFX_EXT_ROW equ 4
+
+gfxPicNum:     db 0              ; picture being loaded/staged
+gfxEntryIdx:   db 0              ; cache slot in use
+gfxMode:       db 0              ; candidate mode from the chain row
+gfxWidth:      dw 0              ; 320 or 256, per mode
+gfxHandle:     db $FF            ; esxDOS handle, $FF = none open
+gfxArenaStart: db 0              ; gfxBankNext at load start (rollback point)
+gfxBankCount:  db 0              ; banks appended by this load
+gfxCurPage:    db 0              ; 8K page being read into
+gfxSizeLo:     dw 0              ; 24-bit byte total: gfxSizeHi:gfxSizeLo
+gfxSizeHi:     db 0
+gfxHeight:     db 0              ; derived rows (0 encodes 256)
+gfxExtPtr:     dw 0              ; chain walk cursor
+gfxSrcIdx:     db 0              ; blit source: arena index of current bank
+gfxSrcHalf:    db 0              ; 0 = lower 8K page, 1 = upper
+gfxSrcPtr:     dw 0              ; blit source: window-relative read cursor
+gfxDstPage:    db 0              ; blit dest: current 8K Layer 2 page
+gfxDstPtr:     dw 0              ; blit dest: linear cursor (256-wide mode)
+gfxRowY:       db 0              ; current pixel row
+gfxRowsLeft:   db 0              ; rows still to copy (initial 0 = 256)
+gfxRowBuf:     ds 320            ; row bounce buffer: slot 6 can only hold
+                                 ; source OR dest, so each row stages here
+                                 ; (in this overlay page - both users above
+                                 ; run only with page 58 mapped; sized for
+                                 ; the wider 320-pixel row)
+
 ; --- DEBUG bring-up test card ---
 ; Owner-driven hardware verification hook, wired from debug.asm's
 ; l2_dbg_hook (holding T at boot, see that file for the key protocol).

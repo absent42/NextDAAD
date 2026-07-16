@@ -88,13 +88,10 @@ boot_data_init:
     ld (chrHandle), a           ; CHR font handle: $FF = no open handle
     ld a, 255
     ld (prevVerb), a            ; compound-sentence previous verb
-    ld a, GFX_EMPTY
-    ld (stagedPic), a           ; picture cache staging sentinels
-    ld (stagedEntry), a         ; all gfx staged state resets together
-    xor a
-    ld (gfxTick), a
-    ld (stagedMode), a
-    ld (stagedHeight), a
+    call gfx_cache_reset        ; picture cache: staged sentinels, cache
+                                ; table, arena cursor - a warm re-entry
+                                ; must not resurrect stale entries whose
+                                ; banks bank_table_init recycles
     ld a, 7*2
     ld (tmAttr), a             ; tilemap attribute (white on black)
     xor a

@@ -1,9 +1,10 @@
 ; Picture cache tables (resident). Tracks which physical RAM banks
 ; currently hold decoded Layer 2 picture data, LRU-ordered by tick so
-; a future loader (Task 4/6) can evict the coldest entry when the pool
-; is full. Nothing calls cache_find/cache_touch/cache_drop yet -
-; picture staging (Task 4) and Layer 2 picture display (Task 6) wire
-; them up. Consumes bank_free (banks.asm, resident).
+; the loader can evict the coldest entry when the pool is full
+; (eviction lands in Task 6; until then a full pool fails the load).
+; The loader/blitter (overlay2.asm: gfx_load/gfx_blit) consumes
+; cache_find/cache_touch and the staged state below. Consumes
+; bank_free (banks.asm, resident).
 
 GFX_CACHE_MAX    equ 24       ; resident picture cache slots
 GFX_ENTRY_SIZE   equ 6        ; picture#, firstBankIdx, bankCount, mode, height, tick
@@ -145,12 +146,49 @@ stagedPic:    db GFX_EMPTY       ; picture# currently being staged, GFX_EMPTY = 
 stagedMode:   db 0
 stagedHeight: db 0
 stagedEntry:  db GFX_EMPTY       ; cache slot reserved for the staged picture
+gfxBankNext:  db 0               ; bank-list arena bump cursor: next free index
+                                 ; (a failed load rewinds it; compaction on
+                                 ; eviction is Task 6's problem)
+gfxName:      db "000.NX2", 0    ; picture filename scratch - RESIDENT so the
+                                 ; path esxDOS reads sits in always-mapped RAM
+                                 ; like ddbName/savName, not an overlay page
 
 gfxBankList: ds GFX_BANKLIST_MAX
 
-; All GFX_CACHE_MAX slots start empty (picture# = GFX_EMPTY, all other
-; fields 0) - assembled directly rather than zeroed by a boot routine,
-; since nothing reads the table until a future task wires up a loader.
+; Reset the whole picture cache to cold state: every slot empty, the
+; staged sentinels cleared, the arena cursor rewound, the tick zeroed.
+; Banks are NOT freed here: the caller (boot_data_init) runs on a path
+; where bank_table_init rebuilds the whole allocator anyway, and a warm
+; re-entry (see boot_data_init's header) would otherwise leave stale
+; cache entries pointing at banks the allocator just recycled.
+; Corrupts AF, BC, HL.
+gfx_cache_reset:
+    ld a, GFX_EMPTY
+    ld (stagedPic), a
+    ld (stagedEntry), a
+    xor a
+    ld (gfxTick), a
+    ld (stagedMode), a
+    ld (stagedHeight), a
+    ld (gfxBankNext), a
+    ld hl, gfxCache
+    ld b, GFX_CACHE_MAX
+.slot:
+    ld (hl), GFX_EMPTY           ; picture#
+    inc hl
+    push bc
+    ld b, GFX_ENTRY_SIZE-1
+.zero:
+    ld (hl), 0                   ; firstBankIdx/bankCount/mode/height/tick
+    inc hl
+    djnz .zero
+    pop bc
+    djnz .slot
+    ret
+
+; All GFX_CACHE_MAX slots assemble empty (picture# = GFX_EMPTY, all
+; other fields 0); gfx_cache_reset above re-establishes the same state
+; at boot for the warm re-entry path.
 gfxCache:
     REPT GFX_CACHE_MAX
     db GFX_EMPTY, 0, 0, 0, 0, 0
