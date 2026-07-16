@@ -654,10 +654,10 @@ NORTH 0
         MES "62 OK#n"
         SKIP 1
 > _ _   MES "62 F#n"
-; 63 LOAD of a missing file: clean failure -> SM57, entry aborts
-; (LOAD is condition-typed), state untouched, session continues.
-; (An io-error mid-restore restarts the session per the manual - that
-; destructive path is owner-verified in the Rabenstein walk only.)
+; 63 LOAD of a missing file: SM57, entry aborts (LOAD is condition-
+; typed), state untouched, session continues. sav_read is atomic
+; (staged commit), so EVERY load failure behaves this way - there is
+; no destructive path.
 > _ _   LET 119 42
         MES "63 TYPE NAME: nofile#n"
         LOAD 0
