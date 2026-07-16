@@ -1311,23 +1311,41 @@ h_save:                         ; 25: arg ignored (classic parity)
 .ok:
     ret
 
-h_load:                         ; 26: arg ignored. Failure semantics per
-    call sav_prompt             ; the manual (LOAD entry): SM57 then
-    ret c                       ; "a system clear, GOTO 0, RESTART" -
-    call sav_read               ; the session restarts (msx2daad
-    jr nc, .ok                  ; implements exactly this; jdaad's
-    ld e, 57                    ; entry-abort is an outlier)
+h_load:                         ; 26: condition-typed (cprops row 26).
+                                ; Failure semantics differentiated by
+                                ; state damage: not-found/wrong-game
+                                ; leave state untouched -> SM57 and
+                                ; fail the entry (the game's redraw is
+                                ; skipped, the error stays visible, the
+                                ; session survives - jdaad behaviour);
+                                ; an io-error mid-restore has already
+                                ; corrupted flags -> SM57 + GOTO 0 +
+                                ; RESTART, the manual's tape-era
+                                ; recovery, kept for the one case that
+                                ; needs it.
+    call sav_prompt
+    ret c                       ; name error: fail the entry (CF set)
+    call sav_read
+    jr nc, .ok
+    push af                     ; A = error class from sav_read
+    ld e, 57
     ld a, 0
     call print_msg
     call prn_newline
+    pop af
+    cp 2                        ; io-error after validation?
+    jr z, .damaged
+    jp ovl1_false               ; clean failure: abort the entry
+.damaged:
     xor a
     ld (flags+FLAG_PLAYER), a   ; GOTO 0
     ld (procSP), a              ; RESTART: wipe the process stack and
     ld (doallLevel), a          ; DOALL state; eng_step re-pushes PRO 0
     ld a, $FF
     ld (doallObj), a
+    jp ovl1_false
 .ok:
-    ret
+    jp ovl1_true
 
 savTimeStash: db 0
 
