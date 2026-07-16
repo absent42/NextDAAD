@@ -3,9 +3,10 @@
 # DDB), generates corrupt/oversize variants from the template, prints
 # a header report. -Suite makes the suite DDB the active sd\GAME.DDB;
 # -Err4 makes the doallnest DDB active instead (deliberate error 4:
-# nested DOALL on the same process); -Rab compiles tools\Rabenstein-
-# master\rabenstein.dsf (the real commercial-quality DAAD game, the
-# SP4 milestone) and makes that DDB active instead. The switches are
+# nested DOALL on the same process); -Rab compiles the modernised next-
+# only tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real
+# commercial-quality DAAD game), makes that DDB active, and stages the
+# Layer 2 art (N.NX2 -> sd\NNN.NX2). The switches are
 # mutually exclusive - if more than one is given, whichever copy runs
 # last in this script wins: -Suite copies first, -Err4 copies over
 # it, and -Rab copies last of all, since its block comes after -Err4's.
@@ -80,63 +81,14 @@ if ($Err4) {
 
 $rabActive = $false
 if ($Rab) {
-    Copy-Item "$root\tools\Rabenstein-master\rabenstein.dsf" "$dr\NDRAB.DSF" -Force
-    Copy-Item "$root\tools\Rabenstein-master\MLV_NEXT.BIN" "$dr\MLV_NEXT.BIN" -Force
+    # The modernised, next-only DSF (tools\Rabenstein-master\nextdaad) compiles
+    # under the bundled DRC with NO preprocessing - every MALUVA X-condact has
+    # been removed at source (PICTURE/DISPLAY, SAVE/LOAD, EXIT for the Next
+    # reset), so the old remap/grep-gate/MLV_NEXT.BIN shim is gone.
+    $rabSrc = "$root\tools\Rabenstein-master\nextdaad"
+    Copy-Item "$rabSrc\rabenstein.dsf" "$dr\NDRAB.DSF" -Force
     Push-Location $dr
     try {
-        # Rabenstein's DSF was built against an older DRC that still treated
-        # the MALUVA X-condacts as live. The DRC bundled here (TOOLS\DRC)
-        # rejects them - DRB.PHP hard-errors (exit 2) on XPICTURE/XSAVE/
-        # XLOAD/XNEXTCLS/XNEXTRST, and DRF doesn't even recognise XNEXTSPEED
-        # as a token. Patch the local copy only (never
-        # tools\Rabenstein-master\rabenstein.dsf) before compiling.
-        #
-        # Re-map every X-condact to its MALUVA EXTERN equivalent (one table
-        # below). This is a semantic fix, not just a compile fix: EXTERN is
-        # an ACTION (h_extern -> extVec -> ext_stub -> h_unimpl; the stub's
-        # CF is ignored for actions) so an unimplemented X-condact NO-OPS and
-        # the entry CONTINUES. The prior mapping used real condacts (XPICTURE
-        # -> PICTURE/DISPLAY, XSAVE -> SAVE, XLOAD -> LOAD); wrong, because
-        # PICTURE is a CONDITION-typed stub here (h_unimpl returns CF set) and
-        # so ABORTED the whole entry - the MESSAGE 14 intro and every
-        # post-move picture-redraw chain silently died.
-        #
-        # EXTERN function numbers (arg count per each condact's real use in
-        # this DSF; all route through extVec's 16 stub slots to h_unimpl):
-        #   XPICTURE x   -> EXTERN x 0    standard MALUVA
-        #   XSAVE 0      -> SAVE 0       real condact since SP5 (action
-        #                                 for action, prompts like MALUVA)
-        #   XLOAD 0      -> LOAD 0       real condact since SP5
-        #   XNEXTSPEED n -> EXTERN n 8    next-only, unused stub vector 8
-        #   XNEXTCLS     -> EXTERN 0 9    next-only, 0-arg, stub vector 9
-        #   XNEXTRST     -> EXTERN 0 10   next-only, 0-arg, stub vector 10
-        #   XSPLITSCR n  -> EXTERN n 11   c64/cpc-only (dead for "next", but
-        #                                 mapped so no X-condact token
-        #                                 survives the grep gate); vector 11
-        # (STUB markers at runtime will read as EXTERN vectors 0/8/9/10/11;
-        # SAVE/LOAD stubs only if the player types SAVE/LOAD, which now stay
-        # real SAVE/LOAD verbs untouched by this table.)
-        $content = [System.IO.File]::ReadAllText("$dr\NDRAB.DSF")
-
-        $content = [regex]::Replace($content, '\bXPICTURE[ \t]+(\S+)',   'EXTERN $1 0')
-        $content = [regex]::Replace($content, '\bXSAVE[ \t]+(\S+)',      'SAVE $1')
-        $content = [regex]::Replace($content, '\bXLOAD[ \t]+(\S+)',      'LOAD $1')
-        $content = [regex]::Replace($content, '\bXNEXTSPEED[ \t]+(\S+)', 'EXTERN $1 8')
-        $content = [regex]::Replace($content, '\bXSPLITSCR[ \t]+(\S+)',  'EXTERN $1 11')
-        $content = $content -replace '\bXNEXTCLS\b', 'EXTERN 0 9'
-        $content = $content -replace '\bXNEXTRST\b', 'EXTERN 0 10'
-
-        # Fail loudly if any X-condact token slipped through (whole family,
-        # not just the ones above): a survivor means DRF/DRB will abort or an
-        # entry silently mis-behaves.
-        $xLeft = [regex]::Matches($content, '\bX(PICTURE|SAVE|LOAD|PART|MES|MESSAGE|BEEP|PLAY|UNDONE|SPLITSCR|NEXTSPEED|NEXTCLS|NEXTRST)\b')
-        if ($xLeft.Count -ne 0) {
-            $names = ($xLeft | ForEach-Object { $_.Value } | Select-Object -Unique) -join ', '
-            throw "Rabenstein patch: $($xLeft.Count) X-condact(s) still present after remap: $names"
-        }
-
-        [System.IO.File]::WriteAllText("$dr\NDRAB.DSF", $content)
-
         & .\TOOLS\DRC\DRF.exe zx next NDRAB.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (rabenstein)" }
         & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDRAB.json NDRAB.DDB
@@ -152,9 +104,19 @@ if ($Rab) {
         }
     }
     finally {
-        Remove-Item "$dr\NDRAB.DSF", "$dr\NDRAB.json", "$dr\NDRAB.___", "$dr\MLV_NEXT.BIN" -ErrorAction SilentlyContinue
+        Remove-Item "$dr\NDRAB.DSF", "$dr\NDRAB.json", "$dr\NDRAB.___" -ErrorAction SilentlyContinue
         Pop-Location
     }
+
+    # Stage the Layer 2 location art: N.NX2 -> sd\NNN.NX2 (zero-padded to 3
+    # digits, the name the interpreter's picture loader expects).
+    $staged = 0
+    Get-ChildItem "$rabSrc\*.NX2" | Where-Object { $_.BaseName -match '^\d+$' } | ForEach-Object {
+        $padded = '{0:D3}' -f [int]$_.BaseName
+        Copy-Item $_.FullName "$root\sd\$padded.NX2" -Force
+        $staged++
+    }
+    "staged $staged Rabenstein art file(s) -> sd\NNN.NX2"
 }
 
 $good = [System.IO.File]::ReadAllBytes("$root\sd\GAME.DDB")

@@ -8,5 +8,7 @@ sd/*.DDB
 sd/*.ddb
 sd/*.SAV
 sd/*.sav
+sd/*.NX2
+sd/*.nx2
 tests/out/
 .superpowers/
