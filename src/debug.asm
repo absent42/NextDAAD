@@ -458,11 +458,65 @@ l2dbg_status_regs:
     call nr_read
     jp dbg_hex8
 
+; Second status row (TM_ROWS-2, also reserved by overlay2's
+; l2_testcard): NR $14 (global transparency index, expect $FE),
+; the Layer 2 clip window read back via the $1C index-reset then four
+; $18 reads in sequence (X1,X2,Y1,Y2 - the guide documents $18 as
+; "reads and writes" and that WRITES auto-increment the index, but
+; does not say reads do too; if they don't, all four values will come
+; back identical, which is itself diagnostic - not skipped, since $18
+; is not write-only, but flagged here as an unconfirmed assumption),
+; and one live pixel read back from the drawn surface (overlay2's
+; l2_peek_marker - the actual top-left corner-marker byte). Corrupts
+; everything.
+l2dbg_status2:
+    ld b, TM_ROWS-2
+    ld c, 0
+    ld d, 1
+    ld e, TM_COLS
+    ld a, 7*2
+    ld (tmAttr), a
+    ld a, GLYPH_SPACE
+    call tm_fill_rect
+    ld b, TM_ROWS-2
+    ld c, 0
+    call dbg_at
+    ld hl, msgReg14
+    call dbg_puts
+    ld e, NR_L2_TRANSP
+    call nr_read
+    call dbg_hex8
+    ld hl, msgClip
+    call dbg_puts
+    nextreg NR_CLIP_IDX, 1        ; bit0: reset the Layer 2 clip index
+    ld e, NR_L2_CLIP
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_L2_CLIP
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_L2_CLIP
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_L2_CLIP
+    call nr_read
+    call dbg_hex8
+    ld hl, msgPx
+    call dbg_puts
+    call l2_peek_marker
+    jp dbg_hex8
+
 msgTestcardHold: db "TESTCARD - HOLD T", 0
 msgTestcard256:  db "TESTCARD 256x192 - RELEASE THEN PRESS T FOR NEXT", 0
 msgTestcard320:  db "TESTCARD 320x256 - RELEASE THEN PRESS T TO EXIT", 0
 msgTestcardDone: db "TESTCARD DONE", 0
 msgRegDump:      db " 69/70/12/15=", 0
+msgReg14:        db "14=", 0
+msgClip:         db " clip=", 0
+msgPx:           db " px=", 0
 
 ; Corrupts everything (drives overlay2's l2_testcard/l2_disable).
 l2_dbg_hook:
@@ -476,12 +530,14 @@ l2_dbg_hook:
     call l2_testcard
     ld hl, msgTestcard256
     call l2dbg_status_regs
+    call l2dbg_status2
     call l2dbg_wait_release
     call l2dbg_wait_press
     ld a, 1                      ; then 320x256
     call l2_testcard
     ld hl, msgTestcard320
     call l2dbg_status_regs
+    call l2dbg_status2
     call l2dbg_wait_release
     call l2dbg_wait_press
     call l2_disable

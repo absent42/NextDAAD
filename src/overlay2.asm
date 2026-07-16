@@ -63,7 +63,22 @@ l2_mode_set:
 ; hw_init and untouched anywhere else - grepped) are never disturbed.
 ; hw_init leaves NR $69 = 0 (Layer 2 off) and NR $15 = 0 ("S L U",
 ; Layer 2 over the tilemap, harmless while invisible) - both
-; reprogrammed here explicitly rather than assumed. Corrupts AF, BC.
+; reprogrammed here explicitly rather than assumed.
+;
+; NR $15 = %010 ("S U L" in the guide's own naming, chapter-next-
+; tilemap.tex line 213-218) is deliberate, NOT a typo for the guide's
+; %000 ("S L U"): those two labels only share three letters by
+; coincidence of naming. %000 is defined as "Sprites are at top,
+; Layer 2 UNDER [sprites], [Enhanced] ULA at bottom" - i.e. Layer 2
+; ABOVE the tilemap, the opposite of what's needed. The design spec
+; (docs/superpowers/specs/2026-07-16-layer2-graphics-design.md line
+; 87) says "Layer order stays SLU (tilemap over Layer 2)" - its own
+; parenthetical defines what "SLU" means for this project: tilemap on
+; top. Of the six non-blend encodings, only 010/011/100/101 put U
+; ahead of L; %010 was chosen because it's the smallest single-bit-set
+; change from hw_init's boot value (0) and leaves sprites (unused,
+; invisible per hw_init) topmost same as the reset default. Corrupts
+; AF, BC.
 l2_enable:
     ld e, NR_DISPLAY_CTRL
     call nr_read
@@ -193,8 +208,8 @@ l2_testcard:
     push af
     ld b, 0
     ld c, 0
-    ld d, TM_ROWS-1               ; card area only; bottom row is the
-    ld e, TM_COLS                 ; hook's status line, left opaque
+    ld d, TM_ROWS-2               ; card area only; bottom TWO rows are
+    ld e, TM_COLS                 ; debug.asm's status lines, left opaque
     call tm_clear_transparent
     pop af
     push af
@@ -210,6 +225,24 @@ l2_testcard:
 .tc320:
     call tc_gradient_320
     call tc_mark_320
+    ret
+
+; Read back byte 0 of Layer 2 8K page BANK_L2_FIRST*2 (18, i.e. bank
+; 9) - where both modes' top-left corner marker lands (tc_mark_256/
+; tc_mark_320 both write TC_MARK_COLOUR there). Lets the boot hook
+; distinguish "content never made it into the banks" (reads back the
+; transparent fill byte or garbage) from "the banks are right but
+; another layer is hiding them" (reads back TC_MARK_COLOUR, $FF, even
+; though the screen doesn't show it) regardless of what the display
+; shows. Out: A = the byte read. Corrupts AF only.
+l2_peek_marker:
+    call data_save
+    ld a, BANK_L2_FIRST*2
+    call data_map_page
+    ld a, (DATA_WINDOW)
+    push af
+    call data_restore            ; corrupts A - stash the peeked byte first
+    pop af
     ret
 
 ; 256x192: 6 x 8K pages, row-major (guide 162: "upper byte Y, lower

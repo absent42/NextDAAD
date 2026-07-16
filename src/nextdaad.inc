@@ -133,6 +133,9 @@ L2_PORT         equ $123B   ; bit 1 Layer 2 visible, bit 0 write paging slot0
                             ; bit 7 is the alias actually used instead
 PAL_L2_FIRST    equ $10     ; NR_PAL_CTRL: auto-inc on, Layer 2 first palette
                             ; (edit + active display), see chapter-next-palette
+NR_L2_CLIP      equ $18     ; Layer 2 clip window (X1,X2,Y1,Y2 - index-
+                            ; sequenced); guide: "reads and writes"
+NR_CLIP_IDX     equ $1C     ; write bit0 = 1 resets the L2 clip index
 
 ; --- Engine (sub-project 3) ---
 PROC_DEPTH      equ 10
