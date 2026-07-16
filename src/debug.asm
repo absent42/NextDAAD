@@ -100,7 +100,7 @@ dbg_putc_tm:
     ld c, a
     ld a, (dbgY)
     ld b, a
-    ld e, 7*2                   ; white on black, always
+    ld e, 1*2                   ; pair 1: white ink (1) on black paper, always
     pop af
     call tm_putc_at
     ld a, (dbgX)

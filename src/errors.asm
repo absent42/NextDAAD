@@ -8,8 +8,9 @@
 ; depth), 4 (nested DOALL), 5 (illegal opcode), 6 (bad process),
 ; 7 (bad message/location number). Codes 1 and 8 are defined for
 ; parity and first raised by later sub-projects.
-; Bar: tm_fill_rect row 0, full width, space glyph, pair 31
-; (paper 3 magenta, ink 7) = attr 62 via tmAttr.
+; Bar: tm_fill_rect row 0, full width, space glyph, pair 65
+; (paper 4 magenta, ink 1 white) = attr 130 via tmAttr - the 16-colour
+; DAAD palette puts magenta at index 4 and white at index 1.
 err_raise:
     ld (errCode), a
  IFDEF DEBUG
@@ -43,7 +44,7 @@ err_raise:
     ld a, (curCondact)
     call dbg_hex8
  ENDIF
-    ld a, 62                    ; pair 31: magenta paper, white ink
+    ld a, 130                   ; pair 65: magenta paper (4), white ink (1)
     ld (tmAttr), a
     ld b, 0
     ld c, 0

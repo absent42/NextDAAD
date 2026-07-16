@@ -78,6 +78,8 @@ NR_TM_MAP_BASE  equ $6E     ; MSB of map offset in bank 5
 NR_TM_DEF_BASE  equ $6F     ; MSB of tile definitions offset in bank 5
 NR_PAL_INDEX    equ $40
 NR_PAL_VALUE    equ $41     ; 8-bit RRRGGGBB, auto-increment via $43
+NR_PAL_VALUE9   equ $44     ; 9-bit value, two writes (RRRGGGBB then B0); index
+                            ; auto-increments after the second write
 NR_PAL_CTRL     equ $43
 TM_CTRL_ON      equ %11001000   ; enable, 80x32, attributes, text mode
 PAL_TM_FIRST    equ $30     ; auto-increment on, tilemap first palette

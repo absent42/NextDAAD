@@ -25,8 +25,8 @@ windows_init:
     inc hl
     ld (hl), a                  ; flags
     inc hl
-    ld a, 7
-    ld (hl), a                  ; ink
+    ld a, 1
+    ld (hl), a                  ; ink (DAAD 1 = white)
     inc hl
     xor a
     ld (hl), a                  ; paper
@@ -102,17 +102,20 @@ win_set_colour:
     ld (hl), d
     ret
 
-; Out: E = attribute = (paper*8 + ink) << 1. Preserves D.
+; Out: E = attribute = (paper*16 + ink) << 1. Ink is full 0-15; paper
+; masks to 0-7 (the tilemap holds 8 paper slots), so a paper 8-15
+; renders as its base hue. Preserves D.
 win_attr:
     ld a, WIN_INK
     call win_field
-    ld e, (hl)                  ; ink
+    ld a, (hl)                  ; ink 0-15
+    and 15
+    ld e, a
     inc hl
     ld a, (hl)                  ; paper
-    add a, a
-    add a, a
-    add a, a                    ; paper*8
-    add a, e
+    and 7                       ; 8 paper slots
+    swapnib                     ; paper * 16
+    add a, e                    ; pair = paper*16 + ink
     add a, a                    ; pair << 1
     ld e, a
     ret

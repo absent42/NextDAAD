@@ -142,7 +142,7 @@ fatal:
     or a
     jr z, .halt0
     push hl
-    ld a, 62                    ; pair 31: magenta paper, white ink
+    ld a, 130                   ; pair 65: magenta paper (4), white ink (1)
     ld (tmAttr), a
     ld b, 0
     ld c, 0

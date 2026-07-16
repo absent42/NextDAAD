@@ -2,14 +2,23 @@
 ; Text-mode attribute = pair number << 1 (palette offset in bits 7-1,
 ; bit 0 = ULA-over-tilemap, kept 0). The glyph pixel selects palette
 ; entry (offset << 1) | pixel, so pair k lives at entries 2k and 2k+1.
+;
+; 16-colour scheme (SP6): a pair encodes paper in bits 6-4 and ink in
+; bits 3-0, i.e. pair = paper*16 + ink. That is 8 papers (0-7) x 16
+; inks (0-15) = 128 pairs = all 256 tilemap palette entries. Ink gets
+; the full DAAD 0-15 range (body text, coloured prompts); paper is
+; limited to the 8 base colours by the tilemap's 128-pair ceiling, so
+; win_attr masks paper to 0-7 (a paper 8-15 renders as its base hue).
+; dadPalette holds the 16 DAAD colours; entry 2k = dadPalette[paper],
+; entry 2k+1 = dadPalette[ink].
 
 ; Switch the display to tilemap text mode. Corrupts all registers.
 txt_init:
     nextreg NR_TM_MAP_BASE, TM_MAP_MSB
     nextreg NR_TM_DEF_BASE, TM_DEFS_MSB
-    call tm_pal_init
+    call tm_palette_init
     call tm_font_init
-    ld a, 7*2                   ; pair 7 = paper 0 ink 7
+    ld a, 1*2                   ; pair 1 = paper 0 ink 1 (white on black)
     ld (tmAttr), a
     ld b, 0
     ld c, 0
@@ -21,38 +30,43 @@ txt_init:
     nextreg NR_TM_CTRL, TM_CTRL_ON
     ret
 
-; Program the 64 classic pairs: pair k = paper*8 + ink at entries
-; 2k (paper RGB) and 2k+1 (ink RGB). Corrupts AF, BC, DE, HL.
-tm_pal_init:
-    nextreg NR_PAL_CTRL, PAL_TM_FIRST
+; Program all 128 pairs from dadPalette: pair k = paper*16 + ink, with
+; paper = k >> 4 (0-7) at entry 2k and ink = k AND 15 (0-15) at entry
+; 2k+1. Each palette entry is a 9-bit value (NR $44, two writes).
+; Corrupts AF, BC, DE, HL.
+tm_palette_init:
+    nextreg NR_PAL_CTRL, PAL_TM_FIRST   ; tilemap first palette, auto-inc
     nextreg NR_PAL_INDEX, 0
-    ld b, 64
-    ld c, 0                     ; pair number k
+    ld c, 0                     ; pair number k (0..127)
 .pair:
     ld a, c
-    rrca
-    rrca
-    rrca
-    and 7                       ; paper = k >> 3
-    call tm_colour
-    nextreg NR_PAL_VALUE, a
+    swapnib
+    and 15                      ; paper = k >> 4 (0-7)
+    call tm_pal_write9          ; entry 2k = dadPalette[paper]
     ld a, c
-    and 7                       ; ink = k AND 7
-    call tm_colour
-    nextreg NR_PAL_VALUE, a
+    and 15                      ; ink = k AND 15 (0-15)
+    call tm_pal_write9          ; entry 2k+1 = dadPalette[ink]
     inc c
-    djnz .pair
+    ld a, c
+    cp 128
+    jr nz, .pair
     ret
 
-; A = colour 0-7 -> A = RGB332. Preserves BC, DE, HL.
-tm_colour:
+; A = dadPalette index 0-15 -> write its 9-bit entry (NR $44 twice).
+; Corrupts AF; preserves BC, DE, HL.
+tm_pal_write9:
     push hl
     push de
+    add a, a                    ; *2 (two bytes per entry)
     ld e, a
     ld d, 0
-    ld hl, tmColours
+    ld hl, dadPalette
     add hl, de
-    ld a, (hl)
+    ld a, (hl)                  ; byte 0 = RRRGGGBB
+    nextreg NR_PAL_VALUE9, a
+    inc hl
+    ld a, (hl)                  ; byte 1 = blue LSB (bit 0)
+    nextreg NR_PAL_VALUE9, a
     pop de
     pop hl
     ret
@@ -209,10 +223,47 @@ tm_scroll_rect:
     ld a, GLYPH_SPACE
     jp tm_fill_rect
 
-tmColours:                      ; classic Spectrum colours as RRRGGGBB
-    db $00, $02, $A0, $A2, $14, $16, $B4, $B6
+; The 16 DAAD text colours as Next 9-bit palette entries (2 bytes each:
+; RRRGGGBB, then blue LSB in bit 0). Provenance: the shipped Rabenstein
+; Next release renders text on the plain ULA - neither the shipped
+; Spectrum interpreter (DS48IE.P3F, used by the DISK/DISC loaders) nor
+; the DAAD-Ready Next player (DSNEXTE3.BIN) programs a tilemap/ULANext
+; text palette (verified: only Layer 2 palette writes, NR $43=$10).
+; Both players share the same INK/PAPER colour routine (decoded from
+; DS48IE.P3F $7064 / DSNEXTE3.BIN $7532): result = table[colour AND 7]
+; with the classic Spectrum BRIGHT bit taken from (colour AND 8). So a
+; DAAD colour is one of 8 base ULA hues, 0-7 dim and 8-15 bright. The
+; base order is DAAD's fixed cross-machine logical order (manual 7.1.5:
+; colour 0=black, 1=white, 2=red on every machine; the rest follow the
+; C64 order the Rabenstein DSF authored against - INK 1 white, INK 10
+; "red('ish)", INK 12 "medium gray"), mapped to the nearest ULA hue:
+;   0 black  1 white  2 red  3 cyan  4 magenta  5 green  6 blue 7 yellow
+; 8-15 are the bright versions of 0-7 (DAAD 8 = orange -> bright black =
+; black). ULA RGB levels: dim = 6/7, bright = 7/7 per channel.
+; ANCHOR confirmed by owner + manual + DSF: INK 1 renders WHITE.
+; NOTE (owner side-by-side): 0/1/2 and their brights (8/9/10) are
+; independently anchored; hues 3-7 (11-15) are derived from the C64
+; logical order and the dim-vs-bright RGB levels are the calibration
+; the owner confirms against the shipped release.
+dadPalette:
+    db $00, $00                 ; 0  black
+    db $DB, $00                 ; 1  white
+    db $C0, $00                 ; 2  red
+    db $1B, $00                 ; 3  cyan
+    db $C3, $00                 ; 4  magenta
+    db $18, $00                 ; 5  green
+    db $03, $00                 ; 6  blue
+    db $D8, $00                 ; 7  yellow
+    db $00, $00                 ; 8  bright black = black (DAAD orange)
+    db $FF, $01                 ; 9  bright white
+    db $E0, $00                 ; 10 bright red
+    db $1F, $01                 ; 11 bright cyan
+    db $E3, $01                 ; 12 bright magenta
+    db $1C, $00                 ; 13 bright green
+    db $03, $01                 ; 14 bright blue
+    db $FC, $00                 ; 15 bright yellow
 
-tmAttr:        db 7*2
+tmAttr:        db 1*2
 tmFillGlyph:   db 0
 tmScrollW:     db 0
 tmScrollH:     db 0

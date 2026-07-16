@@ -1325,16 +1325,16 @@ h_centre:                       ; 109
     ld (hl), e
     ret
 h_paper:                        ; 65: DAAD paper is a 0-15 palette index
-    ld a, b                     ; (jdaad stores param%16). Our tilemap holds
-    and 7                       ; the 8 classic pairs, so fold to 0-7: keeps
-    ld b, a                     ; win_attr's pair inside the 0-63 programmed
-    ld a, WIN_PAPER             ; range AND honours values >=8 instead of
-    call win_field              ; dropping them (Rabenstein's status bar uses
-    ld (hl), b                  ; PAPER 13; the old "cp 8 / ret nc" left it
-    ret                         ; black-on-black). Full 16-colour is SP6.
-h_ink:                          ; 66
-    ld a, b
-    and 7
+    ld a, b                     ; stored straight through (jdaad keeps
+    and 15                      ; param%16). win_attr masks paper to the 8
+    ld b, a                     ; tilemap paper slots at render time; a value
+    ld a, WIN_PAPER             ; >15 is silently ignored (AND 15).
+    call win_field
+    ld (hl), b
+    ret
+h_ink:                          ; 66: DAAD ink 0-15 straight through (the
+    ld a, b                     ; tilemap carries the full 16 ink colours)
+    and 15
     ld b, a
     ld a, WIN_INK
     call win_field
