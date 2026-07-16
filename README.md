@@ -14,16 +14,23 @@ pending implementation.
 
 ## Features
 
+- Layer 2 location graphics: 256x192 and 320x256 256-colour pictures
+  from Gfx2Next files, per-picture palettes, real PICTURE/DISPLAY
+  condacts, bank-allocated picture cache
+- Tilemap-based 80x32 text mode driver with per-character colour and a
+  custom font
 - DDB loading and validation from SD card (esxDOS), with header/size
   error handling
 - Full RAM detection and 8K bank allocator across the Next's extended
   memory map
-- Tilemap-based 80x32 text mode driver with per-character colour and a
-  custom font
+- SAVE/LOAD and RAMSAVE/RAMLOAD to esxDOS .SAV files, with failure handling
 - The DAAD window system (8 windows: geometry, colour, cursor
   save/restore, scrolling, More... paging)
 - DDB text reader: token expansion, message/system-message lookup,
   escape codes
+- Vocabulary lookup and a logical-sentence parser driving PARSE,
+  including conjunction-separated multi-command input (get lamp and
+  drop hat)
 - Process engine: PRO table dispatch, PROCESS/DOALL, REDO/SKIP/RESTART,
   condact argument indirection
 - Object model: carrying, wearing, weight/capacity limits, containers
@@ -33,13 +40,6 @@ pending implementation.
   timeouts and shift handling
 - Word-wrapping print pipeline that buffers a pending word across
   window edges
-- Vocabulary lookup and a logical-sentence parser driving PARSE,
-  including conjunction-separated multi-command input (get lamp and
-  drop hat)
-- SAVE/LOAD and RAMSAVE/RAMLOAD to esxDOS .SAV files, with failure handling
-- Layer 2 location graphics: 256x192 and 320x256 256-colour pictures
-  from Gfx2Next files, per-picture palettes, real PICTURE/DISPLAY
-  condacts, bank-allocated picture cache
 - Debug build with an on-screen diagnostic console (frame counter,
   stub markers, register dumps) and SLD debug data for DeZog
   source-level debugging
@@ -65,9 +65,7 @@ windows below the art show through.
 
 Text colours are safe by construction: text renders on the tilemap
 layer with its own fixed 16-colour classic ULA palette, while picture
-palettes are written only to the Layer 2 palette. Unlike interpreters
-that share the first 16 palette slots between graphics and text (DAAD
-Ready's /s shift), a picture can never recolour text - all 256 slots
+palettes are written only to the Layer 2 palette. All 256 slots
 are usable for art, with one reservation:
 
 - Palette index 254 is the transparency index. The interpreter forces
