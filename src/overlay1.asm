@@ -1311,15 +1311,21 @@ h_save:                         ; 25: arg ignored (classic parity)
 .ok:
     ret
 
-h_load:                         ; 26: arg ignored
-    call sav_prompt
-    ret c
-    call sav_read
-    jr nc, .ok
-    ld e, 57
+h_load:                         ; 26: arg ignored. Failure semantics per
+    call sav_prompt             ; the manual (LOAD entry): SM57 then
+    ret c                       ; "a system clear, GOTO 0, RESTART" -
+    call sav_read               ; the session restarts (msx2daad
+    jr nc, .ok                  ; implements exactly this; jdaad's
+    ld e, 57                    ; entry-abort is an outlier)
     ld a, 0
     call print_msg
     call prn_newline
+    xor a
+    ld (flags+FLAG_PLAYER), a   ; GOTO 0
+    ld (procSP), a              ; RESTART: wipe the process stack and
+    ld (doallLevel), a          ; DOALL state; eng_step re-pushes PRO 0
+    ld a, $FF
+    ld (doallObj), a
 .ok:
     ret
 
