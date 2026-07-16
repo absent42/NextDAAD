@@ -25,8 +25,8 @@ windows_init:
     inc hl
     ld (hl), a                  ; flags
     inc hl
-    ld a, 1
-    ld (hl), a                  ; ink (DAAD 1 = white)
+    ld a, 7
+    ld (hl), a                  ; ink (hardware 7 = white)
     inc hl
     xor a
     ld (hl), a                  ; paper

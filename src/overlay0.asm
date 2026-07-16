@@ -1324,21 +1324,46 @@ h_centre:                       ; 109
     call win_field
     ld (hl), e
     ret
-h_paper:                        ; 65: DAAD paper is a 0-15 palette index
-    ld a, b                     ; stored straight through (jdaad keeps
-    and 15                      ; param%16). win_attr masks paper to the 8
-    ld b, a                     ; tilemap paper slots at render time; a value
-    ld a, WIN_PAPER             ; >15 is silently ignored (AND 15).
+h_paper:                        ; 65: translate DAAD paper 0-15 through the
+    ld a, b                     ; SDG ink table (low 3 bits) with the bright
+    cp 16                       ; bit re-applied; 16+ leaves paper unchanged
+    ret nc
+    call ink_xlat
+    ld c, a
+    ld a, WIN_PAPER
     call win_field
-    ld (hl), b
+    ld (hl), c
     ret
-h_ink:                          ; 66: DAAD ink 0-15 straight through (the
-    ld a, b                     ; tilemap carries the full 16 ink colours)
-    and 15
-    ld b, a
+h_ink:                          ; 66: same translation for ink
+    ld a, b
+    cp 16
+    ret nc
+    call ink_xlat
+    ld c, a
     ld a, WIN_INK
     call win_field
-    ld (hl), b
+    ld (hl), c
+    ret
+
+; A = DAAD colour 0-15 -> A = inkXlat[A AND 7] with the BRIGHT bit
+; (A AND 8) re-applied, exactly as the shipped interpreter does
+; (table[colour AND 7] then OR bright - decoded from DS48IE.P3F $7064).
+; The translated value is a hardware index 0-15 into dadPalette.
+; Preserves BC. Corrupts AF, DE, HL.
+ink_xlat:
+    push bc
+    ld c, a                     ; C = original DAAD colour
+    and 7
+    ld e, a
+    ld d, 0
+    ld hl, inkXlat
+    add hl, de
+    ld a, (hl)                  ; inkXlat[colour AND 7] (0-7)
+    bit 3, c                    ; original bright bit set?
+    jr z, .done
+    or 8                        ; re-apply bright -> 8-15
+.done:
+    pop bc
     ret
 h_border:                       ; 67
     ld a, b

@@ -18,7 +18,7 @@ txt_init:
     nextreg NR_TM_DEF_BASE, TM_DEFS_MSB
     call tm_palette_init
     call tm_font_init
-    ld a, 1*2                   ; pair 1 = paper 0 ink 1 (white on black)
+    ld a, 7*2                   ; pair 7 = paper 0 ink 7 (white on black)
     ld (tmAttr), a
     ld b, 0
     ld c, 0
@@ -223,47 +223,41 @@ tm_scroll_rect:
     ld a, GLYPH_SPACE
     jp tm_fill_rect
 
-; The 16 DAAD text colours as Next 9-bit palette entries (2 bytes each:
-; RRRGGGBB, then blue LSB in bit 0). Provenance: the shipped Rabenstein
-; Next release renders text on the plain ULA - neither the shipped
-; Spectrum interpreter (DS48IE.P3F, used by the DISK/DISC loaders) nor
-; the DAAD-Ready Next player (DSNEXTE3.BIN) programs a tilemap/ULANext
-; text palette (verified: only Layer 2 palette writes, NR $43=$10).
-; Both players share the same INK/PAPER colour routine (decoded from
-; DS48IE.P3F $7064 / DSNEXTE3.BIN $7532): result = table[colour AND 7]
-; with the classic Spectrum BRIGHT bit taken from (colour AND 8). So a
-; DAAD colour is one of 8 base ULA hues, 0-7 dim and 8-15 bright. The
-; base order is DAAD's fixed cross-machine logical order (manual 7.1.5:
-; colour 0=black, 1=white, 2=red on every machine; the rest follow the
-; C64 order the Rabenstein DSF authored against - INK 1 white, INK 10
-; "red('ish)", INK 12 "medium gray"), mapped to the nearest ULA hue:
-;   0 black  1 white  2 red  3 cyan  4 magenta  5 green  6 blue 7 yellow
-; 8-15 are the bright versions of 0-7 (DAAD 8 = orange -> bright black =
-; black). ULA RGB levels: dim = 6/7, bright = 7/7 per channel.
-; ANCHOR confirmed by owner + manual + DSF: INK 1 renders WHITE.
-; NOTE (owner side-by-side): 0/1/2 and their brights (8/9/10) are
-; independently anchored; hues 3-7 (11-15) are derived from the C64
-; logical order and the dim-vs-bright RGB levels are the calibration
-; the owner confirms against the shipped release.
+; The 16 hardware text colours as Next 9-bit palette entries (2 bytes
+; each: RRRGGGBB, then blue LSB in bit 0). These are the CLASSIC ZX
+; Spectrum ULA colours - dim (0-7) and bright (8-15) - in ULA order.
+; Provenance: the shipped Rabenstein Next release and the DAAD-Ready
+; Next player (DSNEXTE3.BIN) both render text on the plain ULA (verified:
+; neither programs a tilemap/ULANext palette, only Layer 2). There is NO
+; custom hardware palette. Per-game colour variation is an 8-entry INK
+; TRANSLATION TABLE in the game's SDG (see inkXlat / sdg_load): the
+; decoded interpreter routine (DS48IE.P3F $7064 / DSNEXTE3.BIN $7532) is
+; result = sdgTable[colour AND 7] with the BRIGHT bit from (colour AND 8).
+; 2020-era games (shipped Rabenstein) embed the OLD table 0,7,2,3,4,5,6,1
+; (DAAD ink 1 -> hardware 7 = WHITE, ink 7 -> 1 = blue); newer DRC embeds
+; the identity 0,1,2,3,4,5,6,7 (ink 1 -> blue). Confirmed empirically by
+; the owner (shipped Rabenstein = white text, fresh compile = blue) and by
+; DRC commit 2f91633 "Embedded SDG changed so colours are as expected".
+; ULA RGB levels: dim = 6/7, bright = 7/7 per channel.
 dadPalette:
     db $00, $00                 ; 0  black
-    db $DB, $00                 ; 1  white
+    db $03, $00                 ; 1  blue
     db $C0, $00                 ; 2  red
-    db $1B, $00                 ; 3  cyan
-    db $C3, $00                 ; 4  magenta
-    db $18, $00                 ; 5  green
-    db $03, $00                 ; 6  blue
-    db $D8, $00                 ; 7  yellow
-    db $00, $00                 ; 8  bright black = black (DAAD orange)
-    db $FF, $01                 ; 9  bright white
+    db $C3, $00                 ; 3  magenta
+    db $18, $00                 ; 4  green
+    db $1B, $00                 ; 5  cyan
+    db $D8, $00                 ; 6  yellow
+    db $DB, $00                 ; 7  white
+    db $00, $00                 ; 8  bright black = black
+    db $03, $01                 ; 9  bright blue
     db $E0, $00                 ; 10 bright red
-    db $1F, $01                 ; 11 bright cyan
-    db $E3, $01                 ; 12 bright magenta
-    db $1C, $00                 ; 13 bright green
-    db $03, $01                 ; 14 bright blue
-    db $FC, $00                 ; 15 bright yellow
+    db $E3, $01                 ; 11 bright magenta
+    db $1C, $00                 ; 12 bright green
+    db $1F, $01                 ; 13 bright cyan
+    db $FC, $00                 ; 14 bright yellow
+    db $FF, $01                 ; 15 bright white
 
-tmAttr:        db 1*2
+tmAttr:        db 7*2
 tmFillGlyph:   db 0
 tmScrollW:     db 0
 tmScrollH:     db 0

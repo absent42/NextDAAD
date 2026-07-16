@@ -157,6 +157,25 @@ if ($Rab) {
     }
 }
 
+# GAME.SDG ink translation table (offset 2062). The shipped Rabenstein
+# Next release carries the 2020-era OLD table 0,7,2,3,4,5,6,1 (DAAD ink 1
+# -> hardware 7 = white body text); no such .SDG is vendored in the repo,
+# so reproduce it by patching the DAAD-Ready template SDG's 8 table bytes.
+# Every other leg uses NO GAME.SDG -> the interpreter's identity default
+# -> classic ULA colours (the fresh-DRC "blue" behaviour).
+$sdgPath = "$root\sd\GAME.SDG"
+if ($Rab) {
+    $sdg = [System.IO.File]::ReadAllBytes("$dr\ASSETS\ZX\DAAD.SDG")
+    $old = [byte[]](0,7,2,3,4,5,6,1)
+    [System.Array]::Copy($old, 0, $sdg, 2062, 8)
+    [System.IO.File]::WriteAllBytes($sdgPath, $sdg)
+    "sdg: GAME.SDG written with the OLD ink table (white body text)"
+}
+elseif (Test-Path $sdgPath) {
+    Remove-Item $sdgPath -Force
+    "sdg: removed (no SDG -> identity -> classic ULA)"
+}
+
 $good = [System.IO.File]::ReadAllBytes("$root\sd\GAME.DDB")
 
 "size=$($good.Length) (hex $('{0:X4}' -f $good.Length))"

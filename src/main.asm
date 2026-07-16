@@ -38,6 +38,7 @@ main:
     call ddb_diag
     call txt_init
     call dbg_engage_tilemap
+    call sdg_load
     call windows_init
     ld hl, objname_print
     ld (objname_hook), hl

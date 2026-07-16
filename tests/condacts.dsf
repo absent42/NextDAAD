@@ -367,10 +367,10 @@ NORTH 0
         SKIP 1
 > _ _   MES "36 F#n"
 > _ _   PAPER 2
-        INK 7
+        INK 6
         MES "37 COLOUR#n"
         PAPER 0
-        INK 1
+        INK 7
         MES "37 OK#n"
         SKIP 1
 > _ _   MES "37 F#n"
