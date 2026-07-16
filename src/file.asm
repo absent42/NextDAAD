@@ -316,9 +316,9 @@ sav_scatter_locs:
 ; count: a header shortfall refuses before the byte compare (otherwise a
 ; zero-length file would leave savRdHdr holding a stale header from a
 ; previous successful read and pass validation); a flags/locs shortfall
-; is classified io-error - by that point the header was already valid,
-; so flags (and possibly part of objTable) may already be partially
-; overwritten from the truncated file. That partial write is not undone.
+; is classified io-error. The load is ATOMIC: flags and locations are
+; staged (savStage/savLocs) and committed to live state only after
+; every read verifies, so NO failure mode can damage the session.
 sav_read:
     call esx_getsetdrv
     jp c, .ioerr
@@ -356,9 +356,10 @@ sav_read:
     ld hl, numObj
     cp (hl)
     jp nz, .errclose_wrong
-    ; flags (256 bytes)
+    ; flags (256 bytes) into the STAGE, not the live page - the load is
+    ; atomic: nothing touches live state until every byte is verified
     ld a, (savHandle)
-    ld ix, flags
+    ld ix, savStage
     ld bc, 256
     call esx_fread
     jp c, .errclose_io
@@ -366,7 +367,7 @@ sav_read:
     or a
     sbc hl, bc
     jp nz, .errclose_io
-    ; object locations
+    ; object locations into their stage
     ld a, (numObj)
     ld c, a
     ld b, 0
@@ -380,6 +381,11 @@ sav_read:
     or a
     sbc hl, bc
     jp nz, .errclose_io
+    ; everything verified: commit atomically
+    ld hl, savStage
+    ld de, flags
+    ld bc, 256
+    ldir
     call sav_scatter_locs
     ld a, (savHandle)
     call esx_fclose
@@ -407,6 +413,8 @@ sav_read:
     ret
 
 savName:    ds 14                ; 8 + ".SAV" + NUL
+savStage:   ds 256               ; sav_read staging: flags commit only
+                                 ; after the whole file verifies
 savHandle:  db 0
 savLocs:    ds 255
 ramSaveBuf: ds 512               ; RAMSAVE: flags[256] + locs[<=255]

@@ -1312,38 +1312,24 @@ h_save:                         ; 25: arg ignored (classic parity)
     ret
 
 h_load:                         ; 26: condition-typed (cprops row 26).
-                                ; Failure semantics differentiated by
-                                ; state damage: not-found/wrong-game
-                                ; leave state untouched -> SM57 and
-                                ; fail the entry (the game's redraw is
-                                ; skipped, the error stays visible, the
-                                ; session survives - jdaad behaviour);
-                                ; an io-error mid-restore has already
-                                ; corrupted flags -> SM57 + GOTO 0 +
-                                ; RESTART, the manual's tape-era
-                                ; recovery, kept for the one case that
-                                ; needs it.
+                                ; sav_read is ATOMIC (staged commit),
+                                ; so EVERY failure leaves the session
+                                ; untouched: SM57 and fail the entry -
+                                ; the game's redraw is skipped, the
+                                ; error stays visible, play continues.
+                                ; The manual's tape-era restart-on-
+                                ; failure existed because a failed
+                                ; physical load had already trashed
+                                ; state; staging makes it obsolete.
     call sav_prompt
     ret c                       ; name error: fail the entry (CF set)
     call sav_read
     jr nc, .ok
-    push af                     ; A = error class from sav_read
     ld e, 57
     ld a, 0
     call print_msg
     call prn_newline
-    pop af
-    cp 2                        ; io-error after validation?
-    jr z, .damaged
-    jp ovl1_false               ; clean failure: abort the entry
-.damaged:
-    xor a
-    ld (flags+FLAG_PLAYER), a   ; GOTO 0
-    ld (procSP), a              ; RESTART: wipe the process stack and
-    ld (doallLevel), a          ; DOALL state; eng_step re-pushes PRO 0
-    ld a, $FF
-    ld (doallObj), a
-    jp ovl1_false
+    jp ovl1_false               ; abort the entry, session survives
 .ok:
     jp ovl1_true
 
