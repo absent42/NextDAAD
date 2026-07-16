@@ -221,8 +221,8 @@ boot_banner:
     call nr_read
     jp dbg_hex8
 
-SELFTEST_FREE_2MB equ 85    ; 14,15 + 29-47 + 48-111
-SELFTEST_FREE_1MB equ 21    ; 14,15 + 29-47
+SELFTEST_FREE_2MB equ 84    ; 14,15 + 30-47 + 48-111 (29 withdrawn for overlay 2)
+SELFTEST_FREE_1MB equ 20    ; 14,15 + 30-47 (29 withdrawn for overlay 2)
 
 ram_diag:
     ld b, 2

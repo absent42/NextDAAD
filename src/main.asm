@@ -14,6 +14,7 @@ main:
                                   ; is held - checked before ANY other
                                   ; init, never returns if entered
  ENDIF
+    call boot_data_init
     call hw_init
     call im2_init
     call dbg_cls
@@ -67,6 +68,32 @@ idle:
     call dbg_hex16
  ENDIF
     jr idle
+
+; Reset the mutable resident sentinels that boot-time and first-turn code read
+; before writing, to their assembly-time values. A warm re-entry (nextreg 2,1
+; soft reset - QUIT reply N, and the game ending - which under CSpect re-enters
+; this .nex with dirty RAM instead of reloading the file image) must boot as if
+; cold. The boot-critical allocator/DDB/engine state (bankTable, ramExpanded,
+; ddbHandle, flags, procSP, doallObj, rngState, dbgTilemap) is already rebuilt
+; unconditionally by bank_table_init / ram_detect / ddb_load / eng_init_game /
+; dbg_cls; these are the remaining read-before-write sentinels not covered
+; elsewhere. On real hardware nextreg 2,1 hands control back to NextZXOS, so
+; this path is exercised only under the CSpect dev loop - but a cold-equivalent
+; boot is correct robustness regardless.
+boot_data_init:
+    ld a, $FF
+    ld (chrHandle), a           ; CHR font handle: $FF = no open handle
+    ld a, 255
+    ld (prevVerb), a            ; compound-sentence previous verb
+    ld a, GFX_EMPTY
+    ld (stagedPic), a           ; picture cache staging sentinels
+    ld (stagedEntry), a
+    ld a, 7*2
+    ld (tmAttr), a             ; tilemap attribute (white on black)
+    xor a
+    ld (tmUp), a               ; tilemap-live flag (fatal-path display route)
+    ld (ramSaveOk), a          ; RAMSAVE-present guard for RAMLOAD
+    ret
 
     INCLUDE "hardware.asm"
     INCLUDE "interrupts.asm"
