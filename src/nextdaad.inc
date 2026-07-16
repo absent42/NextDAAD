@@ -136,6 +136,8 @@ PAL_L2_FIRST    equ $10     ; NR_PAL_CTRL: auto-inc on, Layer 2 first palette
 NR_L2_CLIP      equ $18     ; Layer 2 clip window (X1,X2,Y1,Y2 - index-
                             ; sequenced); guide: "reads and writes"
 NR_CLIP_IDX     equ $1C     ; write bit0 = 1 resets the L2 clip index
+NR_L2_XOFS      equ $16     ; Layer 2 X pixel scroll offset (low 8 bits)
+NR_L2_YOFS      equ $17     ; Layer 2 Y pixel scroll offset
 
 ; --- Engine (sub-project 3) ---
 PROC_DEPTH      equ 10

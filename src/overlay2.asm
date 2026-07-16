@@ -53,7 +53,7 @@ l2_mode_set:
     nextreg NR_L2_CLIP, 159       ; X2 (320x256: X in 2-pixel units)
     nextreg NR_L2_CLIP, 0         ; Y1
     nextreg NR_L2_CLIP, 255       ; Y2
-    ret
+    jr .noscroll
 .m256:
     xor a                        ; NR $70: bits5-4=00 (256x192, 8bpp)
     nextreg NR_L2_CTRL, a
@@ -63,6 +63,12 @@ l2_mode_set:
     nextreg NR_L2_CLIP, 255       ; X2
     nextreg NR_L2_CLIP, 0         ; Y1
     nextreg NR_L2_CLIP, 191       ; Y2
+.noscroll:
+    ; NR $16/$17: X/Y pixel scroll offset (guide 623-639). Same never-
+    ; programmed-on-a-bare-boot class as the clip window; zeroed so a
+    ; stale offset can't shift/wrap the image.
+    nextreg NR_L2_XOFS, 0
+    nextreg NR_L2_YOFS, 0
     ret
 
 ; Enable Layer 2 display via NR $69 bit 7 (guide 713-723: "1 to enable

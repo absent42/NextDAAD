@@ -466,9 +466,10 @@ l2dbg_status_regs:
 ; does not say reads do too; if they don't, all four values will come
 ; back identical, which is itself diagnostic - not skipped, since $18
 ; is not write-only, but flagged here as an unconfirmed assumption),
-; and one live pixel read back from the drawn surface (overlay2's
-; l2_peek_marker - the actual top-left corner-marker byte). Corrupts
-; everything.
+; the Layer 2 scroll offset (NR $16/$17, expect $00 $00 - zeroed by
+; l2_mode_set), and one live pixel read back from the drawn surface
+; (overlay2's l2_peek_marker - the actual top-left corner-marker
+; byte). Corrupts everything.
 l2dbg_status2:
     ld b, TM_ROWS-2
     ld c, 0
@@ -504,6 +505,15 @@ l2dbg_status2:
     ld e, NR_L2_CLIP
     call nr_read
     call dbg_hex8
+    ld hl, msgScroll
+    call dbg_puts
+    ld e, NR_L2_XOFS
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_L2_YOFS
+    call nr_read
+    call dbg_hex8
     ld hl, msgPx
     call dbg_puts
     call l2_peek_marker
@@ -516,6 +526,7 @@ msgTestcardDone: db "TESTCARD DONE", 0
 msgRegDump:      db " 69/70/12/15=", 0
 msgReg14:        db "14=", 0
 msgClip:         db " clip=", 0
+msgScroll:       db " scroll=", 0
 msgPx:           db " px=", 0
 
 ; Corrupts everything (drives overlay2's l2_testcard/l2_disable).
