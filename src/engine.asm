@@ -554,10 +554,12 @@ cprops:
     db $81                      ; 19    DESC (A,1)
     db 0                        ; 20    QUIT (C,0)
     db $80,$80,$80,$80          ; 21-24 END DONE OK ANYKEY (A,0)
-    db $81,1,$81,$81            ; 25-28 SAVE LOAD(C,1) DPRINT DISPLAY
-                                ; LOAD is condition-typed like PARSE/
-                                ; QUIT: a clean load failure aborts the
-                                ; entry (argc 1 matches DRF either way)
+    db 1,1,$81,$81              ; 25-28 SAVE(C,1) LOAD(C,1) DPRINT DISPLAY
+                                ; SAVE/LOAD are condition-typed like
+                                ; PARSE/QUIT: failure aborts the entry
+                                ; so the error message survives the
+                                ; game's redraw; done is set on every
+                                ; outcome (argc 1 matches DRF)
     db $80,$80,$80,$80,$80,$80  ; 29-34 CLS DROPALL AUTOG AUTOD AUTOW AUTOR
     db $81,$82,$81,$81,$81,$81  ; 35-40 PAUSE SYNONYM GOTO MESSAGE REMOVE GET
     db $81,$81,$81,$81,$82,$82  ; 41-46 DROP WEAR DESTROY CREATE SWAP PLACE

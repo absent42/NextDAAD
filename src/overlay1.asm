@@ -1299,17 +1299,21 @@ sav_prompt:
     scf                         ; prn_newline corrupts flags - re-assert
     ret                         ; the name-error CF for the caller
 
-h_save:                         ; 25: arg ignored (classic parity)
-    call sav_prompt
-    ret c                       ; name error already reported
-    call sav_write
-    jr nc, .ok
+h_save:                         ; 25: condition-typed like LOAD; done
+    call sav_prompt             ; set on every outcome (jdaad _SAVEB)
+    jr c, .fail                 ; so the game's catch-all stays quiet;
+    call sav_write              ; failure aborts the entry so SM59/57
+    jr nc, .ok                  ; survive the game's redraw
     ld e, 57                    ; "I/O Error"
     ld a, 0
     call print_msg
     call prn_newline
+.fail:
+    call eng_set_done
+    jp ovl1_false
 .ok:
-    ret
+    call eng_set_done
+    jp ovl1_true
 
 h_load:                         ; 26: condition-typed (cprops row 26).
                                 ; sav_read is ATOMIC (staged commit),
@@ -1322,15 +1326,18 @@ h_load:                         ; 26: condition-typed (cprops row 26).
                                 ; physical load had already trashed
                                 ; state; staging makes it obsolete.
     call sav_prompt
-    ret c                       ; name error: fail the entry (CF set)
+    jr c, .fail                 ; name error: fail the entry
     call sav_read
     jr nc, .ok
     ld e, 57
     ld a, 0
     call print_msg
     call prn_newline
+.fail:
+    call eng_set_done           ; done on every outcome (jdaad _LOADB)
     jp ovl1_false               ; abort the entry, session survives
 .ok:
+    call eng_set_done
     jp ovl1_true
 
 savTimeStash: db 0
