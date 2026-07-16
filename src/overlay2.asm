@@ -179,6 +179,28 @@ l2_clear:
 ; Programs the Layer 2 FIRST palette (NR $43 = PAL_L2_FIRST selects it
 ; for edit and as the active display palette, auto-increment on,
 ; guide 203-230), index reset to 0 (NR $40 = 0). Corrupts AF, BC, HL.
+;
+; Transparency invariant: NR $14 transparency is a COLOUR compare, not
+; an index compare - the hardware matches each Layer 2 pixel's final
+; RRRGGGBB palette output against the register (wiki.specnext.dev/
+; NextReg:$14 "Global Transparency", and guide chapter-next-layer2.tex
+; line 71 "transparent colour of Layer 2"; the guide's register table
+; at line 619 says "index", but the owner's milestone run proved the
+; colour reading: all 21 Rabenstein NX2 palettes map entry 254 to
+; black, and the $FE surface fill rendered opaque black over the text
+; rows). So a loaded palette must reserve one colour for punch-through:
+; - copy loops dodge collisions: any entry whose FIRST byte equals
+;   TM_TRANSP_ATTR ($FE) is written as $FF instead - one blue LSB off,
+;   imperceptible; only the RRRGGGBB byte is compared, so dodging it
+;   suffices (the 9-bit second byte passes through as supplied). Art
+;   scan: 3/12/13.NX2 each carry one $FE-coloured entry that would
+;   otherwise punch unintended holes;
+; - entry 254 is then stamped $FE via the 9-bit pair (NR $44 = $FE,
+;   then 0: blue LSB 0, priority 0 - chosen over an NR $41 write so
+;   the priority bit is explicitly cleared), making index 254 the ONLY
+;   transparent entry after ANY l2_palette_load. No Rabenstein art
+;   uses pixel value $FE, so reserving the index costs nothing; the
+;   DEBUG test card's identity palette already satisfied the invariant.
 l2_palette_load:
     ld a, b
     push af
@@ -191,19 +213,32 @@ l2_palette_load:
 .l8:
     ld a, (hl)
     inc hl
+    cp TM_TRANSP_ATTR            ; colour collision with the reserved
+    jr nz, .w8                   ; transparent colour: dodge to $FF
+    ld a, $FF
+.w8:
     nextreg NR_PAL_VALUE, a
     djnz .l8
-    ret
+    jr .stamp
 .fmt9:
     ld b, 0
 .l9:
     ld a, (hl)
     inc hl
+    cp TM_TRANSP_ATTR            ; dodge the RRRGGGBB byte only - the
+    jr nz, .w9                   ; compare ignores the second byte
+    ld a, $FF
+.w9:
     nextreg NR_PAL_VALUE9, a
     ld a, (hl)
     inc hl
     nextreg NR_PAL_VALUE9, a
     djnz .l9
+.stamp:
+    ; force entry 254 = the reserved transparent colour (see header)
+    nextreg NR_PAL_INDEX, TM_TRANSP_ATTR
+    nextreg NR_PAL_VALUE9, TM_TRANSP_ATTR
+    nextreg NR_PAL_VALUE9, 0     ; blue LSB 0, priority 0
     ret
 
 l2Mode:     db 0                 ; last mode set by l2_mode_set
