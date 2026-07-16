@@ -23,14 +23,10 @@ GCE_TICK   equ 5
 ; A = entry index (0..GFX_CACHE_MAX-1). Out: HL = gfxCache + index*6.
 ; Corrupts DE, HL. Preserves A, BC.
 gce_ptr:
-    ld l, a
-    ld h, 0
-    add hl, hl                  ; *2
-    ld d, h
-    ld e, l
-    add hl, hl                  ; *4
-    add hl, de                  ; *6
-    ld de, gfxCache
+    ld d, GFX_ENTRY_SIZE
+    ld e, a
+    mul d, e                    ; DE = index * 6 (max 23*6 = 138, fits a byte)
+    ld hl, gfxCache
     add hl, de
     ret
 
@@ -89,19 +85,15 @@ cache_touch:
     ret
 
 ; Halve every cache entry's tick field. Only called from cache_touch,
-; right before gfxTick wraps 255 -> 0. Corrupts AF, BC, DE, HL.
+; right before gfxTick wraps 255 -> 0. Corrupts B, DE, HL (preserves AF).
 gfx_tick_renorm:
-    ld b, 0
+    ld hl, gfxCache + GCE_TICK   ; entry 0's tick field
+    ld de, GFX_ENTRY_SIZE
+    ld b, GFX_CACHE_MAX
 .loop:
-    ld a, b
-    call gce_ptr
-    ld de, GCE_TICK
-    add hl, de
     srl (hl)
-    inc b
-    ld a, b
-    cp GFX_CACHE_MAX
-    jr nz, .loop
+    add hl, de                   ; step to the next entry's tick field
+    djnz .loop
     ret
 
 ; A = entry index. Frees every bank in the entry's bank-list range via

@@ -400,10 +400,7 @@ l2dbg_t_held:
     or a                         ; guarantee ZF clear: not held on any sample
     ret
 
-; A round-8 strobe/DI-probe experiment lived here briefly and was
-; superseded by the bare-metal isolation ladder below (l2_bareprobe_
-; hook) before any owner ever ran it - the ladder subsumes what it was
-; for. Back to the plain release/press wait the T-hook always used.
+; Frame-paced wait for T to be released, then pressed again (T-hook).
 l2dbg_wait_release:
     call l2dbg_t_held
     jr z, l2dbg_wait_release
@@ -435,13 +432,10 @@ l2dbg_status:
     jp dbg_puts
 
 ; Like l2dbg_status, but appends a live hex dump of NR $69 (Layer 2
-; enable)/$70 (resolution)/$12 (bank)/$15 (S/L/U priority) after the
-; message, read back via nr_read rather than assumed - so the owner
-; can report the actual register state alongside what's on screen.
-; Round 1's enable path ($123B port) left Layer 2 invisible despite a
-; correct-looking write; this dump exists to catch that class of bug
-; immediately instead of guessing from the visual symptom alone.
-; Corrupts everything.
+; enable)/$70 (resolution)/$12 (bank)/$15 (S/L/U priority), read back
+; via nr_read rather than assumed - so the owner can report the actual
+; register state alongside what is on screen (a correct-looking enable
+; write can still leave Layer 2 invisible). Corrupts everything.
 l2dbg_status_regs:
     call l2dbg_status
     ld hl, msgRegDump
@@ -464,27 +458,13 @@ l2dbg_status_regs:
 
 ; Second status row (TM_ROWS-2, also reserved by overlay2's
 ; l2_testcard): NR $14 (global transparency index, expect $FE), the
-; Layer 2 clip window SHADOW (labelled clipW= - NOT a hardware
-; readback of NR $18, see below), the Layer 2 scroll offset (NR $16/
-; $17, expect $00 $00 - zeroed by l2_mode_set/l2_clip_set), and one
-; live pixel read back from the drawn surface (overlay2's
-; l2_peek_marker - the actual top-left corner-marker byte).
-;
-; The clip field used to be a live $18 readback (index-reset via $1C
-; then four reads). Dropped: per wiki.specnext.dev/NextReg:$18, a
-; WRITE to $18 auto-increments the index but a READ does not - so
-; that old sequence re-read index 0 (X1) four times instead of
-; X1,X2,Y1,Y2, which alone explains a spurious "00 00 00 00" (X1 is
-; legitimately 0 in both modes) independent of whether the real
-; window was fine. The owner also reported a flash of correct colour
-; before the screen went grey, i.e. something about touching $18/$1C
-; disturbed the live window beyond what that misread alone accounts
-; for. Rather than chase the exact mechanism further, this field now
-; prints overlay2's software shadow of what it actually wrote
-; (l2ClipX1/X2/Y1/Y2), and l2_dbg_hook re-asserts the real clip
-; window (l2_clip_set) immediately after this prints, right before
-; the wait loop, so even a still-misbehaving diagnostic can't leave
-; the window degenerate. Corrupts everything.
+; Layer 2 clip window SHADOW (clipW= - overlay2's l2ClipX1/X2/Y1/Y2,
+; NOT a hardware readback: NR $18 cannot be read back, see l2_clip_set),
+; the scroll offset (NR $16/$17, expect $00 $00), and one live pixel
+; read back from the drawn surface (l2_peek_marker - the top-left
+; corner-marker byte). l2_dbg_hook re-asserts the clip window
+; (l2_clip_set) right after this prints, as a guard. Corrupts
+; everything.
 l2dbg_status2:
     ld b, TM_ROWS-2
     ld c, 0
@@ -552,17 +532,16 @@ l2_dbg_hook:
     ld hl, msgTestcard256
     call l2dbg_status_regs
     call l2dbg_status2
-    xor a                        ; re-assert the clip window (l2_clip_set)
-    call l2_clip_set             ; AFTER the diagnostic, right before the
-    call l2dbg_wait_release       ; wait loop - belt and braces against
-    call l2dbg_wait_press         ; the diagnostic disturbing it (see
-                                  ; l2dbg_status2's header comment)
+    xor a                        ; re-assert the clip window after the
+    call l2_clip_set             ; diagnostic, as a guard (l2dbg_status2)
+    call l2dbg_wait_release
+    call l2dbg_wait_press
     ld a, 1                      ; then 320x256
     call l2_testcard
     ld hl, msgTestcard320
     call l2dbg_status_regs
     call l2dbg_status2
-    ld a, 1                      ; re-assert the clip window, same reason
+    ld a, 1                      ; re-assert the clip window, same guard
     call l2_clip_set
     call l2dbg_wait_release
     call l2dbg_wait_press
@@ -583,45 +562,30 @@ l2_dbg_hook:
     call tm_fill_rect
     ret
 
-; --- Round 8: bare-metal isolation ladder ---
-; Built to find why the card rendered correctly for a flash then went
-; permanently grey every round through round 7. It found the answer:
-; stage 0 (below) came back flat BLACK, not the testcard - proof Layer
-; 2 was rendering but sitting BEHIND CSpect's opaque zero-filled ULA
-; screen at the NR $15 priority in use at the time. See l2_enable's
-; header comment (overlay2.asm) for the architecture fix that came out
-; of this (Layer 2 now on top, transparent outside the art). Kept as a
-; general-purpose diagnostic for future Layer 2 regressions: hold P
-; from power-on (checked here, at the very top of main:, BEFORE
-; hw_init/im2_init/txt_init/anything else runs) for a 4-stage ladder,
-; each stage adding exactly one more piece and redrawing:
-;   Stage 0: hw_init only. No im2_init (interrupts stay off - main:
-;            already did `di` before this runs; the ISR never fires).
-;            No txt_init (no tilemap at all). Just the L2 recipe
+; --- Bare-metal isolation ladder ---
+; Permanent bring-up diagnostic for Layer 2 regressions. Hold P from
+; power-on (checked at the very top of main:, BEFORE hw_init/im2_init/
+; txt_init/anything else) for a 4-stage ladder that adds exactly one
+; piece per stage and redraws, isolating which layer/init step a fault
+; belongs to:
+;   Stage 0: hw_init only. No im2_init (interrupts stay off; main: did
+;            `di`). No txt_init (no tilemap). Just the L2 recipe
 ;            (mode+clip+scroll+enable+priority+transparency) and the
-;            gradient/marker draw, 1 marker block, top-left. Expected
-;            appearance NOW: the card's drawable area (see tc_gradient_
-;            320's header comment on 320 mode's 240-line bound), with
-;            hw_init's ULA black showing through Layer 2's transparent
-;            fill everywhere outside it (no txt_init yet to disable
-;            the ULA output or clear it to anything else) - that black
-;            border is expected here, not a fault.
-;   Stage 1: + im2_init (also does EI - the ISR is now live and
-;            ticking frameCounter every frame). Still no tilemap, same
-;            expected black surround. 2 marker blocks.
+;            gradient/marker draw, 1 marker block, top-left. hw_init's
+;            ULA black shows through Layer 2's transparent fill outside
+;            the card's drawable area (see tc_gradient_320's 240-line
+;            bound) - that black border is expected, not a fault.
+;   Stage 1: + im2_init (also EI - ISR live, frameCounter ticking).
+;            Still no tilemap, same black surround. 2 marker blocks.
 ;   Stage 2: + txt_init (tilemap on) + tm_clear_transparent over the
-;            card area + one status line. 3 marker blocks (belt and
-;            braces - costs nothing, tilemap text is the real stage
-;            indicator from here on).
-;   Stage 3: the full existing testcard flow (same as the T-hook's
-;            256x192 leg, including its register/clip-shadow dump).
-; Each stage waits for P to be released then pressed again before
-; advancing. After stage 3, wraps back to stage 0 rather than
-; returning, so the owner can re-run the whole ladder without a
-; manual reset - this path is a dead end by design, entirely separate
-; from and does not alter the existing T-hook (l2_dbg_hook above).
-; P not held: returns immediately, nothing touched, normal boot
-; proceeds exactly as if this code didn't exist.
+;            card area + one status line. 3 marker blocks.
+;   Stage 3: the full testcard flow (as the T-hook's 256x192 leg,
+;            including its register/clip-shadow dump).
+; Each stage waits for P released then pressed before advancing. After
+; stage 3 it wraps back to stage 0 rather than returning, so the ladder
+; re-runs without a reset - a dead end by design, separate from the
+; T-hook (l2_dbg_hook above). P not held: returns immediately, nothing
+; touched.
 
 ; ZF set if P is currently held (row $DF, bit 0 - see keyRows in
 ; overlay0.asm for the same matrix layout). Samples up to 10 times

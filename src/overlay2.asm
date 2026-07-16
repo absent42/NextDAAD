@@ -24,18 +24,15 @@ ovl2_false:
 
 ; A = 0 (256x192 256-colour) or 1 (320x256 256-colour) on entry.
 ; Programs the resolution (NR $70 bits 5-4, guide 728-744: 00 =
-; 256x192, 01 = 320x256), the starting 16K bank (NR $12, guide
-; 586-599: bits 6-0, 16K units) - both modes start at BANK_L2_FIRST
-; (bank 9, "recommended to only use 16K banks 9 or greater", guide
-; line 41) - the global transparent index (NR $14 = TM_TRANSP_ATTR,
-; $FE - see l2_enable's comment: with Layer 2 now on top, a pixel
-; equal to this index falls through to the tilemap/ULA below it, so
-; the recipe must set this itself rather than assume txt_init already
-; has. txt_init also programs the same register/value for the
-; tilemap's own purposes - shared, harmless, whichever runs last
-; wins with an identical value) - then the clip window and scroll
-; offset via l2_clip_set. Remembers the mode locally for l2_clear/
-; l2_testcard. Corrupts AF.
+; 256x192, 01 = 320x256), the Layer 2 start bank (NR $12, guide
+; 586-599: 16K units, BANK_L2_FIRST = bank 9, guide line 41 "only use
+; 16K banks 9 or greater"), and the global transparent index (NR $14 =
+; TM_TRANSP_ATTR): with Layer 2 on top (l2_enable) a pixel equal to
+; this index falls through to the tilemap/ULA below, so the L2 recipe
+; sets it itself. txt_init programs the same register/value for the
+; tilemap - shared, harmless, last writer wins with an identical value.
+; Then the clip window and scroll offset via l2_clip_set. Remembers the
+; mode in l2Mode for l2_clear/l2_testcard. Corrupts AF.
 l2_mode_set:
     ld (l2Mode), a
     push af
@@ -52,63 +49,42 @@ l2_mode_set:
     pop af
     jp l2_clip_set                ; also zeroes the scroll offset, then ret
 
-; A = 0/1 as above. Programs just the Layer 2 clip window (NR $1C
-; index reset + 4x NR $18, guide 650-669) and zeroes the scroll offset
-; (NR $16/$17, guide 623-639). Split out from l2_mode_set so the
-; DEBUG testcard flow can call this a second time, right before its
-; wait loop, to re-assert the clip window after the status-line
-; diagnostic has run - see l2_testcard's DEBUG block below for why.
-;
-; Stores what it wrote into l2ClipX1/X2/Y1/Y2 (a software shadow of
-; the hardware register) because $18 turned out to be unsafe to read
-; back for diagnostic purposes: per wiki.specnext.dev/NextReg:$18,
-; "Reading only retrieves the current coordinate without changing the
-; index; to advance to the next value, you must write the current
-; value back" - a WRITE auto-increments (guide 658) but a READ does
-; not. round 4's diagnostic reset the index once (NR $1C=1) then did
-; four bare reads expecting X1,X2,Y1,Y2 in turn; since reads never
-; advance, all four actually read INDEX 0 (X1) again - which is
-; legitimately 0 in both modes, so the diagnostic printed "00 00 00
-; 00" regardless of whether X2/Y1/Y2 were correct. Separately, the
-; owner reported a flash of correct colour before the screen went
-; grey, consistent with something about touching $18/$1C at all
-; disturbing the clip window on this CSpect build beyond what the
-; wiki's real-hardware description predicts - not fully explained,
-; but not worth another round of guessing at: the fix removes the
-; hardware read entirely and re-asserts the window defensively
-; instead. Corrupts AF.
+; A = 0/1 as above. Programs the Layer 2 clip window (NR $1C index
+; reset + 4x NR $18: X1,X2,Y1,Y2, guide 650-669) and zeroes the scroll
+; offset (NR $16/$17, guide 623-639). Split from l2_mode_set so the
+; DEBUG flow can re-assert the window after its diagnostic runs.
+; Mirrors what it writes into l2ClipX1/X2/Y1/Y2 as a software shadow:
+; NR $18 cannot be read back for a diagnostic - per wiki.specnext.dev/
+; NextReg:$18 a WRITE auto-increments the index (guide 658) but a READ
+; does not - so the shadow is the only reliable source of the window
+; state. Corrupts AF.
 l2_clip_set:
+    ; X1/Y1 are always 0; X2/Y2 depend on the mode in A. Fill the shadow,
+    ; then program the hardware from it - one shared write sequence.
     or a
-    jr z, .m256
-    nextreg NR_CLIP_IDX, 1        ; bit0: reset the Layer 2 clip index
-    nextreg NR_L2_CLIP, 0         ; X1
-    nextreg NR_L2_CLIP, 159       ; X2 (320x256: X in 2-pixel units)
-    nextreg NR_L2_CLIP, 0         ; Y1
-    nextreg NR_L2_CLIP, 255       ; Y2
+    jr nz, .m320
+    ld a, 255                     ; 256x192: X2 = 255
+    ld (l2ClipX2), a
+    ld a, 191                     ; Y2 = 191
+    ld (l2ClipY2), a
+    jr .prog
+.m320:
+    ld a, 159                     ; 320x256: X2 = 159 (X in 2-pixel units)
+    ld (l2ClipX2), a
+    ld a, 255                     ; Y2 = 255
+    ld (l2ClipY2), a
+.prog:
     xor a
     ld (l2ClipX1), a
     ld (l2ClipY1), a
-    ld a, 159
-    ld (l2ClipX2), a
-    ld a, 255
-    ld (l2ClipY2), a
-    jr .scroll
-.m256:
     nextreg NR_CLIP_IDX, 1        ; bit0: reset the Layer 2 clip index
     nextreg NR_L2_CLIP, 0         ; X1
-    nextreg NR_L2_CLIP, 255       ; X2
+    ld a, (l2ClipX2)
+    nextreg NR_L2_CLIP, a         ; X2
     nextreg NR_L2_CLIP, 0         ; Y1
-    nextreg NR_L2_CLIP, 191       ; Y2
-    xor a
-    ld (l2ClipX1), a
-    ld (l2ClipY1), a
-    ld a, 255
-    ld (l2ClipX2), a
-    ld a, 191
-    ld (l2ClipY2), a
-.scroll:
-    ; NR $16/$17: X/Y pixel scroll offset (guide 623-639). Same never-
-    ; programmed-on-a-bare-boot class as the clip window; zeroed so a
+    ld a, (l2ClipY2)
+    nextreg NR_L2_CLIP, a         ; Y2
+    ; NR $16/$17: X/Y pixel scroll offset (guide 623-639), zeroed so a
     ; stale offset can't shift/wrap the image.
     nextreg NR_L2_XOFS, 0
     nextreg NR_L2_YOFS, 0
@@ -119,48 +95,20 @@ l2ClipX2: db 0
 l2ClipY1: db 0
 l2ClipY2: db 0
 
-; Enable Layer 2 display via NR $69 bit 7 (guide 713-723: "1 to enable
-; Layer 2 (alias for bit 1 in $123B)") and set the S/L/U layer
-; priority (NR $15 bits 4-2) to %000 - Layer 2 ABOVE the tilemap/ULA
-; slot, with sprites (unused) nominally topmost of all.
+; Enable Layer 2 display (NR $69 bit 7, guide 713-723) via read-modify-
+; write, so bits 6-0 (ULA shadow / Timex video-mode aliases, all 0 from
+; hw_init) are left undisturbed. NR $69 is used rather than the $123B
+; I/O port because a bare `LD A,2 / OUT ($123B)` also zeroes that port's
+; other live bits (video-RAM bank select, shadow select, CPU paging)
+; every write, which leaves Layer 2 invisible.
 ;
-; Round 1 used the $123B I/O port directly (the guide's own worked
-; example: LD BC,$123B / LD A,2 / OUT (C),A). That produced a screen-
-; wide grey (the NR $4A all-layers-transparent fallback) with the
-; tilemap correctly transparent and the testcard's pixel data
-; correctly in place - Layer 2 was never actually visible despite the
-; enable write. $123B is a combined write-organised port (bits 7-6
-; video-RAM bank select, bit 3 shadow select, bit 2/0 CPU paging) and
-; a blind `LD A,2` also zeroes those other bits every time; NR $69 is
-; the plain nextreg alias for the same enable flip-flop (bit 7) with
-; no other live bits sharing the write, so this is the safer, simpler
-; route - read-modify-write so bits 6-0 (ULA shadow / Timex video
-; mode aliases, all 0 from hw_init and untouched anywhere else -
-; grepped) are never disturbed.
-;
-; NR $15 architecture, corrected after round 8's bare-metal isolation
-; ladder (see the Task 2 report): the ladder showed stage 0 (Layer 2
-; alone, no tilemap, no ISR) as flat BLACK, not the testcard - proof
-; Layer 2 was rendering but hidden behind CSpect's zero-filled ULA
-; screen (bank 5), which is opaque and, at %010, sat ABOVE Layer 2 in
-; the priority stack. Every prior round's diagnosis (enable path,
-; clip window, scroll offset, the diagnostic corrupting state) was
-; correct as far as it went, but all of it was invisible behind an
-; opaque occluder regardless. round 4 had reconciled NR $15 = %010
-; against the project's design spec, which said "Layer order stays
-; SLU (tilemap over Layer 2)" - that line was the wrong architecture
-; and has been corrected by the plan's owner: the actual model, per
-; DAAD-Ready's own multimedia documentation, is Layer 2 ON TOP with
-; TRANSPARENCY OUTSIDE THE ART, not the tilemap on top. Wiki.
-; specnext.dev's NR $15 table (owner-sourced, matches the local guide
-; verbatim) gives bits 4-2 = %000 as "S L U (Sprites are at top, Layer
-; 2 under [sprites], Enhanced ULA at bottom)" - i.e. Layer 2 ABOVE the
-; tilemap/ULA slot, which is what's programmed below. (%110/%111 are
-; blend modes - colours summed/clamped per channel - not used here.)
-; This only works together with l2_mode_set now explicitly programming
-; NR $14 (global transparent index) as part of the L2 recipe: without
-; a correctly transparent-filled surface, Layer 2 on top would just
-; hide the tilemap text instead of the reverse. Corrupts AF, BC.
+; Sets the S/L/U layer priority (NR $15 bits 4-2) to %000 - per wiki.
+; specnext.dev/NextReg:$15 (matches the local guide verbatim), %000 is
+; "S L U": Sprites top, Layer 2 under sprites, Enhanced ULA at bottom -
+; i.e. Layer 2 ABOVE the tilemap/ULA slot. (%110/%111 are blend modes,
+; unused.) Only correct together with l2_mode_set's NR $14 transparent
+; fill: without it, Layer 2 on top would hide the tilemap text instead
+; of letting it show through. Corrupts AF, BC.
 l2_enable:
     ld e, NR_DISPLAY_CTRL
     call nr_read
@@ -182,19 +130,15 @@ l2_disable:
     ret
 
 ; Fill the active surface (per the last l2_mode_set) with the current
-; Layer 2/ULA/LoRes transparent index (NR $14, guide line 616-620) -
-; reads the register rather than assuming a literal, but since
-; l2_mode_set (the only caller path into this) now always programs
-; NR $14 = TM_TRANSP_ATTR ($FE) first, this always fills with $FE in
-; practice: with Layer 2 on top of the tilemap (l2_enable), a pixel
-; equal to this index is exactly what lets the tilemap/ULA below show
-; through. 256x192 = 6 x 8K pages (48K, guide 160); 320x256 = 10 x 8K
-; pages (80K, guide 306), both starting at 8K page BANK_L2_FIRST*2
-; (guide line 599: "8K banks... multiply by 2"). A flat memset works
-; regardless of the row-major/column-major addressing difference
-; between the two modes, since every byte in the span gets the same
-; value. Brackets the remap with data_save/data_restore so slot 6 is
-; always left as the caller found it. Corrupts AF, BC, DE, HL.
+; NR $14 transparent index (guide 616-620) - read back rather than
+; assumed, though l2_mode_set always programs it to TM_TRANSP_ATTR
+; first. With Layer 2 on top (l2_enable) a pixel at this index lets the
+; tilemap/ULA below show through. 256x192 = 6 x 8K pages, 320x256 = 10 x
+; 8K pages (guide 160/306), both from 8K page BANK_L2_FIRST*2 (guide
+; 599). A flat memset works for both regardless of the row-/column-major
+; layout, since every byte gets the same value. Brackets the remap with
+; data_save/data_restore so slot 6 is left as the caller found it.
+; Corrupts AF, BC, DE, HL.
 l2_clear:
     call data_save
     ld e, NR_L2_TRANSP
@@ -278,23 +222,14 @@ l2PageCnt:  db 0
 TC_MARK_COLOUR equ 255           ; distinct from the gradient's low end
 
 ; A = 0 (256x192) or 1 (320x256) on entry. Clears the tilemap over the
-; card area to the reserved transparent attribute (resident
-; tm_clear_transparent, tilemap.asm - the bottom TWO rows are left
-; alone for debug.asm's status lines), then delegates to
-; l2_bareprobe_draw: selects the mode, enables Layer 2 ON TOP of the
-; tilemap/ULA (l2_enable - see its header comment for the round-8
-; architecture correction), clears the Layer 2 surface to the shared
-; transparent index, paints an X-indexed gradient - relying on the
-; Next's default identity Layer 2 palette (index N reads back as
-; colour N out of reset, guide line "initialized with default values,
-; so they are usable out of the box" - chapter-next-palette.tex line
-; 18) so no palette load is needed for the bring-up check - then
-; stamps a 4x4 marker block at all four visual corners. The tilemap
-; clear here and the 320-mode gradient/marker's 240-line bound (see
-; tc_gradient_320's header comment) work together: Layer 2 is transparent
-; everywhere the tilemap has real content (both status rows, always;
-; the card area too, before the gradient/marks draw over most but not
-; all of it), so text and picture coexist with the picture on top.
+; card area to the reserved transparent attribute (tm_clear_transparent,
+; tilemap.asm; the bottom TWO rows are left for debug.asm's status
+; lines), then delegates to l2_bareprobe_draw for the L2 recipe + draw.
+; Uses the Next's default identity Layer 2 palette (index N = colour N
+; out of reset, chapter-next-palette.tex line 18) so no palette load is
+; needed. The card-area clear and the 320-mode 240-line bound (see
+; tc_gradient_320) keep Layer 2 transparent wherever the tilemap has
+; real content, so text and picture coexist with the picture on top.
 ; Corrupts everything.
 l2_testcard:
     push af
@@ -307,12 +242,11 @@ l2_testcard:
     jp l2_bareprobe_draw
 
 ; A = 0/1 as above. The L2 recipe (mode_set incl. clip+scroll, enable
-; incl. priority, clear-to-transparent) plus the gradient+corner-
-; marker draw - i.e. l2_testcard's guts MINUS the tilemap-transparent
-; clear. Split out for round 8's bare-metal isolation ladder
-; (debug.asm's l2_bareprobe_hook, holding P at boot): stages 0-1 of
-; that ladder have no tilemap at all yet, so they call this directly
-; instead of l2_testcard. Corrupts everything.
+; incl. priority, clear-to-transparent) plus the gradient + corner-
+; marker draw - l2_testcard's guts MINUS the tilemap-transparent clear.
+; Split out for the bare-metal isolation ladder (debug.asm's
+; l2_bareprobe_hook): its stages 0-1 have no tilemap yet, so they call
+; this directly instead of l2_testcard. Corrupts everything.
 l2_bareprobe_draw:
     push af
     call l2_mode_set
@@ -330,13 +264,11 @@ l2_bareprobe_draw:
     ret
 
 ; A = ladder stage (0-3). Draws (stage+1) filled 16x16-pixel blocks,
-; TC_MARK_COLOUR, side by side (20px stride) in the surface's top-left
-; corner - the only way to show the stage number with no tilemap
-; available in stages 0-1 of the bare-probe ladder (debug.asm's
-; l2_bareprobe_hook). Works unmodified in both modes: a square block
-; near the origin fits inside 8K page BANK_L2_FIRST*2 whether the
-; surface is row-major or column-major (see tc_mark's header comment
-; for why). Corrupts everything.
+; TC_MARK_COLOUR, side by side (20px stride) in the top-left corner -
+; the only way to show the stage number when stages 0-1 of the ladder
+; have no tilemap. Works in both modes: a square block near the origin
+; fits inside 8K page BANK_L2_FIRST*2 whether the surface is row- or
+; column-major (see tc_mark). Corrupts everything.
 l2_bareprobe_marker:
     inc a                        ; stage -> block count (1-4)
     ld (l2BpBlockCnt), a
@@ -436,11 +368,10 @@ tc_gradient_256:
 ; column across the whole 320-wide sweep, giving a vertical rainbow
 ; repeated left to right (wraps once at column 256 - still clearly a
 ; gradient). Only fills Y 0-239 (240 lines) per column, NOT the full
-; 256: with Layer 2 now on top of the tilemap (l2_enable), the bottom
-; 16 lines - exactly where debug.asm's two status rows sit
-; (TM_ROWS-2..TM_ROWS-1, 8px/row) - are left at l2_clear's transparent
-; fill instead, so that text shows through instead of being covered by
-; opaque gradient content. Corrupts AF, BC, DE, HL.
+; 256: with Layer 2 on top (l2_enable), the bottom 16 lines - where
+; debug.asm's two status rows sit (TM_ROWS-2..TM_ROWS-1, 8px/row) - are
+; left at l2_clear's transparent fill so the text shows through instead
+; of being covered by opaque gradient. Corrupts AF, BC, DE, HL.
 tc_gradient_320:
     call data_save
     ld a, BANK_L2_FIRST*2
