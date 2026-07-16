@@ -149,9 +149,13 @@ stagedEntry:  db GFX_EMPTY       ; cache slot reserved for the staged picture
 gfxBankNext:  db 0               ; bank-list arena bump cursor: next free index
                                  ; (a failed load rewinds it; compaction on
                                  ; eviction is Task 6's problem)
-gfxName:      db "000.NX2", 0    ; picture filename scratch - RESIDENT so the
-                                 ; path esxDOS reads sits in always-mapped RAM
-                                 ; like ddbName/savName, not an overlay page
+gfxName:      db "000.NX2.ZX0", 0  ; picture filename scratch - RESIDENT so
+                                 ; the path esxDOS reads sits in always-mapped
+                                 ; RAM like ddbName/savName, not an overlay
+                                 ; page. Sized for the longest probe,
+                                 ; "NNN.NX2.ZX0": gfx_open_chain writes the 3
+                                 ; digits and 7 NUL-padded extension bytes;
+                                 ; the final NUL is never overwritten
 
 ; Layer 2 double-buffer surface state (resident so boot_data_init can
 ; reset it via gfx_cache_reset before any overlay is mapped). Front =

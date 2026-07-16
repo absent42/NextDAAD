@@ -6,12 +6,17 @@
 # nested DOALL on the same process); -Rab compiles the modernised next-
 # only tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real
 # commercial-quality DAAD game), makes that DDB active, and stages the
-# Layer 2 art (N.NX2 -> sd\NNN.NX2). The switches are
+# Layer 2 art (default N.NX2 -> sd\NNN.NX2). The DDB switches are
 # mutually exclusive - if more than one is given, whichever copy runs
 # last in this script wins: -Suite copies first, -Err4 copies over
 # it, and -Rab copies last of all, since its block comes after -Err4's.
 # The template is active if no switch is given.
-param([switch]$Suite, [switch]$Err4, [switch]$Rab)
+# Art-staging modifiers (effective only with -Rab, combinable):
+#   -Gfx256  stage the 256-wide N.NXI set instead of the N.NX2s
+#   -GfxZx0  ZX0-compress each staged file (sd\NNN.NX2.ZX0 / with
+#            -Gfx256 sd\NNN.NXI.ZX0) so the interpreter's compressed
+#            picture path is exercised
+param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$Gfx256, [switch]$GfxZx0)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -108,21 +113,48 @@ if ($Rab) {
         Pop-Location
     }
 
-    # Stage the Layer 2 location art: N.NX2 -> sd\NNN.NX2 (zero-padded to 3
-    # digits, the name the interpreter's picture loader expects).
+    # Stage the Layer 2 location art (names zero-padded to 3 digits, the
+    # shape the interpreter's picture loader probes for). Source set:
+    # N.NX2 (320-wide) by default, N.NXI (256-wide) with -Gfx256.
+    # -GfxZx0 compresses each file at staging time with z88dk-zx0
+    # (tools\z88dk\bin; -q quick mode keeps the pass to seconds, the
+    # ratio difference does not matter for tests) into sd\NNN.<ext>.ZX0
+    # - a single whole-file ZX0 stream, which the interpreter's
+    # gfx_depack accepts exactly like Gfx2Next's own two-stream output.
+    # Gfx2Next itself only compresses at CONVERSION time, from an 8-bit
+    # paletted source image:
+    #   gfx2next -bitmap -pal-embed -zx0 pic.png N.NX2   -> N.NX2.zx0
+    # (same for N.NXI; -zx0 APPENDS ".zx0" to the output name). This
+    # script has no image-conversion step - the Rabenstein art ships
+    # pre-converted - so -GfxZx0 compresses the shipped files instead.
+    # Stale variants of each staged number are removed first so the
+    # loader's probe chain (NX2.ZX0 -> N2Z -> NX2 -> NXI.ZX0 -> NXZ ->
+    # NXI) cannot pick up a leftover from a previous staging run.
+    $srcExt = if ($Gfx256) { 'NXI' } else { 'NX2' }
+    $zx0 = "$root\tools\z88dk\bin\z88dk-zx0.exe"
     $staged = 0
-    Get-ChildItem "$rabSrc\*.NX2" | Where-Object { $_.BaseName -match '^\d+$' } | ForEach-Object {
+    Get-ChildItem "$rabSrc\*.$srcExt" | Where-Object { $_.BaseName -match '^\d+$' } | ForEach-Object {
         $art = $_
         $padded = '{0:D3}' -f [int]$art.BaseName
         try {
-            Copy-Item $art.FullName "$root\sd\$padded.NX2" -Force
+            foreach ($stale in @('NX2', 'NXI', 'N2Z', 'NXZ', 'NX2.ZX0', 'NXI.ZX0')) {
+                Remove-Item "$root\sd\$padded.$stale" -Force -ErrorAction SilentlyContinue
+            }
+            if ($GfxZx0) {
+                & $zx0 -f -q $art.FullName "$root\sd\$padded.$srcExt.ZX0" | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "z88dk-zx0 exited $LASTEXITCODE" }
+            }
+            else {
+                Copy-Item $art.FullName "$root\sd\$padded.$srcExt" -Force
+            }
             $staged++
         }
         catch {
-            "WARNING: could not copy $($art.Name) to sd\$padded.NX2 (likely locked by a running CSpect - close it and retry): $_"
+            "WARNING: could not stage $($art.Name) (likely locked by a running CSpect - close it and retry): $_"
         }
     }
-    "staged $staged Rabenstein art file(s) -> sd\NNN.NX2"
+    $shape = $srcExt + $(if ($GfxZx0) { '.ZX0' } else { '' })
+    "staged $staged Rabenstein art file(s) -> sd\NNN.$shape"
 }
 
 $good = [System.IO.File]::ReadAllBytes("$root\sd\GAME.DDB")

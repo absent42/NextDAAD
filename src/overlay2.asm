@@ -263,11 +263,28 @@ l2FillByte: db 0
 l2PageCur:  db 0
 l2PageCnt:  db 0
 
-; --- picture loader / blitter / PICTURE / DISPLAY (Task 4) ---
+; --- picture loader / blitter / PICTURE / DISPLAY (Tasks 4+5) ---
 ; File format (Gfx2Next -pal-embed): 512-byte palette (256 x 2-byte
 ; 9-bit entries, NR $44 order) followed by width*height pixel bytes,
 ; emitted row by row. NNN.NX2 = 320 wide, NNN.NXI = 256 wide; the
 ; height is whatever the file size says: (size - 512) / width.
+;
+; Gfx2Next invocations (tools/gfx2next; source must be an 8-bit
+; paletted PNG/BMP of the target width):
+;   raw:        gfx2next -bitmap -pal-embed pic.png N.NX2   (320 wide)
+;               gfx2next -bitmap -pal-embed pic.png N.NXI   (256 wide)
+;   compressed: add -zx0 to either - Gfx2Next then APPENDS ".zx0" to
+;               the given output name (N.NX2 -> N.NX2.zx0), hence the
+;               double extension the probe chain tries first. Verified
+;               against gfx2next.exe: the -zx0 -pal-embed output is TWO
+;               sequential self-terminating ZX0 streams, palette (512
+;               bytes decompressed) then pixels.
+; A whole raw file compressed in one pass (tools/z88dk/bin/z88dk-zx0
+; NNN.NX2 NNN.NX2.ZX0 - what build-tests.ps1 -GfxZx0 stages) is ONE
+; stream; gfx_depack accepts both by depacking streams back to back
+; until the compressed input is exhausted. Either way the decompressed
+; bytes are identical to the raw file, so everything downstream of the
+; load (gfx_derive_height, gfx_blit, l2_palette_load) is unchanged.
 
 GFX_SRC_END equ DATA_WINDOW+$2000   ; first address past the slot 6 window
 
@@ -337,15 +354,18 @@ h_display:
 ; A = picture number. Ensure its palette+pixels are in cache banks
 ; and stage it for DISPLAY 0. Cache hit: cache_touch + stage, no SD
 ; access. Miss: reserve a cache slot, probe the extension chain
-; (gfxExtTab order - Task 5 prepends its ZX0-compressed probes there),
-; stream the file into freshly allocated 16K banks with count-checked
-; reads, derive the height from the byte total, then commit the entry
-; and stage it. Out: CF clear = staged. CF set = failed (no file, no
-; free slot/bank/arena room, malformed size): every partially
-; allocated bank is freed, the arena cursor rewound, and the stage
-; cleared - jdaad unstages on a failed PICTURE too. Eviction when the
-; pool is full is Task 6; this task fails such loads cleanly instead.
-; Corrupts everything.
+; (gfxExtTab order - ZX0-compressed variants win over raw), stream the
+; file into freshly allocated 16K banks with count-checked reads, for
+; a compressed variant depack those scratch banks into a fresh
+; destination run (gfx_depack), derive the height from the
+; (decompressed) byte total, then commit the entry and stage it. Out:
+; CF clear = staged. CF set = failed (no file, no free slot/bank/arena
+; room, depack error, malformed size): every partially allocated bank
+; is freed - scratch and destination alike, the arena cursor still
+; covers both - the cursor rewound, and the stage cleared - jdaad
+; unstages on a failed PICTURE too. Eviction when the pool is full is
+; Task 6; this task fails such loads cleanly instead. Corrupts
+; everything.
 gfx_load:
     ld (gfxPicNum), a
     cp GFX_EMPTY                ; 255 = the empty-slot sentinel; passing it
@@ -363,6 +383,10 @@ gfx_load:
     call gfx_open_chain
     jr c, .failclean
     call gfx_read_banks         ; closes the file on every path
+    jr c, .failbanks
+    ld a, (gfxCompressed)
+    or a                        ; also clears CF for the skip case
+    call nz, gfx_depack         ; scratch banks -> decompressed run
     jr c, .failbanks
     call gfx_derive_height
     jr c, .failbanks
@@ -437,9 +461,9 @@ gfx_find_empty:
 ; decimal, the project's repeated-subtraction decade idiom - see
 ; prn_dec_digit, print.asm), then probe the extension chain: each
 ; gfxExtTab row is tried with esx_fopen until one opens. Out: CF
-; clear with the handle in gfxHandle and gfxMode/gfxWidth set from
-; the matching row; CF set when no candidate exists on SD. Corrupts
-; everything.
+; clear with the handle in gfxHandle and gfxMode/gfxWidth/
+; gfxCompressed set from the matching row; CF set when no candidate
+; exists on SD. Corrupts everything.
 gfx_open_chain:
     ld a, (gfxPicNum)
     ld hl, gfxName
@@ -465,11 +489,16 @@ gfx_open_chain:
 .row:
     ld (gfxExtPtr), hl
     ld de, gfxName+4            ; past "NNN."
-    ldi                         ; 3 extension characters
-    ldi
-    ldi
+    ld bc, GFX_EXT_NAME         ; 7 NUL-padded extension characters -
+    ldir                        ; a short extension carries its own
+                                ; terminator; gfxName's final NUL backs
+                                ; the full-length "NX2.ZX0" rows
     ld a, (hl)                  ; row's mode byte
     ld (gfxMode), a
+    inc hl
+    ld a, (hl)                  ; row's compressed flag
+    ld (gfxCompressed), a
+    ld a, (gfxMode)
     or a
     ld de, 256
     jr z, .width
@@ -676,6 +705,531 @@ gfx_load_rollback:
     call bank_free              ; preserves BC, DE, HL (banks.asm)
     inc hl
     djnz .free
+    ret
+
+; --- ZX0 depacker (Task 5) ---
+; Core algorithm vendored from Einar Saukas's dzx0_standard.asm
+; ("Standard" ZX0 decoder, https://github.com/einar-saukas/ZX0,
+; BSD-licensed / freely reusable with attribution; the copy shipped
+; with z88dk at tools/z88dk/libsrc/_DEVELOPMENT/compress/zx0/z80/
+; dzx0_standard.asm was the vendoring source). Control flow, the
+; interlaced-Elias reader and the negative-offset arithmetic are kept
+; verbatim; only the three memory primitives differ, because here
+; neither the source nor the destination is flat memory:
+;
+;   upstream                    this port
+;   ld a,(hl)/inc hl (source) = zx0_src_byte  (resident-ish chunk buf)
+;   ldir to DE       (dest)   = zx0_dst_write (slot 6 window, banked)
+;   ldir from DE-off (match)  = zx0_ref_read  (slot 6 window, banked)
+;
+; Banked windowing scheme (the scheme the loader lives or dies by):
+; slot 6 ($C000, the ONLY data window - slot 7 holds this overlay's
+; code) belongs to the DESTINATION. DE walks the mapped 8K dest page;
+; zx0DstOrd counts which ordinal page of the destination run that is,
+; and zx0MapOrd remembers which ordinal is actually mapped so remaps
+; are lazy. The compressed SOURCE never needs the window at the same
+; time: zx0_src_byte hands out bytes from a chunk buffer (gfxRowBuf -
+; idle during loads, addressable at $Exxx in this overlay page) which
+; zx0_chunk_refill refills from the scratch banks, briefly stealing
+; slot 6 and invalidating zx0MapOrd so the next dest access remaps.
+; Invariants:
+;   - slot 6 holds the zx0MapOrd-th dest page, except inside
+;     zx0_chunk_refill (which sets zx0MapOrd = $FF on exit);
+;   - DE is always inside $C000..$E000; $E000 means "page full, step
+;     pending" and is normalised by the next write or match setup;
+;   - back-references are served BYTE BY BYTE in ascending order -
+;     exactly LDIR's semantics, so overlapped (RLE) matches are
+;     correct - with zx0_ref_read/zx0_dst_write each remapping slot 6
+;     to their own page only when zx0MapOrd says it is not theirs
+;     (same-page matches, the common case, run remap-free);
+;   - bit-accumulator reloads happen ONLY at Elias stop-bit reads,
+;     exactly as upstream (whose plain add-a,a discriminator/data-bit
+;     reads have no reload path either): a ZX0 stream never drains the
+;     accumulator at those reads - verified over the whole Rabenstein
+;     corpus plus gfx2next -zx0 output with an instrumented model
+;     decoder before porting.
+;
+; Failure discipline: any fault (source exhausted mid-stream, output
+; past the 6-bank cap, bank/arena exhaustion, match offset before the
+; output start) jumps to zx0_fail, which rewinds SP to the snapshot
+; gfx_depack took and exits CF set; gfx_load's rollback then frees
+; scratch and destination banks alike. The compressed INPUT was capped
+; by gfx_read_banks' own 6-bank (96K) ceiling - generous, since ZX0
+; output is never usefully larger than the 82432-byte raw maximum.
+
+GFX_ZX0_CHUNK   equ 320         ; chunk buffer size = gfxRowBuf's
+GFX_DST_ORD_MAX equ 12          ; dest cap: 6 banks x 2 pages, the same
+                                ; ceiling gfx_read_banks puts on raw art
+
+; Depack the streamed compressed file. In: the scratch run described
+; by gfxArenaStart/gfxBankCount/gfxSizeHi:Lo (gfx_read_banks' output).
+; Decompresses every back-to-back ZX0 stream in it (gfx2next -zx0
+; emits two - palette then pixels; a z88dk-zx0 whole-file pass emits
+; one) into freshly allocated banks appended after the scratch run,
+; then frees the scratch banks, slides the destination bank numbers
+; down over their arena slots and rewinds the cursor - so on success
+; gfxArenaStart/gfxBankCount/gfxSize* describe a decompressed run
+; byte-identical to a raw file load. Out: CF clear on success; CF set
+; on any failure, all appended banks (scratch + dest) left for
+; gfx_load_rollback, which the caller runs. Brackets slot 6 with
+; data_save/data_restore. Corrupts everything.
+gfx_depack:
+    call data_save
+    ld (zx0DepackSP), sp        ; zx0_fail's longjmp target
+    ; source stream = the scratch run, from its first byte
+    ld a, (gfxArenaStart)
+    ld (zx0SrcIdx), a
+    xor a
+    ld (zx0SrcHalf), a
+    ld hl, DATA_WINDOW
+    ld (zx0SrcRd), hl
+    ld hl, (gfxSizeLo)
+    ld (zx0SrcLeft), hl
+    ld a, (gfxSizeHi)
+    ld (zx0SrcLeft+2), a
+    ld hl, gfxRowBuf            ; empty chunk: the first fetch refills
+    ld (zx0ChunkPtr), hl
+    ld (zx0ChunkEnd), hl
+    ; destination run appends to the arena after the scratch run
+    ld a, (gfxBankNext)
+    ld (zx0DstStart), a
+    xor a
+    ld (zx0DstCount), a
+    ld (zx0DstOrd), a
+    call zx0_dst_bank_alloc     ; ordinal 0 needs its bank up front
+    ld a, $FF
+    ld (zx0MapOrd), a           ; nothing mapped yet
+    ld de, DATA_WINDOW
+.stream:
+    call dzx0_banked            ; one self-terminating stream
+    ; unconsumed compressed bytes mean another stream follows
+    ld hl, (zx0ChunkEnd)
+    push de
+    ld de, (zx0ChunkPtr)
+    or a
+    sbc hl, de
+    pop de
+    jr nz, .stream              ; chunk buffer not drained
+    ld a, (zx0SrcLeft+2)
+    ld hl, (zx0SrcLeft)
+    or h
+    or l
+    jr nz, .stream              ; scratch banks not drained
+    ; success: decompressed total = zx0DstOrd*$2000 + (DE - $C000),
+    ; a 24-bit value (max 98304)
+    ld a, d
+    sub high DATA_WINDOW
+    ld h, a                     ; H:L = bytes into the current page
+    ld l, e                     ; (H = $20 when DE sits at $E000)
+    ld a, (zx0DstOrd)
+    ld c, a
+    and 7
+    add a, a
+    add a, a
+    add a, a
+    add a, a
+    add a, a                    ; (ord & 7) << 5
+    add a, h
+    ld h, a
+    ld a, 0                     ; keep the carry for the high byte
+    adc a, a
+    ld b, a
+    ld a, c
+    srl a
+    srl a
+    srl a                       ; ord >> 3
+    add a, b
+    ld (gfxSizeHi), a
+    ld (gfxSizeLo), hl
+    ; swap the arena runs: free the scratch banks, slide the dest bank
+    ; numbers down over their slots, rewind the cursor - the committed
+    ; entry then points at a dense run at the same gfxArenaStart
+    ld a, (zx0DstStart)
+    ld hl, gfxArenaStart
+    sub (hl)
+    ld b, a                     ; B = scratch bank count (>= 1)
+    ld a, (gfxArenaStart)
+    ld hl, gfxBankList
+    add hl, a
+    push hl                     ; slide destination
+.freescratch:
+    ld a, (hl)
+    call bank_free              ; preserves BC, DE, HL (banks.asm)
+    inc hl
+    djnz .freescratch
+    pop de                      ; HL ran up to the dest run's numbers
+    ld a, (zx0DstCount)
+    ld c, a
+    ld b, 0
+    ldir
+    ld a, (gfxArenaStart)
+    ld hl, zx0DstCount
+    add a, (hl)
+    ld (gfxBankNext), a
+    ld a, (zx0DstCount)
+    ld (gfxBankCount), a
+    call data_restore
+    or a
+    ret
+.fail:                          ; zx0_fail lands here, SP already rewound
+    call data_restore
+    scf
+    ret
+
+; Abort the depack from any depth: rewind SP to gfx_depack's snapshot
+; and exit through its failure path. Never returns to the caller.
+zx0_fail:
+    ld sp, (zx0DepackSP)
+    jr gfx_depack.fail
+
+; One ZX0 stream (dzx0_standard's main loop, primitives swapped as per
+; the scheme comment). In: DE = dest window cursor, dest/source state
+; live. Out: DE advanced past the stream's output; BC = end-marker
+; residue. A carries the bit accumulator throughout, parked in AF'
+; around byte-copy loops and the new-offset arithmetic (upstream parks
+; it there transiently too). Corrupts AF, AF', BC, HL.
+dzx0_banked:
+    ld hl, $FFFF                ; initial offset = 1, negative form -
+    ld (zx0Offset), hl          ; upstream's `ld bc,$ffff / push bc`
+    ld bc, 0
+    ld a, $80                   ; empty accumulator: sentinel bit only
+.literals:
+    call zx0_elias              ; BC = literal count
+    ex af, af'                  ; park the accumulator
+.litcopy:
+    call zx0_src_byte
+    call zx0_dst_write
+    dec bc
+    ld a, b
+    or c
+    jr nz, .litcopy
+    ex af, af'
+    add a, a                    ; copy from last offset or new offset?
+    jr c, .newoffset
+    call zx0_elias              ; BC = copy length
+    call .copy
+    add a, a                    ; copy from literals or new offset?
+    jr nc, .literals
+.newoffset:
+    call zx0_elias              ; BC = offset MSB (Elias value)
+    ex af, af'                  ; park accumulator + its CF=1 (ret c)
+    xor a
+    sub c                       ; A = -MSB
+    ret z                       ; C = 0 (value 256): end-of-stream
+    ld b, a
+    call zx0_src_byte           ; A = offset LSB (safe: the accumulator
+    ld c, a                     ; and its carry sit parked in AF')
+    ex af, af'                  ; accumulator back, CF = 1 again
+    rr b                        ; BC = negative offset; the bit shifted
+    rr c                        ; out of C = the first length bit
+    ld (zx0Offset), bc
+    ld bc, 1
+    call nc, zx0_elias_bt       ; length gamma continues on a 0 bit
+    inc bc
+    call .copy
+    add a, a                    ; copy from literals or new offset?
+    jr c, .newoffset
+    jr .literals
+; copy BC match bytes from (write position + zx0Offset), strictly
+; ascending byte order = LDIR semantics, overlap-safe
+.copy:
+    ex af, af'                  ; park the accumulator
+    call zx0_ref_setup
+.cploop:
+    call zx0_ref_read
+    call zx0_dst_write
+    dec bc
+    ld a, b
+    or c
+    jr nz, .cploop
+    ex af, af'
+    ret
+
+; Interlaced Elias gamma read (upstream dzx0s_elias, source fetch
+; through the chunk buffer). In: BC = 0 (zx0_elias) or 1 with the
+; first data bit consumed (zx0_elias_bt), A = bit accumulator. Out:
+; BC = value, CF set, accumulator updated. Corrupts F, HL.
+zx0_elias:
+    inc c
+.loop:
+    add a, a                    ; stop bit
+    jr nz, .skip
+    ; accumulator drained - the shifted-out bit was the bit-0 sentinel
+    ; (always 1); fetch 8 fresh bits and re-supply the sentinel by scf,
+    ; standing in for upstream's carried-over rla input
+    call zx0_src_byte
+    scf
+    rla
+.skip:
+    ret c
+zx0_elias_bt:
+    add a, a                    ; data bit (never drains here - stream
+    rl c                        ; invariant, see the scheme comment)
+    rl b
+    jr zx0_elias.loop
+
+; Next compressed byte through the chunk buffer. Out: A = byte.
+; Preserves BC, DE. Corrupts F, HL.
+zx0_src_byte:
+    ld hl, (zx0ChunkPtr)
+    push de
+    ld de, (zx0ChunkEnd)
+    or a
+    sbc hl, de
+    pop de
+    call z, zx0_chunk_refill
+    ld hl, (zx0ChunkPtr)
+    ld a, (hl)
+    inc hl
+    ld (zx0ChunkPtr), hl
+    ret
+
+; Refill gfxRowBuf (dual use: the blit row bounce buffer is idle
+; during loads) with the next run of compressed bytes from the scratch
+; banks. Steals slot 6 for the copy and invalidates zx0MapOrd so the
+; next destination access remaps. Fails via zx0_fail when the stream
+; demands bytes the file does not have. Preserves BC, DE. Corrupts
+; AF, HL.
+zx0_chunk_refill:
+    push bc
+    push de
+    ld a, (zx0SrcLeft+2)
+    ld hl, (zx0SrcLeft)
+    or h
+    or l
+    jp z, zx0_fail              ; source exhausted mid-stream
+    ld hl, (zx0SrcRd)
+    ld a, h
+    cp high GFX_SRC_END
+    jr c, .have
+    ; scratch page drained: upper half, then the run's next bank
+    ld hl, zx0SrcHalf
+    ld a, (hl)
+    xor 1
+    ld (hl), a
+    jr nz, .rewind
+    ld hl, zx0SrcIdx
+    inc (hl)
+.rewind:
+    ld hl, DATA_WINDOW
+    ld (zx0SrcRd), hl
+.have:
+    ld hl, gfxBankList
+    ld a, (zx0SrcIdx)
+    add hl, a
+    ld a, (hl)
+    add a, a
+    ld hl, zx0SrcHalf
+    add a, (hl)
+    call data_map_page
+    ld a, $FF
+    ld (zx0MapOrd), a           ; slot 6 no longer holds a dest page
+    ; count = min(page remainder, chunk capacity, source remainder)
+    ld hl, GFX_SRC_END
+    ld de, (zx0SrcRd)
+    or a
+    sbc hl, de                  ; page remainder (1..8192)
+    ld de, GFX_ZX0_CHUNK
+    or a
+    sbc hl, de
+    jr c, .cap1
+    ld hl, 0                    ; min(HL, DE) idiom: HL-DE kept only
+.cap1:                          ; when negative, DE added back
+    add hl, de
+    ld a, (zx0SrcLeft+2)
+    or a
+    jr nz, .fits                ; 64K+ unread: no source clamp needed
+    ld de, (zx0SrcLeft)
+    or a
+    sbc hl, de
+    jr c, .cap2
+    ld hl, 0
+.cap2:
+    add hl, de
+.fits:
+    ld b, h                     ; BC = refill count (>= 1)
+    ld c, l
+    push bc
+    ld hl, (zx0SrcRd)
+    ld de, gfxRowBuf
+    ldir
+    ld (zx0SrcRd), hl           ; may land on GFX_SRC_END - the next
+                                ; refill's page check advances then
+    ld (zx0ChunkEnd), de
+    ld hl, gfxRowBuf
+    ld (zx0ChunkPtr), hl
+    pop bc
+    ld hl, (zx0SrcLeft)         ; 24-bit source remainder -= count
+    or a
+    sbc hl, bc
+    ld (zx0SrcLeft), hl
+    jr nc, .nb
+    ld hl, zx0SrcLeft+2
+    dec (hl)
+.nb:
+    pop de
+    pop bc
+    ret
+
+; Write A to the destination stream through slot 6, stepping pages
+; (and allocating destination banks) as the run grows. In/out: DE =
+; window cursor. Preserves A, BC. Corrupts F, HL.
+zx0_dst_write:
+    push af
+    ld a, d
+    cp high GFX_SRC_END
+    call nc, zx0_dst_advance    ; page full: step, DE = window base
+    ld a, (zx0DstOrd)
+    ld hl, zx0MapOrd
+    cp (hl)
+    call nz, zx0_map_ord
+    pop af
+    ld (de), a
+    inc de
+    ret
+
+; Step the destination cursor to its next 8K page: the current bank's
+; upper half on odd ordinals, a freshly allocated bank on even ones.
+; Enforces the decompressed-output cap. Out: DE = DATA_WINDOW.
+; Preserves BC. Corrupts AF, HL.
+zx0_dst_advance:
+    ld a, (zx0DstOrd)
+    inc a
+    ld (zx0DstOrd), a
+    cp GFX_DST_ORD_MAX
+    jp nc, zx0_fail             ; output overran the 6-bank cap
+    bit 0, a
+    call z, zx0_dst_bank_alloc  ; even ordinal: a new bank
+    ld de, DATA_WINDOW
+    ret
+
+; Allocate one destination bank and append it to the arena run.
+; Preserves BC, DE. Corrupts AF, HL.
+zx0_dst_bank_alloc:
+    push bc
+    ld a, (gfxBankNext)
+    cp GFX_BANKLIST_MAX
+    jp nc, zx0_fail             ; bank-list arena full
+    call bank_alloc             ; out: A = 16K bank, CF = none free
+    jp c, zx0_fail
+    ld c, a
+    ld hl, gfxBankList
+    ld a, (gfxBankNext)
+    add hl, a
+    ld (hl), c
+    inc a
+    ld (gfxBankNext), a
+    ld hl, zx0DstCount
+    inc (hl)
+    pop bc
+    ret
+
+; Map destination-run ordinal A (0-based 8K page) into slot 6 and
+; remember it in zx0MapOrd. Preserves BC, DE. Corrupts AF, HL.
+zx0_map_ord:
+    ld (zx0MapOrd), a
+    push bc
+    ld b, a                     ; B = ordinal
+    srl a
+    ld c, a                     ; C = bank slot within the run
+    ld a, (zx0DstStart)
+    add a, c                    ; arena index
+    ld hl, gfxBankList
+    add hl, a
+    ld a, (hl)
+    add a, a                    ; the bank's lower 8K page
+    bit 0, b
+    jr z, .map
+    inc a                       ; odd ordinal: upper half
+.map:
+    pop bc
+    jp data_map_page
+
+; Aim the back-reference cursor for the next match: ref position =
+; 24-bit write position + zx0Offset (held negative, upstream form).
+; A pending page step (DE = $E000) is normalised first so the write
+; position is single-valued. Fails when the offset reaches before the
+; output start (corrupt stream). Preserves BC, DE (bar the pending
+; step). Corrupts AF, HL.
+zx0_ref_setup:
+    ld a, d
+    cp high GFX_SRC_END
+    call nc, zx0_dst_advance
+    push bc
+    push de
+    ; W = zx0DstOrd*$2000 + (DE - $C000), built as hi:mid:lo = B:H:L
+    ld a, (zx0DstOrd)
+    ld c, a
+    and 7
+    add a, a
+    add a, a
+    add a, a
+    add a, a
+    add a, a                    ; (ord & 7) << 5
+    ld h, a
+    ld a, d
+    sub high DATA_WINDOW        ; 0..31, disjoint from the field above
+    or h
+    ld h, a                     ; H = W mid byte
+    ld l, e                     ; L = W low byte
+    ld a, c
+    srl a
+    srl a
+    srl a
+    ld b, a                     ; B = W high byte (ord >> 3)
+    ; R = W + negative offset, sign-extended to 24 bits ($FF high)
+    ld de, (zx0Offset)
+    ld a, l
+    add a, e
+    ld l, a
+    ld a, h
+    adc a, d
+    ld h, a
+    ld a, b
+    adc a, $FF
+    jp nc, zx0_fail             ; no wrap = offset before output start
+    ; A:H:L = R; split into ordinal (R >> 13) and window offset
+    add a, a
+    add a, a
+    add a, a
+    ld c, a                     ; R hi << 3
+    ld a, h
+    and %11100000
+    rlca
+    rlca
+    rlca                        ; R mid >> 5
+    or c
+    ld (zx0RefOrd), a
+    ld a, h
+    and $1F
+    or high DATA_WINDOW         ; window base + (R & $1FFF)
+    ld h, a
+    ld (zx0RefPtr), hl
+    pop de
+    pop bc
+    ret
+
+; Read the next back-reference byte from the destination run through
+; slot 6, remapping only when the cursor's page is not the mapped one.
+; Out: A = byte, cursor advanced. Preserves BC, DE. Corrupts F, HL.
+zx0_ref_read:
+    ld hl, (zx0RefPtr)
+    ld a, h
+    cp high GFX_SRC_END
+    jr c, .inpage
+    ld hl, zx0RefOrd            ; cursor ran off the page: next ordinal
+    inc (hl)                    ; (always already allocated - the ref
+    ld hl, DATA_WINDOW          ; trails the write position)
+    ld (zx0RefPtr), hl
+.inpage:
+    ld a, (zx0RefOrd)
+    ld hl, zx0MapOrd
+    cp (hl)
+    call nz, zx0_map_ord
+    ld hl, (zx0RefPtr)
+    ld a, (hl)
+    inc hl
+    ld (zx0RefPtr), hl
     ret
 
 ; Draw the staged cache entry, double-buffered: everything renders to
@@ -928,15 +1482,23 @@ gfx_row_scatter320:
     jr nz, .page
     ret
 
-; Extension probe chain, tried in gfx_open_chain order. Row = 3 ASCII
-; extension characters + the mode byte (0 = 256-wide row-major, 1 =
-; 320-wide column-major; mirrors l2Mode's encoding). Task 5 PREPENDS
-; its ZX0-compressed probe rows here so compressed art wins over raw.
+; Extension probe chain, tried in gfx_open_chain order. Row = 7 ASCII
+; extension characters (NUL-padded; 7 fits the longest, "NX2.ZX0") +
+; the mode byte (0 = 256-wide row-major, 1 = 320-wide column-major;
+; mirrors l2Mode's encoding) + the compressed flag (1 = ZX0, load via
+; gfx_depack). Per shape the ZX0 variants probe before raw so
+; compressed art wins, the Gfx2Next-emitted double extension before
+; its 8.3 synonym (kept for plain-FAT/no-LFN setups).
 gfxExtTab:
-    db "NX2", 1
-    db "NXI", 0
+    db "NX2.ZX0",          1, 1
+    db "N2Z", 0, 0, 0, 0,  1, 1
+    db "NX2", 0, 0, 0, 0,  1, 0
+    db "NXI.ZX0",          0, 1
+    db "NXZ", 0, 0, 0, 0,  0, 1
+    db "NXI", 0, 0, 0, 0,  0, 0
 gfxExtEnd:
-GFX_EXT_ROW equ 4
+GFX_EXT_NAME equ 7
+GFX_EXT_ROW  equ GFX_EXT_NAME+2
 
 gfxPicNum:     db 0              ; picture being loaded/staged
 gfxEntryIdx:   db 0              ; cache slot in use
@@ -959,11 +1521,33 @@ gfxDstPage:    db 0              ; blit dest: current 8K Layer 2 page
 gfxDstPtr:     dw 0              ; blit dest: linear cursor (256-wide mode)
 gfxRowY:       db 0              ; current pixel row
 gfxRowsLeft:   db 0              ; rows still to copy (initial 0 = 256)
+gfxCompressed: db 0              ; candidate row's compressed flag
 gfxRowBuf:     ds 320            ; row bounce buffer: slot 6 can only hold
                                  ; source OR dest, so each row stages here
                                  ; (in this overlay page - both users above
                                  ; run only with page 58 mapped; sized for
-                                 ; the wider 320-pixel row)
+                                 ; the wider 320-pixel row). DUAL USE: the
+                                 ; depacker borrows it as the compressed-
+                                 ; source chunk buffer (zx0_chunk_refill) -
+                                 ; loads and blits never overlap
+    ASSERT GFX_ZX0_CHUNK <= 320
+
+; ZX0 depack state (all cursors in memory: the registers belong to the
+; vendored dzx0 loop)
+zx0SrcIdx:   db 0                ; scratch stream: arena index of its bank
+zx0SrcHalf:  db 0                ; 0 = lower 8K page, 1 = upper
+zx0SrcRd:    dw 0                ; scratch stream: window read cursor
+zx0SrcLeft:  db 0, 0, 0          ; 24-bit compressed bytes not yet chunked
+zx0ChunkPtr: dw 0                ; next byte to hand out of gfxRowBuf
+zx0ChunkEnd: dw 0                ; end of the chunk's valid bytes
+zx0DstStart: db 0                ; arena index of the first dest bank
+zx0DstCount: db 0                ; dest banks allocated so far
+zx0DstOrd:   db 0                ; dest ordinal 8K page being written
+zx0MapOrd:   db 0                ; dest ordinal mapped in slot 6, $FF = none
+zx0RefOrd:   db 0                ; back-ref cursor: dest ordinal page
+zx0RefPtr:   dw 0                ; back-ref cursor: window offset
+zx0Offset:   dw 0                ; current match offset, negative form
+zx0DepackSP: dw 0                ; SP snapshot for zx0_fail's rewind
 
 ; --- DEBUG bring-up test card ---
 ; Owner-driven hardware verification hook, wired from debug.asm's
