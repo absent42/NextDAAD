@@ -430,10 +430,39 @@ l2dbg_status:
     pop hl
     jp dbg_puts
 
+; Like l2dbg_status, but appends a live hex dump of NR $69 (Layer 2
+; enable)/$70 (resolution)/$12 (bank)/$15 (S/L/U priority) after the
+; message, read back via nr_read rather than assumed - so the owner
+; can report the actual register state alongside what's on screen.
+; Round 1's enable path ($123B port) left Layer 2 invisible despite a
+; correct-looking write; this dump exists to catch that class of bug
+; immediately instead of guessing from the visual symptom alone.
+; Corrupts everything.
+l2dbg_status_regs:
+    call l2dbg_status
+    ld hl, msgRegDump
+    call dbg_puts
+    ld e, NR_DISPLAY_CTRL
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_L2_CTRL
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_L2_BANK
+    call nr_read
+    call dbg_hex8
+    call dbg_space
+    ld e, NR_LAYERS
+    call nr_read
+    jp dbg_hex8
+
 msgTestcardHold: db "TESTCARD - HOLD T", 0
 msgTestcard256:  db "TESTCARD 256x192 - RELEASE THEN PRESS T FOR NEXT", 0
 msgTestcard320:  db "TESTCARD 320x256 - RELEASE THEN PRESS T TO EXIT", 0
 msgTestcardDone: db "TESTCARD DONE", 0
+msgRegDump:      db " 69/70/12/15=", 0
 
 ; Corrupts everything (drives overlay2's l2_testcard/l2_disable).
 l2_dbg_hook:
@@ -446,13 +475,13 @@ l2_dbg_hook:
     xor a                        ; 256x192 first
     call l2_testcard
     ld hl, msgTestcard256
-    call l2dbg_status
+    call l2dbg_status_regs
     call l2dbg_wait_release
     call l2dbg_wait_press
     ld a, 1                      ; then 320x256
     call l2_testcard
     ld hl, msgTestcard320
-    call l2dbg_status
+    call l2dbg_status_regs
     call l2dbg_wait_release
     call l2dbg_wait_press
     call l2_disable

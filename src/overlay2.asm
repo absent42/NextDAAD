@@ -42,29 +42,45 @@ l2_mode_set:
     nextreg NR_L2_BANK, BANK_L2_FIRST
     ret
 
-; Enable Layer 2 display (guide 531-564: L2_PORT bit 1 = "Layer 2
-; visible") and set the S/L/U layer priority (NR $15 bits 4-2, guide
-; chapter-next-tilemap.tex 200-230) to "S U L" (010) so the tilemap -
-; which rides the U slot, see chapter-next-tilemap.tex 96-104 - stays
-; above Layer 2. hw_init leaves NR $15 = 0 ("S L U", Layer 2 over the
-; tilemap), which would hide text painted through the tilemap once
-; Layer 2 is visible, so this is programmed explicitly on every
-; enable rather than assumed from boot state. Corrupts AF, BC.
+; Enable Layer 2 display via NR $69 bit 7 (guide 713-723: "1 to enable
+; Layer 2 (alias for bit 1 in $123B)") and set the S/L/U layer
+; priority (NR $15 bits 4-2, guide chapter-next-tilemap.tex 200-230)
+; to "S U L" (010) so the tilemap - which rides the U slot, see
+; chapter-next-tilemap.tex 96-104 - stays above Layer 2.
+;
+; Round 1 used the $123B I/O port directly (the guide's own worked
+; example: LD BC,$123B / LD A,2 / OUT (C),A). That produced a screen-
+; wide grey (the NR $4A all-layers-transparent fallback, per hardware
+; guide/owner bring-up) with the tilemap correctly transparent and the
+; testcard's pixel data correctly in place - i.e. Layer 2 was never
+; actually visible despite the enable write. $123B is a combined
+; write-organised port (bits 7-6 video-RAM bank select, bit 3 shadow
+; select, bit 2/0 CPU paging) and a blind `LD A,2` also zeroes those
+; other bits every time; NR $69 is the plain nextreg alias for the
+; same enable flip-flop (bit 7) with no other live bits sharing the
+; write, so this is the safer, simpler route - read-modify-write so
+; bits 6-0 (ULA shadow / Timex video mode aliases, all 0 from
+; hw_init and untouched anywhere else - grepped) are never disturbed.
+; hw_init leaves NR $69 = 0 (Layer 2 off) and NR $15 = 0 ("S L U",
+; Layer 2 over the tilemap, harmless while invisible) - both
+; reprogrammed here explicitly rather than assumed. Corrupts AF, BC.
 l2_enable:
-    ld bc, L2_PORT
-    ld a, 2
-    out (c), a
+    ld e, NR_DISPLAY_CTRL
+    call nr_read
+    or %10000000                 ; bit7: enable Layer 2
+    nextreg NR_DISPLAY_CTRL, a
     nextreg NR_LAYERS, %00001000 ; bits4-2=010: Sprites, Tilemap/ULA, Layer2
     ret
 
-; Disable Layer 2 display and slot-0 paging (L2_PORT = 0). Layer
-; priority (NR $15) is left as l2_enable set it - harmless, since with
-; Layer 2 invisible the S/L/U order has nothing to prioritise.
-; Corrupts AF, BC.
+; Disable Layer 2 display (NR $69 bit 7 = 0, other bits preserved).
+; Layer priority (NR $15) is left as l2_enable set it - harmless,
+; since with Layer 2 invisible the S/L/U order has nothing to
+; prioritise. Corrupts AF, BC.
 l2_disable:
-    ld bc, L2_PORT
-    xor a
-    out (c), a
+    ld e, NR_DISPLAY_CTRL
+    call nr_read
+    and %01111111
+    nextreg NR_DISPLAY_CTRL, a
     ret
 
 ; Fill the active surface (per the last l2_mode_set) with the current

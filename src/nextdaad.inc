@@ -126,6 +126,11 @@ NR_L2_TRANSP    equ $14     ; transparent colour index (Layer 2/ULA/LoRes)
 NR_LAYERS       equ $15     ; bits 4-2 S/L/U layer priority (alias of
                             ; NR_SPRITES - same register, different role here)
 L2_PORT         equ $123B   ; bit 1 Layer 2 visible, bit 0 write paging slot0
+                            ; - NOT used for enable/disable (see l2_enable's
+                            ; comment, overlay2.asm): a bare enable write also
+                            ; zeroes this port's other live bits (video-RAM
+                            ; bank select etc) every time; NR_DISPLAY_CTRL
+                            ; bit 7 is the alias actually used instead
 PAL_L2_FIRST    equ $10     ; NR_PAL_CTRL: auto-inc on, Layer 2 first palette
                             ; (edit + active display), see chapter-next-palette
 
