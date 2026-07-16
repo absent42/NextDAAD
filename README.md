@@ -1,15 +1,15 @@
-# NextDAAD
+# NextDAAD - ZX Spectrum Next DAAD interpreter
 
-A DAAD text adventure interpreter for the ZX Spectrum Next, written in
+DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
-Project status on 15/07/2026: 
+Project status on 16/07/2026: 
 The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
-object model, process/DOALL dispatch, windows, printing, colour, save-slot style
-condacts, carrying/wearing, movement, vocabulary-driven parser
-implemented (TIME, INPUT, PARSE). 118 of the 128 condacts are
-implemented; the rest (SAVE/LOAD, RAMSAVE/RAMLOAD, SFX, BEEP, PICTURE,
-MOUSE, GFX, CALL) are stubbed pending implementation.
+object model, process/DOALL dispatch, windows, printing, colour,
+carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
+PARSE), and file-backed save/load are implemented. 122 of the 128
+condacts are implemented; the rest (SFX, BEEP, PICTURE, MOUSE, GFX,
+CALL) are stubbed pending implementation.
 
 ## Features
 
@@ -35,17 +35,18 @@ MOUSE, GFX, CALL) are stubbed pending implementation.
 - Vocabulary lookup and a logical-sentence parser driving PARSE,
   including conjunction-separated multi-command input (get lamp and
   drop hat)
+- SAVE/LOAD and RAMSAVE/RAMLOAD to esxDOS .SAV files, with failure handling
 - Debug build with an on-screen diagnostic console (frame counter,
-  stub markers, register dumps)
+  stub markers, register dumps) and SLD debug data for DeZog
+  source-level debugging
 
-Not yet implemented: save/load, sampled and AY sound effects, AY music
-playback, Layer 2 picture display, mouse input, and EXTERN
-subroutines.
+Not yet implemented: sampled and AY sound effects, AY music playback,
+Layer 2 picture display, mouse input, and EXTERN subroutines.
 
 ## Building
 
 The toolchain (not included in repo) lives in tools/ 
-(sjasmplus, CSpect, DRC via DAAD-READY).
+([sjasmplus](https://github.com/z00m128/sjasmplus), [DeZog](https://github.com/maziac/DeZog) VS Code plugin, [CSpect](https://github.com/z00m128/sjasmplus), DRC via [DAAD-READY](https://www.ngpaws.com/daadready/)).
 
 - Build: powershell -File build.ps1 (add -Release for a release build,
   -Force1MB for the unexpanded-RAM test build)
@@ -53,9 +54,9 @@ The toolchain (not included in repo) lives in tools/
 - Clean: powershell -File build.ps1 -Clean
 - Test DDB: powershell -File tests\build-tests.ps1 regenerates
   sd\GAME.DDB and the corrupt/oversize variants in tests\out\ (add
-  -Suite to make the condact test suite DDB active - 60 checks
-  covering condact semantics, parser/conjunction handling and DOALL
-  nesting - or -Err4 for the nested-DOALL error demo)
+  -Suite to make the condact test suite DDB active - 63 checks
+  covering condact semantics, parser/conjunction handling, DOALL
+  nesting and save/load - or -Err4 for the nested-DOALL error demo)
 - VS Code: build / run / clean tasks wrap the same script
 
 ## Layout
@@ -71,3 +72,7 @@ The toolchain (not included in repo) lives in tools/
     - tools/sjasmplus
     - tools/DAAD-READY
     - tools/Rabenstein-master (used for tests)
+
+## Disclaimer
+
+The development of NextDAAD is largely AI agent driven.
