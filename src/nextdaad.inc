@@ -32,7 +32,8 @@ BANK_DDB_FIRST  equ 16      ; 16-23 DDB, 128K maximum
 BANK_DDB_LAST   equ 23
 BANK_AUDIO_FIRST equ 24     ; 24-27 reserved for music and SFX
 BANK_AUDIO_LAST equ 27
-BANK_POOL_B     equ 29      ; 28-47 allocator pool (base model ends at 47); bank 28 withdrawn for overlay 0
+BANK_POOL_B     equ 30      ; 30-47 allocator pool (base model ends at 47); bank 28
+                            ; withdrawn for overlay 0/1, bank 29 for overlay 2
 BANK_BASE_LAST  equ 47
 BANK_EXP_FIRST  equ 48      ; 48-111 expansion pool when detected
 BANK_EXP_LAST   equ 111
@@ -99,7 +100,19 @@ OVL0_PAGE       equ 56      ; = BANK_OVL0*2
 OVL_ORG         equ $E000
 OVL_LIMIT       equ $F800   ; overlay ASSERT bound (512 bytes spare)
 OVL1_PAGE       equ 57      ; overlay page 1: upper 8K of bank 28
+BANK_OVL2       equ 29      ; overlay page 2 lives in bank 29 (lower 8K)
+OVL2_PAGE       equ 58      ; = BANK_OVL2*2
 DATA_WINDOW     equ $C000   ; slot 6 window base (8K)
+
+; --- Layer 2 (sub-project 4) ---
+NR_L2_BANK      equ $12     ; starting 16K bank of Layer 2 (bits 6-0)
+NR_L2_CTRL      equ $70     ; bits 5-4 resolution, bits 3-0 palette offset
+NR_L2_TRANSP    equ $14     ; transparent colour index (Layer 2/ULA/LoRes)
+NR_LAYERS       equ $15     ; bits 4-2 S/L/U layer priority (alias of
+                            ; NR_SPRITES - same register, different role here)
+L2_PORT         equ $123B   ; bit 1 Layer 2 visible, bit 0 write paging slot0
+PAL_L2_FIRST    equ $10     ; NR_PAL_CTRL: auto-inc on, Layer 2 first palette
+                            ; (edit + active display), see chapter-next-palette
 
 ; --- Engine (sub-project 3) ---
 PROC_DEPTH      equ 10

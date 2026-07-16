@@ -39,6 +39,10 @@ main:
     call txt_init
     call dbg_engage_tilemap
     call windows_init
+ IFDEF DEBUG
+    call l2_dbg_hook             ; Layer 2 bring-up test card (Task 2);
+                                  ; no-op unless T is held (debug.asm)
+ ENDIF
     ld hl, objname_print
     ld (objname_hook), hl
     ld c, 0
@@ -61,6 +65,7 @@ idle:
     INCLUDE "hardware.asm"
     INCLUDE "interrupts.asm"
     INCLUDE "banks.asm"
+    INCLUDE "gfxcache.asm"
     INCLUDE "file.asm"
     INCLUDE "tilemap.asm"
     INCLUDE "windows.asm"
@@ -76,6 +81,7 @@ idle:
 
     INCLUDE "overlay0.asm"
     INCLUDE "overlay1.asm"
+    INCLUDE "overlay2.asm"
 
     CSPECTMAP "build/nextdaad.map"
     SAVENEX OPEN "build/nextdaad.nex", main, STACK_TOP

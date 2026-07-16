@@ -267,7 +267,7 @@ bank_selftest:
     cp BANK_POOL_A_END
     ld a, 3
     jr nz, .fail
-    call bank_alloc         ; check 4: then bank 28
+    call bank_alloc         ; check 4: then bank 30 (29 withdrawn for overlay 2)
     cp BANK_POOL_B
     ld a, 4
     jr nz, .fail
@@ -358,6 +358,50 @@ ddb_diag:
     inc hl
     pop bc
     djnz .ptr
+    ret
+
+; --- Layer 2 bring-up hook (Task 2, temporary) ---
+; Holding T through boot (from power-on until windows_init completes,
+; where main.asm calls l2_dbg_hook) shows overlay2's l2_testcard in
+; 256x192, then - on the next T press - in 320x256, then disables
+; Layer 2 and returns so normal boot continues into eng_init_game/
+; eng_run unaffected. Not held: returns immediately, untouched. This
+; is a raw port read rather than overlay0's key_scan/kb_raw, since
+; those live in an overlay this resident code has no reason to page
+; in just to poll one key.
+
+; ZF set if T is currently held (row $FB, bit 4 - see kbRows/keyRows
+; in overlay0/overlay1 for the same matrix layout). Corrupts AF, BC.
+l2dbg_t_held:
+    ld bc, $FBFE
+    in a, (c)
+    bit 4, a
+    ret
+
+l2dbg_wait_release:
+    call l2dbg_t_held
+    jr z, l2dbg_wait_release
+    ret
+l2dbg_wait_press:
+    call l2dbg_t_held
+    jr nz, l2dbg_wait_press
+    ret
+
+; Corrupts everything (drives overlay2's l2_testcard/l2_disable).
+l2_dbg_hook:
+    call l2dbg_t_held
+    ret nz                       ; T not held: leave boot untouched
+    ld a, OVL2_PAGE
+    call ovl_map_page
+    xor a                        ; 256x192 first
+    call l2_testcard
+    call l2dbg_wait_release
+    call l2dbg_wait_press
+    ld a, 1                      ; then 320x256
+    call l2_testcard
+    call l2dbg_wait_release
+    call l2dbg_wait_press
+    call l2_disable
     ret
 
 dbg_font:

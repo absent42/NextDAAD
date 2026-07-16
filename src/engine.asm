@@ -598,6 +598,10 @@ cprops:
     db OVL1_PAGE
     dw addr
     ENDM
+    MACRO DC2 addr
+    db OVL2_PAGE
+    dw addr
+    ENDM
 cdisp:
     ; 128 rows in condact order. Task 2: all DC h_unimpl except the
     ; pilot set; later tasks repoint rows as handlers land.
