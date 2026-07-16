@@ -10,5 +10,13 @@ sd/*.SAV
 sd/*.sav
 sd/*.NX2
 sd/*.nx2
+sd/*.NXI
+sd/*.nxi
+sd/*.NXZ
+sd/*.nxz
+sd/*.N2Z
+sd/*.n2z
+sd/*.zx0
+sd/*.ZX0
 tests/out/
 .superpowers/
