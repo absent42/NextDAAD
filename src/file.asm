@@ -311,6 +311,14 @@ sav_scatter_locs:
 
 ; Read savName into flags + object locations.
 ; A = 0 OK / 1 not-found / 2 io-error / 3 wrong-game.
+; esxDOS F_READ clears CF on a short/EOF read (only A=error sets CF), so
+; every esx_fread here re-checks the returned BC against the requested
+; count: a header shortfall refuses before the byte compare (otherwise a
+; zero-length file would leave savRdHdr holding a stale header from a
+; previous successful read and pass validation); a flags/locs shortfall
+; is classified io-error - by that point the header was already valid,
+; so flags (and possibly part of objTable) may already be partially
+; overwritten from the truncated file. That partial write is not undone.
 sav_read:
     call esx_getsetdrv
     jp c, .ioerr
@@ -319,7 +327,7 @@ sav_read:
     call esx_fopen
     jr nc, .opened
     cp ESX_ENOENT
-    jr z, .notfound
+    jp z, .notfound
     jp .ioerr
 .opened:
     ld (savHandle), a
@@ -329,6 +337,10 @@ sav_read:
     ld bc, 6
     call esx_fread
     jp c, .errclose_io
+    ld hl, 6                    ; short/EOF read: CF clear, BC < 6
+    or a
+    sbc hl, bc
+    jp nz, .errclose_wrong
     ; validate: "NDSV",1 (5 bytes) then numObj byte, before touching flags
     ld hl, savHdr
     ld de, savRdHdr
@@ -350,6 +362,10 @@ sav_read:
     ld bc, 256
     call esx_fread
     jp c, .errclose_io
+    ld hl, 256                  ; short/EOF read: CF clear, BC < 256
+    or a
+    sbc hl, bc
+    jp nz, .errclose_io
     ; object locations
     ld a, (numObj)
     ld c, a
@@ -358,6 +374,12 @@ sav_read:
     ld a, (savHandle)
     call esx_fread
     jp c, .errclose_io
+    ld a, (numObj)              ; re-read expected count: BC now holds
+    ld h, 0                     ; the actual bytes esx_fread returned,
+    ld l, a                     ; not what was requested
+    or a
+    sbc hl, bc
+    jp nz, .errclose_io
     call sav_scatter_locs
     ld a, (savHandle)
     call esx_fclose
