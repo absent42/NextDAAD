@@ -172,3 +172,220 @@ ddbSizeHi:   db 0           ; third byte of the 24-bit size
 scratchByte: db 0
 tmUp:        db 0           ; 1 once windows_init has run (tilemap live)
 ddbHeader:   ds DDB_HEADER_SIZE
+
+; --- .SAV file core -------------------------------------------------
+; esx_fopen: A=drive (in), IX=filename ASCIIZ, B=mode; out CF=0 A=handle,
+; CF=1 A=esxDOS error code. esx_fread/esx_fwrite: A=handle, IX=buffer,
+; BC=count; out BC=actual count, CF=1 A=error on failure. Confirmed from
+; ddb_load's own working usage (ld ix, ... before esx_fopen/esx_fread) -
+; not HL, despite what a register-contract comment elsewhere might say.
+
+; Derive savName ("NAME.SAV", 8.3 uppercase) from the typed inpLine.
+; Out: CF set = empty or no usable characters. Corrupts AF, BC, HL, DE.
+sav_fname:
+    ld hl, inpLine
+    ld de, savName
+    ld b, 8
+    ld c, 0
+.copy:
+    ld a, (hl)
+    or a
+    jr z, .fin
+    inc hl
+    cp ' '
+    jr z, .copy                 ; spaces dropped, scan continues
+    cp 'a'
+    jr c, .keep
+    cp 'z'+1
+    jr nc, .keep
+    sub 32                      ; uppercase
+.keep:
+    ld (de), a
+    inc de
+    inc c
+    djnz .copy
+.fin:
+    ld a, c                     ; C counts stored chars
+    or a
+    jr z, .empty
+    ex de, hl
+    ld (hl), '.'
+    inc hl
+    ld (hl), 'S'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'V'
+    inc hl
+    ld (hl), 0
+    or a
+    ret
+.empty:
+    scf
+    ret
+
+; Save header scratch, filled before writes and validated on reads.
+; savHdr+savNObj form one contiguous 6-byte block written/read as a unit.
+savHdr:   db "NDSV", 1
+savNObj:  db 0
+savRdHdr: ds 6                  ; read-side scratch; never overwrites savHdr
+
+; Write flags + object locations to savName. A = 0 OK / 1 io-error.
+sav_write:
+    call esx_getsetdrv
+    jr c, .err
+    ld ix, savName
+    ld b, ESX_MODE_W
+    call esx_fopen
+    jr c, .err
+    ld (savHandle), a
+    ld a, (numObj)
+    ld (savNObj), a
+    ; header (6 bytes)
+    ld a, (savHandle)
+    ld ix, savHdr
+    ld bc, 6
+    call esx_fwrite
+    jr c, .errclose
+    ; flags (256 bytes)
+    ld a, (savHandle)
+    ld ix, flags
+    ld bc, 256
+    call esx_fwrite
+    jr c, .errclose
+    ; object locations: gather the +0 byte of each 6-byte entry into
+    ; savLocs, then write numObj bytes
+    call sav_gather_locs        ; fills savLocs, BC = numObj
+    ld ix, savLocs
+    ld a, (savHandle)
+    call esx_fwrite
+    jr c, .errclose
+    ld a, (savHandle)
+    call esx_fclose
+    xor a
+    ret
+.errclose:
+    ld a, (savHandle)
+    call esx_fclose
+.err:
+    ld a, 1
+    scf
+    ret
+
+; Copy objTable[i].loc -> savLocs[i]. Out: BC = numObj. Corrupts A,HL,DE.
+sav_gather_locs:
+    ld hl, objTable
+    ld de, savLocs
+    ld a, (numObj)
+    or a
+    jr z, .none
+    ld b, a
+.g:
+    ld a, (hl)
+    ld (de), a
+    inc de
+    add hl, OBJ_SIZE
+    djnz .g
+.none:
+    ld a, (numObj)
+    ld c, a
+    ld b, 0
+    ret
+
+; Copy savLocs[i] -> objTable[i].loc (inverse of sav_gather_locs).
+; In: numObj resident. Corrupts A, HL, DE, B.
+sav_scatter_locs:
+    ld a, (numObj)
+    or a
+    ret z
+    ld hl, savLocs
+    ld de, objTable
+    ld b, a
+.s:
+    ld a, (hl)
+    ld (de), a
+    inc hl
+    add de, OBJ_SIZE
+    djnz .s
+    ret
+
+; Read savName into flags + object locations.
+; A = 0 OK / 1 not-found / 2 io-error / 3 wrong-game.
+sav_read:
+    call esx_getsetdrv
+    jp c, .ioerr
+    ld ix, savName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .opened
+    cp ESX_ENOENT
+    jr z, .notfound
+    jp .ioerr
+.opened:
+    ld (savHandle), a
+    ; header (6 bytes) into read scratch
+    ld a, (savHandle)
+    ld ix, savRdHdr
+    ld bc, 6
+    call esx_fread
+    jp c, .errclose_io
+    ; validate: "NDSV",1 (5 bytes) then numObj byte, before touching flags
+    ld hl, savHdr
+    ld de, savRdHdr
+    ld b, 5
+.cmp:
+    ld a, (de)
+    cp (hl)
+    jp nz, .errclose_wrong
+    inc hl
+    inc de
+    djnz .cmp
+    ld a, (savRdHdr+5)
+    ld hl, numObj
+    cp (hl)
+    jp nz, .errclose_wrong
+    ; flags (256 bytes)
+    ld a, (savHandle)
+    ld ix, flags
+    ld bc, 256
+    call esx_fread
+    jp c, .errclose_io
+    ; object locations
+    ld a, (numObj)
+    ld c, a
+    ld b, 0
+    ld ix, savLocs
+    ld a, (savHandle)
+    call esx_fread
+    jp c, .errclose_io
+    call sav_scatter_locs
+    ld a, (savHandle)
+    call esx_fclose
+    xor a
+    ret
+.errclose_io:
+    ld a, (savHandle)
+    call esx_fclose
+    ld a, 2
+    scf
+    ret
+.errclose_wrong:
+    ld a, (savHandle)
+    call esx_fclose
+    ld a, 3
+    scf
+    ret
+.notfound:
+    ld a, 1
+    scf
+    ret
+.ioerr:
+    ld a, 2
+    scf
+    ret
+
+savName:    ds 14                ; 8 + ".SAV" + NUL
+savHandle:  db 0
+savLocs:    ds 255
+ramSaveBuf: ds 512               ; RAMSAVE: flags[256] + locs[<=255]
+ramSaveOk:  db 0

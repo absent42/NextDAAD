@@ -69,6 +69,8 @@ ESX_F_READ      equ $9D
 ESX_F_WRITE     equ $9E
 ESX_F_SEEK      equ $9F
 ESX_MODE_READ   equ $01
+ESX_MODE_W      equ $0E     ; F_OPEN: write, create or truncate
+ESX_ENOENT      equ 5       ; F_OPEN: file not found
 
 ; --- Tilemap text mode (sub-project 2) ---
 NR_TM_CTRL      equ $6B
