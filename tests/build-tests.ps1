@@ -104,8 +104,9 @@ if ($Rab) {
         # EXTERN function numbers (arg count per each condact's real use in
         # this DSF; all route through extVec's 16 stub slots to h_unimpl):
         #   XPICTURE x   -> EXTERN x 0    standard MALUVA
-        #   XSAVE 0      -> EXTERN 0 1    standard MALUVA
-        #   XLOAD 0      -> EXTERN 0 2    standard MALUVA
+        #   XSAVE 0      -> SAVE 0       real condact since SP5 (action
+        #                                 for action, prompts like MALUVA)
+        #   XLOAD 0      -> LOAD 0       real condact since SP5
         #   XNEXTSPEED n -> EXTERN n 8    next-only, unused stub vector 8
         #   XNEXTCLS     -> EXTERN 0 9    next-only, 0-arg, stub vector 9
         #   XNEXTRST     -> EXTERN 0 10   next-only, 0-arg, stub vector 10
@@ -118,8 +119,8 @@ if ($Rab) {
         $content = [System.IO.File]::ReadAllText("$dr\NDRAB.DSF")
 
         $content = [regex]::Replace($content, '\bXPICTURE[ \t]+(\S+)',   'EXTERN $1 0')
-        $content = [regex]::Replace($content, '\bXSAVE[ \t]+(\S+)',      'EXTERN $1 1')
-        $content = [regex]::Replace($content, '\bXLOAD[ \t]+(\S+)',      'EXTERN $1 2')
+        $content = [regex]::Replace($content, '\bXSAVE[ \t]+(\S+)',      'SAVE $1')
+        $content = [regex]::Replace($content, '\bXLOAD[ \t]+(\S+)',      'LOAD $1')
         $content = [regex]::Replace($content, '\bXNEXTSPEED[ \t]+(\S+)', 'EXTERN $1 8')
         $content = [regex]::Replace($content, '\bXSPLITSCR[ \t]+(\S+)',  'EXTERN $1 11')
         $content = $content -replace '\bXNEXTCLS\b', 'EXTERN 0 9'
