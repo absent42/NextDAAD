@@ -27,49 +27,89 @@ ovl2_false:
 ; 256x192, 01 = 320x256), the starting 16K bank (NR $12, guide
 ; 586-599: bits 6-0, 16K units) - both modes start at BANK_L2_FIRST
 ; (bank 9, "recommended to only use 16K banks 9 or greater", guide
-; line 41) - and the Layer 2 clip window (NR $18, guide 650-669):
-; without this the window is whatever CSpect/hardware left it at,
-; which on a bare .nex boot is $00,$00,$00,$00 - a degenerate window
-; that clips Layer 2 to nothing (the round-4/5 bring-up bug: enable,
-; bank and pixel data were all correct, but a never-programmed clip
-; window hid everything regardless). NR $1C bit 0 resets the Layer 2
-; clip index (guide 679-687, "1 to reset Layer 2 clip-window register
-; index"); each subsequent NR $18 write both sets the next coordinate
-; AND auto-increments the index (guide 658), so the 4 writes below
-; must land in X1,X2,Y1,Y2 order. X positions are guide-documented as
-; doubled in 320x256 (guide 658: "X positions are doubled for 320x256
-; mode"), matching the guide's own full-window table (line 660-669):
-; 256x192 = 0,255,0,191; 320x256 = 0,159,0,255. Remembers the mode
-; locally for l2_clear/l2_testcard. Corrupts AF.
+; line 41) - then the clip window and scroll offset via l2_clip_set.
+; Remembers the mode locally for l2_clear/l2_testcard. Corrupts AF.
 l2_mode_set:
     ld (l2Mode), a
+    push af
     or a
     jr z, .m256
     ld a, %00010000              ; NR $70: bits5-4=01 (320x256, 8bpp)
+    jr .set
+.m256:
+    xor a                        ; NR $70: bits5-4=00 (256x192, 8bpp)
+.set:
     nextreg NR_L2_CTRL, a
     nextreg NR_L2_BANK, BANK_L2_FIRST
+    pop af
+    jp l2_clip_set                ; also zeroes the scroll offset, then ret
+
+; A = 0/1 as above. Programs just the Layer 2 clip window (NR $1C
+; index reset + 4x NR $18, guide 650-669) and zeroes the scroll offset
+; (NR $16/$17, guide 623-639). Split out from l2_mode_set so the
+; DEBUG testcard flow can call this a second time, right before its
+; wait loop, to re-assert the clip window after the status-line
+; diagnostic has run - see l2_testcard's DEBUG block below for why.
+;
+; Stores what it wrote into l2ClipX1/X2/Y1/Y2 (a software shadow of
+; the hardware register) because $18 turned out to be unsafe to read
+; back for diagnostic purposes: per wiki.specnext.dev/NextReg:$18,
+; "Reading only retrieves the current coordinate without changing the
+; index; to advance to the next value, you must write the current
+; value back" - a WRITE auto-increments (guide 658) but a READ does
+; not. round 4's diagnostic reset the index once (NR $1C=1) then did
+; four bare reads expecting X1,X2,Y1,Y2 in turn; since reads never
+; advance, all four actually read INDEX 0 (X1) again - which is
+; legitimately 0 in both modes, so the diagnostic printed "00 00 00
+; 00" regardless of whether X2/Y1/Y2 were correct. Separately, the
+; owner reported a flash of correct colour before the screen went
+; grey, consistent with something about touching $18/$1C at all
+; disturbing the clip window on this CSpect build beyond what the
+; wiki's real-hardware description predicts - not fully explained,
+; but not worth another round of guessing at: the fix removes the
+; hardware read entirely and re-asserts the window defensively
+; instead. Corrupts AF.
+l2_clip_set:
+    or a
+    jr z, .m256
     nextreg NR_CLIP_IDX, 1        ; bit0: reset the Layer 2 clip index
     nextreg NR_L2_CLIP, 0         ; X1
     nextreg NR_L2_CLIP, 159       ; X2 (320x256: X in 2-pixel units)
     nextreg NR_L2_CLIP, 0         ; Y1
     nextreg NR_L2_CLIP, 255       ; Y2
-    jr .noscroll
+    xor a
+    ld (l2ClipX1), a
+    ld (l2ClipY1), a
+    ld a, 159
+    ld (l2ClipX2), a
+    ld a, 255
+    ld (l2ClipY2), a
+    jr .scroll
 .m256:
-    xor a                        ; NR $70: bits5-4=00 (256x192, 8bpp)
-    nextreg NR_L2_CTRL, a
-    nextreg NR_L2_BANK, BANK_L2_FIRST
     nextreg NR_CLIP_IDX, 1        ; bit0: reset the Layer 2 clip index
     nextreg NR_L2_CLIP, 0         ; X1
     nextreg NR_L2_CLIP, 255       ; X2
     nextreg NR_L2_CLIP, 0         ; Y1
     nextreg NR_L2_CLIP, 191       ; Y2
-.noscroll:
+    xor a
+    ld (l2ClipX1), a
+    ld (l2ClipY1), a
+    ld a, 255
+    ld (l2ClipX2), a
+    ld a, 191
+    ld (l2ClipY2), a
+.scroll:
     ; NR $16/$17: X/Y pixel scroll offset (guide 623-639). Same never-
     ; programmed-on-a-bare-boot class as the clip window; zeroed so a
     ; stale offset can't shift/wrap the image.
     nextreg NR_L2_XOFS, 0
     nextreg NR_L2_YOFS, 0
     ret
+
+l2ClipX1: db 0
+l2ClipX2: db 0
+l2ClipY1: db 0
+l2ClipY2: db 0
 
 ; Enable Layer 2 display via NR $69 bit 7 (guide 713-723: "1 to enable
 ; Layer 2 (alias for bit 1 in $123B)") and set the S/L/U layer

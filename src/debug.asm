@@ -459,17 +459,28 @@ l2dbg_status_regs:
     jp dbg_hex8
 
 ; Second status row (TM_ROWS-2, also reserved by overlay2's
-; l2_testcard): NR $14 (global transparency index, expect $FE),
-; the Layer 2 clip window read back via the $1C index-reset then four
-; $18 reads in sequence (X1,X2,Y1,Y2 - the guide documents $18 as
-; "reads and writes" and that WRITES auto-increment the index, but
-; does not say reads do too; if they don't, all four values will come
-; back identical, which is itself diagnostic - not skipped, since $18
-; is not write-only, but flagged here as an unconfirmed assumption),
-; the Layer 2 scroll offset (NR $16/$17, expect $00 $00 - zeroed by
-; l2_mode_set), and one live pixel read back from the drawn surface
-; (overlay2's l2_peek_marker - the actual top-left corner-marker
-; byte). Corrupts everything.
+; l2_testcard): NR $14 (global transparency index, expect $FE), the
+; Layer 2 clip window SHADOW (labelled clipW= - NOT a hardware
+; readback of NR $18, see below), the Layer 2 scroll offset (NR $16/
+; $17, expect $00 $00 - zeroed by l2_mode_set/l2_clip_set), and one
+; live pixel read back from the drawn surface (overlay2's
+; l2_peek_marker - the actual top-left corner-marker byte).
+;
+; The clip field used to be a live $18 readback (index-reset via $1C
+; then four reads). Dropped: per wiki.specnext.dev/NextReg:$18, a
+; WRITE to $18 auto-increments the index but a READ does not - so
+; that old sequence re-read index 0 (X1) four times instead of
+; X1,X2,Y1,Y2, which alone explains a spurious "00 00 00 00" (X1 is
+; legitimately 0 in both modes) independent of whether the real
+; window was fine. The owner also reported a flash of correct colour
+; before the screen went grey, i.e. something about touching $18/$1C
+; disturbed the live window beyond what that misread alone accounts
+; for. Rather than chase the exact mechanism further, this field now
+; prints overlay2's software shadow of what it actually wrote
+; (l2ClipX1/X2/Y1/Y2), and l2_dbg_hook re-asserts the real clip
+; window (l2_clip_set) immediately after this prints, right before
+; the wait loop, so even a still-misbehaving diagnostic can't leave
+; the window degenerate. Corrupts everything.
 l2dbg_status2:
     ld b, TM_ROWS-2
     ld c, 0
@@ -487,23 +498,18 @@ l2dbg_status2:
     ld e, NR_L2_TRANSP
     call nr_read
     call dbg_hex8
-    ld hl, msgClip
+    ld hl, msgClipW
     call dbg_puts
-    nextreg NR_CLIP_IDX, 1        ; bit0: reset the Layer 2 clip index
-    ld e, NR_L2_CLIP
-    call nr_read
+    ld a, (l2ClipX1)
     call dbg_hex8
     call dbg_space
-    ld e, NR_L2_CLIP
-    call nr_read
+    ld a, (l2ClipX2)
     call dbg_hex8
     call dbg_space
-    ld e, NR_L2_CLIP
-    call nr_read
+    ld a, (l2ClipY1)
     call dbg_hex8
     call dbg_space
-    ld e, NR_L2_CLIP
-    call nr_read
+    ld a, (l2ClipY2)
     call dbg_hex8
     ld hl, msgScroll
     call dbg_puts
@@ -525,7 +531,7 @@ msgTestcard320:  db "TESTCARD 320x256 - RELEASE THEN PRESS T TO EXIT", 0
 msgTestcardDone: db "TESTCARD DONE", 0
 msgRegDump:      db " 69/70/12/15=", 0
 msgReg14:        db "14=", 0
-msgClip:         db " clip=", 0
+msgClipW:        db " clipW=", 0
 msgScroll:       db " scroll=", 0
 msgPx:           db " px=", 0
 
@@ -542,13 +548,18 @@ l2_dbg_hook:
     ld hl, msgTestcard256
     call l2dbg_status_regs
     call l2dbg_status2
-    call l2dbg_wait_release
-    call l2dbg_wait_press
+    xor a                        ; re-assert the clip window (l2_clip_set)
+    call l2_clip_set             ; AFTER the diagnostic, right before the
+    call l2dbg_wait_release       ; wait loop - belt and braces against
+    call l2dbg_wait_press         ; the diagnostic disturbing it (see
+                                  ; l2dbg_status2's header comment)
     ld a, 1                      ; then 320x256
     call l2_testcard
     ld hl, msgTestcard320
     call l2dbg_status_regs
     call l2dbg_status2
+    ld a, 1                      ; re-assert the clip window, same reason
+    call l2_clip_set
     call l2dbg_wait_release
     call l2dbg_wait_press
     call l2_disable
