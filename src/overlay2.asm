@@ -281,6 +281,16 @@ l2_testcard:
     ld e, TM_COLS                 ; debug.asm's status lines, left opaque
     call tm_clear_transparent
     pop af
+    jp l2_bareprobe_draw
+
+; A = 0/1 as above. The L2 recipe (mode_set incl. clip+scroll, enable
+; incl. priority, clear-to-transparent) plus the gradient+corner-
+; marker draw - i.e. l2_testcard's guts MINUS the tilemap-transparent
+; clear. Split out for round 8's bare-metal isolation ladder
+; (debug.asm's l2_bareprobe_hook, holding P at boot): stages 0-1 of
+; that ladder have no tilemap at all yet, so they call this directly
+; instead of l2_testcard. Corrupts everything.
+l2_bareprobe_draw:
     push af
     call l2_mode_set
     call l2_enable
@@ -295,6 +305,52 @@ l2_testcard:
     call tc_gradient_320
     call tc_mark_320
     ret
+
+; A = ladder stage (0-3). Draws (stage+1) filled 16x16-pixel blocks,
+; TC_MARK_COLOUR, side by side (20px stride) in the surface's top-left
+; corner - the only way to show the stage number with no tilemap
+; available in stages 0-1 of the bare-probe ladder (debug.asm's
+; l2_bareprobe_hook). Works unmodified in both modes: a square block
+; near the origin fits inside 8K page BANK_L2_FIRST*2 whether the
+; surface is row-major or column-major (see tc_mark's header comment
+; for why). Corrupts everything.
+l2_bareprobe_marker:
+    inc a                        ; stage -> block count (1-4)
+    ld (l2BpBlockCnt), a
+    call data_save
+    ld a, BANK_L2_FIRST*2
+    call data_map_page
+    ld hl, DATA_WINDOW
+.block:
+    push hl
+    ld a, 16
+    ld (l2BpRowCnt), a
+.row:
+    push hl
+    ld b, 16
+.px:
+    ld (hl), TC_MARK_COLOUR
+    inc hl
+    djnz .px
+    pop hl
+    ld de, 256
+    add hl, de
+    ld a, (l2BpRowCnt)
+    dec a
+    ld (l2BpRowCnt), a
+    jr nz, .row
+    pop hl
+    ld de, 20
+    add hl, de
+    ld a, (l2BpBlockCnt)
+    dec a
+    ld (l2BpBlockCnt), a
+    jr nz, .block
+    call data_restore
+    ret
+
+l2BpBlockCnt: db 0
+l2BpRowCnt:   db 0
 
 ; Read back byte 0 of Layer 2 8K page BANK_L2_FIRST*2 (18, i.e. bank
 ; 9) - where both modes' top-left corner marker lands (tc_mark_256/

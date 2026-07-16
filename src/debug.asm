@@ -400,6 +400,10 @@ l2dbg_t_held:
     or a                         ; guarantee ZF clear: not held on any sample
     ret
 
+; A round-8 strobe/DI-probe experiment lived here briefly and was
+; superseded by the bare-metal isolation ladder below (l2_bareprobe_
+; hook) before any owner ever ran it - the ladder subsumes what it was
+; for. Back to the plain release/press wait the T-hook always used.
 l2dbg_wait_release:
     call l2dbg_t_held
     jr z, l2dbg_wait_release
@@ -578,6 +582,129 @@ l2_dbg_hook:
     ld a, GLYPH_SPACE
     call tm_fill_rect
     ret
+
+; --- Round 8: bare-metal isolation ladder ---
+; The card renders correctly for a flash then goes permanently grey
+; every round so far. Rather than guess further, prove which
+; subsystem does it by building the display up from nothing: hold P
+; from power-on (checked here, at the very top of main:, BEFORE
+; hw_init/im2_init/txt_init/anything else runs) for a 4-stage ladder,
+; each stage adding exactly one more piece and redrawing:
+;   Stage 0: hw_init only. No im2_init (interrupts stay off - main:
+;            already did `di` before this runs; the ISR never fires).
+;            No txt_init (no tilemap at all). Just the L2 recipe
+;            (mode+clip+scroll+enable+priority) and the gradient/
+;            marker draw, 1 marker block, top-left. If stable HERE,
+;            the recipe itself is validated with everything else off.
+;   Stage 1: + im2_init (also does EI - the ISR is now live and
+;            ticking frameCounter every frame). Still no tilemap.
+;            2 marker blocks.
+;   Stage 2: + txt_init (tilemap on) + tm_clear_transparent over the
+;            card area + one status line. 3 marker blocks (belt and
+;            braces - costs nothing, tilemap text is the real stage
+;            indicator from here on).
+;   Stage 3: the full existing testcard flow (same as the T-hook's
+;            256x192 leg, including its register/clip-shadow dump).
+; Each stage waits for P to be released then pressed again before
+; advancing. After stage 3, wraps back to stage 0 rather than
+; returning, so the owner can re-run the whole ladder without a
+; manual reset - this path is a dead end by design, entirely separate
+; from and does not alter the existing T-hook (l2_dbg_hook above).
+; P not held: returns immediately, nothing touched, normal boot
+; proceeds exactly as if this code didn't exist.
+
+; ZF set if P is currently held (row $DF, bit 0 - see keyRows in
+; overlay0.asm for the same matrix layout). Samples up to 10 times
+; with a short busy-wait between samples rather than a single read,
+; for the same reason l2dbg_t_held polls repeatedly - except this
+; runs BEFORE im2_init, so frameCounter isn't ticking yet and the
+; pacing has to be a plain busy-wait, not frame-synced. Corrupts
+; AF, BC, DE.
+l2dbg_p_held:
+    ld d, 10
+.sample:
+    ld bc, $DFFE
+    in a, (c)
+    bit 0, a
+    ret z                         ; held on this sample: done, ZF set
+    ld bc, $3000
+.wait:
+    dec bc
+    ld a, b
+    or c
+    jr nz, .wait
+    dec d
+    jr nz, .sample
+    ld a, 1
+    or a                          ; guarantee ZF clear: not held
+    ret
+
+; Raw busy-wait press/release detection (row $DF, bit 0) - used
+; throughout the ladder instead of l2dbg_t_held/wait_release/press
+; because stage 0 has no ISR to pace against; kept the same in later
+; stages too, for one consistent key-handling path across the whole
+; ladder. Corrupts AF, BC.
+l2dbg_p_wait_release:
+    ld bc, $DFFE
+    in a, (c)
+    bit 0, a
+    jr z, l2dbg_p_wait_release
+    ret
+l2dbg_p_wait_press:
+    ld bc, $DFFE
+    in a, (c)
+    bit 0, a
+    jr nz, l2dbg_p_wait_press
+    ret
+
+msgBareStage2: db "STAGE 2 - TILEMAP + TRANSPARENT CLEAR", 0
+
+; Never returns if entered. Corrupts everything.
+l2_bareprobe_hook:
+    call l2dbg_p_held
+    ret nz                        ; P not held: leave boot untouched
+.stage0:
+    call hw_init
+    ld a, OVL2_PAGE
+    call ovl_map_page
+    xor a
+    call l2_bareprobe_draw
+    xor a
+    call l2_bareprobe_marker      ; 1 block
+    call l2dbg_p_wait_release
+    call l2dbg_p_wait_press
+.stage1:
+    call im2_init                 ; also EI's - ISR now live
+    xor a
+    call l2_bareprobe_draw
+    ld a, 1
+    call l2_bareprobe_marker      ; 2 blocks
+    call l2dbg_p_wait_release
+    call l2dbg_p_wait_press
+.stage2:
+    call txt_init
+    xor a
+    call l2_bareprobe_draw
+    ld b, 0
+    ld c, 0
+    ld d, TM_ROWS-1
+    ld e, TM_COLS
+    call tm_clear_transparent
+    ld a, 2
+    call l2_bareprobe_marker      ; 3 blocks
+    ld hl, msgBareStage2
+    call l2dbg_status
+    call l2dbg_p_wait_release
+    call l2dbg_p_wait_press
+.stage3:
+    xor a
+    call l2_testcard               ; the full existing T-hook flow
+    ld hl, msgTestcard256
+    call l2dbg_status_regs
+    call l2dbg_status2
+    call l2dbg_p_wait_release
+    call l2dbg_p_wait_press
+    jr .stage0                     ; wrap around for another pass
 
 dbg_font:
     INCBIN "../tools/DAAD-READY/ASSETS/CHARSET/AD8x8.CHR"   ; 2048 bytes, 256 glyphs

@@ -8,6 +8,12 @@
 main:
     di
     ld sp, STACK_TOP
+ IFDEF DEBUG
+    call l2_bareprobe_hook       ; Layer 2 bare-metal isolation ladder
+                                  ; (Task 2, round 8); no-op unless P
+                                  ; is held - checked before ANY other
+                                  ; init, never returns if entered
+ ENDIF
     call hw_init
     call im2_init
     call dbg_cls
