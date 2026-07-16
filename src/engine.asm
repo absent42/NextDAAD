@@ -621,8 +621,8 @@ cdisp:
     DC h_done                   ; 22  DONE
     DC h_ok                     ; 23  OK
     DC h_anykey                 ; 24  ANYKEY
-    DC h_unimpl                 ; 25  SAVE
-    DC h_unimpl                 ; 26  LOAD
+    DC1 h_save                  ; 25  SAVE
+    DC1 h_load                  ; 26  LOAD
     DC h_dprint                 ; 27  DPRINT
     DC h_display                ; 28  DISPLAY
     DC h_cls                    ; 29  CLS

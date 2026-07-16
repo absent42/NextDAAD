@@ -1275,4 +1275,54 @@ inp_to_load:
     ld (inpTOFrm), a
     ret
 
+; --- SAVE / LOAD handlers ---
+; Shared: prompt SM60, read a line, derive savName. Out: CF set = name
+; error (SM59 already printed). Timeout suspended around the edit.
+sav_prompt:
+    ld a, (flags+FLAG_TIMEOUT)
+    ld (savTimeStash), a
+    xor a
+    ld (flags+FLAG_TIMEOUT), a
+    ld e, 60                    ; "Type in name of file."
+    ld a, 0
+    call print_msg
+    call inp_edit               ; CF (timeout) impossible: flag 48 = 0
+    ld a, (savTimeStash)
+    ld (flags+FLAG_TIMEOUT), a
+    call prn_reset_lines
+    call sav_fname
+    ret nc
+    ld e, 59                    ; "File name error."
+    ld a, 0
+    call print_msg
+    call prn_newline
+    scf                         ; prn_newline corrupts flags - re-assert
+    ret                         ; the name-error CF for the caller
+
+h_save:                         ; 25: arg ignored (classic parity)
+    call sav_prompt
+    ret c                       ; name error already reported
+    call sav_write
+    jr nc, .ok
+    ld e, 57                    ; "I/O Error"
+    ld a, 0
+    call print_msg
+    call prn_newline
+.ok:
+    ret
+
+h_load:                         ; 26: arg ignored
+    call sav_prompt
+    ret c
+    call sav_read
+    jr nc, .ok
+    ld e, 57
+    ld a, 0
+    call print_msg
+    call prn_newline
+.ok:
+    ret
+
+savTimeStash: db 0
+
     ASSERT $ <= OVL_LIMIT
