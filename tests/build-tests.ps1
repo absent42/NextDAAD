@@ -112,9 +112,15 @@ if ($Rab) {
     # digits, the name the interpreter's picture loader expects).
     $staged = 0
     Get-ChildItem "$rabSrc\*.NX2" | Where-Object { $_.BaseName -match '^\d+$' } | ForEach-Object {
-        $padded = '{0:D3}' -f [int]$_.BaseName
-        Copy-Item $_.FullName "$root\sd\$padded.NX2" -Force
-        $staged++
+        $art = $_
+        $padded = '{0:D3}' -f [int]$art.BaseName
+        try {
+            Copy-Item $art.FullName "$root\sd\$padded.NX2" -Force
+            $staged++
+        }
+        catch {
+            "WARNING: could not copy $($art.Name) to sd\$padded.NX2 (likely locked by a running CSpect - close it and retry): $_"
+        }
     }
     "staged $staged Rabenstein art file(s) -> sd\NNN.NX2"
 }

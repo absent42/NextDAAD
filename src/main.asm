@@ -74,10 +74,13 @@ idle:
 ; soft reset - QUIT reply N, and the game ending - which under CSpect re-enters
 ; this .nex with dirty RAM instead of reloading the file image) must boot as if
 ; cold. The boot-critical allocator/DDB/engine state (bankTable, ramExpanded,
-; ddbHandle, flags, procSP, doallObj, rngState, dbgTilemap) is already rebuilt
-; unconditionally by bank_table_init / ram_detect / ddb_load / eng_init_game /
-; dbg_cls; these are the remaining read-before-write sentinels not covered
-; elsewhere. On real hardware nextreg 2,1 hands control back to NextZXOS, so
+; ddbHandle, flags, procSP, doallObj, rngState) is already rebuilt
+; unconditionally by bank_table_init / ram_detect / ddb_load / eng_init_game;
+; these are the remaining read-before-write sentinels not covered elsewhere.
+; dbgTilemap (DEBUG only) is reset here too: dbg_engage_tilemap (debug.asm)
+; doesn't set it until after boot_banner/ram_diag/bank_selftest have already
+; read it to route their output, so it must be cold-equivalent before those
+; first run. On real hardware nextreg 2,1 hands control back to NextZXOS, so
 ; this path is exercised only under the CSpect dev loop - but a cold-equivalent
 ; boot is correct robustness regardless.
 boot_data_init:
@@ -87,12 +90,26 @@ boot_data_init:
     ld (prevVerb), a            ; compound-sentence previous verb
     ld a, GFX_EMPTY
     ld (stagedPic), a           ; picture cache staging sentinels
-    ld (stagedEntry), a
+    ld (stagedEntry), a         ; all gfx staged state resets together
+    xor a
+    ld (gfxTick), a
+    ld (stagedMode), a
+    ld (stagedHeight), a
     ld a, 7*2
     ld (tmAttr), a             ; tilemap attribute (white on black)
     xor a
     ld (tmUp), a               ; tilemap-live flag (fatal-path display route)
     ld (ramSaveOk), a          ; RAMSAVE-present guard for RAMLOAD
+    ld (wrapLock), a           ; print-pipeline sentinels (print.asm)
+    ld (wrapLen), a
+    ld (moreLock), a
+    ld (chsGfx), a             ; upper-charset escape latch, same hazard as
+                                ; wrapLock/moreLock: read unconditionally
+                                ; per printed char (prn_char_raw)
+ IFDEF DEBUG
+    ld (dbgTilemap), a         ; force the ULA route until dbg_engage_tilemap
+                                ; runs, matching cold boot
+ ENDIF
     ret
 
     INCLUDE "hardware.asm"
