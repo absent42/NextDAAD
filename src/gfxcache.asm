@@ -15,7 +15,9 @@ GCE_PIC    equ 0
 GCE_FIRST  equ 1              ; index into gfxBankList of this entry's first bank
 GCE_COUNT  equ 2              ; number of banks this entry occupies in gfxBankList
 GCE_MODE   equ 3              ; 0 = 256x192, 1 = 320x256 (mirrors l2Mode's encoding)
-GCE_HEIGHT equ 4               ; picture height in pixels (sub-full-surface pictures)
+GCE_HEIGHT equ 4             ; picture height in pixels, 0 means 256 - a byte
+                             ; cannot hold 256, so 0 is the full-surface height
+                             ; (Task 4 consumers decode 0 as 256)
 GCE_TICK   equ 5
 
 ; A = entry index (0..GFX_CACHE_MAX-1). Out: HL = gfxCache + index*6.
@@ -34,6 +36,8 @@ gce_ptr:
 
 ; A = picture number. Out: CF clear and A = entry index (0..23) if
 ; cached; CF set (A undefined) if not found. Corrupts BC, DE, HL.
+; Picture GFX_EMPTY (255) is the empty-slot sentinel and is uncacheable -
+; never pass it here, or it would false-match every unused slot.
 cache_find:
     ld e, a                     ; E = picture# to match
     ld hl, gfxCache
@@ -69,8 +73,11 @@ cache_touch:
     push af                     ; A = entry index, survives the renorm pass
     ld a, (gfxTick)
     inc a
-    jr nz, .stamp
+    jr nz, .stamp               ; no wrap: new stamp is gfxTick+1
     call gfx_tick_renorm        ; wrapped: halve every entry's tick first
+    ld a, 128                   ; invariant: post-renorm stamp must exceed the
+                                ; halved maximum (127) so the just-touched entry
+                                ; stays the newest of all
 .stamp:
     ld (gfxTick), a
     pop af                      ; A = entry index
