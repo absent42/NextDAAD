@@ -24,22 +24,45 @@ ovl2_false:
 
 ; A = 0 (256x192 256-colour) or 1 (320x256 256-colour) on entry.
 ; Programs the resolution (NR $70 bits 5-4, guide 728-744: 00 =
-; 256x192, 01 = 320x256) and the starting 16K bank (NR $12, guide
+; 256x192, 01 = 320x256), the starting 16K bank (NR $12, guide
 ; 586-599: bits 6-0, 16K units) - both modes start at BANK_L2_FIRST
 ; (bank 9, "recommended to only use 16K banks 9 or greater", guide
-; line 41). Remembers the mode locally for l2_clear/l2_testcard.
-; Corrupts AF.
+; line 41) - and the Layer 2 clip window (NR $18, guide 650-669):
+; without this the window is whatever CSpect/hardware left it at,
+; which on a bare .nex boot is $00,$00,$00,$00 - a degenerate window
+; that clips Layer 2 to nothing (the round-4/5 bring-up bug: enable,
+; bank and pixel data were all correct, but a never-programmed clip
+; window hid everything regardless). NR $1C bit 0 resets the Layer 2
+; clip index (guide 679-687, "1 to reset Layer 2 clip-window register
+; index"); each subsequent NR $18 write both sets the next coordinate
+; AND auto-increments the index (guide 658), so the 4 writes below
+; must land in X1,X2,Y1,Y2 order. X positions are guide-documented as
+; doubled in 320x256 (guide 658: "X positions are doubled for 320x256
+; mode"), matching the guide's own full-window table (line 660-669):
+; 256x192 = 0,255,0,191; 320x256 = 0,159,0,255. Remembers the mode
+; locally for l2_clear/l2_testcard. Corrupts AF.
 l2_mode_set:
     ld (l2Mode), a
     or a
     jr z, .m256
     ld a, %00010000              ; NR $70: bits5-4=01 (320x256, 8bpp)
-    jr .set
-.m256:
-    xor a                        ; NR $70: bits5-4=00 (256x192, 8bpp)
-.set:
     nextreg NR_L2_CTRL, a
     nextreg NR_L2_BANK, BANK_L2_FIRST
+    nextreg NR_CLIP_IDX, 1        ; bit0: reset the Layer 2 clip index
+    nextreg NR_L2_CLIP, 0         ; X1
+    nextreg NR_L2_CLIP, 159       ; X2 (320x256: X in 2-pixel units)
+    nextreg NR_L2_CLIP, 0         ; Y1
+    nextreg NR_L2_CLIP, 255       ; Y2
+    ret
+.m256:
+    xor a                        ; NR $70: bits5-4=00 (256x192, 8bpp)
+    nextreg NR_L2_CTRL, a
+    nextreg NR_L2_BANK, BANK_L2_FIRST
+    nextreg NR_CLIP_IDX, 1        ; bit0: reset the Layer 2 clip index
+    nextreg NR_L2_CLIP, 0         ; X1
+    nextreg NR_L2_CLIP, 255       ; X2
+    nextreg NR_L2_CLIP, 0         ; Y1
+    nextreg NR_L2_CLIP, 191       ; Y2
     ret
 
 ; Enable Layer 2 display via NR $69 bit 7 (guide 713-723: "1 to enable
