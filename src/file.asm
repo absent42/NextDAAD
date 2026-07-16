@@ -135,54 +135,6 @@ ddb_load:
     pop af
     ret
 
-; Read the 8-entry ink translation table from GAME.SDG at SDG_INK_OFF
-; into inkXlat, so INK/PAPER map through the game's own table (2020-era
-; games swap 1<->7 for white body text; newer games ship identity). The
-; SDG is OPTIONAL: any missing-file / short-read / no-free-bank failure
-; leaves inkXlat at its identity default, silently. Reads through a
-; scratch bank in the slot 6 window (the ddb_load idiom - no F_SEEK).
-; Corrupts all registers.
-sdg_load:
-    call esx_getsetdrv
-    ret c                       ; no default drive -> identity
-    ld ix, sdgName
-    ld b, ESX_MODE_READ
-    call esx_fopen
-    ret c                       ; no GAME.SDG -> identity
-    ld (sdgHandle), a
-    call data_save              ; preserve the slot 6 mapping
-    call bank_alloc             ; A = free bank (CF if none)
-    jr c, .close
-    ld (sdgBank), a
-    add a, a                    ; bank -> lower 8K page
-    call data_map_page          ; scratch page into slot 6 ($C000)
-    ld a, (sdgHandle)
-    ld ix, DATA_WINDOW
-    ld bc, SDG_INK_OFF + 8      ; read enough to cover the table
-    call esx_fread              ; BC = bytes actually read
-    jr c, .free
-    ld hl, SDG_INK_OFF + 8
-    or a
-    sbc hl, bc                  ; short read = table not present
-    jr nz, .free
-    ld hl, DATA_WINDOW + SDG_INK_OFF
-    ld de, inkXlat
-    ld bc, 8
-    ldir
-.free:
-    ld a, (sdgBank)
-    call bank_free
-.close:
-    call data_restore
-    ld a, (sdgHandle)
-    call esx_fclose
-    ret
-
-inkXlat:   db 0,1,2,3,4,5,6,7   ; ink translation, identity until sdg_load
-sdgName:   db "GAME.SDG", 0
-sdgHandle: db $FF
-sdgBank:   db 0
-
 ; A = border colour, HL = ASCIIZ message. Never returns.
 fatal:
     out ($FE), a

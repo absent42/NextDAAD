@@ -229,16 +229,10 @@ tm_scroll_rect:
 ; Provenance: the shipped Rabenstein Next release and the DAAD-Ready
 ; Next player (DSNEXTE3.BIN) both render text on the plain ULA (verified:
 ; neither programs a tilemap/ULANext palette, only Layer 2). There is NO
-; custom hardware palette. Per-game colour variation is an 8-entry INK
-; TRANSLATION TABLE in the game's SDG (see inkXlat / sdg_load): the
-; decoded interpreter routine (DS48IE.P3F $7064 / DSNEXTE3.BIN $7532) is
-; result = sdgTable[colour AND 7] with the BRIGHT bit from (colour AND 8).
-; 2020-era games (shipped Rabenstein) embed the OLD table 0,7,2,3,4,5,6,1
-; (DAAD ink 1 -> hardware 7 = WHITE, ink 7 -> 1 = blue); newer DRC embeds
-; the identity 0,1,2,3,4,5,6,7 (ink 1 -> blue). Confirmed empirically by
-; the owner (shipped Rabenstein = white text, fresh compile = blue) and by
-; DRC commit 2f91633 "Embedded SDG changed so colours are as expected".
-; ULA RGB levels: dim = 6/7, bright = 7/7 per channel.
+; custom hardware palette. DAAD INK/PAPER 0-15 index this table directly
+; (current DRC output is the contract - it embeds the identity colour
+; mapping, so INK 1 = hardware 1 = blue). ULA RGB levels: dim = 6/7,
+; bright = 7/7 per channel.
 dadPalette:
     db $00, $00                 ; 0  black
     db $03, $00                 ; 1  blue
