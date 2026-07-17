@@ -1628,6 +1628,17 @@ aud_load_song:
     or a
     sbc hl, de
     jr c, .failpost
+    ; the generated player is fixed 9-channel/3-PSG: any other export
+    ; shape desyncs its linker read (it pops exactly 9 track pointers
+    ; per entry) into garbage sound. Reject on the header's channel-
+    ; count byte (file[1] - layout verified in the Task 4 report) via
+    ; the page-48 window; same clean CF path as oversize, no partial
+    ; state (music already stopped, area inert).
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld a, (DATA_WINDOW+$1801)
+    cp 9
+    jr nz, .failpost
     ; record the song number in the bank state block (page 49 window)
     ld a, AUD_PAGE_HI
     call data_map_page

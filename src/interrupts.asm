@@ -96,7 +96,9 @@ im2_isr:
     ei
     reti
 
-audEnable: db 0
+audEnable: db 0             ; sticky by design: armed once by the first
+                            ; audio use, never re-cleared - the cheap
+                            ; ISR fast path only serves pre-first-audio
 
 ; SP7 audio request mailbox (Task 4). Overlay condact handlers cannot
 ; call bank-24 code (overlay1 owns slot 7), so they file requests in

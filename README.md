@@ -117,7 +117,10 @@ GAME.DDB:
 Exports are address-encoded: songs must be encoded for $D800 (maximum
 10208 bytes) and the effects bank for $D000. Use tools/export_audio.ps1
 to convert .aks sources - a hand-run SongToAky needs
-`-bin --encodingAddress 0xD800`.
+`-bin --encodingAddress 0xD800`. Songs must be Arkos 3-PSG / 9-channel
+exports - the interpreter rejects any other shape at load time (the
+SFX is a no-op). A composition using fewer channels inside a 9-channel
+song is fine - the unused channels stay silent.
 
 SFX first-argument/sub-command semantics (jdaad-compatible):
 

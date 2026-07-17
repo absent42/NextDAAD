@@ -150,6 +150,13 @@ aud_tick:
     jr nz, .beep
     ld hl, audFlags
     res 2, (hl)
+    ; with no music the player stops ticking here, so an effect whose
+    ; final cell is not volume-0 would leave PSG 3 ringing - silence
+    ; it now (music, when playing, rewrites PSG 3 every frame anyway)
+    bit 0, (hl)
+    jr nz, .beep
+    ld a, $FD
+    call aud_psg_silence
 .beep:
     ld a, (audFlags)
     bit 3, a
