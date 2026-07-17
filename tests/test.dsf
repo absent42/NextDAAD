@@ -409,6 +409,12 @@ $pictureOK
 ; process tables 1 and 2 can now be anywhere or completely absent. Everything
 ; is implemented in the DAAD language itself.
 
+; Border cycles with the location (BORDER = location AND 7): a walk
+; around the map visibly steps the surround colour on real hardware.
+; CSpect does not render the fallback colour (see the hardware test
+; checklist), so no change is expected in the emulator.
+> _       _     BORDER @fPlayer
+
 ;This is better carried out thus
 > _       _     NEWLINE
                 ZERO    fDarkF            ; Isn't dark
