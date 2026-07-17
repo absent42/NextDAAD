@@ -6,7 +6,7 @@ SET GAME=
 
 REM 1 = ZX0-compress location graphics (smaller, uses the interpreter depack
 REM path); 0 = raw NX2/NXI.
-SET COMPRESS=1
+SET COMPRESS=0
 
 REM 1 = launch CSpect on the result after a successful build; 0 = build only.
 SET RUN=1

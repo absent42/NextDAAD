@@ -505,11 +505,11 @@ $pictureOK
 > _       _     
                 WINDOW  0                  ; Make window 0 be full screen, and clear it
                 WINAT 0 0
-                WINSIZE 25 128
+                WINSIZE 32 128
                 CLS
                 WINDOW  1                  ; Define text Window starting at line 14
                 WINAT 14 0
-                WINSIZE 25 128             ; Also maximum with and height
+                WINSIZE 32 128             ; Also maximum with and height
                 WINDOW 0
                 PICTURE 0 
                 DISPLAY 0
@@ -518,7 +518,7 @@ $pictureOK
 
 >  _     _      WINDOW  1                       ; if we get here, there is no picture for location 0, so we have to set the text window full screen
                 WINAT 0 0              
-                WINSIZE 25 128                  
+                WINSIZE 32 128                  
                 #ifdef "splitModeOn"            ; Disable split mode if so
                     XSPLITSCR 0
                     PAUSE 10
