@@ -217,9 +217,16 @@ DAC_PORT        equ $DF     ; SpecDrum-compatible mono DAC (all 4 DACs)
 NR_PERIPH3      equ $08     ; peripheral 3: bit 3 = 8-bit DACs on,
                             ; bit 1 = Turbo Sound on (both hard-reset 0)
 AUD_PSCLOCK     equ 875000  ; prescaler base clock in Hz: rate =
-                            ; AUD_PSCLOCK/prescaler. PROVISIONAL until
-                            ; the Task 2 hold-D probe pins it (CSpect);
-                            ; hardware checklist re-verifies on silicon
+                            ; AUD_PSCLOCK/prescaler. PINNED by the
+                            ; Task 2 hold-D probe (owner, CSpect,
+                            ; 2026-07-17): 8192 bytes at prescaler
+                            ; 87/174 took $2B/$56 frames - exactly
+                            ; linear, only this model fits (zxndma.txt
+                            ; CPU-cycle reading would give 0-10).
+                            ; Effective throughput ran ~5% under
+                            ; nominal from bus contention - hence the
+                            ; engine's consumed-based advance. Hardware
+                            ; checklist re-verifies on silicon
 AUD_RATE_MIN    equ 3500    ; below this the prescaler exceeds 255
 AUD_RATE_MAX    equ 20000   ; staging halves are sized for this
 AUD_SMP_MAX     equ 49152   ; payload cap: banks 25-27 exactly
