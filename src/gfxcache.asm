@@ -1,7 +1,7 @@
 ; Picture cache tables (resident). Tracks which physical RAM banks
 ; currently hold decoded Layer 2 picture data, LRU-ordered by tick so
 ; the loader can evict the coldest entry when the pool is full
-; (eviction lands in Task 6; until then a full pool fails the load).
+; (cache_evict_lru below; overlay2's gfx_bank_get drives the loop).
 ; The loader/blitter (overlay2.asm: gfx_load/gfx_blit) consumes
 ; cache_find/cache_touch and the staged state below. Consumes
 ; bank_free (banks.asm, resident).
@@ -100,7 +100,11 @@ gfx_tick_renorm:
 ; A = entry index. Frees every bank in the entry's bank-list range via
 ; bank_free, then clears the slot (picture# = GFX_EMPTY, counts/mode/
 ; height/tick zeroed). Safe to call on an already-empty slot (bankCount
-; 0 skips the free loop). Corrupts AF, BC, DE, HL.
+; 0 skips the free loop). NOTE: this clears the ENTRY but leaves the
+; entry's slots in gfxBankList behind - a caller must recompact the
+; arena or the density invariant (see gfxBankNext) breaks. The only
+; caller is cache_evict_lru below, which owns that compaction.
+; Corrupts AF, BC, DE, HL.
 cache_drop:
     call gce_ptr                 ; HL -> entry base (picture#)
     inc hl                       ; -> firstBankIdx
@@ -141,14 +145,146 @@ cache_drop:
     ld (hl), a                   ; tick
     ret
 
+; Evict the least-recently-used committed cache entry - the lowest
+; tick among occupied slots, EXCLUDING the staged slot (stagedEntry):
+; gfx_blit re-reads the staged entry's banks at DISPLAY time, so
+; evicting it would be a use-after-free (a DISPLAYED-but-unstaged
+; picture is safe to evict - its pixels already live on the Layer 2
+; surface and its banks are never re-read). The in-flight load's
+; reserved slot is still GFX_EMPTY (gfx_load commits only on success)
+; so it is excluded naturally. Frees the victim's banks (cache_drop),
+; then COMPACTS the arena: the victim's gfxBankList slots are closed
+; up by sliding every higher slot down, every surviving entry's
+; GCE_FIRST is rebased, and gfxBankNext shrinks - restoring the
+; density invariant. The victim's run always sits strictly below any
+; in-flight run (loads append at the cursor), so the caller rebases
+; its own in-flight arena indices by the same rule: index > E means
+; index -= D (overlay2's gfx_evict_fix).
+; Out: CF clear with D = removed slot count, E = removed first index;
+; CF set (D, E undefined) when nothing is evictable. Corrupts
+; AF, BC, DE, HL.
+cache_evict_lru:
+    ld hl, gfxCache
+    ld b, 0                      ; B = scan index
+    ld c, GFX_EMPTY              ; C = victim index, none yet
+    ld d, 0                      ; D = victim tick (valid once C set)
+.scan:
+    ld a, (hl)                   ; GCE_PIC
+    cp GFX_EMPTY
+    jr z, .next                  ; empty slot
+    ld a, (stagedEntry)
+    cp b
+    jr z, .next                  ; staged: gfx_blit may re-read it
+    push hl
+    ld a, GCE_TICK
+    add hl, a
+    ld e, (hl)                   ; E = candidate tick
+    pop hl
+    ld a, c
+    cp GFX_EMPTY
+    jr z, .take                  ; first candidate is provisional victim
+    ld a, e
+    cp d
+    jr nc, .next                 ; not older than the victim so far
+.take:
+    ld c, b
+    ld d, e
+.next:
+    push de
+    ld de, GFX_ENTRY_SIZE
+    add hl, de
+    pop de
+    inc b
+    ld a, b
+    cp GFX_CACHE_MAX
+    jr c, .scan
+    ld a, c
+    cp GFX_EMPTY
+    jr z, .none
+    ; victim found: capture its run before cache_drop clears it
+    call gce_ptr                 ; A = victim index; HL -> entry base
+    inc hl
+    ld a, (hl)                   ; GCE_FIRST
+    ld (gceDropFirst), a
+    inc hl
+    ld a, (hl)                   ; GCE_COUNT
+    ld (gceDropCount), a
+    ld a, c
+    call cache_drop              ; free the banks, clear the slot
+    ; slide gfxBankList[first+count .. gfxBankNext-1] down over the
+    ; hole (forward LDIR: dest < src, overlap-safe)
+    ld a, (gceDropFirst)
+    ld e, a
+    ld d, 0
+    ld hl, gfxBankList
+    add hl, de
+    ex de, hl                    ; DE = dest = list + first
+    ld a, (gceDropCount)
+    ld l, a
+    ld h, 0
+    add hl, de                   ; HL = src = list + first + count
+    ld a, (gceDropFirst)
+    ld b, a
+    ld a, (gceDropCount)
+    add a, b                     ; first + count (<= gfxBankNext <= 128)
+    ld b, a
+    ld a, (gfxBankNext)
+    sub b                        ; slots above the hole
+    jr z, .slid                  ; victim was the topmost run
+    ld c, a
+    ld b, 0
+    ldir
+.slid:
+    ; rebase every surviving entry whose run sat above the hole
+    ; (empty slots hold GCE_FIRST = 0, never > first, so no guard)
+    ld a, (gceDropFirst)
+    ld e, a
+    ld a, (gceDropCount)
+    ld d, a
+    ld hl, gfxCache + GCE_FIRST
+    ld b, GFX_CACHE_MAX
+.rebase:
+    ld a, (hl)
+    cp e
+    jr z, .keep                  ; == first: the cleared victim itself
+    jr c, .keep                  ; below the hole: untouched
+    sub d
+    ld (hl), a
+.keep:
+    push de
+    ld de, GFX_ENTRY_SIZE
+    add hl, de
+    pop de
+    djnz .rebase
+    ld a, (gfxBankNext)
+    sub d
+    ld (gfxBankNext), a
+    or a                         ; CF clear; D = count, E = first
+    ret
+.none:
+    scf
+    ret
+
+gceDropFirst: db 0               ; cache_evict_lru scratch: victim run
+gceDropCount: db 0               ; (first index, slot count)
+
 gfxTick:      db 0
 stagedPic:    db GFX_EMPTY       ; picture# currently being staged, GFX_EMPTY = none
 stagedMode:   db 0
 stagedHeight: db 0
 stagedEntry:  db GFX_EMPTY       ; cache slot reserved for the staged picture
-gfxBankNext:  db 0               ; bank-list arena bump cursor: next free index
-                                 ; (a failed load rewinds it; compaction on
-                                 ; eviction is Task 6's problem)
+gfxBankNext:  db 0               ; bank-list arena cursor: next free index.
+                                 ; DENSITY INVARIANT: [0, gfxBankNext) is
+                                 ; always dense - committed entries' runs in
+                                 ; commit order, then at most one in-flight
+                                 ; load's run on top. Every path that removes
+                                 ; slots restores it: a failed load rewinds
+                                 ; the cursor over its own (topmost) run
+                                 ; (gfx_load_rollback), a depack slides its
+                                 ; dest run down over the freed scratch run
+                                 ; (gfx_depack), an eviction slides everything
+                                 ; above the victim down and rebases the
+                                 ; survivors (cache_evict_lru)
 gfxName:      db "000.NX2.ZX0", 0  ; picture filename scratch - RESIDENT so
                                  ; the path esxDOS reads sits in always-mapped
                                  ; RAM like ddbName/savName, not an overlay

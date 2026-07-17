@@ -667,6 +667,18 @@ NORTH 0
         MES "63 OK#n"
         SKIP 1
 > _ _   MES "63 F#n"
+; ---- graphics checks ----
+; 64 PICTURE with no image file on SD: fails as a condition, entry
+; aborts, session continues. ASSUMES the suite SD state has no 200.*
+; art - the Rabenstein set staged by build-tests.ps1 -Rab covers
+; 000-020 only, and nothing else stages picture files (confirmed at
+; build time: sd\ holds no 200.*). The loader probes the whole
+; extension chain (NX2.ZX0/N2Z/NX2/NXI.ZX0/NXZ/NXI), every probe
+; misses, gfx_load fails clean and h_picture reports false.
+> _ _   PICTURE 200
+        MES "64 F#n"
+        SKIP 1
+> _ _   MES "64 OK#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5

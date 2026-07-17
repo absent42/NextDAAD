@@ -236,9 +236,26 @@ l2_palette_load:
 .w8:
     nextreg NR_PAL_VALUE, a
     djnz .l8
-    jr .stamp
+    jr l2_pal9_stamp
 .fmt9:
     ld b, 0
+    call l2_pal9_run
+    ; fall through to the stamp
+
+; Force entry 254 = the reserved transparent colour (l2_palette_load
+; header). Every palette-programming path ends here. Corrupts AF.
+l2_pal9_stamp:
+    nextreg NR_PAL_INDEX, TM_TRANSP_ATTR
+    nextreg NR_PAL_VALUE9, TM_TRANSP_ATTR
+    nextreg NR_PAL_VALUE9, 0     ; blue LSB 0, priority 0
+    ret
+
+; Program B 9-bit palette entries (0 = 256) from HL via NR $44, with
+; the $FE collision dodge (l2_palette_load header). The caller owns
+; the NR $43/$40 setup and the final l2_pal9_stamp - split out so
+; gfx_direct_stream can feed the 512-byte palette through gfxRowBuf
+; in two 256-byte halves. Corrupts AF, B, HL.
+l2_pal9_run:
 .l9:
     ld a, (hl)
     inc hl
@@ -251,11 +268,6 @@ l2_palette_load:
     inc hl
     nextreg NR_PAL_VALUE9, a
     djnz .l9
-.stamp:
-    ; force entry 254 = the reserved transparent colour (see header)
-    nextreg NR_PAL_INDEX, TM_TRANSP_ATTR
-    nextreg NR_PAL_VALUE9, TM_TRANSP_ATTR
-    nextreg NR_PAL_VALUE9, 0     ; blue LSB 0, priority 0
     ret
 
 l2Mode:     db 0                 ; last mode set by l2_mode_set
@@ -353,23 +365,29 @@ h_display:
 
 ; A = picture number. Ensure its palette+pixels are in cache banks
 ; and stage it for DISPLAY 0. Cache hit: cache_touch + stage, no SD
-; access. Miss: reserve a cache slot, probe the extension chain
-; (gfxExtTab order - ZX0-compressed variants win over raw), stream the
-; file into freshly allocated 16K banks with count-checked reads, for
+; access. Miss: reserve a cache slot (evicting the coldest entry via
+; gfx_evict_fix when every slot is committed), probe the extension
+; chain (gfxExtTab order - ZX0-compressed variants win over raw),
+; stream the file into freshly allocated 16K banks with count-checked
+; reads - gfx_bank_get evicts cold entries as the pool runs dry - for
 ; a compressed variant depack those scratch banks into a fresh
 ; destination run (gfx_depack), derive the height from the
-; (decompressed) byte total, then commit the entry and stage it. Out:
-; CF clear = staged. CF set = failed (no file, no free slot/bank/arena
-; room, depack error, malformed size): every partially allocated bank
-; is freed - scratch and destination alike, the arena cursor still
-; covers both - the cursor rewound, and the stage cleared - jdaad
-; unstages on a failed PICTURE too. Eviction when the pool is full is
-; Task 6; this task fails such loads cleanly instead. Corrupts
-; everything.
+; (decompressed) byte total, then commit the entry and stage it.
+; When even a full eviction pass cannot supply banks (or an evictable
+; slot), a RAW file takes the direct-stream fallback instead
+; (gfx_direct_stream: fused load+blit, nothing cached, stage cleared
+; so a revisit reloads - but PICTURE itself still succeeds);
+; compressed variants cannot (see gfx_direct_stream's header) and
+; fail cleanly. Out: CF clear = staged (or fallback-drawn). CF set =
+; failed (no file, depack error, malformed size, exhaustion with no
+; fallback): every partially allocated bank is freed - scratch and
+; destination alike, the arena cursor still covers both - the cursor
+; rewound, and the stage cleared - jdaad unstages on a failed PICTURE
+; too. Corrupts everything.
 gfx_load:
     ld (gfxPicNum), a
     cp GFX_EMPTY                ; 255 = the empty-slot sentinel; passing it
-    jr z, .failclean            ; to cache_find would false-match every
+    jp z, .failclean            ; to cache_find would false-match every
                                 ; unused slot, so it is simply unloadable
     call cache_find
     jr c, .miss
@@ -377,11 +395,20 @@ gfx_load:
     call cache_touch
     jr .stage
 .miss:
+    xor a
+    ld (gfxAllocFail), a
+.slot:
     call gfx_find_empty         ; reserve a slot; not written until the
-    jr c, .failclean            ; load has fully verified
+    jr nc, .gotslot             ; load has fully verified
+    call gfx_evict_fix          ; every slot committed: evict the
+    jr nc, .slot                ; coldest and rescan
+    jr .exhausted               ; nothing evictable (only the staged
+                                ; slot left - the GFX_CACHE_MAX=1
+                                ; degradation shape): fallback territory
+.gotslot:
     ld (gfxEntryIdx), a
     call gfx_open_chain
-    jr c, .failclean
+    jp c, .failclean
     call gfx_read_banks         ; closes the file on every path
     jr c, .failbanks
     ld a, (gfxCompressed)
@@ -427,6 +454,37 @@ gfx_load:
     ret
 .failbanks:
     call gfx_load_rollback
+    ld a, (gfxAllocFail)        ; exhaustion (banks/arena, post-eviction)
+    or a                        ; is the only failure the fallback can
+    jr z, .failclean            ; help; io/shape errors fail clean
+    ld a, (gfxCompressed)
+    or a
+    jr nz, .failclean           ; compressed: no fallback (see
+                                ; gfx_direct_stream's header)
+.exhausted:
+    ; pool exhausted even after a full eviction pass: direct-stream a
+    ; RAW file. (Re)open via the probe chain - it deterministically
+    ; re-finds the same file and re-sets gfxMode/gfxWidth/gfxCompressed,
+    ; which the .slot-exhaustion path arrives here without.
+    call gfx_open_chain
+    jr c, .failclean
+    ld a, (gfxCompressed)
+    or a
+    jr nz, .failcloseh          ; compressed: close + clean fail
+    call gfx_direct_stream      ; closes the handle on every path
+    jr c, .failclean
+    ; drawn + flipped, transient: no cache entry claims it and the
+    ; stage is cleared so a revisit reloads; PICTURE still succeeds
+    ld a, GFX_EMPTY
+    ld (stagedPic), a
+    ld (stagedEntry), a
+    or a
+    ret
+.failcloseh:
+    ld a, (gfxHandle)
+    call esx_fclose
+    ld a, $FF
+    ld (gfxHandle), a
 .failclean:
     ld a, GFX_EMPTY
     ld (stagedPic), a
@@ -435,8 +493,8 @@ gfx_load:
     ret
 
 ; Find the first empty cache slot. Out: CF clear + A = entry index;
-; CF set when every slot is in use (eviction is Task 6). Corrupts
-; AF, B, DE, HL.
+; CF set when every slot is committed (gfx_load then evicts and
+; rescans). Corrupts AF, B, DE, HL.
 gfx_find_empty:
     ld hl, gfxCache
     ld de, GFX_ENTRY_SIZE
@@ -555,11 +613,9 @@ gfx_read_banks:
     ld a, (gfxBankCount)
     cp 6
     jr nc, .fail
-    ld a, (gfxBankNext)
-    cp GFX_BANKLIST_MAX
-    jr nc, .fail                ; bank-list arena full
-    call bank_alloc             ; out: A = 16K bank, CF = none free
-    jr c, .fail
+    call gfx_bank_get           ; out: A = 16K bank; evicts cold cache
+    jr c, .fail                 ; entries before giving up (CF +
+                                ; gfxAllocFail set = true exhaustion)
     ld e, a
     ld hl, gfxBankList
     ld a, (gfxBankNext)
@@ -705,6 +761,218 @@ gfx_load_rollback:
     call bank_free              ; preserves BC, DE, HL (banks.asm)
     inc hl
     djnz .free
+    ret
+
+; Allocate one 16K bank for the arena, evicting the coldest cache
+; entry (and compacting the arena) as many times as it takes until
+; both a free bank and arena room exist. Every eviction frees at
+; least one bank and at least one arena slot (committed entries hold
+; >= 1 bank), and the victim set only shrinks, so the loop
+; terminates. Out: CF clear + A = bank (the caller appends it at
+; gfxBankNext); CF set + gfxAllocFail = 1 when nothing evictable
+; remains and the pool is still dry - TRUE exhaustion, gfx_load's
+; fallback trigger. Corrupts AF, BC, DE, HL.
+gfx_bank_get:
+.try:
+    ld a, (gfxBankNext)
+    cp GFX_BANKLIST_MAX
+    jr nc, .evict               ; bank-list arena full
+    call bank_alloc             ; out: A = 16K bank, CF = none free
+    ret nc
+.evict:
+    call gfx_evict_fix
+    jr nc, .try
+    ld a, 1
+    ld (gfxAllocFail), a
+    scf
+    ret
+
+; Evict the LRU cache entry (cache_evict_lru: excludes the staged
+; slot, frees the banks, compacts the arena, rebases the surviving
+; entries) and rebase this load's own in-flight arena indices by the
+; same rule - any index above the removed run slides down with it.
+; The victim's run always sits strictly below the in-flight run (the
+; density invariant, gfxcache.asm), so gfxArenaStart and the depack
+; cursors always qualify when live; when no load/depack is in flight
+; they hold stale values that the next load re-initialises before
+; reading, so the blind rebase is harmless. Out: CF set = nothing
+; evictable. Corrupts AF, BC, DE, HL.
+gfx_evict_fix:
+    call cache_evict_lru        ; out: D = removed count, E = first
+    ret c
+    ld hl, gfxArenaStart
+    call .fix
+    ld hl, zx0SrcIdx
+    call .fix
+    ld hl, zx0DstStart
+    call .fix
+    or a
+    ret
+.fix:
+    ld a, (hl)
+    cp e                        ; index <= removed first: untouched
+    ret c
+    ret z
+    sub d
+    ld (hl), a
+    ret
+
+; Fused load+blit fallback for pool exhaustion - RAW files only.
+; In: gfxHandle = an OPEN read handle on gfxName at offset 0, with
+; gfxMode/gfxWidth set by gfx_open_chain and gfxCompressed = 0 (the
+; caller enforces it). Streams the file from SD straight onto the
+; BACK Layer 2 surface: skip the 512-byte embedded palette, then per
+; row esx_fread gfxWidth bytes into gfxRowBuf and write it with the
+; SAME row writers gfx_blit uses (gfx_row_copy256/gfx_row_scatter320
+; - the walks cannot diverge), enforcing gfx_derive_height's shape
+; rules on the fly (>= 1 row, no partial trailing row, <= 192 rows on
+; the 256-wide surface, <= 256 on the 320-wide). Then the palette:
+; the file cursor is past it and F_SEEK is unproven in this codebase,
+; so the file is closed and REOPENED (gfx_open_chain deterministically
+; re-finds the same file) and the 512 bytes are programmed in two
+; 256-byte halves through the shared l2_pal9_run + l2_pal9_stamp (the
+; same $FE dodge and entry-254 stamp as l2_palette_load). Finally the
+; flip, exactly as gfx_blit ends. NOTHING is cached and the caller
+; clears the stage: the result is transient, a revisit reloads.
+; WHY RAW ONLY: a compressed fallback would have to depack directly
+; into the Layer 2 banks, but ZX0 back-references read earlier OUTPUT
+; bytes assuming the linear layout the depacker's dest window
+; provides, and the 320-wide surface is COLUMN-MAJOR - the scatter
+; reorders bytes, so match copies would read reordered data. A 256-
+; wide surface is linear, but a single fallback shape keeps this
+; corner simple: compressed loads that exhaust eviction fail cleanly
+; in gfx_load instead (CF, no picture, session unharmed). On a 1MB
+; machine any legal picture still fits after a full eviction pass, so
+; this whole routine is single-load-bigger-than-everything territory.
+; Out: CF clear = drawn, flipped, handle closed. CF set = failed,
+; handle closed; the back surface may hold partial paint - invisible,
+; never flipped, so the session is unharmed. Corrupts everything.
+gfx_direct_stream:
+    call data_save
+    ld b, 2                     ; skip the palette: 2 x 256-byte
+.skip:                          ; discard reads through gfxRowBuf
+    push bc
+    call gfx_direct_read256
+    pop bc
+    jp c, .fail
+    djnz .skip
+    ; render state exactly as gfx_blit stages it
+    ld a, (gfxMode)
+    ld (l2Mode), a              ; variable only - sizes l2_clear_back;
+                                ; NR $70/$12 wait for the flip
+    ld a, (l2BackBank)
+    add a, a
+    ld (gfxSurfPage), a
+    call l2_clear_back          ; own data_save/restore
+    ld a, (gfxSurfPage)         ; 256-wide linear dest stream init
+    ld (gfxDstPage), a          ; (the 320-wide scatter reinitialises
+    ld hl, DATA_WINDOW          ; gfxDstPage itself every row)
+    ld (gfxDstPtr), hl
+    xor a
+    ld (gfxRowY), a             ; doubles as the written-row count
+    ld (gfxRowFull), a
+.row:
+    ld a, (gfxHandle)
+    ld ix, gfxRowBuf
+    ld bc, (gfxWidth)
+    call esx_fread              ; out: BC = ACTUAL bytes read
+    jp c, .fail
+    ld a, b
+    or c
+    jr z, .eof                  ; clean EOF on a row boundary
+    ld hl, (gfxWidth)
+    or a
+    sbc hl, bc
+    jp nz, .fail                ; partial trailing row: malformed
+    ; enforce the surface's row capacity BEFORE writing
+    ld a, (gfxRowFull)
+    or a
+    jp nz, .fail                ; 257th row on the 320-wide surface
+    ld a, (gfxMode)
+    or a
+    jr nz, .fits
+    ld a, (gfxRowY)
+    cp 192
+    jp nc, .fail                ; 193rd row on the 256-wide surface
+.fits:
+    ld a, (gfxMode)
+    or a
+    jr z, .linear
+    call gfx_row_scatter320
+    jr .wrote
+.linear:
+    call gfx_row_copy256
+.wrote:
+    ld hl, gfxRowY
+    inc (hl)
+    jr nz, .row
+    ld a, 1                     ; row 255 written, counter wrapped: the
+    ld (gfxRowFull), a          ; full 256-row surface is painted -
+    jr .row                     ; only EOF may follow
+.eof:
+    ld a, (gfxRowY)
+    ld hl, gfxRowFull
+    or (hl)
+    jr z, .fail                 ; no pixel rows at all
+    ; palette pass: reopen at offset 0 (header comment)
+    ld a, (gfxHandle)
+    call esx_fclose
+    ld a, $FF
+    ld (gfxHandle), a
+    call gfx_open_chain
+    jr c, .faildone
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    nextreg NR_PAL_INDEX, 0
+    ld b, 2
+.pal:
+    push bc
+    call gfx_direct_read256
+    jr c, .palfail
+    ld hl, gfxRowBuf
+    ld b, 128                   ; 128 9-bit entries per 256-byte half
+    call l2_pal9_run            ; shared $FE-dodge programming loop
+    pop bc
+    djnz .pal
+    call l2_pal9_stamp          ; entry 254 = the reserved transparent
+    ld a, (gfxHandle)
+    call esx_fclose
+    ld a, $FF
+    ld (gfxHandle), a
+    call data_restore
+    ; flip exactly as gfx_blit ends: swap the surface roles, then the
+    ; resolution and new front bank back-to-back (l2_flip_swap header)
+    call l2_flip_swap
+    ld a, (gfxMode)
+    call l2_mode_set
+    call l2_enable
+    or a
+    ret
+.palfail:
+    pop bc
+.fail:
+    ld a, (gfxHandle)
+    call esx_fclose
+    ld a, $FF
+    ld (gfxHandle), a
+.faildone:
+    call data_restore
+    scf
+    ret
+
+; Read exactly 256 bytes from gfxHandle into gfxRowBuf. Out: CF set
+; on an esxDOS error or a short read. Corrupts everything (esx_fread
+; makes no register promises). Only gfx_direct_stream calls this.
+gfx_direct_read256:
+    ld a, (gfxHandle)
+    ld ix, gfxRowBuf
+    ld bc, 256
+    call esx_fread              ; out: BC = ACTUAL bytes read
+    ret c
+    ld hl, 256
+    or a
+    sbc hl, bc
+    ret z                       ; full read: ZF set, CF clear
+    scf
     ret
 
 ; --- ZX0 depacker (Task 5) ---
@@ -1104,14 +1372,18 @@ zx0_dst_advance:
     ret
 
 ; Allocate one destination bank and append it to the arena run.
-; Preserves BC, DE. Corrupts AF, HL.
+; gfx_bank_get may evict cache entries mid-depack: that only touches
+; resident tables (the physical banks never move, slot 6's mapping
+; stays valid), and gfx_evict_fix rebases zx0SrcIdx/zx0DstStart/
+; gfxArenaStart to follow the compacted arena, so the depack cursors
+; stay coherent. Preserves BC, DE. Corrupts AF, HL.
 zx0_dst_bank_alloc:
     push bc
-    ld a, (gfxBankNext)
-    cp GFX_BANKLIST_MAX
-    jp nc, zx0_fail             ; bank-list arena full
-    call bank_alloc             ; out: A = 16K bank, CF = none free
-    jp c, zx0_fail
+    push de                     ; eviction corrupts DE
+    call gfx_bank_get           ; out: A = 16K bank; CF = exhausted
+    pop de
+    jp c, zx0_fail              ; (zx0_fail rewinds SP - the pushed BC
+                                ; is reclaimed by the rewind)
     ld c, a
     ld hl, gfxBankList
     ld a, (gfxBankNext)
@@ -1522,6 +1794,13 @@ gfxDstPtr:     dw 0              ; blit dest: linear cursor (256-wide mode)
 gfxRowY:       db 0              ; current pixel row
 gfxRowsLeft:   db 0              ; rows still to copy (initial 0 = 256)
 gfxCompressed: db 0              ; candidate row's compressed flag
+gfxAllocFail:  db 0              ; 1 = the load failed on TRUE pool
+                                 ; exhaustion (gfx_bank_get gave up
+                                 ; post-eviction) - gfx_load's
+                                 ; direct-stream fallback trigger
+gfxRowFull:    db 0              ; direct stream: the 256th row was
+                                 ; written (gfxRowY wrapped), only EOF
+                                 ; may follow
 gfxRowBuf:     ds 320            ; row bounce buffer: slot 6 can only hold
                                  ; source OR dest, so each row stages here
                                  ; (in this overlay page - both users above

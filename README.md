@@ -3,7 +3,7 @@
 DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
-Project status on 16/07/2026: 
+Project status on 17/07/2026: 
 The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
 object model, process/DOALL dispatch, windows, printing, colour,
 carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
@@ -107,7 +107,7 @@ The toolchain (not included in repo) lives in tools/
 - Clean: powershell -File build.ps1 -Clean
 - Test DDB: powershell -File tests\build-tests.ps1 regenerates
   sd\GAME.DDB and the corrupt/oversize variants in tests\out\ (add
-  -Suite to make the condact test suite DDB active - 63 checks
+  -Suite to make the condact test suite DDB active - 64 checks
   covering condact semantics, parser/conjunction handling, DOALL
   nesting and save/load - or -Err4 for the nested-DOALL error demo)
 - VS Code: build / run / clean tasks wrap the same script
