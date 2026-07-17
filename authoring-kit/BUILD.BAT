@@ -59,7 +59,10 @@ if errorlevel 1 ( pause & exit /b 1 )
 call "%~dp0lib\gfx.bat"
 if errorlevel 1 ( pause & exit /b 1 )
 
-REM === STAGE CALLS INSERTED HERE BY TASKS 8-9 ===
+call "%~dp0lib\audio.bat"
+if errorlevel 1 ( pause & exit /b 1 )
+
+REM === STAGE CALLS INSERTED HERE BY TASKS 9 ===
 
 echo preflight OK
 endlocal
