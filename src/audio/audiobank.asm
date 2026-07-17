@@ -112,6 +112,17 @@ aud_tick:
     call PLY_AKY_STOPSOUNDEFFECTFROMCHANNEL
     ld hl, audFlags
     res 2, (hl)
+    ; An explicit stop must silence PSG 3 now. The player only re-asserts
+    ; PSG 3 volumes from a subsequent PLY_AKY_PLAY, and that runs only
+    ; when audFlags still has music (bit 0) or effect (bit 2) set - an
+    ; effect-only stop drops audFlags to 0 and aud_tick returns before
+    ; the play gate, leaving the effect's last registers ringing. Mirror
+    ; the effect-end watch's no-music branch, but unconditionally: PSG 3
+    ; ($FD) carries only music channels 7-9, so this cannot dent channels
+    ; 1-6 (PSG 1/2), and when music IS playing the same-frame play gate
+    ; overwrites this with the correct music state.
+    ld a, $FD
+    call aud_psg_silence
     ld hl, audRequest
 .no2:
     ; bit 1: play effect audReqSfx on PSG 3 channel 0, full volume
