@@ -70,9 +70,21 @@ audio_init:
 ; result is pushed to the stack immediately (the Z80 stops updating P/V
 ; the instant DI executes, but any instruction between the sample and
 ; the DI could still clobber it, so it is saved, not held live).
+; LD A,I erratum guard: an interrupt accepted at the instruction's end
+; copies IFF2 AFTER acceptance cleared it - P/V reads 0 despite
+; interrupts being enabled, and the bracket would then never EI again
+; (the next halt hangs). Double-sample: our ISR always exits via EI,
+; so a spurious 0 can only mean an interrupt just fired - the second
+; sample is conclusive. Whether the Z80N core reproduces the erratum
+; is unverified (see docs/hardware-test-checklist.md); the re-sample
+; makes it moot either way.
 nr_read:
     push bc
     ld a, i
+    jp pe, .sampled         ; P/V=1: interrupts definitely enabled
+    ld a, i                 ; P/V=0: re-sample (erratum window cannot
+                            ; hit twice in successive instructions)
+.sampled:
     push af                 ; save IFF2 in P/V on the stack
     di
     ld bc, TBBLUE_REG_SEL

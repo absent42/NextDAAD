@@ -689,8 +689,11 @@ NORTH 0
         BEEP 0 60
         MES "65 OK#n"
 ; 66 SFX: missing song no-ops (the suite SD carries no 200.AKY),
+; play-effect with no effects bank no-ops (the suite SD carries no
+; GAME.SFB either - the bank guard must swallow it, not play garbage),
 ; unknown sub-command no-ops, stop-music with nothing playing no-ops.
 > _ _   SFX 200 6
+        SFX 1 1
         SFX 1 99
         SFX 200 8
         MES "66 OK#n"

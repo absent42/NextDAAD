@@ -1639,15 +1639,21 @@ aud_load_song:
     ld a, (DATA_WINDOW+$1801)
     cp 9
     jr nz, .failpost
+    ; play-once: repoint the composer's loop at the terminal silence.
+    ; CF back from the walk = no terminator inside the loaded bytes -
+    ; a malformed/truncated file: REJECT the load (clean-fail
+    ; discipline; done before audSongNum so a reject commits nothing)
+    ld a, (audReqLoop)
+    or a
+    jr nz, .keeploop
+    call aud_repoint_loop
+    jr c, .failpost
+.keeploop:
     ; record the song number in the bank state block (page 49 window)
     ld a, AUD_PAGE_HI
     call data_map_page
     ld a, (audSongReq)
     ld (DATA_WINDOW+audSongNum-$E000), a
-    ; play-once: repoint the composer's loop at the terminal silence
-    ld a, (audReqLoop)
-    or a
-    call z, aud_repoint_loop
     call data_restore
     or a
     ret
@@ -1718,17 +1724,18 @@ aud_load_sfb:
 ; Export-shape-agnostic: header and stride are computed from the
 ; channel-count byte. Runs on the loaded RAM copy inside the load
 ; bracket (music stopped, page windows mapped per byte) - never on
-; the SD file, never during playback. A malformed header or a walk
-; that runs past the loaded size gives up without patching (the song
-; then simply loops - safe fallback). Corrupts AF, BC, DE, HL.
+; the SD file, never during playback. Out: CF clear = loop word
+; patched; CF set = malformed file (bogus channel byte, offset past
+; the loaded size, or no terminator inside it) - the caller rejects
+; the load. Corrupts AF, BC, DE, HL.
 aud_repoint_loop:
     ld hl, 0
     call aud_song_rdw           ; E = format byte, D = channel count
     ld a, d
     or a
-    ret z
+    jr z, .bad
     cp 25                       ; stride byte tops out at 2+2*24
-    ret nc
+    jr nc, .bad
     ld c, a                     ; C = channels
     add a, a
     add a, 2
@@ -1754,11 +1761,14 @@ aud_repoint_loop:
     or a
     sbc hl, de                  ; HL = size - offset
     pop de                      ; DE = offset
+    ret c                       ; borrow: offset already PAST the end
+                                ; (a negative difference would pass
+                                ; the high-byte check below as room)
     ld a, h
     or a
     jr nz, .fits
     ld a, l                     ; fewer than 4 bytes left: truncated
-    cp 4                        ; or malformed - give up, song loops
+    cp 4                        ; or malformed - CF back to the caller
     ret c
 .fits:
     ex de, hl                   ; HL = offset
@@ -1773,7 +1783,12 @@ aud_repoint_loop:
     inc hl
     inc hl                      ; HL = file offset of the loop word
     ld de, audSilenceLinker     ; true bank address of the terminal
-    jp aud_song_wrw             ; silence linker entry (audiobank.asm)
+    call aud_song_wrw           ; silence linker entry (audiobank.asm)
+    or a                        ; CF clear: patched
+    ret
+.bad:
+    scf
+    ret
 
 ; HL = song file offset -> HL = slot-6 window address of that byte,
 ; with the right page mapped. File bytes 0-$7FF live in page 48 at

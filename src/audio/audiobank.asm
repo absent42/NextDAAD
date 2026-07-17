@@ -102,6 +102,14 @@ aud_tick:
     bit 1, (hl)
     jr z, .no1
     res 1, (hl)
+    ; no GAME.SFB loaded: the effect-table operand is still 0 and a
+    ; play would install a wild stream pointer (audible garbage) -
+    ; consume the request as the documented no-op instead
+    ld hl, (PLY_AKY_PTSOUNDEFFECTTABLE+1)
+    ld a, h
+    or l
+    ld hl, audRequest               ; flags survive the reload
+    jr z, .no1
     call aud_ensure_player
     ld a, (audReqSfx)
     ld bc, $0000                    ; B = inverted volume (0 = max),
@@ -118,8 +126,10 @@ aud_tick:
     jr z, .noreq
     res 0, (hl)
     ld a, (audFlags)
-    bit 2, a
-    jr nz, .noreq
+    bit 2, a                        ; deliberately redundant with
+    jr nz, .noreq                   ; aud_beep_start's own bit-2 guard:
+                                    ; this copy also skips the stale
+                                    ; audFlags/audBeepFrames writes
     ld a, (audReqIdx)
     add a, a
     ld hl, audPeriods
@@ -138,6 +148,35 @@ aud_tick:
     ld a, (audFlags)
     or a
     ret z
+    ; terminal watch: a play-once song that has reached the built-in
+    ; silence pattern is over. The player's linker position lives in
+    ; the PLY_AKY_PATTERNFRAMECOUNTER_OVER+1 operand (PLY_AKY_INIT
+    ; seeds it, each linker entry read stores the advanced SP there);
+    ; when it points inside audSilenceSong, clear the music bits,
+    ; silence the music PSGs and stop calling the player for music -
+    ; this both restores BEEP after a play-once tune (an open gate
+    ; re-sends PSG 3 over any beep every tick) and stops burning a
+    ; 9-channel player tick on silence forever. Effects gate
+    ; unaffected (bit 2 keeps PLY_AKY_PLAY running while needed).
+    bit 0, a
+    jr z, .gate
+    ld hl, (PLY_AKY_PATTERNFRAMECOUNTER_OVER+1)
+    ld de, audSilenceSong
+    or a
+    sbc hl, de
+    jr c, .gate                     ; below the pattern: song still on
+    ld de, audSilenceEnd-audSilenceSong
+    sbc hl, de                      ; CF clear from the jr c above
+    jr nc, .gate                    ; above the pattern: song still on
+    ld hl, audFlags
+    res 0, (hl)
+    res 1, (hl)
+    ld a, $FF                       ; PSG 1/2 are music-only: park
+    call aud_psg_silence            ; them (PSG 3 is left to any beep
+    ld a, $FE                       ; or effect; the silence song has
+    call aud_psg_silence            ; already zeroed its volumes)
+.gate:
+    ld a, (audFlags)
     and %00000101                   ; music playing OR effect active
     call nz, PLY_AKY_PLAY           ; music + effects on PSG 3
     ; effect-end watch (see header)
@@ -346,6 +385,9 @@ audSilentTrack:
 audSilentBlock:
     db 0                            ; initial state: no software, no
                                     ; hardware, no noise, volume 0
+audSilenceEnd:                      ; aud_tick's terminal watch treats
+                                    ; [audSilenceSong, audSilenceEnd)
+                                    ; as "the song is over"
 
     ASSERT $ <= AUD_SFB_ORG          ; player+tick+beep+table fit 4K
 

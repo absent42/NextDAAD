@@ -136,11 +136,16 @@ Anything else is a no-op, as is any reference to a file that is not
 on the SD card. An in-game restart (QUIT confirmed, RESTART) leaves
 the music playing uninterrupted by design - the soundtrack is
 ambience that survives restarts exactly like save/load; games change
-or stop music explicitly with SFX n 7 / SFX 0 8. BEEP duration pitch matches the classic interpreters
+or stop music explicitly with SFX n 7 / SFX 0 8.
+
+BEEP takes duration and pitch, matching the classic interpreters
 (jdaad-pinned): duration in centiseconds, pitch an even value 24-222
-mapping the classic semitone table; odd or out-of-range pitches and
+mapping the classic semitone table. Odd or out-of-range pitches and
 zero durations are no-ops. BEEP blocks for its duration and plays on
-the third AY, which sound effects pre-empt.
+the third AY. Pre-emption: an actively looping song and active sound
+effects both pre-empt BEEP - a BEEP during music is dropped by
+design, so use sound effects for in-music stingers. Once a play-once
+tune (SFX n 6) has ended, BEEP works again.
 
 ## Building
 
