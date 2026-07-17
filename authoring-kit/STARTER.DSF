@@ -323,7 +323,7 @@ S 1
                     #endif
                 #endif
                 WINDOW 1
-                WINSIZE 25 127
+                WINSIZE 32 127
 
 
 > _       _     WINDOW  0               ; Graphic window
@@ -347,7 +347,7 @@ S 1
                 #endif
                 WINDOW 1
                 WINAT 0 0               ; Full screen text window
-                WINSIZE 25 127
+                WINSIZE 32 127
                 CLS
 $pictureOK
 
