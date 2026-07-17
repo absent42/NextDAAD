@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-call CONFIG.BAT
+call "%~dp0CONFIG.BAT"
 if exist "RELEASE" (
     del /Q "RELEASE\*" 2>nul
     echo cleaned RELEASE\
