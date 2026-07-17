@@ -2,7 +2,7 @@
 .claude/
 CLAUDE.md
 docs/
-tools/
+/tools/
 build/
 sd/*.DDB
 sd/*.ddb

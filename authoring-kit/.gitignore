@@ -1,2 +1,9 @@
 RELEASE/
 CONFIG.local.BAT
+
+# tools\ skeleton: keep the empty folders (.gitkeep) and README, but ignore any
+# tool binaries a maintainer extracts into it locally.
+tools/**/*
+!tools/**/
+!tools/**/.gitkeep
+!tools/README.txt
