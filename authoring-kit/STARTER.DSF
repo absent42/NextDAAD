@@ -142,6 +142,11 @@ REDES   24      verb
 QUIT    25      verb
 Q       25      verb
 STOP    25      verb
+MUSIC   60      verb
+MUTE    61      verb
+TUNE    62      verb
+BLEEP   63      verb
+ZAP     64      verb
 SAVE    26      verb
 LOAD    27      verb
 RAMSA   28      verb
@@ -473,6 +478,24 @@ $pictureOK
 > RAMLO   _     RAMLOAD 255             ;Reload all flags
                 CLS
                 RESTART
+
+> MUSIC   _     SFX 1 7                 ; play song 001.AKY looped
+                MESSAGE "Music on."
+                DONE
+
+> MUTE    _     SFX 0 8                 ; stop the music
+                MESSAGE "Music off."
+                DONE
+
+> TUNE    _     SFX 1 6                 ; play song 001.AKY once, then silence
+                MESSAGE "Playing a tune."
+                DONE
+
+> ZAP     _     SFX 1 1                 ; play sound effect 1 from GAME.SFB
+                DONE
+
+> BLEEP   _     BEEP 20 100             ; classic tone: 20 centiseconds, pitch 100
+                DONE
 
 > LOOK    _     CLS
                 RESTART
