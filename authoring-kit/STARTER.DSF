@@ -315,7 +315,7 @@ S 1
                 PROCESS 6               ; Initialise
                 
 
-> _       _     WINAT 13 0              ; by default, we have a text window at the bottom of the screen
+> _       _     WINAT 23 0              ; text window below the location image (demo art is 180px = ~23 tile rows)
                 #ifdef "splitModeOn"    ; if split mode is on, we have to apply it
                     XSPLITSCR 1
                     #ifdef "cpc"
