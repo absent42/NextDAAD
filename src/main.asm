@@ -157,6 +157,7 @@ boot_data_init:
     INCLUDE "debug.asm"
 
     ASSERT $ <= RESIDENT_LIMIT
+    DISPLAY "resident ends at ", $, " headroom ", /D, RESIDENT_LIMIT - $
 
     INCLUDE "overlay0.asm"
     INCLUDE "overlay1.asm"
