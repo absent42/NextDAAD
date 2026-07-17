@@ -53,7 +53,10 @@ del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\
 
 echo Building %GAME% ...
 
-REM === STAGE CALLS INSERTED HERE BY TASKS 6-9 ===
+call "%~dp0lib\ddb.bat"
+if errorlevel 1 ( pause & exit /b 1 )
+
+REM === STAGE CALLS INSERTED HERE BY TASKS 7-9 ===
 
 echo preflight OK
 endlocal
