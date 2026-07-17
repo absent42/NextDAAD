@@ -62,8 +62,10 @@ if errorlevel 1 ( pause & exit /b 1 )
 call "%~dp0lib\audio.bat"
 if errorlevel 1 ( pause & exit /b 1 )
 
-REM === STAGE CALLS INSERTED HERE BY TASKS 9 ===
+call "%~dp0lib\assemble.bat"
+if errorlevel 1 ( pause & exit /b 1 )
 
-echo preflight OK
+echo BUILD OK: RELEASE\ is ready to copy to an SD card
+if "%RUN%"=="1" call "%~dp0RUN.BAT"
 endlocal
 exit /b 0
