@@ -18,9 +18,10 @@
 #            picture path is exercised
 # Audio staging (combinable with any DDB switch):
 #   -Aud     stage the test audio assets from tools\audio_assets\
-#            (GAME.AKY, 001.AKY, GAME.SFB - produced by the export
-#            script) into sd\, after removing stale sd\*.AKY and
-#            sd\GAME.SFB; warns and skips if the folder is empty
+#            (GAME.AKY, 001.AKY, GAME.SFB, 001.WAV - produced by the
+#            export script) into sd\, after removing stale sd\*.AKY,
+#            sd\GAME.SFB and sd\*.WAV; warns and skips if the folder
+#            is empty
 param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
@@ -179,10 +180,11 @@ if ($Aud) {
     # a song the current asset set no longer provides.
     Remove-Item "$root\sd\*.AKY" -Force -ErrorAction SilentlyContinue
     Remove-Item "$root\sd\GAME.SFB" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$root\sd\*.WAV" -Force -ErrorAction SilentlyContinue
     $audSrc = "$root\tools\audio_assets"
     $audFiles = @()
     if (Test-Path $audSrc) {
-        $audFiles = @(Get-ChildItem "$audSrc\*.AKY", "$audSrc\GAME.SFB" -ErrorAction SilentlyContinue)
+        $audFiles = @(Get-ChildItem "$audSrc\*.AKY", "$audSrc\GAME.SFB", "$audSrc\*.WAV" -ErrorAction SilentlyContinue)
     }
     if ($audFiles.Count -eq 0) {
         "WARNING: -Aud given but $audSrc has no assets (run the audio export script first) - skipped"

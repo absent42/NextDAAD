@@ -105,11 +105,20 @@ audEnable: db 0             ; sticky by design: armed once by the first
 ; these resident bytes; aud_tick (ISR, bank mapped) consumes them the
 ; next frame. Edge-triggered: aud_tick clears every bit it consumes.
 ; audRequest bits: 0 beep, 1 play-effect, 2 stop-effect, 3 stop-music,
-; 4 start-music, 5 init-effects.
+; 4 start-music, 5 init-effects, 6 start-sample, 7 stop-sample.
+; The byte is now fully allocated - no further audio triggers planned.
 audRequest: db 0
 audReqIdx:  db 0            ; beep: period table index 0..99
 audReqDur:  db 0            ; beep: duration in frames
 audReqSfx:  db 0            ; play-effect: effect number (>= 1)
 audReqLoop: db 0            ; start-music: 1 = loop, 0 = play once
+audReqSmpLoop:  db 0        ; start-sample: 1 = loop, 0 = play once
+audReqSmpPre:   db 0        ; start-sample: DMA prescaler
+audReqSmpLen:   dw 0        ; start-sample: payload bytes (<= 49152)
+audReqSmpChunk: dw 0        ; start-sample: whole bytes per frame (rate/50)
+audReqSmpFrac:  db 0        ; start-sample: rate mod 50 (chunk fraction)
+smpLoadedNum:   db $FF      ; keep-last: sample number resident in banks
+                            ; 25-27 ($FF = none); owned by aud_load_wav,
+                            ; reset by aud_boot_probe on (warm) boot
 
 frameCounter: dw 0

@@ -1859,6 +1859,8 @@ aud_boot_probe:
     ld a, $FF
     ld (DATA_WINDOW+audSongNum-$E000), a
     call data_restore
+    ld a, $FF
+    ld (smpLoadedNum), a        ; keep-last cold on any (warm) boot
     ld a, 1
     ld (audReqLoop), a          ; boot music loops
     ld a, $FF                   ; $FF = GAME.AKY
@@ -1888,5 +1890,352 @@ audStride:  db 0                ; linker entry stride for the walk
 audWalkVal: dw 0                ; word scratch for the split windows
 audProbe:   db 0                ; oversize one-byte probe target
 bpTarget:   dw 0                ; h_beep frameCounter target
+
+; --- WAV sample loader (SP8) ----------------------------------------
+
+; aud_load_wav: A = sample number (1-255). Probes NNN.WAV, validates
+; RIFF/fmt (PCM, mono, 8-bit, rate 3500-20000), streams the data
+; payload into banks 25-27 (pages 50-55) through the slot-6 window,
+; and computes the DMA prescaler and per-frame chunk from the header
+; rate. Keep-last: when A is already resident the SD read is skipped
+; entirely (params persist in the audReqSmp* bytes). Any active sample
+; is stopped (mailbox bit 7 + consumed-wait) before the banks are
+; touched - a playing sample must never be overwritten under the DMA.
+; Out: CF clear = payload resident + audReqSmpPre/Len/Chunk/Frac
+; committed (audReqSmpLoop is the CALLER's, set before or after);
+; CF set = missing/malformed/oversize/short-read - nothing changed
+; except the (idempotent) stop of the previous sample.
+; Corrupts everything.
+aud_load_wav:
+    ld (wavReqNum), a
+    ; keep-last: same number already resident -> instant success, no
+    ; SD touch, no stop (a replay restarts via aud_smp_start's state
+    ; reinit; the old in-flight chunk tail is at most one frame)
+    ld hl, smpLoadedNum
+    cp (hl)
+    jr nz, .load
+    or a                        ; CF clear
+    ret
+.load:
+    ; build "NNN.WAV" (decade idiom, same as aud_load_song)
+    ld hl, audName
+    ld b, '0'-1
+.hund:
+    inc b
+    sub 100
+    jr nc, .hund
+    add a, 100
+    ld (hl), b
+    inc hl
+    ld b, '0'-1
+.tens:
+    inc b
+    sub 10
+    jr nc, .tens
+    add a, 10
+    ld (hl), b
+    inc hl
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld de, wavExt                ; ".WAV", 0
+    ex de, hl
+    ld bc, 5
+    ldir
+    call esx_getsetdrv
+    jp c, .fail
+    ld ix, audName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jp c, .fail                 ; missing: any playing sample untouched
+                                 ; (open probed BEFORE the stop, same
+                                 ; rule as aud_load_song)
+    ld (audHandle), a
+    ; stop any playing sample before the banks move under the DMA.
+    ; audEnable = 0 means the ISR never reaches aud_tick: nothing can
+    ; be playing and the bit would never be consumed - skip the wait.
+    ld a, (audEnable)
+    or a
+    jr z, .stopped
+    ld hl, audRequest
+    res 6, (hl)                 ; a pending un-consumed start must not
+    set 7, (hl)                 ; fire mid-load
+.waitstop:
+    halt
+    ld a, (audRequest)
+    and %10000000
+    jr nz, .waitstop
+.stopped:
+    ld a, $FF
+    ld (smpLoadedNum), a        ; loading invalidates the resident one
+    ; RIFF header: "RIFF" dd size "WAVE"
+    ld ix, wavHdr
+    ld bc, 12
+    call .read
+    jp c, .failclose
+    ld hl, (wavHdr)             ; "RI"
+    ld de, "IR"                  ; little-endian word: 'R','I'
+    or a
+    sbc hl, de
+    jp nz, .failclose
+    ld hl, (wavHdr+8)           ; "WA"
+    ld de, "AW"
+    or a
+    sbc hl, de
+    jp nz, .failclose
+    xor a
+    ld (wavGotFmt), a
+.chunk:
+    ; next chunk header: id(4) size(4)
+    ld ix, wavHdr
+    ld bc, 8
+    call .read
+    jp c, .failclose
+    ld hl, (wavHdr)
+    ld de, "mf"                  ; 'f','m' of "fmt "
+    or a
+    sbc hl, de
+    jr nz, .notfmt
+    ld hl, (wavHdr+2)
+    ld de, " t"                  ; 't',' '
+    or a
+    sbc hl, de
+    jr nz, .notfmt
+    ; fmt chunk: need at least 16 bytes; size high word must be 0
+    ld hl, (wavHdr+6)
+    ld a, h
+    or l
+    jp nz, .failclose
+    ld hl, (wavHdr+4)
+    ld de, 16
+    or a
+    sbc hl, de
+    jp c, .failclose            ; fmt shorter than 16: malformed
+    ld (wavSkip), hl            ; extra fmt bytes to discard after
+    ld ix, wavFmt
+    ld bc, 16
+    call .read
+    jp c, .failclose
+    ld hl, (wavFmt)             ; wFormatTag
+    dec hl                      ; == 1 (PCM)?
+    ld a, h
+    or l
+    jp nz, .failclose
+    ld hl, (wavFmt+2)           ; nChannels
+    dec hl                      ; == 1 (mono)?
+    ld a, h
+    or l
+    jp nz, .failclose
+    ld hl, (wavFmt+6)           ; nSamplesPerSec high word
+    ld a, h
+    or l
+    jp nz, .failclose
+    ld a, (wavFmt+14)           ; wBitsPerSample low byte
+    cp 8
+    jp nz, .failclose
+    ld a, (wavFmt+15)
+    or a
+    jp nz, .failclose
+    ld hl, (wavFmt+4)           ; nSamplesPerSec low word = rate
+    ld de, AUD_RATE_MIN
+    or a
+    sbc hl, de
+    jp c, .failclose
+    ld hl, (wavFmt+4)
+    ld de, AUD_RATE_MAX+1
+    or a
+    sbc hl, de
+    jp nc, .failclose
+    ld a, 1
+    ld (wavGotFmt), a
+    ld hl, (wavSkip)            ; discard fmt tail (+ odd pad)
+    jr .skipodd
+.notfmt:
+    ld hl, (wavHdr)
+    ld de, "ad"                  ; 'd','a' of "data"
+    or a
+    sbc hl, de
+    jr nz, .skip
+    ld hl, (wavHdr+2)
+    ld de, "at"                  ; 't','a'
+    or a
+    sbc hl, de
+    jr nz, .skip
+    ; data chunk: fmt must have come first (rate needed)
+    ld a, (wavGotFmt)
+    or a
+    jp z, .failclose
+    ld hl, (wavHdr+6)           ; size high word
+    ld a, h
+    or l
+    jp nz, .failclose
+    ld hl, (wavHdr+4)           ; size low word = payload length
+    ld a, h
+    or l
+    jp z, .failclose            ; empty data: malformed
+    ld de, AUD_SMP_MAX+1
+    or a
+    sbc hl, de
+    jp nc, .failclose           ; over the 3-bank cap
+    ld hl, (wavHdr+4)
+    ld (wavLen), hl
+    jr .stream
+.skip:
+    ; unknown chunk: discard size (+ odd pad); reject a pathological
+    ; >64K non-data chunk rather than loop for minutes
+    ld hl, (wavHdr+6)
+    ld a, h
+    or l
+    jp nz, .failclose
+    ld hl, (wavHdr+4)
+.skipodd:
+    ; RIFF chunks are word-aligned: odd sizes carry one pad byte
+    bit 0, l
+    jr z, .skiploop
+    inc hl
+.skiploop:
+    ld a, h
+    or l
+    jp z, .chunk
+    ld de, 16
+    or a
+    sbc hl, de
+    jr nc, .skip16
+    add hl, de                  ; fewer than 16 left: read exactly HL
+    ld b, h
+    ld c, l
+    ld hl, 0
+    jr .skiprd
+.skip16:
+    ld bc, 16
+.skiprd:
+    push hl
+    ld ix, wavHdr
+    call .read
+    pop hl
+    jp c, .failclose
+    jr .skiploop
+.stream:
+    ; stream wavLen payload bytes into pages 50-55, 8K per window
+    call data_save
+    ld a, SMP_PAGE_FIRST
+    ld (wavPage), a
+    ld hl, (wavLen)
+.pageloop:
+    ld a, h                     ; remaining == 0 -> done
+    or l
+    jr z, .streamed
+    push hl
+    ld de, $2000
+    or a
+    sbc hl, de
+    jr nc, .full
+    pop hl                      ; partial final window: read HL bytes
+    ld b, h
+    ld c, l
+    ld hl, 0
+    jr .rd
+.full:
+    pop af                      ; discard (remaining was > $2000)
+    ld bc, $2000
+.rd:
+    push hl                     ; remaining AFTER this window
+    ld a, (wavPage)
+    call data_map_page
+    push bc
+    ld ix, DATA_WINDOW
+    call .read
+    pop de                      ; DE = requested for this window
+    jr c, .failpost
+    ; short read = truncated file (data chunk lied): reject
+    ld h, b
+    ld l, c
+    or a
+    sbc hl, de
+    jr nz, .failpost
+    ld a, (wavPage)
+    inc a
+    ld (wavPage), a
+    pop hl
+    jr .pageloop
+.streamed:
+    call data_restore
+    ld a, (audHandle)
+    call esx_fclose
+    ; commit: compute prescaler + chunk from the rate, fill the
+    ; mailbox params, mark resident
+    ld de, (wavFmt+4)           ; rate
+    call aud_div_clock          ; A = AUD_PSCLOCK/rate (<=255 by range)
+    ld (audReqSmpPre), a
+    ld hl, (wavFmt+4)
+    ld de, 50
+    ld bc, 0
+.d50:
+    or a
+    sbc hl, de
+    jr c, .r50
+    inc bc
+    jr .d50
+.r50:
+    add hl, de                  ; HL = rate mod 50 (fits L)
+    ld (audReqSmpChunk), bc
+    ld a, l
+    ld (audReqSmpFrac), a
+    ld hl, (wavLen)
+    ld (audReqSmpLen), hl
+    ld a, (wavReqNum)
+    ld (smpLoadedNum), a
+    or a                        ; CF clear
+    ret
+.failpost:
+    pop hl                      ; balance the remaining-push
+    call data_restore
+.failclose:
+    ld a, (audHandle)
+    call esx_fclose
+.fail:
+    scf
+    ret
+; BC bytes from the open file into IX. Out CF = SD error; BC = bytes
+; actually read (esx_fread contract). Preserves nothing else.
+.read:
+    ld a, (audHandle)
+    jp esx_fread
+
+; AUD_PSCLOCK / DE -> A (round down, clamped 255). DE = 3500..20000
+; (validated), so the quotient is 43..250. 24-bit repeated
+; subtraction: C:HL = dividend, B counts.
+aud_div_clock:
+    ld hl, AUD_PSCLOCK & $FFFF
+    ld a, (AUD_PSCLOCK >> 16) & $FF
+    ld c, a
+    ld b, 0
+.sub:
+    or a
+    sbc hl, de
+    jr nc, .ok
+    dec c
+    bit 7, c                    ; borrowed past zero: done
+    jr nz, .done
+.ok:
+    inc b
+    jr nz, .sub
+    ld b, 255                   ; 256 rounds: clamp (unreachable in range)
+.done:
+    ld a, b
+    ret
+
+wavExt:    db ".WAV", 0
+wavReqNum: db 0
+wavGotFmt: db 0
+wavPage:   db 0
+wavLen:    dw 0
+wavSkip:   dw 0
+wavHdr:    ds 16                ; RIFF/chunk header + discard scratch
+                                 ; (16, NOT 12: the skip loop reads up
+                                 ; to 16 bytes here - a 12-byte buffer
+                                 ; would overflow into wavFmt and
+                                 ; clobber the captured rate)
+wavFmt:    ds 16                ; fmt chunk body
 
     ASSERT $ <= OVL_LIMIT
