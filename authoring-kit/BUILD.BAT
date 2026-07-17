@@ -56,7 +56,10 @@ echo Building %GAME% ...
 call "%~dp0lib\ddb.bat"
 if errorlevel 1 ( pause & exit /b 1 )
 
-REM === STAGE CALLS INSERTED HERE BY TASKS 7-9 ===
+call "%~dp0lib\gfx.bat"
+if errorlevel 1 ( pause & exit /b 1 )
+
+REM === STAGE CALLS INSERTED HERE BY TASKS 8-9 ===
 
 echo preflight OK
 endlocal
