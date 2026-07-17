@@ -4,6 +4,10 @@ if not exist "AUDIO" (
     echo   no AUDIO\ - skipping audio
     exit /b 0
 )
+if not exist "%S2A%" (
+    echo ERROR: SongToAky not found at %S2A% - install Arkos Tracker 3 or fix TOOLSDIR in CONFIG.BAT
+    exit /b 1
+)
 
 REM ---- background music: <GAME>.aks -> GAME.AKY ----
 if exist "AUDIO\%GAME%.aks" (
@@ -38,16 +42,20 @@ for %%F in ("AUDIO\*.aks") do (
 
 REM ---- effects bank: <GAME>_FX.aks -> GAME.SFB (NON-FATAL) ----
 if exist "AUDIO\%GAME%_FX.aks" (
-    "%S2E%" -bin --encodingAddress 0xD000 "AUDIO\%GAME%_FX.aks" "RELEASE\GAME.SFB"
-    if errorlevel 1 (
-        echo   WARNING: effects bank skipped - SongToSoundEffects failed ^(recipe not yet pinned^)
-        del "RELEASE\GAME.SFB" 2>nul
+    if not exist "%S2E%" (
+        echo   WARNING: SongToSoundEffects not found - effects bank skipped
     ) else (
-        for %%A in ("RELEASE\GAME.SFB") do if %%~zA GTR 2048 (
-            echo   WARNING: GAME.SFB is %%~zA bytes, over the 2048 limit - dropped
+        "%S2E%" -bin --encodingAddress 0xD000 "AUDIO\%GAME%_FX.aks" "RELEASE\GAME.SFB"
+        if errorlevel 1 (
+            echo   WARNING: effects bank skipped - SongToSoundEffects failed ^(recipe not yet pinned^)
             del "RELEASE\GAME.SFB" 2>nul
+        ) else (
+            for %%A in ("RELEASE\GAME.SFB") do if %%~zA GTR 2048 (
+                echo   WARNING: GAME.SFB is %%~zA bytes, over the 2048 limit - dropped
+                del "RELEASE\GAME.SFB" 2>nul
+            )
+            if exist "RELEASE\GAME.SFB" echo   effects -^> GAME.SFB
         )
-        if exist "RELEASE\GAME.SFB" echo   effects -^> GAME.SFB
     )
 )
 endlocal

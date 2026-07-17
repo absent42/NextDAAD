@@ -4,6 +4,10 @@ if not exist "IMAGES" (
     echo   no IMAGES\ - skipping graphics
     exit /b 0
 )
+if not exist "%GFX%" (
+    echo ERROR: gfx2next not found at %GFX% - install Gfx2Next or fix TOOLSDIR in CONFIG.BAT
+    exit /b 1
+)
 REM gfx2next behavior (verified against the vendored v1.1.24):
 REM  - it requires a paletted 8-bit PNG (<=256 colours); truecolour is rejected.
 REM  - it takes ONLY an input path and writes <inputbase>.nxi to the CURRENT
