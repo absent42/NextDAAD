@@ -16,7 +16,12 @@
 #   -GfxZx0  ZX0-compress each staged file (sd\NNN.NX2.ZX0 / with
 #            -Gfx256 sd\NNN.NXI.ZX0) so the interpreter's compressed
 #            picture path is exercised
-param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$Gfx256, [switch]$GfxZx0)
+# Audio staging (combinable with any DDB switch):
+#   -Aud     stage the test audio assets from tools\audio_assets\
+#            (GAME.AKY, 001.AKY, GAME.SFB - produced by the export
+#            script) into sd\, after removing stale sd\*.AKY and
+#            sd\GAME.SFB; warns and skips if the folder is empty
+param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -162,6 +167,30 @@ if ($Rab) {
     }
     $shape = $srcExt + $(if ($GfxZx0) { '.ZX0' } else { '' })
     "staged $staged Rabenstein art file(s) -> sd\NNN.$shape"
+}
+
+if ($Aud) {
+    # Same CSpect lock hazard as the art staging: a running emulator
+    # holds sd\ files open and the cleanup/copies fail piecemeal.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause partial audio sets)"
+    }
+    # Stale-audio cleanup first so a previous staging run cannot leak
+    # a song the current asset set no longer provides.
+    Remove-Item "$root\sd\*.AKY" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$root\sd\GAME.SFB" -Force -ErrorAction SilentlyContinue
+    $audSrc = "$root\tools\audio_assets"
+    $audFiles = @()
+    if (Test-Path $audSrc) {
+        $audFiles = @(Get-ChildItem "$audSrc\*.AKY", "$audSrc\GAME.SFB" -ErrorAction SilentlyContinue)
+    }
+    if ($audFiles.Count -eq 0) {
+        "WARNING: -Aud given but $audSrc has no assets (run the audio export script first) - skipped"
+    }
+    else {
+        $audFiles | ForEach-Object { Copy-Item $_.FullName "$root\sd\$($_.Name)" -Force }
+        "staged $($audFiles.Count) audio asset(s) -> sd\ ($(($audFiles | ForEach-Object Name) -join ', '))"
+    }
 }
 
 $good = [System.IO.File]::ReadAllBytes("$root\sd\GAME.DDB")

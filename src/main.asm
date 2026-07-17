@@ -66,6 +66,12 @@ main:
     ld d, TM_ROWS
     ld e, TM_COLS
     call tm_clear_transparent
+    ; SP7 boot autoplay: probe GAME.AKY/GAME.SFB (loaders live in
+    ; overlay1; the dispatcher-owned slot 7 is free at boot). Fail-
+    ; silent when absent - same esxDOS discipline as every loader.
+    ld a, OVL1_PAGE
+    call ovl_map_page
+    call aud_boot_probe
     ld hl, objname_print
     ld (objname_hook), hl
     ld c, 0
@@ -119,13 +125,16 @@ boot_data_init:
     ld (chsGfx), a             ; upper-charset escape latch, same hazard as
                                 ; wrapLock/moreLock: read unconditionally
                                 ; per printed char (prn_char_raw)
-    ld (audEnable), a          ; ISR fast-path gate off until Task 4's API
-                                ; re-enables it; a warm re-entry must not
-                                ; leave the full-context audio ISR path
-                                ; live against stale/uninitialised bank 24
-                                ; state (audio_init, called before this
-                                ; returns to im2_init, already silences
-                                ; the PSGs every boot regardless)
+    ld (audEnable), a          ; ISR fast-path gate off until the audio
+                                ; API re-enables it; a warm re-entry must
+                                ; not leave the full-context audio ISR
+                                ; path live against stale bank 24 state
+                                ; (audio_init, called before this returns
+                                ; to im2_init, already silences the PSGs
+                                ; every boot regardless; aud_boot_probe
+                                ; resets the bank state block)
+    ld (audRequest), a         ; no stale edge-triggered audio requests
+                                ; across a warm re-entry
  IFDEF DEBUG
     ld (dbgTilemap), a         ; force the ULA route until dbg_engage_tilemap
                                 ; runs, matching cold boot

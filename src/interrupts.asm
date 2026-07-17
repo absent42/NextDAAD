@@ -98,4 +98,16 @@ im2_isr:
 
 audEnable: db 0
 
+; SP7 audio request mailbox (Task 4). Overlay condact handlers cannot
+; call bank-24 code (overlay1 owns slot 7), so they file requests in
+; these resident bytes; aud_tick (ISR, bank mapped) consumes them the
+; next frame. Edge-triggered: aud_tick clears every bit it consumes.
+; audRequest bits: 0 beep, 1 play-effect, 2 stop-effect, 3 stop-music,
+; 4 start-music, 5 init-effects.
+audRequest: db 0
+audReqIdx:  db 0            ; beep: period table index 0..99
+audReqDur:  db 0            ; beep: duration in frames
+audReqSfx:  db 0            ; play-effect: effect number (>= 1)
+audReqLoop: db 0            ; start-music: 1 = loop, 0 = play once
+
 frameCounter: dw 0

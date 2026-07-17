@@ -679,6 +679,21 @@ NORTH 0
         MES "64 F#n"
         SKIP 1
 > _ _   MES "64 OK#n"
+; ---- audio checks ----
+; Audio QUALITY is owner-ear (CSpect + real hardware legs); these
+; assert safe completion only.
+; 65 BEEP: a valid note returns after blocking ~0.1s; an odd pitch
+; and a zero duration are silent no-ops that still complete.
+> _ _   BEEP 10 60
+        BEEP 10 61
+        BEEP 0 60
+        MES "65 OK#n"
+; 66 SFX: missing song no-ops (the suite SD carries no 200.AKY),
+; unknown sub-command no-ops, stop-music with nothing playing no-ops.
+> _ _   SFX 200 6
+        SFX 1 99
+        SFX 200 8
+        MES "66 OK#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5

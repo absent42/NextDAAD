@@ -1,4 +1,6 @@
 ; GENERATED - AY periods for jdaad FREQ_TABLE (clock 1773400Hz)
+; Entries 100-107 are an extrapolated octave jdaad lacks - dead under
+; h_beep's 222 pitch clamp (index 0..99).
 audPeriods:
     dw 4095, 4095, 4095, 4095, 4095, 4095
     dw 4095, 4095, 4095, 4030, 3804, 3590

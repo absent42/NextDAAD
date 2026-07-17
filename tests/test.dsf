@@ -130,6 +130,14 @@ EVERY   20      noun
 ;
 TORCH   100     noun
 
+;                       Audio owner verbs (SP7): SOUND = effect 1,
+;                       MUSIC = loop song 1, TUNE = play song 1 once,
+;                       STOPM = stop music
+SOUND   60      verb
+MUSIC   61      verb
+STOPM   62      verb
+TUNE    63      verb
+
 ;                       Verbs
 GET     20      verb
 TAKE    20      verb
@@ -482,6 +490,21 @@ $pictureOK
 
 > LOOK    _     CLS
                 RESTART
+
+; Audio owner verbs (SP7): ear checks against the -Aud staged assets
+; (001.AKY, GAME.SFB). TUNE plays once and ends in silence; MUSIC
+; loops until STOPM.
+> SOUND   _     SFX 1 1
+                DONE
+
+> MUSIC   _     SFX 1 7
+                DONE
+
+> TUNE    _     SFX 1 6
+                DONE
+
+> STOPM   _     SFX 0 8
+                DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation
 

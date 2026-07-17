@@ -624,7 +624,7 @@ cdisp:
     DC h_lt                     ; 15  LT
     DC h_adject1                ; 16  ADJECT1
     DC h_adverb                 ; 17  ADVERB
-    DC h_unimpl                 ; 18  SFX
+    DC1 h_sfx                   ; 18  SFX
     DC h_desc                   ; 19  DESC
     DC h_quit                   ; 20  QUIT
     DC h_end                    ; 21  END
@@ -670,7 +670,7 @@ cdisp:
     DC h_extern                 ; 61  EXTERN
     DC1 h_ramsave                ; 62  RAMSAVE
     DC1 h_ramload                ; 63  RAMLOAD
-    DC h_unimpl                 ; 64  BEEP
+    DC1 h_beep                  ; 64  BEEP
     DC h_paper                  ; 65  PAPER
     DC h_ink                    ; 66  INK
     DC h_border                 ; 67  BORDER

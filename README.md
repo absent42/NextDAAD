@@ -7,15 +7,19 @@ Project status on 17/07/2026:
 The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
 object model, process/DOALL dispatch, windows, printing, colour,
 carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
-PARSE), file-backed save/load, and Layer 2 location graphics
-(PICTURE/DISPLAY) are implemented. 123 of the 128 condacts are
-implemented; the rest (SFX, BEEP, MOUSE, GFX, CALL) are stubbed
-pending implementation.
+PARSE), file-backed save/load, Layer 2 location graphics
+(PICTURE/DISPLAY), and AY audio (SFX/BEEP: music, sound effects and
+speaker beeps) are implemented. 125 of the 128 condacts are
+implemented; the rest (MOUSE, GFX, CALL) are stubbed pending
+implementation.
 
 ## Features
 
 - Layer 2 location graphics: 256x192 and 320x256 256-colour pictures
   from Gfx2Next files, per-picture palettes, bank-allocated picture cache, and double-buffered draw
+- AY audio on the Turbo Sound Next (3 PSGs, 9 channels): interrupt-driven
+  Arkos AKY music playback with boot autoplay, SFX-driven songs and
+  sound effects, and the classic blocking BEEP tone generator
 - 80 column tilemap-based 80x32 text mode driver with per-character colour and a custom 80 column font
 - DDB loading and validation from SD card (esxDOS), with header/size
   error handling
@@ -42,8 +46,8 @@ pending implementation.
   stub markers, register dumps) and SLD debug data for DeZog
   source-level debugging
 
-Not yet implemented: sampled and AY sound effects, AY music playback,
-mouse input, and EXTERN subroutines.
+Not yet implemented: sampled (DMA) sound effects, mouse input, and
+EXTERN subroutines.
 
 ## Location graphics
 
@@ -96,6 +100,42 @@ Next's global fallback colour instead. 320-wide NX2 art covers the
 border area entirely, so BORDER only matters for classic-layout
 games.
 
+## Audio
+
+AY music and sound effects play on the Next's Turbo Sound (three AY
+chips, nine channels) through a converted Arkos Tracker 3 AKY player
+that runs in the interrupt handler. Files live in the SD root next to
+GAME.DDB:
+
+- GAME.AKY - title/background music, auto-played (looped) at boot if
+  present
+- NNN.AKY - songs selected by SFX, named by song number, 3-digit
+  zero-padded (SFX 1 7 plays 001.AKY)
+- GAME.SFB - the sound-effects bank (Arkos sound effects export, up
+  to 2K), loaded at boot if present
+
+Exports are address-encoded: songs must be encoded for $D800 (maximum
+10208 bytes) and the effects bank for $D000. Use tools/export_audio.ps1
+to convert .aks sources - a hand-run SongToAky needs
+`-bin --encodingAddress 0xD800`.
+
+SFX first-argument/sub-command semantics (jdaad-compatible):
+
+| SFX n sub | Effect |
+|-----------|--------|
+| 1, 2 | play sound effect n (on the third AY, over music) |
+| 5 | stop the current sound effect |
+| 6 | play song n once - the song ends in silence |
+| 7 | play song n looped |
+| 8 | stop the music |
+
+Anything else is a no-op, as is any reference to a file that is not
+on the SD card. BEEP duration pitch matches the classic interpreters
+(jdaad-pinned): duration in centiseconds, pitch an even value 24-222
+mapping the classic semitone table; odd or out-of-range pitches and
+zero durations are no-ops. BEEP blocks for its duration and plays on
+the third AY, which sound effects pre-empt.
+
 ## Building
 
 The toolchain (not included in repo) lives in tools/ 
@@ -107,9 +147,11 @@ The toolchain (not included in repo) lives in tools/
 - Clean: powershell -File build.ps1 -Clean
 - Test DDB: powershell -File tests\build-tests.ps1 regenerates
   sd\GAME.DDB and the corrupt/oversize variants in tests\out\ (add
-  -Suite to make the condact test suite DDB active - 64 checks
+  -Suite to make the condact test suite DDB active - 66 checks
   covering condact semantics, parser/conjunction handling, DOALL
-  nesting and save/load - or -Err4 for the nested-DOALL error demo)
+  nesting, save/load and audio no-op safety - or -Err4 for the
+  nested-DOALL error demo; add -Aud to stage the test audio assets
+  from tools\audio_assets)
 - VS Code: build / run / clean tasks wrap the same script
 
 ## Layout

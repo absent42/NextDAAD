@@ -1398,4 +1398,469 @@ h_ramload:                      ; 63: restore locs + flags 0..B inclusive
     ldir
     ret
 
+; --- SFX / BEEP handlers (SP7 Task 4) -------------------------------
+; Overlay1 cannot call bank-24 code (it owns slot 7), so both condacts
+; file requests through the resident audRequest mailbox; aud_tick
+; (ISR, bank mapped) performs the real work next frame. The only
+; direct bank-24 access here is BYTE LOADING through slot-6 windows
+; inside data_save brackets (aud_load_song / aud_load_sfb).
+
+h_beep:                         ; 64: B = duration (cs), C = pitch
+    ld a, c                     ; pitch must be even and 24..222
+    and 1                       ; inclusive (jdaad pin: FREQ_TABLE has
+    ret nz                      ; 100 notes, index (pitch-24)/2 = 0..99)
+    ld a, c
+    cp 24
+    ret c
+    cp 223
+    ret nc
+    ld a, b                     ; duration 0 = no-op
+    or a
+    ret z
+    ld a, c
+    sub 24
+    srl a
+    ld (audReqIdx), a           ; period table index 0..99
+    ld a, b                     ; centiseconds -> frames at 50Hz:
+    srl a                       ; (B+1)/2, minimum 1
+    adc a, 0
+    ld (audReqDur), a
+    ld c, a                     ; C = frames for the wait below
+    ld hl, audRequest
+    set 0, (hl)
+    ld a, 1
+    ld (audEnable), a
+    ld hl, (frameCounter)       ; block: target = now + frames + 1
+    ld b, 0                     ; (the +1 covers the pickup frame)
+    add hl, bc
+    inc hl
+    ld (bpTarget), hl
+.wait:
+    halt
+    ld hl, (frameCounter)
+    ld de, (bpTarget)
+    or a
+    sbc hl, de
+    jr c, .wait
+    ret
+
+h_sfx:                          ; 18: B = n, C = sub-command
+    ld a, c
+    cp 1
+    jr z, .effect
+    cp 2
+    jr z, .effect
+    cp 5
+    jr z, .stopfx
+    cp 6
+    jr z, .playonce
+    cp 7
+    jr z, .playloop
+    cp 8
+    jr z, .stopmusic
+ IFDEF DEBUG                    ; unknown sub-command: no-op with a
+    push bc                     ; marker. Inline - overlay1 must NOT
+    ld b, 30                    ; call overlay0's h_unimpl; the dbg_*
+    ld c, 70                    ; helpers are resident and safe.
+    call dbg_at
+    ld hl, msgSfxUnk
+    call dbg_puts
+    ld a, (curCondact)
+    call dbg_hex8
+    pop bc
+ ENDIF
+    ret
+.effect:                        ; play effect B on PSG 3 (1-frame
+    ld a, b                     ; request latency, inaudible)
+    or a                        ; effect numbers are >= 1
+    ret z
+    ld (audReqSfx), a
+    ld hl, audRequest
+    set 1, (hl)
+    jr .enable
+.stopfx:
+    ld hl, audRequest
+    set 2, (hl)
+    ret                         ; audEnable already set if anything on
+.stopmusic:
+    ld hl, audRequest
+    set 3, (hl)
+    ret
+.playonce:
+    xor a
+    jr .load
+.playloop:
+    ld a, 1
+.load:
+    ld (audReqLoop), a
+    ld a, b
+    call aud_load_song          ; CF = missing/oversized -> no-op
+    ret c
+    ld hl, audRequest
+    set 4, (hl)
+.enable:
+    ld a, 1
+    ld (audEnable), a
+    ret
+
+msgSfxUnk: db "SFX? ", 0
+
+; --- song / effects-bank loaders ------------------------------------
+
+; aud_load_song: A = song number ($FF = GAME.AKY). Loads NNN.AKY into
+; AUD_SONG_ORG through slot-6 windows: the song area spans the tail of
+; page 48 (bank offset $1800-$1FFF = file bytes 0-$7FF) and the first
+; $1FE0 of page 49 (the state block owns the last 32 bytes). Overlay1
+; runs from slot 7, so page 49 is mapped at slot 6 as well - the file
+; streams in two windows. Music is stopped (request bit 3 + one-frame
+; wait) BEFORE the song area is touched: a playing song must never be
+; hot-swapped under the ISR. On success writes audSongNum, applies
+; the play-once loop repoint when audReqLoop = 0, returns CF clear.
+; CF set on any failure (missing file, oversize, read error) - the
+; caller no-ops; a missing file leaves any playing music untouched
+; (the open is probed before the stop). Corrupts everything.
+aud_load_song:
+    ld (audSongReq), a
+    cp $FF
+    jr nz, .num
+    ld hl, audGameAky           ; "GAME.AKY"
+    ld de, audName
+    ld bc, 9
+    ldir
+    jr .open
+.num:
+    ; "NNN.AKY" - 3-digit zero-padded decimal, the project's
+    ; repeated-subtraction decade idiom (see gfx_open_chain)
+    ld hl, audName
+    ld b, '0'-1
+.hund:
+    inc b
+    sub 100
+    jr nc, .hund
+    add a, 100
+    ld (hl), b
+    inc hl
+    ld b, '0'-1
+.tens:
+    inc b
+    sub 10
+    jr nc, .tens
+    add a, 10
+    ld (hl), b
+    inc hl
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld de, audExtAky            ; ".AKY", 0
+    ex de, hl
+    ld bc, 5
+    ldir
+.open:
+    call esx_getsetdrv
+    jp c, .fail
+    ld ix, audName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jp c, .fail                 ; missing: playing music untouched
+    ld (audHandle), a
+    ; stop the music before overwriting the song area. audEnable = 0
+    ; means the ISR never reaches aud_tick - nothing is playing and
+    ; the request would never be consumed, so skip the wait. res 4
+    ; first: a pending not-yet-consumed start of the OLD song must
+    ; not fire mid-load (each set/res is a single instruction, atomic
+    ; against the ISR).
+    ld a, (audEnable)
+    or a
+    jr z, .stopped
+    ld hl, audRequest
+    res 4, (hl)
+    set 3, (hl)
+.waitstop:
+    halt
+    ld a, (audRequest)
+    and %00001000
+    jr nz, .waitstop
+.stopped:
+    call data_save
+    ; window 1: page 48, file bytes 0-$7FF at window offset $1800
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld a, (audHandle)
+    ld ix, DATA_WINDOW+$1800
+    ld bc, $0800
+    call esx_fread
+    jr c, .failclose
+    ld (audLoaded), bc
+    ld hl, $0800
+    or a
+    sbc hl, bc
+    jr nz, .loaded              ; short read: whole file in
+    ; window 2: page 49, up to $1FE0 bytes at window offset 0
+    ld a, AUD_PAGE_HI
+    call data_map_page
+    ld a, (audHandle)
+    ld ix, DATA_WINDOW
+    ld bc, AUD_SONG_MAX-$0800
+    call esx_fread
+    jr c, .failclose
+    ld hl, (audLoaded)
+    add hl, bc
+    ld (audLoaded), hl
+    ld hl, AUD_SONG_MAX-$0800
+    or a
+    sbc hl, bc
+    jr nz, .loaded
+    ; capacity reached: any further byte means oversize
+    ld a, (audHandle)
+    ld ix, audProbe
+    ld bc, 1
+    call esx_fread
+    jr c, .failclose
+    ld a, b
+    or c
+    jr nz, .failclose           ; oversize: no state committed (music
+                                ; already stopped, area inert)
+.loaded:
+    ld a, (audHandle)
+    call esx_fclose
+    ld hl, (audLoaded)          ; sanity: smaller than any header +
+    ld de, 6                    ; terminator cannot be a song
+    or a
+    sbc hl, de
+    jr c, .failpost
+    ; record the song number in the bank state block (page 49 window)
+    ld a, AUD_PAGE_HI
+    call data_map_page
+    ld a, (audSongReq)
+    ld (DATA_WINDOW+audSongNum-$E000), a
+    ; play-once: repoint the composer's loop at the terminal silence
+    ld a, (audReqLoop)
+    or a
+    call z, aud_repoint_loop
+    call data_restore
+    or a
+    ret
+.failclose:
+    ld a, (audHandle)
+    call esx_fclose
+.failpost:
+    call data_restore
+.fail:
+    scf
+    ret
+
+; aud_load_sfb: GAME.SFB -> AUD_SFB_ORG (2K cap). The effects bank
+; sits at page 48 bank offset $1000-$17FF, a single slot-6 window
+; read. CF set on missing/oversize/read error. Corrupts everything.
+aud_load_sfb:
+    call esx_getsetdrv
+    jr c, .fail
+    ld ix, audGameSfb
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr c, .fail
+    ld (audHandle), a
+    call data_save
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld a, (audHandle)
+    ld ix, DATA_WINDOW+$1000
+    ld bc, $0800
+    call esx_fread
+    jr c, .failclose
+    ld hl, $0800
+    or a
+    sbc hl, bc
+    jr nz, .ok                  ; short read: fits
+    ld a, (audHandle)           ; full 2K: an extra byte = oversize
+    ld ix, audProbe
+    ld bc, 1
+    call esx_fread
+    jr c, .failclose
+    ld a, b
+    or c
+    jr nz, .failclose
+.ok:
+    ld a, (audHandle)
+    call esx_fclose
+    call data_restore
+    or a
+    ret
+.failclose:
+    ld a, (audHandle)
+    call esx_fclose
+    call data_restore
+.fail:
+    scf
+    ret
+
+; --- play-once loop repoint -----------------------------------------
+
+; Walk the loaded song's linker and point its terminal loop word at
+; the bank's built-in silence pattern, so a play-once song ends in
+; silence instead of restarting. Layout verified against real
+; SongToAky binary exports (Task 4 report): file[0] = format byte,
+; file[1] = channel count (3 per PSG), then 4 bytes per PSG; the
+; linker follows at offset 2 + 4*psg as contiguous entries of
+; dw duration + one dw track pointer per channel (stride 2 +
+; 2*channels), terminated by dw 0 followed by the dw loop pointer.
+; Export-shape-agnostic: header and stride are computed from the
+; channel-count byte. Runs on the loaded RAM copy inside the load
+; bracket (music stopped, page windows mapped per byte) - never on
+; the SD file, never during playback. A malformed header or a walk
+; that runs past the loaded size gives up without patching (the song
+; then simply loops - safe fallback). Corrupts AF, BC, DE, HL.
+aud_repoint_loop:
+    ld hl, 0
+    call aud_song_rdw           ; E = format byte, D = channel count
+    ld a, d
+    or a
+    ret z
+    cp 25                       ; stride byte tops out at 2+2*24
+    ret nc
+    ld c, a                     ; C = channels
+    add a, a
+    add a, 2
+    ld (audStride), a           ; stride = 2 + 2*channels
+    ld a, c                     ; psg = channels/3
+    ld b, 0
+.div3:
+    sub 3
+    jr c, .divdone
+    inc b
+    jr .div3
+.divdone:
+    ld a, b                     ; linker offset = 2 + 4*psg
+    add a, a
+    add a, a
+    add a, 2
+    ld l, a
+    ld h, 0                     ; HL = linker file offset
+.walk:
+    ld de, (audLoaded)
+    push hl
+    ex de, hl                   ; HL = size, DE = offset
+    or a
+    sbc hl, de                  ; HL = size - offset
+    pop de                      ; DE = offset
+    ld a, h
+    or a
+    jr nz, .fits
+    ld a, l                     ; fewer than 4 bytes left: truncated
+    cp 4                        ; or malformed - give up, song loops
+    ret c
+.fits:
+    ex de, hl                   ; HL = offset
+    call aud_song_rdw           ; DE = duration word (HL preserved)
+    ld a, d
+    or e
+    jr z, .patch
+    ld a, (audStride)
+    add hl, a
+    jr .walk
+.patch:
+    inc hl
+    inc hl                      ; HL = file offset of the loop word
+    ld de, audSilenceLinker     ; true bank address of the terminal
+    jp aud_song_wrw             ; silence linker entry (audiobank.asm)
+
+; HL = song file offset -> HL = slot-6 window address of that byte,
+; with the right page mapped. File bytes 0-$7FF live in page 48 at
+; bank offset $1800; the rest in page 49 from its offset 0.
+; Corrupts AF, DE.
+aud_song_ptr:
+    ld a, h
+    cp $08
+    jr nc, .hi
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld de, DATA_WINDOW+$1800
+    add hl, de
+    ret
+.hi:
+    ld a, AUD_PAGE_HI
+    call data_map_page
+    ld de, DATA_WINDOW-$0800
+    add hl, de
+    ret
+
+; DE = word at song file offset HL (byte-wise: a word may straddle
+; the page 48/49 boundary at offset $800). Preserves HL.
+aud_song_rdw:
+    push hl
+    call aud_song_ptr
+    ld a, (hl)
+    ld (audWalkVal), a
+    pop hl
+    push hl
+    inc hl
+    call aud_song_ptr
+    ld d, (hl)
+    ld a, (audWalkVal)
+    ld e, a
+    pop hl
+    ret
+
+; Write word DE at song file offset HL (byte-wise, as above).
+; Corrupts AF, DE, HL.
+aud_song_wrw:
+    ld (audWalkVal), de
+    push hl
+    call aud_song_ptr
+    ld a, (audWalkVal)
+    ld (hl), a
+    pop hl
+    inc hl
+    call aud_song_ptr
+    ld a, (audWalkVal+1)
+    ld (hl), a
+    ret
+
+; --- boot autoplay probe --------------------------------------------
+
+; Called once from main.asm at game takeover (overlay1 mapped by the
+; caller). Resets the bank-24 audio state through the page-49 window
+; (a warm re-entry must not resurrect stale flags or player state),
+; then probes GAME.AKY (looped autoplay) and GAME.SFB (effects bank).
+; Fail-silent on CF from either loader. Corrupts everything.
+aud_boot_probe:
+    call data_save
+    ld a, AUD_PAGE_HI
+    call data_map_page
+    xor a
+    ld (DATA_WINDOW+audFlags-$E000), a
+    ld (DATA_WINDOW+audPlayerUp-$E000), a
+    ld a, $FF
+    ld (DATA_WINDOW+audSongNum-$E000), a
+    call data_restore
+    ld a, 1
+    ld (audReqLoop), a          ; boot music loops
+    ld a, $FF                   ; $FF = GAME.AKY
+    call aud_load_song
+    jr c, .nosong
+    ld hl, audRequest
+    set 4, (hl)
+    ld a, 1
+    ld (audEnable), a
+.nosong:
+    call aud_load_sfb
+    ret c
+    ld hl, audRequest
+    set 5, (hl)
+    ld a, 1
+    ld (audEnable), a
+    ret
+
+audGameAky: db "GAME.AKY", 0
+audGameSfb: db "GAME.SFB", 0
+audExtAky:  db ".AKY", 0
+audName:    ds 9
+audHandle:  db 0
+audSongReq: db 0
+audLoaded:  dw 0                ; bytes of song actually loaded
+audStride:  db 0                ; linker entry stride for the walk
+audWalkVal: dw 0                ; word scratch for the split windows
+audProbe:   db 0                ; oversize one-byte probe target
+bpTarget:   dw 0                ; h_beep frameCounter target
+
     ASSERT $ <= OVL_LIMIT
