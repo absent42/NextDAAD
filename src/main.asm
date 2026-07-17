@@ -18,6 +18,13 @@ main:
     call hw_init
     call audio_init
     call im2_init
+ IFDEF DEBUG
+    ; SP8 prescaler probe: hold D during boot (row $FD bit 2)
+    ld bc, $FDFE
+    in a, (c)
+    bit 2, a
+    call z, aud_dmaprobe        ; never returns when entered
+ ENDIF
     call dbg_cls
     call boot_banner
     call ram_detect

@@ -211,6 +211,26 @@ AUD_SONG_ORG    equ $D800   ; current song
 AUD_SONG_MAX    equ $27E0   ; 10208 bytes ($D800-$FFDF)
 AUD_STATE       equ $FFE0   ; audFlags/beep state/song number
 
+; --- SP8 sampled sound ---
+DMA_PORT        equ $6B     ; zxnDMA, datagear port decode
+DAC_PORT        equ $DF     ; SpecDrum-compatible mono DAC (all 4 DACs)
+NR_PERIPH3      equ $08     ; peripheral 3: bit 3 = 8-bit DACs on,
+                            ; bit 1 = Turbo Sound on (both hard-reset 0)
+AUD_PSCLOCK     equ 875000  ; prescaler base clock in Hz: rate =
+                            ; AUD_PSCLOCK/prescaler. PROVISIONAL until
+                            ; the Task 2 hold-D probe pins it (CSpect);
+                            ; hardware checklist re-verifies on silicon
+AUD_RATE_MIN    equ 3500    ; below this the prescaler exceeds 255
+AUD_RATE_MAX    equ 20000   ; staging halves are sized for this
+AUD_SMP_MAX     equ 49152   ; payload cap: banks 25-27 exactly
+SMP_PAGE_FIRST  equ 50      ; bank 25 lower 8K; payload spans pages 50-55
+AUD_STAGE_HALF  equ 416     ; bytes per staging half: 20000/50 = 400
+                            ; peak chunk + fractional-carry margin
+AUD_STAGE0      equ $7C00   ; staging buffer, bank 5 upper region -
+AUD_STAGE1      equ AUD_STAGE0+AUD_STAGE_HALF ; ALWAYS mapped (MMU3),
+                            ; above divMMC's $0000-$3FFF, free after
+                            ; TM_DEFS ($7400-$7BFF); ends $7F40 < $8000
+
 ; --- Window system (sub-project 2) ---
 WIN_X           equ 0
 WIN_Y           equ 1

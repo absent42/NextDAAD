@@ -682,6 +682,92 @@ l2_bareprobe_hook:
     call l2dbg_p_wait_press
     jr .stage0                     ; wrap around for another pass
 
+; --- SP8 DMA prescaler probe (hold D at boot) ------------------------
+; Measures what the zxnDMA prescaler actually counts. Transfers 8192
+; bytes from resident RAM ($8000 - content irrelevant, expect a short
+; noise burst) to the DAC in burst mode at two prescaler values and
+; shows elapsed frames for each. Interpretation (28MHz CPU):
+;   875kHz model: pre 87 -> 8192/(875000/87) = 0.81s = ~40-41 frames,
+;                 pre 174 -> ~81 frames (double = linear confirm)
+;   CPU-cycle model: both complete in 0-2 frames
+; Polls the DMA byte counter via the WR6 $BB read mask; if the counter
+; never advances the probe hangs with "DMA?" on screen - itself a
+; result (CSpect not emulating the counter/prescaler).
+; Never returns. Requires interrupts running (frameCounter).
+aud_dmaprobe:
+    ld b, 0
+    ld c, 10
+    call dbg_at
+    ld hl, .msg
+    call dbg_puts
+    ld a, 87
+    call .run                   ; HL = frames at prescaler 87
+    push hl
+    ld b, 1
+    ld c, 10
+    call dbg_at
+    pop hl
+    call dbg_hex16
+    ld a, 174
+    call .run
+    push hl
+    ld b, 2
+    ld c, 10
+    call dbg_at
+    pop hl
+    call dbg_hex16
+.hang:
+    jr .hang
+.msg:
+    db "DMAPROBE", 0
+; A = prescaler. Out HL = elapsed frames. Corrupts everything.
+.run:
+    ld (.pre), a
+    ld hl, (frameCounter)
+    ld (.t0), hl
+    ld hl, .prog
+    ld b, .proglen
+    ld c, DMA_PORT
+    otir
+.poll:
+    ; read byte counter: WR6 read-mask command, mask = counter lo+hi
+    ld a, $BB
+    ld bc, DMA_PORT
+    out (c), a
+    ld a, %00000110
+    out (c), a
+    in a, (c)                   ; byte counter low
+    ld e, a
+    in a, (c)                   ; byte counter high
+    ld d, a
+    ld hl, 8192-2               ; near-complete threshold (end-of-
+    or a                        ; block exact value is model-dependent)
+    sbc hl, de
+    jr nc, .poll
+    ld hl, (frameCounter)
+    ld de, (.t0)
+    or a
+    sbc hl, de
+    ret
+.t0: dw 0
+.prog:
+    db $83                      ; WR6: disable DMA
+    db %01111101                ; WR0: transfer, A->B, A addr + len follow
+    dw $8000                    ; port A: resident RAM (junk audio)
+    dw 8192                     ; block length
+    db %01010100                ; WR1: A = memory, incrementing, timing follows
+    db %00000010                ; A cycle length 2
+    db %01101000                ; WR2: B = IO, fixed, timing follows
+    db %00100010                ; B cycle length 2 + prescaler follows
+.pre:
+    db 87                       ; prescaler (patched per run)
+    db $CD                      ; WR4: burst mode, B addr follows
+    dw DAC_PORT                 ; port B: DAC
+    db %10010010                ; WR5: /ce only, stop on end of block
+    db $CF                      ; WR6: load
+    db $87                      ; WR6: enable
+.proglen equ $ - .prog
+
 dbg_font:
     INCBIN "../tools/DAAD-READY/ASSETS/CHARSET/AD8x8.CHR"   ; 2048 bytes, 256 glyphs
 

@@ -12,6 +12,14 @@ hw_init:
                                     ; powers up non-black
     xor a
     out ($FE), a                    ; black border
+    ; SP8: DACs on for sampled sound; Turbo Sound on explicitly (both
+    ; bits hard-reset to 0 - CSpect is permissive, real hardware/OS
+    ; state is not guaranteed; closes a latent SP7 hardware risk too).
+    ; Read-modify-write preserves NextZXOS's other peripheral bits.
+    ld e, NR_PERIPH3
+    call nr_read
+    or %00001010                ; bit 3 DACs, bit 1 Turbo Sound
+    nextreg NR_PERIPH3, a
     jp ula_cls
 
 ; Clear ULA pixels, set attrs to white ink on black paper.
