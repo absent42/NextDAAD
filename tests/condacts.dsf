@@ -697,6 +697,37 @@ NORTH 0
         SFX 1 99
         SFX 200 8
         MES "66 OK#n"
+; 67 SFX 3/4 as 1/2, stream intact: subs 3 and 4 probe NNN.WAV first
+; exactly like subs 1/2 (DRC's DRF 0.40 cannot emit a DOS-source rate
+; byte at plan-time - the pass-through keeps 3/4 usable at runtime).
+; No 200.WAV and no GAME.SFB in suite staging, so both fall through
+; the sample probe AND the AY effect fallback and land as silent
+; no-ops. Witness flag proves the condacts after them still ran.
+> _ _   LET 123 91
+        SFX 200 3
+        SFX 200 4
+        EQ 123 91
+        MES "67 OK#n"
+        SKIP 1
+> _ _   MES "67 F#n"
+; 68 SFX 0 5: stop-both-kinds with nothing playing - idle no-op,
+; session continues.
+> _ _   LET 123 92
+        SFX 0 5
+        EQ 123 92
+        MES "68 OK#n"
+        SKIP 1
+> _ _   MES "68 F#n"
+; 69 SFX 99 1: 099.WAV is the malformed fixture (16 bytes, no RIFF
+; header) staged by build-tests.ps1 -Suite. aud_load_wav's RIFF probe
+; rejects it (CF set), h_sfx falls through to the AY effect path -
+; also a no-op, the suite SD carries no GAME.SFB. Silent end to end.
+> _ _   LET 123 93
+        SFX 99 1
+        EQ 123 93
+        MES "69 OK#n"
+        SKIP 1
+> _ _   MES "69 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5

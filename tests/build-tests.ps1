@@ -83,8 +83,15 @@ $big = New-Object byte[] (140kb)             # over the 128K cap
 [System.Array]::Copy($good, $big, $good.Length)
 [System.IO.File]::WriteAllBytes("$root\tests\out\oversize.ddb", $big)
 
+# Malformed-WAV fixture for suite check 69: 16 bytes of non-RIFF
+# garbage staged as sd\099.WAV (suite runs with the emulator closed,
+# same lock rules as all staging).
+$badWav = [byte[]](1..16)
+[System.IO.File]::WriteAllBytes("$root\tests\out\badwav.bin", $badWav)
+
 if ($Suite) {
     Copy-Item "$root\tests\out\condacts.ddb" "$root\sd\GAME.DDB" -Force
+    Copy-Item "$root\tests\out\badwav.bin" "$root\sd\099.WAV" -Force
 }
 if ($Err4) {
     Copy-Item "$root\tests\out\doallnest.ddb" "$root\sd\GAME.DDB" -Force

@@ -1447,9 +1447,13 @@ h_beep:                         ; 64: B = duration (cs), C = pitch
 h_sfx:                          ; 18: B = n, C = sub-command
     ld a, c
     cp 1
-    jr z, .effect
+    jr z, .smp1
     cp 2
-    jr z, .effect
+    jr z, .smp2
+    cp 3                        ; 3/4 behave as 1/2: DRF 0.40 cannot
+    jr z, .smp1                 ; emit the DOS DB rate byte (spec,
+    cp 4                        ; plan-time probe) - header rate plays
+    jr z, .smp2
     cp 5
     jr z, .stopfx
     cp 6
@@ -1470,17 +1474,44 @@ h_sfx:                          ; 18: B = n, C = sub-command
     pop bc
  ENDIF
     ret
-.effect:                        ; play effect B on PSG 3 (1-frame
-    ld a, b                     ; request latency, inaudible)
-    or a                        ; effect numbers are >= 1
+.smp1:                          ; sample probe first, play once
+    xor a
+    jr .smp
+.smp2:                          ; sample probe first, looped
+    ld a, 1
+.smp:
+    ld (audReqSmpLoop), a
+    ld a, b
+    or a                        ; numbers are >= 1 (both kinds)
     ret z
+    inc a                       ; n = 255 is reserved: it collides with
+    jr z, .effect               ; smpLoadedNum's $FF "none" sentinel
+                                ; (Task 3 review) - samples are 1-254,
+                                ; 255 goes straight to the AY bank
+    ld a, b
+    push bc                     ; aud_load_wav corrupts BC (the WAV
+    call aud_load_wav           ; filename decade-loop clobbers B
+    pop bc                      ; before any exit path) - restore n for
+                                ; the .effect fallback below. CF = no/
+                                ; invalid NNN.WAV (pop bc leaves flags)
+    jr c, .effect               ; -> AY effect fallback (SP7 path)
+    ld hl, audRequest
+    set 6, (hl)
+    jr .enable
+.effect:                        ; AY effect B on PSG 3 (SP7, unchanged:
+    ld a, b                     ; loop only if authored looping). No
+                                ; guard needed: both entry paths (the
+                                ; n=255 fallthrough, the aud_load_wav
+                                ; CF-set jump) already proved B >= 1
+                                ; in .smp's shared check above.
     ld (audReqSfx), a
     ld hl, audRequest
     set 1, (hl)
     jr .enable
-.stopfx:
+.stopfx:                        ; stop WHICHEVER kind is active
     ld hl, audRequest
-    set 2, (hl)
+    set 2, (hl)                 ; AY effect
+    set 7, (hl)                 ; sample
     ret                         ; audEnable already set if anything on
 .stopmusic:
     ld hl, audRequest

@@ -137,6 +137,11 @@ SOUND   60      verb
 MUSIC   61      verb
 STOPM   62      verb
 TUNE    63      verb
+SAMP    64      verb
+SAMPL   65      verb
+SAMPR   66      verb
+SSTOP   67      verb
+AYFX    68      verb
 
 ;                       Verbs
 GET     20      verb
@@ -504,6 +509,26 @@ $pictureOK
                 DONE
 
 > STOPM   _     SFX 0 8
+                DONE
+
+; SP8 sample verbs: 001.WAV via -Aud staging. SAMP once, SAMPL loop,
+; SAMPR sub-3 (plays as SAMP), SSTOP stops sample and AY effect.
+; AYFX: no 002.WAV exists, so effect 2 falls through to the AY bank -
+; NOTE the old SOUND verb (SFX 1 1) now resolves to the SAMPLE once
+; 001.WAV is staged.
+> SAMP    _     SFX 1 1
+                DONE
+
+> SAMPL   _     SFX 1 2
+                DONE
+
+> SAMPR   _     SFX 1 3
+                DONE
+
+> SSTOP   _     SFX 0 5
+                DONE
+
+> AYFX    _     SFX 2 1
                 DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation
