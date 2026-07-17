@@ -1,0 +1,33 @@
+name: Release authoring kit
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag (for example v1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Zip authoring kit (contents at archive root)
+        run: |
+          cd authoring-kit
+          zip -r "../NextDAAD-AuthoringKit-${{ inputs.version }}.zip" . -x ".gitignore"
+
+      - name: Create release and upload the kit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.version }}" \
+            "NextDAAD-AuthoringKit-${{ inputs.version }}.zip" \
+            --title "Authoring Kit ${{ inputs.version }}" \
+            --notes "NextDAAD authoring kit ${{ inputs.version }}. Download and extract, install the tools listed in tools/README.txt, then double-click BUILD.BAT."

@@ -2,6 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 call "%~dp0CONFIG.BAT"
+if exist "%~dp0CONFIG.local.BAT" call "%~dp0CONFIG.local.BAT"
 
 REM ---- resolve GAME (auto-detect single .DSF when blank) ----
 if "%GAME%"=="" (

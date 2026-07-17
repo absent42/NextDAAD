@@ -2,6 +2,7 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 call "%~dp0CONFIG.BAT"
+if exist "%~dp0CONFIG.local.BAT" call "%~dp0CONFIG.local.BAT"
 if not exist "RELEASE\nextdaad.nex" (
     echo ERROR: nothing built yet - run BUILD.BAT first
     pause
@@ -13,5 +14,5 @@ if not exist "%CSPECT%" (
     pause
     exit /b 1
 )
-"%CSPECT%" -w3 -zxnext -esc -sound -mmc=RELEASE\ "RELEASE\nextdaad.nex"
+"%CSPECT%" -w3 -zxnext -esc -mmc=RELEASE\ "RELEASE\nextdaad.nex"
 endlocal

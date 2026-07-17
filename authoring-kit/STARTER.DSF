@@ -315,7 +315,7 @@ S 1
                 PROCESS 6               ; Initialise
                 
 
-> _       _     WINAT 13 0              ; by default, we have a text window at the bottom of the screen
+> _       _     WINAT 23 0              ; text window below the location image (demo art is 180px = ~23 tile rows)
                 #ifdef "splitModeOn"    ; if split mode is on, we have to apply it
                     XSPLITSCR 1
                     #ifdef "cpc"
@@ -323,7 +323,7 @@ S 1
                     #endif
                 #endif
                 WINDOW 1
-                WINSIZE 25 127
+                WINSIZE 32 127
 
 
 > _       _     WINDOW  0               ; Graphic window
@@ -347,7 +347,7 @@ S 1
                 #endif
                 WINDOW 1
                 WINAT 0 0               ; Full screen text window
-                WINSIZE 25 127
+                WINSIZE 32 127
                 CLS
 $pictureOK
 
@@ -505,11 +505,11 @@ $pictureOK
 > _       _     
                 WINDOW  0                  ; Make window 0 be full screen, and clear it
                 WINAT 0 0
-                WINSIZE 25 128
+                WINSIZE 32 128
                 CLS
                 WINDOW  1                  ; Define text Window starting at line 14
                 WINAT 14 0
-                WINSIZE 25 128             ; Also maximum with and height
+                WINSIZE 32 128             ; Also maximum with and height
                 WINDOW 0
                 PICTURE 0 
                 DISPLAY 0
@@ -518,7 +518,7 @@ $pictureOK
 
 >  _     _      WINDOW  1                       ; if we get here, there is no picture for location 0, so we have to set the text window full screen
                 WINAT 0 0              
-                WINSIZE 25 128                  
+                WINSIZE 32 128                  
                 #ifdef "splitModeOn"            ; Disable split mode if so
                     XSPLITSCR 0
                     PAUSE 10
