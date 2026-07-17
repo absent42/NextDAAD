@@ -86,6 +86,13 @@ if ($Err4) {
 
 $rabActive = $false
 if ($Rab) {
+    # A running CSpect holds sd\ files open: the per-file stale-variant
+    # cleanup and copies below then fail piecemeal, leaving a MIXED set
+    # of shapes that the loader's probe chain resolves unpredictably
+    # (NX2 variants win over NXI). Refuse to stage rather than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause partial/mixed art sets)"
+    }
     # The modernised, next-only DSF (tools\Rabenstein-master\nextdaad) compiles
     # under the bundled DRC with NO preprocessing - every MALUVA X-condact has
     # been removed at source (PICTURE/DISPLAY, SAVE/LOAD, EXIT for the Next
