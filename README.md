@@ -21,6 +21,9 @@ implementation.
 - AY audio on the Turbo Sound Next (3 PSGs, 9 channels): interrupt-driven
   Arkos AKY music playback with boot autoplay, SFX-driven songs and
   sound effects, and the classic blocking BEEP tone generator
+- Digitised sample playback (NNN.WAV) over the zxnDMA, mixed with AY
+  music in the background, with automatic fallback to AY sound
+  effects when no sample is present
 - 80 column tilemap-based 80x32 text mode driver with per-character colour 
   and a custom 80 column font
 - DDB loading and validation from SD card (esxDOS), with header/size
@@ -51,8 +54,7 @@ implementation.
   NextDAAD game releases with pre-built interpreter, format converted 
   images,   AY audio files etc
 
-Not yet implemented: sampled (DMA) sound effects, mouse input, and
-EXTERN subroutines.
+Not yet implemented: mouse input and EXTERN subroutines.
 
 ## Location graphics
 
@@ -109,8 +111,9 @@ games.
 
 AY music and sound effects play on the Next's Turbo Sound (three AY
 chips, nine channels) through a converted Arkos Tracker 3 AKY player
-that runs in the interrupt handler. Files live in the SD root next to
-GAME.DDB:
+that runs in the interrupt handler. Digitised samples play through
+the zxnDMA on a separate channel, in the background over the music.
+Files live in the SD root next to GAME.DDB:
 
 - GAME.AKY - title/background music, auto-played (looped) at boot if
   present
@@ -118,6 +121,13 @@ GAME.DDB:
   zero-padded (SFX 1 7 plays 001.AKY)
 - GAME.SFB - the sound-effects bank (Arkos sound effects export, up
   to 2K), loaded at boot if present
+- NNN.WAV - digitised sample n, 3-digit zero-padded (SFX 1 1 probes
+  001.WAV before falling back to GAME.SFB). Mono 8-bit PCM RIFF WAV
+  only, payload up to 49152 bytes, sample rate 3500-20000 Hz taken
+  from the header - no resampling. Sample numbers 1-254 are valid;
+  255 is reserved and always resolves to the AY effects bank instead.
+  A DAAD Ready DOS game's SOUNDS set (max 32000 bytes per effect,
+  5000-20000 Hz) already fits these limits and drops in unconverted.
 
 Exports are address-encoded: songs must be encoded for $D800 (maximum
 10208 bytes) and the effects bank for $D000. Use tools/export_audio.ps1
@@ -131,17 +141,36 @@ SFX first-argument/sub-command semantics (jdaad-compatible):
 
 | SFX n sub | Effect |
 |-----------|--------|
-| 1, 2 | play sound effect n (on the third AY, over music) |
-| 5 | stop the current sound effect |
+| 1, 3 | play sample/effect n once (NNN.WAV via DMA, over music; falls back to AY effect n on the third AY if no valid sample) |
+| 2, 4 | as 1/3, looped - an AY effect loops only if authored looping |
+| 5 | stop whichever kind - sample or AY effect - is currently active |
 | 6 | play song n once - the song ends in silence |
 | 7 | play song n looped |
 | 8 | stop the music |
 
+Sub-commands 3 and 4 exist because the DOS DAAD convention encodes a
+rate byte ahead of the sound number for them; DRC's DRF 0.40 cannot
+emit that byte inside a process, so 3 and 4 behave exactly like 1 and
+2 in NextDAAD - the WAV header's own rate always applies. A game can
+mix kinds freely across sample numbers: whichever of NNN.WAV or the
+GAME.SFB entry is present resolves for that number.
+
+Keep-last residency: replaying the same sample number is instant -
+only the first play of a given number pays the SD read, and repeat
+plays reuse the resident payload until a different number is
+requested. Sample playback is DMA-driven and runs in the background
+over the AKY music (audio owns the DMA channel outright); the
+per-frame refeed is consumed-based, so heavy SD or Layer 2 picture
+I/O cannot corrupt or clip a playing sample.
+
 Anything else is a no-op, as is any reference to a file that is not
 on the SD card. An in-game restart (QUIT confirmed, RESTART) leaves
-the music playing uninterrupted by design - the soundtrack is
+the music and any playing sample uninterrupted by design - both are
 ambience that survives restarts exactly like save/load; games change
-or stop music explicitly with SFX n 7 / SFX 0 8.
+or stop music explicitly with SFX n 7 / SFX 0 8, and stop a sample or
+effect with SFX n 5. Every real exit or reset (QUIT not confirmed,
+EXIT 0, a hard reset) silences everything, including the DMA and the
+DAC.
 
 BEEP takes duration and pitch, matching the classic interpreters
 (jdaad-pinned): duration in centiseconds, pitch an even value 24-222
