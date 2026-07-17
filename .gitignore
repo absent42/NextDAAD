@@ -18,5 +18,9 @@ sd/*.N2Z
 sd/*.n2z
 sd/*.zx0
 sd/*.ZX0
+sd/*.AKY
+sd/*.aky
+sd/*.SFB
+sd/*.sfb
 tests/out/
 .superpowers/
