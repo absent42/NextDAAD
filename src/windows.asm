@@ -93,15 +93,6 @@ win_home:
     ld (hl), 0
     ret
 
-; D=paper 0-7, E=ink 0-7.
-win_set_colour:
-    ld a, WIN_INK
-    call win_field
-    ld (hl), e
-    inc hl
-    ld (hl), d
-    ret
-
 ; Out: E = attribute = (paper*16 + ink) << 1. Ink is full 0-15; paper
 ; masks to 0-7 (the tilemap holds 8 paper slots), so a paper 8-15
 ; renders as its base hue. Preserves D.

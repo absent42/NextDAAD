@@ -113,7 +113,8 @@ l2ClipY2: db 0
 ; i.e. Layer 2 ABOVE the tilemap/ULA slot. (%110/%111 are blend modes,
 ; unused.) Only correct together with l2_mode_set's NR $14 transparent
 ; fill: without it, Layer 2 on top would hide the tilemap text instead
-; of letting it show through. Corrupts AF, BC.
+; of letting it show through. Corrupts AF, E (nr_read preserves BC;
+; only the ld e register-select setup touches DE).
 l2_enable:
     ld e, NR_DISPLAY_CTRL
     call nr_read
@@ -126,7 +127,8 @@ l2_enable:
 ; Disable Layer 2 display (NR $69 bit 7 = 0, other bits preserved).
 ; Layer priority (NR $15) is left as l2_enable set it - harmless,
 ; since with Layer 2 invisible the S/L/U order has nothing to
-; prioritise. Corrupts AF, BC.
+; prioritise. Corrupts AF, E (nr_read preserves BC; only the ld e
+; register-select setup touches DE).
 l2_disable:
     ld e, NR_DISPLAY_CTRL
     call nr_read
@@ -821,7 +823,9 @@ gfx_evict_fix:
 ; In: gfxHandle = an OPEN read handle on gfxName at offset 0, with
 ; gfxMode/gfxWidth set by gfx_open_chain and gfxCompressed = 0 (the
 ; caller enforces it). Streams the file from SD straight onto the
-; BACK Layer 2 surface: skip the 512-byte embedded palette, then per
+; BACK Layer 2 surface: commit l2Mode (front's mode snapshotted for
+; the failure restore - see the entry comment) + clear the back, skip
+; the 512-byte embedded palette, then per
 ; row esx_fread gfxWidth bytes into gfxRowBuf and write it with the
 ; SAME row writers gfx_blit uses (gfx_row_copy256/gfx_row_scatter320
 ; - the walks cannot diverge), enforcing gfx_derive_height's shape
@@ -845,9 +849,31 @@ gfx_evict_fix:
 ; machine any legal picture still fits after a full eviction pass, so
 ; this whole routine is single-load-bigger-than-everything territory.
 ; Out: CF clear = drawn, flipped, handle closed. CF set = failed,
-; handle closed; the back surface may hold partial paint - invisible,
+; handle closed, l2Mode restored to the still-displayed front
+; surface's mode; the back surface may hold partial paint - invisible,
 ; never flipped, so the session is unharmed. Corrupts everything.
 gfx_direct_stream:
+    ; l2Mode is committed to the NEW mode before the clear (it sizes
+    ; l2_clear_back's page count) but the flip only happens on success:
+    ; snapshot the front surface's mode and restore it on the failure
+    ; funnel, or a later DISPLAY n!=0 would size its back clear for the
+    ; wrong surface (front=320, failed 256 fallback: only 6 of the 10
+    ; pages cleared - garbage band after that flip). Chosen over making
+    ; l2_clear_back unconditionally clear 10 pages: the snapshot is
+    ; smaller and costs successful draws nothing. gfx_blit shares the
+    ; commit-before-flip shape but has no failure path after its
+    ; commit, so it needs no snapshot.
+    ld a, (l2Mode)
+    ld (gfxModeSave), a
+    ld a, (gfxMode)
+    ld (l2Mode), a              ; variable only - sizes l2_clear_back;
+                                ; NR $70/$12 wait for the flip
+    ld a, (l2BackBank)
+    add a, a
+    ld (gfxSurfPage), a
+    call l2_clear_back          ; own data_save/restore - run BEFORE
+                                ; ours, exactly as gfx_blit orders it
+                                ; (no nested data_save)
     call data_save
     ld b, 2                     ; skip the palette: 2 x 256-byte
 .skip:                          ; discard reads through gfxRowBuf
@@ -857,13 +883,6 @@ gfx_direct_stream:
     jp c, .fail
     djnz .skip
     ; render state exactly as gfx_blit stages it
-    ld a, (gfxMode)
-    ld (l2Mode), a              ; variable only - sizes l2_clear_back;
-                                ; NR $70/$12 wait for the flip
-    ld a, (l2BackBank)
-    add a, a
-    ld (gfxSurfPage), a
-    call l2_clear_back          ; own data_save/restore
     ld a, (gfxSurfPage)         ; 256-wide linear dest stream init
     ld (gfxDstPage), a          ; (the 320-wide scatter reinitialises
     ld hl, DATA_WINDOW          ; gfxDstPage itself every row)
@@ -956,6 +975,8 @@ gfx_direct_stream:
     ld (gfxHandle), a
 .faildone:
     call data_restore
+    ld a, (gfxModeSave)         ; no flip happened: re-sync l2Mode with
+    ld (l2Mode), a              ; the still-displayed front surface
     scf
     ret
 
@@ -1801,6 +1822,9 @@ gfxAllocFail:  db 0              ; 1 = the load failed on TRUE pool
 gfxRowFull:    db 0              ; direct stream: the 256th row was
                                  ; written (gfxRowY wrapped), only EOF
                                  ; may follow
+gfxModeSave:   db 0              ; direct stream: front surface's mode
+                                 ; at entry, restored to l2Mode on the
+                                 ; failure funnel (no flip happened)
 gfxRowBuf:     ds 320            ; row bounce buffer: slot 6 can only hold
                                  ; source OR dest, so each row stages here
                                  ; (in this overlay page - both users above

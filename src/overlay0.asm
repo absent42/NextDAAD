@@ -1323,18 +1323,19 @@ h_centre:                       ; 109
     call win_field
     ld (hl), e
     ret
-h_paper:                        ; 65: DAAD paper 0-15 maps directly to a
-    ld a, b                     ; hardware palette index; 16+ silently
-    and 15                      ; ignored. win_attr masks paper to the 8
-    ld b, a                     ; tilemap paper slots at render time.
+h_paper:                        ; 65: DAAD paper maps to a hardware
+    ld a, b                     ; palette index; 16+ FOLDS mod 16 (the
+    and 15                      ; and 15, = jdaad's param%16). win_attr
+    ld b, a                     ; masks paper to the 8 tilemap paper
+                                ; slots at render time.
     ld a, WIN_PAPER
     call win_field
     ld (hl), b
     ret
-h_ink:                          ; 66: DAAD ink 0-15 maps directly (the
-    ld a, b                     ; tilemap carries the full 16 ink colours)
-    and 15
-    ld b, a
+h_ink:                          ; 66: DAAD ink maps to a palette index,
+    ld a, b                     ; 16+ folding mod 16 like h_paper (the
+    and 15                      ; tilemap carries the full 16 ink
+    ld b, a                     ; colours)
     ld a, WIN_INK
     call win_field
     ld (hl), b
