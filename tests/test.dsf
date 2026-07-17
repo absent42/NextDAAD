@@ -483,6 +483,7 @@ $pictureOK
                 WINDOW  0                  ; Make window 0 be full screen, and clear it
                 WINAT 0 0
                 WINSIZE 25 128
+                BORDER 1                   ; blue surround: one-look NR $4A fallback check
                 CLS
                 WINDOW  1                  ; Define text Window starting at line 14
                 WINAT 14 0

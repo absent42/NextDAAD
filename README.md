@@ -83,6 +83,19 @@ are usable for art, with one reservation:
   drawing with index 254; Gfx2Next output does not need any special
   treatment otherwise.
 
+### The classic look
+
+To author a game with the classic bordered Spectrum screen, use
+256-wide NXI art (it displays over the paper area) and lay the text
+windows inside the paper area of the 80x32 text grid, which spans
+tile rows 4-27 and columns 8-71 - for example WINDOW/WINAT 4 8/
+WINSIZE 24 64 for the full classic screen. Set the surround with
+BORDER 0-7, which on NextDAAD colours everything outside the art and
+text: the ULA layer is off, so the interpreter maps BORDER onto the
+Next's global fallback colour instead. 320-wide NX2 art covers the
+border area entirely, so BORDER only matters for classic-layout
+games.
+
 ## Building
 
 The toolchain (not included in repo) lives in tools/ 

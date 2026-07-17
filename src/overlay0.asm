@@ -1339,10 +1339,26 @@ h_ink:                          ; 66: DAAD ink 0-15 maps directly (the
     call win_field
     ld (hl), b
     ret
+; 67 BORDER: B AND 7 selects the classic colour. txt_init disables the
+; ULA layer at text-mode takeover (NR $68 bit 7), so the classic
+; border register is invisible; what actually shows around the screen
+; is the global fallback colour NR $4A - output wherever tilemap and
+; Layer 2 are both transparent, i.e. the whole true border region plus
+; any gaps a 256-wide-art layout leaves uncovered. So BORDER programs
+; NR $4A with the DAAD colour's RRRGGGBB (dadPalette first byte,
+; resident, tilemap.asm; hw_init boots the register black, this
+; overrides at runtime). The out ($FE) write is kept - one
+; instruction, and BORDER keeps its classic meaning if the ULA layer
+; is ever re-enabled. Corrupts AF, HL.
 h_border:                       ; 67
     ld a, b
     and 7
     out ($FE), a
+    add a, a                    ; dadPalette entries are 2 bytes
+    ld hl, dadPalette
+    add hl, a
+    ld a, (hl)                  ; byte 0 of the pair = RRRGGGBB
+    nextreg NR_FALLBACK, a
     ret
 ; --- key decoder ---
 ; Half-row scan -> ASCII. Unshifted; letters lowercase; digits; space;
