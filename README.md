@@ -16,11 +16,13 @@ implementation.
 ## Features
 
 - Layer 2 location graphics: 256x192 and 320x256 256-colour pictures
-  from Gfx2Next files, per-picture palettes, bank-allocated picture cache, and double-buffered draw
+  from Gfx2Next files, per-picture palettes, bank-allocated picture cache, 
+  and double-buffered draw
 - AY audio on the Turbo Sound Next (3 PSGs, 9 channels): interrupt-driven
   Arkos AKY music playback with boot autoplay, SFX-driven songs and
   sound effects, and the classic blocking BEEP tone generator
-- 80 column tilemap-based 80x32 text mode driver with per-character colour and a custom 80 column font
+- 80 column tilemap-based 80x32 text mode driver with per-character colour 
+  and a custom 80 column font
 - DDB loading and validation from SD card (esxDOS), with header/size
   error handling
 - Full RAM detection and 8K bank allocator across the Next's extended
@@ -45,6 +47,9 @@ implementation.
 - Debug build with an on-screen diagnostic console (frame counter,
   stub markers, register dumps) and SLD debug data for DeZog
   source-level debugging
+- Authoring Toolkit: a DAAD-READY like single click tool for building 
+  NextDAAD game releases with pre-built interpreter, format converted 
+  images,   AY audio files etc
 
 Not yet implemented: sampled (DMA) sound effects, mouse input, and
 EXTERN subroutines.
@@ -177,23 +182,6 @@ the repo):
 - Gfx2Next (PNG to Layer 2): https://www.rustypixels.uk/gfx2next/
 - Arkos Tracker 3 (SongToAky / SongToSoundEffects): https://www.julien-nevo.com/arkostracker/index.php/download/
 - CSpect (emulator): https://mdf200.itch.io/cspect
-
-## Layout
-
-- src/ - Z80 source: main, hardware, interrupts, banks, file, tilemap,
-  windows, ddbtext, print, input, engine, errors, objname, debug, and
-  the overlay0/overlay1 condact handler pages
-- sd/ - staged as the CSpect MMC filesystem
-- tests/ - test adventure sources (template, condact suite, DOALL
-  nesting demo), DDB build script and decoder
-- tools/ - not included in repo but needed to build and run tests
-    - tools/CSpect
-    - tools/sjasmplus
-    - tools/DAAD-READY
-    - tools/gfx2next
-    - tools/Rabenstein-master (used for tests)
-    - tools/disark.exe
-    - tools/rasm_w32.exe
 
 ## Acknowledgments
 
