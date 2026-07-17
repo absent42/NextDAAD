@@ -202,6 +202,15 @@ HDR_OBJNAME     equ 26
 HDR_OBJATTR     equ 28
 HDR_OBJEXTR     equ 30
 
+; --- Audio (sub-project 7) ---
+AUD_PAGE_LO     equ 48      ; bank 24 lower 8K
+AUD_PAGE_HI     equ 49      ; bank 24 upper 8K
+AUD_PLAYER_ORG  equ $C000
+AUD_SFB_ORG     equ $D000   ; effects bank (2K)
+AUD_SONG_ORG    equ $D800   ; current song
+AUD_SONG_MAX    equ $27E0   ; 10208 bytes ($D800-$FFDF)
+AUD_STATE       equ $FFE0   ; audFlags/beep state/song number
+
 ; --- Window system (sub-project 2) ---
 WIN_X           equ 0
 WIN_Y           equ 1

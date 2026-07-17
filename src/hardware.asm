@@ -28,6 +28,39 @@ ula_cls:
     ldir
     ret
 
+; Boot-time PSG silence: select each of the three Turbo Sound Next
+; PSGs via port $FFFD ($FD/$FE/$FF - the same inlined select values
+; the converted Arkos player uses, src/audio/player_aky.asm) and
+; write mixer R7 = $3F (all tone/noise off) and volumes
+; R8/R9/R10 = 0. Register number goes to $FFFD, data to $BFFD.
+; Called once from boot after hw_init, before interrupts are enabled.
+; Corrupts AF, BC, DE.
+audio_init:
+    ld e, $FD                       ; PSG 3, then $FE (2), then $FF (1)
+.psg:
+    ld bc, $FFFD
+    out (c), e                      ; Turbo Sound: select PSG
+    ld d, 7
+    ld a, $3F
+    call .write                     ; R7 mixer all off
+    ld d, 8
+.vol:
+    xor a
+    call .write                     ; R8/R9/R10 volume 0
+    inc d
+    ld a, d
+    cp 11
+    jr c, .vol
+    inc e
+    jr nz, .psg                     ; $FD -> $FE -> $FF -> $00 done
+    ret
+.write:                             ; D = register, A = value
+    ld bc, $FFFD
+    out (c), d
+    ld b, $BF
+    out (c), a
+    ret
+
 ; Read a Next register. E = register, returns A = value. Preserves BC.
 nr_read:
     push bc

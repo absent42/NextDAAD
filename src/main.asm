@@ -16,6 +16,7 @@ main:
  ENDIF
     call boot_data_init
     call hw_init
+    call audio_init
     call im2_init
     call dbg_cls
     call boot_banner
@@ -144,6 +145,7 @@ boot_data_init:
     INCLUDE "overlay0.asm"
     INCLUDE "overlay1.asm"
     INCLUDE "overlay2.asm"
+    INCLUDE "audio/audiobank.asm"
 
     CSPECTMAP "build/nextdaad.map"
     SAVENEX OPEN "build/nextdaad.nex", main, STACK_TOP
