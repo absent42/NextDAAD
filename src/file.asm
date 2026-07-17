@@ -138,6 +138,10 @@ ddb_load:
 ; A = border colour, HL = ASCIIZ message. Never returns.
 fatal:
     out ($FE), a
+    di                          ; the halt below never re-enables ints;
+    call audio_init             ; silence the PSGs first (di stops the
+                                ; ISR re-voicing a note before the
+                                ; banner + halt; preserves HL)
     ld a, (tmUp)
     or a
     jr z, .halt0

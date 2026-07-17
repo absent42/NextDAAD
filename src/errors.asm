@@ -55,6 +55,9 @@ err_raise:
     ld a, 3                     ; border too (invisible under the
     out ($FE), a                ; tilemap, correct elsewhere)
     di
+    call audio_init             ; a raised error must not leave the
+                                ; music's last note droning through
+                                ; the halt loop
 .halt:
     jr .halt
 

@@ -1550,13 +1550,17 @@ h_end:                          ; 21: reply N (SM31) = exit to OS, any
     ld (procSP), a
     ret
 .off:
+    di                          ; no ISR tick may re-voice a note
+    call audio_init             ; between the silence and the reset
     nextreg 2, 1
     jr $
 h_exit:                         ; 110: 0 = reset, else XPART stub
     ld a, b
     or a
     jp nz, h_unimpl
-    nextreg 2, 1
+    di                          ; silence the PSGs before the reset -
+    call audio_init             ; the AY keeps sounding its last note
+    nextreg 2, 1                ; through nextreg 2,1 otherwise
     jr $
 h_goto:                         ; 37
     ld a, b

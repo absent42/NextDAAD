@@ -133,7 +133,10 @@ SFX first-argument/sub-command semantics (jdaad-compatible):
 | 8 | stop the music |
 
 Anything else is a no-op, as is any reference to a file that is not
-on the SD card. BEEP duration pitch matches the classic interpreters
+on the SD card. An in-game restart (QUIT confirmed, RESTART) leaves
+the music playing uninterrupted by design - the soundtrack is
+ambience that survives restarts exactly like save/load; games change
+or stop music explicitly with SFX n 7 / SFX 0 8. BEEP duration pitch matches the classic interpreters
 (jdaad-pinned): duration in centiseconds, pitch an even value 24-222
 mapping the classic semitone table; odd or out-of-range pitches and
 zero durations are no-ops. BEEP blocks for its duration and plays on
