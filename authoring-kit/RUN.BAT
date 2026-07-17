@@ -13,5 +13,5 @@ if not exist "%CSPECT%" (
     pause
     exit /b 1
 )
-"%CSPECT%" -w3 -zxnext -esc -sound -mmc=RELEASE\ "RELEASE\nextdaad.nex"
+"%CSPECT%" -w3 -zxnext -esc -mmc=RELEASE\ "RELEASE\nextdaad.nex"
 endlocal
