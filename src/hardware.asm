@@ -44,6 +44,12 @@ ula_cls:
 ; Called once from boot after hw_init, before interrupts are enabled.
 ; Corrupts AF, BC, DE.
 audio_init:
+    ld a, $83                       ; SP8: kill any in-flight sample
+    ld bc, DMA_PORT                 ; DMA and centre the DAC - every
+    out (c), a                      ; reset/halt path (h_exit, h_end,
+    ld a, $80                       ; fatal, err_raise) and boot come
+    ld bc, DAC_PORT                 ; through here
+    out (c), a
     ld e, $FD                       ; PSG 3, then $FE (2), then $FF (1)
 .psg:
     ld bc, $FFFD

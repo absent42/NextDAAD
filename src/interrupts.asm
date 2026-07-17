@@ -29,7 +29,11 @@ im2_init:
 ; aud_tick runs (which corrupts anything - PLY_AKY_PLAY reuses SP
 ; internally but restores it per its own contract) and restored after,
 ; and MMU slots 6/7 are saved/restored around the bank-24 mapping so
-; mainline's own use of those slots survives. Any mainline state -
+; mainline's own use of those slots survives. aud_tick now also refeeds
+; the sample DMA from bank-24 state, windowing sample source pages
+; through slot 7 and restoring slot 7 to AUD_PAGE_HI before it returns
+; (the ISR's own MMU save/restore covers mainline's mapping regardless).
+; Any mainline state -
 ; including AF' (the ZX0 depacker parks state there across long
 ; stretches) - survives an interrupt taken mid-mainline. Interrupts stay
 ; disabled for the whole audio path; only the very last instruction

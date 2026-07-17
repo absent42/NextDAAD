@@ -28,10 +28,11 @@
 ; bytes are resident at $8xxx, visible from ISR context regardless of
 ; the slot 6/7 mapping. Each set bit is consumed with a single res on
 ; the resident byte - atomic against mainline because the ISR runs
-; with interrupts off. Consumption order is 5 (init effects), 3 (stop
-; music), 4 (start music), 2 (stop effect), 1 (play effect), 0 (beep)
-; so that a stale stop filed while audio was off can never kill a
-; same-frame start.
+; with interrupts off. Consumption order is 7 (stop sample), 6 (start
+; sample), 5 (init effects), 3 (stop music), 4 (start music), 2 (stop
+; effect), 1 (play effect), 0 (beep) so that a stale stop filed while
+; audio was off can never kill a same-frame start. The sample refeed
+; (aud_smp_tick) runs every tick regardless of audFlags.
 ;
 ; Player gate: PLY_AKY_PLAY runs when audFlags bit 0 (music) OR bit 2
 ; (effect active) is set - the player is also what advances PSG-3
@@ -50,6 +51,21 @@ aud_tick:
     ld a, (hl)
     or a
     jp z, .noreq
+    ; bit 7: stop sample (before bit 6: a stale stop must not kill a
+    ; same-frame start - mirrors the bit 3/4 music rule)
+    bit 7, (hl)
+    jr z, .no7
+    res 7, (hl)
+    call aud_smp_stop
+    ld hl, audRequest
+.no7:
+    ; bit 6: start the sample staged in banks 25-27
+    bit 6, (hl)
+    jr z, .no6
+    res 6, (hl)
+    call aud_smp_start
+    ld hl, audRequest
+.no6:
     ; bit 5: init the sound-effects table (GAME.SFB at AUD_SFB_ORG)
     bit 5, (hl)
     jr z, .no5
@@ -145,6 +161,7 @@ aud_tick:
     ld h, 0
     ld (audBeepFrames), hl
 .noreq:
+    call aud_smp_tick           ; sample refeed (self-gated on smpFlags)
     ld a, (audFlags)
     or a
     ret z
@@ -275,6 +292,303 @@ aud_psg_silence:
     ld b, 10
     ld c, 0
     jp aud_psg3_write
+
+; --- sampled sound engine (SP8) --------------------------------------
+
+; Start the sample staged in banks 25-27 by aud_load_wav, using the
+; resident audReqSmp* parameters. Runs in ISR context.
+aud_smp_start:
+    ld a, (audReqSmpPre)
+    ld (smpPre), a
+    ld hl, (audReqSmpChunk)
+    ld (smpChunk), hl
+    ld a, (audReqSmpFrac)
+    ld (smpFrac), a
+    xor a
+    ld (smpAcc), a
+    ld (smpHalf), a
+    ld hl, (audReqSmpLen)
+    ld (smpLen), hl
+    ld (smpRemain), hl
+    ld a, SMP_PAGE_FIRST
+    ld (smpPage), a
+    ld hl, 0
+    ld (smpOff), hl
+    ld (smpLast), hl            ; nothing in flight yet
+    ld a, (audReqSmpLoop)
+    and 1
+    add a, a                    ; -> bit 1
+    or 1                        ; bit 0 active
+    ld (smpFlags), a
+    ret
+
+; Stop: disable the DMA, park the DAC at centre, clear the state.
+; Idempotent. Runs in ISR context (also reachable via aud_smp_tick's
+; play-once end).
+aud_smp_stop:
+    xor a
+    ld (smpFlags), a
+    ld (smpLast), a
+    ld (smpLast+1), a           ; no in-flight baseline survives a stop
+    ld a, $83                   ; WR6: disable DMA
+    ld bc, DMA_PORT
+    out (c), a
+    ld a, $80                   ; DAC centre = silence
+    ld bc, DAC_PORT
+    out (c), a
+    ret
+
+; Per-frame refeed, CONSUMED-BASED (probe-driven design change): the
+; source position advances only by bytes the DMA actually transferred
+; last frame (read from its byte counter), so an under-nominal DMA
+; (bus contention measured ~5% worst case) re-sends the unplayed tail
+; instead of clipping it - gapless, self-regulating, pitch = true
+; effective rate. Flow per tick with a sample active:
+;   1. disable the DMA ($83), read the byte counter, clamp to the
+;      length programmed last tick (smpLast; counter semantics near
+;      end-of-block are model-fuzzy, the clamp caps any excess),
+;   2. advance smpOff/smpPage/smpRemain by CONSUMED (smpRemain hits 0
+;      only when every payload byte has truly played),
+;   3. on smpRemain = 0: play-once -> aud_smp_stop; loop -> rewind,
+;   4. compute this frame's chunk (whole + fractional carry, clamped
+;      to remain), copy it from (smpPage, smpOff) into the idle
+;      staging half THROUGH MMU SLOT 7 (this code executes from slot
+;      6 - see the task header; slot 7 restored to AUD_PAGE_HI before
+;      any state writeback), program the DMA, record smpLast.
+; A first-start tick has smpLast = 0 (aud_smp_start zeroes it), so
+; step 1-2 advance by nothing and step 4 programs the first chunk.
+aud_smp_tick:
+    ld a, (smpFlags)
+    rrca
+    ret nc                      ; bit 0 clear: nothing active
+    ; --- consume last frame's transfer ---
+    ld a, $83                   ; disable the DMA: freezes the counter
+    ld bc, DMA_PORT             ; and makes the reprogram below safe
+    out (c), a
+    ld hl, (smpLast)
+    ld a, h
+    or l
+    jr z, .advanced             ; nothing in flight (first tick)
+    ld a, $BB                   ; WR6 read-mask command
+    ld bc, DMA_PORT
+    out (c), a
+    ld a, %00000110             ; mask: byte counter low + high
+    out (c), a
+    in a, (c)                   ; counter low
+    ld e, a
+    in a, (c)                   ; counter high
+    ld d, a                     ; DE = bytes transferred last frame
+    ld hl, (smpLast)
+    or a
+    sbc hl, de
+    jr nc, .clamped             ; counter <= programmed: take it
+    ld de, (smpLast)            ; counter overran (end-of-block
+.clamped:                       ; semantics): clamp to programmed
+    ; advance source by DE consumed: off += DE (page rolls at $2000),
+    ; remain -= DE
+    ld hl, (smpRemain)
+    or a
+    sbc hl, de
+    jr nc, .remok
+    ld hl, 0                    ; safety floor (cannot underflow if
+.remok:                         ; the clamp above held)
+    ld (smpRemain), hl
+    ld hl, (smpOff)
+    add hl, de
+    ld a, h
+    cp $20
+    jr c, .offok                ; still inside the 8K page
+    sub $20                     ; rolled: off -= $2000, page += 1
+    ld h, a
+    ld a, (smpPage)
+    inc a
+    ld (smpPage), a
+.offok:
+    ld (smpOff), hl
+    xor a
+    ld (smpLast), a
+    ld (smpLast+1), a
+.advanced:
+    ; --- end of payload? ---
+    ld hl, (smpRemain)
+    ld a, h
+    or l
+    jr nz, .sized
+    ld a, (smpFlags)
+    bit 1, a
+    jp z, aud_smp_stop          ; play-once: everything has played (jp:
+                                ; out of jr range from here)
+    ld hl, (smpLen)             ; loop: rewind to the payload start
+    ld (smpRemain), hl
+    ld a, SMP_PAGE_FIRST
+    ld (smpPage), a
+    ld hl, 0
+    ld (smpOff), hl
+.sized:
+    ; chunk = smpChunk + (carry from smpAcc += smpFrac overflowing 50)
+    ld a, (smpAcc)
+    ld e, a
+    ld a, (smpFrac)
+    add a, e
+    cp 50
+    ld hl, (smpChunk)
+    jr c, .noc
+    sub 50
+    inc hl
+.noc:
+    ld (smpAcc), a
+    ; clamp to what remains: BC = copy length. smpRemain is NOT
+    ; decremented here - consumption is what decrements it (step 2)
+    ld de, (smpRemain)
+    or a
+    sbc hl, de
+    jr c, .whole                ; chunk < remain: full chunk
+    ld b, d                     ; final stretch: program exactly the
+    ld c, e                     ; rest
+    jr .copy
+.whole:
+    add hl, de                  ; HL = chunk again
+    ld b, h
+    ld c, l
+    ; fall through to .copy
+.copy:
+    ; Stage the copy parameters in scratch while slot 7 still holds
+    ; the state page, then do the whole copy with registers only.
+    ; The copy is a pure READ of the source window: smpOff/smpPage
+    ; are NOT advanced here (consumption advances them next tick).
+    ld (smpTickLen), bc
+    ld hl, (smpOff)
+    ld (smpTickOff), hl
+    ld a, (smpPage)
+    ld (smpTickPage), a
+    ld a, (smpHalf)
+    ld de, AUD_STAGE0
+    or a
+    jr z, .dset
+    ld de, AUD_STAGE1
+.dset:
+    ld (smpTickDst), de
+    ; part 1 length = min(len, $2000 - off)
+    ld hl, $2000
+    ld bc, (smpTickOff)
+    or a
+    sbc hl, bc                  ; HL = room in this page
+    ld bc, (smpTickLen)
+    or a
+    sbc hl, bc
+    jr nc, .onepart             ; room >= len: single copy
+    ; two parts: part1 = room, part2 = len - room
+    ld hl, $2000
+    ld bc, (smpTickOff)
+    or a
+    sbc hl, bc                  ; HL = part1
+    ld b, h
+    ld c, l
+    push bc                     ; part1
+    ld hl, (smpTickLen)
+    or a
+    sbc hl, bc                  ; HL = part2
+    push hl                     ; part2
+    ; copy part1 from (page, off) to dest
+    ld a, (smpTickPage)
+    nextreg $57, a
+    ld hl, (smpTickOff)
+    ld a, h
+    add a, $E0
+    ld h, a
+    ld de, (smpTickDst)
+    pop ix                      ; IX = part2 (parked)
+    pop bc                      ; BC = part1
+    ld a, b
+    or c
+    jr z, .p2
+    ldir
+.p2:
+    ; copy part2 from (page+1, 0); DE already past part1. Reading one
+    ; page past the payload end cannot happen: part2 > 0 only when
+    ; off+len > $2000, and len <= remain keeps off+len within the
+    ; loaded payload, whose last byte lives at page <= 55
+    ld a, (smpTickPage)
+    inc a
+    nextreg $57, a
+    ld hl, $E000
+    push ix
+    pop bc                      ; BC = part2 (non-zero: crossing case)
+    ldir
+    jr .program
+.onepart:
+    ld a, (smpTickPage)
+    nextreg $57, a
+    ld hl, (smpTickOff)
+    ld a, h
+    add a, $E0
+    ld h, a
+    ld de, (smpTickDst)
+    ld bc, (smpTickLen)
+    ld a, b
+    or c
+    jr z, .program              ; zero-length: nothing to copy
+    ldir
+.program:
+    nextreg $57, AUD_PAGE_HI    ; state page back FIRST - every state
+                                ; access below needs it
+    ; (re)program the DMA: staging half -> DAC, burst, prescaler.
+    ; Zero-length chunk (exact drain boundary): leave the DMA stopped;
+    ; smpLast stays 0 and the next tick resolves end-or-loop.
+    ld bc, (smpTickLen)
+    ld a, b
+    or c
+    ret z
+    ld hl, (smpTickDst)
+    ld (audDmaProg.aaddr), hl
+    ld (audDmaProg.alen), bc
+    ld a, (smpPre)
+    ld (audDmaProg.pre), a
+    ld hl, audDmaProg
+    ld b, audDmaProgLen
+    ld c, DMA_PORT
+    otir
+    ld hl, (smpTickLen)
+    ld (smpLast), hl            ; consumption baseline for next tick
+    ; toggle the staging half for the next tick
+    ld a, (smpHalf)
+    xor 1
+    ld (smpHalf), a
+    ret
+
+; IMPORTANT: smpTickLen/Off/Dst/Page are written before the slot-7
+; remap and only read while the source page is mapped (they live in
+; page 48 CODE space at $C000-$CFFF, which stays mapped in slot 6
+; throughout); smpLast and all smp* state live in the $FFE0 block and
+; are only touched while slot 7 holds AUD_PAGE_HI.
+smpTickLen:   dw 0
+smpTickOff:   dw 0
+smpTickDst:   dw 0
+smpTickPage:  db 0
+
+; zxnDMA program template (register encodings per zxndma.txt):
+; disable, WR0 transfer A->B with A address + length, WR1 A memory
+; incrementing cycle 2, WR2 B IO fixed cycle 2 + prescaler, WR4 BURST
+; with B address (DAC), WR5 stop on end of block, load, enable.
+audDmaProg:
+    db $83
+    db %01111101
+.aaddr:
+    dw 0
+.alen:
+    dw 0
+    db %01010100
+    db %00000010
+    db %01101000
+    db %00100010
+.pre:
+    db 0
+    db $CD
+    dw DAC_PORT
+    db %10000010                ; WR5 $82: /ce only, stop on end of block
+    db $CF
+    db $87
+audDmaProgLen equ $ - audDmaProg
 
 ; --- BEEP tone engine ------------------------------------------------
 
@@ -408,5 +722,18 @@ audSongNum:    db $FF                ; $FF = none/GAME.AKY
 audPlayerUp:   db 0                  ; 1 once PLY_AKY_INIT has run
                                      ; (aud_ensure_player gate; reset
                                      ; by aud_boot_probe on warm boot)
+smpFlags:      db 0                  ; bit 0 sample active, bit 1 looping
+smpPage:       db 0                  ; current source 8K page (50-55)
+smpOff:        dw 0                  ; read offset inside that page (0-$1FFF)
+smpRemain:     dw 0                  ; payload bytes left this pass
+smpLen:        dw 0                  ; payload length (loop rewind)
+smpPre:        db 0                  ; DMA prescaler
+smpChunk:      dw 0                  ; whole bytes per frame
+smpFrac:       db 0                  ; rate mod 50
+smpAcc:        db 0                  ; fractional accumulator (0-49)
+smpHalf:       db 0                  ; staging half to fill next (0/1)
+smpLast:       dw 0                  ; bytes programmed last tick (the
+                                     ; consumption baseline; 0 = none
+                                     ; in flight)
     ASSERT audFlags == AUD_STATE
     ASSERT $ <= $10000               ; bank ends inside the 64K map
