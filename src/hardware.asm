@@ -5,6 +5,11 @@ hw_init:
     nextreg NR_SPRITES, 0           ; sprites off
     nextreg NR_DISPLAY_CTRL, 0      ; Layer 2 off, Timex off
     nextreg NR_ULA_CTRL, 0          ; ULA output enabled
+    nextreg NR_FALLBACK, 0          ; global fallback colour black: shows
+                                    ; wherever ALL layers are transparent
+                                    ; (or none covers, e.g. the top band
+                                    ; beside 256x192 Layer 2 art); CSpect
+                                    ; powers up non-black
     xor a
     out ($FE), a                    ; black border
     jp ula_cls

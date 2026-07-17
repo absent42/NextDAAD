@@ -43,8 +43,7 @@ pending implementation.
   source-level debugging
 
 Not yet implemented: sampled and AY sound effects, AY music playback,
-mouse input, EXTERN subroutines, and compressed (.zx0) picture
-loading.
+mouse input, and EXTERN subroutines.
 
 ## Location graphics
 
@@ -56,10 +55,21 @@ GAME.DDB, named by picture number, 3-digit zero-padded:
 - NNN.NX2 - 320 pixels wide (320x256 mode), any height up to 256
 - NNN.NXI - 256 pixels wide (256x192 mode), any height up to 192
 
-For each PICTURE the interpreter tries NNN.NX2 first, then NNN.NXI.
-Height is derived from the file size, and shorter pictures are drawn
-top-aligned with the rest of the screen left transparent, so text
-windows below the art show through.
+Either file may also be ZX0-compressed: Gfx2Next's `-zx0` option
+appends `.zx0` to the output name, and the interpreter probes those
+first - NNN.NX2.ZX0 (8.3 synonym NNN.N2Z), NNN.NX2, NNN.NXI.ZX0
+(NNN.NXZ), then NNN.NXI. A whole raw file compressed in one pass
+(e.g. with z88dk-zx0) works just as well as Gfx2Next's own output.
+Height is derived from the (decompressed) file size, and shorter
+pictures are drawn top-aligned with the rest of the screen left
+transparent, so text windows below the art show through.
+
+The two modes differ in screen coverage. 320-wide pictures (NX2)
+cover the full screen, border area included. 256-wide pictures (NXI)
+display over the classic paper area only, inset by the border on
+every side - the art occupies tile rows 4 to 4+height/8 of the 80x32
+text grid - so games using 256-wide art should lay out their text
+windows the classic way, inside the paper area.
 
 Text colours are safe by construction: text renders on the tilemap
 layer with its own fixed 16-colour classic ULA palette, while picture

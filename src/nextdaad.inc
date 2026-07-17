@@ -85,6 +85,8 @@ NR_PAL_VALUE    equ $41     ; 8-bit RRRGGGBB, auto-increment via $43
 NR_PAL_VALUE9   equ $44     ; 9-bit value, two writes (RRRGGGBB then B0); index
                             ; auto-increments after the second write
 NR_PAL_CTRL     equ $43
+NR_FALLBACK     equ $4A     ; global fallback colour: output wherever
+                            ; every layer is transparent
 TM_CTRL_ON      equ %11001000   ; enable, 80x32, attributes, text mode
 PAL_TM_FIRST    equ $30     ; auto-increment on, tilemap first palette
 TM_MAP          equ $6000   ; 80x32x2 = 5120 bytes, $6000-$73FF
