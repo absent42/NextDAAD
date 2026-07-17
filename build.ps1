@@ -15,6 +15,10 @@ try {
     & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\nextdaad.sld" @defs "src\main.asm"
     if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
     Write-Host "built build\nextdaad.nex"
+    if ($Release) {
+        Copy-Item "$root\build\nextdaad.nex" "$root\authoring-kit\nextdaad.nex" -Force
+        Write-Host "placed authoring-kit\nextdaad.nex"
+    }
     if ($Run) {
         & "$root\tools\CSpect\CSpect.exe" -w3 -zxnext -esc -mmc="$root\sd\" "$root\build\nextdaad.nex"
     }
