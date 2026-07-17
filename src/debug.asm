@@ -763,7 +763,9 @@ aud_dmaprobe:
     db 87                       ; prescaler (patched per run)
     db $CD                      ; WR4: burst mode, B addr follows
     dw DAC_PORT                 ; port B: DAC
-    db %10010010                ; WR5: /ce only, stop on end of block
+    db %10000010                ; WR5 $82: /ce only, stop on end of
+                                ; block ($92 would set D4, the doc's
+                                ; unclear /ce+wait mux mode)
     db $CF                      ; WR6: load
     db $87                      ; WR6: enable
 .proglen equ $ - .prog
