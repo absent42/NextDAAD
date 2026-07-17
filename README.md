@@ -168,9 +168,9 @@ on the SD card. An in-game restart (QUIT confirmed, RESTART) leaves
 the music and any playing sample uninterrupted by design - both are
 ambience that survives restarts exactly like save/load; games change
 or stop music explicitly with SFX n 7 / SFX 0 8, and stop a sample or
-effect with SFX n 5. Every real exit or reset (QUIT not confirmed,
-EXIT 0, a hard reset) silences everything, including the DMA and the
-DAC.
+effect with SFX n 5. Every real exit or reset (declining END's play
+again prompt, EXIT 0, a fatal error) silences everything, including
+the DMA and the DAC.
 
 BEEP takes duration and pitch, matching the classic interpreters
 (jdaad-pinned): duration in centiseconds, pitch an even value 24-222
