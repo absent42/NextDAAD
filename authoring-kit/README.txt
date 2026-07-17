@@ -20,3 +20,5 @@ Other scripts:
 
 A starter game (STARTER.DSF) with example graphics and audio ships with the
 kit so a first build works out of the box.
+
+For full setup instructions, tool downloads, and troubleshooting, see SETUP.md.
