@@ -22,5 +22,7 @@ sd/*.AKY
 sd/*.aky
 sd/*.SFB
 sd/*.sfb
+sd/*.WAV
+sd/*.wav
 tests/out/
 .superpowers/
