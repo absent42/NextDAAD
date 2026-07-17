@@ -62,11 +62,28 @@ audio_init:
     ret
 
 ; Read a Next register. E = register, returns A = value. Preserves BC.
+; IFF-preserving DI bracket: the ISR (interrupts.asm) shares the
+; $243B/$253B select+read pair to save/restore MMU 6/7 around aud_tick,
+; so the select+read here must be atomic against interrupts - otherwise
+; the ISR could re-select the port between our OUT and IN and we would
+; read back the wrong register. `ld a,i` samples IFF2 into P/V; that
+; result is pushed to the stack immediately (the Z80 stops updating P/V
+; the instant DI executes, but any instruction between the sample and
+; the DI could still clobber it, so it is saved, not held live).
 nr_read:
     push bc
+    ld a, i
+    push af                 ; save IFF2 in P/V on the stack
+    di
     ld bc, TBBLUE_REG_SEL
     out (c), e
     ld bc, TBBLUE_REG_ACC
     in a, (c)
+    ld b, a                 ; result safe from the AF pop below
+    pop af                  ; P/V = saved IFF2
+    ld a, b
+    jp po, .noei
+    ei
+.noei:
     pop bc
     ret

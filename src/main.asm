@@ -119,6 +119,13 @@ boot_data_init:
     ld (chsGfx), a             ; upper-charset escape latch, same hazard as
                                 ; wrapLock/moreLock: read unconditionally
                                 ; per printed char (prn_char_raw)
+    ld (audEnable), a          ; ISR fast-path gate off until Task 4's API
+                                ; re-enables it; a warm re-entry must not
+                                ; leave the full-context audio ISR path
+                                ; live against stale/uninitialised bank 24
+                                ; state (audio_init, called before this
+                                ; returns to im2_init, already silences
+                                ; the PSGs every boot regardless)
  IFDEF DEBUG
     ld (dbgTilemap), a         ; force the ULA route until dbg_engage_tilemap
                                 ; runs, matching cold boot
