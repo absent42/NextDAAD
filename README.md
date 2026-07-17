@@ -99,7 +99,7 @@ games.
 ## Building
 
 The toolchain (not included in repo) lives in tools/ 
-([sjasmplus](https://github.com/z00m128/sjasmplus), [DeZog](https://github.com/maziac/DeZog) VS Code plugin, [CSpect](https://github.com/z00m128/sjasmplus), DRC via [DAAD-READY](https://www.ngpaws.com/daadready/)).
+([sjasmplus](https://github.com/z00m128/sjasmplus), [DeZog](https://github.com/maziac/DeZog) VS Code plugin, [CSpect](https://github.com/z00m128/sjasmplus), DRC via [DAAD-READY](https://www.ngpaws.com/daadready/), [Gfx2Next](https://www.rustypixels.uk/gfx2next/), [Disark](https://julien-nevo.com/disark/), [Rasm](https://github.com/EdouardBERGE/rasm)).
 
 - Build: powershell -File build.ps1 (add -Release for a release build,
   -Force1MB for the unexpanded-RAM test build)
@@ -124,7 +124,10 @@ The toolchain (not included in repo) lives in tools/
     - tools/CSpect
     - tools/sjasmplus
     - tools/DAAD-READY
+    - tools/gfx2next
     - tools/Rabenstein-master (used for tests)
+    - tools/disark.exe
+    - tools/rasm_w32.exe
 
 ## Disclaimer
 
