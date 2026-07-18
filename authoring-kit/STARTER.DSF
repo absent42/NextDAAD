@@ -147,6 +147,7 @@ MUTE    61      verb
 TUNE    62      verb
 BLEEP   63      verb
 ZAP     64      verb
+SAMPLE  65      verb
 SAVE    26      verb
 LOAD    27      verb
 RAMSA   28      verb
@@ -315,7 +316,7 @@ S 1
                 PROCESS 6               ; Initialise
                 
 
-> _       _     WINAT 23 0              ; text window below the location image (demo art is 180px = ~23 tile rows)
+> _       _     WINAT 13 0              ; text window below the location image (demo art is 106px = ~13 tile rows)
                 #ifdef "splitModeOn"    ; if split mode is on, we have to apply it
                     XSPLITSCR 1
                     #ifdef "cpc"
@@ -491,8 +492,11 @@ $pictureOK
                 MESSAGE "Playing a tune."
                 DONE
 
-> ZAP     _     SFX 1 1                 ; play sound effect 1 from GAME.SFB
+> ZAP     _     SFX 2 1                 ; play AY sound effect 2 from GAME.SFB
                 DONE
+
+> SAMPLE  _     SFX 1 1                 ; play sampled WAV 001.WAV (SFX n 1 probes
+                DONE                    ; NNN.WAV first, else falls back to AY effect n)
 
 > BLEEP   _     BEEP 20 100             ; classic tone: 20 centiseconds, pitch 100
                 DONE

@@ -36,10 +36,16 @@ Put these in this kit folder:
   your image editor first. A 320-pixel-wide PNG becomes full-screen art; a
   256-pixel-wide PNG becomes classic bordered art. Any other width is rejected
   with an error.
-- Optional audio in `AUDIO\` (Arkos `.aks` sources):
+- Optional audio in `AUDIO\` (Arkos `.aks` sources, converted at build time):
   - `<GAME>.aks` - background music, auto-played at boot.
   - `NNN.aks` - songs selected in-game by `SFX n 6` (once) or `SFX n 7` (loop).
   - `<GAME>_FX.aks` - the sound-effects bank, played by `SFX n 1`.
+- Optional sampled sound in `AUDIO\` (WAV files, copied as-is - no conversion):
+  - `NNN.wav` - a digital sample played by `SFX n 1` (once) or `SFX n 2` (looped).
+    `SFX n 1/2` looks for `NNN.WAV` first and falls back to the AY effect bank
+    if the WAV is absent, so a sample and an AY effect cannot share a number.
+    WAV must be **PCM, mono, 8-bit**; it plays at the file's own sample rate.
+    You supply it in that format - the build does not convert it.
 
 ## 3. Configuration (CONFIG.BAT)
 
