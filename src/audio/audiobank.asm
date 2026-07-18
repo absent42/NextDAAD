@@ -59,7 +59,7 @@ aud_tick:
     call aud_smp_stop
     ld hl, audRequest
 .no7:
-    ; bit 6: start the sample staged in banks 25-27
+    ; bit 6: start the sample staged in the smpPageTab pages
     bit 6, (hl)
     jr z, .no6
     res 6, (hl)
@@ -306,8 +306,9 @@ aud_psg_silence:
 
 ; --- sampled sound engine (SP8) --------------------------------------
 
-; Start the sample staged in banks 25-27 by aud_load_wav, using the
-; resident audReqSmp* parameters. Runs in ISR context.
+; Start the sample staged in the smpPageTab pages by aud_load_wav, using
+; the resident audReqSmp* parameters. Runs in ISR context. Source position
+; starts at table index 0 (smpTabIdx), offset 0; length is 24-bit.
 aud_smp_start:
     ld a, (audReqSmpPre)
     ld (smpPre), a
@@ -318,11 +319,13 @@ aud_smp_start:
     xor a
     ld (smpAcc), a
     ld (smpHalf), a
-    ld hl, (audReqSmpLen)
+    ld (smpTabIdx), a           ; start at the first page-table entry
+    ld hl, (audReqSmpLen)       ; 24-bit payload length
     ld (smpLen), hl
     ld (smpRemain), hl
-    ld a, SMP_PAGE_FIRST
-    ld (smpPage), a
+    ld a, (audReqSmpLenHi)
+    ld (smpLenHi), a
+    ld (smpRemainHi), a
     ld hl, 0
     ld (smpOff), hl
     ld (smpLast), hl            ; nothing in flight yet
@@ -358,14 +361,18 @@ aud_smp_stop:
 ;   1. disable the DMA ($83), read the byte counter, clamp to the
 ;      length programmed last tick (smpLast; counter semantics near
 ;      end-of-block are model-fuzzy, the clamp caps any excess),
-;   2. advance smpOff/smpPage/smpRemain by CONSUMED (smpRemain hits 0
-;      only when every payload byte has truly played),
+;   2. advance smpOff/smpTabIdx/smpRemain by CONSUMED (smpRemain is
+;      24-bit; it hits 0 only when every payload byte has truly played;
+;      smpTabIdx steps to the next smpPageTab entry on each $2000 cross),
 ;   3. on smpRemain = 0: play-once -> aud_smp_stop; loop -> rewind,
 ;   4. compute this frame's chunk (whole + fractional carry, clamped
-;      to remain), copy it from (smpPage, smpOff) into the idle
-;      staging half THROUGH MMU SLOT 7 (this code executes from slot
+;      to remain), copy it from (smpPageTab[smpTabIdx], smpOff) into the
+;      idle staging half THROUGH MMU SLOT 7 (this code executes from slot
 ;      6 - see the task header; slot 7 restored to AUD_PAGE_HI before
-;      any state writeback), program the DMA, record smpLast.
+;      any state writeback), program the DMA, record smpLast. The page
+;      table lives in page-48 code space (slot 6), which stays mapped
+;      throughout the tick, so it is readable even while slot 7 windows
+;      a source page.
 ; A first-start tick has smpLast = 0 (aud_smp_start zeroes it), so
 ; step 1-2 advance by nothing and step 4 programs the first chunk.
 aud_smp_tick:
@@ -395,44 +402,60 @@ aud_smp_tick:
     jr nc, .clamped             ; counter <= programmed: take it
     ld de, (smpLast)            ; counter overran (end-of-block
 .clamped:                       ; semantics): clamp to programmed
-    ; advance source by DE consumed: off += DE (page rolls at $2000),
-    ; remain -= DE
+    ; advance source by DE consumed: remain -= DE (24-bit), off += DE
+    ; (smpTabIdx steps to the next table page on the $2000 crossing)
     ld hl, (smpRemain)
     or a
-    sbc hl, de
-    jr nc, .remok
-    ld hl, 0                    ; safety floor (cannot underflow if
-.remok:                         ; the clamp above held)
+    sbc hl, de                  ; low word -= consumed, CF = borrow
+    ld a, (smpRemainHi)
+    sbc a, 0                    ; high byte -= borrow
+    jr nc, .remstore            ; no underflow past the high byte
+    ld hl, 0                    ; defensive floor: cannot truly underflow
+    xor a                       ; while DE stays clamped to smpLast <= remain
+.remstore:
     ld (smpRemain), hl
+    ld (smpRemainHi), a
     ld hl, (smpOff)
     add hl, de
     ld a, h
     cp $20
     jr c, .offok                ; still inside the 8K page
-    sub $20                     ; rolled: off -= $2000, page += 1
+    sub $20                     ; rolled: off -= $2000, next table page
     ld h, a
-    ld a, (smpPage)
+    ld a, (smpTabIdx)
     inc a
-    ld (smpPage), a
+    ld (smpTabIdx), a
 .offok:
     ld (smpOff), hl
     xor a
     ld (smpLast), a
     ld (smpLast+1), a
 .advanced:
-    ; --- end of payload? ---
+    ; --- end of payload? (24-bit remain drained) ---
     ld hl, (smpRemain)
-    ld a, h
+    ld a, (smpRemainHi)
+    or h
     or l
-    jr nz, .sized
+    jr z, .drained              ; all three bytes zero: payload played out
+    ; defensive: smpTabIdx must index a live table entry before the copy
+    ; maps a source page. In normal flow the drained test above fires on
+    ; the same tick the index would overrun; a >= here means corrupted
+    ; state, so treat it as drained (stop or rewind).
+    ld a, (smpTabIdx)
+    ld hl, smpPageCnt
+    cp (hl)
+    jr c, .sized                ; idx < count: normal
+.drained:
     ld a, (smpFlags)
     bit 1, a
     jp z, aud_smp_stop          ; play-once: everything has played (jp:
                                 ; out of jr range from here)
     ld hl, (smpLen)             ; loop: rewind to the payload start
     ld (smpRemain), hl
-    ld a, SMP_PAGE_FIRST
-    ld (smpPage), a
+    ld a, (smpLenHi)
+    ld (smpRemainHi), a
+    xor a
+    ld (smpTabIdx), a           ; back to the first table page
     ld hl, 0
     ld (smpOff), hl
 .sized:
@@ -449,29 +472,50 @@ aud_smp_tick:
 .noc:
     ld (smpAcc), a
     ; clamp to what remains: BC = copy length. smpRemain is NOT
-    ; decremented here - consumption is what decrements it (step 2)
+    ; decremented here - consumption is what decrements it (step 2).
+    ; smpRemain is 24-bit: a nonzero high byte means remain far exceeds
+    ; the chunk (chunk <= AUD_STAGE_HALF), so the whole chunk always fits
+    ; and the low-word compare must be skipped (it would misclamp).
+    ld a, (smpRemainHi)
+    or a
+    jr nz, .fullchunk
     ld de, (smpRemain)
     or a
     sbc hl, de
-    jr c, .whole                ; chunk < remain: full chunk
+    jr c, .restorechunk         ; chunk < remain: full chunk
     ld b, d                     ; final stretch: program exactly the
     ld c, e                     ; rest
     jr .copy
-.whole:
+.restorechunk:
     add hl, de                  ; HL = chunk again
+.fullchunk:
     ld b, h
     ld c, l
     ; fall through to .copy
 .copy:
     ; Stage the copy parameters in scratch while slot 7 still holds
     ; the state page, then do the whole copy with registers only.
-    ; The copy is a pure READ of the source window: smpOff/smpPage
+    ; The copy is a pure READ of the source window: smpOff/smpTabIdx
     ; are NOT advanced here (consumption advances them next tick).
+    ; Fetch the current and next source pages from smpPageTab (page 48,
+    ; slot 6 - readable now and throughout the slot-7 remap below).
+    ; smpTabIdx < smpPageCnt is guaranteed here (drained test above); the
+    ; +1 read is in-bounds because a crossing (part2 > 0) only happens
+    ; while a further payload page exists, and smpPageCnt (the adjacent
+    ; byte) backstops the table's last entry regardless.
     ld (smpTickLen), bc
     ld hl, (smpOff)
     ld (smpTickOff), hl
-    ld a, (smpPage)
+    ld a, (smpTabIdx)
+    ld e, a
+    ld d, 0
+    ld hl, smpPageTab
+    add hl, de
+    ld a, (hl)                  ; current page = smpPageTab[smpTabIdx]
     ld (smpTickPage), a
+    inc hl
+    ld a, (hl)                  ; next page = smpPageTab[smpTabIdx+1]
+    ld (smpTickPage2), a
     ld a, (smpHalf)
     ld de, AUD_STAGE0
     or a
@@ -515,12 +559,11 @@ aud_smp_tick:
     jr z, .p2
     ldir
 .p2:
-    ; copy part2 from (page+1, 0); DE already past part1. Reading one
-    ; page past the payload end cannot happen: part2 > 0 only when
-    ; off+len > $2000, and len <= remain keeps off+len within the
-    ; loaded payload, whose last byte lives at page <= 55
-    ld a, (smpTickPage)
-    inc a
+    ; copy part2 from (next table page, 0); DE already past part1.
+    ; Reading one table entry ahead cannot walk off the payload: part2
+    ; > 0 only when off+len > $2000, and len <= remain keeps off+len
+    ; within the loaded payload, so smpTabIdx+1 is a live table entry.
+    ld a, (smpTickPage2)
     nextreg $57, a
     ld hl, $E000
     push ix
@@ -567,15 +610,28 @@ aud_smp_tick:
     ld (smpHalf), a
     ret
 
-; IMPORTANT: smpTickLen/Off/Dst/Page are written before the slot-7
+; IMPORTANT: smpTickLen/Off/Dst/Page/Page2 are written before the slot-7
 ; remap and only read while the source page is mapped (they live in
 ; page 48 CODE space at $C000-$CFFF, which stays mapped in slot 6
 ; throughout); smpLast and all smp* state live in the $FFE0 block and
-; are only touched while slot 7 holds AUD_PAGE_HI.
+; are only touched while slot 7 holds AUD_PAGE_HI. smpTickPage2 holds the
+; NEXT source page (smpPageTab[smpTabIdx+1]) for the page-crossing copy -
+; consecutive table entries are not consecutive pages (pool banks are
+; non-contiguous), so the crossing branch reads it instead of page+1.
 smpTickLen:   dw 0
 smpTickOff:   dw 0
 smpTickDst:   dw 0
 smpTickPage:  db 0
+smpTickPage2: db 0
+
+; Sample stream page list + count, in page-48 CODE space (slot 6). The
+; ISR reads them from slot 6, which stays mapped throughout aud_tick, so
+; they are readable even while slot 7 windows a source page. aud_load_wav
+; fills them (bank 24 page 48 mapped into slot 6) via aud_banks_claim;
+; aud_boot_probe zeroes smpPageCnt on warm boot. smpPageCnt sits at
+; smpPageTab+AUD_STRTAB_MAX - aud_banks_claim/release address it there.
+smpPageTab:   ds AUD_STRTAB_MAX
+smpPageCnt:   db 0
 
 ; zxnDMA program template (register encodings per zxndma.txt):
 ; disable, WR0 transfer A->B with A address + length, WR1 A memory
@@ -734,10 +790,12 @@ audPlayerUp:   db 0                  ; 1 once PLY_AKY_INIT has run
                                      ; (aud_ensure_player gate; reset
                                      ; by aud_boot_probe on warm boot)
 smpFlags:      db 0                  ; bit 0 sample active, bit 1 looping
-smpPage:       db 0                  ; current source 8K page (50-55)
+smpTabIdx:     db 0                  ; current index into smpPageTab (page 48)
 smpOff:        dw 0                  ; read offset inside that page (0-$1FFF)
-smpRemain:     dw 0                  ; payload bytes left this pass
-smpLen:        dw 0                  ; payload length (loop rewind)
+smpRemain:     dw 0                  ; payload bytes left this pass, low word
+smpRemainHi:   db 0                  ; payload bytes left this pass, high byte
+smpLen:        dw 0                  ; payload length (loop rewind), low word
+smpLenHi:      db 0                  ; payload length (loop rewind), high byte
 smpPre:        db 0                  ; DMA prescaler
 smpChunk:      dw 0                  ; whole bytes per frame
 smpFrac:       db 0                  ; rate mod 50

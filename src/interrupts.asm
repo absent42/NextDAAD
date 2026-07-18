@@ -118,12 +118,14 @@ audReqSfx:  db 0            ; play-effect: effect number (>= 1)
 audReqLoop: db 0            ; start-music: 1 = loop, 0 = play once
 audReqSmpLoop:  db 0        ; start-sample: 1 = loop, 0 = play once
 audReqSmpPre:   db 0        ; start-sample: DMA prescaler
-audReqSmpLen:   dw 0        ; start-sample: payload bytes (<= 49152)
+audReqSmpLen:   dw 0        ; start-sample: payload bytes, low word (24-bit)
+audReqSmpLenHi: db 0        ; start-sample: payload bytes, high byte
 audReqSmpChunk: dw 0        ; start-sample: whole bytes per frame (rate/50)
 audReqSmpFrac:  db 0        ; start-sample: rate mod 50 (chunk fraction)
-smpLoadedNum:   db $FF      ; keep-last: sample number resident in banks
-                            ; 25-27 ($FF = none); owned by aud_load_wav,
-                            ; reset by aud_boot_probe on (warm) boot
+smpLoadedNum:   db $FF      ; keep-last: sample number resident in the
+                            ; claimed page-table banks ($FF = none); owned
+                            ; by aud_load_wav, reset by aud_boot_probe on
+                            ; (warm) boot
 sfbCount:       db 0        ; GAME.SFB effect count ((table[0]-$D000)/2);
                             ; 0 = no bank loaded - h_sfx bounds guard
 

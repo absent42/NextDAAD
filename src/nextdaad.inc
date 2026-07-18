@@ -229,8 +229,16 @@ AUD_PSCLOCK     equ 875000  ; prescaler base clock in Hz: rate =
                             ; checklist re-verifies on silicon
 AUD_RATE_MIN    equ 3500    ; below this the prescaler exceeds 255
 AUD_RATE_MAX    equ 20000   ; staging halves are sized for this
-AUD_SMP_MAX     equ 49152   ; payload cap: banks 25-27 exactly
-SMP_PAGE_FIRST  equ 50      ; bank 25 lower 8K; payload spans pages 50-55
+AUD_SMP_MAX     equ 1048576 ; sample payload sanity ceiling (1MB = 64
+                            ; banks; allocator success is the real
+                            ; bound - this just rejects absurd WAVs
+                            ; before touching the allocator)
+AUD_STRTAB_MAX  equ 128     ; stream page-table capacity (128 x 8K =
+                            ; 1MB per stream; one table per client)
+SMP_FLOOR_FIRST equ 25      ; reserved audio floor: banks 25-27 are
+SMP_FLOOR_LAST  equ 27      ; claimed first so a 48K load ALWAYS
+                            ; works regardless of pool pressure
+SMP_PAGE_FIRST  equ 50      ; bank 25 lower 8K; floor banks' first page
 AUD_STAGE_HALF  equ 416     ; bytes per staging half: 20000/50 = 400
                             ; peak chunk + fractional-carry margin
     ASSERT AUD_STAGE_HALF >= AUD_RATE_MAX/50 + 2

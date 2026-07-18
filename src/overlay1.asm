@@ -1921,6 +1921,10 @@ aud_boot_probe:
     ld (DATA_WINDOW+audPlayerUp-$E000), a
     ld a, $FF
     ld (DATA_WINDOW+audSongNum-$E000), a
+    ld a, AUD_PAGE_LO           ; smpPageCnt lives in page 48 code space:
+    call data_map_page          ; a stale stream page count must not
+    xor a                       ; survive a warm boot (bank_table_init
+    ld (smpPageCnt), a          ; recycles the banks themselves)
     call data_restore
     ld a, $FF
     ld (smpLoadedNum), a        ; keep-last cold on any (warm) boot
@@ -1959,17 +1963,20 @@ bpTarget:   dw 0                ; h_beep frameCounter target
 ; --- WAV sample loader (SP8) ----------------------------------------
 
 ; aud_load_wav: A = sample number (1-255). Probes NNN.WAV, validates
-; RIFF/fmt (PCM, mono, 8-bit, rate 3500-20000), streams the data
-; payload into banks 25-27 (pages 50-55) through the slot-6 window,
-; and computes the DMA prescaler and per-frame chunk from the header
-; rate. Keep-last: when A is already resident the SD read is skipped
-; entirely (params persist in the audReqSmp* bytes). Any active sample
-; is stopped (mailbox bit 7 + consumed-wait) before the banks are
-; touched - a playing sample must never be overwritten under the DMA.
-; Out: CF clear = payload resident + audReqSmpPre/Len/Chunk/Frac
+; RIFF/fmt (PCM, mono, 8-bit, rate 3500-20000), claims an allocated page
+; list (floor banks 25-27 first, then the pool) via aud_banks_claim and
+; streams the data payload into it through the slot-6 window, then
+; computes the DMA prescaler and per-frame chunk from the header rate.
+; Keep-last: when A is already resident the SD read is skipped entirely
+; (params persist in the audReqSmp* bytes). Any active sample is stopped
+; (mailbox bit 7 + consumed-wait) and its banks released before the new
+; claim - a playing sample must never be overwritten under the DMA.
+; Out: CF clear = payload resident + audReqSmpPre/Len/LenHi/Chunk/Frac
 ; committed (audReqSmpLoop is the CALLER's, set before or after);
-; CF set = missing/malformed/oversize/short-read - nothing changed
-; except the (idempotent) stop of the previous sample.
+; CF set = missing/malformed/oversize/short-read. On any failure past the
+; keep-last check the previous sample is stopped AND its banks released
+; (smpPageCnt 0, no banks held); a missing file (open fails first) leaves
+; the previous sample untouched.
 ; Corrupts everything.
 aud_load_wav:
     ld (wavReqNum), a
@@ -2033,6 +2040,18 @@ aud_load_wav:
 .stopped:
     ld a, $FF
     ld (smpLoadedNum), a        ; loading invalidates the resident one
+    ; release any previous sample's banks now that the engine is provably
+    ; idle (the stop-wait consumed the stop, so the ISR is off the sample)
+    ; and BEFORE the new claim - never while the ISR might walk them. page
+    ; 48 into slot 6 for smpPageTab/smpPageCnt; slot 6 is free here.
+    call data_save
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld hl, smpPageTab
+    ld a, (smpPageCnt)
+    ld b, a
+    call aud_banks_release      ; safe on B=0 (first load); zeroes smpPageCnt
+    call data_restore
     ; RIFF header: "RIFF" dd size "WAVE"
     ld ix, wavHdr
     ld bc, 12
@@ -2143,21 +2162,30 @@ aud_load_wav:
     ld a, (wavGotFmt)
     or a
     jp z, .failclose
-    ld hl, (wavHdr+6)           ; size high word
-    ld a, h
+    ; 32-bit data size: wavHdr+4 low word, wavHdr+6 high word. Reject the
+    ; absurd top byte, then range-check the 24-bit size against AUD_SMP_MAX
+    ; (the allocator is the real bound; this only rejects insane WAVs).
+    ld a, (wavHdr+7)            ; size bits 24-31
+    or a
+    jp nz, .failclose          ; > 16MB: absurd
+    ld hl, (wavHdr+4)          ; size bits 0-15
+    ld a, (wavHdr+6)           ; size bits 16-23
+    ld d, a
+    or h
+    or l
+    jp z, .failclose           ; empty data: malformed
+    ld a, d                    ; range: size <= AUD_SMP_MAX ($100000)
+    cp AUD_SMP_MAX >> 16       ; high byte vs $10
+    jr c, .datok               ; < $10: within the cap
+    jp nz, .failclose          ; > $10: over the cap
+    ld a, h                    ; == $10: low word must be zero
     or l
     jp nz, .failclose
-    ld hl, (wavHdr+4)           ; size low word = payload length
-    ld a, h
-    or l
-    jp z, .failclose            ; empty data: malformed
-    ld de, AUD_SMP_MAX+1
-    or a
-    sbc hl, de
-    jp nc, .failclose           ; over the 3-bank cap
-    ld hl, (wavHdr+4)
-    ld (wavLen), hl
-    jr .stream
+.datok:
+    ld (wavLen), hl            ; 24-bit payload length: low word
+    ld a, d
+    ld (wavLenHi), a           ; high byte
+    jp .stream
 .skip:
     ; unknown chunk: discard size (+ odd pad); reject a pathological
     ; >64K non-data chunk rather than loop for minutes
@@ -2194,48 +2222,78 @@ aud_load_wav:
     jp c, .failclose
     jr .skiploop
 .stream:
-    ; stream wavLen payload bytes into pages 50-55, 8K per window
+    ; claim an allocated page list for the 24-bit payload, then stream it
+    ; window-by-window over smpPageTab. page 48 into slot 6 for the table
+    ; writes: aud_banks_claim needs it mapped (it does not self-bracket).
     call data_save
-    ld a, SMP_PAGE_FIRST
-    ld (wavPage), a
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld a, (wavLenHi)            ; A:DE = 24-bit payload byte count
+    ld de, (wavLen)
+    ld hl, smpPageTab
+    call aud_banks_claim
+    jp c, .claimfail            ; allocation failed: nothing held
+    ; init the 24-bit streaming counter and the table index
     ld hl, (wavLen)
+    ld (wavRem), hl
+    ld a, (wavLenHi)
+    ld (wavRemHi), a
+    xor a
+    ld (wavIdx), a
 .pageloop:
-    ld a, h                     ; remaining == 0 -> done
+    ld hl, (wavRem)            ; 24-bit remaining == 0 -> done
+    ld a, (wavRemHi)
+    or h
     or l
     jr z, .streamed
-    push hl
+    ; this window = min(remaining, $2000)
+    ld a, (wavRemHi)
+    or a
+    jr nz, .fullwin            ; high byte set: remaining >= 64K > $2000
+    ld hl, (wavRem)
     ld de, $2000
     or a
     sbc hl, de
-    jr nc, .full
-    pop hl                      ; partial final window: read HL bytes
-    ld b, h
-    ld c, l
-    ld hl, 0
-    jr .rd
-.full:
-    pop af                      ; discard (remaining was > $2000)
-    ld bc, $2000
-.rd:
-    push hl                     ; remaining AFTER this window
-    ld a, (wavPage)
+    jr nc, .fullwin           ; remaining low word >= $2000
+    ld hl, (wavRem)            ; partial final window: remLo bytes
+    jr .setwin
+.fullwin:
+    ld hl, $2000
+.setwin:
+    ld (wavWin), hl
+    ; source page = smpPageTab[wavIdx]: map page 48, read the entry
+    ld a, AUD_PAGE_LO
     call data_map_page
-    push bc
+    ld a, (wavIdx)
+    ld e, a
+    ld d, 0
+    ld hl, smpPageTab
+    add hl, de
+    ld a, (hl)
+    ; map that source page and read the window into the slot-6 window
+    call data_map_page
     ld ix, DATA_WINDOW
+    ld bc, (wavWin)
     call .read
-    pop de                      ; DE = requested for this window
-    jr c, .failpost
+    jp c, .failpost
     ; short read = truncated file (data chunk lied): reject
-    ld h, b
-    ld l, c
+    ld hl, (wavWin)
     or a
-    sbc hl, de
-    jr nz, .failpost
-    ld a, (wavPage)
-    inc a
-    ld (wavPage), a
-    pop hl
-    jr .pageloop
+    sbc hl, bc                 ; requested - actually read
+    jp nz, .failpost
+    ; advance: remaining -= wavWin (24-bit), step to the next table entry
+    ld hl, (wavRem)
+    ld bc, (wavWin)
+    or a
+    sbc hl, bc
+    ld (wavRem), hl
+    jr nc, .noborrow
+    ld hl, wavRemHi
+    dec (hl)
+.noborrow:
+    ld hl, wavIdx
+    inc (hl)
+    jp .pageloop
 .streamed:
     call data_restore
     ld a, (audHandle)
@@ -2261,12 +2319,28 @@ aud_load_wav:
     ld (audReqSmpFrac), a
     ld hl, (wavLen)
     ld (audReqSmpLen), hl
+    ld a, (wavLenHi)
+    ld (audReqSmpLenHi), a
     ld a, (wavReqNum)
     ld (smpLoadedNum), a
     or a                        ; CF clear
     ret
+.claimfail:
+    ; allocation failed before any bank was held (aud_banks_claim unwound
+    ; its own partial claim and left smpPageCnt 0). restore slot 6, fail.
+    call data_restore
+    jp .failclose
 .failpost:
-    pop hl                      ; balance the remaining-push
+    ; SD error or short read after a successful claim: release the banks.
+    ; slot 6 currently holds a source page (still inside the .stream
+    ; data_save bracket); map page 48 for the release, then data_restore
+    ; restores the caller's slot 6. Leaves smpPageCnt 0 (no banks held).
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld hl, smpPageTab
+    ld a, (smpPageCnt)
+    ld b, a
+    call aud_banks_release
     call data_restore
 .failclose:
     ld a, (audHandle)
@@ -2303,11 +2377,176 @@ aud_div_clock:
     ld a, b
     ret
 
+; --- banked-stream allocation (SP10) --------------------------------
+;
+; PRECONDITION for both helpers: bank 24 page 48 (AUD_PAGE_LO) is mapped
+; into slot 6. The page table and its count byte live there and the
+; helpers do NOT bracket their own slot-6 mapping (so a caller can batch
+; table access - aud_load_wav maps page 48 once per phase, aud_boot_probe
+; likewise). Both write bankTable directly (resident, visible regardless
+; of slot 6) and call bank_alloc/bank_free (also resident). Working
+; storage is mainline-only scratch, so these are not ISR-safe; callers
+; run them only with the sample engine idle.
+;
+; aud_banks_claim: A:DE = 24-bit byte count (A = bits 23-16). HL = page
+; table base (smpPageTab or aysPageTab). Fills the table with 2 pages per
+; claimed 16K bank - floor banks 25-27 first (BT_RESERVED -> BT_USED by
+; direct table write, so bank_alloc can never hand them out twice), then
+; the pool via bank_alloc. On success: CF clear, B = page count, and the
+; count byte at (base + AUD_STRTAB_MAX) = B. On failure (pool exhausted,
+; or more than AUD_STRTAB_MAX/2 banks): everything claimed so far is
+; released (floor -> BT_RESERVED, pool -> bank_free), the count byte is
+; zeroed, CF set. Corrupts everything.
+aud_banks_claim:
+    ld (smpClaimTab), hl        ; stash base for the fill and the count byte
+    ; zero the count byte (base + AUD_STRTAB_MAX) up front: it then reads 0
+    ; on EVERY failure return (cap-fail as well as the unwind), and only a
+    ; successful fill overwrites it. Preserves A:DE (the byte count).
+    ld bc, AUD_STRTAB_MAX
+    add hl, bc
+    ld (hl), 0
+    ; --- 24-bit bytes -> bank count: ceil(bytes / 16384) ---
+    ld hl, 16383
+    add hl, de
+    adc a, 0                    ; A:HL = bytes + 16383 (24-bit)
+    ; banks = (A:HL) >> 14 = (A << 2) | (H >> 6)
+    ld c, a                     ; C = high byte
+    ld a, h
+    rlca
+    rlca
+    and 3                       ; A = H >> 6 (0..3)
+    ld b, a
+    ld a, c
+    add a, a
+    add a, a                    ; A = high byte * 4
+    add a, b                    ; A = bank count
+    cp AUD_STRTAB_MAX/2 + 1     ; more than 64 banks (1MB)?
+    jr nc, .capfail
+    ld (smpClaimBanks), a       ; banks still to claim
+    xor a
+    ld (smpClaimPages), a       ; pages appended so far
+    ld hl, (smpClaimTab)
+    ld (smpClaimPtr), hl        ; table write pointer
+    ; --- pass 1: floor banks 25-27, first-come across clients ---
+    ld c, SMP_FLOOR_FIRST
+.floorlp:
+    ld a, (smpClaimBanks)
+    or a
+    jp z, .filled               ; all banks satisfied from the floor
+    ld a, c
+    cp SMP_FLOOR_LAST+1
+    jr nc, .poollp              ; floor exhausted -> pool
+    ld hl, bankTable
+    ld b, 0
+    add hl, bc                  ; HL -> bankTable[C] (B=0, so BC = C)
+    ld a, (hl)
+    cp BT_RESERVED
+    jr nz, .floornext           ; already claimed by the other client: skip
+    ld (hl), BT_USED            ; claim this floor bank
+    ld a, c
+    add a, a                    ; low page = bank * 2
+    call .append
+.floornext:
+    inc c
+    jr .floorlp
+    ; --- pass 2: pool via bank_alloc ---
+.poollp:
+    ld a, (smpClaimBanks)
+    or a
+    jr z, .filled
+    call bank_alloc
+    jr c, .unwind               ; pool exhausted: release the partial claim
+    add a, a                    ; low page = bank * 2
+    call .append
+    jr .poollp
+.filled:
+    ld a, (smpClaimPages)
+    ld hl, (smpClaimTab)
+    ld de, AUD_STRTAB_MAX
+    add hl, de
+    ld (hl), a                  ; count byte = page count
+    ld b, a                     ; B = page count (contract)
+    or a                        ; CF clear
+    ret
+.unwind:
+    ld a, (smpClaimPages)
+    ld b, a
+    ld hl, (smpClaimTab)
+    call aud_banks_release      ; frees the partial claim, zeroes the count
+    scf
+    ret
+.capfail:
+    scf                         ; too big: nothing claimed, count already 0
+    ret
+; append 2 pages (A = low page, A+1 = high page), advance the write
+; pointer, count 2 pages, decrement banks-remaining. Preserves BC;
+; corrupts AF, DE, HL.
+.append:
+    ld hl, (smpClaimPtr)
+    ld (hl), a
+    inc hl
+    inc a
+    ld (hl), a
+    inc hl
+    ld (smpClaimPtr), hl
+    ld hl, smpClaimPages
+    inc (hl)
+    inc (hl)                    ; pages += 2
+    ld hl, smpClaimBanks
+    dec (hl)                    ; banks -= 1
+    ret
+
+; aud_banks_release: HL = page table base, B = page count. Frees every
+; bank exactly once - pages come in pairs (bank*2, bank*2+1), so step by
+; 2 and take bank = page/2: floor pages (50..55) back to BT_RESERVED, the
+; rest via bank_free. Then zeroes the count byte at (base +
+; AUD_STRTAB_MAX). Safe on B = 0. Corrupts AF, BC, DE, HL.
+aud_banks_release:
+    ld (smpRelTab), hl          ; stash base for the count-byte zero
+    ld a, b
+    or a
+    jr z, .relcount             ; B = 0: nothing to free
+    srl b                       ; B = bank count (pages / 2)
+.rellp:
+    ld a, (hl)                  ; low page of this bank
+    inc hl
+    inc hl                      ; step past the page pair
+    push hl
+    push bc
+    cp SMP_FLOOR_FIRST*2
+    jr c, .relpool              ; page < 50: pool bank
+    cp (SMP_FLOOR_LAST+1)*2
+    jr nc, .relpool             ; page >= 56: pool bank
+    srl a                       ; floor bank = page / 2
+    ld e, a
+    ld d, 0
+    ld hl, bankTable
+    add hl, de
+    ld (hl), BT_RESERVED        ; floor bank back to reserved, NOT free
+    jr .relnext
+.relpool:
+    srl a                       ; pool bank = page / 2
+    call bank_free
+.relnext:
+    pop bc
+    pop hl
+    djnz .rellp
+.relcount:
+    ld hl, (smpRelTab)
+    ld de, AUD_STRTAB_MAX
+    add hl, de
+    ld (hl), 0                  ; count byte: no banks held
+    ret
+
 wavExt:    db ".WAV", 0
 wavReqNum: db 0
 wavGotFmt: db 0
-wavPage:   db 0
-wavLen:    dw 0
+wavLen:    dw 0                 ; payload length low word (24-bit)
+wavLenHi:  db 0                 ; payload length high byte
+wavRem:    dw 0                 ; streaming remaining, low word
+wavRemHi:  db 0                 ; streaming remaining, high byte
+wavIdx:    db 0                 ; current smpPageTab index while streaming
+wavWin:    dw 0                 ; current window byte count
 wavSkip:   dw 0
 wavHdr:    ds 16                ; RIFF/chunk header + discard scratch
                                  ; (16, NOT 12: the skip loop reads up
@@ -2315,5 +2554,10 @@ wavHdr:    ds 16                ; RIFF/chunk header + discard scratch
                                  ; would overflow into wavFmt and
                                  ; clobber the captured rate)
 wavFmt:    ds 16                ; fmt chunk body
+smpClaimTab:   dw 0             ; aud_banks_claim: table base + count anchor
+smpClaimPtr:   dw 0             ; aud_banks_claim: table write pointer
+smpClaimBanks: db 0            ; aud_banks_claim: banks still to claim
+smpClaimPages: db 0            ; aud_banks_claim: pages appended so far
+smpRelTab:     dw 0            ; aud_banks_release: base for the count zero
 
     ASSERT $ <= OVL_LIMIT
