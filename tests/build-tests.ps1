@@ -27,6 +27,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
 
+New-Item -ItemType Directory -Force "$root\tests\out" | Out-Null
+
 Copy-Item "$PSScriptRoot\test.dsf" "$dr\NDTEST.DSF" -Force
 Push-Location $dr
 try {
@@ -35,15 +37,22 @@ try {
     & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDTEST.json NDTEST.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed" }
     Move-Item NDTEST.DDB "$root\sd\GAME.DDB" -Force
+    # tests\test.dsf has no XMESSAGE yet (Task 5 adds the verb), so DRB
+    # emits no 0.XMB for the template - tolerate absence. Wired now so
+    # Task 5 needs no script change: stage sd\0.XMB in the same
+    # default/template path the DDB copy above uses, right after it.
+    if (Test-Path '0.XMB') {
+        Move-Item '0.XMB' "$root\tests\out\template.xmb" -Force
+        Copy-Item "$root\tests\out\template.xmb" "$root\sd\0.XMB" -Force
+        "staged tests\out\template.xmb -> sd\0.XMB"
+    }
 }
 finally {
-    Remove-Item "$dr\NDTEST.DSF", "$dr\NDTEST.json" -ErrorAction SilentlyContinue
+    Remove-Item "$dr\NDTEST.DSF", "$dr\NDTEST.json", "$dr\0.XMB" -ErrorAction SilentlyContinue
     Pop-Location
 }
 
 & "$PSScriptRoot\check-cprops.ps1"
-
-New-Item -ItemType Directory -Force "$root\tests\out" | Out-Null
 
 Copy-Item "$PSScriptRoot\condacts.dsf" "$dr\NDSUITE.DSF" -Force
 Push-Location $dr
@@ -53,9 +62,13 @@ try {
     & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDSUITE.json NDSUITE.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (suite)" }
     Move-Item NDSUITE.DDB "$root\tests\out\condacts.ddb" -Force
+    # condacts.dsf's check 72 always uses XMESSAGE, so DRB always emits
+    # 0.XMB here - no Test-Path guard (an absence would be a real
+    # regression worth throwing on).
+    Move-Item '0.XMB' "$root\tests\out\condacts.xmb" -Force
 }
 finally {
-    Remove-Item "$dr\NDSUITE.DSF", "$dr\NDSUITE.json" -ErrorAction SilentlyContinue
+    Remove-Item "$dr\NDSUITE.DSF", "$dr\NDSUITE.json", "$dr\0.XMB" -ErrorAction SilentlyContinue
     Pop-Location
 }
 
@@ -116,10 +129,12 @@ if ($Suite) {
     # earlier -Aud run's residue would reroute checks 66/69 through the
     # sample path and an out-of-range AY effect. Stale-clean first, then
     # copy the 098/099 fixtures in.
-    Remove-Item "$root\sd\*.WAV", "$root\sd\*.AKY", "$root\sd\GAME.SFB" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$root\sd\*.WAV", "$root\sd\*.AKY", "$root\sd\GAME.SFB", "$root\sd\0.XMB" -Force -ErrorAction SilentlyContinue
     Copy-Item "$root\tests\out\condacts.ddb" "$root\sd\GAME.DDB" -Force
     Copy-Item "$root\tests\out\truncwav.bin" "$root\sd\098.WAV" -Force
     Copy-Item "$root\tests\out\badwav.bin" "$root\sd\099.WAV" -Force
+    Copy-Item "$root\tests\out\condacts.xmb" "$root\sd\0.XMB" -Force
+    "staged tests\out\condacts.xmb -> sd\0.XMB"
 }
 if ($Err4) {
     Copy-Item "$root\tests\out\doallnest.ddb" "$root\sd\GAME.DDB" -Force

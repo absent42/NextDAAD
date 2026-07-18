@@ -79,6 +79,13 @@ main:
     ld a, OVL1_PAGE
     call ovl_map_page
     call aud_boot_probe
+    ; XMES pool-bank claim sentinel (overlay0 data): same cross-bank
+    ; boot-reset shape as aud_boot_probe above - see xms_boot_reset's
+    ; own header comment (overlay0.asm) for why this needs an explicit
+    ; OVL0_PAGE map rather than a plain boot_data_init poke.
+    ld a, OVL0_PAGE
+    call ovl_map_page
+    call xms_boot_reset
     ld hl, objname_print
     ld (objname_hook), hl
     ld c, 0

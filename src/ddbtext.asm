@@ -23,6 +23,23 @@ rd_seek:
     ld (rdPtr), hl
     ret
 
+; Point the stream reader at arbitrary banked memory: A = 8K page,
+; HL = offset within the page (0-$1FFF). rd_next's page-crossing
+; walks into page A+1, so a source spanning both halves of one 16K
+; bank reads seamlessly. Used by ext_xmes (XMB text in the XMES
+; bank); everything downstream (txt_next_decoded, tokens, the
+; XOR-$FF decode, the $0A terminator) behaves exactly as for DDB
+; text - the XMB encoding is identical by construction.
+rd_seek_page:
+    ld (rdPage), a
+    call data_map_page
+    ld a, h
+    and $1F
+    or high DATA_WINDOW         ; $C0 | (offset>>8 AND $1F)
+    ld h, a
+    ld (rdPtr), hl
+    ret
+
 ; Out: A = next byte. Remaps at the 8K boundary ($DFFF -> next page).
 ; Preserves BC, DE, HL.
 rd_next:

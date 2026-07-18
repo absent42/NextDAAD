@@ -1651,10 +1651,124 @@ ext_undone:                     ; EXTERN 0 7 (XUNDONE): clear the done
     xor a                       ; dispatching this action - the entry
     ld (ix+5), a                ; continues, the level reads notdone
     ret
+
+; EXTERN offset_lsb 3 offset_msb (XMESSAGE): print a message from
+; the DRC-emitted external text file 0.XMB. The engine has already
+; consumed the third byte into extArg3 (stream integrity). The
+; message bytes are staged into the XMES bank - claimed from the
+; pool once, kept for the session - and printed with the standard
+; DDB text machinery via rd_seek_page (identical encoding: XOR-$FF
+; bytes, $0A terminator, DRF bakes XMESSAGE's trailing newline into
+; the text itself, so no prn_newline call is needed here). All
+; failures are silent no-ops; the DEBUG marker shows on the missing-
+; file/read-fail paths. EXTERN is action-typed (cprops), so the
+; engine never consults the CF this leaves - unlike a condition
+; handler there is no success/failure contract to honour on return.
+ext_xmes:
+    ld l, a                     ; A = B = offset LSB (h_extern contract)
+    ld a, (extArg3)
+    ld h, a
+    ld (xmsOff), hl
+    ; claim the XMES bank once
+    ld a, (xmsBank)
+    inc a                       ; $FF = unclaimed
+    jr nz, .have
+    call bank_alloc             ; out: A = bank, CF clear; CF set = none
+    jp c, .fail                 ; free (banks.asm ~99-117)
+    ld (xmsBank), a
+.have:
+    call esx_getsetdrv
+    jp c, .fail
+    ld ix, xmsName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jp c, .fail
+    ld (xmsHandle), a
+    ; seek to xmsOff (16-bit -> BCDE with high word 0, mode 0 start).
+    ; NextZXOS F_SEEK: A=handle, BCDE=offset, L=mode (esxapi.def:
+    ; esx_seek_set=0; confirmed against defrag.asm/fragmentation.asm
+    ; usage, not just the opcode equ).
+    ld bc, 0
+    ld de, (xmsOff)
+    ld l, 0                     ; mode 0 = from start
+    ld a, (xmsHandle)
+    call esx_fseek
+    jr c, .failclose
+    ; read up to one 8K page into the XMES bank through the window
+    call data_save
+    ld a, (xmsBank)
+    add a, a                    ; 16K bank -> its lower 8K page
+    call data_map_page
+    ld a, (xmsHandle)
+    ld ix, DATA_WINDOW
+    ld bc, $2000
+    call esx_fread
+    jr c, .failpost
+    ld a, b                     ; zero bytes read = offset at/past EOF
+    or c
+    jr z, .failpost
+    call data_restore           ; CLOSE the window bracket before any
+    ld a, (xmsHandle)           ; printing: data_save is NON-NESTABLE
+    call esx_fclose              ; and the print pipeline (More paging,
+                                 ; SM32) brackets its own window use
+    ; print: a fresh data_save, reader onto the XMES page via
+    ; rd_seek_page (replaces print_msg's msg_seek/rd_seek step),
+    ; tokActive reset, then REUSE print_msg's own decode loop rather
+    ; than duplicate it - print_msg.loop's local .done tail already
+    ; ends in prn_flush + data_restore, so it closes THIS bracket;
+    ; do not add a second data_restore after calling it.
+    call data_save
+    ld a, (xmsBank)
+    add a, a
+    ld hl, 0
+    call rd_seek_page
+    xor a
+    ld (tokActive), a           ; fresh stream, mirrors print_msg
+    jp print_msg.loop           ; tail into the shared loop (same idiom
+                                 ; as h_mes/h_sysmess's jp print_msg) -
+                                 ; its .done closes THIS data_save and
+                                 ; returns straight to ext_xmes's caller
+.failpost:
+    call data_restore
+.failclose:
+    ld a, (xmsHandle)
+    call esx_fclose
+.fail:
+ IFDEF DEBUG                    ; inline marker, same idiom as h_sfx's
+    push bc
+    ld b, 30
+    ld c, 60
+    call dbg_at
+    ld hl, msgXmesFail
+    call dbg_puts
+    pop bc
+ ENDIF
+    ret
+
+msgXmesFail: db "XMES?", 0
+xmsName:    db "0.XMB", 0
+xmsHandle:  db 0
+xmsOff:     dw 0
+xmsBank:    db $FF              ; claimed pool bank, $FF = none yet
+
+; Boot-time reset for xmsBank. This byte lives in overlay0's own data
+; (mapped into slot 7 only when the dispatcher or a caller explicitly
+; maps OVL0_PAGE there), so it cannot be poked directly from resident
+; boot code the way boot_data_init resets plain resident sentinels -
+; the caller (main.asm) maps OVL0_PAGE first, mirroring exactly how
+; aud_boot_probe's overlay1 state gets an explicit OVL1_PAGE map
+; before that call. A warm re-entry (nextreg 2,1 soft reset) must not
+; leave xmsBank pointing at a bank bank_table_init has since recycled
+; to a new owner - see main.asm for why this runs on every boot.
+xms_boot_reset:
+    ld a, $FF
+    ld (xmsBank), a
+    ret
+
 ext_stub:
     jp h_unimpl
 extVec:
-    dw ext_stub, ext_stub, ext_stub, ext_stub
+    dw ext_stub, ext_stub, ext_stub, ext_xmes
     dw ext_stub, ext_stub, ext_stub, ext_undone
     dw ext_stub, ext_stub, ext_stub, ext_stub
     dw ext_stub, ext_stub, ext_stub, ext_stub
