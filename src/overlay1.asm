@@ -2004,6 +2004,10 @@ aud_load_wav:
     ld bc, 12
     call .read
     jp c, .failclose
+    ld hl, 12                   ; short read (EOF): BC untouched by
+    or a                        ; esxDOS, stale wavHdr would re-validate
+    sbc hl, bc                  ; forever - reject explicitly
+    jp nz, .failclose
     ld hl, (wavHdr)             ; "RI"
     ld de, "IR"                  ; little-endian word: 'R','I'
     or a
@@ -2022,16 +2026,21 @@ aud_load_wav:
     ld bc, 8
     call .read
     jp c, .failclose
+    ld hl, 8                    ; short read (EOF): BC untouched by
+    or a                        ; esxDOS, stale wavHdr would re-validate
+    sbc hl, bc                  ; forever - reject explicitly
+    jp nz, .failclose
     ld hl, (wavHdr)
     ld de, "mf"                  ; 'f','m' of "fmt "
     or a
     sbc hl, de
-    jr nz, .notfmt
+    jp nz, .notfmt               ; jr: out of range once the short-read
+                                 ; checks above push .notfmt further away
     ld hl, (wavHdr+2)
     ld de, " t"                  ; 't',' '
     or a
     sbc hl, de
-    jr nz, .notfmt
+    jp nz, .notfmt
     ; fmt chunk: need at least 16 bytes; size high word must be 0
     ld hl, (wavHdr+6)
     ld a, h
@@ -2047,6 +2056,10 @@ aud_load_wav:
     ld bc, 16
     call .read
     jp c, .failclose
+    ld hl, 16                   ; short read (EOF): BC untouched by
+    or a                        ; esxDOS, stale wavFmt would re-validate
+    sbc hl, bc                  ; forever - reject explicitly
+    jp nz, .failclose
     ld hl, (wavFmt)             ; wFormatTag
     dec hl                      ; == 1 (PCM)?
     ld a, h

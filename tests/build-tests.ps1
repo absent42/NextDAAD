@@ -89,8 +89,36 @@ $big = New-Object byte[] (140kb)             # over the 128K cap
 $badWav = [byte[]](1..16)
 [System.IO.File]::WriteAllBytes("$root\tests\out\badwav.bin", $badWav)
 
+# Truncated-WAV fixture for suite check 70: a byte-exact valid 44-byte
+# RIFF+fmt+data header (PCM/mono/8-bit/15000Hz, data chunk promising
+# 1000 bytes) with NO payload bytes written after it, staged as
+# sd\098.WAV. aud_load_wav's RIFF/fmt probes pass; the streaming read
+# then comes up short against the promised data size and must reject
+# cleanly (short-read check), not hang.
+$truncWav = New-Object System.Collections.Generic.List[byte]
+$truncWav.AddRange([System.Text.Encoding]::ASCII.GetBytes("RIFF"))
+$truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]1036))  # RIFF size (arbitrary)
+$truncWav.AddRange([System.Text.Encoding]::ASCII.GetBytes("WAVE"))
+$truncWav.AddRange([System.Text.Encoding]::ASCII.GetBytes("fmt "))
+$truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]16))    # fmt chunk size
+$truncWav.AddRange([System.BitConverter]::GetBytes([UInt16]1))     # PCM
+$truncWav.AddRange([System.BitConverter]::GetBytes([UInt16]1))     # mono
+$truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]15000)) # sample rate
+$truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]15000)) # byte rate (unchecked)
+$truncWav.AddRange([System.BitConverter]::GetBytes([UInt16]1))     # block align (unchecked)
+$truncWav.AddRange([System.BitConverter]::GetBytes([UInt16]8))     # bits per sample
+$truncWav.AddRange([System.Text.Encoding]::ASCII.GetBytes("data"))
+$truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]1000))  # data size (promised, not delivered)
+[System.IO.File]::WriteAllBytes("$root\tests\out\truncwav.bin", $truncWav.ToArray())
+
 if ($Suite) {
+    # Suite semantics assume no sample/music/effects assets staged - an
+    # earlier -Aud run's residue would reroute checks 66/69 through the
+    # sample path and an out-of-range AY effect. Stale-clean first, then
+    # copy the 098/099 fixtures in.
+    Remove-Item "$root\sd\*.WAV", "$root\sd\*.AKY", "$root\sd\GAME.SFB" -Force -ErrorAction SilentlyContinue
     Copy-Item "$root\tests\out\condacts.ddb" "$root\sd\GAME.DDB" -Force
+    Copy-Item "$root\tests\out\truncwav.bin" "$root\sd\098.WAV" -Force
     Copy-Item "$root\tests\out\badwav.bin" "$root\sd\099.WAV" -Force
 }
 if ($Err4) {

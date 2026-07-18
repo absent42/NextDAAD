@@ -233,6 +233,11 @@ AUD_SMP_MAX     equ 49152   ; payload cap: banks 25-27 exactly
 SMP_PAGE_FIRST  equ 50      ; bank 25 lower 8K; payload spans pages 50-55
 AUD_STAGE_HALF  equ 416     ; bytes per staging half: 20000/50 = 400
                             ; peak chunk + fractional-carry margin
+    ASSERT AUD_STAGE_HALF >= AUD_RATE_MAX/50 + 2
+                            ; staging halves must hold a max-rate frame
+                            ; chunk plus the fractional carry - a future
+                            ; AUD_RATE_MAX raise must resize the staging
+                            ; buffer with it
 AUD_STAGE0      equ $7C00   ; staging buffer, bank 5 upper region -
 AUD_STAGE1      equ AUD_STAGE0+AUD_STAGE_HALF ; ALWAYS mapped (MMU3),
                             ; above divMMC's $0000-$3FFF, free after
