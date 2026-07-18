@@ -1996,12 +1996,12 @@ bpTarget:   dw 0                ; h_beep frameCounter target
 ; RIFF/fmt (PCM, mono, 8-bit, rate 3500-20000), claims an allocated page
 ; list (floor banks 25-27 first, then the pool) via aud_banks_claim and
 ; streams the data payload into it through the slot-6 window, then
-; computes the DMA prescaler and per-frame chunk from the header rate.
-; Keep-last: when A is already resident the SD read is skipped entirely
-; (params persist in the audReqSmp* bytes). Any active sample is stopped
-; (mailbox bit 7 + consumed-wait) and its banks released before the new
-; claim - a playing sample must never be overwritten under the DMA.
-; Out: CF clear = payload resident + audReqSmpPre/Len/LenHi committed
+; derives the CTC control word + time constant from the header rate and
+; the live video-timing mode. Keep-last: when A is already resident the SD
+; read is skipped entirely (params persist in the audReqSmp* bytes). Any
+; active sample is stopped (mailbox bit 7 + consumed-wait) and its banks
+; released before the new claim - a playing sample must never be overwritten.
+; Out: CF clear = payload resident + audReqSmpCtrl/Tc/Len/LenHi committed
 ; (audReqSmpLoop is the CALLER's, set before or after);
 ; CF set = missing/malformed/oversize/short-read. On any failure past the
 ; keep-last check the previous sample is stopped AND its banks released
@@ -2311,17 +2311,17 @@ aud_load_wav:
     or a
     sbc hl, bc                 ; requested - actually read
     jp nz, .failpost
-    ; CAUSE 1 (signedness): CSpect's $DF DAC path plays SIGNED 8-bit but WAV
-    ; PCM is UNSIGNED, so the default build flips every byte just read
-    ; (XOR $80) in place - the banks then hold signed-ready data and the ISR
-    ; copy stays a plain move. Real silicon feeds $FFDF UNSIGNED (silence
-    ; $80), so -DDAC_UNSIGNED skips the XOR entirely (banks stay standard
-    ; WAV). This is the load half of the DAC signedness A/B switch (the DAC
-    ; park half is DAC_SILENCE). BC is still esx_fread's return count here
-    ; (the sbc above preserved it, and a short read was rejected, so BC ==
-    ; wavWin - including the partial final window); wavWin >= 1 by the
-    ; .pageloop gate, so the loop runs at least once.
- IFNDEF DAC_UNSIGNED
+    ; DAC signedness (load half; the park half is DAC_SILENCE). SHIPPED DEFAULT
+    ; leaves the bytes UNSIGNED: real silicon feeds $FFDF unsigned (silence $80),
+    ; and both em00k CTC engines feed raw unsigned WAV bytes - so no transform.
+    ; -DDAC_CSPECT flips every byte just read (XOR $80) in place, producing
+    ; signed-ready data for CSpect's admitted-untested signed $DF path (the ISR
+    ; copy stays a plain move either way). Sense flipped post-em00k (SP10 CTC
+    ; pivot). BC is still esx_fread's return count here (the sbc above preserved
+    ; it, and a short read was rejected, so BC == wavWin - including the partial
+    ; final window); wavWin >= 1 by the .pageloop gate, so the loop runs at least
+    ; once.
+ IFDEF DAC_CSPECT
     ld hl, DATA_WINDOW
 .xorwin:
     ld a, (hl)
@@ -2350,27 +2350,11 @@ aud_load_wav:
     call data_restore
     ld a, (audHandle)
     call esx_fclose
-    ; commit: compute the prescaler AND the per-frame copy chunk from the
-    ; rate, fill the mailbox params, mark resident. The f-prime engine copies
-    ; chunk = rate/50 source bytes into the staging ring each frame (whole
-    ; part + rate mod 50 fractional carry), so both come back from SP8.
+    ; commit: derive the CTC control word + time constant from the sample rate
+    ; and the live video-timing mode, fill the mailbox, mark resident. The ring
+    ; self-paces at the CTC rate, so no per-frame chunk sizing is needed.
     ld de, (wavFmt+4)           ; rate
-    call aud_div_clock          ; A = AUD_PSCLOCK/rate (<=255 by range)
-    ld (audReqSmpPre), a
-    ld hl, (wavFmt+4)           ; chunk = rate/50, frac = rate mod 50
-    ld de, 50
-    ld bc, 0
-.d50:
-    or a
-    sbc hl, de
-    jr c, .r50
-    inc bc
-    jr .d50
-.r50:
-    add hl, de                  ; HL = rate mod 50 (fits L)
-    ld (audReqSmpChunk), bc
-    ld a, l
-    ld (audReqSmpFrac), a
+    call aud_ctc_params         ; sets audReqSmpCtrl + audReqSmpTc
     ld hl, (wavLen)
     ld (audReqSmpLen), hl
     ld a, (wavLenHi)
@@ -2408,28 +2392,94 @@ aud_load_wav:
     ld a, (audHandle)
     jp esx_fread
 
-; AUD_PSCLOCK / DE -> A (round down, clamped 255). DE = 3500..20000
-; (validated), so the quotient is 43..250. 24-bit repeated
-; subtraction: C:HL = dividend, B counts.
-aud_div_clock:
-    ld hl, AUD_PSCLOCK & $FFFF
-    ld a, (AUD_PSCLOCK >> 16) & $FF
-    ld c, a
+; aud_ctc_params: DE = sample rate (validated AUD_RATE_MIN..MAX). Derives the
+; CTC control word (audReqSmpCtrl) and time constant (audReqSmpTc) for the rate
+; at the LIVE video-timing mode. The CTC input clock IS the FPGA system clock,
+; 27-33 MHz by video mode (nextreg $11 bits 2:0), so a fixed constant would
+; drift pitch across VGA/HDMI - aud_clk16_tab holds clock/16 per mode (like
+; em00k CTCAudio's table). Prescaler /16 for rate >= AUD_CTC_XOVER
+; (TC = clk16/rate, <= 256); else /256 (TC = (clk16>>4)/rate). TC is floored and
+; clamped to 255 (the lone rate 6836 that divides to 256 lands on 255, a <0.5%
+; nudge); residual error is <= one TC step, largest at the rate extremes (see
+; the hardware checklist). Corrupts AF,BC,HL; preserves DE.
+aud_ctc_params:
+    push de                     ; save the rate; nr_read takes the reg in E
+    ld e, NR_VIDEO_TIMING
+    call nr_read                ; A = nextreg $11 (IFF-preserving)
+    and $07                     ; video timing mode 0-7 (7 = HDMI)
+    ld l, a
+    add a, a
+    add a, l                    ; A = mode * 3 (3 bytes per clk16 entry)
+    ld l, a
+    ld h, 0
+    ld bc, aud_clk16_tab
+    add hl, bc                  ; HL -> clk16[mode] (24-bit little-endian)
+    ld a, (hl)                  ; byte0 (low)
+    inc hl
+    ld b, (hl)                  ; byte1 (mid)
+    inc hl
+    ld c, (hl)                  ; byte2 (high) -> C = dividend high
+    ld h, b
+    ld l, a                     ; HL = clk16 low 16 bits; C:HL = clk16 (24-bit)
+    pop de                      ; DE = rate
+    push hl                     ; protect clk16 low word across the compare
+    ld hl, AUD_CTC_XOVER
+    or a
+    sbc hl, de                  ; XOVER - rate: CF (borrow) when rate > XOVER
+    pop hl
+    jr c, .p16
+    jr z, .p16                  ; rate >= AUD_CTC_XOVER -> prescaler 16
+    ld a, AUD_CTC_CW256         ; /256: control word + dividend = clk16 >> 4
+    ld (audReqSmpCtrl), a
+    srl c                       ; clk16 >> 4 (24-bit C:HL), four right shifts
+    rr h
+    rr l
+    srl c
+    rr h
+    rr l
+    srl c
+    rr h
+    rr l
+    srl c
+    rr h
+    rr l
+    jr .divide
+.p16:
+    ld a, AUD_CTC_CW16
+    ld (audReqSmpCtrl), a
+.divide:
+    ; TC = C:HL / DE (floor, clamp 255). 24-bit repeated subtraction, B counts.
     ld b, 0
 .sub:
     or a
     sbc hl, de
     jr nc, .ok
     dec c
-    bit 7, c                    ; borrowed past zero: done
+    bit 7, c                    ; borrowed past zero: dividend exhausted
     jr nz, .done
 .ok:
     inc b
     jr nz, .sub
-    ld b, 255                   ; 256 rounds: clamp (unreachable in range)
+    ld b, 255                   ; 256 rounds (rate 6836 only): clamp to 255
 .done:
     ld a, b
+    ld (audReqSmpTc), a
     ret
+
+; clock/16 per video-timing mode (nextreg $11 bits 2:0), 24-bit little-endian.
+; System clock from the Next hardware / em00k CTCAudio table; /16 folds the
+; prescaler in so the /16-prescaler divide is a plain clk16/rate (and /256 is
+; clk16>>4 / rate). VGA1/VGA2 clocks are non-integer/16 - floored here, matching
+; em00k's own inexact entries for those two modes.
+aud_clk16_tab:
+    db $F0,$B3,$1A              ; VGA0 28000000/16 = 1750000
+    db $72,$3F,$1B              ; VGA1 28571429/16 = 1785714
+    db $6D,$19,$1C              ; VGA2 29464286/16 = 1841517
+    db $38,$9C,$1C              ; VGA3 30000000/16 = 1875000
+    db $8C,$90,$1D              ; VGA4 31000000/16 = 1937500
+    db $80,$84,$1E              ; VGA5 32000000/16 = 2000000
+    db $A4,$78,$1F              ; VGA6 33000000/16 = 2062500
+    db $CC,$BF,$19              ; HDMI 27000000/16 = 1687500
 
 ; --- AYS streamed-song loader (SP10 client 2) -----------------------
 

@@ -13,6 +13,11 @@ NR_MMU6         equ $56     ; 8K page at $C000
 NR_MMU7         equ $57     ; 8K page at $E000
 TBBLUE_REG_SEL  equ $243B
 TBBLUE_REG_ACC  equ $253B
+NR_INT_CTRL     equ $C0     ; maskable int mode: bits 7-5 IM2 vector base,
+                            ; bit 0 = 1 hardware IM2 (daisy-chain), 0 = pulse
+NR_INT_EN_1     equ $C4     ; int enables: bit 0 ULA, bit 1 line, bit 7 expansion
+NR_INT_EN_2     equ $C5     ; int enables: bit n = CTC channel n
+NR_INT_EN_3     equ $C6     ; int enables: UART Rx/Tx
 
 ; --- Resident memory layout (in 16K bank 2, $8000-$BFFF) ---
 CODE_ORG        equ $8000
@@ -21,6 +26,17 @@ STACK_TOP       equ $BD00   ; SP; grows down toward RESIDENT_LIMIT
 IM2_TABLE       equ $BD00   ; 257 bytes $BD00-$BE00
 IM2_VECTOR_BYTE equ $BE
 IM2_STUB        equ $BEBE   ; 3-byte JP written at runtime
+IM2_CTC_STUB    equ $BEC2   ; 3-byte JP ctc_isr, runtime-written beside IM2_STUB.
+                            ; High byte $BE == IM2_VECTOR_BYTE fill, so only the
+                            ; carved table[V] low byte differs from the uniform fill.
+IM2_CTC_VEC     equ 6       ; CTC channel 0 vector byte in Next hardware-IM2 mode
+                            ; with NR C0 base 0: 2*(3+channel) = 2*3 = 6 (even; the
+                            ; controller supplies word-index<<1). Matches CTCAudio's
+                            ; "ld l,6 ; CTC vectors 3*2 (WORDS)".
+NR_INT_C0_VAL   equ %00000001 ; hardware IM2 mode: vector base (bits 7:5) 0, bit 0 = 1.
+                            ; Relocates ALL sources incl. ULA (index 11 -> byte 22)
+                            ; into the $BD00 table; the uniform fill routes every
+                            ; non-carved source to $BEBE -> im2_isr unchanged.
 
 ; --- Physical bank map (16K banks) ---
 BANK_SYS_LAST   equ 8       ; 0-8 reserved: system, ULA bank 5, code bank 2
@@ -214,34 +230,39 @@ AUD_STATE       equ $FFE0   ; audFlags/beep state/song number
 ; --- SP8 sampled sound ---
 DMA_PORT        equ $6B     ; zxnDMA, datagear port decode
 DAC_PORT        equ $DF     ; SpecDrum-compatible mono DAC (all 4 DACs)
-; DAC signedness A/B switch (owner A/Bs CSpect vs real Next after the
-; distortion fix lands). DEFAULT (undefined) = CSpect-correct: aud_load_wav
-; XORs $80 at load so the banks hold signed PCM and DAC silence/park = $00.
-; Build with -DDAC_UNSIGNED=1 (build.ps1 -DacUnsigned) for hardware-correct
-; behaviour: no load-time XOR (banks stay unsigned WAV), silence/park = $80
-; (the unsigned midpoint). References: benbaker-dma-analysis.md - the FPGA
-; soundrive.vhd resets the DACs to $80 and sums unsigned, while CSpect V1.0
-; notes call $FFDF signed - so the correct convention is emulator-dependent.
- IFDEF DAC_UNSIGNED
-DAC_SILENCE     equ $80
- ELSE
+; DAC signedness. SHIPPED DEFAULT = hardware-correct UNSIGNED: no load-time
+; XOR, DAC silence/park = $80 (the unsigned midpoint). Evidence: the FPGA
+; soundrive.vhd resets the DACs to $80 and sums UNSIGNED; em00k's CTCAudio and
+; playwav32 both feed raw unsigned WAV bytes to the DAC (CTCAudio README:
+; "PCM unsigned" - em00k-audio-engines-analysis.md); and the owner's two real-
+; hardware listens. Build with -DDAC_CSPECT=1 (build.ps1 -DacCSpect) for the
+; CSpect accommodation: aud_load_wav XORs $80 at load so the banks hold signed
+; PCM and silence/park = $00 (CSpect's admitted-"not really tested" signed
+; $FFDF path). See benbaker-dma-analysis.md. One define site, sense flipped
+; post-em00k (SP10 CTC pivot) so the shippable default is silicon-correct.
+ IFDEF DAC_CSPECT
 DAC_SILENCE     equ $00
+ ELSE
+DAC_SILENCE     equ $80
  ENDIF
 NR_PERIPH3      equ $08     ; peripheral 3: bit 3 = 8-bit DACs on,
                             ; bit 1 = Turbo Sound on (both hard-reset 0)
-AUD_PSCLOCK     equ 875000  ; prescaler base clock in Hz: rate =
-                            ; AUD_PSCLOCK/prescaler. PINNED by the
-                            ; Task 2 hold-D probe (owner, CSpect,
-                            ; 2026-07-17): 8192 bytes at prescaler
-                            ; 87/174 took $2B/$56 frames - exactly
-                            ; linear, only this model fits (zxndma.txt
-                            ; CPU-cycle reading would give 0-10).
-                            ; Effective throughput ran ~5% under
-                            ; nominal from bus contention - hence the
-                            ; engine's consumed-based advance. Hardware
-                            ; checklist re-verifies on silicon
-AUD_RATE_MIN    equ 3500    ; below this the prescaler exceeds 255
-AUD_RATE_MAX    equ 20000   ; staging halves are sized for this
+NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6), 7 = HDMI;
+                            ; selects the FPGA system clock the CTC divides
+; SP10 CTC per-sample DAC feed (replaces the SP8 DMA sample engine). The CTC
+; channel input clock IS the video-mode-dependent FPGA system clock (27-33 MHz,
+; nextreg $11), NOT a fixed reference - so the time constant is derived per
+; video mode at load time (aud_clk16_tab in overlay1). Prescaler /16 for rate
+; >= AUD_CTC_XOVER (TC = clock/16/rate <= 256); /256 below it. Confirmed against
+; playvid + em00k CTCAudio: "28,000,000 / 16 / 15625 = 112".
+AUD_CTC_PORT    equ $183B   ; CTC channel 0 (lowest = highest IM2 priority; ch3=joystick)
+AUD_CTC_RESET   equ $03     ; control word: soft reset (D1) + no TC (D2=0); written
+                            ; twice = the Next's unknown-state channel reset (ports.txt)
+AUD_CTC_CW16    equ $85     ; %10000101: int en, timer, /16, auto-trig, TC follows, control
+AUD_CTC_CW256   equ $A5     ; %10100101: as CW16 but prescaler /256
+AUD_CTC_XOVER   equ 6836    ; rate >= this uses /16 (else TC = clock/16/rate > 256)
+AUD_RATE_MIN    equ 3500    ; validated sample-rate floor (aud_load_wav)
+AUD_RATE_MAX    equ 20000   ; the 1K ring holds > 1 frame of this rate
 AUD_SMP_MAX     equ 1048576 ; sample payload sanity ceiling (1MB = 64
                             ; banks; allocator success is the real
                             ; bound - this just rejects absurd WAVs
@@ -252,20 +273,17 @@ SMP_FLOOR_FIRST equ 25      ; reserved audio floor: banks 25-27 are
 SMP_FLOOR_LAST  equ 27      ; claimed first so a 48K load ALWAYS
                             ; works regardless of pool pressure
 SMP_PAGE_FIRST  equ 50      ; bank 25 lower 8K; floor banks' first page
-AUD_STAGE_HALF  equ 416     ; bytes per staging half: 20000/50 = 400
-                            ; peak chunk + fractional-carry margin
-    ASSERT AUD_STAGE_HALF >= AUD_RATE_MAX/50 + 2
-                            ; staging halves must hold a max-rate frame
-                            ; chunk plus the fractional carry - a future
-                            ; AUD_RATE_MAX raise must resize the staging
-                            ; buffer with it
-AUD_STAGE0      equ $7C00   ; staging buffer, bank 5 upper region -
-AUD_STAGE1      equ AUD_STAGE0+AUD_STAGE_HALF ; ALWAYS mapped (MMU3),
-                            ; above divMMC's $0000-$3FFF, free after
-                            ; TM_DEFS ($7400-$7BFF); ends $7F40 < $8000
-AUD_STAGE_RING  equ 2*AUD_STAGE_HALF ; f-prime software-ring size (832): both
-                            ; staging halves form one circular buffer the DMA
-                            ; plays via per-frame $82 one-shots (smpP/smpW)
+AUD_STAGE0      equ $7C00   ; ring base, bank 5 upper region - ALWAYS mapped
+                            ; (MMU3), above divMMC's $0000-$3FFF, free after
+                            ; TM_DEFS ($7400-$7BFF); ends exactly at $8000
+AUD_STAGE_RING  equ 1024    ; power-of-two ring $7C00-$7FFF: the CTC ISR plays
+                            ; smpPlayPtr, the 50Hz tick refills smpW from the
+                            ; page-table source. 1K = 51ms at 20kHz - ample vs
+                            ; the 20ms refill period. Base $7C00 is 1K-aligned so
+                            ; the ISR wraps with a branchless AND/OR mask on H.
+    ASSERT AUD_STAGE0 + AUD_STAGE_RING == $8000   ; ISR wrap tests H == $80
+    ASSERT AUD_STAGE_RING >= 2*(AUD_RATE_MAX/50)  ; ring > 1 frame of consumption
+                            ; so a tick always refills before the ISR underruns
 
 ; --- Window system (sub-project 2) ---
 WIN_X           equ 0

@@ -44,14 +44,22 @@ ula_cls:
 ; Called once from boot after hw_init, before interrupts are enabled.
 ; Corrupts AF, BC, DE.
 audio_init:
-    ld a, $83                       ; SP8: kill any in-flight sample DMA and
-    ld bc, DMA_PORT                 ; park the DAC at silence - every reset/halt
-    out (c), a                      ; path (h_exit, h_end, fatal, err_raise) and
-    ld a, DAC_SILENCE               ; boot come through here. DAC_SILENCE tracks
-    ld bc, DAC_PORT                 ; the signedness switch: $00 signed (default,
-    out (c), a                      ; CSpect) / $80 unsigned (-DacUnsigned, real
-                                    ; hardware midpoint). See nextdaad.inc and
-                                    ; benbaker-dma-analysis.md; owner A/Bs it.
+    ld a, $83                       ; kill any in-flight DMA (now unused by the
+    ld bc, DMA_PORT                 ; sample path but harmless - the DMA is free)
+    out (c), a
+    ; SP10 CTC pivot: stop the sample CTC channel (double soft-reset = timer +
+    ; interrupt off) so no per-sample DAC feed survives a reset, error, or exit.
+    ; Reached from boot and every teardown (h_exit, h_end, fatal, err_raise),
+    ; each of which then DIs indefinitely - stopping the CTC here is what keeps
+    ; those DI sections from starving an active feed.
+    ld a, AUD_CTC_RESET
+    ld bc, AUD_CTC_PORT
+    out (c), a
+    out (c), a
+    ld a, DAC_SILENCE               ; park the DAC at silence. DAC_SILENCE tracks
+    ld bc, DAC_PORT                 ; the signedness switch: $80 unsigned (shipped
+    out (c), a                      ; default, real-hardware midpoint) / $00 signed
+                                    ; (-DacCSpect). See nextdaad.inc.
     ld e, $FD                       ; PSG 3, then $FE (2), then $FF (1)
 .psg:
     ld bc, $FFFD
