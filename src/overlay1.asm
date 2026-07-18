@@ -1498,12 +1498,17 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ld hl, audRequest
     set 6, (hl)
     jr .enable
-.effect:                        ; AY effect B on PSG 3 (SP7, unchanged:
-    ld a, b                     ; loop only if authored looping). No
-                                ; guard needed: both entry paths (the
-                                ; n=255 fallthrough, the aud_load_wav
-                                ; CF-set jump) already proved B >= 1
-                                ; in .smp's shared check above.
+.effect:                        ; AY effect B on PSG 3 (SP7, loop only
+    ld a, b                     ; if authored looping). Both entry
+                                ; paths (the n=255 fallthrough, the
+                                ; aud_load_wav CF-set jump) already
+                                ; proved B >= 1 in .smp's shared check
+                                ; above; the sfbCount guard below covers
+                                ; the upper bound (Task 4).
+    ld a, (sfbCount)
+    cp b                        ; CF when count < n: out of range -
+    ret c                       ; documented no-op (covers count 0)
+    ld a, b
     ld (audReqSfx), a
     ld hl, audRequest
     set 1, (hl)
@@ -1729,6 +1734,31 @@ aud_load_sfb:
     or c
     jr nz, .failclose
 .ok:
+    ; effect count from the header: the SFB is a bare table of dw
+    ; effect addresses, so table[0] - $D000 = table size = 2*count.
+    ; Malformed first word (below $D002, odd, or above $D7FF) -> 0.
+    ld hl, (DATA_WINDOW+$1000)  ; table[0] (bank offset $1000 = $D000)
+    ld de, $D000
+    or a
+    sbc hl, de
+    jr c, .badcnt
+    ld a, h
+    cp $08                      ; >= $0800: table exceeds the 2K bank
+    jr nc, .badcnt
+    bit 0, l
+    jr nz, .badcnt              ; odd table size: malformed
+    srl h
+    rr l                        ; HL = count
+    ld a, h
+    or a
+    jr nz, .badcnt              ; > 255: nonsense
+    ld a, l
+    ld (sfbCount), a
+    jr .cntdone
+.badcnt:
+    xor a
+    ld (sfbCount), a
+.cntdone:
     ld a, (audHandle)
     call esx_fclose
     call data_restore
@@ -1739,6 +1769,8 @@ aud_load_sfb:
     call esx_fclose
     call data_restore
 .fail:
+    xor a
+    ld (sfbCount), a            ; missing/rejected bank always reads 0
     scf
     ret
 
@@ -1892,6 +1924,8 @@ aud_boot_probe:
     call data_restore
     ld a, $FF
     ld (smpLoadedNum), a        ; keep-last cold on any (warm) boot
+    xor a
+    ld (sfbCount), a            ; 0 until aud_load_sfb below confirms it
     ld a, 1
     ld (audReqLoop), a          ; boot music loops
     ld a, $FF                   ; $FF = GAME.AKY
