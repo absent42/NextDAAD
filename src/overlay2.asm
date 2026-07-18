@@ -335,6 +335,83 @@ l2_flip_swap:
     ld (l2BackBank), a
     ret
 
+; Copy one Layer 2 surface onto the other, page for page. Slot 6 is
+; the ONLY data window available to this overlay - slot 7 holds this
+; very code (see gfxRowBuf's header, and banks.asm's ovl_map_page
+; "DISPATCHER/ISR ONLY") - so source and destination pages can never
+; be mapped at once: unlike a dual-window LDIR, each GFX_COPY_CHUNK-
+; byte slice bounces through gfxRowBuf (idle here - same "loads and
+; blits never overlap" invariant gfxRowBuf's header already relies
+; on), mirroring gfx_row_fetch/gfx_row_copy256's source-OR-dest shape.
+; Page count follows l2Mode exactly as l2_clear_back sizes it: 6 x 8K
+; pages (256x192, 3 banks) or 10 x 8K pages (320x256, 5 banks) - NOT a
+; fixed 5-bank assumption, so a 256-wide surface never touches its
+; unused banks 3-4. In: A = source surface's first bank number, D =
+; dest surface's first bank number - GFX 0 (copy back->front) and GFX
+; 1 (copy front->back) are h_gfx's only two callers, and pass
+; l2FrontBank/l2BackBank in swapped order: that swap IS the entire
+; difference between the two subs, this routine is otherwise
+; direction-blind. Brackets data_save/data_restore itself (mainline,
+; NON-NESTABLE - one bracket, opened and closed on every path - see
+; banks.asm). Corrupts everything.
+GFX_COPY_CHUNK equ 256                  ; divides 8192 evenly, fits
+                                         ; inside gfxRowBuf (320 bytes)
+GFX_COPY_CHUNKS_PER_PAGE equ 8192/GFX_COPY_CHUNK
+l2_copy_back_front:
+    add a, a
+    ld (l2CopySrcPage), a
+    ld a, d
+    add a, a
+    ld (l2CopyDstPage), a
+    call data_save
+    ld a, (l2Mode)
+    or a
+    ld a, 6
+    jr z, .cnt
+    ld a, 10
+.cnt:
+    ld (l2CopyPageCnt), a
+.page:
+    ld hl, DATA_WINDOW
+    ld (l2CopyPtr), hl
+    ld a, GFX_COPY_CHUNKS_PER_PAGE
+    ld (l2CopyChunkCnt), a
+.chunk:
+    ld a, (l2CopySrcPage)
+    call data_map_page
+    ld hl, (l2CopyPtr)
+    ld de, gfxRowBuf
+    ld bc, GFX_COPY_CHUNK
+    ldir                         ; source page -> bounce buffer
+    ld a, (l2CopyDstPage)
+    call data_map_page
+    ld hl, gfxRowBuf
+    ld de, (l2CopyPtr)
+    ld bc, GFX_COPY_CHUNK
+    ldir                         ; bounce buffer -> dest page
+    ld hl, (l2CopyPtr)
+    ld de, GFX_COPY_CHUNK
+    add hl, de
+    ld (l2CopyPtr), hl
+    ld hl, l2CopyChunkCnt
+    dec (hl)
+    jr nz, .chunk
+    ld hl, l2CopySrcPage         ; page done: advance both cursors
+    inc (hl)
+    ld hl, l2CopyDstPage
+    inc (hl)
+    ld hl, l2CopyPageCnt
+    dec (hl)
+    jr nz, .page
+    call data_restore
+    ret
+
+l2CopySrcPage:  db 0
+l2CopyDstPage:  db 0
+l2CopyPtr:      dw 0
+l2CopyPageCnt:  db 0
+l2CopyChunkCnt: db 0
+
 ; 28 DISPLAY (action): B = 0 draws the staged picture, B != 0 clears
 ; the picture plane. Semantics pinned against jdaad _DISPLAY
 ; (jdaad.js 2750-2754): jdaad IGNORES its argument entirely - it
@@ -364,6 +441,83 @@ h_display:
     ld a, (l2FrontBank)
     nextreg NR_L2_BANK, a
     ret
+
+; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused - every
+; implemented sub's buffer operation takes no meaningful P1 (jdaad
+; parity: jdaad.js's _GFX() switches on Parameter2 alone - Parameter1
+; only matters to its palette-store subs 9/10, which have no
+; NextDAAD analogue, see below). Sub map pinned against the DAAD
+; condact reference (GFX Routines, condact 87) and jdaad.js _GFX()/
+; DB*() (ASSETS/HTML/jdaad.js ~3676/~4360):
+;   0 = copy the BACK (render) surface onto FRONT (visible), in place
+;       - l2_copy_back_front; jdaad's DBBuffertoScreen draws the back
+;       canvas onto the visible one the same way, so this needs no NR
+;       $12 write - the front bank's identity does not change, only
+;       its contents, and it is already the one being displayed
+;   1 = copy FRONT onto BACK, in place - same routine, source/dest
+;       bank bases swapped (jdaad's DBScreentoBuffer)
+;   2 = swap the front/back roles AND push the new front bank to NR
+;       $12 immediately - l2_flip_swap is VARIABLES ONLY (see its own
+;       header), so this dispatcher pairs it with the hardware write
+;       itself, exactly as h_display's clear path above does, so the
+;       swap is actually visible: jdaad's DBSwapBuffers exchanges the
+;       visible canvas's pixels immediately, not on a later flip
+;   5 = clear the FRONT surface in place - l2_clear (jdaad's
+;       DBClearScreen fills the visible canvas directly)
+;   6 = clear the BACK surface - l2_clear_back (jdaad's DBClearBuffer)
+;   9/10 = jdaad's numbered-palette store/recall (flag-offset RGB
+;       triples into a software colour table) - no NextDAAD analogue,
+;       Layer 2 palette load is picture-driven only; documented no-op
+;   3/4/7/8/11+ (and jdaad's 13/14 MP4-via-SFX redirect) = no
+;       NextDAAD analogue either (graphics/text-buffer split, video
+;       playback); documented no-op
+; Every no-op sub falls to the shared DEBUG marker below rather than
+; overlay0's h_unimpl - overlay2 must not call overlay0 (header
+; discipline) - inline, resident dbg_* helpers only, mirrors h_sfx's
+; unknown-sub idiom (SP7 Task 4, overlay1.asm). Corrupts everything.
+h_gfx:
+    ld a, c                     ; sub-command
+    cp 0
+    jr z, .backfront
+    cp 1
+    jr z, .frontback
+    cp 2
+    jr z, .swap
+    cp 5
+    jp z, l2_clear
+    cp 6
+    jp z, l2_clear_back
+ IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
+    push bc                     ; Second push keeps C (the sub) safe
+    push bc                     ; across dbg_puts (corrupts BC) for
+    ld b, 29                    ; the dbg_hex8 below.
+    ld c, 70
+    call dbg_at
+    ld hl, msgGfxUnk
+    call dbg_puts
+    pop bc
+    ld a, c
+    call dbg_hex8
+    pop bc
+ ENDIF
+    ret
+.backfront:
+    ld a, (l2FrontBank)
+    ld d, a
+    ld a, (l2BackBank)
+    jp l2_copy_back_front
+.frontback:
+    ld a, (l2BackBank)
+    ld d, a
+    ld a, (l2FrontBank)
+    jp l2_copy_back_front
+.swap:
+    call l2_flip_swap
+    ld a, (l2FrontBank)
+    nextreg NR_L2_BANK, a
+    ret
+
+msgGfxUnk: db "GFX? ", 0
 
 ; A = picture number. Ensure its palette+pixels are in cache banks
 ; and stage it for DISPLAY 0. Cache hit: cache_touch + stage, no SD

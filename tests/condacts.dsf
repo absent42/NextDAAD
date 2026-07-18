@@ -781,6 +781,35 @@ NORTH 0
         MES "72 OK#n"
         SKIP 1
 > _ _   MES "72 F#n"
+; 73 GFX: the brief-pinned safe-sub witness - clear front (5), swap
+; front/back (2), unknown sub (99) - buffer/register ops only, no
+; picture ever staged/displayed in this suite (check 64's PICTURE 200
+; fails clean), so l2Mode/l2FrontBank/l2BackBank sit at cold-boot
+; defaults throughout. Safe subs only, no assertion on pixels - visual
+; proof is the owner eye-leg (PICTURE, then GFX 1/5/0) in the task
+; report, not here. Witness flag proves the condacts after them still
+; ran.
+> _ _   LET 123 96
+        GFX 0 5
+        GFX 0 2
+        GFX 0 99
+        EQ 123 96
+        MES "73 OK#n"
+        SKIP 1
+> _ _   MES "73 F#n"
+; 74 GFX: smoke coverage for the new copy loop and the remaining
+; implemented subs - front<->back copy (1 then 0, net no lasting
+; surface-role change), clear back (6), numbered-palette no-op (9).
+; Same no-pixel-assertion rule as check 73.
+> _ _   LET 123 97
+        GFX 0 1
+        GFX 0 0
+        GFX 0 6
+        GFX 0 9
+        EQ 123 97
+        MES "74 OK#n"
+        SKIP 1
+> _ _   MES "74 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5

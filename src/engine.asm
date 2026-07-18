@@ -709,7 +709,7 @@ cdisp:
     DC2 h_picture               ; 84  PICTURE
     DC h_doall                  ; 85  DOALL
     DC h_unimpl                 ; 86  MOUSE
-    DC h_unimpl                 ; 87  GFX
+    DC2 h_gfx                   ; 87  GFX
     DC h_isnotat                 ; 88  ISNOTAT
     DC h_weigh                   ; 89  WEIGH
     DC h_putin                   ; 90  PUTIN
