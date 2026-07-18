@@ -59,6 +59,42 @@ for %%F in ("AUDIO\*.aks") do (
     )
 )
 
+REM ---- streamed songs: STREAM_NNN.aks -> NNN.AYS (per-frame AY-register-
+REM      diff stream for multi-PSG tunes too big for the AKY song slot -
+REM      see lib\aysconv.ps1's header comment for the AYS format and the
+REM      SongToYm recipe. Needs SongToYm; skip the whole leg if there are
+REM      no STREAM_*.aks sources. ----
+if not exist "AUDIO\STREAM_*.aks" goto :stream_done
+if not exist "%S2Y%" (
+    echo ERROR: SongToYm not found at %S2Y% - install Arkos Tracker 3 or fix TOOLSDIR in CONFIG.BAT
+    exit /b 1
+)
+REM NOTE: %~dp0 here is THIS script's own folder (lib\), not the kit root -
+REM aysconv.ps1 lives right beside audio.bat, so no "lib\" prefix.
+if not exist "%~dp0aysconv.ps1" (
+    echo ERROR: %~dp0aysconv.ps1 missing - kit installation is incomplete
+    exit /b 1
+)
+REM NOTE: exit /b from inside this nested for/&&/if does NOT reliably
+REM propagate errorlevel back out of a "call"ed batch file (verified
+REM empirically) - set a flag instead and exit /b once, flat, after the
+REM loop.
+set "AYS_FAIL="
+for %%F in ("AUDIO\STREAM_*.aks") do (
+    echo %%~nF| findstr /R "^STREAM_[0-9][0-9]*$" >nul && (
+        for /f %%N in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "'{0:D3}' -f [int]('%%~nF' -replace '^STREAM_','')"') do set "NUM=%%N"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0aysconv.ps1" -Song "%%~fF" -Out "RELEASE\!NUM!.AYS" -SongToYm "%S2Y%"
+        if errorlevel 1 (
+            echo ERROR: aysconv.ps1 failed on %%~nxF
+            set "AYS_FAIL=1"
+        ) else (
+            echo   stream !NUM! -^> !NUM!.AYS
+        )
+    )
+)
+if defined AYS_FAIL exit /b 1
+:stream_done
+
 REM ---- effects bank: <GAME>_FX.aks -> GAME.SFB (NON-FATAL) ----
 if exist "AUDIO\%GAME%_FX.aks" (
     if not exist "%S2E%" (

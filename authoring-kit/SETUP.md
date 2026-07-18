@@ -16,7 +16,7 @@ a `RELEASE\` folder you copy to an SD card (or run in an emulator).
 |------|----------|----------|----------|
 | DAAD Ready | DRC compiler (`DRF.exe`, `DRB.PHP`) and PHP | https://www.ngpaws.com/daadready/ | `..\tools\DAAD-READY\` |
 | Gfx2Next | PNG to Layer 2 conversion | https://www.rustypixels.uk/gfx2next/ | `..\tools\gfx2next\gfx2next.exe` |
-| Arkos Tracker 3 | `SongToAky.exe`, `SongToSoundEffects.exe` | https://www.julien-nevo.com/arkostracker/index.php/download/ | `..\tools\ArkosTracker3\tools\` |
+| Arkos Tracker 3 | `SongToAky.exe`, `SongToSoundEffects.exe`, `SongToYm.exe` | https://www.julien-nevo.com/arkostracker/index.php/download/ | `..\tools\ArkosTracker3\tools\` |
 | CSpect | Emulator for testing | https://mdf200.itch.io/cspect | `..\tools\CSpect\CSpect.exe` |
 | nextdaad.nex | The interpreter | NextDAAD project build output | `..\build\nextdaad.nex` |
 
@@ -39,6 +39,9 @@ Put these in this kit folder:
 - Optional audio in `AUDIO\` (Arkos `.aks` sources, converted at build time):
   - `<GAME>.aks` - background music, auto-played at boot.
   - `NNN.aks` - songs selected in-game by `SFX n 6` (once) or `SFX n 7` (loop).
+  - `STREAM_NNN.aks` - songs too big for the `NNN.aks` song slot (10208
+    bytes), streamed from SD card instead; also selected by `SFX n 6/7`.
+    Needs Arkos Tracker 3's `SongToYm.exe` (path via `TOOLSDIR`, see above).
   - `<GAME>_FX.aks` - the sound-effects bank, played by `SFX n 1`.
 - Optional sampled sound in `AUDIO\` (WAV files, copied as-is - no conversion):
   - `NNN.wav` - a digital sample played by `SFX n 1` (once) or `SFX n 2` (looped).

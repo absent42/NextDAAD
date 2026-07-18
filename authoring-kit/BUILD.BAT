@@ -31,6 +31,7 @@ set "DRB=%DR%\TOOLS\DRC\DRB.PHP"
 set "GFX=%TOOLSDIR%\gfx2next\gfx2next.exe"
 set "S2A=%TOOLSDIR%\ArkosTracker3\tools\SongToAky.exe"
 set "S2E=%TOOLSDIR%\ArkosTracker3\tools\SongToSoundEffects.exe"
+set "S2Y=%TOOLSDIR%\ArkosTracker3\tools\SongToYm.exe"
 
 REM ---- preflight: always-required tools ----
 for %%T in ("%DRF%" "%PHP%" "%DRB%" "%NEXFILE%") do (
@@ -50,7 +51,7 @@ tasklist /FI "IMAGENAME eq CSpect.exe" 2>nul | find /I "CSpect.exe" >nul && (
 
 REM ---- prepare RELEASE\ and remove stale converted assets ----
 if not exist "RELEASE" md "RELEASE"
-del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.AKY" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" 2>nul
+del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" 2>nul
 
 echo Building %GAME% ...
 
