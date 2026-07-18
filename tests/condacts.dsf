@@ -411,7 +411,19 @@ NORTH 0
         MES "43 OK#n"
         SKIP 1
 > _ _   MES "43 F#n"
-> _ _   EXTERN 5 3
+; 44 EXTERN dispatch to an unimplemented vector is a safe no-op and
+; the entry continues normally. fn 3 is XMESSAGE's reserved
+; 3-parameter encoding (EXTERN offset_lsb 3 offset_msb) - the engine's
+; stream walker (engine.asm) now unconditionally eats a third byte
+; whenever curCondact is EXTERN and the compiled arg2 is 3, regardless
+; of whether that 3 came from a real XMESSAGE (which DRC always pairs
+; with a genuine third byte) or a bare hand-written EXTERN x 3 (which
+; DRC compiles as a plain 2-argument EXTERN, no third byte to eat) -
+; bare fn 3 is author error, not a supported classic-EXTERN form (see
+; ext_xmes's header comment / MALUVA doc: "EXTERN 0 3 (with setup)").
+; This check used fn 3 before ext_xmes/the stream walker existed; kept
+; the same intent (dispatch to a still-stubbed vector) on fn 4 instead.
+> _ _   EXTERN 5 4
         MES "44 OK#n"
         SKIP 1
 > _ _   MES "44 F#n"
