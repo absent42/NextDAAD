@@ -44,12 +44,14 @@ ula_cls:
 ; Called once from boot after hw_init, before interrupts are enabled.
 ; Corrupts AF, BC, DE.
 audio_init:
-    ld a, $83                       ; SP8: kill any in-flight sample
-    ld bc, DMA_PORT                 ; DMA and centre the DAC - every
-    out (c), a                      ; reset/halt path (h_exit, h_end,
-    ld a, $80                       ; fatal, err_raise) and boot come
-    ld bc, DAC_PORT                 ; through here
-    out (c), a
+    ld a, $83                       ; SP8: kill any in-flight sample DMA and
+    ld bc, DMA_PORT                 ; park the DAC at SIGNED silence - every
+    out (c), a                      ; reset/halt path (h_exit, h_end, fatal,
+    ld a, $00                       ; err_raise) and boot come through here.
+    ld bc, DAC_PORT                 ; The $DF DAC path plays signed 8-bit, so
+    out (c), a                      ; silence is $00 (was $80); the load-time
+                                    ; XOR $80 makes the WAV banks signed.
+                                    ; Hardware checklist re-verifies on silicon.
     ld e, $FD                       ; PSG 3, then $FE (2), then $FF (1)
 .psg:
     ld bc, $FFFD

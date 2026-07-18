@@ -2001,8 +2001,8 @@ bpTarget:   dw 0                ; h_beep frameCounter target
 ; (params persist in the audReqSmp* bytes). Any active sample is stopped
 ; (mailbox bit 7 + consumed-wait) and its banks released before the new
 ; claim - a playing sample must never be overwritten under the DMA.
-; Out: CF clear = payload resident + audReqSmpPre/Len/LenHi/Chunk/Frac
-; committed (audReqSmpLoop is the CALLER's, set before or after);
+; Out: CF clear = payload resident + audReqSmpPre/Len/LenHi committed
+; (audReqSmpLoop is the CALLER's, set before or after);
 ; CF set = missing/malformed/oversize/short-read. On any failure past the
 ; keep-last check the previous sample is stopped AND its banks released
 ; (smpPageCnt 0, no banks held); a missing file (open fails first) leaves
@@ -2311,6 +2311,23 @@ aud_load_wav:
     or a
     sbc hl, bc                 ; requested - actually read
     jp nz, .failpost
+    ; CAUSE 1 (signedness): the $DF DAC path plays SIGNED 8-bit but WAV PCM
+    ; is UNSIGNED. Flip every byte just read (XOR $80) in place, so the banks
+    ; hold signed-ready data and the ISR refill stays a plain copy. BC is
+    ; still esx_fread's return count here (the sbc above preserved it, and a
+    ; short read was rejected, so BC == wavWin - including the partial final
+    ; window); wavWin >= 1 by the .pageloop gate, so the loop runs at least
+    ; once. Hardware checklist re-verifies DAC signedness on silicon.
+    ld hl, DATA_WINDOW
+.xorwin:
+    ld a, (hl)
+    xor $80
+    ld (hl), a
+    inc hl
+    dec bc
+    ld a, b
+    or c
+    jr nz, .xorwin
     ; advance: remaining -= wavWin (24-bit), step to the next table entry
     ld hl, (wavRem)
     ld bc, (wavWin)
@@ -2328,25 +2345,12 @@ aud_load_wav:
     call data_restore
     ld a, (audHandle)
     call esx_fclose
-    ; commit: compute prescaler + chunk from the rate, fill the
-    ; mailbox params, mark resident
+    ; commit: compute the prescaler from the rate, fill the mailbox params,
+    ; mark resident. The ring engine advances by a fixed half per crossing,
+    ; so the old per-frame chunk/frac (rate/50) is obsolete and removed.
     ld de, (wavFmt+4)           ; rate
     call aud_div_clock          ; A = AUD_PSCLOCK/rate (<=255 by range)
     ld (audReqSmpPre), a
-    ld hl, (wavFmt+4)
-    ld de, 50
-    ld bc, 0
-.d50:
-    or a
-    sbc hl, de
-    jr c, .r50
-    inc bc
-    jr .d50
-.r50:
-    add hl, de                  ; HL = rate mod 50 (fits L)
-    ld (audReqSmpChunk), bc
-    ld a, l
-    ld (audReqSmpFrac), a
     ld hl, (wavLen)
     ld (audReqSmpLen), hl
     ld a, (wavLenHi)
