@@ -2,6 +2,7 @@
 ;
 ; English language template, recreated by Stefan Vogt, Pond Soft [17-7-18].
 ; Several updates made by Carlos Sanchez after converting to DSF format
+; Updates for NextDAAD features by Dan Gibson 2026
 
 ;------------------------------------------------------------------------------
 ;
@@ -9,7 +10,7 @@
 ;                                                              Tim Gilberts
 ;
 ;                                      'And also WE ALL have to work for it'
-;                                                            Andr�s Samudio
+;                                                            Andres Samudio
 ;
 ;                                                                   [8-6-89]
 ;
@@ -493,12 +494,15 @@ $pictureOK
                 DONE
 
 > ZAP     _     SFX 2 1                 ; play AY sound effect 2 from GAME.SFB
+                MESSAGE "Zapp!"
                 DONE
 
 > SAMPLE  _     SFX 1 1                 ; play sampled WAV 001.WAV (SFX n 1 probes
+                MESSAGE "You hear a sound."
                 DONE                    ; NNN.WAV first, else falls back to AY effect n)
 
 > BLEEP   _     BEEP 20 100             ; classic tone: 20 centiseconds, pitch 100
+                MESSAGE "What was that noise?"
                 DONE
 
 > LOOK    _     CLS
