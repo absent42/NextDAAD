@@ -810,6 +810,33 @@ NORTH 0
         MES "74 OK#n"
         SKIP 1
 > _ _   MES "74 F#n"
+; ---- streamed-song checks (SP10 client 2: AYS) ----
+; 75 SFX n 6 with no NNN.AYS and no NNN.AKY: the stream probe misses,
+; the AKY song probe misses, SFX no-ops and the entry continues. The
+; suite SD carries no 200.AYS/200.AKY, so both loaders fail clean.
+> _ _   LET 123 98
+        SFX 200 6
+        EQ 123 98
+        MES "75 OK#n"
+        SKIP 1
+> _ _   MES "75 F#n"
+; 76 SFX 2 7 loads + loops the staged 002.AYS stream (build-tests.ps1
+; -Suite stages it from tools\audio_assets). The PAUSE lets the ISR
+; consume the start request and tick the stream for real frames BEFORE
+; SFX 0 8 stops it - without the gap both mailbox bits would land in the
+; same frame and the fixed stop-before-start order would restart, not
+; stop. Headless-safe: assert only that the entry continues across the
+; sequence (witness flag survives) - playback is the owner ear leg.
+; Robust either way: if the stream fails to claim, SFX falls through to
+; the (absent) 002.AKY and still no-ops.
+> _ _   LET 123 99
+        SFX 2 7
+        PAUSE 10
+        SFX 0 8
+        EQ 123 99
+        MES "76 OK#n"
+        SKIP 1
+> _ _   MES "76 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5

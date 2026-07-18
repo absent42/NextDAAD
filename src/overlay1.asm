@@ -1520,18 +1520,26 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ret                         ; audEnable already set if anything on
 .stopmusic:
     ld hl, audRequest
-    set 3, (hl)
-    ret
+    set 3, (hl)                 ; stop AKY music
+    ld hl, audRequest2
+    set 0, (hl)                 ; and stop an AYS stream (a stream and an
+    ret                         ; AKY song never both play - one bit fires)
 .playonce:
     xor a
     jr .load
 .playloop:
     ld a, 1
 .load:
-    ld (audReqLoop), a
+    ld (audReq2Loop), a         ; stream loop flag (aud_load_ays consumes it)
+    ld (audReqLoop), a          ; AKY loop flag (the fallthrough path below)
+    push bc                     ; aud_load_ays corrupts BC - keep n for the
+    ld a, b                     ; AKY fallback
+    call aud_load_ays           ; probe NNN.AYS first; on success it has set
+    pop bc                      ; audRequest2 bit 1 + audEnable already
+    ret nc                      ; (pop bc leaves CF from aud_load_ays)
     ld a, b
-    call aud_load_song          ; CF = missing/oversized -> no-op
-    ret c
+    call aud_load_song          ; no/invalid AYS: existing AKY path (CF =
+    ret c                       ; missing/oversized -> no-op)
     ld hl, audRequest
     set 4, (hl)
 .enable:
@@ -1919,20 +1927,30 @@ aud_boot_probe:
     xor a
     ld (DATA_WINDOW+audFlags-$E000), a
     ld (DATA_WINDOW+audPlayerUp-$E000), a
+    ld (DATA_WINDOW+smpFlags-$E000), a  ; clear a stale sample-active bit:
+                                ; a looping sample must not replay a
+                                ; recycled bank table after a warm boot
     ld a, $FF
     ld (DATA_WINDOW+audSongNum-$E000), a
-    ld a, AUD_PAGE_LO           ; smpPageCnt lives in page 48 code space:
-    call data_map_page          ; a stale stream page count must not
-    xor a                       ; survive a warm boot (bank_table_init
-    ld (smpPageCnt), a          ; recycles the banks themselves)
+    ld a, AUD_PAGE_LO           ; smpPageCnt/aysFlags/aysPageCnt live in page
+    call data_map_page          ; 48 code space: a stale stream page count or
+    xor a                       ; active bit must not survive a warm boot
+    ld (smpPageCnt), a          ; (bank_table_init recycles the banks)
+    ld (aysFlags), a            ; stream-active off (sibling of smpFlags)
+    ld (aysPageCnt), a          ; stream page count cold
     call data_restore
     ld a, $FF
     ld (smpLoadedNum), a        ; keep-last cold on any (warm) boot
     xor a
     ld (sfbCount), a            ; 0 until aud_load_sfb below confirms it
     ld a, 1
-    ld (audReqLoop), a          ; boot music loops
-    ld a, $FF                   ; $FF = GAME.AKY
+    ld (audReq2Loop), a         ; boot stream loops
+    ld (audReqLoop), a          ; boot music loops (GAME.AKY fallthrough)
+    ld a, $FF                   ; $FF = GAME.AYS: streamed boot song, probed
+    call aud_load_ays           ; BEFORE GAME.AKY. Success = stream autoplay
+    jr nc, .nosong              ; (start bit + audEnable already set) and the
+                                ; AKY probe is skipped - one boot song only
+    ld a, $FF                   ; no GAME.AYS: fall through to GAME.AKY
     call aud_load_song
     jr c, .nosong
     ld hl, audRequest
@@ -1950,7 +1968,9 @@ aud_boot_probe:
 
 audGameAky: db "GAME.AKY", 0
 audGameSfb: db "GAME.SFB", 0
+audGameAys: db "GAME.AYS", 0
 audExtAky:  db ".AKY", 0
+audExtAys:  db ".AYS", 0
 audName:    ds 9
 audHandle:  db 0
 audSongReq: db 0
@@ -2377,6 +2397,289 @@ aud_div_clock:
     ld a, b
     ret
 
+; --- AYS streamed-song loader (SP10 client 2) -----------------------
+
+; aud_load_ays: A = song number ($FF = GAME.AYS, else NNN.AYS). Probes/
+; opens the file FIRST (a missing file leaves the current music
+; untouched), then stops BOTH music kinds - files audRequest bit 3 (stop
+; AKY song) AND audRequest2 bit 0 (stop stream) and halt-waits until BOTH
+; are consumed (skipped when audEnable = 0: the ISR never ticks, so
+; nothing plays and the bits would never clear). An AKY song and a stream
+; never coexist, so the double stop-wait always terminates - at most one
+; kind is ever actually playing, the other bit is consumed as a no-op on
+; the same frame. Releases any previous stream claim, validates the
+; 16-byte header (magic "AYS1", psgCount 1-3, loopOffset < streamLength),
+; claims a page list for streamLength, streams the file in over those
+; pages (a short read OR a trailing byte means the header streamLength
+; disagrees with the file size -> reject), precomputes the loop position/
+; remainder, commits aysLen/aysPsgs/aysLoop*, then files audRequest2 bit 1
+; + audEnable (audReq2Loop is the CALLER's, set before this call).
+; Out: CF clear = stream resident and its start filed; CF set =
+; missing/malformed/oversize/short-read. Any failure PAST the claim
+; releases the banks (aysPageCnt 0); a missing file (open fails first)
+; leaves the previous stream untouched. Corrupts everything.
+aud_load_ays:
+    cp $FF
+    jr nz, .num
+    ld hl, audGameAys           ; "GAME.AYS"
+    ld de, audName
+    ld bc, 9
+    ldir
+    jr .open
+.num:
+    ld hl, audName              ; "NNN.AYS" - the 3-digit decade idiom
+    ld b, '0'-1
+.hund:
+    inc b
+    sub 100
+    jr nc, .hund
+    add a, 100
+    ld (hl), b
+    inc hl
+    ld b, '0'-1
+.tens:
+    inc b
+    sub 10
+    jr nc, .tens
+    add a, 10
+    ld (hl), b
+    inc hl
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld de, audExtAys            ; ".AYS", 0
+    ex de, hl
+    ld bc, 5
+    ldir
+.open:
+    call esx_getsetdrv
+    jp c, .fail
+    ld ix, audName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jp c, .fail                 ; missing: current music untouched (open
+                                ; probed BEFORE the stop, as aud_load_song)
+    ld (audHandle), a
+    ; stop BOTH music kinds before the banks move / the stream restarts.
+    ; res the start bits first so a pending, not-yet-consumed start of the
+    ; OLD music cannot fire mid-load.
+    ld a, (audEnable)
+    or a
+    jr z, .stopped
+    ld hl, audRequest
+    res 4, (hl)                 ; drop a pending AKY start
+    set 3, (hl)                 ; stop AKY music
+    ld hl, audRequest2
+    res 1, (hl)                 ; drop a pending stream start
+    set 0, (hl)                 ; stop the stream
+.waitstop:
+    halt
+    ld a, (audRequest)
+    and %00001000               ; AKY stop still pending?
+    jr nz, .waitstop
+    ld a, (audRequest2)
+    and %00000001               ; stream stop still pending?
+    jr nz, .waitstop
+.stopped:
+    ; release any previous stream's banks now the engine is provably idle
+    ; and BEFORE the new claim. page 48 into slot 6 for aysPageTab/Cnt.
+    call data_save
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld hl, aysPageTab
+    ld a, (aysPageCnt)
+    ld b, a
+    call aud_banks_release      ; safe on B=0 (first load); zeroes aysPageCnt
+    call data_restore
+    ; read + validate the 16-byte header (into overlay1 scratch)
+    ld ix, aysHdr
+    ld bc, 16
+    call .read
+    jp c, .failclose
+    ld hl, 16
+    or a
+    sbc hl, bc
+    jp nz, .failclose           ; short header: reject
+    ld hl, (aysHdr)             ; magic "AYS1"
+    ld de, "YA"                 ; 'A','Y' little-endian
+    or a
+    sbc hl, de
+    jp nz, .failclose
+    ld hl, (aysHdr+2)
+    ld de, "1S"                 ; 'S','1' little-endian
+    or a
+    sbc hl, de
+    jp nz, .failclose
+    ld a, (aysHdr+4)            ; psgCount 1..3
+    or a
+    jp z, .failclose
+    cp 4
+    jp nc, .failclose
+    ld (aysPsgTmp), a
+    ld hl, (aysHdr+11)          ; streamLength (24-bit: +11 low word,
+    ld (aysLenTmp), hl          ; +13 high byte)
+    ld a, (aysHdr+13)
+    ld (aysLenTmpHi), a
+    or h
+    or l
+    jp z, .failclose            ; empty stream: malformed
+    ld hl, (aysHdr+8)           ; loopOffset (24-bit: +8 low word, +10 high)
+    ld (aysLoopTmp), hl
+    ld a, (aysHdr+10)
+    ld (aysLoopTmpHi), a
+    ; loopOffset < streamLength (24-bit): loopOffset - streamLength must
+    ; borrow, else the loop frame is at/past the end - reject.
+    ld de, (aysLenTmp)
+    or a
+    sbc hl, de
+    ld a, (aysLoopTmpHi)
+    ld hl, aysLenTmpHi
+    sbc a, (hl)
+    jp nc, .failclose
+    ; claim a page list for streamLength into aysPageTab
+    call data_save
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld a, (aysLenTmpHi)         ; A:DE = 24-bit streamLength
+    ld de, (aysLenTmp)
+    ld hl, aysPageTab
+    call aud_banks_claim
+    jp c, .claimfail            ; alloc failed / > 1MB: nothing held
+    ; stream the file in, 24-bit remaining counter, table index from 0
+    ld hl, (aysLenTmp)
+    ld (aysStrRem), hl
+    ld a, (aysLenTmpHi)
+    ld (aysStrRemHi), a
+    xor a
+    ld (aysStrIdx), a
+.pageloop:
+    ld hl, (aysStrRem)
+    ld a, (aysStrRemHi)
+    or h
+    or l
+    jr z, .streamed
+    ld a, (aysStrRemHi)
+    or a
+    jr nz, .fullwin             ; high byte set: remaining >= 64K > $2000
+    ld hl, (aysStrRem)
+    ld de, $2000
+    or a
+    sbc hl, de
+    jr nc, .fullwin
+    ld hl, (aysStrRem)          ; partial final window
+    jr .setwin
+.fullwin:
+    ld hl, $2000
+.setwin:
+    ld (aysStrWin), hl
+    ld a, AUD_PAGE_LO           ; source page = aysPageTab[aysStrIdx]
+    call data_map_page
+    ld a, (aysStrIdx)
+    ld e, a
+    ld d, 0
+    ld hl, aysPageTab
+    add hl, de
+    ld a, (hl)
+    call data_map_page          ; map that page into slot 6
+    ld ix, DATA_WINDOW
+    ld bc, (aysStrWin)
+    call .read
+    jp c, .failpost
+    ld hl, (aysStrWin)
+    or a
+    sbc hl, bc
+    jp nz, .failpost            ; short read: file smaller than streamLength
+    ld hl, (aysStrRem)          ; remaining -= window (24-bit)
+    ld bc, (aysStrWin)
+    or a
+    sbc hl, bc
+    ld (aysStrRem), hl
+    jr nc, .noborrow
+    ld hl, aysStrRemHi
+    dec (hl)
+.noborrow:
+    ld hl, aysStrIdx
+    inc (hl)
+    jp .pageloop
+.streamed:
+    ; oversize check: exactly streamLength bytes must remain (streamLength
+    ; == filesize-16). A trailing byte means the header lied - reject.
+    ld a, AUD_PAGE_LO           ; a source page is in slot 6: map page 48 for
+    call data_map_page          ; the probe target (and the commit below)
+    ld a, (audHandle)
+    ld ix, aysProbe
+    ld bc, 1
+    call esx_fread
+    jp c, .failpost
+    ld a, b
+    or c
+    jp nz, .failpost            ; trailing byte: oversize
+    ; precompute the loop position + remainder into page-48 ays state
+    ; (page 48 is in slot 6 now, so the ays* labels are addressable).
+    ld hl, (aysLoopTmp)         ; inPage = loopOffset & $1FFF
+    ld a, h
+    and $1F
+    ld h, a
+    ld (aysLoopInPage), hl
+    ld a, (aysLoopTmpHi)        ; idx = loopOffset >> 13 = (b2<<3)|(b1>>5)
+    add a, a
+    add a, a
+    add a, a
+    ld c, a                     ; b2 << 3
+    ld a, (aysLoopTmp+1)        ; b1
+    rlca
+    rlca
+    rlca
+    and 7                       ; b1 >> 5
+    or c
+    ld (aysLoopIdx), a
+    ld hl, (aysLenTmp)          ; aysLoopRem = streamLength - loopOffset
+    ld de, (aysLoopTmp)
+    or a
+    sbc hl, de
+    ld (aysLoopRem), hl
+    ld a, (aysLenTmpHi)
+    ld hl, aysLoopTmpHi
+    sbc a, (hl)
+    ld (aysLoopRemHi), a
+    ld hl, (aysLenTmp)          ; commit aysLen + aysPsgs
+    ld (aysLen), hl
+    ld a, (aysLenTmpHi)
+    ld (aysLenHi), a
+    ld a, (aysPsgTmp)
+    ld (aysPsgs), a
+    call data_restore
+    ld a, (audHandle)
+    call esx_fclose
+    ld hl, audRequest2          ; file the start (audReq2Loop was the
+    set 1, (hl)                 ; caller's) and arm the ISR
+    ld a, 1
+    ld (audEnable), a
+    or a                        ; CF clear
+    ret
+.claimfail:
+    call data_restore
+    jp .failclose
+.failpost:
+    ; failure after a successful claim: release the banks. slot 6 may hold
+    ; a source page - map page 48 for the release, then restore slot 6.
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld hl, aysPageTab
+    ld a, (aysPageCnt)
+    ld b, a
+    call aud_banks_release
+    call data_restore
+.failclose:
+    ld a, (audHandle)
+    call esx_fclose
+.fail:
+    scf
+    ret
+.read:
+    ld a, (audHandle)
+    jp esx_fread
+
 ; --- banked-stream allocation (SP10) --------------------------------
 ;
 ; PRECONDITION for both helpers: bank 24 page 48 (AUD_PAGE_LO) is mapped
@@ -2559,5 +2862,20 @@ smpClaimPtr:   dw 0             ; aud_banks_claim: table write pointer
 smpClaimBanks: db 0            ; aud_banks_claim: banks still to claim
 smpClaimPages: db 0            ; aud_banks_claim: pages appended so far
 smpRelTab:     dw 0            ; aud_banks_release: base for the count zero
+
+; aud_load_ays scratch (overlay1 mainline data, slot 7). aysHdr is the
+; 16-byte header buffer; the *Tmp values are staged here and committed to
+; the page-48 ays state only after the whole load validates.
+aysHdr:        ds 16           ; 16-byte AYS header
+aysPsgTmp:     db 0            ; psgCount pending commit
+aysLenTmp:     dw 0            ; streamLength low word (24-bit)
+aysLenTmpHi:   db 0            ; streamLength high byte
+aysLoopTmp:    dw 0            ; loopOffset low word (24-bit)
+aysLoopTmpHi:  db 0            ; loopOffset high byte
+aysStrRem:     dw 0            ; streaming remaining, low word
+aysStrRemHi:   db 0            ; streaming remaining, high byte
+aysStrIdx:     db 0            ; current aysPageTab index while streaming
+aysStrWin:     dw 0            ; current window byte count
+aysProbe:      db 0            ; oversize one-byte probe target
 
     ASSERT $ <= OVL_LIMIT

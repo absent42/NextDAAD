@@ -55,6 +55,14 @@ err_raise:
     ld a, 3                     ; border too (invisible under the
     out ($FE), a                ; tilemap, correct elsewhere)
     di
+    ld hl, audRequest2          ; file a stream-stop alongside the silence,
+    set 0, (hl)                 ; matching the stream-stop discipline. The
+                                ; di + busy-halt below means the ISR never
+                                ; ticks again, so audio_init's PSG silence
+                                ; is what actually takes effect here and the
+                                ; next boot's aud_boot_probe clears aysFlags;
+                                ; the filed bit costs nothing and keeps the
+                                ; reset paths consistent.
     call audio_init             ; a raised error must not leave the
                                 ; music's last note droning through
                                 ; the halt loop

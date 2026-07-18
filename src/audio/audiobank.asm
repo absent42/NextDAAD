@@ -47,6 +47,23 @@
 ; audFlags bit 2 is set and clears the bit when it goes zero, so the
 ; play gate narrows again and BEEP regains PSG 3.
 aud_tick:
+    ; SP10 audRequest2 (banked-stream mailbox) is consumed BEFORE the
+    ; audRequest chain: streams are music, so bit 0 (stop stream) before
+    ; bit 1 (start stream) mirrors the bit 3/4 music rule - a stale stop
+    ; must never kill a same-frame start. Each res is one instruction,
+    ; atomic against mainline (the ISR runs with interrupts off).
+    ld hl, audRequest2
+    bit 0, (hl)
+    jr z, .no2stop
+    res 0, (hl)
+    call aud_ays_stop
+    ld hl, audRequest2
+.no2stop:
+    bit 1, (hl)
+    jr z, .no2start
+    res 1, (hl)
+    call aud_ays_start
+.no2start:
     ld hl, audRequest
     ld a, (hl)
     or a
@@ -173,6 +190,10 @@ aud_tick:
     ld (audBeepFrames), hl
 .noreq:
     call aud_smp_tick           ; sample refeed (self-gated on smpFlags)
+    call aud_ays_tick           ; stream replay (self-gated on aysFlags);
+                                ; runs regardless of audFlags, like the
+                                ; sample refeed - the stream drives its
+                                ; own PSGs independently of the AKY player
     ld a, (audFlags)
     or a
     ret z
@@ -656,6 +677,266 @@ audDmaProg:
     db $CF
     db $87
 audDmaProgLen equ $ - audDmaProg
+
+; --- banked-stream engine (SP10 client 2: AYS streamed song) ---------
+;
+; Per-tick AY-register-delta replay of a song streamed from SD into a
+; claimed page list (aysPageTab). Second client of the same banked-stream
+; walker as the sample engine (aud_smp_*); it clones the page-table /
+; 24-bit-counter / floor-then-pool idioms but is a READER: each tick it
+; walks one frame of the stream and writes the changed AY registers.
+;
+; AYS stream layout (authoritative spec: authoring-kit/lib/aysconv.ps1):
+;   per frame, per PSG 0..aysPsgs-1:
+;     dw mask   ; 14-bit register-change mask (bit r = register r written
+;               ; this frame; bits 14-15 always 0)
+;     db values[popcount(mask)]  ; changed register values, ascending r
+;   frame boundary is implicit after aysPsgs PSG blocks (masks self-size).
+;
+; ALL ays state and both tables live in page-48 CODE space ($C000-$CFFF,
+; MMU slot 6). That slot stays mapped for the whole of aud_tick, so this
+; state is legal to touch at ANY point in the tick - including while slot
+; 7 windows a stream source page. This is REQUIRED, not a convenience:
+; the frame read advances the position (aysTabIdx/aysOff) MID-FRAME as it
+; crosses an 8K page, which the $FFE0 state block (slot 7 = page 49 only)
+; could not support. The one page-49 datum the walk needs, audFlags (for
+; PSG-3 suppression), is snapshotted into aysSup BEFORE slot 7 is remapped
+; off page 49. overlay1 reaches this same state through a page-48 window
+; (aud_load_ays / aud_boot_probe), exactly as it does smpPageTab.
+
+; aud_ays_start: begin the stream loaded into aysPageTab. Position = 0,
+; remain = aysLen; audReq2Loop (resident) selects loop (bit 1) vs once.
+; The loader's stop-wait guarantees no AKY song is running when the start
+; bit is filed (a stream and an AKY song never coexist - documented
+; invariant, asserted nowhere). Runs in ISR context. Corrupts AF, HL.
+aud_ays_start:
+    xor a
+    ld (aysTabIdx), a
+    ld hl, 0
+    ld (aysOff), hl
+    ld hl, (aysLen)             ; 24-bit stream length -> remain this pass
+    ld (aysRemain), hl
+    ld a, (aysLenHi)
+    ld (aysRemainHi), a
+    ld a, (audReq2Loop)
+    and 1
+    add a, a                    ; -> bit 1 (loop)
+    or 1                        ; bit 0 (active)
+    ld (aysFlags), a
+    ret
+
+; aud_ays_stop: stop the stream and silence the PSGs it drove, respecting
+; PSG-3 ownership exactly as aud_music_stop does (an effect or beep owning
+; PSG 3 keeps it). Clears aysFlags. Idempotent. Runs in ISR context.
+; Corrupts AF, BC.
+aud_ays_stop:
+    xor a
+    ld (aysFlags), a
+    ld a, $FF                   ; PSG 1 and PSG 2 carry stream/music only:
+    call aud_psg_silence        ; silence them now (nothing else refreshes
+    ld a, $FE                   ; them once the stream is gone)
+    call aud_psg_silence
+    ld a, (audFlags)            ; PSG 3 may be owned by an effect (bit 2)
+    and %00001100               ; or a beep (bit 3): leave it to them, else
+    ret nz                      ; silence it (the same test aud_music_stop
+    ld a, $FD                   ; uses to protect PSG 3)
+    jp aud_psg_silence
+
+; aud_ays_tick: replay one frame. Called from aud_tick every tick (self-
+; gated on aysFlags bit 0), regardless of audFlags. Slot 7 = AUD_PAGE_HI
+; on entry (aud_smp_tick restored it). Slot 6 stays on page 48 throughout.
+;
+; Slot-7 walk, instruction by instruction:
+;   [slot7=page49] read aysFlags gate; snapshot audFlags bits 2/3 -> aysSup
+;                  (audFlags is $FFE0 = page 49, readable only here);
+;   nextreg $57 <- aysPageTab[aysTabIdx]  ; slot7 now = current source page
+;   [slot7=source] read the whole frame via aud_ays_rdb (byte-wise, rolls
+;                  aysTabIdx/aysOff and remaps slot 7 on each 8K crossing);
+;                  AY writes go to I/O ports, not memory, so they are legal
+;                  under any slot-7 mapping; all loop state is page-48/regs;
+;   nextreg $57 <- AUD_PAGE_HI            ; slot7 back to page 49
+;   [slot7=page49] remain -= consumed (24-bit); on 0: loop (reload the
+;                  precomputed aysLoop* position/remain) or stop.
+; Worst-case frame = 3*(2+14) = 48 bytes read + up to 42 register writes,
+; well within the ISR budget (the AKY player writes similar volumes).
+; Corrupts everything.
+aud_ays_tick:
+    ld a, (aysFlags)
+    bit 0, a
+    ret z                       ; no stream active
+    ; snapshot PSG-3 suppression state while page 49 is still in slot 7
+    ld a, (audFlags)
+    and %00001100               ; effect (bit 2) or beep (bit 3) owns PSG 3
+    ld (aysSup), a
+    ; slot 7 -> the current source page
+    ld a, (aysTabIdx)
+    ld e, a
+    ld d, 0
+    ld hl, aysPageTab
+    add hl, de
+    ld a, (hl)
+    nextreg $57, a
+    ; frame read setup
+    xor a
+    ld (aysConsumed), a
+    ld a, (aysPsgs)             ; 1..3 (validated at load; only used with a
+    ld (aysPsgLeft), a          ; live stream, so never 0 here)
+    ld a, $FF                   ; PSG 1 select ($FF), then $FE, then $FD
+    ld (aysSel), a
+.psg:
+    ld a, (aysSel)
+    call aud_psg3_select        ; select this PSG chip (I/O only)
+    ; is this PSG's write suppressed? only PSG 3 ($FD) while effect/beep
+    ; owns it - consume its bytes but skip the register writes.
+    xor a
+    ld (aysSkip), a
+    ld a, (aysSel)
+    cp $FD
+    jr nz, .mask
+    ld a, (aysSup)
+    or a
+    jr z, .mask
+    ld a, 1
+    ld (aysSkip), a
+.mask:
+    call aud_ays_rdb            ; mask low byte
+    ld e, a
+    call aud_ays_rdb            ; mask high byte (bits 8-13; 14-15 = 0)
+    ld d, a                     ; DE = 14-bit change mask
+    xor a
+    ld (aysReg), a             ; register counter 0..13
+.reg:
+    srl d
+    rr e                        ; CF = mask bit for the current register;
+    jr nc, .regnext             ; DE >>= 1 (bit 0 = register 0 first)
+    call aud_ays_rdb            ; read the value byte (consumed regardless)
+    ld c, a                     ; C = value
+    ld a, (aysSkip)
+    or a
+    jr nz, .regnext             ; suppressed: byte consumed, no write
+    ld a, (aysReg)
+    ld b, a                     ; B = register number
+    call aud_psg3_write         ; out reg B = value C on the selected PSG
+.regnext:
+    ld hl, aysReg
+    inc (hl)
+    ld a, (hl)
+    cp 14
+    jr c, .reg
+    ld a, (aysSel)
+    dec a                       ; $FF -> $FE -> $FD for the next PSG
+    ld (aysSel), a
+    ld hl, aysPsgLeft
+    dec (hl)
+    jp nz, .psg
+    ; frame read complete: slot 7 back to the state page BEFORE any $FFE0
+    ; access (aud_ays_stop below reads audFlags there)
+    nextreg $57, AUD_PAGE_HI
+    ; remain -= consumed (24-bit). consumed == 2*aysPsgs + sum(popcounts),
+    ; the exact byte count aud_ays_rdb advanced the position by, so remain
+    ; and position stay in lock-step.
+    ld a, (aysConsumed)
+    ld e, a
+    ld d, 0
+    ld hl, (aysRemain)
+    or a
+    sbc hl, de
+    ld (aysRemain), hl
+    ld a, (aysRemainHi)
+    sbc a, 0
+    ld (aysRemainHi), a
+    jr c, .endpass              ; underflow (malformed frame align): end pass
+    or h
+    or l
+    ret nz                      ; bytes still remain this pass
+.endpass:
+    ld a, (aysFlags)
+    bit 1, a
+    jp z, aud_ays_stop          ; play-once: end in silence (out of jr range)
+    ; loop: reload the precomputed loop position and remaining count
+    ld a, (aysLoopIdx)
+    ld (aysTabIdx), a
+    ld hl, (aysLoopInPage)
+    ld (aysOff), hl
+    ld hl, (aysLoopRem)
+    ld (aysRemain), hl
+    ld a, (aysLoopRemHi)
+    ld (aysRemainHi), a
+    ret
+
+; aud_ays_rdb: read one stream byte -> A, advancing the position
+; (aysTabIdx/aysOff) and counting it in aysConsumed. On the 8K page
+; boundary it steps aysTabIdx and remaps slot 7 to the next source page -
+; UNLESS the new index has reached aysPageCnt, in which case the stream
+; ended exactly on the boundary and no further byte is read this pass
+; (remain hits 0 and aud_ays_tick's loop/stop runs before any read), so
+; slot 7 is left on the final page and never dereferenced past the table.
+; This is the proven no-read-past-the-table invariant - not a reliance on
+; the aysPageCnt byte sitting adjacent to aysPageTab (it does, mirroring
+; smpPageTab, but the guard here means that adjacency is never reached).
+; Slot 7 holds the live source page on entry and exit. Corrupts AF, HL.
+; Preserves BC, DE, IX, IY.
+aud_ays_rdb:
+    ld hl, aysConsumed
+    inc (hl)                    ; count this byte (frame-scoped)
+    ld hl, (aysOff)
+    ld a, h
+    add a, $E0                  ; source page windows at slot 7 = $E000
+    ld h, a
+    ld a, (hl)                  ; A = the stream byte
+    ld (aysByte), a             ; stash across the page-cross bookkeeping
+    ld hl, (aysOff)
+    inc hl
+    ld (aysOff), hl
+    bit 5, h                    ; new offset high byte $20 = crossed $2000
+    jr nz, .cross
+    ret                         ; no cross: A still holds the byte
+.cross:
+    push de
+    ld hl, 0
+    ld (aysOff), hl             ; offset wraps to 0 in the next page
+    ld hl, aysTabIdx
+    inc (hl)
+    ld a, (hl)                  ; new table index
+    ld hl, aysPageCnt
+    cp (hl)
+    jr nc, .crosspop            ; index reached the count: stream end, no map
+    ld e, a
+    ld d, 0
+    ld hl, aysPageTab
+    add hl, de
+    ld a, (hl)                  ; next source page
+    nextreg $57, a
+.crosspop:
+    pop de
+    ld a, (aysByte)             ; A = the stream byte read above
+    ret
+
+; AYS state + page table, all in page-48 CODE space (slot 6). Reset on
+; (warm) boot by aud_boot_probe (aysFlags + aysPageCnt zeroed through a
+; page-48 window); filled + committed by aud_load_ays. aysPageCnt sits at
+; aysPageTab+AUD_STRTAB_MAX so aud_banks_claim/release address it there.
+aysFlags:     db 0             ; bit 0 stream active, bit 1 looping
+aysPsgs:      db 0             ; 1..3 PSGs in the stream (from the header)
+aysTabIdx:    db 0             ; current index into aysPageTab
+aysOff:       dw 0             ; read offset inside that page (0-$1FFF)
+aysRemain:    dw 0             ; stream bytes left this pass, low word
+aysRemainHi:  db 0             ; stream bytes left this pass, high byte
+aysLen:       dw 0             ; total stream length (loop reload), low word
+aysLenHi:     db 0             ; total stream length, high byte
+aysLoopIdx:   db 0             ; precomputed loop position: page-table index
+aysLoopInPage:dw 0             ; precomputed loop position: offset in page
+aysLoopRem:   dw 0             ; precomputed aysLen-loopOffset, low word
+aysLoopRemHi: db 0             ; precomputed aysLen-loopOffset, high byte
+aysConsumed:  db 0             ; bytes read this frame (aud_ays_rdb counts)
+aysPsgLeft:   db 0             ; PSGs still to read this frame
+aysSel:       db 0             ; current PSG select value ($FF/$FE/$FD)
+aysReg:       db 0             ; current register number 0..13
+aysSkip:      db 0             ; nonzero: suppress this PSG's writes
+aysSup:       db 0             ; audFlags bits 2/3 snapshot (PSG-3 owner)
+aysByte:      db 0             ; aud_ays_rdb return-byte stash across a cross
+aysPageTab:   ds AUD_STRTAB_MAX
+aysPageCnt:   db 0
 
 ; --- BEEP tone engine ------------------------------------------------
 

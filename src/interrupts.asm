@@ -129,4 +129,13 @@ smpLoadedNum:   db $FF      ; keep-last: sample number resident in the
 sfbCount:       db 0        ; GAME.SFB effect count ((table[0]-$D000)/2);
                             ; 0 = no bank loaded - h_sfx bounds guard
 
+; SP10 banked-stream request mailbox (client 2: AYS streamed song).
+; Streams are music, so their stop/start mirror audRequest bits 3/4 and
+; are consumed BEFORE the audRequest chain in aud_tick (a stale stop
+; filed while audio was off can never kill a same-frame start).
+; audRequest2 bits: 0 = stop stream, 1 = start stream. Edge-triggered:
+; aud_tick clears each bit it consumes (single res, atomic vs mainline).
+audRequest2: db 0
+audReq2Loop: db 0          ; start-stream: 1 = loop, 0 = play once
+
 frameCounter: dw 0

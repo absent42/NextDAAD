@@ -144,6 +144,7 @@ SSTOP   67      verb
 AYFX    68      verb
 XMES    69      verb
 AYBAD   70      verb
+TUNE2   71      verb
 
 ;                       Verbs
 GET     20      verb
@@ -542,6 +543,12 @@ $pictureOK
                 DONE
 
 > AYBAD   _     SFX 200 1
+                DONE
+
+; SP10 owner verb: TUNE2 is the ear leg for the AYS streamed song - the
+; too-big-for-AKY 002.AYS (via -Aud staging). SFX 2 7 loops the stream;
+; STOPM (SFX 0 8) stops it (sub 8 now stops both music kinds).
+> TUNE2   _     SFX 2 7
                 DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation

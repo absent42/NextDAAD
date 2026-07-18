@@ -125,16 +125,29 @@ $truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]1000))  # data size (
 [System.IO.File]::WriteAllBytes("$root\tests\out\truncwav.bin", $truncWav.ToArray())
 
 if ($Suite) {
-    # Suite semantics assume no sample/music/effects assets staged - an
-    # earlier -Aud run's residue would reroute checks 66/69 through the
-    # sample path and an out-of-range AY effect. Stale-clean first, then
-    # copy the 098/099 fixtures in.
-    Remove-Item "$root\sd\*.WAV", "$root\sd\*.AKY", "$root\sd\GAME.SFB", "$root\sd\0.XMB" -Force -ErrorAction SilentlyContinue
+    # Suite semantics assume no sample/music/effects assets staged EXCEPT
+    # the one 002.AYS stream check 76 loads - an earlier -Aud run's other
+    # residue would reroute checks 66/69 through the sample path and an
+    # out-of-range AY effect, and a stray 200.AYS would break check 75.
+    # Stale-clean every audio kind first (including *.AYS), then copy the
+    # 098/099 fixtures and the single 002.AYS in.
+    Remove-Item "$root\sd\*.WAV", "$root\sd\*.AKY", "$root\sd\*.AYS", "$root\sd\GAME.SFB", "$root\sd\0.XMB" -Force -ErrorAction SilentlyContinue
     Copy-Item "$root\tests\out\condacts.ddb" "$root\sd\GAME.DDB" -Force
     Copy-Item "$root\tests\out\truncwav.bin" "$root\sd\098.WAV" -Force
     Copy-Item "$root\tests\out\badwav.bin" "$root\sd\099.WAV" -Force
     Copy-Item "$root\tests\out\condacts.xmb" "$root\sd\0.XMB" -Force
     "staged tests\out\condacts.xmb -> sd\0.XMB"
+    # Streamed-song fixture for check 76 (SFX 2 7). Optional: if the audio
+    # export has not been run the check still passes as a clean no-op, so
+    # warn and continue rather than fail the suite build.
+    $ays2 = "$root\tools\audio_assets\002.AYS"
+    if (Test-Path $ays2) {
+        Copy-Item $ays2 "$root\sd\002.AYS" -Force
+        "staged tools\audio_assets\002.AYS -> sd\002.AYS (check 76)"
+    }
+    else {
+        "WARNING: $ays2 absent - check 76 will no-op (run the audio export / aysconv.ps1 to exercise the stream path)"
+    }
 }
 if ($Err4) {
     Copy-Item "$root\tests\out\doallnest.ddb" "$root\sd\GAME.DDB" -Force
