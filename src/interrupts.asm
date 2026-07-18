@@ -17,18 +17,17 @@ im2_init:
     ld hl, im2_isr
     ld (IM2_STUB+1), hl
     ; SP10 CTC pivot: a second runtime-written stub for the per-sample DAC feed,
-    ; plus a two-byte carve of the uniform table so CTC channel 0's IM2 vector
+    ; plus a ONE-byte carve of the uniform table so CTC channel 0's IM2 vector
     ; (byte IM2_CTC_VEC = 6) routes to ctc_isr instead of im2_isr. IM2_CTC_STUB's
-    ; high byte is $BE (== the fill), so table[V+1] already matches the fill and
-    ; only the low byte at table[V] truly changes.
-    ld a, $C3
+    ; high byte is $BE (== the fill), so table[V+1] already matches - only
+    ; table[V]'s low byte is written. A is still $C3 (the JP opcode) from the
+    ; frame stub above.
     ld (IM2_CTC_STUB), a
     ld hl, ctc_isr
     ld (IM2_CTC_STUB+1), hl
-    ld hl, IM2_TABLE + IM2_CTC_VEC
-    ld (hl), IM2_CTC_STUB & $FF          ; table[V]   = low(ctc_stub)
-    inc hl
-    ld (hl), IM2_CTC_STUB >> 8           ; table[V+1] = high(ctc_stub) (= $BE fill)
+    ld a, IM2_CTC_STUB & $FF
+    ld (IM2_TABLE + IM2_CTC_VEC), a      ; table[V] = low(ctc_stub); table[V+1]
+                                         ; is already the $BE fill (= high stub)
     ld a, IM2_TABLE >> 8
     ld i, a
     ; Enter Next hardware IM2 mode. This GLOBAL switch relocates the ULA's own
@@ -40,6 +39,10 @@ im2_init:
     ; playvid and em00k CTCAudio ship exactly this shape (nextreg $C0 bit 0).
     nextreg NR_INT_CTRL, NR_INT_C0_VAL   ; hw IM2, vector base 0 (bit 3 stackless
                                          ; NMI is 0 on every cold/soft-reset boot)
+    nextreg NR_INT_EN_1, %10000001       ; NR C4: expansion-bus INT (bit 7, reset
+                                         ; default) + ULA int (bit 0), set explicitly
+                                         ; so the frame tick never depends on ambient
+                                         ; NextZXOS state (dev-guide example shape)
     nextreg NR_INT_EN_2, %00000001       ; enable CTC channel 0 int (NR C5). playvid
                                          ; and CTCAudio set only NR C0 and still work
                                          ; - this is dev-guide-documented belt-and-
@@ -104,9 +107,13 @@ im2_isr:
     ;      the selected register, the slot 6/7 mapping, and AF' all survive intact.
     ;  (3) Only one CTC nest is ever live (period >> its ~196T body), +4 bytes of
     ;      stack. ctc_isr is non-reentrant against itself (its ei precedes reti).
-    ; DI sections elsewhere stay < one CTC period (min ~50us at 20kHz): nr_read's
-    ; bracket is ~76T (~2.7us); the tick's pointer brackets are ~20T; every
-    ; indefinite-DI teardown calls audio_init (which resets the CTC) first.
+    ; DI sections: nr_read's bracket ~76T (~2.7us) and the tick's pointer brackets
+    ; ~20T stay well under one CTC period (~50us at 20kHz); every indefinite-DI
+    ; teardown calls audio_init (resets the CTC) first. The AKY player calls in
+    ; aud_tick are the DELIBERATE exception - DI-bracketed at ~5.5k T (~200us,
+    ; longer than a CTC period) because the player repoints SP; during sample+
+    ; music coexistence that holds the DAC ~1% duty at 50Hz (accepted v0.1.0
+    ; compromise; nesting there would corrupt the song - see aud_tick .gate).
     ei
     ; Save MMU 6/7 via the register-select port pair. Mainline users of
     ; $243B/$253B are DI-bracketed (hardware.asm nr_read) or run before
@@ -153,7 +160,10 @@ im2_isr:
 ; NO banked memory - just the resident ring pointers, the ALWAYS-mapped ring
 ; ($7C00, MMU3), and one raw OUT to the DAC. That is what makes it nestable
 ; anywhere the frame ISR EIs (mid-tick with bank 24 mapped, mid-copy with a
-; source page in slot 7, mid-ZX0 depack whose AF' parking is untouched here).
+; source page in slot 7, mid-ZX0 depack whose AF' parking is untouched here) -
+; EXCEPT the AKY player calls, which are DI-bracketed in aud_tick: the player
+; repoints SP into song data / RETTABLE, and a nested interrupt-acceptance push
+; would corrupt it (see aud_tick .gate and the SP-repoint contract).
 ; It outputs (smpPlayPtr), then advances with a branchless power-of-two wrap;
 ; when play has caught the producer (smpPlayPtr == smpWritePtr) it holds the
 ; current byte - natural hold-last; aud_smp_tick pads a DAC_SILENCE guard at W

@@ -88,14 +88,18 @@ aud_tick:
     jr z, .no5
     res 5, (hl)
     ld hl, AUD_SFB_ORG
+    di                              ; player repoints SP - no CTC nest (see .gate)
     call PLY_AKY_INITSOUNDEFFECTS
+    ei
     ld hl, audRequest
 .no5:
     ; bit 3: stop music - BEFORE bit 4, see the header
     bit 3, (hl)
     jr z, .no3
     res 3, (hl)
+    di                              ; aud_music_stop -> PLY_AKY_INIT repoints SP
     call aud_music_stop
+    ei
     ld hl, audRequest
 .no3:
     ; bit 4: start the song already loaded at AUD_SONG_ORG
@@ -103,7 +107,9 @@ aud_tick:
     jr z, .no4
     res 4, (hl)
     ld hl, AUD_SONG_ORG
+    di                              ; player repoints SP - no CTC nest
     call PLY_AKY_INIT               ; also zeroes the effect channels
+    ei
     ld a, 1
     ld (audPlayerUp), a
     ld a, (audFlags)
@@ -121,12 +127,14 @@ aud_tick:
     bit 2, (hl)
     jr z, .no2
     res 2, (hl)
+    di                              ; player repoints SP - bracket the triple stop once
     xor a
     call PLY_AKY_STOPSOUNDEFFECTFROMCHANNEL
     ld a, 1
     call PLY_AKY_STOPSOUNDEFFECTFROMCHANNEL
     ld a, 2
     call PLY_AKY_STOPSOUNDEFFECTFROMCHANNEL
+    ei
     ld hl, audFlags
     res 2, (hl)
     ; An explicit stop must silence PSG 3 now. The player only re-asserts
@@ -154,11 +162,13 @@ aud_tick:
     or l
     ld hl, audRequest               ; flags survive the reload
     jr z, .no1
+    di                              ; ensure_player (INIT) + PLAYSOUNDEFFECT repoint SP
     call aud_ensure_player
     ld a, (audReqSfx)
     ld bc, $0000                    ; B = inverted volume (0 = max),
                                     ; C = channel 0
     call PLY_AKY_PLAYSOUNDEFFECT
+    ei
     ld hl, audFlags
     set 2, (hl)
     ld hl, audRequest
@@ -227,7 +237,19 @@ aud_tick:
 .gate:
     ld a, (audFlags)
     and %00000101                   ; music playing OR effect active
+    ; PLY_AKY_PLAY repoints the real SP into the song linker/track pointers and
+    ; the static RETTABLE for essentially its whole body (its documented contract:
+    ; "call with interrupts disabled"). Under the frame ISR's early-EI a nested
+    ; ctc_isr would push PC/AF/HL at the repointed SP and corrupt song data /
+    ; RETTABLE -> ret-to-garbage crash. So mask CTC for the player's duration.
+    ; This is the ONLY per-frame bracket (the others are one-shot request
+    ; handlers); during sample+music COEXISTENCE it holds the DAC for ~5.5k T
+    ; (~200us; ~1.0% duty at 50Hz / 28 MHz) once per frame - a documented v0.1.0
+    ; compromise pending the owner's ear verdict. Sample-only and music-only are
+    ; unaffected (this call only runs when audFlags has music or effect set).
+    di
     call nz, PLY_AKY_PLAY           ; music + effects on PSG 3
+    ei
     ; effect-end watch (see header)
     ld a, (audFlags)
     bit 2, a

@@ -260,7 +260,8 @@ AUD_CTC_RESET   equ $03     ; control word: soft reset (D1) + no TC (D2=0); writ
                             ; twice = the Next's unknown-state channel reset (ports.txt)
 AUD_CTC_CW16    equ $85     ; %10000101: int en, timer, /16, auto-trig, TC follows, control
 AUD_CTC_CW256   equ $A5     ; %10100101: as CW16 but prescaler /256
-AUD_CTC_XOVER   equ 6836    ; rate >= this uses /16 (else TC = clock/16/rate > 256)
+; prescaler crossover is per-video-mode (clk16>>8), computed in aud_ctc_params -
+; a fixed constant would clamp sharply on the faster clocks
 AUD_RATE_MIN    equ 3500    ; validated sample-rate floor (aud_load_wav)
 AUD_RATE_MAX    equ 20000   ; the 1K ring holds > 1 frame of this rate
 AUD_SMP_MAX     equ 1048576 ; sample payload sanity ceiling (1MB = 64

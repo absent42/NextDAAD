@@ -2397,11 +2397,11 @@ aud_load_wav:
 ; at the LIVE video-timing mode. The CTC input clock IS the FPGA system clock,
 ; 27-33 MHz by video mode (nextreg $11 bits 2:0), so a fixed constant would
 ; drift pitch across VGA/HDMI - aud_clk16_tab holds clock/16 per mode (like
-; em00k CTCAudio's table). Prescaler /16 for rate >= AUD_CTC_XOVER
-; (TC = clk16/rate, <= 256); else /256 (TC = (clk16>>4)/rate). TC is floored and
-; clamped to 255 (the lone rate 6836 that divides to 256 lands on 255, a <0.5%
-; nudge); residual error is <= one TC step, largest at the rate extremes (see
-; the hardware checklist). Corrupts AF,BC,HL; preserves DE.
+; em00k CTCAudio's table). Prescaler /16 for rate >= clk16>>8 (the PER-MODE
+; crossover where the /16 TC would reach 256); else /256 (TC = (clk16>>4)/rate).
+; TC is floored and clamped to 255 (the boundary rate that divides to 256 lands
+; on 255, a <0.5% nudge); residual error is <= one TC step, largest at low rates
+; on fast clocks (see the hardware checklist). Corrupts AF,BC,HL; preserves DE.
 aud_ctc_params:
     push de                     ; save the rate; nr_read takes the reg in E
     ld e, NR_VIDEO_TIMING
@@ -2422,13 +2422,18 @@ aud_ctc_params:
     ld h, b
     ld l, a                     ; HL = clk16 low 16 bits; C:HL = clk16 (24-bit)
     pop de                      ; DE = rate
-    push hl                     ; protect clk16 low word across the compare
-    ld hl, AUD_CTC_XOVER
+    ; per-mode crossover = clk16 >> 8 (the rate at which the /16 TC reaches 256).
+    ; A fixed constant only holds for VGA0; on faster clocks (up to VGA6 33 MHz)
+    ; a 6836 crossover would leave a band where /16 TC overflows 255 and clamps
+    ; sharply (+18% on VGA6). clk16 is in C:HL, so clk16 >> 8 = C:H.
+    push hl                     ; protect clk16 low word (restored after the test)
+    ld l, h
+    ld h, c                     ; HL = C:H = clk16 >> 8 = crossover
     or a
-    sbc hl, de                  ; XOVER - rate: CF (borrow) when rate > XOVER
-    pop hl
-    jr c, .p16
-    jr z, .p16                  ; rate >= AUD_CTC_XOVER -> prescaler 16
+    sbc hl, de                  ; crossover - rate: CF (borrow) when rate > crossover
+    pop hl                      ; restore clk16 low16 (C:HL = clk16 again)
+    jr c, .p16                  ; rate > crossover -> /16
+    jr z, .p16                  ; rate == crossover -> /16 (TC 256 -> clamps to 255)
     ld a, AUD_CTC_CW256         ; /256: control word + dividend = clk16 >> 4
     ld (audReqSmpCtrl), a
     srl c                       ; clk16 >> 4 (24-bit C:HL), four right shifts
