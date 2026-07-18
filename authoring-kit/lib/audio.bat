@@ -20,9 +20,18 @@ for %%F in ("AUDIO\*.wav") do (
 )
 
 REM ---- Arkos .aks conversions (music/songs/effects) need SongToAky. Skip the
-REM      whole leg if there are no .aks sources - a samples-only game does not
-REM      need Arkos Tracker installed. ----
-if not exist "AUDIO\*.aks" goto :aks_done
+REM      whole leg if there are no NON-STREAM .aks sources - a samples-only
+REM      game does not need Arkos Tracker installed, and a streamed-only
+REM      game (AUDIO\ holding only STREAM_NNN.aks) needs SongToYm, not
+REM      SongToAky - checked separately below. STREAM_*.aks would already
+REM      fail to match the background-music/numbered-song patterns further
+REM      down, but the plain "AUDIO\*.aks" existence check does not know
+REM      that, so it is scoped here to non-STREAM_ names explicitly. ----
+set "HAS_AKY_SRC="
+for %%F in ("AUDIO\*.aks") do (
+    echo %%~nF| findstr /R /V "^STREAM_" >nul && set "HAS_AKY_SRC=1"
+)
+if not defined HAS_AKY_SRC goto :aky_done
 if not exist "%S2A%" (
     echo ERROR: SongToAky not found at %S2A% - install Arkos Tracker 3 or fix TOOLSDIR in CONFIG.BAT
     exit /b 1
@@ -58,6 +67,7 @@ for %%F in ("AUDIO\*.aks") do (
         echo   song !NUM! -^> !NUM!.AKY
     )
 )
+:aky_done
 
 REM ---- streamed songs: STREAM_NNN.aks -> NNN.AYS (per-frame AY-register-
 REM      diff stream for multi-PSG tunes too big for the AKY song slot -
