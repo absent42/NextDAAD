@@ -29,5 +29,5 @@ jobs:
         run: |
           gh release create "${{ inputs.version }}" \
             "NextDAAD-AuthoringKit-${{ inputs.version }}.zip" \
-            --title "Authoring Kit ${{ inputs.version }}" \
+            --title "NextDAAD Authoring Kit ${{ inputs.version }}" \
             --notes "NextDAAD authoring kit ${{ inputs.version }}. Download and extract, install the tools listed in tools/README.txt, then double-click BUILD.BAT."
