@@ -1,12 +1,8 @@
 name: Release authoring kit
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version tag (for example v1.0.0)"
-        required: true
-        type: string
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -21,13 +17,12 @@ jobs:
       - name: Zip authoring kit (contents at archive root)
         run: |
           cd authoring-kit
-          zip -r "../NextDAAD-AuthoringKit-${{ inputs.version }}.zip" . -x ".gitignore"
+          zip -r "../NextDAAD-AuthoringKit-${{ github.event.release.tag_name }}.zip" . -x ".gitignore"
 
-      - name: Create release and upload the kit
+      - name: Attach the kit to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ inputs.version }}" \
-            "NextDAAD-AuthoringKit-${{ inputs.version }}.zip" \
-            --title "NextDAAD Authoring Kit ${{ inputs.version }}" \
-            --notes "NextDAAD authoring kit ${{ inputs.version }}. Download and extract, install the tools listed in tools/README.txt, then double-click BUILD.BAT."
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "NextDAAD-AuthoringKit-${{ github.event.release.tag_name }}.zip" \
+            --clobber
