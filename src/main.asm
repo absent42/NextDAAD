@@ -148,7 +148,7 @@ boot_data_init:
                                 ; every boot regardless; aud_boot_probe
                                 ; resets the bank state block)
     ld (audRequest), a         ; no stale edge-triggered audio requests
-                                ; across a warm re-entry
+    ld (audRequest2), a        ; across a warm re-entry (both mailboxes)
  IFDEF DEBUG
     ld (dbgTilemap), a         ; force the ULA route until dbg_engage_tilemap
                                 ; runs, matching cold boot

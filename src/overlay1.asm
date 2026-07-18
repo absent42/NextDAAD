@@ -1607,23 +1607,33 @@ aud_load_song:
     call esx_fopen
     jp c, .fail                 ; missing: playing music untouched
     ld (audHandle), a
-    ; stop the music before overwriting the song area. audEnable = 0
-    ; means the ISR never reaches aud_tick - nothing is playing and
-    ; the request would never be consumed, so skip the wait. res 4
-    ; first: a pending not-yet-consumed start of the OLD song must
-    ; not fire mid-load (each set/res is a single instruction, atomic
-    ; against the ISR).
+    ; stop the music before overwriting the song area - BOTH kinds:
+    ; an AYS stream must not survive an AKY load (mutual exclusion is
+    ; two-way; aud_load_ays mirrors this in the other direction).
+    ; audEnable = 0 means the ISR never reaches aud_tick - nothing is
+    ; playing and the requests would never be consumed, so skip the
+    ; wait. res first: a pending not-yet-consumed start of the OLD
+    ; song/stream must not fire mid-load (each set/res is a single
+    ; instruction, atomic against the ISR).
     ld a, (audEnable)
     or a
     jr z, .stopped
     ld hl, audRequest
     res 4, (hl)
     set 3, (hl)
+    ld hl, audRequest2
+    res 1, (hl)
+    set 0, (hl)
 .waitstop:
     halt
     ld a, (audRequest)
     and %00001000
     jr nz, .waitstop
+.waitstop2:
+    halt
+    ld a, (audRequest2)
+    and %00000001
+    jr nz, .waitstop2
 .stopped:
     call data_save
     ; window 1: page 48, file bytes 0-$7FF at window offset $1800
