@@ -45,13 +45,13 @@ ula_cls:
 ; Corrupts AF, BC, DE.
 audio_init:
     ld a, $83                       ; SP8: kill any in-flight sample DMA and
-    ld bc, DMA_PORT                 ; park the DAC at SIGNED silence - every
-    out (c), a                      ; reset/halt path (h_exit, h_end, fatal,
-    ld a, $00                       ; err_raise) and boot come through here.
-    ld bc, DAC_PORT                 ; The $DF DAC path plays signed 8-bit, so
-    out (c), a                      ; silence is $00 (was $80); the load-time
-                                    ; XOR $80 makes the WAV banks signed.
-                                    ; Hardware checklist re-verifies on silicon.
+    ld bc, DMA_PORT                 ; park the DAC at silence - every reset/halt
+    out (c), a                      ; path (h_exit, h_end, fatal, err_raise) and
+    ld a, DAC_SILENCE               ; boot come through here. DAC_SILENCE tracks
+    ld bc, DAC_PORT                 ; the signedness switch: $00 signed (default,
+    out (c), a                      ; CSpect) / $80 unsigned (-DacUnsigned, real
+                                    ; hardware midpoint). See nextdaad.inc and
+                                    ; benbaker-dma-analysis.md; owner A/Bs it.
     ld e, $FD                       ; PSG 3, then $FE (2), then $FF (1)
 .psg:
     ld bc, $FFFD

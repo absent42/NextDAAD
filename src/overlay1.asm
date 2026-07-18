@@ -2311,13 +2311,17 @@ aud_load_wav:
     or a
     sbc hl, bc                 ; requested - actually read
     jp nz, .failpost
-    ; CAUSE 1 (signedness): the $DF DAC path plays SIGNED 8-bit but WAV PCM
-    ; is UNSIGNED. Flip every byte just read (XOR $80) in place, so the banks
-    ; hold signed-ready data and the ISR refill stays a plain copy. BC is
-    ; still esx_fread's return count here (the sbc above preserved it, and a
-    ; short read was rejected, so BC == wavWin - including the partial final
-    ; window); wavWin >= 1 by the .pageloop gate, so the loop runs at least
-    ; once. Hardware checklist re-verifies DAC signedness on silicon.
+    ; CAUSE 1 (signedness): CSpect's $DF DAC path plays SIGNED 8-bit but WAV
+    ; PCM is UNSIGNED, so the default build flips every byte just read
+    ; (XOR $80) in place - the banks then hold signed-ready data and the ISR
+    ; copy stays a plain move. Real silicon feeds $FFDF UNSIGNED (silence
+    ; $80), so -DDAC_UNSIGNED skips the XOR entirely (banks stay standard
+    ; WAV). This is the load half of the DAC signedness A/B switch (the DAC
+    ; park half is DAC_SILENCE). BC is still esx_fread's return count here
+    ; (the sbc above preserved it, and a short read was rejected, so BC ==
+    ; wavWin - including the partial final window); wavWin >= 1 by the
+    ; .pageloop gate, so the loop runs at least once.
+ IFNDEF DAC_UNSIGNED
     ld hl, DATA_WINDOW
 .xorwin:
     ld a, (hl)
@@ -2328,6 +2332,7 @@ aud_load_wav:
     ld a, b
     or c
     jr nz, .xorwin
+ ENDIF
     ; advance: remaining -= wavWin (24-bit), step to the next table entry
     ld hl, (wavRem)
     ld bc, (wavWin)
@@ -2345,12 +2350,27 @@ aud_load_wav:
     call data_restore
     ld a, (audHandle)
     call esx_fclose
-    ; commit: compute the prescaler from the rate, fill the mailbox params,
-    ; mark resident. The ring engine advances by a fixed half per crossing,
-    ; so the old per-frame chunk/frac (rate/50) is obsolete and removed.
+    ; commit: compute the prescaler AND the per-frame copy chunk from the
+    ; rate, fill the mailbox params, mark resident. The f-prime engine copies
+    ; chunk = rate/50 source bytes into the staging ring each frame (whole
+    ; part + rate mod 50 fractional carry), so both come back from SP8.
     ld de, (wavFmt+4)           ; rate
     call aud_div_clock          ; A = AUD_PSCLOCK/rate (<=255 by range)
     ld (audReqSmpPre), a
+    ld hl, (wavFmt+4)           ; chunk = rate/50, frac = rate mod 50
+    ld de, 50
+    ld bc, 0
+.d50:
+    or a
+    sbc hl, de
+    jr c, .r50
+    inc bc
+    jr .d50
+.r50:
+    add hl, de                  ; HL = rate mod 50 (fits L)
+    ld (audReqSmpChunk), bc
+    ld a, l
+    ld (audReqSmpFrac), a
     ld hl, (wavLen)
     ld (audReqSmpLen), hl
     ld a, (wavLenHi)

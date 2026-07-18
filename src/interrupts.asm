@@ -120,9 +120,8 @@ audReqSmpLoop:  db 0        ; start-sample: 1 = loop, 0 = play once
 audReqSmpPre:   db 0        ; start-sample: DMA prescaler
 audReqSmpLen:   dw 0        ; start-sample: payload bytes, low word (24-bit)
 audReqSmpLenHi: db 0        ; start-sample: payload bytes, high byte
-                            ; (the ring engine advances a fixed half per
-                            ; crossing - the old per-frame chunk/frac params
-                            ; are obsolete and were removed with the fix)
+audReqSmpChunk: dw 0        ; start-sample: whole bytes copied per frame (rate/50)
+audReqSmpFrac:  db 0        ; start-sample: rate mod 50 (chunk fractional part)
 smpLoadedNum:   db $FF      ; keep-last: sample number resident in the
                             ; claimed page-table banks ($FF = none); owned
                             ; by aud_load_wav, reset by aud_boot_probe on

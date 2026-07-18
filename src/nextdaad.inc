@@ -214,6 +214,19 @@ AUD_STATE       equ $FFE0   ; audFlags/beep state/song number
 ; --- SP8 sampled sound ---
 DMA_PORT        equ $6B     ; zxnDMA, datagear port decode
 DAC_PORT        equ $DF     ; SpecDrum-compatible mono DAC (all 4 DACs)
+; DAC signedness A/B switch (owner A/Bs CSpect vs real Next after the
+; distortion fix lands). DEFAULT (undefined) = CSpect-correct: aud_load_wav
+; XORs $80 at load so the banks hold signed PCM and DAC silence/park = $00.
+; Build with -DDAC_UNSIGNED=1 (build.ps1 -DacUnsigned) for hardware-correct
+; behaviour: no load-time XOR (banks stay unsigned WAV), silence/park = $80
+; (the unsigned midpoint). References: benbaker-dma-analysis.md - the FPGA
+; soundrive.vhd resets the DACs to $80 and sums unsigned, while CSpect V1.0
+; notes call $FFDF signed - so the correct convention is emulator-dependent.
+ IFDEF DAC_UNSIGNED
+DAC_SILENCE     equ $80
+ ELSE
+DAC_SILENCE     equ $00
+ ENDIF
 NR_PERIPH3      equ $08     ; peripheral 3: bit 3 = 8-bit DACs on,
                             ; bit 1 = Turbo Sound on (both hard-reset 0)
 AUD_PSCLOCK     equ 875000  ; prescaler base clock in Hz: rate =
@@ -250,6 +263,9 @@ AUD_STAGE0      equ $7C00   ; staging buffer, bank 5 upper region -
 AUD_STAGE1      equ AUD_STAGE0+AUD_STAGE_HALF ; ALWAYS mapped (MMU3),
                             ; above divMMC's $0000-$3FFF, free after
                             ; TM_DEFS ($7400-$7BFF); ends $7F40 < $8000
+AUD_STAGE_RING  equ 2*AUD_STAGE_HALF ; f-prime software-ring size (832): both
+                            ; staging halves form one circular buffer the DMA
+                            ; plays via per-frame $82 one-shots (smpP/smpW)
 
 ; --- Window system (sub-project 2) ---
 WIN_X           equ 0

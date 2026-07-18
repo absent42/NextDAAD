@@ -328,22 +328,34 @@ aud_psg_silence:
 ; --- sampled sound engine (SP8) --------------------------------------
 
 ; Start the sample staged in smpPageTab by aud_load_wav. Runs in ISR context.
-; RING-BUFFER DESIGN (SP10 distortion fix): pre-fill BOTH ring halves from the
-; payload start, then program the zxnDMA ONCE over the whole 2*AUD_STAGE_HALF
-; ring with auto-restart. The DMA is NEVER reprogrammed mid-play - aud_smp_tick
-; only refills the half the DMA has vacated. The DMA starts reading ring byte 0
-; (half 0), so smpLastHalf = 0.
+; DESIGN f-prime (SP10 distortion fix, supersedes the auto-restart ring): the
+; staging buffer is a SOFTWARE RING with play (smpP) / write (smpW) offsets;
+; the DMA plays it via per-frame $82 ONE-SHOTs. Each tick copies the next
+; source chunk into the ring while the DMA still plays (copy OUT of the DAC
+; gap - kills the old ~300us disable-copy-reprogram notch), then a ~25us
+; EXCHANGE disables, reads the stopped-state byte counter, advances smpP by
+; the consumed bytes, and reprograms a fresh one-shot from smpP over the
+; occupied region. No auto-restart, no live reads - every DMA op stays in the
+; SP8-validated/reference-exercised set. See distortion-fix2-report.md.
+; aud_smp_start seeds P=W=0, remain=len, the rate/50 sizing trio, then runs one
+; inline tick-equivalent: copy the first chunk and program it (no counter read,
+; nothing was in flight).
 aud_smp_start:
     ld a, (audReqSmpPre)
     ld (smpPre), a
+    ld hl, (audReqSmpChunk)
+    ld (smpChunk), hl
+    ld a, (audReqSmpFrac)
+    ld (smpFrac), a
     xor a
+    ld (smpAcc), a
     ld (smpTabIdx), a           ; source at the first page-table entry
-    ld (smpLastHalf), a         ; DMA starts in half 0
-    ld (smpDrain), a            ; not draining
-    ld (smpDrainHalf), a
     ld hl, 0
     ld (smpOff), hl
-    ld hl, (audReqSmpLen)       ; 24-bit payload length
+    ld (smpP), hl               ; ring empty: play == write == 0
+    ld (smpW), hl
+    ld (smpLast), hl            ; nothing in flight
+    ld hl, (audReqSmpLen)       ; 24-bit payload length (bytes not yet copied)
     ld (smpLen), hl
     ld (smpRemain), hl
     ld a, (audReqSmpLenHi)
@@ -353,14 +365,123 @@ aud_smp_start:
     and 1
     add a, a                    ; -> bit 1 (loop)
     or 1                        ; bit 0 (active)
-    ld (smpFlags), a            ; set BEFORE the refills (they read the loop bit)
-    ; pre-fill half 0 (first chunk) then half 1 (second chunk); short payloads
-    ; pad/loop internally. Advances the source by up to 2*AUD_STAGE_HALF.
+    ld (smpFlags), a            ; set BEFORE the copy (it reads the loop bit)
+    ; inline first tick-equivalent: copy the first chunk, then program from
+    ; P = 0 with L = W (no counter read - nothing was in flight).
+    call aud_smp_copy
+    ld hl, (smpW)               ; P = 0 so L = W - P = W
+    ld a, h
+    or l
+    ret z                       ; empty copy (zero-length sample): DMA idle
+    jp aud_smp_program          ; HL = L, program the one-shot from smpP (= 0)
+
+; Stop: disable the DMA, park the DAC at silence, clear state. Idempotent.
+; Runs in ISR context (also reached from aud_smp_tick's play-once drain end).
+; DAC_SILENCE tracks the signedness switch ($00 signed / $80 unsigned) - see
+; nextdaad.inc; the load-time WAV XOR is its sibling half.
+aud_smp_stop:
     xor a
-    call aud_smp_refill_half
-    ld a, 1
-    call aud_smp_refill_half
-    ; program the DMA once over the full ring (auto-restart; template below)
+    ld (smpFlags), a
+    ld (smpLast), a
+    ld (smpLast+1), a           ; no in-flight baseline survives a stop
+    ld a, $83                   ; WR6: disable DMA
+    ld bc, DMA_PORT
+    out (c), a
+    ld a, DAC_SILENCE           ; park the DAC at silence
+    ld bc, DAC_PORT
+    out (c), a
+    ret
+
+; Per-frame f-prime tick. STEP 1 copies the next source chunk into the ring at
+; smpW while the DMA still plays [smpP, smpP+smpLast) (disjoint - see the
+; invariant on aud_smp_copy). STEP 2 is the only DAC-hold window (~25us):
+; disable, read the STOPPED-state byte counter (the SP8-validated regime -
+; disabling freezes the count), clamp it to smpLast (the SP8 end-of-block
+; overrun clamp), advance smpP by the consumed bytes (mod ring), then program
+; a fresh $82 one-shot from smpP over the occupied region up to the physical
+; ring end. No auto-restart, no live/running reads. The DMA is always mid-block
+; at the exchange (L > bytes-played-per-frame, since chunk = rate/50 nominal
+; exceeds the ~5.6%-under-nominal actual throughput), so in steady state the
+; only DAC hold is the exchange itself. Counter model (up-counting, RR1/RR2 =
+; byte-counter low/high) is SP8-pinned and grounded in the Zilog Z80 DMA
+; datasheet (docs/Z80_DMA_Chip__ps0179.pdf p6-p9); hardware checklist re-checks
+; the stopped-state read + the ring-end wrap on silicon.
+aud_smp_tick:
+    ld a, (smpFlags)
+    rrca
+    ret nc                      ; bit 0 clear: nothing active
+    ; --- STEP 1: copy the next chunk (DMA still playing) ---
+    call aud_smp_copy
+    ; --- STEP 2: exchange (the only DAC-hold window) ---
+    ld bc, DMA_PORT
+    ld a, $83                   ; WR6 disable: freezes the counter, safe reprogram
+    out (c), a
+    ld hl, (smpLast)
+    ld a, h
+    or l
+    jr z, .lcompute             ; nothing in flight: no read, smpP unchanged
+    ld a, $BB                   ; WR6: read mask follows
+    out (c), a
+    ld a, %00000110             ; mask: byte counter low (RR1) + high (RR2)
+    out (c), a
+    in a, (c)                   ; RR1 = counter low
+    ld e, a
+    in a, (c)                   ; RR2 = counter high
+    ld d, a                     ; DE = bytes consumed (stopped-state read)
+    ld hl, (smpLast)
+    or a
+    sbc hl, de
+    jr nc, .clamped             ; consumed <= smpLast: take it
+    ld de, (smpLast)            ; counter overran EOB: clamp to programmed length
+.clamped:
+    ld hl, (smpP)               ; smpP += consumed (mod ring)
+    add hl, de
+    ld de, AUD_STAGE_RING
+    or a
+    sbc hl, de
+    jr nc, .pset                ; P+consumed >= ring: keep the wrapped value
+    add hl, de                  ; else restore (still < ring)
+.pset:
+    ld (smpP), hl
+.lcompute:
+    ; L = occupied contiguous run from P up to the physical ring end.
+    ld hl, (smpW)
+    ld de, (smpP)
+    or a
+    sbc hl, de                  ; W - P
+    jr nc, .lgot                ; W >= P: L = W - P
+    ld hl, AUD_STAGE_RING       ; W < P: L = ring - P (the [0,W) wrap plays next
+    ld de, (smpP)               ; frame, once P wraps to 0)
+    or a
+    sbc hl, de
+.lgot:
+    ld a, h
+    or l
+    jp nz, aud_smp_program      ; L > 0: program the one-shot from smpP
+    ; L == 0: nothing contiguous staged from P
+    ld hl, (smpRemain)          ; draining? (no bytes left to copy, 24-bit)
+    ld a, (smpRemainHi)
+    or h
+    or l
+    jp z, aud_smp_stop          ; drained + ring emptied: playback complete
+    ; defensive (unreachable in steady state - chunk sizing keeps W ahead of P):
+    ; nothing staged but not drained. Leave the DMA disabled this frame and drop
+    ; the stale baseline so next tick reprograms cleanly without a phantom read.
+    ld hl, 0
+    ld (smpLast), hl
+    ret
+
+; Program a $82 one-shot: HL = block length L (> 0), source = staging ring at
+; smpP, prescaler = smpPre; records smpLast = L; OTIRs the template. Runs with
+; slot 7 = AUD_PAGE_HI (smpP/smpPre readable) and slot 6 = page 48 (template +
+; DMA port). Shared by aud_smp_start (first program) and the tick exchange.
+aud_smp_program:
+    ld (audDmaProg.alen), hl
+    ld (smpLast), hl            ; consumption baseline for next tick
+    ld de, AUD_STAGE0
+    ld hl, (smpP)
+    add hl, de                  ; port A = AUD_STAGE0 + P
+    ld (audDmaProg.aaddr), hl
     ld a, (smpPre)
     ld (audDmaProg.pre), a
     ld hl, audDmaProg
@@ -369,309 +490,240 @@ aud_smp_start:
     otir
     ret
 
-; Stop: disable the DMA, park the DAC at SIGNED silence ($00), clear state.
-; Idempotent. Runs in ISR context (also reached from aud_smp_tick's drain
-; end). The $DF DAC path plays signed 8-bit, so silence is $00 (not $80) - the
-; load-time XOR $80 made the banks signed. Hardware checklist re-verifies the
-; convention on silicon.
-aud_smp_stop:
-    xor a
-    ld (smpFlags), a
-    ld (smpDrain), a            ; no drain state survives a stop
-    ld a, $83                   ; WR6: disable DMA
-    ld bc, DMA_PORT
-    out (c), a
-    xor a                       ; DAC $00 = signed silence
-    ld bc, DAC_PORT
-    out (c), a
+; HL = min(HL, DE); DE preserved; corrupts AF. Segment-cap helper for the copy
+; loop - a plain unsigned 16-bit compare (sbc + CF), exact for every offset and
+; length it is handed here. Lives in page-48 code, touches no state - safe to
+; call while slot 7 windows a source page.
+aud_min16:
+    push hl
+    or a
+    sbc hl, de
+    pop hl
+    ret c                       ; HL < DE: keep HL
+    ld h, d
+    ld l, e                     ; HL >= DE: HL = DE
     ret
 
-; Per-frame REFILL tick (SP10 ring-buffer distortion fix). The DMA plays the
-; ring continuously (auto-restart), so this tick NEVER disables or reprograms
-; it - the only DAC gap left is the one-time program in aud_smp_start (the old
-; per-tick disable/copy/reprogram held the DAC ~300us/frame = a 50Hz notch).
+; aud_smp_copy: copy up to `chunk` (= smpChunk + fractional carry) source bytes
+; into the staging ring at smpW, advancing smpW/smpOff/smpTabIdx/smpRemain.
+; chunk is clamped to source remain (play-once, so it stops exactly at the
+; payload end) and to ring free space MINUS 1 (backpressure - guarantees the
+; copy can never reach smpP, so it can never overwrite an unplayed byte the DMA
+; is about to read). The copy wraps at the physical ring end exactly as it
+; splits at source-page boundaries. Loop mode rewinds the source (off/idx/
+; remain) mid-copy and keeps going - the ring never notices the seam.
 ;
-; Each tick reads the LIVE byte counter and works out which ring half the DMA
-; is in; on a half CROSSING it refills the vacated half with the next source
-; chunk (fixed AUD_STAGE_HALF advance - the old chunk/frac rate machinery is
-; gone). Counter semantics are grounded in the Zilog Z80 DMA datasheet (docs/
-; Z80_DMA_Chip__ps0179.pdf): it counts UP, "increments at the end of each
-; cycle" (p6, INTERNAL STRUCTURE); RR1/RR2 = byte counter low/high (p7 table +
-; p9 read-mask diagram - p8 Figure 8a mislabels them, overruled by the two
-; agreeing sources and zxndma.txt); auto-restart "clears the byte counter when
-; the addresses are reloaded" (p4), matching zxndma.txt. In BURST mode the DMA
-; yields the bus to the CPU between fixed-time transfers, so the two counter
-; INs are coherent (the counter is frozen while they execute).
+; DISJOINTNESS: the DMA reads [P, P+smpLast); this writes [W, W+chunk) at W.
+; With occupied = (W-P) mod ring, free = ring-occupied, the backpressure clamp
+; caps chunk at free-1, so W+chunk never reaches P; and smpLast <= occupied by
+; construction (the exchange programs L <= occupied), so [P, P+smpLast) sits
+; wholly inside the occupied region, disjoint from the free region this writes.
 ;
-; RING MARGIN (holds at all rates 3500-20000): a half plays in
-; H = AUD_STAGE_HALF/rate; the tick period is T = 1/50 s. A crossing is
-; detected at the first tick after it (<= T late) and the vacated half refilled
-; then; the DMA re-enters that half one full half-play (H) after the crossing.
-; Safe iff T < H, i.e. rate < AUD_STAGE_HALF*50 = 20800 Hz. At AUD_RATE_MAX
-; (20000): H = 20.8ms > T = 20ms, margin 0.8ms/crossing; the refill LDIR (CPU
-; speed, >= 8x the DMA drain even at 3.5MHz) then stays ahead of the DMA read
-; pointer once started, so the 0.8ms head start suffices. T < H also means the
-; DMA advances < 1 half/tick, so no crossing is ever skipped (currentHalf flips
-; by exactly one). nextdaad.inc's ASSERT AUD_STAGE_HALF >= AUD_RATE_MAX/50 + 2
-; encodes this bound. Hardware checklist re-verifies live counter reads + the
-; wrap window on silicon.
-aud_smp_tick:
-    ld a, (smpFlags)
-    rrca
-    ret nc                      ; bit 0 clear: nothing active
-    ; read the live byte counter (no disable; burst mode makes it coherent)
-    ld bc, DMA_PORT
-    ld a, $BB                   ; WR6: read mask follows
-    out (c), a
-    ld a, %00000110             ; mask: byte counter low (RR1) + high (RR2)
-    out (c), a
-    in a, (c)                   ; RR1 = counter low
+; SLOT DISCIPLINE (identical to the SP8/ring machinery): phase A snapshots the
+; source position + copy plan into slot-6 (page 48) scratch while state is
+; readable (slot 7 = AUD_PAGE_HI); phase B windows source pages at $E000 via
+; slot 7 and copies to the bank-5 ring ($7C00.., MMU3 always mapped) reading
+; the plan from scratch; phase C restores slot 7 = AUD_PAGE_HI and writes the
+; advanced position back to $FFE0. smpPageTab stays in slot 6 throughout.
+; Corrupts everything.
+aud_smp_copy:
+    ; --- phase A: size the chunk, clamp, snapshot into slot-6 scratch ---
+    ; chunk = smpChunk + (smpAcc += smpFrac, carry 1 when it reaches 50)
+    ld a, (smpAcc)
     ld e, a
-    in a, (c)                   ; RR2 = counter high
-    ld d, a                     ; DE = live byte counter (ring read position)
-    ; currentHalf: DE >= ring length -> half 0 (defensive: the one-cycle
-    ; end-of-block window before auto-restart clears the counter); else
-    ; DE >= AUD_STAGE_HALF -> half 1; else half 0.
-    ld hl, 2*AUD_STAGE_HALF - 1
-    or a
-    sbc hl, de
-    jr c, .curhalf0             ; DE >= ring length: just wrapped
-    ld hl, AUD_STAGE_HALF - 1
-    or a
-    sbc hl, de
-    jr c, .curhalf1             ; DE >= AUD_STAGE_HALF
-.curhalf0:
-    xor a
-    jr .curhave
-.curhalf1:
-    ld a, 1
-.curhave:
-    ld (smpCurHalf), a
-    ld hl, smpLastHalf
-    cp (hl)
-    ret z                       ; same half: no crossing this tick
-    ; CROSSING: the DMA left smpLastHalf (vacated) for smpCurHalf
-    ld a, (smpDrain)
-    or a
-    jr nz, .draining
-    ; normal: refill the vacated half with the next source chunk
-    ld a, (smpLastHalf)
-    call aud_smp_refill_half    ; advances the source; may set smpDrain(+Half)
-    ld a, (smpCurHalf)
-    ld (smpLastHalf), a
-    ret
-.draining:
-    ; play-once tail: no more source. Stop only when the DMA vacates the half
-    ; holding the last real bytes (smpDrainHalf) - it has then fully played.
-    ; An earlier crossing (entering that half) just advances the last-seen half.
-    ld a, (smpLastHalf)
-    ld hl, smpDrainHalf
-    cp (hl)
-    jp z, aud_smp_stop          ; vacated == drain half: last bytes out -> stop
-    ld a, (smpCurHalf)
-    ld (smpLastHalf), a
-    ret
-
-; aud_smp_refill_half: fill one ring half (AUD_STAGE_HALF bytes) from the
-; current source position, advancing it. Play-once: pads past the payload end
-; with $00 (signed silence) and, the FIRST time the payload drains, records
-; smpDrain + smpDrainHalf (this half holds the last real bytes). Loop: rewinds
-; to the payload start and keeps filling - seamless, never drains. In: A = half
-; (0 -> AUD_STAGE0, 1 -> AUD_STAGE1). Slot 7 = AUD_PAGE_HI on entry AND exit;
-; it windows source pages at $E000 internally and restores AUD_PAGE_HI before
-; any $FFE0 writeback. smpPageTab lives in slot 6 (page 48), mapped throughout.
-; The staging ring is bank 5 (MMU3, always mapped), untouched by the slot-7
-; remap and by the running DMA's own reads. Corrupts everything.
-aud_smp_refill_half:
-    ; --- phase A: snapshot position + params into slot-6 scratch (state
-    ; readable here, slot 7 = page 49). All copy bookkeeping then runs from
-    ; scratch/registers so it survives the slot-7 source windowing below.
-    ld (smpFillHalf), a
-    or a
-    ld hl, AUD_STAGE0
-    jr z, .basedst
-    ld hl, AUD_STAGE1
-.basedst:
-    ld (smpFillDst), hl
-    ld a, (smpTabIdx)
-    ld (smpFillIdx), a
-    ld hl, (smpOff)
-    ld (smpFillOff), hl
-    ld hl, (smpRemain)
-    ld (smpFillRemLo), hl
+    ld a, (smpFrac)
+    add a, e
+    cp 50
+    ld hl, (smpChunk)
+    jr c, .noc
+    sub 50
+    inc hl
+.noc:
+    ld (smpAcc), a
+    ld (smpCpTo), hl            ; toFill = chunk (pre-clamp)
+    ; play-once: clamp toFill to source remain (24-bit hi-byte shortcut). Loop
+    ; skips this - the fill loop rewinds mid-copy instead of stopping at remain.
+    ld a, (smpFlags)
+    bit 1, a
+    jr nz, .bp                  ; loop mode
     ld a, (smpRemainHi)
-    ld (smpFillRemHi), a
+    or a
+    jr nz, .bp                  ; remain > 64K: chunk (<= ring) always fits
+    ld hl, (smpCpTo)
+    ld de, (smpRemain)
+    or a
+    sbc hl, de
+    jr c, .bp                   ; toFill < remain: keep toFill
+    ld (smpCpTo), de            ; else toFill = remain
+.bp:
+    ; backpressure: toFill = min(toFill, free-1); free = ring - occupied,
+    ; occupied = (smpW - smpP) mod ring.
+    ld hl, (smpW)
+    ld de, (smpP)
+    or a
+    sbc hl, de                  ; W - P
+    jr nc, .occ
+    ld de, AUD_STAGE_RING
+    add hl, de                  ; wrapped: + ring
+.occ:
+    ex de, hl                   ; DE = occupied
+    ld hl, AUD_STAGE_RING - 1
+    or a
+    sbc hl, de                  ; HL = free - 1 (>= 0; occupied <= ring-1)
+    ld de, (smpCpTo)
+    ex de, hl                   ; HL = toFill, DE = free-1
+    or a
+    sbc hl, de
+    jr c, .snap                 ; toFill < free-1: keep (smpCpTo already set)
+    ld (smpCpTo), de            ; toFill >= free-1: clamp to free-1
+.snap:
+    ld a, (smpTabIdx)
+    ld (smpCpIdx), a
+    ld hl, (smpOff)
+    ld (smpCpOff), hl
+    ld hl, (smpRemain)
+    ld (smpCpRemLo), hl
+    ld a, (smpRemainHi)
+    ld (smpCpRemHi), a
     ld hl, (smpLen)
-    ld (smpFillLen), hl
+    ld (smpCpLen), hl
     ld a, (smpLenHi)
-    ld (smpFillLenHi), a
+    ld (smpCpLenHi), a
+    ld hl, (smpW)
+    ld (smpCpDst), hl           ; working ring dest offset (0-AUD_STAGE_RING)
     ld a, (smpFlags)
     and %00000010               ; loop bit
-    ld (smpFillLoop), a
-    ld hl, AUD_STAGE_HALF
-    ld (smpFillTo), hl
+    ld (smpCpLoop), a
     ; --- phase B: fill loop (copies run through slot 7 = source page) ---
 .fill:
-    ld hl, (smpFillTo)
+    ld hl, (smpCpTo)
     ld a, h
     or l
-    jp z, .filldone             ; half full
-    ld hl, (smpFillRemLo)       ; source exhausted?
-    ld a, (smpFillRemHi)
+    jp z, .filldone             ; chunk copied
+    ld hl, (smpCpRemLo)         ; source exhausted?
+    ld a, (smpCpRemHi)
     or h
     or l
     jr nz, .seg                 ; source has bytes
-    ld a, (smpFillLoop)
+    ld a, (smpCpLoop)
     or a
-    jp z, .pad                  ; play-once: pad the rest with $00 (out of jr range)
+    jp z, .filldone             ; play-once drained: stop (toFill is already 0)
     xor a                       ; loop: rewind to the payload start (seamless)
-    ld (smpFillIdx), a
+    ld (smpCpIdx), a
     ld hl, 0
-    ld (smpFillOff), hl
-    ld hl, (smpFillLen)
-    ld (smpFillRemLo), hl
-    ld a, (smpFillLenHi)
-    ld (smpFillRemHi), a
+    ld (smpCpOff), hl
+    ld hl, (smpCpLen)
+    ld (smpCpRemLo), hl
+    ld a, (smpCpLenHi)
+    ld (smpCpRemHi), a
     jr .fill
 .seg:
-    ; avail = min(smpFillTo, room, remain); room = $2000 - off
+    ; seg = min(toFill, srcRoom, dstRoom, remain); srcRoom = $2000 - off,
+    ; dstRoom = ring - dstOff (each cap keeps one copy inside one page/window).
     ld hl, $2000
-    ld de, (smpFillOff)
+    ld de, (smpCpOff)
     or a
-    sbc hl, de                  ; HL = room (1..$2000)
-    ld de, (smpFillTo)
+    sbc hl, de                  ; HL = srcRoom (1..$2000)
+    ld de, (smpCpTo)
+    call aud_min16              ; seg = min(srcRoom, toFill)
+    ld de, (smpCpDst)
+    push hl
+    ld hl, AUD_STAGE_RING
     or a
-    sbc hl, de                  ; room - toFill
-    jr c, .caproom              ; room < toFill: cap = room
-    ld hl, (smpFillTo)          ; else cap = toFill
-    jr .capdone
-.caproom:
-    add hl, de                  ; HL = room (restored)
-.capdone:
-    ld a, (smpFillRemHi)        ; clamp cap to remain if remain < 64K
+    sbc hl, de                  ; HL = dstRoom (1..ring)
+    pop de                      ; DE = seg so far
+    call aud_min16              ; seg = min(dstRoom, seg)
+    ld a, (smpCpRemHi)          ; cap to remain only if it fits 16 bits
     or a
-    jr nz, .availok             ; remainHi != 0: remain huge, no clamp
-    ld de, (smpFillRemLo)
-    or a
-    sbc hl, de                  ; cap - remain
-    jr c, .availadd             ; cap < remain: keep cap
-    ld hl, (smpFillRemLo)       ; else avail = remain
-    jr .availok
-.availadd:
-    add hl, de                  ; HL = cap (restored)
-.availok:
-    ld (smpFillAvail), hl       ; avail (>= 1) -> BC for the copy + advance
-    ld b, h
-    ld c, l
-    ld a, (smpFillIdx)          ; slot 7 <- smpPageTab[idx] (page 48, slot 6)
-    ld e, a
-    ld d, 0
-    ld hl, smpPageTab
+    jr nz, .segok
+    ld de, (smpCpRemLo)
+    call aud_min16              ; seg = min(remain, seg)
+.segok:
+    ld (smpCpSeg), hl           ; seg (>= 1)
+    ld hl, AUD_STAGE0           ; dest abs = AUD_STAGE0 + dstOff -> DE
+    ld de, (smpCpDst)
     add hl, de
+    ex de, hl                   ; DE = dest abs
+    ld a, (smpCpIdx)            ; slot 7 <- smpPageTab[idx] (page 48, slot 6)
+    ld l, a
+    ld h, 0
+    ld bc, smpPageTab
+    add hl, bc
     ld a, (hl)
     nextreg $57, a              ; window the source page at $E000
-    ld hl, (smpFillOff)         ; source = $E000 + off
+    ld hl, (smpCpOff)           ; source abs = $E000 + off -> HL
     ld a, h
     add a, $E0
     ld h, a
-    ld de, (smpFillDst)
-    ldir                        ; copy avail bytes; DE -> dest + avail
-    ld (smpFillDst), de
-    ld bc, (smpFillAvail)       ; advance off/remain/toFill by avail
-    ld hl, (smpFillOff)
+    ld bc, (smpCpSeg)
+    ldir                        ; copy seg bytes (src slot 7 -> ring bank 5)
+    ; advance off (page roll at $2000), dstOff (ring wrap), toFill, remain
+    ld bc, (smpCpSeg)
+    ld hl, (smpCpOff)
     add hl, bc
-    ld (smpFillOff), hl         ; off += avail (<= $2000)
-    ld hl, (smpFillRemLo)
-    or a
-    sbc hl, bc
-    ld (smpFillRemLo), hl
-    ld a, (smpFillRemHi)
-    sbc a, 0
-    ld (smpFillRemHi), a        ; remain -= avail (24-bit)
-    ld hl, (smpFillTo)
-    or a
-    sbc hl, bc
-    ld (smpFillTo), hl          ; toFill -= avail
-    ld hl, (smpFillOff)         ; page crossing: off reached $2000?
+    ld (smpCpOff), hl           ; off += seg
     ld a, h
     cp $20
-    jp c, .fill                 ; off < $2000: same page (out of jr range)
-    ld hl, 0
-    ld (smpFillOff), hl
-    ld a, (smpFillIdx)
+    jr c, .noroll               ; off < $2000: same source page
+    sub $20                     ; rolled: off -= $2000, next table page
+    ld h, a
+    ld (smpCpOff), hl
+    ld a, (smpCpIdx)
     inc a
-    ld (smpFillIdx), a
-    jp .fill                    ; next segment (out of jr range)
-.pad:
-    ; play-once, source drained: fill the remaining smpFillTo bytes with $00
-    ; (signed silence). Dest is bank-5 always-mapped, so slot 7 need not be
-    ; restored first. Phase C then records the drain (first drained half).
-    ld bc, (smpFillTo)
-    ld a, b
-    or c
-    jr z, .filldone
-    ld hl, (smpFillDst)
-    ld (hl), 0
-    ld d, h
-    ld e, l
-    inc de
-    dec bc
-    ld a, b
-    or c
-    jr z, .padone
-    ldir
-.padone:
-    ld hl, 0
-    ld (smpFillTo), hl
-    ; fall through to phase C
+    ld (smpCpIdx), a
+.noroll:
+    ld bc, (smpCpSeg)
+    ld hl, (smpCpDst)
+    add hl, bc                  ; dstOff += seg
+    ld de, AUD_STAGE_RING
+    or a
+    sbc hl, de
+    jr nc, .dstwrap             ; dstOff >= ring: wrapped to HL-ring
+    add hl, de                  ; else restore (< ring)
+.dstwrap:
+    ld (smpCpDst), hl
+    ld bc, (smpCpSeg)
+    ld hl, (smpCpTo)
+    or a
+    sbc hl, bc
+    ld (smpCpTo), hl            ; toFill -= seg
+    ld hl, (smpCpRemLo)
+    or a
+    sbc hl, bc
+    ld (smpCpRemLo), hl
+    ld a, (smpCpRemHi)
+    sbc a, 0
+    ld (smpCpRemHi), a          ; remain -= seg (24-bit)
+    jp .fill
 .filldone:
     nextreg $57, AUD_PAGE_HI    ; slot 7 back to the state page BEFORE $FFE0
-    ld a, (smpFillIdx)          ; write back the advanced source position
+    ld a, (smpCpIdx)            ; write back the advanced source position + W
     ld (smpTabIdx), a
-    ld hl, (smpFillOff)
+    ld hl, (smpCpOff)
     ld (smpOff), hl
-    ld hl, (smpFillRemLo)
+    ld hl, (smpCpRemLo)
     ld (smpRemain), hl
-    ld a, (smpFillRemHi)
+    ld a, (smpCpRemHi)
     ld (smpRemainHi), a
-    ; drain detection: play-once, payload now exhausted, FIRST such half. That
-    ; half holds the last real bytes; the tick stops when the DMA later leaves
-    ; it. A pure-silence half filled AFTER draining must not move smpDrainHalf.
-    ld a, (smpFillLoop)
-    or a
-    ret nz                      ; loop never drains
-    ld hl, (smpFillRemLo)
-    ld a, (smpFillRemHi)
-    or h
-    or l
-    ret nz                      ; source not exhausted
-    ld a, (smpDrain)
-    or a
-    ret nz                      ; already draining: keep the first drain half
-    ld a, 1
-    ld (smpDrain), a
-    ld a, (smpFillHalf)
-    ld (smpDrainHalf), a
+    ld hl, (smpCpDst)
+    ld (smpW), hl              ; W advanced by the bytes actually copied
     ret
 
-; Refill scratch, in page-48 CODE space (slot 6, mapped throughout aud_tick).
-; aud_smp_refill_half stages the source position + copy plan here BEFORE it
-; windows a source page through slot 7, so the walk survives the remap; the
-; $FFE0 smp* state is only touched with slot 7 = AUD_PAGE_HI (phases A and C).
-; smpCurHalf carries aud_smp_tick's currentHalf across the refill call (the
-; refill corrupts everything). All bytes here are transient per-refill scratch.
-smpFillHalf:  db 0    ; half this refill targets (0 = AUD_STAGE0, 1 = AUD_STAGE1)
-smpFillIdx:   db 0    ; working source page-table index
-smpFillOff:   dw 0    ; working offset inside the source page (0-$1FFF)
-smpFillRemLo: dw 0    ; working remain, low word
-smpFillRemHi: db 0    ; working remain, high byte
-smpFillLen:   dw 0    ; payload length low (loop rewind mid-refill)
-smpFillLenHi: db 0    ; payload length high
-smpFillDst:   dw 0    ; working staging dest pointer
-smpFillTo:    dw 0    ; bytes still to fill this half
-smpFillAvail: dw 0    ; this segment's byte count (saved across LDIR)
-smpFillLoop:  db 0    ; loop-mode snapshot for this refill
-smpCurHalf:   db 0    ; aud_smp_tick currentHalf, saved across the refill call
+; Copy scratch, in page-48 CODE space (slot 6, mapped throughout aud_tick).
+; aud_smp_copy stages the source position + copy plan here BEFORE it windows a
+; source page through slot 7, so the walk survives the remap; the $FFE0 smp*
+; state is only touched with slot 7 = AUD_PAGE_HI (phases A and C). All bytes
+; here are transient per-copy scratch.
+smpCpTo:    dw 0    ; bytes still to copy this call (toFill)
+smpCpOff:   dw 0    ; working offset inside the source page (0-$1FFF)
+smpCpIdx:   db 0    ; working source page-table index
+smpCpRemLo: dw 0    ; working source remain, low word
+smpCpRemHi: db 0    ; working source remain, high byte
+smpCpLen:   dw 0    ; payload length low (loop rewind mid-copy)
+smpCpLenHi: db 0    ; payload length high
+smpCpDst:   dw 0    ; working ring dest offset (0-AUD_STAGE_RING)
+smpCpLoop:  db 0    ; loop-mode snapshot for this copy
+smpCpSeg:   dw 0    ; this segment's byte count (saved across LDIR)
 
 ; Sample stream page list + count, in page-48 CODE space (slot 6). The
 ; ISR reads them from slot 6, which stays mapped throughout aud_tick, so
@@ -682,22 +734,28 @@ smpCurHalf:   db 0    ; aud_smp_tick currentHalf, saved across the refill call
 smpPageTab:   ds AUD_STRTAB_MAX
 smpPageCnt:   db 0
 
-; zxnDMA program template - programmed ONCE per playback (aud_smp_start) and
-; NEVER reprogrammed mid-play. Port A = the whole 2*AUD_STAGE_HALF ring (both
-; staging halves), port B = the DAC, WR5 = auto-restart so the DMA loops the
-; ring forever; aud_smp_tick only refills the vacated half on each crossing.
-; Encodings per zxndma.txt and the Zilog Z80 DMA datasheet (docs/
-; Z80_DMA_Chip__ps0179.pdf): WR0 transfer A->B + A address + length, WR1 A
+; zxnDMA program template - re-sent every exchange (aud_smp_program) as a fresh
+; $82 ONE-SHOT over [smpP, smpP+L). Port A start (.aaddr) and block length
+; (.alen) are patched each program; prescaler (.pre) each start. Byte string is
+; the em00k + benbaker reference program minus their vestigial $BB/$08 read
+; mask (never followed by an IN in either reference): $83 disable + $C3/$C7/$CB
+; full reset & timing resets (both references ship them - guarantees a clean
+; register file every program), WR0 transfer A->B + A addr + length, WR1 A
 ; memory incrementing cycle 2, WR2 B IO fixed cycle 2 + prescaler, WR4 BURST +
-; B address, WR5 auto-restart, load, enable. Block length = 2*AUD_STAGE_HALF
-; EXACT: the datasheet (p4) programs N-1, but zxndma.txt states the zxnDMA does
-; NOT duplicate that off-by-one and the working SP8 engine programmed exact
-; lengths, so exact N governs (zxndma.txt over the Zilog original here).
+; B address $FFDF, WR5 $82 one-shot (self-stop at end of block - no auto-restart
+; ever), load, $B3 force-ready (Zilog requires forced RDY for memory->I/O),
+; enable. Block length is EXACT N: the datasheet (p4) programs N-1 but zxndma.txt
+; states the zxnDMA drops that off-by-one, matching SP8 empirics and both refs.
 audDmaProg:
     db $83                      ; WR6: disable
+    db $C3                      ; WR6: reset (clears auto-restart, latches, status)
+    db $C7                      ; WR6: reset port A timing
+    db $CB                      ; WR6: reset port B timing
     db %01111101                ; WR0: A->B, port A addr + block length follow
-    dw AUD_STAGE0               ; port A = ring start (constant - ring never moves)
-    dw 2*AUD_STAGE_HALF         ; block length = full ring (exact N, see above)
+.aaddr:
+    dw 0                        ; port A = AUD_STAGE0 + smpP (patched each program)
+.alen:
+    dw 0                        ; block length L = occupied run (patched, exact N)
     db %01010100                ; WR1: A memory, incrementing, cycle-length follows
     db %00000010                ; A cycle length 2
     db %01101000                ; WR2: B IO, fixed, prescaler follows
@@ -706,15 +764,11 @@ audDmaProg:
     db 0                        ; prescaler (patched from smpPre each start)
     db $CD                      ; WR4: burst mode, port B addr follows
     dw $FF00 + DAC_PORT         ; port B = DAC ($FFDF). Full 16-bit per the
-                                ; em00k reference; the DAC decodes on the low
-                                ; byte ($DF), so $FFDF == the old $00DF.
-    db $B2                      ; WR5: auto-restart (D5) + /ce&wait (D4) +
-                                ; ready-active-low (D3) - the em00k working
-                                ; looped-playback value. $A2 (auto-restart,
-                                ; /ce-only) is the doc-pure alternative if
-                                ; silicon objects - hardware checklist entry.
-                                ; Encoding confirmed: datasheet p9 + zxndma.txt.
+                                ; references; the DAC decodes on the low byte
+                                ; ($DF), so $FFDF == the old $00DF.
+    db %10000010                ; WR5 $82: /ce only, ONE-SHOT stop on end of block
     db $CF                      ; WR6: load
+    db $B3                      ; WR6: force ready (memory->I/O has no DRQ line)
     db $87                      ; WR6: enable
 audDmaProgLen equ $ - audDmaProg
 
@@ -1115,15 +1169,18 @@ audPlayerUp:   db 0                  ; 1 once PLY_AKY_INIT has run
 smpFlags:      db 0                  ; bit 0 sample active, bit 1 looping
 smpTabIdx:     db 0                  ; current source index into smpPageTab (page 48)
 smpOff:        dw 0                  ; source read offset inside that page (0-$1FFF)
-smpRemain:     dw 0                  ; payload bytes left this pass, low word
-smpRemainHi:   db 0                  ; payload bytes left this pass, high byte
+smpRemain:     dw 0                  ; source bytes not yet copied, low word
+smpRemainHi:   db 0                  ; source bytes not yet copied, high byte
 smpLen:        dw 0                  ; payload length (loop rewind), low word
 smpLenHi:      db 0                  ; payload length (loop rewind), high byte
 smpPre:        db 0                  ; DMA prescaler
-smpLastHalf:   db 0                  ; ring half the DMA was last seen in (0/1)
-smpDrain:      db 0                  ; play-once: payload drained, ring padding
-                                     ; out to silence before the stop
-smpDrainHalf:  db 0                  ; ring half holding the last real bytes -
-                                     ; the tick stops when the DMA vacates it
+smpChunk:      dw 0                  ; whole bytes copied per frame (rate/50)
+smpFrac:       db 0                  ; rate mod 50 (chunk fractional part)
+smpAcc:        db 0                  ; fractional accumulator (0-49)
+smpP:          dw 0                  ; ring PLAY offset - first staged-unplayed
+                                     ; byte (0-AUD_STAGE_RING-1)
+smpW:          dw 0                  ; ring WRITE offset - next copy lands here
+smpLast:       dw 0                  ; length of the one-shot programmed last
+                                     ; tick (consumption baseline; 0 = none)
     ASSERT audFlags == AUD_STATE
     ASSERT $ <= $10000               ; bank ends inside the 64K map
