@@ -24,5 +24,7 @@ sd/*.SFB
 sd/*.sfb
 sd/*.WAV
 sd/*.wav
+sd/*.XMB
+sd/*.xmb
 tests/out/
 .superpowers/
