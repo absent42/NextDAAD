@@ -142,6 +142,8 @@ SAMPL   65      verb
 SAMPR   66      verb
 SSTOP   67      verb
 AYFX    68      verb
+XMES    69      verb
+AYBAD   70      verb
 
 ;                       Verbs
 GET     20      verb
@@ -529,6 +531,17 @@ $pictureOK
                 DONE
 
 > AYFX    _     SFX 2 1
+                DONE
+
+; SP9 owner verbs: XMES is the eye verb for EXTERN vector 3
+; (XMESSAGE) - also proves the template 0.XMB emission/staging wired
+; in Task 3. AYBAD is the ear verb for the SFB bounds guard (Task 4):
+; GAME.SFB has 6 effects and no 200.WAV exists, so effect 200 must be
+; pure silence, never garbage tones.
+> XMES    _     XMESSAGE "External message via 0.XMB - tokens, wrap and More paging all native."
+                DONE
+
+> AYBAD   _     SFX 200 1
                 DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation

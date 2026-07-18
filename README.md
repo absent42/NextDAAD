@@ -54,7 +54,7 @@ implementation.
   NextDAAD game releases with pre-built interpreter, format converted 
   images, AY audio files etc
 
-Not yet implemented: mouse input and EXTERN subroutines.
+Not yet implemented: mouse input.
 
 ## Location graphics
 
@@ -164,7 +164,8 @@ per-frame refeed is consumed-based, so heavy SD or Layer 2 picture
 I/O cannot corrupt or clip a playing sample.
 
 Anything else is a no-op, as is any reference to a file that is not
-on the SD card. An in-game restart (QUIT confirmed, RESTART) leaves
+on the SD card, or an AY effect number beyond GAME.SFB's own loaded
+effect count. An in-game restart (QUIT confirmed, RESTART) leaves
 the music and any playing sample uninterrupted by design - both are
 ambience that survives restarts exactly like save/load; games change
 or stop music explicitly with SFX n 7 / SFX 0 8, and stop a sample or
@@ -181,6 +182,38 @@ effects both pre-empt BEEP - a BEEP during music is dropped by
 design, so use sound effects for in-music stingers. Once a play-once
 tune (SFX n 6) has ended, BEEP works again.
 
+## EXTERN and MALUVA
+
+DAAD's EXTERN condact takes a vector number as its second argument,
+selecting one of 16 dispatch slots. NextDAAD implements two:
+
+- Vector 3 - XMESSAGE (XMES): prints text stored externally in
+  0.XMB, a file DRC writes alongside GAME.DDB at compile time and
+  which belongs in the SD root next to it. The text is read from
+  disk and printed through the same token expansion, word-wrap and
+  More... paging as any DDB message - indistinguishable from native
+  text. A missing or unreadable 0.XMB is a silent no-op - like a
+  missing picture or audio asset elsewhere, the game simply
+  continues.
+- Vector 7 - XUNDONE: clears the current action's done state, for
+  SYNONYM-style entries that should not count as a completed turn.
+
+Every other vector is a safe no-op. Upstream DRC has deprecated the
+rest of classic MALUVA - XPICTURE, XSAVE, XLOAD, XPART, XBEEP,
+XSPEED, XNEXTCLS, XNEXTRST - in favour of native engine features, and
+NextDAAD covers the same ground natively: PICTURE/DISPLAY for
+pictures, SAVE/LOAD for game state, EXIT for resets, and SFX for
+sound.
+
+Two things are deliberately unsupported. DRB's `-X` (`dumpToXMB`)
+compiler flag, which would route all game text through XMB rather
+than just explicit XMESSAGE calls, is not implemented. And a
+hand-written EXTERN n 3 is reserved - fn 3 is XMESSAGE's own 3-byte
+encoding (offset low, 3, offset high), and the engine always consumes
+a matching third stream byte whenever it sees that shape, so any
+other use of literal fn 3 will misalign the condacts that follow it.
+The bundled DRC toolchain is DRF 0.40 + DRB 0.36.
+
 ## Building
 
 The toolchain (not included in repo) lives in tools/ 
@@ -192,7 +225,7 @@ The toolchain (not included in repo) lives in tools/
 - Clean: powershell -File build.ps1 -Clean
 - Test DDB: powershell -File tests\build-tests.ps1 regenerates
   sd\GAME.DDB and the corrupt/oversize variants in tests\out\ (add
-  -Suite to make the condact test suite DDB active - 66 checks
+  -Suite to make the condact test suite DDB active - 72 checks
   covering condact semantics, parser/conjunction handling, DOALL
   nesting, save/load and audio no-op safety - or -Err4 for the
   nested-DOALL error demo; add -Aud to stage the test audio assets
