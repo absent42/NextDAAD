@@ -4,6 +4,25 @@ if not exist "AUDIO" (
     echo   no AUDIO\ - skipping audio
     exit /b 0
 )
+REM ---- sampled sound: numeric-named NNN.wav -> NNN.WAV (straight copy, no
+REM      conversion, no tool). Author supplies PCM mono 8-bit WAV; the game
+REM      plays it with SFX n 1 (once) / SFX n 2 (looped). ----
+for %%F in ("AUDIO\*.wav") do (
+    echo %%~nF| findstr /R "^[0-9][0-9]*$" >nul && (
+        for /f %%N in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "'{0:D3}' -f [int]'%%~nF'"') do set "NUM=%%N"
+        copy /Y "%%~fF" "RELEASE\!NUM!.WAV" >nul
+        if errorlevel 1 (
+            echo ERROR: could not copy sample %%~nxF
+            exit /b 1
+        )
+        echo   sample !NUM! -^> !NUM!.WAV
+    )
+)
+
+REM ---- Arkos .aks conversions (music/songs/effects) need SongToAky. Skip the
+REM      whole leg if there are no .aks sources - a samples-only game does not
+REM      need Arkos Tracker installed. ----
+if not exist "AUDIO\*.aks" goto :aks_done
 if not exist "%S2A%" (
     echo ERROR: SongToAky not found at %S2A% - install Arkos Tracker 3 or fix TOOLSDIR in CONFIG.BAT
     exit /b 1
@@ -58,5 +77,6 @@ if exist "AUDIO\%GAME%_FX.aks" (
         )
     )
 )
+:aks_done
 endlocal
 exit /b 0
