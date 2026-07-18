@@ -3,7 +3,7 @@
 DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
-Project status on 17/07/2026: 
+Project status on 18/07/2026: 
 The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
 object model, process/DOALL dispatch, windows, printing, colour,
 carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
@@ -50,9 +50,9 @@ implementation.
 - Debug build with an on-screen diagnostic console (frame counter,
   stub markers, register dumps) and SLD debug data for DeZog
   source-level debugging
-- Authoring Toolkit: a DAAD-READY like single click tool for building 
+- Authoring Kit: DAAD-READY like single click tool for building 
   NextDAAD game releases with pre-built interpreter, format converted 
-  images,   AY audio files etc
+  images, AY audio files etc
 
 Not yet implemented: mouse input and EXTERN subroutines.
 
