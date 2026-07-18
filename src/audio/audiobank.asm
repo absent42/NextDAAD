@@ -243,8 +243,10 @@ aud_tick:
     ; ctc_isr would push PC/AF/HL at the repointed SP and corrupt song data /
     ; RETTABLE -> ret-to-garbage crash. So mask CTC for the player's duration.
     ; This is the ONLY per-frame bracket (the others are one-shot request
-    ; handlers); during sample+music COEXISTENCE it holds the DAC for ~5.5k T
-    ; (~200us; ~1.0% duty at 50Hz / 28 MHz) once per frame - a documented v0.1.0
+    ; handlers); during sample+music COEXISTENCE it holds the DAC for an
+    ; ESTIMATED ~5.5k T (~200us; ~1.0% duty at 50Hz / 28 MHz) once per frame -
+    ; ~1.85k T of that is instruction-counted (the PSG register send), the
+    ; rest is unpinned until a hardware/scope measurement - a documented v0.1.0
     ; compromise pending the owner's ear verdict. Sample-only and music-only are
     ; unaffected (this call only runs when audFlags has music or effect set).
     di

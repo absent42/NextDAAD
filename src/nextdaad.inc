@@ -252,9 +252,12 @@ NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6), 7 = HDM
 ; SP10 CTC per-sample DAC feed (replaces the SP8 DMA sample engine). The CTC
 ; channel input clock IS the video-mode-dependent FPGA system clock (27-33 MHz,
 ; nextreg $11), NOT a fixed reference - so the time constant is derived per
-; video mode at load time (aud_clk16_tab in overlay1). Prescaler /16 for rate
-; >= AUD_CTC_XOVER (TC = clock/16/rate <= 256); /256 below it. Confirmed against
-; playvid + em00k CTCAudio: "28,000,000 / 16 / 15625 = 112".
+; video mode at load time (aud_clk16_tab in overlay1). Prescaler /16 when the
+; /16 time constant fits 8 bits (rate >= clk16>>8, per-mode), /256 below - see
+; aud_ctc_params. Inherent worst-case pitch error ~6% (1/16) in the narrow
+; TC=16 band just below each mode's crossover - CTC 8-bit-TC quantisation,
+; shared by the reference engines. Confirmed against playvid + em00k CTCAudio:
+; "28,000,000 / 16 / 15625 = 112".
 AUD_CTC_PORT    equ $183B   ; CTC channel 0 (lowest = highest IM2 priority; ch3=joystick)
 AUD_CTC_RESET   equ $03     ; control word: soft reset (D1) + no TC (D2=0); written
                             ; twice = the Next's unknown-state channel reset (ports.txt)

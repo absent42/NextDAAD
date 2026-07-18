@@ -110,7 +110,8 @@ im2_isr:
     ; DI sections: nr_read's bracket ~76T (~2.7us) and the tick's pointer brackets
     ; ~20T stay well under one CTC period (~50us at 20kHz); every indefinite-DI
     ; teardown calls audio_init (resets the CTC) first. The AKY player calls in
-    ; aud_tick are the DELIBERATE exception - DI-bracketed at ~5.5k T (~200us,
+    ; aud_tick are the DELIBERATE exception - DI-bracketed at an estimated
+    ; ~5.5k T (partly instruction-counted, partly unpinned - see aud_tick) (~200us,
     ; longer than a CTC period) because the player repoints SP; during sample+
     ; music coexistence that holds the DAC ~1% duty at 50Hz (accepted v0.1.0
     ; compromise; nesting there would corrupt the song - see aud_tick .gate).
