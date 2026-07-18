@@ -12,7 +12,7 @@ try {
     $defs = @()
     if (-not $Release) { $defs += '-DDEBUG=1' }
     if ($Force1MB)     { $defs += '-DFORCE_1MB=1' }
-    & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\nextdaad.sld" @defs "src\main.asm"
+    & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\nextdaad.sld" @defs "src/main.asm"
     if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
     Write-Host "built build\nextdaad.nex"
     if ($Release) {
