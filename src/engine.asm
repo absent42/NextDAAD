@@ -329,11 +329,11 @@ eng_exec:
     and $7F
     ld (curCondact), a
     cp 120
-    jr z, .illegal
-    cp 122
-    jr z, .illegal
-    cp 124
-    jr z, .illegal
+    jp z, .illegal               ; jr out of range once fn-3 consumption
+    cp 122                       ; is inserted below (~+145): illegal
+    jp z, .illegal               ; opcodes are a cold path, jp costs
+    cp 124                       ; nothing that matters here
+    jp z, .illegal
     ; properties
     ld e, a
     ld d, 0
@@ -354,6 +354,22 @@ eng_exec:
     call rd_next
     ld c, a                     ; arg2
 .noargs:
+    ; XMESSAGE stream discipline: current DRC compiles XMESSAGE to a
+    ; 3-parameter EXTERN (offset_lsb, 3, offset_msb) - the only
+    ; 3-param shape it emits. Consume the third byte here, in the
+    ; walker, so the stream survives whether or not the vector-3
+    ; handler runs (engine invariant, not a handler courtesy).
+    ld a, (curCondact)
+    cp 61
+    jr nz, .no3rd
+    ld a, c
+    cp 3
+    jr nz, .no3rd
+    push bc
+    call rd_next
+    ld (extArg3), a             ; offset MSB for ext_xmes
+    pop bc
+.no3rd:
     ; store advanced pointer back into the record
     ld hl, (rdPtr)              ; NOTE: window-relative; rebuild absolute
     call eng_ptr_abs            ; HL = absolute from rdPage/rdPtr
@@ -746,6 +762,7 @@ lastDone:   db 0
 curOpcode:  db 0
 curCondact: db 0
 curProps:   db 0
+extArg3:    db 0                ; EXTERN fn-3 third parameter (offset MSB)
 doallObj:   db $FF
 doallLoc:   db 0
 doallLevel: db 0

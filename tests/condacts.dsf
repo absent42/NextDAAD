@@ -740,6 +740,19 @@ NORTH 0
         MES "70 OK#n"
         SKIP 1
 > _ _   MES "70 F#n"
+; 71 XUNDONE (EXTERN 0 7): PRO 18's entry prints a witness message then
+; runs EXTERN 0 7 and falls through its terminator (no DONE/NOTDONE) -
+; the MES action stamps done=1 pre-dispatch, XUNDONE's ext_undone then
+; clears it back to 0 on the same record. The table then runs out
+; (single-entry process), eng_pop_proc propagates that record's done
+; into lastDone, so ISNDONE here must pass. Also pins that the engine's
+; new EXTERN fn-3 stream-consumption (curCondact 61, arg2 3) leaves the
+; plain 2-arg EXTERN 0 7 encoding alone (arg2 7 <> 3, no 3rd byte read).
+> _ _   PROCESS 18
+        ISNDONE
+        MES "71 OK#n"
+        SKIP 1
+> _ _   MES "71 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5
@@ -785,4 +798,10 @@ NORTH 0
         PLUS 115 1
         AUTOG
         DONE
+/PRO 18
+; XUNDONE check (71) helper: MES stamps done=1, EXTERN 0 7 (XUNDONE)
+; clears it, entry falls through its own terminator (no DONE/NOTDONE)
+; so the table-end pop propagates the cleared stamp, not a forced one.
+> _ _   MES "71 sub ran#n"
+        EXTERN 0 7
 /END

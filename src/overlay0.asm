@@ -1646,11 +1646,16 @@ h_extern:                       ; 61: fn C via vector, A = B on entry
     ld a, b
     ex de, hl
     jp (hl)
+ext_undone:                     ; EXTERN 0 7 (XUNDONE): clear the done
+    call eng_top_ix             ; stamp the engine wrote before
+    xor a                       ; dispatching this action - the entry
+    ld (ix+5), a                ; continues, the level reads notdone
+    ret
 ext_stub:
     jp h_unimpl
 extVec:
     dw ext_stub, ext_stub, ext_stub, ext_stub
-    dw ext_stub, ext_stub, ext_stub, ext_stub
+    dw ext_stub, ext_stub, ext_stub, ext_undone
     dw ext_stub, ext_stub, ext_stub, ext_stub
     dw ext_stub, ext_stub, ext_stub, ext_stub
 
