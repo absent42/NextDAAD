@@ -48,8 +48,39 @@ im2_init:
                                          ; - this is dev-guide-documented belt-and-
                                          ; braces (hardware checklist verifies which)
     im 2
+    ; SP11 frame-tick fix: prime the hw-IM2 daisy chain before releasing
+    ; interrupts. Entering hw-IM2 mode (nextreg $C0 bit 0 = 1, above) can leave a
+    ; spurious in-service latch set in the interrupt controller; until a RETI
+    ; clears it the daisy chain holds that priority level in-service and can
+    ; delay or DENY the LOWEST-priority source - the ULA frame interrupt (vector
+    ; index 11, chapter-next-interrupts.tex daisy-chain table). That 50Hz tick
+    ; drives music tempo (one aud_tick / PLY_AKY_PLAY per im2_isr), so a
+    ; deprioritised ULA sags AKY and AYS playback under a CTC sample storm - the
+    ; owner's coexistence symptom. Per the docs hw-IM2 is latched-until-serviced
+    ; (the $C8/$C9 status bits are hardware-managed, NOT software-clearable, once
+    ; in IM2 mode with interrupts enabled - chapter-next-interrupts.tex $C8/$C9),
+    ; so a CLEAN chain only ever DELAYS the ULA behind the higher-priority CTC
+    ; (ch0 = index 3) within a frame, never drops it; a dropped tick implies an
+    ; unclean chain. playvid's field-validated CTC-audio recipe documents and
+    ; clears exactly this with a dummy call/reti right after entering hw-IM2
+    ; (NextZXOS DotCommands/playvid/main.c: "WHY??? investigate may be hw bug").
+    ; A RETI with no source in-service is a harmless daisy-chain no-op, and run
+    ; with interrupts still disabled it leaves IFF untouched (unlike RETN it does
+    ; not copy IFF2) - it only scrubs the controller state, it does not return
+    ; from a real interrupt. No $C8/$C9 status write is added or possible here:
+    ; playvid acknowledges nothing (ei/reti only) and the docs disable the
+    ; status-clear in IM2 mode - the interrupt-accept cycle and RETI ARE the
+    ; acknowledge, so classic-IM2's implicit re-arm is already performed.
+    ; im2_init's own epilogue is the scrub: RETI (vs a plain RET) returns to the
+    ; boot caller AND emits the daisy-chain end-of-interrupt that clears the
+    ; spurious latch - one opcode, +1 resident byte, instead of playvid's
+    ; separate dummy call/reti (which the tight DEBUG resident budget cannot
+    ; spare). Boot is interrupts-off here (the delayed EI takes effect only after
+    ; the RETI), so no live interrupt is being returned from: RETI pops the
+    ; call's return address exactly as RET would, and additionally scrubs the
+    ; controller. IFF is untouched by RETI (unlike RETN, no IFF2 copy).
     ei
-    ret
+    reti
 
 ; ISR contract (SP7 Task 3): the fast path (audEnable = 0) touches only
 ; AF, HL and frameCounter, exactly as before - never MMU, esxDOS or the
