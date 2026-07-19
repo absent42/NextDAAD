@@ -405,8 +405,8 @@ aud_smp_start:
 
 ; Stop: reset the CTC channel (timer + interrupt off), park the DAC at silence,
 ; clear the active flag. Idempotent. Runs in ISR context (also reached from
-; aud_smp_tick's play-once drain end). DAC_SILENCE tracks the signedness switch
-; ($80 unsigned default / $00 signed -DacCSpect) - see nextdaad.inc.
+; aud_smp_tick's play-once drain end). DAC_SILENCE is the unsigned midpoint $80
+; (unsigned everywhere on the OUT path) - see nextdaad.inc.
 aud_smp_stop:
     xor a
     ld (smpFlags), a

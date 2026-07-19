@@ -1,4 +1,4 @@
-param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [switch]$DacCSpect)
+param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 Push-Location $root
@@ -13,11 +13,9 @@ try {
     # -Kit implies a release build (the kit ships the non-debug interpreter).
     if (-not ($Release -or $Kit)) { $defs += '-DDEBUG=1' }
     if ($Force1MB)                { $defs += '-DFORCE_1MB=1' }
-    # DAC signedness: shipped DEFAULT is hardware-correct (no load-time WAV XOR,
-    # DAC silence/park $80 - the FPGA unsigned midpoint, confirmed by em00k's CTC
-    # engines and two owner hardware listens). -DacCSpect builds the CSpect
-    # accommodation (XOR $80 at load, park $00) for the emulator's signed $DF path.
-    if ($DacCSpect)               { $defs += '-DDAC_CSPECT=1' }
+    # DAC signedness is UNSIGNED everywhere on the CPU-OUT path - one convention,
+    # no build toggle (the -DacCSpect accommodation was retired once the OUT path
+    # was confirmed unsigned on CSpect too; see nextdaad.inc DAC_SILENCE).
     & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\nextdaad.sld" @defs "src/main.asm"
     if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
     Write-Host "built build\nextdaad.nex"

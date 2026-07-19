@@ -230,21 +230,22 @@ AUD_STATE       equ $FFE0   ; audFlags/beep state/song number
 ; --- SP8 sampled sound ---
 DMA_PORT        equ $6B     ; zxnDMA, datagear port decode
 DAC_PORT        equ $DF     ; SpecDrum-compatible mono DAC (all 4 DACs)
-; DAC signedness. SHIPPED DEFAULT = hardware-correct UNSIGNED: no load-time
-; XOR, DAC silence/park = $80 (the unsigned midpoint). Evidence: the FPGA
-; soundrive.vhd resets the DACs to $80 and sums UNSIGNED; em00k's CTCAudio and
-; playwav32 both feed raw unsigned WAV bytes to the DAC (CTCAudio README:
-; "PCM unsigned" - em00k-audio-engines-analysis.md); and the owner's two real-
-; hardware listens. Build with -DDAC_CSPECT=1 (build.ps1 -DacCSpect) for the
-; CSpect accommodation: aud_load_wav XORs $80 at load so the banks hold signed
-; PCM and silence/park = $00 (CSpect's admitted-"not really tested" signed
-; $FFDF path). See benbaker-dma-analysis.md. One define site, sense flipped
-; post-em00k (SP10 CTC pivot) so the shippable default is silicon-correct.
- IFDEF DAC_CSPECT
-DAC_SILENCE     equ $00
- ELSE
+; DAC signedness: UNSIGNED everywhere on the CPU-OUT path. The DAC silence/park
+; value is the unsigned midpoint $80, unconditionally - there is no build toggle.
+;
+; WHY unsigned is now empirically pinned (the -DacCSpect signed accommodation was
+; retired here, SP11): three independent lines of evidence agree the CPU
+; `out (n),a` DAC path is unsigned on BOTH real silicon and CSpect -
+;   1. FPGA source: soundrive.vhd resets the DACs to $80 and sums UNSIGNED.
+;   2. Hardware listens: the owner's two real-Next listens play clean unsigned,
+;      and em00k's CTCAudio + playwav32 feed raw unsigned WAV bytes (CTCAudio
+;      README "PCM unsigned" - em00k-audio-engines-analysis.md).
+;   3. CSpect CTC-path listen (this engine): the DEFAULT unsigned build plays the
+;      sample CLEAN on CSpect; the old XOR $80 build was the DISTORTED one.
+; The DMA-era observation that CSpect wanted SIGNED data was path-specific to the
+; retired zxnDMA write path, NOT the CPU-OUT path this engine uses - so it retired
+; with the DMA engine. One convention now, no IFDEF, no -DacCSpect.
 DAC_SILENCE     equ $80
- ENDIF
 NR_PERIPH3      equ $08     ; peripheral 3: bit 3 = 8-bit DACs on,
                             ; bit 1 = Turbo Sound on (both hard-reset 0)
 NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6), 7 = HDMI;

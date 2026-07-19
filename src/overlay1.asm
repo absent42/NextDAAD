@@ -2311,28 +2311,12 @@ aud_load_wav:
     or a
     sbc hl, bc                 ; requested - actually read
     jp nz, .failpost
-    ; DAC signedness (load half; the park half is DAC_SILENCE). SHIPPED DEFAULT
-    ; leaves the bytes UNSIGNED: real silicon feeds $FFDF unsigned (silence $80),
-    ; and both em00k CTC engines feed raw unsigned WAV bytes - so no transform.
-    ; -DDAC_CSPECT flips every byte just read (XOR $80) in place, producing
-    ; signed-ready data for CSpect's admitted-untested signed $DF path (the ISR
-    ; copy stays a plain move either way). Sense flipped post-em00k (SP10 CTC
-    ; pivot). BC is still esx_fread's return count here (the sbc above preserved
-    ; it, and a short read was rejected, so BC == wavWin - including the partial
-    ; final window); wavWin >= 1 by the .pageloop gate, so the loop runs at least
-    ; once.
- IFDEF DAC_CSPECT
-    ld hl, DATA_WINDOW
-.xorwin:
-    ld a, (hl)
-    xor $80
-    ld (hl), a
-    inc hl
-    dec bc
-    ld a, b
-    or c
-    jr nz, .xorwin
- ENDIF
+    ; DAC signedness: the WAV bytes are staged UNSIGNED, verbatim - no load-time
+    ; transform. The CPU-OUT DAC path is unsigned on both silicon and CSpect, so
+    ; one convention holds everywhere (full evidence at nextdaad.inc DAC_SILENCE).
+    ; The retired -DDAC_CSPECT accommodation used to XOR $80 over every byte read
+    ; into this window here; it is gone now that unsigned is empirically pinned.
+    ; The ISR ring copy stays a plain move.
     ; advance: remaining -= wavWin (24-bit), step to the next table entry
     ld hl, (wavRem)
     ld bc, (wavWin)

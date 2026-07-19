@@ -56,10 +56,10 @@ audio_init:
     ld bc, AUD_CTC_PORT
     out (c), a
     out (c), a
-    ld a, DAC_SILENCE               ; park the DAC at silence. DAC_SILENCE tracks
-    ld bc, DAC_PORT                 ; the signedness switch: $80 unsigned (shipped
-    out (c), a                      ; default, real-hardware midpoint) / $00 signed
-                                    ; (-DacCSpect). See nextdaad.inc.
+    ld a, DAC_SILENCE               ; park the DAC at silence. DAC_SILENCE is the
+    ld bc, DAC_PORT                 ; unsigned midpoint $80 (unsigned everywhere on
+    out (c), a                      ; the OUT path - real-hardware and CSpect).
+                                    ; See nextdaad.inc.
     ld e, $FD                       ; PSG 3, then $FE (2), then $FF (1)
 .psg:
     ld bc, $FFFD
