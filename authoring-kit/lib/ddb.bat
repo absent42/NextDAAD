@@ -22,6 +22,10 @@ if errorlevel 1 (
     echo ERROR: DRF failed compiling %GAME%.DSF - check the source
     exit /b 1
 )
+REM ---- pre-clean stale 0.XMB from a previous compile - %DR% is shared
+REM      across builds, so a game without XMESSAGE must not inherit and
+REM      stage a leftover 0.XMB left behind by a different game.
+del "%DR%\0.XMB" 2>nul
 "%PHP%" "%DRB%" zx next EN __ndb.json __ndb.DDB
 if errorlevel 1 (
     popd
@@ -39,5 +43,15 @@ if %DDBSZ% GTR 131072 (
 move /Y "%DR%\__ndb.DDB" "RELEASE\GAME.DDB" >nul
 del "%DR%\__ndb.DSF" "%DR%\__ndb.json" "%DR%\__ndb.___" 2>nul
 echo   DDB %DDBSZ% bytes -^> RELEASE\GAME.DDB
+REM ---- XMESSAGE/XMES external text: DRB writes 0.XMB into %DR% only
+REM      when the DSF uses XMESSAGE/XMES - absence is normal, not an
+REM      error, so stage it only when present.
+if exist "%DR%\0.XMB" (
+    copy /Y "%DR%\0.XMB" "RELEASE\0.XMB" >nul || (
+        echo ERROR: could not stage 0.XMB into RELEASE
+        exit /b 1
+    )
+    echo   XMB -^> RELEASE\0.XMB
+)
 endlocal
 exit /b 0

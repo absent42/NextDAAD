@@ -77,10 +77,9 @@ missing tool, wrong image width, over-size asset). A pure-text game with no
 
 After a build, `RELEASE\` holds the complete SD-card image:
 `nextdaad.nex`, `GAME.DDB`, any `NNN.NX2`/`NNN.NXI` (optionally `.zx0`), any
-`GAME.AKY`/`NNN.AKY`/`GAME.SFB`/`NNN.AYS`, and any `NNN.WAV`. Copy its
-contents to the root of an SD card to play on real hardware. If your DSF
-uses XMESSAGE/XMES, see the note in section 8 - `0.XMB` needs one manual
-copy step the kit does not yet automate.
+`GAME.AKY`/`NNN.AKY`/`GAME.SFB`/`NNN.AYS`, any `NNN.WAV`, and `0.XMB` if your
+DSF uses XMESSAGE/XMES (see section 8). Copy its contents to the root of an
+SD card to play on real hardware.
 
 ## 6. The starter game
 
@@ -131,9 +130,8 @@ the ceiling should move its largest or least-frequently-seen text
 
 XMESSAGE (adds a trailing newline) and XMES (does not) print text
 stored externally in `0.XMB`, a file DRC writes during compilation
-whenever your DSF uses either condact (see the kit limitation note
-below - getting this file into `RELEASE\` currently needs one manual
-step). Two limits to know:
+whenever your DSF uses either condact (staged into `RELEASE\`
+automatically - see below). Two limits to know:
 
 - **511 characters per call, practical limit.** A single XMESSAGE/XMES
   call is not meant to hold a full page of text. For longer passages,
@@ -147,15 +145,14 @@ step). Two limits to know:
   leans heavily on XMESSAGE should watch its total external-text
   volume, not just individual message length.
 
-**Kit limitation:** `BUILD.BAT` does not currently copy `0.XMB` into
-`RELEASE\`. DRC writes it during the DDB compile step into the
-DAAD-READY tool folder (`%TOOLSDIR%\DAAD-READY\0.XMB`) and it stays
-there - it is not cleaned up or moved. If your DSF uses XMESSAGE or
-XMES, copy that file to `RELEASE\0.XMB` by hand after building
-(alongside `GAME.DDB`); without it, XMESSAGE/XMES silently no-op at
-runtime rather than failing loudly. This is a gap in the kit scripts,
-not the compiler or the interpreter - worth fixing in a future kit
-update.
+`0.XMB` is staged into `RELEASE\` automatically, right after `GAME.DDB`,
+whenever your DSF uses XMESSAGE or XMES. DRC writes the file during the
+DDB compile step into the DAAD-READY tool folder
+(`%TOOLSDIR%\DAAD-READY\0.XMB`); the kit copies it from there to
+`RELEASE\0.XMB`, where it must sit alongside `GAME.DDB` on the SD card -
+without it, XMESSAGE/XMES would silently no-op at runtime rather than
+failing loudly. A DSF with no XMESSAGE/XMES calls produces no `0.XMB`,
+and the build stages none.
 
 ### WAV samples
 
