@@ -838,13 +838,34 @@ boot_banner:
 .loop:
     ld a, (hl)
     or a
-    ret z
+    jr z, .hold
     push hl
     call tm_putc_at
     pop hl
     inc hl
     inc c
     jr .loop
+; SP11 owner polish: hold ~1 second (50 frames @ 50Hz) after the print
+; so the stamp is actually readable before the boot flow's later steps
+; wipe it, instead of flashing for a couple of milliseconds. IM2 is
+; live by this point (im2_init runs at main.asm:20, boot_banner at
+; :29), so frameCounter is ticking. Only reached past the title-
+; presence gate above (ret nc) - a shipped title's boot stays instant,
+; unaffected. Stack is balanced here (no pending push - the gate above
+; is checked before this loop's own push hl). Corrupts everything,
+; same contract as the rest of this routine; the caller (main.asm's
+; ram_detect) makes no assumptions about incoming registers.
+.hold:
+    ld hl, (frameCounter)
+    ld de, 50
+    add hl, de
+    ex de, hl                   ; DE = target frameCounter value
+.wait:
+    ld hl, (frameCounter)
+    or a                        ; clear carry before sbc
+    sbc hl, de
+    jr c, .wait                 ; frameCounter still short of target
+    ret
 
 msgRelTitle: db VERSION_STR, 0
 
