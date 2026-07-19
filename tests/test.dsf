@@ -552,20 +552,29 @@ $pictureOK
 > TUNE2   _     SFX 2 7
                 DONE
 
-; SP10 Task 5 owner verb, reworked SP11: MTEST is the eye/hardware leg
-; for the Kempston mouse condact. MOUSE 0 1 uploads the arrow pattern
-; (first call only, gated internally by mouseReady), arms NR $15 and
-; shows/positions hardware sprite 0 - once, here, on entry. The verb
-; then hands off to PRO 7, which LOOPS: poll (MOUSE 120 3) into scratch
-; flags 120-123 (buttons, X/8, Y/8, X/6), reprint them in place on the
-; same screen spot, repeat - so the owner watches the values track live
-; mouse movement instead of seeing one static snapshot. Any keypress
-; (INKEY, in PRO 7) ends the loop; the pointer is hidden (MOUSE 0 2)
-; before the verb returns DONE. Under headless CSpect (no -mouse
-; capture, or CSpect closed) the sprite still shows/positions and the
-; flags still print - just static/zero without a live pointer - and a
-; keypress still exits normally.
+; SP10 Task 5 owner verb, reworked SP11 (twice): MTEST is the
+; eye/hardware leg for the Kempston mouse condact. MOUSE 0 1 uploads
+; the arrow pattern (first call only, gated internally by mouseReady),
+; arms NR $15 and shows/positions hardware sprite 0 - once, here, on
+; entry. PROCESS 8 then drains the ENTER keypress that just SUBMITTED
+; this "mtest" command line: that key is very often still physically
+; down (or not yet reported released) the instant we get here, and
+; without draining it, PRO 7's own exit check would read it as a fresh
+; keypress and the loop would end after a single pass - the exact
+; hardware symptom reported after the first fix landed ("pointer
+; appears then disappears after each mtest"). Only once PRO 8 confirms
+; no key is down does PROCESS 7 start the real loop: poll (MOUSE 120 3)
+; into scratch flags 120-123 (buttons, X/8, Y/8, X/6), reprint them in
+; place on the same screen spot, repeat - so the owner watches the
+; values track live mouse movement instead of seeing one static
+; snapshot. Any keypress made DURING that loop (INKEY, in PRO 7) ends
+; it; the pointer is hidden (MOUSE 0 2) before the verb returns DONE.
+; Under headless CSpect (no -mouse capture, or CSpect closed) the
+; sprite still shows/positions and the flags still print - just
+; static/zero without a live pointer - and a keypress still exits
+; normally.
 > MTEST   _     MOUSE 0 1
+                PROCESS 8
                 PROCESS 7
                 DONE
 ;------------------------------------------------------------------------------
@@ -668,4 +677,58 @@ $initLoop
 
 > _       _     PAUSE 1
                 REDO
+;------------------------------------------------------------------------------
+/PRO 8 ; MTEST submission-key drain (SP11 hardware-run fix #2). Called
+; once per MTEST invocation by PRO 5's `PROCESS 8`, BEFORE `PROCESS 7`
+; starts the actual poll loop. Purpose: drain the ENTER keypress that
+; just submitted the "mtest" command line, which is very often still
+; physically down (or not yet reported released by the hardware) the
+; instant control reaches here - if PRO 7's own exit check saw that
+; stale press, the loop would end after a single pass, which is exactly
+; the symptom the owner's first hardware run reported.
+;
+; h_inkey (condact 111, CONDITION, argc 0; src/overlay0.asm) SENSES the
+; live keyboard matrix on every call via key_scan (a plain port read/
+; decode with no latch, buffer, or "already reported" flag) - it does
+; not consume a press. So this table simply spins for as long as ANY
+; key currently reads as down, and stops the instant the hardware
+; genuinely reports none held - correct whether it is the stale ENTER
+; from submission or (much less likely, but harmless the same way) some
+; other key still being released by the owner's hand.
+> _       _     INKEY
+                REDO
+;
+; REDO (condact 108, action, argc 0; h_redo, src/overlay0.asm) restarts
+; "the top of the process stack"'s own table from ITS OWN first entry.
+; While this single-entry table is running (pushed by PRO 5's
+; `PROCESS 8`, not yet returned), PRO 8's frame IS the top of the
+; stack, so REDO here can only ever restart PRO 8's own one entry - it
+; cannot fall back into PRO 5 and cannot reach PRO 7. Once INKEY
+; finally reads false (every key genuinely released), this entry
+; ABORTS (DAAD's normal condition-fail-continues-to-next-entry rule);
+; there is no next entry in this table, so the scan hits the table end
+; and control returns to PRO 5's calling entry, right after
+; `PROCESS 8` - i.e. MTEST's own `PROCESS 7`, which starts the real,
+; exitable poll loop against a confirmed-clear keyboard.
+;
+; PRO 8 is deliberately a SEPARATE table from PRO 7, not a first entry
+; folded into PRO 7 itself (the shape first proposed for this fix).
+; REDO always resets to a table's OWN first entry (see above) - so had
+; the drain been PRO 7's entry 1, PRO 7's existing PAUSE/REDO tail
+; (which must equally REDO back to PRO 7's own first entry, by the same
+; rule) would revisit the drain entry on EVERY poll pass, not just the
+; first one. `eng_step`/`eng_exec` (src/engine.asm) dispatch one
+; condact per engine step and advance to the next entry the instant a
+; condition fails, with no real time elapsing in between (no interrupt
+; wait, no PAUSE) - so on every single poll cycle, a same-table drain
+; entry would run its own INKEY microseconds before the poll entry got
+; its turn, and would therefore win the race for any genuinely held key
+; essentially every time (the key is already "down" at the earlier
+; check, long before the later, real exit check ever sees it as fresh).
+; That silently swallows every real owner keypress into an endless
+; freeze/resume cycle that never actually exits - worse than the bug
+; being fixed. Splitting the one-shot drain into its own table (PRO 8)
+; sidesteps this entirely: PRO 7's own two entries (poll+exit-check,
+; then pause+redo) are exactly as they were before this addendum and
+; are never revisited by the drain once it has finished.
 /END
