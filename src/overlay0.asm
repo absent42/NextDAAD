@@ -1951,6 +1951,15 @@ h_xpart:
 ; content (not a separate exact-name buffer), so the probe and the
 ; load always resolve to the identical match.
 switch_to_part:
+    ; The LOAD/RAMLOAD path hands an unvalidated SAV trailing part byte
+    ; here (h_xpart's own 1-9 range check is EXTERN-only); route any
+    ; out-of-range byte to .fail so it is refused the same way as a
+    ; missing GAMEn.DDB - h_xpart's check becomes redundant-but-harmless
+    ; belt-and-braces for its own caller, left as is.
+    cp 1
+    jr c, .fail
+    cp 10
+    jr nc, .fail
     ld (xpartTarget), a
     call xpart_build_name        ; ddbName <- target name (see above)
     call esx_getsetdrv
