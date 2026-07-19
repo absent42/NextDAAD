@@ -47,8 +47,10 @@ Put these in this kit folder:
   - `NNN.wav` - a digital sample played by `SFX n 1` (once) or `SFX n 2` (looped).
     `SFX n 1/2` looks for `NNN.WAV` first and falls back to the AY effect bank
     if the WAV is absent, so a sample and an AY effect cannot share a number.
-    WAV must be **PCM, mono, 8-bit**; it plays at the file's own sample rate.
-    You supply it in that format - the build does not convert it.
+    WAV must be **PCM, mono, 8-bit unsigned**, sample rate 3500-20000 Hz;
+    it plays at the file's own sample rate, no resampling. You supply it
+    in that format - the build does not convert it. See section 8 for
+    size guidance and how large samples are handled.
 
 ## 3. Configuration (CONFIG.BAT)
 
@@ -74,9 +76,11 @@ missing tool, wrong image width, over-size asset). A pure-text game with no
 ## 5. Output
 
 After a build, `RELEASE\` holds the complete SD-card image:
-`nextdaad.nex`, `GAME.DDB`, any `NNN.NX2`/`NNN.NXI` (optionally `.zx0`), and any
-`GAME.AKY`, `NNN.AKY`, `GAME.SFB`. Copy its contents to the root of an SD card
-to play on real hardware.
+`nextdaad.nex`, `GAME.DDB`, any `NNN.NX2`/`NNN.NXI` (optionally `.zx0`), any
+`GAME.AKY`/`NNN.AKY`/`GAME.SFB`/`NNN.AYS`, and any `NNN.WAV`. Copy its
+contents to the root of an SD card to play on real hardware. If your DSF
+uses XMESSAGE/XMES, see the note in section 8 - `0.XMB` needs one manual
+copy step the kit does not yet automate.
 
 ## 6. The starter game
 
@@ -97,3 +101,102 @@ for tones. In the starter, try the verbs MUSIC, MUTE, TUNE, BLEEP, and ZAP.
   reduce channels in Arkos Tracker.
 - Effects bank warnings are non-fatal - the game still builds without
   `GAME.SFB`.
+
+## 8. Authoring notes
+
+A few DSF-authoring facts worth knowing once a game grows past the
+starter's size - none of this is enforced by the kit build scripts;
+DRC (the compiler) or the interpreter enforce it, and these notes
+exist so a compile error or a truncated feature makes sense when you
+hit it.
+
+### DDB size: the 31744-byte ceiling
+
+The DDB format DRC compiles for this target (the classic ZX addressing
+scheme) uses 16-bit pointers based at $8400, the classic ZX DAAD load
+address. That caps the whole compiled DDB - vocabulary, messages,
+objects, locations, connections, processes, everything DRC writes into
+`GAME.DDB` - at 31744 bytes ($8400 to $FFFF). This is a DRC/compiler
+format ceiling, not a NextDAAD interpreter limit (the interpreter
+itself accepts a DDB up to 128K), but it is the ceiling a growing game
+actually reaches first.
+
+The relief valve is XMESSAGE, below: moving text out of the DDB and
+into `0.XMB` frees the same bytes inside the 31744-byte budget, at the
+cost of the separate external-text budget instead. A game approaching
+the ceiling should move its largest or least-frequently-seen text
+(long room descriptions, help text, endgame text) to XMESSAGE first.
+
+### XMESSAGE / XMES
+
+XMESSAGE (adds a trailing newline) and XMES (does not) print text
+stored externally in `0.XMB`, a file DRC writes during compilation
+whenever your DSF uses either condact (see the kit limitation note
+below - getting this file into `RELEASE\` currently needs one manual
+step). Two limits to know:
+
+- **511 characters per call, practical limit.** A single XMESSAGE/XMES
+  call is not meant to hold a full page of text. For longer passages,
+  chain several calls back to back - use XMES (no added newline) for
+  the earlier calls so the text reads as one continuous block, and
+  XMESSAGE (or a trailing newline token) only for the last one.
+- **64K total, compiled.** `0.XMB` holds the compiled (token-compressed)
+  bytes of every XMESSAGE/XMES call in your whole game, back to back,
+  with no gap or padding between entries on this target. That 64K is a
+  budget shared across the WHOLE game, not per call - a game that
+  leans heavily on XMESSAGE should watch its total external-text
+  volume, not just individual message length.
+
+**Kit limitation:** `BUILD.BAT` does not currently copy `0.XMB` into
+`RELEASE\`. DRC writes it during the DDB compile step into the
+DAAD-READY tool folder (`%TOOLSDIR%\DAAD-READY\0.XMB`) and it stays
+there - it is not cleaned up or moved. If your DSF uses XMESSAGE or
+XMES, copy that file to `RELEASE\0.XMB` by hand after building
+(alongside `GAME.DDB`); without it, XMESSAGE/XMES silently no-op at
+runtime rather than failing loudly. This is a gap in the kit scripts,
+not the compiler or the interpreter - worth fixing in a future kit
+update.
+
+### WAV samples
+
+Sample files (`NNN.wav` in `AUDIO\`, section 2) must be PCM, mono,
+8-bit unsigned, sample rate 3500-20000 Hz taken from the file's own
+header - the interpreter does not resample, and the kit copies WAV
+files as-is (you supply them already in this format).
+
+Size is bounded by the Next's available RAM rather than one fixed
+buffer: samples stream into allocated 16K RAM banks at load time (the
+same banked-streaming mechanism a big AYS song uses, below), so a
+sample is not capped at whatever fits in a single fixed slot. As a
+practical guide: **up to 48K always has room**, on any Next, regardless
+of what else is loaded (three RAM banks are reserved for audio use
+first, ahead of location art or anything else). Bigger samples work
+too, up to a generous sanity ceiling, but then compete with Layer 2
+picture caching and streamed songs for the remaining RAM - test on the
+RAM configuration (1MB/2MB) you expect players to use if you rely on a
+large sample.
+
+### AYS streamed songs
+
+The AKY song slot (`<GAME>.aks`/`NNN.aks`, section 2) is fixed-size -
+10208 bytes encoded - and most real multi-channel tunes do not fit it.
+`STREAM_NNN.aks` sources (section 2) convert instead to `NNN.AYS`, a
+per-frame AY-register-delta stream played back from SD rather than
+held resident, with no fixed-slot size limit (the same RAM-bounded
+model as big WAV samples, above). The kit's own converter,
+`lib\aysconv.ps1`, is called automatically by `lib\audio.bat` during a
+normal `BUILD.BAT` run - there is nothing to invoke by hand beyond
+having Arkos Tracker 3 installed. `SongToYm.exe`'s path comes from
+`CONFIG.BAT`'s existing `TOOLSDIR` setting
+(`%TOOLSDIR%\ArkosTracker3\tools\SongToYm.exe`), the same as every
+other Arkos tool the kit uses.
+
+### DRB 0.36: BEEP/PAUSE timing
+
+The bundled compiler is DRF 0.40 + DRB 0.36. If you are copying BEEP
+or XPLAY timings from an older DAAD/MALUVA guide, note that DRB 0.36
+retuned XPLAY's generated BEEP/PAUSE durations (base note length, plus
+a -24 semitone pitch adjustment for the ZX/Next target) relative to
+older DRB versions. Trust what the compiler actually produces - test
+the tone/timing in CSpect or on hardware - over duration tables in
+older documentation.

@@ -3,16 +3,21 @@
 DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
+Current version: v0.1.0 - kit-complete, public-testing phase. NextDAAD
+stays on a 0.x version until public testing earns v1.0 (see
+RELEASE.md for the release checklist and version stamp location).
+
 Project status on 19/07/2026: 
 The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
 object model, process/DOALL dispatch, windows, printing, colour,
 carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
 PARSE), file-backed save/load, Layer 2 location graphics
-(PICTURE/DISPLAY), AY audio (SFX/BEEP: music, sound effects and
-speaker beeps), and mouse input with a hardware sprite pointer
-(MOUSE) are implemented. All 128 condacts are handled: CALL is a
-documented no-op (jdaad parity - DAAD's machine-code CALL condact has
-no analogue in a bytecode interpreter).
+(PICTURE/DISPLAY/GFX), AY audio (SFX/BEEP: music with streamed-song
+support, sound effects and speaker beeps), digitised sample playback
+bounded by available RAM, and mouse input with a hardware sprite
+pointer (MOUSE) are implemented. All 128 condacts are handled: CALL
+is a documented no-op (jdaad parity - DAAD's machine-code CALL
+condact has no analogue in a bytecode interpreter).
 
 ## Features
 
@@ -21,10 +26,18 @@ no analogue in a bytecode interpreter).
   and double-buffered draw
 - AY audio on the Turbo Sound Next (3 PSGs, 9 channels): interrupt-driven
   Arkos AKY music playback with boot autoplay, SFX-driven songs and
-  sound effects, and the classic blocking BEEP tone generator
-- Digitised sample playback (NNN.WAV) over the zxnDMA, mixed with AY
-  music in the background, with automatic fallback to AY sound
-  effects when no sample is present
+  sound effects, the classic blocking BEEP tone generator, and
+  streamed AYS songs (per-frame AY-register-delta streams read from
+  SD) for tunes too large for the fixed AKY song slot
+- Digitised sample playback (NNN.WAV) through a per-sample CTC/DAC
+  feed, bounded by available RAM rather than a fixed size (banked
+  across allocated 16K RAM banks, with a reserved floor so a sample
+  always has room), mixed with AY music in the background, with
+  automatic fallback to AY sound effects when no sample is present
+- Direct Layer 2 surface control (GFX): copy/swap/clear the picture
+  plane's front and back buffers on demand
+- Mouse input (MOUSE) via the Next's Kempston mouse ports, with a
+  hardware sprite pointer
 - 80 column tilemap-based 80x32 text mode driver with per-character colour 
   and a custom 80 column font
 - DDB loading and validation from SD card (esxDOS), with header/size
@@ -109,43 +122,57 @@ games.
 ## Audio
 
 AY music and sound effects play on the Next's Turbo Sound (three AY
-chips, nine channels) through a converted Arkos Tracker 3 AKY player
-that runs in the interrupt handler. Digitised samples play through
-the zxnDMA on a separate channel, in the background over the music.
-Files live in the SD root next to GAME.DDB:
+chips, nine channels). Two song formats are supported: a converted
+Arkos Tracker 3 AKY player, resident in a fixed RAM slot, for small
+songs; and AYS, a NextDAAD-native per-frame AY-register-delta stream
+read from SD, for songs too large for the AKY slot - both run in the
+interrupt handler. Digitised samples play through a per-sample
+CTC/DAC feed on a separate channel, in the background over whichever
+song format is active. Files live in the SD root next to GAME.DDB:
 
 - GAME.AKY - title/background music, auto-played (looped) at boot if
-  present
+  present and no GAME.AYS is found
+- GAME.AYS - streamed title/background music, probed before GAME.AKY
+  at boot
 - NNN.AKY - songs selected by SFX, named by song number, 3-digit
-  zero-padded (SFX 1 7 plays 001.AKY)
+  zero-padded (SFX 1 7 plays 001.AKY if no 001.AYS is present)
+- NNN.AYS - a streamed song, probed before the matching NNN.AKY
 - GAME.SFB - the sound-effects bank (Arkos sound effects export, up
   to 2K), loaded at boot if present
 - NNN.WAV - digitised sample n, 3-digit zero-padded (SFX 1 1 probes
   001.WAV before falling back to GAME.SFB). Mono 8-bit PCM RIFF WAV
-  only, payload up to 49152 bytes, sample rate 3500-20000 Hz taken
-  from the header - no resampling. Sample numbers 1-254 are valid;
-  255 is reserved and always resolves to the AY effects bank instead.
-  A DAAD Ready DOS game's SOUNDS set (max 32000 bytes per effect,
-  5000-20000 Hz) already fits these limits and drops in unconverted.
+  only, sample rate 3500-20000 Hz taken from the header - no
+  resampling. Payload size is bounded by available RAM rather than a
+  fixed limit: samples are allocated across 16K RAM banks (not one
+  fixed slot), with a reserved floor so a sample up to 48K always has
+  room regardless of other RAM pressure, up to a 1MB sanity ceiling.
+  Sample numbers 1-254 are valid; 255 is reserved and always resolves
+  to the AY effects bank instead. A DAAD Ready DOS game's SOUNDS set
+  (max 32000 bytes per effect, 5000-20000 Hz) already fits these
+  limits and drops in unconverted.
 
-Exports are address-encoded: songs must be encoded for $D800 (maximum
-10208 bytes) and the effects bank for $D000. Use tools/export_audio.ps1
-to convert .aks sources - a hand-run SongToAky needs
-`-bin --encodingAddress 0xD800`. Songs must be Arkos 3-PSG / 9-channel
-exports - the interpreter rejects any other shape at load time (the
-SFX is a no-op). A composition using fewer channels inside a 9-channel
-song is fine - the unused channels stay silent.
+AKY exports are address-encoded: songs must be encoded for $D800
+(maximum 10208 bytes) and the effects bank for $D000. Use
+tools/export_audio.ps1 to convert .aks sources - a hand-run SongToAky
+needs `-bin --encodingAddress 0xD800`. Songs must be Arkos 3-PSG /
+9-channel exports - the interpreter rejects any other shape at load
+time (the SFX is a no-op). A composition using fewer channels inside
+a 9-channel song is fine - the unused channels stay silent. AYS
+streams have no fixed-slot limit (bounded by available RAM, like
+samples); the authoring kit converts an Arkos .aks source to AYS via
+Arkos Tracker 3's SongToYm - see authoring-kit/SETUP.md for the
+export path.
 
 SFX first-argument/sub-command semantics (jdaad-compatible):
 
 | SFX n sub | Effect |
 |-----------|--------|
-| 1, 3 | play sample/effect n once (NNN.WAV via DMA, over music; falls back to AY effect n on the third AY if no valid sample) |
+| 1, 3 | play sample/effect n once (NNN.WAV via the CTC/DAC feed, over music; falls back to AY effect n on the third AY if no valid sample) |
 | 2, 4 | as 1/3, looped - an AY effect loops only if authored looping |
 | 5 | stop whichever kind - sample or AY effect - is currently active |
-| 6 | play song n once - the song ends in silence |
-| 7 | play song n looped |
-| 8 | stop the music |
+| 6 | play song n once - whichever of NNN.AYS or NNN.AKY resolves; the song ends in silence |
+| 7 | play song n looped - whichever of NNN.AYS or NNN.AKY resolves |
+| 8 | stop the music - AKY or AYS, whichever is playing |
 
 Sub-commands 3 and 4 exist because the DOS DAAD convention encodes a
 rate byte ahead of the sound number for them; DRC's DRF 0.40 cannot
@@ -157,10 +184,10 @@ GAME.SFB entry is present resolves for that number.
 Keep-last residency: replaying the same sample number is instant -
 only the first play of a given number pays the SD read, and repeat
 plays reuse the resident payload until a different number is
-requested. Sample playback is DMA-driven and runs in the background
-over the AKY music (audio owns the DMA channel outright); the
-per-frame refeed is consumed-based, so heavy SD or Layer 2 picture
-I/O cannot corrupt or clip a playing sample.
+requested. Sample playback runs in the background over whichever
+song format is active (AKY or AYS); the per-frame refeed is
+consumed-based, so heavy SD or Layer 2 picture I/O cannot corrupt or
+clip a playing sample.
 
 Anything else is a no-op, as is any reference to a file that is not
 on the SD card, or an AY effect number beyond GAME.SFB's own loaded
@@ -170,7 +197,7 @@ ambience that survives restarts exactly like save/load; games change
 or stop music explicitly with SFX n 7 / SFX 0 8, and stop a sample or
 effect with SFX n 5. Every real exit or reset (declining END's play
 again prompt, EXIT 0, a fatal error) silences everything, including
-the DMA and the DAC.
+the CTC sample feed and the DAC.
 
 BEEP takes duration and pitch, matching the classic interpreters
 (jdaad-pinned): duration in centiseconds, pitch an even value 24-222
@@ -224,11 +251,13 @@ The toolchain (not included in repo) lives in tools/
 - Clean: powershell -File build.ps1 -Clean
 - Test DDB: powershell -File tests\build-tests.ps1 regenerates
   sd\GAME.DDB and the corrupt/oversize variants in tests\out\ (add
-  -Suite to make the condact test suite DDB active - 78 checks
+  -Suite to make the condact test suite DDB active - 80 checks
   covering condact semantics, parser/conjunction handling, DOALL
-  nesting, save/load and audio no-op safety - or -Err4 for the
-  nested-DOALL error demo; add -Aud to stage the test audio assets
-  from tools\audio_assets)
+  nesting, save/load, GFX/MOUSE/CALL, XMESSAGE and audio no-op
+  safety - or -Err4 for the nested-DOALL error demo; add -Rab or -UU
+  to compile and stage a corpus game (Rabenstein or Urban Upstart)
+  instead; add -Aud to stage the test audio assets from
+  tools\audio_assets)
 - VS Code: build / run / clean tasks wrap the same script
 
 ## Troubleshooting
@@ -258,7 +287,8 @@ the repo):
 
 - DAAD Ready (DRC compiler + PHP): https://www.ngpaws.com/daadready/
 - Gfx2Next (PNG to Layer 2): https://www.rustypixels.uk/gfx2next/
-- Arkos Tracker 3 (SongToAky / SongToSoundEffects): https://www.julien-nevo.com/arkostracker/index.php/download/
+- Arkos Tracker 3 (SongToAky / SongToSoundEffects / SongToYm for
+  streamed AYS songs): https://www.julien-nevo.com/arkostracker/index.php/download/
 - CSpect (emulator): https://mdf200.itch.io/cspect
 
 ## Acknowledgments

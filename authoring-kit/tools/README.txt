@@ -9,7 +9,7 @@ Tool           Provides                                Download                 
 -------------  --------------------------------------  ---------------------------------------------------------  --------------------------
 DAAD Ready     DRC compiler (DRF.exe, DRB.PHP) + PHP   https://www.ngpaws.com/daadready/                          tools\DAAD-READY\
 Gfx2Next       PNG to Layer 2 conversion               https://www.rustypixels.uk/gfx2next/                       tools\gfx2next\
-Arkos Tracker  SongToAky.exe, SongToSoundEffects.exe   https://www.julien-nevo.com/arkostracker/index.php/download/  tools\ArkosTracker3\tools\
+Arkos Tracker  SongToAky/SongToSoundEffects/SongToYm   https://www.julien-nevo.com/arkostracker/index.php/download/  tools\ArkosTracker3\tools\
 CSpect         Emulator for testing                    https://mdf200.itch.io/cspect                              tools\CSpect\
 
 After extracting, these paths must exist:
@@ -19,4 +19,5 @@ After extracting, these paths must exist:
   tools\gfx2next\gfx2next.exe
   tools\ArkosTracker3\tools\SongToAky.exe
   tools\ArkosTracker3\tools\SongToSoundEffects.exe
+  tools\ArkosTracker3\tools\SongToYm.exe (only needed for STREAM_NNN.aks)
   tools\CSpect\CSpect.exe
