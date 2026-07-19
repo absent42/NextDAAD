@@ -1475,16 +1475,32 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 ; code was deleted rather than left in place (leaving 350+ dead-and-
 ; buggy-in-spirit bytes in an already-tight overlay budget serves no
 ; one); this comment is the record of the removal.
+;
+; Post-fix hardening (owner-approved pre-tag review): CF alone is not
+; sufficient either - the SAME root-cause lesson applies to every write
+; here, not just the removed append: F_WRITE's "Fc=0" success flag does
+; not guarantee the full requested count was written (see the append
+; bug above - that is exactly how it went unnoticed). Each of the four
+; writes below now also checks its own returned BC against what it
+; asked for, routing any shortfall to the same .errclose fail-loud path
+; as a CF failure - a disk-full mid-write (or any other partial write)
+; now fails SAVE outright instead of silently landing a truncated file
+; while still reporting OK. The 256-byte flags write compares BC as one
+; 16-bit value (sav_read_v2's own short-read idiom, reused here for a
+; short WRITE); the three sub-256 counts (6, numObj, 1) compare C
+; against the count and B against zero instead - cheaper for a value
+; that always fits in one byte, and BC's high byte is never assumed
+; zero without checking it.
 sav_write_v2:
     call esx_getsetdrv
-    jr c, .err
+    jp c, .err
     ld ix, savName
     ld b, ESX_MODE_W               ; nextdaad.inc: write, create or
                                     ; truncate - the SAME mode sav_write
                                     ; itself uses; always a fresh file,
                                     ; never a reopen of an existing one
     call esx_fopen
-    jr c, .err
+    jp c, .err
     ld (savHandle), a
     ld a, (numObj)
     ld (savNObj), a                ; savHdr+savNObj = the 6-byte header
@@ -1495,27 +1511,49 @@ sav_write_v2:
     ld ix, savHdr
     ld bc, 6
     call esx_fwrite
-    jr c, .errclose
+    jp c, .errclose
+    ld a, c
+    cp 6
+    jp nz, .errclose
+    ld a, b
+    or a
+    jp nz, .errclose
     ; flags (256 bytes)
     ld a, (savHandle)
     ld ix, flags
     ld bc, 256
     call esx_fwrite
-    jr c, .errclose
+    jp c, .errclose
+    ld hl, 256
+    or a
+    sbc hl, bc
+    jp nz, .errclose
     ; object locations (numObj bytes)
     call sav_gather_locs           ; resident (file.asm): fills savLocs,
                                     ; BC = numObj
     ld ix, savLocs
     ld a, (savHandle)
     call esx_fwrite
-    jr c, .errclose
+    jp c, .errclose
+    ld a, (numObj)
+    cp c
+    jp nz, .errclose
+    ld a, b
+    or a
+    jp nz, .errclose
     ; trailing part byte - the ONLY new write versus sav_write, same
     ; open/close session, same call shape as the three writes above
     ld a, (savHandle)
     ld ix, curPart
     ld bc, 1
     call esx_fwrite
-    jr c, .errclose
+    jp c, .errclose
+    ld a, c
+    cp 1
+    jp nz, .errclose
+    ld a, b
+    or a
+    jp nz, .errclose
     ld a, (savHandle)
     call esx_fclose
     xor a
