@@ -22,7 +22,10 @@
 ; RAMLOAD-restored return (the RAMSAVE below is taken BEFORE part B
 ; ever sets 103, and is never refreshed again), 1 on the EXTERN-return
 ; and the LOAD-restored re-entry (both carry a state where part B has
-; already set it).
+; already set it). Flag 104 is a one-shot latch, 0 until entry 3 (the
+; LOAD-auto-switch failure witness) runs, 1 forever after - stops that
+; entry, and the entry 2 return gate that feeds it, from re-firing on
+; every later PRO 0 pass. Never touched on the success path.
 ;
 ; Expected screen output, in order:
 ;   PA BOOT
@@ -192,6 +195,7 @@ CHEST 52 noun
 ; that entry's own gate for why it cannot be a bare fallthrough).
 > _ _   EQ 102 1
         EQ 103 1
+        EQ 104 0
         MES "PA RETURN OK#n"
         MES "PA TYPE NAME: pt#n"
         LOAD 0
@@ -201,8 +205,22 @@ CHEST 52 noun
 ; tells "entry 2 ran and its LOAD failed" (103 still 1) apart from
 ; "entry 2's own gate already failed for an unrelated reason" (103
 ; would be 0, and this entry's gate then also correctly steps aside).
+; Terminal on a failure (fixed after an owner CSpect leg found this
+; entry re-firing forever: nothing previously stopped entry 2 from
+; matching again on the next PRO 0 pass, since neither entry mutates
+; 102/103, so "PA RETURN OK / PA TYPE NAME: pt / PA XLOAD F" repeated
+; without end). Flag 104 (0 until this entry runs, then latched 1) is
+; the fix: EQ 104 0 gates BOTH this entry and entry 2 above, so each
+; can fire at most once, and END here forces the same clean stop the
+; success path (entry 4) already uses - the failure transcript now
+; ends "PA XLOAD F" then SM13 "Another go?", never repeating. Does not
+; touch the success transcript: 104 is never set on that path, so
+; EQ 104 0 is always true there, unchanged from before this fix.
 > _ _   EQ 103 1
+        EQ 104 0
         MES "PA XLOAD F#n"
+        LET 104 1
+        END
 
 ; Entry 4: RETURN-VIA-RAMLOAD. Reached when part 2's RAMLOAD restores
 ; the part-1 buffer taken back in entry 1 - flag 103 reads 0 here

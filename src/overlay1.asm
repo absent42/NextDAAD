@@ -1354,12 +1354,9 @@ sav_fname_sanitize:
 h_save:                         ; 25: condition-typed like LOAD; done
     call sav_prompt             ; set on every outcome (jdaad _SAVEB)
     jr c, .fail                 ; so the game's catch-all stays quiet;
-    call sav_write              ; failure aborts the entry so SM59/57
-    jr c, .ioerr                ; survive the game's redraw
-    call sav_append_part        ; SP11 T4: v1 payload written - append
-    jr nc, .ok                  ; curPart to make it v2 (see below)
-.ioerr:
-    ld e, 57                    ; "I/O Error"
+    call sav_write_v2           ; SP11 T4 fix: single-pass v2 write -
+    jr nc, .ok                  ; failure aborts the entry so SM59/57
+    ld e, 57                    ; "I/O Error"          survive the redraw
     ld a, 0
     call print_msg
     call prn_newline
@@ -1406,7 +1403,7 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 
 ; --- SP11 Task 4: part-aware SAVE/LOAD helpers -----------------------
 ; .SAV v2 = the v1 payload (unchanged byte-for-byte) + ONE trailing part
-; byte. SAVE always writes v2 (sav_append_part). LOAD tells the format
+; byte. SAVE always writes v2 (sav_write_v2). LOAD tells the format
 ; apart by length, not a version field: EOF right at the v1 payload's
 ; end is v1 (pre-Task-4 file) and is always current-part; one more byte
 ; present is v2's part number - equal to curPart, restore in place
@@ -1439,47 +1436,83 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 ; switch_to_part's own SFB re-probe hop into this overlay). That same
 ; entry also serves h_ramload's cross-part path, below, staged from
 ; ramSaveBuf instead.
-ESX_MODE_WEXIST equ $02        ; F_OPEN: write, open EXISTING only (no
-                                ; create, no truncate bit) - contrast
-                                ; ESX_MODE_W ($0E, nextdaad.inc), which
-                                ; always creates/truncates; reopening a
-                                ; file sav_write just wrote must not
-                                ; truncate it back to empty
 
-; Reopen savName (just closed by sav_write) and append ONE byte: curPart.
-; Seeks to the exact known payload end (6-byte header + 256 flags +
-; numObj object-location bytes - the same layout sav_write itself just
-; wrote) via F_SEEK (esxDOS API PDF: A=handle, BCDE=distance, IXL=whence
-; 0=absolute) rather than any "append" open mode (esxDOS/NextZXOS has
-; none outside the dot-command convenience layer this raw rst $08
-; caller does not use - confirmed against the F_OPEN/F_SEEK entries in
-; NextZXOS_and_esxDOS_APIs.odt). Out: CF clear = OK, CF set = io-error
-; (mirrors sav_write's own A/CF contract so h_save's tail needs no
-; special-casing between the two).
-sav_append_part:
+; sav_write_v2 REPLACES an earlier append-after-close shape (owner
+; CSpect sweep evidence: every SAVE reported OK, but PT.SAV/T1.SAV/
+; MYXSV.SAV were all landing at exactly the v1 size - 265/266 bytes,
+; never 266/267 - the trailing byte was silently never written).
+; Investigation (instruction-by-instruction re-read of the committed
+; append routine, since removed): the byte count WAS correctly reloaded
+; to BC=1 immediately before the esx_fwrite that followed the F_SEEK -
+; no register-reuse bug, contrary to the first suspicion. A, IX, and
+; the F_OPEN mode ($02: write + open-existing, confirmed against
+; NextZXOS_and_esxDOS_APIs.odt's F_OPEN entry as a valid, well-formed
+; combination) were all correct too. But F_WRITE's own documented exit
+; contract ("Exit (success): Fc=0; BC=bytes actually written" - no
+; short-write exemption stated, unlike F_READ's explicit "EOF is not an
+; error, check BC" note) was never checked against the requested count
+; - the routine trusted CF alone, exactly as sav_write itself does for
+; its own (proven-reliable, sequential-from-open) writes. Verdict: a
+; write that seeks to the exact current end of an already-open,
+; non-created handle and asks it to grow the file by one byte can
+; return Fc=0 with BC=0 (silent short write); whether that is a CSpect
+; esxDOS-emulation gap in extending mode-$02 handles past their
+; original EOF, or a genuine esxDOS/FatFS characteristic that would
+; reproduce on real hardware too, could not be determined without
+; hardware access - either way it is a real hazard in the seek-then-
+; extend shape, not something worth re-proving with a BC check bolted
+; onto the same shape.
+;
+; Fix: eliminate the shape entirely - write the trailing byte as a
+; fourth sequential esx_fwrite inside sav_write's own single open/
+; create/truncate/close session (mirrors sav_read_v2's own "reimplement
+; on the resident primitives" precedent), the exact same call shape as
+; the header/flags/objects writes immediately before it, which the
+; owner's own evidence proves already write reliably. No second open,
+; no seek, no write-extend edge case. sav_write (file.asm, resident,
+; FROZEN) and the former sav_append_part are both now unreachable from
+; h_save - sav_write cannot be removed (frozen), and sav_append_part's
+; code was deleted rather than left in place (leaving 350+ dead-and-
+; buggy-in-spirit bytes in an already-tight overlay budget serves no
+; one); this comment is the record of the removal.
+sav_write_v2:
     call esx_getsetdrv
     jr c, .err
     ld ix, savName
-    ld b, ESX_MODE_WEXIST
+    ld b, ESX_MODE_W               ; nextdaad.inc: write, create or
+                                    ; truncate - the SAME mode sav_write
+                                    ; itself uses; always a fresh file,
+                                    ; never a reopen of an existing one
     call esx_fopen
     jr c, .err
     ld (savHandle), a
     ld a, (numObj)
-    ld l, a
-    ld h, 0
-    ld de, 262                   ; 6 (header) + 256 (flags)
-    add hl, de
-    ex de, hl                    ; DE = seek target low word
-    ld bc, 0                     ; BC = seek target high word (always 0:
-                                  ; max 262+255=517)
+    ld (savNObj), a                ; savHdr+savNObj = the 6-byte header
+                                    ; (file.asm) - same block sav_write
+                                    ; itself writes
+    ; header (6 bytes)
     ld a, (savHandle)
-    ld ix, 0                     ; IXL = esx_seek_set (absolute from
-                                  ; start)
-    call esx_fseek
+    ld ix, savHdr
+    ld bc, 6
+    call esx_fwrite
     jr c, .errclose
+    ; flags (256 bytes)
     ld a, (savHandle)
-    ld ix, curPart                ; write curPart's live resident byte
-                                   ; directly - no local copy needed
+    ld ix, flags
+    ld bc, 256
+    call esx_fwrite
+    jr c, .errclose
+    ; object locations (numObj bytes)
+    call sav_gather_locs           ; resident (file.asm): fills savLocs,
+                                    ; BC = numObj
+    ld ix, savLocs
+    ld a, (savHandle)
+    call esx_fwrite
+    jr c, .errclose
+    ; trailing part byte - the ONLY new write versus sav_write, same
+    ; open/close session, same call shape as the three writes above
+    ld a, (savHandle)
+    ld ix, curPart
     ld bc, 1
     call esx_fwrite
     jr c, .errclose
