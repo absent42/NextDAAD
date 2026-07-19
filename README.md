@@ -10,8 +10,9 @@ carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
 PARSE), file-backed save/load, Layer 2 location graphics
 (PICTURE/DISPLAY/GFX), AY audio (SFX/BEEP: music with streamed-song
 support, sound effects and speaker beeps), digitised sample playback
-bounded by available RAM, and mouse input with a hardware sprite
-pointer (MOUSE) are implemented. All 128 condacts are handled: CALL
+bounded by available RAM, mouse input with a hardware sprite
+pointer (MOUSE), boot title screens, and native multi-part games
+(EXTERN n 4) are implemented. All 128 condacts are handled: CALL
 is a documented no-op (jdaad parity - DAAD's machine-code CALL
 condact has no analogue in a bytecode interpreter).
 
@@ -33,7 +34,8 @@ condact has no analogue in a bytecode interpreter).
 - Direct Layer 2 surface control (GFX): copy/swap/clear the picture
   plane's front and back buffers on demand
 - Mouse input (MOUSE) via the Next's Kempston mouse ports, with a
-  hardware sprite pointer
+  hardware sprite pointer (sub-commands 0-3; buttons read
+  jdaad-compatible: idle 0, left 1, right 2, middle 4)
 - Boot title screens: ship DAAD.NX2 or DAAD.NXI next to GAME.DDB and
   it displays at boot over the autoplay music until a keypress - no
   source changes
@@ -109,6 +111,19 @@ are usable for art, with one reservation:
   is shifted by one blue LSB (imperceptible). Art should simply avoid
   drawing with index 254; Gfx2Next output does not need any special
   treatment otherwise.
+
+### Title screens
+
+A game shipping DAAD.NX2 (320-wide) or DAAD.NXI (256-wide) next to
+GAME.DDB gets a title screen at cold boot: the picture displays over
+the boot-autoplay music (GAME.AYS/AKY, if present) until any key is
+pressed, then the game begins. The file rules are identical to
+location art - same formats, same ZX0-compressed variants
+(DAAD.NX2.ZX0/N2Z probed first), same converter. A release build
+showing a title suppresses its version banner so the title is the
+first thing seen; with no DAAD.* file, boot is unchanged. The title
+lives in the game root only - it shows once per boot and is never
+re-shown by a multi-part switch.
 
 ### The classic look
 
@@ -189,9 +204,12 @@ Keep-last residency: replaying the same sample number is instant -
 only the first play of a given number pays the SD read, and repeat
 plays reuse the resident payload until a different number is
 requested. Sample playback runs in the background over whichever
-song format is active (AKY or AYS); the per-frame refeed is
-consumed-based, so heavy SD or Layer 2 picture I/O cannot corrupt or
-clip a playing sample.
+song format is active (AKY or AYS): each sample byte is delivered by
+a CTC-timed interrupt from a ring buffer refilled in the main loop,
+so heavy SD or Layer 2 picture I/O cannot corrupt or clip a playing
+sample. Song number 255 with sub-command 6 or 7 plays the game's
+boot theme (GAME.AYS/GAME.AKY) from the game root, in any part of a
+multi-part game.
 
 Anything else is a no-op, as is any reference to a file that is not
 on the SD card, or an AY effect number beyond GAME.SFB's own loaded
@@ -252,10 +270,11 @@ The bundled DRC toolchain is DRF 0.40 + DRB 0.36.
 ## Building
 
 The toolchain (not included in repo) lives in tools/ 
-([sjasmplus](https://github.com/z00m128/sjasmplus), [DeZog](https://github.com/maziac/DeZog) VS Code plugin, [CSpect](https://github.com/z00m128/sjasmplus), DRC via [DAAD-READY](https://www.ngpaws.com/daadready/), [Gfx2Next](https://www.rustypixels.uk/gfx2next/), [Disark](https://julien-nevo.com/disark/), [Rasm](https://github.com/EdouardBERGE/rasm)).
+([sjasmplus](https://github.com/z00m128/sjasmplus), [DeZog](https://github.com/maziac/DeZog) VS Code plugin, [CSpect](https://mdf200.itch.io/cspect), DRC via [DAAD-READY](https://www.ngpaws.com/daadready/), [Gfx2Next](https://www.rustypixels.uk/gfx2next/), [Disark](https://julien-nevo.com/disark/), [Rasm](https://github.com/EdouardBERGE/rasm)).
 
 - Build: powershell -File build.ps1 (add -Release for a release build,
-  -Force1MB for the unexpanded-RAM test build)
+  -Force1MB for the unexpanded-RAM test build, -NoDmaGfx for the
+  CPU-only picture-copy build used in DMA A/B comparisons)
 - Run in CSpect: powershell -File build.ps1 -Run
 - Clean: powershell -File build.ps1 -Clean
 - Test DDB: powershell -File tests\build-tests.ps1 regenerates
@@ -265,7 +284,8 @@ The toolchain (not included in repo) lives in tools/
   nesting, save/load, GFX/MOUSE/CALL, XMESSAGE and audio no-op
   safety - or -Err4 for the nested-DOALL error demo; add -Rab or -UU
   to compile and stage a corpus game (Rabenstein or Urban Upstart)
-  instead; add -Aud to stage the test audio assets from
+  instead; -Part stages the two-part switching fixture; -Title stages
+  the title-screen art; add -Aud to stage the test audio assets from
   tools\audio_assets)
 - VS Code: build / run / clean tasks wrap the same script
 
