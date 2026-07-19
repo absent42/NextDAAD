@@ -1296,13 +1296,60 @@ sav_prompt:
     ld (flags+FLAG_TIMEOUT), a
     call prn_reset_lines
     call sav_fname
-    ret nc
+    jr c, .fname_err
+    call sav_fname_sanitize     ; A/C in = name length (1-8); makes the
+                                 ; typed name filesystem-safe (see the
+                                 ; routine below) so SAVE/LOAD never
+                                 ; trip an esxDOS error on stray bytes
+    or a                        ; CF clear: success (sanitize does not
+    ret                         ; itself carry a fail contract)
+.fname_err:
     ld e, 59                    ; "File name error."
     ld a, 0
     call print_msg
     call prn_newline
     scf                         ; prn_newline corrupts flags - re-assert
     ret                         ; the name-error CF for the caller
+
+; Post-process savName's name field (written by sav_fname) toward the
+; DAAD manual's SAVE opt wording: "this is not checked on 8 bit
+; machines, the file name is MADE acceptable!" (DAAD_Manual_1991.md /
+; DAAD_Ready_Documentation_V2.md) - the manual does not specify HOW,
+; so: sav_fname already uppercases a-z and drops spaces; this maps
+; every remaining non-alphanumeric byte to 'X'. Needed because
+; sav_fname otherwise copies punctuation/control bytes into savName
+; verbatim - a raw '.' typed mid-name would land ahead of the literal
+; ".SAV" suffix appended below it (e.g. typing "my.sv!" would produce
+; "MY.SV!.SAV", a malformed multi-dot 8.3 name) and other bytes may
+; not be legal in an esxDOS/FAT filename at all, so an unsanitized
+; SAVE could fail outright instead of just looking odd.
+; In: A and C = name length (1-8), as sav_fname leaves them on return.
+; savName[0..len-1] holds the space-dropped, letter-uppercased chars;
+; the loop below never touches savName+len.. (the literal ".SAV",0
+; sav_fname already appended there). Corrupts AF, B, HL.
+sav_fname_sanitize:
+    ld b, a
+    ld hl, savName
+.loop:
+    ld a, (hl)
+    cp '0'
+    jr c, .bad                  ; < '0': control chars and punctuation
+    cp '9'+1
+    jr c, .ok                   ; '0'-'9': keep
+    cp 'A'
+    jr c, .bad                  ; ":;<=>?@": punctuation, keep out
+    cp 'Z'+1
+    jr nc, .bad                 ; > 'Z': punctuation/high-bit (no a-z
+                                 ; survives - sav_fname uppercased it)
+.ok:
+    inc hl
+    djnz .loop
+    ret
+.bad:
+    ld (hl), 'X'
+    inc hl
+    djnz .loop
+    ret
 
 h_save:                         ; 25: condition-typed like LOAD; done
     call sav_prompt             ; set on every outcome (jdaad _SAVEB)
