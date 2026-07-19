@@ -2027,31 +2027,33 @@ switch_to_part:
     ; stack entirely and enter the new part from scratch (nothing on
     ; the old stack matters past this line).
     ld sp, STACK_TOP
-    ; One-way cross-overlay hop for the SFB re-probe (brief Step 3h).
-    ; aud_load_sfb (overlay1.asm) has been PARTn\-prefix-aware since
-    ; SP11 Task 5; curPart is already committed above (several lines
-    ; up), before this call, so the prefix activates automatically on
-    ; every switch - no extra wiring needed here. aud_load_sfb lives
-    ; in overlay1 - reaching it from here needs the push-target/
-    ; jp-ovl_map_page trampoline
-    ; (banks.asm's ovl_map_page contract; the title_chain precedent,
-    ; overlay1.asm ~2046). aud_load_sfb is a normal call/ret routine
-    ; (only data_save/data_restore around its own MMU6 window, both
-    ; stack-neutral) reached here via jp, not call - so nothing of ours
-    ; is on the stack for its own ret to consume except what we push.
-    ; Pushing eng_run's (resident) address BELOW aud_load_sfb's on the
-    ; fresh stack means aud_load_sfb's own ret lands directly on
-    ; eng_run once it finishes - a second, automatic one-way hop that
-    ; needs no new code in overlay1 or a new resident landing pad
-    ; (both off-limits - HARD RULES touch only overlay0.asm/errors.
-    ; asm). eng_run is resident, so MMU7 being left on OVL1_PAGE
-    ; afterward is harmless - the condact dispatcher remaps per-condact
-    ; as it always does.
+    ; One-way cross-overlay DOUBLE hop: font reload (overlay2), then the
+    ; SFB re-probe (overlay1, brief Step 3h) - SP12 T1 inserts the font
+    ; leg ahead of the pre-existing SFB one. aud_load_sfb (overlay1.asm)
+    ; has been PARTn\-prefix-aware since SP11 Task 5, and font_load
+    ; (overlay2.asm, SP12 T1) the same way; curPart is already committed
+    ; above (several lines up), before this call, so both prefixes
+    ; activate automatically on every switch - no extra wiring needed
+    ; here. Both targets live in overlays other than this one, reached
+    ; via the push-target/jp-ovl_map_page trampoline (banks.asm's
+    ; ovl_map_page contract; the title_chain precedent, overlay1.asm
+    ; ~2046). font_load_switch (overlay2) and aud_load_sfb (overlay1)
+    ; are both normal call/ret routines reached here via jp, not call -
+    ; so nothing of ours is on the stack for their rets to consume
+    ; except what we push. Pushing eng_run's (resident) address BELOW
+    ; font_load_switch's on the fresh stack means font_load_switch's own
+    ; tail-hop to aud_load_sfb, and THAT routine's own ret, land directly
+    ; on eng_run once the whole chain finishes - a second, automatic
+    ; one-way hop that needs no new resident landing pad (off-limits -
+    ; HARD RULES touch only overlay0.asm/overlay2.asm this task).
+    ; eng_run is resident, so MMU7 being left on OVL1_PAGE afterward is
+    ; harmless - the condact dispatcher remaps per-condact as it always
+    ; does.
     ld hl, eng_run
     push hl
-    ld hl, aud_load_sfb
+    ld hl, font_load_switch
     push hl
-    ld a, OVL1_PAGE
+    ld a, OVL2_PAGE
     jp ovl_map_page
 .fail:
  IFDEF DEBUG

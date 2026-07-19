@@ -2696,9 +2696,19 @@ title_present:
 ; Returns via a plain ret, which - thanks to the chain's stack trick
 ; (overlay1.asm) - lands straight back in aud_boot_probe's own caller
 ; (main.asm). Corrupts everything.
+; SP12 T1: font_load is called on EVERY exit below (the title-absent
+; early path via .noTitle, the mid-load-failure .rollback path also via
+; .noTitle, and the after-keypress success path just before its own
+; tail-jump) - the SP11 T1 exit-coverage lesson (an early ret that skips
+; a chain call silently loses the feature for a whole class of games).
+; The release banner and DEBUG diagnostics (debug.asm) render BEFORE
+; this point, still in the embedded font by design - they are
+; interpreter furniture, not game text; everything from here on
+; (the title screen has no text of its own, so in practice this means
+; the game's own first text) uses the custom font, once loaded.
 title_boot:
     call title_probe
-    ret c                         ; no DAAD.* staged: silent, normal boot
+    jr c, .noTitle                ; no DAAD.* staged: silent, normal boot
     call gfx_read_banks            ; -> scratch banks (closes the
                                    ; handle on every path)
     jr c, .rollback
@@ -2714,6 +2724,7 @@ title_boot:
     call gfx_load_rollback         ; transient: hand the banks straight
                                    ; back - no cache entry ever existed
     call wait_key                  ; block for any key (print.asm)
+    call font_load                 ; after-keypress path (see header note)
     ld b, 1
     jp h_display                   ; h_display's non-zero shape: clear
                                    ; BACK + flip + NR $12 - drops the
@@ -2721,6 +2732,12 @@ title_boot:
                                    ; draw; rets for us
 .rollback:
     call gfx_load_rollback
+.noTitle:                          ; common exit: title-absent early
+                                   ; path falls in here directly, a mid-
+                                   ; load failure falls in via .rollback
+                                   ; just above - both silent, normal
+                                   ; boot either way
+    call font_load
     ret
 
 ; Blit a freshly loaded/depacked TRANSIENT run (gfxArenaStart,
@@ -2795,6 +2812,159 @@ title_blit:
     ld a, (gfxMode)
     call l2_mode_set
     jp l2_enable
+
+; --- SP12 Task 1: custom font load (boot + part switch) ---
+;
+; Step 1 ground truth (tilemap.asm, read-only): tm_font_init installs
+; the RESIDENT embedded font (fontData, an INCBIN of src/font.chr - 2048
+; bytes, tracked in git, NOT the gitignored toolchain path a prior
+; review suspected) into TM_DEFS ($7400, nextdaad.inc) via a plain ldir
+; BEFORE ever touching esxDOS, then optionally overlays root-only
+; GAME.CHR on top (same 2048-byte exact-size validation this mirrors).
+; TM_DEFS is 256 glyphs x 8 rows, 1bpp, stored verbatim - no expansion/
+; conversion, so "install" is always a straight 2048-byte copy. TM_DEFS
+; sits in bank 5, permanently mapped at CPU slot 3 ($6000-$7FFF)
+; regardless of which overlay (0/1/2) MMU7 currently holds, so it is
+; reachable by a plain ldir from here exactly as it is from tilemap.asm
+; or overlay0.asm - no banking dance needed for the WRITE side. GAME.CHR
+; is a separate, earlier, root-only mechanism (tm_font_init, boot-time
+; only) that font_load does not touch, depend on, or duplicate; FONT.CHR
+; below is a distinct, later-loading, PARTn-aware override that replaces
+; whatever tm_font_init left installed (embedded or GAME.CHR) - there is
+; only ever one installed font (a later multi-font feature reloads,
+; never multiplies), so no attribute/palette state needs re-deriving
+; after the swap (tmAttr and the tilemap palette are independent of the
+; glyph bitmaps).
+;
+; Load a custom font: PARTn\FONT.CHR (curPart >= 2) then FONT.CHR,
+; standard DAAD 2048-byte charset (256 chars x 8 rows, 1bpp). Absent =
+; silent (embedded/GAME.CHR font stays); wrong size = silent + DEBUG
+; marker. Never esx_fread's straight into TM_DEFS: a short/failed read
+; must never corrupt the live glyph table the tilemap may be actively
+; displaying (mid-game part switch), so the file lands in a transient
+; bank_alloc'd 16K scratch bank first (mapped into slot 6/DATA_WINDOW
+; via data_save/data_map_page - ext_xmes's own idiom, overlay0.asm) and
+; is only ldir'd into TM_DEFS once the exact size is confirmed - scratch-
+; then-install. Exact-size validation (BC checked, not CF alone - the
+; F_READ/F_WRITE count lesson) plus the 1-byte-overshoot probe mirror
+; tm_font_init's own GAME.CHR check byte for byte. Corrupts AF, BC, DE,
+; HL, IX.
+font_load:
+    ld a, (curPart)
+    dec a
+    jr z, .rootonly              ; curPart == 1: skip straight to the
+                                  ; root name (T5 idiom, gfx_open_chain)
+    ld hl, fontNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl                        ; hl = fontNamePart+6
+    ex de, hl
+    ld hl, fontName                ; copy "FONT.CHR",0 verbatim (9 bytes)
+    ld bc, 9
+    ldir
+    call esx_getsetdrv
+    jr c, .rootonly
+    ld ix, fontNamePart
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .opened
+.rootonly:                        ; ORIGINAL (non-PARTn) name, reached
+                                  ; both when curPart == 1 and as the
+                                  ; PARTn\ fallback above
+    call esx_getsetdrv
+    ret c                         ; no drive at all: silent, table untouched
+    ld ix, fontName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    ret c                         ; no FONT.CHR either: silent, table untouched
+.opened:
+    ld (fontHandle), a
+    call bank_alloc                ; transient scratch bank (banks.asm)
+    jr nc, .haveBank
+    ld a, (fontHandle)
+    call esx_fclose
+    ret                            ; no free bank: silent, table untouched
+.haveBank:
+    ld (fontBank), a
+    call data_save
+    ld a, (fontBank)
+    add a, a                       ; 16K bank -> its lower 8K page
+    call data_map_page
+    ld a, (fontHandle)
+    ld ix, DATA_WINDOW
+    ld bc, 2048
+    call esx_fread
+    jr c, .bad
+    ld a, b                        ; exactly 2048 read? (BC discipline -
+    cp 8                           ; CF alone lies, the F_READ/F_WRITE
+    jr nz, .bad                    ; count lesson; mirrors tm_font_init)
+    ld a, c
+    or a
+    jr nz, .bad
+    ld a, (fontHandle)              ; probe for a 2049th byte - size must
+    ld ix, DATA_WINDOW+2048         ; be exact, not just >= 2048 (same
+    ld bc, 1                        ; probe tm_font_init itself runs)
+    call esx_fread
+    jr c, .bad
+    ld a, b
+    or c
+    jr nz, .bad                     ; a successful 1-byte read here means
+                                    ; the file is LONGER than 2048: reject
+    ld hl, DATA_WINDOW               ; exact size confirmed - scratch ->
+    ld de, TM_DEFS                   ; live table (the only write to
+    ld bc, 2048                      ; TM_DEFS anywhere in this routine)
+    ldir
+    jr .close
+.bad:
+ IFDEF DEBUG                        ; wrong size: no-op with a marker,
+    ld b, 29                        ; same idiom as h_sfx/h_mouse's
+    ld c, 70                        ; unknown-sub-command markers (and
+    call dbg_at                     ; tm_font_init's own chrStatus=2
+    ld hl, msgFontBad                ; GAME.CHR rejection)
+    call dbg_puts
+ ENDIF
+.close:
+    ld a, (fontBank)
+    call bank_free
+    call data_restore
+    ld a, (fontHandle)
+    call esx_fclose
+    ret
+
+; Part-switch tail: reload the (possibly per-part) font, then chain to
+; the SFB re-probe in overlay1; eng_run is already on the stack (pushed
+; by switch_to_part, overlay0.asm) - the SFB routine's final ret lands
+; there once this whole chain finishes (T3's chained-hop precedent).
+; Corrupts everything.
+font_load_switch:
+    call font_load
+    ld hl, aud_load_sfb
+    push hl
+    ld a, OVL1_PAGE
+    jp ovl_map_page
+
+; SP12 T1 font-load state, overlay2-local - parallel to gfxHandle/
+; gfxNamePart's own PARTn machinery above, but see font_load's header
+; for why the read never targets TM_DEFS directly.
+fontHandle:   db $FF              ; esxDOS handle, $FF = none open
+fontBank:     db $FF              ; transient scratch 16K bank while held
+; "PARTn\FONT.CHR",0 = 6 ("PARTn\") + 9 ("FONT.CHR",0) = 15 bytes
+fontNamePart: ds 15
+fontName:     db "FONT.CHR", 0    ; root fallback name AND the PARTn\
+                                  ; suffix (copied into fontNamePart+6,
+                                  ; 9 bytes - the xmsName/ext_xmes reuse)
+msgFontBad:   db "FONT BAD", 0
 
 ; --- DEBUG bring-up test card ---
 ; Owner-driven hardware verification hook, wired from debug.asm's
