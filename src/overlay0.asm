@@ -1677,20 +1677,70 @@ ext_xmes:
     jp c, .fail                 ; free (banks.asm ~99-117)
     ld (xmsBank), a
 .have:
+    ; SP11 T5 PARTn probe - keep in step with the other four sites
+    ; (art in overlay2.asm, WAV/songs/SFB in overlay1.asm). curPart >=
+    ; 2: try PARTn\0.XMB first, root (.rootonly below, shared pool)
+    ; fallback. curPart == 1: skip straight to .rootonly - zero new
+    ; opens, byte-identical to pre-T5 code.
+    ld a, (curPart)
+    dec a
+    jr z, .rootonly
+    ld hl, xmsNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl
+    ex de, hl                   ; de = xmsNamePart+6
+    ld hl, xmsName                ; copy "0.XMB",0 verbatim (6 bytes)
+    ld bc, 6
+    ldir
+    call esx_getsetdrv
+    jr c, .rootonly
+    ld ix, xmsNamePart
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .partopened
+    ; --- end additive block; .rootonly below is the ORIGINAL code,
+    ; unchanged
+.rootonly:
     call esx_getsetdrv
     jp c, .fail
     ld ix, xmsName
     ld b, ESX_MODE_READ
     call esx_fopen
     jp c, .fail
+.partopened:
     ld (xmsHandle), a
     ; seek to xmsOff (16-bit -> BCDE with high word 0, mode 0 start).
-    ; NextZXOS F_SEEK: A=handle, BCDE=offset, L=mode (esxapi.def:
-    ; esx_seek_set=0; confirmed against defrag.asm/fragmentation.asm
-    ; usage, not just the opcode equ).
+    ; NextZXOS F_SEEK: A=handle, BCDE=offset, IXL=mode (esxDOS API odt,
+    ; F_SEEK entry: "IXL [L from dot command] = seek mode" - IXL is the
+    ; register a raw rst $08 caller like this one must set; L is what a
+    ; NextZXOS dot command supplies through its own wrapper. The
+    ; previous comment's defrag.asm/fragmentation.asm citation was a
+    ; category error - those ARE dot commands, so they exercise the L
+    ; convention, not this one; SP11 T4's sav_append_part (overlay1.asm)
+    ; is the correct raw-caller precedent, cross-confirmed against
+    ; tools/NextZXOS's bundled bmp2spr.asm (same "ld ix,0" idiom).
+    ; Fixed per SP11 T5 rider (opus-review finding M2): IXL now set
+    ; explicitly; L kept too, belt-and-braces (harmless - unread on
+    ; this path). This worked on CSpect before possibly by register
+    ; coincidence; the hardware sweep re-verifies.
     ld bc, 0
     ld de, (xmsOff)
-    ld l, 0                     ; mode 0 = from start
+    ld l, 0                     ; mode 0 = from start (belt-and-braces
+                                 ; only - see comment above)
+    ld ix, 0                    ; mode 0 = from start (the register
+                                 ; that actually matters - see above)
     ld a, (xmsHandle)
     call esx_fseek
     jr c, .failclose
@@ -1770,6 +1820,11 @@ xmsName:    db "0.XMB", 0
 xmsHandle:  db 0
 xmsOff:     dw 0
 xmsBank:    db $FF              ; claimed pool bank, $FF = none yet
+; SP11 T5: PARTn\ prefixed scratch for ext_xmes, overlay0-local (xmsName
+; itself is already overlay0-only, but not grown in place - same small-
+; local-buffer shape used at the other four sites). Sized 6 ("PARTn\")
+; + 6 (xmsName's own size, "0.XMB\0") = 12.
+xmsNamePart: ds 12
 
 ; Boot-time reset for xmsBank. This byte lives in overlay0's own data
 ; (mapped into slot 7 only when the dispatcher or a caller explicitly
@@ -1954,10 +2009,13 @@ switch_to_part:
     ; stack entirely and enter the new part from scratch (nothing on
     ; the old stack matters past this line).
     ld sp, STACK_TOP
-    ; One-way cross-overlay hop for the SFB re-probe (Task 5 adds the
-    ; PARTn\ prefix later; today this re-runs the existing root probe
-    ; per brief Step 3h). aud_load_sfb lives in overlay1 - reaching it
-    ; from here needs the push-target/jp-ovl_map_page trampoline
+    ; One-way cross-overlay hop for the SFB re-probe (brief Step 3h).
+    ; aud_load_sfb (overlay1.asm) has been PARTn\-prefix-aware since
+    ; SP11 Task 5; curPart is already committed above (several lines
+    ; up), before this call, so the prefix activates automatically on
+    ; every switch - no extra wiring needed here. aud_load_sfb lives
+    ; in overlay1 - reaching it from here needs the push-target/
+    ; jp-ovl_map_page trampoline
     ; (banks.asm's ovl_map_page contract; the title_chain precedent,
     ; overlay1.asm ~2046). aud_load_sfb is a normal call/ret routine
     ; (only data_save/data_restore around its own MMU6 window, both

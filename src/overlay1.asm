@@ -1913,6 +1913,42 @@ aud_load_song:
     ex de, hl
     ld bc, 5
     ldir
+    ; SP11 T5 PARTn probe - keep in step with the other four sites
+    ; (art in overlay2.asm, WAV/SFB below, XMB in overlay0.asm).
+    ; curPart >= 2: try PARTn\NNN.AKY first, root (.open below,
+    ; shared pool) fallback. curPart == 1: skip straight to .open -
+    ; zero new opens, byte-identical to pre-T5 code. GAME.AKY (the
+    ; $FF sentinel above) is never prefixed - it reaches .open
+    ; directly via its own jr, before this block.
+    ld a, (curPart)
+    dec a
+    jr z, .open
+    ld hl, audNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl
+    ex de, hl                   ; de = audNamePart+6
+    ld hl, audName               ; copy the just-built "NNN.AKY",0
+    ld bc, 9                     ; verbatim (9 bytes)
+    ldir
+    call esx_getsetdrv
+    jr c, .open
+    ld ix, audNamePart
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .partopened
+    ; --- end additive block; .open below is the ORIGINAL code, unchanged
 .open:
     call esx_getsetdrv
     jp c, .fail
@@ -1920,6 +1956,7 @@ aud_load_song:
     ld b, ESX_MODE_READ
     call esx_fopen
     jp c, .fail                 ; missing: playing music untouched
+.partopened:
     ld (audHandle), a
     ; stop the music before overwriting the song area - BOTH kinds:
     ; an AYS stream must not survive an AKY load (mutual exclusion is
@@ -2038,12 +2075,52 @@ aud_load_song:
 ; sits at page 48 bank offset $1000-$17FF, a single slot-6 window
 ; read. CF set on missing/oversize/read error. Corrupts everything.
 aud_load_sfb:
+    ; SP11 T5 PARTn probe - keep in step with the other four sites
+    ; (art in overlay2.asm, WAV/songs above/below, XMB in overlay0.asm).
+    ; curPart >= 2: try PARTn\GAME.SFB first, root (.rootonly below,
+    ; shared pool) fallback. curPart == 1: skip straight to .rootonly -
+    ; zero new opens, byte-identical to pre-T5 code. Task 3's
+    ; switch_to_part already re-probes this routine at every part
+    ; switch with curPart committed first (overlay0.asm), so this
+    ; prefix pass activates automatically on the very next switch.
+    ld a, (curPart)
+    dec a
+    jr z, .rootonly
+    ld hl, audNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl
+    ex de, hl                   ; de = audNamePart+6
+    ld hl, audGameSfb            ; copy "GAME.SFB",0 verbatim (9 bytes)
+    ld bc, 9
+    ldir
+    call esx_getsetdrv
+    jr c, .rootonly
+    ld ix, audNamePart
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .partopened
+    ; --- end additive block; .rootonly below is the ORIGINAL code,
+    ; unchanged
+.rootonly:
     call esx_getsetdrv
     jr c, .fail
     ld ix, audGameSfb
     ld b, ESX_MODE_READ
     call esx_fopen
     jr c, .fail
+.partopened:
     ld (audHandle), a
     call data_save
     ld a, AUD_PAGE_LO
@@ -2321,6 +2398,14 @@ audGameAys: db "GAME.AYS", 0
 audExtAky:  db ".AKY", 0
 audExtAys:  db ".AYS", 0
 audName:    ds 9
+; SP11 T5: PARTn\ prefixed scratch, overlay1-local, shared by all four
+; overlay1 probe sites (aud_load_wav, aud_load_song/aud_load_ays'
+; numbered branches, aud_load_sfb) exactly the way audName above is
+; already shared between them - never concurrently in flight, each
+; site fully rewrites it before use. Sized 6 ("PARTn\") + 9 (matches
+; audName's own size - every name this buffer ever holds, WAV/AKY/AYS/
+; GAME.SFB alike, is <= 9 bytes with its own NUL) = 15.
+audNamePart: ds 15
 audHandle:  db 0
 audSongReq: db 0
 audLoaded:  dw 0                ; bytes of song actually loaded
@@ -2383,6 +2468,42 @@ aud_load_wav:
     ex de, hl
     ld bc, 5
     ldir
+    ; SP11 T5 PARTn probe - keep in step with the other four sites
+    ; (art in overlay2.asm, songs/SFB above/below, XMB in overlay0.asm).
+    ; curPart >= 2: try PARTn\NNN.WAV first, root (.rootonly below,
+    ; shared pool) fallback. curPart == 1: skip straight to .rootonly -
+    ; zero new opens, byte-identical to pre-T5 code.
+    ld a, (curPart)
+    dec a
+    jr z, .rootonly
+    ld hl, audNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl
+    ex de, hl                   ; de = audNamePart+6
+    ld hl, audName               ; copy the just-built "NNN.WAV",0
+    ld bc, 9                     ; verbatim (9 bytes)
+    ldir
+    call esx_getsetdrv
+    jr c, .rootonly
+    ld ix, audNamePart
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .partopened
+    ; --- end additive block; .rootonly below is the ORIGINAL code,
+    ; unchanged
+.rootonly:
     call esx_getsetdrv
     jp c, .fail
     ld ix, audName
@@ -2391,6 +2512,7 @@ aud_load_wav:
     jp c, .fail                 ; missing: any playing sample untouched
                                  ; (open probed BEFORE the stop, same
                                  ; rule as aud_load_song)
+.partopened:
     ld (audHandle), a
     ; stop any playing sample before the banks move under the DMA.
     ; audEnable = 0 means the ISR never reaches aud_tick: nothing can
@@ -2863,6 +2985,42 @@ aud_load_ays:
     ex de, hl
     ld bc, 5
     ldir
+    ; SP11 T5 PARTn probe - keep in step with the other four sites
+    ; (art in overlay2.asm, WAV/songs/SFB above, XMB in overlay0.asm).
+    ; curPart >= 2: try PARTn\NNN.AYS first, root (.open below,
+    ; shared pool) fallback. curPart == 1: skip straight to .open -
+    ; zero new opens, byte-identical to pre-T5 code. GAME.AYS (the
+    ; $FF sentinel above) is never prefixed - it reaches .open
+    ; directly via its own jr, before this block.
+    ld a, (curPart)
+    dec a
+    jr z, .open
+    ld hl, audNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl
+    ex de, hl                   ; de = audNamePart+6
+    ld hl, audName               ; copy the just-built "NNN.AYS",0
+    ld bc, 9                     ; verbatim (9 bytes)
+    ldir
+    call esx_getsetdrv
+    jr c, .open
+    ld ix, audNamePart
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .partopened
+    ; --- end additive block; .open below is the ORIGINAL code, unchanged
 .open:
     call esx_getsetdrv
     jp c, .fail
@@ -2871,6 +3029,7 @@ aud_load_ays:
     call esx_fopen
     jp c, .fail                 ; missing: current music untouched (open
                                 ; probed BEFORE the stop, as aud_load_song)
+.partopened:
     ld (audHandle), a
     ; stop BOTH music kinds before the banks move / the stream restarts.
     ; res the start bits first so a pending, not-yet-consumed start of the

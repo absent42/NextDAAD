@@ -892,7 +892,22 @@ gfx_find_empty:
 ; clear with the handle in gfxHandle and gfxMode/gfxWidth/
 ; gfxCompressed set from the matching row; CF set when no candidate
 ; exists on SD. Corrupts everything.
+;
+; SP11 T5 PARTn probe - keep in step with the other four sites (WAV/
+; songs/SFB in overlay1.asm, XMB in overlay0.asm). curPart >= 2: try
+; the WHOLE chain under PARTn\ first (gfx_open_chain_part below);
+; root (shared pool) fallback below runs the WHOLE chain again,
+; unchanged. curPart == 1: skip straight to the root pass - zero new
+; opens, byte-identical to pre-T5 code.
 gfx_open_chain:
+    ld a, (curPart)
+    dec a
+    jr z, .rootonly
+    call gfx_open_chain_part
+    ret nc                       ; opened under PARTn\: gfxHandle/
+                                  ; gfxMode/gfxWidth/gfxCompressed
+                                  ; already set by gfx_open_chain_part
+.rootonly:
     ld a, (gfxPicNum)
     ld hl, gfxName
     ld b, '0'-1
@@ -950,6 +965,92 @@ gfx_open_chain:
     pop hl
     jr nz, .row
     scf                         ; chain exhausted
+    ret
+.opened:
+    ld (gfxHandle), a
+    or a
+    ret
+
+; gfx_open_chain_part: PARTn\ prefixed pass (curPart 2-9 only - the
+; caller above gates part 1 before ever reaching here). Textually
+; parallel to gfx_open_chain's own root-pass body just above: same
+; gfxPicNum digit-build, same gfxExtTab row walk, same output contract
+; (CF clear + gfxHandle/gfxMode/gfxWidth/gfxCompressed set; CF set =
+; chain exhausted under PARTn\, caller falls back to the unchanged
+; root pass) - but writing/probing gfxNamePart instead of gfxName.
+; Runs the WHOLE chain before giving up. Corrupts everything.
+gfx_open_chain_part:
+    ld hl, gfxNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl                       ; hl = gfxNamePart+6
+    ld a, (gfxPicNum)
+    ld b, '0'-1
+.hund:
+    inc b
+    sub 100
+    jr nc, .hund
+    add a, 100
+    ld (hl), b
+    inc hl
+    ld b, '0'-1
+.tens:
+    inc b
+    sub 10
+    jr nc, .tens
+    add a, 10
+    ld (hl), b
+    inc hl
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '.'                 ; hl = gfxNamePart+9
+    ld hl, gfxExtTab
+.row:
+    ld (gfxExtPtr), hl
+    ld de, gfxNamePart+10        ; past "PARTn\NNN."
+    ld bc, GFX_EXT_NAME
+    ldir
+    ld a, (hl)                   ; row's mode byte
+    ld (gfxMode), a
+    inc hl
+    ld a, (hl)                   ; row's compressed flag
+    ld (gfxCompressed), a
+    ld a, (gfxMode)
+    or a
+    ld de, 256
+    jr z, .width
+    ld de, 320
+.width:
+    ld (gfxWidth), de
+    call esx_getsetdrv           ; A = default drive for esx_fopen
+    jr c, .next
+    ld ix, gfxNamePart
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .opened
+.next:
+    ld hl, (gfxExtPtr)
+    ld de, GFX_EXT_ROW
+    add hl, de
+    push hl
+    ld de, gfxExtEnd
+    or a
+    sbc hl, de
+    pop hl
+    jr nz, .row
+    scf                          ; chain exhausted
     ret
 .opened:
     ld (gfxHandle), a
@@ -2366,6 +2467,20 @@ gfxExtTab:
 gfxExtEnd:
 GFX_EXT_NAME equ 7
 GFX_EXT_ROW  equ GFX_EXT_NAME+2
+
+; SP11 T5: PARTn\ prefixed scratch for gfx_open_chain_part, overlay2-
+; local. gfxName itself is resident (gfxcache.asm) and exactly 12
+; bytes - "sized for the longest probe... the final NUL is never
+; overwritten" per its own comment - no slack for a 6-byte "PARTn\"
+; prefix, hence a separate buffer here rather than growing it. Layout
+; mirrors gfxName exactly, shifted 6: +0-3 "PART", +4 part digit, +5
+; '\', +6-8 NNN, +9 '.', +10-16 the 7-byte extension field, +17 the
+; final NUL - baked in at assembly (never rewritten at runtime, same
+; guarantee gfxName's own trailing NUL provides for the two 7-char
+; rows "NX2.ZX0"/"NXI.ZX0" that fill the extension field with no
+; internal NUL of their own). 6 (PARTn\) + 12 (gfxName's own size) = 18.
+gfxNamePart: ds 17
+             db 0
 
 gfxPicNum:     db 0              ; picture being loaded/staged
 gfxEntryIdx:   db 0              ; cache slot in use
