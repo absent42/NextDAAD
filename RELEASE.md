@@ -17,8 +17,9 @@ Run through this list, top to bottom, before tagging a release.
 2. **Test scaffolding green.**
    - `./tests/build-tests.ps1`
    - `./tests/build-tests.ps1 -Suite`
+   - `./tests/build-tests.ps1 -Part`
 
-   Both must compile cleanly (DRF + DRB, no errors) and stage without
+   All must compile cleanly (DRF + DRB, no errors) and stage without
    warnings.
 
 3. **Full condact suite - owner-run in CSpect.**
@@ -33,6 +34,15 @@ Run through this list, top to bottom, before tagging a release.
    - Urban Upstart: `./tests/build-tests.ps1 -UU`, then playthrough
      rounds in CSpect - defect, fix wave, re-leg, the same rhythm as
      Rabenstein.
+   - Multi-part fixture: `./tests/build-tests.ps1 -Part`, then run.
+     Expect exactly: PA BOOT, PB CARRY OK, the part-two external
+     text (clean), PB SAV OK, PA RETURN OK, PB XLOAD OK,
+     PA RAMLOAD OK - typing the same save name at all three
+     prompts. Any " F" line, garbled external text, or a stall is a
+     defect.
+   - Title screen: `./tests/build-tests.ps1 -Title`, then run. The
+     320x256 title shows with music and any key starts the game; a
+     release build shows no banner text while a title is present.
    - Smoke-set boot matrix: PENDING. The smoke set (a small breadth
      collection of classic DAAD sources taken to compile, boot and
      reach the first room - not full playthroughs) needs the owner to

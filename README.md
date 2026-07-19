@@ -19,7 +19,7 @@ condact has no analogue in a bytecode interpreter).
 
 - Layer 2 location graphics: 256x192 and 320x256 256-colour pictures
   from Gfx2Next files, per-picture palettes, bank-allocated picture cache, 
-  and double-buffered draw
+  double-buffered draw, and DMA-accelerated surface copies
 - AY audio on the Turbo Sound Next (3 PSGs, 9 channels): interrupt-driven
   Arkos AKY music playback with boot autoplay, SFX-driven songs and
   sound effects, the classic blocking BEEP tone generator, and
@@ -34,6 +34,14 @@ condact has no analogue in a bytecode interpreter).
   plane's front and back buffers on demand
 - Mouse input (MOUSE) via the Next's Kempston mouse ports, with a
   hardware sprite pointer
+- Boot title screens: ship DAAD.NX2 or DAAD.NXI next to GAME.DDB and
+  it displays at boot over the autoplay music until a keypress - no
+  source changes
+- Native multi-part games: EXTERN n 4 switches to GAMEn.DDB with
+  flags and objects carried, part-transparent SAVE/LOAD and RAMSAVE
+  (a save from any part loads anywhere and switches automatically),
+  and per-part assets in PARTn\ directories with the game root as a
+  shared pool
 - 80 column tilemap-based 80x32 text mode driver with per-character colour 
   and a custom 80 column font
 - DDB loading and validation from SD card (esxDOS), with header/size
@@ -207,7 +215,7 @@ tune (SFX n 6) has ended, BEEP works again.
 ## EXTERN and MALUVA
 
 DAAD's EXTERN condact takes a vector number as its second argument,
-selecting one of 16 dispatch slots. NextDAAD implements two:
+selecting one of 16 dispatch slots. NextDAAD implements three:
 
 - Vector 3 - XMESSAGE (XMES): prints text stored externally in
   0.XMB, a file DRC writes alongside GAME.DDB at compile time and
@@ -217,11 +225,16 @@ selecting one of 16 dispatch slots. NextDAAD implements two:
   text. A missing or unreadable 0.XMB is a silent no-op - like a
   missing picture or audio asset elsewhere, the game simply
   continues.
+- Vector 4 - XPART: switches the running game to part n (GAMEn.DDB),
+  carrying the flags and object locations across - the multi-part
+  game mechanism. The authoring kit's SETUP.md has the full
+  multi-part guide, including the PARTn asset directories and the
+  part-aware SAVE/LOAD behaviour.
 - Vector 7 - XUNDONE: clears the current action's done state, for
   SYNONYM-style entries that should not count as a completed turn.
 
 Every other vector is a safe no-op. Upstream DRC has deprecated the
-rest of classic MALUVA - XPICTURE, XSAVE, XLOAD, XPART, XBEEP,
+rest of classic MALUVA - XPICTURE, XSAVE, XLOAD, XBEEP,
 XSPEED, XNEXTCLS, XNEXTRST - in favour of native engine features, and
 NextDAAD covers the same ground natively: PICTURE/DISPLAY for
 pictures, SAVE/LOAD for game state, EXIT for resets, and SFX for
