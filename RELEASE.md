@@ -1,30 +1,5 @@
 # NextDAAD Release Checklist
 
-NextDAAD stays on a 0.x version until public testing earns v1.0. This
-milestone (SP10, "compatibility and release") stamps v0.1.0 - the
-first kit-complete, publicly-testable build: 128/128 condacts
-handled, songs and samples bounded by available RAM rather than fixed
-slots, two flagship corpus games plus a smoke set, and this checklist.
-The tag/publication act itself is the owner's, done manually whenever
-they choose - this file is the checklist to run through first, not an
-automated release script.
-
-## Version stamp
-
-- Text: "NEXTDAAD V0.1.0", defined once as VERSION_STR in
-  src/nextdaad.inc so both build variants share it and cannot drift
-  apart.
-- Printed by boot_banner (src/debug.asm) at boot, tilemap row 0, in
-  BOTH the DEBUG and RELEASE build variants. It is a startup flash,
-  not a persistent HUD: main.asm unconditionally clears the tilemap
-  again ("Game takeover", rows 0-11) just before the engine takes
-  over, in every successful boot - DEBUG included. Confirming it
-  actually appears on screen (a boot-time screenshot or frame
-  capture) is an owner eye leg; agents cannot launch an emulator.
-- To bump the version for a future milestone, edit VERSION_STR in one
-  place (src/nextdaad.inc) - both build variants pick it up
-  automatically, nothing else to touch.
-
 ## Checklist
 
 Run through this list, top to bottom, before tagging a release.
@@ -115,11 +90,3 @@ What ships inside authoring-kit/ (committed to the repo):
 Not shipped, not committed: `authoring-kit\RELEASE\` (build output,
 gitignored) and `authoring-kit\CONFIG.local.BAT` (personal overrides,
 gitignored).
-
-## 0.x versioning
-
-NextDAAD stays on a 0.x version (this milestone: v0.1.0) until public
-testing earns v1.0. There is no fixed bar for that jump beyond public
-testing having actually happened and the result holding up - it is an
-owner call, made after real players, not just the corpus and smoke
-set, have used the interpreter.

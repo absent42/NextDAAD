@@ -3,10 +3,6 @@
 DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
-Current version: v0.1.0 - kit-complete, public-testing phase. NextDAAD
-stays on a 0.x version until public testing earns v1.0 (see
-RELEASE.md for the release checklist and version stamp location).
-
 Project status on 19/07/2026: 
 The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
 object model, process/DOALL dispatch, windows, printing, colour,
