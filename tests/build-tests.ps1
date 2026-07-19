@@ -310,17 +310,21 @@ if ($UU) {
 if ($Title) {
     # SP11 Task 1 owner leg fixture: title_present/title_boot (overlay2.asm)
     # probe sd\DAAD.* at boot, so the owner-eye-leg needs one staged.
-    # Sourced from the same corpus -Rab -Gfx256 stages
-    # (tools\Rabenstein-master\nextdaad\*.NXI) rather than a committed
-    # binary - every numbered NXI there is 25088 bytes (21 files, all
-    # identical size), so "the smallest" is a tie; 0.NXI is the
-    # deterministic pick (lowest number). Same CSpect lock hazard as
-    # -Rab/-UU: refuse to stage rather than warn.
+    # The owner-authored 320x256 title (16bitGFX\DAAD.png) is converted
+    # to nextdaad\DAAD.NX2 by the convert_gfx.py pipeline (ADAPTIVE 256,
+    # gfx2next -bitmap -pal-embed; 82432 bytes = 512 pal + 320x256).
+    # Stale DAAD.* variants are cleared first so exactly one title is
+    # staged and the NX2-first probe order is what the leg exercises.
+    # Same CSpect lock hazard as -Rab/-UU: refuse to stage rather than
+    # warn.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial title fixture)"
     }
-    Copy-Item "$root\tools\Rabenstein-master\nextdaad\0.NXI" "$root\sd\DAAD.NXI" -Force
-    "staged tools\Rabenstein-master\nextdaad\0.NXI -> sd\DAAD.NXI"
+    foreach ($v in @('NX2', 'NXI', 'N2Z', 'NXZ', 'NX2.ZX0', 'NXI.ZX0')) {
+        Remove-Item "$root\sd\DAAD.$v" -Force -ErrorAction SilentlyContinue
+    }
+    Copy-Item "$root\tools\Rabenstein-master\nextdaad\DAAD.NX2" "$root\sd\DAAD.NX2" -Force
+    "staged tools\Rabenstein-master\nextdaad\DAAD.NX2 -> sd\DAAD.NX2 (320x256 owner title)"
 }
 
 if ($Aud) {
