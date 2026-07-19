@@ -276,20 +276,9 @@ of the machinery below.
   at the root, alongside `PART2\`, `PART3\`, ... folders holding each
   part's own shadowed assets (see "Shadowed assets" below).
 
-**Stray-file warning:** no file matching `GAMEn.D*` may sit on the SD
-card anywhere except the compiled `GAMEn.DDB` files this kit stages -
-**especially `GAMEn.DSF`**, the DAAD source file itself, which authors
-routinely leave next to the compiled DDB while testing on real
-hardware or a working SD card copy. The part switch opens its target
-DDB by wildcard (`GAMEn.D*`) - a fixed 9-byte filename buffer in the
-interpreter forces this, it cannot spell out `GAMEn.DDB` in full for
-n >= 2 - so a stray `GAMEn.DSF` (or any other `GAMEn.D*` file that
-happens to sort first) can be the one that actually opens. The result
-is garbage loaded as if it were a DDB, and the switch fails silently
-once the interpreter's own header check rejects it. Development
-directories are exactly where this bites: keep source and compiled
-output in different folders, or clean the DSF out before copying to
-the card.
+The part switch opens its target by the exact name `GAMEn.DDB` - a
+stray file beside it (a `GAMEn.DSF` source left next to the compiled
+DDB, say) is ignored and harmless.
 
 ### Switching parts
 
