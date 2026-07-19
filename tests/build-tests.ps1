@@ -323,8 +323,8 @@ if ($Title) {
     foreach ($v in @('NX2', 'NXI', 'N2Z', 'NXZ', 'NX2.ZX0', 'NXI.ZX0')) {
         Remove-Item "$root\sd\DAAD.$v" -Force -ErrorAction SilentlyContinue
     }
-    Copy-Item "$root\tools\Rabenstein-master\nextdaad\DAAD.NX2" "$root\sd\DAAD.NX2" -Force
-    "staged tools\Rabenstein-master\nextdaad\DAAD.NX2 -> sd\DAAD.NX2 (320x256 owner title)"
+    Copy-Item "$root\tools\demo-files\DAAD.NX2" "$root\sd\DAAD.NX2" -Force
+    "staged tools\demo-files\DAAD.NX2 -> sd\DAAD.NX2 (320x256 owner title)"
 }
 
 if ($Aud) {
