@@ -30,12 +30,14 @@
 #            removing stale sd\*.AKY, sd\GAME.SFB, sd\*.WAV and sd\*.AYS;
 #            warns and skips if the folder is empty
 # Boot title screen (SP11 Task 1), independent of the DDB switches:
-#   -Title   stage a DAAD.NXI title-screen fixture into sd\ - copies
-#            tools\Rabenstein-master\nextdaad\0.NXI (the same corpus
-#            -Rab -Gfx256 stages; every numbered NXI there is 25088
-#            bytes, so "smallest" is a tie broken by lowest number) to
-#            sd\DAAD.NXI. Not committed (sd/*.NXI is gitignored).
-#            Default (no -Title) leaves sd\ untouched.
+#   -Title   stage the owner 320x256 title into sd\ - stale-cleans
+#            sd\DAAD.* variants then copies tools\demo-files\DAAD.NX2
+#            (converted from demo-files\DAAD.png via tools\png2nx.py).
+#            tools\demo-files is the home for NEWLY CREATED test
+#            graphics/sound/video assets (owner convention 2026-07-19;
+#            existing asset dirs stay where they are). Not committed
+#            (sd\ is gitignored). Default (no -Title) leaves sd\
+#            untouched.
 param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
@@ -310,9 +312,10 @@ if ($UU) {
 if ($Title) {
     # SP11 Task 1 owner leg fixture: title_present/title_boot (overlay2.asm)
     # probe sd\DAAD.* at boot, so the owner-eye-leg needs one staged.
-    # The owner-authored 320x256 title (16bitGFX\DAAD.png) is converted
-    # to nextdaad\DAAD.NX2 by the convert_gfx.py pipeline (ADAPTIVE 256,
-    # gfx2next -bitmap -pal-embed; 82432 bytes = 512 pal + 320x256).
+    # The owner-authored 320x256 title (tools\demo-files\DAAD.png) is
+    # converted to tools\demo-files\DAAD.NX2 by tools\png2nx.py
+    # (ADAPTIVE 256, gfx2next -bitmap -pal-embed; 82432 bytes =
+    # 512 pal + 320x256).
     # Stale DAAD.* variants are cleared first so exactly one title is
     # staged and the NX2-first probe order is what the leg exercises.
     # Same CSpect lock hazard as -Rab/-UU: refuse to stage rather than
