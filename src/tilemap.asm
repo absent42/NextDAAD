@@ -25,8 +25,10 @@
 ; GLYPH_SPACE (all-zero bitmap, verified in font.chr - every pixel
 ; then reads the pair's even index, matching NR $14 exactly) so the
 ; whole cell shows Layer 2 (or whatever's beneath) through untouched.
-; A custom GAME.CHR that redefines glyph 32 with non-zero pixels would
-; reintroduce ink-coloured specks in "transparent" cells - out of
+; A custom FONT.CHR (font_load, overlay2.asm - the only supported custom-
+; font route as of SP12 T1; the legacy GAME.CHR probe this comment used
+; to name has been retired) that redefines glyph 32 with non-zero pixels
+; would reintroduce ink-coloured specks in "transparent" cells - out of
 ; scope here, flagged for whoever wires up Task 4's picture display.
 
 ; Switch the display to tilemap text mode. Corrupts all registers.
@@ -91,50 +93,24 @@ tm_pal_write9:
     pop hl
     ret
 
-; Copy the embedded font to TM_DEFS, then try GAME.CHR from SD.
-; A valid override is exactly 2048 bytes; anything else restores the
-; embedded font and records the rejection. Corrupts all registers.
+; Copy the embedded font to TM_DEFS. SP12 T1 rider: the GAME.CHR disk
+; probe that used to run here (open/read/validate a root-only override,
+; esxDOS-dependent) has been retired - it was an undocumented mechanism
+; nobody remembered, never wired into any docs, and is now superseded by
+; the owner-unified FONT.CHR path (font_load, overlay2.asm), which loads
+; later, is PARTn-aware, and is the only supported custom-font route
+; going forward. chrStatus is still zeroed here (kept 0, never set
+; non-zero again) so debug.asm's dbg_engage_tilemap - which still reads
+; it and is out of scope for this file-only change - stays silent
+; instead of showing a stale CHR OVERRIDE/CHR BAD banner. Both callers'
+; contracts are preserved: main.asm's boot call and errors.asm's fatal()
+; re-arm (file.asm ~154, txt_init's embedded-font fallback needs no DDB/
+; SD state) both just need TM_DEFS filled unconditionally on return -
+; this is now even more robust than before, since there is no longer any
+; esxDOS dependency at all on this path. Corrupts all registers.
 tm_font_init:
-    call .embedded
     xor a
     ld (chrStatus), a
-    call esx_getsetdrv
-    ret c
-    ld ix, chrName
-    ld b, ESX_MODE_READ
-    call esx_fopen
-    ret c                       ; no GAME.CHR - embedded stays
-    ld (chrHandle), a
-    ld ix, TM_DEFS
-    ld bc, 2048
-    call esx_fread
-    jr c, .bad
-    ld a, b                     ; exactly 2048 read?
-    cp 8
-    jr nz, .bad
-    ld a, c
-    or a
-    jr nz, .bad
-    ld a, (chrHandle)           ; and no byte 2049 (size must be exact)
-    ld ix, chrScratch
-    ld bc, 1
-    call esx_fread
-    jr c, .bad
-    ld a, b
-    or c
-    jr nz, .bad
-    ld a, (chrHandle)
-    call esx_fclose
-    ld a, 1
-    ld (chrStatus), a
-    ret
-.bad:
-    ld a, (chrHandle)
-    call esx_fclose
-    ld a, 2
-    ld (chrStatus), a
-    jr .embedded                ; restore, then ret from .embedded
-.embedded:
     ld hl, fontData
     ld de, TM_DEFS
     ld bc, 2048
@@ -288,7 +264,6 @@ tmAttr:        db 7*2
 tmFillGlyph:   db 0
 tmScrollW:     db 0
 tmScrollH:     db 0
-chrName:       db "GAME.CHR", 0
 chrHandle:     db $FF
 chrScratch:    db 0
 chrStatus:     db 0             ; 0 none, 1 override loaded, 2 rejected
