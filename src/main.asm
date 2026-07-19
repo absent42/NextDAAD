@@ -65,9 +65,9 @@ main:
     ; through every transparent pixel. After the DEBUG T-hook (which
     ; repaints the tilemap itself and must keep its own status rows
     ; while it runs), before the engine's first draw. Safe for
-    ; fatal(): it paints its own bar and (DEBUG) prints fresh text;
-    ; every print path re-sets tmAttr, so leaving it on the
-    ; transparent attribute here binds nothing downstream.
+    ; fatal(): it re-arms the tilemap itself (txt_init) and paints its
+    ; own bar and message; every print path re-sets tmAttr, so leaving
+    ; it on the transparent attribute here binds nothing downstream.
     ld b, 0
     ld c, 0
     ld d, TM_ROWS
@@ -131,7 +131,7 @@ boot_data_init:
     ld a, 7*2
     ld (tmAttr), a             ; tilemap attribute (white on black)
     xor a
-    ld (tmUp), a               ; tilemap-live flag (fatal-path display route)
+    ld (tmUp), a               ; tilemap-live flag (see file.asm)
     ld (ramSaveOk), a          ; RAMSAVE-present guard for RAMLOAD
     ld (wrapLock), a           ; print-pipeline sentinels (print.asm)
     ld (wrapLen), a

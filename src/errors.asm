@@ -3,7 +3,10 @@
 ; classic border is INVISIBLE behind the full-coverage 640x256
 ; tilemap, so the border write alone signals nothing once the
 ; engine display is active (owner-discovered). The border write is
-; kept for completeness. Never returns.
+; kept for completeness. Both build types also print a legible
+; "NextDAAD: RUNTIME ERROR - E<n>" into that same row-0 bar (via
+; fatal_puts below) - previously that text was DEBUG-only, so a
+; release build showed nothing but the bar. Never returns.
 ; Codes raised in SP3: 0 (obj_ptr), 2 (obj_move to 255), 3 (PROCESS
 ; depth), 4 (nested DOALL), 5 (illegal opcode), 6 (bad process),
 ; 7 (bad message/location number). Codes 1 and 8 are defined for
@@ -52,6 +55,11 @@ err_raise:
     ld e, TM_COLS               ; magenta bar across row 0
     ld a, GLYPH_SPACE
     call tm_fill_rect
+    ld hl, msgRuntimeErr
+    call fatal_puts              ; release-safe; leaves B/C/E positioned
+    ld a, (errCode)              ; right after the text (see fatal_puts)
+    add a, '0'                   ; codes are single-digit decimal (0-8)
+    call tm_putc_at              ; append the digit in the same spot
     ld a, 3                     ; border too (invisible under the
     out ($FE), a                ; tilemap, correct elsewhere)
     di
@@ -77,3 +85,36 @@ msgErrV: db " V", 0
 msgErrN: db " N", 0
 msgErrC: db " C", 0
  ENDIF
+
+; HL = ASCIIZ message. Prints at row 0 from col 0, using the current
+; tmAttr - fatal() and err_raise both set tmAttr and paint the row-0
+; bar with it just before calling this, so the text lands on that same
+; background. Release-safe: no DEBUG gate, no windows_init/tmUp
+; dependency, just tm_putc_at (always resident) - the only precondition
+; is txt_init having run at least once (fatal() forces this itself;
+; err_raise only ever runs post-boot, long after boot's txt_init).
+; Leaves B=0, C=column right after the last character, E=tmAttr, so a
+; caller can chain a raw tm_putc_at immediately after (err_raise
+; appends the error digit this way). Corrupts AF, HL.
+fatal_puts:
+    ld a, (tmAttr)
+    ld e, a
+    ld b, 0
+    ld c, 0
+.loop:
+    ld a, (hl)
+    or a
+    ret z
+    push hl
+    call tm_putc_at
+    pop hl
+    inc hl
+    inc c
+    jr .loop
+
+; Fixed prefix; err_raise appends the single decimal digit itself.
+msgRuntimeErr: db "NextDAAD: RUNTIME ERROR - E", 0
+; Reader stack depth overflow (ddbtext.asm's rd_push/rd_pop) - moved
+; here from ddbtext.asm (pre-flags resident, no room to grow) since
+; rd_stack_fatal only needs an HL pointer to it, not local placement.
+msgRdStack:    db "NextDAAD: RD STACK - E9", 0

@@ -136,16 +136,32 @@ ddb_load:
     ret
 
 ; A = border colour, HL = ASCIIZ message. Never returns.
+; Un-gated in both builds: dbg_puts/dbg_at are release stubs (debug.asm),
+; so the message goes through fatal_puts (errors.asm) via the tilemap
+; primitives instead - those are always resident, never stubbed.
 fatal:
     out ($FE), a
     di                          ; the halt below never re-enables ints;
     call audio_init             ; silence the PSGs first (di stops the
                                 ; ISR re-voicing a note before the
                                 ; banner + halt; preserves HL)
-    ld a, (tmUp)
-    or a
-    jr z, .halt0
-    push hl
+    push hl                      ; message ptr: kept on the stack across
+                                 ; txt_init AND tm_fill_rect below, both
+                                 ; of which corrupt HL - only popped once
+                                 ; fatal_puts is about to need it
+    call txt_init                ; force the tilemap live: a boot-time DDB
+                                 ; failure reaches fatal() before
+                                 ; windows_init ever runs (tmUp still 0),
+                                 ; so the old tmUp gate skipped this whole
+                                 ; block - see main.asm's ddb_load branch.
+                                 ; txt_init's embedded-font fallback needs
+                                 ; no DDB/SD state (tm_font_init loads it
+                                 ; before even trying esxDOS for GAME.CHR),
+                                 ; so re-arming it here is always safe,
+                                 ; including the esxDOS-absent case that
+                                 ; likely caused the failure. fatal() never
+                                 ; returns, so clobbering tmUp/tmAttr/the
+                                 ; whole tilemap is fine even mid-game.
     ld a, 110                   ; pair 55: magenta paper (3), white ink (7)
     ld (tmAttr), a
     ld b, 0
@@ -154,18 +170,11 @@ fatal:
     ld e, TM_COLS
     ld a, GLYPH_SPACE
     call tm_fill_rect
-    pop hl
- IFDEF DEBUG
-    push hl
-    ld b, 23
-    ld c, 0
-    call dbg_at
-    pop hl
-    call dbg_puts
- ENDIF
-.halt0:
-    di
+    pop hl                       ; message ptr back, now that both
+                                 ; corrupting calls are done
+    call fatal_puts              ; release-safe (errors.asm)
 .halt:
+    di
     jr .halt
 
 ddbName:     db "GAME.DDB", 0
@@ -174,7 +183,11 @@ ddbChunk:    db 0
 ddbSize:     dw 0
 ddbSizeHi:   db 0           ; third byte of the 24-bit size
 scratchByte: db 0
-tmUp:        db 0           ; 1 once windows_init has run (tilemap live)
+tmUp:        db 0           ; 1 once windows_init has run (tilemap live).
+                            ; No longer read by fatal() (which now forces
+                            ; the tilemap live itself via txt_init) - kept
+                            ; as a general tilemap-state flag in case
+                            ; anything else needs it.
 ddbHeader:   ds DDB_HEADER_SIZE
 
 ; --- .SAV file core -------------------------------------------------

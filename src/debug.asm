@@ -805,9 +805,14 @@ dbg_engage_tilemap:
 
  ENDIF
 
-msgMissing:  db "ERROR: GAME.DDB NOT FOUND", 0
-msgOversize: db "ERROR: GAME.DDB TOO BIG", 0
-msgBadHdr:   db "ERROR: GAME.DDB BAD HEADER", 0
+; Shape matches errors.asm's runtime messages: "NextDAAD: <what> - E<n>"
+; (n = the ddb_load result code returned to main.asm, DDB_E_* in
+; nextdaad.inc). Printed via fatal() -> fatal_puts (errors.asm) in both
+; builds - see main.asm's ddb_load branch for which message pairs with
+; which border colour/ERR_BORDER_*.
+msgMissing:  db "NextDAAD: DDB missing - E1", 0
+msgOversize: db "NextDAAD: DDB oversize - E2", 0
+msgBadHdr:   db "NextDAAD: DDB bad header - E3", 0
 
 dbgX: db 0
 dbgY: db 0

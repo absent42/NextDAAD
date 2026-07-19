@@ -231,6 +231,23 @@ The toolchain (not included in repo) lives in tools/
   from tools\audio_assets)
 - VS Code: build / run / clean tasks wrap the same script
 
+## Troubleshooting
+
+Boot and runtime failures show a legible message on the tilemap (row 0,
+white on magenta), plus a border colour flash as a secondary signal. All
+of these halt the interpreter; power-cycle or reset to retry.
+
+- `NextDAAD: DDB missing - E1` (red border) - no GAME.DDB on the SD card,
+  or the SD/esxDOS filesystem itself could not be reached
+- `NextDAAD: DDB oversize - E2` (magenta border) - GAME.DDB is bigger
+  than the 128K interpreter limit
+- `NextDAAD: DDB bad header - E3` (yellow border) - GAME.DDB exists but
+  failed validation (wrong version or corrupt)
+- `NextDAAD: RUNTIME ERROR - E<n>` (magenta border) - the engine hit an
+  internal fault while running the game (n = 0-8, see src/errors.asm)
+- `NextDAAD: RD STACK - E9` (red border) - internal text-reader stack
+  overflow; should not happen with a correctly compiled DDB
+
 ## Authoring kit
 
 `authoring-kit\` is a DAAD-Ready-style workflow for authors: drop in a `.DSF`
