@@ -2693,14 +2693,27 @@ title_present:
 ; (clear+flip) shape so the game starts on a clean Layer 2 with no
 ; title art left behind. Music keeps playing throughout -
 ; aud_boot_probe already started it, nothing here touches audio.
-; Returns via a plain ret, which - thanks to the chain's stack trick
-; (overlay1.asm) - lands straight back in aud_boot_probe's own caller
-; (main.asm). Corrupts everything.
+; Returns via a threaded one-way hop into overlay0's pointer_load (SP12
+; T3, the shared .toPointer tail below), whose own plain ret then pops
+; whatever was on the stack before this whole chain began - thanks to
+; the chain's stack trick (overlay1.asm), that is still aud_boot_probe's
+; own caller (main.asm), unchanged from before SP12 T3 - the same final
+; ret target, just reached one hop later. MMU7 is left mapped OVL0_PAGE
+; afterward, harmless (main.asm/eng_run don't care what overlay page is
+; mapped - the same precedent as switch_to_part's own chain tail,
+; overlay0.asm). Corrupts everything.
 ; SP12 T1: font_load is called on EVERY exit below (the title-absent
 ; early path via .noTitle, the mid-load-failure .rollback path also via
 ; .noTitle, and the after-keypress success path just before its own
 ; tail-jump) - the SP11 T1 exit-coverage lesson (an early ret that skips
 ; a chain call silently loses the feature for a whole class of games).
+; SP12 T3 threads pointer_load the exact same way, through .toPointer:
+; the after-keypress path now CALLs h_display (was a tail-jump) so its
+; own ret lands back here in OVL2, letting it fall into the same shared
+; trampoline the other two exits use, rather than needing a second,
+; separate hop back from OVL0 into OVL2 just to reach h_display (which
+; physically lives in this overlay page and cannot execute correctly
+; while MMU7 holds pointer_load's OVL0_PAGE).
 ; The release banner and DEBUG diagnostics (debug.asm) render BEFORE
 ; this point, still in the embedded font by design - they are
 ; interpreter furniture, not game text; everything from here on
@@ -2726,10 +2739,15 @@ title_boot:
     call wait_key                  ; block for any key (print.asm)
     call font_load                 ; after-keypress path (see header note)
     ld b, 1
-    jp h_display                   ; h_display's non-zero shape: clear
+    call h_display                 ; h_display's non-zero shape: clear
                                    ; BACK + flip + NR $12 - drops the
                                    ; title art before the game's first
-                                   ; draw; rets for us
+                                   ; draw. SP12 T3: CALL, not the former
+                                   ; tail-jump - its own ret now lands
+                                   ; right below, still in OVL2, so this
+                                   ; path can join the shared pointer-load
+                                   ; tail like the other two exits do.
+    jr .toPointer
 .rollback:
     call gfx_load_rollback
 .noTitle:                          ; common exit: title-absent early
@@ -2738,7 +2756,20 @@ title_boot:
                                    ; just above - both silent, normal
                                    ; boot either way
     call font_load
-    ret
+.toPointer:                        ; SP12 T3: one-way OVL2->OVL0 hop -
+                                   ; font_load/h_display are already this
+                                   ; page, but pointer_load lives in
+                                   ; overlay0, so it needs the established
+                                   ; trampoline (push target, ld a,
+                                   ; OVL0_PAGE, jp ovl_map_page - the
+                                   ; switch_to_part precedent, overlay0.
+                                   ; asm). See this routine's header for
+                                   ; where pointer_load's own ret finally
+                                   ; lands.
+    ld hl, pointer_load
+    push hl
+    ld a, OVL0_PAGE
+    jp ovl_map_page
 
 ; Blit a freshly loaded/depacked TRANSIENT run (gfxArenaStart,
 ; gfxBankCount banks; gfxMode/gfxHeight from title_probe/

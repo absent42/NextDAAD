@@ -47,6 +47,10 @@ Put these in this kit folder:
   your font is a classic 768-byte ZX charset (chars 32-127 only), run
   `lib\fontconv.ps1` first to pad it into a `FONT.CHR`. With no `FONT.CHR`,
   the interpreter's own embedded font plays. See "Custom fonts" below.
+- Optional custom mouse pointer: a ready-made `POINTER.SPR` (a raw
+  256-byte 16x16 8-bit sprite pattern) placed directly in this kit folder,
+  staged to `RELEASE\` as-is. With no `POINTER.SPR`, the interpreter's own
+  default arrow plays. See "Custom mouse pointer" below.
 - Optional audio in `AUDIO\` (Arkos `.aks` sources, converted at build time):
   - `<GAME>.aks` - background music, auto-played at boot.
   - `NNN.aks` - songs selected in-game by `SFX n 6` (once) or `SFX n 7` (loop).
@@ -90,6 +94,7 @@ After a build, `RELEASE\` holds the complete SD-card image:
 `nextdaad.nex`, `GAME.DDB`, any `NNN.NX2`/`NNN.NXI` (optionally `.zx0`), any
 `DAAD.NX2`/`DAAD.NXI` title screen (optionally `.zx0`, see "Title screens"
 below), any `FONT.CHR` custom font (see "Custom fonts" below), any
+`POINTER.SPR` custom mouse pointer (see "Custom mouse pointer" below), any
 `GAME.AKY`/`NNN.AKY`/`GAME.SFB`/`NNN.AYS`, any `NNN.WAV`, and
 `0.XMB` if your DSF uses XMESSAGE/XMES (see section 8). Copy its contents to
 the root of an SD card to play on real hardware.
@@ -139,8 +144,12 @@ a classic ZX Spectrum charset: characters 32-127 only (96 glyphs x 8 rows,
 `lib\fontconv.ps1` accepts either shape:
 
 ```
-powershell lib\fontconv.ps1 -In MyFont.ch8 -Out FONT.CHR
+powershell -ExecutionPolicy Bypass -File lib\fontconv.ps1 -In MyFont.ch8 -Out FONT.CHR
 ```
+
+(PowerShell's default execution policy blocks running a bare `.ps1` script;
+`-ExecutionPolicy Bypass -File` is the same shape `audio.bat` already uses
+internally for `aysconv.ps1`.)
 
 A 2048-byte input is copied straight through. A 768-byte input is padded
 into a full 2048-byte table: it fills glyphs 32-127 (bytes 256-1023) from
@@ -184,6 +193,60 @@ ships no font of its own.
 names for a future multi-font-per-game feature; this version only ever
 reads `FONT.CHR`, so a stray `FONT2.CHR` in the kit folder or on the SD
 card is currently inert.
+
+## Custom mouse pointer
+
+Optional: ship a `POINTER.SPR` (see section 2) and the interpreter installs
+it into hardware sprite pattern slot 0 in place of the default arrow - the
+existing `MOUSE 1` (`SHOWMS`) upload picks it up automatically the next
+time it runs, no source changes needed. With no `POINTER.SPR`, the default
+arrow plays, exactly as before this feature existed.
+
+**Format.** `POINTER.SPR` is a raw 16x16, 8-bit-per-pixel hardware sprite
+pattern - exactly 256 bytes, one byte per pixel, row-major (row 0 first,
+16 bytes per row), no header. Any other size is rejected at boot (a DEBUG
+build shows a marker) and the default arrow plays instead.
+
+**Colour values.** Each byte is read by the sprite hardware as an RGB332
+colour directly (index N = colour N, the Next's default identity sprite
+palette - nothing in this interpreter loads a custom sprite palette, so
+this holds for every pointer). $E3 is the hardware's own soft-reset
+transparent value - use it for any pixel that should show the background
+through. The default pointer uses $00 (black, RGB332) for its outline and
+$FF (white) for its fill; any other RGB332 byte value is a valid opaque
+colour. The hotspot (registration point) is pixel (0,0), the pattern's
+top-left corner - design your artwork with the "business end" of the
+pointer there.
+
+**Making one.** Any sprite/tile editor or hex editor that can export a
+flat, unheadered 16x16 8-bit-indexed byte dump works - draw against the
+Next's standard RGB332-identity palette (palette slot N previewed as
+colour N) so the exported index values are already the correct output
+bytes, then save/export exactly 256 bytes as `POINTER.SPR`. `gfx2next`'s
+`-sprites` mode (`tools\gfx2next`, section 1) does emit a raw, unheadered,
+8-bit 256-byte pattern for a 16x16 indexed PNG (verified directly: a
+16x16 indexed test image round-tripped through `gfx2next -sprites`
+byte-for-byte matches its own source palette indices, no extra header or
+padding) - but it is not wired into this kit's build, because it only
+comes out correct if the source PNG's palette was authored with index N
+already equal to RGB332 colour N; a normal "quantize to a nice-looking
+palette" export (the workflow location art and title screens use) would
+silently produce the wrong pointer colours. Build your `POINTER.SPR`
+directly in a sprite/hex editor, or through `gfx2next -sprites` ONLY if
+you have deliberately set up a standard RGB332-identity palette first.
+
+**Per-part pointers.** For a part >= 2, `POINTER.SPR` is one of the
+shadowed asset kinds - see section 9, "Shadowed assets": a
+`PART<n>\POINTER.SPR` overrides the root pointer for that part only,
+staged automatically by the existing multi-part asset copy (nothing extra
+to configure), and falls back to the root `POINTER.SPR` (or the default
+arrow, if none) if that part ships no pointer of its own.
+
+**Reserved for later.** `MOUSE` sub-command 5 (`POINTERMS`) is accepted
+and ignored on this target (see "MOUSE sub-commands" below) - reserved for
+a future feature that switches between several loaded pointer shapes at
+runtime. This version only ever shows the one pointer installed at boot
+or part-switch time.
 
 ## 7. Troubleshooting
 
@@ -341,7 +404,7 @@ idiom `SFX` uses above for a sub-command it does not recognise.
 | 2 | `HIDEMS` | Hide the hardware sprite pointer. |
 | 3 | `GETMS` | Read mouse state into four flags starting at the first argument: `flags[n]` = buttons (idle 0, left 1, right 2, middle 4, chords additive - jdaad parity, not the raw Kempston byte), `flags[n+1]` = column 0-79 (X/8), `flags[n+2]` = row 0-31 (Y/8), `flags[n+3]` = column 0-53 (X/6). |
 | 4 | `GETFINEMS` | Not supported - accepted and ignored. |
-| 5 | `POINTERMS` | Not supported - accepted and ignored. |
+| 5 | `POINTERMS` | Not supported - accepted and ignored. Reserved for a future feature that switches between several loaded pointer shapes at runtime (see "Custom mouse pointer" above). |
 | 6 | `DELTAXMS` | Not supported - accepted and ignored. |
 | 7 | `DELTAYMS` | Not supported - accepted and ignored. |
 
@@ -368,7 +431,8 @@ of the machinery below.
   `RELEASE\PART<n>\0.XMB` (if that part uses XMESSAGE/XMES), then
   copies every other file from `PART<n>\` into `RELEASE\PART<n>\`
   as-is (no conversion - put ready-to-use `.NX2`/`.NXI`/`.AKY`/`.AYS`/
-  `.WAV`/`GAME.SFB` files there, not `.png`/`.aks` sources).
+  `.WAV`/`GAME.SFB`/`FONT.CHR`/`POINTER.SPR` files there, not
+  `.png`/`.aks` sources).
 - On the SD card this becomes `GAME.DDB`, `GAME2.DDB`, `GAME3.DDB`, ...
   at the root, alongside `PART2\`, `PART3\`, ... folders holding each
   part's own shadowed assets (see "Shadowed assets" below).
@@ -396,8 +460,9 @@ For a part >= 2, these asset kinds probe `PART<n>\<name>` **first**,
 then fall back to the game root if not found there: location art (the
 whole extension probe chain runs under `PART<n>\`, then again at the
 root if that whole pass misses), `NNN.WAV` samples, numbered
-`NNN.AYS`/`NNN.AKY` songs, `GAME.SFB`, `0.XMB`, and `FONT.CHR` (see
-"Custom fonts" above).
+`NNN.AYS`/`NNN.AKY` songs, `GAME.SFB`, `0.XMB`, `FONT.CHR` (see
+"Custom fonts" above), and `POINTER.SPR` (see "Custom mouse pointer"
+above).
 
 Root-only, never shadowed: the title screen (`DAAD.*`, shown once at
 cold boot only) and the boot-autoplay default song (`GAME.AYS`/

@@ -56,8 +56,10 @@ REM      since the last build cannot leave a stray DAAD.N2Z/DAAD.NXZ
 REM      behind on the SD card. RELEASE\FONT.CHR is covered too (SP12
 REM      T2 - see the ready-made font staging below) so a font removed
 REM      from the kit root cannot leave a stray RELEASE\FONT.CHR behind.
+REM      RELEASE\POINTER.SPR is covered the same way (SP12 T3 - see the
+REM      ready-made pointer staging below).
 if not exist "RELEASE" md "RELEASE"
-del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" "RELEASE\FONT.CHR" 2>nul
+del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" "RELEASE\FONT.CHR" "RELEASE\POINTER.SPR" 2>nul
 REM ---- remove stale multi-part output too, so a part removed since the
 REM      last build (its PART<n> folder deleted) cannot leave a stray
 REM      GAME<n>.DDB or PART<n>\ behind on the SD card - see SETUP.md's
@@ -92,6 +94,24 @@ REM      copy loop below (SP11 T6), same as any other per-part asset.
 if exist "FONT.CHR" (
     copy /Y "FONT.CHR" "RELEASE\FONT.CHR" >nul
     echo   font FONT.CHR -^> RELEASE\FONT.CHR ^(ready-made, staged as-is^)
+)
+
+REM ---- ready-made mouse pointer (SP12 T3): a kit-root POINTER.SPR - a
+REM      raw 256-byte 16x16 8-bit hardware sprite pattern, see SETUP.md's
+REM      "Custom mouse pointer" section for the format and a sprite-editor
+REM      workflow - is staged to RELEASE\ as-is, no conversion wired in
+REM      here (gfx2next's -sprites mode CAN emit this exact raw format,
+REM      but only comes out correct with palette authoring this kit does
+REM      not verify - see SETUP.md's "Custom mouse pointer" section).
+REM      Mirrors the ready-made FONT.CHR staging just above and
+REM      lib\gfx.bat's ready-made DAAD.* title staging (9fe5557). No
+REM      POINTER.SPR in the kit root is normal (the default arrow plays)
+REM      and not an error. PART<n>\POINTER.SPR needs no staging step here
+REM      - it already rides the generic PART<n>\ asset copy loop below
+REM      (SP11 T6), same as any other per-part asset.
+if exist "POINTER.SPR" (
+    copy /Y "POINTER.SPR" "RELEASE\POINTER.SPR" >nul
+    echo   pointer POINTER.SPR -^> RELEASE\POINTER.SPR ^(ready-made, staged as-is^)
 )
 
 REM ---- multi-part games (SP11 Task 6): PART2\..PART9\ source folders,

@@ -79,6 +79,12 @@
 #            default.chr. Same CSpect-running guard as -Title (locked
 #            sd\ files cause a partial fixture). Default (no -Font)
 #            leaves sd\ untouched.
+#            SP12 Task 3 rides the same switch: -Font ALSO stale-cleans
+#            sd\POINTER.SPR then generates a fresh 256-byte fixture
+#            in-script (a 16x16 solid green square, 2px $E3 transparent
+#            border, 1px black outline - obviously different from the
+#            interpreter's default black/white arrow at a glance). No
+#            test binary is committed for this either.
 param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
@@ -465,6 +471,33 @@ if ($Font) {
     & "$root\authoring-kit\lib\fontconv.ps1" -In $fontSrc -Out "$root\sd\FONT.CHR" | Out-Null
     $fontSize = (Get-Item "$root\sd\FONT.CHR").Length
     "staged tools\demo-files\fonts\Crews\Spectrum\Crews.ch8 -> sd\FONT.CHR ($fontSize bytes, via fontconv.ps1)"
+
+    # SP12 Task 3 owner leg fixture: pointer_load (overlay0.asm) probes
+    # sd\POINTER.SPR at boot (and PARTn\POINTER.SPR for parts >= 2), so
+    # the owner-eye-leg needs one staged alongside the font fixture just
+    # above - same switch, no separate -Pointer flag. No binary is
+    # committed (same policy as the font fixture): the 256 bytes are
+    # generated right here, a 16x16 solid square with a 2px $E3
+    # (hardware transparent) border, a 1px $00 (black) outline, and a
+    # $1C (pure green, RGB332) fill - a shape and colour obviously
+    # different from mousePattern's own compiled-in black/white diagonal
+    # arrow (overlay0.asm) at a glance.
+    Remove-Item "$root\sd\POINTER.SPR" -Force -ErrorAction SilentlyContinue
+    $ptr = New-Object byte[] 256
+    for ($y = 0; $y -lt 16; $y++) {
+        for ($x = 0; $x -lt 16; $x++) {
+            if ($x -lt 2 -or $x -gt 13 -or $y -lt 2 -or $y -gt 13) {
+                $b = 0xE3                          # transparent border
+            } elseif ($x -eq 2 -or $x -eq 13 -or $y -eq 2 -or $y -eq 13) {
+                $b = 0x00                          # black outline
+            } else {
+                $b = 0x1C                          # green fill
+            }
+            $ptr[$y * 16 + $x] = $b
+        }
+    }
+    [System.IO.File]::WriteAllBytes("$root\sd\POINTER.SPR", $ptr)
+    "staged a generated 16x16 green square (2px `$E3 border, `$00 outline) -> sd\POINTER.SPR (256 bytes)"
 }
 
 if ($Aud) {

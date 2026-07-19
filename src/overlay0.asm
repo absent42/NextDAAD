@@ -2023,6 +2023,16 @@ switch_to_part:
                                   ; already installed by eng_init_game
                                   ; and left untouched here
 .noobjs:
+    ; SP12 T3: PARTn-aware mouse pointer reload. Already same-page (both
+    ; switch_to_part and pointer_load live in overlay0) - a plain call,
+    ; zero trampoline needed, unlike the font/audio hops below. curPart
+    ; was committed several lines above (right after ddb_load, well
+    ; before this point), so the PARTn\ prefix is already active - same
+    ; ordering the font/audio re-probes rely on. Runs on the OLD stack,
+    ; still valid here (before the "point of no return" SP reset just
+    ; below), so this call/ret is fully balanced and leaves nothing
+    ; behind.
+    call pointer_load
     ; Point of no return: abandon the old (deep, process-interpreter)
     ; stack entirely and enter the new part from scratch (nothing on
     ; the old stack matters past this line).
@@ -2645,6 +2655,150 @@ mousePattern:
     db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3
     db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3
     db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00
+
+; --- SP12 Task 3: custom mouse pointer load (boot + part switch) ---
+;
+; Step 1 ground truth: mousePattern (above) is a plain `db` table
+; assembled into overlay0's code page - overlay pages are ordinary RAM
+; at runtime (not ROM), so it is writable, and nothing else in this
+; codebase writes it (grepped: mouse_pattern_load only ever READS it,
+; via its fixed `ld hl, mousePattern` source address - the only write
+; site is this routine's own ldir below). mouseReady (above) is the
+; "pattern already uploaded to hardware sprite slot 0" latch h_mouse's
+; sub-1 checks (.show, above): 0 = mouse_pattern_load runs on the next
+; MOUSE 1, then mouseReady is set to 1 so it does not run again until
+; something clears it - exactly the hook this routine uses: overwrite
+; mousePattern, then clear mouseReady so the NEXT MOUSE 1 (existing
+; lazy-upload code, unmodified) re-OTIRs the new bytes to hardware.
+; Zero mouse-machinery changes needed.
+;
+; Load a custom pointer: PARTn\POINTER.SPR (curPart >= 2) then
+; POINTER.SPR, a raw 256-byte 16x16 8-bit hardware sprite pattern (see
+; mousePattern's own header above for the format: $E3 transparent
+; border/fill, hotspot at the (0,0) corner). Absent = silent
+; (mousePattern keeps its compiled-in arrow); wrong size = silent +
+; DEBUG marker. Never reads straight into the live mousePattern: MOUSE 1
+; can fire at any time and re-OTIR whatever is there the instant
+; mouseReady reads 0, so a short/failed read must never leave the live
+; buffer half-overwritten - the file lands in swapStage first (scratch-
+; then-install) and is only ldir'd into mousePattern once the exact size
+; is confirmed. Exact-size validation (BC checked, not CF alone - the
+; F_READ/F_WRITE count lesson) plus a 1-byte-overshoot probe mirror
+; font_load's own FONT.CHR check byte for byte (overlay2.asm, SP12 T1).
+;
+; Scratch buffer: swapStage (512 bytes, above) reused rather than a new
+; static buffer or a bank_alloc dance - it is directly addressable from
+; this page with no DATA_WINDOW mapping needed (unlike font_load's
+; 2048-byte FONT.CHR, which does not fit this page's margin as a static
+; buffer - see that routine's header), and 257 bytes fits its capacity
+; trivially. Safety of the reuse: swapStage is idle outside a live part
+; switch (nothing touches it at boot before the first switch), and at
+; switch time this routine's own call site (switch_to_part's .noobjs,
+; above) runs AFTER swapStage's flags/object-location payload has
+; already been fully installed into flags/objTable - the install loop
+; immediately above .noobjs is the LAST reader of that payload, so by
+; the time control reaches here swapStage is free scratch, exactly the
+; ordering the task brief requires (verified directly against
+; switch_to_part's own instruction order, not assumed).
+;
+; Corrupts AF, BC, DE, HL, IX.
+pointer_load:
+    ld a, (curPart)
+    dec a
+    jr z, .rootonly              ; curPart == 1: skip straight to the
+                                  ; root name (T5 idiom, gfx_open_chain/
+                                  ; font_load)
+    ld hl, ptrNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl                        ; hl = ptrNamePart+6
+    ex de, hl
+    ld hl, ptrName                ; copy "POINTER.SPR",0 verbatim (12 bytes)
+    ld bc, 12
+    ldir
+    call esx_getsetdrv
+    jr c, .rootonly
+    ld ix, ptrNamePart
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .opened
+.rootonly:                        ; ORIGINAL (non-PARTn) name, reached
+                                  ; both when curPart == 1 and as the
+                                  ; PARTn\ fallback above
+    call esx_getsetdrv
+    ret c                         ; no drive at all: silent, buffer untouched
+    ld ix, ptrName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    ret c                         ; no POINTER.SPR either: silent, untouched
+.opened:
+    ld (ptrHandle), a
+    ld a, (ptrHandle)
+    ld ix, swapStage
+    ld bc, 256
+    call esx_fread
+    jr c, .bad
+    ld a, b                        ; exactly 256 read? (BC discipline -
+    cp 1                           ; CF alone lies, the F_READ/F_WRITE
+    jr nz, .bad                    ; count lesson; mirrors font_load)
+    ld a, c
+    or a
+    jr nz, .bad
+    ld a, (ptrHandle)               ; probe for a 257th byte - size must
+    ld ix, swapStage+256            ; be exact, not just >= 256 (same
+    ld bc, 1                        ; probe font_load itself runs)
+    call esx_fread
+    jr c, .bad
+    ld a, b
+    or c
+    jr nz, .bad                     ; a successful 1-byte read here means
+                                    ; the file is LONGER than 256: reject
+    ld hl, swapStage                 ; exact size confirmed: scratch ->
+    ld de, mousePattern               ; live buffer (the only write to
+    ld bc, 256                        ; mousePattern anywhere but its own
+    ldir                               ; compiled-in initialiser above)
+    xor a
+    ld (mouseReady), a               ; force the next MOUSE 1 to re-OTIR
+    jr .close                        ; the new pattern to hardware
+.bad:
+ IFDEF DEBUG                        ; wrong size: no-op with a marker,
+    ld b, 29                        ; same idiom as h_sfx/h_mouse/
+    ld c, 70                        ; font_load's own markers
+    call dbg_at
+    ld hl, msgPtrBad
+    call dbg_puts
+ ENDIF
+.close:
+    ld a, (ptrHandle)
+    call esx_fclose
+    ret
+
+; SP12 T3 pointer-load state, overlay0-local - parallel to fontHandle/
+; fontNamePart's own PARTn machinery (overlay2.asm), but no scratch bank
+; is needed here (see pointer_load's header: swapStage is directly
+; addressable from this page already).
+ptrHandle:    db $FF              ; esxDOS handle, $FF = none open
+; "PARTn\POINTER.SPR",0 = 6 ("PARTn\") + 12 ("POINTER.SPR",0) = 18 bytes.
+; The task brief's plan said `ds 17` - that arithmetic undercounted:
+; "POINTER.SPR" is 11 characters, +1 for the NUL terminator = 12 (not
+; 11), so 6+12 = 18 is the correct total, used here instead.
+ptrNamePart:  ds 18
+ptrName:      db "POINTER.SPR", 0  ; root fallback name AND the PARTn\
+                                   ; suffix (copied into ptrNamePart+6,
+                                   ; 12 bytes - the fontNamePart/fontName
+                                   ; reuse idiom, overlay2.asm SP12 T1)
+msgPtrBad:    db "PTR BAD", 0
 
 ; Relocated from errors.asm (post-flags resident there had no room to
 ; grow - see fatal_puts's MMU7 map, errors.asm). fatal_puts is the only
