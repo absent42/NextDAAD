@@ -1785,11 +1785,254 @@ xms_boot_reset:
     ld (xmsBank), a
     ret
 
+; --- SP11 Task 3: part switch primitive (EXTERN n 4 / XPART) ---
+
+; h_xpart: EXTERN n 4 (XPART). h_extern's contract leaves A = B = the
+; first EXTERN argument (n, the target part 1-9) on entry; C still
+; holds the vector index (4, unused here). Validates n, then snapshots
+; the LIVE 256 flags + object-location table into swapStage before
+; handing off to switch_to_part. Both failure exits (n out of range,
+; or n == curPart) are a bare scf/ret: EXTERN is action-typed (cprops
+; $82 - engine.asm's cprops table), so eng_exec never consults the CF
+; this leaves (ext_xmes's header comment notes the same); the ret
+; simply returns to h_extern's caller (eng_exec's post-dispatch code)
+; via the same return address h_extern's own jp-tail-chain left on the
+; stack, exactly as if EXTERN had dispatched to ext_stub. curPart is
+; not written until switch_to_part has a confirmed-successful probe,
+; so both failure exits here leave the current part fully untouched.
+h_xpart:
+    cp 1
+    jr c, .bad                  ; n < 1
+    cp 10
+    jr nc, .bad                 ; n > 9
+    ld hl, curPart
+    cp (hl)
+    jr z, .bad                  ; switching to the current part is a no-op
+    ld (xpartTarget), a         ; n survives the snapshot below (which
+                                 ; clobbers AF/BC/DE/HL/IX freely)
+    ld hl, flags
+    ld de, swapStage
+    ld bc, 256
+    ldir                        ; swapStage[0..255] = live flags, verbatim
+    ld a, (numObj)
+    ld (swapObjCount), a        ; old part's object count, for the
+                                 ; min(old,new) rule at install time
+    ld ix, objTable
+    ld hl, swapStage+256
+    ld de, OBJ_SIZE
+    ld b, 0                     ; 256 iterations = objTable's declared
+                                 ; capacity (swapStage's own comment
+                                 ; below has the full arithmetic)
+.snap:
+    ld a, (ix+0)                ; objTable entry's location byte
+    ld (hl), a
+    inc hl
+    add ix, de
+    djnz .snap
+    ld a, (xpartTarget)
+    jp switch_to_part           ; tail-jump: on failure, switch_to_part's
+                                 ; own ret lands exactly where h_xpart's
+                                 ; own ret would have
+.bad:
+    scf
+    ret
+
+; switch_to_part: A = target part number 1-9. Caller contract: swapStage
+; (256 live flags + up to 256 object-location bytes) and swapObjCount
+; (the OLD part's object count, for the install's min(old,new) rule)
+; are already populated - h_xpart does this from live state above;
+; Task 4's LOAD auto-switch is expected to populate them from a save
+; file's payload instead and reuse this exact entry point. On probe
+; failure: CF set, ret, current part untouched (DEBUG marker - the
+; author tests their own part graph, per the design doc's convention).
+; On success: NEVER RETURNS - resets SP and enters the new part fresh
+; at PRO 0.
+;
+; Step 1 ground truth (engine.asm, read-only): eng_init_game has no
+; label between its flag/object init and the rest (window select,
+; procSP/doallObj reset, RNG reseed) - the two are not separable, so
+; the "existing post-init entry label" shape is unavailable. This uses
+; the brief's approved alternative instead: run the FULL eng_init_game
+; against the newly-loaded DDB (rebuilds flags to defaults and objTable
+; to the new part's compiled initial state), then RE-INSTALL swapStage
+; over that fresh state before ever entering eng_run - double init,
+; zero engine.asm bytes, correct per the brief's Step 3(i) fallback.
+;
+; ddbName (file.asm, resident - the buffer ddb_load unconditionally
+; reads via its own hardcoded "ld ix, ddbName") is exactly 9 bytes:
+; enough for "GAME.DDB\0" (n=1) but one byte short of "GAMEn.DDB\0"
+; (n=2-9 need 10). ddbHandle (file.asm) is the very next resident byte
+; with no gap, and ddb_load's own preamble unconditionally writes $FF
+; there BEFORE it ever reads ddbName for F_OPEN - so a NUL landed at
+; ddbName+9 is always overwritten before the scan sees it; there is no
+; slack to borrow. xpart_build_name below writes a wildcarded
+; "GAMEn.D*\0" for n>=2 instead (8 chars + NUL = fits ddbName exactly,
+; zero overflow): esxDOS F_OPEN is documented (NextZXOS_and_esxDOS_
+; APIs.pdf, F_OPEN and the equivalent +3DOS DOS_OPEN entry) to accept
+; '*'/'?' wildcards whenever the requested action opens an EXISTING
+; file only (ddb_load's B=ESX_MODE_READ carries no create bits) and
+; resolves to the first match - exactly ddb_load's call shape,
+; unmodified. Our own pre-load probe below opens that SAME ddbName
+; content (not a separate exact-name buffer), so the probe and the
+; load always resolve to the identical match.
+switch_to_part:
+    ld (xpartTarget), a
+    call xpart_build_name        ; ddbName <- target name (see above)
+    call esx_getsetdrv
+    jr c, .fail
+    ; A = default drive from esx_getsetdrv, consumed by esx_fopen -
+    ; keep A intact (mirrors ddb_load's own call shape, file.asm)
+    ld ix, ddbName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr c, .fail                  ; missing -> current part untouched
+    call esx_fclose               ; probe only; ddb_load reopens fresh
+    call ddb_load                 ; destructive from here. Return code
+                                  ; intentionally unchecked: the probe
+                                  ; already confirmed the file opens - a
+                                  ; read error/bad header mid-load is an
+                                  ; accepted documented residual (brief
+                                  ; Step 3b), not handled specially
+    ld a, (xpartTarget)
+    ld (curPart), a
+    call gfx_cache_reset          ; resident (gfxcache.asm) - free to
+                                  ; call from overlay0 (context note 2)
+    call xms_boot_reset           ; overlay0-local; MMU7 is already
+                                  ; OVL0_PAGE throughout this routine
+    call eng_init_game            ; resident; full re-init from the
+                                  ; just-loaded ddbHeader (h_end already
+                                  ; calls this from overlay0 - overlay0.
+                                  ; asm:1548 - proven-safe precedent)
+    ld hl, swapStage
+    ld de, flags
+    ld bc, 256
+    ldir                          ; flags carried verbatim over the
+                                  ; fresh defaults eng_init_game just set
+    ld a, (swapObjCount)          ; old count
+    ld hl, numObj                 ; new count (eng_init_game just set it
+                                  ; from the new ddbHeader)
+    cp (hl)
+    jr c, .haveMin                ; old < new: A already = old = min
+    ld a, (hl)                    ; old >= new: A = new = min
+.haveMin:
+    or a
+    jr z, .noobjs
+    ld b, a
+    ld ix, objTable
+    ld hl, swapStage+256
+    ld de, OBJ_SIZE
+.instloop:
+    ld a, (hl)                    ; carried location, verbatim (what a
+    ld (ix+0), a                  ; part-1 number means in part n is the
+    inc hl                        ; author's contract, not this engine
+    add ix, de                    ; seam's concern); indices >= min keep
+    djnz .instloop                ; the NEW part's compiled locations,
+                                  ; already installed by eng_init_game
+                                  ; and left untouched here
+.noobjs:
+    ; Point of no return: abandon the old (deep, process-interpreter)
+    ; stack entirely and enter the new part from scratch (nothing on
+    ; the old stack matters past this line).
+    ld sp, STACK_TOP
+    ; One-way cross-overlay hop for the SFB re-probe (Task 5 adds the
+    ; PARTn\ prefix later; today this re-runs the existing root probe
+    ; per brief Step 3h). aud_load_sfb lives in overlay1 - reaching it
+    ; from here needs the push-target/jp-ovl_map_page trampoline
+    ; (banks.asm's ovl_map_page contract; the title_chain precedent,
+    ; overlay1.asm ~2046). aud_load_sfb is a normal call/ret routine
+    ; (only data_save/data_restore around its own MMU6 window, both
+    ; stack-neutral) reached here via jp, not call - so nothing of ours
+    ; is on the stack for its own ret to consume except what we push.
+    ; Pushing eng_run's (resident) address BELOW aud_load_sfb's on the
+    ; fresh stack means aud_load_sfb's own ret lands directly on
+    ; eng_run once it finishes - a second, automatic one-way hop that
+    ; needs no new code in overlay1 or a new resident landing pad
+    ; (both off-limits - HARD RULES touch only overlay0.asm/errors.
+    ; asm). eng_run is resident, so MMU7 being left on OVL1_PAGE
+    ; afterward is harmless - the condact dispatcher remaps per-condact
+    ; as it always does.
+    ld hl, eng_run
+    push hl
+    ld hl, aud_load_sfb
+    push hl
+    ld a, OVL1_PAGE
+    jp ovl_map_page
+.fail:
+ IFDEF DEBUG
+    push bc
+    ld b, 29
+    ld c, 60
+    call dbg_at
+    ld hl, msgXpartFail
+    call dbg_puts
+    pop bc
+ ENDIF
+    scf
+    ret
+
+; Build the DDB filename for part A (1-9) into ddbName (file.asm's
+; resident 9-byte buffer - see switch_to_part's header comment for the
+; full byte-budget proof). n=1 writes the exact, unchanged "GAME.DDB"
+; (byte-identical to ddbName's assembled default). n=2-9 write the
+; wildcarded "GAMEn.D*" (8 chars + NUL, fills ddbName exactly with no
+; overflow). Corrupts AF, HL.
+xpart_build_name:
+    cp 1
+    jr nz, .multi
+    ld hl, .gameddb
+    ld de, ddbName
+    ld bc, 9
+    ldir
+    ret
+.multi:
+    add a, '0'
+    ld hl, ddbName
+    ld (hl), 'G'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'M'
+    inc hl
+    ld (hl), 'E'
+    inc hl
+    ld (hl), a
+    inc hl
+    ld (hl), '.'
+    inc hl
+    ld (hl), 'D'
+    inc hl
+    ld (hl), '*'
+    inc hl
+    ld (hl), 0
+    ret
+.gameddb: db "GAME.DDB", 0
+
+ IFDEF DEBUG
+msgXpartFail: db "XPART?", 0
+ ENDIF
+
+; swapStage: staging buffer for a part switch. [0..255] = the full
+; flags array, copied verbatim. [256..511] = one byte per object =
+; objTable's location field ONLY (attribs/extattr/noun/adj are never
+; carried - they always come from the new part's own compiled data),
+; sized to objTable's declared maximum of 256 entries (engine.asm:
+; "objTable: ds 256*OBJ_SIZE", OBJ_SIZE=6 - so 256 entries, matching
+; the fixed maximum here even though numObj, a byte, can only ever
+; reach 255 in practice). swapObjCount is the companion: the snapshot
+; source part's object count at capture time, needed at install time
+; to compute min(oldCount, newCount) (brief's OBJECT RULE). Both are
+; populated by h_xpart from live state today; Task 4's LOAD auto-switch
+; is expected to populate them from a save file's payload instead,
+; using the same switch_to_part entry point unchanged.
+swapStage:     ds 512
+swapObjCount:  db 0
+xpartTarget:   db 0
+
 ext_stub:
     jp h_unimpl
 extVec:
     dw ext_stub, ext_stub, ext_stub, ext_xmes
-    dw ext_stub, ext_stub, ext_stub, ext_undone
+    dw h_xpart, ext_stub, ext_stub, ext_undone
     dw ext_stub, ext_stub, ext_stub, ext_stub
     dw ext_stub, ext_stub, ext_stub, ext_stub
 
@@ -2210,4 +2453,5 @@ msgRuntimeErr: db "NextDAAD: RUNTIME ERROR - E", 0
 ; Reader stack depth overflow (ddbtext.asm's rd_push/rd_pop).
 msgRdStack:    db "NextDAAD: RD STACK - E9", 0
 
+    DISPLAY "overlay0 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT

@@ -78,6 +78,23 @@ err_raise:
     jr .halt
 
 errCode: db 0
+
+; SP11 Task 3: active part number (1-9), 1-based like the DDB filename
+; suffix (GAME.DDB = part 1, GAME2.DDB = part 2, ...). Compiled static
+; db 1 is correct at cold boot (GAME.DDB is always part 1). A warm
+; re-entry (nextreg 2,1) leaves it at whatever part was active when the
+; reset fired - same documented staleness as the mouse statics
+; (h_mouse's header comment, overlay0.asm). On real hardware nextreg
+; 2,1 hands control back to NextZXOS, which reloads the .nex fresh
+; (curPart and file.asm's ddbName both come back to their compiled
+; GAME.DDB/part-1 defaults with the rest of the image); the CSpect dev
+; loop's dirty-RAM re-entry (boot_data_init's own header comment,
+; main.asm) is the only path where either can stay stale post-switch -
+; neither boot_data_init nor main.asm's unconditional boot-time
+; ddb_load call can be reached from this task's files (overlay0.asm/
+; errors.asm only) to add a reset, so this rides with the same
+; accepted, documented residual as the pre-existing mouse statics.
+curPart: db 1
  IFDEF DEBUG
 msgErr:  db "E", 0
 msgErrP: db " P", 0
