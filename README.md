@@ -3,7 +3,7 @@
 DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
-Project status on 19/07/2026: 
+Project status (v0.1.0): 
 The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
 object model, process/DOALL dispatch, windows, printing, colour,
 carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
@@ -229,6 +229,10 @@ effects both pre-empt BEEP - a BEEP during music is dropped by
 design, so use sound effects for in-music stingers. Once a play-once
 tune (SFX n 6) has ended, BEEP works again.
 
+Compatibility note: In CSpect, playing digitised sampled sound at the 
+same time as AY music currently causes the AY music to slow down. 
+This does not happen on actual ZX Spectrum Next hardware though.
+
 ## EXTERN and MALUVA
 
 DAAD's EXTERN condact takes a vector number as its second argument,
@@ -270,7 +274,7 @@ The bundled DRC toolchain is DRF 0.40 + DRB 0.36.
 
 `authoring-kit\` is a DAAD-Ready-style workflow for authors: drop in a `.DSF`
 (plus optional PNGs and Arkos audio), double-click `BUILD.BAT`, and get a
-ready-to-run `RELEASE\` SD-card folder with the pre-built interpreter. See
+ready-to-run `RELEASE\` SD-card folder with the pre-compiled interpreter. See
 `authoring-kit\SETUP.md` for the full guide. The tools it needs (not shipped in
 the repo):
 
@@ -279,6 +283,11 @@ the repo):
 - Arkos Tracker 3 (SongToAky / SongToSoundEffects / SongToYm for
   streamed AYS songs): https://www.julien-nevo.com/arkostracker/index.php/download/
 - CSpect (emulator): https://mdf200.itch.io/cspect
+
+The latest version of the authoring kit can be downloaded from the
+Github [releases](https://github.com/absent42/NextDAAD/releases) and contains 
+only the parts of the repository that an author needs to build a NextDAAD 
+game.
 
 ## Interpreter Building
 
@@ -326,7 +335,7 @@ of these halt the interpreter; power-cycle or reset to retry.
 - [Uto](https://uto.speccy.org/) for creating [DRC](https://github.com/Utodev/DRC) and [DAAD Ready](https://github.com/Utodev/DAAD-Ready) which influenced a lot of this project
 - NataliaPC for creating [MSX2DAAD](https://github.com/nataliapc/msx2daad) which inspired this project
 - Julien Nevo for [ArkosTracker](https://www.julien-nevo.com/arkostracker/)
-- em00k for [playwav32](https://github.com/em00k/playwav32) which informed the sample sound streaming method
+- em00k for [playwav32](https://github.com/em00k/playwav32) which informed the sample sound playback method
 - Rusty Pixels for [Gfx2Next](https://www.rustypixels.uk/gfx2next/)
 - Mike Dailly for [CSpect](https://mdf200.itch.io/cspect)
 - z00m for [sjasmplus](https://github.com/z00m128/sjasmplus)
