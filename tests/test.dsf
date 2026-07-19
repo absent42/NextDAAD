@@ -145,6 +145,7 @@ AYFX    68      verb
 XMES    69      verb
 AYBAD   70      verb
 TUNE2   71      verb
+MTEST   72      verb
 
 ;                       Verbs
 GET     20      verb
@@ -549,6 +550,30 @@ $pictureOK
 ; too-big-for-AKY 002.AYS (via -Aud staging). SFX 2 7 loops the stream;
 ; STOPM (SFX 0 8) stops it (sub 8 now stops both music kinds).
 > TUNE2   _     SFX 2 7
+                DONE
+
+; SP10 Task 5 owner verb: MTEST is the eye/hardware leg for the
+; Kempston mouse condact. MOUSE 1 uploads the arrow pattern (first
+; call only), arms NR $15 and shows/positions hardware sprite 0;
+; MOUSE 3 polls the hardware into scratch flags 120-123 (buttons,
+; X/8, Y/8, X/6), which are then printed so the owner can watch them
+; track real mouse movement. Under headless CSpect (no -mouse capture,
+; or CSpect closed) the sprite still shows/positions and the flags
+; still print - just static/zero without a live pointer.
+> MTEST   _     MOUSE 0 1
+                MOUSE 120 3
+                MES "mouse btn:"
+                PRINT 120
+                SPACE
+                MES "col80:"
+                PRINT 121
+                SPACE
+                MES "row32:"
+                PRINT 122
+                SPACE
+                MES "col53:"
+                PRINT 123
+                NEWLINE
                 DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation

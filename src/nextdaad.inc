@@ -304,3 +304,52 @@ WIN_LASTPIC     equ 9
 WIN_LINES       equ 10      ; lines printed since last pause
 WIN_SIZE        equ 11
 WINDOW_COUNT    equ 8
+
+; --- Mouse (SP10 Task 5) ---
+; Kempston mouse ports (tools/NextZXOS/docs/extra-hw/io-port-system/
+; ports.txt 517-536; cross-checked against tools/CSpect/Mouse/
+; includes.asm's identical equs and against ReadMe.txt/CSpectReadme.txt
+; for CSpect's own emulation notes - see overlay0.asm's h_mouse header).
+KMOUSE_X_PORT   equ $FBDF   ; IN: 0-255, wraps; increases on RIGHTWARD
+                            ; movement
+KMOUSE_Y_PORT   equ $FFDF   ; IN: 0-255, wraps; increases on UPWARD
+                            ; movement - opposite of screen rows, invert.
+                            ; Same 16-bit number as our sample-playback
+                            ; DAC write in interrupts.asm's ctc_isr
+                            ; ("out (DAC_PORT),a" is the Z80's raw
+                            ; OUT (n),A form, which drives A on the
+                            ; UPPER address byte - so whenever a played
+                            ; sample byte equals $FF, that single OUT
+                            ; cycle asserts bus address $FFDF too). No
+                            ; conflict: OUT vs IN are different bus
+                            ; cycles, and the DAC only decodes low byte
+                            ; $DF (any upper byte) while the mouse Y
+                            ; port only responds to IN reads.
+KMOUSE_BTN_PORT equ $FADF  ; IN: bit0 right, bit1 left, bit2 middle,
+                            ; bits7-4 wheel 0-15 (unused here)
+; Sprite hardware (docs/zx-next-dev-guide-2022-07-15/chapter-next-
+; sprites.tex + chapter-next-tilemap.tex's NR $15 bit table).
+NR_SPRITE_SEL   equ $34    ; select sprite ATTRIBUTE index for $35-$39
+                            ; (independent of port $303B unless port
+                            ; $09 bit4 "lockstep" is set - never is here)
+NR_SPRITE_X     equ $35    ; low 8 bits of X (9th bit: NR_SPRITE_ATTR b0)
+NR_SPRITE_Y     equ $36    ; low 8 bits of Y (9th bit: NR_SPRITE_ATTR2 b0)
+NR_SPRITE_ATTR  equ $37    ; b7-4 palette offset, b3 Xmirror, b2 Ymirror,
+                            ; b1 rotate, b0 = X coordinate bit 8
+NR_SPRITE_PAT   equ $38    ; b7 visible, b6 byte4-enable, b5-0 pattern idx
+NR_SPRITE_ATTR2 equ $39    ; byte 4: b7-6 00=8-bit anchor, b5 unified,
+                            ; b4-1 scale (0=1x), b0 = Y coordinate bit 8
+SPRITE_IDX_PORT equ $303B  ; pattern/attribute upload slot select (full
+                            ; 16-bit port, any value works for $57/$5B
+                            ; below - low byte of THIS port is decoded
+                            ; exactly, unlike the streaming ports)
+SPRITE_PAT_PORT equ $005B  ; pattern upload stream (256 B/sprite, auto-
+                            ; inc slot; low byte $5B only is decoded, so
+                            ; B=0 here doubles as OTIR's 256-byte count)
+SPRITE_BORDER   equ 32     ; sprite-space border offset: (32,32) is the
+                            ; top-left coordinate at which a sprite is
+                            ; fully on-screen (sprites chapter, Patterns)
+MOUSE_X_MAX     equ 319    ; accumulated mouse position ceiling (320-
+                            ; wide sprite/mouse plane)
+MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
+                            ; tall plane, screen-downward)

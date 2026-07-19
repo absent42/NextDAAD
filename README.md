@@ -3,15 +3,16 @@
 DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
-Project status on 18/07/2026: 
+Project status on 19/07/2026: 
 The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
 object model, process/DOALL dispatch, windows, printing, colour,
 carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
 PARSE), file-backed save/load, Layer 2 location graphics
-(PICTURE/DISPLAY), and AY audio (SFX/BEEP: music, sound effects and
-speaker beeps) are implemented. 125 of the 128 condacts are
-implemented; the rest (MOUSE, GFX, CALL) are stubbed pending
-implementation.
+(PICTURE/DISPLAY), AY audio (SFX/BEEP: music, sound effects and
+speaker beeps), and mouse input with a hardware sprite pointer
+(MOUSE) are implemented. All 128 condacts are handled: CALL is a
+documented no-op (jdaad parity - DAAD's machine-code CALL condact has
+no analogue in a bytecode interpreter).
 
 ## Features
 
@@ -53,8 +54,6 @@ implementation.
 - Authoring Kit: DAAD-READY like single click tool for building 
   NextDAAD game releases with pre-built interpreter, format converted 
   images, AY audio files etc
-
-Not yet implemented: mouse input.
 
 ## Location graphics
 
@@ -225,7 +224,7 @@ The toolchain (not included in repo) lives in tools/
 - Clean: powershell -File build.ps1 -Clean
 - Test DDB: powershell -File tests\build-tests.ps1 regenerates
   sd\GAME.DDB and the corrupt/oversize variants in tests\out\ (add
-  -Suite to make the condact test suite DDB active - 72 checks
+  -Suite to make the condact test suite DDB active - 78 checks
   covering condact semantics, parser/conjunction handling, DOALL
   nesting, save/load and audio no-op safety - or -Err4 for the
   nested-DOALL error demo; add -Aud to stage the test audio assets

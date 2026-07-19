@@ -837,6 +837,30 @@ NORTH 0
         MES "76 OK#n"
         SKIP 1
 > _ _   MES "76 F#n"
+; ---- SP10 Task 5: MOUSE + CALL closure ----
+; 77 MOUSE 3 into scratch flags 130-133 (buttons, X/8, Y/8, X/6): no
+; mouse in headless CSpect, so the returned values are unasserted -
+; this proves the poll (hardware IN reads on the Kempston ports, the
+; NR $34-$39 sprite reposition writes) executes without crashing/
+; hanging and the entry continues. Flags 130-133 sit clear of every
+; other flag this suite reads/writes (witness 123, RANDOM's 107,
+; PRINT's 108, the REDO counter's 113). Visual pointer verification
+; (MOUSE 1 show/track, MOUSE 2 hide) is the owner eye leg, not here.
+> _ _   LET 123 100
+        MOUSE 130 3
+        EQ 123 100
+        MES "77 OK#n"
+        SKIP 1
+> _ _   MES "77 F#n"
+; 78 CALL: documented no-op (jdaad parity - jdaad.js's own _CALL() is
+; the same shape). Proves the entry continues through it exactly like
+; any other action condact.
+> _ _   LET 123 101
+        CALL 0 0
+        EQ 123 101
+        MES "78 OK#n"
+        SKIP 1
+> _ _   MES "78 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5

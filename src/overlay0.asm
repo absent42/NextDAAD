@@ -1777,4 +1777,408 @@ savedCurX: db 0
 savedCurY: db 0
 moveVerb:  db 0
 
+; --- SP10 Task 5: CALL closure + Kempston mouse ---
+
+h_call:                         ; 101: CALL (invoke machine code at an
+                                 ; address) has no meaning in a bytecode
+                                 ; interpreter. jdaad.js's own _CALL() is
+                                 ; the same shape - "// CALL not
+                                 ; supported by jDAAD", then just marks
+                                 ; done. Clean, documented no-op - no
+                                 ; DEBUG marker: this is a documented-
+                                 ; unsupported condact, not an
+                                 ; unimplemented one.
+    ret
+
+; MOUSE (86): B = P1 (flag base, sub 3 only), C = sub. Sub map per
+; jdaad's _MOUSE() (tools/DAAD-READY/ASSETS/HTML/jdaad.js ~3587-3615):
+;   0 = reset (centre position, zero buttons)
+;   1 = show the pointer (hardware sprite 0)
+;   2 = hide it
+;   3 = read into flags[P1..P1+3] = buttons, X/8, Y/8, X/6
+; Position model: mouseX (word, 0-319) / mouseY (byte, 0-255, screen-
+; downward) are accumulated resident positions, updated ONLY when sub 3
+; polls - no ISR involvement. Each poll reads the Kempston counters
+; (KMOUSE_X_PORT/KMOUSE_Y_PORT/KMOUSE_BTN_PORT, nextdaad.inc) and takes
+; a SIGNED 8-bit delta against the last raw reading (new-old; correct
+; under wraparound as long as true movement between two polls stays
+; within +-127 counts - CSpect itself caps/scales its emulated deltas
+; for exactly this kind of usability, per CSpectReadme.txt "Capped
+; Mouse deltas to help slow mouse down"). Y's raw delta is negated
+; (nextdaad.inc: the port counts UP on upward movement). The very
+; first poll of a session has no valid "last" reading yet - rather
+; than diff against a compile-time 0 (which would read as a large
+; bogus jump against whatever the host mouse already reads at that
+; point), mouseBaseSet gates a latch-only first call.
+; jdaad's own X/8 clamp is 0-39 (its 320-wide/40-column screen); ours
+; is widened to 0-79 for our 80-column tilemap grid - the mouseX
+; domain itself is still the standard 0-319 sprite/mouse plane (per
+; the sprites chapter, matching jdaad and the hardware sprite
+; coordinate space), so in practice X/8 never exceeds 39 either; the
+; wider ceiling is future-safe spec compliance, not a reachable case
+; today. X/6 (0-53) is unchanged jdaad parity (319/6 floors to 53
+; exactly, so it never clamps either).
+; Pointer: hardware sprite 0, a 16x16 solid arrow (mousePattern,
+; below). NR $15 bits 0-1 are read-modify-written UNCONDITIONALLY on
+; every sub-1 call, preserving every other bit (layer priority etc):
+; bit 0 is sprite visibility; bit 1 is "sprites over border" - per
+; registers.txt (0x15) and the sprites chapter ("sprites can be made
+; visible or invisible when over the border... specified by port 15"),
+; a sprite positioned in the 32px border margin is invisible unless
+; bit 1 is set, and mouse_sprite_pos's +32 offset legitimately parks
+; the pointer there across its own range (mouseX/Y near their maxima
+; put the sprite well past the classic 256x192 visible area). Bit 5
+; ("enable sprite clipping in over border mode", also soft-reset 0,
+; separate from bit 1) is left untouched, so port $19's clip window
+; (default 0,255,0,191) never engages - the pointer is not further
+; restricted to that sub-box. Sprites stay off (hw_init's cold
+; default) for games that never touch MOUSE. Neither bit is latched
+; behind mouseReady the way the (expensive, 256-byte OTIR) pattern
+; upload is: a CSpect warm nextreg-2,1 re-entry re-runs hw_init's
+; "nextreg NR_SPRITES,0" against otherwise-dirty overlay RAM (main.asm's
+; boot_data_init header), and a latched mouseReady=1 surviving that
+; would skip re-arming these bits while the register itself just got
+; zeroed - stuck-invisible until the next cold boot. The RMW itself is
+; one register read + write, cheap enough to just always do.
+; mouseReady/mouseBaseSet/mouseX/mouseY are NOT
+; reset at boot the way xmsBank is (no analogous mouse_boot_reset here)
+; - overlay0's resident CALLER (main.asm) has zero spare bytes before
+; engine.asm's own "ALIGN 256" for the flags array (confirmed by
+; build: the pre-align resident code already lands exactly on that
+; boundary, so any growth there - even a single 3-byte CALL, regardless
+; of target - costs a full extra 256-byte alignment cycle and blows
+; RESIDENT_LIMIT). The residual exposure is narrow and self-correcting:
+; only mouseX/mouseY/mouseBaseSet can carry a stale value across such a
+; warm re-entry, producing at most one over-large position jump on the
+; first post-restart sub-3 poll (which then immediately re-latches a
+; fresh baseline) - cosmetic, CSpect-dev-loop-only (real hardware's
+; nextreg 2,1 hands off to NextZXOS instead of silently re-running
+; dirty RAM), and no worse than the one-time jump every cold boot
+; already accepts before mouseBaseSet's first latch.
+h_mouse:
+    ld a, c
+    cp 0
+    jr z, .reset
+    cp 1
+    jr z, .show
+    cp 2
+    jr z, .hide
+    cp 3
+    jr z, .read
+ IFDEF DEBUG                    ; unknown sub-command: no-op with a
+    push bc                     ; marker, same idiom as h_sfx/h_gfx.
+    push bc                     ; second push keeps C (the sub) safe
+    ld b, 28                    ; across dbg_puts (corrupts BC) for the
+    ld c, 70                    ; dbg_hex8 below.
+    call dbg_at
+    ld hl, msgMouseUnk
+    call dbg_puts
+    pop bc
+    ld a, c
+    call dbg_hex8
+    pop bc
+ ENDIF
+    ret
+.reset:                         ; sub 0: centre position, zero buttons,
+    ld hl, 160                  ; re-latch the raw baseline from the
+    ld (mouseX), hl             ; CURRENT hardware counters so the next
+    ld a, 128                   ; sub-3 poll sees a real (small) delta
+    ld (mouseY), a              ; instead of jumping by whatever the
+    xor a                       ; mouse did before this reset ran.
+    ld (mouseBtn), a            ; Matches jdaad's sub 0 in spirit only -
+    ld bc, KMOUSE_X_PORT        ; jdaad's own case 0 is a no-op ("was
+    in a, (c)                   ; ResetMouse() but it makes no sense in
+    ld (mouseXraw), a           ; JS"); we DO maintain real state, so a
+    ld bc, KMOUSE_Y_PORT        ; real reset is meaningful here.
+    in a, (c)
+    ld (mouseYraw), a
+    ld a, 1
+    ld (mouseBaseSet), a
+    ret
+.show:                          ; sub 1: one-time pattern upload, then
+    ld a, (mouseReady)          ; ALWAYS re-arm NR $15 bits 0+1 and
+    or a                        ; (re)position/show sprite 0. The NR $15
+    jr nz, .patternok           ; RMW is cheap (one register read/write)
+    call mouse_pattern_load     ; and deliberately NOT latched behind
+    ld a, 1                     ; mouseReady like the pattern upload is -
+    ld (mouseReady), a          ; see h_mouse's header comment for why
+.patternok:                     ; this needs to be unconditional.
+    ld e, NR_SPRITES
+    call nr_read                ; RMW: preserve every other bit (layer
+    or %00000011                ; priority etc) - only touch bit 0
+    nextreg NR_SPRITES, a       ; (sprites enable) and bit 1 (sprites
+                                 ; over border - our pointer's range
+                                 ; legitimately reaches into the border,
+                                 ; see h_mouse's header comment)
+    call mouse_sprite_pos       ; leaves sprite 0 selected (NR $34)
+    ld a, %11000000              ; visible(7) + byte4-enable(6) + pattern 0
+    nextreg NR_SPRITE_PAT, a
+    ret
+.hide:                          ; sub 2: invisible attribute only -
+    xor a                       ; sprites master (NR $15) stays enabled
+    nextreg NR_SPRITE_SEL, a
+    ld a, %01000000              ; invisible + byte4-enable kept
+    nextreg NR_SPRITE_PAT, a
+    ret
+.read:                          ; sub 3: poll, write flags[P1..P1+3],
+    ld a, b                     ; reposition the sprite (harmless if
+    ld (mouseP1), a             ; it's currently hidden)
+    call mouse_poll
+    ; col80 = mouseX/8, clamped 0-79 (word >> 3)
+    ld hl, (mouseX)
+    srl h
+    rr l
+    srl h
+    rr l
+    srl h
+    rr l
+    ld a, l
+    cp 80
+    jr c, .c80ok
+    ld a, 79
+.c80ok:
+    ld (mouseCol80), a
+    ; row32 = mouseY/8, clamped 0-31 (byte, zero-extended >> 3)
+    ld a, (mouseY)
+    ld l, a
+    ld h, 0
+    srl h
+    rr l
+    srl h
+    rr l
+    srl h
+    rr l
+    ld a, l
+    cp 32
+    jr c, .r32ok
+    ld a, 31
+.r32ok:
+    ld (mouseRow32), a
+    ; col53 = mouseX/6, clamped 0-53 (repeated subtraction: quotient
+    ; never exceeds 53, cheap enough for a condact handler)
+    ld hl, (mouseX)
+    ld de, 6
+    ld c, 0
+.d6:
+    or a
+    sbc hl, de
+    jr c, .d6done
+    inc c
+    jr .d6
+.d6done:
+    ld a, c
+    cp 54
+    jr c, .c53ok
+    ld a, 53
+.c53ok:
+    ld (mouseCol53), a
+    ; commit flags[P1..P1+3] - flags is 256-aligned, so L wraps safely
+    ld a, (mouseP1)
+    ld h, high flags
+    ld l, a
+    ld a, (mouseBtn)
+    ld (hl), a
+    inc l
+    ld a, (mouseCol80)
+    ld (hl), a
+    inc l
+    ld a, (mouseRow32)
+    ld (hl), a
+    inc l
+    ld a, (mouseCol53)
+    ld (hl), a
+    jp mouse_sprite_pos
+
+msgMouseUnk: db "MOUSE? ", 0
+
+; Poll Kempston mouse hardware: latches mouseBtn (raw byte, bit0 right/
+; bit1 left/bit2 middle/bits7-4 wheel), and accumulates mouseX/mouseY
+; from signed deltas of the wrapping X/Y counters via mouse_move_x/y.
+; First-ever call (mouseBaseSet==0) only latches the raw baseline - see
+; h_mouse's header comment for why. Corrupts AF, BC, DE, HL.
+mouse_poll:
+    ld bc, KMOUSE_BTN_PORT
+    in a, (c)
+    ld (mouseBtn), a
+    ld bc, KMOUSE_X_PORT
+    in a, (c)
+    ld c, a                     ; C = new raw X
+    ld a, (mouseBaseSet)
+    or a
+    jr z, .basex
+    ld a, c
+    ld hl, mouseXraw
+    sub (hl)                    ; A = new - old = signed delta
+    ld (hl), c
+    call mouse_move_x
+    jr .yaxis
+.basex:
+    ld a, c
+    ld (mouseXraw), a
+.yaxis:
+    ld bc, KMOUSE_Y_PORT
+    in a, (c)
+    ld c, a                     ; C = new raw Y
+    ld a, (mouseBaseSet)
+    or a
+    jr z, .basey
+    ld a, c
+    ld hl, mouseYraw
+    sub (hl)                    ; A = new - old, RAW direction (+ = up)
+    ld (hl), c
+    neg                         ; screen delta = -(raw delta)
+    call mouse_move_y
+    jr .done
+.basey:
+    ld a, c
+    ld (mouseYraw), a
+.done:
+    ld a, 1
+    ld (mouseBaseSet), a
+    ret
+
+; A = signed delta. mouseX (word) += A, clamped [0,MOUSE_X_MAX].
+; Corrupts AF, DE, HL.
+mouse_move_x:
+    call mouse_sext
+    ld hl, (mouseX)
+    add hl, de
+    ld de, MOUSE_X_MAX
+    call mouse_clamp
+    ld (mouseX), hl
+    ret
+
+; A = signed SCREEN-space delta. mouseY (byte) += A, clamped
+; [0,MOUSE_Y_MAX]. Corrupts AF, DE, HL.
+mouse_move_y:
+    call mouse_sext
+    ld a, (mouseY)
+    ld l, a
+    ld h, 0
+    add hl, de
+    ld de, MOUSE_Y_MAX
+    call mouse_clamp
+    ld a, l
+    ld (mouseY), a
+    ret
+
+; A = signed delta -> DE sign-extended (D = $00/$FF, E = A). Corrupts AF.
+mouse_sext:
+    ld e, a
+    add a, a
+    sbc a, a
+    ld d, a
+    ret
+
+; In: HL = signed-16-bit candidate, DE = inclusive max (0 <= DE < $8000).
+; Out: HL clamped to [0,DE]. Corrupts AF.
+mouse_clamp:
+    bit 7, h
+    jr z, .nonneg
+    ld hl, 0
+    ret
+.nonneg:
+    or a
+    sbc hl, de
+    jr nc, .over
+    add hl, de                  ; was in range: undo the probe subtract
+    ret
+.over:
+    push de
+    pop hl
+    ret
+
+; One-time upload of the 16x16 arrow pattern to hardware sprite pattern
+; slot 0. Port $303B selects the slot (chapter-next-sprites, "Loading
+; Patterns into FPGA Memory"), port $xx5B streams the 256 bytes with
+; auto-increment; B=0 into SPRITE_PAT_PORT's OTIR gives exactly 256
+; iterations (nextdaad.inc). Corrupts AF, BC, HL.
+mouse_pattern_load:
+    xor a
+    ld bc, SPRITE_IDX_PORT
+    out (c), a                  ; pattern slot 0 (bit7=0, bits6-0=0)
+    ld hl, mousePattern
+    ld bc, SPRITE_PAT_PORT
+    otir
+    ret
+
+; Position hardware sprite 0 at (mouseX+32, mouseY+32) - the sprites
+; chapter's "fully on-screen" origin offset (Patterns: (32,32) is where
+; a sprite is entirely inside the visible area; the coordinate plane
+; overlaps the border by 32px each side). Does not touch the visible
+; bit (register 38/NR_SPRITE_PAT) - safe to call any time, including
+; before MOUSE 1 has ever run (the sprite just sits invisible at the
+; new coordinates - harmless, since bit 7 there stays whatever sub
+; 1/2 last left it, cold-default 0/invisible until sub 1 first runs).
+; Corrupts AF, BC, DE, HL.
+mouse_sprite_pos:
+    xor a
+    nextreg NR_SPRITE_SEL, a
+    ld hl, (mouseX)
+    ld de, SPRITE_BORDER
+    add hl, de                  ; HL = mouseX+32 (9-bit, max 351)
+    ld a, l
+    nextreg NR_SPRITE_X, a
+    ld a, h
+    ld b, a                     ; stash X's bit 8 (0 or 1 only)
+    ld a, (mouseY)
+    ld l, a
+    ld h, 0
+    add hl, de                  ; HL = mouseY+32 (9-bit, max 287)
+    ld a, l
+    nextreg NR_SPRITE_Y, a
+    ld a, b
+    and 1
+    nextreg NR_SPRITE_ATTR, a   ; bit 0 = X's 9th bit; no mirror/rotate
+    ld a, h
+    and 1
+    nextreg NR_SPRITE_ATTR2, a  ; bit 0 = Y's 9th bit; 8-bit anchor, 1x
+    ret
+
+mouseX:       dw 160
+mouseY:       db 128
+mouseBtn:     db 0
+mouseXraw:    db 0
+mouseYraw:    db 0
+mouseBaseSet: db 0
+mouseReady:   db 0
+mouseP1:      db 0
+mouseCol80:   db 0
+mouseRow32:   db 0
+mouseCol53:   db 0
+
+; 16x16 solid-arrow hardware sprite pattern, 8-bit colour index per
+; pixel (chapter-next-sprites: 256 bytes/pattern slot for 8-bit
+; sprites). Hotspot (registration point) is the tip at (0,0), matching
+; mouse_sprite_pos's use of mouseX/mouseY as the sprite's own (0,0)
+; corner - left edge and diagonal hypotenuse outlined in $00 (RGB332
+; black), $FF fill (RGB332 white), $E3 transparent (NR $4B's hardware
+; soft-reset default, registers.txt: "soft reset = 0xe3" - nothing in
+; this codebase reprograms it, so relying on it needs no extra write).
+; Row 0  B...............      Row 8  BWWWWWWWB.......
+; Row 1  BB..............      Row 9  BWWWWWWWWB......
+; Row 2  BWB.............      Row 10 BWWWWWWWWWB.....
+; Row 3  BWWB............      Row 11 BWWWWWWWWWWB....
+; Row 4  BWWWB...........      Row 12 BWWWWWWWWWWWB...
+; Row 5  BWWWWB..........      Row 13 BWWWWWWWWWWWWB..
+; Row 6  BWWWWWB.........      Row 14 BWWWWWWWWWWWWWB.
+; Row 7  BWWWWWWB........      Row 15 BWWWWWWWWWWWWWWB
+mousePattern:
+    db $00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3
+    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3
+    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3
+    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00
+
     ASSERT $ <= OVL_LIMIT
