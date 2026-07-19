@@ -36,6 +36,12 @@ Put these in this kit folder:
   your image editor first. A 320-pixel-wide PNG becomes full-screen art; a
   256-pixel-wide PNG becomes classic bordered art. Any other width is rejected
   with an error.
+- Optional title screen: `IMAGES\DAAD.png`, same art rules as location
+  graphics above (converts to `DAAD.NX2` or `DAAD.NXI`) - or, if you already
+  have converted art, a ready-made `DAAD.NX2`/`DAAD.NXI` (or its ZX0-compressed
+  variant) placed directly in this kit folder, staged to `RELEASE\` as-is. If
+  both are present, the `IMAGES\DAAD.png` conversion wins. See "Title screens"
+  below.
 - Optional audio in `AUDIO\` (Arkos `.aks` sources, converted at build time):
   - `<GAME>.aks` - background music, auto-played at boot.
   - `NNN.aks` - songs selected in-game by `SFX n 6` (once) or `SFX n 7` (loop).
@@ -77,9 +83,10 @@ missing tool, wrong image width, over-size asset). A pure-text game with no
 
 After a build, `RELEASE\` holds the complete SD-card image:
 `nextdaad.nex`, `GAME.DDB`, any `NNN.NX2`/`NNN.NXI` (optionally `.zx0`), any
-`GAME.AKY`/`NNN.AKY`/`GAME.SFB`/`NNN.AYS`, any `NNN.WAV`, and `0.XMB` if your
-DSF uses XMESSAGE/XMES (see section 8). Copy its contents to the root of an
-SD card to play on real hardware.
+`DAAD.NX2`/`DAAD.NXI` title screen (optionally `.zx0`, see "Title screens"
+below), any `GAME.AKY`/`NNN.AKY`/`GAME.SFB`/`NNN.AYS`, any `NNN.WAV`, and
+`0.XMB` if your DSF uses XMESSAGE/XMES (see section 8). Copy its contents to
+the root of an SD card to play on real hardware.
 
 ## 6. The starter game
 
@@ -87,6 +94,25 @@ SD card to play on real hardware.
 build works out of the box and shows the NextDAAD-specific condacts in use:
 `PICTURE`/`DISPLAY` for location art, `SFX` for music and effects, and `BEEP`
 for tones. In the starter, try the verbs MUSIC, MUTE, TUNE, BLEEP, and ZAP.
+
+## Title screens
+
+Optional: ship `IMAGES\DAAD.png` (or a ready-made `DAAD.NX2`/`DAAD.NXI`, see
+section 2) and the game shows it at cold boot - over the boot-autoplay music
+(`GAME.AYS`/`GAME.AKY`, if present) - until any key is pressed, then play
+begins as normal. No source changes are needed. With no `DAAD.*` file, boot
+is unchanged.
+
+Art rules are identical to location graphics (section 2): 8-bit paletted
+PNG, 320 wide for full-screen (`DAAD.NX2`) or 256 wide for classic bordered
+(`DAAD.NXI`), same `COMPRESS` handling and `.zx0` naming.
+
+A release build that ships a title suppresses its version banner, so the
+title is the first thing seen.
+
+The title is root-only - it is never shadowed per-part (see section 9,
+"Root-only, never shadowed"): a multi-part game shows the same title at
+cold boot regardless of which part is running.
 
 ## 7. Troubleshooting
 

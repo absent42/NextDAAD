@@ -50,8 +50,12 @@ tasklist /FI "IMAGENAME eq CSpect.exe" 2>nul | find /I "CSpect.exe" >nul && (
 )
 
 REM ---- prepare RELEASE\ and remove stale converted assets ----
+REM      *.N2Z/*.NXZ are the 8.3 title synonyms (see lib\gfx.bat's
+REM      ready-made DAAD.* staging) - covered here so a title removed
+REM      since the last build cannot leave a stray DAAD.N2Z/DAAD.NXZ
+REM      behind on the SD card.
 if not exist "RELEASE" md "RELEASE"
-del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" 2>nul
+del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" 2>nul
 REM ---- remove stale multi-part output too, so a part removed since the
 REM      last build (its PART<n> folder deleted) cannot leave a stray
 REM      GAME<n>.DDB or PART<n>\ behind on the SD card - see SETUP.md's
