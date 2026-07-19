@@ -45,6 +45,9 @@ is a documented no-op.
   shared pool
 - 80 column tilemap-based 80x32 text mode driver with per-character colour 
   and a custom 80 column font
+- Custom fonts and mouse pointers: drop FONT.CHR (standard DAAD
+  2048-byte charset) or POINTER.SPR (16x16 sprite pattern) next to
+  GAME.DDB - loaded at boot, per-part via PARTn\, no source changes
 - DDB loading and validation from SD card (esxDOS), with header/size
   error handling
 - Full RAM detection and 8K bank allocator across the Next's extended
@@ -232,6 +235,29 @@ tune (SFX n 6) has ended, BEEP works again.
 Compatibility note: In CSpect, playing digitised sampled sound at the 
 same time as AY music currently causes the AY music to slow down. 
 This does not happen on actual ZX Spectrum Next hardware though.
+
+## Custom fonts and mouse pointer
+
+Both follow the title-screen pattern: drop a file next to GAME.DDB,
+no source changes; a missing file means the built-in default, a
+wrong-sized file is ignored. Both load at boot and re-probe at a
+multi-part switch, so PARTn\ copies give each part its own look.
+
+- FONT.CHR - the whole game renders in a custom font: a standard
+  DAAD charset, exactly 2048 bytes (256 glyphs x 8 bytes, 1bpp).
+  Every DAAD font tool (CH82CHR, jDAADFontMaker, GCS - and Damien
+  Guard's classic fonts through CH82CHR) emits this format directly;
+  the authoring kit's fontconv converts classic 768-byte ZX
+  charsets, padding the rest from the built-in font. One rule: glyph
+  32 (space) must stay blank - the renderer relies on it.
+- POINTER.SPR - replaces the arrow mouse pointer: a raw 16x16
+  hardware-sprite pattern, exactly 256 bytes, one byte per pixel
+  read as RRRGGGBB colour, value $E3 = transparent. Any Next sprite
+  editor emits the format; the kit stages a ready-made file as-is.
+
+FONT2.CHR and upward, and the MOUSE POINTERMS sub-command, are
+reserved for a future runtime-switching feature - one font and one
+pointer shape at a time for now.
 
 ## EXTERN and MALUVA
 
