@@ -1355,7 +1355,10 @@ h_save:                         ; 25: condition-typed like LOAD; done
     call sav_prompt             ; set on every outcome (jdaad _SAVEB)
     jr c, .fail                 ; so the game's catch-all stays quiet;
     call sav_write              ; failure aborts the entry so SM59/57
-    jr nc, .ok                  ; survive the game's redraw
+    jr c, .ioerr                ; survive the game's redraw
+    call sav_append_part        ; SP11 T4: v1 payload written - append
+    jr nc, .ok                  ; curPart to make it v2 (see below)
+.ioerr:
     ld e, 57                    ; "I/O Error"
     ld a, 0
     call print_msg
@@ -1368,7 +1371,7 @@ h_save:                         ; 25: condition-typed like LOAD; done
     jp ovl1_true
 
 h_load:                         ; 26: condition-typed (cprops row 26).
-                                ; sav_read is ATOMIC (staged commit),
+                                ; sav_read_v2 is ATOMIC (staged commit),
                                 ; so EVERY failure leaves the session
                                 ; untouched: SM57 and fail the entry -
                                 ; the game's redraw is skipped, the
@@ -1377,9 +1380,18 @@ h_load:                         ; 26: condition-typed (cprops row 26).
                                 ; failure existed because a failed
                                 ; physical load had already trashed
                                 ; state; staging makes it obsolete.
+                                ; SP11 T4: sav_read_v2 replaces sav_read
+                                ; (resident file.asm, FROZEN - see its
+                                ; own header comment below) with the
+                                ; same CF contract, so this handler's
+                                ; shape is otherwise unchanged. A cross-
+                                ; part file hands off to switch_to_part
+                                ; and never returns here at all on
+                                ; success - "cross-part LOAD is a part-
+                                ; entry, not a resume" (brief).
     call sav_prompt
     jr c, .fail                 ; name error: fail the entry
-    call sav_read
+    call sav_read_v2
     jr nc, .ok
     ld e, 57
     ld a, 0
@@ -1392,6 +1404,225 @@ h_load:                         ; 26: condition-typed (cprops row 26).
     call eng_set_done
     jp ovl1_true
 
+; --- SP11 Task 4: part-aware SAVE/LOAD helpers -----------------------
+; .SAV v2 = the v1 payload (unchanged byte-for-byte) + ONE trailing part
+; byte. SAVE always writes v2 (sav_append_part). LOAD tells the format
+; apart by length, not a version field: EOF right at the v1 payload's
+; end is v1 (pre-Task-4 file) and is always current-part; one more byte
+; present is v2's part number - equal to curPart, restore in place
+; exactly like v1; different, hand off to switch_to_part (Task 3,
+; overlay0.asm) for a fresh part entry (sav_read_v2). RAMSAVE/RAMLOAD
+; fork identically (h_ramsave/h_ramload below) against a stored curPart
+; snapshot instead of a file byte.
+;
+; sav_read_v2 cannot reuse the resident sav_read (file.asm, FROZEN -
+; HARD RULES): sav_read rejects any file whose header numObj differs
+; from the LIVE numObj as "wrong game" (error 3). Correct for same-part
+; loads, but wrong for a legitimate v2 cross-part save, which by
+; construction has a DIFFERENT numObj than whatever part is currently
+; active (each part is its own DDB with its own object count) - the
+; check would misfire on every genuine cross-part load. sav_read_v2
+; reimplements the same staged, atomic read shape with the same
+; resident primitives and the same resident scratch buffers sav_read
+; itself uses (savRdHdr/savStage/savLocs, file.asm), but skips that
+; gate and reads one extra byte past the payload to tell v1 from v2 -
+; restoring the numObj-vs-live check ONLY on the same-part path (.v1
+; below), where it is exactly as valid as it is in sav_read today.
+;
+; swapStage/swapObjCount (Task 3, overlay0.asm) live in the OVL0 page -
+; this file's own header comment ("Calls RESIDENT services only - never
+; overlay0") rules out writing them directly from here. The cross-part
+; branch below stages into the resident savStage/savLocs instead (the
+; same buffers the same-part path commits from) and hands off to a new
+; overlay0 entry, xpart_load_entry, via the established trampoline idiom
+; (push target, ld a,OVL0_PAGE, jp ovl_map_page - precedented by
+; switch_to_part's own SFB re-probe hop into this overlay). That same
+; entry also serves h_ramload's cross-part path, below, staged from
+; ramSaveBuf instead.
+ESX_MODE_WEXIST equ $02        ; F_OPEN: write, open EXISTING only (no
+                                ; create, no truncate bit) - contrast
+                                ; ESX_MODE_W ($0E, nextdaad.inc), which
+                                ; always creates/truncates; reopening a
+                                ; file sav_write just wrote must not
+                                ; truncate it back to empty
+
+; Reopen savName (just closed by sav_write) and append ONE byte: curPart.
+; Seeks to the exact known payload end (6-byte header + 256 flags +
+; numObj object-location bytes - the same layout sav_write itself just
+; wrote) via F_SEEK (esxDOS API PDF: A=handle, BCDE=distance, IXL=whence
+; 0=absolute) rather than any "append" open mode (esxDOS/NextZXOS has
+; none outside the dot-command convenience layer this raw rst $08
+; caller does not use - confirmed against the F_OPEN/F_SEEK entries in
+; NextZXOS_and_esxDOS_APIs.odt). Out: CF clear = OK, CF set = io-error
+; (mirrors sav_write's own A/CF contract so h_save's tail needs no
+; special-casing between the two).
+sav_append_part:
+    call esx_getsetdrv
+    jr c, .err
+    ld ix, savName
+    ld b, ESX_MODE_WEXIST
+    call esx_fopen
+    jr c, .err
+    ld (savHandle), a
+    ld a, (numObj)
+    ld l, a
+    ld h, 0
+    ld de, 262                   ; 6 (header) + 256 (flags)
+    add hl, de
+    ex de, hl                    ; DE = seek target low word
+    ld bc, 0                     ; BC = seek target high word (always 0:
+                                  ; max 262+255=517)
+    ld a, (savHandle)
+    ld ix, 0                     ; IXL = esx_seek_set (absolute from
+                                  ; start)
+    call esx_fseek
+    jr c, .errclose
+    ld a, (savHandle)
+    ld ix, curPart                ; write curPart's live resident byte
+                                   ; directly - no local copy needed
+    ld bc, 1
+    call esx_fwrite
+    jr c, .errclose
+    ld a, (savHandle)
+    call esx_fclose
+    xor a
+    ret
+.errclose:
+    ld a, (savHandle)
+    call esx_fclose
+.err:
+    scf
+    ret
+
+sav_read_v2:
+    call esx_getsetdrv
+    jp c, .ioerr
+    ld ix, savName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jp c, .ioerr                 ; not-found or any open error: h_load
+                                  ; only tests CF, never the A code, so
+                                  ; sav_read's own notfound-vs-ioerr
+                                  ; split is not user-visible - one
+                                  ; CF-set exit suffices here
+    ld (savHandle), a
+    ld a, (savHandle)
+    ld ix, savRdHdr
+    ld bc, 6
+    call esx_fread
+    jp c, .errclose
+    ld hl, 6                     ; short/EOF header read: truncated or
+    or a                         ; garbage file
+    sbc hl, bc
+    jp nz, .errclose
+    ld hl, savHdr
+    ld de, savRdHdr
+    ld b, 5
+.cmp:
+    ld a, (de)
+    cp (hl)
+    jp nz, .errclose
+    inc hl
+    inc de
+    djnz .cmp                    ; "NDSV",1 signature confirmed
+    ld a, (savHandle)
+    ld ix, savStage
+    ld bc, 256
+    call esx_fread
+    jp c, .errclose
+    ld hl, 256
+    or a
+    sbc hl, bc
+    jp nz, .errclose
+    ld a, (savRdHdr+5)           ; the FILE's own declared object count -
+                                  ; NOT compared against live numObj here
+                                  ; (see header comment above); .v1 below
+                                  ; does that check, scoped to same-part
+                                  ; only
+    or a
+    jr z, .objsdone              ; zero-object part: nothing to read
+    ld ix, savLocs
+    ld c, a
+    ld b, 0
+    ld a, (savHandle)
+    call esx_fread
+    jp c, .errclose
+    ld a, (savRdHdr+5)
+    ld h, 0
+    ld l, a
+    or a
+    sbc hl, bc
+    jp nz, .errclose
+.objsdone:
+    ld a, (savHandle)            ; probe for a trailing v2 part byte
+    ld ix, savPartByte
+    ld bc, 1
+    call esx_fread
+    jp c, .errclose
+    ld a, b
+    or c
+    jp z, .v1                    ; EOF at exactly N bytes: v1 file
+    ld a, (savPartByte)
+    ld hl, curPart
+    cp (hl)
+    jp z, .v1                    ; v2, but same part: restore in place
+    ; --- cross-part: close, payload already staged in savStage/
+    ; savLocs above, hop to the shared overlay0 entry ---
+    ld a, (savHandle)
+    call esx_fclose
+    ld hl, xpart_load_entry
+    push hl
+    ld hl, savStage
+    ld ix, savLocs
+    ld a, (savRdHdr+5)
+    ld b, a
+    ld a, (savPartByte)
+    ld c, a
+    ld a, OVL0_PAGE
+    jp ovl_map_page               ; never returns here on success; on a
+                                   ; cross-part probe failure,
+                                   ; xpart_load_fail (below) hops back
+                                   ; and lands on OUR caller (h_load)
+                                   ; with CF set, exactly as if this
+                                   ; call had failed directly
+.v1:
+    ld a, (savHandle)
+    call esx_fclose
+    ld a, (savRdHdr+5)            ; same-part safety net (mirrors
+    ld hl, numObj                 ; sav_read's own numObj check exactly,
+    cp (hl)                       ; scoped only to this path - see
+    jp nz, .ioerr                 ; header comment above)
+    ld hl, savStage
+    ld de, flags
+    ld bc, 256
+    ldir
+    call sav_scatter_locs         ; resident (file.asm); uses LIVE
+                                   ; numObj, which the check just above
+                                   ; proved equals the file's own count
+    xor a
+    ret
+.errclose:
+    ld a, (savHandle)
+    call esx_fclose
+.ioerr:
+    scf
+    ret
+
+; Landing pad for a cross-part probe failure trampolined back from
+; xpart_load_entry (overlay0.asm) - see its own header comment for the
+; full reasoning. That trampoline hop already remapped MMU7 to
+; OVL1_PAGE, so this plain scf/ret just re-asserts CF and returns to
+; whichever of sav_read_v2/h_ramload's own stack frame is underneath -
+; the hop into xpart_load_entry was a JP (no frame of its own); its
+; CALL switch_to_part is what actually catches the failure and sends
+; control back here, so the original caller's return address was never
+; disturbed.
+xpart_load_fail:
+    scf
+    ret
+
+savPartByte: db 0
+
 savTimeStash: db 0
 
 h_ramsave:                      ; 62: flags + object locations -> buffer
@@ -1401,6 +1632,9 @@ h_ramsave:                      ; 62: flags + object locations -> buffer
     ldir                         ; DE left at ramSaveBuf+256
     ld hl, objTable
     ld a, (numObj)
+    ld (ramSaveNObj), a          ; SP11 T4: snapshot's object count, for
+                                  ; cross-part RAMLOAD's swapObjCount
+                                  ; (xpart_load_entry, overlay0.asm)
     or a
     jr z, .mark
     ld b, a
@@ -1411,6 +1645,9 @@ h_ramsave:                      ; 62: flags + object locations -> buffer
     add hl, OBJ_SIZE
     djnz .g
 .mark:
+    ld a, (curPart)
+    ld (ramSavePart), a          ; SP11 T4: which part this snapshot
+                                  ; belongs to - h_ramload forks on this
     ld a, 1
     ld (ramSaveOk), a
     ret
@@ -1419,6 +1656,10 @@ h_ramload:                      ; 63: restore locs + flags 0..B inclusive
     ld a, (ramSaveOk)
     or a
     ret z                       ; nothing saved: no-op
+    ld a, (ramSavePart)          ; SP11 T4: fork on the snapshot's part
+    ld hl, curPart
+    cp (hl)
+    jp nz, .xpart                ; stored part != current part
     ; object locations first (buffer offset 256)
     ld hl, ramSaveBuf+256
     ld de, objTable
@@ -1444,6 +1685,32 @@ h_ramload:                      ; 63: restore locs + flags 0..B inclusive
     inc bc                      ; BC = arg1 + 1
     ldir
     ret
+.xpart:
+    ; SP11 T4: cross-part RAMLOAD. swapStage lives in the OVL0 page -
+    ; this file's own header comment ("Calls RESIDENT services only -
+    ; never overlay0") rules out writing it directly. Hand off to the
+    ; same shared overlay0 entry sav_read_v2's cross-part path uses
+    ; (xpart_load_entry, overlay0.asm), staged from ramSaveBuf instead
+    ; of savStage/savLocs.
+    ld hl, xpart_load_entry
+    push hl
+    ld hl, ramSaveBuf
+    ld ix, ramSaveBuf+256
+    ld a, (ramSaveNObj)
+    ld b, a
+    ld a, (ramSavePart)
+    ld c, a
+    ld a, OVL0_PAGE
+    jp ovl_map_page               ; never returns here on success;
+                                   ; RAMLOAD is action-typed (cprops row
+                                   ; 63, $81) - no CF/message contract to
+                                   ; a caller either way, so a bare
+                                   ; landing back here on a probe
+                                   ; failure (via xpart_load_fail) needs
+                                   ; no special handling
+
+ramSavePart: db 0
+ramSaveNObj: db 0
 
 ; --- SFX / BEEP handlers (SP7 Task 4) -------------------------------
 ; Overlay1 cannot call bank-24 code (it owns slot 7), so both condacts

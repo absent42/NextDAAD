@@ -2049,6 +2049,65 @@ swapStage:     ds 512
 swapObjCount:  db 0
 xpartTarget:   db 0
 
+; --- SP11 Task 4: cross-part LOAD/RAMLOAD trampoline entry ----------
+; Shared landing pad for BOTH sav_read_v2's cross-part SAV LOAD path
+; and h_ramload's cross-part path (overlay1.asm) - swapStage/
+; swapObjCount above live in this (OVL0) page and cannot be written
+; directly from overlay1 ("Calls RESIDENT services only - never
+; overlay0", overlay1.asm's own header comment), so both callers stage
+; their payload into a resident buffer first (savStage+savLocs for
+; LOAD, ramSaveBuf+ramSaveBuf+256 for RAMLOAD) and hop here via the
+; established trampoline idiom (push target, ld a,OVL0_PAGE, jp
+; ovl_map_page - precedented by switch_to_part's own SFB re-probe hop
+; into overlay1, above).
+;
+; Entry (ovl_map_page corrupts AF only - BC/DE/HL/IX all survive the
+; hop, per its own header comment in banks.asm): HL = flags source
+; (256 bytes, verbatim), IX = object-location source (packed one byte
+; per object), B = source part's object count 0-255, C = target part
+; 1-9.
+;
+; Calls switch_to_part (unmodified) via CALL, not a tail-jump: on
+; success switch_to_part never returns (resets SP, enters the new part
+; fresh), so the pushed return address is simply abandoned with the
+; rest of the old stack, same as every other switch_to_part caller. On
+; a probe failure switch_to_part does a bare scf/ret with no MMU7
+; remap - safe for h_xpart (same page, this file) but NOT safe here:
+; that ret would land on OUR caller's return address while MMU7 is
+; still mapped OVL0_PAGE, fetching this page's bytes at what is really
+; an OVL1_PAGE address - wrong code executed. So the failure is caught
+; here (CALL, not JP) and explicitly return-trampolined back to
+; overlay1's xpart_load_fail, which remaps MMU7 to OVL1_PAGE before its
+; own ret fires - landing correctly back on whichever of sav_read_v2/
+; h_ramload called us, with CF set, exactly mirroring a same-part LOAD
+; failure (brief's sanctioned "fail-silent abort of the whole LOAD -
+; current part continues unchanged" choice).
+xpart_load_entry:
+    push bc                      ; ldir below clobbers BC as its counter
+    ld de, swapStage
+    ld bc, 256
+    ldir                         ; swapStage[0..255] = flags, verbatim
+    pop bc                       ; B = source object count, C = target
+    ld a, b
+    ld (swapObjCount), a
+    or a
+    jr z, .noobjs
+    ld hl, swapStage+256
+.cp:
+    ld a, (ix+0)
+    ld (hl), a
+    inc hl
+    inc ix
+    djnz .cp
+.noobjs:
+    ld a, c
+    call switch_to_part
+    ; only reached on failure (CF set); success never returns
+    ld hl, xpart_load_fail
+    push hl
+    ld a, OVL1_PAGE
+    jp ovl_map_page
+
 ext_stub:
     jp h_unimpl
 extVec:
