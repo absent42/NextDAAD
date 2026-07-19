@@ -242,7 +242,7 @@ idiom `SFX` uses above for a sub-command it does not recognise.
 | 0 | `RESETMS` | Re-centre the pointer at (160,128), zero the buttons, and re-latch the movement baseline. |
 | 1 | `SHOWMS` | Show the hardware sprite pointer. |
 | 2 | `HIDEMS` | Hide the hardware sprite pointer. |
-| 3 | `GETMS` | Read mouse state into four flags starting at the first argument: `flags[n]` = buttons, `flags[n+1]` = column 0-79 (X/8), `flags[n+2]` = row 0-31 (Y/8), `flags[n+3]` = column 0-53 (X/6). |
+| 3 | `GETMS` | Read mouse state into four flags starting at the first argument: `flags[n]` = buttons (idle 0, left 1, right 2, middle 4, chords additive - jdaad parity, not the raw Kempston byte), `flags[n+1]` = column 0-79 (X/8), `flags[n+2]` = row 0-31 (Y/8), `flags[n+3]` = column 0-53 (X/6). |
 | 4 | `GETFINEMS` | Not supported - accepted and ignored. |
 | 5 | `POINTERMS` | Not supported - accepted and ignored. |
 | 6 | `DELTAXMS` | Not supported - accepted and ignored. |
