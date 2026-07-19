@@ -773,7 +773,7 @@ aud_dmaprobe:
 dbg_font:
     INCBIN "../tools/DAAD-READY/ASSETS/CHARSET/AD8x8.CHR"   ; 2048 bytes, 256 glyphs
 
-msgTitle:   db "NEXTDAAD FOUNDATION", 0
+msgTitle:   db VERSION_STR, 0
 msgCore:    db "CORE ", 0
 msgMachine: db " MACHINE ", 0
 msgSpeed:   db " SPD ", 0
@@ -796,7 +796,42 @@ dbg_puts:
 dbg_hex8:
 dbg_hex16:
 dbg_space:
+    ret
+
+; Release-build version stamp. boot_banner is already called
+; unconditionally from main.asm (both builds, zero call-site cost) -
+; here it prints VERSION_STR (nextdaad.inc, shared with the DEBUG
+; msgTitle above so the two builds cannot drift apart) at row 0, col 0
+; on the tilemap, then returns. This runs BEFORE main.asm's own
+; txt_init call (which follows a successful DDB load), so txt_init is
+; forced here first - the same pattern errors.asm's fatal() already
+; relies on to make tm_putc_at safe this early in boot; re-running
+; txt_init a second time later is harmless (same idempotent register/
+; palette/font programming + full clear DEBUG already pays for once
+; more via dbg_engage_tilemap). The game's first screen draw
+; overwrites this shortly after - a startup stamp, not a persistent
+; HUD; confirming the on-screen result is an owner eye leg, not
+; headlessly testable. Corrupts everything.
 boot_banner:
+    call txt_init
+    ld a, (tmAttr)
+    ld e, a
+    ld b, 0
+    ld c, 0
+    ld hl, msgRelTitle
+.loop:
+    ld a, (hl)
+    or a
+    ret z
+    push hl
+    call tm_putc_at
+    pop hl
+    inc hl
+    inc c
+    jr .loop
+
+msgRelTitle: db VERSION_STR, 0
+
 ram_diag:
 bank_selftest:
 ddb_diag:
