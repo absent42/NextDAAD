@@ -53,9 +53,11 @@ REM ---- prepare RELEASE\ and remove stale converted assets ----
 REM      *.N2Z/*.NXZ are the 8.3 title synonyms (see lib\gfx.bat's
 REM      ready-made DAAD.* staging) - covered here so a title removed
 REM      since the last build cannot leave a stray DAAD.N2Z/DAAD.NXZ
-REM      behind on the SD card.
+REM      behind on the SD card. RELEASE\FONT.CHR is covered too (SP12
+REM      T2 - see the ready-made font staging below) so a font removed
+REM      from the kit root cannot leave a stray RELEASE\FONT.CHR behind.
 if not exist "RELEASE" md "RELEASE"
-del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" 2>nul
+del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" "RELEASE\FONT.CHR" 2>nul
 REM ---- remove stale multi-part output too, so a part removed since the
 REM      last build (its PART<n> folder deleted) cannot leave a stray
 REM      GAME<n>.DDB or PART<n>\ behind on the SD card - see SETUP.md's
@@ -78,6 +80,19 @@ if errorlevel 1 ( pause & exit /b 1 )
 
 call "%~dp0lib\assemble.bat"
 if errorlevel 1 ( pause & exit /b 1 )
+
+REM ---- ready-made font (SP12 T2): a kit-root FONT.CHR - already a full
+REM      2048-byte glyph table, see lib\fontconv.ps1 for how to make one
+REM      from a classic 768-byte ZX charset - is staged to RELEASE\ as-is,
+REM      no conversion. Mirrors lib\gfx.bat's ready-made DAAD.* title
+REM      staging (9fe5557). No FONT.CHR in the kit root is normal (the
+REM      embedded font plays) and not an error. PART<n>\FONT.CHR needs no
+REM      staging step here - it already rides the generic PART<n>\ asset
+REM      copy loop below (SP11 T6), same as any other per-part asset.
+if exist "FONT.CHR" (
+    copy /Y "FONT.CHR" "RELEASE\FONT.CHR" >nul
+    echo   font FONT.CHR -^> RELEASE\FONT.CHR ^(ready-made, staged as-is^)
+)
 
 REM ---- multi-part games (SP11 Task 6): PART2\..PART9\ source folders,
 REM      matching the interpreter's own supported part range (h_xpart

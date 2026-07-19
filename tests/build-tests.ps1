@@ -65,7 +65,21 @@
 #            existing asset dirs stay where they are). Not committed
 #            (sd\ is gitignored). Default (no -Title) leaves sd\
 #            untouched.
-param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part)
+# Custom font (SP12 Task 2), independent of the DDB switches:
+#   -Font    stage a visually distinctive custom font into sd\ - stale-
+#            cleans sd\FONT.CHR then runs authoring-kit\lib\fontconv.ps1
+#            on tools\demo-files\fonts\Crews\Spectrum\Crews.ch8 (a 768-
+#            byte classic ZX charset, chars 32-127 - the "Crews" ZX-
+#            Origins font: a bold, tilted, graffiti-style face, chosen
+#            for being obviously different from the interpreter's plain
+#            embedded font at a glance, and shipped as a single file with
+#            no bold/script weight variants to disambiguate). No test
+#            binary is committed - fontconv.ps1 builds sd\FONT.CHR fresh
+#            each run from the source .ch8 plus authoring-kit\lib\
+#            default.chr. Same CSpect-running guard as -Title (locked
+#            sd\ files cause a partial fixture). Default (no -Font)
+#            leaves sd\ untouched.
+param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -429,6 +443,28 @@ if ($Title) {
     }
     Copy-Item "$root\tools\demo-files\DAAD.NX2" "$root\sd\DAAD.NX2" -Force
     "staged tools\demo-files\DAAD.NX2 -> sd\DAAD.NX2 (320x256 owner title)"
+}
+
+if ($Font) {
+    # SP12 Task 2 owner leg fixture: font_load (overlay2.asm) probes
+    # sd\FONT.CHR at boot (and PARTn\FONT.CHR for parts >= 2), so the
+    # owner-eye-leg needs one staged. tools\demo-files\fonts\Crews is a
+    # 768-byte classic ZX charset (chars 32-127) - a bold, tilted,
+    # graffiti-style face, visually distinctive from the interpreter's
+    # plain embedded font at a glance. No test binary is committed
+    # (authoring-kit hard rule for this task): fontconv.ps1 builds the
+    # full 2048-byte sd\FONT.CHR fresh each run from the .ch8 source
+    # plus authoring-kit\lib\default.chr.
+    # Same CSpect lock hazard as -Rab/-UU/-Title: refuse to stage rather
+    # than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial font fixture)"
+    }
+    Remove-Item "$root\sd\FONT.CHR" -Force -ErrorAction SilentlyContinue
+    $fontSrc = "$root\tools\demo-files\fonts\Crews\Spectrum\Crews.ch8"
+    & "$root\authoring-kit\lib\fontconv.ps1" -In $fontSrc -Out "$root\sd\FONT.CHR" | Out-Null
+    $fontSize = (Get-Item "$root\sd\FONT.CHR").Length
+    "staged tools\demo-files\fonts\Crews\Spectrum\Crews.ch8 -> sd\FONT.CHR ($fontSize bytes, via fontconv.ps1)"
 }
 
 if ($Aud) {

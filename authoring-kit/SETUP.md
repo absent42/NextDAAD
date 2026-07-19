@@ -42,6 +42,11 @@ Put these in this kit folder:
   variant) placed directly in this kit folder, staged to `RELEASE\` as-is. If
   both are present, the `IMAGES\DAAD.png` conversion wins. See "Title screens"
   below.
+- Optional custom font: a ready-made `FONT.CHR` (a full 2048-byte glyph
+  table) placed directly in this kit folder, staged to `RELEASE\` as-is. If
+  your font is a classic 768-byte ZX charset (chars 32-127 only), run
+  `lib\fontconv.ps1` first to pad it into a `FONT.CHR`. With no `FONT.CHR`,
+  the interpreter's own embedded font plays. See "Custom fonts" below.
 - Optional audio in `AUDIO\` (Arkos `.aks` sources, converted at build time):
   - `<GAME>.aks` - background music, auto-played at boot.
   - `NNN.aks` - songs selected in-game by `SFX n 6` (once) or `SFX n 7` (loop).
@@ -84,7 +89,8 @@ missing tool, wrong image width, over-size asset). A pure-text game with no
 After a build, `RELEASE\` holds the complete SD-card image:
 `nextdaad.nex`, `GAME.DDB`, any `NNN.NX2`/`NNN.NXI` (optionally `.zx0`), any
 `DAAD.NX2`/`DAAD.NXI` title screen (optionally `.zx0`, see "Title screens"
-below), any `GAME.AKY`/`NNN.AKY`/`GAME.SFB`/`NNN.AYS`, any `NNN.WAV`, and
+below), any `FONT.CHR` custom font (see "Custom fonts" below), any
+`GAME.AKY`/`NNN.AKY`/`GAME.SFB`/`NNN.AYS`, any `NNN.WAV`, and
 `0.XMB` if your DSF uses XMESSAGE/XMES (see section 8). Copy its contents to
 the root of an SD card to play on real hardware.
 
@@ -113,6 +119,71 @@ title is the first thing seen.
 The title is root-only - it is never shadowed per-part (see section 9,
 "Root-only, never shadowed"): a multi-part game shows the same title at
 cold boot regardless of which part is running.
+
+## Custom fonts
+
+Optional: ship a `FONT.CHR` (see section 2) and the interpreter installs it
+in place of its own embedded font - a plain byte-for-byte copy into the
+tilemap driver's glyph table, no source changes needed. With no `FONT.CHR`,
+the embedded font plays, exactly as before this feature existed.
+
+**Format.** `FONT.CHR` is 256 glyphs x 8 rows, 1bpp, exactly 2048 bytes -
+the standard raw charset format the whole DAAD/ZX tool ecosystem emits, so
+output from CH82CHR, jDAADFontMaker, GCS, and similar font editors works
+directly, unmodified, as `FONT.CHR`. Any other size is rejected at boot (a
+DEBUG build shows a marker) and the embedded font plays instead.
+
+**Classic 768-byte charsets.** Many ZX font packs and editors instead export
+a classic ZX Spectrum charset: characters 32-127 only (96 glyphs x 8 rows,
+768 bytes) - for example the `.ch8` files under `tools\demo-files\fonts`.
+`lib\fontconv.ps1` accepts either shape:
+
+```
+powershell lib\fontconv.ps1 -In MyFont.ch8 -Out FONT.CHR
+```
+
+A 2048-byte input is copied straight through. A 768-byte input is padded
+into a full 2048-byte table: it fills glyphs 32-127 (bytes 256-1023) from
+your file, keeping `lib\default.chr` (a copy of the interpreter's own
+embedded font) for every other glyph (0-31, 128-255). Any other input size
+is an error naming both accepted shapes. Place the script's `FONT.CHR`
+output directly in this kit folder (section 2) to ship it.
+
+**Which glyphs the engine actually renders.** The full 256-glyph table
+(indices 0-255) is addressable, but ordinary game text only ever draws on
+part of it: printed bytes 32-127 (the ordinary printable ASCII range) select
+glyphs 32-127 - or, when a window forces the "upper charset" (`WIN_FLAGS`
+bit 0) or the `GFX ON`/`GFX OFF` print escape is active, the SAME bytes
+select glyphs 160-255 instead (glyph = char + 128), a mirrored bold/alternate
+variant reachable without doubling vocabulary. Bytes 16-31 and 128-255
+select their matching glyph directly (extended/graphics glyphs, no
+mirroring). In practice this means a 768-byte classic charset (glyphs
+32-127) covers everything a typical DAAD game prints; glyphs 0-31, 128-159
+and 160-255 are reachable only through the extended/upper-charset routes
+above and keep `default.chr`'s originals unless your `FONT.CHR` supplies the
+full 2048 bytes.
+
+**Glyph 32 (space) must stay blank.** The tilemap driver relies on glyph 32
+having an all-zero bitmap - it is what gets painted, at the reserved
+transparent attribute, into any cell that should show Layer 2 (or whatever
+sits beneath the tilemap) through untouched. A `FONT.CHR` that redefines
+glyph 32 with non-zero pixels will show ink-coloured specks in those
+"transparent" cells instead. `fontconv.ps1` warns (does not fail) if the
+input's glyph 32 is non-zero; a hand-built or straight-passthrough
+`FONT.CHR` is not checked at boot, so verify this yourself if you edit
+glyph 32.
+
+**Per-part fonts.** For a part >= 2, `FONT.CHR` is one of the shadowed
+asset kinds - see section 9, "Shadowed assets": a `PART<n>\FONT.CHR`
+overrides the root font for that part only, staged automatically by the
+existing multi-part asset copy (nothing extra to configure), and falls
+back to the root `FONT.CHR` (or the embedded font, if none) if that part
+ships no font of its own.
+
+**Reserved for later.** `FONT2.CHR`, `FONT3.CHR`, and so on are reserved
+names for a future multi-font-per-game feature; this version only ever
+reads `FONT.CHR`, so a stray `FONT2.CHR` in the kit folder or on the SD
+card is currently inert.
 
 ## 7. Troubleshooting
 
@@ -325,7 +396,8 @@ For a part >= 2, these asset kinds probe `PART<n>\<name>` **first**,
 then fall back to the game root if not found there: location art (the
 whole extension probe chain runs under `PART<n>\`, then again at the
 root if that whole pass misses), `NNN.WAV` samples, numbered
-`NNN.AYS`/`NNN.AKY` songs, `GAME.SFB`, and `0.XMB`.
+`NNN.AYS`/`NNN.AKY` songs, `GAME.SFB`, `0.XMB`, and `FONT.CHR` (see
+"Custom fonts" above).
 
 Root-only, never shadowed: the title screen (`DAAD.*`, shown once at
 cold boot only) and the boot-autoplay default song (`GAME.AYS`/
