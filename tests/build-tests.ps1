@@ -6,23 +6,30 @@
 # nested DOALL on the same process); -Rab compiles the modernised next-
 # only tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real
 # commercial-quality DAAD game), makes that DDB active, and stages the
-# Layer 2 art (default N.NX2 -> sd\NNN.NX2). The DDB switches are
-# mutually exclusive - if more than one is given, whichever copy runs
-# last in this script wins: -Suite copies first, -Err4 copies over
-# it, and -Rab copies last of all, since its block comes after -Err4's.
-# The template is active if no switch is given.
+# Layer 2 art (default N.NX2 -> sd\NNN.NX2); -UU compiles the owner-
+# authored tools\urban-upstart\URBAN_UPSTART.DSF (untracked vendor dir -
+# never edit it here), makes that DDB active, and stages whatever
+# N.NXI/N.NX2 art exists there as-is (currently NXI-only) to sd\NNN.NXI.
+# The DDB switches are mutually exclusive - if more than one is given,
+# whichever copy runs last in this script wins: -Suite copies first,
+# -Err4 copies over it, -Rab copies over that, and -UU copies last of
+# all, since its block comes after -Rab's. The template is active if no
+# switch is given.
 # Art-staging modifiers (effective only with -Rab, combinable):
 #   -Gfx256  stage the 256-wide N.NXI set instead of the N.NX2s
 #   -GfxZx0  ZX0-compress each staged file (sd\NNN.NX2.ZX0 / with
 #            -Gfx256 sd\NNN.NXI.ZX0) so the interpreter's compressed
 #            picture path is exercised
+#   (-UU always stages whatever single art shape ships in
+#    tools\urban-upstart - no modifiers; that corpus has no parallel
+#    NX2/NXI pair to choose between)
 # Audio staging (combinable with any DDB switch):
 #   -Aud     stage the test audio assets from tools\audio_assets\
 #            (GAME.AKY, 001.AKY, GAME.SFB, 001.WAV, 001.AYS, 002.AYS -
 #            produced by the export script / aysconv.ps1) into sd\, after
 #            removing stale sd\*.AKY, sd\GAME.SFB, sd\*.WAV and sd\*.AYS;
 #            warns and skips if the folder is empty
-param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud)
+param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -233,6 +240,66 @@ if ($Rab) {
     "staged $staged Rabenstein art file(s) -> sd\NNN.$shape"
 }
 
+$uuActive = $false
+if ($UU) {
+    # Same CSpect lock hazard as -Rab: refuse to stage rather than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause partial/mixed art sets)"
+    }
+    # tools\urban-upstart\URBAN_UPSTART.DSF is OWNER-AUTHORED and the vendor
+    # dir is untracked working material - never edit it here. Compiled
+    # exactly like rabenstein.dsf above: copy into DAAD-READY, run DRF/DRB
+    # with no preprocessing, and let a DRC failure abort the script (its
+    # error surfacing is the point - do not swallow it).
+    $uuSrc = "$root\tools\urban-upstart"
+    Copy-Item "$uuSrc\URBAN_UPSTART.DSF" "$dr\NDUU.DSF" -Force
+    Push-Location $dr
+    try {
+        & .\TOOLS\DRC\DRF.exe zx next NDUU.DSF
+        if ($LASTEXITCODE -ne 0) { throw "DRF failed (urbanupstart)" }
+        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDUU.json NDUU.DDB
+        if ($LASTEXITCODE -ne 0) { throw "DRB failed (urbanupstart)" }
+        Copy-Item NDUU.DDB "$root\tests\out\urbanupstart.ddb" -Force
+        try {
+            Copy-Item NDUU.DDB "$root\sd\GAME.DDB" -Force
+            Remove-Item NDUU.DDB -ErrorAction SilentlyContinue
+            $uuActive = $true
+        }
+        catch {
+            "WARNING: could not copy to sd\GAME.DDB (likely locked by a running CSpect - close it and copy $dr\NDUU.DDB across manually): $_"
+        }
+    }
+    finally {
+        Remove-Item "$dr\NDUU.DSF", "$dr\NDUU.json", "$dr\NDUU.___" -ErrorAction SilentlyContinue
+        Pop-Location
+    }
+
+    # Stage whatever location art exists in the vendor dir root (flat
+    # N.NXI/N.NX2, no nextdaad-style subfolder). Prefer NX2 (320-wide) if
+    # present, else NXI (256-wide) - today only the NXI set ships (~91
+    # files, gaps in the numbering tolerated). No -Gfx256/-GfxZx0
+    # modifiers: this corpus ships one art shape, so stage exactly what
+    # exists. Same stale-variant cleanup per staged number as -Rab, so a
+    # leftover Rabenstein NX2 at the same number cannot survive alongside it.
+    $uuExt = if (Get-ChildItem "$uuSrc\*.NX2" -ErrorAction SilentlyContinue) { 'NX2' } else { 'NXI' }
+    $uuStaged = 0
+    Get-ChildItem "$uuSrc\*.$uuExt" | Where-Object { $_.BaseName -match '^\d+$' } | ForEach-Object {
+        $art = $_
+        $padded = '{0:D3}' -f [int]$art.BaseName
+        try {
+            foreach ($stale in @('NX2', 'NXI', 'N2Z', 'NXZ', 'NX2.ZX0', 'NXI.ZX0')) {
+                Remove-Item "$root\sd\$padded.$stale" -Force -ErrorAction SilentlyContinue
+            }
+            Copy-Item $art.FullName "$root\sd\$padded.$uuExt" -Force
+            $uuStaged++
+        }
+        catch {
+            "WARNING: could not stage $($art.Name) (likely locked by a running CSpect - close it and retry): $_"
+        }
+    }
+    "staged $uuStaged Urban Upstart art file(s) -> sd\NNN.$uuExt"
+}
+
 if ($Aud) {
     # Same CSpect lock hazard as the art staging: a running emulator
     # holds sd\ files open and the cleanup/copies fail piecemeal.
@@ -265,7 +332,9 @@ $good = [System.IO.File]::ReadAllBytes("$root\sd\GAME.DDB")
 "version=$($good[0]) target=$('{0:X2}' -f $good[1]) magic=$($good[2])"
 $ptrs = for ($i = 8; $i -lt 34; $i += 2) { '{0:X4}' -f ($good[$i] + 256 * $good[$i+1]) }
 "pointers: $($ptrs -join ' ')"
-if ($rabActive) { "active: rabenstein" }
+if ($uuActive) { "active: urbanupstart" }
+elseif ($UU) { "active: urbanupstart (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
+elseif ($rabActive) { "active: rabenstein" }
 elseif ($Rab) { "active: rabenstein (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($Suite) { "active: suite" }
