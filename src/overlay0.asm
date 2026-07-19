@@ -1933,23 +1933,32 @@ h_xpart:
 ; over that fresh state before ever entering eng_run - double init,
 ; zero engine.asm bytes, correct per the brief's Step 3(i) fallback.
 ;
-; ddbName (file.asm, resident - the buffer ddb_load unconditionally
-; reads via its own hardcoded "ld ix, ddbName") is exactly 9 bytes:
-; enough for "GAME.DDB\0" (n=1) but one byte short of "GAMEn.DDB\0"
-; (n=2-9 need 10). ddbHandle (file.asm) is the very next resident byte
-; with no gap, and ddb_load's own preamble unconditionally writes $FF
-; there BEFORE it ever reads ddbName for F_OPEN - so a NUL landed at
-; ddbName+9 is always overwritten before the scan sees it; there is no
-; slack to borrow. xpart_build_name below writes a wildcarded
-; "GAMEn.D*\0" for n>=2 instead (8 chars + NUL = fits ddbName exactly,
-; zero overflow): esxDOS F_OPEN is documented (NextZXOS_and_esxDOS_
-; APIs.pdf, F_OPEN and the equivalent +3DOS DOS_OPEN entry) to accept
-; '*'/'?' wildcards whenever the requested action opens an EXISTING
-; file only (ddb_load's B=ESX_MODE_READ carries no create bits) and
-; resolves to the first match - exactly ddb_load's call shape,
-; unmodified. Our own pre-load probe below opens that SAME ddbName
-; content (not a separate exact-name buffer), so the probe and the
-; load always resolve to the identical match.
+; ddbName (errors.asm, resident - the buffer ddb_load unconditionally
+; reads via its own hardcoded "ld ix, ddbName" in file.asm, unmodified)
+; is a 10-byte buffer: "GAMEn.DDB",0 is 9 characters + NUL, fitting
+; exactly. xpart_build_name below writes the LITERAL target name for
+; every part, n=1 included - no wildcard.
+;
+; History (superseded - kept for the review trail): the first cut of
+; this routine wrote a wildcarded "GAMEn.D*" into file.asm's ORIGINAL
+; 9-byte ddbName (one byte short of the literal 10-byte name; ddbHandle,
+; the very next resident byte there with no gap, was clobbered by
+; ddb_load's own preamble before the name was ever read, so there was
+; no slack to borrow), relying on esxDOS F_OPEN's documented '*'/'?'
+; wildcard support for read-only opens of an existing file. That is
+; correct against the DOCUMENTED esxDOS contract, but the owner's
+; CSpect sweep found CSpect's esxDOS emulation does not implement
+; wildcard F_OPEN - the fixture failed on CSpect specifically (a real-
+; hardware run was confirming in parallel). Fix: ddbName moved to
+; errors.asm's post-flags region (file.asm's pre-flags region had no
+; room to grow by 1 byte without risking engine.asm's flags ALIGN 256
+; pad - a pre-flags SHRINK is safe there, per T7's precedent, but a
+; GROWTH is not) with 1 extra byte of capacity, eliminating the
+; wildcard and the ddbHandle-adjacency hazard together (ddbHandle stays
+; in file.asm, no longer adjacent to ddbName at all). Our own pre-load
+; probe below opens that SAME ddbName content (not a separate
+; exact-name buffer), so the probe and the load always resolve to the
+; identical file.
 switch_to_part:
     ; The LOAD/RAMLOAD path hands an unvalidated SAV trailing part byte
     ; here (h_xpart's own 1-9 range check is EXTERN-only); route any
@@ -2057,18 +2066,19 @@ switch_to_part:
     scf
     ret
 
-; Build the DDB filename for part A (1-9) into ddbName (file.asm's
-; resident 9-byte buffer - see switch_to_part's header comment for the
-; full byte-budget proof). n=1 writes the exact, unchanged "GAME.DDB"
-; (byte-identical to ddbName's assembled default). n=2-9 write the
-; wildcarded "GAMEn.D*" (8 chars + NUL, fills ddbName exactly with no
-; overflow). Corrupts AF, HL.
+; Build the DDB filename for part A (1-9) into ddbName (errors.asm's
+; resident 10-byte buffer - see switch_to_part's header comment for
+; the relocation history). n=1 writes the exact, literal "GAME.DDB"
+; (byte-identical to ddbName's assembled default, all 10 bytes incl.
+; the spare). n=2-9 write the exact, literal "GAMEn.DDB" (9 characters
+; + NUL, fills all 10 bytes with zero spare). No wildcard either way.
+; Corrupts AF, HL.
 xpart_build_name:
     cp 1
     jr nz, .multi
     ld hl, .gameddb
     ld de, ddbName
-    ld bc, 9
+    ld bc, 10
     ldir
     ret
 .multi:
@@ -2088,11 +2098,15 @@ xpart_build_name:
     inc hl
     ld (hl), 'D'
     inc hl
-    ld (hl), '*'
+    ld (hl), 'D'
+    inc hl
+    ld (hl), 'B'
     inc hl
     ld (hl), 0
     ret
-.gameddb: db "GAME.DDB", 0
+.gameddb: db "GAME.DDB", 0, 0     ; byte-identical to ddbName's own
+                                  ; compiled default (errors.asm) -
+                                  ; 8 chars + NUL + 1 spare = 10
 
  IFDEF DEBUG
 msgXpartFail:  db "XPART?", 0

@@ -79,6 +79,27 @@ err_raise:
 
 errCode: db 0
 
+; ddbName: relocated here from file.asm (SP11 Task 3 review fix 3 -
+; CSpect's esxDOS emulation does not implement wildcard F_OPEN, so the
+; earlier "GAMEn.D*" wildcard technique - correct against the
+; documented esxDOS contract, but CSpect-incompatible - could not
+; survive a real CSpect run; owner sweep caught it). The fix needs a
+; 10-byte buffer ("GAMEn.DDB",0 - 9 characters + NUL) so
+; xpart_build_name (overlay0.asm) can write the LITERAL target name for
+; every part, no wildcard. file.asm's pre-flags region has no room for
+; the extra byte a GROWTH there would cost (engine.asm's flags ALIGN
+; 256 pad only absorbs a SHRINK, per T7's precedent - this task's own
+; report), so the buffer lives post-flags instead, alongside curPart.
+; ddb_load (file.asm, unchanged) still reads this exact label via its
+; own hardcoded "ld ix, ddbName" - only the storage moved, the loader's
+; contract did not. Compiled default below is "GAME.DDB\0" (9 bytes,
+; byte-identical to file.asm's old default) plus one spare byte,
+; totalling the 10-byte capacity; xpart_build_name overwrites all 10
+; bytes every time (n=1 included - its own gameddb literal is this
+; same 10-byte "GAME.DDB\0\0" content, so that path is a byte-identical
+; full rewrite, not a partial one).
+ddbName: db "GAME.DDB", 0, 0
+
 ; SP11 Task 3: active part number (1-9), 1-based like the DDB filename
 ; suffix (GAME.DDB = part 1, GAME2.DDB = part 2, ...). Compiled static
 ; db 1 is correct at cold boot (GAME.DDB is always part 1). A warm
@@ -86,7 +107,7 @@ errCode: db 0
 ; reset fired - same documented staleness as the mouse statics
 ; (h_mouse's header comment, overlay0.asm). On real hardware nextreg
 ; 2,1 hands control back to NextZXOS, which reloads the .nex fresh
-; (curPart and file.asm's ddbName both come back to their compiled
+; (curPart and ddbName above both come back to their compiled
 ; GAME.DDB/part-1 defaults with the rest of the image); the CSpect dev
 ; loop's dirty-RAM re-entry (boot_data_init's own header comment,
 ; main.asm) is the only path where either can stay stale post-switch -

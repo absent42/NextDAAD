@@ -179,7 +179,13 @@ fatal:
     di
     jr .halt
 
-ddbName:     db "GAME.DDB", 0
+; ddbName relocated to errors.asm (SP11 Task 3 review fix 3): it needs
+; 10 bytes now (see there) and file.asm's pre-flags region has none to
+; spare without tripping engine.asm's flags ALIGN 256 pad - moving it
+; post-flags (errors.asm) costs nothing there instead. This file's own
+; references (ld ix,ddbName in ddb_load below) are unaffected: they are
+; absolute addresses: the operand's VALUE changes at assembly, the
+; instruction's byte COUNT does not, so nothing here needed reflowing.
 ddbHandle:   db $FF
 ddbChunk:    db 0
 ddbSize:     dw 0
