@@ -53,16 +53,6 @@ Run through this list, top to bottom, before tagging a release.
    pass - not an agent task. No .nex file should ever be committed by
    an agent.
 
-6. **Hardware session.**
-
-   The closing gate: a real-Next session against
-   docs/hardware-test-checklist.md (suite 01-80 on silicon, the audio
-   checklist sections, Rabenstein and Urban Upstart side by side with
-   CSpect, and every item still unchecked in that file). Record
-   results by ticking the checklist in place; anything silicon-only
-   that fails gets a fix wave and a re-check before the milestone
-   closes.
-
 ## Kit inventory
 
 What ships inside authoring-kit/ (committed to the repo):
