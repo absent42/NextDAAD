@@ -1,8 +1,17 @@
 ; NDPARTB.DSF - SP11 Task 6 two-part fixture, part 2 (staged as
 ; GAME2.DDB + PART2\0.XMB by tests\build-tests.ps1 -Part). Paired with
 ; NDPARTA.DSF (part A, game root) - see that file's header comment for
-; the full owner leg: exact commands, expected screen sequence, and the
-; optional -Title variant. Not part of the automated condacts.dsf suite.
+; the full owner leg: exact commands, expected screen sequence (four
+; switches: EXTERN forward/back, LOAD forward auto-switch, RAMLOAD back
+; auto-switch), and the optional -Title variant. Not part of the
+; automated condacts.dsf suite.
+;
+; PRO 0 has two branches, told apart by flag 103 on entry: 0 means
+; "just arrived from part A live" (the FIRST ENTRY branch below), 1
+; means "just arrived via a restored cross-part SAVE" (the XLOAD
+; RE-ENTRY branch - only LOADing a save with 103=1 on it produces this,
+; since 103 is set to 1 only by this file's own FIRST ENTRY, right
+; before the save that carries it is written).
 
 /CTL
 _
@@ -95,49 +104,101 @@ CHEST 52 noun
 /2    0           5     _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    CHEST  _
 
 /PRO 0
+; --- FIRST ENTRY branch (flag 103 = 0: freshly carried from part A
+; live). Entries 1-8 below are ALL gated EQ 103 0 (or reached only via
+; a gated entry's own fallthrough) so that none of them can also fire
+; during the XLOAD RE-ENTRY pass, where 103 is already 1 on arrival.
+
 ; Entry 1: carry-through proof. Flags 100/101 and object 1's CARRIED
 ; location all arrived from part A verbatim - all 256 flags copy across
 ; a switch, and object locations copy by index for as many objects as
 ; both parts define in common (see authoring-kit\SETUP.md's multi-part
 ; "Author caveats" for the full rules a real game must follow).
-> _ _   EQ 100 77
+> _ _   EQ 103 0
+        EQ 100 77
         EQ 101 88
         CARRIED 1
         MES "PB CARRY OK#n"
         SKIP 1
-> _ _   MES "PB CARRY F#n"
+> _ _   EQ 103 0
+        MES "PB CARRY F#n"
 
-; Entry 2: PARTn asset probe proof. Part A's own 0.XMB is staged at the
+; Entry 3: PARTn asset probe proof. Part A's own 0.XMB is staged at the
 ; SD root (sd\0.XMB); part B's is staged separately at sd\PART2\0.XMB,
 ; with DIFFERENT bytes at the same internal offset. XMES only prints
 ; this clean sentence if ext_xmes's PARTn\ probe (SP11 Task 5) actually
 ; won the race against the root file - a probe that wrongly fell
 ; through to the root 0.XMB would read A's bytes at B's offset instead,
 ; producing garbled or simply wrong text, not a crash and not silence.
-> _ _   XMES "part two external text via PART2"
+> _ _   EQ 103 0
+        XMES "part two external text via PART2"
         NEWLINE
 
-; Entry 3: same-part SAVE/LOAD round trip while curPart = 2 - the first
-; place in the whole test corpus that exercises h_save/h_load away from
+; Entry 4: SAV round-trip GATE. A standalone gate, separate from its
+; own functional body (entry 6), specifically because the body sets
+; flag 103 to 1 (LET 103 1, needed so the save it writes carries
+; 103=1) BEFORE it can fail (SAVE/LOAD are condition-typed - a failure
+; aborts the entry immediately). That makes flag 103 alone ambiguous
+; AFTER the body has started: both "the body ran and SAVE/LOAD failed"
+; and "we are actually in the XLOAD RE-ENTRY, and this gate correctly
+; excluded itself" leave 103=1 behind. Splitting the gate out and
+; routing ITS OWN failure straight to $xload (entry 5, below) - instead
+; of falling into the body/its sibling/the return leg - resolves the
+; ambiguity structurally: entry 7 ("PB SAV F") is then reachable ONLY
+; from the body's own internal failure, never from this gate's.
+> _ _   EQ 103 0
+        SKIP 1
+> _ _   SKIP $xload
+
+; Entry 6: SAV round trip body (reached only via entry 4's SKIP 1
+; above). Same-part v2 round trip while curPart = 2 - the first place
+; in the whole test corpus that exercises h_save/h_load away from
 ; curPart = 1 (condacts.dsf's own SAVE/LOAD checks always run at part
-; 1). Type any 1-8 character name, then the SAME name again at the
-; second prompt. SAVE/LOAD are condition-typed here: either failing
-; aborts this entry immediately and falls to "PB SAV F" below, the same
-; idiom condacts.dsf check 62 uses for its own round trip.
-> _ _   MES "PB TYPE NAME: p2#n"
-        LET 110 55
+; 1). LET 103 1 marks this save as "already through part B once" so
+; the eventual cross-part reload of THIS SAME FILE (NDPARTA.DSF's own
+; LOAD 0) lands back here at the XLOAD RE-ENTRY branch, not this one.
+; Type any 1-8 character name, then the SAME name again at the second
+; prompt - and the SAME name again for NDPARTA.DSF's own LOAD later
+; (one file, one name, three prompts total).
+> _ _   MES "PB TYPE NAME: pt#n"
+        LET 103 1
         SAVE 0
-        LET 110 0
-        MES "PB TYPE NAME: p2#n"
+        MES "PB TYPE NAME: pt#n"
         LOAD 0
-        EQ 110 55
         MES "PB SAV OK#n"
         SKIP 1
 > _ _   MES "PB SAV F#n"
 
-; Entry 4: the return leg, mirroring part A's own outbound switch
+; Entry 8: the return leg, mirroring part A's own outbound switch
 ; (NDPARTA.DSF entry 1) - fail-silent on a missing GAME.DDB, same idiom
-; as condacts.dsf check 44. On success this entry never finishes.
+; as condacts.dsf check 44.
 > _ _   EXTERN 1 4
         MES "PB SWITCH F#n"
+
+$xload
+; --- XLOAD RE-ENTRY branch (flag 103 = 1: only a restored cross-part
+; save produces this on a fresh PRO 0 entry - the FIRST ENTRY branch
+; above is the only place that ever sets 103, and only right before
+; writing the save that carries it).
+
+; Entry 9: re-assert the carry proof (this state arrived via a save
+; file, not a live switch, so it is worth re-checking, not just
+; assumed), then RAMLOAD the part-1 buffer NDPARTA.DSF's entry 1 took
+; (a cross-part restore - curPart is 2 here, the buffer's own stored
+; part is 1) - this auto-switches back to part 1. RAMLOAD is action-
+; typed, so on success this entry never finishes (mirrors EXTERN/LOAD's
+; own "success never returns" contract); "PB RAMLOAD F" runs only if
+; that probe failed.
+> _ _   EQ 103 1
+        EQ 100 77
+        EQ 101 88
+        MES "PB XLOAD OK#n"
+        RAMLOAD 255
+        MES "PB RAMLOAD F#n"
+
+; Entry 10: XLOAD RE-ENTRY carry-check failure witness (sibling to
+; entry 9, gated the same way for the same reason as entries 1-8's own
+; EQ 103 0 gates).
+> _ _   EQ 103 1
+        MES "PB XLOAD F#n"
 /END

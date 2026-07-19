@@ -29,7 +29,19 @@
 #            file; a wrong probe reads part A's bytes at part B's
 #            offsets instead (garbled/wrong text, not a crash). Same
 #            CSpect-running guard as -Rab/-UU; stale-cleans sd\GAME2.DDB
-#            and both 0.XMB files before restaging.
+#            and both 0.XMB files before restaging. The fixture pair's
+#            own PRO 0 logic (owner leg only - run ./build.ps1 -Run
+#            after staging, see each DSF's own header comment for the
+#            full transcript) exercises all four part-switch primitives
+#            in one pass: EXTERN forward (part 1 -> 2), EXTERN back
+#            (2 -> 1), then a cross-part LOAD auto-switch forward
+#            (1 -> 2, h_load's own part-mismatch -> xpart_load_entry ->
+#            switch_to_part wiring) and a cross-part RAMLOAD auto-switch
+#            back (2 -> 1, the same wiring via h_ramload) - both
+#            directions of both switch mechanisms. One typed SAVE and
+#            two typed LOADs share a single on-disk file, so the owner
+#            answers all three filename prompts with the same name
+#            (the fixture suggests "pt").
 # Art-staging modifiers (effective only with -Rab, combinable):
 #   -Gfx256  stage the 256-wide N.NXI set instead of the N.NX2s
 #   -GfxZx0  ZX0-compress each staged file (sd\NNN.NX2.ZX0 / with

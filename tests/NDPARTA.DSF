@@ -1,46 +1,64 @@
 ; NDPARTA.DSF - SP11 Task 6 two-part fixture, part A (game root).
 ; Paired with NDPARTB.DSF (part 2, staged as GAME2.DDB + PART2\0.XMB).
-; Proves the EXTERN n 4 (XPART) switch primitive, part-to-part flag and
-; object carry, and the PARTn\ asset probe (via each part's own 0.XMB)
-; end to end. Not part of the automated condacts.dsf suite - staged and
-; run separately via tests\build-tests.ps1 -Part. Cannot be exercised by
-; the implementing agent (no CSpect/emulator access) - this is the
-; owner's leg.
+; Proves the EXTERN n 4 (XPART) switch primitive, the cross-part LOAD
+; and RAMLOAD auto-switch primitives (h_load/h_ramload's own part-
+; mismatch -> xpart_load_entry -> switch_to_part wiring), part-to-part
+; flag and object carry, and the PARTn\ asset probe (via each part's
+; own 0.XMB) end to end. Not part of the automated condacts.dsf suite -
+; staged and run separately via tests\build-tests.ps1 -Part. Cannot be
+; exercised by the implementing agent (no CSpect/emulator access) -
+; this is the owner's leg.
 ;
 ; Owner leg - exact commands:
 ;   ./tests/build-tests.ps1 -Part
 ;   ./build.ps1 -Run
 ;
+; Four switches happen in this run, both directions of both switch
+; mechanisms: EXTERN forward (A->B), EXTERN back (B->A), LOAD forward
+; auto-switch (A->B, triggered by loading a save whose stored part
+; differs from the running one), RAMLOAD back auto-switch (B->A, same
+; idea via the RAM buffer). Flag 103 is the discriminator that lets
+; PRO 0 tell every re-entry apart: 0 on a genuine cold boot and on the
+; RAMLOAD-restored return (the RAMSAVE below is taken BEFORE part B
+; ever sets 103, and is never refreshed again), 1 on the EXTERN-return
+; and the LOAD-restored re-entry (both carry a state where part B has
+; already set it).
+;
 ; Expected screen output, in order:
 ;   PA BOOT
-;   (part one external text via XMESSAGE - informational only, proves
-;   A's own 0.XMB staged and loads; not itself a pass/fail signal)
-;   [switch to part 2 happens here - no visible marker on success]
+;   (part one external text via XMESSAGE - informational only)
+;   [switch to part 2 - no visible marker on success]
 ;   PB CARRY OK
-;   part two external text via PART2        <- must read EXACTLY this;
-;                                               a PARTn\ probe that fell
-;                                               through to the root
-;                                               0.XMB by mistake reads
-;                                               A's bytes at B's offset
-;                                               instead - garbled text or
-;                                               the wrong sentence, not
-;                                               a crash
-;   PB TYPE NAME: p2    <- type any 1-8 char name (e.g. p2), press ENTER
-;   PB TYPE NAME: p2    <- type the SAME name again, press ENTER
+;   part two external text via PART2        <- must read EXACTLY this
+;   PB TYPE NAME: pt    <- type any 1-8 char name (e.g. pt), press ENTER
+;   PB TYPE NAME: pt    <- type the SAME name again, press ENTER
 ;   PB SAV OK
-;   [switch back to part 1 happens here - no visible marker on success]
+;   [switch back to part 1 - no visible marker on success]
 ;   PA RETURN OK
+;   PA TYPE NAME: pt    <- type the SAME name a THIRD time, press ENTER
+;   [LOAD auto-switches forward to part 2 - no visible marker on success]
+;   PB XLOAD OK
+;   [RAMLOAD auto-switches back to part 1 - no visible marker on success]
+;   PA RAMLOAD OK
 ;   "Would you like another go?" (SM13) - Y or N ends the leg either way
 ;
-; Any line ending " F" (PA SWITCH F, PB CARRY F, PB SAV F, PB SWITCH F)
-; or anything other than the exact clean sentence above where "part two
-; external text via PART2" belongs is a defect - stop and report it.
+; One SAVE and two LOADs share the same on-disk file (SAVE/LOAD names
+; live in one namespace in the game root regardless of part), so all
+; three prompts above must be answered with the SAME typed name.
+;
+; Any line ending " F" (PA SWITCH F, PB CARRY F, PB SAV F, PB SWITCH F,
+; PA XLOAD F, PB XLOAD F, PB RAMLOAD F) is a defect. Anything other
+; than the exact clean sentence where "part two external text via
+; PART2" belongs - garbled characters or a different sentence entirely
+; - is a defect. The sequence stalling or looping (repeating any line)
+; is also a defect - stop and report it, do not continue.
 ;
 ; Optional title variant: ./tests/build-tests.ps1 -Part -Title (the two
 ; staging blocks are independent, so combined staging works) then
 ; ./build.ps1 -Run. The title screen must appear once at cold boot only
-; - never again at either part switch, since a switch jumps straight
-; into the new part's PRO 0 and never revisits the boot/title chain.
+; - never again at any of the four switches, since a switch jumps
+; straight into the new part's PRO 0 and never revisits the boot/title
+; chain.
 ;
 ; NOTE: no CLS anywhere in this fixture's PRO 0 (a deliberate departure
 ; from condacts.dsf's own opening-CLS idiom) - the whole point of this
@@ -138,30 +156,61 @@ CHEST 52 noun
 /2    0           5     _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    CHEST  _
 
 /PRO 0
-; Entry 1: first boot. Sets the two carry-proof witness flags (100,
-; 101) and the boot/return marker (102), prints the boot witness, then
-; attempts the switch to part 2. On success this entry never finishes -
-; switch_to_part resets the stack and enters part 2's own PRO 0 fresh,
-; so nothing after EXTERN 2 4 ever runs. "PA SWITCH F" and the
-; fallthrough to entry 2 below run ONLY if the probe for GAME2.DDB
-; failed: EXTERN is action-typed, so a failed switch just returns and
-; execution continues with the next condact in THIS entry - the same
-; established idiom as condacts.dsf check 44.
+; Entry 1: first boot. Sets the carry-proof witness flags (100, 101),
+; the boot/return marker (102), places KEY into inventory, takes the
+; RAMSAVE snapshot (with 103 still 0 - this is the ONLY RAMSAVE in
+; either file, deliberately never refreshed again, so a later RAMLOAD
+; anywhere always restores exactly this moment - the caveat-8 stale-
+; slot behaviour, proven here by surviving three further switches),
+; then attempts the switch to part 2. On success this entry never
+; finishes - switch_to_part resets the stack and enters part 2's own
+; PRO 0 fresh, so nothing after EXTERN 2 4 ever runs. "PA SWITCH F" and
+; the fallthrough below run ONLY if the probe for GAME2.DDB failed:
+; EXTERN is action-typed, so a failed switch just returns and execution
+; continues with the next condact in THIS entry - the same established
+; idiom as condacts.dsf check 44.
 > _ _   EQ 102 0
         LET 100 77
         LET 101 88
         LET 102 1
+        PLACE 1 254
+        RAMSAVE
         MES "PA BOOT#n"
         XMESSAGE "part one external text"
-        PLACE 1 254
         EXTERN 2 4
         MES "PA SWITCH F#n"
 
-; Entry 2: the return leg. Reached when part 2 switches back here with
-; EXTERN 1 4. Flag 102 survived the whole round trip unchanged (all 256
-; flags carry verbatim across a switch, in either direction), so it
-; still reads 1 on this pass.
+; Entry 2: RETURN-VIA-EXTERN. Reached when part 2 switches back here
+; with EXTERN 1 4 - flag 103 is 1 on this path (part B set it live
+; before switching back), distinguishing it from the RAMLOAD-restored
+; return (entry 4) where 103 reads back 0 (the stale RAMSAVE value).
+; LOAD 0 reads the save part B just wrote (part byte 2, curPart here is
+; 1) - a CROSS-PART load, so a successful read auto-switches forward
+; into part 2 and this entry never finishes either. "PA XLOAD F" is a
+; separate, sibling-like entry (LOAD is condition-typed, so its own
+; failure aborts THIS entry rather than falling through in place - see
+; that entry's own gate for why it cannot be a bare fallthrough).
 > _ _   EQ 102 1
+        EQ 103 1
         MES "PA RETURN OK#n"
+        MES "PA TYPE NAME: pt#n"
+        LOAD 0
+
+; Entry 3: LOAD-auto-switch failure witness. Gated on EQ 103 1 (not a
+; bare wildcard): entry 2 never mutates flag 103, so this gate reliably
+; tells "entry 2 ran and its LOAD failed" (103 still 1) apart from
+; "entry 2's own gate already failed for an unrelated reason" (103
+; would be 0, and this entry's gate then also correctly steps aside).
+> _ _   EQ 103 1
+        MES "PA XLOAD F#n"
+
+; Entry 4: RETURN-VIA-RAMLOAD. Reached when part 2's RAMLOAD restores
+; the part-1 buffer taken back in entry 1 - flag 103 reads 0 here
+; because that RAMSAVE predates part B ever setting 103, proving the
+; stale-slot snapshot survived two more switches (B's own EXTERN back,
+; then this RAMLOAD) unchanged. This branch terminates the whole run.
+> _ _   EQ 102 1
+        EQ 103 0
+        MES "PA RAMLOAD OK#n"
         END
 /END
