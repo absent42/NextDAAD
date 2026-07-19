@@ -247,3 +247,159 @@ idiom `SFX` uses above for a sub-command it does not recognise.
 | 5 | `POINTERMS` | Not supported - accepted and ignored. |
 | 6 | `DELTAXMS` | Not supported - accepted and ignored. |
 | 7 | `DELTAYMS` | Not supported - accepted and ignored. |
+
+## 9. Multi-part games
+
+A game can ship as several separate DDBs ("parts") that switch between
+each other at runtime with `EXTERN n 4` (MALUVA's `XPART n`). Typical
+uses: a game too large for one DDB's practical 31744-byte ceiling
+(section 8), or a natural chapter/episode structure. This is entirely
+optional - a single-part game (this kit's default) never touches any
+of the machinery below.
+
+### Layout
+
+- Part 1 is your main `.DSF` (section 2) - built exactly as before,
+  staged as `GAME.DDB` at the SD root. Nothing about a single-part
+  build changes.
+- Parts 2-9 (the interpreter's own supported range) each get a
+  `PART<n>\` folder in the kit directory, holding exactly one `.DSF`
+  (auto-detected the same way as the main `GAME`) plus that part's own
+  already-converted art/audio, if any.
+- `BUILD.BAT` compiles each `PART<n>\` DSF the same way as the main
+  game and stages the result as `RELEASE\GAME<n>.DDB` +
+  `RELEASE\PART<n>\0.XMB` (if that part uses XMESSAGE/XMES), then
+  copies every other file from `PART<n>\` into `RELEASE\PART<n>\`
+  as-is (no conversion - put ready-to-use `.NX2`/`.NXI`/`.AKY`/`.AYS`/
+  `.WAV`/`GAME.SFB` files there, not `.png`/`.aks` sources).
+- On the SD card this becomes `GAME.DDB`, `GAME2.DDB`, `GAME3.DDB`, ...
+  at the root, alongside `PART2\`, `PART3\`, ... folders holding each
+  part's own shadowed assets (see "Shadowed assets" below).
+
+**Stray-file warning:** no file matching `GAMEn.D*` may sit on the SD
+card anywhere except the compiled `GAMEn.DDB` files this kit stages -
+**especially `GAMEn.DSF`**, the DAAD source file itself, which authors
+routinely leave next to the compiled DDB while testing on real
+hardware or a working SD card copy. The part switch opens its target
+DDB by wildcard (`GAMEn.D*`) - a fixed 9-byte filename buffer in the
+interpreter forces this, it cannot spell out `GAMEn.DDB` in full for
+n >= 2 - so a stray `GAMEn.DSF` (or any other `GAMEn.D*` file that
+happens to sort first) can be the one that actually opens. The result
+is garbage loaded as if it were a DDB, and the switch fails silently
+once the interpreter's own header check rejects it. Development
+directories are exactly where this bites: keep source and compiled
+output in different folders, or clean the DSF out before copying to
+the card.
+
+### Switching parts
+
+- `EXTERN n 4` (`XPART n` under MALUVA) switches the running game to
+  part `n` (1-9). It loads `GAMEn.DDB` (`GAME.DDB` for n=1) from the SD
+  root.
+- If that file is not present, the switch is a silent no-op - the game
+  keeps running in the current part, unaffected. A game that ships an
+  `EXTERN n 4` trigger must also ship that part's DDB, or the trigger
+  quietly does nothing.
+- A successful switch is a fresh entry into the new part, not a resume
+  - it starts at the new part's own `PRO 0`, never at wherever the
+  `EXTERN` was called from.
+
+### Shadowed assets (the PARTn\ probe)
+
+For a part >= 2, these asset kinds probe `PART<n>\<name>` **first**,
+then fall back to the game root if not found there: location art (the
+whole extension probe chain runs under `PART<n>\`, then again at the
+root if that whole pass misses), `NNN.WAV` samples, numbered
+`NNN.AYS`/`NNN.AKY` songs, `GAME.SFB`, and `0.XMB`.
+
+Root-only, never shadowed: the title screen (`DAAD.*`, shown once at
+cold boot only) and the boot-autoplay default song (`GAME.AYS`/
+`GAME.AKY`). The `SFX` music sub-commands' own `n=255` sentinel (the
+"play `GAME.AYS`/`GAME.AKY`" case, section 8) is **also** always
+root-only and reachable identically from every part - `SFX 255 6` or
+`SFX 255 7` plays the game's theme from anywhere, "play the game theme
+anywhere" by design, not a bug if you expected a per-part override.
+
+Part 1 never probes `PART<n>\` at all - a part-1-only game is
+byte-identical to a plain single-part build.
+
+### What carries across a switch, what does not
+
+- **All 256 flags carry verbatim.** Score, turns, and every other
+  system or user flag survive a switch unchanged (see caveat 6 below).
+- **Object locations carry by index**, for as many objects as both
+  parts define in common (caveats 1, 2, 4).
+- **Object attributes and descriptions do not carry** - weight,
+  container/wearable bits, extended attributes, and text always come
+  from the currently active part's own DDB (caveat 3).
+- **Vocabulary is per-part and entirely independent.** A word's
+  spelling, its ID, and whether it exists at all can differ freely
+  between parts - nothing forces part 2's verb/noun IDs to agree with
+  part 1's, and nothing carries them if they did. Only OBJECT NUMBERS
+  need a shared convention across parts (caveat 1); vocabulary needs
+  none.
+
+### Save, load, and RAMSAVE across parts
+
+SAVE always records the current part number in the file (see the
+version note below); LOAD reads it back and switches automatically if
+it differs from the running part - a cross-part LOAD is a part entry,
+exactly like `EXTERN n 4`, not a resume (caveat 7). Save files share
+one filename namespace in the game root regardless of part (caveat 9)
+- SAVE/LOAD never look inside `PART<n>\`.
+
+**Save-file version note:** save files are length-detected - a
+same-part-only save has no trailing part byte (v1), a save written by
+this kit's interpreter has one appended (v2). A malformed or hand-edited
+v1 file (a stray trailing byte, a corrupted header count) can
+misclassify between the two, but the outcome is always bounded to a
+wrong-part restore or a clean rejection - never file corruption. Only
+distribute save files your own build actually wrote; do not hand-edit
+them.
+
+RAMSAVE/RAMLOAD (caveat 8) use one buffer that also survives a switch -
+a RAMLOAD taken two parts later still restores to wherever the RAMSAVE
+was last taken, the "died, try again" checkpoint feature. A cross-part
+RAMLOAD is always a full restore: it ignores RAMLOAD's own "restore up
+to flagno" partial-restore argument, which only applies within the
+same part. Refresh RAMSAVE in the new part's `PRO 0` after a switch if
+you want the checkpoint to track it.
+
+### Author caveats
+
+1. **OBJECT NUMBERING IS THE AUTHOR'S CONTRACT**: the carry copies
+   object locations BY INDEX. Object 7 in part 1 must mean the same
+   thing as object 7 in part 2, or a carried lamp becomes whatever part
+   2 defined at that index. Keep a shared object-numbering map across
+   parts; define cross-part objects at the same indexes in every part.
+2. **THE WHOLE TABLE CARRIES, NOT JUST THE INVENTORY**: objects left in
+   part-1 rooms arrive in part 2 holding part-1 location NUMBERS, which
+   now name different rooms (or nothing). If only carried/worn objects
+   matter across a boundary, have the new part's PRO 0 re-PLACE or
+   ABSENT everything else (classic housekeeping idiom).
+3. Attributes are PER-PART: weight, container/wearable bits, and
+   descriptions come from the ACTIVE part's DDB - a carried object
+   weighs what part 2 says it weighs.
+4. Object counts may differ: objects the new part defines beyond the
+   old part's count start at the new part's compiled initial locations.
+5. Inventory limits are per-part (CTL): arriving with more carried
+   objects than the new part's limit is stable until the next GET;
+   authors who lower the limit should handle the overflow in PRO 0.
+6. ALL 256 FLAGS CARRY - there is no clean slate: a part that assumes
+   its scratch flags start at zero must zero them in PRO 0 (or the
+   previous part clears them before switching). System flags carry
+   too: score/turns carry naturally; the location flag holds a part-1
+   room number until PRO 0 places the player - always set the start
+   location first.
+7. SAVE/LOAD: a v2 save records flags + objects + part; loading it from
+   ANY part lands in the SAVED part - all caveats above apply to the
+   restored state exactly as to a live switch. Cross-part LOAD enters
+   the saved part at PRO 0 (it does not resume mid-turn); same-part
+   LOAD behaves as classic DAAD.
+8. RAMSAVE is ONE SLOT and survives switches: a RAMLOAD two parts later
+   restores to wherever the RAMSAVE was taken. That is the death-retry
+   feature - but a stale slot restores a stale part; authors using
+   RAMSAVE for checkpoints should refresh it after each switch (RAMSAVE
+   in PRO 0).
+9. Save files share one namespace in the game root regardless of part;
+   identical names overwrite across parts.
