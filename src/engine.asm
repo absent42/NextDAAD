@@ -708,7 +708,7 @@ cdisp:
     DC1 h_time                  ; 83  TIME
     DC2 h_picture               ; 84  PICTURE
     DC h_doall                  ; 85  DOALL
-    DC h_unimpl                 ; 86  MOUSE
+    DC h_mouse                  ; 86  MOUSE
     DC2 h_gfx                   ; 87  GFX
     DC h_isnotat                 ; 88  ISNOTAT
     DC h_weigh                   ; 89  WEIGH
@@ -723,7 +723,7 @@ cdisp:
     DC h_backat                 ; 98  BACKAT
     DC h_printat                ; 99  PRINTAT
     DC h_whato                   ; 100 WHATO
-    DC h_unimpl                 ; 101 CALL
+    DC h_call                   ; 101 CALL
     DC h_puto                    ; 102 PUTO
     DC h_notdone                ; 103 NOTDONE
     DC h_autop                   ; 104 AUTOP
