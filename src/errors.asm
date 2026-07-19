@@ -97,6 +97,11 @@ msgErrC: db " C", 0
 ; caller can chain a raw tm_putc_at immediately after (err_raise
 ; appends the error digit this way). Corrupts AF, HL.
 fatal_puts:
+    ; msgRuntimeErr/msgRdStack now live in overlay0.asm's free space (no
+    ; post-flags room here - see there), so HL below needs overlay0's
+    ; page mapped at MMU7 to be dereferenceable. No restore needed -
+    ; both funnels (fatal/err_raise) are terminal and never return.
+    nextreg NR_MMU7, OVL0_PAGE
     ld a, (tmAttr)
     ld e, a
     ld b, 0
@@ -112,9 +117,7 @@ fatal_puts:
     inc c
     jr .loop
 
-; Fixed prefix; err_raise appends the single decimal digit itself.
-msgRuntimeErr: db "NextDAAD: RUNTIME ERROR - E", 0
-; Reader stack depth overflow (ddbtext.asm's rd_push/rd_pop) - moved
-; here from ddbtext.asm (pre-flags resident, no room to grow) since
-; rd_stack_fatal only needs an HL pointer to it, not local placement.
-msgRdStack:    db "NextDAAD: RD STACK - E9", 0
+; msgRuntimeErr and msgRdStack relocated to overlay0.asm's free space
+; (post-flags resident here had no room to grow) - see fatal_puts's
+; MMU7 map above. Call sites (here and ddbtext.asm's rd_stack_fatal)
+; are unchanged pointer-loads; only fatal_puts ever dereferences them.

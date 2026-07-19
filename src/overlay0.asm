@@ -2201,4 +2201,13 @@ mousePattern:
     db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3
     db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00
 
+; Relocated from errors.asm (post-flags resident there had no room to
+; grow - see fatal_puts's MMU7 map, errors.asm). fatal_puts is the only
+; reader: it maps this page at MMU7 before dereferencing either string,
+; reached via err_raise directly or ddbtext.asm's rd_stack_fatal -> fatal.
+; Fixed prefix; err_raise appends the single decimal digit itself.
+msgRuntimeErr: db "NextDAAD: RUNTIME ERROR - E", 0
+; Reader stack depth overflow (ddbtext.asm's rd_push/rd_pop).
+msgRdStack:    db "NextDAAD: RD STACK - E9", 0
+
     ASSERT $ <= OVL_LIMIT

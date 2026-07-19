@@ -145,6 +145,8 @@ fatal:
     call audio_init             ; silence the PSGs first (di stops the
                                 ; ISR re-voicing a note before the
                                 ; banner + halt; preserves HL)
+                                ; audio_init (hardware.asm:46) must not touch HL - the
+                                ; message pointer is still live here, not yet pushed
     push hl                      ; message ptr: kept on the stack across
                                  ; txt_init AND tm_fill_rect below, both
                                  ; of which corrupt HL - only popped once
