@@ -567,7 +567,14 @@ $pictureOK
 ; into scratch flags 120-123 (buttons, X/8, Y/8, X/6), reprint them in
 ; place on the same screen spot, repeat - so the owner watches the
 ; values track live mouse movement instead of seeing one static
-; snapshot. Any keypress made DURING that loop (INKEY, in PRO 7) ends
+; snapshot. Flag 120 (buttons) is jdaad-parity, NOT the raw Kempston
+; byte: idle 0, left click 1, right click 2, middle click 4, chords
+; additive (e.g. left+right = 3) - h_mouse's .read transforms the raw
+; active-LOW/Kempston-order port byte (idle would otherwise read 7,
+; right/left swapped versus jdaad, plus nonzero wheel bits) to this
+; convention at the flag-write point (src/overlay0.asm; jdaad.js
+; _MOUSE/GetMouse is the parity authority). Any keypress made DURING
+; that loop (INKEY, in PRO 7) ends
 ; it; the pointer is hidden (MOUSE 0 2) before the verb returns DONE.
 ; Under headless CSpect (no -mouse capture, or CSpect closed) the
 ; sprite still shows/positions and the flags still print - just

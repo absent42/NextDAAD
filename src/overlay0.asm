@@ -2400,7 +2400,46 @@ h_mouse:
     ld a, (mouseP1)
     ld h, high flags
     ld l, a
-    ld a, (mouseBtn)
+    ld a, (mouseBtn)             ; raw Kempston byte (mouseBtn's own
+                                 ; internal latch stays untouched, raw,
+                                 ; for mouse_poll/mouse_move_x/y's own
+                                 ; use elsewhere) - transform to jdaad's
+                                 ; author-facing convention at this
+                                 ; commit ONLY. Parity authority: jdaad.
+                                 ; js _MOUSE case 3 / GetMouse (github.
+                                 ; com/Utodev/jDAAD) - mouseButtons is
+                                 ; active-HIGH, idle 0, additive combos:
+                                 ;   bit0 LEFT(1)  bit1 RIGHT(2)  bit2 MIDDLE(4)
+                                 ; KMOUSE_BTN_PORT (nextdaad.inc) is
+                                 ; active-LOW, idle 7, Kempston order:
+                                 ;   bit0 RIGHT  bit1 LEFT  bit2 MIDDLE  bits7-4 wheel
+                                 ; jdaad implements only sub-commands
+                                 ; 0-3 (ours 4-7 no-ops are exact parity)
+                                 ; and has no wheel surface at all.
+    cpl                          ; idle 0, pressed 1 now; still Kempston
+                                 ; bit order (0=right,1=left,2=middle);
+                                 ; bits 7-3 = inverted wheel noise
+    and %00000111                ; drop the wheel bits - reclaimable
+                                 ; later as an extension, not a jdaad-
+                                 ; parity loss (jdaad has no wheel)
+    ld b, a                      ; B = idle-0, Kempston-order, 3-bit value
+    rrca                         ; whole-byte rotate right 1: bit0 of A
+                                 ; is now B's old bit1 (left)
+    xor b                        ; A's bit0 = (old bit1) XOR (old bit0):
+                                 ; 1 exactly where the two differ
+    and 1                        ; isolate that bit: 1 iff bit0/bit1 of
+                                 ; B differ, else 0
+    ld c, a
+    add a, a                     ; duplicate into bit1 too
+    or c                         ; A = swap-mask: %011 if bit0/bit1
+                                 ; differ (both must flip to swap), %000
+                                 ; if they already match (no flip needed)
+    xor b                        ; B with bit0/bit1 swapped (right<->
+                                 ; left), bit2 (middle) untouched, bits
+                                 ; 3-7 still 0 - classic adjacent-bit XOR
+                                 ; swap. Result: idle 0, left 1, right 2,
+                                 ; middle 4, combinations additive -
+                                 ; exact jdaad parity.
     ld (hl), a
     inc l
     ld a, (mouseCol80)
