@@ -1707,6 +1707,26 @@ ext_xmes:
     ld a, b                     ; zero bytes read = offset at/past EOF
     or c
     jr z, .failpost
+    ; Sentinel: terminate the freshly-read chunk at DATA_WINDOW+BC with
+    ; an encoded $0A ($F5 = NOT $0A) so txt_next_decoded (driven by
+    ; print_msg.loop below) cannot run past genuinely-read bytes into
+    ; stale window contents left by whatever last occupied this page -
+    ; ddbtext.asm's txt_next_decoded decodes via cpl/cp $0A, so $F5 is
+    ; the exact encoded byte it stops on (verified against that code,
+    ; not assumed). BC is 1..$2000 here (0 already handled above);
+    ; DATA_WINDOW+BC only escapes the 8K window when BC == $2000 (->
+    ; $E000, one past $DFFF), so clamp that one case to DATA_WINDOW+
+    ; $1FFF (the window's last byte) instead - an exactly-8K read is
+    ; already past any conforming message, so the overwritten byte is
+    ; academic.
+    ld hl, DATA_WINDOW
+    add hl, bc
+    ld a, b
+    cp $20                       ; BC == $2000? (B alone suffices - BC
+    jr nz, .sentok                ; can't exceed the $2000 requested)
+    dec hl                        ; clamp to DATA_WINDOW+$1FFF
+.sentok:
+    ld (hl), $F5
     call data_restore           ; CLOSE the window bracket before any
     ld a, (xmsHandle)           ; printing: data_save is NON-NESTABLE
     call esx_fclose              ; and the print pipeline (More paging,
