@@ -2180,6 +2180,261 @@ zx0RefPtr:   dw 0                ; back-ref cursor: window offset
 zx0Offset:   dw 0                ; current match offset, negative form
 zx0DepackSP: dw 0                ; SP snapshot for zx0_fail's rewind
 
+; --- Boot title screen (SP11 Task 1) ---
+; Probes for a game-supplied title image (DAAD.* - never numbered, so
+; it never competes with the picture cache/numbered-art namespace) and,
+; if one exists, shows it with music already playing (aud_boot_probe
+; started it before chaining here - see overlay1.asm) until any key is
+; pressed. Two entry points:
+;   title_present - probe only, for debug.asm's release boot_banner
+;     gate (self-contained: no overlay0/overlay1 dependency, esxDOS is
+;     already up by boot_banner time - see its call site);
+;   title_boot - the full sequence, chained from aud_boot_probe's tail.
+; Both are UNCONDITIONAL (no IFDEF DEBUG): the DEBUG build shows its
+; diagnostics first, then the title; only the release banner's PRINT is
+; gated on title_present, in debug.asm.
+
+TITLE_ROW equ 4                  ; word name ptr + mode byte + compressed byte
+
+; DAAD.* probe order, first hit wins - exactly gfxExtTab's 6 shapes
+; (same mode/compressed pairs, see its header for the ZX0-before-raw/
+; wide-before-narrow reasoning) against the fixed base name "DAAD"
+; instead of a per-picture number, since a title is never numbered.
+titleTab:
+    dw titleName0
+    db 1, 1                       ; DAAD.NX2.ZX0: 320-wide, ZX0
+    dw titleName1
+    db 1, 1                       ; DAAD.N2Z: 320-wide, ZX0 (8.3 synonym)
+    dw titleName2
+    db 1, 0                       ; DAAD.NX2: 320-wide, raw
+    dw titleName3
+    db 0, 1                       ; DAAD.NXI.ZX0: 256-wide, ZX0
+    dw titleName4
+    db 0, 1                       ; DAAD.NXZ: 256-wide, ZX0 (8.3 synonym)
+    dw titleName5
+    db 0, 0                       ; DAAD.NXI: 256-wide, raw
+titleTabEnd:
+
+titleName0: db "DAAD.NX2.ZX0", 0
+titleName1: db "DAAD.N2Z", 0
+titleName2: db "DAAD.NX2", 0
+titleName3: db "DAAD.NXI.ZX0", 0
+titleName4: db "DAAD.NXZ", 0
+titleName5: db "DAAD.NXI", 0
+
+titleRowPtr: dw 0                 ; title_probe's table-walk cursor
+
+; Try titleTab's 6 DAAD.* names in order, first hit wins. Out: CF clear
+; + the open read handle in gfxHandle, gfxMode/gfxWidth/gfxCompressed
+; set from the winning row - exactly what gfx_read_banks needs, and (via
+; gfxMode/gfxWidth) what title_blit needs after it; CF set = none of the
+; 6 exist, gfxHandle untouched. Touches only the shared gfx* load
+; scratch, mirroring gfx_open_chain's own direct-overwrite style (no
+; staging: a row that fails to open just gets overwritten by the next
+; one) - never gfxCache/gfxBankList/staged* (a probe/load, not a cache
+; commit). Corrupts everything.
+title_probe:
+    ld hl, titleTab
+.row:
+    ld (titleRowPtr), hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)                    ; DE = name pointer
+    inc hl
+    ld a, (hl)                    ; row's mode byte
+    ld (gfxMode), a
+    inc hl
+    ld a, (hl)                    ; row's compressed byte
+    ld (gfxCompressed), a
+    ld a, (gfxMode)
+    ld hl, 256
+    or a
+    jr z, .width
+    ld hl, 320
+.width:
+    ld (gfxWidth), hl
+    push de
+    call esx_getsetdrv            ; A = default drive, CF = error
+    pop hl                        ; HL = name pointer
+    jr c, .next
+    push hl
+    pop ix                        ; IX = name pointer
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr nc, .opened
+.next:
+    ld hl, (titleRowPtr)
+    ld de, TITLE_ROW
+    add hl, de
+    push hl
+    ld de, titleTabEnd
+    or a
+    sbc hl, de
+    pop hl
+    jr nz, .row
+    scf                           ; chain exhausted
+    ret
+.opened:
+    ld (gfxHandle), a
+    or a
+    ret
+
+; Boot-banner presence gate (debug.asm's release boot_banner): probes
+; the same 6 DAAD.* names as title_boot but only wants the verdict, so
+; the handle title_probe opens is closed again immediately rather than
+; carried into a load. Out: CF clear = a title is staged for boot (the
+; banner print is skipped - the title itself becomes the first thing
+; the player sees); CF set = none of the 6 exist (boot proceeds exactly
+; as before). Corrupts AF, BC, DE, HL only - IX is saved/restored
+; around title_probe's esxDOS calls so that holds regardless of what
+; esx_fopen/esx_fclose do to it.
+title_present:
+    push ix
+    call title_probe
+    jr c, .none
+    ld a, (gfxHandle)
+    call esx_fclose
+    ld a, $FF
+    ld (gfxHandle), a
+    or a
+    jr .ret
+.none:
+    scf
+.ret:
+    pop ix
+    ret
+
+; Full boot title sequence, chained from aud_boot_probe's tail
+; (overlay1.asm) via the ovl_map_page trampoline, entered with
+; OVL2_PAGE freshly mapped at MMU7. Probes the 6 DAAD.* names
+; (title_probe); CF set (none staged) is a normal, silent, fail-quiet
+; return - a game shipping no title boots exactly as before, and no
+; DEBUG marker fires (absence is normal here, unlike a numbered PICTURE
+; miss). On a hit: streams into scratch banks (gfx_read_banks), depacks
+; them if the row was ZX0 (gfx_depack - skipped for a raw hit, the same
+; call-nz idiom gfx_load uses), derives the row count
+; (gfx_derive_height), then title_blit (below) blits the run straight
+; off gfxArenaStart to the Layer 2 BACK surface and flips - gfx_load's
+; own cache-miss pipeline, stopping short of a cache commit.
+; gfx_direct_stream (location art's OWN transient fallback) is
+; deliberately NOT reused here, even for a raw hit: partway through, it
+; closes and REOPENS the file via gfx_open_chain to reach the palette
+; (F_SEEK unproven, see its own header) - and gfx_open_chain
+; unconditionally rebuilds a "NNN.ext" 3-DIGIT name from gfxPicNum,
+; which can never spell "DAAD". The bank-based path never reopens
+; anything (gfxHandle is closed exactly once, by gfx_read_banks, and
+; never touched again), so it has no such dependency. gfx_load_rollback
+; frees the banks immediately after the blit either way - transient,
+; nothing here ever touches gfxCache/stagedPic/stagedEntry. Ends with
+; the picture flipped visible, then the any-key wait (wait_key,
+; print.asm/SP4 - unconditional, no DAAD flag/timeout dependency, since
+; flags/eng_init_game haven't run yet), then h_display's own non-zero
+; (clear+flip) shape so the game starts on a clean Layer 2 with no
+; title art left behind. Music keeps playing throughout -
+; aud_boot_probe already started it, nothing here touches audio.
+; Returns via a plain ret, which - thanks to the chain's stack trick
+; (overlay1.asm) - lands straight back in aud_boot_probe's own caller
+; (main.asm). Corrupts everything.
+title_boot:
+    call title_probe
+    ret c                         ; no DAAD.* staged: silent, normal boot
+    call gfx_read_banks            ; -> scratch banks (closes the
+                                   ; handle on every path)
+    jr c, .rollback
+    ld a, (gfxCompressed)
+    or a                          ; also clears CF for the skip case
+    call nz, gfx_depack            ; scratch -> fresh decompressed run
+                                   ; (skipped for a raw hit)
+    jr c, .rollback
+    call gfx_derive_height
+    jr c, .rollback
+    call title_blit                ; run -> BACK surface, flip (never
+                                   ; fails, see its header)
+    call gfx_load_rollback         ; transient: hand the banks straight
+                                   ; back - no cache entry ever existed
+    call wait_key                  ; block for any key (print.asm)
+    ld b, 1
+    jp h_display                   ; h_display's non-zero shape: clear
+                                   ; BACK + flip + NR $12 - drops the
+                                   ; title art before the game's first
+                                   ; draw; rets for us
+.rollback:
+    call gfx_load_rollback
+    ret
+
+; Blit a freshly loaded/depacked TRANSIENT run (gfxArenaStart,
+; gfxBankCount banks; gfxMode/gfxHeight from title_probe/
+; gfx_derive_height) to the Layer 2 BACK surface and flip - gfx_blit's
+; body, minus the cache lookup: the run's first bank index is
+; gfxArenaStart directly (exactly what gfx_load would have written as
+; GCE_FIRST had it committed a cache entry - see gfx_load's commit
+; block above), so no gce_ptr indirection and no cache slot is ever
+; touched. Only called after gfx_read_banks + gfx_depack +
+; gfx_derive_height have all succeeded. Corrupts everything.
+title_blit:
+    ld a, (gfxMode)
+    ld (l2Mode), a                ; variable only - sizes l2_clear_back's
+                                   ; page count; NR $70/$12 wait for the flip
+    ld a, (l2BackBank)
+    add a, a
+    ld (gfxSurfPage), a
+    call l2_clear_back             ; own data_save/restore - run BEFORE ours
+    call data_save
+    ld a, (gfxArenaStart)
+    ld (gfxSrcIdx), a
+    xor a
+    ld (gfxSrcHalf), a
+    ld hl, DATA_WINDOW+512         ; skip the palette (loaded after the rows)
+    ld (gfxSrcPtr), hl
+    ld a, (gfxMode)
+    or a
+    ld de, 256
+    jr z, .width
+    ld de, 320
+.width:
+    ld (gfxWidth), de
+    ld a, (gfxSurfPage)            ; 256-wide linear dest stream init
+    ld (gfxDstPage), a             ; (320-wide scatter reinitialises
+    ld hl, DATA_WINDOW              ; gfxDstPage itself every row)
+    ld (gfxDstPtr), hl
+    xor a
+    ld (gfxRowY), a
+    ld a, (gfxHeight)
+    ld (gfxRowsLeft), a            ; 0 = 256 rows (djnz-style wrap)
+.row:
+    call gfx_row_fetch
+    ld a, (gfxMode)
+    or a
+    jr z, .linear
+    call gfx_row_scatter320
+    jr .next
+.linear:
+    call gfx_row_copy256
+.next:
+    ld hl, gfxRowY
+    inc (hl)
+    ld hl, gfxRowsLeft
+    dec (hl)
+    jr nz, .row
+    ; rows done: rewind the source stream to the run's 512-byte palette
+    ; (offset 0, wholly inside the run's first page) and load it now,
+    ; as late as possible before the flip (mirrors gfx_blit)
+    ld a, (gfxArenaStart)
+    ld (gfxSrcIdx), a
+    xor a
+    ld (gfxSrcHalf), a
+    call gfx_src_remap
+    ld hl, DATA_WINDOW
+    ld b, 1                       ; format 1 = 256 x 2-byte 9-bit entries
+    call l2_palette_load
+    call data_restore
+    ; flip: swap surface roles, then program resolution + new front
+    ; bank back-to-back via l2_mode_set (see l2_flip_swap header)
+    call l2_flip_swap
+    ld a, (gfxMode)
+    call l2_mode_set
+    jp l2_enable
+
 ; --- DEBUG bring-up test card ---
 ; Owner-driven hardware verification hook, wired from debug.asm's
 ; l2_dbg_hook (holding T at boot, see that file for the key protocol).
@@ -2484,4 +2739,5 @@ tc_mark_320:
 
  ENDIF
 
+    DISPLAY "overlay2 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT

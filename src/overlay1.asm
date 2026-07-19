@@ -2016,12 +2016,37 @@ aud_boot_probe:
     ld (audEnable), a
 .nosong:
     call aud_load_sfb
-    ret c
+    jr c, .title_chain
     ld hl, audRequest
     set 5, (hl)
     ld a, 1
     ld (audEnable), a
-    ret
+.title_chain:
+    ; Boot title screen (SP11 Task 1): every exit of this routine funnels
+    ; here (including the ret-c above) so a game with no music still gets
+    ; its title - title art with no soundtrack is a normal shipping
+    ; configuration, not a degraded one. Cannot inline "nextreg NR_MMU7,
+    ; OVL2_PAGE" followed by a plain jp/ret here: this code is ITSELF
+    ; executing from the $E000 window (OVL1_PAGE currently mapped at
+    ; MMU7), so the moment the nextreg takes effect, the NEXT byte
+    ; fetched at this same address range comes from OVL2_PAGE, not from
+    ; whatever this file placed after the nextreg (the classic banked-Z80
+    ; self-remap hazard - the same reason ovl_map_page is documented
+    ; DISPATCHER/ISR ONLY and the engine dispatcher (engine.asm) always
+    ; remaps from resident code before jumping into a handler, never the
+    ; other way round). Fix: push the REAL target (title_boot, an overlay2
+    ; address) as a fake return address, then jp into the resident
+    ; ovl_map_page - its own "nextreg NR_MMU7,a / ret" runs entirely from
+    ; resident memory (banks.asm, unaffected by the remap it just made),
+    ; and its ret pops OUR pushed address, landing on title_boot with
+    ; OVL2_PAGE already mapped. Stack-neutral overall: that ret consumes
+    ; exactly the one extra word we pushed, leaving main's original
+    ; return address on top for title_boot's own eventual ret. MMU7 left
+    ; on OVL2 afterwards - harmless, the dispatcher remaps per condact.
+    ld hl, title_boot
+    push hl
+    ld a, OVL2_PAGE
+    jp ovl_map_page
 
 audGameAky: db "GAME.AKY", 0
 audGameSfb: db "GAME.SFB", 0
@@ -2998,4 +3023,5 @@ aysStrIdx:     db 0            ; current aysPageTab index while streaming
 aysStrWin:     dw 0            ; current window byte count
 aysProbe:      db 0            ; oversize one-byte probe target
 
+    DISPLAY "overlay1 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT

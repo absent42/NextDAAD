@@ -812,8 +812,24 @@ dbg_space:
 ; overwrites this shortly after - a startup stamp, not a persistent
 ; HUD; confirming the on-screen result is an owner eye leg, not
 ; headlessly testable. Corrupts everything.
+;
+; SP11 Task 1: after txt_init, a presence gate - probe for a staged
+; DAAD.* title (title_present, overlay2.asm) and skip the print
+; entirely when one exists, so the title is the first thing the player
+; sees rather than a version stamp that the title art immediately
+; covers anyway. Placed AFTER txt_init (not before it) so the early
+; "ret nc" never skips it - fatal()'s own safety (the paragraph above)
+; stays intact regardless of which way this gate goes. This file has no
+; MMU directive (resident, always mapped), so the nextreg + call below
+; are just two ordinary sequential instructions - unlike aud_boot_
+; probe's tail (overlay1.asm), which has to route its own OVL2 handoff
+; through a trampoline because it executes FROM WITHIN the very $E000
+; window it remaps (see that file for why the two cases differ).
 boot_banner:
     call txt_init
+    nextreg NR_MMU7, OVL2_PAGE   ; probe DAAD.* presence - a game
+    call title_present           ; shipping a title gets a clean boot
+    ret nc                       ; (title becomes the first thing seen)
     ld a, (tmAttr)
     ld e, a
     ld b, 0

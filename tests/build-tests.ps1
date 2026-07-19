@@ -29,7 +29,14 @@
 #            produced by the export script / aysconv.ps1) into sd\, after
 #            removing stale sd\*.AKY, sd\GAME.SFB, sd\*.WAV and sd\*.AYS;
 #            warns and skips if the folder is empty
-param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud)
+# Boot title screen (SP11 Task 1), independent of the DDB switches:
+#   -Title   stage a DAAD.NXI title-screen fixture into sd\ - copies
+#            tools\Rabenstein-master\nextdaad\0.NXI (the same corpus
+#            -Rab -Gfx256 stages; every numbered NXI there is 25088
+#            bytes, so "smallest" is a tie broken by lowest number) to
+#            sd\DAAD.NXI. Not committed (sd/*.NXI is gitignored).
+#            Default (no -Title) leaves sd\ untouched.
+param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -298,6 +305,22 @@ if ($UU) {
         }
     }
     "staged $uuStaged Urban Upstart art file(s) -> sd\NNN.$uuExt"
+}
+
+if ($Title) {
+    # SP11 Task 1 owner leg fixture: title_present/title_boot (overlay2.asm)
+    # probe sd\DAAD.* at boot, so the owner-eye-leg needs one staged.
+    # Sourced from the same corpus -Rab -Gfx256 stages
+    # (tools\Rabenstein-master\nextdaad\*.NXI) rather than a committed
+    # binary - every numbered NXI there is 25088 bytes (21 files, all
+    # identical size), so "the smallest" is a tie; 0.NXI is the
+    # deterministic pick (lowest number). Same CSpect lock hazard as
+    # -Rab/-UU: refuse to stage rather than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial title fixture)"
+    }
+    Copy-Item "$root\tools\Rabenstein-master\nextdaad\0.NXI" "$root\sd\DAAD.NXI" -Force
+    "staged tools\Rabenstein-master\nextdaad\0.NXI -> sd\DAAD.NXI"
 }
 
 if ($Aud) {
