@@ -298,6 +298,26 @@ AUD_STAGE_RING  equ 1024    ; power-of-two ring $7C00-$7FFF: the CTC ISR plays
     ASSERT AUD_STAGE_RING >= 2*(AUD_RATE_MAX/50)  ; ring > 1 frame of consumption
                             ; so a tick always refills before the ISR underruns
 
+; --- DMA picture copies (SP11 Task 2) ---
+; zxnDMA one-shot mem-to-mem chunk copies for Layer 2 picture work
+; (overlay2.asm: dma_copy, l2_copy_back_front, gfx_row_copy256). DMA_PORT
+; ($6B, above) is the same physical port the retired SP8 sample engine
+; used - that engine is fully gone (SP10 CTC pivot; see DAC_SILENCE's
+; comment above), so dma_copy is now its only consumer. See dma_copy's
+; own header comment (overlay2.asm) for the frame-ISR MMU6/7 hazard that
+; forces every chunk into its own DI bracket, one-shot CONTINUOUS mode -
+; never burst, auto-restart, or a live status/counter read.
+ IFDEF DMA_GFX
+DMA_CHUNK_MAX   equ 256     ; zxnDMA one-shot cap per DI bracket - dma_copy
+                            ; splits any longer request into pieces this
+                            ; size or smaller
+GFX_DMA_MIN_LEN equ 64      ; design threshold: below this LDIR wins on
+                            ; programming overhead (documentation only -
+                            ; both current call sites move a fixed 256
+                            ; bytes, comfortably over the line, so neither
+                            ; needs a runtime length check)
+ ENDIF
+
 ; --- Window system (sub-project 2) ---
 WIN_X           equ 0
 WIN_Y           equ 1

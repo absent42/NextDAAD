@@ -335,6 +335,196 @@ l2_flip_swap:
     ld (l2BackBank), a
     ret
 
+; --- DMA-accelerated block copy (SP11 Task 2) ---
+; HL = source, DE = dest, BC = length - all three within the currently-
+; mapped windows (the zxnDMA reads the LIVE Z80 MMU map, exactly like a
+; CPU access would).
+;
+; HAZARD: the frame ISR's full-context path (audEnable != 0 - sticky
+; once set, so effectively true for the whole session after the first
+; note of boot music) saves and REMAPS MMU6/7 around aud_tick
+; (interrupts.asm:155-173) to reach the audio banks, then restores them
+; before it returns. A DMA transfer left running across that tick would
+; therefore run through the AUDIO banks' mapping instead of the
+; caller's - corrupting the picture and trashing audio state. LDIR was
+; immune (the CPU simply suspends mid-instruction; the ISR restores the
+; map before LDIR resumes on the far side). So every chunk here is
+; programmed AND run to completion inside ONE DI bracket, in one-shot
+; CONTINUOUS mode: with interrupts off nothing else needs the bus,
+; continuous holds the bus to completion (no burst hand-back), and
+; completion is IMPLICIT - the final OUT (dma_prog's WR6 enable byte)
+; does not return to the next instruction until the whole chunk has
+; transferred, so there is no status poll anywhere. NEVER: burst mode,
+; auto-restart, a live counter read, or a refeed while enabled.
+;
+; Chunks are capped at DMA_CHUNK_MAX (256) bytes: see sp11-task-2-
+; report.md "chunk-loop T-math" for the full instruction-level count -
+; roughly 1.1k T-states (~40us at 28MHz) per chunk including this
+; loop's own dispatch/bookkeeping, comfortably inside the SP10 rule
+; that a DI section stays under one CTC period (50us at 20kHz). Between
+; chunks interrupts are live - ctc_isr catches up (the ring absorbs the
+; jitter) and a pending frame tick runs with the DMA idle, so the
+; hazard window never actually opens.
+;
+; Splits BC into <=256-byte chunks and loops; returns once the whole
+; length has transferred. Corrupts AF, BC, DE, HL - matches LDIR's own
+; end state exactly (HL/DE left just past the last byte moved, BC = 0),
+; so it drops into any LDIR call site with no other change needed.
+ IFDEF DMA_GFX
+dma_copy:
+.loop:
+    ld a, b
+    or c
+    ret z                        ; BC == 0: entire length transferred
+    ld a, b
+    or a
+    jr nz, .full                 ; B != 0: remaining > 255, chunk = 256
+    ld a, c                      ; B == 0: remaining = C, in 1..255
+    ld (dma_prog.alen), a
+    xor a
+    ld (dma_prog.alen+1), a
+    jr .patch
+.full:
+    xor a
+    ld (dma_prog.alen), a
+    ld a, high DMA_CHUNK_MAX
+    ld (dma_prog.alen+1), a      ; chunk = DMA_CHUNK_MAX (256 = $0100)
+.patch:
+    ld (dma_prog.aaddr), hl      ; this chunk's source start
+    ld (dma_prog.baddr), de      ; this chunk's dest start
+    push bc                      ; only BC needs saving across the OTIR
+                                  ; (it repurposes B/C as its own byte
+                                  ; counter/port); HL/DE are rebuilt
+                                  ; below from dma_prog's own fields,
+                                  ; which the OTIR only reads, never
+                                  ; writes
+    di
+    ld hl, dma_prog
+    ld b, dma_prog_len
+    ld c, DMA_PORT
+    otir                         ; program + run to completion, entirely
+                                  ; inside this one DI bracket (see
+                                  ; header) - the ei below is reached
+                                  ; only once the chunk is fully moved
+    ei
+    pop bc
+    ld h, b
+    ld l, c                      ; HL = remaining length (pre-chunk)
+    ld de, (dma_prog.alen)       ; DE = chunk length just transferred
+    or a
+    sbc hl, de                   ; HL = remaining length (post-chunk)
+    ld b, h
+    ld c, l                      ; BC = remaining length (post-chunk)
+    ld hl, (dma_prog.aaddr)      ; HL = this chunk's source start
+    add hl, de                   ; HL = next chunk's source start
+    push hl
+    ld hl, (dma_prog.baddr)      ; HL = this chunk's dest start
+    add hl, de                   ; HL = next chunk's dest start
+    ex de, hl                    ; DE = next chunk's dest start
+    pop hl                       ; HL = next chunk's source start
+    jp .loop
+
+; zxnDMA one-shot program: mem-to-mem, port A (source) -> port B (dest),
+; both memory/incrementing, CONTINUOUS mode, stop on end of block - no
+; auto-restart, ever (WR5 below). Re-sent whole by dma_copy's OTIR every
+; chunk; .aaddr/.alen/.baddr are patched in place first, each call.
+;
+; Bytes verified against docs/Z80_DMA_Chip__ps0179.pdf's WR0/WR1/WR2/
+; WR4/WR5/WR6 bit tables (the PDF is scan-only in this checkout, no
+; extractable text - cross-checked instead via tools/NextZXOS/docs/
+; extra-hw/dma/zxndma.txt, which transcribes the same Zilog-convention
+; tables AND ships a worked mem-to-mem CONTINUOUS example, "TransferDMA",
+; that this template now matches byte for byte) and against the retired
+; SP8/f-prime sample engine (git show d464951, audDmaProg), which cites
+; the same PDF by page number. Two bytes the brief's sketch omitted were
+; added back after that check - see sp11-task-2-report.md "Program bytes
+; used" for the full derivation:
+;   - WR1's base byte (%01010100) sets D6, which per the datasheet
+;     requires an associated "port A timing byte" to follow; without it
+;     every subsequent byte in the program desyncs. Added %00000010
+;     (cycle length 2 - zxndma.txt: "cycle lengths... can be set to
+;     their minimum values without ill effects", the auto-slowdown
+;     handles Layer 2 contention transparently regardless of source).
+;   - WR2's base byte (%01010000) sets the same D6 timing-byte flag for
+;     port B; same fix, same cycle-length-2 byte, prescaler bit (D5)
+;     left clear - a plain mem-to-mem copy has no fixed-rate
+;     requirement, and this is the only DMA program in the codebase
+;     (the SP8 sample engine that used a prescaler is fully retired),
+;     so there is no stale prescaler state to inherit.
+; WR5 = $82: zxndma.txt's own worked example mislabels this byte
+; "Restart on end of block" in its comment, but its OWN formal bit
+; table (D5=0) and the retired SP8 engine's code comment both agree
+; $82 = STOP on end of block - the table and the field-tested reference
+; outrank the prose typo. Block length is the EXACT byte count (not
+; N-1): the datasheet's classic-Z80-DMA off-by-one does not apply to
+; the zxnDMA (zxndma.txt states this explicitly; the retired SP8
+; engine's own comment records the same empirical finding).
+dma_prog:
+    db $83                       ; WR6: disable (clean slate before load)
+    db %01111101                 ; WR0: A->B, port A addr + block length
+                                  ; follow (D3-D6 all set: low,high,lenLo,
+                                  ; lenHi, in that order)
+.aaddr:
+    dw 0                         ; port A start = source (patched)
+.alen:
+    dw 0                         ; block length, exact count (patched)
+    db %01010100                 ; WR1: A memory, incrementing, timing
+                                  ; byte follows
+    db %00000010                 ; A cycle length 2
+    db %01010000                 ; WR2: B memory, incrementing, timing
+                                  ; byte follows
+    db %00000010                 ; B cycle length 2, no prescaler
+    db %10101101                 ; WR4: CONTINUOUS mode, port B addr
+                                  ; (low+high) follows
+.baddr:
+    dw 0                         ; port B start = dest (patched)
+    db %10000010                 ; WR5 $82: /ce only, STOP on end of
+                                  ; block (see header: never auto-restart)
+    db $CF                       ; WR6: load
+    db $87                       ; WR6: enable - this OUT does not return
+                                  ; until the chunk has fully transferred
+dma_prog_len equ $ - dma_prog
+ ENDIF
+
+; --- DMA_GFX A/B measurement (SP11 Task 2, diagnostic, OFF by default) ---
+; frameCounter deltas (src/interrupts.asm - incremented once per frame
+; by BOTH the frame ISR's fast and full-context paths) around the two
+; DMA-eligible operations, printed via the DEBUG dbg_* console. OFF by
+; default; assemble with -DDMA_MEASURE=1 ALONGSIDE the default DEBUG
+; build. Verified this also assembles cleanly under a Release-style
+; build (debug.asm's dbg_* Release stubs are shared no-op `ret`s, not
+; missing labels - see debug.asm:791 "Release stubs: same entry points,
+; no output, minimal size") but is pointless there: every dbg_* call
+; silently discards its output, so the printed numbers never appear -
+; DEBUG is where this diagnostic actually earns its ~94 bytes. Build
+; once with DMA_GFX (default) and once with -NoDmaGfx, trigger the same
+; on-screen action in each, and compare the two printed deltas - that
+; is the A/B leg this exists for; there is no in-build CPU-vs-DMA
+; runtime toggle.
+;   C256/C320 (row 18) - one l2_copy_back_front call (GFX condact subs
+;     0/1), labelled by l2Mode at the moment it runs (0 = 256x192, 6
+;     pages; 1 = 320x256, 10 pages).
+;   SCAT (row 19) - one full gfx_blit, ONLY when stagedMode = 1 (320-
+;     wide, the gfx_row_scatter320 path - see that routine's own header
+;     for why it carries no DMA_GFX branch: this number is expected to
+;     read IDENTICALLY between a DMA_GFX and a -NoDmaGfx build, since
+;     no byte on that path differs between the two).
+ IFDEF DMA_MEASURE
+dma_meas_report:
+    call dbg_puts                ; HL = label (ASCIIZ); advances past it
+    ld hl, (frameCounter)
+    ld de, (dmaMeasT0)
+    or a
+    sbc hl, de                   ; HL = frame delta since dmaMeasT0
+    call dbg_hex16
+    ld a, 13
+    jp dbg_putc
+dmaMeasT0:      dw 0
+dmaMeasLblC256: db "C256 ", 0
+dmaMeasLblC320: db "C320 ", 0
+dmaMeasLblScat: db "SCAT ", 0
+ ENDIF
+
 ; Copy one Layer 2 surface onto the other, page for page. Slot 6 is
 ; the ONLY data window available to this overlay - slot 7 holds this
 ; very code (see gfxRowBuf's header, and banks.asm's ovl_map_page
@@ -358,6 +548,10 @@ GFX_COPY_CHUNK equ 256                  ; divides 8192 evenly, fits
                                          ; inside gfxRowBuf (320 bytes)
 GFX_COPY_CHUNKS_PER_PAGE equ 8192/GFX_COPY_CHUNK
 l2_copy_back_front:
+ IFDEF DMA_MEASURE
+    ld hl, (frameCounter)
+    ld (dmaMeasT0), hl
+ ENDIF
     add a, a
     ld (l2CopySrcPage), a
     ld a, d
@@ -382,13 +576,21 @@ l2_copy_back_front:
     ld hl, (l2CopyPtr)
     ld de, gfxRowBuf
     ld bc, GFX_COPY_CHUNK
+ IFDEF DMA_GFX
+    call dma_copy                ; source page -> bounce buffer
+ ELSE
     ldir                         ; source page -> bounce buffer
+ ENDIF
     ld a, (l2CopyDstPage)
     call data_map_page
     ld hl, gfxRowBuf
     ld de, (l2CopyPtr)
     ld bc, GFX_COPY_CHUNK
+ IFDEF DMA_GFX
+    call dma_copy                ; bounce buffer -> dest page
+ ELSE
     ldir                         ; bounce buffer -> dest page
+ ENDIF
     ld hl, (l2CopyPtr)
     ld de, GFX_COPY_CHUNK
     add hl, de
@@ -404,6 +606,18 @@ l2_copy_back_front:
     dec (hl)
     jr nz, .page
     call data_restore
+ IFDEF DMA_MEASURE
+    ld a, (l2Mode)
+    ld hl, dmaMeasLblC256
+    or a
+    jr z, .measl
+    ld hl, dmaMeasLblC320
+.measl:
+    ld b, 18
+    ld c, 0
+    call dbg_at
+    call dma_meas_report
+ ENDIF
     ret
 
 l2CopySrcPage:  db 0
@@ -1889,6 +2103,10 @@ zx0_ref_read:
 ; artifact. 256-wide mode is trivially linear-to-linear (row-major
 ; both sides): 2 remaps per row.
 gfx_blit:
+ IFDEF DMA_MEASURE
+    ld hl, (frameCounter)
+    ld (dmaMeasT0), hl
+ ENDIF
     ld a, (stagedEntry)
     cp GFX_EMPTY
     ret z
@@ -1960,6 +2178,18 @@ gfx_blit:
     call l2_flip_swap
     ld a, (stagedMode)
     call l2_mode_set
+ IFDEF DMA_MEASURE
+    ld a, (stagedMode)
+    or a
+    jr z, .measskip               ; only the 320-wide (scatter) path -
+                                   ; see gfx_row_scatter320's own header
+    ld hl, dmaMeasLblScat
+    ld b, 19
+    ld c, 0
+    call dbg_at
+    call dma_meas_report
+.measskip:
+ ENDIF
     jp l2_enable
 
 ; Map the current source page (gfxBankList[gfxSrcIdx]*2 + gfxSrcHalf)
@@ -2059,7 +2289,11 @@ gfx_row_copy256:
     ld hl, gfxRowBuf
     ld de, (gfxDstPtr)
     ld bc, 256
+ IFDEF DMA_GFX                   ; 256 >= GFX_DMA_MIN_LEN unconditionally
+    call dma_copy
+ ELSE
     ldir
+ ENDIF
     ld a, d
     cp high GFX_SRC_END
     jr c, .store
@@ -2078,6 +2312,18 @@ gfx_row_copy256:
 ; ten page runs per row. Reuses gfxDstPage as its page cursor (the
 ; linear 256-wide walk and this one never mix within a blit).
 ; Corrupts AF, BC, DE, HL.
+;
+; SP11 Task 2 (DMA): evaluated and rejected here, deliberately left on
+; the CPU path in BOTH DMA_GFX and -NoDmaGfx builds - no IFDEF at all.
+; The inner .px loop's destination is NOT contiguous: D (the address
+; high byte) increments every byte while E (gfxRowY) stays fixed for
+; all 32 iterations of a page, so successive writes land 256 bytes
+; apart. There is no run longer than one byte to hand to dma_copy - the
+; only "batching" possible would be one DMA chunk per PIXEL, and a
+; length-1 chunk costs ~600T of program+dispatch overhead to move one
+; byte the CPU's own per-pixel loop body moves for ~37T (ld/inc/ld/inc/
+; djnz) - more than an order of magnitude worse, not just a wash. See
+; sp11-task-2-report.md "320 scatter" for the full T-state comparison.
 gfx_row_scatter320:
     ld hl, gfxRowBuf
     ld a, (gfxSurfPage)
