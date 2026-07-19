@@ -1,0 +1,143 @@
+; NDPARTB.DSF - SP11 Task 6 two-part fixture, part 2 (staged as
+; GAME2.DDB + PART2\0.XMB by tests\build-tests.ps1 -Part). Paired with
+; NDPARTA.DSF (part A, game root) - see that file's header comment for
+; the full owner leg: exact commands, expected screen sequence, and the
+; optional -Title variant. Not part of the automated condacts.dsf suite.
+
+/CTL
+_
+
+/VOC
+BENCH 50 noun
+KEY   51 noun
+CHEST 52 noun
+
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "I didn't understand."
+/7  "I can't go in that direction."
+/8  "I can't do that."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 "Press any key."
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+
+/MTX
+
+/OTX
+/0 "a wooden bench"
+/1 "a small brass key"
+/2 "a heavy chest"
+
+/LTX
+/0 "Part two arena."
+
+/CON
+/0
+
+/OBJ
+;obj  starts  weight    c w  5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0    noun   adjective
+/0    0           1     _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    BENCH  _
+/1    0           1     _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    KEY    _
+/2    0           5     _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _    CHEST  _
+
+/PRO 0
+; Entry 1: carry-through proof. Flags 100/101 and object 1's CARRIED
+; location all arrived from part A verbatim - all 256 flags copy across
+; a switch, and object locations copy by index for as many objects as
+; both parts define in common (see authoring-kit\SETUP.md's multi-part
+; "Author caveats" for the full rules a real game must follow).
+> _ _   EQ 100 77
+        EQ 101 88
+        CARRIED 1
+        MES "PB CARRY OK#n"
+        SKIP 1
+> _ _   MES "PB CARRY F#n"
+
+; Entry 2: PARTn asset probe proof. Part A's own 0.XMB is staged at the
+; SD root (sd\0.XMB); part B's is staged separately at sd\PART2\0.XMB,
+; with DIFFERENT bytes at the same internal offset. XMES only prints
+; this clean sentence if ext_xmes's PARTn\ probe (SP11 Task 5) actually
+; won the race against the root file - a probe that wrongly fell
+; through to the root 0.XMB would read A's bytes at B's offset instead,
+; producing garbled or simply wrong text, not a crash and not silence.
+> _ _   XMES "part two external text via PART2"
+        NEWLINE
+
+; Entry 3: same-part SAVE/LOAD round trip while curPart = 2 - the first
+; place in the whole test corpus that exercises h_save/h_load away from
+; curPart = 1 (condacts.dsf's own SAVE/LOAD checks always run at part
+; 1). Type any 1-8 character name, then the SAME name again at the
+; second prompt. SAVE/LOAD are condition-typed here: either failing
+; aborts this entry immediately and falls to "PB SAV F" below, the same
+; idiom condacts.dsf check 62 uses for its own round trip.
+> _ _   MES "PB TYPE NAME: p2#n"
+        LET 110 55
+        SAVE 0
+        LET 110 0
+        MES "PB TYPE NAME: p2#n"
+        LOAD 0
+        EQ 110 55
+        MES "PB SAV OK#n"
+        SKIP 1
+> _ _   MES "PB SAV F#n"
+
+; Entry 4: the return leg, mirroring part A's own outbound switch
+; (NDPARTA.DSF entry 1) - fail-silent on a missing GAME.DDB, same idiom
+; as condacts.dsf check 44. On success this entry never finishes.
+> _ _   EXTERN 1 4
+        MES "PB SWITCH F#n"
+/END

@@ -421,9 +421,15 @@ NORTH 0
 ; DRC compiles as a plain 2-argument EXTERN, no third byte to eat) -
 ; bare fn 3 is author error, not a supported classic-EXTERN form (see
 ; ext_xmes's header comment / MALUVA doc: "EXTERN 0 3 (with setup)").
-; This check used fn 3 before ext_xmes/the stream walker existed; kept
-; the same intent (dispatch to a still-stubbed vector) on fn 4 instead.
-> _ _   EXTERN 5 4
+; This check used fn 3 before ext_xmes/the stream walker existed, then
+; fn 4 once ext_xmes/the stream walker existed but XPART did not. SP11
+; Task 3 made vector 4 live (h_xpart) - EXTERN 5 4 would now attempt a
+; real part switch to part 5 instead of hitting a stub, so this check
+; moved to fn 5, still ext_stub (extVec, overlay0.asm), to keep testing
+; its original, still-relevant intent: a bare EXTERN to an unimplemented
+; vector compiles and no-ops. The two-part switch itself is exercised by
+; NDPARTA.DSF/NDPARTB.DSF via -Part, not this suite.
+> _ _   EXTERN 5 5
         MES "44 OK#n"
         SKIP 1
 > _ _   MES "44 F#n"

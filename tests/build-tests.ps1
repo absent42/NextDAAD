@@ -12,9 +12,24 @@
 # N.NXI/N.NX2 art exists there as-is (currently NXI-only) to sd\NNN.NXI.
 # The DDB switches are mutually exclusive - if more than one is given,
 # whichever copy runs last in this script wins: -Suite copies first,
-# -Err4 copies over it, -Rab copies over that, and -UU copies last of
-# all, since its block comes after -Rab's. The template is active if no
-# switch is given.
+# -Err4 copies over it, -Rab copies over that, -UU copies over that, and
+# -Part copies last of all (both its files - see below), since its
+# block comes after -UU's. The template is active if no switch is given.
+# Two-part fixture (SP11 Task 6), independent of the single-DDB switches
+# above except that it also writes sd\GAME.DDB (see the mutually-
+# exclusive note):
+#   -Part    compile and stage both halves of the NDPARTA.DSF/
+#            NDPARTB.DSF fixture pair. NDPARTA -> sd\GAME.DDB (part 1,
+#            byte-identical to a single-part game) + sd\0.XMB; NDPARTB
+#            -> sd\GAME2.DDB (part 2) + sd\PART2\0.XMB (directory
+#            created if absent). The two 0.XMB files hold DIFFERENT
+#            content at overlapping offsets by design - NDPARTB.DSF's
+#            own XMES line only reads back clean if the interpreter's
+#            PARTn\ probe (SP11 Task 5) actually wins over the root
+#            file; a wrong probe reads part A's bytes at part B's
+#            offsets instead (garbled/wrong text, not a crash). Same
+#            CSpect-running guard as -Rab/-UU; stale-cleans sd\GAME2.DDB
+#            and both 0.XMB files before restaging.
 # Art-staging modifiers (effective only with -Rab, combinable):
 #   -Gfx256  stage the 256-wide N.NXI set instead of the N.NX2s
 #   -GfxZx0  ZX0-compress each staged file (sd\NNN.NX2.ZX0 / with
@@ -38,7 +53,7 @@
 #            existing asset dirs stay where they are). Not committed
 #            (sd\ is gitignored). Default (no -Title) leaves sd\
 #            untouched.
-param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title)
+param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -309,6 +324,80 @@ if ($UU) {
     "staged $uuStaged Urban Upstart art file(s) -> sd\NNN.$uuExt"
 }
 
+$partActive = $false
+if ($Part) {
+    # SP11 Task 6: two-part fixture pair. Same CSpect-lock hazard as
+    # -Rab/-UU (four files across two DDBs this time) - refuse to stage
+    # rather than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause partial part staging)"
+    }
+    New-Item -ItemType Directory -Force "$root\sd\PART2" | Out-Null
+    # Stale-clean both DDBs' worth of previous output before restaging -
+    # sd\GAME.DDB itself is always overwritten below (-Force), but the
+    # other three are only ever written by this switch, so a stale copy
+    # from an interrupted/older run would otherwise survive untouched.
+    Remove-Item "$root\sd\GAME.DDB", "$root\sd\0.XMB", "$root\sd\GAME2.DDB", "$root\sd\PART2\0.XMB" -Force -ErrorAction SilentlyContinue
+
+    # Part A (root) -> sd\GAME.DDB + sd\0.XMB. Part 1 is root-only by
+    # design (h_xpart/xpart_build_name), so this is byte-identical to
+    # staging any other single-part DDB as the active game.
+    Copy-Item "$PSScriptRoot\NDPARTA.DSF" "$dr\NDPARTA.DSF" -Force
+    Push-Location $dr
+    try {
+        # SP10 pre-clean lesson (ddb.bat/4a68620): $dr is shared across
+        # every fixture this script compiles - delete a stale 0.XMB
+        # before each DRB run so it cannot be mistaken for this run's
+        # own output (or, worse, silently reused if this DSF's own
+        # XMESSAGE/XMES compile step were ever removed).
+        Remove-Item '0.XMB' -ErrorAction SilentlyContinue
+        & .\TOOLS\DRC\DRF.exe zx next NDPARTA.DSF
+        if ($LASTEXITCODE -ne 0) { throw "DRF failed (NDPARTA)" }
+        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDPARTA.json NDPARTA.DDB
+        if ($LASTEXITCODE -ne 0) { throw "DRB failed (NDPARTA)" }
+        Move-Item NDPARTA.DDB "$root\sd\GAME.DDB" -Force
+        # NDPARTA.DSF always uses XMESSAGE (its own header comment) -
+        # no Test-Path guard, matching -Suite's own condacts.xmb
+        # handling: an absence here is a real regression worth throwing
+        # on, not a silently-tolerated gap like the plain template.
+        if (-not (Test-Path '0.XMB')) { throw "NDPARTA.DSF produced no 0.XMB - XMESSAGE missing from the source?" }
+        Move-Item '0.XMB' "$root\tests\out\parta.xmb" -Force
+        Copy-Item "$root\tests\out\parta.xmb" "$root\sd\0.XMB" -Force
+    }
+    finally {
+        Remove-Item "$dr\NDPARTA.DSF", "$dr\NDPARTA.json" -ErrorAction SilentlyContinue
+        Pop-Location
+    }
+
+    # Part 2 -> sd\GAME2.DDB + sd\PART2\0.XMB (the PARTn\ shadow the
+    # interpreter's asset probe expects - SP11 Task 5).
+    Copy-Item "$PSScriptRoot\NDPARTB.DSF" "$dr\NDPARTB.DSF" -Force
+    Push-Location $dr
+    try {
+        Remove-Item '0.XMB' -ErrorAction SilentlyContinue
+        & .\TOOLS\DRC\DRF.exe zx next NDPARTB.DSF
+        if ($LASTEXITCODE -ne 0) { throw "DRF failed (NDPARTB)" }
+        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDPARTB.json NDPARTB.DDB
+        if ($LASTEXITCODE -ne 0) { throw "DRB failed (NDPARTB)" }
+        Move-Item NDPARTB.DDB "$root\sd\GAME2.DDB" -Force
+        if (-not (Test-Path '0.XMB')) { throw "NDPARTB.DSF produced no 0.XMB - XMES missing from the source?" }
+        Move-Item '0.XMB' "$root\tests\out\partb.xmb" -Force
+        Copy-Item "$root\tests\out\partb.xmb" "$root\sd\PART2\0.XMB" -Force
+    }
+    finally {
+        Remove-Item "$dr\NDPARTB.DSF", "$dr\NDPARTB.json" -ErrorAction SilentlyContinue
+        Pop-Location
+    }
+
+    $partActive = $true
+    $partaSize = (Get-Item "$root\sd\GAME.DDB").Length
+    $partbSize = (Get-Item "$root\sd\GAME2.DDB").Length
+    $partaXmbSize = (Get-Item "$root\sd\0.XMB").Length
+    $partbXmbSize = (Get-Item "$root\sd\PART2\0.XMB").Length
+    "staged NDPARTA -> sd\GAME.DDB ($partaSize bytes) + sd\0.XMB ($partaXmbSize bytes)"
+    "staged NDPARTB -> sd\GAME2.DDB ($partbSize bytes) + sd\PART2\0.XMB ($partbXmbSize bytes)"
+}
+
 if ($Title) {
     # SP11 Task 1 owner leg fixture: title_present/title_boot (overlay2.asm)
     # probe sd\DAAD.* at boot, so the owner-eye-leg needs one staged.
@@ -362,10 +451,17 @@ $good = [System.IO.File]::ReadAllBytes("$root\sd\GAME.DDB")
 "version=$($good[0]) target=$('{0:X2}' -f $good[1]) magic=$($good[2])"
 $ptrs = for ($i = 8; $i -lt 34; $i += 2) { '{0:X4}' -f ($good[$i] + 256 * $good[$i+1]) }
 "pointers: $($ptrs -join ' ')"
-if ($uuActive) { "active: urbanupstart" }
+if ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - sd\GAME2.DDB + sd\PART2\0.XMB also staged)" }
+elseif ($uuActive) { "active: urbanupstart" }
 elseif ($UU) { "active: urbanupstart (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
 elseif ($rabActive) { "active: rabenstein" }
 elseif ($Rab) { "active: rabenstein (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($Suite) { "active: suite" }
 else { "active: template" }
+if ($partActive) {
+    # Confirm the four files this switch is responsible for, not the
+    # whole (possibly art-laden, from an earlier -Rab/-UU run) sd\ tree.
+    $part2Entries = Get-ChildItem "$root\sd\PART2" -Force | ForEach-Object { $_.Name } | Sort-Object
+    "sd\PART2\ contents: $($part2Entries -join ', ')"
+}
