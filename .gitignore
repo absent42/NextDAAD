@@ -29,5 +29,7 @@ sd/*.xmb
 sd/*.AYS
 sd/*.ays
 sd/PART*/
+sd/*.CHR
+sd/*.SPR
 tests/out/
 .superpowers/
