@@ -197,3 +197,53 @@ a -24 semitone pitch adjustment for the ZX/Next target) relative to
 older DRB versions. Trust what the compiler actually produces - test
 the tone/timing in CSpect or on hardware - over duration tables in
 older documentation.
+
+### Appendix D symbol names (SFX and MOUSE)
+
+DAAD Ready's Appendix D lists symbolic names for the sub-command
+argument of `SFX` and `MOUSE` (`PLAYSFX`, `SHOWMS`, and so on). The
+bundled DRF compiler predefines every one of them, and a DSF written
+with the symbolic form compiles byte-identical to the same DSF written
+with the raw number - use whichever reads better. Confirmed by
+compiling a test suite both ways and comparing the resulting DDBs
+byte-for-byte.
+
+**Typo warning:** the DAAD Ready manual's own Appendix D table names
+value 10 `FPLAYFLIL`. That is a documentation typo - `FPLAYFLIL` does
+not compile. The compiler defines `PLAYFLI` (9) and `PLAYFLIL` (10).
+
+### SFX sub-commands
+
+| n | Symbol | Behaviour on this target |
+|---|--------|---------------------------|
+| 1 | `PLAYSFX` | Play `NNN.WAV` once. If no matching WAV exists, the same number plays as an AY sound effect from the effects bank instead. |
+| 2 | `PLAYSFXL` | As 1, looped. |
+| 3 | `PLAYSFXF` | Same as `PLAYSFX` (1) - the DOS-specific file-rate byte does not exist in this toolchain's DDB output, so the WAV's own header rate plays. |
+| 4 | `PLAYSFXFL` | Same as `PLAYSFXL` (2), for the same reason. |
+| 5 | `STOPSFX` | Stop whichever effect kind is currently active (sample and AY). |
+| 6 | `PLAYDRO` | Play music once - a GAME-numbered AYS stream is tried first, an AKY song plays if none exists. On DOS these condacts played OPL music; on this target they are the music surface. |
+| 7 | `PLAYDROL` | As 6, looped. |
+| 8 | `STOPDRO` | Stop music of both kinds (AYS stream and AKY song). |
+| 9 | `PLAYFLI` | Video playback on DOS. Accepted and ignored on this target in this version - a silent no-op (a DEBUG build shows a marker). Reserved for a future video feature. |
+| 10 | `PLAYFLIL` | As 9, ignored. |
+
+Sample numbers 1-254 may resolve to a WAV or fall back to an AY
+effect; 255 is reserved and always plays from the AY effects bank.
+
+### MOUSE sub-commands (partial support)
+
+`MOUSE` support on this target is **partial**: sub-commands 0-3 are
+implemented, 4-7 are accepted but not supported. An unsupported
+sub-command no-ops silently (a DEBUG build shows a marker), the same
+idiom `SFX` uses above for a sub-command it does not recognise.
+
+| n | Symbol | Behaviour on this target |
+|---|--------|---------------------------|
+| 0 | `RESETMS` | Re-centre the pointer at (160,128), zero the buttons, and re-latch the movement baseline. |
+| 1 | `SHOWMS` | Show the hardware sprite pointer. |
+| 2 | `HIDEMS` | Hide the hardware sprite pointer. |
+| 3 | `GETMS` | Read mouse state into four flags starting at the first argument: `flags[n]` = buttons, `flags[n+1]` = column 0-79 (X/8), `flags[n+2]` = row 0-31 (Y/8), `flags[n+3]` = column 0-53 (X/6). |
+| 4 | `GETFINEMS` | Not supported - accepted and ignored. |
+| 5 | `POINTERMS` | Not supported - accepted and ignored. |
+| 6 | `DELTAXMS` | Not supported - accepted and ignored. |
+| 7 | `DELTAYMS` | Not supported - accepted and ignored. |
