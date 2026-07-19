@@ -1792,7 +1792,7 @@ xms_boot_reset:
 ; holds the vector index (4, unused here). Validates n, then snapshots
 ; the LIVE 256 flags + object-location table into swapStage before
 ; handing off to switch_to_part. Both failure exits (n out of range,
-; or n == curPart) are a bare scf/ret: EXTERN is action-typed (cprops
+; or n == curPart) return with CF set: EXTERN is action-typed (cprops
 ; $82 - engine.asm's cprops table), so eng_exec never consults the CF
 ; this leaves (ext_xmes's header comment notes the same); the ret
 ; simply returns to h_extern's caller (eng_exec's post-dispatch code)
@@ -1800,14 +1800,21 @@ xms_boot_reset:
 ; stack, exactly as if EXTERN had dispatched to ext_stub. curPart is
 ; not written until switch_to_part has a confirmed-successful probe,
 ; so both failure exits here leave the current part fully untouched.
+; Out-of-range n gets a DEBUG marker (author diagnostics, same idiom
+; as h_sfx/h_mouse's unknown-sub-command markers); n == curPart stays
+; silent on purpose - see .noop below.
 h_xpart:
     cp 1
-    jr c, .bad                  ; n < 1
+    jr c, .range                ; n < 1
     cp 10
-    jr nc, .bad                 ; n > 9
+    jr nc, .range                ; n > 9
     ld hl, curPart
     cp (hl)
-    jr z, .bad                  ; switching to the current part is a no-op
+    jr z, .noop                  ; n == curPart: a same-part EXTERN is a
+                                 ; benign author idiom (e.g. a shared
+                                 ; process reached while already in part
+                                 ; n), not an error - stays silent, no
+                                 ; DEBUG marker, unlike the range check
     ld (xpartTarget), a         ; n survives the snapshot below (which
                                  ; clobbers AF/BC/DE/HL/IX freely)
     ld hl, flags
@@ -1833,7 +1840,20 @@ h_xpart:
     jp switch_to_part           ; tail-jump: on failure, switch_to_part's
                                  ; own ret lands exactly where h_xpart's
                                  ; own ret would have
-.bad:
+.range:                         ; n < 1 or n > 9: no-op with a marker,
+ IFDEF DEBUG                    ; same idiom as h_sfx/h_mouse's unknown-
+    push af                     ; sub-command markers - preserve n
+    push af                     ; (here in A, not C) across dbg_at/
+    ld b, 29                    ; dbg_puts (both corrupt AF) for the
+    ld c, 70                    ; dbg_hex8 below.
+    call dbg_at
+    ld hl, msgXpartRange
+    call dbg_puts
+    pop af
+    call dbg_hex8
+    pop af
+ ENDIF
+.noop:
     scf
     ret
 
@@ -2008,7 +2028,8 @@ xpart_build_name:
 .gameddb: db "GAME.DDB", 0
 
  IFDEF DEBUG
-msgXpartFail: db "XPART?", 0
+msgXpartFail:  db "XPART?", 0
+msgXpartRange: db "XPART N? ", 0
  ENDIF
 
 ; swapStage: staging buffer for a part switch. [0..255] = the full
