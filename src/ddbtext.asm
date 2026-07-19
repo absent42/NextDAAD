@@ -116,9 +116,10 @@ rd_slot:
 
 rd_stack_fatal:
     ld a, 2                     ; red border - reader stack misuse
-    ld hl, msgRdStack            ; string lives in errors.asm now (this
-    jp fatal                     ; file is pre-flags resident: no room
-                                 ; to grow a message here - see fatal())
+    ld hl, msgRdStack            ; string lives in overlay0 now, mapped
+    jp fatal                     ; by fatal_puts (this file is pre-flags
+                                 ; resident: no room to grow a message
+                                 ; here - see fatal())
 
 ; A = kind 0-3, E = number. CF set if number >= count for that kind.
 ; Kind k: count byte at ddbHeader+6-k, table pointer at ddbHeader+$12-2k.
