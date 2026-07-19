@@ -552,28 +552,21 @@ $pictureOK
 > TUNE2   _     SFX 2 7
                 DONE
 
-; SP10 Task 5 owner verb: MTEST is the eye/hardware leg for the
-; Kempston mouse condact. MOUSE 1 uploads the arrow pattern (first
-; call only), arms NR $15 and shows/positions hardware sprite 0;
-; MOUSE 3 polls the hardware into scratch flags 120-123 (buttons,
-; X/8, Y/8, X/6), which are then printed so the owner can watch them
-; track real mouse movement. Under headless CSpect (no -mouse capture,
-; or CSpect closed) the sprite still shows/positions and the flags
-; still print - just static/zero without a live pointer.
+; SP10 Task 5 owner verb, reworked SP11: MTEST is the eye/hardware leg
+; for the Kempston mouse condact. MOUSE 0 1 uploads the arrow pattern
+; (first call only, gated internally by mouseReady), arms NR $15 and
+; shows/positions hardware sprite 0 - once, here, on entry. The verb
+; then hands off to PRO 7, which LOOPS: poll (MOUSE 120 3) into scratch
+; flags 120-123 (buttons, X/8, Y/8, X/6), reprint them in place on the
+; same screen spot, repeat - so the owner watches the values track live
+; mouse movement instead of seeing one static snapshot. Any keypress
+; (INKEY, in PRO 7) ends the loop; the pointer is hidden (MOUSE 0 2)
+; before the verb returns DONE. Under headless CSpect (no -mouse
+; capture, or CSpect closed) the sprite still shows/positions and the
+; flags still print - just static/zero without a live pointer - and a
+; keypress still exits normally.
 > MTEST   _     MOUSE 0 1
-                MOUSE 120 3
-                MES "mouse btn:"
-                PRINT 120
-                SPACE
-                MES "col80:"
-                PRINT 121
-                SPACE
-                MES "row32:"
-                PRINT 122
-                SPACE
-                MES "col53:"
-                PRINT 123
-                NEWLINE
+                PROCESS 7
                 DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation
@@ -621,6 +614,58 @@ $initLoop
                 LET     fMaxCarr 4
                 SET     fCPronounNoun
                 SET     fCPronounAdject
-                LET     fObjectsCarried   NUM_CARRIED 
-                GOTO    1                 ; Go to first location 
+                LET     fObjectsCarried   NUM_CARRIED
+                GOTO    1                 ; Go to first location
+;------------------------------------------------------------------------------
+/PRO 7 ; MTEST polling loop (SP11 rework). Called once per MTEST command
+; via PRO 5's `PROCESS 7`; MOUSE 0 1 (pattern upload/show) stays in PRO 5
+; and is NOT repeated here - only the poll/print/exit-check loops.
+;
+; Loop mechanism: REDO (condact 108, action, argc 0; see h_redo in
+; src/overlay0.asm) restarts THIS table from its own first entry - it
+; reads the process number of whichever frame is on top of the process
+; stack when REDO runs, which is PRO 7's own frame while we are inside
+; it (called via PROCESS, not yet returned). So REDO here provably loops
+; PRO 7 in place; it cannot fall back into PRO 5 and cannot re-trigger
+; MOUSE 0 1.
+;
+; Entry 1 (poll + display): MOUSE 120 3 (action, argc 2) polls the
+; hardware into flags 120-123 and repositions the sprite. SAVEAT/BACKAT
+; (condacts 97/98, actions, argc 0) bracket the four PRINTs so every
+; pass overwrites the same screen spot instead of scrolling. INKEY
+; (condact 111, CONDITION, argc 0) is true the instant a key is waiting
+; (its code is left in flag 60); on true the entry falls through to
+; NEWLINE (drop below the live line) then MOUSE 0 2 (hide pointer) then
+; DONE, which unwinds PROCESS 7 and lets MTEST's own DONE follow. On
+; false, INKEY's failure ABORTS this entry (DAAD's normal
+; condition-fail-continues-to-next-entry rule) and the table scan moves
+; to entry 2.
+;
+; Entry 2 (re-poll trigger): reached only on entry 1's false INKEY.
+; PAUSE 1 (action, argc 1) paces the loop to one frame (1/50s) so it
+; does not spin hot against the hardware poll; REDO then restarts entry
+; 1 for the next poll. This table has no other entries and is only ever
+; reached via MTEST's PROCESS 7, so it can never act as a stray
+; catch-all for other verbs.
+> _       _     MOUSE 120 3
+                SAVEAT
+                MES "mouse btn:"
+                PRINT 120
+                SPACE
+                MES "col80:"
+                PRINT 121
+                SPACE
+                MES "row32:"
+                PRINT 122
+                SPACE
+                MES "col53:"
+                PRINT 123
+                BACKAT
+                INKEY
+                NEWLINE
+                MOUSE 0 2
+                DONE
+
+> _       _     PAUSE 1
+                REDO
 /END
