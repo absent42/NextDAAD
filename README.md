@@ -12,9 +12,8 @@ PARSE), file-backed save/load, Layer 2 location graphics
 support, sound effects and speaker beeps), digitised sample playback
 bounded by available RAM, mouse input with a hardware sprite
 pointer (MOUSE), boot title screens, and native multi-part games
-(EXTERN n 4) are implemented. All 128 condacts are handled: CALL
-is a documented no-op (jdaad parity - DAAD's machine-code CALL
-condact has no analogue in a bytecode interpreter).
+(EXTERN n 4) are implemented. All 128 condacts are handled, but CALL
+is a documented no-op.
 
 ## Features
 
@@ -267,9 +266,23 @@ a matching third stream byte whenever it sees that shape, so any
 other use of literal fn 3 will misalign the condacts that follow it.
 The bundled DRC toolchain is DRF 0.40 + DRB 0.36.
 
-## Building
+## Authoring kit
 
-The toolchain (not included in repo) lives in tools/ 
+`authoring-kit\` is a DAAD-Ready-style workflow for authors: drop in a `.DSF`
+(plus optional PNGs and Arkos audio), double-click `BUILD.BAT`, and get a
+ready-to-run `RELEASE\` SD-card folder with the pre-built interpreter. See
+`authoring-kit\SETUP.md` for the full guide. The tools it needs (not shipped in
+the repo):
+
+- DAAD Ready (DRC compiler + PHP): https://www.ngpaws.com/daadready/
+- Gfx2Next (PNG to Layer 2): https://www.rustypixels.uk/gfx2next/
+- Arkos Tracker 3 (SongToAky / SongToSoundEffects / SongToYm for
+  streamed AYS songs): https://www.julien-nevo.com/arkostracker/index.php/download/
+- CSpect (emulator): https://mdf200.itch.io/cspect
+
+## Interpreter Building
+
+If you wish to complile your own version of the interpreter the toolchain (not included in repo) lives in tools/ 
 ([sjasmplus](https://github.com/z00m128/sjasmplus), [DeZog](https://github.com/maziac/DeZog) VS Code plugin, [CSpect](https://mdf200.itch.io/cspect), DRC via [DAAD-READY](https://www.ngpaws.com/daadready/), [Gfx2Next](https://www.rustypixels.uk/gfx2next/), [Disark](https://julien-nevo.com/disark/), [Rasm](https://github.com/EdouardBERGE/rasm)).
 
 - Build: powershell -File build.ps1 (add -Release for a release build,
@@ -306,20 +319,6 @@ of these halt the interpreter; power-cycle or reset to retry.
 - `NextDAAD: RD STACK - E9` (red border) - internal text-reader stack
   overflow; should not happen with a correctly compiled DDB
 
-## Authoring kit
-
-`authoring-kit\` is a DAAD-Ready-style workflow for authors: drop in a `.DSF`
-(plus optional PNGs and Arkos audio), double-click `BUILD.BAT`, and get a
-ready-to-run `RELEASE\` SD-card folder with the pre-built interpreter. See
-`authoring-kit\SETUP.md` for the full guide. The tools it needs (not shipped in
-the repo):
-
-- DAAD Ready (DRC compiler + PHP): https://www.ngpaws.com/daadready/
-- Gfx2Next (PNG to Layer 2): https://www.rustypixels.uk/gfx2next/
-- Arkos Tracker 3 (SongToAky / SongToSoundEffects / SongToYm for
-  streamed AYS songs): https://www.julien-nevo.com/arkostracker/index.php/download/
-- CSpect (emulator): https://mdf200.itch.io/cspect
-
 ## Acknowledgments
 
 - [Tim Gilberts](http://www.gilsoft.co.uk/) for writing the original [DAAD](https://github.com/daad-adventure-writer/daad)
@@ -327,6 +326,7 @@ the repo):
 - [Uto](https://uto.speccy.org/) for creating [DRC](https://github.com/Utodev/DRC) and [DAAD Ready](https://github.com/Utodev/DAAD-Ready) which influenced a lot of this project
 - NataliaPC for creating [MSX2DAAD](https://github.com/nataliapc/msx2daad) which inspired this project
 - Julien Nevo for [ArkosTracker](https://www.julien-nevo.com/arkostracker/)
+- em00k for [playwav32](https://github.com/em00k/playwav32) which informed the sample sound streaming method
 - Rusty Pixels for [Gfx2Next](https://www.rustypixels.uk/gfx2next/)
 - Mike Dailly for [CSpect](https://mdf200.itch.io/cspect)
 - z00m for [sjasmplus](https://github.com/z00m128/sjasmplus)
