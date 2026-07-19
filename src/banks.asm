@@ -23,7 +23,10 @@ data_restore:
     nextreg NR_MMU6, a
     ret
 
-; Map 8K page A into slot 7 (code overlay). DISPATCHER/ISR ONLY.
+; Map 8K page A into slot 7 (code overlay). Call from resident code,
+; or from overlay code via a jp-trampoline that returns through a
+; pushed target address in the NEW page - the remap must never be
+; followed by an instruction fetch in the old MMU7 window.
 ; Corrupts AF only. Never touches D.
 ovl_map_page:
     nextreg NR_MMU7, a
