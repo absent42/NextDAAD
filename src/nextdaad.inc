@@ -96,6 +96,11 @@ ESX_F_CLOSE     equ $9B
 ESX_F_READ      equ $9D
 ESX_F_WRITE     equ $9E
 ESX_F_SEEK      equ $9F
+ESX_F_FSTAT     equ $A1     ; A=handle, IX=11-byte buffer; +7(4)=file size
+                            ; (esxDOS API odt: F_FSTAT ($a1)) - used by
+                            ; vid_stream_open (video.asm, SP13 T1) instead
+                            ; of the F_SEEK-to-end idiom, since it needs no
+                            ; seek-back before the first read.
 ESX_MODE_READ   equ $01
 ESX_MODE_W      equ $0E     ; F_OPEN: write, create or truncate
 ESX_ENOENT      equ 5       ; F_OPEN: file not found
@@ -146,6 +151,19 @@ OVL_LIMIT       equ $F800   ; overlay ASSERT bound (512 bytes spare)
 OVL1_PAGE       equ 57      ; overlay page 1: upper 8K of bank 28
 BANK_OVL2       equ 29      ; overlay page 2 lives in bank 29 (lower 8K)
 OVL2_PAGE       equ 58      ; = BANK_OVL2*2
+VID_PAGE        equ 59      ; video code page (SP13 T1): the upper 8K of
+                            ; bank 29, the ONLY page in the overlay-
+                            ; reserved bank range (28/29) with no equate
+                            ; yet - bank_table_init (banks.asm) never
+                            ; marks banks 28/29 BT_FREE (the pool starts
+                            ; at BANK_POOL_B=35), so this page is outside
+                            ; the allocator entirely, exactly like 56-58.
+                            ; Costs zero resident bytes: SAVENEX AUTO
+                            ; (main.asm) picks up any page with assembled
+                            ; content, so populating it via video.asm's
+                            ; own `MMU 7, VID_PAGE, OVL_ORG` + `INCLUDE`
+                            ; is the whole main.asm change needed - see
+                            ; the SP13 Task 1 report for the verification.
 DATA_WINDOW     equ $C000   ; slot 6 window base (8K)
 
 ; --- Layer 2 (sub-project 4) ---
@@ -381,3 +399,63 @@ MOUSE_X_MAX     equ 319    ; accumulated mouse position ceiling (320-
                             ; wide sprite/mouse plane)
 MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
                             ; tall plane, screen-downward)
+
+; --- Video (sub-project 13, MakeVid .VID cutscene format) ---
+; docs/superpowers/specs/2026-07-20-sp13-video-design.md is the design
+; authority; every number below is cross-checked against the playvid
+; format-reference headers (tools/NextZXOS/src/c/DotCommands/playvid/
+; video_256x192_m.asm, video_256x192_m_palette.asm, video_256x240.asm,
+; video_256x240_palette.asm, video_320x240.asm, video_320x240_palette.asm)
+; and playvid's own classifier (sd.c: video_format_size[]). Priority
+; order 0-5 is playvid's own array order - vid_classify (video.asm) walks
+; it in this exact sequence.
+VID_FORMATS     equ 6
+
+; frame size in 512-byte sectors (the classifier's divisor table)
+VID_F0_SECT     equ 155     ; 320x240 palette
+VID_F1_SECT     equ 154     ; 320x240 no-palette
+VID_F2_SECT     equ 129     ; 256x240 palette
+VID_F3_SECT     equ 128     ; 256x240 no-palette
+VID_F4_SECT     equ 99      ; 256x192 palette
+VID_F5_SECT     equ 98      ; 256x192 no-palette
+
+; frame size in bytes (= sect * 512; laid out here for later tasks - the
+; classifier itself only needs the sector table above)
+VID_F0_BYTES    equ 79360
+VID_F1_BYTES    equ 78848
+VID_F2_BYTES    equ 66048
+VID_F3_BYTES    equ 65536
+VID_F4_BYTES    equ 50688
+VID_F5_BYTES    equ 50176
+
+; frame pixel dims (formats 1/3/5 share their palette sibling's dims)
+VID_F0_WIDTH    equ 320
+VID_F0_HEIGHT   equ 240     ; formats 0/1
+VID_F2_WIDTH    equ 256
+VID_F2_HEIGHT   equ 240     ; formats 2/3
+VID_F4_WIDTH    equ 256
+VID_F4_HEIGHT   equ 192     ; formats 4/5
+
+; audio bytes/frame (formats 1/3/5 share their palette sibling's count).
+; 0/1: 933 stereo samples (L,R interleaved) = 1866 bytes, ~15.6kHz.
+; 2/3: 1866 stereo samples = 3732 bytes, ~31.1kHz.
+; 4/5: 933 mono samples = 933 bytes, ~23.3kHz.
+VID_F0_AUDIO    equ 1866
+VID_F2_AUDIO    equ 3732
+VID_F4_AUDIO    equ 933
+VID_F0_SAMPLES  equ 933     ; samples/frame, formats 0/1 (stereo pairs)
+VID_F2_SAMPLES  equ 1866    ; samples/frame, formats 2/3 (stereo pairs)
+VID_F4_SAMPLES  equ 933     ; samples/frame, formats 4/5 (mono)
+VID_RATE0_X10   equ 156     ; ~15.6 kHz (formats 0/1), rate*10 (fixed-point)
+VID_RATE2_X10   equ 311     ; ~31.1 kHz (formats 2/3)
+VID_RATE4_X10   equ 233     ; ~23.3 kHz (formats 4/5)
+VID_FPS0_X10    equ 167     ; 16.7 fps (formats 0-3), fps*10
+VID_FPS4_X10    equ 250     ; 25.0 fps (formats 4/5)
+
+; palette block bytes (formats 0/2/4 only; 1/3/5 carry none)
+VID_PAL_BYTES   equ 512
+
+; mono flag: bit n set = format n is MONO (only 4/5 - all others stereo).
+; Not yet consumed by Task 1 (classify only needs the sector table); laid
+; out now per the brief so Task 2's CTC/ISR selection has it ready.
+VID_MONO_MASK   equ %00110000

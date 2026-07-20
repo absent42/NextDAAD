@@ -176,6 +176,7 @@ boot_data_init:
     INCLUDE "overlay0.asm"
     INCLUDE "overlay1.asm"
     INCLUDE "overlay2.asm"
+    INCLUDE "video.asm"
     INCLUDE "audio/audiobank.asm"
 
     CSPECTMAP "build/nextdaad.map"

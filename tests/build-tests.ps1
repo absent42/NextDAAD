@@ -85,7 +85,36 @@
 #            border, 1px black outline - obviously different from the
 #            interpreter's default black/white arrow at a glance). No
 #            test binary is committed for this either.
-param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font)
+# Video benchmark fixtures (SP13 Task 1), independent of the DDB
+# switches:
+#   -Vid     stage the owner's MakeVid demo matrix into sd\001.VID..
+#            sd\006.VID, one file per format, named in vid_classify's
+#            priority order (video.asm: 0=320x240 palette .. 5=256x192
+#            no-palette). VIDBENCH (DEBUG builds only, tests/test.dsf)
+#            always benches sd\001.VID - the highest data-rate format
+#            (79360 B/frame @ 16.7fps), the conservative gate number.
+#            Stale-cleans sd\*.VID first. Source -> dest mapping (tools\
+#            demo-files\001_<WxH><auto|autopal>[c10g10s10].vid):
+#              001.VID <- 001_320x240autopal[c10g10s10].vid (fmt 0, 155 sect/frame)
+#              002.VID <- 001_320x240auto[c10g10s10].vid     (fmt 1, 154 sect/frame)
+#              003.VID <- 001_256x240autopal[c10g10s10].vid (fmt 2, 129 sect/frame)
+#              004.VID <- 001_256x240auto[c10g10s10].vid     (fmt 3, 128 sect/frame)
+#              005.VID <- 001_256x192autopal[c10g10s10].vid (fmt 4, 99 sect/frame)
+#              006.VID <- 001_256x192auto[c10g10s10].vid     (fmt 5, 98 sect/frame)
+#            NOTE (verified against the real fixture bytes, not just the
+#            filenames): the two 256x192 sources (005/006) carry 1024
+#            trailing bytes not aligned to either format's frame size -
+#            vid_classify reports format 3 for 006.VID (its sector count
+#            happens to ALSO be an exact multiple of format 3's frame
+#            size - a live instance of the spec's documented "classifies
+#            wrong" ambiguity) and CF (unclassifiable) for 005.VID.
+#            001-004 classify correctly. This is a MakeVid fixture-
+#            encoding property (see the spec's blank-frame-append
+#            remedy), not a classifier bug, and does not affect VIDBENCH
+#            (which only ever exercises 001.VID). Same CSpect-running
+#            guard as -Rab/-UU/-Title/-Font. sd\*.VID is NOT added to
+#            .gitignore by this task - that is an owner edit.
+param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -498,6 +527,41 @@ if ($Font) {
     }
     [System.IO.File]::WriteAllBytes("$root\sd\POINTER.SPR", $ptr)
     "staged a generated 16x16 green square (2px `$E3 border, `$00 outline) -> sd\POINTER.SPR (256 bytes)"
+}
+
+if ($Vid) {
+    # SP13 Task 1 owner leg fixture - see the -Vid switch's own header
+    # comment above for the full source->dest mapping and the 005/006
+    # classification-quirk note. Same CSpect-lock hazard as -Rab/-UU/
+    # -Title/-Font: refuse to stage rather than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
+    }
+    Remove-Item "$root\sd\*.VID" -Force -ErrorAction SilentlyContinue
+    $vidSrc = "$root\tools\demo-files"
+    $vidMap = [ordered]@{
+        '001.VID' = '001_320x240autopal[c10g10s10].vid'
+        '002.VID' = '001_320x240auto[c10g10s10].vid'
+        '003.VID' = '001_256x240autopal[c10g10s10].vid'
+        '004.VID' = '001_256x240auto[c10g10s10].vid'
+        '005.VID' = '001_256x192autopal[c10g10s10].vid'
+        '006.VID' = '001_256x192auto[c10g10s10].vid'
+    }
+    # -LiteralPath throughout: the source names' [c10g10s10] suffix is
+    # otherwise parsed as a PowerShell wildcard character class (Test-
+    # Path/Copy-Item's default -Path behaviour), not matched literally.
+    $vidStaged = 0
+    foreach ($dest in $vidMap.Keys) {
+        $src = Join-Path $vidSrc $vidMap[$dest]
+        if (Test-Path -LiteralPath $src) {
+            Copy-Item -LiteralPath $src -Destination "$root\sd\$dest" -Force
+            $vidStaged++
+        }
+        else {
+            "WARNING: $src missing - sd\$dest not staged"
+        }
+    }
+    "staged $vidStaged video fixture(s) -> sd\001.VID..sd\006.VID (tools\demo-files MakeVid matrix, classification-priority order)"
 }
 
 if ($Aud) {

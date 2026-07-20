@@ -146,6 +146,11 @@ XMES    69      verb
 AYBAD   70      verb
 TUNE2   71      verb
 MTEST   72      verb
+VIDBENCH 73     verb            ; SP13 T1: only the first 5 chars ("VIDBE")
+                                ; are significant to the parser (DAAD's
+                                ; standard truncation rule) - kept spelled
+                                ; out in full here to match the owner
+                                ; command name verbatim
 
 ;                       Verbs
 GET     20      verb
@@ -583,6 +588,19 @@ $pictureOK
 > MTEST   _     MOUSE 0 1
                 PROCESS 8
                 PROCESS 7
+                DONE
+
+; SP13 Task 1 owner verb: VIDBENCH is the streaming-throughput leg for
+; the video page (src/video.asm). EXTERN 0 6 routes to vector 6 of
+; extVec (overlay0.asm) - DEBUG-conditional there: a DEBUG interpreter
+; hops to vid_bench_trampoline -> video.asm's vid_bench, which opens
+; sd\001.VID (staged by build-tests.ps1's -Vid switch), streams it end-
+; to-end via vid_stream_read, and prints total bytes/elapsed frames/
+; computed KB/s/classification verdict. A release interpreter's vector 6
+; is ext_stub (h_unimpl no-op, silent) - same fail-silent shape as
+; condacts.dsf check 44's "EXTERN 5 5" against its own always-stub
+; vector. One shot per invocation - re-run to re-measure.
+> VIDBENCH _     EXTERN 0 6
                 DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation
