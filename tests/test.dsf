@@ -167,17 +167,6 @@ VPLY2   80      verb
 VPLY3   81      verb
 VLOP2   82      verb
 VLOP3   83      verb
-; SP13 Task 3 review round 3 owner verbs: the fmt2/3 crash bisection
-; probe (video.asm's vid_prb_run - see its own header for the exact
-; design). EXTERN's P1 argument IS the probe selector directly (no
-; lookup table): 255 = VPRB0 (bypass the column blit entirely, drain
-; via the proven vid_read_block-into-scratch path); 8/64/128 = the
-; column limit for VPRB1/2/3 (vid_stream_pixels_col runs for real, then
-; stops cleanly at that many of the 256 columns).
-VPRB0   84      verb
-VPRB1   85      verb
-VPRB2   86      verb
-VPRB3   87      verb
 
 ;                       Verbs
 GET     20      verb
@@ -675,26 +664,6 @@ $pictureOK
                 DONE
 
 > VLOP3   _     GFX 4 14
-                DONE
-
-; SP13 Task 3 review round 3 owner leg: the fmt2/3 crash bisection probe
-; (video.asm's vid_bench/vid_prb_run - EXTERN 0 6's own DEBUG-only
-; route, reused - P1 nonzero selects the probe instead of VIDBENCH).
-; Prints to the tilemap rows near the bottom of the screen - see the
-; task report's field decode table. A DEBUG build with no -Vid staging
-; (sd\003.VID missing) fails silent (the probe's own "A = vid_open_
-; video's own error code" report row shows it); a release build's
-; vector 6 is ext_stub (h_unimpl no-op, silent), same as VIDBENCH.
-> VPRB0   _     EXTERN 255 6
-                DONE
-
-> VPRB1   _     EXTERN 8 6
-                DONE
-
-> VPRB2   _     EXTERN 64 6
-                DONE
-
-> VPRB3   _     EXTERN 128 6
                 DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation

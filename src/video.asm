@@ -1481,22 +1481,6 @@ vid_stream_frame:
     ld a, (vidFmt)
     cp 4
     jr nc, .monopix
- IFDEF DEBUG
-    ; SP13 T3 review probe (VPRB0): bypass vid_stream_pixels_col
-    ; entirely, draining the 61440 pixel bytes via the PROVEN vid_
-    ; read_block-into-scratch mechanism instead - proves/exonerates
-    ; everything BEFORE the column blit (vid_prb_run's own header).
-    ; Inert (vidPrbMode stays 0) outside a probe session; vidPrbMode=255
-    ; is VPRB0's own sentinel (shared with vid_stream_pixels_col's own
-    ; column-limit check below - never read in overlapping contexts).
-    ld a, (vidPrbMode)
-    cp 255
-    jr nz, .realcol
-    ld de, 120                     ; 61440 / 512
-    call vid_prb_drain
-    ret
-.realcol:
- ENDIF
     ; stereo (2/3): column-major direct-INI blit (vid_stream_pixels_col,
     ; below) - no landing-page relocate, see that routine's own header
     ; for the double-copy cost this avoids.
@@ -1626,11 +1610,6 @@ vid_stream_pixels_col:
     ; l,a / inc h" trick, video_256x240.asm - a IS 0 here, from the sub)
     ld l, a
     inc h
- IFDEF DEBUG
-    ld a, (vidPrbColDone)          ; SP13 T3 review probe: tiny column
-    inc a                          ; counter, HL/B/C/D/E-safe (A is about
-    ld (vidPrbColDone), a          ; to be reloaded below regardless)
- ENDIF
     ld a, VID_COL_HEIGHT/16
 .colok:
     ld (vidColRemain16), a
@@ -1641,7 +1620,13 @@ vid_stream_pixels_col:
                                     ; vid_col_blockdone below (it corrupts
                                     ; HL - "Corrupts AF, BC, DE, HL")
     jr nz, .blkok
-    call vid_col_blockdone         ; CRC skip + run/remain bookkeeping
+    push de                        ; ALSO protect D = chunk16, live and
+    call vid_col_blockdone         ; read again just below (`ld c,d`) -
+    pop de                         ; vid_col_blockdone's own `ld de,512`
+                                    ; clobbers it (ground-up review find:
+                                    ; the missed half of the HL bracket
+                                    ; above - same callee, same contract
+                                    ; line, this register wasn't covered)
 .blkok:
     ; vidPixRealRemain -= chunk16*16 (chunk16 <= 15, so *16 <= 240, fits
     ; a byte-doubled shift into BC without overflow)
@@ -1660,30 +1645,6 @@ vid_stream_pixels_col:
     sbc hl, bc
     ld (vidPixRealRemain), hl
     pop hl                         ; restore the destination pointer
- IFDEF DEBUG
-    ; SP13 T3 review probe: column-limit bisection stop. vidPrbMode = 0
-    ; in the shipped/normal path (VPRB0's own mode=255 never reaches
-    ; this routine at all - see vid_stream_frame's own check) - the
-    ; compare is inert there, costing a handful of T-states per column,
-    ; never changing behaviour. Fires only inside vid_prb_run's own
-    ; probe session (mode 1-254, the column limit). All counters (vid
-    ; ColRemain16/vidBlkRemain16/vidPixRealRemain) are already
-    ; consistent at this exact point - the SAME state the real path
-    ; would carry into its own next iteration.
-    ld a, (vidPrbMode)
-    or a
-    jr z, .noprobelim
-    ld b, a
-    ld a, (vidPrbColDone)
-    cp b
-    jr c, .noprobelim              ; colDone < limit: keep going
-    ld (vidPrbLastDest), hl
-    ld a, VID_ERR_PROBELIM
-    call data_restore
-    scf
-    ret
-.noprobelim:
- ENDIF
     ld c, PORT_SPI_DAT
     jp .next
 .pagedone:
@@ -1722,9 +1683,6 @@ vid_col_newblock:
     inc a
     jr z, .wt
     dec a
- IFDEF DEBUG
-    ld (vidPrbTokenByte), a        ; SP13 T3 review probe: last token byte
- ENDIF
     cp $FE
     jr z, .ok
     ld a, VID_ERR_TOKEN
@@ -2047,16 +2005,7 @@ VIDBENCH_ROW_STRM  equ 28       ; 32-row tilemap, all clear of rows 30-31
 VIDBENCH_ROW_INFO  equ 29       ; (debug.asm's reserved status lines - see
                                  ; l2_testcard's header comment, overlay2.asm)
 
-; A = B (EXTERN's P1) on entry, per h_extern's contract - VIDBENCH itself
-; (EXTERN 0 6) always passed 0, unused until now. SP13 T3 review round 3:
-; A != 0 routes to the fmt2/3 crash bisection probe instead (vid_prb_
-; run's own header explains the A-value meaning: 255 = VPRB0, else a
-; direct column limit for VPRB1/2/3, tests/test.dsf).
 vid_bench:
-    or a
-    jr z, .runbench
-    jp vid_prb_run
-.runbench:
     call bank_alloc              ; one transient scratch bank, reused by
     jr nc, .havebank              ; both passes as the MMU6 read target
     ld b, VIDBENCH_ROW_FREAD
@@ -2068,24 +2017,36 @@ vid_bench:
     ld (vidBenchBank), a
     add a, a                     ; 16K bank -> its lower 8K page
     ld (vidBenchPage), a
-    ; SP13 T3 review round 3: the F_READ comparison pass was dropped
-    ; here (page-space - the crash-probe rung 2 second page needed the
-    ; room) - F_READ was always bench-only infrastructure (the player
-    ; itself always uses raw mode - vid_open_video's own header), so
-    ; this loses a comparison figure, not player-relevant coverage.
-    ; Raw streaming (direct SD SPI) - this ERRORS on CSpect - its
-    ; directory mode fakes the esxDOS API over host files with no SPI
+    ; --- pass 1: F_READ ---
+    xor a
+    ld (vidStrmMode), a
+    call vid_bench_pass
+    jr c, .freadfail
+    ld hl, (vidBenchKbps)        ; stash F_READ KB/s before pass 2 overwrites
+    ld (vidFreadKbps), hl
+    xor a
+    ld (vidFreadErr), a          ; 0 = ok
+    jr .pass2
+.freadfail:
+    ld (vidFreadErr), a          ; A = error (nonzero)
+    ld hl, 0
+    ld (vidFreadKbps), hl
+.pass2:
+    ; --- pass 2: raw streaming (direct SD SPI). This ERRORS on CSpect -
+    ; its directory mode fakes the esxDOS API over host files with no SPI
     ; card behind it, so CMD18/the token wait get no data. Expected: the
-    ; STRM row shows an error there; real hardware is the measurement.
+    ; STRM row shows an error there; real hardware is the measurement. ---
     ld a, 1
     ld (vidStrmMode), a
     call vid_bench_pass
     jr c, .strmfail
     xor a
-    ld (vidStrmErr), a           ; 0 = ok
+    ld (vidStrmErr), a           ; 0 = ok; vidBenchKbps now holds raw KB/s
     jr .freebank
 .strmfail:
-    ld (vidStrmErr), a           ; A = error (nonzero)
+    ld (vidStrmErr), a           ; A = error (nonzero); vidBench* still hold
+    ld hl, 0                      ; the F_READ pass's bytes/frames/fmt if the
+    ld (vidBenchKbps), hl         ; raw open failed before resetting them
 .freebank:
     ld a, (vidBenchBank)
     call bank_free
@@ -2138,16 +2099,8 @@ vid_bench_pass:
 
 ; Derives the report values for the pass just streamed. vidSizeLo/
 ; vidSizeHi are still the size vid_stream_open captured for THIS file, so
-; the classification is for the exact bytes just streamed. SP13 T3
-; review round 3: the on-device KB/s division (totalKB*50/elapsed) was
-; dropped here - page-space (the crash-probe rung 2 second page needed
-; the room) - vid_bench_report still prints raw bytes and elapsed
-; frames (the info row, unchanged), from which KB/s = bytes*50/
-; (elapsed*1024) is a one-line hand calculation; VIDBENCH already
-; served its T1 throughput-validation purpose, so losing the pre-
-; computed convenience figure (not the underlying data) here is a
-; deliberate, disclosed priority call in favour of the crash probe.
-; Corrupts everything.
+; the classification is for the exact bytes just streamed. Corrupts
+; everything.
 vid_bench_compute:
     ; elapsed = end - start (16-bit, wraps correctly via 2's complement -
     ; frameCounter is a plain dw, 50Hz, ~21.8 minutes before it wraps)
@@ -2156,6 +2109,34 @@ vid_bench_compute:
     or a
     sbc hl, de
     ld (vidBenchElapsed), hl
+    ; totalKB = (vidBenchHi:vidBenchLo) >> 10. Assumes the total fits 16
+    ; bits after the shift, true for any file under 64MB - comfortably
+    ; covers the whole MakeVid format matrix (the largest demo fixture is
+    ; ~38MB; see the task report).
+    ld hl, (vidBenchLo)
+    ld de, (vidBenchHi)
+    ld b, 10
+.kshr:
+    srl d
+    rr e
+    rr h
+    rr l
+    djnz .kshr
+    ld (vidBenchKB), hl
+    ; KB/s = totalKB * 50 / elapsed (integer maths; guard elapsed == 0 -
+    ; cannot happen for the real ~38MB fixture, but keeps this honest for
+    ; any smaller file reused against this same harness later)
+    ld hl, (vidBenchElapsed)
+    ld a, h
+    or l
+    jr z, .nokbps
+    call vid_kbps_calc
+    ld (vidBenchKbps), hl
+    jr .havekbps
+.nokbps:
+    ld hl, 0
+    ld (vidBenchKbps), hl
+.havekbps:
     ld hl, (vidSizeLo)
     ld de, (vidSizeHi)
     call vid_classify
@@ -2167,9 +2148,26 @@ vid_bench_compute:
     ld (vidBenchFmtBad), a
     ret
 
-; Prints the two report rows from the values the raw-streaming pass
-; stashed (F_READ comparison pass dropped - see vid_bench's own header).
+; Prints the three report rows from the values stashed by the two passes.
 vid_bench_report:
+    ; row 27: F_READ KB/s (or ERR)
+    ld b, VIDBENCH_ROW_FREAD
+    ld c, 0
+    call dbg_at
+    ld a, (vidFreadErr)
+    or a
+    jr z, .freadok
+    ld hl, msgVidFreadErr
+    call dbg_puts
+    ld a, (vidFreadErr)
+    call dbg_hex8
+    jr .strmrow
+.freadok:
+    ld hl, msgVidFread
+    call dbg_puts
+    ld hl, (vidFreadKbps)
+    call dbg_hex16
+.strmrow:
     ; row 28: raw streaming KB/s (or ERR = distinct fragmentation/API code)
     ld b, VIDBENCH_ROW_STRM
     ld c, 0
@@ -2185,6 +2183,8 @@ vid_bench_report:
 .strmok:
     ld hl, msgVidStrm
     call dbg_puts
+    ld hl, (vidBenchKbps)
+    call dbg_hex16
 .inforow:
     ; row 29: bytes / frames / format (streaming pass, or F_READ fallback)
     ld b, VIDBENCH_ROW_INFO
@@ -2211,247 +2211,83 @@ vid_bench_report:
     ld hl, msgVidUnclass
     jp dbg_puts
 
-; ---------------------------------------------------------------------
-; SP13 T3 review round 3: fmt2/3 crash bisection probe.
-; ---------------------------------------------------------------------
-; Reached via vid_bench's own dispatch. A = EXTERN 0 6's P1 argument,
-; NOT a selector index - a value of 255 means "VPRB0" (skip-col full
-; drain); any other nonzero value IS the column limit directly (8/64/
-; 128 for VPRB1/2/3, tests/test.dsf), no lookup table needed. Runs the
-; REAL entry+CTC-arm+frame-1 path against sd\003.VID (format 2, known)
-; exactly as vid_run's own sequence does (bank_alloc, CTC program with
-; the stereo table/ISR, IX priming), but for exactly one frame, then
-; STOPS CLEANLY before the suspect code can crash the machine - the
-; whole point: a crash kills the screen, so nothing printed AFTER it
-; would ever be seen.
-;   255 (VPRB0) - vid_stream_frame's own DEBUG hook (see its header)
-;     bypasses vid_stream_pixels_col ENTIRELY, draining all 61440 pixel
-;     bytes via vid_prb_drain (the PROVEN vid_read_block-into-scratch
-;     mechanism, via vid_col_newblock/vid_col_blockdone). Survives =
-;     audio(4096B)/palette(512B) reads and everything around them
-;     exonerated, pixels-col 100% convicted. Crashes = the problem is
-;     BEFORE the column blit.
-;   1-254 (VPRB1/2/3, limit=8/64/128) - vid_stream_pixels_col runs for
-;     real, but its own tiny DEBUG column-limit check (see that
-;     routine's own header) aborts it cleanly after N of the 256
-;     columns, returning CF set/A=VID_ERR_PROBELIM instead of
-;     continuing. This routine captures the exact counter state at the
-;     stop point, then tears down WITHOUT draining the remainder -
-;     vid_stream_close's own vid_win_close issues CMD12 unconditionally
-;     regardless of block position, an already-relied-upon contract
-;     this codebase's streaming layer depends on for ANY early-stop
-;     caller (vid_stream_read's own documented short-read/EOF paths
-;     close mid-stream the same way), not a new assumption introduced
-;     here - see the task report for the exact citation.
-; Every VID_PAGE-private reference in this flow (vid_open_video,
-; vidCtcTcTab2, video_ctc_isr_stereo, vid_stream_frame, vid_stream_
-; pixels_col, vid_prb_drain*) is why this whole routine lives on VID_
-; PAGE and not VID_PAGE2 - only the FINAL print (no VID_PAGE dependency
-; once the diagnostic values are in registers) hops there. Never
-; returns to vid_bench - ends by hopping to one of VID_PAGE2's print
-; routines (push-target/ovl_map_page, the established trampoline idiom),
-; which itself ends in a plain `ret` back to the engine dispatcher
-; (harmless with MMU7 left on VID_PAGE2 - eng_exec remaps MMU7 before
-; the next condact regardless, the same acceptance vid_bench's own
-; ending already relies on). L2/display state is deliberately NOT
-; programmed at all (mode/clip/enable) - the probe only exercises
-; STREAMING, never DISPLAYS anything, so there is nothing to restore
-; there either.
-vid_prb_run:
-    ld b, a
+; totalKB (16-bit, vidBenchKB) * 50 / elapsed (16-bit, vidBenchElapsed,
+; already confirmed nonzero by the caller) -> HL = KB/s.
+; 16x8 multiply into a 24-bit accumulator (totalKB up to 65535 * 50 needs
+; up to 22 bits) via 50 plain adds - a one-shot report computation, so
+; the simplest correct approach wins over a shift-add multiply. Then a
+; standard 24-by-16 restoring division (24 steps) for the quotient; the
+; remainder is discarded. Corrupts AF, BC, DE, HL.
+vid_kbps_calc:
+    ld hl, (vidBenchKB)
     xor a
-    ld (vidPrbColDone), a
-    ld a, b
-    ld (vidPrbMode), a             ; 255 = VPRB0 (vid_stream_frame's own
-                                    ; check); 1-254 = the column limit
-                                    ; (vid_stream_pixels_col's own check -
-                                    ; never reached at all when mode=255,
-                                    ; so one shared byte serves both,
-                                    ; never read in overlapping contexts)
-    ld a, (audEnable)
-    ld (vidSvAudEnable), a
-    xor a
-    ld (audEnable), a              ; freeze music (video_ctc_isr_stereo's
-                                    ; own banking invariant needs this,
-                                    ; exactly like vid_run's own freeze)
-    call bank_alloc
-    jp c, .nobank
-    ld (vidAudPoolBank), a
-    add a, a
-    ld (vidAudPoolPage), a
-    ld a, 3
-    ld (vidNum), a                 ; sd\003.VID - known format 2 fixture
-    call vid_open_video
-    jr c, .noopen
-    ld hl, (vidSizeLo)
-    ld de, (vidSizeHi)
-    call vid_classify
-    jr c, .badclass
-    ld (vidFmt), a
-    ; CTC arm - mirrors vid_run's own sequence (stereo table/ISR only,
-    ; 003.VID is a known format-2 fixture, no format branch needed here).
-    ; TC stays in D (not the shared vidCtcTc - this flow has no need to
-    ; persist it) across the port-write sequence, avoiding a store/
-    ; reload and the second "ld bc,AUD_CTC_PORT" (bc survives untouched
-    ; in between).
-    ld e, NR_VIDEO_TIMING
-    call nr_read
-    and 7
-    ld c, a
-    ld b, 0
-    ld hl, vidCtcTcTab2
-    add hl, bc
-    ld d, (hl)
-    ld bc, AUD_CTC_PORT
-    ld a, AUD_CTC_RESET
-    out (c), a
-    out (c), a
-    ld a, AUD_CTC_CW16
-    out (c), a
-    ld hl, video_ctc_isr_stereo
-    ld (IM2_CTC_STUB+1), hl
-    ld a, d
-    out (c), a
-    ld ix, vidAudBuf
-    ld a, 1
-    ld (vidAudDone), a
-    ld a, (l2BackBank)
-    add a, a
-    ld (vidDrawPage), a
-    call vid_stream_frame          ; the one frame under test
-    jr nc, .clean
-    ld (vidPrbErr), a               ; expected bisection stop (VID_ERR_
-                                     ; PROBELIM) or an unexpected error -
-                                     ; either way, vidPixRealRemain/
-                                     ; vidColRemain16/vidBlkRemain16 stay
-                                     ; untouched from here through .report
-                                     ; (nothing below writes them), so
-                                     ; .report reads them directly - no
-                                     ; separate snapshot needed
-    jr .teardown
-.clean:
-    xor a
-    ld (vidPrbErr), a                ; 0 = VPRB0 completed with no error
-.teardown:
-    ld bc, AUD_CTC_PORT
-    ld a, AUD_CTC_RESET
-    out (c), a
-    out (c), a
-    ld a, DAC_SILENCE
-    out (DAC_PORT), a
-    out (VID_DAC_LEFT), a
-    out (VID_DAC_RIGHT), a
-    ld a, (vidSvAudEnable)
-    ld (audEnable), a
-    call vid_stream_close
-    ld a, (vidAudPoolBank)
-    call bank_free
-    jr .report
-.noopen:
-    ld (vidPrbErr), a                ; A = vid_open_video's own error code
-    jr .report
-.badclass:
-.nobank:
-    ld a, 1
-    ld (vidPrbErr), a                ; 1 = setup failed (bank_alloc or
-                                      ; classify - both early/rare on a
-                                      ; known-good fixture; vid_open_
-                                      ; video's own distinct codes above
-                                      ; are the ones worth keeping apart)
-.report:
-    ld a, (vidPrbErr)
-    cp VID_ERR_PROBELIM
-    jr nz, .simplehop
-    ld a, (vidPrbColDone)
-    ld b, a
-    ld a, (vidColRemain16)
-    ld c, a
-    ld a, (vidBlkRemain16)
-    ld d, a
-    ld a, (vidPrbTokenByte)
-    ld e, a
-    ld hl, (vidPixRealRemain)
-    exx
-    ld hl, (vidPrbLastDest)
-    exx
-    ld ix, vid_prb_print_bisect
-    push ix
-    ld a, VID_PAGE2
-    jp ovl_map_page
-.simplehop:
-    ld a, (vidPrbErr)
-    ld c, a
-    ld ix, vid_prb_print_simple
-    push ix
-    ld a, VID_PAGE2
-    jp ovl_map_page
+    ld (vidDivLo), a
+    ld (vidDivHi), a
+    ld (vidDivB2), a
+    ld b, 50
+.mulloop:
+    push bc
+    ld a, (vidDivLo)
+    add a, l
+    ld (vidDivLo), a
+    ld a, (vidDivHi)
+    adc a, h
+    ld (vidDivHi), a
+    jr nc, .noc
+    ld a, (vidDivB2)
+    inc a
+    ld (vidDivB2), a
+.noc:
+    pop bc
+    djnz .mulloop
+    ld de, (vidBenchElapsed)
+    call vid_div24by16
+    ld hl, (vidDivLo)
+    ret
 
-; Drains ONE 512-byte SD block into the scratch buffer (vidStrmBlkBuf -
-; reused, content discarded; this file already owns it, and it is idle
-; whenever no vid_stream_read call is mid-flight, true here since the
-; probe always calls this AFTER vid_stream_frame's own reads have
-; returned). Reuses vid_col_newblock (open window/run + token-wait,
-; leaving the 512 bytes unconsumed - EXACTLY the "PROVEN vid_read_block-
-; into-scratch" shape, just via the direct-INI primitives already proven
-; by vid_stream_pixels_col's own real path rather than duplicating the
-; open/run-management logic a second time) and vid_col_blockdone (CRC
-; skip + bookkeeping). Out: CF clear = one block consumed; CF set =
-; run/window/token error (A = code). Corrupts everything.
-vid_prb_drain_block:
-    call vid_col_newblock
-    ret c
-    ld hl, vidStrmBlkBuf
-    ld c, PORT_SPI_DAT
-    ld e, 32                        ; 512/16
+; 24-bit dividend (vidDivB2:vidDivHi:vidDivLo, MSB first) / 16-bit
+; divisor DE, in place - the same three bytes end up holding the
+; quotient (low 16 bits readable as a plain word at vidDivLo). Standard
+; 24-step shift/compare/subtract restoring division; the running
+; remainder (HL) is discarded once the loop ends - only the quotient is
+; wanted here. In: DE = divisor (nonzero - the caller guards elapsed==0).
+; Corrupts AF, HL, B. Preserves DE (re-read every iteration).
+vid_div24by16:
+    ld hl, 0
+    ld b, 24
 .loop:
-    REPT 16
-       ini
-    ENDR
-    dec e
-    jr nz, .loop
-    jp vid_col_blockdone            ; tail call - CRC skip + bookkeeping
-
-; Drains DE whole 512-byte blocks (VPRB0 only - 120, the whole pixel
-; payload) via repeated vid_prb_drain_block calls. Out: CF clear = all
-; consumed; CF set = a block failed (A = code). Corrupts everything.
-vid_prb_drain:
-.loop:
-    ld a, d
-    or e
-    ret z
-    call vid_prb_drain_block
-    ret c
-    dec de
-    jr .loop
-
-vidPrbMode:       db 0            ; 0 = inert (no probe); 1-254 = column
-                                   ; limit (VPRB1/2/3); 255 = VPRB0 (skip
-                                   ; vid_stream_pixels_col entirely) -
-                                   ; ONE shared byte, safe because the two
-                                   ; checks that read it (vid_stream_
-                                   ; frame's mode==255 test and vid_
-                                   ; stream_pixels_col's own column-limit
-                                   ; test) never both execute in the same
-                                   ; run (mode=255 skips the second one).
-vidPrbColDone:    db 0            ; running column count (0-256)
-vidPrbTokenByte:  db 0            ; last SD token byte seen (vid_col_newblock)
-vidPrbErr:        db 0            ; 0=clean, VID_ERR_PROBELIM=expected stop,
-                                   ; else an unexpected setup/stream error
-                                   ; (report reads vidPixRealRemain/
-                                   ; vidColRemain16/vidBlkRemain16
-                                   ; directly - untouched at .report time)
-vidPrbLastDest:   dw 0            ; final dest pointer (offset within the
-                                   ; 8K page, $C000-based) at the stop -
-                                   ; audEnable save/restore reuses the
-                                   ; existing vidSvAudEnable (vid_run and
-                                   ; vid_prb_run never run concurrently)
+    ld a, (vidDivLo)
+    add a, a
+    ld (vidDivLo), a
+    ld a, (vidDivHi)
+    adc a, a
+    ld (vidDivHi), a
+    ld a, (vidDivB2)
+    adc a, a
+    ld (vidDivB2), a
+    adc hl, hl                   ; remainder <<= 1, bringing in the bit
+                                  ; just shifted out of the 24-bit dividend
+    or a
+    sbc hl, de
+    jr nc, .commit
+    add hl, de                   ; remainder < divisor: undo, quotient bit 0
+    jr .qbit0
+.commit:
+    ld a, (vidDivLo)
+    or 1                         ; quotient bit into the vacated LSB
+    ld (vidDivLo), a
+.qbit0:
+    djnz .loop
+    ret
 
 vidBenchName:   db "001.VID", 0
-msgVidNoBank:   db "NOBANK", 0
-msgVidStrm:     db "VID STRM OK", 0
-msgVidStrmErr:  db "VID STRM ERR=", 0
-msgVidBytes:    db "BYTES=", 0
-msgVidFrames:   db " FR=", 0
+msgVidNoBank:   db "VID NOBANK", 0
+msgVidFread:    db "VID FREAD KB/S=", 0
+msgVidFreadErr: db "VID FREAD ERR=", 0
+msgVidStrm:     db "VID STRM  KB/S=", 0
+msgVidStrmErr:  db "VID STRM  ERR=", 0
+msgVidBytes:    db "VID BYTES=", 0
+msgVidFrames:   db " FRAMES=", 0
 msgVidFmt:      db " FMT=", 0
 msgVidUnclass:  db "??", 0
 
@@ -2462,135 +2298,18 @@ vidBenchHi:      dw 0
 vidBenchStart:   dw 0
 vidBenchEnd:     dw 0
 vidBenchElapsed: dw 0
+vidBenchKB:      dw 0
+vidBenchKbps:    dw 0
 vidBenchFmt:     db 0
 vidBenchFmtBad:  db 0
+vidFreadKbps:    dw 0            ; pass-1 F_READ KB/s (pass 2 reuses vidBenchKbps)
+vidFreadErr:     db 0            ; pass-1 error code, 0 = ok
 vidStrmErr:      db 0            ; pass-2 raw error code, 0 = ok
+vidDivLo:        db 0
+vidDivHi:        db 0
+vidDivB2:        db 0
 
  ENDIF ; DEBUG
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
-
-; ---------------------------------------------------------------------
-; VID_PAGE2 - SP13 T3 review round 3: DEBUG-only second video page.
-; ---------------------------------------------------------------------
-; Bank 35's lower 8K (nextdaad.inc's VID_PAGE2 header - BANK_POOL_B
-; withdraws it under IFDEF DEBUG only, so Release's pool/layout stay
-; BYTE-IDENTICAL - verified via a build hash in the task report). Holds
-; ONLY the fmt2/3 crash bisection probe's print routines - everything
-; that needs VID_PAGE-private code/data (vid_open_video, vidCtcTcTab2,
-; video_ctc_isr_stereo, vid_stream_frame, vid_stream_pixels_col, the
-; drain routines) stays on VID_PAGE itself (vid_prb_run, video.asm)
-; because it must run through the CTC-armed window; nothing here ever
-; executes while the CTC is armed (vid_prb_run parks/resets it in its
-; own teardown BEFORE this page is ever reached), so no MMU7-remap-
-; while-armed hazard applies. Reached via vid_prb_run's own push-target
-; hop with the diagnostic values already loaded into registers (B,C,D,E,
-; HL directly; HL' via one exx - see vid_prb_run's own report/gohop
-; code for the exact allocation). Each entry point ends in a plain `ret`
-; straight back to the engine dispatcher - MMU7 is left on VID_PAGE2,
-; harmless (matches vid_bench's own established ending: eng_exec remaps
-; MMU7 before the next condact regardless).
- IFDEF DEBUG
-    MMU 7, VID_PAGE2, OVL_ORG
-
-VID_PRB_ROW equ 20              ; three report rows, clear of debug.asm's
-                                 ; reserved 30-31 and VIDBENCH's own 27-29
-
-; In: C = vidPrbErr (0 = VPRB0 clean run, else error code - an
-; unexpected setup/stream failure for whichever probe ran; the owner's
-; own typed command already identifies which one, so nothing here
-; re-prints a selector).
-vid_prb_print_simple:
-    ld a, c
-    ld (prbP2Err), a
-    ld b, VID_PRB_ROW
-    ld c, 0
-    call dbg_at
-    ld hl, msgPrbHdr
-    call dbg_puts
-    ld a, (prbP2Err)
-    or a
-    jr nz, .err
-    ld hl, msgPrbOk
-    jp dbg_puts
-.err:
-    ld hl, msgPrbErr
-    call dbg_puts
-    ld a, (prbP2Err)
-    jp dbg_hex8
-
-; In: B = columns completed, C = vidColRemain16, D = vidBlkRemain16,
-; E = last SD token byte, HL = vidPixRealRemain, HL' (one exx) = final
-; dest pointer. VPRB1/2/3 only (always vidPrbErr = VID_ERR_PROBELIM -
-; vid_prb_run's own .report gate only hops here on that exact code).
-vid_prb_print_bisect:
-    ld a, b
-    ld (prbP2Cols), a
-    ld a, c
-    ld (prbP2ColRem), a
-    ld a, d
-    ld (prbP2BlkRem), a
-    ld a, e
-    ld (prbP2Token), a
-    ld (prbP2PixRem), hl
-    exx
-    ld (prbP2Dest), hl
-    exx
-    ld b, VID_PRB_ROW
-    ld c, 0
-    call dbg_at
-    ld hl, msgPrbHdr
-    call dbg_puts
-    ld hl, msgPrbCols
-    call dbg_puts
-    ld a, (prbP2Cols)
-    call dbg_hex8
-    ld hl, msgPrbPixRem
-    call dbg_puts
-    ld hl, (prbP2PixRem)
-    call dbg_hex16
-    ld b, VID_PRB_ROW+1
-    ld c, 0
-    call dbg_at
-    ld hl, msgPrbColRem
-    call dbg_puts
-    ld a, (prbP2ColRem)
-    call dbg_hex8
-    ld hl, msgPrbBlkRem
-    call dbg_puts
-    ld a, (prbP2BlkRem)
-    call dbg_hex8
-    ld b, VID_PRB_ROW+2
-    ld c, 0
-    call dbg_at
-    ld hl, msgPrbTok
-    call dbg_puts
-    ld a, (prbP2Token)
-    call dbg_hex8
-    ld hl, msgPrbDest
-    call dbg_puts
-    ld hl, (prbP2Dest)
-    jp dbg_hex16
-
-msgPrbHdr:     db "VPRB", 0
-msgPrbOk:      db " OK", 0
-msgPrbErr:     db " ERR=", 0
-msgPrbCols:    db " COLS=", 0
-msgPrbPixRem:  db " PXREM=", 0
-msgPrbColRem:  db "CREM=", 0
-msgPrbBlkRem:  db " BREM=", 0
-msgPrbTok:     db "TOK=", 0
-msgPrbDest:    db " DEST=", 0
-
-prbP2Err:      db 0
-prbP2Cols:     db 0
-prbP2ColRem:   db 0
-prbP2BlkRem:   db 0
-prbP2Token:    db 0
-prbP2PixRem:   dw 0
-prbP2Dest:     dw 0
-
-    DISPLAY "video2 ends at ", $, " headroom ", /D, OVL_LIMIT - $
-    ASSERT $ <= OVL_LIMIT
- ENDIF ; DEBUG
