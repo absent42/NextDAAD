@@ -10,7 +10,8 @@ carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
 PARSE), file-backed save/load, Layer 2 location graphics
 (PICTURE/DISPLAY/GFX), AY audio (SFX/BEEP: music with streamed-song
 support, sound effects and speaker beeps), digitised sample playback
-bounded by available RAM, mouse input with a hardware sprite
+bounded by available RAM, full-screen video cutscene playback (GFX
+13/14, aliased SFX 9/10), mouse input with a hardware sprite
 pointer (MOUSE), boot title screens, and native multi-part games
 (EXTERN n 4) are implemented. All 128 condacts are handled, but CALL
 is a documented no-op.
@@ -32,6 +33,11 @@ is a documented no-op.
   automatic fallback to AY sound effects when no sample is present
 - Direct Layer 2 surface control (GFX): copy/swap/clear the picture
   plane's front and back buffers on demand
+- Video cutscenes (GFX 13/14, aliased as the classic SFX 9/10 PLAYFLI/
+  PLAYFLIL): full-screen MakeVid/playvid-format .VID playback, six
+  auto-detected formats (320x240, 256x240, 256x192, palette or not),
+  stereo or mono AY-DAC audio, play-once or loop-until-keypress,
+  PARTn-shadowed like other assets
 - Mouse input (MOUSE) via the Next's Kempston mouse ports, with a
   hardware sprite pointer (sub-commands 0-3; buttons read
   jdaad-compatible: idle 0, left 1, right 2, middle 4)
@@ -194,6 +200,8 @@ SFX first-argument/sub-command semantics (jdaad-compatible):
 | 6 | play song n once - whichever of NNN.AYS or NNN.AKY resolves; the song ends in silence |
 | 7 | play song n looped - whichever of NNN.AYS or NNN.AKY resolves |
 | 8 | stop the music - AKY or AYS, whichever is playing |
+| 9 | play video n once (NNN.VID) - the classic PLAYFLI symbol, identical to GFX n 13 |
+| 10 | as 9, looped until a key is pressed - PLAYFLIL, identical to GFX n 14 |
 
 Sub-commands 3 and 4 exist because the DOS DAAD convention encodes a
 rate byte ahead of the sound number for them; DRC's DRF 0.40 cannot
@@ -235,6 +243,53 @@ tune (SFX n 6) has ended, BEEP works again.
 Compatibility note: In CSpect, playing digitised sampled sound at the 
 same time as AY music currently causes the AY music to slow down. 
 This does not happen on actual ZX Spectrum Next hardware though.
+
+## Video cutscenes
+
+`GFX n 13` plays video `NNN.VID` once; `GFX n 14` loops it until a key
+is pressed. Both are also reachable through the classic DOS DAAD
+symbols `SFX n 9` (PLAYFLI) and `SFX n 10` (PLAYFLIL) - see the SFX
+table above. `NNN.VID` lives in the SD root next to GAME.DDB, 3-digit
+zero-padded like every other numbered asset; `PARTn\NNN.VID` shadows it
+per part.
+
+Six formats are auto-detected purely from file size - nothing to
+select at the DSF level:
+
+| fmt | resolution | palette | fps | audio (encoded rate) |
+|---|---|---|---|---|
+| 0 | 320x240 | yes | 50/3 | stereo, 15550 Hz |
+| 1 | 320x240 | no | 50/3 | stereo, 15550 Hz |
+| 2 | 256x240 | yes | 50/3 | stereo, 31100 Hz |
+| 3 | 256x240 | no | 50/3 | stereo, 31100 Hz |
+| 4 | 256x192 | yes | 25 | mono, 23325 Hz |
+| 5 | 256x192 | no | 25 | mono, 23325 Hz |
+
+These rates are exact (samples/frame x fps, re-derived rather than taken
+from tool documentation's "~15.6k/31.1k/23.3k" roundings).
+
+On the current build, the stereo formats play downsampled from their
+encoded rate - a memory-constraint tradeoff slated for revisiting in a
+future optimisation pass: formats 2/3 play at ~10.4 kHz (3:1
+downsample), formats 0/1 at ~7.78 kHz (2:1 downsample). Mono formats
+(4/5) always play at their full encoded rate. Format 0 (the highest
+data-rate format) may show slight stutter on the current Next core; an
+upcoming core release with faster SD reads is expected to improve this.
+Loop mode has a brief audio gap at each restart, by design. These
+formats are 50Hz-designed; a 60Hz display gets slower playback and
+audio popping, an accepted limitation.
+
+Video playback is a full-screen takeover, like DISPLAY: register state
+is restored when it ends, pixel content is not, so a game must redraw
+its own picture afterwards.
+
+Two ways to encode a `.VID`: MakeVid (a third-party GUI tool - its
+"with palette" formats 0/2/4 are currently broken, malformed raw-RGB24
+output, upstream defect; its non-palette formats 1/3/5 are correct), or
+this project's own `tests/videnc.py` (Python 3 + Pillow + ffmpeg),
+which encodes all six formats correctly, including real per-frame
+adaptive palettes, proven on hardware. See `authoring-kit/SETUP.md`'s
+"Video cutscenes" section for the full authoring workflow.
 
 ## Custom fonts and mouse pointer
 

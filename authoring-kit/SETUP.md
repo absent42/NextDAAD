@@ -66,6 +66,10 @@ Put these in this kit folder:
     it plays at the file's own sample rate, no resampling. You supply it
     in that format - the build does not convert it. See section 8 for
     size guidance and how large samples are handled.
+- Optional video cutscenes in `VIDEO\` (pre-encoded `.vid` files, copied
+  as-is - no conversion): `NNN.vid` -> `RELEASE\NNN.VID`, played by
+  `GFX n 13`/`GFX n 14`. See "Video cutscenes" below for the formats,
+  encoding tools, and playback caveats.
 
 ## 3. Configuration (CONFIG.BAT)
 
@@ -95,16 +99,18 @@ After a build, `RELEASE\` holds the complete SD-card image:
 `DAAD.NX2`/`DAAD.NXI` title screen (optionally `.zx0`, see "Title screens"
 below), any `FONT.CHR` custom font (see "Custom fonts" below), any
 `POINTER.SPR` custom mouse pointer (see "Custom mouse pointer" below), any
-`GAME.AKY`/`NNN.AKY`/`GAME.SFB`/`NNN.AYS`, any `NNN.WAV`, and
+`GAME.AKY`/`NNN.AKY`/`GAME.SFB`/`NNN.AYS`, any `NNN.WAV`, any `NNN.VID`
+(see "Video cutscenes" below), and
 `0.XMB` if your DSF uses XMESSAGE/XMES (see section 8). Copy its contents to
 the root of an SD card to play on real hardware.
 
 ## 6. The starter game
 
-`STARTER.DSF` with example graphics and audio ships with the kit, so a first
-build works out of the box and shows the NextDAAD-specific condacts in use:
-`PICTURE`/`DISPLAY` for location art, `SFX` for music and effects, and `BEEP`
-for tones. In the starter, try the verbs MUSIC, MUTE, TUNE, BLEEP, and ZAP.
+`STARTER.DSF` with example graphics, audio and video ships with the kit, so
+a first build works out of the box and shows the NextDAAD-specific condacts
+in use: `PICTURE`/`DISPLAY` for location art, `SFX` for music and effects,
+`BEEP` for tones, and `GFX` for video cutscenes. In the starter, try the
+verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE, and REEL.
 
 ## Title screens
 
@@ -248,6 +254,103 @@ a future feature that switches between several loaded pointer shapes at
 runtime. This version only ever shows the one pointer installed at boot
 or part-switch time.
 
+## Video cutscenes
+
+Optional: drop pre-encoded `.vid` cutscene files in `VIDEO\` (section 2),
+numbered by video number, e.g. `VIDEO\001.vid` stages as-is (no
+conversion) to `RELEASE\001.VID`. A DSF plays one with `GFX n 13` (play
+once) or `GFX n 14` (loop until any key), where `n` is the video number -
+`GFX 3 13` plays `003.VID`. These are also reachable through the classic
+DOS DAAD symbols `SFX n 9` (`PLAYFLI`) and `SFX n 10` (`PLAYFLIL`) - see
+the SFX sub-command table below, rows 9/10, now a real feature on this
+target rather than a no-op. Like location art, `PART<n>\NNN.VID` shadows
+the root copy for that part only (section 9, "Shadowed assets").
+
+### The six formats
+
+The player identifies which of six formats a `.VID` file is purely from
+its file size - nothing to select at the DSF level, any correctly-sized
+`.VID` just plays:
+
+| fmt | resolution | palette | fps | audio (encoded rate) |
+|---|---|---|---|---|
+| 0 | 320x240 | yes | 50/3 | stereo, 15550 Hz |
+| 1 | 320x240 | no | 50/3 | stereo, 15550 Hz |
+| 2 | 256x240 | yes | 50/3 | stereo, 31100 Hz |
+| 3 | 256x240 | no | 50/3 | stereo, 31100 Hz |
+| 4 | 256x192 | yes | 25 | mono, 23325 Hz |
+| 5 | 256x192 | no | 25 | mono, 23325 Hz |
+
+These rates are exact (re-derived from samples/frame x fps), not the
+"~15.6k/31.1k/23.3k" roundings some tool documentation uses.
+
+**Playback audio caveat.** On the current build, the stereo formats play
+downsampled from their encoded rate - a memory-constraint tradeoff,
+slated for revisiting in a future optimisation pass: formats 2/3 play at
+~10.4 kHz (3:1 downsample), formats 0/1 at ~7.78 kHz (2:1 downsample).
+The mono formats (4/5) always play at their full encoded rate.
+
+**Performance caveat.** Format 0 (320x240 palette, the highest data-rate
+format) may show slight stutter on the current Next core; an upcoming
+core release with faster SD reads is expected to improve this. Loop mode
+(`GFX n 14`) has a brief audio gap at each restart, by design.
+
+**Redraw after a cutscene.** Video playback is a full-screen takeover,
+like `DISPLAY`: register state is restored when it ends, but pixel
+content is not. A game must redraw its own picture afterwards - the
+starter game's own `MOVIE`/`REEL` verbs do this the same way its `R`
+(redraw) verb already does, `CLS` then `RESTART`.
+
+**60Hz displays.** These formats are 50Hz-designed; on a 60Hz display,
+expect slower playback and audio popping - an accepted limitation, not a
+bug to report.
+
+### Encoding a `.VID`
+
+Two ways to make one - neither is wired into `BUILD.BAT`, both write a
+finished `.vid` you drop into `VIDEO\` yourself:
+
+- **MakeVid** (`tools\README.txt`), a GUI tool, for the non-palette
+  formats (1/3/5). Its "with palette" formats (0/2/4) are currently
+  broken in MakeVid 1.77 - malformed output, raw RGB24 pixel data never
+  converted to palette indices (only the top third of each frame
+  decodes). Non-palette output is correct; the defect is upstream and a
+  report on it is on hold pending this kit's own proven alternative.
+- **`lib\videnc.py`** (shipped with this kit), a command-line tool that
+  encodes all six formats correctly, including real per-frame adaptive
+  palettes - proven on hardware, and the only way to get a working
+  palette format (0/2/4) until MakeVid's defect is fixed upstream. Needs
+  Python 3, Pillow (`pip install Pillow`), and ffmpeg (default path
+  `tools\ffmpeg\bin\ffmpeg.exe`, override with `--ffmpeg PATH`) - the
+  only place in this kit's workflow with a dependency beyond the batch
+  files and the tools in section 1.
+
+```
+python lib\videnc.py INPUT.mp4 VIDEO\001.vid --format 1 --start 00:00:03 --duration 4
+```
+
+`--format` is 0-5 (the table above); `--start`/`--duration` cut a clip
+from a longer source; `--dither` Floyd-Steinberg dithers the palette
+formats (default: no dither). Run `python lib\videnc.py --help` for the
+full option list.
+
+**Contiguity.** Files play best contiguous on the SD card - defragment
+the card if a video stutters that a straight sector-throughput
+calculation says should not. **Classification collision.** A `.VID`
+whose size happens to be an exact multiple of an earlier-priority
+format's frame size classifies as that earlier format instead, by
+design (see the format table's priority order 0-5) - `lib\videnc.py`
+detects and fixes this automatically by appending one blank frame at
+encode time; a MakeVid-produced file hitting this is rare but possible,
+and the fix is the same (append one blank frame).
+
+### The starter game's demo clips
+
+`VIDEO\001.vid` (format 1, 320x240 no-palette - the safe default) and
+`VIDEO\002.vid` (format 0, 320x240 palette - the showcase) ship with the
+kit so `GFX 13`/`GFX 14` work out of the box. Try the verbs MOVIE (plays
+001.VID once) and REEL (loops 002.VID until a key is pressed).
+
 ## 7. Troubleshooting
 
 - "required tool missing" - the named path does not exist; fix `TOOLSDIR`/
@@ -384,8 +487,8 @@ not compile. The compiler defines `PLAYFLI` (9) and `PLAYFLIL` (10).
 | 6 | `PLAYDRO` | Play music once - a GAME-numbered AYS stream is tried first, an AKY song plays if none exists. On DOS these condacts played OPL music; on this target they are the music surface. |
 | 7 | `PLAYDROL` | As 6, looped. |
 | 8 | `STOPDRO` | Stop music of both kinds (AYS stream and AKY song). |
-| 9 | `PLAYFLI` | Video playback on DOS. Accepted and ignored on this target in this version - a silent no-op (a DEBUG build shows a marker). Reserved for a future video feature. |
-| 10 | `PLAYFLIL` | As 9, ignored. |
+| 9 | `PLAYFLI` | Play video `NNN.VID` once - the classic DOS video symbol, now real: identical to `GFX n 13`. See "Video cutscenes" above. |
+| 10 | `PLAYFLIL` | As 9, looped until a key is pressed - identical to `GFX n 14`. |
 
 Sample numbers 1-254 may resolve to a WAV or fall back to an AY
 effect; 255 is reserved and always plays from the AY effects bank.
@@ -431,7 +534,7 @@ of the machinery below.
   `RELEASE\PART<n>\0.XMB` (if that part uses XMESSAGE/XMES), then
   copies every other file from `PART<n>\` into `RELEASE\PART<n>\`
   as-is (no conversion - put ready-to-use `.NX2`/`.NXI`/`.AKY`/`.AYS`/
-  `.WAV`/`GAME.SFB`/`FONT.CHR`/`POINTER.SPR` files there, not
+  `.WAV`/`.VID`/`GAME.SFB`/`FONT.CHR`/`POINTER.SPR` files there, not
   `.png`/`.aks` sources).
 - On the SD card this becomes `GAME.DDB`, `GAME2.DDB`, `GAME3.DDB`, ...
   at the root, alongside `PART2\`, `PART3\`, ... folders holding each
@@ -459,10 +562,10 @@ DDB, say) is ignored and harmless.
 For a part >= 2, these asset kinds probe `PART<n>\<name>` **first**,
 then fall back to the game root if not found there: location art (the
 whole extension probe chain runs under `PART<n>\`, then again at the
-root if that whole pass misses), `NNN.WAV` samples, numbered
-`NNN.AYS`/`NNN.AKY` songs, `GAME.SFB`, `0.XMB`, `FONT.CHR` (see
-"Custom fonts" above), and `POINTER.SPR` (see "Custom mouse pointer"
-above).
+root if that whole pass misses), `NNN.WAV` samples, `NNN.VID` videos
+(see "Video cutscenes" above), numbered `NNN.AYS`/`NNN.AKY` songs,
+`GAME.SFB`, `0.XMB`, `FONT.CHR` (see "Custom fonts" above), and
+`POINTER.SPR` (see "Custom mouse pointer" above).
 
 Root-only, never shadowed: the title screen (`DAAD.*`, shown once at
 cold boot only) and the boot-autoplay default song (`GAME.AYS`/

@@ -59,7 +59,7 @@ REM      from the kit root cannot leave a stray RELEASE\FONT.CHR behind.
 REM      RELEASE\POINTER.SPR is covered the same way (SP12 T3 - see the
 REM      ready-made pointer staging below).
 if not exist "RELEASE" md "RELEASE"
-del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" "RELEASE\FONT.CHR" "RELEASE\POINTER.SPR" 2>nul
+del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\*.VID" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" "RELEASE\FONT.CHR" "RELEASE\POINTER.SPR" 2>nul
 REM ---- remove stale multi-part output too, so a part removed since the
 REM      last build (its PART<n> folder deleted) cannot leave a stray
 REM      GAME<n>.DDB or PART<n>\ behind on the SD card - see SETUP.md's
@@ -78,6 +78,9 @@ call "%~dp0lib\gfx.bat"
 if errorlevel 1 ( pause & exit /b 1 )
 
 call "%~dp0lib\audio.bat"
+if errorlevel 1 ( pause & exit /b 1 )
+
+call "%~dp0lib\video.bat"
 if errorlevel 1 ( pause & exit /b 1 )
 
 call "%~dp0lib\assemble.bat"
