@@ -1291,10 +1291,47 @@ vid_run:
     ; check below, making the loop unkillable.
     call vid_key_any
     jr nz, .restore
+    ; --- CTC-park bracket (SP13 T3 review fix, B1 - critical) ---
+    ; vid_open_video (via vid_stream_open/vid_raw_setup) loads IX with
+    ; esxDOS buffer/argument pointers (vidNamePart/vidName for esx_fopen,
+    ; vidFstatBuf for F_FSTAT, vidRawResetByte then vidFilemapBuf for the
+    ; raw filemap setup) across several BLOCKING esxDOS calls - and BOTH
+    ; video ISRs (video_ctc_isr/video_ctc_isr_stereo, below) treat IX as
+    ; their own private play pointer, `inc ix`-ing it on EVERY tick
+    ; whenever it is not EXACTLY vidAudBufLast/vidAudBufLastStereo (the
+    ; compare-and-hold-last branch, both ISRs' bodies). This is NOT made
+    ; safe by waiting for the previous frame's audio to drain first: once
+    ; mainline repoints IX to an esxDOS buffer, that value is (correctly)
+    ; never equal to vidAudBufLast either, so the VERY NEXT tick's
+    ; compare fails and the ISR falls straight into `inc ix` on
+    ; mainline's esxDOS pointer - drained or not. The only safe fix is to
+    ; stop the ISR from firing at all for the duration: park the CTC
+    ; (the same double soft-reset teardown idiom `.restore` uses, below)
+    ; before vid_stream_close/vid_open_video, re-arm (the same CW16+TC
+    ; program this routine's own entry sequence uses - vidCtcTc and the
+    ; IM2_CTC_STUB patch are both still correct, format never changes
+    ; mid-session, so neither is recomputed) after a successful reopen.
+    ; Audio holds at its last DAC output across the park - a brief,
+    ; audible gap at every loop restart (documented, not a bug - playvid
+    ; itself is not gapless across loops either).
+    ld bc, AUD_CTC_PORT
+    ld a, AUD_CTC_RESET
+    out (c), a
+    out (c), a                     ; CTC parked - the ISR cannot fire
+                                    ; again until re-armed below
     call vid_stream_close
     ld a, (vidNum)
     call vid_open_video
-    jr c, .restore                 ; reopen failed: abort via restore
+    jr c, .restore                 ; reopen failed: .restore's own CTC
+                                    ; reset (double soft-reset again) is
+                                    ; a harmless repeat from here - the
+                                    ; CTC is already parked
+    ld bc, AUD_CTC_PORT
+    ld a, AUD_CTC_CW16
+    out (c), a
+    ld a, (vidCtcTc)
+    ld bc, AUD_CTC_PORT
+    out (c), a                     ; re-armed - ISR resumes next tick
     jp .frameloop
 .drainlast:
     ; the last successfully streamed frame (if any) is already showing
@@ -1476,6 +1513,17 @@ vid_stream_frame:
 ; 16), so the transfer loop is one uniform 16-byte-unrolled inner block
 ; for every chunk - column-complete, block-complete, or both at once -
 ; with no remainder handling anywhere.
+; RESYNC PRECONDITION: this routine starts with vidBlkRemain16=0,
+; forcing a fresh 512-byte SD block boundary (token-wait) on its first
+; chunk - correct ONLY because the audio+pad and palette reads that
+; precede it (vid_stream_frame) are BOTH exact whole-block multiples
+; (VID_F2_AUDIO+VID_F23_AUDPAD=4096=8 blocks, VID_PAL_BYTES=512=1 block,
+; for formats 2/3), so vid_stream_read's own block-alignment cursor is
+; already sitting exactly on a boundary when this routine takes over -
+; no partial block is left buffered in vidStrmBlkBuf for it to miss. Any
+; FUTURE format wired through this same direct-INI path MUST keep its
+; own pre-pixel reads block-aligned, or route pixels through the
+; buffered vid_stream_read path instead (accepting its relocate cost).
 ; In: A = starting destination 8K page (VID_PIX_PAGES23 consecutive
 ;     pages are streamed, incrementing after each).
 ; Out: CF clear = all 8 pages written; CF set = stream error/EOF (A =
@@ -1869,10 +1917,11 @@ vidColRemain16:   db 0             ; vid_stream_pixels_col: column-major
 vidBlkRemain16:   db 0             ; blit state, units of 16 bytes (see
 vidPixRealRemain: dw 0             ; that routine's own header)
 ; Shared mono/stereo play buffer, sized for the LARGER stereo need
-; (VID_F2_PLAY_BYTES=1866, the downsampled rate's frame - see nextdaad.
-; inc). Mono (933 bytes, VID_F4_AUDIO) uses only the front of it,
-; unchanged from T2 - formats never play concurrently, so one shared
-; buffer costs less page space than two separate ones (1866 vs 1866+933).
+; (VID_F2_PLAY_BYTES=1244 - 622 pairs, the 3:1-downsampled frame - see
+; nextdaad.inc's VID_STEREO_DOWNSAMPLE header). Mono (933 bytes,
+; VID_F4_AUDIO) uses only the front of it, unchanged from T2 - formats
+; never play concurrently, so one shared buffer costs less page space
+; than two separate ones (1244 vs 1244+933).
 vidAudBuf:        ds VID_F2_PLAY_BYTES
 vidAudBufLast       equ vidAudBuf + VID_F4_AUDIO - 1
 vidAudBufLastStereo equ vidAudBuf + VID_F2_PLAY_BYTES - 2

@@ -647,11 +647,13 @@ $pictureOK
                 DONE
 
 ; SP13 Task 3 owner verbs: the stereo dual-DAC / 256x240 formats (2/3)
-; eye/ear legs (-Vid staged sd\003.VID = format 2 palette, sd\004.VID =
-; format 3 no-palette, both SYNTHETIC per tests/gen_fmt4.py - see build-
-; tests.ps1's -Vid header). VPLY2/VPLY3 exercise GFX n 13 play-once;
-; VLOP2/VLOP3 exercise GFX n 14 loop (any key ends it) - same dispatch
-; path as VPLY4/VPLY5 above, format gate widened in vid_play (video.asm).
+; eye/ear legs (-Vid staged sd\003.VID = format 2 palette, SYNTHETIC per
+; tests/gen_vid_synth.py; sd\004.VID = format 3 no-palette, a REAL copy
+; of its MakeVid source (never touched by the autopal bug - only 003 is
+; generated) - see build-tests.ps1's -Vid header). VPLY2/VPLY3 exercise
+; GFX n 13 play-once; VLOP2/VLOP3 exercise GFX n 14 loop (any key ends
+; it) - same dispatch path as VPLY4/VPLY5 above, format gate widened in
+; vid_play (video.asm).
 > VPLY2   _     GFX 3 13
                 DONE
 
