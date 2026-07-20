@@ -167,12 +167,21 @@ vid_stream_open:
     call esx_fopen               ; IX = caller's filename, untouched
     jr c, .fail                  ; since esx_getsetdrv/the ld b above
     ld (vidHandle), a
-    push af                      ; A = handle, about to be needed again
-    ld ix, vidFstatBuf
-    pop af
+    ; DISK_FILEMAP MUST run first - before F_FSTAT or any other file access
+    ; (a prior access perturbs the sector-cache state the map walks, giving
+    ; a wrong card address the card rejects; playvid parity - it FILEMAPs
+    ; straight after F_OPEN and never F_FSTATs). F_READ mode never maps.
+    ld a, (vidStrmMode)
+    or a
+    jr z, .fstat
+    call vid_raw_setup           ; raw: capture + validate the filemap NOW
+    jr c, .openfail
+.fstat:
+    ld a, (vidHandle)            ; F_FSTAT (both modes) - legal AFTER FILEMAP,
+    ld ix, vidFstatBuf            ; before any STRMSTART
     rst $08
     db ESX_F_FSTAT
-    jr c, .statfail
+    jr c, .openfail
     ld hl, (vidFstatBuf+7)
     ld (vidSizeLo), hl
     ld hl, (vidFstatBuf+9)
@@ -180,19 +189,15 @@ vid_stream_open:
     ld a, (vidStrmMode)
     or a
     ret z                        ; F_READ mode: CF clear (from or a), done
-    call vid_raw_setup           ; raw mode: build filemap + prime cursor
-    ret nc                       ; CF clear = raw open ready
-    push af                      ; raw setup failed: close the handle,
-    ld a, (vidHandle)             ; propagating A (esxDOS or VID_ERR_* code)
-    call esx_fclose
-    ld a, $FF
-    ld (vidHandle), a
-    pop af
-    scf
+    ld hl, (vidSizeLo)           ; raw: prime remain from the captured size
+    ld (vidStrmRemainLo), hl      ; (the map + run/tail cursor were set by
+    ld hl, (vidSizeHi)            ; vid_raw_setup above)
+    ld (vidStrmRemainHi), hl
+    or a                         ; CF clear
     ret
-.statfail:
-    push af
-    ld a, (vidHandle)
+.openfail:
+    push af                      ; close the handle, propagating A (esxDOS
+    ld a, (vidHandle)             ; code or VID_ERR_* from the filemap step)
     call esx_fclose
     ld a, $FF
     ld (vidHandle), a
@@ -203,17 +208,18 @@ vid_stream_open:
     scf
     ret
 
-; Raw-mode open tail: F_OPEN + F_FSTAT already done. The file is FRESH
-; (F_FSTAT reads directory metadata only - it never moves the file
-; pointer nor touches file-data sectors), so we follow stream.asm's
-; fresh-open path: DISK_FILEMAP directly, no F_SEEK/1-byte-read reset.
-; Fails (CF set, A = code) if the map came back empty (VID_ERR_NOMAP) or
-; the file needs more runs than the 32-entry buffer holds (VID_ERR_FRAG
-; - DISK_FILEMAP reported zero unused entries, i.e. it filled the buffer
-; and may have had more; the kit's defrag advice applies). Records the
-; card granularity (cardflags bit 1: 0 = byte addresses, +512/block;
-; 1 = block addresses, +1/block) as the per-block step and primes the
-; streaming cursor. Corrupts AF, BC, DE, HL, IX.
+; Raw-mode filemap capture: runs IMMEDIATELY after F_OPEN, BEFORE F_FSTAT
+; or any other file access (a prior access perturbs the sector-cache the
+; map walks - playvid parity, stream.asm's pre-access caveat). The file
+; is fresh, so DISK_FILEMAP goes straight in with no F_SEEK/1-byte-read
+; reset. Fails (CF set, A = code) if the map came back empty
+; (VID_ERR_NOMAP) or the file needs more runs than the 32-entry buffer
+; holds (VID_ERR_FRAG - DISK_FILEMAP reported zero unused entries, i.e.
+; it filled the buffer and may have had more; the kit's defrag advice
+; applies). Records the card granularity (cardflags bit 1: 0 = byte
+; addresses, +512/block; 1 = block addresses, +1/block) as the per-block
+; step and resets the run/tail cursor; remain is primed by the caller
+; after F_FSTAT yields the size. Corrupts AF, BC, DE, HL, IX.
 vid_raw_setup:
  IFDEF DEBUG
     xor a                        ; DIAG scaffolding (SP13 T1b hw token bug):
@@ -260,12 +266,8 @@ vid_raw_setup:
     ld (vidStrmRunBlocks), hl
     ld (vidStrmBlkPos), hl
     ld (vidStrmBlkLen), hl
-    ld hl, (vidSizeLo)            ; remain = full file size
-    ld (vidStrmRemainLo), hl
-    ld hl, (vidSizeHi)
-    ld (vidStrmRemainHi), hl
-    or a                          ; CF clear
-    ret
+    or a                          ; CF clear (remain is primed by the caller
+    ret                           ; once F_FSTAT has read the size)
 
 ; In: A = destination 8K page, mapped into the MMU6 window ($C000) for
 ;     the duration of this read only (the established data_save/
