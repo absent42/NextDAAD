@@ -1243,6 +1243,14 @@ vid_run:
     ld (l2BackBank), a
     ld a, (l2FrontBank)
     nextreg NR_L2_BANK, a
+    ; format 4 only: apply the palette streamed earlier this frame (still
+    ; resident at vidAudPoolPage+1, untouched since) NOW - synchronised
+    ; with the pixel flip just above, not when it was read (vid_stream_
+    ; frame's header explains why: applying it early would recolour the
+    ; frame that was VISIBLE at read time, not the one just flipped in).
+    ld a, (vidFmt)
+    cp 4
+    call z, vid_apply_palette
     ld a, (vidExitReq)
     or a
     jr nz, .restore
@@ -1323,12 +1331,28 @@ vid_run:
 ; DIFFERENT page so it cannot overwrite the audio, since vid_stream_read
 ; always lands at the start of its destination page), and vidDrawPage's
 ; VID_PIX_PAGES consecutive 8K pages (pixels, zero-copy - vid_stream_
-; read's dest IS the shadow Layer 2 surface, no staging copy). Out: CF
-; clear = the whole frame streamed; CF set = end of file (the audio+pad
-; read was short - the classifier-clean T2 fixtures are truncated to a
-; whole number of frames, so EOF always lands here, never mid-frame) or
-; a genuine read error - both treated identically by the caller.
-; Corrupts everything.
+; read's dest IS the shadow Layer 2 surface, no staging copy).
+;
+; Format 4's palette is READ here but deliberately NOT APPLIED here -
+; vid_apply_palette runs later, from vid_run's flip section, synchronised
+; with the pixel-bank flip (see that call site's own comment for why:
+; NR $43=PAL_L2_FIRST is "edit + active display", the SAME palette that
+; is CURRENTLY ON SCREEN, so applying it immediately here would recolour
+; the STILL-VISIBLE previous frame's pixels for this whole routine's
+; ~36-46ms run time, every frame - playvid avoids this with a genuinely
+; double-buffered palette (its frame_wait toggles NR $43 in lockstep with
+; NR $12); this task's fix is cheaper - defer the apply to the flip
+; instant instead, shrinking the mismatch window to the ~0.3-0.5ms the
+; 512 nextreg writes themselves take. The landing page holding the raw
+; palette bytes is not reused for anything else before that call, so
+; deferring the READ's raw bytes costs nothing - only the byte data
+; itself is deferred, not re-streamed.
+;
+; Out: CF clear = the whole frame streamed; CF set = end of file (the
+; audio+pad read was short - the classifier-clean T2 fixtures are
+; truncated to a whole number of frames, so EOF always lands here, never
+; mid-frame) or a genuine read error - both treated identically by the
+; caller. Corrupts everything.
 vid_stream_frame:
     ld a, (vidAudPoolPage)
     ld de, VID_F4_AUDIO + VID_F45_AUDPAD
@@ -1350,7 +1374,8 @@ vid_stream_frame:
     or a
     sbc hl, bc
     jr nz, .err
-    call vid_apply_palette
+    ; NOT applied here - see this routine's header. vid_run's flip
+    ; section applies it (vidAudPoolPage+1 still holds it, untouched).
 .pixels:
     ld a, (vidDrawPage)
     ld (vidPxPage), a
@@ -1380,10 +1405,28 @@ vid_stream_frame:
     ret
 
 ; Apply the 512-byte 9-bit palette just landed at vidAudPoolPage+1 (format
-; 4 only) to Layer 2, dodging the TM_TRANSP_ATTR collision exactly like
-; l2_palette_load (overlay2.asm) - duplicated here since overlay2 is a
-; different MMU7 page, unreachable while MMU7 = VID_PAGE for the whole
-; playback. Corrupts everything.
+; 4 only) to Layer 2. Called from vid_run's flip section, NOT from
+; vid_stream_frame where it was read (see that routine's header).
+;
+; Dodges the TM_TRANSP_ATTR collision on EVERY entry's RGB byte (any
+; source value == TM_TRANSP_ATTR is written as $FF instead) - the same
+; per-entry technique l2_palette_load uses (overlay2.asm, duplicated here
+; since overlay2 is unreachable cross-page during playback). UNLIKE
+; l2_palette_load, this does NOT also force-stamp index TM_TRANSP_ATTR
+; (254) to genuinely BE the transparent colour afterward: l2_palette_load
+; safely reserves that one index because "no Rabenstein art uses pixel
+; value $FE" - a guarantee that holds only for THIS project's own hand-
+; converted picture assets, never established for third-party MakeVid
+; video content, which has no reason to avoid index 254. Forcing it
+; anyway would have made every pixel legitimately assigned that index
+; punch through to the tilemap instead of showing its real colour - a
+; real defect, found during the owner's format-4 hardware leg (garbled/
+; wrong-coloured video; format 5's vid_identity_palette carried the same
+; bug but its specific test content happened not to trigger it visibly).
+; With the per-entry dodge alone, NO entry can ever equal TM_TRANSP_ATTR,
+; so Layer 2's NR $14 compare (left at TM_TRANSP_ATTR, the engine-wide
+; convention) can never match ANY video pixel - genuinely opaque, as
+; intended, with no reserved/sacrificed index at all. Corrupts everything.
 vid_apply_palette:
     call data_save
     ld a, (vidAudPoolPage)
@@ -1405,15 +1448,18 @@ vid_apply_palette:
     inc hl
     nextreg NR_PAL_VALUE9, a
     djnz .loop
-    nextreg NR_PAL_INDEX, TM_TRANSP_ATTR
-    nextreg NR_PAL_VALUE9, TM_TRANSP_ATTR
-    nextreg NR_PAL_VALUE9, 0
     call data_restore
     ret
 
 ; Program a fixed identity RRRGGGBB palette (value[i] = i) once at entry
 ; for format 5 (no embedded palette - its pixel bytes ARE their own
-; colour). Dodges TM_TRANSP_ATTR the same way. Corrupts AF, BC.
+; colour). Dodges TM_TRANSP_ATTR the same way (entry 254 -> colour $FF
+; instead of its "natural" identity value $FE) and, like vid_apply_
+; palette, does NOT also force-stamp entry 254 to genuinely BE
+; TM_TRANSP_ATTR afterward - see vid_apply_palette's header for why: no
+; MakeVid content is guaranteed to avoid pixel value 254, so reserving it
+; as transparent would punch real content through to the tilemap.
+; Corrupts AF, BC.
 vid_identity_palette:
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
     nextreg NR_PAL_INDEX, 0
@@ -1429,9 +1475,6 @@ vid_identity_palette:
     nextreg NR_PAL_VALUE9, 0
     inc c
     djnz .loop
-    nextreg NR_PAL_INDEX, TM_TRANSP_ATTR
-    nextreg NR_PAL_VALUE9, TM_TRANSP_ATTR
-    nextreg NR_PAL_VALUE9, 0
     ret
 
 ; Any-key test: A = 0 selects ALL 8 keyboard half-rows simultaneously via
