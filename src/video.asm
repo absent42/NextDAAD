@@ -108,9 +108,18 @@ vid_mod24:
     sla l
     rl h
     rl e
-    rla
+    rla                          ; A holds the running remainder r < d <= 155;
+                                  ; the shifted 9-bit value v = 2r+bit <= 309
+    jr c, .fsub                  ; bit 8 fell out of A into CF: true v = A+256,
+                                  ; always >= any divisor here, so subtract
+                                  ; unconditionally - sub d's 8-bit wraparound
+                                  ; supplies the +256 (v-d = A-d mod 256, and
+                                  ; 101 <= v-d <= 154 fits). The old `cp d`
+                                  ; discarded this carry, corrupting every
+                                  ; divisor 128..155 (r reaches 128+).
     cp d
     jr c, .skip
+.fsub:
     sub d
 .skip:
     djnz .loop
@@ -127,19 +136,27 @@ vidFormatSect:
     db VID_F3_SECT, VID_F4_SECT, VID_F5_SECT
 
 ; ---------------------------------------------------------------------
-; vid_stream_* - the F_READ-backed streaming interface (Task 1 ships
-; this implementation behind the interface; the bench below measures
-; IT, and the streaming-mechanism decision may swap the internals later
-; without changing these three signatures - see the task report).
+; vid_stream_* - dual-mechanism streaming interface. The three
+; signatures and their register contracts are PINNED (Task 2's player
+; consumes them verbatim); a one-byte selector vidStrmMode chooses the
+; internals: 0 = plain esxDOS F_READ, 1 = raw card streaming
+; (DISK_FILEMAP + DISK_STRMSTART/END). The caller sets vidStrmMode
+; BEFORE vid_stream_open; all three routines honour it internally. The
+; bench below drives one pass in each mode so the owner's re-leg
+; measures both mechanisms end-to-end in a single run.
 ; ---------------------------------------------------------------------
 
 ; In: IX = ASCIIZ filename pointer (root name; no PARTn\ probing - that
 ;     is Task 2's job once vid_play knows the active part; this bench-
-;     only entry always opens exactly the name it is given).
+;     only entry always opens exactly the name it is given). vidStrmMode
+;     selects the mechanism (see above).
 ; Out: CF clear = opened; vidHandle holds the esxDOS handle; vidSizeLo/
 ;      vidSizeHi hold the 32-bit byte size read via F_FSTAT (low word/
 ;      high word - feed straight into vid_classify as HL/DE).
-;      CF set = failed (A = esxDOS error code); vidHandle left at $FF.
+;      CF set = failed (A = error code); vidHandle left at $FF. In raw
+;      mode the code may be an esxDOS code OR VID_ERR_FRAG/VID_ERR_NOMAP
+;      (nextdaad.inc - distinct so the bench can name the fragmentation
+;      failure the kit's defrag guidance is written for).
 ; Corrupts AF, BC, DE, HL, IX.
 vid_stream_open:
     ld a, $FF
@@ -160,7 +177,18 @@ vid_stream_open:
     ld (vidSizeLo), hl
     ld hl, (vidFstatBuf+9)
     ld (vidSizeHi), hl
+    ld a, (vidStrmMode)
     or a
+    ret z                        ; F_READ mode: CF clear (from or a), done
+    call vid_raw_setup           ; raw mode: build filemap + prime cursor
+    ret nc                       ; CF clear = raw open ready
+    push af                      ; raw setup failed: close the handle,
+    ld a, (vidHandle)             ; propagating A (esxDOS or VID_ERR_* code)
+    call esx_fclose
+    ld a, $FF
+    ld (vidHandle), a
+    pop af
+    scf
     ret
 .statfail:
     push af
@@ -175,6 +203,62 @@ vid_stream_open:
     scf
     ret
 
+; Raw-mode open tail: F_OPEN + F_FSTAT already done. The file is FRESH
+; (F_FSTAT reads directory metadata only - it never moves the file
+; pointer nor touches file-data sectors), so we follow stream.asm's
+; fresh-open path: DISK_FILEMAP directly, no F_SEEK/1-byte-read reset.
+; Fails (CF set, A = code) if the map came back empty (VID_ERR_NOMAP) or
+; the file needs more runs than the 32-entry buffer holds (VID_ERR_FRAG
+; - DISK_FILEMAP reported zero unused entries, i.e. it filled the buffer
+; and may have had more; the kit's defrag advice applies). Records the
+; card granularity (cardflags bit 1: 0 = byte addresses, +512/block;
+; 1 = block addresses, +1/block) as the per-block step and primes the
+; streaming cursor. Corrupts AF, BC, DE, HL, IX.
+vid_raw_setup:
+    ld a, (vidHandle)
+    ld ix, vidFilemapBuf
+    ld de, VID_FILEMAP_ENT       ; buffer capacity in 6-byte entries
+    rst $08
+    db ESX_DISK_FILEMAP
+    ret c                        ; A = esxDOS error, CF set
+    ; DE = unused entries, HL = address past last written entry, A = flags
+    ld (vidCardFlags), a
+    ld a, e                      ; unused == 0 -> buffer was full, treat as
+    or d                          ; over-fragmented (cannot prove complete)
+    jr nz, .roomok
+    ld a, VID_ERR_FRAG
+    scf
+    ret
+.roomok:
+    ld de, vidFilemapBuf
+    ld (vidStrmEntryPtr), de      ; cursor starts at the first entry
+    or a
+    sbc hl, de                    ; HL = bytes of entries written
+    jr nz, .haveentries
+    ld a, VID_ERR_NOMAP           ; empty map: nothing to stream
+    scf
+    ret
+.haveentries:
+    add hl, de                    ; re-form the end address
+    ld (vidStrmEntryEnd), hl
+    ld a, (vidCardFlags)          ; per-block card-address step
+    and %00000010
+    ld hl, 512                    ; bit 1 = 0: byte addressing, +512/block
+    jr z, .stepset
+    ld hl, 1                      ; bit 1 = 1: block addressing, +1/block
+.stepset:
+    ld (vidStrmStep), hl
+    ld hl, 0                      ; no run loaded, no buffered tail yet
+    ld (vidStrmRunBlocks), hl
+    ld (vidStrmBlkPos), hl
+    ld (vidStrmBlkLen), hl
+    ld hl, (vidSizeLo)            ; remain = full file size
+    ld (vidStrmRemainLo), hl
+    ld hl, (vidSizeHi)
+    ld (vidStrmRemainHi), hl
+    or a                          ; CF clear
+    ret
+
 ; In: A = destination 8K page, mapped into the MMU6 window ($C000) for
 ;     the duration of this read only (the established data_save/
 ;     data_map_page/data_restore bracket - see ext_xmes/font_load,
@@ -182,14 +266,21 @@ vid_stream_open:
 ;     (one MMU6 window's worth - callers chunk larger transfers into
 ;     repeated calls, exactly like ddb_load/ext_xmes/font_load's own
 ;     $2000-per-call reads).
-; Out: CF set = esxDOS I/O error, A = esxDOS error code.
-;      CF clear = BC = bytes actually read. esxDOS F_READ clears CF on a
-;      short/EOF read too (only a real error sets it) - callers MUST
-;      compare BC against the requested DE themselves, the established
-;      BC-discipline count-check law (file.asm's sav_read comment;
-;      font_load's "BC discipline" comment, overlay2.asm).
+; Out: CF set = I/O error, A = error code.
+;      CF clear = BC = bytes actually read. A short/EOF read clears CF
+;      too (both mechanisms) - callers MUST compare BC against the
+;      requested DE themselves, the established BC-discipline count-check
+;      law (file.asm's sav_read comment; font_load's "BC discipline"
+;      comment, overlay2.asm).
 ; Corrupts AF, BC, DE, HL, IX.
 vid_stream_read:
+    ld (vidReadPage), a          ; A = dest page (must survive the mode
+    ld a, (vidStrmMode)           ; test); DE = count untouched throughout
+    or a
+    ld a, (vidReadPage)
+    jr z, .fread
+    jp vid_stream_read_raw
+.fread:
     push af                      ; A = dest page; data_save only promises
     call data_save                ; to preserve DE, so stash A ourselves
     pop af
@@ -213,7 +304,8 @@ vid_stream_read:
     ret
 
 ; Closes the handle opened by vid_stream_open. No-op if none is open.
-; Corrupts AF.
+; (Raw mode leaves no window open - every raw read ends with DISK_STRMEND
+; before returning - so close is just F_CLOSE in both modes.) Corrupts AF.
 vid_stream_close:
     ld a, (vidHandle)
     cp $FF
@@ -223,11 +315,357 @@ vid_stream_close:
     ld (vidHandle), a
     ret
 
+vidStrmMode: db 0              ; 0 = F_READ, 1 = raw card streaming
 vidHandle:   db $FF
 vidSizeLo:   dw 0
 vidSizeHi:   dw 0
+vidReadPage: db 0
 vidFstatBuf: ds 11             ; F_FSTAT buffer: +0 '*' +1 $81 +2 attr
                                 ; +3 time +5 date +7(4) size (esxDOS API)
+
+; ---------------------------------------------------------------------
+; Raw card streaming internals (vidStrmMode = 1). All state lives in the
+; video page (bank space) - nothing here grows resident memory.
+; ---------------------------------------------------------------------
+; The streaming cursor persists across vid_stream_read calls so a large
+; transfer chunked into repeated $2000 reads resumes exactly where it
+; left off. Whole 512-byte card blocks are always pulled (the SD block
+; protocol has no sub-block read); when a caller's count ends mid-block
+; the tail is held in vidStrmBlkBuf and drained first on the next call.
+; remain (file bytes not yet delivered) drives EOF; the last card block
+; of an unaligned file yields a full 512 of which only remain are valid.
+;
+; vid_stream_read raw path.
+; In:  vidReadPage = dest 8K page, DE = requested count <= $2000.
+; Out: CF clear, BC = bytes delivered (< DE at EOF); CF set, A = code.
+; The whole pass is bracketed by data_save/data_map_page/data_restore
+; (dest in the MMU6 window) and by a Multiface disable/restore; each
+; contiguous run is streamed inside its own DISK_STRMSTART/END window and
+; DISK_STRMEND is always issued before returning, so normal file I/O
+; elsewhere is never left poisoned - no filesystem call is ever made
+; between a STRMSTART and its STRMEND. Corrupts AF, BC, DE, HL, IX.
+vid_stream_read_raw:
+    ld (vidStrmNeed), de          ; bytes still to serve this call
+    ld (vidReadCountSaved), de    ; original count (for the served figure)
+    call data_save
+    ld a, (vidReadPage)
+    call data_map_page            ; MMU6 = dest page
+    call vid_mf_disable           ; save + clear Multiface enable
+    ld hl, DATA_WINDOW
+    ld (vidStrmDest), hl
+.outer:
+    ld hl, (vidStrmNeed)          ; served every requested byte?
+    ld a, h
+    or l
+    jp z, .done
+    call vid_remain_zero          ; file exhausted?
+    jp z, .done
+    ld hl, (vidStrmBlkLen)        ; drain a buffered tail before streaming
+    ld de, (vidStrmBlkPos)
+    or a
+    sbc hl, de
+    jr z, .needstream
+    call vid_drain
+    jp .outer
+.needstream:
+    ld hl, (vidStrmRunBlocks)     ; current run empty? load the next one
+    ld a, h
+    or l
+    jr nz, .haverun
+    call vid_next_run
+    jp c, .done                   ; no more runs (defensive EOF)
+.haverun:
+    call vid_strm_start           ; open a window on the current run
+    jp c, .strmerr
+.inner:
+    ld hl, (vidStrmNeed)
+    ld a, h
+    or l
+    jp z, .endwin
+    call vid_remain_zero
+    jp z, .endwin
+    ld hl, (vidStrmRunBlocks)
+    ld a, h
+    or l
+    jp z, .endwin                 ; run exhausted mid-window: close, next run
+    ld hl, (vidStrmNeed)          ; direct 512 only when a whole block both
+    ld de, 512                    ; fits the request and is all valid data
+    or a
+    sbc hl, de
+    jp c, .viabuf                 ; need < 512: buffer + prefix-copy
+    call vid_remain_ge512
+    jp c, .viabuf                 ; remain < 512: partial final block
+    ld hl, (vidStrmDest)
+    call vid_read_block           ; 512 straight into the window
+    jp c, .tokerr
+    ld (vidStrmDest), hl
+    ld hl, (vidStrmNeed)
+    ld de, 512
+    or a
+    sbc hl, de
+    ld (vidStrmNeed), hl
+    ld de, 512
+    call vid_remain_sub
+    jp .blockdone
+.viabuf:
+    ld hl, vidStrmBlkBuf
+    call vid_read_block           ; full 512 into the tail buffer
+    jp c, .tokerr
+    call vid_remain_ge512         ; valid bytes = min(512, remain)
+    jr nc, .fullblk
+    ld hl, (vidStrmRemainLo)      ; remain < 512: only remain are valid
+    jr .havelen
+.fullblk:
+    ld hl, 512
+.havelen:
+    ld (vidStrmBlkLen), hl
+    ld hl, 0
+    ld (vidStrmBlkPos), hl
+    call vid_drain                ; copy min(need, blkLen) now; tail stays
+.blockdone:
+    ld hl, (vidStrmRunBlocks)     ; one card block consumed
+    dec hl
+    ld (vidStrmRunBlocks), hl
+    ld hl, (vidStrmRunAddrLo)     ; advance card address by the step
+    ld de, (vidStrmStep)
+    add hl, de
+    ld (vidStrmRunAddrLo), hl
+    jr nc, .noaddrcarry
+    ld hl, (vidStrmRunAddrHi)
+    inc hl
+    ld (vidStrmRunAddrHi), hl
+.noaddrcarry:
+    jp .inner
+.endwin:
+    call vid_strm_end
+    jp c, .strmerr
+    jp .outer
+.done:
+    call vid_mf_restore
+    call data_restore
+    ld hl, (vidReadCountSaved)    ; served = original count - need left
+    ld de, (vidStrmNeed)
+    or a
+    sbc hl, de
+    push hl
+    pop bc                        ; BC = bytes delivered
+    or a                          ; CF clear
+    ret
+.tokerr:
+    call vid_strm_end             ; best-effort close before bailing
+    ld a, VID_ERR_TOKEN
+    jr .failrestore
+.strmerr:
+    ; A = esxDOS error from vid_strm_start / vid_strm_end
+.failrestore:
+    push af
+    call vid_mf_restore
+    call data_restore
+    pop af
+    scf
+    ret
+
+; Copy min(vidStrmNeed, buffered) bytes from vidStrmBlkBuf+BlkPos to the
+; MMU6 window (vidStrmDest), advancing need/dest/BlkPos and taking that
+; many off remain (buffered bytes were counted into remain when read, so
+; they subtract here as delivered). Corrupts AF, BC, DE, HL.
+vid_drain:
+    ld hl, (vidStrmBlkLen)        ; avail = BlkLen - BlkPos
+    ld de, (vidStrmBlkPos)
+    or a
+    sbc hl, de
+    ld de, (vidStrmNeed)          ; count = min(avail, need)
+    push hl                       ; avail
+    or a
+    sbc hl, de                    ; avail - need
+    pop hl                        ; avail
+    jr c, .count                  ; avail < need: count = avail
+    jr z, .count                  ; avail == need: count = avail
+    ld hl, (vidStrmNeed)          ; avail > need: count = need
+.count:
+    push hl
+    pop bc                        ; BC = count (<= 511, <= need)
+    ld hl, vidStrmBlkBuf          ; src = BlkBuf + BlkPos
+    ld de, (vidStrmBlkPos)
+    add hl, de
+    ld de, (vidStrmDest)
+    push bc
+    ldir                          ; HL,DE advance; BC -> 0
+    pop bc
+    ld (vidStrmDest), de
+    ld hl, (vidStrmBlkPos)        ; BlkPos += count
+    add hl, bc
+    ld (vidStrmBlkPos), hl
+    ld hl, (vidStrmNeed)          ; need -= count
+    or a
+    sbc hl, bc
+    ld (vidStrmNeed), hl
+    ld d, b                       ; remain -= count
+    ld e, c
+    jp vid_remain_sub             ; tail-call, returns to vid_drain's caller
+
+; Load the next filemap entry into the run cursor. Out: CF set = no more
+; entries. Each entry: 4-byte card address (low word, high word) + 2-byte
+; block count. Corrupts AF, DE, HL.
+vid_next_run:
+    ld hl, (vidStrmEntryPtr)
+    ld de, (vidStrmEntryEnd)
+    or a
+    sbc hl, de
+    jr c, .more
+    scf                          ; EntryPtr >= EntryEnd: exhausted
+    ret
+.more:
+    ld hl, (vidStrmEntryPtr)
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld (vidStrmRunAddrLo), de     ; card address low word
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld (vidStrmRunAddrHi), de     ; card address high word
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld (vidStrmRunBlocks), de     ; number of 512-byte blocks in the run
+    ld (vidStrmEntryPtr), hl
+    or a                         ; CF clear
+    ret
+
+; Begin a streaming window on the current run. Out: CF set = error
+; (A = esxDOS code); else vidStrmPort = data port. IXDE = card address,
+; BC = block count (ignored by SD/MMC), A = cardflags (stream.asm).
+; Corrupts AF, BC, DE, HL, IX.
+vid_strm_start:
+    ld de, (vidStrmRunAddrLo)
+    ld hl, (vidStrmRunAddrHi)
+    push hl
+    pop ix                        ; IXDE = card address
+    ld bc, (vidStrmRunBlocks)
+    ld a, (vidCardFlags)
+    rst $08
+    db ESX_DISK_STRMSTART
+    ret c                         ; A = esxDOS error, CF set
+    ld a, c                       ; C = data port ($EB on Next)
+    ld (vidStrmPort), a
+    or a                          ; CF clear
+    ret
+
+; End the current streaming window. Out: CF set = error (A = code).
+; A = cardflags on entry (stream.asm). Corrupts AF, BC, DE, HL, IX.
+vid_strm_end:
+    ld a, (vidCardFlags)
+    rst $08
+    db ESX_DISK_STRMEND
+    ret
+
+; Read one whole 512-byte card block from vidStrmPort into (HL), then
+; skip the SD 2-byte CRC and wait for the next block's $FE data token
+; (SD/MMC protocol - protocol byte is always 0 on the Next; the token
+; wait leaves the card positioned at the next block, exactly as
+; stream.asm sequences it). In: HL = destination. Out: HL += 512; CF set
+; = bad token. Corrupts AF, BC, HL. Runs inside a STRMSTART window only.
+vid_read_block:
+    ld a, (vidStrmPort)
+    ld c, a
+    ld b, 0
+    inir                          ; 256 bytes (B wraps 0 -> 256 iterations)
+    inir                          ; next 256 bytes; HL now +512
+    in a, (c)                     ; skip the 2-byte CRC (the nops pad the
+    nop                           ; in/in to the 16T/byte interface timing)
+    in a, (c)
+    nop
+.wt:
+    in a, (c)                     ; wait for the next block's data token
+    cp $FF                        ; $FF = not yet available
+    jr z, .wt
+    cp $FE                        ; $FE = correct token
+    ret z                         ; CF clear
+    scf                           ; anything else = protocol error
+    ret
+
+; Clear the Multiface enable (peripheral 2 bit 3), saving the prior
+; value. A Multiface trap during a streaming window could issue file I/O
+; and hang the machine (stream.asm). Corrupts AF, E.
+vid_mf_disable:
+    ld e, NR_PERIPH2
+    call nr_read                  ; A = current peripheral 2 (preserves BC)
+    ld (vidMfSave), a
+    and %11110111
+    nextreg NR_PERIPH2, a
+    ret
+
+; Restore peripheral 2 to its pre-stream value. Corrupts AF.
+vid_mf_restore:
+    ld a, (vidMfSave)
+    nextreg NR_PERIPH2, a
+    ret
+
+; remain == 0 test. Out: Z set if the file is exhausted. Corrupts AF only.
+vid_remain_zero:
+    ld a, (vidStrmRemainLo)
+    or a
+    ret nz
+    ld a, (vidStrmRemainLo+1)
+    or a
+    ret nz
+    ld a, (vidStrmRemainHi)
+    or a
+    ret nz
+    ld a, (vidStrmRemainHi+1)
+    or a
+    ret
+
+; remain >= 512 test. Out: CF set = remain < 512 (a partial final block).
+; Corrupts AF, DE, HL.
+vid_remain_ge512:
+    ld hl, (vidStrmRemainHi)
+    ld a, h
+    or l
+    jr nz, .ge                    ; any high-word bits: definitely >= 512
+    ld hl, (vidStrmRemainLo)
+    ld de, 512
+    or a
+    sbc hl, de                    ; CF set iff remain < 512
+    ret
+.ge:
+    or a                         ; CF clear
+    ret
+
+; remain -= DE (16-bit, DE <= 512). Corrupts AF, HL.
+vid_remain_sub:
+    ld hl, (vidStrmRemainLo)
+    or a
+    sbc hl, de
+    ld (vidStrmRemainLo), hl
+    ret nc
+    ld hl, (vidStrmRemainHi)
+    dec hl
+    ld (vidStrmRemainHi), hl
+    ret
+
+vidCardFlags:      db 0
+vidStrmPort:       db 0
+vidMfSave:         db 0
+vidReadCountSaved: dw 0          ; original requested count (served calc)
+vidStrmNeed:       dw 0          ; bytes still to serve this call
+vidStrmDest:       dw 0          ; next dest address in the MMU6 window
+vidStrmEntryPtr:   dw 0          ; next filemap entry to consume
+vidStrmEntryEnd:   dw 0          ; one past the last written entry
+vidStrmRunAddrLo:  dw 0          ; current run card address, low word
+vidStrmRunAddrHi:  dw 0          ; current run card address, high word
+vidStrmRunBlocks:  dw 0          ; 512-byte blocks left in the current run
+vidStrmStep:       dw 0          ; card-address step per block (1 or 512)
+vidStrmRemainLo:   dw 0          ; file bytes not yet delivered, low word
+vidStrmRemainHi:   dw 0          ; file bytes not yet delivered, high word
+vidStrmBlkPos:     dw 0          ; drain cursor into vidStrmBlkBuf
+vidStrmBlkLen:     dw 0          ; valid bytes held in vidStrmBlkBuf
+vidFilemapBuf:     ds VID_FILEMAP_ENT*6   ; DISK_FILEMAP entries (192 bytes)
+vidStrmBlkBuf:     ds 512        ; one card block held for sub-block drains
 
 ; ---------------------------------------------------------------------
 ; VIDBENCH - DEBUG-only dev harness (SP13 Task 1).
@@ -241,30 +679,33 @@ vidFstatBuf: ds 11             ; F_FSTAT buffer: +0 '*' +1 $81 +2 attr
 ; before dispatching the NEXT condact regardless (the same invariant
 ; h_xpart's cross-page failure hop already relies on).
 ;
-; Opens sd\001.VID (root only), streams it end-to-end through
-; vid_stream_read in maximal ($2000) MMU6-window chunks, times the pass
-; via frameCounter (interrupts.asm, incremented once per 50Hz interrupt),
-; then prints total bytes, elapsed frames, computed KB/s, and
-; vid_classify's verdict for the file. One shot per call - re-invoking
-; VIDBENCH re-opens and re-measures from scratch (the spec's RE-RUNNABLE
-; requirement: a new NextZXOS/Next-core release is expected to change
-; the numbers). Output uses the DEBUG dbg_at/dbg_puts/dbg_hex8/dbg_hex16
-; console helpers (debug.asm; release-safe stubs, but this whole routine
-; is IFDEF DEBUG anyway) - hex only, matching every existing use of
-; those helpers in this codebase (no decimal printer exists).
+; Opens sd\001.VID (root only) and streams it end-to-end through
+; vid_stream_read in maximal ($2000) MMU6-window chunks, timing the pass
+; via frameCounter (interrupts.asm, incremented once per 50Hz interrupt).
+; ONE invocation runs TWO passes - pass 1 F_READ, pass 2 raw streaming
+; (re-opening between passes) - so the owner's re-leg produces both
+; mechanism verdicts at once. Prints three rows: F_READ KB/s, raw
+; streaming KB/s (or its distinct error code if the raw open failed -
+; the owner always still gets the F_READ number), and total bytes /
+; elapsed frames / vid_classify verdict (from the streaming pass; from
+; the F_READ pass if streaming never ran). One shot per call - re-
+; invoking VIDBENCH re-opens and re-measures from scratch (the spec's
+; RE-RUNNABLE requirement: a new NextZXOS/Next-core release is expected
+; to change the numbers). Output uses the DEBUG dbg_at/dbg_puts/dbg_hex8/
+; dbg_hex16 console helpers (debug.asm) - hex only, matching every
+; existing use of those helpers in this codebase (no decimal printer
+; exists).
  IFDEF DEBUG
 
-VIDBENCH_ROW1 equ 28            ; two report rows near the bottom of the
-VIDBENCH_ROW2 equ 29            ; 32-row tilemap, clear of rows 30-31
-                                 ; (debug.asm's own reserved status lines
-                                 ; - see l2_testcard's header comment,
-                                 ; overlay2.asm) and clear of a typical
-                                 ; game window's rows
+VIDBENCH_ROW_FREAD equ 27       ; three report rows near the bottom of the
+VIDBENCH_ROW_STRM  equ 28       ; 32-row tilemap, all clear of rows 30-31
+VIDBENCH_ROW_INFO  equ 29       ; (debug.asm's reserved status lines - see
+                                 ; l2_testcard's header comment, overlay2.asm)
 
 vid_bench:
-    call bank_alloc              ; transient scratch bank for the MMU6
-    jr nc, .havebank              ; read target (banks.asm)
-    ld b, VIDBENCH_ROW1
+    call bank_alloc              ; one transient scratch bank, reused by
+    jr nc, .havebank              ; both passes as the MMU6 read target
+    ld b, VIDBENCH_ROW_FREAD
     ld c, 0
     call dbg_at
     ld hl, msgVidNoBank
@@ -273,20 +714,46 @@ vid_bench:
     ld (vidBenchBank), a
     add a, a                     ; 16K bank -> its lower 8K page
     ld (vidBenchPage), a
+    ; --- pass 1: F_READ ---
+    xor a
+    ld (vidStrmMode), a
+    call vid_bench_pass
+    jr c, .freadfail
+    ld hl, (vidBenchKbps)        ; stash F_READ KB/s before pass 2 overwrites
+    ld (vidFreadKbps), hl
+    xor a
+    ld (vidFreadErr), a          ; 0 = ok
+    jr .pass2
+.freadfail:
+    ld (vidFreadErr), a          ; A = error (nonzero)
+    ld hl, 0
+    ld (vidFreadKbps), hl
+.pass2:
+    ; --- pass 2: raw streaming ---
+    ld a, 1
+    ld (vidStrmMode), a
+    call vid_bench_pass
+    jr c, .strmfail
+    xor a
+    ld (vidStrmErr), a           ; 0 = ok; vidBenchKbps now holds raw KB/s
+    jr .freebank
+.strmfail:
+    ld (vidStrmErr), a           ; A = error (nonzero); vidBench* still hold
+    ld hl, 0                      ; the F_READ pass's bytes/frames/fmt if the
+    ld (vidBenchKbps), hl         ; raw open failed before resetting them
+.freebank:
+    ld a, (vidBenchBank)
+    call bank_free
+    jp vid_bench_report
+
+; Runs one full timed streaming pass over vidBenchName into vidBenchPage
+; using the currently selected vidStrmMode, then computes the pass's
+; report values into vidBench*. Out: CF set = open/read failed (A = error
+; code); CF clear = success. Corrupts everything.
+vid_bench_pass:
     ld ix, vidBenchName
     call vid_stream_open
-    jr nc, .opened
-    push af
-    ld b, VIDBENCH_ROW1
-    ld c, 0
-    call dbg_at
-    ld hl, msgVidOpenFail
-    call dbg_puts
-    pop af
-    call dbg_hex8
-    ld a, (vidBenchBank)
-    jp bank_free
-.opened:
+    ret c                         ; A = error, CF set (open failed)
     ld hl, 0
     ld (vidBenchLo), hl
     ld (vidBenchHi), hl
@@ -308,34 +775,27 @@ vid_bench:
     ld hl, $2000
     or a
     sbc hl, bc
-    jr z, .readloop               ; BC == $2000: full window, more likely
-                                   ; follows - keep streaming
-    ; BC < $2000: short/EOF read (esxDOS clears CF on this - see the
-    ; vid_stream_read header) - the file is exhausted
+    jr z, .readloop               ; BC == $2000: full window, keep streaming
+    ; BC < $2000: short/EOF read (CF clear on this - see the vid_stream_read
+    ; header) - the file is exhausted
     ld hl, (frameCounter)
     ld (vidBenchEnd), hl
     call vid_stream_close
-    ld a, (vidBenchBank)
-    call bank_free
-    jp vid_bench_report
+    call vid_bench_compute
+    or a                         ; CF clear
+    ret
 .readfail:
     push af
     call vid_stream_close
-    ld a, (vidBenchBank)
-    call bank_free
-    ld b, VIDBENCH_ROW1
-    ld c, 0
-    call dbg_at
-    ld hl, msgVidReadFail
-    call dbg_puts
     pop af
-    jp dbg_hex8
+    scf
+    ret
 
-; Derives and prints the four report values. vidSizeLo/vidSizeHi are
-; still the size vid_stream_open captured for THIS file, so the
-; classification printed here is for the exact bytes just streamed.
-; Corrupts everything.
-vid_bench_report:
+; Derives the report values for the pass just streamed. vidSizeLo/
+; vidSizeHi are still the size vid_stream_open captured for THIS file, so
+; the classification is for the exact bytes just streamed. Corrupts
+; everything.
+vid_bench_compute:
     ; elapsed = end - start (16-bit, wraps correctly via 2's complement -
     ; frameCounter is a plain dw, 50Hz, ~21.8 minutes before it wraps)
     ld hl, (vidBenchEnd)
@@ -380,8 +840,48 @@ vid_bench_report:
     ld a, 1
 .classok:
     ld (vidBenchFmtBad), a
-    ; --- print ---
-    ld b, VIDBENCH_ROW1
+    ret
+
+; Prints the three report rows from the values stashed by the two passes.
+vid_bench_report:
+    ; row 27: F_READ KB/s (or ERR)
+    ld b, VIDBENCH_ROW_FREAD
+    ld c, 0
+    call dbg_at
+    ld a, (vidFreadErr)
+    or a
+    jr z, .freadok
+    ld hl, msgVidFreadErr
+    call dbg_puts
+    ld a, (vidFreadErr)
+    call dbg_hex8
+    jr .strmrow
+.freadok:
+    ld hl, msgVidFread
+    call dbg_puts
+    ld hl, (vidFreadKbps)
+    call dbg_hex16
+.strmrow:
+    ; row 28: raw streaming KB/s (or ERR = distinct fragmentation/API code)
+    ld b, VIDBENCH_ROW_STRM
+    ld c, 0
+    call dbg_at
+    ld a, (vidStrmErr)
+    or a
+    jr z, .strmok
+    ld hl, msgVidStrmErr
+    call dbg_puts
+    ld a, (vidStrmErr)
+    call dbg_hex8
+    jr .inforow
+.strmok:
+    ld hl, msgVidStrm
+    call dbg_puts
+    ld hl, (vidBenchKbps)
+    call dbg_hex16
+.inforow:
+    ; row 29: bytes / frames / format (streaming pass, or F_READ fallback)
+    ld b, VIDBENCH_ROW_INFO
     ld c, 0
     call dbg_at
     ld hl, msgVidBytes
@@ -393,13 +893,6 @@ vid_bench_report:
     ld hl, msgVidFrames
     call dbg_puts
     ld hl, (vidBenchElapsed)
-    call dbg_hex16
-    ld b, VIDBENCH_ROW2
-    ld c, 0
-    call dbg_at
-    ld hl, msgVidKbps
-    call dbg_puts
-    ld hl, (vidBenchKbps)
     call dbg_hex16
     ld hl, msgVidFmt
     call dbg_puts
@@ -483,11 +976,12 @@ vid_div24by16:
 
 vidBenchName:   db "001.VID", 0
 msgVidNoBank:   db "VID NOBANK", 0
-msgVidOpenFail: db "VID OPEN FAIL ", 0
-msgVidReadFail: db "VID READ FAIL ", 0
+msgVidFread:    db "VID FREAD KB/S=", 0
+msgVidFreadErr: db "VID FREAD ERR=", 0
+msgVidStrm:     db "VID STRM  KB/S=", 0
+msgVidStrmErr:  db "VID STRM  ERR=", 0
 msgVidBytes:    db "VID BYTES=", 0
 msgVidFrames:   db " FRAMES=", 0
-msgVidKbps:     db "VID KB/S=", 0
 msgVidFmt:      db " FMT=", 0
 msgVidUnclass:  db "??", 0
 
@@ -502,6 +996,9 @@ vidBenchKB:      dw 0
 vidBenchKbps:    dw 0
 vidBenchFmt:     db 0
 vidBenchFmtBad:  db 0
+vidFreadKbps:    dw 0            ; pass-1 F_READ KB/s (pass 2 reuses vidBenchKbps)
+vidFreadErr:     db 0            ; pass-1 error code, 0 = ok
+vidStrmErr:      db 0            ; pass-2 raw error code, 0 = ok
 vidDivLo:        db 0
 vidDivHi:        db 0
 vidDivB2:        db 0

@@ -104,6 +104,16 @@ ESX_F_FSTAT     equ $A1     ; A=handle, IX=11-byte buffer; +7(4)=file size
 ESX_MODE_READ   equ $01
 ESX_MODE_W      equ $0E     ; F_OPEN: write, create or truncate
 ESX_ENOENT      equ 5       ; F_OPEN: file not found
+ESX_DISK_FILEMAP  equ $85   ; card-address map of a file's fragment runs
+ESX_DISK_STRMSTART equ $86  ; begin a raw card streaming read
+ESX_DISK_STRMEND   equ $87  ; end a raw card streaming read
+; --- raw-streaming (video page, SP13 T1b) distinct open-failure codes,
+;     chosen outside the esxDOS error range so the bench can tell them
+;     apart from a real esxDOS code on the STRM row.
+VID_ERR_FRAG    equ $FE     ; file needs > VID_FILEMAP_ENT runs (run .defrag)
+VID_ERR_NOMAP   equ $FF     ; DISK_FILEMAP returned no entries
+VID_ERR_TOKEN   equ $FD     ; bad SD data token mid-stream (protocol error)
+VID_FILEMAP_ENT equ 32      ; filemap buffer capacity, 6 bytes/entry (192 B)
 
 ; --- Tilemap text mode (sub-project 2) ---
 NR_TM_CTRL      equ $6B
@@ -272,6 +282,10 @@ DAC_PORT        equ $DF     ; SpecDrum-compatible mono DAC (all 4 DACs)
 ; retired zxnDMA write path, NOT the CPU-OUT path this engine uses - so it retired
 ; with the DMA engine. One convention now, no IFDEF, no -DacCSpect.
 DAC_SILENCE     equ $80
+NR_PERIPH2      equ $06     ; peripheral 2: bit 3 = Multiface enable - the raw
+                            ; streaming path (video.asm) clears it for the
+                            ; duration of a stream (a Multiface trap could
+                            ; issue filesystem I/O mid-STRMSTART and lock up)
 NR_PERIPH3      equ $08     ; peripheral 3: bit 3 = 8-bit DACs on,
                             ; bit 1 = Turbo Sound on (both hard-reset 0)
 NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6), 7 = HDMI;
