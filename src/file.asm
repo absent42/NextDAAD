@@ -157,8 +157,8 @@ fatal:
                                  ; so the old tmUp gate skipped this whole
                                  ; block - see main.asm's ddb_load branch.
                                  ; txt_init's embedded-font fallback needs
-                                 ; no DDB/SD state (tm_font_init loads it
-                                 ; before even trying esxDOS for GAME.CHR),
+                                 ; no DDB/SD state (tm_font_init is a pure
+                                 ; ldir, no esxDOS since SP12 T1),
                                  ; so re-arming it here is always safe,
                                  ; including the esxDOS-absent case that
                                  ; likely caused the failure. fatal() never

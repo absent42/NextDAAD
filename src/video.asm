@@ -571,8 +571,9 @@ vid_fast_spill:
 
 ; Copy min(vidStrmNeed, buffered) bytes from vidStrmBlkBuf+BlkPos to the
 ; MMU6 window (vidStrmDest), advancing need/dest/BlkPos and taking that
-; many off remain (buffered bytes were counted into remain when read, so
-; they subtract here as delivered). Corrupts AF, BC, DE, HL.
+; many off remain (remain counts UNDELIVERED file bytes - buffering a
+; block does not touch it; it decrements here, delivery time, exactly
+; like the direct-512 path does). Corrupts AF, BC, DE, HL.
 vid_drain:
     ld hl, (vidStrmBlkLen)        ; avail = BlkLen - BlkPos
     ld de, (vidStrmBlkPos)
@@ -796,9 +797,10 @@ vid_sd_cmd:
     ret
 
 ; Clear the Multiface enable (peripheral 2 bit 3), saving the prior value.
-; An NMI/Multiface trap mid-SD-transaction could issue file I/O (which
-; re-selects the card) and corrupt the read or hang the machine. Corrupts
-; AF, E.
+; A Multiface NMI mid-SD-transaction could issue file I/O that re-selects
+; the card and desyncs the stream (recoverable-looking but wrong data);
+; disabling it for the window removes the possibility. Corrupts AF
+; (E is nr_read's select input, not written).
 vid_mf_disable:
     ld e, NR_PERIPH2
     call nr_read                  ; A = current peripheral 2 (preserves BC)

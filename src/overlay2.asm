@@ -2870,18 +2870,18 @@ title_blit:
 ; the RESIDENT embedded font (fontData, an INCBIN of src/font.chr - 2048
 ; bytes, tracked in git, NOT the gitignored toolchain path a prior
 ; review suspected) into TM_DEFS ($7400, nextdaad.inc) via a plain ldir
-; BEFORE ever touching esxDOS, then optionally overlays root-only
-; GAME.CHR on top (same 2048-byte exact-size validation this mirrors).
+; with no esxDOS involvement (its former root-only GAME.CHR overlay
+; probe was retired in SP12 T1; this routine mirrors the 2048-byte
+; exact-size validation that probe pioneered).
 ; TM_DEFS is 256 glyphs x 8 rows, 1bpp, stored verbatim - no expansion/
 ; conversion, so "install" is always a straight 2048-byte copy. TM_DEFS
 ; sits in bank 5, permanently mapped at CPU slot 3 ($6000-$7FFF)
 ; regardless of which overlay (0/1/2) MMU7 currently holds, so it is
 ; reachable by a plain ldir from here exactly as it is from tilemap.asm
-; or overlay0.asm - no banking dance needed for the WRITE side. GAME.CHR
-; is a separate, earlier, root-only mechanism (tm_font_init, boot-time
-; only) that font_load does not touch, depend on, or duplicate; FONT.CHR
-; below is a distinct, later-loading, PARTn-aware override that replaces
-; whatever tm_font_init left installed (embedded or GAME.CHR) - there is
+; or overlay0.asm - no banking dance needed for the WRITE side. FONT.CHR
+; below is the ONLY custom-font mechanism (the legacy boot-time GAME.CHR
+; probe was retired in SP12 T1): a PARTn-aware override that replaces
+; whatever tm_font_init installed (always the embedded font) - there is
 ; only ever one installed font (a later multi-font feature reloads,
 ; never multiplies), so no attribute/palette state needs re-deriving
 ; after the swap (tmAttr and the tilemap palette are independent of the
@@ -2889,7 +2889,7 @@ title_blit:
 ;
 ; Load a custom font: PARTn\FONT.CHR (curPart >= 2) then FONT.CHR,
 ; standard DAAD 2048-byte charset (256 chars x 8 rows, 1bpp). Absent =
-; silent (embedded/GAME.CHR font stays); wrong size = silent + DEBUG
+; silent (the embedded font stays); wrong size = silent + DEBUG
 ; marker. Never esx_fread's straight into TM_DEFS: a short/failed read
 ; must never corrupt the live glyph table the tilemap may be actively
 ; displaying (mid-game part switch), so the file lands in a transient
@@ -2981,8 +2981,8 @@ font_load:
  IFDEF DEBUG                        ; wrong size: no-op with a marker,
     ld b, 29                        ; same idiom as h_sfx/h_mouse's
     ld c, 70                        ; unknown-sub-command markers (and
-    call dbg_at                     ; tm_font_init's own chrStatus=2
-    ld hl, msgFontBad                ; GAME.CHR rejection)
+    call dbg_at                     ; the retired GAME.CHR probe's old
+    ld hl, msgFontBad                ; wrong-size rejection idiom)
     call dbg_puts
  ENDIF
 .close:
