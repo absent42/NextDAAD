@@ -294,7 +294,8 @@ DAC_SILENCE     equ $80
 NR_PERIPH2      equ $06     ; peripheral 2: bit 3 = Multiface enable - the raw
                             ; streaming path (video.asm) clears it for the
                             ; duration of a stream (a Multiface trap could
-                            ; issue filesystem I/O mid-STRMSTART and lock up)
+                            ; issue filesystem I/O mid-SD-transaction and
+                            ; lock up)
 NR_PERIPH3      equ $08     ; peripheral 3: bit 3 = 8-bit DACs on,
                             ; bit 1 = Turbo Sound on (both hard-reset 0)
 NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6), 7 = HDMI;

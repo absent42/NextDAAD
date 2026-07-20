@@ -631,6 +631,7 @@ vid_card_deselect:
     ld a, $FF
     out (PORT_SPI_CS), a
     in a, (PORT_SPI_DAT)
+    nop                           ; >= 16T between reads (interface pacing)
     in a, (PORT_SPI_DAT)
     or a                          ; CF clear
     ret
