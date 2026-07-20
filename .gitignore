@@ -31,5 +31,6 @@ sd/*.ays
 sd/PART*/
 sd/*.CHR
 sd/*.SPR
+sd/*.VID
 tests/out/
 .superpowers/
