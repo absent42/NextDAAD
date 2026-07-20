@@ -215,6 +215,14 @@ vid_stream_open:
 ; 1 = block addresses, +1/block) as the per-block step and primes the
 ; streaming cursor. Corrupts AF, BC, DE, HL, IX.
 vid_raw_setup:
+ IFDEF DEBUG
+    xor a                        ; DIAG scaffolding (SP13 T1b hw token bug):
+    ld (vidDiagOByte), a          ; clear the token-error capture at the start
+    ld hl, 0                      ; of each raw open so a stale value from a
+    ld (vidDiagData), hl          ; prior VIDBENCH is never mistaken for this
+    ld (vidDiagData+2), hl        ; run's data
+    ld (vidDiagBlks), hl
+ ENDIF
     ld a, (vidHandle)
     ld ix, vidFilemapBuf
     ld de, VID_FILEMAP_ENT       ; buffer capacity in 6-byte entries
@@ -435,6 +443,11 @@ vid_stream_read_raw:
     inc hl
     ld (vidStrmRunAddrHi), hl
 .noaddrcarry:
+ IFDEF DEBUG
+    ld hl, (vidDiagBlks)         ; DIAG: one more block consumed this window
+    inc hl
+    ld (vidDiagBlks), hl
+ ENDIF
     jp .inner
 .endwin:
     call vid_strm_end
@@ -541,6 +554,10 @@ vid_next_run:
 ; BC = block count (ignored by SD/MMC), A = cardflags (stream.asm).
 ; Corrupts AF, BC, DE, HL, IX.
 vid_strm_start:
+ IFDEF DEBUG
+    ld hl, 0                     ; DIAG: blocks-consumed counter is per-window
+    ld (vidDiagBlks), hl
+ ENDIF
     ld de, (vidStrmRunAddrLo)
     ld hl, (vidStrmRunAddrHi)
     push hl
@@ -584,7 +601,27 @@ vid_read_block:
     cp $FF                        ; $FF = not yet available
     jr z, .wt
     cp $FE                        ; $FE = correct token
-    ret z                         ; CF clear
+    ret z                         ; CF clear (success path byte-for-byte
+                                   ; unchanged - no diagnostic code runs in
+                                   ; the timing-critical block loop)
+ IFDEF DEBUG
+    ld (vidDiagOByte), a          ; DIAG: the offending non-$FF/$FE byte, plus
+    push de                       ; the first 4 bytes of the block just read
+    ld de, -512                   ; (HL still points 512 past the block start;
+    add hl, de                    ; HL need not be restored - the error path's
+    ld a, (hl)                    ; caller (.tokerr) never uses HL)
+    ld (vidDiagData+0), a
+    inc hl
+    ld a, (hl)
+    ld (vidDiagData+1), a
+    inc hl
+    ld a, (hl)
+    ld (vidDiagData+2), a
+    inc hl
+    ld a, (hl)
+    ld (vidDiagData+3), a
+    pop de
+ ENDIF
     scf                           ; anything else = protocol error
     ret
 
@@ -873,6 +910,7 @@ vid_bench_report:
     call dbg_puts
     ld a, (vidStrmErr)
     call dbg_hex8
+    call vid_bench_diag           ; raw failed: dump the hw-diagnosis rows
     jr .inforow
 .strmok:
     ld hl, msgVidStrm
@@ -904,6 +942,81 @@ vid_bench_report:
 .printbad:
     ld hl, msgVidUnclass
     jp dbg_puts
+
+; SP13 T1b hardware-diagnosis dump (temporary scaffolding). Printed only
+; when the raw pass failed (vidStrmErr != 0), on rows 24-26 (clear of
+; debug.asm's reserved 30-31). Fields are decoded in the task report.
+;   row 24: FLG=<DISK_FILEMAP flags byte> OBY=<offending token byte>
+;           BLK=<blocks consumed in the failing window>
+;   row 25: RUN0 A=<32-bit card address, hi word then lo word>
+;           B=<run 0 block count> N=<number of runs parsed>
+;   row 26: BLK0=<first 4 bytes of the last block INIR'd, memory order>
+vid_bench_diag:
+    ld b, 24
+    ld c, 0
+    call dbg_at
+    ld hl, msgDiagFlg
+    call dbg_puts
+    ld a, (vidCardFlags)          ; the raw A returned by DISK_FILEMAP
+    call dbg_hex8
+    ld hl, msgDiagOby
+    call dbg_puts
+    ld a, (vidDiagOByte)
+    call dbg_hex8
+    ld hl, msgDiagBlk
+    call dbg_puts
+    ld hl, (vidDiagBlks)
+    call dbg_hex16
+    ld b, 25
+    ld c, 0
+    call dbg_at
+    ld hl, msgDiagRun
+    call dbg_puts
+    ld hl, (vidFilemapBuf+2)      ; card address high word
+    call dbg_hex16
+    ld hl, (vidFilemapBuf+0)      ; card address low word
+    call dbg_hex16
+    ld hl, msgDiagRunB
+    call dbg_puts
+    ld hl, (vidFilemapBuf+4)      ; run 0 block count
+    call dbg_hex16
+    ld hl, msgDiagRunN
+    call dbg_puts
+    call vid_diag_runs            ; HL = (EntryEnd - FilemapBuf) / 6
+    call dbg_hex16
+    ld b, 26
+    ld c, 0
+    call dbg_at
+    ld hl, msgDiagData
+    call dbg_puts
+    ld a, (vidDiagData+0)
+    call dbg_hex8
+    ld a, (vidDiagData+1)
+    call dbg_hex8
+    ld a, (vidDiagData+2)
+    call dbg_hex8
+    ld a, (vidDiagData+3)
+    jp dbg_hex8
+
+; Number of 6-byte filemap entries parsed. Out: HL = count. Corrupts
+; AF, BC, DE, HL.
+vid_diag_runs:
+    ld hl, (vidStrmEntryEnd)
+    ld de, vidFilemapBuf
+    or a
+    sbc hl, de                    ; HL = bytes of entries written
+    ld de, 6
+    ld bc, 0
+.dl:
+    or a
+    sbc hl, de
+    jr c, .fin
+    inc bc
+    jr .dl
+.fin:
+    ld h, b
+    ld l, c
+    ret
 
 ; totalKB (16-bit, vidBenchKB) * 50 / elapsed (16-bit, vidBenchElapsed,
 ; already confirmed nonzero by the caller) -> HL = KB/s.
@@ -984,6 +1097,13 @@ msgVidBytes:    db "VID BYTES=", 0
 msgVidFrames:   db " FRAMES=", 0
 msgVidFmt:      db " FMT=", 0
 msgVidUnclass:  db "??", 0
+msgDiagFlg:     db "FLG=", 0
+msgDiagOby:     db " OBY=", 0
+msgDiagBlk:     db " BLK=", 0
+msgDiagRun:     db "RUN0 A=", 0
+msgDiagRunB:    db " B=", 0
+msgDiagRunN:    db " N=", 0
+msgDiagData:    db "BLK0=", 0
 
 vidBenchBank:    db 0
 vidBenchPage:    db 0
@@ -999,6 +1119,9 @@ vidBenchFmtBad:  db 0
 vidFreadKbps:    dw 0            ; pass-1 F_READ KB/s (pass 2 reuses vidBenchKbps)
 vidFreadErr:     db 0            ; pass-1 error code, 0 = ok
 vidStrmErr:      db 0            ; pass-2 raw error code, 0 = ok
+vidDiagOByte:    db 0            ; SP13 T1b hw-diag: offending token byte
+vidDiagBlks:     dw 0            ; blocks consumed in the failing window
+vidDiagData:     ds 4            ; first 4 bytes of the last block INIR'd
 vidDivLo:        db 0
 vidDivHi:        db 0
 vidDivB2:        db 0
