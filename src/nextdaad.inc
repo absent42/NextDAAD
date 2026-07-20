@@ -58,9 +58,20 @@ BANK_AUDIO_FIRST equ 24     ; 24-27 reserved for music and SFX
 BANK_AUDIO_LAST equ 27
 BANK_L2BACK_FIRST equ 30    ; 30-34 Layer 2 boot BACK surface (double buffer:
 BANK_L2BACK_LAST equ 34     ; gfx_blit renders here, then flips NR $12)
+; BANK_POOL_B: DEBUG builds withdraw one more bank (35) for a DEBUG-ONLY
+; second video page (VID_PAGE2, SP13 T3 review round 3 - the fmt2/3
+; crash bisection probe). Conditional on DEBUG so Release's pool and
+; layout stay BYTE-IDENTICAL to before this change - verified via a
+; build hash, see the task report. Both branches otherwise identical to
+; the prior single value (35).
+ IFDEF DEBUG
+BANK_POOL_B     equ 36      ; 36-47 allocator pool (one less bank: 35 below)
+VID_PAGE2       equ 70      ; bank 35 lower 8K - DEBUG-only bisection probe
+ ELSE
 BANK_POOL_B     equ 35      ; 35-47 allocator pool (base model ends at 47); bank 28
                             ; withdrawn for overlay 0/1, bank 29 for overlay 2,
                             ; banks 30-34 for the Layer 2 back surface
+ ENDIF
 BANK_BASE_LAST  equ 47
 BANK_EXP_FIRST  equ 48      ; 48-111 expansion pool when detected
 BANK_EXP_LAST   equ 111
@@ -122,6 +133,11 @@ VID_ERR_FRAG    equ $FE     ; file needs > VID_FILEMAP_ENT runs (run .defrag)
 VID_ERR_NOMAP   equ $FF     ; DISK_FILEMAP returned no entries
 VID_ERR_TOKEN   equ $FD     ; SD data token was not $FE (bad block token)
 VID_ERR_CMD     equ $FC     ; SD command R1 response was not 0 (CMD18 reject)
+VID_ERR_PROBELIM equ $FB    ; SP13 T3 review: the DEBUG bisection probe's
+                            ; column-limit was reached - a deliberate,
+                            ; clean stop (vid_stream_pixels_col), not a
+                            ; real streaming failure. video.asm's probe
+                            ; code only.
 VID_FILEMAP_ENT equ 32      ; filemap buffer capacity, 6 bytes/entry (192 B)
 
 ; --- Tilemap text mode (sub-project 2) ---
