@@ -1126,10 +1126,15 @@ vid_run:
 
     ; --- CTC retune: 23.3kHz for formats 4/5, table-driven from the
     ; live video-timing mode (NR $11 bits 2:0) - every mode's /16-vs-/256
-    ; crossover exceeds 23300, so the control word is always CW16 (see
-    ; vidCtcTcTab's header). Mirrors aud_smp_start's exact CTC program
-    ; sequence (unknown-state double reset, control word, time constant -
-    ; audiobank.asm). ---
+    ; crossover is BELOW 23300 for every mode, so the control word is
+    ; always CW16 (see vidCtcTcTab's header). Mirrors aud_smp_start's
+    ; exact CTC program sequence (unknown-state double reset, control
+    ; word, time constant - audiobank.asm), EXCEPT the stub is patched
+    ; between the control word and the time constant (not after) - the
+    ; time-constant byte is what starts the timer (aud_smp_start's own
+    ; comment: "loading the TC starts the timer"), so patching the stub
+    ; first guarantees the FIRST possible tick already dispatches
+    ; video_ctc_isr, never a stale ctc_isr. ---
     ld e, NR_VIDEO_TIMING
     call nr_read
     and 7
@@ -1142,16 +1147,20 @@ vid_run:
     out (c), a
     out (c), a                    ; double soft-reset (unknown -> clean)
     ld a, AUD_CTC_CW16
-    out (c), a
-    ld a, (vidCtcTc)
-    out (c), a                    ; time constant -> timer starts
+    out (c), a                    ; control word - timer not running yet
 
-    ; --- IM2_CTC_STUB patched to the video audio ISR. Single atomic
-    ; LD (nn),HL (doc 08's "interrupt atomicity" - one instruction, no DI
-    ; needed); MMU7 = VID_PAGE for the whole playback from here, the
-    ; banking invariant video_ctc_isr depends on (its own header). ---
+    ; --- IM2_CTC_STUB patched to the video audio ISR, BEFORE the time
+    ; constant starts the timer below. Single atomic LD (nn),HL (doc 08's
+    ; "interrupt atomicity" - one instruction, no DI needed); MMU7 =
+    ; VID_PAGE for the whole playback from here, the banking invariant
+    ; video_ctc_isr depends on (its own header). ---
     ld hl, video_ctc_isr
     ld (IM2_CTC_STUB+1), hl
+
+    ld a, (vidCtcTc)
+    ld bc, AUD_CTC_PORT
+    out (c), a                    ; time constant -> timer starts NOW,
+                                   ; already dispatching video_ctc_isr
 
     ; --- Layer 2 setup for playback: mode 0 (256x192), full clip, no
     ; scroll, transparent colour left at TM_TRANSP_ATTR (the engine-wide
@@ -1222,7 +1231,10 @@ vid_run:
     xor a
     ld (vidAudDone), a
     ; flip (l2_flip_swap's own variable-swap + NR $12 write, duplicated
-    ; here since overlay2 is unreachable while MMU7 = VID_PAGE)
+    ; here since overlay2 is unreachable while MMU7 = VID_PAGE). NR $12
+    ; takes the 16K bank number RAW (l2_mode_set/h_gfx.swap precedent,
+    ; overlay2.asm) - no *2 here (that shift is ONLY for deriving an 8K
+    ; MMU PAGE number, e.g. vidDrawPage above; NR $12 is not a page).
     ld a, (l2FrontBank)
     ld b, a
     ld a, (l2BackBank)
@@ -1230,7 +1242,6 @@ vid_run:
     ld a, b
     ld (l2BackBank), a
     ld a, (l2FrontBank)
-    add a, a
     nextreg NR_L2_BANK, a
     ld a, (vidExitReq)
     or a
@@ -1303,22 +1314,27 @@ vid_run:
     ret
 
 ; Stream one frame's worth of data for the CURRENT vidFmt into: the pool
-; landing page (audio, 933B, always at vidAudPoolPage; format 4's 512B
-; palette at vidAudPoolPage+1 - a DIFFERENT page so it cannot overwrite
-; the audio, since vid_stream_read always lands at the start of its
-; destination page), and vidDrawPage's VID_PIX_PAGES consecutive 8K pages
-; (pixels, zero-copy - vid_stream_read's dest IS the shadow Layer 2
-; surface, no staging copy). Out: CF clear = the whole frame streamed;
-; CF set = end of file (the audio read was short - the classifier-clean
-; T2 fixtures are truncated to a whole number of frames, so EOF always
-; lands here, never mid-frame) or a genuine read error - both treated
-; identically by the caller. Corrupts everything.
+; landing page (audio + its 91-byte sector-alignment padding, 1024B
+; total, always at vidAudPoolPage - the MakeVid frame layout is audio
+; (933) + pad (91) + [palette, format 4 only] + pixels, playvid's own
+; "pad to 1024 bytes for sector alignment"; the pad is read here and
+; simply left unread past byte 933 by the copy-out in vid_run, never
+; touched again - format 4's 512B palette at vidAudPoolPage+1, a
+; DIFFERENT page so it cannot overwrite the audio, since vid_stream_read
+; always lands at the start of its destination page), and vidDrawPage's
+; VID_PIX_PAGES consecutive 8K pages (pixels, zero-copy - vid_stream_
+; read's dest IS the shadow Layer 2 surface, no staging copy). Out: CF
+; clear = the whole frame streamed; CF set = end of file (the audio+pad
+; read was short - the classifier-clean T2 fixtures are truncated to a
+; whole number of frames, so EOF always lands here, never mid-frame) or
+; a genuine read error - both treated identically by the caller.
+; Corrupts everything.
 vid_stream_frame:
     ld a, (vidAudPoolPage)
-    ld de, VID_F4_AUDIO
+    ld de, VID_F4_AUDIO + VID_F45_AUDPAD
     call vid_stream_read
     jr c, .eof
-    ld hl, VID_F4_AUDIO
+    ld hl, VID_F4_AUDIO + VID_F45_AUDPAD
     or a
     sbc hl, bc
     jr nz, .eof
@@ -1479,8 +1495,9 @@ video_ctc_isr:
 ; unreachable during playback. Derived from the SAME per-mode clock
 ; table (aud_clk16_tab) at assemble time: TC = floor(clk16[mode] / rate),
 ; floored, control word always AUD_CTC_CW16 - every mode's /16-vs-/256
-; crossover (clk16>>8, roughly 6600-8000) comfortably exceeds 23300, so
-; the /256 branch never applies at this rate. VGA0 75, VGA1 76, VGA2 79,
+; crossover (clk16>>8, roughly 6835-8056) sits WELL BELOW 23300 (aud_
+; ctc_params picks /16 whenever the rate EXCEEDS the crossover), so the
+; /256 branch never applies at this rate. VGA0 75, VGA1 76, VGA2 79,
 ; VGA3 80, VGA4 83, VGA5 85, VGA6 88, HDMI 72.
 vidCtcTcTab:
     db 75, 76, 79, 80, 83, 85, 88, 72

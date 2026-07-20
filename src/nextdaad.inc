@@ -479,6 +479,14 @@ VID_FPS4_X10    equ 250     ; 25.0 fps (formats 4/5)
 ; palette block bytes (formats 0/2/4 only; 1/3/5 carry none)
 VID_PAL_BYTES   equ 512
 
+; audio-block sector-alignment padding, formats 4/5 (playvid video_
+; 256x192_m.asm/_palette.asm: 933 audio + 91 padding = 1024, the "pad to
+; 1024 bytes for sector alignment" comment and the 90-iteration REPT skip
+; in both files' video_loop). Frame layout: audio(933) + pad(91) +
+; [palette(512), format 4 only] + pixels(49152) = VID_F4_BYTES/VID_F5_
+; BYTES exactly (933+91+512+49152=50688; 933+91+49152=50176).
+VID_F45_AUDPAD  equ 91
+
 ; mono flag: bit n set = format n is MONO (only 4/5 - all others stereo).
 ; Not yet consumed by Task 1 (classify only needs the sector table); laid
 ; out now per the brief so Task 2's CTC/ISR selection has it ready.
