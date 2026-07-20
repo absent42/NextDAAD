@@ -701,6 +701,10 @@ h_gfx:
     jp z, l2_clear
     cp 6
     jp z, l2_clear_back
+    cp GFX_SUB_VID_ONCE
+    jr z, .vidonce
+    cp GFX_SUB_VID_LOOP
+    jr z, .vidloop
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
     push bc                     ; across dbg_puts (corrupts BC) for
@@ -730,6 +734,22 @@ h_gfx:
     ld a, (l2FrontBank)
     nextreg NR_L2_BANK, a
     ret
+.vidonce:
+    ld a, 0
+    jr .vidgo
+.vidloop:
+    ld a, 1
+.vidgo:
+    ; B (video number) is untouched; C becomes vid_play's 0/1 loop
+    ; contract. ovl_map_page corrupts AF only (banks.asm) - B/C survive
+    ; the cross-page hop into video.asm, a different MMU7 page from this
+    ; one (the established push-target/ovl_map_page trampoline idiom -
+    ; vid_bench_trampoline, overlay0.asm; xpart_load_fail's own hop).
+    ld c, a
+    ld hl, vid_play
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
 
 msgGfxUnk: db "GFX? ", 0
 

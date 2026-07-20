@@ -483,3 +483,18 @@ VID_PAL_BYTES   equ 512
 ; Not yet consumed by Task 1 (classify only needs the sector table); laid
 ; out now per the brief so Task 2's CTC/ISR selection has it ready.
 VID_MONO_MASK   equ %00110000
+
+; --- Video player core (SP13 Task 2) ---
+; GFX n 13/14 and SFX n 9/10 (PLAYFLI/PLAYFLIL) all dispatch to vid_play
+; (video.asm): n = video number, sub selects play-once vs loop. h_gfx/
+; h_sfx each translate their own sub-command range into vid_play's C =
+; 0 (once) / 1 (loop) contract via a plain `sub base` before the cross-
+; page hop (push-target/ovl_map_page trampoline, precedented by
+; vid_bench_trampoline in overlay0.asm).
+GFX_SUB_VID_ONCE equ 13
+GFX_SUB_VID_LOOP equ 14
+SFX_SUB_VID_ONCE equ 9
+SFX_SUB_VID_LOOP equ 10
+
+VID_PIX_PAGES   equ 6       ; 8K pages per 256x192 frame (49152/8192) -
+                            ; formats 4/5 only (mono, this task's scope)

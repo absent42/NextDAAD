@@ -1847,6 +1847,10 @@ h_sfx:                          ; 18: B = n, C = sub-command
     jr z, .playloop
     cp 8
     jr z, .stopmusic
+    cp SFX_SUB_VID_ONCE
+    jr z, .vidonce
+    cp SFX_SUB_VID_LOOP
+    jr z, .vidloop
  IFDEF DEBUG                    ; unknown sub-command: no-op with a
     push bc                     ; marker. Inline - overlay1 must NOT
     ld b, 30                    ; call overlay0's h_unimpl; the dbg_*
@@ -1931,6 +1935,20 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ld a, 1
     ld (audEnable), a
     ret
+.vidonce:
+    ld a, 0
+    jr .vidgo
+.vidloop:
+    ld a, 1
+.vidgo:
+    ; PLAYFLI/PLAYFLIL alias (design doc): B (video number) untouched, C
+    ; becomes vid_play's 0/1 loop contract - identical trampoline shape
+    ; to h_gfx's own GFX_SUB_VID_ONCE/LOOP handling (overlay2.asm).
+    ld c, a
+    ld hl, vid_play
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
 
 msgSfxUnk: db "SFX? ", 0
 

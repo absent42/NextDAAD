@@ -151,6 +151,16 @@ VIDBENCH 73     verb            ; SP13 T1: only the first 5 chars ("VIDBE")
                                 ; standard truncation rule) - kept spelled
                                 ; out in full here to match the owner
                                 ; command name verbatim
+; SP13 Task 2 owner verbs (player core, mono 256x192 formats). Kept to
+; exactly 5 significant characters each - VPLAY4/VPLAY5 or VLOOP4/VLOOP5
+; would truncate to the same 5-char token ("VPLAY"/"VLOOP") and collide,
+; unlike VIDBENCH above (already <=5 sig chars, no truncation in play).
+VPLY4   74      verb
+VPLY5   75      verb
+VLOP4   76      verb
+VLOP5   77      verb
+SPLY4   78      verb
+SPLY5   79      verb
 
 ;                       Verbs
 GET     20      verb
@@ -601,6 +611,33 @@ $pictureOK
 ; condacts.dsf check 44's "EXTERN 5 5" against its own always-stub
 ; vector. One shot per invocation - re-run to re-measure.
 > VIDBENCH _     EXTERN 0 6
+                DONE
+
+; SP13 Task 2 owner verbs: the player-core eye/ear legs for the mono
+; 256x192 formats (-Vid staged sd\005.VID = format 4 palette, sd\006.VID
+; = format 5 no-palette - see build-tests.ps1's -Vid header). VPLY4/VPLY5
+; exercise the GFX n 13 (play-once) real dispatch path (h_gfx sub 13,
+; overlay2.asm -> vid_play, video.asm); VLOP4/VLOP5 exercise GFX n 14
+; (loop, any key ends it). SPLY4/SPLY5 prove the SFX n 9/10 alias surface
+; (h_sfx, overlay1.asm - PLAYFLI/PLAYFLIL parity) reaches the SAME
+; player. A DEBUG build with no -Vid staging fails silent (missing-file
+; DEBUG marker only); a release build is always silent either way.
+> VPLY4   _     GFX 5 13
+                DONE
+
+> VPLY5   _     GFX 6 13
+                DONE
+
+> VLOP4   _     GFX 5 14
+                DONE
+
+> VLOP5   _     GFX 6 14
+                DONE
+
+> SPLY4   _     SFX 5 9
+                DONE
+
+> SPLY5   _     SFX 6 10
                 DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation

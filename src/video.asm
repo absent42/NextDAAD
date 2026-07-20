@@ -923,6 +923,602 @@ vidFilemapBuf:     ds VID_FILEMAP_ENT*6   ; DISK_FILEMAP entries (192 bytes)
 vidStrmBlkBuf:     ds 512        ; one card block held for sub-block drains
 
 ; ---------------------------------------------------------------------
+; vid_play - the player core (SP13 Task 2). Formats 4/5 (256x192 mono)
+; only; any other classification is a fail-silent no-op (formats 0-3
+; are later tasks). Entry: B = video number, C = 0 play-once / 1 loop
+; (h_gfx/h_sfx translate their own sub-command numbers into this before
+; the cross-page hop - see nextdaad.inc's GFX_SUB_VID_*/SFX_SUB_VID_*).
+; Probes PARTn\NNN.VID (curPart > 1) then root NNN.VID, classifies,
+; plays, and ALWAYS returns via the restore path (vid_run's .restore/
+; .restore_noplay) on every exit - key, EOF, or a read error. Corrupts
+; everything; the caller (h_gfx.vidgo/h_sfx.vidgo) never resumes - this
+; IS the tail of the dispatch, and the return lands directly on the
+; engine dispatcher via the trampoline's stacked return address (the
+; xpart_load_entry/vid_bench_trampoline push-target idiom).
+; ---------------------------------------------------------------------
+vid_play:
+    ld a, b
+    ld (vidNum), a
+    ld a, c
+    ld (vidLoopMode), a
+    ld a, b
+    call vid_open_video
+    jr c, .missing
+    ld hl, (vidSizeLo)
+    ld de, (vidSizeHi)
+    call vid_classify
+    jr c, .badfmt
+    cp 4
+    jr z, .haveformat
+    cp 5
+    jr nz, .badfmt
+.haveformat:
+    ld (vidFmt), a
+    jp vid_run                    ; tail: vid_run's own restore paths ret
+.badfmt:
+ IFDEF DEBUG
+    ld b, 23
+    ld c, 0
+    call dbg_at
+    ld hl, msgVidBadFmt
+    call dbg_puts
+ ENDIF
+    call vid_stream_close
+    ret
+.missing:
+ IFDEF DEBUG
+    ld b, 23
+    ld c, 0
+    call dbg_at
+    ld hl, msgVidMissing
+    call dbg_puts
+ ENDIF
+    ret
+
+; Build vidName ("NNN.VID",0) from A = video number (3-digit zero-padded
+; decimal, the project's repeated-subtraction decade idiom - aud_load_song
+; overlay1.asm, gfx_open_chain overlay2.asm). curPart > 1 also builds
+; vidNamePart ("PARTn\NNN.VID",0) and tries it FIRST, root as fallback -
+; the established PARTn probe idiom (SP11 T5's four other sites); curPart
+; == 1 skips straight to root, zero new opens. Sets vidStrmMode = 1 (raw)
+; before every open attempt - the player always uses raw mode (T1's pinned
+; contract; F_READ mode is bench-only). Out: CF clear = opened (vidHandle/
+; vidSizeLo/Hi set by vid_stream_open); CF set = neither name opened.
+; Corrupts AF, BC, DE, HL, IX.
+vid_open_video:
+    ld hl, vidName
+    ld b, '0'-1
+.hund:
+    inc b
+    sub 100
+    jr nc, .hund
+    add a, 100
+    ld (hl), b
+    inc hl
+    ld b, '0'-1
+.tens:
+    inc b
+    sub 10
+    jr nc, .tens
+    add a, 10
+    ld (hl), b
+    inc hl
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ex de, hl                     ; de = vidName+3 (write cursor)
+    ld hl, vidExtVid              ; ".VID",0 (5 bytes)
+    ld bc, 5
+    ldir
+    ld a, 1
+    ld (vidStrmMode), a           ; raw streaming, always (T1 pinned contract)
+    ld a, (curPart)
+    dec a
+    jr z, .openroot
+    ld hl, vidNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl
+    ex de, hl                     ; de = vidNamePart+6
+    ld hl, vidName
+    ld bc, 8                      ; "NNN.VID",0
+    ldir
+    ld ix, vidNamePart
+    call vid_stream_open
+    ret nc                        ; PARTn open succeeded
+.openroot:
+    ld ix, vidName
+    jp vid_stream_open
+
+vidExtVid: db ".VID", 0
+
+; ---------------------------------------------------------------------
+; vid_run - entry/exit symmetry: everything vid_run touches is captured
+; into a vidSv*-prefixed cell here and reversed on EVERY exit path via
+; .restore (or .restore_noplay if the pool-bank claim itself failed).
+; Sequence (brief Step 2): save state -> samples abort (SSTOP, waited)
+; -> music tick frozen (audEnable=0 - the least invasive freeze: it also
+; stops the frame ISR's OWN MMU6/7 remap around aud_tick, which is
+; exactly what keeps MMU7=VID_PAGE stable for video_ctc_isr's banking
+; invariant, doc 11) -> CTC retuned -> IM2_CTC_STUB patched -> the loop
+; -> reverse-order restore on any exit (key, EOF in play-once, or a read
+; error), banks released, ret through the dispatcher's normal path.
+; ---------------------------------------------------------------------
+vid_run:
+    ; --- save state (vidSaved) ---
+    ld e, NR_MMU6
+    call nr_read
+    ld (vidSvMmu6), a
+    ld e, NR_MMU7
+    call nr_read
+    ld (vidSvMmu7), a
+    ld e, NR_L2_BANK
+    call nr_read
+    ld (vidSvNr12), a
+    ld e, NR_L2_CTRL
+    call nr_read
+    ld (vidSvNr70), a
+    ld e, NR_DISPLAY_CTRL
+    call nr_read
+    ld (vidSvNr69), a
+    ld e, NR_LAYERS
+    call nr_read
+    ld (vidSvNr15), a
+    ld hl, (IM2_CTC_STUB+1)
+    ld (vidSvCtcStub), hl
+    ld a, (audEnable)
+    ld (vidSvAudEnable), a
+    ld a, (l2FrontBank)
+    ld (vidSvL2Front), a
+    ld a, (l2BackBank)
+    ld (vidSvL2Back), a
+
+    ; --- samples abort (SSTOP request path, waited) ---
+    ; audEnable = 0 means aud_tick never runs - the ISR never reaches the
+    ; request chain, so a bit set here would never clear (aud_load_song's
+    ; own documented hazard, overlay1.asm) - skip the wait in that case.
+    ; Re-read from vidSvAudEnable (A has since been reloaded twice above
+    ; for the l2Front/BackBank saves) rather than trust a stale register.
+    ld a, (vidSvAudEnable)
+    or a
+    jr z, .noaudsave
+    ld hl, audRequest
+    set 7, (hl)
+.waitstop:
+    halt
+    ld a, (audRequest)
+    bit 7, a
+    jr nz, .waitstop
+.noaudsave:
+    ; --- music tick frozen ---
+    xor a
+    ld (audEnable), a
+
+    ; --- pool bank: the audio landing page (lower 8K) + palette landing
+    ; page (upper 8K of the SAME bank) - not two full frame pairs; pixels
+    ; are the existing Layer 2 back-surface banks (zero-copy, no pool
+    ; allocation needed for them at all). ---
+    call bank_alloc
+    jr nc, .havebank
+ IFDEF DEBUG
+    ld b, 23
+    ld c, 0
+    call dbg_at
+    ld hl, msgVidNoBank2
+    call dbg_puts
+ ENDIF
+    jp .restore_noplay
+.havebank:
+    ld (vidAudPoolBank), a
+    add a, a
+    ld (vidAudPoolPage), a
+
+    ; --- CTC retune: 23.3kHz for formats 4/5, table-driven from the
+    ; live video-timing mode (NR $11 bits 2:0) - every mode's /16-vs-/256
+    ; crossover exceeds 23300, so the control word is always CW16 (see
+    ; vidCtcTcTab's header). Mirrors aud_smp_start's exact CTC program
+    ; sequence (unknown-state double reset, control word, time constant -
+    ; audiobank.asm). ---
+    ld e, NR_VIDEO_TIMING
+    call nr_read
+    and 7
+    ld hl, vidCtcTcTab
+    add hl, a
+    ld a, (hl)
+    ld (vidCtcTc), a
+    ld bc, AUD_CTC_PORT
+    ld a, AUD_CTC_RESET
+    out (c), a
+    out (c), a                    ; double soft-reset (unknown -> clean)
+    ld a, AUD_CTC_CW16
+    out (c), a
+    ld a, (vidCtcTc)
+    out (c), a                    ; time constant -> timer starts
+
+    ; --- IM2_CTC_STUB patched to the video audio ISR. Single atomic
+    ; LD (nn),HL (doc 08's "interrupt atomicity" - one instruction, no DI
+    ; needed); MMU7 = VID_PAGE for the whole playback from here, the
+    ; banking invariant video_ctc_isr depends on (its own header). ---
+    ld hl, video_ctc_isr
+    ld (IM2_CTC_STUB+1), hl
+
+    ; --- Layer 2 setup for playback: mode 0 (256x192), full clip, no
+    ; scroll, transparent colour left at TM_TRANSP_ATTR (the engine-wide
+    ; convention every l2_mode_set call also uses - vid_apply_palette/
+    ; vid_identity_palette dodge it exactly like l2_palette_load). NR $18/
+    ; $1C (clip) and $16/$17 (scroll) are NOT saved/restored - any picture
+    ; the game shows after video re-programs them in full via its own
+    ; l2_mode_set/l2_clip_set (gfx_blit calls it unconditionally on every
+    ; DISPLAY), exactly like the palette below. ---
+    xor a
+    nextreg NR_L2_CTRL, a
+    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
+    nextreg NR_CLIP_IDX, 1
+    nextreg NR_L2_CLIP, 0
+    nextreg NR_L2_CLIP, 255
+    nextreg NR_L2_CLIP, 0
+    nextreg NR_L2_CLIP, 191
+    nextreg NR_L2_XOFS, 0
+    nextreg NR_L2_YOFS, 0
+    ld e, NR_DISPLAY_CTRL
+    call nr_read
+    or %10000000
+    nextreg NR_DISPLAY_CTRL, a
+    nextreg NR_LAYERS, 0
+
+    ; format 5 (no embedded palette): the pixel byte IS its own RRRGGGBB
+    ; colour - program a fixed identity table once, no per-frame block.
+    ld a, (vidFmt)
+    cp 5
+    call z, vid_identity_palette
+
+    ; prime pacing so the first iteration's wait passes immediately (no
+    ; prior frame is playing yet)
+    ld hl, vidAudBuf
+    ld (vidAudPlayPtr), hl
+    ld a, 1
+    ld (vidAudDone), a
+
+.frameloop:
+    ld a, (l2BackBank)             ; draw target = the currently-hidden
+    add a, a                        ; back surface (idle during playback)
+    ld (vidDrawPage), a
+    call vid_stream_frame
+    jr c, .eof
+    call vid_key_any
+    ld a, 0
+    jr z, .nokey
+    ld a, 1
+.nokey:
+    ld (vidExitReq), a
+.pace:
+    ld a, (vidAudDone)             ; wait for the CURRENTLY VISIBLE
+    or a                            ; frame's audio to finish (pacing:
+    jr z, .pace                    ; samples-per-frame count exhausted)
+    ; launch the frame just streamed: copy the landing-page audio into
+    ; the ISR-resident buffer (safe with no DI - see video_ctc_isr's own
+    ; header for why a torn read here is at most one imperceptible tick)
+    call data_save
+    ld a, (vidAudPoolPage)
+    call data_map_page
+    ld hl, DATA_WINDOW
+    ld de, vidAudBuf
+    ld bc, VID_F4_AUDIO
+    ldir
+    call data_restore
+    ld hl, vidAudBuf
+    ld (vidAudPlayPtr), hl
+    xor a
+    ld (vidAudDone), a
+    ; flip (l2_flip_swap's own variable-swap + NR $12 write, duplicated
+    ; here since overlay2 is unreachable while MMU7 = VID_PAGE)
+    ld a, (l2FrontBank)
+    ld b, a
+    ld a, (l2BackBank)
+    ld (l2FrontBank), a
+    ld a, b
+    ld (l2BackBank), a
+    ld a, (l2FrontBank)
+    add a, a
+    nextreg NR_L2_BANK, a
+    ld a, (vidExitReq)
+    or a
+    jr nz, .restore
+    jr .frameloop
+.eof:
+    ld a, (vidLoopMode)
+    or a
+    jr z, .drainlast               ; play-once: EOF ends it
+    ; loop mode: EOF restarts from the beginning (never ends the loop
+    ; except by keypress, per the brief). Key-checked here too - without
+    ; this, a persistently empty/corrupt file would EOF on every reopen
+    ; attempt with no frame ever reaching the ordinary per-iteration key
+    ; check below, making the loop unkillable.
+    call vid_key_any
+    jr nz, .restore
+    call vid_stream_close
+    ld a, (vidNum)
+    call vid_open_video
+    jr c, .restore                 ; reopen failed: abort via restore
+    jr .frameloop
+.drainlast:
+    ; the last successfully streamed frame (if any) is already showing
+    ; from the previous iteration's flip - just let its audio finish.
+.waitlast:
+    ld a, (vidAudDone)
+    or a
+    jr z, .waitlast
+.restore:
+    ; CTC off - mirrors aud_smp_stop's own teardown exactly. No prior
+    ; value is restored (the registers are write-only): any FUTURE
+    ; sample-start recomputes its own control word/TC via aud_ctc_params
+    ; as it always does, so there is nothing to reverse here beyond stop.
+    ld bc, AUD_CTC_PORT
+    ld a, AUD_CTC_RESET
+    out (c), a
+    out (c), a
+    ld a, DAC_SILENCE
+    out (DAC_PORT), a
+    ld hl, (vidSvCtcStub)
+    ld (IM2_CTC_STUB+1), hl
+    ld a, (vidSvAudEnable)
+    ld (audEnable), a
+    ld a, (vidSvL2Front)
+    ld (l2FrontBank), a
+    ld a, (vidSvL2Back)
+    ld (l2BackBank), a
+    ld a, (vidSvNr12)
+    nextreg NR_L2_BANK, a
+    ld a, (vidSvNr70)
+    nextreg NR_L2_CTRL, a
+    ld a, (vidSvNr69)
+    nextreg NR_DISPLAY_CTRL, a
+    ld a, (vidSvNr15)
+    nextreg NR_LAYERS, a
+    call vid_stream_close
+    ld a, (vidAudPoolBank)
+    call bank_free
+    ld a, (vidSvMmu6)
+    nextreg NR_MMU6, a
+    ld a, (vidSvMmu7)
+    nextreg NR_MMU7, a
+    ret
+.restore_noplay:
+    ; reached only if bank_alloc failed - CTC/stub/L2 were never touched,
+    ; so only the freeze needs reversing.
+    ld a, (vidSvAudEnable)
+    ld (audEnable), a
+    call vid_stream_close
+    ret
+
+; Stream one frame's worth of data for the CURRENT vidFmt into: the pool
+; landing page (audio, 933B, always at vidAudPoolPage; format 4's 512B
+; palette at vidAudPoolPage+1 - a DIFFERENT page so it cannot overwrite
+; the audio, since vid_stream_read always lands at the start of its
+; destination page), and vidDrawPage's VID_PIX_PAGES consecutive 8K pages
+; (pixels, zero-copy - vid_stream_read's dest IS the shadow Layer 2
+; surface, no staging copy). Out: CF clear = the whole frame streamed;
+; CF set = end of file (the audio read was short - the classifier-clean
+; T2 fixtures are truncated to a whole number of frames, so EOF always
+; lands here, never mid-frame) or a genuine read error - both treated
+; identically by the caller. Corrupts everything.
+vid_stream_frame:
+    ld a, (vidAudPoolPage)
+    ld de, VID_F4_AUDIO
+    call vid_stream_read
+    jr c, .eof
+    ld hl, VID_F4_AUDIO
+    or a
+    sbc hl, bc
+    jr nz, .eof
+    ld a, (vidFmt)
+    cp 4
+    jr nz, .pixels
+    ld a, (vidAudPoolPage)
+    inc a                          ; upper 8K of the same bank
+    ld de, VID_PAL_BYTES
+    call vid_stream_read
+    jr c, .err
+    ld hl, VID_PAL_BYTES
+    or a
+    sbc hl, bc
+    jr nz, .err
+    call vid_apply_palette
+.pixels:
+    ld a, (vidDrawPage)
+    ld (vidPxPage), a
+    ld a, VID_PIX_PAGES
+    ld (vidPxCount), a
+.pxloop:
+    ld a, (vidPxPage)
+    ld de, $2000
+    call vid_stream_read
+    jr c, .err
+    ld hl, $2000
+    or a
+    sbc hl, bc
+    jr nz, .err
+    ld hl, vidPxPage
+    inc (hl)
+    ld hl, vidPxCount
+    dec (hl)
+    jr nz, .pxloop
+    or a
+    ret
+.eof:
+    scf
+    ret
+.err:
+    scf
+    ret
+
+; Apply the 512-byte 9-bit palette just landed at vidAudPoolPage+1 (format
+; 4 only) to Layer 2, dodging the TM_TRANSP_ATTR collision exactly like
+; l2_palette_load (overlay2.asm) - duplicated here since overlay2 is a
+; different MMU7 page, unreachable while MMU7 = VID_PAGE for the whole
+; playback. Corrupts everything.
+vid_apply_palette:
+    call data_save
+    ld a, (vidAudPoolPage)
+    inc a
+    call data_map_page
+    ld hl, DATA_WINDOW
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    nextreg NR_PAL_INDEX, 0
+    ld b, 0                        ; 256 iterations
+.loop:
+    ld a, (hl)
+    inc hl
+    cp TM_TRANSP_ATTR
+    jr nz, .w1
+    ld a, $FF
+.w1:
+    nextreg NR_PAL_VALUE9, a
+    ld a, (hl)
+    inc hl
+    nextreg NR_PAL_VALUE9, a
+    djnz .loop
+    nextreg NR_PAL_INDEX, TM_TRANSP_ATTR
+    nextreg NR_PAL_VALUE9, TM_TRANSP_ATTR
+    nextreg NR_PAL_VALUE9, 0
+    call data_restore
+    ret
+
+; Program a fixed identity RRRGGGBB palette (value[i] = i) once at entry
+; for format 5 (no embedded palette - its pixel bytes ARE their own
+; colour). Dodges TM_TRANSP_ATTR the same way. Corrupts AF, BC.
+vid_identity_palette:
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    nextreg NR_PAL_INDEX, 0
+    ld b, 0                        ; 256 iterations
+    ld c, 0                        ; ascending palette index
+.loop:
+    ld a, c
+    cp TM_TRANSP_ATTR
+    jr nz, .w
+    ld a, $FF
+.w:
+    nextreg NR_PAL_VALUE9, a
+    nextreg NR_PAL_VALUE9, 0
+    inc c
+    djnz .loop
+    nextreg NR_PAL_INDEX, TM_TRANSP_ATTR
+    nextreg NR_PAL_VALUE9, TM_TRANSP_ATTR
+    nextreg NR_PAL_VALUE9, 0
+    ret
+
+; Any-key test: A = 0 selects ALL 8 keyboard half-rows simultaneously via
+; IN A,($FE) (playvid's own idiom) - a raw port read needs no cross-page
+; hop, matching debug.asm's l2dbg_t_held precedent ("a raw port read
+; rather than overlay0's key_scan, since that lives in an overlay this
+; code has no reason to page in"). Out: Z set = no key down, NZ = some
+; key down. Corrupts AF.
+vid_key_any:
+    xor a
+    in a, ($FE)
+    and %00011111
+    cp %00011111
+    ret
+
+; Mono video audio ISR (SP13 T2). Fires at 23.3kHz via CTC channel 0,
+; installed by patching IM2_CTC_STUB for the whole playback. BANKING
+; INVARIANT (doc 11's SMC/DMA hazard, applied to the ISR body itself, not
+; just a patch site): this code is entered through the IM2 table's fixed
+; JP at IM2_CTC_STUB, but the JP's OWN target address only resolves to
+; THIS code as long as MMU7 stays mapped to VID_PAGE for the entire
+; playback - vid_run never remaps MMU7 (freezing audEnable also stops the
+; frame ISR's own MMU6/7 remap around aud_tick, interrupts.asm, which is
+; exactly what makes this safe). Preserves the alternate set (never
+; touches it, docs/Z80/02) - compatible with T1d's register-resident fast
+; streaming loop, which relies on the same guarantee from both existing
+; IM2 ISRs. Touches NO MMU slot (mirrors ctc_isr's own "resident ring, no
+; MMU" discipline, interrupts.asm) - vidAudBuf lives in THIS page, always
+; reachable while the invariant holds, so streaming's own MMU6 traffic
+; can never race it. Hold-last at the final byte (ctc_isr's own
+; precedent) until mainline refills and relaunches. Budget: see the task
+; report's Step 1 table (28MHz-adjusted T-states per docs/Z80/01).
+video_ctc_isr:
+    push af
+    push hl
+    ld hl, (vidAudPlayPtr)
+    ld a, (hl)
+    out (DAC_PORT), a
+    ld a, l
+    cp low vidAudBufLast
+    jr nz, .adv
+    ld a, h
+    cp high vidAudBufLast
+    jr nz, .adv
+    ld a, 1
+    ld (vidAudDone), a
+    jr .ret
+.adv:
+    inc hl
+    ld (vidAudPlayPtr), hl
+.ret:
+    pop hl
+    pop af
+    ei
+    reti
+
+; Per-video-mode (NR $11 bits 2:0) CTC time constant for 23300 Hz (VID_
+; RATE4_X10 * 100, shared by formats 4/5), mirroring aud_ctc_params'
+; algorithm (overlay1.asm) collapsed to this one fixed rate - duplicated
+; rather than cross-called since overlay1 is a different MMU7 page,
+; unreachable during playback. Derived from the SAME per-mode clock
+; table (aud_clk16_tab) at assemble time: TC = floor(clk16[mode] / rate),
+; floored, control word always AUD_CTC_CW16 - every mode's /16-vs-/256
+; crossover (clk16>>8, roughly 6600-8000) comfortably exceeds 23300, so
+; the /256 branch never applies at this rate. VGA0 75, VGA1 76, VGA2 79,
+; VGA3 80, VGA4 83, VGA5 85, VGA6 88, HDMI 72.
+vidCtcTcTab:
+    db 75, 76, 79, 80, 83, 85, 88, 72
+
+vidNum:          db 0
+vidLoopMode:      db 0             ; 0 = play once, 1 = loop
+vidFmt:           db 0             ; 4 or 5 (vid_classify's verdict)
+vidExitReq:       db 0
+vidName:          ds 8             ; "NNN.VID",0
+vidNamePart:      ds 14            ; "PARTn\NNN.VID",0
+vidAudPoolBank:   db 0
+vidAudPoolPage:   db 0
+vidDrawPage:      db 0
+vidPxPage:        db 0
+vidPxCount:       db 0
+vidCtcTc:         db 0
+vidAudBuf:        ds VID_F4_AUDIO
+vidAudBufLast     equ vidAudBuf + VID_F4_AUDIO - 1
+vidAudPlayPtr:    dw vidAudBuf
+vidAudDone:       db 0
+vidSvMmu6:        db 0
+vidSvMmu7:        db 0
+vidSvNr12:        db 0
+vidSvNr70:        db 0
+vidSvNr69:        db 0
+vidSvNr15:        db 0
+vidSvCtcStub:     dw 0
+vidSvAudEnable:   db 0
+vidSvL2Front:     db 0
+vidSvL2Back:      db 0
+
+ IFDEF DEBUG
+msgVidBadFmt:  db "VID FMT?", 0
+msgVidMissing: db "VID FILE?", 0
+msgVidNoBank2: db "VID NOBANK2", 0
+ ENDIF
+
+; ---------------------------------------------------------------------
 ; VIDBENCH - DEBUG-only dev harness (SP13 Task 1).
 ; ---------------------------------------------------------------------
 ; Reached only via extVec vector 6's DEBUG-conditional trampoline

@@ -110,17 +110,21 @@
 #              002.VID size 39581696  77308 sect  -> 1 (154)  [intended 1, correct]
 #              003.VID size 33156096  64758 sect  -> 2 (129)  [intended 2, correct]
 #              004.VID size 32899072  64256 sect  -> 3 (128)  [intended 3, correct]
-#              005.VID size 38067712  74351 sect  -> CF       [intended 4, unclassifiable]
-#              006.VID size 37683200  73600 sect  -> 3 (128)  [intended 5, COLLIDES fmt3]
+#              005.VID size 38066688  74349 sect  -> 4 (99)   [intended 4, correct]
+#              006.VID size 37682176  73598 sect  -> 5 (98)   [intended 5, correct]
 #            005/006 carry 2 trailing sectors beyond a whole number of
-#            frames (99x751+2 and 98x751+2) - consistent MakeVid output
-#            for the 256x192 formats, seen in both the pre-incident and
-#            regenerated encodes. playvid's own size-only classifier has
-#            the same limitation (its README offers -4/-5 to force the
-#            format); the spec's blank-frame-append remedy applies at
-#            ENCODE time before 005/006 are usable as classification
-#            fixtures. Not a classifier bug, and none of this affects
-#            VIDBENCH (which only ever exercises 001.VID, format 0).
+#            frames in the SOURCE tools\demo-files fixtures (99x751+2 and
+#            98x751+2 - consistent MakeVid output for the 256x192 formats,
+#            seen in both the pre-incident and regenerated encodes).
+#            playvid's own size-only classifier has the same limitation
+#            (its README offers -4/-5 to force the format). SP13 Task 2:
+#            the STAGED COPIES of 005.VID/006.VID (never the tools\ source
+#            - read-only) are now TRUNCATED to their last whole-frame
+#            boundary (fmt4 frame = 99*512=50688 B, fmt5 = 98*512=50176 B)
+#            immediately after copying, dropping only the 2-sector tail
+#            padding, never a whole frame - both now classify clean, and
+#            the T2 player's owner leg (GFX n 13/14, SFX n 9/10) needs
+#            classification-clean fixtures to reach the run loop at all.
 #            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
 #            sd\*.VID is gitignored (owner edit).
 param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid)
@@ -568,6 +572,29 @@ if ($Vid) {
         }
         else {
             "WARNING: $src missing - sd\$dest not staged"
+        }
+    }
+    # SP13 Task 2: truncate the STAGED COPIES of 005.VID/006.VID (256x192
+    # formats) to their last whole-frame boundary - the source fixtures
+    # carry a 2-sector MakeVid tail beyond a whole number of frames (see
+    # the -Vid header comment above), which leaves 005 unclassifiable and
+    # 006 colliding with an earlier format's divisor. Truncating drops
+    # only the tail padding, never a whole frame. tools\demo-files itself
+    # is never modified (read-only per project rules) - this rewrites
+    # only the sd\ copy just staged above.
+    $vidFrameBytes = [ordered]@{ '005.VID' = 50688; '006.VID' = 50176 }   # fmt4 99*512, fmt5 98*512
+    foreach ($dest in $vidFrameBytes.Keys) {
+        $path = "$root\sd\$dest"
+        if (Test-Path -LiteralPath $path) {
+            $frameBytes = $vidFrameBytes[$dest]
+            $size = (Get-Item -LiteralPath $path).Length
+            $truncated = [math]::Floor($size / $frameBytes) * $frameBytes
+            if ($truncated -lt $size) {
+                $stream = [System.IO.File]::Open($path, 'Open', 'Write')
+                $stream.SetLength($truncated)
+                $stream.Close()
+                "truncated sd\$dest $size -> $truncated bytes (whole-frame boundary, $($size - $truncated) tail bytes dropped)"
+            }
         }
     }
     "staged $vidStaged video fixture(s) -> sd\001.VID..sd\006.VID (tools\demo-files MakeVid matrix, classification-priority order)"
