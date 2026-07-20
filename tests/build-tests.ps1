@@ -101,28 +101,28 @@
 #              004.VID <- 001_256x240auto[c10g10s10].vid     (fmt 3, 128 sect/frame)
 #              005.VID <- 001_256x192autopal[c10g10s10].vid (fmt 4, 99 sect/frame)
 #              006.VID <- 001_256x192auto[c10g10s10].vid     (fmt 5, 98 sect/frame)
-#            NOTE (re-derived against the CURRENT restored tools\demo-
-#            files bytes with the fixed vid_classify arithmetic - sector
-#            count = size/512, first exact divisor in priority order
-#            155,154,129,128,99,98 wins, else CF; see the SP13 T1b
-#            report for the full table). What the fixed classifier
-#            reports for these six fixtures:
-#              001.VID size 36584960  71455 sect  -> 0 (155)  [intended 0, correct]
-#              002.VID size 36348928  70994 sect  -> 1 (154)  [intended 1, correct]
-#              003.VID size 30514176  59598 sect  -> 1 (154)  [intended 2, COLLIDES fmt1]
-#              004.VID size 30277632  59136 sect  -> 1 (154)  [intended 3, COLLIDES fmt1]
-#              005.VID size 35026432  68411 sect  -> CF       [intended 4, unclassifiable]
-#              006.VID size 34672640  67720 sect  -> CF       [intended 5, unclassifiable]
-#            003/004 have sector counts that are also exact multiples of
-#            format 1's frame size (154), so the earlier-priority format
-#            wins - the spec's documented blank-frame-append ambiguity,
-#            here a live property of the restored MakeVid fixtures, not a
-#            classifier bug. 005/006 divide no format exactly. Only
-#            001/002 self-classify; the others need a padding frame at
-#            ENCODE time before they are usable as classification
-#            fixtures. None of this affects VIDBENCH (which only ever
-#            exercises 001.VID, format 0). Same CSpect-running guard as
-#            -Rab/-UU/-Title/-Font. sd\*.VID is gitignored (owner edit).
+#            NOTE (re-derived against the owner's 2026-07-20 REGENERATED
+#            tools\demo-files bytes with the fixed vid_classify
+#            arithmetic - sector count = size/512, first exact divisor
+#            in priority order 155,154,129,128,99,98 wins, else CF).
+#            What the fixed classifier reports for these six fixtures:
+#              001.VID size 39838720  77810 sect  -> 0 (155)  [intended 0, correct]
+#              002.VID size 39581696  77308 sect  -> 1 (154)  [intended 1, correct]
+#              003.VID size 33156096  64758 sect  -> 2 (129)  [intended 2, correct]
+#              004.VID size 32899072  64256 sect  -> 3 (128)  [intended 3, correct]
+#              005.VID size 38067712  74351 sect  -> CF       [intended 4, unclassifiable]
+#              006.VID size 37683200  73600 sect  -> 3 (128)  [intended 5, COLLIDES fmt3]
+#            005/006 carry 2 trailing sectors beyond a whole number of
+#            frames (99x751+2 and 98x751+2) - consistent MakeVid output
+#            for the 256x192 formats, seen in both the pre-incident and
+#            regenerated encodes. playvid's own size-only classifier has
+#            the same limitation (its README offers -4/-5 to force the
+#            format); the spec's blank-frame-append remedy applies at
+#            ENCODE time before 005/006 are usable as classification
+#            fixtures. Not a classifier bug, and none of this affects
+#            VIDBENCH (which only ever exercises 001.VID, format 0).
+#            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
+#            sd\*.VID is gitignored (owner edit).
 param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
