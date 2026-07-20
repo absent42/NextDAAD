@@ -1311,9 +1311,12 @@ vid_run:
     ; program this routine's own entry sequence uses - vidCtcTc and the
     ; IM2_CTC_STUB patch are both still correct, format never changes
     ; mid-session, so neither is recomputed) after a successful reopen.
-    ; Audio holds at its last DAC output across the park - a brief,
-    ; audible gap at every loop restart (documented, not a bug - playvid
-    ; itself is not gapless across loops either).
+    ; On resume the ISR replays the still-resident LAST FRAME's buffer
+    ; from the top into the gap (see the `ld ix, vidAudBuf` re-seat
+    ; below) - brief and bounded (ends at the marker exactly like any
+    ; other frame, setting vidAudDone normally), then the new frame's
+    ; audio takes over at the next `.pace` relaunch. Not silent, not an
+    ; unbounded hold.
     ld bc, AUD_CTC_PORT
     ld a, AUD_CTC_RESET
     out (c), a
@@ -1326,6 +1329,24 @@ vid_run:
                                     ; reset (double soft-reset again) is
                                     ; a harmless repeat from here - the
                                     ; CTC is already parked
+    ; --- B2 fix (review of the B1 fix, critical): vid_open_video's
+    ; success path returns with IX = vidFstatBuf (vid_stream_open's own
+    ; F_FSTAT call, "ld ix,vidFstatBuf" immediately before its `rst $08`
+    ; - the LAST IX assignment before that routine returns). Re-arming
+    ; the CTC with THAT still live in IX would resume the ISR reading/
+    ; inc-ix-walking from an esxDOS buffer address instead of audio -
+    ; mono: garbage DAC output until IX random-walks onto the marker by
+    ; chance (unbounded in practice); stereo: IX steps by 2 with a fixed
+    ; parity, so if vidFstatBuf's address parity never matches vidAud
+    ; BufLastStereo's, the marker is NEVER hit, vidAudDone never sets,
+    ; and .pace (no key-check) hangs forever. Re-seat IX to the resident
+    ; last-frame buffer BEFORE re-arming - the ISR then resumes its
+    ; normal, already-proven compare-and-hold behaviour against the
+    ; SAME fixed end marker every other tick in this file uses, bounded
+    ; and correct for both mono and stereo (this is the shared loop-mode
+    ; path - the re-seat lands before EITHER isr can next fire, since
+    ; the CTC is still parked at this point).
+    ld ix, vidAudBuf
     ld bc, AUD_CTC_PORT
     ld a, AUD_CTC_CW16
     out (c), a
