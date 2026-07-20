@@ -209,10 +209,13 @@ vid_stream_open:
     ret
 
 ; Raw-mode filemap capture: runs IMMEDIATELY after F_OPEN, BEFORE F_FSTAT
-; or any other file access (a prior access perturbs the sector-cache the
-; map walks - playvid parity, stream.asm's pre-access caveat). The file
-; is fresh, so DISK_FILEMAP goes straight in with no F_SEEK/1-byte-read
-; reset. Fails (CF set, A = code) if the map came back empty
+; or any other video-file access (F_FSTAT alone is metadata-only, but the
+; map still walks the GLOBAL sector cache, which prior game/file I/O
+; leaves pointing mid-file). So we apply stream.asm's touched-file reset
+; unconditionally first (seek 0, read 1 byte, seek 0) to repoint the
+; cache at the file's first sector, THEN DISK_FILEMAP - the production-
+; normal case is a hot cache (T2 opens videos after arbitrary game I/O).
+; Fails (CF set, A = code) if the map came back empty
 ; (VID_ERR_NOMAP) or the file needs more runs than the 32-entry buffer
 ; holds (VID_ERR_FRAG - DISK_FILEMAP reported zero unused entries, i.e.
 ; it filled the buffer and may have had more; the kit's defrag advice
@@ -229,6 +232,19 @@ vid_raw_setup:
     ld (vidDiagData+2), hl        ; run's data
     ld (vidDiagBlks), hl
  ENDIF
+    ; stream.asm touched-file reset (global sector cache): repoint it at
+    ; the first sector before mapping, else DISK_FILEMAP walks from wherever
+    ; the last file access left it and returns a wrong card address the card
+    ; rejects. Required before EVERY map - the cache is process-wide.
+    call vid_raw_seek0           ; F_SEEK -> offset 0
+    ret c
+    ld a, (vidHandle)            ; F_READ one byte (the cache primer)
+    ld ix, vidRawResetByte
+    ld bc, 1
+    call esx_fread
+    ret c
+    call vid_raw_seek0           ; F_SEEK back -> offset 0
+    ret c
     ld a, (vidHandle)
     ld ix, vidFilemapBuf
     ld de, VID_FILEMAP_ENT       ; buffer capacity in 6-byte entries
@@ -268,6 +284,18 @@ vid_raw_setup:
     ld (vidStrmBlkLen), hl
     or a                          ; CF clear (remain is primed by the caller
     ret                           ; once F_FSTAT has read the size)
+
+; F_SEEK the video handle to absolute offset 0. NextZXOS F_SEEK: A=handle,
+; BCDE=offset, IXL=mode (0 = from start; IX is the register that matters,
+; L set too belt-and-braces - see overlay0.asm's xmes seek). Out: CF set =
+; esxDOS error (A = code). Corrupts AF, BC, DE, HL, IX.
+vid_raw_seek0:
+    ld bc, 0
+    ld de, 0
+    ld l, 0
+    ld ix, 0
+    ld a, (vidHandle)
+    jp esx_fseek
 
 ; In: A = destination 8K page, mapped into the MMU6 window ($C000) for
 ;     the duration of this read only (the established data_save/
@@ -690,6 +718,7 @@ vid_remain_sub:
 vidCardFlags:      db 0
 vidStrmPort:       db 0
 vidMfSave:         db 0
+vidRawResetByte:   db 0          ; F_READ target for the pre-map cache primer
 vidReadCountSaved: dw 0          ; original requested count (served calc)
 vidStrmNeed:       dw 0          ; bytes still to serve this call
 vidStrmDest:       dw 0          ; next dest address in the MMU6 window
