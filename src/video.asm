@@ -139,8 +139,9 @@ vidFormatSect:
 ; vid_stream_* - dual-mechanism streaming interface. The three
 ; signatures and their register contracts are PINNED (Task 2's player
 ; consumes them verbatim); a one-byte selector vidStrmMode chooses the
-; internals: 0 = plain esxDOS F_READ, 1 = raw card streaming
-; (DISK_FILEMAP + DISK_STRMSTART/END). The caller sets vidStrmMode
+; internals: 0 = plain esxDOS F_READ, 1 = raw card streaming (DISK_FILEMAP
+; for the address map, then direct SD SPI CMD18/CMD12 - playvid's
+; transport, not the OS DISK_STRM* API). The caller sets vidStrmMode
 ; BEFORE vid_stream_open; all three routines honour it internally. The
 ; bench below drives one pass in each mode so the owner's re-leg
 ; measures both mechanisms end-to-end in a single run.
@@ -178,7 +179,7 @@ vid_stream_open:
     jr c, .openfail
 .fstat:
     ld a, (vidHandle)            ; F_FSTAT (both modes) - legal AFTER FILEMAP,
-    ld ix, vidFstatBuf            ; before any STRMSTART
+    ld ix, vidFstatBuf            ; before opening the card for streaming
     rst $08
     db ESX_F_FSTAT
     jr c, .openfail
@@ -342,8 +343,9 @@ vid_stream_read:
     ret
 
 ; Closes the handle opened by vid_stream_open. No-op if none is open.
-; (Raw mode leaves no window open - every raw read ends with DISK_STRMEND
-; before returning - so close is just F_CLOSE in both modes.) Corrupts AF.
+; (Raw mode deselects the card at the end of every read, so no card
+; transaction is ever left open - close is just F_CLOSE in both modes.)
+; Corrupts AF.
 vid_stream_close:
     ld a, (vidHandle)
     cp $FF
@@ -378,10 +380,11 @@ vidFstatBuf: ds 11             ; F_FSTAT buffer: +0 '*' +1 $81 +2 attr
 ; Out: CF clear, BC = bytes delivered (< DE at EOF); CF set, A = code.
 ; The whole pass is bracketed by data_save/data_map_page/data_restore
 ; (dest in the MMU6 window) and by a Multiface disable/restore; each
-; contiguous run is streamed inside its own DISK_STRMSTART/END window and
-; DISK_STRMEND is always issued before returning, so normal file I/O
-; elsewhere is never left poisoned - no filesystem call is ever made
-; between a STRMSTART and its STRMEND. Corrupts AF, BC, DE, HL, IX.
+; contiguous run is read inside its own CMD18/CMD12 card transaction, and
+; the card is always CMD12-stopped and deselected before returning, so the
+; game's normal file I/O between reads is never disturbed (no OS streaming
+; state exists to poison - only the physical card selection, which we
+; always release). Corrupts AF, BC, DE, HL, IX.
 vid_stream_read_raw:
     ld (vidStrmNeed), de          ; bytes still to serve this call
     ld (vidReadCountSaved), de    ; original count (for the served figure)
@@ -495,11 +498,11 @@ vid_stream_read_raw:
     or a                          ; CF clear
     ret
 .tokerr:
-    call vid_strm_end             ; best-effort close before bailing
+    call vid_strm_end             ; CMD12-stop + deselect before bailing
     ld a, VID_ERR_TOKEN
     jr .failrestore
 .strmerr:
-    ; A = esxDOS error from vid_strm_start / vid_strm_end
+    ; A = VID_ERR_CMD from vid_strm_start (card already deselected there)
 .failrestore:
     push af
     call vid_mf_restore
@@ -579,67 +582,82 @@ vid_next_run:
     or a                         ; CF clear
     ret
 
-; Begin a streaming window on the current run. Out: CF set = error
-; (A = esxDOS code); else vidStrmPort = data port. IXDE = card address,
-; BC = block count (ignored by SD/MMC), A = cardflags (stream.asm).
-; Corrupts AF, BC, DE, HL, IX.
+; Open a read window on the current run via raw SD SPI - CMD18
+; READ_MULTIPLE_BLOCK at the run's card address (transcribed from
+; playvid's nf_ open sequence). NO OS streaming window is opened: we drive
+; the card directly, so nothing needs "ending" beyond deselecting the card
+; in vid_strm_end. The card address goes on the wire big-endian (H,L,D,E)
+; in card-native units, the exact value DISK_FILEMAP gave us. Out: CF set =
+; R1 rejected the command (A = VID_ERR_CMD, card released); CF clear = card
+; selected and ready to stream. Corrupts AF, BC, DE, HL.
 vid_strm_start:
  IFDEF DEBUG
     ld hl, 0                     ; DIAG: blocks-consumed counter is per-window
     ld (vidDiagBlks), hl
  ENDIF
-    ld de, (vidStrmRunAddrLo)
-    ld hl, (vidStrmRunAddrHi)
-    push hl
-    pop ix                        ; IXDE = card address
-    ld bc, (vidStrmRunBlocks)
     ld a, (vidCardFlags)
-    rst $08
-    db ESX_DISK_STRMSTART
-    ret c                         ; A = esxDOS error, CF set
-    ld a, c                       ; C = data port ($EB on Next)
-    ld (vidStrmPort), a
+    and 1                         ; Z = card 0, NZ = card 1 (survives to .cs)
+    ld hl, (vidStrmRunAddrHi)     ; H:L = addr byte3 (MSB) : byte2
+    ld de, (vidStrmRunAddrLo)     ; D:E = addr byte1 : byte0 (LSB)
+    ld a, CMD18_READ_MULTIPLE_BLOCK
+    call vid_sd_cmd
+    jr nz, .cmdfail               ; R1 != 0: card rejected the read
+    or a                          ; CF clear: window open, card selected
+    ret
+.cmdfail:
+    call vid_card_deselect
+    ld a, VID_ERR_CMD
+    scf
+    ret
+
+; Close the current read: CMD12 STOP_TRANSMISSION, clock the stop tail,
+; deselect the card. No OS streaming window exists, so deselecting is all
+; that is needed to leave the filesystem usable again between reads - this
+; is exactly what playvid does at every fragment boundary. Always CF clear.
+; Corrupts AF, BC, DE, HL.
+vid_strm_end:
+    ld a, (vidCardFlags)
+    and 1                         ; Z = card 0 (survives to .cs)
+    ld a, CMD12_STOP_TRANSMISSION
+    call vid_sd_cmd_noparam       ; R1 ignored (best-effort stop)
+    ld b, 8+1                     ; clock 9 bytes to flush the stop response
+.tail:
+    in a, (PORT_SPI_DAT)
+    djnz .tail
+    ; fall through to deselect + tail clocks
+; Deselect the SD card (CS high) and clock it twice (playvid parity).
+; Always CF clear. Corrupts AF.
+vid_card_deselect:
+    ld a, $FF
+    out (PORT_SPI_CS), a
+    in a, (PORT_SPI_DAT)
+    in a, (PORT_SPI_DAT)
     or a                          ; CF clear
     ret
 
-; End the current streaming window. Out: CF set = error (A = code).
-; A = cardflags on entry (stream.asm). Corrupts AF, BC, DE, HL, IX.
-vid_strm_end:
-    ld a, (vidCardFlags)
-    rst $08
-    db ESX_DISK_STRMEND
-    ret
-
-; Read one whole 512-byte card block from vidStrmPort into (HL), then
-; skip the SD 2-byte CRC and wait for the next block's $FE data token
-; (SD/MMC protocol - protocol byte is always 0 on the Next; the token
-; wait leaves the card positioned at the next block, exactly as
-; stream.asm sequences it). In: HL = destination. Out: HL += 512; CF set
-; = bad token. Corrupts AF, BC, HL. Runs inside a STRMSTART window only.
+; Read one whole 512-byte block from the SD data port into (HL): wait the
+; $FE data token FIRST (playvid order - poll until non-$FF, verify $FE),
+; then the 512 bytes, then skip the 2-byte CRC. In: HL = destination, card
+; already selected + streaming (CMD18 issued). Out: HL += 512; CF set = the
+; token was not $FE (A = the offending byte). Corrupts AF, BC, HL.
 vid_read_block:
-    ld a, (vidStrmPort)
-    ld c, a
+.wt:
+    in a, (PORT_SPI_DAT)          ; poll for the block's data token
+    inc a
+    jr z, .wt                     ; $FF -> not ready yet, keep polling
+    dec a                         ; recover the raw byte
+    cp $FE                        ; $FE = valid data token
+    jr nz, .tokbad
+    ld c, PORT_SPI_DAT
     ld b, 0
     inir                          ; 256 bytes (B wraps 0 -> 256 iterations)
     inir                          ; next 256 bytes; HL now +512
-    in a, (c)                     ; skip the 2-byte CRC (the nops pad the
-    nop                           ; in/in to the 16T/byte interface timing)
-    in a, (c)
-    nop
-.wt:
-    in a, (c)                     ; wait for the next block's data token
-    cp $FF                        ; $FF = not yet available
-    jr z, .wt
-    cp $FE                        ; $FE = correct token
-    ret z                         ; CF clear (success path byte-for-byte
-                                   ; unchanged - no diagnostic code runs in
-                                   ; the timing-critical block loop)
  IFDEF DEBUG
-    ld (vidDiagOByte), a          ; DIAG: the offending non-$FF/$FE byte, plus
-    push de                       ; the first 4 bytes of the block just read
-    ld de, -512                   ; (HL still points 512 past the block start;
-    add hl, de                    ; HL need not be restored - the error path's
-    ld a, (hl)                    ; caller (.tokerr) never uses HL)
+    push de                       ; DIAG: first 4 bytes of the block just read
+    push hl                       ; (HL points 512 past the block start)
+    ld de, -512
+    add hl, de
+    ld a, (hl)
     ld (vidDiagData+0), a
     inc hl
     ld a, (hl)
@@ -650,14 +668,67 @@ vid_read_block:
     inc hl
     ld a, (hl)
     ld (vidDiagData+3), a
+    pop hl
     pop de
  ENDIF
-    scf                           ; anything else = protocol error
+    in a, (c)                     ; skip the 2-byte CRC (the nops pad the
+    nop                           ; in/in to the 16T/byte interface timing)
+    in a, (c)
+    nop
+    or a                          ; CF clear: block read
+    ret
+.tokbad:
+ IFDEF DEBUG
+    ld (vidDiagOByte), a          ; DIAG: the offending non-$FF/$FE byte
+ ENDIF
+    scf
     ret
 
-; Clear the Multiface enable (peripheral 2 bit 3), saving the prior
-; value. A Multiface trap during a streaming window could issue file I/O
-; and hang the machine (stream.asm). Corrupts AF, E.
+; Send an SD SPI command (playvid sd_send_command). In: A = command byte
+; (CMDn|$40); HLDE = 32-bit argument, sent big-endian (H first); the Z flag
+; = card select (Z -> SD_CS0/card 0, NZ -> SD_CS1/card 1), set by the
+; caller's `and 1` and preserved into here. Selects the card, clocks the
+; 6-byte frame, polls R1. Out: Z set = R1 was 0 (accepted). Preserves
+; DE/HL; corrupts AF, BC.
+vid_sd_cmd_noparam:
+    ld h, 0                       ; no address argument (flags-only commands)
+    ld l, 0
+    ld d, 0
+    ld e, 0
+vid_sd_cmd:
+    ld b, $FF                     ; CRC placeholder (real CRC only CMD0/CMD8)
+    ld c, a                       ; save the command byte
+    ld a, SD_CS0
+    jr z, .cs
+    ld a, SD_CS1
+.cs:
+    out (PORT_SPI_CS), a          ; select the card
+    in a, (PORT_SPI_DAT)          ; sync clock
+    ld a, c                       ; command byte first
+    ld c, PORT_SPI_DAT            ; OUT (C) => 16T/byte framing
+    out (c), a
+    ld a, h
+    out (c), a                    ; arg byte 3 (MSB)
+    ld a, l
+    out (c), a                    ; arg byte 2
+    ld a, d
+    out (c), a                    ; arg byte 1
+    ld a, e
+    out (c), a                    ; arg byte 0 (LSB)
+    ld a, b
+    out (c), a                    ; CRC
+    nop
+.resp:
+    in a, (PORT_SPI_DAT)          ; poll R1 (card holds $FF until it answers)
+    inc a
+    jr z, .resp
+    dec a                         ; Z iff R1 == 0 (no error)
+    ret
+
+; Clear the Multiface enable (peripheral 2 bit 3), saving the prior value.
+; An NMI/Multiface trap mid-SD-transaction could issue file I/O (which
+; re-selects the card) and corrupt the read or hang the machine. Corrupts
+; AF, E.
 vid_mf_disable:
     ld e, NR_PERIPH2
     call nr_read                  ; A = current peripheral 2 (preserves BC)
@@ -716,7 +787,6 @@ vid_remain_sub:
     ret
 
 vidCardFlags:      db 0
-vidStrmPort:       db 0
 vidMfSave:         db 0
 vidRawResetByte:   db 0          ; F_READ target for the pre-map cache primer
 vidReadCountSaved: dw 0          ; original requested count (served calc)
@@ -797,7 +867,10 @@ vid_bench:
     ld hl, 0
     ld (vidFreadKbps), hl
 .pass2:
-    ; --- pass 2: raw streaming ---
+    ; --- pass 2: raw streaming (direct SD SPI). This ERRORS on CSpect -
+    ; its directory mode fakes the esxDOS API over host files with no SPI
+    ; card behind it, so CMD18/the token wait get no data. Expected: the
+    ; STRM row shows an error there; real hardware is the measurement. ---
     ld a, 1
     ld (vidStrmMode), a
     call vid_bench_pass

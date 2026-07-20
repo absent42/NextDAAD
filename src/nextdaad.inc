@@ -105,14 +105,23 @@ ESX_MODE_READ   equ $01
 ESX_MODE_W      equ $0E     ; F_OPEN: write, create or truncate
 ESX_ENOENT      equ 5       ; F_OPEN: file not found
 ESX_DISK_FILEMAP  equ $85   ; card-address map of a file's fragment runs
-ESX_DISK_STRMSTART equ $86  ; begin a raw card streaming read
-ESX_DISK_STRMEND   equ $87  ; end a raw card streaming read
-; --- raw-streaming (video page, SP13 T1b) distinct open-failure codes,
-;     chosen outside the esxDOS error range so the bench can tell them
-;     apart from a real esxDOS code on the STRM row.
+; --- raw SD SPI transport (video page, SP13 T1c). DISK_STRMSTART/END are
+;     NOT used - we drive the card directly, transcribed from playvid
+;     (tools/ZXNextOS/.../playvid/video_stream_postamble.asm, Garry
+;     Lancaster's inlined SD code; MIT-cleared). No OS streaming window is
+;     opened, so nothing needs ending beyond deselecting the card.
+PORT_SPI_CS     equ $E7     ; SD card-select port
+PORT_SPI_DAT    equ $EB     ; SD data port (read/write; 16T/byte via OUT (C))
+SD_CS0          equ $FE     ; select card 0
+SD_CS1          equ $FD     ; select card 1
+CMD12_STOP_TRANSMISSION   equ 12|$40   ; = $4C
+CMD18_READ_MULTIPLE_BLOCK equ 18|$40   ; = $52
+; --- distinct open/stream failure codes, chosen outside the esxDOS error
+;     range so the bench can name them on the STRM row.
 VID_ERR_FRAG    equ $FE     ; file needs > VID_FILEMAP_ENT runs (run .defrag)
 VID_ERR_NOMAP   equ $FF     ; DISK_FILEMAP returned no entries
-VID_ERR_TOKEN   equ $FD     ; bad SD data token mid-stream (protocol error)
+VID_ERR_TOKEN   equ $FD     ; SD data token was not $FE (bad block token)
+VID_ERR_CMD     equ $FC     ; SD command R1 response was not 0 (CMD18 reject)
 VID_FILEMAP_ENT equ 32      ; filemap buffer capacity, 6 bytes/entry (192 B)
 
 ; --- Tilemap text mode (sub-project 2) ---
