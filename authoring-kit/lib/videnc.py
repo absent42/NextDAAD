@@ -5,6 +5,11 @@ lib/videnc.py - open-source encoder for MakeVid/playvid .VID format
 project's tests/videnc.py - see SETUP.md's "Video cutscenes" section
 for the kit workflow.
 
+Sync convention: this file's ENCODING LOGIC must stay identical to
+tests/videnc.py in the main repo - only this docstring and the --help
+text may differ (kit-relative paths/tool references vs repo-relative
+ones). Port any logic fix to both copies.
+
 Why this exists: MakeVid 1.77's own palette ("autopal") encodes are
 broken - their pixel slots hold raw, un-quantized RGB24 data, never
 converted to palette indices (diagnosed offline, SP13 T2 report's
@@ -310,7 +315,8 @@ def validate_output(out_path, fmt):
 def main(argv):
     ap = argparse.ArgumentParser(
         description="Encode a video file into MakeVid/playvid .VID format "
-                    "(open, spec-compliant - see tests/videnc-README.md).")
+                    "(open, spec-compliant - see SETUP.md's \"Video "
+                    "cutscenes\" section).")
     ap.add_argument("input", help="any video file ffmpeg can read")
     ap.add_argument("output", help="destination .VID file")
     ap.add_argument("--format", type=int, required=True, choices=range(6),

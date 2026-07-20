@@ -290,10 +290,22 @@ slated for revisiting in a future optimisation pass: formats 2/3 play at
 ~10.4 kHz (3:1 downsample), formats 0/1 at ~7.78 kHz (2:1 downsample).
 The mono formats (4/5) always play at their full encoded rate.
 
+**Game audio during playback.** A cutscene owns the sound hardware while
+it plays: a playing sample is stopped, not resumed afterwards; AY music
+is frozen in place (paused, not stopped) and resumes automatically the
+instant playback ends. No author action needed either way.
+
 **Performance caveat.** Format 0 (320x240 palette, the highest data-rate
 format) may show slight stutter on the current Next core; an upcoming
 core release with faster SD reads is expected to improve this. Loop mode
 (`GFX n 14`) has a brief audio gap at each restart, by design.
+
+**Palette sparkle caveat.** Formats 0/2/4 (palette) may show a brief
+colour sparkle in fast-changing areas of the picture on the current
+build - a known engine limitation (the per-frame palette write races the
+screen's own scan-out, a sub-millisecond window), not a defect in the
+encoded file. A fix (true palette double-buffering) is scheduled for the
+next optimisation update.
 
 **Redraw after a cutscene.** Video playback is a full-screen takeover,
 like `DISPLAY`: register state is restored when it ends, but pixel

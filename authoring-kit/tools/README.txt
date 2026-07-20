@@ -28,7 +28,7 @@ samples. Two ways to make one, neither wired into BUILD.BAT:
 
 Tool           Provides                                Download                                                   Where
 -------------  --------------------------------------  ---------------------------------------------------------  --------------------------
-MakeVid        GUI .VID encoder (5 of the 6 formats)   https://github.com/em00k/MakeVid-Release                  run standalone, save output into VIDEO\
+MakeVid        GUI .VID encoder (3 of the 6 formats)   https://github.com/em00k/MakeVid-Release                  run standalone, save output into VIDEO\
 lib\videnc.py  CLI .VID encoder (all 6 formats)        shipped with this kit                                      ..\lib\videnc.py
 
 MakeVid 1.77's "with palette" formats (0/2/4) are currently broken (raw

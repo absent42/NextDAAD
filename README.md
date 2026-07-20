@@ -277,11 +277,18 @@ data-rate format) may show slight stutter on the current Next core; an
 upcoming core release with faster SD reads is expected to improve this.
 Loop mode has a brief audio gap at each restart, by design. These
 formats are 50Hz-designed; a 60Hz display gets slower playback and
-audio popping, an accepted limitation.
+audio popping, an accepted limitation. Palette formats (0/2/4) may show
+a brief colour sparkle in fast-changing areas on the current build - a
+known engine limitation (the per-frame palette write races the screen's
+own scan-out), not an encoding defect; a fix (true palette
+double-buffering) is scheduled for the next optimisation update.
 
 Video playback is a full-screen takeover, like DISPLAY: register state
 is restored when it ends, pixel content is not, so a game must redraw
-its own picture afterwards.
+its own picture afterwards. Game audio is likewise handled
+automatically - a playing sample is stopped (not resumed), and AY music
+is frozen in place and resumes on its own the instant the cutscene
+ends; no author action is needed either way.
 
 Two ways to encode a `.VID`: MakeVid (a third-party GUI tool - its
 "with palette" formats 0/2/4 are currently broken, malformed raw-RGB24

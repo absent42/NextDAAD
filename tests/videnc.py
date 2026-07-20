@@ -3,6 +3,10 @@
 tests/videnc.py - open-source encoder for MakeVid/playvid .VID format
 (all six playback formats: 0-5).
 
+Sync convention: authoring-kit/lib/videnc.py is a kit copy of this
+file - its ENCODING LOGIC must stay identical to this one; only its
+docstring and --help text may differ. Port any logic fix to both.
+
 Why this exists: MakeVid 1.77's own palette ("autopal") encodes are
 broken - their pixel slots hold raw, un-quantized RGB24 data, never
 converted to palette indices (diagnosed offline, SP13 T2 report's
