@@ -272,13 +272,14 @@ vid_raw_setup:
 .haveentries:
     add hl, de                    ; re-form the end address
     ld (vidStrmEntryEnd), hl
-    ld a, (vidCardFlags)          ; per-block card-address step
-    and %00000010
-    ld hl, 512                    ; bit 1 = 0: byte addressing, +512/block
-    jr z, .stepset
-    ld hl, 1                      ; bit 1 = 1: block addressing, +1/block
-.stepset:
-    ld (vidStrmStep), hl
+    ; Card granularity (cardflags bit 1: byte vs 512-byte-block addresses)
+    ; needs no handling: DISK_FILEMAP already returns each run's start address
+    ; in the card's native CMD18 units, and the persistent CMD18 window
+    ; streams successive blocks internally - we never compute a per-block
+    ; address, so no step is derived. (bit 0 = card id is still used, for the
+    ; CS0/CS1 select in vid_sd_cmd.)
+    xor a
+    ld (vidStrmWinOpen), a         ; no SD window open on a fresh raw open
     ld hl, 0                      ; no run loaded, no buffered tail yet
     ld (vidStrmRunBlocks), hl
     ld (vidStrmBlkPos), hl
@@ -312,6 +313,14 @@ vid_raw_seek0:
 ;      law (file.asm's sav_read comment; font_load's "BC discipline"
 ;      comment, overlay2.asm).
 ; Corrupts AF, BC, DE, HL, IX.
+;
+; RAW-MODE CONTRACT (vidStrmMode=1): the CMD18 SD read window is held OPEN
+; across successive vid_stream_read calls for throughput (it closes only at
+; a fragment boundary, EOF, an error, or vid_stream_close). While it is
+; open, NO filesystem or SD access may occur ANYWHERE in the machine between
+; calls - the card is mid-transaction and the Multiface is disabled. This
+; holds by design: the bench pass loop and the T2 player loop do only Layer
+; 2 / audio / timing work between reads. vid_stream_close is the release.
 vid_stream_read:
     ld (vidReadPage), a          ; A = dest page (must survive the mode
     ld a, (vidStrmMode)           ; test); DE = count untouched throughout
@@ -343,10 +352,12 @@ vid_stream_read:
     ret
 
 ; Closes the handle opened by vid_stream_open. No-op if none is open.
-; (Raw mode deselects the card at the end of every read, so no card
-; transaction is ever left open - close is just F_CLOSE in both modes.)
-; Corrupts AF.
+; In raw mode a read window may persist across calls (see vid_stream_read's
+; contract) - vid_win_close releases it here (CMD12 + deselect + Multiface
+; restore); it is idempotent and a no-op in F_READ mode. This is the
+; caller's release point for the persistent window. Corrupts AF, BC, DE, HL.
 vid_stream_close:
+    call vid_win_close            ; release any open raw SD window first
     ld a, (vidHandle)
     cp $FF
     ret z
@@ -388,19 +399,18 @@ vidFstatBuf: ds 11             ; F_FSTAT buffer: +0 '*' +1 $81 +2 attr
 vid_stream_read_raw:
     ld (vidStrmNeed), de          ; bytes still to serve this call
     ld (vidReadCountSaved), de    ; original count (for the served figure)
-    call data_save
-    ld a, (vidReadPage)
+    call data_save                ; per-call MMU6 bracket (dest page changes
+    ld a, (vidReadPage)            ; between calls; the SD window persists)
     call data_map_page            ; MMU6 = dest page
-    call vid_mf_disable           ; save + clear Multiface enable
     ld hl, DATA_WINDOW
     ld (vidStrmDest), hl
 .outer:
     ld hl, (vidStrmNeed)          ; served every requested byte?
     ld a, h
     or l
-    jp z, .done
+    jp z, .retopen                ; yes: return, leaving the window OPEN
     call vid_remain_zero          ; file exhausted?
-    jp z, .done
+    jp z, .eofclose               ; yes: close the window
     ld hl, (vidStrmBlkLen)        ; drain a buffered tail before streaming
     ld de, (vidStrmBlkPos)
     or a
@@ -409,26 +419,89 @@ vid_stream_read_raw:
     call vid_drain
     jp .outer
 .needstream:
-    ld hl, (vidStrmRunBlocks)     ; current run empty? load the next one
+    ld hl, (vidStrmRunBlocks)     ; current run empty? close it, load the next
     ld a, h
     or l
-    jr nz, .haverun
+    jr nz, .haveblocks
+    call vid_win_close            ; CMD12 the finished run before advancing
     call vid_next_run
-    jp c, .done                   ; no more runs (defensive EOF)
-.haverun:
-    call vid_strm_start           ; open a window on the current run
+    jp c, .eofclose               ; no more runs (defensive EOF)
+.haveblocks:
+    call vid_win_open             ; open at the current run (no-op if already)
     jp c, .strmerr
+    ; --- register-resident fast path (the hot loop): stream whole 512-byte
+    ; blocks straight into the window while need >= 512, remain >= 512 and the
+    ; run still has blocks. Hot state lives in registers - main HL = dest,
+    ; DE = need; alternate BC' = runBlocks, DE' = remainHi, HL' = remainLo -
+    ; and is written back to the vidStrm* cells only on exit (vid_fast_spill),
+    ; so cross-call resume stays memory-backed exactly as the slow path leaves
+    ; it. The alternate set is safe: both IM2 ISRs (interrupts.asm) fully
+    ; preserve it, and vid_read_block preserves DE + the alternate set. No
+    ; IX/IY, no per-block memory bookkeeping (golden rules 1 and 2). Any edge
+    ; (need/remain < 512, run boundary, EOF) spills and drops to .inner. ---
+    ld bc, (vidStrmRunBlocks)
+    ld de, (vidStrmRemainHi)
+    ld hl, (vidStrmRemainLo)
+    exx
+    ld de, (vidStrmNeed)
+    ld hl, (vidStrmDest)
+.fast:
+    ld a, d                       ; need >= 512 ? (DE >= $0200 <=> d >= 2)
+    cp 2
+    jr c, .fastexit
+    exx                           ; -> alternate: remain, runBlocks
+    ld a, d                       ; remainHi (DE') != 0 -> remain huge, ok
+    or e
+    jr nz, .fastruns
+    ld a, h                       ; remainHi == 0: remainLo (HL') >= 512 ?
+    cp 2
+    jr c, .fastexits
+.fastruns:
+    ld a, b                       ; runBlocks (BC') > 0 ?
+    or c
+    jr z, .fastexits
+    exx                           ; -> main: HL = dest, DE = need
+    call vid_read_block           ; 512 into (HL); HL += 512; preserves DE + alt
+    jr c, .fasttok
+    ld a, d                       ; need -= 512 (d -= 2; 512's low byte is 0 and
+    sub 2                         ; d >= 2 was just checked, so no borrow)
+    ld d, a
+    exx                           ; -> alternate: remain -= 512, runBlocks -= 1
+    ld a, h                       ; remainLo high byte (H') -= 2
+    sub 2
+    ld h, a
+    jr nc, .fastnb
+    dec de                        ; borrow into remainHi (DE')
+.fastnb:
+    dec bc                        ; runBlocks--
+    exx                           ; -> main
+ IFDEF DEBUG
+    push hl                       ; DIAG only: count the block (memory)
+    ld hl, (vidDiagBlks)
+    inc hl
+    ld (vidDiagBlks), hl
+    pop hl
+ ENDIF
+    jr .fast
+.fasttok:
+    call vid_fast_spill           ; token error (main active): write back, bail
+    jp .tokerr
+.fastexits:
+    exx                           ; exited in the alternate set: back to main
+.fastexit:
+    call vid_fast_spill
+    ; fall into .inner to handle the edge with the memory-based path
 .inner:
     ld hl, (vidStrmNeed)
     ld a, h
     or l
-    jp z, .endwin
+    jp z, .retopen                ; caller satisfied: window stays open
     call vid_remain_zero
-    jp z, .endwin
+    jp z, .eofclose
     ld hl, (vidStrmRunBlocks)
     ld a, h
     or l
-    jp z, .endwin                 ; run exhausted mid-window: close, next run
+    jp z, .outer                  ; run boundary: back to .needstream to close
     ld hl, (vidStrmNeed)          ; direct 512 only when a whole block both
     ld de, 512                    ; fits the request and is all valid data
     or a
@@ -464,31 +537,24 @@ vid_stream_read_raw:
     ld (vidStrmBlkPos), hl
     call vid_drain                ; copy min(need, blkLen) now; tail stays
 .blockdone:
-    ld hl, (vidStrmRunBlocks)     ; one card block consumed
-    dec hl
-    ld (vidStrmRunBlocks), hl
-    ld hl, (vidStrmRunAddrLo)     ; advance card address by the step
-    ld de, (vidStrmStep)
-    add hl, de
-    ld (vidStrmRunAddrLo), hl
-    jr nc, .noaddrcarry
-    ld hl, (vidStrmRunAddrHi)
-    inc hl
-    ld (vidStrmRunAddrHi), hl
-.noaddrcarry:
+    ld hl, (vidStrmRunBlocks)     ; one card block consumed (the run address
+    dec hl                         ; is NOT stepped per block - the open CMD18
+    ld (vidStrmRunBlocks), hl      ; window advances the card internally; the
+                                   ; next run's address comes fresh from the
+                                   ; filemap at the boundary)
  IFDEF DEBUG
     ld hl, (vidDiagBlks)         ; DIAG: one more block consumed this window
     inc hl
     ld (vidDiagBlks), hl
  ENDIF
     jp .inner
-.endwin:
-    call vid_strm_end
-    jp c, .strmerr
-    jp .outer
-.done:
-    call vid_mf_restore
+.retopen:
+    call data_restore             ; per-call MMU6 restore only - the SD window
+    jr .served                    ; and the Multiface disable both persist
+.eofclose:
+    call vid_win_close            ; CMD12 + deselect + MF restore
     call data_restore
+.served:
     ld hl, (vidReadCountSaved)    ; served = original count - need left
     ld de, (vidStrmNeed)
     or a
@@ -498,17 +564,28 @@ vid_stream_read_raw:
     or a                          ; CF clear
     ret
 .tokerr:
-    call vid_strm_end             ; CMD12-stop + deselect before bailing
     ld a, VID_ERR_TOKEN
-    jr .failrestore
 .strmerr:
-    ; A = VID_ERR_CMD from vid_strm_start (card already deselected there)
-.failrestore:
+    ; A = error code (VID_ERR_TOKEN, or VID_ERR_CMD from vid_win_open)
     push af
-    call vid_mf_restore
+    call vid_win_close            ; close + MF restore (no-op if never opened)
     call data_restore
     pop af
     scf
+    ret
+
+; Write the fast-path hot registers back to the resume cells. In: main
+; HL = dest, DE = need; alternate BC = runBlocks, DE = remainHi, HL =
+; remainLo. Out: main set active, all cells consistent. Preserves the
+; register contents; corrupts nothing (no flags).
+vid_fast_spill:
+    ld (vidStrmDest), hl
+    ld (vidStrmNeed), de
+    exx
+    ld (vidStrmRunBlocks), bc
+    ld (vidStrmRemainHi), de
+    ld (vidStrmRemainLo), hl
+    exx
     ret
 
 ; Copy min(vidStrmNeed, buffered) bytes from vidStrmBlkBuf+BlkPos to the
@@ -519,15 +596,15 @@ vid_drain:
     ld hl, (vidStrmBlkLen)        ; avail = BlkLen - BlkPos
     ld de, (vidStrmBlkPos)
     or a
-    sbc hl, de
+    sbc hl, de                    ; HL = avail
     ld de, (vidStrmNeed)          ; count = min(avail, need)
-    push hl                       ; avail
     or a
-    sbc hl, de                    ; avail - need
-    pop hl                        ; avail
-    jr c, .count                  ; avail < need: count = avail
-    jr z, .count                  ; avail == need: count = avail
-    ld hl, (vidStrmNeed)          ; avail > need: count = need
+    sbc hl, de                    ; avail - need (CF set = avail < need). No
+    jr nc, .useneed               ; push/pop guard: restore avail with ADD only
+    add hl, de                    ; in the avail < need branch, where CF is dead
+    jr .count                     ; avail < need: count = avail (HL restored)
+.useneed:
+    ld hl, (vidStrmNeed)          ; avail >= need: count = need
 .count:
     push hl
     pop bc                        ; BC = count (<= 511, <= need)
@@ -580,6 +657,43 @@ vid_next_run:
     ld (vidStrmRunBlocks), de     ; number of 512-byte blocks in the run
     ld (vidStrmEntryPtr), hl
     or a                         ; CF clear
+    ret
+
+; Ensure the SD read window is open at the current run address. No-op if
+; already open (the window persists ACROSS vid_stream_read calls - see the
+; vid_stream_read contract). The first open disables the Multiface (it stays
+; off for the whole window) and issues CMD18. Out: CF set = CMD18 rejected
+; (A = VID_ERR_CMD, MF restored, window left closed). Corrupts AF, BC, DE, HL.
+vid_win_open:
+    ld a, (vidStrmWinOpen)
+    or a
+    ret nz                        ; already open (CF clear)
+    call vid_mf_disable
+    call vid_strm_start           ; CMD18 (deselects the card on failure)
+    jr c, .failed
+    ld a, 1
+    ld (vidStrmWinOpen), a
+    or a                          ; CF clear
+    ret
+.failed:
+    push af                       ; keep VID_ERR_CMD
+    call vid_mf_restore           ; window never opened - undo the MF disable
+    pop af
+    scf
+    ret
+
+; Close the SD read window if open: CMD12 stop, deselect, restore the
+; Multiface. No-op (CF clear) if none is open (F_READ mode, or already
+; closed) - idempotent, so vid_stream_close can always call it. Corrupts
+; AF, BC, DE, HL.
+vid_win_close:
+    ld a, (vidStrmWinOpen)
+    or a
+    ret z                         ; not open
+    call vid_strm_end             ; CMD12 + deselect (always CF clear)
+    call vid_mf_restore
+    xor a
+    ld (vidStrmWinOpen), a         ; mark closed (A = 0, CF clear)
     ret
 
 ; Open a read window on the current run via raw SD SPI - CMD18
@@ -648,11 +762,11 @@ vid_read_block:
     jr z, .wt                     ; $FF -> not ready yet, keep polling
     dec a                         ; recover the raw byte
     cp $FE                        ; $FE = valid data token
-    jr nz, .tokbad
+    jp nz, .tokbad                ; jp: .tokbad is past the 1024-byte unroll
     ld c, PORT_SPI_DAT
-    ld b, 0
-    inir                          ; 256 bytes (B wraps 0 -> 256 iterations)
-    inir                          ; next 256 bytes; HL now +512
+    DUP 512                       ; 512 unrolled INI at 16T/byte (playvid
+      ini                          ; parity - the interface's peak rate; INIR
+    EDUP                           ; would be 21T/byte). HL now += 512.
  IFDEF DEBUG
     push de                       ; DIAG: first 4 bytes of the block just read
     push hl                       ; (HL points 512 past the block start)
@@ -789,6 +903,8 @@ vid_remain_sub:
 
 vidCardFlags:      db 0
 vidMfSave:         db 0
+vidStrmWinOpen:    db 0          ; 1 = an SD read window (CMD18) is open and
+                                  ; persists across vid_stream_read calls
 vidRawResetByte:   db 0          ; F_READ target for the pre-map cache primer
 vidReadCountSaved: dw 0          ; original requested count (served calc)
 vidStrmNeed:       dw 0          ; bytes still to serve this call
@@ -798,7 +914,6 @@ vidStrmEntryEnd:   dw 0          ; one past the last written entry
 vidStrmRunAddrLo:  dw 0          ; current run card address, low word
 vidStrmRunAddrHi:  dw 0          ; current run card address, high word
 vidStrmRunBlocks:  dw 0          ; 512-byte blocks left in the current run
-vidStrmStep:       dw 0          ; card-address step per block (1 or 512)
 vidStrmRemainLo:   dw 0          ; file bytes not yet delivered, low word
 vidStrmRemainHi:   dw 0          ; file bytes not yet delivered, high word
 vidStrmBlkPos:     dw 0          ; drain cursor into vidStrmBlkBuf
