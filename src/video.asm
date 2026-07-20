@@ -389,13 +389,14 @@ vidFstatBuf: ds 11             ; F_FSTAT buffer: +0 '*' +1 $81 +2 attr
 ; vid_stream_read raw path.
 ; In:  vidReadPage = dest 8K page, DE = requested count <= $2000.
 ; Out: CF clear, BC = bytes delivered (< DE at EOF); CF set, A = code.
-; The whole pass is bracketed by data_save/data_map_page/data_restore
-; (dest in the MMU6 window) and by a Multiface disable/restore; each
-; contiguous run is read inside its own CMD18/CMD12 card transaction, and
-; the card is always CMD12-stopped and deselected before returning, so the
-; game's normal file I/O between reads is never disturbed (no OS streaming
-; state exists to poison - only the physical card selection, which we
-; always release). Corrupts AF, BC, DE, HL, IX.
+; Each call is bracketed by data_save/data_map_page/data_restore (dest in
+; the MMU6 window). The CMD18 card window PERSISTS across calls: when the
+; caller's count is exhausted mid-run the card stays selected mid-stream
+; (Multiface stays disabled - both are window-scoped, see vid_win_open/
+; vid_win_close) and the next call resumes it. NO filesystem or SD access
+; may occur anywhere between calls while a window is open; vid_stream_close
+; (or a run boundary/EOF/error inside a call) is what releases the card.
+; Corrupts AF, BC, DE, HL, IX.
 vid_stream_read_raw:
     ld (vidStrmNeed), de          ; bytes still to serve this call
     ld (vidReadCountSaved), de    ; original count (for the served figure)
