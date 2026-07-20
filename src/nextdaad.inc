@@ -506,3 +506,83 @@ SFX_SUB_VID_LOOP equ 10
 
 VID_PIX_PAGES   equ 6       ; 8K pages per 256x192 frame (49152/8192) -
                             ; formats 4/5 only (mono, this task's scope)
+
+; --- Video player core (SP13 Task 3) - stereo dual-DAC + 256x240 (2/3) ---
+; audio-block sector-alignment padding, formats 2/3 (playvid video_256x240.
+; asm/_palette.asm: 3732 audio + 364 padding = 4096, "pad to 4096 bytes for
+; sector alignment", video_256x240.asm lines 8-9/501-525 and _palette.asm
+; lines 8-9/515-525). Frame layout: audio(3732) + pad(364) +
+; [palette(512), format 2 only] + pixels(61440) = VID_F2_BYTES/VID_F3_BYTES
+; exactly (3732+364+512+61440=66048; 3732+364+61440=65536).
+VID_F23_AUDPAD  equ 364
+
+; DAC ports (ports.txt, tools/ZXNextOS/docs/extra-hw/io-port-system/
+; ports.txt lines 266-274: "four 8-bit dac channels... A,B are directed to
+; the left audio channel and C,D are directed to the right"; the
+; soundrive-2 column gives DAC B = $F3, DAC C = $F9 - the exact pair the
+; MakeVid reference ISR uses (tools/ZXNextOS/.../playvid/interrupts-
+; common.asm isr_ctc_stereo, lines 250-307: "out (0xf3),a ; left dac B" /
+; "out (0xf9),a ; right dac C"). NR_PERIPH3 bit 3 (already enabled
+; elsewhere for the mono DAC) covers these too - same "8-bit DACs on" gate.
+VID_DAC_LEFT    equ $F3
+VID_DAC_RIGHT   equ $F9
+
+; Stereo audio downsample factor: T3's page-space finding (see the task
+; report) is that a full 3732-byte resident play buffer (matching the
+; simple whole-frame-resident design mono uses) does not fit the video
+; page's ~6KB budget alongside the rest of the streaming machinery, which
+; must stay resident even for a hot/cold split (loop-mode reopen calls
+; vid_open_video/vid_stream_open mid-CTC-armed-session, so that machinery
+; can never leave the page - measured, not assumed: a 2:1 buffer, 1866
+; bytes, still overflowed the page by ~517 bytes even after stripping the
+; T1b-T1d DEBUG diagnostic scaffolding, and the VIDBENCH harness this
+; could otherwise fall back to relocating is too tightly coupled to the
+; hot vid_stream_read internals - every one of its calls would need its
+; own two-way page-hop trampoline - to safely split off in this pass).
+; Factor 3 fits with margin: playing every 3rd stereo sample pair shrinks
+; the resident buffer to 1244 bytes (622 pairs, exactly divisible - no
+; remainder) at the cost of the audible rate (~31.1kHz source ->
+; ~10.37kHz played). Disclosed, deliberate mitigation, not silent quality
+; loss - see the report.
+VID_STEREO_DOWNSAMPLE equ 3
+VID_F2_PLAY_SAMPLES equ VID_F2_SAMPLES / VID_STEREO_DOWNSAMPLE  ; 622 pairs
+VID_F2_PLAY_BYTES   equ VID_F2_PLAY_SAMPLES * 2                 ; 1244 bytes
+
+; 256x240 column-major pixel layout (formats 2/3). Reference: tools/
+; ZXNextOS/.../playvid/video_256x240.asm header (lines 1-11: "256 x 240
+; pixels (column major order)") and its loop_8k (lines 567-1252): each
+; 8K L2 page holds 32 columns at a fixed 256-byte hardware stride (Layer 2
+; mode 1 addressing, address = X*256+Y - overlay2.asm's own "320x256:
+; column-major" comment, l2_mode_set/l2_clip_set), but the file supplies
+; only 240 real bytes per column (256x240 = 61440 = 256*240) - the
+; remaining 16 bytes/column are UNWRITTEN stride padding (playvid's own
+; "ld l,a / inc h" mid-loop_8k address jumps, e.g. video_256x240.asm lines
+; 586-591). VID_COL_STRIDE - VID_COL_HEIGHT = VID_COL_GAP = 16.
+VID_COL_HEIGHT  equ 240     ; real pixel bytes per column
+VID_COL_STRIDE  equ 256     ; hardware column pitch (mode 1, fixed)
+VID_COL_GAP     equ VID_COL_STRIDE - VID_COL_HEIGHT  ; = 16
+VID_COL_PER_PAGE equ 8192 / VID_COL_STRIDE           ; = 32 columns/8K page
+VID_PIX_PAGES23 equ 8       ; 8K pages per 256x240 frame (256 cols / 32
+                            ; per page) - matches the reference's own
+                            ; _w_layer2_page_count = 8 (video_256x240.asm
+                            ; line 122)
+VID_L2_MODE1    equ %00010000  ; NR $70: mode 1 (320x256/column-major),
+                            ; matching l2_mode_set's own %00010000 literal
+                            ; (overlay2.asm) - formats 2/3 use a 256-wide
+                            ; subset of this mode, never mode 0
+VID_L2_CLIP_X2_M1 equ (256/2)-1  ; = 127: NR $18 X2 in 2-pixel units for
+                            ; mode 1 (overlay2.asm l2_clip_set's own
+                            ; "X2 = 159 ... X in 2-pixel units" comment,
+                            ; cross-checked against the reference's own
+                            ; clip X1=16,X2=143 = 128 units = 256 px);
+                            ; full-height, no inset: X1=0, Y1=0,
+                            ; Y2=VID_COL_HEIGHT-1 - no playvid-style
+                            ; scroll/crop (the brief's "no paper inset")
+
+; Per-video-mode CTC time constant for the stereo downsampled rate
+; (31100/VID_STEREO_DOWNSAMPLE = ~10366 Hz), same derivation as
+; vidCtcTcTab (video.asm): TC = floor(clk16[mode]/rate), always CW16 (the
+; crossover stays far below 10366 on every mode, same reasoning as the
+; 23300Hz table's header). VGA0 168, VGA1 172, VGA2 177, VGA3 180, VGA4
+; 186, VGA5 192, VGA6 198, HDMI 162.
+VID_RATE_STEREO_PLAY equ 10366

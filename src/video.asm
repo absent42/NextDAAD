@@ -225,14 +225,6 @@ vid_stream_open:
 ; step and resets the run/tail cursor; remain is primed by the caller
 ; after F_FSTAT yields the size. Corrupts AF, BC, DE, HL, IX.
 vid_raw_setup:
- IFDEF DEBUG
-    xor a                        ; DIAG scaffolding (SP13 T1b hw token bug):
-    ld (vidDiagOByte), a          ; clear the token-error capture at the start
-    ld hl, 0                      ; of each raw open so a stale value from a
-    ld (vidDiagData), hl          ; prior VIDBENCH is never mistaken for this
-    ld (vidDiagData+2), hl        ; run's data
-    ld (vidDiagBlks), hl
- ENDIF
     ; stream.asm touched-file reset (global sector cache): repoint it at
     ; the first sector before mapping, else DISK_FILEMAP walks from wherever
     ; the last file access left it and returns a wrong card address the card
@@ -476,13 +468,6 @@ vid_stream_read_raw:
 .fastnb:
     dec bc                        ; runBlocks--
     exx                           ; -> main
- IFDEF DEBUG
-    push hl                       ; DIAG only: count the block (memory)
-    ld hl, (vidDiagBlks)
-    inc hl
-    ld (vidDiagBlks), hl
-    pop hl
- ENDIF
     jr .fast
 .fasttok:
     call vid_fast_spill           ; token error (main active): write back, bail
@@ -543,11 +528,6 @@ vid_stream_read_raw:
     ld (vidStrmRunBlocks), hl      ; window advances the card internally; the
                                    ; next run's address comes fresh from the
                                    ; filemap at the boundary)
- IFDEF DEBUG
-    ld hl, (vidDiagBlks)         ; DIAG: one more block consumed this window
-    inc hl
-    ld (vidDiagBlks), hl
- ENDIF
     jp .inner
 .retopen:
     call data_restore             ; per-call MMU6 restore only - the SD window
@@ -706,10 +686,6 @@ vid_win_close:
 ; R1 rejected the command (A = VID_ERR_CMD, card released); CF clear = card
 ; selected and ready to stream. Corrupts AF, BC, DE, HL.
 vid_strm_start:
- IFDEF DEBUG
-    ld hl, 0                     ; DIAG: blocks-consumed counter is per-window
-    ld (vidDiagBlks), hl
- ENDIF
     ld a, (vidCardFlags)
     and 1                         ; Z = card 0, NZ = card 1 (survives to .cs)
     ld hl, (vidStrmRunAddrHi)     ; H:L = addr byte3 (MSB) : byte2
@@ -768,25 +744,6 @@ vid_read_block:
     DUP 512                       ; 512 unrolled INI at 16T/byte (playvid
       ini                          ; parity - the interface's peak rate; INIR
     EDUP                           ; would be 21T/byte). HL now += 512.
- IFDEF DEBUG
-    push de                       ; DIAG: first 4 bytes of the block just read
-    push hl                       ; (HL points 512 past the block start)
-    ld de, -512
-    add hl, de
-    ld a, (hl)
-    ld (vidDiagData+0), a
-    inc hl
-    ld a, (hl)
-    ld (vidDiagData+1), a
-    inc hl
-    ld a, (hl)
-    ld (vidDiagData+2), a
-    inc hl
-    ld a, (hl)
-    ld (vidDiagData+3), a
-    pop hl
-    pop de
- ENDIF
     in a, (c)                     ; skip the 2-byte CRC (the nops pad the
     nop                           ; in/in to the 16T/byte interface timing)
     in a, (c)
@@ -794,9 +751,6 @@ vid_read_block:
     or a                          ; CF clear: block read
     ret
 .tokbad:
- IFDEF DEBUG
-    ld (vidDiagOByte), a          ; DIAG: the offending non-$FF/$FE byte
- ENDIF
     scf
     ret
 
@@ -923,9 +877,10 @@ vidFilemapBuf:     ds VID_FILEMAP_ENT*6   ; DISK_FILEMAP entries (192 bytes)
 vidStrmBlkBuf:     ds 512        ; one card block held for sub-block drains
 
 ; ---------------------------------------------------------------------
-; vid_play - the player core (SP13 Task 2). Formats 4/5 (256x192 mono)
-; only; any other classification is a fail-silent no-op (formats 0-3
-; are later tasks). Entry: B = video number, C = 0 play-once / 1 loop
+; vid_play - the player core (SP13 Task 2 mono, Task 3 stereo). Formats
+; 2-5 (256x240 stereo, 256x192 mono); any other classification (0/1,
+; 320x240 - a later task) is a fail-silent no-op. Entry: B = video number,
+; C = 0 play-once / 1 loop
 ; (h_gfx/h_sfx translate their own sub-command numbers into this before
 ; the cross-page hop - see nextdaad.inc's GFX_SUB_VID_*/SFX_SUB_VID_*).
 ; Probes PARTn\NNN.VID (curPart > 1) then root NNN.VID, classifies,
@@ -948,10 +903,10 @@ vid_play:
     ld de, (vidSizeHi)
     call vid_classify
     jr c, .badfmt
-    cp 4
-    jr z, .haveformat
-    cp 5
-    jr nz, .badfmt
+    cp 2
+    jr c, .badfmt          ; formats 0/1 (320x240) - out of scope, later task
+    cp 6
+    jr nc, .badfmt          ; defensive (vid_classify never returns > 5)
 .haveformat:
     ld (vidFmt), a
     jp vid_run                    ; tail: vid_run's own restore paths ret
@@ -1124,22 +1079,32 @@ vid_run:
     add a, a
     ld (vidAudPoolPage), a
 
-    ; --- CTC retune: 23.3kHz for formats 4/5, table-driven from the
-    ; live video-timing mode (NR $11 bits 2:0) - every mode's /16-vs-/256
-    ; crossover is BELOW 23300 for every mode, so the control word is
-    ; always CW16 (see vidCtcTcTab's header). Mirrors aud_smp_start's
-    ; exact CTC program sequence (unknown-state double reset, control
-    ; word, time constant - audiobank.asm), EXCEPT the stub is patched
-    ; between the control word and the time constant (not after) - the
-    ; time-constant byte is what starts the timer (aud_smp_start's own
-    ; comment: "loading the TC starts the timer"), so patching the stub
-    ; first guarantees the FIRST possible tick already dispatches
-    ; video_ctc_isr, never a stale ctc_isr. ---
+    ; --- CTC retune: 23.3kHz for mono formats 4/5, ~10.37kHz (downsampled
+    ; 3:1 from the source's 31.1kHz - see nextdaad.inc's VID_STEREO_
+    ; DOWNSAMPLE header for why: a full-rate resident stereo buffer does
+    ; not fit the video page) for stereo formats 2/3 - table-driven from
+    ; the live video-timing mode (NR $11 bits 2:0). Every mode's /16-vs-
+    ; /256 crossover is BELOW both rates on every mode, so the control
+    ; word is always CW16 (see vidCtcTcTab/vidCtcTcTab2's headers).
+    ; Mirrors aud_smp_start's exact CTC program sequence (unknown-state
+    ; double reset, control word, time constant - audiobank.asm), EXCEPT
+    ; the stub is patched between the control word and the time constant
+    ; (not after) - the time-constant byte is what starts the timer
+    ; (aud_smp_start's own comment: "loading the TC starts the timer"),
+    ; so patching the stub first guarantees the FIRST possible tick
+    ; already dispatches the right ISR, never a stale ctc_isr. ---
     ld e, NR_VIDEO_TIMING
     call nr_read
     and 7
-    ld hl, vidCtcTcTab
-    add hl, a
+    ld c, a
+    ld b, 0
+    ld a, (vidFmt)
+    ld hl, vidCtcTcTab             ; mono table (formats 4/5)
+    cp 4
+    jr nc, .gottctab
+    ld hl, vidCtcTcTab2            ; stereo/downsampled table (formats 2/3)
+.gottctab:
+    add hl, bc
     ld a, (hl)
     ld (vidCtcTc), a
     ld bc, AUD_CTC_PORT
@@ -1149,27 +1114,49 @@ vid_run:
     ld a, AUD_CTC_CW16
     out (c), a                    ; control word - timer not running yet
 
-    ; --- IM2_CTC_STUB patched to the video audio ISR, BEFORE the time
-    ; constant starts the timer below. Single atomic LD (nn),HL (doc 08's
-    ; "interrupt atomicity" - one instruction, no DI needed); MMU7 =
-    ; VID_PAGE for the whole playback from here, the banking invariant
-    ; video_ctc_isr depends on (its own header). ---
+    ; --- IM2_CTC_STUB patched to the video audio ISR (mono or stereo),
+    ; BEFORE the time constant starts the timer below. Single atomic
+    ; LD (nn),HL (doc 08's "interrupt atomicity" - one instruction, no DI
+    ; needed); MMU7 = VID_PAGE for the whole playback from here, the
+    ; banking invariant both ISRs depend on (their own headers). ---
+    ld a, (vidFmt)
     ld hl, video_ctc_isr
+    cp 4
+    jr nc, .gotisr
+    ld hl, video_ctc_isr_stereo
+.gotisr:
     ld (IM2_CTC_STUB+1), hl
 
     ld a, (vidCtcTc)
     ld bc, AUD_CTC_PORT
     out (c), a                    ; time constant -> timer starts NOW,
-                                   ; already dispatching video_ctc_isr
+                                   ; already dispatching the right ISR
 
-    ; --- Layer 2 setup for playback: mode 0 (256x192), full clip, no
-    ; scroll, transparent colour left at TM_TRANSP_ATTR (the engine-wide
-    ; convention every l2_mode_set call also uses - vid_apply_palette/
-    ; vid_identity_palette dodge it exactly like l2_palette_load). NR $18/
-    ; $1C (clip) and $16/$17 (scroll) are NOT saved/restored - any picture
-    ; the game shows after video re-programs them in full via its own
-    ; l2_mode_set/l2_clip_set (gfx_blit calls it unconditionally on every
-    ; DISPLAY), exactly like the palette below. ---
+    ; --- Layer 2 setup for playback: mode 0/row-major (256x192, formats
+    ; 4/5) or mode 1/column-major (256x240 subset of 320x256, formats
+    ; 2/3 - VID_L2_MODE1, nextdaad.inc, matching l2_mode_set's own %10
+    ; literal for 320x256), full-height clip (no playvid-style scroll/
+    ; crop inset - the brief's "no paper inset"), transparent colour left
+    ; at TM_TRANSP_ATTR (the engine-wide convention every l2_mode_set
+    ; call also uses - vid_apply_palette/vid_identity_palette dodge it
+    ; exactly like l2_palette_load). NR $18/$1C (clip) and $16/$17
+    ; (scroll) are NOT saved/restored - any picture the game shows after
+    ; video re-programs them in full via its own l2_mode_set/l2_clip_set
+    ; (gfx_blit calls it unconditionally on every DISPLAY), exactly like
+    ; the palette below. ---
+    ld a, (vidFmt)
+    cp 4
+    jr nc, .l2mode0
+    ld a, VID_L2_MODE1
+    nextreg NR_L2_CTRL, a
+    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
+    nextreg NR_CLIP_IDX, 1
+    nextreg NR_L2_CLIP, 0
+    nextreg NR_L2_CLIP, VID_L2_CLIP_X2_M1
+    nextreg NR_L2_CLIP, 0
+    nextreg NR_L2_CLIP, VID_COL_HEIGHT-1
+    jr .l2clipdone
+.l2mode0:
     xor a
     nextreg NR_L2_CTRL, a
     nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
@@ -1178,6 +1165,7 @@ vid_run:
     nextreg NR_L2_CLIP, 255
     nextreg NR_L2_CLIP, 0
     nextreg NR_L2_CLIP, 191
+.l2clipdone:
     nextreg NR_L2_XOFS, 0
     nextreg NR_L2_YOFS, 0
     ld e, NR_DISPLAY_CTRL
@@ -1186,16 +1174,21 @@ vid_run:
     nextreg NR_DISPLAY_CTRL, a
     nextreg NR_LAYERS, 0
 
-    ; format 5 (no embedded palette): the pixel byte IS its own RRRGGGBB
+    ; no-palette formats (odd: 3, 5) - the pixel byte IS its own RRRGGGBB
     ; colour - program a fixed identity table once, no per-frame block.
     ld a, (vidFmt)
-    cp 5
-    call z, vid_identity_palette
+    and 1
+    call nz, vid_identity_palette
 
     ; prime pacing so the first iteration's wait passes immediately (no
-    ; prior frame is playing yet)
-    ld hl, vidAudBuf
-    ld (vidAudPlayPtr), hl
+    ; prior frame is playing yet). IX is the resident play pointer for
+    ; BOTH ISRs (mitigation - see the task report's Step 0: dedicating IX
+    ; removes the mono ISR's HL push/pop AND its 16-bit memory round-trip;
+    ; IX is proven free of mainline/other-ISR use throughout playback -
+    ; im2_isr's fast path, taken whenever audEnable=0 as it is for the
+    ; whole session, never touches ix/iy; the raw streaming internals are
+    ; documented IX/IY-free by their own "golden rules 1 and 2" header).
+    ld ix, vidAudBuf
     ld a, 1
     ld (vidAudDone), a
 
@@ -1217,17 +1210,48 @@ vid_run:
     jr z, .pace                    ; samples-per-frame count exhausted)
     ; launch the frame just streamed: copy the landing-page audio into
     ; the ISR-resident buffer (safe with no DI - see video_ctc_isr's own
-    ; header for why a torn read here is at most one imperceptible tick)
+    ; header for why a torn read here is at most one imperceptible tick).
+    ; Stereo (formats 2/3) downsamples 3:1 while copying (every 3rd
+    ; sample PAIR kept, the other two dropped) - nextdaad.inc's VID_
+    ; STEREO_DOWNSAMPLE header explains why (page-space finding, not a
+    ; casual quality cut).
     call data_save
     ld a, (vidAudPoolPage)
     call data_map_page
+    ld a, (vidFmt)
+    cp 4
+    jr nc, .monocopy
+    ld hl, DATA_WINDOW
+    ld de, vidAudBuf
+    ld bc, VID_F2_PLAY_SAMPLES      ; > 255: a 16-bit down-count, not djnz
+.dsloop:
+    ld a, (hl)                     ; keep this pair's L
+    ld (de), a
+    inc hl
+    inc de
+    ld a, (hl)                     ; keep this pair's R
+    ld (de), a
+    inc hl
+    inc de
+    ; VID_STEREO_DOWNSAMPLE=3: drop the NEXT TWO pairs (2*2=4 bytes -
+    ; NOT 8: a "pair" is 2 bytes, L+R, not 4)
+    inc hl
+    inc hl
+    inc hl
+    inc hl
+    dec bc
+    ld a, b
+    or c
+    jr nz, .dsloop
+    jr .copydone
+.monocopy:
     ld hl, DATA_WINDOW
     ld de, vidAudBuf
     ld bc, VID_F4_AUDIO
     ldir
+.copydone:
     call data_restore
-    ld hl, vidAudBuf
-    ld (vidAudPlayPtr), hl
+    ld ix, vidAudBuf
     xor a
     ld (vidAudDone), a
     ; flip (l2_flip_swap's own variable-swap + NR $12 write, duplicated
@@ -1243,18 +1267,19 @@ vid_run:
     ld (l2BackBank), a
     ld a, (l2FrontBank)
     nextreg NR_L2_BANK, a
-    ; format 4 only: apply the palette streamed earlier this frame (still
-    ; resident at vidAudPoolPage+1, untouched since) NOW - synchronised
-    ; with the pixel flip just above, not when it was read (vid_stream_
-    ; frame's header explains why: applying it early would recolour the
-    ; frame that was VISIBLE at read time, not the one just flipped in).
+    ; palette formats (even: 2, 4) only: apply the palette streamed
+    ; earlier this frame (still resident at vidAudPoolPage+1, untouched
+    ; since) NOW - synchronised with the pixel flip just above, not when
+    ; it was read (vid_stream_frame's header explains why: applying it
+    ; early would recolour the frame that was VISIBLE at read time, not
+    ; the one just flipped in).
     ld a, (vidFmt)
-    cp 4
+    and 1
     call z, vid_apply_palette
     ld a, (vidExitReq)
     or a
     jr nz, .restore
-    jr .frameloop
+    jp .frameloop
 .eof:
     ld a, (vidLoopMode)
     or a
@@ -1270,7 +1295,7 @@ vid_run:
     ld a, (vidNum)
     call vid_open_video
     jr c, .restore                 ; reopen failed: abort via restore
-    jr .frameloop
+    jp .frameloop
 .drainlast:
     ; the last successfully streamed frame (if any) is already showing
     ; from the previous iteration's flip - just let its audio finish.
@@ -1289,6 +1314,8 @@ vid_run:
     out (c), a
     ld a, DAC_SILENCE
     out (DAC_PORT), a
+    out (VID_DAC_LEFT), a          ; format-agnostic: always park all
+    out (VID_DAC_RIGHT), a         ; three DAC ports used by either ISR
     ld hl, (vidSvCtcStub)
     ld (IM2_CTC_STUB+1), hl
     ld a, (vidSvAudEnable)
@@ -1322,19 +1349,23 @@ vid_run:
     ret
 
 ; Stream one frame's worth of data for the CURRENT vidFmt into: the pool
-; landing page (audio + its 91-byte sector-alignment padding, 1024B
-; total, always at vidAudPoolPage - the MakeVid frame layout is audio
-; (933) + pad (91) + [palette, format 4 only] + pixels, playvid's own
-; "pad to 1024 bytes for sector alignment"; the pad is read here and
-; simply left unread past byte 933 by the copy-out in vid_run, never
-; touched again - format 4's 512B palette at vidAudPoolPage+1, a
-; DIFFERENT page so it cannot overwrite the audio, since vid_stream_read
-; always lands at the start of its destination page), and vidDrawPage's
-; VID_PIX_PAGES consecutive 8K pages (pixels, zero-copy - vid_stream_
-; read's dest IS the shadow Layer 2 surface, no staging copy).
+; landing page (audio + its sector-alignment padding - 1024B total for
+; mono formats 4/5, 4096B for stereo formats 2/3, both always at
+; vidAudPoolPage - the MakeVid frame layout is audio + pad +
+; [palette, even formats only] + pixels, playvid's own "pad ... for
+; sector alignment"; the pad is read here and simply left unread past
+; the real audio bytes by the copy-out in vid_run, never touched again -
+; the palette's 512B lands at vidAudPoolPage+1, a DIFFERENT page so it
+; cannot overwrite the audio, since vid_stream_read always lands at the
+; start of its destination page), and the pixel surface: mono's
+; vidDrawPage VID_PIX_PAGES consecutive 8K pages (zero-copy - vid_stream_
+; read's dest IS the shadow Layer 2 surface, no staging copy), or
+; stereo's vid_stream_pixels_col (below - a different, direct-INI
+; mechanism, not vid_stream_read at all - see its own header for why).
 ;
-; Format 4's palette is READ here but deliberately NOT APPLIED here -
-; vid_apply_palette runs later, from vid_run's flip section, synchronised
+; Palette-format frames (even: 2, 4) have their palette READ here but
+; deliberately NOT APPLIED here - vid_apply_palette runs later, from
+; vid_run's flip section, synchronised
 ; with the pixel-bank flip (see that call site's own comment for why:
 ; NR $43=PAL_L2_FIRST is "edit + active display", the SAME palette that
 ; is CURRENTLY ON SCREEN, so applying it immediately here would recolour
@@ -1353,18 +1384,32 @@ vid_run:
 ; truncated to a whole number of frames, so EOF always lands here, never
 ; mid-frame) or a genuine read error - both treated identically by the
 ; caller. Corrupts everything.
+; Stereo (2/3) audio+pad is bigger (VID_F2_AUDIO+VID_F23_AUDPAD=4096) than
+; mono's (VID_F4_AUDIO+VID_F45_AUDPAD=1024) - select the right read size
+; up front, then share the palette-check and pixel-dispatch tails.
 vid_stream_frame:
-    ld a, (vidAudPoolPage)
+    ld a, (vidFmt)
+    cp 4
+    jr nc, .monoaud
+    ld de, VID_F2_AUDIO + VID_F23_AUDPAD
+    jr .readaud
+.monoaud:
     ld de, VID_F4_AUDIO + VID_F45_AUDPAD
+.readaud:
+    ld (vidAudReadLen), de
+    ld a, (vidAudPoolPage)
     call vid_stream_read
     jr c, .eof
-    ld hl, VID_F4_AUDIO + VID_F45_AUDPAD
+    ld hl, (vidAudReadLen)
     or a
     sbc hl, bc
     jr nz, .eof
+    ; palette formats (even: 2, 4) only - streamed here, NOT applied
+    ; (see this routine's header): vid_run's flip section applies it
+    ; (vidAudPoolPage+1 still holds it, untouched).
     ld a, (vidFmt)
-    cp 4
-    jr nz, .pixels
+    and 1
+    jr nz, .nopalette
     ld a, (vidAudPoolPage)
     inc a                          ; upper 8K of the same bank
     ld de, VID_PAL_BYTES
@@ -1374,9 +1419,19 @@ vid_stream_frame:
     or a
     sbc hl, bc
     jr nz, .err
-    ; NOT applied here - see this routine's header. vid_run's flip
-    ; section applies it (vidAudPoolPage+1 still holds it, untouched).
-.pixels:
+.nopalette:
+    ld a, (vidFmt)
+    cp 4
+    jr nc, .monopix
+    ; stereo (2/3): column-major direct-INI blit (vid_stream_pixels_col,
+    ; below) - no landing-page relocate, see that routine's own header
+    ; for the double-copy cost this avoids.
+    ld a, (vidDrawPage)
+    call vid_stream_pixels_col
+    jr c, .err
+    or a
+    ret
+.monopix:
     ld a, (vidDrawPage)
     ld (vidPxPage), a
     ld a, VID_PIX_PAGES
@@ -1404,9 +1459,184 @@ vid_stream_frame:
     scf
     ret
 
-; Apply the 512-byte 9-bit palette just landed at vidAudPoolPage+1 (format
-; 4 only) to Layer 2. Called from vid_run's flip section, NOT from
-; vid_stream_frame where it was read (see that routine's header).
+; ---------------------------------------------------------------------
+; vid_stream_pixels_col - column-major pixel blit (formats 2/3, SP13
+; Task 3). See nextdaad.inc's VID_COL_* header for the stride/gap/
+; reference derivation (tools/ZXNextOS/.../playvid/video_256x240.asm,
+; column-major, 240 real bytes/column against a fixed 256-byte hardware
+; stride). Streams VID_PIX_PAGES23 (8) consecutive 8K L2 pages, 32
+; columns/page, DIRECTLY via raw SD INI bursts into the MMU6 window - NOT
+; through vid_stream_read's landing-page contract, because a landing-
+; then-relocate design costs an extra ~21T/byte LDIR pass over the WHOLE
+; 61440-byte pixel payload (~46ms) to re-insert the per-column gaps,
+; which alone would exceed the 60ms fmt2/3 pace period - see the task
+; report's budget table. vidColRemain16/vidBlkRemain16/vidPixRealRemain
+; are all in units that stay exact multiples of 16 bytes throughout
+; (GCD(VID_COL_STRIDE against one 512-byte SD block, VID_COL_HEIGHT) =
+; 16), so the transfer loop is one uniform 16-byte-unrolled inner block
+; for every chunk - column-complete, block-complete, or both at once -
+; with no remainder handling anywhere.
+; In: A = starting destination 8K page (VID_PIX_PAGES23 consecutive
+;     pages are streamed, incrementing after each).
+; Out: CF clear = all 8 pages written; CF set = stream error/EOF (A =
+;      code, matching vid_stream_read's contract).
+; Corrupts everything.
+vid_stream_pixels_col:
+    ld (vidPxPage), a
+    ld a, VID_PIX_PAGES23
+    ld (vidPxCount), a
+.pageloop:
+    call data_save
+    ld a, (vidPxPage)
+    call data_map_page
+    ld hl, DATA_WINDOW
+    ld a, VID_COL_HEIGHT/16
+    ld (vidColRemain16), a
+    xor a
+    ld (vidBlkRemain16), a         ; force a fresh block on the first chunk
+    ld de, VID_COL_HEIGHT*VID_COL_PER_PAGE   ; 7680 real bytes/page
+    ld (vidPixRealRemain), de
+    ld c, PORT_SPI_DAT
+.next:
+    ld de, (vidPixRealRemain)
+    ld a, d
+    or e
+    jp z, .pagedone
+    ld a, (vidBlkRemain16)
+    or a
+    jr nz, .havesrc
+    push hl                        ; HL = live destination pointer -
+    call vid_col_newblock          ; vid_col_newblock corrupts it (its
+    pop hl                         ; own "Corrupts AF, BC, DE, HL" contract)
+    jr nc, .gotblock
+    push af
+    call data_restore
+    pop af
+    scf
+    ret
+.gotblock:
+    ld c, PORT_SPI_DAT             ; vid_col_newblock may have used BC
+.havesrc:
+    ; chunk16 = min(colRemain16, blkRemain16), both in units of 16 bytes
+    ld a, (vidColRemain16)
+    ld b, a
+    ld a, (vidBlkRemain16)
+    cp b
+    jr c, .usechunk
+    ld a, b
+.usechunk:
+    ld d, a                        ; d = chunk16 (kept across the transfer)
+    ld e, a                        ; e = loop counter (consumed)
+.xfer:
+    REPT 16
+       ini
+    ENDR
+    dec e
+    jr nz, .xfer
+    ld a, (vidColRemain16)
+    sub d
+    jr nz, .colok
+    ; column complete: jump the destination to the next 256-byte stride
+    ; boundary, skipping the 16-byte hardware gap (playvid's own "ld
+    ; l,a / inc h" trick, video_256x240.asm - a IS 0 here, from the sub)
+    ld l, a
+    inc h
+    ld a, VID_COL_HEIGHT/16
+.colok:
+    ld (vidColRemain16), a
+    ld a, (vidBlkRemain16)
+    sub d
+    ld (vidBlkRemain16), a
+    push hl                        ; protect the destination pointer across
+                                    ; vid_col_blockdone below (it corrupts
+                                    ; HL - "Corrupts AF, BC, DE, HL")
+    jr nz, .blkok
+    call vid_col_blockdone         ; CRC skip + run/remain bookkeeping
+.blkok:
+    ; vidPixRealRemain -= chunk16*16 (chunk16 <= 15, so *16 <= 240, fits
+    ; a byte-doubled shift into BC without overflow)
+    ld b, 0
+    ld c, d
+    sla c
+    rl b
+    sla c
+    rl b
+    sla c
+    rl b
+    sla c
+    rl b
+    ld hl, (vidPixRealRemain)
+    or a
+    sbc hl, bc
+    ld (vidPixRealRemain), hl
+    pop hl                         ; restore the destination pointer
+    ld c, PORT_SPI_DAT
+    jp .next
+.pagedone:
+    call data_restore
+    ld hl, vidPxPage
+    inc (hl)
+    ld hl, vidPxCount
+    dec (hl)
+    jp nz, .pageloop
+    or a
+    ret
+
+; Ensure a fresh 512-byte SD block is ready to stream (window open, run
+; available, data token seen) - mirrors vid_stream_read_raw's own
+; .needstream/.haveblocks/vid_win_open/vid_next_run sequence, but leaves
+; the 512 bytes UNCONSUMED (vid_stream_pixels_col's own INI bursts read
+; them directly, split across column/block chunk boundaries). Out: CF
+; clear, vidBlkRemain16 = 32; CF set = run/window/token error (A = code).
+; Corrupts AF, BC, DE, HL.
+vid_col_newblock:
+    ld hl, (vidStrmRunBlocks)
+    ld a, h
+    or l
+    jr nz, .open
+    call vid_win_close
+    call vid_next_run
+    jr nc, .open
+    ld a, VID_ERR_NOMAP
+    scf
+    ret
+.open:
+    call vid_win_open
+    ret c                          ; CF set, A = VID_ERR_CMD (its contract)
+.wt:
+    in a, (PORT_SPI_DAT)
+    inc a
+    jr z, .wt
+    dec a
+    cp $FE
+    jr z, .ok
+    ld a, VID_ERR_TOKEN
+    scf
+    ret
+.ok:
+    ld a, 32                       ; 512/16
+    ld (vidBlkRemain16), a
+    or a
+    ret
+
+; A completed 512-byte SD block's bookkeeping (CRC skip, run-block
+; count, file-remain accounting) - the DATA itself was already consumed
+; by the caller's own INI bursts, split across chunks. In: C = PORT_SPI_
+; DAT (the caller's own port register, reused). Corrupts AF, BC, DE, HL.
+vid_col_blockdone:
+    in a, (c)                      ; skip the 2-byte CRC (playvid parity,
+    nop                            ; matches vid_read_block's own skip)
+    in a, (c)
+    ld hl, (vidStrmRunBlocks)
+    dec hl
+    ld (vidStrmRunBlocks), hl
+    ld de, 512
+    jp vid_remain_sub              ; tail call
+
+; Apply the 512-byte 9-bit palette just landed at vidAudPoolPage+1
+; (palette formats only: 2, 4) to Layer 2. Called from vid_run's flip
+; section, NOT from vid_stream_frame where it was read (see that
+; routine's header).
 ;
 ; Dodges the TM_TRANSP_ATTR collision on EVERY entry's RGB byte (any
 ; source value == TM_TRANSP_ATTR is written as $FF instead) - the same
@@ -1452,13 +1682,22 @@ vid_apply_palette:
     ret
 
 ; Program a fixed identity RRRGGGBB palette (value[i] = i) once at entry
-; for format 5 (no embedded palette - its pixel bytes ARE their own
+; for no-palette formats (odd: 3, 5 - their pixel bytes ARE their own
 ; colour). Dodges TM_TRANSP_ATTR the same way (entry 254 -> colour $FF
 ; instead of its "natural" identity value $FE) and, like vid_apply_
 ; palette, does NOT also force-stamp entry 254 to genuinely BE
 ; TM_TRANSP_ATTR afterward - see vid_apply_palette's header for why: no
 ; MakeVid content is guaranteed to avoid pixel value 254, so reserving it
 ; as transparent would punch real content through to the tilemap.
+; Byte1 (the expanded 9th blue bit) is computed, not hardcoded 0 - SP13
+; T3 ride-along fix: this now matches the Next's own 8-bit->9-bit
+; hardware expansion rule ("least significant bit of blue is set to OR
+; between B2 and B1", docs/zx-next-dev-guide-2022-07-15/chapter-next-
+; palette.tex:176 - byte1 = 1 iff the index's two blue bits, i&3, are
+; nonzero), the SAME rule tests/gen_vid_synth.py's synthetic palette
+; blocks already use - T2's report disclosed this as a known asymmetry
+; (a "very slight blue-channel shading difference" between formats 4/5);
+; reconciled here rather than left for a future task.
 ; Corrupts AF, BC.
 vid_identity_palette:
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
@@ -1472,7 +1711,15 @@ vid_identity_palette:
     ld a, $FF
 .w:
     nextreg NR_PAL_VALUE9, a
-    nextreg NR_PAL_VALUE9, 0
+    ld a, c
+    and 3
+    jr z, .noblue
+    ld a, 1
+    jr .haveblue
+.noblue:
+    xor a
+.haveblue:
+    nextreg NR_PAL_VALUE9, a
     inc c
     djnz .loop
     ret
@@ -1490,43 +1737,94 @@ vid_key_any:
     cp %00011111
     ret
 
-; Mono video audio ISR (SP13 T2). Fires at 23.3kHz via CTC channel 0,
-; installed by patching IM2_CTC_STUB for the whole playback. BANKING
-; INVARIANT (doc 11's SMC/DMA hazard, applied to the ISR body itself, not
-; just a patch site): this code is entered through the IM2 table's fixed
-; JP at IM2_CTC_STUB, but the JP's OWN target address only resolves to
-; THIS code as long as MMU7 stays mapped to VID_PAGE for the entire
-; playback - vid_run never remaps MMU7 (freezing audEnable also stops the
-; frame ISR's own MMU6/7 remap around aud_tick, interrupts.asm, which is
-; exactly what makes this safe). Preserves the alternate set (never
-; touches it, docs/Z80/02) - compatible with T1d's register-resident fast
-; streaming loop, which relies on the same guarantee from both existing
-; IM2 ISRs. Touches NO MMU slot (mirrors ctc_isr's own "resident ring, no
-; MMU" discipline, interrupts.asm) - vidAudBuf lives in THIS page, always
-; reachable while the invariant holds, so streaming's own MMU6 traffic
-; can never race it. Hold-last at the final byte (ctc_isr's own
-; precedent) until mainline refills and relaunches. Budget: see the task
-; report's Step 1 table (28MHz-adjusted T-states per docs/Z80/01).
+; Mono video audio ISR (SP13 T2, IX mitigation SP13 T3). Fires at 23.3kHz
+; via CTC channel 0, installed by patching IM2_CTC_STUB for the whole
+; playback. BANKING INVARIANT (doc 11's SMC/DMA hazard, applied to the
+; ISR body itself, not just a patch site): this code is entered through
+; the IM2 table's fixed JP at IM2_CTC_STUB, but the JP's OWN target
+; address only resolves to THIS code as long as MMU7 stays mapped to
+; VID_PAGE for the entire playback - vid_run never remaps MMU7 (freezing
+; audEnable also stops the frame ISR's own MMU6/7 remap around aud_tick,
+; interrupts.asm, which is exactly what makes this safe). Preserves the
+; alternate set (never touches it, docs/Z80/02) - compatible with T1d's
+; register-resident fast streaming loop, which relies on the same
+; guarantee from both existing IM2 ISRs. Touches NO MMU slot (mirrors
+; ctc_isr's own "resident ring, no MMU" discipline, interrupts.asm) -
+; vidAudBuf lives in THIS page, always reachable while the invariant
+; holds, so streaming's own MMU6 traffic can never race it. Hold-last at
+; the final byte (ctc_isr's own precedent) until mainline refills and
+; relaunches.
+;
+; T3 mitigation (task report Step 0): IX is the resident play pointer,
+; NOT a plain memory variable reloaded/stored every tick (T2's original
+; design) - this removes both the `push hl`/`pop hl` pair AND the 16-bit
+; memory round-trip (`ld hl,(nn)` / `ld (nn),hl`), the two cost centres
+; T2's own report named as dominating the budget. IX is proven free for
+; this exclusive use throughout playback: im2_isr's fast path (taken
+; unconditionally while audEnable=0, which is the WHOLE playback session)
+; never touches ix/iy at all (interrupts.asm - only its now-unreachable
+; `.audio` branch does); the raw streaming internals this ISR runs
+; alongside are documented ix/iy-free by their own "golden rules 1 and 2"
+; header (vid_stream_read_raw); data_save/data_map_page/data_restore
+; (banks.asm) and every DEBUG dbg_* helper (debug.asm) are ix/iy-free
+; too (grepped). The `(ix+d)` read costs more per access than `(hl)`
+; (doc 01's regime 2 - no way around that), but the round-trip + push/pop
+; hl it replaces cost more still - net ISR body shrink, see the report's
+; budget table for the exact T-state accounting. Budget: see the task
+; report's Step 0 table (28MHz-adjusted T-states per docs/Z80/01).
 video_ctc_isr:
     push af
-    push hl
-    ld hl, (vidAudPlayPtr)
-    ld a, (hl)
+    ld a, (ix+0)
     out (DAC_PORT), a
-    ld a, l
+    ld a, ixl
     cp low vidAudBufLast
     jr nz, .adv
-    ld a, h
+    ld a, ixh
     cp high vidAudBufLast
     jr nz, .adv
     ld a, 1
     ld (vidAudDone), a
     jr .ret
 .adv:
-    inc hl
-    ld (vidAudPlayPtr), hl
+    inc ix
 .ret:
-    pop hl
+    pop af
+    ei
+    reti
+
+; Stereo video audio ISR (SP13 T3). Fires at the downsampled rate (see
+; nextdaad.inc's VID_STEREO_DOWNSAMPLE/VID_RATE_STEREO_PLAY headers) via
+; CTC channel 0, same installation/banking-invariant/alternate-set/no-MMU
+; discipline as video_ctc_isr above (see its header - identical
+; reasoning applies here, not repeated). DAC ports: VID_DAC_LEFT ($F3,
+; DAC channel B) / VID_DAC_RIGHT ($F9, DAC channel C) - ports.txt lines
+; 266-274 ("A,B are directed to the left audio channel and C,D...
+; right"), the exact pair the MakeVid reference ISR uses (interrupts-
+; common.asm isr_ctc_stereo, lines 250-307) - confirming the interleave
+; order too: L byte first (even offset), R second (odd offset) per
+; sample pair, matching "(hl)" then "inc l / (hl)" there. IX addresses
+; the CURRENT pair's L byte; R is (ix+1). End condition: IX has reached
+; the LAST pair's L byte (vidAudBufLastStereo = vidAudBuf +
+; VID_F2_PLAY_BYTES - 2), advancing by 2 per tick, not 1.
+video_ctc_isr_stereo:
+    push af
+    ld a, (ix+0)
+    out (VID_DAC_LEFT), a
+    ld a, (ix+1)
+    out (VID_DAC_RIGHT), a
+    ld a, ixl
+    cp low vidAudBufLastStereo
+    jr nz, .adv
+    ld a, ixh
+    cp high vidAudBufLastStereo
+    jr nz, .adv
+    ld a, 1
+    ld (vidAudDone), a
+    jr .ret
+.adv:
+    inc ix
+    inc ix
+.ret:
     pop af
     ei
     reti
@@ -1545,9 +1843,16 @@ video_ctc_isr:
 vidCtcTcTab:
     db 75, 76, 79, 80, 83, 85, 88, 72
 
+; Same derivation, for VID_RATE_STEREO_PLAY (~10366 Hz, the downsampled
+; stereo rate - nextdaad.inc). Crossover stays well below 10366 on every
+; mode too, so CW16 throughout, same as the table above. VGA0 168,
+; VGA1 172, VGA2 177, VGA3 180, VGA4 186, VGA5 192, VGA6 198, HDMI 162.
+vidCtcTcTab2:
+    db 168, 172, 177, 180, 186, 192, 198, 162
+
 vidNum:          db 0
 vidLoopMode:      db 0             ; 0 = play once, 1 = loop
-vidFmt:           db 0             ; 4 or 5 (vid_classify's verdict)
+vidFmt:           db 0             ; 2-5 (vid_classify's verdict)
 vidExitReq:       db 0
 vidName:          ds 8             ; "NNN.VID",0
 vidNamePart:      ds 14            ; "PARTn\NNN.VID",0
@@ -1557,9 +1862,20 @@ vidDrawPage:      db 0
 vidPxPage:        db 0
 vidPxCount:       db 0
 vidCtcTc:         db 0
-vidAudBuf:        ds VID_F4_AUDIO
-vidAudBufLast     equ vidAudBuf + VID_F4_AUDIO - 1
-vidAudPlayPtr:    dw vidAudBuf
+vidAudReadLen:    dw 0             ; this frame's audio+pad read size
+                                    ; (mono VID_F4_AUDIO+VID_F45_AUDPAD or
+                                    ; stereo VID_F2_AUDIO+VID_F23_AUDPAD)
+vidColRemain16:   db 0             ; vid_stream_pixels_col: column-major
+vidBlkRemain16:   db 0             ; blit state, units of 16 bytes (see
+vidPixRealRemain: dw 0             ; that routine's own header)
+; Shared mono/stereo play buffer, sized for the LARGER stereo need
+; (VID_F2_PLAY_BYTES=1866, the downsampled rate's frame - see nextdaad.
+; inc). Mono (933 bytes, VID_F4_AUDIO) uses only the front of it,
+; unchanged from T2 - formats never play concurrently, so one shared
+; buffer costs less page space than two separate ones (1866 vs 1866+933).
+vidAudBuf:        ds VID_F2_PLAY_BYTES
+vidAudBufLast       equ vidAudBuf + VID_F4_AUDIO - 1
+vidAudBufLastStereo equ vidAudBuf + VID_F2_PLAY_BYTES - 2
 vidAudDone:       db 0
 vidSvMmu6:        db 0
 vidSvMmu7:        db 0
@@ -1787,7 +2103,6 @@ vid_bench_report:
     call dbg_puts
     ld a, (vidStrmErr)
     call dbg_hex8
-    call vid_bench_diag           ; raw failed: dump the hw-diagnosis rows
     jr .inforow
 .strmok:
     ld hl, msgVidStrm
@@ -1819,81 +2134,6 @@ vid_bench_report:
 .printbad:
     ld hl, msgVidUnclass
     jp dbg_puts
-
-; SP13 T1b hardware-diagnosis dump (temporary scaffolding). Printed only
-; when the raw pass failed (vidStrmErr != 0), on rows 24-26 (clear of
-; debug.asm's reserved 30-31). Fields are decoded in the task report.
-;   row 24: FLG=<DISK_FILEMAP flags byte> OBY=<offending token byte>
-;           BLK=<blocks consumed in the failing window>
-;   row 25: RUN0 A=<32-bit card address, hi word then lo word>
-;           B=<run 0 block count> N=<number of runs parsed>
-;   row 26: BLK0=<first 4 bytes of the last block INIR'd, memory order>
-vid_bench_diag:
-    ld b, 24
-    ld c, 0
-    call dbg_at
-    ld hl, msgDiagFlg
-    call dbg_puts
-    ld a, (vidCardFlags)          ; the raw A returned by DISK_FILEMAP
-    call dbg_hex8
-    ld hl, msgDiagOby
-    call dbg_puts
-    ld a, (vidDiagOByte)
-    call dbg_hex8
-    ld hl, msgDiagBlk
-    call dbg_puts
-    ld hl, (vidDiagBlks)
-    call dbg_hex16
-    ld b, 25
-    ld c, 0
-    call dbg_at
-    ld hl, msgDiagRun
-    call dbg_puts
-    ld hl, (vidFilemapBuf+2)      ; card address high word
-    call dbg_hex16
-    ld hl, (vidFilemapBuf+0)      ; card address low word
-    call dbg_hex16
-    ld hl, msgDiagRunB
-    call dbg_puts
-    ld hl, (vidFilemapBuf+4)      ; run 0 block count
-    call dbg_hex16
-    ld hl, msgDiagRunN
-    call dbg_puts
-    call vid_diag_runs            ; HL = (EntryEnd - FilemapBuf) / 6
-    call dbg_hex16
-    ld b, 26
-    ld c, 0
-    call dbg_at
-    ld hl, msgDiagData
-    call dbg_puts
-    ld a, (vidDiagData+0)
-    call dbg_hex8
-    ld a, (vidDiagData+1)
-    call dbg_hex8
-    ld a, (vidDiagData+2)
-    call dbg_hex8
-    ld a, (vidDiagData+3)
-    jp dbg_hex8
-
-; Number of 6-byte filemap entries parsed. Out: HL = count. Corrupts
-; AF, BC, DE, HL.
-vid_diag_runs:
-    ld hl, (vidStrmEntryEnd)
-    ld de, vidFilemapBuf
-    or a
-    sbc hl, de                    ; HL = bytes of entries written
-    ld de, 6
-    ld bc, 0
-.dl:
-    or a
-    sbc hl, de
-    jr c, .fin
-    inc bc
-    jr .dl
-.fin:
-    ld h, b
-    ld l, c
-    ret
 
 ; totalKB (16-bit, vidBenchKB) * 50 / elapsed (16-bit, vidBenchElapsed,
 ; already confirmed nonzero by the caller) -> HL = KB/s.
@@ -1974,13 +2214,6 @@ msgVidBytes:    db "VID BYTES=", 0
 msgVidFrames:   db " FRAMES=", 0
 msgVidFmt:      db " FMT=", 0
 msgVidUnclass:  db "??", 0
-msgDiagFlg:     db "FLG=", 0
-msgDiagOby:     db " OBY=", 0
-msgDiagBlk:     db " BLK=", 0
-msgDiagRun:     db "RUN0 A=", 0
-msgDiagRunB:    db " B=", 0
-msgDiagRunN:    db " N=", 0
-msgDiagData:    db "BLK0=", 0
 
 vidBenchBank:    db 0
 vidBenchPage:    db 0
@@ -1996,9 +2229,6 @@ vidBenchFmtBad:  db 0
 vidFreadKbps:    dw 0            ; pass-1 F_READ KB/s (pass 2 reuses vidBenchKbps)
 vidFreadErr:     db 0            ; pass-1 error code, 0 = ok
 vidStrmErr:      db 0            ; pass-2 raw error code, 0 = ok
-vidDiagOByte:    db 0            ; SP13 T1b hw-diag: offending token byte
-vidDiagBlks:     dw 0            ; blocks consumed in the failing window
-vidDiagData:     ds 4            ; first 4 bytes of the last block INIR'd
 vidDivLo:        db 0
 vidDivHi:        db 0
 vidDivB2:        db 0
