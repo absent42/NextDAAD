@@ -877,9 +877,10 @@ vidFilemapBuf:     ds VID_FILEMAP_ENT*6   ; DISK_FILEMAP entries (192 bytes)
 vidStrmBlkBuf:     ds 512        ; one card block held for sub-block drains
 
 ; ---------------------------------------------------------------------
-; vid_play - the player core (SP13 Task 2 mono, Task 3 stereo). Formats
-; 2-5 (256x240 stereo, 256x192 mono); any other classification (0/1,
-; 320x240 - a later task) is a fail-silent no-op. Entry: B = video number,
+; vid_play - the player core (SP13 Task 2 mono, Task 3 stereo, Task 4
+; 320x240 full-bleed). All six formats 0-5 play (320x240 palette/no-
+; palette, 256x240 stereo, 256x192 mono); vid_classify's CF (unclassifiable
+; size) is the only fail-silent no-op left. Entry: B = video number,
 ; C = 0 play-once / 1 loop
 ; (h_gfx/h_sfx translate their own sub-command numbers into this before
 ; the cross-page hop - see nextdaad.inc's GFX_SUB_VID_*/SFX_SUB_VID_*).
@@ -903,10 +904,10 @@ vid_play:
     ld de, (vidSizeHi)
     call vid_classify
     jr c, .badfmt
-    cp 2
-    jr c, .badfmt          ; formats 0/1 (320x240) - out of scope, later task
     cp 6
-    jr nc, .badfmt          ; defensive (vid_classify never returns > 5)
+    jr nc, .badfmt          ; defensive (vid_classify never returns > 5) -
+                            ; SP13 T4: all six formats (0-5) now play; the
+                            ; old cp2/jr c reject for 0/1 is gone
 .haveformat:
     ld (vidFmt), a
     jp vid_run                    ; tail: vid_run's own restore paths ret
@@ -1079,13 +1080,18 @@ vid_run:
     add a, a
     ld (vidAudPoolPage), a
 
-    ; --- CTC retune: 23.3kHz for mono formats 4/5, ~10.37kHz (downsampled
-    ; 3:1 from the source's 31.1kHz - see nextdaad.inc's VID_STEREO_
-    ; DOWNSAMPLE header for why: a full-rate resident stereo buffer does
-    ; not fit the video page) for stereo formats 2/3 - table-driven from
-    ; the live video-timing mode (NR $11 bits 2:0). Every mode's /16-vs-
-    ; /256 crossover is BELOW both rates on every mode, so the control
-    ; word is always CW16 (see vidCtcTcTab/vidCtcTcTab2's headers).
+    ; --- CTC retune: 23.3kHz for mono formats 4/5; ~10.37kHz (downsampled
+    ; 3:1 from the source's 31.1kHz - nextdaad.inc's VID_STEREO_DOWNSAMPLE
+    ; header) for stereo formats 2/3; ~7.78kHz (downsampled 2:1 from
+    ; 15.55kHz - VID_STEREO01_DOWNSAMPLE header, SP13 T4) for stereo
+    ; formats 0/1 - table-driven from the live video-timing mode (NR $11
+    ; bits 2:0). For formats 4/5 and 2/3 the /16-vs-/256 crossover stays
+    ; below the rate on every mode, so the control word is always CW16
+    ; (vidCtcTcTab/vidCtcTcTab2's own headers). Formats 0/1 are the
+    ; EXCEPTION: VGA5/VGA6's crossover (7812/8056 Hz) exceeds 7783 Hz, so
+    ; those two modes need CW256/TC=16 instead - vidCtcTcTab0 stores a 0
+    ; sentinel at those two slots (never a valid CW16 TC) and the `or a`
+    ; check below detects it (see nextdaad.inc's vidCtcTcTab0 header).
     ; Mirrors aud_smp_start's exact CTC program sequence (unknown-state
     ; double reset, control word, time constant - audiobank.asm), EXCEPT
     ; the stub is patched between the control word and the time constant
@@ -1099,25 +1105,41 @@ vid_run:
     ld c, a
     ld b, 0
     ld a, (vidFmt)
-    ld hl, vidCtcTcTab             ; mono table (formats 4/5)
+    ld hl, vidCtcTcTab              ; mono table (formats 4/5)
     cp 4
     jr nc, .gottctab
-    ld hl, vidCtcTcTab2            ; stereo/downsampled table (formats 2/3)
+    ld hl, vidCtcTcTab2              ; stereo table, fmt2/3 rate (~10.37kHz)
+    cp 2
+    jr nc, .gottctab
+    ld hl, vidCtcTcTab0              ; stereo table, fmt0/1 rate (~7.78kHz)
 .gottctab:
     add hl, bc
     ld a, (hl)
+    ld d, AUD_CTC_CW16               ; default; overridden below only for
+                                      ; fmt0/1's VGA5/VGA6 sentinel (0) hit
+    or a
+    jr nz, .havetc
+    ld a, 16                         ; sentinel: TC=16 under CW256
+    ld d, AUD_CTC_CW256
+.havetc:
     ld (vidCtcTc), a
+    ld a, d
+    ld (vidCtcCw), a               ; stashed - the loop-mode reopen's own
+                                    ; CTC re-arm (below) reuses this rather
+                                    ; than assuming CW16 (SP13 T4: fmt0/1's
+                                    ; VGA5/VGA6 case needs CW256 - see above)
     ld bc, AUD_CTC_PORT
     ld a, AUD_CTC_RESET
     out (c), a
     out (c), a                    ; double soft-reset (unknown -> clean)
-    ld a, AUD_CTC_CW16
+    ld a, d
     out (c), a                    ; control word - timer not running yet
 
-    ; --- IM2_CTC_STUB patched to the video audio ISR (mono or stereo),
-    ; BEFORE the time constant starts the timer below. Single atomic
-    ; LD (nn),HL (doc 08's "interrupt atomicity" - one instruction, no DI
-    ; needed); MMU7 = VID_PAGE for the whole playback from here, the
+    ; --- IM2_CTC_STUB patched to the video audio ISR (mono or stereo -
+    ; ONE stereo ISR body serves formats 0/1/2/3 alike, see below),
+    ; BEFORE the time constant starts the timer further down. Single
+    ; atomic LD (nn),HL (doc 08's "interrupt atomicity" - one instruction,
+    ; no DI needed); MMU7 = VID_PAGE for the whole playback from here, the
     ; banking invariant both ISRs depend on (their own headers). ---
     ld a, (vidFmt)
     ld hl, video_ctc_isr
@@ -1126,6 +1148,28 @@ vid_run:
     ld hl, video_ctc_isr_stereo
 .gotisr:
     ld (IM2_CTC_STUB+1), hl
+
+    ; --- stereo formats only (0-3): patch video_ctc_isr_stereo's own two
+    ; end-marker immediate operand bytes (self-modifying code - the SAME
+    ; idiom as the IM2_CTC_STUB patch just above, doc 11) so the ONE ISR
+    ; body serves both downsampled buffer lengths (fmt2/3's 622 pairs /
+    ; fmt0/1's 467 pairs, SP13 T4) at ZERO ISR byte or T-state cost - only
+    ; this one-time mainline setup pays. MUST happen before the time-
+    ; constant write below starts the timer (same ordering rule as the
+    ; stub patch). ---
+    ld a, (vidFmt)
+    cp 4
+    jr nc, .noisrmark              ; mono: no marker to patch
+    ld hl, vidAudBufLastStereo23
+    cp 2
+    jr nc, .gotmark
+    ld hl, vidAudBufLastStereo01
+.gotmark:
+    ld a, l
+    ld (video_ctc_isr_stereo.cmplo+1), a
+    ld a, h
+    ld (video_ctc_isr_stereo.cmphi+1), a
+.noisrmark:
 
     ld a, (vidCtcTc)
     ld bc, AUD_CTC_PORT
@@ -1152,7 +1196,16 @@ vid_run:
     nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
     nextreg NR_CLIP_IDX, 1
     nextreg NR_L2_CLIP, 0
-    nextreg NR_L2_CLIP, VID_L2_CLIP_X2_M1
+    ; X2: full-bleed 320-wide (fmt0/1, SP13 T4) vs fmt2/3's 256-of-320
+    ; pillarboxed subset - VID_L2_CLIP_X2_M1_01/VID_L2_CLIP_X2_M1
+    ; (nextdaad.inc). Y1/Y2/scroll are format-agnostic (unchanged below).
+    ld a, (vidFmt)
+    cp 2
+    ld a, VID_L2_CLIP_X2_M1_01
+    jr c, .gotx2
+    ld a, VID_L2_CLIP_X2_M1
+.gotx2:
+    nextreg NR_L2_CLIP, a
     nextreg NR_L2_CLIP, 0
     nextreg NR_L2_CLIP, VID_COL_HEIGHT-1
     jr .l2clipdone
@@ -1197,7 +1250,9 @@ vid_run:
     add a, a                        ; back surface (idle during playback)
     ld (vidDrawPage), a
     call vid_stream_frame
-    jr c, .eof
+    jp c, .eof                     ; jr (was in range pre-T4; the added
+                                    ; fmt0/1 downsample loop between here
+                                    ; and .eof pushed it out of jr's +127)
     call vid_key_any
     ld a, 0
     jr z, .nokey
@@ -1211,16 +1266,40 @@ vid_run:
     ; launch the frame just streamed: copy the landing-page audio into
     ; the ISR-resident buffer (safe with no DI - see video_ctc_isr's own
     ; header for why a torn read here is at most one imperceptible tick).
-    ; Stereo (formats 2/3) downsamples 3:1 while copying (every 3rd
-    ; sample PAIR kept, the other two dropped) - nextdaad.inc's VID_
-    ; STEREO_DOWNSAMPLE header explains why (page-space finding, not a
-    ; casual quality cut).
+    ; Stereo formats 2/3 downsample 3:1 while copying (every 3rd sample
+    ; PAIR kept, the other two dropped - VID_STEREO_DOWNSAMPLE header);
+    ; stereo formats 0/1 (SP13 T4) downsample 2:1 (every other pair kept -
+    ; VID_STEREO01_DOWNSAMPLE header) - both are page-space findings, not
+    ; casual quality cuts.
     call data_save
     ld a, (vidAudPoolPage)
     call data_map_page
     ld a, (vidFmt)
     cp 4
     jr nc, .monocopy
+    cp 2
+    jr nc, .stereocopy23
+    ld hl, DATA_WINDOW
+    ld de, vidAudBuf
+    ld bc, VID_F0_PLAY_SAMPLES      ; > 255: a 16-bit down-count, not djnz
+.ds01loop:
+    ld a, (hl)                     ; keep this pair's L
+    ld (de), a
+    inc hl
+    inc de
+    ld a, (hl)                     ; keep this pair's R
+    ld (de), a
+    inc hl
+    inc de
+    ; VID_STEREO01_DOWNSAMPLE=2: drop the NEXT ONE pair (2 bytes)
+    inc hl
+    inc hl
+    dec bc
+    ld a, b
+    or c
+    jr nz, .ds01loop
+    jr .copydone
+.stereocopy23:
     ld hl, DATA_WINDOW
     ld de, vidAudBuf
     ld bc, VID_F2_PLAY_SAMPLES      ; > 255: a 16-bit down-count, not djnz
@@ -1298,7 +1377,7 @@ vid_run:
     ; raw filemap setup) across several BLOCKING esxDOS calls - and BOTH
     ; video ISRs (video_ctc_isr/video_ctc_isr_stereo, below) treat IX as
     ; their own private play pointer, `inc ix`-ing it on EVERY tick
-    ; whenever it is not EXACTLY vidAudBufLast/vidAudBufLastStereo (the
+    ; whenever it is not EXACTLY vidAudBufLast/vidAudBufLastStereo23/01 (the
     ; compare-and-hold-last branch, both ISRs' bodies). This is NOT made
     ; safe by waiting for the previous frame's audio to drain first: once
     ; mainline repoints IX to an esxDOS buffer, that value is (correctly)
@@ -1348,7 +1427,12 @@ vid_run:
     ; the CTC is still parked at this point).
     ld ix, vidAudBuf
     ld bc, AUD_CTC_PORT
-    ld a, AUD_CTC_CW16
+    ld a, (vidCtcCw)                ; NOT a hardcoded AUD_CTC_CW16 (SP13
+                                     ; T4: fmt0/1's VGA5/VGA6 case needs
+                                     ; CW256 - the entry sequence above
+                                     ; stashed whichever this session
+                                     ; actually uses; format never changes
+                                     ; mid-session, so it is still correct)
     out (c), a
     ld a, (vidCtcTc)
     ld bc, AUD_CTC_PORT
@@ -1442,13 +1526,19 @@ vid_run:
 ; truncated to a whole number of frames, so EOF always lands here, never
 ; mid-frame) or a genuine read error - both treated identically by the
 ; caller. Corrupts everything.
-; Stereo (2/3) audio+pad is bigger (VID_F2_AUDIO+VID_F23_AUDPAD=4096) than
-; mono's (VID_F4_AUDIO+VID_F45_AUDPAD=1024) - select the right read size
-; up front, then share the palette-check and pixel-dispatch tails.
+; Three sizes: fmt0/1's VID_F0_AUDIO+VID_F01_AUDPAD=2048 (SP13 T4),
+; fmt2/3's VID_F2_AUDIO+VID_F23_AUDPAD=4096, mono's VID_F4_AUDIO+
+; VID_F45_AUDPAD=1024 - select the right read size up front, then share
+; the palette-check and pixel-dispatch tails.
 vid_stream_frame:
     ld a, (vidFmt)
     cp 4
     jr nc, .monoaud
+    cp 2
+    jr nc, .stereoaud23
+    ld de, VID_F0_AUDIO + VID_F01_AUDPAD
+    jr .readaud
+.stereoaud23:
     ld de, VID_F2_AUDIO + VID_F23_AUDPAD
     jr .readaud
 .monoaud:
@@ -1481,9 +1571,9 @@ vid_stream_frame:
     ld a, (vidFmt)
     cp 4
     jr nc, .monopix
-    ; stereo (2/3): column-major direct-INI blit (vid_stream_pixels_col,
-    ; below) - no landing-page relocate, see that routine's own header
-    ; for the double-copy cost this avoids.
+    ; stereo (0/1/2/3): column-major direct-INI blit (vid_stream_
+    ; pixels_col, below) - no landing-page relocate, see that routine's
+    ; own header for the double-copy cost this avoids.
     ld a, (vidDrawPage)
     call vid_stream_pixels_col
     jr c, .err
@@ -1519,14 +1609,19 @@ vid_stream_frame:
 
 ; ---------------------------------------------------------------------
 ; vid_stream_pixels_col - column-major pixel blit (formats 2/3, SP13
-; Task 3). See nextdaad.inc's VID_COL_* header for the stride/gap/
-; reference derivation (tools/ZXNextOS/.../playvid/video_256x240.asm,
-; column-major, 240 real bytes/column against a fixed 256-byte hardware
-; stride). Streams VID_PIX_PAGES23 (8) consecutive 8K L2 pages, 32
-; columns/page, DIRECTLY via raw SD INI bursts into the MMU6 window - NOT
-; through vid_stream_read's landing-page contract, because a landing-
-; then-relocate design costs an extra ~21T/byte LDIR pass over the WHOLE
-; 61440-byte pixel payload (~46ms) to re-insert the per-column gaps,
+; Task 3; formats 0/1, SP13 Task 4 - same mode-1 addressing, full-bleed
+; 320-wide instead of a 256-of-320 subset, only the PAGE COUNT differs).
+; See nextdaad.inc's VID_COL_* header for the stride/gap/reference
+; derivation (tools/ZXNextOS/.../playvid/video_256x240.asm/video_320x240.
+; asm, column-major, real pixel bytes/column against a fixed 256-byte
+; hardware stride). Streams VID_PIX_PAGES23 (8, fmt2/3) or VID_PIX_
+; PAGES01 (10, fmt0/1 - both EXACT, no partial final page, see nextdaad.
+; inc's VID_PIX_PAGES01 header) consecutive 8K L2 pages, 32 columns/page
+; in either case (the stride/page-size relationship is a Layer 2 mode
+; property, not format-specific), DIRECTLY via raw SD INI bursts into the
+; MMU6 window - NOT through vid_stream_read's landing-page contract,
+; because a landing-then-relocate design costs an extra ~21T/byte LDIR
+; pass over the WHOLE pixel payload to re-insert the per-column gaps,
 ; which alone would exceed the 60ms fmt2/3 pace period - see the task
 ; report's budget table. vidColRemain16/vidBlkRemain16/vidPixRealRemain
 ; are all in units that stay exact multiples of 16 bytes throughout
@@ -1537,22 +1632,28 @@ vid_stream_frame:
 ; RESYNC PRECONDITION: this routine starts with vidBlkRemain16=0,
 ; forcing a fresh 512-byte SD block boundary (token-wait) on its first
 ; chunk - correct ONLY because the audio+pad and palette reads that
-; precede it (vid_stream_frame) are BOTH exact whole-block multiples
-; (VID_F2_AUDIO+VID_F23_AUDPAD=4096=8 blocks, VID_PAL_BYTES=512=1 block,
-; for formats 2/3), so vid_stream_read's own block-alignment cursor is
+; precede it (vid_stream_frame) are BOTH exact whole-block multiples:
+; VID_F2_AUDIO+VID_F23_AUDPAD=4096=8 blocks (fmt2/3) or VID_F0_AUDIO+
+; VID_F01_AUDPAD=2048=4 blocks (fmt0/1, SP13 T4), VID_PAL_BYTES=512=1
+; block either way - so vid_stream_read's own block-alignment cursor is
 ; already sitting exactly on a boundary when this routine takes over -
 ; no partial block is left buffered in vidStrmBlkBuf for it to miss. Any
 ; FUTURE format wired through this same direct-INI path MUST keep its
 ; own pre-pixel reads block-aligned, or route pixels through the
 ; buffered vid_stream_read path instead (accepting its relocate cost).
-; In: A = starting destination 8K page (VID_PIX_PAGES23 consecutive
-;     pages are streamed, incrementing after each).
-; Out: CF clear = all 8 pages written; CF set = stream error/EOF (A =
+; In: A = starting destination 8K page (VID_PIX_PAGES23/01 consecutive
+;     pages, by vidFmt, are streamed, incrementing after each).
+; Out: CF clear = all pages written; CF set = stream error/EOF (A =
 ;      code, matching vid_stream_read's contract).
 ; Corrupts everything.
 vid_stream_pixels_col:
     ld (vidPxPage), a
+    ld a, (vidFmt)
+    cp 2
+    ld a, VID_PIX_PAGES01
+    jr c, .gotpages
     ld a, VID_PIX_PAGES23
+.gotpages:
     ld (vidPxCount), a
 .pageloop:
     call data_save
@@ -1867,20 +1968,29 @@ video_ctc_isr:
     ei
     reti
 
-; Stereo video audio ISR (SP13 T3). Fires at the downsampled rate (see
-; nextdaad.inc's VID_STEREO_DOWNSAMPLE/VID_RATE_STEREO_PLAY headers) via
-; CTC channel 0, same installation/banking-invariant/alternate-set/no-MMU
-; discipline as video_ctc_isr above (see its header - identical
-; reasoning applies here, not repeated). DAC ports: VID_DAC_LEFT ($F3,
-; DAC channel B) / VID_DAC_RIGHT ($F9, DAC channel C) - ports.txt lines
-; 266-274 ("A,B are directed to the left audio channel and C,D...
-; right"), the exact pair the MakeVid reference ISR uses (interrupts-
-; common.asm isr_ctc_stereo, lines 250-307) - confirming the interleave
-; order too: L byte first (even offset), R second (odd offset) per
-; sample pair, matching "(hl)" then "inc l / (hl)" there. IX addresses
-; the CURRENT pair's L byte; R is (ix+1). End condition: IX has reached
-; the LAST pair's L byte (vidAudBufLastStereo = vidAudBuf +
-; VID_F2_PLAY_BYTES - 2), advancing by 2 per tick, not 1.
+; Stereo video audio ISR (SP13 T3; T4 generalizes it to serve formats 0/1
+; too). Fires at the downsampled rate (VID_STEREO_DOWNSAMPLE/VID_RATE_
+; STEREO_PLAY for fmt2/3, VID_STEREO01_DOWNSAMPLE/VID_RATE0_PLAY for
+; fmt0/1 - nextdaad.inc) via CTC channel 0, same installation/banking-
+; invariant/alternate-set/no-MMU discipline as video_ctc_isr above (see
+; its header - identical reasoning applies here, not repeated). DAC
+; ports: VID_DAC_LEFT ($F3, DAC channel B) / VID_DAC_RIGHT ($F9, DAC
+; channel C) - ports.txt lines 266-274 ("A,B are directed to the left
+; audio channel and C,D... right"), the exact pair the MakeVid reference
+; ISR uses (interrupts-common.asm isr_ctc_stereo, lines 250-307) -
+; confirming the interleave order too: L byte first (even offset), R
+; second (odd offset) per sample pair, matching "(hl)" then "inc l /
+; (hl)" there. IX addresses the CURRENT pair's L byte; R is (ix+1).
+; End condition: IX has reached the LAST pair's L byte - ONE shared body
+; serves BOTH downsampled buffer lengths (fmt2/3's vidAudBufLastStereo23
+; / fmt0/1's vidAudBufLastStereo01) via a self-modifying-code patch to
+; the two `cp n` immediate operands below (video_ctc_isr_stereo.cmplo+1/
+; .cmphi+1), poked once per session by vid_run BEFORE the CTC time
+; constant starts the timer (SP13 T4 - see that call site's own comment)
+; - zero ISR byte or T-state cost versus a hardcoded single-format
+; constant, and zero risk to the T3-proven fmt2/3 path (the ISR body
+; itself is textually unchanged except for the two new poke-target
+; labels). Advances by 2 per tick, not 1.
 video_ctc_isr_stereo:
     push af
     ld a, (ix+0)
@@ -1888,10 +1998,12 @@ video_ctc_isr_stereo:
     ld a, (ix+1)
     out (VID_DAC_RIGHT), a
     ld a, ixl
-    cp low vidAudBufLastStereo
+.cmplo:
+    cp low vidAudBufLastStereo23
     jr nz, .adv
     ld a, ixh
-    cp high vidAudBufLastStereo
+.cmphi:
+    cp high vidAudBufLastStereo23
     jr nz, .adv
     ld a, 1
     ld (vidAudDone), a
@@ -1925,9 +2037,20 @@ vidCtcTcTab:
 vidCtcTcTab2:
     db 168, 172, 177, 180, 186, 192, 198, 162
 
+; Same derivation, for VID_RATE0_PLAY (~7783 Hz, formats 0/1's own
+; downsampled rate, SP13 T4). UNLIKE the two tables above, the crossover
+; does NOT stay below this (lower) rate on every mode: VGA5 (crossover
+; 7812 Hz) and VGA6 (crossover 8056 Hz) both exceed 7783, so those two
+; slots store 0 - a sentinel vid_run's own CTC-arm code detects (never a
+; valid CW16 TC) and substitutes CW256/TC=16 for at runtime (see that
+; call site). VGA0 224, VGA1 229, VGA2 236, VGA3 240, VGA4 248, VGA5
+; 0(sentinel), VGA6 0(sentinel), HDMI 216.
+vidCtcTcTab0:
+    db 224, 229, 236, 240, 248, 0, 0, 216
+
 vidNum:          db 0
 vidLoopMode:      db 0             ; 0 = play once, 1 = loop
-vidFmt:           db 0             ; 2-5 (vid_classify's verdict)
+vidFmt:           db 0             ; 0-5 (vid_classify's verdict)
 vidExitReq:       db 0
 vidName:          ds 8             ; "NNN.VID",0
 vidNamePart:      ds 14            ; "PARTn\NNN.VID",0
@@ -1937,21 +2060,29 @@ vidDrawPage:      db 0
 vidPxPage:        db 0
 vidPxCount:       db 0
 vidCtcTc:         db 0
+vidCtcCw:         db 0             ; this session's CTC control word (SP13
+                                    ; T4: not always CW16 - see vid_run's
+                                    ; entry sequence and the loop-mode
+                                    ; reopen's own re-arm, both above)
 vidAudReadLen:    dw 0             ; this frame's audio+pad read size
                                     ; (mono VID_F4_AUDIO+VID_F45_AUDPAD or
-                                    ; stereo VID_F2_AUDIO+VID_F23_AUDPAD)
+                                    ; fmt0/1/2/3 VID_F0/2_AUDIO+VID_F01/23_
+                                    ; AUDPAD)
 vidColRemain16:   db 0             ; vid_stream_pixels_col: column-major
 vidBlkRemain16:   db 0             ; blit state, units of 16 bytes (see
 vidPixRealRemain: dw 0             ; that routine's own header)
-; Shared mono/stereo play buffer, sized for the LARGER stereo need
-; (VID_F2_PLAY_BYTES=1244 - 622 pairs, the 3:1-downsampled frame - see
-; nextdaad.inc's VID_STEREO_DOWNSAMPLE header). Mono (933 bytes,
-; VID_F4_AUDIO) uses only the front of it, unchanged from T2 - formats
-; never play concurrently, so one shared buffer costs less page space
-; than two separate ones (1244 vs 1244+933).
+; Shared mono/stereo play buffer, sized for the LARGEST need among all
+; three groups: VID_F2_PLAY_BYTES=1244 (fmt2/3 - 622 pairs, 3:1-
+; downsampled - VID_STEREO_DOWNSAMPLE header) is still the largest even
+; after SP13 T4 added fmt0/1 (VID_F0_PLAY_BYTES=934 - 467 pairs, 2:1-
+; downsampled - VID_STEREO01_DOWNSAMPLE header - fits inside the existing
+; allocation with no growth). Mono (933 bytes, VID_F4_AUDIO) uses only
+; the front of it, unchanged from T2 - formats never play concurrently,
+; so one shared buffer costs less page space than separate ones.
 vidAudBuf:        ds VID_F2_PLAY_BYTES
-vidAudBufLast       equ vidAudBuf + VID_F4_AUDIO - 1
-vidAudBufLastStereo equ vidAudBuf + VID_F2_PLAY_BYTES - 2
+vidAudBufLast         equ vidAudBuf + VID_F4_AUDIO - 1
+vidAudBufLastStereo23 equ vidAudBuf + VID_F2_PLAY_BYTES - 2
+vidAudBufLastStereo01 equ vidAudBuf + VID_F0_PLAY_BYTES - 2
 vidAudDone:       db 0
 vidSvMmu6:        db 0
 vidSvMmu7:        db 0
@@ -1987,12 +2118,14 @@ msgVidNoBank2: db "VID NOBANK2", 0
 ; via frameCounter (interrupts.asm, incremented once per 50Hz interrupt).
 ; ONE invocation runs TWO passes - pass 1 F_READ, pass 2 raw streaming
 ; (re-opening between passes) - so the owner's re-leg produces both
-; mechanism verdicts at once. Prints three rows: F_READ KB/s, raw
-; streaming KB/s (or its distinct error code if the raw open failed -
-; the owner always still gets the F_READ number), and total bytes /
-; elapsed frames / vid_classify verdict (from the streaming pass; from
-; the F_READ pass if streaming never ran). One shot per call - re-
-; invoking VIDBENCH re-opens and re-measures from scratch (the spec's
+; mechanism verdicts at once. Prints three rows: F_READ OK/ERR, raw
+; streaming OK/ERR (its distinct error code if the raw open failed - the
+; owner always still gets the F_READ verdict), and total bytes / elapsed
+; frames / vid_classify verdict (from the streaming pass; from the
+; F_READ pass if streaming never ran) - KB/s is NOT computed on-device
+; (SP13 T4 page-space recovery; a one-line hand calculation from the
+; printed bytes/frames, KB/s = bytes*50/frames/1024). One shot per call -
+; re-invoking VIDBENCH re-opens and re-measures from scratch (the spec's
 ; RE-RUNNABLE requirement: a new NextZXOS/Next-core release is expected
 ; to change the numbers). Output uses the DEBUG dbg_at/dbg_puts/dbg_hex8/
 ; dbg_hex16 console helpers (debug.asm) - hex only, matching every
@@ -2022,15 +2155,11 @@ vid_bench:
     ld (vidStrmMode), a
     call vid_bench_pass
     jr c, .freadfail
-    ld hl, (vidBenchKbps)        ; stash F_READ KB/s before pass 2 overwrites
-    ld (vidFreadKbps), hl
     xor a
     ld (vidFreadErr), a          ; 0 = ok
     jr .pass2
 .freadfail:
     ld (vidFreadErr), a          ; A = error (nonzero)
-    ld hl, 0
-    ld (vidFreadKbps), hl
 .pass2:
     ; --- pass 2: raw streaming (direct SD SPI). This ERRORS on CSpect -
     ; its directory mode fakes the esxDOS API over host files with no SPI
@@ -2041,12 +2170,12 @@ vid_bench:
     call vid_bench_pass
     jr c, .strmfail
     xor a
-    ld (vidStrmErr), a           ; 0 = ok; vidBenchKbps now holds raw KB/s
+    ld (vidStrmErr), a           ; 0 = ok
     jr .freebank
 .strmfail:
     ld (vidStrmErr), a           ; A = error (nonzero); vidBench* still hold
-    ld hl, 0                      ; the F_READ pass's bytes/frames/fmt if the
-    ld (vidBenchKbps), hl         ; raw open failed before resetting them
+                                  ; the F_READ pass's bytes/frames/fmt if the
+                                  ; raw open failed before resetting them
 .freebank:
     ld a, (vidBenchBank)
     call bank_free
@@ -2123,20 +2252,10 @@ vid_bench_compute:
     rr l
     djnz .kshr
     ld (vidBenchKB), hl
-    ; KB/s = totalKB * 50 / elapsed (integer maths; guard elapsed == 0 -
-    ; cannot happen for the real ~38MB fixture, but keeps this honest for
-    ; any smaller file reused against this same harness later)
-    ld hl, (vidBenchElapsed)
-    ld a, h
-    or l
-    jr z, .nokbps
-    call vid_kbps_calc
-    ld (vidBenchKbps), hl
-    jr .havekbps
-.nokbps:
-    ld hl, 0
-    ld (vidBenchKbps), hl
-.havekbps:
+    ; KB/s is NOT computed on-device (SP13 T4 space recovery - see the
+    ; task report; T3 round 3 precedent) - vid_bench_report's INFO row
+    ; prints raw bytes/frames unchanged, a one-line hand calculation
+    ; (KB/s = bytes*50/frames/1024) for the owner's re-leg.
     ld hl, (vidSizeLo)
     ld de, (vidSizeHi)
     call vid_classify
@@ -2165,8 +2284,6 @@ vid_bench_report:
 .freadok:
     ld hl, msgVidFread
     call dbg_puts
-    ld hl, (vidFreadKbps)
-    call dbg_hex16
 .strmrow:
     ; row 28: raw streaming KB/s (or ERR = distinct fragmentation/API code)
     ld b, VIDBENCH_ROW_STRM
@@ -2183,8 +2300,6 @@ vid_bench_report:
 .strmok:
     ld hl, msgVidStrm
     call dbg_puts
-    ld hl, (vidBenchKbps)
-    call dbg_hex16
 .inforow:
     ; row 29: bytes / frames / format (streaming pass, or F_READ fallback)
     ld b, VIDBENCH_ROW_INFO
@@ -2211,80 +2326,11 @@ vid_bench_report:
     ld hl, msgVidUnclass
     jp dbg_puts
 
-; totalKB (16-bit, vidBenchKB) * 50 / elapsed (16-bit, vidBenchElapsed,
-; already confirmed nonzero by the caller) -> HL = KB/s.
-; 16x8 multiply into a 24-bit accumulator (totalKB up to 65535 * 50 needs
-; up to 22 bits) via 50 plain adds - a one-shot report computation, so
-; the simplest correct approach wins over a shift-add multiply. Then a
-; standard 24-by-16 restoring division (24 steps) for the quotient; the
-; remainder is discarded. Corrupts AF, BC, DE, HL.
-vid_kbps_calc:
-    ld hl, (vidBenchKB)
-    xor a
-    ld (vidDivLo), a
-    ld (vidDivHi), a
-    ld (vidDivB2), a
-    ld b, 50
-.mulloop:
-    push bc
-    ld a, (vidDivLo)
-    add a, l
-    ld (vidDivLo), a
-    ld a, (vidDivHi)
-    adc a, h
-    ld (vidDivHi), a
-    jr nc, .noc
-    ld a, (vidDivB2)
-    inc a
-    ld (vidDivB2), a
-.noc:
-    pop bc
-    djnz .mulloop
-    ld de, (vidBenchElapsed)
-    call vid_div24by16
-    ld hl, (vidDivLo)
-    ret
-
-; 24-bit dividend (vidDivB2:vidDivHi:vidDivLo, MSB first) / 16-bit
-; divisor DE, in place - the same three bytes end up holding the
-; quotient (low 16 bits readable as a plain word at vidDivLo). Standard
-; 24-step shift/compare/subtract restoring division; the running
-; remainder (HL) is discarded once the loop ends - only the quotient is
-; wanted here. In: DE = divisor (nonzero - the caller guards elapsed==0).
-; Corrupts AF, HL, B. Preserves DE (re-read every iteration).
-vid_div24by16:
-    ld hl, 0
-    ld b, 24
-.loop:
-    ld a, (vidDivLo)
-    add a, a
-    ld (vidDivLo), a
-    ld a, (vidDivHi)
-    adc a, a
-    ld (vidDivHi), a
-    ld a, (vidDivB2)
-    adc a, a
-    ld (vidDivB2), a
-    adc hl, hl                   ; remainder <<= 1, bringing in the bit
-                                  ; just shifted out of the 24-bit dividend
-    or a
-    sbc hl, de
-    jr nc, .commit
-    add hl, de                   ; remainder < divisor: undo, quotient bit 0
-    jr .qbit0
-.commit:
-    ld a, (vidDivLo)
-    or 1                         ; quotient bit into the vacated LSB
-    ld (vidDivLo), a
-.qbit0:
-    djnz .loop
-    ret
-
 vidBenchName:   db "001.VID", 0
 msgVidNoBank:   db "VID NOBANK", 0
-msgVidFread:    db "VID FREAD KB/S=", 0
+msgVidFread:    db "VID FREAD OK", 0
 msgVidFreadErr: db "VID FREAD ERR=", 0
-msgVidStrm:     db "VID STRM  KB/S=", 0
+msgVidStrm:     db "VID STRM  OK", 0
 msgVidStrmErr:  db "VID STRM  ERR=", 0
 msgVidBytes:    db "VID BYTES=", 0
 msgVidFrames:   db " FRAMES=", 0
@@ -2299,15 +2345,10 @@ vidBenchStart:   dw 0
 vidBenchEnd:     dw 0
 vidBenchElapsed: dw 0
 vidBenchKB:      dw 0
-vidBenchKbps:    dw 0
 vidBenchFmt:     db 0
 vidBenchFmtBad:  db 0
-vidFreadKbps:    dw 0            ; pass-1 F_READ KB/s (pass 2 reuses vidBenchKbps)
 vidFreadErr:     db 0            ; pass-1 error code, 0 = ok
 vidStrmErr:      db 0            ; pass-2 raw error code, 0 = ok
-vidDivLo:        db 0
-vidDivHi:        db 0
-vidDivB2:        db 0
 
  ENDIF ; DEBUG
 

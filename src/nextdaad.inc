@@ -586,3 +586,75 @@ VID_L2_CLIP_X2_M1 equ (256/2)-1  ; = 127: NR $18 X2 in 2-pixel units for
 ; 23300Hz table's header). VGA0 168, VGA1 172, VGA2 177, VGA3 180, VGA4
 ; 186, VGA5 192, VGA6 198, HDMI 162.
 VID_RATE_STEREO_PLAY equ 10366
+
+; --- Video player core (SP13 Task 4) - 320x240 formats (0/1), full-bleed ---
+; audio-block sector-alignment padding, formats 0/1 (video_320x240.asm/
+; _palette.asm: 1866 audio + 182 padding = 2048, "pad to 2048 bytes for
+; sector alignment", both files' lines 8-9/513-514). Frame layout:
+; audio(1866) + pad(182) + [palette(512), format 0 only] + pixels(76800)
+; = VID_F0_BYTES/VID_F1_BYTES exactly (1866+182+512+76800=79360;
+; 1866+182+76800=78848).
+VID_F01_AUDPAD  equ 182
+
+; 320x240 column-major pixel layout (formats 0/1) - the SAME mode-1
+; addressing T3 proved for 256x240 (2/3): the stride/gap/32-cols-per-page
+; geometry (VID_COL_HEIGHT/STRIDE/GAP/PER_PAGE above) is a Layer 2 mode
+; property, not format-specific, so only the PAGE COUNT differs here.
+; Reference: video_320x240.asm/_palette.asm header (lines 1-11, "(column
+; major order)") and loop_8k (both files, lines ~562-1291): 15 SD blocks
+; (512B each = 7680B) per 8K L2 page, case_0..case_14 (15 cases, each one
+; SD block; case_15 is pure loop control, no transfer). VID_PIX_PAGES01 =
+; 320 cols / 32 per page = 10 EXACT pages - confirmed directly by the
+; reference's own `ld ix,(_w_layer2_page_count)` comment "ixh = dst layer
+; 2 page, ixl = 10 (10 * 8K = 80K for L2)" (line 604/562) and cross-
+; checked arithmetically: 10 pages * 7680 real bytes/page = 76800, the
+; format's own pixel block size, with ZERO remainder. NOTE: this
+; corrects an earlier draft assumption (this task's own brief) of a
+; partial final page (76800/8192=9.375, treating the 8192 DESTINATION
+; page size as the divisor of SOURCE bytes/page) - the reference's own
+; code and this arithmetic both confirm 10 FULL pages, no partial page;
+; see the task report for the full reconciliation.
+VID_PIX_PAGES01 equ 10
+
+; NR $18 X2 clip for the fmt0/1 full-bleed case: the whole 320-wide
+; surface is used (no pillarbox, unlike fmt2/3's 256-of-320 subset) - X2
+; in 2-pixel units = (320/2)-1 = 159, matching the reference's own
+; `_vc_clip: defb 0, 159, 8, 247` (video_320x240_palette.asm:39; X1=0
+; confirms no left inset either). Y1/Y2/X1/scroll stay the SAME shape as
+; fmt2/3 (0, VID_COL_HEIGHT-1, no scroll) - the reference's own Y1=8/
+; scroll_y=-8 is playvid's own VGA-border centering (not applicable
+; here, same "no paper inset" reasoning T3 already established for 2/3).
+VID_L2_CLIP_X2_M1_01 equ (320/2)-1  ; = 159
+
+; Stereo downsample for formats 0/1 (owner-decided, SP13 T4 brief): 2:1
+; (keep stereo, skip alternate pairs) - a DIFFERENT factor from fmt2/3's
+; 3:1 (VID_STEREO_DOWNSAMPLE above). fmt0/1's SOURCE rate is already
+; lower (933 pairs/frame vs fmt2/3's 1866), so a full-fidelity resident
+; buffer would need only 1866 bytes (933*2) - still larger than the
+; EXISTING 1244-byte shared vidAudBuf allocation (sized for fmt2/3's own
+; downsampled need), so the same page-space pressure applies; the
+; owner's 2:1 factor keeps the result WITHIN that existing allocation
+; (no buffer growth at all): 933 pairs, kept = ceil(933/2) = 467 (indices
+; 0,2,4,...,932 - the pattern starts AND ends on a kept pair since 933 is
+; odd: 467 kept + 466 skipped = 933 exactly, no remainder), 934 bytes -
+; comfortably under 1244. Effective played rate = 467 pairs / 60ms (the
+; format's own frame period, 50/3 fps like fmt2/3) = 7783.33 Hz, matching
+; the brief's own "~7.78kHz" figure and its "933 bytes/frame effective"
+; approximation (934, off by the ceiling rounding).
+VID_STEREO01_DOWNSAMPLE equ 2
+VID_F0_PLAY_SAMPLES equ 467   ; ceil(933/2) - see derivation above
+VID_F0_PLAY_BYTES   equ VID_F0_PLAY_SAMPLES * 2   ; 934 bytes
+VID_RATE0_PLAY equ 7783        ; floor(467*50/3) - see derivation above
+
+; Per-video-mode CTC time constant for VID_RATE0_PLAY (~7783 Hz), same
+; derivation as vidCtcTcTab/vidCtcTcTab2 (floor(clk16[mode]/rate)) - BUT
+; UNLIKE those two tables, the CW16 crossover does NOT stay below this
+; rate on every mode: VGA5 (crossover 7812 Hz) and VGA6 (crossover
+; 8056 Hz) both EXCEED 7783 - so those two modes need CW256 (TC=16,
+; floor((clk16>>4)/rate)=16 for both) instead of CW16. This table (video.
+; asm's vidCtcTcTab0) stores 0 (a sentinel - never a valid CW16 TC) at
+; the VGA5/VGA6 slots; vid_run detects the sentinel and substitutes
+; CW256/TC=16 at runtime - see that routine's own comment. VGA0 224,
+; VGA1 229, VGA2 236, VGA3 240, VGA4 248, VGA5 0(sentinel), VGA6
+; 0(sentinel), HDMI 216. Verified with a Python cross-check (not hand
+; arithmetic), matching the T3 report's own methodology.

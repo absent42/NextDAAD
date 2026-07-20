@@ -167,6 +167,12 @@ VPLY2   80      verb
 VPLY3   81      verb
 VLOP2   82      verb
 VLOP3   83      verb
+; SP13 Task 4 owner verbs: 320x240 full-bleed formats (0/1), mirroring
+; the sets above exactly (same 5-char-truncation reasoning).
+VPLY0   84      verb
+VPLY1   85      verb
+VLOP0   86      verb
+VLOP1   87      verb
 
 ;                       Verbs
 GET     20      verb
@@ -664,6 +670,32 @@ $pictureOK
                 DONE
 
 > VLOP3   _     GFX 4 14
+                DONE
+
+; SP13 Task 4 owner verbs: the 320x240 full-bleed formats (0/1) eye/ear
+; legs (-Vid staged sd\001.VID = format 0 palette, a REAL adaptive-
+; palette encode via tests\videnc.py - the first real per-frame palette
+; content through the player, replacing MakeVid's malformed autopal
+; output; sd\002.VID = format 1 no-palette, a REAL copy of its MakeVid
+; source (never touched by the autopal bug) - see build-tests.ps1's -Vid
+; header). VPLY0/VPLY1 exercise GFX n 13 play-once; VLOP0/VLOP1 exercise
+; GFX n 14 loop (any key ends it) - same dispatch path as VPLY2/VPLY3
+; above, format gate widened to 0-5 in vid_play (video.asm). This is the
+; HIGHEST data-rate format pair (155/154 sectors/frame, full 320-wide
+; column-major blit, 10 pixel pages instead of 8) and the audio is
+; downsampled 2:1 (not fmt2/3's 3:1) to a DIFFERENT effective rate
+; (~7.78kHz, not ~10.37kHz) - both disclosed, deliberate page-space
+; mitigations (see nextdaad.inc's VID_STEREO01_DOWNSAMPLE header).
+> VPLY0   _     GFX 1 13
+                DONE
+
+> VPLY1   _     GFX 2 13
+                DONE
+
+> VLOP0   _     GFX 1 14
+                DONE
+
+> VLOP1   _     GFX 2 14
                 DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation
