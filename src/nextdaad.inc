@@ -654,7 +654,10 @@ VID_RATE0_PLAY equ 7783        ; floor(467*50/3) - see derivation above
 ; floor((clk16>>4)/rate)=16 for both) instead of CW16. This table (video.
 ; asm's vidCtcTcTab0) stores 0 (a sentinel - never a valid CW16 TC) at
 ; the VGA5/VGA6 slots; vid_run detects the sentinel and substitutes
-; CW256/TC=16 at runtime - see that routine's own comment. VGA0 224,
+; CW256/TC=16 at runtime - see that routine's own comment. Do NOT
+; reclaim 0 as a real TC here: the CTC's own "0 = TC 256" encoding is
+; unreachable at this rate on CW16 modes (max entry 248), which is what
+; keeps the sentinel unambiguous. VGA0 224,
 ; VGA1 229, VGA2 236, VGA3 240, VGA4 248, VGA5 0(sentinel), VGA6
 ; 0(sentinel), HDMI 216. Verified with a Python cross-check (not hand
 ; arithmetic), matching the T3 report's own methodology.
