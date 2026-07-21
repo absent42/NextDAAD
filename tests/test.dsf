@@ -178,6 +178,12 @@ VSTG1   88      verb
 VSTG2   89      verb
 VSTG3   90      verb
 VSTG4   91      verb
+; VSTG2 sub-ladder (owner gate-leg follow-up 2, VSTG2 hardware freeze):
+; flag 249 selects the sub-stage WITHIN stage 2 (audio/palette/first-16-
+; pixel-blocks boundaries) - see vid_stream_frame's own gates.
+VS2A  92      verb
+VS2B  93      verb
+VS2C  94      verb
 
 ;                       Verbs
 GET     20      verb
@@ -705,6 +711,44 @@ $pictureOK
 ; itself (audio+palette+pixel read, or the direct flip), not the CTC or
 ; the copper.
 > VSTG2   _     LET 250 2
+                GFX 1 13
+                DONE
+
+; VSTG2 sub-ladder (owner gate-leg follow-up 2, VSTG2/3/4 all froze with
+; the SAME white+freeze signature - streaming/blit path, common cause,
+; copper exonerated for this specific failure). flag 249 selects the
+; sub-stage WITHIN stage 2 (LET 250 2 alongside it, same GFX 1 13 call -
+; vid_stream_frame's own gates read both, self-clearing like flag 250).
+;
+; VS2A: audio+pad blocks only (vidABytesPad bytes) - stop before the
+; palette/pixel reads. "STG2A OK ERR=xx" (VID_PAGE2, row 22). If this
+; freezes, the bug is in the audio read itself (or the streaming
+; primitives/window state it depends on) - the earliest possible point
+; after the header (VSTG1's own read) succeeds.
+> VS2A  _     LET 250 2
+                LET 249 1
+                GFX 1 13
+                DONE
+
+; VS2B: +the 512-byte palette block - stop before the pixel read.
+; "STG2B OK ERR=xx". If VS2A passes but this freezes, the bug is in
+; the palette read specifically (or a desync it exposes that the audio
+; read alone did not).
+> VS2B  _     LET 250 2
+                LET 249 2
+                GFX 1 13
+                DONE
+
+; VS2C: +a plain first-16-block ($2000) pixel read at vidDrawPage -
+; NOT the full flat-serve loop, no flip. "STG2C OK ERR=xx". If VS2B
+; passes but this freezes, the bug is in the pixel read path itself
+; (the point where audio+palette positional consumption hands off to
+; pixel data) - if VS2C ALSO passes but plain VSTG2 (full frame +
+; flip) still freezes, the bug is specifically in vid_stream_pixels_
+; flat's own chunking loop or the flip/bank-parity step, not the first-
+; chunk read this sub-stage already proved works.
+> VS2C  _     LET 250 2
+                LET 249 3
                 GFX 1 13
                 DONE
 

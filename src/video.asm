@@ -562,11 +562,34 @@ vid_card_deselect:
 ; genuinely idle memory cell would work too (E.g. a new byte alongside
 ; vidRawResetByte) but costs more bytes for zero extra safety once A is
 ; confirmed clear - the smaller of the two options this sweep found.
+; Owner gate-leg audit follow-up (SP14a T4, VSTG2 hardware freeze): the
+; token-wait below was UNBOUNDED (unconditional spin) - confirmed
+; unchanged from the pre-T4 player (git history: byte-identical at
+; commit 163d353~1), so not a T4 regression, but a genuine latent
+; hazard this file never actually closed. A card that never answers
+; (window desync, a run boundary the filemap did not expect, any other
+; wedge) hangs here forever with no recovery - exactly the observed
+; "freeze" signature. Bounded to 65536 polls (BC countdown, ~20T/poll -
+; tens of milliseconds of real margin over any legitimate SD response
+; latency) so a wedged card now falls through to .tokbad's own clean
+; VID_ERR_TOKEN-style exit instead of hanging - unconditional (not
+; IFDEF DEBUG): this hardens Release too, not just the diagnostic
+; ladder. BC is already in this routine's own "Corrupts BC" contract,
+; so the counter costs no new register-contract risk.
 vid_read_block:
 .wt:
+    ld bc, 0                      ; bounded retry: 65536 polls
+.wtloop:
     in a, (PORT_SPI_DAT)          ; poll for the block's data token
     inc a
-    jr z, .wt                     ; $FF -> not ready yet, keep polling
+    jr nz, .wtgot                 ; non-$FF: something arrived, check it
+    dec bc
+    ld a, b
+    or c
+    jr nz, .wtloop
+    jp .tokbad                    ; exhausted: treat as a bad/missing token -
+                                   ; jp: .tokbad is past the ~520-byte unroll
+.wtgot:
     dec a                         ; recover the raw byte
     cp $FE                        ; $FE = valid data token
     jp nz, .tokbad                ; jp: .tokbad is past the ~520-byte unroll
@@ -1262,17 +1285,26 @@ vid_run:
  IFDEF DEBUG
 ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): shared hot
 ; micro-stub, reached (tail-jumped, never called - it never returns
-; here) from all three stage-exit sites above and the stage-1 gate
-; near .l2setupret. In: C = stage number just completed (1-3). Hops
-; cold to print the matching marker (vid_stage_marker_body, VID_PAGE2 -
-; register-passed, not a VID_PAGE memory read from cold code, so the
-; "copy-across" translation lesson does not apply here), then falls
-; straight into .restore - the SAME teardown every ordinary exit
-; already uses (CTC-off/copper-stop are idempotent no-ops if this
-; stage never armed/started them; vid_stream_close/L2-restore/bank-
-; free/presentation-restore are all unconditionally correct regardless
-; of which stage got this far).
+; here) from all three stage-exit sites above, the stage-1 gate near
+; .l2setupret, and the sub-ladder 2a/2b/2c gates inside vid_stream_frame
+; (qualified `jp vid_run.stagegate`). In: C = stage/sub-stage number
+; just completed. Out (to vid_stage_marker_body): D = vidErrCode's
+; CURRENT value, read HOT (this stub runs on VID_PAGE, same page
+; vidErrCode lives on, so no translation is needed) and passed via a
+; register - deliberately sidesteps the "copy-across" lesson rather
+; than needing it, exactly like C already does. Every call site is
+; responsible for vidErrCode already holding the right value by the
+; time it jumps here (0 for a clean sub-stage boundary; the real code
+; on a bounded-error exit) - owner directive: "STGn OK ERR=xx" on
+; every marker, not just a bare pass/fail. Hops cold to print (vid_
+; stage_marker_body, VID_PAGE2), then falls straight into .restore -
+; the SAME teardown every ordinary exit already uses (CTC-off/copper-
+; stop are idempotent no-ops if this stage never armed/started them;
+; vid_stream_close/L2-restore/bank-free/presentation-restore are all
+; unconditionally correct regardless of which stage got this far).
 .stagegate:
+    ld a, (vidErrCode)
+    ld d, a
     ld hl, vid_stage_marker_body
     push hl
     ld a, VID_PAGE2
@@ -1406,6 +1438,8 @@ vid_run:
     call dbg_at
     ld hl, msgStg4
     call dbg_puts
+    ld a, (vidErrCode)             ; owner directive: every marker shows
+    call dbg_hex8                  ; ERR, not just a bare pass/fail
 .stg4nomark:
     ; SP14a T1: the frame-timeline report - fully torn-down playback only
     ; (CTC parked/stub restored, DAC parked, L2/NR state restored) - no
@@ -1482,7 +1516,8 @@ vid_stream_frame:
     ld (vidAudReadLen), de
     ld a, (vidAudPoolPage)
     call vid_stream_read
-    jr c, .eof
+    jp c, .eof                    ; jp: .eof is now past jr's range (the
+                                   ; sub-ladder gates grew this routine)
     ld hl, (vidAudReadLen)
     or a
     sbc hl, bc
@@ -1503,6 +1538,24 @@ vid_stream_frame:
  ENDIF
     jp .eof
 .audfull:
+ IFDEF DEBUG
+    ; Owner gate-leg sub-ladder (VSTG2A, SP14a T4 follow-up): audio+pad
+    ; consumed successfully (the exact-match branch above proves it) -
+    ; stop here, before the palette/pixel reads, if requested. No error
+    ; is possible at this exact point (the byte count already matched),
+    ; so ERR is always clean.
+    ld a, (vidStageLimit)
+    cp 2
+    jr nz, .sub2askip
+    ld a, (vidStage2Sub)
+    cp 1
+    jr nz, .sub2askip
+    xor a
+    ld (vidErrCode), a
+    ld c, 4
+    jp vid_run.stagegate
+.sub2askip:
+ ENDIF
     ; palette-flag files only - streamed here, NOT applied (see this
     ; routine's header): vid_run's flip section applies it (vidAudPool
     ; Page+1 still holds it, untouched).
@@ -1522,10 +1575,51 @@ vid_stream_frame:
  IFDEF DEBUG
     ld a, VID_TL_BLIT               ; closes phase 0 (stream: the audio
     call vid_tl_stamp               ; read, plus the palette read above)
+    ; Owner gate-leg sub-ladder (VSTG2B, SP14a T4 follow-up): palette
+    ; consumed (or skipped, non-palette files) - stop here, before the
+    ; pixel read, if requested. No error possible at this exact point
+    ; either (same reasoning as 2a).
+    ld a, (vidStageLimit)
+    cp 2
+    jr nz, .sub2bskip
+    ld a, (vidStage2Sub)
+    cp 2
+    jr nz, .sub2bskip
+    xor a
+    ld (vidErrCode), a
+    ld c, 5
+    jp vid_run.stagegate
+.sub2bskip:
  ENDIF
     ld a, (vidGapNeeded)
     or a
     jr nz, .gappath
+ IFDEF DEBUG
+    ; Owner gate-leg sub-ladder (VSTG2C, SP14a T4 follow-up): a plain
+    ; 16-block/$2000 read at vidDrawPage - NOT vid_stream_pixels_flat's
+    ; own chunking loop (this sub-stage checks "can pixel data be read
+    ; at all", not the flat serve's own bookkeeping) - then stop, no
+    ; flip, before the real pixel serve even starts.
+    ld a, (vidStageLimit)
+    cp 2
+    jr nz, .sub2cskip
+    ld a, (vidStage2Sub)
+    cp 3
+    jr nz, .sub2cskip
+    ld a, (vidDrawPage)
+    ld de, $2000
+    call vid_stream_read
+    jr nc, .sub2cok
+    ld (vidErrCode), a
+    jr .sub2cdone
+.sub2cok:
+    xor a
+    ld (vidErrCode), a
+.sub2cdone:
+    ld c, 6
+    jp vid_run.stagegate
+.sub2cskip:
+ ENDIF
     ld a, (vidDrawPage)
     ld hl, (vidPixBlocks)
     ld (vidPxBlocksLeft), hl
@@ -2258,7 +2352,14 @@ vidStageFrameCnt: db 0        ; stage 3's own frame counter - explicitly
                                ; so a second VSTG3 in the same session
                                ; would otherwise inherit the first run's
                                ; own final count and cap out after 1 frame
-msgStg4: db "STG4 OK", 0      ; stays hot (.restore_tail's own inline
+vidStage2Sub:     db 0        ; stage-2 sub-ladder (VSTG2A/B/C, flag 249):
+                               ; 0 = no sub-limit (ordinary stage 2 = "2d",
+                               ; full frame + one CPU flip), 1/2/3 = stop
+                               ; after audio+pad / +palette / +first 16
+                               ; pixel blocks (vid_stream_frame's own
+                               ; gates). Read once alongside vidStageLimit,
+                               ; same self-clearing reasoning.
+msgStg4: db "STG4 OK ERR=", 0 ; stays hot (.restore_tail's own inline
                                ; print, no hop) - STG1-3 print cold
                                ; instead (vid_stage_marker_body, VID_PAGE2)
                                ; since those exits hop there anyway
@@ -2677,6 +2778,12 @@ vid_run_entry_body:
                                    ; VPLY0 too. Cleared the instant it is
                                    ; read, so only THIS invocation ever
                                    ; sees a nonzero vidStageLimit.
+    ; Stage-2 sub-ladder (VSTG2A/B/C, owner gate-leg follow-up): flag 249,
+    ; same read/self-clear shape as flag 250 above.
+    ld a, (flags+249)
+    ld (vidStage2Sub+DATA_WINDOW-OVL_ORG), a
+    xor a
+    ld (flags+249), a
  ENDIF
     call data_restore
 
@@ -2923,16 +3030,24 @@ vid_run_l2setup_body:
     jp ovl_map_page
 
 ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): prints the
-; STG1/STG2/STG3 marker for whichever stage vid_run's own .stagegate
-; stub (VID_PAGE) just tail-jumped from, then falls into .stagegateret
-; (VID_PAGE) which does `jp .restore` - the same teardown every ordinary
-; exit already uses. In: C = stage number (1-3) - a REGISTER, not a
-; VID_PAGE memory read, so this deliberately sidesteps the "copy-across"
-; translation lesson (vid_tl_report_body's own header, above) rather
-; than needing it: nothing here reads a VID_PAGE-resident cell at all.
+; STGn marker (n = C, 1-3 for the main stages, 4-6 for the 2a/2b/2c sub-
+; ladder) plus " ERR=xx" (D, the err byte .stagegate already read hot -
+; owner directive: every marker shows ERR, not just a bare pass/fail),
+; for whichever stage/sub-stage vid_run's own .stagegate stub (VID_PAGE)
+; or vid_stream_frame's own sub-ladder gates (also VID_PAGE, qualified
+; `jp vid_run.stagegate`) just tail-jumped from - then falls into
+; .stagegateret (VID_PAGE) which does `jp .restore`, the same teardown
+; every ordinary exit already uses. In: C = stage number, D = err byte -
+; both REGISTERS, not a VID_PAGE memory read, so this deliberately
+; sidesteps the "copy-across" translation lesson (vid_tl_report_body's
+; own header, above) rather than needing it. D is stashed on the stack
+; (push af/pop af) since it is about to be reused for the message-
+; pointer table lookup below - no new memory cell needed for the swap.
 ; Corrupts everything (matches every other one-way hop in this file).
  IFDEF DEBUG
 vid_stage_marker_body:
+    ld a, d
+    push af                      ; stash the err byte - D is reused below
     ld a, c
     add a, a                     ; *2 (word-sized table entries)
     ld l, a
@@ -2947,17 +3062,26 @@ vid_stage_marker_body:
     call dbg_at
     ex de, hl
     call dbg_puts
+    ld hl, msgStgErr
+    call dbg_puts
+    pop af                       ; recover the err byte
+    call dbg_hex8
     ld hl, vid_run.stagegateret
     push hl
     ld a, VID_PAGE
     jp ovl_map_page
 
-vidStageMsgTab: dw 0, msgStg1, msgStg2, msgStg3  ; index 0 unused - stages
+vidStageMsgTab: dw 0, msgStg1, msgStg2, msgStg3, msgStg2a, msgStg2b, msgStg2c
+                                                  ; index 0 unused - stages
                                                   ; are 1-based (C is
                                                   ; never 0 here)
-msgStg1: db "STG1 OK", 0
-msgStg2: db "STG2 OK", 0
-msgStg3: db "STG3 OK", 0
+msgStg1:  db "STG1 OK", 0
+msgStg2:  db "STG2 OK", 0
+msgStg3:  db "STG3 OK", 0
+msgStg2a: db "STG2A OK", 0
+msgStg2b: db "STG2B OK", 0
+msgStg2c: db "STG2C OK", 0
+msgStgErr: db " ERR=", 0
  ENDIF
 
 ; Per-video-mode (NR $11 bits 2:0) CTC time constant for the two
