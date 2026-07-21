@@ -533,6 +533,35 @@ vid_card_deselect:
 ; then the 512 bytes, then skip the 2-byte CRC. In: HL = destination, card
 ; already selected + streaming (CMD18 issued). Out: HL += 512; CF set = the
 ; token was not $FE (A = the offending byte). Corrupts AF, BC, HL.
+;
+; SP14a T4 owner follow-up (RELEASE-side VID_PAGE lever, coordinator
+; directive): the transfer body is 256 unrolled INI executed TWICE
+; (was 512 unrolled INI once, ~1KB hot) - halves this routine's own
+; code size for ~507B freed, on EVERY build variant (this code is not
+; IFDEF DEBUG - Release and DEBUG alike gain the same headroom). Cost:
+; one extra loop-control (dec/jr) + one count-reload per block, ~30T
+; against the interface's own 16T/byte x 512 = 8192T block transfer -
+; folded into the per-profile margin restatement in the task report.
+;
+; Loop-counter register sweep: A, not B or DE. B is banned by the
+; standing lesson (Z80 INI itself decrements B as a side effect - a
+; B-based outer counter would be corrupted by the very instructions it
+; is counting, the SP14a T3 fix-wave-3 regression this file already
+; carries the scar of). DE is banned by THIS routine's own established
+; contract - every call site (the register-resident fast path above
+; especially: "preserves DE + alt") depends on vid_read_block leaving
+; DE untouched; using E here would silently break that. IX/IY are
+; banned by the wider streaming subsystem's own golden rules (this
+; file's "IX/IY-free" invariant - IX is the video CTC ISR's exclusive
+; resident play pointer for the whole armed window this routine runs
+; inside; touching it here, even transiently, would race the ISR).
+; A is the only register left, and it is provably free: INI's own
+; operation is (HL)<-(C), HL++, B-- - it never reads or writes A at
+; all - and A was ALREADY in this routine's own "Corrupts AF" contract
+; before this change, so no caller relies on it surviving either. A
+; genuinely idle memory cell would work too (E.g. a new byte alongside
+; vidRawResetByte) but costs more bytes for zero extra safety once A is
+; confirmed clear - the smaller of the two options this sweep found.
 vid_read_block:
 .wt:
     in a, (PORT_SPI_DAT)          ; poll for the block's data token
@@ -540,16 +569,24 @@ vid_read_block:
     jr z, .wt                     ; $FF -> not ready yet, keep polling
     dec a                         ; recover the raw byte
     cp $FE                        ; $FE = valid data token
-    jp nz, .tokbad                ; jp: .tokbad is past the 1024-byte unroll
+    jp nz, .tokbad                ; jp: .tokbad is past the ~520-byte unroll
     ld c, PORT_SPI_DAT
-    DUP 512                       ; 512 unrolled INI at 16T/byte (playvid
+    ld a, 2                       ; two 256-byte halves = 512 bytes total
+.halfloop:
+    DUP 256                       ; 256 unrolled INI at 16T/byte (playvid
       ini                          ; parity - the interface's peak rate; INIR
-    EDUP                           ; would be 21T/byte). HL now += 512.
+    EDUP                           ; would be 21T/byte). HL += 256 per pass.
+    dec a                         ; A survives untouched across every INI
+    jp nz, .halfloop               ; above (see this routine's own header) -
+                                    ; jp: .halfloop is ~512 bytes back, past
+                                    ; jr's -128 range
     in a, (c)                     ; skip the 2-byte CRC (the nops pad the
     nop                           ; in/in to the 16T/byte interface timing)
     in a, (c)
     nop
-    or a                          ; CF clear: block read
+    or a                          ; CF clear: block read (A's leftover CRC
+                                   ; byte is discarded either way - matches
+                                   ; the pre-existing behaviour exactly)
     ret
 .tokbad:
     scf
@@ -2309,6 +2346,49 @@ nxv_open_body:
     or l
     jp z, .bad
     ld (vidPixBlocks), hl
+    ; SP14a T4 owner follow-up (review finding): cross-check the header's
+    ; own pixel-block count against width*height/512 derived from the
+    ; already-validated shape+height - fail-clean hardening against a
+    ; corrupt/malformed PIXBLK field that would otherwise blit the wrong
+    ; amount of data (short or over-read) instead of cleanly rejecting
+    ; the file as VID FMT?. Computed as a height-scaling (not a literal
+    ; width*height/512) to dodge 16-bit overflow (320*256=81920 does not
+    ; fit 16 bits): mode-1 expected = height*5/8 (320/512 reduces to
+    ; 5/8; height is already validated as a multiple of 8, or exactly
+    ; 256, so this is always exact); mode-0 expected = height/2 (256/512
+    ; reduces to 1/2; height is already validated as a multiple of 2).
+    ld a, (vidShape)
+    or a
+    jr nz, .pbmode0
+    ld hl, (vidHeight)
+    ld a, h
+    or a
+    jr z, .pbnotnative
+    ld hl, 160                      ; height==256 (native): 256*5/8=160
+    jr .pbgot
+.pbnotnative:
+    ld a, l                         ; height < 256, already a multiple of 8
+    srl a
+    srl a
+    srl a                          ; a = height/8
+    ld b, a
+    add a, a
+    add a, a                       ; a = 4*(height/8)
+    add a, b                       ; a = 5*(height/8) = height*5/8
+    ld l, a
+    ld h, 0
+    jr .pbgot
+.pbmode0:
+    ld hl, (vidHeight)
+    ld a, l                         ; H is always 0 for mode-0 (<=192)
+    srl a                          ; a = height/2
+    ld l, a
+    ld h, 0
+.pbgot:
+    ld de, (vidPixBlocks)
+    or a
+    sbc hl, de
+    jp nz, .bad
     ; derive gap/Y-centering geometry from shape+height
     ld a, (vidShape)
     or a
