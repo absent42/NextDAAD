@@ -2286,6 +2286,12 @@ vidTlFrames:    dw 0        ; frame-loop iterations reached (vid_tl_stamp
                             ; increments this whenever phase VID_TL_STREAM
                             ; opens - vid_stream_frame's own entry stamp)
 vidTlAcc:       ds VID_TL_PHASES*4   ; 5 phases x 32-bit (LE) tick total
+; Fix wave 2: total span of the block above (vidTlTicks..end of
+; vidTlAcc) that vid_tl_report_body must copy across the page hop before
+; reading it (see that routine's own header) - computed, not hand-
+; counted (2+2+1+2+20 = 27), so it can never drift if a field above is
+; resized.
+VID_TL_BLOCK_LEN equ vidTlAcc + VID_TL_PHASES*4 - vidTlTicks
 
 ; DEBUG frame-timeline instrument. In: A = new phase id (VID_TL_STREAM..
 ; VID_TL_OTHER, nextdaad.inc). Snapshots vidTlTicks and accumulates the
@@ -2674,6 +2680,34 @@ vid_tl_report_body:
     and %01111111
     nextreg NR_DISPLAY_CTRL, a
 
+    ; SP14a T1 fix wave 2 (owner leg feedback): vidTlTicks/vidTlLastTick/
+    ; vidTlLastPhase/vidTlFrames/vidTlAcc are VID_PAGE-resident data (see
+    ; their declarations above vid_tl_stamp) - by this point MMU7 ==
+    ; VID_PAGE2 (vid_tl_report's own trampoline hop already ran), so a
+    ; DIRECT read of those labels' own $E0xx addresses hits VID_PAGE2's
+    ; own never-written bytes at that offset instead of the real data -
+    ; every field reads zero (the control-flow hop is fine; the DATA does
+    ; not come along automatically - MMU7 is a runtime remap, not a
+    ; compile-time one). Fix: copy the whole VID_TL_BLOCK_LEN(27)-byte
+    ; block across via the MMU6 window (data_save/data_map_page(VID_PAGE)/
+    ; LDIR/data_restore - MMU6 is free here, post-teardown; the same
+    ; convention this file uses everywhere else for a transient cross-
+    ; page read) into a page-local mirror (vidTlTicksL.. below) BEFORE any
+    ; real print runs. Source address: vidTlTicks's own VID_PAGE address
+    ; translated to the MMU6 $C000 window (vidTlTicks + DATA_WINDOW -
+    ; OVL_ORG = vidTlTicks - $2000). Dest: vidTlTicksL, an ordinary
+    ; VID_PAGE2-local label - its own absolute address is already correct
+    ; for THIS page, no translation needed (only the SOURCE crosses
+    ; pages).
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld hl, vidTlTicks + DATA_WINDOW - OVL_ORG
+    ld de, vidTlTicksL
+    ld bc, VID_TL_BLOCK_LEN
+    ldir
+    call data_restore
+
     ld a, VID_TL_ROW0
     ld (vidTlRptRow), a
     xor a
@@ -2699,7 +2733,7 @@ vid_tl_report_body:
     add a, a
     ld l, a
     ld h, 0
-    ld de, vidTlAcc
+    ld de, vidTlAccL
     add hl, de
     call vid_tl_print32
     ld a, (vidTlRptIdx)
@@ -2707,11 +2741,11 @@ vid_tl_report_body:
     jr nz, .nextrow
     ld hl, msgTlTot
     call dbg_puts
-    ld hl, (vidTlTicks)
+    ld hl, (vidTlTicksL)
     call dbg_hex16
     ld hl, msgTlFrm
     call dbg_puts
-    ld hl, (vidTlFrames)
+    ld hl, (vidTlFramesL)
     call dbg_hex16
     jr .done
 .nextrow:
@@ -2739,6 +2773,18 @@ msgTlTot: db " TOT=", 0
 msgTlFrm: db " FRM=", 0
 vidTlRptRow: db 0
 vidTlRptIdx: db 0
+
+; Page-local mirror of the VID_PAGE-resident vidTlTicks..vidTlAcc block
+; (fix wave 2, above) - same field order/sizes, filled by the pre-print
+; LDIR, read by the report in place of the (unreachable-from-here)
+; VID_PAGE originals. vidTlLastTickL/vidTlLastPhaseL are copied but never
+; read here - kept only for exact layout parity with the source block,
+; so the single LDIR's length (VID_TL_BLOCK_LEN) needs no special-casing.
+vidTlTicksL:     dw 0
+vidTlLastTickL:  dw 0
+vidTlLastPhaseL: db 0
+vidTlFramesL:    dw 0
+vidTlAccL:       ds VID_TL_PHASES*4
 
     DISPLAY "video2 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
