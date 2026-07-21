@@ -2654,6 +2654,26 @@ vid_tl_print32:
 ; iterations reached). Reached only via vid_tl_report's own hop (VID_PAGE,
 ; above) - lands here with MMU7 == VID_PAGE2. Corrupts everything.
 vid_tl_report_body:
+    ; SP14a T1 fix wave (owner leg feedback): the leftover video frame
+    ; remains on Layer 2 after teardown (content not preserved by
+    ; design) - by this point NR $69 already holds its pre-video vidSv-
+    ; captured value (vid_run's .restore path writes it back BEFORE this
+    ; report is called, above), but if Layer 2 was on before playback
+    ; started, the tilemap's transparent paper lets that stale L2
+    ; content show through and makes these rows unreadable. Read-modify-
+    ; write NR $69 (an already-established readable register in this
+    ; exact file - vid_run's own entry sequence captures it via this
+    ; same nr_read pattern) to clear bit 7 (Layer 2 enable) before
+    ; printing. Deliberately NOT restored afterward - this path is
+    ; DEBUG-only and reached after every other piece of game state is
+    ; already back to normal; the next real GFX/picture load re-enables
+    ; Layer 2 unconditionally (gfx_blit's own DISPLAY path), so nothing
+    ; downstream depends on this bit's value surviving the report.
+    ld e, NR_DISPLAY_CTRL
+    call nr_read
+    and %01111111
+    nextreg NR_DISPLAY_CTRL, a
+
     ld a, VID_TL_ROW0
     ld (vidTlRptRow), a
     xor a
