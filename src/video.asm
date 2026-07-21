@@ -3226,7 +3226,23 @@ vid_filemap_dump:
     ld a, VID_PAGE
     call data_map_page
     ld hl, (vidStrmEntryEnd+DATA_WINDOW-OVL_ORG)
-    ld de, vidFilemapBuf+DATA_WINDOW-OVL_ORG
+    ; owner bug fix (address-space mismatch caught by the "convict the
+    ; trampler" audit): the VALUE stored in the vidStrmEntryEnd CELL is a
+    ; REAL VID_PAGE (OVL_ORG-space) address - vid_raw_setup converts it
+    ; back with `ld de,OVL_ORG-DATA_WINDOW / add hl,de` before storing
+    ; (above, this file) specifically so hot code (vid_next_run) can
+    ; compare it directly against vidStrmEntryPtr with no translation.
+    ; HL above is therefore already real-space. DE must match: the bare
+    ; `vidFilemapBuf` label (real/OVL_ORG-space), NOT the +DATA_WINDOW-
+    ; OVL_ORG translated form - that translated form is only correct
+    ; when BOTH sides of a subtraction are translated (vid_raw_setup's
+    ; own .roomok comment: "the translation cancels in the difference").
+    ; Mixing one real address with one translated address here made HL
+    ; run high by exactly DATA_WINDOW-OVL_ORG (8192), so the repeated
+    ; -6 division below wrapped the 8-bit counter into a bogus RUNS
+    ; value (observed: 0x57) - not file-map corruption, an instrument
+    ; bug in this diagnostic itself.
+    ld de, vidFilemapBuf
     or a
     sbc hl, de                      ; HL = bytes of entries written
     ld b, 0
