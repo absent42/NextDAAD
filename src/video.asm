@@ -1989,15 +1989,36 @@ vid_col_blockdone:
 ; IMMEDIATE B (group count, 1-15) per segment instead of the old runtime
 ; chunk16=min(colRemain16,blkRemain16) computation. In: B = group count,
 ; C = PORT_SPI_DAT, HL = destination. Out: HL advanced by B*16 bytes.
-; Corrupts F, B; PRESERVES A - the case bodies' column-gap trick (xor a
-; at case top, ld l,a after each column) DEPENDS on A surviving every
-; call (ini does not touch A). Never add an A-clobbering instruction
-; here without reworking every case's gap handling.
+;
+; SP14a T3 fix wave 3 (owner hardware leg, ERR=FD/BYT=B5 root cause): B
+; CANNOT be the outer loop counter here - the Z80 `ini` instruction
+; decrements B as part of its OWN semantics (ED A2: (HL)<-IN(C); HL++;
+; B--), so the REPT16 block below already consumes B sixteen times per
+; pass; a trailing `djnz` on top of that decremented it a 17th time,
+; reading vastly more than B*16 bytes per call (measured: B=15 entering
+; read 496 bytes before terminating, not 240) - the case blit overran
+; its own first block within case 0 itself, desyncing the wire for
+; every block after it (exactly the observed ERR=FD/BYT=B5 signature -
+; a mid-data byte at the NEXT block's token-wait). The pre-T3 dynamic
+; code never had this bug because it used a register `ini` never
+; touches (E, via `dec e`/`jr nz`) for its own outer chunk counter - E
+; is restored here as the outer counter, copied from B at entry so
+; every one of the 46 call sites' `ld b,N` contract is unchanged.
+; Out: HL advanced by B*16 bytes. Corrupts AF, B, E - PRESERVES... A is
+; NOT touched by `ini`/`ld e,b`/`dec e`, so it still survives - the case
+; bodies' column-gap trick (xor a at case top, ld l,a after each column)
+; still depends on this. Never add an A-clobbering instruction here
+; without reworking every case's gap handling.
 vid_xfer16n:
+    ld e, b                        ; E = outer pass count ('ini' only
+                                    ; touches B, never E - matches the
+                                    ; pre-T3 dynamic loop's own `dec e`)
+.pass:
     REPT 16
         ini
     ENDR
-    djnz vid_xfer16n
+    dec e
+    jr nz, .pass
     ret
 
 ; Shared per-case-block prologue (SP14a T3 wave 2 - byte-budget lever):
