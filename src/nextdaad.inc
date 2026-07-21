@@ -461,75 +461,103 @@ MOUSE_X_MAX     equ 319    ; accumulated mouse position ceiling (320-
 MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
                             ; tall plane, screen-downward)
 
-; --- Video (sub-project 13, MakeVid .VID cutscene format) ---
-; docs/superpowers/specs/2026-07-20-sp13-video-design.md is the design
-; authority; every number below is cross-checked against the playvid
-; format-reference headers (tools/NextZXOS/src/c/DotCommands/playvid/
-; video_256x192_m.asm, video_256x192_m_palette.asm, video_256x240.asm,
-; video_256x240_palette.asm, video_320x240.asm, video_320x240_palette.asm)
-; and playvid's own classifier (sd.c: video_format_size[]). Priority
-; order 0-5 is playvid's own array order - vid_classify (video.asm) walks
-; it in this exact sequence.
-VID_FORMATS     equ 6
+; --- Video (native NXV format, SP14a T4 - MakeVid compatibility SCRAPPED) ---
+; docs/superpowers/specs/2026-07-21-sp14a-native-video-design.md is the
+; design authority. NXV is ONE parameterized, block-aligned container -
+; every section is an exact multiple of 512-byte SD blocks. The header
+; REPLACES the old sizeless sector-count classifier entirely: vid_open
+; (video.asm) reads block 0, validates the magic, and derives shape/
+; geometry/audio/palette/frame-count straight from the fields below - no
+; divisor walk, no collision hazard, no six-format zoo.
+;
+; --- NXV header (block 0, 512 bytes) - byte layout (all multi-byte
+; fields little-endian) ---
+;   offset  size  field
+;     0      5    magic "NXVID"
+;     5      1    version (=1)
+;     6      1    shape: 0 = 320-wide mode-1 (column-major), 1 = 256-wide
+;                 mode-0 (row-major)
+;     7      2    width (320 or 256 - cross-checked against shape at
+;                 open, not trusted alone)
+;     9      2    height - content height (<= native: 256 for mode-1,
+;                 192 for mode-0). ANY value satisfying the block-
+;                 alignment rule (spec's HEADER section: 320-wide needs
+;                 h mod 8 = 0; 256-wide needs h mod 2 = 0) - the
+;                 letterbox bars cost ZERO wire bytes; the player derives
+;                 Y-centering (clip + YOFS) from this at open time.
+;    11      2    fps_x10 (fps*10, e.g. 125=12.5fps) - informational/
+;                 cadence only; playback pacing is audio-driven, not fps
+;    13      1    audio channels: 1 = mono, 2 = stereo
+;    14      2    audio rate, Hz - NXV_RATE_STEREO or NXV_RATE_MONO only
+;                 (the supported set); anything else = VID FMT?
+;    16      2    audio bytes/frame, PADDED to a 512-byte block multiple
+;                 - the wire read size every frame
+;    18      2    audio bytes/frame, REAL (<= padded) - the played
+;                 length; the padding difference is silent wire filler,
+;                 never copied into the resident play buffer
+;    20      1    palette flag: 0 = no per-frame palette block (pixel
+;                 bytes ARE their own RGB332 colour), 1 = a 512-byte
+;                 9-bit palette block precedes the pixels every frame
+;    21      3    frame count (24-bit LE)
+;    24      2    pixel blocks/frame (512-byte blocks; pixel bytes =
+;                 this * 512 = width*height exactly, guaranteed by the
+;                 block-alignment rule above)
+;    26..511       reserved, zero
+NXV_MAGIC_LEN    equ 5
+NXV_VERSION      equ 1
+NXV_OFF_MAGIC    equ 0
+NXV_OFF_VERSION  equ 5
+NXV_OFF_SHAPE    equ 6
+NXV_OFF_WIDTH    equ 7
+NXV_OFF_HEIGHT   equ 9
+NXV_OFF_FPSX10   equ 11
+NXV_OFF_ACHAN    equ 13
+NXV_OFF_ARATE    equ 14
+NXV_OFF_ABYTES_PAD  equ 16
+NXV_OFF_ABYTES_REAL equ 18
+NXV_OFF_PALFLAG  equ 20
+NXV_OFF_FRAMES   equ 21     ; 3 bytes, 24-bit LE
+NXV_OFF_PIXBLK   equ 24
 
-; frame size in 512-byte sectors (the classifier's divisor table)
-VID_F0_SECT     equ 155     ; 320x240 palette
-VID_F1_SECT     equ 154     ; 320x240 no-palette
-VID_F2_SECT     equ 129     ; 256x240 palette
-VID_F3_SECT     equ 128     ; 256x240 no-palette
-VID_F4_SECT     equ 99      ; 256x192 palette
-VID_F5_SECT     equ 98      ; 256x192 no-palette
+NXV_SHAPE_MODE1  equ 0      ; 320-wide, Layer 2 mode 1, column-major
+NXV_SHAPE_MODE0  equ 1      ; 256-wide, Layer 2 mode 0, row-major
+NXV_WIDTH_MODE1  equ 320
+NXV_WIDTH_MODE0  equ 256
+NXV_NATIVE_H_MODE1 equ 256  ; column stride (hardware-fixed) - the ONLY
+                            ; height at which mode-1 needs zero column-
+                            ; gap bookkeeping (the flat-serve win)
+NXV_NATIVE_H_MODE0 equ 192  ; mode-0 has no stride mismatch at ANY
+                            ; height - always trivially flat/linear
+NXV_COLS_PER_PAGE equ 32    ; mode-1 hardware constant: 8192/256
 
-; frame size in bytes (= sect * 512; laid out here for later tasks - the
-; classifier itself only needs the sector table above)
-VID_F0_BYTES    equ 79360
-VID_F1_BYTES    equ 78848
-VID_F2_BYTES    equ 66048
-VID_F3_BYTES    equ 65536
-VID_F4_BYTES    equ 50688
-VID_F5_BYTES    equ 50176
+; Supported audio rate set (T4 design step, T1's derivation method,
+; CW16 across every video mode - see vidCtcTcNxvStereo/Mono, video.asm,
+; and the task report's TC tables). Any other header rate = VID FMT?.
+NXV_RATE_STEREO  equ 15625  ; 28,000,000/16/112 = 15625 exactly (VGA0) -
+                            ; the same "nice" CTC rate em00k's CTCAudio
+                            ; and this project's own SP10 music/SFX
+                            ; engine already use (aud_clk16_tab.asm docs)
+NXV_RATE_MONO    equ 23325  ; 933 samples * 25fps = 23325 exactly - the
+                            ; SAME true rate the old fmt4/5 mono format
+                            ; already derived (VID_RATE4_X10's own
+                            ; "233*100=23300, not exact" disclosure,
+                            ; sp13-task-2-report.md) - reused verbatim,
+                            ; not a new number
 
-; frame pixel dims (formats 1/3/5 share their palette sibling's dims)
-VID_F0_WIDTH    equ 320
-VID_F0_HEIGHT   equ 240     ; formats 0/1
-VID_F2_WIDTH    equ 256
-VID_F2_HEIGHT   equ 240     ; formats 2/3
-VID_F4_WIDTH    equ 256
-VID_F4_HEIGHT   equ 192     ; formats 4/5
+NXV_PAL_BYTES    equ 512    ; per-frame palette block size (palette-flag
+                            ; files only)
+NXV_AUD_BUF_MAX  equ 2560   ; largest real-or-padded per-frame audio size
+                            ; any shipped profile needs (N0 stereo:
+                            ; 2560B padded / 2500B real) - vidAudBuf's
+                            ; resident size (video.asm)
 
-; audio bytes/frame (formats 1/3/5 share their palette sibling's count).
-; 0/1: 933 stereo samples (L,R interleaved) = 1866 bytes, ~15.6kHz.
-; 2/3: 1866 stereo samples = 3732 bytes, ~31.1kHz.
-; 4/5: 933 mono samples = 933 bytes, ~23.3kHz.
-VID_F0_AUDIO    equ 1866
-VID_F2_AUDIO    equ 3732
-VID_F4_AUDIO    equ 933
-VID_F0_SAMPLES  equ 933     ; samples/frame, formats 0/1 (stereo pairs)
-VID_F2_SAMPLES  equ 1866    ; samples/frame, formats 2/3 (stereo pairs)
-VID_F4_SAMPLES  equ 933     ; samples/frame, formats 4/5 (mono)
-VID_RATE0_X10   equ 156     ; ~15.6 kHz (formats 0/1), rate*10 (fixed-point)
-VID_RATE2_X10   equ 311     ; ~31.1 kHz (formats 2/3)
-VID_RATE4_X10   equ 233     ; ~23.3 kHz (formats 4/5)
-VID_FPS0_X10    equ 167     ; 16.7 fps (formats 0-3), fps*10
-VID_FPS4_X10    equ 250     ; 25.0 fps (formats 4/5)
+; Distinct short-pixel-read failure code (mid-frame, after audio+palette
+; already confirmed present - never the documented-normal EOF signal a
+; short AUDIO read is). Outside the esxDOS error range, alongside VID_
+; ERR_FRAG/NOMAP/TOKEN/CMD above.
+VID_ERR_SHORT    equ $FB
 
-; palette block bytes (formats 0/2/4 only; 1/3/5 carry none)
-VID_PAL_BYTES   equ 512
-
-; audio-block sector-alignment padding, formats 4/5 (playvid video_
-; 256x192_m.asm/_palette.asm: 933 audio + 91 padding = 1024, the "pad to
-; 1024 bytes for sector alignment" comment and the 90-iteration REPT skip
-; in both files' video_loop). Frame layout: audio(933) + pad(91) +
-; [palette(512), format 4 only] + pixels(49152) = VID_F4_BYTES/VID_F5_
-; BYTES exactly (933+91+512+49152=50688; 933+91+49152=50176).
-VID_F45_AUDPAD  equ 91
-
-; mono flag: bit n set = format n is MONO (only 4/5 - all others stereo).
-; Not yet consumed by Task 1 (classify only needs the sector table); laid
-; out now per the brief so Task 2's CTC/ISR selection has it ready.
-VID_MONO_MASK   equ %00110000
-
-; --- Video player core (SP13 Task 2) ---
+; --- Video player core - GFX/SFX dispatch (unchanged surface) ---
 ; GFX n 13/14 and SFX n 9/10 (PLAYFLI/PLAYFLIL) all dispatch to vid_play
 ; (video.asm): n = video number, sub selects play-once vs loop. h_gfx/
 ; h_sfx each translate their own sub-command range into vid_play's C =
@@ -541,189 +569,47 @@ GFX_SUB_VID_LOOP equ 14
 SFX_SUB_VID_ONCE equ 9
 SFX_SUB_VID_LOOP equ 10
 
-VID_PIX_PAGES   equ 6       ; 8K pages per 256x192 frame (49152/8192) -
-                            ; formats 4/5 only (mono, this task's scope)
-
-; --- Video player core (SP13 Task 3) - stereo dual-DAC + 256x240 (2/3) ---
-; audio-block sector-alignment padding, formats 2/3 (playvid video_256x240.
-; asm/_palette.asm: 3732 audio + 364 padding = 4096, "pad to 4096 bytes for
-; sector alignment", video_256x240.asm lines 8-9/501-525 and _palette.asm
-; lines 8-9/515-525). Frame layout: audio(3732) + pad(364) +
-; [palette(512), format 2 only] + pixels(61440) = VID_F2_BYTES/VID_F3_BYTES
-; exactly (3732+364+512+61440=66048; 3732+364+61440=65536).
-VID_F23_AUDPAD  equ 364
-
 ; DAC ports (ports.txt, tools/ZXNextOS/docs/extra-hw/io-port-system/
 ; ports.txt lines 266-274: "four 8-bit dac channels... A,B are directed to
 ; the left audio channel and C,D are directed to the right"; the
 ; soundrive-2 column gives DAC B = $F3, DAC C = $F9 - the exact pair the
 ; MakeVid reference ISR uses (tools/ZXNextOS/.../playvid/interrupts-
-; common.asm isr_ctc_stereo, lines 250-307: "out (0xf3),a ; left dac B" /
-; "out (0xf9),a ; right dac C"). NR_PERIPH3 bit 3 (already enabled
-; elsewhere for the mono DAC) covers these too - same "8-bit DACs on" gate.
+; common.asm isr_ctc_stereo). NR_PERIPH3 bit 3 (already enabled elsewhere
+; for the mono DAC) covers these too - same "8-bit DACs on" gate.
 VID_DAC_LEFT    equ $F3
 VID_DAC_RIGHT   equ $F9
 
-; Stereo audio downsample factor: T3's page-space finding (see the task
-; report) is that a full 3732-byte resident play buffer (matching the
-; simple whole-frame-resident design mono uses) does not fit the video
-; page's ~6KB budget alongside the rest of the streaming machinery, which
-; must stay resident even for a hot/cold split (loop-mode reopen calls
-; vid_open_video/vid_stream_open mid-CTC-armed-session, so that machinery
-; can never leave the page - measured, not assumed: a 2:1 buffer, 1866
-; bytes, still overflowed the page by ~517 bytes even after stripping the
-; T1b-T1d DEBUG diagnostic scaffolding, and the VIDBENCH harness this
-; could otherwise fall back to relocating is too tightly coupled to the
-; hot vid_stream_read internals - every one of its calls would need its
-; own two-way page-hop trampoline - to safely split off in this pass).
-; Factor 3 fits with margin: playing every 3rd stereo sample pair shrinks
-; the resident buffer to 1244 bytes (622 pairs, exactly divisible - no
-; remainder) at the cost of the audible rate (~31.1kHz source ->
-; ~10.37kHz played). Disclosed, deliberate mitigation, not silent quality
-; loss - see the report.
-VID_STEREO_DOWNSAMPLE equ 3
-VID_F2_PLAY_SAMPLES equ VID_F2_SAMPLES / VID_STEREO_DOWNSAMPLE  ; 622 pairs
-VID_F2_PLAY_BYTES   equ VID_F2_PLAY_SAMPLES * 2                 ; 1244 bytes
+; Layer 2 mode select (NR $70), matching l2_mode_set's own literals
+; (overlay2.asm).
+NXV_NR70_MODE1  equ %00010000  ; mode 1 (320x256/column-major)
+NXV_NR70_MODE0  equ 0          ; mode 0 (256x192/row-major)
 
-; 256x240 column-major pixel layout (formats 2/3). Reference: tools/
-; ZXNextOS/.../playvid/video_256x240.asm header (lines 1-11: "256 x 240
-; pixels (column major order)") and its loop_8k (lines 567-1252): each
-; 8K L2 page holds 32 columns at a fixed 256-byte hardware stride (Layer 2
-; mode 1 addressing, address = X*256+Y - overlay2.asm's own "320x256:
-; column-major" comment, l2_mode_set/l2_clip_set), but the file supplies
-; only 240 real bytes per column (256x240 = 61440 = 256*240) - the
-; remaining 16 bytes/column are UNWRITTEN stride padding (playvid's own
-; "ld l,a / inc h" mid-loop_8k address jumps, e.g. video_256x240.asm lines
-; 586-591). VID_COL_STRIDE - VID_COL_HEIGHT = VID_COL_GAP = 16.
-VID_COL_HEIGHT  equ 240     ; real pixel bytes per column
-VID_COL_STRIDE  equ 256     ; hardware column pitch (mode 1, fixed)
-VID_COL_GAP     equ VID_COL_STRIDE - VID_COL_HEIGHT  ; = 16
-VID_COL_PER_PAGE equ 8192 / VID_COL_STRIDE           ; = 32 columns/8K page
-VID_PIX_PAGES23 equ 8       ; 8K pages per 256x240 frame (256 cols / 32
-                            ; per page) - matches the reference's own
-                            ; _w_layer2_page_count = 8 (video_256x240.asm
-                            ; line 122)
-VID_L2_MODE1    equ %00010000  ; NR $70: mode 1 (320x256/column-major),
-                            ; matching l2_mode_set's own %00010000 literal
-                            ; (overlay2.asm) - formats 2/3 use a 256-wide
-                            ; subset of this mode, never mode 0
-; SP14a T3 fix wave 4 (owner hardware leg - vply2 pillarbox regression):
-; fmt2/3's 256-wide content is centered within the SAME 320-wide mode-1
-; surface fmt0/1 uses full-bleed - X1=16/X2=143 (2-pixel units: 16 units
-; = 32px inset each side, (320-256)/2=32px), matching the reference's
-; own clip X1=16,X2=143 EXACTLY (this file's own header already cited
-; this pair - "cross-checked against the reference's own clip X1=16,
-; X2=143" - but the CODE only ever used X1=0, never implementing the
-; X1 half of that citation). The blit's own destination base is offset
-; by the matching 1 page (VID_COL_PER_PAGE=32 columns = the same 32px)
-; so written data lands under this clip window - see vid_stream_frame's
-; own dest-page derivation, video.asm.
-;
-; CORRECTION (SP14a escalation bench wave, a further owner hardware
-; leg): the paragraph above originally also argued the reference's own
-; Y1=8/scroll_y=-8 pairing was "VGA-border compensation" that "genuinely
-; does not apply here" - that reasoning was WRONG, for the same reason
-; the X1=0 gap was wrong: 240 real rows inside a 256-row-addressable
-; column need vertical centering regardless of any VGA-border question.
-; vply2/3 (and vply0/1 - the SAME mode-1 column geometry, see VID_PIX_
-; PAGES01's own header below) rendered pinned to the top of the surface
-; until this was fixed - see video.asm's own vid_run Layer 2 setup
-; (Y1=8/Y2=247 clip + NR_L2_YOFS=-8, mirroring the reference's exact
-; pairing, applied to ALL FOUR 240-line formats 0/1/2/3 - mode 0's
-; 256x192 formats 4/5 are unaffected, matching the reference's own
-; scroll_y=0 there).
-VID_L2_CLIP_X1_M1 equ 16        ; = 32px inset (fmt2/3 only)
-VID_L2_CLIP_X2_M1 equ VID_L2_CLIP_X1_M1 + (256/2) - 1  ; = 143
+; NR $18 clip X (full-bleed, every NXV profile - no pillarbox anywhere in
+; the new matrix, unlike the old fmt2/3's 256-of-320 subset): mode-1 X
+; units are 2px/unit (X2=(320/2)-1=159), mode-0 X units are 1px/unit
+; (X2=256-1=255) - both full width, X1=0 always.
+NXV_CLIP_X2_MODE1 equ (320/2)-1   ; = 159
+NXV_CLIP_X2_MODE0 equ 256-1        ; = 255
 
-; Per-video-mode CTC time constant for the stereo downsampled rate
-; (31100/VID_STEREO_DOWNSAMPLE = ~10366 Hz), same derivation as
-; vidCtcTcTab (video.asm): TC = floor(clk16[mode]/rate), always CW16 (the
-; crossover stays far below 10366 on every mode, same reasoning as the
-; 23300Hz table's header). VGA0 168, VGA1 172, VGA2 177, VGA3 180, VGA4
-; 186, VGA5 192, VGA6 198, HDMI 162.
-VID_RATE_STEREO_PLAY equ 10366
-
-; --- Video player core (SP13 Task 4) - 320x240 formats (0/1), full-bleed ---
-; audio-block sector-alignment padding, formats 0/1 (video_320x240.asm/
-; _palette.asm: 1866 audio + 182 padding = 2048, "pad to 2048 bytes for
-; sector alignment", both files' lines 8-9/513-514). Frame layout:
-; audio(1866) + pad(182) + [palette(512), format 0 only] + pixels(76800)
-; = VID_F0_BYTES/VID_F1_BYTES exactly (1866+182+512+76800=79360;
-; 1866+182+76800=78848).
-VID_F01_AUDPAD  equ 182
-
-; 320x240 column-major pixel layout (formats 0/1) - the SAME mode-1
-; addressing T3 proved for 256x240 (2/3): the stride/gap/32-cols-per-page
-; geometry (VID_COL_HEIGHT/STRIDE/GAP/PER_PAGE above) is a Layer 2 mode
-; property, not format-specific, so only the PAGE COUNT differs here.
-; Reference: video_320x240.asm/_palette.asm header (lines 1-11, "(column
-; major order)") and loop_8k (both files, lines ~562-1291): 15 SD blocks
-; (512B each = 7680B) per 8K L2 page, case_0..case_14 (15 cases, each one
-; SD block; case_15 is pure loop control, no transfer). VID_PIX_PAGES01 =
-; 320 cols / 32 per page = 10 EXACT pages - confirmed directly by the
-; reference's own `ld ix,(_w_layer2_page_count)` comment "ixh = dst layer
-; 2 page, ixl = 10 (10 * 8K = 80K for L2)" (line 604/562) and cross-
-; checked arithmetically: 10 pages * 7680 real bytes/page = 76800, the
-; format's own pixel block size, with ZERO remainder. NOTE: this
-; corrects an earlier draft assumption (this task's own brief) of a
-; partial final page (76800/8192=9.375, treating the 8192 DESTINATION
-; page size as the divisor of SOURCE bytes/page) - the reference's own
-; code and this arithmetic both confirm 10 FULL pages, no partial page;
-; see the task report for the full reconciliation.
-VID_PIX_PAGES01 equ 10
-
-; NR $18 X2 clip for the fmt0/1 full-bleed case: the whole 320-wide
-; surface is used (no pillarbox, unlike fmt2/3's 256-of-320 subset) - X2
-; in 2-pixel units = (320/2)-1 = 159, matching the reference's own
-; `_vc_clip: defb 0, 159, 8, 247` (video_320x240_palette.asm:39; X1=0
-; confirms no left inset either). Y1/Y2 DO match fmt2/3's own (8, 247 -
-; see the correction note on VID_L2_CLIP_X1_M1 above; the earlier claim
-; that the reference's Y1=8/scroll_y=-8 pairing was VGA-border-only and
-; "not applicable here" was wrong for both format pairs alike).
-VID_L2_CLIP_X2_M1_01 equ (320/2)-1  ; = 159
-
-; Stereo downsample for formats 0/1 (owner-decided, SP13 T4 brief): 2:1
-; (keep stereo, skip alternate pairs) - a DIFFERENT factor from fmt2/3's
-; 3:1 (VID_STEREO_DOWNSAMPLE above). fmt0/1's SOURCE rate is already
-; lower (933 pairs/frame vs fmt2/3's 1866), so a full-fidelity resident
-; buffer would need only 1866 bytes (933*2) - still larger than the
-; EXISTING 1244-byte shared vidAudBuf allocation (sized for fmt2/3's own
-; downsampled need), so the same page-space pressure applies; the
-; owner's 2:1 factor keeps the result WITHIN that existing allocation
-; (no buffer growth at all): 933 pairs, kept = ceil(933/2) = 467 (indices
-; 0,2,4,...,932 - the pattern starts AND ends on a kept pair since 933 is
-; odd: 467 kept + 466 skipped = 933 exactly, no remainder), 934 bytes -
-; comfortably under 1244. Effective played rate = 467 pairs / 60ms (the
-; format's own frame period, 50/3 fps like fmt2/3) = 7783.33 Hz, matching
-; the brief's own "~7.78kHz" figure and its "933 bytes/frame effective"
-; approximation (934, off by the ceiling rounding).
-VID_STEREO01_DOWNSAMPLE equ 2
-VID_F0_PLAY_SAMPLES equ 467   ; ceil(933/2) - see derivation above
-VID_F0_PLAY_BYTES   equ VID_F0_PLAY_SAMPLES * 2   ; 934 bytes
-VID_RATE0_PLAY equ 7783        ; floor(467*50/3) - see derivation above
-
-; Per-video-mode CTC time constant for VID_RATE0_PLAY (~7783 Hz), same
-; derivation as vidCtcTcTab/vidCtcTcTab2 (floor(clk16[mode]/rate)) - BUT
-; UNLIKE those two tables, the CW16 crossover does NOT stay below this
-; rate on every mode: VGA5 (crossover 7812 Hz) and VGA6 (crossover
-; 8056 Hz) both EXCEED 7783 - so those two modes need CW256 (TC=16,
-; floor((clk16>>4)/rate)=16 for both) instead of CW16. This table (video.
-; asm's vidCtcTcTab0) stores 0 (a sentinel - never a valid CW16 TC) at
-; the VGA5/VGA6 slots; vid_run detects the sentinel and substitutes
-; CW256/TC=16 at runtime - see that routine's own comment. Do NOT
-; reclaim 0 as a real TC here: the CTC's own "0 = TC 256" encoding is
-; unreachable at this rate on CW16 modes (max entry 248), which is what
-; keeps the sentinel unambiguous. VGA0 224,
-; VGA1 229, VGA2 236, VGA3 240, VGA4 248, VGA5 0(sentinel), VGA6
-; 0(sentinel), HDMI 216. Verified with a Python cross-check (not hand
-; arithmetic), matching the T3 report's own methodology.
+; Copper flip (spec's Q2a design, owner hardware-validated line - the
+; VBENCH-COPPER owner leg confirmed a clean band at the default probe
+; line with the picture correctly above it, "confirms L2-ends-at-256
+; well enough for the flip design"). FRAME-mode 4-instruction/8-byte
+; list: WAIT <line>,0 / MOVE NR_L2_BANK,<bank> / MOVE NR_PAL_CTRL,
+; <palctl> / HALT (WAIT $FFFF). The CPU rewrites only the two MOVE data
+; bytes each frame, during active display (copper parked at the
+; terminal HALT by then - never mid-instruction, per the design doc's
+; own hazard note).
+NXV_COPPER_LINE     equ 257  ; owner-validated (VBENCH-COPPER leg)
+NXV_COPPER_OFF_BANK equ 3    ; byte offset of the NR $12 MOVE's data
+NXV_COPPER_OFF_PAL  equ 5    ; byte offset of the NR $43 MOVE's data
 
 ; --- SP14a Task 1: DEBUG-only frame-timeline instrument (video.asm's
 ; vid_tl_stamp/vid_tl_report) - phase ids for the 5-phase closed loop
 ; the frame loop is stamped through once per frame: stream (audio+
 ; palette bytes read) -> blit (pixel data transfer) -> other (key/exit
-; check) -> flip/pace-wait (audio-done spin + downsample copy-out + the
-; L2 bank/NR $12 flip) -> palette (the deferred vid_apply_palette call,
+; check) -> flip/pace-wait (audio-done spin + full-rate audio copy-out +
+; the L2 bank/NR $12 copper-flip poke) -> palette (the deferred vid_apply_palette call,
 ; palette formats only) -> other (loop-back) -> stream ... Named here,
 ; not left as magic immediates, so vid_tl_stamp's call sites self-
 ; document. DEBUG-only: zero cost to Release (see video.asm's own IFDEF

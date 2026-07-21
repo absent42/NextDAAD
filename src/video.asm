@@ -1,89 +1,26 @@
-; NextDAAD code page: video (SP13 - MakeVid .VID cutscene playback).
+; NextDAAD code page: video (native NXV cutscene playback, SP14a T4).
 ; VID_PAGE (nextdaad.inc) = 59, the upper 8K of bank 29 - the only page
 ; in the overlay-reserved bank range (28/29) with no prior equate; see
-; nextdaad.inc's VID_PAGE comment and this task's report for the full
-; free-page derivation. Reached exactly like overlay0/1/2: MMU7 mapped
-; to this page by whoever hops in (the engine dispatcher for condacts
-; once Task 2 wires GFX/SFX; the DEBUG bench trampoline below for
-; VIDBENCH), never resident code running in place.
+; nextdaad.inc's VID_PAGE comment. Reached exactly like overlay0/1/2:
+; MMU7 mapped to this page by whoever hops in (the engine dispatcher for
+; GFX/SFX condacts; the DEBUG bench trampoline below for VIDBENCH), never
+; resident code running in place. ONE RULE, unchanged from every prior
+; video task: MMU7 = VID_PAGE for the entire window the video CTC ISR can
+; fire (from the time constant write in vid_run through the CTC's final
+; reset in .restore) - every cross-page hop in this file respects it.
 ;
-; This file currently holds (Task 1): the format classifier, the
-; F_READ-backed vid_stream_* streaming interface (Task 2's player
-; consumes these three routines verbatim - signatures are pinned, see
-; the task report), and a DEBUG-only benchmark harness. The player
-; itself (vid_play, the CTC/Layer-2 machinery) is Task 2+.
+; SP14a T4 (docs/superpowers/specs/2026-07-21-sp14a-native-video-design.md)
+; SCRAPPED MakeVid compatibility entirely and replaced it with NXV, a
+; single native, block-aligned, header-classified container (see
+; nextdaad.inc's NXV header layout comment). This file holds: nxv_open
+; (header validate + geometry derivation, replacing the old sizeless
+; sector-count classifier), the raw-SD-SPI vid_stream_* streaming
+; interface (format-agnostic, unchanged across every video task to
+; date), the player core (vid_play/vid_run - CTC/Layer 2/copper-flip/
+; presentation-isolation machinery), the flat and gapped pixel blits, and
+; a DEBUG-only benchmark harness (VIDBENCH/VBENCH-FLAT/DMA/COPPER).
 
     MMU 7, VID_PAGE, OVL_ORG
-
-; ---------------------------------------------------------------------
-; vid_classify
-; ---------------------------------------------------------------------
-; In: HL = file size low word, DE = file size high word (the 32-bit
-;     "DEHL" convention - DE:HL, high:low; ext_xmes/ddb_load use the
-;     narrower ddbSizeHi:ddbSize shape for the 128K-capped DDB, but video
-;     files run far larger, so this takes the full word pair). Typical
-;     caller sequence: ld hl,(vidSizeLo) / ld de,(vidSizeHi) after a
-;     vid_stream_open.
-; Out: CF clear, A = format 0-5 (priority order: 0 = 320x240 palette
-;      (155 sectors/frame) .. 5 = 256x192 no-palette (98 sectors/frame) -
-;      vidFormatSect below, VID_F0_SECT..VID_F5_SECT in nextdaad.inc).
-;      CF set = unclassifiable (size not a whole number of 512-byte
-;      sectors, or no format's frame-sector-count divides the sector
-;      count exactly).
-;
-; Matches playvid's own algorithm exactly (tools/NextZXOS/src/c/
-; DotCommands/playvid/sd.c: sd_classify_video_format / video_format_size)
-; - classification works in 512-byte SECTORS, not raw bytes: reject any
-; size that is not a whole number of sectors, then walk the six frame-
-; sector-counts in priority order looking for an exact division.
-;
-; BLANK-FRAME-AMBIGUITY NOTE (spec, "Format classification"): a file
-; whose sector count is ALSO an exact multiple of an EARLIER-priority
-; format's frame-sector-count classifies as that earlier format instead
-; - by design, matching playvid; the documented remedy is at ENCODE time
-; (MakeVid appends one blank frame to break the coincidence), not here.
-; This task's report cites a real example found in the tools/demo-files
-; fixture matrix (one file collides with an earlier format's divisor;
-; another fails to classify as itself at all - both are fixture-encoding
-; properties, not classifier defects).
-;
-; SP14a T3 wave 1: COLD (VID_PAGE2). Provably never runs while the video
-; CTC ISR is armed - vid_classify's only real caller is vid_play (calls
-; it BEFORE `jp vid_run`, i.e. before the CTC ever arms this session).
-; The DEBUG-only vid_bench_compute (VIDBENCH, itself moved to VID_PAGE2
-; in the SP14a escalation bench wave) calls its own dedicated vbench_
-; classify copy instead (same-page plain call, bypassing this hot stub
-; entirely - see that routine's own header for why it is a separate
-; copy, not a shared core) - it never touches the CTC either way.
-; This hot-page stub is the ONLY part left resident here: it hops
-; to vid_classify_body (VID_PAGE2, below) via the established push-
-; target/ovl_map_page trampoline (vid_tl_report's own precedent, this
-; file) and back, preserving the plain `call vid_classify` contract for
-; both callers unchanged. Register-only I/O (HL/DE in, A/CF out) is
-; carried across the hop via B - `ovl_map_page`'s own `ld a,<page>`
-; clobbers A, and CF is reconstructed explicitly at the landing stub
-; rather than assumed to survive `nextreg`/`ret` untouched. The IN
-; registers (HL/DE) are stacked here BEFORE the trampoline's own `ld
-; hl,<target>` would otherwise clobber them, and popped back first thing
-; in vid_classify_body - the hop machinery itself needs HL as its jump-
-; target vehicle, so the caller's real HL/DE cannot be loaded until after
-; that push. Corrupts AF, BC, DE, HL, IX.
-vid_classify:
-    push hl                      ; caller's HL (size low) - preserved
-    push de                      ; caller's DE (size high) - preserved
-    ld hl, vid_classify_body
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
-vid_classify_ret:
-    ld a, b
-    cp $FF
-    jr z, .bad
-    or a                         ; CF clear, A = format (already in A)
-    ret
-.bad:
-    scf
-    ret
 
 ; ---------------------------------------------------------------------
 ; vid_stream_* - dual-mechanism streaming interface. The three
@@ -782,20 +719,21 @@ vidFilemapBuf:     ds VID_FILEMAP_ENT*6   ; DISK_FILEMAP entries (192 bytes)
 vidStrmBlkBuf:     ds 512        ; one card block held for sub-block drains
 
 ; ---------------------------------------------------------------------
-; vid_play - the player core (SP13 Task 2 mono, Task 3 stereo, Task 4
-; 320x240 full-bleed). All six formats 0-5 play (320x240 palette/no-
-; palette, 256x240 stereo, 256x192 mono); vid_classify's CF (unclassifiable
-; size) is the only fail-silent no-op left. Entry: B = video number,
-; C = 0 play-once / 1 loop
-; (h_gfx/h_sfx translate their own sub-command numbers into this before
-; the cross-page hop - see nextdaad.inc's GFX_SUB_VID_*/SFX_SUB_VID_*).
-; Probes PARTn\NNN.VID (curPart > 1) then root NNN.VID, classifies,
-; plays, and ALWAYS returns via the restore path (vid_run's .restore/
-; .restore_noplay) on every exit - key, EOF, or a read error. Corrupts
-; everything; the caller (h_gfx.vidgo/h_sfx.vidgo) never resumes - this
-; IS the tail of the dispatch, and the return lands directly on the
-; engine dispatcher via the trampoline's stacked return address (the
-; xpart_load_entry/vid_bench_trampoline push-target idiom).
+; vid_play - the player core entry (SP14a T4: native NXV). Entry: B =
+; video number, C = 0 play-once / 1 loop (h_gfx/h_sfx translate their own
+; sub-command numbers into this before the cross-page hop - see
+; nextdaad.inc's GFX_SUB_VID_*/SFX_SUB_VID_*). Probes PARTn\NNN.VID
+; (curPart > 1) then root NNN.VID, opens, and unconditionally hands off to
+; vid_run - the NXV header validate (nxv_open, below) now runs INSIDE
+; vid_run's own early-bail sequence (after bank_alloc, before any CTC/
+; Layer2/copper state is touched), not here - see vid_run's header for
+; why. ALWAYS returns via vid_run's own restore path (.restore/
+; .restore_noplay/.restore_badhdr) on every exit - key, EOF, read error,
+; or a bad header. Corrupts everything; the caller (h_gfx.vidgo/h_sfx.
+; vidgo) never resumes - this IS the tail of the dispatch, and the return
+; lands directly on the engine dispatcher via the trampoline's stacked
+; return address (the xpart_load_entry/vid_bench_trampoline push-target
+; idiom).
 ; ---------------------------------------------------------------------
 vid_play:
     ld a, b
@@ -807,27 +745,7 @@ vid_play:
                                    ; own MMU7 value - see vid_open_video)
     call vid_open_video
     jr c, .missing
-    ld hl, (vidSizeLo)
-    ld de, (vidSizeHi)
-    call vid_classify
-    jr c, .badfmt
-    cp 6
-    jr nc, .badfmt          ; defensive (vid_classify never returns > 5) -
-                            ; SP13 T4: all six formats (0-5) now play; the
-                            ; old cp2/jr c reject for 0/1 is gone
-.haveformat:
-    ld (vidFmt), a
     jp vid_run                    ; tail: vid_run's own restore paths ret
-.badfmt:
- IFDEF DEBUG
-    ld b, 23
-    ld c, 0
-    call dbg_at
-    ld hl, msgVidBadFmt
-    call dbg_puts
- ENDIF
-    call vid_stream_close
-    ret
 .missing:
  IFDEF DEBUG
     ld b, 23
@@ -844,16 +762,17 @@ vid_play:
 ;
 ; SP14a T3 wave 1: COLD (VID_PAGE2) - the whole name-build/PARTn-probe/
 ; open cluster runs exactly once per vid_play invocation, entirely before
-; vid_run ever arms the CTC (provably: vid_play calls this, then vid_
-; classify, then `jp vid_run` - the CTC's own first arm is deep inside
-; vid_run, well after this cluster's work is done; the loop-mode restart
-; no longer calls this at all - see vid_run's own restart redesign). This
-; hot-page stub is the only part left resident: it hops to vid_open_
-; video_body (VID_PAGE2, below) via the established push-target/ovl_map_
-; page trampoline and back - same B-carries-CF convention as vid_classify
-; above. The video number travels via C (set by vid_play, above) rather
-; than memory, so vid_open_video_body needs no MMU6 translation just to
-; learn which file to open. Corrupts AF, BC, DE, HL, IX.
+; vid_run ever arms the CTC (provably: vid_play calls this then `jp
+; vid_run` unconditionally - the CTC's own first arm is deep inside
+; vid_run, well after this cluster's work AND nxv_open's own header
+; validate, below, are both done; the loop-mode restart no longer calls
+; this at all - see vid_run's own restart redesign). This hot-page stub
+; is the only part left resident: it hops to vid_open_video_body (VID_
+; PAGE2, below) via the established push-target/ovl_map_page trampoline
+; and back - same B-carries-CF convention this file uses everywhere else.
+; The video number travels via C (set by vid_play, above) rather than
+; memory, so vid_open_video_body needs no MMU6 translation just to learn
+; which file to open. Corrupts AF, BC, DE, HL, IX.
 vid_open_video:
     ld hl, vid_open_video_body
     push hl
@@ -870,85 +789,146 @@ vid_open_video_ret:
     ret
 
 ; ---------------------------------------------------------------------
+; nxv_open - validate the NXV header (block 0) and derive every per-file
+; playback parameter this player needs, straight from the header fields
+; (nextdaad.inc's NXV_OFF_* layout comment is the authority for offsets/
+; sizes). REPLACES the old sizeless sector-count vid_classify entirely -
+; no divisor walk, no priority-order collision hazard, no six-format
+; table.
+;
+; Split hot stub / cold body (VID_PAGE budget - the validation logic
+; itself is sizeable and does not need MMU7=VID_PAGE for anything beyond
+; the one vid_stream_read call): this hot stub does ONLY the actual 512-
+; byte read off the SD card (vid_stream_read is VID_PAGE-resident and
+; touches vidStrm* cells directly, untranslated), then hops to nxv_open_
+; body (VID_PAGE2, below) for the parse/validate/derive, and back - the
+; same push-target/ovl_map_page trampoline and B-carries-result
+; convention this file uses everywhere else. Called from vid_run's own
+; early sequence, AFTER bank_alloc has claimed the pool bank (block 0
+; lands in vidAudPoolPage as one-time scratch - the SAME page frame 0's
+; real audio will land in; no rewind is needed afterward, since the raw
+; streaming cursor naturally continues from block 1 = frame 0's own
+; first byte) and BEFORE any CTC/Layer2/copper/isolation state is
+; touched - an invalid header bails out through vid_run's own .restore_
+; badhdr path with zero teardown needed beyond freeing the bank and
+; closing the stream. C carries the pool page across the hop (the hot
+; stub's own A/BC are both consumed/corrupted by vid_stream_read, so it
+; is reloaded fresh from vidAudPoolPage - cheap - rather than assumed to
+; survive the call).
+; Out: CF clear = valid NXV header; every vid* cell (vidShape/vidHeight/
+;      vidAChan/vidABytesPad/vidABytesReal/vidPalFlag/vidPixBlocks/
+;      vidGapNeeded/vidColUnits/vidClipY1/vidYofs) populated for the
+;      frame loop to use every frame. CF set = invalid (bad magic/
+;      version/shape/width/height-alignment/rate/pad-real/palette-flag/
+;      pixel-block-count, or a read/IO failure on the header block
+;      itself) - caller prints the existing "VID FMT?" message, same as
+;      the old unclassifiable-size case. Corrupts everything.
+nxv_open:
+    ld a, (vidAudPoolPage)
+    ld de, 512
+    call vid_stream_read
+    jr c, .ioerr
+    ld hl, 512
+    or a
+    sbc hl, bc
+    jr nz, .ioerr           ; short/EOF read on the header block itself
+    ld a, (vidAudPoolPage)  ; reload fresh - vid_stream_read corrupts A
+    ld c, a
+    ld hl, nxv_open_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+.ioerr:
+    scf
+    ret
+nxv_open_ret:
+    ld a, b
+    or a
+    jr z, .ok
+    scf
+    ret
+.ok:
+    or a
+    ret
+
+; ---------------------------------------------------------------------
+; Copper flip (spec's Q2a design - docs/superpowers/specs/2026-07-21-
+; sp14a-native-video-design.md). A 4-instruction/8-byte FRAME-mode list:
+; WAIT <NXV_COPPER_LINE>,0 / MOVE NR_L2_BANK,<bank> / MOVE NR_PAL_CTRL,
+; <palctl> / HALT (WAIT $FFFF, PC parked there until FRAME mode resets it
+; to 0 next vblank). Offloads the double-buffer bank flip and palette-
+; control flip to hardware, replacing the old direct CPU nextreg writes
+; at flip time - closes the palette-sparkle mismatch window to a
+; hardware-exact vblank flip (the T4 addendum's own design sketch,
+; confirmed by playvid's own shipped code, and the SP14a T3 escalation-
+; research wave's own Q2a design). WAIT line is owner-hardware-validated
+; (VBENCH-COPPER leg, SP14a T3's escalation-bench wave: "band from the
+; default line 257, correctly below the picture, confirms L2-ends-at-256
+; well enough for the flip design"). The one-time list LOAD (vid_copper_
+; init) lives cold (VID_PAGE2, below - see vid_run_l2setup_body's own
+; header for why it can be: nothing about loading the list needs MMU7 =
+; VID_PAGE, and it always runs BEFORE the CTC arms). Only the PER-FRAME
+; poke stays hot - it runs every frame during the CTC-armed window.
+; ---------------------------------------------------------------------
+
+; Rewrite one copper MOVE instruction's data byte - safe during active
+; display (the copper is parked at the terminal HALT by then, never at
+; either MOVE - see the design doc's own hazard note: writing program RAM
+; while the copper executes the very instruction being half-written is
+; the documented risk, and only the OPERAND changes here, one byte at a
+; time, never the register-select byte). In: A = data byte, E =
+; NXV_COPPER_OFF_BANK or NXV_COPPER_OFF_PAL. Corrupts AF.
+vid_copper_poke:
+    push af
+    ld a, e
+    nextreg NR_COPPER_ADDR_LO, a
+    ld a, %11000000                  ; control = FRAME (re-asserted, not
+    nextreg NR_COPPER_ADDR_HI_CTRL, a ; disturbed - see the header above)
+    pop af
+    nextreg NR_COPPER_DATA, a
+    ret
+
+; ---------------------------------------------------------------------
 ; vid_run - entry/exit symmetry: everything vid_run touches is captured
 ; into a vidSv*-prefixed cell here and reversed on EVERY exit path via
-; .restore (or .restore_noplay if the pool-bank claim itself failed).
-; Sequence (brief Step 2): save state -> samples abort (SSTOP, waited)
-; -> music tick frozen (audEnable=0 - the least invasive freeze: it also
-; stops the frame ISR's OWN MMU6/7 remap around aud_tick, which is
-; exactly what keeps MMU7=VID_PAGE stable for video_ctc_isr's banking
-; invariant, doc 11) -> CTC retuned -> IM2_CTC_STUB patched -> the loop
-; -> reverse-order restore on any exit (key, EOF in play-once, or a read
-; error), banks released, ret through the dispatcher's normal path.
+; .restore (.restore_badhdr if the NXV header is invalid, .restore_noplay
+; if the pool-bank claim itself failed). Sequence: save state -> samples
+; abort (SSTOP, waited) -> music tick frozen (audEnable=0 - the least
+; invasive freeze: it also stops the frame ISR's OWN MMU6/7 remap around
+; aud_tick, which is exactly what keeps MMU7=VID_PAGE stable for video_
+; ctc_isr's banking invariant, doc 11) -> pool bank claimed -> NXV header
+; validated (nxv_open - an invalid header bails HERE, before any CTC/
+; Layer2/copper/presentation state is touched) -> presentation isolation
+; saved+disabled -> CTC retuned -> IM2_CTC_STUB patched -> Layer 2 set up
+; -> copper flip initialised -> the loop -> reverse-order restore on any
+; exit (key, EOF in play-once, or a read error), banks released, ret
+; through the dispatcher's normal path.
 ; ---------------------------------------------------------------------
 vid_run:
-    ; --- save state (vidSaved) ---
+    ; --- save state: MMU6/MMU7 MUST be captured HERE, hot, before ANY
+    ; hop - a cold hop's own data_save/data_map_page bracket would
+    ; otherwise capture that bracket's OWN temporary MMU6 value instead
+    ; of the true pre-video one (and MMU7 is already VID_PAGE by
+    ; definition the instant any hop runs, not vid_run's true caller-
+    ; side value). VID_PAGE budget lever: everything ELSE this routine
+    ; used to capture/do here (NR12/70/69/15, the IM2 stub, audEnable,
+    ; l2Front/BackBank, the samples-abort wait, the music-tick freeze)
+    ; has no such ordering hazard, so it moved to vid_run_entry_body
+    ; (VID_PAGE2, below). ---
     ld e, NR_MMU6
     call nr_read
     ld (vidSvMmu6), a
     ld e, NR_MMU7
     call nr_read
     ld (vidSvMmu7), a
-    ld e, NR_L2_BANK
-    call nr_read
-    ld (vidSvNr12), a
-    ld e, NR_L2_CTRL
-    call nr_read
-    ld (vidSvNr70), a
-    ld e, NR_DISPLAY_CTRL
-    call nr_read
-    ld (vidSvNr69), a
-    ld e, NR_LAYERS
-    call nr_read
-    ld (vidSvNr15), a
-    ld hl, (IM2_CTC_STUB+1)
-    ld (vidSvCtcStub), hl
-    ld a, (audEnable)
-    ld (vidSvAudEnable), a
-    ld a, (l2FrontBank)
-    ld (vidSvL2Front), a
-    ld a, (l2BackBank)
-    ld (vidSvL2Back), a
-    ; NR $43 (palette ctrl): the dev guide's per-register spec (chapter-
-    ; next-palette.tex, "Register $43") never states it is readable - NR
-    ; $40/$41/$44 each say "Reads or writes ..." explicitly, $43's own
-    ; entry only describes what each bit DOES when written, no read
-    ; mention. nr_read is therefore NOT used here; the game's own
-    ; convention is captured instead (sp13-task-4-report.md addendum:
-    ; every Layer 2 palette writer in this codebase, including this
-    ; file's own vid_identity_palette below, uses PAL_L2_FIRST
-    ; unconditionally - it is the only value NR $43 can hold on entry).
-    ; vidPalCtrl (the double-buffer's own "which bank is on screen right
-    ; now" tracker, kept in software for the same readability reason) is
-    ; primed to the same value - frame 0 starts believing the first bank
-    ; is displayed, matching what vid_identity_palette/l2_palette_load's
-    ; own convention actually left on the hardware.
-    ld a, PAL_L2_FIRST
-    ld (vidSvNr43), a
-    ld (vidPalCtrl), a
+    ld hl, vid_run_entry_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+.entryret:
 
-    ; --- samples abort (SSTOP request path, waited) ---
-    ; audEnable = 0 means aud_tick never runs - the ISR never reaches the
-    ; request chain, so a bit set here would never clear (aud_load_song's
-    ; own documented hazard, overlay1.asm) - skip the wait in that case.
-    ; Re-read from vidSvAudEnable (A has since been reloaded twice above
-    ; for the l2Front/BackBank saves) rather than trust a stale register.
-    ld a, (vidSvAudEnable)
-    or a
-    jr z, .noaudsave
-    ld hl, audRequest
-    set 7, (hl)
-.waitstop:
-    halt
-    ld a, (audRequest)
-    bit 7, a
-    jr nz, .waitstop
-.noaudsave:
-    ; --- music tick frozen ---
-    xor a
-    ld (audEnable), a
-
-    ; --- pool bank: the audio landing page (lower 8K) + palette landing
+    ; --- pool bank: the audio landing page (lower 8K, doubles as nxv_
+    ; open's one-time NXV header scratch buffer below) + palette landing
     ; page (upper 8K of the SAME bank) - not two full frame pairs; pixels
     ; are the existing Layer 2 back-surface banks (zero-copy, no pool
     ; allocation needed for them at all). ---
@@ -967,204 +947,71 @@ vid_run:
     add a, a
     ld (vidAudPoolPage), a
 
-    ; --- CTC retune: 23.3kHz for mono formats 4/5; ~10.37kHz (downsampled
-    ; 3:1 from the source's 31.1kHz - nextdaad.inc's VID_STEREO_DOWNSAMPLE
-    ; header) for stereo formats 2/3; ~7.78kHz (downsampled 2:1 from
-    ; 15.55kHz - VID_STEREO01_DOWNSAMPLE header, SP13 T4) for stereo
-    ; formats 0/1 - table-driven from the live video-timing mode (NR $11
-    ; bits 2:0). For formats 4/5 and 2/3 the /16-vs-/256 crossover stays
-    ; below the rate on every mode, so the control word is always CW16
-    ; (vidCtcTcTab/vidCtcTcTab2's own headers). Formats 0/1 are the
-    ; EXCEPTION: VGA5/VGA6's crossover (7812/8056 Hz) exceeds 7783 Hz, so
-    ; those two modes need CW256/TC=16 instead - vidCtcTcTab0 stores a 0
-    ; sentinel at those two slots (never a valid CW16 TC) and the `or a`
-    ; check below detects it (see nextdaad.inc's vidCtcTcTab0 header).
-    ; Mirrors aud_smp_start's exact CTC program sequence (unknown-state
-    ; double reset, control word, time constant - audiobank.asm), EXCEPT
-    ; the stub is patched between the control word and the time constant
-    ; (not after) - the time-constant byte is what starts the timer
-    ; (aud_smp_start's own comment: "loading the TC starts the timer"),
-    ; so patching the stub first guarantees the FIRST possible tick
-    ; already dispatches the right ISR, never a stale ctc_isr. ---
-    ld e, NR_VIDEO_TIMING
-    call nr_read
-    and 7
-    ld c, a
-    ld b, 0
-    ld a, (vidFmt)
-    ld hl, vidCtcTcTab              ; mono table (formats 4/5)
-    cp 4
-    jr nc, .gottctab
-    ld hl, vidCtcTcTab2              ; stereo table, fmt2/3 rate (~10.37kHz)
-    cp 2
-    jr nc, .gottctab
-    ld hl, vidCtcTcTab0              ; stereo table, fmt0/1 rate (~7.78kHz)
-.gottctab:
-    add hl, bc
-    ld a, (hl)
-    ld d, AUD_CTC_CW16               ; default; overridden below only for
-                                      ; fmt0/1's VGA5/VGA6 sentinel (0) hit
-    or a
-    jr nz, .havetc
-    ld a, 16                         ; sentinel: TC=16 under CW256
-    ld d, AUD_CTC_CW256
-.havetc:
-    ld (vidCtcTc), a
-    ld a, d
-    ; SP14a T3 wave 1: no longer stashed into vidCtcCw - the loop-mode
-    ; restart no longer re-arms the CTC at all (it stays continuously
-    ; armed through the restart, see vid_run's .eof: redesign), so the
-    ; only historical reader of that stash is gone; vidCtcCw itself is
-    ; removed below (would otherwise be a dead write-only cell).
+    ; --- SP14a T4: NXV header validate (nxv_open, above) - block 0 is
+    ; read via the raw streaming cursor already sitting at file start
+    ; (vid_open_video's own raw setup/reset). CF set = bad header: bail
+    ; before ANY CTC/Layer2/presentation/copper state is touched - only
+    ; the pool bank and the sample-freeze need reversing (.restore_
+    ; badhdr, below) - REPLACES the old vid_classify's badfmt path. ---
+    call nxv_open
+    jp c, .restore_badhdr
+
+    ; --- presentation isolation (spec requirement, owner 2026-07-21) +
+    ; Layer 2 setup + identity palette + copper list load - ALL hopped
+    ; cold (VID_PAGE2's vid_run_l2setup_body, below) since NONE of it
+    ; depends on the CTC being armed, and this runs strictly BEFORE the
+    ; CTC retune section below arms it - the one-rule invariant (MMU7 =
+    ; VID_PAGE whenever the ISR can fire) is honoured because the hop
+    ; happens entirely pre-arm. See vid_run_l2setup_body's own header
+    ; (VID_PAGE2) for the full geometry derivation this used to do
+    ; inline here. ---
+    ld hl, vid_run_l2setup_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+.l2setupret:
+    ; sjasmplus dot-local scoping note (vid_stream_open_body's own
+    ; precedent, VID_PAGE2): a bare global landing label here would
+    ; rescope every dot-local vid_run defines AFTER it (.restore,
+    ; .frameloop, .eof, etc.) away from vid_run's own scope, breaking
+    ; every earlier `jp .restore_badhdr`-style reference. `.l2setupret`
+    ; stays a vid_run-scoped dot-local instead; vid_run_l2setup_body's
+    ; own hop-back targets it via the qualified name `vid_run.l2setupret`.
+
+    ; --- CTC retune: vidCtcTc was already computed cold, in vid_run_
+    ; l2setup_body above (table-driven from the live video-timing mode
+    ; and the header's own audio channel count - a pure data lookup, no
+    ; self-modifying code, so it is 100% safe pre-arm; moved there
+    ; purely to save hot-page bytes, the SAME already-open cold hop, no
+    ; new one). Both NXV tables (vidCtcTcNxvMono/Stereo) land CW16 on
+    ; EVERY video mode - no sentinel/CW256 branch needed (unlike the old
+    ; MakeVid-era fmt0/1 table). Mirrors aud_smp_start's exact CTC
+    ; program sequence (unknown-state double reset, control word, time
+    ; constant), stub patched BETWEEN the control word and the time
+    ; constant (loading the TC starts the timer), same ordering rule
+    ; every prior video task used. ---
     ld bc, AUD_CTC_PORT
     ld a, AUD_CTC_RESET
     out (c), a
     out (c), a                    ; double soft-reset (unknown -> clean)
-    ld a, d
+    ld a, AUD_CTC_CW16
     out (c), a                    ; control word - timer not running yet
 
-    ; --- IM2_CTC_STUB patched to the video audio ISR (mono or stereo -
-    ; ONE stereo ISR body serves formats 0/1/2/3 alike, see below),
-    ; BEFORE the time constant starts the timer further down. Single
-    ; atomic LD (nn),HL (doc 08's "interrupt atomicity" - one instruction,
-    ; no DI needed); MMU7 = VID_PAGE for the whole playback from here, the
-    ; banking invariant both ISRs depend on (their own headers). ---
-    ld a, (vidFmt)
-    ld hl, video_ctc_isr
-    cp 4
-    jr nc, .gotisr
-    ld hl, video_ctc_isr_stereo
-.gotisr:
-    ld (IM2_CTC_STUB+1), hl
-
-    ; --- stereo formats only (0-3): patch video_ctc_isr_stereo's own two
-    ; end-marker immediate operand bytes (self-modifying code - the SAME
-    ; idiom as the IM2_CTC_STUB patch just above, doc 11) so the ONE ISR
-    ; body serves both downsampled buffer lengths (fmt2/3's 622 pairs /
-    ; fmt0/1's 467 pairs, SP13 T4) at ZERO ISR byte or T-state cost - only
-    ; this one-time mainline setup pays. MUST happen before the time-
-    ; constant write below starts the timer (same ordering rule as the
-    ; stub patch). ---
-    ld a, (vidFmt)
-    cp 4
-    jr nc, .noisrmark              ; mono: no marker to patch
-    ld hl, vidAudBufLastStereo23
-    cp 2
-    jr nc, .gotmark
-    ld hl, vidAudBufLastStereo01
-.gotmark:
-    ld a, l
-    ld (video_ctc_isr_stereo.cmplo+1), a
-    ld a, h
-    ld (video_ctc_isr_stereo.cmphi+1), a
-.noisrmark:
-
+    ; --- IM2_CTC_STUB (ISR select) and both ISR bodies' end-marker were
+    ; ALSO already patched cold, in vid_run_l2setup_body above (another
+    ; VID_PAGE budget lever - same reasoning as the CTC table lookup
+    ; just above: both writes target either RESIDENT memory (IM2_CTC_
+    ; STUB) or VID_PAGE-resident code reached via the SAME MMU6-
+    ; translated-write bracket that body already holds open, so nothing
+    ; here needs to be hot). Both complete before this section's own
+    ; time-constant write, below, starts the timer - the one real
+    ; ordering rule (loading the TC starts the timer, so the stub/
+    ; end-marker patches must land first) is honoured because the whole
+    ; cold hop finishes and returns before this hot code ever runs. ---
     ld a, (vidCtcTc)
     ld bc, AUD_CTC_PORT
     out (c), a                    ; time constant -> timer starts NOW,
                                    ; already dispatching the right ISR
-
-    ; --- Layer 2 setup for playback: mode 0/row-major (256x192, formats
-    ; 4/5) or mode 1/column-major (256x240 subset of 320x256, formats
-    ; 2/3 - VID_L2_MODE1, nextdaad.inc, matching l2_mode_set's own %10
-    ; literal for 320x256), full-height clip (no playvid-style scroll/
-    ; crop inset - the brief's "no paper inset"), transparent colour left
-    ; at TM_TRANSP_ATTR (the engine-wide convention every l2_mode_set
-    ; call also uses - vid_apply_palette/vid_identity_palette dodge it
-    ; exactly like l2_palette_load). NR $18/$1C (clip) and $16/$17
-    ; (scroll) are NOT saved/restored - any picture the game shows after
-    ; video re-programs them in full via its own l2_mode_set/l2_clip_set
-    ; (gfx_blit calls it unconditionally on every DISPLAY), exactly like
-    ; the palette below. ---
-    ld a, (vidFmt)
-    cp 4
-    jr nc, .l2mode0
-    ld a, VID_L2_MODE1
-    nextreg NR_L2_CTRL, a
-    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
-    nextreg NR_CLIP_IDX, 1
-    ; X1/X2: full-bleed 320-wide (fmt0/1, SP13 T4, X1=0/X2=159) vs
-    ; fmt2/3's 256-of-320 CENTERED pillarbox (X1=16/X2=143, nextdaad.inc's
-    ; VID_L2_CLIP_X1_M1/X2_M1 - matches the reference exactly). SP14a T3
-    ; fix wave 4 (owner hardware leg): X1 was unconditionally 0 before
-    ; this fix, which only ever clipped fmt2/3's content to the LEFT 256
-    ; columns of the 320-wide surface (no centering at all) - the dest-
-    ; page offset below must move in lockstep with this X1, or the blit
-    ; writes data that lands outside (or only partially inside) whatever
-    ; window is clipped to.
-    ld a, (vidFmt)
-    cp 2
-    ld a, 0
-    ld b, VID_L2_CLIP_X2_M1_01
-    jr c, .gotx1x2
-    ld a, VID_L2_CLIP_X1_M1
-    ld b, VID_L2_CLIP_X2_M1
-.gotx1x2:
-    nextreg NR_L2_CLIP, a
-    ld a, b
-    nextreg NR_L2_CLIP, a
-    ; Y1/Y2 = 8/247 (VID_COL_HEIGHT+7), not 0/(VID_COL_HEIGHT-1) - owner
-    ; hardware leg (geometry item, following the pillarbox fix): vply2/3
-    ; rendered centered horizontally but pinned to the TOP of the 256-
-    ; row-tall column surface. The reference (tools/NextZXOS/.../playvid/
-    ; video_320x240.asm and video_256x240.asm, both palette and non-
-    ; palette variants) uses clip Y1=8/Y2=247 PLUS scroll_y=-8 together
-    ; for every 240-line format (256x192's own video_256x192_m.asm uses
-    ; scroll_y=0 - mode 0 is unaffected, still 191 below) - an EARLIER
-    ; T3 wave misread this pairing as playvid's own VGA-border
-    ; compensation ("no paper inset... not applicable here") and dropped
-    ; both; that reasoning is wrong for the SAME reason the X1=16 drop
-    ; was wrong - 240 real rows inside a 256-row-addressable column need
-    ; centering regardless of any VGA-border question, independent of
-    ; whether the surrounding 16px is "border" or just gap.
-    ;
-    ; Mechanism: scroll (NR_L2_YOFS = -8), NOT a per-column write-offset
-    ; change - the blit's OWN dest-base derivation needs NO change for Y.
-    ; vid_stream_pixels_col writes each column's 240 real bytes starting
-    ; at byte-offset 0 of that column's 256-byte hardware stride (HL =
-    ; DATA_WINDOW + column*256, unconditionally, in every one of the 15
-    ; static cases - nextdaad.inc's own VID_COL_STRIDE/GAP header). NR_
-    ; L2_YOFS shifts which Layer 2 memory row maps to the clip window's
-    ; OWN top edge (screen row Y1=8) at DISPLAY time, entirely downstream
-    ; of where the blit wrote - with YOFS=-8, Layer 2 row (Yofs+screenY)
-    ; = row 0 (the blit's own write-origin) is what appears at screen
-    ; row Y1=8, i.e. exactly at the clip window's top - matching the
-    ; reference's PAIRING of Y1=8 with scroll_y=-8 exactly, and touching
-    ; NONE of the case table's own delicate xor-a/ld-l,a column-gap
-    ; logic (the SAME lever the X-fix used for its own page-count shift,
-    ; scroll for X was the reference's mechanism there too but the
-    ; existing clip+dest-page-offset fix already works and is hardware-
-    ; validated - not touched again here). This is why NR_L2_YOFS is set
-    ; PER-BRANCH below (mode-1: -8; mode-0: 0, unchanged) instead of at
-    ; the old shared .l2clipdone tail.
-    nextreg NR_L2_CLIP, 8
-    nextreg NR_L2_CLIP, VID_COL_HEIGHT+7
-    nextreg NR_L2_YOFS, -8
-    jr .l2clipdone
-.l2mode0:
-    xor a
-    nextreg NR_L2_CTRL, a
-    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
-    nextreg NR_CLIP_IDX, 1
-    nextreg NR_L2_CLIP, 0
-    nextreg NR_L2_CLIP, 255
-    nextreg NR_L2_CLIP, 0
-    nextreg NR_L2_CLIP, 191
-    nextreg NR_L2_YOFS, 0          ; mode 0 (256x192, fmt4/5) - unaffected,
-                                    ; matches the reference's own scroll_y=0
-.l2clipdone:
-    nextreg NR_L2_XOFS, 0
-    ld e, NR_DISPLAY_CTRL
-    call nr_read
-    or %10000000
-    nextreg NR_DISPLAY_CTRL, a
-    nextreg NR_LAYERS, 0
-
-    ; no-palette formats (odd: 3, 5) - the pixel byte IS its own RRRGGGBB
-    ; colour - program a fixed identity table once, no per-frame block.
-    ld a, (vidFmt)
-    and 1
-    call nz, vid_identity_palette
 
     ; prime pacing so the first iteration's wait passes immediately (no
     ; prior frame is playing yet). IX is the resident play pointer for
@@ -1224,79 +1071,28 @@ vid_run:
     ; launch the frame just streamed: copy the landing-page audio into
     ; the ISR-resident buffer (safe with no DI - see video_ctc_isr's own
     ; header for why a torn read here is at most one imperceptible tick).
-    ; Stereo formats 2/3 downsample 3:1 while copying (every 3rd sample
-    ; PAIR kept, the other two dropped - VID_STEREO_DOWNSAMPLE header);
-    ; stereo formats 0/1 (SP13 T4) downsample 2:1 (every other pair kept -
-    ; VID_STEREO01_DOWNSAMPLE header) - both are page-space findings, not
-    ; casual quality cuts.
+    ; SP14a T4: FULL RATE, no decimation - a plain LDIR of vidABytesReal
+    ; bytes (mono or stereo alike, channel-agnostic: it is just a byte
+    ; count either way). Deletes the old 2:1/3:1 downsample loops
+    ; entirely - NXV's own header-driven audio sizing (nextdaad.inc's
+    ; NXV_RATE_STEREO/MONO) makes them unnecessary.
     call data_save
     ld a, (vidAudPoolPage)
     call data_map_page
-    ld a, (vidFmt)
-    cp 4
-    jr nc, .monocopy
-    cp 2
-    jr nc, .stereocopy23
     ld hl, DATA_WINDOW
     ld de, vidAudBuf
-    ld bc, VID_F0_PLAY_SAMPLES      ; > 255: a 16-bit down-count, not djnz
-.ds01loop:
-    ld a, (hl)                     ; keep this pair's L
-    ld (de), a
-    inc hl
-    inc de
-    ld a, (hl)                     ; keep this pair's R
-    ld (de), a
-    inc hl
-    inc de
-    ; VID_STEREO01_DOWNSAMPLE=2: drop the NEXT ONE pair (2 bytes)
-    inc hl
-    inc hl
-    dec bc
-    ld a, b
-    or c
-    jr nz, .ds01loop
-    jr .copydone
-.stereocopy23:
-    ld hl, DATA_WINDOW
-    ld de, vidAudBuf
-    ld bc, VID_F2_PLAY_SAMPLES      ; > 255: a 16-bit down-count, not djnz
-.dsloop:
-    ld a, (hl)                     ; keep this pair's L
-    ld (de), a
-    inc hl
-    inc de
-    ld a, (hl)                     ; keep this pair's R
-    ld (de), a
-    inc hl
-    inc de
-    ; VID_STEREO_DOWNSAMPLE=3: drop the NEXT TWO pairs (2*2=4 bytes -
-    ; NOT 8: a "pair" is 2 bytes, L+R, not 4)
-    inc hl
-    inc hl
-    inc hl
-    inc hl
-    dec bc
-    ld a, b
-    or c
-    jr nz, .dsloop
-    jr .copydone
-.monocopy:
-    ld hl, DATA_WINDOW
-    ld de, vidAudBuf
-    ld bc, VID_F4_AUDIO
+    ld bc, (vidABytesReal)
     ldir
-.copydone:
     call data_restore
     ld ix, vidAudBuf
     xor a
     ld (vidAudDone), a
     ; SP14a T2: palette EDIT (invisible write to the currently NON-
     ; displayed Layer 2 palette bank) - MOVED here, ahead of both flip
-    ; writes below (pre-SP14a this ran AFTER the NR $12 write, into the
+    ; pokes below (pre-SP14a this ran AFTER the NR $12 write, into the
     ; SAME bank being scanned out - the ~0.4ms race that caused the
     ; sparkle, sp13-task-4-report.md's addendum). It must finish before
-    ; EITHER flip write fires (NR $43 bit 2 or NR $12 - see the flip
+    ; EITHER flip poke fires (NR $43 bit 2 or NR $12 - see the flip
     ; block below for why both, not just one) so the 256-entry write
     ; happens while the OLD frame is still fully, consistently on screen
     ; (old pixels under the old palette, nothing changing) instead of
@@ -1306,49 +1102,45 @@ vid_run:
     ; header), just applied to the hidden bank instead of the live one.
  IFDEF DEBUG
     ld a, VID_TL_PALETTE            ; closes phase 3 (flip/pace-wait: the
-    call vid_tl_stamp               ; .pace spin + downsample copy-out -
+    call vid_tl_stamp               ; .pace spin + full-rate copy-out -
  ENDIF                               ; SP14a T2 moved the flip swap/NR $12
                                      ; write out of this phase, see below)
-    ld a, (vidFmt)
-    and 1
-    call z, vid_apply_palette
+    ld a, (vidPalFlag)
+    or a
+    call nz, vid_apply_palette
  IFDEF DEBUG
     ld a, VID_TL_OTHER              ; closes phase 2 (palette apply, or
     call vid_tl_stamp               ; ~0 for non-palette formats)
  ENDIF
-    ; flip (l2_flip_swap's own variable-swap + NR $12 write, duplicated
-    ; here since overlay2 is unreachable while MMU7 = VID_PAGE). NR $12
-    ; takes the 16K bank number RAW (l2_mode_set/h_gfx.swap precedent,
-    ; overlay2.asm) - no *2 here (that shift is ONLY for deriving an 8K
-    ; MMU PAGE number, e.g. vidDrawPage above; NR $12 is not a page).
+    ; SP14a T4: flip via the copper (vid_copper_poke, above) - REPLACES
+    ; the old direct CPU nextreg NR_L2_BANK/NR_PAL_CTRL writes. l2_flip_
+    ; swap's own variable-swap logic is unchanged (duplicated here since
+    ; overlay2 is unreachable while MMU7 = VID_PAGE); only the FINAL
+    ; hardware-apply step moved off the CPU hot path onto the copper's
+    ; own vblank-synchronised WAIT (nextdaad.inc's NXV_COPPER_LINE). NR
+    ; $12 takes the 16K bank number RAW (l2_mode_set/h_gfx.swap
+    ; precedent, overlay2.asm) - no *2 here (that shift is ONLY for
+    ; deriving an 8K MMU PAGE number, e.g. vidDrawPage above; NR $12 is
+    ; not a page).
     ;
     ; SP14a T2: palette display-select (NR $43 bit 2) flips in lockstep
     ; with the pixel bank (NR $12) - both express the SAME "which buffer
     ; is live" decision, one for pixels, one for the palette that colours
     ; them; the edit above already made the target bank correct, so all
-    ; that is left is to point the display at it. DEFAULT order shipped
-    ; here: palette-select FIRST, pixel bank SECOND, back-to-back with no
-    ; branch/call between them (design note's reasoning: new pixels
-    ; briefly under a stale-but-still-CORRECT palette is the more jarring
-    ; failure mode of the two, the same logic that made the original bug
-    ; visible as sparkle rather than a subtler blend). ALTERNATIVE order
-    ; is one move away: relocate the pixel-bank block (the 7 lines from
-    ; "ld a, (l2FrontBank)" to "nextreg NR_L2_BANK, a") to BEFORE this
-    ; comment, ahead of the palette-select block below - the owner's
-    ; hardware leg adjudicates if either flip order shows an artifact.
-    ; Palette-format-only (vidFmt and 1 == 0) - non-palette formats never
-    ; touch NR $43 bit 2, so vid_identity_palette's one programmed-at-
-    ; entry bank stays the displayed one for the whole session (design
-    ; note item 6: an unconditional flip here would show garbage/stale
-    ; colour on every odd frame for formats 1/3/5, which were never
-    ; programmed into the second bank).
-    ld a, (vidFmt)
-    and 1
-    jr nz, .nopalflip
+    ; that is left is to point the display at it. Palette-format-only
+    ; (vidPalFlag != 0) - non-palette files never touch NR $43 bit 2, so
+    ; vid_identity_palette's one programmed-at-entry bank stays the
+    ; displayed one for the whole session (an unconditional flip here
+    ; would show garbage/stale colour on every odd frame for identity-
+    ; palette files, which were never programmed into the second bank).
+    ld a, (vidPalFlag)
+    or a
+    jr z, .nopalflip
     ld a, (vidPalCtrl)              ; currently-displayed bank's NR43 value
     xor $44                         ; flip both edit- and display-target to
     ld (vidPalCtrl), a              ; the bank the edit above just wrote
-    nextreg NR_PAL_CTRL, a
+    ld e, NXV_COPPER_OFF_PAL
+    call vid_copper_poke
 .nopalflip:
     ld a, (l2FrontBank)
     ld b, a
@@ -1357,7 +1149,8 @@ vid_run:
     ld a, b
     ld (l2BackBank), a
     ld a, (l2FrontBank)
-    nextreg NR_L2_BANK, a
+    ld e, NXV_COPPER_OFF_BANK
+    call vid_copper_poke
     ld a, (vidExitReq)
     or a
     jr nz, .restore
@@ -1421,11 +1214,11 @@ vid_run:
                                     ; state vid_raw_setup+vid_stream_open
                                     ; left after the very first open
     call vid_next_run              ; load run 0's card address
-    jp c, .restore                 ; defensive: empty map (should not
+    jr c, .restore                 ; defensive: empty map (should not
                                     ; happen - the same map just played)
     call vid_win_open              ; reopen at run 0 via the existing raw
                                     ; CMD18 path
-    jp c, .restore                 ; defensive: card rejected the reopen
+    jr c, .restore                 ; defensive: card rejected the reopen
     jp .frameloop
 .drainlast:
     ; the last successfully streamed frame (if any) is already showing
@@ -1439,6 +1232,14 @@ vid_run:
     ; value is restored (the registers are write-only): any FUTURE
     ; sample-start recomputes its own control word/TC via aud_ctc_params
     ; as it always does, so there is nothing to reverse here beyond stop.
+    ; The ISR cannot fire once this completes, so everything else this
+    ; routine still needs to do (stub/L2/presentation restore, bank
+    ; free, the DEBUG report, the final MMU6/7 restore) is safe to hop
+    ; cold for (vid_run_restore_body, VID_PAGE2, below) - a real VID_
+    ; PAGE budget lever (this tail was the single largest routine on the
+    ; page). vid_stream_close stays hot first (below) since it is
+    ; itself VID_PAGE-resident code, not reachable by a plain call from
+    ; cold - genuinely a same-page call, unlike everything after it.
     ld bc, AUD_CTC_PORT
     ld a, AUD_CTC_RESET
     out (c), a
@@ -1447,39 +1248,27 @@ vid_run:
     out (DAC_PORT), a
     out (VID_DAC_LEFT), a          ; format-agnostic: always park all
     out (VID_DAC_RIGHT), a         ; three DAC ports used by either ISR
-    ld hl, (vidSvCtcStub)
-    ld (IM2_CTC_STUB+1), hl
-    ld a, (vidSvAudEnable)
-    ld (audEnable), a
-    ld a, (vidSvL2Front)
-    ld (l2FrontBank), a
-    ld a, (vidSvL2Back)
-    ld (l2BackBank), a
-    ld a, (vidSvNr12)
-    nextreg NR_L2_BANK, a
-    ld a, (vidSvNr70)
-    nextreg NR_L2_CTRL, a
-    ld a, (vidSvNr69)
-    nextreg NR_DISPLAY_CTRL, a
-    ld a, (vidSvNr15)
-    nextreg NR_LAYERS, a
-    ; SP14a T2: NR $43 restored to the game's own convention (captured as
-    ; PAL_L2_FIRST at entry, not read back - see the entry-capture
-    ; comment). l2_palette_load unconditionally re-asserts PAL_L2_FIRST
-    ; before every picture display anyway (design note), but restoring it
-    ; here too keeps this routine's own symmetry doctrine exact, matching
-    ; NR $12/$70/$69/$15 immediately above.
-    ld a, (vidSvNr43)
-    nextreg NR_PAL_CTRL, a
+    ; copper: STOP suffices (the design doc's own guidance - program RAM
+    ; is write-only and persists; nothing else in this codebase drives
+    ; the copper, so there is no prior state to restore, only to stop).
+    xor a
+    nextreg NR_COPPER_ADDR_HI_CTRL, a
     call vid_stream_close
-    ld a, (vidAudPoolBank)
-    call bank_free
+    ; hop cold for the stub/L2/presentation restore + bank_free trigger
+    ; (vid_run_restore_body, VID_PAGE2, below), then back here for the
+    ; DEBUG report (its OWN existing hot/cold/hot mechanism, unchanged)
+    ; and the final MMU6/7 restore.
+    ld hl, vid_run_restore_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+.restore_tail:
  IFDEF DEBUG
     ; SP14a T1: the frame-timeline report - fully torn-down playback only
-    ; (CTC parked/stub restored above, DAC parked, L2/NR state restored) -
-    ; no window/ISR constraint on printing here. Hops to VID_PAGE2 and
-    ; back (vid_tl_report's own header) - MMU7 == VID_PAGE again by the
-    ; time it returns, so the plain MMU6/7 restore below is unaffected.
+    ; (CTC parked/stub restored, DAC parked, L2/NR state restored) - no
+    ; window/ISR constraint on printing here. Hops to VID_PAGE2 and back
+    ; (vid_tl_report's own header) - MMU7 == VID_PAGE again by the time
+    ; it returns, so the plain MMU6/7 restore below is unaffected.
     call vid_tl_report
  ENDIF
     ld a, (vidSvMmu6)
@@ -1487,73 +1276,64 @@ vid_run:
     ld a, (vidSvMmu7)
     nextreg NR_MMU7, a
     ret
+.restore_badhdr:
+    ; nxv_open rejected the header - reached AFTER bank_alloc but BEFORE
+    ; any CTC/Layer2/presentation/copper state was touched, so only the
+    ; bank and the sample-freeze need reversing (matches the old vid_
+    ; classify badfmt path's own scope, just relocated here since header
+    ; validation itself moved into vid_run - see this routine's header).
+ IFDEF DEBUG
+    ld b, 23
+    ld c, 0
+    call dbg_at
+    ld hl, msgVidBadFmt
+    call dbg_puts
+ ENDIF
+    ld a, (vidAudPoolBank)
+    call bank_free
+    jr .restore_noplay_tail
 .restore_noplay:
-    ; reached only if bank_alloc failed - CTC/stub/L2 were never touched,
-    ; so only the freeze needs reversing.
+    ; reached only if bank_alloc failed - CTC/stub/L2/presentation were
+    ; never touched, so only the freeze needs reversing (no bank to free
+    ; either - falls into the SAME tail .restore_badhdr shares, below).
+.restore_noplay_tail:
     ld a, (vidSvAudEnable)
     ld (audEnable), a
     call vid_stream_close
     ret
 
-; Stream one frame's worth of data for the CURRENT vidFmt into: the pool
-; landing page (audio + its sector-alignment padding - 1024B total for
-; mono formats 4/5, 4096B for stereo formats 2/3, both always at
-; vidAudPoolPage - the MakeVid frame layout is audio + pad +
-; [palette, even formats only] + pixels, playvid's own "pad ... for
-; sector alignment"; the pad is read here and simply left unread past
-; the real audio bytes by the copy-out in vid_run, never touched again -
-; the palette's 512B lands at vidAudPoolPage+1, a DIFFERENT page so it
-; cannot overwrite the audio, since vid_stream_read always lands at the
-; start of its destination page), and the pixel surface: mono's
-; vidDrawPage VID_PIX_PAGES consecutive 8K pages (zero-copy - vid_stream_
-; read's dest IS the shadow Layer 2 surface, no staging copy), or
-; stereo's vid_stream_pixels_col (below - a different, direct-INI
-; mechanism, not vid_stream_read at all - see its own header for why).
+; Stream one frame's worth of data into: the pool landing page (audio,
+; padded to a block multiple - vidABytesPad, header-derived) always at
+; vidAudPoolPage; the palette block (512B, vidPalFlag files only) at
+; vidAudPoolPage+1, a DIFFERENT page so it cannot overwrite the audio;
+; and the pixel surface - vid_stream_pixels_flat (mode-0 always, or
+; mode-1 at native height - zero column bookkeeping) or vid_stream_
+; pixels_gap (mode-1, letterboxed height - the runtime column-gap loop),
+; selected by vidGapNeeded (nxv_open's own derivation, see either
+; routine's own header for the geometry reasoning).
 ;
-; Palette-format frames (even: 2, 4) have their palette READ here but
-; deliberately NOT APPLIED here - vid_apply_palette runs later, from
-; vid_run's flip section, synchronised
-; with the pixel-bank flip (see that call site's own comment for why:
-; NR $43=PAL_L2_FIRST is "edit + active display", the SAME palette that
-; is CURRENTLY ON SCREEN, so applying it immediately here would recolour
-; the STILL-VISIBLE previous frame's pixels for this whole routine's
-; ~36-46ms run time, every frame - playvid avoids this with a genuinely
-; double-buffered palette (its frame_wait toggles NR $43 in lockstep with
-; NR $12); this task's fix is cheaper - defer the apply to the flip
-; instant instead, shrinking the mismatch window to the ~0.3-0.5ms the
-; 512 nextreg writes themselves take. The landing page holding the raw
-; palette bytes is not reused for anything else before that call, so
-; deferring the READ's raw bytes costs nothing - only the byte data
-; itself is deferred, not re-streamed.
+; Palette-flag frames have their palette READ here but deliberately NOT
+; APPLIED here - vid_apply_palette runs later, from vid_run's flip
+; section, synchronised with the pixel-bank flip (see that call site's
+; own comment for why: NR $43=PAL_L2_FIRST is "edit + active display",
+; the SAME palette that is CURRENTLY ON SCREEN, so applying it
+; immediately here would recolour the STILL-VISIBLE previous frame's
+; pixels for this whole routine's own run time, every frame). The
+; landing page holding the raw palette bytes is not reused for anything
+; else before that call, so deferring the READ's raw bytes costs nothing.
 ;
 ; Out: CF clear = the whole frame streamed; CF set = end of file (the
-; audio+pad read was short - the classifier-clean T2 fixtures are
-; truncated to a whole number of frames, so EOF always lands here, never
-; mid-frame) or a genuine read error - both treated identically by the
-; caller. Corrupts everything.
-; Three sizes: fmt0/1's VID_F0_AUDIO+VID_F01_AUDPAD=2048 (SP13 T4),
-; fmt2/3's VID_F2_AUDIO+VID_F23_AUDPAD=4096, mono's VID_F4_AUDIO+
-; VID_F45_AUDPAD=1024 - select the right read size up front, then share
-; the palette-check and pixel-dispatch tails.
+; audio read was short - encoder-produced files are truncated to a whole
+; number of frames, so EOF always lands here, never mid-frame) or a
+; genuine read error - both treated identically by the caller. Corrupts
+; everything.
 vid_stream_frame:
  IFDEF DEBUG
     ld a, VID_TL_STREAM              ; closes phase 4 (other: the tail of
     call vid_tl_stamp                ; the previous iteration - exit-flag
  ENDIF                                ; check, loop-back, this call's own
                                       ; overhead) and increments vidTlFrames
-    ld a, (vidFmt)
-    cp 4
-    jr nc, .monoaud
-    cp 2
-    jr nc, .stereoaud23
-    ld de, VID_F0_AUDIO + VID_F01_AUDPAD
-    jr .readaud
-.stereoaud23:
-    ld de, VID_F2_AUDIO + VID_F23_AUDPAD
-    jr .readaud
-.monoaud:
-    ld de, VID_F4_AUDIO + VID_F45_AUDPAD
-.readaud:
+    ld de, (vidABytesPad)
     ld (vidAudReadLen), de
     ld a, (vidAudPoolPage)
     call vid_stream_read
@@ -1566,83 +1346,52 @@ vid_stream_frame:
                                    ; the sbc above and this jr - the Z
                                    ; flag it tests must survive untouched
  IFDEF DEBUG
-    ; SP14a T3 fix wave: this IS the documented-normal short-read EOF (the
-    ; classifier-clean T2 fixtures are truncated to a whole number of
-    ; frames, so a short AUDIO read - never a mismatched palette/pixel
-    ; read - is the expected end-of-file signal, per this routine's own
-    ; header). It carries no real error code (A here is whatever vid_
-    ; stream_read's own success path left over) - force it to 0 so vid_
-    ; run's .eof capture (below) reports ERR=00 for the expected case,
-    ; leaving genuine VID_ERR_*/esxDOS codes (from THIS call's own CF-set
-    ; .eof branch above, or any .err branch below) visibly nonzero.
+    ; this IS the documented-normal short-read EOF (encoder-produced
+    ; files are truncated to a whole number of frames, so a short AUDIO
+    ; read - never a mismatched palette/pixel read - is the expected
+    ; end-of-file signal). It carries no real error code (A here is
+    ; whatever vid_stream_read's own success path left over) - force it
+    ; to 0 so vid_run's .eof capture reports ERR=00 for the expected
+    ; case, leaving genuine VID_ERR_*/esxDOS codes (from THIS call's own
+    ; CF-set .eof branch above, or any .err branch below) visibly nonzero.
     xor a
  ENDIF
     jp .eof
 .audfull:
-    ; palette formats (even: 2, 4) only - streamed here, NOT applied
-    ; (see this routine's header): vid_run's flip section applies it
-    ; (vidAudPoolPage+1 still holds it, untouched).
-    ld a, (vidFmt)
-    and 1
-    jr nz, .nopalette
+    ; palette-flag files only - streamed here, NOT applied (see this
+    ; routine's header): vid_run's flip section applies it (vidAudPool
+    ; Page+1 still holds it, untouched).
+    ld a, (vidPalFlag)
+    or a
+    jr z, .nopalette
     ld a, (vidAudPoolPage)
     inc a                          ; upper 8K of the same bank
-    ld de, VID_PAL_BYTES
+    ld de, NXV_PAL_BYTES
     call vid_stream_read
     jr c, .err
-    ld hl, VID_PAL_BYTES
+    ld hl, NXV_PAL_BYTES
     or a
     sbc hl, bc
     jr nz, .err
 .nopalette:
  IFDEF DEBUG
-    ld a, VID_TL_BLIT               ; closes phase 0 (stream: the audio+
-    call vid_tl_stamp               ; pad read, plus the palette read above
- ENDIF                               ; for even formats)
-    ld a, (vidFmt)
-    cp 4
-    jr nc, .monopix
-    ; stereo (0/1/2/3): column-major direct-INI blit (vid_stream_
-    ; pixels_col, below) - no landing-page relocate, see that routine's
-    ; own header for the double-copy cost this avoids.
-    ;
-    ; SP14a T3 fix wave 4 (owner hardware leg - vply2 pillarbox
-    ; regression): fmt2/3 write their 8-page/256-column span starting 1
-    ; page (32 columns) INTO the 10-page/320-column Layer 2 back surface,
-    ; not at its start - centering under the matching X1=16 clip
-    ; programmed above (vid_run's own Layer 2 setup) instead of the old
-    ; unconditional vidDrawPage (which only ever produced a left-aligned
-    ; 256-column image against a 320-wide surface). fmt0/1 use all 10
-    ; pages full-bleed, unchanged.
-    ld a, (vidFmt)
-    cp 2
+    ld a, VID_TL_BLIT               ; closes phase 0 (stream: the audio
+    call vid_tl_stamp               ; read, plus the palette read above)
+ ENDIF
+    ld a, (vidGapNeeded)
+    or a
+    jr nz, .gappath
     ld a, (vidDrawPage)
-    jr c, .gotdrawbase
-    inc a
-.gotdrawbase:
-    call vid_stream_pixels_col
+    ld hl, (vidPixBlocks)
+    ld (vidPxBlocksLeft), hl
+    call vid_stream_pixels_flat
     jr c, .err
     or a
     ret
-.monopix:
+.gappath:
     ld a, (vidDrawPage)
-    ld (vidPxPage), a
-    ld a, VID_PIX_PAGES
-    ld (vidPxCount), a
-.pxloop:
-    ld a, (vidPxPage)
-    ld de, $2000
-    call vid_stream_read
+    call vid_stream_pixels_gap
     jr c, .err
-    ld hl, $2000
-    or a
-    sbc hl, bc
-    jr nz, .err
-    ld hl, vidPxPage
-    inc (hl)
-    ld hl, vidPxCount
-    dec (hl)
-    jr nz, .pxloop
     or a
     ret
 .eof:
@@ -1653,329 +1402,247 @@ vid_stream_frame:
     ret
 
 ; ---------------------------------------------------------------------
-; vid_stream_pixels_col - column-major pixel blit (formats 2/3, SP13
-; Task 3; formats 0/1, SP13 Task 4 - same mode-1 addressing, full-bleed
-; 320-wide instead of a 256-of-320 subset, only the PAGE COUNT differs).
-; See nextdaad.inc's VID_COL_* header for the stride/gap/reference
-; derivation (tools/ZXNextOS/.../playvid/video_256x240.asm/video_320x240.
-; asm, column-major, real pixel bytes/column against a fixed 256-byte
-; hardware stride). Streams VID_PIX_PAGES23 (8, fmt2/3) or VID_PIX_
-; PAGES01 (10, fmt0/1 - both EXACT, no partial final page, see nextdaad.
-; inc's VID_PIX_PAGES01 header) consecutive 8K L2 pages, 32 columns/page
-; in either case (the stride/page-size relationship is a Layer 2 mode
-; property, not format-specific), DIRECTLY via raw SD INI bursts into the
-; MMU6 window - NOT through vid_stream_read's landing-page contract,
-; because a landing-then-relocate design costs an extra ~21T/byte LDIR
-; pass over the WHOLE pixel payload to re-insert the per-column gaps,
-; which alone would exceed the 60ms fmt2/3 pace period - see the task
-; report's budget table.
+; vid_stream_pixels_flat - the flat serve (spec's headline design): mode
+; 0 always (row-linear, no stride mismatch at ANY height), or mode 1 at
+; native height (256 - the column stride itself, so no column-boundary
+; gap exists either). ZERO column/block bookkeeping beyond vid_stream_
+; read's own proven register-resident fast path (the SAME general-
+; purpose reader the old mono path always used) - reused here in $2000
+; (one MMU page)-sized chunks, generalized to an arbitrary total block
+; count (header-derived vidPxBlocksLeft, primed by the caller) instead of
+; a fixed per-format page count, and an arbitrary starting page. This
+; REPLACES the old 15-case static-unroll blit entirely - the "T3 case
+; table dies" per the spec: a block-aligned native-stride format needs no
+; case table AND no runtime chunk bookkeeping, just a linear reader.
 ;
-; SP14a T3 wave 2: STATIC CASE SEQUENCE (playvid parity - tools/ZXNextOS/
-; src/c/DotCommands/playvid/video_256x240.asm and video_320x240.asm's
-; case_0..case_14, confirmed structurally identical between the two
-; formats, only the page COUNT differs, 8 vs 10). One 8K page is always
-; 32 columns x 240 real bytes = 7680 bytes = exactly fifteen 512-byte SD
-; blocks (GCD(512,240)=16 - this file's own long-standing header already
-; derived this), so the column/block misalignment pattern is a FIXED,
-; ASSEMBLE-TIME-KNOWN sequence, identical on every page of every format
-; using this path - not a per-frame runtime quantity. Each of the 15
-; per-page cases below is a straight-line sequence of calls to vid_
-; xfer16n (a shared 16-byte-group INI burst, below) with an IMMEDIATE
-; group count per segment - no vidColRemain16/vidBlkRemain16/vidPix
-; RealRemain tracking, no runtime chunk16=min() computation, no running-
-; remainder subtraction: the old dynamic bookkeeping is GONE, replaced
-; by which case executes. This also deletes the whole register-liveness
-; class the D-clobber lesson (SP13, vid_col_blockdone's documented DE
-; corruption meeting a live chunk16 in D after three clean reviews) lived
-; in - no chunk-size value is ever carried live across a vid_col_
-; newblock/vid_col_blockdone call anymore; only the destination pointer
-; (HL) is, via the same push/pop bracket the old code already used.
-;
-; RESYNC PRECONDITION (unchanged from the pre-wave-2 design): this
-; routine's first case always opens a FRESH 512-byte SD block - correct
-; ONLY because the audio+pad and palette reads that precede it (vid_
-; stream_frame) are BOTH exact whole-block multiples (see nextdaad.inc's
-; VID_F0/F2_AUDIO+AUDPAD headers) - vid_stream_read's own block-alignment
-; cursor is already sitting exactly on a boundary when this routine takes
-; over. Any FUTURE format wired through this same direct-INI path MUST
-; keep its own pre-pixel reads block-aligned, or route pixels through the
-; buffered vid_stream_read path instead (accepting its relocate cost).
-; In: A = starting destination 8K page (VID_PIX_PAGES23/01 consecutive
-;     pages, by vidFmt, are streamed, incrementing after each).
-; Out: CF clear = all pages written; CF set = stream error/EOF (A =
-;      code, matching vid_stream_read's contract).
+; In: A = starting destination 8K page; vidPxBlocksLeft (dw) = total
+;     512-byte blocks remaining this frame (primed by vid_stream_frame
+;     from the header's own vidPixBlocks).
+; Out: CF clear = all pixel blocks streamed; CF set = error (A = code -
+;      vid_stream_read's contract, or VID_ERR_SHORT on a short read - a
+;      genuine anomaly here, unlike a short AUDIO read, which is the
+;      documented-normal EOF signal - see vid_stream_frame's own header).
 ; Corrupts everything.
-vid_stream_pixels_col:
+vid_stream_pixels_flat:
     ld (vidPxPage), a
-    ld a, (vidFmt)
-    cp 2
-    ld a, VID_PIX_PAGES01
-    jr c, .gotpages
-    ld a, VID_PIX_PAGES23
-.gotpages:
-    ld (vidPxCount), a
-.pageloop:
+.loop:
+    ld hl, (vidPxBlocksLeft)
+    ld a, h
+    or l
+    jr z, .done
+    ld de, 16                      ; 16 blocks = one full $2000 page
+    or a
+    sbc hl, de
+    jr nc, .fullpage               ; >=16 blocks left: take a full page
+    add hl, de                     ; <16 blocks left: undo the sbc above
+                                    ; (exact regardless of the borrow) to
+                                    ; recover the real remaining count -
+                                    ; the partial final page
+    jr .havecount
+.fullpage:
+    ld hl, 16
+.havecount:
+    ld (vidPxBlocksReq), hl
+    ; byte count = blocksReq*512 (blocksReq is 1-16, so the result is
+    ; 512-8192, safely within a word) - L holds the count (H is 0 for
+    ; these small values); DE = L*256, then doubled once more = L*512.
+    ld d, l
+    ld e, 0
+    sla e
+    rl d
+    ld (vidPxChunkBytes), de
+    ld a, (vidPxPage)
+    call vid_stream_read
+    jr c, .err
+    ld hl, (vidPxChunkBytes)
+    or a
+    sbc hl, bc
+    jr nz, .shortread               ; short/EOF read here is a genuine
+                                     ; error - see this routine's header
+    ld hl, (vidPxBlocksLeft)
+    ld de, (vidPxBlocksReq)
+    or a
+    sbc hl, de
+    ld (vidPxBlocksLeft), hl
+    ld hl, vidPxPage
+    inc (hl)
+    jr .loop
+.done:
+    or a
+    ret
+.shortread:
+    ld a, VID_ERR_SHORT
+    scf
+    ret
+.err:
+    scf
+    ret
+
+; ---------------------------------------------------------------------
+; vid_stream_pixels_gap - mode-1 letterboxed column blit (content height
+; < native 256 - a Layer 2 hardware property, not something the format
+; can avoid: mode 1's column stride is FIXED at 256 bytes regardless of
+; content height, so any height < 256 needs a per-column destination
+; jump). Generalizes the pre-SP14a "dynamic" column-blit design (the
+; chunk=min(colRemain,blkRemain) technique, proven correct in production
+; before the SP14a T3 wave-2 case-unroll replaced it for the single
+; highest-pressure format) to an ARBITRARY, header-derived column height
+; instead of a compile-time-fixed one - a genuine architectural
+; requirement here, not a simplification: NXV's own "HEIGHT IS A HEADER
+; PARAMETER" design (the spec's own framing) means the column height is
+; runtime DATA, so an assemble-time case-unroll (the old T3 technique) is
+; not even possible for this path - only N0 (native height, zero gap)
+; gets the true flat/zero-bookkeeping design (vid_stream_pixels_flat,
+; above).
+;
+; Transfer unit: 8 bytes (vid_xfer8n, below), not the old vid_xfer16n's
+; 16 - the spec's own block-alignment rule guarantees content height is
+; ALWAYS a multiple of 8 for 320-wide (mode-1) profiles ("h mod 8 = 0"),
+; but NOT always a multiple of 16 (e.g. N4's 320x120: 120/8=15,
+; 120/16=7.5) - 8 bytes is the largest unit that divides EVERY valid
+; mode-1 height, so one primitive serves every letterboxed profile
+; uniformly. This is a disclosed, bounded overhead relative to N0's
+; zero-bookkeeping path (see the task report) - real, but the only
+; hardware-correct way to handle a runtime-variable column height on
+; Layer 2's fixed-stride addressing.
+;
+; State lives in memory (vidGap* cells, VID_PAGE), not registers: vid_
+; col_block_start/end and vid_xfer8n all corrupt BC/DE/parts of the
+; register file per their own documented contracts, so nothing here could
+; safely ride a register across those calls anyway - correctness over
+; cleverness for this bounded-overhead path.
+;
+; In: A = starting destination 8K page; header: vidColUnits (height/8,
+;     nxv_open's own derivation - the gap blit's fixed per-column unit
+;     count for this file). Column count is 320 (NXV_WIDTH_MODE1) for
+;     every shipped mode-1 letterbox profile (N3/N4 - full width, no
+;     pillarbox); a hardcoded 320 is used rather than a header re-read
+;     since nothing this wave ships needs any other mode-1 width.
+; Out: CF clear = all columns written; CF set = error (A = code).
+; Corrupts everything.
+vid_stream_pixels_gap:
+    ld (vidPxPage), a
+    ld hl, 320                      ; NXV_WIDTH_MODE1 - see this routine's
+    ld (vidGapColsLeft), hl         ; own header for why this is fixed
+    xor a
+    ld (vidGapBlkLeft), a           ; 0 = no block open yet
     call data_save
     ld a, (vidPxPage)
     call data_map_page
     ld hl, DATA_WINDOW
-    ; --- case 0 (SD block 0: real bytes 0..512, column boundaries at
-    ; 240 and 480 - two full 240-byte columns then 32 bytes into a third) ---
-    call vid_col_block_start
-    jp c, .colerr
+    ld (vidGapDest), hl
+    ld a, (vidColUnits)
+    ld (vidGapColLeft), a
+.loop:
+    ld hl, (vidGapColsLeft)
+    ld a, h
+    or l
+    jr z, .alldone
+    ld a, (vidGapBlkLeft)
+    or a
+    jr nz, .haveblk
+    ld hl, (vidGapDest)
+    call vid_col_block_start        ; preserves HL; opens/waits token
+    jr c, .err
+    ld a, 64                        ; 512/8 units
+    ld (vidGapBlkLeft), a
+.haveblk:
+    ; chunk = min(colLeft, blkLeft), both bytes
+    ld a, (vidGapColLeft)
+    ld hl, vidGapBlkLeft
+    cp (hl)
+    jr c, .havechunk                 ; colLeft < blkLeft: keep A=colLeft
+    ld a, (hl)                       ; blkLeft <= colLeft: use blkLeft
+.havechunk:
+    ld (vidGapChunk), a
+    ld b, a
+    ld hl, (vidGapDest)
+    ld c, PORT_SPI_DAT
+    call vid_xfer8n                  ; HL += B*8; B/C/E now garbage
+    ld (vidGapDest), hl
+    ld a, (vidGapColLeft)
+    ld hl, vidGapChunk
+    sub (hl)
+    ld (vidGapColLeft), a
+    ld a, (vidGapBlkLeft)
+    sub (hl)
+    ld (vidGapBlkLeft), a
+    jr nz, .blkopen
+    ld hl, (vidGapDest)
+    call vid_col_block_end           ; preserves HL; CRC skip + bookkeeping
+.blkopen:
+    ld a, (vidGapColLeft)
+    or a
+    jr nz, .loop                     ; column not finished
+    ; column finished: force-jump dest to the next 256-aligned column
+    ; base, unconditionally - valid because a gapped column NEVER lets
+    ; the natural ini increment carry L into H on its own (height < 256
+    ; means L never reaches 256 within one column), so this explicit
+    ; jump is the ONLY way H advances between columns.
+    ld hl, (vidGapDest)
     xor a
-    ld b, 15
-    call vid_xfer16n
     ld l, a
     inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 2
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 1 (block 1: 512..1024; boundaries at 720, 960) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 13
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 4
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 2 (block 2: 1024..1536; boundaries at 1200, 1440) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 11
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 6
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 3 (block 3: 1536..2048; boundaries at 1680, 1920) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 9
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 8
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 4 (block 4: 2048..2560; boundaries at 2160, 2400) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 7
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 10
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 5 (block 5: 2560..3072; boundaries at 2640, 2880) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 5
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 12
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 6 (block 6: 3072..3584; boundaries at 3120, 3360) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 3
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 14
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 7 (block 7: 3584..4096; boundaries at 3600, 3840, 4080 -
-    ; the ONE case per page whose block spans THREE column boundaries) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 1
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 1
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 8 (block 8: 4096..4608; boundaries at 4320, 4560) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 14
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 3
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 9 (block 9: 4608..5120; boundaries at 4800, 5040) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 12
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 5
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 10 (block 10: 5120..5632; boundaries at 5280, 5520) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 10
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 7
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 11 (block 11: 5632..6144; boundaries at 5760, 6000) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 8
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 9
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 12 (block 12: 6144..6656; boundaries at 6240, 6480) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 6
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 11
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 13 (block 13: 6656..7168; boundaries at 6720, 6960) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 4
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 13
-    call vid_xfer16n
-    call vid_col_block_end
-    ; --- case 14 (block 14: 7168..7680, the page's LAST block; boundaries
-    ; at 7200, 7440 - ends exactly at the 32nd column, real byte 7680) ---
-    call vid_col_block_start
-    jp c, .colerr
-    xor a
-    ld b, 2
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    ld l, a
-    inc h
-    ld b, 15
-    call vid_xfer16n
-    call vid_col_block_end
-.pagedone:
+    ld (vidGapDest), hl
+    ld a, (vidColUnits)
+    ld (vidGapColLeft), a
+    ld hl, (vidGapColsLeft)
+    dec hl
+    ld (vidGapColsLeft), hl
+    ; page (MMU window) switch - every 32 columns, matching the fixed
+    ; 8192-byte/32-column L2 addressing stride regardless of content
+    ; height (the WIRE side may not align to this cadence - e.g. N4's
+    ; 32*120=3840 bytes = 7.5 blocks - but the DESTINATION side always
+    ; does, since column stride is a hardware constant). Detected via
+    ; colsLeft's own low byte mod 32 (colsLeft starts at 320 = 10*32,
+    ; so "mod 32 == 0" recurs at every 32nd column with no separate
+    ; counter needed - 256 is itself a multiple of 32, so testing only
+    ; the low byte is exact regardless of the high byte's value).
+    ld a, l
+    and 31
+    jr nz, .loop
     call data_restore
     ld hl, vidPxPage
     inc (hl)
-    ld hl, vidPxCount
-    dec (hl)
-    jp nz, .pageloop
+    call data_save
+    ld a, (vidPxPage)
+    call data_map_page
+    ld hl, DATA_WINDOW
+    ld (vidGapDest), hl
+    jp .loop
+.alldone:
+    call data_restore
     or a
     ret
-.colerr:
+.err:
     push af
     call data_restore
     pop af
     scf
     ret
 
+; Shared 8-byte burst primitive - same E-based-outer-counter fix as
+; vid_xfer16n (the SP14a T3 fix-wave-3 lesson: `ini` itself decrements B,
+; so B cannot ALSO be the outer pass counter - E is used instead, copied
+; from B at entry, before `ini` can touch either). In: B = group count
+; (units of 8 bytes), C = PORT_SPI_DAT, HL = destination. Out: HL
+; advanced by B*8 bytes. Corrupts AF, B, E.
+vid_xfer8n:
+    ld e, b
+.pass:
+    REPT 8
+        ini
+    ENDR
+    dec e
+    jr nz, .pass
+    ret
+
 ; Ensure a fresh 512-byte SD block is ready to stream (window open, run
 ; available, data token seen) - mirrors vid_stream_read_raw's own
 ; .needstream/.haveblocks/vid_win_open/vid_next_run sequence, but leaves
-; the 512 bytes UNCONSUMED (vid_stream_pixels_col's own INI bursts read
-; them directly, split across the case sequence's own segment
-; boundaries). Out: CF clear (a fresh block is ready - SP14a T3 wave 2:
-; no longer stamps vidBlkRemain16=32, since the case sequence tracks
-; block position at ASSEMBLE time now, not via that runtime cell - see
-; vid_stream_pixels_col's own header); CF set = run/window/token error
+; the 512 bytes UNCONSUMED (the caller's own INI bursts read them
+; directly - vid_stream_pixels_gap, above, and VBENCH-FLAT/DMA below).
+; Out: CF clear (a fresh block is ready); CF set = run/window/token error
 ; (A = code). Corrupts AF, BC, DE, HL.
 vid_col_newblock:
     ld hl, (vidStrmRunBlocks)
@@ -2011,25 +1678,15 @@ vid_col_newblock:
     scf
     ret
 .ok:
-    ; SP14a T3 fix wave 2: restored verbatim (owner hardware leg lead 1) -
-    ; this write was removed in wave 2's own tail-simplification pass as
-    ; register-level dead (vidBlkRemain16 has no reader anywhere post-
-    ; wave-2, confirmed by grep and by the build itself, which would fail
-    ; on an undefined symbol otherwise). Hardware regressed at exactly
-    ; this call site afterward (ERR=FD, wire desync at the col path's
-    ; first block) with no other logical divergence found despite an
-    ; exhaustive audit (every primitive this routine touches or is
-    ; touched by is byte-identical to BASE; the case-table numbers and
-    ; the vid_raw_setup MMU6-translation arithmetic were independently
-    ; recomputed/simulated and check out). The two REMOVED instructions
-    ; here (~24T) are, along with the caller-side chunk16 computation
-    ; wave 2's own case-unroll eliminated entirely, the only measurable
-    ; timing difference between "token confirmed" and "first ini fires"
-    ; versus the pre-T3, hardware-proven sequence - restored as the
-    ; cheapest, lowest-risk candidate (exactly the shipped SP13 T3/T4
-    ; machine code for this exact site) pending the owner's next leg.
-    ld a, 32                       ; 512/16
-    ld (vidBlkRemain16), a
+    ; SP14a T4: the SP13/T3-era vidBlkRemain16 stamp (a timing-margin
+    ; experiment carried since the T3 fix-wave-2 owner leg - see git
+    ; history for the full ERR=FD investigation) is dropped here: the
+    ; ACTUAL root cause of that regression was vid_xfer16n's own B/`ini`
+    ; double-count bug (SP14a T3 fix wave 3, fixed in vid_xfer16n's own
+    ; header below), not a timing margin - confirmed on hardware once
+    ; that fix shipped. This is a clean-break rewrite (NXV scraps MakeVid
+    ; compatibility entirely), so the now-fully-explained, register-level
+    ; -dead experimental write is not carried forward.
     or a                           ; CF clear
     ret
 
@@ -2047,52 +1704,27 @@ vid_col_blockdone:
     ld de, 512
     jp vid_remain_sub              ; tail call
 
-; SP14a T3 wave 2: shared static-case transfer primitive - vid_stream_
-; pixels_col's own case_0..case_14 sequence (above) calls this with an
-; IMMEDIATE B (group count, 1-15) per segment instead of the old runtime
-; chunk16=min(colRemain16,blkRemain16) computation. In: B = group count,
-; C = PORT_SPI_DAT, HL = destination. Out: HL advanced by B*16 bytes.
-;
-; SP14a T3 fix wave 3 (owner hardware leg, ERR=FD/BYT=B5 root cause): B
-; CANNOT be the outer loop counter here - the Z80 `ini` instruction
-; decrements B as part of its OWN semantics (ED A2: (HL)<-IN(C); HL++;
-; B--), so the REPT16 block below already consumes B sixteen times per
-; pass; a trailing `djnz` on top of that decremented it a 17th time,
-; reading vastly more than B*16 bytes per call (measured: B=15 entering
-; read 496 bytes before terminating, not 240) - the case blit overran
-; its own first block within case 0 itself, desyncing the wire for
-; every block after it (exactly the observed ERR=FD/BYT=B5 signature -
-; a mid-data byte at the NEXT block's token-wait). The pre-T3 dynamic
-; code never had this bug because it used a register `ini` never
-; touches (E, via `dec e`/`jr nz`) for its own outer chunk counter - E
-; is restored here as the outer counter, copied from B at entry so
-; every one of the 46 call sites' `ld b,N` contract is unchanged.
-; Out: HL advanced by B*16 bytes. Corrupts AF, B, E - PRESERVES... A is
-; NOT touched by `ini`/`ld e,b`/`dec e`, so it still survives - the case
-; bodies' column-gap trick (xor a at case top, ld l,a after each column)
-; still depends on this. Never add an A-clobbering instruction here
-; without reworking every case's gap handling.
-vid_xfer16n:
-    ld e, b                        ; E = outer pass count ('ini' only
-                                    ; touches B, never E - matches the
-                                    ; pre-T3 dynamic loop's own `dec e`)
-.pass:
-    REPT 16
-        ini
-    ENDR
-    dec e
-    jr nz, .pass
-    ret
+; vid_xfer16n (the old 16-byte-group INI burst primitive) is GONE - SP14a
+; T4's pixel paths no longer need it (vid_stream_pixels_flat goes through
+; vid_stream_read; vid_stream_pixels_gap uses the 8-byte vid_xfer8n,
+; above) and its last remaining caller, VBENCH-FLAT, is retired (see vid_
+; bench_pass_ret's own neighbouring comment). Historical note preserved
+; because the lesson still governs vid_xfer8n's own design: SP14a T3 fix
+; wave 3 found that B CANNOT be an outer loop counter wrapped around a
+; REPT-unrolled `ini` block - the Z80 `ini` instruction (ED A2) decrements
+; B as part of its OWN semantics, so a trailing `djnz` on top of that
+; double-counts. E is the outer counter instead in every transfer
+; primitive this file still has (vid_xfer8n), copied from B at entry,
+; before `ini` can touch either.
 
-; Shared per-case-block prologue (SP14a T3 wave 2 - byte-budget lever):
-; opens the next SD block (vid_col_newblock's own token-wait) and readies
-; C=PORT_SPI_DAT, folding the push/pop-HL protection bracket and the
-; post-newblock BC reload into ONE call site per case instead of five
-; inline instructions each. In: HL = live destination pointer (preserved
-; across the call). Out: CF clear, C=PORT_SPI_DAT, HL unchanged, ready
-; for the caller's own vid_xfer16n bursts; CF set = error (A = code, HL
-; still unchanged - vid_stream_pixels_col's own .colerr tail does not
-; need it). Corrupts AF, BC, DE.
+; Shared per-block prologue: opens the next SD block (vid_col_newblock's
+; own token-wait) and readies C=PORT_SPI_DAT, folding the push/pop-HL
+; protection bracket and the post-newblock BC reload into ONE call site.
+; In: HL = live destination pointer (preserved across the call). Out: CF
+; clear, C=PORT_SPI_DAT, HL unchanged, ready for the caller's own
+; vid_xfer8n/16n bursts; CF set = error (A = code, HL still unchanged).
+; Used by vid_stream_pixels_gap (above) and VBENCH-FLAT/DMA (below).
+; Corrupts AF, BC, DE.
 vid_col_block_start:
     push hl
     call vid_col_newblock
@@ -2101,13 +1733,12 @@ vid_col_block_start:
     ld c, PORT_SPI_DAT             ; vid_col_newblock may have used BC
     ret                            ; CF clear (vid_col_newblock's own)
 
-; Shared per-case-block epilogue: the same push/pop-HL protection bracket
+; Shared per-block epilogue: the same push/pop-HL protection bracket
 ; around vid_col_blockdone (CRC-skip + run-block-count + remain-subtract)
-; that vid_col_block_start's own header describes, folded into one call
-; site per case. In/Out: HL preserved across the call (the ONLY register
-; kept live across a block boundary now - the wave 2 header's own "no
-; chunk-size value ever carried live across this call" design property).
-; Corrupts AF, BC, DE.
+; that vid_col_block_start's own header describes. In/Out: HL preserved
+; across the call (the only register ever kept live across a block
+; boundary in this design - no chunk-size value is carried live across
+; this call, see vid_stream_pixels_gap's own header). Corrupts AF, BC, DE.
 vid_col_block_end:
     push hl
     call vid_col_blockdone
@@ -2115,7 +1746,7 @@ vid_col_block_end:
     ret
 
 ; Apply the 512-byte 9-bit palette just landed at vidAudPoolPage+1
-; (palette formats only: 0, 2, 4) to Layer 2. Called from vid_run's flip
+; (palette-flag files only) to Layer 2. Called from vid_run's flip
 ; section, NOT from vid_stream_frame where it was read (see that
 ; routine's header).
 ;
@@ -2175,49 +1806,6 @@ vid_apply_palette:
     call data_restore
     ret
 
-; Program a fixed identity RRRGGGBB palette (value[i] = i) once at entry
-; for no-palette formats (odd: 3, 5 - their pixel bytes ARE their own
-; colour). Dodges TM_TRANSP_ATTR the same way (entry 254 -> colour $FF
-; instead of its "natural" identity value $FE) and, like vid_apply_
-; palette, does NOT also force-stamp entry 254 to genuinely BE
-; TM_TRANSP_ATTR afterward - see vid_apply_palette's header for why: no
-; MakeVid content is guaranteed to avoid pixel value 254, so reserving it
-; as transparent would punch real content through to the tilemap.
-; Byte1 (the expanded 9th blue bit) is computed, not hardcoded 0 - SP13
-; T3 ride-along fix: this now matches the Next's own 8-bit->9-bit
-; hardware expansion rule ("least significant bit of blue is set to OR
-; between B2 and B1", docs/zx-next-dev-guide-2022-07-15/chapter-next-
-; palette.tex:176 - byte1 = 1 iff the index's two blue bits, i&3, are
-; nonzero), the SAME rule tests/gen_vid_synth.py's synthetic palette
-; blocks already use - T2's report disclosed this as a known asymmetry
-; (a "very slight blue-channel shading difference" between formats 4/5);
-; reconciled here rather than left for a future task.
-; Corrupts AF, BC.
-vid_identity_palette:
-    nextreg NR_PAL_CTRL, PAL_L2_FIRST
-    nextreg NR_PAL_INDEX, 0
-    ld b, 0                        ; 256 iterations
-    ld c, 0                        ; ascending palette index
-.loop:
-    ld a, c
-    cp TM_TRANSP_ATTR
-    jr nz, .w
-    ld a, $FF
-.w:
-    nextreg NR_PAL_VALUE9, a
-    ld a, c
-    and 3
-    jr z, .noblue
-    ld a, 1
-    jr .haveblue
-.noblue:
-    xor a
-.haveblue:
-    nextreg NR_PAL_VALUE9, a
-    inc c
-    djnz .loop
-    ret
-
 ; Any-key test: A = 0 selects ALL 8 keyboard half-rows simultaneously via
 ; IN A,($FE) (playvid's own idiom) - a raw port read needs no cross-page
 ; hop, matching debug.asm's l2dbg_t_held precedent ("a raw port read
@@ -2266,6 +1854,15 @@ vid_key_any:
 ; hl it replaces cost more still - net ISR body shrink, see the report's
 ; budget table for the exact T-state accounting. Budget: see the task
 ; report's Step 0 table (28MHz-adjusted T-states per docs/Z80/01).
+;
+; SP14a T4: the end-marker is now SELF-MODIFIED, like the stereo ISR
+; already was (below) - NXV's audio-bytes/frame is a per-FILE header
+; field (vidABytesReal), not one of a small fixed set of compile-time
+; constants, so a hardcoded `cp low/high vidAudBufLast` no longer has a
+; single correct value. vid_run pokes the real end address (vidAudBuf +
+; vidABytesReal - 1) into .cmplo+1/.cmphi+1 BEFORE the CTC time constant
+; starts the timer - same ordering rule, same mechanism the stereo ISR
+; already used for its own two-buffer-length case.
 video_ctc_isr:
     push af
  IFDEF DEBUG
@@ -2285,11 +1882,13 @@ video_ctc_isr:
     ld a, (ix+0)
     out (DAC_PORT), a
     ld a, ixl
-    cp low vidAudBufLast
-    jr nz, .adv
+.cmplo:
+    cp 0                            ; patched: low byte of the real end
+    jr nz, .adv                     ; address (vid_run, before CTC arm)
     ld a, ixh
-    cp high vidAudBufLast
-    jr nz, .adv
+.cmphi:
+    cp 0                            ; patched: high byte of the real end
+    jr nz, .adv                     ; address
     ld a, 1
     ld (vidAudDone), a
     jr .ret
@@ -2300,29 +1899,21 @@ video_ctc_isr:
     ei
     reti
 
-; Stereo video audio ISR (SP13 T3; T4 generalizes it to serve formats 0/1
-; too). Fires at the downsampled rate (VID_STEREO_DOWNSAMPLE/VID_RATE_
-; STEREO_PLAY for fmt2/3, VID_STEREO01_DOWNSAMPLE/VID_RATE0_PLAY for
-; fmt0/1 - nextdaad.inc) via CTC channel 0, same installation/banking-
-; invariant/alternate-set/no-MMU discipline as video_ctc_isr above (see
-; its header - identical reasoning applies here, not repeated). DAC
-; ports: VID_DAC_LEFT ($F3, DAC channel B) / VID_DAC_RIGHT ($F9, DAC
-; channel C) - ports.txt lines 266-274 ("A,B are directed to the left
-; audio channel and C,D... right"), the exact pair the MakeVid reference
-; ISR uses (interrupts-common.asm isr_ctc_stereo, lines 250-307) -
+; Stereo video audio ISR. Fires at the file's own full-rate header rate
+; (NXV_RATE_STEREO = 15625 Hz, every stereo NXV profile - no downsample,
+; unlike the old MakeVid-era player) via CTC channel 0, same
+; installation/banking-invariant/alternate-set/no-MMU discipline as
+; video_ctc_isr above (see its header - identical reasoning applies here,
+; not repeated). DAC ports: VID_DAC_LEFT ($F3, DAC channel B) / VID_DAC_
+; RIGHT ($F9, DAC channel C) - ports.txt lines 266-274 ("A,B are directed
+; to the left audio channel and C,D... right"), the exact pair the
+; MakeVid reference ISR used (interrupts-common.asm isr_ctc_stereo) -
 ; confirming the interleave order too: L byte first (even offset), R
-; second (odd offset) per sample pair, matching "(hl)" then "inc l /
-; (hl)" there. IX addresses the CURRENT pair's L byte; R is (ix+1).
-; End condition: IX has reached the LAST pair's L byte - ONE shared body
-; serves BOTH downsampled buffer lengths (fmt2/3's vidAudBufLastStereo23
-; / fmt0/1's vidAudBufLastStereo01) via a self-modifying-code patch to
-; the two `cp n` immediate operands below (video_ctc_isr_stereo.cmplo+1/
-; .cmphi+1), poked once per session by vid_run BEFORE the CTC time
-; constant starts the timer (SP13 T4 - see that call site's own comment)
-; - zero ISR byte or T-state cost versus a hardcoded single-format
-; constant, and zero risk to the T3-proven fmt2/3 path (the ISR body
-; itself is textually unchanged except for the two new poke-target
-; labels). Advances by 2 per tick, not 1.
+; second (odd offset) per sample pair. IX addresses the CURRENT pair's L
+; byte; R is (ix+1). End condition: IX has reached the LAST pair's L
+; byte - the end address is self-modified into .cmplo+1/.cmphi+1 exactly
+; like the mono ISR above, computed from vidABytesReal (vid_run, before
+; the CTC time constant starts the timer). Advances by 2 per tick, not 1.
 video_ctc_isr_stereo:
     push af
  IFDEF DEBUG
@@ -2343,12 +1934,12 @@ video_ctc_isr_stereo:
     out (VID_DAC_RIGHT), a
     ld a, ixl
 .cmplo:
-    cp low vidAudBufLastStereo23
-    jr nz, .adv
+    cp 0                            ; patched: low byte of the real end
+    jr nz, .adv                     ; address
     ld a, ixh
 .cmphi:
-    cp high vidAudBufLastStereo23
-    jr nz, .adv
+    cp 0                            ; patched: high byte of the real end
+    jr nz, .adv                     ; address
     ld a, 1
     ld (vidAudDone), a
     jr .ret
@@ -2360,41 +1951,8 @@ video_ctc_isr_stereo:
     ei
     reti
 
-; Per-video-mode (NR $11 bits 2:0) CTC time constant for 23300 Hz (VID_
-; RATE4_X10 * 100, shared by formats 4/5), mirroring aud_ctc_params'
-; algorithm (overlay1.asm) collapsed to this one fixed rate - duplicated
-; rather than cross-called since overlay1 is a different MMU7 page,
-; unreachable during playback. Derived from the SAME per-mode clock
-; table (aud_clk16_tab) at assemble time: TC = floor(clk16[mode] / rate),
-; floored, control word always AUD_CTC_CW16 - every mode's /16-vs-/256
-; crossover (clk16>>8, roughly 6835-8056) sits WELL BELOW 23300 (aud_
-; ctc_params picks /16 whenever the rate EXCEEDS the crossover), so the
-; /256 branch never applies at this rate. VGA0 75, VGA1 76, VGA2 79,
-; VGA3 80, VGA4 83, VGA5 85, VGA6 88, HDMI 72.
-vidCtcTcTab:
-    db 75, 76, 79, 80, 83, 85, 88, 72
-
-; Same derivation, for VID_RATE_STEREO_PLAY (~10366 Hz, the downsampled
-; stereo rate - nextdaad.inc). Crossover stays well below 10366 on every
-; mode too, so CW16 throughout, same as the table above. VGA0 168,
-; VGA1 172, VGA2 177, VGA3 180, VGA4 186, VGA5 192, VGA6 198, HDMI 162.
-vidCtcTcTab2:
-    db 168, 172, 177, 180, 186, 192, 198, 162
-
-; Same derivation, for VID_RATE0_PLAY (~7783 Hz, formats 0/1's own
-; downsampled rate, SP13 T4). UNLIKE the two tables above, the crossover
-; does NOT stay below this (lower) rate on every mode: VGA5 (crossover
-; 7812 Hz) and VGA6 (crossover 8056 Hz) both exceed 7783, so those two
-; slots store 0 - a sentinel vid_run's own CTC-arm code detects (never a
-; valid CW16 TC) and substitutes CW256/TC=16 for at runtime (see that
-; call site). VGA0 224, VGA1 229, VGA2 236, VGA3 240, VGA4 248, VGA5
-; 0(sentinel), VGA6 0(sentinel), HDMI 216.
-vidCtcTcTab0:
-    db 224, 229, 236, 240, 248, 0, 0, 216
-
 vidNum:          db 0
 vidLoopMode:      db 0             ; 0 = play once, 1 = loop
-vidFmt:           db 0             ; 0-5 (vid_classify's verdict)
 vidExitReq:       db 0
 ; vidName/vidNamePart moved to VID_PAGE2 (SP14a T3 wave 1) - only the now-
 ; cold vid_open_video_body/vid_stream_open_body touch them (vid_open_
@@ -2404,33 +1962,54 @@ vidAudPoolBank:   db 0
 vidAudPoolPage:   db 0
 vidDrawPage:      db 0
 vidPxPage:        db 0
-vidPxCount:       db 0
+; vid_stream_pixels_flat's own runtime state (flat-serve path, mode-0
+; always or mode-1 at native height - see that routine's own header).
+vidPxBlocksLeft:  dw 0             ; total 512B blocks remaining, frame
+vidPxBlocksReq:   dw 0             ; this step's block count (1-16)
+vidPxChunkBytes:  dw 0             ; vidPxBlocksReq*512 (the vid_stream_
+                                    ; read call's own DE)
 vidCtcTc:         db 0
-vidAudReadLen:    dw 0             ; this frame's audio+pad read size
-                                    ; (mono VID_F4_AUDIO+VID_F45_AUDPAD or
-                                    ; fmt0/1/2/3 VID_F0/2_AUDIO+VID_F01/23_
-                                    ; AUDPAD)
-; vidColRemain16/vidPixRealRemain removed (SP14a T3 wave 2) - the static
-; case sequence (vid_stream_pixels_col) tracks column/remaining-byte
-; position at ASSEMBLE time now (which case is executing), not via these
-; runtime cells. vidBlkRemain16 restored below (fix wave 2, owner
-; hardware leg lead 1) - see vid_col_newblock's own .ok: comment; it has
-; no reader (register-level dead, confirmed), kept only to reproduce the
-; exact pre-T3 instruction sequence at that call site as a timing-margin
-; experiment.
-vidBlkRemain16:   db 0
-; Shared mono/stereo play buffer, sized for the LARGEST need among all
-; three groups: VID_F2_PLAY_BYTES=1244 (fmt2/3 - 622 pairs, 3:1-
-; downsampled - VID_STEREO_DOWNSAMPLE header) is still the largest even
-; after SP13 T4 added fmt0/1 (VID_F0_PLAY_BYTES=934 - 467 pairs, 2:1-
-; downsampled - VID_STEREO01_DOWNSAMPLE header - fits inside the existing
-; allocation with no growth). Mono (933 bytes, VID_F4_AUDIO) uses only
-; the front of it, unchanged from T2 - formats never play concurrently,
-; so one shared buffer costs less page space than separate ones.
-vidAudBuf:        ds VID_F2_PLAY_BYTES
-vidAudBufLast         equ vidAudBuf + VID_F4_AUDIO - 1
-vidAudBufLastStereo23 equ vidAudBuf + VID_F2_PLAY_BYTES - 2
-vidAudBufLastStereo01 equ vidAudBuf + VID_F0_PLAY_BYTES - 2
+vidAudReadLen:    dw 0             ; this frame's audio read size
+                                    ; (== vidABytesPad, staged fresh each
+                                    ; frame so vid_stream_frame's caller
+                                    ; never re-derives it)
+; --- SP14a T4: NXV header-derived playback parameters (nxv_open's own
+; output, above) - populated once at open, read every frame. ---
+vidShape:         db 0             ; NXV_SHAPE_MODE1/MODE0
+vidHeight:        dw 0             ; content height (256 fits, so a word)
+vidAChan:         db 0             ; 1 = mono, 2 = stereo
+vidABytesPad:     dw 0             ; audio wire read size (block multiple)
+vidABytesReal:    dw 0             ; audio played length (<= padded)
+vidPalFlag:       db 0             ; 0 = identity/RGB332, 1 = per-frame
+                                    ; 512B palette block
+vidPixBlocks:     dw 0             ; pixel data, 512-byte blocks/frame
+vidGapNeeded:     db 0             ; 1 = mode-1 column-gap blit needed
+                                    ; (height < native 256); 0 = flat
+vidColUnits:      db 0             ; gap blit only: height/8 (8-byte
+                                    ; transfer units per column)
+vidClipY1:        db 0             ; NR $18 Y1 (content band top)
+vidYofs:          db 0             ; NR $17 (signed, = -vidClipY1)
+; --- gap-blit runtime state (vid_stream_pixels_gap, below - see its own
+; header for the algorithm). Memory-backed rather than register-resident:
+; vid_col_block_start/end and vid_xfer8n all corrupt BC/DE/parts of the
+; register file per their own documented contracts, so nothing here could
+; safely ride a register across those calls anyway - correctness over
+; cleverness for this bounded-overhead path (see the task report). ---
+vidGapColsLeft:   dw 0             ; columns remaining, whole frame
+vidGapColLeft:    db 0             ; 8-byte units left in CURRENT column
+vidGapBlkLeft:    db 0             ; 8-byte units left in the open SD
+                                    ; block (0 = none open)
+vidGapDest:       dw 0             ; live destination pointer (MMU6
+                                    ; window-relative)
+vidGapChunk:      db 0             ; this step's transfer size (8-byte
+                                    ; units) - stashed because vid_xfer8n
+                                    ; corrupts B before it can be reread
+; Resident play buffer - full rate, no decimation (SP14a T4 deletes the
+; old 2:1/3:1 downsample entirely: NXV streams every real sample). Sized
+; to NXV_AUD_BUF_MAX (2560B, N0 stereo's own real-byte figure rounded up
+; to its padded size) - the largest per-frame real-audio length any
+; shipped profile needs; formats needing less use only the front of it.
+vidAudBuf:        ds NXV_AUD_BUF_MAX
 vidAudDone:       db 0
 vidSvMmu6:        db 0
 vidSvMmu7:        db 0
@@ -2445,6 +2024,12 @@ vidSvL2Back:      db 0
 vidSvNr43:        db 0             ; SP14a T2: captured constant (PAL_L2_
                                     ; FIRST), NOT a read - see vid_run's
                                     ; entry-capture comment for why
+vidSvNr6b:        db 0             ; SP14a T4: presentation isolation -
+                                    ; saved NR_TM_CTRL (tilemap), disabled
+                                    ; for the whole session, restored here
+vidSvNr4a:        db 0             ; SP14a T4: presentation isolation -
+                                    ; saved NR_FALLBACK, forced black for
+                                    ; the whole session, restored here
 vidPalCtrl:       db 0             ; SP14a T2: which Layer 2 palette bank
                                     ; is CURRENTLY DISPLAYED, always either
                                     ; PAL_L2_FIRST or PAL_L2_SECOND between
@@ -2640,30 +2225,12 @@ VIDBENCH_ROW_INFO  equ 29       ; 32-row tilemap (debug.asm's reserved
 
 ; vid_bench is the ONLY symbol vid_bench_trampoline (overlay0.asm,
 ; unmodifiable in this wave - see the task report) can jump to; it always
-; runs with MMU7 = VID_PAGE already set. SP14a escalation bench wave:
-; this tiny dispatcher reads flags+250 (set by test.dsf's LET before the
-; shared EXTERN 0 6 call - the file-scope constraint that rules out a new
-; extVec vector, see the task report) and routes to one of the five bench
-; verbs; 0 (the default/unset value) preserves the original VIDBENCH dual
-; -pass behaviour unchanged. flags is resident (engine.asm) - readable
-; from any page, no translation needed. VBENCH-FLAT/DMA stay hot (their
-; own headers explain why - measurement/ISR-mapping integrity); VBENCH-
-; COPPER is fully cold, a single hop out with C = 0/1/2 (init/up/down).
+; runs with MMU7 = VID_PAGE already set. flags+250 (test.dsf's own LET-
+; before-EXTERN convention) is no longer read here at all - SP14a T4
+; retires every escalation-bench verb (VBFLT/VBDMA/VBCOP/VBCU/VBCD, see
+; vid_bench_pass_ret's own neighbouring comment for why), leaving only
+; the original dual-pass VIDBENCH behaviour, unconditionally.
 vid_bench:
-    ld a, (flags+250)
-    or a
-    jr z, vid_bench_orig
-    cp 1
-    jp z, vbench_flat_run          ; stays hot - see that routine's header
-    ; 2 (DMA)/3/4/5 (copper init/up/down) all route cold - DMA's own
-    ; orchestration is mostly cold (see vbench_dma_run's header), and
-    ; copper is fully cold; C carries the raw selector through.
-    ld c, a
-    ld hl, vbench_cold_dispatch
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
-
 vid_bench_orig:
     call bank_alloc              ; one transient scratch bank, the MMU6
     jr nc, .havebank              ; read target for the raw streaming pass
@@ -2756,235 +2323,32 @@ vid_bench_pass:
 
 ; Landing point for the hop back from vid_bench_compute (VID_PAGE2). A
 ; separate global label, not a local .xxx of vid_bench_pass - it must be
-; referenced from another page's code (vid_classify's own vid_classify_
-; ret is the same pattern) and, placed here AFTER vid_bench_pass's own
-; local-label scope closes, does not disturb any of vid_bench_pass's
-; .readloop/.nocarry/.readfail references (a global label placed BETWEEN
-; them would silently rescope any that followed it).
+; referenced from another page's code and, placed here AFTER vid_bench_
+; pass's own local-label scope closes, does not disturb any of vid_bench_
+; pass's .readloop/.nocarry/.readfail references (a global label placed
+; BETWEEN them would silently rescope any that followed it).
 vid_bench_pass_ret:
     or a                         ; CF clear
     ret
 
-; VBENCH-FLAT (SP14a escalation bench wave, the L1 native-format decider -
-; see the task report's Q3/"Remaining silicon-bench items"). Sustained
-; KB/s streaming VBENCH_FLAT_N contiguous 512-byte blocks with ONLY the
-; per-block token-wait/CRC-skip glue (vid_col_block_start/vid_col_
-; block_end - the SAME primitives the real column blit uses) - no column
-; math, no dest-stride jumps: every block lands at the SAME fixed
-; destination, content discarded. Destination is vidAudBuf (1244 bytes,
-; comfortably >= 512) used DIRECTLY, not a bank_alloc'd MMU6 scratch page
-; - it is VID_PAGE-resident, so it is plain-addressable while we are
-; already running here, and it is provably idle: no bench verb ever runs
-; concurrently with real playback (the only other thing that touches it).
-; This avoids a whole bank_alloc/data_save/data_map_page/data_restore/
-; bank_free bracket - VID_PAGE's DEBUG headroom could not absorb it once
-; VBENCH-DMA's own hot footprint was added (see the task report's byte
-; count). Stays HOT (VID_PAGE, same page as vid_col_block_start/
-; vid_xfer16n) for the WHOLE loop - a per-block cross-page hop would add
-; real, measurable overhead here (unlike vid_bench_compute's one-shot hop
-; above) and risk understating the achievable rate right at the 1410
-; KB/s decision threshold. Opens vidBenchName fresh (raw mode) rather
-; than reusing vid_bench_pass's own open, so this verb is independent of
-; VIDBENCH ever having run first. Stops early (not an error) if the file
-; runs out of blocks before N - the report reflects exactly what was
-; measured either way. Out (via a hop to vbench_flat_ret, VID_PAGE2):
-; B = 0 open failed, 1 ran (early or full - vbenchBlocksDone vs
-; VBENCH_FLAT_N distinguishes which). Corrupts everything.
-; SP14a escalation bench wave, precision follow-up: raised from 1024
-; (512KB, ~21 frames elapsed, +/-1 tick = +/-~60 KB/s granularity - too
-; coarse for a threshold decision) to 4096 (2MB, ~84 frames at the
-; measured ~1219 KB/s baseline, +/-1 tick = ~1.2% granularity). See
-; vbench_flat_ret's own header for the KB/s arithmetic this forced open
-; (blocks*25 overflows 16 bits above 2621 blocks - 4096*25=102400).
-VBENCH_FLAT_N equ 4096          ; 2MB - large enough for a stable rate
-                                 ; reading, small enough that 001.VID
-                                 ; (the existing VIDBENCH fixture) need
-                                 ; not be huge; a short file just stops
-                                 ; early (see above), still reports a
-                                 ; real, if noisier, rate over what it did
-                                 ; get.
-vbench_flat_run:
-    ld a, 1
-    ld (vidStrmMode), a
-    ld ix, vidBenchName
-    call vid_stream_open
-    jr nc, .opened
-    ld b, 0
-    jr .backhop
-.opened:
-    ld hl, 0
-    ld (vbenchBlocksDone), hl
-    ld hl, (frameCounter)
-    ld (vidBenchStart), hl
-    ; SP14a escalation bench wave, owner-leg fix: the loop counter MUST
-    ; live in memory (vbenchBlocksDone itself), not a register - vid_
-    ; col_block_start/vid_col_block_end both corrupt DE (their own
-    ; documented contract), and vid_xfer16n corrupts E too, so a DE-based
-    ; countdown carried across these calls was silently trashed every
-    ; iteration (the owner-leg bug: BLOCKS read back as garbage, ~12x
-    ; the intended 1024, and the resulting KB/s was consequently
-    ; nonsense too - the divide itself was never the problem, its inputs
-    ; were). Comparing the freshly-read/incremented vbenchBlocksDone
-    ; against VBENCH_FLAT_N each iteration (with DE reloaded fresh, not
-    ; relied on to survive the calls) fixes both numbers at once.
-.loop:
-    ld hl, vidAudBuf
-    call vid_col_block_start
-    jr c, .done                   ; error - stop early; blocksDone < N
-                                   ; alone tells the report "not clean"
-                                   ; (see this routine's own header), no
-                                   ; separate error-code cell needed
-    ld hl, vidAudBuf              ; fixed dest every block - no stride
-    ld b, 32                      ; 32*16 = 512 bytes
-    call vid_xfer16n
-    call vid_col_block_end
-    ld hl, (vbenchBlocksDone)
-    inc hl
-    ld (vbenchBlocksDone), hl
-    ld de, VBENCH_FLAT_N
-    or a
-    sbc hl, de
-    jr c, .loop                   ; blocksDone < N - keep streaming
-.done:
-    ld hl, (frameCounter)
-    ld (vidBenchEnd), hl
-    call vid_stream_close
-    ld b, 1
-.backhop:
-    ld hl, vbench_flat_ret
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
-
-vbenchBlocksDone: dw 0           ; < VBENCH_FLAT_N means the loop stopped
-                                  ; early (error or short file) - see
-                                  ; vbench_flat_run's own header
-
-; VBENCH-DMA (SP14a escalation bench wave - the task report's Q1e spec).
-; ONE shared hot routine serves BOTH the correctness/rate pass (WR4 =
-; CONTINUOUS) and the burst+audio-coexistence pass (WR4 = BURST, a tiny
-; dedicated test-tone ISR armed for the transfer's duration) - vbenchDma
-; Mode (0/1, set by the cold orchestrator below before each hop) selects
-; which, keeping the hot-page footprint to ONE copy of the token-wait/
-; DMA-program/CRC-skip machinery instead of two. Everything else (both
-; opens, the F_READ-mode reference read via esx_fread, the byte compare,
-; the report) runs cold (VID_PAGE2) - none of it needs precise timing or
-; the CTC-armed MMU7 invariant, only the DMA transfer itself does (burst
-; mode needs MMU7 = VID_PAGE for its whole armed window - the ISR code
-; lives here - the SAME reason VBENCH-FLAT's loop stays hot, just for a
-; window instead of N blocks).
-;
-; DMA program bytes: WR0/WR2/WR5/WR6 copied verbatim from overlay2.asm's
-; own proven dma_copy/dma_prog (mem-to-mem; re-derived here against
-; tools/NextZXOS/docs/extra-hw/dma/zxndma.txt's WR0/WR1/WR2/WR4 bit
-; tables since this is a PORT-source transfer, not mem-to-mem - only
-; WR1 (port A = IO, fixed address, cycle length 4 - the SPI data port
-; is always read from the SAME port number, never incrementing) and WR4
-; (mode bit patched per-call; CONTINUOUS = %10101101, BURST = %10001101)
-; actually differ from that template, confirming the escalation
-; research's own "only WR1/WR4 differ" finding independently). Port A
-; address = PORT_SPI_DAT ($00EB); block length = 512 (exact count, no
-; off-by-one on the zxnDMA).
-vbench_dma_prog:
-    db $83                       ; WR6: disable (clean slate before load)
-    db %01111101                 ; WR0: A->B, port A addr+block length
-                                  ; follow (D3-D6 all set)
-    dw PORT_SPI_DAT               ; port A "address" = the fixed SPI
-                                  ; data port number
-    dw 512                        ; block length, exact count
-    db %01101100                 ; WR1: A is IO, address fixed, timing
-                                  ; byte follows
-    db %00000000                 ; A cycle length 4 (safest for a real
-                                  ; peripheral port, not a plain memory
-                                  ; bus - dma_copy's cycle-length-2 choice
-                                  ; was for mem-to-mem only)
-    db %01010000                 ; WR2: B memory, incrementing, timing
-                                  ; byte follows (identical to dma_copy -
-                                  ; port B is a plain memory dest here too)
-    db %00000010                 ; B cycle length 2, no prescaler
-.wr4:
-    db %10101101                 ; WR4: mode (patched per call) + port B
-                                  ; addr (low+high) follows
-.baddr:
-    dw 0                          ; port B start = dest (patched)
-    db %10000010                 ; WR5 $82: /ce only, STOP on end of
-                                  ; block (never auto-restart)
-    db $CF                        ; WR6: load
-    db $87                        ; WR6: enable - this OUT does not
-                                  ; return until the block has fully
-                                  ; transferred (CONTINUOUS) or the CPU
-                                  ; has been let run during SPI waits
-                                  ; (BURST) - either way, done when it
-                                  ; returns; no status readback exists
-                                  ; on the zxnDMA to poll instead.
-vbench_dma_prog_len equ $ - vbench_dma_prog
-
-; Out (via a hop to vbench_dma_ret2, VID_PAGE2): B = 0 token-wait error /
-; 1 ok (exact error code not kept - see the scope-cut note below; a bare
-; ok/error split is enough for a bench report). Corrupts everything.
-;
-; SP14a escalation bench wave - SCOPE CUT (VID_PAGE budget): the burst-
-; mode audio-coexistence pass (Q1e's third question - does burst mode
-; yield the bus during per-byte SPI waits so the CTC audio ISR survives)
-; is NOT implemented in this wave. Reaching it would have needed the
-; whole armed window (CTC arm, DMA program+launch, disarm, a dedicated
-; test-tone ISR) to run HOT (MMU7 = VID_PAGE for as long as the CTC could
-; fire - the same invariant every ISR in this file depends on), on top
-; of VBENCH-FLAT's own hot loop and this pass's own correctness/rate
-; code; the combined total overflowed VID_PAGE's DEBUG budget by ~150
-; bytes even after moving everything else possible cold, and headroom
-; was still ~10 bytes short even after that - so the mode-select branch
-; itself (and the vbenchDmaMode/vbenchDmaErr cells that fed it) is cut
-; too, not just left dead: WR4 is hardcoded to CONTINUOUS (%10101101)
-; below. To re-add burst mode in a future wave once more VID_PAGE
-; headroom is freed (candidates: relocate more of vid_stream_pixels_
-; col's case table, or drop another DEBUG-only report row - see the task
-; report for the byte-cost options this proposes): restore a mode cell,
-; branch WR4 between %10101101/%10001101, and wrap the DMA launch in a
-; CTC arm/disarm (video_ctc_isr's own installation sequence, vid_run,
-; is the template - but needs a dedicated tiny test-tone ISR, not that
-; one, since this bench has no real playback buffer to drive it).
-;
-; Destination is vidAudBuf, used directly - same reasoning as VBENCH-
-; FLAT's own header (VID_PAGE-resident, plain-addressable, provably idle
-; during any bench call, no bank_alloc/MMU6 bracket needed). Content
-; here is NOT discarded, unlike VBENCH-FLAT's own use of it - the cold
-; compare step (vbench_dma_ret2) reads it back through a data_save/
-; data_map_page(VID_PAGE)/vidAudBuf+DATA_WINDOW-OVL_ORG bracket, the
-; same translated-address idiom vid_open_video_body already uses.
-vbench_dma_hot:
-    ld hl, vidAudBuf
-    ld (vbench_dma_prog.baddr), hl
-    ld hl, vidAudBuf
-    call vid_col_block_start       ; token-wait - HL unused by this
-                                    ; caller, just needs to be preserved
-    jr c, .err
-    ld hl, (frameCounter)
-    ld (vidBenchStart), hl
-    di
-    ld hl, vbench_dma_prog
-    ld b, vbench_dma_prog_len
-    ld c, DMA_PORT
-    otir                           ; program + run to completion (see
-                                    ; vbench_dma_prog's own WR6-enable
-                                    ; comment)
-    ei
-    ld hl, (frameCounter)
-    ld (vidBenchEnd), hl
-    ld c, PORT_SPI_DAT
-    call vid_col_block_end         ; CRC skip + run/remain bookkeeping
-    call vid_stream_close
-    ld b, 1
-    jr .backhop
-.err:
-    call vid_stream_close
-    ld b, 0
-.backhop:
-    ld hl, vbench_dma_ret2
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
-
+; VBENCH-FLAT/DMA/COPPER ALL RETIRED (SP14a T4, VID_PAGE budget - the
+; native NXV player's own new hot-page needs, particularly the full-rate
+; vidAudBuf resident buffer (2560B vs the old downsampled 1244B), left no
+; room to carry the old MakeVid-era case-unroll's replacement AND all
+; three SP13/T3-era silicon-bench probes). All three had already CLOSED
+; their own questions before this task started (escalation research doc:
+; "DMA-from-SPI is unreliable on this silicon at speed... refuted for
+; production use... No further DMA iterations planned"; the copper WAIT
+; line VBCOP/VBCU/VBCD converged on, 257, is now hardcoded as nextdaad.
+; inc's NXV_COPPER_LINE, itself owner-hardware-validated; VBFLT's own
+; ~1219 KB/s finding fed directly into the spec's own "1264 KB/s design
+; rate" margin table already shipped in docs/superpowers/specs/2026-07-
+; 21-sp14a-native-video-design.md) - retiring all three sheds real hot-
+; page bytes without losing any open question. The task brief's own
+; DELETION SWEEP names only the ORIGINAL VIDBENCH (retargeted, above) as
+; required to stay - VBENCH-FLAT/DMA/COPPER were never in that list.
+; test.dsf's VBFLT/VBDMA/VBCOP/VBCU/VBCD verbs are removed in the SAME
+; commit (Wave 2's own test.dsf changes).
 ; vid_bench_compute and vid_bench_report moved to VID_PAGE2 (SP14a
 ; escalation bench wave - see that page section for the routines and the
 ; vidBenchElapsed/KB/Fmt/FmtBad cells + message strings). vidBenchBank/
@@ -3016,15 +2380,20 @@ msgVidNoBank:   db "NOBANK", 0
 ; overflow page hosting only the frame-timeline report's print body
 ; (SP13 T3's own crash-bisection-probe precedent: print-only, reached
 ; strictly AFTER playback is fully torn down, never while the CTC/ISR is
-; armed). SP14a T3 wave 1 makes the page UNCONDITIONAL (both build
-; variants) and adds a second kind of content: COLD video code evicted
+; armed). SP14a T3 wave 1 made the page UNCONDITIONAL (both build
+; variants) and added a second kind of content: COLD video code evicted
 ; off VID_PAGE under the SAME one-rule invariant (MMU7 = VID_PAGE
-; whenever the video CTC ISR can fire) - vid_classify, and the whole
-; open/filemap-orchestration cluster (vid_open_video, vid_stream_open),
-; both provably reachable only BEFORE any CTC arm (see each routine's own
-; header, below, for the call-site evidence). The DEBUG-only report body
-; (vid_tl_report_body etc) stays exactly as T1 left it, still guarded by
-; its own IFDEF DEBUG within this now-unconditional page.
+; whenever the video CTC ISR can fire) - the open/filemap-orchestration
+; cluster (vid_open_video, vid_stream_open), provably reachable only
+; BEFORE any CTC arm (see each routine's own header, below, for the
+; call-site evidence). SP14a T4 removes the old sizeless-classifier
+; cluster entirely (vid_classify_body/vid_mod24/vidFormatSect/vidSectE-L)
+; and adds NXV's own header validate (nxv_open_body, below - the bulk of
+; nxv_open's logic; only the one vid_stream_read call stays on the hot
+; stub, VID_PAGE - see that routine's own header for the split
+; rationale). The DEBUG-only report body (vid_tl_report_body etc) stays
+; exactly as T1 left it, still guarded by its own IFDEF DEBUG within this
+; now-unconditional page.
 ; ---------------------------------------------------------------------
     MMU 7, VID_PAGE2, OVL_ORG
 
@@ -3032,104 +2401,604 @@ msgVidNoBank:   db "NOBANK", 0
 ; Cold video code (SP14a T3 wave 1) - both build variants.
 ; ------------------------------------------------------------------
 
-; vid_classify body (hot stub: VID_PAGE, above). Identical logic to the
-; pre-wave-1 vid_classify, just relocated and renamed; ends by hopping
-; back to vid_classify_ret (VID_PAGE) with the result in B ($FF = bad,
-; else the format 0-5) instead of a plain `ret` with CF/A. First restores
-; HL/DE (the real In: HL/DE size argument) from the stub's own pushes -
-; see vid_classify's header, VID_PAGE, for why the stub couldn't just
-; leave them live across its own `ld hl,<hop target>`.
-vid_classify_body:
-    pop de                       ; caller's DE (size high)
-    pop hl                       ; caller's HL (size low)
+; nxv_open_body - the bulk of NXV header validation (see nxv_open's own
+; header, VID_PAGE, for the hot-stub/cold-body split rationale). In: C =
+; the pool page the hot stub already read block 0 into. Ends by hopping
+; back to nxv_open_ret (VID_PAGE) with the verdict in B (0 = valid, 1 =
+; bad) - the same B-carries-result convention this file uses throughout.
+; Corrupts everything.
+nxv_open_body:
+    call data_save
+    ld a, c
+    call data_map_page
+    ld hl, DATA_WINDOW + NXV_OFF_MAGIC
+    ld de, nxvMagic
+    ld b, NXV_MAGIC_LEN
+.magic:
+    ld a, (de)
+    cp (hl)
+    jp nz, .bad
+    inc hl
+    inc de
+    djnz .magic
+    ld a, (DATA_WINDOW + NXV_OFF_VERSION)
+    cp NXV_VERSION
+    jp nz, .bad
+    ld a, (DATA_WINDOW + NXV_OFF_SHAPE)
+    cp NXV_SHAPE_MODE0 + 1
+    jp nc, .bad                     ; shape must be 0 or 1
+    ld (vidShape), a
+    ; width cross-check (shape implies width; reject a mismatched pair)
+    ld hl, (DATA_WINDOW + NXV_OFF_WIDTH)
+    ld de, NXV_WIDTH_MODE1
+    ld a, (vidShape)
+    or a
+    jr z, .checkw
+    ld de, NXV_WIDTH_MODE0
+.checkw:
+    or a
+    sbc hl, de
+    jp nz, .bad
+    ; height: 0 < height <= native, alignment per shape (mode1: mod 8,
+    ; mode0: mod 2) - height==native (256, mode1 only) is the one value
+    ; whose high byte is set (H=1,L=0) and is exempt from the alignment
+    ; test (it IS the stride, never a gapped case).
+    ld hl, (DATA_WINDOW + NXV_OFF_HEIGHT)
+    ld a, h
+    or a
+    jr z, .lowheight
+    ld a, (vidShape)
+    or a
+    jp nz, .bad                     ; high byte set: mode0 never valid
     ld a, l
     or a
-    jr nz, .bad
+    jp nz, .bad                     ; must be exactly 256 (H=1,L=0)
+    jr .heightok
+.lowheight:
+    ld a, l
+    or a
+    jp z, .bad                      ; height 0 never valid
+    ld b, a                         ; stash height for the native-ceiling
+                                     ; compare (A is about to be reused)
+    ld a, (vidShape)
+    or a
+    jr nz, .mode0ceiling
+    ; mode1: native height is 256, which cannot be loaded into an 8-bit
+    ; register - but ANY value B can hold here (1-255, H was already
+    ; confirmed 0 above) is by construction < 256, so the ceiling test
+    ; is unconditionally satisfied - skip straight to the alignment mask.
+    jr .gotmask
+.mode0ceiling:
+    ld a, NXV_NATIVE_H_MODE0        ; = 192, fits an 8-bit literal
+    cp b
+    jp c, .bad                      ; native < height: over the ceiling
+.gotmask:
+    ld a, (vidShape)
+    or a
+    ld c, 7                         ; mode1 mask: mod 8 -> low 3 bits
+    jr z, .gotmaskval
+    ld c, 1                         ; mode0 mask: mod 2 -> low 1 bit
+.gotmaskval:
+    ld a, b
+    and c
+    jp nz, .bad
+.heightok:
+    ld hl, (DATA_WINDOW + NXV_OFF_HEIGHT)
+    ld (vidHeight), hl
+    ; audio channels + rate (the supported set: NXV_RATE_STEREO paired
+    ; with 2ch, NXV_RATE_MONO paired with 1ch - any other combination,
+    ; including a "right" rate on the wrong channel count, rejected)
+    ld a, (DATA_WINDOW + NXV_OFF_ACHAN)
+    cp 1
+    jr z, .mono
+    cp 2
+    jp nz, .bad
+    ld hl, NXV_RATE_STEREO
+    jr .havechan
+.mono:
+    ld hl, NXV_RATE_MONO
+.havechan:
+    ld (vidAChan), a
+    ex de, hl                       ; DE = expected rate
+    ld hl, (DATA_WINDOW + NXV_OFF_ARATE)
+    or a
+    sbc hl, de
+    jp nz, .bad
+    ; audio bytes/frame: padded must be a nonzero 512-byte multiple; real
+    ; must be <= padded
+    ld hl, (DATA_WINDOW + NXV_OFF_ABYTES_PAD)
+    ld a, h
+    or l
+    jp z, .bad
+    ld a, l
+    or a
+    jp nz, .bad                     ; low byte must be 0 (multiple of 256)
     ld a, h
     and 1
-    jr nz, .bad                 ; size not a multiple of 512: reject
-    ld b, 9                     ; >>9 (=/512) -> 24-bit sector count in
-.shr:                           ; E:H:L (D discarded - always 0 for any
-    srl d                       ; file under 8GB, comfortably beyond the
-    rr e                        ; format matrix)
-    rr h
-    rr l
-    djnz .shr
-    ld a, e
-    ld (vidSectE), a
-    ld a, h
-    ld (vidSectH), a
-    ld a, l
-    ld (vidSectL), a
-    ld ix, vidFormatSect
-    ld c, 0
-.tryfmt:
-    ld a, (ix+0)
-    ld d, a
-    call vid_mod24
+    jp nz, .bad                     ; bit 0 of high byte must be 0 too
+                                     ; (together: multiple of 512)
+    ld (vidABytesPad), hl
+    ld hl, (DATA_WINDOW + NXV_OFF_ABYTES_REAL)
+    ld de, (vidABytesPad)
     or a
-    jr z, .found
-    inc ix
-    inc c
-    ld a, c
-    cp VID_FORMATS
-    jr nz, .tryfmt
+    sbc hl, de
+    jr c, .realok                   ; real < padded
+    jr z, .realok                   ; real == padded
+    jp .bad                         ; real > padded: reject
+.realok:
+    ld hl, (DATA_WINDOW + NXV_OFF_ABYTES_REAL)
+    ld (vidABytesReal), hl
+    ld a, (DATA_WINDOW + NXV_OFF_PALFLAG)
+    cp 2
+    jp nc, .bad
+    ld (vidPalFlag), a
+    ld hl, (DATA_WINDOW + NXV_OFF_PIXBLK)
+    ld a, h
+    or l
+    jp z, .bad
+    ld (vidPixBlocks), hl
+    ; derive gap/Y-centering geometry from shape+height
+    ld a, (vidShape)
+    or a
+    jr nz, .mode0derive
+    ; mode 1: gap needed unless height == native (256, H=1 case handled
+    ; separately - only L is meaningful for any OTHER valid height here)
+    ld hl, (vidHeight)
+    ld a, h
+    or a
+    jr nz, .flatnative              ; height==256: flat, no gap
+    ; Y1 = (256-height)/2 - 256 does not fit an 8-bit literal, so this
+    ; computes 0-L (mod 256), which equals 256-L exactly for any L in
+    ; 1..255 (the only range reachable here - L=0/H=1 both handled above)
+    xor a
+    sub l
+    srl a
+    ld (vidClipY1), a
+    ld a, 1
+    ld (vidGapNeeded), a
+    ld a, l
+    srl a
+    srl a
+    srl a
+    ld (vidColUnits), a             ; height/8, the gap blit's constant
+    jr .derivedone
+.flatnative:
+    xor a
+    ld (vidClipY1), a
+    ld (vidGapNeeded), a
+    jr .derivedone
+.mode0derive:
+    ; mode 0: never a gap - row-linear at any height
+    ld hl, (vidHeight)
+    ld a, NXV_NATIVE_H_MODE0
+    sub l
+    srl a
+    ld (vidClipY1), a
+    xor a
+    ld (vidGapNeeded), a
+.derivedone:
+    ld a, (vidClipY1)
+    neg
+    ld (vidYofs), a
+    ld b, 0                          ; verdict: valid
+    jr .backhop
 .bad:
-    ld b, $FF
-    jr .ret
-.found:
-    ld b, c
-.ret:
-    ld hl, vid_classify_ret
+    ld b, 1                          ; verdict: bad
+.backhop:
+    call data_restore
+    ld hl, nxv_open_ret
     push hl
     ld a, VID_PAGE
     jp ovl_map_page
 
-; 24-bit dividend (vidSectE:vidSectH:vidSectL, E=MSB) mod 8-bit divisor.
-; In: D = divisor (1-155 - every format's sector count is under 256, so
-;     an 8-bit remainder accumulator suffices). Out: A = remainder.
-; Standard shift-compare-subtract restoring division, 24 steps. Reads
-; the dividend fresh from memory each call so the six vid_classify
-; iterations share one unmodified dividend. Corrupts AF, BC, HL, E.
-vid_mod24:
-    ld a, (vidSectE)
-    ld e, a
-    ld a, (vidSectH)
-    ld h, a
-    ld a, (vidSectL)
-    ld l, a
+nxvMagic: db "NXVID"
+
+; ---------------------------------------------------------------------
+; vid_run_entry_body - the bulk of vid_run's own entry state-capture
+; (VID_PAGE budget lever - see vid_run's own header, above, for why
+; MMU6/MMU7 specifically cannot move here). Captures NR12/70/69/15, the
+; IM2 stub, audEnable, and l2Front/BackBank into the established MMU6-
+; translated-address bracket, THEN runs the samples-abort wait and the
+; music-tick freeze (both unchanged logic, just relocated - `halt`'s own
+; interrupt wait does not care which page MMU7 currently maps, and the
+; interrupt handler that can fire here is the pre-existing, RESIDENT
+; game music/sample ISR, entirely unrelated to video). Hops back to
+; vid_run.entryret (VID_PAGE) to continue with bank_alloc onward.
+; Corrupts everything.
+vid_run_entry_body:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld e, NR_L2_BANK
+    call nr_read
+    ld (vidSvNr12+DATA_WINDOW-OVL_ORG), a
+    ld e, NR_L2_CTRL
+    call nr_read
+    ld (vidSvNr70+DATA_WINDOW-OVL_ORG), a
+    ld e, NR_DISPLAY_CTRL
+    call nr_read
+    ld (vidSvNr69+DATA_WINDOW-OVL_ORG), a
+    ld e, NR_LAYERS
+    call nr_read
+    ld (vidSvNr15+DATA_WINDOW-OVL_ORG), a
+    ld hl, (IM2_CTC_STUB+1)
+    ld (vidSvCtcStub+DATA_WINDOW-OVL_ORG), hl
+    ld a, (audEnable)
+    ld (vidSvAudEnable+DATA_WINDOW-OVL_ORG), a
+    ld b, a                          ; stash - data_restore corrupts A
+    ld a, (l2FrontBank)
+    ld (vidSvL2Front+DATA_WINDOW-OVL_ORG), a
+    ld a, (l2BackBank)
+    ld (vidSvL2Back+DATA_WINDOW-OVL_ORG), a
+    call data_restore
+
+    ; --- samples abort (SSTOP request path, waited) ---
+    ; audEnable = 0 means aud_tick never runs - the ISR never reaches the
+    ; request chain, so a bit set here would never clear (aud_load_song's
+    ; own documented hazard, overlay1.asm) - skip the wait in that case.
+    ; B holds the just-captured audEnable (stashed above, since data_
+    ; restore corrupts A).
+    ld a, b
+    or a
+    jr z, .noaudsave
+    ld hl, audRequest
+    set 7, (hl)
+.waitstop:
+    halt
+    ld a, (audRequest)
+    bit 7, a
+    jr nz, .waitstop
+.noaudsave:
+    ; --- music tick frozen ---
     xor a
-    ld b, 24
+    ld (audEnable), a
+
+    ld hl, vid_run.entryret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+; ---------------------------------------------------------------------
+; vid_run_l2setup_body - Layer 2 setup + identity palette + copper list
+; load, hopped cold from vid_run (VID_PAGE, above - see that call site's
+; own comment for why this is safe pre-arm). Reads vidShape/vidClipY1/
+; vidHeight/vidYofs/vidPalFlag (VID_PAGE-resident, nxv_open's own output)
+; via the established MMU6-translated-address bracket (data_save/
+; data_map_page(VID_PAGE), held for this whole body). vid_identity_
+; palette and vid_copper_init (both below) are same-page plain calls -
+; no further hop needed, since both are pure NextReg I/O with no VID_
+; PAGE-resident memory reads of their own (safe to relocate here
+; wholesale). Ends by hopping back to vid_run_l2setup_ret (VID_PAGE).
+; Corrupts everything.
+;
+; Mode 1/column-major (320-wide, NXV_NR70_MODE1) or mode 0/row-major
+; (256-wide, NXV_NR70_MODE0) per the header's own shape field. Full-
+; WIDTH clip always (X1=0, X2 = the shape's own native width-1 in its
+; own clip units) - NXV has no pillarbox profile in the shipped matrix,
+; unlike the old MakeVid-era fmt2/3's 256-of-320 subset. Y clip/scroll
+; derived from the header's own content height (nxv_open's vidClipY1/
+; vidYofs) instead of a fixed per-format pair - this is what makes
+; height a genuine HEADER PARAMETER (spec's own framing), not a format
+; property. Transparent colour left at TM_TRANSP_ATTR (the engine-wide
+; convention every l2_mode_set call also uses - vid_apply_palette/vid_
+; identity_palette dodge it exactly like l2_palette_load).
+vid_run_l2setup_body:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ; presentation isolation (spec requirement, owner 2026-07-21): save +
+    ; disable the tilemap layer, save + force the global fallback colour
+    ; to black - moved here from vid_run's own hot code (another VID_
+    ; PAGE budget lever; no CTC dependency, same reasoning as the rest of
+    ; this body). Restored on every real exit (vid_run_restore_body,
+    ; below).
+    ld e, NR_TM_CTRL
+    call nr_read
+    ld (vidSvNr6b+DATA_WINDOW-OVL_ORG), a
+    and %01111111                   ; disable (clear the enable bit)
+    nextreg NR_TM_CTRL, a
+    ld e, NR_FALLBACK
+    call nr_read
+    ld (vidSvNr4a+DATA_WINDOW-OVL_ORG), a
+    xor a
+    nextreg NR_FALLBACK, a          ; force black
+    ; NR $43 (palette ctrl): the dev guide's per-register spec (chapter-
+    ; next-palette.tex, "Register $43") never states it is readable - NR
+    ; $40/$41/$44 each say "Reads or writes ..." explicitly, $43's own
+    ; entry only describes what each bit DOES when written, no read
+    ; mention. nr_read is therefore NOT used here; the game's own
+    ; convention is captured instead (sp13-task-4-report.md addendum:
+    ; every Layer 2 palette writer in this codebase, including vid_
+    ; identity_palette, uses PAL_L2_FIRST unconditionally - it is the
+    ; only value NR $43 can hold on entry). vidPalCtrl (the double-
+    ; buffer's own "which bank is on screen right now" tracker) is
+    ; primed to the same value - frame 0 starts believing the first bank
+    ; is displayed, matching what vid_identity_palette/l2_palette_load's
+    ; own convention actually left on the hardware.
+    ld a, PAL_L2_FIRST
+    ld (vidSvNr43+DATA_WINDOW-OVL_ORG), a
+    ld (vidPalCtrl+DATA_WINDOW-OVL_ORG), a
+    ld a, (vidShape+DATA_WINDOW-OVL_ORG)
+    or a
+    jr nz, .l2mode0
+    ld a, NXV_NR70_MODE1
+    nextreg NR_L2_CTRL, a
+    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
+    nextreg NR_CLIP_IDX, 1
+    xor a
+    nextreg NR_L2_CLIP, a            ; X1 = 0 (full-bleed)
+    ld a, NXV_CLIP_X2_MODE1
+    nextreg NR_L2_CLIP, a
+    jr .clipY
+.l2mode0:
+    xor a
+    nextreg NR_L2_CTRL, a
+    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
+    nextreg NR_CLIP_IDX, 1
+    xor a
+    nextreg NR_L2_CLIP, a            ; X1 = 0 (full-bleed)
+    ld a, NXV_CLIP_X2_MODE0
+    nextreg NR_L2_CLIP, a
+.clipY:
+    ; Y1 = vidClipY1 (nxv_open's own derivation); Y2 = Y1 + height - 1,
+    ; special-cased when height==256 (H=1,L=0 - the one value that does
+    ; not fit an 8-bit add: Y1 is already 0 there, so Y2 is simply 255).
+    ld a, (vidClipY1+DATA_WINDOW-OVL_ORG)
+    nextreg NR_L2_CLIP, a
+    ld hl, (vidHeight+DATA_WINDOW-OVL_ORG)
+    ld a, h
+    or a
+    jr z, .y2low
+    ld a, 255
+    jr .havey2
+.y2low:
+    ld a, (vidClipY1+DATA_WINDOW-OVL_ORG)
+    add a, l
+    dec a
+.havey2:
+    nextreg NR_L2_CLIP, a
+    ld a, (vidYofs+DATA_WINDOW-OVL_ORG)
+    nextreg NR_L2_YOFS, a
+    nextreg NR_L2_XOFS, 0
+    ld e, NR_DISPLAY_CTRL
+    call nr_read
+    or %10000000
+    nextreg NR_DISPLAY_CTRL, a
+    nextreg NR_LAYERS, 0
+
+    ; no per-frame palette block (vidPalFlag=0): pixel bytes ARE their
+    ; own RRRGGGBB colour - program a fixed identity table once.
+    ld a, (vidPalFlag+DATA_WINDOW-OVL_ORG)
+    or a
+    call z, vid_identity_palette
+
+    ; copper flip init - FRAME-mode 8-byte list, owner-validated WAIT
+    ; line (nextdaad.inc's NXV_COPPER_LINE).
+    call vid_copper_init
+
+    ; SP14a T4 (VID_PAGE budget lever): the CTC time-constant table
+    ; lookup moved here from vid_run's own hot CTC-retune section - it
+    ; is a pure data lookup (no self-modifying code, no timing
+    ; dependency), 100% safe to compute pre-arm, and this cold body
+    ; already has the exact MMU6-translated-write pattern (vidCtcTc,
+    ; VID_PAGE-resident) it needs - riding the SAME hop already open
+    ; here costs nothing extra, while the equivalent hot-page code (two
+    ; 8-byte tables + the lookup instructions) would.
+    ld e, NR_VIDEO_TIMING
+    call nr_read
+    and 7
+    ld c, a
+    ld b, 0
+    ld a, (vidAChan+DATA_WINDOW-OVL_ORG)
+    ld hl, vidCtcTcNxvMono
+    cp 2
+    jr nz, .gottctab
+    ld hl, vidCtcTcNxvStereo
+.gottctab:
+    add hl, bc
+    ld a, (hl)
+    ld (vidCtcTc+DATA_WINDOW-OVL_ORG), a
+
+    ; IM2_CTC_STUB (ISR select, mono or stereo per the header's channel
+    ; count) - RESIDENT memory, no translation needed. Single atomic LD
+    ; (nn),HL (doc 08's "interrupt atomicity"); safe to write from any
+    ; page, any time before the CTC actually arms (vid_run's own hot
+    ; code does that, strictly after this whole cold body returns).
+    ld a, (vidAChan+DATA_WINDOW-OVL_ORG)
+    ld hl, video_ctc_isr
+    cp 2
+    jr nz, .isrpicked
+    ld hl, video_ctc_isr_stereo
+.isrpicked:
+    ld (IM2_CTC_STUB+1), hl
+
+    ; BOTH ISR bodies' end-marker patched unconditionally (only the one
+    ; actually installed above ever executes; patching the other is
+    ; harmless dead bytes and avoids a branch) - end address = vidAudBuf
+    ; + vidABytesReal - (1 for mono, 2 for stereo pairs). These operand
+    ; bytes ARE VID_PAGE-resident code, so the writes use the SAME MMU6-
+    ; translated-address bracket this whole body already holds open.
+    ld hl, (vidABytesReal+DATA_WINDOW-OVL_ORG)
+    ld de, vidAudBuf
+    add hl, de                       ; one past the real audio's own end
+    dec hl                           ; mono's own end address (real-1)
+    ld a, l
+    ld (video_ctc_isr.cmplo+1+DATA_WINDOW-OVL_ORG), a
+    ld a, h
+    ld (video_ctc_isr.cmphi+1+DATA_WINDOW-OVL_ORG), a
+    dec hl                           ; stereo's own end address (real-2)
+    ld a, l
+    ld (video_ctc_isr_stereo.cmplo+1+DATA_WINDOW-OVL_ORG), a
+    ld a, h
+    ld (video_ctc_isr_stereo.cmphi+1+DATA_WINDOW-OVL_ORG), a
+
+    call data_restore
+    ld hl, vid_run.l2setupret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+; Per-video-mode (NR $11 bits 2:0) CTC time constant for the two
+; supported NXV audio rates (nextdaad.inc's NXV_RATE_STEREO/MONO),
+; mirroring aud_ctc_params' algorithm (overlay1.asm) collapsed to these
+; two fixed rates - duplicated rather than cross-called since overlay1 is
+; a different MMU7 page, unreachable during playback. Derived from the
+; SAME per-mode clock table (aud_clk16_tab) at assemble time: TC =
+; floor(clk16[mode] / rate). BOTH tables land CW16 (never CW256) on
+; EVERY video mode - verified with a Python cross-check against aud_
+; clk16_tab's own values (the T1 report's method), no sentinel needed
+; (unlike the old fmt0/1-only vidCtcTcTab0): the /16-vs-/256 crossover
+; (clk16>>8, ~6835-8056 across modes) stays below BOTH 15625 and 23325 on
+; every mode, with margin. Achieved-rate error (TC quantization, the
+; project's own accepted class of imprecision): stereo 0.00%-0.73% across
+; modes, mono 0.04%-1.22% - both well inside the range every prior CTC
+; table in this codebase already ships. VGA0 112, VGA1 114, VGA2 117,
+; VGA3 120, VGA4 124, VGA5 128, VGA6 132, HDMI 108 (achieved Hz: 15625,
+; 15664.16, 15739.46, 15625, 15625, 15625, 15625, 15625).
+vidCtcTcNxvStereo:
+    db 112, 114, 117, 120, 124, 128, 132, 108
+
+; Same derivation, NXV_RATE_MONO (23325 Hz - the SAME true rate the old
+; fmt4/5 mono format already derived, VID_RATE4_X10's own "23300, not
+; exact" disclosure, sp13-task-2-report.md, reused verbatim). VGA0 75,
+; VGA1 76, VGA2 78, VGA3 80, VGA4 83, VGA5 85, VGA6 88, HDMI 72 (achieved
+; Hz: 23333.33, 23496.24, 23609.19, 23437.50, 23343.37, 23529.41,
+; 23437.50, 23437.50).
+vidCtcTcNxvMono:
+    db 75, 76, 78, 80, 83, 85, 88, 72
+
+; Loads the copper list and starts FRAME mode. RESET pulse before
+; STOP+load (VBENCH-COPPER's own owner-leg fix - clears any stale mid-
+; list PC from a prior run before writing fresh bytes). Initial MOVE
+; data bytes are the CURRENT (pre-flip) bank/palctl - harmless status-
+; quo values in the unlikely event a vblank lands before the first CPU
+; poke (vid_copper_poke, VID_PAGE) overwrites them. l2FrontBank is
+; RESIDENT (not VID_PAGE), so no MMU6 translation is needed to read it
+; here. Corrupts AF.
+vid_copper_init:
+    ld a, %01000000                 ; control = RESET (01), index hi = 0
+    nextreg NR_COPPER_ADDR_HI_CTRL, a
+    xor a
+    nextreg NR_COPPER_ADDR_LO, a    ; write-index low = 0
+    nextreg NR_COPPER_ADDR_HI_CTRL, a  ; index hi = 0, control = STOP (00)
+    ld a, %10000001                 ; WAIT hi: H=0, V bit8=1 (257 >= 256)
+    nextreg NR_COPPER_DATA, a
+    ld a, NXV_COPPER_LINE & $FF
+    nextreg NR_COPPER_DATA, a       ; WAIT lo: V low 8 bits (257&$FF=1)
+    ld a, NR_L2_BANK
+    nextreg NR_COPPER_DATA, a       ; MOVE1 hi: register $12
+    ld a, (l2FrontBank)
+    nextreg NR_COPPER_DATA, a       ; MOVE1 lo: initial bank
+    ld a, NR_PAL_CTRL
+    nextreg NR_COPPER_DATA, a       ; MOVE2 hi: register $43
+    ld a, PAL_L2_FIRST
+    nextreg NR_COPPER_DATA, a       ; MOVE2 lo: initial palctl
+    ld a, $FF                        ; HALT (WAIT $FFFF)
+    nextreg NR_COPPER_DATA, a
+    nextreg NR_COPPER_DATA, a
+    ld a, %11000000                  ; control = FRAME, start running
+    nextreg NR_COPPER_ADDR_HI_CTRL, a
+    ret
+
+; Program a fixed identity RRRGGGBB palette (value[i] = i) once at entry
+; for no-per-frame-palette files (vidPalFlag=0 - their pixel bytes ARE
+; their own colour). Dodges TM_TRANSP_ATTR the same way (entry 254 ->
+; colour $FF instead of its "natural" identity value $FE) and, like
+; vid_apply_palette, does NOT also force-stamp entry 254 to genuinely BE
+; TM_TRANSP_ATTR afterward - see vid_apply_palette's header for why: no
+; source content is guaranteed to avoid pixel value 254, so reserving it
+; as transparent would punch real content through to the tilemap. Byte1
+; (the expanded 9th blue bit) matches the Next's own 8-bit->9-bit
+; hardware expansion rule ("least significant bit of blue is set to OR
+; between B2 and B1", docs/zx-next-dev-guide-2022-07-15/chapter-next-
+; palette.tex:176 - byte1 = 1 iff the index's two blue bits, i&3, are
+; nonzero), the SAME rule tests/videnc.py's palette builder uses.
+; Corrupts AF, BC.
+vid_identity_palette:
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    nextreg NR_PAL_INDEX, 0
+    ld b, 0                        ; 256 iterations
+    ld c, 0                        ; ascending palette index
 .loop:
-    sla l
-    rl h
-    rl e
-    rla                          ; A holds the running remainder r < d <= 155;
-                                  ; the shifted 9-bit value v = 2r+bit <= 309
-    jr c, .fsub                  ; bit 8 fell out of A into CF: true v = A+256,
-                                  ; always >= any divisor here, so subtract
-                                  ; unconditionally - sub d's 8-bit wraparound
-                                  ; supplies the +256 (v-d = A-d mod 256, and
-                                  ; 101 <= v-d <= 154 fits). The old `cp d`
-                                  ; discarded this carry, corrupting every
-                                  ; divisor 128..155 (r reaches 128+).
-    cp d
-    jr c, .skip
-.fsub:
-    sub d
-.skip:
+    ld a, c
+    cp TM_TRANSP_ATTR
+    jr nz, .w
+    ld a, $FF
+.w:
+    nextreg NR_PAL_VALUE9, a
+    ld a, c
+    and 3
+    jr z, .noblue
+    ld a, 1
+    jr .haveblue
+.noblue:
+    xor a
+.haveblue:
+    nextreg NR_PAL_VALUE9, a
+    inc c
     djnz .loop
     ret
 
-vidSectE: db 0
-vidSectH: db 0
-vidSectL: db 0
-
-; Frame-sector-count table, priority order 0-5 (VID_F0_SECT..VID_F5_SECT,
-; nextdaad.inc) - vid_classify's own divisor walk.
-vidFormatSect:
-    db VID_F0_SECT, VID_F1_SECT, VID_F2_SECT
-    db VID_F3_SECT, VID_F4_SECT, VID_F5_SECT
+; ---------------------------------------------------------------------
+; vid_run_restore_body - the bulk of vid_run's own teardown (VID_PAGE
+; budget lever - this was the single largest hot routine before the
+; split). Reached from vid_run's own .restore (VID_PAGE, above) AFTER
+; the CTC has already been stopped and vid_stream_close has already run
+; (both genuinely need to be hot - the CTC-off must happen before the
+; ISR could fire again, and vid_stream_close is itself VID_PAGE-resident
+; code) - everything left (IM2 stub restore, Layer 2/palette/
+; presentation-isolation restore, freeing the pool bank) touches only
+; RESIDENT memory (audEnable, l2FrontBank/l2BackBank, IM2_CTC_STUB) or
+; NextReg I/O (no MMU-page dependency either way) or VID_PAGE-resident
+; vidSv* cells read via the established MMU6-translated bracket - none
+; of it needs MMU7 = VID_PAGE. Hops back to vid_run.restore_tail (VID_
+; PAGE) for the DEBUG report (its own existing, unchanged hot/cold/hot
+; mechanism) and the final MMU6/7 restore. Corrupts everything.
+vid_run_restore_body:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld hl, (vidSvCtcStub+DATA_WINDOW-OVL_ORG)
+    ld (IM2_CTC_STUB+1), hl
+    ld a, (vidSvAudEnable+DATA_WINDOW-OVL_ORG)
+    ld (audEnable), a
+    ld a, (vidSvL2Front+DATA_WINDOW-OVL_ORG)
+    ld (l2FrontBank), a
+    ld a, (vidSvL2Back+DATA_WINDOW-OVL_ORG)
+    ld (l2BackBank), a
+    ld a, (vidSvNr12+DATA_WINDOW-OVL_ORG)
+    nextreg NR_L2_BANK, a
+    ld a, (vidSvNr70+DATA_WINDOW-OVL_ORG)
+    nextreg NR_L2_CTRL, a
+    ld a, (vidSvNr69+DATA_WINDOW-OVL_ORG)
+    nextreg NR_DISPLAY_CTRL, a
+    ld a, (vidSvNr15+DATA_WINDOW-OVL_ORG)
+    nextreg NR_LAYERS, a
+    ; SP14a T2: NR $43 restored to the game's own convention (captured as
+    ; PAL_L2_FIRST at entry, not read back - see vid_run's own entry-
+    ; capture comment). l2_palette_load unconditionally re-asserts PAL_
+    ; L2_FIRST before every picture display anyway (design note), but
+    ; restoring it here too keeps the symmetry doctrine exact, matching
+    ; NR $12/$70/$69/$15 immediately above.
+    ld a, (vidSvNr43+DATA_WINDOW-OVL_ORG)
+    nextreg NR_PAL_CTRL, a
+    ; presentation isolation: restore the tilemap + fallback colour
+    ; (symmetry-matrix rows, spec requirement) - reached only via a real
+    ; playback session (.restore_badhdr/.restore_noplay never touch
+    ; these, since they bail before this pair is ever saved/disabled).
+    ld a, (vidSvNr6b+DATA_WINDOW-OVL_ORG)
+    nextreg NR_TM_CTRL, a
+    ld a, (vidSvNr4a+DATA_WINDOW-OVL_ORG)
+    nextreg NR_FALLBACK, a
+    ld a, (vidAudPoolBank+DATA_WINDOW-OVL_ORG)
+    call bank_free                   ; resident, MMU6-independent - safe
+                                      ; to call before data_restore, no
+                                      ; stash needed
+    call data_restore
+    ld hl, vid_run.restore_tail
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
 
 ; Build vidName ("NNN.VID",0) from the video number (passed via C, set
 ; by vid_play before the hop - see vid_open_video's own header, VID_PAGE)
@@ -3673,76 +3542,18 @@ vid_bench_compute:
     ; (KB/s = bytes*50/frames/1024) for the owner's re-leg. The new
     ; VBENCH-FLAT verb (below) DOES compute/report KB/s directly - a
     ; small dedicated flat measurement, not a retrofit of this one.
-    ld hl, (vidSizeLo+DATA_WINDOW-OVL_ORG)
-    ld de, (vidSizeHi+DATA_WINDOW-OVL_ORG)
-    call vbench_classify           ; B = format 0-5, or $FF = bad
-    ld a, b
-    ld (vidBenchFmt), a
-    ld a, b
-    cp $FF
-    ld a, 0
-    jr nz, .classok
-    ld a, 1
-.classok:
-    ld (vidBenchFmtBad), a
+    ; SP14a T4: the old six-format sizeless classify (vbench_classify/
+    ; vid_mod24/vidFormatSect) is gone with no replacement here - VID_
+    ; PAGE budget is too tight in DEBUG builds to also carry a magic-
+    ; check (a real per-file verdict was prototyped and cut for exactly
+    ; this reason); vid_bench_report's own "NXV" label is now a bare
+    ; stream-agnostic marker, not a per-file verdict - VBFLT/VBDMA
+    ; (below) are the real per-file NXV exercises this wave adds.
     call data_restore
     ld hl, vid_bench_pass_ret
     push hl
     ld a, VID_PAGE
     jp ovl_map_page
-
-; DEBUG-only copy of vid_classify_body's own classify logic (VID_PAGE,
-; hot stub above), kept SEPARATE from it so that stub's Release-shipped
-; call site never pays for a call/ret it does not need - a first attempt
-; at sharing the logic via a common core routine added call/ret overhead
-; to vid_classify_body's own non-DEBUG-gated code path (vid_play's real
-; classify call, both build variants), a genuine Release-byte-drift bug
-; caught by a before/after hash compare and reverted; this duplicate
-; exists purely so that fix does not cost vid_bench_compute (DEBUG-only,
-; a plain same-page call, no stack tricks - unlike vid_classify_body's
-; own pop-de/pop-hl preamble, which is specific to being entered via the
-; hot stub's push-hl/push-de/push-target dance) its own classification.
-; In: HL/DE = size low/high. Out: B = format 0-5, or $FF = unclassified.
-; Corrupts AF, C, HL, IX.
-vbench_classify:
-    ld a, l
-    or a
-    jr nz, .bad
-    ld a, h
-    and 1
-    jr nz, .bad
-    ld b, 9
-.shr:
-    srl d
-    rr e
-    rr h
-    rr l
-    djnz .shr
-    ld a, e
-    ld (vidSectE), a
-    ld a, h
-    ld (vidSectH), a
-    ld a, l
-    ld (vidSectL), a
-    ld ix, vidFormatSect
-    ld c, 0
-.tryfmt:
-    ld a, (ix+0)
-    ld d, a
-    call vid_mod24
-    or a
-    jr z, .found
-    inc ix
-    inc c
-    ld a, c
-    cp VID_FORMATS
-    jr nz, .tryfmt
-.bad:
-    ld b, $FF
-    ret
-.found:
-    ld b, c
-    ret
 
 ; Prints the two report rows from the values stashed by the streaming
 ; pass. vidStrmErr/vidBenchHi/vidBenchLo are VID_PAGE-resident - read via
@@ -3787,17 +3598,8 @@ vid_bench_report:
     call dbg_hex16
     ld hl, msgVidFmt
     call dbg_puts
-    ld a, (vidBenchFmtBad)
-    or a
-    jr nz, .printbad
-    ld a, (vidBenchFmt)
-    push af
     call data_restore
-    pop af
-    jp dbg_hex8
-.printbad:
-    call data_restore
-    ld hl, msgVidUnclass
+    ld hl, msgVidNxvOk
     jp dbg_puts
 
 ; SP14a T2: five VIDBENCH message strings shortened (VID_PAGE space
@@ -3805,7 +3607,7 @@ vid_bench_report:
 ; page-budget section) - same disclosed lever SP13 T4 Step 6 already used
 ; on this exact DEBUG-only dev harness (VIDBENCH's KB/s calc removal);
 ; this is a fresh application, not a revert. No information is lost -
-; row 28/29 still print bank/error/bytes/frames/format, just with
+; row 28/29 still print bank/error/bytes/frames/magic-verdict, just with
 ; terser labels; no test or fixture reads these strings (grepped clean).
 ; msgVidNoBank stays on VID_PAGE (hot vid_bench's own bank_alloc-failure
 ; path, before any hop) - see that declaration's own comment.
@@ -3813,511 +3615,11 @@ msgVidStrm:     db "STRM OK", 0
 msgVidStrmErr:  db "STRM ERR=", 0
 msgVidBytes:    db "BYTES=", 0
 msgVidFrames:   db " FR=", 0
-msgVidFmt:      db " FMT=", 0
-msgVidUnclass:  db "??", 0
+msgVidFmt:      db " NXV=", 0
+msgVidNxvOk:    db "STREAM", 0
 
 vidBenchElapsed: dw 0
 vidBenchKB:      dw 0
-vidBenchFmt:     db 0
-vidBenchFmtBad:  db 0
-
-; --- SP14a escalation bench wave: VBENCH-FLAT/DMA/COPPER cold half ---
-; See vid_bench's own header (VID_PAGE) for the flags+250 dispatch that
-; reaches vbench_cold_dispatch below, and vbench_flat_run/vbench_dma_hot
-; (VID_PAGE) for the hot halves this cold code hops to/lands from.
-
-; 16-bit unsigned divide. In: HL = dividend, DE = divisor (DE <> 0 -
-; callers must guard the zero case themselves, e.g. "elapsed frames = 0"
-; below). Out: HL = quotient, DE = remainder. Standard restoring-division,
-; 16 steps - only ever runs cold, in a report path, so speed does not
-; matter. Corrupts AF, BC.
-div16:
-    ld b, h
-    ld c, l                       ; BC = dividend
-    ld hl, 0                      ; HL = remainder accumulator
-    ld a, 16
-.bit:
-    sla c
-    rl b                          ; shift dividend left; carry out -> HL
-    adc hl, hl
-    sbc hl, de
-    jr nc, .noadd
-    add hl, de
-    jr .nextbit
-.noadd:
-    inc c                         ; quotient bit (BC's own low bit, just
-                                   ; vacated by sla c above)
-.nextbit:
-    dec a
-    jr nz, .bit
-    ld d, h
-    ld e, l                       ; DE = remainder
-    ld h, b
-    ld l, c                       ; HL = quotient
-    ret
-
-; Reads C = flags+250's raw value (2 = DMA, 3/4/5 = copper init/up/down -
-; see vid_bench's own header) and routes. VBENCH-FLAT never reaches here
-; (it stays hot - a separate jp from vid_bench itself).
-vbench_cold_dispatch:
-    ld a, c
-    cp 2
-    jp z, vbench_dma_run
-    sub 3                          ; 3/4/5 -> 0/1/2 (copper init/up/down)
-    ld c, a
-    jp vbench_copper_dispatch
-
-; Landing point for the hop back from vbench_flat_run (VID_PAGE). In:
-; B = 0 (open failed) / 1 (ran). Computes KB/s = blocksDone*25/elapsed
-; (512 bytes/block * 50 ticks/s / 1024 bytes/KB = 25 - see the derivation
-; in the task report) via div16 above, guarding elapsed == 0 (finished
-; within a single 50Hz tick - too fast to time at this block count,
-; reported distinctly rather than dividing by zero). vidBenchStart/End/
-; vbenchBlocksDone are all VID_PAGE-resident - read via the established
-; data_save/data_map_page(VID_PAGE)/label+DATA_WINDOW-OVL_ORG bracket.
-vbench_flat_ret:
-    ld a, b
-    ld b, VIDBENCH_ROW_STRM
-    ld c, 0
-    push af
-    call dbg_at
-    pop af
-    or a
-    jr nz, .ran
-    ld hl, msgVbFlatOpenErr
-    jp dbg_puts
-.ran:
-    call data_save
-    ld a, VID_PAGE
-    call data_map_page
-    ld hl, (vidBenchEnd+DATA_WINDOW-OVL_ORG)
-    ld de, (vidBenchStart+DATA_WINDOW-OVL_ORG)
-    or a
-    sbc hl, de
-    ld (vbenchFlatElapsed), hl
-    ld hl, (vbenchBlocksDone+DATA_WINDOW-OVL_ORG)
-    call data_restore
-    ld (vbenchFlatBlocks), hl
-    ld hl, msgVbFlatKb
-    call dbg_puts
-    ld de, (vbenchFlatElapsed)
-    ld a, d
-    or e
-    jr nz, .haveelapsed
-    ld hl, msgVbFlatTooFast
-    call dbg_puts
-    jr .inforow
-.haveelapsed:
-    ; KB/s = blocksDone*25 / elapsed (512 bytes/block * 50 ticks/s /
-    ; 1024 bytes/KB = 25). SP14a escalation bench wave, precision
-    ; follow-up: VBENCH_FLAT_N raised 1024->4096 for finer timing
-    ; granularity, but blocks*25 now overflows 16 bits above 2621 blocks
-    ; (4096*25=102400 > 65535) - widening to a genuine 32-bit multiply/
-    ; divide was rejected as more delicate Z80 than this needs; instead
-    ; the SAME div16 (16-bit only, unchanged) computes this EXACTLY via
-    ; the standard division identity: for blocks = Q*elapsed + R (Q =
-    ; blocks/elapsed, R = blocks mod elapsed, both < 65536 and R <
-    ; elapsed by construction), floor(blocks*25/elapsed) = Q*25 +
-    ; floor(R*25/elapsed) - an EXACT identity (floor(a+b) = a+floor(b)
-    ; when a is already an integer - Q*25 is), not an approximation, and
-    ; every intermediate (Q*25, R*25) now multiplies a value bounded by
-    ; elapsed or less, not the full block count, so 16-bit arithmetic
-    ; suffices throughout PROVIDED both Q and R individually stay <=2621
-    ; (2622*25 overflows) - vbench_mul25_safe (below) guards this
-    ; explicitly per multiply rather than assuming it, even though ANY
-    ; real 2MB transfer's own elapsed-tick count makes it physically
-    ; unreachable (Q>2621 needs elapsed<2 ticks for 4096 blocks - faster
-    ; than this project has ever measured any SD interface, by a wide
-    ; margin; R>2621 needs elapsed>2621 ticks = 52+ seconds, already an
-    ; obviously-hung transfer the BLOCKS row would explain on its own).
-    ld hl, (vbenchFlatBlocks)
-    ld de, (vbenchFlatElapsed)
-    call div16                      ; HL = Q (blocks/elapsed), DE = R
-    ld (vbenchFlatR), de
-    call vbench_mul25_safe          ; HL = Q*25, or CF set if Q unsafe
-    jr c, .imprecise
-    ld (vbenchFlatKBWhole), hl
-    ld hl, (vbenchFlatR)
-    call vbench_mul25_safe          ; HL = R*25, or CF set if R unsafe
-    jr c, .imprecise
-    ld de, (vbenchFlatElapsed)
-    call div16                      ; HL = floor(R*25/elapsed)
-    ld de, (vbenchFlatKBWhole)
-    add hl, de                      ; HL = Q*25 + floor(R*25/elapsed) =
-                                     ; the exact KB/s figure
-    call dbg_hex16
-    jr .inforow
-.imprecise:
-    ld hl, msgVbFlatTooFast          ; reused - see this block's own
-    call dbg_puts                    ; header for why this path is
-                                      ; physically unreachable for a
-                                      ; real transfer, not just "fast"
-.inforow:
-    ld b, VIDBENCH_ROW_INFO
-    ld c, 0
-    call dbg_at
-    ld hl, msgVbFlatBlocks
-    call dbg_puts
-    ld hl, (vbenchFlatBlocks)
-    call dbg_hex16
-    ret
-
-; Multiplies HL by 25 via a 25-iteration add loop, guarding the 16-bit
-; result against overflow (unsafe once the input exceeds 2621 -
-; 2622*25=65550 wraps). In: HL = value. Out: CF clear, HL = value*25;
-; CF set = value > 2621 (caller must not trust HL - see vbench_flat_
-; ret's own header for why this is checked explicitly rather than
-; assumed). Corrupts AF, DE, B.
-vbench_mul25_safe:
-    ld de, 2622
-    or a
-    sbc hl, de
-    jr nc, .unsafe
-    add hl, de                      ; undo the compare-subtract, HL =
-                                     ; the original value again
-    ex de, hl                       ; DE = value (term to add repeatedly)
-    ld hl, 0
-    ld b, 25
-.loop:
-    add hl, de
-    djnz .loop
-    or a                            ; CF clear
-    ret
-.unsafe:
-    scf
-    ret
-
-msgVbFlatOpenErr: db "FLAT OPEN ERR", 0
-msgVbFlatKb:       db "FLAT KB/S=", 0
-msgVbFlatTooFast:  db "FAST", 0
-msgVbFlatBlocks:   db "BLOCKS=", 0
-vbenchFlatBlocks:   dw 0
-vbenchFlatElapsed:  dw 0
-vbenchFlatR:        dw 0
-vbenchFlatKBWhole:  dw 0
-
-; VBENCH-DMA cold orchestrator (SP14a escalation bench wave - the task
-; report's Q1e spec). Two passes against vidBenchName's FIRST 512-byte
-; block: (1) F_READ mode - an ordinary esxDOS read, used purely as a
-; trusted reference, into a bank_alloc'd scratch bank, then copied into
-; vbenchRefCopy (this page, below) so it can be compared without needing
-; two simultaneous MMU6 windows; (2) raw mode - the actual timed DMA
-; test (vbench_dma_hot, VID_PAGE - see its own header for why the DMA/
-; token-wait itself must run hot). vid_stream_open_body/esx_fread/esx_
-; fclose are all resident or same-page-callable (see vid_stream_open_
-; body's own "assumes MMU6 already maps VID_PAGE" convention) - reading
-; vidHandle needs its OWN short-lived bracket before the scratch-page
-; bracket opens, since MMU6 can only hold one mapping at a time (see the
-; three-bracket structure below). Corrupts everything.
-vbench_dma_run:
-    call bank_alloc
-    jr nc, .haverefbank
-    ld b, 0
-    jp vbench_dma_report           ; NOBANK
-.haverefbank:
-    ld (vbenchDmaRefBank), a
-    add a, a
-    ld (vbenchDmaRefPage), a
-    ; --- bracket 1: MMU6 = VID_PAGE - set F_READ mode, open the file ---
-    call data_save
-    ld a, VID_PAGE
-    call data_map_page
-    xor a
-    ld (vidStrmMode+DATA_WINDOW-OVL_ORG), a
-    ld ix, vidBenchName
-    call vid_stream_open_body
-    jr nc, .refopened
-    call data_restore
-    ld b, 1
-    ld a, (vbenchDmaRefBank)
-    call bank_free
-    jp vbench_dma_report           ; OPEN ERR (reference pass)
-.refopened:
-    ld a, (vidHandle+DATA_WINDOW-OVL_ORG)
-    ld (vbenchDmaHandle), a
-    call data_restore
-    ; --- bracket 2: MMU6 = scratch page - the actual F_READ ---
-    call data_save
-    ld a, (vbenchDmaRefPage)
-    call data_map_page
-    ld a, (vbenchDmaHandle)
-    ld ix, DATA_WINDOW
-    ld bc, 512
-    call esx_fread
-    jr c, .refreadfail
-    ld hl, DATA_WINDOW
-    ld de, vbenchRefCopy
-    ld bc, 512
-    ldir                            ; keep a cold-page copy - the scratch
-                                     ; bank is freed below, before the
-                                     ; DMA pass reuses no bank at all (its
-                                     ; own dest is vidAudBuf directly)
-.refreadfail:
-    call data_restore
-    ld a, (vbenchDmaHandle)
-    call esx_fclose
-    ld a, (vbenchDmaRefBank)
-    call bank_free
-    ; --- bracket 3: MMU6 = VID_PAGE - raw-mode open for the DMA pass ---
-    call data_save
-    ld a, VID_PAGE
-    call data_map_page
-    ld a, 1
-    ld (vidStrmMode+DATA_WINDOW-OVL_ORG), a
-    ld ix, vidBenchName
-    call vid_stream_open_body
-    jr nc, .dmaopened
-    call data_restore
-    ld b, 2
-    jp vbench_dma_report           ; OPEN ERR (DMA pass)
-.dmaopened:
-    call data_restore
-    ld hl, vbench_dma_hot
-    push hl
-    ld a, VID_PAGE
-    jp ovl_map_page
-
-; Landing point for the hop back from vbench_dma_hot (VID_PAGE). In:
-; B = 0 (token-wait error) / 1 (ok - vidAudBuf holds the DMA'd 512
-; bytes). Compares against vbenchRefCopy (the F_READ reference, taken
-; above) and reports MATCH y/n plus a KB/s figure derived from this
-; single block's own elapsed time (necessarily noisy at 512 bytes - the
-; point of THIS pass is correctness, not throughput; VBENCH-FLAT is the
-; real throughput number).
-vbench_dma_ret2:
-    ld a, b                         ; A = vbench_dma_hot's own result
-                                    ; (0 = token error, 1 = ok)
-    or a
-    jr nz, .tokenok
-    ld b, 3                        ; TOKEN ERR
-    jp vbench_dma_report
-.tokenok:
-    call vbench_dma_compare
-    ld b, 4                        ; MATCH
-    jr nc, .gotmatch
-    ld b, 5                        ; MISMATCH
-.gotmatch:
-    jp vbench_dma_report
-
-; Compares vbenchRefCopy (512 bytes, this page) against vidAudBuf
-; (VID_PAGE-resident, read via a data_save/data_map_page(VID_PAGE)
-; bracket - vbench_dma_hot's own DMA destination, still sitting there
-; unless another bench call has since overwritten it). Out: CF clear =
-; match, CF set = mismatch. Corrupts AF, BC, DE, HL.
-vbench_dma_compare:
-    call data_save
-    ld a, VID_PAGE
-    call data_map_page
-    ld hl, vidAudBuf+DATA_WINDOW-OVL_ORG
-    ld de, vbenchRefCopy
-    ld bc, 512
-.loop:
-    ld a, (de)
-    cpi                             ; A vs (HL); HL++, BC--
-    jr nz, .mismatch
-    inc de
-    ld a, b
-    or c
-    jr nz, .loop
-    call data_restore
-    or a                            ; CF clear (match)
-    ret
-.mismatch:
-    push af
-    call data_restore
-    pop af
-    scf
-    ret
-
-; Prints the DMA pass's report. In: B = 0 NOBANK / 1 reference OPEN ERR /
-; 2 DMA-pass OPEN ERR / 3 TOKEN ERR / 4 MATCH / 5 MISMATCH. Row 28 =
-; status; row 29 (MATCH/MISMATCH only) = the first 4 bytes of the
-; reference (F_READ) buffer next to the first 4 bytes of the DMA buffer,
-; 8 hex pairs - the owner-leg discriminator: offset-shifted-but-real
-; data = a pacing/alignment issue; constant fill ($FF/$00 repeated) =
-; the DMA never actually engaged the port; unstructured garbage = free-
-; running/unsynchronised reads (the RTL wait-state model not honouring
-; the SD port's own timing on real silicon). Replaces this row's
-; original KB/s figure (moved out entirely, not just deprioritised - a
-; single 512-byte block's timing is too noisy to be worth the row once
-; there is a content question to answer first). The status code is
-; stashed to vbenchDmaCode - B/A do not survive the dbg_at/dbg_puts
-; calls between here and where it is needed again.
-vbench_dma_report:
-    ld a, b
-    ld (vbenchDmaCode), a
-    ld b, VIDBENCH_ROW_STRM
-    ld c, 0
-    call dbg_at
-    ld a, (vbenchDmaCode)
-    ld hl, msgVbDmaNoBank
-    or a
-    jr z, .print
-    ld hl, msgVbDmaRefOpenErr
-    dec a
-    jr z, .print
-    ld hl, msgVbDmaOpenErr
-    dec a
-    jr z, .print
-    ld hl, msgVbDmaTokenErr
-    dec a
-    jr z, .print
-    ld hl, msgVbDmaMatch
-    dec a
-    jr z, .print
-    ld hl, msgVbDmaMismatch
-.print:
-    call dbg_puts
-    ld a, (vbenchDmaCode)
-    cp 4
-    ret c                           ; only MATCH(4)/MISMATCH(5) get a
-                                    ; KB/s row - the others are error
-                                    ; states with nothing to time
-    ld b, VIDBENCH_ROW_INFO
-    ld c, 0
-    call dbg_at
-    ld hl, msgVbDmaRef
-    call dbg_puts
-    ld hl, vbenchRefCopy            ; this page - plain address, no
-                                     ; bracket needed
-    ld b, 4
-    call vbench_dma_dumpbytes
-    ld hl, msgVbDmaDma
-    call dbg_puts
-    call data_save
-    ld a, VID_PAGE
-    call data_map_page
-    ld hl, vidAudBuf+DATA_WINDOW-OVL_ORG
-    ld b, 4
-    call vbench_dma_dumpbytes
-    jp data_restore
-
-; Prints B bytes starting at HL as consecutive dbg_hex8 pairs (no
-; separator - the two labels either side already delimit them). In:
-; HL = source, B = count. Corrupts AF, B, HL.
-vbench_dma_dumpbytes:
-    ld a, (hl)
-    push hl
-    push bc
-    call dbg_hex8
-    pop bc
-    pop hl
-    inc hl
-    djnz vbench_dma_dumpbytes
-    ret
-
-msgVbDmaNoBank:     db "DMA NOBANK", 0
-msgVbDmaRefOpenErr: db "DMA REF OPEN ERR", 0
-msgVbDmaOpenErr:    db "DMA OPEN ERR", 0
-msgVbDmaTokenErr:   db "DMA TOKEN ERR", 0
-msgVbDmaMatch:      db "DMA MATCH", 0
-msgVbDmaMismatch:   db "DMA MISMATCH", 0
-msgVbDmaRef:        db "REF=", 0
-msgVbDmaDma:        db " DMA=", 0
-vbenchDmaRefBank: db 0
-vbenchDmaRefPage: db 0
-vbenchDmaHandle:  db 0
-vbenchDmaCode:    db 0
-vbenchRefCopy:    ds 512
-
-; --- VBENCH-COPPER (SP14a escalation bench wave - the task report's
-; remaining item 2, Q2a). A crude but usable probe: loads a 4-instruction
-; FRAME-mode copper list (WAIT <line>,0 / MOVE NR_FALLBACK,<colour> /
-; HALT) and lets the owner step <line> up/down to find the exact raster
-; line where the Layer 2 320x256 display ends on his VGA mode. NR_
-; FALLBACK ($4A) substitutes for the escalation research's own "MOVE to
-; the border colour register" suggestion - the border is NOT NextReg-
-; addressable at all (legacy I/O port $FE bits 2:0 only; confirmed by
-; this wave's own research pass), so there is no NextReg to MOVE to for
-; that purpose. NR_FALLBACK paints a full-width band from the WAIT line
-; to the bottom of the screen instead of a 32-pixel border strip - a
-; cruder probe than the research doc's own sketch, but an equally usable
-; (arguably more visible) one for finding the display's bottom edge. ---
-VBENCH_COPPER_COLOUR equ $E0    ; RGB332 111 000 00 - bright red, chosen
-                                 ; to be maximally distinct from typical
-                                 ; video content and the tilemap palette
-VBENCH_COPPER_DEFAULT_LINE equ 257  ; the research doc's own recommended
-                                     ; starting point (Q2a)
-
-; In: C = 0 (init - reset to the default line) / 1 (up, +1) / 2 (down,
-; -1). Reloads the copper list at the resulting line and reports it on
-; row 28. Corrupts everything.
-vbench_copper_dispatch:
-    ld a, c
-    or a
-    jr z, .init
-    dec a
-    jr z, .up
-    ld hl, (vbenchCopperLine)
-    dec hl
-    ld (vbenchCopperLine), hl
-    jr .load
-.up:
-    ld hl, (vbenchCopperLine)
-    inc hl
-    ld (vbenchCopperLine), hl
-    jr .load
-.init:
-    ld hl, VBENCH_COPPER_DEFAULT_LINE
-    ld (vbenchCopperLine), hl
-.load:
-    call vbench_copper_load
-    ld b, VIDBENCH_ROW_STRM
-    ld c, 0
-    call dbg_at
-    ld hl, msgVbCopLine
-    call dbg_puts
-    ld hl, (vbenchCopperLine)
-    jp dbg_hex16
-
-; Loads the 4-instruction list from vbenchCopperLine and starts the
-; copper in FRAME mode (PC resets to 0 every vblank, so the SAME probe
-; re-draws every frame automatically - no per-frame re-arm needed).
-; Copper instructions are 16-bit, big-endian in copper RAM: WAIT =
-; 1HHHHHHV VVVVVVVV (H=0 fixed here - leftmost column); MOVE =
-; 0RRRRRRR DDDDDDDD; HALT = WAIT $FFFF (H=63,V=511, both all-ones).
-;
-; Owner-leg fix: VBCU x3 then VBCD stopped printing/painting - a state
-; bug across repeated reloads of an already-running copper. STOP
-; (control=00) alone pauses the copper wherever its OWN internal PC
-; happens to be; it is NOT documented to guarantee that PC (as distinct
-; from the NR $61/$62 write-index this routine also sets) is reset to a
-; known point, so a stale mid-list PC from a PREVIOUS run could survive
-; a STOP-then-reload on top of it. RESET (control=01) is the stronger
-; operation and is issued FIRST, unconditionally, before the write-index
-; is touched at all - this could not be independently confirmed against
-; a live hardware leg this wave (low priority per the coordinator), so
-; treat this as the best-reasoned fix pending re-validation, not a
-; confirmed root cause.
-; Corrupts AF.
-vbench_copper_load:
-    ld a, %01000000                ; control = RESET (01), index hi = 0 -
-    nextreg NR_COPPER_ADDR_HI_CTRL, a  ; clears the copper's own PC/state
-                                    ; fully, not just pausing it in place
-    xor a
-    nextreg NR_COPPER_ADDR_LO, a   ; write-index low = 0
-    nextreg NR_COPPER_ADDR_HI_CTRL, a  ; index hi = 0, control = STOP -
-                                    ; safe to load now
-    ld hl, (vbenchCopperLine)
-    ld a, h
-    and 1
-    or %10000000
-    nextreg NR_COPPER_DATA, a      ; WAIT high byte: 1 000000 V(msb)
-    ld a, l
-    nextreg NR_COPPER_DATA, a      ; WAIT low byte: V's low 8 bits
-    ld a, NR_FALLBACK
-    nextreg NR_COPPER_DATA, a      ; MOVE high byte: 0 + NR_FALLBACK (<128)
-    ld a, VBENCH_COPPER_COLOUR
-    nextreg NR_COPPER_DATA, a      ; MOVE low byte: the probe colour
-    ld a, $FF
-    nextreg NR_COPPER_DATA, a      ; HALT high byte
-    nextreg NR_COPPER_DATA, a      ; HALT low byte
-    ld a, %11000000                ; control = FRAME, start running
-    nextreg NR_COPPER_ADDR_HI_CTRL, a
-    ret
-
-msgVbCopLine: db "COPPER LINE=", 0
-vbenchCopperLine: dw VBENCH_COPPER_DEFAULT_LINE
 
  ENDIF ; DEBUG
 
