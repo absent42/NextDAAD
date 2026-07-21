@@ -1140,8 +1140,8 @@ vid_run:
     ld hl, vidTlTicks
     ld (hl), 0
     ld de, vidTlTicks+1
-    ld bc, vidErrCode - vidTlTicks   ; = VID_TL_BLOCK_LEN - 1 (also zeroes
-                                      ; the new vidErrCode cell - a fresh
+    ld bc, vidErrByte - vidTlTicks   ; = VID_TL_BLOCK_LEN - 1 (also zeroes
+                                      ; vidErrCode/vidErrByte - a fresh
                                       ; playback session starts ERR=00)
     ldir
  ENDIF
@@ -1935,10 +1935,38 @@ vid_col_newblock:
     dec a
     cp $FE
     jr z, .ok
+ IFDEF DEBUG
+    ; SP14a T3 fix wave 2 (owner hardware leg, vply0 ERR=FD follow-up):
+    ; stash the RAW byte the token-wait actually saw (A, still the real
+    ; wire byte here - not yet overwritten by the VID_ERR_TOKEN sentinel
+    ; below) - see vidErrByte's own declaration for the decode. Corrupts
+    ; nothing else; A is about to be overwritten by the very next
+    ; instruction regardless.
+    ld (vidErrByte), a
+ ENDIF
     ld a, VID_ERR_TOKEN
     scf
     ret
 .ok:
+    ; SP14a T3 fix wave 2: restored verbatim (owner hardware leg lead 1) -
+    ; this write was removed in wave 2's own tail-simplification pass as
+    ; register-level dead (vidBlkRemain16 has no reader anywhere post-
+    ; wave-2, confirmed by grep and by the build itself, which would fail
+    ; on an undefined symbol otherwise). Hardware regressed at exactly
+    ; this call site afterward (ERR=FD, wire desync at the col path's
+    ; first block) with no other logical divergence found despite an
+    ; exhaustive audit (every primitive this routine touches or is
+    ; touched by is byte-identical to BASE; the case-table numbers and
+    ; the vid_raw_setup MMU6-translation arithmetic were independently
+    ; recomputed/simulated and check out). The two REMOVED instructions
+    ; here (~24T) are, along with the caller-side chunk16 computation
+    ; wave 2's own case-unroll eliminated entirely, the only measurable
+    ; timing difference between "token confirmed" and "first ini fires"
+    ; versus the pre-T3, hardware-proven sequence - restored as the
+    ; cheapest, lowest-risk candidate (exactly the shipped SP13 T3/T4
+    ; machine code for this exact site) pending the owner's next leg.
+    ld a, 32                       ; 512/16
+    ld (vidBlkRemain16), a
     or a                           ; CF clear
     ret
 
@@ -2298,10 +2326,15 @@ vidAudReadLen:    dw 0             ; this frame's audio+pad read size
                                     ; (mono VID_F4_AUDIO+VID_F45_AUDPAD or
                                     ; fmt0/1/2/3 VID_F0/2_AUDIO+VID_F01/23_
                                     ; AUDPAD)
-; vidColRemain16/vidBlkRemain16/vidPixRealRemain removed (SP14a T3 wave
-; 2) - the static case sequence (vid_stream_pixels_col) tracks column/
-; block/remaining-byte position at ASSEMBLE time now (which case is
-; executing), not via these runtime cells.
+; vidColRemain16/vidPixRealRemain removed (SP14a T3 wave 2) - the static
+; case sequence (vid_stream_pixels_col) tracks column/remaining-byte
+; position at ASSEMBLE time now (which case is executing), not via these
+; runtime cells. vidBlkRemain16 restored below (fix wave 2, owner
+; hardware leg lead 1) - see vid_col_newblock's own .ok: comment; it has
+; no reader (register-level dead, confirmed), kept only to reproduce the
+; exact pre-T3 instruction sequence at that call site as a timing-margin
+; experiment.
+vidBlkRemain16:   db 0
 ; Shared mono/stereo play buffer, sized for the LARGEST need among all
 ; three groups: VID_F2_PLAY_BYTES=1244 (fmt2/3 - 622 pairs, 3:1-
 ; downsampled - VID_STEREO_DOWNSAMPLE header) is still the largest even
@@ -2375,11 +2408,25 @@ vidTlAcc:       ds VID_TL_PHASES*4   ; 5 phases x 32-bit (LE) tick total
 ; actually failed (vid_col_newblock's three codes are the ones a wave-2
 ; blit regression would show). Printed as ERR=xx in the timeline report.
 vidErrCode:     db 0
+; SP14a T3 fix wave 2 (owner hardware leg lead 2 fallback instrumentation):
+; the RAW byte a failed vid_col_newblock token-wait actually read off the
+; wire (captured only on the VID_ERR_TOKEN path, before A is overwritten
+; with the sentinel - see that call site). Discriminates the two
+; remaining candidates when ERR=FD: a plausible CRC/data byte (any value
+; that is neither $FF nor $FE, but "looks like" wire content - e.g. often
+; seen as part of a real 512-byte data pattern or a small CRC16 byte)
+; supports a byte-accounting desync (lead 2 - one protocol step missing
+; or doubled at the audio/palette-to-blit handoff); a value indistinguishable
+; from noise, or repeatedly $00/$FF-adjacent, points at a wilder desync
+; or a genuine card/timing fault instead. Printed as BYT=xx alongside
+; ERR=xx. Meaningless (stays whatever a PRIOR failing call left it, or 0
+; on a fresh session) when ERR is not FD.
+vidErrByte:     db 0
 ; Fix wave 2: total span of the block above (vidTlTicks..end of
-; vidErrCode) that vid_tl_report_body must copy across the page hop
+; vidErrByte) that vid_tl_report_body must copy across the page hop
 ; before reading it (see that routine's own header) - computed, not
 ; hand-counted, so it can never drift if a field above is resized.
-VID_TL_BLOCK_LEN equ vidErrCode + 1 - vidTlTicks
+VID_TL_BLOCK_LEN equ vidErrByte + 1 - vidTlTicks
 
 ; DEBUG frame-timeline instrument. In: A = new phase id (VID_TL_STREAM..
 ; VID_TL_OTHER, nextdaad.inc). Snapshots vidTlTicks and accumulates the
@@ -3188,11 +3235,12 @@ vid_tl_report_body:
     ; own never-written bytes at that offset instead of the real data -
     ; every field reads zero (the control-flow hop is fine; the DATA does
     ; not come along automatically - MMU7 is a runtime remap, not a
-    ; compile-time one). Fix: copy the whole VID_TL_BLOCK_LEN-byte
-    ; (28, since the SP14a T3 fix wave extended it through vidErrCode -
-    ; computed, not hand-counted, so this comment can't drift again)
-    ; block across via the MMU6 window (data_save/data_map_page(VID_PAGE)/
-    ; LDIR/data_restore - MMU6 is free here, post-teardown; the same
+    ; compile-time one). Fix: copy the whole VID_TL_BLOCK_LEN-byte (29,
+    ; since the SP14a T3 fix waves extended it through vidErrCode then
+    ; vidErrByte - computed, not hand-counted, so this comment can't
+    ; drift again) block across via the MMU6 window (data_save/data_map_
+    ; page(VID_PAGE)/LDIR/data_restore - MMU6 is free here, post-teardown;
+    ; the same
     ; convention this file uses everywhere else for a transient cross-
     ; page read) into a page-local mirror (vidTlTicksL.. below) BEFORE any
     ; real print runs. Source address: vidTlTicks's own VID_PAGE address
@@ -3253,6 +3301,10 @@ vid_tl_report_body:
     call dbg_puts
     ld a, (vidErrCodeL)
     call dbg_hex8
+    ld hl, msgTlByt
+    call dbg_puts
+    ld a, (vidErrByteL)
+    call dbg_hex8
     jr .done
 .nextrow:
     ld hl, vidTlRptRow
@@ -3278,11 +3330,12 @@ msgTl4: db "OTHER  =", 0
 msgTlTot: db " TOT=", 0
 msgTlFrm: db " FRM=", 0
 msgTlErr: db " ERR=", 0
+msgTlByt: db " BYT=", 0
 vidTlRptRow: db 0
 vidTlRptIdx: db 0
 
-; Page-local mirror of the VID_PAGE-resident vidTlTicks..vidErrCode block
-; (fix wave 2, above; SP14a T3 fix wave extended it through vidErrCode -
+; Page-local mirror of the VID_PAGE-resident vidTlTicks..vidErrByte block
+; (fix wave 2, above; SP14a T3 fix wave 2 extended it through vidErrByte -
 ; see that cell's own declaration) - same field order/sizes, filled by
 ; the pre-print LDIR, read by the report in place of the (unreachable-
 ; from-here) VID_PAGE originals. vidTlLastTickL/vidTlLastPhaseL are
@@ -3297,6 +3350,8 @@ vidTlAccL:       ds VID_TL_PHASES*4
 vidErrCodeL:     db 0             ; mirrors vidErrCode - see that cell's
                                    ; own declaration for the ERR=xx
                                    ; convention (00 = clean EOF)
+vidErrByteL:     db 0             ; mirrors vidErrByte - see that cell's
+                                   ; own declaration for the BYT=xx decode
 
  ENDIF ; DEBUG
 
