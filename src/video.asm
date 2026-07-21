@@ -2774,7 +2774,17 @@ vbench_flat_run:
     ld (vbenchBlocksDone), hl
     ld hl, (frameCounter)
     ld (vidBenchStart), hl
-    ld de, VBENCH_FLAT_N
+    ; SP14a escalation bench wave, owner-leg fix: the loop counter MUST
+    ; live in memory (vbenchBlocksDone itself), not a register - vid_
+    ; col_block_start/vid_col_block_end both corrupt DE (their own
+    ; documented contract), and vid_xfer16n corrupts E too, so a DE-based
+    ; countdown carried across these calls was silently trashed every
+    ; iteration (the owner-leg bug: BLOCKS read back as garbage, ~12x
+    ; the intended 1024, and the resulting KB/s was consequently
+    ; nonsense too - the divide itself was never the problem, its inputs
+    ; were). Comparing the freshly-read/incremented vbenchBlocksDone
+    ; against VBENCH_FLAT_N each iteration (with DE reloaded fresh, not
+    ; relied on to survive the calls) fixes both numbers at once.
 .loop:
     ld hl, vidAudBuf
     call vid_col_block_start
@@ -2789,10 +2799,10 @@ vbench_flat_run:
     ld hl, (vbenchBlocksDone)
     inc hl
     ld (vbenchBlocksDone), hl
-    dec de
-    ld a, d
-    or e
-    jr nz, .loop
+    ld de, VBENCH_FLAT_N
+    or a
+    sbc hl, de
+    jr c, .loop                   ; blocksDone < N - keep streaming
 .done:
     ld hl, (frameCounter)
     ld (vidBenchEnd), hl
@@ -4021,12 +4031,18 @@ vbench_dma_compare:
 
 ; Prints the DMA pass's report. In: B = 0 NOBANK / 1 reference OPEN ERR /
 ; 2 DMA-pass OPEN ERR / 3 TOKEN ERR / 4 MATCH / 5 MISMATCH. Row 28 =
-; status; row 29 = a KB/s figure (single-block, MATCH/MISMATCH only -
-; necessarily noisy at 512 bytes, a single 50Hz-tick measurement window
-; - VBENCH-FLAT is the real throughput number; a transfer finishing
-; inside the SAME tick it started reports "FAST" rather than dividing by
-; zero). The status code is stashed to vbenchDmaCode - B/A do not survive
-; the dbg_at/dbg_puts calls between here and where it is needed again.
+; status; row 29 (MATCH/MISMATCH only) = the first 4 bytes of the
+; reference (F_READ) buffer next to the first 4 bytes of the DMA buffer,
+; 8 hex pairs - the owner-leg discriminator: offset-shifted-but-real
+; data = a pacing/alignment issue; constant fill ($FF/$00 repeated) =
+; the DMA never actually engaged the port; unstructured garbage = free-
+; running/unsynchronised reads (the RTL wait-state model not honouring
+; the SD port's own timing on real silicon). Replaces this row's
+; original KB/s figure (moved out entirely, not just deprioritised - a
+; single 512-byte block's timing is too noisy to be worth the row once
+; there is a content question to answer first). The status code is
+; stashed to vbenchDmaCode - B/A do not survive the dbg_at/dbg_puts
+; calls between here and where it is needed again.
 vbench_dma_report:
     ld a, b
     ld (vbenchDmaCode), a
@@ -4057,34 +4073,38 @@ vbench_dma_report:
     ret c                           ; only MATCH(4)/MISMATCH(5) get a
                                     ; KB/s row - the others are error
                                     ; states with nothing to time
-    call data_save
-    ld a, VID_PAGE
-    call data_map_page
-    ld hl, (vidBenchEnd+DATA_WINDOW-OVL_ORG)
-    ld de, (vidBenchStart+DATA_WINDOW-OVL_ORG)
-    or a
-    sbc hl, de
-    call data_restore
-    ld (vbenchDmaElapsed), hl
     ld b, VIDBENCH_ROW_INFO
     ld c, 0
     call dbg_at
-    ld hl, msgVbDmaKb
+    ld hl, msgVbDmaRef
     call dbg_puts
-    ld de, (vbenchDmaElapsed)
-    ld a, d
-    or e
-    jr nz, .haveelapsed2
-    ld hl, msgVbFlatTooFast
-    jp dbg_puts
-.haveelapsed2:
-    ld hl, 25                       ; one block: 512 bytes*50/1024 = 25
-                                     ; (same per-block constant as
-                                     ; VBENCH-FLAT's own KB/s calc) -
-                                     ; dividend; DE (elapsed) is the
-                                     ; divisor, already loaded above
-    call div16
-    jp dbg_hex16
+    ld hl, vbenchRefCopy            ; this page - plain address, no
+                                     ; bracket needed
+    ld b, 4
+    call vbench_dma_dumpbytes
+    ld hl, msgVbDmaDma
+    call dbg_puts
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld hl, vidAudBuf+DATA_WINDOW-OVL_ORG
+    ld b, 4
+    call vbench_dma_dumpbytes
+    jp data_restore
+
+; Prints B bytes starting at HL as consecutive dbg_hex8 pairs (no
+; separator - the two labels either side already delimit them). In:
+; HL = source, B = count. Corrupts AF, B, HL.
+vbench_dma_dumpbytes:
+    ld a, (hl)
+    push hl
+    push bc
+    call dbg_hex8
+    pop bc
+    pop hl
+    inc hl
+    djnz vbench_dma_dumpbytes
+    ret
 
 msgVbDmaNoBank:     db "DMA NOBANK", 0
 msgVbDmaRefOpenErr: db "DMA REF OPEN ERR", 0
@@ -4092,12 +4112,12 @@ msgVbDmaOpenErr:    db "DMA OPEN ERR", 0
 msgVbDmaTokenErr:   db "DMA TOKEN ERR", 0
 msgVbDmaMatch:      db "DMA MATCH", 0
 msgVbDmaMismatch:   db "DMA MISMATCH", 0
-msgVbDmaKb:         db "DMA KB/S=", 0
+msgVbDmaRef:        db "REF=", 0
+msgVbDmaDma:        db " DMA=", 0
 vbenchDmaRefBank: db 0
 vbenchDmaRefPage: db 0
 vbenchDmaHandle:  db 0
 vbenchDmaCode:    db 0
-vbenchDmaElapsed: dw 0
 vbenchRefCopy:    ds 512
 
 ; --- VBENCH-COPPER (SP14a escalation bench wave - the task report's
@@ -4156,12 +4176,28 @@ vbench_copper_dispatch:
 ; Copper instructions are 16-bit, big-endian in copper RAM: WAIT =
 ; 1HHHHHHV VVVVVVVV (H=0 fixed here - leftmost column); MOVE =
 ; 0RRRRRRR DDDDDDDD; HALT = WAIT $FFFF (H=63,V=511, both all-ones).
+;
+; Owner-leg fix: VBCU x3 then VBCD stopped printing/painting - a state
+; bug across repeated reloads of an already-running copper. STOP
+; (control=00) alone pauses the copper wherever its OWN internal PC
+; happens to be; it is NOT documented to guarantee that PC (as distinct
+; from the NR $61/$62 write-index this routine also sets) is reset to a
+; known point, so a stale mid-list PC from a PREVIOUS run could survive
+; a STOP-then-reload on top of it. RESET (control=01) is the stronger
+; operation and is issued FIRST, unconditionally, before the write-index
+; is touched at all - this could not be independently confirmed against
+; a live hardware leg this wave (low priority per the coordinator), so
+; treat this as the best-reasoned fix pending re-validation, not a
+; confirmed root cause.
 ; Corrupts AF.
 vbench_copper_load:
+    ld a, %01000000                ; control = RESET (01), index hi = 0 -
+    nextreg NR_COPPER_ADDR_HI_CTRL, a  ; clears the copper's own PC/state
+                                    ; fully, not just pausing it in place
     xor a
     nextreg NR_COPPER_ADDR_LO, a   ; write-index low = 0
     nextreg NR_COPPER_ADDR_HI_CTRL, a  ; index hi = 0, control = STOP -
-                                    ; safe to load while stopped
+                                    ; safe to load now
     ld hl, (vbenchCopperLine)
     ld a, h
     and 1
