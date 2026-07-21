@@ -596,14 +596,23 @@ VID_L2_MODE1    equ %00010000  ; NR $70: mode 1 (320x256/column-major),
                             ; matching l2_mode_set's own %00010000 literal
                             ; (overlay2.asm) - formats 2/3 use a 256-wide
                             ; subset of this mode, never mode 0
-VID_L2_CLIP_X2_M1 equ (256/2)-1  ; = 127: NR $18 X2 in 2-pixel units for
-                            ; mode 1 (overlay2.asm l2_clip_set's own
-                            ; "X2 = 159 ... X in 2-pixel units" comment,
-                            ; cross-checked against the reference's own
-                            ; clip X1=16,X2=143 = 128 units = 256 px);
-                            ; full-height, no inset: X1=0, Y1=0,
-                            ; Y2=VID_COL_HEIGHT-1 - no playvid-style
-                            ; scroll/crop (the brief's "no paper inset")
+; SP14a T3 fix wave 4 (owner hardware leg - vply2 pillarbox regression):
+; fmt2/3's 256-wide content is centered within the SAME 320-wide mode-1
+; surface fmt0/1 uses full-bleed - X1=16/X2=143 (2-pixel units: 16 units
+; = 32px inset each side, (320-256)/2=32px), matching the reference's
+; own clip X1=16,X2=143 EXACTLY (this file's own header already cited
+; this pair - "cross-checked against the reference's own clip X1=16,
+; X2=143" - but the CODE only ever used X1=0, never implementing the
+; X1 half of that citation; the earlier "no playvid-style scroll/crop"
+; framing described the Y-AXIS VGA-border compensation playvid's own
+; Y1=8/scroll_y=-8 does, which genuinely does not apply here - it was
+; never a statement that X-centering itself was unneeded, and the code
+; never actually achieved it). The blit's own destination base is
+; offset by the matching 1 page (VID_COL_PER_PAGE=32 columns = the same
+; 32px) so written data lands under this clip window - see vid_stream_
+; frame's own dest-page derivation, video.asm.
+VID_L2_CLIP_X1_M1 equ 16        ; = 32px inset (fmt2/3 only)
+VID_L2_CLIP_X2_M1 equ VID_L2_CLIP_X1_M1 + (256/2) - 1  ; = 143
 
 ; Per-video-mode CTC time constant for the stereo downsampled rate
 ; (31100/VID_STEREO_DOWNSAMPLE = ~10366 Hz), same derivation as

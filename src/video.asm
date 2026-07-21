@@ -1079,16 +1079,25 @@ vid_run:
     nextreg NR_L2_CTRL, a
     nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
     nextreg NR_CLIP_IDX, 1
-    nextreg NR_L2_CLIP, 0
-    ; X2: full-bleed 320-wide (fmt0/1, SP13 T4) vs fmt2/3's 256-of-320
-    ; pillarboxed subset - VID_L2_CLIP_X2_M1_01/VID_L2_CLIP_X2_M1
-    ; (nextdaad.inc). Y1/Y2/scroll are format-agnostic (unchanged below).
+    ; X1/X2: full-bleed 320-wide (fmt0/1, SP13 T4, X1=0/X2=159) vs
+    ; fmt2/3's 256-of-320 CENTERED pillarbox (X1=16/X2=143, nextdaad.inc's
+    ; VID_L2_CLIP_X1_M1/X2_M1 - matches the reference exactly). SP14a T3
+    ; fix wave 4 (owner hardware leg): X1 was unconditionally 0 before
+    ; this fix, which only ever clipped fmt2/3's content to the LEFT 256
+    ; columns of the 320-wide surface (no centering at all) - the dest-
+    ; page offset below must move in lockstep with this X1, or the blit
+    ; writes data that lands outside (or only partially inside) whatever
+    ; window is clipped to.
     ld a, (vidFmt)
     cp 2
-    ld a, VID_L2_CLIP_X2_M1_01
-    jr c, .gotx2
-    ld a, VID_L2_CLIP_X2_M1
-.gotx2:
+    ld a, 0
+    ld b, VID_L2_CLIP_X2_M1_01
+    jr c, .gotx1x2
+    ld a, VID_L2_CLIP_X1_M1
+    ld b, VID_L2_CLIP_X2_M1
+.gotx1x2:
+    nextreg NR_L2_CLIP, a
+    ld a, b
     nextreg NR_L2_CLIP, a
     nextreg NR_L2_CLIP, 0
     nextreg NR_L2_CLIP, VID_COL_HEIGHT-1
@@ -1556,7 +1565,21 @@ vid_stream_frame:
     ; stereo (0/1/2/3): column-major direct-INI blit (vid_stream_
     ; pixels_col, below) - no landing-page relocate, see that routine's
     ; own header for the double-copy cost this avoids.
+    ;
+    ; SP14a T3 fix wave 4 (owner hardware leg - vply2 pillarbox
+    ; regression): fmt2/3 write their 8-page/256-column span starting 1
+    ; page (32 columns) INTO the 10-page/320-column Layer 2 back surface,
+    ; not at its start - centering under the matching X1=16 clip
+    ; programmed above (vid_run's own Layer 2 setup) instead of the old
+    ; unconditional vidDrawPage (which only ever produced a left-aligned
+    ; 256-column image against a 320-wide surface). fmt0/1 use all 10
+    ; pages full-bleed, unchanged.
+    ld a, (vidFmt)
+    cp 2
     ld a, (vidDrawPage)
+    jr c, .gotdrawbase
+    inc a
+.gotdrawbase:
     call vid_stream_pixels_col
     jr c, .err
     or a
