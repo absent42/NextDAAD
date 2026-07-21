@@ -1015,11 +1015,6 @@ vid_run:
     ; ordering rule (loading the TC starts the timer, so the stub/
     ; end-marker patches must land first) is honoured because the whole
     ; cold hop finishes and returns before this hot code ever runs. ---
-    ld a, (vidCtcTc)
-    ld bc, AUD_CTC_PORT
-    out (c), a                    ; time constant -> timer starts NOW,
-                                   ; already dispatching the right ISR
-
     ; prime pacing so the first iteration's wait passes immediately (no
     ; prior frame is playing yet). IX is the resident play pointer for
     ; BOTH ISRs (mitigation - see the task report's Step 0: dedicating IX
@@ -1028,9 +1023,25 @@ vid_run:
     ; im2_isr's fast path, taken whenever audEnable=0 as it is for the
     ; whole session, never touches ix/iy; the raw streaming internals are
     ; documented IX/IY-free by their own "golden rules 1 and 2" header).
+    ; MOVED here, BEFORE the time-constant write below (owner gate-leg
+    ; postmortem sweep, SP14a T4 follow-up): the old order wrote the TC
+    ; first, arming the timer, and only THEN set IX - a narrow window
+    ; where a premature tick (unlikely but not provably impossible) would
+    ; read `(ix+0)` from whatever IX held on entry (stale/undefined),
+    ; matching part of the observed hardware signature ("a split-second
+    ; of corrupted sound... ISR ran garbage briefly"). Every shipped TC
+    ; (72-132, CW16) gives a huge real-world margin before the first tick
+    ; can possibly fire, so this was very unlikely to be the primary
+    ; cause, but reordering costs nothing and closes the window outright.
     ld ix, vidAudBuf
     ld a, 1
     ld (vidAudDone), a
+
+    ld a, (vidCtcTc)
+    ld bc, AUD_CTC_PORT
+    out (c), a                    ; time constant -> timer starts NOW,
+                                   ; already dispatching the right ISR,
+                                   ; with IX already valid
 
 .frameloop:
     ld a, (l2BackBank)             ; draw target = the currently-hidden
@@ -2738,20 +2749,53 @@ vidCtcTcNxvStereo:
 vidCtcTcNxvMono:
     db 75, 76, 78, 80, 83, 85, 88, 72
 
-; Loads the copper list and starts FRAME mode. RESET pulse before
-; STOP+load (VBENCH-COPPER's own owner-leg fix - clears any stale mid-
-; list PC from a prior run before writing fresh bytes). Initial MOVE
-; data bytes are the CURRENT (pre-flip) bank/palctl - harmless status-
-; quo values in the unlikely event a vblank lands before the first CPU
-; poke (vid_copper_poke, VID_PAGE) overwrites them. l2FrontBank is
-; RESIDENT (not VID_PAGE), so no MMU6 translation is needed to read it
-; here. Corrupts AF.
+; Loads the copper list and starts FRAME mode. Corrupts AF.
+;
+; OWNER GATE LEG POSTMORTEM (SP14a T4 follow-up, all-profile hardware
+; crash, first-ever hardware execution of the NXV path): this routine
+; USED TO send a "RESET pulse" (NR $62 = %01000000, mode 01 - resets
+; CPC to 0 AND STARTS the copper running) BEFORE stopping it and
+; loading fresh bytes - intended to "clear any stale mid-list PC from a
+; prior run", per the removed comment. That reasoning was wrong on two
+; counts: (1) mode 01/11 ALREADY resets CPC to 0 as an intrinsic part of
+; starting - the final FRAME-mode start below does this unconditionally,
+; making a separate reset step redundant regardless of any prior CPC
+; value; (2) far worse, sending mode 01 BEFORE the fresh list is loaded
+; makes the copper immediately START EXECUTING from CPC=0 on WHATEVER
+; STALE OR UNINITIALIZED BYTES currently sit in copper RAM - two Z80
+; instructions' worth of real time (the index-low write and its own
+; dispatch) during which the copper, running at a comparable clock,
+; can execute several of its own instructions. Copper MOVE covers NR
+; $00-$7F, which INCLUDES the MMU registers ($50-$57) - one garbage
+; MOVE hitting NR $50/$51 (MMU6/MMU7) at raster time corrupts the live
+; memory map under the running CPU: freeze or reset, exactly the
+; observed signature, on the FIRST-EVER hardware exercise of this list
+; (copper RAM content at that point is unknown/unproven - this build
+; had never driven the copper before). Fixed: go straight to STOP
+; (mode 00 - "CPC keeps its current value", no execution happens in
+; this mode, so stale content is inert) before touching the index or
+; uploading anything, matching the dev guide's own safe example order
+; (chapter-next-copper.tex "Example": NEXTREG &61 then &62=stop-mode,
+; never a mode-01/11 write before the list is loaded). The final FRAME-
+; mode start (unchanged, below) is what actually resets CPC for the
+; fresh list - it always was, the removed pulse just did it redundantly
+; and dangerously one step early.
+;
+; Initial MOVE data bytes are the CURRENT (pre-flip) bank/palctl -
+; harmless status-quo values in the unlikely event a vblank lands
+; before the first CPU poke (vid_copper_poke, VID_PAGE) overwrites
+; them. l2FrontBank is RESIDENT (not VID_PAGE), so no MMU6 translation
+; is needed to read it here.
 vid_copper_init:
-    ld a, %01000000                 ; control = RESET (01), index hi = 0
-    nextreg NR_COPPER_ADDR_HI_CTRL, a
     xor a
-    nextreg NR_COPPER_ADDR_LO, a    ; write-index low = 0
-    nextreg NR_COPPER_ADDR_HI_CTRL, a  ; index hi = 0, control = STOP (00)
+    nextreg NR_COPPER_ADDR_LO, a    ; write-index low = 0 - safe regardless
+                                     ; of current mode (only $62 controls
+                                     ; execution state, never $61)
+    nextreg NR_COPPER_ADDR_HI_CTRL, a  ; index hi = 0, control = STOP (00) -
+                                        ; copper is inert from here until
+                                        ; the FRAME-mode start below; no
+                                        ; execution window on stale/
+                                        ; uninitialized list content
     ld a, %10000001                 ; WAIT hi: H=0, V bit8=1 (257 >= 256)
     nextreg NR_COPPER_DATA, a
     ld a, NXV_COPPER_LINE & $FF
