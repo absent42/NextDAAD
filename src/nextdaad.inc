@@ -183,7 +183,7 @@ VID_PAGE        equ 59      ; video code page (SP13 T1): the upper 8K of
                             ; reserved bank range (28/29) with no equate
                             ; yet - bank_table_init (banks.asm) never
                             ; marks banks 28/29 BT_FREE (the pool starts
-                            ; at BANK_POOL_B=35), so this page is outside
+                            ; at BANK_POOL_B=36), so this page is outside
                             ; the allocator entirely, exactly like 56-58.
                             ; Costs zero resident bytes: SAVENEX AUTO
                             ; (main.asm) picks up any page with assembled

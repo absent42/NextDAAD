@@ -1932,7 +1932,10 @@ vid_col_blockdone:
 ; IMMEDIATE B (group count, 1-15) per segment instead of the old runtime
 ; chunk16=min(colRemain16,blkRemain16) computation. In: B = group count,
 ; C = PORT_SPI_DAT, HL = destination. Out: HL advanced by B*16 bytes.
-; Corrupts AF, B.
+; Corrupts F, B; PRESERVES A - the case bodies' column-gap trick (xor a
+; at case top, ld l,a after each column) DEPENDS on A surviving every
+; call (ini does not touch A). Never add an A-clobbering instruction
+; here without reworking every case's gap handling.
 vid_xfer16n:
     REPT 16
         ini

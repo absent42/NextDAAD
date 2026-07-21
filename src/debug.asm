@@ -268,7 +268,7 @@ bank_selftest:
     cp BANK_POOL_A_END
     ld a, 3
     jr nz, .fail
-    call bank_alloc         ; check 4: then bank 35 (29 withdrawn for
+    call bank_alloc         ; check 4: then bank 36 (29 withdrawn for
                             ; overlay 2, 30-34 for the L2 back surface)
     cp BANK_POOL_B
     ld a, 4
