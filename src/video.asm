@@ -2790,7 +2790,13 @@ vid_bench_pass_ret:
 ; measured either way. Out (via a hop to vbench_flat_ret, VID_PAGE2):
 ; B = 0 open failed, 1 ran (early or full - vbenchBlocksDone vs
 ; VBENCH_FLAT_N distinguishes which). Corrupts everything.
-VBENCH_FLAT_N equ 1024          ; 512KB - large enough for a stable rate
+; SP14a escalation bench wave, precision follow-up: raised from 1024
+; (512KB, ~21 frames elapsed, +/-1 tick = +/-~60 KB/s granularity - too
+; coarse for a threshold decision) to 4096 (2MB, ~84 frames at the
+; measured ~1219 KB/s baseline, +/-1 tick = ~1.2% granularity). See
+; vbench_flat_ret's own header for the KB/s arithmetic this forced open
+; (blocks*25 overflows 16 bits above 2621 blocks - 4096*25=102400).
+VBENCH_FLAT_N equ 4096          ; 2MB - large enough for a stable rate
                                  ; reading, small enough that 001.VID
                                  ; (the existing VIDBENCH fixture) need
                                  ; not be huge; a short file just stops
@@ -3903,18 +3909,49 @@ vbench_flat_ret:
     jr .inforow
 .haveelapsed:
     ; KB/s = blocksDone*25 / elapsed (512 bytes/block * 50 ticks/s /
-    ; 1024 bytes/KB = 25) - a plain 25-iteration add loop (cold, one-
-    ; shot, speed does not matter) rather than a bit-decomposition
-    ; multiply, for simplicity/correctness.
-    ld hl, 0
-    ld de, (vbenchFlatBlocks)
-    ld b, 25
-.mul:
-    add hl, de
-    djnz .mul
-    ld de, (vbenchFlatElapsed)     ; HL = blocks*25 (dividend), DE = elapsed
-    call div16                     ; HL = KB/s
+    ; 1024 bytes/KB = 25). SP14a escalation bench wave, precision
+    ; follow-up: VBENCH_FLAT_N raised 1024->4096 for finer timing
+    ; granularity, but blocks*25 now overflows 16 bits above 2621 blocks
+    ; (4096*25=102400 > 65535) - widening to a genuine 32-bit multiply/
+    ; divide was rejected as more delicate Z80 than this needs; instead
+    ; the SAME div16 (16-bit only, unchanged) computes this EXACTLY via
+    ; the standard division identity: for blocks = Q*elapsed + R (Q =
+    ; blocks/elapsed, R = blocks mod elapsed, both < 65536 and R <
+    ; elapsed by construction), floor(blocks*25/elapsed) = Q*25 +
+    ; floor(R*25/elapsed) - an EXACT identity (floor(a+b) = a+floor(b)
+    ; when a is already an integer - Q*25 is), not an approximation, and
+    ; every intermediate (Q*25, R*25) now multiplies a value bounded by
+    ; elapsed or less, not the full block count, so 16-bit arithmetic
+    ; suffices throughout PROVIDED both Q and R individually stay <=2621
+    ; (2622*25 overflows) - vbench_mul25_safe (below) guards this
+    ; explicitly per multiply rather than assuming it, even though ANY
+    ; real 2MB transfer's own elapsed-tick count makes it physically
+    ; unreachable (Q>2621 needs elapsed<2 ticks for 4096 blocks - faster
+    ; than this project has ever measured any SD interface, by a wide
+    ; margin; R>2621 needs elapsed>2621 ticks = 52+ seconds, already an
+    ; obviously-hung transfer the BLOCKS row would explain on its own).
+    ld hl, (vbenchFlatBlocks)
+    ld de, (vbenchFlatElapsed)
+    call div16                      ; HL = Q (blocks/elapsed), DE = R
+    ld (vbenchFlatR), de
+    call vbench_mul25_safe          ; HL = Q*25, or CF set if Q unsafe
+    jr c, .imprecise
+    ld (vbenchFlatKBWhole), hl
+    ld hl, (vbenchFlatR)
+    call vbench_mul25_safe          ; HL = R*25, or CF set if R unsafe
+    jr c, .imprecise
+    ld de, (vbenchFlatElapsed)
+    call div16                      ; HL = floor(R*25/elapsed)
+    ld de, (vbenchFlatKBWhole)
+    add hl, de                      ; HL = Q*25 + floor(R*25/elapsed) =
+                                     ; the exact KB/s figure
     call dbg_hex16
+    jr .inforow
+.imprecise:
+    ld hl, msgVbFlatTooFast          ; reused - see this block's own
+    call dbg_puts                    ; header for why this path is
+                                      ; physically unreachable for a
+                                      ; real transfer, not just "fast"
 .inforow:
     ld b, VIDBENCH_ROW_INFO
     ld c, 0
@@ -3925,12 +3962,39 @@ vbench_flat_ret:
     call dbg_hex16
     ret
 
+; Multiplies HL by 25 via a 25-iteration add loop, guarding the 16-bit
+; result against overflow (unsafe once the input exceeds 2621 -
+; 2622*25=65550 wraps). In: HL = value. Out: CF clear, HL = value*25;
+; CF set = value > 2621 (caller must not trust HL - see vbench_flat_
+; ret's own header for why this is checked explicitly rather than
+; assumed). Corrupts AF, DE, B.
+vbench_mul25_safe:
+    ld de, 2622
+    or a
+    sbc hl, de
+    jr nc, .unsafe
+    add hl, de                      ; undo the compare-subtract, HL =
+                                     ; the original value again
+    ex de, hl                       ; DE = value (term to add repeatedly)
+    ld hl, 0
+    ld b, 25
+.loop:
+    add hl, de
+    djnz .loop
+    or a                            ; CF clear
+    ret
+.unsafe:
+    scf
+    ret
+
 msgVbFlatOpenErr: db "FLAT OPEN ERR", 0
 msgVbFlatKb:       db "FLAT KB/S=", 0
 msgVbFlatTooFast:  db "FAST", 0
 msgVbFlatBlocks:   db "BLOCKS=", 0
-vbenchFlatBlocks:  dw 0
-vbenchFlatElapsed: dw 0
+vbenchFlatBlocks:   dw 0
+vbenchFlatElapsed:  dw 0
+vbenchFlatR:        dw 0
+vbenchFlatKBWhole:  dw 0
 
 ; VBENCH-DMA cold orchestrator (SP14a escalation bench wave - the task
 ; report's Q1e spec). Two passes against vidBenchName's FIRST 512-byte
