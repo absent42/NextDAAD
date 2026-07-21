@@ -1177,6 +1177,18 @@ vid_run:
     ld ix, vidAudBuf
     xor a
     ld (vidAudDone), a
+ IFDEF DEBUG
+    ; Stage 6 (fresh-eyes wave): real frame + audio copy-out ONLY, then
+    ; stop - no palette apply, no flip. vidErrCode already reads clean
+    ; here (the pixel serve just proved CF clear, above, or .eof would
+    ; already have diverted away) - no extra capture needed.
+    ld a, (vidStageLimit)
+    cp 6
+    jr nz, .sub6skip
+    ld c, 9
+    jp vid_run.stagegate
+.sub6skip:
+ ENDIF
     ; SP14a T2: palette EDIT (invisible write to the currently NON-
     ; displayed Layer 2 palette bank) - MOVED here, ahead of both flip
     ; pokes below (pre-SP14a this ran AFTER the NR $12 write, into the
@@ -1201,6 +1213,14 @@ vid_run:
  IFDEF DEBUG
     ld a, VID_TL_OTHER              ; closes phase 2 (palette apply, or
     call vid_tl_stamp               ; ~0 for non-palette formats)
+    ; Stage 7 (fresh-eyes wave): + vid_apply_palette, then stop - no
+    ; flip (stage 8 would be +flip, which is VSTG2 itself).
+    ld a, (vidStageLimit)
+    cp 7
+    jr nz, .sub7skip
+    ld c, 10
+    jp vid_run.stagegate
+.sub7skip:
  ENDIF
     ; SP14a T4: flip via the copper (vid_copper_poke, above) - REPLACES
     ; the old direct CPU nextreg NR_L2_BANK/NR_PAL_CTRL writes. l2_flip_
@@ -1538,24 +1558,10 @@ vid_stream_frame:
  ENDIF
     jp .eof
 .audfull:
- IFDEF DEBUG
-    ; Owner gate-leg sub-ladder (VSTG2A, SP14a T4 follow-up): audio+pad
-    ; consumed successfully (the exact-match branch above proves it) -
-    ; stop here, before the palette/pixel reads, if requested. No error
-    ; is possible at this exact point (the byte count already matched),
-    ; so ERR is always clean.
-    ld a, (vidStageLimit)
-    cp 2
-    jr nz, .sub2askip
-    ld a, (vidStage2Sub)
-    cp 1
-    jr nz, .sub2askip
-    xor a
-    ld (vidErrCode), a
-    ld c, 4
-    jp vid_run.stagegate
-.sub2askip:
- ENDIF
+    ; VS2A retired (owner follow-up 4, VID_PAGE budget - it had already
+    ; served its purpose: proved audio+pad consumption clean before the
+    ; fresh-eyes wave redirected the search to the serve loop/post-frame
+    ; block instead). git history holds the code.
     ; palette-flag files only - streamed here, NOT applied (see this
     ; routine's header): vid_run's flip section applies it (vidAudPool
     ; Page+1 still holds it, untouched).
@@ -1576,22 +1582,9 @@ vid_stream_frame:
  IFDEF DEBUG
     ld a, VID_TL_BLIT               ; closes phase 0 (stream: the audio
     call vid_tl_stamp               ; read, plus the palette read above)
-    ; Owner gate-leg sub-ladder (VSTG2B, SP14a T4 follow-up): palette
-    ; consumed (or skipped, non-palette files) - stop here, before the
-    ; pixel read, if requested. No error possible at this exact point
-    ; either (same reasoning as 2a).
-    ld a, (vidStageLimit)
-    cp 2
-    jr nz, .sub2bskip
-    ld a, (vidStage2Sub)
-    cp 2
-    jr nz, .sub2bskip
-    xor a
-    ld (vidErrCode), a
-    ld c, 5
-    jp vid_run.stagegate
-.sub2bskip:
  ENDIF
+    ; VS2B retired (owner follow-up 4, VID_PAGE budget) - see VS2A's own
+    ; retirement note above; git history holds the code.
     ld a, (vidGapNeeded)
     or a
     jr nz, .gappath
@@ -1654,6 +1647,30 @@ vid_stream_frame:
     ld hl, (vidPixBlocks)
     ld (vidPxBlocksLeft), hl
     call vid_stream_pixels_flat
+ IFDEF DEBUG
+    ; VS2E (fresh-eyes wave, stage flag 5): stop HERE, immediately after
+    ; the REAL vid_stream_pixels_flat loop (all chunks, the genuine
+    ; multi-advance walk VS2C/D's own direct reads never exercised) -
+    ; before ANY post-frame processing (audio copy-out/palette apply/
+    ; flip) ever runs. Captures the REAL CF/error, not a synthetic ok -
+    ; this is the loop-vs-postframe discriminator.
+    push af
+    ld a, (vidStageLimit)
+    cp 5
+    jr nz, .sub5skip
+    pop af
+    jr nc, .sub5ok
+    ld (vidErrCode), a
+    jr .sub5done
+.sub5ok:
+    xor a
+    ld (vidErrCode), a
+.sub5done:
+    ld c, 8
+    jp vid_run.stagegate
+.sub5skip:
+    pop af
+ ENDIF
     jr c, .err
     or a
     ret
@@ -2631,6 +2648,26 @@ nxv_open_body:
     and 1
     jp nz, .bad                     ; bit 0 of high byte must be 0 too
                                      ; (together: multiple of 512)
+    ; SP14a T4 owner follow-up (fresh-eyes finding #3b): upper-bound pad
+    ; against NXV_AUD_BUF_MAX (2560) - vidAudBuf's own resident size. An
+    ; unbounded pad would overflow vidAudBuf when the per-frame LDIR
+    ; copy-out (vid_run's own .frameloop) later copies `real` (<=pad,
+    ; enforced below) bytes into it - bounding pad alone closes both
+    ; fields at once, since real can never exceed it.
+    ld de, NXV_AUD_BUF_MAX
+    or a
+    sbc hl, de
+    jr c, .padok                    ; pad < max
+    jr z, .padok                    ; pad == max
+    jp .bad                         ; pad > max: reject
+.padok:
+    add hl, de                      ; recover the original pad value (the
+                                     ; sbc above was destructive - the
+                                     ; same "subtract then add back"
+                                     ; idiom vid_stream_pixels_flat
+                                     ; already uses; exact regardless of
+                                     ; which branch was taken, since DE
+                                     ; is unchanged since the sbc)
     ld (vidABytesPad), hl
     ld hl, (DATA_WINDOW + NXV_OFF_ABYTES_REAL)
     ld de, (vidABytesPad)
@@ -2641,6 +2678,14 @@ nxv_open_body:
     jp .bad                         ; real > padded: reject
 .realok:
     ld hl, (DATA_WINDOW + NXV_OFF_ABYTES_REAL)
+    ld a, h
+    or l
+    jp z, .bad                      ; SP14a T4 owner follow-up (fresh-
+                                     ; eyes finding #3a): real == 0
+                                     ; rejected - a zero-length copy-out
+                                     ; LDIR (vid_run's own .frameloop)
+                                     ; would wrap BC to 65536 and
+                                     ; obliterate VID_PAGE
     ld (vidABytesReal), hl
     ld a, (DATA_WINDOW + NXV_OFF_PALFLAG)
     cp 2
@@ -3101,7 +3146,11 @@ vid_stage_marker_body:
     ld a, VID_PAGE
     jp ovl_map_page
 
-vidStageMsgTab: dw 0, msgStg1, msgStg2, msgStg3, msgStg2a, msgStg2b, msgStg2c, msgStg2d
+; Indices 4/5 (formerly VS2A/VS2B) are dead - those gates retired (owner
+; follow-up 4, VID_PAGE budget) but the table slots are left in place
+; rather than reshuffling every other index; harmless (cold, unreferenced,
+; C is never 4 or 5 any more).
+vidStageMsgTab: dw 0, msgStg1, msgStg2, msgStg3, msgStg2a, msgStg2b, msgStg2c, msgStg2d, msgStg2e, msgStg6, msgStg7
                                                   ; index 0 unused - stages
                                                   ; are 1-based (C is
                                                   ; never 0 here)
@@ -3112,6 +3161,10 @@ msgStg2a: db "STG2A OK", 0
 msgStg2b: db "STG2B OK", 0
 msgStg2c: db "STG2C OK", 0
 msgStg2d: db "STG2D OK", 0
+msgStg2e: db "STG5 OK", 0     ; C=8: VS2E (vidStageLimit=5) - full serve
+                               ; loop, no post-frame
+msgStg6:  db "STG6 OK", 0     ; C=9: vidStageLimit=6 - +audio copy-out
+msgStg7:  db "STG7 OK", 0     ; C=10: vidStageLimit=7 - +palette apply
 msgStgErr: db " ERR=", 0
  ENDIF
 

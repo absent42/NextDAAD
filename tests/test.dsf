@@ -179,14 +179,23 @@ VSTG2   89      verb
 VSTG3   90      verb
 VSTG4   91      verb
 ; VSTG2 sub-ladder (owner gate-leg follow-up 2, VSTG2 hardware freeze):
-; flag 249 selects the sub-stage WITHIN stage 2 (audio/palette/first-16-
-; pixel-blocks boundaries) - see vid_stream_frame's own gates.
-VS2A  92      verb
-VS2B  93      verb
+; flag 249 selects the sub-stage WITHIN stage 2 (first-16-pixel-blocks
+; boundary) - see vid_stream_frame's own gates. VS2A/VS2B (audio-only/
+; +palette) retired (owner follow-up 4, VID_PAGE budget) - they had
+; already served: proved audio+palette consumption clean before the
+; fresh-eyes wave redirected the search to the serve loop/post-frame
+; block. Verb numbers 92/93 are free again.
 VS2C  94      verb
 ; VS2D (owner follow-up 3, page-walk audit): 32 blocks = 2 pages = one
 ; page advance - the smallest exercise of the code VS2C never touches.
 VS2D  95      verb
+; Fresh-eyes wave (owner follow-up 4): VS2E is the loop-vs-postframe
+; discriminator (full REAL serve loop, no post-frame at all); VS6/VS7
+; bisect the post-frame block itself. See each verb's own PROCESS
+; block for the exact stage decode.
+VS2E  96      verb
+VS6   97      verb
+VS7   98      verb
 
 ;                       Verbs
 GET     20      verb
@@ -723,25 +732,12 @@ $pictureOK
 ; sub-stage WITHIN stage 2 (LET 250 2 alongside it, same GFX 1 13 call -
 ; vid_stream_frame's own gates read both, self-clearing like flag 250).
 ;
-; VS2A: audio+pad blocks only (vidABytesPad bytes) - stop before the
-; palette/pixel reads. "STG2A OK ERR=xx" (VID_PAGE2, row 22). If this
-; freezes, the bug is in the audio read itself (or the streaming
-; primitives/window state it depends on) - the earliest possible point
-; after the header (VSTG1's own read) succeeds.
-> VS2A  _     LET 250 2
-                LET 249 1
-                GFX 1 13
-                DONE
-
-; VS2B: +the 512-byte palette block - stop before the pixel read.
-; "STG2B OK ERR=xx". If VS2A passes but this freezes, the bug is in
-; the palette read specifically (or a desync it exposes that the audio
-; read alone did not).
-> VS2B  _     LET 250 2
-                LET 249 2
-                GFX 1 13
-                DONE
-
+; VS2A/VS2B retired (owner follow-up 4, VID_PAGE budget) - both PASSED
+; ERR=0 on the owner's own hardware leg (audio+pad, then +palette, both
+; clean), so their job was done: the fresh-eyes wave redirected the
+; search to the serve loop and post-frame block instead (VS2E/VS6/VS7,
+; below). git history holds the verbs/code if ever needed again.
+;
 ; VS2C: +a plain first-16-block ($2000) pixel read at vidDrawPage -
 ; NOT the full flat-serve loop, no flip. "STG2C OK ERR=xx". If VS2B
 ; passes but this freezes, the bug is in the pixel read path itself
@@ -765,6 +761,38 @@ $pictureOK
 ; advance to surface.
 > VS2D  _     LET 250 2
                 LET 249 4
+                GFX 1 13
+                DONE
+
+; Fresh-eyes wave (owner follow-up 4): an independent ground-up review
+; found that VS2A-D never actually exercised vid_stream_pixels_flat (the
+; REAL serve loop) OR the post-frame block (audio copy-out/palette
+; apply/flip, video.asm ~1161-1243) - they used direct vid_stream_read
+; calls instead. VS2E/VS6/VS7 close that gap - each is now its own top-
+; level stage (flag 250 = 5/6/7, no flag 249 sub-value needed).
+;
+; VS2E: the REAL vid_stream_pixels_flat loop, full frame (all 10 blocks/
+; page-advances for N0) - then stop, before ANY post-frame processing.
+; "STG5 OK ERR=xx". The loop-vs-postframe discriminator: if this
+; freezes, the bug is in the serve loop itself (the genuine multi-
+; advance walk VS2C/VS2D's own direct reads never exercised); if this
+; passes but VSTG2 still crashes, the bug is in the post-frame block.
+> VS2E   _     LET 250 5
+                GFX 1 13
+                DONE
+
+; VS6: +the full-rate audio copy-out LDIR only - then stop, before
+; palette apply or flip. "STG6 OK ERR=xx". If VS2E passes but this
+; freezes, the bug is in the copy-out step.
+> VS6    _     LET 250 6
+                GFX 1 13
+                DONE
+
+; VS7: +vid_apply_palette - then stop, before flip. "STG7 OK ERR=xx".
+; If VS6 passes but this freezes, the bug is in the palette-apply step.
+; If VS2E/VS6/VS7 ALL pass but plain VSTG2 still crashes, the bug is
+; specifically in the flip/bank-swap step - the only thing left.
+> VS7    _     LET 250 7
                 GFX 1 13
                 DONE
 
