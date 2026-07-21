@@ -880,8 +880,36 @@ nxv_open_ret:
 ; while the copper executes the very instruction being half-written is
 ; the documented risk, and only the OPERAND changes here, one byte at a
 ; time, never the register-select byte). In: A = data byte, E =
-; NXV_COPPER_OFF_BANK or NXV_COPPER_OFF_PAL. Corrupts AF.
+; NXV_COPPER_OFF_BANK or NXV_COPPER_OFF_PAL. Corrupts AF (DEBUG builds:
+; also C - see the stage-gate branch below).
+;
+; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): stages 1-3
+; (vidStageLimit 1-3) never touch the copper at all - "CPU flips"
+; per the ladder's own spec, so this call becomes a direct NextReg
+; write to the SAME register E would otherwise have indexed into the
+; copper list (NXV_COPPER_OFF_BANK -> NR_L2_BANK, NXV_COPPER_OFF_PAL ->
+; NR_PAL_CTRL), bypassing the copper entirely. Both callers (vid_run's
+; own flip block) are unaffected either way - same In/Out contract.
 vid_copper_poke:
+ IFDEF DEBUG
+    ld c, a                       ; stash data byte (A about to be reused)
+    ld a, (vidStageLimit)
+    or a
+    jr z, .cpnormal
+    cp 4
+    jr nc, .cpnormal
+    ld a, e
+    cp NXV_COPPER_OFF_BANK
+    ld a, c                       ; restore data byte either way
+    jr nz, .cppal
+    nextreg NR_L2_BANK, a
+    ret
+.cppal:
+    nextreg NR_PAL_CTRL, a
+    ret
+.cpnormal:
+    ld a, c                       ; restore data byte
+ ENDIF
     push af
     ld a, e
     nextreg NR_COPPER_ADDR_LO, a
@@ -985,6 +1013,27 @@ vid_run:
     ; stays a vid_run-scoped dot-local instead; vid_run_l2setup_body's
     ; own hop-back targets it via the qualified name `vid_run.l2setupret`.
 
+ IFDEF DEBUG
+    ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): Stage 1
+    ; is "open+header+display setup+isolation ONLY" - display/palette/
+    ; isolation are already fully done by the l2setup_body hop just
+    ; above (which also skipped the copper init for stages 1-3 - see
+    ; that body's own gate); nothing below this point (CTC arm, the
+    ; frame loop, copper pokes) may run for stage 1, so it exits here,
+    ; before any of that starts. vidStageFrameCnt is reset here (not at
+    ; assemble time only - VID_PAGE is banked, not re-initialized
+    ; between calls) regardless of stage, since every path that reaches
+    ; this point either needs it fresh (stage 3) or doesn't care (0/4).
+    xor a
+    ld (vidStageFrameCnt), a
+    ld a, (vidStageLimit)
+    cp 1
+    jr nz, .stg1cont
+    ld c, 1
+    jp .stagegate
+.stg1cont:
+ ENDIF
+
     ; --- CTC retune: vidCtcTc was already computed cold, in vid_run_
     ; l2setup_body above (table-driven from the live video-timing mode
     ; and the header's own audio channel count - a pure data lookup, no
@@ -1001,6 +1050,14 @@ vid_run:
     ld a, AUD_CTC_RESET
     out (c), a
     out (c), a                    ; double soft-reset (unknown -> clean)
+ IFDEF DEBUG
+    ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): Stage 2 is
+    ; "no audio" - leave the CTC reset/stopped (never write CW16 or a
+    ; time constant below), so the ISR never fires and no sound plays.
+    ld a, (vidStageLimit)
+    cp 2
+    jr z, .stg2noarm
+ ENDIF
     ld a, AUD_CTC_CW16
     out (c), a                    ; control word - timer not running yet
 
@@ -1042,6 +1099,15 @@ vid_run:
     out (c), a                    ; time constant -> timer starts NOW,
                                    ; already dispatching the right ISR,
                                    ; with IX already valid
+ IFDEF DEBUG
+    jr .stg2armdone
+.stg2noarm:
+    ld ix, vidAudBuf               ; still prime IX/vidAudDone even with
+    ld a, 1                        ; the CTC left stopped - .frameloop's
+    ld (vidAudDone), a             ; own .pace check expects vidAudDone
+                                    ; already true on the first iteration
+.stg2armdone:
+ ENDIF
 
 .frameloop:
     ld a, (l2BackBank)             ; draw target = the currently-hidden
@@ -1155,7 +1221,65 @@ vid_run:
     ld a, (vidExitReq)
     or a
     jr nz, .restore
+ IFDEF DEBUG
+    ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): stages 2
+    ; and 3 never reach the ordinary key/EOF-only loop exit above -
+    ; they are time/frame-boxed so the ladder always completes on its
+    ; own, even if something is subtly wrong. Stage 1 never reaches
+    ; here at all (it exits before the frame loop starts, above).
+    ld a, (vidStageLimit)
+    or a
+    jr z, .stagecont
+    cp 4
+    jr nc, .stagecont
+    cp 2
+    jr nz, .stage3cap
+    ; Stage 2: exactly one frame was just streamed and flipped (via
+    ; vid_copper_poke's own CPU-direct branch, above) - hold it on
+    ; screen ~2s (100 x 50Hz halt) with nothing further streamed or
+    ; flipped, then exit. This IS "flip once, hold" - never loops back.
+    ld b, 100
+.stg2hold:
+    halt
+    djnz .stg2hold
+    ld c, 2
+    jp .stagegate
+.stage3cap:
+    ; Stage 3: keep the ordinary streaming/CPU-flip loop running (CTC
+    ; audio armed, copper bypassed) for ~100 frames (~2-4s depending on
+    ; profile fps), then exit - the ladder's own "+CTC audio, CPU
+    ; flips" stage, time-boxed the same way stage 2 is.
+    ld hl, vidStageFrameCnt
+    inc (hl)
+    ld a, (hl)
+    cp 100
+    jr c, .stagecont
+    ld c, 3
+    jp .stagegate
+.stagecont:
+ ENDIF
     jp .frameloop
+ IFDEF DEBUG
+; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): shared hot
+; micro-stub, reached (tail-jumped, never called - it never returns
+; here) from all three stage-exit sites above and the stage-1 gate
+; near .l2setupret. In: C = stage number just completed (1-3). Hops
+; cold to print the matching marker (vid_stage_marker_body, VID_PAGE2 -
+; register-passed, not a VID_PAGE memory read from cold code, so the
+; "copy-across" translation lesson does not apply here), then falls
+; straight into .restore - the SAME teardown every ordinary exit
+; already uses (CTC-off/copper-stop are idempotent no-ops if this
+; stage never armed/started them; vid_stream_close/L2-restore/bank-
+; free/presentation-restore are all unconditionally correct regardless
+; of which stage got this far).
+.stagegate:
+    ld hl, vid_stage_marker_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+.stagegateret:
+    jp .restore
+ ENDIF
 .eof:
  IFDEF DEBUG
     ; SP14a T3 fix wave (owner hardware leg, vply0 regression audit): A
@@ -1265,6 +1389,24 @@ vid_run:
     jp ovl_map_page
 .restore_tail:
  IFDEF DEBUG
+    ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): Stage 4
+    ; ("full, copper") exits through this SAME ordinary path every non-
+    ; ladder playback already uses (key/EOF), so it needs no stage-gate
+    ; of its own - reaching here at all, followed by the timeline report
+    ; below (which only ever prints after a fully clean teardown), is
+    ; already the "ends clean" evidence. The one addition is a matching
+    ; "STG4 OK" marker for ladder-convention consistency with STG1-3 -
+    ; printed inline (dbg_at/dbg_puts are RESIDENT, no cold hop needed
+    ; for a plain string literal that can live right here, hot).
+    ld a, (vidStageLimit)
+    cp 4
+    jr nz, .stg4nomark
+    ld b, 22
+    ld c, 0
+    call dbg_at
+    ld hl, msgStg4
+    call dbg_puts
+.stg4nomark:
     ; SP14a T1: the frame-timeline report - fully torn-down playback only
     ; (CTC parked/stub restored, DAC parked, L2/NR state restored) - no
     ; window/ISR constraint on printing here. Hops to VID_PAGE2 and back
@@ -2100,6 +2242,27 @@ vidErrByte:     db 0
 ; hand-counted, so it can never drift if a field above is resized.
 VID_TL_BLOCK_LEN equ vidErrByte + 1 - vidTlTicks
 
+; Owner gate-leg staged-entry ladder (SP14a T4 follow-up) - see vid_run's
+; own stage-check sites and vid_stage_marker_body's header (VID_PAGE2)
+; for the full mechanism. Deliberately OUTSIDE the vidTlTicks..vidErrByte
+; span above (VID_TL_BLOCK_LEN must stay exactly that block's own size -
+; the timeline report's copy-across, see that equ's own comment).
+vidStageLimit:    db 0        ; 0 = ordinary (VPLY0-4/VLOP0-4), 1-4 = the
+                               ; VSTG1-4 ladder stage cap, read once from
+                               ; flags+250 at vid_run entry
+vidStageFrameCnt: db 0        ; stage 3's own frame counter - explicitly
+                               ; zeroed at the stage-1 check site (vid_run,
+                               ; below) on EVERY entry, not just this
+                               ; assemble-time initial value: VID_PAGE is
+                               ; banked, not re-initialized between calls,
+                               ; so a second VSTG3 in the same session
+                               ; would otherwise inherit the first run's
+                               ; own final count and cap out after 1 frame
+msgStg4: db "STG4 OK", 0      ; stays hot (.restore_tail's own inline
+                               ; print, no hop) - STG1-3 print cold
+                               ; instead (vid_stage_marker_body, VID_PAGE2)
+                               ; since those exits hop there anyway
+
 ; DEBUG frame-timeline instrument. In: A = new phase id (VID_TL_STREAM..
 ; VID_TL_OTHER, nextdaad.inc). Snapshots vidTlTicks and accumulates the
 ; delta since the PREVIOUS stamp into the accumulator for the phase that
@@ -2493,6 +2656,28 @@ vid_run_entry_body:
     ld (vidSvL2Front+DATA_WINDOW-OVL_ORG), a
     ld a, (l2BackBank)
     ld (vidSvL2Back+DATA_WINDOW-OVL_ORG), a
+ IFDEF DEBUG
+    ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): flags is
+    ; RESIDENT (engine.asm, always mapped regardless of MMU7), so no
+    ; translation is needed to read it; vidStageLimit IS VID_PAGE-
+    ; resident, so ITS write uses this body's own already-open bracket,
+    ; same as every other capture here. flag 250 (VIDBENCH's own retired
+    ; slot, free since that verb's removal) - 0 = ordinary playback
+    ; (VPLY0-4/VLOP0-4, untouched), 1-4 = the VSTG1-4 ladder verbs
+    ; (test.dsf). See vid_stage_marker_body's own header for the full
+    ; stage decode.
+    ld a, (flags+250)
+    ld (vidStageLimit+DATA_WINDOW-OVL_ORG), a
+    xor a
+    ld (flags+250), a             ; self-clearing: flag 250 is a plain
+                                   ; session-persistent DDB flag, not
+                                   ; auto-reset - without this, a VSTG3
+                                   ; run would leave flag 250=3 and
+                                   ; silently stage-cap the NEXT ordinary
+                                   ; VPLY0 too. Cleared the instant it is
+                                   ; read, so only THIS invocation ever
+                                   ; sees a nonzero vidStageLimit.
+ ENDIF
     call data_restore
 
     ; --- samples abort (SSTOP request path, waited) ---
@@ -2637,7 +2822,24 @@ vid_run_l2setup_body:
 
     ; copper flip init - FRAME-mode 8-byte list, owner-validated WAIT
     ; line (nextdaad.inc's NXV_COPPER_LINE).
+ IFDEF DEBUG
+    ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): stages
+    ; 1-3 never touch the copper at all - skip the init entirely rather
+    ; than load-then-never-start it, so a stage-1/2/3 run genuinely
+    ; exercises zero copper instructions, matching the ladder's own
+    ; "no copper" wording for those stages exactly (not just "copper
+    ; loaded but not FRAME-started").
+    ld a, (vidStageLimit+DATA_WINDOW-OVL_ORG)
+    or a
+    jr z, .cpinitgo
+    cp 4
+    jr c, .cpinitskip
+.cpinitgo:
     call vid_copper_init
+.cpinitskip:
+ ELSE
+    call vid_copper_init
+ ENDIF
 
     ; SP14a T4 (VID_PAGE budget lever): the CTC time-constant table
     ; lookup moved here from vid_run's own hot CTC-retune section - it
@@ -2719,6 +2921,44 @@ vid_run_l2setup_body:
     push hl
     ld a, VID_PAGE
     jp ovl_map_page
+
+; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): prints the
+; STG1/STG2/STG3 marker for whichever stage vid_run's own .stagegate
+; stub (VID_PAGE) just tail-jumped from, then falls into .stagegateret
+; (VID_PAGE) which does `jp .restore` - the same teardown every ordinary
+; exit already uses. In: C = stage number (1-3) - a REGISTER, not a
+; VID_PAGE memory read, so this deliberately sidesteps the "copy-across"
+; translation lesson (vid_tl_report_body's own header, above) rather
+; than needing it: nothing here reads a VID_PAGE-resident cell at all.
+; Corrupts everything (matches every other one-way hop in this file).
+ IFDEF DEBUG
+vid_stage_marker_body:
+    ld a, c
+    add a, a                     ; *2 (word-sized table entries)
+    ld l, a
+    ld h, 0
+    ld de, vidStageMsgTab
+    add hl, de
+    ld e, (hl)
+    inc hl
+    ld d, (hl)                   ; DE = message pointer
+    ld b, 22
+    ld c, 0
+    call dbg_at
+    ex de, hl
+    call dbg_puts
+    ld hl, vid_run.stagegateret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+vidStageMsgTab: dw 0, msgStg1, msgStg2, msgStg3  ; index 0 unused - stages
+                                                  ; are 1-based (C is
+                                                  ; never 0 here)
+msgStg1: db "STG1 OK", 0
+msgStg2: db "STG2 OK", 0
+msgStg3: db "STG3 OK", 0
+ ENDIF
 
 ; Per-video-mode (NR $11 bits 2:0) CTC time constant for the two
 ; supported NXV audio rates (nextdaad.inc's NXV_RATE_STEREO/MONO),

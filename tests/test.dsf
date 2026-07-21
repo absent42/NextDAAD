@@ -169,6 +169,15 @@ VPLY0   84      verb
 VPLY1   85      verb
 VLOP0   86      verb
 VLOP1   87      verb
+; Owner gate-leg staged-entry ladder (SP14a T4 follow-up, hardware-crash
+; postmortem): DEBUG-only diagnostic verbs, one per ladder stage - see
+; each verb's own PROCESS block for the exact stage decode. All four
+; play sd\001.VID (N0, the highest data-rate profile - the same
+; conservative choice VIDBENCH used to make for its own throughput leg).
+VSTG1   88      verb
+VSTG2   89      verb
+VSTG3   90      verb
+VSTG4   91      verb
 
 ;                       Verbs
 GET     20      verb
@@ -663,6 +672,58 @@ $pictureOK
                 DONE
 
 > VLOP1   _     GFX 2 14
+                DONE
+
+; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): all five NXV
+; profiles crashed at/near playback start on the FIRST hardware exercise
+; of this path (freeze N0/N1/N3, reset N2/N4) - the copper audit found
+; and fixed a smoking-gun bug (vid_copper_init's own "RESET pulse"
+; briefly ran the copper on stale/uninitialized list content before the
+; STOP write landed - see that routine's own postmortem comment,
+; src/video.asm). This ladder lets the owner re-run the gate leg
+; INCREMENTALLY, isolating copper-vs-stream-vs-audio-vs-setup in one
+; sitting, in case anything else is still wrong. flag 250 (LET, before
+; the shared GFX 1 13 dispatch) selects the stage; vid_run (video.asm)
+; reads it once at entry via flags+250 into vidStageLimit and gates
+; itself accordingly - see that cell's own declaration for the full
+; mechanism. All four play sd\001.VID (N0).
+;
+; VSTG1: open+header+display setup+isolation ONLY - no copper, no CTC,
+; no streaming. Prints "STG1 OK" (VID_PAGE2, row 22) and exits clean.
+; If this crashes, the bug is in the open/header/Layer2/palette/
+; presentation-isolation setup itself, before any of the newer T4
+; machinery (copper, full-rate audio) is even reached.
+> VSTG1   _     LET 250 1
+                GFX 1 13
+                DONE
+
+; VSTG2: +palette prime +first-frame stream, still no copper/audio -
+; one frame is streamed and flipped via a DIRECT CPU NextReg write
+; (vid_copper_poke's own stage-gate branch bypasses the copper
+; entirely), held on screen ~2s, then clean exit with "STG2 OK". If
+; VSTG1 passes but this crashes, the bug is in the streaming/blit path
+; itself (audio+palette+pixel read, or the direct flip), not the CTC or
+; the copper.
+> VSTG2   _     LET 250 2
+                GFX 1 13
+                DONE
+
+; VSTG3: +CTC audio (still no copper - CPU flips every frame), running
+; for ~100 frames (~2-4s depending on profile fps) then clean exit with
+; "STG3 OK". If VSTG2 passes but this crashes, the bug is in the CTC
+; arm/ISR/audio path, not the copper.
+> VSTG3   _     LET 250 3
+                GFX 1 13
+                DONE
+
+; VSTG4: full playback WITH the copper flip (the fixed vid_copper_init/
+; vid_copper_poke path) - ordinary VPLY0 behaviour (runs until a key or
+; EOF), plus a "STG4 OK" marker on the existing DEBUG timeline report's
+; own exit path for ladder-convention consistency. If VSTG1-3 all pass
+; but this crashes, the bug is specifically in the copper mechanism -
+; the exact hypothesis the audit targeted.
+> VSTG4   _     LET 250 4
+                GFX 1 13
                 DONE
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation
