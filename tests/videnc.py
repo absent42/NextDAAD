@@ -48,7 +48,7 @@ class. audioBytesReal = samples*channels (the played length);
 audioBytesPad = audioBytesReal rounded up to a 512-byte block multiple
 (the wire read size - the pad bytes are silent filler, never played).
 
-Pixel order: mode-1 (N0/N3/N3/N4) is column-major (Layer 2 mode 1
+Pixel order: mode-1 (N0/N3/N4) is column-major (Layer 2 mode 1
 addressing); mode-0 (N1/N2) is row-major. Column-major output uses
 Pillow's own transpose, which already yields exactly `height` real
 bytes per column with NO stride padding - precisely what the player's
