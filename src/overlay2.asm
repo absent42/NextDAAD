@@ -370,7 +370,13 @@ l2_flip_swap:
 ; length has transferred. Corrupts AF, BC, DE, HL - matches LDIR's own
 ; end state exactly (HL/DE left just past the last byte moved, BC = 0),
 ; so it drops into any LDIR call site with no other change needed.
- IFDEF DMA_GFX
+;
+; Unconditional since SP14a T4's follow-up wave (was IFDEF DMA_GFX,
+; A/B against a -NoDmaGfx CPU-only LDIR fallback) - the owner's DMA-
+; during-samples question closed 2026-07-21 (real hardware, kit Release
+; build: location-art DMA blit mid-sample-playback, clean draw), so
+; -NoDmaGfx and its fallback retired together (build.ps1, and every
+; call site below).
 dma_copy:
 .loop:
     ld a, b
@@ -484,9 +490,8 @@ dma_prog:
     db $87                       ; WR6: enable - this OUT does not return
                                   ; until the chunk has fully transferred
 dma_prog_len equ $ - dma_prog
- ENDIF
 
-; --- DMA_GFX A/B measurement (SP11 Task 2, diagnostic, OFF by default) ---
+; --- DMA timing measurement (SP11 Task 2, diagnostic, OFF by default) ---
 ; frameCounter deltas (src/interrupts.asm - incremented once per frame
 ; by BOTH the frame ISR's fast and full-context paths) around the two
 ; DMA-eligible operations, printed via the DEBUG dbg_* console. OFF by
@@ -496,19 +501,20 @@ dma_prog_len equ $ - dma_prog
 ; missing labels - see debug.asm:791 "Release stubs: same entry points,
 ; no output, minimal size") but is pointless there: every dbg_* call
 ; silently discards its output, so the printed numbers never appear -
-; DEBUG is where this diagnostic actually earns its ~94 bytes. Build
-; once with DMA_GFX (default) and once with -NoDmaGfx, trigger the same
-; on-screen action in each, and compare the two printed deltas - that
-; is the A/B leg this exists for; there is no in-build CPU-vs-DMA
-; runtime toggle.
+; DEBUG is where this diagnostic actually earns its ~94 bytes. Formerly
+; an A/B leg (build once with DMA_GFX, once with -NoDmaGfx, compare the
+; two printed deltas) - that question closed 2026-07-21 (owner hardware
+; test, see dma_copy's own header) and -NoDmaGfx retired with its CPU-
+; only fallback, so this now just measures the (sole) DMA path's own
+; timing; there is no in-build CPU-vs-DMA runtime toggle to compare
+; against any more.
 ;   C256/C320 (row 18) - one l2_copy_back_front call (GFX condact subs
 ;     0/1), labelled by l2Mode at the moment it runs (0 = 256x192, 6
 ;     pages; 1 = 320x256, 10 pages).
 ;   SCAT (row 19) - one full gfx_blit, ONLY when stagedMode = 1 (320-
 ;     wide, the gfx_row_scatter320 path - see that routine's own header
-;     for why it carries no DMA_GFX branch: this number is expected to
-;     read IDENTICALLY between a DMA_GFX and a -NoDmaGfx build, since
-;     no byte on that path differs between the two).
+;     for why it never had a DMA branch to begin with, -NoDmaGfx or
+;     not: the scatter pattern was always CPU-only on its own merits).
  IFDEF DMA_MEASURE
 dma_meas_report:
     call dbg_puts                ; HL = label (ASCIIZ); advances past it
@@ -576,21 +582,13 @@ l2_copy_back_front:
     ld hl, (l2CopyPtr)
     ld de, gfxRowBuf
     ld bc, GFX_COPY_CHUNK
- IFDEF DMA_GFX
     call dma_copy                ; source page -> bounce buffer
- ELSE
-    ldir                         ; source page -> bounce buffer
- ENDIF
     ld a, (l2CopyDstPage)
     call data_map_page
     ld hl, gfxRowBuf
     ld de, (l2CopyPtr)
     ld bc, GFX_COPY_CHUNK
- IFDEF DMA_GFX
     call dma_copy                ; bounce buffer -> dest page
- ELSE
-    ldir                         ; bounce buffer -> dest page
- ENDIF
     ld hl, (l2CopyPtr)
     ld de, GFX_COPY_CHUNK
     add hl, de
@@ -2409,12 +2407,8 @@ gfx_row_copy256:
     call data_map_page
     ld hl, gfxRowBuf
     ld de, (gfxDstPtr)
-    ld bc, 256
- IFDEF DMA_GFX                   ; 256 >= GFX_DMA_MIN_LEN unconditionally
+    ld bc, 256                   ; 256 >= GFX_DMA_MIN_LEN unconditionally
     call dma_copy
- ELSE
-    ldir
- ENDIF
     ld a, d
     cp high GFX_SRC_END
     jr c, .store
@@ -2435,11 +2429,12 @@ gfx_row_copy256:
 ; Corrupts AF, BC, DE, HL.
 ;
 ; SP11 Task 2 (DMA): evaluated and rejected here, deliberately left on
-; the CPU path in BOTH DMA_GFX and -NoDmaGfx builds - no IFDEF at all.
-; The inner .px loop's destination is NOT contiguous: D (the address
-; high byte) increments every byte while E (gfxRowY) stays fixed for
-; all 32 iterations of a page, so successive writes land 256 bytes
-; apart. There is no run longer than one byte to hand to dma_copy - the
+; the CPU path unconditionally - no IFDEF, never was one even before
+; -NoDmaGfx retired (SP14a T4 follow-up). The inner .px loop's
+; destination is NOT contiguous: D (the address high byte) increments
+; every byte while E (gfxRowY) stays fixed for all 32 iterations of a
+; page, so successive writes land 256 bytes apart. There is no run
+; longer than one byte to hand to dma_copy - the
 ; only "batching" possible would be one DMA chunk per PIXEL, and a
 ; length-1 chunk costs ~600T of program+dispatch overhead to move one
 ; byte the CPU's own per-pixel loop body moves for ~37T (ld/inc/ld/inc/

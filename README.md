@@ -383,8 +383,7 @@ If you wish to complile your own version of the interpreter the toolchain (not i
 ([sjasmplus](https://github.com/z00m128/sjasmplus), [DeZog](https://github.com/maziac/DeZog) VS Code plugin, [CSpect](https://mdf200.itch.io/cspect), DRC via [DAAD-READY](https://www.ngpaws.com/daadready/), [Gfx2Next](https://www.rustypixels.uk/gfx2next/), [Disark](https://julien-nevo.com/disark/), [Rasm](https://github.com/EdouardBERGE/rasm)).
 
 - Build: powershell -File build.ps1 (add -Release for a release build,
-  -Force1MB for the unexpanded-RAM test build, -NoDmaGfx for the
-  CPU-only picture-copy build used in DMA A/B comparisons)
+  -Force1MB for the unexpanded-RAM test build)
 - Run in CSpect: powershell -File build.ps1 -Run
 - Clean: powershell -File build.ps1 -Clean
 - Test DDB: powershell -File tests\build-tests.ps1 regenerates

@@ -1,4 +1,4 @@
-param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [switch]$NoDmaGfx)
+param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 Push-Location $root
@@ -13,10 +13,10 @@ try {
     # -Kit implies a release build (the kit ships the non-debug interpreter).
     if (-not ($Release -or $Kit)) { $defs += '-DDEBUG=1' }
     if ($Force1MB)                { $defs += '-DFORCE_1MB=1' }
-    # DMA-accelerated picture copies (SP11 Task 2), on by default; -NoDmaGfx
-    # is the A/B lever for the owner's CSpect/hardware leg - removed entirely
-    # once that session passes (a later commit, not this one).
-    if (-not $NoDmaGfx)           { $defs += '-DDMA_GFX=1' }
+    # DMA-accelerated picture copies (SP11 Task 2) are unconditional - the
+    # owner's -NoDmaGfx A/B lever closed 2026-07-21 (kit Release build,
+    # real hardware: location-art DMA blit during sample playback, clean
+    # draw) and retired with its CPU-only fallback (src/overlay2.asm).
     # DAC signedness is UNSIGNED everywhere on the CPU-OUT path - one convention,
     # no build toggle (the -DacCSpect accommodation was retired once the OUT path
     # was confirmed unsigned on CSpect too; see nextdaad.inc DAC_SILENCE).
