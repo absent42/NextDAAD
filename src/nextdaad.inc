@@ -614,14 +614,24 @@ VID_L2_MODE1    equ %00010000  ; NR $70: mode 1 (320x256/column-major),
 ; own clip X1=16,X2=143 EXACTLY (this file's own header already cited
 ; this pair - "cross-checked against the reference's own clip X1=16,
 ; X2=143" - but the CODE only ever used X1=0, never implementing the
-; X1 half of that citation; the earlier "no playvid-style scroll/crop"
-; framing described the Y-AXIS VGA-border compensation playvid's own
-; Y1=8/scroll_y=-8 does, which genuinely does not apply here - it was
-; never a statement that X-centering itself was unneeded, and the code
-; never actually achieved it). The blit's own destination base is
-; offset by the matching 1 page (VID_COL_PER_PAGE=32 columns = the same
-; 32px) so written data lands under this clip window - see vid_stream_
-; frame's own dest-page derivation, video.asm.
+; X1 half of that citation). The blit's own destination base is offset
+; by the matching 1 page (VID_COL_PER_PAGE=32 columns = the same 32px)
+; so written data lands under this clip window - see vid_stream_frame's
+; own dest-page derivation, video.asm.
+;
+; CORRECTION (SP14a escalation bench wave, a further owner hardware
+; leg): the paragraph above originally also argued the reference's own
+; Y1=8/scroll_y=-8 pairing was "VGA-border compensation" that "genuinely
+; does not apply here" - that reasoning was WRONG, for the same reason
+; the X1=0 gap was wrong: 240 real rows inside a 256-row-addressable
+; column need vertical centering regardless of any VGA-border question.
+; vply2/3 (and vply0/1 - the SAME mode-1 column geometry, see VID_PIX_
+; PAGES01's own header below) rendered pinned to the top of the surface
+; until this was fixed - see video.asm's own vid_run Layer 2 setup
+; (Y1=8/Y2=247 clip + NR_L2_YOFS=-8, mirroring the reference's exact
+; pairing, applied to ALL FOUR 240-line formats 0/1/2/3 - mode 0's
+; 256x192 formats 4/5 are unaffected, matching the reference's own
+; scroll_y=0 there).
 VID_L2_CLIP_X1_M1 equ 16        ; = 32px inset (fmt2/3 only)
 VID_L2_CLIP_X2_M1 equ VID_L2_CLIP_X1_M1 + (256/2) - 1  ; = 143
 
@@ -666,10 +676,10 @@ VID_PIX_PAGES01 equ 10
 ; surface is used (no pillarbox, unlike fmt2/3's 256-of-320 subset) - X2
 ; in 2-pixel units = (320/2)-1 = 159, matching the reference's own
 ; `_vc_clip: defb 0, 159, 8, 247` (video_320x240_palette.asm:39; X1=0
-; confirms no left inset either). Y1/Y2/X1/scroll stay the SAME shape as
-; fmt2/3 (0, VID_COL_HEIGHT-1, no scroll) - the reference's own Y1=8/
-; scroll_y=-8 is playvid's own VGA-border centering (not applicable
-; here, same "no paper inset" reasoning T3 already established for 2/3).
+; confirms no left inset either). Y1/Y2 DO match fmt2/3's own (8, 247 -
+; see the correction note on VID_L2_CLIP_X1_M1 above; the earlier claim
+; that the reference's Y1=8/scroll_y=-8 pairing was VGA-border-only and
+; "not applicable here" was wrong for both format pairs alike).
 VID_L2_CLIP_X2_M1_01 equ (320/2)-1  ; = 159
 
 ; Stereo downsample for formats 0/1 (owner-decided, SP13 T4 brief): 2:1

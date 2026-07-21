@@ -1103,8 +1103,43 @@ vid_run:
     nextreg NR_L2_CLIP, a
     ld a, b
     nextreg NR_L2_CLIP, a
-    nextreg NR_L2_CLIP, 0
-    nextreg NR_L2_CLIP, VID_COL_HEIGHT-1
+    ; Y1/Y2 = 8/247 (VID_COL_HEIGHT+7), not 0/(VID_COL_HEIGHT-1) - owner
+    ; hardware leg (geometry item, following the pillarbox fix): vply2/3
+    ; rendered centered horizontally but pinned to the TOP of the 256-
+    ; row-tall column surface. The reference (tools/NextZXOS/.../playvid/
+    ; video_320x240.asm and video_256x240.asm, both palette and non-
+    ; palette variants) uses clip Y1=8/Y2=247 PLUS scroll_y=-8 together
+    ; for every 240-line format (256x192's own video_256x192_m.asm uses
+    ; scroll_y=0 - mode 0 is unaffected, still 191 below) - an EARLIER
+    ; T3 wave misread this pairing as playvid's own VGA-border
+    ; compensation ("no paper inset... not applicable here") and dropped
+    ; both; that reasoning is wrong for the SAME reason the X1=16 drop
+    ; was wrong - 240 real rows inside a 256-row-addressable column need
+    ; centering regardless of any VGA-border question, independent of
+    ; whether the surrounding 16px is "border" or just gap.
+    ;
+    ; Mechanism: scroll (NR_L2_YOFS = -8), NOT a per-column write-offset
+    ; change - the blit's OWN dest-base derivation needs NO change for Y.
+    ; vid_stream_pixels_col writes each column's 240 real bytes starting
+    ; at byte-offset 0 of that column's 256-byte hardware stride (HL =
+    ; DATA_WINDOW + column*256, unconditionally, in every one of the 15
+    ; static cases - nextdaad.inc's own VID_COL_STRIDE/GAP header). NR_
+    ; L2_YOFS shifts which Layer 2 memory row maps to the clip window's
+    ; OWN top edge (screen row Y1=8) at DISPLAY time, entirely downstream
+    ; of where the blit wrote - with YOFS=-8, Layer 2 row (Yofs+screenY)
+    ; = row 0 (the blit's own write-origin) is what appears at screen
+    ; row Y1=8, i.e. exactly at the clip window's top - matching the
+    ; reference's PAIRING of Y1=8 with scroll_y=-8 exactly, and touching
+    ; NONE of the case table's own delicate xor-a/ld-l,a column-gap
+    ; logic (the SAME lever the X-fix used for its own page-count shift,
+    ; scroll for X was the reference's mechanism there too but the
+    ; existing clip+dest-page-offset fix already works and is hardware-
+    ; validated - not touched again here). This is why NR_L2_YOFS is set
+    ; PER-BRANCH below (mode-1: -8; mode-0: 0, unchanged) instead of at
+    ; the old shared .l2clipdone tail.
+    nextreg NR_L2_CLIP, 8
+    nextreg NR_L2_CLIP, VID_COL_HEIGHT+7
+    nextreg NR_L2_YOFS, -8
     jr .l2clipdone
 .l2mode0:
     xor a
@@ -1115,9 +1150,10 @@ vid_run:
     nextreg NR_L2_CLIP, 255
     nextreg NR_L2_CLIP, 0
     nextreg NR_L2_CLIP, 191
+    nextreg NR_L2_YOFS, 0          ; mode 0 (256x192, fmt4/5) - unaffected,
+                                    ; matches the reference's own scroll_y=0
 .l2clipdone:
     nextreg NR_L2_XOFS, 0
-    nextreg NR_L2_YOFS, 0
     ld e, NR_DISPLAY_CTRL
     call nr_read
     or %10000000
