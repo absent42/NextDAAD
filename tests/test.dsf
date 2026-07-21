@@ -151,36 +151,27 @@ VIDBENCH 73     verb            ; SP13 T1: only the first 5 chars ("VIDBE")
                                 ; standard truncation rule) - kept spelled
                                 ; out in full here to match the owner
                                 ; command name verbatim
-; SP13 Task 2 owner verbs (player core, mono 256x192 formats). Kept to
-; exactly 5 significant characters each - VPLAY4/VPLAY5 or VLOOP4/VLOOP5
-; would truncate to the same 5-char token ("VPLAY"/"VLOOP") and collide,
-; unlike VIDBENCH above (already <=5 sig chars, no truncation in play).
+; SP14a Task 4 owner verbs (native NXV player core, profiles N0-N4). Kept
+; to exactly 5 significant characters each - VPLAY4/VLOOP4 style names
+; would truncate to the same 5-char token and collide, unlike VIDBENCH
+; above (already <=5 sig chars, no truncation in play). VPLY5/VLOP5/
+; SPLY5 (the old fmt5/006.VID trio) retire with the MakeVid deletion
+; sweep - only 5 fixtures (001-005.VID = N0-N4) are staged now.
 VPLY4   74      verb
-VPLY5   75      verb
 VLOP4   76      verb
-VLOP5   77      verb
 SPLY4   78      verb
-SPLY5   79      verb
-; SP13 Task 3 owner verbs: stereo 256x240 formats (2/3), mirroring the
-; mono set above exactly (same 5-char-truncation reasoning).
+; SP14a Task 4: N2/N3 profile legs, mirroring the set above exactly
+; (same 5-char-truncation reasoning).
 VPLY2   80      verb
 VPLY3   81      verb
 VLOP2   82      verb
 VLOP3   83      verb
-; SP13 Task 4 owner verbs: 320x240 full-bleed formats (0/1), mirroring
-; the sets above exactly (same 5-char-truncation reasoning).
+; SP14a Task 4: N0/N1 profile legs, mirroring the sets above exactly
+; (same 5-char-truncation reasoning).
 VPLY0   84      verb
 VPLY1   85      verb
 VLOP0   86      verb
 VLOP1   87      verb
-; SP14a escalation bench wave owner verbs: the three silicon-bench probes
-; (flags 250 selects which, via LET before the shared EXTERN 0 6 call -
-; see VIDBENCH's own PROCESS block below for the flag convention).
-VBFLT   88      verb            ; VBENCH-FLAT: sustained flat-ini KB/s
-VBDMA   89      verb            ; VBENCH-DMA: DMA correctness/rate pass
-VBCOP   90      verb            ; VBENCH-COPPER: (re)init probe line
-VBCU    91      verb            ; VBENCH-COPPER: probe line up (+1)
-VBCD    92      verb            ; VBENCH-COPPER: probe line down (-1)
 
 ;                       Verbs
 GET     20      verb
@@ -620,122 +611,52 @@ $pictureOK
                 PROCESS 7
                 DONE
 
-; SP13 Task 1 owner verb: VIDBENCH is the streaming-throughput leg for
-; the video page (src/video.asm). EXTERN 0 6 routes to vector 6 of
-; extVec (overlay0.asm) - DEBUG-conditional there: a DEBUG interpreter
-; hops to vid_bench_trampoline -> video.asm's vid_bench, which opens
-; sd\001.VID (staged by build-tests.ps1's -Vid switch), streams it end-
-; to-end via vid_stream_read, and prints total bytes/elapsed frames/
-; computed KB/s/classification verdict. A release interpreter's vector 6
-; is ext_stub (h_unimpl no-op, silent) - same fail-silent shape as
-; condacts.dsf check 44's "EXTERN 5 5" against its own always-stub
-; vector. One shot per invocation - re-run to re-measure.
-; flag 250 selects which bench body vid_bench (video.asm) runs - 0 (this
-; verb) is the original dual-pass streaming-throughput measurement; 1-5
-; are the SP14a escalation bench wave's own VBFLT/VBDMA/VBCOP/VBCU/VBCD
-; verbs below. LET (condact 51, `flag = value`) guards against stale
-; flag state from an earlier bench call in the same session - flag 250
-; already defaults to 0, so this is a no-op the first time, defence in
-; depth thereafter.
+; SP13 Task 1 owner verb, retargeted SP14a T4: VIDBENCH is the
+; streaming-throughput leg for the video page (src/video.asm). EXTERN 0 6
+; routes to vector 6 of extVec (overlay0.asm) - DEBUG-conditional there:
+; a DEBUG interpreter hops to vid_bench_trampoline -> video.asm's
+; vid_bench, which opens sd\001.VID (staged by build-tests.ps1's -Vid
+; switch, now the N0 native NXV fixture), streams it end-to-end via
+; vid_stream_read, and prints total bytes/elapsed frames/computed KB/s.
+; A release interpreter's vector 6 is ext_stub (h_unimpl no-op, silent) -
+; same fail-silent shape as condacts.dsf check 44's "EXTERN 5 5" against
+; its own always-stub vector. One shot per invocation - re-run to
+; re-measure. The SP14a escalation bench wave (VBFLT/VBDMA/VBCOP/VBCU/
+; VBCD, flag 250 = 1-5) is RETIRED with this task - those silicon
+; questions are already closed (see .superpowers/sdd/sp14a-escalation-
+; research.md); vid_bench now runs unconditionally. LET (condact 51,
+; `flag = value`) guards against stale flag state from an earlier bench
+; call in the same session - flag 250 already defaults to 0, so this is
+; a no-op the first time, defence in depth thereafter.
 > VIDBENCH _     LET 250 0
                 EXTERN 0 6
                 DONE
 
-; SP14a escalation bench wave owner verbs - three silicon-bench probes
-; feeding the native-format decision (see .superpowers/sdd/sp14a-
-; escalation-research.md and the task report's own append for this
-; wave). All route through the SAME EXTERN 0 6 call as VIDBENCH above -
-; flag 250 tells vid_bench (video.asm) which body to run; see that
-; routine's own header for the full dispatch and why (overlay0.asm's
-; extVec table is off-limits this wave, so a new EXTERN vector was not
-; an option).
-;
-; VBFLT (VBENCH-FLAT): sustained flat-ini KB/s over 1024 contiguous
-; 512-byte blocks - no column math, content discarded. Prints "FLAT
-; KB/S=xxxx" (row 28, hex) or "FLAT OPEN ERR"/"FLAT KB/S=FAST" (finished
-; inside a single 50Hz tick - re-run, or trust VBDMA's own single-block
-; timing is even noisier); row 29 prints "BLOCKS=xxxx" (< 0400 = stopped
-; early, short file or a mid-stream error).
-> VBFLT   _     LET 250 1
-                EXTERN 0 6
-                DONE
-
-; VBDMA (VBENCH-DMA): reads the file's first 512-byte block twice - once
-; via ordinary F_READ (trusted reference), once via a timed zxnDMA
-; CONTINUOUS-mode transfer straight off the SD wire - and compares them.
-; Row 28: "DMA MATCH"/"DMA MISMATCH" (content-correctness verdict) or
-; "DMA NOBANK"/"DMA REF OPEN ERR"/"DMA OPEN ERR"/"DMA TOKEN ERR" (a
-; failure before the compare was reached). Row 29 (MATCH/MISMATCH only):
-; "DMA KB/S=xxxx" or "DMA KB/S=FAST" - a single block's own rate is
-; necessarily noisy; VBFLT above is the real throughput number, this
-; verb is about correctness. The burst-mode audio-coexistence sub-test
-; (does the CTC ISR survive a DMA transfer's SPI wait-states) is NOT
-; implemented this wave - see video.asm's own vbench_dma_hot header for
-; the scope-cut reasoning (VID_PAGE budget) and what a future wave needs
-; to re-add it.
-> VBDMA   _     LET 250 2
-                EXTERN 0 6
-                DONE
-
-; VBCOP/VBCU/VBCD (VBENCH-COPPER): a crude raster-line probe for finding
-; where the Layer 2 320x256 display ends on the owner's VGA mode. VBCOP
-; (re)loads the probe at its default line (257, the escalation research
-; doc's own Q2a starting point); VBCU/VBCD step it up/down by one line
-; and reload. All three print "COPPER LINE=xxxx" (row 28, hex, the
-; raster line now in effect). Watch for a solid colour band (NR_
-; FALLBACK painted bright red - the border itself is NOT NextReg-
-; addressable, so this substitutes a full-width probe instead of a
-; border-only one, per the task report's own correction of the research
-; doc's premise) appearing from that line to the bottom of the screen;
-; step the line until its top edge lines up with the real video image's
-; own bottom edge.
-> VBCOP   _     LET 250 3
-                EXTERN 0 6
-                DONE
-
-> VBCU    _     LET 250 4
-                EXTERN 0 6
-                DONE
-
-> VBCD    _     LET 250 5
-                EXTERN 0 6
-                DONE
-
-; SP13 Task 2 owner verbs: the player-core eye/ear legs for the mono
-; 256x192 formats (-Vid staged sd\005.VID = format 4 palette, sd\006.VID
-; = format 5 no-palette - see build-tests.ps1's -Vid header). VPLY4/VPLY5
-; exercise the GFX n 13 (play-once) real dispatch path (h_gfx sub 13,
-; overlay2.asm -> vid_play, video.asm); VLOP4/VLOP5 exercise GFX n 14
-; (loop, any key ends it). SPLY4/SPLY5 prove the SFX n 9/10 alias surface
-; (h_sfx, overlay1.asm - PLAYFLI/PLAYFLIL parity) reaches the SAME
-; player. A DEBUG build with no -Vid staging fails silent (missing-file
-; DEBUG marker only); a release build is always silent either way.
+; SP14a Task 4 owner verbs: the native NXV player core eye/ear legs for
+; profiles N4 (-Vid staged sd\005.VID, 320x120 mode-1 letterbox, 25fps -
+; see build-tests.ps1's -Vid header and docs\superpowers\specs\2026-07-
+; 21-sp14a-native-video-design.md's matrix). VPLY4 exercises the GFX n 13
+; (play-once) real dispatch path (h_gfx sub 13, overlay2.asm -> vid_play,
+; video.asm); VLOP4 exercises GFX n 14 (loop, any key ends it). SPLY4
+; proves the SFX n 9 alias surface (h_sfx, overlay1.asm - PLAYFLI parity)
+; reaches the SAME player. A DEBUG build with no -Vid staging fails
+; silent (missing-file DEBUG marker only); a release build is always
+; silent either way. VPLY5/VLOP5/SPLY5 (the old fmt5/006.VID trio)
+; retire with the MakeVid deletion sweep - only 5 fixtures are staged.
 > VPLY4   _     GFX 5 13
-                DONE
-
-> VPLY5   _     GFX 6 13
                 DONE
 
 > VLOP4   _     GFX 5 14
                 DONE
 
-> VLOP5   _     GFX 6 14
-                DONE
-
 > SPLY4   _     SFX 5 9
                 DONE
 
-> SPLY5   _     SFX 6 10
-                DONE
-
-; SP13 Task 3 owner verbs: the stereo dual-DAC / 256x240 formats (2/3)
-; eye/ear legs (-Vid staged sd\003.VID = format 2 palette, SYNTHETIC per
-; tests/gen_vid_synth.py; sd\004.VID = format 3 no-palette, a REAL copy
-; of its MakeVid source (never touched by the autopal bug - only 003 is
-; generated) - see build-tests.ps1's -Vid header). VPLY2/VPLY3 exercise
-; GFX n 13 play-once; VLOP2/VLOP3 exercise GFX n 14 loop (any key ends
-; it) - same dispatch path as VPLY4/VPLY5 above, format gate widened in
-; vid_play (video.asm).
+; SP14a Task 4 owner verbs: the N2/N3 letterbox profile eye/ear legs
+; (-Vid staged sd\003.VID = N2 256x144 mode-0 letterbox 25fps; sd\004.VID
+; = N3 320x192 mode-1 letterbox 16.667fps - see build-tests.ps1's -Vid
+; header). VPLY2/VPLY3 exercise GFX n 13 play-once; VLOP2/VLOP3 exercise
+; GFX n 14 loop (any key ends it) - same dispatch path as VPLY4 above.
 > VPLY2   _     GFX 3 13
                 DONE
 
@@ -748,20 +669,14 @@ $pictureOK
 > VLOP3   _     GFX 4 14
                 DONE
 
-; SP13 Task 4 owner verbs: the 320x240 full-bleed formats (0/1) eye/ear
-; legs (-Vid staged sd\001.VID = format 0 palette, a REAL adaptive-
-; palette encode via tests\videnc.py - the first real per-frame palette
-; content through the player, replacing MakeVid's malformed autopal
-; output; sd\002.VID = format 1 no-palette, a REAL copy of its MakeVid
-; source (never touched by the autopal bug) - see build-tests.ps1's -Vid
-; header). VPLY0/VPLY1 exercise GFX n 13 play-once; VLOP0/VLOP1 exercise
-; GFX n 14 loop (any key ends it) - same dispatch path as VPLY2/VPLY3
-; above, format gate widened to 0-5 in vid_play (video.asm). This is the
-; HIGHEST data-rate format pair (155/154 sectors/frame, full 320-wide
-; column-major blit, 10 pixel pages instead of 8) and the audio is
-; downsampled 2:1 (not fmt2/3's 3:1) to a DIFFERENT effective rate
-; (~7.78kHz, not ~10.37kHz) - both disclosed, deliberate page-space
-; mitigations (see nextdaad.inc's VID_STEREO01_DOWNSAMPLE header).
+; SP14a Task 4 owner verbs: the N0/N1 profile eye/ear legs (-Vid staged
+; sd\001.VID = N0 320x256 mode-1 12.5fps "cinema"; sd\002.VID = N1
+; 256x192 mode-0 20fps "classic" - see build-tests.ps1's -Vid header).
+; VPLY0/VPLY1 exercise GFX n 13 play-once; VLOP0/VLOP1 exercise GFX n 14
+; loop (any key ends it) - same dispatch path as VPLY2/VPLY3 above. N0 is
+; the highest data-rate profile (160 blocks/frame, full 320-wide column-
+; major mode-1 blit); both profiles carry full-rate (no decimation)
+; stereo audio per the NXV format (nextdaad.inc's NXV_RATE_STEREO).
 > VPLY0   _     GFX 1 13
                 DONE
 
