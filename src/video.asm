@@ -1041,6 +1041,23 @@ vid_run:
     ld (vidSvL2Front), a
     ld a, (l2BackBank)
     ld (vidSvL2Back), a
+    ; NR $43 (palette ctrl): the dev guide's per-register spec (chapter-
+    ; next-palette.tex, "Register $43") never states it is readable - NR
+    ; $40/$41/$44 each say "Reads or writes ..." explicitly, $43's own
+    ; entry only describes what each bit DOES when written, no read
+    ; mention. nr_read is therefore NOT used here; the game's own
+    ; convention is captured instead (sp13-task-4-report.md addendum:
+    ; every Layer 2 palette writer in this codebase, including this
+    ; file's own vid_identity_palette below, uses PAL_L2_FIRST
+    ; unconditionally - it is the only value NR $43 can hold on entry).
+    ; vidPalCtrl (the double-buffer's own "which bank is on screen right
+    ; now" tracker, kept in software for the same readability reason) is
+    ; primed to the same value - frame 0 starts believing the first bank
+    ; is displayed, matching what vid_identity_palette/l2_palette_load's
+    ; own convention actually left on the hardware.
+    ld a, PAL_L2_FIRST
+    ld (vidSvNr43), a
+    ld (vidPalCtrl), a
 
     ; --- samples abort (SSTOP request path, waited) ---
     ; audEnable = 0 means aud_tick never runs - the ISR never reaches the
@@ -1358,11 +1375,65 @@ vid_run:
     ld ix, vidAudBuf
     xor a
     ld (vidAudDone), a
+    ; SP14a T2: palette EDIT (invisible write to the currently NON-
+    ; displayed Layer 2 palette bank) - MOVED here, ahead of both flip
+    ; writes below (pre-SP14a this ran AFTER the NR $12 write, into the
+    ; SAME bank being scanned out - the ~0.4ms race that caused the
+    ; sparkle, sp13-task-4-report.md's addendum). It must finish before
+    ; EITHER flip write fires (NR $43 bit 2 or NR $12 - see the flip
+    ; block below for why both, not just one) so the 256-entry write
+    ; happens while the OLD frame is still fully, consistently on screen
+    ; (old pixels under the old palette, nothing changing) instead of
+    ; being visible mid-write. Still the palette streamed EARLIER this
+    ; frame (resident at vidAudPoolPage+1, untouched since) - same "apply
+    ; late, not at read time" reasoning as before (vid_stream_frame's own
+    ; header), just applied to the hidden bank instead of the live one.
+ IFDEF DEBUG
+    ld a, VID_TL_PALETTE            ; closes phase 3 (flip/pace-wait: the
+    call vid_tl_stamp               ; .pace spin + downsample copy-out -
+ ENDIF                               ; SP14a T2 moved the flip swap/NR $12
+                                     ; write out of this phase, see below)
+    ld a, (vidFmt)
+    and 1
+    call z, vid_apply_palette
+ IFDEF DEBUG
+    ld a, VID_TL_OTHER              ; closes phase 2 (palette apply, or
+    call vid_tl_stamp               ; ~0 for non-palette formats)
+ ENDIF
     ; flip (l2_flip_swap's own variable-swap + NR $12 write, duplicated
     ; here since overlay2 is unreachable while MMU7 = VID_PAGE). NR $12
     ; takes the 16K bank number RAW (l2_mode_set/h_gfx.swap precedent,
     ; overlay2.asm) - no *2 here (that shift is ONLY for deriving an 8K
     ; MMU PAGE number, e.g. vidDrawPage above; NR $12 is not a page).
+    ;
+    ; SP14a T2: palette display-select (NR $43 bit 2) flips in lockstep
+    ; with the pixel bank (NR $12) - both express the SAME "which buffer
+    ; is live" decision, one for pixels, one for the palette that colours
+    ; them; the edit above already made the target bank correct, so all
+    ; that is left is to point the display at it. DEFAULT order shipped
+    ; here: palette-select FIRST, pixel bank SECOND, back-to-back with no
+    ; branch/call between them (design note's reasoning: new pixels
+    ; briefly under a stale-but-still-CORRECT palette is the more jarring
+    ; failure mode of the two, the same logic that made the original bug
+    ; visible as sparkle rather than a subtler blend). ALTERNATIVE order
+    ; is one move away: relocate the pixel-bank block (the 7 lines from
+    ; "ld a, (l2FrontBank)" to "nextreg NR_L2_BANK, a") to BEFORE this
+    ; comment, ahead of the palette-select block below - the owner's
+    ; hardware leg adjudicates if either flip order shows an artifact.
+    ; Palette-format-only (vidFmt and 1 == 0) - non-palette formats never
+    ; touch NR $43 bit 2, so vid_identity_palette's one programmed-at-
+    ; entry bank stays the displayed one for the whole session (design
+    ; note item 6: an unconditional flip here would show garbage/stale
+    ; colour on every odd frame for formats 1/3/5, which were never
+    ; programmed into the second bank).
+    ld a, (vidFmt)
+    and 1
+    jr nz, .nopalflip
+    ld a, (vidPalCtrl)              ; currently-displayed bank's NR43 value
+    xor $44                         ; flip both edit- and display-target to
+    ld (vidPalCtrl), a              ; the bank the edit above just wrote
+    nextreg NR_PAL_CTRL, a
+.nopalflip:
     ld a, (l2FrontBank)
     ld b, a
     ld a, (l2BackBank)
@@ -1371,23 +1442,6 @@ vid_run:
     ld (l2BackBank), a
     ld a, (l2FrontBank)
     nextreg NR_L2_BANK, a
-    ; palette formats (even: 2, 4) only: apply the palette streamed
-    ; earlier this frame (still resident at vidAudPoolPage+1, untouched
-    ; since) NOW - synchronised with the pixel flip just above, not when
-    ; it was read (vid_stream_frame's header explains why: applying it
-    ; early would recolour the frame that was VISIBLE at read time, not
-    ; the one just flipped in).
- IFDEF DEBUG
-    ld a, VID_TL_PALETTE            ; closes phase 3 (flip/pace-wait: the
-    call vid_tl_stamp               ; .pace spin + downsample copy-out +
- ENDIF                               ; the flip swap/NR $12 write above)
-    ld a, (vidFmt)
-    and 1
-    call z, vid_apply_palette
- IFDEF DEBUG
-    ld a, VID_TL_OTHER              ; closes phase 2 (palette apply, or
-    call vid_tl_stamp               ; ~0 for non-palette formats)
- ENDIF
     ld a, (vidExitReq)
     or a
     jr nz, .restore
@@ -1507,6 +1561,14 @@ vid_run:
     nextreg NR_DISPLAY_CTRL, a
     ld a, (vidSvNr15)
     nextreg NR_LAYERS, a
+    ; SP14a T2: NR $43 restored to the game's own convention (captured as
+    ; PAL_L2_FIRST at entry, not read back - see the entry-capture
+    ; comment). l2_palette_load unconditionally re-asserts PAL_L2_FIRST
+    ; before every picture display anyway (design note), but restoring it
+    ; here too keeps this routine's own symmetry doctrine exact, matching
+    ; NR $12/$70/$69/$15 immediately above.
+    ld a, (vidSvNr43)
+    nextreg NR_PAL_CTRL, a
     call vid_stream_close
     ld a, (vidAudPoolBank)
     call bank_free
@@ -1860,9 +1922,20 @@ vid_col_blockdone:
     jp vid_remain_sub              ; tail call
 
 ; Apply the 512-byte 9-bit palette just landed at vidAudPoolPage+1
-; (palette formats only: 2, 4) to Layer 2. Called from vid_run's flip
+; (palette formats only: 0, 2, 4) to Layer 2. Called from vid_run's flip
 ; section, NOT from vid_stream_frame where it was read (see that
 ; routine's header).
+;
+; SP14a T2: writes the NON-displayed Layer 2 palette bank (the "back"
+; palette buffer, invisible until vid_run's own flip toggles NR $43 bit 2
+; - the SAME frame's display-select write, done separately right after
+; this returns). vidPalCtrl always holds PAL_L2_FIRST or PAL_L2_SECOND
+; (whichever bank is CURRENTLY on screen); XOR $40 flips only the edit-
+; target field's top bit (bits 6-4: 001<->101) and leaves bit 2 (display)
+; untouched - PAL_L2_FIRST XOR $40 = PAL_L2_EDIT_SECOND, PAL_L2_SECOND
+; XOR $40 = PAL_L2_EDIT_FIRST (nextdaad.inc's own header verifies both).
+; This is the "invisible write" the design note calls for - no scan-out
+; race, since the bank being written here is never the one being shown.
 ;
 ; Dodges the TM_TRANSP_ATTR collision on EVERY entry's RGB byte (any
 ; source value == TM_TRANSP_ATTR is written as $FF instead) - the same
@@ -1889,7 +1962,9 @@ vid_apply_palette:
     inc a
     call data_map_page
     ld hl, DATA_WINDOW
-    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    ld a, (vidPalCtrl)
+    xor $40                         ; edit the OTHER bank, display untouched
+    nextreg NR_PAL_CTRL, a
     nextreg NR_PAL_INDEX, 0
     ld b, 0                        ; 256 iterations
 .loop:
@@ -2170,6 +2245,23 @@ vidSvCtcStub:     dw 0
 vidSvAudEnable:   db 0
 vidSvL2Front:     db 0
 vidSvL2Back:      db 0
+vidSvNr43:        db 0             ; SP14a T2: captured constant (PAL_L2_
+                                    ; FIRST), NOT a read - see vid_run's
+                                    ; entry-capture comment for why
+vidPalCtrl:       db 0             ; SP14a T2: which Layer 2 palette bank
+                                    ; is CURRENTLY DISPLAYED, always either
+                                    ; PAL_L2_FIRST or PAL_L2_SECOND between
+                                    ; frames - software-tracked because NR
+                                    ; $43 is not reliably readable (same
+                                    ; reason vidSvNr43 above is a captured
+                                    ; constant, not a read). Persists
+                                    ; unreset across loop-mode EOF restarts
+                                    ; (see vid_run's flip-block comment) -
+                                    ; the physical display state does not
+                                    ; change just because playback reopens
+                                    ; the file, exactly like l2FrontBank/
+                                    ; l2BackBank's own persistent-across-
+                                    ; restart behaviour.
 
  IFDEF DEBUG
 msgVidBadFmt:  db "VID FMT?", 0
@@ -2482,11 +2574,18 @@ vid_bench_report:
     jp dbg_puts
 
 vidBenchName:   db "001.VID", 0
-msgVidNoBank:   db "VID NOBANK", 0
-msgVidStrm:     db "VID STRM  OK", 0
-msgVidStrmErr:  db "VID STRM  ERR=", 0
-msgVidBytes:    db "VID BYTES=", 0
-msgVidFrames:   db " FRAMES=", 0
+; SP14a T2: five VIDBENCH message strings shortened (VID_PAGE space
+; recovery for the palette double-buffer feature - see the task report's
+; page-budget section) - same disclosed lever SP13 T4 Step 6 already used
+; on this exact DEBUG-only dev harness (VIDBENCH's KB/s calc removal);
+; this is a fresh application, not a revert. No information is lost -
+; row 28/29 still print bank/error/bytes/frames/format, just with
+; terser labels; no test or fixture reads these strings (grepped clean).
+msgVidNoBank:   db "NOBANK", 0
+msgVidStrm:     db "STRM OK", 0
+msgVidStrmErr:  db "STRM ERR=", 0
+msgVidBytes:    db "BYTES=", 0
+msgVidFrames:   db " FR=", 0
 msgVidFmt:      db " FMT=", 0
 msgVidUnclass:  db "??", 0
 

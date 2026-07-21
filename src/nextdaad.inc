@@ -208,6 +208,24 @@ L2_PORT         equ $123B   ; bit 1 Layer 2 visible, bit 0 write paging slot0
                             ; bit 7 is the alias actually used instead
 PAL_L2_FIRST    equ $10     ; NR_PAL_CTRL: auto-inc on, Layer 2 first palette
                             ; (edit + active display), see chapter-next-palette
+; SP14a T2: true palette double-buffering. NR $43 bits 6-4 = edit target
+; (which bank $44 writes land in), bit 2 = display select (which bank is
+; scanned out) - INDEPENDENT fields (sp13-task-4-report.md addendum). The
+; two "locked" constants below mirror PAL_L2_FIRST's shape (edit==display,
+; both pointed at the same bank) so vidPalCtrl (video.asm) always holds
+; one of these two values between frames - "the bank currently on screen,
+; also the edit target if nothing else is asked". EDIT_SECOND/EDIT_FIRST
+; are the "invisible write" values (edit the OTHER bank, display left
+; alone): note EDIT_SECOND = PAL_L2_FIRST XOR $40 and EDIT_FIRST =
+; PAL_L2_SECOND XOR $40 - flipping only the edit-target field's top bit
+; (bit6, 001<->101) never touches bit2 (display) - video.asm's vid_apply_
+; palette uses this XOR instead of a branch (smaller, and it is exactly
+; the "leave display untouched" operation the design note calls for).
+; Flipping vidPalCtrl XOR $44 (bit6+bit2 together) moves BOTH edit and
+; display to the other bank in one step - the flip site's own toggle.
+PAL_L2_SECOND      equ $54  ; edit=L2 second, display=L2 second (locked)
+PAL_L2_EDIT_SECOND equ $50  ; edit=L2 second, display=L2 first (unchanged)
+PAL_L2_EDIT_FIRST  equ $14  ; edit=L2 first, display=L2 second (unchanged)
 NR_L2_CLIP      equ $18     ; Layer 2 clip window (X1,X2,Y1,Y2 - index-
                             ; sequenced); guide: "reads and writes"
 NR_CLIP_IDX     equ $1C     ; write bit0 = 1 resets the L2 clip index
