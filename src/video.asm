@@ -1566,11 +1566,12 @@ vid_stream_frame:
     inc a                          ; upper 8K of the same bank
     ld de, NXV_PAL_BYTES
     call vid_stream_read
-    jr c, .err
+    jp c, .err                    ; jp: .err is past jr's range (the
+                                   ; sub-ladder gates grew this routine)
     ld hl, NXV_PAL_BYTES
     or a
     sbc hl, bc
-    jr nz, .err
+    jp nz, .err
 .nopalette:
  IFDEF DEBUG
     ld a, VID_TL_BLIT               ; closes phase 0 (stream: the audio
@@ -1595,14 +1596,14 @@ vid_stream_frame:
     or a
     jr nz, .gappath
  IFDEF DEBUG
+    ld a, (vidStageLimit)
+    cp 2
+    jr nz, .sub2cdskip
     ; Owner gate-leg sub-ladder (VSTG2C, SP14a T4 follow-up): a plain
     ; 16-block/$2000 read at vidDrawPage - NOT vid_stream_pixels_flat's
     ; own chunking loop (this sub-stage checks "can pixel data be read
     ; at all", not the flat serve's own bookkeeping) - then stop, no
     ; flip, before the real pixel serve even starts.
-    ld a, (vidStageLimit)
-    cp 2
-    jr nz, .sub2cskip
     ld a, (vidStage2Sub)
     cp 3
     jr nz, .sub2cskip
@@ -1619,6 +1620,35 @@ vid_stream_frame:
     ld c, 6
     jp vid_run.stagegate
 .sub2cskip:
+    ; VS2D (owner follow-up 3, page-walk audit): 32 blocks = 2 pages -
+    ; exactly ONE page advance (vidDrawPage, then vidDrawPage+1) - the
+    ; smallest possible exercise of the code VS2C's own single-page read
+    ; never touches at all. If VS2C passed but VS2D freezes/errors, the
+    ; bug is confirmed in the advance step itself, isolated to a single
+    ; increment.
+    ld a, (vidStage2Sub)
+    cp 4
+    jr nz, .sub2dskip
+    ld a, (vidDrawPage)
+    ld de, $2000
+    call vid_stream_read
+    jr c, .sub2derr
+    ld a, (vidDrawPage)
+    inc a
+    ld de, $2000
+    call vid_stream_read
+    jr nc, .sub2dok
+.sub2derr:
+    ld (vidErrCode), a
+    jr .sub2ddone
+.sub2dok:
+    xor a
+    ld (vidErrCode), a
+.sub2ddone:
+    ld c, 7
+    jp vid_run.stagegate
+.sub2dskip:
+.sub2cdskip:
  ENDIF
     ld a, (vidDrawPage)
     ld hl, (vidPixBlocks)
@@ -3071,7 +3101,7 @@ vid_stage_marker_body:
     ld a, VID_PAGE
     jp ovl_map_page
 
-vidStageMsgTab: dw 0, msgStg1, msgStg2, msgStg3, msgStg2a, msgStg2b, msgStg2c
+vidStageMsgTab: dw 0, msgStg1, msgStg2, msgStg3, msgStg2a, msgStg2b, msgStg2c, msgStg2d
                                                   ; index 0 unused - stages
                                                   ; are 1-based (C is
                                                   ; never 0 here)
@@ -3081,6 +3111,7 @@ msgStg3:  db "STG3 OK", 0
 msgStg2a: db "STG2A OK", 0
 msgStg2b: db "STG2B OK", 0
 msgStg2c: db "STG2C OK", 0
+msgStg2d: db "STG2D OK", 0
 msgStgErr: db " ERR=", 0
  ENDIF
 

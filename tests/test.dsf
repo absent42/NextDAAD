@@ -184,6 +184,9 @@ VSTG4   91      verb
 VS2A  92      verb
 VS2B  93      verb
 VS2C  94      verb
+; VS2D (owner follow-up 3, page-walk audit): 32 blocks = 2 pages = one
+; page advance - the smallest exercise of the code VS2C never touches.
+VS2D  95      verb
 
 ;                       Verbs
 GET     20      verb
@@ -749,6 +752,19 @@ $pictureOK
 ; chunk read this sub-stage already proved works.
 > VS2C  _     LET 250 2
                 LET 249 3
+                GFX 1 13
+                DONE
+
+; VS2D (owner follow-up 3, page-walk audit): 32 blocks = 2 pages -
+; exactly ONE page advance (vidDrawPage read, then vidDrawPage+1 read) -
+; the smallest possible exercise of the increment-and-second-read step
+; VS2C's own single-page read never touches at all. "STG2D OK ERR=xx".
+; If VS2C passes but VS2D freezes/errors, the bug is confirmed narrowed
+; to the advance step itself (a single increment), not the read
+; primitive (already proven by VS2C) or anything needing more than one
+; advance to surface.
+> VS2D  _     LET 250 2
+                LET 249 4
                 GFX 1 13
                 DONE
 
