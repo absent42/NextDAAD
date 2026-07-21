@@ -185,9 +185,9 @@ VSTG4   91      verb
 ; already served: proved audio+palette consumption clean before the
 ; fresh-eyes wave redirected the search to the serve loop/post-frame
 ; block. Verb numbers 92/93 are free again.
-VS2C  94      verb
-; VS2D retired (fresh-eyes round 2, VID_PAGE budget) - superseded by
-; VS2F's own deconfounder program below. Verb number 95 free again.
+; VS2C/VS2D retired (fresh-eyes round 2/3, VID_PAGE budget) - superseded
+; by VS2F/VS2G's own cleaner deconfounder program below. Verb numbers
+; 92-95 all free again (VS2A/B/C/D).
 ; Fresh-eyes wave (owner follow-up 4): VS2E is the loop-vs-postframe
 ; discriminator (full REAL serve loop, no post-frame at all); VS6/VS7
 ; bisect the post-frame block itself. See each verb's own PROCESS
@@ -195,10 +195,14 @@ VS2C  94      verb
 VS2E  96      verb
 VS6   97      verb
 VS7   98      verb
-; VS2F (fresh-eyes round 2): the deconfounder - reads the same 10 pages
-; via the OLD PROVEN .monopix shape, bypassing the flat serve's own
-; bookkeeping entirely. 4 characters - no 5-char truncation collision.
+; VS2F/VS2G (fresh-eyes round 2/3): the deconfounder pair - both read
+; 10 pages/$2000 chunks via the OLD PROVEN .monopix shape, bypassing
+; the flat serve's own bookkeeping entirely. VS2F walks the page (like
+; VSTG2 itself); VS2G reads the SAME page 10 times (no walk at all) -
+; splitting "sustained reads" from "the MMU6 page walk" as independent
+; suspects. Both 4 characters - no 5-char truncation collision.
 VS2F  99      verb
+VS2G  100     verb
 
 ;                       Verbs
 GET     20      verb
@@ -710,10 +714,14 @@ $pictureOK
 ; mechanism. All four play sd\001.VID (N0).
 ;
 ; VSTG1: open+header+display setup+isolation ONLY - no copper, no CTC,
-; no streaming. Prints "STG1 OK" (VID_PAGE2, row 22) and exits clean.
-; If this crashes, the bug is in the open/header/Layer2/palette/
-; presentation-isolation setup itself, before any of the newer T4
-; machinery (copper, full-rate audio) is even reached.
+; no streaming. Prints "STG1 OK ERR=xx DRAWPG=xx" (row 22) and, unique
+; to this stage, "RUNS=nn RUN1=xxxx" (row 23 - fresh-eyes round 3: the
+; SD card's own filemap for sd\001.VID, read directly, not inferred -
+; RUNS = fragment count, RUN1 = the first fragment's own block count;
+; settles run-boundary questions for every later stage in the same
+; sitting). Exits clean. If this crashes, the bug is in the open/
+; header/Layer2/palette/presentation-isolation setup itself, before any
+; of the newer T4 machinery (copper, full-rate audio) is even reached.
 > VSTG1   _     LET 250 1
                 GFX 1 13
                 DONE
@@ -741,24 +749,10 @@ $pictureOK
 ; search to the serve loop and post-frame block instead (VS2E/VS6/VS7,
 ; below). git history holds the verbs/code if ever needed again.
 ;
-; VS2C: +a plain first-16-block ($2000) pixel read at vidDrawPage -
-; NOT the full flat-serve loop, no flip. "STG2C OK ERR=xx". If VS2B
-; passes but this freezes, the bug is in the pixel read path itself
-; (the point where audio+palette positional consumption hands off to
-; pixel data) - if VS2C ALSO passes but plain VSTG2 (full frame +
-; flip) still freezes, the bug is specifically in vid_stream_pixels_
-; flat's own chunking loop or the flip/bank-parity step, not the first-
-; chunk read this sub-stage already proved works.
-> VS2C  _     LET 250 2
-                LET 249 3
-                GFX 1 13
-                DONE
-
-; VS2D retired (fresh-eyes round 2, VID_PAGE budget) - superseded by
-; VS2F's own deconfounder program (below): VS2D varied direct-read-vs-
-; loop AND 2-pages-vs-10-pages at once (confounded), VS2F holds the
-; "old proven shape" constant while varying only the page count, a
-; cleaner isolation. git history holds VS2D's own code/verb.
+; VS2C/VS2D retired (fresh-eyes round 2/3, VID_PAGE budget) - superseded
+; by VS2F/VS2G's own cleaner deconfounder program (below): VS2C/VS2D
+; each varied direct-read-vs-loop AND page-count at once (confounded).
+; git history holds their own code/verbs.
 ;
 ; Fresh-eyes wave (owner follow-up 4): an independent ground-up review
 ; found that VS2A-D never actually exercised vid_stream_pixels_flat (the
@@ -805,20 +799,44 @@ $pictureOK
 ; reads, but via the OLD PROVEN fixed-page-count loop shape (not vid_
 ; stream_pixels_flat's own block-based bookkeeping) - isolates "the
 ; flat serve's own bookkeeping" from "10 sustained reads in one window"
-; as two independent suspects. "STGF OK ERR=xx".
-;   - VS2F resets like VS2E -> the bug is the SHARED sustained-read
-;     composition (vid_stream_read's fast path x10 in one window), NOT
-;     the flat serve's own bookkeeping - next instrument: 166 blocks to
-;     ONE fixed page (no page walk at all), splitting "sustained reads"
-;     from "the MMU6 walk" as suspects; likely fix direction: bound the
-;     CMD18 window (close/reopen every N chunks) rather than holding it
-;     open for the whole frame.
-;   - VS2F passes -> vid_stream_pixels_flat's own bookkeeping is
-;     CONVICTED despite reading clean on paper - fix: replace it with
-;     exactly this proven fixed-$2000/counted-loop shape (the same
-;     shape that shipped clean for weeks as the old mono format's own
-;     pixel reader).
+; as two independent suspects. "STGF OK ERR=xx DRAWPG=xx" (row 22).
+;
+; OWNER RESULT: VS2F CRASH/RESET, same as VS2E - the flat serve's own
+; bookkeeping is EXONERATED (both the old proven shape and the new one
+; fail identically); the fault is the shared sustained-read composition
+; itself (vid_stream_read's fast path invoked 10 times in one CMD18
+; window), or the walk between them. VS2G (below) splits those two.
+;
+; Also: the pass/fail pattern (VS2C 16 blocks / VS2D 32 blocks passed;
+; VS2E/F 166/160 blocks reset - consistently) matches a filemap run
+; boundary at a fixed position as well as a sustained-read-count effect
+; - STG1's own marker now prints "RUNS=nn RUN1=xxxx" (row 23, read
+; straight from vidFilemapBuf, not inferred) to settle whether the file
+; is even fragmented at all. DRAWPG=xx on every stage marker settles a
+; separate, unlikely-but-cheap-to-rule-out theory: that the page walk's
+; own starting bank is wrong/stale and wanders into VID_PAGE (59)
+; itself on the 3rd-4th advance - the boot-time reset (gfx_cache_reset)
+; and the swap-only mutation (l2_flip_swap) mean this should always
+; read 18 or 60, never near 59, but the printed byte settles it for real
+; rather than by code-reading alone.
 > VS2F   _     LET 250 8
+                GFX 1 13
+                DONE
+
+; VS2G: the walk splitter - reads the SAME 10 x $2000 VS2F reads, same
+; old-proven loop shape, but with NO page advance at all (every read
+; lands on vidDrawPage, overwriting itself each pass - the resulting
+; pixel data is meaningless, only whether the READS themselves survive
+; matters). "STGG OK ERR=xx DRAWPG=xx".
+;   - VS2G resets too -> the fault is the sustained-read composition
+;     itself (10 vid_stream_read calls in one persistent CMD18 window),
+;     NOT the MMU6 page walk - likely fix direction: bound the window
+;     (close/reopen CMD18 every N chunks) instead of holding one
+;     persistent window for the whole frame.
+;   - VS2G passes -> the MMU6 walk between reads is implicated (or the
+;     filemap-run-boundary story from VS2F's own note above holds,
+;     which the RUNS=/RUN1= print will have already shown directly).
+> VS2G   _     LET 250 9
                 GFX 1 13
                 DONE
 

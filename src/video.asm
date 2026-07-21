@@ -1325,6 +1325,14 @@ vid_run:
 .stagegate:
     ld a, (vidErrCode)
     ld d, a
+    ld a, (vidDrawPage)              ; owner addendum: settle the walk's
+    ld e, a                          ; own base with one printed byte -
+                                      ; E survives the hop (ovl_map_page
+                                      ; corrupts AF only), same idiom as
+                                      ; C/D already use. Meaningless for
+                                      ; stage 1 (exits before .frameloop
+                                      ; ever sets it) - meaningful for
+                                      ; every stage that reaches here.
     ld hl, vid_stage_marker_body
     push hl
     ld a, VID_PAGE2
@@ -1590,50 +1598,31 @@ vid_stream_frame:
     jp nz, .gappath                ; jp: .gappath is now past jr's range
                                     ; (VS2F's own gate grew this routine)
  IFDEF DEBUG
-    ld a, (vidStageLimit)
-    cp 2
-    jr nz, .sub2cdskip
-    ; Owner gate-leg sub-ladder (VSTG2C, SP14a T4 follow-up): a plain
-    ; 16-block/$2000 read at vidDrawPage - NOT vid_stream_pixels_flat's
-    ; own chunking loop (this sub-stage checks "can pixel data be read
-    ; at all", not the flat serve's own bookkeeping) - then stop, no
-    ; flip, before the real pixel serve even starts.
-    ld a, (vidStage2Sub)
-    cp 3
-    jr nz, .sub2cskip
-    ld a, (vidDrawPage)
-    ld de, $2000
-    call vid_stream_read
-    jr nc, .sub2cok
-    ld (vidErrCode), a
-    jr .sub2cdone
-.sub2cok:
-    xor a
-    ld (vidErrCode), a
-.sub2cdone:
-    ld c, 6
-    jp vid_run.stagegate
-.sub2cskip:
-    ; VS2D retired (fresh-eyes round 2, VID_PAGE budget - superseded by
-    ; VS2F's own deconfounder program; VS2C stays as the one direct-
-    ; read reference). git history holds the code/verb.
-.sub2cdskip:
-    ; VS2F (fresh-eyes round 2, stage flag 8): the deconfounder - reads
-    ; the SAME 10 pages via the OLD PROVEN .monopix shape (fixed $2000
+    ; VS2C/VS2D retired (fresh-eyes round 2, VID_PAGE budget) - both
+    ; superseded by VS2F/VS2G's own cleaner deconfounder program below.
+    ; git history holds the code/verbs.
+    ;
+    ; VS2F (stage 8) / VS2G (stage 9, round 3): the deconfounder pair -
+    ; both read 10 x $2000 via the OLD PROVEN .monopix shape (fixed-size
     ; read + a counted loop), bypassing vid_stream_pixels_flat's own
-    ; block-based bookkeeping entirely - separates "the flat serve's own
-    ; bookkeeping" from "10 sustained vid_stream_read calls in one CMD18
-    ; window" as two independent suspects (VS2D/VS2E only ever varied
-    ; both at once - direct-read-once vs loop-of-ten). B is corrupted by
-    ; vid_stream_read (raw path: "Corrupts AF, BC, DE, HL, IX") and so is
-    ; DE, so the loop counter cannot live in either (the standing ini-
-    ; decrements-B lesson's own sibling for this call) - it lives in
-    ; vidPxBlocksLeft's low byte instead (scratch-reused, not needed for
-    ; its own purpose on this bypass path). Replaces vid_stream_pixels_
-    ; flat's own call entirely when active - never both.
+    ; block-based bookkeeping entirely, sharing ONE loop body. VS2F
+    ; advances vidPxPage every iteration (the same 10-page walk VSTG2
+    ; itself does); VS2G reads the SAME page 10 times over (NO advance
+    ; at all) - splitting "10 sustained vid_stream_read calls in one
+    ; CMD18 window" from "the MMU6 page walk between them" as two
+    ; independent suspects for the first time (VS2D/VS2E only ever
+    ; varied direct-read-vs-loop AND page-count at once). B is corrupted
+    ; by vid_stream_read (raw path: "Corrupts AF, BC, DE, HL, IX") and
+    ; so is DE - the standing ini-decrements-B lesson's own sibling for
+    ; this call - so the loop counter lives in vidPxBlocksLeft's low
+    ; byte instead (scratch-reused). Replaces vid_stream_pixels_flat's
+    ; own call entirely when either is active - never both.
     ld a, (vidStageLimit)
     cp 8
-    jr nz, .sub8skip
+    jr z, .sub89go
+    cp 9
+    jr nz, .sub89skip
+.sub89go:
     ld a, (vidDrawPage)
     ld (vidPxPage), a
     ld a, 10
@@ -1643,8 +1632,12 @@ vid_stream_frame:
     ld de, $2000
     call vid_stream_read
     jr c, .sub8err
+    ld a, (vidStageLimit)
+    cp 9
+    jr z, .sub8noadv                ; VS2G: same page every time
     ld hl, vidPxPage
     inc (hl)
+.sub8noadv:
     ld hl, vidPxBlocksLeft
     dec (hl)
     jr nz, .sub8loop
@@ -1653,9 +1646,14 @@ vid_stream_frame:
 .sub8err:
 .sub8done:
     ld (vidErrCode), a
-    ld c, 11
+    ld c, 11                        ; assume VS2F (stage 8)
+    ld a, (vidStageLimit)
+    cp 9
+    jr nz, .sub89mark
+    ld c, 12                        ; VS2G (stage 9)
+.sub89mark:
     jp vid_run.stagegate
-.sub8skip:
+.sub89skip:
  ENDIF
     ld a, (vidDrawPage)
     ld hl, (vidPixBlocks)
@@ -3135,8 +3133,14 @@ vid_run_l2setup_body:
 ; Corrupts everything (matches every other one-way hop in this file).
  IFDEF DEBUG
 vid_stage_marker_body:
-    ld a, d
-    push af                      ; stash the err byte - D is reused below
+    push bc                      ; stash C=stage number (owner addendum:
+                                  ; needed below, after C is reused as
+                                  ; dbg_at's own column argument, to
+                                  ; conditionally trigger the filemap
+                                  ; dump for STG1 only)
+    push de                      ; stash D=err, E=vidDrawPage (owner
+                                  ; addendum) - both about to be reused
+                                  ; for the table lookup below
     ld a, c
     add a, a                     ; *2 (word-sized table entries)
     ld l, a
@@ -3153,8 +3157,22 @@ vid_stage_marker_body:
     call dbg_puts
     ld hl, msgStgErr
     call dbg_puts
-    pop af                       ; recover the err byte
+    pop de                       ; recover D=err, E=vidDrawPage
+    ld a, d
     call dbg_hex8
+    ld hl, msgStgDp
+    call dbg_puts
+    ld a, e
+    call dbg_hex8
+    ; owner addendum (fresh-eyes round 3): filemap dump, STG1's own
+    ; marker only - the cheapest correct place (the data is already
+    ; valid by STG1's own exit point; printing it on every marker would
+    ; be wasteful for no extra information - the filemap never changes
+    ; mid-session).
+    pop bc                       ; recover C=stage number
+    ld a, c
+    cp 1
+    call z, vid_filemap_dump
     ld hl, vid_run.stagegateret
     push hl
     ld a, VID_PAGE
@@ -3185,6 +3203,67 @@ msgStg7:  db "STG7 OK", 0     ; C=10: vidStageLimit=7 - +palette apply
 msgStg2f: db "STGF OK", 0     ; C=11: VS2F (vidStageLimit=8) - the
                                ; .monopix-shape deconfounder
 msgStgErr: db " ERR=", 0
+msgStgDp:  db " DRAWPG=", 0   ; owner addendum: settles the walk's own
+                               ; base with one printed byte (vidDrawPage
+                               ; at .stagegate time) - meaningless for
+                               ; stage 1 (exits before .frameloop sets
+                               ; it), meaningful for every other stage
+
+; Owner addendum (fresh-eyes round 3): filemap dump - RUNS=nn (entry
+; count) and RUN1=xxxx (first run's own block count, 16-bit hex) -
+; converts run-boundary questions from inference to reading,
+; permanently. vidFilemapBuf/vidStrmEntryEnd are VID_PAGE-resident
+; (populated by vid_raw_setup at file-open time, already valid by the
+; time ANY stage marker prints), read here via the established MMU6-
+; translated-address bracket - this routine itself runs entirely cold
+; (VID_PAGE2, called from vid_stage_marker_body, already cold), so it
+; costs nothing against the hot-page budget. RUNS is computed by
+; repeated subtraction (no divide instruction; at most 32 iterations,
+; the buffer's own entry cap - cheap and one-shot, not hot). Row 23,
+; directly below the STGn marker's own row 22. Corrupts everything.
+vid_filemap_dump:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld hl, (vidStrmEntryEnd+DATA_WINDOW-OVL_ORG)
+    ld de, vidFilemapBuf+DATA_WINDOW-OVL_ORG
+    or a
+    sbc hl, de                      ; HL = bytes of entries written
+    ld b, 0
+.divloop:
+    ld a, l
+    sub 6
+    ld l, a
+    ld a, h
+    sbc a, 0
+    ld h, a
+    jr c, .divdone
+    inc b
+    jr .divloop
+.divdone:
+    ld hl, (vidFilemapBuf+4+DATA_WINDOW-OVL_ORG)  ; RUN1 = entry 0's own
+                                                    ; block count (offset
+                                                    ; 4: AddrLo(2)+
+                                                    ; AddrHi(2)+Blocks(2))
+    push hl                          ; stash RUN1 across data_restore
+    push bc                          ; stash RUNS (B) across data_restore
+    call data_restore
+    ld b, 23
+    ld c, 0
+    call dbg_at
+    ld hl, msgFmRuns
+    call dbg_puts
+    pop bc
+    ld a, b
+    call dbg_hex8
+    ld hl, msgFmRun1
+    call dbg_puts
+    pop hl
+    call dbg_hex16
+    ret
+
+msgFmRuns: db "RUNS=", 0
+msgFmRun1: db " RUN1=", 0
  ENDIF
 
 ; Per-video-mode (NR $11 bits 2:0) CTC time constant for the two
