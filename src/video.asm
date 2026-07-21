@@ -1140,7 +1140,9 @@ vid_run:
     ld hl, vidTlTicks
     ld (hl), 0
     ld de, vidTlTicks+1
-    ld bc, vidTlAcc + VID_TL_PHASES*4 - vidTlTicks - 1
+    ld bc, vidErrCode - vidTlTicks   ; = VID_TL_BLOCK_LEN - 1 (also zeroes
+                                      ; the new vidErrCode cell - a fresh
+                                      ; playback session starts ERR=00)
     ldir
  ENDIF
 
@@ -1312,6 +1314,16 @@ vid_run:
     jr nz, .restore
     jp .frameloop
 .eof:
+ IFDEF DEBUG
+    ; SP14a T3 fix wave (owner hardware leg, vply0 regression audit): A
+    ; here is vid_stream_frame's own return-time value (unchanged by the
+    ; `jp c,.eof` above, and by the IFDEF DEBUG vid_tl_stamp block that
+    ; runs LATER in .frameloop - this is the funnel point BEFORE that).
+    ; Capture it before the very next instruction (`ld a,(vidLoopMode)`)
+    ; overwrites A. See vidErrCode's own declaration for the 0=clean-EOF/
+    ; nonzero=real-error convention.
+    ld (vidErrCode), a
+ ENDIF
     ld a, (vidLoopMode)
     or a
     jr z, .drainlast               ; play-once: EOF ends it
@@ -1500,7 +1512,24 @@ vid_stream_frame:
     ld hl, (vidAudReadLen)
     or a
     sbc hl, bc
-    jr nz, .eof
+    jr z, .audfull                ; exact match - not the short-read/EOF
+                                   ; case; DO NOT insert anything between
+                                   ; the sbc above and this jr - the Z
+                                   ; flag it tests must survive untouched
+ IFDEF DEBUG
+    ; SP14a T3 fix wave: this IS the documented-normal short-read EOF (the
+    ; classifier-clean T2 fixtures are truncated to a whole number of
+    ; frames, so a short AUDIO read - never a mismatched palette/pixel
+    ; read - is the expected end-of-file signal, per this routine's own
+    ; header). It carries no real error code (A here is whatever vid_
+    ; stream_read's own success path left over) - force it to 0 so vid_
+    ; run's .eof capture (below) reports ERR=00 for the expected case,
+    ; leaving genuine VID_ERR_*/esxDOS codes (from THIS call's own CF-set
+    ; .eof branch above, or any .err branch below) visibly nonzero.
+    xor a
+ ENDIF
+    jp .eof
+.audfull:
     ; palette formats (even: 2, 4) only - streamed here, NOT applied
     ; (see this routine's header): vid_run's flip section applies it
     ; (vidAudPoolPage+1 still holds it, untouched).
@@ -2337,12 +2366,20 @@ vidTlFrames:    dw 0        ; frame-loop iterations reached (vid_tl_stamp
                             ; increments this whenever phase VID_TL_STREAM
                             ; opens - vid_stream_frame's own entry stamp)
 vidTlAcc:       ds VID_TL_PHASES*4   ; 5 phases x 32-bit (LE) tick total
+; SP14a T3 fix wave (owner hardware leg, vply0 regression audit): the
+; deepest error code seen at vid_run's .eof funnel point (see that
+; label's own IFDEF DEBUG capture) - 0 = clean EOF (the documented-
+; normal short-audio-read termination, explicitly zeroed there - see
+; vid_stream_frame's own .audfull comment); nonzero = a genuine VID_ERR_*
+; (nextdaad.inc) or esxDOS error code propagated from wherever the frame
+; actually failed (vid_col_newblock's three codes are the ones a wave-2
+; blit regression would show). Printed as ERR=xx in the timeline report.
+vidErrCode:     db 0
 ; Fix wave 2: total span of the block above (vidTlTicks..end of
-; vidTlAcc) that vid_tl_report_body must copy across the page hop before
-; reading it (see that routine's own header) - computed, not hand-
-; counted (2+2+1+2+20 = 27), so it can never drift if a field above is
-; resized.
-VID_TL_BLOCK_LEN equ vidTlAcc + VID_TL_PHASES*4 - vidTlTicks
+; vidErrCode) that vid_tl_report_body must copy across the page hop
+; before reading it (see that routine's own header) - computed, not
+; hand-counted, so it can never drift if a field above is resized.
+VID_TL_BLOCK_LEN equ vidErrCode + 1 - vidTlTicks
 
 ; DEBUG frame-timeline instrument. In: A = new phase id (VID_TL_STREAM..
 ; VID_TL_OTHER, nextdaad.inc). Snapshots vidTlTicks and accumulates the
@@ -3151,7 +3188,9 @@ vid_tl_report_body:
     ; own never-written bytes at that offset instead of the real data -
     ; every field reads zero (the control-flow hop is fine; the DATA does
     ; not come along automatically - MMU7 is a runtime remap, not a
-    ; compile-time one). Fix: copy the whole VID_TL_BLOCK_LEN(27)-byte
+    ; compile-time one). Fix: copy the whole VID_TL_BLOCK_LEN-byte
+    ; (28, since the SP14a T3 fix wave extended it through vidErrCode -
+    ; computed, not hand-counted, so this comment can't drift again)
     ; block across via the MMU6 window (data_save/data_map_page(VID_PAGE)/
     ; LDIR/data_restore - MMU6 is free here, post-teardown; the same
     ; convention this file uses everywhere else for a transient cross-
@@ -3210,6 +3249,10 @@ vid_tl_report_body:
     call dbg_puts
     ld hl, (vidTlFramesL)
     call dbg_hex16
+    ld hl, msgTlErr
+    call dbg_puts
+    ld a, (vidErrCodeL)
+    call dbg_hex8
     jr .done
 .nextrow:
     ld hl, vidTlRptRow
@@ -3234,20 +3277,26 @@ msgTl3: db "PACE   =", 0
 msgTl4: db "OTHER  =", 0
 msgTlTot: db " TOT=", 0
 msgTlFrm: db " FRM=", 0
+msgTlErr: db " ERR=", 0
 vidTlRptRow: db 0
 vidTlRptIdx: db 0
 
-; Page-local mirror of the VID_PAGE-resident vidTlTicks..vidTlAcc block
-; (fix wave 2, above) - same field order/sizes, filled by the pre-print
-; LDIR, read by the report in place of the (unreachable-from-here)
-; VID_PAGE originals. vidTlLastTickL/vidTlLastPhaseL are copied but never
-; read here - kept only for exact layout parity with the source block,
-; so the single LDIR's length (VID_TL_BLOCK_LEN) needs no special-casing.
+; Page-local mirror of the VID_PAGE-resident vidTlTicks..vidErrCode block
+; (fix wave 2, above; SP14a T3 fix wave extended it through vidErrCode -
+; see that cell's own declaration) - same field order/sizes, filled by
+; the pre-print LDIR, read by the report in place of the (unreachable-
+; from-here) VID_PAGE originals. vidTlLastTickL/vidTlLastPhaseL are
+; copied but never read here - kept only for exact layout parity with
+; the source block, so the single LDIR's length (VID_TL_BLOCK_LEN) needs
+; no special-casing.
 vidTlTicksL:     dw 0
 vidTlLastTickL:  dw 0
 vidTlLastPhaseL: db 0
 vidTlFramesL:    dw 0
 vidTlAccL:       ds VID_TL_PHASES*4
+vidErrCodeL:     db 0             ; mirrors vidErrCode - see that cell's
+                                   ; own declaration for the ERR=xx
+                                   ; convention (00 = clean EOF)
 
  ENDIF ; DEBUG
 
