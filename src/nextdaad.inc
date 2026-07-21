@@ -563,7 +563,7 @@ VID_ERR_SHORT    equ $FB
 ; h_sfx each translate their own sub-command range into vid_play's C =
 ; 0 (once) / 1 (loop) contract via a plain `sub base` before the cross-
 ; page hop (push-target/ovl_map_page trampoline, precedented by
-; vid_bench_trampoline in overlay0.asm).
+; xpart_load_entry in overlay0.asm).
 GFX_SUB_VID_ONCE equ 13
 GFX_SUB_VID_LOOP equ 14
 SFX_SUB_VID_ONCE equ 9

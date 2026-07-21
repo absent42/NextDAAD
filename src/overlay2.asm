@@ -744,7 +744,7 @@ h_gfx:
     ; contract. ovl_map_page corrupts AF only (banks.asm) - B/C survive
     ; the cross-page hop into video.asm, a different MMU7 page from this
     ; one (the established push-target/ovl_map_page trampoline idiom -
-    ; vid_bench_trampoline, overlay0.asm; xpart_load_fail's own hop).
+    ; xpart_load_fail's own hop, overlay0.asm).
     ld c, a
     ld hl, vid_play
     push hl

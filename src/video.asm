@@ -3,8 +3,8 @@
 ; in the overlay-reserved bank range (28/29) with no prior equate; see
 ; nextdaad.inc's VID_PAGE comment. Reached exactly like overlay0/1/2:
 ; MMU7 mapped to this page by whoever hops in (the engine dispatcher for
-; GFX/SFX condacts; the DEBUG bench trampoline below for VIDBENCH), never
-; resident code running in place. ONE RULE, unchanged from every prior
+; GFX/SFX condacts), never resident code running in place. ONE RULE,
+; unchanged from every prior
 ; video task: MMU7 = VID_PAGE for the entire window the video CTC ISR can
 ; fire (from the time constant write in vid_run through the CTC's final
 ; reset in .restore) - every cross-page hop in this file respects it.
@@ -18,7 +18,11 @@
 ; interface (format-agnostic, unchanged across every video task to
 ; date), the player core (vid_play/vid_run - CTC/Layer 2/copper-flip/
 ; presentation-isolation machinery), the flat and gapped pixel blits, and
-; a DEBUG-only benchmark harness (VIDBENCH/VBENCH-FLAT/DMA/COPPER).
+; a DEBUG-only frame-timeline instrument (vid_tl_stamp/vid_tl_report -
+; the gate's evidence tool). VIDBENCH, the streaming-throughput dev
+; harness that fed the SP13/SP14a native-format decision, is retired
+; (owner decision, SP14a T4 follow-up - its job is done; git history
+; holds the code).
 
     MMU 7, VID_PAGE, OVL_ORG
 
@@ -29,58 +33,16 @@
 ; internals: 0 = plain esxDOS F_READ, 1 = raw card streaming (DISK_FILEMAP
 ; for the address map, then direct SD SPI CMD18/CMD12 - playvid's
 ; transport, not the OS DISK_STRM* API). The caller sets vidStrmMode
-; BEFORE vid_stream_open; all three routines honour it internally. The
-; bench below drives one pass in each mode so the owner's re-leg
-; measures both mechanisms end-to-end in a single run.
+; BEFORE opening; all three routines honour it internally.
 ; ---------------------------------------------------------------------
 
-; In: IX = ASCIIZ filename pointer (root name; no PARTn\ probing - that
-;     is Task 2's job once vid_play knows the active part; this bench-
-;     only entry always opens exactly the name it is given). vidStrmMode
-;     selects the mechanism (see above).
-; Out: CF clear = opened; vidHandle holds the esxDOS handle; vidSizeLo/
-;      vidSizeHi hold the 32-bit byte size read via F_FSTAT (low word/
-;      high word - feed straight into vid_classify as HL/DE).
-;      CF set = failed (A = error code); vidHandle left at $FF. In raw
-;      mode the code may be an esxDOS code OR VID_ERR_FRAG/VID_ERR_NOMAP
-;      (nextdaad.inc - distinct so the bench can name the fragmentation
-;      failure the kit's defrag guidance is written for).
-;
-; SP14a T3 wave 1: the real body (vid_stream_open_body, VID_PAGE2) is
-; COLD - open-time only, provably never running while the video CTC ISR
-; is armed (both real callers run before any CTC arm: vid_open_video_
-; body's own two attempts, same VID_PAGE2 page, and the DEBUG-only vid_
-; bench_pass, which never touches the CTC). vid_open_video_body calls
-; vid_stream_open_body directly (same page, plain call, no hop). This
-; hot-page stub exists ONLY for vid_bench_pass's sake, hopping to a small
-; VID_PAGE2 wrapper (vid_stream_open_hopbody) that calls vid_stream_
-; open_body and hops back - the same push-target/ovl_map_page trampoline
-; as vid_classify's stub above, same B-carries-CF/A convention. Corrupts
-; AF, BC, DE, HL, IX.
-;
-; vid_raw_setup/vid_raw_seek0 also moved to VID_PAGE2 (see below) - this
-; hot-page stub itself is IFDEF DEBUG - its ONLY caller (vid_bench_pass)
-; is DEBUG-only (VIDBENCH); vid_open_video_body's own two attempts go
-; straight to vid_stream_open_body (same VID_PAGE2 page, no hop, no stub
-; needed), so Release never reaches this trampoline at all - space
-; recovered accordingly (see the task report's page arithmetic).
- IFDEF DEBUG
-vid_stream_open:
-    ld hl, vid_stream_open_hopbody
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
-vid_stream_open_ret:
-    ld a, b
-    or a
-    jr z, .ok
-    ld a, c                      ; C = real error code (see vid_stream_
-    scf                          ; open_hopbody's own carry)
-    ret
-.ok:
-    or a
-    ret
- ENDIF ; DEBUG
+; vid_stream_open_body (VID_PAGE2, below) is the real open routine - COLD,
+; open-time only, provably never running while the video CTC ISR is armed
+; (vid_open_video_body's own two attempts run before any CTC arm). SP14a
+; T4 owner decision: VIDBENCH (the only caller that ever needed a hot-
+; page trampoline into this routine) is retired entirely - vid_open_
+; video_body is the sole remaining caller, and it is already same-page
+; (plain call, no hop needed). No hot-page stub exists here any more.
 
 ; In: A = destination 8K page, mapped into the MMU6 window ($C000) for
 ;     the duration of this read only (the established data_save/
@@ -732,8 +694,7 @@ vidStrmBlkBuf:     ds 512        ; one card block held for sub-block drains
 ; or a bad header. Corrupts everything; the caller (h_gfx.vidgo/h_sfx.
 ; vidgo) never resumes - this IS the tail of the dispatch, and the return
 ; lands directly on the engine dispatcher via the trampoline's stacked
-; return address (the xpart_load_entry/vid_bench_trampoline push-target
-; idiom).
+; return address (the xpart_load_entry push-target idiom).
 ; ---------------------------------------------------------------------
 vid_play:
     ld a, b
@@ -748,11 +709,16 @@ vid_play:
     jp vid_run                    ; tail: vid_run's own restore paths ret
 .missing:
  IFDEF DEBUG
-    ld b, 23
-    ld c, 0
-    call dbg_at
-    ld hl, msgVidMissing
-    call dbg_puts
+    ; SP14a T4 owner follow-up (VID_PAGE budget, post-VIDBENCH-retirement):
+    ; hopped cold - this path is reached only when vid_open_video failed,
+    ; strictly before vid_run/the CTC are ever touched, so it is safe to
+    ; leave MMU7 pointed at VID_PAGE2 for the duration of the print (same
+    ; pre-arm reasoning as every other cold hop in this file).
+    ld hl, vid_play_missing_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+.missingret:
  ENDIF
     ret
 
@@ -935,11 +901,15 @@ vid_run:
     call bank_alloc
     jr nc, .havebank
  IFDEF DEBUG
-    ld b, 23
-    ld c, 0
-    call dbg_at
-    ld hl, msgVidNoBank2
-    call dbg_puts
+    ; SP14a T4 owner follow-up (VID_PAGE budget, post-VIDBENCH-retirement):
+    ; hopped cold - reached only on a bank_alloc failure, strictly before
+    ; the CTC/L2/presentation state is ever touched (matches this path's
+    ; own existing .restore_noplay scope - see that label's own comment).
+    ld hl, vid_run_nobank_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+.nobankret:
  ENDIF
     jp .restore_noplay
 .havebank:
@@ -1024,23 +994,6 @@ vid_run:
     ld ix, vidAudBuf
     ld a, 1
     ld (vidAudDone), a
-
- IFDEF DEBUG
-    ; SP14a T1: fresh timeline baseline for THIS playback session (not
-    ; cumulative across calls) - zero-fills vidTlTicks..vidTlAcc's last
-    ; byte (see that block's own header, below vidSvL2Back). Safe here
-    ; despite the CTC already being armed above: only IX is off-limits
-    ; during the armed window (T3's own proven constraint, this file's
-    ; ISR headers); this touches AF/HL/DE/BC only, exactly like the
-    ; L2-setup/vid_identity_palette calls immediately above already do.
-    ld hl, vidTlTicks
-    ld (hl), 0
-    ld de, vidTlTicks+1
-    ld bc, vidErrByte - vidTlTicks   ; = VID_TL_BLOCK_LEN - 1 (also zeroes
-                                      ; vidErrCode/vidErrByte - a fresh
-                                      ; playback session starts ERR=00)
-    ldir
- ENDIF
 
 .frameloop:
     ld a, (l2BackBank)             ; draw target = the currently-hidden
@@ -1283,11 +1236,13 @@ vid_run:
     ; classify badfmt path's own scope, just relocated here since header
     ; validation itself moved into vid_run - see this routine's header).
  IFDEF DEBUG
-    ld b, 23
-    ld c, 0
-    call dbg_at
-    ld hl, msgVidBadFmt
-    call dbg_puts
+    ; SP14a T4 owner follow-up (VID_PAGE budget, post-VIDBENCH-retirement):
+    ; hopped cold - same pre-arm reasoning as this label's own header.
+    ld hl, vid_run_badfmt_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+.badfmtret:
  ENDIF
     ld a, (vidAudPoolBank)
     call bank_free
@@ -2046,9 +2001,9 @@ vidPalCtrl:       db 0             ; SP14a T2: which Layer 2 palette bank
                                     ; restart behaviour.
 
  IFDEF DEBUG
-msgVidBadFmt:  db "VID FMT?", 0
-msgVidMissing: db "VID FILE?", 0
-msgVidNoBank2: db "VID NOBANK2", 0
+; msgVidBadFmt/Missing/NoBank2 moved to VID_PAGE2 (SP14a T4 owner follow-
+; up, VID_PAGE budget) - see vid_play_missing_body/vid_run_nobank_body/
+; vid_run_badfmt_body, below the cold section's own DEBUG-only content.
 
 ; SP14a Task 1: DEBUG frame-timeline instrument state. Zeroed at every
 ; vid_run entry (see the IFDEF DEBUG block right before .frameloop) -
@@ -2160,8 +2115,7 @@ vid_tl_stamp:
 ; comment) - no ISR can fire during the hop, honouring the SP13 T3 probe
 ; postmortem's lesson ("no second-page code reachable while the ISR is
 ; armed"). Uses the established push-target/ovl_map_page trampoline idiom
-; (vid_bench_trampoline, overlay0.asm; xpart_load_entry, overlay0.asm).
-; Corrupts everything.
+; (xpart_load_entry, overlay0.asm). Corrupts everything.
 vid_tl_report:
     ld hl, vid_tl_report_body
     push hl
@@ -2173,204 +2127,22 @@ vid_tl_report_ret:
                                     ; own hop back writes it before this)
  ENDIF
 
-; ---------------------------------------------------------------------
-; VIDBENCH - DEBUG-only dev harness (SP13 Task 1).
-; ---------------------------------------------------------------------
-; Reached only via extVec vector 6's DEBUG-conditional trampoline
-; (overlay0.asm) - see this task's report for the exact dispatch route
-; and why vector 6 was chosen. Entered with VID_PAGE already mapped at
-; MMU7 (the trampoline's own hop, the established push-target/ovl_map_page
-; idiom); B/C on entry (h_extern's EXTERN args) are unused. Ends with
-; MMU7 still VID_PAGE - harmless, eng_exec (engine.asm) re-maps MMU7
-; before dispatching the NEXT condact regardless (the same invariant
-; h_xpart's cross-page failure hop already relies on).
-;
-; Opens sd\001.VID (root only) and streams it end-to-end through
-; vid_stream_read in maximal ($2000) MMU6-window chunks, timing the pass
-; via frameCounter (interrupts.asm, incremented once per 50Hz interrupt).
-; ONE invocation runs TWO passes - pass 1 F_READ, pass 2 raw streaming
-; (re-opening between passes) - so the owner's re-leg produces both
-; mechanism verdicts at once. Prints three rows: F_READ OK/ERR, raw
-; streaming OK/ERR (its distinct error code if the raw open failed - the
-; owner always still gets the F_READ verdict), and total bytes / elapsed
-; frames / vid_classify verdict (from the streaming pass; from the
-; F_READ pass if streaming never ran) - KB/s is NOT computed on-device
-; (SP13 T4 page-space recovery; a one-line hand calculation from the
-; printed bytes/frames, KB/s = bytes*50/frames/1024). One shot per call -
-; re-invoking VIDBENCH re-opens and re-measures from scratch (the spec's
-; RE-RUNNABLE requirement: a new NextZXOS/Next-core release is expected
-; to change the numbers). Output uses the DEBUG dbg_at/dbg_puts/dbg_hex8/
-; dbg_hex16 console helpers (debug.asm) - hex only, matching every
-; existing use of those helpers in this codebase (no decimal printer
-; exists).
- IFDEF DEBUG
-
-VIDBENCH_ROW_STRM  equ 28       ; two report rows near the bottom of the
-VIDBENCH_ROW_INFO  equ 29       ; 32-row tilemap (debug.asm's reserved
-                                 ; status lines - l2_testcard's header
-                                 ; comment, overlay2.asm). SP14a T1: the
-                                 ; F_READ comparison pass (row 27) is
-                                 ; removed here to recover VID_PAGE
-                                 ; headroom for the frame-timeline
-                                 ; instrument (this task's report, Step 1)
-                                 ; - it was comparison-only infrastructure
-                                 ; from SP13 Task 1 (the player itself
-                                 ; always uses raw mode, T1's pinned
-                                 ; contract); the same lever SP13 T3 round
-                                 ; 3 already used once for its own space
-                                 ; crunch (that trim was later reverted
-                                 ; when T3's own probe was stripped - this
-                                 ; is a fresh, disclosed application of it,
-                                 ; not a revert).
-
-; vid_bench is the ONLY symbol vid_bench_trampoline (overlay0.asm,
-; unmodifiable in this wave - see the task report) can jump to; it always
-; runs with MMU7 = VID_PAGE already set. flags+250 (test.dsf's own LET-
-; before-EXTERN convention) is no longer read here at all - SP14a T4
-; retires every escalation-bench verb (VBFLT/VBDMA/VBCOP/VBCU/VBCD, see
-; vid_bench_pass_ret's own neighbouring comment for why), leaving only
-; the original dual-pass VIDBENCH behaviour, unconditionally.
-vid_bench:
-vid_bench_orig:
-    call bank_alloc              ; one transient scratch bank, the MMU6
-    jr nc, .havebank              ; read target for the raw streaming pass
-    ld b, VIDBENCH_ROW_STRM
-    ld c, 0
-    call dbg_at
-    ld hl, msgVidNoBank
-    jp dbg_puts
-.havebank:
-    ld (vidBenchBank), a
-    add a, a                     ; 16K bank -> its lower 8K page
-    ld (vidBenchPage), a
-    ; raw streaming (direct SD SPI) - the player's only mechanism (T1's
-    ; pinned contract). ERRORS on CSpect - its directory mode fakes the
-    ; esxDOS API over host files with no SPI card behind it, so CMD18/the
-    ; token wait get no data. Expected: the STRM row shows an error there;
-    ; real hardware is the measurement.
-    ld a, 1
-    ld (vidStrmMode), a
-    call vid_bench_pass
-    jr c, .strmfail
-    xor a
-    ld (vidStrmErr), a           ; 0 = ok
-    jr .freebank
-.strmfail:
-    ld (vidStrmErr), a           ; A = error (nonzero)
-.freebank:
-    ld a, (vidBenchBank)
-    call bank_free
-    ; vid_bench_report moved to VID_PAGE2 (SP14a escalation bench wave) -
-    ; one-way hop, no hop-back needed: this is the last thing vid_bench
-    ; does, and MMU7 is left at VID_PAGE2 afterwards - safe, matching
-    ; every other "tail hop with no further hot-page work" call site in
-    ; this file (the wider engine remaps MMU7 on its own before it next
-    ; matters - see vid_run's own entry/exit precedent).
-    ld hl, vid_bench_report
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
-
-; Runs one full timed streaming pass over vidBenchName into vidBenchPage
-; using the currently selected vidStrmMode, then computes the pass's
-; report values into vidBench*. Out: CF set = open/read failed (A = error
-; code); CF clear = success. Corrupts everything.
-vid_bench_pass:
-    ld ix, vidBenchName
-    call vid_stream_open
-    ret c                         ; A = error, CF set (open failed)
-    ld hl, 0
-    ld (vidBenchLo), hl
-    ld (vidBenchHi), hl
-    ld hl, (frameCounter)
-    ld (vidBenchStart), hl
-.readloop:
-    ld a, (vidBenchPage)
-    ld de, $2000
-    call vid_stream_read
-    jr c, .readfail
-    ld hl, (vidBenchLo)
-    add hl, bc
-    ld (vidBenchLo), hl
-    jr nc, .nocarry
-    ld hl, (vidBenchHi)
-    inc hl
-    ld (vidBenchHi), hl
-.nocarry:
-    ld hl, $2000
-    or a
-    sbc hl, bc
-    jr z, .readloop               ; BC == $2000: full window, keep streaming
-    ; BC < $2000: short/EOF read (CF clear on this - see the vid_stream_read
-    ; header) - the file is exhausted
-    ld hl, (frameCounter)
-    ld (vidBenchEnd), hl
-    call vid_stream_close
-    ; SP14a escalation bench wave: vid_bench_compute moved to VID_PAGE2
-    ; (called once per pass, not per-chunk - a hop here costs nothing
-    ; measurable, unlike a per-$2000-chunk hop would) to free VID_PAGE
-    ; space for the new bench verbs - see that routine's own header.
-    ld hl, vid_bench_compute
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
-.readfail:
-    push af
-    call vid_stream_close
-    pop af
-    scf
-    ret
-
-; Landing point for the hop back from vid_bench_compute (VID_PAGE2). A
-; separate global label, not a local .xxx of vid_bench_pass - it must be
-; referenced from another page's code and, placed here AFTER vid_bench_
-; pass's own local-label scope closes, does not disturb any of vid_bench_
-; pass's .readloop/.nocarry/.readfail references (a global label placed
-; BETWEEN them would silently rescope any that followed it).
-vid_bench_pass_ret:
-    or a                         ; CF clear
-    ret
-
-; VBENCH-FLAT/DMA/COPPER ALL RETIRED (SP14a T4, VID_PAGE budget - the
-; native NXV player's own new hot-page needs, particularly the full-rate
-; vidAudBuf resident buffer (2560B vs the old downsampled 1244B), left no
-; room to carry the old MakeVid-era case-unroll's replacement AND all
-; three SP13/T3-era silicon-bench probes). All three had already CLOSED
-; their own questions before this task started (escalation research doc:
-; "DMA-from-SPI is unreliable on this silicon at speed... refuted for
-; production use... No further DMA iterations planned"; the copper WAIT
-; line VBCOP/VBCU/VBCD converged on, 257, is now hardcoded as nextdaad.
-; inc's NXV_COPPER_LINE, itself owner-hardware-validated; VBFLT's own
-; ~1219 KB/s finding fed directly into the spec's own "1264 KB/s design
-; rate" margin table already shipped in docs/superpowers/specs/2026-07-
-; 21-sp14a-native-video-design.md) - retiring all three sheds real hot-
-; page bytes without losing any open question. The task brief's own
-; DELETION SWEEP names only the ORIGINAL VIDBENCH (retargeted, above) as
-; required to stay - VBENCH-FLAT/DMA/COPPER were never in that list.
-; test.dsf's VBFLT/VBDMA/VBCOP/VBCU/VBCD verbs are removed in the SAME
-; commit (Wave 2's own test.dsf changes).
-; vid_bench_compute and vid_bench_report moved to VID_PAGE2 (SP14a
-; escalation bench wave - see that page section for the routines and the
-; vidBenchElapsed/KB/Fmt/FmtBad cells + message strings). vidBenchBank/
-; Page/Lo/Hi/Start/End/vidStrmErr stay HERE (hot) - they are written
-; directly by vid_bench/vid_bench_pass while running on VID_PAGE, and a
-; cross-page write would need its own MMU6 bracket for no benefit; the
-; cold compute/report routines read them back via a data_map_page(VID_
-; PAGE) bracket instead (see vid_bench_compute's own header).
-vidBenchBank:    db 0
-vidBenchPage:    db 0
-vidBenchLo:      dw 0
-vidBenchHi:      dw 0
-vidBenchStart:   dw 0
-vidBenchEnd:     dw 0
-vidStrmErr:      db 0            ; raw streaming pass error code, 0 = ok
-
-; msgVidNoBank stays HERE (hot) unlike its five siblings (moved to VID_
-; PAGE2 with vid_bench_report) - it is printed by vid_bench's own
-; bank_alloc-failure path, which runs on VID_PAGE, before any hop.
-msgVidNoBank:   db "NOBANK", 0
-
- ENDIF ; DEBUG
+; VIDBENCH (SP13 Task 1's streaming-throughput dev harness) RETIRED in
+; full - owner decision, SP14a T4 (this task's follow-up commit): its
+; job is done (the SP13 streaming mechanism decision, the flat-rate
+; measurement that sized the NXV matrix, are all in the historical task
+; reports; git history holds the code if a future core ever warrants
+; resurrection). Removed: this dispatcher (vid_bench/vid_bench_orig),
+; vid_bench_pass/vid_bench_pass_ret, the vidBench* data cells, msgVidNoBank,
+; the VID_PAGE2 cold bodies (vid_bench_compute/vid_bench_report and their
+; own message strings/cells, below), the vid_stream_open hot stub +
+; vid_stream_open_hopbody that existed only for vid_bench_pass's sake
+; (see this file's own top-of-file comment), extVec vector 6's DEBUG row
+; and vid_bench_trampoline (overlay0.asm), and the VIDBENCH/VBFLT/VBDMA/
+; VBCOP/VBCU/VBCD test.dsf verbs (already-retired siblings from the
+; prior wave - VIDBENCH itself was the last one standing). The frame-
+; timeline instrument (vid_tl_stamp/vid_tl_report, above) is UNCHANGED -
+; that is the active gate/evidence tool this task keeps.
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
@@ -2832,6 +2604,25 @@ vid_run_l2setup_body:
     ld a, h
     ld (video_ctc_isr_stereo.cmphi+1+DATA_WINDOW-OVL_ORG), a
 
+ IFDEF DEBUG
+    ; SP14a T4 owner follow-up (VID_PAGE budget, post-VIDBENCH-retirement):
+    ; the timeline baseline reset moved here from vid_run's own hot CTC-
+    ; retune section - fresh-per-session zero-fill of vidTlTicks..
+    ; vidTlAcc's last byte (see that block's own declaration, VID_PAGE),
+    ; pure data zeroing with no CTC/timing dependency, so it is just as
+    ; safe run here, strictly pre-arm, as it was safe run hot post-arm.
+    ; Same MMU6-translated-write bracket this body already holds open -
+    ; the "write 0 then LDIR propagates it forward" idiom is unaffected
+    ; by the constant DATA_WINDOW-OVL_ORG offset on both HL and DE.
+    ld hl, vidTlTicks+DATA_WINDOW-OVL_ORG
+    ld (hl), 0
+    ld de, vidTlTicks+1+DATA_WINDOW-OVL_ORG
+    ld bc, vidErrByte - vidTlTicks   ; = VID_TL_BLOCK_LEN - 1 (also zeroes
+                                      ; vidErrCode/vidErrByte - a fresh
+                                      ; playback session starts ERR=00)
+    ldir
+ ENDIF
+
     call data_restore
     ld hl, vid_run.l2setupret
     push hl
@@ -3086,6 +2877,54 @@ vid_open_video_body:
 
 vidExtVid: db ".VID", 0
 
+; SP14a T4 owner follow-up (VID_PAGE budget, post-VIDBENCH-retirement):
+; three small DEBUG-only diagnostic prints moved cold from VID_PAGE -
+; vid_play's own missing-file bail (vid_open_video failed) and vid_run's
+; own bank_alloc-failure and bad-header bails. All three are provably
+; reached strictly BEFORE the CTC ever arms (each hot call site's own
+; comment), so hopping cold for the print, then hopping straight back,
+; is exactly as safe as every other pre-arm cold hop in this file.
+; dbg_at/dbg_puts are resident (debug.asm), reachable unchanged from
+; here. Each ends with a hop back to its own hot landing point.
+ IFDEF DEBUG
+vid_play_missing_body:
+    ld b, 23
+    ld c, 0
+    call dbg_at
+    ld hl, msgVidMissing
+    call dbg_puts
+    ld hl, vid_play.missingret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+vid_run_nobank_body:
+    ld b, 23
+    ld c, 0
+    call dbg_at
+    ld hl, msgVidNoBank2
+    call dbg_puts
+    ld hl, vid_run.nobankret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+vid_run_badfmt_body:
+    ld b, 23
+    ld c, 0
+    call dbg_at
+    ld hl, msgVidBadFmt
+    call dbg_puts
+    ld hl, vid_run.badfmtret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+msgVidMissing:  db "VID FILE?", 0
+msgVidNoBank2:  db "VID NOBANK2", 0
+msgVidBadFmt:   db "VID FMT?", 0
+ ENDIF
+
 ; The real open body (renamed from vid_stream_open, moved cold - see
 ; that name's hot stub, VID_PAGE, for why and for the callers). Same
 ; contract as before: IX = filename pointer in; CF/A(error code) out
@@ -3261,35 +3100,6 @@ vid_raw_seek0:
 vidRawResetByte: db 0             ; F_READ target for the pre-map cache
                                    ; primer (discarded, never read back)
 
-; Hot-caller wrapper (vid_bench_pass only - see vid_stream_open's own hot
-; stub, VID_PAGE, IFDEF DEBUG there too - mirrored here). Corrupts AF,
-; BC, DE, HL, IX.
- IFDEF DEBUG
-vid_stream_open_hopbody:
-    ; vid_stream_open_body assumes MMU6 already maps VID_PAGE (the
-    ; translated-address touches to vidHandle/vidStrmMode/vidSizeLo/Hi -
-    ; see its own header). vid_open_video_body's internal calls inherit
-    ; that mapping from their own already-open bracket; vid_bench_pass's
-    ; call via THIS hop has no such bracket active, so it is opened here
-    ; instead - not nested with vid_open_video_body's own (the two paths
-    ; are mutually exclusive: vid_bench_pass never runs mid-vid_play).
-    call data_save
-    ld a, VID_PAGE
-    call data_map_page
-    call vid_stream_open_body
-    ld b, 0
-    jr nc, vid_stream_open_hopresult
-    ld b, 1
-    ld c, a                      ; preserve the error code (data_restore,
-                                  ; below, clobbers A)
-vid_stream_open_hopresult:
-    call data_restore
-    ld hl, vid_stream_open_ret
-    push hl
-    ld a, VID_PAGE
-    jp ovl_map_page
- ENDIF ; DEBUG
-
 vidName:     ds 8             ; "NNN.VID",0
 vidNamePart: ds 14            ; "PARTn\NNN.VID",0
 vidFstatBuf: ds 11             ; F_FSTAT buffer: +0 '*' +1 $81 +2 attr
@@ -3301,15 +3111,12 @@ vidFstatBuf: ds 11             ; F_FSTAT buffer: +0 '*' +1 $81 +2 attr
 ; ------------------------------------------------------------------
  IFDEF DEBUG
 
-VID_TL_ROW0 equ 24              ; rows 24-28 (this task's own report rows,
-                                 ; distinct from VIDBENCH's 28-29 above -
-                                 ; the two harnesses are never on screen at
-                                 ; the same time, so the row overlap is
-                                 ; cosmetic only, not a functional clash)
+VID_TL_ROW0 equ 24              ; rows 24-28 (this task's own report rows;
+                                 ; VIDBENCH, the harness that once used
+                                 ; rows 28-29, is retired - SP14a T4)
 
 ; Print the 32-bit little-endian value at (HL) as 8 hex digits (two
-; dbg_hex16 calls, high word then low word) - matches VIDBENCH's own
-; "(vidBenchHi) then (vidBenchLo)" idiom above. Report-only (called
+; dbg_hex16 calls, high word then low word). Report-only (called
 ; strictly after playback teardown - see vid_tl_report's header) so the
 ; IX-avoidance constraint that applies to vid_tl_stamp/the ISRs does NOT
 ; apply here. Corrupts AF, DE, HL.
@@ -3484,144 +3291,10 @@ vidErrByteL:     db 0             ; mirrors vidErrByte - see that cell's
 
  ENDIF ; DEBUG
 
-; vidBenchName moved here from VID_PAGE (SP14a T3 wave 1): vid_bench_pass
-; (VID_PAGE, DEBUG-only) sets IX to it BEFORE calling vid_stream_open
-; (the hot stub); IX survives the hop unchanged (only A/HL are touched by
-; the trampoline), so it must resolve to real bytes once MMU7=VID_PAGE2
-; (where vid_stream_open_body actually reads it via esx_fopen) - it
-; cannot stay on VID_PAGE, which would be unmapped at that point.
- IFDEF DEBUG
-vidBenchName: db "001.VID", 0
- ENDIF
-
-; vid_bench_compute and vid_bench_report moved here from VID_PAGE (SP14a
-; escalation bench wave - see the task report's page-budget section: VID_
-; PAGE DEBUG headroom was down to 9 bytes, not enough for even a minimal
-; new dispatch stub for the three new bench verbs). vid_bench_compute is
-; reached via a hop from vid_bench_pass (VID_PAGE, hot - see that
-; routine's own tail) after each streaming pass; vid_bench_report is
-; reached via a one-way hop from vid_bench's own tail (last thing it
-; does, no hop back needed - matches every other "tail hop, nothing runs
-; after it on the hot page" call site in this file).
- IFDEF DEBUG
-
-; vidBenchEnd/Start/Lo/Hi and vidSizeLo/Hi are VID_PAGE-resident (written
-; by hot code) - read here via the established data_save/data_map_page
-; (VID_PAGE)/data_restore bracket and the label+DATA_WINDOW-OVL_ORG
-; translated address (vid_open_video_body/vid_stream_open_body's own
-; idiom, above). vbench_classify (below) is same-page - a plain call, no
-; hop. Ends with a hop back to vid_bench_pass_ret (VID_PAGE) - vid_bench_
-; pass (and its own caller, vid_bench) expect MMU7 = VID_PAGE again.
-; Corrupts everything.
-vid_bench_compute:
-    call data_save
-    ld a, VID_PAGE
-    call data_map_page
-    ld hl, (vidBenchEnd+DATA_WINDOW-OVL_ORG)
-    ld de, (vidBenchStart+DATA_WINDOW-OVL_ORG)
-    or a
-    sbc hl, de
-    ld (vidBenchElapsed), hl
-    ; totalKB = (vidBenchHi:vidBenchLo) >> 10. Assumes the total fits 16
-    ; bits after the shift, true for any file under 64MB - comfortably
-    ; covers the whole MakeVid format matrix (the largest demo fixture is
-    ; ~38MB; see the task report).
-    ld hl, (vidBenchLo+DATA_WINDOW-OVL_ORG)
-    ld de, (vidBenchHi+DATA_WINDOW-OVL_ORG)
-    ld b, 10
-.kshr:
-    srl d
-    rr e
-    rr h
-    rr l
-    djnz .kshr
-    ld (vidBenchKB), hl
-    ; KB/s is NOT computed on-device (SP13 T4 space recovery - see the
-    ; task report; T3 round 3 precedent) - vid_bench_report's INFO row
-    ; prints raw bytes/frames unchanged, a one-line hand calculation
-    ; (KB/s = bytes*50/frames/1024) for the owner's re-leg. The new
-    ; VBENCH-FLAT verb (below) DOES compute/report KB/s directly - a
-    ; small dedicated flat measurement, not a retrofit of this one.
-    ; SP14a T4: the old six-format sizeless classify (vbench_classify/
-    ; vid_mod24/vidFormatSect) is gone with no replacement here - VID_
-    ; PAGE budget is too tight in DEBUG builds to also carry a magic-
-    ; check (a real per-file verdict was prototyped and cut for exactly
-    ; this reason); vid_bench_report's own "NXV" label is now a bare
-    ; stream-agnostic marker, not a per-file verdict - VBFLT/VBDMA
-    ; (below) are the real per-file NXV exercises this wave adds.
-    call data_restore
-    ld hl, vid_bench_pass_ret
-    push hl
-    ld a, VID_PAGE
-    jp ovl_map_page
-
-; Prints the two report rows from the values stashed by the streaming
-; pass. vidStrmErr/vidBenchHi/vidBenchLo are VID_PAGE-resident - read via
-; the same data_save/data_map_page(VID_PAGE)/data_restore bracket as
-; vid_bench_compute, above; dbg_at/dbg_puts/dbg_hex8/dbg_hex16 are
-; resident (not page-swapped), reachable unchanged from here. One-way
-; hop from vid_bench (VID_PAGE) - no hop back (see this section's own
-; header). Corrupts everything.
-vid_bench_report:
-    call data_save
-    ld a, VID_PAGE
-    call data_map_page
-    ; row 28: raw streaming KB/s (or ERR = distinct fragmentation/API code)
-    ld b, VIDBENCH_ROW_STRM
-    ld c, 0
-    call dbg_at
-    ld a, (vidStrmErr+DATA_WINDOW-OVL_ORG)
-    or a
-    jr z, .strmok
-    ld hl, msgVidStrmErr
-    call dbg_puts
-    ld a, (vidStrmErr+DATA_WINDOW-OVL_ORG)
-    call dbg_hex8
-    jr .inforow
-.strmok:
-    ld hl, msgVidStrm
-    call dbg_puts
-.inforow:
-    ; row 29: bytes / frames / format (streaming pass, or F_READ fallback)
-    ld b, VIDBENCH_ROW_INFO
-    ld c, 0
-    call dbg_at
-    ld hl, msgVidBytes
-    call dbg_puts
-    ld hl, (vidBenchHi+DATA_WINDOW-OVL_ORG)
-    call dbg_hex16
-    ld hl, (vidBenchLo+DATA_WINDOW-OVL_ORG)
-    call dbg_hex16
-    ld hl, msgVidFrames
-    call dbg_puts
-    ld hl, (vidBenchElapsed)
-    call dbg_hex16
-    ld hl, msgVidFmt
-    call dbg_puts
-    call data_restore
-    ld hl, msgVidNxvOk
-    jp dbg_puts
-
-; SP14a T2: five VIDBENCH message strings shortened (VID_PAGE space
-; recovery for the palette double-buffer feature - see the task report's
-; page-budget section) - same disclosed lever SP13 T4 Step 6 already used
-; on this exact DEBUG-only dev harness (VIDBENCH's KB/s calc removal);
-; this is a fresh application, not a revert. No information is lost -
-; row 28/29 still print bank/error/bytes/frames/magic-verdict, just with
-; terser labels; no test or fixture reads these strings (grepped clean).
-; msgVidNoBank stays on VID_PAGE (hot vid_bench's own bank_alloc-failure
-; path, before any hop) - see that declaration's own comment.
-msgVidStrm:     db "STRM OK", 0
-msgVidStrmErr:  db "STRM ERR=", 0
-msgVidBytes:    db "BYTES=", 0
-msgVidFrames:   db " FR=", 0
-msgVidFmt:      db " NXV=", 0
-msgVidNxvOk:    db "STREAM", 0
-
-vidBenchElapsed: dw 0
-vidBenchKB:      dw 0
-
- ENDIF ; DEBUG
+; VIDBENCH's cold-page bodies (vid_bench_compute/vid_bench_report),
+; vidBenchName and their own message strings/cells are RETIRED along
+; with the hot dispatcher (see that routine's own removal comment,
+; VID_PAGE above) - owner decision, SP14a T4 follow-up.
 
     DISPLAY "video2 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT

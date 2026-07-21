@@ -2204,30 +2204,16 @@ xpart_load_entry:
 ext_stub:
     jp h_unimpl
 
-; EXTERN vector 6 (SP13 Task 1): DEBUG-only route to VIDBENCH (tests/
-; test.dsf), the video streaming benchmark harness (video.asm, VID_PAGE).
-; Chosen over 5 (suite check 44 runs "EXTERN 5 5" and depends on vector 5
-; staying ext_stub forever) and over 3/4/7 (live: XMESSAGE/XPART/
-; XUNDONE). extVec is overlay0 DATA, not code - the IFDEF below on the
-; table ROW costs nothing in a release build (the row is simply ext_stub
-; there, byte-identical to before this task); the trampoline body is
-; itself IFDEF DEBUG so no dead code reaches overlay0 in release either.
- IFDEF DEBUG
-vid_bench_trampoline:
-    ld hl, vid_bench              ; established push-target/ovl_map_page
-    push hl                       ; trampoline idiom (font_load_switch,
-    ld a, VID_PAGE                ; xpart_load_fail's own hop, etc.)
-    jp ovl_map_page
- ENDIF
-
+; EXTERN vector 6 was SP13 Task 1's DEBUG-only route to VIDBENCH (video.
+; asm, VID_PAGE) - VIDBENCH is retired entirely (owner decision, SP14a
+; T4 follow-up: its job is done, git history holds the code if a future
+; core ever warrants resurrection). Vector 6 reverts to ext_stub
+; unconditionally, matching vectors 0-2/5/8-15 - byte-identical to what
+; Release already emitted here, and now also what DEBUG emits.
 extVec:
     dw ext_stub, ext_stub, ext_stub, ext_xmes
     dw h_xpart, ext_stub
- IFDEF DEBUG
-    dw vid_bench_trampoline       ; vector 6, DEBUG only
- ELSE
-    dw ext_stub                   ; vector 6, release: unimplemented stub
- ENDIF
+    dw ext_stub                   ; vector 6: unimplemented stub (was VIDBENCH)
     dw ext_undone
     dw ext_stub, ext_stub, ext_stub, ext_stub
     dw ext_stub, ext_stub, ext_stub, ext_stub
