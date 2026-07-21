@@ -1587,7 +1587,8 @@ vid_stream_frame:
     ; retirement note above; git history holds the code.
     ld a, (vidGapNeeded)
     or a
-    jr nz, .gappath
+    jp nz, .gappath                ; jp: .gappath is now past jr's range
+                                    ; (VS2F's own gate grew this routine)
  IFDEF DEBUG
     ld a, (vidStageLimit)
     cp 2
@@ -1613,35 +1614,48 @@ vid_stream_frame:
     ld c, 6
     jp vid_run.stagegate
 .sub2cskip:
-    ; VS2D (owner follow-up 3, page-walk audit): 32 blocks = 2 pages -
-    ; exactly ONE page advance (vidDrawPage, then vidDrawPage+1) - the
-    ; smallest possible exercise of the code VS2C's own single-page read
-    ; never touches at all. If VS2C passed but VS2D freezes/errors, the
-    ; bug is confirmed in the advance step itself, isolated to a single
-    ; increment.
-    ld a, (vidStage2Sub)
-    cp 4
-    jr nz, .sub2dskip
-    ld a, (vidDrawPage)
-    ld de, $2000
-    call vid_stream_read
-    jr c, .sub2derr
-    ld a, (vidDrawPage)
-    inc a
-    ld de, $2000
-    call vid_stream_read
-    jr nc, .sub2dok
-.sub2derr:
-    ld (vidErrCode), a
-    jr .sub2ddone
-.sub2dok:
-    xor a
-    ld (vidErrCode), a
-.sub2ddone:
-    ld c, 7
-    jp vid_run.stagegate
-.sub2dskip:
+    ; VS2D retired (fresh-eyes round 2, VID_PAGE budget - superseded by
+    ; VS2F's own deconfounder program; VS2C stays as the one direct-
+    ; read reference). git history holds the code/verb.
 .sub2cdskip:
+    ; VS2F (fresh-eyes round 2, stage flag 8): the deconfounder - reads
+    ; the SAME 10 pages via the OLD PROVEN .monopix shape (fixed $2000
+    ; read + a counted loop), bypassing vid_stream_pixels_flat's own
+    ; block-based bookkeeping entirely - separates "the flat serve's own
+    ; bookkeeping" from "10 sustained vid_stream_read calls in one CMD18
+    ; window" as two independent suspects (VS2D/VS2E only ever varied
+    ; both at once - direct-read-once vs loop-of-ten). B is corrupted by
+    ; vid_stream_read (raw path: "Corrupts AF, BC, DE, HL, IX") and so is
+    ; DE, so the loop counter cannot live in either (the standing ini-
+    ; decrements-B lesson's own sibling for this call) - it lives in
+    ; vidPxBlocksLeft's low byte instead (scratch-reused, not needed for
+    ; its own purpose on this bypass path). Replaces vid_stream_pixels_
+    ; flat's own call entirely when active - never both.
+    ld a, (vidStageLimit)
+    cp 8
+    jr nz, .sub8skip
+    ld a, (vidDrawPage)
+    ld (vidPxPage), a
+    ld a, 10
+    ld (vidPxBlocksLeft), a
+.sub8loop:
+    ld a, (vidPxPage)
+    ld de, $2000
+    call vid_stream_read
+    jr c, .sub8err
+    ld hl, vidPxPage
+    inc (hl)
+    ld hl, vidPxBlocksLeft
+    dec (hl)
+    jr nz, .sub8loop
+    xor a
+    jr .sub8done
+.sub8err:
+.sub8done:
+    ld (vidErrCode), a
+    ld c, 11
+    jp vid_run.stagegate
+.sub8skip:
  ENDIF
     ld a, (vidDrawPage)
     ld hl, (vidPixBlocks)
@@ -3150,7 +3164,10 @@ vid_stage_marker_body:
 ; follow-up 4, VID_PAGE budget) but the table slots are left in place
 ; rather than reshuffling every other index; harmless (cold, unreferenced,
 ; C is never 4 or 5 any more).
-vidStageMsgTab: dw 0, msgStg1, msgStg2, msgStg3, msgStg2a, msgStg2b, msgStg2c, msgStg2d, msgStg2e, msgStg6, msgStg7
+; Index 7 (formerly VS2D) is dead too now (retired, fresh-eyes round 2 -
+; superseded by VS2F) - same "leave the slot, don't reshuffle" reasoning
+; as indices 4/5.
+vidStageMsgTab: dw 0, msgStg1, msgStg2, msgStg3, msgStg2a, msgStg2b, msgStg2c, msgStg2d, msgStg2e, msgStg6, msgStg7, msgStg2f
                                                   ; index 0 unused - stages
                                                   ; are 1-based (C is
                                                   ; never 0 here)
@@ -3165,6 +3182,8 @@ msgStg2e: db "STG5 OK", 0     ; C=8: VS2E (vidStageLimit=5) - full serve
                                ; loop, no post-frame
 msgStg6:  db "STG6 OK", 0     ; C=9: vidStageLimit=6 - +audio copy-out
 msgStg7:  db "STG7 OK", 0     ; C=10: vidStageLimit=7 - +palette apply
+msgStg2f: db "STGF OK", 0     ; C=11: VS2F (vidStageLimit=8) - the
+                               ; .monopix-shape deconfounder
 msgStgErr: db " ERR=", 0
  ENDIF
 
