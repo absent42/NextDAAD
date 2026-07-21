@@ -47,93 +47,39 @@
 ; another fails to classify as itself at all - both are fixture-encoding
 ; properties, not classifier defects).
 ;
-; Corrupts AF, BC, DE, HL, IX.
+; SP14a T3 wave 1: COLD (VID_PAGE2). Provably never runs while the video
+; CTC ISR is armed - vid_classify's only two callers are vid_play (calls
+; it BEFORE `jp vid_run`, i.e. before the CTC ever arms this session) and
+; the DEBUG-only vid_bench_compute (VIDBENCH never touches the CTC at
+; all). This hot-page stub is the ONLY part left resident here: it hops
+; to vid_classify_body (VID_PAGE2, below) via the established push-
+; target/ovl_map_page trampoline (vid_tl_report's own precedent, this
+; file) and back, preserving the plain `call vid_classify` contract for
+; both callers unchanged. Register-only I/O (HL/DE in, A/CF out) is
+; carried across the hop via B - `ovl_map_page`'s own `ld a,<page>`
+; clobbers A, and CF is reconstructed explicitly at the landing stub
+; rather than assumed to survive `nextreg`/`ret` untouched. The IN
+; registers (HL/DE) are stacked here BEFORE the trampoline's own `ld
+; hl,<target>` would otherwise clobber them, and popped back first thing
+; in vid_classify_body - the hop machinery itself needs HL as its jump-
+; target vehicle, so the caller's real HL/DE cannot be loaded until after
+; that push. Corrupts AF, BC, DE, HL, IX.
 vid_classify:
-    ld a, l
-    or a
-    jr nz, .bad
-    ld a, h
-    and 1
-    jr nz, .bad                 ; size not a multiple of 512: reject
-    ld b, 9                     ; >>9 (=/512) -> 24-bit sector count in
-.shr:                           ; E:H:L (D discarded - always 0 for any
-    srl d                       ; file under 8GB, comfortably beyond the
-    rr e                        ; format matrix)
-    rr h
-    rr l
-    djnz .shr
-    ld a, e
-    ld (vidSectE), a
-    ld a, h
-    ld (vidSectH), a
-    ld a, l
-    ld (vidSectL), a
-    ld ix, vidFormatSect
-    ld c, 0
-.tryfmt:
-    ld a, (ix+0)
-    ld d, a
-    call vid_mod24
-    or a
-    jr z, .found
-    inc ix
-    inc c
-    ld a, c
-    cp VID_FORMATS
-    jr nz, .tryfmt
+    push hl                      ; caller's HL (size low) - preserved
+    push de                      ; caller's DE (size high) - preserved
+    ld hl, vid_classify_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+vid_classify_ret:
+    ld a, b
+    cp $FF
+    jr z, .bad
+    or a                         ; CF clear, A = format (already in A)
+    ret
 .bad:
     scf
     ret
-.found:
-    ld a, c
-    or a                         ; CF clear
-    ret
-
-; 24-bit dividend (vidSectE:vidSectH:vidSectL, E=MSB) mod 8-bit divisor.
-; In: D = divisor (1-155 - every format's sector count is under 256, so
-;     an 8-bit remainder accumulator suffices). Out: A = remainder.
-; Standard shift-compare-subtract restoring division, 24 steps. Reads
-; the dividend fresh from memory each call so the six vid_classify
-; iterations share one unmodified dividend. Corrupts AF, BC, HL, E.
-vid_mod24:
-    ld a, (vidSectE)
-    ld e, a
-    ld a, (vidSectH)
-    ld h, a
-    ld a, (vidSectL)
-    ld l, a
-    xor a
-    ld b, 24
-.loop:
-    sla l
-    rl h
-    rl e
-    rla                          ; A holds the running remainder r < d <= 155;
-                                  ; the shifted 9-bit value v = 2r+bit <= 309
-    jr c, .fsub                  ; bit 8 fell out of A into CF: true v = A+256,
-                                  ; always >= any divisor here, so subtract
-                                  ; unconditionally - sub d's 8-bit wraparound
-                                  ; supplies the +256 (v-d = A-d mod 256, and
-                                  ; 101 <= v-d <= 154 fits). The old `cp d`
-                                  ; discarded this carry, corrupting every
-                                  ; divisor 128..155 (r reaches 128+).
-    cp d
-    jr c, .skip
-.fsub:
-    sub d
-.skip:
-    djnz .loop
-    ret
-
-vidSectE: db 0
-vidSectH: db 0
-vidSectL: db 0
-
-; Frame-sector-count table, priority order 0-5 (VID_F0_SECT..VID_F5_SECT,
-; nextdaad.inc) - vid_classify's own divisor walk.
-vidFormatSect:
-    db VID_F0_SECT, VID_F1_SECT, VID_F2_SECT
-    db VID_F3_SECT, VID_F4_SECT, VID_F5_SECT
 
 ; ---------------------------------------------------------------------
 ; vid_stream_* - dual-mechanism streaming interface. The three
@@ -158,56 +104,50 @@ vidFormatSect:
 ;      mode the code may be an esxDOS code OR VID_ERR_FRAG/VID_ERR_NOMAP
 ;      (nextdaad.inc - distinct so the bench can name the fragmentation
 ;      failure the kit's defrag guidance is written for).
-; Corrupts AF, BC, DE, HL, IX.
+;
+; SP14a T3 wave 1: the real body (vid_stream_open_body, VID_PAGE2) is
+; COLD - open-time only, provably never running while the video CTC ISR
+; is armed (both real callers run before any CTC arm: vid_open_video_
+; body's own two attempts, same VID_PAGE2 page, and the DEBUG-only vid_
+; bench_pass, which never touches the CTC). vid_open_video_body calls
+; vid_stream_open_body directly (same page, plain call, no hop). This
+; hot-page stub exists ONLY for vid_bench_pass's sake, hopping to a small
+; VID_PAGE2 wrapper (vid_stream_open_hopbody) that calls vid_stream_
+; open_body and hops back - the same push-target/ovl_map_page trampoline
+; as vid_classify's stub above, same B-carries-CF/A convention. Corrupts
+; AF, BC, DE, HL, IX.
+;
+; vid_raw_setup/vid_raw_seek0 (below) stay HOT/resident, unchanged - the
+; DISK_FILEMAP call inside vid_raw_setup writes a 192-byte esxDOS buffer
+; directly via IX and returns an address in HL; keeping that logic
+; genuinely resident (no MMU6 address translation) is the conservative,
+; lowest-risk choice for the one piece of this cluster that parses a
+; multi-byte protocol result, at a modest space cost versus evicting it
+; too - see the task report. vid_stream_open_body (cold) reaches it via
+; the SAME cold-calls-hot hop vid_raw_reset_cursor already uses below.
+;
+; This hot-page stub itself is IFDEF DEBUG - its ONLY caller (vid_bench_
+; pass) is DEBUG-only (VIDBENCH); vid_open_video_body's own two attempts
+; go straight to vid_stream_open_body (same VID_PAGE2 page, no hop, no
+; stub needed), so Release never reaches this trampoline at all - space
+; recovered accordingly (see the task report's page arithmetic).
+ IFDEF DEBUG
 vid_stream_open:
-    ld a, $FF
-    ld (vidHandle), a
-    call esx_getsetdrv
-    jr c, .fail
-    ld b, ESX_MODE_READ
-    call esx_fopen               ; IX = caller's filename, untouched
-    jr c, .fail                  ; since esx_getsetdrv/the ld b above
-    ld (vidHandle), a
-    ; DISK_FILEMAP MUST run first - before F_FSTAT or any other file access
-    ; (a prior access perturbs the sector-cache state the map walks, giving
-    ; a wrong card address the card rejects; playvid parity - it FILEMAPs
-    ; straight after F_OPEN and never F_FSTATs). F_READ mode never maps.
-    ld a, (vidStrmMode)
+    ld hl, vid_stream_open_hopbody
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+vid_stream_open_ret:
+    ld a, b
     or a
-    jr z, .fstat
-    call vid_raw_setup           ; raw: capture + validate the filemap NOW
-    jr c, .openfail
-.fstat:
-    ld a, (vidHandle)            ; F_FSTAT (both modes) - legal AFTER FILEMAP,
-    ld ix, vidFstatBuf            ; before opening the card for streaming
-    rst $08
-    db ESX_F_FSTAT
-    jr c, .openfail
-    ld hl, (vidFstatBuf+7)
-    ld (vidSizeLo), hl
-    ld hl, (vidFstatBuf+9)
-    ld (vidSizeHi), hl
-    ld a, (vidStrmMode)
+    jr z, .ok
+    ld a, c                      ; C = real error code (see vid_stream_
+    scf                          ; open_hopbody's own carry)
+    ret
+.ok:
     or a
-    ret z                        ; F_READ mode: CF clear (from or a), done
-    ld hl, (vidSizeLo)           ; raw: prime remain from the captured size
-    ld (vidStrmRemainLo), hl      ; (the map + run/tail cursor were set by
-    ld hl, (vidSizeHi)            ; vid_raw_setup above)
-    ld (vidStrmRemainHi), hl
-    or a                         ; CF clear
     ret
-.openfail:
-    push af                      ; close the handle, propagating A (esxDOS
-    ld a, (vidHandle)             ; code or VID_ERR_* from the filemap step)
-    call esx_fclose
-    ld a, $FF
-    ld (vidHandle), a
-    pop af
-    scf
-    ret
-.fail:
-    scf
-    ret
+ ENDIF ; DEBUG
 
 ; Raw-mode filemap capture: runs IMMEDIATELY after F_OPEN, BEFORE F_FSTAT
 ; or any other video-file access (F_FSTAT alone is metadata-only, but the
@@ -222,8 +162,10 @@ vid_stream_open:
 ; it filled the buffer and may have had more; the kit's defrag advice
 ; applies). Records the card granularity (cardflags bit 1: 0 = byte
 ; addresses, +512/block; 1 = block addresses, +1/block) as the per-block
-; step and resets the run/tail cursor; remain is primed by the caller
-; after F_FSTAT yields the size. Corrupts AF, BC, DE, HL, IX.
+; step. No longer resets the run/tail cursor itself (SP14a T3 wave 1:
+; that is now vid_raw_reset_cursor's job, shared with the loop-mode
+; restart - see its own header, VID_PAGE); remain is primed by the
+; caller after F_FSTAT yields the size. Corrupts AF, BC, DE, HL, IX.
 vid_raw_setup:
     ; stream.asm touched-file reset (global sector cache): repoint it at
     ; the first sector before mapping, else DISK_FILEMAP walks from wherever
@@ -254,7 +196,6 @@ vid_raw_setup:
     ret
 .roomok:
     ld de, vidFilemapBuf
-    ld (vidStrmEntryPtr), de      ; cursor starts at the first entry
     or a
     sbc hl, de                    ; HL = bytes of entries written
     jr nz, .haveentries
@@ -270,14 +211,10 @@ vid_raw_setup:
     ; streams successive blocks internally - we never compute a per-block
     ; address, so no step is derived. (bit 0 = card id is still used, for the
     ; CS0/CS1 select in vid_sd_cmd.)
-    xor a
-    ld (vidStrmWinOpen), a         ; no SD window open on a fresh raw open
-    ld hl, 0                      ; no run loaded, no buffered tail yet
-    ld (vidStrmRunBlocks), hl
-    ld (vidStrmBlkPos), hl
-    ld (vidStrmBlkLen), hl
-    or a                          ; CF clear (remain is primed by the caller
-    ret                           ; once F_FSTAT has read the size)
+    or a                          ; CF clear (the run/tail cursor and remain
+    ret                           ; are reset by vid_raw_reset_cursor, via
+                                   ; vid_stream_open_body's own tail, once
+                                   ; F_FSTAT has read the size)
 
 ; F_SEEK the video handle to absolute offset 0. NextZXOS F_SEEK: A=handle,
 ; BCDE=offset, IXL=mode (0 = from start; IX is the register that matters,
@@ -290,6 +227,26 @@ vid_raw_seek0:
     ld ix, 0
     ld a, (vidHandle)
     jp esx_fseek
+
+; Hot-side trampoline: reached (via a hop) from vid_stream_open_body
+; (VID_PAGE2, cold) so vid_raw_setup can run genuinely resident (its own
+; DISK_FILEMAP call is easiest to keep correct without MMU6 address
+; translation - see vid_stream_open's own header above), then hops back.
+; B carries CF (0 = clear, 1 = set) across the hop, same convention as
+; every other trampoline in this file. Corrupts everything.
+vid_raw_setup_coldcall:
+    call vid_raw_setup
+    ld b, 0
+    jr nc, .haveresult
+    ld b, 1
+    ld c, a                      ; preserve the real error code for
+                                  ; vid_stream_open_rawsetupret's own
+                                  ; `ld a,c` (propagated to the caller)
+.haveresult:
+    ld hl, vid_stream_open_rawsetupret
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
 
 ; In: A = destination 8K page, mapped into the MMU6 window ($C000) for
 ;     the duration of this read only (the established data_save/
@@ -358,13 +315,60 @@ vid_stream_close:
     ld (vidHandle), a
     ret
 
+; Reset the raw streaming cursor to file start: entry pointer -> the
+; first filemap run, window-open flag and run/tail-buffer state cleared,
+; remain <- vidSizeLo/Hi (the file's total byte size, already known).
+; SP14a T3 wave 1: factored out of vid_raw_setup/vid_stream_open's own
+; first-open tail so BOTH first-open (via the cold hop below) and vid_
+; run's loop-mode restart (same-page call, no hop - see that call site)
+; share ONE definition of "cursor at file start" (the brief's own
+; requirement). HOT (VID_PAGE): the loop-restart caller cannot hop away
+; from VID_PAGE while the CTC is armed (the one rule), so this routine
+; must be reachable by a plain same-page call. Does not touch vidStrm
+; EntryEnd/vidCardFlags (filemap-capture-time-only properties that never
+; change across a restart) or vidFilemapBuf itself (persists for the
+; whole session). Corrupts AF, DE, HL.
+vid_raw_reset_cursor:
+    ld de, vidFilemapBuf
+    ld (vidStrmEntryPtr), de
+    xor a
+    ld (vidStrmWinOpen), a
+    ld hl, 0
+    ld (vidStrmRunBlocks), hl
+    ld (vidStrmBlkPos), hl
+    ld (vidStrmBlkLen), hl
+    ld hl, (vidSizeLo)
+    ld (vidStrmRemainLo), hl
+    ld hl, (vidSizeHi)
+    ld (vidStrmRemainHi), hl
+    ret
+
+; Hot-side trampoline: reached (via a hop) from vid_stream_open_body
+; (VID_PAGE2, cold) so its own raw-mode tail can run vid_raw_reset_cursor
+; while resident on VID_PAGE, then hop back to VID_PAGE2's own resume
+; point - the SAME push-target/ovl_map_page idiom used everywhere else in
+; this file, just in the cold-calls-hot direction. Corrupts everything.
+vid_raw_reset_cursor_coldcall:
+    call vid_raw_reset_cursor
+    ld hl, vid_stream_open_resetret
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+
+; vidHandle/vidStrmMode/vidSizeLo/vidSizeHi stay VID_PAGE-resident (hot)
+; despite being WRITTEN only by the now-cold open cluster: hot code reads
+; them every session (vid_stream_read's mode dispatch, vid_stream_close's
+; handle check, vid_play's own vidSizeLo/Hi read before vid_classify, vid_
+; raw_reset_cursor's remain-priming at loop restart) - the cold cluster
+; touches them via the established MMU6 data-window translation instead
+; (data_save/data_map_page(VID_PAGE)/`label+DATA_WINDOW-OVL_ORG` - see
+; vid_open_video_body's header, VID_PAGE2 section). vidFstatBuf moves to
+; VID_PAGE2 with the cold cluster (no hot reader - see that section).
 vidStrmMode: db 0              ; 0 = F_READ, 1 = raw card streaming
 vidHandle:   db $FF
 vidSizeLo:   dw 0
 vidSizeHi:   dw 0
 vidReadPage: db 0
-vidFstatBuf: ds 11             ; F_FSTAT buffer: +0 '*' +1 $81 +2 attr
-                                ; +3 time +5 date +7(4) size (esxDOS API)
 
 ; ---------------------------------------------------------------------
 ; Raw card streaming internals (vidStrmMode = 1). All state lives in the
@@ -899,7 +903,9 @@ vid_play:
     ld (vidNum), a
     ld a, c
     ld (vidLoopMode), a
-    ld a, b
+    ld c, b                       ; video number -> C (survives the hop
+                                   ; below; A is consumed by ovl_map_page's
+                                   ; own MMU7 value - see vid_open_video)
     call vid_open_video
     jr c, .missing
     ld hl, (vidSizeLo)
@@ -933,73 +939,36 @@ vid_play:
  ENDIF
     ret
 
-; Build vidName ("NNN.VID",0) from A = video number (3-digit zero-padded
-; decimal, the project's repeated-subtraction decade idiom - aud_load_song
-; overlay1.asm, gfx_open_chain overlay2.asm). curPart > 1 also builds
-; vidNamePart ("PARTn\NNN.VID",0) and tries it FIRST, root as fallback -
-; the established PARTn probe idiom (SP11 T5's four other sites); curPart
-; == 1 skips straight to root, zero new opens. Sets vidStrmMode = 1 (raw)
-; before every open attempt - the player always uses raw mode (T1's pinned
-; contract; F_READ mode is bench-only). Out: CF clear = opened (vidHandle/
-; vidSizeLo/Hi set by vid_stream_open); CF set = neither name opened.
-; Corrupts AF, BC, DE, HL, IX.
+; Build vidName ("NNN.VID",0) from the video number, probe PARTn\ then
+; root, open the winner. Out: CF clear = opened (vidHandle/vidSizeLo/Hi
+; set); CF set = neither name opened.
+;
+; SP14a T3 wave 1: COLD (VID_PAGE2) - the whole name-build/PARTn-probe/
+; open cluster runs exactly once per vid_play invocation, entirely before
+; vid_run ever arms the CTC (provably: vid_play calls this, then vid_
+; classify, then `jp vid_run` - the CTC's own first arm is deep inside
+; vid_run, well after this cluster's work is done; the loop-mode restart
+; no longer calls this at all - see vid_run's own restart redesign). This
+; hot-page stub is the only part left resident: it hops to vid_open_
+; video_body (VID_PAGE2, below) via the established push-target/ovl_map_
+; page trampoline and back - same B-carries-CF convention as vid_classify
+; above. The video number travels via C (set by vid_play, above) rather
+; than memory, so vid_open_video_body needs no MMU6 translation just to
+; learn which file to open. Corrupts AF, BC, DE, HL, IX.
 vid_open_video:
-    ld hl, vidName
-    ld b, '0'-1
-.hund:
-    inc b
-    sub 100
-    jr nc, .hund
-    add a, 100
-    ld (hl), b
-    inc hl
-    ld b, '0'-1
-.tens:
-    inc b
-    sub 10
-    jr nc, .tens
-    add a, 10
-    ld (hl), b
-    inc hl
-    add a, '0'
-    ld (hl), a
-    inc hl
-    ex de, hl                     ; de = vidName+3 (write cursor)
-    ld hl, vidExtVid              ; ".VID",0 (5 bytes)
-    ld bc, 5
-    ldir
-    ld a, 1
-    ld (vidStrmMode), a           ; raw streaming, always (T1 pinned contract)
-    ld a, (curPart)
-    dec a
-    jr z, .openroot
-    ld hl, vidNamePart
-    ld (hl), 'P'
-    inc hl
-    ld (hl), 'A'
-    inc hl
-    ld (hl), 'R'
-    inc hl
-    ld (hl), 'T'
-    inc hl
-    ld a, (curPart)
-    add a, '0'
-    ld (hl), a
-    inc hl
-    ld (hl), '\'
-    inc hl
-    ex de, hl                     ; de = vidNamePart+6
-    ld hl, vidName
-    ld bc, 8                      ; "NNN.VID",0
-    ldir
-    ld ix, vidNamePart
-    call vid_stream_open
-    ret nc                        ; PARTn open succeeded
-.openroot:
-    ld ix, vidName
-    jp vid_stream_open
-
-vidExtVid: db ".VID", 0
+    ld hl, vid_open_video_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+vid_open_video_ret:
+    ld a, b
+    or a
+    jr z, .ok
+    scf
+    ret
+.ok:
+    or a
+    ret
 
 ; ---------------------------------------------------------------------
 ; vid_run - entry/exit symmetry: everything vid_run touches is captured
@@ -1143,10 +1112,11 @@ vid_run:
 .havetc:
     ld (vidCtcTc), a
     ld a, d
-    ld (vidCtcCw), a               ; stashed - the loop-mode reopen's own
-                                    ; CTC re-arm (below) reuses this rather
-                                    ; than assuming CW16 (SP13 T4: fmt0/1's
-                                    ; VGA5/VGA6 case needs CW256 - see above)
+    ; SP14a T3 wave 1: no longer stashed into vidCtcCw - the loop-mode
+    ; restart no longer re-arms the CTC at all (it stays continuously
+    ; armed through the restart, see vid_run's .eof: redesign), so the
+    ; only historical reader of that stash is gone; vidCtcCw itself is
+    ; removed below (would otherwise be a dead write-only cell).
     ld bc, AUD_CTC_PORT
     ld a, AUD_CTC_RESET
     out (c), a
@@ -1457,73 +1427,49 @@ vid_run:
     ; check below, making the loop unkillable.
     call vid_key_any
     jr nz, .restore
-    ; --- CTC-park bracket (SP13 T3 review fix, B1 - critical) ---
-    ; vid_open_video (via vid_stream_open/vid_raw_setup) loads IX with
-    ; esxDOS buffer/argument pointers (vidNamePart/vidName for esx_fopen,
-    ; vidFstatBuf for F_FSTAT, vidRawResetByte then vidFilemapBuf for the
-    ; raw filemap setup) across several BLOCKING esxDOS calls - and BOTH
-    ; video ISRs (video_ctc_isr/video_ctc_isr_stereo, below) treat IX as
-    ; their own private play pointer, `inc ix`-ing it on EVERY tick
-    ; whenever it is not EXACTLY vidAudBufLast/vidAudBufLastStereo23/01 (the
-    ; compare-and-hold-last branch, both ISRs' bodies). This is NOT made
-    ; safe by waiting for the previous frame's audio to drain first: once
-    ; mainline repoints IX to an esxDOS buffer, that value is (correctly)
-    ; never equal to vidAudBufLast either, so the VERY NEXT tick's
-    ; compare fails and the ISR falls straight into `inc ix` on
-    ; mainline's esxDOS pointer - drained or not. The only safe fix is to
-    ; stop the ISR from firing at all for the duration: park the CTC
-    ; (the same double soft-reset teardown idiom `.restore` uses, below)
-    ; before vid_stream_close/vid_open_video, re-arm (the same CW16+TC
-    ; program this routine's own entry sequence uses - vidCtcTc and the
-    ; IM2_CTC_STUB patch are both still correct, format never changes
-    ; mid-session, so neither is recomputed) after a successful reopen.
-    ; On resume the ISR replays the still-resident LAST FRAME's buffer
-    ; from the top into the gap (see the `ld ix, vidAudBuf` re-seat
-    ; below) - brief and bounded (ends at the marker exactly like any
-    ; other frame, setting vidAudDone normally), then the new frame's
-    ; audio takes over at the next `.pace` relaunch. Not silent, not an
-    ; unbounded hold.
-    ld bc, AUD_CTC_PORT
-    ld a, AUD_CTC_RESET
-    out (c), a
-    out (c), a                     ; CTC parked - the ISR cannot fire
-                                    ; again until re-armed below
-    call vid_stream_close
-    ld a, (vidNum)
-    call vid_open_video
-    jr c, .restore                 ; reopen failed: .restore's own CTC
-                                    ; reset (double soft-reset again) is
-                                    ; a harmless repeat from here - the
-                                    ; CTC is already parked
-    ; --- B2 fix (review of the B1 fix, critical): vid_open_video's
-    ; success path returns with IX = vidFstatBuf (vid_stream_open's own
-    ; F_FSTAT call, "ld ix,vidFstatBuf" immediately before its `rst $08`
-    ; - the LAST IX assignment before that routine returns). Re-arming
-    ; the CTC with THAT still live in IX would resume the ISR reading/
-    ; inc-ix-walking from an esxDOS buffer address instead of audio -
-    ; mono: garbage DAC output until IX random-walks onto the marker by
-    ; chance (unbounded in practice); stereo: IX steps by 2 with a fixed
-    ; parity, so if vidFstatBuf's address parity never matches vidAud
-    ; BufLastStereo's, the marker is NEVER hit, vidAudDone never sets,
-    ; and .pace (no key-check) hangs forever. Re-seat IX to the resident
-    ; last-frame buffer BEFORE re-arming - the ISR then resumes its
-    ; normal, already-proven compare-and-hold behaviour against the
-    ; SAME fixed end marker every other tick in this file uses, bounded
-    ; and correct for both mono and stereo (this is the shared loop-mode
-    ; path - the re-seat lands before EITHER isr can next fire, since
-    ; the CTC is still parked at this point).
-    ld ix, vidAudBuf
-    ld bc, AUD_CTC_PORT
-    ld a, (vidCtcCw)                ; NOT a hardcoded AUD_CTC_CW16 (SP13
-                                     ; T4: fmt0/1's VGA5/VGA6 case needs
-                                     ; CW256 - the entry sequence above
-                                     ; stashed whichever this session
-                                     ; actually uses; format never changes
-                                     ; mid-session, so it is still correct)
-    out (c), a
-    ld a, (vidCtcTc)
-    ld bc, AUD_CTC_PORT
-    out (c), a                     ; re-armed - ISR resumes next tick
+    ; --- SP14a T3 wave 1: cached-filemap raw restart (playvid parity,
+    ; T1's own "Loop behaviour" finding - a cheap rewind, never a full
+    ; esxDOS file reopen). Replaces the old vid_stream_close/vid_open_
+    ; video esxDOS round-trip AND the CTC-park bracket + `ld ix,vidAudBuf`
+    ; re-seat that used to guard it (SP13 T3 B1/B2). NO esxDOS call
+    ; anywhere in this path - the file handle stays open from the
+    ; original vid_open_video (F_CLOSE happens only at vid_stream_close's
+    ; final call, .restore below); vidFilemapBuf persists for the whole
+    ; session, never re-captured.
+    ;
+    ; IX sweep (re-verified from source, not assumed): vid_win_close
+    ; (Corrupts AF, BC, DE, HL - no IX), vid_raw_reset_cursor (Corrupts
+    ; AF, DE, HL - no IX), vid_next_run (Corrupts AF, DE, HL - no IX),
+    ; vid_win_open (Corrupts AF, BC, DE, HL - no IX; its own vid_mf_
+    ; disable/vid_strm_start/vid_sd_cmd chain is IX-free too, T1c's own
+    ; finding, confirmed here) - EVERY routine this restart calls is
+    ; provably IX-free. The CTC stays ARMED and TICKING throughout: IX
+    ; (the ISR's exclusive resident play pointer) is never touched, never
+    ; re-seated - the B1/B2 hazard (mainline repointing IX to an esxDOS
+    ; buffer the ISR then walks) cannot occur because nothing here ever
+    ; loads IX with anything. Audio drains seamlessly into the restart:
+    ; the ISR keeps replaying the still-resident last frame's buffer
+    ; (holding at the end marker once reached, exactly as it already does
+    ; at any other quiet moment) while this sequence runs; if the reopen
+    ; finishes before the drain would have, there is no gap at all; if it
+    ; takes longer, the held last sample continues until the next frame's
+    ; audio replaces vidAudBuf at the following `.pace` relaunch - no
+    ; hard silence, unlike the old park (which stopped the CTC outright
+    ; for the whole reopen). This is also NOT a new hazard: vid_win_close
+    ; and vid_win_open are the SAME pair the hot streaming path already
+    ; calls constantly, mid-frame, while just as armed.
+    call vid_win_close             ; release the current SD window (CMD12
+                                    ; + deselect) - as today
+    call vid_raw_reset_cursor      ; cursor -> file start (entry ptr,
+                                    ; remain, run/tail state) - the SAME
+                                    ; state vid_raw_setup+vid_stream_open
+                                    ; left after the very first open
+    call vid_next_run              ; load run 0's card address
+    jp c, .restore                 ; defensive: empty map (should not
+                                    ; happen - the same map just played)
+    call vid_win_open              ; reopen at run 0 via the existing raw
+                                    ; CMD18 path
+    jp c, .restore                 ; defensive: card rejected the reopen
     jp .frameloop
 .drainlast:
     ; the last successfully streamed frame (if any) is already showing
@@ -2203,18 +2149,16 @@ vidNum:          db 0
 vidLoopMode:      db 0             ; 0 = play once, 1 = loop
 vidFmt:           db 0             ; 0-5 (vid_classify's verdict)
 vidExitReq:       db 0
-vidName:          ds 8             ; "NNN.VID",0
-vidNamePart:      ds 14            ; "PARTn\NNN.VID",0
+; vidName/vidNamePart moved to VID_PAGE2 (SP14a T3 wave 1) - only the now-
+; cold vid_open_video_body/vid_stream_open_body touch them (vid_open_
+; video_body builds them; vid_stream_open_body's esx_fopen reads them via
+; IX - see the VID_PAGE2 section's own declarations).
 vidAudPoolBank:   db 0
 vidAudPoolPage:   db 0
 vidDrawPage:      db 0
 vidPxPage:        db 0
 vidPxCount:       db 0
 vidCtcTc:         db 0
-vidCtcCw:         db 0             ; this session's CTC control word (SP13
-                                    ; T4: not always CW16 - see vid_run's
-                                    ; entry sequence and the loop-mode
-                                    ; reopen's own re-arm, both above)
 vidAudReadLen:    dw 0             ; this frame's audio+pad read size
                                     ; (mono VID_F4_AUDIO+VID_F45_AUDPAD or
                                     ; fmt0/1/2/3 VID_F0/2_AUDIO+VID_F01/23_
@@ -2579,7 +2523,11 @@ vid_bench_report:
     ld hl, msgVidUnclass
     jp dbg_puts
 
-vidBenchName:   db "001.VID", 0
+; vidBenchName moved to VID_PAGE2 (SP14a T3 wave 1) - vid_bench_pass sets
+; IX to it BEFORE calling vid_stream_open (the hot stub), and IX survives
+; the hop unchanged, so it must resolve to real bytes once MMU7=VID_PAGE2
+; (where vid_stream_open_body actually reads it via esx_fopen) - see the
+; VID_PAGE2 section's own comment at its declaration.
 ; SP14a T2: five VIDBENCH message strings shortened (VID_PAGE space
 ; recovery for the palette double-buffer feature - see the task report's
 ; page-budget section) - same disclosed lever SP13 T4 Step 6 already used
@@ -2613,17 +2561,331 @@ vidStrmErr:      db 0            ; raw streaming pass error code, 0 = ok
     ASSERT $ <= OVL_LIMIT
 
 ; ---------------------------------------------------------------------
-; VID_PAGE2 - DEBUG-only second video page (SP14a Task 1). SP13 T3's own
-; precedent (its round-3 crash-bisection probe) for a DEBUG-only overflow
-; page, reused here for the SAME reason: print-only content, reached
-; strictly AFTER playback is fully torn down (vid_tl_report's own header
-; explains the call site), never while the CTC/ISR is armed - the exact
-; property that precedent's postmortem said its own probe should have
-; had (that probe's harness carried live column-blit state across the
-; hop; this one carries nothing but already-frozen report data).
+; VID_PAGE2 - second video page. Originally (SP14a T1) a DEBUG-only
+; overflow page hosting only the frame-timeline report's print body
+; (SP13 T3's own crash-bisection-probe precedent: print-only, reached
+; strictly AFTER playback is fully torn down, never while the CTC/ISR is
+; armed). SP14a T3 wave 1 makes the page UNCONDITIONAL (both build
+; variants) and adds a second kind of content: COLD video code evicted
+; off VID_PAGE under the SAME one-rule invariant (MMU7 = VID_PAGE
+; whenever the video CTC ISR can fire) - vid_classify, and the whole
+; open/filemap-orchestration cluster (vid_open_video, vid_stream_open),
+; both provably reachable only BEFORE any CTC arm (see each routine's own
+; header, below, for the call-site evidence). The DEBUG-only report body
+; (vid_tl_report_body etc) stays exactly as T1 left it, still guarded by
+; its own IFDEF DEBUG within this now-unconditional page.
 ; ---------------------------------------------------------------------
- IFDEF DEBUG
     MMU 7, VID_PAGE2, OVL_ORG
+
+; ------------------------------------------------------------------
+; Cold video code (SP14a T3 wave 1) - both build variants.
+; ------------------------------------------------------------------
+
+; vid_classify body (hot stub: VID_PAGE, above). Identical logic to the
+; pre-wave-1 vid_classify, just relocated and renamed; ends by hopping
+; back to vid_classify_ret (VID_PAGE) with the result in B ($FF = bad,
+; else the format 0-5) instead of a plain `ret` with CF/A. First restores
+; HL/DE (the real In: HL/DE size argument) from the stub's own pushes -
+; see vid_classify's header, VID_PAGE, for why the stub couldn't just
+; leave them live across its own `ld hl,<hop target>`.
+vid_classify_body:
+    pop de                       ; caller's DE (size high)
+    pop hl                       ; caller's HL (size low)
+    ld a, l
+    or a
+    jr nz, .bad
+    ld a, h
+    and 1
+    jr nz, .bad                 ; size not a multiple of 512: reject
+    ld b, 9                     ; >>9 (=/512) -> 24-bit sector count in
+.shr:                           ; E:H:L (D discarded - always 0 for any
+    srl d                       ; file under 8GB, comfortably beyond the
+    rr e                        ; format matrix)
+    rr h
+    rr l
+    djnz .shr
+    ld a, e
+    ld (vidSectE), a
+    ld a, h
+    ld (vidSectH), a
+    ld a, l
+    ld (vidSectL), a
+    ld ix, vidFormatSect
+    ld c, 0
+.tryfmt:
+    ld a, (ix+0)
+    ld d, a
+    call vid_mod24
+    or a
+    jr z, .found
+    inc ix
+    inc c
+    ld a, c
+    cp VID_FORMATS
+    jr nz, .tryfmt
+.bad:
+    ld b, $FF
+    jr .ret
+.found:
+    ld b, c
+.ret:
+    ld hl, vid_classify_ret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+; 24-bit dividend (vidSectE:vidSectH:vidSectL, E=MSB) mod 8-bit divisor.
+; In: D = divisor (1-155 - every format's sector count is under 256, so
+;     an 8-bit remainder accumulator suffices). Out: A = remainder.
+; Standard shift-compare-subtract restoring division, 24 steps. Reads
+; the dividend fresh from memory each call so the six vid_classify
+; iterations share one unmodified dividend. Corrupts AF, BC, HL, E.
+vid_mod24:
+    ld a, (vidSectE)
+    ld e, a
+    ld a, (vidSectH)
+    ld h, a
+    ld a, (vidSectL)
+    ld l, a
+    xor a
+    ld b, 24
+.loop:
+    sla l
+    rl h
+    rl e
+    rla                          ; A holds the running remainder r < d <= 155;
+                                  ; the shifted 9-bit value v = 2r+bit <= 309
+    jr c, .fsub                  ; bit 8 fell out of A into CF: true v = A+256,
+                                  ; always >= any divisor here, so subtract
+                                  ; unconditionally - sub d's 8-bit wraparound
+                                  ; supplies the +256 (v-d = A-d mod 256, and
+                                  ; 101 <= v-d <= 154 fits). The old `cp d`
+                                  ; discarded this carry, corrupting every
+                                  ; divisor 128..155 (r reaches 128+).
+    cp d
+    jr c, .skip
+.fsub:
+    sub d
+.skip:
+    djnz .loop
+    ret
+
+vidSectE: db 0
+vidSectH: db 0
+vidSectL: db 0
+
+; Frame-sector-count table, priority order 0-5 (VID_F0_SECT..VID_F5_SECT,
+; nextdaad.inc) - vid_classify's own divisor walk.
+vidFormatSect:
+    db VID_F0_SECT, VID_F1_SECT, VID_F2_SECT
+    db VID_F3_SECT, VID_F4_SECT, VID_F5_SECT
+
+; Build vidName ("NNN.VID",0) from the video number (passed via C, set
+; by vid_play before the hop - see vid_open_video's own header, VID_PAGE)
+; - 3-digit zero-padded decimal, the project's repeated-subtraction
+; decade idiom. curPart > 1 also builds vidNamePart ("PARTn\NNN.VID",0)
+; and tries it FIRST, root as fallback - the established PARTn probe
+; idiom (SP11 T5's four other sites); curPart == 1 skips straight to
+; root, zero new opens. curPart is RESIDENT (errors.asm, always mapped -
+; no translation needed to read it here, unlike the VID_PAGE-resident
+; cells below). Sets vidStrmMode = 1 (raw) before every open attempt -
+; the player always uses raw mode (T1's pinned contract; F_READ mode is
+; bench-only). Out (via the hop back to vid_open_video_ret): CF clear =
+; opened; CF set = neither name opened. Corrupts everything.
+vid_open_video_body:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page            ; MMU6 window held for this WHOLE body -
+                                   ; nothing else needs it during this
+                                   ; pre-arm, single-threaded sequence
+    ld a, c                       ; C = video number
+    ld hl, vidName
+    ld b, '0'-1
+.hund:
+    inc b
+    sub 100
+    jr nc, .hund
+    add a, 100
+    ld (hl), b
+    inc hl
+    ld b, '0'-1
+.tens:
+    inc b
+    sub 10
+    jr nc, .tens
+    add a, 10
+    ld (hl), b
+    inc hl
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ex de, hl                     ; de = vidName+3 (write cursor)
+    ld hl, vidExtVid              ; ".VID",0 (5 bytes)
+    ld bc, 5
+    ldir
+    ld a, 1
+    ld (vidStrmMode+DATA_WINDOW-OVL_ORG), a  ; hot-resident - translated
+    ld a, (curPart)
+    dec a
+    jr z, .openroot
+    ld hl, vidNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl
+    ex de, hl                     ; de = vidNamePart+6
+    ld hl, vidName
+    ld bc, 8                      ; "NNN.VID",0
+    ldir
+    ld ix, vidNamePart
+    call vid_stream_open_body     ; same page - plain call, no hop
+    jr nc, .done                  ; PARTn open succeeded
+.openroot:
+    ld ix, vidName
+    call vid_stream_open_body
+.done:
+    ld b, 0
+    jr nc, .haveresult
+    ld b, 1
+.haveresult:
+    call data_restore
+    ld hl, vid_open_video_ret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+vidExtVid: db ".VID", 0
+
+; The real open body (renamed from vid_stream_open, moved cold - see
+; that name's hot stub, VID_PAGE, for why and for the callers). Same
+; contract as before: IX = filename pointer in; CF/A(error code) out
+; (via the hop back for hot callers, or a plain ret for the same-page
+; vid_open_video_body caller above). Touches vidHandle/vidStrmMode/
+; vidSizeLo/vidSizeHi (all VID_PAGE-resident - hot code needs them, see
+; their own declarations) via the MMU6 translation vid_open_video_body
+; holds open for this whole cluster's execution. vidFstatBuf is VID_
+; PAGE2-local (this page IS what MMU7 shows while this code runs), so
+; F_FSTAT's own IX-target write needs no translation. vid_raw_setup
+; (hot, VID_PAGE) is reached via the cold-calls-hot hop established
+; there. Corrupts AF, BC, DE, HL, IX.
+; NOTE: sjasmplus scopes a dot-local label (.foo) to the nearest PRECEDING
+; global (non-dot) label - since this routine's own hop-out/hop-back
+; needs intervening global labels (vid_stream_open_rawsetupret, vid_
+; stream_open_resetret - both referenced from OTHER routines, so they
+; must be global), the shared exit points below (fail/fstat/openfail) are
+; given explicit global names instead of dot-locals, so every jr/jp to
+; them resolves regardless of which global label precedes the jump site.
+vid_stream_open_body:
+    ld a, $FF
+    ld (vidHandle+DATA_WINDOW-OVL_ORG), a
+    call esx_getsetdrv
+    jr c, vid_stream_open_fail
+    ld b, ESX_MODE_READ
+    call esx_fopen               ; IX = caller's filename, untouched
+    jr c, vid_stream_open_fail   ; since esx_getsetdrv/the ld b above
+    ld (vidHandle+DATA_WINDOW-OVL_ORG), a
+    ; DISK_FILEMAP MUST run first - before F_FSTAT or any other file
+    ; access (a prior access perturbs the sector-cache state the map
+    ; walks, giving a wrong card address the card rejects; playvid
+    ; parity). F_READ mode never maps.
+    ld a, (vidStrmMode+DATA_WINDOW-OVL_ORG)
+    or a
+    jr z, vid_stream_open_fstat
+    ld hl, vid_raw_setup_coldcall ; raw: capture + validate the filemap
+    push hl                       ; NOW (vid_raw_setup stays hot - see
+    ld a, VID_PAGE                ; vid_stream_open's own header, VID_PAGE)
+    jp ovl_map_page
+vid_stream_open_rawsetupret:
+    ld a, b
+    or a
+    jr z, vid_stream_open_fstat
+    ld a, c                       ; restore the real error code
+    jp vid_stream_open_openfail
+vid_stream_open_fstat:
+    ld a, (vidHandle+DATA_WINDOW-OVL_ORG) ; F_FSTAT (both modes) - legal
+    ld ix, vidFstatBuf                     ; AFTER FILEMAP, before opening
+    rst $08                                ; the card for streaming
+    db ESX_F_FSTAT
+    jr c, vid_stream_open_openfail
+    ld hl, (vidFstatBuf+7)
+    ld (vidSizeLo+DATA_WINDOW-OVL_ORG), hl
+    ld hl, (vidFstatBuf+9)
+    ld (vidSizeHi+DATA_WINDOW-OVL_ORG), hl
+    ld a, (vidStrmMode+DATA_WINDOW-OVL_ORG)
+    or a
+    ret z                        ; F_READ mode: CF clear (from or a), done
+    ; raw: reset the whole cursor (entry ptr/remain/run/tail state) via
+    ; the SAME routine the loop-mode restart shares - hot (VID_PAGE), so
+    ; reaching it needs the cold-calls-hot hop too.
+    ld hl, vid_raw_reset_cursor_coldcall
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+vid_stream_open_resetret:
+    or a                         ; CF clear
+    ret
+vid_stream_open_openfail:
+    push af                      ; close the handle, propagating A (esxDOS
+    ld a, (vidHandle+DATA_WINDOW-OVL_ORG) ; code or VID_ERR_* from the
+    call esx_fclose                        ; filemap step)
+    ld a, $FF
+    ld (vidHandle+DATA_WINDOW-OVL_ORG), a
+    pop af
+    scf
+    ret
+vid_stream_open_fail:
+    scf
+    ret
+
+; Hot-caller wrapper (vid_bench_pass only - see vid_stream_open's own hot
+; stub, VID_PAGE, IFDEF DEBUG there too - mirrored here). Corrupts AF,
+; BC, DE, HL, IX.
+ IFDEF DEBUG
+vid_stream_open_hopbody:
+    ; vid_stream_open_body assumes MMU6 already maps VID_PAGE (the
+    ; translated-address touches to vidHandle/vidStrmMode/vidSizeLo/Hi -
+    ; see its own header). vid_open_video_body's internal calls inherit
+    ; that mapping from their own already-open bracket; vid_bench_pass's
+    ; call via THIS hop has no such bracket active, so it is opened here
+    ; instead - not nested with vid_open_video_body's own (the two paths
+    ; are mutually exclusive: vid_bench_pass never runs mid-vid_play).
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    call vid_stream_open_body
+    ld b, 0
+    jr nc, vid_stream_open_hopresult
+    ld b, 1
+    ld c, a                      ; preserve the error code (data_restore,
+                                  ; below, clobbers A)
+vid_stream_open_hopresult:
+    call data_restore
+    ld hl, vid_stream_open_ret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+ ENDIF ; DEBUG
+
+vidName:     ds 8             ; "NNN.VID",0
+vidNamePart: ds 14            ; "PARTn\NNN.VID",0
+vidFstatBuf: ds 11             ; F_FSTAT buffer: +0 '*' +1 $81 +2 attr
+                                ; +3 time +5 date +7(4) size (esxDOS API)
+
+; ------------------------------------------------------------------
+; DEBUG-only content below (unchanged in shape from SP14a T1/T2 - wave 1
+; only made the PAGE unconditional, not this section's own guard).
+; ------------------------------------------------------------------
+ IFDEF DEBUG
 
 VID_TL_ROW0 equ 24              ; rows 24-28 (this task's own report rows,
                                  ; distinct from VIDBENCH's 28-29 above -
@@ -2786,6 +3048,17 @@ vidTlLastPhaseL: db 0
 vidTlFramesL:    dw 0
 vidTlAccL:       ds VID_TL_PHASES*4
 
+ ENDIF ; DEBUG
+
+; vidBenchName moved here from VID_PAGE (SP14a T3 wave 1): vid_bench_pass
+; (VID_PAGE, DEBUG-only) sets IX to it BEFORE calling vid_stream_open
+; (the hot stub); IX survives the hop unchanged (only A/HL are touched by
+; the trampoline), so it must resolve to real bytes once MMU7=VID_PAGE2
+; (where vid_stream_open_body actually reads it via esx_fopen) - it
+; cannot stay on VID_PAGE, which would be unmapped at that point.
+ IFDEF DEBUG
+vidBenchName: db "001.VID", 0
+ ENDIF
+
     DISPLAY "video2 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
- ENDIF ; DEBUG

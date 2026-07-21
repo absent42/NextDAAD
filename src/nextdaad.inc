@@ -60,16 +60,15 @@ BANK_L2BACK_FIRST equ 30    ; 30-34 Layer 2 boot BACK surface (double buffer:
 BANK_L2BACK_LAST equ 34     ; gfx_blit renders here, then flips NR $12)
 ; 35-47 allocator pool (base model ends at 47); bank 28 withdrawn for
 ; overlay 0/1, bank 29 for overlay 2, banks 30-34 for the Layer 2 back
-; surface. SP14a T1 (DEBUG only): bank 35 is ALSO withdrawn, for
-; VID_PAGE2 below - the frame-timeline instrument's report-print body
-; (SP13 T3's own precedent: a DEBUG-only second video page, used the
-; same way here - print-only, never reachable while the ISR is armed).
- IFDEF DEBUG
+; surface. Bank 35 is ALSO withdrawn, for VID_PAGE2 below - originally
+; (SP14a T1) a DEBUG-only report-print page; SP14a T3 wave 1 makes the
+; withdrawal UNCONDITIONAL in both build variants, since VID_PAGE2 now
+; also carries Release-reachable COLD video code (vid_classify, the
+; open/filemap-setup cluster) evicted off VID_PAGE under the one-rule
+; invariant (MMU7 = VID_PAGE whenever the video CTC ISR can fire) - see
+; video.asm's own eviction comments at each moved routine.
 BANK_POOL_B     equ 36
 VID_PAGE2       equ 70      ; = 35*2, lower 8K of the withdrawn bank
- ELSE
-BANK_POOL_B     equ 35
- ENDIF
 BANK_BASE_LAST  equ 47
 BANK_EXP_FIRST  equ 48      ; 48-111 expansion pool when detected
 BANK_EXP_LAST   equ 111
