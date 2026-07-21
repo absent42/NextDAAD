@@ -173,6 +173,14 @@ VPLY0   84      verb
 VPLY1   85      verb
 VLOP0   86      verb
 VLOP1   87      verb
+; SP14a escalation bench wave owner verbs: the three silicon-bench probes
+; (flags 250 selects which, via LET before the shared EXTERN 0 6 call -
+; see VIDBENCH's own PROCESS block below for the flag convention).
+VBFLT   88      verb            ; VBENCH-FLAT: sustained flat-ini KB/s
+VBDMA   89      verb            ; VBENCH-DMA: DMA correctness/rate pass
+VBCOP   90      verb            ; VBENCH-COPPER: (re)init probe line
+VBCU    91      verb            ; VBENCH-COPPER: probe line up (+1)
+VBCD    92      verb            ; VBENCH-COPPER: probe line down (-1)
 
 ;                       Verbs
 GET     20      verb
@@ -622,7 +630,75 @@ $pictureOK
 ; is ext_stub (h_unimpl no-op, silent) - same fail-silent shape as
 ; condacts.dsf check 44's "EXTERN 5 5" against its own always-stub
 ; vector. One shot per invocation - re-run to re-measure.
-> VIDBENCH _     EXTERN 0 6
+; flag 250 selects which bench body vid_bench (video.asm) runs - 0 (this
+; verb) is the original dual-pass streaming-throughput measurement; 1-5
+; are the SP14a escalation bench wave's own VBFLT/VBDMA/VBCOP/VBCU/VBCD
+; verbs below. LET (condact 51, `flag = value`) guards against stale
+; flag state from an earlier bench call in the same session - flag 250
+; already defaults to 0, so this is a no-op the first time, defence in
+; depth thereafter.
+> VIDBENCH _     LET 250 0
+                EXTERN 0 6
+                DONE
+
+; SP14a escalation bench wave owner verbs - three silicon-bench probes
+; feeding the native-format decision (see .superpowers/sdd/sp14a-
+; escalation-research.md and the task report's own append for this
+; wave). All route through the SAME EXTERN 0 6 call as VIDBENCH above -
+; flag 250 tells vid_bench (video.asm) which body to run; see that
+; routine's own header for the full dispatch and why (overlay0.asm's
+; extVec table is off-limits this wave, so a new EXTERN vector was not
+; an option).
+;
+; VBFLT (VBENCH-FLAT): sustained flat-ini KB/s over 1024 contiguous
+; 512-byte blocks - no column math, content discarded. Prints "FLAT
+; KB/S=xxxx" (row 28, hex) or "FLAT OPEN ERR"/"FLAT KB/S=FAST" (finished
+; inside a single 50Hz tick - re-run, or trust VBDMA's own single-block
+; timing is even noisier); row 29 prints "BLOCKS=xxxx" (< 0400 = stopped
+; early, short file or a mid-stream error).
+> VBFLT   _     LET 250 1
+                EXTERN 0 6
+                DONE
+
+; VBDMA (VBENCH-DMA): reads the file's first 512-byte block twice - once
+; via ordinary F_READ (trusted reference), once via a timed zxnDMA
+; CONTINUOUS-mode transfer straight off the SD wire - and compares them.
+; Row 28: "DMA MATCH"/"DMA MISMATCH" (content-correctness verdict) or
+; "DMA NOBANK"/"DMA REF OPEN ERR"/"DMA OPEN ERR"/"DMA TOKEN ERR" (a
+; failure before the compare was reached). Row 29 (MATCH/MISMATCH only):
+; "DMA KB/S=xxxx" or "DMA KB/S=FAST" - a single block's own rate is
+; necessarily noisy; VBFLT above is the real throughput number, this
+; verb is about correctness. The burst-mode audio-coexistence sub-test
+; (does the CTC ISR survive a DMA transfer's SPI wait-states) is NOT
+; implemented this wave - see video.asm's own vbench_dma_hot header for
+; the scope-cut reasoning (VID_PAGE budget) and what a future wave needs
+; to re-add it.
+> VBDMA   _     LET 250 2
+                EXTERN 0 6
+                DONE
+
+; VBCOP/VBCU/VBCD (VBENCH-COPPER): a crude raster-line probe for finding
+; where the Layer 2 320x256 display ends on the owner's VGA mode. VBCOP
+; (re)loads the probe at its default line (257, the escalation research
+; doc's own Q2a starting point); VBCU/VBCD step it up/down by one line
+; and reload. All three print "COPPER LINE=xxxx" (row 28, hex, the
+; raster line now in effect). Watch for a solid colour band (NR_
+; FALLBACK painted bright red - the border itself is NOT NextReg-
+; addressable, so this substitutes a full-width probe instead of a
+; border-only one, per the task report's own correction of the research
+; doc's premise) appearing from that line to the bottom of the screen;
+; step the line until its top edge lines up with the real video image's
+; own bottom edge.
+> VBCOP   _     LET 250 3
+                EXTERN 0 6
+                DONE
+
+> VBCU    _     LET 250 4
+                EXTERN 0 6
+                DONE
+
+> VBCD    _     LET 250 5
+                EXTERN 0 6
                 DONE
 
 ; SP13 Task 2 owner verbs: the player-core eye/ear legs for the mono

@@ -143,6 +143,17 @@ NR_PAL_VALUE9   equ $44     ; 9-bit value, two writes (RRRGGGBB then B0); index
 NR_PAL_CTRL     equ $43
 NR_FALLBACK     equ $4A     ; global fallback colour: output wherever
                             ; every layer is transparent
+; Copper co-processor (SP14a escalation bench wave, VBENCH-COPPER) - the
+; border colour is NOT NextReg-addressable (legacy I/O port $FE bits 2:0
+; only - confirmed the escalation research doc's own "MOVE to the border
+; register" premise is wrong), so NR_FALLBACK above is VBENCH-COPPER's
+; substitute visible probe target instead.
+NR_COPPER_DATA        equ $60 ; copper RAM data port, auto-increments
+NR_COPPER_ADDR_LO     equ $61 ; copper RAM write-index, low 8 bits
+NR_COPPER_ADDR_HI_CTRL equ $62 ; bits 7-6 = control (00 STOP/01 RESET/
+                            ; 10 START/11 FRAME - PC resets to 0 every
+                            ; vblank in FRAME mode), bits 2-0 = index
+                            ; high bits
 TM_CTRL_ON      equ %11001000   ; enable, 80x32, attributes, text mode
 PAL_TM_FIRST    equ $30     ; auto-increment on, tilemap first palette
 TM_MAP          equ $6000   ; 80x32x2 = 5120 bytes, $6000-$73FF

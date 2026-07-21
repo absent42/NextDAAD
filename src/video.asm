@@ -48,10 +48,14 @@
 ; properties, not classifier defects).
 ;
 ; SP14a T3 wave 1: COLD (VID_PAGE2). Provably never runs while the video
-; CTC ISR is armed - vid_classify's only two callers are vid_play (calls
-; it BEFORE `jp vid_run`, i.e. before the CTC ever arms this session) and
-; the DEBUG-only vid_bench_compute (VIDBENCH never touches the CTC at
-; all). This hot-page stub is the ONLY part left resident here: it hops
+; CTC ISR is armed - vid_classify's only real caller is vid_play (calls
+; it BEFORE `jp vid_run`, i.e. before the CTC ever arms this session).
+; The DEBUG-only vid_bench_compute (VIDBENCH, itself moved to VID_PAGE2
+; in the SP14a escalation bench wave) calls its own dedicated vbench_
+; classify copy instead (same-page plain call, bypassing this hot stub
+; entirely - see that routine's own header for why it is a separate
+; copy, not a shared core) - it never touches the CTC either way.
+; This hot-page stub is the ONLY part left resident here: it hops
 ; to vid_classify_body (VID_PAGE2, below) via the established push-
 ; target/ovl_map_page trampoline (vid_tl_report's own precedent, this
 ; file) and back, preserving the plain `call vid_classify` contract for
@@ -2598,7 +2602,33 @@ VIDBENCH_ROW_INFO  equ 29       ; 32-row tilemap (debug.asm's reserved
                                  ; is a fresh, disclosed application of it,
                                  ; not a revert).
 
+; vid_bench is the ONLY symbol vid_bench_trampoline (overlay0.asm,
+; unmodifiable in this wave - see the task report) can jump to; it always
+; runs with MMU7 = VID_PAGE already set. SP14a escalation bench wave:
+; this tiny dispatcher reads flags+250 (set by test.dsf's LET before the
+; shared EXTERN 0 6 call - the file-scope constraint that rules out a new
+; extVec vector, see the task report) and routes to one of the five bench
+; verbs; 0 (the default/unset value) preserves the original VIDBENCH dual
+; -pass behaviour unchanged. flags is resident (engine.asm) - readable
+; from any page, no translation needed. VBENCH-FLAT/DMA stay hot (their
+; own headers explain why - measurement/ISR-mapping integrity); VBENCH-
+; COPPER is fully cold, a single hop out with C = 0/1/2 (init/up/down).
 vid_bench:
+    ld a, (flags+250)
+    or a
+    jr z, vid_bench_orig
+    cp 1
+    jp z, vbench_flat_run          ; stays hot - see that routine's header
+    ; 2 (DMA)/3/4/5 (copper init/up/down) all route cold - DMA's own
+    ; orchestration is mostly cold (see vbench_dma_run's header), and
+    ; copper is fully cold; C carries the raw selector through.
+    ld c, a
+    ld hl, vbench_cold_dispatch
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+
+vid_bench_orig:
     call bank_alloc              ; one transient scratch bank, the MMU6
     jr nc, .havebank              ; read target for the raw streaming pass
     ld b, VIDBENCH_ROW_STRM
@@ -2627,7 +2657,16 @@ vid_bench:
 .freebank:
     ld a, (vidBenchBank)
     call bank_free
-    jp vid_bench_report
+    ; vid_bench_report moved to VID_PAGE2 (SP14a escalation bench wave) -
+    ; one-way hop, no hop-back needed: this is the last thing vid_bench
+    ; does, and MMU7 is left at VID_PAGE2 afterwards - safe, matching
+    ; every other "tail hop with no further hot-page work" call site in
+    ; this file (the wider engine remaps MMU7 on its own before it next
+    ; matters - see vid_run's own entry/exit precedent).
+    ld hl, vid_bench_report
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
 
 ; Runs one full timed streaming pass over vidBenchName into vidBenchPage
 ; using the currently selected vidStrmMode, then computes the pass's
@@ -2664,9 +2703,14 @@ vid_bench_pass:
     ld hl, (frameCounter)
     ld (vidBenchEnd), hl
     call vid_stream_close
-    call vid_bench_compute
-    or a                         ; CF clear
-    ret
+    ; SP14a escalation bench wave: vid_bench_compute moved to VID_PAGE2
+    ; (called once per pass, not per-chunk - a hop here costs nothing
+    ; measurable, unlike a per-$2000-chunk hop would) to free VID_PAGE
+    ; space for the new bench verbs - see that routine's own header.
+    ld hl, vid_bench_compute
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
 .readfail:
     push af
     call vid_stream_close
@@ -2674,121 +2718,241 @@ vid_bench_pass:
     scf
     ret
 
-; Derives the report values for the pass just streamed. vidSizeLo/
-; vidSizeHi are still the size vid_stream_open captured for THIS file, so
-; the classification is for the exact bytes just streamed. Corrupts
-; everything.
-vid_bench_compute:
-    ; elapsed = end - start (16-bit, wraps correctly via 2's complement -
-    ; frameCounter is a plain dw, 50Hz, ~21.8 minutes before it wraps)
-    ld hl, (vidBenchEnd)
-    ld de, (vidBenchStart)
-    or a
-    sbc hl, de
-    ld (vidBenchElapsed), hl
-    ; totalKB = (vidBenchHi:vidBenchLo) >> 10. Assumes the total fits 16
-    ; bits after the shift, true for any file under 64MB - comfortably
-    ; covers the whole MakeVid format matrix (the largest demo fixture is
-    ; ~38MB; see the task report).
-    ld hl, (vidBenchLo)
-    ld de, (vidBenchHi)
-    ld b, 10
-.kshr:
-    srl d
-    rr e
-    rr h
-    rr l
-    djnz .kshr
-    ld (vidBenchKB), hl
-    ; KB/s is NOT computed on-device (SP13 T4 space recovery - see the
-    ; task report; T3 round 3 precedent) - vid_bench_report's INFO row
-    ; prints raw bytes/frames unchanged, a one-line hand calculation
-    ; (KB/s = bytes*50/frames/1024) for the owner's re-leg.
-    ld hl, (vidSizeLo)
-    ld de, (vidSizeHi)
-    call vid_classify
-    ld (vidBenchFmt), a
-    ld a, 0
-    jr nc, .classok
-    ld a, 1
-.classok:
-    ld (vidBenchFmtBad), a
+; Landing point for the hop back from vid_bench_compute (VID_PAGE2). A
+; separate global label, not a local .xxx of vid_bench_pass - it must be
+; referenced from another page's code (vid_classify's own vid_classify_
+; ret is the same pattern) and, placed here AFTER vid_bench_pass's own
+; local-label scope closes, does not disturb any of vid_bench_pass's
+; .readloop/.nocarry/.readfail references (a global label placed BETWEEN
+; them would silently rescope any that followed it).
+vid_bench_pass_ret:
+    or a                         ; CF clear
     ret
 
-; Prints the two report rows from the values stashed by the streaming pass.
-vid_bench_report:
-    ; row 28: raw streaming KB/s (or ERR = distinct fragmentation/API code)
-    ld b, VIDBENCH_ROW_STRM
-    ld c, 0
-    call dbg_at
-    ld a, (vidStrmErr)
-    or a
-    jr z, .strmok
-    ld hl, msgVidStrmErr
-    call dbg_puts
-    ld a, (vidStrmErr)
-    call dbg_hex8
-    jr .inforow
-.strmok:
-    ld hl, msgVidStrm
-    call dbg_puts
-.inforow:
-    ; row 29: bytes / frames / format (streaming pass, or F_READ fallback)
-    ld b, VIDBENCH_ROW_INFO
-    ld c, 0
-    call dbg_at
-    ld hl, msgVidBytes
-    call dbg_puts
-    ld hl, (vidBenchHi)
-    call dbg_hex16
-    ld hl, (vidBenchLo)
-    call dbg_hex16
-    ld hl, msgVidFrames
-    call dbg_puts
-    ld hl, (vidBenchElapsed)
-    call dbg_hex16
-    ld hl, msgVidFmt
-    call dbg_puts
-    ld a, (vidBenchFmtBad)
-    or a
-    jr nz, .printbad
-    ld a, (vidBenchFmt)
-    jp dbg_hex8
-.printbad:
-    ld hl, msgVidUnclass
-    jp dbg_puts
+; VBENCH-FLAT (SP14a escalation bench wave, the L1 native-format decider -
+; see the task report's Q3/"Remaining silicon-bench items"). Sustained
+; KB/s streaming VBENCH_FLAT_N contiguous 512-byte blocks with ONLY the
+; per-block token-wait/CRC-skip glue (vid_col_block_start/vid_col_
+; block_end - the SAME primitives the real column blit uses) - no column
+; math, no dest-stride jumps: every block lands at the SAME fixed
+; destination, content discarded. Destination is vidAudBuf (1244 bytes,
+; comfortably >= 512) used DIRECTLY, not a bank_alloc'd MMU6 scratch page
+; - it is VID_PAGE-resident, so it is plain-addressable while we are
+; already running here, and it is provably idle: no bench verb ever runs
+; concurrently with real playback (the only other thing that touches it).
+; This avoids a whole bank_alloc/data_save/data_map_page/data_restore/
+; bank_free bracket - VID_PAGE's DEBUG headroom could not absorb it once
+; VBENCH-DMA's own hot footprint was added (see the task report's byte
+; count). Stays HOT (VID_PAGE, same page as vid_col_block_start/
+; vid_xfer16n) for the WHOLE loop - a per-block cross-page hop would add
+; real, measurable overhead here (unlike vid_bench_compute's one-shot hop
+; above) and risk understating the achievable rate right at the 1410
+; KB/s decision threshold. Opens vidBenchName fresh (raw mode) rather
+; than reusing vid_bench_pass's own open, so this verb is independent of
+; VIDBENCH ever having run first. Stops early (not an error) if the file
+; runs out of blocks before N - the report reflects exactly what was
+; measured either way. Out (via a hop to vbench_flat_ret, VID_PAGE2):
+; B = 0 open failed, 1 ran (early or full - vbenchBlocksDone vs
+; VBENCH_FLAT_N distinguishes which). Corrupts everything.
+VBENCH_FLAT_N equ 1024          ; 512KB - large enough for a stable rate
+                                 ; reading, small enough that 001.VID
+                                 ; (the existing VIDBENCH fixture) need
+                                 ; not be huge; a short file just stops
+                                 ; early (see above), still reports a
+                                 ; real, if noisier, rate over what it did
+                                 ; get.
+vbench_flat_run:
+    ld a, 1
+    ld (vidStrmMode), a
+    ld ix, vidBenchName
+    call vid_stream_open
+    jr nc, .opened
+    ld b, 0
+    jr .backhop
+.opened:
+    ld hl, 0
+    ld (vbenchBlocksDone), hl
+    ld hl, (frameCounter)
+    ld (vidBenchStart), hl
+    ld de, VBENCH_FLAT_N
+.loop:
+    ld hl, vidAudBuf
+    call vid_col_block_start
+    jr c, .done                   ; error - stop early; blocksDone < N
+                                   ; alone tells the report "not clean"
+                                   ; (see this routine's own header), no
+                                   ; separate error-code cell needed
+    ld hl, vidAudBuf              ; fixed dest every block - no stride
+    ld b, 32                      ; 32*16 = 512 bytes
+    call vid_xfer16n
+    call vid_col_block_end
+    ld hl, (vbenchBlocksDone)
+    inc hl
+    ld (vbenchBlocksDone), hl
+    dec de
+    ld a, d
+    or e
+    jr nz, .loop
+.done:
+    ld hl, (frameCounter)
+    ld (vidBenchEnd), hl
+    call vid_stream_close
+    ld b, 1
+.backhop:
+    ld hl, vbench_flat_ret
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
 
-; vidBenchName moved to VID_PAGE2 (SP14a T3 wave 1) - vid_bench_pass sets
-; IX to it BEFORE calling vid_stream_open (the hot stub), and IX survives
-; the hop unchanged, so it must resolve to real bytes once MMU7=VID_PAGE2
-; (where vid_stream_open_body actually reads it via esx_fopen) - see the
-; VID_PAGE2 section's own comment at its declaration.
-; SP14a T2: five VIDBENCH message strings shortened (VID_PAGE space
-; recovery for the palette double-buffer feature - see the task report's
-; page-budget section) - same disclosed lever SP13 T4 Step 6 already used
-; on this exact DEBUG-only dev harness (VIDBENCH's KB/s calc removal);
-; this is a fresh application, not a revert. No information is lost -
-; row 28/29 still print bank/error/bytes/frames/format, just with
-; terser labels; no test or fixture reads these strings (grepped clean).
-msgVidNoBank:   db "NOBANK", 0
-msgVidStrm:     db "STRM OK", 0
-msgVidStrmErr:  db "STRM ERR=", 0
-msgVidBytes:    db "BYTES=", 0
-msgVidFrames:   db " FR=", 0
-msgVidFmt:      db " FMT=", 0
-msgVidUnclass:  db "??", 0
+vbenchBlocksDone: dw 0           ; < VBENCH_FLAT_N means the loop stopped
+                                  ; early (error or short file) - see
+                                  ; vbench_flat_run's own header
 
+; VBENCH-DMA (SP14a escalation bench wave - the task report's Q1e spec).
+; ONE shared hot routine serves BOTH the correctness/rate pass (WR4 =
+; CONTINUOUS) and the burst+audio-coexistence pass (WR4 = BURST, a tiny
+; dedicated test-tone ISR armed for the transfer's duration) - vbenchDma
+; Mode (0/1, set by the cold orchestrator below before each hop) selects
+; which, keeping the hot-page footprint to ONE copy of the token-wait/
+; DMA-program/CRC-skip machinery instead of two. Everything else (both
+; opens, the F_READ-mode reference read via esx_fread, the byte compare,
+; the report) runs cold (VID_PAGE2) - none of it needs precise timing or
+; the CTC-armed MMU7 invariant, only the DMA transfer itself does (burst
+; mode needs MMU7 = VID_PAGE for its whole armed window - the ISR code
+; lives here - the SAME reason VBENCH-FLAT's loop stays hot, just for a
+; window instead of N blocks).
+;
+; DMA program bytes: WR0/WR2/WR5/WR6 copied verbatim from overlay2.asm's
+; own proven dma_copy/dma_prog (mem-to-mem; re-derived here against
+; tools/NextZXOS/docs/extra-hw/dma/zxndma.txt's WR0/WR1/WR2/WR4 bit
+; tables since this is a PORT-source transfer, not mem-to-mem - only
+; WR1 (port A = IO, fixed address, cycle length 4 - the SPI data port
+; is always read from the SAME port number, never incrementing) and WR4
+; (mode bit patched per-call; CONTINUOUS = %10101101, BURST = %10001101)
+; actually differ from that template, confirming the escalation
+; research's own "only WR1/WR4 differ" finding independently). Port A
+; address = PORT_SPI_DAT ($00EB); block length = 512 (exact count, no
+; off-by-one on the zxnDMA).
+vbench_dma_prog:
+    db $83                       ; WR6: disable (clean slate before load)
+    db %01111101                 ; WR0: A->B, port A addr+block length
+                                  ; follow (D3-D6 all set)
+    dw PORT_SPI_DAT               ; port A "address" = the fixed SPI
+                                  ; data port number
+    dw 512                        ; block length, exact count
+    db %01101100                 ; WR1: A is IO, address fixed, timing
+                                  ; byte follows
+    db %00000000                 ; A cycle length 4 (safest for a real
+                                  ; peripheral port, not a plain memory
+                                  ; bus - dma_copy's cycle-length-2 choice
+                                  ; was for mem-to-mem only)
+    db %01010000                 ; WR2: B memory, incrementing, timing
+                                  ; byte follows (identical to dma_copy -
+                                  ; port B is a plain memory dest here too)
+    db %00000010                 ; B cycle length 2, no prescaler
+.wr4:
+    db %10101101                 ; WR4: mode (patched per call) + port B
+                                  ; addr (low+high) follows
+.baddr:
+    dw 0                          ; port B start = dest (patched)
+    db %10000010                 ; WR5 $82: /ce only, STOP on end of
+                                  ; block (never auto-restart)
+    db $CF                        ; WR6: load
+    db $87                        ; WR6: enable - this OUT does not
+                                  ; return until the block has fully
+                                  ; transferred (CONTINUOUS) or the CPU
+                                  ; has been let run during SPI waits
+                                  ; (BURST) - either way, done when it
+                                  ; returns; no status readback exists
+                                  ; on the zxnDMA to poll instead.
+vbench_dma_prog_len equ $ - vbench_dma_prog
+
+; Out (via a hop to vbench_dma_ret2, VID_PAGE2): B = 0 token-wait error /
+; 1 ok (exact error code not kept - see the scope-cut note below; a bare
+; ok/error split is enough for a bench report). Corrupts everything.
+;
+; SP14a escalation bench wave - SCOPE CUT (VID_PAGE budget): the burst-
+; mode audio-coexistence pass (Q1e's third question - does burst mode
+; yield the bus during per-byte SPI waits so the CTC audio ISR survives)
+; is NOT implemented in this wave. Reaching it would have needed the
+; whole armed window (CTC arm, DMA program+launch, disarm, a dedicated
+; test-tone ISR) to run HOT (MMU7 = VID_PAGE for as long as the CTC could
+; fire - the same invariant every ISR in this file depends on), on top
+; of VBENCH-FLAT's own hot loop and this pass's own correctness/rate
+; code; the combined total overflowed VID_PAGE's DEBUG budget by ~150
+; bytes even after moving everything else possible cold, and headroom
+; was still ~10 bytes short even after that - so the mode-select branch
+; itself (and the vbenchDmaMode/vbenchDmaErr cells that fed it) is cut
+; too, not just left dead: WR4 is hardcoded to CONTINUOUS (%10101101)
+; below. To re-add burst mode in a future wave once more VID_PAGE
+; headroom is freed (candidates: relocate more of vid_stream_pixels_
+; col's case table, or drop another DEBUG-only report row - see the task
+; report for the byte-cost options this proposes): restore a mode cell,
+; branch WR4 between %10101101/%10001101, and wrap the DMA launch in a
+; CTC arm/disarm (video_ctc_isr's own installation sequence, vid_run,
+; is the template - but needs a dedicated tiny test-tone ISR, not that
+; one, since this bench has no real playback buffer to drive it).
+;
+; Destination is vidAudBuf, used directly - same reasoning as VBENCH-
+; FLAT's own header (VID_PAGE-resident, plain-addressable, provably idle
+; during any bench call, no bank_alloc/MMU6 bracket needed). Content
+; here is NOT discarded, unlike VBENCH-FLAT's own use of it - the cold
+; compare step (vbench_dma_ret2) reads it back through a data_save/
+; data_map_page(VID_PAGE)/vidAudBuf+DATA_WINDOW-OVL_ORG bracket, the
+; same translated-address idiom vid_open_video_body already uses.
+vbench_dma_hot:
+    ld hl, vidAudBuf
+    ld (vbench_dma_prog.baddr), hl
+    ld hl, vidAudBuf
+    call vid_col_block_start       ; token-wait - HL unused by this
+                                    ; caller, just needs to be preserved
+    jr c, .err
+    ld hl, (frameCounter)
+    ld (vidBenchStart), hl
+    di
+    ld hl, vbench_dma_prog
+    ld b, vbench_dma_prog_len
+    ld c, DMA_PORT
+    otir                           ; program + run to completion (see
+                                    ; vbench_dma_prog's own WR6-enable
+                                    ; comment)
+    ei
+    ld hl, (frameCounter)
+    ld (vidBenchEnd), hl
+    ld c, PORT_SPI_DAT
+    call vid_col_block_end         ; CRC skip + run/remain bookkeeping
+    call vid_stream_close
+    ld b, 1
+    jr .backhop
+.err:
+    call vid_stream_close
+    ld b, 0
+.backhop:
+    ld hl, vbench_dma_ret2
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+
+; vid_bench_compute and vid_bench_report moved to VID_PAGE2 (SP14a
+; escalation bench wave - see that page section for the routines and the
+; vidBenchElapsed/KB/Fmt/FmtBad cells + message strings). vidBenchBank/
+; Page/Lo/Hi/Start/End/vidStrmErr stay HERE (hot) - they are written
+; directly by vid_bench/vid_bench_pass while running on VID_PAGE, and a
+; cross-page write would need its own MMU6 bracket for no benefit; the
+; cold compute/report routines read them back via a data_map_page(VID_
+; PAGE) bracket instead (see vid_bench_compute's own header).
 vidBenchBank:    db 0
 vidBenchPage:    db 0
 vidBenchLo:      dw 0
 vidBenchHi:      dw 0
 vidBenchStart:   dw 0
 vidBenchEnd:     dw 0
-vidBenchElapsed: dw 0
-vidBenchKB:      dw 0
-vidBenchFmt:     db 0
-vidBenchFmtBad:  db 0
 vidStrmErr:      db 0            ; raw streaming pass error code, 0 = ok
+
+; msgVidNoBank stays HERE (hot) unlike its five siblings (moved to VID_
+; PAGE2 with vid_bench_report) - it is printed by vid_bench's own
+; bank_alloc-failure path, which runs on VID_PAGE, before any hop.
+msgVidNoBank:   db "NOBANK", 0
 
  ENDIF ; DEBUG
 
@@ -3408,6 +3572,618 @@ vidErrByteL:     db 0             ; mirrors vidErrByte - see that cell's
  IFDEF DEBUG
 vidBenchName: db "001.VID", 0
  ENDIF
+
+; vid_bench_compute and vid_bench_report moved here from VID_PAGE (SP14a
+; escalation bench wave - see the task report's page-budget section: VID_
+; PAGE DEBUG headroom was down to 9 bytes, not enough for even a minimal
+; new dispatch stub for the three new bench verbs). vid_bench_compute is
+; reached via a hop from vid_bench_pass (VID_PAGE, hot - see that
+; routine's own tail) after each streaming pass; vid_bench_report is
+; reached via a one-way hop from vid_bench's own tail (last thing it
+; does, no hop back needed - matches every other "tail hop, nothing runs
+; after it on the hot page" call site in this file).
+ IFDEF DEBUG
+
+; vidBenchEnd/Start/Lo/Hi and vidSizeLo/Hi are VID_PAGE-resident (written
+; by hot code) - read here via the established data_save/data_map_page
+; (VID_PAGE)/data_restore bracket and the label+DATA_WINDOW-OVL_ORG
+; translated address (vid_open_video_body/vid_stream_open_body's own
+; idiom, above). vbench_classify (below) is same-page - a plain call, no
+; hop. Ends with a hop back to vid_bench_pass_ret (VID_PAGE) - vid_bench_
+; pass (and its own caller, vid_bench) expect MMU7 = VID_PAGE again.
+; Corrupts everything.
+vid_bench_compute:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld hl, (vidBenchEnd+DATA_WINDOW-OVL_ORG)
+    ld de, (vidBenchStart+DATA_WINDOW-OVL_ORG)
+    or a
+    sbc hl, de
+    ld (vidBenchElapsed), hl
+    ; totalKB = (vidBenchHi:vidBenchLo) >> 10. Assumes the total fits 16
+    ; bits after the shift, true for any file under 64MB - comfortably
+    ; covers the whole MakeVid format matrix (the largest demo fixture is
+    ; ~38MB; see the task report).
+    ld hl, (vidBenchLo+DATA_WINDOW-OVL_ORG)
+    ld de, (vidBenchHi+DATA_WINDOW-OVL_ORG)
+    ld b, 10
+.kshr:
+    srl d
+    rr e
+    rr h
+    rr l
+    djnz .kshr
+    ld (vidBenchKB), hl
+    ; KB/s is NOT computed on-device (SP13 T4 space recovery - see the
+    ; task report; T3 round 3 precedent) - vid_bench_report's INFO row
+    ; prints raw bytes/frames unchanged, a one-line hand calculation
+    ; (KB/s = bytes*50/frames/1024) for the owner's re-leg. The new
+    ; VBENCH-FLAT verb (below) DOES compute/report KB/s directly - a
+    ; small dedicated flat measurement, not a retrofit of this one.
+    ld hl, (vidSizeLo+DATA_WINDOW-OVL_ORG)
+    ld de, (vidSizeHi+DATA_WINDOW-OVL_ORG)
+    call vbench_classify           ; B = format 0-5, or $FF = bad
+    ld a, b
+    ld (vidBenchFmt), a
+    ld a, b
+    cp $FF
+    ld a, 0
+    jr nz, .classok
+    ld a, 1
+.classok:
+    ld (vidBenchFmtBad), a
+    call data_restore
+    ld hl, vid_bench_pass_ret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+; DEBUG-only copy of vid_classify_body's own classify logic (VID_PAGE,
+; hot stub above), kept SEPARATE from it so that stub's Release-shipped
+; call site never pays for a call/ret it does not need - a first attempt
+; at sharing the logic via a common core routine added call/ret overhead
+; to vid_classify_body's own non-DEBUG-gated code path (vid_play's real
+; classify call, both build variants), a genuine Release-byte-drift bug
+; caught by a before/after hash compare and reverted; this duplicate
+; exists purely so that fix does not cost vid_bench_compute (DEBUG-only,
+; a plain same-page call, no stack tricks - unlike vid_classify_body's
+; own pop-de/pop-hl preamble, which is specific to being entered via the
+; hot stub's push-hl/push-de/push-target dance) its own classification.
+; In: HL/DE = size low/high. Out: B = format 0-5, or $FF = unclassified.
+; Corrupts AF, C, HL, IX.
+vbench_classify:
+    ld a, l
+    or a
+    jr nz, .bad
+    ld a, h
+    and 1
+    jr nz, .bad
+    ld b, 9
+.shr:
+    srl d
+    rr e
+    rr h
+    rr l
+    djnz .shr
+    ld a, e
+    ld (vidSectE), a
+    ld a, h
+    ld (vidSectH), a
+    ld a, l
+    ld (vidSectL), a
+    ld ix, vidFormatSect
+    ld c, 0
+.tryfmt:
+    ld a, (ix+0)
+    ld d, a
+    call vid_mod24
+    or a
+    jr z, .found
+    inc ix
+    inc c
+    ld a, c
+    cp VID_FORMATS
+    jr nz, .tryfmt
+.bad:
+    ld b, $FF
+    ret
+.found:
+    ld b, c
+    ret
+
+; Prints the two report rows from the values stashed by the streaming
+; pass. vidStrmErr/vidBenchHi/vidBenchLo are VID_PAGE-resident - read via
+; the same data_save/data_map_page(VID_PAGE)/data_restore bracket as
+; vid_bench_compute, above; dbg_at/dbg_puts/dbg_hex8/dbg_hex16 are
+; resident (not page-swapped), reachable unchanged from here. One-way
+; hop from vid_bench (VID_PAGE) - no hop back (see this section's own
+; header). Corrupts everything.
+vid_bench_report:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ; row 28: raw streaming KB/s (or ERR = distinct fragmentation/API code)
+    ld b, VIDBENCH_ROW_STRM
+    ld c, 0
+    call dbg_at
+    ld a, (vidStrmErr+DATA_WINDOW-OVL_ORG)
+    or a
+    jr z, .strmok
+    ld hl, msgVidStrmErr
+    call dbg_puts
+    ld a, (vidStrmErr+DATA_WINDOW-OVL_ORG)
+    call dbg_hex8
+    jr .inforow
+.strmok:
+    ld hl, msgVidStrm
+    call dbg_puts
+.inforow:
+    ; row 29: bytes / frames / format (streaming pass, or F_READ fallback)
+    ld b, VIDBENCH_ROW_INFO
+    ld c, 0
+    call dbg_at
+    ld hl, msgVidBytes
+    call dbg_puts
+    ld hl, (vidBenchHi+DATA_WINDOW-OVL_ORG)
+    call dbg_hex16
+    ld hl, (vidBenchLo+DATA_WINDOW-OVL_ORG)
+    call dbg_hex16
+    ld hl, msgVidFrames
+    call dbg_puts
+    ld hl, (vidBenchElapsed)
+    call dbg_hex16
+    ld hl, msgVidFmt
+    call dbg_puts
+    ld a, (vidBenchFmtBad)
+    or a
+    jr nz, .printbad
+    ld a, (vidBenchFmt)
+    push af
+    call data_restore
+    pop af
+    jp dbg_hex8
+.printbad:
+    call data_restore
+    ld hl, msgVidUnclass
+    jp dbg_puts
+
+; SP14a T2: five VIDBENCH message strings shortened (VID_PAGE space
+; recovery for the palette double-buffer feature - see the task report's
+; page-budget section) - same disclosed lever SP13 T4 Step 6 already used
+; on this exact DEBUG-only dev harness (VIDBENCH's KB/s calc removal);
+; this is a fresh application, not a revert. No information is lost -
+; row 28/29 still print bank/error/bytes/frames/format, just with
+; terser labels; no test or fixture reads these strings (grepped clean).
+; msgVidNoBank stays on VID_PAGE (hot vid_bench's own bank_alloc-failure
+; path, before any hop) - see that declaration's own comment.
+msgVidStrm:     db "STRM OK", 0
+msgVidStrmErr:  db "STRM ERR=", 0
+msgVidBytes:    db "BYTES=", 0
+msgVidFrames:   db " FR=", 0
+msgVidFmt:      db " FMT=", 0
+msgVidUnclass:  db "??", 0
+
+vidBenchElapsed: dw 0
+vidBenchKB:      dw 0
+vidBenchFmt:     db 0
+vidBenchFmtBad:  db 0
+
+; --- SP14a escalation bench wave: VBENCH-FLAT/DMA/COPPER cold half ---
+; See vid_bench's own header (VID_PAGE) for the flags+250 dispatch that
+; reaches vbench_cold_dispatch below, and vbench_flat_run/vbench_dma_hot
+; (VID_PAGE) for the hot halves this cold code hops to/lands from.
+
+; 16-bit unsigned divide. In: HL = dividend, DE = divisor (DE <> 0 -
+; callers must guard the zero case themselves, e.g. "elapsed frames = 0"
+; below). Out: HL = quotient, DE = remainder. Standard restoring-division,
+; 16 steps - only ever runs cold, in a report path, so speed does not
+; matter. Corrupts AF, BC.
+div16:
+    ld b, h
+    ld c, l                       ; BC = dividend
+    ld hl, 0                      ; HL = remainder accumulator
+    ld a, 16
+.bit:
+    sla c
+    rl b                          ; shift dividend left; carry out -> HL
+    adc hl, hl
+    sbc hl, de
+    jr nc, .noadd
+    add hl, de
+    jr .nextbit
+.noadd:
+    inc c                         ; quotient bit (BC's own low bit, just
+                                   ; vacated by sla c above)
+.nextbit:
+    dec a
+    jr nz, .bit
+    ld d, h
+    ld e, l                       ; DE = remainder
+    ld h, b
+    ld l, c                       ; HL = quotient
+    ret
+
+; Reads C = flags+250's raw value (2 = DMA, 3/4/5 = copper init/up/down -
+; see vid_bench's own header) and routes. VBENCH-FLAT never reaches here
+; (it stays hot - a separate jp from vid_bench itself).
+vbench_cold_dispatch:
+    ld a, c
+    cp 2
+    jp z, vbench_dma_run
+    sub 3                          ; 3/4/5 -> 0/1/2 (copper init/up/down)
+    ld c, a
+    jp vbench_copper_dispatch
+
+; Landing point for the hop back from vbench_flat_run (VID_PAGE). In:
+; B = 0 (open failed) / 1 (ran). Computes KB/s = blocksDone*25/elapsed
+; (512 bytes/block * 50 ticks/s / 1024 bytes/KB = 25 - see the derivation
+; in the task report) via div16 above, guarding elapsed == 0 (finished
+; within a single 50Hz tick - too fast to time at this block count,
+; reported distinctly rather than dividing by zero). vidBenchStart/End/
+; vbenchBlocksDone are all VID_PAGE-resident - read via the established
+; data_save/data_map_page(VID_PAGE)/label+DATA_WINDOW-OVL_ORG bracket.
+vbench_flat_ret:
+    ld a, b
+    ld b, VIDBENCH_ROW_STRM
+    ld c, 0
+    push af
+    call dbg_at
+    pop af
+    or a
+    jr nz, .ran
+    ld hl, msgVbFlatOpenErr
+    jp dbg_puts
+.ran:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld hl, (vidBenchEnd+DATA_WINDOW-OVL_ORG)
+    ld de, (vidBenchStart+DATA_WINDOW-OVL_ORG)
+    or a
+    sbc hl, de
+    ld (vbenchFlatElapsed), hl
+    ld hl, (vbenchBlocksDone+DATA_WINDOW-OVL_ORG)
+    call data_restore
+    ld (vbenchFlatBlocks), hl
+    ld hl, msgVbFlatKb
+    call dbg_puts
+    ld de, (vbenchFlatElapsed)
+    ld a, d
+    or e
+    jr nz, .haveelapsed
+    ld hl, msgVbFlatTooFast
+    call dbg_puts
+    jr .inforow
+.haveelapsed:
+    ; KB/s = blocksDone*25 / elapsed (512 bytes/block * 50 ticks/s /
+    ; 1024 bytes/KB = 25) - a plain 25-iteration add loop (cold, one-
+    ; shot, speed does not matter) rather than a bit-decomposition
+    ; multiply, for simplicity/correctness.
+    ld hl, 0
+    ld de, (vbenchFlatBlocks)
+    ld b, 25
+.mul:
+    add hl, de
+    djnz .mul
+    ld de, (vbenchFlatElapsed)     ; HL = blocks*25 (dividend), DE = elapsed
+    call div16                     ; HL = KB/s
+    call dbg_hex16
+.inforow:
+    ld b, VIDBENCH_ROW_INFO
+    ld c, 0
+    call dbg_at
+    ld hl, msgVbFlatBlocks
+    call dbg_puts
+    ld hl, (vbenchFlatBlocks)
+    call dbg_hex16
+    ret
+
+msgVbFlatOpenErr: db "FLAT OPEN ERR", 0
+msgVbFlatKb:       db "FLAT KB/S=", 0
+msgVbFlatTooFast:  db "FAST", 0
+msgVbFlatBlocks:   db "BLOCKS=", 0
+vbenchFlatBlocks:  dw 0
+vbenchFlatElapsed: dw 0
+
+; VBENCH-DMA cold orchestrator (SP14a escalation bench wave - the task
+; report's Q1e spec). Two passes against vidBenchName's FIRST 512-byte
+; block: (1) F_READ mode - an ordinary esxDOS read, used purely as a
+; trusted reference, into a bank_alloc'd scratch bank, then copied into
+; vbenchRefCopy (this page, below) so it can be compared without needing
+; two simultaneous MMU6 windows; (2) raw mode - the actual timed DMA
+; test (vbench_dma_hot, VID_PAGE - see its own header for why the DMA/
+; token-wait itself must run hot). vid_stream_open_body/esx_fread/esx_
+; fclose are all resident or same-page-callable (see vid_stream_open_
+; body's own "assumes MMU6 already maps VID_PAGE" convention) - reading
+; vidHandle needs its OWN short-lived bracket before the scratch-page
+; bracket opens, since MMU6 can only hold one mapping at a time (see the
+; three-bracket structure below). Corrupts everything.
+vbench_dma_run:
+    call bank_alloc
+    jr nc, .haverefbank
+    ld b, 0
+    jp vbench_dma_report           ; NOBANK
+.haverefbank:
+    ld (vbenchDmaRefBank), a
+    add a, a
+    ld (vbenchDmaRefPage), a
+    ; --- bracket 1: MMU6 = VID_PAGE - set F_READ mode, open the file ---
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    xor a
+    ld (vidStrmMode+DATA_WINDOW-OVL_ORG), a
+    ld ix, vidBenchName
+    call vid_stream_open_body
+    jr nc, .refopened
+    call data_restore
+    ld b, 1
+    ld a, (vbenchDmaRefBank)
+    call bank_free
+    jp vbench_dma_report           ; OPEN ERR (reference pass)
+.refopened:
+    ld a, (vidHandle+DATA_WINDOW-OVL_ORG)
+    ld (vbenchDmaHandle), a
+    call data_restore
+    ; --- bracket 2: MMU6 = scratch page - the actual F_READ ---
+    call data_save
+    ld a, (vbenchDmaRefPage)
+    call data_map_page
+    ld a, (vbenchDmaHandle)
+    ld ix, DATA_WINDOW
+    ld bc, 512
+    call esx_fread
+    jr c, .refreadfail
+    ld hl, DATA_WINDOW
+    ld de, vbenchRefCopy
+    ld bc, 512
+    ldir                            ; keep a cold-page copy - the scratch
+                                     ; bank is freed below, before the
+                                     ; DMA pass reuses no bank at all (its
+                                     ; own dest is vidAudBuf directly)
+.refreadfail:
+    call data_restore
+    ld a, (vbenchDmaHandle)
+    call esx_fclose
+    ld a, (vbenchDmaRefBank)
+    call bank_free
+    ; --- bracket 3: MMU6 = VID_PAGE - raw-mode open for the DMA pass ---
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld a, 1
+    ld (vidStrmMode+DATA_WINDOW-OVL_ORG), a
+    ld ix, vidBenchName
+    call vid_stream_open_body
+    jr nc, .dmaopened
+    call data_restore
+    ld b, 2
+    jp vbench_dma_report           ; OPEN ERR (DMA pass)
+.dmaopened:
+    call data_restore
+    ld hl, vbench_dma_hot
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+; Landing point for the hop back from vbench_dma_hot (VID_PAGE). In:
+; B = 0 (token-wait error) / 1 (ok - vidAudBuf holds the DMA'd 512
+; bytes). Compares against vbenchRefCopy (the F_READ reference, taken
+; above) and reports MATCH y/n plus a KB/s figure derived from this
+; single block's own elapsed time (necessarily noisy at 512 bytes - the
+; point of THIS pass is correctness, not throughput; VBENCH-FLAT is the
+; real throughput number).
+vbench_dma_ret2:
+    ld a, b                         ; A = vbench_dma_hot's own result
+                                    ; (0 = token error, 1 = ok)
+    or a
+    jr nz, .tokenok
+    ld b, 3                        ; TOKEN ERR
+    jp vbench_dma_report
+.tokenok:
+    call vbench_dma_compare
+    ld b, 4                        ; MATCH
+    jr nc, .gotmatch
+    ld b, 5                        ; MISMATCH
+.gotmatch:
+    jp vbench_dma_report
+
+; Compares vbenchRefCopy (512 bytes, this page) against vidAudBuf
+; (VID_PAGE-resident, read via a data_save/data_map_page(VID_PAGE)
+; bracket - vbench_dma_hot's own DMA destination, still sitting there
+; unless another bench call has since overwritten it). Out: CF clear =
+; match, CF set = mismatch. Corrupts AF, BC, DE, HL.
+vbench_dma_compare:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld hl, vidAudBuf+DATA_WINDOW-OVL_ORG
+    ld de, vbenchRefCopy
+    ld bc, 512
+.loop:
+    ld a, (de)
+    cpi                             ; A vs (HL); HL++, BC--
+    jr nz, .mismatch
+    inc de
+    ld a, b
+    or c
+    jr nz, .loop
+    call data_restore
+    or a                            ; CF clear (match)
+    ret
+.mismatch:
+    push af
+    call data_restore
+    pop af
+    scf
+    ret
+
+; Prints the DMA pass's report. In: B = 0 NOBANK / 1 reference OPEN ERR /
+; 2 DMA-pass OPEN ERR / 3 TOKEN ERR / 4 MATCH / 5 MISMATCH. Row 28 =
+; status; row 29 = a KB/s figure (single-block, MATCH/MISMATCH only -
+; necessarily noisy at 512 bytes, a single 50Hz-tick measurement window
+; - VBENCH-FLAT is the real throughput number; a transfer finishing
+; inside the SAME tick it started reports "FAST" rather than dividing by
+; zero). The status code is stashed to vbenchDmaCode - B/A do not survive
+; the dbg_at/dbg_puts calls between here and where it is needed again.
+vbench_dma_report:
+    ld a, b
+    ld (vbenchDmaCode), a
+    ld b, VIDBENCH_ROW_STRM
+    ld c, 0
+    call dbg_at
+    ld a, (vbenchDmaCode)
+    ld hl, msgVbDmaNoBank
+    or a
+    jr z, .print
+    ld hl, msgVbDmaRefOpenErr
+    dec a
+    jr z, .print
+    ld hl, msgVbDmaOpenErr
+    dec a
+    jr z, .print
+    ld hl, msgVbDmaTokenErr
+    dec a
+    jr z, .print
+    ld hl, msgVbDmaMatch
+    dec a
+    jr z, .print
+    ld hl, msgVbDmaMismatch
+.print:
+    call dbg_puts
+    ld a, (vbenchDmaCode)
+    cp 4
+    ret c                           ; only MATCH(4)/MISMATCH(5) get a
+                                    ; KB/s row - the others are error
+                                    ; states with nothing to time
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld hl, (vidBenchEnd+DATA_WINDOW-OVL_ORG)
+    ld de, (vidBenchStart+DATA_WINDOW-OVL_ORG)
+    or a
+    sbc hl, de
+    call data_restore
+    ld (vbenchDmaElapsed), hl
+    ld b, VIDBENCH_ROW_INFO
+    ld c, 0
+    call dbg_at
+    ld hl, msgVbDmaKb
+    call dbg_puts
+    ld de, (vbenchDmaElapsed)
+    ld a, d
+    or e
+    jr nz, .haveelapsed2
+    ld hl, msgVbFlatTooFast
+    jp dbg_puts
+.haveelapsed2:
+    ld hl, 25                       ; one block: 512 bytes*50/1024 = 25
+                                     ; (same per-block constant as
+                                     ; VBENCH-FLAT's own KB/s calc) -
+                                     ; dividend; DE (elapsed) is the
+                                     ; divisor, already loaded above
+    call div16
+    jp dbg_hex16
+
+msgVbDmaNoBank:     db "DMA NOBANK", 0
+msgVbDmaRefOpenErr: db "DMA REF OPEN ERR", 0
+msgVbDmaOpenErr:    db "DMA OPEN ERR", 0
+msgVbDmaTokenErr:   db "DMA TOKEN ERR", 0
+msgVbDmaMatch:      db "DMA MATCH", 0
+msgVbDmaMismatch:   db "DMA MISMATCH", 0
+msgVbDmaKb:         db "DMA KB/S=", 0
+vbenchDmaRefBank: db 0
+vbenchDmaRefPage: db 0
+vbenchDmaHandle:  db 0
+vbenchDmaCode:    db 0
+vbenchDmaElapsed: dw 0
+vbenchRefCopy:    ds 512
+
+; --- VBENCH-COPPER (SP14a escalation bench wave - the task report's
+; remaining item 2, Q2a). A crude but usable probe: loads a 4-instruction
+; FRAME-mode copper list (WAIT <line>,0 / MOVE NR_FALLBACK,<colour> /
+; HALT) and lets the owner step <line> up/down to find the exact raster
+; line where the Layer 2 320x256 display ends on his VGA mode. NR_
+; FALLBACK ($4A) substitutes for the escalation research's own "MOVE to
+; the border colour register" suggestion - the border is NOT NextReg-
+; addressable at all (legacy I/O port $FE bits 2:0 only; confirmed by
+; this wave's own research pass), so there is no NextReg to MOVE to for
+; that purpose. NR_FALLBACK paints a full-width band from the WAIT line
+; to the bottom of the screen instead of a 32-pixel border strip - a
+; cruder probe than the research doc's own sketch, but an equally usable
+; (arguably more visible) one for finding the display's bottom edge. ---
+VBENCH_COPPER_COLOUR equ $E0    ; RGB332 111 000 00 - bright red, chosen
+                                 ; to be maximally distinct from typical
+                                 ; video content and the tilemap palette
+VBENCH_COPPER_DEFAULT_LINE equ 257  ; the research doc's own recommended
+                                     ; starting point (Q2a)
+
+; In: C = 0 (init - reset to the default line) / 1 (up, +1) / 2 (down,
+; -1). Reloads the copper list at the resulting line and reports it on
+; row 28. Corrupts everything.
+vbench_copper_dispatch:
+    ld a, c
+    or a
+    jr z, .init
+    dec a
+    jr z, .up
+    ld hl, (vbenchCopperLine)
+    dec hl
+    ld (vbenchCopperLine), hl
+    jr .load
+.up:
+    ld hl, (vbenchCopperLine)
+    inc hl
+    ld (vbenchCopperLine), hl
+    jr .load
+.init:
+    ld hl, VBENCH_COPPER_DEFAULT_LINE
+    ld (vbenchCopperLine), hl
+.load:
+    call vbench_copper_load
+    ld b, VIDBENCH_ROW_STRM
+    ld c, 0
+    call dbg_at
+    ld hl, msgVbCopLine
+    call dbg_puts
+    ld hl, (vbenchCopperLine)
+    jp dbg_hex16
+
+; Loads the 4-instruction list from vbenchCopperLine and starts the
+; copper in FRAME mode (PC resets to 0 every vblank, so the SAME probe
+; re-draws every frame automatically - no per-frame re-arm needed).
+; Copper instructions are 16-bit, big-endian in copper RAM: WAIT =
+; 1HHHHHHV VVVVVVVV (H=0 fixed here - leftmost column); MOVE =
+; 0RRRRRRR DDDDDDDD; HALT = WAIT $FFFF (H=63,V=511, both all-ones).
+; Corrupts AF.
+vbench_copper_load:
+    xor a
+    nextreg NR_COPPER_ADDR_LO, a   ; write-index low = 0
+    nextreg NR_COPPER_ADDR_HI_CTRL, a  ; index hi = 0, control = STOP -
+                                    ; safe to load while stopped
+    ld hl, (vbenchCopperLine)
+    ld a, h
+    and 1
+    or %10000000
+    nextreg NR_COPPER_DATA, a      ; WAIT high byte: 1 000000 V(msb)
+    ld a, l
+    nextreg NR_COPPER_DATA, a      ; WAIT low byte: V's low 8 bits
+    ld a, NR_FALLBACK
+    nextreg NR_COPPER_DATA, a      ; MOVE high byte: 0 + NR_FALLBACK (<128)
+    ld a, VBENCH_COPPER_COLOUR
+    nextreg NR_COPPER_DATA, a      ; MOVE low byte: the probe colour
+    ld a, $FF
+    nextreg NR_COPPER_DATA, a      ; HALT high byte
+    nextreg NR_COPPER_DATA, a      ; HALT low byte
+    ld a, %11000000                ; control = FRAME, start running
+    nextreg NR_COPPER_ADDR_HI_CTRL, a
+    ret
+
+msgVbCopLine: db "COPPER LINE=", 0
+vbenchCopperLine: dw VBENCH_COPPER_DEFAULT_LINE
+
+ ENDIF ; DEBUG
 
     DISPLAY "video2 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
