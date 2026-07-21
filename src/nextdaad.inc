@@ -58,9 +58,18 @@ BANK_AUDIO_FIRST equ 24     ; 24-27 reserved for music and SFX
 BANK_AUDIO_LAST equ 27
 BANK_L2BACK_FIRST equ 30    ; 30-34 Layer 2 boot BACK surface (double buffer:
 BANK_L2BACK_LAST equ 34     ; gfx_blit renders here, then flips NR $12)
-BANK_POOL_B     equ 35      ; 35-47 allocator pool (base model ends at 47); bank 28
-                            ; withdrawn for overlay 0/1, bank 29 for overlay 2,
-                            ; banks 30-34 for the Layer 2 back surface
+; 35-47 allocator pool (base model ends at 47); bank 28 withdrawn for
+; overlay 0/1, bank 29 for overlay 2, banks 30-34 for the Layer 2 back
+; surface. SP14a T1 (DEBUG only): bank 35 is ALSO withdrawn, for
+; VID_PAGE2 below - the frame-timeline instrument's report-print body
+; (SP13 T3's own precedent: a DEBUG-only second video page, used the
+; same way here - print-only, never reachable while the ISR is armed).
+ IFDEF DEBUG
+BANK_POOL_B     equ 36
+VID_PAGE2       equ 70      ; = 35*2, lower 8K of the withdrawn bank
+ ELSE
+BANK_POOL_B     equ 35
+ ENDIF
 BANK_BASE_LAST  equ 47
 BANK_EXP_FIRST  equ 48      ; 48-111 expansion pool when detected
 BANK_EXP_LAST   equ 111
@@ -661,3 +670,22 @@ VID_RATE0_PLAY equ 7783        ; floor(467*50/3) - see derivation above
 ; VGA1 229, VGA2 236, VGA3 240, VGA4 248, VGA5 0(sentinel), VGA6
 ; 0(sentinel), HDMI 216. Verified with a Python cross-check (not hand
 ; arithmetic), matching the T3 report's own methodology.
+
+; --- SP14a Task 1: DEBUG-only frame-timeline instrument (video.asm's
+; vid_tl_stamp/vid_tl_report) - phase ids for the 5-phase closed loop
+; the frame loop is stamped through once per frame: stream (audio+
+; palette bytes read) -> blit (pixel data transfer) -> other (key/exit
+; check) -> flip/pace-wait (audio-done spin + downsample copy-out + the
+; L2 bank/NR $12 flip) -> palette (the deferred vid_apply_palette call,
+; palette formats only) -> other (loop-back) -> stream ... Named here,
+; not left as magic immediates, so vid_tl_stamp's call sites self-
+; document. DEBUG-only: zero cost to Release (see video.asm's own IFDEF
+; DEBUG blocks around every consumer).
+ IFDEF DEBUG
+VID_TL_STREAM   equ 0
+VID_TL_BLIT     equ 1
+VID_TL_PALETTE  equ 2
+VID_TL_FLIPPACE equ 3
+VID_TL_OTHER    equ 4
+VID_TL_PHASES   equ 5
+ ENDIF

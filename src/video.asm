@@ -1247,6 +1247,21 @@ vid_run:
     ld a, 1
     ld (vidAudDone), a
 
+ IFDEF DEBUG
+    ; SP14a T1: fresh timeline baseline for THIS playback session (not
+    ; cumulative across calls) - zero-fills vidTlTicks..vidTlAcc's last
+    ; byte (see that block's own header, below vidSvL2Back). Safe here
+    ; despite the CTC already being armed above: only IX is off-limits
+    ; during the armed window (T3's own proven constraint, this file's
+    ; ISR headers); this touches AF/HL/DE/BC only, exactly like the
+    ; L2-setup/vid_identity_palette calls immediately above already do.
+    ld hl, vidTlTicks
+    ld (hl), 0
+    ld de, vidTlTicks+1
+    ld bc, vidTlAcc + VID_TL_PHASES*4 - vidTlTicks - 1
+    ldir
+ ENDIF
+
 .frameloop:
     ld a, (l2BackBank)             ; draw target = the currently-hidden
     add a, a                        ; back surface (idle during playback)
@@ -1255,12 +1270,20 @@ vid_run:
     jp c, .eof                     ; jr (was in range pre-T4; the added
                                     ; fmt0/1 downsample loop between here
                                     ; and .eof pushed it out of jr's +127)
+ IFDEF DEBUG
+    ld a, VID_TL_OTHER             ; closes phase 1 (blit, stamped inside
+    call vid_tl_stamp              ; vid_stream_frame at .nopalette below)
+ ENDIF
     call vid_key_any
     ld a, 0
     jr z, .nokey
     ld a, 1
 .nokey:
     ld (vidExitReq), a
+ IFDEF DEBUG
+    ld a, VID_TL_FLIPPACE          ; closes phase 4 (other: the key/exit
+    call vid_tl_stamp              ; check just above)
+ ENDIF
 .pace:
     ld a, (vidAudDone)             ; wait for the CURRENTLY VISIBLE
     or a                            ; frame's audio to finish (pacing:
@@ -1354,9 +1377,17 @@ vid_run:
     ; it was read (vid_stream_frame's header explains why: applying it
     ; early would recolour the frame that was VISIBLE at read time, not
     ; the one just flipped in).
+ IFDEF DEBUG
+    ld a, VID_TL_PALETTE            ; closes phase 3 (flip/pace-wait: the
+    call vid_tl_stamp               ; .pace spin + downsample copy-out +
+ ENDIF                               ; the flip swap/NR $12 write above)
     ld a, (vidFmt)
     and 1
     call z, vid_apply_palette
+ IFDEF DEBUG
+    ld a, VID_TL_OTHER              ; closes phase 2 (palette apply, or
+    call vid_tl_stamp               ; ~0 for non-palette formats)
+ ENDIF
     ld a, (vidExitReq)
     or a
     jr nz, .restore
@@ -1479,6 +1510,14 @@ vid_run:
     call vid_stream_close
     ld a, (vidAudPoolBank)
     call bank_free
+ IFDEF DEBUG
+    ; SP14a T1: the frame-timeline report - fully torn-down playback only
+    ; (CTC parked/stub restored above, DAC parked, L2/NR state restored) -
+    ; no window/ISR constraint on printing here. Hops to VID_PAGE2 and
+    ; back (vid_tl_report's own header) - MMU7 == VID_PAGE again by the
+    ; time it returns, so the plain MMU6/7 restore below is unaffected.
+    call vid_tl_report
+ ENDIF
     ld a, (vidSvMmu6)
     nextreg NR_MMU6, a
     ld a, (vidSvMmu7)
@@ -1533,6 +1572,11 @@ vid_run:
 ; VID_F45_AUDPAD=1024 - select the right read size up front, then share
 ; the palette-check and pixel-dispatch tails.
 vid_stream_frame:
+ IFDEF DEBUG
+    ld a, VID_TL_STREAM              ; closes phase 4 (other: the tail of
+    call vid_tl_stamp                ; the previous iteration - exit-flag
+ ENDIF                                ; check, loop-back, this call's own
+                                      ; overhead) and increments vidTlFrames
     ld a, (vidFmt)
     cp 4
     jr nc, .monoaud
@@ -1570,6 +1614,10 @@ vid_stream_frame:
     sbc hl, bc
     jr nz, .err
 .nopalette:
+ IFDEF DEBUG
+    ld a, VID_TL_BLIT               ; closes phase 0 (stream: the audio+
+    call vid_tl_stamp               ; pad read, plus the palette read above
+ ENDIF                               ; for even formats)
     ld a, (vidFmt)
     cp 4
     jr nc, .monopix
@@ -1952,6 +2000,20 @@ vid_key_any:
 ; report's Step 0 table (28MHz-adjusted T-states per docs/Z80/01).
 video_ctc_isr:
     push af
+ IFDEF DEBUG
+    ; SP14a T1: timeline tick counter - A only (AF already saved above,
+    ; A is about to be reloaded fresh below regardless of this value), NO
+    ; HL/IX - the ISR's IX-exclusivity and HL-freedom invariants (this
+    ; header, above) must not be disturbed by the instrument itself.
+    ld a, (vidTlTicks)
+    inc a
+    ld (vidTlTicks), a
+    jr nz, .tlnc
+    ld a, (vidTlTicks+1)
+    inc a
+    ld (vidTlTicks+1), a
+.tlnc:
+ ENDIF
     ld a, (ix+0)
     out (DAC_PORT), a
     ld a, ixl
@@ -1995,6 +2057,18 @@ video_ctc_isr:
 ; labels). Advances by 2 per tick, not 1.
 video_ctc_isr_stereo:
     push af
+ IFDEF DEBUG
+    ; SP14a T1: timeline tick counter - see video_ctc_isr's own comment
+    ; (identical shape, A only, no HL/IX).
+    ld a, (vidTlTicks)
+    inc a
+    ld (vidTlTicks), a
+    jr nz, .tlnc
+    ld a, (vidTlTicks+1)
+    inc a
+    ld (vidTlTicks+1), a
+.tlnc:
+ ENDIF
     ld a, (ix+0)
     out (VID_DAC_LEFT), a
     ld a, (ix+1)
@@ -2101,6 +2175,100 @@ vidSvL2Back:      db 0
 msgVidBadFmt:  db "VID FMT?", 0
 msgVidMissing: db "VID FILE?", 0
 msgVidNoBank2: db "VID NOBANK2", 0
+
+; SP14a Task 1: DEBUG frame-timeline instrument state. Zeroed at every
+; vid_run entry (see the IFDEF DEBUG block right before .frameloop) -
+; a fresh measurement per playback session, not cumulative across calls.
+; The five accumulators must stay contiguous and in this exact order -
+; the entry reset (a single LDIR) and vid_tl_stamp's indexed access both
+; depend on it.
+vidTlTicks:     dw 0        ; video-ISR tick count (video_ctc_isr/_stereo
+                            ; increment this every tick, A-only - see
+                            ; either ISR's own header) - the timeline
+                            ; clock, 43-128us resolution depending on
+                            ; format (VID_RATE4_X10.../VID_RATE0_PLAY)
+vidTlLastTick:  dw 0        ; vidTlTicks snapshot at the previous stamp
+vidTlLastPhase: db 0        ; phase id (VID_TL_*, nextdaad.inc) active
+                            ; since that snapshot
+vidTlFrames:    dw 0        ; frame-loop iterations reached (vid_tl_stamp
+                            ; increments this whenever phase VID_TL_STREAM
+                            ; opens - vid_stream_frame's own entry stamp)
+vidTlAcc:       ds VID_TL_PHASES*4   ; 5 phases x 32-bit (LE) tick total
+
+; DEBUG frame-timeline instrument. In: A = new phase id (VID_TL_STREAM..
+; VID_TL_OTHER, nextdaad.inc). Snapshots vidTlTicks and accumulates the
+; delta since the PREVIOUS stamp into the accumulator for the phase that
+; was active over that interval (vidTlAcc[vidTlLastPhase]), then records
+; the new phase/tick as current. A=VID_TL_STREAM (0) also increments
+; vidTlFrames. Deliberately avoids IX (the ISR's exclusive resident play
+; pointer for the whole CTC-armed window - see either ISR's header): this
+; runs mainline, interruptible by the tick ISR at any point, so it must
+; never touch IX. Every call site (this task's report has the full list)
+; sits where nothing else is live across the call, so the AF/BC/DE/HL
+; corruption below costs nothing beyond the call itself - see the
+; report's perturbation-bound section for the per-call T-state cost.
+; Corrupts AF, BC, DE, HL.
+vid_tl_stamp:
+    push af                        ; new phase id, needed again after the
+                                    ; accumulator update below
+    ld hl, (vidTlTicks)
+    ld de, (vidTlLastTick)
+    ld (vidTlLastTick), hl
+    or a
+    sbc hl, de                     ; hl = delta ticks since previous stamp
+    ex de, hl                      ; de = delta
+    ld a, (vidTlLastPhase)
+    add a, a
+    add a, a                       ; *4 - each accumulator is 4 bytes
+    ld l, a
+    ld h, 0
+    ld bc, vidTlAcc
+    add hl, bc                     ; hl = &vidTlAcc[vidTlLastPhase]
+    ld a, e
+    add a, (hl)
+    ld (hl), a
+    inc hl
+    ld a, d
+    adc a, (hl)
+    ld (hl), a
+    jr nc, .noc
+    inc hl
+    inc (hl)
+    jr nz, .noc
+    inc hl
+    inc (hl)
+.noc:
+    pop af
+    ld (vidTlLastPhase), a
+    or a                            ; VID_TL_STREAM == 0
+    ret nz
+    ld hl, (vidTlFrames)
+    inc hl
+    ld (vidTlFrames), hl
+    ret
+
+; Hops to VID_PAGE2 to print the timeline report (rows 24-28: vid_tl_
+; report_body, the VID_PAGE2 section at the end of this file), then hops
+; back before returning - MMU7 == VID_PAGE both on entry and on return,
+; matching every other call site's expectation (the SAME data_map_page-
+; style bracket already used for MMU6, applied here to MMU7 instead,
+; since the report body needs more space than VID_PAGE's own headroom -
+; see the task report). Reached only from vid_run's .restore, strictly
+; AFTER the CTC is parked and the stub restored (that call site's own
+; comment) - no ISR can fire during the hop, honouring the SP13 T3 probe
+; postmortem's lesson ("no second-page code reachable while the ISR is
+; armed"). Uses the established push-target/ovl_map_page trampoline idiom
+; (vid_bench_trampoline, overlay0.asm; xpart_load_entry, overlay0.asm).
+; Corrupts everything.
+vid_tl_report:
+    ld hl, vid_tl_report_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page                ; nextreg NR_MMU7,VID_PAGE2 / ret ->
+                                    ; vid_tl_report_body (VID_PAGE2 below)
+vid_tl_report_ret:
+    ret                             ; MMU7 == VID_PAGE already (the body's
+                                    ; own hop back writes it before this)
  ENDIF
 
 ; ---------------------------------------------------------------------
@@ -2135,15 +2303,28 @@ msgVidNoBank2: db "VID NOBANK2", 0
 ; exists).
  IFDEF DEBUG
 
-VIDBENCH_ROW_FREAD equ 27       ; three report rows near the bottom of the
-VIDBENCH_ROW_STRM  equ 28       ; 32-row tilemap, all clear of rows 30-31
-VIDBENCH_ROW_INFO  equ 29       ; (debug.asm's reserved status lines - see
-                                 ; l2_testcard's header comment, overlay2.asm)
+VIDBENCH_ROW_STRM  equ 28       ; two report rows near the bottom of the
+VIDBENCH_ROW_INFO  equ 29       ; 32-row tilemap (debug.asm's reserved
+                                 ; status lines - l2_testcard's header
+                                 ; comment, overlay2.asm). SP14a T1: the
+                                 ; F_READ comparison pass (row 27) is
+                                 ; removed here to recover VID_PAGE
+                                 ; headroom for the frame-timeline
+                                 ; instrument (this task's report, Step 1)
+                                 ; - it was comparison-only infrastructure
+                                 ; from SP13 Task 1 (the player itself
+                                 ; always uses raw mode, T1's pinned
+                                 ; contract); the same lever SP13 T3 round
+                                 ; 3 already used once for its own space
+                                 ; crunch (that trim was later reverted
+                                 ; when T3's own probe was stripped - this
+                                 ; is a fresh, disclosed application of it,
+                                 ; not a revert).
 
 vid_bench:
-    call bank_alloc              ; one transient scratch bank, reused by
-    jr nc, .havebank              ; both passes as the MMU6 read target
-    ld b, VIDBENCH_ROW_FREAD
+    call bank_alloc              ; one transient scratch bank, the MMU6
+    jr nc, .havebank              ; read target for the raw streaming pass
+    ld b, VIDBENCH_ROW_STRM
     ld c, 0
     call dbg_at
     ld hl, msgVidNoBank
@@ -2152,21 +2333,11 @@ vid_bench:
     ld (vidBenchBank), a
     add a, a                     ; 16K bank -> its lower 8K page
     ld (vidBenchPage), a
-    ; --- pass 1: F_READ ---
-    xor a
-    ld (vidStrmMode), a
-    call vid_bench_pass
-    jr c, .freadfail
-    xor a
-    ld (vidFreadErr), a          ; 0 = ok
-    jr .pass2
-.freadfail:
-    ld (vidFreadErr), a          ; A = error (nonzero)
-.pass2:
-    ; --- pass 2: raw streaming (direct SD SPI). This ERRORS on CSpect -
-    ; its directory mode fakes the esxDOS API over host files with no SPI
-    ; card behind it, so CMD18/the token wait get no data. Expected: the
-    ; STRM row shows an error there; real hardware is the measurement. ---
+    ; raw streaming (direct SD SPI) - the player's only mechanism (T1's
+    ; pinned contract). ERRORS on CSpect - its directory mode fakes the
+    ; esxDOS API over host files with no SPI card behind it, so CMD18/the
+    ; token wait get no data. Expected: the STRM row shows an error there;
+    ; real hardware is the measurement.
     ld a, 1
     ld (vidStrmMode), a
     call vid_bench_pass
@@ -2175,9 +2346,7 @@ vid_bench:
     ld (vidStrmErr), a           ; 0 = ok
     jr .freebank
 .strmfail:
-    ld (vidStrmErr), a           ; A = error (nonzero); vidBench* still hold
-                                  ; the F_READ pass's bytes/frames/fmt if the
-                                  ; raw open failed before resetting them
+    ld (vidStrmErr), a           ; A = error (nonzero)
 .freebank:
     ld a, (vidBenchBank)
     call bank_free
@@ -2269,24 +2438,8 @@ vid_bench_compute:
     ld (vidBenchFmtBad), a
     ret
 
-; Prints the three report rows from the values stashed by the two passes.
+; Prints the two report rows from the values stashed by the streaming pass.
 vid_bench_report:
-    ; row 27: F_READ KB/s (or ERR)
-    ld b, VIDBENCH_ROW_FREAD
-    ld c, 0
-    call dbg_at
-    ld a, (vidFreadErr)
-    or a
-    jr z, .freadok
-    ld hl, msgVidFreadErr
-    call dbg_puts
-    ld a, (vidFreadErr)
-    call dbg_hex8
-    jr .strmrow
-.freadok:
-    ld hl, msgVidFread
-    call dbg_puts
-.strmrow:
     ; row 28: raw streaming KB/s (or ERR = distinct fragmentation/API code)
     ld b, VIDBENCH_ROW_STRM
     ld c, 0
@@ -2330,8 +2483,6 @@ vid_bench_report:
 
 vidBenchName:   db "001.VID", 0
 msgVidNoBank:   db "VID NOBANK", 0
-msgVidFread:    db "VID FREAD OK", 0
-msgVidFreadErr: db "VID FREAD ERR=", 0
 msgVidStrm:     db "VID STRM  OK", 0
 msgVidStrmErr:  db "VID STRM  ERR=", 0
 msgVidBytes:    db "VID BYTES=", 0
@@ -2349,10 +2500,127 @@ vidBenchElapsed: dw 0
 vidBenchKB:      dw 0
 vidBenchFmt:     db 0
 vidBenchFmtBad:  db 0
-vidFreadErr:     db 0            ; pass-1 error code, 0 = ok
-vidStrmErr:      db 0            ; pass-2 raw error code, 0 = ok
+vidStrmErr:      db 0            ; raw streaming pass error code, 0 = ok
 
  ENDIF ; DEBUG
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
+
+; ---------------------------------------------------------------------
+; VID_PAGE2 - DEBUG-only second video page (SP14a Task 1). SP13 T3's own
+; precedent (its round-3 crash-bisection probe) for a DEBUG-only overflow
+; page, reused here for the SAME reason: print-only content, reached
+; strictly AFTER playback is fully torn down (vid_tl_report's own header
+; explains the call site), never while the CTC/ISR is armed - the exact
+; property that precedent's postmortem said its own probe should have
+; had (that probe's harness carried live column-blit state across the
+; hop; this one carries nothing but already-frozen report data).
+; ---------------------------------------------------------------------
+ IFDEF DEBUG
+    MMU 7, VID_PAGE2, OVL_ORG
+
+VID_TL_ROW0 equ 24              ; rows 24-28 (this task's own report rows,
+                                 ; distinct from VIDBENCH's 28-29 above -
+                                 ; the two harnesses are never on screen at
+                                 ; the same time, so the row overlap is
+                                 ; cosmetic only, not a functional clash)
+
+; Print the 32-bit little-endian value at (HL) as 8 hex digits (two
+; dbg_hex16 calls, high word then low word) - matches VIDBENCH's own
+; "(vidBenchHi) then (vidBenchLo)" idiom above. Report-only (called
+; strictly after playback teardown - see vid_tl_report's header) so the
+; IX-avoidance constraint that applies to vid_tl_stamp/the ISRs does NOT
+; apply here. Corrupts AF, DE, HL.
+vid_tl_print32:
+    push hl
+    inc hl
+    inc hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl
+    call dbg_hex16                  ; high word
+    pop hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl
+    jp dbg_hex16                     ; low word, tail call
+
+; The frame-timeline report - rows 24-27: one phase's 32-bit tick total
+; per row (VID_TL_STREAM..VID_TL_FLIPPACE). Row 28: VID_TL_OTHER's total
+; PLUS the timeline's own grand total (vidTlTicks, the absolute tick
+; count since vid_run's entry reset) and vidTlFrames (frame-loop
+; iterations reached). Reached only via vid_tl_report's own hop (VID_PAGE,
+; above) - lands here with MMU7 == VID_PAGE2. Corrupts everything.
+vid_tl_report_body:
+    ld a, VID_TL_ROW0
+    ld (vidTlRptRow), a
+    xor a
+    ld (vidTlRptIdx), a
+.rowloop:
+    ld a, (vidTlRptRow)
+    ld b, a
+    ld c, 0
+    call dbg_at
+    ld a, (vidTlRptIdx)
+    add a, a
+    ld l, a
+    ld h, 0
+    ld de, vidTlMsgTab
+    add hl, de
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl
+    call dbg_puts
+    ld a, (vidTlRptIdx)
+    add a, a
+    add a, a
+    ld l, a
+    ld h, 0
+    ld de, vidTlAcc
+    add hl, de
+    call vid_tl_print32
+    ld a, (vidTlRptIdx)
+    cp VID_TL_OTHER
+    jr nz, .nextrow
+    ld hl, msgTlTot
+    call dbg_puts
+    ld hl, (vidTlTicks)
+    call dbg_hex16
+    ld hl, msgTlFrm
+    call dbg_puts
+    ld hl, (vidTlFrames)
+    call dbg_hex16
+    jr .done
+.nextrow:
+    ld hl, vidTlRptRow
+    inc (hl)
+    ld hl, vidTlRptIdx
+    inc (hl)
+    jr .rowloop
+.done:
+    ; hop back to VID_PAGE (vid_tl_report's own trampoline half) -
+    ; MMU7 == VID_PAGE by the time vid_tl_report_ret executes there.
+    ld hl, vid_tl_report_ret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+vidTlMsgTab:
+    dw msgTl0, msgTl1, msgTl2, msgTl3, msgTl4
+msgTl0: db "STREAM =", 0
+msgTl1: db "BLIT   =", 0
+msgTl2: db "PALETTE=", 0
+msgTl3: db "PACE   =", 0
+msgTl4: db "OTHER  =", 0
+msgTlTot: db " TOT=", 0
+msgTlFrm: db " FRM=", 0
+vidTlRptRow: db 0
+vidTlRptIdx: db 0
+
+    DISPLAY "video2 ends at ", $, " headroom ", /D, OVL_LIMIT - $
+    ASSERT $ <= OVL_LIMIT
+ ENDIF ; DEBUG
