@@ -117,19 +117,11 @@ vid_classify_ret:
 ; as vid_classify's stub above, same B-carries-CF/A convention. Corrupts
 ; AF, BC, DE, HL, IX.
 ;
-; vid_raw_setup/vid_raw_seek0 (below) stay HOT/resident, unchanged - the
-; DISK_FILEMAP call inside vid_raw_setup writes a 192-byte esxDOS buffer
-; directly via IX and returns an address in HL; keeping that logic
-; genuinely resident (no MMU6 address translation) is the conservative,
-; lowest-risk choice for the one piece of this cluster that parses a
-; multi-byte protocol result, at a modest space cost versus evicting it
-; too - see the task report. vid_stream_open_body (cold) reaches it via
-; the SAME cold-calls-hot hop vid_raw_reset_cursor already uses below.
-;
-; This hot-page stub itself is IFDEF DEBUG - its ONLY caller (vid_bench_
-; pass) is DEBUG-only (VIDBENCH); vid_open_video_body's own two attempts
-; go straight to vid_stream_open_body (same VID_PAGE2 page, no hop, no
-; stub needed), so Release never reaches this trampoline at all - space
+; vid_raw_setup/vid_raw_seek0 also moved to VID_PAGE2 (see below) - this
+; hot-page stub itself is IFDEF DEBUG - its ONLY caller (vid_bench_pass)
+; is DEBUG-only (VIDBENCH); vid_open_video_body's own two attempts go
+; straight to vid_stream_open_body (same VID_PAGE2 page, no hop, no stub
+; needed), so Release never reaches this trampoline at all - space
 ; recovered accordingly (see the task report's page arithmetic).
  IFDEF DEBUG
 vid_stream_open:
@@ -148,105 +140,6 @@ vid_stream_open_ret:
     or a
     ret
  ENDIF ; DEBUG
-
-; Raw-mode filemap capture: runs IMMEDIATELY after F_OPEN, BEFORE F_FSTAT
-; or any other video-file access (F_FSTAT alone is metadata-only, but the
-; map still walks the GLOBAL sector cache, which prior game/file I/O
-; leaves pointing mid-file). So we apply stream.asm's touched-file reset
-; unconditionally first (seek 0, read 1 byte, seek 0) to repoint the
-; cache at the file's first sector, THEN DISK_FILEMAP - the production-
-; normal case is a hot cache (T2 opens videos after arbitrary game I/O).
-; Fails (CF set, A = code) if the map came back empty
-; (VID_ERR_NOMAP) or the file needs more runs than the 32-entry buffer
-; holds (VID_ERR_FRAG - DISK_FILEMAP reported zero unused entries, i.e.
-; it filled the buffer and may have had more; the kit's defrag advice
-; applies). Records the card granularity (cardflags bit 1: 0 = byte
-; addresses, +512/block; 1 = block addresses, +1/block) as the per-block
-; step. No longer resets the run/tail cursor itself (SP14a T3 wave 1:
-; that is now vid_raw_reset_cursor's job, shared with the loop-mode
-; restart - see its own header, VID_PAGE); remain is primed by the
-; caller after F_FSTAT yields the size. Corrupts AF, BC, DE, HL, IX.
-vid_raw_setup:
-    ; stream.asm touched-file reset (global sector cache): repoint it at
-    ; the first sector before mapping, else DISK_FILEMAP walks from wherever
-    ; the last file access left it and returns a wrong card address the card
-    ; rejects. Required before EVERY map - the cache is process-wide.
-    call vid_raw_seek0           ; F_SEEK -> offset 0
-    ret c
-    ld a, (vidHandle)            ; F_READ one byte (the cache primer)
-    ld ix, vidRawResetByte
-    ld bc, 1
-    call esx_fread
-    ret c
-    call vid_raw_seek0           ; F_SEEK back -> offset 0
-    ret c
-    ld a, (vidHandle)
-    ld ix, vidFilemapBuf
-    ld de, VID_FILEMAP_ENT       ; buffer capacity in 6-byte entries
-    rst $08
-    db ESX_DISK_FILEMAP
-    ret c                        ; A = esxDOS error, CF set
-    ; DE = unused entries, HL = address past last written entry, A = flags
-    ld (vidCardFlags), a
-    ld a, e                      ; unused == 0 -> buffer was full, treat as
-    or d                          ; over-fragmented (cannot prove complete)
-    jr nz, .roomok
-    ld a, VID_ERR_FRAG
-    scf
-    ret
-.roomok:
-    ld de, vidFilemapBuf
-    or a
-    sbc hl, de                    ; HL = bytes of entries written
-    jr nz, .haveentries
-    ld a, VID_ERR_NOMAP           ; empty map: nothing to stream
-    scf
-    ret
-.haveentries:
-    add hl, de                    ; re-form the end address
-    ld (vidStrmEntryEnd), hl
-    ; Card granularity (cardflags bit 1: byte vs 512-byte-block addresses)
-    ; needs no handling: DISK_FILEMAP already returns each run's start address
-    ; in the card's native CMD18 units, and the persistent CMD18 window
-    ; streams successive blocks internally - we never compute a per-block
-    ; address, so no step is derived. (bit 0 = card id is still used, for the
-    ; CS0/CS1 select in vid_sd_cmd.)
-    or a                          ; CF clear (the run/tail cursor and remain
-    ret                           ; are reset by vid_raw_reset_cursor, via
-                                   ; vid_stream_open_body's own tail, once
-                                   ; F_FSTAT has read the size)
-
-; F_SEEK the video handle to absolute offset 0. NextZXOS F_SEEK: A=handle,
-; BCDE=offset, IXL=mode (0 = from start; IX is the register that matters,
-; L set too belt-and-braces - see overlay0.asm's xmes seek). Out: CF set =
-; esxDOS error (A = code). Corrupts AF, BC, DE, HL, IX.
-vid_raw_seek0:
-    ld bc, 0
-    ld de, 0
-    ld l, 0
-    ld ix, 0
-    ld a, (vidHandle)
-    jp esx_fseek
-
-; Hot-side trampoline: reached (via a hop) from vid_stream_open_body
-; (VID_PAGE2, cold) so vid_raw_setup can run genuinely resident (its own
-; DISK_FILEMAP call is easiest to keep correct without MMU6 address
-; translation - see vid_stream_open's own header above), then hops back.
-; B carries CF (0 = clear, 1 = set) across the hop, same convention as
-; every other trampoline in this file. Corrupts everything.
-vid_raw_setup_coldcall:
-    call vid_raw_setup
-    ld b, 0
-    jr nc, .haveresult
-    ld b, 1
-    ld c, a                      ; preserve the real error code for
-                                  ; vid_stream_open_rawsetupret's own
-                                  ; `ld a,c` (propagated to the caller)
-.haveresult:
-    ld hl, vid_stream_open_rawsetupret
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
 
 ; In: A = destination 8K page, mapped into the MMU6 window ($C000) for
 ;     the duration of this read only (the established data_save/
@@ -866,7 +759,9 @@ vidCardFlags:      db 0
 vidMfSave:         db 0
 vidStrmWinOpen:    db 0          ; 1 = an SD read window (CMD18) is open and
                                   ; persists across vid_stream_read calls
-vidRawResetByte:   db 0          ; F_READ target for the pre-map cache primer
+; vidRawResetByte moved to VID_PAGE2 with vid_raw_setup (SP14a T3 wave 2)
+; - it is F_READ's discard target (never read back), so it has no reason
+; to stay hot once its only writer does not.
 vidReadCountSaved: dw 0          ; original requested count (served calc)
 vidStrmNeed:       dw 0          ; bytes still to serve this call
 vidStrmDest:       dw 0          ; next dest address in the MMU6 window
@@ -1681,23 +1576,37 @@ vid_stream_frame:
 ; because a landing-then-relocate design costs an extra ~21T/byte LDIR
 ; pass over the WHOLE pixel payload to re-insert the per-column gaps,
 ; which alone would exceed the 60ms fmt2/3 pace period - see the task
-; report's budget table. vidColRemain16/vidBlkRemain16/vidPixRealRemain
-; are all in units that stay exact multiples of 16 bytes throughout
-; (GCD(VID_COL_STRIDE against one 512-byte SD block, VID_COL_HEIGHT) =
-; 16), so the transfer loop is one uniform 16-byte-unrolled inner block
-; for every chunk - column-complete, block-complete, or both at once -
-; with no remainder handling anywhere.
-; RESYNC PRECONDITION: this routine starts with vidBlkRemain16=0,
-; forcing a fresh 512-byte SD block boundary (token-wait) on its first
-; chunk - correct ONLY because the audio+pad and palette reads that
-; precede it (vid_stream_frame) are BOTH exact whole-block multiples:
-; VID_F2_AUDIO+VID_F23_AUDPAD=4096=8 blocks (fmt2/3) or VID_F0_AUDIO+
-; VID_F01_AUDPAD=2048=4 blocks (fmt0/1, SP13 T4), VID_PAL_BYTES=512=1
-; block either way - so vid_stream_read's own block-alignment cursor is
-; already sitting exactly on a boundary when this routine takes over -
-; no partial block is left buffered in vidStrmBlkBuf for it to miss. Any
-; FUTURE format wired through this same direct-INI path MUST keep its
-; own pre-pixel reads block-aligned, or route pixels through the
+; report's budget table.
+;
+; SP14a T3 wave 2: STATIC CASE SEQUENCE (playvid parity - tools/ZXNextOS/
+; src/c/DotCommands/playvid/video_256x240.asm and video_320x240.asm's
+; case_0..case_14, confirmed structurally identical between the two
+; formats, only the page COUNT differs, 8 vs 10). One 8K page is always
+; 32 columns x 240 real bytes = 7680 bytes = exactly fifteen 512-byte SD
+; blocks (GCD(512,240)=16 - this file's own long-standing header already
+; derived this), so the column/block misalignment pattern is a FIXED,
+; ASSEMBLE-TIME-KNOWN sequence, identical on every page of every format
+; using this path - not a per-frame runtime quantity. Each of the 15
+; per-page cases below is a straight-line sequence of calls to vid_
+; xfer16n (a shared 16-byte-group INI burst, below) with an IMMEDIATE
+; group count per segment - no vidColRemain16/vidBlkRemain16/vidPix
+; RealRemain tracking, no runtime chunk16=min() computation, no running-
+; remainder subtraction: the old dynamic bookkeeping is GONE, replaced
+; by which case executes. This also deletes the whole register-liveness
+; class the D-clobber lesson (SP13, vid_col_blockdone's documented DE
+; corruption meeting a live chunk16 in D after three clean reviews) lived
+; in - no chunk-size value is ever carried live across a vid_col_
+; newblock/vid_col_blockdone call anymore; only the destination pointer
+; (HL) is, via the same push/pop bracket the old code already used.
+;
+; RESYNC PRECONDITION (unchanged from the pre-wave-2 design): this
+; routine's first case always opens a FRESH 512-byte SD block - correct
+; ONLY because the audio+pad and palette reads that precede it (vid_
+; stream_frame) are BOTH exact whole-block multiples (see nextdaad.inc's
+; VID_F0/F2_AUDIO+AUDPAD headers) - vid_stream_read's own block-alignment
+; cursor is already sitting exactly on a boundary when this routine takes
+; over. Any FUTURE format wired through this same direct-INI path MUST
+; keep its own pre-pixel reads block-aligned, or route pixels through the
 ; buffered vid_stream_read path instead (accepting its relocate cost).
 ; In: A = starting destination 8K page (VID_PIX_PAGES23/01 consecutive
 ;     pages, by vidFmt, are streamed, incrementing after each).
@@ -1718,94 +1627,238 @@ vid_stream_pixels_col:
     ld a, (vidPxPage)
     call data_map_page
     ld hl, DATA_WINDOW
-    ld a, VID_COL_HEIGHT/16
-    ld (vidColRemain16), a
+    ; --- case 0 (SD block 0: real bytes 0..512, column boundaries at
+    ; 240 and 480 - two full 240-byte columns then 32 bytes into a third) ---
+    call vid_col_block_start
+    jp c, .colerr
     xor a
-    ld (vidBlkRemain16), a         ; force a fresh block on the first chunk
-    ld de, VID_COL_HEIGHT*VID_COL_PER_PAGE   ; 7680 real bytes/page
-    ld (vidPixRealRemain), de
-    ld c, PORT_SPI_DAT
-.next:
-    ld de, (vidPixRealRemain)
-    ld a, d
-    or e
-    jp z, .pagedone
-    ld a, (vidBlkRemain16)
-    or a
-    jr nz, .havesrc
-    push hl                        ; HL = live destination pointer -
-    call vid_col_newblock          ; vid_col_newblock corrupts it (its
-    pop hl                         ; own "Corrupts AF, BC, DE, HL" contract)
-    jr nc, .gotblock
-    push af
-    call data_restore
-    pop af
-    scf
-    ret
-.gotblock:
-    ld c, PORT_SPI_DAT             ; vid_col_newblock may have used BC
-.havesrc:
-    ; chunk16 = min(colRemain16, blkRemain16), both in units of 16 bytes
-    ld a, (vidColRemain16)
-    ld b, a
-    ld a, (vidBlkRemain16)
-    cp b
-    jr c, .usechunk
-    ld a, b
-.usechunk:
-    ld d, a                        ; d = chunk16 (kept across the transfer)
-    ld e, a                        ; e = loop counter (consumed)
-.xfer:
-    REPT 16
-       ini
-    ENDR
-    dec e
-    jr nz, .xfer
-    ld a, (vidColRemain16)
-    sub d
-    jr nz, .colok
-    ; column complete: jump the destination to the next 256-byte stride
-    ; boundary, skipping the 16-byte hardware gap (playvid's own "ld
-    ; l,a / inc h" trick, video_256x240.asm - a IS 0 here, from the sub)
+    ld b, 15
+    call vid_xfer16n
     ld l, a
     inc h
-    ld a, VID_COL_HEIGHT/16
-.colok:
-    ld (vidColRemain16), a
-    ld a, (vidBlkRemain16)
-    sub d
-    ld (vidBlkRemain16), a
-    push hl                        ; protect the destination pointer across
-                                    ; vid_col_blockdone below (it corrupts
-                                    ; HL - "Corrupts AF, BC, DE, HL")
-    jr nz, .blkok
-    push de                        ; ALSO protect D = chunk16, live and
-    call vid_col_blockdone         ; read again just below (`ld c,d`) -
-    pop de                         ; vid_col_blockdone's own `ld de,512`
-                                    ; clobbers it (ground-up review find:
-                                    ; the missed half of the HL bracket
-                                    ; above - same callee, same contract
-                                    ; line, this register wasn't covered)
-.blkok:
-    ; vidPixRealRemain -= chunk16*16 (chunk16 <= 15, so *16 <= 240, fits
-    ; a byte-doubled shift into BC without overflow)
-    ld b, 0
-    ld c, d
-    sla c
-    rl b
-    sla c
-    rl b
-    sla c
-    rl b
-    sla c
-    rl b
-    ld hl, (vidPixRealRemain)
-    or a
-    sbc hl, bc
-    ld (vidPixRealRemain), hl
-    pop hl                         ; restore the destination pointer
-    ld c, PORT_SPI_DAT
-    jp .next
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 2
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 1 (block 1: 512..1024; boundaries at 720, 960) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 13
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 4
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 2 (block 2: 1024..1536; boundaries at 1200, 1440) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 11
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 6
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 3 (block 3: 1536..2048; boundaries at 1680, 1920) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 9
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 8
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 4 (block 4: 2048..2560; boundaries at 2160, 2400) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 7
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 10
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 5 (block 5: 2560..3072; boundaries at 2640, 2880) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 5
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 12
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 6 (block 6: 3072..3584; boundaries at 3120, 3360) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 3
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 14
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 7 (block 7: 3584..4096; boundaries at 3600, 3840, 4080 -
+    ; the ONE case per page whose block spans THREE column boundaries) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 1
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 1
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 8 (block 8: 4096..4608; boundaries at 4320, 4560) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 14
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 3
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 9 (block 9: 4608..5120; boundaries at 4800, 5040) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 12
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 5
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 10 (block 10: 5120..5632; boundaries at 5280, 5520) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 10
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 7
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 11 (block 11: 5632..6144; boundaries at 5760, 6000) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 8
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 9
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 12 (block 12: 6144..6656; boundaries at 6240, 6480) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 6
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 11
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 13 (block 13: 6656..7168; boundaries at 6720, 6960) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 4
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 13
+    call vid_xfer16n
+    call vid_col_block_end
+    ; --- case 14 (block 14: 7168..7680, the page's LAST block; boundaries
+    ; at 7200, 7440 - ends exactly at the 32nd column, real byte 7680) ---
+    call vid_col_block_start
+    jp c, .colerr
+    xor a
+    ld b, 2
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    ld l, a
+    inc h
+    ld b, 15
+    call vid_xfer16n
+    call vid_col_block_end
 .pagedone:
     call data_restore
     ld hl, vidPxPage
@@ -1815,14 +1868,23 @@ vid_stream_pixels_col:
     jp nz, .pageloop
     or a
     ret
+.colerr:
+    push af
+    call data_restore
+    pop af
+    scf
+    ret
 
 ; Ensure a fresh 512-byte SD block is ready to stream (window open, run
 ; available, data token seen) - mirrors vid_stream_read_raw's own
 ; .needstream/.haveblocks/vid_win_open/vid_next_run sequence, but leaves
 ; the 512 bytes UNCONSUMED (vid_stream_pixels_col's own INI bursts read
-; them directly, split across column/block chunk boundaries). Out: CF
-; clear, vidBlkRemain16 = 32; CF set = run/window/token error (A = code).
-; Corrupts AF, BC, DE, HL.
+; them directly, split across the case sequence's own segment
+; boundaries). Out: CF clear (a fresh block is ready - SP14a T3 wave 2:
+; no longer stamps vidBlkRemain16=32, since the case sequence tracks
+; block position at ASSEMBLE time now, not via that runtime cell - see
+; vid_stream_pixels_col's own header); CF set = run/window/token error
+; (A = code). Corrupts AF, BC, DE, HL.
 vid_col_newblock:
     ld hl, (vidStrmRunBlocks)
     ld a, h
@@ -1848,9 +1910,7 @@ vid_col_newblock:
     scf
     ret
 .ok:
-    ld a, 32                       ; 512/16
-    ld (vidBlkRemain16), a
-    or a
+    or a                           ; CF clear
     ret
 
 ; A completed 512-byte SD block's bookkeeping (CRC skip, run-block
@@ -1866,6 +1926,49 @@ vid_col_blockdone:
     ld (vidStrmRunBlocks), hl
     ld de, 512
     jp vid_remain_sub              ; tail call
+
+; SP14a T3 wave 2: shared static-case transfer primitive - vid_stream_
+; pixels_col's own case_0..case_14 sequence (above) calls this with an
+; IMMEDIATE B (group count, 1-15) per segment instead of the old runtime
+; chunk16=min(colRemain16,blkRemain16) computation. In: B = group count,
+; C = PORT_SPI_DAT, HL = destination. Out: HL advanced by B*16 bytes.
+; Corrupts AF, B.
+vid_xfer16n:
+    REPT 16
+        ini
+    ENDR
+    djnz vid_xfer16n
+    ret
+
+; Shared per-case-block prologue (SP14a T3 wave 2 - byte-budget lever):
+; opens the next SD block (vid_col_newblock's own token-wait) and readies
+; C=PORT_SPI_DAT, folding the push/pop-HL protection bracket and the
+; post-newblock BC reload into ONE call site per case instead of five
+; inline instructions each. In: HL = live destination pointer (preserved
+; across the call). Out: CF clear, C=PORT_SPI_DAT, HL unchanged, ready
+; for the caller's own vid_xfer16n bursts; CF set = error (A = code, HL
+; still unchanged - vid_stream_pixels_col's own .colerr tail does not
+; need it). Corrupts AF, BC, DE.
+vid_col_block_start:
+    push hl
+    call vid_col_newblock
+    pop hl
+    ret c                          ; error: CF/A propagate, HL restored
+    ld c, PORT_SPI_DAT             ; vid_col_newblock may have used BC
+    ret                            ; CF clear (vid_col_newblock's own)
+
+; Shared per-case-block epilogue: the same push/pop-HL protection bracket
+; around vid_col_blockdone (CRC-skip + run-block-count + remain-subtract)
+; that vid_col_block_start's own header describes, folded into one call
+; site per case. In/Out: HL preserved across the call (the ONLY register
+; kept live across a block boundary now - the wave 2 header's own "no
+; chunk-size value ever carried live across this call" design property).
+; Corrupts AF, BC, DE.
+vid_col_block_end:
+    push hl
+    call vid_col_blockdone
+    pop hl
+    ret
 
 ; Apply the 512-byte 9-bit palette just landed at vidAudPoolPage+1
 ; (palette formats only: 0, 2, 4) to Layer 2. Called from vid_run's flip
@@ -2163,9 +2266,10 @@ vidAudReadLen:    dw 0             ; this frame's audio+pad read size
                                     ; (mono VID_F4_AUDIO+VID_F45_AUDPAD or
                                     ; fmt0/1/2/3 VID_F0/2_AUDIO+VID_F01/23_
                                     ; AUDPAD)
-vidColRemain16:   db 0             ; vid_stream_pixels_col: column-major
-vidBlkRemain16:   db 0             ; blit state, units of 16 bytes (see
-vidPixRealRemain: dw 0             ; that routine's own header)
+; vidColRemain16/vidBlkRemain16/vidPixRealRemain removed (SP14a T3 wave
+; 2) - the static case sequence (vid_stream_pixels_col) tracks column/
+; block/remaining-byte position at ASSEMBLE time now (which case is
+; executing), not via these runtime cells.
 ; Shared mono/stereo play buffer, sized for the LARGEST need among all
 ; three groups: VID_F2_PLAY_BYTES=1244 (fmt2/3 - 622 pairs, 3:1-
 ; downsampled - VID_STEREO_DOWNSAMPLE header) is still the largest even
@@ -2776,15 +2880,16 @@ vidExtVid: db ".VID", 0
 ; holds open for this whole cluster's execution. vidFstatBuf is VID_
 ; PAGE2-local (this page IS what MMU7 shows while this code runs), so
 ; F_FSTAT's own IX-target write needs no translation. vid_raw_setup
-; (hot, VID_PAGE) is reached via the cold-calls-hot hop established
-; there. Corrupts AF, BC, DE, HL, IX.
+; (below, also VID_PAGE2 now - SP14a T3 wave 2's own byte-budget pass
+; moved it here too, reusing this SAME already-open MMU6 bracket rather
+; than the earlier cold-calls-hot hop) is a plain same-page call.
 ; NOTE: sjasmplus scopes a dot-local label (.foo) to the nearest PRECEDING
 ; global (non-dot) label - since this routine's own hop-out/hop-back
-; needs intervening global labels (vid_stream_open_rawsetupret, vid_
-; stream_open_resetret - both referenced from OTHER routines, so they
-; must be global), the shared exit points below (fail/fstat/openfail) are
-; given explicit global names instead of dot-locals, so every jr/jp to
-; them resolves regardless of which global label precedes the jump site.
+; needs an intervening global label (vid_stream_open_resetret, below -
+; referenced from OTHER routines, so it must be global), the shared exit
+; points below (fail/fstat/openfail) are given explicit global names
+; instead of dot-locals, so every jr/jp to them resolves regardless of
+; which global label precedes the jump site. Corrupts AF, BC, DE, HL, IX.
 vid_stream_open_body:
     ld a, $FF
     ld (vidHandle+DATA_WINDOW-OVL_ORG), a
@@ -2801,16 +2906,8 @@ vid_stream_open_body:
     ld a, (vidStrmMode+DATA_WINDOW-OVL_ORG)
     or a
     jr z, vid_stream_open_fstat
-    ld hl, vid_raw_setup_coldcall ; raw: capture + validate the filemap
-    push hl                       ; NOW (vid_raw_setup stays hot - see
-    ld a, VID_PAGE                ; vid_stream_open's own header, VID_PAGE)
-    jp ovl_map_page
-vid_stream_open_rawsetupret:
-    ld a, b
-    or a
-    jr z, vid_stream_open_fstat
-    ld a, c                       ; restore the real error code
-    jp vid_stream_open_openfail
+    call vid_raw_setup            ; raw: capture + validate the filemap
+    jr c, vid_stream_open_openfail ; NOW - same page, plain call
 vid_stream_open_fstat:
     ld a, (vidHandle+DATA_WINDOW-OVL_ORG) ; F_FSTAT (both modes) - legal
     ld ix, vidFstatBuf                     ; AFTER FILEMAP, before opening
@@ -2846,6 +2943,107 @@ vid_stream_open_openfail:
 vid_stream_open_fail:
     scf
     ret
+
+; Raw-mode filemap capture: runs IMMEDIATELY after F_OPEN, BEFORE F_FSTAT
+; or any other video-file access (F_FSTAT alone is metadata-only, but the
+; map still walks the GLOBAL sector cache, which prior game/file I/O
+; leaves pointing mid-file). So we apply stream.asm's touched-file reset
+; unconditionally first (seek 0, read 1 byte, seek 0) to repoint the
+; cache at the file's first sector, THEN DISK_FILEMAP - the production-
+; normal case is a hot cache (T2 opens videos after arbitrary game I/O).
+; Fails (CF set, A = code) if the map came back empty (VID_ERR_NOMAP) or
+; the file needs more runs than the 32-entry buffer holds (VID_ERR_FRAG -
+; DISK_FILEMAP reported zero unused entries, i.e. it filled the buffer
+; and may have had more; the kit's defrag advice applies). Records the
+; card granularity (cardflags bit 1: 0 = byte addresses, +512/block; 1 =
+; block addresses, +1/block) as the per-block step. Does not reset the
+; run/tail cursor itself (that is vid_raw_reset_cursor's job, shared with
+; the loop-mode restart - VID_PAGE); remain is primed by the caller after
+; F_FSTAT yields the size.
+;
+; SP14a T3 wave 2: COLD (VID_PAGE2, moved here from VID_PAGE - reached by
+; a plain same-page call from vid_stream_open_body's raw-mode branch,
+; above; this was kept hot through wave 1 for a conservative first pass,
+; then moved once wave 2's own case-unroll needed the extra headroom -
+; the DISK_FILEMAP call's multi-byte IX-target write and its HL address
+; return use the SAME MMU6 data-window translation (DATA_WINDOW-OVL_ORG)
+; vid_stream_open_body already relies on, held open by vid_open_video_
+; body for this whole cluster's execution - no new technique, no new
+; risk class). vidHandle/vidCardFlags/vidStrmEntryEnd/vidFilemapBuf stay
+; VID_PAGE-resident (hot code needs them - vid_strm_start/vid_next_run);
+; vidRawResetByte is VID_PAGE2-local (never read back, no hot reader).
+; Corrupts AF, BC, DE, HL, IX.
+vid_raw_setup:
+    ; stream.asm touched-file reset (global sector cache): repoint it at
+    ; the first sector before mapping, else DISK_FILEMAP walks from wherever
+    ; the last file access left it and returns a wrong card address the card
+    ; rejects. Required before EVERY map - the cache is process-wide.
+    call vid_raw_seek0           ; F_SEEK -> offset 0
+    ret c
+    ld a, (vidHandle+DATA_WINDOW-OVL_ORG) ; F_READ one byte (cache primer)
+    ld ix, vidRawResetByte
+    ld bc, 1
+    call esx_fread
+    ret c
+    call vid_raw_seek0           ; F_SEEK back -> offset 0
+    ret c
+    ld a, (vidHandle+DATA_WINDOW-OVL_ORG)
+    ld ix, vidFilemapBuf+DATA_WINDOW-OVL_ORG ; hot-resident target - see
+    ld de, VID_FILEMAP_ENT                    ; vid_next_run
+    rst $08
+    db ESX_DISK_FILEMAP
+    ret c                        ; A = esxDOS error, CF set
+    ; DE = unused entries, HL = address past last written entry (both in
+    ; the MMU6-translated space, since IX was translated too), A = flags
+    ld (vidCardFlags+DATA_WINDOW-OVL_ORG), a
+    ld a, e                      ; unused == 0 -> buffer was full, treat as
+    or d                          ; over-fragmented (cannot prove complete)
+    jr nz, .roomok
+    ld a, VID_ERR_FRAG
+    scf
+    ret
+.roomok:
+    ld de, vidFilemapBuf+DATA_WINDOW-OVL_ORG
+    or a
+    sbc hl, de                    ; HL = bytes of entries written (the
+                                   ; translation cancels in the difference)
+    jr nz, .haveentries
+    ld a, VID_ERR_NOMAP           ; empty map: nothing to stream
+    scf
+    ret
+.haveentries:
+    add hl, de                    ; re-form the end address (still in the
+                                   ; translated space, since DE is too)
+    ld de, OVL_ORG - DATA_WINDOW  ; convert back to VID_PAGE's own real
+    add hl, de                    ; address space - vid_next_run (hot)
+                                   ; compares this directly against vidStrm
+                                   ; EntryPtr, which vid_raw_reset_cursor
+                                   ; always sets as a real address (it runs
+                                   ; genuinely resident on VID_PAGE)
+    ld (vidStrmEntryEnd+DATA_WINDOW-OVL_ORG), hl
+    ; Card granularity (cardflags bit 1: byte vs 512-byte-block addresses)
+    ; needs no handling: DISK_FILEMAP already returns each run's start address
+    ; in the card's native CMD18 units, and the persistent CMD18 window
+    ; streams successive blocks internally - we never compute a per-block
+    ; address, so no step is derived. (bit 0 = card id is still used, for the
+    ; CS0/CS1 select in vid_sd_cmd.)
+    or a                          ; CF clear
+    ret
+
+; F_SEEK the video handle to absolute offset 0. NextZXOS F_SEEK: A=handle,
+; BCDE=offset, IXL=mode (0 = from start; IX is the register that matters,
+; L set too belt-and-braces - see overlay0.asm's xmes seek). Out: CF set =
+; esxDOS error (A = code). Corrupts AF, BC, DE, HL, IX.
+vid_raw_seek0:
+    ld bc, 0
+    ld de, 0
+    ld l, 0
+    ld ix, 0
+    ld a, (vidHandle+DATA_WINDOW-OVL_ORG)
+    jp esx_fseek
+
+vidRawResetByte: db 0             ; F_READ target for the pre-map cache
+                                   ; primer (discarded, never read back)
 
 ; Hot-caller wrapper (vid_bench_pass only - see vid_stream_open's own hot
 ; stub, VID_PAGE, IFDEF DEBUG there too - mirrored here). Corrupts AF,
