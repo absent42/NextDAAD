@@ -274,6 +274,225 @@ kb_char:
     ld a, d
     ret
 
+ IFDEF DEBUG
+; KTEST diagnostic (EXTERN 0 6, tests/test.dsf's KTEST verb - see
+; overlay0.asm's extVec vector 6 / ktest_trampoline; DEBUG-only, no
+; footprint in Release). Called once per engine step by the DSF's own
+; PROCESS/REDO loop (PRO 9); draws:
+;   - the 8 raw keyboard half-row bytes as binary (pressed=1, the TRUE
+;     unmasked electrical state - unlike kb_raw's own masking, which
+;     hides a held shift key's bit from its own row);
+;   - the kb_raw-decoded matrix code and shift state (C/S bits);
+;   - the kb_char-decoded character (hex + glyph if printable) - this
+;     exercises the REAL production settle/repeat/decode path, so a
+;     brief tap may show 0 until the 2-frame settle catches it, exactly
+;     as real typing would;
+;   - the capsLock state.
+; All rendered natively via the resident dbg_* console (DAAD's own
+; PRINT is decimal-only and cannot show binary/hex/glyphs). Exit:
+; flags+130 is set to 1 when TRUE VIDEO (CAPS+3, matrix 17) is the
+; currently-held key, 0 otherwise - the DSF checks this every pass and
+; DONEs on nonzero. TRUE VIDEO is a deliberate two-key chord unlikely
+; to be hit while sweeping single keys/combos (named as a safe exit
+; choice in the owning task brief); it is excluded from live sweep by
+; this choice, same trade-off the brief accepted.
+;
+; Register-liveness note (doc-13 rubric 1): dbg_putc/dbg_puts/dbg_hex8
+; corrupt AF, BC, DE, HL (dbg_putc's own 8-row glyph copy uses B as an
+; unconditional djnz counter). Every loop/state value this routine
+; needs across a dbg_* call is therefore kept in memory (ktestIdx/
+; ktestRowSel/ktestBits/ktestMatrix/ktestShift/ktestChar), never in a
+; register held live across such a call. Corrupts everything.
+ktest_poll:
+    call dbg_cls
+    ld b, 0
+    call dbg_at0
+    ld hl, ktestTitle
+    call dbg_puts
+    xor a
+    ld (ktestIdx), a
+.rowloop:
+    ld a, (ktestIdx)
+    cp 8
+    jp z, .rowsdone
+    add a, 2                     ; screen row = 2 + index
+    ld b, a
+    call dbg_at0
+    ld a, (ktestIdx)
+    ld e, a
+    ld d, 0
+    ld hl, kbRows
+    add hl, de
+    ld a, (hl)
+    ld (ktestRowSel), a
+    call dbg_hex8
+    ld a, ' '
+    call dbg_putc
+    ld a, (ktestIdx)
+    add a, a                     ; *2: word-table index
+    ld e, a
+    ld d, 0
+    ld hl, ktestRowNamePtrs
+    add hl, de
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl
+    call dbg_puts
+    ld a, ' '
+    call dbg_putc
+    ld a, ':'
+    call dbg_putc
+    ld a, ' '
+    call dbg_putc
+    ld a, (ktestRowSel)
+    ld b, a
+    ld c, $FE
+    in a, (c)
+    cpl
+    and $1F
+    ld (ktestBits), a
+    ld a, (ktestBits)
+    bit 0, a
+    ld a, '0'
+    jr z, .b0
+    ld a, '1'
+.b0: call dbg_putc
+    ld a, (ktestBits)
+    bit 1, a
+    ld a, '0'
+    jr z, .b1
+    ld a, '1'
+.b1: call dbg_putc
+    ld a, (ktestBits)
+    bit 2, a
+    ld a, '0'
+    jr z, .b2
+    ld a, '1'
+.b2: call dbg_putc
+    ld a, (ktestBits)
+    bit 3, a
+    ld a, '0'
+    jr z, .b3
+    ld a, '1'
+.b3: call dbg_putc
+    ld a, (ktestBits)
+    bit 4, a
+    ld a, '0'
+    jr z, .b4
+    ld a, '1'
+.b4: call dbg_putc
+    ld a, (ktestIdx)
+    inc a
+    ld (ktestIdx), a
+    jp .rowloop
+.rowsdone:
+    ; --- decoded matrix code + shift state (row 11) ---
+    ld b, 11
+    call dbg_at0
+    ld hl, ktestMatrixLbl
+    call dbg_puts
+    call kb_raw                  ; A = matrix ($FF none), B = shift
+    ld (ktestMatrix), a
+    ld a, b
+    ld (ktestShift), a
+    ld a, (ktestMatrix)
+    call dbg_hex8
+    ld a, ' '
+    call dbg_putc
+    ld hl, ktestShiftLbl
+    call dbg_puts
+    ld a, (ktestShift)
+    call dbg_hex8
+    ld hl, ktestCLbl
+    call dbg_puts
+    ld a, (ktestShift)
+    bit 0, a
+    ld a, '0'
+    jr z, .cz
+    ld a, '1'
+.cz: call dbg_putc
+    ld hl, ktestSLbl
+    call dbg_puts
+    ld a, (ktestShift)
+    bit 1, a
+    ld a, '0'
+    jr z, .sz
+    ld a, '1'
+.sz: call dbg_putc
+    ; --- decoded character + caps-lock state (row 12) ---
+    ld b, 12
+    call dbg_at0
+    ld hl, ktestCharLbl
+    call dbg_puts
+    call kb_char                 ; A = decoded char, or 0
+    ld (ktestChar), a
+    call dbg_hex8
+    ld a, ' '
+    call dbg_putc
+    ld a, "'"
+    call dbg_putc
+    ld a, (ktestChar)
+    cp ' '
+    jr c, .noglyph
+    cp $7F
+    jr nc, .noglyph
+    call dbg_putc
+    jr .glyphdone
+.noglyph:
+    ld a, '.'
+    call dbg_putc
+.glyphdone:
+    ld a, "'"
+    call dbg_putc
+    ld hl, ktestLockLbl
+    call dbg_puts
+    ld a, (capsLock)
+    add a, '0'
+    call dbg_putc
+    ; --- exit check: TRUE VIDEO (CAPS+3, matrix 17) ---
+    xor a
+    ld (flags+130), a
+    ld a, (ktestMatrix)
+    cp 17
+    jr nz, .noexit
+    ld a, (ktestShift)
+    and 3
+    cp 1                          ; bit0 (caps) set, bit1 (sym) clear
+    jr nz, .noexit
+    ld a, 1
+    ld (flags+130), a
+.noexit:
+    ret
+
+ktestIdx:      db 0
+ktestRowSel:   db 0
+ktestBits:     db 0
+ktestMatrix:   db 0
+ktestShift:    db 0
+ktestChar:     db 0
+
+ktestTitle:    db "KTEST keyboard matrix/decode - TRUE VIDEO to exit", 0
+ktestMatrixLbl: db "MATRIX=", 0
+ktestShiftLbl:  db " SHIFT=", 0
+ktestCLbl:      db " C=", 0
+ktestSLbl:      db " S=", 0
+ktestCharLbl:   db "CHAR=", 0
+ktestLockLbl:   db "  CAPSLOCK=", 0
+
+ktestRowNamePtrs:
+    dw ktestName0, ktestName1, ktestName2, ktestName3
+    dw ktestName4, ktestName5, ktestName6, ktestName7
+ktestName0: db "CZXCV", 0        ; $FE: bit0..4 = CAPS,Z,X,C,V
+ktestName1: db "ASDFG", 0        ; $FD: A,S,D,F,G
+ktestName2: db "QWERT", 0        ; $FB: Q,W,E,R,T
+ktestName3: db "12345", 0        ; $F7: 1,2,3,4,5
+ktestName4: db "09876", 0        ; $EF: 0,9,8,7,6
+ktestName5: db "POIUY", 0        ; $DF: P,O,I,U,Y
+ktestName6: db "ELKJH", 0        ; $BF: ENTER,L,K,J,H
+ktestName7: db "_SMNB", 0        ; $7F: SPACE,SYM,M,N,B
+ ENDIF
+
 ; --- input line editor ---
 ; Edits inpLine in the current window from the current cursor position.
 ; Echo goes through prn_char with moreLock held (input never pages).

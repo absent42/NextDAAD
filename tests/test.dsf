@@ -203,6 +203,12 @@ VS7   98      verb
 ; suspects. Both 4 characters - no 5-char truncation collision.
 VS2F  99      verb
 VS2G  100     verb
+; Silicon keyboard-defect task: KTEST is the owner's hardware-sweep
+; instrument for the keyboard matrix/decode fix (see PRO 9 below and
+; overlay1.asm's ktest_poll / overlay0.asm's EXTERN vector 6). DEBUG
+; build only - Release's EXTERN 0 6 is ext_stub (silent no-op, blank
+; screen, no crash); this verb is not meant to ship.
+KTEST 101     verb
 
 ;                       Verbs
 GET     20      verb
@@ -642,6 +648,19 @@ $pictureOK
                 PROCESS 7
                 DONE
 
+; Silicon keyboard-defect task owner verb: KTEST is the hardware-sweep
+; eye leg for the keyboard matrix decode fix (src/input.asm resident
+; state, src/overlay1.asm kb_raw/kb_char, the CAPS+2 caps-lock toggle).
+; No submission-key drain is needed here (unlike MTEST): KTEST's exit
+; trigger is a SPECIFIC chord (TRUE VIDEO, CAPS+3), not "any key", so
+; the stale ENTER that just submitted the "ktest" command line cannot
+; false-trigger it. PROCESS 9 (see its own table, after PRO 8 below)
+; runs the poll/draw/exit-check loop; CLS restores a normal text
+; screen once it returns.
+> KTEST   _     PROCESS 9
+                CLS
+                DONE
+
 ; SP14a Task 4 owner verbs: the native NXV player core eye/ear legs for
 ; profiles N4 (-Vid staged sd\005.VID, 320x120 mode-1 letterbox, 25fps -
 ; see build-tests.ps1's -Vid header and docs\superpowers\specs\2026-07-
@@ -1011,4 +1030,36 @@ $initLoop
 ; sidesteps this entirely: PRO 7's own two entries (poll+exit-check,
 ; then pause+redo) are exactly as they were before this addendum and
 ; are never revisited by the drain once it has finished.
+;------------------------------------------------------------------------------
+/PRO 9 ; KTEST polling loop (silicon keyboard-defect task). Called once
+; per KTEST invocation via PRO 5's `PROCESS 9`. Same REDO-restarts-
+; this-table-only reasoning as PRO 7/PRO 8 above (h_redo restarts the
+; top of the process stack's own table; while this frame is live via
+; PROCESS, not yet returned, that is always THIS table's own first
+; entry - it cannot fall back into PRO 5).
+;
+; Entry 1 (poll + draw + exit-check): EXTERN 0 6 (action, argc 2)
+; dispatches to ktest_poll (overlay1.asm) via extVec vector 6
+; (overlay0.asm's ktest_trampoline) - DEBUG-only; Release's vector 6 is
+; ext_stub, a silent no-op, so this verb just leaves a blank diagnostic
+; area in a Release build rather than crashing. ktest_poll draws the
+; whole diagnostic screen itself (native dbg_* console calls - DAAD's
+; own PRINT is decimal-only and cannot show binary/hex/glyphs) and
+; sets flags+130 to 1 exactly when TRUE VIDEO (CAPS+3) is currently
+; held. NOTZERO 130 (CONDITION, argc 0) passes when that flag is set,
+; falling through to DONE, which unwinds PROCESS 9 and lets KTEST's
+; own CLS/DONE (PRO 5) follow. On flags+130 == 0, NOTZERO's failure
+; ABORTS this entry (DAAD's normal condition-fail-continues-to-next-
+; entry rule) and the table scan moves to entry 2.
+;
+; Entry 2 (re-poll trigger): reached only on entry 1's false NOTZERO.
+; PAUSE 1 paces the loop to one frame so it does not spin hot against
+; the hardware poll; REDO then restarts entry 1 for the next poll/draw
+; pass.
+> _       _     EXTERN 0 6
+                NOTZERO 130
+                DONE
+
+> _       _     PAUSE 1
+                REDO
 /END
