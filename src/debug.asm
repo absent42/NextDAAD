@@ -219,6 +219,30 @@ dbg_hist_row:
     djnz .loop
     ret
 
+; SP14c gate follow-up (OV0-3 + OBJ1 measurement instrument): session-
+; cumulative 16-bit iteration counter across the five deferred obj-
+; table scan-hoist sites - obj_find_pass/h_dropall/owf_core/
+; weight_total (overlay0.asm, OV0-3) and list_at's two passes
+; (objname.asm, the OBJ1 site). Every site calls this unconditionally
+; (Release gets the no-op stub below, matching this file's own
+; dbg_at/dbg_puts convention - no IFDEF DEBUG needed at any of the six
+; call sites). Not auto-reset per turn: a resident per-turn zero hook
+; would need touching engine.asm's own turn loop, outside this task's
+; authorized scope (list_at only) - the owner instead reads
+; objScanCount before and after one command of interest and takes the
+; difference. Peek address: grep OBJSCANCOUNT in the build map.
+; Corrupts HL, F only - every call site's own liveness was checked
+; against exactly that (see the report).
+objscan_tick:
+    ld hl, objScanCount
+    inc (hl)
+    ret nz
+    inc hl
+    inc (hl)
+    ret
+
+objScanCount: dw 0
+
 dbg_space:
     ld a, ' '
     jp dbg_putc
@@ -813,6 +837,7 @@ dbg_puts:
 dbg_hex8:
 dbg_hex16:
 dbg_space:
+objscan_tick:
     ret
 
 ; Release-build version stamp. boot_banner is already called

@@ -100,6 +100,7 @@ list_at:
     ld a, (numObj)
     cp b
     jr z, .counted
+    call objscan_tick           ; SP14c gate follow-up: OBJ1 measurement
     ld a, b
     push bc
     push de
@@ -148,6 +149,7 @@ list_at:
     ld a, (numObj)
     cp b
     jr z, .done
+    call objscan_tick           ; SP14c gate follow-up: OBJ1 measurement
     ld a, b
     push bc
     push de
