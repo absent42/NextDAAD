@@ -430,6 +430,39 @@ eng_ptr_abs:
     ld a, (rdPage)
     sub DDB_PAGE_FIRST
     ld d, a
+ IFDEF DEBUG
+    ; SP14c E6 histogram instrument (opus gate ruling: DEFER-TO-
+    ; MEASUREMENT - the *2000 loop optimization itself is NOT applied;
+    ; only this counter, to let the owner measure the real a-value
+    ; distribution before any resident change lands). Bucket[a] counts
+    ; condact dispatches with page-crossing index a (0-7, D above),
+    ; saturating at 255 so a wrap can never masquerade as "rare".
+    ; Preserves AF/HL/DE exactly (push/pop brackets) - zero behavioural
+    ; effect on the function. Read-out: no debug.asm UI hook added
+    ; (out of this batch's module scope) - peek the 8 bytes at label
+    ; ENG_PTR_ABS_HIST (see build\nextdaad.map after assembly) in
+    ; CSpect's or DeZog's memory viewer during the smoke leg. bucket[0]
+    ; = a=0 count, bucket[1] = a=1, ... bucket[7] = a=7. Decision rule
+    ; (gate's): endorse E6 only if bucket[0] dominates AND nonzero mass
+    ; sits at bucket[2..7]; if bucket[1] dominates instead, REJECT E6
+    ; (its non-zero-a path would then regress the common case by
+    ; ~10T/condact for no real page-crossing win).
+    push af
+    push hl
+    push de
+    ld e, d                     ; E = page index (0-7); D unchanged,
+    ld d, 0                     ; restored below by pop de regardless
+    ld hl, eng_ptr_abs_hist
+    add hl, de
+    ld a, (hl)
+    cp 255
+    jr z, .e6hist_sat
+    inc (hl)
+.e6hist_sat:
+    pop de
+    pop hl
+    pop af
+ ENDIF
     ld hl, (rdPtr)
     ld a, h
     sub high DATA_WINDOW        ; H -= $C0
@@ -446,6 +479,17 @@ eng_ptr_abs:
     ld de, DDB_ZX_BASE
     add hl, de
     ret
+
+ IFDEF DEBUG
+; SP14c E6 histogram data (see eng_ptr_abs above). Deliberately placed
+; HERE - before this file's ALIGN 256/flags boundary - not after: the
+; SP14c T1 batch freed slack ahead of that boundary, and landing this
+; DEBUG-only diagnostic table there spends slack that is otherwise
+; invisible to the plan's tracked tail headroom, rather than the
+; scarcer post-flags RESIDENT_LIMIT budget. 8 bytes; verified (see
+; report) not to cross the 256-byte alignment threshold.
+eng_ptr_abs_hist: ds 8
+ ENDIF
 
 ; IX -> top stack record. Corrupts AF, DE, HL.
 eng_top_ix:
