@@ -1987,21 +1987,30 @@ vid_stream_pixels_gap:
     jr nz, .fastremloop
 .fastxferdone:
     ld (vidGapDest), hl
-    ; owner fix (profiling-instrument postmortem): the BLIT stamp that
-    ; used to sit HERE is removed - it clobbered C (vid_tl_stamp's own
-    ; documented "Corrupts AF, BC, DE, HL") in the exact window where
-    ; C=PORT_SPI_DAT is live for the vid_col_block_end call three lines
-    ; below (vid_col_blockdone's own contract: "In: C = PORT_SPI_DAT").
-    ; With C clobbered, that call's `in a,(c)` CRC-skip read the WRONG
-    ; port, never advancing the SD interface's own byte position by the
-    ; 2 CRC bytes it owed it - the next block's token-wait then looked
-    ; for $FE two bytes off from where the card actually put it, timed
-    ; out, and surfaced as ERR=FD/BYT=F3 (whatever garbage sat at the
-    ; wrong offset) - exactly the owner's observed decode. A SINGLE
-    ; stamp now lives at .blkopen (below), reached AFTER this call on
-    ; both paths, where C is dead by construction (verified: nothing
-    ; from .blkopen through the loop's own top touches B or C at all
-    ; until .haveblk/.fastfit's own fresh `ld c,PORT_SPI_DAT`).
+ IFDEF DEBUG
+    ; owner fix (GT-inflation postmortem): the PREVIOUS fix for the C-
+    ; clobber bug (moving this stamp to .blkopen, after the conditional
+    ; vid_col_block_end call) was correct for safety but WRONG for
+    ; measurement - it widened the GT window to also cover this whole
+    ; column's post-transfer bookkeeping and, on a block-closing column,
+    ; the entire CRC-skip/run-accounting call - none of which is "inside
+    ; the transfer primitives". That is what doubled the measured GT
+    ; rate (owner decode: 31.7T/byte vs the true 16T/byte floor), not
+    ; the ini bursts themselves (re-verified: this file's transfer
+    ; primitives are pure unrolled `ini`, no in a,(c)/ld (hl),a anywhere
+    ; - grepped clean). Fix: stamp back to VID_TL_BLIT HERE, immediately
+    ; after the transfer's own HL is stored (tight window), with C
+    ; explicitly protected across the call - C=PORT_SPI_DAT is live
+    ; here too (set at .fastfit's own entry, still needed by the
+    ; possible vid_col_block_end call below) but vid_tl_stamp's
+    ; "Corrupts AF, BC, DE, HL" no longer reaches it, since it is
+    ; stashed/restored around the call instead of the stamp being
+    ; relocated past the read.
+    push bc
+    ld a, VID_TL_BLIT
+    call vid_tl_stamp
+    pop bc
+ ENDIF
     xor a
     ld (vidGapColLeft), a              ; whole column consumed in one go
     ld a, (vidGapBlkLeft)
@@ -2054,15 +2063,23 @@ vid_stream_pixels_gap:
     dec e
     jr nz, .xfer8n
     ; HL now advanced by (original B)*8 bytes; B/C/E garbage - same
-    ; contract vid_xfer8n's own removed header documented.
+    ; contract vid_xfer8n's own removed header documented (C is not
+    ; actually touched by `ini` itself - the "garbage" label is this
+    ; contract's own conservative default, not a real corruption; kept
+    ; as-is rather than tightened, since the caller-side fix below does
+    ; not rely on it either way).
     ld (vidGapDest), hl
-    ; owner fix (profiling-instrument postmortem): the BLIT stamp that
-    ; used to sit HERE is removed - same bug, same reasoning as .fast
-    ; xferdone's own removed stamp above (C=PORT_SPI_DAT live for the
-    ; vid_col_block_end call two lines below; the classic-class register
-    ; hazard reappearing in this loop's own instrument code, not its
-    ; transfer code - see that call site's own comment for the full
-    ; decode). The .blkopen stamp below covers this path too.
+ IFDEF DEBUG
+    ; owner fix (GT-inflation postmortem): same retiming as .fastxfer
+    ; done's own fix above - stamp tightly, right after the transfer's
+    ; HL is stored, with C explicitly protected across the call (C=
+    ; PORT_SPI_DAT, set at .havechunk's own entry, needed by the
+    ; possible vid_col_block_end call below).
+    push bc
+    ld a, VID_TL_BLIT
+    call vid_tl_stamp
+    pop bc
+ ENDIF
     ld a, (vidGapColLeft)
     ld hl, vidGapChunk
     sub (hl)
@@ -2074,22 +2091,14 @@ vid_stream_pixels_gap:
     ld hl, (vidGapDest)
     call vid_col_block_end           ; preserves HL; CRC skip + bookkeeping
 .blkopen:
+    ; owner fix (GT-inflation postmortem): the stamp that used to sit
+    ; HERE is removed - it is now redundant (and was the direct cause
+    ; of the GT-window widening bug): both paths above stamp VID_TL_
+    ; BLIT tightly, right after their own transfer's HL is stored, with
+    ; C protected via push/pop bc instead of relocating the stamp past
+    ; the conditional vid_col_block_end call. Phase is already BLIT by
+    ; the time control reaches here on both paths - nothing left to do.
     ld a, (vidGapColLeft)
- IFDEF DEBUG
-    ; owner profiling round (postmortem fix): stamp back to VID_TL_BLIT
-    ; ONCE here - reached AFTER any conditional vid_col_block_end call
-    ; on BOTH the fast and slow paths (the two per-path stamps above
-    ; were removed for exactly this reason), so C is always dead by
-    ; construction at this point (nothing between here and the next
-    ; fresh `ld c,PORT_SPI_DAT` in .fastfit/.havechunk touches B or C).
-    ; A (colLeft, just loaded) is stashed across the call - vid_tl_stamp
-    ; needs A for its own phase-id argument and corrupts it, unlike
-    ; BC/HL which are safe to just let it clobber here.
-    push af
-    ld a, VID_TL_BLIT
-    call vid_tl_stamp
-    pop af
- ENDIF
     or a
     jp nz, .loop                     ; jp: pushed out of jr range by the
                                       ; round-2 coarse unit above
