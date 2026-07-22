@@ -262,9 +262,10 @@ kb_char:
     jr z, .idx
     ld hl, kbMapCaps
 .idx:
-    ld e, c
-    ld d, 0
-    add hl, de
+    ld a, c
+    add hl, a                   ; Z80N ED 31: HL += C (unsigned); C is
+                                 ; dead after this (rest of the routine
+                                 ; reads only D/A) - SP14c OV1-3
     ld a, (hl)
     ; caps-lock (letters only, classic semantics - matches the classic
     ; ROM's k_decode_4 "C mode": forces upper-case letters regardless
@@ -1450,21 +1451,19 @@ obj2_resolve:
     cp b
     jr z, .miss
     ; HL -> objTable entry (6 bytes/obj): loc,attr,ext lo,ext hi,noun,adj
+    ; SP14c OV1-1: Z80N MUL D,E for the *6 stride (was 3x ADD HL,HL/DE -
+    ; the same shift-add pattern obj_ptr itself used before batch A's
+    ; E4 fix; this routine never calls obj_ptr, so E4 never reached it)
+    ; plus a bundled ADD HL,nn fold of the immediately-following +4.
     push bc
-    ld a, b
-    ld l, a
-    ld h, 0
-    add hl, hl                  ; *2
-    ld e, l
-    ld d, h
-    add hl, hl                  ; *4
-    add hl, de                  ; *6
-    ld de, objTable
+    ld d, 6
+    ld e, b
+    mul d, e                    ; Z80N: DE = 6*b = OBJ_SIZE*objnum
+    ld hl, objTable
     add hl, de
     pop bc
     push hl
-    ld de, 4
-    add hl, de
+    add hl, 4                   ; Z80N ADD HL,nn
     ld a, (flags+FLAG_NOUN2)
     cp (hl)                     ; object noun match?
     jr nz, .no
@@ -1665,21 +1664,15 @@ inp_reprint:
     jr .l
 
 ; HL = flag48*50 -> inpTOFrames; seed the editor's frame baseline.
+; SP14c OV1-2: Z80N MUL D,E replaces the 6-step shift/push/add chain -
+; same idiom as batch B's PRN1 (print.asm's wait_key_timeout), which
+; computes the identical flag48*50 quantity at a different call site.
 inp_to_load:
     ld a, (flags+FLAG_TIMEOUT)
-    ld l, a
-    ld h, 0
-    add hl, hl                  ; *2
-    push hl
-    add hl, hl                  ; *4
-    add hl, hl                  ; *8
-    add hl, hl                  ; *16
-    push hl
-    add hl, hl                  ; *32
-    pop de
-    add hl, de                  ; *48
-    pop de
-    add hl, de                  ; *50
+    ld e, a
+    ld d, 50
+    mul d, e                    ; Z80N: DE = flag48*50
+    ex de, hl                   ; HL = product
     ld (inpTOFrames), hl
     ld a, (frameCounter)
     ld (inpTOFrm), a
@@ -2359,6 +2352,53 @@ msgSfxUnk: db "SFX? ", 0
 
 ; --- song / effects-bank loaders ------------------------------------
 
+; SP14c batch C (OV1-5): shared PARTn\ prefix-build-and-probe helper.
+; aud_load_song/aud_load_wav/aud_load_ays/aud_load_sfb each inlined this
+; identical ~55-byte block (verified byte-for-byte identical modulo the
+; source pointer before folding); this is the single body all four now
+; call. In: DE = source name pointer (9 bytes, NUL-padded - audName for
+; song/wav/ays, audGameSfb for sfb). curPart==1 is checked first (skips
+; straight to CF-set, matching every caller's own un-prefixed root-name
+; fallback exactly as before). Out: NC + A = handle on a successful
+; PARTn-prefixed open (caller proceeds to its own unchanged
+; .partopened body); CF set on curPart==1, no default drive, or an
+; open failure (caller falls through to its own unchanged root-name
+; open path - none of that fallback code moved). The tail is a plain
+; tail-call into esx_fopen, so this routine's own corruption set is
+; exactly esx_fopen's: Corrupts AF, BC, DE, HL, IX.
+aud_part_open:
+    ld a, (curPart)
+    dec a
+    jr z, .skip
+    push de                      ; source ptr survives the buffer build
+    ld hl, audNamePart
+    ld (hl), 'P'
+    inc hl
+    ld (hl), 'A'
+    inc hl
+    ld (hl), 'R'
+    inc hl
+    ld (hl), 'T'
+    inc hl
+    ld a, (curPart)
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ld (hl), '\'
+    inc hl
+    ex de, hl                    ; de = audNamePart+6
+    pop hl                       ; hl = source ptr
+    ld bc, 9
+    ldir
+    call esx_getsetdrv
+    ret c                        ; no drive: CF set, caller's root path
+    ld ix, audNamePart
+    ld b, ESX_MODE_READ
+    jp esx_fopen                 ; tail call: NC+A=handle or CF, as-is
+.skip:
+    scf
+    ret
+
 ; aud_load_song: A = song number ($FF = GAME.AKY). Loads NNN.AKY into
 ; AUD_SONG_ORG through slot-6 windows: the song area spans the tail of
 ; page 48 (bank offset $1800-$1FFF = file bytes 0-$7FF) and the first
@@ -2407,42 +2447,15 @@ aud_load_song:
     ex de, hl
     ld bc, 5
     ldir
-    ; SP11 T5 PARTn probe - keep in step with the other four sites
-    ; (art in overlay2.asm, WAV/SFB below, XMB in overlay0.asm).
-    ; curPart >= 2: try PARTn\NNN.AKY first, root (.open below,
-    ; shared pool) fallback. curPart == 1: skip straight to .open -
-    ; zero new opens, byte-identical to pre-T5 code. GAME.AKY (the
-    ; $FF sentinel above) is never prefixed - it reaches .open
-    ; directly via its own jr, before this block.
-    ld a, (curPart)
-    dec a
-    jr z, .open
-    ld hl, audNamePart
-    ld (hl), 'P'
-    inc hl
-    ld (hl), 'A'
-    inc hl
-    ld (hl), 'R'
-    inc hl
-    ld (hl), 'T'
-    inc hl
-    ld a, (curPart)
-    add a, '0'
-    ld (hl), a
-    inc hl
-    ld (hl), '\'
-    inc hl
-    ex de, hl                   ; de = audNamePart+6
-    ld hl, audName               ; copy the just-built "NNN.AKY",0
-    ld bc, 9                     ; verbatim (9 bytes)
-    ldir
-    call esx_getsetdrv
-    jr c, .open
-    ld ix, audNamePart
-    ld b, ESX_MODE_READ
-    call esx_fopen
+    ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open,
+    ; above) - was an inlined ~55-byte block, identical in shape at all
+    ; four song/sample/effects-bank loader sites. curPart == 1: skip
+    ; straight to .open - zero new opens, byte-identical to pre-fold
+    ; behavior. GAME.AKY (the $FF sentinel above) is never prefixed -
+    ; it reaches .open directly via its own jr, before this block.
+    ld de, audName
+    call aud_part_open
     jr nc, .partopened
-    ; --- end additive block; .open below is the ORIGINAL code, unchanged
 .open:
     call esx_getsetdrv
     jp c, .fail
@@ -2569,44 +2582,15 @@ aud_load_song:
 ; sits at page 48 bank offset $1000-$17FF, a single slot-6 window
 ; read. CF set on missing/oversize/read error. Corrupts everything.
 aud_load_sfb:
-    ; SP11 T5 PARTn probe - keep in step with the other four sites
-    ; (art in overlay2.asm, WAV/songs above/below, XMB in overlay0.asm).
-    ; curPart >= 2: try PARTn\GAME.SFB first, root (.rootonly below,
-    ; shared pool) fallback. curPart == 1: skip straight to .rootonly -
-    ; zero new opens, byte-identical to pre-T5 code. Task 3's
+    ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open,
+    ; above this section). curPart == 1: skip straight to .rootonly -
+    ; zero new opens, byte-identical to pre-fold behavior. Task 3's
     ; switch_to_part already re-probes this routine at every part
     ; switch with curPart committed first (overlay0.asm), so this
     ; prefix pass activates automatically on the very next switch.
-    ld a, (curPart)
-    dec a
-    jr z, .rootonly
-    ld hl, audNamePart
-    ld (hl), 'P'
-    inc hl
-    ld (hl), 'A'
-    inc hl
-    ld (hl), 'R'
-    inc hl
-    ld (hl), 'T'
-    inc hl
-    ld a, (curPart)
-    add a, '0'
-    ld (hl), a
-    inc hl
-    ld (hl), '\'
-    inc hl
-    ex de, hl                   ; de = audNamePart+6
-    ld hl, audGameSfb            ; copy "GAME.SFB",0 verbatim (9 bytes)
-    ld bc, 9
-    ldir
-    call esx_getsetdrv
-    jr c, .rootonly
-    ld ix, audNamePart
-    ld b, ESX_MODE_READ
-    call esx_fopen
+    ld de, audGameSfb
+    call aud_part_open
     jr nc, .partopened
-    ; --- end additive block; .rootonly below is the ORIGINAL code,
-    ; unchanged
 .rootonly:
     call esx_getsetdrv
     jr c, .fail
@@ -2962,41 +2946,12 @@ aud_load_wav:
     ex de, hl
     ld bc, 5
     ldir
-    ; SP11 T5 PARTn probe - keep in step with the other four sites
-    ; (art in overlay2.asm, songs/SFB above/below, XMB in overlay0.asm).
-    ; curPart >= 2: try PARTn\NNN.WAV first, root (.rootonly below,
-    ; shared pool) fallback. curPart == 1: skip straight to .rootonly -
-    ; zero new opens, byte-identical to pre-T5 code.
-    ld a, (curPart)
-    dec a
-    jr z, .rootonly
-    ld hl, audNamePart
-    ld (hl), 'P'
-    inc hl
-    ld (hl), 'A'
-    inc hl
-    ld (hl), 'R'
-    inc hl
-    ld (hl), 'T'
-    inc hl
-    ld a, (curPart)
-    add a, '0'
-    ld (hl), a
-    inc hl
-    ld (hl), '\'
-    inc hl
-    ex de, hl                   ; de = audNamePart+6
-    ld hl, audName               ; copy the just-built "NNN.WAV",0
-    ld bc, 9                     ; verbatim (9 bytes)
-    ldir
-    call esx_getsetdrv
-    jr c, .rootonly
-    ld ix, audNamePart
-    ld b, ESX_MODE_READ
-    call esx_fopen
+    ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open).
+    ; curPart == 1: skip straight to .rootonly - zero new opens,
+    ; byte-identical to pre-fold behavior.
+    ld de, audName
+    call aud_part_open
     jr nc, .partopened
-    ; --- end additive block; .rootonly below is the ORIGINAL code,
-    ; unchanged
 .rootonly:
     call esx_getsetdrv
     jp c, .fail
@@ -3479,42 +3434,14 @@ aud_load_ays:
     ex de, hl
     ld bc, 5
     ldir
-    ; SP11 T5 PARTn probe - keep in step with the other four sites
-    ; (art in overlay2.asm, WAV/songs/SFB above, XMB in overlay0.asm).
-    ; curPart >= 2: try PARTn\NNN.AYS first, root (.open below,
-    ; shared pool) fallback. curPart == 1: skip straight to .open -
-    ; zero new opens, byte-identical to pre-T5 code. GAME.AYS (the
-    ; $FF sentinel above) is never prefixed - it reaches .open
-    ; directly via its own jr, before this block.
-    ld a, (curPart)
-    dec a
-    jr z, .open
-    ld hl, audNamePart
-    ld (hl), 'P'
-    inc hl
-    ld (hl), 'A'
-    inc hl
-    ld (hl), 'R'
-    inc hl
-    ld (hl), 'T'
-    inc hl
-    ld a, (curPart)
-    add a, '0'
-    ld (hl), a
-    inc hl
-    ld (hl), '\'
-    inc hl
-    ex de, hl                   ; de = audNamePart+6
-    ld hl, audName               ; copy the just-built "NNN.AYS",0
-    ld bc, 9                     ; verbatim (9 bytes)
-    ldir
-    call esx_getsetdrv
-    jr c, .open
-    ld ix, audNamePart
-    ld b, ESX_MODE_READ
-    call esx_fopen
+    ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open).
+    ; curPart == 1: skip straight to .open - zero new opens, byte-
+    ; identical to pre-fold behavior. GAME.AYS (the $FF sentinel above)
+    ; is never prefixed - it reaches .open directly via its own jr,
+    ; before this block.
+    ld de, audName
+    call aud_part_open
     jr nc, .partopened
-    ; --- end additive block; .open below is the ORIGINAL code, unchanged
 .open:
     call esx_getsetdrv
     jp c, .fail
@@ -3805,8 +3732,9 @@ aud_banks_claim:
     cp SMP_FLOOR_LAST+1
     jr nc, .poollp              ; floor exhausted -> pool
     ld hl, bankTable
-    ld b, 0
-    add hl, bc                  ; HL -> bankTable[C] (B=0, so BC = C)
+    add hl, a                   ; SP14c OV1-4: A already = C (cp does
+                                 ; not touch A) - HL -> bankTable[C],
+                                 ; no ld b,0 needed
     ld a, (hl)
     cp BT_RESERVED
     jr nz, .floornext           ; already claimed by the other client: skip
