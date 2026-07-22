@@ -1987,14 +1987,21 @@ vid_stream_pixels_gap:
     jr nz, .fastremloop
 .fastxferdone:
     ld (vidGapDest), hl
- IFDEF DEBUG
-    ; owner profiling round: stamp back to VID_TL_BLIT (block glue +
-    ; bookkeeping, from here on) - placed right after HL is safely
-    ; stored, before anything below depends on a live register the
-    ; stamp call would corrupt (everything below reloads from memory).
-    ld a, VID_TL_BLIT
-    call vid_tl_stamp
- ENDIF
+    ; owner fix (profiling-instrument postmortem): the BLIT stamp that
+    ; used to sit HERE is removed - it clobbered C (vid_tl_stamp's own
+    ; documented "Corrupts AF, BC, DE, HL") in the exact window where
+    ; C=PORT_SPI_DAT is live for the vid_col_block_end call three lines
+    ; below (vid_col_blockdone's own contract: "In: C = PORT_SPI_DAT").
+    ; With C clobbered, that call's `in a,(c)` CRC-skip read the WRONG
+    ; port, never advancing the SD interface's own byte position by the
+    ; 2 CRC bytes it owed it - the next block's token-wait then looked
+    ; for $FE two bytes off from where the card actually put it, timed
+    ; out, and surfaced as ERR=FD/BYT=F3 (whatever garbage sat at the
+    ; wrong offset) - exactly the owner's observed decode. A SINGLE
+    ; stamp now lives at .blkopen (below), reached AFTER this call on
+    ; both paths, where C is dead by construction (verified: nothing
+    ; from .blkopen through the loop's own top touches B or C at all
+    ; until .haveblk/.fastfit's own fresh `ld c,PORT_SPI_DAT`).
     xor a
     ld (vidGapColLeft), a              ; whole column consumed in one go
     ld a, (vidGapBlkLeft)
@@ -2049,13 +2056,13 @@ vid_stream_pixels_gap:
     ; HL now advanced by (original B)*8 bytes; B/C/E garbage - same
     ; contract vid_xfer8n's own removed header documented.
     ld (vidGapDest), hl
- IFDEF DEBUG
-    ; owner profiling round: stamp back to VID_TL_BLIT, same placement
-    ; rule as .fastxferdone's own (HL already safely stored; everything
-    ; below reloads from memory).
-    ld a, VID_TL_BLIT
-    call vid_tl_stamp
- ENDIF
+    ; owner fix (profiling-instrument postmortem): the BLIT stamp that
+    ; used to sit HERE is removed - same bug, same reasoning as .fast
+    ; xferdone's own removed stamp above (C=PORT_SPI_DAT live for the
+    ; vid_col_block_end call two lines below; the classic-class register
+    ; hazard reappearing in this loop's own instrument code, not its
+    ; transfer code - see that call site's own comment for the full
+    ; decode). The .blkopen stamp below covers this path too.
     ld a, (vidGapColLeft)
     ld hl, vidGapChunk
     sub (hl)
@@ -2068,6 +2075,21 @@ vid_stream_pixels_gap:
     call vid_col_block_end           ; preserves HL; CRC skip + bookkeeping
 .blkopen:
     ld a, (vidGapColLeft)
+ IFDEF DEBUG
+    ; owner profiling round (postmortem fix): stamp back to VID_TL_BLIT
+    ; ONCE here - reached AFTER any conditional vid_col_block_end call
+    ; on BOTH the fast and slow paths (the two per-path stamps above
+    ; were removed for exactly this reason), so C is always dead by
+    ; construction at this point (nothing between here and the next
+    ; fresh `ld c,PORT_SPI_DAT` in .fastfit/.havechunk touches B or C).
+    ; A (colLeft, just loaded) is stashed across the call - vid_tl_stamp
+    ; needs A for its own phase-id argument and corrupts it, unlike
+    ; BC/HL which are safe to just let it clobber here.
+    push af
+    ld a, VID_TL_BLIT
+    call vid_tl_stamp
+    pop af
+ ENDIF
     or a
     jp nz, .loop                     ; jp: pushed out of jr range by the
                                       ; round-2 coarse unit above
