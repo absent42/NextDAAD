@@ -428,30 +428,26 @@ eng_exec:
 ; offset = (page-DDB_PAGE_FIRST)*$2000 + (rdPtr - DATA_WINDOW)
 eng_ptr_abs:
     ld a, (rdPage)
-    sub DDB_PAGE_FIRST
-    ld d, a
+    sub DDB_PAGE_FIRST           ; a = page index, PROVABLY 0..7 (rd_seek
+                                 ; masks offset>>13 with AND 7, ddbtext.asm)
  IFDEF DEBUG
-    ; SP14c E6 histogram instrument (opus gate ruling: DEFER-TO-
-    ; MEASUREMENT - the *2000 loop optimization itself is NOT applied;
-    ; only this counter, to let the owner measure the real a-value
-    ; distribution before any resident change lands). Bucket[a] counts
-    ; condact dispatches with page-crossing index a (0-7, D above),
-    ; saturating at 255 so a wrap can never masquerade as "rare".
-    ; Preserves AF/HL/DE exactly (push/pop brackets) - zero behavioural
-    ; effect on the function. Read-out: no debug.asm UI hook added
-    ; (out of this batch's module scope) - peek the 8 bytes at label
-    ; ENG_PTR_ABS_HIST (see build\nextdaad.map after assembly) in
-    ; CSpect's or DeZog's memory viewer during the smoke leg. bucket[0]
-    ; = a=0 count, bucket[1] = a=1, ... bucket[7] = a=7. Decision rule
-    ; (gate's): endorse E6 only if bucket[0] dominates AND nonzero mass
-    ; sits at bucket[2..7]; if bucket[1] dominates instead, REJECT E6
-    ; (its non-zero-a path would then regress the common case by
-    ; ~10T/condact for no real page-crossing win).
+    ; SP14c E6 histogram instrument (KEPT post-apply - owner's request;
+    ; one optional Urban Upstart cross-check remains, strips at batch
+    ; close). Bucket[a] counts condact dispatches with page-crossing
+    ; index a (0-7), saturating at 255. Preserves AF/HL/DE exactly
+    ; (push/pop brackets) - zero behavioural effect on the function.
+    ; Read-out: peek the 8 bytes at label ENG_PTR_ABS_HIST (see
+    ; build\nextdaad.map after assembly) in CSpect's/DeZog's memory
+    ; viewer. Verdict already landed (owner-measured Rabenstein
+    ; session, real gameplay): buckets = 00 00 FF 00 00 00 00 00 -
+    ; every condact dispatch that session hit page index a=2, nothing
+    ; else, ever (DRC places process tables at the END of the DDB, so
+    ; condact fetches always target the highest pages present).
     push af
     push hl
     push de
-    ld e, d                     ; E = page index (0-7); D unchanged,
-    ld d, 0                     ; restored below by pop de regardless
+    ld e, a                     ; E = page index (0-7); A unchanged,
+    ld d, 0                     ; restored below by pop af regardless
     ld hl, eng_ptr_abs_hist
     add hl, de
     ld a, (hl)
@@ -463,19 +459,31 @@ eng_ptr_abs:
     pop hl
     pop af
  ENDIF
+    ; SP14c E6 (owner-endorsed on the histogram above): flat,
+    ; unconditional shift replaces the old data-dependent DEC-loop.
+    ; a*$2000 = (a<<5) placed as the high byte of a 16-bit word (low
+    ; byte 0), since $2000/$100 = $20 = 1<<5; exact for the full
+    ; provable range a=0..7 (2^5*7 = 224, fits one byte, no overflow).
+    ; Verdict rationale: real dispatch never observed a=0 (the
+    ; feared regression case the gate's rule guarded against), so the
+    ; old loop's a=0 fast exit bought nothing in practice while its
+    ; cost grew with a on every other call; this form is constant-time
+    ; (124T) for every a in 0..7, faster than the loop at every a>=1
+    ; and only slightly slower than the loop's unreachable a=0 case
+    ; (106T) - see the findings report for the full instruction-by-
+    ; instruction derivation (doc 05/06 shift-by-constant idiom).
+    add a, a                    ; T=4 B=1
+    add a, a                    ; T=4 B=1
+    add a, a                    ; T=4 B=1
+    add a, a                    ; T=4 B=1
+    add a, a                    ; T=4 B=1  a << 5
+    ld d, a
+    ld e, 0                     ; DE = a*$2000
     ld hl, (rdPtr)
     ld a, h
     sub high DATA_WINDOW        ; H -= $C0
     ld h, a
-    ld a, d
-    or a
-    jr z, .add
-.mul:
-    ld de, $2000
     add hl, de
-    dec a
-    jr nz, .mul
-.add:
     ld de, DDB_ZX_BASE
     add hl, de
     ret
