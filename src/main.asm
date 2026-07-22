@@ -120,8 +120,10 @@ idle:
 ; this path is exercised only under the CSpect dev loop - but a cold-equivalent
 ; boot is correct robustness regardless.
 boot_data_init:
-    ld a, $FF
-    ld (chrHandle), a           ; CHR font handle: $FF = no open handle
+    ; SP14c M1: chrHandle's boot write removed - the cell (tilemap.asm)
+    ; is dead (grep of the whole tree finds only its declaration and
+    ; this write, no reader anywhere). The chrHandle/chrScratch storage
+    ; cells themselves are batch B's (tilemap.asm) to remove.
     ld a, 255
     ld (prevVerb), a            ; compound-sentence previous verb
     call gfx_cache_reset        ; picture cache: staged sentinels, cache
