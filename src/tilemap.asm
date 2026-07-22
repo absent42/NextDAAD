@@ -39,8 +39,7 @@ txt_init:
     call tm_font_init
     ld a, 7*2                   ; pair 7 = paper 0 ink 7 (white on black)
     ld (tmAttr), a
-    ld b, 0
-    ld c, 0
+    ld bc, 0                    ; SP14c batch B TM3
     ld d, TM_ROWS
     ld e, TM_COLS
     ld a, GLYPH_SPACE
@@ -119,26 +118,20 @@ tm_font_init:
 
 ; B=row, C=col -> HL = TM_MAP + row*160 + col*2.
 ; Corrupts AF; preserves BC, DE.
+; SP14c batch B TM1: row*160 via Z80N MUL D,E (row max TM_ROWS-1=31,
+; product max 4960, well inside MUL D,E's always-safe 65025 ceiling);
+; the TM_MAP base-add folds to a bundled ADD HL,nn too (byte-neutral).
 tm_cell_addr:
     push de
-    ld l, b
-    ld h, 0
-    add hl, hl                  ; row*2
-    add hl, hl                  ; row*4
-    add hl, hl                  ; row*8
-    add hl, hl                  ; row*16
-    add hl, hl                  ; row*32
-    ld e, l
-    ld d, h                     ; DE = row*32
-    add hl, hl                  ; row*64
-    add hl, hl                  ; row*128
-    add hl, de                  ; row*160
+    ld e, b                     ; row (0..31)
+    ld d, 160
+    mul d, e                    ; DE = row*160
+    ex de, hl                    ; HL = row*160
     ld e, c
     ld d, 0
     add hl, de
     add hl, de                  ; + col*2
-    ld de, TM_MAP
-    add hl, de
+    add hl, TM_MAP
     pop de
     ret
 
@@ -264,9 +257,28 @@ tmAttr:        db 7*2
 tmFillGlyph:   db 0
 tmScrollW:     db 0
 tmScrollH:     db 0
-chrHandle:     db $FF
-chrScratch:    db 0
+; SP14c batch B TM2: chrHandle/chrScratch removed - dead (batch A's
+; M1 removed the last write, main.asm; zero readers anywhere in the
+; tree, confirmed by grep before removal).
 chrStatus:     db 0             ; 0 none, 1 override loaded, 2 rejected
+
+ IFNDEF DEBUG
+; SP14c batch B accounting note: TM1+TM2+TM3's combined -10 bytes
+; landed this module's pre-flags code exactly ON the ALIGN(256)
+; boundary from below in the RELEASE variant only (measured via the
+; map-address technique: CDISP+384 dropped from 0xA10A to exactly
+; 0xA100, so `flags` snapped from 0xA200 to 0xA100 instead of staying
+; put - Release's pre-flags slack at this boundary was only 10 bytes,
+; far tighter than DEBUG's 158+). This 10-byte pad restores Release's
+; original margin so `flags` stays at 0xA200 (the hard constraint) -
+; DEBUG is unaffected (its own ALIGN slack absorbed the same -10
+; bytes with over a hundred bytes to spare) and keeps the full
+; tracked-headroom benefit of TM1-3. Costs nothing meaningful here
+; (Release headroom is >3700 bytes) - if a future Release-side
+; pre-flags reduction elsewhere changes this margin, re-measure and
+; adjust/remove this pad rather than assuming it still applies.
+    ds 10
+ ENDIF
 
 fontData:
     INCBIN "font.chr"           ; 2048 bytes, path relative to src/
