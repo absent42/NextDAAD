@@ -1949,6 +1949,13 @@ vid_stream_pixels_gap:
     ; colUnits/1 (worst case, one 8-byte pass per unit) to at most
     ; groups+1 (3-4 for N3/N4), matching the coordinator's own target
     ; shape ("192=3x64", "120=64+56").
+ IFDEF DEBUG
+    ; owner profiling round: stamp GT (pure transfer) - placed before
+    ; ANY register this section needs is loaded, so vid_tl_stamp's own
+    ; "Corrupts AF, BC, DE, HL" costs nothing here (nothing is live yet).
+    ld a, VID_TL_GAPXFER
+    call vid_tl_stamp
+ ENDIF
     ld hl, (vidGapDest)
     ld c, PORT_SPI_DAT
 .fastgroups:
@@ -1980,6 +1987,14 @@ vid_stream_pixels_gap:
     jr nz, .fastremloop
 .fastxferdone:
     ld (vidGapDest), hl
+ IFDEF DEBUG
+    ; owner profiling round: stamp back to VID_TL_BLIT (block glue +
+    ; bookkeeping, from here on) - placed right after HL is safely
+    ; stored, before anything below depends on a live register the
+    ; stamp call would corrupt (everything below reloads from memory).
+    ld a, VID_TL_BLIT
+    call vid_tl_stamp
+ ENDIF
     xor a
     ld (vidGapColLeft), a              ; whole column consumed in one go
     ld a, (vidGapBlkLeft)
@@ -1996,6 +2011,15 @@ vid_stream_pixels_gap:
                                         ; either transfer loop above)
     jr .blkopen
 .slow:
+ IFDEF DEBUG
+    ; owner profiling round: stamp GT here too - .slow is a single entry
+    ; point (verified: .havechunk's only OTHER reference is this
+    ; fallthrough), reached with nothing live yet, so this is as safe
+    ; as .fastfit's own entry stamp above. Covers the boundary-straddle
+    ; case's own transfer time in the same GT bucket.
+    ld a, VID_TL_GAPXFER
+    call vid_tl_stamp
+ ENDIF
     ld a, (vidGapColLeft)
     ld hl, vidGapBlkLeft
     cp (hl)
@@ -2025,6 +2049,13 @@ vid_stream_pixels_gap:
     ; HL now advanced by (original B)*8 bytes; B/C/E garbage - same
     ; contract vid_xfer8n's own removed header documented.
     ld (vidGapDest), hl
+ IFDEF DEBUG
+    ; owner profiling round: stamp back to VID_TL_BLIT, same placement
+    ; rule as .fastxferdone's own (HL already safely stored; everything
+    ; below reloads from memory).
+    ld a, VID_TL_BLIT
+    call vid_tl_stamp
+ ENDIF
     ld a, (vidGapColLeft)
     ld hl, vidGapChunk
     sub (hl)
@@ -4163,7 +4194,11 @@ vid_tl_report_body:
     add hl, de
     call vid_tl_print32
     ld a, (vidTlRptIdx)
-    cp VID_TL_OTHER
+    cp VID_TL_GAPXFER               ; owner profiling round: the new
+                                     ; final phase index - was VID_TL_
+                                     ; OTHER before GAPXFER was added;
+                                     ; the summary trails whichever row
+                                     ; prints last, purely cosmetic.
     jr nz, .nextrow
     ld hl, msgTlTot
     call dbg_puts
@@ -4197,12 +4232,17 @@ vid_tl_report_body:
     jp ovl_map_page
 
 vidTlMsgTab:
-    dw msgTl0, msgTl1, msgTl2, msgTl3, msgTl4
+    dw msgTl0, msgTl1, msgTl2, msgTl3, msgTl4, msgTl5
 msgTl0: db "STREAM =", 0
-msgTl1: db "BLIT   =", 0
+; owner profiling round (item 5, gap-blit sub-phase audit): BLIT now
+; excludes GT (gap profiles only - flat profiles never stamp GAPXFER,
+; so their BLIT total is unaffected) - relabeled so the row is not
+; misread as the old, undivided total.
+msgTl1: db "BLT-GBK=", 0
 msgTl2: db "PALETTE=", 0
 msgTl3: db "PACE   =", 0
 msgTl4: db "OTHER  =", 0
+msgTl5: db "GT     =", 0
 msgTlTot: db " TOT=", 0
 msgTlFrm: db " FRM=", 0
 msgTlErr: db " ERR=", 0

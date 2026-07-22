@@ -621,5 +621,18 @@ VID_TL_BLIT     equ 1
 VID_TL_PALETTE  equ 2
 VID_TL_FLIPPACE equ 3
 VID_TL_OTHER    equ 4
-VID_TL_PHASES   equ 5
+; owner profiling round (item 5, gap-blit sub-phase audit): ONE new
+; phase, not three - a 2-way split (GT vs everything else) reusing the
+; EXISTING VID_TL_BLIT accumulator as the "everything else" (block glue
+; + bookkeeping) bucket costs zero new hot bytes for that half; only
+; the GT (pure transfer) side needs a new phase id. A true 3-way split
+; (separate GB/GK) would need ~10-12 new stamp call sites (~50-60 hot
+; bytes) against a 45-byte budget - does not fit; see video.asm's own
+; vid_stream_pixels_gap header for the full reasoning. VID_TL_BLIT's
+; own printed row therefore now means "block glue + bookkeeping" for
+; gap profiles specifically (unchanged meaning for flat profiles, which
+; never touch VID_TL_GAPXFER at all) - the report's own row label notes
+; this.
+VID_TL_GAPXFER  equ 5
+VID_TL_PHASES   equ 6
  ENDIF
