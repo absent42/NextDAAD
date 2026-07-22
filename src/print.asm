@@ -342,20 +342,13 @@ wait_key_timeout:
     and e
     jp z, wait_key              ; this context not armed -> plain wait
     ; frames = flag48 * 50
+    ; SP14c batch B PRN1: Z80N MUL D,E replaces the shift/push/add
+    ; chain (flag48 is a byte, product always fits 16 bits).
     ld a, (flags+FLAG_TIMEOUT)
-    ld l, a
-    ld h, 0
-    add hl, hl                  ; *2
-    push hl
-    add hl, hl                  ; *4
-    add hl, hl                  ; *8
-    add hl, hl                  ; *16
-    push hl
-    add hl, hl                  ; *32
-    pop de
-    add hl, de                  ; *48
-    pop de
-    add hl, de                  ; *50
+    ld e, a
+    ld d, 50
+    mul d, e
+    ex de, hl
     ld (inpTOFrames), hl
     ld a, (frameCounter)
     ld d, a                     ; D = last seen frame low byte
@@ -459,3 +452,15 @@ wrapBuf:      ds 80             ; pending word (word-wrap), max = WIN_W
 wrapLen:      db 0             ; chars buffered in wrapBuf
 wrapLock:     db 0             ; non-zero: bypass buffering (editor/SM32)
 wrapIdx:      db 0             ; prn_flush emit-loop cursor
+
+ IFNDEF DEBUG
+; SP14c batch B accounting note (same class as tilemap.asm's, see
+; that file's comment for the full mechanism): Release's pre-flags
+; ALIGN(256) margin was down to 7 bytes by the time this module's
+; PRN1 (-8 bytes) landed - measured via CDISP+384 vs the 0xA100/
+; 0xA200 boundary pair. This pad cancels PRN1's Release-side effect
+; so `flags` stays at 0xA200; DEBUG keeps the full saving (its own
+; slack is unaffected). Re-measure before assuming this still
+; applies if more pre-flags code changes upstream.
+    ds 8
+ ENDIF
