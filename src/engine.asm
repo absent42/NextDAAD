@@ -781,6 +781,13 @@ cdisp:
 ; --- engine data (flags 256-aligned) ---
     ALIGN 256
 flags:      ds 256
+; SP14c batch B gate follow-up (rubric 7): flags is a frozen-address
+; ABI anchor. ALIGN snaps DOWNWARD when pre-flags code shrinks past a
+; 256 boundary - the image gets SMALLER, so RESIDENT_LIMIT asserts
+; pass while the ABI silently breaks (it happened: Release-only snap
+; to $A100, caught at apply time). This assert makes any future snap
+; a hard build failure in every variant.
+    ASSERT flags == $A200
 objTable:   ds 256*OBJ_SIZE
 numObj:     db 0
 procStack:  ds PROC_DEPTH*PREC_SIZE
