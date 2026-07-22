@@ -878,69 +878,33 @@ nxv_open_ret:
     ret
 
 ; ---------------------------------------------------------------------
-; Copper flip (spec's Q2a design - docs/superpowers/specs/2026-07-21-
-; sp14a-native-video-design.md). A 4-instruction/8-byte FRAME-mode list:
-; WAIT <NXV_COPPER_LINE>,0 / MOVE NR_L2_BANK,<bank> / MOVE NR_PAL_CTRL,
-; <palctl> / HALT (WAIT $FFFF, PC parked there until FRAME mode resets it
-; to 0 next vblank). Offloads the double-buffer bank flip and palette-
-; control flip to hardware, replacing the old direct CPU nextreg writes
-; at flip time - closes the palette-sparkle mismatch window to a
-; hardware-exact vblank flip (the T4 addendum's own design sketch,
-; confirmed by playvid's own shipped code, and the SP14a T3 escalation-
-; research wave's own Q2a design). WAIT line is owner-hardware-validated
-; (VBENCH-COPPER leg, SP14a T3's escalation-bench wave: "band from the
-; default line 257, correctly below the picture, confirms L2-ends-at-256
-; well enough for the flip design"). The one-time list LOAD (vid_copper_
-; init) lives cold (VID_PAGE2, below - see vid_run_l2setup_body's own
-; header for why it can be: nothing about loading the list needs MMU7 =
-; VID_PAGE, and it always runs BEFORE the CTC arms). Only the PER-FRAME
-; poke stays hot - it runs every frame during the CTC-armed window.
+; Copper flip - RETIRED (owner fix, "PALETTE SPARKLE + MAGENTA
+; REGRESSION" parity-chain audit). This block used to describe a 4-
+; instruction/8-byte FRAME-mode list (WAIT <NXV_COPPER_LINE>,0 / MOVE
+; NR_L2_BANK,<bank> / MOVE NR_PAL_CTRL,<palctl> / HALT) offloading the
+; double-buffer flip to hardware (spec's Q2a design, docs/superpowers/
+; specs/2026-07-21-sp14a-native-video-design.md). Sound in isolation,
+; but UNSAFE in combination with vid_apply_palette (below): the copper's
+; own MOVE to NR $43 fires unconditionally every field once CPC reaches
+; it (dev guide, chapter-next-copper.tex, FRAME mode) - a second,
+; independent writer to the exact register vid_apply_palette ALSO
+; writes directly, 256 times per call, to select its own edit-target
+; bank. A vblank landing mid-loop stomps the edit-target bit back to
+; the "locked" state, corrupting the rest of that frame's palette write
+; (sparkle) and leaving the bank it just flipped to only partially
+; written the next time it's shown (magenta). T2 (git ffc5350) never
+; had this hazard - its flip was a single immediate CPU write, no
+; independent hardware writer racing it - and vid_run's own flip block
+; (above) now uses that exact proven choreography again instead. The
+; former per-frame poke routine (vid_copper_poke, hot/VID_PAGE) is
+; deleted outright - nothing calls it any more, and hot-page budget is
+; tight. vid_copper_init (below, VID_PAGE2, still owner-hardware-
+; validated for its WAIT line - VBENCH-COPPER leg, SP14a T3) is left
+; defined but uncalled: a future correct integration would need to
+; bracket vid_apply_palette's own loop with a copper STOP/START (or
+; equivalent mutual exclusion) rather than letting the two writers race
+; unguarded - that redesign is out of this fix's scope.
 ; ---------------------------------------------------------------------
-
-; Rewrite one copper MOVE instruction's data byte - safe during active
-; display (the copper is parked at the terminal HALT by then, never at
-; either MOVE - see the design doc's own hazard note: writing program RAM
-; while the copper executes the very instruction being half-written is
-; the documented risk, and only the OPERAND changes here, one byte at a
-; time, never the register-select byte). In: A = data byte, E =
-; NXV_COPPER_OFF_BANK or NXV_COPPER_OFF_PAL. Corrupts AF (DEBUG builds:
-; also C - see the stage-gate branch below).
-;
-; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): stages 1-3
-; (vidStageLimit 1-3) never touch the copper at all - "CPU flips"
-; per the ladder's own spec, so this call becomes a direct NextReg
-; write to the SAME register E would otherwise have indexed into the
-; copper list (NXV_COPPER_OFF_BANK -> NR_L2_BANK, NXV_COPPER_OFF_PAL ->
-; NR_PAL_CTRL), bypassing the copper entirely. Both callers (vid_run's
-; own flip block) are unaffected either way - same In/Out contract.
-vid_copper_poke:
- IFDEF DEBUG
-    ld c, a                       ; stash data byte (A about to be reused)
-    ld a, (vidStageLimit)
-    or a
-    jr z, .cpnormal
-    cp 4
-    jr nc, .cpnormal
-    ld a, e
-    cp NXV_COPPER_OFF_BANK
-    ld a, c                       ; restore data byte either way
-    jr nz, .cppal
-    nextreg NR_L2_BANK, a
-    ret
-.cppal:
-    nextreg NR_PAL_CTRL, a
-    ret
-.cpnormal:
-    ld a, c                       ; restore data byte
- ENDIF
-    push af
-    ld a, e
-    nextreg NR_COPPER_ADDR_LO, a
-    ld a, %11000000                  ; control = FRAME (re-asserted, not
-    nextreg NR_COPPER_ADDR_HI_CTRL, a ; disturbed - see the header above)
-    pop af
-    nextreg NR_COPPER_DATA, a
-    ret
 
 ; ---------------------------------------------------------------------
 ; vid_run - entry/exit symmetry: everything vid_run touches is captured
@@ -954,7 +918,7 @@ vid_copper_poke:
 ; validated (nxv_open - an invalid header bails HERE, before any CTC/
 ; Layer2/copper/presentation state is touched) -> presentation isolation
 ; saved+disabled -> CTC retuned -> IM2_CTC_STUB patched -> Layer 2 set up
-; -> copper flip initialised -> the loop -> reverse-order restore on any
+; -> the loop -> reverse-order restore on any
 ; exit (key, EOF in play-once, or a read error), banks released, ret
 ; through the dispatcher's normal path.
 ; ---------------------------------------------------------------------
@@ -1226,16 +1190,40 @@ vid_run:
     jp vid_run.stagegate
 .sub7skip:
  ENDIF
-    ; SP14a T4: flip via the copper (vid_copper_poke, above) - REPLACES
-    ; the old direct CPU nextreg NR_L2_BANK/NR_PAL_CTRL writes. l2_flip_
-    ; swap's own variable-swap logic is unchanged (duplicated here since
-    ; overlay2 is unreachable while MMU7 = VID_PAGE); only the FINAL
-    ; hardware-apply step moved off the CPU hot path onto the copper's
-    ; own vblank-synchronised WAIT (nextdaad.inc's NXV_COPPER_LINE). NR
-    ; $12 takes the 16K bank number RAW (l2_mode_set/h_gfx.swap
-    ; precedent, overlay2.asm) - no *2 here (that shift is ONLY for
-    ; deriving an 8K MMU PAGE number, e.g. vidDrawPage above; NR $12 is
-    ; not a page).
+    ; owner fix (parity-chain audit, "PALETTE SPARKLE + MAGENTA
+    ; REGRESSION"): REVERTS the SP14a T4 copper-poke flip back to T2's
+    ; direct CPU nextreg NR_L2_BANK/NR_PAL_CTRL writes (git ffc5350) -
+    ; the proven, hardware-confirmed choreography. The copper flip was
+    ; not just deferred-by-a-frame-sometimes; it was ACTIVELY UNSAFE:
+    ; the dev guide's own Copper chapter states MOVE fires unconditionally
+    ; every field once CPC reaches it ("FRAME mode... will start executing
+    ; ... continue until CPC reaches 1023... stop if HALT is encountered
+    ; ... auto-wrap on every vertical blank") - the copper's own NR $43
+    ; MOVE (nextdaad.inc's NXV_COPPER_LINE, line 257) fires EVERY field,
+    ; unconditionally, using whatever data byte currently sits in copper
+    ; RAM. vid_apply_palette (above) ALSO writes NR $43 directly, 256
+    ; times per call, to select which bank its own writes land in (the
+    ; edit-target bit, bit 6) - a SECOND, independent writer to the same
+    ; register the copper periodically reasserts. If line 257 is reached
+    ; WHILE vid_apply_palette's loop is mid-flight, the copper's own MOVE
+    ; overwrites bit 6 back to the "locked" (edit==display) state,
+    ; silently redirecting the REMAINDER of that 256-entry loop into the
+    ; LIVE bank instead of the hidden one - interleaved live/hidden
+    ; writes, exactly sparkle, and left the JUST-flipped-to bank only
+    ; partially written, exactly magenta on the next frame it's shown.
+    ; T2 never had this hazard because its flip was a single, immediate,
+    ; CPU-driven write with no independent hardware writer racing it.
+    ; Restoring that exact choreography removes the race outright rather
+    ; than trying to time around it. l2_flip_swap's own variable-swap
+    ; logic is unchanged (duplicated here since overlay2 is unreachable
+    ; while MMU7 = VID_PAGE). NR $12 takes the 16K bank number RAW
+    ; (l2_mode_set/h_gfx.swap precedent, overlay2.asm) - no *2 here (that
+    ; shift is ONLY for deriving an 8K MMU PAGE number, e.g. vidDrawPage
+    ; above; NR $12 is not a page). vid_copper_init/vid_copper_poke are
+    ; left defined (VID_PAGE2/VID_PAGE) but uncalled - see vid_copper_
+    ; init's own header for the reintroduction note; vid_copper_poke
+    ; itself is removed outright below (nothing calls it any more, and
+    ; it was hot/VID_PAGE - budget win).
     ;
     ; SP14a T2: palette display-select (NR $43 bit 2) flips in lockstep
     ; with the pixel bank (NR $12) - both express the SAME "which buffer
@@ -1253,8 +1241,7 @@ vid_run:
     ld a, (vidPalCtrl)              ; currently-displayed bank's NR43 value
     xor $44                         ; flip both edit- and display-target to
     ld (vidPalCtrl), a              ; the bank the edit above just wrote
-    ld e, NXV_COPPER_OFF_PAL
-    call vid_copper_poke
+    nextreg NR_PAL_CTRL, a
 .nopalflip:
     ld a, (l2FrontBank)
     ld b, a
@@ -1263,8 +1250,7 @@ vid_run:
     ld a, b
     ld (l2BackBank), a
     ld a, (l2FrontBank)
-    ld e, NXV_COPPER_OFF_BANK
-    call vid_copper_poke
+    nextreg NR_L2_BANK, a
     ld a, (vidExitReq)
     or a
     jr nz, .restore
@@ -1281,10 +1267,11 @@ vid_run:
     jr nc, .stagecont
     cp 2
     jr nz, .stage3cap
-    ; Stage 2: exactly one frame was just streamed and flipped (via
-    ; vid_copper_poke's own CPU-direct branch, above) - hold it on
-    ; screen ~2s (100 x 50Hz halt) with nothing further streamed or
-    ; flipped, then exit. This IS "flip once, hold" - never loops back.
+    ; Stage 2: exactly one frame was just streamed and flipped (a direct
+    ; CPU write, above - the copper poke this comment used to reference
+    ; is retired, see the flip block's own header) - hold it on screen
+    ; ~2s (100 x 50Hz halt) with nothing further streamed or flipped,
+    ; then exit. This IS "flip once, hold" - never loops back.
     ld b, 100
 .stg2hold:
     halt
@@ -1414,6 +1401,44 @@ vid_run:
     call vid_win_open              ; reopen at run 0 via the existing raw
                                     ; CMD18 path
     jr c, .restore                 ; defensive: card rejected the reopen
+    ; owner fix ("LOOP RESTART BROKEN" audit): the cursor reset above
+    ; rewinds to byte 0 of the FILE - the start of the 512-byte NXV
+    ; header, not the first pixel-bearing block. The original open
+    ; consumed the header via nxv_open's own vid_stream_read call,
+    ; BEFORE the frame loop ever ran; this restart jumped straight to
+    ; .frameloop with no equivalent skip, so the next vid_stream_frame
+    ; read the header bytes themselves as if they were frame data
+    ; (audio samples, palette, pixels) - garbled DAC output (the
+    ; reported audio distortion) and a garbage Layer 2/palette write
+    ; (the reported red screen). Fix: replay nxv_open's own 512-byte
+    ; throwaway read (same call shape: A=vidAudPoolPage, DE=512),
+    ; discarding the header block, before resuming - reusing the
+    ; SAME already-proven vid_stream_read bookkeeping the original
+    ; open relied on (run/remain state consumed exactly as normal
+    ; streaming would, so no run-boundary drift accumulates over
+    ; repeated loops). Its contract corrupts IX ("Corrupts AF, BC, DE,
+    ; HL, IX") - unlike every OTHER call in this restart, which are all
+    ; provably IX-free (see this block's own header) - so this ONE
+    ; call is bracketed with DI/EI: the CTC keeps ticking (a pending
+    ; tick just latches, hardware IM2, and fires the instant EI
+    ; re-enables it) but the ISR cannot be DISPATCHED mid-call, so it
+    ; can never read IX while this call is transiently corrupting it.
+    ; IX is reseated to vidAudBuf (a known-valid resident buffer,
+    ; matching the CTC-arm sequence's own priming, above) before EI, so
+    ; even an immediately-pending tick reads a well-defined address.
+    ; Brief (one 512-byte SD transfer, a few hundred microseconds) -
+    ; far short of a hard-silence gap, unlike the CTC-park-the-whole-
+    ; reopen approach this restart replaced (see this block's own
+    ; header for why that was removed).
+    di
+    ld a, (vidAudPoolPage)
+    ld de, 512
+    call vid_stream_read
+    ld ix, vidAudBuf
+    ei
+    jr c, .restore                 ; defensive: I/O error on the header
+                                    ; block itself (should not happen -
+                                    ; the same header just validated it)
     jp .frameloop
 .drainlast:
     ; the last successfully streamed frame (if any) is already showing
@@ -2801,8 +2826,37 @@ nxv_open_body:
     xor a
     ld (vidGapNeeded), a
 .derivedone:
+    ; owner fix ("N2 band addressing" audit - hardware-observed bottom-
+    ; half-of-frame rendering on the top half of the screen, mode 0
+    ; letterbox only): YOFS must wrap against the SURFACE's own native
+    ; height, not unconditionally 256. Plain `neg` computes (256-
+    ; vidClipY1) mod 256 - exactly correct for mode 1 (native height
+    ; 256, the mode-1 branches above), but WRONG for mode 0 (native
+    ; height 192): it overshoots the true 192-row modulus by 64
+    ; whenever vidClipY1 != 0, landing YOFS outside the dev guide's own
+    ; documented valid range (chapter-next-layer2.tex, port $17:
+    ; "Valid range is: 256x192: 191") - e.g. vidClipY1=24 (256x144)
+    ; gives neg=232 (invalid), not the correct 192-24=168. The zero
+    ; case (native height, no letterbox) is exempt either way - neg(0)
+    ; is already 0, and 192-0 would wrongly give 192 (itself out of
+    ; range) if not special-cased.
     ld a, (vidClipY1)
+    or a
+    jr z, .yofszero
+    ld b, a                          ; stash vidClipY1 (nonzero)
+    ld a, (vidShape)
+    or a
+    jr z, .yofsmode1                 ; vidShape=0 -> mode 1 (native 256)
+    ld a, NXV_NATIVE_H_MODE0         ; mode 0: wrap against 192
+    sub b
+    jr .yofsdone
+.yofsmode1:
+    ld a, b
     neg
+    jr .yofsdone
+.yofszero:
+    xor a
+.yofsdone:
     ld (vidYofs), a
     ; owner fix ("convict the trampler" - mechanism found live via ZEsarUX
     ; + map cross-check, not the original buffer-overrun hypothesis): this
@@ -2938,17 +2992,17 @@ vid_run_entry_body:
     jp ovl_map_page
 
 ; ---------------------------------------------------------------------
-; vid_run_l2setup_body - Layer 2 setup + identity palette + copper list
-; load, hopped cold from vid_run (VID_PAGE, above - see that call site's
-; own comment for why this is safe pre-arm). Reads vidShape/vidClipY1/
-; vidHeight/vidYofs/vidPalFlag (VID_PAGE-resident, nxv_open's own output)
-; via the established MMU6-translated-address bracket (data_save/
-; data_map_page(VID_PAGE), held for this whole body). vid_identity_
-; palette and vid_copper_init (both below) are same-page plain calls -
-; no further hop needed, since both are pure NextReg I/O with no VID_
-; PAGE-resident memory reads of their own (safe to relocate here
-; wholesale). Ends by hopping back to vid_run_l2setup_ret (VID_PAGE).
-; Corrupts everything.
+; vid_run_l2setup_body - Layer 2 setup + identity palette, hopped cold
+; from vid_run (VID_PAGE, above - see that call site's own comment for
+; why this is safe pre-arm). Reads vidShape/vidClipY1/vidHeight/vidYofs/
+; vidPalFlag (VID_PAGE-resident, nxv_open's own output) via the
+; established MMU6-translated-address bracket (data_save/data_map_page
+; (VID_PAGE), held for this whole body). vid_identity_palette (below) is
+; a same-page plain call - no further hop needed, pure NextReg I/O with
+; no VID_PAGE-resident memory reads of its own (safe to relocate here
+; wholesale). Copper list load retired (owner fix - see vid_copper_
+; poke's old header, VID_PAGE, for why). Ends by hopping back to vid_
+; run_l2setup_ret (VID_PAGE). Corrupts everything.
 ;
 ; Mode 1/column-major (320-wide, NXV_NR70_MODE1) or mode 0/row-major
 ; (256-wide, NXV_NR70_MODE0) per the header's own shape field. Full-
@@ -3051,26 +3105,13 @@ vid_run_l2setup_body:
     or a
     call z, vid_identity_palette
 
-    ; copper flip init - FRAME-mode 8-byte list, owner-validated WAIT
-    ; line (nextdaad.inc's NXV_COPPER_LINE).
- IFDEF DEBUG
-    ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): stages
-    ; 1-3 never touch the copper at all - skip the init entirely rather
-    ; than load-then-never-start it, so a stage-1/2/3 run genuinely
-    ; exercises zero copper instructions, matching the ladder's own
-    ; "no copper" wording for those stages exactly (not just "copper
-    ; loaded but not FRAME-started").
-    ld a, (vidStageLimit+DATA_WINDOW-OVL_ORG)
-    or a
-    jr z, .cpinitgo
-    cp 4
-    jr c, .cpinitskip
-.cpinitgo:
-    call vid_copper_init
-.cpinitskip:
- ELSE
-    call vid_copper_init
- ENDIF
+    ; copper flip init - RETIRED (owner fix, palette sparkle/magenta
+    ; parity-chain audit - see vid_copper_poke's old header, VID_PAGE,
+    ; for the full mechanism). vid_run's flip block uses direct CPU
+    ; writes again (T2's proven choreography); the copper is never
+    ; started for video playback any more, so there is nothing to init
+    ; here and no stage-gating needed - every stage now behaves like
+    ; the old "stages 1-3, no copper" case uniformly.
 
     ; SP14a T4 (VID_PAGE budget lever): the CTC time-constant table
     ; lookup moved here from vid_run's own hot CTC-retune section - it
@@ -3404,9 +3445,19 @@ vidCtcTcNxvMono:
 ;
 ; Initial MOVE data bytes are the CURRENT (pre-flip) bank/palctl -
 ; harmless status-quo values in the unlikely event a vblank lands
-; before the first CPU poke (vid_copper_poke, VID_PAGE) overwrites
-; them. l2FrontBank is RESIDENT (not VID_PAGE), so no MMU6 translation
-; is needed to read it here.
+; before the first CPU poke overwrites them. l2FrontBank is RESIDENT
+; (not VID_PAGE), so no MMU6 translation is needed to read it here.
+;
+; UNCALLED (owner fix, palette sparkle/magenta parity-chain audit): the
+; per-frame poke this list was designed for (vid_copper_poke, formerly
+; VID_PAGE) raced vid_apply_palette's own direct NR $43 writes - see
+; the retired flip block's header (vid_run, VID_PAGE) for the full
+; mechanism. Left defined, not deleted: the WAIT line (257) is real,
+; owner-hardware-validated geometry (VBENCH-COPPER leg, SP14a T3) that
+; a future correct integration could still use, PROVIDED it also
+; brackets vid_apply_palette's 256-entry loop against this list's own
+; MOVE (a copper STOP/START around the loop, or equivalent), which this
+; routine alone does not provide.
 vid_copper_init:
     xor a
     nextreg NR_COPPER_ADDR_LO, a    ; write-index low = 0 - safe regardless
