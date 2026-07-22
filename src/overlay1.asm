@@ -126,7 +126,25 @@ kbMapCaps:                      ; caps: letters upper; digits/edit keys
     db   8, '9', 11, 10, '6',  'P','O','I','U','Y' ; 20 BS, 22 right, 23 recall
     db  13, 'L','K','J','H',  ' ',  0, 'M','N','B'
 kbMapSym:                       ; symbol shift: classic punctuation
-    db   0, ':', 96, '?','/',  '~','|','\\','{','}'
+    db   0, ':', 96, '?','/',  '~','|', 92, '{','}'  ; 92 = '\' (0x5C) as
+                                 ; a decimal literal, NOT '\\' - sjasmplus
+                                 ; expands a quoted '\\' into TWO bytes
+                                 ; (5C 5C, a 2-char string), not one
+                                 ; escaped backslash. That extra byte was
+                                 ; the whole bug: kbMapSym assembled 41
+                                 ; bytes instead of 40, shifting every
+                                 ; entry from matrix 8 onward down by one
+                                 ; physical position - kbMapSym[N] held
+                                 ; the value meant for matrix N-1, for
+                                 ; every symbol-shifted key from F onward
+                                 ; (confirmed via build/nextdaad.sld: the
+                                 ; table was 57547..57588 = 41 bytes, and
+                                 ; the .lst dump showed "5C 5C" for this
+                                 ; single db element). See 96/39 above/
+                                 ; below for the SAME decimal-literal
+                                 ; convention already used here for
+                                 ; backtick/apostrophe - now applied
+                                 ; consistently to backslash too.
     db   0,   0,   0, '<','>',  '!','@','#','$','%'
     db '_',')','(', 39, '&',  '"',';',   0,']','['
     db  13, '=','+','-','^',  ' ',  0, '.',',','*'
