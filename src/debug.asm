@@ -10,6 +10,19 @@ dbg_cls:
     ld (dbgY), a
     ret
 
+; SP14c batch B DBG4: shared entry stub for the common "row N, column
+; 0" call shape (ten sites in this file, one more in errors.asm).
+; B = row 0-23. Only touches A.
+dbg_at0:
+    ld c, 0
+    jr dbg_at
+
+; SP14c batch B DBG5: same idea for aud_dmaprobe's "row N, column 10"
+; sites. B = row 0-23. Only touches A.
+dbg_atc10:
+    ld c, 10
+    jr dbg_at
+
 ; B = row 0-23, C = col 0-31. Only touches A.
 dbg_at:
     ld a, b
@@ -40,12 +53,11 @@ dbg_putc:
     ret
 .print:
     ; DE = glyph address = dbg_font + char*8
-    ld l, a
-    ld h, 0
-    add hl, hl
-    add hl, hl
-    add hl, hl
-    ld de, dbg_font
+    ; SP14c batch B DBG1: Z80N MUL D,E replaces the *8 shift chain
+    ld e, a
+    ld d, 8
+    mul d, e
+    ld hl, dbg_font
     add hl, de
     ex de, hl
     ; HL = screen address: H = $40 + (y AND $18), L = ((y AND 7)<<5) + x
@@ -81,9 +93,13 @@ dbg_putc:
     ret
 
 ; Tilemap debug output: raw glyphs, white on black, 80 columns.
+; SP14c batch B DBG3: the column-wrap path used to re-type this same
+; row-advance/clamp body verbatim (.sety2); it now shares .rowadv/
+; .sety via a jump, matching dbg_putc's own .print-tail fold above.
 dbg_putc_tm:
     cp 13
     jr nz, .char
+.rowadv:
     xor a
     ld (dbgX), a
     ld a, (dbgY)
@@ -107,16 +123,7 @@ dbg_putc_tm:
     inc a
     cp TM_COLS
     jr c, .setx
-    xor a
-    ld (dbgX), a
-    ld a, (dbgY)
-    inc a
-    cp TM_ROWS
-    jr c, .sety2
-    ld a, TM_ROWS-1
-.sety2:
-    ld (dbgY), a
-    ret
+    jr .rowadv
 .setx:
     ld (dbgX), a
     ret
@@ -133,8 +140,7 @@ dbg_engage_tilemap:
     ret z
     push af                     ; dbg_at leaves A = C, preserve chrStatus
     ld b, 11
-    ld c, 0
-    call dbg_at
+    call dbg_at0
     pop af
     dec a
     jr nz, .bad
@@ -163,10 +169,7 @@ dbg_puts:
 ; A = byte, prints two hex digits
 dbg_hex8:
     push af
-    rrca
-    rrca
-    rrca
-    rrca
+    swapnib                     ; SP14c batch B DBG2: Z80N nibble swap
     call .nib
     pop af
 .nib:
@@ -187,19 +190,46 @@ dbg_hex16:
     ld a, l
     jr dbg_hex8
 
+; SP14c batch B (owner request, <=15B budget): report row for
+; engine.asm's ENG_PTR_ABS_HIST (SP14c batch A's E6 measurement
+; instrument, 8 saturating buckets, DDB page-crossing index 0-7).
+; Not wired into any automatic boot/key-hook path - the histogram is
+; only meaningful after real play, so this is a manual/debugger-
+; invoked call (breakpoint + step-into, or a temporary wire-in when
+; actually measuring), not a permanent boot-time cost. Caller
+; positions the cursor first (call dbg_at) if a specific row is
+; wanted; this routine just streams 8 hex-pairs from where the
+; cursor already is. B/HL are parked in the shadow bank (EXX) across
+; each dbg_hex8 call rather than the stack, since dbg_hex8 corrupts
+; BC/HL and mainline code owns the shadow set by project convention
+; (doc 02) - the ISR saves/restores it in full on its audio path, so
+; a frame tick mid-loop cannot disturb the parked state. No trailing
+; space between digit pairs (kept out of the 15-byte budget). Exists
+; only if the histogram itself survives future stripping - if
+; eng_ptr_abs_hist goes, delete this with it.
+dbg_hist_row:
+    ld hl, eng_ptr_abs_hist
+    ld b, 8
+.loop:
+    ld a, (hl)
+    inc hl
+    exx
+    call dbg_hex8
+    exx
+    djnz .loop
+    ret
+
 dbg_space:
     ld a, ' '
     jp dbg_putc
 
 boot_banner:
     ld b, 0
-    ld c, 0
-    call dbg_at
+    call dbg_at0
     ld hl, msgTitle
     call dbg_puts
     ld b, 1
-    ld c, 0
-    call dbg_at
+    call dbg_at0
     ld hl, msgCore
     call dbg_puts
     ld e, NR_CORE_MAJOR
@@ -227,8 +257,7 @@ SELFTEST_FREE_1MB equ 15    ; 14,15 + 35-47 (same withdrawals)
 
 ram_diag:
     ld b, 2
-    ld c, 0
-    call dbg_at
+    call dbg_at0
     ld a, (ramExpanded)
     or a
     jr z, .base
@@ -246,8 +275,7 @@ ram_diag:
 ; Relies on helpers not touching D (expected free count).
 bank_selftest:
     ld b, 10
-    ld c, 0
-    call dbg_at
+    call dbg_at0
     ld a, (ramExpanded)
     or a
     jr z, .exp1mb
@@ -322,8 +350,7 @@ bank_selftest:
 
 ddb_diag:
     ld b, 5
-    ld c, 0
-    call dbg_at
+    call dbg_at0
     ld hl, msgDdb
     call dbg_puts
     ld a, (ddbSizeHi)       ; six hex digits: full 24-bit size
@@ -331,8 +358,7 @@ ddb_diag:
     ld hl, (ddbSize)
     call dbg_hex16
     ld b, 6
-    ld c, 0
-    call dbg_at
+    call dbg_at0
     ld hl, msgVer
     call dbg_puts
     ld a, (ddbHeader+0)
@@ -342,8 +368,7 @@ ddb_diag:
     ld a, (ddbHeader+1)
     call dbg_hex8
     ld b, 7
-    ld c, 0
-    call dbg_at
+    call dbg_at0
     ld hl, ddbHeader+8      ; 13 pointer words, wrap fills rows 7-9
     ld b, 13
 .ptr:
@@ -417,19 +442,26 @@ l2dbg_wait_press:
 ; ASCIIZ string at HL there via the existing dbg_puts/dbg_at console -
 ; a fixed clear-then-print avoids stale trailing characters when a new
 ; status line is shorter than the one it replaces. Corrupts everything.
-l2dbg_status:
-    push hl
-    ld b, TM_ROWS-1
+;
+; SP14c batch B DBG6: B=row, D=height. Fills a TM_COLS-wide white-ink/
+; black-paper, space-glyph bar - the exact 8-instruction sequence
+; l2dbg_status/l2dbg_status2/l2_dbg_hook each repeated verbatim.
+; Corrupts AF, BC, DE, HL (tm_fill_rect's own contract).
+dbg_bar_white:
     ld c, 0
-    ld d, 1
     ld e, TM_COLS
     ld a, 7*2                    ; pair 7: white ink on black paper
     ld (tmAttr), a
     ld a, GLYPH_SPACE
-    call tm_fill_rect
+    jp tm_fill_rect               ; tail call - returns to OUR caller
+
+l2dbg_status:
+    push hl
     ld b, TM_ROWS-1
-    ld c, 0
-    call dbg_at
+    ld d, 1
+    call dbg_bar_white
+    ld b, TM_ROWS-1
+    call dbg_at0
     pop hl
     jp dbg_puts
 
@@ -469,16 +501,10 @@ l2dbg_status_regs:
 ; everything.
 l2dbg_status2:
     ld b, TM_ROWS-2
-    ld c, 0
     ld d, 1
-    ld e, TM_COLS
-    ld a, 7*2
-    ld (tmAttr), a
-    ld a, GLYPH_SPACE
-    call tm_fill_rect
+    call dbg_bar_white
     ld b, TM_ROWS-2
-    ld c, 0
-    call dbg_at
+    call dbg_at0
     ld hl, msgReg14
     call dbg_puts
     ld e, NR_L2_TRANSP
@@ -555,13 +581,8 @@ l2_dbg_hook:
     ; immediately overwrite reads as a plain blank screen, not a
     ; black hole where Layer 2 used to show through
     ld b, 0
-    ld c, 0
     ld d, TM_ROWS
-    ld e, TM_COLS
-    ld a, 7*2                    ; pair 7: white ink on black paper
-    ld (tmAttr), a
-    ld a, GLYPH_SPACE
-    call tm_fill_rect
+    call dbg_bar_white
     ret
 
 ; --- Bare-metal isolation ladder ---
@@ -661,8 +682,7 @@ l2_bareprobe_hook:
     call txt_init
     xor a
     call l2_bareprobe_draw
-    ld b, 0
-    ld c, 0
+    ld bc, 0
     ld d, TM_ROWS-1
     ld e, TM_COLS
     call tm_clear_transparent
@@ -696,24 +716,21 @@ l2_bareprobe_hook:
 ; Never returns. Requires interrupts running (frameCounter).
 aud_dmaprobe:
     ld b, 0
-    ld c, 10
-    call dbg_at
+    call dbg_atc10
     ld hl, .msg
     call dbg_puts
     ld a, 87
     call .run                   ; HL = frames at prescaler 87
     push hl
     ld b, 1
-    ld c, 10
-    call dbg_at
+    call dbg_atc10
     pop hl
     call dbg_hex16
     ld a, 174
     call .run
     push hl
     ld b, 2
-    ld c, 10
-    call dbg_at
+    call dbg_atc10
     pop hl
     call dbg_hex16
 .hang:
@@ -832,8 +849,7 @@ boot_banner:
     ret nc                       ; (title becomes the first thing seen)
     ld a, (tmAttr)
     ld e, a
-    ld b, 0
-    ld c, 0
+    ld bc, 0
     ld hl, msgRelTitle
 .loop:
     ld a, (hl)
@@ -857,8 +873,8 @@ boot_banner:
 ; ram_detect) makes no assumptions about incoming registers.
 .hold:
     ld hl, (frameCounter)
-    ld de, 50
-    add hl, de
+    add hl, 50                  ; Z80N ADD HL,nn: byte-neutral vs
+                                 ; ld de,50/add hl,de, -5T
     ex de, hl                   ; DE = target frameCounter value
 .wait:
     ld hl, (frameCounter)
