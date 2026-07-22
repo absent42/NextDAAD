@@ -1991,11 +1991,28 @@ vid_col_newblock:
 .open:
     call vid_win_open
     ret c                          ; CF set, A = VID_ERR_CMD (its contract)
+    ; owner fix (gap-blit perf audit, item 5 follow-up): bounded retry,
+    ; mirroring vid_read_block's own fix earlier this session - this
+    ; token-wait was still unconditional/unbounded (a different copy
+    ; from vid_read_block's, missed by that fix since it lives in a
+    ; separate routine). A wedged card must not hang the gap path
+    ; either. BC is free here (routine's own "Corrupts AF, BC, DE, HL").
 .wt:
+    ld bc, 0                       ; bounded retry: 65536 polls
+.wtloop:
     in a, (PORT_SPI_DAT)
     inc a
-    jr z, .wt
+    jr nz, .wtgot
+    dec bc
+    ld a, b
+    or c
+    jr nz, .wtloop
+    ld a, $FF                      ; exhausted: synthesize a non-$FE byte
+    jr .checktok                   ; so the existing bad-token path below
+                                    ; fires unchanged
+.wtgot:
     dec a
+.checktok:
     cp $FE
     jr z, .ok
  IFDEF DEBUG
