@@ -46,10 +46,10 @@ cache_find:
     ld a, (hl)
     cp e
     jr z, .hit
-    push bc
-    ld bc, GFX_ENTRY_SIZE
-    add hl, bc
-    pop bc
+    ; SP14c batch B GFX1: Z80N ADD HL,nn needs no register, so the
+    ; push/pop bc bracket (it existed only to protect the loop
+    ; counter/comparand while a register held the constant) is gone.
+    add hl, GFX_ENTRY_SIZE
     inc b
     jr .scan
 .hit:
@@ -79,8 +79,7 @@ cache_touch:
     ld (gfxTick), a
     pop af                      ; A = entry index
     call gce_ptr                ; HL -> entry base
-    ld bc, GCE_TICK
-    add hl, bc
+    add hl, GCE_TICK             ; SP14c batch B GFX2: Z80N ADD HL,nn
     ld a, (gfxTick)
     ld (hl), a
     ret
