@@ -1287,20 +1287,27 @@ gfx_bank_get:
 ; arena or the density invariant (see gfxBankNext) breaks. The only
 ; caller is cache_evict_lru below, which owns that compaction.
 ; Corrupts AF, BC, DE, HL.
+; SP14c gate follow-up: A held firstBankIdx immediately after the read
+; below, before bankCount's own read clobbered it - reordered so the
+; Z80N ADD HL,A add runs while A still holds it, removing the C/D/E
+; relay entirely (C is no longer read anywhere in this routine). This
+; also removes the need for .clear's own pop: HL already sits at
+; entry base+2 (the bankCount cell) when .clear is reached either way
+; (fall-through from the bankCount==0 test, or after the .free loop -
+; bank_free's own "preserves BC, DE, HL" contract keeps it there), so
+; the two dec hl below land on entry base with no stack retrieval.
 cache_drop:
     call gce_ptr                 ; HL -> entry base (picture#)
     inc hl                       ; -> firstBankIdx
-    ld a, (hl)
-    ld c, a                      ; C = firstBankIdx
+    ld a, (hl)                   ; A = firstBankIdx
+    push hl                      ; save pointer (entry base + 1)
+    ld hl, gfxBankList
+    add hl, a                    ; Z80N ED 31: HL = gfxBankList+firstBankIdx
+    ex de, hl                    ; DE -> gfxBankList[firstBankIdx]
+    pop hl                       ; HL -> entry base + 1 (firstBankIdx)
     inc hl                       ; -> bankCount
     ld a, (hl)
     ld b, a                      ; B = bankCount
-    ld d, 0
-    ld e, c
-    push hl                      ; save pointer (entry base + 2, GCE_COUNT)
-    ld hl, gfxBankList
-    add hl, de
-    ex de, hl                    ; DE -> gfxBankList[firstBankIdx]
     ld a, b
     or a
     jr z, .clear
@@ -1310,7 +1317,6 @@ cache_drop:
     inc de
     djnz .free
 .clear:
-    pop hl                       ; HL -> entry base + 2
     dec hl
     dec hl                       ; HL -> entry base
     ld (hl), GFX_EMPTY           ; picture#
@@ -1396,10 +1402,10 @@ cache_evict_lru:
     ; slide gfxBankList[first+count .. gfxBankNext-1] down over the
     ; hole (forward LDIR: dest < src, overlap-safe)
     ld a, (gceDropFirst)
-    ld e, a
-    ld d, 0
     ld hl, gfxBankList
-    add hl, de
+    add hl, a                    ; Z80N ED 31 - gate follow-up, same
+                                  ; class as OV1-3/OV1-4 (A already =
+                                  ; gceDropFirst, nothing intervenes)
     ex de, hl                    ; DE = dest = list + first
     ld a, (gceDropCount)
     ld l, a
