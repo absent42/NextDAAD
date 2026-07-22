@@ -50,11 +50,11 @@ win_select:
     ld hl, winTable
     or a
     jr z, .done
-    ld b, a
-    ld de, WIN_SIZE
-.mul:
+    ; SP14c batch B WIN1: Z80N MUL D,E replaces the DJNZ-counted add
+    ld d, WIN_SIZE
+    ld e, a
+    mul d, e
     add hl, de
-    djnz .mul
 .done:
     ld (curWin), hl
     ret
