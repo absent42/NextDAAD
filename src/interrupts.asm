@@ -152,15 +152,25 @@ im2_isr:
     ; im2_init's ei (see the SP7 Task 3 report's port audit), so this
     ; selection cannot race a mainline select. A nested ctc_isr never
     ; touches this pair, so it cannot split the select from the read.
+    ; SP14c INT-1 (opus-gated): TBBLUE_REG_SEL ($243B) and
+    ; TBBLUE_REG_ACC ($253B) differ only in B ($24 vs $25) - load the
+    ; pair once and toggle B with inc/dec instead of four LD BC,nn
+    ; reloads. Safe against a nested ctc_isr: that ISR (below, fires
+    ; freely here since 'ei' ran at :149) touches only AF and HL, never
+    ; BC - so B's SEL/ACC state survives a CTC edge landing anywhere in
+    ; this sequence unchanged. BC itself is fully saved/restored around
+    ; the whole .audio path (both register banks, via the push bc's
+    ; above and the pop bc's below) so leaving B on $25 (ACC) on exit
+    ; from this block has no caller-visible effect.
     ld bc, TBBLUE_REG_SEL
     ld a, $56
     out (c), a
-    ld bc, TBBLUE_REG_ACC
+    inc b                    ; B: SEL -> ACC ($24 -> $25)
     in d, (c)               ; D = MMU6
-    ld bc, TBBLUE_REG_SEL
+    dec b                    ; B: ACC -> SEL
     ld a, $57
     out (c), a
-    ld bc, TBBLUE_REG_ACC
+    inc b                    ; B: SEL -> ACC
     in e, (c)               ; E = MMU7
     push de
     nextreg $56, AUD_PAGE_LO
