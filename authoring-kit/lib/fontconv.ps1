@@ -26,10 +26,15 @@
 #
 # default.chr (committed alongside this script) is a byte-for-byte copy
 # of src/font.chr, the interpreter's embedded font - verified identical
-# by SHA256 at the time this script was written:
-#   c16e3bac15f24b3f5d0368fab37c6f6dcf113ef4bfd35ee76c678547db952446
+# by SHA256 at the time this note was last updated (2026-07-22, the
+# glyph 38/$26 (ampersand) and glyph 96/$60 (pound sterling) content
+# fix - see .superpowers/sdd/keyboard-fix-report.md):
+#   9de51ef5d66c06f2845eacede265c303ddbaa10b5e47583d1f7b077ed2802c64
 # (src/font.chr is INCBIN'd at tilemap.asm:297, tracked in git, exactly
-# 2048 bytes - see .superpowers/sdd/fonts-task-1-report.md).
+# 2048 bytes - see .superpowers/sdd/fonts-task-1-report.md). Re-verify
+# and update this hash whenever either file changes - `sha256sum
+# src/font.chr authoring-kit/lib/default.chr` must print the SAME
+# digest for both.
 #
 # Glyph 32 (space) constraint: the tilemap driver relies on glyph 32
 # having an all-zero bitmap (src/tilemap.asm's GLYPH_SPACE comment) -
