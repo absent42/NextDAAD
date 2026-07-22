@@ -120,16 +120,22 @@ bank_alloc:
     ret
 
 ; Free bank A.
-; No bounds check - bankTable is followed by code; an out-of-range free corrupts it. Never touches D.
+; No bounds check - bankTable is followed by code; an out-of-range free corrupts it.
+; SP14c BANKS-1: DE no longer touched at all (was scratch, saved/
+; restored); Z80N ADD HL,A replaces the LD E,A/LD D,0/ADD HL,DE index
+; build. Preserves BC, DE, HL (BC untouched as before; DE now
+; genuinely untouched, not saved/restored; HL saved/restored). A is
+; unchanged throughout (ADD HL,A does not modify A). Callers do not
+; read flags on return (grepped every call site: debug.asm's two are
+; followed by an unrelated bank_alloc/cp pair; overlay1.asm/video.asm
+; sites are followed by an unconditional jump or an unrelated call;
+; overlay2.asm's three djnz-loop sites test B, not any flag) - ADD
+; HL,A's undefined carry is safe here.
 bank_free:
     push hl
-    push de
-    ld e, a
-    ld d, 0
     ld hl, bankTable
-    add hl, de
+    add hl, a
     ld (hl), BT_FREE
-    pop de
     pop hl
     ret
 
