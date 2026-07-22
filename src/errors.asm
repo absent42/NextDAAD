@@ -18,8 +18,8 @@ err_raise:
     ld (errCode), a
  IFDEF DEBUG
     ld b, 30
-    ld c, 0
-    call dbg_at
+    call dbg_at0                ; SP14c batch B ERR2: shared with
+                                 ; debug.asm's dbg_at0 (row-only stub)
     ld hl, msgErr
     call dbg_puts
     ld a, (errCode)
@@ -49,8 +49,7 @@ err_raise:
  ENDIF
     ld a, 110                   ; pair 55: magenta paper (3), white ink (7)
     ld (tmAttr), a
-    ld b, 0
-    ld c, 0
+    ld bc, 0                    ; SP14c batch B ERR1
     ld d, 1
     ld e, TM_COLS               ; magenta bar across row 0
     ld a, GLYPH_SPACE
@@ -142,8 +141,7 @@ fatal_puts:
     nextreg NR_MMU7, OVL0_PAGE
     ld a, (tmAttr)
     ld e, a
-    ld b, 0
-    ld c, 0
+    ld bc, 0                    ; SP14c batch B ERR1
 .loop:
     ld a, (hl)
     or a
