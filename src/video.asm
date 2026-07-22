@@ -1866,21 +1866,52 @@ vid_stream_pixels_gap:
     ld (vidGapDest), hl
     ld a, (vidColUnits)
     ld (vidGapColLeft), a
+    ld (.fastlen+1), a               ; owner redesign (item 5): self-
+                                      ; modify the per-column unit count
+                                      ; once per call - the fast path
+                                      ; below compares against this
+                                      ; immediate instead of a second
+                                      ; memory read every column.
 .loop:
     ld hl, (vidGapColsLeft)
     ld a, h
     or l
-    jr z, .alldone
+    jp z, .alldone                  ; jp: .alldone now past jr's +127
+                                     ; (owner redesign, item 5, pushed it
+                                     ; out of range)
     ld a, (vidGapBlkLeft)
     or a
     jr nz, .haveblk
     ld hl, (vidGapDest)
     call vid_col_block_start        ; preserves HL; opens/waits token
-    jr c, .err
+    jp c, .err                      ; jp: same reason
     ld a, 64                        ; 512/8 units
     ld (vidGapBlkLeft), a
 .haveblk:
-    ; chunk = min(colLeft, blkLeft), both bytes
+    ; owner redesign (item 5, gap-blit perf audit): a column's own unit
+    ; count (vidColUnits, <=32 for any valid header height) is always
+    ; well under a block's 64-unit capacity, so most columns fit
+    ; ENTIRELY inside whatever block is currently open - only a column
+    ; that happens to straddle a 512-byte boundary needs the general
+    ; min() computation below. Detect a FRESH column (colLeft ==
+    ; vidColUnits, via the self-modified immediate - the only value
+    ; colLeft is ever reset to) that fits, and jump straight into
+    ; .havechunk with A already holding the correct chunk (the whole
+    ; column) - same transfer primitive (vid_xfer8n, still 16T/byte,
+    ; INIR was already rejected elsewhere in this file for falling
+    ; short of that, 21T/byte), just skipping a memory re-read and the
+    ; general compare for the common case. Falls through to the
+    ; original min(colLeft,blkLeft) logic, unchanged, for everything
+    ; else (mid-chunk already, or a genuine boundary straddle).
+    ld a, (vidGapColLeft)
+.fastlen:
+    cp 0                              ; patched: vidColUnits
+    jr nz, .slow
+    ld hl, vidGapBlkLeft
+    cp (hl)                           ; A unchanged by cp
+    jr c, .havechunk                  ; colUnits < blkLeft: fits, A=chunk
+    jr z, .havechunk                  ; exact fit too
+.slow:
     ld a, (vidGapColLeft)
     ld hl, vidGapBlkLeft
     cp (hl)
@@ -1891,7 +1922,24 @@ vid_stream_pixels_gap:
     ld b, a
     ld hl, (vidGapDest)
     ld c, PORT_SPI_DAT
-    call vid_xfer8n                  ; HL += B*8; B/C/E now garbage
+    ; owner redesign (item 5): vid_xfer8n's own body inlined - this is
+    ; its ONLY call site (verified: no other reference in this file),
+    ; so the call/ret round trip (~27T) was pure overhead paid every
+    ; chunk (roughly once per column in the common no-boundary-straddle
+    ; case, 320 times/frame). Same E-based-outer-counter shape (ini
+    ; itself decrements B, so B cannot also be the pass counter - the
+    ; SP14a T3 fix-wave-3 lesson, unchanged), same 16T/byte REPT-8 ini
+    ; burst (matches the SD interface's own peak rate exactly, unlike
+    ; INIR's 21T/byte - already rejected elsewhere in this file).
+    ld e, b
+.xfer8n:
+    REPT 8
+        ini
+    ENDR
+    dec e
+    jr nz, .xfer8n
+    ; HL now advanced by (original B)*8 bytes; B/C/E garbage - same
+    ; contract vid_xfer8n's own removed header documented.
     ld (vidGapDest), hl
     ld a, (vidGapColLeft)
     ld hl, vidGapChunk
@@ -1933,7 +1981,9 @@ vid_stream_pixels_gap:
     ; the low byte is exact regardless of the high byte's value).
     ld a, l
     and 31
-    jr nz, .loop
+    jp nz, .loop                    ; jp: .loop now past jr's -128
+                                     ; (owner redesign, item 5, pushed it
+                                     ; out of range)
     call data_restore
     ld hl, vidPxPage
     inc (hl)
@@ -1954,21 +2004,13 @@ vid_stream_pixels_gap:
     scf
     ret
 
-; Shared 8-byte burst primitive - same E-based-outer-counter fix as
-; vid_xfer16n (the SP14a T3 fix-wave-3 lesson: `ini` itself decrements B,
-; so B cannot ALSO be the outer pass counter - E is used instead, copied
-; from B at entry, before `ini` can touch either). In: B = group count
-; (units of 8 bytes), C = PORT_SPI_DAT, HL = destination. Out: HL
-; advanced by B*8 bytes. Corrupts AF, B, E.
-vid_xfer8n:
-    ld e, b
-.pass:
-    REPT 8
-        ini
-    ENDR
-    dec e
-    jr nz, .pass
-    ret
+; vid_xfer8n (the shared 8-byte burst primitive) RETIRED (owner
+; redesign, item 5, gap-blit perf audit): it had exactly one call site
+; (vid_stream_pixels_gap's own .havechunk, above) - inlined there to
+; remove the call/ret round trip from every chunk transfer. Same E-
+; based-outer-counter shape (the SP14a T3 fix-wave-3 lesson: `ini`
+; itself decrements B, so B cannot also be the outer pass counter) and
+; the same 16T/byte REPT-8 ini burst live on at that inline site now.
 
 ; Ensure a fresh 512-byte SD block is ready to stream (window open, run
 ; available, data token seen) - mirrors vid_stream_read_raw's own
