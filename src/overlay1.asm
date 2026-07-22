@@ -159,6 +159,21 @@ kb_char:
     ld (inpRepFirst), a
     ld a, (frameCounter)
     ld (inpRepFrm), a           ; seed the per-frame tick baseline
+    ; arm the CAPS+2 caps-lock toggle exactly once per fresh press (see
+    ; .emit's CAPS+2 handling below for the consuming side and the
+    ; audit note on why this combo is special-cased at all)
+    xor a
+    ld (capsLockArmed), a
+    ld a, c
+    cp 16
+    jr nz, .noarm
+    ld a, b
+    and 3
+    cp 1                         ; bit0 (caps) set, bit1 (sym) clear
+    jr nz, .noarm
+    ld a, 1
+    ld (capsLockArmed), a
+.noarm:
     xor a
     ret
 .held:
@@ -190,6 +205,34 @@ kb_char:
     xor a
     ret
 .emit:
+    ; CAPS+2 (matrix 16, CAPS held, SYM clear): the Next's dedicated
+    ; CAPS LOCK key emits this combo electrically (classic Spectrum
+    ; authority - CAPS SHIFT+2 = CAPS LOCK; confirmed against
+    ; tools/tbblue/src/asm/KeyboardTester/KeyboardTester.asm's own
+    ; keystopress combo table and the dev guide's keyboard chapter). It
+    ; is a LOCK TOGGLE, never a character - kbMapCaps[16] literal '2'
+    ; was the bug. capsLockArmed (input.asm, resident) is set once by
+    ; the "new key" branch above and consumed here, so a long hold
+    ; toggles exactly once rather than once per autorepeat tick.
+    ld a, c
+    cp 16
+    jr nz, .notlock
+    ld a, b
+    and 3
+    cp 1                         ; bit0 (caps) set, bit1 (sym) clear
+    jr nz, .notlock
+    ld a, (capsLockArmed)
+    or a
+    jr z, .locked                ; already consumed this hold: no-op
+    xor a
+    ld (capsLockArmed), a
+    ld a, (capsLock)
+    xor 1
+    ld (capsLock), a
+.locked:
+    xor a
+    ret
+.notlock:
     ; pick the map by shift state in B
     ld hl, kbMapPlain
     bit 1, b
@@ -205,6 +248,30 @@ kb_char:
     ld d, 0
     add hl, de
     ld a, (hl)
+    ; caps-lock (letters only, classic semantics - matches the classic
+    ; ROM's k_decode_4 "C mode": forces upper-case letters regardless
+    ; of the live CAPS SHIFT read, and touches nothing else). SYM-
+    ; shifted chars and physically-CAPS-shifted chars (kbMapCaps, which
+    ; already carries the correct case/edit-key value) are returned
+    ; unmodified; only the plain-table, no-shift-held path can still be
+    ; a lower-case letter that the lock should force upper-case.
+    bit 1, b
+    ret nz                        ; sym-shifted: return as looked up
+    bit 0, b
+    ret nz                        ; physical caps held: already correct
+    ld d, a                       ; D = looked-up plain-table char
+    cp 'a'
+    jr c, .plain
+    cp 'z'+1
+    jr nc, .plain
+    ld a, (capsLock)
+    or a
+    jr z, .plain
+    ld a, d
+    sub 32                        ; lowercase -> uppercase
+    ret
+.plain:
+    ld a, d
     ret
 
 ; --- input line editor ---
