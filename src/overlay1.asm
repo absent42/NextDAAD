@@ -1060,10 +1060,9 @@ inp_cursor_put:
     add a, b
     ld b, a                     ; screen row
     ld a, (inpCur)              ; glyph = inpLine[inpCur] or space
-    ld e, a
-    ld d, 0
     ld hl, inpLine
-    add hl, de
+    add hl, a                   ; Z80N ED 31: HL += A (unsigned) - gate
+                                 ; follow-up, same class as OV1-3/OV1-4
     ld a, (hl)
     or a
     jr nz, .g
