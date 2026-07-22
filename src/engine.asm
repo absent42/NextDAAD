@@ -118,15 +118,10 @@ obj_ptr:
     dec a
     cp c
     jr c, .bad
-    ld a, c
-    ld hl, 0
-    ld l, a
-    add hl, hl                  ; *2
-    ld e, l
-    ld d, h
-    add hl, hl                  ; *4
-    add hl, de                  ; *6
-    ld de, objTable
+    ld d, 6                      ; SP14c E4: DE = 6*c (OBJ_SIZE) via
+    ld e, c                      ; Z80N MUL (was shift-add *2/*4/+de)
+    mul d, e
+    ld hl, objTable
     add hl, de
     ld a, c
     pop bc
@@ -199,14 +194,10 @@ eng_push_proc:
 eng_rec_ptr:
     ld a, (procSP)
 eng_rec_ptr_a:                  ; entry with A = level
-    ld hl, 0
-    ld l, a
-    add hl, hl
-    ld e, l
-    ld d, h
-    add hl, hl
-    add hl, de                  ; *6 = PREC_SIZE
-    ld de, procStack
+    ld e, a                      ; SP14c E5: DE = 6*level (PREC_SIZE) via
+    ld d, 6                      ; Z80N MUL (was shift-add *2/*4/+de)
+    mul d, e
+    ld hl, procStack
     add hl, de
     ret
 
@@ -290,11 +281,15 @@ eng_pop_proc:
     ld b, a
     ld a, (procSP)
     cp b
-    jr nz, .plainpop
+    jr nz, eng_pop_tail
     ld a, (doallObj)
     inc a
     jp nz, eng_doall_next       ; DOALL live on this level: iterate
-.plainpop:
+; Shared tail (SP14c E1): this exact 36-byte sequence was duplicated
+; verbatim as eng_doall_next's .plainpop2 (dead-code duplication found
+; in the SP14c sweep) - both plain-pop paths (normal pop and DOALL-
+; exhausted pop) now share this one body via a tail JP.
+eng_pop_tail:
     ld a, (procSP)
     dec a
     ld (procSP), a
@@ -323,9 +318,10 @@ eng_exec:
     call rd_seek
     call rd_next                ; opcode byte
     ld (curOpcode), a
-    inc a                       ; $FF = entry terminator (DRC emits it
-    jp z, .endentry             ; on every fall-through entry)
-    ld a, (curOpcode)
+    cp $FF                      ; $FF = entry terminator (DRC emits it
+    jp z, .endentry             ; on every fall-through entry); CP keeps
+                                 ; A intact so the reload below (SP14c E2)
+                                 ; is unneeded
     and $7F
     ld (curCondact), a
     cp 120
@@ -399,10 +395,9 @@ eng_exec:
     ; dispatch
     ld a, (curCondact)
     ld e, a
-    ld d, 0
+    ld d, 3                     ; SP14c E3: DE = 3*curCondact via Z80N MUL
+    mul d, e                    ; (was 3x add hl,de; doc 07(b) idiom)
     ld hl, cdisp
-    add hl, de
-    add hl, de
     add hl, de                  ; *3
     ld a, (hl)                  ; page
     inc hl
@@ -535,28 +530,8 @@ eng_doall_next:
     ld (doallObj), a
     xor a
     ld (doallLevel), a
-.plainpop2:
-    ; complete as DONE: plain pop
-    ld a, (procSP)
-    dec a
-    ld (procSP), a
-    call eng_rec_ptr_a
-    ld de, 5
-    add hl, de
-    ld a, (hl)
-    ld (lastDone), a
-    ld b, a
-    ld a, (procSP)
-    or a
-    ret z
-    dec a
-    call eng_rec_ptr_a
-    ld de, 5
-    add hl, de
-    ld a, (hl)
-    or b
-    ld (hl), a
-    ret
+    ; complete as DONE: plain pop (SP14c E1 - shared tail, see eng_pop_proc)
+    jp eng_pop_tail
 
 ; --- condact properties: bit 7 = action, bits 0-1 = argc ---
 ; QUIT 20, MOVE 106, PICTURE 84, PARSE 73 deliberately typed as
