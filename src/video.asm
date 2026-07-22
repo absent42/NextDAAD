@@ -594,14 +594,28 @@ vid_read_block:
     cp $FE                        ; $FE = valid data token
     jp nz, .tokbad                ; jp: .tokbad is past the ~520-byte unroll
     ld c, PORT_SPI_DAT
-    ld a, 2                       ; two 256-byte halves = 512 bytes total
+    ld a, 4                       ; owner redesign (item 5 round 2, byte-
+                                   ; class audit): four 128-byte quarters
+                                   ; instead of two 256-byte halves - same
+                                   ; 512 bytes total, same 16T/byte INI
+                                   ; rate (playvid parity; INIR would be
+                                   ; 21T/byte), but the UNROLLED BLOCK
+                                   ; itself shrinks from 512 code bytes to
+                                   ; 256, freeing headroom for the gap
+                                   ; path's own new coarse unit below.
+                                   ; Cost: 2 extra outer-loop passes/block
+                                   ; (~28T/block owner-estimated) - at
+                                   ; N0's 160 blocks/frame that is ~4480T
+                                   ; (~0.16ms/frame against a 10.3ms
+                                   ; margin) - trivial next to the budget
+                                   ; this frees.
 .halfloop:
-    DUP 256                       ; 256 unrolled INI at 16T/byte (playvid
-      ini                          ; parity - the interface's peak rate; INIR
-    EDUP                           ; would be 21T/byte). HL += 256 per pass.
+    DUP 128
+      ini                          ; 16T/byte, unchanged - see this
+    EDUP                           ; routine's own header.
     dec a                         ; A survives untouched across every INI
     jp nz, .halfloop               ; above (see this routine's own header) -
-                                    ; jp: .halfloop is ~512 bytes back, past
+                                    ; jp: .halfloop is ~256 bytes back, past
                                     ; jr's -128 range
     in a, (c)                     ; skip the 2-byte CRC (the nops pad the
     nop                           ; in/in to the 16T/byte interface timing)
@@ -1872,6 +1886,19 @@ vid_stream_pixels_gap:
                                       ; below compares against this
                                       ; immediate instead of a second
                                       ; memory read every column.
+    ; owner redesign (item 5 round 2, byte-class audit): also self-
+    ; modify the column's own 64-byte-group count (colUnits>>3) and
+    ; 8-byte-unit remainder (colUnits&7) - cheap shifts/mask, computed
+    ; once per call, not a runtime divide per column. Used by .fastfit
+    ; below to serve most of a column through the coarse 64-byte
+    ; primitive instead of the 8-byte one throughout.
+    srl a
+    srl a
+    srl a
+    ld (.fastgroups+1), a
+    ld a, (vidColUnits)
+    and 7
+    ld (.fastremlen+1), a
 .loop:
     ld hl, (vidGapColsLeft)
     ld a, h
@@ -1895,22 +1922,79 @@ vid_stream_pixels_gap:
     ; that happens to straddle a 512-byte boundary needs the general
     ; min() computation below. Detect a FRESH column (colLeft ==
     ; vidColUnits, via the self-modified immediate - the only value
-    ; colLeft is ever reset to) that fits, and jump straight into
-    ; .havechunk with A already holding the correct chunk (the whole
-    ; column) - same transfer primitive (vid_xfer8n, still 16T/byte,
-    ; INIR was already rejected elsewhere in this file for falling
-    ; short of that, 21T/byte), just skipping a memory re-read and the
-    ; general compare for the common case. Falls through to the
-    ; original min(colLeft,blkLeft) logic, unchanged, for everything
+    ; colLeft is ever reset to) that fits, and route it to .fastfit
+    ; (below) - the round-2 coarse-unit transfer - instead of the
+    ; general min(colLeft,blkLeft) path, which still owns everything
     ; else (mid-chunk already, or a genuine boundary straddle).
     ld a, (vidGapColLeft)
 .fastlen:
     cp 0                              ; patched: vidColUnits
-    jr nz, .slow
+    jp nz, .slow                      ; jp: pushed out of jr range by
+                                       ; the coarse unit below
     ld hl, vidGapBlkLeft
     cp (hl)                           ; A unchanged by cp
-    jr c, .havechunk                  ; colUnits < blkLeft: fits, A=chunk
-    jr z, .havechunk                  ; exact fit too
+    jr c, .fastfit                    ; colUnits < blkLeft: fits
+    jr z, .fastfit                    ; exact fit too
+    jp .slow                          ; jp: straddles a block boundary
+.fastfit:
+    ; owner redesign (item 5 round 2, byte-class audit): the whole
+    ; column fits in the open block (just confirmed above) - serve it
+    ; through the coarse 64-byte primitive for every complete 64-byte
+    ; group, then the 8-byte primitive for the (<64-byte) remainder,
+    ; instead of vid_xfer8n's uniform 8-byte granularity throughout.
+    ; The byte-class audit (report) found the 8-byte granule's own
+    ; loop-reload cost (~24-30T every 8 bytes) was the dominant
+    ; remaining overhead the round-1 inlining did not touch - this is
+    ; the fix: per-column loop-control instances drop from up to
+    ; colUnits/1 (worst case, one 8-byte pass per unit) to at most
+    ; groups+1 (3-4 for N3/N4), matching the coordinator's own target
+    ; shape ("192=3x64", "120=64+56").
+    ld hl, (vidGapDest)
+    ld c, PORT_SPI_DAT
+.fastgroups:
+    ld b, 0                            ; patched: vidColUnits>>3
+    ld a, b
+    or a
+    jp z, .fastrem                     ; jp: past jr's +127 (128-byte
+                                        ; unrolled block ahead)
+    ld e, b
+.fastgrouploop:
+    DUP 64
+      ini                              ; 16T/byte, same rate as the 8-
+    EDUP                               ; byte primitive - only the loop-
+    dec e                              ; control cadence changes.
+    jp nz, .fastgrouploop               ; jp: 128-byte block behind,
+                                         ; past jr's -128
+.fastrem:
+.fastremlen:
+    ld b, 0                            ; patched: vidColUnits&7
+    ld a, b
+    or a
+    jr z, .fastxferdone
+    ld e, b
+.fastremloop:
+    REPT 8
+        ini
+    ENDR
+    dec e
+    jr nz, .fastremloop
+.fastxferdone:
+    ld (vidGapDest), hl
+    xor a
+    ld (vidGapColLeft), a              ; whole column consumed in one go
+    ld a, (vidGapBlkLeft)
+    ld hl, .fastlen+1                  ; re-read the already-patched
+                                        ; colUnits byte (avoids a third
+                                        ; SMC site just for this)
+    sub (hl)
+    ld (vidGapBlkLeft), a
+    jr nz, .blkopen                    ; block not finished: rejoin the
+                                        ; shared "column finished" tail
+    ld hl, (vidGapDest)
+    call vid_col_block_end             ; block ALSO finished (C is still
+                                        ; PORT_SPI_DAT, untouched by
+                                        ; either transfer loop above)
+    jr .blkopen
 .slow:
     ld a, (vidGapColLeft)
     ld hl, vidGapBlkLeft
@@ -1954,7 +2038,8 @@ vid_stream_pixels_gap:
 .blkopen:
     ld a, (vidGapColLeft)
     or a
-    jr nz, .loop                     ; column not finished
+    jp nz, .loop                     ; jp: pushed out of jr range by the
+                                      ; round-2 coarse unit above
     ; column finished: force-jump dest to the next 256-aligned column
     ; base, unconditionally - valid because a gapped column NEVER lets
     ; the natural ini increment carry L into H on its own (height < 256
