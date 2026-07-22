@@ -325,22 +325,11 @@ ktest_poll:
     add hl, de
     ld a, (hl)
     ld (ktestRowSel), a
-    call dbg_hex8
-    ld a, ' '
-    call dbg_putc
-    ld a, (ktestIdx)
-    add a, a                     ; *2: word-table index
-    ld e, a
-    ld d, 0
-    ld hl, ktestRowNamePtrs
-    add hl, de
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    ex de, hl
-    call dbg_puts
-    ld a, ' '
-    call dbg_putc
+    call dbg_hex8                ; row-select byte identifies the row -
+                                  ; see the report's row-name table
+                                  ; (kbRows order); trimmed the on-
+                                  ; screen name label here for overlay1
+                                  ; budget (owner bench feedback task)
     ld a, ':'
     call dbg_putc
     ld a, ' '
@@ -387,15 +376,100 @@ ktest_poll:
     ld (ktestIdx), a
     jp .rowloop
 .rowsdone:
-    ; --- decoded matrix code + shift state (row 11) ---
+    ; --- owner bench feedback (2026-07-22): the old level-triggered
+    ; readout (kb_raw/kb_char re-read and re-printed every frame)
+    ; flashed and cleared on release - unreadable at the bench. The
+    ; decoded MATRIX/SHIFT/CHAR lines below now LATCH: they update
+    ; only on a genuine NEW press (edge, not level), consume-on-press
+    ; like capsLockArmed's own gate, and hold across release until the
+    ; next press. The raw bit rows above stay live per the same
+    ; feedback. A rolling 8-entry decoded-char history (hex, newest
+    ; first) lets a typing sequence be reviewed after the fact.
+    ;
+    ; The decode below (.kdnl/.kdns/.kdix/.kdgot) is a deliberate,
+    ; self-contained MIRROR of kb_char's own .notlock/.idx/letters-
+    ; case-lock logic (overlay1.asm, same file) - NOT a shared call:
+    ; kb_char's own settle timing (2 frames) would hide exactly the
+    ; "pressed but not yet decoded" state this tool exists to show
+    ; (e.g. the owner's reported comma/period/"!" symptom), and this
+    ; task's own constraint is to touch nothing outside this KTEST
+    ; block. kb_char is still called below for its REAL side effects
+    ; (autorepeat bookkeeping, the actual capsLock toggle) - this
+    ; mirror never writes capsLock itself.
+    call kb_raw                  ; A = matrix ($FF none), B = shift (fresh every frame - feeds the LIVE exit check and the edge test)
+    ld (ktestFreshM), a
+    ld a, b
+    ld (ktestFreshS), a
+    ld a, (ktestFreshM)
+    ld hl, ktestPrevM
+    cp (hl)
+    ld (hl), a
+    jr z, .noedge
+    cp $FF
+    jr z, .noedge
+    ld (ktestMatrix), a
+    ld a, (ktestFreshS)
+    ld (ktestShift), a
+    ld a, (ktestMatrix)
+    cp 16
+    jr nz, .kdnl
+    ld a, (ktestShift)
+    and 3
+    cp 1
+    jr nz, .kdnl
+    xor a
+    jr .kdgot
+.kdnl:
+    ld a, (ktestShift)
+    ld c, a
+    ld hl, kbMapPlain
+    bit 1, c
+    jr z, .kdns
+    ld hl, kbMapSym
+    jr .kdix
+.kdns:
+    bit 0, c
+    jr z, .kdix
+    ld hl, kbMapCaps
+.kdix:
+    ld a, (ktestMatrix)
+    ld e, a
+    ld d, 0
+    add hl, de
+    ld a, (hl)
+    bit 1, c
+    jr nz, .kdgot
+    bit 0, c
+    jr nz, .kdgot
+    cp 'a'
+    jr c, .kdgot
+    cp 'z'+1
+    jr nc, .kdgot
+    ld d, a
+    ld a, (capsLock)
+    or a
+    jr z, .kdlo
+    ld a, d
+    sub 32
+    jr .kdgot
+.kdlo:
+    ld a, d
+.kdgot:
+    ld (ktestChar), a
+    ld hl, ktestHist+6
+    ld de, ktestHist+7
+    ld bc, 7
+    lddr
+    ld (ktestHist), a
+.noedge:
+    call kb_char                 ; real side effects only (autorepeat
+                                  ; state, the actual capsLock toggle);
+                                  ; return value unused for display
+    ; --- decoded matrix code + shift state (row 11, LATCHED) ---
     ld b, 11
     call dbg_at0
     ld hl, ktestMatrixLbl
     call dbg_puts
-    call kb_raw                  ; A = matrix ($FF none), B = shift
-    ld (ktestMatrix), a
-    ld a, b
-    ld (ktestShift), a
     ld a, (ktestMatrix)
     call dbg_hex8
     ld a, ' '
@@ -420,13 +494,12 @@ ktest_poll:
     jr z, .sz
     ld a, '1'
 .sz: call dbg_putc
-    ; --- decoded character + caps-lock state (row 12) ---
+    ; --- decoded character (row 12, LATCHED) + caps-lock (live) ---
     ld b, 12
     call dbg_at0
     ld hl, ktestCharLbl
     call dbg_puts
-    call kb_char                 ; A = decoded char, or 0
-    ld (ktestChar), a
+    ld a, (ktestChar)
     call dbg_hex8
     ld a, ' '
     call dbg_putc
@@ -450,13 +523,38 @@ ktest_poll:
     ld a, (capsLock)
     add a, '0'
     call dbg_putc
-    ; --- exit check: TRUE VIDEO (CAPS+3, matrix 17) ---
+    ; --- rolling last-8-decoded-chars history (row 13, hex, newest first) ---
+    ld b, 13
+    call dbg_at0
+    ld hl, ktestHistLbl
+    call dbg_puts
+    xor a
+    ld (ktestHi), a
+.hloop:
+    ld a, (ktestHi)
+    cp 8
+    jr z, .hdone
+    ld e, a
+    ld d, 0
+    ld hl, ktestHist
+    add hl, de
+    ld a, (hl)
+    call dbg_hex8
+    ld a, ' '
+    call dbg_putc
+    ld a, (ktestHi)
+    inc a
+    ld (ktestHi), a
+    jr .hloop
+.hdone:
+    ; --- exit check: TRUE VIDEO (CAPS+3, matrix 17) - LIVE (not
+    ; latched), so leaving the tool never waits on an edge ---
     xor a
     ld (flags+130), a
-    ld a, (ktestMatrix)
+    ld a, (ktestFreshM)
     cp 17
     jr nz, .noexit
-    ld a, (ktestShift)
+    ld a, (ktestFreshS)
     and 3
     cp 1                          ; bit0 (caps) set, bit1 (sym) clear
     jr nz, .noexit
@@ -468,9 +566,14 @@ ktest_poll:
 ktestIdx:      db 0
 ktestRowSel:   db 0
 ktestBits:     db 0
-ktestMatrix:   db 0
-ktestShift:    db 0
-ktestChar:     db 0
+ktestMatrix:   db 0              ; latched
+ktestShift:    db 0              ; latched
+ktestChar:     db 0              ; latched
+ktestFreshM:   db 0              ; live, this frame only
+ktestFreshS:   db 0              ; live, this frame only
+ktestPrevM:    db $FF            ; edge-detect baseline
+ktestHi:       db 0
+ktestHist:     ds 8              ; rolling decoded-char history, newest first
 
 ktestTitle:    db "KTEST keyboard matrix/decode - TRUE VIDEO to exit", 0
 ktestMatrixLbl: db "MATRIX=", 0
@@ -479,18 +582,12 @@ ktestCLbl:      db " C=", 0
 ktestSLbl:      db " S=", 0
 ktestCharLbl:   db "CHAR=", 0
 ktestLockLbl:   db "  CAPSLOCK=", 0
-
-ktestRowNamePtrs:
-    dw ktestName0, ktestName1, ktestName2, ktestName3
-    dw ktestName4, ktestName5, ktestName6, ktestName7
-ktestName0: db "CZXCV", 0        ; $FE: bit0..4 = CAPS,Z,X,C,V
-ktestName1: db "ASDFG", 0        ; $FD: A,S,D,F,G
-ktestName2: db "QWERT", 0        ; $FB: Q,W,E,R,T
-ktestName3: db "12345", 0        ; $F7: 1,2,3,4,5
-ktestName4: db "09876", 0        ; $EF: 0,9,8,7,6
-ktestName5: db "POIUY", 0        ; $DF: P,O,I,U,Y
-ktestName6: db "ELKJH", 0        ; $BF: ENTER,L,K,J,H
-ktestName7: db "_SMNB", 0        ; $7F: SPACE,SYM,M,N,B
+ktestHistLbl:   db "HIST: ", 0
+; Row-name labels (kbRows order: $FE=CZXCV $FD=ASDFG $FB=QWERT
+; $F7=12345 $EF=09876 $DF=POIUY $BF=ELKJH $7F=_SMNB, bit0..4 left to
+; right) were trimmed from the on-screen raw-bits rows for overlay1
+; budget (owner bench feedback task) - the row-select hex byte alone
+; identifies the row; see the report for the full table.
  ENDIF
 
 ; --- input line editor ---
