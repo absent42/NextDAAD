@@ -1081,8 +1081,7 @@ owf_core:
 
 ; Total carried+worn weight.
 weight_total:
-    ld b, 0
-    ld c, 0
+    ld bc, 0                    ; SP14c OV0-1
 .scan:
     ld a, (numObj)
     cp b
@@ -1393,8 +1392,8 @@ key_scan:
     ld a, c
     or a
     jr nz, .hit
-    ld bc, 5
-    add hl, bc
+    add hl, 5                   ; Z80N ADD HL,nn - SP14c OV0-2 (BC dead
+                                 ; here; byte-neutral, -5T/row missed)
     dec d
     jr nz, .row
     xor a
