@@ -103,13 +103,15 @@ rd_pop:
     ret
 
 ; A = level 0-3 -> HL = rdSave + A*3. Preserves DE.
+; SP14c batch B DDB1: Z80N MUL D,E replaces the three ADD HL,DE
+; (byte-neutral, -14T per call - rd_push/rd_pop fire at every
+; token/message nesting transition).
 rd_slot:
     push de
-    ld hl, rdSave
+    ld d, 3
     ld e, a
-    ld d, 0
-    add hl, de
-    add hl, de
+    mul d, e
+    ld hl, rdSave
     add hl, de
     pop de
     ret
