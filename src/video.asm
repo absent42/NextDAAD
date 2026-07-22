@@ -1172,8 +1172,12 @@ vid_run:
     ld hl, DATA_WINDOW
     ld de, vidAudBuf
     ld bc, (vidABytesReal)
-    ldir
-    call data_restore
+    ld a, b                       ; owner addendum ("convict the trampler"
+    or c                          ; follow-up, belt-and-braces): BC=0 would
+    jr z, .noaudcopy              ; wrap to a 65536-byte LDIR and obliterate
+    ldir                          ; VID_PAGE - nxv_open_body already rejects
+.noaudcopy:                       ; a zero header field, so this never fires
+    call data_restore             ; on a validated file; guards the class.
     ld ix, vidAudBuf
     xor a
     ld (vidAudDone), a
@@ -1333,6 +1337,12 @@ vid_run:
                                       ; stage 1 (exits before .frameloop
                                       ; ever sets it) - meaningful for
                                       ; every stage that reaches here.
+    ld ix, (vidPixBlocks)            ; owner addendum ("convict the
+                                      ; trampler" follow-up): vacuous-pass
+                                      ; guard - a real serve always shows
+                                      ; a nonzero PIXBLK here; IX is free
+                                      ; (unused by anything in this stub)
+                                      ; and survives the hop same as E.
     ld hl, vid_stage_marker_body
     push hl
     ld a, VID_PAGE2
@@ -2794,6 +2804,33 @@ nxv_open_body:
     ld a, (vidClipY1)
     neg
     ld (vidYofs), a
+    ; owner fix ("convict the trampler" - mechanism found live via ZEsarUX
+    ; + map cross-check, not the original buffer-overrun hypothesis): this
+    ; whole routine runs with MMU7 == VID_PAGE2 (nxv_open's own trampoline
+    ; hop, above), but vidShape..vidYofs (the 15-byte contiguous block
+    ; declared together, above, "NXV header-derived playback parameters")
+    ; are VID_PAGE-resident labels - every `ld (vidXxx),a/hl` store just
+    ; above compiled to a bare $Exxx address and landed on VID_PAGE2's own
+    ; never-otherwise-written bytes at that offset, not on VID_PAGE's copy
+    ; the hot player (vid_stream_frame, vid_stream_pixels_flat, etc.)
+    ; actually reads - exactly the same "control flow crosses pages, data
+    ; does not follow automatically" class vid_tl_report_body's own fix
+    ; already documents in this file (see that routine's header, VID_
+    ; PAGE2, below). Zeros on ZEsarUX's zeroed RAM masked it as vacuous
+    ; sub-stage "passes"; uninitialized garbage on real hardware produced
+    ; the white screen and, when vidABytesReal read back as a stale
+    ; nonzero-but-wrong or zero value, the observed resets (a zero would
+    ; wrap the .frameloop audio-copy LDIR's BC to 65536 - see that call
+    ; site's own new guard). Fix: bulk-copy the whole block across via
+    ; the MMU6/DATA_WINDOW window, the SAME translated-store pattern
+    ; vid_raw_setup already uses correctly two screens above - one LDIR,
+    ; since the block is already contiguous and in the right order.
+    ld a, VID_PAGE
+    call data_map_page
+    ld hl, vidShape
+    ld de, vidShape+DATA_WINDOW-OVL_ORG
+    ld bc, vidYofs-vidShape+1
+    ldir
     ld b, 0                          ; verdict: valid
     jr .backhop
 .bad:
@@ -3138,6 +3175,15 @@ vid_stage_marker_body:
                                   ; dbg_at's own column argument, to
                                   ; conditionally trigger the filemap
                                   ; dump for STG1 only)
+    push ix                      ; stash IX=vidPixBlocks (owner addendum,
+                                  ; "convict the trampler" follow-up) -
+                                  ; printed below so a vacuous pass (zero
+                                  ; or garbage block count) can never
+                                  ; masquerade as a real one again. Pushed
+                                  ; BEFORE de so the existing `pop de`
+                                  ; below (unmoved) still matches its own
+                                  ; push - LIFO order is bc,ix,de in, so
+                                  ; de,ix,bc must come back out.
     push de                      ; stash D=err, E=vidDrawPage (owner
                                   ; addendum) - both about to be reused
                                   ; for the table lookup below
@@ -3164,6 +3210,12 @@ vid_stage_marker_body:
     call dbg_puts
     ld a, e
     call dbg_hex8
+    pop ix                       ; recover PIXBLK
+    ld hl, msgStgPb
+    call dbg_puts
+    push ix
+    pop hl
+    call dbg_hex16
     ; owner addendum (fresh-eyes round 3): filemap dump, STG1's own
     ; marker only - the cheapest correct place (the data is already
     ; valid by STG1's own exit point; printing it on every marker would
@@ -3208,6 +3260,13 @@ msgStgDp:  db " DRAWPG=", 0   ; owner addendum: settles the walk's own
                                ; at .stagegate time) - meaningless for
                                ; stage 1 (exits before .frameloop sets
                                ; it), meaningful for every other stage
+msgStgPb:  db " PIXBLK=", 0   ; owner addendum ("convict the trampler"
+                               ; follow-up): vidPixBlocks, 16-bit hex -
+                               ; a real serve always shows a nonzero
+                               ; count here; meaningful on every marker
+                               ; (unlike DRAWPG, this field is populated
+                               ; by nxv_open, strictly before any marker
+                               ; can print, on every stage including 1)
 
 ; Owner addendum (fresh-eyes round 3): filemap dump - RUNS=nn (entry
 ; count) and RUN1=xxxx (first run's own block count, 16-bit hex) -
