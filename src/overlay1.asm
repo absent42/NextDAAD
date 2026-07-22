@@ -305,7 +305,9 @@ kb_char:
 ; register held live across such a call. Corrupts everything.
 ktest_poll:
     call dbg_cls
-    ld b, 0
+    ld b, 12                     ; rows 0-11 sit under the test game's
+                                  ; location art (owner bench finding) -
+                                  ; the whole readout lives at 12+
     call dbg_at0
     ld hl, ktestTitle
     call dbg_puts
@@ -315,7 +317,8 @@ ktest_poll:
     ld a, (ktestIdx)
     cp 8
     jp z, .rowsdone
-    add a, 2                     ; screen row = 2 + index
+    add a, 16                    ; screen row = 16 + index (below the
+                                  ; art + the latched readout rows)
     ld b, a
     call dbg_at0
     ld a, (ktestIdx)
@@ -465,8 +468,9 @@ ktest_poll:
     call kb_char                 ; real side effects only (autorepeat
                                   ; state, the actual capsLock toggle);
                                   ; return value unused for display
-    ; --- decoded matrix code + shift state (row 11, LATCHED) ---
-    ld b, 11
+    ; --- decoded matrix code + shift state (row 13, LATCHED - rows
+    ; 11-12 sit under the test game's location art; owner bench) ---
+    ld b, 13
     call dbg_at0
     ld hl, ktestMatrixLbl
     call dbg_puts
@@ -494,8 +498,8 @@ ktest_poll:
     jr z, .sz
     ld a, '1'
 .sz: call dbg_putc
-    ; --- decoded character (row 12, LATCHED) + caps-lock (live) ---
-    ld b, 12
+    ; --- decoded character (row 14, LATCHED) + caps-lock (live) ---
+    ld b, 14
     call dbg_at0
     ld hl, ktestCharLbl
     call dbg_puts
@@ -523,8 +527,8 @@ ktest_poll:
     ld a, (capsLock)
     add a, '0'
     call dbg_putc
-    ; --- rolling last-8-decoded-chars history (row 13, hex, newest first) ---
-    ld b, 13
+    ; --- rolling last-8-decoded-chars history (row 15, hex, newest first) ---
+    ld b, 15
     call dbg_at0
     ld hl, ktestHistLbl
     call dbg_puts
