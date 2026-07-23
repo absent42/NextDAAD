@@ -12,7 +12,7 @@ Gfx2Next       PNG to Layer 2 conversion               https://www.rustypixels.u
 Arkos Tracker  SongToAky/SongToSoundEffects/SongToYm   https://www.julien-nevo.com/arkostracker/index.php/download/  tools\ArkosTracker3\tools\
 CSpect         Emulator for testing                    https://mdf200.itch.io/cspect                              tools\CSpect\
 ffmpeg         Video decode for cutscene encoding      https://www.gyan.dev/ffmpeg/builds/ (release essentials)   tools\ffmpeg\
-videnc.exe     Standalone NXV cutscene encoder         NextDAAD releases page (first-party, built from lib\videnc.py)  tools\videnc\
+videnc.exe     Standalone NXV cutscene encoder         SHIPPED with this kit (first-party, built from ..\lib\videnc.py)  tools\videnc\
 
 After extracting, these paths must exist:
   tools\DAAD-READY\TOOLS\DRC\DRF.exe
@@ -31,11 +31,12 @@ BUILD.BAT: drop a numeric-named source video (VIDEO\NNN.mp4) into
 VIDEO\ and the build encodes it to the interpreter's native NXV
 format, caching the result as VIDEO\NNN.vid (re-encoded only when the
 .mp4 changes). A pre-encoded NXV VIDEO\NNN.vid is staged as-is.
-Encoding needs ffmpeg plus videnc.exe (both in the table above; no
-Python required) - neither is needed for a text/graphics/audio-only
-game. Anyone with Python 3 + Pillow (pip install Pillow) can skip the
-videnc.exe download: the build falls back to ..\lib\videnc.py, the
-script videnc.exe is built from. The encode profile is VIDPROFILE in
+Encoding needs ffmpeg (table above) plus videnc.exe (shipped, no
+Python required) - neither matters for a text/graphics/audio-only
+game, so ffmpeg is the ONLY extra download for video authoring. If
+videnc.exe is ever missing the build falls back to ..\lib\videnc.py,
+the script it is built from (needs Python 3 + Pillow, pip install
+Pillow). The encode profile is VIDPROFILE in
 CONFIG.BAT (blank = auto); run the encoder by hand for per-file
 control (--profile n0..n4, --start/--duration clipping, --mono,
 --dither and more - run it with -h).

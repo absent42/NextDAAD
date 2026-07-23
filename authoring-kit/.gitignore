@@ -2,8 +2,11 @@ RELEASE/
 CONFIG.local.BAT
 
 # tools\ skeleton: keep the empty folders (.gitkeep) and README, but ignore any
-# tool binaries a maintainer extracts into it locally.
+# tool binaries a maintainer extracts into it locally. videnc.exe is the one
+# SHIPPED tool binary (first-party, built from lib\videnc.py - owner decision
+# 2026-07-23): tracked so the kit works without Python out of the box.
 tools/**/*
 !tools/**/
 !tools/**/.gitkeep
 !tools/README.txt
+!tools/videnc/videnc.exe

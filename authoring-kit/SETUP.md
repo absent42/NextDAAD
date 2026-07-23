@@ -307,11 +307,11 @@ The build's encode pass needs an encoder and ffmpeg, both resolved
 from `TOOLSDIR` (section 1):
 
 - **`videnc.exe`** (`tools\videnc\videnc.exe`) - the standalone
-  encoder, a NextDAAD release download, no Python needed. Preferred
-  automatically when present; see `tools\README.txt`.
-- **`lib\videnc.py`** (shipped with this kit) - the same encoder as a
-  script, the fallback when `videnc.exe` is absent. Needs Python 3 and
-  Pillow (`pip install Pillow`).
+  encoder, SHIPPED with this kit (the one bundled tool binary; no
+  Python needed, no download). Preferred automatically.
+- **`lib\videnc.py`** - the same encoder as a script, the fallback if
+  videnc.exe is ever missing and the source it is built from. Needs
+  Python 3 and Pillow (`pip install Pillow`).
 - **ffmpeg** (`tools\ffmpeg\bin\ffmpeg.exe`) - required either way for
   reading the source video; see `tools\README.txt` for the download.
 
