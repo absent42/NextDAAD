@@ -3379,10 +3379,51 @@ vid_run_entry_body:
     xor a
     ld (audEnable), a
 
+    ; --- AY music park (owner hardware leg, 2026-07-23: "last tone
+    ; frozen, plays continuously over the video"): audEnable=0 stops the
+    ; AKY tick but leaves the PSG latched on its last tone/volume, which
+    ; sounds forever. Park the two music PSGs exactly as aud_psg_silence
+    ; does (R7=$3F mixer off, R8/9/10 volumes 0; PSG 3 left to any beep/
+    ; effect, matching the explicit-stop path's convention). Inline port
+    ; I/O - aud_psg_silence lives in the audio bank, mapped only inside
+    ; the ISR's own MMU6/7 bracket, unreachable from this body. The exit
+    ; path needs nothing: once audEnable is restored the AKY tick
+    ; rewrites every register each frame (the silence-song gate proves a
+    ; song recovers from exactly this parking). DI-bracketed so nothing
+    ; can interleave with the $FFFD select latch mid-sequence. ---
+    di
+    ld a, $FF                       ; Turbo Sound select: music PSG 1
+    call .psgpark
+    ld a, $FE                       ; music PSG 2
+    call .psgpark
+    ei
+
     ld hl, vid_run.entryret
     push hl
     ld a, VID_PAGE
     jp ovl_map_page
+
+; Park one PSG (A = Turbo Sound select value): mixer all off, three
+; volumes zero - aud_psg_silence's register sequence, inlined (see the
+; call site comment above). Corrupts BC, DE.
+.psgpark:
+    ld bc, $FFFD
+    out (c), a                      ; Turbo Sound PSG select
+    ld d, 7
+    ld e, $3F
+    call .psgreg                    ; R7: mixer all off
+    ld e, 0
+    ld d, 8
+    call .psgreg                    ; R8/9/10: volumes 0
+    ld d, 9
+    call .psgreg
+    ld d, 10                        ; falls through for the last write
+.psgreg:
+    ld bc, $FFFD
+    out (c), d                      ; register select
+    ld b, $BF
+    out (c), e                      ; data
+    ret
 
 ; ---------------------------------------------------------------------
 ; vid_run_l2setup_body - Layer 2 setup + identity palette, hopped cold
