@@ -290,9 +290,7 @@ the one canonical encoder - it produces the interpreter's native NXV
 format (five profiles, per-frame adaptive palettes, proven on
 hardware), and the kit's BUILD.BAT runs it automatically for any
 `VIDEO\NNN.mp4` (preferring the standalone `videnc.exe` build of the
-same encoder when present - a release download, no Python needed).
-MakeVid files are no longer playable; re-encode from the original
-source. See `authoring-kit/SETUP.md`'s "Video cutscenes" section and
+same encoder when present - a release download, no Python needed). See `authoring-kit/SETUP.md`'s "Video cutscenes" section and
 `authoring-kit/lib/videnc-README.md`.
 
 ## Custom fonts and mouse pointer
