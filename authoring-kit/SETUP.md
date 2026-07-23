@@ -66,10 +66,15 @@ Put these in this kit folder:
     it plays at the file's own sample rate, no resampling. You supply it
     in that format - the build does not convert it. See section 8 for
     size guidance and how large samples are handled.
-- Optional video cutscenes in `VIDEO\` (pre-encoded `.vid` files, copied
-  as-is - no conversion): `NNN.vid` -> `RELEASE\NNN.VID`, played by
-  `GFX n 13`/`GFX n 14`. See "Video cutscenes" below for the formats,
-  encoding tools, and playback caveats.
+- Optional video cutscenes in `VIDEO\`, two source kinds:
+  - `NNN.mp4` (or anything ffmpeg reads, renamed to `.mp4`) - encoded to
+    native NXV automatically by the build; the resulting `NNN.vid` is
+    kept beside the source as an encode cache, so a slow encode runs
+    once per source change, not once per build.
+  - `NNN.vid` - a pre-encoded NXV file, staged as-is.
+  Both end up as `RELEASE\NNN.VID`, played by `GFX n 13`/`GFX n 14`.
+  See "Video cutscenes" below for the profiles, encoding tools, and
+  playback notes.
 
 ## 3. Configuration (CONFIG.BAT)
 
@@ -256,112 +261,109 @@ or part-switch time.
 
 ## Video cutscenes
 
-Optional: drop pre-encoded `.vid` cutscene files in `VIDEO\` (section 2),
-numbered by video number, e.g. `VIDEO\001.vid` stages as-is (no
-conversion) to `RELEASE\001.VID`. A DSF plays one with `GFX n 13` (play
-once) or `GFX n 14` (loop until any key), where `n` is the video number -
-`GFX 3 13` plays `003.VID`. These are also reachable through the classic
-DOS DAAD symbols `SFX n 9` (`PLAYFLI`) and `SFX n 10` (`PLAYFLIL`) - see
-the SFX sub-command table below, rows 9/10, now a real feature on this
-target rather than a no-op. Like location art, `PART<n>\NNN.VID` shadows
-the root copy for that part only (section 9, "Shadowed assets").
+Full-screen, full-motion video with synchronised audio, in NextDAAD's
+own native NXV format. Drop a video source in `VIDEO\` (section 2),
+numbered by video number - `VIDEO\001.mp4` is encoded by the build to
+`VIDEO\001.vid` (the encode cache, made once per source change) and
+staged as `RELEASE\001.VID`; a pre-encoded `VIDEO\001.vid` with no
+`.mp4` beside it stages as-is. A DSF plays one with `GFX n 13` (play
+once) or `GFX n 14` (loop until any key), where `n` is the video
+number - `GFX 3 13` plays `003.VID`. Both are also reachable through
+the classic DOS DAAD symbols `SFX n 9` (`PLAYFLI`) and `SFX n 10`
+(`PLAYFLIL`) - see the SFX sub-command table below, rows 9/10, now a
+real feature on this target rather than a no-op. Like location art,
+`PART<n>\NNN.VID` shadows the root copy for that part only (section 9,
+"Shadowed assets").
 
-### The six formats
+### The five profiles
 
-The player identifies which of six formats a `.VID` file is purely from
-its file size - nothing to select at the DSF level, any correctly-sized
-`.VID` just plays:
+An NXV file is fully self-describing (a real header - nothing to
+select at the DSF level), encoded with one of five shipped profiles:
 
-| fmt | resolution | palette | fps | audio (encoded rate) |
-|---|---|---|---|---|
-| 0 | 320x240 | yes | 50/3 | stereo, 15550 Hz |
-| 1 | 320x240 | no | 50/3 | stereo, 15550 Hz |
-| 2 | 256x240 | yes | 50/3 | stereo, 31100 Hz |
-| 3 | 256x240 | no | 50/3 | stereo, 31100 Hz |
-| 4 | 256x192 | yes | 25 | mono, 23325 Hz |
-| 5 | 256x192 | no | 25 | mono, 23325 Hz |
+| Profile | Resolution | Screen mode | fps |
+|---|---|---|---|
+| `n0` "cinema" | 320x256 | Layer 2 320-wide, full height | 12.5 |
+| `n1` "classic" | 256x192 | Layer 2 256-wide | 20 |
+| `n2` "widescreen" | 256x144 | Layer 2 256-wide, letterboxed | 25 |
+| `n3` "widescreen XL" | 320x192 | Layer 2 320-wide, letterboxed | 16.67 |
+| `n4` "epic" | 320x120 | Layer 2 320-wide, letterboxed | 20 |
 
-These rates are exact (re-derived from samples/frame x fps), not the
-"~15.6k/31.1k/23.3k" roundings some tool documentation uses.
+All profiles carry 256-colour pictures with a per-frame adaptive
+palette (or a fixed RGB332 palette with `--no-palette`) and full-rate
+audio - stereo at 15625 Hz by default, mono at 23325 Hz with `--mono`.
+No decimation, no downsampling: what the encoder writes is what plays.
+Letterbox bars cost zero file bytes (the player renders them black).
 
-**Playback audio caveat.** On the current build, the stereo formats play
-downsampled from their encoded rate - a memory-constraint tradeoff,
-slated for revisiting in a future optimisation pass: formats 2/3 play at
-~10.4 kHz (3:1 downsample), formats 0/1 at ~7.78 kHz (2:1 downsample).
-The mono formats (4/5) always play at their full encoded rate.
+The build encodes every `VIDEO\NNN.mp4` with the profile set by
+`VIDPROFILE` in `CONFIG.BAT` - blank picks `auto`, the profile whose
+pixel aspect best matches the source (sources are centre-cropped to
+the profile's exact aspect, never distorted). Set `VIDPROFILE` to one
+of `n0`-`n4` to force a profile for every encoded cutscene, or run the
+encoder by hand (below) for per-file control.
 
-**Game audio during playback.** A cutscene owns the sound hardware while
-it plays: a playing sample is stopped, not resumed afterwards; AY music
-is frozen in place (paused, not stopped) and resumes automatically the
-instant playback ends. No author action needed either way.
+### Encoding tools
 
-**Performance caveat.** Format 0 (320x240 palette, the highest data-rate
-format) may show slight stutter on the current Next core; an upcoming
-core release with faster SD reads is expected to improve this. Loop mode
-(`GFX n 14`) has a brief audio gap at each restart, by design.
+The build's encode pass needs an encoder and ffmpeg, both resolved
+from `TOOLSDIR` (section 1):
 
-**Palette sparkle caveat.** Formats 0/2/4 (palette) may show a brief
-colour sparkle in fast-changing areas of the picture on the current
-build - a known engine limitation (the per-frame palette write races the
-screen's own scan-out, a sub-millisecond window), not a defect in the
-encoded file. A fix (true palette double-buffering) is scheduled for the
-next optimisation update.
+- **`videnc.exe`** (`tools\videnc\videnc.exe`) - the standalone
+  encoder, a NextDAAD release download, no Python needed. Preferred
+  automatically when present; see `tools\README.txt`.
+- **`lib\videnc.py`** (shipped with this kit) - the same encoder as a
+  script, the fallback when `videnc.exe` is absent. Needs Python 3 and
+  Pillow (`pip install Pillow`).
+- **ffmpeg** (`tools\ffmpeg\bin\ffmpeg.exe`) - required either way for
+  reading the source video; see `tools\README.txt` for the download.
+
+None of this is needed for pre-encoded `.vid` files - a kit with only
+`.vid` sources (or no `VIDEO\` at all) builds with no encoder present.
+
+Run the encoder by hand for per-file profile control or to cut a clip
+from a longer source:
+
+```
+videnc.exe INPUT.mp4 VIDEO\001.vid --profile n1 --start 00:00:03 --duration 4
+```
+
+(or `python lib\videnc.py ...`, same options). `--profile` is `n0`-`n4`
+or `auto`; `--start`/`--duration` cut a clip; `--mono` halves the audio
+stream; `--no-palette` uses a fixed RGB332 palette; `--dither`
+Floyd-Steinberg dithers (default: no dither). Run with `--help` for the
+full list, and see `lib\videnc-README.md` for the format details.
+
+### Playback notes
+
+**Game audio during playback.** A cutscene owns the sound hardware
+while it plays: a playing sample is stopped, not resumed afterwards; AY
+music is frozen in place (paused, not stopped) and resumes
+automatically the instant playback ends. No author action needed either
+way.
 
 **Redraw after a cutscene.** Video playback is a full-screen takeover,
 like `DISPLAY`: register state is restored when it ends, but pixel
-content is not. A game must redraw its own picture afterwards - the
-starter game's own `MOVIE`/`REEL` verbs do this the same way its `R`
-(redraw) verb already does, `CLS` then `RESTART`.
+content is not. A game must redraw its own picture afterwards, two
+ways - both demonstrated by the starter game: redraw in place
+(`PICTURE @fPlayer` + `DISPLAY 0`, the starter's MOVIE verb via its
+redraw process) or a full redescribe (`CLS` then `RESTART`, the
+starter's REEL verb, same as its `R` redraw verb - use at scene
+changes).
 
-**60Hz displays.** These formats are 50Hz-designed; on a 60Hz display,
-expect slower playback and audio popping - an accepted limitation, not a
-bug to report.
+**Contiguity.** Videos stream from the SD card at a rate that assumes
+the file is reasonably contiguous. A heavily fragmented file (more
+than 32 fragments) refuses to play; defragment the card (or re-copy
+the file to a freshly formatted card) if a video will not start or
+stutters.
 
-### Encoding a `.VID`
-
-Two ways to make one - neither is wired into `BUILD.BAT`, both write a
-finished `.vid` you drop into `VIDEO\` yourself:
-
-- **MakeVid** (`tools\README.txt`), a GUI tool, for the non-palette
-  formats (1/3/5). Its "with palette" formats (0/2/4) are currently
-  broken in MakeVid 1.77 - malformed output, raw RGB24 pixel data never
-  converted to palette indices (only the top third of each frame
-  decodes). Non-palette output is correct; the defect is upstream and a
-  report on it is on hold pending this kit's own proven alternative.
-- **`lib\videnc.py`** (shipped with this kit), a command-line tool that
-  encodes all six formats correctly, including real per-frame adaptive
-  palettes - proven on hardware, and the only way to get a working
-  palette format (0/2/4) until MakeVid's defect is fixed upstream. Needs
-  Python 3, Pillow (`pip install Pillow`), and ffmpeg (default path
-  `tools\ffmpeg\bin\ffmpeg.exe`, override with `--ffmpeg PATH`) - the
-  only place in this kit's workflow with a dependency beyond the batch
-  files and the tools in section 1.
-
-```
-python lib\videnc.py INPUT.mp4 VIDEO\001.vid --format 1 --start 00:00:03 --duration 4
-```
-
-`--format` is 0-5 (the table above); `--start`/`--duration` cut a clip
-from a longer source; `--dither` Floyd-Steinberg dithers the palette
-formats (default: no dither). Run `python lib\videnc.py --help` for the
-full option list.
-
-**Contiguity.** Files play best contiguous on the SD card - defragment
-the card if a video stutters that a straight sector-throughput
-calculation says should not. **Classification collision.** A `.VID`
-whose size happens to be an exact multiple of an earlier-priority
-format's frame size classifies as that earlier format instead, by
-design (see the format table's priority order 0-5) - `lib\videnc.py`
-detects and fixes this automatically by appending one blank frame at
-encode time; a MakeVid-produced file hitting this is rare but possible,
-and the fix is the same (append one blank frame).
+**60Hz displays.** NXV is 50Hz-designed (frames present on the 50Hz
+vblank cadence); on a 60Hz display, expect slower playback and audio
+popping - an accepted limitation, not a bug to report.
 
 ### The starter game's demo clips
 
-`VIDEO\001.vid` (format 1, 320x240 no-palette - the safe default) and
-`VIDEO\002.vid` (format 0, 320x240 palette - the showcase) ship with the
-kit so `GFX 13`/`GFX 14` work out of the box. Try the verbs MOVIE (plays
-001.VID once) and REEL (loops 002.VID until a key is pressed).
+`VIDEO\001.vid` (profile `n0`, 320x256 cinema) and `VIDEO\002.vid`
+(profile `n1`, 256x192 classic) ship with the kit so `GFX 13`/`GFX 14`
+work out of the box. Try the verbs MOVIE (plays 001.VID once) and REEL
+(loops 002.VID until a key is pressed).
 
 ## 7. Troubleshooting
 

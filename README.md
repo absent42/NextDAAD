@@ -34,10 +34,10 @@ is a documented no-op.
 - Direct Layer 2 surface control (GFX): copy/swap/clear the picture
   plane's front and back buffers on demand
 - Video cutscenes (GFX 13/14, aliased as the classic SFX 9/10 PLAYFLI/
-  PLAYFLIL): full-screen MakeVid/playvid-format .VID playback, six
-  auto-detected formats (320x240, 256x240, 256x192, palette or not),
-  stereo or mono AY-DAC audio, play-once or loop-until-keypress,
-  PARTn-shadowed like other assets
+  PLAYFLIL): full-screen native NXV .VID playback, five profiles up to
+  320x256 at 12.5-25 fps, 256 colours with per-frame adaptive
+  palettes, full-rate DAC audio (stereo 15625 Hz or mono 23325 Hz),
+  play-once or loop-until-keypress, PARTn-shadowed like other assets
 - Mouse input (MOUSE) via the Next's Kempston mouse ports, with a
   hardware sprite pointer (sub-commands 0-3; buttons read
   jdaad-compatible: idle 0, left 1, right 2, middle 4)
@@ -253,35 +253,30 @@ table above. `NNN.VID` lives in the SD root next to GAME.DDB, 3-digit
 zero-padded like every other numbered asset; `PARTn\NNN.VID` shadows it
 per part.
 
-Six formats are auto-detected purely from file size - nothing to
-select at the DSF level:
+`.VID` files are NextDAAD's native NXV format: a self-describing
+container (a real header, nothing to select at the DSF level) encoded
+with one of five shipped profiles:
 
-| fmt | resolution | palette | fps | audio (encoded rate) |
-|---|---|---|---|---|
-| 0 | 320x240 | yes | 50/3 | stereo, 15550 Hz |
-| 1 | 320x240 | no | 50/3 | stereo, 15550 Hz |
-| 2 | 256x240 | yes | 50/3 | stereo, 31100 Hz |
-| 3 | 256x240 | no | 50/3 | stereo, 31100 Hz |
-| 4 | 256x192 | yes | 25 | mono, 23325 Hz |
-| 5 | 256x192 | no | 25 | mono, 23325 Hz |
+| Profile | Resolution | Screen mode | fps |
+|---|---|---|---|
+| n0 "cinema" | 320x256 | Layer 2 320-wide, full height | 12.5 |
+| n1 "classic" | 256x192 | Layer 2 256-wide | 20 |
+| n2 "widescreen" | 256x144 | Layer 2 256-wide, letterboxed | 25 |
+| n3 "widescreen XL" | 320x192 | Layer 2 320-wide, letterboxed | 16.67 |
+| n4 "epic" | 320x120 | Layer 2 320-wide, letterboxed | 20 |
 
-These rates are exact (samples/frame x fps, re-derived rather than taken
-from tool documentation's "~15.6k/31.1k/23.3k" roundings).
-
-On the current build, the stereo formats play downsampled from their
-encoded rate - a memory-constraint tradeoff slated for revisiting in a
-future optimisation pass: formats 2/3 play at ~10.4 kHz (3:1
-downsample), formats 0/1 at ~7.78 kHz (2:1 downsample). Mono formats
-(4/5) always play at their full encoded rate. Format 0 (the highest
-data-rate format) may show slight stutter on the current Next core; an
-upcoming core release with faster SD reads is expected to improve this.
-Loop mode has a brief audio gap at each restart, by design. These
-formats are 50Hz-designed; a 60Hz display gets slower playback and
-audio popping, an accepted limitation. Palette formats (0/2/4) may show
-a brief colour sparkle in fast-changing areas on the current build - a
-known engine limitation (the per-frame palette write races the screen's
-own scan-out), not an encoding defect; a fix (true palette
-double-buffering) is scheduled for the next optimisation update.
+Every profile carries 256-colour pictures with a per-frame adaptive
+palette (or fixed RGB332), and full-rate unsigned 8-bit PCM audio -
+stereo at 15625 Hz by default, mono at 23325 Hz - played through the
+Next's DAC ports by a CTC-timed interrupt feed. Frames present at
+vblank via a copper-driven buffer flip; playback streams raw SD card
+blocks (CMD18 multiple-block reads over the file's own cluster map),
+so the whole pipeline runs without OS calls while a video plays. The
+tilemap text layer is hidden and letterbox bars render black for the
+duration; both restore on exit. Files should be reasonably contiguous
+on card - a file in more than 32 fragments refuses to play (defragment
+or re-copy the card). NXV is 50Hz-designed; a 60Hz display gets slower
+playback and audio popping, an accepted limitation.
 
 Video playback is a full-screen takeover, like DISPLAY: register state
 is restored when it ends, pixel content is not, so a game must redraw
@@ -294,9 +289,11 @@ Encoding: `authoring-kit/lib/videnc.py` (Python 3 + Pillow + ffmpeg) is
 the one canonical encoder - it produces the interpreter's native NXV
 format (five profiles, per-frame adaptive palettes, proven on
 hardware), and the kit's BUILD.BAT runs it automatically for any
-`VIDEO\NNN.mp4`. MakeVid files are no longer playable; re-encode from
-the original source. See `authoring-kit/SETUP.md`'s "Video cutscenes"
-section and `authoring-kit/lib/videnc-README.md`.
+`VIDEO\NNN.mp4` (preferring the standalone `videnc.exe` build of the
+same encoder when present - a release download, no Python needed).
+MakeVid files are no longer playable; re-encode from the original
+source. See `authoring-kit/SETUP.md`'s "Video cutscenes" section and
+`authoring-kit/lib/videnc-README.md`.
 
 ## Custom fonts and mouse pointer
 
