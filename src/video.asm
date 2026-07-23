@@ -542,6 +542,10 @@ vid_card_deselect:
 ; one extra loop-control (dec/jr) + one count-reload per block, ~30T
 ; against the interface's own 16T/byte x 512 = 8192T block transfer -
 ; folded into the per-profile margin restatement in the task report.
+; SP14a gap-blit "full burst" wave: DEBUG-only, shrinks once more, 128x4
+; -> 64x8 (see .halfloop's own comment below for the exact byte/T-state
+; accounting and why this is DEBUG-only, unlike the first halving above -
+; Release keeps 128x4 unchanged).
 ;
 ; Loop-counter register sweep: A, not B or DE. B is banned by the
 ; standing lesson (Z80 INI itself decrements B as a side effect - a
@@ -594,29 +598,62 @@ vid_read_block:
     cp $FE                        ; $FE = valid data token
     jp nz, .tokbad                ; jp: .tokbad is past the ~520-byte unroll
     ld c, PORT_SPI_DAT
-    ld a, 4                       ; owner redesign (item 5 round 2, byte-
-                                   ; class audit): four 128-byte quarters
-                                   ; instead of two 256-byte halves - same
-                                   ; 512 bytes total, same 16T/byte INI
-                                   ; rate (playvid parity; INIR would be
-                                   ; 21T/byte), but the UNROLLED BLOCK
-                                   ; itself shrinks from 512 code bytes to
-                                   ; 256, freeing headroom for the gap
-                                   ; path's own new coarse unit below.
-                                   ; Cost: 2 extra outer-loop passes/block
-                                   ; (~28T/block owner-estimated) - at
-                                   ; N0's 160 blocks/frame that is ~4480T
-                                   ; (~0.16ms/frame against a 10.3ms
-                                   ; margin) - trivial next to the budget
-                                   ; this frees.
+    ; SP14a gap-blit "full burst" wave (space fallback, coordinator-
+    ; sanctioned "only if unavoidable" lever): DEBUG's own VID_PAGE
+    ; headroom could not otherwise fund vid_gap_xfer's shared 192-`ini`
+    ; full-burst run (vid_stream_pixels_gap, above) without touching
+    ; unrelated DEBUG scaffolding this wave has no business in - DEBUG
+    ; shrinks this unroll one step further, 128x4 -> 64x8 (frees 128B,
+    ; against a ~60B need). RELEASE KEEPS 128x4 UNCHANGED: Release's own
+    ; VID_PAGE headroom (392B before this wave) already covers the new
+    ; run without shrinking anything, and N0/N1/N2 (the profiles that
+    ; live in THIS routine, never vid_gap_xfer) are the ones actually
+    ; shipped to players - there is no reason to pay a burst-length
+    ; regression (even the small, well-understood CPU-side kind, let
+    ; alone any less-certain silicon-side one - the burst-length-vs-T/
+    ; byte curve is only measured at 64 bytes (fragmented, mixed with an
+    ; 8-byte remainder - the old gap path) and 256+ bytes (flat's own
+    ; sustained figure); a clean, UNIFORM 64-byte burst's own real rate
+    ; is not directly measured, so a DEBUG-only trade avoids gambling
+    ; Release's own already-healthy N0/N1/N2 margins on that gap) in the
+    ; binary that ships. DEBUG builds are for development, not play.
+ IFDEF DEBUG
+    ld a, 8                            ; eight 64-byte eighths
 .halfloop:
-    DUP 128
-      ini                          ; 16T/byte, unchanged - see this
-    EDUP                           ; routine's own header.
-    dec a                         ; A survives untouched across every INI
-    jp nz, .halfloop               ; above (see this routine's own header) -
-                                    ; jp: .halfloop is ~256 bytes back, past
-                                    ; jr's -128 range
+    DUP 64
+      ini                              ; 16T/byte, unchanged - see this
+    EDUP                               ; routine's own header.
+    dec a                             ; A survives untouched across every
+    jp nz, .halfloop                   ; INI above (see this routine's own
+                                        ; header) - jp: within jr's -128
+                                        ; range now but left as jp
+                                        ; (harmless, byte-identical cost
+                                        ; either way: JP cc is always
+                                        ; 10T/3B, JR cc taken is 12T/2B -
+                                        ; not changed to keep the diff
+                                        ; minimal and obviously correct)
+ ELSE
+    ; Owner rider (SP14a gap-blit "full burst" wave, folded in after the
+    ; main job's own space arithmetic settled): Release's own VID_PAGE
+    ; headroom (392B before this rider) covers restoring the unroll
+    ; toward 256x2 (+256B needed, 136B left after) - RELEASE ONLY, DEBUG
+    ; stays at 64x8 above (its own budget cannot also fund this). This is
+    ; not speculative: 256-byte bursts are the EXACT configuration the
+    ; coordinator's own 22.1T/byte "silicon floor" figure was measured
+    ; against (this routine's own "flat's sustained 1264KB/s" precedent,
+    ; vid_stream_pixels_gap's header) - restoring it is a return to the
+    ; measured-good shape, not a new gamble, worth ~0.5-1T/byte over the
+    ; shipped 128x4 baseline (~1-2ms/frame on N0's own 320KB/frame).
+    ld a, 2                            ; two 256-byte halves
+.halfloop:
+    DUP 256
+      ini                              ; 16T/byte, unchanged - see this
+    EDUP                               ; routine's own header.
+    dec a                             ; A survives untouched across every
+    jp nz, .halfloop                   ; INI above (see this routine's own
+                                        ; header) - jp: .halfloop is ~512
+                                        ; bytes back, past jr's -128 range
+ ENDIF
     in a, (c)                     ; skip the 2-byte CRC (the nops pad the
     nop                           ; in/in to the 16T/byte interface timing)
     in a, (c)
@@ -1842,37 +1879,42 @@ vid_stream_pixels_flat:
 ; gets the true flat/zero-bookkeeping design (vid_stream_pixels_flat,
 ; above).
 ;
-; Transfer unit: 8 bytes (the .fastgroups/.fastremlen/.xfer_chunk
-; primitives below), not the old vid_xfer16n's 16 - the spec's own
-; block-alignment rule guarantees content height is ALWAYS a multiple of
-; 8 for 320-wide (mode-1) profiles ("h mod 8 = 0"), but NOT always a
-; multiple of 16 (e.g. N4's 320x120: 120/8=15, 120/16=7.5) - 8 bytes is
-; the largest unit that divides EVERY valid mode-1 height, so one
-; primitive serves every letterboxed profile uniformly. This is a
-; disclosed, bounded overhead relative to N0's zero-bookkeeping path (see
-; the task report) - real, but the only hardware-correct way to handle a
-; runtime-variable column height on Layer 2's fixed-stride addressing.
+; SP14a gap-blit "full burst" wave: ZEsarUX-vs-hardware differential
+; measurement (2026-07-23) found the CPU loop cycle-exact clean against
+; the round-2 accounting (217T/column measured vs predicted) - the
+; remaining ~14ms/frame gap is SILICON-ONLY: a real SD SPI burst reads at
+; ~26T/byte effective in 64-byte-or-shorter bursts (the RTL's between-
+; byte shifter halt/restart latency dominates short bursts), not the
+; nominal 16T; the flat path's own sustained 1264KB/s (22.1T/byte, its
+; 256-ini runs) is the measured silicon floor for LONG bursts. Chunk
+; transfers here now go through vid_gap_xfer (below) - ONE fully
+; unrolled 192-`ini` run (192 = N3's own max chunk, 24 units x 8 bytes;
+; N4's 120-byte max chunk is served by ENTERING the same run partway
+; through, below), entered via a computed offset so the run for ANY
+; chunk size 1-24 units is one unbroken burst with ZERO loop-control
+; instructions between bytes - the fragmentation the old 64-group+8-
+; remainder design paid for at every group boundary is gone entirely.
 ;
-; REGISTER RESIDENCY (SP14a gap-blit redesign wave - GAPSPINS convicted
-; the token-wait itself innocent, 2.0 polls/block; the overage is CPU-
-; side per-block/per-column bookkeeping, closed here with the flat
-; path's own economics, vid_stream_read_raw above, as the template):
-; run/block/column state lives in the ALTERNATE register set for the
-; WHOLE call, spilled to memory only at genuinely rare boundaries (a
-; page switch, an error, or routine entry/exit) - NOT once per block and
-; NOT once per column, unlike the memory-cell design this replaces.
-; Verified safe against every routine this loop calls: grepped, NONE of
-; them (vid_col_block_start/end/newblock/blockdone, vid_win_open/close,
-; vid_next_run, vid_remain_*, data_save/map_page/restore) contains a
-; single `exx` anywhere in this whole file outside vid_stream_read_raw/
-; vid_fast_spill - the alt set survives every one of these calls
-; automatically, by construction, not by an undocumented assumption.
-; Also verified against both live ISRs: im2_isr's fast frame-tick path
-; (the only im2_isr path reachable during video playback - audEnable is
-; frozen at 0 for the whole session) push/pops AF/HL and never touches
-; BC/DE/the alt set at all; video_ctc_isr's own header already states
-; "Preserves the alternate set (never touches it)" - the SAME guarantee
-; vid_stream_read_raw's own fast path already relies on.
+; REGISTER RESIDENCY (SP14a gap-blit redesign wave, unchanged by this
+; wave - GAPSPINS convicted the token-wait itself innocent, 2.0 polls/
+; block; the overage was CPU-side per-block/per-column bookkeeping,
+; closed with the flat path's own economics, vid_stream_read_raw above,
+; as the template; this wave only replaces the transfer PRIMITIVE, not
+; the residency design around it): run/block/column state lives in the
+; ALTERNATE register set for the WHOLE call, spilled to memory only at
+; genuinely rare boundaries (a page switch, an error, or routine entry/
+; exit). Verified safe against every routine this loop calls: grepped,
+; NONE of them (vid_col_block_start/end/newblock/blockdone, vid_win_
+; open/close, vid_next_run, vid_remain_*, data_save/map_page/restore)
+; contains a single `exx` anywhere in this whole file outside vid_
+; stream_read_raw/vid_fast_spill - the alt set survives every one of
+; these calls automatically, by construction. Also verified against both
+; live ISRs: im2_isr's fast frame-tick path (the only im2_isr path
+; reachable during video playback - audEnable is frozen at 0 for the
+; whole session) push/pops AF/HL and never touches BC/DE/IY/the alt set
+; at all; video_ctc_isr's own header already states "Preserves the
+; alternate set (never touches it)" and touches only AF/IX - IY (newly
+; used this wave, see vid_gap_xfer) is untouched by both.
 ;
 ;   MAIN:      HL = live destination pointer (the MMU6-window address
 ;              the next byte lands at) - resident across the WHOLE loop,
@@ -1885,12 +1927,11 @@ vid_stream_pixels_flat:
 ;                   block (0 = no block open)
 ;              E  = 8-byte units remaining in the CURRENT column
 ;              L  = vidColUnits, cached once at entry (a per-FILE
-;                   constant - never re-derived per block/column, unlike
-;                   the SD-block bookkeeping; already-optimal before
-;                   this wave, since the fastgroups/fastremlen SMC
-;                   patches below already hoist to once-per-CALL, i.e.
-;                   once per frame, not per column - there is no
-;                   coarser "per run" to hoist to)
+;                   constant) - reset target for E when a column
+;                   finishes; nothing else needs it this wave (the old
+;                   "is this a fresh column" fast/slow split is gone -
+;                   every chunk now goes through the SAME transfer, see
+;                   below, so there is nothing left to dispatch on)
 ;              H  = unused
 ; .loop is entered/left with MAIN active and HL correct; every `exx`
 ; pair below is balanced within its own basic block (rubric-1 sweep in
@@ -1901,7 +1942,8 @@ vid_stream_pixels_flat:
 ;
 ; In: A = starting destination 8K page; header: vidColUnits (height/8,
 ;     nxv_open's own derivation - the gap blit's fixed per-column unit
-;     count for this file). Column count is 320 (NXV_WIDTH_MODE1) for
+;     count for this file, <= 24 - vid_gap_xfer's own 192-`ini` run
+;     bound; see its header). Column count is 320 (NXV_WIDTH_MODE1) for
 ;     every shipped mode-1 letterbox profile (N3/N4 - full width, no
 ;     pillarbox); a hardcoded 320 is used rather than a header re-read
 ;     since nothing this wave ships needs any other mode-1 width.
@@ -1916,18 +1958,10 @@ vid_stream_pixels_gap:
     ld (vidGapDest), hl              ; entry sync (debugger visibility -
                                        ; see the routine header)
     ld a, (vidColUnits)
-    srl a
-    srl a
-    srl a
-    ld (.fastgroups+1), a             ; self-modified once/call: colUnits>>3
-    ld a, (vidColUnits)
-    and 7
-    ld (.fastremlen+1), a               ; self-modified once/call: colUnits&7
-    ld a, (vidColUnits)
-    exx                                   ; -> alt: seed the whole-run state
-    ld bc, 320                             ; colsLeft (NXV_WIDTH_MODE1)
-    ld d, 0                                 ; blkLeft = 0: forces a block-
-                                              ; open on the very first .loop
+    exx                                ; -> alt: seed the whole-run state
+    ld bc, 320                           ; colsLeft (NXV_WIDTH_MODE1)
+    ld d, 0                                ; blkLeft = 0: forces a block-
+                                             ; open on the very first .loop
     ld e, a                                   ; colLeft = colUnits (the
                                                 ; first column starts fresh)
     ld l, a                                     ; colUnits, cached for the
@@ -1954,109 +1988,38 @@ vid_stream_pixels_gap:
     exx                                        ; -> alt
     ld d, 64                                     ; fresh block: 512/8 units
 .haveblk_x:
+    ; chunk = min(colLeft, blkLeft) - every transfer, fresh column or a
+    ; straddle's continuation alike, goes through the SAME computation
+    ; and the SAME transfer primitive now (vid_gap_xfer's own full-burst
+    ; design serves any 1-24-unit chunk equally well, so the old fast/
+    ; slow split - which existed only to pick between two DIFFERENT
+    ; transfer primitives - has nothing left to dispatch on).
     ld a, e                                        ; colLeft
-    cp l                                             ; == colUnits? (fresh
-                                                       ; column, the only
-                                                       ; value colLeft is
-                                                       ; ever reset to)
-    jp nz, .slow_x                                     ; not fresh
-                                                         ; (continuing a
-                                                         ; straddled
-                                                         ; column): general
-                                                         ; path (jp: past
-                                                         ; .fastfit_x's own
-                                                         ; body)
-    cp d                                                  ; fresh: does the
-                                                            ; WHOLE column
-                                                            ; fit the open
-                                                            ; block?
-    jr c, .fastfit_x
-    jr z, .fastfit_x
-    jp .slow_x                                              ; fresh column,
-                                                              ; does not fit
-.fastfit_x:
-    ; the whole column fits in the open block (just confirmed above) -
-    ; serve it through the coarse 64-byte primitive for every complete
-    ; 64-byte group, then the 8-byte primitive for the (<64-byte)
-    ; remainder, instead of the general path's uniform 8-byte
-    ; granularity - per-column loop-control instances drop from up to
-    ; colUnits/1 (worst case) to at most groups+1 (3-4 for N3/N4).
-    exx                            ; -> main: HL already = dest (resident)
-    ld c, PORT_SPI_DAT
-.fastgroups:
-    ld b, 0                            ; patched: colUnits>>3
-    ld a, b
-    or a
-    jp z, .fastrem                     ; jp: past jr's +127 (128-byte
-                                        ; unrolled block ahead)
-    ld e, b
-.fastgrouploop:
-    DUP 64
-      ini                              ; 16T/byte, same rate as the 8-
-    EDUP                               ; byte primitive - only the loop-
-    dec e                              ; control cadence changes.
-    jp nz, .fastgrouploop               ; jp: 128-byte block behind,
-                                         ; past jr's -128
-.fastrem:
-.fastremlen:
-    ld b, 0                            ; patched: colUnits&7
-    ld a, b
-    or a
-    jr z, .fastxferdone
-    ld e, b
-.fastremloop:
-    REPT 8
-        ini
-    ENDR
-    dec e
-    jr nz, .fastremloop
-.fastxferdone:
-    ; HL now = dest for the NEXT column (resident, no memory write) - a
-    ; fastfit column is ALWAYS fully consumed in one pass.
-    exx                                   ; -> alt
-    xor a
-    ld e, a                                 ; colLeft = 0 (column done)
-    ld a, d
-    sub l                                     ; blkLeft -= colUnits (may
-    ld d, a                                    ; hit 0: block also closes)
-    jp .aftertransfer_x                          ; jp: past .slow_x's body
-.slow_x:
-    ; chunk = min(colLeft, blkLeft) - the general boundary-straddle case
-    ; (a fresh column too big for the open block, or the continuation of
-    ; a column that already straddled at least one boundary).
-    ld a, e
-    cp d
-    ld h, e                            ; H' = tentative chunk (colLeft)
-    jr c, .havechunk_x
-    ld h, d                              ; blkLeft is the smaller: chunk=it
+    cp d                                             ; vs blkLeft
+    jr c, .havechunk_x                                 ; colLeft smaller:
+                                                          ; chunk = colLeft
+    ld a, d                                              ; blkLeft smaller
+                                                           ; or equal: chunk
+                                                           ; = blkLeft
 .havechunk_x:
+    ld h, a                                                ; H' = chunk
+                                                             ; (units, 1-24)
     ld a, e
     sub h
-    ld e, a                                ; colLeft -= chunk
+    ld e, a                                                   ; colLeft -=
+                                                                ; chunk
     ld a, d
     sub h
-    ld d, a                                  ; blkLeft -= chunk
-    ld a, h                                    ; A = chunk (survives the
-                                                 ; `exx` below - EXX never
-                                                 ; touches AF)
-    exx                                           ; -> main
-    ld b, a
-    ld c, PORT_SPI_DAT
-    ld e, b                                          ; outer pass counter
-                                                       ; (ini itself
-                                                       ; decrements B, so B
-                                                       ; cannot double as
-                                                       ; this - SP14a T3
-                                                       ; fix-wave-3 lesson,
-                                                       ; unchanged)
-.xfer_chunk:
-    REPT 8
-        ini
-    ENDR
-    dec e
-    jr nz, .xfer_chunk
-    ; HL now advanced by chunk*8 bytes (resident, no memory write)
-    exx                                                 ; -> alt
+    ld d, a                                                      ; blkLeft
+                                                                   ; -= chunk
+    ld a, h                                                        ; A =
+                                                                     ; chunk
+    exx                                                               ; ->
+                                                                        ; main
+    call vid_gap_xfer                ; HL advances by chunk*8 bytes (the
+                                       ; full-burst transfer, below);
+                                       ; corrupts AF, BC, DE, IY
+    exx                                 ; -> alt
 .aftertransfer_x:
 ; For the owner's debugger: a breakpoint here catches every block/
 ; column-close decision, ALT active - D = new blkLeft, E = new colLeft.
@@ -2078,12 +2041,11 @@ vid_stream_pixels_gap:
                                                       ; the NEXT column
                                                       ; starts fresh (bug
                                                       ; caught by hand-
-                                                      ; trace: without this
-                                                      ; the next .haveblk_x
+                                                      ; trace last wave:
+                                                      ; without this the
+                                                      ; next .haveblk_x
                                                       ; would see colLeft
-                                                      ; still 0 and wrongly
-                                                      ; route a fresh
-                                                      ; column into .slow_x)
+                                                      ; still 0)
     exx                                             ; -> main: advance dest
     xor a                                             ; to the next 256-
     ld l, a                                            ; aligned column
@@ -2142,6 +2104,71 @@ vid_stream_pixels_gap:
     call data_restore
     pop af
     scf
+    ret
+
+; Full-burst gap-column transfer (SP14a "maximize burst length" wave -
+; see vid_stream_pixels_gap's own header for the ZEsarUX-vs-hardware
+; finding this responds to). In: A = chunk (8-byte units, 1-24 - the
+; caller's own min(colLeft,blkLeft), never wider than vidColUnits <= 24
+; for any shipped or future mode-1 letterbox profile whose height stays
+; under the native 256 - see nxv_open's own header derivation). HL =
+; live destination pointer (preserved, advanced by chunk*8 bytes). Out:
+; HL advanced. Corrupts AF, BC, DE, IY.
+;
+; ONE shared 192-`ini` unrolled run (192 = 24 units x 8 bytes, N3's own
+; max chunk) serves every chunk size via a COMPUTED ENTRY POINT partway
+; through the run, not a loop: entry = run_end - chunk*16 (chunk*8 bytes
+; needed x 2 code-bytes/`ini`), so exactly chunk*8 bytes transfer as one
+; unbroken burst regardless of where the entry lands - N4's own 120-byte
+; (15-unit) max chunk enters 72 `ini`s in, N3's 192-byte (24-unit) max
+; enters at the very start (chunk=24 -> entry = run_end - 384 = run_
+; start). A straddle's smaller residues (1-23 units) enter further in,
+; the identical mechanism. Rubric 2: the run itself consumes NO loop
+; register at all (no B, no E, no counter of any kind) - the byte count
+; actually transferred is driven purely by the ENTRY OFFSET, not by any
+; runtime decrement; B/E are free for other use across this call (both
+; corrupted here as ordinary scratch, not as loop state).
+;
+; Entry-offset arithmetic: chunk*16 via Z80N `MUL D,E` (D=chunk, E=16,
+; DE=D*E) - one instruction instead of four `add hl,hl` doublings, and
+; leaves HL untouched throughout (dest is parked in BC while HL computes
+; the entry address, then restored - `MUL D,E` needs D/E as its own
+; operands, so dest cannot live there during the multiply). IY (not IX -
+; IX is the video CTC ISR's own exclusive resident play pointer for the
+; whole armed window, see this file's established IX/IY-free/IX-
+; exclusivity invariant) carries the computed jump target so HL is free
+; to hold dest again before the burst starts; IY is untouched by both
+; ISRs live during playback (im2_isr's fast path and video_ctc_isr both
+; verified AF/HL/IX-only, this routine's own header).
+vid_gap_xfer:
+    ld b, h                    ; park dest (BC) - MUL D,E needs D/E
+    ld c, l
+    ld d, a                      ; D = chunk (units)
+    ld e, 16                       ; E = 16 (8 bytes/unit x 2 code-bytes/
+                                     ; `ini`)
+    mul d, e                         ; DE = chunk*16 = the run's own byte-
+                                       ; skip from its start
+    ld hl, .run_end
+    or a
+    sbc hl, de                         ; HL = entry address
+    push hl
+    pop iy                                ; IY = entry address
+    ld h, b                                 ; dest restored
+    ld l, c
+    ld c, PORT_SPI_DAT
+    jp (iy)                                   ; enter the run at the
+                                                ; computed offset
+.run_start:
+    DUP 192
+      ini                                        ; ~22T/byte silicon-
+    EDUP                                         ; effective in this long
+                                                  ; a burst (measured, see
+                                                  ; the routine header) -
+                                                  ; no loop-control
+                                                  ; instruction anywhere
+                                                  ; between these, by
+                                                  ; design
+.run_end:
     ret
 
 ; Ensure a fresh 512-byte SD block is ready to stream (window open, run
@@ -2230,17 +2257,19 @@ vid_col_blockdone:
 
 ; vid_xfer16n (the old 16-byte-group INI burst primitive) is GONE - SP14a
 ; T4's pixel paths no longer need it (vid_stream_pixels_flat goes through
-; vid_stream_read; vid_stream_pixels_gap's own inline 8-byte-unit
-; primitives, above - .fastgroups/.fastremlen/.xfer_chunk - replaced the
-; old standalone vid_xfer8n) and its last remaining caller, VBENCH-FLAT,
-; is retired (see vid_bench_pass_ret's own neighbouring comment).
-; Historical note preserved because the lesson still governs every one of
-; those inline primitives' own design: SP14a T3 fix wave 3 found that B
-; CANNOT be an outer loop counter wrapped around a REPT-unrolled `ini`
-; block - the Z80 `ini` instruction (ED A2) decrements B as part of its
-; OWN semantics, so a trailing `djnz` on top of that double-counts. E is
-; the outer counter instead in every transfer primitive this file has,
-; copied from B at entry, before `ini` can touch either.
+; vid_stream_read; vid_stream_pixels_gap's own transfer, above, now goes
+; through vid_gap_xfer's single shared full-burst run, entered at a
+; computed offset - no outer loop, no B/E counter at all, see that
+; routine's own header) and its last remaining caller, VBENCH-FLAT, is
+; retired (see vid_bench_pass_ret's own neighbouring comment). Historical
+; note preserved because the lesson still governs vid_read_block's own
+; .halfloop, above, the last transfer primitive in this file that DOES
+; still loop: SP14a T3 fix wave 3 found that B CANNOT be an outer loop
+; counter wrapped around a REPT-unrolled `ini` block - the Z80 `ini`
+; instruction (ED A2) decrements B as part of its OWN semantics, so a
+; trailing `djnz` on top of that double-counts. A is the outer counter
+; there instead (that routine's own header explains why not E either) -
+; `ini` never reads or writes A, so it is provably free.
 
 ; Shared per-block prologue: opens the next SD block (vid_col_newblock's
 ; own token-wait) and readies C=PORT_SPI_DAT, folding the push/pop-HL
