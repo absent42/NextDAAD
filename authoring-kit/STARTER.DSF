@@ -507,12 +507,20 @@ $pictureOK
                 MESSAGE "What was that noise?"
                 DONE
 
-> MOVIE   _     GFX 1 13                ; play 001.VID once (safe default: fmt1, 320x240 no-palette)
-                CLS                     ; cutscene took over the whole screen - redraw via RESTART
-                RESTART
+; Video cutscenes (NXV format, see the kit's SETUP.md): GFX n 13 plays
+; NNN.VID once, GFX n 14 loops it until a key is pressed. The player
+; deliberately leaves the screen as the video left it - restoring the
+; location picture is the game's job. Two ways to do it:
+;   1. In place (MOVIE below): PROCESS 7 redraws the picture without
+;      re-describing the location - use when play continues in the room.
+;   2. Full redescribe (REEL below): CLS + RESTART re-enters the main
+;      loop, which redraws picture and text - use at scene changes.
+> MOVIE   _     GFX 1 13                ; play 001.VID once
+                PROCESS 7               ; redraw location picture in place
+                DONE
 
-> REEL    _     GFX 2 14                ; loop 002.VID until a key is pressed (showcase: fmt0, palette)
-                CLS
+> REEL    _     GFX 2 14                ; loop 002.VID until a key is pressed
+                CLS                     ; scene change style: full redescribe
                 RESTART
 
 > LOOK    _     CLS
@@ -562,6 +570,17 @@ $initLoop
                 LET     fMaxCarr 4
                 SET     fCPronounNoun
                 SET     fCPronounAdject
-                LET     fObjectsCarried   NUM_CARRIED 
-                GOTO    1                 ; Go to first location 
+                LET     fObjectsCarried   NUM_CARRIED
+                GOTO    1                 ; Go to first location
+;------------------------------------------------------------------------------
+/PRO 7 ; Post-video location picture redraw (in-place restore, see the
+; MOVIE verb). The same PICTURE/DISPLAY pair the main loop uses. If the
+; location has no picture, PICTURE fails and the entry aborts (DAAD's
+; condition-fail rule), falling to the bare DONE so the verb still ends
+; cleanly.
+> _       _     PICTURE @fPlayer
+                DISPLAY 0
+                DONE
+
+> _       _     DONE 
 /END
