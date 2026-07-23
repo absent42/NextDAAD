@@ -6,6 +6,7 @@ CLAUDE.md
 docs/
 /tools/
 build/
+debug/
 sd/*.DDB
 sd/*.ddb
 sd/*.SAV
