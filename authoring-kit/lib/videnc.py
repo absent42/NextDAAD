@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-tests/videnc.py - encoder for NextDAAD's native NXV video format (SP14a
-T4), with the original six-format MakeVid/playvid encoder kept behind
---legacy for anyone who still needs a file for playvid itself.
+authoring-kit/lib/videnc.py - encoder for NextDAAD's native NXV video
+format (SP14a T4). The interim six-format MakeVid/playvid --legacy
+encoder was removed before anything shipped (owner decision,
+2026-07-23) - NXV is the only output.
 
-Sync convention: authoring-kit/lib/videnc.py is a kit copy of this
-file - its ENCODING LOGIC must stay identical to this one; only its
-docstring and --help text may differ. Port any logic fix to both (the
-authoring-kit copy's own NXV sync is T5's job, not this task's - do not
-touch it here).
+This is the ONE canonical copy (owner consolidation, 2026-07-23 - the
+old tests/videnc.py duplicate is gone). It ships in the authoring kit
+and the repo's own test harness consumes it from here (build-tests.ps1
+-Vid), the same pattern as lib/fontconv.ps1. The default ffmpeg path
+resolves relative to this file (authoring-kit/tools/ffmpeg/); repo
+callers pass --ffmpeg tools/ffmpeg/bin/ffmpeg.exe explicitly.
 
 NXV (default output): docs/superpowers/specs/2026-07-21-sp14a-native-
 video-design.md is the format authority. ONE parameterized container,
@@ -79,8 +81,7 @@ for N2) performs no crop at all. See compute_center_crop's own docstring
 for the exact arithmetic.
 
 Palette block (palette-flag files): 256 entries x 2 bytes, NR $44 write
-order - identical construction to the legacy encoder's own (see
-build_palette_block, shared by both paths).
+order (see build_palette_block).
 
 Requires: Python 3, Pillow. An ffmpeg binary is required at run time
 (default: the project's own tools\\ffmpeg\\bin\\ffmpeg.exe, override
@@ -189,65 +190,11 @@ def nxv_build_header(profile: dict, channels: int, rate: int, abytes_pad: int,
     return bytes(hdr)
 
 
-# ---------------------------------------------------------------------
-# Legacy MakeVid/playvid format table (six formats 0-5) - unsupported by
-# NextDAAD's own player (SP14a T4 scrapped MakeVid compatibility), kept
-# only for anyone who needs a file for playvid itself.
-# ---------------------------------------------------------------------
-LEGACY_FORMATS = {
-    0: dict(width=320, height=240, palette=True,  stereo=True,
-            spf=933,  pad=182, pixel_bytes=76800, sectors=155,
-            column_major=True),
-    1: dict(width=320, height=240, palette=False, stereo=True,
-            spf=933,  pad=182, pixel_bytes=76800, sectors=154,
-            column_major=True),
-    2: dict(width=256, height=240, palette=True,  stereo=True,
-            spf=1866, pad=364, pixel_bytes=61440, sectors=129,
-            column_major=True),
-    3: dict(width=256, height=240, palette=False, stereo=True,
-            spf=1866, pad=364, pixel_bytes=61440, sectors=128,
-            column_major=True),
-    4: dict(width=256, height=192, palette=True,  spf=933, stereo=False,
-            pad=91,   pixel_bytes=49152, sectors=99,
-            column_major=False),
-    5: dict(width=256, height=192, palette=False, spf=933, stereo=False,
-            pad=91,   pixel_bytes=49152, sectors=98,
-            column_major=False),
-}
-for _fmt, _info in LEGACY_FORMATS.items():
-    _info["fps"] = Fraction(50, 3) if _fmt < 4 else Fraction(25, 1)
-    _info["channels"] = 2 if _info["stereo"] else 1
-    _rate = Fraction(_info["spf"]) * _info["fps"]
-    assert _rate.denominator == 1, (
-        f"legacy format {_fmt}: samples/frame * fps did not land on an "
-        f"exact sample rate ({_rate}) - format table is wrong"
-    )
-    _info["rate"] = int(_rate)
-    _info["audio_bytes"] = _info["spf"] * _info["channels"]
-    _info["palette_bytes"] = 512 if _info["palette"] else 0
-    _info["frame_bytes"] = (_info["audio_bytes"] + _info["pad"]
-                             + _info["palette_bytes"] + _info["pixel_bytes"])
-    assert _info["frame_bytes"] == _info["sectors"] * 512, (
-        f"legacy format {_fmt}: frame_bytes {_info['frame_bytes']} != "
-        f"sectors*512 {_info['sectors'] * 512}"
-    )
-
-
 def fps_arg(fps: Fraction) -> str:
     """ffmpeg -r argument string for an exact rational frame rate."""
     if fps.denominator == 1:
         return str(fps.numerator)
     return f"{fps.numerator}/{fps.denominator}"
-
-
-def legacy_classify(total_sectors: int) -> int:
-    """Mirrors playvid's own priority-order classifier (README.TXT):
-    walk formats 0..5 in that order, return the first whose sector
-    count evenly divides total_sectors. Returns -1 if none match."""
-    for fmt in range(6):
-        if total_sectors % LEGACY_FORMATS[fmt]["sectors"] == 0:
-            return fmt
-    return -1
 
 
 def run_ffmpeg(ffmpeg, args, what):
@@ -369,8 +316,7 @@ def build_palette_block(pal_rgb):
 def encode_frame(rgb_frame, width, height, column_major, palette, dither):
     """Returns (palette_block_or_empty, pixel_bytes) for one WxH RGB24
     frame. Column-major output (Pillow's own transpose) yields exactly
-    `height` real bytes per column with no stride padding - shared by
-    both the NXV and legacy encode paths."""
+    `height` real bytes per column with no stride padding."""
     img = Image.frombytes("RGB", (width, height), rgb_frame)
     if palette:
         dmode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
@@ -388,53 +334,6 @@ def encode_frame(rgb_frame, width, height, column_major, palette, dither):
         pixels = idx_img.tobytes()
     assert len(pixels) == width * height
     return pal_block, pixels
-
-
-def blank_frame_legacy(info):
-    """A filler frame used only to break a legacy sector-count
-    classification tie (README.TXT's own documented escape hatch)."""
-    audio = bytes([SILENCE_U8]) * info["audio_bytes"]
-    pad = bytes(info["pad"])
-    pal = bytes(info["palette_bytes"])
-    pixels = bytes(info["pixel_bytes"])
-    return audio + pad + pal + pixels
-
-
-def append_until_classifies(out_path, fmt, info):
-    """Legacy-only: appends whole blank frames until the file's total
-    sector count no longer divides evenly by any EARLIER-priority
-    format's sector count. Returns the number of blank frames appended.
-    NXV needs no equivalent - the header makes every file self-
-    describing, killing the whole classification-collision hazard."""
-    appended = 0
-    while True:
-        total_bytes = out_path.stat().st_size
-        assert total_bytes % 512 == 0
-        total_sectors = total_bytes // 512
-        collision = any(total_sectors % LEGACY_FORMATS[i]["sectors"] == 0
-                         for i in range(fmt))
-        if not collision:
-            return appended
-        with open(out_path, "ab") as f:
-            f.write(blank_frame_legacy(info))
-        appended += 1
-
-
-def validate_legacy_output(out_path, fmt):
-    total_bytes = out_path.stat().st_size
-    if total_bytes % 512 != 0:
-        raise SystemExit(f"error: output size {total_bytes} is not a "
-                          f"whole number of sectors - refusing to ship")
-    total_sectors = total_bytes // 512
-    verdict = legacy_classify(total_sectors)
-    if verdict != fmt:
-        raise SystemExit(
-            f"error: self-check failed - {out_path} ({total_bytes} B, "
-            f"{total_sectors} sectors) classifies as format {verdict}, "
-            f"not the requested format {fmt}. Refusing to ship a "
-            f"misclassifying file."
-        )
-    return total_bytes, total_sectors
 
 
 def encode_nxv(args):
@@ -549,114 +448,30 @@ def encode_nxv(args):
     return 0
 
 
-def encode_legacy(args):
-    if args.format is None:
-        raise SystemExit("error: --legacy requires --format 0-5")
-    info = LEGACY_FORMATS[args.format]
-    input_path = Path(args.input)
-    if not input_path.exists():
-        raise SystemExit(f"error: input not found: {input_path}")
-    out_path = Path(args.output)
-    ffmpeg = Path(args.ffmpeg)
-    if not ffmpeg.exists():
-        raise SystemExit(f"error: ffmpeg not found at {ffmpeg}")
-
-    print(f"LEGACY format {args.format} (unsupported by NextDAAD's own "
-          f"player - MakeVid compatibility was scrapped, SP14a T4): "
-          f"{info['width']}x{info['height']}, "
-          f"{'palette' if info['palette'] else 'no-palette'}, "
-          f"{'stereo' if info['stereo'] else 'mono'}, "
-          f"{info['rate']} Hz, {fps_arg(info['fps'])} fps, "
-          f"{info['frame_bytes']} B/frame ({info['sectors']} sectors)")
-
-    print("extracting video frames...")
-    video_bytes, nframes = extract_video(ffmpeg, input_path, args.start,
-                                          args.duration, info["width"],
-                                          info["height"], info["fps"])
-    if nframes == 0:
-        raise SystemExit("error: no frames decoded - check input/"
-                          "--start/--duration")
-    print(f"  {nframes} frames decoded")
-
-    print("extracting audio...")
-    audio_bytes = extract_audio(ffmpeg, input_path, args.start,
-                                 args.duration, info["channels"],
-                                 info["rate"])
-    needed = nframes * info["audio_bytes"]
-    if len(audio_bytes) < needed:
-        short = needed - len(audio_bytes)
-        print(f"  source audio shorter than video by {short} B - "
-              f"padding with silence")
-        audio_bytes = audio_bytes + bytes([SILENCE_U8]) * short
-    elif len(audio_bytes) > needed:
-        audio_bytes = audio_bytes[:needed]
-    print(f"  {len(audio_bytes)} B ({info['channels']}ch u8 @ "
-          f"{info['rate']} Hz)")
-
-    frame_stride = info["width"] * info["height"] * 3
-    print(f"encoding {nframes} frames...")
-    report_every = max(1, nframes // 10)
-    with open(out_path, "wb") as f:
-        for n in range(nframes):
-            rgb_frame = video_bytes[n * frame_stride:(n + 1) * frame_stride]
-            audio_slice = audio_bytes[n * info["audio_bytes"]:
-                                       (n + 1) * info["audio_bytes"]]
-            pal_block, pixels = encode_frame(
-                rgb_frame, info["width"], info["height"],
-                info["column_major"], info["palette"], args.dither)
-            frame_out = audio_slice + bytes(info["pad"]) + pal_block + pixels
-            assert len(frame_out) == info["frame_bytes"]
-            f.write(frame_out)
-            if (n + 1) % report_every == 0 or n + 1 == nframes:
-                print(f"  {n + 1}/{nframes} frames")
-
-    appended = append_until_classifies(out_path, args.format, info)
-    if appended:
-        print(f"  appended {appended} blank frame(s) to break a "
-              f"classification collision with an earlier-priority format")
-
-    total_bytes, total_sectors = validate_legacy_output(out_path, args.format)
-    print(f"wrote {out_path}: {total_bytes} B, {total_sectors} sectors, "
-          f"classifies as legacy format {args.format} - OK "
-          f"(unsupported by NextDAAD's own player)")
-    return 0
-
-
 def main(argv):
     ap = argparse.ArgumentParser(
         description="Encode a video file into NextDAAD's native NXV "
-                    "format (default), or a legacy MakeVid/playvid "
-                    "format with --legacy (see tests/videnc-README.md).")
+                    "format (see lib/videnc-README.md).")
     ap.add_argument("input", help="any video file ffmpeg can read")
     ap.add_argument("output", help="destination video file")
     ap.add_argument("--profile", default="auto", choices=list(NXV_PROFILES) + ["auto"],
                      help="NXV profile n0-n4, or auto (nearest pixel-"
-                          "aspect match - see module docstring). "
-                          "Ignored with --legacy.")
+                          "aspect match - see module docstring)")
     ap.add_argument("--mono", action="store_true",
-                     help="NXV: mono audio (23325 Hz) instead of the "
+                     help="mono audio (23325 Hz) instead of the "
                           "default stereo (15625 Hz)")
     ap.add_argument("--no-palette", action="store_true",
-                     help="NXV: RGB332-direct pixels (no per-frame "
+                     help="RGB332-direct pixels (no per-frame "
                           "palette block) instead of the default "
                           "adaptive per-frame palette")
-    ap.add_argument("--legacy", action="store_true",
-                     help="encode a legacy MakeVid/playvid format "
-                          "instead of NXV - unsupported by NextDAAD's "
-                          "own player, for playvid compatibility only")
-    ap.add_argument("--format", type=int, choices=range(6),
-                     help="--legacy only: target format 0-5")
     ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
     ap.add_argument("--duration", help="clip duration in seconds")
     ap.add_argument("--dither", action="store_true",
-                     help="Floyd-Steinberg dither the palette formats "
+                     help="Floyd-Steinberg dither the palette "
                           "(default: no dither, matching tools/png2nx.py)")
     ap.add_argument("--ffmpeg", default=str(DEFAULT_FFMPEG),
                      help=f"ffmpeg binary (default: {DEFAULT_FFMPEG})")
     args = ap.parse_args(argv[1:])
-
-    if args.legacy:
-        return encode_legacy(args)
     return encode_nxv(args)
 
 

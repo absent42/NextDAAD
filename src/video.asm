@@ -3933,7 +3933,7 @@ vid_copper_init:
 ; hardware expansion rule ("least significant bit of blue is set to OR
 ; between B2 and B1", docs/zx-next-dev-guide-2022-07-15/chapter-next-
 ; palette.tex:176 - byte1 = 1 iff the index's two blue bits, i&3, are
-; nonzero), the SAME rule tests/videnc.py's palette builder uses.
+; nonzero), the SAME rule authoring-kit/lib/videnc.py's palette builder uses.
 ; Corrupts AF, BC.
 vid_identity_palette:
     nextreg NR_PAL_CTRL, PAL_L2_FIRST

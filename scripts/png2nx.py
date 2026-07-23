@@ -9,12 +9,12 @@ Usage:
 
 Pipeline (recreated recipe - the original tool was lost in the 2026-07-20
 tools/ deletion incident; this rebuilds it from the project's persisted
-recipe plus the working reference quantizer in tests/videnc.py):
+recipe plus the working reference quantizer in authoring-kit/lib/videnc.py):
   1. Load the source PNG as RGB.
   2. Optionally crop to the top N rows (--crop-height), for sources that
      are letterboxed or include padding below the picture area.
   3. Quantize to an 8-bit paletted image: PIL ADAPTIVE 256-colour
-     palette, dither NONE (matches tests/videnc.py's default and the
+     palette, dither NONE (matches authoring-kit/lib/videnc.py's default and the
      prior one-shot converters this recipe was re-derived from).
   4. Save the paletted image as a temporary 8-bit PNG - gfx2next requires
      an already-paletted source, it rejects truecolour input.

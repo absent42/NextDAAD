@@ -90,7 +90,9 @@
 #   -Vid     stage the native NXV format matrix into sd\001.VID..
 #            sd\005.VID = profiles N0..N4 (docs\superpowers\specs\2026-
 #            07-21-sp14a-native-video-design.md), one file per profile,
-#            each a REAL encode via tests\videnc.py - MakeVid
+#            each a REAL encode via authoring-kit\lib\videnc.py (the
+#            ONE canonical encoder, shipped in the kit like
+#            fontconv.ps1 - no drift-prone test copy) - MakeVid
 #            compatibility is SCRAPPED (SP14a T4), so there is no
 #            classifier-collision/malformed-autopal baggage left to work
 #            around; the header makes every file self-describing.
@@ -128,8 +130,8 @@
 #            across runs, unlike sd\*.VID which this switch always
 #            stale-cleans first). Regenerate by deleting the relevant
 #            cache file and re-running -Vid, or directly with e.g.:
-#              python tests\videnc.py tools\demo-files\1440x1080-25p.mp4 tests\out\001_n0_cache.vid --profile n0
-#              python tests\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\005_n4_cache.vid --profile n4
+#              python authoring-kit\lib\videnc.py tools\demo-files\1440x1080-25p.mp4 tests\out\001_n0_cache.vid --profile n0
+#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\005_n4_cache.vid --profile n4
 #            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
 #            sd\*.VID is gitignored (owner edit).
 param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid)
@@ -582,7 +584,10 @@ if ($Vid) {
         $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${profile}_cache.vid"
         if (-not (Test-Path -LiteralPath $cache)) {
             "encoding sd\$dest (profile $profile, source $(Split-Path -Leaf $src)) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
-            & python "$root\tests\videnc.py" $src $cache --profile $profile
+            # canonical encoder lives in the kit (see -Vid header); repo
+            # tools ffmpeg passed explicitly - the kit default resolves
+            # to authoring-kit\tools\ffmpeg, absent on a fresh clone
+            & python "$root\authoring-kit\lib\videnc.py" $src $cache --profile $profile --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
             if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$dest not staged" }
         }
         if (Test-Path -LiteralPath $cache) {

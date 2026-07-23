@@ -290,13 +290,13 @@ automatically - a playing sample is stopped (not resumed), and AY music
 is frozen in place and resumes on its own the instant the cutscene
 ends; no author action is needed either way.
 
-Two ways to encode a `.VID`: MakeVid (a third-party GUI tool - its
-"with palette" formats 0/2/4 are currently broken, malformed raw-RGB24
-output, upstream defect; its non-palette formats 1/3/5 are correct), or
-this project's own `tests/videnc.py` (Python 3 + Pillow + ffmpeg),
-which encodes all six formats correctly, including real per-frame
-adaptive palettes, proven on hardware. See `authoring-kit/SETUP.md`'s
-"Video cutscenes" section for the full authoring workflow.
+Encoding: `authoring-kit/lib/videnc.py` (Python 3 + Pillow + ffmpeg) is
+the one canonical encoder - it produces the interpreter's native NXV
+format (five profiles, per-frame adaptive palettes, proven on
+hardware), and the kit's BUILD.BAT runs it automatically for any
+`VIDEO\NNN.mp4`. MakeVid files are no longer playable; re-encode from
+the original source. See `authoring-kit/SETUP.md`'s "Video cutscenes"
+section and `authoring-kit/lib/videnc-README.md`.
 
 ## Custom fonts and mouse pointer
 
