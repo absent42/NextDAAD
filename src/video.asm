@@ -1547,13 +1547,21 @@ vid_run:
     ld a, (vidStageLimit)
     cp 4
     jr nz, .stg4nomark
-    ld b, 22
-    ld c, 0
-    call dbg_at
-    ld hl, msgStg4
-    call dbg_puts
-    ld a, (vidErrCode)             ; owner directive: every marker shows
-    call dbg_hex8                  ; ERR, not just a bare pass/fail
+    ; SP14a block-glue slim wave (VID_PAGE budget): the STG4 print body
+    ; moved cold (vid_stg4_body, VID_PAGE2) - this point is strictly
+    ; post-teardown (CTC parked, stub restored, .restore's own hop
+    ; already ran), the same safety argument vid_tl_report's hop below
+    ; already relies on. vidErrCode is read HOT and passed via D
+    ; (register-passing idiom, .stagegate's precedent - sidesteps the
+    ; copy-across lesson rather than needing it; ovl_map_page corrupts
+    ; AF only, so D survives the hop).
+    ld a, (vidErrCode)
+    ld d, a
+    ld hl, vid_stg4_body
+    push hl
+    ld a, VID_PAGE2
+    jp ovl_map_page
+.stg4ret:
 .stg4nomark:
     ; SP14a T1: the frame-timeline report - fully torn-down playback only
     ; (CTC parked/stub restored, DAC parked, L2/NR state restored) - no
@@ -1904,8 +1912,9 @@ vid_stream_pixels_flat:
 ; ALTERNATE register set for the WHOLE call, spilled to memory only at
 ; genuinely rare boundaries (a page switch, an error, or routine entry/
 ; exit). Verified safe against every routine this loop calls: grepped,
-; NONE of them (vid_col_block_start/end/newblock/blockdone, vid_win_
-; open/close, vid_next_run, vid_remain_*, data_save/map_page/restore)
+; NONE of them (vid_col_block_start - the block glue's one remaining
+; routine after this wave - vid_win_open/close, vid_next_run,
+; data_save/map_page/restore)
 ; contains a single `exx` anywhere in this whole file outside vid_
 ; stream_read_raw/vid_fast_spill - the alt set survives every one of
 ; these calls automatically, by construction. Also verified against both
@@ -1916,13 +1925,42 @@ vid_stream_pixels_flat:
 ; alternate set (never touches it)" and touches only AF/IX - IY (newly
 ; used this wave, see vid_gap_xfer) is untouched by both.
 ;
+; SP14a block-glue slim wave (this wave): the per-block glue around the
+; transfers is collapsed to near its floor. Block OPEN is one slim
+; routine (vid_col_block_start, below - vid_col_newblock/vid_win_open's
+; per-block window-flag check and the old push/pop-HL wrapper are gone;
+; the run-block count is decremented at OPEN time, fast path touches
+; only A/DE so HL needs no protection at all). Block CLOSE is a bare
+; inline 2-byte CRC skip (in a,(c)/nop/in a,(c)) at the two closing
+; sites - vid_col_block_end/vid_col_blockdone are deleted; the old
+; per-block file-remain subtract (512 each) is BATCHED into one
+; per-frame subtract at .alldone (vidPixBlocks*512 in 256-byte units -
+; remain's only readers, vid_stream_read's EOF tests, run strictly
+; between frames, and every error/restart path re-primes or tears down
+; remain before it is ever consulted again). The open fast path leans
+; on a PROVEN INVARIANT: vidStrmRunBlocks > 0 implies the SD window is
+; open - every writer that closes the window (vid_stream_read's
+; .needstream/.eofclose/error paths, the loop-mode restart, teardown)
+; either re-opens it before returning to streaming or ends the session;
+; the boundary path (RunBlocks == 0) is the only place a close/open
+; pair ever happens mid-frame.
+;
 ;   MAIN:      HL = live destination pointer (the MMU6-window address
 ;              the next byte lands at) - resident across the WHOLE loop,
 ;              never round-tripped through memory except at the sync
 ;              points below (page switch, entry, error - for debugger
 ;              visibility, not correctness: nothing reads vidGapDest
 ;              back into this routine).
-;   ALTERNATE: BC = columns remaining, whole frame (320 down to 0)
+;   ALTERNATE: B  = columns remaining in the CURRENT 8K page (32/page:
+;                   8192B page / 256B column stride, height-independent;
+;                   SP14a block-glue slim wave - splits the old 16-bit
+;                   colsLeft so a single djnz replaces BOTH the old
+;                   16-bit frame-done test at .loop AND the old and-31
+;                   page-boundary test at .colfinished_x). MUST live in
+;                   the alt set (doc-13 rubric 2): the `ini` bursts run
+;                   in the MAIN set and decrement MAIN B as their own
+;                   side effect - main B is scratch, never a counter.
+;              C  = 8K pages remaining this frame (10 = 320 cols / 32)
 ;              D  = 8-byte units remaining in the currently open SD
 ;                   block (0 = no block open)
 ;              E  = 8-byte units remaining in the CURRENT column
@@ -1932,7 +1970,7 @@ vid_stream_pixels_flat:
 ;                   "is this a fresh column" fast/slow split is gone -
 ;                   every chunk now goes through the SAME transfer, see
 ;                   below, so there is nothing left to dispatch on)
-;              H  = unused
+;              H  = chunk-size temp on the general path only
 ; .loop is entered/left with MAIN active and HL correct; every `exx`
 ; pair below is balanced within its own basic block (rubric-1 sweep in
 ; the task report traces each one by hand) - EXX never touches flags, so
@@ -1979,7 +2017,9 @@ vid_stream_pixels_gap:
                                        ; see the routine header)
     ld a, (vidColUnits)
     exx                                ; -> alt: seed the whole-run state
-    ld bc, 320                           ; colsLeft (NXV_WIDTH_MODE1)
+    ld bc, 32*256 + 10                   ; B = columns left this page (32),
+                                           ; C = pages left (10) - see the
+                                           ; header (replaces colsLeft=320)
     ld d, 0                                ; blkLeft = 0: forces a block-
                                              ; open on the very first .loop
     ld e, a                                   ; colLeft = colUnits (the
@@ -1987,23 +2027,22 @@ vid_stream_pixels_gap:
     ld l, a                                     ; colUnits, cached for the
                                                   ; whole call (see header)
     exx                                            ; -> main
-; For the owner's debugger: a breakpoint at .loop lands at the top of
-; every column/chunk decision with MAIN active and HL = the live dest
-; for whatever comes next; `exx` once in the shadow-register view to see
-; colsLeft(BC)/blkLeft(D)/colLeft(E)/colUnits(L).
+; For the owner's debugger: a breakpoint at .loop_alt lands at the top
+; of every column/chunk decision with ALT active - B = columns left in
+; this page, C = pages left, D = blkLeft, E = colLeft, L = colUnits;
+; `exx` once in the shadow view to see HL = the live dest.
 .loop:
-    exx
-    ld a, b
-    or c
-    jp z, .alldone_x                 ; colsLeft == 0: whole frame served
-                                       ; (jp: .alldone_x is past jr range)
+    exx                                ; -> alt (entry/page-switch arrivals
+                                         ; only - the per-column djnz and
+                                         ; the straddle re-entry both land
+                                         ; on .loop_alt already alt-side)
+.loop_alt:
     ld a, d
     or a
     jr nz, .haveblk_x                  ; block already open
-    exx                                   ; -> main: block_start needs HL
-    call vid_col_block_start                ; preserves HL; opens/waits
-                                              ; token; alt set untouched
-                                              ; (see the header)
+    exx                                   ; -> main: block_start preserves
+    call vid_col_block_start                ; HL + the alt set; opens the
+                                              ; next block/waits its token
     jp c, .err
     exx                                        ; -> alt
     ld d, 64                                     ; fresh block: 512/8 units
@@ -2041,12 +2080,14 @@ vid_stream_pixels_gap:
     ; colUnits < blkLeft strictly: the column finishes and the block
     ; does NOT close - both true by construction of this branch, so all
     ; the bookkeeping happens up front (no post-transfer test needed).
+    ; colLeft (E) needs no reset: this branch is only reachable with
+    ; colLeft == colUnits (the dispatch above proved it) and the column
+    ; completes whole, so E already holds the next column's fresh value.
+    ; colsLeft bookkeeping is gone entirely (block-glue slim wave) - the
+    ; djnz at .colfinished_x IS the column count now.
     ld a, d
     sub l
     ld d, a                       ; blkLeft -= colUnits (> 0, guaranteed)
-    ld e, l                         ; colLeft = colUnits (reset for the
-                                      ; next column - this one is done)
-    dec bc                            ; colsLeft -= 1
     exx                                 ; -> main
     call vid_gap_xfer_full                ; HL advances by colUnits*8
                                             ; bytes; corrupts AF, IY
@@ -2055,12 +2096,14 @@ vid_stream_pixels_gap:
                                               ; is skipped entirely
 .fullcol_exact_x:
     ; colUnits == blkLeft exactly: the column finishes AND the block
-    ; closes - both true by construction, so vid_col_block_end is called
-    ; unconditionally instead of via a runtime test.
+    ; closes - both true by construction, so the block close (a bare
+    ; 2-byte CRC skip since the block-glue slim wave - run-count and
+    ; remain accounting both live elsewhere now, see vid_col_block_
+    ; start's header) is inlined unconditionally instead of via a
+    ; runtime test. E needs no reset for the same reason as .fullcol_
+    ; room_x above.
     xor a
     ld d, a                       ; blkLeft -> 0
-    ld e, l                         ; colLeft = colUnits (reset)
-    dec bc                            ; colsLeft -= 1
     exx                                 ; -> main
     call vid_gap_xfer_full                ; HL advances by colUnits*8
                                             ; bytes; corrupts AF, IY. C is
@@ -2069,16 +2112,12 @@ vid_stream_pixels_gap:
                                             ; `ini` burst itself - `ini`
                                             ; never modifies C, established
                                             ; fact this file already
-                                            ; relies on elsewhere) - block_
-                                            ; end's own "In: C=PORT_SPI_
-                                            ; DAT" contract is satisfied
-                                            ; with NO exx in between here,
-                                            ; even more directly than the
-                                            ; general path's own reliance
-                                            ; on the same fact surviving
-                                            ; an exx round-trip.
-    call vid_col_block_end                   ; unconditional; preserves
-                                               ; HL + the alt set
+                                            ; relies on elsewhere) - so the
+                                            ; CRC skip below reads the SPI
+                                            ; port with NO exx in between.
+    in a, (c)                                ; skip the 2-byte CRC (playvid
+    nop                                       ; parity - the nop paces the
+    in a, (c)                                 ; two reads to >= 16T)
     jp .colfinished_x
 .havechunk_x:
     ld a, e                                        ; colLeft
@@ -2112,18 +2151,24 @@ vid_stream_pixels_gap:
 ; column-close decision, ALT active - D = new blkLeft, E = new colLeft.
     ld a, d
     or a
-    exx                                ; -> main (HL needed either way,
-                                         ; whether the call below fires)
-    call z, vid_col_block_end            ; preserves HL + the alt set
+    exx                                ; -> main (flags survive EXX; HL/C
+                                         ; needed whether the skip fires
+                                         ; or not)
+    jr nz, .noclose
+    in a, (c)                            ; block closed: skip the 2-byte
+    nop                                   ; CRC (C = PORT_SPI_DAT from the
+    in a, (c)                             ; transfer just above - no exx
+                                           ; touched main C in between)
+.noclose:
     exx                                     ; -> alt
     ld a, e
     or a
-    jr nz, .loop_from_alt                     ; column not finished (a
+    jp nz, .loop_alt                          ; column not finished (a
                                                 ; straddle just closed its
                                                 ; block, more to come next
                                                 ; block): straight back,
-                                                ; dest already correct
-    dec bc                                       ; column finished NOW
+                                                ; already alt-side, dest
+                                                ; already correct
     ld e, l                                        ; colLeft = colUnits:
                                                       ; the NEXT column
                                                       ; starts fresh (bug
@@ -2154,20 +2199,21 @@ vid_stream_pixels_gap:
                                                          ; reaches 256
                                                          ; within one
                                                          ; column)
-    exx                                                  ; -> alt: page
-                                                           ; switch due?
-    ld a, c                                                ; colsLeft's own
-                                                             ; low byte -
-                                                             ; 320=10*32, so
-                                                             ; "mod 32==0"
-                                                             ; recurs every
-                                                             ; 32nd column
-                                                             ; with no
-                                                             ; separate
-                                                             ; counter
-    and 31
-    exx                                                       ; -> main
-    jp nz, .loop
+    exx                                                  ; -> alt
+    djnz .loop_alt                                       ; next column, same
+                                                           ; page (31/32 of
+                                                           ; columns) - B is
+                                                           ; the alt-set page
+                                                           ; column counter,
+                                                           ; see the header
+    ; every 32nd column: page boundary, or the whole frame done
+    dec c                                                ; pages left
+    ld b, 32                                             ; reload for the
+                                                           ; next page (dead
+                                                           ; if frame done)
+    exx                                                  ; -> main (Z from
+                                                           ; dec c survives)
+    jp z, .alldone
     ; page switch (rare, ~1/32 columns - afford the full memory-based
     ; sequence here; data_save/map_page/restore corrupt AF only per their
     ; own headers, so both HL and the alt set survive untouched)
@@ -2180,13 +2226,29 @@ vid_stream_pixels_gap:
     call data_map_page
     ld hl, DATA_WINDOW
     jp .loop
-.loop_from_alt:
-    exx
-    jp .loop
-.alldone_x:
-    exx
-    jp .alldone
 .alldone:
+    ; Batched file-remain accounting (block-glue slim wave): the whole
+    ; frame's pixel bytes come off remain in ONE subtract instead of 512
+    ; per block (the old vid_col_blockdone's per-block vid_remain_sub).
+    ; vidPixBlocks*512 can exceed 16 bits (height 208+ letterboxes), so
+    ; the subtract runs in 256-byte units against remain's OWN bits
+    ; 8..23 - the unaligned word at vidStrmRemainLo+1 (RemainLo's high
+    ; byte + RemainHi's low byte, declared contiguous above) - with the
+    ; borrow propagated into remain's top byte. Bits 0..7 are untouched:
+    ; pixel bytes are always a 512-multiple. Same-page stores (this code
+    ; and every vidStrm* cell are both VID_PAGE - rubric 3 clean).
+    ld hl, (vidPixBlocks)
+    add hl, hl                    ; blocks*2 = frame pixel bytes in
+                                   ; 256-byte units (<= 620, fits a word)
+    ex de, hl
+    ld hl, (vidStrmRemainLo+1)
+    or a
+    sbc hl, de
+    ld (vidStrmRemainLo+1), hl
+    jr nc, .nborrow
+    ld hl, vidStrmRemainHi+1
+    dec (hl)
+.nborrow:
     call data_restore
     or a
     ret
@@ -2290,89 +2352,100 @@ vid_gap_xfer_full:
                                      ; exactly like a call to vid_gap_
                                      ; xfer itself would
 
-; Ensure a fresh 512-byte SD block is ready to stream (window open, run
-; available, data token seen) - mirrors vid_stream_read_raw's own
-; .needstream/.haveblocks/vid_win_open/vid_next_run sequence, but leaves
-; the 512 bytes UNCONSUMED (the caller's own INI bursts read them
-; directly - vid_stream_pixels_gap, above, and VBENCH-FLAT/DMA below).
-; Out: CF clear (a fresh block is ready); CF set = run/window/token error
-; (A = code). Corrupts AF, BC, DE, HL.
-vid_col_newblock:
-    ld hl, (vidStrmRunBlocks)
-    ld a, h
-    or l
-    jr nz, .open
-    call vid_win_close
-    call vid_next_run
-    jr nc, .open
-    ld a, VID_ERR_NOMAP
-    scf
-    ret
-.open:
-    call vid_win_open
-    ret c                          ; CF set, A = VID_ERR_CMD (its contract)
-    ; owner fix (gap-blit perf audit, item 5 follow-up): bounded retry,
-    ; mirroring vid_read_block's own fix earlier this session - this
-    ; token-wait was still unconditional/unbounded (a different copy
-    ; from vid_read_block's, missed by that fix since it lives in a
-    ; separate routine). A wedged card must not hang the gap path
-    ; either. BC is free here (routine's own "Corrupts AF, BC, DE, HL").
-.wt:
-    ld bc, 0                       ; bounded retry: 65536 polls
+; Slim per-block open (SP14a block-glue slim wave - replaces the old
+; vid_col_newblock + vid_col_block_start wrapper pair AND absorbs the
+; run-block decrement that used to live in vid_col_blockdone at close
+; time). Ensures a fresh 512-byte SD block is ready to stream (window
+; open, run available, data token seen and consumed), leaving the 512
+; data bytes UNCONSUMED for the caller's own `ini` bursts (vid_stream_
+; pixels_gap, the sole caller).
+;
+; FAST PATH (run still has blocks): the SD window is then GUARANTEED
+; open (the invariant proven in vid_stream_pixels_gap's header - every
+; closer either re-opens before streaming resumes or ends the session),
+; so the old per-block vid_win_open flag check (a call + memory read
+; per block) is gone; vidStrmRunBlocks is decremented HERE (open time)
+; so the block CLOSE is a bare inline CRC skip at the call sites. The
+; fast path touches only A and DE - HL survives with NO push/pop
+; bracket (the old wrapper's whole reason to exist), and the alt set is
+; untouched (no exx anywhere in this routine or its boundary callees -
+; the header's own grep). Token wait: two inline quick polls first
+; (GAPSPINS measured 2.0 polls/block on silicon - the common case never
+; sets up a counter at all), then the established bounded 65536-poll
+; fallback (doc-13 rubric 6 - the bound survives this rewrite; counter
+; in DE, already corrupt, so main BC stays untouched too).
+;
+; BOUNDARY PATH (RunBlocks == 0, rare - once per filemap run): close
+; the finished run (CMD12), load the next, open it (CMD18), then
+; re-dispatch through the fast path so the fresh run's own count gets
+; the same dec-at-open treatment. HL is push/pop-protected here only
+; (vid_win_close/vid_next_run/vid_win_open corrupt HL per their own
+; headers). A zero-block run in the filemap now simply advances to the
+; next entry (or fails VID_ERR_NOMAP) instead of desyncing the count -
+; strictly safer than the old shape.
+;
+; In: HL = live destination pointer (preserved, ALL paths). Out: CF
+; clear = block open, token consumed, 512 data bytes ready on the wire;
+; CF set = error (A = VID_ERR_NOMAP/VID_ERR_CMD/VID_ERR_TOKEN, HL still
+; preserved). Corrupts AF, DE; BC only on the boundary path. C is NOT
+; loaded with PORT_SPI_DAT any more - both transfer routines (vid_gap_
+; xfer/vid_gap_xfer_full) load it themselves before their bursts, and
+; every CRC-skip site reads it strictly after a transfer.
+vid_col_block_start:
+    ld de, (vidStrmRunBlocks)
+    ld a, d
+    or e
+    jr z, .boundary
+    dec de
+    ld (vidStrmRunBlocks), de      ; dec-at-open (see header)
+    in a, (PORT_SPI_DAT)           ; quick poll 1 (the 22T of test code
+    inc a                           ; between reads paces the interface)
+    jr nz, .got
+    in a, (PORT_SPI_DAT)           ; quick poll 2 (2.0 polls/block
+    inc a                           ; measured - this usually hits)
+    jr nz, .got
+    ld de, 0                       ; bounded fallback: 65536 more polls
 .wtloop:
     in a, (PORT_SPI_DAT)
     inc a
-    jr nz, .wtgot
-    dec bc
-    ld a, b
-    or c
+    jr nz, .got
+    dec de
+    ld a, d
+    or e
     jr nz, .wtloop
     ld a, $FF                      ; exhausted: synthesize a non-$FE byte
-    jr .checktok                   ; so the existing bad-token path below
-                                    ; fires unchanged
-.wtgot:
-    dec a
-.checktok:
-    cp $FE
-    jr z, .ok
+    jr .check                      ; so the bad-token path fires unchanged
+.got:
+    dec a                          ; recover the raw wire byte
+.check:
+    cp $FE                         ; $FE = valid data token
+    jr nz, .bad
+    ret                            ; CF clear (equal compare borrows 0)
+.bad:
  IFDEF DEBUG
     ; SP14a T3 fix wave 2 (owner hardware leg, vply0 ERR=FD follow-up):
     ; stash the RAW byte the token-wait actually saw (A, still the real
     ; wire byte here - not yet overwritten by the VID_ERR_TOKEN sentinel
-    ; below) - see vidErrByte's own declaration for the decode. Corrupts
-    ; nothing else; A is about to be overwritten by the very next
-    ; instruction regardless.
+    ; below) - see vidErrByte's own declaration for the decode.
     ld (vidErrByte), a
  ENDIF
     ld a, VID_ERR_TOKEN
     scf
     ret
-.ok:
-    ; SP14a T4: the SP13/T3-era vidBlkRemain16 stamp (a timing-margin
-    ; experiment carried since the T3 fix-wave-2 owner leg - see git
-    ; history for the full ERR=FD investigation) is dropped here: the
-    ; ACTUAL root cause of that regression was vid_xfer16n's own B/`ini`
-    ; double-count bug (SP14a T3 fix wave 3, fixed in vid_xfer16n's own
-    ; header below), not a timing margin - confirmed on hardware once
-    ; that fix shipped. This is a clean-break rewrite (NXV scraps MakeVid
-    ; compatibility entirely), so the now-fully-explained, register-level
-    ; -dead experimental write is not carried forward.
-    or a                           ; CF clear
+.boundary:
+    push hl                        ; the three calls below corrupt HL
+    call vid_win_close             ; CMD12 the finished run
+    call vid_next_run              ; load the next filemap entry
+    jr c, .nomap
+    call vid_win_open              ; CMD18 at the new run's address
+    pop hl
+    ret c                          ; CF set, A = VID_ERR_CMD (its contract)
+    jr vid_col_block_start         ; re-dispatch: fresh count now loaded
+.nomap:
+    pop hl
+    ld a, VID_ERR_NOMAP
+    scf
     ret
-
-; A completed 512-byte SD block's bookkeeping (CRC skip, run-block
-; count, file-remain accounting) - the DATA itself was already consumed
-; by the caller's own INI bursts, split across chunks. In: C = PORT_SPI_
-; DAT (the caller's own port register, reused). Corrupts AF, BC, DE, HL.
-vid_col_blockdone:
-    in a, (c)                      ; skip the 2-byte CRC (playvid parity,
-    nop                            ; matches vid_read_block's own skip)
-    in a, (c)
-    ld hl, (vidStrmRunBlocks)
-    dec hl
-    ld (vidStrmRunBlocks), hl
-    ld de, 512
-    jp vid_remain_sub              ; tail call
 
 ; vid_xfer16n (the old 16-byte-group INI burst primitive) is GONE - SP14a
 ; T4's pixel paths no longer need it (vid_stream_pixels_flat goes through
@@ -2390,33 +2463,14 @@ vid_col_blockdone:
 ; there instead (that routine's own header explains why not E either) -
 ; `ini` never reads or writes A, so it is provably free.
 
-; Shared per-block prologue: opens the next SD block (vid_col_newblock's
-; own token-wait) and readies C=PORT_SPI_DAT, folding the push/pop-HL
-; protection bracket and the post-newblock BC reload into ONE call site.
-; In: HL = live destination pointer (preserved across the call). Out: CF
-; clear, C=PORT_SPI_DAT, HL unchanged, ready for the caller's own `ini`
-; bursts; CF set = error (A = code, HL still unchanged).
-; Used by vid_stream_pixels_gap (above) and VBENCH-FLAT/DMA (below).
-; Corrupts AF, BC, DE.
-vid_col_block_start:
-    push hl
-    call vid_col_newblock
-    pop hl
-    ret c                          ; error: CF/A propagate, HL restored
-    ld c, PORT_SPI_DAT             ; vid_col_newblock may have used BC
-    ret                            ; CF clear (vid_col_newblock's own)
-
-; Shared per-block epilogue: the same push/pop-HL protection bracket
-; around vid_col_blockdone (CRC-skip + run-block-count + remain-subtract)
-; that vid_col_block_start's own header describes. In/Out: HL preserved
-; across the call (the only register ever kept live across a block
-; boundary in this design - no chunk-size value is carried live across
-; this call, see vid_stream_pixels_gap's own header). Corrupts AF, BC, DE.
-vid_col_block_end:
-    push hl
-    call vid_col_blockdone
-    pop hl
-    ret
+; vid_col_block_start's old push/pop-HL wrapper, vid_col_newblock,
+; vid_col_block_end and vid_col_blockdone are GONE (SP14a block-glue
+; slim wave) - the open collapsed into the slim vid_col_block_start
+; above (fast path needs no HL protection at all), the close collapsed
+; to inline 2-byte CRC skips at vid_stream_pixels_gap's two closing
+; sites, the run-block decrement moved to open time, and the per-block
+; remain subtract became one per-frame batch at that routine's own
+; .alldone. git history holds the old shapes.
 
 ; Apply the 512-byte 9-bit palette just landed at vidAudPoolPage+1
 ; (palette-flag files only) to Layer 2. Called from vid_run's flip
@@ -2746,11 +2800,11 @@ vidTlAcc:       ds VID_TL_PHASES*4   ; 5 phases x 32-bit (LE) tick total
 ; normal short-audio-read termination, explicitly zeroed there - see
 ; vid_stream_frame's own .audfull comment); nonzero = a genuine VID_ERR_*
 ; (nextdaad.inc) or esxDOS error code propagated from wherever the frame
-; actually failed (vid_col_newblock's three codes are the ones a wave-2
+; actually failed (vid_col_block_start's three codes are the ones a wave-2
 ; blit regression would show). Printed as ERR=xx in the timeline report.
 vidErrCode:     db 0
 ; SP14a T3 fix wave 2 (owner hardware leg lead 2 fallback instrumentation):
-; the RAW byte a failed vid_col_newblock token-wait actually read off the
+; the RAW byte a failed vid_col_block_start token-wait actually read off the
 ; wire (captured only on the VID_ERR_TOKEN path, before A is overwritten
 ; with the sentinel - see that call site). Discriminates the two
 ; remaining candidates when ERR=FD: a plausible CRC/data byte (any value
@@ -2792,10 +2846,10 @@ vidStage2Sub:     db 0        ; stage-2 sub-ladder (VSTG2A/B/C, flag 249):
                                ; pixel blocks (vid_stream_frame's own
                                ; gates). Read once alongside vidStageLimit,
                                ; same self-clearing reasoning.
-msgStg4: db "STG4 OK ERR=", 0 ; stays hot (.restore_tail's own inline
-                               ; print, no hop) - STG1-3 print cold
-                               ; instead (vid_stage_marker_body, VID_PAGE2)
-                               ; since those exits hop there anyway
+; msgStg4 moved to VID_PAGE2 with its print body (vid_stg4_body - SP14a
+; block-glue slim wave, VID_PAGE budget lever): STG4 now prints via a
+; post-teardown cold hop, exactly like STG1-3 always did (vid_stage_
+; marker_body) - see .restore_tail's own call site for the safety case.
 
 ; DEBUG frame-timeline instrument. In: A = new phase id (VID_TL_STREAM..
 ; VID_TL_OTHER, nextdaad.inc). Snapshots vidTlTicks and accumulates the
@@ -4058,6 +4112,29 @@ vid_run_badfmt_body:
 msgVidMissing:  db "VID FILE?", 0
 msgVidNoBank2:  db "VID NOBANK2", 0
 msgVidBadFmt:   db "VID FMT?", 0
+
+; STG4 marker print (SP14a block-glue slim wave - moved cold from vid_
+; run's .restore_tail, VID_PAGE budget lever; reached strictly post-
+; teardown, see that call site). In: D = vidErrCode, read hot and
+; passed by register (.stagegate's idiom). dbg_at/dbg_puts may corrupt
+; DE (vid_stage_marker_body's own push de precedent), so D is stacked
+; across them. Hops back to vid_run.stg4ret (VID_PAGE).
+vid_stg4_body:
+    push de
+    ld b, 22
+    ld c, 0
+    call dbg_at
+    ld hl, msgStg4
+    call dbg_puts
+    pop de
+    ld a, d
+    call dbg_hex8
+    ld hl, vid_run.stg4ret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+msgStg4: db "STG4 OK ERR=", 0
  ENDIF
 
 ; The real open body (renamed from vid_stream_open, moved cold - see
