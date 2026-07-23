@@ -1954,6 +1954,26 @@ vid_stream_pixels_gap:
     call data_save
     ld a, (vidPxPage)
     call data_map_page
+    ; SP14a N3 glue-slim wave: precompute the full-column transfer's own
+    ; entry point into vid_gap_xfer's shared run ONCE here - the SAME
+    ; `MUL D,E` arithmetic vid_gap_xfer's own general (straddle) path
+    ; pays per chunk (~200+ times/frame for N3's own full columns), paid
+    ; here exactly once per call instead. Valid because colUnits is a
+    ; per-FILE constant (nxv_open's own header derivation), so the entry
+    ; offset for a FULL column never changes within one call. Done
+    ; BEFORE HL is claimed as the resident dest pointer below, so no
+    ; save/restore is needed around this one-time computation.
+    ld a, (vidColUnits)
+    ld d, a
+    ld e, 16
+    mul d, e                         ; DE = colUnits*16 (the run's own
+                                       ; byte-skip for a full column -
+                                       ; see vid_gap_xfer's own header)
+    ld hl, vid_gap_xfer.run_end
+    or a
+    sbc hl, de
+    ld (vidGapEntryFull), hl           ; cached - vid_gap_xfer_full's own
+                                         ; direct `LD IY,(nn)` reads this
     ld hl, DATA_WINDOW              ; MAIN: HL = dest, resident from here
     ld (vidGapDest), hl              ; entry sync (debugger visibility -
                                        ; see the routine header)
@@ -1988,20 +2008,87 @@ vid_stream_pixels_gap:
     exx                                        ; -> alt
     ld d, 64                                     ; fresh block: 512/8 units
 .haveblk_x:
-    ; chunk = min(colLeft, blkLeft) - every transfer, fresh column or a
-    ; straddle's continuation alike, goes through the SAME computation
-    ; and the SAME transfer primitive now (vid_gap_xfer's own full-burst
-    ; design serves any 1-24-unit chunk equally well, so the old fast/
-    ; slow split - which existed only to pick between two DIFFERENT
-    ; transfer primitives - has nothing left to dispatch on).
+    ; SP14a N3 glue-slim wave: a FRESH column (colLeft == colUnits) that
+    ; fits the open block is the dominant case (~5/7 of N3's own columns,
+    ; per the cycle the coordinator's own ZEsarUX profiling walked) and
+    ; is now split into two STATICALLY-KNOWN-OUTCOME fast paths that skip
+    ; both the general per-chunk entry-offset arithmetic (vid_gap_xfer's
+    ; own MUL+subtract, replaced by a precomputed direct IY load - see
+    ; vid_gap_xfer_full, below) AND the post-transfer "did the block also
+    ; close" test (.fullcol_room_x/.fullcol_exact_x each already KNOW the
+    ; answer from the dispatch decision itself, so there is nothing left
+    ; to test). Only a genuine straddle (colLeft != colUnits: continuing
+    ; a column that already crossed a block boundary) or a fresh column
+    ; too big for the currently open block falls through to the general
+    ; min(colLeft,blkLeft) path (.havechunk_x, unchanged in shape from
+    ; the full-burst wave) - chunk size genuinely varies there, so it
+    ; still needs the runtime computation.
+    ld a, e                        ; colLeft
+    cp l                             ; == colUnits? (fresh column, the
+                                       ; only value colLeft is ever reset
+                                       ; to)
+    jr nz, .havechunk_x                ; not fresh: general path
+    cp d                                 ; fresh: does the WHOLE column
+                                           ; fit the open block?
+    jr z, .fullcol_exact_x                 ; exact fit: block ALSO closes
+    jr c, .fullcol_room_x                    ; room to spare: block stays
+                                               ; open
+    jp .havechunk_x                            ; fresh, does not fit:
+                                                 ; general path too (jp:
+                                                 ; past the fast paths'
+                                                 ; own bodies, below)
+.fullcol_room_x:
+    ; colUnits < blkLeft strictly: the column finishes and the block
+    ; does NOT close - both true by construction of this branch, so all
+    ; the bookkeeping happens up front (no post-transfer test needed).
+    ld a, d
+    sub l
+    ld d, a                       ; blkLeft -= colUnits (> 0, guaranteed)
+    ld e, l                         ; colLeft = colUnits (reset for the
+                                      ; next column - this one is done)
+    dec bc                            ; colsLeft -= 1
+    exx                                 ; -> main
+    call vid_gap_xfer_full                ; HL advances by colUnits*8
+                                            ; bytes; corrupts AF, IY
+    jp .colfinished_x                       ; MAIN already active - the
+                                              ; block-close check below
+                                              ; is skipped entirely
+.fullcol_exact_x:
+    ; colUnits == blkLeft exactly: the column finishes AND the block
+    ; closes - both true by construction, so vid_col_block_end is called
+    ; unconditionally instead of via a runtime test.
+    xor a
+    ld d, a                       ; blkLeft -> 0
+    ld e, l                         ; colLeft = colUnits (reset)
+    dec bc                            ; colsLeft -= 1
+    exx                                 ; -> main
+    call vid_gap_xfer_full                ; HL advances by colUnits*8
+                                            ; bytes; corrupts AF, IY. C is
+                                            ; left = PORT_SPI_DAT (set
+                                            ; internally, untouched by the
+                                            ; `ini` burst itself - `ini`
+                                            ; never modifies C, established
+                                            ; fact this file already
+                                            ; relies on elsewhere) - block_
+                                            ; end's own "In: C=PORT_SPI_
+                                            ; DAT" contract is satisfied
+                                            ; with NO exx in between here,
+                                            ; even more directly than the
+                                            ; general path's own reliance
+                                            ; on the same fact surviving
+                                            ; an exx round-trip.
+    call vid_col_block_end                   ; unconditional; preserves
+                                               ; HL + the alt set
+    jp .colfinished_x
+.havechunk_x:
     ld a, e                                        ; colLeft
     cp d                                             ; vs blkLeft
-    jr c, .havechunk_x                                 ; colLeft smaller:
+    jr c, .havechunk_body                              ; colLeft smaller:
                                                           ; chunk = colLeft
     ld a, d                                              ; blkLeft smaller
                                                            ; or equal: chunk
                                                            ; = blkLeft
-.havechunk_x:
+.havechunk_body:
     ld h, a                                                ; H' = chunk
                                                              ; (units, 1-24)
     ld a, e
@@ -2047,6 +2134,13 @@ vid_stream_pixels_gap:
                                                       ; would see colLeft
                                                       ; still 0)
     exx                                             ; -> main: advance dest
+.colfinished_x:
+; For the owner's debugger: a breakpoint here catches the shared "column
+; just finished" tail - MAIN active, HL not yet advanced to the next
+; column base. Reached from THREE places: the general path just above
+; (a straddle's own closing chunk), and both fast paths (.fullcol_room_x/
+; .fullcol_exact_x) via a direct `jp`, their own bookkeeping already done
+; before the transfer.
     xor a                                             ; to the next 256-
     ld l, a                                            ; aligned column
     inc h                                              ; base, unconditio-
@@ -2129,6 +2223,15 @@ vid_stream_pixels_gap:
 ; runtime decrement; B/E are free for other use across this call (both
 ; corrupted here as ordinary scratch, not as loop state).
 ;
+; SP14a N3 glue-slim wave: THIS entry (with its own per-call MUL+
+; subtract) is reached only from vid_stream_pixels_gap's general path
+; now - a genuine straddle, where chunk varies at runtime. The dominant
+; full-column case (chunk == colUnits, ~5/7 of N3's own columns) goes
+; through vid_gap_xfer_full instead (below `.run_end`) - a precomputed
+; direct IY load, no MUL, no dest-park/restore, since colUnits's own
+; entry point is a per-FILE constant, not something that needs re-
+; deriving on every dispatch.
+;
 ; Entry-offset arithmetic: chunk*16 via Z80N `MUL D,E` (D=chunk, E=16,
 ; DE=D*E) - one instruction instead of four `add hl,hl` doublings, and
 ; leaves HL untouched throughout (dest is parked in BC while HL computes
@@ -2170,6 +2273,22 @@ vid_gap_xfer:
                                                   ; design
 .run_end:
     ret
+
+; Full-column fast transfer (SP14a N3 glue-slim wave). The entry point
+; for a chunk of exactly `vidColUnits` (the WHOLE column) into vid_gap_
+; xfer's own shared run is a per-FILE CONSTANT - vid_stream_pixels_gap's
+; own entry precomputes it once into vidGapEntryFull (its own header),
+; so this routine is just a direct load, no MUL, no dest-park/restore
+; dance (dest never leaves HL at all here - nothing needs D/E for a
+; multiply). In: HL = live destination pointer (preserved, advanced by
+; vidColUnits*8 bytes). Out: HL advanced. Corrupts AF, IY.
+vid_gap_xfer_full:
+    ld iy, (vidGapEntryFull)
+    ld c, PORT_SPI_DAT
+    jp (iy)                        ; enters vid_gap_xfer's own run,
+                                     ; falls through its `.run_end: ret`
+                                     ; exactly like a call to vid_gap_
+                                     ; xfer itself would
 
 ; Ensure a fresh 512-byte SD block is ready to stream (window open, run
 ; available, data token seen) - mirrors vid_stream_read_raw's own
@@ -2546,12 +2665,17 @@ vidYofs:          db 0             ; NR $17 (signed, = -vidClipY1)
 ; --- gap-blit runtime state (vid_stream_pixels_gap, above - see its own
 ; header for the algorithm). SP14a gap-blit redesign wave: columns-left/
 ; block-left/column-left/colUnits-cache are register-resident (ALTERNATE
-; set) for the whole call, not memory-backed - only vidGapDest remains,
-; kept as a debugger-visibility sync point (page-switch/entry/error),
-; never read back by the routine itself. ---
+; set) for the whole call, not memory-backed - vidGapDest is a debugger-
+; visibility sync point (page-switch/entry/error), never read back by
+; the routine itself. vidGapEntryFull (SP14a N3 glue-slim wave) IS read
+; back - every call to vid_gap_xfer_full - see that routine's own header
+; and vid_stream_pixels_gap's own entry setup for the writer. ---
 vidGapDest:       dw 0             ; live destination pointer (MMU6
                                     ; window-relative) - write-only sync,
                                     ; see vid_stream_pixels_gap's header
+vidGapEntryFull:  dw 0             ; precomputed vid_gap_xfer.run_end -
+                                    ; vidColUnits*16 - the full-column
+                                    ; entry point, written once/call
 ; Resident play buffer - full rate, no decimation (SP14a T4 deletes the
 ; old 2:1/3:1 downsample entirely: NXV streams every real sample). Sized
 ; to NXV_AUD_BUF_MAX (2560B, N0 stereo's own real-byte figure rounded up
