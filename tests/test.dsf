@@ -672,13 +672,19 @@ $pictureOK
 ; silent (missing-file DEBUG marker only); a release build is always
 ; silent either way. VPLY5/VLOP5/SPLY5 (the old fmt5/006.VID trio)
 ; retire with the MakeVid deletion sweep - only 5 fixtures are staged.
+; All video verbs finish with PROCESS 10 (post-video location art
+; redraw, see its table) - modelling the documented author convention:
+; the player leaves the L2 surface to the game, the game redraws.
 > VPLY4   _     GFX 5 13
+                PROCESS 10
                 DONE
 
 > VLOP4   _     GFX 5 14
+                PROCESS 10
                 DONE
 
 > SPLY4   _     SFX 5 9
+                PROCESS 10
                 DONE
 
 ; SP14a Task 4 owner verbs: the N2/N3 letterbox profile eye/ear legs
@@ -687,15 +693,19 @@ $pictureOK
 ; header). VPLY2/VPLY3 exercise GFX n 13 play-once; VLOP2/VLOP3 exercise
 ; GFX n 14 loop (any key ends it) - same dispatch path as VPLY4 above.
 > VPLY2   _     GFX 3 13
+                PROCESS 10
                 DONE
 
 > VPLY3   _     GFX 4 13
+                PROCESS 10
                 DONE
 
 > VLOP2   _     GFX 3 14
+                PROCESS 10
                 DONE
 
 > VLOP3   _     GFX 4 14
+                PROCESS 10
                 DONE
 
 ; SP14a Task 4 owner verbs: the N0/N1 profile eye/ear legs (-Vid staged
@@ -707,15 +717,19 @@ $pictureOK
 ; major mode-1 blit); both profiles carry full-rate (no decimation)
 ; stereo audio per the NXV format (nextdaad.inc's NXV_RATE_STEREO).
 > VPLY0   _     GFX 1 13
+                PROCESS 10
                 DONE
 
 > VPLY1   _     GFX 2 13
+                PROCESS 10
                 DONE
 
 > VLOP0   _     GFX 1 14
+                PROCESS 10
                 DONE
 
 > VLOP1   _     GFX 2 14
+                PROCESS 10
                 DONE
 
 ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): all five NXV
@@ -1062,4 +1076,20 @@ $initLoop
 
 > _       _     PAUSE 1
                 REDO
+
+/PRO 10 ; Post-video location art redraw. Called by every video verb
+; (VPLY0-4/VLOP0-4/SPLY4, PRO 5) after playback returns. The NXV player
+; deliberately leaves the L2 surface as the video left it (spec: the
+; game redraws after a cutscene; auto snapshot/restore is an SP15+
+; nicety) - this table models the documented author convention with the
+; same PICTURE/DISPLAY pair the main location loop uses (PRO 0). Entry
+; 1: PICTURE failure (no art for this location) aborts the entry per
+; DAAD's condition-fail rule and falls to entry 2's bare DONE, so
+; art-less locations exit cleanly with the surface as the player left
+; it (cleared).
+> _       _     PICTURE @fPlayer
+                DISPLAY 0
+                DONE
+
+> _       _     DONE
 /END
