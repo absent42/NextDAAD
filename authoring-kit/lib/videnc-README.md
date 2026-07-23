@@ -84,10 +84,10 @@ No stride/gap padding is ever written to disk.
   (`docs\zx-next-dev-guide-2022-07-15\chapter-next-palette.tex:176`:
   "least significant bit of blue is set to OR between B2 and B1"),
   applied to byte0's own 2-bit blue field: `byte1 = 1 if (byte0 & 3)
-  else 0`. This is the same rule `tests\gen_vid_synth.py`'s identity
-  palette and the interpreter's own `vid_identity_palette`
-  (`src\video.asm`) use, generalized here to arbitrary (non-identity)
-  adaptive palette entries instead of an identity mapping.
+  else 0`. This is the same rule the interpreter's own
+  `vid_identity_palette` (`src\video.asm`) uses, generalized here to
+  arbitrary (non-identity) adaptive palette entries instead of an
+  identity mapping.
 
 Quantization: `tools\png2nx.py`'s proven recipe (RGB -> PIL ADAPTIVE
 256-colour palette, no dither by default) - `img.convert("P",
