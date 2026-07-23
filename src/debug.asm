@@ -827,6 +827,47 @@ msgDdb:      db "GAME.DDB SIZE ", 0
 msgVer:      db "VER ", 0
 msgTgt:      db " TGT ", 0
 
+; SP14a gap-blit perf round (DeZog wave): the GAP path's token-wait spin
+; counter. 24-bit LE, RESIDENT here (not VID_PAGE) so the owner can watch
+; it by label with no MMU7 bank-switch needed in the debugger - see
+; video.asm's dbg_spin_inc24 (the increment primitive, called from vid_
+; col_newblock's own wait loop) and gapspin_reset (below) for the
+; writers. Sized for the expected magnitude of one owner run (up to
+; ~16.7M) rather than the theoretical worst case (32-bit); if a run's
+; total reads suspiciously small next to the timeline report's own FRM=
+; (frame count), suspect wraparound and shorten the run.
+;
+; GAP-ONLY this round (no FLATSPINS, no live block counters on either
+; path): VID_PAGE's own DEBUG headroom was exactly 17 bytes before this
+; wave, and the minimal correct design - a shared 24-bit "inc (hl)" carry
+; chain (8B) plus one "ld hl,addr"/"call" site (6B) per touch point -
+; costs 14B for GAP alone but 20B for GAP+FLAT together (confirmed by a
+; failed build: ASSERT $ <= OVL_LIMIT missed by exactly 3 bytes with both
+; wired up). GAP is the path under investigation and the one this round's
+; decode needs first; a FLAT baseline is a real, separately-dispatchable
+; follow-up once more VID_PAGE room exists (SP14c's broader codebase
+; sweep is already tracked to free some). Block totals for GAP are not
+; tracked live either, for the same reason - derive as (bytes streamed)/
+; 512, e.g. FRM (the existing timeline report's own frame count) x N4's
+; known per-frame byte count, or the .VID file's size on the card; either
+; is exact for a run that reaches EOF cleanly.
+GAPSPINS:  ds 3      ; vid_col_newblock's token-wait, one inc per poll
+
+; Zero the counter - called from h_gfx.vidgo/h_sfx.vidgo (overlay2.asm/
+; overlay1.asm) right before each vid_play entry, NOT from video.asm: this
+; routine is RESIDENT (always reachable, no ovl_map_page hop needed from
+; either caller) and runs once per video call, not once per poll, so
+; placing it off VID_PAGE costs nothing there and keeps the tight 17-byte
+; ledger entirely for the hot per-poll increment. Corrupts AF, HL.
+gapspin_reset:
+    ld hl, GAPSPINS
+    ld (hl), 0
+    inc hl
+    ld (hl), 0
+    inc hl
+    ld (hl), 0
+    ret
+
  ELSE
 
 ; Release stubs: same entry points, no output, minimal size.

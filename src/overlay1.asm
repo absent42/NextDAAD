@@ -2341,6 +2341,16 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ; PLAYFLI/PLAYFLIL alias (design doc): B (video number) untouched, C
     ; becomes vid_play's 0/1 loop contract - identical trampoline shape
     ; to h_gfx's own GFX_SUB_VID_ONCE/LOOP handling (overlay2.asm).
+ IFDEF DEBUG
+    ; SP14a gap-blit perf round: zero the RESIDENT spin counter here,
+    ; not in vid_play - see gapspin_reset's own header (debug.asm) for
+    ; why (VID_PAGE budget). Same A-only bracket as h_gfx.vidgo's own
+    ; identical addition (overlay2.asm) - gapspin_reset corrupts AF, HL
+    ; only, so B (video number) needs no protection.
+    push af
+    call gapspin_reset
+    pop af
+ ENDIF
     ld c, a
     ld hl, vid_play
     push hl

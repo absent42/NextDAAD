@@ -629,6 +629,33 @@ vid_read_block:
     scf
     ret
 
+ IFDEF DEBUG
+; SP14a gap-blit perf round (DeZog wave): 24-bit LE memory increment,
+; called once per token-wait poll from vid_col_newblock's own .wtloop
+; (below) - the discriminator between "the card's own request cadence"
+; and "CPU-side bookkeeping" as the source of the gap path's overage (see
+; the report). GAP-ONLY this round: VID_PAGE's own 17-byte DEBUG headroom
+; could not also fund a FLATSPINS call site (a second "ld hl,nn"+"call"
+; pair, ~6 more bytes) on top of this - see the report for the exact
+; arithmetic and the follow-up-round plan. In: HL = counter address
+; (GAPSPINS, debug.asm - RESIDENT, no page translation needed from here).
+; Out: HL left at whichever byte last changed, NOT restored to the base
+; address - the call site reloads HL fresh every poll (rubric 1: nothing
+; else is live at the insertion point, which sits before vid_col_
+; newblock's own "in a,(PORT_SPI_DAT)", itself neither reading flags nor
+; caring about A's incoming value - see that site's own comment).
+; Corrupts AF, HL.
+dbg_spin_inc24:
+    inc (hl)
+    ret nz
+    inc hl
+    inc (hl)
+    ret nz
+    inc hl
+    inc (hl)
+    ret
+ ENDIF
+
 ; Send an SD SPI command (playvid sd_send_command). In: A = command byte
 ; (CMDn|$40); HLDE = 32-bit argument, sent big-endian (H first); the Z flag
 ; = card select (Z -> SD_CS0/card 0, NZ -> SD_CS1/card 1), set by the
@@ -769,6 +796,10 @@ vidStrmBlkBuf:     ds 512        ; one card block held for sub-block drains
 ; vidgo) never resumes - this IS the tail of the dispatch, and the return
 ; lands directly on the engine dispatcher via the trampoline's stacked
 ; return address (the xpart_load_entry push-target idiom).
+; DEBUG: GAPSPINS (debug.asm) is zeroed by the caller (h_gfx.vidgo/h_sfx.
+; vidgo, overlay2.asm/overlay1.asm), immediately before this entry is
+; reached rather than inside it - see gapspin_reset's own header for why
+; (VID_PAGE budget: this routine has no room to spare for the reset).
 ; ---------------------------------------------------------------------
 vid_play:
     ld a, b
@@ -2189,6 +2220,16 @@ vid_col_newblock:
 .wt:
     ld bc, 0                       ; bounded retry: 65536 polls
 .wtloop:
+ IFDEF DEBUG
+    ; SP14a gap-blit perf round: one GAPSPINS increment per poll - see
+    ; dbg_spin_inc24's own header. Placed before the port read (which
+    ; overwrites A and neither reads nor needs incoming flags), so
+    ; nothing live here (BC the retry counter; this routine's own
+    ; contract already lists AF/DE among what it corrupts, so neither is
+    ; a new hazard) is disturbed.
+    ld hl, GAPSPINS
+    call dbg_spin_inc24
+ ENDIF
     in a, (PORT_SPI_DAT)
     inc a
     jr nz, .wtgot
