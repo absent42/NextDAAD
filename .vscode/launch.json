@@ -1,0 +1,56 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "dezog",
+            "request": "launch",
+            "name": "DeZog: CSpect (NextDAAD)",
+            "remoteType": "cspect",
+            "cspect": {
+                "hostname": "localhost",
+                "port": 11000
+            },
+            "sjasmplus": [
+                {
+                    "path": "build/nextdaad.sld"
+                }
+            ],
+            "rootFolder": "${workspaceFolder}",
+            "topOfStack": "STACK_TOP"
+        },
+        {
+            "type": "dezog",
+            "request": "launch",
+            "name": "DeZog: ZX Next (hardware, serial)",
+            "remoteType": "zxnext",
+            "zxnext": {
+                "serial": "COM_TODO"
+            },
+            "sjasmplus": [
+                {
+                    "path": "build/nextdaad.sld"
+                }
+            ],
+            "rootFolder": "${workspaceFolder}",
+            "topOfStack": "STACK_TOP",
+            "load": "build/nextdaad.nex"
+        },
+        {
+            "type": "dezog",
+            "request": "launch",
+            "name": "DeZog: ZEsarUX (Next core, SD-SPI repro)",
+            "remoteType": "zrcp",
+            "zrcp": {
+                "hostname": "localhost",
+                "port": 10000
+            },
+            "sjasmplus": [
+                {
+                    "path": "build/nextdaad.sld"
+                }
+            ],
+            "rootFolder": "${workspaceFolder}",
+            "topOfStack": "STACK_TOP"
+        }
+    ]
+}
