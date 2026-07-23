@@ -629,33 +629,6 @@ vid_read_block:
     scf
     ret
 
- IFDEF DEBUG
-; SP14a gap-blit perf round (DeZog wave): 24-bit LE memory increment,
-; called once per token-wait poll from vid_col_newblock's own .wtloop
-; (below) - the discriminator between "the card's own request cadence"
-; and "CPU-side bookkeeping" as the source of the gap path's overage (see
-; the report). GAP-ONLY this round: VID_PAGE's own 17-byte DEBUG headroom
-; could not also fund a FLATSPINS call site (a second "ld hl,nn"+"call"
-; pair, ~6 more bytes) on top of this - see the report for the exact
-; arithmetic and the follow-up-round plan. In: HL = counter address
-; (GAPSPINS, debug.asm - RESIDENT, no page translation needed from here).
-; Out: HL left at whichever byte last changed, NOT restored to the base
-; address - the call site reloads HL fresh every poll (rubric 1: nothing
-; else is live at the insertion point, which sits before vid_col_
-; newblock's own "in a,(PORT_SPI_DAT)", itself neither reading flags nor
-; caring about A's incoming value - see that site's own comment).
-; Corrupts AF, HL.
-dbg_spin_inc24:
-    inc (hl)
-    ret nz
-    inc hl
-    inc (hl)
-    ret nz
-    inc hl
-    inc (hl)
-    ret
- ENDIF
-
 ; Send an SD SPI command (playvid sd_send_command). In: A = command byte
 ; (CMDn|$40); HLDE = 32-bit argument, sent big-endian (H first); the Z flag
 ; = card select (Z -> SD_CS0/card 0, NZ -> SD_CS1/card 1), set by the
@@ -796,10 +769,6 @@ vidStrmBlkBuf:     ds 512        ; one card block held for sub-block drains
 ; vidgo) never resumes - this IS the tail of the dispatch, and the return
 ; lands directly on the engine dispatcher via the trampoline's stacked
 ; return address (the xpart_load_entry push-target idiom).
-; DEBUG: GAPSPINS (debug.asm) is zeroed by the caller (h_gfx.vidgo/h_sfx.
-; vidgo, overlay2.asm/overlay1.asm), immediately before this entry is
-; reached rather than inside it - see gapspin_reset's own header for why
-; (VID_PAGE budget: this routine has no room to spare for the reset).
 ; ---------------------------------------------------------------------
 vid_play:
     ld a, b
@@ -1980,13 +1949,6 @@ vid_stream_pixels_gap:
     ; colUnits/1 (worst case, one 8-byte pass per unit) to at most
     ; groups+1 (3-4 for N3/N4), matching the coordinator's own target
     ; shape ("192=3x64", "120=64+56").
- IFDEF DEBUG
-    ; owner profiling round: stamp GT (pure transfer) - placed before
-    ; ANY register this section needs is loaded, so vid_tl_stamp's own
-    ; "Corrupts AF, BC, DE, HL" costs nothing here (nothing is live yet).
-    ld a, VID_TL_GAPXFER
-    call vid_tl_stamp
- ENDIF
     ld hl, (vidGapDest)
     ld c, PORT_SPI_DAT
 .fastgroups:
@@ -2018,30 +1980,6 @@ vid_stream_pixels_gap:
     jr nz, .fastremloop
 .fastxferdone:
     ld (vidGapDest), hl
- IFDEF DEBUG
-    ; owner fix (GT-inflation postmortem): the PREVIOUS fix for the C-
-    ; clobber bug (moving this stamp to .blkopen, after the conditional
-    ; vid_col_block_end call) was correct for safety but WRONG for
-    ; measurement - it widened the GT window to also cover this whole
-    ; column's post-transfer bookkeeping and, on a block-closing column,
-    ; the entire CRC-skip/run-accounting call - none of which is "inside
-    ; the transfer primitives". That is what doubled the measured GT
-    ; rate (owner decode: 31.7T/byte vs the true 16T/byte floor), not
-    ; the ini bursts themselves (re-verified: this file's transfer
-    ; primitives are pure unrolled `ini`, no in a,(c)/ld (hl),a anywhere
-    ; - grepped clean). Fix: stamp back to VID_TL_BLIT HERE, immediately
-    ; after the transfer's own HL is stored (tight window), with C
-    ; explicitly protected across the call - C=PORT_SPI_DAT is live
-    ; here too (set at .fastfit's own entry, still needed by the
-    ; possible vid_col_block_end call below) but vid_tl_stamp's
-    ; "Corrupts AF, BC, DE, HL" no longer reaches it, since it is
-    ; stashed/restored around the call instead of the stamp being
-    ; relocated past the read.
-    push bc
-    ld a, VID_TL_BLIT
-    call vid_tl_stamp
-    pop bc
- ENDIF
     xor a
     ld (vidGapColLeft), a              ; whole column consumed in one go
     ld a, (vidGapBlkLeft)
@@ -2058,15 +1996,6 @@ vid_stream_pixels_gap:
                                         ; either transfer loop above)
     jr .blkopen
 .slow:
- IFDEF DEBUG
-    ; owner profiling round: stamp GT here too - .slow is a single entry
-    ; point (verified: .havechunk's only OTHER reference is this
-    ; fallthrough), reached with nothing live yet, so this is as safe
-    ; as .fastfit's own entry stamp above. Covers the boundary-straddle
-    ; case's own transfer time in the same GT bucket.
-    ld a, VID_TL_GAPXFER
-    call vid_tl_stamp
- ENDIF
     ld a, (vidGapColLeft)
     ld hl, vidGapBlkLeft
     cp (hl)
@@ -2100,17 +2029,6 @@ vid_stream_pixels_gap:
     ; as-is rather than tightened, since the caller-side fix below does
     ; not rely on it either way).
     ld (vidGapDest), hl
- IFDEF DEBUG
-    ; owner fix (GT-inflation postmortem): same retiming as .fastxfer
-    ; done's own fix above - stamp tightly, right after the transfer's
-    ; HL is stored, with C explicitly protected across the call (C=
-    ; PORT_SPI_DAT, set at .havechunk's own entry, needed by the
-    ; possible vid_col_block_end call below).
-    push bc
-    ld a, VID_TL_BLIT
-    call vid_tl_stamp
-    pop bc
- ENDIF
     ld a, (vidGapColLeft)
     ld hl, vidGapChunk
     sub (hl)
@@ -2122,13 +2040,6 @@ vid_stream_pixels_gap:
     ld hl, (vidGapDest)
     call vid_col_block_end           ; preserves HL; CRC skip + bookkeeping
 .blkopen:
-    ; owner fix (GT-inflation postmortem): the stamp that used to sit
-    ; HERE is removed - it is now redundant (and was the direct cause
-    ; of the GT-window widening bug): both paths above stamp VID_TL_
-    ; BLIT tightly, right after their own transfer's HL is stored, with
-    ; C protected via push/pop bc instead of relocating the stamp past
-    ; the conditional vid_col_block_end call. Phase is already BLIT by
-    ; the time control reaches here on both paths - nothing left to do.
     ld a, (vidGapColLeft)
     or a
     jp nz, .loop                     ; jp: pushed out of jr range by the
@@ -2220,16 +2131,6 @@ vid_col_newblock:
 .wt:
     ld bc, 0                       ; bounded retry: 65536 polls
 .wtloop:
- IFDEF DEBUG
-    ; SP14a gap-blit perf round: one GAPSPINS increment per poll - see
-    ; dbg_spin_inc24's own header. Placed before the port read (which
-    ; overwrites A and neither reads nor needs incoming flags), so
-    ; nothing live here (BC the retry counter; this routine's own
-    ; contract already lists AF/DE among what it corrupts, so neither is
-    ; a new hazard) is disturbed.
-    ld hl, GAPSPINS
-    call dbg_spin_inc24
- ENDIF
     in a, (PORT_SPI_DAT)
     inc a
     jr nz, .wtgot
@@ -4266,11 +4167,8 @@ vid_tl_report_body:
     add hl, de
     call vid_tl_print32
     ld a, (vidTlRptIdx)
-    cp VID_TL_GAPXFER               ; owner profiling round: the new
-                                     ; final phase index - was VID_TL_
-                                     ; OTHER before GAPXFER was added;
-                                     ; the summary trails whichever row
-                                     ; prints last, purely cosmetic.
+    cp VID_TL_OTHER                 ; last row (summary trails whichever
+                                     ; row prints last, purely cosmetic)
     jr nz, .nextrow
     ld hl, msgTlTot
     call dbg_puts
@@ -4304,17 +4202,12 @@ vid_tl_report_body:
     jp ovl_map_page
 
 vidTlMsgTab:
-    dw msgTl0, msgTl1, msgTl2, msgTl3, msgTl4, msgTl5
+    dw msgTl0, msgTl1, msgTl2, msgTl3, msgTl4
 msgTl0: db "STREAM =", 0
-; owner profiling round (item 5, gap-blit sub-phase audit): BLIT now
-; excludes GT (gap profiles only - flat profiles never stamp GAPXFER,
-; so their BLIT total is unaffected) - relabeled so the row is not
-; misread as the old, undivided total.
-msgTl1: db "BLT-GBK=", 0
+msgTl1: db "BLIT   =", 0
 msgTl2: db "PALETTE=", 0
 msgTl3: db "PACE   =", 0
 msgTl4: db "OTHER  =", 0
-msgTl5: db "GT     =", 0
 msgTlTot: db " TOT=", 0
 msgTlFrm: db " FRM=", 0
 msgTlErr: db " ERR=", 0

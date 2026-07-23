@@ -639,18 +639,17 @@ VID_TL_BLIT     equ 1
 VID_TL_PALETTE  equ 2
 VID_TL_FLIPPACE equ 3
 VID_TL_OTHER    equ 4
-; owner profiling round (item 5, gap-blit sub-phase audit): ONE new
-; phase, not three - a 2-way split (GT vs everything else) reusing the
-; EXISTING VID_TL_BLIT accumulator as the "everything else" (block glue
-; + bookkeeping) bucket costs zero new hot bytes for that half; only
-; the GT (pure transfer) side needs a new phase id. A true 3-way split
-; (separate GB/GK) would need ~10-12 new stamp call sites (~50-60 hot
-; bytes) against a 45-byte budget - does not fit; see video.asm's own
-; vid_stream_pixels_gap header for the full reasoning. VID_TL_BLIT's
-; own printed row therefore now means "block glue + bookkeeping" for
-; gap profiles specifically (unchanged meaning for flat profiles, which
-; never touch VID_TL_GAPXFER at all) - the report's own row label notes
-; this.
-VID_TL_GAPXFER  equ 5
-VID_TL_PHASES   equ 6
+VID_TL_PHASES   equ 5
+; VID_TL_GAPXFER (the per-column gap-path GT sub-phase, formerly index 5/
+; PHASES=6) retired (SP14a gap-blit redesign wave, strip step): its own
+; stamp call sites (vid_stream_pixels_gap's .fastfit/.slow entries, plus
+; the retimed VID_TL_BLIT stamps that shared the same instrumentation
+; round) fired ~2x/column x 320 columns/frame - ~3-4ms/frame of
+; measurement tax on the exact hot path being redesigned, muddying every
+; number since. Its job is done: it isolated the gap path's overage to
+; "inside the transfer window measurement" (section 27) and then, via
+; GAPSPINS (retired alongside it, debug.asm), to CPU-side bookkeeping
+; rather than card cadence. The 5 phases above are the frame-level
+; readout that stays - cheap (2 stamps/frame each, not 2/column) and
+; still the leg's own report.
  ENDIF

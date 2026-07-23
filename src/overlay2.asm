@@ -743,18 +743,6 @@ h_gfx:
     ; the cross-page hop into video.asm, a different MMU7 page from this
     ; one (the established push-target/ovl_map_page trampoline idiom -
     ; xpart_load_fail's own hop, overlay0.asm).
- IFDEF DEBUG
-    ; SP14a gap-blit perf round: zero the RESIDENT spin counter here
-    ; (debug.asm), not in vid_play - see gapspin_reset's own header for
-    ; why (VID_PAGE budget). gapspin_reset's own "Corrupts AF, HL" would
-    ; otherwise clobber A (this .vidgo's own loop-mode flag, about to
-    ; become C below) - bracketed; B (video number, this header's own
-    ; "B untouched" contract) is not in gapspin_reset's corruption set,
-    ; needs no protection.
-    push af
-    call gapspin_reset
-    pop af
- ENDIF
     ld c, a
     ld hl, vid_play
     push hl
