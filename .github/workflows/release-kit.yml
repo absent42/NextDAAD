@@ -13,6 +13,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # videnc.exe ships via Git LFS - without this the checkout
+          # leaves a 1KB pointer file and the zip packages that
+          lfs: true
 
       - name: Zip authoring kit (contents at archive root)
         run: |
