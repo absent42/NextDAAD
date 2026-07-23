@@ -29,21 +29,32 @@ if (-not (Test-Path $ffmpeg)) {
 # download - no Python needed, the normal authoring path) is preferred;
 # the lib\videnc.py script (Python 3 + Pillow) is the fallback for
 # anyone who has Python anyway or wants to modify the encoder.
+# videnc.exe is probed in BOTH tool locations: the configured TOOLSDIR
+# and the kit's own tools\ (a TOOLSDIR override - e.g. the maintainer's
+# CONFIG.local.BAT pointing at the repo toolchain - must not hide the
+# kit-slot exe). Python candidates are probed for PILLOW, not mere
+# presence: py -3 and python can be different installs, and picking a
+# Pillow-less one fails mid-encode.
+$kitRoot = Split-Path -Parent $PSScriptRoot
 $enc = $null
-$exe = Join-Path $env:TOOLSDIR 'videnc\videnc.exe'
-if (Test-Path $exe) {
-    $enc = @($exe)
-} else {
+$exeCandidates = @(
+    (Join-Path $env:TOOLSDIR 'videnc\videnc.exe'),
+    (Join-Path $kitRoot 'tools\videnc\videnc.exe')
+)
+foreach ($exe in $exeCandidates) {
+    if (Test-Path $exe) { $enc = @($exe); break }
+}
+if (-not $enc) {
     foreach ($cand in @(@('py', '-3'), @('python'))) {
         try {
-            & $cand[0] $cand[1..($cand.Length)] --version *> $null
+            & $cand[0] $cand[1..($cand.Length)] -c 'import PIL' *> $null
             if ($LASTEXITCODE -eq 0) { $enc = $cand + 'lib\videnc.py'; break }
         } catch {}
     }
 }
 if (-not $enc) {
-    Write-Host 'ERROR: no encoder for VIDEO\*.mp4 - neither videnc.exe nor Python 3 found'
-    Write-Host "       Easiest: download videnc.exe into $exe (see tools\README.txt)"
+    Write-Host 'ERROR: no encoder for VIDEO\*.mp4 - videnc.exe not found and no Python 3 with Pillow'
+    Write-Host "       Easiest: download videnc.exe into $($exeCandidates[-1]) (see tools\README.txt)"
     Write-Host '       Or install Python 3 (https://www.python.org/) plus: pip install Pillow'
     exit 1
 }
