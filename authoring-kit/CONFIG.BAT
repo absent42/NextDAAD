@@ -17,3 +17,9 @@ SET TOOLSDIR=tools
 
 REM The pre-built interpreter to ship in RELEASE\ as nextdaad.nex.
 SET NEXFILE=nextdaad.nex
+
+REM NXV video profile for VIDEO\NNN.mp4 encoding (lib\videnc.py). Blank =
+REM auto (picks the best fit from the source's aspect and motion). Set one
+REM of: n0 n1 n2 n3 n4 to force a profile for every encoded cutscene; use
+REM lib\videnc.py by hand for per-file control. See SETUP.md.
+SET VIDPROFILE=

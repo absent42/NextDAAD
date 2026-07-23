@@ -1,0 +1,63 @@
+# NextDAAD authoring kit - video cutscene encode pass (SP14a NXV).
+# Called by lib\video.bat (cwd = kit root) BEFORE its staging pass.
+# Encodes VIDEO\NNN.mp4 -> VIDEO\NNN.vid via lib\videnc.py whenever the
+# .vid is missing or older than its .mp4 (the .vid beside the source is
+# the encode cache - BUILD.BAT wipes RELEASE\, not VIDEO\, so a slow
+# encode runs once per source change, not once per build). Profile comes
+# from VIDPROFILE in CONFIG.BAT (blank = auto). Requires Python 3 +
+# Pillow and ffmpeg (tools\ffmpeg\bin\ffmpeg.exe - see tools\README.txt);
+# neither is needed unless numeric-named .mp4 files exist in VIDEO\.
+
+$sources = @(Get-ChildItem 'VIDEO\*.mp4' -ErrorAction SilentlyContinue |
+    Where-Object { $_.BaseName -match '^\d+$' })
+if (-not $sources) { exit 0 }
+
+$work = $sources | Where-Object {
+    $vid = [IO.Path]::ChangeExtension($_.FullName, 'vid')
+    -not (Test-Path $vid) -or (Get-Item $vid).LastWriteTime -lt $_.LastWriteTime
+}
+if (-not $work) { exit 0 }
+
+$ffmpeg = Join-Path $env:TOOLSDIR 'ffmpeg\bin\ffmpeg.exe'
+if (-not (Test-Path $ffmpeg)) {
+    Write-Host "ERROR: ffmpeg not found at $ffmpeg (needed to encode VIDEO\*.mp4)"
+    Write-Host "       Download it - see tools\README.txt - or pre-encode to .vid"
+    exit 1
+}
+
+# Encoder resolution: the standalone videnc.exe (a NextDAAD release
+# download - no Python needed, the normal authoring path) is preferred;
+# the lib\videnc.py script (Python 3 + Pillow) is the fallback for
+# anyone who has Python anyway or wants to modify the encoder.
+$enc = $null
+$exe = Join-Path $env:TOOLSDIR 'videnc\videnc.exe'
+if (Test-Path $exe) {
+    $enc = @($exe)
+} else {
+    foreach ($cand in @(@('py', '-3'), @('python'))) {
+        try {
+            & $cand[0] $cand[1..($cand.Length)] --version *> $null
+            if ($LASTEXITCODE -eq 0) { $enc = $cand + 'lib\videnc.py'; break }
+        } catch {}
+    }
+}
+if (-not $enc) {
+    Write-Host 'ERROR: no encoder for VIDEO\*.mp4 - neither videnc.exe nor Python 3 found'
+    Write-Host "       Easiest: download videnc.exe into $exe (see tools\README.txt)"
+    Write-Host '       Or install Python 3 (https://www.python.org/) plus: pip install Pillow'
+    exit 1
+}
+
+$vidProfile = if ($env:VIDPROFILE) { $env:VIDPROFILE } else { 'auto' }
+foreach ($src in $work) {
+    $vid = [IO.Path]::ChangeExtension($src.FullName, 'vid')
+    Write-Host "  encoding $($src.Name) -> $([IO.Path]::GetFileName($vid)) (profile $vidProfile)"
+    & $enc[0] $enc[1..($enc.Length)] $src.FullName $vid `
+        --profile $vidProfile --ffmpeg $ffmpeg
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: videnc failed on $($src.Name)"
+        if (Test-Path $vid) { Remove-Item $vid -Force }
+        exit 1
+    }
+}
+exit 0

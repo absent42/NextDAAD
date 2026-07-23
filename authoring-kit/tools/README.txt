@@ -11,6 +11,8 @@ DAAD Ready     DRC compiler (DRF.exe, DRB.PHP) + PHP   https://www.ngpaws.com/da
 Gfx2Next       PNG to Layer 2 conversion               https://www.rustypixels.uk/gfx2next/                       tools\gfx2next\
 Arkos Tracker  SongToAky/SongToSoundEffects/SongToYm   https://www.julien-nevo.com/arkostracker/index.php/download/  tools\ArkosTracker3\tools\
 CSpect         Emulator for testing                    https://mdf200.itch.io/cspect                              tools\CSpect\
+ffmpeg         Video decode for cutscene encoding      https://www.gyan.dev/ffmpeg/builds/ (release essentials)   tools\ffmpeg\
+videnc.exe     Standalone NXV cutscene encoder         NextDAAD releases page (first-party, built from lib\videnc.py)  tools\videnc\
 
 After extracting, these paths must exist:
   tools\DAAD-READY\TOOLS\DRC\DRF.exe
@@ -21,20 +23,23 @@ After extracting, these paths must exist:
   tools\ArkosTracker3\tools\SongToSoundEffects.exe
   tools\ArkosTracker3\tools\SongToYm.exe (only needed for STREAM_NNN.aks)
   tools\CSpect\CSpect.exe
+  tools\ffmpeg\bin\ffmpeg.exe (only needed for VIDEO\NNN.mp4 cutscenes)
+  tools\videnc\videnc.exe (only needed for VIDEO\NNN.mp4 cutscenes)
 
-Video cutscenes (VIDEO\NNN.vid, see ..\SETUP.md "Video cutscenes") are NOT
-built by BUILD.BAT - they are pre-encoded .VID files staged as-is, like WAV
-samples. Two ways to make one, neither wired into BUILD.BAT:
+Video cutscenes (see ..\SETUP.md "Video cutscenes") ARE built by
+BUILD.BAT: drop a numeric-named source video (VIDEO\NNN.mp4) into
+VIDEO\ and the build encodes it to the interpreter's native NXV
+format, caching the result as VIDEO\NNN.vid (re-encoded only when the
+.mp4 changes). A pre-encoded NXV VIDEO\NNN.vid is staged as-is.
+Encoding needs ffmpeg plus videnc.exe (both in the table above; no
+Python required) - neither is needed for a text/graphics/audio-only
+game. Anyone with Python 3 + Pillow (pip install Pillow) can skip the
+videnc.exe download: the build falls back to ..\lib\videnc.py, the
+script videnc.exe is built from. The encode profile is VIDPROFILE in
+CONFIG.BAT (blank = auto); run the encoder by hand for per-file
+control (--profile n0..n4, --start/--duration clipping, --mono,
+--dither and more - run it with -h).
 
-Tool           Provides                                Download                                                   Where
--------------  --------------------------------------  ---------------------------------------------------------  --------------------------
-MakeVid        GUI .VID encoder (3 of the 6 formats)   https://github.com/em00k/MakeVid-Release                  run standalone, save output into VIDEO\
-lib\videnc.py  CLI .VID encoder (all 6 formats)        shipped with this kit                                      ..\lib\videnc.py
-
-MakeVid 1.77's "with palette" formats (0/2/4) are currently broken (raw
-RGB24 pixel data, never palette-indexed) - use its non-palette formats
-(1/3/5), or use lib\videnc.py for every format including palette, which
-is proven correct. lib\videnc.py needs Python 3, Pillow (pip install
-Pillow) and ffmpeg (default path tools\ffmpeg\bin\ffmpeg.exe, override
-with --ffmpeg PATH) - not required for a text/graphics/audio-only game,
-only if you author video cutscenes.
+MakeVid .VID files are NOT playable by this interpreter any more - the
+NXV rewrite (SP14a) replaced the six legacy formats. Re-encode from the
+original video source instead.
