@@ -4,10 +4,11 @@
 ; --- Version (SP10 Task 10) ---
 ; Single source of truth for the boot-time version stamp text: DEBUG's
 ; msgTitle and RELEASE's boot_banner (both debug.asm) print this exact
-; string, so the two build variants cannot drift apart. v0.1.0 is the
-; SP10 kit-complete milestone - the "0.x" line runs until public
-; testing earns v1.0 (see RELEASE.md).
-    DEFINE VERSION_STR "NEXTDAAD V0.1.0"
+; string, so the two build variants cannot drift apart. v0.2.0 is the
+; SP14 milestone (native NXV video, five profiles, optimization
+; sweeps, kit mp4 pipeline + shipped videnc.exe); the "0.x" line runs
+; until public testing earns v1.0 (see RELEASE.md).
+    DEFINE VERSION_STR "NEXTDAAD V0.2.0"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00

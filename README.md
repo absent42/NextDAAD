@@ -3,7 +3,7 @@
 DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
-Project status (v0.1.0): 
+Project status (v0.2.0): 
 The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
 object model, process/DOALL dispatch, windows, printing, colour,
 carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
