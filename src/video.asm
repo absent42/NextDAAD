@@ -1842,22 +1842,62 @@ vid_stream_pixels_flat:
 ; gets the true flat/zero-bookkeeping design (vid_stream_pixels_flat,
 ; above).
 ;
-; Transfer unit: 8 bytes (vid_xfer8n, below), not the old vid_xfer16n's
-; 16 - the spec's own block-alignment rule guarantees content height is
-; ALWAYS a multiple of 8 for 320-wide (mode-1) profiles ("h mod 8 = 0"),
-; but NOT always a multiple of 16 (e.g. N4's 320x120: 120/8=15,
-; 120/16=7.5) - 8 bytes is the largest unit that divides EVERY valid
-; mode-1 height, so one primitive serves every letterboxed profile
-; uniformly. This is a disclosed, bounded overhead relative to N0's
-; zero-bookkeeping path (see the task report) - real, but the only
-; hardware-correct way to handle a runtime-variable column height on
-; Layer 2's fixed-stride addressing.
+; Transfer unit: 8 bytes (the .fastgroups/.fastremlen/.xfer_chunk
+; primitives below), not the old vid_xfer16n's 16 - the spec's own
+; block-alignment rule guarantees content height is ALWAYS a multiple of
+; 8 for 320-wide (mode-1) profiles ("h mod 8 = 0"), but NOT always a
+; multiple of 16 (e.g. N4's 320x120: 120/8=15, 120/16=7.5) - 8 bytes is
+; the largest unit that divides EVERY valid mode-1 height, so one
+; primitive serves every letterboxed profile uniformly. This is a
+; disclosed, bounded overhead relative to N0's zero-bookkeeping path (see
+; the task report) - real, but the only hardware-correct way to handle a
+; runtime-variable column height on Layer 2's fixed-stride addressing.
 ;
-; State lives in memory (vidGap* cells, VID_PAGE), not registers: vid_
-; col_block_start/end and vid_xfer8n all corrupt BC/DE/parts of the
-; register file per their own documented contracts, so nothing here could
-; safely ride a register across those calls anyway - correctness over
-; cleverness for this bounded-overhead path.
+; REGISTER RESIDENCY (SP14a gap-blit redesign wave - GAPSPINS convicted
+; the token-wait itself innocent, 2.0 polls/block; the overage is CPU-
+; side per-block/per-column bookkeeping, closed here with the flat
+; path's own economics, vid_stream_read_raw above, as the template):
+; run/block/column state lives in the ALTERNATE register set for the
+; WHOLE call, spilled to memory only at genuinely rare boundaries (a
+; page switch, an error, or routine entry/exit) - NOT once per block and
+; NOT once per column, unlike the memory-cell design this replaces.
+; Verified safe against every routine this loop calls: grepped, NONE of
+; them (vid_col_block_start/end/newblock/blockdone, vid_win_open/close,
+; vid_next_run, vid_remain_*, data_save/map_page/restore) contains a
+; single `exx` anywhere in this whole file outside vid_stream_read_raw/
+; vid_fast_spill - the alt set survives every one of these calls
+; automatically, by construction, not by an undocumented assumption.
+; Also verified against both live ISRs: im2_isr's fast frame-tick path
+; (the only im2_isr path reachable during video playback - audEnable is
+; frozen at 0 for the whole session) push/pops AF/HL and never touches
+; BC/DE/the alt set at all; video_ctc_isr's own header already states
+; "Preserves the alternate set (never touches it)" - the SAME guarantee
+; vid_stream_read_raw's own fast path already relies on.
+;
+;   MAIN:      HL = live destination pointer (the MMU6-window address
+;              the next byte lands at) - resident across the WHOLE loop,
+;              never round-tripped through memory except at the sync
+;              points below (page switch, entry, error - for debugger
+;              visibility, not correctness: nothing reads vidGapDest
+;              back into this routine).
+;   ALTERNATE: BC = columns remaining, whole frame (320 down to 0)
+;              D  = 8-byte units remaining in the currently open SD
+;                   block (0 = no block open)
+;              E  = 8-byte units remaining in the CURRENT column
+;              L  = vidColUnits, cached once at entry (a per-FILE
+;                   constant - never re-derived per block/column, unlike
+;                   the SD-block bookkeeping; already-optimal before
+;                   this wave, since the fastgroups/fastremlen SMC
+;                   patches below already hoist to once-per-CALL, i.e.
+;                   once per frame, not per column - there is no
+;                   coarser "per run" to hoist to)
+;              H  = unused
+; .loop is entered/left with MAIN active and HL correct; every `exx`
+; pair below is balanced within its own basic block (rubric-1 sweep in
+; the task report traces each one by hand) - EXX never touches flags, so
+; a Z/C test computed on one side of an `exx` survives to be branched on
+; the other side unchanged (used deliberately below to fold what would
+; otherwise be two round trips into one).
 ;
 ; In: A = starting destination 8K page; header: vidColUnits (height/8,
 ;     nxv_open's own derivation - the gap blit's fixed per-column unit
@@ -1869,90 +1909,82 @@ vid_stream_pixels_flat:
 ; Corrupts everything.
 vid_stream_pixels_gap:
     ld (vidPxPage), a
-    ld hl, 320                      ; NXV_WIDTH_MODE1 - see this routine's
-    ld (vidGapColsLeft), hl         ; own header for why this is fixed
-    xor a
-    ld (vidGapBlkLeft), a           ; 0 = no block open yet
     call data_save
     ld a, (vidPxPage)
     call data_map_page
-    ld hl, DATA_WINDOW
-    ld (vidGapDest), hl
+    ld hl, DATA_WINDOW              ; MAIN: HL = dest, resident from here
+    ld (vidGapDest), hl              ; entry sync (debugger visibility -
+                                       ; see the routine header)
     ld a, (vidColUnits)
-    ld (vidGapColLeft), a
-    ld (.fastlen+1), a               ; owner redesign (item 5): self-
-                                      ; modify the per-column unit count
-                                      ; once per call - the fast path
-                                      ; below compares against this
-                                      ; immediate instead of a second
-                                      ; memory read every column.
-    ; owner redesign (item 5 round 2, byte-class audit): also self-
-    ; modify the column's own 64-byte-group count (colUnits>>3) and
-    ; 8-byte-unit remainder (colUnits&7) - cheap shifts/mask, computed
-    ; once per call, not a runtime divide per column. Used by .fastfit
-    ; below to serve most of a column through the coarse 64-byte
-    ; primitive instead of the 8-byte one throughout.
     srl a
     srl a
     srl a
-    ld (.fastgroups+1), a
+    ld (.fastgroups+1), a             ; self-modified once/call: colUnits>>3
     ld a, (vidColUnits)
     and 7
-    ld (.fastremlen+1), a
+    ld (.fastremlen+1), a               ; self-modified once/call: colUnits&7
+    ld a, (vidColUnits)
+    exx                                   ; -> alt: seed the whole-run state
+    ld bc, 320                             ; colsLeft (NXV_WIDTH_MODE1)
+    ld d, 0                                 ; blkLeft = 0: forces a block-
+                                              ; open on the very first .loop
+    ld e, a                                   ; colLeft = colUnits (the
+                                                ; first column starts fresh)
+    ld l, a                                     ; colUnits, cached for the
+                                                  ; whole call (see header)
+    exx                                            ; -> main
+; For the owner's debugger: a breakpoint at .loop lands at the top of
+; every column/chunk decision with MAIN active and HL = the live dest
+; for whatever comes next; `exx` once in the shadow-register view to see
+; colsLeft(BC)/blkLeft(D)/colLeft(E)/colUnits(L).
 .loop:
-    ld hl, (vidGapColsLeft)
-    ld a, h
-    or l
-    jp z, .alldone                  ; jp: .alldone now past jr's +127
-                                     ; (owner redesign, item 5, pushed it
-                                     ; out of range)
-    ld a, (vidGapBlkLeft)
+    exx
+    ld a, b
+    or c
+    jp z, .alldone_x                 ; colsLeft == 0: whole frame served
+                                       ; (jp: .alldone_x is past jr range)
+    ld a, d
     or a
-    jr nz, .haveblk
-    ld hl, (vidGapDest)
-    call vid_col_block_start        ; preserves HL; opens/waits token
-    jp c, .err                      ; jp: same reason
-    ld a, 64                        ; 512/8 units
-    ld (vidGapBlkLeft), a
-.haveblk:
-    ; owner redesign (item 5, gap-blit perf audit): a column's own unit
-    ; count (vidColUnits, <=32 for any valid header height) is always
-    ; well under a block's 64-unit capacity, so most columns fit
-    ; ENTIRELY inside whatever block is currently open - only a column
-    ; that happens to straddle a 512-byte boundary needs the general
-    ; min() computation below. Detect a FRESH column (colLeft ==
-    ; vidColUnits, via the self-modified immediate - the only value
-    ; colLeft is ever reset to) that fits, and route it to .fastfit
-    ; (below) - the round-2 coarse-unit transfer - instead of the
-    ; general min(colLeft,blkLeft) path, which still owns everything
-    ; else (mid-chunk already, or a genuine boundary straddle).
-    ld a, (vidGapColLeft)
-.fastlen:
-    cp 0                              ; patched: vidColUnits
-    jp nz, .slow                      ; jp: pushed out of jr range by
-                                       ; the coarse unit below
-    ld hl, vidGapBlkLeft
-    cp (hl)                           ; A unchanged by cp
-    jr c, .fastfit                    ; colUnits < blkLeft: fits
-    jr z, .fastfit                    ; exact fit too
-    jp .slow                          ; jp: straddles a block boundary
-.fastfit:
-    ; owner redesign (item 5 round 2, byte-class audit): the whole
-    ; column fits in the open block (just confirmed above) - serve it
-    ; through the coarse 64-byte primitive for every complete 64-byte
-    ; group, then the 8-byte primitive for the (<64-byte) remainder,
-    ; instead of vid_xfer8n's uniform 8-byte granularity throughout.
-    ; The byte-class audit (report) found the 8-byte granule's own
-    ; loop-reload cost (~24-30T every 8 bytes) was the dominant
-    ; remaining overhead the round-1 inlining did not touch - this is
-    ; the fix: per-column loop-control instances drop from up to
-    ; colUnits/1 (worst case, one 8-byte pass per unit) to at most
-    ; groups+1 (3-4 for N3/N4), matching the coordinator's own target
-    ; shape ("192=3x64", "120=64+56").
-    ld hl, (vidGapDest)
+    jr nz, .haveblk_x                  ; block already open
+    exx                                   ; -> main: block_start needs HL
+    call vid_col_block_start                ; preserves HL; opens/waits
+                                              ; token; alt set untouched
+                                              ; (see the header)
+    jp c, .err
+    exx                                        ; -> alt
+    ld d, 64                                     ; fresh block: 512/8 units
+.haveblk_x:
+    ld a, e                                        ; colLeft
+    cp l                                             ; == colUnits? (fresh
+                                                       ; column, the only
+                                                       ; value colLeft is
+                                                       ; ever reset to)
+    jp nz, .slow_x                                     ; not fresh
+                                                         ; (continuing a
+                                                         ; straddled
+                                                         ; column): general
+                                                         ; path (jp: past
+                                                         ; .fastfit_x's own
+                                                         ; body)
+    cp d                                                  ; fresh: does the
+                                                            ; WHOLE column
+                                                            ; fit the open
+                                                            ; block?
+    jr c, .fastfit_x
+    jr z, .fastfit_x
+    jp .slow_x                                              ; fresh column,
+                                                              ; does not fit
+.fastfit_x:
+    ; the whole column fits in the open block (just confirmed above) -
+    ; serve it through the coarse 64-byte primitive for every complete
+    ; 64-byte group, then the 8-byte primitive for the (<64-byte)
+    ; remainder, instead of the general path's uniform 8-byte
+    ; granularity - per-column loop-control instances drop from up to
+    ; colUnits/1 (worst case) to at most groups+1 (3-4 for N3/N4).
+    exx                            ; -> main: HL already = dest (resident)
     ld c, PORT_SPI_DAT
 .fastgroups:
-    ld b, 0                            ; patched: vidColUnits>>3
+    ld b, 0                            ; patched: colUnits>>3
     ld a, b
     or a
     jp z, .fastrem                     ; jp: past jr's +127 (128-byte
@@ -1967,7 +1999,7 @@ vid_stream_pixels_gap:
                                          ; past jr's -128
 .fastrem:
 .fastremlen:
-    ld b, 0                            ; patched: vidColUnits&7
+    ld b, 0                            ; patched: colUnits&7
     ld a, b
     or a
     jr z, .fastxferdone
@@ -1979,100 +2011,111 @@ vid_stream_pixels_gap:
     dec e
     jr nz, .fastremloop
 .fastxferdone:
-    ld (vidGapDest), hl
+    ; HL now = dest for the NEXT column (resident, no memory write) - a
+    ; fastfit column is ALWAYS fully consumed in one pass.
+    exx                                   ; -> alt
     xor a
-    ld (vidGapColLeft), a              ; whole column consumed in one go
-    ld a, (vidGapBlkLeft)
-    ld hl, .fastlen+1                  ; re-read the already-patched
-                                        ; colUnits byte (avoids a third
-                                        ; SMC site just for this)
-    sub (hl)
-    ld (vidGapBlkLeft), a
-    jr nz, .blkopen                    ; block not finished: rejoin the
-                                        ; shared "column finished" tail
-    ld hl, (vidGapDest)
-    call vid_col_block_end             ; block ALSO finished (C is still
-                                        ; PORT_SPI_DAT, untouched by
-                                        ; either transfer loop above)
-    jr .blkopen
-.slow:
-    ld a, (vidGapColLeft)
-    ld hl, vidGapBlkLeft
-    cp (hl)
-    jr c, .havechunk                 ; colLeft < blkLeft: keep A=colLeft
-    ld a, (hl)                       ; blkLeft <= colLeft: use blkLeft
-.havechunk:
-    ld (vidGapChunk), a
+    ld e, a                                 ; colLeft = 0 (column done)
+    ld a, d
+    sub l                                     ; blkLeft -= colUnits (may
+    ld d, a                                    ; hit 0: block also closes)
+    jp .aftertransfer_x                          ; jp: past .slow_x's body
+.slow_x:
+    ; chunk = min(colLeft, blkLeft) - the general boundary-straddle case
+    ; (a fresh column too big for the open block, or the continuation of
+    ; a column that already straddled at least one boundary).
+    ld a, e
+    cp d
+    ld h, e                            ; H' = tentative chunk (colLeft)
+    jr c, .havechunk_x
+    ld h, d                              ; blkLeft is the smaller: chunk=it
+.havechunk_x:
+    ld a, e
+    sub h
+    ld e, a                                ; colLeft -= chunk
+    ld a, d
+    sub h
+    ld d, a                                  ; blkLeft -= chunk
+    ld a, h                                    ; A = chunk (survives the
+                                                 ; `exx` below - EXX never
+                                                 ; touches AF)
+    exx                                           ; -> main
     ld b, a
-    ld hl, (vidGapDest)
     ld c, PORT_SPI_DAT
-    ; owner redesign (item 5): vid_xfer8n's own body inlined - this is
-    ; its ONLY call site (verified: no other reference in this file),
-    ; so the call/ret round trip (~27T) was pure overhead paid every
-    ; chunk (roughly once per column in the common no-boundary-straddle
-    ; case, 320 times/frame). Same E-based-outer-counter shape (ini
-    ; itself decrements B, so B cannot also be the pass counter - the
-    ; SP14a T3 fix-wave-3 lesson, unchanged), same 16T/byte REPT-8 ini
-    ; burst (matches the SD interface's own peak rate exactly, unlike
-    ; INIR's 21T/byte - already rejected elsewhere in this file).
-    ld e, b
-.xfer8n:
+    ld e, b                                          ; outer pass counter
+                                                       ; (ini itself
+                                                       ; decrements B, so B
+                                                       ; cannot double as
+                                                       ; this - SP14a T3
+                                                       ; fix-wave-3 lesson,
+                                                       ; unchanged)
+.xfer_chunk:
     REPT 8
         ini
     ENDR
     dec e
-    jr nz, .xfer8n
-    ; HL now advanced by (original B)*8 bytes; B/C/E garbage - same
-    ; contract vid_xfer8n's own removed header documented (C is not
-    ; actually touched by `ini` itself - the "garbage" label is this
-    ; contract's own conservative default, not a real corruption; kept
-    ; as-is rather than tightened, since the caller-side fix below does
-    ; not rely on it either way).
-    ld (vidGapDest), hl
-    ld a, (vidGapColLeft)
-    ld hl, vidGapChunk
-    sub (hl)
-    ld (vidGapColLeft), a
-    ld a, (vidGapBlkLeft)
-    sub (hl)
-    ld (vidGapBlkLeft), a
-    jr nz, .blkopen
-    ld hl, (vidGapDest)
-    call vid_col_block_end           ; preserves HL; CRC skip + bookkeeping
-.blkopen:
-    ld a, (vidGapColLeft)
+    jr nz, .xfer_chunk
+    ; HL now advanced by chunk*8 bytes (resident, no memory write)
+    exx                                                 ; -> alt
+.aftertransfer_x:
+; For the owner's debugger: a breakpoint here catches every block/
+; column-close decision, ALT active - D = new blkLeft, E = new colLeft.
+    ld a, d
     or a
-    jp nz, .loop                     ; jp: pushed out of jr range by the
-                                      ; round-2 coarse unit above
-    ; column finished: force-jump dest to the next 256-aligned column
-    ; base, unconditionally - valid because a gapped column NEVER lets
-    ; the natural ini increment carry L into H on its own (height < 256
-    ; means L never reaches 256 within one column), so this explicit
-    ; jump is the ONLY way H advances between columns.
-    ld hl, (vidGapDest)
-    xor a
-    ld l, a
-    inc h
-    ld (vidGapDest), hl
-    ld a, (vidColUnits)
-    ld (vidGapColLeft), a
-    ld hl, (vidGapColsLeft)
-    dec hl
-    ld (vidGapColsLeft), hl
-    ; page (MMU window) switch - every 32 columns, matching the fixed
-    ; 8192-byte/32-column L2 addressing stride regardless of content
-    ; height (the WIRE side may not align to this cadence - e.g. N4's
-    ; 32*120=3840 bytes = 7.5 blocks - but the DESTINATION side always
-    ; does, since column stride is a hardware constant). Detected via
-    ; colsLeft's own low byte mod 32 (colsLeft starts at 320 = 10*32,
-    ; so "mod 32 == 0" recurs at every 32nd column with no separate
-    ; counter needed - 256 is itself a multiple of 32, so testing only
-    ; the low byte is exact regardless of the high byte's value).
-    ld a, l
+    exx                                ; -> main (HL needed either way,
+                                         ; whether the call below fires)
+    call z, vid_col_block_end            ; preserves HL + the alt set
+    exx                                     ; -> alt
+    ld a, e
+    or a
+    jr nz, .loop_from_alt                     ; column not finished (a
+                                                ; straddle just closed its
+                                                ; block, more to come next
+                                                ; block): straight back,
+                                                ; dest already correct
+    dec bc                                       ; column finished NOW
+    ld e, l                                        ; colLeft = colUnits:
+                                                      ; the NEXT column
+                                                      ; starts fresh (bug
+                                                      ; caught by hand-
+                                                      ; trace: without this
+                                                      ; the next .haveblk_x
+                                                      ; would see colLeft
+                                                      ; still 0 and wrongly
+                                                      ; route a fresh
+                                                      ; column into .slow_x)
+    exx                                             ; -> main: advance dest
+    xor a                                             ; to the next 256-
+    ld l, a                                            ; aligned column
+    inc h                                              ; base, unconditio-
+                                                         ; nally - valid
+                                                         ; because a gapped
+                                                         ; column NEVER
+                                                         ; lets `ini` carry
+                                                         ; L into H on its
+                                                         ; own (height<256
+                                                         ; means L never
+                                                         ; reaches 256
+                                                         ; within one
+                                                         ; column)
+    exx                                                  ; -> alt: page
+                                                           ; switch due?
+    ld a, c                                                ; colsLeft's own
+                                                             ; low byte -
+                                                             ; 320=10*32, so
+                                                             ; "mod 32==0"
+                                                             ; recurs every
+                                                             ; 32nd column
+                                                             ; with no
+                                                             ; separate
+                                                             ; counter
     and 31
-    jp nz, .loop                    ; jp: .loop now past jr's -128
-                                     ; (owner redesign, item 5, pushed it
-                                     ; out of range)
+    exx                                                       ; -> main
+    jp nz, .loop
+    ; page switch (rare, ~1/32 columns - afford the full memory-based
+    ; sequence here; data_save/map_page/restore corrupt AF only per their
+    ; own headers, so both HL and the alt set survive untouched)
+    ld (vidGapDest), hl                                           ; sync
     call data_restore
     ld hl, vidPxPage
     inc (hl)
@@ -2080,26 +2123,26 @@ vid_stream_pixels_gap:
     ld a, (vidPxPage)
     call data_map_page
     ld hl, DATA_WINDOW
-    ld (vidGapDest), hl
     jp .loop
+.loop_from_alt:
+    exx
+    jp .loop
+.alldone_x:
+    exx
+    jp .alldone
 .alldone:
     call data_restore
     or a
     ret
 .err:
+    ld (vidGapDest), hl        ; debugger-visible: dest as of the failed
+                                ; block-open attempt (vid_col_block_start's
+                                ; own contract preserves HL even on error)
     push af
     call data_restore
     pop af
     scf
     ret
-
-; vid_xfer8n (the shared 8-byte burst primitive) RETIRED (owner
-; redesign, item 5, gap-blit perf audit): it had exactly one call site
-; (vid_stream_pixels_gap's own .havechunk, above) - inlined there to
-; remove the call/ret round trip from every chunk transfer. Same E-
-; based-outer-counter shape (the SP14a T3 fix-wave-3 lesson: `ini`
-; itself decrements B, so B cannot also be the outer pass counter) and
-; the same 16T/byte REPT-8 ini burst live on at that inline site now.
 
 ; Ensure a fresh 512-byte SD block is ready to stream (window open, run
 ; available, data token seen) - mirrors vid_stream_read_raw's own
@@ -2187,23 +2230,24 @@ vid_col_blockdone:
 
 ; vid_xfer16n (the old 16-byte-group INI burst primitive) is GONE - SP14a
 ; T4's pixel paths no longer need it (vid_stream_pixels_flat goes through
-; vid_stream_read; vid_stream_pixels_gap uses the 8-byte vid_xfer8n,
-; above) and its last remaining caller, VBENCH-FLAT, is retired (see vid_
-; bench_pass_ret's own neighbouring comment). Historical note preserved
-; because the lesson still governs vid_xfer8n's own design: SP14a T3 fix
-; wave 3 found that B CANNOT be an outer loop counter wrapped around a
-; REPT-unrolled `ini` block - the Z80 `ini` instruction (ED A2) decrements
-; B as part of its OWN semantics, so a trailing `djnz` on top of that
-; double-counts. E is the outer counter instead in every transfer
-; primitive this file still has (vid_xfer8n), copied from B at entry,
-; before `ini` can touch either.
+; vid_stream_read; vid_stream_pixels_gap's own inline 8-byte-unit
+; primitives, above - .fastgroups/.fastremlen/.xfer_chunk - replaced the
+; old standalone vid_xfer8n) and its last remaining caller, VBENCH-FLAT,
+; is retired (see vid_bench_pass_ret's own neighbouring comment).
+; Historical note preserved because the lesson still governs every one of
+; those inline primitives' own design: SP14a T3 fix wave 3 found that B
+; CANNOT be an outer loop counter wrapped around a REPT-unrolled `ini`
+; block - the Z80 `ini` instruction (ED A2) decrements B as part of its
+; OWN semantics, so a trailing `djnz` on top of that double-counts. E is
+; the outer counter instead in every transfer primitive this file has,
+; copied from B at entry, before `ini` can touch either.
 
 ; Shared per-block prologue: opens the next SD block (vid_col_newblock's
 ; own token-wait) and readies C=PORT_SPI_DAT, folding the push/pop-HL
 ; protection bracket and the post-newblock BC reload into ONE call site.
 ; In: HL = live destination pointer (preserved across the call). Out: CF
-; clear, C=PORT_SPI_DAT, HL unchanged, ready for the caller's own
-; vid_xfer8n/16n bursts; CF set = error (A = code, HL still unchanged).
+; clear, C=PORT_SPI_DAT, HL unchanged, ready for the caller's own `ini`
+; bursts; CF set = error (A = code, HL still unchanged).
 ; Used by vid_stream_pixels_gap (above) and VBENCH-FLAT/DMA (below).
 ; Corrupts AF, BC, DE.
 vid_col_block_start:
@@ -2470,21 +2514,15 @@ vidColUnits:      db 0             ; gap blit only: height/8 (8-byte
                                     ; transfer units per column)
 vidClipY1:        db 0             ; NR $18 Y1 (content band top)
 vidYofs:          db 0             ; NR $17 (signed, = -vidClipY1)
-; --- gap-blit runtime state (vid_stream_pixels_gap, below - see its own
-; header for the algorithm). Memory-backed rather than register-resident:
-; vid_col_block_start/end and vid_xfer8n all corrupt BC/DE/parts of the
-; register file per their own documented contracts, so nothing here could
-; safely ride a register across those calls anyway - correctness over
-; cleverness for this bounded-overhead path (see the task report). ---
-vidGapColsLeft:   dw 0             ; columns remaining, whole frame
-vidGapColLeft:    db 0             ; 8-byte units left in CURRENT column
-vidGapBlkLeft:    db 0             ; 8-byte units left in the open SD
-                                    ; block (0 = none open)
+; --- gap-blit runtime state (vid_stream_pixels_gap, above - see its own
+; header for the algorithm). SP14a gap-blit redesign wave: columns-left/
+; block-left/column-left/colUnits-cache are register-resident (ALTERNATE
+; set) for the whole call, not memory-backed - only vidGapDest remains,
+; kept as a debugger-visibility sync point (page-switch/entry/error),
+; never read back by the routine itself. ---
 vidGapDest:       dw 0             ; live destination pointer (MMU6
-                                    ; window-relative)
-vidGapChunk:      db 0             ; this step's transfer size (8-byte
-                                    ; units) - stashed because vid_xfer8n
-                                    ; corrupts B before it can be reread
+                                    ; window-relative) - write-only sync,
+                                    ; see vid_stream_pixels_gap's header
 ; Resident play buffer - full rate, no decimation (SP14a T4 deletes the
 ; old 2:1/3:1 downsample entirely: NXV streams every real sample). Sized
 ; to NXV_AUD_BUF_MAX (2560B, N0 stereo's own real-byte figure rounded up
