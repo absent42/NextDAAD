@@ -116,8 +116,11 @@
 #                         palette, from 1920x1080-25p.mp4)
 #              004.VID <- N3 (320x192 mode-1 letterbox, 16.667fps,
 #                         stereo, palette, from 1920x1080-25p.mp4)
-#              005.VID <- N4 (320x120 mode-1 letterbox, 25fps, stereo,
-#                         palette, from 1920x1080-25p.mp4, center-cropped)
+#              005.VID <- N4 (320x120 mode-1 letterbox, 20fps - re-
+#                         profiled from 25fps, SP14a gap-blit closing
+#                         wave 2026-07-23, floor-proven infeasible at
+#                         25fps - stereo, palette, from 1920x1080-25p.mp4,
+#                         center-cropped)
 #            Each encode is SLOW (per-frame adaptive palette
 #            quantization over the whole clip) so results are CACHED at
 #            tests\out\00X_nY_cache.vid and only regenerated when that

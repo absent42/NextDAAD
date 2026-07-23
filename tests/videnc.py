@@ -25,8 +25,16 @@ Five shipped profiles (the spec's own matrix):
                                                     trivially - no gap)
   N3 "widescreen XL"   320x192 mode-1  16.667 fps  letterboxed (mode-1
                                                     column gap)
-  N4 "epic"            320x120 mode-1  25   fps   letterboxed (mode-1
-                                                    column gap, anamorphic)
+  N4 "epic"            320x120 mode-1  20   fps   letterboxed (mode-1
+                                                    column gap, anamorphic) -
+                                                    re-profiled from 25fps
+                                                    (SP14a gap-blit closing
+                                                    wave, 2026-07-23): the
+                                                    25fps combination is
+                                                    floor-proven infeasible
+                                                    (min blit > 40ms budget
+                                                    even at the silicon
+                                                    floor) - owner decision
 
 --profile auto picks the shipped profile whose own pixel aspect ratio
 (width/height, square-pixel assumption) is closest to the source's -
@@ -40,7 +48,8 @@ constant divides cleanly on every video mode (src/video.asm's own
 vidCtcTcNxvStereo/Mono tables, T1's derivation method): stereo
 15625 Hz, mono 23325 Hz (nextdaad.inc's NXV_RATE_STEREO/MONO). Samples/
 frame = round(rate/fps) - not always an exact integer division for
-every profile's fps (N1's 20fps and N3's 50/3fps in particular), so the
+every profile's fps (N1's and N4's shared 20fps, and N3's 50/3fps, in
+particular), so the
 achieved rate drifts a few Hz from the nominal target; the drift is
 disclosed here and in the task report, and is two orders of magnitude
 smaller than this project's own already-accepted CTC-quantization error
@@ -126,7 +135,7 @@ NXV_PROFILES = {
     "n1": dict(shape=NXV_SHAPE_MODE0, width=256, height=192, fps=Fraction(20, 1)),
     "n2": dict(shape=NXV_SHAPE_MODE0, width=256, height=144, fps=Fraction(25, 1)),
     "n3": dict(shape=NXV_SHAPE_MODE1, width=320, height=192, fps=Fraction(50, 3)),
-    "n4": dict(shape=NXV_SHAPE_MODE1, width=320, height=120, fps=Fraction(25, 1)),
+    "n4": dict(shape=NXV_SHAPE_MODE1, width=320, height=120, fps=Fraction(20, 1)),
 }
 for _name, _p in NXV_PROFILES.items():
     _p["column_major"] = (_p["shape"] == NXV_SHAPE_MODE1)
