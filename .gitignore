@@ -1,6 +1,7 @@
 .vscode/*
 !.vscode/launch.json
 !.vscode/tasks.json
+.tmp/*
 .claude/
 CLAUDE.md
 docs/
@@ -36,4 +37,6 @@ sd/*.CHR
 sd/*.SPR
 sd/*.VID
 tests/out/
+authoring-kit/VIDEO/*.vid
+authoring-kit/VIDEO/*.VID
 .superpowers/
