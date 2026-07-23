@@ -42,7 +42,10 @@ $exeCandidates = @(
     (Join-Path $kitRoot 'tools\videnc\videnc.exe')
 )
 foreach ($exe in $exeCandidates) {
-    if (Test-Path $exe) { $enc = @($exe); break }
+    # >1MB check: a clone made without git-lfs leaves a tiny text
+    # POINTER file at this path, not the real (26MB) binary - skip it
+    # and fall through to the Python script rather than "running" text.
+    if ((Test-Path $exe) -and (Get-Item $exe).Length -gt 1MB) { $enc = @($exe); break }
 }
 if (-not $enc) {
     foreach ($cand in @(@('py', '-3'), @('python'))) {
