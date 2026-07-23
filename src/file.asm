@@ -34,6 +34,17 @@ esx_fclose:
     db ESX_F_CLOSE
     ret
 
+ IFDEF DEBUG
+; DeZog quality-of-life fallback (see ddb_load_debug_retry, below): F_CHDIR
+; ($a9). In: A=drive specifier, IX=ASCIIZ path. Out: CF set + A=esxDOS
+; error code on failure. Only reachable via ddb_load_debug_retry, so
+; DEBUG-only - Release never emits this.
+esx_fchdir:
+    rst $08
+    db ESX_F_CHDIR
+    ret
+ ENDIF
+
 ; Load GAME.DDB into 8K pages DDB_PAGE_FIRST.. via slot 6.
 ; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE or DDB_E_HDR.
 ddb_load:
@@ -134,6 +145,43 @@ ddb_load:
     call data_restore
     pop af
     ret
+
+ IFDEF DEBUG
+; DeZog quality-of-life (owner's first real hardware DeZog session): a
+; dezogif/serial DeZog launch inherits cwd at the SD ROOT, not wherever
+; the debug payload actually lives (the owner keeps it at DBG_DDB_
+; FALLBACK_DIR, nextdaad.inc - edit that ONE DEFINE if it ever moves), so
+; plain ddb_load's first attempt can come back DDB_E_FILE even though the
+; card genuinely has the file. main.asm's boot path calls THIS in place
+; of plain ddb_load (DEBUG only - see main.asm's own IFDEF). On DDB_E_
+; FILE only, F_CHDIR into the fallback directory and retry ddb_load
+; exactly once; any OTHER result (DDB_OK/DDB_E_SIZE/DDB_E_HDR) from the
+; first attempt returns immediately, untouched. If the F_CHDIR itself
+; fails, or the retried ddb_load STILL comes back DDB_E_FILE (or any
+; other code), the retry's own return value is passed straight through -
+; the net effect is identical to plain ddb_load, plus this one extra
+; attempt. A normal Browser launch (cwd already holds GAME.DDB) never
+; reaches the F_CHDIR at all: the first ddb_load already returns DDB_OK
+; and this returns immediately, same as it always has. Out: A = DDB_OK,
+; DDB_E_FILE, DDB_E_SIZE or DDB_E_HDR - identical contract to ddb_load.
+ddb_load_debug_retry:
+    call ddb_load
+    cp DDB_E_FILE
+    ret nz                       ; success, or a non-"missing" failure:
+                                  ; no retry, pass through unchanged
+    ld a, '*'                    ; esxDOS F_CHDIR: '*' = default drive
+    ld ix, dbgDdbFallbackDir
+    call esx_fchdir
+    jr nc, .retry                ; chdir worked: try ddb_load once more
+    ld a, DDB_E_FILE              ; chdir itself failed - esx_fchdir left
+    ret                            ; its OWN esxDOS code in A; discard it
+                                    ; and keep ddb_load's own contract
+.retry:
+    jp ddb_load                    ; tail call: whatever it returns IS the
+                                    ; final result, propagated untouched
+
+dbgDdbFallbackDir: db DBG_DDB_FALLBACK_DIR, 0
+ ENDIF
 
 ; A = border colour, HL = ASCIIZ message. Never returns.
 ; Un-gated in both builds: dbg_puts/dbg_at are release stubs (debug.asm),

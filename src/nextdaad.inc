@@ -109,10 +109,28 @@ ESX_F_FSTAT     equ $A1     ; A=handle, IX=11-byte buffer; +7(4)=file size
                             ; vid_stream_open (video.asm, SP13 T1) instead
                             ; of the F_SEEK-to-end idiom, since it needs no
                             ; seek-back before the first read.
+ESX_F_CHDIR     equ $A9     ; A=drive spec ('*'=default), IX=path, null-
+                            ; terminated; Fc=1/A=error on failure (esxDOS
+                            ; API odt/PDF, "F_CHDIR ($a9)": does NOT also
+                            ; change the current drive - M_GETSETDRV is
+                            ; separate). Used by file.asm's DEBUG-only
+                            ; ddb_load_debug_retry.
 ESX_MODE_READ   equ $01
 ESX_MODE_W      equ $0E     ; F_OPEN: write, create or truncate
 ESX_ENOENT      equ 5       ; F_OPEN: file not found
 ESX_DISK_FILEMAP  equ $85   ; card-address map of a file's fragment runs
+
+; DEBUG-only boot fallback (DeZog quality-of-life): a dezogif/serial
+; DeZog launch inherits cwd at the SD ROOT, not wherever the debug
+; payload actually lives, so ddb_load's first attempt can miss GAME.DDB
+; even though the card genuinely has it - a real hardware session hit
+; this. file.asm's ddb_load_debug_retry (DEBUG-only, main.asm's boot path
+; calls it in place of plain ddb_load) F_CHDIRs here and retries once
+; before falling through to the ordinary E1 fatal. ONE place to edit if
+; the owner's debug payload directory ever moves - text substitution
+; only (sjasmplus DEFINE), the string is emitted where it's declared
+; (file.asm), not here.
+ DEFINE DBG_DDB_FALLBACK_DIR "/nextdaad/debug"
 ; --- raw SD SPI transport (video page, SP13 T1c). DISK_STRMSTART/END are
 ;     NOT used - we drive the card directly, transcribed from playvid
 ;     (tools/ZXNextOS/.../playvid/video_stream_postamble.asm, Garry

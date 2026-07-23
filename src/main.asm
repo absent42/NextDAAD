@@ -31,7 +31,15 @@ main:
     call bank_table_init
     call ram_diag
     call bank_selftest
+ IFDEF DEBUG
+    ; DeZog quality-of-life: dezogif/serial-launch sessions inherit cwd
+    ; at the SD root - see file.asm's ddb_load_debug_retry (this wraps
+    ; plain ddb_load with a one-shot F_CHDIR-and-retry fallback) for the
+    ; full story. Release keeps the plain, unwrapped call below.
+    call ddb_load_debug_retry
+ ELSE
     call ddb_load
+ ENDIF
     or a
     jr z, .loaded
     dec a
