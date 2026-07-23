@@ -726,19 +726,19 @@ vid_mf_restore:
     nextreg NR_PERIPH2, a
     ret
 
-; remain == 0 test. Out: Z set if the file is exhausted. Corrupts AF only.
+; remain == 0 test. Out: Z set if the file is exhausted. Corrupts AF, HL
+; (T5 byte-budget squeeze: word loads replaced the four byte loads; both
+; callers - vid_stream_read_raw's .outer and .inner - reload HL on the
+; very next instruction after their jp z, so nothing reads HL across
+; this call).
 vid_remain_zero:
-    ld a, (vidStrmRemainLo)
-    or a
+    ld hl, (vidStrmRemainLo)
+    ld a, h
+    or l
     ret nz
-    ld a, (vidStrmRemainLo+1)
-    or a
-    ret nz
-    ld a, (vidStrmRemainHi)
-    or a
-    ret nz
-    ld a, (vidStrmRemainHi+1)
-    or a
+    ld hl, (vidStrmRemainHi)
+    ld a, h
+    or l
     ret
 
 ; remain >= 512 test. Out: CF set = remain < 512 (a partial final block).
@@ -1304,7 +1304,9 @@ vid_run:
     nextreg NR_L2_BANK, a
     ld a, (vidExitReq)
     or a
-    jr nz, .restore
+    jp nz, .restore                ; jp: .restore is past jr's range (the
+                                    ; T5 seam-polish rewind grew the loop
+                                    ; restart block between here and it)
  IFDEF DEBUG
     ; Owner gate-leg staged-entry ladder (SP14a T4 follow-up): stages 2
     ; and 3 never reach the ordinary key/EOF-only loop exit above -
@@ -1422,24 +1424,21 @@ vid_run:
     ; IX sweep (re-verified from source, not assumed): vid_win_close
     ; (Corrupts AF, BC, DE, HL - no IX), vid_raw_reset_cursor (Corrupts
     ; AF, DE, HL - no IX), vid_next_run (Corrupts AF, DE, HL - no IX),
-    ; vid_win_open (Corrupts AF, BC, DE, HL - no IX; its own vid_mf_
-    ; disable/vid_strm_start/vid_sd_cmd chain is IX-free too, T1c's own
-    ; finding, confirmed here) - EVERY routine this restart calls is
-    ; provably IX-free. The CTC stays ARMED and TICKING throughout: IX
-    ; (the ISR's exclusive resident play pointer) is never touched, never
-    ; re-seated - the B1/B2 hazard (mainline repointing IX to an esxDOS
-    ; buffer the ISR then walks) cannot occur because nothing here ever
-    ; loads IX with anything. Audio drains seamlessly into the restart:
-    ; the ISR keeps replaying the still-resident last frame's buffer
-    ; (holding at the end marker once reached, exactly as it already does
-    ; at any other quiet moment) while this sequence runs; if the reopen
-    ; finishes before the drain would have, there is no gap at all; if it
-    ; takes longer, the held last sample continues until the next frame's
-    ; audio replaces vidAudBuf at the following `.pace` relaunch - no
-    ; hard silence, unlike the old park (which stopped the CTC outright
-    ; for the whole reopen). This is also NOT a new hazard: vid_win_close
-    ; and vid_win_open are the SAME pair the hot streaming path already
-    ; calls constantly, mid-frame, while just as armed.
+    ; vid_remain_sub (Corrupts AF, HL - no IX), vid_win_open (Corrupts
+    ; AF, BC, DE, HL - no IX; its own vid_mf_disable/vid_strm_start/
+    ; vid_sd_cmd chain is IX-free too, T1c's own finding, confirmed
+    ; here) - EVERY routine this restart calls is provably IX-free. The
+    ; CTC stays ARMED and TICKING throughout: IX (the ISR's exclusive
+    ; resident play pointer) is never touched, never re-seated - the
+    ; B1/B2 hazard (mainline repointing IX to an esxDOS buffer the ISR
+    ; then walks) cannot occur because nothing here ever loads IX with
+    ; anything. Audio drains seamlessly into the restart: the ISR keeps
+    ; replaying the still-resident last frame's buffer (holding at the
+    ; end marker once reached, exactly as it already does at any other
+    ; quiet moment) while this sequence runs. This is also NOT a new
+    ; hazard: vid_win_close and vid_win_open are the SAME pair the hot
+    ; streaming path already calls constantly, mid-frame, while just as
+    ; armed.
     call vid_win_close             ; release the current SD window (CMD12
                                     ; + deselect) - as today
     call vid_raw_reset_cursor      ; cursor -> file start (entry ptr,
@@ -1449,47 +1448,59 @@ vid_run:
     call vid_next_run              ; load run 0's card address
     jr c, .restore                 ; defensive: empty map (should not
                                     ; happen - the same map just played)
-    call vid_win_open              ; reopen at run 0 via the existing raw
-                                    ; CMD18 path
-    jr c, .restore                 ; defensive: card rejected the reopen
-    ; owner fix ("LOOP RESTART BROKEN" audit): the cursor reset above
-    ; rewinds to byte 0 of the FILE - the start of the 512-byte NXV
-    ; header, not the first pixel-bearing block. The original open
-    ; consumed the header via nxv_open's own vid_stream_read call,
-    ; BEFORE the frame loop ever ran; this restart jumped straight to
-    ; .frameloop with no equivalent skip, so the next vid_stream_frame
-    ; read the header bytes themselves as if they were frame data
-    ; (audio samples, palette, pixels) - garbled DAC output (the
-    ; reported audio distortion) and a garbage Layer 2/palette write
-    ; (the reported red screen). Fix: replay nxv_open's own 512-byte
-    ; throwaway read (same call shape: A=vidAudPoolPage, DE=512),
-    ; discarding the header block, before resuming - reusing the
-    ; SAME already-proven vid_stream_read bookkeeping the original
-    ; open relied on (run/remain state consumed exactly as normal
-    ; streaming would, so no run-boundary drift accumulates over
-    ; repeated loops). Its contract corrupts IX ("Corrupts AF, BC, DE,
-    ; HL, IX") - unlike every OTHER call in this restart, which are all
-    ; provably IX-free (see this block's own header) - so this ONE
-    ; call is bracketed with DI/EI: the CTC keeps ticking (a pending
-    ; tick just latches, hardware IM2, and fires the instant EI
-    ; re-enables it) but the ISR cannot be DISPATCHED mid-call, so it
-    ; can never read IX while this call is transiently corrupting it.
-    ; IX is reseated to vidAudBuf (a known-valid resident buffer,
-    ; matching the CTC-arm sequence's own priming, above) before EI, so
-    ; even an immediately-pending tick reads a well-defined address.
-    ; Brief (one 512-byte SD transfer, a few hundred microseconds) -
-    ; far short of a hard-silence gap, unlike the CTC-park-the-whole-
-    ; reopen approach this restart replaced (see this block's own
-    ; header for why that was removed).
-    di
-    ld a, (vidAudPoolPage)
+    ; --- SP14a T5 seam polish: rewind to the FIRST DATA BLOCK, not
+    ; block 0. The parsed header state (nxv_open's outputs - geometry,
+    ; fps/TC, audio sizes, palette flag) persists across passes and
+    ; never changes, so re-reading the 512-byte header block every loop
+    ; was pure seam cost (one throwaway SD transfer plus a DI/EI + IX
+    ; reseat bracket, all deleted here). HISTORY WARNING (the "LOOP
+    ; RESTART BROKEN" audit): an earlier restart rewound to byte 0
+    ; WITHOUT consuming the header and the next vid_stream_frame served
+    ; the header bytes as frame data - garbled DAC audio and a red
+    ; screen. The cursor must therefore be ADVANCED PAST the header
+    ; block, exactly as nxv_open's own read would have advanced it:
+    ; remain -= 512, run 0's block count -1, run 0's card address +1
+    ; block (in card-native units - cardflags bit 1 set = block
+    ; addressing, +1; clear = byte addressing, +512; vid_raw_setup's
+    ; own documented granularity, unused until now because the open
+    ; CMD18 window steps the card internally and this is the one place
+    ; a per-block address is ever computed), then reopen CMD18 at the
+    ; adjusted address. End state matches the post-nxv_open first-open
+    ; state on every cell vid_stream_read/the gap path consume: remain,
+    ; RunBlocks, EntryPtr (already at run 1), BlkPos/BlkLen (0 - the
+    ; header is block-aligned so no tail is held), window OPEN with the
+    ; card positioned at the first data block. Edge (run 0 is the
+    ; header alone, RunBlocks hits 0): skip the reopen - the advanced
+    ; address would point past run 0's extent, but it is never read:
+    ; the first reader (vid_stream_frame's audio read, both modes) hits
+    ; .needstream's RunBlocks==0 boundary, which does win_close (no-op)
+    ; + next_run (overwrites the address with run 1's) + win_open -
+    ; the same path any exhausted run takes. The RunBlocks>0-implies-
+    ; window-OPEN invariant (vid_stream_pixels_gap's block-start fast
+    ; path) holds on both exits: >0 with the window opened here, ==0
+    ; with it closed.
     ld de, 512
-    call vid_stream_read
-    ld ix, vidAudBuf
-    ei
-    jr c, .restore                 ; defensive: I/O error on the header
-                                    ; block itself (should not happen -
-                                    ; the same header just validated it)
+    call vid_remain_sub            ; remain -= header (preserves DE)
+    ld a, (vidCardFlags)
+    and 2                          ; bit 1: card address granularity
+    jr z, .hdrstep                 ; byte-addressed: +512/block - DE
+    ld de, 1                       ; already holds it; block-addressed:
+.hdrstep:                          ; +1/block
+    ld hl, (vidStrmRunAddrLo)      ; run 0 card address += one block
+    add hl, de
+    ld (vidStrmRunAddrLo), hl
+    jr nc, .hdrnocy
+    ld hl, (vidStrmRunAddrHi)
+    inc hl
+    ld (vidStrmRunAddrHi), hl
+.hdrnocy:
+    ld hl, (vidStrmRunBlocks)      ; run 0 block count -= the header
+    dec hl
+    ld (vidStrmRunBlocks), hl
+    ld a, h
+    or l                           ; also clears CF for the not-taken
+    call nz, vid_win_open          ; case of the call below
+    jr c, .restore                 ; defensive: card rejected the reopen
     jp .frameloop
 .drainlast:
     ; the last successfully streamed frame (if any) is already showing
