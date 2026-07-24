@@ -40,3 +40,4 @@ tests/out/
 authoring-kit/VIDEO/*.vid
 authoring-kit/VIDEO/*.VID
 .superpowers/
+__pycache__/
