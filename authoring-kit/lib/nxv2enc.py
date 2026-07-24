@@ -1173,3 +1173,298 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
             ), f, indent=1)
 
     return report
+
+
+# ---------------------------------------------------------------------
+# Bench fixtures (SP15 T2 --bench-fixtures). The decode-kernel silicon
+# bench (src/video.asm NXBEN verb family, DEBUG builds) measures
+# prototype Z80N decode kernels against known payload shapes; the rows
+# feed back into TMODEL_COEFFS above, after which the format freezes.
+# Every synthetic payload below is a RAW OPCODE STREAM (no header, no
+# audio blocks, no 512-byte padding) built from this module's own op
+# emitters, then verified against nxv2dec.run_payload - the reference
+# decoder stays the single ground truth for what the bytes mean.
+#
+# File set (8.3 names, staged to sd\ by build-tests.ps1 -NxBench):
+#   NXB0.BIN  op-soup: dense [SKIP8 8][RUN8 8][COPY8 8] groups - the
+#             dispatch/parse-dominated worst case
+#   NXB1.BIN  all-RUN8: 256 x RUN8 192          (RUN8 CPU fill row)
+#   NXB2.BIN  all-RUN16: 48 x RUN16 1024        (RUN16 CPU + DMA rows)
+#   NXB3.BIN  all-COPY8: 256 x COPY8 192        (COPY8 CPU row)
+#   NXB4.BIN  all-COPY16: 48 x COPY16 1024      (COPY16 CPU + DMA rows)
+#   NXB5.BIN  skip8-soup: 6144 x SKIP8 8        (SKIP8 row)
+#   NXB6.BIN  all-SKIP16: 48 x SKIP16 1024      (SKIP16 row)
+#   NXB7.BIN  keyframe chunk: KSTART + one COPY16 of BENCH_KF_LITERALS
+#             literal bytes + KFLIP - the ~43KB shape-A chunk shape
+#             (43008 <= 49152, so the same file serves both display
+#             modes' rows)
+#   NXB8.BIN  real fixture segment: consecutive whole-frame payloads
+#             extracted from a real Task-1 encode (classic 256x192@25),
+#             concatenated raw, cut at a frame boundary outside any
+#             keyframe span, capped at BENCH_SEGMENT_CAP bytes
+#   NXB9.BIN  flip micro-payload: KSTART + KFLIP (KSTART/KFLIP row)
+#
+# All synthetic cursor spans total BENCH_CLASSIC_RAW (256x192 = 49152),
+# the classic-shape surface, so mode-0 rows cover the whole surface and
+# mode-1 rows cover the first 49152 bytes of the 320x256 surface - the
+# payload bytes are identical either way (cursor space is linear paint
+# order in both modes).
+# ---------------------------------------------------------------------
+BENCH_CLASSIC_RAW = 256 * 192       # 49152
+BENCH_KF_LITERALS = 43008           # one-COPY16 keyframe chunk (~43KB, the
+                                     # 25fps chunk-budget shape - see
+                                     # kf_chunk_budget_bytes(25) ~ 44161)
+BENCH_SEGMENT_CAP = 61440           # NXB8 cap: 60KB = 8 pool pages, and the
+                                     # bench's 16-bit length cells stay clean
+
+
+def _bench_literals(n, seed=0):
+    """Deterministic literal filler (no RNG state dependence): a simple
+    affine byte sequence, incompressible enough to be honest COPY data."""
+    i = np.arange(n, dtype=np.uint32)
+    return ((i * 7 + 13 + seed) & 0xFF).astype(np.uint8).tobytes()
+
+
+def walk_payload_ops(buf):
+    """Structural walk of one raw payload (opcode stream): returns a dict
+    with per-op counts, cursor coverage, literal byte total, terminal op
+    and whether a KSTART appears. Pure length arithmetic - decode
+    semantics stay nxv2dec's job; this only knows the wire lengths (the
+    same table the format reference publishes). Raises ValueError on a
+    reserved op or a truncated stream - bench fixtures must be clean."""
+    counts = {}
+    pos = 0
+    cursor = 0
+    literals = 0
+    kstart = False
+    n = len(buf)
+
+    def need(k):
+        if pos + k > n:
+            raise ValueError(f"truncated op at byte {pos}")
+
+    while True:
+        if pos >= n:
+            raise ValueError("payload ended without FEND/KFLIP")
+        op = buf[pos]
+        pos += 1
+        counts[op] = counts.get(op, 0) + 1
+        if op in TERMINAL_OPS:
+            return dict(counts=counts, bytes=pos, cursor=cursor,
+                        literals=literals, terminal=op, kstart=kstart)
+        if op == OP_KSTART:
+            kstart = True
+            cursor = 0
+        elif op == OP_SKIP8:
+            need(1); cursor += buf[pos]; pos += 1
+        elif op == OP_SKIP16:
+            need(2); cursor += int.from_bytes(buf[pos:pos + 2], "little"); pos += 2
+        elif op == OP_RUN8:
+            need(2); cursor += buf[pos]; pos += 2
+        elif op == OP_RUN16:
+            need(3); cursor += int.from_bytes(buf[pos:pos + 2], "little"); pos += 3
+        elif op == OP_COPY8:
+            need(1); cnt = buf[pos]; pos += 1
+            need(cnt); cursor += cnt; literals += cnt; pos += cnt
+        elif op == OP_COPY16:
+            need(2); cnt = int.from_bytes(buf[pos:pos + 2], "little"); pos += 2
+            need(cnt); cursor += cnt; literals += cnt; pos += cnt
+        elif op == OP_PAL:
+            need(PAL_BLOCK_SIZE); pos += PAL_BLOCK_SIZE
+        else:
+            raise ValueError(f"reserved opcode ${op:02X} at byte {pos - 1}")
+
+
+def _bench_verify(name, payload, expect_cursor=None, expect_terminal=OP_FEND,
+                   cursor_len=BENCH_CLASSIC_RAW):
+    """Run one synthetic payload through the REFERENCE decoder
+    (nxv2dec.run_payload) and assert it decodes clean to the expected
+    cursor/terminal. Imported lazily - nxv2dec imports this module at
+    top level, so the reverse import must stay inside the function."""
+    import nxv2dec as _dec
+    surface = np.zeros(cursor_len, dtype=np.uint8)
+    pos, cursor, op = _dec.run_payload(payload, 0, surface, cursor_len)
+    if op == OP_KSTART:
+        pos, cursor, op = _dec.run_payload(payload, pos, surface, cursor_len,
+                                            start_cursor=0)
+    if op != expect_terminal:
+        raise AssertionError(f"{name}: terminal ${op:02X}, expected ${expect_terminal:02X}")
+    if pos != len(payload):
+        raise AssertionError(f"{name}: decoder consumed {pos} of {len(payload)} bytes")
+    if expect_cursor is not None and cursor != expect_cursor:
+        raise AssertionError(f"{name}: cursor {cursor}, expected {expect_cursor}")
+
+
+def _bench_segment(segment_vid, cap=BENCH_SEGMENT_CAP):
+    """Extract consecutive whole-frame payloads from a real NXV v2 file
+    (header/audio/padding stripped) into one raw concatenated stream,
+    cut at a frame boundary that is NOT inside a keyframe span, capped
+    at `cap` bytes. Returns (bytes, frame_count)."""
+    buf = Path(segment_vid).read_bytes()
+    hdr = unpack_header(buf)
+    if (hdr["width"], hdr["height"]) != (256, 192):
+        raise ValueError(f"segment source must be the classic 256x192 shape, "
+                          f"got {hdr['width']}x{hdr['height']}")
+    abytes_pad = ((hdr["audio_bytes_per_frame"] + 511) // 512) * 512
+    out = bytearray()
+    frames = 0
+    cut_len, cut_frames = 0, 0    # last clean cut point (outside any span)
+    pos = HEADER_SIZE
+    in_span = False
+    for _ in range(hdr["frame_count"]):
+        pos += abytes_pad
+        payload_start = pos
+        # find this frame's payload length with the structural walker
+        info = walk_payload_ops(buf[payload_start:payload_start +
+                                     hdr["per_frame_cap_blocks"] * 512 + 512])
+        plen = info["bytes"]
+        if len(out) + plen > cap:
+            break
+        out += buf[payload_start:payload_start + plen]
+        frames += 1
+        if info["kstart"]:
+            in_span = True
+        if info["terminal"] == OP_KFLIP:
+            in_span = False
+        if not in_span:
+            cut_len, cut_frames = len(out), frames
+        pos = payload_start + ((plen + 511) // 512) * 512
+    if cut_frames == 0:
+        raise ValueError("segment cap too small to hold even one complete "
+                          "frame/keyframe span")
+    return bytes(out[:cut_len]), cut_frames
+
+
+def bench_fixtures(out_dir, segment_vid=None):
+    """SP15 T2 --bench-fixtures: write the NXB0-NXB9 bench payload set
+    into out_dir (created if absent) plus nxbench-manifest.txt. Every
+    synthetic payload is verified against nxv2dec.run_payload before it
+    is written. segment_vid (a real classic-shape Task-1 encode, e.g.
+    build-tests' tests/out/002_classic_cache.vid) feeds NXB8; when None,
+    NXB8 is skipped with a manifest note. Returns the manifest dict."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    raw = BENCH_CLASSIC_RAW
+    files = {}
+
+    # NXB0 op-soup: 2048 x [SKIP8 8][RUN8 8][COPY8 8] = 49152 cursor
+    parts = []
+    for g in range(raw // 24):
+        parts.append(op_skip(8))
+        parts.append(op_run(8, g & 0xFF))
+        parts.append(op_copy(_bench_literals(8, seed=g)))
+    parts.append(bytes([OP_FEND]))
+    files["NXB0.BIN"] = b"".join(parts)
+
+    # NXB1 all-RUN8: 256 x RUN8 192
+    parts = [op_run(192, c & 0xFF) for c in range(raw // 192)]
+    parts.append(bytes([OP_FEND]))
+    files["NXB1.BIN"] = b"".join(parts)
+
+    # NXB2 all-RUN16: 48 x RUN16 1024
+    parts = [op_run(1024, c & 0xFF) for c in range(raw // 1024)]
+    parts.append(bytes([OP_FEND]))
+    files["NXB2.BIN"] = b"".join(parts)
+
+    # NXB3 all-COPY8: 256 x COPY8 192
+    parts = [op_copy(_bench_literals(192, seed=c)) for c in range(raw // 192)]
+    parts.append(bytes([OP_FEND]))
+    files["NXB3.BIN"] = b"".join(parts)
+
+    # NXB4 all-COPY16: 48 x COPY16 1024
+    parts = [op_copy(_bench_literals(1024, seed=c)) for c in range(raw // 1024)]
+    parts.append(bytes([OP_FEND]))
+    files["NXB4.BIN"] = b"".join(parts)
+
+    # NXB5 skip8-soup: 6144 x SKIP8 8
+    files["NXB5.BIN"] = op_skip(8) * (raw // 8) + bytes([OP_FEND])
+
+    # NXB6 all-SKIP16: 48 x SKIP16 1024 (op_skip would fold 1024 into one
+    # SKIP16 of 1024 - emit each op individually, same as the others)
+    files["NXB6.BIN"] = op_skip(1024) * (raw // 1024) + bytes([OP_FEND])
+
+    # NXB7 keyframe chunk: KSTART + one COPY16 of BENCH_KF_LITERALS + KFLIP
+    files["NXB7.BIN"] = (bytes([OP_KSTART])
+                          + op_copy(_bench_literals(BENCH_KF_LITERALS))
+                          + bytes([OP_KFLIP]))
+
+    # NXB9 flip micro-payload
+    files["NXB9.BIN"] = bytes([OP_KSTART, OP_KFLIP])
+
+    # verify the synthetic set against the reference decoder
+    _bench_verify("NXB0.BIN", files["NXB0.BIN"], expect_cursor=raw)
+    _bench_verify("NXB1.BIN", files["NXB1.BIN"], expect_cursor=raw)
+    _bench_verify("NXB2.BIN", files["NXB2.BIN"], expect_cursor=raw)
+    _bench_verify("NXB3.BIN", files["NXB3.BIN"], expect_cursor=raw)
+    _bench_verify("NXB4.BIN", files["NXB4.BIN"], expect_cursor=raw)
+    _bench_verify("NXB5.BIN", files["NXB5.BIN"], expect_cursor=raw)
+    _bench_verify("NXB6.BIN", files["NXB6.BIN"], expect_cursor=raw)
+    _bench_verify("NXB7.BIN", files["NXB7.BIN"], expect_cursor=BENCH_KF_LITERALS,
+                   expect_terminal=OP_KFLIP)
+    _bench_verify("NXB9.BIN", files["NXB9.BIN"], expect_cursor=0,
+                   expect_terminal=OP_KFLIP)
+
+    segment_note = None
+    if segment_vid is not None:
+        seg, seg_frames = _bench_segment(segment_vid)
+        files["NXB8.BIN"] = seg
+    else:
+        seg_frames = 0
+        segment_note = ("NXB8.BIN skipped: no --segment source given "
+                        "(build-tests.ps1 -NxBench passes the classic cache)")
+
+    op_names = {OP_FEND: "FEND", OP_SKIP16: "SKIP16", OP_RUN8: "RUN8",
+                OP_RUN16: "RUN16", OP_COPY8: "COPY8", OP_COPY16: "COPY16",
+                OP_PAL: "PAL", OP_SKIP8: "SKIP8", OP_KFLIP: "KFLIP",
+                OP_KSTART: "KSTART"}
+    manifest = {}
+    lines = ["NXV v2 bench fixtures (SP15 T2 --bench-fixtures)",
+             f"classic surface = {raw} bytes; kf literals = {BENCH_KF_LITERALS}; "
+             f"segment cap = {BENCH_SEGMENT_CAP}", ""]
+    for name in sorted(files):
+        payload = files[name]
+        if name == "NXB8.BIN":
+            # multi-frame stream: summarize per-frame walks
+            total_counts = {}
+            pos = 0
+            while pos < len(payload):
+                info = walk_payload_ops(payload[pos:])
+                for op, k in info["counts"].items():
+                    total_counts[op] = total_counts.get(op, 0) + k
+                pos += info["bytes"]
+            desc = (f"{len(payload)} bytes, {seg_frames} frames, ops: "
+                    + " ".join(f"{op_names[o]}={k}" for o, k in sorted(total_counts.items())))
+            manifest[name] = dict(bytes=len(payload), frames=seg_frames,
+                                   counts={op_names[o]: k for o, k in total_counts.items()})
+        else:
+            info = walk_payload_ops(payload)
+            desc = (f"{len(payload)} bytes, cursor {info['cursor']}, "
+                    f"literals {info['literals']}, terminal {op_names[info['terminal']]}, ops: "
+                    + " ".join(f"{op_names[o]}={k}" for o, k in sorted(info["counts"].items())))
+            manifest[name] = dict(bytes=len(payload), cursor=info["cursor"],
+                                   literals=info["literals"],
+                                   terminal=op_names[info["terminal"]],
+                                   counts={op_names[o]: k for o, k in info["counts"].items()})
+        (out_dir / name).write_bytes(payload)
+        lines.append(f"{name}: {desc}")
+    if segment_note:
+        lines.append(segment_note)
+    (out_dir / "nxbench-manifest.txt").write_text("\n".join(lines) + "\n")
+    for ln in lines:
+        print(ln)
+    return manifest
+
+
+if __name__ == "__main__":
+    # The only CLI this module carries is the T2 bench-fixture emitter -
+    # everything else goes through videnc.py (the one canonical CLI).
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="NXV v2 encoder module - CLI exposes --bench-fixtures only")
+    ap.add_argument("--bench-fixtures", metavar="OUTDIR", required=True,
+                    help="write the NXB0-NXB9 bench payload set to OUTDIR")
+    ap.add_argument("--segment", metavar="VIDFILE", default=None,
+                    help="real classic-shape NXV v2 file for NXB8 (e.g. "
+                         "tests/out/002_classic_cache.vid)")
+    args = ap.parse_args()
+    bench_fixtures(args.bench_fixtures, segment_vid=args.segment)

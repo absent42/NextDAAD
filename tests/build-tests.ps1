@@ -125,6 +125,18 @@
 #              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\005_classic-wide_cache.vid --shape classic-wide --fps 25
 #            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
 #            sd\*.VID is gitignored (owner edit).
+#   -NxBench   stage the SP15 T2 decode-kernel bench payloads into
+#              sd\NXB0.BIN..sd\NXB9.BIN (nxv2enc.py --bench-fixtures -
+#              raw opcode-stream payloads, no header/audio/padding; see
+#              that mode's own comment block for the file-by-file
+#              shapes, and .superpowers\sdd\sp14a-task-4-report.md
+#              section 36 for the owner bench card). NXB8 (the real
+#              classic 256x192@25 segment) is cut from the -Vid cache
+#              tests\out\002_classic_cache.vid, which is encoded first
+#              if missing (slow - same cache rule as -Vid). Fixture
+#              set + manifest land in tests\out\nxbench\ then copy to
+#              sd\ (stale-clean first). Same CSpect-lock guard as the
+#              other staging switches. sd\ is gitignored.
 #   -Nxv2Test  run tests\nxv2_selftest.py (plain python, no pytest -
 #              header/opcode/keyframe-span roundtrips, scene-cut
 #              lookahead, dual-budget rate control, BuildReport/
@@ -134,7 +146,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$Nxv2Test)
+param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$NxBench, [switch]$Nxv2Test)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -597,6 +609,37 @@ if ($Vid) {
         }
     }
     "staged $vidStaged video fixture(s) -> sd\001.VID..sd\005.VID (NXV v2 shapes full/classic/16:9/scope/classic-wide, docs\superpowers\plans\2026-07-23-sp15-nxv2.md)"
+}
+
+if ($NxBench) {
+    # SP15 T2 decode-kernel bench payloads - see the -NxBench header
+    # comment above. Same CSpect-lock hazard as the other staging
+    # switches: refuse to stage rather than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial bench fixture set)"
+    }
+    # NXB8's segment source is the -Vid classic cache; encode it first if
+    # missing (identical command to -Vid's own 002.VID path).
+    $nxbCache = Join-Path $root 'tests\out\002_classic_cache.vid'
+    if (-not (Test-Path -LiteralPath $nxbCache)) {
+        $nxbSrc = Join-Path $root 'tools\demo-files\1440x1080-25p.mp4'
+        if (-not (Test-Path -LiteralPath $nxbSrc)) {
+            throw "-NxBench: $nxbSrc missing and no cached classic encode exists - cannot build NXB8"
+        }
+        "encoding tests\out\002_classic_cache.vid (shape classic) via videnc.py - slow, cached after this run..."
+        & python "$root\authoring-kit\lib\videnc.py" $nxbSrc $nxbCache --shape classic --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
+        if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - bench fixtures not staged" }
+    }
+    $nxbDir = Join-Path $root 'tests\out\nxbench'
+    & python "$root\authoring-kit\lib\nxv2enc.py" --bench-fixtures $nxbDir --segment $nxbCache
+    if ($LASTEXITCODE -ne 0) { throw "nxv2enc.py --bench-fixtures failed (exit $LASTEXITCODE)" }
+    Remove-Item "$root\sd\NXB*.BIN" -Force -ErrorAction SilentlyContinue
+    $nxbStaged = 0
+    Get-ChildItem "$nxbDir\NXB*.BIN" | ForEach-Object {
+        Copy-Item $_.FullName "$root\sd\$($_.Name)" -Force
+        $nxbStaged++
+    }
+    "staged $nxbStaged bench payload(s) -> sd\NXB0.BIN..sd\NXB9.BIN (manifest: tests\out\nxbench\nxbench-manifest.txt)"
 }
 
 if ($Nxv2Test) {
