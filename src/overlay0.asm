@@ -2255,17 +2255,18 @@ ktest_trampoline:
     jp ovl_map_page                ; vid_bench_trampoline, etc.)
  ENDIF
 
-; EXTERN vector 8 (SP14a DMA autopsy bench wave): DEBUG-only route to
-; DMAT, the DMA-from-SPI bench suite (tests/test.dsf's DMAT3/DMAT1/
-; DMAT4/DMAT2/DMARC/DMARB/DMARP verbs; body is dmat_entry in
+; EXTERN vector 8 (SP15 T2 NXV v2 decode-kernel bench, replacing the
+; retired DMAT/DMACC suite on the same vector): DEBUG-only route to
+; NXBEN (tests/test.dsf's NXBD/NXBS/NXBR/NXBRD/NXBC0-1/NXBD0-1/
+; NXBA0-1/NXBK0-1/NXBF/NXBX/NXBP verbs; body is nxben_entry in
 ; video.asm's VID_PAGE2 DEBUG section). Vector 8 is the first free
 ; stub row past 7 (XUNDONE) - 3/4/7 are live, 5 must stay ext_stub
 ; forever (suite check 44), 6 is KTEST's. Same IFDEF pattern as
 ; ktest_trampoline above: Release keeps ext_stub and stays byte-
 ; identical.
  IFDEF DEBUG
-dmat_trampoline:
-    ld hl, dmat_entry             ; push-target/ovl_map_page idiom again
+nxben_trampoline:
+    ld hl, nxben_entry            ; push-target/ovl_map_page idiom again
     push hl
     ld a, VID_PAGE2
     jp ovl_map_page
@@ -2281,7 +2282,7 @@ extVec:
  ENDIF
     dw ext_undone
  IFDEF DEBUG
-    dw dmat_trampoline            ; vector 8, DEBUG only
+    dw nxben_trampoline           ; vector 8, DEBUG only
  ELSE
     dw ext_stub                   ; vector 8, release: unimplemented stub
  ENDIF

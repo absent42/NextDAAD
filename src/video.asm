@@ -4555,221 +4555,268 @@ vidErrByteL:     db 0             ; mirrors vidErrByte - see that cell's
                                    ; own declaration for the BYT=xx decode
 
 ; =====================================================================
-; DMAT - DMA-from-SPI bench verb suite (SP14a DMA autopsy falsification
-; wave, first core 3.02.04 sitting). DEBUG builds only - this whole
-; block sits inside the VID_PAGE2 IFDEF DEBUG section; Release carries
-; none of it (byte-identity verified at commit time).
+; NXBEN - NXV v2 decode-kernel silicon bench (SP15 Task 2, the format
+; freeze gate). DEBUG builds only - this whole block sits inside the
+; VID_PAGE2 IFDEF DEBUG section; Release carries none of it (byte-
+; identity verified at commit time). Replaces the retired DMAT/DMACC
+; suite (SP14a DMA autopsy - its job is done; git holds the code at
+; 0922e9f/a177255) to reclaim this page's DEBUG headroom.
 ; =====================================================================
-; Purpose: falsify the four hypotheses from the DMA autopsy (research-
-; decode-models.md Mission 2, section 3.5) for the SP14a silicon
-; refutation of DMA-from-$EB (REF/DMA diverging from offset ~0xC3 on
-; the 03.01.09-generation core, VBDMA bench, retired in dc16964):
-;   H1  pre-3.02.02 core bug ("read byte one read cycle behind") -
-;       DMAT1 re-runs the original continuous program byte-for-byte
-;       (dest low byte $3D, reproducing the bench-era alignment), with
-;       the core version (NR $01/$0E) stamped on every readout.
-;   H2  marginal wait-release vs the shifter's real restart latency -
-;       DMAT2 runs a prescaler-paced variant (32 cycles/byte floor,
-;       above the measured 22.1T/byte silicon ini floor) and a
-;       cycle-length 4/4 variant, one factor varied per run.
-;   H3  destination 256-boundary carry artifact - DMAT3 sweeps dest
-;       offsets 0/61/128/255 in a 256-aligned buffer; if the divergence
-;       offset tracks (256 - dest&$FF), H3 is convicted (predicted
-;       DIV = 0100/00C3/0080/0001 respectively).
-;   H4  mode/init dependence - DMAT4 runs the burst-mode variant with
-;       the em00k reference init ($C3 full reset header, $B3 force-
-;       ready before enable). NOTE the autopsy's own H4 sketch writes
-;       WR4 burst as %10001101 - that decodes to mode bits D6:D5 = 00,
-;       "do not use", per zxndma.txt; the em00k reference program's $CD
-;       = %11001101 (D6:D5 = 10) is what burst actually is, and is what
-;       this bench sends.
-; Plus a CPU-concurrency mode (DMACC verb, mode 6): with burst-mode
-; DMA-from-SPI transfers running continuously, how much of its own
-; throughput does the CPU keep? See dmat_mode_cc's block header for the
-; method (calibrated counting loop vs the same loop overlapped with
-; transfers) and the measurement hazards it controls for.
-; Plus a sustained-rate mode (DMARC/DMARB/DMARP verbs) for any program
-; that MATCHes: up to 1024 blocks (512KB) repeat-transferred off the
-; fixture's first contiguous run, KB/s reported (VBFLT's measurement
-; shape: blocks*25/elapsed-frames via div16). The frame clock here is
-; a raster-line-wrap poll (NR $1E/$1F), NOT frameCounter - a continuous
-; -mode DMA transfer freezes the CPU and can swallow the 50Hz INT pulse
-; entirely (up to ~20% of pulses at full pace), which would silently
-; inflate a frameCounter-based KB/s; polling the raster between blocks
-; is immune to INT masking. Frame unit assumes the standard 50Hz
-; display timing (same assumption VBFLT made).
+; Purpose: measure PROTOTYPE NXV v2 decode kernels on real hardware so
+; the encoder's modeled T-coefficients (TMODEL_COEFFS, authoring-kit/
+; lib/nxv2enc.py - model-not-silicon) can be replaced with silicon
+; numbers, after which the opcode set + header FREEZE. This is NOT the
+; real player (Task 3) - it is a measurement instrument. Kernel
+; semantics follow authoring-kit/lib/nxv2dec.py (the executable spec)
+; for every op implemented; divergences are deliberate,
+; measurement-only, and listed here:
+;   - KSTART does not copy visible->hidden surface content (the
+;     reference decoder's hidden_surface[:] = visible: a player-side
+;     composition decision for Task 3, not an op cost).
+;   - KFLIP performs the full flip WRITE sequence for cost parity
+;     (NR $43 write + front/hidden swap + NR $12 write) but writes the
+;     CURRENT display values, so the screen state is not disturbed
+;     between reps.
+;   - Payloads are pre-validated by the encoder (--bench-fixtures
+;     verifies each against nxv2dec.run_payload), so the kernels guard
+;     only structurally: reserved ops error (as the spec requires),
+;     source-page and dest-surface overruns abort the rep with a
+;     printed E= code.
 ;
-; Every SD/DMA wait in this block is bounded (doc-13 rubric 6): R1
-; polls 256, token waits 65536, burst completion polls 65536 - each
-; with a clean printed error exit. THE ONE UNBOUNDABLE HAZARD: a
-; continuous-mode DMA transfer that wedges never returns the bus - the
-; CPU is frozen by hardware design and no software bound can exist.
-; The original silicon evidence shows continuous transfers DO complete
-; (with corruption), so this is accepted and documented on the bench
-; card rather than guarded against.
+; Architecture (docs/Z80 citations per the plans-cite-docs convention):
+;   - Payloads are loaded from sd\NXB<n>.BIN (build-tests.ps1 -NxBench)
+;     into pool banks (bank_alloc, both 8K pages of each bank) via
+;     esxDOS F_READ through the MMU6 window - the ddb_load pattern.
+;   - Decode source = MMU6 window ($C000, page list walked as the
+;     cursor crosses 8K boundaries). Decode dest = the REAL Layer 2
+;     surface through a borrowed MMU2 window ($4000-$5FFF, saved/
+;     restored; nothing else touches $4000-$5FFF during a row: the
+;     50Hz im2_isr fast path touches only AF/HL/frameCounter
+;     (interrupts.asm ISR contract), audEnable is frozen for armed
+;     rows, and the bench prints only after windows are restored).
+;     Front surface pages = NR $12 bank * 2, hidden = NR $13 bank * 2
+;     (doc 11's MMU model; rubric 3: every cross-page access here goes
+;     through an explicitly mapped window).
+;   - Op dispatch: bounded jump-slot table entered through a low-byte
+;     SMC-patched JP (doc 07's dense-opcode dispatch, doc 08's SMC
+;     rules: MMU7 stays VID_PAGE2 for the whole bench, so the patch
+;     site's page can never move under it). Reserved ops ($09, $0B,
+;     >= $0C) take the error row, matching nxv2dec's rejection.
+;   - Kernels (the measured coefficients):
+;       RUN fill  U: unrolled ld (hl),e/inc hl pairs (doc 01 costs)
+;                 P: PUSH-pair fill (doc 11's 5.5T/byte note; SP
+;                    repointed, whole rep under DI, SP restored before
+;                    any call - see nxb_fill_push header)
+;                 D: zxnDMA fill (port A FIXED at the colour cell,
+;                    port B incrementing - doc 11 fill variant),
+;                    DI-bracketed chunks (the DI amortization IS the
+;                    measurement)
+;       COPY      CPU: computed-entry unrolled LDI blocks (doc 04's
+;                    block-copy shape; LDI's own BC countdown is the
+;                    loop counter - rubric 2 respected by design)
+;                 DMA: the canonical 16-byte mem-to-mem program
+;                    (overlay2.asm dma_prog byte-for-byte, doc 11),
+;                    chunk ladder 64/128/256/512, DI per chunk
+;       SKIP: pointer advance with window-seam splitting
+;       PAL: NR $44 upload via outinb (doc 01) into the SECOND Layer 2
+;                    palette (edit-target only - display select
+;                    untouched, game palette undisturbed)
+;   - Clock: raster-line frame clock (NR $1E/$1F wrap = one frame -
+;     the DMAT/VBFLT precedent; INT-mask immune, works under DI), with
+;     start/end line stamps for sub-frame resolution. Rows report RAW
+;     counts (hex): R=reps completed, F=raster wraps, D=endline-
+;     startline (two's complement). T = (F*LPF + D) * TPL, where
+;     LPF/TPL depend on the machine timing mode (128K/+3 VGA 50Hz:
+;     LPF=311, TPL=1824 at 28MHz) - the bench card carries the
+;     formula; nothing here assumes a mode. Sampling cadence: one
+;     raster poll per source/dest page seam plus one per rep (every
+;     interval well under half a frame; poll cost <1% of any row -
+;     rubric 5: the poll sits inside the measured window and the card
+;     discloses it per row).
+;   - Audio-armed rows (COPY-DMA A-variants, keyframe rows): CTC
+;     channel 0 armed at the stereo video rate (28MHz/16/112 =
+;     15625Hz) with a cost-parity REPLICA of video_ctc_isr_stereo
+;     (same instruction shape: tick counter, two DAC writes, IX pair
+;     advance + end compare; IX loops over a 32-byte silence buffer
+;     instead of setting a done flag). The replica lives on THIS page:
+;     MMU7 = VID_PAGE2 for the whole armed window (the same one-rule
+;     banking invariant vid_run holds for VID_PAGE, doc 11 / rubric
+;     3), no ovl_map_page hops until disarm, IX untouched by every
+;     kernel while armed. audEnable is frozen (vid_run's own music-
+;     tick freeze) so the frame ISR never remaps MMU6/7. Armed rows
+;     also report T=tick delta - a second, independent clock (expected
+;     ticks = elapsed_T/1792; a shortfall = ticks swallowed by DI
+;     windows, exactly the DI-vs-audio interplay this bench exists to
+;     price).
+;   - Ring-prefetch probe: bounded SD SPI primitives (carried from the
+;     retired DMAT suite - the hot VID_PAGE originals are unreachable
+;     from this page, rubric 3) drive a CMD18 window over sd\001.VID's
+;     first contiguous run: N sequential 512-byte ini block reads into
+;     a pool page, raster-timed - the per-block producer cost of the
+;     Task 3 ring.
 ;
-; The bench is fully self-contained on VID_PAGE2 (cold; no CTC ISR is
-; ever armed while it runs, so the "MMU7 = VID_PAGE while the ISR can
-; fire" invariant is not in play, and VID_PAGE's 7-byte DEBUG headroom
-; is not touched). It deliberately does NOT call the hot (VID_PAGE)
-; SD/streaming routines - vid_sd_cmd/vid_read_block/vid_win_* are
-; unreachable from this page without a hot-side stub (rubric 3), so the
-; small SPI primitives are duplicated here with the bounds added. The
-; only vid_stream state touched is via dmat_get_addr's MMU6 bracket
-; (open, capture the first filemap run, close the handle); the raw
-; streaming window state machine itself is never engaged
-; (vidStrmWinOpen stays 0).
+; Every hardware wait is bounded (rubric 6): SD R1 polls 256, token
+; waits 65536, raster-stability retries 4; error exits print tagged
+; rows. Error unwinding: nxb_rep records SP at entry and structural
+; errors reset SP to it before returning (stack-balance invariant:
+; the op loop and handlers keep the stack level between ops).
 ;
-; Dispatch: extVec vector 8 (overlay0.asm's dmat_trampoline, DEBUG
-; only) -> dmat_entry, with flags+250 = sub-mode and flags+249 = rate
-; program, both set by test.dsf LETs before the shared EXTERN 0 8 and
-; self-cleared here (the video stage ladder's own flag convention).
+; Dispatch: extVec vector 8 (overlay0.asm nxben_trampoline, DEBUG
+; only) -> nxben_entry, flags+250 = mode, flags+249 = param (bit 0 =
+; display mode 0/1, bit 1 = audio armed where applicable), both set by
+; test.dsf LETs before the shared EXTERN 0 8 and self-cleared here
+; (the established stage-ladder flag convention). Modes:
+;   1 NXBD   dispatch row (NXB0 op-soup)            row SOU
+;   2 NXBS   skip rows (NXB5, NXB6)                 rows SK8 S16
+;   3 NXBR   RUN CPU rows (NXB1, NXB2 x U/P fill)   rows R8U R8P R6U R6P
+;   4 NXBRD  RUN DMA rows (NXB2, chunks 64/128/256) rows RD1 RD2 RD3
+;   5 NXBC0/1  COPY CPU rows (NXB3, NXB4)           rows C8  C16
+;   6 NXBD0/1/NXBA0/1  COPY DMA rows (NXB4, chunks 64/128/256/512),
+;      param bit1 = audio armed                     rows CD1..CD4
+;   7 NXBK0/1  keyframe rows, ALWAYS audio-armed: NXB7 43KB chunk via
+;      DMA copy (chunk 256) + NXB9 flip micro       rows KF  FLP
+;   8 NXBF   per-frame fixed cost (synthesized FEND-only payload) row FE
+;   9 NXBX   real segment playback (NXB8, CPU kernels)           row SEG
+;  10 NXBP   ring-prefetch probe (256 blocks off sd\001.VID)     row PF
+; Owner bench card: .superpowers/sdd/sp14a-task-4-report.md section 36
+; (run order, row decode, coefficient mapping, STOP condition).
 
-DMAT_ROW_HDR     equ 24     ; header row; run rows follow from 25
-DMAT_NR_LINE_MSB equ $1E    ; active video line, bit 8
-DMAT_NR_LINE_LSB equ $1F    ; active video line, bits 7:0
-DMAT_NR_CORE_VER equ $01    ; core version major.minor (hex nibbles)
-DMAT_NR_CORE_SUB equ $0E    ; core version sub minor
-DMAT_PRESCALER   equ 32     ; H2 pacing: >= 32 cycles/byte at the DMA
-                             ; clock - above the 22.1T/byte silicon ini
-                             ; floor (~875KB/s, below ini's 1264KB/s)
-DMAT_RATE_N      equ 1024   ; rate-mode block target (512KB; capped to
-                             ; the fixture's first contiguous run)
+; Opcode values - literal transcription of the format reference (the
+; same table nxv2enc.py/nxv2dec.py transcribe; Task 3 moves the
+; player's copy into nextdaad.inc when the real player lands).
+NXB_OP_FEND      equ $00
+NXB_OP_SKIP16    equ $01
+NXB_OP_RUN8      equ $02
+NXB_OP_RUN16     equ $03
+NXB_OP_COPY8     equ $04
+NXB_OP_COPY16    equ $05
+NXB_OP_PAL       equ $06
+NXB_OP_SKIP8     equ $07
+NXB_OP_KFLIP     equ $08
+NXB_OP_KSTART    equ $0A
 
-; Entry from dmat_trampoline (overlay0.asm), MMU7 = VID_PAGE2 already.
-; Reads + self-clears flags+250 (sub-mode) and flags+249 (rate
-; program), prints the core-stamped header row, captures the fixture's
-; card address, takes the ini reference read, then dispatches.
-; Corrupts everything; returns with MMU7 left at VID_PAGE2 (harmless -
-; eng_exec remaps MMU7 before the next condact, the ktest_trampoline/
-; retired-vid_bench precedent).
-dmat_entry:
+NXB_ROW_HDR      equ 24     ; header row; data rows follow from 25
+NXB_NR_LINE_MSB  equ $1E    ; active video line, bit 8
+NXB_NR_LINE_LSB  equ $1F    ; active video line, bits 7:0
+NXB_NR_CORE_VER  equ $01    ; core version major.minor (hex nibbles)
+NXB_NR_CORE_SUB  equ $0E    ; core version sub minor
+NXB_NR_MMU2      equ $52    ; slot 2 ($4000-$5FFF): the borrowed dest window
+NXB_NR_L2_SHADOW equ $13    ; Layer 2 shadow (hidden) 16K bank
+NXB_SRC_WIN      equ DATA_WINDOW ; $C000: MMU6 source window
+NXB_DST_WIN      equ $4000  ; MMU2 dest window base
+NXB_CTC_TC       equ 112    ; 28MHz/16/112 = 15625Hz (video stereo rate)
+NXB_MAX_PAGES    equ 8      ; payload cap: 8 x 8K (files capped at 60KB)
+NXB_PF_BLOCKS    equ 256    ; prefetch probe: 512B blocks per row
+
+; ---------------------------------------------------------------------
+; Entry from nxben_trampoline (overlay0.asm), MMU7 = VID_PAGE2 already.
+; Reads + self-clears flags+250 (mode) and flags+249 (param), prints
+; the core-stamped header row, brackets MMU6 (data_save) and MMU2
+; (nr_read save) for the whole visit, then dispatches. Corrupts
+; everything; returns with MMU7 left at VID_PAGE2 (harmless - eng_exec
+; remaps MMU7 before the next condact; the ktest/dmat precedent).
+; ---------------------------------------------------------------------
+nxben_entry:
     ld a, (flags+250)
-    ld (dmatMode), a
+    ld (nxbMode), a
     xor a
     ld (flags+250), a           ; self-clearing (stage-ladder convention)
     ld a, (flags+249)
-    ld (dmatProg), a
+    ld (nxbParam), a
     xor a
     ld (flags+249), a
-    ; header row: mode, rate program, core version
-    ld b, DMAT_ROW_HDR
+    ; header row: mode, param, core version
+    ld b, NXB_ROW_HDR
     ld c, 0
     call dbg_at
-    ld hl, msgDmatHdr
+    ld hl, msgNxbHdr
     call dbg_puts
-    ld a, (dmatMode)
+    ld a, (nxbMode)
     call dbg_hex8
-    ld hl, msgDmatProg
+    ld hl, msgNxbParm
     call dbg_puts
-    ld a, (dmatProg)
+    ld a, (nxbParam)
     call dbg_hex8
-    ld hl, msgDmatCore
+    ld hl, msgNxbCore
     call dbg_puts
-    ld e, DMAT_NR_CORE_VER
+    ld e, NXB_NR_CORE_VER
     call nr_read
     call dbg_hex8
     ld a, '.'
     call dbg_putc
-    ld e, DMAT_NR_CORE_SUB
+    ld e, NXB_NR_CORE_SUB
     call nr_read
     call dbg_hex8
-    ld a, DMAT_ROW_HDR+1
-    ld (dmatRow), a
-    ; card address of the fixture's first block (fresh every invocation)
-    call dmat_get_addr
-    jr nc, .opened
-    ld hl, msgDmatOpenErr       ; A = esxDOS or VID_ERR_* code
-    jp dmat_fail_row
-.opened:
-    ; ini reference read of the same block (fresh every invocation -
-    ; also proves the plain wire path before any DMA run is judged)
-    call dmat_ref_read
-    jr nc, .haveref
-    ld hl, msgDmatRefErr        ; A = VID_ERR_CMD/VID_ERR_TOKEN
-    jp dmat_fail_row
-.haveref:
-    ld a, (dmatMode)
+    ld a, NXB_ROW_HDR+1
+    ld (nxbRow), a
+    ; window brackets for the whole visit (restored in nxb_exit)
+    call data_save              ; MMU6 (banks.asm cell)
+    ld e, NXB_NR_MMU2
+    call nr_read
+    ld (nxbSvMMU2), a           ; MMU2 (bench-local cell)
+    ; music tick frozen for the WHOLE visit (vid_run's own freeze): a
+    ; live audEnable would send the 50Hz ISR down its .audio branch,
+    ; whose aud_tick MMU6/7 remap bracket both pauses rows (cost
+    ; pollution) and races the borrowed windows. The card also
+    ; instructs a quiet game state; this is the structural guarantee.
+    ld a, (audEnable)
+    ld (nxbSvAudMain), a
+    xor a
+    ld (audEnable), a
+    xor a
+    ld (nxbErr), a
+    ld (nxbAudArmed), a
+    ld (nxbShowFrames), a
+    ld hl, 0
+    ld (nxbTicks), hl
+    ; mode dispatch
+    ld a, (nxbMode)
     dec a
-    jr z, dmat_mode_h3
+    jp z, nxb_mode_dispatch
     dec a
-    jr z, dmat_mode_h1
+    jp z, nxb_mode_skip
     dec a
-    jr z, dmat_mode_h4
+    jp z, nxb_mode_runcpu
     dec a
-    jr z, dmat_mode_h2
+    jp z, nxb_mode_rundma
     dec a
-    jp z, dmat_mode_rate
+    jp z, nxb_mode_copycpu
     dec a
-    jp z, dmat_mode_cc
-    ld a, (dmatMode)
-    ld hl, msgDmatBadMode
-    jp dmat_fail_row
+    jp z, nxb_mode_copydma
+    dec a
+    jp z, nxb_mode_keyframe
+    dec a
+    jp z, nxb_mode_fend
+    dec a
+    jp z, nxb_mode_segment
+    dec a
+    jp z, nxb_mode_prefetch
+    ld a, (nxbMode)
+    ld hl, msgNxbBadMode
+    call nxb_fail_row
+    jp nxb_exit
 
-; H3: destination alignment sweep - the original continuous program at
-; dest offsets 0/61/128/255 in the 256-aligned buffer, one report row
-; each. Divergence tracking (256 - offset) convicts H3.
-dmat_mode_h3:
-    ld hl, dmatSweepOffs
-    ld b, 4
-.next:
-    push bc
-    push hl
-    ld a, (hl)
-    ld e, a
-    ld d, 0
-    ld hl, dmatDstBuf
-    add hl, de
-    ld (dmatDest), hl
-    xor a                       ; program 0 = original continuous
-    call dmat_run_and_report
-    pop hl
-    inc hl
-    pop bc
-    djnz .next
+; Common exit: MMU2/MMU6 restored, palette control back to the game
+; default (a PAL op may have left the edit target on the second L2
+; palette), MMU7 stays VID_PAGE2 (see entry header).
+nxb_exit:
+    ld a, (nxbSvMMU2)
+    nextreg NXB_NR_MMU2, a
+    call data_restore
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    ld a, (nxbSvAudMain)
+    ld (audEnable), a           ; music tick thawed (entry's freeze)
     ret
-dmatSweepOffs: db 0, 61, 128, 255
 
-; H1: the original continuous program re-run as-was. Dest low byte $3D
-; (offset 61) reproduces the bench-era vidAudBuf alignment implied by
-; the recorded divergence offset 0xC3 = 256 - 61, so this run is
-; faithful in program bytes AND destination alignment.
-dmat_mode_h1:
-    ld hl, dmatDstBuf+61
-    ld (dmatDest), hl
-    xor a                       ; program 0 = original continuous
-    jp dmat_run_and_report
-
-; H4: burst-mode variant with the em00k reference init ($C3 header,
-; $B3 force-ready) - see the program's own comments.
-dmat_mode_h4:
-    ld hl, dmatDstBuf
-    ld (dmatDest), hl
-    ld a, 1                     ; program 1 = burst + $C3/$B3
-    jp dmat_run_and_report
-
-; H2: pacing pair - prescaler-paced continuous (row 1), then cycle-
-; length 4/4 continuous (row 2). One factor varied per run vs H1's
-; original program.
-dmat_mode_h2:
-    ld hl, dmatDstBuf
-    ld (dmatDest), hl
-    ld a, 2                     ; program 2 = prescaler-paced
-    call dmat_run_and_report
-    ld hl, dmatDstBuf
-    ld (dmatDest), hl
-    ld a, 3                     ; program 3 = cycle length 4/4
-    jp dmat_run_and_report
-
-; In: HL = message, A = code byte (appended as hex). Prints on the next
-; run row, consuming it. Corrupts everything.
-dmat_fail_row:
+; In: HL = message, A = code byte (appended as hex). Prints on the
+; next data row, consuming it. Corrupts everything.
+nxb_fail_row:
     push af
     push hl
-    ld a, (dmatRow)
+    ld a, (nxbRow)
     ld b, a
     inc a
-    ld (dmatRow), a
+    ld (nxbRow), a
     ld c, 0
     call dbg_at
     pop hl
@@ -4777,466 +4824,1629 @@ dmat_fail_row:
     pop af
     jp dbg_hex8
 
-; In: A = program index 0-3, (dmatDest) set. Runs one 512-byte DMA
-; transfer of the reference block and prints one report row:
-;   "O=xx MATCH"                                    clean match
-;   "O=xx DIV=yyyy R=rrrrrrrrrrrrrrrr D=dddd..."    divergence offset +
-;                                                   first (up to) 8
-;                                                   REF/DMA bytes from it
-;   "O=xx CMD ERR" / "O=xx TOK ERR"                 SD bracket errors
-;   "O=xx TMO ..."                                  burst completion
-;                                                   timeout (compare
-;                                                   still printed - the
-;                                                   data may have landed)
-; Corrupts everything.
-dmat_run_and_report:
-    call dmat_prog_sel
-    call dmat_run_block         ; B = 0 ok/1 CMD/2 token/3 burst timeout
+; =====================================================================
+; Mode bodies. Shared shape: display/dest setup from the param, load
+; the fixture(s), configure the kernel selectors, run row(s), free the
+; banks, restore, exit.
+; =====================================================================
+
+; Mode 1: dispatch row - NXB0 op-soup through the CPU kernels.
+nxb_mode_dispatch:
+    call nxb_disp_set
+    ld a, '0'
+    call nxb_load
+    jp c, nxb_load_fail
+    call nxb_cfg_cpu
+    ld hl, 32
+    ld (nxbReps), hl
+    ld hl, tagSOU
+    call nxb_run_row
+    call nxb_free
+    call nxb_disp_restore
+    jp nxb_exit
+
+; Mode 2: skip rows - NXB5 (SKIP8 soup) then NXB6 (SKIP16).
+nxb_mode_skip:
+    call nxb_disp_set
+    call nxb_cfg_cpu
+    ld a, '5'
+    call nxb_load
+    jp c, nxb_load_fail
+    ld hl, 64
+    ld (nxbReps), hl
+    ld hl, tagSK8
+    call nxb_run_row
+    call nxb_free
+    ld a, '6'
+    call nxb_load
+    jp c, nxb_load_fail
+    ld hl, 256
+    ld (nxbReps), hl
+    ld hl, tagS16
+    call nxb_run_row
+    call nxb_free
+    call nxb_disp_restore
+    jp nxb_exit
+
+; Mode 3: RUN CPU rows - NXB1 (RUN8) and NXB2 (RUN16), each through
+; the unrolled fill and the PUSH fill (PUSH reps run under DI - see
+; nxb_fill_push's header).
+nxb_mode_runcpu:
+    call nxb_disp_set
+    call nxb_cfg_cpu
+    ld a, '1'
+    call nxb_load
+    jp c, nxb_load_fail
+    ld hl, 32
+    ld (nxbReps), hl
+    xor a
+    ld (nxbFillKind), a          ; unrolled
+    ld hl, tagR8U
+    call nxb_run_row
+    ld a, 1
+    ld (nxbFillKind), a          ; push
+    ld hl, tagR8P
+    call nxb_run_row
+    call nxb_free
+    ld a, '2'
+    call nxb_load
+    jp c, nxb_load_fail
+    xor a
+    ld (nxbFillKind), a
+    ld hl, tagR6U
+    call nxb_run_row
+    ld a, 1
+    ld (nxbFillKind), a
+    ld hl, tagR6P
+    call nxb_run_row
+    call nxb_free
+    call nxb_disp_restore
+    jp nxb_exit
+
+; Mode 4: RUN DMA rows - NXB2 through the zxnDMA fill at chunk caps
+; 64/128/256 (the >=64B DMA-crossover ladder incl. DI amortization).
+nxb_mode_rundma:
+    call nxb_disp_set
+    ld a, '2'
+    call nxb_load
+    jp c, nxb_load_fail
+    ld a, 2
+    ld (nxbFillKind), a          ; DMA fill
+    xor a
+    ld (nxbCopyKind), a
+    ld hl, 32
+    ld (nxbReps), hl
+    ld hl, 64
+    ld (nxbDmaCap), hl
+    ld hl, tagRD1
+    call nxb_run_row
+    ld hl, 128
+    ld (nxbDmaCap), hl
+    ld hl, tagRD2
+    call nxb_run_row
+    ld hl, 256
+    ld (nxbDmaCap), hl
+    ld hl, tagRD3
+    call nxb_run_row
+    call nxb_free
+    call nxb_disp_restore
+    jp nxb_exit
+
+; Mode 5: COPY CPU rows - NXB3 (COPY8) then NXB4 (COPY16), LDI kernel.
+; param bit 0 = display mode (0 = 256x192 mode-0, 1 = 320x256 mode-1).
+nxb_mode_copycpu:
+    call nxb_disp_set
+    call nxb_cfg_cpu
+    ld hl, 32
+    ld (nxbReps), hl
+    ld a, '3'
+    call nxb_load
+    jp c, nxb_load_fail
+    ld hl, tagC8
+    call nxb_run_row
+    call nxb_free
+    ld a, '4'
+    call nxb_load
+    jp c, nxb_load_fail
+    ld hl, tagC16
+    call nxb_run_row
+    call nxb_free
+    call nxb_disp_restore
+    jp nxb_exit
+
+; Mode 6: COPY DMA rows - NXB4 through the mem-to-mem DMA copy at
+; chunk caps 64/128/256/512. param bit 0 = display mode, bit 1 =
+; audio armed (the CTC replica ISR ticking through every chunk's DI
+; bracket - the decisive interplay measurement).
+nxb_mode_copydma:
+    call nxb_disp_set
+    ld a, '4'
+    call nxb_load
+    jp c, nxb_load_fail
+    ld a, 1
+    ld (nxbCopyKind), a          ; DMA copy
+    xor a
+    ld (nxbFillKind), a
+    ld hl, 32
+    ld (nxbReps), hl
+    ld a, (nxbParam)
+    and 2
+    call nz, nxb_audio_arm
+    ld hl, 64
+    ld (nxbDmaCap), hl
+    ld hl, tagCD1
+    call nxb_run_row
+    ld hl, 128
+    ld (nxbDmaCap), hl
+    ld hl, tagCD2
+    call nxb_run_row
+    ld hl, 256
+    ld (nxbDmaCap), hl
+    ld hl, tagCD3
+    call nxb_run_row
+    ld hl, 512
+    ld (nxbDmaCap), hl
+    ld hl, tagCD4
+    call nxb_run_row
+    ld a, (nxbAudArmed)
+    or a
+    call nz, nxb_audio_disarm
+    call nxb_free
+    call nxb_disp_restore
+    jp nxb_exit
+
+; Mode 7: keyframe rows, ALWAYS audio-armed - NXB7 (KSTART + one 43KB
+; COPY16 + KFLIP) via DMA copy at chunk 256 (the shape-A collapse
+; question), then NXB9 (KSTART+KFLIP micro) for the flip op cost.
+; param bit 0 = display mode.
+; Loads strictly precede arming: the replica ISR owns IX while armed
+; (it ADVANCES IX every tick), and nxb_load's esxDOS calls pass
+; pointers in IX - the two cannot overlap.
+nxb_mode_keyframe:
+    call nxb_disp_set
+    ld a, 1
+    ld (nxbCopyKind), a
+    xor a
+    ld (nxbFillKind), a
+    ld hl, 256
+    ld (nxbDmaCap), hl
+    ld a, '7'
+    call nxb_load
+    jp c, nxb_load_fail
+    call nxb_audio_arm
+    ld hl, 32
+    ld (nxbReps), hl
+    ld hl, tagKF
+    call nxb_run_row
+    call nxb_audio_disarm
+    call nxb_free
+    ld a, '9'
+    call nxb_load
+    jp c, nxb_load_fail
+    call nxb_audio_arm
+    ld hl, 4096
+    ld (nxbReps), hl
+    ld hl, tagFLP
+    call nxb_run_row
+    call nxb_audio_disarm
+    call nxb_free
+    call nxb_disp_restore
+    jp nxb_exit
+
+; Mode 8: per-frame fixed cost - a synthesized 1-byte FEND payload in
+; one pool page (no file). The rep IS the harness reset + one dispatch
+; + terminal bookkeeping: the frame-loop floor.
+nxb_mode_fend:
+    call nxb_disp_set
+    call nxb_cfg_cpu
+    call bank_alloc
+    jr c, .nobank
+    ld (nxbBanks), a
+    add a, a
+    ld (nxbSrcPages), a
+    call data_map_page
+    xor a
+    ld (NXB_SRC_WIN), a          ; the single FEND byte
+    ld a, 1
+    ld (nxbBankCnt), a
+    ld (nxbSrcCnt), a
+    ld hl, 1
+    ld (nxbLen), hl
+    ld hl, 8192
+    ld (nxbReps), hl
+    ld hl, tagFE
+    call nxb_run_row
+    call nxb_free
+    call nxb_disp_restore
+    jp nxb_exit
+.nobank:
+    ld hl, msgNxbBank
+    xor a
+    call nxb_fail_row
+    call nxb_disp_restore
+    jp nxb_exit
+
+; Mode 9: real segment playback - NXB8 (consecutive real frame
+; payloads from the classic 256x192@25 encode) through the CPU
+; kernels; the mixed-op sanity anchor against the whole model. The
+; row also reports N= frames decoded per rep.
+nxb_mode_segment:
+    call nxb_disp_set
+    call nxb_cfg_cpu
+    ld a, '8'
+    call nxb_load
+    jp c, nxb_load_fail
+    ld a, 1
+    ld (nxbShowFrames), a
+    ld hl, 16
+    ld (nxbReps), hl
+    ld hl, tagSEG
+    call nxb_run_row
+    call nxb_free
+    call nxb_disp_restore
+    jp nxb_exit
+
+; Shared load-failure tail (A = esxDOS/alloc error code from nxb_load).
+nxb_load_fail:
+    ld hl, msgNxbLoad
+    call nxb_fail_row
+    call nxb_free                ; release any banks the partial load took
+    call nxb_disp_restore
+    jp nxb_exit
+
+; CPU kernel config: no DMA cap, unrolled fill, LDI copy.
+nxb_cfg_cpu:
+    xor a
+    ld (nxbFillKind), a
+    ld (nxbCopyKind), a
+    ld hl, 0
+    ld (nxbDmaCap), hl
+    ret
+
+; =====================================================================
+; Display/dest setup. Reads the param's display-mode bit, saves and
+; sets NR $70 (resolution bits 5-4) and NR $69 (bit 7 Layer 2 visible
+; - display fetch active = realistic bus conditions), derives the
+; front/hidden surface page bases from NR $12/$13 (16K bank * 2) and
+; the per-surface page counts (mode-0: 48K = 6 pages; mode-1: 80K =
+; 10 pages). The bench paints the VISIBLE surface deliberately -
+; garbage on screen during a row is expected and stated on the card.
+; =====================================================================
+nxb_disp_set:
+    ld a, (nxbParam)
+    and 1
+    ld (nxbDispMode), a
+    ld e, NR_L2_CTRL
+    call nr_read
+    ld (nxbSvNr70), a
+    and %11001111                ; clear resolution bits 5-4
+    ld b, a
+    ld a, (nxbDispMode)
+    or a
+    jr z, .m0
+    set 4, b                     ; %01 = 320x256 mode-1
+.m0:
     ld a, b
-    ld (dmatStatus), a
-    ld a, (dmatRow)
+    nextreg NR_L2_CTRL, a
+    ld e, NR_DISPLAY_CTRL
+    call nr_read
+    ld (nxbSvNr69), a
+    or $80                       ; Layer 2 visible
+    nextreg NR_DISPLAY_CTRL, a
+    ld e, NR_L2_BANK
+    call nr_read
+    ld (nxbSvNr12), a
+    add a, a
+    ld (nxbBaseFront), a
+    ld e, NXB_NR_L2_SHADOW
+    call nr_read
+    or a
+    jr nz, .sh                   ; shadow unset (0 = system bank): the
+    ld a, (nxbSvNr12)            ; hidden surface FALLS BACK to the
+                                  ; front bank - painting "hidden" then
+                                  ; paints the visible surface, which
+                                  ; is cost-identical (card notes it);
+                                  ; never page 0 (rubric: a wild write
+                                  ; there lands on system RAM)
+.sh:
+    add a, a
+    ld (nxbBaseHidden), a
+    ld a, (nxbDispMode)
+    or a
+    ld a, 6
+    jr z, .n
+    ld a, 10
+.n:
+    ld (nxbPagesN), a
+    ld b, a
+    ld a, (nxbBaseFront)
+    add a, b
+    ld (nxbEndFront), a
+    ld a, (nxbBaseHidden)
+    add a, b
+    ld (nxbEndHidden), a
+    ret
+
+nxb_disp_restore:
+    ld a, (nxbSvNr70)
+    nextreg NR_L2_CTRL, a
+    ld a, (nxbSvNr69)
+    nextreg NR_DISPLAY_CTRL, a
+    ret
+
+; =====================================================================
+; Fixture loader. In: A = fixture digit ('0'-'9') patched into
+; "NXB?.BIN". Allocates pool banks (both 8K pages each), reads the
+; file through the MMU6 window (esxDOS F_READ, the ddb_load pattern),
+; records the page list + total length. Out: CF clear = loaded (page
+; list/len valid); CF set = failure, A = esxDOS/alloc code, any banks
+; already taken remain recorded for nxb_free. Corrupts everything.
+; =====================================================================
+nxb_load:
+    ld (nxbFname+3), a
+    xor a
+    ld (nxbSrcCnt), a
+    ld (nxbBankCnt), a
+    ld (nxbSrcIdx), a            ; doubles as the loader's page index
+    ld hl, 0
+    ld (nxbLen), hl
+    call esx_getsetdrv
+    ret c
+    ld ix, nxbFname
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    ret c
+    ld (nxbHandle), a
+.page:
+    ld a, (nxbSrcIdx)
+    cp NXB_MAX_PAGES
+    jr nc, .toobig
+    bit 0, a
+    jr nz, .odd
+    call bank_alloc              ; even page index: fresh bank
+    jr c, .errclose
+    push af
+    ld hl, nxbBanks
+    ld a, (nxbBankCnt)
+    add hl, a
+    inc a
+    ld (nxbBankCnt), a
+    pop af
+    ld (hl), a
+    add a, a                     ; page = bank * 2
+    jr .have
+.odd:
+    ld hl, nxbSrcPages
+    ld a, (nxbSrcIdx)
+    dec a
+    add hl, a
+    ld a, (hl)
+    inc a                        ; page = previous page + 1
+.have:
+    ld hl, nxbSrcPages
+    push af
+    ld a, (nxbSrcIdx)
+    add hl, a
+    pop af
+    ld (hl), a
+    call data_map_page
+    ld a, (nxbHandle)
+    ld ix, NXB_SRC_WIN
+    ld bc, $2000
+    call esx_fread
+    jr c, .errclose
+    ld a, b
+    or c
+    jr z, .done                  ; empty read: previous page was the end
+    ld hl, (nxbLen)
+    add hl, bc
+    ld (nxbLen), hl
+    ld a, (nxbSrcIdx)
+    inc a
+    ld (nxbSrcIdx), a
+    ld (nxbSrcCnt), a
+    ld a, b
+    cp $20
+    jr z, .page                  ; full 8K: keep reading
+.done:
+    ld a, (nxbHandle)
+    call esx_fclose
+    ld hl, (nxbLen)
+    ld a, h
+    or l
+    jr z, .empty
+    or a                         ; CF clear
+    ret
+.toobig:
+    ld a, $FE                    ; bench-local: file exceeds 64K cap
+    jr .errclose                 ; (via the push - errclose2 pops)
+.empty:
+    ld a, $FD                    ; bench-local: empty file
+    scf
+    ret
+.errclose:
+    push af
+.errclose2:
+    ld a, (nxbHandle)
+    call esx_fclose
+    pop af
+    scf
+    ret
+
+; Free every bank the loader took. Corrupts AF, BC, HL.
+nxb_free:
+    ld a, (nxbBankCnt)
+    or a
+    ret z
+    ld b, a
+    ld hl, nxbBanks
+.f:
+    ld a, (hl)
+    call bank_free
+    inc hl
+    djnz .f
+    xor a
+    ld (nxbBankCnt), a
+    ret
+
+; =====================================================================
+; Row runner. In: HL = tag string, nxbReps + kernel config + display
+; set + payload loaded. Runs nxbReps decode reps, raster-timed,
+; prints one row: TAG R=reps F=wraps D=lineDelta [T=ticks] [N=frames]
+; [E=err/op]. Corrupts everything.
+; =====================================================================
+nxb_run_row:
+    ld (nxbRowTag), hl
+    xor a
+    ld (nxbErr), a
+    ld hl, (nxbTicks)
+    ld (nxbTickStart), hl
+    ld hl, (nxbReps)
+    ld (nxbRepCnt), hl
+    ld hl, 0
+    ld (nxbFrames), hl
+    call nxb_line_read
+    ld (nxbLinePrev), hl
+    ld (nxbLineStart), hl
+.rep:
+    call nxb_rep
+    ld a, (nxbErr)
+    or a
+    jr nz, .end
+    call nxb_tick_pres
+    ld hl, (nxbRepCnt)
+    dec hl
+    ld (nxbRepCnt), hl
+    ld a, h
+    or l
+    jr nz, .rep
+.end:
+    call nxb_line_read
+    ld (nxbLineEnd), hl
+    ; ---- print the row ----
+    ld a, (nxbRow)
     ld b, a
     inc a
-    ld (dmatRow), a
+    ld (nxbRow), a
     ld c, 0
     call dbg_at
-    ld hl, msgDmatOff
+    ld hl, (nxbRowTag)
     call dbg_puts
-    ld a, (dmatDest)            ; low byte IS the sweep offset (the
-    call dbg_hex8                ; buffer is 256-aligned)
-    ld a, ' '
-    call dbg_putc
-    ld a, (dmatStatus)
+    ld hl, msgNxbR
+    call dbg_puts
+    ld hl, (nxbReps)
+    ld de, (nxbRepCnt)
     or a
-    jr z, .compare
-    cp 3
-    jr z, .tmo
-    cp 1
-    ld hl, msgDmatCmdErr
-    jr z, .err
-    ld hl, msgDmatTokErr
-.err:
-    jp dbg_puts
-.tmo:
-    ld hl, msgDmatTmo
-    call dbg_puts
-.compare:
-    call dmat_compare           ; CF set = diverged, HL = offset
-    jr c, .diverge
-    ld hl, msgDmatMatch
-    jp dbg_puts
-.diverge:
-    push hl
-    ld hl, msgDmatDiv
-    call dbg_puts
-    pop hl
-    push hl
+    sbc hl, de                   ; reps completed
     call dbg_hex16
-    ld hl, msgDmatRef
+    ld hl, msgNxbF
     call dbg_puts
-    pop hl
-    push hl
-    ld de, dmatRefBuf
-    add hl, de
-    call dmat_dump8
-    ld hl, msgDmatDma
+    ld hl, (nxbFrames)
+    call dbg_hex16
+    ld hl, msgNxbD
     call dbg_puts
-    pop hl
-    ld de, (dmatDest)
-    add hl, de
-    jp dmat_dump8
+    ld hl, (nxbLineEnd)
+    ld de, (nxbLineStart)
+    or a
+    sbc hl, de                   ; line delta, two's complement
+    call dbg_hex16
+    ld a, (nxbAudArmed)
+    or a
+    jr z, .noticks
+    ld hl, msgNxbT
+    call dbg_puts
+    ld hl, (nxbTicks)
+    ld de, (nxbTickStart)
+    or a
+    sbc hl, de
+    call dbg_hex16
+.noticks:
+    ld a, (nxbShowFrames)
+    or a
+    jr z, .nofr
+    ld hl, msgNxbN
+    call dbg_puts
+    ld a, (nxbSegFrames)
+    call dbg_hex8
+.nofr:
+    ld a, (nxbErr)
+    or a
+    ret z
+    ld hl, msgNxbE
+    call dbg_puts
+    ld a, (nxbErr)
+    call dbg_hex8
+    ld a, '/'
+    call dbg_putc
+    ld a, (nxbErrOp)
+    jp dbg_hex8
 
-; In: A = program index 0-3 (orig/burst/prescaler/cy44), (dmatDest) =
-; destination. Stages dmatProgPtr/ProgLen/Burst and patches the
-; selected program's WR4 Port B start address field. Corrupts AF, DE,
-; HL.
-dmat_prog_sel:
-    ld l, a
-    ld h, 0
-    ld e, l
-    ld d, h
-    add hl, hl                  ; *2
-    add hl, de                  ; *3
-    add hl, hl                  ; *6 (table entries are 6 bytes)
-    ld de, dmatProgTab
-    add hl, de
-    ld e, (hl)
+; =====================================================================
+; One rep: decode the loaded payload (all its frames) from the source
+; pages into the Layer 2 surface. Register file across the op loop:
+; HL = source cursor ($C000-$DFFF), DE = dest cursor ($4000-$5FFF),
+; BC = per-op scratch/counts. Stack is level between ops; nxbRepSp is
+; the abort anchor (structural errors reset SP and return). IX is
+; never touched (reserved for the armed replica ISR).
+; =====================================================================
+nxb_rep:
+    ld (nxbRepSp), sp
+    xor a
+    ld (nxbHidden), a
+    ld (nxbSrcIdx), a
+    ld (nxbFrameCt), a
+    ld a, (nxbSrcPages)
+    call data_map_page
+    ld a, (nxbBaseFront)
+    ld (nxbDstPage), a
+    nextreg NXB_NR_MMU2, a
+    ld a, (nxbEndFront)
+    ld (nxbDstEnd), a
+    ld hl, NXB_SRC_WIN
+    ld de, NXB_DST_WIN
+    ; PUSH-fill rows run the whole rep under DI (SP is repointed
+    ; inside the fill - see nxb_fill_push). EI ambient otherwise.
+    ld a, (nxbFillKind)
+    cp 1
+    jr nz, nxb_oploop
+    di
+    call nxb_oploop_call         ; run the rep as a subroutine, then EI
+    ei
+    ret
+nxb_oploop_call:
+    jr nxb_oploop                ; (kept trivial: the rep exits via ret)
+
+; ---- the op loop ----
+nxb_oploop:
+    ld a, h
+    cp $DF
+    jr nc, nxb_op_edge           ; rare: window end or header straddle
+nxb_op_fetch:
+    ld a, (hl)
     inc hl
-    ld d, (hl)
+nxb_dispatch_a:
+    cp $0C
+    jr nc, nxb_op_bad_a
+    add a, a
+    add a, a
+    add a, low nxbJtab
+    ld (nxb_disp_jt+1), a
+nxb_disp_jt:
+    jp nxbJtab                   ; low byte SMC-patched (doc 08: MMU7
+                                  ; fixed at VID_PAGE2 for the whole
+                                  ; bench, the patch site cannot move)
+nxb_op_edge:
+    ; H = $DF (last page bytes) or >= $E0 (wrap due). Normalize first.
+    cp $E0
+    jr c, .instr
+    call nxb_src_next
+    jr nxb_oploop
+.instr:
+    ; opcode at $DFxx: if fewer than 3 operand bytes remain in the
+    ; window ($DFFD-$DFFF), take the byte-fetch slow path; otherwise
+    ; the fast path is safe for every op header (max 3 operand bytes).
+    ld a, l
+    cp $FD
+    jr c, nxb_op_fetch
+    jp nxb_slow_op
+
+; Reserved/unknown opcode (A = op). nxv2dec: "reserved/unimplemented
+; opcode" - no length is known, so the rep aborts.
+nxb_op_bad_a:
+    ld (nxbErrOp), a
+    ld a, 1
+    ld (nxbErr), a
+nxb_rep_abort:
+    ld sp, (nxbRepSp)
+    ei                           ; a PUSH-fill (DI) rep's abort must not
+                                  ; leave interrupts off for the caller
+    ret
+
+; Slow op path: opcode (and each operand byte) fetched through
+; nxb_fetch, which handles the window seam per byte. Operand-less ops
+; re-enter the normal dispatcher (their bodies handle seams
+; themselves); counted ops parse here and enter the shared bodies
+; with the same register contract the fast handlers use.
+nxb_slow_op:
+    call nxb_fetch               ; A = opcode
+    cp $0C
+    jr nc, nxb_op_bad_a
+    cp NXB_OP_SKIP8
+    jr z, .s8
+    cp NXB_OP_SKIP16
+    jr z, .s16
+    cp NXB_OP_RUN8
+    jr z, .r8
+    cp NXB_OP_RUN16
+    jr z, .r16
+    cp NXB_OP_COPY8
+    jr z, .c8
+    cp NXB_OP_COPY16
+    jr z, .c16
+    jp nxb_dispatch_a            ; FEND/PAL/KFLIP/KSTART: no operands
+.s8:
+    call nxb_fetch
+    ld c, a
+    ld b, 0
+    jp nxb_skip_body
+.s16:
+    call nxb_fetch
+    ld c, a
+    call nxb_fetch
+    ld b, a
+    jp nxb_skip_body
+.r8:
+    call nxb_fetch
+    ld c, a
+    ld b, 0
+    call nxb_fetch               ; colour
+    jp nxb_run_body
+.r16:
+    call nxb_fetch
+    ld c, a
+    call nxb_fetch
+    ld b, a
+    call nxb_fetch               ; colour
+    jp nxb_run_body
+.c8:
+    call nxb_fetch
+    ld c, a
+    ld b, 0
+    jp nxb_copy_body
+.c16:
+    call nxb_fetch
+    ld c, a
+    call nxb_fetch
+    ld b, a
+    jp nxb_copy_body
+
+; Fetch one source byte across the window seam. Out: A = byte, HL
+; advanced. Preserves BC, DE. Corrupts F.
+nxb_fetch:
+    ld a, h
+    cp $E0
+    call nc, nxb_src_next
+    ld a, (hl)
     inc hl
-    ld a, e
-    ld (dmatProgPtr), a
+    ret
+
+; Advance to the next source page: bump the page index (bounds-checked
+; against the loaded page count - overrun aborts the rep), map it at
+; MMU6, rebase HL, and take the raster-clock sample for this seam
+; (the row's sampling cadence - see the block header). Preserves BC,
+; DE. Corrupts AF; HL rebased by -$2000.
+nxb_src_next:
+    push bc
+    push de
+    ld a, (nxbSrcIdx)
+    inc a
+    ld (nxbSrcIdx), a
+    ld c, a
+    ld a, (nxbSrcCnt)
+    dec a
+    cp c
+    jr c, .ovr                   ; idx > last valid page
+    ld a, c
+    push hl
+    ld hl, nxbSrcPages
+    add hl, a
+    ld a, (hl)
+    pop hl
+    call data_map_page
+    ld a, h
+    sub $20
+    ld h, a
+    call nxb_tick_pres
+    pop de
+    pop bc
+    ret
+.ovr:
+    ld a, 2                      ; E=02: source ran past the loaded pages
+    ld (nxbErr), a
+    xor a
+    ld (nxbErrOp), a
+    jp nxb_rep_abort
+
+; Advance to the next dest page (surface-bounds-checked), map at MMU2,
+; rebase DE, raster sample. Preserves BC, HL. Corrupts AF; DE rebased.
+nxb_dst_next:
+    push bc
+    ld a, (nxbDstPage)
+    inc a
+    ld (nxbDstPage), a
+    ld c, a
+    ld a, (nxbDstEnd)
+    cp c
+    jr z, .ovr
+    jr c, .ovr
+    ld a, c
+    nextreg NXB_NR_MMU2, a
     ld a, d
-    ld (dmatProgPtr+1), a
-    ld e, (hl)
+    sub $20
+    ld d, a
+    call nxb_tick_pres
+    pop bc
+    ret
+.ovr:
+    ld a, 3                      ; E=03: cursor overran the surface
+    ld (nxbErr), a
+    xor a
+    ld (nxbErrOp), a
+    jp nxb_rep_abort
+
+; =====================================================================
+; Op handlers. Fast entries parse operands inline ((hl) reads are safe:
+; the dispatcher guaranteed 3 operand bytes before the seam), then
+; fall into the shared bodies. Contract at each body: HL = src after
+; the header, DE = dest, BC = count (RUN also A = colour).
+; =====================================================================
+
+nxb_op_skip8:
+    ld c, (hl)
     inc hl
-    ld d, (hl)                  ; DE = the program's baddr field
+    ld b, 0
+    jr nxb_skip_body
+nxb_op_skip16:
+    ld c, (hl)
     inc hl
-    ld a, (hl)
-    ld (dmatProgLen), a
+    ld b, (hl)
     inc hl
-    ld a, (hl)
-    ld (dmatBurst), a
-    ld hl, (dmatDest)
+nxb_skip_body:
+.seg:
+    ld a, b
+    or c
+    jp z, nxb_oploop
+    ld a, d
+    cp $60
+    call nc, nxb_dst_next
+    push hl
+    ld hl, $6000
+    or a
+    sbc hl, de                   ; HL = dest room (1..$2000)
+    or a
+    push hl
+    sbc hl, bc                   ; room - count
+    pop hl
+    jr c, .part
+    ; count fits: DE += BC, done
+    pop hl
     ex de, hl
+    add hl, bc
+    ex de, hl
+    jp nxb_oploop
+.part:
+    ; consume the room: BC -= room, DE hits the seam
+    ld a, c
+    sub l
+    ld c, a
+    ld a, b
+    sbc a, h
+    ld b, a
+    pop hl
+    ld d, $60                    ; place DE exactly at the seam
+    ld e, 0
+    jr .seg                      ; seam handled at loop head
+
+nxb_op_run8:
+    ld c, (hl)
+    inc hl
+    ld b, 0
+    ld a, (hl)
+    inc hl
+    jr nxb_run_body
+nxb_op_run16:
+    ld c, (hl)
+    inc hl
+    ld b, (hl)
+    inc hl
+    ld a, (hl)
+    inc hl
+nxb_run_body:
+    ld (nxbColour), a
+    ld (nxbRemain), bc
+.seg:
+    ld bc, (nxbRemain)
+    ld a, b
+    or c
+    jp z, nxb_oploop
+    ld a, d
+    cp $60
+    call nc, nxb_dst_next
+    call nxb_min_dst             ; BC = chunk (dest room + DMA cap)
+    push hl
+    ld hl, (nxbRemain)
+    or a
+    sbc hl, bc
+    ld (nxbRemain), hl
+    pop hl
+    ld a, (nxbFillKind)
+    or a
+    jr z, .u
+    dec a
+    jr z, .p
+    call nxb_fill_dma
+    jr .seg
+.u:
+    call nxb_fill_unrolled
+    jr .seg
+.p:
+    call nxb_fill_push
+    jr .seg
+
+nxb_op_copy8:
+    ld c, (hl)
+    inc hl
+    ld b, 0
+    jr nxb_copy_body
+nxb_op_copy16:
+    ld c, (hl)
+    inc hl
+    ld b, (hl)
+    inc hl
+nxb_copy_body:
+    ld (nxbRemain), bc
+.seg:
+    ld bc, (nxbRemain)
+    ld a, b
+    or c
+    jp z, nxb_oploop
+    ld a, h
+    cp $E0
+    call nc, nxb_src_next
+    ld a, d
+    cp $60
+    call nc, nxb_dst_next
+    call nxb_min_all             ; BC = chunk (src + dest rooms + cap)
+    push hl
+    ld hl, (nxbRemain)
+    or a
+    sbc hl, bc
+    ld (nxbRemain), hl
+    pop hl
+    ld a, (nxbCopyKind)
+    or a
+    jr z, .cpu
+    call nxb_copy_dma
+    jr .seg
+.cpu:
+    call nxb_copy_ldi
+    jr .seg
+
+; PAL: 512-byte NR $44 palette block upload into the SECOND Layer 2
+; palette (edit target only - NR $43 display-select bits untouched, so
+; the game's displayed palette never changes; the game default edit
+; target is restored at nxb_exit). Prototype kernel: plain outinb
+; loop - PAL is not a bench coefficient (its cost is arithmetic:
+; 512 fetches + 256 index-pair writes), it just has to be CORRECT for
+; the NXB8 segment row.
+nxb_op_pal:
+    nextreg NR_PAL_CTRL, $50     ; auto-inc, edit target = L2 second
+    nextreg NR_PAL_INDEX, 0
+    ld bc, 512
+    ld (nxbRemain), bc
+.seg:
+    ld bc, (nxbRemain)
+    ld a, b
+    or c
+    jp z, nxb_oploop
+    ld a, h
+    cp $E0
+    call nc, nxb_src_next
+    call nxb_min_src             ; BC = chunk (src room only)
+    push hl
+    ld hl, (nxbRemain)
+    or a
+    sbc hl, bc
+    ld (nxbRemain), hl
+    pop hl
+    push de
+    ld d, b
+    ld e, c                      ; DE = chunk counter (dest ptr parked)
+    ld bc, TBBLUE_REG_SEL
+    ld a, NR_PAL_VALUE9
+    out (c), a
+    ld b, high TBBLUE_REG_ACC    ; C stays $3B
+.pb:
+    outinb                       ; out (BC),(HL); HL++ (B unchanged)
+    dec de
+    ld a, d
+    or e
+    jr nz, .pb
+    pop de
+    jr .seg
+
+; KSTART: begin keyframe span - paint target = hidden surface, cursor
+; reset to 0 (format reference). See the block header for the
+; deliberate no-content-copy divergence from nxv2dec.
+nxb_op_kstart:
+    ld a, 1
+    ld (nxbHidden), a
+    ld a, (nxbBaseHidden)
+    ld (nxbDstPage), a
+    nextreg NXB_NR_MMU2, a
+    ld a, (nxbEndHidden)
+    ld (nxbDstEnd), a
+    ld de, NXB_DST_WIN
+    jp nxb_oploop
+
+; KFLIP: end of keyframe span - the full flip WRITE sequence for cost
+; parity (vid_run's own flip: NR $43 palette-bank write + front/back
+; swap + NR $12 write), but with the CURRENT display values so the
+; screen keeps showing the same bank between reps. Terminal.
+nxb_op_kflip:
+    ld a, PAL_L2_FIRST
+    nextreg NR_PAL_CTRL, a
+    ld a, (nxbBaseFront)
+    ld b, a
+    ld a, (nxbBaseHidden)
+    ld (nxbBaseFront), a
+    ld a, b
+    ld (nxbBaseHidden), a        ; swap the bench's own front/hidden
+    ld a, (nxbEndFront)
+    ld b, a
+    ld a, (nxbEndHidden)
+    ld (nxbEndFront), a
+    ld a, b
+    ld (nxbEndHidden), a
+    ld a, (nxbSvNr12)
+    nextreg NR_L2_BANK, a        ; cost parity, value unchanged
+    xor a
+    ld (nxbHidden), a
+    jr nxb_terminal
+
+; FEND: frame end. Multi-frame payloads (NXB8) continue with the next
+; frame: an ordinary frame resets the cursor to 0 on the front
+; surface; a mid-span hold frame CONTINUES the span cursor on the
+; hidden surface (nxv2dec's span_cursor rule).
+nxb_op_fend:
+nxb_terminal:
+    ld a, (nxbFrameCt)
+    inc a
+    ld (nxbFrameCt), a
+    ; consumed = srcIdx*8192 + (HL - $C000); rep done when >= len
+    ld a, (nxbSrcIdx)
+    add a, a
+    add a, a
+    add a, a
+    add a, a
+    add a, a                     ; * 32 = high byte of idx*8192
+    ld b, a
+    ld c, 0
+    push hl
+    ld a, h
+    sub $C0
+    ld h, a
+    add hl, bc                   ; HL = consumed
+    ld bc, (nxbLen)
+    or a
+    sbc hl, bc
+    pop hl
+    jr nc, .repdone
+    ; more frames follow
+    ld a, (nxbHidden)
+    or a
+    jp nz, nxb_oploop            ; span hold: cursor continues hidden
+    ld a, (nxbBaseFront)
+    ld (nxbDstPage), a
+    nextreg NXB_NR_MMU2, a
+    ld a, (nxbEndFront)
+    ld (nxbDstEnd), a
+    ld de, NXB_DST_WIN
+    jp nxb_oploop
+.repdone:
+    ld a, (nxbFrameCt)
+    ld (nxbSegFrames), a
+    ret
+
+; Reserved-op table stubs ($09 / $0B SCROLL - unimplemented in v2.0,
+; the player errors, nxv2dec parity).
+nxb_bad09:
+    ld a, $09
+    jp nxb_op_bad_a
+nxb_bad0B:
+    ld a, $0B
+    jp nxb_op_bad_a
+
+; Dispatch slot table: 12 x 4-byte JP slots, reached by low-byte SMC.
+; ALIGN 64 keeps the 48 bytes inside one 256-byte page (the SMC adds
+; op*4 to the low byte only). Rubric 8: size-asserted.
+    ALIGN 64
+nxbJtab:
+    jp nxb_op_fend               ; $00 FEND
+    nop
+    jp nxb_op_skip16             ; $01 SKIP16
+    nop
+    jp nxb_op_run8               ; $02 RUN8
+    nop
+    jp nxb_op_run16              ; $03 RUN16
+    nop
+    jp nxb_op_copy8              ; $04 COPY8
+    nop
+    jp nxb_op_copy16             ; $05 COPY16
+    nop
+    jp nxb_op_pal                ; $06 PAL
+    nop
+    jp nxb_op_skip8              ; $07 SKIP8
+    nop
+    jp nxb_op_kflip              ; $08 KFLIP
+    nop
+    jp nxb_bad09                 ; $09 reserved
+    nop
+    jp nxb_op_kstart             ; $0A KSTART
+    nop
+    jp nxb_bad0B                 ; $0B SCROLL (reserved, errors)
+    nop
+    ASSERT $ - nxbJtab == 12*4   ; the dispatcher indexes by op*4
+    ASSERT (low nxbJtab) <= 256-48 ; SMC low-byte add must not wrap
+
+; =====================================================================
+; Chunk sizing. In: HL = src, DE = dest, BC = remaining (callers
+; normalized both windows first, so both rooms are >= 1). Out: BC =
+; chunk = min(remaining, room(s), DMA cap if nonzero). Preserves HL,
+; DE. Corrupts AF.
+; =====================================================================
+nxb_min_all:                     ; src room + dest room + cap (COPY)
+    ld (nxbSaveSrc), hl
+    push de
+    ex de, hl                    ; DE = src
+    ld hl, $E000
+    or a
+    sbc hl, de                   ; HL = src room
+    pop de
+    or a
+    push hl
+    sbc hl, bc
+    pop hl
+    jr nc, nxb_min_dst_e         ; src room >= BC: keep BC
+    ld b, h
+    ld c, l
+    jr nxb_min_dst_e
+nxb_min_src:                     ; src room only (PAL)
+    ld (nxbSaveSrc), hl
+    push de
+    ex de, hl
+    ld hl, $E000
+    or a
+    sbc hl, de
+    pop de
+    or a
+    push hl
+    sbc hl, bc
+    pop hl
+    jr nc, .cap
+    ld b, h
+    ld c, l
+.cap:
+    jr nxb_min_cap
+nxb_min_dst:                     ; dest room + cap (RUN/SKIP callers)
+    ld (nxbSaveSrc), hl
+nxb_min_dst_e:
+    ld hl, $6000
+    or a
+    sbc hl, de                   ; HL = dest room
+    or a
+    push hl
+    sbc hl, bc
+    pop hl
+    jr nc, nxb_min_cap
+    ld b, h
+    ld c, l
+nxb_min_cap:
+    ld hl, (nxbDmaCap)
+    ld a, h
+    or l
+    jr z, .done
+    or a
+    push hl
+    sbc hl, bc
+    pop hl
+    jr nc, .done
+    ld b, h
+    ld c, l
+.done:
+    ld hl, (nxbSaveSrc)
+    ret
+
+; =====================================================================
+; Fill kernels. Contract in: HL = src (preserved), DE = dest, BC =
+; chunk (1..$2000, inside one dest window), (nxbColour) = colour.
+; Contract out: DE advanced by chunk, BC = anything, HL preserved.
+; =====================================================================
+
+; U: unrolled ld (hl),e/inc hl pairs (16 stores per block), remainder
+; first. ~15T/byte at 28MHz (doc 01: 7+1 store, 6+1 inc).
+nxb_fill_unrolled:
+    push hl                      ; src
+    ld h, d
+    ld l, e                      ; HL = dest
+    ld a, (nxbColour)
+    ld e, a                      ; E = colour (DE dest recomputed after)
+    ld a, c
+    and 15
+    jr z, .blocks
+.rem:
     ld (hl), e
     inc hl
-    ld (hl), d
-    ret
-
-; entry: dw program, dw baddr field, db length, db burst flag
-dmatProgTab:
-    dw dmat_prog_orig,  dmat_prog_orig_baddr
-    db dmat_prog_orig_len, 0
-    dw dmat_prog_burst, dmat_prog_burst_baddr
-    db dmat_prog_burst_len, 1
-    dw dmat_prog_presc, dmat_prog_presc_baddr
-    db dmat_prog_presc_len, 0
-    dw dmat_prog_cy44,  dmat_prog_cy44_baddr
-    db dmat_prog_cy44_len, 0
-    ASSERT $ - dmatProgTab == 4*6  ; dmat_prog_sel indexes by *6 (rubric 8)
-
-; One 512-byte DMA transfer of the reference block into (dmatDest)
-; using the staged program. Full SD bracket per run: MF disable + CMD18
-; at the captured address, bounded token wait, DI + otir (a continuous
-; program's final $87 OUT does not complete until the transfer has -
-; see the block header for the documented wedge hazard), burst
-; completion-polled via the DMA read mask (bounded), CRC skip, CMD12 +
-; deselect + MF restore. Out: B = 0 ok / 1 CMD reject / 2 token error /
-; 3 burst timeout (DMA force-disabled; transfer state unknown).
-; Corrupts everything.
-dmat_run_block:
-    call dmat_win_open
-    jr nc, .winok
-    ld b, 1
-    ret                         ; win_open's fail path already restored MF
-.winok:
-    call dmat_token_wait
-    jr nc, .token
-    call dmat_win_close         ; best-effort CMD12 + deselect + MF
-    ld b, 2
-    ret
-.token:
-    di
-    ld hl, (dmatProgPtr)
-    ld a, (dmatProgLen)
-    ld b, a
-    ld c, DMA_PORT
-    otir                        ; program + run (otir consumes B by its
-                                 ; own semantics - B IS the length here)
-    ld a, (dmatBurst)
-    or a
-    jr z, .done
-    call dmat_burst_wait        ; bounded; disables the DMA either way
-    jr nc, .done
-    ei
-    call dmat_crc_close
-    ld b, 3
-    ret
-.done:
-    ei
-    call dmat_crc_close
-    ld b, 0
-    ret
-
-; Bounded burst-completion wait: WR6 $BB read mask -> byte counter low+
-; high, polled until the pair reads 512 ($0200) in either phase order
-; (one half 0, the other 2 - unambiguous, since the high half can only
-; be 2 at exactly 512), 65536 polls max. $83-disables the DMA on BOTH
-; exits (freezes/settles the engine - em00k stop discipline). Out: CF
-; clear = completed; CF set = timeout. Corrupts AF, BC, DE.
-dmat_burst_wait:
-    ld a, $BB                   ; WR6: read mask follows
-    out (DMA_PORT), a
-    ld a, %00000110             ; mask: byte counter low + high
-    out (DMA_PORT), a
-    ld bc, 0                    ; 65536 bounded polls
-.poll:
-    push bc
-    ld bc, DMA_PORT             ; the port decodes on the low byte only
-    in a, (c)                    ; (otir's own B-as-high-byte precedent)
-    ld e, a
-    in a, (c)
-    ld d, a
-    pop bc
-    ld a, d
-    add a, e
-    cp 2
-    jr nz, .next
-    ld a, d
-    and e
-    jr z, .hit
-.next:
-    dec bc
-    ld a, b
-    or c
-    jr nz, .poll
-    ld a, $83
-    out (DMA_PORT), a
-    scf
-    ret
-.hit:
-    ld a, $83
-    out (DMA_PORT), a
-    or a
-    ret
-
-; CRC skip (two clocked reads at the interface's pacing) then close the
-; window. Corrupts AF, BC, DE, HL.
-dmat_crc_close:
-    in a, (PORT_SPI_DAT)
-    nop
-    in a, (PORT_SPI_DAT)
-    jp dmat_win_close
-
-; Compare dmatRefBuf against 512 bytes at (dmatDest). Out: CF clear =
-; match; CF set = diverged, HL = first divergence offset (also stored
-; in dmatDivOff for dmat_dump8's clamp). Corrupts AF, BC, DE.
-dmat_compare:
-    ld hl, dmatRefBuf
-    ld de, (dmatDest)
-    ld bc, 512
-.loop:
-    ld a, (de)
-    cp (hl)
-    jr nz, .diff
-    inc hl
-    inc de
-    dec bc
-    ld a, b
-    or c
-    jr nz, .loop
-    or a
-    ret
-.diff:
-    ld hl, 512
-    or a
-    sbc hl, bc                  ; offset = 512 - remaining
-    ld (dmatDivOff), hl
-    scf
-    ret
-
-; Print min(8, 512 - dmatDivOff) bytes from HL as hex pairs (the clamp
-; keeps a divergence near the block end from dumping past the buffer).
-; Corrupts everything.
-dmat_dump8:
-    push hl
-    ld hl, (dmatDivOff)
-    ld de, 512-8
-    or a
-    sbc hl, de                  ; > 0 iff fewer than 8 bytes remain
-    jr c, .full
-    jr z, .full
-    ld a, 8
-    sub l                       ; L = offset - 504 (1..7 here)
-    jr .have
-.full:
-    ld a, 8
-.have:
-    ld b, a
-    pop hl
-.loop:
-    ld a, (hl)
-    push hl
-    push bc
-    call dbg_hex8
-    pop bc
-    pop hl
-    inc hl
-    djnz .loop
-    ret
-
-; ---------------------------------------------------------------------
-; Self-contained SD SPI primitives (bounded copies of the VID_PAGE
-; originals - unreachable from this page without a hot stub, and the
-; copies add the rubric-6 bounds the hot vid_sd_cmd's own R1 poll still
-; lacks; that pre-existing sibling is out of this wave's scope).
-; ---------------------------------------------------------------------
-
-; MF disable + CMD18 READ_MULTIPLE_BLOCK at the captured first-block
-; card address. Out: CF clear = card selected and streaming; CF set =
-; R1 reject/timeout (A = VID_ERR_CMD, card deselected, MF restored).
-; Corrupts AF, BC, DE, HL.
-dmat_win_open:
-    call dmat_mf_disable
-    ld a, (dmatCardFlags)
-    and 1                       ; Z = card 0 (vid_strm_start's idiom -
-                                 ; the flag survives the loads below)
-    ld hl, (dmatAddrHi)
-    ld de, (dmatAddrLo)
-    ld a, CMD18_READ_MULTIPLE_BLOCK
-    call dmat_sd_cmd
-    jr nz, .fail
-    or a
-    ret
-.fail:
-    call dmat_card_deselect
-    call dmat_mf_restore
-    ld a, VID_ERR_CMD
-    scf
-    ret
-
-; CMD12 stop (R1 ignored, best effort), flush the stop tail, deselect,
-; restore the Multiface. Always CF clear. Corrupts AF, BC, DE, HL.
-dmat_win_close:
-    ld a, (dmatCardFlags)
-    and 1
-    ld a, CMD12_STOP_TRANSMISSION
-    call dmat_sd_cmd_noparam
-    ld b, 8+1
-.tail:
-    in a, (PORT_SPI_DAT)
-    djnz .tail
-    call dmat_card_deselect
-    jp dmat_mf_restore
-
-; CS high + two pacing clocks (vid_card_deselect parity). Corrupts AF.
-dmat_card_deselect:
-    ld a, $FF
-    out (PORT_SPI_CS), a
-    in a, (PORT_SPI_DAT)
-    nop
-    in a, (PORT_SPI_DAT)
-    ret
-
-; SD SPI command (vid_sd_cmd transcribed, R1 poll BOUNDED to 256 - NCR
-; is <= 8 bytes, so 256 is generous margin). In: A = command, HLDE =
-; 32-bit argument big-endian, Z flag = card select (set by the caller's
-; `and 1`). Out: Z = R1 accepted; NZ = rejected or poll exhausted.
-; Preserves DE/HL; corrupts AF, BC.
-dmat_sd_cmd_noparam:
-    ld h, 0
-    ld l, 0
-    ld d, 0
-    ld e, 0
-dmat_sd_cmd:
-    ld b, $FF                   ; CRC placeholder
-    ld c, a
-    ld a, SD_CS0
-    jr z, .cs
-    ld a, SD_CS1
-.cs:
-    out (PORT_SPI_CS), a
-    in a, (PORT_SPI_DAT)        ; sync clock
-    ld a, c
-    ld c, PORT_SPI_DAT
-    out (c), a
-    ld a, h
-    out (c), a
-    ld a, l
-    out (c), a
-    ld a, d
-    out (c), a
-    ld a, e
-    out (c), a
-    ld a, b
-    out (c), a
-    nop
-    ld b, 0                     ; bounded R1 poll: 256 tries (in a,(c)
-.resp:                           ; puts B on A8-15; the decode ignores it
-    in a, (c)                    ; - otir's own varying-B precedent)
-    inc a
-    jr nz, .got
-    djnz .resp
-    or 1                        ; timeout: force NZ (treated as reject)
-    ret
-.got:
-    dec a                       ; Z iff R1 == 0
-    ret
-
-; Bounded $FE data-token wait (65536 polls, vid_read_block's own bound).
-; Out: CF clear = token consumed; CF set = timeout or bad token.
-; Corrupts AF, BC.
-dmat_token_wait:
-    ld bc, 0
-.loop:
-    in a, (PORT_SPI_DAT)
-    inc a
-    jr nz, .got
-    dec bc
-    ld a, b
-    or c
-    jr nz, .loop
-    scf
-    ret
-.got:
     dec a
-    cp $FE
-    ret z                       ; equal: Z set, CF clear
-    scf
+    jr nz, .rem
+.blocks:
+    srl b
+    rr c
+    srl b
+    rr c
+    srl b
+    rr c
+    srl b
+    rr c                         ; BC = chunk / 16
+    ld a, b
+    or c
+    jr z, .done
+.bl:
+    DUP 16
+      ld (hl), e
+      inc hl
+    EDUP
+    dec bc
+    ld a, b
+    or c
+    jr nz, .bl
+.done:
+    ex de, hl                    ; DE = dest + chunk
+    pop hl                       ; src
     ret
 
-; Multiface disable/restore (vid_mf_disable parity, own save cell -
-; this page's copy never races the hot one: no bench runs during
-; playback). Corrupts AF (E is nr_read's select input).
-dmat_mf_disable:
-    ld e, NR_PERIPH2
+; P: PUSH-pair fill, ~6T/byte (doc 11's 5.5T/byte + the 28MHz fetch
+; wait). SP is repointed at the chunk END and pairs fill DOWNWARD to
+; the chunk start; the whole rep runs under DI (nxb_rep), so nothing
+; can push below the fill zone. SP restored before any call. Odd
+; chunks write the first byte separately.
+nxb_fill_push:
+    push hl                      ; src
+    ld (nxbDstSave), de
+    ld h, d
+    ld l, e
+    add hl, bc                   ; HL = chunk end
+    ld a, (nxbColour)
+    ld d, a
+    ld e, a                      ; DE = colour pair
+    srl b
+    rr c                         ; BC = pairs, CF = odd
+    ex af, af'                   ; save odd flag (alternate AF is free:
+                                  ; both ISRs save AF, doc 02)
+    ld (nxbSpSave), sp
+    ld sp, hl
+    ld a, c
+    and 15
+    jr z, .blocks
+.rem:
+    push de
+    dec a
+    jr nz, .rem
+.blocks:
+    srl b
+    rr c
+    srl b
+    rr c
+    srl b
+    rr c
+    srl b
+    rr c                         ; BC = pair blocks of 16
+    ld a, b
+    or c
+    jr z, .done
+.bl:
+    DUP 16
+      push de
+    EDUP
+    dec bc
+    ld a, b
+    or c
+    jr nz, .bl
+.done:
+    ld sp, (nxbSpSave)
+    ex af, af'
+    jr nc, .even
+    push hl
+    ld hl, (nxbDstSave)
+    ld (hl), e                   ; the odd (first) byte
+    pop hl
+.even:
+    ex de, hl                    ; DE = chunk end = dest + chunk
+    pop hl                       ; src
+    ret
+
+; D: zxnDMA fill - port A FIXED at the colour cell (this page, always
+; mapped at MMU7), port B incrementing across the dest chunk. One
+; one-shot program per chunk, DI-bracketed (doc 11's law; the
+; DI+program-upload amortization is exactly what the RD rows price).
+; Chunk is additionally capped by nxbDmaCap (nxb_min_dst).
+nxb_fill_dma:
+    ld (nxbDmaFill.baddr), de
+    ld (nxbDmaFill.alen), bc
+    push hl
+    push de
+    push bc
+    ld hl, nxbDmaFill
+    ld b, nxbDmaFill_len
+    ld c, DMA_PORT
+    di
+    otir                         ; program + run: continuous mode, the
+                                  ; final $87 OUT returns only when the
+                                  ; transfer is complete (doc 11)
+    ei
+    pop bc
+    pop de
+    pop hl
+    ex de, hl
+    add hl, bc
+    ex de, hl                    ; DE += chunk
+    ret
+
+; =====================================================================
+; Copy kernels. Contract in: HL = src, DE = dest, BC = chunk (inside
+; both windows). Out: HL/DE advanced by chunk.
+; =====================================================================
+
+; CPU: computed-entry unrolled LDI block. The remainder enters the
+; 16-LDI block mid-way ((16-rem) pairs in), then full blocks repeat
+; while LDI's own BC countdown holds P/V set (doc 04 shape; rubric 2:
+; BC is consumed by LDI itself and nothing else counts on it). ALIGN
+; 64 keeps the 35-byte block inside one page for the low-byte SMC.
+nxb_copy_ldi:
+    ld a, c
+    and 15
+    jr z, .aligned
+    add a, a                     ; rem * 2 (LDI = 2 bytes)
+    neg
+    add a, 32 + low nxb_ldi_blk  ; entry = block + (16-rem)*2
+    jr .set
+.aligned:
+    ld a, low nxb_ldi_blk
+.set:
+    ld (.centry+1), a
+.centry:
+    jp nxb_ldi_blk               ; low byte SMC-patched
+    ALIGN 64
+nxb_ldi_blk:
+    DUP 16
+      ldi
+    EDUP
+    jp pe, nxb_ldi_blk           ; P/V set = BC != 0
+    ret
+    ASSERT (low nxb_ldi_blk) <= 256-36 ; block + entry math stays in page
+
+; DMA: the canonical 16-byte mem-to-mem continuous one-shot
+; (overlay2.asm dma_prog byte-for-byte), source = MMU6 window, dest =
+; MMU2 window, DI per chunk. Chunk capped by nxbDmaCap upstream.
+nxb_copy_dma:
+    ld (nxbDmaCopy.aaddr), hl
+    ld (nxbDmaCopy.baddr), de
+    ld (nxbDmaCopy.alen), bc
+    push hl
+    push de
+    push bc
+    ld hl, nxbDmaCopy
+    ld b, nxbDmaCopy_len
+    ld c, DMA_PORT
+    di
+    otir
+    ei
+    pop bc
+    pop de
+    pop hl
+    add hl, bc                   ; src += chunk
+    ex de, hl
+    add hl, bc
+    ex de, hl                    ; dest += chunk
+    ret
+
+; =====================================================================
+; Raster clock (the DMAT/VBFLT precedent, carried): NR $1E/$1F line
+; read with bounded MSB-stability retries; a lower line than the
+; previous sample = raster wrapped = one frame elapsed. Sampled at
+; every window seam + once per rep - always at least twice per frame
+; (see the block header's cadence budget).
+; =====================================================================
+
+; Out: HL = line 0..~311. Corrupts AF, E (nr_read select input).
+nxb_line_read:
+    ld d, 4                      ; bounded stability retries
+.rd:
+    ld e, NXB_NR_LINE_MSB
     call nr_read
-    ld (dmatMfSave), a
-    and %11110111
-    nextreg NR_PERIPH2, a
-    ret
-dmat_mf_restore:
-    ld a, (dmatMfSave)
-    nextreg NR_PERIPH2, a
+    ld h, a
+    ld e, NXB_NR_LINE_LSB
+    call nr_read
+    ld l, a
+    ld e, NXB_NR_LINE_MSB
+    call nr_read
+    cp h
+    jr z, .ok
+    dec d
+    jr nz, .rd
+.ok:
+    ld a, h
+    and 1
+    ld h, a
     ret
 
-; ini reference read of the reference block into dmatRefBuf: CMD18,
-; bounded token wait, 512 bytes as 32 x 16 unrolled ini at the
-; interface's 16T/byte pacing (vid_read_block's shape - A is the outer
-; counter because ini consumes B by its own semantics, rubric 2), CRC
-; skip, CMD12 close. Out: CF clear = dmatRefBuf holds the block; CF
-; set = SD error (A = VID_ERR_CMD/VID_ERR_TOKEN). Corrupts everything.
-dmat_ref_read:
-    call dmat_win_open
-    ret c                       ; A = VID_ERR_CMD
-    call dmat_token_wait
-    jr nc, .token
-    call dmat_win_close
-    ld a, VID_ERR_TOKEN
-    scf
+; Frame tick: wrap detection + frame count. Corrupts AF, DE, HL.
+nxb_raster_tick:
+    call nxb_line_read
+    ld de, (nxbLinePrev)
+    ld (nxbLinePrev), hl
+    or a
+    sbc hl, de
+    ret nc                       ; monotonic: same frame
+    ld hl, (nxbFrames)
+    inc hl
+    ld (nxbFrames), hl
     ret
-.token:
-    ld hl, dmatRefBuf
-    ld c, PORT_SPI_DAT
+
+; Register-preserving wrapper for use inside kernels/seams.
+nxb_tick_pres:
+    push af
+    push bc
+    push de
+    push hl
+    call nxb_raster_tick
+    pop hl
+    pop de
+    pop bc
+    pop af
+    ret
+
+; =====================================================================
+; Audio arm/disarm: the cost-parity CTC replica (see block header).
+; Order rules are vid_run's own: stub patched between the control
+; word and the time constant; IX valid before the TC starts the
+; timer; disarm resets the CTC before restoring the stub. audEnable
+; frozen across the armed window (the frame ISR's fast path then
+; never remaps MMU6/7 - interrupts.asm contract). The bench card
+; instructs the owner to run bench verbs with no music/samples
+; playing (the full SSTOP park dance is vid_run's, not replicated).
+; =====================================================================
+nxb_audio_arm:
+    ld a, (audEnable)
+    ld (nxbSvAudEnable), a
+    xor a
+    ld (audEnable), a
+    ld hl, (IM2_CTC_STUB+1)
+    ld (nxbSvStub), hl
+    ld hl, nxbAudSil             ; silence-fill the replica's buffer
+    ld b, 32
+    ld a, $80
+.f:
+    ld (hl), a
+    inc hl
+    djnz .f
+    ld bc, AUD_CTC_PORT
+    ld a, AUD_CTC_RESET
+    out (c), a
+    out (c), a                   ; double soft-reset (unknown -> clean)
+    ld a, AUD_CTC_CW16
+    out (c), a                   ; control word - timer not running yet
+    ld hl, nxb_ctc_isr
+    ld (IM2_CTC_STUB+1), hl      ; stub -> replica (resident cell)
+    ld ix, nxbAudSil             ; IX valid BEFORE the timer starts
+    ld a, NXB_CTC_TC
+    out (c), a                   ; time constant -> timer starts NOW
+    ld a, 1
+    ld (nxbAudArmed), a
+    ret
+
+nxb_audio_disarm:
+    ld bc, AUD_CTC_PORT
+    ld a, AUD_CTC_RESET
+    out (c), a
+    out (c), a                   ; CTC parked first
+    ld hl, (nxbSvStub)
+    ld (IM2_CTC_STUB+1), hl
+    ld a, (nxbSvAudEnable)
+    ld (audEnable), a
+    xor a
+    ld (nxbAudArmed), a
+    ret
+
+; The replica ISR: video_ctc_isr_stereo's exact instruction shape
+; (tick counter, two DAC reads+writes via IX, low/high end compare,
+; pair advance), with the end branch RESETTING IX to the silence
+; buffer instead of setting a done flag - bounded by construction,
+; cost-equal within a few T once per 15 pairs. Entered via
+; IM2_CTC_STUB while MMU7 = VID_PAGE2 (the armed window's banking
+; invariant - block header). AF only + IX, like the original.
+nxb_ctc_isr:
+    push af
+    ld a, (nxbTicks)
+    inc a
+    ld (nxbTicks), a
+    jr nz, .nc
+    ld a, (nxbTicks+1)
+    inc a
+    ld (nxbTicks+1), a
+.nc:
+    ld a, (ix+0)
+    out (VID_DAC_LEFT), a
+    ld a, (ix+1)
+    out (VID_DAC_RIGHT), a
+    ld a, ixl
+    cp low (nxbAudSil+30)
+    jr nz, .adv
+    ld ix, nxbAudSil             ; loop the silence buffer
+    jr .ret
+.adv:
+    inc ix
+    inc ix
+.ret:
+    pop af
+    ei
+    reti
+
+; =====================================================================
+; Mode 10: ring-prefetch probe. Bounded SD SPI primitives (carried
+; from the retired DMAT suite) + the v1 open body capture the
+; fixture's first contiguous run, then NXB_PF_BLOCKS sequential 512B
+; blocks are ini-read into one pool page through MMU6, raster-timed -
+; the Task 3 ring producer's per-block cost. Row: PF R=blocks F= D=
+; (+ CMD/TOK error tag on early abort, partial figures kept honest).
+; =====================================================================
+nxb_mode_prefetch:
+    call nxb_get_addr
+    jr nc, .opened
+    ld hl, msgNxbOpen
+    call nxb_fail_row
+    jp nxb_exit
+.opened:
+    call bank_alloc
+    jr nc, .haveland
+    ld hl, msgNxbBank
+    xor a
+    call nxb_fail_row
+    jp nxb_exit
+.haveland:
+    ld (nxbBanks), a
+    ld c, a
+    ld a, 1
+    ld (nxbBankCnt), a
+    ld a, c
+    add a, a                     ; landing page = bank * 2
+    call data_map_page
+    xor a
+    ld (nxbPfStat), a
+    ld hl, NXB_PF_BLOCKS
+    ld (nxbRepCnt), hl
+    ld hl, 0
+    ld (nxbFrames), hl
+    call nxb_line_read
+    ld (nxbLinePrev), hl
+    ld (nxbLineStart), hl
+    call nxb_win_open
+    jr nc, .blk
+    ld a, 1
+    ld (nxbPfStat), a            ; CMD reject
+    jr .rowdone
+.blk:
+    call nxb_token_wait
+    jr nc, .tok
+    ld a, 2
+    ld (nxbPfStat), a            ; token error
+    jr .close
+.tok:
+    ld hl, NXB_SRC_WIN           ; same landing page every block (ring
+    ld c, PORT_SPI_DAT           ; parity: cost-identical to rotating)
     ld a, 32
 .xfer:
     DUP 16
       ini
     EDUP
     dec a
-    jr nz, .xfer
-    call dmat_crc_close
+    jr nz, .xfer                 ; A is the outer counter - ini consumes
+                                  ; B by its own semantics (rubric 2)
+    in a, (PORT_SPI_DAT)         ; CRC skip, in-stream
+    nop
+    in a, (PORT_SPI_DAT)
+    call nxb_tick_pres
+    ld hl, (nxbRepCnt)
+    dec hl
+    ld (nxbRepCnt), hl
+    ld a, h
+    or l
+    jr nz, .blk
+.close:
+    call nxb_win_close
+.rowdone:
+    call nxb_line_read
+    ld (nxbLineEnd), hl
+    ; ---- row ----
+    ld a, (nxbRow)
+    ld b, a
+    inc a
+    ld (nxbRow), a
+    ld c, 0
+    call dbg_at
+    ld hl, tagPF
+    call dbg_puts
+    ld hl, msgNxbR
+    call dbg_puts
+    ld hl, NXB_PF_BLOCKS
+    ld de, (nxbRepCnt)
     or a
-    ret
+    sbc hl, de                   ; blocks completed
+    call dbg_hex16
+    ld hl, msgNxbF
+    call dbg_puts
+    ld hl, (nxbFrames)
+    call dbg_hex16
+    ld hl, msgNxbD
+    call dbg_puts
+    ld hl, (nxbLineEnd)
+    ld de, (nxbLineStart)
+    or a
+    sbc hl, de
+    call dbg_hex16
+    ld a, (nxbPfStat)
+    or a
+    jr z, .clean
+    cp 1
+    ld hl, msgNxbCmdTag
+    jr z, .tag
+    ld hl, msgNxbTokTag
+.tag:
+    call dbg_puts
+.clean:
+    call nxb_free
+    jp nxb_exit
 
-; Open the bench fixture (root 001.VID) raw via the cold open body
-; (same-page call, vid_open_video_body's precedent), capture the FIRST
-; filemap run's card address/block count and the card flags, then close
-; the esx handle. The vid streaming window state machine is never
-; engaged (vidStrmWinOpen stays 0) - from here the bench drives the
-; card with its own primitives. All VID_PAGE cells go through the
-; established MMU6 bracket + DATA_WINDOW translation (rubric 3); this
-; page's own dmat* cells are plain stores (MMU7 = VID_PAGE2 throughout).
-; Out: CF clear = dmatAddrLo/Hi/RunBlocks/CardFlags valid; CF set =
-; open failed (A = error code). Corrupts everything.
-dmat_get_addr:
+; ---------------------------------------------------------------------
+; Bounded SD SPI primitives (carried from the retired DMAT suite -
+; the hot VID_PAGE originals are unreachable from this page without a
+; hot-side stub, rubric 3; these copies keep the rubric-6 bounds).
+; ---------------------------------------------------------------------
+
+; Open the probe fixture (root 001.VID) raw via the cold open body
+; (same-page call, vid_open_video_body's precedent), capture the
+; FIRST filemap run's card address + card flags, close the esx
+; handle. The vid streaming window state machine is never engaged
+; (vidStrmWinOpen stays 0). All VID_PAGE cells go through the
+; established MMU6 bracket + DATA_WINDOW translation (rubric 3);
+; this page's own nxb* cells are plain stores. Out: CF clear =
+; nxbAddrLo/Hi/CardFlags valid; CF set = open failed (A = code).
+; Corrupts everything.
+nxb_get_addr:
     call data_save
     ld a, VID_PAGE
     call data_map_page
     ld a, 1
     ld (vidStrmMode+DATA_WINDOW-OVL_ORG), a
-    ld ix, dmatName
+    ld ix, nxbPfName
     call vid_stream_open_body
     jr c, .fail
     ld a, (vidCardFlags+DATA_WINDOW-OVL_ORG)
-    ld (dmatCardFlags), a
+    ld (nxbCardFlags), a
     ld hl, (vidFilemapBuf+0+DATA_WINDOW-OVL_ORG)
-    ld (dmatAddrLo), hl
+    ld (nxbAddrLo), hl
     ld hl, (vidFilemapBuf+2+DATA_WINDOW-OVL_ORG)
-    ld (dmatAddrHi), hl
-    ld hl, (vidFilemapBuf+4+DATA_WINDOW-OVL_ORG)
-    ld (dmatRunBlocks), hl
+    ld (nxbAddrHi), hl
     ld a, (vidHandle+DATA_WINDOW-OVL_ORG)
     call esx_fclose
     ld a, $FF
@@ -5251,765 +6461,274 @@ dmat_get_addr:
     scf
     ret
 
-; ---------------------------------------------------------------------
-; Rate mode (DMARC/DMARB/DMARP): repeat-transfer up to DMAT_RATE_N
-; blocks off the fixture's first contiguous run with the selected
-; program, count frames via the raster-wrap poll, report KB/s =
-; blocks*25/frames (512 B/block x 50 frames/s / 1024 B/KB - VBFLT's
-; own formula) via div16. Stops early (with the partial counts and a
-; TOK/TMO tag) on any SD/DMA error - the report reflects exactly what
-; ran.
-; ---------------------------------------------------------------------
-dmat_mode_rate:
-    ld hl, dmatDstBuf
-    ld (dmatDest), hl
-    ld a, (dmatProg)
-    cp 4
-    jr c, .progok
-    xor a                       ; out of range: original continuous
-.progok:
-    call dmat_prog_sel
-    ; N = min(DMAT_RATE_N, first-run contiguous blocks)
-    ld hl, (dmatRunBlocks)
-    ld de, DMAT_RATE_N
+; MF disable + CMD18 READ_MULTIPLE_BLOCK at the captured first-block
+; card address. Out: CF clear = card selected and streaming; CF set =
+; R1 reject/timeout (card deselected, MF restored). Corrupts AF, BC,
+; DE, HL.
+nxb_win_open:
+    call nxb_mf_disable
+    ld a, (nxbCardFlags)
+    and 1                        ; Z = card 0 (vid_strm_start's idiom)
+    ld hl, (nxbAddrHi)
+    ld de, (nxbAddrLo)
+    ld a, CMD18_READ_MULTIPLE_BLOCK
+    call nxb_sd_cmd
+    jr nz, .fail
     or a
-    sbc hl, de
-    jr c, .short
-    ld hl, DMAT_RATE_N
-    jr .haven
-.short:
-    add hl, de                  ; restore the (smaller) run count
-.haven:
-    ld (dmatRateN), hl
-    ld hl, 0
-    ld (dmatBlocksDone), hl
-    ld (dmatFrames), hl
-    xor a
-    ld (dmatRateFlag), a        ; 0 clean / 2 token err / 3 dma timeout
-    call dmat_win_open
-    jr nc, .open
-    ld hl, msgDmatCmdErr        ; A = VID_ERR_CMD
-    jp dmat_fail_row
-.open:
-    call dmat_line_read         ; prime the raster frame clock
-    ld (dmatLinePrev), hl
-.blk:
-    call dmat_token_wait
-    jr nc, .tok
-    ld a, 2
-    ld (dmatRateFlag), a
-    jr .end
-.tok:
-    di
-    ld hl, (dmatProgPtr)
-    ld a, (dmatProgLen)
-    ld b, a
-    ld c, DMA_PORT
-    otir
-    ld a, (dmatBurst)
-    or a
-    jr z, .xdone
-    call dmat_burst_wait
-    jr nc, .xdone
-    ei
-    ld a, 3
-    ld (dmatRateFlag), a
-    jr .end
-.xdone:
-    ei
-    in a, (PORT_SPI_DAT)        ; CRC skip, in-stream (window stays open)
+    ret
+.fail:
+    call nxb_card_deselect
+    call nxb_mf_restore
+    scf
+    ret
+
+; CMD12 stop (R1 ignored, best effort), flush the stop tail,
+; deselect, restore the Multiface. Corrupts AF, BC, DE, HL.
+nxb_win_close:
+    ld a, (nxbCardFlags)
+    and 1
+    ld a, CMD12_STOP_TRANSMISSION
+    call nxb_sd_cmd_noparam
+    ld b, 8+1
+.tail:
+    in a, (PORT_SPI_DAT)
+    djnz .tail
+    call nxb_card_deselect
+    jp nxb_mf_restore
+
+; CS high + two pacing clocks. Corrupts AF.
+nxb_card_deselect:
+    ld a, $FF
+    out (PORT_SPI_CS), a
+    in a, (PORT_SPI_DAT)
     nop
     in a, (PORT_SPI_DAT)
-    call dmat_raster_tick
-    ld hl, (dmatBlocksDone)
-    inc hl
-    ld (dmatBlocksDone), hl
-    ld de, (dmatRateN)
-    or a
-    sbc hl, de
-    jr c, .blk
-.end:
-    call dmat_win_close
-    ; --- report row ---
-    ld a, (dmatRow)
-    ld b, a
-    inc a
-    ld (dmatRow), a
-    ld c, 0
-    call dbg_at
-    ld hl, msgDmatRateN
-    call dbg_puts
-    ld hl, (dmatBlocksDone)
-    call dbg_hex16
-    ld hl, msgDmatRateF
-    call dbg_puts
-    ld hl, (dmatFrames)
-    call dbg_hex16
-    ld hl, msgDmatRateKb
-    call dbg_puts
-    ld hl, (dmatFrames)
-    ld a, h
-    or l
-    jr nz, .havefr
-    ld hl, msgDmatFast          ; finished inside one frame: too fast
-    call dbg_puts                ; to time at this block count
-    jr .flag
-.havefr:
-    ld hl, 0
-    ld de, (dmatBlocksDone)
-    ld b, 25                    ; blocks*25 (max 1024*25 = 25600, fits)
-.mul:
-    add hl, de
-    djnz .mul
-    ld de, (dmatFrames)
-    call div16
-    call dbg_hex16
-.flag:
-    ld a, (dmatRateFlag)
-    or a
-    ret z
-    cp 2
-    ld hl, msgDmatRateTok
-    jr z, .pf
-    ld hl, msgDmatRateTmo
-.pf:
-    jp dbg_puts
-
-; Read the current raster line (9-bit) from NR $1E/$1F with a bounded
-; MSB-stability re-read (a scanline is ~1792T at 28MHz, far longer than
-; the read pair, so one retry nearly always settles a boundary tear).
-; Out: HL = line 0..~311. Corrupts AF, DE (nr_read preserves BC and
-; does not touch D/HL).
-dmat_line_read:
-    ld d, 4                     ; bounded stability retries
-.rd:
-    ld e, DMAT_NR_LINE_MSB
-    call nr_read
-    ld h, a
-    ld e, DMAT_NR_LINE_LSB
-    call nr_read
-    ld l, a
-    ld e, DMAT_NR_LINE_MSB
-    call nr_read
-    cp h
-    jr z, .ok
-    dec d
-    jr nz, .rd
-.ok:
-    ld a, h
-    and 1
-    ld h, a
     ret
 
-; Frame clock tick: a new line LOWER than the previous sample = the
-; raster wrapped = one frame elapsed. Sampled once per block (~12-16kT
-; apart, far inside one ~560kT frame), so a wrap cannot be missed; and
-; unlike frameCounter it is immune to the INT-pulse masking a
-; continuous-mode DMA transfer causes (see the block header).
-; Corrupts AF, DE, HL.
-dmat_raster_tick:
-    call dmat_line_read
-    ld de, (dmatLinePrev)
-    ld (dmatLinePrev), hl
-    or a
-    sbc hl, de
-    ret nc                      ; monotonic: still the same frame
-    ld hl, (dmatFrames)
-    inc hl
-    ld (dmatFrames), hl
-    ret
-
-; 16-bit unsigned divide (retired VBFLT's div16, verbatim). In: HL =
-; dividend, DE = divisor (callers guard DE = 0). Out: HL = quotient,
-; DE = remainder. Corrupts AF, BC.
-div16:
-    ld b, h
-    ld c, l
-    ld hl, 0
-    ld a, 16
-.bit:
-    sla c
-    rl b
-    adc hl, hl
-    sbc hl, de
-    jr nc, .noadd
-    add hl, de
-    jr .nextbit
-.noadd:
-    inc c
-.nextbit:
-    dec a
-    jr nz, .bit
-    ld d, h
-    ld e, l
-    ld h, b
-    ld l, c
-    ret
-
-; ---------------------------------------------------------------------
-; DMACC - CPU-concurrency mode (verb DMACC, mode 6). The decisive
-; SP15 question: zxnDMA burst mode releases the bus while the port
-; ready line is inactive - so during the SPI shifter's ~22T/byte stall
-; windows, does the CPU keep (most of) its own throughput? If yes,
-; fetch overlaps decode and the video-compression budget model changes
-; fundamentally.
-;
-; Method - two 50-frame windows, identical counting skeleton:
-;   CALIBRATE  run the counting loop with NO DMA active; passes counted
-;              over DMACC_FRAMES raster-wrap frames = 100% baseline.
-;   MEASURE    re-run the SAME loop while burst DMA-from-SPI transfers
-;              run continuously: per block the CPU issues the glue
-;              (token wait, program otir, read-mask arm, CRC skip)
-;              BETWEEN counting bursts, and counts while the transfer
-;              itself is in flight, polling completion cheaply once per
-;              counted pass. Only counting passes are counted - glue is
-;              outside the counter by construction.
-; Report row: BASE=passes CONC=passes CPU%=conc*100/base B=blocks
-; KB/S=blocks*25/frames (all hex; CPU% $64 = 100).
-;
-; MEASUREMENT HAZARDS controlled here (each also on the bench card):
-; - RAM separation: the counting loop and every dmat*/dmacc* cell live
-;   on VID_PAGE2 (page 70); the DMA lands on DMACC_LAND_PAGE (71, the
-;   upper 8K of withdrawn bank 35 - outside the allocator, no owner,
-;   no equate elsewhere) through the MMU6 window. A DIFFERENT 8K page,
-;   so the DMA can never write the page holding the loop it races, and
-;   dmatDstBuf stays reserved for the compare modes.
-; - Interrupts: the whole calibrate+measure pair runs under ONE DI
-;   (~2s). The 50Hz ISR (or an armed CTC) would otherwise steal cycles
-;   at uncorrelated points in the two windows and pollute the ratio.
-;   The frame clock is the NR $1E/$1F raster-wrap poll
-;   (dmat_raster_tick), which needs no interrupts; nr_read's IFF2
-;   save/restore keeps DI in force across it.
-; - Poll cost budget (the "< 2% of loop time" bound) - fast-path pass:
-;     counted burst   ld b,DMACC_ITER (7T) + djnz spin
-;                     (127*13+8 = 1659T)                     = 1666T
-;     pass counter    ld hl,(nn)+inc hl+ld (nn),hl           =   38T
-;     completion poll in a,(c) 12T + cp 7T + jr 7T           =   26T
-;     cadence check   ld a,l + and n + jr                    =   23T
-;   ~1753T per pass -> poll share 26/1753 ~ 1.5% < 2%; DMACC_ITER=128
-;   is chosen exactly for that bound. Every 16th pass adds
-;   dmat_raster_tick (~400T, ~25T amortized) - identical in BOTH
-;   phases, so it cancels out of the ratio (the calibrate loop also
-;   executes a dead completion poll for full cost parity).
-; - Detection latency: <= one pass (~1.8kT) against ~11.7kT per 512B
-;   block at the measured ~1219KB/s burst wire rate, so the DMA idles
-;   up to ~15% of a block awaiting service - the KB/S column therefore
-;   UNDERSTATES the pure overlap ceiling slightly (card notes it); the
-;   CPU% column is unaffected by that idle tail.
-; - Counter width: baseline ~ 50 frames x ~559kT / ~1.78kT ~ 15,700
-;   passes - fits 16 bits with 4x margin. CPU% is computed by scaling
-;   base and conc right together until both fit 9 bits (conc'*100 <=
-;   51,100 stays 16-bit for div16; base' >= 256 keeps quantization
-;   error under ~0.4%).
-; - Window sync: each phase starts on a raster wrap (dmacc_sync,
-;   bounded), so both windows are the same 50 whole frames rather than
-;   49-and-a-fraction vs 50-and-a-fraction.
-; Bounded waits (rubric 6): token 65536 (dmat_token_wait), sync 65536
-; tick polls (~47 frames), and the measure window itself is the hard
-; bound on completion - burst mode releases the bus by design, so the
-; counting loop always reaches its raster ticks; a window that moves
-; ZERO blocks reports a TMO tag instead of hanging. Early SD errors
-; report CMD/TOK-tagged rows with whatever partial figures ran.
-; ---------------------------------------------------------------------
-
-DMACC_LAND_PAGE equ VID_PAGE2+1 ; = 71: upper 8K of withdrawn bank 35.
-                                 ; bank_table_init never frees bank 35
-                                 ; (pool restarts at BANK_POOL_B=36) and
-                                 ; only page 70 (VID_PAGE2) carries
-                                 ; content - page 71 is unowned RAM, the
-                                 ; DMA landing zone (see hazard note)
-DMACC_FRAMES    equ 50          ; window length per phase, raster frames
-DMACC_ITER      equ 128         ; djnz iterations per counted pass (the
-                                 ; poll-budget comment's N)
-DMACC_TICK_MASK equ 15          ; raster tick every 16th pass (~51kT -
-                                 ; ~11 samples per ~559kT frame). Wrap-
-                                 ; miss safe even in the worst bus-hog
-                                 ; case: at most ONE in-flight block can
-                                 ; stall each pass (completions are
-                                 ; serviced once per pass), so a 16-pass
-                                 ; stretch is bounded by ~16 x (1753T +
-                                 ; ~11.7kT steal) + 16 glues ~ 250kT -
-                                 ; still >= 2 raster samples per frame
-
-; Mode 6 entry. Program comes from flags+249 like the rate mode
-; (test.dsf's DMACC sends 1 = burst, the designed leg - the only mode
-; that releases the bus mid-block; 0/2/3 are accepted as owner control
-; runs, where continuous freezes the CPU for each whole transfer by
-; design and should floor CPU%). Corrupts everything.
-dmat_mode_cc:
-    ld a, (dmatProg)
-    cp 4
-    jr c, .progok
-    ld a, 1                     ; out of range: burst
-.progok:
-    ld hl, DATA_WINDOW          ; DMA dest = MMU6 window -> page 71
-    ld (dmatDest), hl
-    call dmat_prog_sel
-    call data_save
-    ld a, DMACC_LAND_PAGE
-    call data_map_page
-    di                          ; ONE DI over both windows (see header)
-    ; ---- calibrate: 50 frames, no DMA ----
-    call dmacc_sync
-    jr c, .syncfail
-    call dmacc_count_cal
-    ld hl, (dmaccCnt)
-    ld (dmaccBase), hl
-    ; ---- measure: 50 frames, burst transfers overlapped ----
-    xor a
-    ld (dmaccStat), a           ; 0 clean/1 CMD/2 token/3 zero blocks
-    ld hl, 0
-    ld (dmaccBlocks), hl
-    ld (dmaccRun), hl
-    call dmat_win_open
-    jr c, .cmdfail
-    call dmacc_sync
-    jr c, .syncfail2
-    call dmacc_block_start      ; launch block 1 (uncounted glue)
-    jr nc, .run
-    ld a, 2
-    ld (dmaccStat), a
-    jr .winddown
-.run:
-    call dmacc_count_meas       ; sets dmaccStat on early SD aborts
-.winddown:
-    ld a, $83                   ; settle the engine whatever state it
-    out (DMA_PORT), a           ; is in (idempotent - em00k discipline)
-    ld hl, (dmatFrames)
-    ld (dmaccFrames), hl        ; actual window (< 50 on early aborts -
-    ld hl, (dmaccCnt)            ; KB/S stays honest for what ran)
-    ld (dmaccConc), hl
-    call dmat_win_close         ; best-effort CMD12+deselect+MF; safe
-                                 ; after a fail path already closed
-                                 ; (CMD12 to an idle card is ignored,
-                                 ; MF restore is idempotent)
-    ei
-    call data_restore
-    ; zero blocks moved with no earlier SD error = completion was never
-    ; observed at all: tag TMO (detection or transfer failure - the
-    ; BASE/CONC figures are still real)
-    ld hl, (dmaccBlocks)
+; SD SPI command, R1 poll BOUNDED to 256 (NCR <= 8 bytes - generous).
+; In: A = command, HLDE = 32-bit argument big-endian, Z flag = card
+; select (caller's `and 1`). Out: Z = R1 accepted; NZ = rejected or
+; poll exhausted. Preserves DE/HL; corrupts AF, BC.
+nxb_sd_cmd_noparam:
+    ld h, 0
+    ld l, 0
+    ld d, 0
+    ld e, 0
+nxb_sd_cmd:
+    ld b, $FF                    ; CRC placeholder
+    ld c, a
+    ld a, SD_CS0
+    jr z, .cs
+    ld a, SD_CS1
+.cs:
+    out (PORT_SPI_CS), a
+    in a, (PORT_SPI_DAT)         ; sync clock
+    ld a, c
+    ld c, PORT_SPI_DAT
+    out (c), a
     ld a, h
-    or l
-    jr nz, .report
-    ld a, (dmaccStat)
-    or a
-    jr nz, .report
-    ld a, 3
-    ld (dmaccStat), a
-    jr .report
-.syncfail:
-    ei
-    call data_restore
-    xor a
-    ld hl, msgDmaccSyncErr
-    jp dmat_fail_row
-.syncfail2:
-    call dmat_win_close
-    jr .syncfail
-.cmdfail:
-    push af                     ; A = VID_ERR_CMD
-    ei
-    call data_restore
-    pop af
-    ld hl, msgDmatCmdErr
-    jp dmat_fail_row
-.report:
-    ld a, (dmatRow)
-    ld b, a
-    inc a
-    ld (dmatRow), a
-    ld c, 0
-    call dbg_at
-    ld hl, msgDmaccBase
-    call dbg_puts
-    ld hl, (dmaccBase)
-    call dbg_hex16
-    ld hl, msgDmaccConc
-    call dbg_puts
-    ld hl, (dmaccConc)
-    call dbg_hex16
-    ld hl, msgDmaccPct
-    call dbg_puts
-    ; CPU% = conc*100/base via div16, both scaled right together until
-    ; each fits 9 bits (see the header's counter-width note)
-    ld hl, (dmaccBase)
-    ld de, (dmaccConc)
-.scale:
-    ld a, h
-    or d
-    cp 2
-    jr c, .scaled
-    srl h
-    rr l
-    srl d
-    rr e
-    jr .scale
-.scaled:
-    ld a, h
-    or l
-    jr nz, .pct
-    ld a, $FF                   ; base 0 = calibrate never ran -
-    call dbg_hex8                ; impossible short of a bug; printed,
-    jr .blocks                   ; never divided by
-.pct:
-    push hl                     ; base'
-    ld hl, 0
-    ld b, 100
-.m100:
-    add hl, de                  ; conc'*100 <= 51,100 (conc' <= 511)
-    djnz .m100
-    pop de
-    call div16
+    out (c), a
     ld a, l
-    call dbg_hex8               ; hex: $64 = 100%
-.blocks:
-    ld hl, msgDmaccBlk
-    call dbg_puts
-    ld hl, (dmaccBlocks)
-    call dbg_hex16
-    ld hl, msgDmatRateKb
-    call dbg_puts
-    ld hl, (dmaccFrames)
-    ld a, h
-    or l
-    jr nz, .rate
-    ld hl, msgDmatFast          ; frames 0: aborted before the first
-    call dbg_puts                ; wrap - nothing to time
-    jr .tag
-.rate:
-    ; KB/s = blocks*25/frames (the rate mode's own formula). Blocks
-    ; clamped to 2621 so *25 stays 16-bit - 50 frames at the SPI wire
-    ; ceiling is ~2600, so the clamp is insurance, not a path.
-    ld hl, (dmaccBlocks)
-    ld de, 2622
-    or a
-    sbc hl, de
-    jr nc, .clamp
-    add hl, de                  ; restore (blocks < 2622)
-    jr .mul
-.clamp:
-    ld hl, 2621
-.mul:
-    ex de, hl
-    ld hl, 0
-    ld b, 25
-.m25:
-    add hl, de
-    djnz .m25
-    ld de, (dmaccFrames)
-    call div16
-    call dbg_hex16
-.tag:
-    ld a, (dmaccStat)
-    or a
-    ret z
-    cp 1
-    ld hl, msgDmaccCmdTag
-    jr z, .pt
-    cp 2
-    ld hl, msgDmatRateTok
-    jr z, .pt
-    ld hl, msgDmatRateTmo
-.pt:
-    jp dbg_puts
+    out (c), a
+    ld a, d
+    out (c), a
+    ld a, e
+    out (c), a
+    ld a, b
+    out (c), a
+    nop
+    ld b, 0                      ; bounded R1 poll: 256 tries (in a,(c)
+.resp:                            ; puts B on A8-15; the decode ignores
+    in a, (c)                    ; it - otir's varying-B precedent)
+    inc a
+    jr nz, .got
+    djnz .resp
+    or 1                         ; timeout: force NZ (treated as reject)
+    ret
+.got:
+    dec a                        ; Z iff R1 == 0
+    ret
 
-; Align a phase start to a raster wrap and zero the phase counters, so
-; both windows are the same DMACC_FRAMES whole frames. Bounded: 65536
-; tick polls (~400T each ~ 47 frames' worth; the wrap must arrive
-; inside one frame on working silicon). Out: CF set = no wrap observed
-; (raster clock dead). Corrupts AF, BC, DE, HL.
-dmacc_sync:
-    call dmat_line_read
-    ld (dmatLinePrev), hl
-    ld hl, 0
-    ld (dmatFrames), hl
-    ld bc, 0                    ; 65536 bounded polls
-.wait:
-    call dmat_raster_tick       ; preserves BC (corrupts AF, DE, HL)
-    ld a, (dmatFrames)
-    or a
-    jr nz, .wrapped
+; Bounded $FE data-token wait (65536 polls). Out: CF clear = token
+; consumed; CF set = timeout or bad token. Corrupts AF, BC.
+nxb_token_wait:
+    ld bc, 0
+.loop:
+    in a, (PORT_SPI_DAT)
+    inc a
+    jr nz, .got
     dec bc
     ld a, b
     or c
-    jr nz, .wait
+    jr nz, .loop
     scf
     ret
-.wrapped:
-    ld hl, 0
-    ld (dmatFrames), hl
-    ld (dmaccCnt), hl
-    or a
+.got:
+    dec a
+    cp $FE
+    ret z                        ; equal: Z set, CF clear
+    scf
     ret
 
-; CALIBRATE counting loop: passes of DMACC_ITER djnz iterations,
-; counted in dmaccCnt, until DMACC_FRAMES raster wraps. The in a,(c)
-; is a DEAD completion poll for full cost parity with the measure loop
-; (DMA idle here; the jr target is the fall-through either way, so a
-; status byte that happens to read 2 changes nothing but 5T once).
-; In: DI, dmacc_sync just ran. Corrupts AF, BC, DE, HL.
-dmacc_count_cal:
-    ld c, DMA_PORT
-.loop:
-    ld b, DMACC_ITER            ; ---- counted burst ----
-.spin:
-    djnz .spin
-    ld hl, (dmaccCnt)
-    inc hl
-    ld (dmaccCnt), hl
-    in a, (c)                   ; dead poll (cost parity - see header)
-    cp 2
-    jr z, .parity
-.parity:
-    ld a, l
-    and DMACC_TICK_MASK
-    jr nz, .loop
-    call dmat_raster_tick       ; every 16th pass (both phases alike)
-    ld a, (dmatFrames)          ; frames <= 50 < 256: low byte suffices
-    cp DMACC_FRAMES
-    jr c, .loop
+; Multiface disable/restore (own save cell - never races the hot copy:
+; no bench runs during playback). Corrupts AF, E.
+nxb_mf_disable:
+    ld e, NR_PERIPH2
+    call nr_read
+    ld (nxbMfSave), a
+    and %11110111
+    nextreg NR_PERIPH2, a
     ret
-
-; MEASURE counting loop: the same skeleton, with the poll LIVE (WR6
-; $BB read mask = byte counter high, armed per block by
-; dmacc_block_start: one in a,(c) reads counter bits 15:8, which read
-; 2 exactly and only at 512 - dmat_burst_wait's own unambiguity
-; argument, halved to a single IN so the poll costs 26T). On
-; completion the uncounted glue runs: settle DMA, CRC skip, account
-; the block, rewind the CMD18 window when the fixture's contiguous run
-; is exhausted (CMD12+CMD18, once per ~1024 blocks - a few hundred
-; microseconds of glue inside a ~1s window), then launch the next
-; block. Exits: raster window complete (a block usually still in
-; flight - caller settles the engine; NOT an error), or SD failure
-; (dmaccStat set, caller reports the tagged partial figures).
-; In: DI, window open, block 1 launched. Corrupts everything.
-dmacc_count_meas:
-    ld c, DMA_PORT
-.loop:
-    ld b, DMACC_ITER            ; ---- counted burst ----
-.spin:
-    djnz .spin
-    ld hl, (dmaccCnt)
-    inc hl
-    ld (dmaccCnt), hl
-    in a, (c)                   ; live poll: byte counter high
-    cp 2
-    jr z, .blockdone
-.cadence:
-    ld a, l
-    and DMACC_TICK_MASK
-    jr nz, .loop
-    call dmat_raster_tick
-    ld a, (dmatFrames)
-    cp DMACC_FRAMES
-    jr c, .loop
-    ret                         ; window complete
-.blockdone:
-    ; ---- uncounted glue ----
-    ld a, $83
-    out (DMA_PORT), a           ; settle (em00k stop discipline)
-    in a, (PORT_SPI_DAT)        ; CRC skip, in-stream (rate mode shape)
-    nop
-    in a, (PORT_SPI_DAT)
-    ld hl, (dmaccBlocks)
-    inc hl
-    ld (dmaccBlocks), hl
-    ld hl, (dmaccRun)
-    inc hl
-    ld (dmaccRun), hl
-    ld de, (dmatRunBlocks)
-    or a
-    sbc hl, de
-    jr c, .next
-    ; contiguous run exhausted: rewind to the run start
-    call dmat_win_close
-    call dmat_win_open
-    jr c, .cmdfail
-    ld hl, 0
-    ld (dmaccRun), hl
-.next:
-    call dmacc_block_start      ; leaves C = DMA_PORT
-    jr c, .tokfail
-    ld hl, (dmaccCnt)           ; reload L for the cadence check
-    jr .cadence
-.cmdfail:
-    ld a, 1
-    ld (dmaccStat), a
-    ret
-.tokfail:
-    ld a, 2
-    ld (dmaccStat), a
-    ret
-
-; One block's launch glue (uncounted): bounded $FE token wait, program
-; otir, then arm the WR6 $BB read mask = %00000100 (byte counter HIGH
-; only) for the measure loop's single-IN completion poll. For the
-; burst program the transfer then runs concurrently; for a continuous
-; control program the otir's final $87 OUT itself blocks until the
-; transfer completes (dmat_run_block's documented behaviour), so the
-; poll sees 512 immediately and CPU% floors - the intended control
-; result. Out: CF set = token timeout (window left open, caller
-; closes); C = DMA_PORT on the clean exit. Corrupts AF, BC, HL.
-dmacc_block_start:
-    call dmat_token_wait
-    ret c
-    ld hl, (dmatProgPtr)
-    ld a, (dmatProgLen)
-    ld b, a
-    ld c, DMA_PORT
-    otir                        ; program + run (B is the length,
-                                 ; otir's own semantics)
-    ld a, $BB                   ; WR6: read mask follows (proven live
-    out (DMA_PORT), a            ; mid-burst by dmat_burst_wait)
-    ld a, %00000100             ; mask: byte counter high only
-    out (DMA_PORT), a
-    or a                        ; CF clear (C still DMA_PORT after otir)
+nxb_mf_restore:
+    ld a, (nxbMfSave)
+    nextreg NR_PERIPH2, a
     ret
 
 ; ---------------------------------------------------------------------
-; DMA programs. All transfer 512 bytes A->B, Port A = the SPI data port
-; ($EB, IO, fixed address), Port B = memory incrementing (start address
-; patched by dmat_prog_sel). dmat_prog_orig is byte-for-byte the
-; retired VBDMA program (commit 98954ac, field-audited against
-; zxndma.txt); each variant changes exactly the factor its hypothesis
-; names.
+; DMA programs (doc 11; overlay2.asm dma_prog is the canonical copy -
+; duplicated here because overlay2 is unreachable while MMU7 =
+; VID_PAGE2, rubric 3). Timing bytes cycle-length 2 on both ports,
+; CONTINUOUS mode, WR5 = $82 STOP on end of block (one-shot law).
 ; ---------------------------------------------------------------------
-dmat_prog_orig:                  ; H1/H3: the original continuous program
+nxbDmaCopy:                      ; mem-to-mem copy (source incrementing)
     db $83                       ; WR6: disable (clean slate)
-    db %01111101                 ; WR0: transfer A->B, A addr + length follow
-    dw PORT_SPI_DAT              ; Port A "address" = the fixed SPI port
-    dw 512                       ; block length, exact count
-    db %01101100                 ; WR1: A = IO, address fixed, timing follows
-    db %00000000                 ; A cycle length 4
-    db %01010000                 ; WR2: B = memory, increment, timing follows
+    db %01111101                 ; WR0: A->B, A addr + length follow
+.aaddr:
+    dw 0                         ; port A start = source (patched)
+.alen:
+    dw 0                         ; block length, exact count (patched)
+    db %01010100                 ; WR1: A memory, incrementing, timing follows
+    db %00000010                 ; A cycle length 2
+    db %01010000                 ; WR2: B memory, incrementing, timing follows
     db %00000010                 ; B cycle length 2, no prescaler
-    db %10101101                 ; WR4: CONTINUOUS + B addr follows
-dmat_prog_orig_baddr:
-    dw 0                         ; Port B start (patched)
-    db %10000010                 ; WR5: /ce only, stop on end of block
+    db %10101101                 ; WR4: CONTINUOUS, port B addr follows
+.baddr:
+    dw 0                         ; port B start = dest (patched)
+    db %10000010                 ; WR5: stop on end of block (one-shot)
     db $CF                       ; WR6: load
-    db $87                       ; WR6: enable
-dmat_prog_orig_len equ $ - dmat_prog_orig
+    db $87                       ; WR6: enable - LAST byte; the CPU
+                                  ; stalls here until the transfer ends
+nxbDmaCopy_len equ $ - nxbDmaCopy
 
-dmat_prog_burst:                 ; H4: burst + $C3 reset + $B3 force-ready
-    db $C3                       ; WR6: full reset (em00k reference header)
-    db $83                       ; WR6: disable (kept for orig parity)
-    db %01111101
-    dw PORT_SPI_DAT
-    dw 512
-    db %01101100
-    db %00000000                 ; A cycle length 4 (unchanged)
-    db %01010000
-    db %00000010                 ; B cycle length 2 (unchanged)
-    db %11001101                 ; WR4: BURST (D6:D5 = 10) + B addr follows.
-                                 ; The autopsy's own sketch says %10001101,
-                                 ; but that decodes to mode bits 00 = "do
-                                 ; not use" per zxndma.txt; em00k's proven
-                                 ; $CD = %11001101 is real burst.
-dmat_prog_burst_baddr:
-    dw 0
-    db %10000010
-    db $CF
-    db $B3                       ; WR6: force ready ($EB has no DRQ line)
-    db $87
-dmat_prog_burst_len equ $ - dmat_prog_burst
-
-dmat_prog_presc:                 ; H2a: prescaler-paced continuous
+nxbDmaFill:                      ; fill: port A FIXED at the colour cell
     db $83
     db %01111101
-    dw PORT_SPI_DAT
-    dw 512
-    db %01101100
-    db %00000000                 ; A cycle length 4 (unchanged)
-    db %01010000
-    db %00100010                 ; B cycle length 2 + D5: prescaler follows
-    db DMAT_PRESCALER            ; >= 32 cycles/byte (the one varied factor)
-    db %10101101                 ; CONTINUOUS (prescaler works in both
-                                 ; modes per zxndma.txt)
-dmat_prog_presc_baddr:
-    dw 0
-    db %10000010
+.aaddr:
+    dw nxbColour                 ; port A = the colour byte (this page,
+                                  ; always mapped at MMU7 during a row)
+.alen:
+    dw 0                         ; block length (patched)
+    db %01100100                 ; WR1: A memory, FIXED address, timing follows
+    db %00000010                 ; A cycle length 2
+    db %01010000                 ; WR2: B memory, incrementing, timing follows
+    db %00000010                 ; B cycle length 2
+    db %10101101                 ; WR4: CONTINUOUS, port B addr follows
+.baddr:
+    dw 0                         ; port B start = dest chunk (patched)
+    db %10000010                 ; WR5: stop on end of block
     db $CF
     db $87
-dmat_prog_presc_len equ $ - dmat_prog_presc
-
-dmat_prog_cy44:                  ; H2b: cycle length 4/4 continuous
-    db $83
-    db %01111101
-    dw PORT_SPI_DAT
-    dw 512
-    db %01101100
-    db %00000000                 ; A cycle length 4
-    db %01010000
-    db %00000000                 ; B cycle length 4 (the one varied factor)
-    db %10101101
-dmat_prog_cy44_baddr:
-    dw 0
-    db %10000010
-    db $CF
-    db $87
-dmat_prog_cy44_len equ $ - dmat_prog_cy44
+nxbDmaFill_len equ $ - nxbDmaFill
 
 ; --- strings + cells ---
-msgDmatHdr:     db "DMAT M=", 0
-msgDmatProg:    db " P=", 0
-msgDmatCore:    db " CORE=", 0
-msgDmatOpenErr: db "OPEN ERR ", 0
-msgDmatRefErr:  db "REF ERR ", 0
-msgDmatBadMode: db "MODE? ", 0
-msgDmatOff:     db "O=", 0
-msgDmatCmdErr:  db "CMD ERR", 0
-msgDmatTokErr:  db "TOK ERR", 0
-msgDmatTmo:     db "TMO ", 0
-msgDmatMatch:   db "MATCH", 0
-msgDmatDiv:     db "DIV=", 0
-msgDmatRef:     db " R=", 0
-msgDmatDma:     db " D=", 0
-msgDmatRateN:   db "N=", 0
-msgDmatRateF:   db " F=", 0
-msgDmatRateKb:  db " KB/S=", 0
-msgDmatFast:    db "FAST", 0
-msgDmatRateTok: db " TOK", 0
-msgDmatRateTmo: db " TMO", 0
-msgDmaccBase:   db "BASE=", 0
-msgDmaccConc:   db " CONC=", 0
-msgDmaccPct:    db " CPU%=", 0
-msgDmaccBlk:    db " B=", 0
-msgDmaccCmdTag: db " CMD", 0
-msgDmaccSyncErr: db "SYNC ERR ", 0
-dmatName:       db "001.VID", 0  ; the N0 fixture (build-tests -Vid) -
-                                  ; biggest file, so the rate mode's 1024
-                                  ; contiguous blocks are usually there
-dmatMode:       db 0
-dmatProg:       db 0
-dmatRow:        db 0
-dmatStatus:     db 0
-dmatCardFlags:  db 0
-dmatMfSave:     db 0
-dmatBurst:      db 0
-dmatProgLen:    db 0
-dmatProgPtr:    dw 0
-dmatDest:       dw 0
-dmatDivOff:     dw 0
-dmatAddrLo:     dw 0
-dmatAddrHi:     dw 0
-dmatRunBlocks:  dw 0
-dmatRateN:      dw 0
-dmatBlocksDone: dw 0
-dmatFrames:     dw 0
-dmatLinePrev:   dw 0
-dmatRateFlag:   db 0
-dmaccCnt:       dw 0             ; counted passes (current phase)
-dmaccBase:      dw 0             ; calibrate passes (100% baseline)
-dmaccConc:      dw 0             ; measure passes (concurrent)
-dmaccBlocks:    dw 0             ; blocks moved during the window
-dmaccRun:       dw 0             ; blocks since the last CMD18 (rewind)
-dmaccFrames:    dw 0             ; actual measure window in frames
-dmaccStat:      db 0             ; 0 clean/1 CMD/2 token/3 zero blocks
-dmatRefBuf:     ds 512
-    ALIGN 256                    ; dest & $FF must equal the sweep offset
-dmatDstBuf:     ds 768           ; 512 + max offset 255 (256-aligned)
+msgNxbHdr:     db "NXBEN M=", 0
+msgNxbParm:    db " P=", 0
+msgNxbCore:    db " CORE=", 0
+msgNxbBadMode: db "MODE? ", 0
+msgNxbLoad:    db "LOAD ERR ", 0
+msgNxbBank:    db "BANK ERR ", 0
+msgNxbOpen:    db "OPEN ERR ", 0
+msgNxbR:       db " R=", 0
+msgNxbF:       db " F=", 0
+msgNxbD:       db " D=", 0
+msgNxbT:       db " T=", 0
+msgNxbN:       db " N=", 0
+msgNxbE:       db " E=", 0
+msgNxbCmdTag:  db " CMD", 0
+msgNxbTokTag:  db " TOK", 0
+tagSOU:        db "SOU", 0
+tagSK8:        db "SK8", 0
+tagS16:        db "S16", 0
+tagR8U:        db "R8U", 0
+tagR8P:        db "R8P", 0
+tagR6U:        db "R6U", 0
+tagR6P:        db "R6P", 0
+tagRD1:        db "RD1", 0
+tagRD2:        db "RD2", 0
+tagRD3:        db "RD3", 0
+tagC8:         db "C8", 0
+tagC16:        db "C16", 0
+tagCD1:        db "CD1", 0
+tagCD2:        db "CD2", 0
+tagCD3:        db "CD3", 0
+tagCD4:        db "CD4", 0
+tagKF:         db "KF", 0
+tagFLP:        db "FLP", 0
+tagFE:         db "FE", 0
+tagSEG:        db "SEG", 0
+tagPF:         db "PF", 0
+nxbFname:      db "NXB0.BIN", 0  ; digit at +3 patched by nxb_load
+nxbPfName:     db "001.VID", 0   ; prefetch probe fixture (-Vid staged)
+
+nxbMode:       db 0
+nxbParam:      db 0
+nxbRow:        db 0
+nxbErr:        db 0              ; 0 ok / 1 reserved op / 2 src overrun
+                                  ; / 3 dest overrun
+nxbErrOp:      db 0
+nxbHandle:     db 0
+nxbSrcPages:   ds NXB_MAX_PAGES  ; loaded payload page list
+nxbBanks:      ds 4              ; owning banks (for nxb_free)
+nxbBankCnt:    db 0
+nxbSrcCnt:     db 0              ; pages holding payload bytes
+nxbSrcIdx:     db 0              ; currently mapped source page index
+nxbLen:        dw 0              ; payload length in bytes
+nxbReps:       dw 0
+nxbRepCnt:     dw 0
+nxbFrames:     dw 0
+nxbLinePrev:   dw 0
+nxbLineStart:  dw 0
+nxbLineEnd:    dw 0
+nxbTicks:      dw 0              ; replica ISR tick count
+nxbTickStart:  dw 0
+nxbFrameCt:    db 0              ; frames decoded this rep
+nxbSegFrames:  db 0              ; frames decoded (last completed rep)
+nxbShowFrames: db 0
+nxbHidden:     db 0              ; 1 = inside a KSTART..KFLIP span
+nxbDstPage:    db 0
+nxbDstEnd:     db 0
+nxbBaseFront:  db 0
+nxbBaseHidden: db 0
+nxbEndFront:   db 0
+nxbEndHidden:  db 0
+nxbPagesN:     db 0
+nxbDispMode:   db 0
+nxbFillKind:   db 0              ; 0 unrolled / 1 push / 2 DMA
+nxbCopyKind:   db 0              ; 0 LDI / 1 DMA
+nxbDmaCap:     dw 0              ; chunk cap (0 = uncapped CPU rows)
+nxbRemain:     dw 0
+nxbColour:     db 0
+nxbSaveSrc:    dw 0
+nxbDstSave:    dw 0
+nxbSpSave:     dw 0
+nxbRepSp:      dw 0
+nxbRowTag:     dw 0
+nxbAudArmed:   db 0
+nxbSvAudEnable: db 0             ; arm/disarm nesting save (always 0 -
+                                  ; entry froze the tick first)
+nxbSvAudMain:  db 0              ; entry/exit save of the true value
+nxbSvStub:     dw 0
+nxbSvMMU2:     db 0
+nxbSvNr70:     db 0
+nxbSvNr69:     db 0
+nxbSvNr12:     db 0
+nxbPfStat:     db 0              ; 0 clean / 1 CMD / 2 token
+nxbCardFlags:  db 0
+nxbMfSave:     db 0
+nxbAddrLo:     dw 0
+nxbAddrHi:     dw 0
+nxbAudSil:     ds 32             ; replica ISR silence loop ($80-filled
+                                  ; at arm time)
 
  ENDIF ; DEBUG
 

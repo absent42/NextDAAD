@@ -210,23 +210,31 @@ VS2G  100     verb
 ; screen, no crash); this verb is not meant to ship.
 KTEST 101     verb
 
-; SP14a DMA autopsy bench verbs (first core 3.02.04 sitting): DMAT3/
-; DMAT1/DMAT4/DMAT2 are the hypothesis legs H3/H1/H4/H2 (dest-alignment
-; sweep / original re-run / burst init / pacing pair) and DMARC/DMARB/
-; DMARP the sustained-rate legs (continuous/burst/prescaler program).
-; DMACC is the burst CPU-concurrency probe (does the CPU keep running
-; while a burst DMA-from-SPI transfer is in flight? - the SP15 fetch-
-; overlap question; bench card section 35).
-; DEBUG builds only - Release's EXTERN 0 8 is ext_stub (silent no-op).
-; See PRO 5's entries and src/video.asm's dmat_entry block header.
-DMAT3 102     verb
-DMAT1 103     verb
-DMAT4 104     verb
-DMAT2 105     verb
-DMARC 106     verb
-DMARB 107     verb
-DMARP 108     verb
-DMACC 109     verb
+; SP15 T2 NXV v2 decode-kernel bench verbs (NXBEN family, replacing
+; the retired DMAT/DMACC suite - its job is done, git holds the code):
+; silicon coefficients for the encoder's TMODEL_COEFFS before the v2
+; format freezes. flag 250 = mode, flag 249 = param (bit 0 = display
+; mode 0/1, bit 1 = audio armed). DEBUG builds only - Release's
+; EXTERN 0 8 is ext_stub (silent no-op). Stage payloads first:
+; tests\build-tests.ps1 -NxBench (sd\NXB0.BIN..NXB9.BIN); NXBP also
+; needs -Vid's sd\001.VID. Owner bench card:
+; .superpowers/sdd/sp14a-task-4-report.md section 36. See
+; src/video.asm's nxben_entry block header for the mode/row decode.
+NXBD  102     verb
+NXBS  103     verb
+NXBR  104     verb
+NXBRD 105     verb
+NXBC0 106     verb
+NXBC1 107     verb
+NXBD0 108     verb
+NXBD1 109     verb
+NXBA0 110     verb
+NXBA1 111     verb
+NXBK0 112     verb
+NXBK1 113     verb
+NXBF  114     verb
+NXBX  115     verb
+NXBP  116     verb
 
 ;                       Verbs
 GET     20      verb
@@ -679,51 +687,91 @@ $pictureOK
                 CLS
                 DONE
 
-; SP14a DMA autopsy bench verbs (src/video.asm dmat_entry; owner bench
-; card: .superpowers/sdd/sp14a-task-4-report.md section 34; DMACC card
-; section 35). flag 250 = sub-mode (1 = H3 dest-alignment sweep, 2 =
-; H1 original re-run, 3 = H4 burst init, 4 = H2 pacing pair, 5 =
-; sustained rate, 6 = CPU-concurrency), flag 249 = rate/concurrency
-; DMA program (0 continuous-original / 1 burst / 2
-; prescaler); both self-clear inside dmat_entry, the video stage
-; ladder's own convention for these flags. All route through EXTERN
-; 0 8 -> extVec vector 8 (overlay0.asm's dmat_trampoline, DEBUG only -
-; Release's vector 8 stays ext_stub, so these verbs are silent no-ops
-; there). Hardware-only by nature: CSpect has no raw SPI path, so on
-; the emulator every leg reports OPEN/CMD ERR instead of data.
-> DMAT3   _     LET 250 1
+; SP15 T2 NXV v2 decode-kernel bench verbs (src/video.asm nxben_entry;
+; owner bench card: .superpowers/sdd/sp14a-task-4-report.md section
+; 36). flag 250 = mode (1 dispatch soup / 2 skip / 3 RUN CPU / 4 RUN
+; DMA / 5 COPY CPU / 6 COPY DMA / 7 keyframe / 8 per-frame fixed /
+; 9 real segment / 10 ring-prefetch probe), flag 249 = param (bit 0 =
+; display mode: 0 = 256x192 mode-0, 1 = 320x256 mode-1; bit 1 = audio
+; armed, modes 6 - mode 7 always arms). Both self-clear inside
+; nxben_entry (the stage-ladder flag convention). All route through
+; EXTERN 0 8 -> extVec vector 8 (overlay0.asm's nxben_trampoline,
+; DEBUG only - Release's vector 8 stays ext_stub, silent no-ops).
+; NXBP is hardware-only (raw SPI - CSpect reports OPEN/CMD ERR); the
+; other modes decode from RAM and run anywhere, but the coefficients
+; only count when measured on silicon (core-stamped rows).
+> NXBD    _     LET 249 0
+                LET 250 1
                 EXTERN 0 8
                 DONE
 
-> DMAT1   _     LET 250 2
+> NXBS    _     LET 249 0
+                LET 250 2
                 EXTERN 0 8
                 DONE
 
-> DMAT4   _     LET 250 3
+> NXBR    _     LET 249 0
+                LET 250 3
                 EXTERN 0 8
                 DONE
 
-> DMAT2   _     LET 250 4
+> NXBRD   _     LET 249 0
+                LET 250 4
                 EXTERN 0 8
                 DONE
 
-> DMARC   _     LET 249 0
+> NXBC0   _     LET 249 0
                 LET 250 5
                 EXTERN 0 8
                 DONE
 
-> DMARB   _     LET 249 1
+> NXBC1   _     LET 249 1
                 LET 250 5
                 EXTERN 0 8
                 DONE
 
-> DMARP   _     LET 249 2
-                LET 250 5
-                EXTERN 0 8
-                DONE
-
-> DMACC   _     LET 249 1
+> NXBD0   _     LET 249 0
                 LET 250 6
+                EXTERN 0 8
+                DONE
+
+> NXBD1   _     LET 249 1
+                LET 250 6
+                EXTERN 0 8
+                DONE
+
+> NXBA0   _     LET 249 2
+                LET 250 6
+                EXTERN 0 8
+                DONE
+
+> NXBA1   _     LET 249 3
+                LET 250 6
+                EXTERN 0 8
+                DONE
+
+> NXBK0   _     LET 249 0
+                LET 250 7
+                EXTERN 0 8
+                DONE
+
+> NXBK1   _     LET 249 1
+                LET 250 7
+                EXTERN 0 8
+                DONE
+
+> NXBF    _     LET 249 0
+                LET 250 8
+                EXTERN 0 8
+                DONE
+
+> NXBX    _     LET 249 0
+                LET 250 9
+                EXTERN 0 8
+                DONE
+
+> NXBP    _     LET 249 0
+                LET 250 10
                 EXTERN 0 8
                 DONE
 
