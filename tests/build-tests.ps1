@@ -85,56 +85,56 @@
 #            border, 1px black outline - obviously different from the
 #            interpreter's default black/white arrow at a glance). No
 #            test binary is committed for this either.
-# Video benchmark fixtures (SP13 Task 1, native-format rewrite SP14a
-# T4), independent of the DDB switches:
-#   -Vid     stage the native NXV format matrix into sd\001.VID..
-#            sd\005.VID = profiles N0..N4 (docs\superpowers\specs\2026-
-#            07-21-sp14a-native-video-design.md), one file per profile,
-#            each a REAL encode via authoring-kit\lib\videnc.py (the
-#            ONE canonical encoder, shipped in the kit like
-#            fontconv.ps1 - no drift-prone test copy) - MakeVid
-#            compatibility is SCRAPPED (SP14a T4), so there is no
-#            classifier-collision/malformed-autopal baggage left to work
-#            around; the header makes every file self-describing.
-#            VIDBENCH (DEBUG builds only, tests\test.dsf) always benches
-#            sd\001.VID (N0, the highest data-rate profile - the
-#            conservative gate). Stale-cleans sd\*.VID first. Two owner-
-#            provisioned sources feed the matrix (both read-only, like
-#            everything under tools\) - each profile's own dominant
-#            source aspect, so videnc's center-crop (never a stretch -
-#            see videnc.py's own docstring) stays minimal-to-none for
-#            every shipped profile: tools\demo-files\1440x1080-25p.mp4
-#            (4:3) for the full-height shapes N0/N1; tools\demo-
-#            files\1920x1080-25p.mp4 (16:9) for the letterboxed shapes
-#            N2/N3/N4 - N2 is a native 25p 1:1 frame match, N4's 2.667:1
-#            target center-crops the 16:9 source's top/bottom (1080 ->
-#            720) before scaling, the one profile with a substantial
-#            crop. Source -> dest mapping:
-#              001.VID <- N0 (320x256 mode-1, 12.5fps, stereo, palette,
-#                         from 1440x1080-25p.mp4)
-#              002.VID <- N1 (256x192 mode-0, 20fps, stereo, palette,
-#                         from 1440x1080-25p.mp4)
-#              003.VID <- N2 (256x144 mode-0 letterbox, 25fps, stereo,
-#                         palette, from 1920x1080-25p.mp4)
-#              004.VID <- N3 (320x192 mode-1 letterbox, 16.667fps,
-#                         stereo, palette, from 1920x1080-25p.mp4)
-#              005.VID <- N4 (320x120 mode-1 letterbox, 20fps - re-
-#                         profiled from 25fps, SP14a gap-blit closing
-#                         wave 2026-07-23, floor-proven infeasible at
-#                         25fps - stereo, palette, from 1920x1080-25p.mp4,
-#                         center-cropped)
-#            Each encode is SLOW (per-frame adaptive palette
-#            quantization over the whole clip) so results are CACHED at
-#            tests\out\00X_nY_cache.vid and only regenerated when that
-#            cache file is missing - tests\out\ is gitignored (persists
-#            across runs, unlike sd\*.VID which this switch always
-#            stale-cleans first). Regenerate by deleting the relevant
-#            cache file and re-running -Vid, or directly with e.g.:
-#              python authoring-kit\lib\videnc.py tools\demo-files\1440x1080-25p.mp4 tests\out\001_n0_cache.vid --profile n0
-#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\005_n4_cache.vid --profile n4
+# Video benchmark fixtures (SP13 Task 1, NXV v2 rewrite SP15 T1),
+# independent of the DDB switches:
+#   -Vid     stage the NXV v2 shape matrix into sd\001.VID..sd\005.VID -
+#            docs\superpowers\plans\2026-07-23-sp15-nxv2.md is the
+#            format authority; authoring-kit\lib\nxv2enc.py/nxv2dec.py
+#            are the encoder pipeline/reference decoder, videnc.py the
+#            CLI shell (the ONE canonical encoder, shipped in the kit
+#            like fontconv.ps1 - no drift-prone test copy). v1's five
+#            fixed profiles (n0-n4) are GONE (SP15 T1, owner decision) -
+#            v2 has five SHAPE presets instead (full/16:9/scope/
+#            classic/classic-wide, nxv2enc.PRESETS), each encoded here
+#            at 25fps stereo. VIDBENCH (DEBUG builds only, tests\
+#            test.dsf) always benches sd\001.VID (full, the highest
+#            data-rate shape - the conservative gate). Stale-cleans
+#            sd\*.VID first. Two owner-provisioned sources feed the
+#            matrix (both read-only, like everything under tools\) -
+#            each shape's own dominant source aspect, so videnc's
+#            center-crop (never a stretch - see videnc.py's own
+#            docstring) stays minimal-to-none for every shipped shape:
+#            tools\demo-files\1440x1080-25p.mp4 (4:3) for the full-
+#            height shapes full/classic; tools\demo-files\1920x1080-
+#            25p.mp4 (16:9) for the letterboxed shapes 16:9/scope/
+#            classic-wide. Source -> dest mapping:
+#              001.VID <- full          (320x256 mode-1, from 1440x1080-25p.mp4)
+#              002.VID <- classic       (256x192 mode-0, from 1440x1080-25p.mp4)
+#              003.VID <- 16:9          (320x192 mode-1 letterbox, from 1920x1080-25p.mp4)
+#              004.VID <- scope         (320x144 mode-1 letterbox, from 1920x1080-25p.mp4)
+#              005.VID <- classic-wide  (256x144 mode-0 letterbox, from 1920x1080-25p.mp4)
+#            Each encode is SLOW (content-triggered-keyframe, dual-
+#            budget delta coding over the whole clip) so results are
+#            CACHED at tests\out\00X_<shape>_cache.vid and only
+#            regenerated when that cache file is missing - tests\out\
+#            is gitignored (persists across runs, unlike sd\*.VID which
+#            this switch always stale-cleans first). Regenerate by
+#            deleting the relevant cache file and re-running -Vid, or
+#            directly with e.g.:
+#              python authoring-kit\lib\videnc.py tools\demo-files\1440x1080-25p.mp4 tests\out\001_full_cache.vid --shape full --fps 25
+#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\005_classic-wide_cache.vid --shape classic-wide --fps 25
 #            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
 #            sd\*.VID is gitignored (owner edit).
-param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid)
+#   -Nxv2Test  run tests\nxv2_selftest.py (plain python, no pytest -
+#              header/opcode/keyframe-span roundtrips, scene-cut
+#              lookahead, dual-budget rate control, BuildReport/
+#              validate() sanity vs both research demo clips, CLI
+#              rewire) and throw if it exits non-zero. Independent of
+#              every other switch; does not touch sd\ or the DAAD
+#              toolchain. Slow (steps 4-7 run real ffmpeg encodes
+#              against tools\demo-files\) - not part of the default
+#              (no-switch) run.
+param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$Nxv2Test)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -550,44 +550,45 @@ if ($Font) {
 }
 
 if ($Vid) {
-    # SP14a T4 native-format fixtures - see the -Vid switch's own header
-    # comment above for the full profile->dest mapping. Same CSpect-lock
+    # SP15 T1 NXV v2 shape fixtures - see the -Vid switch's own header
+    # comment above for the full shape->dest mapping. Same CSpect-lock
     # hazard as -Rab/-UU/-Title/-Font: refuse to stage rather than warn.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
     }
     Remove-Item "$root\sd\*.VID" -Force -ErrorAction SilentlyContinue
-    $vidSrc43 = Join-Path $root 'tools\demo-files\1440x1080-25p.mp4'   # N0/N1 (4:3)
-    $vidSrc169 = Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'  # N2/N3/N4 (16:9)
+    $vidSrc43 = Join-Path $root 'tools\demo-files\1440x1080-25p.mp4'   # full/classic (4:3)
+    $vidSrc169 = Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'  # 16:9/scope/classic-wide
     $vidOutDir = Join-Path $root 'tests\out'
     New-Item -ItemType Directory -Force $vidOutDir | Out-Null
-    # dest file -> (NXV profile, source clip), in the spec's own N0..N4
-    # order - see the -Vid switch's own header comment for why each
-    # profile draws from the source whose own aspect it dominantly
-    # matches (videnc.py's center-crop makes any pairing correct, but a
-    # closer-matching source keeps the crop minimal-to-none).
-    $vidProfileMap = [ordered]@{
-        '001.VID' = @{ profile = 'n0'; src = $vidSrc43 }
-        '002.VID' = @{ profile = 'n1'; src = $vidSrc43 }
-        '003.VID' = @{ profile = 'n2'; src = $vidSrc169 }
-        '004.VID' = @{ profile = 'n3'; src = $vidSrc169 }
-        '005.VID' = @{ profile = 'n4'; src = $vidSrc169 }
+    # dest file -> (NXV v2 shape preset, source clip) - see the -Vid
+    # switch's own header comment for why each shape draws from the
+    # source whose own aspect it dominantly matches (videnc.py's
+    # center-crop makes any pairing correct, but a closer-matching
+    # source keeps the crop minimal-to-none).
+    $vidShapeMap = [ordered]@{
+        '001.VID' = @{ shape = 'full'; src = $vidSrc43 }
+        '002.VID' = @{ shape = 'classic'; src = $vidSrc43 }
+        '003.VID' = @{ shape = '16:9'; src = $vidSrc169 }
+        '004.VID' = @{ shape = 'scope'; src = $vidSrc169 }
+        '005.VID' = @{ shape = 'classic-wide'; src = $vidSrc169 }
     }
     $vidStaged = 0
-    foreach ($dest in $vidProfileMap.Keys) {
-        $profile = $vidProfileMap[$dest].profile
-        $src = $vidProfileMap[$dest].src
+    foreach ($dest in $vidShapeMap.Keys) {
+        $shape = $vidShapeMap[$dest].shape
+        $src = $vidShapeMap[$dest].src
         if (-not (Test-Path -LiteralPath $src)) {
             "WARNING: $src missing - sd\$dest not generated"
             continue
         }
-        $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${profile}_cache.vid"
+        $shapeTag = $shape -replace ':', ''
+        $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_cache.vid"
         if (-not (Test-Path -LiteralPath $cache)) {
-            "encoding sd\$dest (profile $profile, source $(Split-Path -Leaf $src)) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
+            "encoding sd\$dest (shape $shape, source $(Split-Path -Leaf $src)) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
             # canonical encoder lives in the kit (see -Vid header); repo
             # tools ffmpeg passed explicitly - the kit default resolves
             # to authoring-kit\tools\ffmpeg, absent on a fresh clone
-            & python "$root\authoring-kit\lib\videnc.py" $src $cache --profile $profile --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
+            & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
             if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$dest not staged" }
         }
         if (Test-Path -LiteralPath $cache) {
@@ -595,7 +596,16 @@ if ($Vid) {
             $vidStaged++
         }
     }
-    "staged $vidStaged video fixture(s) -> sd\001.VID..sd\005.VID (native NXV profiles N0..N4, docs\superpowers\specs\2026-07-21-sp14a-native-video-design.md)"
+    "staged $vidStaged video fixture(s) -> sd\001.VID..sd\005.VID (NXV v2 shapes full/classic/16:9/scope/classic-wide, docs\superpowers\plans\2026-07-23-sp15-nxv2.md)"
+}
+
+if ($Nxv2Test) {
+    # SP15 T1 encoder/decoder selftest - plain python, no pytest dep.
+    # Independent of sd\/the DAAD toolchain; slow (steps 4-7 run real
+    # ffmpeg encodes against tools\demo-files\ - see tests\
+    # nxv2_selftest.py's own header comment).
+    & python "$root\tests\nxv2_selftest.py"
+    if ($LASTEXITCODE -ne 0) { throw "nxv2_selftest.py failed (exit $LASTEXITCODE)" }
 }
 
 if ($Aud) {
