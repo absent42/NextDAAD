@@ -313,6 +313,45 @@ def t3_unterminated_span():
             raise AssertionError("decode() should raise on an unterminated keyframe span")
 
 
+@case(3, "validate() robustness on genuinely malformed/truncated files (never raises)")
+def t3_validate_robustness():
+    with tempfile.TemporaryDirectory() as td:
+        # Empty file.
+        p_empty = Path(td) / "empty.vid"
+        p_empty.write_bytes(b"")
+        issues = dec.validate(p_empty)
+        expect(issues != [], "empty file should report an issue")
+
+        # Garbage (not NXVID at all).
+        p_garbage = Path(td) / "garbage.vid"
+        p_garbage.write_bytes(bytes(rng_bytes(600)))
+        issues = dec.validate(p_garbage)
+        expect(issues != [], "garbage file should report an issue")
+
+        # Valid header claiming 5 frames, but the file only contains
+        # payload data for 1 (truncated mid-stream, e.g. a partial SD
+        # write) - validate() must report it, not raise or hang.
+        hdr = enc.pack_header(width=256, height=1, fps=25, channels=1, arate=enc.RATE_MONO,
+                               frame_count=5, audio_bytes_per_frame=0,
+                               ring_start_margin_blocks=0, per_frame_cap_blocks=0)
+        one_frame = enc.op_skip(256) + bytes([enc.OP_FEND])
+        buf = hdr + one_frame + bytes((-len(one_frame)) % 512)
+        p_trunc = Path(td) / "truncated.vid"
+        p_trunc.write_bytes(buf)
+        issues = dec.validate(p_trunc)
+        expect(issues != [], f"truncated file (header says 5 frames, file has 1) should report an issue: {issues}")
+        try:
+            list(dec.decode(p_trunc))
+        except dec.Nxv2FormatError:
+            pass
+        else:
+            raise AssertionError("decode() should raise on a truncated file")
+
+
+def rng_bytes(n):
+    return np.random.default_rng(9).integers(0, 256, size=n, dtype=np.uint8).tobytes()
+
+
 # =======================================================================
 # Steps 4-7: real-footage pipeline (Sintel/BBB). Cached extraction to
 # avoid repeated ffmpeg runs across steps within one selftest run.
@@ -382,6 +421,33 @@ def t6_zero_truncation():
         expect(trunc == [], f"{clip.name} {w}x{h}@{fps}: {len(trunc)} truncated frame(s) - dual-budget cap failed to protect the budget")
     if not any_ran:
         print("  SKIP (demo sources or ffmpeg not available)")
+
+
+@case(6, "dual-budget rate control - truncation fallback mechanism itself (synthetic, forced)")
+def t6_truncation_fallback_mechanism():
+    # Real footage never exercises the "coarsest threshold still over
+    # budget" fallback (research finding + t6_zero_truncation above both
+    # confirm 0 truncation on both clips) - so that path needs its own
+    # direct test: an artificially tiny cap that even THRESHOLDS[-1]
+    # cannot satisfy, forcing the greedy priority-truncation branch.
+    rng = np.random.default_rng(5)
+    n = 320 * 256
+    prev = rng.integers(0, 256, size=n, dtype=np.uint8)
+    target = rng.integers(0, 256, size=n, dtype=np.uint8)   # near-total change
+    err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
+    tiny_cap = 200   # far below anything THRESHOLDS[-1]=64 could hit on this data
+    gcls, gstarts, glens, b, t, mode, binding = enc.encode_delta(target, err2, tiny_cap, None)
+    expect(mode == "trunc" and binding == "trunc", f"expected the truncation fallback to fire, got mode={mode} binding={binding}")
+    expect(b <= tiny_cap, f"truncated stream still exceeds its own cap: {b} > {tiny_cap}")
+    payload = enc.emit_delta_ops(target, gcls, gstarts, glens)
+    expect(len(payload) == b, f"truncated payload length {len(payload)} != modeled bytes {b}")
+    # The truncated stream must still be a STRUCTURALLY valid opcode
+    # stream (content is intentionally incomplete - only cursor
+    # exactness and clean termination are asserted here).
+    surface = prev.copy()
+    pos, cursor, term = dec.run_payload(payload, 0, surface, n, issues=None)
+    expect(cursor == n, f"truncated stream must still reach cursor-end: {cursor} != {n}")
+    expect(term == enc.OP_FEND, "truncated stream still terminates cleanly with FEND")
 
 
 @case(7, "ring/resident sizing + BuildReport + validate() full pass (both research clips)")

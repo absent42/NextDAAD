@@ -29,7 +29,7 @@ import numpy as np
 from nxv2enc import (
     HEADER_SIZE, unpack_header,
     OP_FEND, OP_SKIP16, OP_RUN8, OP_RUN16, OP_COPY8, OP_COPY16, OP_PAL,
-    OP_SKIP8, OP_KFLIP, OP_KSTART, VALID_OPS, TERMINAL_OPS,
+    OP_SKIP8, OP_KFLIP, OP_KSTART, TERMINAL_OPS,
     unflatten_frame,
 )
 

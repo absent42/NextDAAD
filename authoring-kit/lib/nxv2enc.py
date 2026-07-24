@@ -30,7 +30,6 @@ frames (research finding: the shadow-compose variant is priced out at
 paint the HIDDEN surface across a KSTART..KFLIP span and flip+palette-
 swap atomically on KFLIP.
 """
-import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -586,7 +585,7 @@ def detect_scene_cuts(chg):
     cuts = []
     N = len(chg)
     for i in range(1, N):
-        med3 = float(np.median(chg[max(1, i - 3):i])) if i > 1 else 0.0
+        med3 = float(np.median(chg[max(1, i - IMPULSE_MEDIAN_WINDOW):i])) if i > 1 else 0.0
         impulse = med3 <= 0.0 or chg[i] >= IMPULSE_MULT * med3
         if chg[i] > CUT_T and impulse:
             cuts.append(i)
@@ -934,8 +933,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65):
             is_last = not kf_chunks
             payload = emit_kf_chunk_payload(tflat, s, L, first, is_last, kf_pal=kf_pal)
             payloads.append(payload)
-            b, t = kf_chunk_cost(L, first)
-            per_frame["bytes"].append(len(payload))
+            per_frame["bytes"].append(len(payload))   # actual, not kf_chunk_cost's modeled estimate
             per_frame["binding"].append("kf")
             per_frame["drift"].append(float("nan"))
             if is_last:

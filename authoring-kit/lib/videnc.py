@@ -58,15 +58,13 @@ from fractions import Fraction
 from pathlib import Path
 
 try:
-    from PIL import Image, ImageChops
+    from PIL import Image   # noqa: F401 - import-guard only; nxv2enc.py does the real Pillow work
 except ImportError:
     print("error: Pillow is required (pip install Pillow)", file=sys.stderr)
     sys.exit(1)
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FFMPEG = ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
-
-SILENCE_U8 = 128  # unsigned 8-bit PCM zero-crossing level
 
 
 def fps_arg(fps: Fraction) -> str:
