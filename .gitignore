@@ -36,6 +36,8 @@ sd/PART*/
 sd/*.CHR
 sd/*.SPR
 sd/*.VID
+sd/*.BIN
+sd/*.bin
 tests/out/
 authoring-kit/VIDEO/*.vid
 authoring-kit/VIDEO/*.VID
