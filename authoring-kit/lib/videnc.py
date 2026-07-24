@@ -1,91 +1,54 @@
 #!/usr/bin/env python3
 """
-authoring-kit/lib/videnc.py - encoder for NextDAAD's native NXV video
-format (SP14a T4). The interim six-format MakeVid/playvid --legacy
-encoder was removed before anything shipped (owner decision,
-2026-07-23) - NXV is the only output.
+authoring-kit/lib/videnc.py - CLI for NextDAAD's native NXV video
+format. NXV v2 (SP15 T1) is the only output now - the v1 fixed-profile
+container (five shipped profiles n0-n4) was replaced wholesale (owner
+decision, 2026-07-24): v1 files are no longer produced or read by this
+tool. docs/superpowers/plans/2026-07-23-sp15-nxv2.md's "Format
+reference" section is the format authority; authoring-kit/lib/
+nxv2enc.py and nxv2dec.py are the encoder pipeline and reference
+decoder - this file is a thin CLI shell around nxv2enc.encode().
 
-This is the ONE canonical copy (owner consolidation, 2026-07-23 - the
-old tests/videnc.py duplicate is gone). It ships in the authoring kit
-and the repo's own test harness consumes it from here (build-tests.ps1
--Vid), the same pattern as lib/fontconv.ps1. The default ffmpeg path
-resolves relative to this file (authoring-kit/tools/ffmpeg/); repo
-callers pass --ffmpeg tools/ffmpeg/bin/ffmpeg.exe explicitly.
+This is the ONE canonical copy (owner consolidation, 2026-07-23). It
+ships in the authoring kit and the repo's own test harness consumes it
+from here (build-tests.ps1 -Vid), the same pattern as lib/fontconv.ps1.
+The default ffmpeg path resolves relative to this file (authoring-kit/
+tools/ffmpeg/); repo callers pass --ffmpeg tools/ffmpeg/bin/ffmpeg.exe
+explicitly.
 
-NXV (default output): docs/superpowers/specs/2026-07-21-sp14a-native-
-video-design.md is the format authority. ONE parameterized container,
-every section an exact multiple of 512-byte SD blocks - REPLACES the old
-sizeless six-format classifier entirely (a real header, not a divisor
-walk). See nextdaad.inc's own NXV_OFF_* header-layout comment for the
-exact byte offsets this encoder writes (kept identical, on purpose, so
-one comment block is the single source of truth for both sides).
+Shape (replaces v1's five fixed profiles): --shape picks one of five
+presets (full/16:9/scope/classic/classic-wide, see nxv2enc.PRESETS) or
+an explicit WIDTHxHEIGHT (width must be 256 or 320 - the only two
+Layer 2 shapes); --aspect derives a FREE height for a given width from
+a target displayed aspect ratio (e.g. --width 320 --aspect 2.35 for
+true cinema scope), correcting for Layer 2 mode-1's non-square pixels
+(nxv2enc.derive_free_height's own docstring has the exact math). --fps
+is independent of shape (the v1 profiles baked one fixed fps per
+profile; v2 does not) - default 25.
 
-Five shipped profiles (the spec's own matrix):
-  N0 "cinema"        320x256 mode-1  12.5 fps   full-bleed
-  N1 "classic"        256x192 mode-0  20   fps   full-bleed
-  N2 "widescreen"      256x144 mode-0  25   fps   letterboxed (mode-0,
-                                                    trivially - no gap)
-  N3 "widescreen XL"   320x192 mode-1  16.667 fps  letterboxed (mode-1
-                                                    column gap)
-  N4 "epic"            320x120 mode-1  20   fps   letterboxed (mode-1
-                                                    column gap, anamorphic) -
-                                                    re-profiled from 25fps
-                                                    (SP14a gap-blit closing
-                                                    wave, 2026-07-23): the
-                                                    25fps combination is
-                                                    floor-proven infeasible
-                                                    (min blit > 40ms budget
-                                                    even at the silicon
-                                                    floor) - owner decision
-
---profile auto picks the shipped profile whose own pixel aspect ratio
-(width/height, square-pixel assumption) is closest to the source's -
-a simple, disclosed heuristic (not a physical-display-aspect model);
-pass an explicit --profile if the source's intended framing needs a
-specific shape.
-
-Audio: full rate always (no decimation, unlike the old MakeVid-era
-downsampled formats) - two supported rates, chosen so the CTC time
-constant divides cleanly on every video mode (src/video.asm's own
-vidCtcTcNxvStereo/Mono tables, T1's derivation method): stereo
-15625 Hz, mono 23325 Hz (nextdaad.inc's NXV_RATE_STEREO/MONO). Samples/
-frame = round(rate/fps) - not always an exact integer division for
-every profile's fps (N1's and N4's shared 20fps, and N3's 50/3fps, in
-particular), so the
-achieved rate drifts a few Hz from the nominal target; the drift is
-disclosed here and in the task report, and is two orders of magnitude
-smaller than this project's own already-accepted CTC-quantization error
-class. audioBytesReal = samples*channels (the played length);
-audioBytesPad = audioBytesReal rounded up to a 512-byte block multiple
-(the wire read size - the pad bytes are silent filler, never played).
-
-Pixel order: mode-1 (N0/N3/N4) is column-major (Layer 2 mode 1
-addressing); mode-0 (N1/N2) is row-major. Column-major output uses
-Pillow's own transpose, which already yields exactly `height` real
-bytes per column with NO stride padding - precisely what the player's
-flat/gap blits expect on the wire (nextdaad.inc's own header: "the bars
-cost ZERO wire bytes - the format streams content lines only").
+Audio: full rate always, same two rates as v1 (chosen so the CTC time
+constant divides cleanly on every video mode): stereo 15625 Hz, mono
+23325 Hz (nxv2enc.RATE_STEREO/RATE_MONO). Samples/frame = round(rate/
+fps) - the achieved rate drifts a few Hz from nominal on some fps
+values, disclosed here as it was for v1.
 
 Cropping: the source's own pixel dimensions are always probed (ffmpeg
--i stderr, same regex --profile auto uses) and compared against the
-target profile's aspect ratio (width/height, square-pixel assumption).
-If they differ, the source is CENTER-CROPPED to the profile's exact
-aspect before scaling - never stretched/squashed - so every shipped
-profile presents undistorted content regardless of source aspect. The
-crop always removes the SMALLER dimension's excess: source wider than
-the profile (src aspect > profile aspect) crops the sides (equal margins
-left/right, full source height kept); source narrower/taller than the
-profile crops top/bottom (equal margins top/bottom, full source width
-kept). An exact aspect match (e.g. a 4:3 source for N1, or a 16:9 source
-for N2) performs no crop at all. See compute_center_crop's own docstring
-for the exact arithmetic.
+-i stderr) and compared against the target shape's aspect ratio
+(width/height, square-pixel assumption). If they differ, the source is
+CENTER-CROPPED to the shape's exact aspect before scaling - never
+stretched/squashed. See compute_center_crop's own docstring for the
+exact arithmetic.
 
-Palette block (palette-flag files): 256 entries x 2 bytes, NR $44 write
-order (see build_palette_block).
+Quality: NXV v2 is a content-triggered-keyframe, dual-budget (bytes +
+modeled decode-T) delta codec - encode time is the main quality lever
+(nxv2enc.TMODEL_COEFFS is model-not-silicon; Task 2's bench replaces
+it before the format freezes). --report writes the BuildReport
+(mean/worst PSNR, keyframe count, bytes, binding-budget histogram) as
+JSON next to the output file.
 
-Requires: Python 3, Pillow. An ffmpeg binary is required at run time
-(default: the project's own tools\\ffmpeg\\bin\\ffmpeg.exe, override
-with --ffmpeg).
+Requires: Python 3, Pillow, numpy. An ffmpeg binary is required at run
+time (default: the project's own tools\\ffmpeg\\bin\\ffmpeg.exe,
+override with --ffmpeg).
 """
 
 import argparse
@@ -104,90 +67,6 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FFMPEG = ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
 
 SILENCE_U8 = 128  # unsigned 8-bit PCM zero-crossing level
-
-# ---------------------------------------------------------------------
-# NXV header layout (nextdaad.inc's own NXV_OFF_* comment is the
-# authority - offsets/sizes here MUST match it exactly).
-# ---------------------------------------------------------------------
-NXV_MAGIC = b"NXVID"
-NXV_VERSION = 1
-NXV_OFF_MAGIC = 0
-NXV_OFF_VERSION = 5
-NXV_OFF_SHAPE = 6
-NXV_OFF_WIDTH = 7
-NXV_OFF_HEIGHT = 9
-NXV_OFF_FPSX10 = 11
-NXV_OFF_ACHAN = 13
-NXV_OFF_ARATE = 14
-NXV_OFF_ABYTES_PAD = 16
-NXV_OFF_ABYTES_REAL = 18
-NXV_OFF_PALFLAG = 20
-NXV_OFF_FRAMES = 21
-NXV_OFF_PIXBLK = 24
-NXV_HEADER_SIZE = 512
-
-NXV_SHAPE_MODE1 = 0   # 320-wide, Layer 2 mode 1, column-major
-NXV_SHAPE_MODE0 = 1   # 256-wide, Layer 2 mode 0, row-major
-NXV_RATE_STEREO = 15625
-NXV_RATE_MONO = 23325
-
-NXV_PROFILES = {
-    "n0": dict(shape=NXV_SHAPE_MODE1, width=320, height=256, fps=Fraction(25, 2)),
-    "n1": dict(shape=NXV_SHAPE_MODE0, width=256, height=192, fps=Fraction(20, 1)),
-    "n2": dict(shape=NXV_SHAPE_MODE0, width=256, height=144, fps=Fraction(25, 1)),
-    "n3": dict(shape=NXV_SHAPE_MODE1, width=320, height=192, fps=Fraction(50, 3)),
-    "n4": dict(shape=NXV_SHAPE_MODE1, width=320, height=120, fps=Fraction(20, 1)),
-}
-for _name, _p in NXV_PROFILES.items():
-    _p["column_major"] = (_p["shape"] == NXV_SHAPE_MODE1)
-    _p["aspect"] = Fraction(_p["width"], _p["height"])
-
-
-def nxv_audio_layout(fps: Fraction, channels: int):
-    """Returns (rate, samples_per_frame, real_bytes, padded_bytes) for a
-    full-rate NXV audio stream at the given fps/channel count. samples
-    = round(rate/fps) - see this module's own docstring for the achieved
-    -rate drift this rounding implies on some profile/channel pairs."""
-    rate = NXV_RATE_STEREO if channels == 2 else NXV_RATE_MONO
-    exact = Fraction(rate) / fps
-    samples = int(exact + Fraction(1, 2))  # round-half-up, always positive
-    real = samples * channels
-    padded = ((real + 511) // 512) * 512
-    return rate, samples, real, padded
-
-
-def nxv_pick_profile(width: int, height: int) -> str:
-    """--profile auto: nearest pixel-aspect match (square-pixel
-    assumption) among the five shipped profiles - see this module's own
-    docstring for the disclosed limits of this heuristic."""
-    src_aspect = Fraction(width, height)
-    best, best_diff = None, None
-    for name, p in NXV_PROFILES.items():
-        diff = abs(p["aspect"] - src_aspect)
-        if best_diff is None or diff < best_diff:
-            best, best_diff = name, diff
-    return best
-
-
-def nxv_build_header(profile: dict, channels: int, rate: int, abytes_pad: int,
-                      abytes_real: int, palette: bool, frame_count: int,
-                      pixblocks: int) -> bytes:
-    hdr = bytearray(NXV_HEADER_SIZE)
-    hdr[NXV_OFF_MAGIC:NXV_OFF_MAGIC + 5] = NXV_MAGIC
-    hdr[NXV_OFF_VERSION] = NXV_VERSION
-    hdr[NXV_OFF_SHAPE] = profile["shape"]
-    hdr[NXV_OFF_WIDTH:NXV_OFF_WIDTH + 2] = profile["width"].to_bytes(2, "little")
-    hdr[NXV_OFF_HEIGHT:NXV_OFF_HEIGHT + 2] = profile["height"].to_bytes(2, "little")
-    fps_x10 = round(profile["fps"] * 10)
-    hdr[NXV_OFF_FPSX10:NXV_OFF_FPSX10 + 2] = fps_x10.to_bytes(2, "little")
-    hdr[NXV_OFF_ACHAN] = channels
-    hdr[NXV_OFF_ARATE:NXV_OFF_ARATE + 2] = rate.to_bytes(2, "little")
-    hdr[NXV_OFF_ABYTES_PAD:NXV_OFF_ABYTES_PAD + 2] = abytes_pad.to_bytes(2, "little")
-    hdr[NXV_OFF_ABYTES_REAL:NXV_OFF_ABYTES_REAL + 2] = abytes_real.to_bytes(2, "little")
-    hdr[NXV_OFF_PALFLAG] = 1 if palette else 0
-    hdr[NXV_OFF_FRAMES:NXV_OFF_FRAMES + 3] = frame_count.to_bytes(3, "little")
-    hdr[NXV_OFF_PIXBLK:NXV_OFF_PIXBLK + 2] = pixblocks.to_bytes(2, "little")
-    return bytes(hdr)
 
 
 def fps_arg(fps: Fraction) -> str:
@@ -209,9 +88,9 @@ def run_ffmpeg(ffmpeg, args, what):
 
 def probe_dimensions(ffmpeg, input_path):
     """Returns (width, height) of the source's own first video stream,
-    read from ffmpeg's own stderr banner (no ffprobe dependency - see
-    encode_nxv's --profile auto comment, this is the same probe, shared
-    so the center-crop math below never needs a second one)."""
+    read from ffmpeg's own stderr banner (no ffprobe dependency - the
+    same probe the center-crop math below and nxv2enc's --shape auto
+    picker both need, shared so there is only one implementation)."""
     probe = subprocess.run(
         [str(ffmpeg), "-i", str(input_path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -287,86 +166,64 @@ def extract_audio(ffmpeg, input_path, start, duration, channels, rate):
     return run_ffmpeg(ffmpeg, args, "audio")
 
 
-def posterize_band(img):
-    """Direct 3-3-2 posterize of an RGB image to a single 'L' band of
-    RRRGGGBB bytes (no-palette-flag output), the three bit fields (bits
-    7-5 red, 4-2 green, 1-0 blue) never overlapping, so addition is
-    exactly bitwise OR - no clipping possible (max sum 0xE0+0x1C+0x03
-    = 0xFF)."""
-    r, g, b = img.split()
-    r2 = r.point(lambda v: v & 0xE0)
-    g2 = g.point(lambda v: (v >> 3) & 0x1C)
-    b2 = b.point(lambda v: v >> 6)
-    return ImageChops.add(ImageChops.add(r2, g2), b2)
+def main(argv):
+    import nxv2enc
 
+    ap = argparse.ArgumentParser(
+        description="Encode a video file into NextDAAD's native NXV v2 "
+                    "format (see lib/videnc-README.md).")
+    ap.add_argument("input", help="any video file ffmpeg can read")
+    ap.add_argument("output", help="destination .VID file")
+    ap.add_argument("--shape", default=None,
+                     help="shape preset (full/16:9/scope/classic/"
+                          "classic-wide, default: full) or an explicit "
+                          "WIDTHxHEIGHT (width must be 256 or 320)")
+    ap.add_argument("--width", type=int, choices=(256, 320), default=None,
+                     help="Layer 2 width for --aspect free-height "
+                          "derivation (256 or 320); ignored if --shape "
+                          "is given")
+    ap.add_argument("--aspect", type=float, default=None,
+                     help="derive a free height for --width from a "
+                          "target displayed aspect ratio (w/h, e.g. "
+                          "2.35 for cinema scope) - see nxv2enc."
+                          "derive_free_height; overrides --shape")
+    ap.add_argument("--fps", type=float, default=25.0,
+                     help="frames per second (default: 25)")
+    ap.add_argument("--mono", action="store_true",
+                     help="mono audio (23325 Hz) instead of the "
+                          "default stereo (15625 Hz)")
+    ap.add_argument("--dither", action="store_true",
+                     help="Floyd-Steinberg dither the palette "
+                          "(default: no dither, matching tools/png2nx.py)")
+    ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
+    ap.add_argument("--duration", help="clip duration in seconds")
+    ap.add_argument("--report", help="write the BuildReport as JSON to "
+                                      "this path (default: none)")
+    ap.add_argument("--ffmpeg", default=str(DEFAULT_FFMPEG),
+                     help=f"ffmpeg binary (default: {DEFAULT_FFMPEG})")
+    args = ap.parse_args(argv[1:])
 
-def build_palette_block(pal_rgb):
-    """256 entries x 2 bytes, NR $44 order. pal_rgb is a flat RGB list
-    (from Image.getpalette(), padded to 768 entries by the caller)."""
-    out = bytearray(512)
-    for i in range(256):
-        r, g, b = pal_rgb[i * 3], pal_rgb[i * 3 + 1], pal_rgb[i * 3 + 2]
-        byte0 = (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6)
-        byte1 = 1 if (byte0 & 3) else 0  # 9th blue bit: OR(B1,B0)
-        out[i * 2] = byte0
-        out[i * 2 + 1] = byte1
-    return bytes(out)
-
-
-def encode_frame(rgb_frame, width, height, column_major, palette, dither):
-    """Returns (palette_block_or_empty, pixel_bytes) for one WxH RGB24
-    frame. Column-major output (Pillow's own transpose) yields exactly
-    `height` real bytes per column with no stride padding."""
-    img = Image.frombytes("RGB", (width, height), rgb_frame)
-    if palette:
-        dmode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
-        idx_img = img.convert("P", palette=Image.Palette.ADAPTIVE,
-                               colors=256, dither=dmode)
-        pal = list(idx_img.getpalette() or [])
-        pal += [0] * (768 - len(pal))
-        pal_block = build_palette_block(pal)
-    else:
-        idx_img = posterize_band(img)
-        pal_block = b""
-    if column_major:
-        pixels = idx_img.transpose(Image.Transpose.TRANSPOSE).tobytes()
-    else:
-        pixels = idx_img.tobytes()
-    assert len(pixels) == width * height
-    return pal_block, pixels
-
-
-def encode_nxv(args):
-    profile_name = args.profile
     input_path = Path(args.input)
     if not input_path.exists():
         raise SystemExit(f"error: input not found: {input_path}")
-    out_path = Path(args.output)
-
-    channels = 1 if args.mono else 2
-    palette = not args.no_palette
-
     ffmpeg = Path(args.ffmpeg)
     if not ffmpeg.exists():
         raise SystemExit(f"error: ffmpeg not found at {ffmpeg}")
 
-    # Source dimensions are always probed now - --profile auto's own pick
-    # needs them, and so does the center-crop computed below regardless
-    # of profile (an explicit --profile still gets an undistorted crop,
-    # not a stretch, when the source aspect does not already match).
+    if args.aspect is not None:
+        width = args.width or 320
+        height = nxv2enc.derive_free_height(width, args.aspect)
+        shape = (width, height)
+        print(f"--aspect {args.aspect}: width {width} -> free height {height}")
+    elif args.shape is not None and "x" in args.shape.lower() and args.shape not in nxv2enc.PRESETS:
+        w_str, h_str = args.shape.lower().split("x", 1)
+        shape = (int(w_str), int(h_str))
+    else:
+        shape = args.shape   # a preset name, or None (default: "full")
+
+    width, height = nxv2enc.resolve_shape(shape)
+
     src_w, src_h = probe_dimensions(ffmpeg, input_path)
-
-    if profile_name == "auto":
-        profile_name = nxv_pick_profile(src_w, src_h)
-        print(f"--profile auto: source {src_w}x{src_h} -> {profile_name}")
-
-    if profile_name not in NXV_PROFILES:
-        raise SystemExit(f"error: unknown profile {profile_name!r} - "
-                          f"choose one of {sorted(NXV_PROFILES)} or auto")
-    profile = NXV_PROFILES[profile_name]
-    width, height, fps = profile["width"], profile["height"], profile["fps"]
-    column_major = profile["column_major"]
-
     crop = compute_center_crop(src_w, src_h, width, height)
     if crop:
         crop_w, crop_h, crop_x, crop_y = crop
@@ -374,105 +231,22 @@ def encode_nxv(args):
               f"+{crop_x}+{crop_y} -> scale {width}x{height} (undistorted)")
     else:
         print(f"  source {src_w}x{src_h} aspect already matches "
-              f"{profile_name} - no crop, straight scale to {width}x{height}")
+              f"{width}x{height} - no crop, straight scale")
 
-    pixel_bytes = width * height
-    if pixel_bytes % 512 != 0:
-        raise SystemExit(
-            f"error: profile {profile_name} pixel size {pixel_bytes} is "
-            f"not a 512-byte multiple - format table is wrong")
-    pixblocks = pixel_bytes // 512
+    print(f"encoding {width}x{height} @ {args.fps} fps "
+          f"({'mono' if args.mono else 'stereo'}) -> {args.output}")
+    report = nxv2enc.encode(
+        str(input_path), args.output, shape=(width, height), fps=args.fps,
+        quality_profile="max", report_path=args.report,
+        start=args.start, duration=args.duration, ffmpeg=str(ffmpeg),
+        dither=args.dither, mono=args.mono)
 
-    rate, samples_per_frame, abytes_real, abytes_pad = nxv_audio_layout(
-        fps, channels)
-
-    print(f"profile {profile_name}: {width}x{height} "
-          f"{'mode-1' if profile['shape'] == NXV_SHAPE_MODE1 else 'mode-0'}, "
-          f"{'palette' if palette else 'no-palette'}, "
-          f"{'stereo' if channels == 2 else 'mono'} {rate} Hz, "
-          f"{fps_arg(fps)} fps, pixels {pixel_bytes} B ({pixblocks} blocks), "
-          f"audio {abytes_real} B real / {abytes_pad} B padded")
-
-    print("extracting video frames...")
-    video_bytes, nframes = extract_video(ffmpeg, input_path, args.start,
-                                          args.duration, width, height, fps,
-                                          crop=crop)
-    if nframes == 0:
-        raise SystemExit("error: no frames decoded - check input/"
-                          "--start/--duration")
-    print(f"  {nframes} frames decoded")
-    if nframes >= (1 << 24):
-        raise SystemExit("error: frame count exceeds the header's 24-bit "
-                          "field - clip is absurdly long, trim it first")
-
-    print("extracting audio...")
-    audio_bytes = extract_audio(ffmpeg, input_path, args.start,
-                                 args.duration, channels, rate)
-    needed = nframes * abytes_real
-    if len(audio_bytes) < needed:
-        short = needed - len(audio_bytes)
-        print(f"  source audio shorter than video by {short} B - "
-              f"padding with silence")
-        audio_bytes = audio_bytes + bytes([SILENCE_U8]) * short
-    elif len(audio_bytes) > needed:
-        audio_bytes = audio_bytes[:needed]
-    print(f"  {len(audio_bytes)} B ({channels}ch u8 @ {rate} Hz)")
-
-    frame_stride = width * height * 3
-    audio_frame_pad = bytes([SILENCE_U8]) * (abytes_pad - abytes_real)
-
-    print(f"encoding {nframes} frames...")
-    report_every = max(1, nframes // 10)
-    with open(out_path, "wb") as f:
-        f.write(nxv_build_header(profile, channels, rate, abytes_pad,
-                                  abytes_real, palette, nframes, pixblocks))
-        for n in range(nframes):
-            rgb_frame = video_bytes[n * frame_stride:(n + 1) * frame_stride]
-            audio_slice = audio_bytes[n * abytes_real:(n + 1) * abytes_real]
-            pal_block, pixels = encode_frame(rgb_frame, width, height,
-                                              column_major, palette,
-                                              args.dither)
-            frame_out = audio_slice + audio_frame_pad + pal_block + pixels
-            expected = abytes_pad + (512 if palette else 0) + pixel_bytes
-            assert len(frame_out) == expected
-            f.write(frame_out)
-            if (n + 1) % report_every == 0 or n + 1 == nframes:
-                print(f"  {n + 1}/{nframes} frames")
-
-    total_bytes = out_path.stat().st_size
-    if total_bytes % 512 != 0:
-        raise SystemExit(f"error: internal error - output size "
-                          f"{total_bytes} is not a 512-byte multiple")
-    print(f"wrote {out_path}: {total_bytes} B, {total_bytes // 512} "
-          f"sectors, profile {profile_name}, {nframes} frames - OK")
+    print(f"wrote {args.output}: {report.total_bytes} B, "
+          f"{report.total_bytes // 512} sectors, {report.frames} frames, "
+          f"{report.keyframes} keyframe event(s), "
+          f"PSNR mean/worst {report.mean_psnr:.2f}/{report.worst_psnr:.2f} dB, "
+          f"{report.seconds_per_mb:.2f} s/MB - OK")
     return 0
-
-
-def main(argv):
-    ap = argparse.ArgumentParser(
-        description="Encode a video file into NextDAAD's native NXV "
-                    "format (see lib/videnc-README.md).")
-    ap.add_argument("input", help="any video file ffmpeg can read")
-    ap.add_argument("output", help="destination video file")
-    ap.add_argument("--profile", default="auto", choices=list(NXV_PROFILES) + ["auto"],
-                     help="NXV profile n0-n4, or auto (nearest pixel-"
-                          "aspect match - see module docstring)")
-    ap.add_argument("--mono", action="store_true",
-                     help="mono audio (23325 Hz) instead of the "
-                          "default stereo (15625 Hz)")
-    ap.add_argument("--no-palette", action="store_true",
-                     help="RGB332-direct pixels (no per-frame "
-                          "palette block) instead of the default "
-                          "adaptive per-frame palette")
-    ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
-    ap.add_argument("--duration", help="clip duration in seconds")
-    ap.add_argument("--dither", action="store_true",
-                     help="Floyd-Steinberg dither the palette "
-                          "(default: no dither, matching tools/png2nx.py)")
-    ap.add_argument("--ffmpeg", default=str(DEFAULT_FFMPEG),
-                     help=f"ffmpeg binary (default: {DEFAULT_FFMPEG})")
-    args = ap.parse_args(argv[1:])
-    return encode_nxv(args)
 
 
 if __name__ == "__main__":
