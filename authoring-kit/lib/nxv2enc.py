@@ -710,12 +710,19 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
     rimp = imp_cum[re] - imp_cum[rs]   # importance = sum |delta| per region
     order = np.argsort(-rimp)
     sel = []
+    # Each kept region also introduces (roughly) one SKIP gap ahead of it -
+    # at silicon prices the skip dispatch (360 T) is NOT negligible, so it
+    # must be charged during selection or the greedy over-selects and the
+    # frame busts its T budget (settlement's sintel_320x256 hard config).
+    skip_disp = TMODEL_COEFFS["t_skip"] + TMODEL_COEFFS["header_rate"]
     ab, at = 1.0, TMODEL_COEFFS["t_frame_fixed"]   # +1 for the FEND byte
     mb = cap_bytes * 0.97
     mt = None if cap_t is None else cap_t * 0.97
     for ri in order:
         L = int(re[ri] - rs[ri])
         cb, ct = op_cost("copy", L)
+        cb += 2            # ~ the skip byte(s) ahead of this region
+        ct += skip_disp
         if ab + cb > mb or (mt is not None and at + ct > mt):
             continue
         ab += cb
@@ -727,14 +734,17 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
     gcls, gstarts, glens = segment(target_flat, selmask)
     b, t = stream_cost(gcls, glens)
     b += 1
-    guard = 0
-    while (b > cap_bytes or (cap_t is not None and t > cap_t)) and sel and guard < 40:
+    # Drain the lowest-importance kept regions until the frame genuinely
+    # fits BOTH caps (no arbitrary iteration cap - the dual-budget
+    # guarantee must actually hold; an all-skip frame always fits, so this
+    # terminates). sel is importance-ordered, so pop() drops the least
+    # important survivor first.
+    while (b > cap_bytes or (cap_t is not None and t > cap_t)) and sel:
         ri = sel.pop()
         selmask[rs[ri]:re[ri]] = False
         gcls, gstarts, glens = segment(target_flat, selmask)
         b, t = stream_cost(gcls, glens)
         b += 1
-        guard += 1
     payload = emit_delta_ops(target_flat, gcls, gstarts, glens)
     return gcls, gstarts, glens, b, t, "trunc", "trunc", payload
 
