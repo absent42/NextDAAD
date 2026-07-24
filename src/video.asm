@@ -4554,6 +4554,1022 @@ vidErrCodeL:     db 0             ; mirrors vidErrCode - see that cell's
 vidErrByteL:     db 0             ; mirrors vidErrByte - see that cell's
                                    ; own declaration for the BYT=xx decode
 
+; =====================================================================
+; DMAT - DMA-from-SPI bench verb suite (SP14a DMA autopsy falsification
+; wave, first core 3.02.04 sitting). DEBUG builds only - this whole
+; block sits inside the VID_PAGE2 IFDEF DEBUG section; Release carries
+; none of it (byte-identity verified at commit time).
+; =====================================================================
+; Purpose: falsify the four hypotheses from the DMA autopsy (research-
+; decode-models.md Mission 2, section 3.5) for the SP14a silicon
+; refutation of DMA-from-$EB (REF/DMA diverging from offset ~0xC3 on
+; the 03.01.09-generation core, VBDMA bench, retired in dc16964):
+;   H1  pre-3.02.02 core bug ("read byte one read cycle behind") -
+;       DMAT1 re-runs the original continuous program byte-for-byte
+;       (dest low byte $3D, reproducing the bench-era alignment), with
+;       the core version (NR $01/$0E) stamped on every readout.
+;   H2  marginal wait-release vs the shifter's real restart latency -
+;       DMAT2 runs a prescaler-paced variant (32 cycles/byte floor,
+;       above the measured 22.1T/byte silicon ini floor) and a
+;       cycle-length 4/4 variant, one factor varied per run.
+;   H3  destination 256-boundary carry artifact - DMAT3 sweeps dest
+;       offsets 0/61/128/255 in a 256-aligned buffer; if the divergence
+;       offset tracks (256 - dest&$FF), H3 is convicted (predicted
+;       DIV = 0100/00C3/0080/0001 respectively).
+;   H4  mode/init dependence - DMAT4 runs the burst-mode variant with
+;       the em00k reference init ($C3 full reset header, $B3 force-
+;       ready before enable). NOTE the autopsy's own H4 sketch writes
+;       WR4 burst as %10001101 - that decodes to mode bits D6:D5 = 00,
+;       "do not use", per zxndma.txt; the em00k reference program's $CD
+;       = %11001101 (D6:D5 = 10) is what burst actually is, and is what
+;       this bench sends.
+; Plus a sustained-rate mode (DMARC/DMARB/DMARP verbs) for any program
+; that MATCHes: up to 1024 blocks (512KB) repeat-transferred off the
+; fixture's first contiguous run, KB/s reported (VBFLT's measurement
+; shape: blocks*25/elapsed-frames via div16). The frame clock here is
+; a raster-line-wrap poll (NR $1E/$1F), NOT frameCounter - a continuous
+; -mode DMA transfer freezes the CPU and can swallow the 50Hz INT pulse
+; entirely (up to ~20% of pulses at full pace), which would silently
+; inflate a frameCounter-based KB/s; polling the raster between blocks
+; is immune to INT masking. Frame unit assumes the standard 50Hz
+; display timing (same assumption VBFLT made).
+;
+; Every SD/DMA wait in this block is bounded (doc-13 rubric 6): R1
+; polls 256, token waits 65536, burst completion polls 65536 - each
+; with a clean printed error exit. THE ONE UNBOUNDABLE HAZARD: a
+; continuous-mode DMA transfer that wedges never returns the bus - the
+; CPU is frozen by hardware design and no software bound can exist.
+; The original silicon evidence shows continuous transfers DO complete
+; (with corruption), so this is accepted and documented on the bench
+; card rather than guarded against.
+;
+; The bench is fully self-contained on VID_PAGE2 (cold; no CTC ISR is
+; ever armed while it runs, so the "MMU7 = VID_PAGE while the ISR can
+; fire" invariant is not in play, and VID_PAGE's 7-byte DEBUG headroom
+; is not touched). It deliberately does NOT call the hot (VID_PAGE)
+; SD/streaming routines - vid_sd_cmd/vid_read_block/vid_win_* are
+; unreachable from this page without a hot-side stub (rubric 3), so the
+; small SPI primitives are duplicated here with the bounds added. The
+; only vid_stream state touched is via dmat_get_addr's MMU6 bracket
+; (open, capture the first filemap run, close the handle); the raw
+; streaming window state machine itself is never engaged
+; (vidStrmWinOpen stays 0).
+;
+; Dispatch: extVec vector 8 (overlay0.asm's dmat_trampoline, DEBUG
+; only) -> dmat_entry, with flags+250 = sub-mode and flags+249 = rate
+; program, both set by test.dsf LETs before the shared EXTERN 0 8 and
+; self-cleared here (the video stage ladder's own flag convention).
+
+DMAT_ROW_HDR     equ 24     ; header row; run rows follow from 25
+DMAT_NR_LINE_MSB equ $1E    ; active video line, bit 8
+DMAT_NR_LINE_LSB equ $1F    ; active video line, bits 7:0
+DMAT_NR_CORE_VER equ $01    ; core version major.minor (hex nibbles)
+DMAT_NR_CORE_SUB equ $0E    ; core version sub minor
+DMAT_PRESCALER   equ 32     ; H2 pacing: >= 32 cycles/byte at the DMA
+                             ; clock - above the 22.1T/byte silicon ini
+                             ; floor (~875KB/s, below ini's 1264KB/s)
+DMAT_RATE_N      equ 1024   ; rate-mode block target (512KB; capped to
+                             ; the fixture's first contiguous run)
+
+; Entry from dmat_trampoline (overlay0.asm), MMU7 = VID_PAGE2 already.
+; Reads + self-clears flags+250 (sub-mode) and flags+249 (rate
+; program), prints the core-stamped header row, captures the fixture's
+; card address, takes the ini reference read, then dispatches.
+; Corrupts everything; returns with MMU7 left at VID_PAGE2 (harmless -
+; eng_exec remaps MMU7 before the next condact, the ktest_trampoline/
+; retired-vid_bench precedent).
+dmat_entry:
+    ld a, (flags+250)
+    ld (dmatMode), a
+    xor a
+    ld (flags+250), a           ; self-clearing (stage-ladder convention)
+    ld a, (flags+249)
+    ld (dmatProg), a
+    xor a
+    ld (flags+249), a
+    ; header row: mode, rate program, core version
+    ld b, DMAT_ROW_HDR
+    ld c, 0
+    call dbg_at
+    ld hl, msgDmatHdr
+    call dbg_puts
+    ld a, (dmatMode)
+    call dbg_hex8
+    ld hl, msgDmatProg
+    call dbg_puts
+    ld a, (dmatProg)
+    call dbg_hex8
+    ld hl, msgDmatCore
+    call dbg_puts
+    ld e, DMAT_NR_CORE_VER
+    call nr_read
+    call dbg_hex8
+    ld a, '.'
+    call dbg_putc
+    ld e, DMAT_NR_CORE_SUB
+    call nr_read
+    call dbg_hex8
+    ld a, DMAT_ROW_HDR+1
+    ld (dmatRow), a
+    ; card address of the fixture's first block (fresh every invocation)
+    call dmat_get_addr
+    jr nc, .opened
+    ld hl, msgDmatOpenErr       ; A = esxDOS or VID_ERR_* code
+    jp dmat_fail_row
+.opened:
+    ; ini reference read of the same block (fresh every invocation -
+    ; also proves the plain wire path before any DMA run is judged)
+    call dmat_ref_read
+    jr nc, .haveref
+    ld hl, msgDmatRefErr        ; A = VID_ERR_CMD/VID_ERR_TOKEN
+    jp dmat_fail_row
+.haveref:
+    ld a, (dmatMode)
+    dec a
+    jr z, dmat_mode_h3
+    dec a
+    jr z, dmat_mode_h1
+    dec a
+    jr z, dmat_mode_h4
+    dec a
+    jr z, dmat_mode_h2
+    dec a
+    jp z, dmat_mode_rate
+    ld a, (dmatMode)
+    ld hl, msgDmatBadMode
+    jp dmat_fail_row
+
+; H3: destination alignment sweep - the original continuous program at
+; dest offsets 0/61/128/255 in the 256-aligned buffer, one report row
+; each. Divergence tracking (256 - offset) convicts H3.
+dmat_mode_h3:
+    ld hl, dmatSweepOffs
+    ld b, 4
+.next:
+    push bc
+    push hl
+    ld a, (hl)
+    ld e, a
+    ld d, 0
+    ld hl, dmatDstBuf
+    add hl, de
+    ld (dmatDest), hl
+    xor a                       ; program 0 = original continuous
+    call dmat_run_and_report
+    pop hl
+    inc hl
+    pop bc
+    djnz .next
+    ret
+dmatSweepOffs: db 0, 61, 128, 255
+
+; H1: the original continuous program re-run as-was. Dest low byte $3D
+; (offset 61) reproduces the bench-era vidAudBuf alignment implied by
+; the recorded divergence offset 0xC3 = 256 - 61, so this run is
+; faithful in program bytes AND destination alignment.
+dmat_mode_h1:
+    ld hl, dmatDstBuf+61
+    ld (dmatDest), hl
+    xor a                       ; program 0 = original continuous
+    jp dmat_run_and_report
+
+; H4: burst-mode variant with the em00k reference init ($C3 header,
+; $B3 force-ready) - see the program's own comments.
+dmat_mode_h4:
+    ld hl, dmatDstBuf
+    ld (dmatDest), hl
+    ld a, 1                     ; program 1 = burst + $C3/$B3
+    jp dmat_run_and_report
+
+; H2: pacing pair - prescaler-paced continuous (row 1), then cycle-
+; length 4/4 continuous (row 2). One factor varied per run vs H1's
+; original program.
+dmat_mode_h2:
+    ld hl, dmatDstBuf
+    ld (dmatDest), hl
+    ld a, 2                     ; program 2 = prescaler-paced
+    call dmat_run_and_report
+    ld hl, dmatDstBuf
+    ld (dmatDest), hl
+    ld a, 3                     ; program 3 = cycle length 4/4
+    jp dmat_run_and_report
+
+; In: HL = message, A = code byte (appended as hex). Prints on the next
+; run row, consuming it. Corrupts everything.
+dmat_fail_row:
+    push af
+    push hl
+    ld a, (dmatRow)
+    ld b, a
+    inc a
+    ld (dmatRow), a
+    ld c, 0
+    call dbg_at
+    pop hl
+    call dbg_puts
+    pop af
+    jp dbg_hex8
+
+; In: A = program index 0-3, (dmatDest) set. Runs one 512-byte DMA
+; transfer of the reference block and prints one report row:
+;   "O=xx MATCH"                                    clean match
+;   "O=xx DIV=yyyy R=rrrrrrrrrrrrrrrr D=dddd..."    divergence offset +
+;                                                   first (up to) 8
+;                                                   REF/DMA bytes from it
+;   "O=xx CMD ERR" / "O=xx TOK ERR"                 SD bracket errors
+;   "O=xx TMO ..."                                  burst completion
+;                                                   timeout (compare
+;                                                   still printed - the
+;                                                   data may have landed)
+; Corrupts everything.
+dmat_run_and_report:
+    call dmat_prog_sel
+    call dmat_run_block         ; B = 0 ok/1 CMD/2 token/3 burst timeout
+    ld a, b
+    ld (dmatStatus), a
+    ld a, (dmatRow)
+    ld b, a
+    inc a
+    ld (dmatRow), a
+    ld c, 0
+    call dbg_at
+    ld hl, msgDmatOff
+    call dbg_puts
+    ld a, (dmatDest)            ; low byte IS the sweep offset (the
+    call dbg_hex8                ; buffer is 256-aligned)
+    ld a, ' '
+    call dbg_putc
+    ld a, (dmatStatus)
+    or a
+    jr z, .compare
+    cp 3
+    jr z, .tmo
+    cp 1
+    ld hl, msgDmatCmdErr
+    jr z, .err
+    ld hl, msgDmatTokErr
+.err:
+    jp dbg_puts
+.tmo:
+    ld hl, msgDmatTmo
+    call dbg_puts
+.compare:
+    call dmat_compare           ; CF set = diverged, HL = offset
+    jr c, .diverge
+    ld hl, msgDmatMatch
+    jp dbg_puts
+.diverge:
+    push hl
+    ld hl, msgDmatDiv
+    call dbg_puts
+    pop hl
+    push hl
+    call dbg_hex16
+    ld hl, msgDmatRef
+    call dbg_puts
+    pop hl
+    push hl
+    ld de, dmatRefBuf
+    add hl, de
+    call dmat_dump8
+    ld hl, msgDmatDma
+    call dbg_puts
+    pop hl
+    ld de, (dmatDest)
+    add hl, de
+    jp dmat_dump8
+
+; In: A = program index 0-3 (orig/burst/prescaler/cy44), (dmatDest) =
+; destination. Stages dmatProgPtr/ProgLen/Burst and patches the
+; selected program's WR4 Port B start address field. Corrupts AF, DE,
+; HL.
+dmat_prog_sel:
+    ld l, a
+    ld h, 0
+    ld e, l
+    ld d, h
+    add hl, hl                  ; *2
+    add hl, de                  ; *3
+    add hl, hl                  ; *6 (table entries are 6 bytes)
+    ld de, dmatProgTab
+    add hl, de
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld a, e
+    ld (dmatProgPtr), a
+    ld a, d
+    ld (dmatProgPtr+1), a
+    ld e, (hl)
+    inc hl
+    ld d, (hl)                  ; DE = the program's baddr field
+    inc hl
+    ld a, (hl)
+    ld (dmatProgLen), a
+    inc hl
+    ld a, (hl)
+    ld (dmatBurst), a
+    ld hl, (dmatDest)
+    ex de, hl
+    ld (hl), e
+    inc hl
+    ld (hl), d
+    ret
+
+; entry: dw program, dw baddr field, db length, db burst flag
+dmatProgTab:
+    dw dmat_prog_orig,  dmat_prog_orig_baddr
+    db dmat_prog_orig_len, 0
+    dw dmat_prog_burst, dmat_prog_burst_baddr
+    db dmat_prog_burst_len, 1
+    dw dmat_prog_presc, dmat_prog_presc_baddr
+    db dmat_prog_presc_len, 0
+    dw dmat_prog_cy44,  dmat_prog_cy44_baddr
+    db dmat_prog_cy44_len, 0
+    ASSERT $ - dmatProgTab == 4*6  ; dmat_prog_sel indexes by *6 (rubric 8)
+
+; One 512-byte DMA transfer of the reference block into (dmatDest)
+; using the staged program. Full SD bracket per run: MF disable + CMD18
+; at the captured address, bounded token wait, DI + otir (a continuous
+; program's final $87 OUT does not complete until the transfer has -
+; see the block header for the documented wedge hazard), burst
+; completion-polled via the DMA read mask (bounded), CRC skip, CMD12 +
+; deselect + MF restore. Out: B = 0 ok / 1 CMD reject / 2 token error /
+; 3 burst timeout (DMA force-disabled; transfer state unknown).
+; Corrupts everything.
+dmat_run_block:
+    call dmat_win_open
+    jr nc, .winok
+    ld b, 1
+    ret                         ; win_open's fail path already restored MF
+.winok:
+    call dmat_token_wait
+    jr nc, .token
+    call dmat_win_close         ; best-effort CMD12 + deselect + MF
+    ld b, 2
+    ret
+.token:
+    di
+    ld hl, (dmatProgPtr)
+    ld a, (dmatProgLen)
+    ld b, a
+    ld c, DMA_PORT
+    otir                        ; program + run (otir consumes B by its
+                                 ; own semantics - B IS the length here)
+    ld a, (dmatBurst)
+    or a
+    jr z, .done
+    call dmat_burst_wait        ; bounded; disables the DMA either way
+    jr nc, .done
+    ei
+    call dmat_crc_close
+    ld b, 3
+    ret
+.done:
+    ei
+    call dmat_crc_close
+    ld b, 0
+    ret
+
+; Bounded burst-completion wait: WR6 $BB read mask -> byte counter low+
+; high, polled until the pair reads 512 ($0200) in either phase order
+; (one half 0, the other 2 - unambiguous, since the high half can only
+; be 2 at exactly 512), 65536 polls max. $83-disables the DMA on BOTH
+; exits (freezes/settles the engine - em00k stop discipline). Out: CF
+; clear = completed; CF set = timeout. Corrupts AF, BC, DE.
+dmat_burst_wait:
+    ld a, $BB                   ; WR6: read mask follows
+    out (DMA_PORT), a
+    ld a, %00000110             ; mask: byte counter low + high
+    out (DMA_PORT), a
+    ld bc, 0                    ; 65536 bounded polls
+.poll:
+    push bc
+    ld bc, DMA_PORT             ; the port decodes on the low byte only
+    in a, (c)                    ; (otir's own B-as-high-byte precedent)
+    ld e, a
+    in a, (c)
+    ld d, a
+    pop bc
+    ld a, d
+    add a, e
+    cp 2
+    jr nz, .next
+    ld a, d
+    and e
+    jr z, .hit
+.next:
+    dec bc
+    ld a, b
+    or c
+    jr nz, .poll
+    ld a, $83
+    out (DMA_PORT), a
+    scf
+    ret
+.hit:
+    ld a, $83
+    out (DMA_PORT), a
+    or a
+    ret
+
+; CRC skip (two clocked reads at the interface's pacing) then close the
+; window. Corrupts AF, BC, DE, HL.
+dmat_crc_close:
+    in a, (PORT_SPI_DAT)
+    nop
+    in a, (PORT_SPI_DAT)
+    jp dmat_win_close
+
+; Compare dmatRefBuf against 512 bytes at (dmatDest). Out: CF clear =
+; match; CF set = diverged, HL = first divergence offset (also stored
+; in dmatDivOff for dmat_dump8's clamp). Corrupts AF, BC, DE.
+dmat_compare:
+    ld hl, dmatRefBuf
+    ld de, (dmatDest)
+    ld bc, 512
+.loop:
+    ld a, (de)
+    cp (hl)
+    jr nz, .diff
+    inc hl
+    inc de
+    dec bc
+    ld a, b
+    or c
+    jr nz, .loop
+    or a
+    ret
+.diff:
+    ld hl, 512
+    or a
+    sbc hl, bc                  ; offset = 512 - remaining
+    ld (dmatDivOff), hl
+    scf
+    ret
+
+; Print min(8, 512 - dmatDivOff) bytes from HL as hex pairs (the clamp
+; keeps a divergence near the block end from dumping past the buffer).
+; Corrupts everything.
+dmat_dump8:
+    push hl
+    ld hl, (dmatDivOff)
+    ld de, 512-8
+    or a
+    sbc hl, de                  ; > 0 iff fewer than 8 bytes remain
+    jr c, .full
+    jr z, .full
+    ld a, 8
+    sub l                       ; L = offset - 504 (1..7 here)
+    jr .have
+.full:
+    ld a, 8
+.have:
+    ld b, a
+    pop hl
+.loop:
+    ld a, (hl)
+    push hl
+    push bc
+    call dbg_hex8
+    pop bc
+    pop hl
+    inc hl
+    djnz .loop
+    ret
+
+; ---------------------------------------------------------------------
+; Self-contained SD SPI primitives (bounded copies of the VID_PAGE
+; originals - unreachable from this page without a hot stub, and the
+; copies add the rubric-6 bounds the hot vid_sd_cmd's own R1 poll still
+; lacks; that pre-existing sibling is out of this wave's scope).
+; ---------------------------------------------------------------------
+
+; MF disable + CMD18 READ_MULTIPLE_BLOCK at the captured first-block
+; card address. Out: CF clear = card selected and streaming; CF set =
+; R1 reject/timeout (A = VID_ERR_CMD, card deselected, MF restored).
+; Corrupts AF, BC, DE, HL.
+dmat_win_open:
+    call dmat_mf_disable
+    ld a, (dmatCardFlags)
+    and 1                       ; Z = card 0 (vid_strm_start's idiom -
+                                 ; the flag survives the loads below)
+    ld hl, (dmatAddrHi)
+    ld de, (dmatAddrLo)
+    ld a, CMD18_READ_MULTIPLE_BLOCK
+    call dmat_sd_cmd
+    jr nz, .fail
+    or a
+    ret
+.fail:
+    call dmat_card_deselect
+    call dmat_mf_restore
+    ld a, VID_ERR_CMD
+    scf
+    ret
+
+; CMD12 stop (R1 ignored, best effort), flush the stop tail, deselect,
+; restore the Multiface. Always CF clear. Corrupts AF, BC, DE, HL.
+dmat_win_close:
+    ld a, (dmatCardFlags)
+    and 1
+    ld a, CMD12_STOP_TRANSMISSION
+    call dmat_sd_cmd_noparam
+    ld b, 8+1
+.tail:
+    in a, (PORT_SPI_DAT)
+    djnz .tail
+    call dmat_card_deselect
+    jp dmat_mf_restore
+
+; CS high + two pacing clocks (vid_card_deselect parity). Corrupts AF.
+dmat_card_deselect:
+    ld a, $FF
+    out (PORT_SPI_CS), a
+    in a, (PORT_SPI_DAT)
+    nop
+    in a, (PORT_SPI_DAT)
+    ret
+
+; SD SPI command (vid_sd_cmd transcribed, R1 poll BOUNDED to 256 - NCR
+; is <= 8 bytes, so 256 is generous margin). In: A = command, HLDE =
+; 32-bit argument big-endian, Z flag = card select (set by the caller's
+; `and 1`). Out: Z = R1 accepted; NZ = rejected or poll exhausted.
+; Preserves DE/HL; corrupts AF, BC.
+dmat_sd_cmd_noparam:
+    ld h, 0
+    ld l, 0
+    ld d, 0
+    ld e, 0
+dmat_sd_cmd:
+    ld b, $FF                   ; CRC placeholder
+    ld c, a
+    ld a, SD_CS0
+    jr z, .cs
+    ld a, SD_CS1
+.cs:
+    out (PORT_SPI_CS), a
+    in a, (PORT_SPI_DAT)        ; sync clock
+    ld a, c
+    ld c, PORT_SPI_DAT
+    out (c), a
+    ld a, h
+    out (c), a
+    ld a, l
+    out (c), a
+    ld a, d
+    out (c), a
+    ld a, e
+    out (c), a
+    ld a, b
+    out (c), a
+    nop
+    ld b, 0                     ; bounded R1 poll: 256 tries (in a,(c)
+.resp:                           ; puts B on A8-15; the decode ignores it
+    in a, (c)                    ; - otir's own varying-B precedent)
+    inc a
+    jr nz, .got
+    djnz .resp
+    or 1                        ; timeout: force NZ (treated as reject)
+    ret
+.got:
+    dec a                       ; Z iff R1 == 0
+    ret
+
+; Bounded $FE data-token wait (65536 polls, vid_read_block's own bound).
+; Out: CF clear = token consumed; CF set = timeout or bad token.
+; Corrupts AF, BC.
+dmat_token_wait:
+    ld bc, 0
+.loop:
+    in a, (PORT_SPI_DAT)
+    inc a
+    jr nz, .got
+    dec bc
+    ld a, b
+    or c
+    jr nz, .loop
+    scf
+    ret
+.got:
+    dec a
+    cp $FE
+    ret z                       ; equal: Z set, CF clear
+    scf
+    ret
+
+; Multiface disable/restore (vid_mf_disable parity, own save cell -
+; this page's copy never races the hot one: no bench runs during
+; playback). Corrupts AF (E is nr_read's select input).
+dmat_mf_disable:
+    ld e, NR_PERIPH2
+    call nr_read
+    ld (dmatMfSave), a
+    and %11110111
+    nextreg NR_PERIPH2, a
+    ret
+dmat_mf_restore:
+    ld a, (dmatMfSave)
+    nextreg NR_PERIPH2, a
+    ret
+
+; ini reference read of the reference block into dmatRefBuf: CMD18,
+; bounded token wait, 512 bytes as 32 x 16 unrolled ini at the
+; interface's 16T/byte pacing (vid_read_block's shape - A is the outer
+; counter because ini consumes B by its own semantics, rubric 2), CRC
+; skip, CMD12 close. Out: CF clear = dmatRefBuf holds the block; CF
+; set = SD error (A = VID_ERR_CMD/VID_ERR_TOKEN). Corrupts everything.
+dmat_ref_read:
+    call dmat_win_open
+    ret c                       ; A = VID_ERR_CMD
+    call dmat_token_wait
+    jr nc, .token
+    call dmat_win_close
+    ld a, VID_ERR_TOKEN
+    scf
+    ret
+.token:
+    ld hl, dmatRefBuf
+    ld c, PORT_SPI_DAT
+    ld a, 32
+.xfer:
+    DUP 16
+      ini
+    EDUP
+    dec a
+    jr nz, .xfer
+    call dmat_crc_close
+    or a
+    ret
+
+; Open the bench fixture (root 001.VID) raw via the cold open body
+; (same-page call, vid_open_video_body's precedent), capture the FIRST
+; filemap run's card address/block count and the card flags, then close
+; the esx handle. The vid streaming window state machine is never
+; engaged (vidStrmWinOpen stays 0) - from here the bench drives the
+; card with its own primitives. All VID_PAGE cells go through the
+; established MMU6 bracket + DATA_WINDOW translation (rubric 3); this
+; page's own dmat* cells are plain stores (MMU7 = VID_PAGE2 throughout).
+; Out: CF clear = dmatAddrLo/Hi/RunBlocks/CardFlags valid; CF set =
+; open failed (A = error code). Corrupts everything.
+dmat_get_addr:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld a, 1
+    ld (vidStrmMode+DATA_WINDOW-OVL_ORG), a
+    ld ix, dmatName
+    call vid_stream_open_body
+    jr c, .fail
+    ld a, (vidCardFlags+DATA_WINDOW-OVL_ORG)
+    ld (dmatCardFlags), a
+    ld hl, (vidFilemapBuf+0+DATA_WINDOW-OVL_ORG)
+    ld (dmatAddrLo), hl
+    ld hl, (vidFilemapBuf+2+DATA_WINDOW-OVL_ORG)
+    ld (dmatAddrHi), hl
+    ld hl, (vidFilemapBuf+4+DATA_WINDOW-OVL_ORG)
+    ld (dmatRunBlocks), hl
+    ld a, (vidHandle+DATA_WINDOW-OVL_ORG)
+    call esx_fclose
+    ld a, $FF
+    ld (vidHandle+DATA_WINDOW-OVL_ORG), a
+    call data_restore
+    or a
+    ret
+.fail:
+    push af
+    call data_restore
+    pop af
+    scf
+    ret
+
+; ---------------------------------------------------------------------
+; Rate mode (DMARC/DMARB/DMARP): repeat-transfer up to DMAT_RATE_N
+; blocks off the fixture's first contiguous run with the selected
+; program, count frames via the raster-wrap poll, report KB/s =
+; blocks*25/frames (512 B/block x 50 frames/s / 1024 B/KB - VBFLT's
+; own formula) via div16. Stops early (with the partial counts and a
+; TOK/TMO tag) on any SD/DMA error - the report reflects exactly what
+; ran.
+; ---------------------------------------------------------------------
+dmat_mode_rate:
+    ld hl, dmatDstBuf
+    ld (dmatDest), hl
+    ld a, (dmatProg)
+    cp 4
+    jr c, .progok
+    xor a                       ; out of range: original continuous
+.progok:
+    call dmat_prog_sel
+    ; N = min(DMAT_RATE_N, first-run contiguous blocks)
+    ld hl, (dmatRunBlocks)
+    ld de, DMAT_RATE_N
+    or a
+    sbc hl, de
+    jr c, .short
+    ld hl, DMAT_RATE_N
+    jr .haven
+.short:
+    add hl, de                  ; restore the (smaller) run count
+.haven:
+    ld (dmatRateN), hl
+    ld hl, 0
+    ld (dmatBlocksDone), hl
+    ld (dmatFrames), hl
+    xor a
+    ld (dmatRateFlag), a        ; 0 clean / 2 token err / 3 dma timeout
+    call dmat_win_open
+    jr nc, .open
+    ld hl, msgDmatCmdErr        ; A = VID_ERR_CMD
+    jp dmat_fail_row
+.open:
+    call dmat_line_read         ; prime the raster frame clock
+    ld (dmatLinePrev), hl
+.blk:
+    call dmat_token_wait
+    jr nc, .tok
+    ld a, 2
+    ld (dmatRateFlag), a
+    jr .end
+.tok:
+    di
+    ld hl, (dmatProgPtr)
+    ld a, (dmatProgLen)
+    ld b, a
+    ld c, DMA_PORT
+    otir
+    ld a, (dmatBurst)
+    or a
+    jr z, .xdone
+    call dmat_burst_wait
+    jr nc, .xdone
+    ei
+    ld a, 3
+    ld (dmatRateFlag), a
+    jr .end
+.xdone:
+    ei
+    in a, (PORT_SPI_DAT)        ; CRC skip, in-stream (window stays open)
+    nop
+    in a, (PORT_SPI_DAT)
+    call dmat_raster_tick
+    ld hl, (dmatBlocksDone)
+    inc hl
+    ld (dmatBlocksDone), hl
+    ld de, (dmatRateN)
+    or a
+    sbc hl, de
+    jr c, .blk
+.end:
+    call dmat_win_close
+    ; --- report row ---
+    ld a, (dmatRow)
+    ld b, a
+    inc a
+    ld (dmatRow), a
+    ld c, 0
+    call dbg_at
+    ld hl, msgDmatRateN
+    call dbg_puts
+    ld hl, (dmatBlocksDone)
+    call dbg_hex16
+    ld hl, msgDmatRateF
+    call dbg_puts
+    ld hl, (dmatFrames)
+    call dbg_hex16
+    ld hl, msgDmatRateKb
+    call dbg_puts
+    ld hl, (dmatFrames)
+    ld a, h
+    or l
+    jr nz, .havefr
+    ld hl, msgDmatFast          ; finished inside one frame: too fast
+    call dbg_puts                ; to time at this block count
+    jr .flag
+.havefr:
+    ld hl, 0
+    ld de, (dmatBlocksDone)
+    ld b, 25                    ; blocks*25 (max 1024*25 = 25600, fits)
+.mul:
+    add hl, de
+    djnz .mul
+    ld de, (dmatFrames)
+    call div16
+    call dbg_hex16
+.flag:
+    ld a, (dmatRateFlag)
+    or a
+    ret z
+    cp 2
+    ld hl, msgDmatRateTok
+    jr z, .pf
+    ld hl, msgDmatRateTmo
+.pf:
+    jp dbg_puts
+
+; Read the current raster line (9-bit) from NR $1E/$1F with a bounded
+; MSB-stability re-read (a scanline is ~1792T at 28MHz, far longer than
+; the read pair, so one retry nearly always settles a boundary tear).
+; Out: HL = line 0..~311. Corrupts AF, DE (nr_read preserves BC and
+; does not touch D/HL).
+dmat_line_read:
+    ld d, 4                     ; bounded stability retries
+.rd:
+    ld e, DMAT_NR_LINE_MSB
+    call nr_read
+    ld h, a
+    ld e, DMAT_NR_LINE_LSB
+    call nr_read
+    ld l, a
+    ld e, DMAT_NR_LINE_MSB
+    call nr_read
+    cp h
+    jr z, .ok
+    dec d
+    jr nz, .rd
+.ok:
+    ld a, h
+    and 1
+    ld h, a
+    ret
+
+; Frame clock tick: a new line LOWER than the previous sample = the
+; raster wrapped = one frame elapsed. Sampled once per block (~12-16kT
+; apart, far inside one ~560kT frame), so a wrap cannot be missed; and
+; unlike frameCounter it is immune to the INT-pulse masking a
+; continuous-mode DMA transfer causes (see the block header).
+; Corrupts AF, DE, HL.
+dmat_raster_tick:
+    call dmat_line_read
+    ld de, (dmatLinePrev)
+    ld (dmatLinePrev), hl
+    or a
+    sbc hl, de
+    ret nc                      ; monotonic: still the same frame
+    ld hl, (dmatFrames)
+    inc hl
+    ld (dmatFrames), hl
+    ret
+
+; 16-bit unsigned divide (retired VBFLT's div16, verbatim). In: HL =
+; dividend, DE = divisor (callers guard DE = 0). Out: HL = quotient,
+; DE = remainder. Corrupts AF, BC.
+div16:
+    ld b, h
+    ld c, l
+    ld hl, 0
+    ld a, 16
+.bit:
+    sla c
+    rl b
+    adc hl, hl
+    sbc hl, de
+    jr nc, .noadd
+    add hl, de
+    jr .nextbit
+.noadd:
+    inc c
+.nextbit:
+    dec a
+    jr nz, .bit
+    ld d, h
+    ld e, l
+    ld h, b
+    ld l, c
+    ret
+
+; ---------------------------------------------------------------------
+; DMA programs. All transfer 512 bytes A->B, Port A = the SPI data port
+; ($EB, IO, fixed address), Port B = memory incrementing (start address
+; patched by dmat_prog_sel). dmat_prog_orig is byte-for-byte the
+; retired VBDMA program (commit 98954ac, field-audited against
+; zxndma.txt); each variant changes exactly the factor its hypothesis
+; names.
+; ---------------------------------------------------------------------
+dmat_prog_orig:                  ; H1/H3: the original continuous program
+    db $83                       ; WR6: disable (clean slate)
+    db %01111101                 ; WR0: transfer A->B, A addr + length follow
+    dw PORT_SPI_DAT              ; Port A "address" = the fixed SPI port
+    dw 512                       ; block length, exact count
+    db %01101100                 ; WR1: A = IO, address fixed, timing follows
+    db %00000000                 ; A cycle length 4
+    db %01010000                 ; WR2: B = memory, increment, timing follows
+    db %00000010                 ; B cycle length 2, no prescaler
+    db %10101101                 ; WR4: CONTINUOUS + B addr follows
+dmat_prog_orig_baddr:
+    dw 0                         ; Port B start (patched)
+    db %10000010                 ; WR5: /ce only, stop on end of block
+    db $CF                       ; WR6: load
+    db $87                       ; WR6: enable
+dmat_prog_orig_len equ $ - dmat_prog_orig
+
+dmat_prog_burst:                 ; H4: burst + $C3 reset + $B3 force-ready
+    db $C3                       ; WR6: full reset (em00k reference header)
+    db $83                       ; WR6: disable (kept for orig parity)
+    db %01111101
+    dw PORT_SPI_DAT
+    dw 512
+    db %01101100
+    db %00000000                 ; A cycle length 4 (unchanged)
+    db %01010000
+    db %00000010                 ; B cycle length 2 (unchanged)
+    db %11001101                 ; WR4: BURST (D6:D5 = 10) + B addr follows.
+                                 ; The autopsy's own sketch says %10001101,
+                                 ; but that decodes to mode bits 00 = "do
+                                 ; not use" per zxndma.txt; em00k's proven
+                                 ; $CD = %11001101 is real burst.
+dmat_prog_burst_baddr:
+    dw 0
+    db %10000010
+    db $CF
+    db $B3                       ; WR6: force ready ($EB has no DRQ line)
+    db $87
+dmat_prog_burst_len equ $ - dmat_prog_burst
+
+dmat_prog_presc:                 ; H2a: prescaler-paced continuous
+    db $83
+    db %01111101
+    dw PORT_SPI_DAT
+    dw 512
+    db %01101100
+    db %00000000                 ; A cycle length 4 (unchanged)
+    db %01010000
+    db %00100010                 ; B cycle length 2 + D5: prescaler follows
+    db DMAT_PRESCALER            ; >= 32 cycles/byte (the one varied factor)
+    db %10101101                 ; CONTINUOUS (prescaler works in both
+                                 ; modes per zxndma.txt)
+dmat_prog_presc_baddr:
+    dw 0
+    db %10000010
+    db $CF
+    db $87
+dmat_prog_presc_len equ $ - dmat_prog_presc
+
+dmat_prog_cy44:                  ; H2b: cycle length 4/4 continuous
+    db $83
+    db %01111101
+    dw PORT_SPI_DAT
+    dw 512
+    db %01101100
+    db %00000000                 ; A cycle length 4
+    db %01010000
+    db %00000000                 ; B cycle length 4 (the one varied factor)
+    db %10101101
+dmat_prog_cy44_baddr:
+    dw 0
+    db %10000010
+    db $CF
+    db $87
+dmat_prog_cy44_len equ $ - dmat_prog_cy44
+
+; --- strings + cells ---
+msgDmatHdr:     db "DMAT M=", 0
+msgDmatProg:    db " P=", 0
+msgDmatCore:    db " CORE=", 0
+msgDmatOpenErr: db "OPEN ERR ", 0
+msgDmatRefErr:  db "REF ERR ", 0
+msgDmatBadMode: db "MODE? ", 0
+msgDmatOff:     db "O=", 0
+msgDmatCmdErr:  db "CMD ERR", 0
+msgDmatTokErr:  db "TOK ERR", 0
+msgDmatTmo:     db "TMO ", 0
+msgDmatMatch:   db "MATCH", 0
+msgDmatDiv:     db "DIV=", 0
+msgDmatRef:     db " R=", 0
+msgDmatDma:     db " D=", 0
+msgDmatRateN:   db "N=", 0
+msgDmatRateF:   db " F=", 0
+msgDmatRateKb:  db " KB/S=", 0
+msgDmatFast:    db "FAST", 0
+msgDmatRateTok: db " TOK", 0
+msgDmatRateTmo: db " TMO", 0
+dmatName:       db "001.VID", 0  ; the N0 fixture (build-tests -Vid) -
+                                  ; biggest file, so the rate mode's 1024
+                                  ; contiguous blocks are usually there
+dmatMode:       db 0
+dmatProg:       db 0
+dmatRow:        db 0
+dmatStatus:     db 0
+dmatCardFlags:  db 0
+dmatMfSave:     db 0
+dmatBurst:      db 0
+dmatProgLen:    db 0
+dmatProgPtr:    dw 0
+dmatDest:       dw 0
+dmatDivOff:     dw 0
+dmatAddrLo:     dw 0
+dmatAddrHi:     dw 0
+dmatRunBlocks:  dw 0
+dmatRateN:      dw 0
+dmatBlocksDone: dw 0
+dmatFrames:     dw 0
+dmatLinePrev:   dw 0
+dmatRateFlag:   db 0
+dmatRefBuf:     ds 512
+    ALIGN 256                    ; dest & $FF must equal the sweep offset
+dmatDstBuf:     ds 768           ; 512 + max offset 255 (256-aligned)
+
  ENDIF ; DEBUG
 
 ; VIDBENCH's cold-page bodies (vid_bench_compute/vid_bench_report),

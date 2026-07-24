@@ -210,6 +210,20 @@ VS2G  100     verb
 ; screen, no crash); this verb is not meant to ship.
 KTEST 101     verb
 
+; SP14a DMA autopsy bench verbs (first core 3.02.04 sitting): DMAT3/
+; DMAT1/DMAT4/DMAT2 are the hypothesis legs H3/H1/H4/H2 (dest-alignment
+; sweep / original re-run / burst init / pacing pair) and DMARC/DMARB/
+; DMARP the sustained-rate legs (continuous/burst/prescaler program).
+; DEBUG builds only - Release's EXTERN 0 8 is ext_stub (silent no-op).
+; See PRO 5's entries and src/video.asm's dmat_entry block header.
+DMAT3 102     verb
+DMAT1 103     verb
+DMAT4 104     verb
+DMAT2 105     verb
+DMARC 106     verb
+DMARB 107     verb
+DMARP 108     verb
+
 ;                       Verbs
 GET     20      verb
 TAKE    20      verb
@@ -659,6 +673,48 @@ $pictureOK
 ; screen once it returns.
 > KTEST   _     PROCESS 9
                 CLS
+                DONE
+
+; SP14a DMA autopsy bench verbs (src/video.asm dmat_entry; owner bench
+; card: .superpowers/sdd/sp14a-task-4-report.md section 34). flag 250 =
+; sub-mode (1 = H3 dest-alignment sweep, 2 = H1 original re-run, 3 =
+; H4 burst init, 4 = H2 pacing pair, 5 = sustained rate), flag 249 =
+; rate-mode DMA program (0 continuous-original / 1 burst / 2
+; prescaler); both self-clear inside dmat_entry, the video stage
+; ladder's own convention for these flags. All route through EXTERN
+; 0 8 -> extVec vector 8 (overlay0.asm's dmat_trampoline, DEBUG only -
+; Release's vector 8 stays ext_stub, so these verbs are silent no-ops
+; there). Hardware-only by nature: CSpect has no raw SPI path, so on
+; the emulator every leg reports OPEN/CMD ERR instead of data.
+> DMAT3   _     LET 250 1
+                EXTERN 0 8
+                DONE
+
+> DMAT1   _     LET 250 2
+                EXTERN 0 8
+                DONE
+
+> DMAT4   _     LET 250 3
+                EXTERN 0 8
+                DONE
+
+> DMAT2   _     LET 250 4
+                EXTERN 0 8
+                DONE
+
+> DMARC   _     LET 249 0
+                LET 250 5
+                EXTERN 0 8
+                DONE
+
+> DMARB   _     LET 249 1
+                LET 250 5
+                EXTERN 0 8
+                DONE
+
+> DMARP   _     LET 249 2
+                LET 250 5
+                EXTERN 0 8
                 DONE
 
 ; SP14a Task 4 owner verbs: the native NXV player core eye/ear legs for
