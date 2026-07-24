@@ -193,6 +193,13 @@ def main(argv):
     ap.add_argument("--dither", action="store_true",
                      help="Floyd-Steinberg dither the palette "
                           "(default: no dither, matching tools/png2nx.py)")
+    ap.add_argument("--no-merge", dest="no_merge", action="store_true",
+                     help="disable the encoder-only gap-merge optimization "
+                          "(SP15). Production encodes keep it ON; this is for "
+                          "the decode-kernel bench, whose NXB8 real-stream "
+                          "fixture must stay dense small ops for the dispatch "
+                          "measurement (nxv2enc bench-fixtures merge-bypass "
+                          "note)")
     ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
     ap.add_argument("--duration", help="clip duration in seconds")
     ap.add_argument("--report", help="write the BuildReport as JSON to "
@@ -237,7 +244,7 @@ def main(argv):
         str(input_path), args.output, shape=(width, height), fps=args.fps,
         quality_profile="max", report_path=args.report,
         start=args.start, duration=args.duration, ffmpeg=str(ffmpeg),
-        dither=args.dither, mono=args.mono)
+        dither=args.dither, mono=args.mono, merge_gaps=not args.no_merge)
 
     print(f"wrote {args.output}: {report.total_bytes} B, "
           f"{report.total_bytes // 512} sectors, {report.frames} frames, "

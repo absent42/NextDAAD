@@ -447,10 +447,11 @@ def t6_truncation_fallback_mechanism():
     target = rng.integers(0, 256, size=n, dtype=np.uint8)   # near-total change
     err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
     tiny_cap = 200   # far below anything THRESHOLDS[-1]=64 could hit on this data
-    gcls, gstarts, glens, b, t, mode, binding = enc.encode_delta(target, err2, tiny_cap, None)
+    # surface_flat omitted -> the merge is bypassed here (the fallback emits
+    # the un-merged stream for byte safety - see encode_delta).
+    gcls, gstarts, glens, b, t, mode, binding, payload = enc.encode_delta(target, err2, tiny_cap, None)
     expect(mode == "trunc" and binding == "trunc", f"expected the truncation fallback to fire, got mode={mode} binding={binding}")
     expect(b <= tiny_cap, f"truncated stream still exceeds its own cap: {b} > {tiny_cap}")
-    payload = enc.emit_delta_ops(target, gcls, gstarts, glens)
     expect(len(payload) == b, f"truncated payload length {len(payload)} != modeled bytes {b}")
     # The truncated stream must still be a STRUCTURALLY valid opcode
     # stream (content is intentionally incomplete - only cursor
@@ -670,6 +671,214 @@ def t9_kf_span_end_of_clip_clamp():
         expect(issues == [], f"validate() should be clean (no unterminated keyframe span): {issues}")
         frames = list(dec.decode(path))
         expect(len(frames) == N, f"expected {N} decoded frames, got {len(frames)}")
+
+
+# =======================================================================
+# Step 10: SP15 encoder-optimization wave (silicon TMODEL, optimal
+# gap-merge, quantizer hysteresis, importance-sorted coarsening,
+# trailing-skip drop)
+# =======================================================================
+
+def _op_kinds(payload):
+    """Walk a raw delta payload, return the list of op-name strings in
+    order (terminating at FEND/KFLIP). Skip/run/copy operand-aware."""
+    names = {enc.OP_FEND: "FEND", enc.OP_SKIP16: "SKIP16", enc.OP_RUN8: "RUN8",
+             enc.OP_RUN16: "RUN16", enc.OP_COPY8: "COPY8", enc.OP_COPY16: "COPY16",
+             enc.OP_PAL: "PAL", enc.OP_SKIP8: "SKIP8", enc.OP_KFLIP: "KFLIP",
+             enc.OP_KSTART: "KSTART"}
+    out = []
+    pos = 0
+    while pos < len(payload):
+        op = payload[pos]; pos += 1
+        out.append(names.get(op, f"?{op:02X}"))
+        if op in (enc.OP_FEND, enc.OP_KFLIP):
+            break
+        if op == enc.OP_SKIP8:
+            pos += 1
+        elif op == enc.OP_SKIP16:
+            pos += 2
+        elif op == enc.OP_RUN8:
+            pos += 2
+        elif op == enc.OP_RUN16:
+            pos += 3
+        elif op == enc.OP_COPY8:
+            pos += 1 + payload[pos]
+        elif op == enc.OP_COPY16:
+            cnt = int.from_bytes(payload[pos:pos + 2], "little"); pos += 2 + cnt
+        elif op == enc.OP_PAL:
+            pos += enc.PAL_BLOCK_SIZE
+    return out
+
+
+@case(10, "silicon TMODEL adopted - dispatch envelope ~920T, K* self-retunes from coeffs")
+def t10_silicon_coeffs():
+    tc = enc.TMODEL_COEFFS
+    expect(tc["t_op_parse"] == 920.0, f"t_op_parse should be the silicon 920, got {tc['t_op_parse']}")
+    expect(tc["t_skip"] == 360.0, f"t_skip should be the silicon SK8 360, got {tc['t_skip']}")
+    expect(tc["fetch_long"] == 20.2, f"fetch_long should be the silicon 20.2, got {tc['fetch_long']}")
+    expect(tc["t_frame_fixed"] == 1735.0, "t_frame_fixed should be the silicon FE 1735")
+    expect(abs(enc.usable_budget_t(25.0) - 952000.0) < 1.0,
+           f"silicon usable budget @25 should be 952000 T, got {enc.usable_budget_t(25.0)}")
+    # K* derives from the coefficients (self-retunes). At silicon:
+    # (360+920)/20.2 = 63.4 B.
+    ks = enc.merge_kstar()
+    expect(62.0 < ks < 65.0, f"silicon K* should be ~63 B, got {ks:.1f}")
+    saved = dict(enc.TMODEL_COEFFS)
+    try:
+        enc.TMODEL_COEFFS["t_op_parse"] = 150.0
+        ks2 = enc.merge_kstar()
+        expect(ks2 < ks, f"K* must fall when dispatch falls: {ks2:.1f} !< {ks:.1f}")
+        expect(abs(ks2 - (360 + 150) / 20.2) < 0.1, "K* recomputes from live coeffs")
+    finally:
+        enc.TMODEL_COEFFS.clear()
+        enc.TMODEL_COEFFS.update(saved)
+
+
+@case(10, "optimal gap-merge - decoded output BYTE-IDENTICAL to un-merged, fewer ops, lower T")
+def t10_merge_byte_identity():
+    rng = np.random.default_rng(21)
+    n = 2000
+    prev = rng.integers(0, 256, size=n, dtype=np.uint8)
+    target = prev.copy()
+    # two changed spans separated by a tiny (< K*) interior skip -> bridge;
+    # one change followed by a WIDE (> K*) skip then another change -> keep;
+    # last change well before the end -> trailing skip dropped.
+    target[100:110] = 7
+    target[113:123] = 9       # gap 110..113 = 3 bytes < K* -> bridged
+    target[400:410] = 11
+    target[900:910] = 13      # gap 410..900 = 490 bytes > K* -> NOT bridged
+    # everything after 910 is unchanged -> trailing skip
+    mask = prev != target
+    gcls, gstarts, glens = enc.segment(target, mask)
+    unmerged = enc.emit_delta_ops(target, gcls, gstarts, glens)
+    merged, mb, mt = enc.merge_delta_stream(gcls, gstarts, glens, target, prev, cap_bytes=n)
+    _, tb = enc.stream_cost(gcls, glens)
+
+    surf_u = prev.copy()
+    dec.run_payload(unmerged, 0, surf_u, n)
+    surf_m = prev.copy()
+    dec.run_payload(merged, 0, surf_m, n)
+    expect(np.array_equal(surf_u, surf_m),
+           "merged stream must decode BYTE-IDENTICAL to the un-merged stream")
+    expect(np.array_equal(surf_m, target), "decoded surface equals the target content")
+
+    ku = _op_kinds(unmerged)
+    km = _op_kinds(merged)
+    expect(len(km) < len(ku), f"merge should reduce op count: {len(km)} !< {len(ku)}")
+    # the small interior gap was bridged: fewer SKIP ops in the merged stream
+    expect(km.count("SKIP8") < ku.count("SKIP8"),
+           f"bridged skip should drop a SKIP8 op: merged skips={km.count('SKIP8')} vs {ku.count('SKIP8')}")
+    # the wide gap survives as a real skip
+    expect("SKIP16" in km or "SKIP8" in km, "the wide interior gap must survive as a skip")
+    expect(mt < tb, f"merged modeled T must be lower: {mt:.0f} !< {tb:.0f}")
+
+
+@case(10, "trailing-skip drop - merged stream never ends on a skip op")
+def t10_trailing_skip_dropped():
+    rng = np.random.default_rng(22)
+    n = 1500
+    prev = rng.integers(0, 256, size=n, dtype=np.uint8)
+    target = prev.copy()
+    target[50:60] = 3   # only change is early; rest is a long trailing skip
+    mask = prev != target
+    gcls, gstarts, glens = enc.segment(target, mask)
+    unmerged = enc.emit_delta_ops(target, gcls, gstarts, glens)
+    merged, _, _ = enc.merge_delta_stream(gcls, gstarts, glens, target, prev, cap_bytes=n)
+    ku = _op_kinds(unmerged)
+    km = _op_kinds(merged)
+    # un-merged carries a trailing skip before FEND; merged must not.
+    expect(ku[-2].startswith("SKIP"), f"setup: un-merged should have a trailing skip, got {ku}")
+    expect(not km[-2].startswith("SKIP"), f"merged must drop the trailing skip, got {km}")
+    # and still decode identically (trailing bytes stay == surface)
+    su = prev.copy(); dec.run_payload(unmerged, 0, su, n)
+    sm = prev.copy(); dec.run_payload(merged, 0, sm, n)
+    expect(np.array_equal(su, sm), "trailing-skip-dropped stream decodes identically")
+
+
+@case(10, "op-soup gap-merge cuts modeled T >= 50% at silicon prices (research: 64-84% at D=920)")
+def t10_merge_t_magnitude():
+    # Synthetic 'op soup' resembling the real footage histograms (median
+    # copy ~1-5B, median skip ~6-16B): hundreds of tiny alternating
+    # changed/unchanged spans. The merge should collapse them, cutting the
+    # dispatch-dominated modeled T by more than half.
+    rng = np.random.default_rng(23)
+    n = 20000
+    prev = rng.integers(0, 256, size=n, dtype=np.uint8)
+    target = prev.copy()
+    pos = 0
+    while pos < n - 40:
+        clen = int(rng.integers(1, 6))
+        target[pos:pos + clen] = rng.integers(0, 256, size=clen, dtype=np.uint8)
+        pos += clen + int(rng.integers(6, 17))   # interior skip 6..16 (< K*)
+    mask = prev != target
+    gcls, gstarts, glens = enc.segment(target, mask)
+    _, t_un = enc.stream_cost(gcls, glens)
+    merged, _, t_m = enc.merge_delta_stream(gcls, gstarts, glens, target, prev, cap_bytes=n)
+    expect(t_m <= 0.5 * t_un,
+           f"merge should cut modeled T by >=50% on op-soup: {t_m:.0f} vs {t_un:.0f} ({t_m / t_un:.1%})")
+    sm = prev.copy(); dec.run_payload(merged, 0, sm, n)
+    expect(np.array_equal(sm, target), "op-soup merge still decodes to target")
+
+
+@case(10, "quantizer hysteresis - stable-scene-with-noise churn drops >10x, PSNR within tolerance")
+def t10_hysteresis_churn():
+    rng = np.random.default_rng(24)
+    H, W = 48, 64
+    yy, xx = np.mgrid[0:H, 0:W]
+    # smooth gradient -> many pixels near palette-cell boundaries (churn)
+    base = np.stack([(xx * 4) % 256, (yy * 5) % 256, ((xx + yy) * 3) % 256],
+                    axis=2).astype(np.uint8)
+    pal = enc.adaptive_palette(base)
+    prev0, _ = enc.quantize_to_palette(base, pal)
+    prev_no = prev0.copy()
+    prev_hy = prev0.copy()
+    churn_no = churn_hy = 0
+    psnr_no, psnr_hy = [], []
+    for _ in range(20):
+        noise = rng.integers(-3, 4, size=(H, W, 3))
+        frame = np.clip(base.astype(int) + noise, 0, 255).astype(np.uint8)
+        idx_no, dec_no = enc.quantize_to_palette(frame, pal)
+        idx_hy, dec_hy = enc.quantize_to_palette(
+            frame, pal, prev_idx=prev_hy, hysteresis_eps=enc.HYSTERESIS_EPS)
+        churn_no += int((idx_no != prev_no).sum())
+        churn_hy += int((idx_hy != prev_hy).sum())
+        psnr_no.append(enc.psnr(frame, dec_no))
+        psnr_hy.append(enc.psnr(frame, dec_hy))
+        prev_no, prev_hy = idx_no, idx_hy
+    ratio = churn_no / max(1, churn_hy)
+    drop = float(np.mean(psnr_no) - np.mean(psnr_hy))
+    expect(ratio >= 10.0, f"hysteresis should cut index churn >=10x, got {ratio:.1f}x")
+    expect(drop < 1.5, f"hysteresis PSNR regression {drop:.2f} dB exceeds the 1.5 dB tolerance")
+
+
+@case(10, "importance-sorted coarsening - the fallback keeps the highest-|delta| regions")
+def t10_importance_coarsening():
+    # Two equal-size changed regions, BOTH large enough to survive the
+    # coarsest threshold (err2 > 3*64*64 = 12288) so the ladder cannot
+    # separate them - only the fallback runs. A is a bigger colour jump
+    # (higher importance) than B; a cap that admits one region must keep A
+    # and drop B (XDC importance ordering, not error-blind truncation).
+    rng = np.random.default_rng(31)
+    n = 4000
+    prev = np.full(n, 100, dtype=np.uint8)
+    target = prev.copy()
+    # non-uniform (-> COPY, not a cheap RUN) so the byte cap actually binds;
+    # both regions clear err2 > 12288 (|delta| > 110) so the threshold ladder
+    # can't separate them and the fallback must run.
+    target[100:300] = rng.integers(235, 256, size=200, dtype=np.uint8)   # A: delta ~135-155 (high)
+    target[2000:2200] = rng.integers(215, 226, size=200, dtype=np.uint8)  # B: delta ~115-125 (low)
+    err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
+    # cap ~ one 200B copy (2 header + 200 body) + FEND + margin
+    cap = 230
+    gcls, gstarts, glens, b, t, mode, binding, payload = enc.encode_delta(
+        target, err2, cap, None)
+    expect(mode == "trunc", f"expected the truncation fallback, got {mode}")
+    surf = prev.copy()
+    dec.run_payload(payload, 0, surf, n)
+    a_kept = not np.array_equal(surf[100:300], prev[100:300])
+    b_kept = not np.array_equal(surf[2000:2200], prev[2000:2200])
+    expect(a_kept and not b_kept,
+           f"importance ordering must keep region A, drop region B (A_kept={a_kept}, B_kept={b_kept})")
 
 
 def main():

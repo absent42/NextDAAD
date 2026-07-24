@@ -30,6 +30,7 @@ frames (research finding: the shadow-compose variant is priced out at
 paint the HIDDEN surface across a KSTART..KFLIP span and flip+palette-
 swap atomically on KFLIP.
 """
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -200,28 +201,72 @@ TERMINAL_OPS = frozenset({OP_FEND, OP_KFLIP})
 PAL_BLOCK_SIZE = 512
 
 # ---------------------------------------------------------------------
-# TMODEL_COEFFS - modeled Z80N decode+fetch T-state costs, ported
-# VERBATIM from the research tmodel (.superpowers/sdd/sp15-research/
-# research-decode-models.md kernel-d coefficients, protovid/tmodel.py).
-# MODEL-NOT-SILICON: fetch_long/fetch_short are silicon-measured, every
-# other number here is a research estimate. Task 2's silicon bench
-# replaces this whole dict with measured coefficients before the format
-# freezes - do not treat these as final.
+# TMODEL_COEFFS - Z80N decode+fetch T-state costs. SILICON-ADOPTED
+# (SP15 Task 2 settlement, core 3.02.04 KS3 TEST core, 2026-07-24):
+# .superpowers/sdd/task-2-settlement-report.md section 1 replaced the
+# old research-estimate model wholesale with the NXBEN bench's measured
+# coefficients. Each entry cites its bench row + the settlement's model
+# value it replaced. The per-op dispatch envelope is the whole story:
+# it went from a modeled 50 T to a silicon-measured ~920 T (~18x). These
+# are the values the rate control and feasibility validation now price
+# with (SP15 encoder-optimization wave adoption).
+#
+# RE-BENCH PENDING (per entry): the Task-2 kernel-optimization wave
+# (.superpowers/sdd/task-2-optimization-report.md) hand-counts a rewritten
+# direct-threaded dispatch that should drop the per-op envelope to
+# ~100-224 T per class; the owner re-benches the same section-36 card and
+# the next settlement re-updates this dict. Adopting the FIRST-sitting
+# silicon values (not the predictions) is deliberate - the rate control
+# prices with measured truth until the re-bench lands.
+#
+# Envelope convention: the ~920 T dispatch is measured on real copy/run
+# ops that already carry their count byte, and the 360 T skip envelope on
+# real SKIP8 ops that carry theirs, so the count-byte parse is FOLDED INTO
+# the dispatch envelopes below - header_rate is retired to 0 to avoid
+# double-counting (matches the op-economy attribution model,
+# scratchpad/research-op-economy.md section 0/2).
 # ---------------------------------------------------------------------
 TMODEL_COEFFS = {
-    "fetch_long": 22.1,        # T/byte, ini burst >= 64B [SILICON]
-    "fetch_short": 26.0,       # T/byte, burst < 64B [SILICON]
-    "t_skip": 45.0,             # skip op: pointer add + count parse
-    "t_op_parse": 50.0,         # run/copy/pal op dispatch + parse
-    "fill_cpu": 13.2,           # T/byte CPU fill, runs < dma threshold
-    "fill_dma_per_b": 4.0,      # T/byte DMA fill (runs >= dma threshold)
-    "fill_dma_setup": 355.0,    # DMA program upload, once per fill op
-    "fill_dma_min": 64,         # bytes - DMA vs CPU fill crossover
-    "header_rate": 26.0,        # T/byte for count/colour bytes (short reads)
-    "t_frame_fixed": 1000.0,    # frame header + loop setup, once/frame
-    "t_palette": 512 * 22.1 + 256 * 20.0,  # PAL op: 512B fetch + 256 nextreg writes
+    "fetch_long": 20.2,        # T/byte LDI copy body [SILICON C8/C16 decomp;
+                                #   model was 22.1]. re-bench pending: opt-report
+                                #   C16 row predicts ~20.1 T/B (body preserved)
+    "fetch_short": 20.2,        # T/byte [SILICON]. No separate short-burst body
+                                #   penalty exists: C8's 25.0 T/B is fully the
+                                #   920 dispatch amortized over 192B + 20.2 body
+                                #   (settlement s1); burst size is dispatch, now
+                                #   priced separately. model was 26.0
+    "t_skip": 360.0,            # SKIP8 op envelope [SILICON SK8 row 360 T incl
+                                #   its count byte; settlement decomposes 340+20;
+                                #   model was 45]. re-bench pending: opt-report
+                                #   SKIP8 row predicts 121 T
+    "t_op_parse": 920.0,        # copy/run/pal per-op dispatch envelope [SILICON
+                                #   run 920 / copy 927, C8-vs-C16 solve; model was
+                                #   50; ~18x - the feasibility-flip driver]. body
+                                #   priced separately (fetch_long/fill_*).
+                                #   re-bench pending: opt-report ~100-224 T/class
+    "fill_cpu": 17.0,           # T/byte unrolled CPU fill [SILICON R8U row;
+                                #   model was 13.2]. re-bench pending: body
+                                #   unchanged (opt-report keeps 17.0 T/B)
+    "fill_dma_per_b": 4.5,      # T/byte DMA fill body [SILICON RD chunk solve;
+                                #   model was 4.0]. re-bench pending
+    "fill_dma_setup": 1273.0,   # T per 256B DMA fill chunk [SILICON RD2/RD3
+                                #   solve; model was 355 (~3x low)]. re-bench
+                                #   pending: opt-report ~373 T kernel
+    "fill_dma_min": 256,        # DMA fill chunk size (bytes); DMA beats CPU fill
+                                #   at L>=~102 (op-economy s0). was 64
+    "header_rate": 0.0,         # count/colour byte parse - FOLDED into the
+                                #   dispatch envelopes above on silicon (see the
+                                #   envelope-convention note). model was 26.0
+    "t_frame_fixed": 1735.0,    # frame-fixed floor [SILICON FE row incl bench
+                                #   harness; model was 1000]. re-bench pending:
+                                #   opt-report ~1050-1200 T (player share ~560)
+    "t_palette": 512 * 22.1 + 256 * 20.0,  # 16435 T - MODEL value kept: no
+                                #   silicon PAL row exists (settlement s1 note;
+                                #   op-economy caveat). PAL is <0.2% of any frame
     "clock_khz": 28000.0,       # T per ms at 28MHz
-    "audio_factor": 0.89,       # usable budget after the 11% audio ISR tax
+    "audio_factor": 0.85,       # usable budget after the armed-decode audio tax
+                                #   [SILICON ~15-17% CD armed-vs-unarmed; model
+                                #   was 0.89]. re-bench pending
 }
 
 
@@ -303,12 +348,20 @@ def _cost_skip_chunk(L):
     return 3, tc["t_skip"] + 2 * tc["header_rate"]
 
 
+def _fill_t(L):
+    """Modeled fill T for L bytes: min of unrolled CPU fill and DMA fill
+    chunked at fill_dma_min (256B) bytes/chunk. Matches the op-economy
+    silicon fill model (scratchpad/research-op-economy.md section 0)."""
+    tc = TMODEL_COEFFS
+    cpu = L * tc["fill_cpu"]
+    chunk = tc["fill_dma_min"]
+    dma = math.ceil(L / chunk) * tc["fill_dma_setup"] + L * tc["fill_dma_per_b"]
+    return min(cpu, dma)
+
+
 def _cost_run_chunk(L):
     tc = TMODEL_COEFFS
-    if L >= tc["fill_dma_min"]:
-        fill_t = tc["fill_dma_setup"] + L * tc["fill_dma_per_b"]
-    else:
-        fill_t = L * tc["fill_cpu"]
+    fill_t = _fill_t(L)
     if L <= 255:
         return 3, tc["t_op_parse"] + 2 * tc["header_rate"] + fill_t
     return 4, tc["t_op_parse"] + 3 * tc["header_rate"] + fill_t
@@ -442,32 +495,205 @@ def emit_delta_ops(target_flat, gcls, gstarts, glens):
     return b"".join(parts)
 
 
-def encode_delta(target_flat, err2_flat, cap_bytes, cap_t):
+# ---------------------------------------------------------------------
+# Optimal gap-merge (SP15 encoder-optimization wave, encoder-only,
+# decoded-output-identical). Per-frame greedy pass over the emitted op
+# sequence that (a) bridges interior skips shorter than K* by re-copying
+# the unchanged surface bytes, (b) absorbs sub-threshold runs into a
+# contiguous copy, (c) drops the trailing skip. K* and the run-absorb
+# threshold derive from TMODEL_COEFFS at encode time, so the merge
+# self-retunes whenever the coefficients change (e.g. the Task-2 re-bench).
+# The research op-economy tooling proved this is byte-identical to the
+# un-merged decode (scratchpad/research-op-economy.md section 3,
+# scratchpad/opeconomy/analyze.py optimal_merge); the selftest asserts it
+# by decoding both streams. Empirically the greedy pass approaches the
+# DP upper bound the research measured (64-84% T cut at D=920).
+# ---------------------------------------------------------------------
+
+def merge_kstar():
+    """Interior-skip bridge crossover K* (bytes). Bridging a SKIP that
+    sits between two data ops merges SKIP+COPY into a single COPY: it
+    saves the skip dispatch AND one copy dispatch and costs K bytes at the
+    copy body rate, so it wins while K < (D_skip + D_copy) / copy_rate.
+    Derived from TMODEL_COEFFS - self-tunes with the coefficients (91 B at
+    the old model's D=920/skip920; ~63 B at silicon's D=920/skip360)."""
+    tc = TMODEL_COEFFS
+    skip_disp = tc["t_skip"] + tc["header_rate"]      # SKIP8 op envelope
+    copy_disp = tc["t_op_parse"]
+    return (skip_disp + copy_disp) / tc["fetch_long"]
+
+
+def merge_run_absorb_max():
+    """Max RUN length (bytes) worth absorbing into a contiguous COPY.
+    Absorbing drops the run's own dispatch but re-prices its body at the
+    copy rate instead of the (cheaper) fill rate, so it wins while
+    L < D / (copy_rate - fill_cpu_rate) (~287 B at silicon)."""
+    tc = TMODEL_COEFFS
+    denom = tc["fetch_long"] - tc["fill_cpu"]
+    if denom <= 0:
+        return float("inf")
+    return tc["t_op_parse"] / denom
+
+
+def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
+                        cap_bytes):
+    """Gap-merge one delta frame's segment list into a re-expressed opcode
+    payload whose DECODE is byte-identical to emit_delta_ops on the same
+    segments. Returns (payload_bytes, modeled_bytes, modeled_T).
+
+    Byte-identity mechanism: build a value buffer that holds the current
+    SURFACE bytes everywhere and the TARGET bytes on the changed spans.
+    Any copy region emitted from that buffer therefore writes surface
+    values across bridged skips (== what was already on screen, a no-op
+    change) and target values across real changes - so the decoded surface
+    is exactly what the un-merged stream produced. The changed-segment list
+    itself is unchanged, so encode_clip's _apply_segments still tracks the
+    surface correctly.
+
+    cap_bytes bounds the byte inflation a bridge/absorb may add (each
+    bridged skip re-sends K literal bytes); a bridge that would push the
+    stream past the cap is declined and the skip is kept."""
+    kstar = merge_kstar()
+
+    valbuf = np.array(surface_flat, dtype=np.uint8, copy=True)
+    segs = []
+    for c, s, L in zip(gcls, gstarts, glens):
+        c, s, L = int(c), int(s), int(L)
+        if L <= 0:
+            continue
+        segs.append((c, s, L))
+        if c != 0:
+            valbuf[s:s + L] = target_flat[s:s + L]
+    # (c) drop the trailing skip(s) - pure loss, cursor need not reach the
+    # frame end. After this the last segment is always a change, so every
+    # remaining skip is interior (has a change before and after it).
+    while segs and segs[-1][0] == 0:
+        segs.pop()
+
+    # Group segments into copy-through REGIONS separated by KEPT skips. A
+    # region accumulates contiguous data segments plus any BRIDGED interior
+    # skips (skip L < K*, budget permitting); the whole region emits as one
+    # COPY from valbuf (surface bytes on bridged skips, target bytes on the
+    # changes) EXCEPT a region that is exactly one lone RUN segment - that
+    # stays a RUN (fill is cheaper than copy for an un-bridged run). A copy
+    # directly touching a run (no skip between) folds it in (run-absorb).
+    ops = []            # primitive ops: ('skip', L) | ('run', L, col) | ('copy', a, b)
+    est_bytes = 1       # FEND byte - soft running estimate for the cap guard
+    region = None       # [start, end, members] ; members = list of (cls, L)/('bridge', L)
+
+    def flush():
+        nonlocal region
+        if region is None:
+            return
+        rs, re_, members = region
+        if len(members) == 1 and members[0][0] == 2:
+            ops.append(("run", re_ - rs, int(target_flat[rs])))
+        else:
+            ops.append(("copy", rs, re_))
+        region = None
+
+    for c, s, L in segs:
+        if c == 0:                      # skip (interior by construction)
+            if (region is not None and L < kstar
+                    and est_bytes + L <= cap_bytes):
+                # bridge: the skip's surface bytes join the region as
+                # copy-through; the region will emit as one COPY.
+                region[1] = s + L
+                region[2].append(("bridge", L))
+                est_bytes += L
+                continue
+            flush()
+            ops.append(("skip", L))
+            est_bytes += 2 * max(1, math.ceil(L / 65535))
+        elif c in (1, 2):               # data (copy or run)
+            if region is None:
+                region = [s, s + L, [(c, L)]]
+            else:
+                region[1] = s + L
+                region[2].append((c, L))
+            est_bytes += L
+        else:
+            raise ValueError(f"bad segment class {c}")
+    flush()
+
+    parts = []
+    b_total = 0
+    t_total = TMODEL_COEFFS["t_frame_fixed"]
+    for op in ops:
+        if op[0] == "skip":
+            parts.append(op_skip(op[1]))
+            bb, tt = op_cost("skip", op[1])
+        elif op[0] == "run":
+            parts.append(op_run(op[1], op[2]))
+            bb, tt = op_cost("run", op[1])
+        else:
+            data = valbuf[op[1]:op[2]].tobytes()
+            parts.append(op_copy(data))
+            bb, tt = op_cost("copy", len(data))
+        b_total += bb
+        t_total += tt
+    parts.append(bytes([OP_FEND]))
+    b_total += 1                        # FEND byte (dispatch folded into
+                                         # t_frame_fixed, matching stream_cost)
+    return b"".join(parts), b_total, t_total
+
+
+def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
+                 surface_flat=None, merge_gaps=True):
     """Threshold ladder with a byte cap and an optional modeled-T cap.
-    Coarsens THRESHOLDS until both fit; falls back to greedy priority
-    truncation (highest per-region squared error kept first) if even
-    the coarsest threshold does not fit either cap. Ported from the
-    research prototype's encode_delta, re-costed against the real op
-    format. Returns (gcls, gstarts, glens, bytes, T, mode, binding)."""
+    Coarsens THRESHOLDS until both fit; falls back to importance-sorted
+    priority truncation if even the coarsest threshold does not fit either
+    cap. Returns (gcls, gstarts, glens, bytes, T, mode, binding, payload).
+
+    When surface_flat is given and merge_gaps is on, each threshold's
+    candidate is first gap-merged (encoder-only, decode-identical - see
+    merge_delta_stream); the merged stream is much cheaper in T (it kills
+    the per-op dispatch that dominates the silicon cost) but slightly more
+    expensive in bytes, so the ladder prefers the merged candidate when it
+    fits both caps and falls back to the un-merged one otherwise. This is
+    what lets the finest thresholds stay feasible at silicon prices where
+    the un-merged stream alone would force coarsening/truncation.
+
+    The returned (gcls, gstarts, glens) is always the CHANGED-segment list
+    (un-merged); the surface tracking in encode_clip walks it directly. The
+    returned payload is the stream actually chosen (merged or not)."""
     binding = "none"
     last_fail = None
     for k, T in enumerate(THRESHOLDS):
         mask = close_gaps(err2_flat > 3.0 * T * T)
         gcls, gstarts, glens = segment(target_flat, mask)
-        b, t = stream_cost(gcls, glens)
-        b += 1  # FEND
-        ok_b = b <= cap_bytes
-        ok_t = cap_t is None or t <= cap_t
-        if ok_b and ok_t:
+        b_un, t_un = stream_cost(gcls, glens)
+        b_un += 1  # FEND
+        # merged candidate first (lower T; may fit where un-merged busts T)
+        if merge_gaps and surface_flat is not None:
+            payload_m, b_m, t_m = merge_delta_stream(
+                gcls, gstarts, glens, target_flat, surface_flat, cap_bytes)
+            if b_m <= cap_bytes and (cap_t is None or t_m <= cap_t):
+                if k > 0:
+                    binding = last_fail
+                return (gcls, gstarts, glens, b_m, t_m,
+                        f"thresh:{T}+merge", binding, payload_m)
+            fb, ft = b_m, t_m   # what bound the shipped (merged) candidate
+        else:
+            fb, ft = b_un, t_un
+        if b_un <= cap_bytes and (cap_t is None or t_un <= cap_t):
             if k > 0:
                 binding = last_fail
-            return gcls, gstarts, glens, b, t, f"thresh:{T}", binding
-        last_fail = ("both" if (not ok_b and not ok_t)
-                     else ("bytes" if not ok_b else "T"))
+            payload = emit_delta_ops(target_flat, gcls, gstarts, glens)
+            return (gcls, gstarts, glens, b_un, t_un,
+                    f"thresh:{T}", binding, payload)
+        ob = fb <= cap_bytes
+        ot = cap_t is None or ft <= cap_t
+        last_fail = ("both" if (not ob and not ot)
+                     else ("bytes" if not ob else "T"))
 
-    # Coarsest threshold still over budget: greedy priority truncation,
-    # highest-error changed regions kept first, ported from the
-    # research prototype's fallback.
+    # Coarsest threshold still over budget: importance-sorted priority
+    # truncation (XDC lineage - drop the SMALLEST-importance changed regions
+    # first, keeping the ones that buy the most perceptual quality per T;
+    # importance = sum |delta| over the region = changed-count x magnitude,
+    # scratchpad/research-stream-optimization.md section 4b). Emits the
+    # un-merged stream: the merge inflates bytes and this branch is already
+    # byte-bound, so byte safety wins over the T saving here.
     T = THRESHOLDS[-1]
     mask = close_gaps(err2_flat > 3.0 * T * T)
     bnd = np.flatnonzero(mask[1:] != mask[:-1]) + 1
@@ -478,10 +704,11 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t):
     if len(rs) == 0:
         gcls, gstarts, glens = segment(target_flat, np.zeros_like(mask))
         b, t = stream_cost(gcls, glens)
-        return gcls, gstarts, glens, b + 1, t, "trunc", "trunc"
-    cs = np.concatenate(([0.0], np.cumsum(err2_flat)))
-    rerr = cs[re] - cs[rs]
-    order = np.argsort(-rerr)
+        payload = emit_delta_ops(target_flat, gcls, gstarts, glens)
+        return gcls, gstarts, glens, b + 1, t, "trunc", "trunc", payload
+    imp_cum = np.concatenate(([0.0], np.cumsum(np.sqrt(err2_flat))))
+    rimp = imp_cum[re] - imp_cum[rs]   # importance = sum |delta| per region
+    order = np.argsort(-rimp)
     sel = []
     ab, at = 1.0, TMODEL_COEFFS["t_frame_fixed"]   # +1 for the FEND byte
     mb = cap_bytes * 0.97
@@ -508,7 +735,8 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t):
         b, t = stream_cost(gcls, glens)
         b += 1
         guard += 1
-    return gcls, gstarts, glens, b, t, "trunc", "trunc"
+    payload = emit_delta_ops(target_flat, gcls, gstarts, glens)
+    return gcls, gstarts, glens, b, t, "trunc", "trunc", payload
 
 
 # ---------------------------------------------------------------------
@@ -550,25 +778,71 @@ def adaptive_palette(rgb, colors=256):
     return np.array(pal[:colors * 3], dtype=np.uint8).reshape(colors, 3)
 
 
-def _nearest(vecs, cb, chunk=131072):
+# Quantizer index-hysteresis deadzone (SP15 encoder-optimization wave):
+# when re-quantizing to a HELD palette, a pixel keeps its previous-frame
+# index whenever that index's colour is within HYSTERESIS_EPS (squared RGB
+# distance) of the best match. This kills per-frame nearest-neighbour index
+# churn - 30-93% of delta-written bytes sit at visually-STABLE pixels
+# (scratchpad/research-op-economy.md section 5) - at near-zero perceptual
+# cost. Default tuned so a genuine colour move (well outside the deadzone)
+# still re-quantizes freely while sub-quantization-step flicker sticks.
+# The existing drift-triggered keyframe (encode_clip DRIFT_T) bounds any
+# slow freeze-drift accumulation - the research's drift-accumulator caveat.
+#
+# Default 150 (squared RGB distance): a pixel keeps its old index while the
+# old colour stays within ~sqrt(150) of the best match, aligning the
+# deadzone with the churn audit's "visually stable = max-channel source
+# move <= 10" population (scratchpad/research-op-economy.md section 5). On
+# a stable-scene-with-noise clip this cuts index churn by >10x for <0.5 dB
+# PSNR (per-pixel error is bounded eps above the best match - it does NOT
+# accumulate, since prev_d is re-measured against the CURRENT source each
+# frame). NOTE: on the two research clips at silicon prices the effect is a
+# WASH - the byte/T rate control already coarsens the churn away before
+# hysteresis can act (task-2b report); hysteresis pays off on quiet content
+# where the budget is not the binding constraint.
+HYSTERESIS_EPS = 150.0
+
+
+def _nearest(vecs, cb, chunk=131072, want_dist=False):
     vecs = vecs.astype(np.float32)
     cb = cb.astype(np.float32)
     cbn = np.sum(cb * cb, axis=1)
     out = np.empty(vecs.shape[0], dtype=np.int32)
+    dout = np.empty(vecs.shape[0], dtype=np.float32) if want_dist else None
     for s in range(0, vecs.shape[0], chunk):
         v = vecs[s:s + chunk]
         d = v @ cb.T
         d = np.sum(v * v, axis=1)[:, None] - 2 * d + cbn[None, :]
-        out[s:s + chunk] = np.argmin(d, axis=1)
+        bi = np.argmin(d, axis=1)
+        out[s:s + chunk] = bi
+        if want_dist:
+            dout[s:s + chunk] = d[np.arange(bi.size), bi]
+    if want_dist:
+        return out, dout
     return out
 
 
-def quantize_to_palette(rgb, pal):
+def quantize_to_palette(rgb, pal, prev_idx=None, hysteresis_eps=None):
     """Quantize (H,W,3) uint8 RGB to a fixed 256-entry palette. Returns
-    (idx (H,W) uint8, decoded rgb (H,W,3) uint8). Nearest-colour."""
+    (idx (H,W) uint8, decoded rgb (H,W,3) uint8). Nearest-colour.
+
+    prev_idx (H,W): previous-frame index map. When given together with a
+    hysteresis_eps deadzone, a pixel keeps prev_idx whenever that index's
+    colour distance is within eps of the best match - index hysteresis
+    (see HYSTERESIS_EPS). Used only against a HELD palette (delta frames);
+    keyframe re-quantization to a fresh palette passes prev_idx=None."""
     H, W, _ = rgb.shape
+    palf = pal.astype(np.float32)
     v = rgb.reshape(-1, 3).astype(np.float32)
-    idx = _nearest(v, pal.astype(np.float32)).astype(np.uint8)
+    if prev_idx is not None and hysteresis_eps is not None:
+        idx, best_d = _nearest(v, palf, want_dist=True)
+        pv = prev_idx.reshape(-1).astype(np.int64)
+        diff = v - palf[pv]
+        prev_d = np.sum(diff * diff, axis=1)
+        keep = prev_d <= best_d + hysteresis_eps
+        idx = np.where(keep, pv, idx).astype(np.uint8)
+    else:
+        idx = _nearest(v, palf).astype(np.uint8)
     dec = pal[idx].reshape(H, W, 3)
     return idx.reshape(H, W), dec
 
@@ -891,7 +1165,8 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
                 abytes_real=abytes_real, abytes_pad=abytes_pad, nframes=nframes)
 
 
-def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65):
+def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
+                merge_gaps=True, hysteresis=True):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -910,6 +1185,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65):
     usable = usable_budget_t(fps)
     refract = max(1, int(round(fps / 2)))
     cap_bytes = int(cap_bytes_frac * raw)
+    hyst_eps = HYSTERESIS_EPS if hysteresis else None
 
     scene_cuts = detect_scene_cuts(chg)
 
@@ -939,7 +1215,13 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65):
         elif held_pal is None:
             start_kf, trigger = True, "start"
         else:
-            target_idx, target_dec = quantize_to_palette(orig[i], held_pal)
+            # Drift measures HELD-PALETTE STALENESS (best achievable vs the
+            # frame's own ideal), so it must use the non-sticky nearest-
+            # colour quantize - applying hysteresis here would conflate
+            # index stickiness with palette drift and thrash the keyframe
+            # trigger (freeze-drift). Emission below re-quantizes with
+            # hysteresis; the trigger stays clean.
+            _, target_dec = quantize_to_palette(orig[i], held_pal)
             drift = po_ceil[i] - psnr(orig[i], target_dec)
             drift_for_stats = drift
             in_refract = (i - last_kf_end) <= refract
@@ -960,14 +1242,16 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65):
             # avoids composing a mixed-scene frame on the hidden
             # surface (research-realfootage-results.md HAZARD FOUND).
             if len(planned) > 1 and prev_flat is not None and _is_cut_at(chg, i + 1, CUT_T):
-                target_idx, target_dec = quantize_to_palette(orig[i], held_pal)
+                prev_idx = unflatten_frame(prev_flat, height, width, column_major)
+                target_idx, target_dec = quantize_to_palette(
+                    orig[i], held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
                 tflat = flatten_frame(target_idx, column_major)
                 prev_dec_flat = held_pal[prev_flat].astype(np.float32)
                 targ_dec_flat = held_pal[tflat].astype(np.float32)
                 err2 = np.sum((targ_dec_flat - prev_dec_flat) ** 2, axis=1)
-                gcls, gstarts, glens, b, t, mode, binding = encode_delta(
-                    tflat, err2, cap_bytes, usable)
-                payload = emit_delta_ops(tflat, gcls, gstarts, glens)
+                gcls, gstarts, glens, b, t, mode, binding, payload = encode_delta(
+                    tflat, err2, cap_bytes, usable,
+                    surface_flat=prev_flat, merge_gaps=merge_gaps)
                 prev_flat = np.where(_mask_from_segments(gcls, gstarts, glens, raw), tflat, prev_flat)
                 dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
                 payloads.append(payload)
@@ -1047,14 +1331,16 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65):
             decoded.append(dec_img)
             per_frame["psnr"].append(psnr(orig[i], dec_img))
         else:
-            target_idx, target_dec = quantize_to_palette(orig[i], held_pal)
+            prev_idx = unflatten_frame(prev_flat, height, width, column_major)
+            target_idx, target_dec = quantize_to_palette(
+                orig[i], held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
             tflat = flatten_frame(target_idx, column_major)
             prev_dec_flat = held_pal[prev_flat].astype(np.float32)
             targ_dec_flat = held_pal[tflat].astype(np.float32)
             err2 = np.sum((targ_dec_flat - prev_dec_flat) ** 2, axis=1)
-            gcls, gstarts, glens, b, t, mode, binding = encode_delta(
-                tflat, err2, cap_bytes, usable)
-            payload = emit_delta_ops(tflat, gcls, gstarts, glens)
+            gcls, gstarts, glens, b, t, mode, binding, payload = encode_delta(
+                tflat, err2, cap_bytes, usable,
+                surface_flat=prev_flat, merge_gaps=merge_gaps)
             new_flat = _apply_segments(prev_flat, tflat, gcls, gstarts, glens)
             prev_flat = new_flat
             payloads.append(payload)
@@ -1091,7 +1377,7 @@ def _apply_segments(prev_flat, target_flat, gcls, gstarts, glens):
 
 def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
-           dither=False, mono=False):
+           dither=False, mono=False, merge_gaps=True, hysteresis=True):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     quality_profile: only "max" is implemented in T1 (the dual-budget
@@ -1107,7 +1393,8 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
 
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
                           ffmpeg, dither, mono)
-    result = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width, height, fps_val)
+    result = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width, height,
+                          fps_val, merge_gaps=merge_gaps, hysteresis=hysteresis)
 
     payloads = result["payloads"]
     nframes_out = len(payloads)
@@ -1193,6 +1480,15 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
 # audio blocks, no 512-byte padding) built from this module's own op
 # emitters, then verified against nxv2dec.run_payload - the reference
 # decoder stays the single ground truth for what the bytes mean.
+#
+# MERGE BYPASS (SP15 encoder-optimization wave): the synthetic fixtures
+# (NXB0-NXB7, NXB9) are hand-built directly from op_skip/op_run/op_copy and
+# NEVER pass through encode_delta / merge_delta_stream - the gap-merge would
+# collapse the dispatch-dominated op-soup (NXB0) that the SOU/dispatch bench
+# row is measuring, defeating the fixture's whole purpose. They stay dense
+# small ops BY DESIGN. NXB8 (the real-stream fixture) must likewise be cut
+# from a NON-merged encode to keep its worst-case op density (build-tests
+# encodes its segment source with videnc.py --no-merge).
 #
 # File set (8.3 names, staged to sd\ by build-tests.ps1 -NxBench):
 #   NXB0.BIN  op-soup: dense [SKIP8 8][RUN8 8][COPY8 8] groups - the
