@@ -4598,11 +4598,18 @@ vidErrByteL:     db 0             ; mirrors vidErrByte - see that cell's
 ;     rows, and the bench prints only after windows are restored).
 ;     (doc 11's MMU model; rubric 3: every cross-page access here goes
 ;     through an explicitly mapped window).
-;   - Op dispatch: bounded jump-slot table entered through a low-byte
-;     SMC-patched JP (doc 07's dense-opcode dispatch, doc 08's SMC
-;     rules: MMU7 stays VID_PAGE2 for the whole bench, so the patch
-;     site's page can never move under it). Reserved ops ($09, $0B,
-;     >= $0C) take the error row, matching nxv2dec's rejection.
+;   - Op dispatch (SP15 optimization wave): DIRECT-THREADED. The wire
+;     opcode is pre-scaled x4 by the encoder, so the byte IS the
+;     offset into nxbStubPage (256-ALIGNed page of 4-byte JP stubs -
+;     doc 07's dense dispatch taken to its floor: zero multiply, zero
+;     SMC, zero bounds check). Each hot handler ends with the inline
+;     next-op sequence (NXBNEXT: seam guard + fetch + ld iyl,a +
+;     jp (iy); IYH is pinned to the stub page for the whole rep).
+;     Reserved values ($24 = old $09, $2C SCROLL, and every byte
+;     outside the set) land on error stubs / the page's NOP slide
+;     into nxb_op_bad_a, matching nxv2dec's rejection. Kernel-kind
+;     selection costs zero per op: nxb_row_setup patches the CALL
+;     operands once per row (doc 08 SMC - MMU7 pinned at VID_PAGE2).
 ;   - Kernels (the measured coefficients):
 ;       RUN fill  U: unrolled ld (hl),e/inc hl pairs (doc 01 costs)
 ;                 P: PUSH-pair fill (doc 11's 5.5T/byte note; SP
@@ -4686,16 +4693,21 @@ vidErrByteL:     db 0             ; mirrors vidErrByte - see that cell's
 ; Opcode values - literal transcription of the format reference (the
 ; same table nxv2enc.py/nxv2dec.py transcribe; Task 3 moves the
 ; player's copy into nextdaad.inc when the real player lands).
+; SP15 optimization wave: values are PRE-SCALED BY 4 by the encoder -
+; the wire byte IS the offset into the 256-aligned nxbStubPage (zero
+; multiply, zero SMC, zero bounds check in dispatch). Reserved slots
+; $24 (old $09) and $2C (SCROLL) hold error stubs; every other
+; non-set value lands on the page's NOP slide into nxb_op_bad_a.
 NXB_OP_FEND      equ $00
-NXB_OP_SKIP16    equ $01
-NXB_OP_RUN8      equ $02
-NXB_OP_RUN16     equ $03
-NXB_OP_COPY8     equ $04
-NXB_OP_COPY16    equ $05
-NXB_OP_PAL       equ $06
-NXB_OP_SKIP8     equ $07
-NXB_OP_KFLIP     equ $08
-NXB_OP_KSTART    equ $0A
+NXB_OP_SKIP16    equ $04
+NXB_OP_RUN8      equ $08
+NXB_OP_RUN16     equ $0C
+NXB_OP_COPY8     equ $10
+NXB_OP_COPY16    equ $14
+NXB_OP_PAL       equ $18
+NXB_OP_SKIP8     equ $1C
+NXB_OP_KFLIP     equ $20
+NXB_OP_KSTART    equ $28
 
 NXB_ROW_HDR      equ 24     ; header row; data rows follow from 25
 NXB_NR_LINE_MSB  equ $1E    ; active video line, bit 8
@@ -4842,9 +4854,7 @@ nxb_mode_dispatch:
     ld (nxbReps), hl
     ld hl, tagSOU
     call nxb_run_row
-    call nxb_free
-    call nxb_dest_cleanup
-    jp nxb_exit
+    jp nxb_done
 
 ; Mode 2: skip rows - NXB5 (SKIP8 soup) then NXB6 (SKIP16).
 nxb_mode_skip:
@@ -4865,9 +4875,7 @@ nxb_mode_skip:
     ld (nxbReps), hl
     ld hl, tagS16
     call nxb_run_row
-    call nxb_free
-    call nxb_dest_cleanup
-    jp nxb_exit
+    jp nxb_done
 
 ; Mode 3: RUN CPU rows - NXB1 (RUN8) and NXB2 (RUN16), each through
 ; the unrolled fill and the PUSH fill (PUSH reps run under DI - see
@@ -4900,9 +4908,7 @@ nxb_mode_runcpu:
     ld (nxbFillKind), a
     ld hl, tagR6P
     call nxb_run_row
-    call nxb_free
-    call nxb_dest_cleanup
-    jp nxb_exit
+    jp nxb_done
 
 ; Mode 4: RUN DMA rows - NXB2 through the zxnDMA fill at chunk caps
 ; 64/128/256 (the >=64B DMA-crossover ladder incl. DI amortization).
@@ -4929,9 +4935,7 @@ nxb_mode_rundma:
     ld (nxbDmaCap), hl
     ld hl, tagRD3
     call nxb_run_row
-    call nxb_free
-    call nxb_dest_cleanup
-    jp nxb_exit
+    jp nxb_done
 
 ; Mode 5: COPY CPU rows - NXB3 (COPY8) then NXB4 (COPY16), LDI kernel.
 ; param bit 0 = surface span (0 = mode-0 shape, 1 = mode-1 shape).
@@ -4951,9 +4955,7 @@ nxb_mode_copycpu:
     jp c, nxb_load_fail
     ld hl, tagC16
     call nxb_run_row
-    call nxb_free
-    call nxb_dest_cleanup
-    jp nxb_exit
+    jp nxb_done
 
 ; Mode 6: COPY DMA rows - NXB4 through the mem-to-mem DMA copy at
 ; chunk caps 64/128/256/512. param bit 0 = surface span, bit 1 =
@@ -4992,9 +4994,7 @@ nxb_mode_copydma:
     ld a, (nxbAudArmed)
     or a
     call nz, nxb_audio_disarm
-    call nxb_free
-    call nxb_dest_cleanup
-    jp nxb_exit
+    jp nxb_done
 
 ; Mode 7: keyframe rows, ALWAYS audio-armed - NXB7 (KSTART + one 43KB
 ; COPY16 + KFLIP) via DMA copy at chunk 256 (the shape-A collapse
@@ -5030,9 +5030,7 @@ nxb_mode_keyframe:
     ld hl, tagFLP
     call nxb_run_row
     call nxb_audio_disarm
-    call nxb_free
-    call nxb_dest_cleanup
-    jp nxb_exit
+    jp nxb_done
 
 ; Mode 8: per-frame fixed cost - a synthesized 1-byte FEND payload in
 ; one pool page (no file). The rep IS the harness reset + one dispatch
@@ -5057,9 +5055,7 @@ nxb_mode_fend:
     ld (nxbReps), hl
     ld hl, tagFE
     call nxb_run_row
-    call nxb_free
-    call nxb_dest_cleanup
-    jp nxb_exit
+    jp nxb_done
 .nobank:
     ld hl, msgNxbBank
     xor a
@@ -5083,15 +5079,17 @@ nxb_mode_segment:
     ld (nxbReps), hl
     ld hl, tagSEG
     call nxb_run_row
-    call nxb_free
-    call nxb_dest_cleanup
-    jp nxb_exit
+    jp nxb_done
 
 ; Shared load-failure tail (A = esxDOS/alloc error code from nxb_load).
 nxb_load_fail:
     ld hl, msgNxbLoad
     call nxb_fail_row
-    call nxb_free                ; release any banks the partial load took
+    ; falls into the shared row tail (frees any banks the partial
+    ; load already took)
+; Shared mode tail: free banks, scrub the painted pages, restore.
+nxb_done:
+    call nxb_free
     call nxb_dest_cleanup
     jp nxb_exit
 
@@ -5301,6 +5299,8 @@ nxb_free:
 ; =====================================================================
 nxb_run_row:
     ld (nxbRowTag), hl
+    call nxb_row_setup           ; SMC patching + DMA descriptor init -
+                                  ; UNTIMED (the raster stamps follow)
     xor a
     ld (nxbErr), a
     ld hl, (nxbTicks)
@@ -5386,13 +5386,110 @@ nxb_run_row:
     jp dbg_hex8
 
 ; =====================================================================
+; Once-per-row configuration (SP15 wave), OUTSIDE the timed window -
+; nxb_run_row calls this before the row's first raster stamp:
+;   - terminal SMC constants: end page index + end pointer, so the
+;     per-frame consumed check is a cp + one 16-bit compare instead of
+;     the old multiply/add chain (doc 08 SMC; MMU7 pinned VID_PAGE2);
+;   - the four fast-path kernel CALL operands + the two slow-body CALL
+;     operands from the row's kind cells (zero per-op kind dispatch;
+;     DMA kinds route the FAST paths to cap-honouring shims so
+;     nxbDmaCap always applies through the chunked bodies);
+;   - the persistent zxnDMA descriptor upload (WR1/WR2 timing, WR5,
+;     fixed port A for fills) once per row - the per-chunk re-arm then
+;     rewrites only source/length/dest (see nxbDmaFiArm/nxbDmaCpArm).
+; Corrupts AF, BC, HL.
+; =====================================================================
+nxb_row_setup:
+    ld a, (nxbSrcCnt)
+    dec a
+    ld (nxb_terminal.idx+1), a   ; endIdx = last valid page index
+    add a, a
+    add a, a
+    add a, a
+    add a, a
+    add a, a                     ; *32 = high byte of endIdx*8192
+    ld b, a
+    ld c, 0
+    ld hl, (nxbLen)
+    or a
+    sbc hl, bc                   ; len - endIdx*8192
+    add hl, $C000                ; Z80N ADD HL,nn (doc 05): window addr
+    ld (nxb_terminal.ptr+1), hl  ; endPtr (one past the final byte)
+    ; fill kernel patches
+    ld a, (nxbFillKind)
+    ld hl, nxb_fill_unrolled
+    or a
+    jr z, .fs
+    dec a
+    ld hl, nxb_fill_push
+    jr z, .fs
+    ld hl, nxb_fill_dma
+.fs:
+    ld (nxb_run_body_bc.kcall+1), hl
+    ld a, (nxbFillKind)
+    cp 2
+    jr nz, .ff
+    ld hl, nxb_run_dma_shim      ; DMA fills must honour nxbDmaCap
+.ff:
+    ld (nxb_op_run8.kcall+1), hl
+    ld (nxb_op_run16.kcall+1), hl
+    ; copy kernel patches
+    ld a, (nxbCopyKind)
+    or a
+    ld hl, nxb_copy_ldi
+    jr z, .cs
+    ld hl, nxb_copy_dma
+.cs:
+    ld (nxb_copy_body.kcall+1), hl
+    jr z, .cf                    ; Z survives the stores: copyKind == 0
+    ld hl, nxb_copy_dma_shim     ; DMA copies must honour nxbDmaCap
+.cf:
+    ld (nxb_op_copy8.kcall+1), hl
+    ld (nxb_op_copy16.kcall+1), hl
+    ; persistent DMA descriptor (once per row; DI-bracketed, untimed)
+    ld a, (nxbFillKind)
+    cp 2
+    jr z, .fi
+    ld a, (nxbCopyKind)
+    or a
+    ret z
+    ld hl, nxbDmaCpInit
+    ld bc, (nxbDmaCpInit_len << 8) | DMA_PORT
+    jr .send
+.fi:
+    ld hl, nxbDmaFiInit
+    ld bc, (nxbDmaFiInit_len << 8) | DMA_PORT
+.send:
+    di
+    otir
+    ei
+    ret
+
+; =====================================================================
 ; One rep: decode the loaded payload (all its frames) from the source
 ; pages into the Layer 2 surface. Register file across the op loop:
 ; HL = source cursor ($C000-$DFFF), DE = dest cursor ($4000-$5FFF),
-; BC = per-op scratch/counts. Stack is level between ops; nxbRepSp is
-; the abort anchor (structural errors reset SP and return). IX is
-; never touched (reserved for the armed replica ISR).
+; BC = per-op scratch/counts, IY = nxbStubPage (IYH pinned - nothing
+; in the loop touches IY: the 50Hz ISR fast path is AF/HL only with
+; audEnable frozen, the armed replica ISR is AF/IX/DAC only). Stack
+; is level between ops; nxbRepSp is the abort anchor (structural
+; errors reset SP and return). IX is never touched (reserved for the
+; armed replica ISR).
+; Dispatch is direct-threaded: hot handlers end with the inline
+; NXBNEXT sequence; window-edge/cap/oversize cases fall to the
+; chunked slow bodies (the original seg loops, kept below).
 ; =====================================================================
+    MACRO NXBNEXT edgelbl
+      ld a, h
+      cp $DF
+      jr nc, edgelbl             ; rare: window end or header straddle
+      ld a, (hl)
+      inc hl
+      ld iyl, a                  ; opcode byte = stub page offset
+      jp (iy)
+    ENDM
+
 nxb_rep:
     ld (nxbRepSp), sp
     xor a
@@ -5400,62 +5497,117 @@ nxb_rep:
     ld (nxbSrcIdx), a
     ld (nxbFrameCt), a
     ld a, (nxbSrcPages)
-    call data_map_page
+    nextreg NR_MMU6, a           ; data_map_page inlined (banks.asm:8)
     ld a, (nxbBaseFront)
     ld (nxbDstPage), a
     nextreg NXB_NR_MMU2, a
     ld a, (nxbEndFront)
     ld (nxbDstEnd), a
+    ld iy, nxbStubPage           ; IYH = dispatch page for the rep
     ld hl, NXB_SRC_WIN
     ld de, NXB_DST_WIN
     ; PUSH-fill rows run the whole rep under DI (SP is repointed
     ; inside the fill - see nxb_fill_push). EI ambient otherwise.
     ld a, (nxbFillKind)
     cp 1
-    jr nz, nxb_oploop
+    jp nz, nxb_next
     di
-    call nxb_oploop_call         ; run the rep as a subroutine, then EI
+    call .run                    ; run the rep as a subroutine, then EI
     ei
     ret
-nxb_oploop_call:
-    jr nxb_oploop                ; (kept trivial: the rep exits via ret)
+.run:
+    jp nxb_next
 
-; ---- the op loop ----
-nxb_oploop:
+; ---- fast handlers, upper bank (NXBNEXT jr reaches nxb_op_edge) ----
+
+; SKIP8: cursor += n. Fast when D <= $5E (any 8-bit count stays under
+; the window end); window-edge cases use the chunked body.
+nxb_op_skip8:
+    ld a, d
+    cp $5F
+    jr nc, .edge
+    ld a, (hl)
+    inc hl
+    add de, a                    ; Z80N: DE += count (doc 05)
+    NXBNEXT nxb_op_edge
+.edge:
+    ld c, (hl)
+    inc hl
+    ld b, 0
+    jp nxb_skip_body
+
+; SKIP16: fast when DE+count < $6000 (no carry, high byte < $60);
+; else the chunked body (which also surface-bounds-checks).
+nxb_op_skip16:
+    ld c, (hl)
+    inc hl
+    ld b, (hl)
+    inc hl
+    ld a, e
+    add a, c
+    ld a, d
+    adc a, b
+    jr c, .slow                  ; 16-bit overflow: chunked path walks/aborts
+    cp $60
+    jr nc, .slow
+    ex de, hl
+    add hl, bc
+    ex de, hl
+    jp nxb_next                  ; shared tail (rare-op class: +13T)
+.slow:
+    jp nxb_skip_body
+
+; RUN8: fast when D <= $5E (any 8-bit count fits the window room).
+; Fast-path colour travels in A (the CPU kernels take A directly -
+; no cell round-trip); the chunked body still stores the cell.
+nxb_op_run8:
+    ld c, (hl)
+    inc hl
+    ld a, d
+    cp $5F
+    jr nc, .edge
+    ld a, (hl)
+    inc hl                       ; A = colour
+    ld b, 0
+.kcall:
+    call nxb_fill_unrolled       ; operand SMC-patched per row
+    NXBNEXT nxb_op_edge
+.edge:
+    ld a, (hl)
+    inc hl                       ; A = colour
+    ld b, 0
+    jp nxb_run_body
+
+; ---- shared dispatch tail + edge machinery (central for jr range) ----
+nxb_next:
     ld a, h
     cp $DF
     jr nc, nxb_op_edge           ; rare: window end or header straddle
-nxb_op_fetch:
+nxb_next_fetch:
     ld a, (hl)
     inc hl
-nxb_dispatch_a:
-    cp $0C
-    jr nc, nxb_op_bad_a
-    add a, a
-    add a, a
-    add a, low nxbJtab
-    ld (nxb_disp_jt+1), a
-nxb_disp_jt:
-    jp nxbJtab                   ; low byte SMC-patched (doc 08: MMU7
-                                  ; fixed at VID_PAGE2 for the whole
-                                  ; bench, the patch site cannot move)
+    ld iyl, a
+    jp (iy)
+
 nxb_op_edge:
-    ; H = $DF (last page bytes) or >= $E0 (wrap due). Normalize first.
+    ; A = H: $DF (last page bytes) or >= $E0 (wrap due).
     cp $E0
     jr c, .instr
     call nxb_src_next
-    jr nxb_oploop
+    jr nxb_next
 .instr:
     ; opcode at $DFxx: if fewer than 3 operand bytes remain in the
     ; window ($DFFD-$DFFF), take the byte-fetch slow path; otherwise
-    ; the fast path is safe for every op header (max 3 operand bytes).
+    ; the fast fetch is safe for every op HEADER (max 3 operand
+    ; bytes; counted bodies re-check their own window rooms).
     ld a, l
     cp $FD
-    jr c, nxb_op_fetch
+    jr c, nxb_next_fetch
     jp nxb_slow_op
 
-; Reserved/unknown opcode (A = op). nxv2dec: "reserved/unimplemented
-; opcode" - no length is known, so the rep aborts.
+; Reserved/unknown opcode (A = op byte, preserved through the stub
+; page's NOP slide). nxv2dec: "reserved/unimplemented opcode" - no
+; length is known, so the rep aborts.
 nxb_op_bad_a:
     ld (nxbErrOp), a
     ld a, 1
@@ -5466,15 +5618,101 @@ nxb_rep_abort:
                                   ; leave interrupts off for the caller
     ret
 
+; ---- fast handlers, lower bank ----
+
+; RUN16: fast when DE+count < $6000. Colour in A (as RUN8).
+nxb_op_run16:
+    ld c, (hl)
+    inc hl
+    ld b, (hl)
+    inc hl
+    ld a, e
+    add a, c
+    ld a, d
+    adc a, b
+    jr c, .slow
+    cp $60
+    jr nc, .slow
+    ld a, (hl)
+    inc hl                       ; A = colour
+.kcall:
+    call nxb_fill_unrolled       ; operand SMC-patched per row
+    jp nxb_next                  ; shared tail (rare-op class: +13T)
+.slow:
+    ld a, (hl)
+    inc hl                       ; A = colour
+    jp nxb_run_body
+
+; COPY8: the source body is structurally safe when the opcode byte sat
+; below $DF00 (body start <= $DF01, +255 <= $E000 - the last read is
+; at most $DFFF); an edge-refined opcode at $DFxx needs the exact
+; L+count <= $100 check. Dest fast when D <= $5E.
+nxb_op_copy8:
+    ld c, (hl)
+    inc hl
+    ld b, 0
+    ld a, h
+    cp $DF
+    jr nc, .srcedge
+.sok:
+    ld a, d
+    cp $5F
+    jr nc, .slow
+.kcall:
+    call nxb_copy_ldi            ; operand SMC-patched per row
+    NXBNEXT nxb_op_edge
+.srcedge:
+    ld a, l
+    add a, c
+    jr nc, .sok                  ; L+count <= 255: body inside window
+    jr z, .sok                   ; == 256 exactly: last read is $DFFF
+.slow:
+    jp nxb_copy_body
+
+; COPY16: fast when HL+count <= src window end AND DE+count < $6000.
+nxb_op_copy16:
+    ld c, (hl)
+    inc hl
+    ld b, (hl)
+    inc hl
+    ld a, l
+    add a, c
+    ld a, h
+    adc a, b
+    jr c, .slow
+    cp $E0
+    jr nc, .slow
+    ld a, e
+    add a, c
+    ld a, d
+    adc a, b
+    jr c, .slow
+    cp $60
+    jr nc, .slow
+.kcall:
+    call nxb_copy_ldi            ; operand SMC-patched per row
+    jp nxb_next                  ; shared tail (rare-op class: +13T)
+.slow:
+    jp nxb_copy_body
+
+; Cap-honouring shims: DMA rows patch the FAST call sites here so the
+; chunked bodies (min-of rooms + nxbDmaCap) drive the DMA kernels -
+; the fast fits-checks already ran, the return address is dropped.
+nxb_run_dma_shim:
+    ld (nxbColour), a            ; colour arrives in A (fast contract);
+    pop af                       ; the DMA descriptor reads the cell
+    jp nxb_run_body_bc
+nxb_copy_dma_shim:
+    pop af
+    jp nxb_copy_body
+
 ; Slow op path: opcode (and each operand byte) fetched through
 ; nxb_fetch, which handles the window seam per byte. Operand-less ops
-; re-enter the normal dispatcher (their bodies handle seams
-; themselves); counted ops parse here and enter the shared bodies
-; with the same register contract the fast handlers use.
+; dispatch through the stub page (their bodies handle seams
+; themselves; reserved values land on its error stubs); counted ops
+; parse here and enter the shared chunked bodies.
 nxb_slow_op:
     call nxb_fetch               ; A = opcode
-    cp $0C
-    jr nc, nxb_op_bad_a
     cp NXB_OP_SKIP8
     jr z, .s8
     cp NXB_OP_SKIP16
@@ -5487,7 +5725,8 @@ nxb_slow_op:
     jr z, .c8
     cp NXB_OP_COPY16
     jr z, .c16
-    jp nxb_dispatch_a            ; FEND/PAL/KFLIP/KSTART: no operands
+    ld iyl, a                    ; FEND/PAL/KFLIP/KSTART: no operands;
+    jp (iy)                      ; reserved values land on error stubs
 .s8:
     call nxb_fetch
     ld c, a
@@ -5556,7 +5795,7 @@ nxb_src_next:
     add hl, a
     ld a, (hl)
     pop hl
-    call data_map_page
+    nextreg NR_MMU6, a           ; data_map_page inlined (banks.asm:8)
     ld a, h
     sub $20
     ld h, a
@@ -5599,27 +5838,18 @@ nxb_dst_next:
     jp nxb_rep_abort
 
 ; =====================================================================
-; Op handlers. Fast entries parse operands inline ((hl) reads are safe:
-; the dispatcher guaranteed 3 operand bytes before the seam), then
-; fall into the shared bodies. Contract at each body: HL = src after
-; the header, DE = dest, BC = count (RUN also A = colour).
+; Chunked slow bodies (the original seg loops): entered by the fast
+; handlers' edge/oversize branches, the DMA-cap shims, and the byte-
+; fetch slow path. Contract at each body: HL = src after the header,
+; DE = dest, BC = count (nxb_run_body also A = colour). Kernel-kind
+; CALL operands are SMC-patched per row (nxb_row_setup).
 ; =====================================================================
 
-nxb_op_skip8:
-    ld c, (hl)
-    inc hl
-    ld b, 0
-    jr nxb_skip_body
-nxb_op_skip16:
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
-    inc hl
 nxb_skip_body:
 .seg:
     ld a, b
     or c
-    jp z, nxb_oploop
+    jp z, nxb_next
     ld a, d
     cp $60
     call nc, nxb_dst_next
@@ -5637,7 +5867,7 @@ nxb_skip_body:
     ex de, hl
     add hl, bc
     ex de, hl
-    jp nxb_oploop
+    jp nxb_next
 .part:
     ; consume the room: BC -= room, DE hits the seam
     ld a, c
@@ -5651,28 +5881,15 @@ nxb_skip_body:
     ld e, 0
     jr .seg                      ; seam handled at loop head
 
-nxb_op_run8:
-    ld c, (hl)
-    inc hl
-    ld b, 0
-    ld a, (hl)
-    inc hl
-    jr nxb_run_body
-nxb_op_run16:
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
-    inc hl
-    ld a, (hl)
-    inc hl
 nxb_run_body:
     ld (nxbColour), a
+nxb_run_body_bc:
     ld (nxbRemain), bc
 .seg:
     ld bc, (nxbRemain)
     ld a, b
     or c
-    jp z, nxb_oploop
+    jp z, nxb_next
     ld a, d
     cp $60
     call nc, nxb_dst_next
@@ -5683,37 +5900,18 @@ nxb_run_body:
     sbc hl, bc
     ld (nxbRemain), hl
     pop hl
-    ld a, (nxbFillKind)
-    or a
-    jr z, .u
-    dec a
-    jr z, .p
-    call nxb_fill_dma
-    jr .seg
-.u:
-    call nxb_fill_unrolled
-    jr .seg
-.p:
-    call nxb_fill_push
+    ld a, (nxbColour)            ; CPU kernels take colour in A
+.kcall:
+    call nxb_fill_unrolled       ; operand SMC-patched per row
     jr .seg
 
-nxb_op_copy8:
-    ld c, (hl)
-    inc hl
-    ld b, 0
-    jr nxb_copy_body
-nxb_op_copy16:
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
-    inc hl
 nxb_copy_body:
     ld (nxbRemain), bc
 .seg:
     ld bc, (nxbRemain)
     ld a, b
     or c
-    jp z, nxb_oploop
+    jp z, nxb_next
     ld a, h
     cp $E0
     call nc, nxb_src_next
@@ -5727,32 +5925,45 @@ nxb_copy_body:
     sbc hl, bc
     ld (nxbRemain), hl
     pop hl
-    ld a, (nxbCopyKind)
-    or a
-    jr z, .cpu
-    call nxb_copy_dma
-    jr .seg
-.cpu:
-    call nxb_copy_ldi
+.kcall:
+    call nxb_copy_ldi            ; operand SMC-patched per row
     jr .seg
 
 ; PAL: 512-byte NR $44 palette block upload into the SECOND Layer 2
 ; palette (edit target only - NR $43 display-select bits untouched, so
 ; the game's displayed palette never changes; the game default edit
-; target is restored at nxb_exit). Prototype kernel: plain outinb
-; loop - PAL is not a bench coefficient (its cost is arithmetic:
-; 512 fetches + 256 index-pair writes), it just has to be CORRECT for
-; the NXB8 segment row.
+; target is restored at nxb_exit). PAL is not a bench coefficient, it
+; just has to be CORRECT (and cheap) for the NXB8 segment row: the
+; fast path (all 512 bytes inside the window, H <= $DD) is an 8-way
+; unrolled outinb block; the window straddle keeps the chunked loop.
 nxb_op_pal:
     nextreg NR_PAL_CTRL, $50     ; auto-inc, edit target = L2 second
     nextreg NR_PAL_INDEX, 0
+    ld a, h
+    cp $DE
+    jr nc, .straddle             ; H <= $DD: HL+511 <= $DFFE, all inside
+    push de
+    ld bc, TBBLUE_REG_SEL
+    ld a, NR_PAL_VALUE9
+    out (c), a
+    ld b, high TBBLUE_REG_ACC    ; C stays $3B
+    ld d, 64                     ; 64 x 8 = 512 bytes
+.pb:
+    DUP 8
+      outinb                     ; out (BC),(HL); HL++ (B unchanged)
+    EDUP
+    dec d
+    jr nz, .pb
+    pop de
+    jp nxb_next
+.straddle:
     ld bc, 512
     ld (nxbRemain), bc
 .seg:
     ld bc, (nxbRemain)
     ld a, b
     or c
-    jp z, nxb_oploop
+    jp z, nxb_next
     ld a, h
     cp $E0
     call nc, nxb_src_next
@@ -5770,12 +5981,12 @@ nxb_op_pal:
     ld a, NR_PAL_VALUE9
     out (c), a
     ld b, high TBBLUE_REG_ACC    ; C stays $3B
-.pb:
+.pb2:
     outinb                       ; out (BC),(HL); HL++ (B unchanged)
     dec de
     ld a, d
     or e
-    jr nz, .pb
+    jr nz, .pb2
     pop de
     jr .seg
 
@@ -5791,7 +6002,7 @@ nxb_op_kstart:
     ld a, (nxbEndHidden)
     ld (nxbDstEnd), a
     ld de, NXB_DST_WIN
-    jp nxb_oploop
+    jp nxb_next
 
 ; KFLIP: end of keyframe span - the full flip WRITE sequence for cost
 ; parity (vid_run's own flip: NR $43 palette-bank write + front/back
@@ -5821,87 +6032,41 @@ nxb_op_kflip:
 ; FEND: frame end. Multi-frame payloads (NXB8) continue with the next
 ; frame: an ordinary frame resets the cursor to 0 on the front
 ; surface; a mid-span hold frame CONTINUES the span cursor on the
-; hidden surface (nxv2dec's span_cursor rule).
+; hidden surface (nxv2dec's span_cursor rule). Consumed check (SP15
+; wave): the old idx*8192+offset arithmetic is replaced by two SMC
+; constants patched per row (nxb_row_setup) - rep done when the
+; cursor sits on the LAST loaded page at/past the end pointer.
 nxb_op_fend:
 nxb_terminal:
     ld a, (nxbFrameCt)
     inc a
     ld (nxbFrameCt), a
-    ; consumed = srcIdx*8192 + (HL - $C000); rep done when >= len
     ld a, (nxbSrcIdx)
-    add a, a
-    add a, a
-    add a, a
-    add a, a
-    add a, a                     ; * 32 = high byte of idx*8192
-    ld b, a
-    ld c, 0
+.idx:
+    cp 0                         ; SMC: last valid page index
+    jr c, .morefr                ; below the last page: more frames
+    ; on the last page: compare HL against the end pointer
+.ptr:
+    ld bc, 0                     ; SMC: endPtr (one past the final byte)
     push hl
-    ld a, h
-    sub $C0
-    ld h, a
-    add hl, bc                   ; HL = consumed
-    ld bc, (nxbLen)
     or a
     sbc hl, bc
     pop hl
-    jr nc, .repdone
-    ; more frames follow
+    jr c, .morefr                ; HL < endPtr: more frames follow
+    ld a, (nxbFrameCt)
+    ld (nxbSegFrames), a
+    ret
+.morefr:
     ld a, (nxbHidden)
     or a
-    jp nz, nxb_oploop            ; span hold: cursor continues hidden
+    jp nz, nxb_next              ; span hold: cursor continues hidden
     ld a, (nxbBaseFront)
     ld (nxbDstPage), a
     nextreg NXB_NR_MMU2, a
     ld a, (nxbEndFront)
     ld (nxbDstEnd), a
     ld de, NXB_DST_WIN
-    jp nxb_oploop
-.repdone:
-    ld a, (nxbFrameCt)
-    ld (nxbSegFrames), a
-    ret
-
-; Reserved-op table stubs ($09 / $0B SCROLL - unimplemented in v2.0,
-; the player errors, nxv2dec parity).
-nxb_bad09:
-    ld a, $09
-    jp nxb_op_bad_a
-nxb_bad0B:
-    ld a, $0B
-    jp nxb_op_bad_a
-
-; Dispatch slot table: 12 x 4-byte JP slots, reached by low-byte SMC.
-; ALIGN 64 keeps the 48 bytes inside one 256-byte page (the SMC adds
-; op*4 to the low byte only). Rubric 8: size-asserted.
-    ALIGN 64
-nxbJtab:
-    jp nxb_op_fend               ; $00 FEND
-    nop
-    jp nxb_op_skip16             ; $01 SKIP16
-    nop
-    jp nxb_op_run8               ; $02 RUN8
-    nop
-    jp nxb_op_run16              ; $03 RUN16
-    nop
-    jp nxb_op_copy8              ; $04 COPY8
-    nop
-    jp nxb_op_copy16             ; $05 COPY16
-    nop
-    jp nxb_op_pal                ; $06 PAL
-    nop
-    jp nxb_op_skip8              ; $07 SKIP8
-    nop
-    jp nxb_op_kflip              ; $08 KFLIP
-    nop
-    jp nxb_bad09                 ; $09 reserved
-    nop
-    jp nxb_op_kstart             ; $0A KSTART
-    nop
-    jp nxb_bad0B                 ; $0B SCROLL (reserved, errors)
-    nop
-    ASSERT $ - nxbJtab == 12*4   ; the dispatcher indexes by op*4
-    ASSERT (low nxbJtab) <= 256-48 ; SMC low-byte add must not wrap
+    jp nxb_next
 
 ; =====================================================================
 ; Chunk sizing. In: HL = src, DE = dest, BC = remaining (callers
@@ -5973,27 +6138,33 @@ nxb_min_cap:
 
 ; =====================================================================
 ; Fill kernels. Contract in: HL = src (preserved), DE = dest, BC =
-; chunk (1..$2000, inside one dest window), (nxbColour) = colour.
+; chunk (1..$2000, inside one dest window), A = colour (SP15 wave -
+; no cell round-trip; the DMA kernel instead reads the nxbColour
+; cell, its FIXED port A source, which every path stores first).
 ; Contract out: DE advanced by chunk, BC = anything, HL preserved.
 ; =====================================================================
 
-; U: unrolled ld (hl),e/inc hl pairs (16 stores per block), remainder
-; first. ~15T/byte at 28MHz (doc 01: 7+1 store, 6+1 inc).
+; U: unrolled ld (hl),e stores with a COMPUTED ENTRY (doc 04's block
+; shape + the vid_gap_xfer computed-entry precedent): the remainder
+; (chunk & 15) enters the 16-store block mid-way, then full passes
+; ride the pass counter - no per-byte remainder loop. ~15T/byte at
+; 28MHz (doc 01: ld (hl),e 7+1, inc hl 6+1) + ~2T/byte loop tax.
 nxb_fill_unrolled:
     push hl                      ; src
-    ld h, d
-    ld l, e                      ; HL = dest
-    ld a, (nxbColour)
-    ld e, a                      ; E = colour (DE dest recomputed after)
+    ex de, hl                    ; HL = dest (D/E become scratch)
+    ld e, a                      ; E = colour (in A per the contract)
     ld a, c
     and 15
-    jr z, .blocks
-.rem:
-    ld (hl), e
-    inc hl
-    dec a
-    jr nz, .rem
-.blocks:
+    jr z, .full                  ; rem = 0: enter at the block start
+    add a, a                     ; rem * 2 (store+inc = 2 bytes)
+    neg
+    add a, low (nxb_fu_blk + 32) ; entry = block end - rem*2
+    jr .set
+.full:
+    ld a, low nxb_fu_blk
+.set:
+    ld (.fe+1), a                ; low-byte SMC (page-asserted below)
+    add bc, 15                   ; Z80N: BC = chunk + 15 (doc 05)
     srl b
     rr c
     srl b
@@ -6001,11 +6172,14 @@ nxb_fill_unrolled:
     srl b
     rr c
     srl b
-    rr c                         ; BC = chunk / 16
+    rr c                         ; BC = passes = (chunk+15)/16
     ld a, b
     or c
-    jr z, .done
-.bl:
+    jr z, nxb_fu_done            ; structural: zero chunk is a no-op
+.fe:
+    jp nxb_fu_blk                ; low byte SMC-patched
+    ALIGN 64
+nxb_fu_blk:
     DUP 16
       ld (hl), e
       inc hl
@@ -6013,11 +6187,12 @@ nxb_fill_unrolled:
     dec bc
     ld a, b
     or c
-    jr nz, .bl
-.done:
+    jr nz, nxb_fu_blk
+nxb_fu_done:
     ex de, hl                    ; DE = dest + chunk
     pop hl                       ; src
     ret
+    ASSERT (low nxb_fu_blk) <= 256-40 ; block + entry math stays in page
 
 ; P: PUSH-pair fill, ~6T/byte (doc 11's 5.5T/byte + the 28MHz fetch
 ; wait). SP is repointed at the chunk END and pairs fill DOWNWARD to
@@ -6030,9 +6205,8 @@ nxb_fill_push:
     ld h, d
     ld l, e
     add hl, bc                   ; HL = chunk end
-    ld a, (nxbColour)
     ld d, a
-    ld e, a                      ; DE = colour pair
+    ld e, a                      ; DE = colour pair (A per the contract)
     srl b
     rr c                         ; BC = pairs, CF = odd
     ex af, af'                   ; save odd flag (alternate AF is free:
@@ -6080,30 +6254,26 @@ nxb_fill_push:
     ret
 
 ; D: zxnDMA fill - port A FIXED at the colour cell (this page, always
-; mapped at MMU7), port B incrementing across the dest chunk. One
-; one-shot program per chunk, DI-bracketed (doc 11's law; the
-; DI+program-upload amortization is exactly what the RD rows price).
-; Chunk is additionally capped by nxbDmaCap (nxb_min_dst).
+; mapped at MMU7), port B incrementing across the dest chunk. SP15
+; wave: the never-changing WR state was programmed once per row
+; (nxbDmaFiInit via nxb_row_setup); each chunk re-arms ONLY length +
+; dest (9-byte otir vs the old 16-byte full program). Still one
+; DI-bracketed continuous one-shot per chunk (doc 11's law; the
+; final $87 OUT returns only when the transfer is complete). Chunk
+; is capped by nxbDmaCap (nxb_min_dst via the chunked body).
 nxb_fill_dma:
-    ld (nxbDmaFill.baddr), de
-    ld (nxbDmaFill.alen), bc
-    push hl
-    push de
-    push bc
-    ld hl, nxbDmaFill
-    ld b, nxbDmaFill_len
-    ld c, DMA_PORT
-    di
-    otir                         ; program + run: continuous mode, the
-                                  ; final $87 OUT returns only when the
-                                  ; transfer is complete (doc 11)
-    ei
-    pop bc
-    pop de
-    pop hl
+    ld (nxbDmaFiArm.blen), bc
+    ld (nxbDmaFiArm.bdst), de
     ex de, hl
     add hl, bc
-    ex de, hl                    ; DE += chunk
+    ex de, hl                    ; DE += chunk (before BC dies)
+    push hl
+    ld hl, nxbDmaFiArm
+    ld bc, (nxbDmaFiArm_len << 8) | DMA_PORT
+    di
+    otir                         ; re-arm + run: continuous one-shot
+    ei
+    pop hl
     ret
 
 ; =====================================================================
@@ -6116,7 +6286,13 @@ nxb_fill_dma:
 ; while LDI's own BC countdown holds P/V set (doc 04 shape; rubric 2:
 ; BC is consumed by LDI itself and nothing else counts on it). ALIGN
 ; 64 keeps the 35-byte block inside one page for the low-byte SMC.
+; SP15 wave: a zero-count guard added (the fast paths can hand a
+; structurally-invalid count 0 here; entering the block with BC=0
+; would ride the LDI countdown through 64K).
 nxb_copy_ldi:
+    ld a, b
+    or c
+    ret z                        ; zero count: structural no-op
     ld a, c
     and 15
     jr z, .aligned
@@ -6139,29 +6315,28 @@ nxb_ldi_blk:
     ret
     ASSERT (low nxb_ldi_blk) <= 256-36 ; block + entry math stays in page
 
-; DMA: the canonical 16-byte mem-to-mem continuous one-shot
-; (overlay2.asm dma_prog byte-for-byte), source = MMU6 window, dest =
-; MMU2 window, DI per chunk. Chunk capped by nxbDmaCap upstream.
+; DMA: mem-to-mem continuous one-shot, source = MMU6 window, dest =
+; MMU2 window, DI per chunk. SP15 wave: WR1/WR2/WR5 programmed once
+; per row (nxbDmaCpInit); each chunk re-arms source + length + dest
+; (11-byte otir vs the old 16-byte program + separate patch stores).
+; Chunk capped by nxbDmaCap upstream (chunked body).
 nxb_copy_dma:
-    ld (nxbDmaCopy.aaddr), hl
-    ld (nxbDmaCopy.baddr), de
-    ld (nxbDmaCopy.alen), bc
-    push hl
-    push de
-    push bc
-    ld hl, nxbDmaCopy
-    ld b, nxbDmaCopy_len
-    ld c, DMA_PORT
-    di
-    otir
-    ei
-    pop bc
-    pop de
-    pop hl
+    ld (nxbDmaCpArm.asrc), hl
+    ld (nxbDmaCpArm.blen), bc
+    ld (nxbDmaCpArm.bdst), de
     add hl, bc                   ; src += chunk
     ex de, hl
     add hl, bc
     ex de, hl                    ; dest += chunk
+    push hl
+    push de
+    ld hl, nxbDmaCpArm
+    ld bc, (nxbDmaCpArm_len << 8) | DMA_PORT
+    di
+    otir                         ; re-arm + run: continuous one-shot
+    ei
+    pop de
+    pop hl
     ret
 
 ; =====================================================================
@@ -6172,18 +6347,30 @@ nxb_copy_dma:
 ; (see the block header's cadence budget).
 ; =====================================================================
 
-; Out: HL = line 0..~311. Corrupts AF, E (nr_read select input).
+; Out: HL = line 0..~311. Corrupts AF, BC, D. SP15 wave: the three
+; nr_read calls are replaced by inline $243B/$253B pair I/O (~-270T
+; per sample). Safe without a DI bracket: the bench freezes audEnable
+; so the 50Hz ISR runs its AF/HL-only fast path and never touches the
+; select pair, and the armed replica ISR is AF/IX/DAC only - the same
+; interleaving argument im2_isr's own inline pair use documents.
 nxb_line_read:
-    ld d, 4                      ; bounded stability retries
+    ld d, 4                      ; bounded stability retries (rubric 6)
 .rd:
-    ld e, NXB_NR_LINE_MSB
-    call nr_read
-    ld h, a
-    ld e, NXB_NR_LINE_LSB
-    call nr_read
-    ld l, a
-    ld e, NXB_NR_LINE_MSB
-    call nr_read
+    ld bc, TBBLUE_REG_SEL
+    ld a, NXB_NR_LINE_MSB
+    out (c), a
+    inc b                        ; SEL -> ACC ($24 -> $25)
+    in h, (c)
+    dec b
+    ld a, NXB_NR_LINE_LSB
+    out (c), a
+    inc b
+    in l, (c)
+    dec b
+    ld a, NXB_NR_LINE_MSB
+    out (c), a
+    inc b
+    in a, (c)
     cp h
     jr z, .ok
     dec d
@@ -6194,7 +6381,9 @@ nxb_line_read:
     ld h, a
     ret
 
-; Frame tick: wrap detection + frame count. Corrupts AF, DE, HL.
+; Frame tick: wrap detection + frame count. Corrupts AF, BC, DE, HL
+; (BC via nxb_line_read; the only caller inside timed code is
+; nxb_tick_pres, which brackets all four pairs).
 nxb_raster_tick:
     call nxb_line_read
     ld de, (nxbLinePrev)
@@ -6589,50 +6778,67 @@ nxb_mf_restore:
     ret
 
 ; ---------------------------------------------------------------------
-; DMA programs (doc 11; overlay2.asm dma_prog is the canonical copy -
-; duplicated here because overlay2 is unreachable while MMU7 =
-; VID_PAGE2, rubric 3). Timing bytes cycle-length 2 on both ports,
-; CONTINUOUS mode, WR5 = $82 STOP on end of block (one-shot law).
+; zxnDMA persistent-descriptor programs (SP15 wave; zxndma.txt WR bit
+; tables + doc 11's one-shot law; overlay2.asm dma_prog remains the
+; canonical FULL program - unreachable from this page, rubric 3). The
+; INIT block programs the never-changing state once per row
+; (nxb_row_setup, untimed): WR1/WR2 port configs + cycle-length-2
+; timing, WR5 stop-on-end, and for fills the FIXED port A = the
+; colour cell (this page, always mapped at MMU7 during a row). The
+; per-chunk ARM block rewrites ONLY the fields that change (WR0
+; subset flags select source/length; WR4 the dest) + LOAD + ENABLE.
+; WR register state persists between chunks (zxndma.txt: registers
+; hold their values until rewritten; $CF reloads the address/counter
+; latches). Every chunk is still a complete DI-bracketed CONTINUOUS
+; one-shot: $87 is the last byte and the otir does not finish until
+; the transfer ends - no polling, no refeed, no auto-restart.
 ; ---------------------------------------------------------------------
-nxbDmaCopy:                      ; mem-to-mem copy (source incrementing)
+nxbDmaFiInit:                    ; fill init: port A FIXED at the colour
     db $83                       ; WR6: disable (clean slate)
-    db %01111101                 ; WR0: A->B, A addr + length follow
-.aaddr:
-    dw 0                         ; port A start = source (patched)
-.alen:
-    dw 0                         ; block length, exact count (patched)
+    db %00011101                 ; WR0: A->B transfer, A addr follows
+    dw nxbColour                 ; port A = the colour byte
+    db %01100100                 ; WR1: A memory, FIXED address, timing follows
+    db %00000010                 ; A cycle length 2
+    db %01010000                 ; WR2: B memory, incrementing, timing follows
+    db %00000010                 ; B cycle length 2, no prescaler
+    db %10000010                 ; WR5: stop on end of block (one-shot)
+nxbDmaFiInit_len equ $ - nxbDmaFiInit
+
+nxbDmaCpInit:                    ; copy init: port A incrementing source
+    db $83                       ; WR6: disable (clean slate)
     db %01010100                 ; WR1: A memory, incrementing, timing follows
     db %00000010                 ; A cycle length 2
     db %01010000                 ; WR2: B memory, incrementing, timing follows
     db %00000010                 ; B cycle length 2, no prescaler
-    db %10101101                 ; WR4: CONTINUOUS, port B addr follows
-.baddr:
-    dw 0                         ; port B start = dest (patched)
     db %10000010                 ; WR5: stop on end of block (one-shot)
+nxbDmaCpInit_len equ $ - nxbDmaCpInit
+
+nxbDmaFiArm:                     ; per-chunk fill re-arm (9 bytes)
+    db $83                       ; WR6: disable (known-clean re-entry)
+    db %01100101                 ; WR0: A->B, length follows (A is fixed)
+.blen:
+    dw 0                         ; block length, exact count (patched)
+    db %10101101                 ; WR4: CONTINUOUS, port B addr follows
+.bdst:
+    dw 0                         ; port B = dest chunk (patched)
     db $CF                       ; WR6: load
     db $87                       ; WR6: enable - LAST byte; the CPU
                                   ; stalls here until the transfer ends
-nxbDmaCopy_len equ $ - nxbDmaCopy
+nxbDmaFiArm_len equ $ - nxbDmaFiArm
 
-nxbDmaFill:                      ; fill: port A FIXED at the colour cell
-    db $83
-    db %01111101
-.aaddr:
-    dw nxbColour                 ; port A = the colour byte (this page,
-                                  ; always mapped at MMU7 during a row)
-.alen:
-    dw 0                         ; block length (patched)
-    db %01100100                 ; WR1: A memory, FIXED address, timing follows
-    db %00000010                 ; A cycle length 2
-    db %01010000                 ; WR2: B memory, incrementing, timing follows
-    db %00000010                 ; B cycle length 2
+nxbDmaCpArm:                     ; per-chunk copy re-arm (11 bytes)
+    db $83                       ; WR6: disable (known-clean re-entry)
+    db %01111101                 ; WR0: A->B, A addr + length follow
+.asrc:
+    dw 0                         ; port A = source (patched)
+.blen:
+    dw 0                         ; block length, exact count (patched)
     db %10101101                 ; WR4: CONTINUOUS, port B addr follows
-.baddr:
-    dw 0                         ; port B start = dest chunk (patched)
-    db %10000010                 ; WR5: stop on end of block
-    db $CF
-    db $87
-nxbDmaFill_len equ $ - nxbDmaFill
+.bdst:
+    dw 0                         ; port B = dest (patched)
+    db $CF                       ; WR6: load
+    db $87                       ; WR6: enable - LAST byte
+nxbDmaCpArm_len equ $ - nxbDmaCpArm
 
 ; --- strings + cells ---
 msgNxbHdr:     db "NXBEN M=", 0
@@ -6671,6 +6877,51 @@ tagFLP:        db "FLP", 0
 tagFE:         db "FE", 0
 tagSEG:        db "SEG", 0
 tagPF:         db "PF", 0
+; ---------------------------------------------------------------------
+; Dispatch stub page (SP15 wave): 256-ALIGNed; the pre-scaled opcode
+; byte IS the offset (ld iyl,a / jp (iy), IYH pinned here). Twelve
+; 4-byte JP stubs cover the op set at $00-$2C ($24 = old $09 and $2C
+; SCROLL are reserved -> error); the rest of the page is a ZERO (NOP)
+; slide, so every reserved byte value $30-$FF lands in the slide and
+; falls through into nxb_bad_land -> nxb_op_bad_a with the op byte
+; still in A (NOPs touch nothing). Misaligned values below $30 are
+; outside the wire format entirely (encoder-verified fixtures cannot
+; produce them). Rubric 8: alignment + slide-size asserted. Placement
+; note: the tag strings + cells sit AFTER this page so the ALIGN
+; padding stays small - re-tune the split if the ALIGN waste grows.
+; ---------------------------------------------------------------------
+    ALIGN 256
+nxbStubPage:
+    jp nxb_op_fend               ; $00 FEND
+    nop
+    jp nxb_op_skip16             ; $04 SKIP16
+    nop
+    jp nxb_op_run8               ; $08 RUN8
+    nop
+    jp nxb_op_run16              ; $0C RUN16
+    nop
+    jp nxb_op_copy8              ; $10 COPY8
+    nop
+    jp nxb_op_copy16             ; $14 COPY16
+    nop
+    jp nxb_op_pal                ; $18 PAL
+    nop
+    jp nxb_op_skip8              ; $1C SKIP8
+    nop
+    jp nxb_op_kflip              ; $20 KFLIP
+    nop
+    jp nxb_op_bad_a              ; $24 reserved (old $09)
+    nop
+    jp nxb_op_kstart             ; $28 KSTART
+    nop
+    jp nxb_op_bad_a              ; $2C SCROLL (reserved, errors)
+    nop
+    ds 256-48, 0                 ; NOP slide for reserved values $30-$FF
+nxb_bad_land:
+    jp nxb_op_bad_a              ; A = the offending op byte
+    ASSERT (low nxbStubPage) == 0
+    ASSERT nxb_bad_land - nxbStubPage == 256
+
 nxbFname:      db "NXB0.BIN", 0  ; digit at +3 patched by nxb_load
 nxbPfName:     db "001.VID", 0   ; prefetch probe fixture (-Vid staged)
 
