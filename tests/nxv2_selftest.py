@@ -44,6 +44,17 @@ def expect(cond, msg="assertion failed"):
         raise AssertionError(msg)
 
 
+class SkipCase(Exception):
+    """Raised by a case to mark itself SKIPPED (not PASSED) in the
+    summary line - e.g. a real-footage case whose demo source/ffmpeg
+    isn't present. main() catches this separately from AssertionError/
+    other failures so a skip never gets counted or printed as a pass."""
+
+
+def skip(msg):
+    raise SkipCase(msg)
+
+
 # =======================================================================
 # Step 1: header writer/reader roundtrip
 # =======================================================================
@@ -387,8 +398,7 @@ def _encode_clip(clip_path, width, height, fps, start, duration):
 def t4_scene_cut_lookahead():
     result = _encode_clip(SINTEL, 256, 192, 25.0, "00:00:01", "4")
     if result is None:
-        print("  SKIP (Sintel source or ffmpeg not available)")
-        return
+        skip("Sintel source or ffmpeg not available")
     cuts = result["scene_cuts"]
     expect(len(result["kf_span_ranges"]) >= 1, "expected at least one keyframe span in a 4s cut-containing window")
     for (s, e) in result["kf_span_ranges"]:
@@ -400,8 +410,7 @@ def t4_scene_cut_lookahead():
 def t5_drift_under_trigger():
     result = _encode_clip(SINTEL, 256, 192, 25.0, "00:00:01", "4")
     if result is None:
-        print("  SKIP (Sintel source or ffmpeg not available)")
-        return
+        skip("Sintel source or ffmpeg not available")
     drifts = result["per_frame"]["drift"]
     bad = [(i, d) for i, d in enumerate(drifts) if not np.isnan(d) and d >= enc.DRIFT_T_REFRACT]
     expect(bad == [], f"drift exceeded the refractory trigger on frames: {bad[:5]}")
@@ -420,7 +429,7 @@ def t6_zero_truncation():
         trunc = [m for m in result["per_frame"]["mode"] if m == "trunc"]
         expect(trunc == [], f"{clip.name} {w}x{h}@{fps}: {len(trunc)} truncated frame(s) - dual-budget cap failed to protect the budget")
     if not any_ran:
-        print("  SKIP (demo sources or ffmpeg not available)")
+        skip("demo sources or ffmpeg not available")
 
 
 @case(6, "dual-budget rate control - truncation fallback mechanism itself (synthetic, forced)")
@@ -453,8 +462,7 @@ def t6_truncation_fallback_mechanism():
 @case(7, "ring/resident sizing + BuildReport + validate() full pass (both research clips)")
 def t7_report_and_validate():
     if not SINTEL.exists() or not BBB.exists() or not FFMPEG.exists():
-        print("  SKIP (demo sources or ffmpeg not available)")
-        return
+        skip("demo sources or ffmpeg not available")
     with tempfile.TemporaryDirectory() as td:
         for clip, shape_name, (w, h) in ((SINTEL, "256x192", (256, 192)),
                                           (BBB, "320x256", (320, 256))):
@@ -513,8 +521,7 @@ def t8_free_height():
 @case(8, "CLI end-to-end - videnc.py --shape/--aspect produces a valid NXV v2 file")
 def t8_cli_end_to_end():
     if not SINTEL.exists() or not FFMPEG.exists():
-        print("  SKIP (Sintel source or ffmpeg not available)")
-        return
+        skip("Sintel source or ffmpeg not available")
     import subprocess
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "cli_test.vid"
@@ -530,8 +537,141 @@ def t8_cli_end_to_end():
         expect(issues == [], f"CLI output failed validate(): {issues}")
 
 
+# =======================================================================
+# Step 9: review fixes (post-T1 review findings 1/2 + minor fixes)
+# =======================================================================
+
+@case(9, "review fix: height cap conditioned on width (256-wide max 192, 320-wide max 256)")
+def t9_height_cap_by_width():
+    common = dict(fps=25, channels=2, arate=15625, frame_count=1,
+                   audio_bytes_per_frame=0, ring_start_margin_blocks=0,
+                   per_frame_cap_blocks=0)
+
+    # pack_header: 256-wide (mode-0, 192 lines) must reject > 192.
+    for bad_h in (193, 256):
+        try:
+            enc.pack_header(width=256, height=bad_h, **common)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"pack_header should reject width=256 height={bad_h}")
+    enc.pack_header(width=256, height=192, **common)   # the max is still accepted
+    enc.pack_header(width=320, height=256, **common)   # 320-wide (mode-1) still allows up to 256
+
+    # resolve_shape: same width-conditioned cap on an explicit (w,h) tuple.
+    for bad_h in (193, 256):
+        try:
+            enc.resolve_shape((256, bad_h))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"resolve_shape should reject (256, {bad_h})")
+    expect(enc.resolve_shape((256, 192)) == (256, 192), "resolve_shape 256x192 (the max) accepted")
+    expect(enc.resolve_shape((320, 256)) == (320, 256), "resolve_shape 320x256 still accepted")
+
+    # derive_free_height: an aspect ratio that would derive a height
+    # past 192 for a 256-wide (square-pixel) shape must clamp to 192,
+    # not the old unconditional 256 ceiling.
+    h256 = enc.derive_free_height(256, 0.1)   # tiny aspect -> huge raw height
+    expect(h256 == 192, f"derive_free_height(256, 0.1) should clamp to 192, got {h256}")
+    # 320-wide is unaffected - still clamps to 256.
+    expect(enc.derive_free_height(320, 0.001) == 256, "derive_free_height(320, ...) still clamps to 256")
+
+
+@case(9, "review fix: fps_x10 header byte clamps to 255 with a warning instead of silently wrapping")
+def t9_fps_x10_clamp():
+    import warnings
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        hdr = enc.pack_header(width=256, height=192, fps=30.0, channels=2, arate=15625,
+                               frame_count=1, audio_bytes_per_frame=0,
+                               ring_start_margin_blocks=0, per_frame_cap_blocks=0)
+    got = hdr[enc.HDR_OFF_FPSX10]
+    expect(got == 255, f"fps=30 (fps*10=300) should clamp fps_x10 to 255, got {got}")
+    expect(got != (300 & 0xFF), "must not silently wrap fps_x10 (300 & 0xFF == 44 was the old bug)")
+    expect(any(issubclass(w.category, UserWarning) for w in caught), f"expected a UserWarning on fps_x10 clamp, got {[w.category for w in caught]}")
+
+    # A normal fps (fps*10 <= 255) still round-trips with no warning.
+    with warnings.catch_warnings(record=True) as caught2:
+        warnings.simplefilter("always")
+        hdr2 = enc.pack_header(width=256, height=192, fps=25.0, channels=2, arate=15625,
+                                frame_count=1, audio_bytes_per_frame=0,
+                                ring_start_margin_blocks=0, per_frame_cap_blocks=0)
+    expect(hdr2[enc.HDR_OFF_FPSX10] == 250, f"fps=25 -> fps_x10 250, got {hdr2[enc.HDR_OFF_FPSX10]}")
+    expect(caught2 == [], f"fps=25 should not warn, got {[str(w.message) for w in caught2]}")
+
+
+@case(9, "review fix: _is_cut_at reads IMPULSE_MEDIAN_WINDOW (not a hardcoded 3)")
+def t9_impulse_window_not_hardcoded():
+    # Crafted so the impulse verdict flips depending on the median
+    # window width - proves the function re-reads the module constant
+    # at call time rather than closing over a literal 3.
+    chg = np.array([0.0, 0.0, 0.0, 5.0, 0.5])
+    orig_window = enc.IMPULSE_MEDIAN_WINDOW
+    try:
+        enc.IMPULSE_MEDIAN_WINDOW = 3
+        expect(enc._is_cut_at(chg, 4, 0.4) == True,
+               "window=3: median(chg[1:4])=0.0 -> impulse True -> cut fires")
+        enc.IMPULSE_MEDIAN_WINDOW = 1
+        expect(enc._is_cut_at(chg, 4, 0.4) == False,
+               "window=1: median(chg[3:4])=5.0 -> impulse False -> cut suppressed")
+    finally:
+        enc.IMPULSE_MEDIAN_WINDOW = orig_window
+
+
+@case(9, "review fix: content-triggered keyframe near clip end clamps its chunk plan instead of emitting an unterminated span")
+def t9_kf_span_end_of_clip_clamp():
+    fps = 25.0
+    width, height = 256, 192   # 'classic' shape: raw=49152 falls in the T-model's 2-chunk range at 25fps
+    raw = width * height
+    planned = enc.plan_kf_chunks(raw, fps)
+    expect(len(planned) == 2,
+           f"test setup assumption broken: expected a 2-chunk keyframe plan at "
+           f"{width}x{height}@{fps}, got {len(planned)} - re-tune this test's shape "
+           f"if TMODEL_COEFFS changed")
+
+    N = 6
+    rng = np.random.default_rng(11)
+    color_a = rng.integers(0, 256, size=3, dtype=np.uint8)
+    color_b = rng.integers(0, 256, size=3, dtype=np.uint8)
+    orig = np.empty((N, height, width, 3), dtype=np.uint8)
+    orig[:] = color_a
+    orig[N - 1] = color_b   # forced hard cut on the clip's LAST frame
+    chg = np.zeros(N)
+    chg[N - 1] = 1.0        # maximal change-fraction signal at the cut
+    po_ceil = np.full(N, 99.0)
+
+    result = enc.encode_clip(orig, chg, po_ceil, width, height, fps)
+
+    # remaining_frames at the cut (N-1) is 1, but the plan needs 2
+    # chunks - the guard must clamp it to a single-frame span (KSTART
+    # and KFLIP on the same, final payload) rather than leaving a
+    # KSTART with no matching KFLIP.
+    expect(result["kf_events"] >= 2,
+           f"expected >=2 keyframe events (startup span + end-of-clip cut), got {result['kf_events']}")
+    last_span = result["kf_span_ranges"][-1]
+    expect(last_span == (N - 1, N - 1),
+           f"expected a clamped single-frame span at the clip's last frame, got {last_span}")
+    expect(any(m.endswith(":clamped") for m in result["per_frame"]["mode"]),
+           "expected a per-frame mode entry disclosing the clamp (BuildReport degradation-event source)")
+    expect(any(enc.OP_KFLIP in p for p in result["payloads"]),
+           "expected an OP_KFLIP byte in the payload stream")
+
+    hdr = enc.pack_header(width=width, height=height, fps=fps, channels=1, arate=enc.RATE_MONO,
+                           frame_count=len(result["payloads"]), audio_bytes_per_frame=0,
+                           ring_start_margin_blocks=0, per_frame_cap_blocks=0)
+    buf = hdr + b"".join(p + bytes((-len(p)) % 512) for p in result["payloads"])
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "kf_end_clamp.vid"
+        path.write_bytes(buf)
+        issues = dec.validate(path)
+        expect(issues == [], f"validate() should be clean (no unterminated keyframe span): {issues}")
+        frames = list(dec.decode(path))
+        expect(len(frames) == N, f"expected {N} decoded frames, got {len(frames)}")
+
+
 def main():
-    passed, failed = 0, 0
+    passed, failed, skipped = 0, 0, 0
     last_step = None
     for step, name, fn in CASES:
         if step != last_step:
@@ -539,6 +679,9 @@ def main():
             last_step = step
         try:
             fn()
+        except SkipCase as exc:
+            skipped += 1
+            print(f"[SKIP] {name}\n       {exc}")
         except Exception as exc:
             failed += 1
             print(f"[FAIL] {name}\n       {exc.__class__.__name__}: {exc}")
@@ -546,7 +689,7 @@ def main():
         else:
             passed += 1
             print(f"[PASS] {name}")
-    print(f"\n{passed} passed, {failed} failed, {passed + failed} total")
+    print(f"\n{passed} passed, {skipped} skipped, {failed} failed, {passed + failed + skipped} total")
     return 0 if failed == 0 else 1
 
 

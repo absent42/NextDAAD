@@ -68,6 +68,13 @@ HDR_RESERVED_START = 23    # .. reserved 0 to 512
 WIDTH_BY_CODE = {0: 256, 1: 320}
 CODE_BY_WIDTH = {256: 0, 320: 1}
 
+# Layer 2 line counts differ by width: mode-0 (256-wide) has 192 lines,
+# mode-1 (320-wide) has 256 lines - height must never exceed the mode's
+# actual hardware line count (review finding: all three height-cap call
+# sites below used to cap at 256 unconditionally, which let a 256-wide
+# shape claim up to 256 lines - 64 lines past what mode-0 can display).
+MAX_HEIGHT_BY_WIDTH = {256: 192, 320: 256}
+
 FLAG_DELTA_STREAM = 1 << 0   # always 1 in v2
 FLAG_DIRECT_SERVE = 1 << 1   # direct-serve hint
 FLAG_BAND_PALETTE = 1 << 2   # RESERVED band-palette experiment
@@ -83,12 +90,15 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
                  per_frame_cap_blocks, flags=FLAG_DELTA_STREAM,
                  kf_policy=KF_POLICY_V2):
     """Build the 512-byte NXV v2 header. width must be 256 or 320
-    (the only two Layer 2 shapes); height 1-256 (256 encodes as the
-    sentinel byte 0 - see HDR_OFF_HEIGHT)."""
+    (the only two Layer 2 shapes); height is 1-192 for width 256
+    (mode-0, 192 lines) or 1-256 for width 320 (mode-1, 256 lines) -
+    256 encodes as the sentinel byte 0, see HDR_OFF_HEIGHT."""
     if width not in CODE_BY_WIDTH:
         raise ValueError(f"width must be 256 or 320, got {width}")
-    if not (1 <= height <= 256):
-        raise ValueError(f"height must be 1-256, got {height}")
+    max_height = MAX_HEIGHT_BY_WIDTH[width]
+    if not (1 <= height <= max_height):
+        raise ValueError(f"height must be 1-{max_height} for width {width} "
+                          f"(Layer 2 mode-{CODE_BY_WIDTH[width]} has {max_height} lines), got {height}")
     if channels not in (1, 2):
         raise ValueError(f"channels must be 1 or 2, got {channels}")
     if not (0 <= frame_count < (1 << 24)):
@@ -100,12 +110,23 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
     if not (0 <= per_frame_cap_blocks < (1 << 16)):
         raise ValueError("per_frame_cap_blocks out of 16-bit range")
 
+    fps_x10 = int(round(float(fps) * 10))
+    if fps_x10 > 255:
+        import warnings
+        warnings.warn(f"fps*10 ({fps_x10}, fps={fps}) exceeds the header's "
+                       f"8-bit fps_x10 field - clamping to 255 (25.5fps); "
+                       f"this field is informational only and does not "
+                       f"affect playback rate")
+        fps_x10 = 255
+    elif fps_x10 < 0:
+        fps_x10 = 0
+
     hdr = bytearray(HEADER_SIZE)
     hdr[HDR_OFF_MAGIC:HDR_OFF_MAGIC + 5] = MAGIC
     hdr[HDR_OFF_VERSION] = VERSION
     hdr[HDR_OFF_WIDTHCODE] = CODE_BY_WIDTH[width]
     hdr[HDR_OFF_HEIGHT] = 0 if height == 256 else height
-    hdr[HDR_OFF_FPSX10] = int(round(float(fps) * 10)) & 0xFF
+    hdr[HDR_OFF_FPSX10] = fps_x10
     hdr[HDR_OFF_ACHAN] = channels
     hdr[HDR_OFF_ARATE:HDR_OFF_ARATE + 2] = int(arate).to_bytes(2, "little")
     hdr[HDR_OFF_FLAGS] = flags & 0xFF
@@ -595,7 +616,7 @@ def detect_scene_cuts(chg):
 def _is_cut_at(chg, i, cut_t):
     if i <= 0 or i >= len(chg):
         return False
-    med3 = float(np.median(chg[max(1, i - 3):i])) if i > 1 else 0.0
+    med3 = float(np.median(chg[max(1, i - IMPULSE_MEDIAN_WINDOW):i])) if i > 1 else 0.0
     impulse = med3 <= 0.0 or chg[i] >= IMPULSE_MULT * med3
     return chg[i] > cut_t and impulse
 
@@ -650,6 +671,29 @@ def plan_kf_chunks(raw_len, fps):
         pos += c
         remaining -= c
         first = False
+    return chunks
+
+
+def _clamp_kf_chunks_to_frames(raw_len, n_chunks):
+    """Re-partition raw_len bytes into exactly n_chunks (start, length,
+    first) chunks, evenly sized (remainder spread across the earliest
+    chunks). Used by encode_clip's start_kf guard when plan_kf_chunks's
+    T-budget-sized plan needs more chunks than there are source frames
+    left before the clip ends - a content-triggered keyframe firing
+    close to the end must still complete its KSTART..KFLIP span by the
+    clip's final frame, or decode() raises "unterminated keyframe span"
+    (review finding). This intentionally trades a modeled T-budget
+    overrun on the affected final frame(s) for a span that actually
+    terminates; encode_clip records each such frame as a degradation
+    event in the BuildReport."""
+    n_chunks = max(1, int(n_chunks))
+    base, extra = divmod(int(raw_len), n_chunks)
+    chunks = []
+    pos = 0
+    for k in range(n_chunks):
+        length = base + (1 if k < extra else 0)
+        chunks.append((pos, length, k == 0))
+        pos += length
     return chunks
 
 
@@ -721,12 +765,15 @@ def derive_free_height(width, display_aspect):
     or 320) and a desired DISPLAYED aspect ratio (w/h, standard square-
     pixel notation, e.g. 2.35 for cinema scope), returns the integer
     pixel height whose corrected aspect matches. width must be 256 or
-    320 (the only two Layer 2 shapes)."""
+    320 (the only two Layer 2 shapes); the result is clamped to that
+    width's actual Layer 2 line count (192 for 256-wide mode-0, 256 for
+    320-wide mode-1 - see MAX_HEIGHT_BY_WIDTH)."""
     if width not in CODE_BY_WIDTH:
         raise ValueError(f"width must be 256 or 320, got {width}")
     correction = PIXEL_ASPECT_CORRECTION_320 if width == 320 else PIXEL_ASPECT_CORRECTION_256
     h = int(round(width * correction / float(display_aspect)))
-    return max(1, min(256, h))
+    max_height = MAX_HEIGHT_BY_WIDTH[width]
+    return max(1, min(max_height, h))
 
 
 def resolve_shape(shape):
@@ -742,8 +789,10 @@ def resolve_shape(shape):
     width, height = shape
     if width not in CODE_BY_WIDTH:
         raise ValueError(f"width must be 256 or 320, got {width}")
-    if not (1 <= height <= 256):
-        raise ValueError(f"height must be 1-256, got {height}")
+    max_height = MAX_HEIGHT_BY_WIDTH[width]
+    if not (1 <= height <= max_height):
+        raise ValueError(f"height must be 1-{max_height} for width {width} "
+                          f"(Layer 2 mode-{CODE_BY_WIDTH[width]} has {max_height} lines), got {height}")
     return int(width), int(height)
 
 
@@ -868,6 +917,9 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65):
     last_kf_end = -10_000
     span_start_frame = None
     kf_events = 0
+    kf_span_clamped = False   # True while the active span's chunk plan was
+                               # clamped to fit the clip's remaining frames
+                               # (finding 2) - marks its chunk-frames' mode
 
     for i in range(N):
         start_kf = False
@@ -917,6 +969,30 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65):
                 per_frame["drift"].append(float("nan"))
                 decoded.append(dec_img)
                 continue
+
+            # Finding 2: a content-triggered keyframe firing too close
+            # to the clip's end must not plan more chunks than there
+            # are source frames left to hold them - the KFLIP chunk
+            # would never emit, leaving an unterminated KSTART span
+            # (validate() flags it, decode() raises). Clamp the plan to
+            # fit the remaining frames by raising the per-chunk budget
+            # so the span completes on the clip's final frame (the
+            # T-budget cap may be exceeded on those final frames -
+            # recorded below as a degradation event); if even a single-
+            # frame span cannot fit (no frames remain), suppress the
+            # trigger instead and ride the held palette to the end.
+            remaining_frames = N - i
+            kf_span_clamped = False
+            if len(planned) > remaining_frames:
+                if remaining_frames >= 1:
+                    planned = _clamp_kf_chunks_to_frames(raw, remaining_frames)
+                    kf_span_clamped = True
+                else:
+                    planned = []
+                if not planned:
+                    start_kf = False
+
+        if start_kf:
             kf_chunks = planned
             kf_events += 1
             span_start_frame = i
@@ -945,6 +1021,12 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65):
                 mode = "kf" if first else "kfflip"
             else:
                 mode = "kfhold"
+            if kf_span_clamped:
+                # Finding 2 disclosure: this chunk belongs to a span
+                # whose plan was clamped to fit the clip's remaining
+                # frames - its T-budget cap may have been exceeded.
+                # encode()'s degradation_events count picks this up.
+                mode += ":clamped"
             per_frame["mode"].append(mode)
             # Display shows the flipped (hidden->visible) surface only
             # once KFLIP fires on the last chunk; every earlier chunk
@@ -1060,7 +1142,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     psnr_arr = np.array(per_frame["psnr"])
     degradation_events = sum(
         1 for m, bd in zip(per_frame["mode"], per_frame["binding"])
-        if not m.startswith("kf") and bd not in ("none",))
+        if (not m.startswith("kf") and bd not in ("none",)) or m.endswith(":clamped"))
     hist = {}
     for bd in per_frame["binding"]:
         hist[bd] = hist.get(bd, 0) + 1
