@@ -236,9 +236,11 @@ def t2_copy16_max():
     expect(np.array_equal(surface[:65535], data), "COPY16 max content")
 
 
-@case(2, "reserved-op rejection ($09, $0B SCROLL) - raises in decode mode, recorded in validate mode")
+@case(2, "reserved-op rejection ($24 = old $09, $2C SCROLL, misaligned, $FF) - raises in decode mode, recorded in validate mode")
 def t2_reserved_op_rejection():
-    for opcode in (0x09, enc.OP_SCROLL, 0x0C, 0xFF):
+    # Pre-scaled x4 opcode space: $24/$2C are the reserved slots, any
+    # non-multiple-of-4 byte (e.g. $02) is outside the set entirely.
+    for opcode in (0x24, enc.OP_SCROLL, 0x02, 0xFF):
         buf = bytes([opcode])
         surface = np.zeros(8, dtype=np.uint8)
         try:

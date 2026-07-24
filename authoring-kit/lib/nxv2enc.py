@@ -170,19 +170,28 @@ def unpack_header(buf):
 
 
 # ---------------------------------------------------------------------
-# Opcodes ($00-$0B) - literal transcription of the format reference.
+# Opcodes - literal transcription of the format reference. PRE-SCALED
+# BY 4 (SP15 optimization wave, owner-authorized re-encoding): the wire
+# byte IS the Z80 player's dispatch offset into a 256-aligned page of
+# 4-byte jump stubs (opcode -> stub -> handler with zero multiply, zero
+# bounds check - every non-stub offset lands on an error slide). Only
+# the VALUES changed; the semantics, operand layouts and ordering are
+# the original $00-$0B set times 4. Reserved slots keep their positions
+# ($24 = old $09, $2C = old SCROLL $0B). Any byte outside the set below
+# (including non-multiples of 4) is reserved and rejected by the
+# reference decoder.
 # ---------------------------------------------------------------------
 OP_FEND = 0x00     # frame end - rest of block is padding
-OP_SKIP16 = 0x01   # cursor += nn (LE, 2 bytes)
-OP_RUN8 = 0x02     # n (1-255) bytes of colour c
-OP_RUN16 = 0x03    # nn (LE) bytes of colour c
-OP_COPY8 = 0x04    # n (1-255) literal bytes follow
-OP_COPY16 = 0x05   # nn (LE) literal bytes follow
-OP_PAL = 0x06      # full 512-byte palette block, NR $44 order
-OP_SKIP8 = 0x07    # cursor += n (1-255)
-OP_KFLIP = 0x08    # end of final keyframe chunk: atomic flip + palette swap
-OP_KSTART = 0x0A   # begin keyframe span: target = hidden surface; cursor = 0
-OP_SCROLL = 0x0B   # RESERVED, unimplemented in v2.0 - encoder never emits
+OP_SKIP16 = 0x04   # cursor += nn (LE, 2 bytes)
+OP_RUN8 = 0x08     # n (1-255) bytes of colour c
+OP_RUN16 = 0x0C    # nn (LE) bytes of colour c
+OP_COPY8 = 0x10    # n (1-255) literal bytes follow
+OP_COPY16 = 0x14   # nn (LE) literal bytes follow
+OP_PAL = 0x18      # full 512-byte palette block, NR $44 order
+OP_SKIP8 = 0x1C    # cursor += n (1-255)
+OP_KFLIP = 0x20    # end of final keyframe chunk: atomic flip + palette swap
+OP_KSTART = 0x28   # begin keyframe span: target = hidden surface; cursor = 0
+OP_SCROLL = 0x2C   # RESERVED, unimplemented in v2.0 - encoder never emits
 
 VALID_OPS = frozenset({OP_FEND, OP_SKIP16, OP_RUN8, OP_RUN16, OP_COPY8,
                         OP_COPY16, OP_PAL, OP_SKIP8, OP_KFLIP, OP_KSTART})
