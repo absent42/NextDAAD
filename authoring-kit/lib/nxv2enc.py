@@ -428,6 +428,52 @@ DRIFT_T, DRIFT_T_REFRACT = 1.5, 3.0
 IMPULSE_MULT = 1.7
 IMPULSE_MEDIAN_WINDOW = 3
 
+# Anti-drift / staleness controls (SP15 task-2b - the conditional-
+# replenishment DEATH SPIRAL fix). On whole-frame slow-drift content
+# (Jellyfish gradients) every frame carries thousands of tiny deltas the
+# silicon-priced budget cannot afford; importance coarsening drops the
+# smallest EVERY frame, so the same pixels starve indefinitely and the
+# decoded-vs-source error grows unbounded (the drift trigger only sees
+# palette FIT vs the frame's own ceiling, not accumulated decoded error).
+# Three encoder-only remedies, all keyed off the fact that err2 below is
+# already decoded-surface-vs-target error, i.e. how wrong the screen is:
+STALE_DB = 3.0             # (1) staleness-bounded refresh: the decoded screen
+                           #     may fall at most this far below the frame's own
+                           #     quantize ceiling (po_ceil) before a forced
+                           #     keyframe - the hard staleness bound
+AGE_GAIN = 0.5             # (2) importance aging: a persistently-wrong, un-
+                           #     updated pixel's importance grows by this per
+                           #     frame (XDC precedent) so it eventually wins
+                           #     budget - no pixel starves forever
+STALE_ERR2_FLOOR = 16.0    #     squared error above which a pixel counts as
+                           #     "wrong" and accrues age (below it: correct)
+PHASE_REFRESH_K = 32       # (3) phase-staggered forced refresh: a rotating
+                           #     1/K paint-order slice of the WRONG pixels is
+                           #     forced into the mask each frame, so worst-case
+                           #     staleness is bounded ~K frames by design
+PHASE_FLOOR = 3.0 * THRESHOLDS[-1] ** 2 + 1.0   # just above the coarsest mask
+
+# Region-coherent budget-bound scheduling (SP15 task-2b owner exhibit fix):
+# when a frame's deltas exceed budget the encoder spends on whole contiguous
+# paint-order BANDS (TILE_BAND rows in mode-0 / columns in mode-1) rather
+# than scattered per-pixel/per-region picks, so shortfall reads as soft
+# regional lag not hard-edged stale patchwork. Tunable granularity.
+TILE_BAND = 4
+
+# Dissolve/pan detection (SP15 task-2b owner exhibit fix): a slow crossfade
+# or pan is a SUSTAINED elevated change fraction WITHOUT an impulse - the cut
+# trigger misses it and incremental visible repair ghosts/seams. Route it
+# through the KEYFRAME SPAN (atomic hidden-surface flip) instead. The
+# palette-drift component is REQUIRED to distinguish a dissolve (held palette
+# losing fit) from whole-frame drift with a stable histogram (Jellyfish) -
+# change fraction alone would thrash keyframes on the latter.
+DISSOLVE_WINDOW = 4        # frames of sustained elevation to confirm
+DISSOLVE_CHG_T = 0.30      # sustained change-fraction floor
+DISSOLVE_DRIFT_T = 1.0     # palette-drift floor (the structure-trend gate)
+WHOLE_FRAME_FRAC = 0.60    # decoded-error area above which a staleness refresh
+                           # is treated as WHOLE-FRAME -> keyframe span, not
+                           # incremental in-place repair
+
 
 def close_gaps(mask, max_gap=2):
     """Fill short (<=max_gap) False runs between True runs - reduces
@@ -638,115 +684,100 @@ def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
     return b"".join(parts), b_total, t_total
 
 
-def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
-                 surface_flat=None, merge_gaps=True):
-    """Threshold ladder with a byte cap and an optional modeled-T cap.
-    Coarsens THRESHOLDS until both fit; falls back to importance-sorted
-    priority truncation if even the coarsest threshold does not fit either
-    cap. Returns (gcls, gstarts, glens, bytes, T, mode, binding, payload).
+def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
+                   cap_bytes, cap_t, merge_gaps):
+    """Cost a changed-segment list. Returns (bytes, T, payload, suffix) for
+    the cheapest variant that fits BOTH caps (gap-merged preferred - it kills
+    the dominant per-op dispatch), or None if neither variant fits."""
+    b_un, t_un = stream_cost(gcls, glens)
+    b_un += 1  # FEND byte
+    if merge_gaps and surface_flat is not None:
+        payload_m, b_m, t_m = merge_delta_stream(
+            gcls, gstarts, glens, target_flat, surface_flat, cap_bytes)
+        if b_m <= cap_bytes and (cap_t is None or t_m <= cap_t):
+            return b_m, t_m, payload_m, "+merge"
+    if b_un <= cap_bytes and (cap_t is None or t_un <= cap_t):
+        return b_un, t_un, emit_delta_ops(target_flat, gcls, gstarts, glens), ""
+    return None
 
-    When surface_flat is given and merge_gaps is on, each threshold's
-    candidate is first gap-merged (encoder-only, decode-identical - see
-    merge_delta_stream); the merged stream is much cheaper in T (it kills
-    the per-op dispatch that dominates the silicon cost) but slightly more
-    expensive in bytes, so the ladder prefers the merged candidate when it
-    fits both caps and falls back to the un-merged one otherwise. This is
-    what lets the finest thresholds stay feasible at silicon prices where
-    the un-merged stream alone would force coarsening/truncation.
+
+def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
+                 surface_flat=None, merge_gaps=True, tile_px=None):
+    """Region-coherent budget-bound delta encoder. Returns
+    (gcls, gstarts, glens, bytes, T, mode, binding, payload).
+
+    FAST PATH: the full changed mask (finest de-noise - drop only sub-noise
+    pixels) is tried whole; if it fits both caps the frame keeps ALL its real
+    changes, gap-merged (mode 'full[+merge]'). This is the common quiet/mild
+    case at silicon prices.
+
+    BUDGET-BOUND PATH (region-coherent, SP15 task-2b owner exhibit fix):
+    when the full frame does not fit, the budget is spent on CONTIGUOUS TILES
+    (paint-order bands) chosen by aggregate importance - a kept tile is
+    updated IN FULL, a deferred tile is left intact. Shortfall then reads as
+    coherent regional LAG (soft, motion-masked) instead of the scattered
+    per-pixel PATCHWORK that error-blind threshold coarsening / per-region
+    truncation produced (hard-edged stale islands on motion bursts). The
+    caller's importance AGING keeps deferred tiles from starving: their err2
+    grows each frame until a later tile schedule admits them. An all-skip
+    frame always fits, so the dual-budget guarantee holds by construction.
+    mode 'region:<kept>/<total>[+merge]'.
 
     The returned (gcls, gstarts, glens) is always the CHANGED-segment list
-    (un-merged); the surface tracking in encode_clip walks it directly. The
-    returned payload is the stream actually chosen (merged or not)."""
-    binding = "none"
-    last_fail = None
-    for k, T in enumerate(THRESHOLDS):
-        mask = close_gaps(err2_flat > 3.0 * T * T)
-        gcls, gstarts, glens = segment(target_flat, mask)
-        b_un, t_un = stream_cost(gcls, glens)
-        b_un += 1  # FEND
-        # merged candidate first (lower T; may fit where un-merged busts T)
-        if merge_gaps and surface_flat is not None:
-            payload_m, b_m, t_m = merge_delta_stream(
-                gcls, gstarts, glens, target_flat, surface_flat, cap_bytes)
-            if b_m <= cap_bytes and (cap_t is None or t_m <= cap_t):
-                if k > 0:
-                    binding = last_fail
-                return (gcls, gstarts, glens, b_m, t_m,
-                        f"thresh:{T}+merge", binding, payload_m)
-            fb, ft = b_m, t_m   # what bound the shipped (merged) candidate
-        else:
-            fb, ft = b_un, t_un
-        if b_un <= cap_bytes and (cap_t is None or t_un <= cap_t):
-            if k > 0:
-                binding = last_fail
-            payload = emit_delta_ops(target_flat, gcls, gstarts, glens)
-            return (gcls, gstarts, glens, b_un, t_un,
-                    f"thresh:{T}", binding, payload)
-        ob = fb <= cap_bytes
-        ot = cap_t is None or ft <= cap_t
-        last_fail = ("both" if (not ob and not ot)
-                     else ("bytes" if not ob else "T"))
+    (un-merged) the caller walks to track the surface; payload is the chosen
+    (possibly merged) stream."""
+    n = int(err2_flat.size)
+    denoise = 3.0 * THRESHOLDS[0] * THRESHOLDS[0]
+    mask_full = close_gaps(err2_flat > denoise)
+    gcls, gstarts, glens = segment(target_flat, mask_full)
+    res = _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
+                         cap_bytes, cap_t, merge_gaps)
+    if res is not None:
+        b, t, payload, sfx = res
+        return gcls, gstarts, glens, b, t, "full" + sfx, "none", payload
 
-    # Coarsest threshold still over budget: importance-sorted priority
-    # truncation (XDC lineage - drop the SMALLEST-importance changed regions
-    # first, keeping the ones that buy the most perceptual quality per T;
-    # importance = sum |delta| over the region = changed-count x magnitude,
-    # scratchpad/research-stream-optimization.md section 4b). Emits the
-    # un-merged stream: the merge inflates bytes and this branch is already
-    # byte-bound, so byte safety wins over the T saving here.
-    T = THRESHOLDS[-1]
-    mask = close_gaps(err2_flat > 3.0 * T * T)
-    bnd = np.flatnonzero(mask[1:] != mask[:-1]) + 1
-    starts = np.concatenate(([0], bnd))
-    ends = np.concatenate((bnd, [mask.size]))
-    vals = mask[starts]
-    rs, re = starts[vals], ends[vals]
-    if len(rs) == 0:
-        gcls, gstarts, glens = segment(target_flat, np.zeros_like(mask))
-        b, t = stream_cost(gcls, glens)
-        payload = emit_delta_ops(target_flat, gcls, gstarts, glens)
-        return gcls, gstarts, glens, b + 1, t, "trunc", "trunc", payload
-    imp_cum = np.concatenate(([0.0], np.cumsum(np.sqrt(err2_flat))))
-    rimp = imp_cum[re] - imp_cum[rs]   # importance = sum |delta| per region
-    order = np.argsort(-rimp)
-    sel = []
-    # Each kept region also introduces (roughly) one SKIP gap ahead of it -
-    # at silicon prices the skip dispatch (360 T) is NOT negligible, so it
-    # must be charged during selection or the greedy over-selects and the
-    # frame busts its T budget (settlement's sintel_320x256 hard config).
-    skip_disp = TMODEL_COEFFS["t_skip"] + TMODEL_COEFFS["header_rate"]
-    ab, at = 1.0, TMODEL_COEFFS["t_frame_fixed"]   # +1 for the FEND byte
-    mb = cap_bytes * 0.97
-    mt = None if cap_t is None else cap_t * 0.97
-    for ri in order:
-        L = int(re[ri] - rs[ri])
-        cb, ct = op_cost("copy", L)
-        cb += 2            # ~ the skip byte(s) ahead of this region
-        ct += skip_disp
-        if ab + cb > mb or (mt is not None and at + ct > mt):
-            continue
-        ab += cb
-        at += ct
-        sel.append(ri)
-    selmask = np.zeros(mask.size, dtype=bool)
-    for ri in sel:
-        selmask[rs[ri]:re[ri]] = True
-    gcls, gstarts, glens = segment(target_flat, selmask)
-    b, t = stream_cost(gcls, glens)
-    b += 1
-    # Drain the lowest-importance kept regions until the frame genuinely
-    # fits BOTH caps (no arbitrary iteration cap - the dual-budget
-    # guarantee must actually hold; an all-skip frame always fits, so this
-    # terminates). sel is importance-ordered, so pop() drops the least
-    # important survivor first.
-    while (b > cap_bytes or (cap_t is not None and t > cap_t)) and sel:
-        ri = sel.pop()
-        selmask[rs[ri]:re[ri]] = False
-        gcls, gstarts, glens = segment(target_flat, selmask)
-        b, t = stream_cost(gcls, glens)
-        b += 1
-    payload = emit_delta_ops(target_flat, gcls, gstarts, glens)
-    return gcls, gstarts, glens, b, t, "trunc", "trunc", payload
+    # ---- region-coherent tile schedule ----
+    # Keep the largest importance-ordered PREFIX of whole bands that fits both
+    # caps under the EXACT gap-merged cost. Cost is monotone in the prefix
+    # length (adding a band only adds changes), so a binary search finds the
+    # cut in ~log2(ntiles) exact merges - fast AND budget-accurate (a plain
+    # per-tile greedy re-merges the whole growing mask every step; a
+    # conservative estimate badly under-fills because the merge frees far more
+    # T than it can predict).
+    if tile_px is None:
+        tile_px = max(256, n // 48)
+    ntiles = (n + tile_px - 1) // tile_px
+    sqrt_e = np.where(mask_full, np.sqrt(err2_flat), 0.0)
+    band_imp = np.array([sqrt_e[ti * tile_px:(ti + 1) * tile_px].sum()
+                         for ti in range(ntiles)])
+    order = [int(ti) for ti in np.argsort(-band_imp) if band_imp[ti] > 0.0]
+
+    def _prefix_fit(k):
+        """Exact (b, t, payload, sfx) for the top-k importance bands, or None."""
+        selmask = np.zeros(n, dtype=bool)
+        for ti in order[:k]:
+            a, z = ti * tile_px, min((ti + 1) * tile_px, n)
+            selmask[a:z] |= mask_full[a:z]
+        gc, gs, gl = segment(target_flat, selmask)
+        r = _fit_candidate(gc, gs, gl, target_flat, surface_flat,
+                           cap_bytes, cap_t, merge_gaps)
+        if r is None:
+            return None
+        return (gc, gs, gl) + r
+
+    lo, hi = 0, len(order)
+    best_k, best = 0, _prefix_fit(0)     # k=0 (all-skip) always fits
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        res = _prefix_fit(mid)
+        if res is not None:
+            best_k, best = mid, res
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    gc, gs, gl, b, t, payload, sfx = best
+    return (gc, gs, gl, b, t,
+            f"region:{best_k}/{ntiles}{sfx}", "budget", payload)
 
 
 # ---------------------------------------------------------------------
@@ -1029,6 +1060,7 @@ class BuildReport:
     seconds_per_mb: float
     keyframes: int
     degradation_events: int
+    staleness_events: int = 0
     binding_budget_histogram: dict = field(default_factory=dict)
 
 
@@ -1176,7 +1208,7 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
 
 
 def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
-                merge_gaps=True, hysteresis=True):
+                merge_gaps=True, hysteresis=True, staleness_refresh=True):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -1196,6 +1228,10 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     refract = max(1, int(round(fps / 2)))
     cap_bytes = int(cap_bytes_frac * raw)
     hyst_eps = HYSTERESIS_EPS if hysteresis else None
+    # Region-coherent tile size: a band of TILE_BAND rows (mode-0) / columns
+    # (mode-1) is contiguous in paint order, so shortfall lags coherent
+    # horizontal/vertical strips.
+    tile_px = TILE_BAND * (height if column_major else width)
 
     scene_cuts = detect_scene_cuts(chg)
 
@@ -1212,6 +1248,9 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     last_kf_end = -10_000
     span_start_frame = None
     kf_events = 0
+    staleness_events = 0
+    kf_triggers = {}
+    age = np.zeros(raw, dtype=np.float32)   # per-pixel un-updated-wrong age
     kf_span_clamped = False   # True while the active span's chunk plan was
                                # clamped to fit the clip's remaining frames
                                # (finding 2) - marks its chunk-frames' mode
@@ -1237,8 +1276,36 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             in_refract = (i - last_kf_end) <= refract
             ct = CUT_T_REFRACT if in_refract else CUT_T
             dt = DRIFT_T_REFRACT if in_refract else DRIFT_T
+            # Staleness of the ACTUAL decoded screen (held_pal[prev_flat]) vs
+            # this source - the accumulated decoded error the drift trigger is
+            # blind to (it only sees palette FIT). dec_now = current screen;
+            # decoded_deficit = how far below the frame's own ceiling it sits;
+            # wrong_frac = the AREA that is wrong (whole-frame vs local).
+            dec_now = unflatten_frame(held_pal[prev_flat], height, width, column_major)
+            decoded_deficit = po_ceil[i] - psnr(orig[i], dec_now)
+            d_now = np.abs(orig[i].astype(np.int16) - dec_now.astype(np.int16)).max(axis=2)
+            wrong_frac = float((d_now > 12).mean())
+            # Dissolve/pan: sustained elevated change WITHOUT an impulse, WITH
+            # the held palette losing fit (drift up) - a scene transition. The
+            # palette-drift gate excludes palette-stable whole-frame drift
+            # (Jellyfish) so it does not thrash keyframes. Route through the
+            # keyframe span (atomic flip) so a transition never shows a
+            # half-repaired seam/ghost.
+            w0 = max(1, i - DISSOLVE_WINDOW + 1)
+            sustained_chg = float(np.mean(chg[w0:i + 1]))
             if _is_cut_at(chg, i, ct):
                 start_kf, trigger = True, "cut"
+            elif (staleness_refresh and not in_refract
+                  and sustained_chg > DISSOLVE_CHG_T and drift > DISSOLVE_DRIFT_T):
+                start_kf, trigger = True, "dissolve"
+            elif (staleness_refresh and not in_refract
+                  and decoded_deficit > STALE_DB and wrong_frac > WHOLE_FRAME_FRAC):
+                # WHOLE-FRAME accumulated error -> atomic keyframe, not the
+                # incremental in-place repair (which would seam). Local
+                # staleness (small wrong_frac) is left to the aging + tile
+                # schedule to refresh coherently in the delta path.
+                start_kf, trigger = True, "staleness"
+                staleness_events += 1
             elif drift > dt:
                 start_kf, trigger = True, "drift"
 
@@ -1261,7 +1328,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 err2 = np.sum((targ_dec_flat - prev_dec_flat) ** 2, axis=1)
                 gcls, gstarts, glens, b, t, mode, binding, payload = encode_delta(
                     tflat, err2, cap_bytes, usable,
-                    surface_flat=prev_flat, merge_gaps=merge_gaps)
+                    surface_flat=prev_flat, merge_gaps=merge_gaps, tile_px=tile_px)
                 prev_flat = np.where(_mask_from_segments(gcls, gstarts, glens, raw), tflat, prev_flat)
                 dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
                 payloads.append(payload)
@@ -1298,6 +1365,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
         if start_kf:
             kf_chunks = planned
             kf_events += 1
+            kf_triggers[trigger] = kf_triggers.get(trigger, 0) + 1
             span_start_frame = i
             if prev_flat is None:
                 prev_flat = np.zeros(raw, dtype=np.uint8)
@@ -1320,6 +1388,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 staging = None
                 held_pal = kf_pal
                 last_kf_end = i
+                age[:] = 0.0   # KFLIP repaints the whole surface -> all fresh
                 kf_span_ranges.append((span_start_frame, i))
                 mode = "kf" if first else "kfflip"
             else:
@@ -1348,11 +1417,34 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             prev_dec_flat = held_pal[prev_flat].astype(np.float32)
             targ_dec_flat = held_pal[tflat].astype(np.float32)
             err2 = np.sum((targ_dec_flat - prev_dec_flat) ** 2, axis=1)
+            # err2 IS the decoded-surface-vs-target error, so importance already
+            # tracks accumulated wrongness; the death spiral is that a pixel
+            # persistently below the coarsest threshold never enters the mask.
+            # (2) AGING: boost a wrong pixel's err2 by its age so persistent
+            # small errors eventually cross the threshold / win the fallback.
+            # (3) PHASE-STAGGER: force a rotating 1/K slice of the wrong pixels
+            # over the coarsest mask floor so worst-case staleness ~K frames.
+            if staleness_refresh:
+                enc_err2 = err2 * (1.0 + AGE_GAIN * age)
+                wrong = err2 > STALE_ERR2_FLOOR
+                bi = i % PHASE_REFRESH_K
+                b0 = bi * raw // PHASE_REFRESH_K
+                b1 = (bi + 1) * raw // PHASE_REFRESH_K
+                band = np.zeros(raw, dtype=bool)
+                band[b0:b1] = True
+                force = band & wrong
+                enc_err2 = np.where(force, np.maximum(enc_err2, PHASE_FLOOR), enc_err2)
+            else:
+                enc_err2 = err2
             gcls, gstarts, glens, b, t, mode, binding, payload = encode_delta(
-                tflat, err2, cap_bytes, usable,
-                surface_flat=prev_flat, merge_gaps=merge_gaps)
+                tflat, enc_err2, cap_bytes, usable,
+                surface_flat=prev_flat, merge_gaps=merge_gaps, tile_px=tile_px)
             new_flat = _apply_segments(prev_flat, tflat, gcls, gstarts, glens)
             prev_flat = new_flat
+            if staleness_refresh:
+                updated = _mask_from_segments(gcls, gstarts, glens, raw)
+                wrong = err2 > STALE_ERR2_FLOOR
+                age = np.where(updated, 0.0, np.where(wrong, age + 1.0, 0.0))
             payloads.append(payload)
             per_frame["bytes"].append(b)
             per_frame["mode"].append(mode)
@@ -1364,6 +1456,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
 
     return dict(payloads=payloads, kf_span_ranges=kf_span_ranges, decoded=decoded,
                 per_frame=per_frame, scene_cuts=scene_cuts, kf_events=kf_events,
+                staleness_events=staleness_events, kf_triggers=kf_triggers,
                 held_pal_final=held_pal, usable_budget_ms=usable / TMODEL_COEFFS["clock_khz"])
 
 
@@ -1387,7 +1480,8 @@ def _apply_segments(prev_flat, target_flat, gcls, gstarts, glens):
 
 def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
-           dither=False, mono=False, merge_gaps=True, hysteresis=True):
+           dither=False, mono=False, merge_gaps=True, hysteresis=True,
+           staleness_refresh=True):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     quality_profile: only "max" is implemented in T1 (the dual-budget
@@ -1404,7 +1498,8 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
                           ffmpeg, dither, mono)
     result = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width, height,
-                          fps_val, merge_gaps=merge_gaps, hysteresis=hysteresis)
+                          fps_val, merge_gaps=merge_gaps, hysteresis=hysteresis,
+                          staleness_refresh=staleness_refresh)
 
     payloads = result["payloads"]
     nframes_out = len(payloads)
@@ -1462,6 +1557,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
         worst_psnr=float(psnr_arr.min()) if len(psnr_arr) else 0.0,
         total_bytes=total_bytes, seconds_per_mb=seconds_per_mb,
         keyframes=result["kf_events"], degradation_events=degradation_events,
+        staleness_events=result.get("staleness_events", 0),
         binding_budget_histogram=hist,
     )
 
@@ -1474,6 +1570,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                 worst_psnr=report.worst_psnr, total_bytes=report.total_bytes,
                 seconds_per_mb=report.seconds_per_mb, keyframes=report.keyframes,
                 degradation_events=report.degradation_events,
+                staleness_events=report.staleness_events,
                 binding_budget_histogram=report.binding_budget_histogram,
                 scene_cuts=result["scene_cuts"], kf_span_ranges=result["kf_span_ranges"],
             ), f, indent=1)

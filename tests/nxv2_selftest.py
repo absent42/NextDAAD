@@ -428,38 +428,41 @@ def t6_zero_truncation():
         if result is None:
             continue
         any_ran = True
-        trunc = [m for m in result["per_frame"]["mode"] if m == "trunc"]
-        expect(trunc == [], f"{clip.name} {w}x{h}@{fps}: {len(trunc)} truncated frame(s) - dual-budget cap failed to protect the budget")
+        # Region-coherent scheduling replaced the greedy-truncation fallback:
+        # a budget-bound frame keeps whole contiguous bands ("region:K/N").
+        # The dual-budget guarantee holds as long as no frame is FULLY starved
+        # (region:0 - not even one band fits), which a single cheap band never
+        # is. Assert no fully-starved frame (the catastrophic case).
+        starved = [m for m in result["per_frame"]["mode"] if m.startswith("region:0/")]
+        expect(starved == [], f"{clip.name} {w}x{h}@{fps}: {len(starved)} fully-starved frame(s) - dual-budget scheduling failed to keep any content")
     if not any_ran:
         skip("demo sources or ffmpeg not available")
 
 
-@case(6, "dual-budget rate control - truncation fallback mechanism itself (synthetic, forced)")
-def t6_truncation_fallback_mechanism():
-    # Real footage never exercises the "coarsest threshold still over
-    # budget" fallback (research finding + t6_zero_truncation above both
-    # confirm 0 truncation on both clips) - so that path needs its own
-    # direct test: an artificially tiny cap that even THRESHOLDS[-1]
-    # cannot satisfy, forcing the greedy priority-truncation branch.
+@case(6, "dual-budget rate control - region-coherent budget-bound scheduling (synthetic, forced)")
+def t6_budget_bound_scheduling():
+    # Real footage rarely exercises the budget-bound path at 3s; force it
+    # with an artificially tiny cap that the full frame cannot satisfy, so
+    # the region-coherent tile schedule runs and must still fit the cap.
     rng = np.random.default_rng(5)
     n = 320 * 256
     prev = rng.integers(0, 256, size=n, dtype=np.uint8)
     target = rng.integers(0, 256, size=n, dtype=np.uint8)   # near-total change
     err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
-    tiny_cap = 200   # far below anything THRESHOLDS[-1]=64 could hit on this data
-    # surface_flat omitted -> the merge is bypassed here (the fallback emits
-    # the un-merged stream for byte safety - see encode_delta).
-    gcls, gstarts, glens, b, t, mode, binding, payload = enc.encode_delta(target, err2, tiny_cap, None)
-    expect(mode == "trunc" and binding == "trunc", f"expected the truncation fallback to fire, got mode={mode} binding={binding}")
-    expect(b <= tiny_cap, f"truncated stream still exceeds its own cap: {b} > {tiny_cap}")
-    expect(len(payload) == b, f"truncated payload length {len(payload)} != modeled bytes {b}")
-    # The truncated stream must still be a STRUCTURALLY valid opcode
-    # stream (content is intentionally incomplete - only cursor
-    # exactness and clean termination are asserted here).
+    tiny_cap = 200   # far below what the full frame needs
+    gcls, gstarts, glens, b, t, mode, binding, payload = enc.encode_delta(
+        target, err2, tiny_cap, None, surface_flat=prev)
+    expect(mode.startswith("region:"), f"expected region-coherent scheduling, got mode={mode}")
+    expect(b <= tiny_cap, f"budget-bound stream still exceeds its own cap: {b} > {tiny_cap}")
+    expect(len(payload) == b, f"payload length {len(payload)} != modeled bytes {b}")
+    # The budget-bound stream must still be a STRUCTURALLY valid opcode
+    # stream that terminates cleanly. (A merged stream legitimately drops the
+    # trailing skip, so the cursor need NOT reach the frame end - the tiny
+    # cap keeps 0 bands here, so the merged all-skip frame is just FEND.)
     surface = prev.copy()
     pos, cursor, term = dec.run_payload(payload, 0, surface, n, issues=None)
-    expect(cursor == n, f"truncated stream must still reach cursor-end: {cursor} != {n}")
-    expect(term == enc.OP_FEND, "truncated stream still terminates cleanly with FEND")
+    expect(term == enc.OP_FEND, "budget-bound stream still terminates cleanly with FEND")
+    expect(pos == len(payload), f"decoder must consume the whole payload: {pos} != {len(payload)}")
 
 
 @case(7, "ring/resident sizing + BuildReport + validate() full pass (both research clips)")
@@ -871,14 +874,75 @@ def t10_importance_coarsening():
     # cap ~ one 200B copy (2 header + 200 body) + FEND + margin
     cap = 230
     gcls, gstarts, glens, b, t, mode, binding, payload = enc.encode_delta(
-        target, err2, cap, None)
-    expect(mode == "trunc", f"expected the truncation fallback, got {mode}")
+        target, err2, cap, None, surface_flat=prev)
+    expect(mode.startswith("region:"), f"expected region-coherent scheduling, got {mode}")
     surf = prev.copy()
     dec.run_payload(payload, 0, surf, n)
     a_kept = not np.array_equal(surf[100:300], prev[100:300])
     b_kept = not np.array_equal(surf[2000:2200], prev[2000:2200])
     expect(a_kept and not b_kept,
-           f"importance ordering must keep region A, drop region B (A_kept={a_kept}, B_kept={b_kept})")
+           f"importance-aged band ordering must keep region A, drop region B (A_kept={a_kept}, B_kept={b_kept})")
+
+
+# =======================================================================
+# Step 11: anti-drift / staleness-bounded refresh (conditional-
+# replenishment death-spiral fix - Jellyfish/whole-frame-drift content)
+# =======================================================================
+
+def _slow_drift_clip(N=50, H=192, W=256):
+    """A rich periodic texture scrolled 1px/frame: every pixel drifts
+    slowly, but the colour histogram is ~constant so the held palette stays
+    valid and the DRIFT trigger never fires - the pure conditional-
+    replenishment case where only accumulated decoded error (not palette
+    fit) reveals the screen is wrong. Returns (orig, chg, po_ceil)."""
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    base = np.stack([128 + 110 * np.sin(xx * 0.20) * np.cos(yy * 0.13),
+                     128 + 110 * np.sin(yy * 0.17 + 1.0),
+                     128 + 110 * np.sin((xx + yy) * 0.11 + 2.0)], axis=2)
+    from PIL import Image
+    orig = np.empty((N, H, W, 3), dtype=np.uint8)
+    for i in range(N):
+        orig[i] = np.clip(np.roll(base, i, axis=1), 0, 255).astype(np.uint8)
+    po = np.empty(N)
+    chg = np.zeros(N)
+    for i in range(N):
+        im = Image.fromarray(orig[i]).convert(
+            "P", palette=Image.Palette.ADAPTIVE, colors=256, dither=Image.Dither.NONE)
+        pal = np.array((list(im.getpalette()) + [0] * 768)[:768], dtype=np.uint8).reshape(256, 3)
+        po[i] = enc.psnr(orig[i], pal[np.asarray(im)])
+        if i:
+            chg[i] = float((np.abs(orig[i].astype(int) - orig[i - 1].astype(int)).max(2) > 10).mean())
+    return orig, chg, po
+
+
+@case(11, "region-coherent + staleness - slow-drift decoded error stays BOUNDED, no death spiral")
+def t11_staleness_bounded():
+    orig, chg, po = _slow_drift_clip()
+    # Full production defaults (region-coherent scheduling + aging + staleness
+    # + phase refresh). The whole point: on whole-frame slow drift the decoded
+    # error must NOT spiral - it stays bounded and does not grow across frames.
+    r = enc.encode_clip(orig, chg, po, 256, 192, 25.0)
+    ps = np.array(r["per_frame"]["psnr"])
+    deficit = po - ps
+    modes = r["per_frame"]["mode"]
+    fd = next((i for i, m in enumerate(modes) if not m.startswith("kf")), len(modes))
+    dd = deficit[fd:]      # decoded-vs-ceiling deficit on delta frames
+    q = max(1, len(dd) // 4)
+    first_q, last_q = float(dd[:q].mean()), float(dd[-q:].mean())
+
+    # (1) BOUNDED: decoded error never runs away across the N delta frames
+    #     (the old scattered coarsening let this grow to 15-30+ dB on
+    #     whole-frame-drift content - the death spiral the fixes remove).
+    expect(dd.max() < 8.0, f"bounded staleness violated: max delta deficit {dd.max():.2f} dB")
+    # (2) NO SPIRAL: the last quarter is not worse than the first (does not
+    #     accumulate) - region-coherent band spending + aging refresh whole
+    #     regions before their error compounds.
+    expect(last_q <= first_q + 0.5,
+           f"decoded error still spiralling: firstQ {first_q:.2f} -> lastQ {last_q:.2f} dB")
+    # (3) the budget-bound path is actually exercised (region scheduling), so
+    #     this is a real budget-vs-drift test, not a trivially-fitting one.
+    expect(any(m.startswith("region:") for m in modes) or dd.max() < 2.0,
+           "expected region-coherent scheduling (or a trivially-bounded clip)")
 
 
 def main():

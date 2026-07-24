@@ -618,16 +618,20 @@ if ($NxBench) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial bench fixture set)"
     }
-    # NXB8's segment source is the -Vid classic cache; encode it first if
-    # missing (identical command to -Vid's own 002.VID path).
-    $nxbCache = Join-Path $root 'tests\out\002_classic_cache.vid'
+    # NXB8's segment source is a dedicated classic encode built with
+    # --no-merge (SP15): the gap-merge would collapse the dense small-op
+    # stream that the dispatch bench row measures, so NXB8 must be cut from
+    # a NON-merged encode to keep its worst-case op density (nxv2enc
+    # bench-fixtures merge-bypass note). This is a SEPARATE cache from the
+    # -Vid 002 production (merged) cache.
+    $nxbCache = Join-Path $root 'tests\out\002_classic_nomerge_cache.vid'
     if (-not (Test-Path -LiteralPath $nxbCache)) {
         $nxbSrc = Join-Path $root 'tools\demo-files\1440x1080-25p.mp4'
         if (-not (Test-Path -LiteralPath $nxbSrc)) {
             throw "-NxBench: $nxbSrc missing and no cached classic encode exists - cannot build NXB8"
         }
-        "encoding tests\out\002_classic_cache.vid (shape classic) via videnc.py - slow, cached after this run..."
-        & python "$root\authoring-kit\lib\videnc.py" $nxbSrc $nxbCache --shape classic --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
+        "encoding tests\out\002_classic_nomerge_cache.vid (shape classic, --no-merge) via videnc.py - slow, cached after this run..."
+        & python "$root\authoring-kit\lib\videnc.py" $nxbSrc $nxbCache --shape classic --fps 25 --no-merge --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
         if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - bench fixtures not staged" }
     }
     $nxbDir = Join-Path $root 'tests\out\nxbench'
