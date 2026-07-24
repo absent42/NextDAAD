@@ -4583,6 +4583,11 @@ vidErrByteL:     db 0             ; mirrors vidErrByte - see that cell's
 ;       "do not use", per zxndma.txt; the em00k reference program's $CD
 ;       = %11001101 (D6:D5 = 10) is what burst actually is, and is what
 ;       this bench sends.
+; Plus a CPU-concurrency mode (DMACC verb, mode 6): with burst-mode
+; DMA-from-SPI transfers running continuously, how much of its own
+; throughput does the CPU keep? See dmat_mode_cc's block header for the
+; method (calibrated counting loop vs the same loop overlapped with
+; transfers) and the measurement hazards it controls for.
 ; Plus a sustained-rate mode (DMARC/DMARB/DMARP verbs) for any program
 ; that MATCHes: up to 1024 blocks (512KB) repeat-transferred off the
 ; fixture's first contiguous run, KB/s reported (VBFLT's measurement
@@ -4695,6 +4700,8 @@ dmat_entry:
     jr z, dmat_mode_h2
     dec a
     jp z, dmat_mode_rate
+    dec a
+    jp z, dmat_mode_cc
     ld a, (dmatMode)
     ld hl, msgDmatBadMode
     jp dmat_fail_row
@@ -5440,6 +5447,427 @@ div16:
     ret
 
 ; ---------------------------------------------------------------------
+; DMACC - CPU-concurrency mode (verb DMACC, mode 6). The decisive
+; SP15 question: zxnDMA burst mode releases the bus while the port
+; ready line is inactive - so during the SPI shifter's ~22T/byte stall
+; windows, does the CPU keep (most of) its own throughput? If yes,
+; fetch overlaps decode and the video-compression budget model changes
+; fundamentally.
+;
+; Method - two 50-frame windows, identical counting skeleton:
+;   CALIBRATE  run the counting loop with NO DMA active; passes counted
+;              over DMACC_FRAMES raster-wrap frames = 100% baseline.
+;   MEASURE    re-run the SAME loop while burst DMA-from-SPI transfers
+;              run continuously: per block the CPU issues the glue
+;              (token wait, program otir, read-mask arm, CRC skip)
+;              BETWEEN counting bursts, and counts while the transfer
+;              itself is in flight, polling completion cheaply once per
+;              counted pass. Only counting passes are counted - glue is
+;              outside the counter by construction.
+; Report row: BASE=passes CONC=passes CPU%=conc*100/base B=blocks
+; KB/S=blocks*25/frames (all hex; CPU% $64 = 100).
+;
+; MEASUREMENT HAZARDS controlled here (each also on the bench card):
+; - RAM separation: the counting loop and every dmat*/dmacc* cell live
+;   on VID_PAGE2 (page 70); the DMA lands on DMACC_LAND_PAGE (71, the
+;   upper 8K of withdrawn bank 35 - outside the allocator, no owner,
+;   no equate elsewhere) through the MMU6 window. A DIFFERENT 8K page,
+;   so the DMA can never write the page holding the loop it races, and
+;   dmatDstBuf stays reserved for the compare modes.
+; - Interrupts: the whole calibrate+measure pair runs under ONE DI
+;   (~2s). The 50Hz ISR (or an armed CTC) would otherwise steal cycles
+;   at uncorrelated points in the two windows and pollute the ratio.
+;   The frame clock is the NR $1E/$1F raster-wrap poll
+;   (dmat_raster_tick), which needs no interrupts; nr_read's IFF2
+;   save/restore keeps DI in force across it.
+; - Poll cost budget (the "< 2% of loop time" bound) - fast-path pass:
+;     counted burst   ld b,DMACC_ITER (7T) + djnz spin
+;                     (127*13+8 = 1659T)                     = 1666T
+;     pass counter    ld hl,(nn)+inc hl+ld (nn),hl           =   38T
+;     completion poll in a,(c) 12T + cp 7T + jr 7T           =   26T
+;     cadence check   ld a,l + and n + jr                    =   23T
+;   ~1753T per pass -> poll share 26/1753 ~ 1.5% < 2%; DMACC_ITER=128
+;   is chosen exactly for that bound. Every 16th pass adds
+;   dmat_raster_tick (~400T, ~25T amortized) - identical in BOTH
+;   phases, so it cancels out of the ratio (the calibrate loop also
+;   executes a dead completion poll for full cost parity).
+; - Detection latency: <= one pass (~1.8kT) against ~11.7kT per 512B
+;   block at the measured ~1219KB/s burst wire rate, so the DMA idles
+;   up to ~15% of a block awaiting service - the KB/S column therefore
+;   UNDERSTATES the pure overlap ceiling slightly (card notes it); the
+;   CPU% column is unaffected by that idle tail.
+; - Counter width: baseline ~ 50 frames x ~559kT / ~1.78kT ~ 15,700
+;   passes - fits 16 bits with 4x margin. CPU% is computed by scaling
+;   base and conc right together until both fit 9 bits (conc'*100 <=
+;   51,100 stays 16-bit for div16; base' >= 256 keeps quantization
+;   error under ~0.4%).
+; - Window sync: each phase starts on a raster wrap (dmacc_sync,
+;   bounded), so both windows are the same 50 whole frames rather than
+;   49-and-a-fraction vs 50-and-a-fraction.
+; Bounded waits (rubric 6): token 65536 (dmat_token_wait), sync 65536
+; tick polls (~47 frames), and the measure window itself is the hard
+; bound on completion - burst mode releases the bus by design, so the
+; counting loop always reaches its raster ticks; a window that moves
+; ZERO blocks reports a TMO tag instead of hanging. Early SD errors
+; report CMD/TOK-tagged rows with whatever partial figures ran.
+; ---------------------------------------------------------------------
+
+DMACC_LAND_PAGE equ VID_PAGE2+1 ; = 71: upper 8K of withdrawn bank 35.
+                                 ; bank_table_init never frees bank 35
+                                 ; (pool restarts at BANK_POOL_B=36) and
+                                 ; only page 70 (VID_PAGE2) carries
+                                 ; content - page 71 is unowned RAM, the
+                                 ; DMA landing zone (see hazard note)
+DMACC_FRAMES    equ 50          ; window length per phase, raster frames
+DMACC_ITER      equ 128         ; djnz iterations per counted pass (the
+                                 ; poll-budget comment's N)
+DMACC_TICK_MASK equ 15          ; raster tick every 16th pass (~51kT -
+                                 ; ~11 samples per ~559kT frame). Wrap-
+                                 ; miss safe even in the worst bus-hog
+                                 ; case: at most ONE in-flight block can
+                                 ; stall each pass (completions are
+                                 ; serviced once per pass), so a 16-pass
+                                 ; stretch is bounded by ~16 x (1753T +
+                                 ; ~11.7kT steal) + 16 glues ~ 250kT -
+                                 ; still >= 2 raster samples per frame
+
+; Mode 6 entry. Program comes from flags+249 like the rate mode
+; (test.dsf's DMACC sends 1 = burst, the designed leg - the only mode
+; that releases the bus mid-block; 0/2/3 are accepted as owner control
+; runs, where continuous freezes the CPU for each whole transfer by
+; design and should floor CPU%). Corrupts everything.
+dmat_mode_cc:
+    ld a, (dmatProg)
+    cp 4
+    jr c, .progok
+    ld a, 1                     ; out of range: burst
+.progok:
+    ld hl, DATA_WINDOW          ; DMA dest = MMU6 window -> page 71
+    ld (dmatDest), hl
+    call dmat_prog_sel
+    call data_save
+    ld a, DMACC_LAND_PAGE
+    call data_map_page
+    di                          ; ONE DI over both windows (see header)
+    ; ---- calibrate: 50 frames, no DMA ----
+    call dmacc_sync
+    jr c, .syncfail
+    call dmacc_count_cal
+    ld hl, (dmaccCnt)
+    ld (dmaccBase), hl
+    ; ---- measure: 50 frames, burst transfers overlapped ----
+    xor a
+    ld (dmaccStat), a           ; 0 clean/1 CMD/2 token/3 zero blocks
+    ld hl, 0
+    ld (dmaccBlocks), hl
+    ld (dmaccRun), hl
+    call dmat_win_open
+    jr c, .cmdfail
+    call dmacc_sync
+    jr c, .syncfail2
+    call dmacc_block_start      ; launch block 1 (uncounted glue)
+    jr nc, .run
+    ld a, 2
+    ld (dmaccStat), a
+    jr .winddown
+.run:
+    call dmacc_count_meas       ; sets dmaccStat on early SD aborts
+.winddown:
+    ld a, $83                   ; settle the engine whatever state it
+    out (DMA_PORT), a           ; is in (idempotent - em00k discipline)
+    ld hl, (dmatFrames)
+    ld (dmaccFrames), hl        ; actual window (< 50 on early aborts -
+    ld hl, (dmaccCnt)            ; KB/S stays honest for what ran)
+    ld (dmaccConc), hl
+    call dmat_win_close         ; best-effort CMD12+deselect+MF; safe
+                                 ; after a fail path already closed
+                                 ; (CMD12 to an idle card is ignored,
+                                 ; MF restore is idempotent)
+    ei
+    call data_restore
+    ; zero blocks moved with no earlier SD error = completion was never
+    ; observed at all: tag TMO (detection or transfer failure - the
+    ; BASE/CONC figures are still real)
+    ld hl, (dmaccBlocks)
+    ld a, h
+    or l
+    jr nz, .report
+    ld a, (dmaccStat)
+    or a
+    jr nz, .report
+    ld a, 3
+    ld (dmaccStat), a
+    jr .report
+.syncfail:
+    ei
+    call data_restore
+    xor a
+    ld hl, msgDmaccSyncErr
+    jp dmat_fail_row
+.syncfail2:
+    call dmat_win_close
+    jr .syncfail
+.cmdfail:
+    push af                     ; A = VID_ERR_CMD
+    ei
+    call data_restore
+    pop af
+    ld hl, msgDmatCmdErr
+    jp dmat_fail_row
+.report:
+    ld a, (dmatRow)
+    ld b, a
+    inc a
+    ld (dmatRow), a
+    ld c, 0
+    call dbg_at
+    ld hl, msgDmaccBase
+    call dbg_puts
+    ld hl, (dmaccBase)
+    call dbg_hex16
+    ld hl, msgDmaccConc
+    call dbg_puts
+    ld hl, (dmaccConc)
+    call dbg_hex16
+    ld hl, msgDmaccPct
+    call dbg_puts
+    ; CPU% = conc*100/base via div16, both scaled right together until
+    ; each fits 9 bits (see the header's counter-width note)
+    ld hl, (dmaccBase)
+    ld de, (dmaccConc)
+.scale:
+    ld a, h
+    or d
+    cp 2
+    jr c, .scaled
+    srl h
+    rr l
+    srl d
+    rr e
+    jr .scale
+.scaled:
+    ld a, h
+    or l
+    jr nz, .pct
+    ld a, $FF                   ; base 0 = calibrate never ran -
+    call dbg_hex8                ; impossible short of a bug; printed,
+    jr .blocks                   ; never divided by
+.pct:
+    push hl                     ; base'
+    ld hl, 0
+    ld b, 100
+.m100:
+    add hl, de                  ; conc'*100 <= 51,100 (conc' <= 511)
+    djnz .m100
+    pop de
+    call div16
+    ld a, l
+    call dbg_hex8               ; hex: $64 = 100%
+.blocks:
+    ld hl, msgDmaccBlk
+    call dbg_puts
+    ld hl, (dmaccBlocks)
+    call dbg_hex16
+    ld hl, msgDmatRateKb
+    call dbg_puts
+    ld hl, (dmaccFrames)
+    ld a, h
+    or l
+    jr nz, .rate
+    ld hl, msgDmatFast          ; frames 0: aborted before the first
+    call dbg_puts                ; wrap - nothing to time
+    jr .tag
+.rate:
+    ; KB/s = blocks*25/frames (the rate mode's own formula). Blocks
+    ; clamped to 2621 so *25 stays 16-bit - 50 frames at the SPI wire
+    ; ceiling is ~2600, so the clamp is insurance, not a path.
+    ld hl, (dmaccBlocks)
+    ld de, 2622
+    or a
+    sbc hl, de
+    jr nc, .clamp
+    add hl, de                  ; restore (blocks < 2622)
+    jr .mul
+.clamp:
+    ld hl, 2621
+.mul:
+    ex de, hl
+    ld hl, 0
+    ld b, 25
+.m25:
+    add hl, de
+    djnz .m25
+    ld de, (dmaccFrames)
+    call div16
+    call dbg_hex16
+.tag:
+    ld a, (dmaccStat)
+    or a
+    ret z
+    cp 1
+    ld hl, msgDmaccCmdTag
+    jr z, .pt
+    cp 2
+    ld hl, msgDmatRateTok
+    jr z, .pt
+    ld hl, msgDmatRateTmo
+.pt:
+    jp dbg_puts
+
+; Align a phase start to a raster wrap and zero the phase counters, so
+; both windows are the same DMACC_FRAMES whole frames. Bounded: 65536
+; tick polls (~400T each ~ 47 frames' worth; the wrap must arrive
+; inside one frame on working silicon). Out: CF set = no wrap observed
+; (raster clock dead). Corrupts AF, BC, DE, HL.
+dmacc_sync:
+    call dmat_line_read
+    ld (dmatLinePrev), hl
+    ld hl, 0
+    ld (dmatFrames), hl
+    ld bc, 0                    ; 65536 bounded polls
+.wait:
+    call dmat_raster_tick       ; preserves BC (corrupts AF, DE, HL)
+    ld a, (dmatFrames)
+    or a
+    jr nz, .wrapped
+    dec bc
+    ld a, b
+    or c
+    jr nz, .wait
+    scf
+    ret
+.wrapped:
+    ld hl, 0
+    ld (dmatFrames), hl
+    ld (dmaccCnt), hl
+    or a
+    ret
+
+; CALIBRATE counting loop: passes of DMACC_ITER djnz iterations,
+; counted in dmaccCnt, until DMACC_FRAMES raster wraps. The in a,(c)
+; is a DEAD completion poll for full cost parity with the measure loop
+; (DMA idle here; the jr target is the fall-through either way, so a
+; status byte that happens to read 2 changes nothing but 5T once).
+; In: DI, dmacc_sync just ran. Corrupts AF, BC, DE, HL.
+dmacc_count_cal:
+    ld c, DMA_PORT
+.loop:
+    ld b, DMACC_ITER            ; ---- counted burst ----
+.spin:
+    djnz .spin
+    ld hl, (dmaccCnt)
+    inc hl
+    ld (dmaccCnt), hl
+    in a, (c)                   ; dead poll (cost parity - see header)
+    cp 2
+    jr z, .parity
+.parity:
+    ld a, l
+    and DMACC_TICK_MASK
+    jr nz, .loop
+    call dmat_raster_tick       ; every 16th pass (both phases alike)
+    ld a, (dmatFrames)          ; frames <= 50 < 256: low byte suffices
+    cp DMACC_FRAMES
+    jr c, .loop
+    ret
+
+; MEASURE counting loop: the same skeleton, with the poll LIVE (WR6
+; $BB read mask = byte counter high, armed per block by
+; dmacc_block_start: one in a,(c) reads counter bits 15:8, which read
+; 2 exactly and only at 512 - dmat_burst_wait's own unambiguity
+; argument, halved to a single IN so the poll costs 26T). On
+; completion the uncounted glue runs: settle DMA, CRC skip, account
+; the block, rewind the CMD18 window when the fixture's contiguous run
+; is exhausted (CMD12+CMD18, once per ~1024 blocks - a few hundred
+; microseconds of glue inside a ~1s window), then launch the next
+; block. Exits: raster window complete (a block usually still in
+; flight - caller settles the engine; NOT an error), or SD failure
+; (dmaccStat set, caller reports the tagged partial figures).
+; In: DI, window open, block 1 launched. Corrupts everything.
+dmacc_count_meas:
+    ld c, DMA_PORT
+.loop:
+    ld b, DMACC_ITER            ; ---- counted burst ----
+.spin:
+    djnz .spin
+    ld hl, (dmaccCnt)
+    inc hl
+    ld (dmaccCnt), hl
+    in a, (c)                   ; live poll: byte counter high
+    cp 2
+    jr z, .blockdone
+.cadence:
+    ld a, l
+    and DMACC_TICK_MASK
+    jr nz, .loop
+    call dmat_raster_tick
+    ld a, (dmatFrames)
+    cp DMACC_FRAMES
+    jr c, .loop
+    ret                         ; window complete
+.blockdone:
+    ; ---- uncounted glue ----
+    ld a, $83
+    out (DMA_PORT), a           ; settle (em00k stop discipline)
+    in a, (PORT_SPI_DAT)        ; CRC skip, in-stream (rate mode shape)
+    nop
+    in a, (PORT_SPI_DAT)
+    ld hl, (dmaccBlocks)
+    inc hl
+    ld (dmaccBlocks), hl
+    ld hl, (dmaccRun)
+    inc hl
+    ld (dmaccRun), hl
+    ld de, (dmatRunBlocks)
+    or a
+    sbc hl, de
+    jr c, .next
+    ; contiguous run exhausted: rewind to the run start
+    call dmat_win_close
+    call dmat_win_open
+    jr c, .cmdfail
+    ld hl, 0
+    ld (dmaccRun), hl
+.next:
+    call dmacc_block_start      ; leaves C = DMA_PORT
+    jr c, .tokfail
+    ld hl, (dmaccCnt)           ; reload L for the cadence check
+    jr .cadence
+.cmdfail:
+    ld a, 1
+    ld (dmaccStat), a
+    ret
+.tokfail:
+    ld a, 2
+    ld (dmaccStat), a
+    ret
+
+; One block's launch glue (uncounted): bounded $FE token wait, program
+; otir, then arm the WR6 $BB read mask = %00000100 (byte counter HIGH
+; only) for the measure loop's single-IN completion poll. For the
+; burst program the transfer then runs concurrently; for a continuous
+; control program the otir's final $87 OUT itself blocks until the
+; transfer completes (dmat_run_block's documented behaviour), so the
+; poll sees 512 immediately and CPU% floors - the intended control
+; result. Out: CF set = token timeout (window left open, caller
+; closes); C = DMA_PORT on the clean exit. Corrupts AF, BC, HL.
+dmacc_block_start:
+    call dmat_token_wait
+    ret c
+    ld hl, (dmatProgPtr)
+    ld a, (dmatProgLen)
+    ld b, a
+    ld c, DMA_PORT
+    otir                        ; program + run (B is the length,
+                                 ; otir's own semantics)
+    ld a, $BB                   ; WR6: read mask follows (proven live
+    out (DMA_PORT), a            ; mid-burst by dmat_burst_wait)
+    ld a, %00000100             ; mask: byte counter high only
+    out (DMA_PORT), a
+    or a                        ; CF clear (C still DMA_PORT after otir)
+    ret
+
+; ---------------------------------------------------------------------
 ; DMA programs. All transfer 512 bytes A->B, Port A = the SPI data port
 ; ($EB, IO, fixed address), Port B = memory incrementing (start address
 ; patched by dmat_prog_sel). dmat_prog_orig is byte-for-byte the
@@ -5544,6 +5972,12 @@ msgDmatRateKb:  db " KB/S=", 0
 msgDmatFast:    db "FAST", 0
 msgDmatRateTok: db " TOK", 0
 msgDmatRateTmo: db " TMO", 0
+msgDmaccBase:   db "BASE=", 0
+msgDmaccConc:   db " CONC=", 0
+msgDmaccPct:    db " CPU%=", 0
+msgDmaccBlk:    db " B=", 0
+msgDmaccCmdTag: db " CMD", 0
+msgDmaccSyncErr: db "SYNC ERR ", 0
 dmatName:       db "001.VID", 0  ; the N0 fixture (build-tests -Vid) -
                                   ; biggest file, so the rate mode's 1024
                                   ; contiguous blocks are usually there
@@ -5566,6 +6000,13 @@ dmatBlocksDone: dw 0
 dmatFrames:     dw 0
 dmatLinePrev:   dw 0
 dmatRateFlag:   db 0
+dmaccCnt:       dw 0             ; counted passes (current phase)
+dmaccBase:      dw 0             ; calibrate passes (100% baseline)
+dmaccConc:      dw 0             ; measure passes (concurrent)
+dmaccBlocks:    dw 0             ; blocks moved during the window
+dmaccRun:       dw 0             ; blocks since the last CMD18 (rewind)
+dmaccFrames:    dw 0             ; actual measure window in frames
+dmaccStat:      db 0             ; 0 clean/1 CMD/2 token/3 zero blocks
 dmatRefBuf:     ds 512
     ALIGN 256                    ; dest & $FF must equal the sweep offset
 dmatDstBuf:     ds 768           ; 512 + max offset 255 (256-aligned)

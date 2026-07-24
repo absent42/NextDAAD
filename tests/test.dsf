@@ -214,6 +214,9 @@ KTEST 101     verb
 ; DMAT1/DMAT4/DMAT2 are the hypothesis legs H3/H1/H4/H2 (dest-alignment
 ; sweep / original re-run / burst init / pacing pair) and DMARC/DMARB/
 ; DMARP the sustained-rate legs (continuous/burst/prescaler program).
+; DMACC is the burst CPU-concurrency probe (does the CPU keep running
+; while a burst DMA-from-SPI transfer is in flight? - the SP15 fetch-
+; overlap question; bench card section 35).
 ; DEBUG builds only - Release's EXTERN 0 8 is ext_stub (silent no-op).
 ; See PRO 5's entries and src/video.asm's dmat_entry block header.
 DMAT3 102     verb
@@ -223,6 +226,7 @@ DMAT2 105     verb
 DMARC 106     verb
 DMARB 107     verb
 DMARP 108     verb
+DMACC 109     verb
 
 ;                       Verbs
 GET     20      verb
@@ -676,10 +680,11 @@ $pictureOK
                 DONE
 
 ; SP14a DMA autopsy bench verbs (src/video.asm dmat_entry; owner bench
-; card: .superpowers/sdd/sp14a-task-4-report.md section 34). flag 250 =
-; sub-mode (1 = H3 dest-alignment sweep, 2 = H1 original re-run, 3 =
-; H4 burst init, 4 = H2 pacing pair, 5 = sustained rate), flag 249 =
-; rate-mode DMA program (0 continuous-original / 1 burst / 2
+; card: .superpowers/sdd/sp14a-task-4-report.md section 34; DMACC card
+; section 35). flag 250 = sub-mode (1 = H3 dest-alignment sweep, 2 =
+; H1 original re-run, 3 = H4 burst init, 4 = H2 pacing pair, 5 =
+; sustained rate, 6 = CPU-concurrency), flag 249 = rate/concurrency
+; DMA program (0 continuous-original / 1 burst / 2
 ; prescaler); both self-clear inside dmat_entry, the video stage
 ; ladder's own convention for these flags. All route through EXTERN
 ; 0 8 -> extVec vector 8 (overlay0.asm's dmat_trampoline, DEBUG only -
@@ -714,6 +719,11 @@ $pictureOK
 
 > DMARP   _     LET 249 2
                 LET 250 5
+                EXTERN 0 8
+                DONE
+
+> DMACC   _     LET 249 1
+                LET 250 6
                 EXTERN 0 8
                 DONE
 
