@@ -4588,13 +4588,14 @@ vidErrByteL:     db 0             ; mirrors vidErrByte - see that cell's
 ;     into pool banks (bank_alloc, both 8K pages of each bank) via
 ;     esxDOS F_READ through the MMU6 window - the ddb_load pattern.
 ;   - Decode source = MMU6 window ($C000, page list walked as the
-;     cursor crosses 8K boundaries). Decode dest = the REAL Layer 2
-;     surface through a borrowed MMU2 window ($4000-$5FFF, saved/
+;     cursor crosses 8K boundaries). Decode dest = the game's BACK
+;     (hidden) Layer 2 surface (l2BackBank * 2 - see nxb_disp_set's
+;     header; the displayed surface and the tilemap readout are never
+;     painted) through a borrowed MMU2 window ($4000-$5FFF, saved/
 ;     restored; nothing else touches $4000-$5FFF during a row: the
 ;     50Hz im2_isr fast path touches only AF/HL/frameCounter
 ;     (interrupts.asm ISR contract), audEnable is frozen for armed
 ;     rows, and the bench prints only after windows are restored).
-;     Front surface pages = NR $12 bank * 2, hidden = NR $13 bank * 2
 ;     (doc 11's MMU model; rubric 3: every cross-page access here goes
 ;     through an explicitly mapped window).
 ;   - Op dispatch: bounded jump-slot table entered through a low-byte
@@ -4663,7 +4664,8 @@ vidErrByteL:     db 0             ; mirrors vidErrByte - see that cell's
 ;
 ; Dispatch: extVec vector 8 (overlay0.asm nxben_trampoline, DEBUG
 ; only) -> nxben_entry, flags+250 = mode, flags+249 = param (bit 0 =
-; display mode 0/1, bit 1 = audio armed where applicable), both set by
+; surface span: 0 = mode-0 shape (6 pages) / 1 = mode-1 shape (10
+; pages), bit 1 = audio armed where applicable), both set by
 ; test.dsf LETs before the shared EXTERN 0 8 and self-cleared here
 ; (the established stage-ladder flag convention). Modes:
 ;   1 NXBD   dispatch row (NXB0 op-soup)            row SOU
@@ -4701,7 +4703,6 @@ NXB_NR_LINE_LSB  equ $1F    ; active video line, bits 7:0
 NXB_NR_CORE_VER  equ $01    ; core version major.minor (hex nibbles)
 NXB_NR_CORE_SUB  equ $0E    ; core version sub minor
 NXB_NR_MMU2      equ $52    ; slot 2 ($4000-$5FFF): the borrowed dest window
-NXB_NR_L2_SHADOW equ $13    ; Layer 2 shadow (hidden) 16K bank
 NXB_SRC_WIN      equ DATA_WINDOW ; $C000: MMU6 source window
 NXB_DST_WIN      equ $4000  ; MMU2 dest window base
 NXB_CTC_TC       equ 112    ; 28MHz/16/112 = 15625Hz (video stereo rate)
@@ -4842,7 +4843,7 @@ nxb_mode_dispatch:
     ld hl, tagSOU
     call nxb_run_row
     call nxb_free
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 
 ; Mode 2: skip rows - NXB5 (SKIP8 soup) then NXB6 (SKIP16).
@@ -4865,7 +4866,7 @@ nxb_mode_skip:
     ld hl, tagS16
     call nxb_run_row
     call nxb_free
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 
 ; Mode 3: RUN CPU rows - NXB1 (RUN8) and NXB2 (RUN16), each through
@@ -4900,7 +4901,7 @@ nxb_mode_runcpu:
     ld hl, tagR6P
     call nxb_run_row
     call nxb_free
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 
 ; Mode 4: RUN DMA rows - NXB2 through the zxnDMA fill at chunk caps
@@ -4929,11 +4930,11 @@ nxb_mode_rundma:
     ld hl, tagRD3
     call nxb_run_row
     call nxb_free
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 
 ; Mode 5: COPY CPU rows - NXB3 (COPY8) then NXB4 (COPY16), LDI kernel.
-; param bit 0 = display mode (0 = 256x192 mode-0, 1 = 320x256 mode-1).
+; param bit 0 = surface span (0 = mode-0 shape, 1 = mode-1 shape).
 nxb_mode_copycpu:
     call nxb_disp_set
     call nxb_cfg_cpu
@@ -4951,11 +4952,11 @@ nxb_mode_copycpu:
     ld hl, tagC16
     call nxb_run_row
     call nxb_free
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 
 ; Mode 6: COPY DMA rows - NXB4 through the mem-to-mem DMA copy at
-; chunk caps 64/128/256/512. param bit 0 = display mode, bit 1 =
+; chunk caps 64/128/256/512. param bit 0 = surface span, bit 1 =
 ; audio armed (the CTC replica ISR ticking through every chunk's DI
 ; bracket - the decisive interplay measurement).
 nxb_mode_copydma:
@@ -4992,13 +4993,13 @@ nxb_mode_copydma:
     or a
     call nz, nxb_audio_disarm
     call nxb_free
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 
 ; Mode 7: keyframe rows, ALWAYS audio-armed - NXB7 (KSTART + one 43KB
 ; COPY16 + KFLIP) via DMA copy at chunk 256 (the shape-A collapse
 ; question), then NXB9 (KSTART+KFLIP micro) for the flip op cost.
-; param bit 0 = display mode.
+; param bit 0 = surface span.
 ; Loads strictly precede arming: the replica ISR owns IX while armed
 ; (it ADVANCES IX every tick), and nxb_load's esxDOS calls pass
 ; pointers in IX - the two cannot overlap.
@@ -5030,7 +5031,7 @@ nxb_mode_keyframe:
     call nxb_run_row
     call nxb_audio_disarm
     call nxb_free
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 
 ; Mode 8: per-frame fixed cost - a synthesized 1-byte FEND payload in
@@ -5057,13 +5058,13 @@ nxb_mode_fend:
     ld hl, tagFE
     call nxb_run_row
     call nxb_free
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 .nobank:
     ld hl, msgNxbBank
     xor a
     call nxb_fail_row
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 
 ; Mode 9: real segment playback - NXB8 (consecutive real frame
@@ -5083,7 +5084,7 @@ nxb_mode_segment:
     ld hl, tagSEG
     call nxb_run_row
     call nxb_free
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 
 ; Shared load-failure tail (A = esxDOS/alloc error code from nxb_load).
@@ -5091,7 +5092,7 @@ nxb_load_fail:
     ld hl, msgNxbLoad
     call nxb_fail_row
     call nxb_free                ; release any banks the partial load took
-    call nxb_disp_restore
+    call nxb_dest_cleanup
     jp nxb_exit
 
 ; CPU kernel config: no DMA cap, unrolled fill, LDI copy.
@@ -5104,53 +5105,39 @@ nxb_cfg_cpu:
     ret
 
 ; =====================================================================
-; Display/dest setup. Reads the param's display-mode bit, saves and
-; sets NR $70 (resolution bits 5-4) and NR $69 (bit 7 Layer 2 visible
-; - display fetch active = realistic bus conditions), derives the
-; front/hidden surface page bases from NR $12/$13 (16K bank * 2) and
-; the per-surface page counts (mode-0: 48K = 6 pages; mode-1: 80K =
-; 10 pages). The bench paints the VISIBLE surface deliberately -
-; garbage on screen during a row is expected and stated on the card.
+; Dest-surface setup (owner-leg fix, 2026-07-24: the first cut painted
+; the VISIBLE front surface, garbling the display and obscuring the
+; tilemap readout). The bench now paints the game's BACK (hidden)
+; Layer 2 surface: l2BackBank (RESIDENT, gfxcache.asm, build-time
+; init BANK_L2BACK_FIRST = 30 - the gfx engine's own double-buffer
+; draw target). Same memory class, same MMU banking, identical
+; T-cost as the front surface, but never displayed - the readout and
+; the game picture stay untouched. BOTH the ordinary paint target and
+; the KSTART "hidden" target resolve to this one back surface; the
+; two role cells still exist and still swap at KFLIP (cost parity -
+; deliberately swapping two equal values, so the TIMED code is
+; unchanged by this fix). Display state is NOT touched: no NR $70/
+; $69/$12/$13 writes here - NR $12 is READ once so nxb_op_kflip's
+; cost-parity write rewrites the current value. param bit 0 now
+; selects only the surface page span (mode-0 shape: 6 pages / mode-1
+; shape: 10 pages); the display-fetch-interference question the old
+; mode flip probed is RTL-settled as absent (docs 01/11), and a
+; readable readout outranks re-proving it. nxb_dest_cleanup (below)
+; zero-fills the touched pages after the rows, outside every timed
+; region, so no residue can surface if the game later flips.
 ; =====================================================================
 nxb_disp_set:
     ld a, (nxbParam)
     and 1
     ld (nxbDispMode), a
-    ld e, NR_L2_CTRL
-    call nr_read
-    ld (nxbSvNr70), a
-    and %11001111                ; clear resolution bits 5-4
-    ld b, a
-    ld a, (nxbDispMode)
-    or a
-    jr z, .m0
-    set 4, b                     ; %01 = 320x256 mode-1
-.m0:
-    ld a, b
-    nextreg NR_L2_CTRL, a
-    ld e, NR_DISPLAY_CTRL
-    call nr_read
-    ld (nxbSvNr69), a
-    or $80                       ; Layer 2 visible
-    nextreg NR_DISPLAY_CTRL, a
     ld e, NR_L2_BANK
     call nr_read
-    ld (nxbSvNr12), a
-    add a, a
-    ld (nxbBaseFront), a
-    ld e, NXB_NR_L2_SHADOW
-    call nr_read
-    or a
-    jr nz, .sh                   ; shadow unset (0 = system bank): the
-    ld a, (nxbSvNr12)            ; hidden surface FALLS BACK to the
-                                  ; front bank - painting "hidden" then
-                                  ; paints the visible surface, which
-                                  ; is cost-identical (card notes it);
-                                  ; never page 0 (rubric: a wild write
-                                  ; there lands on system RAM)
-.sh:
-    add a, a
-    ld (nxbBaseHidden), a
+    ld (nxbSvNr12), a            ; read-only capture for KFLIP's
+                                  ; same-value cost-parity write
+    ld a, (l2BackBank)
+    add a, a                     ; 16K bank -> first 8K page
+    ld (nxbBaseFront), a         ; ordinary paint target = BACK surface
+    ld (nxbBaseHidden), a        ; KSTART target = the same back surface
     ld a, (nxbDispMode)
     or a
     ld a, 6
@@ -5162,16 +5149,33 @@ nxb_disp_set:
     ld a, (nxbBaseFront)
     add a, b
     ld (nxbEndFront), a
-    ld a, (nxbBaseHidden)
-    add a, b
     ld (nxbEndHidden), a
     ret
 
-nxb_disp_restore:
-    ld a, (nxbSvNr70)
-    nextreg NR_L2_CTRL, a
-    ld a, (nxbSvNr69)
-    nextreg NR_DISPLAY_CTRL, a
+; Zero-fill the back-surface pages the rows painted (all nxbPagesN,
+; from the fresh l2BackBank base - not the KFLIP-swapped role cells).
+; Runs after a mode's rows / on its error tails, OUTSIDE every timed
+; region. The gfx engine's draw-before-flip discipline would mask
+; residue anyway; this makes it structural. Corrupts AF, BC, DE, HL.
+nxb_dest_cleanup:
+    ld a, (l2BackBank)
+    add a, a
+    ld b, a                      ; B = page cursor
+    ld a, (nxbPagesN)
+    ld c, a                      ; C = pages left
+.page:
+    ld a, b
+    nextreg NXB_NR_MMU2, a
+    push bc
+    ld hl, NXB_DST_WIN
+    ld (hl), 0
+    ld de, NXB_DST_WIN+1
+    ld bc, $1FFF
+    ldir                         ; 8K self-propagating zero fill
+    pop bc
+    inc b
+    dec c
+    jr nz, .page
     ret
 
 ; =====================================================================
@@ -6719,8 +6723,6 @@ nxbSvAudEnable: db 0             ; arm/disarm nesting save (always 0 -
 nxbSvAudMain:  db 0              ; entry/exit save of the true value
 nxbSvStub:     dw 0
 nxbSvMMU2:     db 0
-nxbSvNr70:     db 0
-nxbSvNr69:     db 0
 nxbSvNr12:     db 0
 nxbPfStat:     db 0              ; 0 clean / 1 CMD / 2 token
 nxbCardFlags:  db 0

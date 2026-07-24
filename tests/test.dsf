@@ -692,8 +692,10 @@ $pictureOK
 ; 36). flag 250 = mode (1 dispatch soup / 2 skip / 3 RUN CPU / 4 RUN
 ; DMA / 5 COPY CPU / 6 COPY DMA / 7 keyframe / 8 per-frame fixed /
 ; 9 real segment / 10 ring-prefetch probe), flag 249 = param (bit 0 =
-; display mode: 0 = 256x192 mode-0, 1 = 320x256 mode-1; bit 1 = audio
-; armed, modes 6 - mode 7 always arms). Both self-clear inside
+; surface span: 0 = mode-0 shape (6 pages), 1 = mode-1 shape (10
+; pages) - all painting targets the HIDDEN back surface (l2BackBank),
+; display untouched; bit 1 = audio armed, modes 6 - mode 7 always
+; arms). Both self-clear inside
 ; nxben_entry (the stage-ladder flag convention). All route through
 ; EXTERN 0 8 -> extVec vector 8 (overlay0.asm's nxben_trampoline,
 ; DEBUG only - Release's vector 8 stays ext_stub, silent no-ops).
