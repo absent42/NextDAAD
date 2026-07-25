@@ -1,7 +1,8 @@
 ; NextDAAD code page: video (NXV v2 delta-video player, SP15 Task 3
-; stage 3a - the v1 player is DELETED; git holds it).
+; stages 3a resident + 3b ring streaming - the v1 player is DELETED;
+; git holds it).
 ;
-; PAGE LAYOUT (SP15 3a redesign - this header is the layout authority):
+; PAGE LAYOUT (SP15 3a redesign + 3b streaming - the layout authority):
 ;
 ;   VID_PAGE (59, MMU7 while any video code runs, $E000-$F7FF) - HOT:
 ;     everything that can execute while the video CTC ISR is armed.
@@ -10,24 +11,27 @@
 ;     $E040..      decode kernels (computed-entry fill/LDI blocks,
 ;                  ALIGN 64), fast op handlers (flat + gapped sets),
 ;                  central dispatch, chunked bodies, DMA arm blocks,
-;                  seam walkers, PAL/KSTART/KFLIP/FEND handlers
+;                  seam walkers (streaming-aware: circular wrap +
+;                  walk bound), PAL/KSTART/KFLIP/FEND handlers
 ;     then         vid_decode_frame / vid_src_seek / vid_aud_copy,
 ;                  vid_play / vid_run + the frame loop, vid_key_any,
-;                  the two audio CTC ISRs, DEBUG timeline stamp
-;     then         hot cells (vidAudBuf 2560B, ring bank list, vidSv*)
+;                  the two audio CTC ISRs (3b: double-buffer swap
+;                  tails), the 3b STREAMING PRODUCER + hot SD cluster
+;                  (gate/prod_step/win/cmd/block - see its banner),
+;                  DEBUG timeline stamp
+;     then         hot cells (vidAudBuf 2x1280B halves, ring bank
+;                  list, streaming session cells, hot filemap, vidSv*)
 ;
 ;   VID_PAGE2 (70, $E000-$F7FF) - COLD (pre-arm / post-disarm only):
-;     nxv2_open_body (v2 header validate + ring alloc + resident
-;     load), vid_run_entry_body / vid_run_l2setup_body /
+;     nxv2_open_body (v2 header validate + ring alloc + delivery
+;     decision + resident load / streaming ring PREFILL + hot
+;     staging), vid_run_entry_body / vid_run_l2setup_body /
 ;     vid_run_restore_body (EXIT ORDER FIX lives there), the esxDOS
 ;     open cluster (vid_open_video_body / vid_stream_open_body /
-;     vid_raw_setup), and the WHOLE SD streaming cluster
-;     (vid_stream_read + raw CMD18 machinery) - moved off the hot
-;     page wholesale: stage 3a plays RESIDENT ONLY, so no SD code
-;     ever runs while the CTC is armed. 3b PARTS BIN: the streaming
-;     cluster is kept intact and clearly marked - the 3b prefetch
-;     producer re-hots what it needs (see the cluster's own banner).
-;     DEBUG: the timeline report body.
+;     vid_raw_setup), and the cold SD streaming cluster
+;     (vid_stream_read raw CMD18 machinery) - serves the pre-arm
+;     load/prefill only; the ARMED session runs on the hot clones
+;     (see the cluster banner). DEBUG: the timeline report body.
 ;
 ; ONE RULE (unchanged from every prior video task): MMU7 = VID_PAGE for
 ; the entire window the video CTC ISR can fire (from the time-constant
@@ -41,6 +45,13 @@
 ; im2_isr fast path is AF/HL/frameCounter only, the video CTC ISR is
 ; AF/IX only, and nothing prints while a video plays).
 ;
+; THIRD RULE (new, 3b): while a STREAMING session is armed, the CMD18
+; window may be open across frames and the Multiface is disabled for
+; its whole open span - no other filesystem/SD access can happen
+; (structurally true: audEnable is frozen, nothing else runs), and the
+; hot producer owns every window/run/MF cell (the cold twins hand off
+; at .strm_loaded and take nothing back until teardown).
+;
 ; Format authority: docs/superpowers/plans/2026-07-23-sp15-nxv2.md
 ; (FROZEN 2026-07-25); nextdaad.inc's NXV2_* block is the player-side
 ; transcription; authoring-kit/lib/nxv2dec.py is the executable spec.
@@ -51,13 +62,19 @@
 ;      with AND $C3 and rejects nonzero (VID_ERR_OP) - only offsets
 ;      $00-$3C, multiples of 4, can reach the stub block, whose $24/
 ;      $2C/$30-$3C slots are error stubs. Cost: +14T per op (AND 7T +
-;      untaken JR 7T; ~+16T at 28MHz with wait states) - ~1.5-4% of
-;      the settled per-op envelopes, bounded by design.
+;      untaken JR 7T; ~+16T at 28MHz with wait states) = 3.6-5.2% of
+;      the settled 267-387T per-op envelopes (and ~0.5% of a
+;      transfer-dominated real frame), bounded by design.
 ;   2. Early-FEND tail semantics: the decoder only writes what ops
 ;      write - no surface clears anywhere - so an early FEND leaves
 ;      the untouched frame tail exactly as it stands (patch-in-place).
 ;   3. DMA chunks <= 256B: every chunk path is capped at NXV2_DMA_CHUNK
 ;      by vid_chunk_dst/vid_chunk_all before a DMA kernel can see it.
+; CORRUPT-INPUT DIVERGENCE NOTE (3b carried minor): a RUN8/COPY8 with
+; n = 0 is a SILENT NO-OP here (the kernels' structural zero-count
+; guards) where nxv2dec raises. The encoder never emits n = 0, so the
+; divergence is reachable only on corrupt input, where this player's
+; contract is "abort or benign no-op, never UB" - not output equality.
 ; KF-INHERIT CAVEAT (freeze caveat (a)): KSTART performs NO visible->
 ; hidden inherit copy - keyframe spans are encoder-guaranteed FULL
 ; repaints (every pixel covered across the span), so the composition
@@ -768,10 +785,26 @@ vid_chunk_src:
 ; ---------------------------------------------------------------------
 ; Advance to the next ring page (source). Preserves BC, DE; corrupts
 ; AF; HL rebased by -$2000. Ring pages alternate bank*2 / bank*2+1
-; through the allocated bank list; running off the list = the payload
-; overran the loaded file (clean abort - rubric 6: every walk bounded).
+; through the allocated bank list. RESIDENT: running off the list =
+; the payload overran the loaded file (clean abort). STREAMING: the
+; list is CIRCULAR (the producer guarantees the data ahead - the
+; frame-top gate holds until a whole frame section is buffered), so
+; the walk wraps to bank 0 instead; the per-seek walk counter bounds
+; a corrupt payload that would otherwise orbit the ring forever
+; (rubric 6: every walk bounded either way).
 vid_src_next:
     push bc
+    ld a, (vidStreaming)
+    or a
+    jr z, .step
+    ld a, (vidSrcWalks)
+    inc a
+    ld (vidSrcWalks), a
+    ld c, a
+    ld a, (vidWalkMax)
+    cp c
+    jr c, .ovr                   ; walks > bound: corrupt payload
+.step:
     ld a, (vidSrcParity)
     xor 1
     ld (vidSrcParity), a
@@ -786,8 +819,12 @@ vid_src_next:
     ld a, (vidRingBankCnt)
     dec a
     cp c
-    jr c, .ovr                   ; idx > last bank (store stays dead:
-                                  ; bank index unchanged on abort)
+    jr nc, .idxok                ; idx <= last bank
+    ld a, (vidStreaming)         ; past the list end: circular when
+    or a                         ; streaming, overrun when resident
+    jr z, .ovr                   ; (store stays dead: bank index
+    ld c, 0                      ; unchanged on abort)
+.idxok:
     ld a, c
     ld (vidSrcBankIdx), a
     push hl
@@ -1001,6 +1038,10 @@ vid_dec_done:
     and $FE
     ld h, a
     ld l, 0
+    ld a, (vidStreaming)
+    or a
+    jp nz, vid_dec_done_strm     ; B:HL = rounded RING position there
+.bound:
     ; bounds: pos <= fileEnd (== on the last frame)
     ld a, (vidFileEnd+2)
     cp b
@@ -1028,6 +1069,80 @@ vid_dec_done:
  ENDIF
     ld a, VID_ERR_SRCOVR
     jp vid_dec_abort_pos
+
+; Streaming terminal tail: B:HL = the rounded-up RING-linear position
+; the payload ended at (<= ringBytes: the round-up may land exactly on
+; the wrap point - the mod folds it to 0). Derives the consumed byte
+; count (mod ringBytes, valid because rlStart is block-aligned and one
+; payload is far smaller than the ring), advances the ring cursor and
+; the depth gauge, then hands the FILE-relative candidate position to
+; vid_dec_done's shared bound check (the terminal op stays pushed).
+vid_dec_done_strm:
+    ld (vidRlNew), hl
+    ld a, b
+    ld (vidRlNew+2), a
+    call vid_rl_mod              ; new ring cursor (mod) -> vidRingRl
+    ; consumed = vidRlNew - vidRlStart (mod ringBytes)
+    ld hl, (vidRlNew)
+    ld de, (vidRlStart)
+    or a
+    sbc hl, de
+    ld a, (vidRlStart+2)
+    ld c, a
+    ld a, (vidRlNew+2)
+    sbc a, c                     ; A:HL = diff (borrow = wrapped)
+    jr nc, .cons
+    ld de, (vidRingBytes)
+    add hl, de
+    ld c, a
+    ld a, (vidRingBytes+2)
+    adc a, c
+.cons:                           ; A:HL = consumed (512-multiple, > 0)
+    ld d, a                      ; D = consumed[23:16] (kept)
+    ld b, a                      ; blocks = consumed >> 9 = (A:H) >> 1
+    ld a, h
+    srl b
+    rra
+    ld c, a                      ; BC = consumed blocks
+    push hl
+    push de
+    ld hl, (vidRingDepth)
+    or a
+    sbc hl, bc
+    ld (vidRingDepth), hl
+    pop de
+    pop hl
+    ; framePos += consumed -> the shared bound check (B:HL candidate)
+    ld bc, (vidFramePos)
+    add hl, bc
+    ld a, (vidFramePos+2)
+    adc a, d
+    ld b, a
+    jp vid_dec_done.bound
+
+; Fold a ring-linear position (A:HL, < 2*ringBytes) into the ring:
+; one conditional ringBytes subtract, stored to vidRingRl. Corrupts
+; AF, BC, DE, HL.
+vid_rl_mod:
+    ld de, (vidRingBytes)
+    ld b, a
+    ld a, (vidRingBytes+2)
+    ld c, a                      ; C:DE = ringBytes
+    ld a, b
+    push hl
+    or a
+    sbc hl, de
+    sbc a, c
+    jr c, .keep                  ; pos < ringBytes: keep as-is
+    pop de                       ; discard the saved copy
+    jr .store                    ; A:HL = pos - ringBytes
+.keep:
+    pop hl
+    ld a, b
+.store:
+    ld (vidRingRl), hl
+    ld (vidRingRl+2), a
+    ret
 
 ; ---------------------------------------------------------------------
 ; zxnDMA kernels (graduated NXBEN persistent-descriptor scheme; doc
@@ -1160,11 +1275,20 @@ vid_decode_frame:
     jp vid_next                  ; terminal handlers ret to our caller
 
 ; ---------------------------------------------------------------------
-; vid_src_seek - map the ring page holding vidFramePos and derive the
-; window cursor. Out: HL = VID_SRC_WIN + (pos & $1FFF), MMU6 mapped,
-; vidSrcBankIdx/Parity/CurPage current. Corrupts AF, BC.
+; vid_src_seek - map the ring page holding the consumer cursor and
+; derive the window cursor. RESIDENT: the cursor IS vidFramePos (the
+; ring holds the whole file at identity offsets). STREAMING: the
+; cursor is vidRingRl, the ring-linear offset (< ringBytes) the
+; circular producer/consumer arithmetic maintains - the seek also
+; spills it to vidRlStart (vid_dec_done's consumed-bytes base) and
+; resets the per-seek source page-walk bound. Out: HL = VID_SRC_WIN +
+; (cur & $1FFF), MMU6 mapped, vidSrcBankIdx/Parity/CurPage current.
+; Corrupts AF, BC.
 ; ---------------------------------------------------------------------
 vid_src_seek:
+    ld a, (vidStreaming)
+    or a
+    jr nz, .ring
     ld a, (vidFramePos+2)
     add a, a
     add a, a
@@ -1200,19 +1324,63 @@ vid_src_seek:
     ld a, (vidFramePos)
     ld l, a                      ; HL = window cursor
     ret
+.ring:
+    ; ring-linear cursor -> window (streaming). pageLin = rl >> 13.
+    ld hl, (vidRingRl)           ; L = b0, H = b1
+    ld a, (vidRingRl+2)
+    ld (vidRlStart), hl
+    ld (vidRlStart+2), a
+    add a, a
+    add a, a
+    add a, a
+    ld b, a                      ; b2 << 3
+    ld a, h
+    rlca
+    rlca
+    rlca
+    and 7
+    or b                         ; A = linear ring page (0..159)
+    ld c, a
+    srl a
+    ld (vidSrcBankIdx), a        ; bank index = pageLin >> 1
+    ld b, a
+    ld a, c
+    and 1
+    ld (vidSrcParity), a
+    push hl
+    ld hl, vidRingBanks
+    ld a, b
+    add hl, a                    ; Z80N (doc 05)
+    ld a, (hl)
+    pop hl
+    add a, a
+    ld b, a
+    ld a, (vidSrcParity)
+    or b                         ; page = bank*2 + parity
+    ld (vidSrcCurPage), a
+    nextreg NR_MMU6, a
+    ld a, h
+    and $1F
+    or $C0
+    ld h, a                      ; HL = $C000 | (rl & $1FFF)
+    xor a
+    ld (vidSrcWalks), a          ; per-seek page-walk bound reset
+    ret
 
 ; ---------------------------------------------------------------------
-; vid_aud_copy - copy this frame's REAL audio bytes from the ring at
-; vidFramePos into the ISR-resident vidAudBuf (LDIR, seam-walked),
-; then advance vidFramePos by the padded block size. Safe with no DI
-; (the ISR is holding at the end marker - pace already passed; a torn
-; read is at most one imperceptible tick, the v1-proven argument).
+; vid_aud_copy - copy the NEXT-to-play frame's REAL audio bytes from
+; the ring at vidFramePos into the IDLE vidAudBuf half (LDIR,
+; seam-walked), advance the cursors (vidFramePos; streaming also the
+; ring-linear cursor + depth), then QUEUE the filled half for the ISR
+; (vidAudNextPtr/End, vidAudNextRdy LAST - the release store) and
+; toggle the fill half. The ISR never reads the half being filled
+; (double buffer), so the 3a torn-read argument is now structural.
 ; Corrupts AF, BC, DE, HL. Errors (a corrupt file whose audio runs
-; off the ring) abort via vid_src_next's own bounds check.
+; off the ring) abort via vid_src_next's own bounds checks.
 ; ---------------------------------------------------------------------
 vid_aud_copy:
     call vid_src_seek
-    ld de, vidAudBuf
+    ld de, (vidAudFillPtr)
     ld bc, (vidABytes)
 .seg:
     ld (vidAudNeed), bc
@@ -1246,9 +1414,43 @@ vid_aud_copy:
     ld bc, (vidABytesPad)
     add hl, bc
     ld (vidFramePos), hl
-    ret nc
+    jr nc, .noc
     ld hl, vidFramePos+2
     inc (hl)
+.noc:
+    ld a, (vidStreaming)
+    or a
+    jr z, .queue
+    ; streaming: ring cursor += padded block (mod ringBytes), depth
+    ; -= its blocks (the gate's staged need covered them)
+    ld a, (vidApadBlk)
+    ld c, a
+    ld b, 0
+    ld hl, (vidRingDepth)
+    or a
+    sbc hl, bc
+    ld (vidRingDepth), hl
+    ld hl, (vidRingRl)
+    ld bc, (vidABytesPad)
+    add hl, bc
+    ld a, (vidRingRl+2)
+    adc a, 0
+    call vid_rl_mod              ; A:HL mod ringBytes -> vidRingRl
+.queue:
+    ; hand the filled half to the ISR: Ptr/End first, Rdy LAST
+    ld hl, (vidAudFillPtr)
+    ld (vidAudNextPtr), hl
+    ld bc, (vidAudEndOff)        ; = real bytes - 1 (mono) / - 2
+    add hl, bc
+    ld (vidAudNextEnd), hl
+    ; toggle: other = (halfA + halfB) - current (mod 2^16)
+    ld de, (vidAudFillPtr)
+    ld hl, (vidAudBuf*2 + NXV_AUD_HALF) & $FFFF
+    or a
+    sbc hl, de
+    ld (vidAudFillPtr), hl
+    ld a, 1
+    ld (vidAudNextRdy), a
     ret
 
 ; ---------------------------------------------------------------------
@@ -1319,10 +1521,11 @@ vid_run:
     ld a, VID_PAGE2
     jp ovl_map_page
 .entryret:
-    ; --- v2 open + resident load (cold). B verdict: 0 = loaded,
-    ; 1 = bad header/read (VID FMT), 2 = no bank, 3 = exceeds the
-    ; ring (stage 3a's clean not-yet-supported error). On failure the
-    ; body has already freed the ring and closed the stream. ---
+    ; --- v2 open + resident load / streaming prefill (cold). B
+    ; verdict: 0 = ready, 1 = bad header/read (VID FMT), 2 = no
+    ; bank, 3 = no ring fits, 4 = too fragmented to stream. On
+    ; failure the body has already freed the ring and closed the
+    ; stream. ---
     ld hl, nxv2_open_body
     push hl
     ld a, VID_PAGE2
@@ -1350,6 +1553,28 @@ vid_run:
     ld a, VID_PAGE2
     jp ovl_map_page
 .l2setupret:
+    ; --- decode session init (BEFORE the CTC arm - the audio-0
+    ; preload below consumes the cursors) ---
+    xor a
+    ld (vidInSpan), a
+    ld (vidPalPending), a
+    ld (vidFramePos+2), a
+    ld (vidAudNextRdy), a
+    ld hl, 512                   ; frame 0's audio follows the header
+    ld (vidFramePos), hl
+    ld hl, (vidFrames)
+    ld (vidFramesLeft), hl
+    ; --- audio-0 preload (double buffer): fill half A and consume
+    ; the queue it posts - IX starts AT half A (the l2setup body
+    ; initialised both ISRs' end markers to half A's end), so Rdy is
+    ; re-cleared; the fill pointer is left on half B for frame 1.
+    ld (vidDecSp), sp            ; abort anchor: the preload's ring
+                                 ; walk can abort on corrupt input
+                                 ; (.restore is safe pre-arm - the CTC
+                                 ; park is a no-op on an unarmed CTC)
+    call vid_aud_copy
+    xor a
+    ld (vidAudNextRdy), a
     ; --- CTC retune (v1-proven sequence, carried verbatim): double
     ; soft-reset, control word, IX + vidAudDone primed BEFORE the
     ; time constant starts the timer (the postmortem ordering rule);
@@ -1366,24 +1591,23 @@ vid_run:
     ld a, (vidCtcTc)
     ld bc, AUD_CTC_PORT
     out (c), a                   ; time constant -> timer starts NOW
-    ; --- decode session init ---
-    xor a
-    ld (vidInSpan), a
-    ld (vidPalPending), a
-    ld (vidFramePos+2), a
-    ld hl, 512                   ; frame 0's audio follows the header
-    ld (vidFramePos), hl
-    ld hl, (vidFrames)
-    ld (vidFramesLeft), hl
 
 ; ---------------------------------------------------------------------
-; The frame loop. Per frame: pace on the PREVIOUS frame's audio ->
-; copy + launch THIS frame's audio -> decode/paint THIS frame's
-; payload (delta: visible surface; span chunks: hidden) -> present
-; (KFLIP: palette swap + bank flip; delta: palette swap if a PAL
-; rode the frame) -> key check -> frame accounting (loop mode
-; restarts by rewinding the RAM cursor - no SD, seam-free by
-; construction). DEBUG: 5-phase timeline stamps, one per transition.
+; The frame loop (3b double-buffer phasing). Per frame f: pace on the
+; boundary INTO frame f's audio (the ISR swapped into the half queued
+; last iteration; while waiting, the streaming producer prefetches SD
+; blocks into the ring) -> ring gate (streaming: frame f's payload +
+; frame f+1's audio must be buffered - shortfall = the counted
+; underrun pace-hold) -> decode/paint frame f's payload (delta:
+; visible surface; span chunks: hidden) -> present (KFLIP: palette
+; swap + bank flip; delta: palette swap if a PAL rode the frame) ->
+; QUEUE frame f+1's audio into the idle half (the ISR swaps at the
+; next boundary - no held-sample gap; loop mode rewinds the cursors
+; first, so pass N+1's frame-0 audio queues seamlessly; play-once
+; skips the queue on the last frame and the drain tail holds) -> key
+; check -> frame accounting. DEBUG: 5-phase stamps, one per
+; transition (AUDIO now brackets the queue copy AFTER present - the
+; copy left the pace path, which is the whole point of the fix).
 ; ---------------------------------------------------------------------
 .frameloop:
  IFDEF DEBUG
@@ -1391,18 +1615,35 @@ vid_run:
     call vid_tl_stamp            ; closes OTHER, opens PACE, frames++
  ENDIF
     ld (vidDecSp), sp            ; abort anchor for this iteration
-.pace:
-    ld a, (vidAudDone)           ; previous frame's audio finished?
-    or a
-    jr z, .pace
  IFDEF DEBUG
-    ld a, VID_TL_AUDIO
-    call vid_tl_stamp
- ENDIF
-    call vid_aud_copy            ; ring -> vidAudBuf + cursor advance
-    ld ix, vidAudBuf
     xor a
-    ld (vidAudDone), a           ; this frame's audio launches
+    ld (vidProdCnt), a           ; per-frame producer budget (throttle)
+ ENDIF
+.pace:
+    ld a, (vidAudDone)           ; boundary into this frame's audio?
+    or a
+    jr nz, .paced
+    ld a, (vidStreaming)
+    or a
+    jr z, .pace                  ; resident: plain spin (v1-identical)
+ IFDEF DEBUG
+    ld a, (vidProdThrottle)      ; deliberate-underrun lever (099):
+    or a                         ; cap pace-window production per
+    jr z, .prod                  ; frame; the gate's force-fill is
+    ld c, a                      ; deliberately NOT capped (recovery)
+    ld a, (vidProdCnt)
+    cp c
+    jr nc, .pace
+.prod:
+ ENDIF
+    call vid_prod_step           ; one 512B block max, then re-check
+    jr .pace
+.paced:
+    xor a
+    ld (vidAudDone), a           ; ack the boundary
+    ld a, (vidStreaming)
+    or a
+    call nz, vid_ring_gate       ; streaming: hold until frame served
  IFDEF DEBUG
     ld a, VID_TL_DECODE
     call vid_tl_stamp
@@ -1453,6 +1694,28 @@ vid_run:
     ld (vidPalPending), a
 .present_done:
  IFDEF DEBUG
+    ld a, VID_TL_AUDIO
+    call vid_tl_stamp
+ ENDIF
+    ; --- queue the NEXT frame's audio into the idle half ---
+    ld hl, (vidFramesLeft)
+    dec hl
+    ld a, h
+    or l
+    jr nz, .qnext                ; frames follow: queue frame f+1
+    ld a, (vidLoopMode)
+    or a
+    jr z, .qskip                 ; last frame, play-once: nothing to
+                                 ; queue - the drain tail holds
+    ; loop restart: rewind the consumer BEFORE queueing pass N+1's
+    ; frame-0 audio (resident: RAM cursor only - no SD, no reopen,
+    ; seam-free; streaming: ring cursor + the pass header block)
+    call vid_loop_rewind
+.qnext:
+    call vid_aud_copy            ; fills + queues; ISR swaps at the
+                                 ; next boundary - zero held samples
+.qskip:
+ IFDEF DEBUG
     ld a, VID_TL_OTHER
     call vid_tl_stamp
  ENDIF
@@ -1464,27 +1727,20 @@ vid_run:
     ld a, h
     or l
     jp nz, .frameloop
-    ; --- EOF ---
+    ; --- EOF (loop mode already rewound + queued at .qnext) ---
     ld a, (vidLoopMode)
     or a
     jr z, .drainlast
-    ; loop restart: rewind the RAM cursor to frame 0 - no SD access,
-    ; no reopen, no seam (the whole file is resident)
     ld hl, (vidFrames)
     ld (vidFramesLeft), hl
-    ld hl, 512
-    ld (vidFramePos), hl
-    xor a
-    ld (vidFramePos+2), a
-    ld (vidInSpan), a            ; defensive (a valid file never ends
-                                 ; mid-span - nxv2dec validates)
  IFDEF DEBUG
     ld hl, vidLoopPass           ; breadcrumb: pass count for the
-    inc (hl)                     ; the report's live PASS= field
+    inc (hl)                     ; report's live PASS= field
  ENDIF
     jp .frameloop
 .drainlast:
     ; play-once: the last frame is showing; let its audio finish
+    ; (nothing queued - the ISR sets done and holds at the end)
     ld a, (vidAudDone)
     or a
     jr z, .drainlast
@@ -1503,6 +1759,10 @@ vid_run:
     out (DAC_PORT), a
     out (VID_DAC_LEFT), a        ; park all three DAC ports either
     out (VID_DAC_RIGHT), a       ; ISR could have driven
+    ld a, (vidStreaming)         ; streaming: the CMD18 window is HOT
+    or a                         ; property - close it here (CMD12 +
+    call nz, vid_win_close_h     ; deselect + Multiface restore) before
+                                 ; the cold body F_CLOSEs the handle
     ld hl, vid_run_restore_body  ; stub/L2/presentation/MMU2 restore +
     push hl                      ; ring free (EXIT ORDER FIX inside)
     ld a, VID_PAGE2
@@ -1528,14 +1788,25 @@ vid_key_any:
     ret
 
 ; ---------------------------------------------------------------------
-; Audio CTC ISRs - CARRIED VERBATIM from the v1 player (the pacing /
-; hold-last / IX-exclusivity / banking-invariant design is unchanged;
-; see git history for the full derivation comments). Installed by
+; Audio CTC ISRs - the v1 per-tick shape (pacing / IX-exclusivity /
+; banking-invariant design unchanged) plus the SP15 3b DOUBLE-BUFFER
+; SWAP TAIL (the structural-slow fix): the last-sample tick no longer
+; holds while the main loop copies the next frame's audio - if the
+; other vidAudBuf half is queued (vidAudNextRdy), the ISR swaps INTO
+; it in the same interrupt (IX + its own end-marker SMC) and the next
+; tick plays the new frame's first sample: a true 625-tick / 40.000ms
+; frame period (the 3a player held ~20 ticks per frame = 41.3ms, the
+; calibration wave's finding 5). No queue (main loop late, or the
+; drain tail after the last frame) = hold the last sample, exactly
+; the old behaviour. The per-tick path is byte-identical to 3a; the
+; swap tail runs once per frame. Handoff protocol: the main loop
+; writes vidAudNextPtr/End first and vidAudNextRdy LAST (the release
+; store); the ISR reads Rdy before either. Installed by
 ; vid_run_l2setup_body patching IM2_CTC_STUB (mono or stereo per the
-; header's channel count); end markers self-modified to vidAudBuf +
-; vidABytes - 1 (mono) / - 2 (stereo) before the CTC time constant
-; starts the timer. MMU7 = VID_PAGE for the whole armed window keeps
-; the stub's target resolving to THIS code (doc 11 / rubric 3).
+; header's channel count); end markers initialised to half A + real
+; bytes - 1 (mono) / - 2 (stereo) before the CTC time constant starts
+; the timer, then owned by each ISR's own swap SMC (same-page - MMU7
+; = VID_PAGE for the whole armed window, doc 11 / rubric 3).
 ; ---------------------------------------------------------------------
 video_ctc_isr:
     push af
@@ -1559,6 +1830,19 @@ video_ctc_isr:
 .cmphi:
     cp 0                         ; patched: end address high byte
     jr nz, .adv
+    ; buffer end: swap into the queued half if the main loop has it
+    ; ready; else hold the last sample (main late / drain tail)
+    ld a, (vidAudNextRdy)
+    or a
+    jr z, .boundary
+    xor a
+    ld (vidAudNextRdy), a
+    ld ix, (vidAudNextPtr)
+    ld a, (vidAudNextEnd)
+    ld (.cmplo+1), a
+    ld a, (vidAudNextEnd+1)
+    ld (.cmphi+1), a
+.boundary:
     ld a, 1
     ld (vidAudDone), a
     jr .ret
@@ -1593,6 +1877,17 @@ video_ctc_isr_stereo:
 .cmphi:
     cp 0                         ; patched: end address high byte
     jr nz, .adv
+    ld a, (vidAudNextRdy)        ; swap tail - see the mono ISR
+    or a
+    jr z, .boundary
+    xor a
+    ld (vidAudNextRdy), a
+    ld ix, (vidAudNextPtr)
+    ld a, (vidAudNextEnd)
+    ld (.cmplo+1), a
+    ld a, (vidAudNextEnd+1)
+    ld (.cmphi+1), a
+.boundary:
     ld a, 1
     ld (vidAudDone), a
     jr .ret
@@ -1603,6 +1898,386 @@ video_ctc_isr_stereo:
     pop af
     ei
     reti
+
+; =====================================================================
+; STREAMING PRODUCER (SP15 3b) - the hot half of the SD streaming
+; machinery. The cold cluster (VID_PAGE2) opens the file, captures the
+; filemap and prefills the whole ring pre-arm; these routines then own
+; the CMD18 window for the armed session (the raw contract carried
+; verbatim: the window persists across frames and closes only at a
+; fragment boundary, a producer rewind, or teardown; while it is open
+; NO other filesystem/SD access happens anywhere - structurally true:
+; audEnable is frozen and nothing else runs during playback). The
+; Multiface stays disabled while the window is open, i.e. effectively
+; the whole streaming session (an NMI would corrupt the SD wire).
+; Every cell these routines touch is HOT (rubric 3); every hardware
+; poll is bounded (rubric 6); ini's B consumption is respected - A is
+; the block counter (rubric 2, the NXV first-contact lesson).
+; =====================================================================
+
+; ---------------------------------------------------------------------
+; Streaming ring gate (frame top, post-pace): the staged need blocks
+; (payload cap + next audio pad + 1 loop-pass header block) must be
+; buffered ahead of the consumer before the frame proceeds. Shortfall
+; with blocks still owed = a genuine UNDERRUN: counted once per gated
+; frame (DEBUG, the RING= row) and served by an uncapped force-fill
+; pace-hold - playback runs late, never corrupt. Bounded: every
+; vid_prod_step call raises depth, lowers remain, or aborts through
+; its own fault funnels; need <= ring capacity is validated at open.
+; Corrupts AF, BC, DE, HL.
+; ---------------------------------------------------------------------
+vid_ring_gate:
+ IFDEF DEBUG
+    ld hl, (vidRingDepth)        ; RING= row: minimum frame-top depth
+    ld de, (vidRingMin)
+    or a
+    sbc hl, de
+    jr nc, .nomin
+    ld hl, (vidRingDepth)
+    ld (vidRingMin), hl
+.nomin:
+ ENDIF
+    call .served
+    ret nc
+ IFDEF DEBUG
+    ld hl, (vidRingUnder)        ; one event per gated frame
+    inc hl
+    ld (vidRingUnder), hl
+ ENDIF
+.fill:
+    call vid_prod_step
+    call .served
+    jr c, .fill
+    ret
+.served:
+    ; CF clear = frame served: depth >= need, or the producer owes
+    ; nothing this pass (the buffered tail is the whole remainder)
+    ld hl, (vidRingDepth)
+    ld de, (vidNeedBlk)
+    or a
+    sbc hl, de
+    ret nc
+    ld hl, (vidStrmRemainBlk)
+    ld a, h
+    or l
+    jr nz, .owe
+    or a
+    ret
+.owe:
+    scf
+    ret
+
+; ---------------------------------------------------------------------
+; Produce ONE 512-byte block into the ring at the write cursor. No-op
+; when the ring is full or the pass is fully streamed (loop mode
+; rewinds the producer to file start and keeps going - the pass
+; header block is re-streamed and later consumed by vid_loop_rewind).
+; SD faults (CMD reject / bad token / short filemap) abort the whole
+; session through the frame loop's SP anchor - clean error exit, the
+; ring/window/handle all torn down by the normal restore path.
+; Corrupts AF, BC, DE, HL. Preserves IX.
+; ---------------------------------------------------------------------
+vid_prod_step:
+    ld hl, (vidStrmRemainBlk)
+    ld a, h
+    or l
+    jr nz, .have
+    ld a, (vidLoopMode)          ; pass fully streamed
+    or a
+    ret z                        ; play-once: producer done
+    xor a                        ; loop: rewind to file start (the
+    ld (vidStrmEntryIdx), a      ; runBlocks==0 path below re-opens
+    ld h, a                      ; the window at run 0's address)
+    ld l, a
+    ld (vidStrmRunBlkH), hl
+    ld hl, (vidTotalBlk)
+    ld (vidStrmRemainBlk), hl
+.have:
+    ld hl, (vidRingCapBlk)
+    ld de, (vidRingDepth)
+    or a
+    sbc hl, de
+    ret z                        ; ring full
+    ld hl, (vidStrmRunBlkH)
+    ld a, h
+    or l
+    jr nz, .run
+    call vid_win_close_h         ; fragment boundary / rewind: CMD12
+    call vid_next_run_h
+    jr c, .short                 ; map exhausted with blocks owed
+.run:
+    call vid_win_open_h          ; CMD18 at the run cursor (idempotent)
+    jr c, .cmdfail
+    ; write page = ringBanks[pageLin >> 1] * 2 + (pageLin & 1)
+    ld a, (vidWrPageLin)
+    srl a                        ; A = bank index, CF = parity
+    push af
+    ld hl, vidRingBanks
+    add hl, a                    ; Z80N (doc 05)
+    ld b, (hl)
+    pop af                       ; CF = parity restored
+    ld a, b
+    adc a, b                     ; page = bank*2 + parity
+    nextreg NR_MMU6, a
+    ld hl, (vidWrOfs)
+    ld a, h
+    or $C0
+    ld h, a                      ; HL = window dest (512-aligned)
+    call vid_sd_blk_h
+    jr c, .tokfail
+    ; advance the write cursor (16 blocks per page - never straddles)
+    ld hl, (vidWrOfs)
+    ld bc, 512
+    add hl, bc
+    ld a, h
+    cp $20
+    jr c, .ofsok
+    ld hl, 0
+    ld a, (vidWrPageLin)
+    inc a
+    ld c, a
+    ld a, (vidRingPageCnt)
+    cp c
+    jr nz, .pgok
+    ld c, 0                      ; circular: wrap to ring page 0
+.pgok:
+    ld a, c
+    ld (vidWrPageLin), a
+.ofsok:
+    ld (vidWrOfs), hl
+    ld hl, (vidRingDepth)
+    inc hl
+    ld (vidRingDepth), hl
+    ld hl, (vidStrmRunBlkH)
+    dec hl
+    ld (vidStrmRunBlkH), hl
+    ld hl, (vidStrmRemainBlk)
+    dec hl
+    ld (vidStrmRemainBlk), hl
+ IFDEF DEBUG
+    ld hl, vidProdCnt            ; per-frame budget (throttle lever)
+    inc (hl)
+ ENDIF
+    ret
+.short:
+    ld a, VID_ERR_SHORT
+    jr .fault
+.cmdfail:
+    ld a, VID_ERR_CMD
+    jr .fault
+.tokfail:
+    ld a, VID_ERR_TOKEN
+.fault:
+    jp vid_dec_abort_pos         ; producer faults skip the source-pos
+                                 ; capture (POS then holds the last
+                                 ; decode value - noted in the card)
+
+; Advance to the next hot filemap run. CF set = map exhausted.
+; Corrupts AF, C, DE, HL.
+vid_next_run_h:
+    ld a, (vidStrmEntryIdx)
+    ld c, a
+    ld a, (vidStrmEntryCnt)
+    cp c
+    jr z, .out
+    ld a, c
+    add a, a
+    add a, c                     ; idx * 3
+    add a, a                     ; idx * 6 (<= 42: 8-entry hot map)
+    ld hl, vidHotMap
+    add hl, a                    ; Z80N (doc 05)
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld (vidRunAddrLoH), de
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld (vidRunAddrHiH), de
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ld (vidStrmRunBlkH), de
+    ld a, c
+    inc a
+    ld (vidStrmEntryIdx), a
+    or a
+    ret
+.out:
+    scf
+    ret
+
+; Ensure the CMD18 window is open at the hot run cursor (idempotent).
+; CF set = command rejected (MF restored, card deselected). Corrupts
+; AF, BC, DE, HL.
+vid_win_open_h:
+    ld a, (vidWinOpenH)
+    or a
+    ret nz
+    call vid_mf_disable_h
+    ld a, (vidCardFlagsH)
+    and 1                        ; Z = card select (vid_sd_cmd_h reads)
+    ld hl, (vidRunAddrHiH)
+    ld de, (vidRunAddrLoH)
+    ld a, CMD18_READ_MULTIPLE_BLOCK
+    call vid_sd_cmd_h
+    jr nz, .rej
+    ld a, 1
+    ld (vidWinOpenH), a
+    or a
+    ret
+.rej:
+    call vid_card_desel_h
+    call vid_mf_restore_h
+    scf
+    ret
+
+; Close the window if open: CMD12 + flush + deselect + MF restore.
+; Idempotent. Corrupts AF, BC, DE, HL.
+vid_win_close_h:
+    ld a, (vidWinOpenH)
+    or a
+    ret z
+    ld a, (vidCardFlagsH)
+    and 1
+    ld a, CMD12_STOP_TRANSMISSION
+    call vid_sd_cmd_np_h
+    ld b, 8+1
+.tail:
+    in a, (PORT_SPI_DAT)
+    djnz .tail
+    call vid_card_desel_h
+    call vid_mf_restore_h
+    xor a
+    ld (vidWinOpenH), a
+    ret
+
+vid_card_desel_h:
+    ld a, $FF
+    out (PORT_SPI_CS), a
+    in a, (PORT_SPI_DAT)
+    nop
+    in a, (PORT_SPI_DAT)
+    ret
+
+; SD SPI command (hot clone of the cold vid_sd_cmd; Z on entry =
+; card select from the caller's `and 1`). Bounded R1 poll (rubric 6).
+vid_sd_cmd_np_h:
+    ld h, 0
+    ld l, 0
+    ld d, 0
+    ld e, 0
+vid_sd_cmd_h:
+    ld b, $FF
+    ld c, a
+    ld a, SD_CS0
+    jr z, .cs
+    ld a, SD_CS1
+.cs:
+    out (PORT_SPI_CS), a
+    in a, (PORT_SPI_DAT)
+    ld a, c
+    ld c, PORT_SPI_DAT
+    out (c), a
+    ld a, h
+    out (c), a
+    ld a, l
+    out (c), a
+    ld a, d
+    out (c), a
+    ld a, e
+    out (c), a
+    ld a, b
+    out (c), a
+    nop
+    ld b, 0                      ; bounded R1 poll: 256 tries
+.resp:
+    in a, (PORT_SPI_DAT)
+    inc a
+    jr nz, .got
+    djnz .resp
+    or 1                         ; timeout: NZ (treated as reject)
+    ret
+.got:
+    dec a                        ; Z iff R1 == 0
+    ret
+
+; Read one 512-byte block into (HL) (hot clone; 32-ini sixteenths in
+; BOTH variants - the extra loop overhead ~434T is ~4% of one block
+; read and buys ~65 hot bytes vs the cold Release unroll). Bounded
+; token wait (rubric 6); A is the outer counter (rubric 2 - ini
+; consumes B). CF set = bad/absent token.
+vid_sd_blk_h:
+    ld bc, 0                     ; bounded token wait: 65536 polls
+.wt:
+    in a, (PORT_SPI_DAT)
+    inc a
+    jr nz, .got
+    dec bc
+    ld a, b
+    or c
+    jr nz, .wt
+    jr .bad
+.got:
+    dec a
+    cp $FE
+    jr nz, .bad
+    ld c, PORT_SPI_DAT
+    ld a, 16                     ; sixteen 32-byte chunks
+.blk:
+    DUP 32
+      ini
+    EDUP
+    dec a
+    jp nz, .blk
+    in a, (c)                    ; skip the 2-byte CRC
+    nop
+    in a, (c)
+    or a
+    ret
+.bad:
+    scf
+    ret
+
+vid_mf_disable_h:
+    ld e, NR_PERIPH2
+    call nr_read
+    ld (vidMfSaveH), a
+    and %11110111
+    nextreg NR_PERIPH2, a
+    ret
+vid_mf_restore_h:
+    ld a, (vidMfSaveH)
+    nextreg NR_PERIPH2, a
+    ret
+
+; Loop-restart rewind (called before queueing pass N+1's frame-0
+; audio). Resident: RAM cursor only - no SD, no reopen, seam-free.
+; Streaming: the producer streamed the pass header block between the
+; old tail and the new frames - consume it (ring cursor += 512, depth
+; -= 1; the gate's staged +1 guaranteed it is buffered). Corrupts AF,
+; BC, DE, HL.
+vid_loop_rewind:
+    ld hl, 512
+    ld (vidFramePos), hl
+    xor a
+    ld (vidFramePos+2), a
+    ld (vidInSpan), a            ; defensive (a valid file never ends
+                                 ; mid-span - nxv2dec validates)
+    ld a, (vidStreaming)
+    or a
+    ret z
+    ld hl, (vidRingDepth)
+    dec hl
+    ld (vidRingDepth), hl
+    ld hl, (vidRingRl)
+    ld bc, 512
+    add hl, bc
+    ld a, (vidRingRl+2)
+    adc a, 0
+    jp vid_rl_mod
 
 ; ---------------------------------------------------------------------
 ; Hot cells.
@@ -1656,9 +2331,44 @@ vidAudNeed:      dw 0
 vidDecSp:        dw 0            ; frame-loop SP anchor (abort path)
 vidCtcTc:        db 0
 
-; Resident play buffer - the ISR reads it via IX; full rate, no
-; decimation (v1-proven sizing: NXV_AUD_BUF_MAX bounds the header
-; field at open).
+; --- 3b streaming session cells (staged by nxv2_open_body; every
+; producer/gate/consumer-wrap read is hot - rubric 3) ---
+vidStreaming:    db 0            ; 0 = resident, 1 = ring streaming
+vidRingRl:       ds 3            ; consumer ring-linear cursor
+vidRlStart:      ds 3            ; payload-start spill (vid_src_seek)
+vidRlNew:        ds 3            ; vid_dec_done_strm scratch
+vidRingBytes:    ds 3            ; ring capacity in bytes (cnt << 14)
+vidRingCapBlk:   dw 0            ; ring capacity in 512B blocks
+vidRingDepth:    dw 0            ; buffered blocks (produced-consumed)
+vidNeedBlk:      dw 0            ; gate need: cap + apad + 1 blocks
+vidApadBlk:      db 0            ; audio section blocks (1..3)
+vidWalkMax:      db 0            ; per-seek source page-walk bound
+vidSrcWalks:     db 0
+vidRingPageCnt:  db 0            ; cnt * 2 (producer wrap modulus)
+vidWrPageLin:    db 0            ; producer write cursor: ring page +
+vidWrOfs:        dw 0            ; offset (0..$1FFF, 512-aligned)
+vidTotalBlk:     dw 0            ; whole-file blocks (producer rewind)
+vidStrmRemainBlk: dw 0           ; blocks still to stream this pass
+vidStrmEntryIdx: db 0            ; hot filemap cursor
+vidStrmEntryCnt: db 0
+vidStrmRunBlkH:  dw 0            ; blocks left in the current run
+vidRunAddrLoH:   dw 0            ; current run's card address
+vidRunAddrHiH:   dw 0
+vidCardFlagsH:   db 0
+vidMfSaveH:      db 0
+vidWinOpenH:     db 0
+vidHotMap:       ds VID_STRM_HOT_ENT*6
+
+; --- audio double-buffer cells (3b structural-slow fix) ---
+vidAudFillPtr:   dw 0            ; the half the next copy fills
+vidAudNextPtr:   dw 0            ; queued half (ISR swaps into it)
+vidAudNextEnd:   dw 0            ; its end-marker value
+vidAudNextRdy:   db 0            ; handoff release store, written LAST
+vidAudEndOff:    dw 0            ; real bytes - 1 (mono) / - 2 (stereo)
+
+; Double-buffered play feed - the ISR plays one NXV_AUD_HALF half via
+; IX while the frame loop fills the other; full rate, no decimation
+; (NXV_AUD_HALF bounds the header field at open).
 vidAudBuf:       ds NXV_AUD_BUF_MAX
 vidAudDone:      db 0
 
@@ -1697,10 +2407,19 @@ vidErrPos:       ds 3            ; breadcrumb: failing source position
                                  ; meaningful when ERR != 0)
 vidLoopPass:     db 0            ; live loop-pass counter (0 = pass 1);
                                  ; reported as PASS= on EVERY exit
-vidTlFillFrames: dw 0            ; resident ring load duration, 50Hz
+vidRingMin:      dw 0            ; RING= row: min frame-top depth (3b;
+                                 ; staged by the open body like
+                                 ; vidTlFillFrames - outside the zero
+                                 ; span, inside the report copy)
+vidRingUnder:    dw 0            ; RING= row: gate underrun events
+vidTlFillFrames: dw 0            ; ring load/prefill duration, 50Hz
                                  ; frames (frameCounter delta)
 VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlTicks
 VID_TL_BLOCK_LEN equ vidTlFillFrames + 2 - vidTlTicks
+vidProdThrottle: db 0            ; deliberate-underrun lever: max
+                                 ; pace-window producer blocks/frame
+                                 ; (0 = uncapped; set for video 099)
+vidProdCnt:      db 0            ; blocks produced this frame
 
 ; DEBUG timeline stamp: A = new phase id (VID_TL_*). Accumulates the
 ; tick delta since the previous stamp into the phase that was active,
@@ -1770,22 +2489,28 @@ vid_tl_report_ret:
     MMU 7, VID_PAGE2, OVL_ORG
 
 ; ---------------------------------------------------------------------
-; nxv2_open_body - NXV v2 header open + ring allocation + RESIDENT
-; full-file load (stage 3a: resident is the ONLY delivery; files
-; larger than the allocatable ring get the clean B=3 verdict - 3b
-; adds streaming). Runs entirely cold, entirely pre-arm, with the
-; music tick already frozen (entry body) so the load is silent (text
-; adventure pre-roll, ~1s/1.5MB at the measured ~1264KB/s SD floor).
+; nxv2_open_body - NXV v2 header open + ring allocation + DELIVERY
+; DECISION (3b): a file the pool holds whole loads RESIDENT (3a's
+; proven path); anything bigger STREAMS - the ring becomes a circular
+; prefetch buffer of every bank the pool gives, PREFILLED FULL here
+; pre-arm (the full fill is >= any honorable header start-margin),
+; with the CMD18 window left open and the whole producer state staged
+; hot for the armed session. Runs entirely cold, entirely pre-arm,
+; with the music tick already frozen (entry body) so the load is
+; silent (~0.8s/1MB at the measured ~1264KB/s SD floor).
 ;
 ; In: the file is open (vid_open_video_body ran: vidHandle/vidSizeLo/
 ; Hi valid, raw cursor at file start). Out (via the hop back to
-; vid_run.openret): B = 0 loaded + every hot parameter staged;
-; B = 1 bad header / read error (VID FMT - v1 files land here);
-; B = 2 no pool bank at all; B = 3 file exceeds the ring. On any
-; failure the ring is freed and the stream closed. Corrupts
-; everything. Rubric 3: every write to a VID_PAGE cell or code byte
-; goes through the MMU6 window (+DATA_WINDOW-OVL_ORG) in the two
-; marked brackets; everything else here is VID_PAGE2-local.
+; vid_run.openret): B = 0 loaded/prefilled + every hot parameter
+; staged; B = 1 bad header / read error (VID FMT - v1 files land
+; here; streaming adds: size not whole blocks, bad payload cap);
+; B = 2 no pool bank at all; B = 3 no ring fits (pool below one
+; streamed frame's need + slack, or file >= 16MB); B = 4 too
+; fragmented to stream (filemap exceeds the hot copy). On any failure
+; the ring is freed and the stream closed. Corrupts everything.
+; Rubric 3: every write to a VID_PAGE cell or code byte goes through
+; the MMU6 window (+DATA_WINDOW-OVL_ORG) in the marked brackets;
+; everything else here is VID_PAGE2-local.
 ; ---------------------------------------------------------------------
 nxv2_open_body:
     xor a
@@ -1881,17 +2606,19 @@ nxv2_open_body:
     or l
     jp z, .badu
     ld (vidP_Frames), hl
-    ; audio bytes/frame: nonzero, <= vidAudBuf; pad = round-up-512
+    ; audio bytes/frame: nonzero, <= one vidAudBuf HALF (the 3b
+    ; double buffer: the ISR plays one half while the loop fills the
+    ; other - stereo 1250 / mono 933 both fit); pad = round-up-512
     ld hl, (DATA_WINDOW + NXV2_OFF_ABYTES)
     ld a, h
     or l
     jp z, .badu                  ; zero would wrap the copy LDIR
     ld (vidP_ABytes), hl
-    ld de, NXV_AUD_BUF_MAX
+    ld de, NXV_AUD_HALF
     or a
     sbc hl, de
-    jr c, .abok                  ; real < max
-    jp nz, .badu                 ; real > max: overflow guard
+    jr c, .abok                  ; real < half
+    jp nz, .badu                 ; real > half: overflow guard
 .abok:
     ld hl, (vidP_ABytes)
     ld de, 511
@@ -1901,6 +2628,10 @@ nxv2_open_body:
     ld h, a
     ld l, 0
     ld (vidP_ABytesPad), hl
+    ; per-frame payload cap (blocks): captured for the streaming
+    ; gate; resident ignores it (informational there, as 3a did)
+    ld hl, (DATA_WINDOW + NXV2_OFF_FRAMECAP)
+    ld (vidHdrCapC), hl
     call data_restore
     ; --- geometry derivation (free heights - no block math) ---
     xor a
@@ -1962,13 +2693,21 @@ nxv2_open_body:
 .m0y0:
     ld (vidP_Yofs), a
 .geodone:
-    ; --- size -> needed banks; the ring must hold the WHOLE file ---
+    ; --- size -> DELIVERY DECISION (3b): a file the pool holds whole
+    ; loads RESIDENT (the proven 3a path; loop = RAM rewind); anything
+    ; bigger STREAMS through a circular ring of every bank the pool
+    ; will give, prefilled full before the CTC arms. ---
+    xor a
+    ld (vidDeliverStrm), a
     ld a, (vidSizeHi+1)
     or a
-    jp nz, .toobig               ; >= 16MB
+    jp nz, .toobig               ; >= 16MB: over the 24-bit cursors
     ld a, (vidSizeHi)
     cp $20
-    jp nc, .toobig               ; >= 2MB: exceeds any ring
+    jr c, .needcalc
+    ld a, VID_RING_MAX           ; >= 2MB: no ring holds it - stream
+    jr .strmneed
+.needcalc:
     add a, a
     add a, a
     ld b, a                      ; size[20:16] << 2
@@ -1989,7 +2728,14 @@ nxv2_open_body:
     or a
     jp z, .badc                  ; zero-size file: not a video
     cp VID_RING_MAX+1
-    jp nc, .toobig               ; over the list capacity
+    jr c, .needok                ; fits the list: try resident
+    ld a, VID_RING_MAX           ; over the list capacity: stream
+.strmneed:
+    push af
+    ld a, 1
+    ld (vidDeliverStrm), a
+    pop af
+.needok:
     ld (vidRingNeed), a
 .alloc:
     ld a, (vidRingCntC)
@@ -1998,7 +2744,7 @@ nxv2_open_body:
     cp b
     jr z, .allocdone
     call bank_alloc
-    jp c, .toobig                ; pool exhausted: exceeds the ring
+    jr c, .allocshort            ; pool exhausted before the target
     ld hl, vidRingBanksC
     ld c, a
     ld a, (vidRingCntC)          ; re-read the slot index: bank_alloc
@@ -2015,19 +2761,36 @@ nxv2_open_body:
     inc a
     ld (vidRingCntC), a
     jr .alloc
+.allocshort:
+    ; the pool gave fewer banks than the target: a resident attempt
+    ; falls back to streaming with the ring in hand; a streaming
+    ; target simply takes the smaller ring (minimum checked below)
+    ld a, 1
+    ld (vidDeliverStrm), a
 .allocdone:
-    ; --- load the rest: ring pages in order until received == size.
+    ld a, (vidDeliverStrm)
+    or a
+    jp nz, .stream_setup
+    ; resident: prefill target = the whole file
+    ld hl, (vidSizeLo)
+    ld (vidLoadTgt), hl
+    ld a, (vidSizeHi)
+    ld (vidLoadTgt+2), a
+.loadgo:
+    ; --- load: ring pages in order until received == target (the
+    ; whole file resident / the whole ring streaming - the streaming
+    ; prefill IS the start margin, >= any honorable header value).
     ; vid_stream_read holds the CMD18 window open across calls (its
     ; own contract), so this is one continuous multi-block read. ---
     ld a, 1
     ld (vidLoadIdx), a
 .load:
-    ; remaining = size - received (24-bit); 0 -> loaded
-    ld hl, (vidSizeLo)
+    ; remaining = target - received (24-bit); 0 -> loaded
+    ld hl, (vidLoadTgt)
     ld de, (vidRecvLo)
     or a
     sbc hl, de
-    ld a, (vidSizeHi)
+    ld a, (vidLoadTgt+2)
     ld d, a
     ld a, (vidRecvHi)
     ld e, a
@@ -2076,8 +2839,12 @@ nxv2_open_body:
     ld (vidLoadIdx), a
     jr .load
 .loaded:
-    ; SD is DONE for the whole session: CMD12 + deselect + Multiface
-    ; restore + F_CLOSE now, pre-arm (resident playback never streams)
+    ld a, (vidDeliverStrm)
+    or a
+    jp nz, .strm_loaded
+    ; RESIDENT: SD is DONE for the whole session - CMD12 + deselect +
+    ; Multiface restore + F_CLOSE now, pre-arm (resident playback
+    ; never streams)
     call vid_stream_close
  IFDEF DEBUG
     ld hl, (frameCounter)
@@ -2086,9 +2853,263 @@ nxv2_open_body:
     sbc hl, de
     ld (vidFillD), hl            ; ring-fill duration, 50Hz frames
  ENDIF
-    ; --- stage everything hot (ONE translated bracket - rubric 3):
-    ; the parameter block, the ring bank list, the per-file SMC
-    ; patches (stub dispatch targets + gap height immediates). ---
+    call vid_stage_common        ; bracket returns OPEN
+    ; resident extras: the streaming session cells parked off (a
+    ; previous streaming run must not leak its flag/window into this
+    ; session)
+    xor a
+    ld (vidStreaming + DATA_WINDOW - OVL_ORG), a
+    ld (vidWinOpenH + DATA_WINDOW - OVL_ORG), a
+ IFDEF DEBUG
+    ld hl, 0
+    ld (vidRingMin + DATA_WINDOW - OVL_ORG), hl
+    ld (vidRingUnder + DATA_WINDOW - OVL_ORG), hl
+ ENDIF
+    call data_restore
+    ld b, 0                      ; verdict: loaded
+    jp .backhop
+
+.stream_setup:
+    ; --- 3b RING STREAMING setup. Contract validation first: the
+    ; file must be whole 512B blocks (every v2 frame section is
+    ; block-aligned, so a valid encode's fstat size always is) and
+    ; the header's per-frame payload cap must be a sane block count -
+    ; the gate paces on it, so a lying/absent cap is a corrupt
+    ; header. The header start-margin is honored by construction: the
+    ; prefill fills the ENTIRE ring, which is >= any margin the ring
+    ; could honor (a margin larger than the ring itself is served
+    ; best-effort by the same full fill - documented in the report).
+    ld a, (vidSizeLo)
+    or a
+    jp nz, .badc
+    ld a, (vidSizeLo+1)
+    and 1
+    jp nz, .badc
+    ld hl, (vidHdrCapC)
+    ld a, h
+    or a
+    jp nz, .badc
+    ld a, l
+    or a
+    jp z, .badc
+    cp NXV2_STRM_CAP_MAX+1
+    jp nc, .badc
+    ld (vidCapBlkC), a
+    ; gate need = audio-pad blocks + cap + 1 (the loop-pass header
+    ; block rides between passes)
+    ld hl, (vidP_ABytesPad)
+    ld a, h
+    srl a                        ; pad >> 9 (pad <= 1536: 1..3 blocks)
+    ld (vidApadBlkC), a
+    ld b, a
+    ld a, (vidCapBlkC)
+    add a, b
+    inc a                        ; <= 244: no carry possible
+    ld (vidNeedBlkC), a
+    ; ring geometry from the allocated count
+    ld a, (vidRingCntC)
+    ld l, a
+    ld h, 0
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl                   ; HL = cnt << 6
+    xor a
+    ld (vidLoadTgt), a           ; prefill target = ringBytes =
+    ld a, l                      ; cnt << 14 (low byte 0 by shape)
+    ld (vidLoadTgt+1), a
+    ld a, h
+    ld (vidLoadTgt+2), a
+    srl h
+    rr l                         ; HL = cnt * 32 = ring blocks
+    ld (vidRingCapBlkC), hl
+    ; the ring must hold one served frame + the next audio + slack
+    ld a, (vidNeedBlkC)
+    ld c, a
+    ld a, (vidApadBlkC)
+    add a, c
+    add a, 2
+    ld c, a
+    ld b, 0
+    or a
+    sbc hl, bc
+    jp c, .toobig                ; ring too small to stream this file
+    ; the filemap must fit the hot copy (fragment ceiling)
+    ld hl, (vidStrmEntryEnd)
+    ld de, vidFilemapBuf
+    or a
+    sbc hl, de                   ; HL = entries * 6 (<= 192)
+    ld a, l
+    cp VID_STRM_HOT_ENT*6+1
+    jp nc, .toofrag
+    ld b, 0
+.entdiv:
+    sub 6
+    jr c, .entdivd
+    inc b
+    jr .entdiv
+.entdivd:
+    ld a, b
+    ld (vidEntCntC), a
+    jp .loadgo
+
+.strm_loaded:
+    ; STREAMING: the CMD18 window STAYS OPEN - ownership moves to the
+    ; hot producer (the cold flag is cleared below so the cold close
+    ; path will not CMD12 a window it no longer owns; the esxDOS
+    ; handle stays open for the session and the restore body F_CLOSEs
+    ; it at teardown).
+ IFDEF DEBUG
+    ld hl, (frameCounter)
+    ld de, (vidFillT0)
+    or a
+    sbc hl, de
+    ld (vidFillD), hl            ; prefill duration, 50Hz frames
+ ENDIF
+    call vid_stage_common        ; bracket returns OPEN
+    ; --- streaming extras (same bracket) ---
+    ld a, 1
+    ld (vidStreaming + DATA_WINDOW - OVL_ORG), a
+    ; consumer cursor: first consumed byte = file offset 512 (the
+    ; ring holds file offsets 0..ringBytes-1 at identity positions;
+    ; block 0 = the header, consumed by construction - the producer
+    ; may overwrite its slot on the first wrap)
+    ld hl, 512
+    ld (vidRingRl + DATA_WINDOW - OVL_ORG), hl
+    xor a
+    ld (vidRingRl+2 + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidRingCntC)
+    add a, a
+    ld (vidRingPageCnt + DATA_WINDOW - OVL_ORG), a
+    ld hl, (vidRingCapBlkC)
+    ld (vidRingCapBlk + DATA_WINDOW - OVL_ORG), hl
+    dec hl                       ; depth = ring blocks - 1 (header)
+    ld (vidRingDepth + DATA_WINDOW - OVL_ORG), hl
+    ld a, (vidLoadTgt)
+    ld (vidRingBytes + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidLoadTgt+1)
+    ld (vidRingBytes+1 + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidLoadTgt+2)
+    ld (vidRingBytes+2 + DATA_WINDOW - OVL_ORG), a
+    ; producer write cursor: received == ringBytes exactly, i.e.
+    ; wrapped to ring page 0 offset 0
+    xor a
+    ld (vidWrPageLin + DATA_WINDOW - OVL_ORG), a
+    ld hl, 0
+    ld (vidWrOfs + DATA_WINDOW - OVL_ORG), hl
+    ld a, (vidNeedBlkC)
+    ld l, a
+    ld h, 0
+    ld (vidNeedBlk + DATA_WINDOW - OVL_ORG), hl
+    ld a, (vidApadBlkC)
+    ld (vidApadBlk + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidCapBlkC)
+    rrca
+    rrca
+    rrca
+    rrca
+    and $0F                      ; cap / 16
+    add a, 3
+    ld (vidWalkMax + DATA_WINDOW - OVL_ORG), a
+    ; totals: file blocks + blocks still owed this pass
+    ld a, (vidSizeHi)
+    ld h, a
+    ld a, (vidSizeLo+1)
+    ld l, a                      ; HL = size >> 8 (low byte 0)
+    srl h
+    rr l                         ; HL = size >> 9
+    ld (vidTotalBlk + DATA_WINDOW - OVL_ORG), hl
+    ld de, (vidRingCapBlkC)
+    or a
+    sbc hl, de                   ; received == ringBytes
+    ld (vidStrmRemainBlk + DATA_WINDOW - OVL_ORG), hl
+    ; run-cursor handoff (the open window continues mid-run)
+    ld a, (vidEntCntC)
+    ld (vidStrmEntryCnt + DATA_WINDOW - OVL_ORG), a
+    ld hl, (vidStrmEntryPtr)
+    ld de, vidFilemapBuf
+    or a
+    sbc hl, de
+    ld a, l                      ; (entryPtr - buf), <= 48 here
+    ld c, 0
+.eidx:
+    sub 6
+    jr c, .eidxd
+    inc c
+    jr .eidx
+.eidxd:
+    ld a, c
+    ld (vidStrmEntryIdx + DATA_WINDOW - OVL_ORG), a
+    ld hl, (vidStrmRunBlocks)
+    ld (vidStrmRunBlkH + DATA_WINDOW - OVL_ORG), hl
+    ld hl, (vidStrmRunAddrLo)
+    ld (vidRunAddrLoH + DATA_WINDOW - OVL_ORG), hl
+    ld hl, (vidStrmRunAddrHi)
+    ld (vidRunAddrHiH + DATA_WINDOW - OVL_ORG), hl
+    ld a, (vidCardFlags)
+    ld (vidCardFlagsH + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidMfSave)
+    ld (vidMfSaveH + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidStrmWinOpen)
+    ld (vidWinOpenH + DATA_WINDOW - OVL_ORG), a
+    ld hl, vidFilemapBuf
+    ld de, vidHotMap + DATA_WINDOW - OVL_ORG
+    ld bc, VID_STRM_HOT_ENT*6
+    ldir
+ IFDEF DEBUG
+    ld hl, (vidRingCapBlkC)
+    dec hl
+    ld (vidRingMin + DATA_WINDOW - OVL_ORG), hl
+    ld hl, 0
+    ld (vidRingUnder + DATA_WINDOW - OVL_ORG), hl
+    xor a
+    ld (vidProdCnt + DATA_WINDOW - OVL_ORG), a
+    ld (vidProdThrottle + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidNum + DATA_WINDOW - OVL_ORG)
+    cp 99                        ; 099 = the deliberate-underrun
+    jr nz, .thrdone              ; fixture: throttle the pace-window
+    ld a, 8                      ; producer to 8 blocks/frame (DEBUG
+    ld (vidProdThrottle + DATA_WINDOW - OVL_ORG), a
+.thrdone:                        ; only; the gate force-fill is not
+ ENDIF                           ; throttled - clean recovery)
+    call data_restore
+    xor a                        ; window ownership is HOT now
+    ld (vidStrmWinOpen), a
+    ld b, 0                      ; verdict: loaded (streaming)
+    jp .backhop
+
+.badu:
+    call data_restore            ; the parse bracket was open
+.badc:
+    ld b, 1                      ; verdict: bad header / bad read
+    jr .fail
+.toofrag:
+    ld b, 4                      ; verdict: too fragmented to stream
+    jr .fail
+.toobig:
+    ld b, 3                      ; verdict: no ring fits (pool below
+                                 ; one streamed frame's need, or the
+                                 ; file is >= 16MB)
+.fail:
+    push bc
+    call vid_ring_free
+    call vid_stream_close
+    pop bc
+.backhop:
+    ld hl, vid_run.openret
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+; Common hot staging (both deliveries): fileEnd, the parameter block,
+; ring count + bank list, DEBUG fill row, per-file SMC patches (stub
+; dispatch targets + gap height immediates - doc 08, written through
+; the window, rubric 3). OPENS the MMU6 bracket and RETURNS WITH IT
+; OPEN - the caller stages its delivery extras then closes with
+; data_restore. Corrupts everything.
+vid_stage_common:
     ld hl, (vidSizeLo)           ; fileEnd = size (staged with the
     ld (vidP_FileEnd), hl        ; block, one LDIR)
     ld a, (vidSizeHi)
@@ -2110,9 +3131,6 @@ nxv2_open_body:
     ld hl, (vidFillD)
     ld (vidTlFillFrames + DATA_WINDOW - OVL_ORG), hl
  ENDIF
-    ; stub dispatch targets: flat vs gapped fast handlers for the
-    ; 8-bit ops (the 16-bit ops share the gap-aware bodies) - doc 08
-    ; SMC, written through the window (rubric 3: VID_PAGE code bytes)
     ld a, (vidP_GapFlag)
     or a
     jr z, .flatset
@@ -2126,7 +3144,7 @@ nxv2_open_body:
     ld (vg_op_skip8.hcmp + 1 + DATA_WINDOW - OVL_ORG), a
     ld (vg_op_run8.hcmp + 1 + DATA_WINDOW - OVL_ORG), a
     ld (vg_op_copy8.hcmp + 1 + DATA_WINDOW - OVL_ORG), a
-    jr .patched
+    ret
 .flatset:
     ld hl, vf_op_skip8
     ld (vid_stub + VOP_SKIP8 + 1 + DATA_WINDOW - OVL_ORG), hl
@@ -2134,27 +3152,7 @@ nxv2_open_body:
     ld (vid_stub + VOP_RUN8 + 1 + DATA_WINDOW - OVL_ORG), hl
     ld hl, vf_op_copy8
     ld (vid_stub + VOP_COPY8 + 1 + DATA_WINDOW - OVL_ORG), hl
-.patched:
-    call data_restore
-    ld b, 0                      ; verdict: loaded
-    jr .backhop
-.badu:
-    call data_restore            ; the parse bracket was open
-.badc:
-    ld b, 1                      ; verdict: bad header / bad read
-    jr .fail
-.toobig:
-    ld b, 3                      ; verdict: exceeds the resident ring
-.fail:
-    push bc
-    call vid_ring_free
-    call vid_stream_close
-    pop bc
-.backhop:
-    ld hl, vid_run.openret
-    push hl
-    ld a, VID_PAGE
-    jp ovl_map_page
+    ret
 
 nxvMagic: db "NXVID"
 
@@ -2183,6 +3181,15 @@ vidRingNeed:   db 0
 vidLoadIdx:    db 0
 vidRecvLo:     dw 0
 vidRecvHi:     db 0
+; 3b streaming-setup scratch (cold; staged hot by .strm_loaded)
+vidDeliverStrm: db 0             ; 0 = resident, 1 = ring streaming
+vidLoadTgt:    ds 3              ; prefill byte target (size / ring)
+vidHdrCapC:    dw 0              ; header per-frame payload cap
+vidCapBlkC:    db 0              ; validated cap (blocks)
+vidApadBlkC:   db 0
+vidNeedBlkC:   db 0
+vidRingCapBlkC: dw 0
+vidEntCntC:    db 0              ; filemap entries in use
  IFDEF DEBUG
 vidFillT0:     dw 0
 vidFillD:      dw 0
@@ -2436,6 +3443,19 @@ vid_run_l2setup_body:
     ld (video_ctc_isr_stereo.cmplo+1+DATA_WINDOW-OVL_ORG), a
     ld a, h
     ld (video_ctc_isr_stereo.cmphi+1+DATA_WINDOW-OVL_ORG), a
+    ; double-buffer cells (3b): the first fill lands in half A (the
+    ; end markers above already point there); the queue end offset =
+    ; real bytes - 1 (mono) / - 2 (stereo pair)
+    ld hl, vidAudBuf
+    ld (vidAudFillPtr+DATA_WINDOW-OVL_ORG), hl
+    ld hl, (vidP_ABytes)
+    dec hl
+    ld a, (vidP_AChan)
+    cp 2
+    jr nz, .endoff
+    dec hl
+.endoff:
+    ld (vidAudEndOff+DATA_WINDOW-OVL_ORG), hl
  IFDEF DEBUG
     ; timeline baseline: zero vidTlTicks..vidLoopPass (vidTlFillFrames
     ; sits outside the span - the open body already staged it)
@@ -2572,6 +3592,11 @@ vid_run_restore_body:
     nextreg NR_MMU2, a
     call vid_ring_free
     call data_restore
+    call vid_stream_close        ; streaming keeps the esxDOS handle
+                                 ; open for the session (the hot side
+                                 ; already CMD12'd its window before
+                                 ; hopping here); resident closed at
+                                 ; load time - idempotent either way
     ld hl, vid_run.restore_tail
     push hl
     ld a, VID_PAGE
@@ -2611,8 +3636,6 @@ vid_open_video_body:
     ld hl, vidExtVid             ; ".VID",0 (5 bytes)
     ld bc, 5
     ldir
-    ld a, 1
-    ld (vidStrmMode), a          ; the player always opens raw
     ld a, (curPart)
     dec a
     jr z, .openroot
@@ -2667,10 +3690,12 @@ vid_play_missing_body:
     ld a, VID_PAGE
     jp ovl_map_page
 
-; Open/load failure print: B = 1 VID FMT / 2 no bank / 3 exceeds the
-; ring (stage 3a's not-yet-supported size error). B survives the hop
-; (ovl_map_page corrupts AF only) and must survive back for nothing -
-; the hot side falls into .restore_noplay regardless.
+; Open/load failure print: B = 1 VID FMT / 2 no bank / 3 no ring fits
+; (pool below one streamed frame's need, or the file is >= 16MB) / 4
+; too fragmented to stream (filemap exceeds the hot copy - .defrag).
+; B survives the hop (ovl_map_page corrupts AF only) and must survive
+; back for nothing - the hot side falls into .restore_noplay
+; regardless.
 vid_open_fail_body:
     push bc
     ld b, 23
@@ -2683,7 +3708,10 @@ vid_open_fail_body:
     jr c, .have                  ; B = 1
     ld hl, msgVidNoBank2
     jr z, .have                  ; B = 2
-    ld hl, msgVidTooBig          ; B = 3
+    cp 4
+    ld hl, msgVidTooBig
+    jr c, .have                  ; B = 3
+    ld hl, msgVidFrag            ; B = 4
 .have:
     call dbg_puts
     ld hl, vid_run.openfailret
@@ -2695,15 +3723,17 @@ msgVidMissing:  db "VID FILE?", 0
 msgVidNoBank2:  db "VID NOBANK2", 0
 msgVidBadFmt:   db "VID FMT?", 0
 msgVidTooBig:   db "VID SIZE?", 0
+msgVidFrag:     db "VID FRAG?", 0
  ENDIF
 
 ; ---------------------------------------------------------------------
 ; vid_stream_open_body - the real open (carried; IX = filename in,
 ; CF/A out; called same-page from vid_open_video_body). DISK_FILEMAP
 ; runs FIRST (before F_FSTAT - the sector-cache ordering law), then
-; F_FSTAT for the size, then the raw cursor reset. All cells are
-; page-local now (the old hot/cold translation dance is gone with
-; the cluster's move). Corrupts AF, BC, DE, HL, IX.
+; F_FSTAT for the size, then the raw cursor reset. RAW ONLY (3b): the
+; F_READ mode and its vidStrmMode selector are DELETED - the player
+; always opened raw since 3a, the branch was dead code. Corrupts AF,
+; BC, DE, HL, IX.
 ; ---------------------------------------------------------------------
 vid_stream_open_body:
     ld a, $FF
@@ -2714,12 +3744,8 @@ vid_stream_open_body:
     call esx_fopen               ; IX = caller's filename
     jr c, vid_stream_open_fail
     ld (vidHandle), a
-    ld a, (vidStrmMode)
-    or a
-    jr z, vid_stream_open_fstat
-    call vid_raw_setup           ; raw: capture + validate the filemap
+    call vid_raw_setup           ; capture + validate the filemap
     jr c, vid_stream_open_openfail
-vid_stream_open_fstat:
     ld a, (vidHandle)            ; F_FSTAT - legal AFTER FILEMAP,
     ld ix, vidFstatBuf           ; before the card streams
     rst $08
@@ -2729,10 +3755,7 @@ vid_stream_open_fstat:
     ld (vidSizeLo), hl
     ld hl, (vidFstatBuf+9)
     ld (vidSizeHi), hl
-    ld a, (vidStrmMode)
-    or a
-    ret z                        ; F_READ mode: done (CF clear)
-    call vid_raw_reset_cursor    ; same-page now - no hop needed
+    call vid_raw_reset_cursor    ; same-page - no hop needed
     or a                         ; CF clear
     ret
 vid_stream_open_openfail:
@@ -2806,51 +3829,32 @@ vidNamePart: ds 14               ; "PARTn\NNN.VID",0
 vidFstatBuf: ds 11               ; F_FSTAT: +7(4) = file size
 
 ; =====================================================================
-; SD STREAMING CLUSTER - 3b PARTS BIN. Moved wholesale from the hot
-; page (SP15 3a): stage 3a plays resident only, so none of this runs
-; while the CTC is armed - it serves the pre-arm resident load and
-; will feed stage 3b's prefetch ring producer (which must re-hot the
-; per-frame pieces it needs; the CMD18-window-persistence contract
-; and every routine below are UNCHANGED from the v1-proven shapes).
+; SD STREAMING CLUSTER - COLD SIDE (3b status update of the 3a parts
+; bin): serves the PRE-ARM work only - the resident full load and the
+; streaming ring prefill, both through vid_stream_read below (raw
+; CMD18, window persisting across calls per the carried contract).
+; The ARMED session never executes this page: stage 3b re-hotted the
+; per-block pieces as clones on VID_PAGE (vid_prod_step + vid_*_h -
+; win open/close, sd cmd, block read, next-run, MF), owning hot twins
+; of every cell they touch; .strm_loaded stages the handoff and
+; clears the cold window flag so this side never double-closes. The
+; F_READ branch and its vidStrmMode selector are DELETED (dead since
+; 3a - the player always opens raw). Everything else is UNCHANGED
+; from the v1-proven shapes.
 ; =====================================================================
 
-; vid_stream_read - dual-mechanism read. In: A = dest 8K page (mapped
-; at MMU6 for this call), DE = count <= $2000. Out: CF clear, BC =
-; bytes read (short = EOF - callers count-check, the BC discipline);
-; CF set, A = error. vidStrmMode 0 = esxDOS F_READ, 1 = raw CMD18.
+; vid_stream_read - raw CMD18 read (the F_READ branch and vidStrmMode
+; are DELETED - dead since 3a, the player always opens raw). In: A =
+; dest 8K page (mapped at MMU6 for this call), DE = count <= $2000.
+; Out: CF clear, BC = bytes read (short = EOF - callers count-check,
+; the BC discipline); CF set, A = error.
 ; RAW CONTRACT (carried verbatim): the CMD18 window persists ACROSS
 ; calls (closed only at a fragment boundary, EOF, error, or
 ; vid_stream_close); while open, NO other filesystem/SD access may
 ; happen anywhere. Corrupts AF, BC, DE, HL, IX.
 vid_stream_read:
     ld (vidReadPage), a
-    ld a, (vidStrmMode)
-    or a
-    ld a, (vidReadPage)
-    jr z, .fread
     jp vid_stream_read_raw
-.fread:
-    push af
-    call data_save
-    pop af
-    call data_map_page
-    ld a, (vidHandle)
-    ld ix, DATA_WINDOW
-    push de
-    pop bc
-    call esx_fread
-    jr c, .fail
-    push bc
-    call data_restore
-    pop bc
-    or a
-    ret
-.fail:
-    push af
-    call data_restore
-    pop af
-    scf
-    ret
 
 ; Close the stream: release any raw window (CMD12 + deselect + MF
 ; restore), close the esxDOS handle. Idempotent. Corrupts AF,BC,DE,HL.
@@ -3314,8 +4318,8 @@ vid_remain_sub:
     ld (vidStrmRemainHi), hl
     ret
 
-; Streaming cluster cells (page-local; the hot page carries none).
-vidStrmMode:       db 0          ; 0 = F_READ, 1 = raw card streaming
+; Streaming cluster cells (page-local; the ARMED streaming session
+; runs on the hot twins staged by .strm_loaded, not on these).
 vidHandle:         db $FF
 vidSizeLo:         dw 0
 vidSizeHi:         dw 0
@@ -3442,6 +4446,19 @@ vid_tl_report_body:
     call dbg_puts
     ld hl, (vidTlFillFramesL)
     call dbg_hex16
+    ; RING row (3b): min frame-top ring depth / gate underrun events
+    ; (streaming; a resident run prints 0000/0000 - staged so)
+    ld b, VID_TL_ROW0+5
+    ld c, 0
+    call dbg_at
+    ld hl, msgTlRing
+    call dbg_puts
+    ld hl, (vidRingMinL)
+    call dbg_hex16
+    ld hl, msgTlSlash
+    call dbg_puts
+    ld hl, (vidRingUnderL)
+    call dbg_hex16
     jr .done
 .nextrow:
     ld hl, vidTlRptRow
@@ -3470,6 +4487,8 @@ msgTlOp:   db " OP=", 0
 msgTlPos:  db " POS=", 0
 msgTlPass: db " PASS=", 0
 msgTlFill: db " FILL=", 0
+msgTlRing: db "RING   =", 0
+msgTlSlash: db "/", 0
 vidTlRptRow: db 0
 vidTlRptIdx: db 0
 
@@ -3484,6 +4503,8 @@ vidErrCodeL:      db 0
 vidErrOpL:        db 0
 vidErrPosL:       ds 3
 vidLoopPassL:     db 0
+vidRingMinL:      dw 0
+vidRingUnderL:    dw 0
 vidTlFillFramesL: dw 0
     ASSERT vidTlFillFramesL + 2 - vidTlTicksL == VID_TL_BLOCK_LEN
  ENDIF

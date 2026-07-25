@@ -564,10 +564,19 @@ NXV2_DMA_CHUNK   equ 256
 NXV2_RUN_DMA_MIN equ 64
 NXV2_COPY_DMA_MIN equ 90
 
-; Resident ring (stage 3a): pool banks holding the WHOLE file. The
+; Ring (3a resident / 3b streaming): pool banks holding the whole
+; file (resident) or the circular prefetch buffer (streaming). The
 ; bank list capacity covers every allocatable pool bank on a 2MB
 ; machine (14-15 + 36-47 + 48-111 = 78) with margin.
 VID_RING_MAX     equ 80
+
+; 3b streaming limits: the hot filemap copy holds this many 6-byte
+; DISK_FILEMAP runs (a file needing more is too fragmented to stream -
+; "VID FRAG?", run .defrag); the header's per-frame payload cap is
+; validated against NXV2_STRM_CAP_MAX blocks (the encoder's real caps
+; top out around 110 blocks; a bigger value is a corrupt header).
+VID_STRM_HOT_ENT equ 8
+NXV2_STRM_CAP_MAX equ 240
 
 NR_MMU2          equ $52    ; slot 2 ($4000-$5FFF): the decode loop's
                             ; borrowed dest window (saved/restored for
@@ -580,9 +589,14 @@ VID_SRC_WIN      equ DATA_WINDOW ; $C000 MMU6 source (ring) window
 ; Decode error codes (DEBUG report ERR=xx; outside the esxDOS range,
 ; alongside VID_ERR_FRAG/NOMAP/TOKEN/CMD above)
 VID_ERR_OP       equ $FA    ; reserved/misaligned opcode (contract 1)
-VID_ERR_BIG      equ $F9    ; file exceeds the resident ring (3a's
-                            ; clean not-yet-supported error; 3b streams)
+; VID_ERR_BIG ($F9) DROPPED (SP15 3b carried minor): nothing ever
+; stored it - the size verdict is the open body's B=3 "VID SIZE?"
+; exit, which never reaches the timeline report. 3b streaming also
+; removed most of the class (any size < 16MB now plays); the residual
+; B=3 cases (ring below one frame's need, >= 16MB) keep the message.
 VID_ERR_SRCOVR   equ $F8    ; payload ran past the loaded file
+                            ; (streaming: or the per-frame source
+                            ; page-walk bound tripped - corrupt input)
 VID_ERR_DSTOVR   equ $F7    ; cursor ran past the Layer 2 surface
 
 ; Supported audio rate set (T4 design step, T1's derivation method,
@@ -600,9 +614,16 @@ NXV_RATE_MONO    equ 23325  ; 933 samples * 25fps = 23325 exactly - the
                             ; not a new number
 
 NXV_PAL_BYTES    equ 512    ; PAL opcode block size (NR $44 order)
-NXV_AUD_BUF_MAX  equ 2560   ; largest per-frame real audio size any
-                            ; header may declare (validated at open) -
-                            ; vidAudBuf's resident size (video.asm)
+NXV_AUD_HALF     equ 1280   ; one half of the double-buffered audio
+                            ; feed (SP15 3b structural-slow fix): the
+                            ; ISR plays one half while the frame loop
+                            ; fills the other - largest per-frame real
+                            ; audio size any header may declare
+                            ; (validated at open; stereo 1250 / mono
+                            ; 933 both fit with headroom)
+NXV_AUD_BUF_MAX  equ NXV_AUD_HALF*2 ; vidAudBuf's resident size (two
+                            ; halves - same 2560 bytes the 3a single
+                            ; buffer occupied)
 
 ; Short-read failure during the resident ring load (the file ended
 ; before its own F_FSTAT size was served). Outside the esxDOS error
