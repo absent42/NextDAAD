@@ -481,74 +481,109 @@ MOUSE_X_MAX     equ 319    ; accumulated mouse position ceiling (320-
 MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
                             ; tall plane, screen-downward)
 
-; --- Video (native NXV format, SP14a T4 - MakeVid compatibility SCRAPPED) ---
-; docs/superpowers/specs/2026-07-21-sp14a-native-video-design.md is the
-; design authority. NXV is ONE parameterized, block-aligned container -
-; every section is an exact multiple of 512-byte SD blocks. The header
-; REPLACES the old sizeless sector-count classifier entirely: vid_open
-; (video.asm) reads block 0, validates the magic, and derives shape/
-; geometry/audio/palette/frame-count straight from the fields below - no
-; divisor walk, no collision hazard, no six-format zoo.
+; --- Video (NXV v2, SP15 - v1 DELETED, stage 3a player) ---
+; docs/superpowers/plans/2026-07-23-sp15-nxv2.md "Format reference" is
+; the frozen authority (FORMAT FROZEN 2026-07-25, second NXBEN silicon
+; settlement, core 3.02.04). This comment block and the constants below
+; are the byte-identical player-side transcription; the encoder-side
+; twin lives in authoring-kit/lib/nxv2enc.py (HDR_OFF_*), and
+; authoring-kit/lib/nxv2dec.py is the executable spec every hand-trace
+; cites.
 ;
-; --- NXV header (block 0, 512 bytes) - byte layout (all multi-byte
-; fields little-endian) ---
+; --- NXV v2 header (block 0, 512 bytes; multi-byte fields LE) ---
 ;   offset  size  field
 ;     0      5    magic "NXVID"
-;     5      1    version (=1)
-;     6      1    shape: 0 = 320-wide mode-1 (column-major), 1 = 256-wide
-;                 mode-0 (row-major)
-;     7      2    width (320 or 256 - cross-checked against shape at
-;                 open, not trusted alone)
-;     9      2    height - content height (<= native: 256 for mode-1,
-;                 192 for mode-0). ANY value satisfying the block-
-;                 alignment rule (spec's HEADER section: 320-wide needs
-;                 h mod 8 = 0; 256-wide needs h mod 2 = 0) - the
-;                 letterbox bars cost ZERO wire bytes; the player derives
-;                 Y-centering (clip + YOFS) from this at open time.
-;    11      2    fps_x10 (fps*10, e.g. 125=12.5fps) - informational/
-;                 cadence only; playback pacing is audio-driven, not fps
-;    13      1    audio channels: 1 = mono, 2 = stereo
-;    14      2    audio rate, Hz - NXV_RATE_STEREO or NXV_RATE_MONO only
-;                 (the supported set); anything else = VID FMT?
-;    16      2    audio bytes/frame, PADDED to a 512-byte block multiple
-;                 - the wire read size every frame
-;    18      2    audio bytes/frame, REAL (<= padded) - the played
-;                 length; the padding difference is silent wire filler,
-;                 never copied into the resident play buffer
-;    20      1    palette flag: 0 = no per-frame palette block (pixel
-;                 bytes ARE their own RGB332 colour), 1 = a 512-byte
-;                 9-bit palette block precedes the pixels every frame
-;    21      3    frame count (24-bit LE)
-;    24      2    pixel blocks/frame (512-byte blocks; pixel bytes =
-;                 this * 512 = width*height exactly, guaranteed by the
-;                 block-alignment rule above)
-;    26..511       reserved, zero
+;     5      1    version = 2 (v1 files, version 1, are rejected -
+;                 VID FMT - the v1 player is deleted)
+;     6      1    width code: 0 = 256 (mode-0), 1 = 320 (mode-1)
+;                 (NOTE: INVERTED vs the old v1 shape byte)
+;     7      1    height: 1-255 lines, 0 = 256 (free heights - no
+;                 block-alignment rule any more)
+;     8      1    fps*10 low byte - informational only (pacing derives
+;                 from audio bytes, as v1 proved)
+;     9      1    audio channels: 1 mono / 2 stereo
+;    10      2    audio rate Hz LE (15625 stereo / 23325 mono)
+;    12      1    flags: bit0 = delta stream (always 1 in v2), bit1 =
+;                 direct-serve hint (ignored in stage 3a), bit2 =
+;                 RESERVED band-palette experiment, bits 3-7 reserved 0
+;    13      1    keyframe policy byte (encoder bookkeeping, ignored)
+;    14      3    frame count LE24
+;    17      2    audio bytes/frame LE (REAL, pre-pad; the wire block
+;                 is this rounded up to a 512 multiple)
+;    19      2    ring start-margin in 512B blocks LE (3b streaming;
+;                 ignored by the resident path)
+;    21      2    per-frame payload cap in blocks LE (informational)
+;    23..511      reserved 0
+;
+; Frame layout: [audio blocks (padded 512)] [payload blocks (padded
+; 512)]. Payload = opcode stream; opcode byte VALUES are PRE-SCALED BY
+; 4 so the wire byte IS the dispatch offset into the player's
+; 256-aligned stub block (doc 07 dense dispatch at its floor).
 NXV_MAGIC_LEN    equ 5
-NXV_VERSION      equ 1
-NXV_OFF_MAGIC    equ 0
-NXV_OFF_VERSION  equ 5
-NXV_OFF_SHAPE    equ 6
-NXV_OFF_WIDTH    equ 7
-NXV_OFF_HEIGHT   equ 9
-NXV_OFF_FPSX10   equ 11
-NXV_OFF_ACHAN    equ 13
-NXV_OFF_ARATE    equ 14
-NXV_OFF_ABYTES_PAD  equ 16
-NXV_OFF_ABYTES_REAL equ 18
-NXV_OFF_PALFLAG  equ 20
-NXV_OFF_FRAMES   equ 21     ; 3 bytes, 24-bit LE
-NXV_OFF_PIXBLK   equ 24
+NXV2_VERSION     equ 2
+NXV2_OFF_MAGIC   equ 0
+NXV2_OFF_VERSION equ 5
+NXV2_OFF_WIDTH   equ 6      ; width CODE (0/1), not a pixel count
+NXV2_OFF_HEIGHT  equ 7
+NXV2_OFF_FPSX10  equ 8
+NXV2_OFF_ACHAN   equ 9
+NXV2_OFF_ARATE   equ 10
+NXV2_OFF_FLAGS   equ 12
+NXV2_OFF_KFPOL   equ 13
+NXV2_OFF_FRAMES  equ 14     ; 3 bytes LE24
+NXV2_OFF_ABYTES  equ 17     ; real (pre-pad) audio bytes/frame
+NXV2_OFF_RMARGIN equ 19
+NXV2_OFF_FRAMECAP equ 21
 
-NXV_SHAPE_MODE1  equ 0      ; 320-wide, Layer 2 mode 1, column-major
-NXV_SHAPE_MODE0  equ 1      ; 256-wide, Layer 2 mode 0, row-major
-NXV_WIDTH_MODE1  equ 320
-NXV_WIDTH_MODE0  equ 256
-NXV_NATIVE_H_MODE1 equ 256  ; column stride (hardware-fixed) - the ONLY
-                            ; height at which mode-1 needs zero column-
-                            ; gap bookkeeping (the flat-serve win)
-NXV_NATIVE_H_MODE0 equ 192  ; mode-0 has no stride mismatch at ANY
-                            ; height - always trivially flat/linear
-NXV_COLS_PER_PAGE equ 32    ; mode-1 hardware constant: 8192/256
+NXV2_FLAG_DELTA  equ 1      ; bit0 - must be set
+NXV2_FLAG_DIRECT equ 2      ; bit1 - direct-serve hint (3a: ignored)
+
+; Opcode values (frozen, x4-scaled). Reserved: $24 (old $09), $2C
+; (SCROLL), $30-$3C, and every non-multiple-of-4/every value >= $40 -
+; all rejected by the production decoder (decoder contract 1).
+VOP_FEND         equ $00
+VOP_SKIP16       equ $04
+VOP_RUN8         equ $08
+VOP_RUN16        equ $0C
+VOP_COPY8        equ $10
+VOP_COPY16       equ $14
+VOP_PAL          equ $18
+VOP_SKIP8        equ $1C
+VOP_KFLIP        equ $20
+VOP_KSTART       equ $28
+
+NXV_NATIVE_H_MODE1 equ 256  ; mode-1 column stride (hardware-fixed)
+NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
+
+; Kernel crossovers (task-2 silicon settlement, the settled
+; TMODEL_COEFFS): RUN fills go DMA at >= 64 bytes, COPY goes DMA
+; mem-to-mem at >= ~90 bytes; every DMA burst is capped at 256 bytes
+; (decoder contract 3 - a 512B burst starves the audio sample ISR,
+; measured 35% CTC tick shortfall; 1.2% at 256B).
+NXV2_DMA_CHUNK   equ 256
+NXV2_RUN_DMA_MIN equ 64
+NXV2_COPY_DMA_MIN equ 90
+
+; Resident ring (stage 3a): pool banks holding the WHOLE file. The
+; bank list capacity covers every allocatable pool bank on a 2MB
+; machine (14-15 + 36-47 + 48-111 = 78) with margin.
+VID_RING_MAX     equ 80
+
+NR_MMU2          equ $52    ; slot 2 ($4000-$5FFF): the decode loop's
+                            ; borrowed dest window (saved/restored for
+                            ; the whole playback session - the NXBEN
+                            ; precedent; nothing else touches
+                            ; $4000-$5FFF while a video plays)
+VID_DST_WIN      equ $4000  ; MMU2 dest window base
+VID_SRC_WIN      equ DATA_WINDOW ; $C000 MMU6 source (ring) window
+
+; Decode error codes (DEBUG report ERR=xx; outside the esxDOS range,
+; alongside VID_ERR_FRAG/NOMAP/TOKEN/CMD above)
+VID_ERR_OP       equ $FA    ; reserved/misaligned opcode (contract 1)
+VID_ERR_BIG      equ $F9    ; file exceeds the resident ring (3a's
+                            ; clean not-yet-supported error; 3b streams)
+VID_ERR_SRCOVR   equ $F8    ; payload ran past the loaded file
+VID_ERR_DSTOVR   equ $F7    ; cursor ran past the Layer 2 surface
 
 ; Supported audio rate set (T4 design step, T1's derivation method,
 ; CW16 across every video mode - see vidCtcTcNxvStereo/Mono, video.asm,
@@ -564,17 +599,14 @@ NXV_RATE_MONO    equ 23325  ; 933 samples * 25fps = 23325 exactly - the
                             ; sp13-task-2-report.md) - reused verbatim,
                             ; not a new number
 
-NXV_PAL_BYTES    equ 512    ; per-frame palette block size (palette-flag
-                            ; files only)
-NXV_AUD_BUF_MAX  equ 2560   ; largest real-or-padded per-frame audio size
-                            ; any shipped profile needs (N0 stereo:
-                            ; 2560B padded / 2500B real) - vidAudBuf's
-                            ; resident size (video.asm)
+NXV_PAL_BYTES    equ 512    ; PAL opcode block size (NR $44 order)
+NXV_AUD_BUF_MAX  equ 2560   ; largest per-frame real audio size any
+                            ; header may declare (validated at open) -
+                            ; vidAudBuf's resident size (video.asm)
 
-; Distinct short-pixel-read failure code (mid-frame, after audio+palette
-; already confirmed present - never the documented-normal EOF signal a
-; short AUDIO read is). Outside the esxDOS error range, alongside VID_
-; ERR_FRAG/NOMAP/TOKEN/CMD above.
+; Short-read failure during the resident ring load (the file ended
+; before its own F_FSTAT size was served). Outside the esxDOS error
+; range, alongside VID_ERR_FRAG/NOMAP/TOKEN/CMD above.
 VID_ERR_SHORT    equ $FB
 
 ; --- Video player core - GFX/SFX dispatch (unchanged surface) ---
@@ -611,46 +643,24 @@ NXV_NR70_MODE0  equ 0          ; mode 0 (256x192/row-major)
 NXV_CLIP_X2_MODE1 equ (320/2)-1   ; = 159
 NXV_CLIP_X2_MODE0 equ 256-1        ; = 255
 
-; Copper flip (spec's Q2a design, owner hardware-validated line - the
-; VBENCH-COPPER owner leg confirmed a clean band at the default probe
-; line with the picture correctly above it, "confirms L2-ends-at-256
-; well enough for the flip design"). FRAME-mode 4-instruction/8-byte
-; list: WAIT <line>,0 / MOVE NR_L2_BANK,<bank> / MOVE NR_PAL_CTRL,
-; <palctl> / HALT (WAIT $FFFF). The CPU rewrites only the two MOVE data
-; bytes each frame, during active display (copper parked at the
-; terminal HALT by then - never mid-instruction, per the design doc's
-; own hazard note).
-NXV_COPPER_LINE     equ 257  ; owner-validated (VBENCH-COPPER leg)
-NXV_COPPER_OFF_BANK equ 3    ; byte offset of the NR $12 MOVE's data
-NXV_COPPER_OFF_PAL  equ 5    ; byte offset of the NR $43 MOVE's data
+; NXV_COPPER_* constants retired with the v1 player (SP15 3a): the
+; copper flip was already UNCALLED after the sparkle/magenta audit; v2
+; flips are CPU-only by design. git holds the list geometry.
 
-; --- SP14a Task 1: DEBUG-only frame-timeline instrument (video.asm's
-; vid_tl_stamp/vid_tl_report) - phase ids for the 5-phase closed loop
-; the frame loop is stamped through once per frame: stream (audio+
-; palette bytes read) -> blit (pixel data transfer) -> other (key/exit
-; check) -> flip/pace-wait (audio-done spin + full-rate audio copy-out +
-; the L2 bank/NR $12 copper-flip poke) -> palette (the deferred vid_apply_palette call,
-; palette formats only) -> other (loop-back) -> stream ... Named here,
-; not left as magic immediates, so vid_tl_stamp's call sites self-
-; document. DEBUG-only: zero cost to Release (see video.asm's own IFDEF
-; DEBUG blocks around every consumer).
+; --- DEBUG-only frame-timeline instrument (video.asm's vid_tl_stamp/
+; vid_tl_report) - phase ids for the v2 frame loop's 5-phase closed
+; loop, stamped once per frame: pace (audio-done spin) -> audio (ring
+; -> vidAudBuf copy-out + launch) -> decode (the whole payload decode/
+; paint) -> flip (present: NR $43/$12 pokes) -> other (key/exit check,
+; loop-back) -> pace ... vid_tl_stamp increments the frame counter when
+; phase 0 (PACE) opens. The report also prints FILL= (the resident ring
+; load's duration in 50Hz frames, measured pre-arm via frameCounter).
+; DEBUG-only: zero cost to Release.
  IFDEF DEBUG
-VID_TL_STREAM   equ 0
-VID_TL_BLIT     equ 1
-VID_TL_PALETTE  equ 2
-VID_TL_FLIPPACE equ 3
+VID_TL_PACE     equ 0
+VID_TL_AUDIO    equ 1
+VID_TL_DECODE   equ 2
+VID_TL_FLIP     equ 3
 VID_TL_OTHER    equ 4
 VID_TL_PHASES   equ 5
-; VID_TL_GAPXFER (the per-column gap-path GT sub-phase, formerly index 5/
-; PHASES=6) retired (SP14a gap-blit redesign wave, strip step): its own
-; stamp call sites (vid_stream_pixels_gap's .fastfit/.slow entries, plus
-; the retimed VID_TL_BLIT stamps that shared the same instrumentation
-; round) fired ~2x/column x 320 columns/frame - ~3-4ms/frame of
-; measurement tax on the exact hot path being redesigned, muddying every
-; number since. Its job is done: it isolated the gap path's overage to
-; "inside the transfer window measurement" (section 27) and then, via
-; GAPSPINS (retired alongside it, debug.asm), to CPU-side bookkeeping
-; rather than card cadence. The 5 phases above are the frame-level
-; readout that stays - cheap (2 stamps/frame each, not 2/column) and
-; still the leg's own report.
  ENDIF

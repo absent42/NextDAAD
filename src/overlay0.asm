@@ -2255,23 +2255,15 @@ ktest_trampoline:
     jp ovl_map_page                ; vid_bench_trampoline, etc.)
  ENDIF
 
-; EXTERN vector 8 (SP15 T2 NXV v2 decode-kernel bench, replacing the
-; retired DMAT/DMACC suite on the same vector): DEBUG-only route to
-; NXBEN (tests/test.dsf's NXBD/NXBS/NXBR/NXBRD/NXBC0-1/NXBD0-1/
-; NXBA0-1/NXBK0-1/NXBF/NXBX/NXBP verbs; body is nxben_entry in
-; video.asm's VID_PAGE2 DEBUG section). Vector 8 is the first free
-; stub row past 7 (XUNDONE) - 3/4/7 are live, 5 must stay ext_stub
-; forever (suite check 44), 6 is KTEST's. Same IFDEF pattern as
-; ktest_trampoline above: Release keeps ext_stub and stays byte-
-; identical.
- IFDEF DEBUG
-nxben_trampoline:
-    ld hl, nxben_entry            ; push-target/ovl_map_page idiom again
-    push hl
-    ld a, VID_PAGE2
-    jp ovl_map_page
- ENDIF
-
+; EXTERN vector 8: NXBEN (the SP15 T2 decode-kernel bench) is RETIRED
+; with the v2 format freeze (SP15 3a page-layout redesign): its job -
+; the silicon coefficients behind the freeze - is done, its kernels
+; graduated into the production decoder (video.asm hot page), and its
+; ~2.4KB of VID_PAGE2 DEBUG space now funds the v2 open/load cluster
+; plus the streaming cluster's move off the hot page. git holds the
+; bench (commits 5cc2c70/a63ccfd lineage) and the DMAT/DMACC
+; precedent before it. Vector 8 is ext_stub again in both variants;
+; 5 must stay ext_stub forever (suite check 44), 6 is KTEST's.
 extVec:
     dw ext_stub, ext_stub, ext_stub, ext_xmes
     dw h_xpart, ext_stub
@@ -2281,11 +2273,7 @@ extVec:
     dw ext_stub                   ; vector 6, release: unimplemented stub
  ENDIF
     dw ext_undone
- IFDEF DEBUG
-    dw nxben_trampoline           ; vector 8, DEBUG only
- ELSE
-    dw ext_stub                   ; vector 8, release: unimplemented stub
- ENDIF
+    dw ext_stub                   ; vector 8 (NXBEN retired, see above)
     dw ext_stub, ext_stub, ext_stub
     dw ext_stub, ext_stub, ext_stub, ext_stub
 
