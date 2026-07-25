@@ -1,37 +1,47 @@
 ; NextDAAD code page: video (NXV v2 delta-video player, SP15 Task 3
-; stages 3a resident + 3b ring streaming - the v1 player is DELETED;
-; git holds it).
+; stages 3a resident + 3b ring streaming + 3c direct-serve/column-hop
+; - the v1 player is DELETED; git holds it).
 ;
-; PAGE LAYOUT (SP15 3a redesign + 3b streaming - the layout authority):
+; PAGE LAYOUT (SP15 3a redesign + 3b streaming + 3c - the layout
+; authority):
 ;
 ;   VID_PAGE (59, MMU7 while any video code runs, $E000-$F7FF) - HOT:
 ;     everything that can execute while the video CTC ISR is armed.
 ;     $E000        vid_stub - 64-byte 256-aligned dispatch block (16
-;                  4-byte JP slots; the wire opcode IS the offset)
+;                  4-byte JP slots; the wire opcode IS the offset;
+;                  3c: FEND/PAL/KFLIP slots are per-session SMC too)
 ;     $E040..      decode kernels (computed-entry fill/LDI blocks,
-;                  ALIGN 64), fast op handlers (flat + gapped sets),
-;                  central dispatch, chunked bodies, DMA arm blocks,
-;                  seam walkers (streaming-aware: circular wrap +
-;                  walk bound), PAL/KSTART/KFLIP/FEND handlers
-;     then         vid_decode_frame / vid_src_seek / vid_aud_copy,
+;                  ALIGN 64), fast op handlers (flat + gapped sets,
+;                  3c inline column hop), central dispatch, chunked
+;                  bodies (SMC exits), DMA arm blocks, seam walkers
+;                  (streaming-aware: circular wrap + walk bound),
+;                  PAL/KSTART/KFLIP/FEND handlers, vid_pos24
+;     then         vid_decode_frame/_ds + vid_dst_setup,
+;                  vid_src_seek / vid_aud_copy + vid_aud_queue,
 ;                  vid_play / vid_run + the frame loop, vid_key_any,
-;                  the two audio CTC ISRs (3b: double-buffer swap
+;                  the two audio CTC ISRs (3b double-buffer swap
 ;                  tails), the 3b STREAMING PRODUCER + hot SD cluster
-;                  (gate/prod_step/win/cmd/block - see its banner),
-;                  DEBUG timeline stamp
-;     then         hot cells (vidAudBuf 2x1280B halves, ring bank
-;                  list, streaming session cells, hot filemap, vidSv*)
+;                  (gate/prod_step/win/cmd/tok/block - see its
+;                  banner), the 3c DIRECT-SERVE cluster (ds_next/
+;                  byte/blkopen/pad/xfer/copy_body/pal/terminals/
+;                  aud_copy - see its banner), DEBUG timeline stamp
+;     then         hot cells (ring bank list, streaming + direct
+;                  session cells, hot filemap, vidSvMmu6/7; the
+;                  AUDIO BUFFER is NOT here any more - FOURTH RULE)
 ;
 ;   VID_PAGE2 (70, $E000-$F7FF) - COLD (pre-arm / post-disarm only):
-;     nxv2_open_body (v2 header validate + ring alloc + delivery
-;     decision + resident load / streaming ring PREFILL + hot
-;     staging), vid_run_entry_body / vid_run_l2setup_body /
-;     vid_run_restore_body (EXIT ORDER FIX lives there), the esxDOS
-;     open cluster (vid_open_video_body / vid_stream_open_body /
-;     vid_raw_setup), and the cold SD streaming cluster
-;     (vid_stream_read raw CMD18 machinery) - serves the pre-arm
-;     load/prefill only; the ARMED session runs on the hot clones
-;     (see the cluster banner). DEBUG: the timeline report body.
+;     vid_run_orch_body (3c: the whole pre-arm ladder as plain calls)
+;     -> nxv2_open_body (v2 header validate + audio bank + ring alloc
+;     + delivery decision by hint/size + resident load / streaming
+;     ring PREFILL / direct rewind-and-handoff + hot staging incl.
+;     the per-session decode vectors), vid_run_entry_body /
+;     vid_run_l2setup_body / vid_run_restore_body (EXIT ORDER FIX
+;     lives there), the esxDOS open cluster (vid_open_video_body /
+;     vid_stream_open_body / vid_raw_setup), the cold SD streaming
+;     cluster (vid_stream_read raw CMD18 machinery - pre-arm
+;     load/prefill only; the ARMED session runs on the hot clones),
+;     the cold-only vidSv* cells (3c move). DEBUG: the failure
+;     prints + the timeline report body.
 ;
 ; ONE RULE (unchanged from every prior video task): MMU7 = VID_PAGE for
 ; the entire window the video CTC ISR can fire (from the time-constant
@@ -45,16 +55,28 @@
 ; im2_isr fast path is AF/HL/frameCounter only, the video CTC ISR is
 ; AF/IX only, and nothing prints while a video plays).
 ;
-; THIRD RULE (new, 3b): while a STREAMING session is armed, the CMD18
-; window may be open across frames and the Multiface is disabled for
-; each open span - no other filesystem/SD access can happen
-; (structurally true: audEnable is frozen, nothing else runs), and the
-; hot producer owns every window/run/MF cell (the cold twins hand off
-; at .strm_loaded and take nothing back until teardown). MF protection
-; is per-window, not per-session: vid_win_close_h restores MF, so
-; brief re-enabled gaps exist at fragment boundaries and producer
-; rewinds until the next vid_win_open_h re-disables it (v1's shape -
-; an NMI in a gap hits with the window CLOSED, which is safe).
+; THIRD RULE (new, 3b; extended 3c): while a STREAMING or DIRECT-SERVE
+; session is armed, the CMD18 window may be open across frames and the
+; Multiface is disabled for each open span - no other filesystem/SD
+; access can happen (structurally true: audEnable is frozen, nothing
+; else runs), and the hot side owns every window/run/MF cell (the cold
+; twins hand off at .strm_loaded / .direct_setup and take nothing back
+; until teardown). MF protection is per-window, not per-session:
+; vid_win_close_h restores MF, so brief re-enabled gaps exist at
+; fragment boundaries and rewinds until the next vid_win_open_h
+; re-disables it (v1's shape - an NMI in a gap hits with the window
+; CLOSED, which is safe).
+;
+; FOURTH RULE (new, 3c): MMU3 ($6000-$7FFF) is the session's borrowed
+; AUDIO window - one pool bank holding the 2560-byte double buffer
+; (vidAudBuf = VID_AUD_WIN), mapped in vid_run_l2setup_body and
+; restored in the restore body (the MMU2 pattern). Safe by the same
+; freeze arguments as the SECOND RULE: the tilemap (bank 5) is hidden
+; and isolated, the sample machinery (its $7C00 stage ring included)
+; is aborted with its CTC vector replaced, and nothing else reads
+; slot 3 while a video plays; bank 5's CONTENT is untouched - only
+; the CPU mapping is borrowed. This is the 2560-byte hot-page reclaim
+; that funds the 3c direct-serve + column-hop features.
 ;
 ; Format authority: docs/superpowers/plans/2026-07-23-sp15-nxv2.md
 ; (FROZEN 2026-07-25); nextdaad.inc's NXV2_* block is the player-side
@@ -648,21 +670,29 @@ vid_slow_op:
     ld b, a
     call vid_fetch               ; colour
     jp vid_run_body
-.c8:
-    call vid_fetch
-    ld c, a
-    ld b, 0
-    jp vid_copy_body
 .c16:
     call vid_fetch
     ld c, a
     call vid_fetch
     ld b, a
-    jp vid_copy_body
+    jr .cj
+.c8:
+    call vid_fetch
+    ld c, a
+    ld b, 0
+.cj:
+    jp vid_copy_body             ; SMC: vid_ds_copy_body when the
+                                 ; session is direct-serve (3c)
 
-; Fetch one source byte across the window seam. Out: A = byte, HL
-; advanced. Preserves BC, DE. Corrupts F.
+; Fetch one source byte - SMC-VECTORED per session (3c direct-serve):
+; the RAM window walk (resident/streaming) or the SD stream byte
+; (direct). vid_stage_common patches .vec+1 on every open. Out: A =
+; byte, HL advanced (RAM cursor / block-remain). Preserves BC, DE.
+; Corrupts F.
 vid_fetch:
+.vec:
+    jp vid_fetch_ram             ; SMC: vid_fetch_ram / vid_ds_byte
+vid_fetch_ram:
     ld a, h
     cp $E0
     call nc, vid_src_next
@@ -685,7 +715,8 @@ vid_skip_body:
     ld bc, (vidRemain)
     ld a, b
     or c
-    jp z, vid_next
+.next:
+    jp z, vid_next               ; SMC: vid_ds_next when direct (3c)
     call vid_dst_norm
     call vid_chunk_dst_nocap     ; BC = min(remain, dest/col room) -
                                  ; skips move no bytes, so no DMA cap
@@ -707,7 +738,8 @@ vid_run_body:
     ld bc, (vidRemain)
     ld a, b
     or c
-    jp z, vid_next
+.next:
+    jp z, vid_next               ; SMC: vid_ds_next when direct (3c)
     call vid_dst_norm
     call vid_chunk_dst           ; BC = chunk (rooms + 256 cap)
     push hl
@@ -1038,7 +1070,11 @@ vid_op_kstart:
     add a, c
     ld (vidDstEnd), a
     ld de, VID_DST_WIN           ; cursor = 0 (KSTART's own effect)
-    jp vid_next
+.next:
+    jp vid_next                  ; SMC: vid_ds_next when direct (3c -
+                                 ; the handler itself is shared: it
+                                 ; never touches HL, the direct
+                                 ; session's live block-remain)
 .dup:
     ld a, VID_ERR_OP
     jp vid_dec_abort
@@ -1332,6 +1368,25 @@ vidDmaCpArm_len equ $ - vidDmaCpArm
 ; ---------------------------------------------------------------------
 vid_decode_frame:
     call vid_src_seek            ; HL = payload cursor, MMU6 mapped
+    call vid_dst_setup
+    ld iy, vid_stub              ; IYH pinned for the whole payload
+    jp vid_next                  ; terminal handlers ret to our caller
+
+; Frame-decode dispatcher (3c): the frame loop calls this; direct-
+; serve sessions decode from the SD stream, everything else from the
+; RAM ring.
+vid_decode_any:
+    ld a, (vidDirect)
+    or a
+    jp nz, vid_decode_frame_ds
+    jp vid_decode_frame
+
+; Dest-surface setup from the span state (extracted 3c - shared with
+; the direct-serve decode): span-continuation frames restore the
+; spilled hidden-surface cursor, ordinary frames start the VISIBLE
+; surface at cursor 0. Sets vidDstPage/End, maps MMU2, DE = cursor.
+; Corrupts AF, C.
+vid_dst_setup:
     ld a, (vidInSpan)
     or a
     jr z, .fresh
@@ -1345,7 +1400,7 @@ vid_decode_frame:
     add a, c
     ld (vidDstEnd), a
     ld de, (vidSpanDE)
-    jr .go
+    ret
 .fresh:
     ld a, (l2FrontBank)          ; delta frames patch the VISIBLE
     add a, a                     ; surface in place
@@ -1356,9 +1411,24 @@ vid_decode_frame:
     add a, c
     ld (vidDstEnd), a
     ld de, VID_DST_WIN           ; cursor 0
-.go:
-    ld iy, vid_stub              ; IYH pinned for the whole payload
-    jp vid_next                  ; terminal handlers ret to our caller
+    ret
+
+; Direct-serve frame decode (3c): the payload arrives ONE BYTE AT A
+; TIME off the open CMD18 stream - HL carries the open block's
+; remaining byte count for the whole decode (every frame section is
+; 512-aligned, so HL is 0 at every section boundary and no cell is
+; needed). Ops parse through the always-slow path (vid_fetch is
+; vectored to vid_ds_byte); COPY literals ride vid_ds_copy_body's
+; inir transport straight to the surface; SKIP/RUN reuse the shared
+; dest-side bodies; FEND/PAL/KFLIP land on the ds handlers via the
+; per-session stub slot patches. Terminal handlers ret to our caller.
+vid_decode_frame_ds:
+    xor a
+    ld (vidDsFrmBlk), a          ; per-frame section bound reset
+    call vid_dst_setup
+    ld iy, vid_stub              ; slow_op's jp (iy) needs it
+    ld hl, 0                     ; block-remain: at a boundary
+    jp vid_ds_next
 
 ; ---------------------------------------------------------------------
 ; vid_src_seek - map the ring page holding the consumer cursor and
@@ -1506,7 +1576,7 @@ vid_aud_copy:
 .noc:
     ld a, (vidStreaming)
     or a
-    jr z, .queue
+    jr z, vid_aud_queue
     ; streaming: ring cursor += padded block (mod ringBytes), depth
     ; -= its blocks (the gate's staged need covered them)
     ld a, (vidApadBlk)
@@ -1522,8 +1592,11 @@ vid_aud_copy:
     ld a, (vidRingRl+2)
     adc a, 0
     call vid_rl_mod              ; A:HL mod ringBytes -> vidRingRl
-.queue:
-    ; hand the filled half to the ISR: Ptr/End first, Rdy LAST
+    ; falls into vid_aud_queue
+; Hand the filled half to the ISR: Ptr/End first, Rdy LAST (the
+; release store) + fill-half toggle. Shared tail (3c): the direct-
+; serve audio read (vid_ds_aud_copy) queues through here too.
+vid_aud_queue:
     ld hl, (vidAudFillPtr)
     ld (vidAudNextPtr), hl
     ld bc, (vidAudEndOff)        ; = real bytes - 1 (mono) / - 2
@@ -1599,10 +1672,11 @@ vid_run:
     ; initialised both ISRs' end markers to half A's end), so Rdy is
     ; re-cleared; the fill pointer is left on half B for frame 1.
     ld (vidDecSp), sp            ; abort anchor: the preload's ring
-                                 ; walk can abort on corrupt input
-                                 ; (.restore is safe pre-arm - the CTC
-                                 ; park is a no-op on an unarmed CTC)
-    call vid_aud_copy
+                                 ; walk / SD read can abort on corrupt
+                                 ; input (.restore is safe pre-arm -
+                                 ; the CTC park no-ops on an unarmed
+                                 ; CTC)
+    call vid_aud_copy_any
     xor a
     ld (vidAudNextRdy), a
     ; --- CTC retune (v1-proven sequence, carried verbatim): double
@@ -1667,7 +1741,7 @@ vid_run:
     ld a, VID_TL_DECODE
     call vid_tl_stamp
  ENDIF
-    call vid_decode_frame        ; A = terminal (errors -> .decfail)
+    call vid_decode_any          ; A = terminal (errors -> .decfail)
  IFDEF DEBUG
     push af
     ld a, VID_TL_FLIP
@@ -1731,7 +1805,7 @@ vid_run:
     ; seam-free; streaming: ring cursor + the pass header block)
     call vid_loop_rewind
 .qnext:
-    call vid_aud_copy            ; fills + queues; ISR swaps at the
+    call vid_aud_copy_any        ; fills + queues; ISR swaps at the
                                  ; next boundary - zero held samples
 .qskip:
  IFDEF DEBUG
@@ -2301,6 +2375,9 @@ vid_loop_rewind:
     ld (vidFramePos+2), a
     ld (vidInSpan), a            ; defensive (a valid file never ends
                                  ; mid-span - nxv2dec validates)
+    ld a, (vidDirect)
+    or a
+    jr nz, .direct
     ld a, (vidStreaming)
     or a
     ret z
@@ -2313,6 +2390,288 @@ vid_loop_rewind:
     ld a, (vidRingRl+2)
     adc a, 0
     jp vid_rl_mod
+.direct:
+    ; direct-serve rewind (3c): close the window, reset the producer
+    ; run cursor to run 0, re-open and consume the pass header block
+    ; through the ds machinery (the per-frame bound's +1 covers it,
+    ; exactly the streamed loop's staged header block).
+    call vid_win_close_h
+    xor a
+    ld (vidStrmEntryIdx), a
+    ld (vidDsCrcDue), a          ; window closed: no CRC pending
+    ld hl, 0
+    ld (vidStrmRunBlkH), hl
+    ld hl, (vidTotalBlk)
+    ld (vidStrmRemainBlk), hl
+    ld hl, 0
+    call vid_ds_blkopen          ; run 0 reopened + the header block
+    jp vid_ds_pad                ; discard all 512 header bytes
+
+; =====================================================================
+; DIRECT-SERVE DECODE (SP15 3c) - the header hint's delivery mode:
+; literal-heavy (raw-equivalent) streams are served STRAIGHT from the
+; SD wire to the Layer 2 surface, v1-style - no ring, no RAM pass.
+; Composition: the whole decode runs the ALWAYS-SLOW op path
+; (vid_fetch vectored to vid_ds_byte; SKIP/RUN reuse the shared
+; dest-side chunked bodies via the SMC exits; COPY literals inir
+; port->surface below; FEND/PAL/KFLIP/KSTART via the per-session stub
+; slot patches). HL is the open block's remaining byte count for the
+; entire armed session phase (frame sections are 512-aligned, so it
+; is 0 at every section boundary). The CMD18 window is hot property
+; exactly as in streaming (THIRD RULE); the filemap runs/fragment
+; boundaries reuse the producer's own hot machinery
+; (vid_win_open/close_h + vid_next_run_h). Bounds (rubric 6): every
+; block open decrements the whole-pass remain (0 = corrupt payload,
+; abort) and counts against the per-frame section bound
+; (cap + apad + 1 blocks, staged at open) - a corrupt payload cannot
+; read unboundedly; the token/R1 polls carry the settled bounds.
+; docs/Z80 citations: doc 01 (inir 21T/B - at the ~22.1T/B SPI wire
+; floor the transport is wire-bound by design), doc 05 (16-bit
+; min/clip chains), doc 08 (the per-session SMC vectors, patched
+; cold through the MMU6 window - rubric 3), doc 11 (no DMA-from-SPI
+; - measured-rejected; the inir arms stay <= 256B and IRQ-open, so
+; the audio ISR is never starved - the contract-3 concern class).
+; =====================================================================
+
+; The direct dispatch loop: every op through the slow parser (whose
+; fetch is vectored here per session). 3 bytes - the SMC body exits
+; and stub slots point at this.
+vid_ds_next:
+    jp vid_slow_op
+
+; Fetch one stream byte. In/out: HL = open block's remaining count.
+; Preserves BC, DE. Out: A = byte.
+vid_ds_byte:
+    ld a, h
+    or l
+    call z, vid_ds_blkopen
+    dec hl
+    in a, (PORT_SPI_DAT)
+    ret
+
+; Open the next 512-byte stream block: consume the previous block's
+; CRC, enforce the per-frame section bound and the whole-pass remain,
+; walk the filemap at fragment boundaries (close/next/open - the
+; producer's own hot pieces), wait the data token (bounded). In: HL =
+; 0. Out: HL = 512. Preserves BC, DE. Faults abort the session (SP
+; anchor; POS= is not meaningful in direct mode - card decode key).
+vid_ds_blkopen:
+    push bc
+    push de
+    ld a, (vidDsCrcDue)
+    or a
+    jr z, .nocrc
+    in a, (PORT_SPI_DAT)         ; the previous block's 2 CRC bytes
+    nop
+    in a, (PORT_SPI_DAT)
+.nocrc:
+    ld a, (vidDsFrmBlk)          ; per-frame section bound: payload f
+    inc a                        ; + the next audio + a loop header
+    ld (vidDsFrmBlk), a          ; block at most (cap + apad + 1)
+    ld c, a
+    ld a, (vidDsBound)
+    cp c
+    jr c, .ovr                   ; over the bound: corrupt payload
+    ld hl, (vidStrmRemainBlk)    ; whole-pass accounting
+    ld a, h
+    or l
+    jr z, .ovr                   ; reading past the file: corrupt
+    dec hl
+    ld (vidStrmRemainBlk), hl
+    ld hl, (vidStrmRunBlkH)
+    ld a, h
+    or l
+    jr nz, .run
+    call vid_win_close_h         ; fragment boundary / rewind resume:
+    call vid_next_run_h          ; CMD12, next filemap run, CMD18
+    jr c, .short
+    call vid_win_open_h
+    jr c, .cmdfail
+.run:
+    ld hl, (vidStrmRunBlkH)
+    dec hl
+    ld (vidStrmRunBlkH), hl
+    call vid_sd_tok_h            ; bounded token wait (shared)
+    jr c, .tokfail
+    ld a, 1
+    ld (vidDsCrcDue), a
+    pop de
+    pop bc
+    ld hl, 512
+    ret
+.short:
+    ld a, VID_ERR_SHORT
+    jr .fault
+.cmdfail:
+    ld a, VID_ERR_CMD
+    jr .fault
+.ovr:
+    ld a, VID_ERR_SRCOVR
+    jr .fault
+.tokfail:
+    ld a, VID_ERR_TOKEN
+.fault:
+    jp vid_dec_abort_pos         ; pushed BC/DE absorbed by the anchor
+
+; Discard the rest of the open block (every frame section is
+; 512-aligned: sections end by discarding to the boundary). In/out:
+; HL = remaining count (0 on exit). Corrupts AF.
+vid_ds_pad:
+    ld a, h
+    or l
+    ret z
+.d:
+    in a, (PORT_SPI_DAT)
+    dec hl
+    ld a, h
+    or l
+    jr nz, .d
+    ret
+
+; Transfer BC bytes from the stream to (DE): inir arms <= 256 bytes,
+; interrupts open throughout (the audio ISR rides between arms - the
+; wire, not the CPU, is the floor). In: HL = block remain, DE = dest,
+; BC = count. Out: DE advanced, HL updated, BC = 0. Corrupts AF.
+vid_ds_xfer:
+.loop:
+    ld a, b
+    or c
+    ret z
+    ld a, h
+    or l
+    call z, vid_ds_blkopen
+    push bc                      ; remaining
+    push hl                      ; n = min(remaining, block remain)
+    or a
+    sbc hl, bc
+    pop hl
+    jr nc, .nok                  ; remain >= count: n = count
+    ld b, h
+    ld c, l                      ; n = block remain
+.nok:
+    ld a, b                      ; clip n to 256 (one inir arm)
+    or a
+    jr z, .le                    ; < 256
+    dec a
+    jr nz, .clip                 ; >= 512
+    ld a, c
+    or a
+    jr z, .le                    ; exactly 256
+.clip:
+    ld bc, 256
+.le:
+    ld a, c                      ; A = n low byte (0 iff n == 256)
+    or a
+    sbc hl, bc                   ; block remain -= n
+    ex (sp), hl                  ; HL = remaining, TOS = block remain
+    or a
+    sbc hl, bc                   ; remaining -= n
+    ex (sp), hl                  ; HL = block remain, TOS = remaining
+    ld b, a                      ; inir count (0 = 256)
+    ld c, PORT_SPI_DAT
+    ex de, hl                    ; HL = dest (inir writes (HL))
+    inir
+    ex de, hl                    ; HL = block remain, DE = dest'
+    pop bc                       ; remaining
+    jr .loop
+
+; Direct COPY body: dest-normalized chunks (column hop + window seam
+; via the shared walkers), each served by the inir transport. No
+; 256-byte chunk cap here - that cap is the DMA DI-bracket contract
+; (contract 3), and this transport holds no DI at all (the inir arms
+; are internally <= 256 and IRQ-open). In: BC = literal count.
+vid_ds_copy_body:
+    ld (vidRemain), bc
+.seg:
+    ld bc, (vidRemain)
+    ld a, b
+    or c
+    jp z, vid_ds_next
+    call vid_dst_norm            ; preserves BC, HL
+    call vid_chunk_dst_nocap     ; BC = min(remain, dest/column room)
+    push hl
+    ld hl, (vidRemain)
+    or a
+    sbc hl, bc
+    ld (vidRemain), hl
+    pop hl
+    call vid_ds_xfer
+    jr .seg
+
+; Direct PAL: 512 palette bytes port -> NR $44, same double-buffer
+; choreography as vid_op_pal (edit the hidden bank, flip at present).
+vid_ds_pal:
+    ld a, (vidPalCtrl)
+    xor $40                      ; edit the OTHER bank, display as-is
+    nextreg NR_PAL_CTRL, a
+    nextreg NR_PAL_INDEX, 0
+    ld a, 1
+    ld (vidPalPending), a
+    ld a, NR_PAL_VALUE9
+    ld bc, TBBLUE_REG_SEL
+    out (c), a
+    ld b, high TBBLUE_REG_ACC    ; C stays $3B
+    push de
+    ld de, NXV_PAL_BYTES
+.pl:
+    ld a, h
+    or l
+    call z, vid_ds_blkopen       ; preserves BC, DE
+    in a, (PORT_SPI_DAT)
+    dec hl
+    out (c), a
+    dec de
+    ld a, d
+    or e
+    jr nz, .pl
+    pop de
+    jp vid_ds_next
+
+; Direct terminals: the span logic mirrors the RAM handlers; the
+; section pad is discarded to the block boundary before returning to
+; the frame loop (vid_decode_frame_ds's caller).
+vid_ds_kflip:
+    ld a, (vidInSpan)
+    or a
+    jr z, .stray
+    xor a
+    ld (vidInSpan), a
+    ld a, VOP_KFLIP
+    jr vid_ds_done
+.stray:
+    ld a, VID_ERR_OP
+    jp vid_dec_abort
+vid_ds_fend:
+    ld a, (vidInSpan)
+    or a
+    jr z, .plain
+    ld a, (vidDstPage)           ; span hold frame: spill the cursor
+    ld (vidSpanDstPage), a       ; (parity with the RAM handler; the
+    ld (vidSpanDE), de           ; direct preset emits single-frame
+.plain:                          ; spans, but the format allows more)
+    ld a, VOP_FEND
+vid_ds_done:
+    push af
+    call vid_ds_pad              ; discard to the block boundary
+    pop af
+    ret                          ; A = terminal, to the frame loop
+
+; Direct audio read: the next frame's real bytes port -> the idle
+; half, pad discarded, then the shared ISR queue handoff.
+vid_ds_aud_copy:
+    ld hl, 0                     ; sections are block-aligned
+    ld de, (vidAudFillPtr)
+    ld bc, (vidABytes)
+    call vid_ds_xfer
+    call vid_ds_pad
+    jp vid_aud_queue
+
+; Audio-copy dispatcher (3c): preload + the frame loop's queue call.
+vid_aud_copy_any:
+    ld a, (vidDirect)
+    or a
+    jp nz, vid_ds_aud_copy
+    jp vid_aud_copy
 
 ; ---------------------------------------------------------------------
 ; Hot cells.
@@ -2394,6 +2753,14 @@ vidMfSaveH:      db 0
 vidWinOpenH:     db 0
 vidHotMap:       ds VID_STRM_HOT_ENT*6
 
+; --- 3c direct-serve session cells (staged by nxv2_open_body's
+; .direct_setup; the run/remain/window cells above are SHARED with
+; the streaming producer - only one delivery mode is ever armed) ---
+vidDirect:       db 0            ; 1 = direct-serve session
+vidDsCrcDue:     db 0            ; an open block's CRC pends on the wire
+vidDsFrmBlk:     db 0            ; blocks consumed this frame section
+vidDsBound:      db 0            ; per-frame bound: cap + apad + 1
+
 ; --- audio double-buffer cells (3b structural-slow fix) ---
 vidAudFillPtr:   dw 0            ; the half the next copy fills
 vidAudNextPtr:   dw 0            ; queued half (ISR swaps into it)
@@ -2403,8 +2770,12 @@ vidAudEndOff:    dw 0            ; real bytes - 1 (mono) / - 2 (stereo)
 
 ; Double-buffered play feed - the ISR plays one NXV_AUD_HALF half via
 ; IX while the frame loop fills the other; full rate, no decimation
-; (NXV_AUD_HALF bounds the header field at open).
-vidAudBuf:       ds NXV_AUD_BUF_MAX
+; (NXV_AUD_HALF bounds the header field at open). 3c: the buffer
+; lives in the session's AUDIO BANK, pinned at MMU3 for the whole
+; armed window (VID_AUD_WIN - the 2560-byte hot-page reclaim; see
+; the FOURTH RULE in the file header).
+vidAudBuf        equ VID_AUD_WIN
+    ASSERT NXV_AUD_BUF_MAX <= $2000
 vidAudDone:      db 0
 
 ; Entry/exit symmetry captures (hot pair only - MMU6/7 are written
@@ -2537,6 +2908,8 @@ vid_tl_report_ret:
 nxv2_open_body:
     xor a
     ld (vidRingCntC), a
+    ld (vidAudBankC), a          ; 0 = none (bank 0 is reserved -
+                                 ; never allocatable, safe sentinel)
  IFDEF DEBUG
     ld hl, (frameCounter)        ; resident cell - ring-fill timing
     ld (vidFillT0), hl
@@ -2550,6 +2923,17 @@ nxv2_open_body:
     ld (vidRingBanksC), a
     ld a, 1
     ld (vidRingCntC), a
+    ; --- the AUDIO BANK (3c): one pool bank pinned at MMU3 for the
+    ; session's 2560-byte audio double buffer (vidAudBuf = $6000 -
+    ; moved OFF the hot code page; the reclaim that funds the 3c
+    ; features). Allocated before the ring sizing so the delivery
+    ; decision sees the reduced pool naturally. ---
+    call bank_alloc
+    jr nc, .audbok
+    ld b, 2                      ; verdict: no bank
+    jp .fail
+.audbok:
+    ld (vidAudBankC), a
     ld a, (vidRingBanksC)
     add a, a                     ; dest page = bank*2
     ld de, $2000
@@ -2612,9 +2996,14 @@ nxv2_open_body:
     or a
     sbc hl, de
     jp nz, .badu
-    ; flags: delta stream set; bits 2-7 reserved-zero (bit1 = the
-    ; direct-serve hint is ACCEPTED and ignored in stage 3a)
+    ; flags: delta stream set; bits 2-7 reserved-zero; bit1 = the
+    ; direct-serve hint - HONOURED from 3c (captured here, drives the
+    ; delivery decision at .geodone)
     ld a, (DATA_WINDOW + NXV2_OFF_FLAGS)
+    ld c, a
+    and NXV2_FLAG_DIRECT
+    ld (vidHdrDirectC), a        ; 0 / NXV2_FLAG_DIRECT
+    ld a, c
     and %11111101
     cp NXV2_FLAG_DELTA
     jp nz, .badu
@@ -2720,10 +3109,18 @@ nxv2_open_body:
 .m0y0:
     ld (vidP_Yofs), a
 .geodone:
-    ; --- size -> DELIVERY DECISION (3b): a file the pool holds whole
-    ; loads RESIDENT (the proven 3a path; loop = RAM rewind); anything
-    ; bigger STREAMS through a circular ring of every bank the pool
-    ; will give, prefilled full before the CTC arms. ---
+    ; --- DELIVERY DECISION (3b size split + 3c direct override): the
+    ; header's direct-serve hint takes the whole file to the SD-to-
+    ; surface path regardless of size; otherwise a file the pool
+    ; holds whole loads RESIDENT (the proven 3a path; loop = RAM
+    ; rewind); anything bigger STREAMS through a circular ring of
+    ; every bank the pool will give, prefilled full before the CTC
+    ; arms. ---
+    xor a
+    ld (vidDeliverDir), a
+    ld a, (vidHdrDirectC)
+    or a
+    jp nz, .direct_setup
     xor a
     ld (vidDeliverStrm), a
     ld a, (vidSizeHi+1)
@@ -3112,6 +3509,144 @@ nxv2_open_body:
     ld b, 0                      ; verdict: loaded (streaming)
     jp .backhop
 
+.direct_setup:
+    ; --- 3c DIRECT-SERVE setup: no ring, no prefill - the armed
+    ; session serves the SD stream straight to the surface. Contract
+    ; validation mirrors streaming: whole 512B blocks, sane payload
+    ; cap (it prices the per-frame section bound cap + apad + 1),
+    ; advisory margin range check, filemap fits the hot copy. Then
+    ; the raw cursor REWINDS to file start (the header ate the first
+    ; 16 blocks for the parse) and the header block is consumed cold,
+    ; leaving the window open at frame 0's audio for the handoff. ---
+    ld a, 1
+    ld (vidDeliverDir), a
+    ld a, (vidSizeLo)
+    or a
+    jp nz, .badc
+    ld a, (vidSizeLo+1)
+    and 1
+    jp nz, .badc
+    ld a, (vidSizeHi+1)
+    or a
+    jp nz, .badc                 ; >= 16MB: over the 24-bit sizes
+    ld hl, (vidHdrCapC)
+    ld a, h
+    or a
+    jp nz, .badc
+    ld a, l
+    or a
+    jp z, .badc
+    cp NXV2_STRM_CAP_MAX+1
+    jp nc, .badc
+    ld (vidCapBlkC), a
+    ld hl, (vidP_ABytesPad)
+    ld a, h
+    srl a                        ; pad >> 9 (1..3 blocks)
+    ld (vidApadBlkC), a
+    ld b, a
+    ld a, (vidCapBlkC)
+    add a, b
+    inc a                        ; <= 244: no carry
+    ld (vidNeedBlkC), a          ; the per-frame section bound
+    ; file blocks (also the margin range check's bound)
+    ld a, (vidSizeHi)
+    ld h, a
+    ld a, (vidSizeLo+1)
+    ld l, a
+    srl h
+    rr l                         ; HL = size >> 9
+    ld (vidTotalBlkC), hl
+    ld de, (vidHdrMarginC)
+    or a
+    sbc hl, de
+    jp c, .badc                  ; margin > file blocks: corrupt
+    ; filemap must fit the hot copy
+    ld hl, (vidStrmEntryEnd)
+    ld de, vidFilemapBuf
+    or a
+    sbc hl, de
+    ld a, l
+    cp VID_STRM_HOT_ENT*6+1
+    jp nc, .toofrag
+    ld b, 0
+.dentdiv:
+    sub 6
+    jr c, .dentdivd
+    inc b
+    jr .dentdiv
+.dentdivd:
+    ld a, b
+    ld (vidEntCntC), a
+    ; rewind to file start + consume the header block cold (the
+    ; armed session then starts exactly at frame 0's audio)
+    call vid_win_close
+    call vid_raw_reset_cursor
+    call vid_next_run
+    jp c, .badc                  ; cannot happen: map validated above
+    call vid_win_open
+    jp c, .badc
+    ld hl, vidStrmBlkBuf
+    call vid_read_block          ; the header block - discarded (CRC
+    jp c, .badc                  ; consumed by the reader itself)
+    ld hl, (vidStrmRunBlocks)
+    dec hl
+    ld (vidStrmRunBlocks), hl
+    call vid_ring_free           ; bank 0 served the parse only -
+                                 ; direct needs NO pool banks
+ IFDEF DEBUG
+    ld hl, (frameCounter)
+    ld de, (vidFillT0)
+    or a
+    sbc hl, de
+    ld (vidFillD), hl            ; FILL row = the header/probe time
+ ENDIF
+    call vid_stage_common        ; bracket returns OPEN (stages the
+                                 ; ds decode vectors from vidDeliverDir)
+    ; --- direct extras (same bracket) ---
+    xor a
+    ld (vidStreaming + DATA_WINDOW - OVL_ORG), a
+    ld (vidDsCrcDue + DATA_WINDOW - OVL_ORG), a
+    ld (vidDsFrmBlk + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidNeedBlkC)
+    ld (vidDsBound + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidApadBlkC)
+    ld (vidApadBlk + DATA_WINDOW - OVL_ORG), a
+    ld hl, (vidTotalBlkC)
+    ld (vidTotalBlk + DATA_WINDOW - OVL_ORG), hl
+    dec hl                       ; the header block is consumed
+    ld (vidStrmRemainBlk + DATA_WINDOW - OVL_ORG), hl
+    ; run-cursor handoff: window OPEN one block into run 0
+    ld a, (vidEntCntC)
+    ld (vidStrmEntryCnt + DATA_WINDOW - OVL_ORG), a
+    ld a, 1
+    ld (vidStrmEntryIdx + DATA_WINDOW - OVL_ORG), a
+    ld hl, (vidStrmRunBlocks)
+    ld (vidStrmRunBlkH + DATA_WINDOW - OVL_ORG), hl
+    ld hl, (vidStrmRunAddrLo)
+    ld (vidRunAddrLoH + DATA_WINDOW - OVL_ORG), hl
+    ld hl, (vidStrmRunAddrHi)
+    ld (vidRunAddrHiH + DATA_WINDOW - OVL_ORG), hl
+    ld a, (vidCardFlags)
+    ld (vidCardFlagsH + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidMfSave)
+    ld (vidMfSaveH + DATA_WINDOW - OVL_ORG), a
+    ld a, (vidStrmWinOpen)
+    ld (vidWinOpenH + DATA_WINDOW - OVL_ORG), a
+    ld hl, vidFilemapBuf
+    ld de, vidHotMap + DATA_WINDOW - OVL_ORG
+    ld bc, VID_STRM_HOT_ENT*6
+    ldir
+ IFDEF DEBUG
+    ld hl, 0
+    ld (vidRingMin + DATA_WINDOW - OVL_ORG), hl
+    ld (vidRingUnder + DATA_WINDOW - OVL_ORG), hl
+ ENDIF
+    call data_restore
+    xor a                        ; window ownership is HOT now
+    ld (vidStrmWinOpen), a
+    ld b, 0                      ; verdict: loaded (direct)
+    jp .backhop
+
 .badu:
     call data_restore            ; the parse bracket was open
 .badc:
@@ -3127,6 +3662,7 @@ nxv2_open_body:
 .fail:
     push bc
     call vid_ring_free
+    call vid_aud_bank_free
     call vid_stream_close
     pop bc
 .backhop:
@@ -3180,7 +3716,7 @@ vid_stage_common:
     ld (vg_op_copy8.hcmp + 1 + DATA_WINDOW - OVL_ORG), a
     ld (vg_op_copy8.hsub + 1 + DATA_WINDOW - OVL_ORG), a
     ld (vg_op_copy8.hcmp2 + 1 + DATA_WINDOW - OVL_ORG), a
-    ret
+    jr .vec
 .flatset:
     ld hl, vf_op_skip8
     ld (vid_stub + VOP_SKIP8 + 1 + DATA_WINDOW - OVL_ORG), hl
@@ -3188,6 +3724,47 @@ vid_stage_common:
     ld (vid_stub + VOP_RUN8 + 1 + DATA_WINDOW - OVL_ORG), hl
     ld hl, vf_op_copy8
     ld (vid_stub + VOP_COPY8 + 1 + DATA_WINDOW - OVL_ORG), hl
+.vec:
+    ; --- per-session decode vectoring (3c direct-serve): the fetch
+    ; vector, the shared bodies' exit jumps, slow-op's COPY body
+    ; target and the FEND/PAL/KFLIP stub slots all point at the RAM
+    ; decode (resident/streaming) or the SD-stream decode (direct).
+    ; Patched EVERY open - a previous session may have left the other
+    ; set. Same doc-08/rubric-3 bracket as the stub patches above. ---
+    ld a, (vidDeliverDir)
+    ld (vidDirect + DATA_WINDOW - OVL_ORG), a
+    or a
+    jr nz, .dsvec
+    ld hl, vid_fetch_ram
+    ld (vid_fetch.vec + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_next
+    ld (vid_skip_body.next + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_run_body.next + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_op_kstart.next + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_copy_body
+    ld (vid_slow_op.cj + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_op_fend
+    ld (vid_stub + VOP_FEND + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_op_pal
+    ld (vid_stub + VOP_PAL + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_op_kflip
+    ld (vid_stub + VOP_KFLIP + 1 + DATA_WINDOW - OVL_ORG), hl
+    ret
+.dsvec:
+    ld hl, vid_ds_byte
+    ld (vid_fetch.vec + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_ds_next
+    ld (vid_skip_body.next + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_run_body.next + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld (vid_op_kstart.next + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_ds_copy_body
+    ld (vid_slow_op.cj + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_ds_fend
+    ld (vid_stub + VOP_FEND + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_ds_pal
+    ld (vid_stub + VOP_PAL + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_ds_kflip
+    ld (vid_stub + VOP_KFLIP + 1 + DATA_WINDOW - OVL_ORG), hl
     ret
 
 nxvMagic: db "NXVID"
@@ -3219,6 +3796,10 @@ vidRecvLo:     dw 0
 vidRecvHi:     db 0
 ; 3b streaming-setup scratch (cold; staged hot by .strm_loaded)
 vidDeliverStrm: db 0             ; 0 = resident, 1 = ring streaming
+vidDeliverDir: db 0              ; 1 = direct-serve (3c; wins over both)
+vidAudBankC:   db 0              ; the session audio bank (3c; 0 = none)
+vidHdrDirectC: db 0              ; header flags bit1 capture
+vidTotalBlkC:  dw 0              ; file blocks (direct setup scratch)
 vidLoadTgt:    ds 3              ; prefill byte target (size / ring)
 vidHdrCapC:    dw 0              ; header per-frame payload cap
 vidHdrMarginC: dw 0              ; header ring start-margin (advisory;
@@ -3233,6 +3814,16 @@ vidEntCntC:    db 0              ; filemap entries in use
 vidFillT0:     dw 0
 vidFillD:      dw 0
  ENDIF
+
+; Free the session audio bank (idempotent; 3c). Corrupts AF, BC, HL.
+vid_aud_bank_free:
+    ld a, (vidAudBankC)
+    or a
+    ret z                        ; none held
+    call bank_free
+    xor a
+    ld (vidAudBankC), a
+    ret
 
 ; Free every ring bank (idempotent; cold callers only: the open
 ; body's failure paths + the restore body). Corrupts AF, B, HL.
@@ -3397,6 +3988,7 @@ vid_run_entry_body:
 ; the cells live page-local and the old bracket translations are
 ; gone; only vidSvMmu6/7 stay hot, see the hot cells block).
 vidSvMmu2:       db 0            ; the borrowed dest window (3a)
+vidSvMmu3:       db 0            ; the borrowed audio window (3c)
 vidSvNr12:       db 0
 vidSvNr70:       db 0
 vidSvNr69:       db 0
@@ -3422,6 +4014,16 @@ vid_run_l2setup_body:
     call data_save
     ld a, VID_PAGE
     call data_map_page
+    ; borrowed AUDIO window (3c): MMU3 -> the session audio bank for
+    ; the whole armed window (vidAudBuf = VID_AUD_WIN; captured here,
+    ; restored in step 8 with MMU2 - the same borrowed-window pattern;
+    ; FOURTH RULE in the file header)
+    ld e, NR_MMU3
+    call nr_read
+    ld (vidSvMmu3), a
+    ld a, (vidAudBankC)
+    add a, a
+    nextreg NR_MMU3, a
     ; presentation isolation: tilemap off, fallback black (restored
     ; on every real exit - vid_run_restore_body)
     ld e, NR_TM_CTRL
@@ -3682,7 +4284,10 @@ vid_run_restore_body:
     nextreg NR_FALLBACK, a
     ld a, (vidSvMmu2)
     nextreg NR_MMU2, a
+    ld a, (vidSvMmu3)            ; the borrowed audio window (3c)
+    nextreg NR_MMU3, a
     call vid_ring_free
+    call vid_aud_bank_free
     call vid_stream_close        ; streaming keeps the esxDOS handle
                                  ; open for the session (the hot side
                                  ; already CMD12'd its window before

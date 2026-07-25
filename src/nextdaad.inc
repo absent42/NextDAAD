@@ -583,7 +583,21 @@ NR_MMU2          equ $52    ; slot 2 ($4000-$5FFF): the decode loop's
                             ; the whole playback session - the NXBEN
                             ; precedent; nothing else touches
                             ; $4000-$5FFF while a video plays)
+NR_MMU3          equ $53    ; slot 3 ($6000-$7FFF): the session's
+                            ; borrowed AUDIO window (SP15 3c - the
+                            ; 2560-byte double buffer moved OFF the
+                            ; hot code page into one pool bank pinned
+                            ; here; same capture/restore pattern as
+                            ; MMU2. Safe by the same freeze arguments:
+                            ; the tilemap (bank 5's TM_DEFS/map) is
+                            ; hidden+isolated, the sample machinery
+                            ; (AUD_STAGE0 $7C00 ring) is aborted and
+                            ; its CTC vector replaced, and nothing
+                            ; else reads slot 3 while a video plays;
+                            ; bank 5's CONTENT is untouched - only
+                            ; the CPU mapping is borrowed)
 VID_DST_WIN      equ $4000  ; MMU2 dest window base
+VID_AUD_WIN      equ $6000  ; MMU3 audio window base (vidAudBuf)
 VID_SRC_WIN      equ DATA_WINDOW ; $C000 MMU6 source (ring) window
 
 ; Decode error codes (DEBUG report ERR=xx; outside the esxDOS range,

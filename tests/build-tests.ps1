@@ -670,6 +670,11 @@ if ($VidLong) {
         '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @(); tag = '' }
         '008.VID' = @{ shape = 'full';    src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.51'); tag = 'sb51' }
         '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.68'); tag = 'sb68' }
+        # SP15 3c: 010 = the DIRECT-SERVE leg (VDIR/VDIRL) - all-literal
+        # raw-equivalent classic-wide encode, header hint set; the player
+        # serves it SD-to-surface with no ring (worst-frame wire util
+        # ~0.90 at 256x144@25 - the direct gate's admissible envelope)
+        '010.VID' = @{ shape = 'classic-wide'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct' }
     }
     $vidLongStaged = 0
     foreach ($dest in $vidLongMap.Keys) {
@@ -693,13 +698,15 @@ if ($VidLong) {
             $vidLongStaged++
         }
     }
-    # 099.VID = the deliberate-underrun leg: a byte-copy of 007 (the
-    # DEBUG player throttles the producer for video number 99 only)
+    # 099.VID = a byte-copy of 007. (3c: the DEBUG deliberate-underrun
+    # THROTTLE for video 99 is RETIRED - VSTRU is a plain streamed
+    # regression leg now; the drill's verdict is on record in Cards
+    # #3/#4 and git holds the lever.)
     if (Test-Path -LiteralPath "$root\sd\007.VID") {
         Copy-Item -LiteralPath "$root\sd\007.VID" -Destination "$root\sd\099.VID" -Force
         $vidLongStaged++
     }
-    "staged $vidLongStaged long fixture(s) -> sd\007-009.VID + sd\099.VID (SP15 3b streaming leg set: VSTR0/VSTR1/VSTR2/VSTRU, sp14a-task-4-report.md section 38)"
+    "staged $vidLongStaged long fixture(s) -> sd\007-010.VID + sd\099.VID (SP15 3b/3c streaming + direct leg set: VSTR0/VSTR1/VSTR2/VSTRU/VDIR, sp14a-task-4-report.md sections 38/39)"
 }
 
 if ($NxBench) {

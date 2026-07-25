@@ -208,6 +208,18 @@ VSTR0   94      verb
 VSTR1   95      verb
 VSTR2   96      verb
 VSTRU   97      verb
+
+; SP15 3c DIRECT-SERVE legs (header hint, flags bit1): 010.VID =
+; classic-wide 256x144 all-literal raw-equivalent encode (Sintel full
+; 10s, --direct), served straight from the SD wire to the surface -
+; no ring, no RAM pass. VDIR plays once, VDIRL loops (the loop
+; exercises the direct producer rewind + header-block consume). 98/99
+; reuse retired VSTG ladder numbers. NOTE (3c): the 099 deliberate-
+; underrun THROTTLE lever behind VSTRU is RETIRED - VSTRU now plays
+; 099.VID (the 007 copy) as an ordinary streamed regression leg; the
+; drill's verdict is on record in Cards #3/#4 and git holds the lever.
+VDIR    98      verb
+VDIRL   99      verb
 ; VSTG1-4 / VS2E / VS6 / VS7 / VS2F / VS2G (the SP14a staged-entry
 ; ladder + its sub-ladders, verbs 88-91 and 96-100 - 96/97 since
 ; reused by VSTR2/VSTRU above) are RETIRED with
@@ -777,6 +789,17 @@ $pictureOK
                 DONE
 
 > VSTRU   _     GFX 99 13
+                PROCESS 10
+                DONE
+
+; SP15 3c direct-serve legs (see the vocabulary block): 010.VID,
+; all-literal classic-wide encode with the header direct-serve hint -
+; the player reads the SD stream straight to the surface.
+> VDIR    _     GFX 10 13
+                PROCESS 10
+                DONE
+
+> VDIRL   _     GFX 10 14
                 PROCESS 10
                 DONE
 
