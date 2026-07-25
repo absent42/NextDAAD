@@ -780,12 +780,14 @@ vid_src_next:
 .nextbank:
     ld a, (vidSrcBankIdx)
     inc a
-    ld (vidSrcBankIdx), a
     ld c, a
     ld a, (vidRingBankCnt)
     dec a
     cp c
-    jr c, .ovr                   ; idx > last bank
+    jr c, .ovr                   ; idx > last bank (store stays dead:
+                                  ; bank index unchanged on abort)
+    ld a, c
+    ld (vidSrcBankIdx), a
     push hl
     ld hl, vidRingBanks
     ld a, c
@@ -1676,7 +1678,7 @@ vidSvNr6b:       db 0            ; presentation isolation: tilemap
 vidSvNr4a:       db 0            ; presentation isolation: fallback
 
  IFDEF DEBUG
-; DEBUG frame-timeline instrument state. vidTlTicks..vidErrOp is
+; DEBUG frame-timeline instrument state. vidTlTicks..vidLoopPass is
 ; zeroed at session start (l2setup body); vidTlFillFrames sits AFTER
 ; the zero span (it is written by nxv2_open_body BEFORE the wipe
 ; runs) and inside the report's copy span. The accumulators must stay
@@ -2269,11 +2271,15 @@ vid_run_entry_body:
     ; 7-9 + effects on PSG 3 (audiobank aud_music_stop parks it for the
     ; same reason), and a frozen beep/effect/AYS stream holds PSG 3
     ; forever too - the 3a leg's "TONE HELD" was a held PSG-3 voice
-    ; sounding under the video. Resume needs nothing: the AKY tick
-    ; rewrites PSG 1-3 every frame once audEnable is restored, a
-    ; resumed beep re-silences via its own countdown, and an AYS
-    ; stream rewrites its registers each tick. DI-bracketed ($FFFD
-    ; select latch must not interleave).
+    ; sounding under the video. Resume needs nothing for music: the
+    ; AKY tick rewrites PSG 1-3 every frame once audEnable is
+    ; restored. A beep straddling the video is TRUNCATED, not
+    ; resumed: aud_beep_start programs PSG 3's tone/mixer/volume
+    ; once at beep-start; aud_tick only counts audBeepFrames down
+    ; and calls aud_beep_silence at zero, it never reprograms the
+    ; tone - so the park's silence sticks for the rest of the beep's
+    ; nominal duration. An AYS stream rewrites its registers each
+    ; tick. DI-bracketed ($FFFD select latch must not interleave).
     di
     ld a, $FF                    ; Turbo Sound select: music PSG 1
     call .psgpark
@@ -2429,7 +2435,7 @@ vid_run_l2setup_body:
     ld a, h
     ld (video_ctc_isr_stereo.cmphi+1+DATA_WINDOW-OVL_ORG), a
  IFDEF DEBUG
-    ; timeline baseline: zero vidTlTicks..vidErrOp (vidTlFillFrames
+    ; timeline baseline: zero vidTlTicks..vidLoopPass (vidTlFillFrames
     ; sits outside the span - the open body already staged it)
     ld hl, vidTlTicks+DATA_WINDOW-OVL_ORG
     ld (hl), 0
