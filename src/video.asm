@@ -1940,7 +1940,15 @@ nxv2_open_body:
     jp c, .toobig                ; pool exhausted: exceeds the ring
     ld hl, vidRingBanksC
     ld c, a
-    ld a, b
+    ld a, (vidRingCntC)          ; re-read the slot index: bank_alloc
+                                 ; corrupts B AND C (its table-scan
+                                 ; djnz counter / bank counter) - the
+                                 ; SP15 3a first-silicon defect: `ld
+                                 ; a, b` here stored every bank at
+                                 ; vidRingBanksC[112-bank], scrambling
+                                 ; the ring list AND the count (doc 13
+                                 ; rubric 1: register liveness across
+                                 ; calls)
     add hl, a                    ; Z80N (doc 05)
     ld (hl), c
     inc a
