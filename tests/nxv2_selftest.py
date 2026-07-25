@@ -1044,6 +1044,85 @@ def t12_moving_edge_pixel_exact():
         expect(checked >= 5, f"{w}x{h}: too few unbudgeted frames checked ({checked})")
 
 
+# =======================================================================
+# Step 13: review fix - run-absorb threshold wired into gap-merge
+# (merge_run_absorb_max() existed but was never consulted; every run
+# touching a copy with no interior skip got absorbed unconditionally,
+# which LOSES decode-T for runs past the break-even).
+# =======================================================================
+
+@case(13, "review fix: run-absorb threshold wired - long runs stay RUN ops (lower T than force-absorbed), short runs still absorb")
+def t13_run_absorb_threshold():
+    tc = enc.TMODEL_COEFFS
+    absorb_max = enc.merge_run_absorb_max()
+    expect(200.0 < absorb_max < 400.0, f"sanity: silicon absorb_max ~287B, got {absorb_max:.1f}")
+
+    rng = np.random.default_rng(51)
+    n = 3000
+    prev = rng.integers(0, 256, size=n, dtype=np.uint8)
+
+    # --- long run (> absorb_max) directly touching copy segments on both
+    # sides (no interior skip) - pre-fix this got folded into one COPY
+    # unconditionally; post-fix it must stay a standalone RUN op. ---
+    target = prev.copy()
+    run_len = int(absorb_max) + 200
+    run_start = 500
+    run_color = 42
+    target[run_start - 5:run_start] = rng.integers(0, 256, size=5, dtype=np.uint8)
+    target[run_start:run_start + run_len] = run_color
+    end = run_start + run_len
+    target[end:end + 5] = rng.integers(0, 256, size=5, dtype=np.uint8)
+    mask = prev != target
+    gcls, gstarts, glens = enc.segment(target, mask)
+
+    merged, mb, mt = enc.merge_delta_stream(gcls, gstarts, glens, target, prev, cap_bytes=n)
+    kinds = _op_kinds(merged)
+    expect("RUN8" in kinds or "RUN16" in kinds,
+           f"long run (len={run_len} > absorb_max={absorb_max:.0f}) must stay a RUN op, got {kinds}")
+    surf = prev.copy()
+    dec.run_payload(merged, 0, surf, n)
+    expect(np.array_equal(surf, target), "long-run guard preserves decode byte-identity")
+
+    # Force the OLD (unconditional-absorb) behaviour by making
+    # merge_run_absorb_max() return +inf (fetch_long == fill_cpu -> denom
+    # <= 0) and re-merge the same segments - the guarded merge's modeled T
+    # must beat the force-absorbed T (the review finding's exact claim).
+    saved = dict(tc)
+    try:
+        tc["fill_cpu"] = tc["fetch_long"]
+        expect(enc.merge_run_absorb_max() == float("inf"), "test setup: forced absorb_max should be +inf")
+        _, _, t_forced = enc.merge_delta_stream(gcls, gstarts, glens, target, prev, cap_bytes=n)
+    finally:
+        tc.clear()
+        tc.update(saved)
+    expect(mt < t_forced,
+           f"guarded merge T ({mt:.0f}) should be lower than force-absorbed T ({t_forced:.0f})")
+
+    # --- short run (well under 100B) directly touching copy segments -
+    # absorption must still happen (folded into one COPY, no standalone
+    # RUN op survives in the merged stream). ---
+    target2 = prev.copy()
+    short_len = 40
+    s2 = 700
+    target2[s2:s2 + 5] = rng.integers(0, 256, size=5, dtype=np.uint8)
+    target2[s2 + 5:s2 + 5 + short_len] = 77
+    target2[s2 + 5 + short_len:s2 + 10 + short_len] = rng.integers(0, 256, size=5, dtype=np.uint8)
+    mask2 = prev != target2
+    gcls2, gstarts2, glens2 = enc.segment(target2, mask2)
+    unmerged2 = enc.emit_delta_ops(target2, gcls2, gstarts2, glens2)
+    ku2 = _op_kinds(unmerged2)
+    expect(ku2.count("RUN8") + ku2.count("RUN16") >= 1,
+           f"test setup: un-merged stream should carry the short run as its own RUN op, got {ku2}")
+
+    merged2, mb2, mt2 = enc.merge_delta_stream(gcls2, gstarts2, glens2, target2, prev, cap_bytes=n)
+    kinds2 = _op_kinds(merged2)
+    expect(kinds2.count("RUN8") + kinds2.count("RUN16") == 0,
+           f"short run (len={short_len} <= absorb_max={absorb_max:.0f}) must still absorb into a COPY, got {kinds2}")
+    surf2 = prev.copy()
+    dec.run_payload(merged2, 0, surf2, n)
+    expect(np.array_equal(surf2, target2), "short-run absorb preserves decode byte-identity")
+
+
 def main():
     passed, failed, skipped = 0, 0, 0
     last_step = None

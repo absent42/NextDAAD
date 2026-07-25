@@ -573,7 +573,15 @@ def merge_run_absorb_max():
     """Max RUN length (bytes) worth absorbing into a contiguous COPY.
     Absorbing drops the run's own dispatch but re-prices its body at the
     copy rate instead of the (cheaper) fill rate, so it wins while
-    L < D / (copy_rate - fill_cpu_rate) (~287 B at silicon)."""
+    L < D / (copy_rate - fill_cpu_rate) (~287 B at silicon).
+
+    Wired into merge_delta_stream's region assembly (review finding, fix):
+    this function used to be computed but never consulted, so every run
+    touching a copy (no interior skip) got absorbed UNCONDITIONALLY and a
+    run longer than this threshold LOST decode-T instead of saving it. A
+    run segment longer than this value is now kept as its own standalone
+    RUN op regardless of adjacency; only runs at or under it still fold
+    into a neighbouring copy region."""
     tc = TMODEL_COEFFS
     denom = tc["fetch_long"] - tc["fill_cpu"]
     if denom <= 0:
@@ -622,10 +630,16 @@ def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
     # COPY from valbuf (surface bytes on bridged skips, target bytes on the
     # changes) EXCEPT a region that is exactly one lone RUN segment - that
     # stays a RUN (fill is cheaper than copy for an un-bridged run). A copy
-    # directly touching a run (no skip between) folds it in (run-absorb).
+    # directly touching a run (no skip between) folds it in (run-absorb) -
+    # but ONLY while the run is <= merge_run_absorb_max() bytes (review
+    # finding, fix): past that length, absorbing re-prices the run's body
+    # at the copy rate instead of the cheaper fill rate and LOSES decode-T,
+    # so a longer run is emitted as its own standalone RUN op instead,
+    # breaking the region on both sides of it.
     ops = []            # primitive ops: ('skip', L) | ('run', L, col) | ('copy', a, b)
     est_bytes = 1       # FEND byte - soft running estimate for the cap guard
     region = None       # [start, end, members] ; members = list of (cls, L)/('bridge', L)
+    absorb_max = merge_run_absorb_max()
 
     def flush():
         nonlocal region
@@ -651,7 +665,16 @@ def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
             flush()
             ops.append(("skip", L))
             est_bytes += 2 * max(1, math.ceil(L / 65535))
-        elif c in (1, 2):               # data (copy or run)
+        elif c == 2 and L > absorb_max:
+            # Long run: flush whatever region was accumulating (unaffected
+            # by this run) and emit the run as its OWN standalone RUN op,
+            # regardless of adjacency to neighbouring data segments - the
+            # next data segment starts a fresh region rather than folding
+            # this run in.
+            flush()
+            ops.append(("run", L, int(target_flat[s])))
+            est_bytes += L
+        elif c in (1, 2):               # data (copy or short run <= absorb_max)
             if region is None:
                 region = [s, s + L, [(c, L)]]
             else:
@@ -682,6 +705,26 @@ def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
     b_total += 1                        # FEND byte (dispatch folded into
                                          # t_frame_fixed, matching stream_cost)
     return b"".join(parts), b_total, t_total
+
+
+def default_tile_px(n, width=None, height=None, column_major=False):
+    """Single source of truth for the region-tile size (bytes) used by
+    encode_delta's budget-bound tile schedule when the caller doesn't pass
+    tile_px explicitly (review finding, fix: encode_delta's own inline
+    default and encode_clip's inline TILE_BAND expression used to be two
+    independently-hardcoded formulas that could silently diverge; both now
+    go through this one function).
+
+    Shape-aware form (width/height/column_major given, as encode_clip
+    always supplies): TILE_BAND rows (mode-0) or columns (mode-1) worth of
+    paint-order bytes - a contiguous band in display terms.
+
+    Shape-agnostic fallback (width omitted - direct/standalone callers,
+    e.g. tests and tooling, that don't know the frame's geometry): a size
+    heuristic scaled to the flat length."""
+    if width is not None:
+        return TILE_BAND * (height if column_major else width)
+    return max(256, n // 48)
 
 
 def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
@@ -745,7 +788,7 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
     # conservative estimate badly under-fills because the merge frees far more
     # T than it can predict).
     if tile_px is None:
-        tile_px = max(256, n // 48)
+        tile_px = default_tile_px(n)
     ntiles = (n + tile_px - 1) // tile_px
     sqrt_e = np.where(mask_full, np.sqrt(err2_flat), 0.0)
     band_imp = np.array([sqrt_e[ti * tile_px:(ti + 1) * tile_px].sum()
@@ -1232,7 +1275,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     # Region-coherent tile size: a band of TILE_BAND rows (mode-0) / columns
     # (mode-1) is contiguous in paint order, so shortfall lags coherent
     # horizontal/vertical strips.
-    tile_px = TILE_BAND * (height if column_major else width)
+    tile_px = default_tile_px(raw, width=width, height=height, column_major=column_major)
 
     scene_cuts = detect_scene_cuts(chg)
 
