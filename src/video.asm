@@ -343,9 +343,52 @@ vid_op_bad:
 ; Structural decode abort: A = VID_ERR_* code. Resets SP to the frame
 ; loop's anchor and jumps to its fail exit - safe from ANY depth
 ; (kernels, seam walkers, the audio copy).
+; DEBUG breadcrumb (SP15 3a follow-up, intermittent-trap): capture the
+; failing SOURCE position as the 24-bit linear file offset (the same
+; bankIdx/parity/HL linearization vid_dec_done performs, unrounded)
+; plus the loop pass count, surfaced on the timeline report as POS=/
+; PASS= - a one-shot ERR=FA self-localizes to a byte position instead
+; of being unreproducible. HL is the live source cursor in every abort
+; context (op dispatch, seam walkers, audio copy, PAL/COPY bodies)
+; except vid_dec_done's bound trip, which stores its already-rounded
+; position itself and enters at vid_dec_abort_pos.
 vid_dec_abort:
  IFDEF DEBUG
+    push af
+    ld a, (vidSrcBankIdx)
+    add a, a
+    ld c, a
+    ld a, (vidSrcParity)
+    or c
+    ld c, a                      ; C = linear ring page
+    ld a, h
+    sub $C0
+    ld h, a                      ; HL = window offset (0..$2000)
+    ld a, c
+    and 7
+    rrca
+    rrca
+    rrca                         ; (page & 7) << 5
+    add a, h
+    ld h, a                      ; HL = pos low16 (partial)
+    ld a, 0
+    adc a, 0
+    ld b, a
+    ld a, c
+    rrca
+    rrca
+    rrca
+    and $1F                      ; page >> 3
+    add a, b                     ; A = pos[23:16]
+    ld (vidErrPos+2), a
+    ld (vidErrPos), hl
+    pop af
+ ENDIF
+vid_dec_abort_pos:               ; entry with vidErrPos already stored
+ IFDEF DEBUG
     ld (vidErrCode), a
+    ld a, (vidLoopPass)
+    ld (vidErrPass), a           ; A dead past here (.restore reloads)
  ENDIF
     ld sp, (vidDecSp)
     jp vid_run.decfail
@@ -974,8 +1017,13 @@ vid_dec_done:
     ret                          ; -> vid_decode_frame's caller
 .ovr:
     pop af
+ IFDEF DEBUG
+    ld (vidErrPos), hl           ; breadcrumb: the already-rounded
+    ld a, b                      ; linear pos this bound trip rejected
+    ld (vidErrPos+2), a
+ ENDIF
     ld a, VID_ERR_SRCOVR
-    jp vid_dec_abort
+    jp vid_dec_abort_pos
 
 ; ---------------------------------------------------------------------
 ; zxnDMA kernels (graduated NXBEN persistent-descriptor scheme; doc
@@ -1426,6 +1474,10 @@ vid_run:
     ld (vidFramePos+2), a
     ld (vidInSpan), a            ; defensive (a valid file never ends
                                  ; mid-span - nxv2dec validates)
+ IFDEF DEBUG
+    ld hl, vidLoopPass           ; breadcrumb: pass count for the
+    inc (hl)                     ; abort funnel's PASS= report field
+ ENDIF
     jp .frameloop
 .drainlast:
     ; play-once: the last frame is showing; let its audio finish
@@ -1636,9 +1688,14 @@ vidTlFrames:     dw 0
 vidTlAcc:        ds VID_TL_PHASES*4
 vidErrCode:      db 0            ; 0 = clean; VID_ERR_* on abort
 vidErrOp:        db 0            ; the offending opcode byte (ERR=OP)
+vidErrPos:       ds 3            ; breadcrumb: failing source position
+                                 ; (24-bit linear file offset; only
+                                 ; meaningful when ERR != 0)
+vidErrPass:      db 0            ; breadcrumb: loop pass at the abort
+vidLoopPass:     db 0            ; live loop-pass counter (0 = pass 1)
 vidTlFillFrames: dw 0            ; resident ring load duration, 50Hz
                                  ; frames (frameCounter delta)
-VID_TL_ZERO_LEN  equ vidErrOp + 1 - vidTlTicks
+VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlTicks
 VID_TL_BLOCK_LEN equ vidTlFillFrames + 2 - vidTlTicks
 
 ; DEBUG timeline stamp: A = new phase id (VID_TL_*). Accumulates the
@@ -3362,6 +3419,16 @@ vid_tl_report_body:
     call dbg_puts
     ld a, (vidErrOpL)
     call dbg_hex8
+    ld hl, msgTlPos              ; breadcrumb: failing source offset
+    call dbg_puts                ; (24-bit hex; meaningful iff ERR!=0)
+    ld a, (vidErrPosL+2)
+    call dbg_hex8
+    ld hl, (vidErrPosL)
+    call dbg_hex16
+    ld hl, msgTlPass             ; breadcrumb: loop pass at the abort
+    call dbg_puts
+    ld a, (vidErrPassL)
+    call dbg_hex8
     ld hl, msgTlFill
     call dbg_puts
     ld hl, (vidTlFillFramesL)
@@ -3372,7 +3439,8 @@ vid_tl_report_body:
     inc (hl)
     ld hl, vidTlRptIdx
     inc (hl)
-    jr .rowloop
+    jp .rowloop                  ; jr range: the OTHER-row tail grew
+                                 ; past -128 with the POS=/PASS= print
 .done:
     ld hl, vid_tl_report_ret
     push hl
@@ -3390,6 +3458,8 @@ msgTlTot:  db " TOT=", 0
 msgTlFrm:  db " FRM=", 0
 msgTlErr:  db " ERR=", 0
 msgTlOp:   db " OP=", 0
+msgTlPos:  db " POS=", 0
+msgTlPass: db " PASS=", 0
 msgTlFill: db " FILL=", 0
 vidTlRptRow: db 0
 vidTlRptIdx: db 0
@@ -3403,6 +3473,9 @@ vidTlFramesL:     dw 0
 vidTlAccL:        ds VID_TL_PHASES*4
 vidErrCodeL:      db 0
 vidErrOpL:        db 0
+vidErrPosL:       ds 3
+vidErrPassL:      db 0
+vidLoopPassL:     db 0
 vidTlFillFramesL: dw 0
     ASSERT vidTlFillFramesL + 2 - vidTlTicksL == VID_TL_BLOCK_LEN
  ENDIF
