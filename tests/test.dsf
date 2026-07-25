@@ -150,15 +150,15 @@ MTEST   72      verb
 ; follow-up: its job (the streaming-throughput measurement that fed the
 ; SP13/SP14a native-format decision) is done; git history holds the code.
 ; SP15 3a: the vply/vlop/sply verbs now exercise the NXV v2 player
-; (video.asm rewrite - resident path this stage). Fixtures are the v2
+; (video.asm rewrite). Fixtures are the v2
 ; shape matrix (tests\build-tests.ps1 -Vid): 001 = full 320x256,
 ; 002 = classic 256x192, 003 = 16:9 320x192, 004 = scope 320x144,
-; 005 = classic-wide 256x144, all 25fps stereo. STAGE 3a IS RESIDENT
-; ONLY: a fixture must fit the pool ring (~1.2MB on a 2MB Next) or the
-; player exits clean with VID SIZE? (DEBUG) - the -Vid 10s encodes do
-; NOT fit; stage short re-encodes for the owner leg (the leg card in
-; .superpowers/sdd/sp14a-task-4-report.md section 37 has the exact
-; videnc command lines). 3b's streaming lifts the size limit.
+; 005 = classic-wide 256x144, all 25fps stereo. These fit the pool
+; ring and play RESIDENT (the fully-buffered special case). SP15 3b:
+; files bigger than the ring now STREAM (circular prefetch ring, per
+; frame SD reads) - the VSTR* verbs below and the -VidLong fixtures
+; exercise that path; the old VID SIZE? limit is gone (leg card:
+; .superpowers/sdd/sp14a-task-4-report.md sections 37-38).
 ; Names kept to 5 significant characters (DRF truncation collisions).
 VPLY4   74      verb
 VLOP4   76      verb
@@ -189,8 +189,28 @@ VLOP1   87      verb
 ; 88-91 and 96-100.)
 VPACE   92      verb
 VPACL   93      verb
+; SP15 3b: RING STREAMING legs - long-clip fixtures BIGGER than the
+; pool ring, staged by tests\build-tests.ps1 -VidLong (full-duration
+; 10s research-clip encodes, 6.4-11MB, cached like the leg set):
+;   VSTR0 - 007.VID classic 256x192 (Sintel 10s, ~6.4MB, 250 frames)
+;   VSTR1 - 008.VID full 320x256 LOOPED (BBB 10s, ~11MB, 252 frames -
+;           the long-clip seam-free-loop leg; any key exits)
+;   VSTR2 - 009.VID 16:9 320x192 letterbox (Jellyfish 10s, ~7.3MB -
+;           the GAPPED streaming path)
+;   VSTRU - 099.VID (a copy of 007): the DELIBERATE-UNDERRUN leg.
+;           DEBUG builds throttle the pace-window producer to 8
+;           blocks/frame for video number 99 ONLY - the ring drains,
+;           every starved frame pace-holds cleanly (underruns count
+;           on the RING= report row; picture/audio stay correct,
+;           just late). Release plays 099 normally.
+; 94-95 were never assigned; 96-97 reuse retired VSTG ladder numbers.
+VSTR0   94      verb
+VSTR1   95      verb
+VSTR2   96      verb
+VSTRU   97      verb
 ; VSTG1-4 / VS2E / VS6 / VS7 / VS2F / VS2G (the SP14a staged-entry
-; ladder + its sub-ladders, verbs 88-91 and 96-100) are RETIRED with
+; ladder + its sub-ladders, verbs 88-91 and 96-100 - 96/97 since
+; reused by VSTR2/VSTRU above) are RETIRED with
 ; the v1 player they instrumented (SP15 3a): every stage gate they
 ; drove was deleted in the video.asm rewrite, their crash class was
 ; root-caused and closed (the cross-page store + copper-init
@@ -740,9 +760,30 @@ $pictureOK
                 PROCESS 10
                 DONE
 
+; SP15 3b streaming legs (see the vocabulary block for the fixture
+; map): files larger than the pool ring, served by the per-frame
+; prefetch producer. Same GFX n 13/14 dispatch surface; -VidLong
+; stages 007/008/009/099.
+> VSTR0   _     GFX 7 13
+                PROCESS 10
+                DONE
+
+> VSTR1   _     GFX 8 14
+                PROCESS 10
+                DONE
+
+> VSTR2   _     GFX 9 13
+                PROCESS 10
+                DONE
+
+> VSTRU   _     GFX 99 13
+                PROCESS 10
+                DONE
+
 ; The VSTG/VS* staged-entry ladder responses (verbs 88-91, 96-100)
 ; are retired with the v1 player they instrumented (SP15 3a) - see
-; the vocabulary block note. git holds them.
+; the vocabulary block note (96/97 reused by VSTR2/VSTRU). git holds
+; them.
 
 ;------------------------------------------------------------------------------
 /PRO 6 ; Initialisation

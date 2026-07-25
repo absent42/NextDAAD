@@ -135,10 +135,25 @@
 #            the pre-calibration T budget) do NOT match the leg-staged
 #            fixtures above and were deleted from tests\out\ (one-time
 #            stale-clean, 2026-07-25) rather than left to silently
-#            drift. Long-clip staging is not gone for good - it returns
-#            as a SEPARATE switch (not yet named) when SP15 3b
-#            (streaming) lands; until then -Vid always means this short
-#            leg set.
+#            drift. Long-clip staging returned as -VidLong (below)
+#            when SP15 3b (streaming) landed; -Vid always means this
+#            short leg set.
+#   -VidLong stage the SP15 3b STREAMING leg fixtures into sd\ - the
+#            three research clips at FULL 10s duration (they exceed
+#            the ~1.25MB pool ring and exercise the 3b prefetch
+#            producer across multiple ring wraps), plus the
+#            deliberate-underrun copy:
+#              007.VID <- classic 256x192 (Sintel_1080_10s_30MB.mp4, full clip, ~6.4MB)
+#              008.VID <- full 320x256    (Big_Buck_Bunny_1080_10s_30MB.mp4, full clip, ~11MB)
+#              009.VID <- 16:9 320x192 LB (Jellyfish_1080_10s_30MB.mp4, full clip, ~7.3MB)
+#              099.VID <- byte-copy of 007.VID (VSTRU: DEBUG builds
+#                         throttle the producer for video number 99 -
+#                         the deliberate-underrun leg)
+#            Cached at tests\out\00X_<shape>_long_cache.vid exactly
+#            like -Vid (encode once, copy after; delete a cache to
+#            re-encode). Does NOT touch sd\001-006.VID, so it can be
+#            staged alongside -Vid. Verbs: VSTR0/VSTR1/VSTR2/VSTRU
+#            (tests\test.dsf). Same CSpect-lock guard.
 #   -NxBench   stage the SP15 T2 decode-kernel bench payloads into
 #              sd\NXB0.BIN..sd\NXB9.BIN (nxv2enc.py --bench-fixtures -
 #              raw opcode-stream payloads, no header/audio/padding; see
@@ -160,7 +175,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$NxBench, [switch]$Nxv2Test)
+param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -625,6 +640,49 @@ if ($Vid) {
         }
     }
     "staged $vidStaged video fixture(s) -> sd\001.VID..sd\006.VID (NXV v2 leg set: full/classic/16:9/scope/classic-wide/16:9-card, sp14a-task-4-report.md section 37)"
+}
+
+if ($VidLong) {
+    # SP15 3b STREAMING leg fixtures - full-duration research-clip
+    # encodes bigger than the pool ring (see the -VidLong header
+    # comment). Cached like -Vid; does not touch sd\001-006.VID.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
+    }
+    $vidOutDir = Join-Path $root 'tests\out'
+    New-Item -ItemType Directory -Force $vidOutDir | Out-Null
+    $vidLongMap = [ordered]@{
+        '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4') }
+        '008.VID' = @{ shape = 'full';    src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4') }
+        '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4') }
+    }
+    $vidLongStaged = 0
+    foreach ($dest in $vidLongMap.Keys) {
+        $shape = $vidLongMap[$dest].shape
+        $src = $vidLongMap[$dest].src
+        if (-not (Test-Path -LiteralPath $src)) {
+            "WARNING: $src missing - sd\$dest not generated"
+            continue
+        }
+        $shapeTag = $shape -replace ':', ''
+        $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_long_cache.vid"
+        if (-not (Test-Path -LiteralPath $cache)) {
+            "encoding sd\$dest (shape $shape, source $(Split-Path -Leaf $src), FULL duration) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
+            & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
+            if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$dest not staged" }
+        }
+        if (Test-Path -LiteralPath $cache) {
+            Copy-Item -LiteralPath $cache -Destination "$root\sd\$dest" -Force
+            $vidLongStaged++
+        }
+    }
+    # 099.VID = the deliberate-underrun leg: a byte-copy of 007 (the
+    # DEBUG player throttles the producer for video number 99 only)
+    if (Test-Path -LiteralPath "$root\sd\007.VID") {
+        Copy-Item -LiteralPath "$root\sd\007.VID" -Destination "$root\sd\099.VID" -Force
+        $vidLongStaged++
+    }
+    "staged $vidLongStaged long fixture(s) -> sd\007-009.VID + sd\099.VID (SP15 3b streaming leg set: VSTR0/VSTR1/VSTR2/VSTRU, sp14a-task-4-report.md section 38)"
 }
 
 if ($NxBench) {
