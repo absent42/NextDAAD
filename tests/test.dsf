@@ -175,6 +175,20 @@ VPLY0   84      verb
 VPLY1   85      verb
 VLOP0   86      verb
 VLOP1   87      verb
+; SP15 3a calibration wave: the PACING CHECK fixture. 006.VID is the
+; test-card source (tools\demo-files\1920x1080-25p.mp4) encoded at the
+; SAME 16:9 320x192 letterbox shape as 003 - so it walks the same
+; gapped decode path - but at test-card content density, so it paces
+; with a large PACE margin. The card carries a rolling frame/timestamp
+; banner, a big seconds digit AND a 1 Hz beep authored into the source
+; audio, which makes it a two-dimensional instrument: beep-vs-stopwatch
+; measures RATE, beep-vs-counter measures A/V SYNC. Exactly 5.000 s /
+; 125 frames, so VPACL's loop rewind keeps the 1 Hz beep cadence
+; continuous across passes - loop it N times for an N x 5 s stopwatch
+; leg. (Verbs 92-95 were never assigned - the retired VSTG ladder used
+; 88-91 and 96-100.)
+VPACE   92      verb
+VPACL   93      verb
 ; VSTG1-4 / VS2E / VS6 / VS7 / VS2F / VS2G (the SP14a staged-entry
 ; ladder + its sub-ladders, verbs 88-91 and 96-100) are RETIRED with
 ; the v1 player they instrumented (SP15 3a): every stage gate they
@@ -661,6 +675,13 @@ $pictureOK
 ;   VPLY2/VLOP2 - 003.VID 16:9         320x192 mode-1 letterbox
 ;   VPLY3/VLOP3 - 004.VID scope        320x144 mode-1 letterbox
 ;   VPLY4/VLOP4 - 005.VID classic-wide 256x144 mode-0 letterbox
+;   VPACE/VPACL - 006.VID 16:9         320x192 mode-1 letterbox
+;                 (PACING CHECK: test card, 5.000 s / 125 frames /
+;                  862,208 B; rolling counter + 1 Hz beep. VPACL loops
+;                  it seamlessly - the beep cadence stays continuous
+;                  across passes, so N loops = an N x 5 s stopwatch
+;                  leg. Same gapped path as VPLY2 at a fraction of the
+;                  decode cost, so PACE must be large and positive.)
 ; STAGE 3a: fixtures must fit the resident ring (see the vocabulary
 ; note; oversize = clean VID SIZE? exit, DEBUG). A DEBUG build with no
 ; staging fails silent (missing-file DEBUG marker only); Release is
@@ -708,6 +729,14 @@ $pictureOK
                 DONE
 
 > VLOP1   _     GFX 2 14
+                PROCESS 10
+                DONE
+
+> VPACE   _     GFX 6 13
+                PROCESS 10
+                DONE
+
+> VPACL   _     GFX 6 14
                 PROCESS 10
                 DONE
 

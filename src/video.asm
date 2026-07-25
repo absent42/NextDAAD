@@ -345,10 +345,12 @@ vid_op_bad:
 ; (kernels, seam walkers, the audio copy).
 ; DEBUG breadcrumb (SP15 3a follow-up, intermittent-trap): capture the
 ; failing SOURCE position as the 24-bit linear file offset (the same
-; bankIdx/parity/HL linearization vid_dec_done performs, unrounded)
-; plus the loop pass count, surfaced on the timeline report as POS=/
-; PASS= - a one-shot ERR=FA self-localizes to a byte position instead
-; of being unreproducible. HL is the live source cursor in every abort
+; bankIdx/parity/HL linearization vid_dec_done performs, unrounded),
+; surfaced on the timeline report as POS= - a one-shot ERR=FA
+; self-localizes to a byte position instead of being unreproducible.
+; (PASS= is reported LIVE from vidLoopPass on every exit, clean or
+; error - stage-3a calibration wave; POS= stays abort-only.)
+; HL is the live source cursor in every abort
 ; context (op dispatch, seam walkers, audio copy, PAL/COPY bodies)
 ; except vid_dec_done's bound trip, which stores its already-rounded
 ; position itself and enters at vid_dec_abort_pos.
@@ -386,9 +388,9 @@ vid_dec_abort:
  ENDIF
 vid_dec_abort_pos:               ; entry with vidErrPos already stored
  IFDEF DEBUG
-    ld (vidErrCode), a
-    ld a, (vidLoopPass)
-    ld (vidErrPass), a           ; A dead past here (.restore reloads)
+    ld (vidErrCode), a           ; PASS= needs no capture here: the loop
+                                 ; stops at the abort, so the LIVE
+                                 ; vidLoopPass IS the pass that failed
  ENDIF
     ld sp, (vidDecSp)
     jp vid_run.decfail
@@ -1478,7 +1480,7 @@ vid_run:
                                  ; mid-span - nxv2dec validates)
  IFDEF DEBUG
     ld hl, vidLoopPass           ; breadcrumb: pass count for the
-    inc (hl)                     ; abort funnel's PASS= report field
+    inc (hl)                     ; the report's live PASS= field
  ENDIF
     jp .frameloop
 .drainlast:
@@ -1693,8 +1695,8 @@ vidErrOp:        db 0            ; the offending opcode byte (ERR=OP)
 vidErrPos:       ds 3            ; breadcrumb: failing source position
                                  ; (24-bit linear file offset; only
                                  ; meaningful when ERR != 0)
-vidErrPass:      db 0            ; breadcrumb: loop pass at the abort
-vidLoopPass:     db 0            ; live loop-pass counter (0 = pass 1)
+vidLoopPass:     db 0            ; live loop-pass counter (0 = pass 1);
+                                 ; reported as PASS= on EVERY exit
 vidTlFillFrames: dw 0            ; resident ring load duration, 50Hz
                                  ; frames (frameCounter delta)
 VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlTicks
@@ -3431,9 +3433,10 @@ vid_tl_report_body:
     call dbg_hex8
     ld hl, (vidErrPosL)
     call dbg_hex16
-    ld hl, msgTlPass             ; breadcrumb: loop pass at the abort
-    call dbg_puts
-    ld a, (vidErrPassL)
+    ld hl, msgTlPass             ; LIVE loop pass, printed 1-based on
+    call dbg_puts                ; every exit (clean or error); 01 on a
+    ld a, (vidLoopPassL)         ; play-once run, mod 256 on a long soak
+    inc a
     call dbg_hex8
     ld hl, msgTlFill
     call dbg_puts
@@ -3480,7 +3483,6 @@ vidTlAccL:        ds VID_TL_PHASES*4
 vidErrCodeL:      db 0
 vidErrOpL:        db 0
 vidErrPosL:       ds 3
-vidErrPassL:      db 0
 vidLoopPassL:     db 0
 vidTlFillFramesL: dw 0
     ASSERT vidTlFillFramesL + 2 - vidTlTicksL == VID_TL_BLOCK_LEN
