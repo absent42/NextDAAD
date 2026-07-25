@@ -1445,7 +1445,7 @@ vid_aud_copy:
     ld (vidAudNextEnd), hl
     ; toggle: other = (halfA + halfB) - current (mod 2^16)
     ld de, (vidAudFillPtr)
-    ld hl, (vidAudBuf*2 + NXV_AUD_HALF) & $FFFF
+    ld hl, $FFFF & (vidAudBuf*2 + NXV_AUD_HALF)
     or a
     sbc hl, de
     ld (vidAudFillPtr), hl
