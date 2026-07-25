@@ -2434,11 +2434,22 @@ vidCtcTcNxvMono:
 ;   1. IM2 stub, audEnable, l2Front/Back cells (resident state)
 ;   2. NR $69 bit7 CLEARED - Layer 2 hidden, other bits held
 ;   3. NR $12 bank, NR $70 mode - restored invisibly
-;   4. NR $69 = saved value - re-shows iff it was on pre-video
-;   5. NR $15 layers, NR $43 palette ctrl
-;   6. NR $6B tilemap, NR $4A fallback (presentation isolation)
-;   7. MMU2 (the borrowed dest window)
-;   8. ring banks freed
+;   4. clip window (NR $1C/$18) + scroll (NR $16/$17) + NR $43
+;      palette select - ALSO mode interpretation, ALSO restored
+;      inside the hidden bracket (SP15 3a letterbox exit flash: the
+;      l2setup body programs a letterbox clip band + a YOFS wrap that
+;      were never restored at all, so the re-shown game surface
+;      scanned out rolled/clipped for a field on 003/004/005; benign
+;      on full-band shapes only because their YOFS is 0. Clip/scroll
+;      are reconstructed by convention: l2_clip_set (overlay2) is the
+;      game's only clip/scroll writer and always programs full-bleed
+;      clip for its mode + zero scroll - the mode comes from the
+;      saved NR $70 bits 5:4, the same derivation l2_clip_set uses.)
+;   5. NR $69 = saved value - re-shows iff it was on pre-video
+;   6. NR $15 layers
+;   7. NR $6B tilemap, NR $4A fallback (presentation isolation)
+;   8. MMU2 (the borrowed dest window)
+;   9. ring banks freed
 ; Hops back to vid_run.restore_tail. Corrupts everything.
 ; ---------------------------------------------------------------------
 vid_run_restore_body:
@@ -2453,7 +2464,7 @@ vid_run_restore_body:
     ld (l2FrontBank), a
     ld a, (vidSvL2Back+DATA_WINDOW-OVL_ORG)
     ld (l2BackBank), a
-    ; EXIT ORDER FIX steps 2-4 (see the header matrix)
+    ; EXIT ORDER FIX steps 2-5 (see the header matrix)
     ld e, NR_DISPLAY_CTRL
     call nr_read
     and %01111111
@@ -2462,12 +2473,32 @@ vid_run_restore_body:
     nextreg NR_L2_BANK, a
     ld a, (vidSvNr70+DATA_WINDOW-OVL_ORG)
     nextreg NR_L2_CTRL, a
+    ; step 4: clip window + scroll + palette select, still hidden.
+    ; Game convention (l2_clip_set): X1/Y1 = 0, X2/Y2 full-bleed for
+    ; the game's mode, XOFS/YOFS = 0. Mode from the saved NR $70.
+    ld a, (vidSvNr70+DATA_WINDOW-OVL_ORG)
+    and %00110000                ; bits 5:4: 00 = 256x192, else 320x256
+    ld d, 255
+    ld e, 191                    ; 256x192: X2 = 255, Y2 = 191
+    jr z, .clipgame
+    ld d, 159                    ; 320x256: X2 = 159 (2-pixel units),
+    ld e, 255                    ; Y2 = 255
+.clipgame:
+    nextreg NR_CLIP_IDX, 1       ; reset the Layer 2 clip index
+    nextreg NR_L2_CLIP, 0        ; X1
+    ld a, d
+    nextreg NR_L2_CLIP, a        ; X2
+    nextreg NR_L2_CLIP, 0        ; Y1
+    ld a, e
+    nextreg NR_L2_CLIP, a        ; Y2
+    nextreg NR_L2_XOFS, 0
+    nextreg NR_L2_YOFS, 0
+    ld a, (vidSvNr43+DATA_WINDOW-OVL_ORG)
+    nextreg NR_PAL_CTRL, a
     ld a, (vidSvNr69+DATA_WINDOW-OVL_ORG)
     nextreg NR_DISPLAY_CTRL, a   ; re-show (iff it was on pre-video)
     ld a, (vidSvNr15+DATA_WINDOW-OVL_ORG)
     nextreg NR_LAYERS, a
-    ld a, (vidSvNr43+DATA_WINDOW-OVL_ORG)
-    nextreg NR_PAL_CTRL, a
     ld a, (vidSvNr6b+DATA_WINDOW-OVL_ORG)
     nextreg NR_TM_CTRL, a
     ld a, (vidSvNr4a+DATA_WINDOW-OVL_ORG)
