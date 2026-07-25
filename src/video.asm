@@ -47,10 +47,14 @@
 ;
 ; THIRD RULE (new, 3b): while a STREAMING session is armed, the CMD18
 ; window may be open across frames and the Multiface is disabled for
-; its whole open span - no other filesystem/SD access can happen
+; each open span - no other filesystem/SD access can happen
 ; (structurally true: audEnable is frozen, nothing else runs), and the
 ; hot producer owns every window/run/MF cell (the cold twins hand off
-; at .strm_loaded and take nothing back until teardown).
+; at .strm_loaded and take nothing back until teardown). MF protection
+; is per-window, not per-session: vid_win_close_h restores MF, so
+; brief re-enabled gaps exist at fragment boundaries and producer
+; rewinds until the next vid_win_open_h re-disables it (v1's shape -
+; an NMI in a gap hits with the window CLOSED, which is safe).
 ;
 ; Format authority: docs/superpowers/plans/2026-07-23-sp15-nxv2.md
 ; (FROZEN 2026-07-25); nextdaad.inc's NXV2_* block is the player-side
@@ -1908,8 +1912,10 @@ video_ctc_isr_stereo:
 ; fragment boundary, a producer rewind, or teardown; while it is open
 ; NO other filesystem/SD access happens anywhere - structurally true:
 ; audEnable is frozen and nothing else runs during playback). The
-; Multiface stays disabled while the window is open, i.e. effectively
-; the whole streaming session (an NMI would corrupt the SD wire).
+; Multiface stays disabled while the window is open (an NMI would
+; corrupt the SD wire); it is briefly re-enabled across each window
+; close - fragment boundaries, producer rewinds - and re-disabled by
+; the next open, matching v1's per-window shape.
 ; Every cell these routines touch is HOT (rubric 3); every hardware
 ; poll is bounded (rubric 6); ini's B consumption is respected - A is
 ; the block counter (rubric 2, the NXV first-contact lesson).
@@ -1950,8 +1956,15 @@ vid_ring_gate:
     jr c, .fill
     ret
 .served:
-    ; CF clear = frame served: depth >= need, or the producer owes
-    ; nothing this pass (the buffered tail is the whole remainder)
+    ; CF clear = frame served: depth >= need, or - PLAY-ONCE ONLY -
+    ; the producer owes nothing this pass (the buffered tail is the
+    ; whole remainder). In LOOP MODE remain==0 is TRANSIENT until
+    ; vid_prod_step's lazy rewind runs, so it still counts as owed:
+    ; the fill loop's prod_step rewinds and converges (sustained-late
+    ; regime: without this, the unrewound producer let depth drain
+    ; and vid_loop_rewind underflowed it past a header block never
+    ; produced). Ring-full still terminates the fill: full ring =>
+    ; depth >= need (validated at open).
     ld hl, (vidRingDepth)
     ld de, (vidNeedBlk)
     or a
@@ -1961,8 +1974,10 @@ vid_ring_gate:
     ld a, h
     or l
     jr nz, .owe
+    ld a, (vidLoopMode)
     or a
-    ret
+    jr nz, .owe                  ; loop: rewind pending - still owed
+    ret                          ; play-once: tail drain, CF clear
 .owe:
     scf
     ret
@@ -2632,6 +2647,11 @@ nxv2_open_body:
     ; gate; resident ignores it (informational there, as 3a did)
     ld hl, (DATA_WINDOW + NXV2_OFF_FRAMECAP)
     ld (vidHdrCapC), hl
+    ; ring start-margin: ADVISORY - this player honors it by
+    ; domination (full-ring prefill); captured only for the cheap
+    ; corrupt-header range check in .stream_setup
+    ld hl, (DATA_WINDOW + NXV2_OFF_RMARGIN)
+    ld (vidHdrMarginC), hl
     call data_restore
     ; --- geometry derivation (free heights - no block math) ---
     xor a
@@ -2895,6 +2915,20 @@ nxv2_open_body:
     cp NXV2_STRM_CAP_MAX+1
     jp nc, .badc
     ld (vidCapBlkC), a
+    ; advisory start-margin range check: this player never reads the
+    ; margin as a fill target (full-ring prefill dominates any margin
+    ; the ring could honor), but a margin claiming more blocks than
+    ; the whole file is a corrupt header - reject it cheaply
+    ld a, (vidSizeHi)
+    ld h, a
+    ld a, (vidSizeLo+1)
+    ld l, a                      ; HL = size >> 8 (low byte 0, checked
+    srl h                        ; above)
+    rr l                         ; HL = file blocks (size >> 9)
+    ld de, (vidHdrMarginC)
+    or a
+    sbc hl, de
+    jp c, .badc                  ; margin > file blocks
     ; gate need = audio-pad blocks + cap + 1 (the loop-pass header
     ; block rides between passes)
     ld hl, (vidP_ABytesPad)
@@ -3185,6 +3219,9 @@ vidRecvHi:     db 0
 vidDeliverStrm: db 0             ; 0 = resident, 1 = ring streaming
 vidLoadTgt:    ds 3              ; prefill byte target (size / ring)
 vidHdrCapC:    dw 0              ; header per-frame payload cap
+vidHdrMarginC: dw 0              ; header ring start-margin (advisory;
+                                 ; range-checked only, never a fill
+                                 ; target - the prefill fills the ring)
 vidCapBlkC:    db 0              ; validated cap (blocks)
 vidApadBlkC:   db 0
 vidNeedBlkC:   db 0
