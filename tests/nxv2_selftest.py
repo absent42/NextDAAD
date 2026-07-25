@@ -71,7 +71,8 @@ def t1_header_roundtrip():
         channels = 2
         arate = enc.RATE_STEREO
         frame_count = 12345
-        audio_bpf = 933 * 2
+        audio_bpf = 1250        # stereo@25 - within the v2.0 player
+                                # bound pack_header now enforces (3c)
         ring_margin = 7
         cap_blocks = 86
         hdr = enc.pack_header(
@@ -249,7 +250,10 @@ def t1_stream_supply_gate_e2e():
     width, height, fps = 256, 192, 25.0
     nframes = 50
     payload_len = 30000                      # bytes, fixed per frame
-    abytes_pad = abytes_real = 1536
+    abytes_real = 1250                       # stereo@25 (within the
+    abytes_pad = 1536                        # 1280 player bound the 3c
+                                             # pack_header defence now
+                                             # enforces on every writer)
     channels, rate = 2, enc.RATE_STEREO
     payload_blocks = (payload_len + 511) // 512
     mean_demand = abytes_pad + payload_blocks * 512
@@ -1357,6 +1361,177 @@ def t13_run_absorb_threshold():
     surf2 = prev.copy()
     dec.run_payload(merged2, 0, surf2, n)
     expect(np.array_equal(surf2, target2), "short-run absorb preserves decode byte-identity")
+
+
+# =======================================================================
+# Step 11 (SP15 3c): direct-serve preset + pack_header defence-in-depth
+# =======================================================================
+
+def _synthetic_ex(n, width, height, seed=7, cut_at=None):
+    """Build the ex dict _encode_direct consumes, without ffmpeg."""
+    rng = np.random.default_rng(seed)
+    # blocky content (quantizes losslessly enough to be stable)
+    orig = np.repeat(np.repeat(
+        rng.integers(0, 255, size=(n, height // 8, width // 8, 3), dtype=np.uint8),
+        8, axis=1), 8, axis=2)
+    chg = np.zeros(n)
+    if cut_at is not None:
+        chg[cut_at] = 0.9      # over CUT_T with impulse -> a scene cut
+    abytes_real = 1250
+    abytes_pad = 1536
+    audio = bytes(rng.integers(0, 256, size=n * abytes_real, dtype=np.uint8))
+    return dict(orig=orig, chg=chg, audio_bytes=audio, channels=2,
+                rate=enc.RATE_STEREO, abytes_real=abytes_real,
+                abytes_pad=abytes_pad, nframes=n)
+
+
+@case(11, "pack_header defence-in-depth - audio bytes over the 1280 player bound rejected")
+def t11_pack_header_bound():
+    try:
+        enc.pack_header(width=256, height=192, fps=25, channels=2,
+                        arate=enc.RATE_STEREO, frame_count=1,
+                        audio_bytes_per_frame=enc.AUD_HALF + 1,
+                        ring_start_margin_blocks=0, per_frame_cap_blocks=1)
+    except ValueError as e:
+        expect("1280" in str(e), "error names the 1280 player bound")
+        expect("VID FMT" in str(e), "error names the player refusal")
+    else:
+        raise AssertionError("pack_header must reject 1281 audio bytes/frame")
+    # the bound itself is legal
+    hdr = enc.pack_header(width=256, height=192, fps=25, channels=2,
+                          arate=enc.RATE_STEREO, frame_count=1,
+                          audio_bytes_per_frame=enc.AUD_HALF,
+                          ring_start_margin_blocks=0, per_frame_cap_blocks=1)
+    expect(len(hdr) == 512, "1280 exactly is accepted")
+
+
+def _walk_ops(payload):
+    """Return the op list of a raw payload (structure only)."""
+    ops, p = [], 0
+    while p < len(payload):
+        op = payload[p]; p += 1
+        ops.append(op)
+        if op in (enc.OP_FEND, enc.OP_KFLIP):
+            break
+        if op == enc.OP_KSTART:
+            continue
+        if op == enc.OP_PAL:
+            p += 512
+        elif op == enc.OP_COPY8:
+            p += 1 + payload[p]
+        elif op == enc.OP_COPY16:
+            n = int.from_bytes(payload[p:p + 2], "little"); p += 2 + n
+        elif op == enc.OP_RUN8:
+            p += 2
+        elif op == enc.OP_RUN16:
+            p += 3
+        elif op == enc.OP_SKIP8:
+            p += 1
+        elif op == enc.OP_SKIP16:
+            p += 2
+        else:
+            raise AssertionError(f"unexpected op {op:02X} in a direct payload")
+    return ops
+
+
+@case(11, "direct-serve encode - all-literal container, flags bit1, nxv2dec byte-exact")
+def t11_direct_serve():
+    import tempfile as tf
+    n, width, height = 6, 256, 144
+    ex = _synthetic_ex(n, width, height, cut_at=3)
+    with tf.TemporaryDirectory() as td:
+        out = Path(td) / "direct.vid"
+        report = enc._encode_direct(ex, width, height, 25.0, out)
+        expect(report.mode == "direct", "report mode")
+        expect(report.frames == n, "frame count")
+        buf = out.read_bytes()
+        hdr = enc.unpack_header(buf)
+        expect(hdr["flags"] & enc.FLAG_DIRECT_SERVE, "direct-serve hint set")
+        expect(hdr["flags"] & enc.FLAG_DELTA_STREAM, "delta bit still set")
+        expect(len(buf) % 512 == 0, "whole 512B blocks")
+        issues = dec.validate(out)
+        expect(issues == [], f"validate clean, got {issues}")
+        # every frame: KSTART [PAL] COPY* KFLIP - literal-only
+        pos = enc.HEADER_SIZE
+        pal_frames = []
+        for i in range(n):
+            pos += ex["abytes_pad"]
+            ops = _walk_ops(buf[pos:])
+            expect(ops[0] == enc.OP_KSTART, f"f{i} opens with KSTART")
+            expect(ops[-1] == enc.OP_KFLIP, f"f{i} closes with KFLIP")
+            body = [o for o in ops[1:-1] if o != enc.OP_PAL]
+            expect(all(o in (enc.OP_COPY8, enc.OP_COPY16) for o in body),
+                   f"f{i} body is literal-only, got {[hex(o) for o in body]}")
+            if enc.OP_PAL in ops:
+                pal_frames.append(i)
+            # advance pos past this frame's payload blocks
+            plen = _payload_len(buf, pos)
+            pos += ((plen + 511) // 512) * 512
+        expect(pal_frames == [0, 3], f"PAL on scene starts only, got {pal_frames}")
+        # decoded output is pixel-exact vs the encoder's own quantize
+        frames = list(dec.decode(out))
+        expect(len(frames) == n, "decoded frame count")
+        cuts = [3]
+        bounds = [0] + cuts + [n]
+        fi = 0
+        for s_i, e_i in zip(bounds[:-1], bounds[1:]):
+            pal = enc.scene_palette(ex["orig"], s_i, e_i)
+            for i in range(s_i, e_i):
+                idx, _ = enc.quantize_to_palette(ex["orig"][i], pal)
+                dpal, dimg = frames[fi]
+                expect(np.array_equal(dimg, idx), f"f{fi} indexed pixel-exact")
+                fi += 1
+        # header cap covers the worst payload
+        expect(hdr["per_frame_cap_blocks"] >= 1, "cap present")
+
+
+def _payload_len(buf, pos):
+    """Length in bytes of the payload starting at pos (walk to the
+    terminal op) - mirrors _walk_ops but returns the byte length."""
+    p = pos
+    while True:
+        op = buf[p]; p += 1
+        if op in (enc.OP_FEND, enc.OP_KFLIP):
+            return p - pos
+        if op == enc.OP_KSTART:
+            continue
+        if op == enc.OP_PAL:
+            p += 512
+        elif op == enc.OP_COPY8:
+            p += 1 + buf[p]
+        elif op == enc.OP_COPY16:
+            n = int.from_bytes(buf[p:p + 2], "little"); p += 2 + n
+        elif op == enc.OP_RUN8:
+            p += 2
+        elif op == enc.OP_RUN16:
+            p += 3
+        elif op == enc.OP_SKIP8:
+            p += 1
+        elif op == enc.OP_SKIP16:
+            p += 2
+        else:
+            raise AssertionError(f"unexpected op {op:02X}")
+
+
+@case(11, "direct-serve wire gate - infeasible shape refused with named numbers")
+def t11_direct_gate():
+    import tempfile as tf
+    ex = _synthetic_ex(2, 320, 256)
+    with tf.TemporaryDirectory() as td:
+        out = Path(td) / "toobig.vid"
+        try:
+            enc._encode_direct(ex, 320, 256, 25.0, out)
+        except SystemExit as e:
+            msg = str(e)
+            expect("direct-serve" in msg, "error names the mode")
+            expect("utilization" in msg, "error names the utilization")
+            expect(not out.exists(), "no file written on refusal")
+        else:
+            raise AssertionError("320x256@25 direct must be refused "
+                                 "(raw 81920 B/frame over the wire)")
+    # the sanity anchor: classic-wide (256x144) is admissible
+    ds = enc.direct_supply_check(1536 + ((256 * 144 + 520 + 511) // 512) * 512, 25.0)
+    expect(ds["utilization"] < 1.0, "classic-wide direct is feasible")
 
 
 def main():

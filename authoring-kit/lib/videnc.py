@@ -210,6 +210,15 @@ def main(argv):
                           "file bigger than the resident pool must pass the "
                           "streaming supply gate (nxv2enc.stream_supply_"
                           "check) - its error names the value to pass here")
+    ap.add_argument("--direct", action="store_true",
+                     help="SP15 3c direct-serve preset: all-literal "
+                          "raw-equivalent encode (every frame a full "
+                          "keyframe repaint, header direct-serve hint "
+                          "set) - the player serves it straight from "
+                          "SD to the surface, no ring. Gated by "
+                          "worst-frame WIRE feasibility "
+                          "(nxv2enc.direct_supply_check); small shapes "
+                          "only at 25 fps (raw bytes/frame = WxH)")
     ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
     ap.add_argument("--duration", help="clip duration in seconds")
     ap.add_argument("--report", help="write the BuildReport as JSON to "
@@ -267,10 +276,16 @@ def main(argv):
         quality_profile="max", report_path=args.report,
         start=args.start, duration=args.duration, ffmpeg=str(ffmpeg),
         dither=args.dither, mono=args.mono, merge_gaps=not args.no_merge,
-        cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget)
+        cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget,
+        direct=args.direct)
 
     stream_line = ""
-    if report.stream_checked:
+    if report.mode == "direct":
+        stream_line = (f", DIRECT-SERVE wire util "
+                       f"{report.stream_utilization:.2f} "
+                       f"(SD {report.stream_sd_ms:.1f} ms/frame, "
+                       f"{report.stream_demand_kbs:.0f} KB/s)")
+    elif report.stream_checked:
         stream_line = (f", stream util {report.stream_utilization:.2f} "
                        f"(decode {report.stream_busy_ms:.1f} + SD "
                        f"{report.stream_sd_ms:.1f} ms, "

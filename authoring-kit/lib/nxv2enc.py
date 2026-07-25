@@ -106,6 +106,17 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
         raise ValueError("frame_count out of the header's 24-bit range")
     if not (0 <= audio_bytes_per_frame < (1 << 16)):
         raise ValueError("audio_bytes_per_frame out of 16-bit range")
+    if audio_bytes_per_frame > AUD_HALF:
+        # v2.0 PLAYER BOUND defence-in-depth (3b review minor -> 3c):
+        # the player rejects such a header at open (VID FMT?), so no
+        # writer may build one. audio_layout() enforces this upstream
+        # for every real encode path; this guard catches any future
+        # caller that bypasses it.
+        raise ValueError(
+            f"audio_bytes_per_frame {audio_bytes_per_frame} exceeds the "
+            f"NXV v2.0 player bound of {AUD_HALF} bytes (one double-"
+            f"buffer half, NXV_AUD_HALF - the player refuses the file "
+            f"at open with VID FMT?)")
     if not (0 <= ring_start_margin_blocks < (1 << 16)):
         raise ValueError("ring_start_margin_blocks out of 16-bit range")
     if not (0 <= per_frame_cap_blocks < (1 << 16)):
@@ -546,8 +557,33 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
 #
 # A WINDOWED/BURST criterion - checking utilization over a sliding
 # window sized to the ring depth, not just the whole-clip mean - would
-# close both gaps. Out of scope here.
+# close both gaps. Out of scope here. (3c note, carried per the stage
+# queue: this limitation is DOCUMENTED-ACCEPTED for v2.0 - the direct-
+# serve gate below deliberately uses the WORST frame instead, because
+# direct delivery has no ring to absorb excursions at all.)
 # ---------------------------------------------------------------------
+
+
+def direct_supply_check(worst_frame_bytes, fps):
+    """Direct-serve wire feasibility (SP15 3c). A direct-serve session
+    reads every byte of a frame section (audio blocks + payload blocks,
+    padding included) off the SD wire INSIDE that frame's own period -
+    the literal bytes are served straight to the surface (ini
+    transport, the whole point of the mode), and there is NO ring to
+    absorb bursts. The criterion is therefore the WORST frame, not the
+    clip mean (contrast stream_supply_check's documented mean-rate
+    limitation above). audio_factor de-rates the wire exactly as the
+    streaming gate does - the ISR sample tax applies to the ini
+    transport identically. Decode-side overhead beyond the wire (op
+    parse, RUN fills) is second-order for the all-literal composition
+    this gate fronts and is covered by the same conservative wire
+    floor the streaming gate leans on."""
+    af = TMODEL_COEFFS["audio_factor"]
+    period_ms = 1000.0 / float(fps)
+    sd_ms = worst_frame_bytes / (SD_WIRE_BYTES_PER_MS * af)
+    return dict(utilization=sd_ms / period_ms, sd_ms=sd_ms,
+                period_ms=period_ms,
+                demand_kbs=worst_frame_bytes * float(fps) / 1024.0)
 
 
 # ---------------------------------------------------------------------
@@ -1363,6 +1399,22 @@ def emit_kf_chunk_payload(target_flat, start, length, first, is_last, kf_pal=Non
     return b"".join(parts)
 
 
+def emit_direct_frame_payload(target_flat, pal=None):
+    """One DIRECT-SERVE frame (SP15 3c): a single-frame keyframe span -
+    KSTART [+ PAL on scene starts] + COPY literals of the whole content
+    surface + KFLIP. All-literal by construction (op_copy chunks into
+    COPY16/COPY8), so the player's direct path can ini the body bytes
+    straight from the SD wire to the hidden surface. The frozen wire
+    format is untouched - this is just a composition the direct-serve
+    header hint (flags bit1) promises."""
+    parts = [bytes([OP_KSTART])]
+    if pal is not None:
+        parts.append(op_pal(pal))
+    parts.append(op_copy(np.asarray(target_flat, dtype=np.uint8).tobytes()))
+    parts.append(bytes([OP_KFLIP]))
+    return b"".join(parts)
+
+
 # ---------------------------------------------------------------------
 # BuildReport (T1 step 7)
 # ---------------------------------------------------------------------
@@ -1482,12 +1534,15 @@ def audio_layout(fps, channels):
                             + Fraction(1, 2)) <= AUD_HALF
             if mono_fits:
                 remedy += " or use --mono (mono fits at this fps)"
+        import math as _math
         raise SystemExit(
             f"error: {real} audio bytes/frame ({mode} at {float(fps):g} "
             f"fps) exceeds the NXV v2.0 player's per-frame audio bound "
             f"of {AUD_HALF} bytes (one double-buffer half - a bigger "
             f"frame is rejected at open with VID FMT?). Stereo requires "
-            f"fps > {min_fps_for(2):.2f}, mono fps > {min_fps_for(1):.2f}; "
+            f"fps >= {_math.ceil(min_fps_for(2) * 100) / 100:.2f}, mono "
+            f"fps >= {_math.ceil(min_fps_for(1) * 100) / 100:.2f} "
+            f"(the floors themselves fit - 3b re-review wording fix); "
             f"{remedy}.")
     padded = ((real + 511) // 512) * 512
     return rate, samples, real, padded
@@ -1856,10 +1911,121 @@ def _apply_segments(prev_flat, target_flat, gcls, gstarts, glens):
     return out
 
 
+def _encode_direct(ex, width, height, fps_val, out_path, report_path=None):
+    """SP15 3c DIRECT-SERVE encode (the raw-equivalent all-literal
+    preset): every frame is a single-frame keyframe span (KSTART
+    [+ PAL] + COPY + KFLIP) and the header sets the direct-serve hint
+    (flags bit1), so the player serves the literal bytes straight from
+    the SD wire to the hidden surface - no ring, no RAM pass. Scene-
+    scoped palettes reuse the delta pipeline's cut detection + sampled
+    full-span quantize; there is no delta and no rate control - the
+    stream is raw-equivalent by design, gated by WIRE feasibility
+    (direct_supply_check: worst frame, no ring absorber)."""
+    orig = ex["orig"]
+    N = ex["nframes"]
+    column_major = (width == 320)
+    cuts = [c for c in detect_scene_cuts(ex["chg"]) if 0 < c < N]
+    bounds = [0] + cuts + [N]
+    payloads = []
+    psnrs = []
+    for s_i, e_i in zip(bounds[:-1], bounds[1:]):
+        if s_i == e_i:
+            continue
+        pal = scene_palette(orig, s_i, e_i)
+        for i in range(s_i, e_i):
+            idx, dec = quantize_to_palette(orig[i], pal)
+            flat = flatten_frame(idx, column_major)
+            payloads.append(emit_direct_frame_payload(
+                flat, pal if i == s_i else None))
+            psnrs.append(psnr(orig[i], dec))
+    nframes_out = len(payloads)
+    max_payload = max((len(p) for p in payloads), default=0)
+    per_frame_cap_blocks = (max_payload + 511) // 512
+    abytes_pad = ex["abytes_pad"]
+
+    # --- DIRECT-SERVE WIRE GATE: the worst frame section must cross
+    # the SD wire inside one frame period (no ring absorber) ---
+    worst_frame = abytes_pad + per_frame_cap_blocks * 512
+    ds = direct_supply_check(worst_frame, fps_val)
+    if ds["utilization"] > 1.0:
+        raise SystemExit(
+            f"error: this direct-serve encode cannot play at rate - "
+            f"worst-frame wire utilization {ds['utilization']:.2f} > "
+            f"1.00 ({worst_frame} B/frame needs {ds['sd_ms']:.1f} ms of "
+            f"SD wire per {ds['period_ms']:.0f} ms frame; "
+            f"{ds['demand_kbs']:.0f} KB/s vs the "
+            f"~{SD_WIRE_BYTES_PER_MS * TMODEL_COEFFS['audio_factor'] * 1000 / 1024:.0f} KB/s "
+            f"pace wire rate). Direct-serve has NO ring to absorb "
+            f"bursts - use a smaller shape (raw bytes/frame = "
+            f"width*height), lower --fps, or drop --direct and let the "
+            f"delta encoder compress it.")
+    elif ds["utilization"] > STREAM_WARN_UTIL:
+        print(f"  warning: direct-serve wire utilization "
+              f"{ds['utilization']:.2f} (> {STREAM_WARN_UTIL:.2f}) - "
+              f"at-capacity encode; slow cards may pace-hold")
+
+    header = pack_header(
+        width=width, height=height, fps=fps_val, channels=ex["channels"],
+        arate=ex["rate"], frame_count=nframes_out,
+        audio_bytes_per_frame=ex["abytes_real"],
+        ring_start_margin_blocks=per_frame_cap_blocks,
+        per_frame_cap_blocks=per_frame_cap_blocks,
+        flags=FLAG_DELTA_STREAM | FLAG_DIRECT_SERVE)
+
+    audio_pad = bytes([SILENCE_U8]) * (abytes_pad - ex["abytes_real"])
+    total_bytes = HEADER_SIZE
+    out_path = Path(out_path)
+    with open(out_path, "wb") as f:
+        f.write(header)
+        audio_bytes = ex["audio_bytes"]
+        abr = ex["abytes_real"]
+        for i, payload in enumerate(payloads):
+            f.write(audio_bytes[i * abr:(i + 1) * abr])
+            f.write(audio_pad)
+            f.write(payload)
+            pad = (-len(payload)) % 512
+            if pad:
+                f.write(bytes(pad))
+            total_bytes += abytes_pad + len(payload) + pad
+
+    psnr_arr = np.array(psnrs)
+    seconds = nframes_out / fps_val
+    seconds_per_mb = seconds / (total_bytes / (1024 * 1024)) if total_bytes else 0.0
+    report = BuildReport(
+        mode="direct", shape=(width, height), fps=fps_val, frames=nframes_out,
+        mean_psnr=float(psnr_arr.mean()) if len(psnr_arr) else 0.0,
+        worst_psnr=float(psnr_arr.min()) if len(psnr_arr) else 0.0,
+        total_bytes=total_bytes, seconds_per_mb=seconds_per_mb,
+        keyframes=nframes_out, degradation_events=0,
+        binding_budget_histogram={"direct": nframes_out},
+        stream_checked=True,
+        stream_utilization=ds["utilization"],
+        stream_busy_ms=0.0, stream_sd_ms=ds["sd_ms"],
+        stream_demand_kbs=ds["demand_kbs"])
+    if report_path:
+        import json
+        with open(report_path, "w") as f:
+            json.dump(dict(
+                mode=report.mode, shape=list(report.shape), fps=report.fps,
+                frames=report.frames, mean_psnr=report.mean_psnr,
+                worst_psnr=report.worst_psnr, total_bytes=report.total_bytes,
+                seconds_per_mb=report.seconds_per_mb, keyframes=report.keyframes,
+                degradation_events=0, staleness_events=0,
+                binding_budget_histogram=report.binding_budget_histogram,
+                stream_checked=True,
+                stream_utilization=report.stream_utilization,
+                stream_busy_ms=0.0, stream_sd_ms=report.stream_sd_ms,
+                stream_demand_kbs=report.stream_demand_kbs,
+                scene_cuts=cuts, kf_span_ranges=[[i, i] for i in range(nframes_out)],
+            ), f, indent=1)
+    return report
+
+
 def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
            dither=False, mono=False, merge_gaps=True, hysteresis=True,
-           staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=1.0):
+           staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=1.0,
+           direct=False):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     quality_profile: only "max" is implemented in T1 (the dual-budget
@@ -1873,7 +2039,12 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     delta caps (bytes AND decode-T) - the operating-point lever for the
     streaming supply gate below. A file bigger than the reference
     resident pool (STREAM_RESIDENT_POOL_B) must pass
-    stream_supply_check or this function refuses to write it."""
+    stream_supply_check or this function refuses to write it.
+
+    direct (--direct, SP15 3c): the raw-equivalent all-literal preset -
+    every frame a full keyframe repaint, header direct-serve hint set
+    (flags bit1), gated by worst-frame WIRE feasibility instead of the
+    delta pipeline's dual budgets (see _encode_direct)."""
     if quality_profile != "max":
         raise ValueError(f"quality_profile {quality_profile!r} not implemented - only 'max'")
 
@@ -1882,6 +2053,11 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
 
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
                           ffmpeg, dither, mono)
+    if direct:
+        # SP15 3c: the all-literal direct-serve preset - no delta
+        # pipeline, no rate control; see _encode_direct.
+        return _encode_direct(ex, width, height, fps_val, out_path,
+                              report_path)
     result = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width, height,
                           fps_val, cap_bytes_frac=cap_bytes_frac,
                           budget_scale=stream_budget,
