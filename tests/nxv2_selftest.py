@@ -231,6 +231,109 @@ def t1_stream_supply_gate():
            > s7["utilization"], "utilization monotonic in demand")
 
 
+@case(1, "streaming supply gate - encode() end-to-end REFUSAL (no file "
+         "written) and admit just below util 1.0")
+def t1_stream_supply_gate_e2e():
+    # t1_stream_supply_gate above pins stream_supply_check() itself
+    # against the silicon anchors. This case pins the WIRING around it:
+    # nxv2enc.encode() must actually call the gate, raise SystemExit
+    # with the stream-supply message and write NOTHING when a projected
+    # encode would exceed util 1.0, and must admit (write the file,
+    # report util < 1.0) an operating point just under the line. Uses a
+    # synthetic clip/parameters (no ffmpeg, no demo source) by
+    # monkeypatching the two internal seams encode() calls by bare name
+    # - _extract_source (ffmpeg/PIL extraction) and encode_clip (the
+    # numpy delta pipeline) - so the test is fast and exercises the real
+    # encode() gate/header/file-write code path exactly as videnc.py
+    # drives it.
+    width, height, fps = 256, 192, 25.0
+    nframes = 50
+    payload_len = 30000                      # bytes, fixed per frame
+    abytes_pad = abytes_real = 1536
+    channels, rate = 2, enc.RATE_STEREO
+    payload_blocks = (payload_len + 511) // 512
+    mean_demand = abytes_pad + payload_blocks * 512
+    projected_total = enc.HEADER_SIZE + nframes * mean_demand
+    expect(projected_total > enc.STREAM_RESIDENT_POOL_B,
+           "fixture must exceed the resident pool to exercise the gate at all")
+
+    # Binary-search mean_t (the modeled decode T/frame the gate would
+    # compute) for the util==1.0 boundary using stream_supply_check
+    # itself - the same function encode()'s gate calls - so the
+    # refuse/admit split below is derived, not hand-guessed.
+    lo_t, hi_t = 1.0, 5_000_000.0
+    for _ in range(60):
+        mid_t = (lo_t + hi_t) / 2.0
+        u = enc.stream_supply_check(mid_t, mean_demand, abytes_pad, fps,
+                                    width, height)["utilization"]
+        if u < 1.0:
+            lo_t = mid_t
+        else:
+            hi_t = mid_t
+    admit_t = lo_t            # utilization just under 1.0
+    refuse_t = hi_t * 1.20    # comfortably over 1.0
+
+    admit_util = enc.stream_supply_check(admit_t, mean_demand, abytes_pad,
+                                         fps, width, height)["utilization"]
+    refuse_util = enc.stream_supply_check(refuse_t, mean_demand, abytes_pad,
+                                          fps, width, height)["utilization"]
+    expect(0.90 < admit_util < 1.0, f"admit boundary util {admit_util:.4f} not just below 1.0")
+    expect(refuse_util > 1.0, f"refuse fixture util {refuse_util:.4f} not above 1.0")
+
+    def fake_extract_source(src_path, w, h, fps_val, start, duration, ffmpeg, dither, mono):
+        return dict(orig=np.zeros((1, h, w, 3), dtype=np.uint8),
+                    chg=np.zeros(1), po_ceil=np.zeros(1),
+                    audio_bytes=bytes(nframes * abytes_real),
+                    channels=channels, rate=rate,
+                    abytes_real=abytes_real, abytes_pad=abytes_pad,
+                    nframes=nframes)
+
+    def make_fake_encode_clip(mean_t):
+        def fake_encode_clip(orig, chg, po_ceil, w, h, fps_val, **kw):
+            per_frame = dict(bytes=[payload_len] * nframes,
+                              psnr=[40.0] * nframes,
+                              mode=["full"] * nframes,
+                              binding=["none"] * nframes,
+                              drift=[0.0] * nframes,
+                              t=[mean_t] * nframes)
+            return dict(payloads=[bytes(payload_len)] * nframes,
+                        kf_span_ranges=[(0, 0)], per_frame=per_frame,
+                        scene_cuts=[], kf_events=1, staleness_events=0)
+        return fake_encode_clip
+
+    real_extract_source = enc._extract_source
+    real_encode_clip = enc.encode_clip
+    try:
+        enc._extract_source = fake_extract_source
+
+        with tempfile.TemporaryDirectory() as td:
+            out_path = Path(td) / "refuse.vid"
+            enc.encode_clip = make_fake_encode_clip(refuse_t)
+            try:
+                enc.encode("dummy.mp4", str(out_path), shape=(width, height), fps=fps)
+            except SystemExit as e:
+                msg = str(e)
+                expect("cannot stream" in msg, f"refusal message missing 'cannot stream': {msg!r}")
+                expect(f"{refuse_util:.2f}" in msg or "utilization" in msg,
+                       f"refusal message missing utilization figure: {msg!r}")
+            else:
+                raise AssertionError("over-budget synthetic encode did not raise SystemExit")
+            expect(not out_path.exists(), "refused encode must leave no output file")
+
+        with tempfile.TemporaryDirectory() as td:
+            out_path = Path(td) / "admit.vid"
+            enc.encode_clip = make_fake_encode_clip(admit_t)
+            report = enc.encode("dummy.mp4", str(out_path), shape=(width, height), fps=fps)
+            expect(out_path.exists(), "admitted encode must write its output file")
+            expect(out_path.stat().st_size > 0, "admitted encode's output file must be non-empty")
+            expect(report.stream_checked, "admitted encode must have run the supply gate")
+            expect(report.stream_utilization < 1.0,
+                   f"admitted encode utilization {report.stream_utilization:.4f} must be < 1.0")
+    finally:
+        enc._extract_source = real_extract_source
+        enc.encode_clip = real_encode_clip
+
+
 # =======================================================================
 # Step 2: opcode emitter + reference decoder roundtrip
 # =======================================================================

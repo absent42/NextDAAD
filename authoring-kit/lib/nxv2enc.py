@@ -296,6 +296,16 @@ TMODEL_COEFFS = {
 #   R = (silicon DECODE T/frame) / (model T/frame / audio_factor)
 #   silicon T/frame = DECODE ticks / FRM * 1792 T   (CTC /16 x TC 112)
 #
+#   AF CONVENTION (cross-refer stream_supply_check's own note at :447):
+#   this formula divides the MODEL side by audio_factor before taking
+#   the ratio - af is folded into R's own calibration, once, here. The
+#   R values below feed TMODEL_SILICON_R, which stream_supply_check()
+#   later multiplies straight onto the RAW (undivided) model T/frame,
+#   applying audio_factor separately and only to the wire (SD fetch)
+#   term instead. Those are two DIFFERENT placements of the same af,
+#   not one convention used twice - see :447 for why they must not be
+#   reconciled without re-fitting both against the silicon anchors.
+#
 #   | fixture | shape             | gap | model T/f | silicon T/f | R     |
 #   |---------|-------------------|-----|-----------|-------------|-------|
 #   | 001.VID | 320x256 mode-1    | no  |   778,161 |     822,105 | 0.898 |
@@ -408,7 +418,24 @@ TMODEL_SILICON_R = {
     "gapped_144": 1.40,  # measured 1.401 (004, 320x144 LB)
 }
 
-SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon prefill floor
+SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon prefill floor -
+                                                # ~22.1 T/byte as originally
+                                                # documented (research-decode-
+                                                # models.md); the SECOND NXBEN
+                                                # sitting's settled PF row (see
+                                                # TMODEL_COEFFS docstring)
+                                                # measured 10,609 T/512B block
+                                                # = 20.72 T/byte, ~7% cheaper -
+                                                # this constant is left at the
+                                                # OLDER, more conservative
+                                                # figure deliberately: it is
+                                                # part of the same silicon-
+                                                # anchor fit as the af
+                                                # convention note at :447, and
+                                                # moving it to 20.72 without
+                                                # re-checking the 007/008
+                                                # anchors would shift
+                                                # utilization for every file
 STREAM_RESIDENT_POOL_B = 78 * 16384            # fresh-boot 2MB pool ring
 STREAM_WARN_UTIL = 0.90
 STREAM_TARGET_UTIL = 0.90                       # suggestion target
@@ -444,6 +471,30 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     clock = TMODEL_COEFFS["clock_khz"]
     period_ms = 1000.0 / float(fps)
     wire_eff = SD_WIRE_BYTES_PER_MS * af
+    # AF CONVENTION (documented, not a bug - review closure Important 2):
+    # audio_factor de-rates ONLY the wire (SD fetch) term above, via
+    # wire_eff. The busy (decode) term below multiplies silicon_r()
+    # straight onto mean_t, the RAW model T/frame - audio_factor never
+    # touches it. This is NOT the same convention as the R formula that
+    # produced these silicon_r/TMODEL_SILICON_R values in the first
+    # place (TMODEL_COMPOSITION_FACTOR block above, :296ish:
+    # R = silicon / (model / audio_factor) - af divides the MODEL side
+    # there, before the ratio is taken).
+    #
+    # The wire floor SD_WIRE_BYTES_PER_MS is ALSO not the settled
+    # silicon figure - it keeps the older, ~7% more conservative value
+    # (see its own definition comment above).
+    #
+    # Both of these - the af placement here and the wire floor's
+    # conservatism - are CO-FITTED to the Card #3 silicon anchor points
+    # (007 classic healthy at util ~1.00, 008 full collapsed at ~1.74),
+    # not independently derived from first principles. A maintainer who
+    # "corrects" only one of them - e.g. dividing mean_t by af here to
+    # literally match the :296 R formula, or swapping in the settled
+    # 20.72 T/B wire figure - without re-fitting the other and
+    # re-checking both anchors will shift busy_ms/sd_ms and can refuse
+    # silicon-healthy encodes (007-class files) for no silicon reason.
+    # Change both together, against the anchors, or change neither.
     busy_ms = mean_t * silicon_r(width, height) / clock
     sd_ms = mean_demand_bytes / wire_eff
     util = (busy_ms + sd_ms) / period_ms
@@ -458,6 +509,45 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
                 period_ms=period_ms,
                 demand_kbs=mean_demand_bytes * float(fps) / 1024.0,
                 suggested_budget=max(0.05, min(1.0, suggested)))
+
+
+# ---------------------------------------------------------------------
+# LIMITATION (documented, not implemented - review closure Important 3;
+# future work, SP15 3c/T4 candidate): stream_supply_check() above is a
+# WHOLE-CLIP MEAN criterion. encode()'s gate divides total projected
+# demand and total modeled decode-T by the frame count and compares that
+# single mean against one frame period - it has no notion of WHEN in the
+# clip the demand lands, only how much of it there is on average.
+#
+# Two consequences, both currently invisible to the gate:
+#   - A sustained high-demand run SHORTER than roughly one ring-depth's
+#     worth of frames is absorbed by the ring's own buffering and never
+#     underruns, even while its INSTANTANEOUS utilization is well over
+#     1.0 - only an excursion that outlasts the ring's absorption
+#     capacity actually starves playback. At 008-class heavy demand
+#     (~85 blocks/frame) a ring holding ~2495 blocks (Card #3) absorbs
+#     roughly 2495/85 =~ 29 frames of such an excursion before it would
+#     underrun. A clip whose MEAN is comfortably admissible can still
+#     contain a shorter high-demand run the mean never sees.
+#   - Keyframe span chunks are deliberately NOT scaled by
+#     --stream-budget (encode_clip: rare, ring-amortized on average) -
+#     which also means cut-heavy content (frequent keyframes) clusters
+#     its highest-demand frames together rather than spreading them out,
+#     exactly the excursion shape the whole-clip mean cannot see.
+#
+# suggested_budget above is ADVISORY, not exact: it is one linear solve
+# against the mean-rate invariant (scale busy_ms and the payload part of
+# sd_ms, hold the audio pad fixed). Payload size does not respond to
+# --stream-budget linearly in practice (a smaller byte/T cap changes
+# which frames fall back to fewer changed pixels, coarser fill choices,
+# etc.), so a second encode-and-recheck iteration may be needed to land
+# inside the target utilization band, particularly after a large
+# suggested change.
+#
+# A WINDOWED/BURST criterion - checking utilization over a sliding
+# window sized to the ring depth, not just the whole-clip mean - would
+# close both gaps. Out of scope here.
+# ---------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------

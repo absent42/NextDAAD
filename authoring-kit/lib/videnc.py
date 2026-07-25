@@ -225,6 +225,18 @@ def main(argv):
     if not ffmpeg.exists():
         raise SystemExit(f"error: ffmpeg not found at {ffmpeg}")
 
+    # Both scale the per-frame decode-T/byte caps (nxv2enc.encode_clip's
+    # cap_bytes_frac and budget_scale) - 0 or negative produces a
+    # zero/negative cap nothing can fit, and above 1.0 scales the usable
+    # budget PAST the per-frame decode-T contract usable_budget_t() was
+    # derived from (internally, stream_supply_check's own
+    # suggested_budget already clamps into this same range; the CLI must
+    # match it rather than silently accept an out-of-contract value).
+    if not (0 < args.byte_cap <= 1.0):
+        raise SystemExit(f"error: --byte-cap must be in (0, 1], got {args.byte_cap}")
+    if not (0 < args.stream_budget <= 1.0):
+        raise SystemExit(f"error: --stream-budget must be in (0, 1], got {args.stream_budget}")
+
     if args.aspect is not None:
         width = args.width or 320
         height = nxv2enc.derive_free_height(width, args.aspect)
