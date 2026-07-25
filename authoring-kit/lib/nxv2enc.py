@@ -201,72 +201,84 @@ TERMINAL_OPS = frozenset({OP_FEND, OP_KFLIP})
 PAL_BLOCK_SIZE = 512
 
 # ---------------------------------------------------------------------
-# TMODEL_COEFFS - Z80N decode+fetch T-state costs. SILICON-ADOPTED
-# (SP15 Task 2 settlement, core 3.02.04 KS3 TEST core, 2026-07-24):
-# .superpowers/sdd/task-2-settlement-report.md section 1 replaced the
-# old research-estimate model wholesale with the NXBEN bench's measured
-# coefficients. Each entry cites its bench row + the settlement's model
-# value it replaced. The per-op dispatch envelope is the whole story:
-# it went from a modeled 50 T to a silicon-measured ~920 T (~18x). These
-# are the values the rate control and feasibility validation now price
-# with (SP15 encoder-optimization wave adoption).
+# TMODEL_COEFFS - Z80N decode+fetch T-state costs. SILICON-SETTLED on the
+# SECOND NXBEN sitting (core 3.02.04 KS3 TEST core, 2026-07-25), which
+# benched the OPTIMIZED decode kernels (commits bfadc71 + 5cc2c70):
+# .superpowers/sdd/task-2-final-settlement.md. Every entry cites its bench
+# row and the first-sitting value it replaces. The kernel wave did what it
+# claimed: the per-op dispatch envelope went 920 -> 267 T (copy) / 387 T
+# (run) and the SKIP8 envelope 360 -> 130 T, so the rate control now prices
+# with the optimized silicon truth. Whole-model cross-check: feeding these
+# coefficients through the SEG row's manifest op counts reproduces the
+# measured 3-frame mixed stream to +0.5%.
 #
-# RE-BENCH PENDING (per entry): the Task-2 kernel-optimization wave
-# (.superpowers/sdd/task-2-optimization-report.md) hand-counts a rewritten
-# direct-threaded dispatch that should drop the per-op envelope to
-# ~100-224 T per class; the owner re-benches the same section-36 card and
-# the next settlement re-updates this dict. Adopting the FIRST-sitting
-# silicon values (not the predictions) is deliberate - the rate control
-# prices with measured truth until the re-bench lands.
-#
-# Envelope convention: the ~920 T dispatch is measured on real copy/run
-# ops that already carry their count byte, and the 360 T skip envelope on
-# real SKIP8 ops that carry theirs, so the count-byte parse is FOLDED INTO
-# the dispatch envelopes below - header_rate is retired to 0 to avoid
-# double-counting (matches the op-economy attribution model,
-# scratchpad/research-op-economy.md section 0/2).
+# Envelope convention (unchanged): the dispatch envelopes are measured on
+# real ops that already carry their count byte, so the count-byte parse is
+# FOLDED INTO them - header_rate stays 0 to avoid double-counting.
 # ---------------------------------------------------------------------
 TMODEL_COEFFS = {
-    "fetch_long": 20.2,        # T/byte LDI copy body [SILICON C8/C16 decomp;
-                                #   model was 22.1]. re-bench pending: opt-report
-                                #   C16 row predicts ~20.1 T/B (body preserved)
+    "fetch_long": 20.2,        # T/byte LDI copy body [SILICON C8/C16 joint solve,
+                                #   sitting 2: 20.25 incl ~0.13 of window-seam
+                                #   cost; body preserved by the wave exactly as
+                                #   promised]. sitting 1: 20.2. model was 22.1
     "fetch_short": 20.2,        # T/byte [SILICON]. No separate short-burst body
-                                #   penalty exists: C8's 25.0 T/B is fully the
-                                #   920 dispatch amortized over 192B + 20.2 body
-                                #   (settlement s1); burst size is dispatch, now
-                                #   priced separately. model was 26.0
-    "t_skip": 360.0,            # SKIP8 op envelope [SILICON SK8 row 360 T incl
-                                #   its count byte; settlement decomposes 340+20;
-                                #   model was 45]. re-bench pending: opt-report
-                                #   SKIP8 row predicts 121 T
-    "t_op_parse": 920.0,        # copy/run/pal per-op dispatch envelope [SILICON
-                                #   run 920 / copy 927, C8-vs-C16 solve; model was
-                                #   50; ~18x - the feasibility-flip driver]. body
-                                #   priced separately (fetch_long/fill_*).
-                                #   re-bench pending: opt-report ~100-224 T/class
-    "fill_cpu": 17.0,           # T/byte unrolled CPU fill [SILICON R8U row;
-                                #   model was 13.2]. re-bench pending: body
-                                #   unchanged (opt-report keeps 17.0 T/B)
-    "fill_dma_per_b": 4.5,      # T/byte DMA fill body [SILICON RD chunk solve;
-                                #   model was 4.0]. re-bench pending
-    "fill_dma_setup": 1273.0,   # T per 256B DMA fill chunk [SILICON RD2/RD3
-                                #   solve; model was 355 (~3x low)]. re-bench
-                                #   pending: opt-report ~373 T kernel
-    "fill_dma_min": 256,        # DMA fill chunk size (bytes); DMA beats CPU fill
-                                #   at L>=~102 (op-economy s0). was 64
+                                #   penalty exists: C8's 21.6 T/B row is fully the
+                                #   267 dispatch amortized over 192B + 20.2 body;
+                                #   burst size is dispatch, priced separately
+    "t_skip": 130.0,            # SKIP8 op envelope [SILICON SK8 row sitting 2:
+                                #   129.9 T incl its count byte; hand count 121].
+                                #   sitting 1: 360. model was 45. NOTE the SKIP16
+                                #   op measures 295 T (S16 row), inflated by the
+                                #   8K window seams the 1024B skips cross - the
+                                #   single-key model prices both at the SKIP8
+                                #   value (disclosed under-price for 16-bit skips,
+                                #   bounded: skips are the cheapest ops)
+    "t_op_parse": 387.0,        # copy/run/pal per-op dispatch envelope [SILICON
+                                #   sitting 2: RUN8 solve 387 (hand count 383),
+                                #   COPY8/COPY16 solve 267 (hand count 267)]. The
+                                #   single-key model takes the MORE EXPENSIVE
+                                #   class - conservative for feasibility; the run
+                                #   envelope carries the computed-entry fill setup
+                                #   that the copy path does not. sitting 1: 920.
+                                #   model was 50. body priced separately
+    "fill_cpu": 17.0,           # T/byte unrolled CPU fill [SILICON R8U/R6U joint
+                                #   solve sitting 2: 17.17 incl ~0.13 seam cost;
+                                #   body unchanged by the wave as promised].
+                                #   sitting 1: 17.0. model was 13.2
+    "fill_dma_per_b": 5.1,      # T/byte DMA fill body [SILICON RD chunk solve
+                                #   sitting 2, over-determined against the DMA-copy
+                                #   KF/CD3 cross-row solve]. Hardware term - the
+                                #   wave cannot change it; sitting 1's 4.5 was an
+                                #   artifact of attributing 920 T/op. model was 4.0
+    "fill_dma_setup": 849.0,    # T per 256B DMA fill chunk [SILICON RD1/RD2/RD3
+                                #   solve sitting 2 - both chunk differences give
+                                #   849.4 exactly; persistent-descriptor re-arm].
+                                #   sitting 1: 1273. hand count 683. model was 355
+    "fill_dma_min": 256,        # DMA fill chunk size (bytes); also the audio-safety
+                                #   cap (512B bursts starve the sample ISR - 35%
+                                #   tick shortfall, both sittings). DMA beats CPU
+                                #   fill at L >= 849/(17.0-5.1) = ~71 B
     "header_rate": 0.0,         # count/colour byte parse - FOLDED into the
                                 #   dispatch envelopes above on silicon (see the
                                 #   envelope-convention note). model was 26.0
-    "t_frame_fixed": 1735.0,    # frame-fixed floor [SILICON FE row incl bench
-                                #   harness; model was 1000]. re-bench pending:
-                                #   opt-report ~1050-1200 T (player share ~560)
+    "t_frame_fixed": 1132.0,    # frame-fixed floor [SILICON FE row sitting 2:
+                                #   1132.4 T, inside the 1050-1200 hand count].
+                                #   Still a conservative overestimate of the
+                                #   PLAYER's own fixed cost - the FE row carries
+                                #   ~500 T of bench harness on top of it, which
+                                #   leaves headroom for the Task 3 player's real
+                                #   per-frame work (ring bookkeeping, audio
+                                #   hand-off) the bench does not model.
+                                #   sitting 1: 1735. model was 1000
     "t_palette": 512 * 22.1 + 256 * 20.0,  # 16435 T - MODEL value kept: no
-                                #   silicon PAL row exists (settlement s1 note;
-                                #   op-economy caveat). PAL is <0.2% of any frame
+                                #   silicon PAL row exists in either sitting; the
+                                #   wave's unrolled outinb path makes this an
+                                #   overestimate. PAL is <0.2% of any frame
     "clock_khz": 28000.0,       # T per ms at 28MHz
     "audio_factor": 0.85,       # usable budget after the armed-decode audio tax
-                                #   [SILICON ~15-17% CD armed-vs-unarmed; model
-                                #   was 0.89]. re-bench pending
+                                #   [SILICON sitting 2: CD armed/unarmed = 1.170-
+                                #   1.173 at c64/c128/c256 -> 0.853; held at 0.85].
+                                #   sitting 1: 0.85. model was 0.89
 }
 
 
@@ -562,7 +574,9 @@ def merge_kstar():
     saves the skip dispatch AND one copy dispatch and costs K bytes at the
     copy body rate, so it wins while K < (D_skip + D_copy) / copy_rate.
     Derived from TMODEL_COEFFS - self-tunes with the coefficients (91 B at
-    the old model's D=920/skip920; ~63 B at silicon's D=920/skip360)."""
+    the old model's D=920/skip920; ~63 B at sitting-1 silicon D=920/skip360;
+    ~26 B at sitting-2 silicon D=387/skip130 - the optimized kernels make
+    fewer gaps worth bridging because a dispatch is no longer expensive)."""
     tc = TMODEL_COEFFS
     skip_disp = tc["t_skip"] + tc["header_rate"]      # SKIP8 op envelope
     copy_disp = tc["t_op_parse"]
@@ -573,7 +587,8 @@ def merge_run_absorb_max():
     """Max RUN length (bytes) worth absorbing into a contiguous COPY.
     Absorbing drops the run's own dispatch but re-prices its body at the
     copy rate instead of the (cheaper) fill rate, so it wins while
-    L < D / (copy_rate - fill_cpu_rate) (~287 B at silicon).
+    L < D / (copy_rate - fill_cpu_rate) (~287 B at sitting-1 silicon,
+    ~121 B at sitting-2 silicon's D=387).
 
     Wired into merge_delta_stream's region assembly (review finding, fix):
     this function used to be computed but never consulted, so every run

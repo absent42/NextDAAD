@@ -713,25 +713,29 @@ def _op_kinds(payload):
     return out
 
 
-@case(10, "silicon TMODEL adopted - dispatch envelope ~920T, K* self-retunes from coeffs")
+@case(10, "silicon TMODEL adopted - optimized-kernel dispatch 387T, K* self-retunes from coeffs")
 def t10_silicon_coeffs():
     tc = enc.TMODEL_COEFFS
-    expect(tc["t_op_parse"] == 920.0, f"t_op_parse should be the silicon 920, got {tc['t_op_parse']}")
-    expect(tc["t_skip"] == 360.0, f"t_skip should be the silicon SK8 360, got {tc['t_skip']}")
+    # Second NXBEN sitting (core 3.02.04, 2026-07-25) - the OPTIMIZED kernels.
+    expect(tc["t_op_parse"] == 387.0, f"t_op_parse should be the silicon RUN8 387, got {tc['t_op_parse']}")
+    expect(tc["t_skip"] == 130.0, f"t_skip should be the silicon SK8 130, got {tc['t_skip']}")
     expect(tc["fetch_long"] == 20.2, f"fetch_long should be the silicon 20.2, got {tc['fetch_long']}")
-    expect(tc["t_frame_fixed"] == 1735.0, "t_frame_fixed should be the silicon FE 1735")
+    expect(tc["fill_cpu"] == 17.0, f"fill_cpu should be the silicon 17.0, got {tc['fill_cpu']}")
+    expect(tc["fill_dma_setup"] == 849.0, f"fill_dma_setup should be the silicon 849, got {tc['fill_dma_setup']}")
+    expect(tc["fill_dma_per_b"] == 5.1, f"fill_dma_per_b should be the silicon 5.1, got {tc['fill_dma_per_b']}")
+    expect(tc["t_frame_fixed"] == 1132.0, "t_frame_fixed should be the silicon FE 1132")
     expect(abs(enc.usable_budget_t(25.0) - 952000.0) < 1.0,
            f"silicon usable budget @25 should be 952000 T, got {enc.usable_budget_t(25.0)}")
-    # K* derives from the coefficients (self-retunes). At silicon:
-    # (360+920)/20.2 = 63.4 B.
+    # K* derives from the coefficients (self-retunes). At sitting-2 silicon:
+    # (130+387)/20.2 = 25.6 B.
     ks = enc.merge_kstar()
-    expect(62.0 < ks < 65.0, f"silicon K* should be ~63 B, got {ks:.1f}")
+    expect(25.0 < ks < 26.5, f"silicon K* should be ~25.6 B, got {ks:.1f}")
     saved = dict(enc.TMODEL_COEFFS)
     try:
         enc.TMODEL_COEFFS["t_op_parse"] = 150.0
         ks2 = enc.merge_kstar()
         expect(ks2 < ks, f"K* must fall when dispatch falls: {ks2:.1f} !< {ks:.1f}")
-        expect(abs(ks2 - (360 + 150) / 20.2) < 0.1, "K* recomputes from live coeffs")
+        expect(abs(ks2 - (130 + 150) / 20.2) < 0.1, "K* recomputes from live coeffs")
     finally:
         enc.TMODEL_COEFFS.clear()
         enc.TMODEL_COEFFS.update(saved)
@@ -1055,7 +1059,7 @@ def t12_moving_edge_pixel_exact():
 def t13_run_absorb_threshold():
     tc = enc.TMODEL_COEFFS
     absorb_max = enc.merge_run_absorb_max()
-    expect(200.0 < absorb_max < 400.0, f"sanity: silicon absorb_max ~287B, got {absorb_max:.1f}")
+    expect(100.0 < absorb_max < 200.0, f"sanity: silicon absorb_max ~121B, got {absorb_max:.1f}")
 
     rng = np.random.default_rng(51)
     n = 3000
