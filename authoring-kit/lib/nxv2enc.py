@@ -1253,8 +1253,25 @@ def resolve_shape(shape):
 
 # ---------------------------------------------------------------------
 # Audio layout (unchanged from v1's own derivation - same rates, same
-# round(rate/fps) samples-per-frame rule).
+# round(rate/fps) samples-per-frame rule) + the NXV v2.0 PLAYER BOUND:
+# the player's audio feed is double-buffered in two 1280-byte halves
+# (NXV_AUD_HALF, src/nextdaad.inc), and the open path rejects any
+# header declaring more than 1280 real audio bytes/frame ("VID FMT?").
+# The wire format itself allows more - this is a player capability
+# bound, enforced HERE so a doomed encode fails at encode time with a
+# named remedy instead of building a file that refuses to play.
 # ---------------------------------------------------------------------
+
+AUD_HALF = 1280   # matches NXV_AUD_HALF - one double-buffer half
+
+
+def min_fps_for(channels):
+    """Lowest fps whose round(rate/fps)*channels fits AUD_HALF:
+    samples <= smax requires rate/fps < smax + 0.5, i.e.
+    fps > rate/(smax + 0.5). Stereo ~24.40, mono ~18.22."""
+    rate = RATE_STEREO if channels == 2 else RATE_MONO
+    return rate / (AUD_HALF // channels + 0.5)
+
 
 def audio_layout(fps, channels):
     from fractions import Fraction
@@ -1262,6 +1279,22 @@ def audio_layout(fps, channels):
     exact = Fraction(rate) / Fraction(fps).limit_denominator(1000)
     samples = int(exact + Fraction(1, 2))
     real = samples * channels
+    if real > AUD_HALF:
+        mode = "stereo" if channels == 2 else "mono"
+        remedy = "raise --fps"
+        if channels == 2:
+            mono_fits = int(Fraction(RATE_MONO)
+                            / Fraction(fps).limit_denominator(1000)
+                            + Fraction(1, 2)) <= AUD_HALF
+            if mono_fits:
+                remedy += " or use --mono (mono fits at this fps)"
+        raise SystemExit(
+            f"error: {real} audio bytes/frame ({mode} at {float(fps):g} "
+            f"fps) exceeds the NXV v2.0 player's per-frame audio bound "
+            f"of {AUD_HALF} bytes (one double-buffer half - a bigger "
+            f"frame is rejected at open with VID FMT?). Stereo requires "
+            f"fps > {min_fps_for(2):.2f}, mono fps > {min_fps_for(1):.2f}; "
+            f"{remedy}.")
     padded = ((real + 511) // 512) * 512
     return rate, samples, real, padded
 
@@ -1293,13 +1326,15 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     crop = _videnc.compute_center_crop(src_w, src_h, width, height)
     from fractions import Fraction
     fps_frac = fps if isinstance(fps, Fraction) else Fraction(fps).limit_denominator(1000)
+    channels = 1 if mono else 2
+    # Lay out the audio FIRST: the v2.0 player-bound guard (real
+    # bytes/frame <= AUD_HALF) rejects a doomed fps/channels combo
+    # before the slow ffmpeg extraction, not after.
+    rate, samples_per_frame, abytes_real, abytes_pad = audio_layout(fps_frac, channels)
     video_bytes, nframes = _videnc.extract_video(
         ffmpeg_path, input_path, start, duration, width, height, fps_frac, crop=crop)
     if nframes == 0:
         raise SystemExit("error: no frames decoded - check input/--start/--duration")
-
-    channels = 1 if mono else 2
-    rate, samples_per_frame, abytes_real, abytes_pad = audio_layout(fps_frac, channels)
     needed = nframes * abytes_real
     try:
         audio_bytes = _videnc.extract_audio(ffmpeg_path, input_path, start, duration,

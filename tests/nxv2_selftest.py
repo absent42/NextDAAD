@@ -155,6 +155,40 @@ def t1_header_invalid():
         raise AssertionError("expected ValueError for short buffer")
 
 
+@case(1, "audio layout - NXV v2.0 player bound (1280B/frame half) enforced at encode time")
+def t1_audio_player_bound():
+    # The player's double-buffered audio feed caps real audio at
+    # NXV_AUD_HALF = 1280 bytes/frame (open rejects more with VID
+    # FMT?). audio_layout must refuse to lay out such an encode with
+    # a named error - stereo needs fps > ~24.40, mono fps > ~18.22.
+    # stereo 25 fps: 625*2 = 1250 <= 1280 - accepted
+    rate, samples, real, padded = enc.audio_layout(25, 2)
+    expect(real == 1250 and real <= enc.AUD_HALF, "stereo 25fps fits")
+    # mono 20 fps: round(23325/20) = 1166 <= 1280 - accepted
+    rate, samples, real, padded = enc.audio_layout(20, 1)
+    expect(real == 1166 and real <= enc.AUD_HALF, "mono 20fps fits")
+    # stereo 20 fps: round(15625/20)*2 = 1562 > 1280 - rejected with
+    # the named floors and the --mono remedy (mono fits at 20)
+    try:
+        enc.audio_layout(20, 2)
+    except SystemExit as e:
+        msg = str(e)
+        expect("1280" in msg, "error names the 1280-byte player bound")
+        expect("24.40" in msg, "error names the stereo fps floor")
+        expect("18.22" in msg, "error names the mono fps floor")
+        expect("--mono" in msg, "error suggests --mono when mono fits")
+    else:
+        raise AssertionError("stereo 20fps must be rejected (1562 > 1280)")
+    # floors are the boundary: just above passes, just below rejects
+    expect(enc.audio_layout(24.40, 2)[2] <= enc.AUD_HALF, "stereo 24.40 fits")
+    try:
+        enc.audio_layout(24.39, 2)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("stereo 24.39fps must be rejected")
+
+
 # =======================================================================
 # Step 2: opcode emitter + reference decoder roundtrip
 # =======================================================================
