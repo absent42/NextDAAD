@@ -2200,15 +2200,30 @@ vid_run_entry_body:
     xor a
     ld (audEnable), a
 
-    ; --- AY music park (owner hardware finding, carried verbatim):
-    ; audEnable=0 leaves the PSG latched on its last tone - park both
-    ; music PSGs (mixer off, volumes 0); the AKY tick rewrites every
-    ; register when audEnable is restored. DI-bracketed ($FFFD latch).
+    ; --- AY park (owner hardware finding + SP15 3a leg regression).
+    ; ENTRY ORDER (load-bearing): capture -> samples abort (waited,
+    ; needs the tick alive) -> audEnable=0 (tick frozen) -> park. The
+    ; park MUST follow the freeze: a park before it would be re-latched
+    ; by the very next 50Hz music tick. audEnable=0 leaves every PSG
+    ; latched on its last tone, and nothing can rewrite ANY of them for
+    ; the whole session - so park ALL THREE. The v1 park covered only
+    ; PSG 1/2 ("PSG 3 left to beeps/effects", the explicit-stop
+    ; convention); but the multi-PSG AKY player drives music channels
+    ; 7-9 + effects on PSG 3 (audiobank aud_music_stop parks it for the
+    ; same reason), and a frozen beep/effect/AYS stream holds PSG 3
+    ; forever too - the 3a leg's "TONE HELD" was a held PSG-3 voice
+    ; sounding under the video. Resume needs nothing: the AKY tick
+    ; rewrites PSG 1-3 every frame once audEnable is restored, a
+    ; resumed beep re-silences via its own countdown, and an AYS
+    ; stream rewrites its registers each tick. DI-bracketed ($FFFD
+    ; select latch must not interleave).
     di
     ld a, $FF                    ; Turbo Sound select: music PSG 1
     call .psgpark
     ld a, $FE                    ; music PSG 2
     call .psgpark
+    ld a, $FD                    ; PSG 3: music channels 7-9 + beep/
+    call .psgpark                ; effect/stream - all frozen too
     ei
 
     ld hl, vid_run.entryret
