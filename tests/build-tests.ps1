@@ -85,46 +85,60 @@
 #            border, 1px black outline - obviously different from the
 #            interpreter's default black/white arrow at a glance). No
 #            test binary is committed for this either.
-# Video benchmark fixtures (SP13 Task 1, NXV v2 rewrite SP15 T1),
+# Video benchmark fixtures (SP13 Task 1, NXV v2 rewrite SP15 T1; LEG SET
+# switched to the SP15 3a calibration-wave fixtures 2026-07-25),
 # independent of the DDB switches:
-#   -Vid     stage the NXV v2 shape matrix into sd\001.VID..sd\005.VID -
+#   -Vid     stage the CURRENT LEG SET into sd\001.VID..sd\006.VID - the
+#            SAME six fixtures the owner leg card stages
+#            (.superpowers\sdd\sp14a-task-4-report.md section 37 + its
+#            CALIBRATION WAVE addendum), short real-footage/test-card
+#            CUTS sized to the ~950 KB resident ring - NOT full-clip
+#            encodes (see the obsolete-cache note below).
 #            docs\superpowers\plans\2026-07-23-sp15-nxv2.md is the
 #            format authority; authoring-kit\lib\nxv2enc.py/nxv2dec.py
 #            are the encoder pipeline/reference decoder, videnc.py the
 #            CLI shell (the ONE canonical encoder, shipped in the kit
 #            like fontconv.ps1 - no drift-prone test copy). v1's five
 #            fixed profiles (n0-n4) are GONE (SP15 T1, owner decision) -
-#            v2 has five SHAPE presets instead (full/16:9/scope/
-#            classic/classic-wide, nxv2enc.PRESETS), each encoded here
-#            at 25fps stereo. VIDBENCH (DEBUG builds only, tests\
-#            test.dsf) always benches sd\001.VID (full, the highest
-#            data-rate shape - the conservative gate). Stale-cleans
-#            sd\*.VID first. Two owner-provisioned sources feed the
-#            matrix (both read-only, like everything under tools\) -
-#            each shape's own dominant source aspect, so videnc's
-#            center-crop (never a stretch - see videnc.py's own
-#            docstring) stays minimal-to-none for every shipped shape:
-#            tools\demo-files\1440x1080-25p.mp4 (4:3) for the full-
-#            height shapes full/classic; tools\demo-files\1920x1080-
-#            25p.mp4 (16:9) for the letterboxed shapes 16:9/scope/
-#            classic-wide. Source -> dest mapping:
-#              001.VID <- full          (320x256 mode-1, from 1440x1080-25p.mp4)
-#              002.VID <- classic       (256x192 mode-0, from 1440x1080-25p.mp4)
-#              003.VID <- 16:9          (320x192 mode-1 letterbox, from 1920x1080-25p.mp4)
-#              004.VID <- scope         (320x144 mode-1 letterbox, from 1920x1080-25p.mp4)
-#              005.VID <- classic-wide  (256x144 mode-0 letterbox, from 1920x1080-25p.mp4)
-#            Each encode is SLOW (content-triggered-keyframe, dual-
-#            budget delta coding over the whole clip) so results are
-#            CACHED at tests\out\00X_<shape>_cache.vid and only
-#            regenerated when that cache file is missing - tests\out\
-#            is gitignored (persists across runs, unlike sd\*.VID which
-#            this switch always stale-cleans first). Regenerate by
-#            deleting the relevant cache file and re-running -Vid, or
-#            directly with e.g.:
-#              python authoring-kit\lib\videnc.py tools\demo-files\1440x1080-25p.mp4 tests\out\001_full_cache.vid --shape full --fps 25
-#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\005_classic-wide_cache.vid --shape classic-wide --fps 25
+#            v2 has SHAPE presets instead (full/16:9/scope/classic/
+#            classic-wide, nxv2enc.PRESETS), each encoded here at 25fps
+#            stereo. VIDBENCH (DEBUG builds only, tests\test.dsf)
+#            always benches sd\001.VID (full, the highest data-rate
+#            shape - the conservative gate). Stale-cleans sd\*.VID
+#            first. Source -> dest mapping (shape, source clip, exact
+#            --start/--duration - these values reproduce the leg-staged
+#            bytes byte-for-byte, the encoder being deterministic):
+#              001.VID <- full          (320x256 mode-1, Sintel_1080_10s_30MB.mp4 @00:00:00 dur 1.35)
+#              002.VID <- classic       (256x192 mode-0, Sintel_1080_10s_30MB.mp4 @00:00:00 dur 1.8)
+#              003.VID <- 16:9          (320x192 mode-1 letterbox, Big_Buck_Bunny_1080_10s_30MB.mp4 @00:00:03 dur 1.0)
+#              004.VID <- scope         (320x144 mode-1 letterbox, Sintel_1080_10s_30MB.mp4 @00:00:00 dur 1.7)
+#              005.VID <- classic-wide  (256x144 mode-0 letterbox, Jellyfish_1080_10s_30MB.mp4 @00:00:04 dur 1.6)
+#              006.VID <- 16:9          (320x192 mode-1 letterbox, 1920x1080-25p.mp4 test card @00:00:00 dur 5.0 - the PACING CARD, vpace/vpacl)
+#            Sources are owner-provisioned research clips plus the
+#            existing test-card footage, all under tools\demo-files\
+#            (read-only, like everything under tools\). Each encode is
+#            SLOW (content-triggered-keyframe, dual-budget delta
+#            coding) so results are CACHED at
+#            tests\out\00X_<shape>_leg_cache.vid and only regenerated
+#            when that cache file is missing - tests\out\ is gitignored
+#            (persists across runs, unlike sd\*.VID which this switch
+#            always stale-cleans first). Regenerate by deleting the
+#            relevant cache file and re-running -Vid, or directly with
+#            e.g.:
+#              python authoring-kit\lib\videnc.py tools\demo-files\Sintel_1080_10s_30MB.mp4 tests\out\001_full_leg_cache.vid --shape full --fps 25 --start 00:00:00 --duration 1.35
+#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\006_169_leg_cache.vid --shape 16:9 --fps 25 --start 00:00:00 --duration 5.0
 #            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
 #            sd\*.VID is gitignored (owner edit).
+#            PRE-3a LONG-CLIP CACHES ARE OBSOLETE: the five 10-14MB
+#            full-60s-clip caches this switch used to stage (encoded
+#            from the two 1440x1080-25p.mp4/1920x1080-25p.mp4 sources at
+#            the pre-calibration T budget) do NOT match the leg-staged
+#            fixtures above and were deleted from tests\out\ (one-time
+#            stale-clean, 2026-07-25) rather than left to silently
+#            drift. Long-clip staging is not gone for good - it returns
+#            as a SEPARATE switch (not yet named) when SP15 3b
+#            (streaming) lands; until then -Vid always means this short
+#            leg set.
 #   -NxBench   stage the SP15 T2 decode-kernel bench payloads into
 #              sd\NXB0.BIN..sd\NXB9.BIN (nxv2enc.py --bench-fixtures -
 #              raw opcode-stream payloads, no header/audio/padding; see
@@ -562,45 +576,47 @@ if ($Font) {
 }
 
 if ($Vid) {
-    # SP15 T1 NXV v2 shape fixtures - see the -Vid switch's own header
-    # comment above for the full shape->dest mapping. Same CSpect-lock
-    # hazard as -Rab/-UU/-Title/-Font: refuse to stage rather than warn.
+    # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,
+    # 2026-07-25) - see the -Vid switch's own header comment above for
+    # the full shape/source/start/duration mapping and the pre-3a
+    # long-clip cache retirement note. Same CSpect-lock hazard as
+    # -Rab/-UU/-Title/-Font: refuse to stage rather than warn.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
     }
     Remove-Item "$root\sd\*.VID" -Force -ErrorAction SilentlyContinue
-    $vidSrc43 = Join-Path $root 'tools\demo-files\1440x1080-25p.mp4'   # full/classic (4:3)
-    $vidSrc169 = Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'  # 16:9/scope/classic-wide
     $vidOutDir = Join-Path $root 'tests\out'
     New-Item -ItemType Directory -Force $vidOutDir | Out-Null
-    # dest file -> (NXV v2 shape preset, source clip) - see the -Vid
-    # switch's own header comment for why each shape draws from the
-    # source whose own aspect it dominantly matches (videnc.py's
-    # center-crop makes any pairing correct, but a closer-matching
-    # source keeps the crop minimal-to-none).
-    $vidShapeMap = [ordered]@{
-        '001.VID' = @{ shape = 'full'; src = $vidSrc43 }
-        '002.VID' = @{ shape = 'classic'; src = $vidSrc43 }
-        '003.VID' = @{ shape = '16:9'; src = $vidSrc169 }
-        '004.VID' = @{ shape = 'scope'; src = $vidSrc169 }
-        '005.VID' = @{ shape = 'classic-wide'; src = $vidSrc169 }
+    # dest file -> (NXV v2 shape preset, source clip, --start, --duration)
+    # - exact leg-card values (sp14a-task-4-report.md section 37 + the
+    # CALIBRATION WAVE addendum) that reproduce the leg-staged bytes
+    # byte-for-byte (the encoder is deterministic).
+    $vidLegMap = [ordered]@{
+        '001.VID' = @{ shape = 'full';         src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4');         start = '00:00:00'; duration = '1.35' }
+        '002.VID' = @{ shape = 'classic';      src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4');         start = '00:00:00'; duration = '1.8' }
+        '003.VID' = @{ shape = '16:9';         src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4'); start = '00:00:03'; duration = '1.0' }
+        '004.VID' = @{ shape = 'scope';        src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4');         start = '00:00:00'; duration = '1.7' }
+        '005.VID' = @{ shape = 'classic-wide'; src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4');      start = '00:00:04'; duration = '1.6' }
+        '006.VID' = @{ shape = '16:9';         src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4');                start = '00:00:00'; duration = '5.0' }
     }
     $vidStaged = 0
-    foreach ($dest in $vidShapeMap.Keys) {
-        $shape = $vidShapeMap[$dest].shape
-        $src = $vidShapeMap[$dest].src
+    foreach ($dest in $vidLegMap.Keys) {
+        $shape = $vidLegMap[$dest].shape
+        $src = $vidLegMap[$dest].src
+        $start = $vidLegMap[$dest].start
+        $duration = $vidLegMap[$dest].duration
         if (-not (Test-Path -LiteralPath $src)) {
             "WARNING: $src missing - sd\$dest not generated"
             continue
         }
         $shapeTag = $shape -replace ':', ''
-        $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_cache.vid"
+        $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_leg_cache.vid"
         if (-not (Test-Path -LiteralPath $cache)) {
-            "encoding sd\$dest (shape $shape, source $(Split-Path -Leaf $src)) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
+            "encoding sd\$dest (shape $shape, source $(Split-Path -Leaf $src), start $start dur $duration) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
             # canonical encoder lives in the kit (see -Vid header); repo
             # tools ffmpeg passed explicitly - the kit default resolves
             # to authoring-kit\tools\ffmpeg, absent on a fresh clone
-            & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
+            & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --start $start --duration $duration --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
             if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$dest not staged" }
         }
         if (Test-Path -LiteralPath $cache) {
@@ -608,7 +624,7 @@ if ($Vid) {
             $vidStaged++
         }
     }
-    "staged $vidStaged video fixture(s) -> sd\001.VID..sd\005.VID (NXV v2 shapes full/classic/16:9/scope/classic-wide, docs\superpowers\plans\2026-07-23-sp15-nxv2.md)"
+    "staged $vidStaged video fixture(s) -> sd\001.VID..sd\006.VID (NXV v2 leg set: full/classic/16:9/scope/classic-wide/16:9-card, sp14a-task-4-report.md section 37)"
 }
 
 if ($NxBench) {
