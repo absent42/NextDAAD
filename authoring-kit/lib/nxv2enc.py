@@ -341,9 +341,12 @@ def is_gapped(width, height):
 
 def composition_factor(width=None, height=None):
     """Composed-player de-rating for this surface shape. Shape unknown
-    (the legacy one-argument call) -> the flat factor."""
+    (the legacy one-argument call) -> the GAPPED (pessimistic) factor,
+    not the flat one: an unset shape must fail safe toward the de-rated
+    budget rather than silently handing back the optimistic 1.00 a
+    gapped surface would then blow through."""
     if width is None or height is None:
-        return TMODEL_COMPOSITION_FACTOR["flat"]
+        return TMODEL_COMPOSITION_FACTOR["gapped"]
     return TMODEL_COMPOSITION_FACTOR["gapped" if is_gapped(width, height) else "flat"]
 
 

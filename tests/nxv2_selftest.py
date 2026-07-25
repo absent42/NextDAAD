@@ -724,8 +724,12 @@ def t10_silicon_coeffs():
     expect(tc["fill_dma_setup"] == 849.0, f"fill_dma_setup should be the silicon 849, got {tc['fill_dma_setup']}")
     expect(tc["fill_dma_per_b"] == 5.1, f"fill_dma_per_b should be the silicon 5.1, got {tc['fill_dma_per_b']}")
     expect(tc["t_frame_fixed"] == 1132.0, "t_frame_fixed should be the silicon FE 1132")
-    expect(abs(enc.usable_budget_t(25.0) - 952000.0) < 1.0,
-           f"silicon usable budget @25 should be 952000 T, got {enc.usable_budget_t(25.0)}")
+    # Shape given explicitly (320x256, flat): composition_factor()'s
+    # unknown-shape default is the pessimistic gapped factor now (fail-
+    # safe fix), so a bare no-shape call here would no longer read
+    # 952000 - pin the flat baseline against the real flat shape instead.
+    expect(abs(enc.usable_budget_t(25.0, 320, 256) - 952000.0) < 1.0,
+           f"silicon usable budget @25 (flat 320x256) should be 952000 T, got {enc.usable_budget_t(25.0, 320, 256)}")
     # Composed-player safety factor (stage-3a real-footage silicon leg,
     # 2026-07-25): flat surfaces come in UNDER the model (worst 0.898),
     # mode-1 LETTERBOX surfaces cost 1.20-1.40x it (column-hop chunked
@@ -746,8 +750,16 @@ def t10_silicon_coeffs():
     expect(abs(enc.usable_budget_t(25.0, 256, 144) - 952000.0) < 1.0,
            "flat 256x144 keeps the full 952000 T budget")
     gb = enc.usable_budget_t(25.0, 320, 192)
-    expect(abs(gb - 952000.0 / 1.55) < 1.0,
-           f"gapped 320x192 budget should be 952000/1.55 = 614194 T, got {gb:.0f}")
+    # Independent literal, not re-derived from the 1.55 constant above -
+    # a coefficient/factor typo that moved both numbers together would
+    # otherwise still pass this assertion.
+    expect(abs(gb - 614193.5) < 1.0,
+           f"gapped 320x192 budget should be 614193.5 T, got {gb:.0f}")
+    # Fail-safe default (nxv2enc.composition_factor): an unset/unknown
+    # shape must resolve to the pessimistic gapped factor, not the
+    # optimistic flat one.
+    expect(abs(enc.usable_budget_t(25.0) - 614193.5) < 1.0,
+           f"unknown-shape budget should fail safe to the gapped 614193.5 T, got {enc.usable_budget_t(25.0):.0f}")
     # ... and the keyframe chunk planner must shrink with it (a kf chunk
     # is one long COPY straight down the paint order - it crosses every
     # column boundary the gapped surface has).
