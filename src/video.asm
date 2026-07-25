@@ -2458,6 +2458,18 @@ vid_loop_rewind:
 ; cold through the MMU6 window - rubric 3), doc 11 (no DMA-from-SPI
 ; - measured-rejected; the inir arms stay <= 256B and IRQ-open, so
 ; the audio ISR is never starved - the contract-3 concern class).
+;
+; LATCH HAZARD (review fix, 3c): any ds op that selects a NextReg on
+; the $243B/$253B pair ONCE and then relies on the latch across MORE
+; THAN ONE byte must re-select after every vid_ds_blkopen call in
+; between. blkopen's fragment-boundary/rewind branch calls
+; vid_win_open_h -> vid_mf_disable_h -> nr_read, which re-targets the
+; SAME select latch (to NR_PERIPH2) to do its own read - a latch a
+; caller assumed still pointed at its own register no longer does.
+; vid_ds_pal was the one victim (fixed below, re-selects
+; unconditionally after every blkopen); no other ds routine holds a
+; select across a blkopen call today, but the next one that does must
+; follow the same rule.
 ; =====================================================================
 
 ; The direct dispatch loop: every op through the slow parser (whose
@@ -2627,6 +2639,20 @@ vid_ds_copy_body:
 
 ; Direct PAL: 512 palette bytes port -> NR $44, same double-buffer
 ; choreography as vid_op_pal (edit the hidden bank, flip at present).
+; LATCH HAZARD FIX (review, 3c): the select below targets NR_PAL_VALUE9
+; on $243B ONCE, then every out (c),a in .pl relies on that latch
+; across up to 512 bytes. vid_ds_blkopen's fragment-boundary/rewind
+; branch calls vid_win_open_h -> vid_mf_disable_h -> nr_read, which
+; re-targets the SAME latch to NR_PERIPH2 for its own read - any
+; palette byte written after that (before this fix) landed on
+; NR_PERIPH2 instead: silent palette corruption + spurious
+; Peripheral-2 writes. Fix: re-select NR_PAL_VALUE9 unconditionally
+; immediately after every blkopen call (chosen over an unconditional
+; per-byte re-select: blkopen fires at most ~2 times across a 512-byte
+; PAL block - roughly +35T total - vs 512 x ~19T unconditionally; both
+; are cheap against this cold-ish op's SD-wire cost, but the
+; per-blkopen form is exact rather than merely "affordable", doc 01
+; T-state accounting).
 vid_ds_pal:
     ld a, (vidPalCtrl)
     xor $40                      ; edit the OTHER bank, display as-is
@@ -2643,7 +2669,15 @@ vid_ds_pal:
 .pl:
     ld a, h
     or l
-    call z, vid_ds_blkopen       ; preserves BC, DE
+    jr nz, .byte
+    call vid_ds_blkopen           ; preserves BC, DE; MAY reopen the
+                                  ; CMD18 window on a fragment boundary
+                                  ; (nr_read latch hazard - banner above)
+    ld bc, TBBLUE_REG_SEL         ; re-select NR_PAL_VALUE9 (cheap: this
+    ld a, NR_PAL_VALUE9           ; branch is taken at most ~2x per PAL
+    out (c), a                    ; block, never per-byte)
+    ld b, high TBBLUE_REG_ACC     ; C stays $3B
+.byte:
     in a, (PORT_SPI_DAT)
     dec hl
     out (c), a

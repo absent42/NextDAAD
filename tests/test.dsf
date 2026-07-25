@@ -197,12 +197,10 @@ VPACL   93      verb
 ;           the long-clip seam-free-loop leg; any key exits)
 ;   VSTR2 - 009.VID 16:9 320x192 letterbox (Jellyfish 10s, ~7.3MB -
 ;           the GAPPED streaming path)
-;   VSTRU - 099.VID (a copy of 007): the DELIBERATE-UNDERRUN leg.
-;           DEBUG builds throttle the pace-window producer to 8
-;           blocks/frame for video number 99 ONLY - the ring drains,
-;           every starved frame pace-holds cleanly (underruns count
-;           on the RING= report row; picture/audio stay correct,
-;           just late). Release plays 099 normally.
+;   VSTRU - 099.VID (a copy of 007): plain streamed regression leg -
+;           the DEBUG throttle that once drove a deliberate-underrun
+;           drill here is RETIRED (see the 3c NOTE below; git holds
+;           the lever).
 ; 94-95 were never assigned; 96-97 reuse retired VSTG ladder numbers.
 VSTR0   94      verb
 VSTR1   95      verb
