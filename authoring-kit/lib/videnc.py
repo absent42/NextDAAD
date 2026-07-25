@@ -200,6 +200,16 @@ def main(argv):
                           "fixture must stay dense small ops for the dispatch "
                           "measurement (nxv2enc bench-fixtures merge-bypass "
                           "note)")
+    ap.add_argument("--byte-cap", dest="byte_cap", type=float, default=0.65,
+                     help="delta per-frame byte cap as a fraction of the "
+                          "raw surface (default: 0.65)")
+    ap.add_argument("--stream-budget", dest="stream_budget", type=float,
+                     default=1.0,
+                     help="scale BOTH delta caps (bytes + decode-T) to fit "
+                          "the ring-streaming SD supply (default: 1.0). A "
+                          "file bigger than the resident pool must pass the "
+                          "streaming supply gate (nxv2enc.stream_supply_"
+                          "check) - its error names the value to pass here")
     ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
     ap.add_argument("--duration", help="clip duration in seconds")
     ap.add_argument("--report", help="write the BuildReport as JSON to "
@@ -244,13 +254,20 @@ def main(argv):
         str(input_path), args.output, shape=(width, height), fps=args.fps,
         quality_profile="max", report_path=args.report,
         start=args.start, duration=args.duration, ffmpeg=str(ffmpeg),
-        dither=args.dither, mono=args.mono, merge_gaps=not args.no_merge)
+        dither=args.dither, mono=args.mono, merge_gaps=not args.no_merge,
+        cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget)
 
+    stream_line = ""
+    if report.stream_checked:
+        stream_line = (f", stream util {report.stream_utilization:.2f} "
+                       f"(decode {report.stream_busy_ms:.1f} + SD "
+                       f"{report.stream_sd_ms:.1f} ms, "
+                       f"{report.stream_demand_kbs:.0f} KB/s)")
     print(f"wrote {args.output}: {report.total_bytes} B, "
           f"{report.total_bytes // 512} sectors, {report.frames} frames, "
           f"{report.keyframes} keyframe event(s), "
           f"PSNR mean/worst {report.mean_psnr:.2f}/{report.worst_psnr:.2f} dB, "
-          f"{report.seconds_per_mb:.2f} s/MB - OK")
+          f"{report.seconds_per_mb:.2f} s/MB{stream_line} - OK")
     return 0
 
 

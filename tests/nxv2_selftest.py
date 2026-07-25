@@ -189,6 +189,48 @@ def t1_audio_player_bound():
         raise AssertionError("stereo 24.39fps must be rejected")
 
 
+@case(1, "streaming supply gate - silicon-calibrated (Card #3 VSTR0/VSTR1 anchors)")
+def t1_stream_supply_gate():
+    # A ring-streamed file must be PRODUCIBLE: mean decode wall time +
+    # mean SD fetch time must fit the frame period (utilization <= 1.0
+    # or nxv2enc.encode refuses to write). Anchors are the Card #3
+    # silicon runs (2026-07-25): 007 classic HEALTHY at ~1.00, 008
+    # full COLLAPSED at ~1.74 (65.5 ms frames, underrun every frame).
+    clock = enc.TMODEL_COEFFS["clock_khz"]
+    # silicon_r: measured composed-player ratios, cluster + interpolation
+    expect(enc.silicon_r(256, 192) == enc.TMODEL_SILICON_R["flat_256"], "classic flat R")
+    expect(enc.silicon_r(320, 256) == enc.TMODEL_SILICON_R["flat_320"], "full flat R")
+    expect(enc.silicon_r(320, 192) == enc.TMODEL_SILICON_R["gapped_192"], "gapped 192 R")
+    expect(abs(enc.silicon_r(320, 144) - enc.TMODEL_SILICON_R["gapped_144"]) < 1e-9,
+           "gapped 144 R")
+    expect(enc.silicon_r(320, 100) <= 1.45, "gapped extrapolation capped")
+    # VSTR1 anchor: the first 008 encode (mean demand 43520 B/f incl
+    # 1536B audio pad, mean modeled busy 30.19 ms) is UNSTREAMABLE
+    t8 = 30.187 * clock / enc.silicon_r(320, 256)
+    s8 = enc.stream_supply_check(t8, 43520.0, 1536, 25.0, 320, 256)
+    expect(1.70 < s8["utilization"] < 1.80,
+           f"008 anchor utilization {s8['utilization']:.2f} (silicon: collapsed)")
+    expect(0.45 < s8["suggested_budget"] < 0.55, "008 suggestion ~0.51")
+    # VSTR0 anchor: the shipped 007 encode (25508 B/f, busy 16.73 ms)
+    # sits AT the ceiling and must still be admitted (silicon-healthy)
+    t7 = 16.729 * clock / enc.silicon_r(256, 192)
+    s7 = enc.stream_supply_check(t7, 25508.0, 1536, 25.0, 256, 192)
+    expect(0.97 < s7["utilization"] <= 1.0,
+           f"007 anchor utilization {s7['utilization']:.3f} (silicon: healthy)")
+    # suggestion self-consistency: scaling busy + payload-SD by the
+    # suggested budget lands the mean at STREAM_TARGET_UTIL
+    sug = s8["suggested_budget"]
+    af = enc.TMODEL_COEFFS["audio_factor"]
+    wire_eff = enc.SD_WIRE_BYTES_PER_MS * af
+    audio_sd = 1536 / wire_eff
+    scaled = (s8["busy_ms"] + (s8["sd_ms"] - audio_sd)) * sug + audio_sd
+    expect(abs(scaled / s8["period_ms"] - enc.STREAM_TARGET_UTIL) < 0.01,
+           "suggested budget lands the target utilization")
+    # monotonicity: more demand can only raise utilization
+    expect(enc.stream_supply_check(t7, 30000.0, 1536, 25.0, 256, 192)["utilization"]
+           > s7["utilization"], "utilization monotonic in demand")
+
+
 # =======================================================================
 # Step 2: opcode emitter + reference decoder roundtrip
 # =======================================================================
@@ -504,23 +546,33 @@ def t7_report_and_validate():
     if not SINTEL.exists() or not BBB.exists() or not FFMPEG.exists():
         skip("demo sources or ffmpeg not available")
     with tempfile.TemporaryDirectory() as td:
-        for clip, shape_name, (w, h) in ((SINTEL, "256x192", (256, 192)),
-                                          (BBB, "320x256", (320, 256))):
+        # BBB at full shape is unstreamable at the default operating
+        # point (the Card #3 VSTR1 finding - the gate refuses it, see
+        # the gate case in step 1); encode it at the -VidLong fixture
+        # operating point. Sintel classic streams at the default point
+        # (utilization ~0.95 on a 5s window - the at-capacity warning).
+        for clip, shape_name, (w, h), sb in (
+                (SINTEL, "256x192", (256, 192), 1.0),
+                (BBB, "320x256", (320, 256), 0.51)):
             out = Path(td) / f"{clip.stem}_{shape_name}.vid"
             report = enc.encode(str(clip), str(out), shape=(w, h), fps=25.0,
                                  quality_profile="max", start=None, duration="5",
-                                 ffmpeg=str(FFMPEG))
+                                 ffmpeg=str(FFMPEG), stream_budget=sb)
             expect(report.frames > 0, "BuildReport.frames > 0")
             expect(report.shape == (w, h), "BuildReport.shape")
             expect(out.stat().st_size % 512 == 0, "output file is a 512B block multiple")
             expect(out.stat().st_size == report.total_bytes, "BuildReport.total_bytes matches file size")
             expect(15.0 < report.mean_psnr < 50.0, f"mean PSNR {report.mean_psnr} outside sane bounds")
             expect(report.keyframes >= 1, "at least one keyframe (startup)")
+            expect(report.stream_checked, "5s encodes exceed the resident pool - gate must have run")
+            expect(report.stream_utilization <= 1.0,
+                   f"admitted encode utilization {report.stream_utilization:.2f} > 1.0")
             issues = dec.validate(out)
             expect(issues == [], f"{clip.name} {w}x{h}: validate() found issues: {issues}")
             print(f"  [{clip.stem} {w}x{h}@25] frames={report.frames} bytes={report.total_bytes} "
                   f"mean/worst PSNR={report.mean_psnr:.2f}/{report.worst_psnr:.2f} "
                   f"kf={report.keyframes} s/MB={report.seconds_per_mb:.2f} "
+                  f"stream_util={report.stream_utilization:.2f} "
                   f"binding={report.binding_budget_histogram}")
 
 

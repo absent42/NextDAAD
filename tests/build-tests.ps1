@@ -144,16 +144,28 @@
 #            producer across multiple ring wraps), plus the
 #            deliberate-underrun copy:
 #              007.VID <- classic 256x192 (Sintel_1080_10s_30MB.mp4, full clip, ~6.4MB)
-#              008.VID <- full 320x256    (Big_Buck_Bunny_1080_10s_30MB.mp4, full clip, ~11MB)
-#              009.VID <- 16:9 320x192 LB (Jellyfish_1080_10s_30MB.mp4, full clip, ~7.3MB)
+#              008.VID <- full 320x256    (Big_Buck_Bunny_1080_10s_30MB.mp4, --stream-budget 0.51)
+#              009.VID <- 16:9 320x192 LB (Jellyfish_1080_10s_30MB.mp4, --stream-budget 0.68)
 #              099.VID <- byte-copy of 007.VID (VSTRU: DEBUG builds
 #                         throttle the producer for video number 99 -
 #                         the deliberate-underrun leg)
-#            Cached at tests\out\00X_<shape>_long_cache.vid exactly
+#            STREAM OPERATING POINTS (Card #3 VSTR1 follow-up): the
+#            first 008/009 encodes rode the full decode-T budget -
+#            mean supply utilization 1.74/1.30, mathematically
+#            unstreamable (VSTR1 collapsed at ~65.5ms/frame on
+#            silicon). videnc's streaming supply gate now refuses
+#            such encodes; 008/009 carry the --stream-budget values
+#            the gate derived (target ~0.90 utilization). 007 stays
+#            at the default point: it measures utilization ~1.00 -
+#            AT the streaming ceiling (silicon-healthy, VSTR0) - and
+#            the gate refuses any higher byte-cap for it.
+#            Cached at tests\out\00X_<shape>[_<tag>]_long_cache.vid
 #            like -Vid (encode once, copy after; delete a cache to
-#            re-encode). Does NOT touch sd\001-006.VID, so it can be
-#            staged alongside -Vid. Verbs: VSTR0/VSTR1/VSTR2/VSTRU
-#            (tests\test.dsf). Same CSpect-lock guard.
+#            re-encode; the operating point is part of the cache
+#            name, so changing it re-encodes). Does NOT touch
+#            sd\001-006.VID, so it can be staged alongside -Vid.
+#            Verbs: VSTR0/VSTR1/VSTR2/VSTRU (tests\test.dsf). Same
+#            CSpect-lock guard.
 #   -NxBench   stage the SP15 T2 decode-kernel bench payloads into
 #              sd\NXB0.BIN..sd\NXB9.BIN (nxv2enc.py --bench-fixtures -
 #              raw opcode-stream payloads, no header/audio/padding; see
@@ -651,10 +663,13 @@ if ($VidLong) {
     }
     $vidOutDir = Join-Path $root 'tests\out'
     New-Item -ItemType Directory -Force $vidOutDir | Out-Null
+    # extraArgs = the streaming-supply operating point (see the -VidLong
+    # header comment); tag makes it part of the cache name so a changed
+    # point re-encodes instead of silently reusing a stale cache
     $vidLongMap = [ordered]@{
-        '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4') }
-        '008.VID' = @{ shape = 'full';    src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4') }
-        '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4') }
+        '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @(); tag = '' }
+        '008.VID' = @{ shape = 'full';    src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.51'); tag = 'sb51' }
+        '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.68'); tag = 'sb68' }
     }
     $vidLongStaged = 0
     foreach ($dest in $vidLongMap.Keys) {
@@ -665,10 +680,12 @@ if ($VidLong) {
             continue
         }
         $shapeTag = $shape -replace ':', ''
+        $tag = $vidLongMap[$dest].tag
+        if ($tag) { $shapeTag = "${shapeTag}_${tag}" }
         $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_long_cache.vid"
         if (-not (Test-Path -LiteralPath $cache)) {
             "encoding sd\$dest (shape $shape, source $(Split-Path -Leaf $src), FULL duration) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
-            & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
+            & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe" @($vidLongMap[$dest].extraArgs)
             if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$dest not staged" }
         }
         if (Test-Path -LiteralPath $cache) {

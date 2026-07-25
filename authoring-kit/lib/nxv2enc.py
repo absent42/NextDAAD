@@ -362,6 +362,105 @@ def usable_budget_t(fps, width=None, height=None):
 
 
 # ---------------------------------------------------------------------
+# STREAMING SUPPLY MODEL (SP15 3b silicon follow-up, Card #3 VSTR1).
+#
+# A ring-streamed file must be PRODUCIBLE, not just decodable: the SD
+# producer runs only in the pace slack a frame leaves, so the mean
+# demand (audio pad + padded payload per frame) must fit
+#
+#   busy_ms + demand_bytes / (wire * audio_factor)  <=  frame period
+#
+# The dual budget (bytes + decode-T) bounds PER-FRAME peaks only; it
+# happily emits every frame AT the decode-T cap, which leaves ~zero
+# pace slack - exactly what shipped in the first -VidLong 008/009
+# encodes (mean busy modeled 39.5 ms of a 40 ms period). On silicon
+# that collapses into a chronic gate-driven regime: frame time =
+# busy + demand/wire, observed on Card #3 as VSTR1's ~1023-tick
+# (65.5 ms) frames with an underrun every frame and RING min depth 1.
+# The T1 placeholder note ("ring sizing against real prefetch cost
+# may refine this") was never followed up - this check is that
+# follow-up, silicon-calibrated:
+#
+#   - wire floor 1264 KB/s: Card #3 FILL row (full-ring prefill).
+#   - the ISR audio tax (audio_factor) applies to the pace-window
+#     reads as well - the producer's ini loops are CPU-driven.
+#   - busy uses TMODEL_SILICON_R, the MEASURED composed-player
+#     ratios from the stage-3a five-fixture table above - NOT the
+#     margined COMPOSITION factor, which de-rates the encode budget
+#     and would reject silicon-healthy encodes here (feasibility
+#     wants the honest estimate, budget de-rating wants the margin).
+#
+# Calibration anchors (Card #3 silicon, 2026-07-25):
+#   007 classic  utilization 1.00 -> HEALTHY (period 623.8/625 ticks,
+#                0 underruns - at capacity, and it held)
+#   008 full     utilization 1.74 -> COLLAPSED (predicted equilibrium
+#                ~70 ms/frame vs 65.5 observed; min depth 1)
+# The infeasibility line is utilization > 1.0; STREAM_WARN_UTIL warns
+# above 0.90 (at-capacity encodes have no burst margin beyond the
+# ring). Files at or below STREAM_RESIDENT_POOL_B load RESIDENT on
+# the reference fresh-boot 2MB machine and skip the check (smaller
+# pools stream them too, disclosed on the leg card as underrun-prone).
+# ---------------------------------------------------------------------
+TMODEL_SILICON_R = {
+    "flat_256": 0.84,   # measured 0.834 (002, 256x192) / 0.760 (005)
+    "flat_320": 0.90,   # measured 0.898 (001, 320x256 flat)
+    "gapped_192": 1.20,  # measured 1.199 (003, 320x192 LB)
+    "gapped_144": 1.40,  # measured 1.401 (004, 320x144 LB)
+}
+
+SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon prefill floor
+STREAM_RESIDENT_POOL_B = 78 * 16384            # fresh-boot 2MB pool ring
+STREAM_WARN_UTIL = 0.90
+STREAM_TARGET_UTIL = 0.90                       # suggestion target
+
+
+def silicon_r(width, height):
+    """Measured composed-player decode ratio (silicon/model) for this
+    shape cluster. Gapped surfaces interpolate on height between the
+    two measured letterbox rows (crossing rate ~ 1/height); a gapped
+    height below 144 extrapolates and is capped at 1.45 pending a
+    silicon row (mirrors the composition-factor caveat)."""
+    if not is_gapped(width, height):
+        return TMODEL_SILICON_R["flat_320" if int(width) == 320 else "flat_256"]
+    h = int(height)
+    if h >= 192:
+        return TMODEL_SILICON_R["gapped_192"]
+    r = (TMODEL_SILICON_R["gapped_192"]
+         + (192 - h) / 48.0 * (TMODEL_SILICON_R["gapped_144"]
+                                - TMODEL_SILICON_R["gapped_192"]))
+    return min(r, 1.45)
+
+
+def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
+                         width, height):
+    """Mean-rate streaming feasibility for an emitted stream. mean_t =
+    mean modeled decode T/frame (TMODEL prices), mean_demand_bytes =
+    mean (audio pad + 512-padded payload) per frame. Returns a dict:
+    utilization (busy + SD time over the frame period; > 1.0 is
+    unstreamable), busy_ms, sd_ms, period_ms, demand_kbs, and
+    suggested_budget (the --stream-budget scale that lands the mean at
+    STREAM_TARGET_UTIL, from the audio-demand-invariant solve)."""
+    af = TMODEL_COEFFS["audio_factor"]
+    clock = TMODEL_COEFFS["clock_khz"]
+    period_ms = 1000.0 / float(fps)
+    wire_eff = SD_WIRE_BYTES_PER_MS * af
+    busy_ms = mean_t * silicon_r(width, height) / clock
+    sd_ms = mean_demand_bytes / wire_eff
+    util = (busy_ms + sd_ms) / period_ms
+    # scaling the operating point scales busy and the payload part of
+    # demand; the audio pad is invariant
+    audio_sd_ms = audio_pad_bytes / wire_eff
+    payload_sd_ms = sd_ms - audio_sd_ms
+    scalable = busy_ms + payload_sd_ms
+    suggested = ((period_ms * STREAM_TARGET_UTIL - audio_sd_ms) / scalable
+                 if scalable > 0 else 1.0)
+    return dict(utilization=util, busy_ms=busy_ms, sd_ms=sd_ms,
+                period_ms=period_ms,
+                demand_kbs=mean_demand_bytes * float(fps) / 1024.0,
+                suggested_budget=max(0.05, min(1.0, suggested)))
+
+
+# ---------------------------------------------------------------------
 # Low-level op emission + costing. Any run/skip/copy segment longer than
 # a single op's count field is CHUNKED into consecutive ops of the same
 # kind (matches _chunk_lengths below) - correctness never depends on
@@ -1192,6 +1291,11 @@ class BuildReport:
     degradation_events: int
     staleness_events: int = 0
     binding_budget_histogram: dict = field(default_factory=dict)
+    stream_checked: bool = False        # True when the supply gate applied
+    stream_utilization: float = 0.0     # (busy + SD)/period, mean-rate
+    stream_busy_ms: float = 0.0
+    stream_sd_ms: float = 0.0
+    stream_demand_kbs: float = 0.0
 
 
 # ---------------------------------------------------------------------
@@ -1373,8 +1477,8 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
 
 
 def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
-                merge_gaps=True, hysteresis=True, staleness_refresh=True,
-                return_surfaces=False):
+                budget_scale=1.0, merge_gaps=True, hysteresis=True,
+                staleness_refresh=True, return_surfaces=False):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -1390,9 +1494,13 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     assert (H, W) == (height, width)
     raw = H * W
     column_major = (width == 320)
-    usable = usable_budget_t(fps, width, height)
+    # budget_scale (--stream-budget) scales BOTH delta caps - the
+    # streaming-supply operating-point lever (keyframe span chunks are
+    # deliberately NOT scaled: they are rare, amortized by the ring,
+    # and shrinking them just multiplies span length)
+    usable = usable_budget_t(fps, width, height) * budget_scale
     refract = max(1, int(round(fps / 2)))
-    cap_bytes = int(cap_bytes_frac * raw)
+    cap_bytes = int(cap_bytes_frac * budget_scale * raw)
     hyst_eps = HYSTERESIS_EPS if hysteresis else None
     # Region-coherent tile size: a band of TILE_BAND rows (mode-0) / columns
     # (mode-1) is contiguous in paint order, so shortfall lags coherent
@@ -1403,7 +1511,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
 
     payloads = []
     kf_span_ranges = []
-    per_frame = {"bytes": [], "psnr": [], "mode": [], "binding": [], "drift": []}
+    per_frame = {"bytes": [], "psnr": [], "mode": [], "binding": [], "drift": [],
+                 "t": []}   # modeled decode T/frame (streaming supply check)
     decoded = []
     surfaces = []   # (return_surfaces) per-frame index surface the encoder
                      # believes is on screen - for the decode-vs-bookkeeping
@@ -1506,6 +1615,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 per_frame["mode"].append(mode + ":deferred_kf")
                 per_frame["binding"].append(binding)
                 per_frame["drift"].append(float("nan"))
+                per_frame["t"].append(t)
                 decoded.append(dec_img)
                 if return_surfaces:
                     surfaces.append(unflatten_frame(prev_flat, height, width, column_major).copy())
@@ -1554,6 +1664,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             per_frame["bytes"].append(len(payload))   # actual, not kf_chunk_cost's modeled estimate
             per_frame["binding"].append("kf")
             per_frame["drift"].append(float("nan"))
+            per_frame["t"].append(kf_chunk_cost(L, first)[1])
             if is_last:
                 prev_flat = staging
                 staging = None
@@ -1623,6 +1734,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             per_frame["mode"].append(mode)
             per_frame["binding"].append(binding)
             per_frame["drift"].append(drift_for_stats if drift_for_stats is not None else float("nan"))
+            per_frame["t"].append(t)
             dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
             decoded.append(dec_img)
             if return_surfaces:
@@ -1657,14 +1769,21 @@ def _apply_segments(prev_flat, target_flat, gcls, gstarts, glens):
 def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
            dither=False, mono=False, merge_gaps=True, hysteresis=True,
-           staleness_refresh=True):
+           staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=1.0):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     quality_profile: only "max" is implemented in T1 (the dual-budget
     streaming cap point from the research - cap_bytes=0.65x raw AND
     cap_t=usable_budget_t(fps)). A byte-only "resident" profile is
     future work (research-realfootage-results.md's resident-mode
-    finding: same streams re-priced without fetch cost)."""
+    finding: same streams re-priced without fetch cost).
+
+    cap_bytes_frac (--byte-cap): delta per-frame byte cap as a fraction
+    of the raw surface. stream_budget (--stream-budget): scales both
+    delta caps (bytes AND decode-T) - the operating-point lever for the
+    streaming supply gate below. A file bigger than the reference
+    resident pool (STREAM_RESIDENT_POOL_B) must pass
+    stream_supply_check or this function refuses to write it."""
     if quality_profile != "max":
         raise ValueError(f"quality_profile {quality_profile!r} not implemented - only 'max'")
 
@@ -1674,7 +1793,9 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
                           ffmpeg, dither, mono)
     result = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width, height,
-                          fps_val, merge_gaps=merge_gaps, hysteresis=hysteresis,
+                          fps_val, cap_bytes_frac=cap_bytes_frac,
+                          budget_scale=stream_budget,
+                          merge_gaps=merge_gaps, hysteresis=hysteresis,
                           staleness_refresh=staleness_refresh)
 
     payloads = result["payloads"]
@@ -1684,6 +1805,45 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     ring_start_margin_blocks = per_frame_cap_blocks   # conservative T1 placeholder -
     # buffer at least one full max-size frame before starting playback;
     # Task 2/3 (ring sizing against real prefetch cost) may refine this.
+
+    # --- STREAMING SUPPLY GATE (silicon follow-up, Card #3 VSTR1) ---
+    # Mean demand/decode-T over the emitted stream vs the SD producer's
+    # pace-window supply. Checked BEFORE writing: an unstreamable file
+    # is refused, not shipped (it would play at ~(busy + demand/wire)
+    # ms/frame with an underrun every frame - correct output, wrong
+    # wall time, VSTR1's exact silicon signature).
+    abytes_pad = ex["abytes_pad"]
+    projected_total = HEADER_SIZE + sum(
+        abytes_pad + ((len(p) + 511) // 512) * 512 for p in payloads)
+    stream_stats = None
+    if projected_total > STREAM_RESIDENT_POOL_B and nframes_out:
+        mean_t = sum(result["per_frame"]["t"]) / nframes_out
+        mean_demand = (projected_total - HEADER_SIZE) / nframes_out
+        stream_stats = stream_supply_check(
+            mean_t, mean_demand, abytes_pad, fps_val, width, height)
+        if stream_stats["utilization"] > 1.0:
+            eq_ms = stream_stats["busy_ms"] + stream_stats["sd_ms"]
+            raise SystemExit(
+                f"error: this encode cannot stream - mean supply "
+                f"utilization {stream_stats['utilization']:.2f} > 1.00 "
+                f"(decode {stream_stats['busy_ms']:.1f} ms + SD fetch "
+                f"{stream_stats['sd_ms']:.1f} ms per {stream_stats['period_ms']:.0f} ms frame; "
+                f"{stream_stats['demand_kbs']:.0f} KB/s demand vs the "
+                f"~{SD_WIRE_BYTES_PER_MS * TMODEL_COEFFS['audio_factor'] * 1000 / 1024:.0f} KB/s "
+                f"pace-window wire rate). It is {projected_total} B - "
+                f"bigger than the {STREAM_RESIDENT_POOL_B} B reference "
+                f"resident pool, so it MUST stream, and would play at "
+                f"~{eq_ms:.0f} ms/frame (target {stream_stats['period_ms']:.0f}) with an "
+                f"underrun every frame. Remedy: --stream-budget "
+                f"{stream_stats['suggested_budget']:.2f} (scales the "
+                f"delta caps to ~{STREAM_TARGET_UTIL:.0%} utilization), "
+                f"or a smaller shape, lower --fps, or a shorter/"
+                f"resident-sized clip.")
+        elif stream_stats["utilization"] > STREAM_WARN_UTIL:
+            print(f"  warning: stream utilization "
+                  f"{stream_stats['utilization']:.2f} (> {STREAM_WARN_UTIL:.2f}) - "
+                  f"at-capacity encode; bursts ride the ring, small "
+                  f"underrun counts possible on slow cards")
 
     header = pack_header(
         width=width, height=height, fps=fps_val, channels=ex["channels"],
@@ -1735,6 +1895,11 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
         keyframes=result["kf_events"], degradation_events=degradation_events,
         staleness_events=result.get("staleness_events", 0),
         binding_budget_histogram=hist,
+        stream_checked=stream_stats is not None,
+        stream_utilization=stream_stats["utilization"] if stream_stats else 0.0,
+        stream_busy_ms=stream_stats["busy_ms"] if stream_stats else 0.0,
+        stream_sd_ms=stream_stats["sd_ms"] if stream_stats else 0.0,
+        stream_demand_kbs=stream_stats["demand_kbs"] if stream_stats else 0.0,
     )
 
     if report_path:
@@ -1748,6 +1913,11 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                 degradation_events=report.degradation_events,
                 staleness_events=report.staleness_events,
                 binding_budget_histogram=report.binding_budget_histogram,
+                stream_checked=report.stream_checked,
+                stream_utilization=report.stream_utilization,
+                stream_busy_ms=report.stream_busy_ms,
+                stream_sd_ms=report.stream_sd_ms,
+                stream_demand_kbs=report.stream_demand_kbs,
                 scene_cuts=result["scene_cuts"], kf_span_ranges=result["kf_span_ranges"],
             ), f, indent=1)
 
