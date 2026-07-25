@@ -481,7 +481,8 @@ MOUSE_X_MAX     equ 319    ; accumulated mouse position ceiling (320-
 MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
                             ; tall plane, screen-downward)
 
-; --- Video (NXV v2, SP15 - v1 DELETED, stage 3a player) ---
+; --- Video (NXV v2, SP15 - v1 DELETED; stage 3c player: resident +
+; ring streaming + direct-serve) ---
 ; docs/superpowers/plans/2026-07-23-sp15-nxv2.md "Format reference" is
 ; the frozen authority (FORMAT FROZEN 2026-07-25, second NXBEN silicon
 ; settlement, core 3.02.04). This comment block and the constants below
@@ -504,15 +505,33 @@ MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
 ;     9      1    audio channels: 1 mono / 2 stereo
 ;    10      2    audio rate Hz LE (15625 stereo / 23325 mono)
 ;    12      1    flags: bit0 = delta stream (always 1 in v2), bit1 =
-;                 direct-serve hint (ignored in stage 3a), bit2 =
-;                 RESERVED band-palette experiment, bits 3-7 reserved 0
+;                 direct-serve hint (HONOURED from 3c: the file is
+;                 served SD-to-surface, no ring - nxv2_open_body
+;                 .direct_setup), bit2 = RESERVED band-palette
+;                 experiment, bits 3-7 reserved 0
 ;    13      1    keyframe policy byte (encoder bookkeeping, ignored)
 ;    14      3    frame count LE24
 ;    17      2    audio bytes/frame LE (REAL, pre-pad; the wire block
-;                 is this rounded up to a 512 multiple)
-;    19      2    ring start-margin in 512B blocks LE (3b streaming;
-;                 ignored by the resident path)
-;    21      2    per-frame payload cap in blocks LE (informational)
+;                 is this rounded up to a 512 multiple). v2.0 PLAYER
+;                 BOUND: the audio feed is double-buffered in
+;                 NXV_AUD_HALF (1280-byte) halves, so open REJECTS
+;                 > 1280 real bytes/frame (VID FMT?) - stereo needs
+;                 fps >= 24.40, mono >= 18.22; the encoder enforces
+;                 this at encode time (audio_layout + a pack_header
+;                 defence-in-depth guard). Wire field 16 bits; player
+;                 capability bound 1280.
+;    19      2    ring start-margin in 512B blocks LE. ADVISORY to
+;                 the v2.0 player: it prefills the ENTIRE ring (which
+;                 dominates any margin the ring could honor) and
+;                 never reads the field as a fill target - it is only
+;                 range-checked at open (margin <= file blocks;
+;                 larger = corrupt header, VID FMT?).
+;    21      2    per-frame payload cap in blocks LE. LOAD-BEARING
+;                 for streaming AND direct-serve: the ring gate paces
+;                 on it and the direct per-frame section bound is
+;                 cap + apad + 1 blocks - open validates it in
+;                 1..NXV2_STRM_CAP_MAX (a lying/absent cap is a
+;                 corrupt header, VID FMT?); resident ignores it.
 ;    23..511      reserved 0
 ;
 ; Frame layout: [audio blocks (padded 512)] [payload blocks (padded
@@ -536,7 +555,9 @@ NXV2_OFF_RMARGIN equ 19
 NXV2_OFF_FRAMECAP equ 21
 
 NXV2_FLAG_DELTA  equ 1      ; bit0 - must be set
-NXV2_FLAG_DIRECT equ 2      ; bit1 - direct-serve hint (3a: ignored)
+NXV2_FLAG_DIRECT equ 2      ; bit1 - direct-serve hint (3c: honoured -
+                            ; the delivery decision routes the file
+                            ; SD-to-surface, no ring)
 
 ; Opcode values (frozen, x4-scaled). Reserved: $24 (old $09), $2C
 ; (SCROLL), $30-$3C, and every non-multiple-of-4/every value >= $40 -

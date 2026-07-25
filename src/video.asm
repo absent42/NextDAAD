@@ -1197,6 +1197,14 @@ vid_dec_done_strm:
     ld hl, (vidRingDepth)
     or a
     sbc hl, bc
+    jr nc, .dok                  ; DEPTH FLOOR (3c hardening): the
+ IFDEF DEBUG                     ; underflow class is impossible by
+    ld a, (vidDepthClip)         ; construction now, not merely by
+    inc a                        ; the gate contract - a clamp fires
+    ld (vidDepthClip), a         ; only on a bookkeeping bug and is
+ ENDIF                           ; counted on the RING row (DEBUG)
+    ld hl, 0
+.dok:
     ld (vidRingDepth), hl
     pop de
     pop hl
@@ -1585,6 +1593,14 @@ vid_aud_copy:
     ld hl, (vidRingDepth)
     or a
     sbc hl, bc
+    jr nc, .dok                  ; DEPTH FLOOR (3c hardening)
+ IFDEF DEBUG
+    ld a, (vidDepthClip)
+    inc a
+    ld (vidDepthClip), a
+ ENDIF
+    ld hl, 0
+.dok:
     ld (vidRingDepth), hl
     ld hl, (vidRingRl)
     ld bc, (vidABytesPad)
@@ -2382,8 +2398,19 @@ vid_loop_rewind:
     or a
     ret z
     ld hl, (vidRingDepth)
+    ld a, h
+    or l
+    jr nz, .pos                  ; DEPTH FLOOR (3c hardening): the
+ IFDEF DEBUG                     ; pre-review-fix loop-tail underflow
+    ld a, (vidDepthClip)         ; class dies here structurally
+    inc a
+    ld (vidDepthClip), a
+ ENDIF
+    jr .dz                       ; hold at 0 (already stored)
+.pos:
     dec hl
     ld (vidRingDepth), hl
+.dz:
     ld hl, (vidRingRl)
     ld bc, 512
     add hl, bc
@@ -2809,6 +2836,10 @@ vidRingMin:      dw 0            ; RING= row: min frame-top depth (3b;
                                  ; vidTlFillFrames - outside the zero
                                  ; span, inside the report copy)
 vidRingUnder:    dw 0            ; RING= row: gate underrun events
+vidDepthClip:    db 0            ; RING= row third field (3c): depth-
+                                 ; floor clamp events - MUST be 00
+                                 ; (a nonzero value = a bookkeeping
+                                 ; bug the floor contained)
 vidTlFillFrames: dw 0            ; ring load/prefill duration, 50Hz
                                  ; frames (frameCounter delta)
 VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlTicks
@@ -3288,6 +3319,8 @@ nxv2_open_body:
     ld hl, 0
     ld (vidRingMin + DATA_WINDOW - OVL_ORG), hl
     ld (vidRingUnder + DATA_WINDOW - OVL_ORG), hl
+    xor a
+    ld (vidDepthClip + DATA_WINDOW - OVL_ORG), a
  ENDIF
     call data_restore
     ld b, 0                      ; verdict: loaded
@@ -3502,6 +3535,8 @@ nxv2_open_body:
     ld (vidRingMin + DATA_WINDOW - OVL_ORG), hl
     ld hl, 0
     ld (vidRingUnder + DATA_WINDOW - OVL_ORG), hl
+    xor a
+    ld (vidDepthClip + DATA_WINDOW - OVL_ORG), a
  ENDIF                           ; (099 throttle lever RETIRED in 3c)
     call data_restore
     xor a                        ; window ownership is HOT now
@@ -3640,6 +3675,8 @@ nxv2_open_body:
     ld hl, 0
     ld (vidRingMin + DATA_WINDOW - OVL_ORG), hl
     ld (vidRingUnder + DATA_WINDOW - OVL_ORG), hl
+    xor a
+    ld (vidDepthClip + DATA_WINDOW - OVL_ORG), a
  ENDIF
     call data_restore
     xor a                        ; window ownership is HOT now
@@ -5106,7 +5143,7 @@ vid_tl_report_body:
     call vid_tl_print32
     ld a, (vidTlRptIdx)
     cp VID_TL_OTHER
-    jr nz, .nextrow
+    jp nz, .nextrow              ; jp: the OTHER-row tail outgrew jr
     ld hl, msgTlTot
     call dbg_puts
     ld hl, (vidTlTicksL)
@@ -5151,6 +5188,10 @@ vid_tl_report_body:
     call dbg_puts
     ld hl, (vidRingUnderL)
     call dbg_hex16
+    ld hl, msgTlSlash
+    call dbg_puts
+    ld a, (vidDepthClipL)            ; depth-floor clamps (3c) - MUST
+    call dbg_hex8                    ; read 00 (see the cell comment)
     jr .done
 .nextrow:
     ld hl, vidTlRptRow
@@ -5197,6 +5238,7 @@ vidErrPosL:       ds 3
 vidLoopPassL:     db 0
 vidRingMinL:      dw 0
 vidRingUnderL:    dw 0
+vidDepthClipL:    db 0
 vidTlFillFramesL: dw 0
     ASSERT vidTlFillFramesL + 2 - vidTlTicksL == VID_TL_BLOCK_LEN
  ENDIF
