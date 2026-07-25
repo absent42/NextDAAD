@@ -282,13 +282,80 @@ TMODEL_COEFFS = {
 }
 
 
+# ---------------------------------------------------------------------
+# TMODEL_COMPOSITION_FACTOR - the COMPOSED-PLAYER safety factor.
+#
+# TMODEL_COEFFS above are micro-bench truths: isolated kernels, isolated
+# dispatch, one op class at a time. The real player composes them - fast
+# handler vs chunked body selection, dest-cursor normalization, column
+# hops, window-seam walks, the audio-ring interleave and the per-frame
+# glue the bench cannot see. The stage-3a real-footage silicon leg
+# (2026-07-25, core 3.02.04 KS3 TEST, five staged fixtures sd\001-005,
+# DEBUG timeline DECODE rows) measured that composition tax directly:
+#
+#   R = (silicon DECODE T/frame) / (model T/frame / audio_factor)
+#   silicon T/frame = DECODE ticks / FRM * 1792 T   (CTC /16 x TC 112)
+#
+#   | fixture | shape             | gap | model T/f | silicon T/f | R     |
+#   |---------|-------------------|-----|-----------|-------------|-------|
+#   | 001.VID | 320x256 mode-1    | no  |   778,161 |     822,105 | 0.898 |
+#   | 002.VID | 256x192 mode-0    | no  |   488,954 |     479,700 | 0.834 |
+#   | 003.VID | 320x192 mode-1 LB | YES |   887,452 |   1,250,890 | 1.199 |
+#   | 004.VID | 320x144 mode-1 LB | YES |   577,674 |     952,053 | 1.401 |
+#   | 005.VID | 256x144 mode-0    | no  |   548,298 |     488,858 | 0.760 |
+#
+# The rows split into two clean clusters on ONE discriminator: the
+# mode-1 letterbox column gap. Flat surfaces (any width, any mode) come
+# in UNDER the model (0.76-0.90 - the model over-prices copies at the
+# 387 T run envelope). Gapped surfaces cost 1.20-1.40x the model,
+# because every op whose length crosses a column boundary leaves the
+# SMC'd fast handler and rides the chunked body (normalize + hop +
+# multiple chunk sizings). Shorter columns cross more often, which is
+# why 004 (h=144) is worse than 003 (h=192). 001 is 320-wide mode-1 and
+# FLAT, so this is the column gap and not a mode-1 display-fetch term.
+#
+# The factor DIVIDES the usable budget, so it is a straight de-rating of
+# the modeled-T cap. A frame emitted at the de-rated cap is predicted to
+# consume R/FACTOR of one frame period on silicon - 0.90 flat, 0.90
+# gapped - leaving real PACE margin on both.
+#
+# Calibrated at gapped heights 144 and 192. A NEW gapped height below
+# 144 must be re-checked on silicon before it is trusted (the crossing
+# rate scales roughly with 1/height).
+# ---------------------------------------------------------------------
+TMODEL_COMPOSITION_FACTOR = {
+    "flat":   1.00,   # worst observed 0.898 (001) - 11% margin, and the
+                       #   model is conservative here by construction
+    "gapped": 1.55,   # worst observed 1.401 (004, h=144) - 11% margin
+}
+
+
+def is_gapped(width, height):
+    """True for a mode-1 (320-wide) LETTERBOX surface, whose columns are
+    256-aligned so a sub-256 content height leaves a gap after every
+    column. Mirrors the player's own vidP_GapFlag derivation
+    (src/video.asm: mode-1 and height byte != 0/256). Mode-0 (256-wide)
+    is row-linear and never gapped, whatever the height."""
+    return int(width) == 320 and int(height) != 256
+
+
+def composition_factor(width=None, height=None):
+    """Composed-player de-rating for this surface shape. Shape unknown
+    (the legacy one-argument call) -> the flat factor."""
+    if width is None or height is None:
+        return TMODEL_COMPOSITION_FACTOR["flat"]
+    return TMODEL_COMPOSITION_FACTOR["gapped" if is_gapped(width, height) else "flat"]
+
+
 def frame_period_t(fps):
     return 1000.0 / float(fps) * TMODEL_COEFFS["clock_khz"]
 
 
-def usable_budget_t(fps):
-    """Usable decode T per frame after the audio ISR tax."""
-    return frame_period_t(fps) * TMODEL_COEFFS["audio_factor"]
+def usable_budget_t(fps, width=None, height=None):
+    """Usable decode T per frame after the audio ISR tax AND the
+    composed-player safety factor for this surface shape."""
+    return (frame_period_t(fps) * TMODEL_COEFFS["audio_factor"]
+            / composition_factor(width, height))
 
 
 # ---------------------------------------------------------------------
@@ -1028,13 +1095,15 @@ def scene_palette(orig_frames, start_idx, scene_end_idx, max_samples=6, colors=2
 # the last. All chunks paint the HIDDEN surface; only KFLIP exposes it.
 # ---------------------------------------------------------------------
 
-def kf_chunk_budget_bytes(fps, first):
+def kf_chunk_budget_bytes(fps, first, width=None, height=None):
     """Max keyframe literal bytes this frame's chunk may hold so the
     modeled decode stays inside the usable per-frame T budget (2%
     reserve). Ported from the research prototype's kf_chunk_cap,
     re-costed for the real COPY op overhead (KSTART/PAL dispatch on
-    the first chunk)."""
-    budget_t = usable_budget_t(fps) * 0.98 - TMODEL_COEFFS["t_frame_fixed"]
+    the first chunk). A keyframe chunk is one long COPY straight down
+    the paint order, so it crosses every column boundary a gapped
+    surface has - the composition factor applies here too."""
+    budget_t = usable_budget_t(fps, width, height) * 0.98 - TMODEL_COEFFS["t_frame_fixed"]
     if first:
         budget_t -= TMODEL_COEFFS["t_palette"]
         budget_t -= 2 * TMODEL_COEFFS["t_op_parse"]   # KSTART + PAL dispatch
@@ -1042,13 +1111,13 @@ def kf_chunk_budget_bytes(fps, first):
     return max(L, 1)
 
 
-def plan_kf_chunks(raw_len, fps):
+def plan_kf_chunks(raw_len, fps, width=None, height=None):
     """Returns a list of (start, length, first) chunks covering
     raw_len bytes, each sized to kf_chunk_budget_bytes."""
     chunks = []
     remaining, pos, first = raw_len, 0, True
     while remaining:
-        c = min(remaining, kf_chunk_budget_bytes(fps, first))
+        c = min(remaining, kf_chunk_budget_bytes(fps, first, width, height))
         chunks.append((pos, c, first))
         pos += c
         remaining -= c
@@ -1283,7 +1352,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     assert (H, W) == (height, width)
     raw = H * W
     column_major = (width == 320)
-    usable = usable_budget_t(fps)
+    usable = usable_budget_t(fps, width, height)
     refract = max(1, int(round(fps / 2)))
     cap_bytes = int(cap_bytes_frac * raw)
     hyst_eps = HYSTERESIS_EPS if hysteresis else None
@@ -1374,7 +1443,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
         if start_kf:
             scene_end = next((c for c in scene_cuts if c > i), N)
             kf_pal = scene_palette(orig, i, scene_end)
-            planned = plan_kf_chunks(raw, fps)
+            planned = plan_kf_chunks(raw, fps, width, height)
             # Cut lookahead (T1 step 4): if this span would take >1
             # chunk AND the very next frame independently looks like a
             # hard cut too, defer starting the span to i+1 instead -

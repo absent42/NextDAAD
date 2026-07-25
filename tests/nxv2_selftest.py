@@ -726,6 +726,37 @@ def t10_silicon_coeffs():
     expect(tc["t_frame_fixed"] == 1132.0, "t_frame_fixed should be the silicon FE 1132")
     expect(abs(enc.usable_budget_t(25.0) - 952000.0) < 1.0,
            f"silicon usable budget @25 should be 952000 T, got {enc.usable_budget_t(25.0)}")
+    # Composed-player safety factor (stage-3a real-footage silicon leg,
+    # 2026-07-25): flat surfaces come in UNDER the model (worst 0.898),
+    # mode-1 LETTERBOX surfaces cost 1.20-1.40x it (column-hop chunked
+    # bodies). Pinned here so a coefficient re-fit cannot silently drop
+    # the de-rating that keeps a gapped clip inside one frame period.
+    cf = enc.TMODEL_COMPOSITION_FACTOR
+    expect(cf["flat"] == 1.00, f"flat composition factor should be 1.00, got {cf['flat']}")
+    expect(cf["gapped"] == 1.55, f"gapped composition factor should be 1.55, got {cf['gapped']}")
+    expect(enc.is_gapped(320, 192) and enc.is_gapped(320, 144),
+           "mode-1 sub-256 heights are gapped")
+    expect(not enc.is_gapped(320, 256) and not enc.is_gapped(256, 144)
+           and not enc.is_gapped(256, 192),
+           "mode-1 full height and ALL mode-0 heights are flat (row-linear)")
+    # The budget must actually de-rate for a gapped shape, and not for a
+    # flat one - the whole point of threading the shape through.
+    expect(abs(enc.usable_budget_t(25.0, 320, 256) - 952000.0) < 1.0,
+           "flat 320x256 keeps the full 952000 T budget")
+    expect(abs(enc.usable_budget_t(25.0, 256, 144) - 952000.0) < 1.0,
+           "flat 256x144 keeps the full 952000 T budget")
+    gb = enc.usable_budget_t(25.0, 320, 192)
+    expect(abs(gb - 952000.0 / 1.55) < 1.0,
+           f"gapped 320x192 budget should be 952000/1.55 = 614194 T, got {gb:.0f}")
+    # ... and the keyframe chunk planner must shrink with it (a kf chunk
+    # is one long COPY straight down the paint order - it crosses every
+    # column boundary the gapped surface has).
+    expect(enc.kf_chunk_budget_bytes(25.0, True, 320, 192)
+           < enc.kf_chunk_budget_bytes(25.0, True, 320, 256),
+           "gapped keyframe chunks must be smaller than flat ones")
+    expect(len(enc.plan_kf_chunks(320 * 192, 25.0, 320, 192))
+           > len(enc.plan_kf_chunks(320 * 192, 25.0, 320, 256)),
+           "a gapped keyframe span needs more chunks at the de-rated budget")
     # K* derives from the coefficients (self-retunes). At sitting-2 silicon:
     # (130+387)/20.2 = 25.6 B.
     ks = enc.merge_kstar()
