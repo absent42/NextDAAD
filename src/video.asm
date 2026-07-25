@@ -3134,11 +3134,16 @@ vid_sd_cmd:
     ld a, b
     out (c), a
     nop
-.resp:
-    in a, (PORT_SPI_DAT)
-    inc a
-    jr z, .resp
-    dec a
+    ld b, 0                      ; bounded R1 poll: 256 tries (NCR <= 8
+.resp:                           ; bytes - generous; rubric 6, the
+    in a, (PORT_SPI_DAT)         ; nxb_sd_cmd precedent - v1's copy of
+    inc a                        ; this loop was the last unbounded SD
+    jr nz, .got                  ; poll left in the tree)
+    djnz .resp
+    or 1                         ; timeout: force NZ (treated as reject)
+    ret
+.got:
+    dec a                        ; Z iff R1 == 0
     ret
 
 ; Multiface disable/restore around the raw window (carried).
