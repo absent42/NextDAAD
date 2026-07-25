@@ -1208,7 +1208,8 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
 
 
 def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
-                merge_gaps=True, hysteresis=True, staleness_refresh=True):
+                merge_gaps=True, hysteresis=True, staleness_refresh=True,
+                return_surfaces=False):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -1239,6 +1240,9 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     kf_span_ranges = []
     per_frame = {"bytes": [], "psnr": [], "mode": [], "binding": [], "drift": []}
     decoded = []
+    surfaces = []   # (return_surfaces) per-frame index surface the encoder
+                     # believes is on screen - for the decode-vs-bookkeeping
+                     # byte-identity invariant (stride/merge-bug guard)
 
     held_pal = None
     prev_flat = None
@@ -1338,6 +1342,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 per_frame["binding"].append(binding)
                 per_frame["drift"].append(float("nan"))
                 decoded.append(dec_img)
+                if return_surfaces:
+                    surfaces.append(unflatten_frame(prev_flat, height, width, column_major).copy())
                 continue
 
             # Finding 2: a content-triggered keyframe firing too close
@@ -1408,6 +1414,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             # held_pal[prev_flat] is exactly the correct hold image.
             dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
             decoded.append(dec_img)
+            if return_surfaces:
+                surfaces.append(unflatten_frame(prev_flat, height, width, column_major).copy())
             per_frame["psnr"].append(psnr(orig[i], dec_img))
         else:
             prev_idx = unflatten_frame(prev_flat, height, width, column_major)
@@ -1452,11 +1460,14 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             per_frame["drift"].append(drift_for_stats if drift_for_stats is not None else float("nan"))
             dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
             decoded.append(dec_img)
+            if return_surfaces:
+                surfaces.append(unflatten_frame(prev_flat, height, width, column_major).copy())
             per_frame["psnr"].append(psnr(orig[i], dec_img))
 
     return dict(payloads=payloads, kf_span_ranges=kf_span_ranges, decoded=decoded,
                 per_frame=per_frame, scene_cuts=scene_cuts, kf_events=kf_events,
                 staleness_events=staleness_events, kf_triggers=kf_triggers,
+                surfaces=surfaces,
                 held_pal_final=held_pal, usable_budget_ms=usable / TMODEL_COEFFS["clock_khz"])
 
 

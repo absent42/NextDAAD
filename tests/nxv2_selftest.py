@@ -945,6 +945,105 @@ def t11_staleness_bounded():
            "expected region-coherent scheduling (or a trivially-bounded clip)")
 
 
+# =======================================================================
+# Step 12: stride/flatten-bug DISCRIMINATION (owner exhibit 4/5). Two
+# invariants that separate a correctness bug (displaced error map /
+# transposed flatten in one mode) from the expected region-band lag.
+# =======================================================================
+
+def _build_vid(result, w, h, fps=25.0):
+    """Assemble a decodable .vid buffer from an encode_clip result."""
+    payloads = result["payloads"]
+    hdr = enc.pack_header(width=w, height=h, fps=fps, channels=1, arate=enc.RATE_MONO,
+                           frame_count=len(payloads), audio_bytes_per_frame=0,
+                           ring_start_margin_blocks=0, per_frame_cap_blocks=0)
+    return hdr + b"".join(p + bytes((-len(p)) % 512) for p in payloads)
+
+
+def _synth_clip(orig):
+    """po_ceil + chg for a synthetic (N,H,W,3) stack, like _extract_source."""
+    from PIL import Image
+    N = orig.shape[0]
+    po = np.empty(N)
+    chg = np.zeros(N)
+    for i in range(N):
+        im = Image.fromarray(orig[i]).convert(
+            "P", palette=Image.Palette.ADAPTIVE, colors=256, dither=Image.Dither.NONE)
+        pal = np.array((list(im.getpalette()) + [0] * 768)[:768], dtype=np.uint8).reshape(256, 3)
+        po[i] = enc.psnr(orig[i], pal[np.asarray(im)])
+        if i:
+            chg[i] = float((np.abs(orig[i].astype(int) - orig[i - 1].astype(int)).max(2) > 10).mean())
+    return chg, po
+
+
+@case(12, "decode-vs-bookkeeping byte-identity - emitted stream == encoder surface, BOTH modes")
+def t12_decode_matches_bookkeeping():
+    # A real-ish moving clip in BOTH Layer-2 modes. Whatever the encoder
+    # BELIEVES is on screen (its prev_flat bookkeeping) MUST equal what the
+    # reference decoder reconstructs from the emitted stream - any divergence
+    # is a merge / _apply_segments / stride bookkeeping bug (mechanism B).
+    rng = np.random.default_rng(41)
+    for (w, h) in ((256, 192), (320, 256)):
+        N = 24
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+        orig = np.empty((N, h, w, 3), dtype=np.uint8)
+        for i in range(N):
+            base = np.stack([128 + 110 * np.sin((xx + i * 3) * 0.05),
+                             128 + 110 * np.cos((yy - i * 2) * 0.06),
+                             128 + 110 * np.sin((xx + yy) * 0.03 + i * 0.2)], axis=2)
+            orig[i] = np.clip(base, 0, 255).astype(np.uint8)
+        chg, po = _synth_clip(orig)
+        result = enc.encode_clip(orig, chg, po, w, h, 25.0, return_surfaces=True)
+        buf = _build_vid(result, w, h)
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / f"bk_{w}x{h}.vid"
+            p.write_bytes(buf)
+            issues = dec.validate(p)
+            expect(issues == [], f"{w}x{h}: validate() issues: {issues}")
+            frames = list(dec.decode(p))
+        expect(len(frames) == len(result["surfaces"]),
+               f"{w}x{h}: frame count {len(frames)} != {len(result['surfaces'])}")
+        for i, ((pal, idx), surf) in enumerate(zip(frames, result["surfaces"])):
+            expect(np.array_equal(idx, surf),
+                   f"{w}x{h} frame {i}: DECODER surface != ENCODER bookkeeping "
+                   f"({int((idx != surf).sum())} px diverge) - stride/merge bug")
+
+
+@case(12, "moving vertical edge - UNBUDGETED frames are pixel-exact vs quantized source, BOTH modes")
+def t12_moving_edge_pixel_exact():
+    # A hard vertical edge translating horizontally. Where the budget does
+    # NOT bind (mode 'full'), the decoded surface must be PIXEL-EXACT vs the
+    # held-palette quantization of the source - a stride/transpose error in
+    # one mode would displace the edge and this catches it. The clip is
+    # 2-colour and tiny so the budget never binds.
+    for (w, h) in ((256, 192), (320, 256)):
+        N = 20
+        orig = np.empty((N, h, w, 3), dtype=np.uint8)
+        c0 = np.array([20, 40, 60], dtype=np.uint8)
+        c1 = np.array([200, 180, 160], dtype=np.uint8)
+        for i in range(N):
+            edge = 4 + i * ((w - 8) // N)   # edge column marches right
+            frame = np.empty((h, w, 3), dtype=np.uint8)
+            frame[:, :edge] = c0
+            frame[:, edge:] = c1
+            orig[i] = frame
+        chg, po = _synth_clip(orig)
+        result = enc.encode_clip(orig, chg, po, w, h, 25.0, return_surfaces=True)
+        held = result["held_pal_final"]
+        modes = result["per_frame"]["mode"]
+        checked = 0
+        for i in range(1, N):
+            if not modes[i].startswith("full"):
+                continue   # budget-bound frame: lag is allowed
+            target_idx, _ = enc.quantize_to_palette(orig[i], held)
+            expect(np.array_equal(result["surfaces"][i], target_idx),
+                   f"{w}x{h} frame {i} (mode {modes[i]}): decoded surface not "
+                   f"pixel-exact vs quantized source - stride/transpose bug")
+            checked += 1
+        expect(checked >= 5, f"{w}x{h}: too few unbudgeted frames checked ({checked})")
+
+
 def main():
     passed, failed, skipped = 0, 0, 0
     last_step = None
