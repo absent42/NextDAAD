@@ -1455,17 +1455,20 @@ def _walk_ops(payload):
 @case(11, "direct-serve encode - all-literal container, flags bit1, nxv2dec byte-exact")
 def t11_direct_serve():
     import tempfile as tf
-    n, width, height = 6, 256, 144
+    # TIGHTEN (Card #5, 2026-07-26): the gate is unconditional - there
+    # is no accept_slow override any more, so this container-structure
+    # case (the all-literal composition, flags bit1, nxv2dec byte-
+    # exactness) must use a shape that is ACTUALLY at-rate under the
+    # strict gate. classic-wide 256x144 @25 stereo (1.075) would now be
+    # refused outright; 256x128 (raw 32768 B, under the 34298 B budget)
+    # keeps the height a clean multiple of 8 for this helper's blocky
+    # synthetic content. The gate itself (refusal + its envelope
+    # message) is tested in t11_direct_gate below.
+    n, width, height = 6, 256, 128
     ex = _synthetic_ex(n, width, height, cut_at=3)
     with tf.TemporaryDirectory() as td:
         out = Path(td) / "direct.vid"
-        # direct_accept_slow: this case exercises the CONTAINER (the
-        # all-literal composition, flags bit1, nxv2dec byte-exactness),
-        # not the wire policy. Since the Card #5 recalibration
-        # classic-wide @25 stereo scores 1.075 and is a policy-override
-        # shape; the gate itself is tested in t11_direct_gate below.
-        report = enc._encode_direct(ex, width, height, 25.0, out,
-                                     direct_accept_slow=True)
+        report = enc._encode_direct(ex, width, height, 25.0, out)
         expect(report.mode == "direct", "report mode")
         expect(report.frames == n, "frame count")
         buf = out.read_bytes()
@@ -1537,9 +1540,10 @@ def _payload_len(buf, pos):
             raise AssertionError(f"unexpected op {op:02X}")
 
 
-@case(11, "direct-serve wire gate - infeasible shape refused with named numbers")
+@case(11, "direct-serve wire gate - TIGHTEN: unconditional refusal, no accept-slow escape")
 def t11_direct_gate():
     import tempfile as tf
+    import inspect
     ex = _synthetic_ex(2, 320, 256)
     with tf.TemporaryDirectory() as td:
         out = Path(td) / "toobig.vid"
@@ -1549,6 +1553,10 @@ def t11_direct_gate():
             msg = str(e)
             expect("direct-serve" in msg, "error names the mode")
             expect("utilization" in msg, "error names the utilization")
+            expect("stereo" in msg and "mono" in msg,
+                   "refusal states the envelope for BOTH channel counts (the full menu)")
+            expect("accept-slow" not in msg.lower(),
+                   "refusal must not mention a slow-playback override that no longer exists")
             expect(not out.exists(), "no file written on refusal")
         else:
             raise AssertionError("320x256@25 direct must be refused "
@@ -1563,11 +1571,13 @@ def t11_direct_gate():
     ds = enc.direct_supply_check(mean_frame, 25.0)
     expect(abs(ds["sd_ms"] - 42.44) < 0.05,
            f"the recalibrated model must reproduce VDIR's 42.456 ms/frame, got {ds['sd_ms']:.3f}")
-    # ... so classic-wide@25 stereo is NO LONGER at-rate - it is the
-    # shape the owner policy line is about (1.075, ~6% slow)
+    # classic-wide@25 stereo (the ORIGINALLY shipped 010 shape) is NOT
+    # at-rate - this is exactly the shape the TIGHTEN ruling refuses
+    # outright, with no override available at any layer.
     worst = 1536 + 74 * 512               # + the scene-start PAL block
     expect(1.05 < enc.direct_supply_check(worst, 25.0)["utilization"] < 1.10,
-           "classic-wide@25 direct scores ~1.075 under the recalibrated gate")
+           "classic-wide@25 direct scores ~1.075 under the recalibrated gate - "
+           "over 1.00, so it must now be refused unconditionally")
     # the recalibrated at-rate envelope, and its monotonicity
     raw25 = enc.direct_max_raw_bytes(25.0, 2, 1.0)
     expect(34000 < raw25 < 34600, f"25fps stereo direct tops out ~34.3 KB raw, got {raw25}")
@@ -1576,10 +1586,73 @@ def t11_direct_gate():
         "direct_max_raw_bytes must actually pass its own gate")
     expect(enc.direct_max_raw_bytes(18.22, 1, 1.0) > raw25,
            "a lower fps / mono admits a bigger direct surface")
-    # the accept-slow policy override: refuses without it, ships with it,
-    # and still refuses above DIRECT_ACCEPT_SLOW_MAX
-    expect(1.0 < enc.DIRECT_ACCEPT_SLOW_MAX < 1.5,
-           "the accept-slow ceiling is a bounded override, not a blank cheque")
+    # 010/011's chosen re-encode point (256x133@25 stereo) must actually
+    # be at-rate under the gate - the positive-path complement to the
+    # 320x256 refusal above.
+    ok_worst = 1536 + ((256 * 133 + 518 + 511) // 512) * 512
+    expect(enc.direct_supply_check(ok_worst, 25.0)["utilization"] <= 1.0,
+           "256x133@25 stereo (the 010/011 TIGHTEN re-encode shape) must pass the gate")
+
+    # TIGHTEN (Card #5, 2026-07-26 owner ruling): the accept-slow escape
+    # is REMOVED, not just unused - assert it no longer exists anywhere
+    # in the encoder plumbing, and that the wire gate cannot be talked
+    # past by any flag.
+    expect(not hasattr(enc, "DIRECT_ACCEPT_SLOW_MAX"),
+           "DIRECT_ACCEPT_SLOW_MAX must not exist - no bounded override either")
+    direct_params = inspect.signature(enc._encode_direct).parameters
+    expect("direct_accept_slow" not in direct_params,
+           "_encode_direct must not accept a slow-accept override kwarg")
+    encode_params = inspect.signature(enc.encode).parameters
+    expect("direct_accept_slow" not in encode_params,
+           "encode() must not accept a slow-accept override kwarg")
+    try:
+        enc._encode_direct(ex, 320, 256, 25.0, out, direct_accept_slow=True)
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("_encode_direct must reject an unknown "
+                             "direct_accept_slow kwarg outright")
+    # ... and at the CLI: --direct-accept-slow must be gone, and an
+    # over-wire direct encode must be refused REGARDLESS of any flags
+    # thrown at it (there is no flag left that changes the verdict).
+    import subprocess
+    help_proc = subprocess.run(
+        [sys.executable, str(LIB / "videnc.py"), "--help"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    expect("--direct-accept-slow" not in help_proc.stdout.decode("utf-8", "replace"),
+           "--direct-accept-slow must not appear in videnc.py --help")
+    if SINTEL.exists() and FFMPEG.exists():
+        with tf.TemporaryDirectory() as td:
+            # (a) the removed flag itself: argparse must reject it before
+            # the encoder ever runs.
+            out2 = Path(td) / "over_wire.vid"
+            cmd = [sys.executable, str(LIB / "videnc.py"), str(SINTEL), str(out2),
+                   "--shape", "classic-wide", "--fps", "25", "--duration", "1",
+                   "--direct", "--direct-accept-slow", "--ffmpeg", str(FFMPEG)]
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            expect(proc.returncode != 0,
+                   "an over-wire --direct encode with an (unrecognized) "
+                   "--direct-accept-slow flag must still fail")
+            expect(not out2.exists(), "no file written")
+            stderr = proc.stderr.decode("utf-8", "replace")
+            expect("unrecognized arguments" in stderr or "--direct-accept-slow" in stderr,
+                   f"argparse should reject the removed flag, got:\n{stderr}")
+            # (b) REGARDLESS OF FLAGS: even with only the flags that DO
+            # still exist (no accept-slow at all), the same over-wire
+            # shape must be refused by the wire gate itself, not just
+            # by argparse rejecting an unknown flag.
+            out3 = Path(td) / "over_wire_plain.vid"
+            cmd2 = [sys.executable, str(LIB / "videnc.py"), str(SINTEL), str(out3),
+                    "--shape", "classic-wide", "--fps", "25", "--duration", "1",
+                    "--direct", "--ffmpeg", str(FFMPEG)]
+            proc2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            expect(proc2.returncode != 0,
+                   "classic-wide@25 stereo --direct (util 1.075) must be "
+                   "refused with no other flags in play")
+            expect(not out3.exists(), "no file written on the plain-flag refusal")
+            stderr2 = proc2.stderr.decode("utf-8", "replace")
+            expect("utilization" in stderr2 and "direct-serve" in stderr2,
+                   f"the plain refusal must be the wire-gate message, got:\n{stderr2}")
 
 
 def main():

@@ -218,20 +218,14 @@ def main(argv):
                           "SD to the surface, no ring. Gated by "
                           "worst-frame WIRE feasibility "
                           "(nxv2enc.direct_supply_check); small shapes "
-                          "only at 25 fps (raw bytes/frame = WxH)")
-    ap.add_argument("--direct-accept-slow", dest="direct_accept_slow",
-                     action="store_true",
-                     help="POLICY OVERRIDE (SP15 Card #5): ship a "
-                          "--direct encode whose worst-frame wire "
-                          "utilization exceeds 1.00, i.e. one that "
-                          "plays SLOW by that margin on silicon. The "
-                          "gate then prints the measured slowdown "
-                          "instead of refusing. Audio and video stay "
-                          "locked to each other (the player's ISR "
-                          "holds its last sample when the main loop is "
-                          "late), at the cost of a held-sample gap "
-                          "once per frame. Refuses regardless above "
-                          "nxv2enc.DIRECT_ACCEPT_SLOW_MAX")
+                          "only at 25 fps (raw bytes/frame = WxH). "
+                          "TIGHTEN policy (Card #5, 2026-07-26 owner "
+                          "ruling): the gate is unconditional - a "
+                          "worst-frame utilization above 1.00 refuses "
+                          "outright, and prints the at-rate envelope; "
+                          "there is no slow-playback override. Use a "
+                          "smaller shape, lower --fps, --mono, or drop "
+                          "--direct for the delta encoder instead")
     ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
     ap.add_argument("--duration", help="clip duration in seconds")
     ap.add_argument("--report", help="write the BuildReport as JSON to "
@@ -290,8 +284,7 @@ def main(argv):
         start=args.start, duration=args.duration, ffmpeg=str(ffmpeg),
         dither=args.dither, mono=args.mono, merge_gaps=not args.no_merge,
         cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget,
-        direct=args.direct,
-        direct_accept_slow=args.direct_accept_slow)
+        direct=args.direct)
 
     stream_line = ""
     if report.mode == "direct":

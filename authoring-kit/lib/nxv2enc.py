@@ -650,11 +650,13 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
 # above: do not move SD_WIRE_BYTES_PER_MS without re-deriving this.
 DIRECT_TRANSPORT_FACTOR = 1.20
 
-# Policy line (OWNER-FACING, Card #5): at 1.20 the shipped 010 fixture
-# (classic-wide 256x144 @25 stereo) scores 1.075 - it plays ~6% slow,
-# which is what silicon does. direct_accept_slow=True downgrades the
-# refusal to a quantified warning; see _encode_direct.
-DIRECT_ACCEPT_SLOW_MAX = 1.25   # beyond this even the accept path refuses
+# Policy line (OWNER-FACING, Card #5 TIGHTEN ruling, 2026-07-26): at
+# 1.20 the shipped 010 fixture (classic-wide 256x144 @25 stereo) scored
+# 1.075 - it would have played ~6% slow, which is what silicon does.
+# The owner ruled STRICT: direct-serve is on-rate or it is refused,
+# full stop. There is NO accept-slow override - a utilization > 1.0
+# ALWAYS raises SystemExit; see _encode_direct. (010/011 were
+# re-encoded inside the envelope rather than shipped slow.)
 
 
 def direct_supply_check(worst_frame_bytes, fps):
@@ -2022,8 +2024,7 @@ def _apply_segments(prev_flat, target_flat, gcls, gstarts, glens):
     return out
 
 
-def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
-                    direct_accept_slow=False):
+def _encode_direct(ex, width, height, fps_val, out_path, report_path=None):
     """SP15 3c DIRECT-SERVE encode (the raw-equivalent all-literal
     preset): every frame is a single-frame keyframe span (KSTART
     [+ PAL] + COPY + KFLIP) and the header sets the direct-serve hint
@@ -2032,7 +2033,10 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
     scoped palettes reuse the delta pipeline's cut detection + sampled
     full-span quantize; there is no delta and no rate control - the
     stream is raw-equivalent by design, gated by WIRE feasibility
-    (direct_supply_check: worst frame, no ring absorber)."""
+    (direct_supply_check: worst frame, no ring absorber). TIGHTEN
+    ruling (Card #5, 2026-07-26, owner-decided): this gate is
+    UNCONDITIONAL - a worst-frame utilization above 1.00 always
+    refuses, there is no slow-playback opt-out."""
     orig = ex["orig"]
     N = ex["nframes"]
     column_major = (width == 320)
@@ -2056,11 +2060,21 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
     abytes_pad = ex["abytes_pad"]
 
     # --- DIRECT-SERVE WIRE GATE: the worst frame section must cross
-    # the SD wire inside one frame period (no ring absorber) ---
+    # the SD wire inside one frame period (no ring absorber). TIGHTEN
+    # (Card #5, 2026-07-26 owner ruling): UNCONDITIONAL - utilization
+    # > 1.00 always refuses, no accept-slow override exists. ---
     worst_frame = abytes_pad + per_frame_cap_blocks * 512
     ds = direct_supply_check(worst_frame, fps_val)
-    if ds["utilization"] > 1.0 and not (
-            direct_accept_slow and ds["utilization"] <= DIRECT_ACCEPT_SLOW_MAX):
+    if ds["utilization"] > 1.0:
+        # Full menu (both channel counts, at this fps AND at the mono
+        # floor fps) so an expert sees every at-rate option in one
+        # refusal, not just the shape they happened to try.
+        s_at = direct_max_raw_bytes(fps_val, 2, 1.0)
+        s_90 = direct_max_raw_bytes(fps_val, 2, 0.90)
+        m_at = direct_max_raw_bytes(fps_val, 1, 1.0)
+        m_90 = direct_max_raw_bytes(fps_val, 1, 0.90)
+        mono_floor = min_fps_for(1)
+        m_floor_at = direct_max_raw_bytes(mono_floor, 1, 1.0)
         raise SystemExit(
             f"error: this direct-serve encode cannot play at rate - "
             f"worst-frame wire utilization {ds['utilization']:.2f} > "
@@ -2069,33 +2083,18 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
             f"{ds['demand_kbs']:.0f} KB/s vs the "
             f"~{SD_WIRE_BYTES_PER_MS * TMODEL_COEFFS['audio_factor'] * 1000 / (1024 * DIRECT_TRANSPORT_FACTOR):.0f} KB/s "
             f"measured direct-transport rate). Direct-serve has NO ring "
-            f"to absorb bursts - largest raw surface at {fps_val:g}fps "
-            f"{'stereo' if ex['channels'] == 2 else 'mono'} is "
-            f"{direct_max_raw_bytes(fps_val, ex['channels']):,} B "
-            f"({width}x{direct_max_raw_bytes(fps_val, ex['channels']) // width} "
-            f"at this width). Use a smaller shape, lower --fps, or drop "
-            f"--direct and let the delta encoder compress it."
-            + (f" --direct-accept-slow ships it anyway at the degraded "
-               f"rate (owner policy)."
-               if ds["utilization"] <= DIRECT_ACCEPT_SLOW_MAX else
-               f" NOT eligible for --direct-accept-slow either: "
-               f"{ds['utilization']:.2f} is past the "
-               f"{DIRECT_ACCEPT_SLOW_MAX:.2f} override ceiling."))
-    elif ds["utilization"] > 1.0:
-        slow = (ds["utilization"] - 1.0) * 100.0
-        print(f"  WARNING (--direct-accept-slow): direct-serve WORST-frame "
-              f"wire utilization {ds['utilization']:.3f} - this clip plays "
-              f"up to {slow:.1f}% SLOW ({ds['sd_ms']:.2f} ms against a "
-              f"{ds['period_ms']:.2f} ms period on the worst frame, which "
-              f"BOUNDS the clip: {nframes_out} frames <= "
-              f"{nframes_out * ds['sd_ms'] / 1000.0:.2f} s wall vs "
-              f"{nframes_out / fps_val:.2f} s nominal; ordinary "
-              f"(no-palette) frames run at the smaller section size). "
-              f"Audio and video "
-              f"stay locked to each other (the ISR holds its last "
-              f"sample while the main loop is late - no samples are "
-              f"dropped), at the cost of a ~{ds['sd_ms'] - ds['period_ms']:.1f} "
-              f"ms held-sample gap once per frame.")
+            f"to absorb bursts and NO slow-playback opt-out (TIGHTEN "
+            f"policy, Card #5 2026-07-26 owner ruling: this gate is "
+            f"unconditional above utilization 1.00). The envelope at "
+            f"{fps_val:g}fps, {width}-wide: stereo tops out at "
+            f"{width}x{s_at // width} at-rate ({width}x{s_90 // width} "
+            f"with the 0.90 burst margin every other gate carries); "
+            f"mono tops out at {width}x{m_at // width} at-rate "
+            f"({width}x{m_90 // width} at 0.90). Dropping to the "
+            f"{mono_floor:.2f}fps mono floor opens the envelope to "
+            f"{width}x{m_floor_at // width}. Use a smaller shape, lower "
+            f"--fps, switch to --mono, or drop --direct and let the "
+            f"delta encoder compress it.")
     elif ds["utilization"] > STREAM_WARN_UTIL:
         print(f"  warning: direct-serve wire utilization "
               f"{ds['utilization']:.2f} (> {STREAM_WARN_UTIL:.2f}) - "
@@ -2162,7 +2161,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
            dither=False, mono=False, merge_gaps=True, hysteresis=True,
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=1.0,
-           direct=False, direct_accept_slow=False):
+           direct=False):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     quality_profile: only "max" is implemented in T1 (the dual-budget
@@ -2181,7 +2180,9 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     direct (--direct, SP15 3c): the raw-equivalent all-literal preset -
     every frame a full keyframe repaint, header direct-serve hint set
     (flags bit1), gated by worst-frame WIRE feasibility instead of the
-    delta pipeline's dual budgets (see _encode_direct)."""
+    delta pipeline's dual budgets (see _encode_direct). TIGHTEN ruling
+    (Card #5, 2026-07-26): the gate is unconditional - there is no
+    slow-playback opt-out at this or any layer above it."""
     if quality_profile != "max":
         raise ValueError(f"quality_profile {quality_profile!r} not implemented - only 'max'")
 
@@ -2194,7 +2195,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
         # SP15 3c: the all-literal direct-serve preset - no delta
         # pipeline, no rate control; see _encode_direct.
         return _encode_direct(ex, width, height, fps_val, out_path,
-                              report_path, direct_accept_slow)
+                              report_path)
     result = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width, height,
                           fps_val, cap_bytes_frac=cap_bytes_frac,
                           budget_scale=stream_budget,

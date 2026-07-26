@@ -146,16 +146,19 @@
 #              007.VID <- classic 256x192 (Sintel_1080_10s_30MB.mp4, full clip, ~6.4MB)
 #              008.VID <- full 320x256    (Big_Buck_Bunny_1080_10s_30MB.mp4, --stream-budget 0.51)
 #              009.VID <- 16:9 320x192 LB (Jellyfish_1080_10s_30MB.mp4, --stream-budget 0.54 - re-derived at the Card #5 gapped prices)
-#              010.VID <- classic-wide 256x144 --direct (Sintel full clip - VDIR/VDIRL, the direct-serve leg)
-#              011.VID <- classic-wide 256x144 --direct (1920x1080-25p test card @00:00:00 dur 5.0 - DPACE/DPACL, the DIRECT PACING CARD)
+#              010.VID <- 256x133 --direct (Sintel full clip - VDIR/VDIRL, the direct-serve leg)
+#              011.VID <- 256x133 --direct (1920x1080-25p test card @00:00:00 dur 5.0 - DPACE/DPACL, the DIRECT PACING CARD)
 #              099.VID <- byte-copy of 007.VID (VSTRU: DEBUG builds
 #                         throttle the producer for video number 99 -
 #                         the deliberate-underrun leg)
-#            010/011 carry --direct-accept-slow: Card #5's first silicon
-#            rows put the direct transport at 917 B/ms (not the 1100 the
-#            3c gate assumed), so classic-wide@25 stereo scores 1.075 and
-#            plays ~6% slow. The flag is the OWNER POLICY LINE - keep it
-#            (accept) or drop it and shrink the shape (tighten).
+#            010/011 TIGHTEN RULING (Card #5, 2026-07-26, owner-decided):
+#            the direct-serve gate is UNCONDITIONAL - no accept-slow
+#            override. Card #5's first silicon rows put the direct
+#            transport at 917 B/ms (not the 1100 the 3c gate assumed), so
+#            classic-wide 256x144@25 stereo scored 1.075 (~6% slow) and is
+#            now refused outright by its own gate; 010/011 are encoded at
+#            256x133@25 stereo instead (util 0.99, at-rate) - the
+#            recalibrated gate's largest at-rate classic surface.
 #            STREAM OPERATING POINTS (Card #3 VSTR1 follow-up): the
 #            first 008/009 encodes rode the full decode-T budget -
 #            mean supply utilization 1.74/1.30, mathematically
@@ -683,25 +686,28 @@ if ($VidLong) {
         # operating points were chosen against, now +0.63 dB richer
         '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.54'); tag = 'sb54' }
         # SP15 3c: 010 = the DIRECT-SERVE leg (VDIR/VDIRL) - all-literal
-        # raw-equivalent classic-wide encode, header hint set; the player
-        # serves it SD-to-surface with no ring.
-        # SP15 Card #5 RECALIBRATION: the 3c gate scored this shape 0.90;
-        # the first silicon rows (VDIR/VDIRL, 663.4/663.6 ticks/frame)
-        # measured the direct transport at 917 B/ms against the 1100 B/ms
-        # the gate assumed, so the honest score is 1.075 - it plays ~6%
-        # slow. --direct-accept-slow is the OWNER POLICY LINE (Card #5
-        # item 2): keep it to ship the shape at the degraded rate, or
-        # DROP it and re-encode at 256x133@25 stereo (the recalibrated
-        # gate's largest at-rate classic surface) / 256x144 @23.5 mono.
-        '010.VID' = @{ shape = 'classic-wide'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct', '--direct-accept-slow'); tag = 'direct' }
+        # raw-equivalent encode, header hint set; the player serves it
+        # SD-to-surface with no ring.
+        # SP15 Card #5 TIGHTEN RULING (2026-07-26, owner-decided): the
+        # recalibrated gate is UNCONDITIONAL - no accept-slow override
+        # exists. classic-wide 256x144@25 stereo scored 1.075 (~6%
+        # slow) and is refused outright by its own gate now, so 010 is
+        # re-encoded at 256x133@25 stereo - the recalibrated gate's
+        # largest at-rate classic surface (util 0.99, real content;
+        # direct demand is content-independent - see 011 below).
+        '010.VID' = @{ shape = '256x133'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct' }
         # 011 = the DIRECT-MODE PACING CARD (DPACE/DPACL, Card #5): the
         # SAME test-card source and the SAME 5.000 s / 125 frames as
-        # 006, encoded --direct at the shipped 010 shape - so the 1 Hz
-        # beep makes the direct rate OBJECTIVELY measurable by stopwatch
-        # exactly as VPACL does for the delta paths (12 loop passes =
-        # 60 s nominal; at the modeled 6.1% the wall clock lands ~63.6 s
-        # and the beep/stopwatch split IS the verdict).
-        '011.VID' = @{ shape = 'classic-wide'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct', '--direct-accept-slow'); tag = 'directpace'; start = '00:00:00'; duration = '5.0' }
+        # 006, encoded --direct at the shipped 010 shape (256x133@25
+        # stereo, util 0.99) - so the 1 Hz beep makes the direct rate
+        # OBJECTIVELY measurable by stopwatch exactly as VPACL does for
+        # the delta paths: TRUE at-rate playback now (12 loop passes =
+        # 60 s nominal should land at 60.0 s, not the ~63.6 s the
+        # refused 1.075 shape would have produced). The 11-line crop
+        # (144 -> 133) was checked via nxv2dec frame export: the pts
+        # banner (row 0) and the seconds-digit box (right edge) are
+        # both still fully inside the frame, not clipped.
+        '011.VID' = @{ shape = '256x133'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct'); tag = 'directpace'; start = '00:00:00'; duration = '5.0' }
     }
     $vidLongStaged = 0
     foreach ($dest in $vidLongMap.Keys) {
