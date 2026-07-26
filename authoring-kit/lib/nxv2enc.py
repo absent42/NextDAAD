@@ -337,17 +337,55 @@ TMODEL_COEFFS = {
 #
 # The factor DIVIDES the usable budget, so it is a straight de-rating of
 # the modeled-T cap. A frame emitted at the de-rated cap is predicted to
-# consume R/FACTOR of one frame period on silicon - 0.90 flat, 0.90
-# gapped - leaving real PACE margin on both.
+# consume R/FACTOR of one frame period on silicon, leaving real PACE
+# margin on both classes.
 #
 # Calibrated at gapped heights 144 and 192. A NEW gapped height below
 # 144 must be re-checked on silicon before it is trusted (the crossing
 # rate scales roughly with 1/height).
+#
+# ---------------------------------------------------------------------
+# GAPPED RE-SETTLEMENT (SP15 Card #5, 2026-07-26, core 3.02.04) - the
+# COLUMN-HOP payback. Stage 3c gave the gapped fast handlers an INLINE
+# single-crossing column hop, so a crossing op no longer falls into the
+# chunked bodies. Card #5 re-measured R on the SAME staged streams
+# (sd\003/004/006, byte-identical since Card #2 - no re-encode enters
+# the ratio), same formula, same 1792 T tick:
+#
+#   | fixture | shape         | model T/f | silicon T/f | R post | R pre |
+#   |---------|---------------|-----------|-------------|--------|-------|
+#   | 003.VID | 320x192 LB    |   585,811 |     692,572 | 1.005  | 1.064 |
+#   | 004.VID | 320x144 LB    |   561,298 |     675,417 | 1.023  |   -   |
+#   | 006.VID | 320x192 LB TC |   251,202 |     566,172 | 1.916  | 2.015 |
+#   | 001/002/005 (flat, regression) 0.898 / 0.847 / 0.757 - UNMOVED   |
+#
+# The dense real-footage gapped rows collapsed onto the flat cluster:
+# 1.20/1.40 -> 1.005/1.023. The hop is worth 41,001 T/frame on 003
+# (5.6%) and 29,360 T/frame on 006 (4.9%) against the same streams.
+#
+# TWO REGIMES, and the factor is calibrated on the one the cap governs:
+#   - DENSE (003/004): frames are budget-BOUND (22 of 25 on 003), so
+#     their mean IS their at-cap cost. R 1.005-1.023. These are the
+#     rows a cap de-rating must answer to.
+#   - SPARSE (006, the test card): 90% of the surface is skipped every
+#     frame and the model prices it at 251 kT while silicon spends
+#     566 kT - R 1.92, twice out of family. DISCLOSED MODEL WEAKNESS,
+#     not a cap hazard: a sparse frame is cheap in ABSOLUTE terms
+#     (006 measures 20.2 ms of a 40 ms period, PACE 285 ticks), and
+#     sparseness bounds the byte demand in the same breath. The two
+#     gapped operating points are 2 clusters, not a curve - do NOT
+#     read a law into them; a third, genuinely intermediate gapped
+#     density would be the row that settles the shape.
+# Factor = worst DENSE gapped R x the same ~11% margin the 2026-07-25
+# calibration used: 1.023 x 1.12 = 1.15.
 # ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
     "flat":   1.00,   # worst observed 0.898 (001) - 11% margin, and the
                        #   model is conservative here by construction
-    "gapped": 1.55,   # worst observed 1.401 (004, h=144) - 11% margin
+    "gapped": 1.15,   # worst observed DENSE 1.023 (004, h=144) - 12%
+                       #   margin [Card #5 post-column-hop re-measure,
+                       #   2026-07-26]. Was 1.55 (pre-hop worst 1.401).
+                       #   Gapped cap @25fps: 614,194 -> 827,826 T
 }
 
 
@@ -422,11 +460,22 @@ def usable_budget_t(fps, width=None, height=None):
 # the reference fresh-boot 2MB machine and skip the check (smaller
 # pools stream them too, disclosed on the leg card as underrun-prone).
 # ---------------------------------------------------------------------
+# SPARSE-GAPPED CAVEAT (Card #5): the gapped rows below are the DENSE
+# real-footage measurement. A SPARSE gapped stream (006-class: most of
+# the surface skipped every frame) runs R ~1.92, so busy_ms below is
+# ~2x optimistic for such content. It is not a streaming hazard because
+# the two terms are anti-correlated - sparseness that inflates R also
+# collapses the byte demand the wire term prices: a 006-class streamed
+# clip totals busy 20.2 ms + SD 6.0 ms = 0.66 utilization on the
+# measured numbers. Disclosed, not machined around (cf. the SKIP16
+# under-price, task-2-final-settlement section 5.3).
 TMODEL_SILICON_R = {
     "flat_256": 0.84,   # measured 0.834 (002, 256x192) / 0.760 (005)
     "flat_320": 0.90,   # measured 0.898 (001, 320x256 flat)
-    "gapped_192": 1.20,  # measured 1.199 (003, 320x192 LB)
-    "gapped_144": 1.40,  # measured 1.401 (004, 320x144 LB)
+    "gapped_192": 1.01,  # measured 1.005 (003, 320x192 LB) [Card #5
+                          #   post-column-hop; was 1.20 pre-hop]
+    "gapped_144": 1.03,  # measured 1.023 (004, 320x144 LB) [Card #5;
+                          #   was 1.40 pre-hop]
 }
 
 SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon prefill floor -
@@ -564,26 +613,88 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
 # ---------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------
+# DIRECT_TRANSPORT_FACTOR - the direct-serve TRANSPORT GLUE term, and
+# the 3c gate's one omission. SILICON-SETTLED on Card #5 (2026-07-26,
+# core 3.02.04), the first hardware run of the direct path:
+#
+#   | leg   | FRM  | ticks/frame | ms/frame | B/frame | delivered   |
+#   |-------|------|-------------|----------|---------|-------------|
+#   | VDIR  |  250 |     663.37  |  42.456  | 38,932  | 916.99 B/ms |
+#   | VDIRL | 1016 |     663.60  |  42.470  | 38,932  | 916.69 B/ms |
+#
+# The 3c gate priced the frame at SD_WIRE_BYTES_PER_MS * audio_factor =
+# 1100.19 B/ms and stated that "decode-side overhead beyond the wire is
+# second-order ... covered by the same conservative wire floor". IT IS
+# NOT. Measured / modeled = 1100.19 / 917 = 1.200 on BOTH legs
+# independently (agreement 0.03%), i.e. the direct transport delivers
+# only 83% of the bare wire rate. What the missing 20% is:
+#   - vid_ds_blkopen once per 512 B block (76 per frame here): previous
+#     block's 2 CRC bytes drained off the wire, section-bound + pass-
+#     remain accounting, filemap run bookkeeping, and the BOUNDED DATA
+#     TOKEN WAIT - the card's own inter-block gap inside an open CMD18
+#     window, which no per-byte rate can express;
+#   - vid_ds_xfer re-arms inir every <= 256 B (144 arms/frame) with a
+#     min/clip chain and two 16-bit sbc pairs per arm;
+#   - section padding (793 B/frame here) is discarded through
+#     vid_ds_pad's byte loop at ~37 T/B, not through inir's 21 T/B;
+#   - vid_ds_copy_body's dest-normalize + chunk walk per segment, and
+#     the always-slow op parse (KSTART/COPY/KFLIP, +PAL on cuts).
+# All of it scales with BLOCKS, not with picture content, which is why
+# one factor on the byte demand reproduces both legs: the recalibrated
+# model predicts 010's ordinary (no-palette) frame at 42.44 ms against
+# 42.456 measured (0.03%), and its scene-start frame at 43.00 ms - the
+# gate's own worst-frame criterion. Same silicon-anchoring discipline
+# as the streaming
+# gate carries - and like it, the factor is CO-FITTED to the wire floor
+# above: do not move SD_WIRE_BYTES_PER_MS without re-deriving this.
+DIRECT_TRANSPORT_FACTOR = 1.20
+
+# Policy line (OWNER-FACING, Card #5): at 1.20 the shipped 010 fixture
+# (classic-wide 256x144 @25 stereo) scores 1.075 - it plays ~6% slow,
+# which is what silicon does. direct_accept_slow=True downgrades the
+# refusal to a quantified warning; see _encode_direct.
+DIRECT_ACCEPT_SLOW_MAX = 1.25   # beyond this even the accept path refuses
+
+
 def direct_supply_check(worst_frame_bytes, fps):
-    """Direct-serve wire feasibility (SP15 3c). A direct-serve session
-    reads every byte of a frame section (audio blocks + payload blocks,
-    padding included) off the SD wire INSIDE that frame's own period -
-    the literal bytes are served straight to the surface (ini
-    transport, the whole point of the mode), and there is NO ring to
-    absorb bursts. The criterion is therefore the WORST frame, not the
-    clip mean (contrast stream_supply_check's documented mean-rate
-    limitation above). audio_factor de-rates the wire exactly as the
-    streaming gate does - the ISR sample tax applies to the ini
-    transport identically. Decode-side overhead beyond the wire (op
-    parse, RUN fills) is second-order for the all-literal composition
-    this gate fronts and is covered by the same conservative wire
-    floor the streaming gate leans on."""
+    """Direct-serve wire feasibility (SP15 3c, RECALIBRATED Card #5). A
+    direct-serve session reads every byte of a frame section (audio
+    blocks + payload blocks, padding included) off the SD wire INSIDE
+    that frame's own period - the literal bytes are served straight to
+    the surface (inir transport, the whole point of the mode), and
+    there is NO ring to absorb bursts. The criterion is therefore the
+    WORST frame, not the clip mean (contrast stream_supply_check's
+    documented mean-rate limitation above). audio_factor de-rates the
+    wire exactly as the streaming gate does - the ISR sample tax
+    applies to the inir transport identically - and
+    DIRECT_TRANSPORT_FACTOR carries the per-block/per-arm transport
+    glue the first silicon rows measured (see its block above; the 3c
+    gate omitted it and ran 20% optimistic)."""
     af = TMODEL_COEFFS["audio_factor"]
     period_ms = 1000.0 / float(fps)
-    sd_ms = worst_frame_bytes / (SD_WIRE_BYTES_PER_MS * af)
+    sd_ms = (worst_frame_bytes * DIRECT_TRANSPORT_FACTOR
+             / (SD_WIRE_BYTES_PER_MS * af))
     return dict(utilization=sd_ms / period_ms, sd_ms=sd_ms,
                 period_ms=period_ms,
                 demand_kbs=worst_frame_bytes * float(fps) / 1024.0)
+
+
+def direct_max_raw_bytes(fps, channels=2, util=1.0):
+    """Largest RAW surface (width*height) a direct-serve encode can
+    carry at this fps/channel count and utilization target, under the
+    recalibrated gate. Inverse of direct_supply_check: the frame
+    section is audio_pad + 512-rounded(payload), and the payload is
+    KSTART(1) + PAL(1+512) + COPY16(3) + raw + terminal(1)."""
+    period_ms = 1000.0 / float(fps)
+    budget_b = (period_ms * util * SD_WIRE_BYTES_PER_MS
+                * TMODEL_COEFFS["audio_factor"] / DIRECT_TRANSPORT_FACTOR)
+    # the audio pad comes from audio_layout, NOT a local rate guess -
+    # mono runs at RATE_MONO (23325), not the stereo 15625, so a local
+    # copy of that arithmetic gets the mono envelope wrong
+    apad = audio_layout(fps, channels)[3]
+    payload_blocks = int((budget_b - apad) // 512)
+    return max(0, payload_blocks * 512 - (1 + 1 + PAL_BLOCK_SIZE + 3 + 1))
 
 
 # ---------------------------------------------------------------------
@@ -1911,7 +2022,8 @@ def _apply_segments(prev_flat, target_flat, gcls, gstarts, glens):
     return out
 
 
-def _encode_direct(ex, width, height, fps_val, out_path, report_path=None):
+def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
+                    direct_accept_slow=False):
     """SP15 3c DIRECT-SERVE encode (the raw-equivalent all-literal
     preset): every frame is a single-frame keyframe span (KSTART
     [+ PAL] + COPY + KFLIP) and the header sets the direct-serve hint
@@ -1947,18 +2059,43 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None):
     # the SD wire inside one frame period (no ring absorber) ---
     worst_frame = abytes_pad + per_frame_cap_blocks * 512
     ds = direct_supply_check(worst_frame, fps_val)
-    if ds["utilization"] > 1.0:
+    if ds["utilization"] > 1.0 and not (
+            direct_accept_slow and ds["utilization"] <= DIRECT_ACCEPT_SLOW_MAX):
         raise SystemExit(
             f"error: this direct-serve encode cannot play at rate - "
             f"worst-frame wire utilization {ds['utilization']:.2f} > "
             f"1.00 ({worst_frame} B/frame needs {ds['sd_ms']:.1f} ms of "
             f"SD wire per {ds['period_ms']:.0f} ms frame; "
             f"{ds['demand_kbs']:.0f} KB/s vs the "
-            f"~{SD_WIRE_BYTES_PER_MS * TMODEL_COEFFS['audio_factor'] * 1000 / 1024:.0f} KB/s "
-            f"pace wire rate). Direct-serve has NO ring to absorb "
-            f"bursts - use a smaller shape (raw bytes/frame = "
-            f"width*height), lower --fps, or drop --direct and let the "
-            f"delta encoder compress it.")
+            f"~{SD_WIRE_BYTES_PER_MS * TMODEL_COEFFS['audio_factor'] * 1000 / (1024 * DIRECT_TRANSPORT_FACTOR):.0f} KB/s "
+            f"measured direct-transport rate). Direct-serve has NO ring "
+            f"to absorb bursts - largest raw surface at {fps_val:g}fps "
+            f"{'stereo' if ex['channels'] == 2 else 'mono'} is "
+            f"{direct_max_raw_bytes(fps_val, ex['channels']):,} B "
+            f"({width}x{direct_max_raw_bytes(fps_val, ex['channels']) // width} "
+            f"at this width). Use a smaller shape, lower --fps, or drop "
+            f"--direct and let the delta encoder compress it."
+            + (f" --direct-accept-slow ships it anyway at the degraded "
+               f"rate (owner policy)."
+               if ds["utilization"] <= DIRECT_ACCEPT_SLOW_MAX else
+               f" NOT eligible for --direct-accept-slow either: "
+               f"{ds['utilization']:.2f} is past the "
+               f"{DIRECT_ACCEPT_SLOW_MAX:.2f} override ceiling."))
+    elif ds["utilization"] > 1.0:
+        slow = (ds["utilization"] - 1.0) * 100.0
+        print(f"  WARNING (--direct-accept-slow): direct-serve WORST-frame "
+              f"wire utilization {ds['utilization']:.3f} - this clip plays "
+              f"up to {slow:.1f}% SLOW ({ds['sd_ms']:.2f} ms against a "
+              f"{ds['period_ms']:.2f} ms period on the worst frame, which "
+              f"BOUNDS the clip: {nframes_out} frames <= "
+              f"{nframes_out * ds['sd_ms'] / 1000.0:.2f} s wall vs "
+              f"{nframes_out / fps_val:.2f} s nominal; ordinary "
+              f"(no-palette) frames run at the smaller section size). "
+              f"Audio and video "
+              f"stay locked to each other (the ISR holds its last "
+              f"sample while the main loop is late - no samples are "
+              f"dropped), at the cost of a ~{ds['sd_ms'] - ds['period_ms']:.1f} "
+              f"ms held-sample gap once per frame.")
     elif ds["utilization"] > STREAM_WARN_UTIL:
         print(f"  warning: direct-serve wire utilization "
               f"{ds['utilization']:.2f} (> {STREAM_WARN_UTIL:.2f}) - "
@@ -2025,7 +2162,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
            dither=False, mono=False, merge_gaps=True, hysteresis=True,
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=1.0,
-           direct=False):
+           direct=False, direct_accept_slow=False):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     quality_profile: only "max" is implemented in T1 (the dual-budget
@@ -2057,7 +2194,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
         # SP15 3c: the all-literal direct-serve preset - no delta
         # pipeline, no rate control; see _encode_direct.
         return _encode_direct(ex, width, height, fps_val, out_path,
-                              report_path)
+                              report_path, direct_accept_slow)
     result = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width, height,
                           fps_val, cap_bytes_frac=cap_bytes_frac,
                           budget_scale=stream_budget,

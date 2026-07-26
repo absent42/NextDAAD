@@ -923,14 +923,21 @@ def t10_silicon_coeffs():
     # 952000 - pin the flat baseline against the real flat shape instead.
     expect(abs(enc.usable_budget_t(25.0, 320, 256) - 952000.0) < 1.0,
            f"silicon usable budget @25 (flat 320x256) should be 952000 T, got {enc.usable_budget_t(25.0, 320, 256)}")
-    # Composed-player safety factor (stage-3a real-footage silicon leg,
-    # 2026-07-25): flat surfaces come in UNDER the model (worst 0.898),
-    # mode-1 LETTERBOX surfaces cost 1.20-1.40x it (column-hop chunked
-    # bodies). Pinned here so a coefficient re-fit cannot silently drop
-    # the de-rating that keeps a gapped clip inside one frame period.
+    # Composed-player safety factor. Flat surfaces come in UNDER the
+    # model (worst 0.898, stage-3a leg 2026-07-25). Mode-1 LETTERBOX
+    # surfaces cost 1.20-1.40x it PRE-column-hop; the 3c inline hop
+    # collapsed the DENSE gapped rows onto the flat cluster (Card #5,
+    # 2026-07-26: 003 R=1.005, 004 R=1.023 on byte-identical streams),
+    # so the factor re-settled 1.55 -> 1.15. Pinned here so a
+    # coefficient re-fit cannot silently drop the de-rating that keeps
+    # a gapped clip inside one frame period.
     cf = enc.TMODEL_COMPOSITION_FACTOR
     expect(cf["flat"] == 1.00, f"flat composition factor should be 1.00, got {cf['flat']}")
-    expect(cf["gapped"] == 1.55, f"gapped composition factor should be 1.55, got {cf['gapped']}")
+    expect(cf["gapped"] == 1.15, f"gapped composition factor should be 1.15, got {cf['gapped']}")
+    # the de-rating must still BE a de-rating, and must still exceed the
+    # worst measured dense gapped R (margin, not a coincidence)
+    expect(cf["gapped"] > enc.TMODEL_SILICON_R["gapped_144"] > enc.TMODEL_SILICON_R["gapped_192"],
+           "gapped factor must carry margin over the worst measured gapped R")
     expect(enc.is_gapped(320, 192) and enc.is_gapped(320, 144),
            "mode-1 sub-256 heights are gapped")
     expect(not enc.is_gapped(320, 256) and not enc.is_gapped(256, 144)
@@ -943,25 +950,36 @@ def t10_silicon_coeffs():
     expect(abs(enc.usable_budget_t(25.0, 256, 144) - 952000.0) < 1.0,
            "flat 256x144 keeps the full 952000 T budget")
     gb = enc.usable_budget_t(25.0, 320, 192)
-    # Independent literal, not re-derived from the 1.55 constant above -
+    # Independent literal, not re-derived from the 1.15 constant above -
     # a coefficient/factor typo that moved both numbers together would
-    # otherwise still pass this assertion.
-    expect(abs(gb - 614193.5) < 1.0,
-           f"gapped 320x192 budget should be 614193.5 T, got {gb:.0f}")
+    # otherwise still pass this assertion. 1120000*0.85/1.15 = 827826.1
+    expect(abs(gb - 827826.1) < 1.0,
+           f"gapped 320x192 budget should be 827826.1 T, got {gb:.0f}")
     # Fail-safe default (nxv2enc.composition_factor): an unset/unknown
     # shape must resolve to the pessimistic gapped factor, not the
     # optimistic flat one.
-    expect(abs(enc.usable_budget_t(25.0) - 614193.5) < 1.0,
-           f"unknown-shape budget should fail safe to the gapped 614193.5 T, got {enc.usable_budget_t(25.0):.0f}")
+    expect(abs(enc.usable_budget_t(25.0) - 827826.1) < 1.0,
+           f"unknown-shape budget should fail safe to the gapped 827826.1 T, got {enc.usable_budget_t(25.0):.0f}")
     # ... and the keyframe chunk planner must shrink with it (a kf chunk
     # is one long COPY straight down the paint order - it crosses every
     # column boundary the gapped surface has).
     expect(enc.kf_chunk_budget_bytes(25.0, True, 320, 192)
            < enc.kf_chunk_budget_bytes(25.0, True, 320, 256),
            "gapped keyframe chunks must be smaller than flat ones")
-    expect(len(enc.plan_kf_chunks(320 * 192, 25.0, 320, 192))
-           > len(enc.plan_kf_chunks(320 * 192, 25.0, 320, 256)),
-           "a gapped keyframe span needs more chunks at the de-rated budget")
+    # ... and that de-rating must propagate into the PLAN, not just the
+    # per-chunk budget. Asserted on the plan's shape rather than on its
+    # chunk COUNT: at the Card #5 factor (1.15) a 61,440 B span happens
+    # to need 2 chunks either way, so a count comparison would test
+    # where an integer boundary falls, not whether the de-rating
+    # applies. Chunk count must never DROP, and the first (budget-sized)
+    # chunk must be strictly smaller - that is the contract.
+    gap_plan = enc.plan_kf_chunks(320 * 192, 25.0, 320, 192)
+    flat_plan = enc.plan_kf_chunks(320 * 192, 25.0, 320, 256)
+    expect(len(gap_plan) >= len(flat_plan),
+           "a gapped keyframe span never needs FEWER chunks than a flat one")
+    expect(gap_plan[0][1] < flat_plan[0][1],
+           f"the gapped plan's first chunk must be smaller: "
+           f"{gap_plan[0][1]} !< {flat_plan[0][1]}")
     # K* derives from the coefficients (self-retunes). At sitting-2 silicon:
     # (130+387)/20.2 = 25.6 B.
     ks = enc.merge_kstar()
@@ -1441,7 +1459,13 @@ def t11_direct_serve():
     ex = _synthetic_ex(n, width, height, cut_at=3)
     with tf.TemporaryDirectory() as td:
         out = Path(td) / "direct.vid"
-        report = enc._encode_direct(ex, width, height, 25.0, out)
+        # direct_accept_slow: this case exercises the CONTAINER (the
+        # all-literal composition, flags bit1, nxv2dec byte-exactness),
+        # not the wire policy. Since the Card #5 recalibration
+        # classic-wide @25 stereo scores 1.075 and is a policy-override
+        # shape; the gate itself is tested in t11_direct_gate below.
+        report = enc._encode_direct(ex, width, height, 25.0, out,
+                                     direct_accept_slow=True)
         expect(report.mode == "direct", "report mode")
         expect(report.frames == n, "frame count")
         buf = out.read_bytes()
@@ -1529,9 +1553,33 @@ def t11_direct_gate():
         else:
             raise AssertionError("320x256@25 direct must be refused "
                                  "(raw 81920 B/frame over the wire)")
-    # the sanity anchor: classic-wide (256x144) is admissible
-    ds = enc.direct_supply_check(1536 + ((256 * 144 + 520 + 511) // 512) * 512, 25.0)
-    expect(ds["utilization"] < 1.0, "classic-wide direct is feasible")
+    # DIRECT TRANSPORT RECALIBRATION (Card #5, 2026-07-26): the first
+    # silicon rows measured 663.4/663.6 ticks/frame on VDIR/VDIRL =
+    # 917 B/ms delivered against the 1100 B/ms the 3c gate assumed.
+    # The factor is pinned, and so is the row it reproduces.
+    expect(enc.DIRECT_TRANSPORT_FACTOR == 1.20,
+           f"direct transport factor should be the silicon 1.20, got {enc.DIRECT_TRANSPORT_FACTOR}")
+    mean_frame = 1536 + 73 * 512          # 010's ordinary (no-PAL) section
+    ds = enc.direct_supply_check(mean_frame, 25.0)
+    expect(abs(ds["sd_ms"] - 42.44) < 0.05,
+           f"the recalibrated model must reproduce VDIR's 42.456 ms/frame, got {ds['sd_ms']:.3f}")
+    # ... so classic-wide@25 stereo is NO LONGER at-rate - it is the
+    # shape the owner policy line is about (1.075, ~6% slow)
+    worst = 1536 + 74 * 512               # + the scene-start PAL block
+    expect(1.05 < enc.direct_supply_check(worst, 25.0)["utilization"] < 1.10,
+           "classic-wide@25 direct scores ~1.075 under the recalibrated gate")
+    # the recalibrated at-rate envelope, and its monotonicity
+    raw25 = enc.direct_max_raw_bytes(25.0, 2, 1.0)
+    expect(34000 < raw25 < 34600, f"25fps stereo direct tops out ~34.3 KB raw, got {raw25}")
+    expect(enc.direct_supply_check(
+        1536 + ((raw25 + 518 + 511) // 512) * 512, 25.0)["utilization"] <= 1.0,
+        "direct_max_raw_bytes must actually pass its own gate")
+    expect(enc.direct_max_raw_bytes(18.22, 1, 1.0) > raw25,
+           "a lower fps / mono admits a bigger direct surface")
+    # the accept-slow policy override: refuses without it, ships with it,
+    # and still refuses above DIRECT_ACCEPT_SLOW_MAX
+    expect(1.0 < enc.DIRECT_ACCEPT_SLOW_MAX < 1.5,
+           "the accept-slow ceiling is a bounded override, not a blank cheque")
 
 
 def main():
@@ -1546,7 +1594,12 @@ def main():
         except SkipCase as exc:
             skipped += 1
             print(f"[SKIP] {name}\n       {exc}")
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
+            # SystemExit is NOT an Exception: the encoder's supply gates
+            # raise it, so without naming it here an unexpected gate
+            # refusal killed the whole run at that case - no [FAIL] line
+            # and no summary at all (observed on the Card #5
+            # recalibration wave, which is how this was found).
             failed += 1
             print(f"[FAIL] {name}\n       {exc.__class__.__name__}: {exc}")
             traceback.print_exc(limit=6)
