@@ -260,7 +260,7 @@ container (a real header, nothing to select at the DSF level) carrying
 a FLIC-lineage delta video stream - SKIP/RUN/COPY/palette opcodes over
 the Layer 2 surface, keyframes composed on the hidden buffer and
 flipped atomically, scene-scoped adaptive 256-colour palettes - at
-roughly 7:1 the size of raw. Any shape is a valid encode: five presets
+roughly 7:1 smaller than raw. Any shape is a valid encode: five presets
 (full 320x256, 16:9 320x192, scope 320x144, classic 256x192,
 classic-wide 256x144) plus free heights down to a single line, at any
 fps (default 25) above the audio floors (stereo 24.40, mono 18.22).

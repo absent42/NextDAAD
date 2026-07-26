@@ -83,8 +83,8 @@ Put these in this kit folder:
 | `GAME` | Base name of your `.DSF`. Blank = auto-detect the single `.DSF`. |
 | `COMPRESS` | `1` = ZX0-compress graphics (smaller); `0` = raw. |
 | `RUN` | `1` = launch CSpect after a successful build; `0` = build only. |
-| `TOOLSDIR` | Folder holding the tools above (default `..\tools`). |
-| `NEXFILE` | The interpreter to ship (default `..\build\nextdaad.nex`). |
+| `TOOLSDIR` | Folder holding the tools above (default `tools`). |
+| `NEXFILE` | The interpreter to ship (default `nextdaad.nex`). |
 | `VIDASPECT`, `VIDFPS`, `VIDOPTS`, `VIDOPTS_NNN` | Video cutscene encoding - see "Video cutscenes" below. |
 
 ## 4. Build and run
@@ -305,7 +305,7 @@ aspect, never distorted.
 **Smaller shapes come out better.** The player's data budget (SD
 streaming rate plus decode time) is fixed, so quality scales inversely
 with pixel count: a clip encoded at a smaller height keeps more detail
-per pixel at the same data rate - roughly twice the bytes per pixel at
+per pixel at the same data rate - roughly 1.7x the bytes per pixel at
 `classic` versus `full`. If a clip looks rough at `full`, re-encode it
 letterboxed. Two caveats: hard content (constant whole-frame motion,
 noise, fades) eats budget regardless of shape, and the letterboxed
@@ -341,14 +341,16 @@ The build encodes every `VIDEO\NNN.mp4` with settings from
 | `VIDASPECT` | Shape for every encode: a preset name, `WIDTHxHEIGHT`, or a bare aspect number (e.g. `2.35` - free height at 320 wide). Blank = `full`. |
 | `VIDFPS` | Frames per second. Blank = 25. |
 | `VIDOPTS` | Extra encoder options for every encode (e.g. `--mono --dither`). |
-| `VIDOPTS_NNN` | Extra options for video `NNN` only (3-digit number), appended after `VIDOPTS` - later options win. |
-| `VIDPROFILE` | Deprecated v1 name, honored one release: `n0`-`n4` map to the nearest v2 shape when `VIDASPECT` is blank. |
+| `VIDOPTS_NNN` | Extra options for video `NNN` only (3-digit number), appended after `VIDOPTS`. For most repeated options videnc takes the last occurrence, so `VIDOPTS_NNN` wins over `VIDOPTS` - except `--aspect`, which videnc always takes over `--shape` regardless of order; a `VIDOPTS_NNN` that sets its own `--shape`/`--width`/`--aspect` still wins for shape (the encode pass suppresses `VIDASPECT` for that video rather than relying on order). |
+| `VIDPROFILE` | Deprecated v1 name, honored one release: `n0`-`n4` map to the nearest v2 shape (and, when `VIDFPS` is blank, that profile's own baked fps, floored to the audio-legal minimum) when `VIDASPECT` is blank. |
 
-The `.vid` beside the source is an encode cache keyed on the `.mp4`'s
-timestamp - after changing these settings, delete the affected
-`VIDEO\NNN.vid` files to force a re-encode. For full per-file control
-(clipping, shapes per video), use `VIDOPTS_NNN` or run the encoder by
-hand (below).
+The `.vid` beside the source is an encode cache keyed on both the
+`.mp4`'s timestamp and a hash of the effective `VIDASPECT`/`VIDFPS`/
+`VIDOPTS`/`VIDOPTS_NNN` settings for that video (stored in a sidecar,
+`VIDEO\NNN.vid.args`) - changing any of these settings is detected
+automatically and forces a re-encode; there is nothing to delete by
+hand. For full per-file control (clipping, shapes per video), use
+`VIDOPTS_NNN` or run the encoder by hand (below).
 
 ### Encoding tools
 
@@ -360,7 +362,7 @@ from `TOOLSDIR` (section 1):
   Python needed, no download). Preferred automatically.
 - **`lib\videnc.py`** - the same encoder as a script, the fallback if
   videnc.exe is ever missing and the source it is built from. Needs
-  Python 3 and Pillow (`pip install Pillow`).
+  Python 3, Pillow and numpy (`pip install Pillow numpy`).
 - **ffmpeg** (`tools\ffmpeg\bin\ffmpeg.exe`) - required either way for
   reading the source video; see `tools\README.txt` for the download.
 

@@ -6,7 +6,7 @@ ffmpeg can read into NextDAAD's native NXV v2 `.VID` format: a
 FLIC-lineage delta format (SKIP/RUN/COPY/palette opcodes over the
 Layer 2 surface, keyframes composed hidden and flipped atomically,
 scene-scoped adaptive palettes) with any shape from five presets to
-free heights, at roughly 7:1 the size of the old raw format. NXV v2 is
+free heights, roughly 7:1 smaller than the old raw format. NXV v2 is
 the only output; v1 files no longer play - re-encode from the original
 source.
 

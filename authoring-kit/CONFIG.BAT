@@ -35,10 +35,19 @@ REM Full list: lib\videnc-README.md, or run the encoder with --help.
 SET VIDOPTS=
 
 REM Per-video overrides: VIDOPTS_NNN (3-digit video number) appends options
-REM for that video only, after VIDOPTS - later options win. The starter's
-REM demo clips use this: 001 keeps the full shape streamable with the
-REM --stream-budget value the encoder's supply gate suggested, 002 picks the
-REM 16:9 preset. See SETUP.md "Streaming, resident and direct delivery".
+REM for that video only, after VIDOPTS. For most repeated options videnc
+REM takes the last occurrence, so VIDOPTS_NNN wins over VIDOPTS - except
+REM --aspect, which videnc always takes over --shape regardless of order;
+REM a VIDOPTS_NNN that sets its own --shape/--width/--aspect still wins
+REM for shape, but via the encode pass suppressing VIDASPECT for that
+REM video rather than argument order. See lib\video.ps1's header comment.
+REM The values below are TUNED TO THE SHIPPED DEMO CLIPS (001.mp4/002.mp4)
+REM - delete these two lines when you replace them with your own videos,
+REM or they will silently apply to whatever you drop in as 001/002. The
+REM starter's demo clips use this: 001 keeps the full shape streamable
+REM with the --stream-budget value the encoder's supply gate suggested,
+REM 002 picks the 16:9 preset. See SETUP.md "Streaming, resident and
+REM direct delivery". The encode pass echoes each applied VIDOPTS_NNN.
 SET VIDOPTS_001=--stream-budget 0.50
 SET VIDOPTS_002=--shape 16:9 --stream-budget 0.52
 
