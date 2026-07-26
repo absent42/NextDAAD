@@ -145,10 +145,17 @@
 #            deliberate-underrun copy:
 #              007.VID <- classic 256x192 (Sintel_1080_10s_30MB.mp4, full clip, ~6.4MB)
 #              008.VID <- full 320x256    (Big_Buck_Bunny_1080_10s_30MB.mp4, --stream-budget 0.51)
-#              009.VID <- 16:9 320x192 LB (Jellyfish_1080_10s_30MB.mp4, --stream-budget 0.68)
+#              009.VID <- 16:9 320x192 LB (Jellyfish_1080_10s_30MB.mp4, --stream-budget 0.54 - re-derived at the Card #5 gapped prices)
+#              010.VID <- classic-wide 256x144 --direct (Sintel full clip - VDIR/VDIRL, the direct-serve leg)
+#              011.VID <- classic-wide 256x144 --direct (1920x1080-25p test card @00:00:00 dur 5.0 - DPACE/DPACL, the DIRECT PACING CARD)
 #              099.VID <- byte-copy of 007.VID (VSTRU: DEBUG builds
 #                         throttle the producer for video number 99 -
 #                         the deliberate-underrun leg)
+#            010/011 carry --direct-accept-slow: Card #5's first silicon
+#            rows put the direct transport at 917 B/ms (not the 1100 the
+#            3c gate assumed), so classic-wide@25 stereo scores 1.075 and
+#            plays ~6% slow. The flag is the OWNER POLICY LINE - keep it
+#            (accept) or drop it and shrink the shape (tighten).
 #            STREAM OPERATING POINTS (Card #3 VSTR1 follow-up): the
 #            first 008/009 encodes rode the full decode-T budget -
 #            mean supply utilization 1.74/1.30, mathematically
@@ -669,12 +676,32 @@ if ($VidLong) {
     $vidLongMap = [ordered]@{
         '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @(); tag = '' }
         '008.VID' = @{ shape = 'full';    src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.51'); tag = 'sb51' }
-        '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.68'); tag = 'sb68' }
+        # 009's operating point RE-DERIVED at the Card #5 gapped prices
+        # (composition factor 1.55 -> 1.15, silicon_r gapped 1.20 -> 1.01):
+        # the higher decode-T cap made 0.68 unstreamable (gate: util 1.58),
+        # and 0.54 lands at util 0.892 - the same ~0.90 target the 3b
+        # operating points were chosen against, now +0.63 dB richer
+        '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.54'); tag = 'sb54' }
         # SP15 3c: 010 = the DIRECT-SERVE leg (VDIR/VDIRL) - all-literal
         # raw-equivalent classic-wide encode, header hint set; the player
-        # serves it SD-to-surface with no ring (worst-frame wire util
-        # ~0.90 at 256x144@25 - the direct gate's admissible envelope)
-        '010.VID' = @{ shape = 'classic-wide'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct'); tag = 'direct' }
+        # serves it SD-to-surface with no ring.
+        # SP15 Card #5 RECALIBRATION: the 3c gate scored this shape 0.90;
+        # the first silicon rows (VDIR/VDIRL, 663.4/663.6 ticks/frame)
+        # measured the direct transport at 917 B/ms against the 1100 B/ms
+        # the gate assumed, so the honest score is 1.075 - it plays ~6%
+        # slow. --direct-accept-slow is the OWNER POLICY LINE (Card #5
+        # item 2): keep it to ship the shape at the degraded rate, or
+        # DROP it and re-encode at 256x133@25 stereo (the recalibrated
+        # gate's largest at-rate classic surface) / 256x144 @23.5 mono.
+        '010.VID' = @{ shape = 'classic-wide'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--direct', '--direct-accept-slow'); tag = 'direct' }
+        # 011 = the DIRECT-MODE PACING CARD (DPACE/DPACL, Card #5): the
+        # SAME test-card source and the SAME 5.000 s / 125 frames as
+        # 006, encoded --direct at the shipped 010 shape - so the 1 Hz
+        # beep makes the direct rate OBJECTIVELY measurable by stopwatch
+        # exactly as VPACL does for the delta paths (12 loop passes =
+        # 60 s nominal; at the modeled 6.1% the wall clock lands ~63.6 s
+        # and the beep/stopwatch split IS the verdict).
+        '011.VID' = @{ shape = 'classic-wide'; src = (Join-Path $root 'tools\demo-files\1920x1080-25p.mp4'); extraArgs = @('--direct', '--direct-accept-slow'); tag = 'directpace'; start = '00:00:00'; duration = '5.0' }
     }
     $vidLongStaged = 0
     foreach ($dest in $vidLongMap.Keys) {
@@ -688,9 +715,14 @@ if ($VidLong) {
         $tag = $vidLongMap[$dest].tag
         if ($tag) { $shapeTag = "${shapeTag}_${tag}" }
         $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_long_cache.vid"
+        # optional cut (011 only - the pacing card is an exact 5.000 s
+        # slice of a 60 s source; everything else is a FULL-duration encode)
+        $cut = @()
+        if ($vidLongMap[$dest].start)    { $cut += @('--start', $vidLongMap[$dest].start) }
+        if ($vidLongMap[$dest].duration) { $cut += @('--duration', $vidLongMap[$dest].duration) }
         if (-not (Test-Path -LiteralPath $cache)) {
-            "encoding sd\$dest (shape $shape, source $(Split-Path -Leaf $src), FULL duration) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
-            & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe" @($vidLongMap[$dest].extraArgs)
+            "encoding sd\$dest (shape $shape, source $(Split-Path -Leaf $src), $(if ($cut) { "cut $($vidLongMap[$dest].start) dur $($vidLongMap[$dest].duration)" } else { 'FULL duration' })) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
+            & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe" @($vidLongMap[$dest].extraArgs) @cut
             if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$dest not staged" }
         }
         if (Test-Path -LiteralPath $cache) {
@@ -706,7 +738,7 @@ if ($VidLong) {
         Copy-Item -LiteralPath "$root\sd\007.VID" -Destination "$root\sd\099.VID" -Force
         $vidLongStaged++
     }
-    "staged $vidLongStaged long fixture(s) -> sd\007-010.VID + sd\099.VID (SP15 3b/3c streaming + direct leg set: VSTR0/VSTR1/VSTR2/VSTRU/VDIR, sp14a-task-4-report.md sections 38/39)"
+    "staged $vidLongStaged long fixture(s) -> sd\007-011.VID + sd\099.VID (SP15 3b/3c streaming + direct leg set: VSTR0/VSTR1/VSTR2/VSTRU/VDIR/DPACE, sp14a-task-4-report.md sections 38/39)"
 }
 
 if ($NxBench) {

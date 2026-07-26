@@ -197,6 +197,8 @@ VPACL   93      verb
 ;           the long-clip seam-free-loop leg; any key exits)
 ;   VSTR2 - 009.VID 16:9 320x192 letterbox (Jellyfish 10s, ~7.3MB -
 ;           the GAPPED streaming path)
+;   DPACE/DPACL - 011.VID classic-wide 256x144 --direct (the test
+;           card, 5.000 s / 125 frames) - the DIRECT PACING CARD
 ;   VSTRU - 099.VID (a copy of 007): plain streamed regression leg -
 ;           the DEBUG throttle that once drove a deliberate-underrun
 ;           drill here is RETIRED (see the 3c NOTE below; git holds
@@ -218,6 +220,18 @@ VSTRU   97      verb
 ; drill's verdict is on record in Cards #3/#4 and git holds the lever.
 VDIR    98      verb
 VDIRL   99      verb
+; SP15 Card #5: the DIRECT PACING CARD. 011.VID is the SAME test-card
+; source and the SAME 5.000 s / 125 frames as 006.VID, encoded --direct
+; at 010's classic-wide shape - so DPACL is to the direct path exactly
+; what VPACL is to the delta paths: stopwatch on a beep, count N beeps,
+; and the beep-vs-stopwatch split measures the direct RATE while
+; beep-vs-counter measures A/V sync. The first silicon rows (VDIR/VDIRL)
+; put direct playback at 663.4 ticks/frame = 42.46 ms against a 40.00 ms
+; period, i.e. ~6% slow, so 12 loop passes (60 s nominal) should land
+; near 63.6 s - an objective verdict on the direct transport's true
+; rate. 88/89 reuse retired VSTG ladder numbers.
+DPACE   88      verb
+DPACL   89      verb
 ; VSTG1-4 / VS2E / VS6 / VS7 / VS2F / VS2G (the SP14a staged-entry
 ; ladder + its sub-ladders, verbs 88-91 and 96-100 - 96/97 since
 ; reused by VSTR2/VSTRU above) are RETIRED with
@@ -798,6 +812,17 @@ $pictureOK
                 DONE
 
 > VDIRL   _     GFX 10 14
+                PROCESS 10
+                DONE
+
+; SP15 Card #5 direct pacing card (see the vocabulary block): 011.VID,
+; the 006 test card encoded --direct at classic-wide. DPACE plays the
+; 5.000 s once, DPACL loops it for the stopwatch leg.
+> DPACE   _     GFX 11 13
+                PROCESS 10
+                DONE
+
+> DPACL   _     GFX 11 14
                 PROCESS 10
                 DONE
 
