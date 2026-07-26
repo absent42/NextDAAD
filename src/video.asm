@@ -5110,8 +5110,11 @@ vidStrmBlkBuf:     ds 512
 ; DEBUG timeline report (carried mechanism: the VID_PAGE block is
 ; LDIR-copied across the page hop into the page-local mirror BEFORE
 ; any print - the copy-across contract, rubric 3). v2 rows: the five
-; frame-loop phases, then TOT/FRM/ERR/OP/FILL (FILL = the resident
-; ring load's 50Hz-frame count - the new ring-fill row).
+; frame-loop phases; the OTHER row carries TOT/FRM/ERR/OP/POS/PASS and
+; the RING row carries the ring triple + FILL (the resident ring load's
+; 50Hz-frame count). FRM prints as live/mirror - the Card #5 trap, see
+; vid_tl_frames_live; FILL moved to the RING row in the same change
+; because the pair pushed the OTHER row past 80 columns.
 ; ---------------------------------------------------------------------
 VID_TL_ROW0 equ 24
 
@@ -5182,7 +5185,11 @@ vid_tl_report_body:
     call dbg_puts
     ld hl, (vidTlTicksL)
     call dbg_hex16
-    ld hl, msgTlFrm
+    ld hl, msgTlFrm              ; FRM=live/mirror (SP15 Card #5 TRAP)
+    call dbg_puts                ; - see vid_tl_frames_live's own banner
+    call vid_tl_frames_live      ; a SECOND, independent read of the hot
+    call dbg_hex16               ; cell, taken after the mirror LDIR
+    ld hl, msgTlSlash
     call dbg_puts
     ld hl, (vidTlFramesL)
     call dbg_hex16
@@ -5205,12 +5212,10 @@ vid_tl_report_body:
     ld a, (vidLoopPassL)         ; play-once run, mod 256 on a long soak
     inc a
     call dbg_hex8
-    ld hl, msgTlFill
-    call dbg_puts
-    ld hl, (vidTlFillFramesL)
-    call dbg_hex16
     ; RING row (3b): min frame-top ring depth / gate underrun events
-    ; (streaming; a resident run prints 0000/0000 - staged so)
+    ; (streaming; a resident run prints 0000/0000 - staged so). FILL=
+    ; moved here from the OTHER row (Card #5): the FRM=live/mirror trap
+    ; pair pushed that row to 81 of the 80 tilemap columns.
     ld b, VID_TL_ROW0+5
     ld c, 0
     call dbg_at
@@ -5226,6 +5231,10 @@ vid_tl_report_body:
     call dbg_puts
     ld a, (vidDepthClipL)            ; depth-floor clamps (3c) - MUST
     call dbg_hex8                    ; read 00 (see the cell comment)
+    ld hl, msgTlFill
+    call dbg_puts
+    ld hl, (vidTlFillFramesL)
+    call dbg_hex16
     jr .done
 .nextrow:
     ld hl, vidTlRptRow
@@ -5239,6 +5248,35 @@ vid_tl_report_body:
     push hl
     ld a, VID_PAGE
     jp ovl_map_page
+
+; FRM=live/mirror TRAP (SP15 Card #5, item 3). The intermittent
+; FRM=0000 row (3 occurrences in ~13 runs across VLOP0/vply3/vply4;
+; every re-run reads correctly, playback and every other field sane -
+; owner-assessed as transcription, kept instrumented rather than
+; investigated) has two candidate sides: the hot cell itself, or the
+; report path (the mirror LDIR / its layout). This routine re-reads
+; vidTlFrames STRAIGHT from the hot page, in its own MMU6 bracket,
+; AFTER the block LDIR has already snapshotted it - so the next
+; occurrence localizes the fault by inspection:
+;   FRM=xxxx/xxxx (equal, nonzero) - normal.
+;   FRM=xxxx/0000 - the MIRROR side is wrong: the LDIR or the mirror
+;                   layout dropped it (the hot counter was fine).
+;   FRM=0000/xxxx - the LIVE cell was zeroed BETWEEN the LDIR and this
+;                   read, i.e. something is still writing post-park.
+;   FRM=0000/0000 - the counter was already zero when the report ran:
+;                   the fault is upstream of the report path entirely
+;                   (stamp path or an early zero), not in the mirror.
+; Out: HL = live vidTlFrames. Corrupts AF; preserves DE (data_save's
+; own contract).
+vid_tl_frames_live:
+    call data_save
+    ld a, VID_PAGE
+    call data_map_page
+    ld hl, (vidTlFrames + DATA_WINDOW - OVL_ORG)
+    push hl
+    call data_restore
+    pop hl
+    ret
 
 vidTlMsgTab:
     dw msgTl0, msgTl1, msgTl2, msgTl3, msgTl4
