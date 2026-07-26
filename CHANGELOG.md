@@ -31,6 +31,11 @@ All notable changes to NextDAAD are recorded here.
   number; old name maps for one release) plus VIDFPS, VIDOPTS and
   per-video VIDOPTS_NNN; shape-quality guidance in SETUP.md; demo
   clips re-encoded (001 full, 002 16:9).
+- Breaking hardware requirement: video needs a 2MB Next (the standard
+  fit on issue 2 boards and later) - a 1MB machine has too small a
+  pool to hold or stream clips reliably.
+- Fixed: multi-PSG AKY tunes left PSG 3 unparked on video entry,
+  an audible frozen tone under video. Entry now parks all three PSGs.
 
 ## v0.2.0 - 2026-07-23
 

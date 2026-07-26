@@ -617,20 +617,44 @@ def t6_zero_truncation():
     combos = [(SINTEL, 256, 192, 25.0), (SINTEL, 320, 256, 25.0),
               (BBB, 256, 192, 25.0), (BBB, 320, 256, 25.0)]
     any_ran = False
+    total_budget_bound = 0
+    worst_psnr_overall = float("inf")
     for clip, w, h, fps in combos:
         result = _encode_clip(clip, w, h, fps, None, "3")
         if result is None:
             continue
         any_ran = True
+        pf = result["per_frame"]
         # Region-coherent scheduling replaced the greedy-truncation fallback:
         # a budget-bound frame keeps whole contiguous bands ("region:K/N").
         # The dual-budget guarantee holds as long as no frame is FULLY starved
         # (region:0 - not even one band fits), which a single cheap band never
         # is. Assert no fully-starved frame (the catastrophic case).
-        starved = [m for m in result["per_frame"]["mode"] if m.startswith("region:0/")]
+        starved = [m for m in pf["mode"] if m.startswith("region:0/")]
         expect(starved == [], f"{clip.name} {w}x{h}@{fps}: {len(starved)} fully-starved frame(s) - dual-budget scheduling failed to keep any content")
+        total_budget_bound += sum(1 for bd in pf["binding"] if bd == "budget")
+        psnr_arr = np.array(pf["psnr"])
+        if len(psnr_arr):
+            worst_psnr_overall = min(worst_psnr_overall, float(psnr_arr.min()))
     if not any_ran:
         skip("demo sources or ffmpeg not available")
+    # SP15 T5 close-out review finding: starved==[] alone is unfalsifiable
+    # (an all-skip frame always fits region:0, so the assertion above never
+    # fails regardless of whether the budget path ever actually engages).
+    # Prove the guarantee is tested UNDER pressure, not in its absence - at
+    # least one of the four combos must genuinely hit the budget-bound path.
+    # Measured this review (2026-07-26): Sintel 256x192 never binds budget,
+    # but Sintel 320x256 (17/75 frames), BBB 256x192 (23/75) and BBB 320x256
+    # (71/75) all do.
+    expect(total_budget_bound > 0,
+           "no combo hit the budget-bound path - zero-truncation guarantee is untested under pressure")
+    # worst_psnr floor: measured worst across these four fixtures this
+    # review was 4.28 dB (Sintel 320x256@25, an early hidden-keyframe-span
+    # transition frame - not the budget path). Floor set with ~0.75 dB of
+    # honest headroom below that so routine noise doesn't trip it while a
+    # real regression (keyframe-span or budget-scheduling defect) still does.
+    expect(worst_psnr_overall > 3.5,
+           f"worst PSNR {worst_psnr_overall:.2f} below the SP15 T5 floor (measured 4.28 this review)")
 
 
 @case(6, "dual-budget rate control - region-coherent budget-bound scheduling (synthetic, forced)")

@@ -104,8 +104,11 @@
 #            classic-wide, nxv2enc.PRESETS), each encoded here at 25fps
 #            stereo. VIDBENCH (DEBUG builds only, tests\test.dsf)
 #            always benches sd\001.VID (full, the highest data-rate
-#            shape - the conservative gate). Stale-cleans sd\*.VID
-#            first. Source -> dest mapping (shape, source clip, exact
+#            shape - the conservative gate). Stale-cleans ONLY the
+#            files this switch owns, sd\001.VID..sd\006.VID (SP15 T5
+#            review fix: a bare sd\*.VID wipe used to also delete
+#            007-011.VID/099.VID, breaking a -Vid-then-VidLong combined
+#            stage). Source -> dest mapping (shape, source clip, exact
 #            --start/--duration - these values reproduce the leg-staged
 #            bytes byte-for-byte, the encoder being deterministic):
 #              001.VID <- full          (320x256 mode-1, Sintel_1080_10s_30MB.mp4 @00:00:00 dur 1.35)
@@ -119,14 +122,28 @@
 #            (read-only, like everything under tools\). Each encode is
 #            SLOW (content-triggered-keyframe, dual-budget delta
 #            coding) so results are CACHED at
-#            tests\out\00X_<shape>_leg_cache.vid and only regenerated
-#            when that cache file is missing - tests\out\ is gitignored
-#            (persists across runs, unlike sd\*.VID which this switch
-#            always stale-cleans first). Regenerate by deleting the
+#            tests\out\00X_<shape>_<settlementTag>_leg_cache.vid and
+#            only regenerated when that cache file is missing -
+#            tests\out\ is gitignored (persists across runs, unlike
+#            sd\001-006.VID which this switch always stale-cleans
+#            first). $vidLegSettlementTag below is an EXPLICIT TAG BUMP
+#            discipline, not a hash: unlike -VidLong's per-entry 'tag'
+#            (sb51/sb54/direct/directpace), which fingerprints a CLI
+#            operating-point argument, 001-006 take no such argument -
+#            their bytes instead depend on nxv2enc.py's SOURCE-level
+#            silicon-settled constants (TMODEL_COEFFS,
+#            TMODEL_COMPOSITION_FACTOR, TMODEL_SILICON_R), which a CLI-
+#            arg hash cannot see. The 4814921 gapped resettlement
+#            (composition factor 1.55 -> 1.15) changed encoded output
+#            with no CLI-arg change at all, and silently restaged the
+#            stale pre-resettlement cache once already (SP15 T5 review
+#            finding). Rule: bump $vidLegSettlementTag any time a
+#            silicon-settled constant in nxv2enc.py changes; the cache
+#            name change forces a re-encode. Regenerate by deleting the
 #            relevant cache file and re-running -Vid, or directly with
 #            e.g.:
-#              python authoring-kit\lib\videnc.py tools\demo-files\Sintel_1080_10s_30MB.mp4 tests\out\001_full_leg_cache.vid --shape full --fps 25 --start 00:00:00 --duration 1.35
-#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\006_169_leg_cache.vid --shape 16:9 --fps 25 --start 00:00:00 --duration 5.0
+#              python authoring-kit\lib\videnc.py tools\demo-files\Sintel_1080_10s_30MB.mp4 tests\out\001_full_gap115_leg_cache.vid --shape full --fps 25 --start 00:00:00 --duration 1.35
+#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\006_169_gap115_leg_cache.vid --shape 16:9 --fps 25 --start 00:00:00 --duration 5.0
 #            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
 #            sd\*.VID is gitignored (owner edit).
 #            PRE-3a LONG-CLIP CACHES ARE OBSOLETE: the five 10-14MB
@@ -621,9 +638,20 @@ if ($Vid) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
     }
-    Remove-Item "$root\sd\*.VID" -Force -ErrorAction SilentlyContinue
+    # SP15 T5 review fix: scope the stale-clean to the files THIS switch
+    # owns (001-006) - a bare sd\*.VID wipe also deleted -VidLong's
+    # 007-011.VID/099.VID, breaking a combined -Vid + -VidLong stage
+    # (card section 40.5 needs 001-011+099 staged together).
+    Remove-Item "$root\sd\00[1-6].VID" -Force -ErrorAction SilentlyContinue
     $vidOutDir = Join-Path $root 'tests\out'
     New-Item -ItemType Directory -Force $vidOutDir | Out-Null
+    # Bump this whenever a silicon-settled constant in nxv2enc.py changes
+    # (TMODEL_COEFFS, TMODEL_COMPOSITION_FACTOR, TMODEL_SILICON_R, etc) -
+    # see the -Vid header comment for why an arg-list hash can't catch
+    # this class of change. 'gap115' = the Card #5 gapped resettlement
+    # (composition factor 1.55 -> 1.15, commit 4814921) this tag was
+    # introduced to stop silently restaging around.
+    $vidLegSettlementTag = 'gap115'
     # dest file -> (NXV v2 shape preset, source clip, --start, --duration)
     # - exact leg-card values (sp14a-task-4-report.md section 37 + the
     # CALIBRATION WAVE addendum) that reproduce the leg-staged bytes
@@ -647,7 +675,7 @@ if ($Vid) {
             continue
         }
         $shapeTag = $shape -replace ':', ''
-        $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_leg_cache.vid"
+        $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_${vidLegSettlementTag}_leg_cache.vid"
         if (-not (Test-Path -LiteralPath $cache)) {
             "encoding sd\$dest (shape $shape, source $(Split-Path -Leaf $src), start $start dur $duration) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
             # canonical encoder lives in the kit (see -Vid header); repo

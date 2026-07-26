@@ -63,6 +63,14 @@ Run through this list, top to bottom, before tagging a release.
    pass - not an agent task. No .nex file should ever be committed by
    an agent.
 
+6. **NXV v2 test-core caveat re-confirm.** All NXV v2 silicon
+   coefficients were settled on core 3.02.04, a KS3 TEST core (freeze
+   caveat (b)). Before any release, re-confirm the coefficients on the
+   then-current RELEASE core - one CPU row + one DMA row suffices. See
+   docs/hardware-test-checklist.md:509-528 for the detail. Do not skip
+   this line silently: either the re-confirm has run on the release
+   core in use, or this stays an open item.
+
 ## Kit inventory
 
 What ships inside authoring-kit/ (committed to the repo):
