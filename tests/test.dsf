@@ -197,7 +197,7 @@ VPACL   93      verb
 ;           the long-clip seam-free-loop leg; any key exits)
 ;   VSTR2 - 009.VID 16:9 320x192 letterbox (Jellyfish 10s, ~7.3MB -
 ;           the GAPPED streaming path)
-;   DPACE/DPACL - 011.VID classic-wide 256x144 --direct (the test
+;   DPACE/DPACL - 011.VID classic-wide 256x133 --direct (the test
 ;           card, 5.000 s / 125 frames) - the DIRECT PACING CARD
 ;   VSTRU - 099.VID (a copy of 007): plain streamed regression leg -
 ;           the DEBUG throttle that once drove a deliberate-underrun

@@ -201,10 +201,21 @@ def t1_stream_supply_gate():
     # silicon_r: measured composed-player ratios, cluster + interpolation
     expect(enc.silicon_r(256, 192) == enc.TMODEL_SILICON_R["flat_256"], "classic flat R")
     expect(enc.silicon_r(320, 256) == enc.TMODEL_SILICON_R["flat_320"], "full flat R")
-    expect(enc.silicon_r(320, 192) == enc.TMODEL_SILICON_R["gapped_192"], "gapped 192 R")
-    expect(abs(enc.silicon_r(320, 144) - enc.TMODEL_SILICON_R["gapped_144"]) < 1e-9,
-           "gapped 144 R")
-    expect(enc.silicon_r(320, 100) <= 1.45, "gapped extrapolation capped")
+    # Card #5 settlement review fix: 144-192 is the MEASURED cluster
+    # (settled formula, untouched) - both ends must still land exactly
+    # on TMODEL_SILICON_R. Below 144 is UNMEASURED and now FLOORED (not
+    # capped) at 1.15, TMODEL_COMPOSITION_FACTOR["gapped"]'s worst-dense
+    # basis, since the settled ~0.02/48 slope makes the naive formula
+    # ~1.05-1.06 there - optimistic, not conservative, without the
+    # floor.
+    expect(enc.silicon_r(320, 192) == enc.TMODEL_SILICON_R["gapped_192"],
+           "gapped 192 matches the settled formula (measured cluster)")
+    expect(enc.silicon_r(320, 144) == enc.TMODEL_SILICON_R["gapped_144"],
+           "gapped 144 matches the settled formula (measured cluster)")
+    expect(enc.silicon_r(320, 100) == 1.15,
+           "sub-144 gapped extrapolation floored at 1.15 pending silicon")
+    expect(enc.silicon_r(256, 100) == enc.TMODEL_SILICON_R["flat_256"],
+           "the sub-144 gapped floor must not leak into the flat 256 cluster")
     # VSTR1 anchor: the first 008 encode (mean demand 43520 B/f incl
     # 1536B audio pad, mean modeled busy 30.19 ms) is UNSTREAMABLE
     t8 = 30.187 * clock / enc.silicon_r(320, 256)
@@ -1653,6 +1664,64 @@ def t11_direct_gate():
             stderr2 = proc2.stderr.decode("utf-8", "replace")
             expect("utilization" in stderr2 and "direct-serve" in stderr2,
                    f"the plain refusal must be the wire-gate message, got:\n{stderr2}")
+
+
+@case(11, "direct-serve gate refusal - mono-floor menu entry hardened "
+          "against the Fraction-rounding knife-edge (Card #5 review fix)")
+def t11_direct_gate_mono_floor_menu():
+    # Review finding: min_fps_for(1) is, BY CONSTRUCTION, the exact fps
+    # where audio_layout's real mono bytes/frame lands on the AUD_HALF
+    # boundary. Which side of the boundary Fraction rounding falls on
+    # there is a coin flip only a few ULP wide - a raise there inside
+    # the refusal-message builder (direct_max_raw_bytes -> audio_layout)
+    # would surface as an unrelated SystemExit ("... exceeds the NXV
+    # v2.0 player's per-frame audio bound ...") out of what should be
+    # the direct-serve wire-gate refusal. The fix rounds the floor UP
+    # to the nearest 0.01 fps (math.ceil(...*100)/100, the same idiom
+    # audio_layout's own "fits" floors already use) before feeding it
+    # back through direct_max_raw_bytes.
+    import math as _m
+    mono_floor = enc.min_fps_for(1)
+    # demonstrate the knife-edge is real: a few ULP below the exact
+    # floor flips audio_layout's verdict (samples 1280 -> 1281, one
+    # over AUD_HALF) and direct_max_raw_bytes raises unguarded.
+    unlucky = mono_floor - 1e-6
+    try:
+        enc.direct_max_raw_bytes(unlucky, 1, 1.0)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("test setup: expected the floor minus an "
+                             "ULP to demonstrate the raise this case "
+                             "guards against")
+    # the fix's guard: rounding UP first, at the floor itself AND at
+    # the unlucky perturbation, must render without raising either way.
+    for fps in (mono_floor, unlucky):
+        safe = _m.ceil(fps * 100) / 100
+        m_floor_at = enc.direct_max_raw_bytes(safe, 1, 1.0)
+        expect(m_floor_at > 0,
+               f"direct_max_raw_bytes at the rounded mono floor "
+               f"({safe}) must not raise, got {m_floor_at}")
+    # end-to-end: the real refusal path (320x256@25, same shape the
+    # sibling gate case above refuses) must render the mono-floor menu
+    # entry using this same guarded computation - not just be correct
+    # in isolation.
+    import tempfile as tf
+    ex = _synthetic_ex(2, 320, 256)
+    with tf.TemporaryDirectory() as td:
+        out = Path(td) / "toobig_monofloor.vid"
+        try:
+            enc._encode_direct(ex, 320, 256, 25.0, out)
+        except SystemExit as e:
+            msg = str(e)
+            expect("mono floor" in msg,
+                   f"refusal names the mono-floor envelope entry, got:\n{msg}")
+            expect("player's per-frame audio bound" not in msg,
+                   f"the mono-floor menu computation must not leak an "
+                   f"audio_layout error into the refusal, got:\n{msg}")
+            expect(not out.exists(), "no file written on refusal")
+        else:
+            raise AssertionError("320x256@25 direct must be refused")
 
 
 def main():

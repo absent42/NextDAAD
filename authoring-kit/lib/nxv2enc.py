@@ -504,9 +504,14 @@ STREAM_TARGET_UTIL = 0.90                       # suggestion target
 def silicon_r(width, height):
     """Measured composed-player decode ratio (silicon/model) for this
     shape cluster. Gapped surfaces interpolate on height between the
-    two measured letterbox rows (crossing rate ~ 1/height); a gapped
-    height below 144 extrapolates and is capped at 1.45 pending a
-    silicon row (mirrors the composition-factor caveat)."""
+    two measured letterbox rows, 144-192 - the SETTLED, MEASURED
+    cluster (Card #5 settlement, 2026-07-26, R 1.005-1.023; see
+    .superpowers/sdd/card5-settlement-report.md section 1). Below 144
+    is UNMEASURED: the settled slope is ~0.02 R per 48 lines, so the
+    naive formula is only ~1.05-1.06 there and would hand out
+    optimistic extrapolation over a region the silicon rows never
+    covered. Floor it instead, at TMODEL_COMPOSITION_FACTOR["gapped"]'s
+    worst-dense basis (1.15), until a sub-144 silicon row lands."""
     if not is_gapped(width, height):
         return TMODEL_SILICON_R["flat_320" if int(width) == 320 else "flat_256"]
     h = int(height)
@@ -515,7 +520,9 @@ def silicon_r(width, height):
     r = (TMODEL_SILICON_R["gapped_192"]
          + (192 - h) / 48.0 * (TMODEL_SILICON_R["gapped_144"]
                                 - TMODEL_SILICON_R["gapped_192"]))
-    return min(r, 1.45)
+    if h < 144:
+        return max(r, 1.15)
+    return r
 
 
 def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
@@ -2074,7 +2081,19 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None):
         m_at = direct_max_raw_bytes(fps_val, 1, 1.0)
         m_90 = direct_max_raw_bytes(fps_val, 1, 0.90)
         mono_floor = min_fps_for(1)
-        m_floor_at = direct_max_raw_bytes(mono_floor, 1, 1.0)
+        # menu-only hardening: mono_floor sits within a Fraction-
+        # rounding tick of audio_layout's AUD_HALF boundary by
+        # construction (it IS the floor where real bytes/frame lands
+        # at exactly AUD_HALF), so feeding the exact float back through
+        # direct_max_raw_bytes -> audio_layout can trip its strict
+        # SystemExit depending on which way the rounding falls - a
+        # refusal-message computation must never itself raise. Round
+        # the floor UP to the nearest 0.01 fps first (the same ceiling
+        # idiom audio_layout's own "fits" floors use, and the precision
+        # already shown to the user below) to land safely inside the
+        # AUD_HALF bucket instead of on its edge.
+        mono_floor_safe = math.ceil(mono_floor * 100) / 100
+        m_floor_at = direct_max_raw_bytes(mono_floor_safe, 1, 1.0)
         raise SystemExit(
             f"error: this direct-serve encode cannot play at rate - "
             f"worst-frame wire utilization {ds['utilization']:.2f} > "
