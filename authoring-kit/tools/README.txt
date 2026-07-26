@@ -28,19 +28,22 @@ After extracting, these paths must exist:
 
 Video cutscenes (see ..\SETUP.md "Video cutscenes") ARE built by
 BUILD.BAT: drop a numeric-named source video (VIDEO\NNN.mp4) into
-VIDEO\ and the build encodes it to the interpreter's native NXV
+VIDEO\ and the build encodes it to the interpreter's native NXV v2
 format, caching the result as VIDEO\NNN.vid (re-encoded only when the
-.mp4 changes). A pre-encoded NXV VIDEO\NNN.vid is staged as-is.
+.mp4 changes). A pre-encoded NXV v2 VIDEO\NNN.vid is staged as-is.
 Encoding needs ffmpeg (table above) plus videnc.exe (shipped, no
 Python required) - neither matters for a text/graphics/audio-only
 game, so ffmpeg is the ONLY extra download for video authoring. If
 videnc.exe is ever missing the build falls back to ..\lib\videnc.py,
-the script it is built from (needs Python 3 + Pillow, pip install
-Pillow). The encode profile is VIDPROFILE in
-CONFIG.BAT (blank = auto); run the encoder by hand for per-file
-control (--profile n0..n4, --start/--duration clipping, --mono,
---dither and more - run it with -h).
+the script it is built from (needs Python 3 + Pillow + numpy, pip
+install Pillow numpy). The encode shape and options are VIDASPECT,
+VIDFPS, VIDOPTS and per-video VIDOPTS_NNN in CONFIG.BAT (blank =
+full-screen 320x256 at 25 fps); run the encoder by hand for per-file
+control (--shape presets or WIDTHxHEIGHT, --aspect free heights,
+--fps, --start/--duration clipping, --mono, --dither and more - run
+it with -h, and see ..\lib\videnc-README.md).
 
-MakeVid .VID files are NOT playable by this interpreter any more - the
-NXV rewrite (SP14a) replaced the six legacy formats. Re-encode from the
-original video source instead.
+Older .VID files are NOT playable by this interpreter any more: the
+NXV v2 rewrite (SP15) replaced NXV v1, which had replaced the six
+legacy MakeVid formats (SP14a). Re-encode from the original video
+source instead.

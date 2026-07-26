@@ -14,16 +14,19 @@ Quick start:
        <GAME>_FX.aks    sound-effects bank
        NNN.wav          digitised samples (SFX n 1/2; supplied ready-made,
                         PCM mono 8-bit unsigned)
-  4. Optional title screen: IMAGES\DAAD.png (shown at boot until a key is
+  4. Optional video cutscenes: numeric-named source videos in VIDEO\
+     (e.g. 001.mp4), encoded to native NXV at build time and played by
+     GFX n 13 (once) / GFX n 14 (loop). Shape via VIDASPECT in CONFIG.BAT.
+  5. Optional title screen: IMAGES\DAAD.png (shown at boot until a key is
      pressed). Multi-part games: see SETUP.md section 9.
-  5. Double-click BUILD.BAT. Output appears in RELEASE\ - copy its contents
+  6. Double-click BUILD.BAT. Output appears in RELEASE\ - copy its contents
      to an SD card, or let CSpect launch automatically (CONFIG.BAT RUN=1).
 
 Other scripts:
   RUN.BAT    - launch CSpect on the current RELEASE\ without rebuilding
   CLEAN.BAT  - remove RELEASE\ contents and build intermediates
 
-A starter game (STARTER.DSF) with example graphics and audio ships with the
-kit so a first build works out of the box.
+A starter game (STARTER.DSF) with example graphics, audio and video ships
+with the kit so a first build works out of the box.
 
 For full setup instructions, tool downloads, and troubleshooting, see SETUP.md.

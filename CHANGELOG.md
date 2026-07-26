@@ -2,6 +2,36 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## Unreleased
+
+### Video
+
+- NXV v2 replaces NXV v1 outright - v1 files no longer play, re-encode
+  from source. FLIC-lineage delta format (SKIP/RUN/COPY/palette opcodes
+  over the Layer 2 surface, keyframes composed hidden and flipped
+  atomically, scene-scoped adaptive palettes), roughly 7:1 smaller
+  files. Format frozen 2026-07-25 on silicon bench evidence.
+- Shapes replace the five fixed profiles: presets full 320x256,
+  16:9 320x192, scope 320x144, classic 256x192, classic-wide 256x144,
+  plus any explicit WIDTHxHEIGHT and --aspect free-height derivation
+  (true 2.35:1 scope). fps is free (default 25) above the audio floors:
+  stereo 24.40, mono 18.22.
+- Delivery unified and automatic: resident (file fits the bank pool),
+  ring-streamed (prefetch ring of pool banks, files bigger than the
+  pool), or direct-served (encoder-hinted uncompressed, straight from
+  SD). All strictly at true rate; direct-serve gate is unconditional
+  (TIGHTEN ruling 2026-07-26, no slow-playback opt-out).
+- Encoder: quality-maximalist dual-budget rate control at
+  silicon-measured prices; encode-time supply gates refuse infeasible
+  encodes with named remedies (--stream-budget suggestion, at-rate
+  direct envelope).
+- Exit-order fix: Layer 2 hidden across the mode restore - kills the
+  exit flash when a mode-0 video ends inside a 320-wide game.
+- Kit: VIDPROFILE replaced by VIDASPECT (preset/WIDTHxHEIGHT/aspect
+  number; old name maps for one release) plus VIDFPS, VIDOPTS and
+  per-video VIDOPTS_NNN; shape-quality guidance in SETUP.md; demo
+  clips re-encoded (001 full, 002 16:9).
+
 ## v0.2.0 - 2026-07-23
 
 Cutscene video playback, hardware-measured performance work,

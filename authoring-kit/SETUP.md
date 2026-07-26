@@ -73,7 +73,7 @@ Put these in this kit folder:
     once per source change, not once per build.
   - `NNN.vid` - a pre-encoded NXV file, staged as-is.
   Both end up as `RELEASE\NNN.VID`, played by `GFX n 13`/`GFX n 14`.
-  See "Video cutscenes" below for the profiles, encoding tools, and
+  See "Video cutscenes" below for the shapes, encoding tools, and
   playback notes.
 
 ## 3. Configuration (CONFIG.BAT)
@@ -85,6 +85,7 @@ Put these in this kit folder:
 | `RUN` | `1` = launch CSpect after a successful build; `0` = build only. |
 | `TOOLSDIR` | Folder holding the tools above (default `..\tools`). |
 | `NEXFILE` | The interpreter to ship (default `..\build\nextdaad.nex`). |
+| `VIDASPECT`, `VIDFPS`, `VIDOPTS`, `VIDOPTS_NNN` | Video cutscene encoding - see "Video cutscenes" below. |
 
 ## 4. Build and run
 
@@ -275,31 +276,79 @@ real feature on this target rather than a no-op. Like location art,
 `PART<n>\NNN.VID` shadows the root copy for that part only (section 9,
 "Shadowed assets").
 
-### The five profiles
+Video is designed for a 2MB Next (the standard fit on issue 2 boards
+and later): playback buffers through a large pool of RAM banks, and a
+1MB machine has too small a pool to hold or stream clips reliably.
+
+### Shapes and quality
 
 An NXV file is fully self-describing (a real header - nothing to
-select at the DSF level), encoded with one of five shipped profiles:
+select at the DSF level). NXV v2 encodes to a *shape* - any Layer 2
+width (256 or 320) by any height from 1 line to the mode's full 192 or
+256 - rather than a fixed profile. Five preset shapes ship:
 
-| Profile | Resolution | Screen mode | fps |
-|---|---|---|---|
-| `n0` "cinema" | 320x256 | Layer 2 320-wide, full height | 12.5 |
-| `n1` "classic" | 256x192 | Layer 2 256-wide | 20 |
-| `n2` "widescreen" | 256x144 | Layer 2 256-wide, letterboxed | 25 |
-| `n3` "widescreen XL" | 320x192 | Layer 2 320-wide, letterboxed | 16.67 |
-| `n4` "epic" | 320x120 | Layer 2 320-wide, letterboxed | 20 |
+| Preset | Shape | Screen mode | Displayed aspect | Character |
+|---|---|---|---|---|
+| `full` | 320x256 | 320-wide, full height | 4:3, edge to edge | The whole screen. Heaviest data rate, so quality gives way first. |
+| `16:9` | 320x192 | 320-wide, letterboxed | 16:9 | The sweet spot for modern widescreen sources. |
+| `scope` | 320x144 | 320-wide, letterboxed | ~2.35:1 | Cinematic scope. Small surface, high quality. |
+| `classic` | 256x192 | 256-wide, bordered | 4:3 | The classic Spectrum frame. Cheapest 4:3. |
+| `classic-wide` | 256x144 | 256-wide, bordered + letterboxed | 16:9 | Cheapest widescreen of all. |
 
-All profiles carry 256-colour pictures with a per-frame adaptive
-palette (or a fixed RGB332 palette with `--no-palette`) and full-rate
-audio - stereo at 15625 Hz by default, mono at 23325 Hz with `--mono`.
-No decimation, no downsampling: what the encoder writes is what plays.
-Letterbox bars cost zero file bytes (the player renders them black).
+All shapes default to 25 fps and carry 256-colour pictures with
+adaptive palettes and full-rate audio - stereo at 15625 Hz by default,
+mono at 23325 Hz with `--mono`. No decimation: what the encoder writes
+is what plays. Letterbox bars cost zero file bytes (the player renders
+them black). Sources are centre-cropped to the shape's exact displayed
+aspect, never distorted.
 
-The build encodes every `VIDEO\NNN.mp4` with the profile set by
-`VIDPROFILE` in `CONFIG.BAT` - blank picks `auto`, the profile whose
-pixel aspect best matches the source (sources are centre-cropped to
-the profile's exact aspect, never distorted). Set `VIDPROFILE` to one
-of `n0`-`n4` to force a profile for every encoded cutscene, or run the
-encoder by hand (below) for per-file control.
+**Smaller shapes come out better.** The player's data budget (SD
+streaming rate plus decode time) is fixed, so quality scales inversely
+with pixel count: a clip encoded at a smaller height keeps more detail
+per pixel at the same data rate - roughly twice the bytes per pixel at
+`classic` versus `full`. If a clip looks rough at `full`, re-encode it
+letterboxed. Two caveats: hard content (constant whole-frame motion,
+noise, fades) eats budget regardless of shape, and the letterboxed
+320-wide shapes carry a small decode surcharge for the gapped surface
+(~1.15x), which makes `16:9` the usual best trade for widescreen
+sources.
+
+**Free heights.** Beyond the presets, any `WIDTHxHEIGHT` is a valid
+shape (`320x150`, `256x100`, ...), and `--aspect` derives the height
+for a target displayed aspect ratio - `--aspect 2.35` gives true
+cinema scope, with the 320-wide mode's non-square pixels corrected
+for automatically.
+
+**fps floors.** Frame rate is free (default 25) down to a hard floor
+set by audio: the player feeds audio from 1280-byte double-buffer
+halves, so one frame may carry at most 1280 audio bytes. Stereo at
+15625 Hz needs 24.40 fps or more; mono at 23325 Hz needs 18.22 fps or
+more. The encoder refuses an encode below the floor and names the
+remedy (raise fps, or switch to `--mono` if mono fits).
+
+**Encode time is quality.** The encoder is deliberately slow - it
+spends its time squeezing the best picture into the fixed playback
+budget. Expect minutes per clip, once per source change (the build
+caches the result).
+
+### Configuring the build's encode pass
+
+The build encodes every `VIDEO\NNN.mp4` with settings from
+`CONFIG.BAT`:
+
+| Setting | Meaning |
+|---------|---------|
+| `VIDASPECT` | Shape for every encode: a preset name, `WIDTHxHEIGHT`, or a bare aspect number (e.g. `2.35` - free height at 320 wide). Blank = `full`. |
+| `VIDFPS` | Frames per second. Blank = 25. |
+| `VIDOPTS` | Extra encoder options for every encode (e.g. `--mono --dither`). |
+| `VIDOPTS_NNN` | Extra options for video `NNN` only (3-digit number), appended after `VIDOPTS` - later options win. |
+| `VIDPROFILE` | Deprecated v1 name, honored one release: `n0`-`n4` map to the nearest v2 shape when `VIDASPECT` is blank. |
+
+The `.vid` beside the source is an encode cache keyed on the `.mp4`'s
+timestamp - after changing these settings, delete the affected
+`VIDEO\NNN.vid` files to force a re-encode. For full per-file control
+(clipping, shapes per video), use `VIDOPTS_NNN` or run the encoder by
+hand (below).
 
 ### Encoding tools
 
@@ -318,18 +367,52 @@ from `TOOLSDIR` (section 1):
 None of this is needed for pre-encoded `.vid` files - a kit with only
 `.vid` sources (or no `VIDEO\` at all) builds with no encoder present.
 
-Run the encoder by hand for per-file profile control or to cut a clip
-from a longer source:
+Run the encoder by hand for per-file control or to cut a clip from a
+longer source:
 
 ```
-videnc.exe INPUT.mp4 VIDEO\001.vid --profile n1 --start 00:00:03 --duration 4
+videnc.exe INPUT.mp4 VIDEO\001.vid --shape classic --start 00:00:03 --duration 4
 ```
 
-(or `python lib\videnc.py ...`, same options). `--profile` is `n0`-`n4`
-or `auto`; `--start`/`--duration` cut a clip; `--mono` halves the audio
-stream; `--no-palette` uses a fixed RGB332 palette; `--dither`
-Floyd-Steinberg dithers (default: no dither). Run with `--help` for the
-full list, and see `lib\videnc-README.md` for the format details.
+(or `python lib\videnc.py ...`, same options). `--shape` is a preset
+or `WIDTHxHEIGHT`; `--aspect` derives a free height instead;
+`--fps` sets the frame rate; `--start`/`--duration` cut a clip;
+`--mono` halves the audio stream; `--dither` Floyd-Steinberg dithers
+(default: no dither). Run with `--help` for the full list, and see
+`lib\videnc-README.md` for the options and format details.
+
+### Streaming, resident and direct delivery
+
+Delivery is automatic - nothing to choose at authoring time. A file
+that fits the player's RAM bank pool (about 1.2 MB on a fresh boot) is
+loaded whole and played from RAM; a bigger file streams from SD
+through a prefetch ring of the same banks. Either way playback runs at
+true rate.
+
+Because streaming has a fixed supply rate, the encoder checks every
+over-pool-size encode against it and *refuses* one that could not
+stream ("error: this encode cannot stream - mean supply utilization
+N.NN > 1.00 ..."). The message shows where the time goes (decode ms +
+SD fetch ms per frame period) and names the remedies: the exact
+`--stream-budget` value that fits (it scales the encoder's quality
+caps down to streamable), a smaller shape, a lower fps, or a shorter
+clip. `--stream-budget` is advisory-precise: after a large change,
+re-encode and let the gate re-check. A warning (not a refusal) above
+0.90 utilization means an at-capacity encode - fine on a healthy card,
+with the ring absorbing bursts.
+
+**Direct-serve (expert).** `--direct` (per-video via `VIDOPTS_NNN`)
+writes an uncompressed encode the player serves straight from SD to
+the screen - no delta decode, pixel-exact every frame. The catch is a
+strict at-rate envelope with no ring to absorb bursts: at 25 fps
+stereo it tops out around 256x133, and the gate refuses anything the
+SD wire cannot sustain - there is deliberately no slow-playback
+opt-out (every shipped mode plays at true rate). The refusal message
+prints the live envelope menu for your width: the at-rate stereo and
+mono heights, and how far the mono fps floor opens it (256x187-class
+at 18.22 fps mono). For almost all content the normal delta encoder
+is the better tool; `--direct` exists for encodes that must be
+pixel-exact.
 
 ### Playback notes
 
@@ -360,10 +443,13 @@ popping - an accepted limitation, not a bug to report.
 
 ### The starter game's demo clips
 
-`VIDEO\001.vid` (profile `n0`, 320x256 cinema) and `VIDEO\002.vid`
-(profile `n1`, 256x192 classic) ship with the kit so `GFX 13`/`GFX 14`
-work out of the box. Try the verbs MOVIE (plays 001.VID once) and REEL
-(loops 002.VID until a key is pressed).
+`VIDEO\001.mp4` (encoded at the `full` 320x256 preset, streamed - its
+shipped `VIDOPTS_001` carries the `--stream-budget` the supply gate
+suggested) and `VIDEO\002.mp4` (encoded at `16:9` 320x192 via the
+shipped `VIDOPTS_002`) build with the kit so `GFX 13`/`GFX 14` work
+out of the box, and their `CONFIG.BAT` entries double as worked
+examples of per-video options. Try the verbs MOVIE (plays 001.VID
+once) and REEL (loops 002.VID until a key is pressed).
 
 ## 7. Troubleshooting
 
@@ -375,6 +461,12 @@ work out of the box. Try the verbs MOVIE (plays 001.VID once) and REEL
   256 pixels wide.
 - "GAME.AKY is ... over the ... limit" - the tune is too large; shorten it or
   reduce channels in Arkos Tracker.
+- "this encode cannot stream" / "cannot play at rate" - the video encoder's
+  supply gate refused an infeasible encode; the message names the remedy
+  (a `--stream-budget` value, a smaller shape, lower fps, or `--mono`). See
+  "Video cutscenes", "Streaming, resident and direct delivery".
+- "audio bytes/frame ... exceeds" - fps below the audio floor (stereo 24.40,
+  mono 18.22); raise `VIDFPS` or add `--mono` to `VIDOPTS`.
 - Effects bank warnings are non-fatal - the game still builds without
   `GAME.SFB`.
 

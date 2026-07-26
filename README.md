@@ -34,10 +34,12 @@ is a documented no-op.
 - Direct Layer 2 surface control (GFX): copy/swap/clear the picture
   plane's front and back buffers on demand
 - Video cutscenes (GFX 13/14, aliased as the classic SFX 9/10 PLAYFLI/
-  PLAYFLIL): full-screen native NXV .VID playback, five profiles up to
-  320x256 at 12.5-25 fps, 256 colours with per-frame adaptive
-  palettes, full-rate DAC audio (stereo 15625 Hz or mono 23325 Hz),
-  play-once or loop-until-keypress, PARTn-shadowed like other assets
+  PLAYFLIL): native NXV v2 delta-video .VID playback, shapes from
+  full-screen 320x256@25 down to free heights, 256 colours with
+  scene-scoped adaptive palettes, full-rate DAC audio (stereo 15625 Hz
+  or mono 23325 Hz), resident/ring-streamed/direct-served delivery
+  chosen automatically, play-once or loop-until-keypress,
+  PARTn-shadowed like other assets
 - Mouse input (MOUSE) via the Next's Kempston mouse ports, with a
   hardware sprite pointer (sub-commands 0-3; buttons read
   jdaad-compatible: idle 0, left 1, right 2, middle 4)
@@ -253,30 +255,31 @@ table above. `NNN.VID` lives in the SD root next to GAME.DDB, 3-digit
 zero-padded like every other numbered asset; `PARTn\NNN.VID` shadows it
 per part.
 
-`.VID` files are NextDAAD's native NXV format: a self-describing
-container (a real header, nothing to select at the DSF level) encoded
-with one of five shipped profiles:
+`.VID` files are NextDAAD's native NXV v2 format: a self-describing
+container (a real header, nothing to select at the DSF level) carrying
+a FLIC-lineage delta video stream - SKIP/RUN/COPY/palette opcodes over
+the Layer 2 surface, keyframes composed on the hidden buffer and
+flipped atomically, scene-scoped adaptive 256-colour palettes - at
+roughly 7:1 the size of raw. Any shape is a valid encode: five presets
+(full 320x256, 16:9 320x192, scope 320x144, classic 256x192,
+classic-wide 256x144) plus free heights down to a single line, at any
+fps (default 25) above the audio floors (stereo 24.40, mono 18.22).
 
-| Profile | Resolution | Screen mode | fps |
-|---|---|---|---|
-| n0 "cinema" | 320x256 | Layer 2 320-wide, full height | 12.5 |
-| n1 "classic" | 256x192 | Layer 2 256-wide | 20 |
-| n2 "widescreen" | 256x144 | Layer 2 256-wide, letterboxed | 25 |
-| n3 "widescreen XL" | 320x192 | Layer 2 320-wide, letterboxed | 16.67 |
-| n4 "epic" | 320x120 | Layer 2 320-wide, letterboxed | 20 |
-
-Every profile carries 256-colour pictures with a per-frame adaptive
-palette (or fixed RGB332), and full-rate unsigned 8-bit PCM audio -
-stereo at 15625 Hz by default, mono at 23325 Hz - played through the
-Next's DAC ports by a CTC-timed interrupt feed. Frames present at
-vblank via a copper-driven buffer flip; playback streams raw SD card
-blocks (CMD18 multiple-block reads over the file's own cluster map),
-so the whole pipeline runs without OS calls while a video plays. The
-tilemap text layer is hidden and letterbox bars render black for the
-duration; both restore on exit. Files should be reasonably contiguous
-on card - a file in more than 32 fragments refuses to play (defragment
-or re-copy the card). NXV is 50Hz-designed; a 60Hz display gets slower
-playback and audio popping, an accepted limitation.
+Audio is full-rate unsigned 8-bit PCM - stereo at 15625 Hz by default,
+mono at 23325 Hz - played through the Next's DAC ports by a CTC-timed
+interrupt feed. Frames present at vblank; delivery is automatic per
+file: at or below the resident bank pool (~1.2 MB) the clip plays from
+RAM, above it the clip streams through a prefetch ring of pool banks,
+and encoder-hinted direct-serve clips play uncompressed straight from
+SD - all strictly at true rate. Streaming reads raw SD card blocks
+(CMD18 multiple-block reads over the file's own cluster map), so the
+whole pipeline runs without OS calls while a video plays. The tilemap
+text layer is hidden and letterbox bars render black for the duration;
+both restore on exit. Video needs a 2MB Next. Files should be
+reasonably contiguous on card - a file in more than 32 fragments
+refuses to play (defragment or re-copy the card). NXV is 50Hz-designed;
+a 60Hz display gets slower playback and audio popping, an accepted
+limitation.
 
 Video playback is a full-screen takeover, like DISPLAY: register state
 is restored when it ends, pixel content is not, so a game must redraw
@@ -285,12 +288,14 @@ automatically - a playing sample is stopped (not resumed), and AY music
 is frozen in place and resumes on its own the instant the cutscene
 ends; no author action is needed either way.
 
-Encoding: `authoring-kit/lib/videnc.py` (Python 3 + Pillow + ffmpeg) is
-the one canonical encoder - it produces the interpreter's native NXV
-format (five profiles, per-frame adaptive palettes, proven on
-hardware), and the kit's BUILD.BAT runs it automatically for any
+Encoding: `authoring-kit/lib/videnc.py` (Python 3 + Pillow + numpy +
+ffmpeg) is the one canonical encoder - quality-maximalist delta
+encoding under silicon-measured rate control, with encode-time supply
+gates that refuse an unstreamable or off-rate file and name the remedy
+(proven on hardware). The kit's BUILD.BAT runs it automatically for any
 `VIDEO\NNN.mp4` (preferring the standalone `videnc.exe` build of the
-same encoder when present - a release download, no Python needed). See `authoring-kit/SETUP.md`'s "Video cutscenes" section and
+same encoder when present - shipped with the kit, no Python needed).
+See `authoring-kit/SETUP.md`'s "Video cutscenes" section and
 `authoring-kit/lib/videnc-README.md`.
 
 ## Custom fonts and mouse pointer
