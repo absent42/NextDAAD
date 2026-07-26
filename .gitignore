@@ -41,5 +41,6 @@ sd/*.bin
 tests/out/
 authoring-kit/VIDEO/*.vid
 authoring-kit/VIDEO/*.VID
+authoring-kit/VIDEO/*.vid.args
 .superpowers/
 __pycache__/
