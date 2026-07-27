@@ -52,6 +52,7 @@ override with --ffmpeg).
 """
 
 import argparse
+import re
 import subprocess
 import sys
 from fractions import Fraction
@@ -84,22 +85,43 @@ def run_ffmpeg(ffmpeg, args, what):
     return proc.stdout
 
 
-def probe_dimensions(ffmpeg, input_path):
-    """Returns (width, height) of the source's own first video stream,
-    read from ffmpeg's own stderr banner (no ffprobe dependency - the
-    same probe the center-crop math below and nxv2enc's --shape auto
-    picker both need, shared so there is only one implementation)."""
+def _probe_stderr(ffmpeg, input_path):
+    """Runs ffmpeg -i <input_path> with no output and returns its stderr
+    banner text (source info: dimensions, stream list) - the single
+    shared probe invocation behind probe_dimensions and probe_has_audio,
+    so a caller needing both only pays for one ffmpeg process."""
     probe = subprocess.run(
         [str(ffmpeg), "-i", str(input_path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stderr = probe.stderr.decode("utf-8", "replace")
-    import re
+    return probe.stderr.decode("utf-8", "replace")
+
+
+def probe_dimensions(ffmpeg, input_path, stderr=None):
+    """Returns (width, height) of the source's own first video stream,
+    read from ffmpeg's own stderr banner (no ffprobe dependency - the
+    same probe the center-crop math below and nxv2enc's --shape auto
+    picker both need, shared so there is only one implementation). Pass
+    stderr= to reuse an already-fetched _probe_stderr() banner."""
+    if stderr is None:
+        stderr = _probe_stderr(ffmpeg, input_path)
     m = re.search(r",\s*(\d{2,5})x(\d{2,5})[,\s]", stderr)
     if not m:
         raise SystemExit(
             "error: could not detect the source's own dimensions from "
             "ffmpeg's own output")
     return int(m.group(1)), int(m.group(2))
+
+
+def probe_has_audio(ffmpeg, input_path, stderr=None):
+    """True if ffmpeg's own stderr banner for input_path lists an audio
+    stream (a "Stream #n:n(...): Audio: ..." line). Used by nxv2enc's
+    _extract_source to skip a doomed audio extraction (and the scary raw
+    ffmpeg stderr it prints on the way down) when the source is
+    video-only, e.g. both SP15 research demo clips. Pass stderr= to
+    reuse an already-fetched _probe_stderr() banner."""
+    if stderr is None:
+        stderr = _probe_stderr(ffmpeg, input_path)
+    return re.search(r"Stream #\d+:\d+.*:\s*Audio:", stderr) is not None
 
 
 def compute_center_crop(src_w, src_h, target_w, target_h):

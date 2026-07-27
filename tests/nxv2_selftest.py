@@ -1761,6 +1761,44 @@ def t11_direct_gate_mono_floor_menu():
             raise AssertionError("320x256@25 direct must be refused")
 
 
+@case(12, "review fix: no-audio-source probe skips extraction (no raw "
+          "ffmpeg stderr leak), silence bytes unchanged")
+def t12_no_audio_source_probe():
+    import videnc as vv
+    # probe_has_audio regex, pinned against synthetic ffmpeg -i banners
+    # (no ffmpeg process needed - stderr= bypasses the subprocess call).
+    expect(vv.probe_has_audio(None, None,
+           stderr="  Stream #0:1(und): Audio: aac (LC) ...") is True,
+           "an audio stream line must be detected")
+    expect(vv.probe_has_audio(None, None,
+           stderr="  Stream #0:0(und): Video: h264 ...") is False,
+           "a video-only banner must report no audio")
+
+    # end-to-end: the real video-only fixture must skip extraction
+    # entirely (one informative note, no raw ffmpeg extraction stderr)
+    # and still fall back to the same silence bytes as before.
+    if not SINTEL.exists() or not FFMPEG.exists():
+        skip("Sintel source or ffmpeg not available")
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        ex = enc._extract_source(SINTEL, 256, 192, 25.0, "00:00:01", "1",
+                                  str(FFMPEG), dither=False, mono=False)
+    captured = buf.getvalue()
+    expect("no audio stream" in captured,
+           f"expected the one-line no-audio note, got: {captured!r}")
+    expect(captured.count("no audio stream") == 1,
+           f"expected exactly one note line, got: {captured!r}")
+    for scary in ("QT chapter track", "does not contain any stream",
+                  "Error opening output files", "Invalid argument"):
+        expect(scary not in captured,
+               f"raw ffmpeg extraction stderr leaked ({scary!r}): {captured!r}")
+    expect(len(ex["audio_bytes"]) > 0, "silence fallback must still be non-empty")
+    expect(all(b == enc.SILENCE_U8 for b in ex["audio_bytes"]),
+           "audio bytes must be the unchanged SILENCE_U8 fill")
+
+
 def main():
     passed, failed, skipped = 0, 0, 0
     last_step = None

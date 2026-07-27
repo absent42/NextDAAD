@@ -31,6 +31,7 @@ paint the HIDDEN surface across a KSTART..KFLIP span and flip+palette-
 swap atomically on KFLIP.
 """
 import math
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1849,7 +1850,9 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     if not ffmpeg_path.exists():
         raise SystemExit(f"error: ffmpeg not found at {ffmpeg_path}")
 
-    src_w, src_h = _videnc.probe_dimensions(ffmpeg_path, input_path)
+    probe_stderr = _videnc._probe_stderr(ffmpeg_path, input_path)
+    src_w, src_h = _videnc.probe_dimensions(ffmpeg_path, input_path, stderr=probe_stderr)
+    has_audio = _videnc.probe_has_audio(ffmpeg_path, input_path, stderr=probe_stderr)
     crop = _videnc.compute_center_crop(src_w, src_h, width, height)
     from fractions import Fraction
     fps_frac = fps if isinstance(fps, Fraction) else Fraction(fps).limit_denominator(1000)
@@ -1863,15 +1866,25 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     if nframes == 0:
         raise SystemExit("error: no frames decoded - check input/--start/--duration")
     needed = nframes * abytes_real
-    try:
-        audio_bytes = _videnc.extract_audio(ffmpeg_path, input_path, start, duration,
-                                             channels, rate)
-    except SystemExit:
+    if not has_audio:
         # Source has no audio stream at all (both SP15 research demo
         # clips, Sintel_1080_10s_30MB.mp4 and Big_Buck_Bunny_1080_10s_
-        # 30MB.mp4, are video-only) - fall back to silence rather than
-        # failing the encode.
+        # 30MB.mp4, are video-only) - skip the doomed extraction (and
+        # the raw ffmpeg stderr it would print on the way down) and go
+        # straight to silence.
+        print("note: source has no audio stream - encoding with silence",
+              file=sys.stderr)
         audio_bytes = b""
+    else:
+        try:
+            audio_bytes = _videnc.extract_audio(ffmpeg_path, input_path, start, duration,
+                                                 channels, rate)
+        except SystemExit:
+            # Extraction failed even though a stream was reported -
+            # genuinely anomalous; let the raw ffmpeg stderr through
+            # and still fall back to silence rather than failing the
+            # encode outright.
+            audio_bytes = b""
     if len(audio_bytes) < needed:
         audio_bytes = audio_bytes + bytes([SILENCE_U8]) * (needed - len(audio_bytes))
     elif len(audio_bytes) > needed:
