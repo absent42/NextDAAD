@@ -16,6 +16,8 @@ pointer (MOUSE), boot title screens, and native multi-part games
 (EXTERN n 4) are implemented. All 128 condacts are handled, but CALL
 is a documented no-op.
 
+From v0.3.0 onwards, Next core 3.02.04+ is required for video playback.
+
 ## Features
 
 - Layer 2 location graphics: 256x192 and 320x256 256-colour pictures
@@ -301,6 +303,9 @@ gates that refuse an unstreamable or off-rate file and name the remedy
 same encoder when present - shipped with the kit, no Python needed).
 See `authoring-kit/SETUP.md`'s "Video cutscenes" section and
 `authoring-kit/lib/videnc-README.md`.
+
+Compatibility note: In emulators, video playback does not currently 
+work correctly, use actual ZX Next hardware with core 3.02.04+
 
 ## Custom fonts and mouse pointer
 
