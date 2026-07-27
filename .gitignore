@@ -44,3 +44,4 @@ authoring-kit/VIDEO/*.VID
 authoring-kit/VIDEO/*.vid.args
 .superpowers/
 __pycache__/
+RELEASE.md
