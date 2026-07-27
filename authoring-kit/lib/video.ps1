@@ -42,8 +42,17 @@ $sources = @(Get-ChildItem 'VIDEO\*.mp4' -ErrorAction SilentlyContinue |
     Where-Object { $_.BaseName -match '^\d+$' })
 if (-not $sources) { exit 0 }
 
+# Encoder GENERATION stamp, salted into the sidecar hash below. The
+# arg-vector hash alone cannot see encoder-INTERNAL output changes (the
+# gap115 lesson: a re-tuned constant re-shapes the bytes with an
+# identical CLI), so bump this string whenever nxv2enc.py changes what
+# it emits for unchanged args - same discipline as build-tests.ps1's
+# $vidLegSettlementTag. 'pal9' = the 2026-07-27 palette-collapse fix
+# (display-lattice palettes + true 9th blue bit + ordered dither).
+$encoderGeneration = 'pal9'
+
 function Get-ArgHash([string[]]$argList) {
-    $joined = ($argList -join ' ')
+    $joined = ((@($encoderGeneration) + $argList) -join ' ')
     $md5 = [System.Security.Cryptography.MD5]::Create()
     try {
         $hashBytes = $md5.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($joined))

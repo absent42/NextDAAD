@@ -142,8 +142,8 @@
 #            name change forces a re-encode. Regenerate by deleting the
 #            relevant cache file and re-running -Vid, or directly with
 #            e.g.:
-#              python authoring-kit\lib\videnc.py tools\demo-files\Sintel_1080_10s_30MB.mp4 tests\out\001_full_gap115_leg_cache.vid --shape full --fps 25 --start 00:00:00 --duration 1.35
-#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\006_169_gap115_leg_cache.vid --shape 16:9 --fps 25 --start 00:00:00 --duration 5.0
+#              python authoring-kit\lib\videnc.py tools\demo-files\Sintel_1080_10s_30MB.mp4 tests\out\001_full_pal9_leg_cache.vid --shape full --fps 25 --start 00:00:00 --duration 1.35
+#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\006_169_pal9_leg_cache.vid --shape 16:9 --fps 25 --start 00:00:00 --duration 5.0
 #            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
 #            sd\*.VID is gitignored (owner edit).
 #            PRE-3a LONG-CLIP CACHES ARE OBSOLETE: the five 10-14MB
@@ -181,15 +181,17 @@
 #            mean supply utilization 1.74/1.30, mathematically
 #            unstreamable (VSTR1 collapsed at ~65.5ms/frame on
 #            silicon). videnc's streaming supply gate now refuses
-#            such encodes; 008/009 carry the --stream-budget values
-#            the gate derived (target ~0.90 utilization). 007 stays
-#            at the default point: it measures utilization ~1.00 -
-#            AT the streaming ceiling (silicon-healthy, VSTR0) - and
-#            the gate refuses any higher byte-cap for it.
-#            Cached at tests\out\00X_<shape>[_<tag>]_long_cache.vid
-#            like -Vid (encode once, copy after; delete a cache to
-#            re-encode; the operating point is part of the cache
-#            name, so changing it re-encodes). Does NOT touch
+#            such encodes; 007/008/009 carry the --stream-budget
+#            values the gate derived (007 sb 0.85 since the pal9
+#            palette-collapse fix pushed its old default point to
+#            util 1.06; it lands at util 1.00 - AT the streaming
+#            ceiling, the VSTR0 regime it was chosen for; 008/009
+#            target ~0.90).
+#            Cached at tests\out\00X_<shape>[_<tag>]_<settlementTag>_
+#            long_cache.vid like -Vid (encode once, copy after;
+#            delete a cache to re-encode; the operating point AND the
+#            settlement tag are part of the cache name, so changing
+#            either re-encodes). Does NOT touch
 #            sd\001-006.VID, so it can be staged alongside -Vid.
 #            Verbs: VSTR0/VSTR1/VSTR2/VSTRU (tests\test.dsf). Same
 #            CSpect-lock guard.
@@ -629,6 +631,19 @@ if ($Font) {
     "staged a generated 16x16 green square (2px `$E3 border, `$00 outline) -> sd\POINTER.SPR (256 bytes)"
 }
 
+# Bump this whenever a silicon-settled constant OR output-shaping
+# internal in nxv2enc.py changes (TMODEL_COEFFS,
+# TMODEL_COMPOSITION_FACTOR, TMODEL_SILICON_R, palette/dither
+# pipeline, etc) - see the -Vid header comment for why an arg-list
+# hash can't catch this class of change. History: 'gap115' = the
+# Card #5 gapped resettlement (factor 1.55 -> 1.15, commit
+# 4814921); 'pal9' = the 2026-07-27 palette-collapse fix
+# (display-lattice palettes + true 9th blue bit + ordered dither -
+# wire output changes with identical CLI args). Used by BOTH -Vid and
+# -VidLong cache names (the -VidLong per-entry 'tag' only fingerprints
+# CLI operating points, so it is equally blind to this class).
+$vidLegSettlementTag = 'pal9'
+
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,
     # 2026-07-25) - see the -Vid switch's own header comment above for
@@ -645,13 +660,6 @@ if ($Vid) {
     Remove-Item "$root\sd\00[1-6].VID" -Force -ErrorAction SilentlyContinue
     $vidOutDir = Join-Path $root 'tests\out'
     New-Item -ItemType Directory -Force $vidOutDir | Out-Null
-    # Bump this whenever a silicon-settled constant in nxv2enc.py changes
-    # (TMODEL_COEFFS, TMODEL_COMPOSITION_FACTOR, TMODEL_SILICON_R, etc) -
-    # see the -Vid header comment for why an arg-list hash can't catch
-    # this class of change. 'gap115' = the Card #5 gapped resettlement
-    # (composition factor 1.55 -> 1.15, commit 4814921) this tag was
-    # introduced to stop silently restaging around.
-    $vidLegSettlementTag = 'gap115'
     # dest file -> (NXV v2 shape preset, source clip, --start, --duration)
     # - exact leg-card values (sp14a-task-4-report.md section 37 + the
     # CALIBRATION WAVE addendum) that reproduce the leg-staged bytes
@@ -705,7 +713,13 @@ if ($VidLong) {
     # header comment); tag makes it part of the cache name so a changed
     # point re-encodes instead of silently reusing a stale cache
     $vidLongMap = [ordered]@{
-        '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @(); tag = '' }
+        # 007's operating point RE-DERIVED at the pal9 palette-collapse
+        # fix (2026-07-27): dithered display-lattice targets raise the
+        # delta demand, the old default point now scores util 1.06 and
+        # the gate refuses it; 0.85 is the gate's own named remedy and
+        # lands at util 1.00 - AT the streaming ceiling, the same VSTR0
+        # operating regime 007 was chosen for.
+        '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.85'); tag = 'sb85' }
         '008.VID' = @{ shape = 'full';    src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.51'); tag = 'sb51' }
         # 009's operating point RE-DERIVED at the Card #5 gapped prices
         # (composition factor 1.55 -> 1.15, silicon_r gapped 1.20 -> 1.01):
@@ -748,7 +762,9 @@ if ($VidLong) {
         $shapeTag = $shape -replace ':', ''
         $tag = $vidLongMap[$dest].tag
         if ($tag) { $shapeTag = "${shapeTag}_${tag}" }
-        $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_long_cache.vid"
+        # settlement tag in the name for the same reason as -Vid: an
+        # encoder-internal change re-shapes output with identical args
+        $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_${vidLegSettlementTag}_long_cache.vid"
         # optional cut (011 only - the pacing card is an exact 5.000 s
         # slice of a 60 s source; everything else is a FULL-duration encode)
         $cut = @()
