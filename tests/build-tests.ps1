@@ -639,10 +639,16 @@ if ($Font) {
 # Card #5 gapped resettlement (factor 1.55 -> 1.15, commit
 # 4814921); 'pal9' = the 2026-07-27 palette-collapse fix
 # (display-lattice palettes + true 9th blue bit + ordered dither -
-# wire output changes with identical CLI args). Used by BOTH -Vid and
-# -VidLong cache names (the -VidLong per-entry 'tag' only fingerprints
-# CLI operating points, so it is equally blind to this class).
-$vidLegSettlementTag = 'pal9'
+# wire output changes with identical CLI args); 'pal9b' = the
+# palette-lattice review fix-wave (2026-07-27, commits dcc2230/
+# 5b47727 review): nearest-level lattice snap (was truncating >>5)
+# and DITHER_AMP corrected to the true lattice bin spacing (was ~12%
+# narrow) - the pal9 encodes were never hardware-eyeballed, so one
+# bump covers both the pal9 and pal9b output-shaping changes at once.
+# Used by BOTH -Vid and -VidLong cache names (the -VidLong per-entry
+# 'tag' only fingerprints CLI operating points, so it is equally
+# blind to this class).
+$vidLegSettlementTag = 'pal9b'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

@@ -648,13 +648,19 @@ def t6_zero_truncation():
     # (71/75) all do.
     expect(total_budget_bound > 0,
            "no combo hit the budget-bound path - zero-truncation guarantee is untested under pressure")
-    # worst_psnr floor: measured worst across these four fixtures this
-    # review was 4.28 dB (Sintel 320x256@25, an early hidden-keyframe-span
-    # transition frame - not the budget path). Floor set with ~0.75 dB of
-    # honest headroom below that so routine noise doesn't trip it while a
-    # real regression (keyframe-span or budget-scheduling defect) still does.
+    # worst_psnr floor: re-derived under the wire-true pipeline (review
+    # fix-wave 2026-07-27, nearest-lattice snap + corrected DITHER_AMP -
+    # dcc2230/5b47727 review). Measured worst across these four fixtures
+    # is now 4.02 dB (Sintel 320x256@25, an early hidden-keyframe-span
+    # transition frame - not the budget path; was 4.28 dB under the OLD
+    # pre-fix pal9 pipeline - the corrected dither amplitude trades a
+    # little raw PSNR for banding removal, so wire-true worst moved
+    # DOWN, not up). Floor left at 3.5 (NOT raised - wire-true worst
+    # only widened, did not shrink, the headroom, now ~0.52 dB) so
+    # routine noise doesn't trip it while a real regression (keyframe-
+    # span or budget-scheduling defect) still does.
     expect(worst_psnr_overall > 3.5,
-           f"worst PSNR {worst_psnr_overall:.2f} below the SP15 T5 floor (measured 4.28 this review)")
+           f"worst PSNR {worst_psnr_overall:.2f} below the SP15 T5 floor (measured 4.02 this review)")
 
 
 @case(6, "dual-budget rate control - region-coherent budget-bound scheduling (synthetic, forced)")
@@ -1190,22 +1196,25 @@ def _slow_drift_clip(N=50, H=192, W=256):
     slowly, but the colour histogram is ~constant so the held palette stays
     valid and the DRIFT trigger never fires - the pure conditional-
     replenishment case where only accumulated decoded error (not palette
-    fit) reveals the screen is wrong. Returns (orig, chg, po_ceil)."""
+    fit) reveals the screen is wrong. Returns (orig, chg, po_ceil).
+
+    po_ceil (review MAJOR 2 fix, 2026-07-27): built via enc.display_ceiling,
+    same as _synth_clip (:1259-1272) - a REACHABLE display-pipeline ceiling
+    (dithered, lattice-snapped), not a 24-bit ADAPTIVE ceiling that sits
+    above anything the display pipeline can reach (which would either make
+    t11_staleness_bounded vacuous - the deficit gate never binds - or
+    thrash the staleness/drift trigger into per-frame keyframes)."""
     yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
     base = np.stack([128 + 110 * np.sin(xx * 0.20) * np.cos(yy * 0.13),
                      128 + 110 * np.sin(yy * 0.17 + 1.0),
                      128 + 110 * np.sin((xx + yy) * 0.11 + 2.0)], axis=2)
-    from PIL import Image
     orig = np.empty((N, H, W, 3), dtype=np.uint8)
     for i in range(N):
         orig[i] = np.clip(np.roll(base, i, axis=1), 0, 255).astype(np.uint8)
     po = np.empty(N)
     chg = np.zeros(N)
     for i in range(N):
-        im = Image.fromarray(orig[i]).convert(
-            "P", palette=Image.Palette.ADAPTIVE, colors=256, dither=Image.Dither.NONE)
-        pal = np.array((list(im.getpalette()) + [0] * 768)[:768], dtype=np.uint8).reshape(256, 3)
-        po[i] = enc.psnr(orig[i], pal[np.asarray(im)])
+        po[i] = enc.display_ceiling(orig[i])
         if i:
             chg[i] = float((np.abs(orig[i].astype(int) - orig[i - 1].astype(int)).max(2) > 10).mean())
     return orig, chg, po

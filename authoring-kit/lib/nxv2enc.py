@@ -1331,15 +1331,38 @@ def adaptive_palette(rgb, colors=256):
 LATTICE_EXP3 = np.array([(v << 5) | (v << 2) | (v >> 1) for v in range(8)],
                         dtype=np.uint8)
 
+# Lattice bin spacing (255/7): the 8 reconstruction levels 0/36/73/109/
+# 146/182/219/255 are not quite evenly spaced (36/37 alternating), so
+# this is the mean/nominal bin width used for the dither amplitude below.
+LATTICE_BIN = 255.0 / 7.0   # 36.42857...
+
+
+def _nearest_lattice_lut():
+    """256-entry LUT, uint8 -> nearest LATTICE_EXP3 level (decoder-
+    expanded). Review MAJOR 1 fix (2026-07-27): the old snap was a
+    truncating >>5 (floor to the level BELOW x), a worst-case error of
+    one full bin (~36/255) with a systematic downward bias. Nearest-
+    level rounding halves the worst case to <=18/255 (half a bin) and
+    is bias-free (ties split evenly, not always down)."""
+    levels = LATTICE_EXP3.astype(np.int32)
+    x = np.arange(256, dtype=np.int32)[:, None]
+    d = np.abs(x - levels[None, :])
+    idx = np.argmin(d, axis=1)
+    return LATTICE_EXP3[idx]
+
+
+LATTICE_NEAREST = _nearest_lattice_lut()
+
 
 def snap_to_lattice(rgb):
     """Snap uint8 RGB (any shape, last axis 3) to the 9-bit display
     lattice, returning decoder-expanded 8-bit values (the colours the
-    hardware will actually show)."""
+    hardware will actually show). NEAREST-level snap (LATTICE_NEAREST),
+    not truncation - see _nearest_lattice_lut."""
     out = np.empty_like(rgb)
-    out[..., 0] = LATTICE_EXP3[rgb[..., 0] >> 5]
-    out[..., 1] = LATTICE_EXP3[rgb[..., 1] >> 5]
-    out[..., 2] = LATTICE_EXP3[rgb[..., 2] >> 5]
+    out[..., 0] = LATTICE_NEAREST[rgb[..., 0]]
+    out[..., 1] = LATTICE_NEAREST[rgb[..., 1]]
+    out[..., 2] = LATTICE_NEAREST[rgb[..., 2]]
     return out
 
 
@@ -1351,7 +1374,11 @@ def _bayer8():
 
 
 BAYER8 = _bayer8()          # 8x8 ordered-dither threshold map, 0..63
-DITHER_AMP = 32.0           # one lattice bin (>>5 quantizer bin width)
+# One TRUE lattice bin (review MAJOR 1 fix, 2026-07-27): the old 32.0
+# was the >>5 TRUNCATING quantizer's bin width, ~12% narrower than the
+# actual nearest-level lattice spacing (255/7 = 36.43), under-dithering
+# the gradient recovery this pass exists for.
+DITHER_AMP = LATTICE_BIN
 
 
 def ordered_dither(frame):
@@ -1905,8 +1932,12 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     # dithered frames (position-deterministic - quiet content dithers
     # identically every frame, so this feeds no churn to the delta
     # coder); PSNR/staleness are still measured against the true
-    # source. Dithered once up front.
-    dith = np.stack([ordered_dither(orig[i]) for i in range(N)])
+    # source. Dithered PER-FRAME inside the loop below (review minor,
+    # 2026-07-27: a precomputed (N,H,W,3) stack doubled encode_clip's
+    # peak RAM against the already-resident `orig` stack; ordered_dither
+    # is a pure position-deterministic function of one frame, so
+    # streaming it costs nothing but a cheap re-derive on the rare
+    # frame that references it twice).
 
     payloads = []
     kf_span_ranges = []
@@ -1933,6 +1964,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                                # (finding 2) - marks its chunk-frames' mode
 
     for i in range(N):
+        frame_dith = ordered_dither(orig[i])   # streaming, see note above
         start_kf = False
         trigger = None
         drift_for_stats = None   # T1 step 5: recorded for plain delta frames
@@ -1947,7 +1979,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             # index stickiness with palette drift and thrash the keyframe
             # trigger (freeze-drift). Emission below re-quantizes with
             # hysteresis; the trigger stays clean.
-            _, target_dec = quantize_to_palette(dith[i], held_pal)
+            _, target_dec = quantize_to_palette(frame_dith, held_pal)
             drift = po_ceil[i] - psnr(orig[i], target_dec)
             drift_for_stats = drift
             in_refract = (i - last_kf_end) <= refract
@@ -2002,7 +2034,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             if len(planned) > 1 and prev_flat is not None and _is_cut_at(chg, i + 1, CUT_T):
                 prev_idx = unflatten_frame(prev_flat, height, width, column_major)
                 target_idx, target_dec = quantize_to_palette(
-                    dith[i], held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
+                    frame_dith, held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
                 tflat = flatten_frame(target_idx, column_major)
                 prev_dec_flat = held_pal[prev_flat].astype(np.float32)
                 targ_dec_flat = held_pal[tflat].astype(np.float32)
@@ -2058,7 +2090,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
 
         if kf_chunks:
             s, L, first = kf_chunks.pop(0)
-            tidx, _ = quantize_to_palette(dith[i], kf_pal)
+            tidx, _ = quantize_to_palette(frame_dith, kf_pal)
             tflat = flatten_frame(tidx, column_major)
             staging[s:s + L] = tflat[s:s + L]
             is_last = not kf_chunks
@@ -2099,7 +2131,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
         else:
             prev_idx = unflatten_frame(prev_flat, height, width, column_major)
             target_idx, target_dec = quantize_to_palette(
-                dith[i], held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
+                frame_dith, held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
             tflat = flatten_frame(target_idx, column_major)
             prev_dec_flat = held_pal[prev_flat].astype(np.float32)
             targ_dec_flat = held_pal[tflat].astype(np.float32)

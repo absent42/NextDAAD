@@ -48,8 +48,11 @@ if (-not $sources) { exit 0 }
 # identical CLI), so bump this string whenever nxv2enc.py changes what
 # it emits for unchanged args - same discipline as build-tests.ps1's
 # $vidLegSettlementTag. 'pal9' = the 2026-07-27 palette-collapse fix
-# (display-lattice palettes + true 9th blue bit + ordered dither).
-$encoderGeneration = 'pal9'
+# (display-lattice palettes + true 9th blue bit + ordered dither);
+# 'pal9b' = the palette-lattice review fix-wave (2026-07-27): nearest-
+# level lattice snap (was truncating) + corrected DITHER_AMP (was ~12%
+# narrow) - kit demos must re-encode with the snap fix too.
+$encoderGeneration = 'pal9b'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')
