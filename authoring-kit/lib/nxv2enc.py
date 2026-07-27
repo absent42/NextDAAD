@@ -1292,6 +1292,133 @@ def adaptive_palette(rgb, colors=256):
     return np.array(pal[:colors * 3], dtype=np.uint8).reshape(colors, 3)
 
 
+# ---------------------------------------------------------------------
+# Hardware display lattice (SP15 palette-collapse fix, 2026-07-27).
+#
+# ROOT CAUSE this block exists for: the NR $44 palette is 9-bit RGB333
+# (512 displayable colours). The encoder used to generate/assign
+# palettes in 24-bit space and only truncate at build_palette_block
+# time - AND synthesized the 9th blue bit with the hardware's 8-bit
+# auto-expand OR rule (4 effective blue levels: 0/109/182/255). On real
+# footage the 256 ADAPTIVE entries collapsed onto ~19 distinct
+# displayed colours (004/001 leg fixtures, measured), while every
+# quality number (BuildReport PSNR, panels, drift triggers) was
+# computed against the UN-truncated 8-bit palette - a wire PSNR of
+# ~21 dB reported as ~36 dB. Verified NOT a regression: the T1-era
+# encoder (caa48ed) wire-measures identically (19 colours, 20.63 dB).
+#
+# Fix, encoder-side only (wire format untouched - byte1 bit0 was
+# always spec'd as the 9th blue bit and the player forwards the whole
+# 512-byte block to NR $44):
+#   1. palettes are generated IN lattice space (display_palette):
+#      median-cut, snap to lattice, dedupe, refill freed entries with
+#      the most-frequent unused lattice colours of the dithered scene
+#      composite - all 256 entries are distinct displayable colours,
+#      stored in decoder-expanded 8-bit form so the encoder's internal
+#      decode is byte-identical to the wire decode (PSNR is wire-true);
+#   2. build_palette_block writes the TRUE 9th blue bit (b>>5 & 1),
+#      doubling blue resolution (exact round-trip for lattice values);
+#   3. quantization targets are ordered-dithered (8x8 Bayer, amplitude
+#      = one lattice bin): position-deterministic, so temporally
+#      STABLE (no frame-to-frame dither churn feeding the delta coder),
+#      recovering the gradient depth the 512-colour gamut cannot carry
+#      flat (foggy/skin gradients: a frame often CONTAINS only ~36
+#      distinct lattice colours undithered).
+# ---------------------------------------------------------------------
+
+# 3-bit -> 8-bit expansion, the reference decoder's own rule
+# (nxv2dec._decode_palette_block): value v -> (v<<5)|(v<<2)|(v>>1).
+LATTICE_EXP3 = np.array([(v << 5) | (v << 2) | (v >> 1) for v in range(8)],
+                        dtype=np.uint8)
+
+
+def snap_to_lattice(rgb):
+    """Snap uint8 RGB (any shape, last axis 3) to the 9-bit display
+    lattice, returning decoder-expanded 8-bit values (the colours the
+    hardware will actually show)."""
+    out = np.empty_like(rgb)
+    out[..., 0] = LATTICE_EXP3[rgb[..., 0] >> 5]
+    out[..., 1] = LATTICE_EXP3[rgb[..., 1] >> 5]
+    out[..., 2] = LATTICE_EXP3[rgb[..., 2] >> 5]
+    return out
+
+
+def _bayer8():
+    m = np.array([[0]], dtype=np.int32)
+    while m.shape[0] < 8:
+        m = np.block([[4 * m + 0, 4 * m + 2], [4 * m + 3, 4 * m + 1]])
+    return m
+
+
+BAYER8 = _bayer8()          # 8x8 ordered-dither threshold map, 0..63
+DITHER_AMP = 32.0           # one lattice bin (>>5 quantizer bin width)
+
+
+def ordered_dither(frame):
+    """8x8 Bayer ordered dither of an (H,W,3) uint8 frame, amplitude
+    one lattice bin, same offset on all three channels (no hue noise).
+    Position-deterministic: identical source pixels dither identically
+    every frame, so quiet content produces ZERO index churn."""
+    H, W, _ = frame.shape
+    t = (BAYER8[np.arange(H)[:, None] % 8, np.arange(W)[None, :] % 8]
+         .astype(np.float32) + 0.5) / 64.0 - 0.5
+    f = frame.astype(np.float32) + (t * DITHER_AMP)[..., None]
+    return np.clip(f, 0.0, 255.0).astype(np.uint8)
+
+
+def _lattice_codes(rgb_flat):
+    v = rgb_flat.astype(np.int32)
+    return (v[:, 0] << 16) | (v[:, 1] << 8) | v[:, 2]
+
+
+def display_palette(composite, colors=256):
+    """Palette of `colors` DISTINCT displayable lattice colours for an
+    (rows,W,3) composite: Pillow median-cut (keeps rare-but-salient
+    colours), snapped to the lattice and deduped, then freed slots
+    refilled with the most-frequent unused lattice colours of the
+    ordered-dithered composite (what the dithered pixels will actually
+    ask for). Entries are decoder-expanded 8-bit values; if the scene
+    holds fewer distinct lattice colours than `colors`, the tail
+    duplicates entry 0 (never selected by nearest-match)."""
+    snapped = snap_to_lattice(adaptive_palette(composite, colors=colors))
+    codes = _lattice_codes(snapped)
+    seen = set()
+    kept = []
+    for c in codes.tolist():
+        if c not in seen:
+            seen.add(c)
+            kept.append(c)
+    if len(kept) < colors:
+        dpost = snap_to_lattice(ordered_dither(composite)).reshape(-1, 3)
+        uniq, counts = np.unique(_lattice_codes(dpost), return_counts=True)
+        for c in uniq[np.argsort(-counts)].tolist():
+            if len(kept) >= colors:
+                break
+            if c not in seen:
+                seen.add(c)
+                kept.append(c)
+    pal = np.zeros((colors, 3), dtype=np.uint8)
+    n = len(kept)
+    arr = np.array(kept, dtype=np.int64)
+    pal[:n, 0] = (arr >> 16) & 0xFF
+    pal[:n, 1] = (arr >> 8) & 0xFF
+    pal[:n, 2] = arr & 0xFF
+    if n < colors:
+        pal[n:] = pal[0]
+    return pal
+
+
+def display_ceiling(frame):
+    """Per-frame quality ceiling in DISPLAY space: the PSNR of the
+    frame's own best display_palette applied to its ordered-dithered
+    self - the wire-true analogue of the old 24-bit ADAPTIVE po_ceil
+    (drift triggers compare achieved PSNR against this, so both sides
+    of that comparison must live in the same space)."""
+    pal = display_palette(frame)
+    _, dec = quantize_to_palette(ordered_dither(frame), pal)
+    return psnr(frame, dec)
+
+
 # Quantizer index-hysteresis deadzone (SP15 encoder-optimization wave):
 # when re-quantizing to a HELD palette, a pixel keeps its previous-frame
 # index whenever that index's colour is within HYSTERESIS_EPS (squared RGB
@@ -1370,17 +1497,18 @@ def psnr(a, b):
 
 
 def build_palette_block(pal_256x3):
-    """256 entries x 2 bytes, NR $44 order (same packing as the v1
-    encoder's build_palette_block, kept identical so panels/hardware
-    behaviour do not shift): byte0 = RRRGGGBB (top bits), byte1 bit0 =
-    the 9th (extended) blue bit per the Next's own 8-bit->9-bit
-    hardware expansion rule (docs/zx-next-dev-guide-2022-07-15/chapter-
-    next-palette.tex:176)."""
+    """256 entries x 2 bytes, NR $44 order: byte0 = RRRGGGBB (top
+    bits), byte1 bit0 = the 9th (extended) blue bit, taken from the
+    TRUE source blue bit 5 (palette-collapse fix 2026-07-27: the old
+    packing synthesized it with the hardware's 8-bit auto-expand OR
+    rule, quietly halving blue to 4 effective levels). For palettes in
+    decoder-expanded lattice form (display_palette) this packing
+    round-trips exactly through nxv2dec._decode_palette_block."""
     out = bytearray(PAL_BLOCK_SIZE)
     for i in range(256):
         r, g, b = (int(pal_256x3[i, 0]), int(pal_256x3[i, 1]), int(pal_256x3[i, 2]))
         byte0 = (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6)
-        byte1 = 1 if (byte0 & 3) else 0
+        byte1 = (b >> 5) & 1
         out[i * 2] = byte0
         out[i * 2 + 1] = byte1
     return bytes(out)
@@ -1433,7 +1561,10 @@ def scene_palette(orig_frames, start_idx, scene_end_idx, max_samples=6, colors=2
         k = min(max_samples, n)
         idxs = sorted({int(round(start_idx + j * (n - 1) / (k - 1))) for j in range(k)})
     composite = np.concatenate([orig_frames[i] for i in idxs], axis=0)
-    return adaptive_palette(composite, colors=colors)
+    # palette-collapse fix: palettes live in DISPLAY lattice space (256
+    # distinct displayable colours, decoder-expanded) - see the
+    # display_palette block for the mechanism.
+    return display_palette(composite, colors=colors)
 
 
 # ---------------------------------------------------------------------
@@ -1677,7 +1808,7 @@ SILENCE_U8 = 128
 # ---------------------------------------------------------------------
 
 def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dither, mono):
-    """Extracts (orig (N,H,W,3) uint8 RGB frames, ref_idx, ref_pal,
+    """Extracts (orig (N,H,W,3) uint8 RGB frames, po_ceil, chg,
     audio_bytes, channels, rate) from a source file, reusing videnc.py's
     own ffmpeg plumbing (probe/crop/extract) - the canonical location
     for that logic per the kit's own docstring. Imported lazily to
@@ -1720,23 +1851,19 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
         audio_bytes = audio_bytes[:needed]
 
     orig = np.frombuffer(video_bytes, dtype=np.uint8).reshape(nframes, height, width, 3)
-    dmode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
-    ref_idx = np.empty((nframes, height, width), dtype=np.uint8)
-    ref_pal = np.empty((nframes, 256, 3), dtype=np.uint8)
+    # po_ceil: per-frame quality ceiling in DISPLAY space (palette-
+    # collapse fix - the old 24-bit ADAPTIVE reference over-stated the
+    # ceiling by the whole lattice truncation, so drift never saw it;
+    # the legacy --dither/FS reference flag is subsumed: ordered
+    # dithering into the lattice is now integral to the pipeline).
     po_ceil = np.empty(nframes)
     chg = np.zeros(nframes)
     for i in range(nframes):
-        im = Image.fromarray(orig[i]).convert(
-            "P", palette=Image.Palette.ADAPTIVE, colors=256, dither=dmode)
-        pal = list(im.getpalette() or [])
-        pal += [0] * (768 - len(pal))
-        ref_idx[i] = np.asarray(im, dtype=np.uint8)
-        ref_pal[i] = np.array(pal[:768], dtype=np.uint8).reshape(256, 3)
-        po_ceil[i] = psnr(orig[i], ref_pal[i][ref_idx[i]])
+        po_ceil[i] = display_ceiling(orig[i])
         if i:
             d = np.abs(orig[i].astype(np.int16) - orig[i - 1].astype(np.int16)).max(axis=2)
             chg[i] = float((d > 10).mean())
-    return dict(orig=orig, ref_idx=ref_idx, ref_pal=ref_pal, po_ceil=po_ceil,
+    return dict(orig=orig, po_ceil=po_ceil,
                 chg=chg, audio_bytes=audio_bytes, channels=channels, rate=rate,
                 abytes_real=abytes_real, abytes_pad=abytes_pad, nframes=nframes)
 
@@ -1773,6 +1900,13 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     tile_px = default_tile_px(raw, width=width, height=height, column_major=column_major)
 
     scene_cuts = detect_scene_cuts(chg)
+
+    # Palette-collapse fix: all quantization TARGETS are the ordered-
+    # dithered frames (position-deterministic - quiet content dithers
+    # identically every frame, so this feeds no churn to the delta
+    # coder); PSNR/staleness are still measured against the true
+    # source. Dithered once up front.
+    dith = np.stack([ordered_dither(orig[i]) for i in range(N)])
 
     payloads = []
     kf_span_ranges = []
@@ -1813,7 +1947,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             # index stickiness with palette drift and thrash the keyframe
             # trigger (freeze-drift). Emission below re-quantizes with
             # hysteresis; the trigger stays clean.
-            _, target_dec = quantize_to_palette(orig[i], held_pal)
+            _, target_dec = quantize_to_palette(dith[i], held_pal)
             drift = po_ceil[i] - psnr(orig[i], target_dec)
             drift_for_stats = drift
             in_refract = (i - last_kf_end) <= refract
@@ -1824,9 +1958,13 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             # blind to (it only sees palette FIT). dec_now = current screen;
             # decoded_deficit = how far below the frame's own ceiling it sits;
             # wrong_frac = the AREA that is wrong (whole-frame vs local).
+            # wrong_frac compares the screen against the ACHIEVABLE target
+            # (both lattice-decoded) rather than the raw source - against the
+            # source, deliberate dither displacement would count as wrong and
+            # saturate the area gate (palette-collapse fix).
             dec_now = unflatten_frame(held_pal[prev_flat], height, width, column_major)
             decoded_deficit = po_ceil[i] - psnr(orig[i], dec_now)
-            d_now = np.abs(orig[i].astype(np.int16) - dec_now.astype(np.int16)).max(axis=2)
+            d_now = np.abs(target_dec.astype(np.int16) - dec_now.astype(np.int16)).max(axis=2)
             wrong_frac = float((d_now > 12).mean())
             # Dissolve/pan: sustained elevated change WITHOUT an impulse, WITH
             # the held palette losing fit (drift up) - a scene transition. The
@@ -1864,7 +2002,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             if len(planned) > 1 and prev_flat is not None and _is_cut_at(chg, i + 1, CUT_T):
                 prev_idx = unflatten_frame(prev_flat, height, width, column_major)
                 target_idx, target_dec = quantize_to_palette(
-                    orig[i], held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
+                    dith[i], held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
                 tflat = flatten_frame(target_idx, column_major)
                 prev_dec_flat = held_pal[prev_flat].astype(np.float32)
                 targ_dec_flat = held_pal[tflat].astype(np.float32)
@@ -1920,7 +2058,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
 
         if kf_chunks:
             s, L, first = kf_chunks.pop(0)
-            tidx, _ = quantize_to_palette(orig[i], kf_pal)
+            tidx, _ = quantize_to_palette(dith[i], kf_pal)
             tflat = flatten_frame(tidx, column_major)
             staging[s:s + L] = tflat[s:s + L]
             is_last = not kf_chunks
@@ -1961,7 +2099,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
         else:
             prev_idx = unflatten_frame(prev_flat, height, width, column_major)
             target_idx, target_dec = quantize_to_palette(
-                orig[i], held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
+                dith[i], held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
             tflat = flatten_frame(target_idx, column_major)
             prev_dec_flat = held_pal[prev_flat].astype(np.float32)
             targ_dec_flat = held_pal[tflat].astype(np.float32)
@@ -2056,7 +2194,8 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None):
             continue
         pal = scene_palette(orig, s_i, e_i)
         for i in range(s_i, e_i):
-            idx, dec = quantize_to_palette(orig[i], pal)
+            # palette-collapse fix: dithered target, source-true PSNR
+            idx, dec = quantize_to_palette(ordered_dither(orig[i]), pal)
             flat = flatten_frame(idx, column_major)
             payloads.append(emit_direct_frame_payload(
                 flat, pal if i == s_i else None))

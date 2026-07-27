@@ -191,8 +191,9 @@ def main(argv):
                      help="mono audio (23325 Hz) instead of the "
                           "default stereo (15625 Hz)")
     ap.add_argument("--dither", action="store_true",
-                     help="Floyd-Steinberg dither the palette "
-                          "(default: no dither, matching tools/png2nx.py)")
+                     help="accepted for compatibility; NXV v2 always "
+                          "ordered-dithers into the 9-bit display "
+                          "lattice (palette-collapse fix 2026-07-27)")
     ap.add_argument("--no-merge", dest="no_merge", action="store_true",
                      help="disable the encoder-only gap-merge optimization "
                           "(SP15). Production encodes keep it ON; this is for "

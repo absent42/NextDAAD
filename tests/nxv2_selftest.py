@@ -691,10 +691,13 @@ def t7_report_and_validate():
         # BBB at full shape is unstreamable at the default operating
         # point (the Card #3 VSTR1 finding - the gate refuses it, see
         # the gate case in step 1); encode it at the -VidLong fixture
-        # operating point. Sintel classic streams at the default point
-        # (utilization ~0.95 on a 5s window - the at-capacity warning).
+        # operating point. Sintel classic used to stream at the default
+        # point (~0.95, at-capacity); the palette-collapse fix's
+        # dithered targets push it to 1.02 and the gate refuses -
+        # encode at the gate's own named remedy (0.88, ~0.90 target),
+        # the same re-derivation Card #5 did for 009.
         for clip, shape_name, (w, h), sb in (
-                (SINTEL, "256x192", (256, 192), 1.0),
+                (SINTEL, "256x192", (256, 192), 0.88),
                 (BBB, "320x256", (320, 256), 0.51)):
             out = Path(td) / f"{clip.stem}_{shape_name}.vid"
             report = enc.encode(str(clip), str(out), shape=(w, h), fps=25.0,
@@ -1254,16 +1257,16 @@ def _build_vid(result, w, h, fps=25.0):
 
 
 def _synth_clip(orig):
-    """po_ceil + chg for a synthetic (N,H,W,3) stack, like _extract_source."""
-    from PIL import Image
+    """po_ceil + chg for a synthetic (N,H,W,3) stack, like _extract_source
+    (palette-collapse fix: the ceiling lives in DISPLAY space, exactly as
+    _extract_source computes it - a 24-bit ADAPTIVE ceiling would sit
+    several dB above anything the display pipeline can reach and thrash
+    the drift trigger into per-frame keyframes)."""
     N = orig.shape[0]
     po = np.empty(N)
     chg = np.zeros(N)
     for i in range(N):
-        im = Image.fromarray(orig[i]).convert(
-            "P", palette=Image.Palette.ADAPTIVE, colors=256, dither=Image.Dither.NONE)
-        pal = np.array((list(im.getpalette()) + [0] * 768)[:768], dtype=np.uint8).reshape(256, 3)
-        po[i] = enc.psnr(orig[i], pal[np.asarray(im)])
+        po[i] = enc.display_ceiling(orig[i])
         if i:
             chg[i] = float((np.abs(orig[i].astype(int) - orig[i - 1].astype(int)).max(2) > 10).mean())
     return chg, po
@@ -1329,7 +1332,7 @@ def t12_moving_edge_pixel_exact():
         for i in range(1, N):
             if not modes[i].startswith("full"):
                 continue   # budget-bound frame: lag is allowed
-            target_idx, _ = enc.quantize_to_palette(orig[i], held)
+            target_idx, _ = enc.quantize_to_palette(enc.ordered_dither(orig[i]), held)
             expect(np.array_equal(result["surfaces"][i], target_idx),
                    f"{w}x{h} frame {i} (mode {modes[i]}): decoded surface not "
                    f"pixel-exact vs quantized source - stride/transpose bug")
@@ -1539,7 +1542,8 @@ def t11_direct_serve():
         for s_i, e_i in zip(bounds[:-1], bounds[1:]):
             pal = enc.scene_palette(ex["orig"], s_i, e_i)
             for i in range(s_i, e_i):
-                idx, _ = enc.quantize_to_palette(ex["orig"][i], pal)
+                # mirrors _encode_direct: ordered-dithered target
+                idx, _ = enc.quantize_to_palette(enc.ordered_dither(ex["orig"][i]), pal)
                 dpal, dimg = frames[fi]
                 expect(np.array_equal(dimg, idx), f"f{fi} indexed pixel-exact")
                 fi += 1
