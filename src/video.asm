@@ -31,8 +31,9 @@
 ;
 ;   VID_PAGE2 (70, $E000-$F7FF) - COLD (pre-arm / post-disarm only):
 ;     vid_run_orch_body (3c: the whole pre-arm ladder as plain calls)
-;     -> nxv2_open_body (v2 header validate + audio bank + ring alloc
-;     + delivery decision by hint/size + resident load / streaming
+;     -> nxv2_open_body (v2 header validate + audio bank + snapshot
+;     bank reservation + ring alloc + delivery decision by hint/size
+;     + resident load / streaming
 ;     ring PREFILL / direct rewind-and-handoff + hot staging incl.
 ;     the per-session decode vectors), vid_run_entry_body /
 ;     vid_run_l2setup_body / vid_run_restore_body (EXIT ORDER FIX

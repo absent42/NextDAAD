@@ -432,8 +432,12 @@ is just the play). Details worth knowing: the hidden back surface is
 NOT preserved (its contents are undefined after a video - only matters
 if a game draws there directly), the snapshot reserves a few memory
 banks per session (a video refuses with `VID NOBANK2` if the pool
-cannot cover it - only plausible on a heavily loaded 2MB machine), and
-a text-only game with the picture layer hidden pays nothing. A full
+cannot cover it - on the 2MB baseline that takes a heavily-loaded pool
+(gfx cache pressure) to bite; unexpanded/1MB machines are outside
+video support entirely, since the shared allocator pool there is only
+the 14-bank base model with no expansion banks behind it - the same
+`VID NOBANK2` path, just triggered far more readily), and a text-only
+game with the picture layer hidden pays nothing. A full
 redescribe (`CLS` then `RESTART`, the starter's REEL verb) remains a
 scene-change choice when the story moves on - a choice, no longer a
 necessity.
