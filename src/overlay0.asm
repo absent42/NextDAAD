@@ -2262,8 +2262,43 @@ ktest_trampoline:
 ; ~2.4KB of VID_PAGE2 DEBUG space now funds the v2 open/load cluster
 ; plus the streaming cluster's move off the hot page. git holds the
 ; bench (commits 5cc2c70/a63ccfd lineage) and the DMAT/DMACC
-; precedent before it. Vector 8 is ext_stub again in both variants;
-; 5 must stay ext_stub forever (suite check 44), 6 is KTEST's.
+; precedent before it. Vector 8 is reused below (Card #6 fixture
+; wave); 5 must stay ext_stub forever (suite check 44), 6 is KTEST's.
+;
+; EXTERN vectors 8/9/10 (Card #6 SNAP=03/00 sitting follow-up,
+; .superpowers/sdd/sp14a-task-4-report.md section 41): DEBUG-only
+; routes for tests/test.dsf's L2MOD/LHIDE/LSHOW verbs, so the owner
+; can drive the two snapshot branches the seven-leg sitting could not
+; reach (the test template runs 320x256 mode-1 always, so
+; vid_snap_geom's mode-0/hidden-L2 branches never ran on silicon).
+; L2MOD (vector 8) drops the template into the mode-0 test-card state
+; (l2_testcard, overlay2.asm) - a following VPLY1 should then read
+; SNAP=03. LHIDE/LSHOW (vectors 9/10) trampoline straight to the
+; resident l2_disable/l2_enable (overlay2.asm) - the same NR $69 bit
+; vid_snap_geom reads - so a following VPLY1 after LHIDE should read
+; SNAP=00. Same push-target/ovl_map_page idiom as ktest_trampoline.
+; l2mod_run's overlay2.asm wrapper exists only because l2_testcard
+; needs A = mode on entry, which this trampoline cannot set before
+; the page switch (ovl_map_page's own A-clobber, loading OVL2_PAGE);
+; LHIDE/LSHOW need no such wrapper since l2_disable/l2_enable take no
+; argument, so they push the resident routines directly.
+ IFDEF DEBUG
+l2mod_trampoline:
+    ld hl, l2mod_run
+    push hl
+    ld a, OVL2_PAGE
+    jp ovl_map_page
+l2hide_trampoline:
+    ld hl, l2_disable
+    push hl
+    ld a, OVL2_PAGE
+    jp ovl_map_page
+l2show_trampoline:
+    ld hl, l2_enable
+    push hl
+    ld a, OVL2_PAGE
+    jp ovl_map_page
+ ENDIF
 extVec:
     dw ext_stub, ext_stub, ext_stub, ext_xmes
     dw h_xpart, ext_stub
@@ -2273,9 +2308,14 @@ extVec:
     dw ext_stub                   ; vector 6, release: unimplemented stub
  ENDIF
     dw ext_undone
-    dw ext_stub                   ; vector 8 (NXBEN retired, see above)
-    dw ext_stub, ext_stub, ext_stub
-    dw ext_stub, ext_stub, ext_stub, ext_stub
+ IFDEF DEBUG
+    dw l2mod_trampoline           ; vector 8, DEBUG only (Card #6)
+    dw l2hide_trampoline          ; vector 9, DEBUG only (Card #6)
+    dw l2show_trampoline          ; vector 10, DEBUG only (Card #6)
+ ELSE
+    dw ext_stub, ext_stub, ext_stub ; vectors 8-10, release: stubs
+ ENDIF
+    dw ext_stub, ext_stub, ext_stub, ext_stub, ext_stub ; vectors 11-15
 
 savedCurX: db 0
 savedCurY: db 0

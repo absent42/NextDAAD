@@ -252,12 +252,32 @@ DPACL   89      verb
 ; screen, no crash); this verb is not meant to ship.
 KTEST 101     verb
 
+; Card #6 SNAP=03/00 sitting follow-up (.superpowers/sdd/sp14a-task-4-
+; report.md section 41): the seven-leg sitting could not exercise
+; vid_snap_geom's mode-0 (3-bank) or hidden-L2 (0-bank) branches - the
+; test template always runs 320x256 mode-1, so SNAP=05 on every row.
+; DEBUG build only owner instruments, EXTERN vectors 8/9/10
+; (overlay0.asm's l2mod_trampoline/l2hide_trampoline/l2show_trampoline
+; -> overlay2.asm's l2mod_run/l2_disable/l2_enable), Release's stubs
+; are silent no-ops:
+;   L2MOD - draws the mode-0 (256x192) DEBUG test card over the front
+;     surface (l2_testcard's own gradient + corner markers - reused
+;     rather than new drawing code). A following VPLY1 should then
+;     read SNAP=03 and auto-return the card intact.
+;   LHIDE - clears NR $69's Layer 2 visible bit (l2_disable), exactly
+;     the bit vid_snap_geom reads. A following VPLY1 should then read
+;     SNAP=00 (hidden-L2, zero pool cost) and exit clean, text-only.
+;   LSHOW - re-sets it (l2_enable), undoing LHIDE.
+L2MOD 90      verb
+LHIDE 91      verb
+LSHOW 100     verb
+
 ; NXBEN (the SP15 T2 decode-kernel bench, verbs 102-116) is RETIRED
 ; (SP15 3a): the format froze on its evidence (task-2 settlement,
 ; 2026-07-25), its kernels graduated into the production v2 decoder,
 ; and its VID_PAGE2 DEBUG space now funds the v2 open/load cluster.
-; EXTERN 0 8 is ext_stub again in both variants. git holds the verbs,
-; the bench (video.asm's NXBEN section) and the trampoline.
+; EXTERN vector 8 is L2MOD's now (see above), not ext_stub. git holds
+; the verbs, the bench (video.asm's NXBEN section) and the trampoline.
 
 ;                       Verbs
 GET     20      verb
@@ -708,6 +728,21 @@ $pictureOK
 ; screen once it returns.
 > KTEST   _     PROCESS 9
                 CLS
+                DONE
+
+; Card #6 SNAP=03/00 sitting follow-up owner verbs (see the vocabulary
+; block's own note for the full leg). L2MOD/LHIDE/LSHOW leave no text
+; response of their own - LHIDE/LSHOW are silent state toggles, and
+; L2MOD's whole point is the test card staying on screen (DEBUG
+; status rows survive underneath - l2_testcard leaves the bottom two
+; tilemap rows alone) until the owner runs VPLY1 against it.
+> L2MOD   _     EXTERN 0 8
+                DONE
+
+> LHIDE   _     EXTERN 0 9
+                DONE
+
+> LSHOW   _     EXTERN 0 10
                 DONE
 
 ; NXBEN bench responses retired with the verbs (see the vocabulary

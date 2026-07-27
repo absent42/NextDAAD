@@ -3320,6 +3320,24 @@ tc_mark_320:
     call data_restore
     ret
 
+; Card #6 SNAP=03/00 sitting follow-up (.superpowers/sdd/sp14a-task-4-
+; report.md section 41): EXTERN vector 8 (overlay0.asm's
+; l2mod_trampoline, tests/test.dsf's L2MOD verb) lands here once
+; OVL2_PAGE is mapped. Only reason this wrapper exists at all: A must
+; be set to the mode AFTER the page switch, since ovl_map_page's own
+; A-clobber (loading OVL2_PAGE for the NR_MMU7 write) would otherwise
+; destroy it if the trampoline set A first. Tail-jumps into
+; l2_testcard (this file, above) - draws the mode-0 (256x192) test
+; card, distinct gradient + corner markers, over the current front
+; surface, so a following VPLY1 exercises vid_snap_geom's 3-bank
+; branch and the restore is visibly checkable. LHIDE/LSHOW (vectors
+; 9/10) need no such wrapper - they trampoline straight to
+; l2_disable/l2_enable below, unchanged. Corrupts everything
+; (l2_testcard's own contract).
+l2mod_run:
+    xor a                       ; A = 0: 256x192 mode-0
+    jp l2_testcard
+
  ENDIF
 
     DISPLAY "overlay2 ends at ", $, " headroom ", /D, OVL_LIMIT - $
