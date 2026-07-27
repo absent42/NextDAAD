@@ -36,7 +36,9 @@
 ;     ring PREFILL / direct rewind-and-handoff + hot staging incl.
 ;     the per-session decode vectors), vid_run_entry_body /
 ;     vid_run_l2setup_body / vid_run_restore_body (EXIT ORDER FIX
-;     lives there), the esxDOS open cluster (vid_open_video_body /
+;     lives there), the SP15 L2 snapshot cluster (vid_snap_save_body /
+;     vid_snap_restore_body / vid_snap_copy + the 512B palette
+;     readback buffer), the esxDOS open cluster (vid_open_video_body /
 ;     vid_stream_open_body / vid_raw_setup), the cold SD streaming
 ;     cluster (vid_stream_read raw CMD18 machinery - pre-arm
 ;     load/prefill only; the ARMED session runs on the hot clones),
@@ -2975,6 +2977,7 @@ nxv2_open_body:
     ld (vidRingCntC), a
     ld (vidAudBankC), a          ; 0 = none (bank 0 is reserved -
                                  ; never allocatable, safe sentinel)
+    ld (vidSnapCnt), a           ; snapshot list empty (SP15 snapshot)
  IFDEF DEBUG
     ld hl, (frameCounter)        ; resident cell - ring-fill timing
     ld (vidFillT0), hl
@@ -2999,6 +3002,40 @@ nxv2_open_body:
     jp .fail
 .audbok:
     ld (vidAudBankC), a
+    ; --- the SNAPSHOT banks (SP15 L2 snapshot/restore): 0/3/5 pool
+    ; banks reserved UP FRONT for the game's front L2 surface, so the
+    ; post-video screen never depends on gfx-cache history - reserve-
+    ; first, refuse-on-failure (VID NOBANK2), the audio-bank precedent.
+    ; Count from the ENTRY capture (vid_run_entry_body ran before this
+    ; body): 0 when Layer 2 was hidden, else 3 (256x192) / 5 (320x256).
+    ; Allocated before the ring sizing, like the audio bank, so the
+    ; delivery decision sees the reduced pool naturally. ---
+    call vid_snap_geom           ; A = 0/3/5 (vidSvNr69/70)
+    or a
+    jr z, .snapok
+    ld b, a
+    ld hl, vidSnapBanks
+.snapal:
+    push hl
+    push bc
+    call bank_alloc              ; corrupts B AND C (doc 13 rubric 1 -
+    pop bc                       ; the SP15 3a .alloc lesson)
+    pop hl
+    jr nc, .snapgot
+    ld b, 2                      ; verdict: no bank (the partial list
+    jp .fail                     ; is freed by the .fail cluster)
+.snapgot:
+    ld (hl), a
+    inc hl
+    ld a, (vidSnapCnt)
+    inc a
+    ld (vidSnapCnt), a
+    djnz .snapal
+.snapok:
+ IFDEF DEBUG
+    ld a, (vidSnapCnt)
+    ld (vidSnapCntL), a          ; SNAP= on the timeline report
+ ENDIF
     ld a, (vidRingBanksC)
     add a, a                     ; dest page = bank*2
     ld de, $2000
@@ -3734,6 +3771,7 @@ nxv2_open_body:
     push bc
     call vid_ring_free
     call vid_aud_bank_free
+    call vid_snap_free
     call vid_stream_close
     pop bc
 .backhop:
@@ -3913,6 +3951,40 @@ vid_ring_free:
     ld (vidRingCntC), a
     ret
 
+; Free every snapshot bank (idempotent; cold callers only: the open
+; body's .fail cluster + the restore body - SP15 snapshot). NOT on
+; direct-serve's mid-open vid_ring_free path: snap banks survive a
+; direct session, correctly. Corrupts AF, B, HL.
+vid_snap_free:
+    ld a, (vidSnapCnt)
+    or a
+    ret z
+    ld b, a
+    ld hl, vidSnapBanks
+.f:
+    ld a, (hl)
+    call bank_free
+    inc hl
+    djnz .f
+    xor a
+    ld (vidSnapCnt), a
+    ret
+
+; Snapshot geometry (SP15): A = pool banks the captured game state
+; needs - 0 (Layer 2 hidden pre-video), 3 (256x192) or 5 (320x256).
+; Mode derivation = the restore body's own (vidSvNr70 bits 5:4).
+; Plain same-page reads. Corrupts AF only.
+vid_snap_geom:
+    ld a, (vidSvNr69)
+    and %10000000                ; bit7 = Layer 2 visible
+    ret z                        ; hidden: A = 0, no snapshot
+    ld a, (vidSvNr70)
+    and %00110000                ; bits 5:4: 00 = 256x192, else 320x256
+    ld a, 3
+    ret z                        ; mode 0: 48KB = 3 banks
+    ld a, 5
+    ret                          ; mode 1: 80KB = 5 banks
+
 ; ---------------------------------------------------------------------
 ; vid_run_orch_body - the pre-arm ladder as ONE cold body (3c
 ; reclaim): entry capture -> open/load -> L2 setup + session init,
@@ -3930,6 +4002,11 @@ vid_run_orch_body:
     ld a, b
     or a
     jr nz, .fail
+    call vid_snap_save_body      ; SP15 snapshot: capture the game's
+                                 ; front surface + first palette -
+                                 ; strictly BEFORE l2setup's
+                                 ; vid_pal_black/mode switch clobber
+                                 ; anything; only on a successful open
     call vid_run_l2setup_body
     ld b, 0
 .back:
@@ -4072,6 +4149,15 @@ vidSvNr43:       db 0            ; captured constant (PAL_L2_FIRST) -
                                  ; NR $43 is not readable (v1 finding)
 vidSvNr6b:       db 0            ; presentation isolation: tilemap
 vidSvNr4a:       db 0            ; presentation isolation: fallback
+
+; SP15 L2 snapshot cells (page-local like vidSv*): the reserved pool
+; bank list + the first-palette readback. vidSnapCnt = 0 means no
+; snapshot this session (Layer 2 hidden pre-video / nothing held -
+; the idempotent-free sentinel, like vidAudBankC).
+vidSnapCnt:      db 0
+vidSnapBanks:    ds VID_SNAP_MAX
+vidSnapDir:      db 0            ; copy engine direction (1 = save)
+vidSnapPal:      ds NXV_PAL_BYTES ; 256 entries x NR $44 pair (512B)
 
 ; ---------------------------------------------------------------------
 ; vid_run_l2setup_body - Layer 2 mode/clip/scroll per the v2 header,
@@ -4298,11 +4384,17 @@ vidCtcTcNxvMono:
 ;      game's only clip/scroll writer and always programs full-bleed
 ;      clip for its mode + zero scroll - the mode comes from the
 ;      saved NR $70 bits 5:4, the same derivation l2_clip_set uses.)
+;   4b. SNAPSHOT restore (SP15): the game's front-surface pixels
+;      (DMA one-shots out of the reserved snapshot banks) then the
+;      first-palette contents (512 NR $44 writes from vidSnapPal) -
+;      content writes only, still inside the hidden bracket, so the
+;      re-show at step 5 presents the game's own picture. No-op when
+;      vidSnapCnt = 0 (L2 was hidden - restore-to-hidden is exact).
 ;   5. NR $69 = saved value - re-shows iff it was on pre-video
 ;   6. NR $15 layers
 ;   7. NR $6B tilemap, NR $4A fallback (presentation isolation)
 ;   8. MMU2 (the borrowed dest window)
-;   9. ring banks freed
+;   9. ring + audio + snapshot banks freed
 ; Hops back to vid_run.restore_tail. Corrupts everything.
 ; ---------------------------------------------------------------------
 vid_run_restore_body:
@@ -4345,6 +4437,9 @@ vid_run_restore_body:
     nextreg NR_L2_YOFS, 0
     ld a, (vidSvNr43)
     nextreg NR_PAL_CTRL, a
+    ; step 4b (SP15 snapshot): pixels + palette return while Layer 2
+    ; is still hidden (see the matrix comment)
+    call vid_snap_restore_body
     ld a, (vidSvNr69)
     nextreg NR_DISPLAY_CTRL, a   ; re-show (iff it was on pre-video)
     ld a, (vidSvNr15)
@@ -4359,6 +4454,7 @@ vid_run_restore_body:
     nextreg NR_MMU3, a
     call vid_ring_free
     call vid_aud_bank_free
+    call vid_snap_free
     call vid_stream_close        ; streaming keeps the esxDOS handle
                                  ; open for the session (the hot side
                                  ; already CMD12'd its window before
@@ -4368,6 +4464,190 @@ vid_run_restore_body:
     push hl
     ld a, VID_PAGE
     jp ovl_map_page
+
+; ---------------------------------------------------------------------
+; vid_snap_save_body - SP15 L2 SNAPSHOT capture (cold, strictly
+; pre-arm): the game's front Layer 2 surface pixels into the reserved
+; snapshot banks + the L2 FIRST palette contents into vidSnapPal.
+; Called by vid_run_orch_body between open success and the l2setup
+; body - before vid_pal_black / the mode switch clobber anything; a
+; failed open never reaches it, so the copy needs no unwind of its
+; own. No-op when vidSnapCnt = 0 (Layer 2 was hidden pre-video).
+; Palette: hardware readback - per entry NR $40 index write (also
+; resets the NR $44 two-byte latch), nr_read $41 (RRRGGGBB) +
+; nr_read $44 (bit7 priority + bit0 blue LSB), stored exactly as the
+; NR $44 replay pair. The readback goes through the FIRST-palette
+; edit target, the convention every game-side L2 palette writer
+; asserts (vidSvNr43's own finding); the explicit NR $43 select makes
+; the target deterministic and equals the value the restore body
+; rewrites anyway. NR $41/$44 VALUE readback is the design's one
+; silicon unknown - the owner leg's colour-correct return is the
+; proof (fallback on refutation: a shadow-tee in the overlay2 palette
+; writers, recorded in the brief). Pixels: shared engine below.
+; Corrupts everything.
+; ---------------------------------------------------------------------
+vid_snap_save_body:
+    ld a, (vidSnapCnt)
+    or a
+    ret z
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    ld hl, vidSnapPal
+    xor a
+.palrd:
+    push af
+    nextreg NR_PAL_INDEX, a      ; index write resets the $44 latch
+    ld e, NR_PAL_VALUE
+    call nr_read                 ; preserves DE/HL (hardware.asm)
+    ld (hl), a                   ; first byte: RRRGGGBB
+    inc hl
+    ld e, NR_PAL_VALUE9
+    call nr_read
+    ld (hl), a                   ; second: bit7 priority + bit0 B0
+    inc hl
+    pop af
+    inc a
+    jr nz, .palrd                ; 256 entries
+    ld a, 1                      ; direction: save (L2 -> pool)
+    jp vid_snap_copy             ; tail call - rets to the orch body
+
+; ---------------------------------------------------------------------
+; vid_snap_restore_body - restore matrix step 4b (SP15): pixels then
+; palette written back while Layer 2 is still hidden (called between
+; step 4 and the step-5 re-show). No-op when vidSnapCnt = 0 -
+; restore-to-hidden is already exact. NR $43 = PAL_L2_FIRST here
+; (step 4 just wrote vidSvNr43: edit = first palette, auto-inc on).
+; audEnable was restored at step 1, so the 50Hz frame ISR's MMU6/7
+; remap around aud_tick is LIVE - the copy engine's DI-bracketed
+; one-shot discipline covers it (doc 11's law). ~14ms mode-1 (~9ms
+; mode-0): under one field, invisible inside the hidden bracket.
+; Corrupts everything.
+; ---------------------------------------------------------------------
+vid_snap_restore_body:
+    ld a, (vidSnapCnt)
+    or a
+    ret z
+    xor a                        ; direction: restore (pool -> L2)
+    call vid_snap_copy
+    ; palette replay: 512 NR $44 writes from the captured pairs; the
+    ; index auto-increments after each entry's second write
+    nextreg NR_PAL_INDEX, 0
+    ld hl, vidSnapPal
+    ld b, 0                      ; 256 entries
+.pal:
+    ld a, (hl)
+    inc hl
+    nextreg NR_PAL_VALUE9, a     ; first byte: RRRGGGBB
+    ld a, (hl)
+    inc hl
+    nextreg NR_PAL_VALUE9, a     ; second: priority + blue LSB
+    djnz .pal
+    ret
+
+; ---------------------------------------------------------------------
+; vid_snap_copy - the shared snapshot page-pair copy engine. In: A =
+; direction (nonzero = save: L2 -> pool; zero = restore: pool -> L2).
+; Walks 2 x vidSnapCnt 8K pages (6 or 10): the L2 page (physical
+; pages vidSvNr12*2.. - independent of the live NR $12) at MMU2/$4000
+; (SECOND RULE - the window is session-owned from entry capture to
+; restore step 8, free to retarget in both bodies), the snapshot pool
+; page at MMU6/$C000 via the data_save bracket (rubric 3); MMU7 stays
+; VID_PAGE2 (cold body). Transport: zxnDMA mem-to-mem per doc 11's
+; law - WR2/WR5 programmed once per body (vidDmaInit, same page),
+; then 32 fixed 256-byte CONTINUOUS one-shot chunks per page, each
+; programmed AND run to completion inside its own DI bracket (the
+; frame ISR remaps MMU6/7 around aud_tick; no transfer may be in
+; flight outside DI). ~4T/B: 80KB ~= 11.7ms + arm overhead. LDIRX is
+; NOT usable here - it skips writes where (HL) == A (the transparency
+; copier, doc 01). Closes the MMU6 bracket on exit. Corrupts
+; everything.
+; ---------------------------------------------------------------------
+vid_snap_copy:
+    ld (vidSnapDir), a
+    call data_save
+    ; session WR2/WR5 (the never-changing halves - each chunk's arm
+    ; below carries its own WR0/WR1, the hot kernels' scheme)
+    ld hl, vidDmaInit
+    ld bc, (vidDmaInit_len << 8) | DMA_PORT
+    di
+    otir
+    ei
+    ld a, (vidSnapCnt)
+    add a, a
+    ld b, a                      ; B = 8K pages (6 or 10)
+    ld c, 0                      ; C = page index
+.page:
+    push bc
+    ld a, (vidSvNr12)
+    add a, a
+    add a, c
+    nextreg NR_MMU2, a           ; L2 page: front bank base + index
+    ld a, c
+    srl a                        ; snapshot list slot = index/2
+    ld hl, vidSnapBanks
+    add hl, a                    ; Z80N (doc 05)
+    ld a, (hl)
+    add a, a
+    ld d, a
+    ld a, c
+    and 1
+    add a, d                     ; pool page = bank*2 + (index & 1)
+    call data_map_page           ; -> MMU6
+    ld d, high VID_DST_WIN       ; D = L2-side chunk high byte ($40)
+    ld e, high DATA_WINDOW       ; E = pool-side chunk high byte ($C0)
+    ld b, 32                     ; 32 x 256B chunks per 8K page
+.chunk:
+    push bc
+    push de
+    ld l, 0                      ; chunks are 256-aligned
+    ld a, (vidSnapDir)
+    or a
+    jr z, .rst
+    ld h, d
+    ld (vidSnapDmaArm.asrc), hl  ; save: port A = the L2 chunk
+    ld h, e
+    ld (vidSnapDmaArm.bdst), hl  ;       port B = the pool chunk
+    jr .arm
+.rst:
+    ld h, e
+    ld (vidSnapDmaArm.asrc), hl  ; restore: port A = the pool chunk
+    ld h, d
+    ld (vidSnapDmaArm.bdst), hl  ;          port B = the L2 chunk
+.arm:
+    ld hl, vidSnapDmaArm
+    ld bc, (vidSnapDmaArm_len << 8) | DMA_PORT
+    di
+    otir                         ; program + run to completion in ONE
+    ei                           ; DI bracket (doc 11's one-shot law)
+    pop de
+    pop bc
+    inc d                        ; both windows advance 256
+    inc e
+    djnz .chunk
+    pop bc
+    inc c
+    djnz .page
+    jp data_restore              ; close the MMU6 bracket (tail ret)
+
+; Per-chunk snapshot arm (the vidDmaCpArm shape, this page): WR0
+; (A addr + length), WR1 incrementing + timing, WR4 CONTINUOUS +
+; B addr, load, enable. WR2/WR5 persist from vidDmaInit (sent once
+; per body). The length is the fixed 256-byte chunk - only the two
+; addresses are patched.
+vidSnapDmaArm:
+    db $83                       ; WR6: disable (known-clean re-entry)
+    db %01111101                 ; WR0: A->B; A addr + length follow
+.asrc:
+    dw 0                         ; port A = source chunk (patched)
+    dw 256                       ; block length: exact count, fixed
+    db %01010100                 ; WR1: A memory, INCREMENTING, timing
+    db %00000010                 ; A cycle length 2
+    db %10101101                 ; WR4: CONTINUOUS, port B addr follows
+.bdst:
+    dw 0                         ; port B = dest chunk (patched)
+    db $CF                       ; WR6: load
+    db $87                       ; WR6: enable - LAST byte; the CPU
+                                 ; stalls here until the chunk is done
+vidSnapDmaArm_len equ $ - vidSnapDmaArm
 
 ; ---------------------------------------------------------------------
 ; vid_open_video_body - build vidName ("NNN.VID",0) from the video
@@ -5235,6 +5515,10 @@ vid_tl_report_body:
     call dbg_puts
     ld hl, (vidTlFillFramesL)
     call dbg_hex16
+    ld hl, msgTlSnap             ; SNAP= reserved snapshot bank count
+    call dbg_puts                ; (SP15: 00 hidden-L2 / 03 / 05; row
+    ld a, (vidSnapCntL)          ; is 38 of 80 columns with it)
+    call dbg_hex8
     jr .done
 .nextrow:
     ld hl, vidTlRptRow
@@ -5294,8 +5578,12 @@ msgTlPass: db " PASS=", 0
 msgTlFill: db " FILL=", 0
 msgTlRing: db "RING   =", 0
 msgTlSlash: db "/", 0
+msgTlSnap: db " SNAP=", 0
 vidTlRptRow: db 0
 vidTlRptIdx: db 0
+vidSnapCntL: db 0                ; SNAP= mirror - written at open (the
+                                 ; live vidSnapCnt is zeroed by the
+                                 ; teardown free before the report)
 
 ; Page-local mirror of the hot instrument block (same order/sizes -
 ; one LDIR; the length is computed so it can never drift).

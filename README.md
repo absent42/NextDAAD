@@ -281,12 +281,16 @@ refuses to play (defragment or re-copy the card). NXV is 50Hz-designed;
 a 60Hz display gets slower playback and audio popping, an accepted
 limitation.
 
-Video playback is a full-screen takeover, like DISPLAY: register state
-is restored when it ends, pixel content is not, so a game must redraw
-its own picture afterwards. Game audio is likewise handled
-automatically - a playing sample is stopped (not resumed), and AY music
-is frozen in place and resumes on its own the instant the cutscene
-ends; no author action is needed either way.
+Video playback is a full-screen takeover, like DISPLAY, and the player
+puts everything back itself: register state, the visible picture
+surface and its palette are all restored when the video ends (the
+front surface and Layer 2 first palette are snapshotted into reserved
+pool banks at start - a video refuses with VID NOBANK2 if the pool
+cannot cover the reservation; the hidden back surface is undefined
+afterwards). No post-video redraw is needed. Game audio is likewise
+handled automatically - a playing sample is stopped (not resumed), and
+AY music is frozen in place and resumes on its own the instant the
+cutscene ends; no author action is needed either way.
 
 Encoding: `authoring-kit/lib/videnc.py` (Python 3 + Pillow + numpy +
 ffmpeg) is the one canonical encoder - quality-maximalist delta

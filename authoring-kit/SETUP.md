@@ -424,14 +424,19 @@ music is frozen in place (paused, not stopped) and resumes
 automatically the instant playback ends. No author action needed either
 way.
 
-**Redraw after a cutscene.** Video playback is a full-screen takeover,
-like `DISPLAY`: register state is restored when it ends, but pixel
-content is not. A game must redraw its own picture afterwards, two
-ways - both demonstrated by the starter game: redraw in place
-(`PICTURE @fPlayer` + `DISPLAY 0`, the starter's MOVIE verb via its
-redraw process) or a full redescribe (`CLS` then `RESTART`, the
-starter's REEL verb, same as its `R` redraw verb - use at scene
-changes).
+**Automatic picture restore.** When a cutscene ends, the player puts
+the screen back by itself: the visible picture surface AND its palette
+are snapshotted before the video starts and restored before the screen
+is re-shown - no post-video redraw is needed (the starter's MOVIE verb
+is just the play). Details worth knowing: the hidden back surface is
+NOT preserved (its contents are undefined after a video - only matters
+if a game draws there directly), the snapshot reserves a few memory
+banks per session (a video refuses with `VID NOBANK2` if the pool
+cannot cover it - only plausible on a heavily loaded 2MB machine), and
+a text-only game with the picture layer hidden pays nothing. A full
+redescribe (`CLS` then `RESTART`, the starter's REEL verb) remains a
+scene-change choice when the story moves on - a choice, no longer a
+necessity.
 
 **Contiguity.** Videos stream from the SD card at a rate that assumes
 the file is reasonably contiguous. A heavily fragmented file (more

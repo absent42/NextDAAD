@@ -2,10 +2,18 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## Unreleased
+## v0.3.0 - 2026-07-27
 
 ### Video
 
+- L2 snapshot/restore: the game's visible picture surface and its
+  palette are snapshotted at video start and restored automatically at
+  exit, while the screen is still hidden. The post-video redraw
+  convention is retired - games no longer need PICTURE/DISPLAY (or the
+  starter's PROCESS 7) after a cutscene; CLS+RESTART remains a
+  scene-change choice. Costs 3 (256x192 game) or 5 (320x256) pool
+  banks per session, 0 with L2 hidden; reservation failure refuses
+  the video (VID NOBANK2). Back surface is undefined across a video.
 - NXV v2 replaces NXV v1 outright - v1 files no longer play, re-encode
   from source. FLIC-lineage delta format (SKIP/RUN/COPY/palette opcodes
   over the Layer 2 surface, keyframes composed hidden and flipped

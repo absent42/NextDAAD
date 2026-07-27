@@ -4,11 +4,12 @@
 ; --- Version (SP10 Task 10) ---
 ; Single source of truth for the boot-time version stamp text: DEBUG's
 ; msgTitle and RELEASE's boot_banner (both debug.asm) print this exact
-; string, so the two build variants cannot drift apart. v0.2.0 is the
-; SP14 milestone (native NXV video, five profiles, optimization
-; sweeps, kit mp4 pipeline + shipped videnc.exe); the "0.x" line runs
-; until public testing earns v1.0 (see RELEASE.md).
-    DEFINE VERSION_STR "NEXTDAAD V0.2.0"
+; string, so the two build variants cannot drift apart. v0.3.0 is the
+; SP15 milestone (NXV v2 delta video with resident/streamed/direct
+; delivery, L2 snapshot/restore - automatic picture return after a
+; cutscene); the "0.x" line runs until public testing earns v1.0 (see
+; RELEASE.md).
+    DEFINE VERSION_STR "NEXTDAAD V0.3.0"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00
@@ -590,6 +591,28 @@ NXV2_COPY_DMA_MIN equ 90
 ; bank list capacity covers every allocatable pool bank on a 2MB
 ; machine (14-15 + 36-47 + 48-111 = 78) with margin.
 VID_RING_MAX     equ 80
+
+; L2 SNAPSHOT/RESTORE (SP15, v0.3.0): the player snapshots the game's
+; visible (front) Layer 2 surface + the L2 FIRST palette contents at
+; open and restores both inside the exit bracket while Layer 2 is
+; still hidden - a game's picture returns automatically after a
+; cutscene, no post-video redraw needed. Contract:
+;   - pool banks reserved UP FRONT at open, before the ring sizing:
+;     0 (Layer 2 hidden pre-video - text-only games cost nothing),
+;     3 (256x192 game) or 5 (320x256 game); reservation failure
+;     refuses the video (verdict 2, "VID NOBANK2"), never a
+;     history-dependent skip;
+;   - the BACK surface is NOT snapshotted: gfx_blit renders whole
+;     pictures to back then flips, so back content is scratch and is
+;     UNDEFINED across a video;
+;   - the palette payload is the FIRST L2 palette only (every game-
+;     side palette writer targets PAL_L2_FIRST; the second palette is
+;     video-only property), captured by NR $41/$44 hardware readback
+;     into a page-local 512-byte buffer (vidSnapPal, video.asm);
+;   - a game that hides L2, plays a video, then shows L2 without
+;     drawing sees undefined pixels/palette (count 0 - was already
+;     true before the snapshot existed).
+VID_SNAP_MAX     equ 5      ; snapshot bank list capacity (mode-1 worst)
 
 ; 3b streaming limits: the hot filemap copy holds this many 6-byte
 ; DISK_FILEMAP runs (a file needing more is too fragmented to stream -
