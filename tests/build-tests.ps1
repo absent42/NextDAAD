@@ -184,9 +184,10 @@
 #            such encodes; 007/008/009 carry the --stream-budget
 #            values the gate derived (007 sb 0.85 since the pal9
 #            palette-collapse fix pushed its old default point to
-#            util 1.06; it lands at util 1.00 - AT the streaming
-#            ceiling, the VSTR0 regime it was chosen for; 008/009
-#            target ~0.90).
+#            util 1.06; sb 0.85 alone landed at util 1.00 - AT the
+#            ceiling, which starved the deltas on the wire, so 007
+#            also carries --dither 0.25 and lands at util 0.981;
+#            008/009 target ~0.90).
 #            Cached at tests\out\00X_<shape>[_<tag>]_<settlementTag>_
 #            long_cache.vid like -Vid (encode once, copy after;
 #            delete a cache to re-encode; the operating point AND the
@@ -726,10 +727,15 @@ if ($VidLong) {
         # 007's operating point RE-DERIVED at the pal9 palette-collapse
         # fix (2026-07-27): dithered display-lattice targets raise the
         # delta demand, the old default point now scores util 1.06 and
-        # the gate refuses it; 0.85 is the gate's own named remedy and
-        # lands at util 1.00 - AT the streaming ceiling, the same VSTR0
-        # operating regime 007 was chosen for.
-        '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.85'); tag = 'sb85' }
+        # the gate refuses it; 0.85 is the gate's own named remedy but
+        # landed at util 1.00 - AT the streaming ceiling, where the wire
+        # bytes carried delta starvation (stale horizontal bands on
+        # 123/250 frames at the delta byte ceiling, confirmed on real
+        # hardware; player exonerated, zero underruns). Fix (2026-07-28,
+        # owner-track): keep sb 0.85, lower dither demand with --dither
+        # 0.25 - util 0.981 (below the ceiling), delta-p10 24.68 vs the
+        # starved 23.37.
+        '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.85', '--dither', '0.25'); tag = 'sb85d025' }
         '008.VID' = @{ shape = 'full';    src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.51'); tag = 'sb51' }
         # 009's operating point RE-DERIVED at the Card #5 gapped prices
         # (composition factor 1.55 -> 1.15, silicon_r gapped 1.20 -> 1.01):
