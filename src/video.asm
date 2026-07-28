@@ -414,6 +414,12 @@ vid_dec_abort_pos:               ; entry with vidErrPos already stored
     ld (vidErrCode), a           ; PASS= needs no capture here: the loop
                                  ; stops at the abort, so the LIVE
                                  ; vidLoopPass IS the pass that failed
+    push af                      ; SP17 bench reclaim (review fix): the
+    call nxb_reclaim             ; abort chain never returns to the
+    pop af                       ; bench, so its banks/audEnable/MMU
+                                 ; state have to come back HERE. Whole
+                                 ; routine is a 7-cycle no-op unless a
+                                 ; standalone bench row is live.
  ENDIF
     ld sp, (vidDecSp)
     jp vid_run.decfail
@@ -1686,6 +1692,26 @@ vid_run:
     ld a, b
     or a
     ret nz
+ IFDEF DEBUG
+    ; SP17 BENCH HOOK (row group 1, direct-serve transport breakdown).
+    ; flags+248 selects it; a DIRECT session only (the rows measure the
+    ; ds routines and would consume a resident/streamed session's ring
+    ; without meaning). Placed HERE deliberately: the session is fully
+    ; armed (window open one block into run 0, counters live) but the
+    ; CTC is NOT - no ISR, no DI windows, the quiet machine the
+    ; settlement's unarmed rows were taken on. Playback is REPLACED:
+    ; the rows run, then the ordinary teardown + timeline report.
+    ld a, (flags+248)
+    or a
+    jr z, .nobench
+    ld a, (vidDirect)
+    or a
+    jr z, .nobench               ; not direct: fall through and play
+    ld (vidDecSp), sp            ; abort anchor for the bench rows
+    call nxb_ds_rows
+    jp .restore
+.nobench:
+ ENDIF
     ; --- audio-0 preload (double buffer): fill half A and consume
     ; the queue it posts - IX starts AT half A (the l2setup body
     ; initialised both ISRs' end markers to half A's end), so Rdy is
@@ -2341,6 +2367,38 @@ vid_sd_tok_h:
     jr nz, .wt
     jr .bad
 .got:
+ IFDEF DEBUG
+    ; SP17 TOKEN-POLL INSTRUMENT (bench row group 1a): the card's
+    ; data-token wait is not timeable at raster resolution (~1824 T
+    ; per line against a wait of a few hundred T), but it IS exactly
+    ; COUNTABLE - BC is the countdown from 0, so -BC is the number of
+    ; poll iterations that returned $FF. Accumulated HERE, at .got,
+    ; strictly OUTSIDE the poll loop: the loop itself is byte-
+    ; identical to Release, so the counted quantity is undistorted.
+    ; The ~167 T this block costs lands once per block in EVERY bench
+    ; row that opens a block, so it cancels in every row difference;
+    ; only the absolute per-block figure carries it (card decode key
+    ; subtracts it). 16-bit accumulators: zeroed at bench entry, and
+    ; a 250-frame direct pass is ~3.3k blocks x a few polls - inside
+    ; the range. Polls per call = (accumulated) + 1 per call, since
+    ; the successful poll does not decrement.
+    push af
+    push de
+    push hl
+    ld hl, 0
+    or a
+    sbc hl, bc                   ; HL = -BC = failed polls this call
+    ex de, hl
+    ld hl, (vidTokPolls)
+    add hl, de
+    ld (vidTokPolls), hl
+    ld hl, (vidTokCalls)
+    inc hl
+    ld (vidTokCalls), hl
+    pop hl
+    pop de
+    pop af
+ ENDIF
     dec a
     cp $FE
     ret z                        ; CF clear from the cp
@@ -2933,6 +2991,842 @@ vid_tl_report:
     jp ovl_map_page
 vid_tl_report_ret:
     ret
+
+; =====================================================================
+; NXB - SP17 PLAYER-PATH SILICON BENCH (the SP15 3a NXBEN revival).
+; DEBUG builds only; Release carries none of it (byte-identity is a
+; commit-time gate). Owner card: .superpowers/sdd/sp14a-task-4-report
+; .md section 42.
+; =====================================================================
+; WHAT CHANGED vs THE RETIRED NXBEN (commit 0c292ae, stripped at
+; 08edaf5): that bench measured PROTOTYPE kernels to settle the format
+; freeze, so it carried its own copies of everything (its own stub
+; page, its own fill/copy kernels, its own SD primitives, ~2.4KB). The
+; player has SHIPPED since; every question SP17 needs answered is
+; about the code that actually runs. So this revival keeps NXBEN's
+; INSTRUMENT (raster frame clock, raw-count rows, the F/D reporting
+; convention, the flags+250 mode entry) and points every measured loop
+; at the PRODUCTION routines - vid_ds_blkopen / vid_ds_pad /
+; vid_ds_xfer / vid_sd_blk_h / vid_stub / vid_copy_ldi / vid_fill_cpu
+; / vid_copy_dma / vid_fill_dma are CALLED, never re-implemented. That
+; is also why the bench lives HERE, on VID_PAGE: those routines are
+; MMU7-resident on this page and no other page can reach them.
+;
+; CLOCK (carried verbatim from NXBEN, so results stay on the settled
+; scale): the raster line pair NR $1E/$1F. One wrap = one frame; rows
+; report RAW counts in hex - R = reps completed, F = wraps, D =
+; endline - startline (two's complement). T = (F*LPF + D) * TPL, the
+; card carries LPF/TPL for the owner's timing mode (128K/+3 VGA 50Hz:
+; LPF=311, TPL=1824 at 28MHz). Nothing here assumes a mode. One
+; raster poll per rep only (poll cost is well under 1% of every row).
+;
+; ROW GROUPS (the card decodes each; every row is a DIFFERENCE that
+; isolates ONE cost, or the row is not worth running):
+;   1 direct-serve transport breakdown - rides the LIVE armed direct
+;     session (see nxb_ds_rows); answers card5-settlement-report.md
+;     :282-287, "~3,100 T/block is attributed, not measured".
+;   2 op dispatch envelope - the shipping vid_stub / NXVNEXT path.
+;   3 COPY kernel across the size distribution real streams produce
+;     (census: COPY p50 = 1-5 B, 61-99% of COPY ops are 1-8 B).
+;   4 fill crossover + the DMA DI-window margin.
+;
+; STANDALONE MODES (2-4) synthesize their op streams into a pool bank
+; at MMU6 and paint a second pool bank at MMU2 - NOT Layer 2, so no
+; display state is disturbed and no session is needed. Streams are
+; sized so the source cursor never reaches $DF00 and the dest cursor
+; never leaves the 8K window, so the seam walkers are deliberately NOT
+; exercised here (they are their own question, not this one's).
+; vidDecSp is anchored at entry: a structural fault therefore unwinds
+; into the ordinary abort path and prints ERR= rather than hanging.
+; =====================================================================
+
+NXB_ROW0         equ 8       ; bench rows start here (the timeline
+                             ; report owns 24-29)
+NXB_LINE_MSB     equ $1E     ; active video line, bit 8
+NXB_LINE_LSB     equ $1F     ; active video line, bits 7:0
+
+; ---------------------------------------------------------------------
+; Entry from nxb_trampoline (overlay0.asm, EXTERN vector 12). Mode in
+; flags+250 (self-clearing, the established stage-ladder convention).
+; Modes 2/3/4 run standalone; mode 1 is NOT reachable here - the
+; direct-serve rows need a live armed session and ride the player
+; instead (flags+248 + a VDIR-shaped verb; see nxb_ds_rows).
+; Corrupts everything.
+; ---------------------------------------------------------------------
+nxb_entry:
+    ld (vidDecSp), sp            ; abort anchor for the standalone
+                                 ; modes (block header). The direct
+                                 ; rows keep vid_run's own anchor -
+                                 ; theirs is a live session's.
+    ld a, (flags+250)
+    ld (nxbMode), a
+    xor a
+    ld (flags+250), a
+    ld a, NXB_ROW0
+    ld (nxbRow), a
+    call nxb_ops_setup
+    jr c, .nobank
+    ld a, (nxbMode)
+    ld hl, nxbTabOpd
+    cp 2
+    jr z, .go
+    ld hl, nxbTabCpy
+    cp 3
+    jr z, .go
+    ld hl, nxbTabKrn
+    cp 4
+    jr z, .go
+    ld hl, nxbTabOpd            ; unknown mode: the dispatch table
+.go:
+    call nxb_run_table
+    jp nxb_ops_restore
+.nobank:
+    ld hl, nxbMsgBank            ; setup may already hold one bank -
+    call nxb_fail_row            ; the restore frees whatever it took
+    jp nxb_ops_restore
+
+; ---------------------------------------------------------------------
+; Standalone setup: two pool banks (source stream / paint target), the
+; decode loop's session cells staged flat, the per-session SMC slots
+; pointed at the RAM+flat set (a previous video session may have left
+; the direct-serve set), the FEND stub slot diverted to nxb_term (the
+; shipping vid_op_fend runs vid_dec_done's file-position accounting,
+; which is meaningless with no session), and the zxnDMA WR2/WR5
+; one-time program sent (the shipping vidDmaInit lives on VID_PAGE2,
+; unreachable from here - nxbDmaInit below is its 4-byte twin).
+; CF set = no free bank. Corrupts everything.
+; ---------------------------------------------------------------------
+nxb_ops_setup:
+    ; audEnable FROZEN for the whole visit (vid_run's own music-tick
+    ; freeze, and the retired bench's). Without it the 50Hz im2_isr
+    ; takes its aud_tick branch, which SAVES AND REMAPS MMU6/MMU7 to
+    ; reach the audio banks - a row's source window would vanish mid-
+    ; kernel. The frame tick itself stays live and costs one ISR per
+    ; 50Hz frame in every row alike (well under 1%, disclosed on the
+    ; card). The direct rows need no freeze of their own: the player
+    ; has already frozen audEnable by the time the hook fires.
+    ld a, (audEnable)
+    ld (nxbSvAudEn), a
+    xor a
+    ld (audEnable), a
+    ld e, NR_MMU6
+    call nr_read
+    ld (nxbSvMmu6), a
+    ld e, NR_MMU2
+    call nr_read
+    ld (nxbSvMmu2), a
+    xor a
+    ld (nxbBankCnt), a
+    call bank_alloc
+    ret c
+    ld (nxbSrcBank), a
+    ld hl, nxbBankCnt
+    inc (hl)
+    add a, a
+    nextreg NR_MMU6, a
+    call bank_alloc
+    ret c
+    ld (nxbDstBank), a
+    ld hl, nxbBankCnt
+    inc (hl)
+    add a, a
+    ld (nxbDstP), a
+    ld (vidDstPage), a
+    nextreg NR_MMU2, a
+    add a, 2
+    ld (vidDstEnd), a            ; one bank = two 8K pages
+    xor a
+    ld (vidGapFlag), a           ; flat: no column bookkeeping
+    ld (vidStreaming), a
+    ld (vidInSpan), a
+    ld (vidDirect), a
+    ; per-session SMC: RAM fetch, flat fast handlers, RAM bodies
+    ld hl, vid_fetch_ram
+    ld (vid_fetch.vec + 1), hl
+    ld hl, vid_next
+    ld (vid_skip_body.next + 1), hl
+    ld (vid_run_body.next + 1), hl
+    ld (vid_op_kstart.next + 1), hl
+    ld hl, vid_copy_body
+    ld (vid_slow_op.cj + 1), hl
+    ld hl, vf_op_skip8
+    ld (vid_stub + VOP_SKIP8 + 1), hl
+    ld hl, vf_op_run8
+    ld (vid_stub + VOP_RUN8 + 1), hl
+    ld hl, vf_op_copy8
+    ld (vid_stub + VOP_COPY8 + 1), hl
+    ld hl, nxb_term              ; FEND -> the bench terminal
+    ld (vid_stub + VOP_FEND + 1), hl
+    ld hl, nxbDmaInit
+    ld bc, (nxbDmaInit_len << 8) | DMA_PORT
+    otir
+    or a
+    ret
+
+; Undo the setup: FEND stub back to the shipping handler, then the
+; shared reclaim. The other SMC slots are re-patched by every video
+; open, so they are left as staged (the same rule the player's own
+; vid_stage_common follows).
+nxb_ops_restore:
+    ld hl, vid_op_fend
+    ld (vid_stub + VOP_FEND + 1), hl
+    ; falls into nxb_reclaim
+
+; Shared standalone reclaim - called on the CLEAN exit above and from
+; vid_dec_abort_pos on a structural fault (review fix). nxbBankCnt is
+; the ownership flag and is zeroed here, so the routine is idempotent
+; and a plain video session's own abort runs it as a 7-cycle no-op.
+; The abort case ALSO has to stage vidSvMmu6/vidSvMmu7: the standalone
+; modes never went through vid_run, so those cells hold a previous
+; session's values (or none), and vid_run.restore_tail - which the
+; abort chain reaches - would otherwise map two arbitrary pages and
+; leave MMU7 off VID_PAGE for the ret that follows.
+nxb_reclaim:
+    ld a, (nxbBankCnt)
+    or a
+    ret z
+    ld a, (nxbSrcBank)
+    call bank_free
+    ld a, (nxbBankCnt)
+    dec a
+    jr z, .noban
+    ld a, (nxbDstBank)
+    call bank_free
+.noban:
+    xor a
+    ld (nxbBankCnt), a           ; ownership released (idempotent)
+    ld a, (nxbSvMmu6)
+    nextreg NR_MMU6, a
+    ld (vidSvMmu6), a
+    ld a, VID_PAGE
+    ld (vidSvMmu7), a
+    ld a, (nxbSvMmu2)
+    nextreg NR_MMU2, a
+    ld a, (nxbSvAudEn)
+    ld (audEnable), a
+    ret
+
+; The bench's frame terminal: FEND lands here instead of the shipping
+; vid_dec_done chain. The op loop keeps the stack level between ops,
+; so this ret returns straight to nxb_row's `call nxb_body`.
+nxb_term:
+    ret
+
+; ---------------------------------------------------------------------
+; Row table walker. HL = table; entries are 8 bytes:
+;   dw tag, db opcode, dw count, db ops-per-rep, dw reps
+; terminated by a zero tag pointer. Builds the stream once per row
+; (untimed), then runs the row.
+; ---------------------------------------------------------------------
+nxb_run_table:
+    ld a, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld e, a
+    or d
+    ret z                        ; end of table
+    push hl
+    ex de, hl
+    ld (nxbTag), hl              ; tag
+    pop hl
+    ld a, (hl)
+    inc hl
+    ld (nxbOpc), a
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld (nxbCnt), de
+    ld a, (hl)
+    inc hl
+    ld (nxbOps), a
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld (nxbReps), de
+    push hl
+    call nxb_build
+    ld hl, nxb_ops_body
+    ld (nxb_body + 1), hl
+    call nxb_row
+    pop hl
+    jr nxb_run_table
+
+; Build one rep's op stream at $C000: nxbOps copies of the row's op,
+; then a FEND. COPY literal bodies are left as whatever the bank
+; holds (their VALUES cannot change the cost - LDI and zxnDMA are
+; data-independent).
+nxb_build:
+    ld hl, DATA_WINDOW
+    ld a, (nxbOps)
+    ld b, a
+.op:
+    push bc
+    ld a, (nxbOpc)
+    ld (hl), a
+    inc hl
+    ld bc, (nxbCnt)
+    ld (hl), c
+    inc hl
+    cp VOP_SKIP16
+    jr z, .hi
+    cp VOP_RUN16
+    jr z, .hi
+    cp VOP_COPY16
+    jr nz, .nohi
+.hi:
+    ld (hl), b
+    inc hl
+.nohi:
+    cp VOP_RUN8
+    jr z, .col
+    cp VOP_RUN16
+    jr z, .col
+    cp VOP_COPY8
+    jr z, .lit
+    cp VOP_COPY16
+    jr z, .lit
+    jr .done
+.col:
+    ld (hl), $55                 ; fill colour (value-independent)
+    inc hl
+    jr .done
+.lit:
+    add hl, bc                   ; step over the literal body
+.done:
+    pop bc
+    djnz .op
+    ld (hl), VOP_FEND
+    ret
+
+; One rep of a standalone op row: reset both cursors and run the
+; SHIPPING decode loop over the built stream.
+nxb_ops_body:
+    ld a, (nxbDstP)
+    ld (vidDstPage), a
+    nextreg NR_MMU2, a
+    ld de, VID_DST_WIN
+    ld hl, DATA_WINDOW
+    ld iy, vid_stub              ; IYH pinned (the shipping contract)
+    jp vid_next
+
+; ---------------------------------------------------------------------
+; Row runner: nxbReps reps of the SMC-vectored body, raster-timed,
+; one printed row. In: nxbTag/nxbOps/nxbReps set, body vectored.
+; ---------------------------------------------------------------------
+nxb_row:
+    ld hl, (nxbReps)
+    ld (nxbLeft), hl
+    ld hl, 0
+    ld (nxbFrames), hl
+    call nxb_line
+    ld (nxbPrev), hl
+    ld (nxbL0), hl
+.rep:
+    call nxb_body
+    call nxb_tick
+    ld hl, (nxbLeft)
+    dec hl
+    ld (nxbLeft), hl
+    ld a, h
+    or l
+    jr nz, .rep
+    call nxb_line
+    ld (nxbL1), hl
+    ; ---- print: TAG O=xx R=xxxx F=xxxx D=xxxx ----
+    call nxb_at
+    ld hl, (nxbTag)
+    call dbg_puts
+    ld hl, nxbMsgO
+    call dbg_puts
+    ld a, (nxbOps)
+    call dbg_hex8
+    ld hl, nxbMsgR
+    call dbg_puts
+    ld hl, (nxbReps)
+    ld de, (nxbLeft)
+    or a
+    sbc hl, de
+    call dbg_hex16
+    ld hl, nxbMsgF
+    call dbg_puts
+    ld hl, (nxbFrames)
+    call dbg_hex16
+    ld hl, nxbMsgD
+    call dbg_puts
+    ld hl, (nxbL1)
+    ld de, (nxbL0)
+    or a
+    sbc hl, de
+    jp dbg_hex16                 ; line delta, two's complement
+nxb_body:
+    jp 0                         ; SMC: the row's per-rep body
+
+; Cursor to the next bench row, column 0. Corrupts AF, BC.
+nxb_at:
+    ld a, (nxbRow)
+    ld b, a
+    inc a
+    ld (nxbRow), a
+    ld c, 0
+    jp dbg_at
+
+; Read the raster line (NR $1E:$1F) with a bounded stability retry.
+; Out: HL = line (9 bits). Corrupts AF, BC, D.
+nxb_line:
+    ld d, 4                      ; bounded retries (rubric 6)
+.rd:
+    ld bc, TBBLUE_REG_SEL
+    ld a, NXB_LINE_MSB
+    out (c), a
+    inc b
+    in h, (c)
+    dec b
+    ld a, NXB_LINE_LSB
+    out (c), a
+    inc b
+    in l, (c)
+    dec b
+    ld a, NXB_LINE_MSB
+    out (c), a
+    inc b
+    in a, (c)
+    cp h
+    jr z, .ok
+    dec d
+    jr nz, .rd
+.ok:
+    ld a, h
+    and 1
+    ld h, a
+    ret
+
+; Frame tick: a non-monotonic line reading means the raster wrapped.
+nxb_tick:
+    call nxb_line
+    ld de, (nxbPrev)
+    ld (nxbPrev), hl
+    or a
+    sbc hl, de
+    ret nc
+    ld hl, (nxbFrames)
+    inc hl
+    ld (nxbFrames), hl
+    ret
+
+; Tagged failure row (HL = message).
+nxb_fail_row:
+    push hl
+    call nxb_at
+    pop hl
+    jp dbg_puts
+
+; =====================================================================
+; ROW GROUP 1 - DIRECT-SERVE TRANSPORT BREAKDOWN.
+; Entered from vid_run once the orchestrator reports a good open and
+; BEFORE the audio preload / CTC arm, so the machine is quiet (no ISR,
+; no DI windows) - the same unarmed condition the settlement's
+; unarmed rows were taken in. The session is fully staged at that
+; point: the CMD18 window is open one block into run 0, vidDsCrcDue
+; is 0, and the run/pass counters are live. The bench consumes real
+; blocks off the fixture and then leaves through the ordinary
+; teardown - playback is REPLACED by the bench, not instrumented.
+;
+; THE DECOMPOSITION (this is the whole point - each row is one term):
+;   DTA = vid_sd_blk_h                  = tok + 512*wire + crc + ovh
+;   DTI = vid_ds_blkopen + 512 raw ini  = crc + book + tok + 512*wire
+;                                         + ovh
+;   DTB = vid_ds_blkopen + vid_ds_pad   = crc + book + tok + pad512
+;                                         + ovh
+;   DTC = vid_ds_blkopen + xfer(512)    = crc + book + tok + xfer512
+;                                         + ovh
+;   DTD = vid_ds_blkopen + 4 x xfer(128)
+; so:
+;   DTI - DTA = vid_ds_blkopen's BOOKKEEPING, absolutely, with no
+;               modelled term anywhere in it (the token wait, the CRC
+;               consume, the 512-byte wire cost and the loop overhead
+;               are byte-identical on both sides and cancel).
+;   DTB - DTI = vid_ds_pad's excess over a bare ini (the ~37 vs ~21
+;               T/B claim, measured).
+;   DTC - DTI = vid_ds_xfer's clip/min chain over a bare ini.
+;   DTD - DTC = 2 extra inir arms + 3 extra call entries = the
+;               per-arm price the ~144 arms/frame pay.
+;   TOK row   = the poll counters (vid_sd_tok_h's DEBUG instrument):
+;               the data-token wait in POLLS, which is the one term
+;               that is hardware and immovable.
+; Every row opens the same number of blocks, so the token instrument's
+; ~167 T lands identically in all of them and cancels in every
+; difference above.
+;
+; The per-frame section bound is lifted for the visit (vidDsBound =
+; 255, vidDsFrmBlk reset per row) - the bench's block runs are not
+; frame sections. Rows that bypass vid_ds_blkopen (DTA) settle the
+; run/pass counters themselves afterwards, untimed, so the session
+; stays honest for the teardown.
+; =====================================================================
+NXB_DS_REPS      equ 128     ; blocks per direct row
+
+nxb_ds_rows:
+    xor a
+    ld (flags+248), a            ; self-clearing
+    ld (nxbOps), a               ; no ops on these rows: O prints 00
+    ld a, NXB_ROW0
+    ld (nxbRow), a
+    ld hl, 0
+    ld (vidTokPolls), hl
+    ld (vidTokCalls), hl
+    ; Landing page for the block reads: the game's HIDDEN Layer 2 back
+    ; surface, NOT a pool allocation. Review fix - every row here calls
+    ; vid_ds_blkopen, whose SD faults jump to vid_dec_abort_pos and
+    ; from there straight into vid_run's teardown, so ANY code after
+    ; the row loop (a bank_free included) is unreachable on a fault
+    ; and a pool bank would be stranded permanently. Borrowing the
+    ; back surface owes nothing: it is guaranteed to exist (the gfx
+    ; double buffer), it is not displayed, the teardown's snapshot
+    ; restore puts it back, and the verb's own PROCESS 10 redraws the
+    ; location afterwards either way. 512 bytes of stream data land in
+    ; it and are never read.
+    ld a, (l2BackBank)
+    add a, a
+    nextreg NR_MMU6, a
+    ld a, 255
+    ld (vidDsBound), a           ; the bench is not a frame section
+    ld hl, NXB_DS_REPS
+    ld (nxbReps), hl
+    ; ---- DTA: the raw producer block read (also the ring prefill's
+    ; own per-block cost - row group 4's ring-vs-direct question) ----
+    call nxb_ds_pre
+    ld hl, nxb_ds_a
+    ld (nxb_body + 1), hl
+    ld hl, nxbTagDTA
+    ld (nxbTag), hl
+    call nxb_row
+    call nxb_ds_settle           ; DTA never called blkopen
+    ; ---- DTI: shipping blkopen + the same 512-byte ini ----
+    call nxb_ds_pre
+    ld hl, nxb_ds_i
+    ld (nxb_body + 1), hl
+    ld hl, nxbTagDTI
+    ld (nxbTag), hl
+    call nxb_row
+    ; ---- DTB: shipping blkopen + vid_ds_pad ----
+    call nxb_ds_pre
+    ld hl, nxb_ds_b
+    ld (nxb_body + 1), hl
+    ld hl, nxbTagDTB
+    ld (nxbTag), hl
+    call nxb_row
+    ; ---- DTC: shipping blkopen + one 512-byte vid_ds_xfer ----
+    call nxb_ds_pre
+    ld hl, nxb_ds_c
+    ld (nxb_body + 1), hl
+    ld hl, nxbTagDTC
+    ld (nxbTag), hl
+    call nxb_row
+    ; ---- DTD: shipping blkopen + four 128-byte vid_ds_xfers ----
+    call nxb_ds_pre
+    ld hl, nxb_ds_d
+    ld (nxb_body + 1), hl
+    ld hl, nxbTagDTD
+    ld (nxbTag), hl
+    call nxb_row
+    ; ---- TOK: the token-poll instrument ----
+    call nxb_at
+    ld hl, nxbTagTOK
+    call dbg_puts
+    ld hl, nxbMsgP
+    call dbg_puts
+    ld hl, (vidTokPolls)
+    call dbg_hex16
+    ld hl, nxbMsgN
+    call dbg_puts
+    ld hl, (vidTokCalls)
+    jp dbg_hex16                 ; no cleanup owed: the landing page
+                                 ; is borrowed, not allocated, and
+                                 ; MMU6 is restored by the teardown
+
+; Per-row preamble (untimed): clear the section counter and the CRC
+; flag. DTA's reader consumes its own CRC; every other row's blkopen
+; consumes the previous block's, so the flag has to start clean.
+nxb_ds_pre:
+    xor a
+    ld (vidDsFrmBlk), a
+    ld (vidDsCrcDue), a
+    ret
+
+; DTA settle (untimed): DTA read blocks straight off the open window
+; without going through vid_ds_blkopen, so the run and pass counters
+; owe NXB_DS_REPS. Charge them here.
+nxb_ds_settle:
+    ld hl, (vidStrmRunBlkH)
+    ld de, NXB_DS_REPS
+    or a
+    sbc hl, de
+    ld (vidStrmRunBlkH), hl
+    ld hl, (vidStrmRemainBlk)
+    or a
+    sbc hl, de
+    ld (vidStrmRemainBlk), hl
+    ret
+
+; --- the five direct-row bodies ---
+nxb_ds_a:
+    ld hl, DATA_WINDOW
+    jp vid_sd_blk_h              ; token + 512 ini + CRC (bounded)
+nxb_ds_i:
+    ld hl, 0
+    call vid_ds_blkopen
+    ld hl, DATA_WINDOW
+    ld c, PORT_SPI_DAT
+    ld a, 16                     ; A is the outer counter (rubric 2 -
+.b:                              ; ini consumes B), the vid_sd_blk_h
+    DUP 32                       ; shape byte-for-byte
+      ini
+    EDUP
+    dec a
+    jp nz, .b
+    ret
+nxb_ds_b:
+    ld hl, 0
+    call vid_ds_blkopen
+    jp vid_ds_pad
+nxb_ds_c:
+    ld hl, 0
+    call vid_ds_blkopen
+    ld de, DATA_WINDOW
+    ld bc, 512
+    jp vid_ds_xfer
+nxb_ds_d:
+    ld hl, 0
+    call vid_ds_blkopen
+    ld b, 4
+.x:
+    push bc
+    ld de, DATA_WINDOW
+    ld bc, 128
+    call vid_ds_xfer             ; preserves nothing but HL (remain)
+    pop bc
+    djnz .x
+    ret
+
+; ---------------------------------------------------------------------
+; Row tables. Sizing rule for every entry: ops*(header+body) < 7900 so
+; the source cursor never reaches $DF00, and ops*count <= 8192 so the
+; dest cursor never leaves the window - the seam walkers are out of
+; scope for these rows by construction (block header).
+; ---------------------------------------------------------------------
+; GROUP 2 - op dispatch envelope. SK00 is the floor: SKIP8 with a zero
+; count runs the fast handler and NOTHING else, so it IS the dispatch
+; cost. The RU01/RU17 and CP01/CP17 pairs are the settlement's own
+; joint-solve shape - the 16-byte difference gives the kernel's T/B
+; and back-solves the per-op envelope against the settled 387 (RUN8)
+; / 267 (COPY8/16). S160/R161/C161 price the 16-bit-operand ops,
+; which take the slow parser and the chunked bodies.
+nxbTabOpd:
+    dw nxbTagSK00
+    db VOP_SKIP8
+    dw 0
+    db 255
+    dw 64
+    dw nxbTagS160
+    db VOP_SKIP16
+    dw 0
+    db 255
+    dw 64
+    dw nxbTagRU01
+    db VOP_RUN8
+    dw 1
+    db 255
+    dw 32
+    dw nxbTagRU17
+    db VOP_RUN8
+    dw 17
+    db 255
+    dw 32
+    dw nxbTagCP01
+    db VOP_COPY8
+    dw 1
+    db 255
+    dw 32
+    dw nxbTagCP17
+    db VOP_COPY8
+    dw 17
+    db 255
+    dw 32
+    dw nxbTagR161
+    db VOP_RUN16
+    dw 1
+    db 255
+    dw 32
+    dw nxbTagC161
+    db VOP_COPY16
+    dw 1
+    db 255
+    dw 32
+    dw 0
+
+; GROUP 3 - the COPY size ladder, weighted where real content lives.
+; Delta-stream census (250/252-frame Sintel and Big Buck Bunny
+; encodes, both geometries): COPY p50 = 1 B (BBB) to 5 B (Sintel);
+; 61-99% of all COPY ops are 1-8 B; p90 = 4-38 B; p99 = 8-103 B.
+; C073/C074 straddle the derived DMA crossover (NXV2_COPY_DMA_MIN =
+; 74); C256 is the COPY16 bulk-repaint path (40 keyframe ops carry
+; 16-21% of Sintel's copied bytes).
+nxbTabCpy:
+    dw nxbTagC001
+    db VOP_COPY8
+    dw 1
+    db 255
+    dw 64
+    dw nxbTagC004
+    db VOP_COPY8
+    dw 4
+    db 255
+    dw 64
+    dw nxbTagC008
+    db VOP_COPY8
+    dw 8
+    db 255
+    dw 48
+    dw nxbTagC016
+    db VOP_COPY8
+    dw 16
+    db 255
+    dw 48
+    dw nxbTagC038
+    db VOP_COPY8
+    dw 38
+    db 197
+    dw 48
+    dw nxbTagC073
+    db VOP_COPY8
+    dw 73
+    db 105
+    dw 64
+    dw nxbTagC074
+    db VOP_COPY8
+    dw 74
+    db 103
+    dw 64
+    dw nxbTagC103
+    db VOP_COPY8
+    dw 103
+    db 75
+    dw 64
+    dw nxbTagC256
+    db VOP_COPY16
+    dw 256
+    db 30
+    dw 96
+    dw 0
+
+; GROUP 4 - fill crossover + the DMA DI window. F070/F071 straddle
+; the derived RUN crossover (NXV2_RUN_DMA_MIN = 71); F063 is the CPU
+; fill at the census's RUN p99 neighbourhood (every observed RUN is
+; short - RUN carries 0.003-6% of painted bytes and RUN16 is never
+; emitted at all, so this group is a CONFIRMATION, not a lever).
+; F256/K256 are full 256-byte DMA chunks: one arm each, so the row's
+; per-op T IS the DI bracket the audio ISR has to survive - the
+; measured answer to the stale ~38% margin claim.
+nxbTabKrn:
+    dw nxbTagF063
+    db VOP_RUN8
+    dw 63
+    db 125
+    dw 64
+    dw nxbTagF070
+    db VOP_RUN8
+    dw 70
+    db 112
+    dw 64
+    dw nxbTagF071
+    db VOP_RUN8
+    dw 71
+    db 111
+    dw 64
+    dw nxbTagF256
+    db VOP_RUN16
+    dw 256
+    db 30
+    dw 96
+    dw nxbTagK256
+    db VOP_COPY16
+    dw 256
+    db 30
+    dw 96
+    dw 0
+
+; zxnDMA WR2/WR5 one-time program - the VID_PAGE-local twin of
+; vidDmaInit (VID_PAGE2, unreachable from here). Byte-for-byte the
+; same four bytes; if that block ever changes, this one moves with it.
+nxbDmaInit:
+    db $83                       ; WR6: disable (clean slate)
+    db %01010000                 ; WR2: B memory, incrementing, timing
+    db %00000010                 ; B cycle length 2 (no prescaler)
+    db %10000010                 ; WR5: stop on end of block (one-shot)
+nxbDmaInit_len equ $ - nxbDmaInit
+
+nxbMsgO:   db " O=", 0
+nxbMsgR:   db " R=", 0
+nxbMsgF:   db " F=", 0
+nxbMsgD:   db " D=", 0
+nxbMsgP:   db " P=", 0
+nxbMsgN:   db " N=", 0
+nxbMsgBank: db "NXB NO BANK", 0
+nxbTagDTA: db "DTA", 0
+nxbTagDTI: db "DTI", 0
+nxbTagDTB: db "DTB", 0
+nxbTagDTC: db "DTC", 0
+nxbTagDTD: db "DTD", 0
+nxbTagTOK: db "TOK", 0
+nxbTagSK00: db "SK00", 0
+nxbTagS160: db "S160", 0
+nxbTagRU01: db "RU01", 0
+nxbTagRU17: db "RU17", 0
+nxbTagCP01: db "CP01", 0
+nxbTagCP17: db "CP17", 0
+nxbTagR161: db "R161", 0
+nxbTagC161: db "C161", 0
+nxbTagC001: db "C001", 0
+nxbTagC004: db "C004", 0
+nxbTagC008: db "C008", 0
+nxbTagC016: db "C016", 0
+nxbTagC038: db "C038", 0
+nxbTagC073: db "C073", 0
+nxbTagC074: db "C074", 0
+nxbTagC103: db "C103", 0
+nxbTagC256: db "C256", 0
+nxbTagF063: db "F063", 0
+nxbTagF070: db "F070", 0
+nxbTagF071: db "F071", 0
+nxbTagF256: db "F256", 0
+nxbTagK256: db "K256", 0
+
+nxbMode:     db 0
+nxbRow:      db 0
+nxbTag:      dw 0
+nxbOpc:      db 0
+nxbCnt:      dw 0
+nxbOps:      db 0
+nxbReps:     dw 0
+nxbLeft:     dw 0
+nxbFrames:   dw 0
+nxbPrev:     dw 0
+nxbL0:       dw 0
+nxbL1:       dw 0
+nxbSrcBank:  db 0
+nxbDstBank:  db 0
+nxbDstP:     db 0
+nxbBankCnt:  db 0
+nxbSvMmu6:   db 0
+nxbSvMmu2:   db 0
+nxbSvAudEn:  db 0
+
+; Token-poll instrument accumulators (vid_sd_tok_h, above).
+vidTokPolls: dw 0
+vidTokCalls: dw 0
  ENDIF
 
     DISPLAY "video ends at ", $, " headroom ", /D, OVL_LIMIT - $

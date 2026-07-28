@@ -2319,6 +2319,27 @@ l2scr_trampoline:
     ld a, OVL2_PAGE
     jp ovl_map_page
  ENDIF
+
+; EXTERN vector 12 (SP17 player bench - the NXBEN revival, card
+; .superpowers/sdd/sp14a-task-4-report.md section 42): DEBUG-only
+; route for tests/test.dsf's NXBO/NXBC/NXBK verbs. NXBEN's vector 8
+; went to the Card #6 fixture wave while the bench was retired, so the
+; revival takes 12 (12-15 are the last free ones; 5 must stay
+; ext_stub forever, suite check 44). ONE vector for all three modes:
+; the mode rides flags+250 (the stage-ladder convention the retired
+; bench used), set by the verb's LET before the shared EXTERN, so a
+; new mode costs a table row rather than a vector. The bench's fourth
+; row group (direct-serve transport) needs a LIVE armed session and
+; cannot come through here at all - it rides the player instead
+; (flags+248 + a GFX n 13 verb; see video.asm's vid_run bench hook).
+; Same push-target/ovl_map_page idiom as the trampolines above.
+ IFDEF DEBUG
+nxb_trampoline:
+    ld hl, nxb_entry
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+ ENDIF
 extVec:
     dw ext_stub, ext_stub, ext_stub, ext_xmes
     dw h_xpart, ext_stub
@@ -2340,7 +2361,12 @@ extVec:
  ELSE
     dw ext_stub                   ; vector 11, release: stub
  ENDIF
-    dw ext_stub, ext_stub, ext_stub, ext_stub ; vectors 12-15
+ IFDEF DEBUG
+    dw nxb_trampoline             ; vector 12, DEBUG only (SP17 bench)
+ ELSE
+    dw ext_stub                   ; vector 12, release: stub
+ ENDIF
+    dw ext_stub, ext_stub, ext_stub ; vectors 13-15
 
 savedCurX: db 0
 savedCurY: db 0

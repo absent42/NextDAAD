@@ -357,14 +357,23 @@ l2_flip_swap:
 ; transferred, so there is no status poll anywhere. NEVER: burst mode,
 ; auto-restart, a live counter read, or a refeed while enabled.
 ;
-; Chunks are capped at DMA_CHUNK_MAX (256) bytes: see sp11-task-2-
-; report.md "chunk-loop T-math" for the full instruction-level count -
-; roughly 1.1k T-states (~40us at 28MHz) per chunk including this
-; loop's own dispatch/bookkeeping, comfortably inside the SP10 rule
-; that a DI section stays under one CTC period (50us at 20kHz). Between
-; chunks interrupts are live - ctc_isr catches up (the ring absorbs the
-; jitter) and a pending frame tick runs with the DMA idle, so the
-; hazard window never actually opens.
+; Chunks are capped at DMA_CHUNK_MAX (256) bytes. MARGIN CORRECTION
+; (SP17, 2026-07-28): this comment used to claim "roughly 1.1k T-states
+; (~40us at 28MHz) per chunk ... comfortably inside" one CTC period.
+; That was WRONG in both figures and the word "comfortably" was a
+; falsehood a reviewer would have trusted. SP14c T4 re-derived the
+; 256-byte bracket at 1379 T = ~49.3us (.superpowers/sdd/sp14c-t4-
+; settlement-report.md:54-69), against a 50us CTC period at
+; AUD_RATE_MAX 20000: the real margin is ~1.4%, not ~38%. The cap is
+; still the right one - the settlement kept 256 because a 512-byte
+; burst measured a 35% CTC tick shortfall against 1.2% at 256 - but it
+; sits AT the edge of the SP10 rule, not comfortably inside it, and
+; anything that lengthens this bracket (a bigger cap, extra work
+; inside the DI) crosses it. The SP17 bench's F256/K256 rows measure
+; the bracket on silicon (card section 42, row group 4). Between
+; chunks interrupts are live - ctc_isr catches up (the ring absorbs
+; the jitter) and a pending frame tick runs with the DMA idle, so the
+; hazard window closes again every chunk.
 ;
 ; Splits BC into <=256-byte chunks and loops; returns once the whole
 ; length has transferred. Corrupts AF, BC, DE, HL - matches LDIR's own

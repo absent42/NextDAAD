@@ -308,12 +308,29 @@ LSTB  109     verb
 LSTC  110     verb
 LS256 111     verb
 
-; NXBEN (the SP15 T2 decode-kernel bench, verbs 102-116) is RETIRED
-; (SP15 3a): the format froze on its evidence (task-2 settlement,
-; 2026-07-25), its kernels graduated into the production v2 decoder,
-; and its VID_PAGE2 DEBUG space now funds the v2 open/load cluster.
-; EXTERN vector 8 is L2MOD's now (see above), not ext_stub. git holds
-; the verbs, the bench (video.asm's NXBEN section) and the trampoline.
+; SP17 PLAYER BENCH (the NXBEN revival - card .superpowers/sdd/
+; sp14a-task-4-report.md section 42). NXBEN itself was retired at SP15
+; 3a: the format froze on its evidence and its prototype kernels
+; graduated into the production decoder. The revival measures the
+; SHIPPING routines instead of prototypes, so the rows answer decode
+; questions the player actually has. Four verbs on the last of the old
+; 102-116 block; the three standalone modes share EXTERN vector 12
+; (overlay0.asm's nxb_trampoline -> video.asm's nxb_entry) with the
+; mode in flag 250, and the fourth rides the PLAYER because its rows
+; need a live armed direct-serve session.
+;   NXBO - mode 2, op dispatch envelope (8 rows)
+;   NXBC - mode 3, COPY kernel size ladder (9 rows)
+;   NXBK - mode 4, fill crossover + DMA DI window (5 rows)
+;   NXBD - flag 248 + GFX 10 13: the direct-serve transport
+;          breakdown against 010.VID (6 rows). NEEDS -VidLong staged.
+;          Playback is REPLACED by the bench - nothing plays.
+; Rows print at tilemap rows 8+ and become visible when the timeline
+; report hides Layer 2 at teardown. Release's EXTERN 0 12 is ext_stub
+; and flag 248 is inert, so all four are silent no-ops there.
+NXBO  112     verb
+NXBC  113     verb
+NXBK  114     verb
+NXBD  115     verb
 
 ;                       Verbs
 GET     20      verb
@@ -946,6 +963,32 @@ $pictureOK
                 DONE
 
 > DPACL   _     GFX 11 14
+                PROCESS 10
+                DONE
+
+; SP17 player bench (see the vocabulary block). The three standalone
+; modes set flag 250 then share EXTERN 0 12; the mode cell self-clears
+; in the handler, so a stray EXTERN can never re-run a row set. NXBD
+; sets flag 248 and then plays 010.VID: the player opens the file
+; exactly as it ships, and the bench hook diverts to the transport
+; rows the instant the session is armed and BEFORE the CTC starts, so
+; the rows are taken on a quiet machine. No PROCESS 10 on the three
+; standalone verbs - they never touch the display, so there is
+; nothing for the game to redraw.
+> NXBO    _     LET     250 2
+                EXTERN  0 12
+                DONE
+
+> NXBC    _     LET     250 3
+                EXTERN  0 12
+                DONE
+
+> NXBK    _     LET     250 4
+                EXTERN  0 12
+                DONE
+
+> NXBD    _     LET     248 1
+                GFX     10 13
                 PROCESS 10
                 DONE
 
