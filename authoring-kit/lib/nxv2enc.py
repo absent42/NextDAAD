@@ -30,6 +30,7 @@ frames (research finding: the shadow-compose variant is priced out at
 paint the HIDDEN surface across a KSTART..KFLIP span and flip+palette-
 swap atomically on KFLIP.
 """
+import hashlib
 import math
 import sys
 from dataclasses import dataclass, field
@@ -1746,15 +1747,89 @@ BLUENOISE32 = np.array([
      392,  923,   90,  564,  411,  211,  842,  361,  253,  111,  425,  728,  363,  486,  838,  535,   17,  791,  877,  118,  242,  381,   13,  545, 1010,   76,  621,  802,  571,  152,  300, 1001,
 ], dtype=np.int32).reshape(32, 32)
 
-# Dither amplitude knob (owner-approved 2026-07-28): the per-pixel
-# offset is (threshold_norm - 0.5) * DITHER_STEP * amplitude, with
-# amplitude a float 0.0-1.0. 1.0 reproduces the historical full-
-# quantization-step depth; 0.0 is pure nearest-level snap (no dither).
-# DEFAULT 0.5: the full-step pattern read too strongly on smooth
-# content on real hardware (owner eyeball, Big Buck Bunny/jellyfish).
-# CLI: videnc --dither; kit config: VIDOPTS/VIDOPTS_NNN.
+# Dither amplitude knob (owner-approved 2026-07-28; the SP17 Yliluoma
+# wave 2026-07-28 added a SECOND meaning for the opt-in mixture mode -
+# see the DITHER_MODE block below):
+#
+#   mode "offset" (DEFAULT, unchanged behaviour):
+#       the per-pixel offset is (threshold_norm - 0.5) * DITHER_STEP *
+#       amplitude - one full lattice quantization step at 1.0, 0.0 is
+#       a pure nearest-colour snap.
+#   mode "mixture" (OPT-IN, Yliluoma positional mixture dithering):
+#       amplitude is the FRACTION OF THE PIXEL'S QUANTIZATION ERROR the
+#       dither is asked to correct. The mixture target is the gamma-
+#       correct mix of the pixel's nearest palette colour (amplitude 0)
+#       and the true source colour (amplitude 1); the mixture planner
+#       then reproduces THAT target. 0.0 = pure nearest-colour, no
+#       dither; 1.0 = full Yliluoma (local mean reproduces the source).
+#       There is no single "offset" any more - a mixture plan has no
+#       amplitude - so this is the amplitude analogue that keeps the
+#       knob monotone, keeps 0.0 meaning "off", and keeps author control.
+#
+# DEFAULT 0.5 is UNCHANGED (the owner's ratified "0.5 looks best"). The
+# mixture meaning was chosen so that at 0.5 its measured GRAIN (fraction
+# of pixels emitted away from the pure nearest colour) lands on the
+# offset path's own 0.5 grain on all three leg sources (Sintel .286 vs
+# .320, Big Buck Bunny .30 vs .30, Jellyfish .21 vs .20) - the two modes
+# are comparable at the same number.
+# CLI: videnc --dither / --dither-mode; kit config: VIDOPTS/VIDOPTS_NNN.
 DITHER_STEP = LATTICE_BIN
 DITHER_AMP_DEFAULT = 0.5
+
+# WHICH DITHER IS DEFAULT (SP17 Yliluoma wave, decided on measurement
+# 2026-07-28). OFFSET, with the Yliluoma mixture path shipped OPT-IN.
+# The mixture algorithm is implemented in full below and is a genuine
+# improvement on some content, but it is NOT a win on this project's
+# real content and it must not be the silent default. The evidence, so
+# nobody re-litigates this blind:
+#
+#  - PER-PIXEL WIRE PSNR: mixture loses on EVERY fixture measured -
+#    -0.43 to -3.55 dB across the eleven leg fixtures here, and an
+#    independent measurement wave on the owner's own boat-pan and
+#    church-zoom clips found the same (-0.75 to -1.46 dB). Some of that
+#    is inherent to any dither, but the size of it is not.
+#  - LOCAL-MEAN FIDELITY (the metric that should favour a mixture
+#    dither): SPLIT. Mixture wins clearly on Jellyfish and on Sintel and
+#    at high amplitude everywhere, and loses on Big Buck Bunny and on
+#    the owner's church-zoom clip. It is not a uniform win.
+#  - COLOUR CAST: mixture carries a systematic PER-CHANNEL MEAN BIAS
+#    that the offset dither does not. Measured over 8 frames against
+#    the source mean: Big Buck Bunny blue -3.1 (offset -0.9) at
+#    amplitude 0.5 and -4.7 at 1.0; the independent wave measured the
+#    same shape as a green deficit on dark content. The cause is
+#    structural, not a bug: the plan minimizes the RGBL distance of the
+#    list's MEAN to the target, and RGBL deliberately discounts chroma
+#    (x0.75) against luma (+lumadiff^2), so the planner will trade a
+#    per-channel mean error for a luma match. Nothing in the article
+#    claims otherwise.
+#  - DELTA COST: up to +26% wire bytes on colourful moving content, and
+#    it pushed 003 from 72% to 92% budget-bound. See the wave report.
+#  - PALETTE MATERIAL: the display lattice holds only 510 usable
+#    colours and real clips occupy ~100 of them across a whole clip
+#    (~70 per frame), so scene palettes carry only ~85-95 DISTINCT
+#    entries. Algorithm 2 assumes a richer set to mix from than this
+#    content actually provides.
+#  - IT WEAKENS TWO KEYFRAME TRIGGERS. display_ceiling measures a
+#    FULLY dithered frame, while the achieved surface keeps pixels
+#    closer to the source (index hysteresis, partial delta updates).
+#    Mixture dithering's per-pixel penalty is large enough to invert
+#    that: measured over three leg clips, po_ceil - achieved stays
+#    POSITIVE on 110/110 frames in offset mode but goes NEGATIVE on
+#    105/110 in mixture mode (mean -0.63 to +0.09 dB, min -1.13). A
+#    negative deficit can never cross DRIFT_T or STALE_DB, so the drift
+#    and staleness keyframes go structurally inert. Fixing that means
+#    re-basing po_ceil, which would re-calibrate the triggers for BOTH
+#    modes - deliberately not done in this wave. Anyone promoting
+#    mixture to default must deal with this first.
+#
+# Both modes stay positionally deterministic, both honour --dither, and
+# the two unconditional halves of the wave - gamma-correct mixing and
+# the luminance-weighted RGBL distance metric - apply in BOTH modes and
+# stand on their own. Flip with videnc --dither-mode mixture.
+DITHER_MODE_MIXTURE = "mixture"
+DITHER_MODE_OFFSET = "offset"
+DITHER_MODE_DEFAULT = DITHER_MODE_OFFSET
+DITHER_MODES = (DITHER_MODE_MIXTURE, DITHER_MODE_OFFSET)
 
 
 def _dither_amp(amplitude):
@@ -1770,14 +1845,28 @@ def _dither_amp(amplitude):
     return a
 
 
+def _dither_mode(mode):
+    if mode is None:
+        return DITHER_MODE_DEFAULT
+    m = str(mode)
+    if m not in DITHER_MODES:
+        raise ValueError(f"dither mode must be one of {DITHER_MODES}, got {mode!r}")
+    return m
+
+
 def ordered_dither(frame, amplitude=None):
-    """Blue-noise ordered dither of an (H,W,3) uint8 frame: per-pixel
-    offset (threshold_norm - 0.5) * DITHER_STEP * amplitude, the same
-    offset on all three channels (no hue noise). Position-deterministic
-    (a pure function of y%32, x%32 and the amplitude): identical source
-    pixels dither identically every frame, so quiet content produces
-    ZERO index churn. amplitude None -> DITHER_AMP_DEFAULT; 0.0 returns
-    the frame unchanged (pure nearest snap happens downstream)."""
+    """LEGACY (mode "offset") blue-noise ordered dither of an (H,W,3)
+    uint8 frame: per-pixel offset (threshold_norm - 0.5) * DITHER_STEP *
+    amplitude, the same offset on all three channels (no hue noise).
+    Position-deterministic (a pure function of y%32, x%32 and the
+    amplitude): identical source pixels dither identically every frame,
+    so quiet content produces ZERO index churn. amplitude None ->
+    DITHER_AMP_DEFAULT; 0.0 returns the frame unchanged (pure nearest
+    snap happens downstream).
+
+    This is the DEFAULT dither path (see the DITHER_MODE_DEFAULT block
+    above for why the Yliluoma mixture path ships opt-in), and it also
+    drives the palette-refill spread probe (PALETTE_SPREAD_AMP)."""
     amp = _dither_amp(amplitude)
     H, W, _ = frame.shape
     t = ((BLUENOISE32[np.arange(H)[:, None] % 32, np.arange(W)[None, :] % 32]
@@ -1786,21 +1875,444 @@ def ordered_dither(frame, amplitude=None):
     return np.clip(f, 0.0, 255.0).astype(np.uint8)
 
 
+# ---------------------------------------------------------------------
+# GAMMA-CORRECT MIXING + LUMINANCE-WEIGHTED COLOUR DISTANCE
+# (SP17 Yliluoma wave, 2026-07-28 - Joel Yliluoma, "Arbitrary-palette
+# positional dithering algorithm", https://bisqwit.iki.fi/story/howto/
+# dither/jy/).
+#
+# WHY. Two of the article's points apply to this encoder verbatim:
+#
+#  1. MIXING MUST BE GAMMA-AWARE. Light adds LINEARLY; sRGB-ish 8-bit
+#     values do not. Averaging 8-bit values directly ("a + (b-a)*ratio")
+#     produces a mix that misrepresents what the eye will see when the
+#     two colours alternate spatially - a 50/50 black/white dither reads
+#     as ~186, not 128. Every place this encoder MIXES or AVERAGES
+#     colours uses gamma_mix()'s formula with gamma 2.2. (The DEFAULT
+#     offset dither mixes nothing - it displaces one pixel and snaps -
+#     so in practice this governs the mixture path; it is stated and
+#     tested here so no future mixing site gets it wrong.)
+#         a' = a^g,  b' = b^g,  r' = a' + (b'-a')*ratio,  r = r'^(1/g)
+#     WHERE GAMMA DOES NOT APPLY (deliberately, all verified below):
+#       - snap_to_lattice / LATTICE_NEAREST: a nearest-ENTRY lookup, no
+#         mixing happens, and the lattice levels are hardware
+#         reconstruction values - snapping in linear space would bias
+#         the choice away from the hardware's own spacing.
+#       - _nearest / colour distance: a comparison, not a mix.
+#       - psnr(): a WIRE-TRUE error metric against the displayed 8-bit
+#         values - re-basing it would silently change every reported
+#         number and every drift trigger threshold.
+#       - build_palette_block / the 3-bit lattice packing: bit layout.
+#
+#  2. COLOUR DISTANCE, LUMINANCE-WEIGHTED. Plain Euclidean RGB treats a
+#     blue error as it treats a green one; the eye does not. The
+#     article's cheap "RGBL" metric (its own CIEDE2000 section reports
+#     that metric "works better for some pictures than for others" and
+#     can scatter yellow pixels, so the cheap metric is the right
+#     target) is:
+#         lumadiff = (r1-r2)*.299 + (g1-g2)*.587 + (b1-b2)*.114, /255
+#         D = (dR^2*.299 + dG^2*.587 + dB^2*.114)*0.75 + lumadiff^2
+#     with dR/dG/dB normalized to 0..1. D expands to a plain SQUARED
+#     EUCLIDEAN distance in a 4-D embedding (_rgbl_embed): three axes
+#     c*sqrt(0.75*w_c) plus one luma axis - so the same matmul
+#     nearest-neighbour solver carries it, at 4/3 the width
+#     (_nearest_rgbl).
+#
+#     WHERE IT IS USED: the mixture dither, everywhere - every plan
+#     decision and its nearest-colour anchor. WHERE IT IS NOT: the
+#     DEFAULT (offset) path's nearest-palette search and hysteresis,
+#     which stay on plain squared-RGB. That is a MEASURED decision, not
+#     an oversight. Swapping the shipped nearest-colour search to RGBL
+#     was tried and re-encoded across all eleven leg fixtures: it lost
+#     0.36-1.85 dB of per-pixel wire PSNR AND 0.9-3.0 dB of 4x4
+#     local-mean PSNR - every fixture worse on both metrics - and it
+#     made the per-channel mean bias worse, not better (001 red -4.99
+#     -> -6.16, blue -3.82 -> +1.08: a visible cast). The cause is the
+#     palette: these are sparse subsets of a 510-colour hardware
+#     lattice, so "perceptually nearest" routinely means a chroma jump
+#     the eye does see, and there is no denser entry to fall back on.
+#     Nothing in the article claims otherwise - it assumes a palette
+#     you can actually mix within.
+#
+#     PALETTE DERIVATION is Pillow's own median-cut (adaptive_palette),
+#     which exposes no distance hook, so no metric applies to the cut
+#     itself; the lattice snap + frequency refill that follow it are
+#     exact-match operations with no distance in them.
+# ---------------------------------------------------------------------
+
+GAMMA = 2.2
+_GAMMA_LIN = ((np.arange(256, dtype=np.float64) / 255.0) ** GAMMA).astype(np.float32)
+_GAMMA_SRGB_N = 4096
+_GAMMA_SRGB = ((np.linspace(0.0, 1.0, _GAMMA_SRGB_N) ** (1.0 / GAMMA))
+               * 255.0).astype(np.float32)
+RGBL_W = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+
+
+def to_linear(rgb8):
+    """uint8 sRGB-ish value(s) -> linear light 0..1 (LUT, exact)."""
+    return _GAMMA_LIN[np.asarray(rgb8, dtype=np.uint8)]
+
+
+def from_linear(lin):
+    """Linear light 0..1 -> 0..255 float. LUT-interpolated at
+    _GAMMA_SRGB_N steps: a pow() per element costs ~50x more and the
+    step (1/4096 of full scale) is 1/580 of one lattice bin."""
+    i = np.clip(np.asarray(lin, dtype=np.float32) * (_GAMMA_SRGB_N - 1),
+                0, _GAMMA_SRGB_N - 1).astype(np.int32)
+    return _GAMMA_SRGB[i]
+
+
+def gamma_mix(a, b, ratio):
+    """Yliluoma's gamma-aware mix of two uint8 colours: a'=a^g, b'=b^g,
+    r'=a'+(b'-a')*ratio, r=r'^(1/g). ratio 0 -> a, 1 -> b. Returns
+    uint8 (rounded). `ratio` must be a scalar or already broadcastable
+    against the (...,3) colour arrays (pass (...,1), not (...,)) - no
+    axis is guessed, because a length-3 ratio vector would be
+    indistinguishable from a per-channel one.
+
+    The encoder's own two mixing sites work in unrounded float on the
+    same formula rather than calling this (MixturePlanner._solve
+    accumulates the candidate list in linear light; MixturePlanner.plan
+    pulls the dither target from the nearest palette colour toward the
+    source) - rounding to uint8 mid-pipeline would cost precision for
+    nothing. This is the shared, testable statement of the formula."""
+    la = (np.asarray(a, dtype=np.float64) / 255.0) ** GAMMA
+    lb = (np.asarray(b, dtype=np.float64) / 255.0) ** GAMMA
+    r = np.asarray(ratio, dtype=np.float64)
+    m = np.clip(la + (lb - la) * r, 0.0, 1.0)
+    # exact pow, not from_linear()'s LUT: this is the reference
+    # statement of the formula and must round-trip its endpoints
+    # exactly (ratio 0 -> a, ratio 1 -> b), not to within a code
+    return np.clip(np.rint((m ** (1.0 / GAMMA)) * 255.0), 0, 255).astype(np.uint8)
+
+
+def color_compare(a, b):
+    """Yliluoma's RGBL colour difference (see the block comment above).
+    a/b are float/uint8 arrays (...,3) on the 0..255 scale; returns the
+    squared perceptual distance (0 .. ~1.75)."""
+    d = (np.asarray(a, dtype=np.float32) - np.asarray(b, dtype=np.float32)) / 255.0
+    return ((d[..., 0] ** 2 * 0.299 + d[..., 1] ** 2 * 0.587
+             + d[..., 2] ** 2 * 0.114) * 0.75 + (d @ RGBL_W) ** 2)
+
+
+def _rgbl_embed(rgb):
+    """(...,3) 0..255 -> (...,4) float32 whose SQUARED EUCLIDEAN
+    distance is exactly color_compare(): three colour axes scaled by
+    sqrt(0.75*w_c) plus a luma axis. Lets the matmul nearest-neighbour
+    solver carry the perceptual metric with no change of shape."""
+    v = np.asarray(rgb, dtype=np.float32) / 255.0
+    return np.concatenate([v * np.sqrt(0.75 * RGBL_W), (v @ RGBL_W)[..., None]],
+                          axis=-1).astype(np.float32)
+
+
+# ---------------------------------------------------------------------
+# YLILUOMA POSITIONAL MIXTURE DITHERING - Algorithm 2 (the N-way
+# iterative mixing plan), SP17 wave 2026-07-28.
+#
+# WHICH VARIANT, AND WHY. The article offers algorithm 1 (best PAIR of
+# palette entries + a mixing ratio; "refined" solves that ratio
+# analytically instead of scanning it), and algorithm 2 (greedily builds
+# an N-COLOUR candidate list). Measured here, on this encoder's own
+# palettes, algorithm 1 is structurally too weak: our palettes are
+# subsets of a 512-colour hardware lattice and a scene often carries
+# only 45-190 DISTINCT entries with ~36/255 gaps, so the best two-colour
+# mixture cannot land near the target. On the 001 Sintel leg frame the
+# best algorithm-1 plan still sat 6.8 RMS from the source and its
+# realized 16x16 local mean was 5.4 RMS off, WORSE than the offset
+# dither it replaces (1.8); algorithm 2, which may spend its 32 list
+# slots over several entries, reaches 0.66. The analytic-ratio
+# refinement only accelerates algorithm 1's ratio scan, so it inherits
+# that ceiling and buys nothing here. Algorithm 2 it is.
+#
+# PSYCHOVISUAL PENALTY: NOT INCLUDED, on measurement (the article makes
+# it optional - "if your measurements support it"). Algorithm 1's
+# penalty term (component difference x 0.1 x mixing evenness) was ported
+# to algorithm 2 as a per-component "distance from target x share of the
+# list" term and swept at weights 0.25/0.5/1/2/4/8 on all three leg
+# sources. It reduces grain, but strictly WORSE than simply lowering the
+# amplitude does: at matched grain it cost 15-80% more local-mean error
+# on every clip (e.g. Sintel at grain .32: penalty 6.97 RMS vs amplitude
+# 3.82 RMS). The article's OTHER stated pruning - restrict the mixable
+# set - is kept instead, as MIX_NEIGHBOURS: it is self-normalizing
+# against palette density, which is the whole point of the exercise.
+#
+# HARD INVARIANTS (all pinned by tests/nxv2_selftest.py step 13):
+#   - POSITIONAL DETERMINISM. The emitted index is a pure function of
+#     (x mod 32, y mod 32, source colour, palette, amplitude). No frame
+#     index, no randomness, no error diffusion, no dependence on any
+#     neighbouring pixel's RESULT. Delta compression depends on it.
+#   - The threshold matrix stays BLUENOISE32 (owner-ratified on silicon
+#     over Bayer). The article's index formula generalises to any
+#     matrix: list[ matrix_value * list_size / matrix_max ]; here that
+#     is BLUENOISE32 (0..1023) * MIX_LEVELS // 1024.
+#   - Only palette indices are ever emitted, so the $FE transparency
+#     exclusion baked into display_palette/snap_to_lattice still holds
+#     by construction.
+# ---------------------------------------------------------------------
+
+# Candidate-list length: the mixing plan is MIX_LEVELS palette slots,
+# luminance-sorted, indexed by the blue-noise rank. 32 measured better
+# than 16 (finer ratios: Sintel local-mean RMS 0.66 vs 0.83 at full
+# amplitude) for ~1.3x the plan cost; 64 added <0.1 RMS for 2x.
+MIX_LEVELS = 32
+
+# Mixable set per target: the MIX_NEIGHBOURS nearest DISTINCT palette
+# entries under RGBL. This is the article's "prune implausible mixes"
+# step, and it is what makes the dither adapt to palette DENSITY (the
+# defect that started this wave): where the palette is dense the 8
+# nearest entries are all close, so mixtures stay subtle; where it is
+# sparse they are the only material available. 8 measured better than 4
+# on local-mean fidelity at equal grain and better than 16/32 on
+# per-pixel PSNR (16+ starts reaching for far colours - the article's
+# "scattered pixels" hazard).
+MIX_NEIGHBOURS = 8
+
+# Mixture targets are cached on a 6-bit-per-channel grid (step 4/255,
+# i.e. 1/9 of a lattice bin; the resulting noise floor sits at ~47 dB,
+# ~20 dB below anything this codec reports). The grid is what makes the
+# plan cache hit across frames of a scene - without it every frame pays
+# the full solve. 6 vs 7 bits measured 1.8x faster for 0.05-0.09 dB of
+# per-frame ceiling; 5 bits was 0.4 dB and too coarse.
+MIX_QBITS = 6
+
+# display_ceiling() subsamples by this stride on both axes before
+# solving, IN MIXTURE MODE ONLY (the palette is still derived from the
+# whole frame). The ceiling is a per-frame PSNR yardstick, not an
+# emitted picture, and a stride-4 sample of a 320x256 frame is still
+# 5120 pixels covering 64 distinct blue-noise threshold cells -
+# measured within 0.06 dB of the full-frame ceiling on both leg
+# sources, for 3-5x the speed. It is needed because a fresh palette per
+# frame means a cold mixture plan cache every time, which made this the
+# single hottest call in the encoder. The DEFAULT path is cheap and
+# takes no stride, so its po_ceil - and therefore every drift and
+# staleness trigger, and therefore every emitted byte - is bit-for-bit
+# what it was before this wave.
+CEILING_STRIDE = 4
+
+# Plan-cache ceiling (distinct quantized targets held per palette).
+# Reached only by very long, very colourful scenes; overflow simply
+# resets the cache, which is exact (a cache miss recomputes the same
+# plan) and costs time, never bytes.
+MIX_CACHE_MAX = 600_000
+
+# Palette-refill spread probe. display_palette fills slots left over
+# after the median cut with the most-frequent lattice colours an
+# ORDERED-DITHERED composite asks for. In offset mode that probe is the
+# encode's own dither, unchanged. In MIXTURE mode --dither no longer
+# maps onto a spread at all, so the probe is pinned to a FIXED 0.5 -
+# which also makes mixture-mode palettes identical to the offset-mode
+# ones at the default amplitude, so a mode A/B measures the DITHER and
+# nothing else.
+PALETTE_SPREAD_AMP = 0.5
+
+
+class MixturePlanner:
+    """Yliluoma algorithm-2 mixing plans for one (palette, amplitude).
+
+    Holds a target-colour -> candidate-list cache that persists across
+    the frames of a scene (the palette is held for a whole scene, so the
+    hit rate after the first frame is high). Purely functional: the
+    cache never changes an answer, only the time to get it."""
+
+    def __init__(self, pal, amplitude=None, levels=MIX_LEVELS,
+                 neighbours=MIX_NEIGHBOURS, qbits=MIX_QBITS):
+        self.pal = np.ascontiguousarray(pal, dtype=np.uint8)
+        self.amp = _dither_amp(amplitude)
+        self.levels = int(levels)
+        self.qbits = int(qbits)
+        # Distinct palette colours only: display_palette pads unused
+        # slots with a copy of entry 0, and mixing a colour with itself
+        # is a wasted candidate slot.
+        uniq, inv = np.unique(self.pal.reshape(-1, 3), axis=0, return_inverse=True)
+        self.uniq = uniq
+        self.neighbours = int(min(neighbours, uniq.shape[0]))
+        # distinct -> a palette index that carries that colour (lowest
+        # index wins, so plans stay stable against slot duplication)
+        dmap = np.zeros(uniq.shape[0], dtype=np.uint8)
+        for i in range(self.pal.shape[0] - 1, -1, -1):
+            dmap[inv[i]] = i
+        self.dmap = dmap
+        self._uniq_lin = to_linear(uniq)
+        self._uniq_emb = _rgbl_embed(uniq)
+        self._uniq_lum = (uniq.astype(np.float32) @ RGBL_W)
+        self._keys = np.zeros(0, dtype=np.int32)
+        self._lists = np.zeros((0, self.levels), dtype=np.uint8)
+        self._plan_rgb = np.zeros((0, 3), dtype=np.uint8)
+
+    # -- Algorithm 2 proper -------------------------------------------
+    def _solve(self, targets, chunk=4096):
+        """targets (U,3) float 0..255 -> (lists (U,L) uint8 index into
+        self.uniq, plan_rgb (U,3) uint8 the plan's achieved colour).
+
+        The article's loop: repeatedly pick the palette colour (and a
+        power-of-two repeat count) whose addition brings the running
+        MEAN closest to the target, until the list is full; then sort
+        the list by luminance."""
+        L = self.levels
+        U = targets.shape[0]
+        lists = np.zeros((U, L), dtype=np.uint8)
+        plan_rgb = np.zeros((U, 3), dtype=np.uint8)
+        for s in range(0, U, chunk):
+            tg = np.ascontiguousarray(targets[s:s + chunk], dtype=np.float32)
+            n = tg.shape[0]
+            te = _rgbl_embed(tg)
+            pe = self._uniq_emb
+            d = (np.sum(te * te, 1)[:, None] - 2.0 * (te @ pe.T)
+                 + np.sum(pe * pe, 1)[None, :])
+            k = self.neighbours
+            nb = (np.argpartition(d, k - 1, axis=1)[:, :k] if k < d.shape[1]
+                  else np.tile(np.arange(d.shape[1]), (n, 1)))
+            cand = self._uniq_lin[nb]                  # (n,k,3) linear light
+            so_far = np.zeros((n, 3), dtype=np.float32)
+            total = np.zeros(n, dtype=np.int32)
+            lst = np.zeros((n, L), dtype=np.uint8)
+            tgn = tg / 255.0
+            pos = np.arange(L)[None, :]
+            scale = np.float32(_GAMMA_SRGB_N - 1)
+            # ACTIVE SET. A target's plan is finished as soon as its list
+            # is full, and the greedy step often adds only one slot, so a
+            # naive loop would keep re-evaluating long-finished rows for
+            # up to L passes. Compacting to the still-unfinished rows each
+            # pass is the difference between ~8x and ~1x the necessary
+            # work on real footage; it changes no result.
+            act = np.arange(n)
+            while act.size:
+                a_tot = total[act]
+                a_so = so_far[act]
+                a_cand = cand[act]
+                a_tgn = tgn[act]
+                m = act.size
+                best_pen = np.full(m, np.inf, dtype=np.float32)
+                best_c = np.zeros(m, dtype=np.int32)
+                best_p = np.ones(m, dtype=np.int32)
+                maxp = np.maximum(1, a_tot)
+                p = 1
+                while p <= L:
+                    ok = p <= maxp
+                    if bool(ok.any()):
+                        t = (a_tot + p).astype(np.float32)[:, None, None]
+                        # linear mean of the candidate list if `p` copies
+                        # of each candidate were appended; the convex
+                        # combination is in [0,1] by construction, so the
+                        # sRGB LUT index needs no clip
+                        lin = (a_so[:, None, :] + a_cand * p) / t
+                        test = _GAMMA_SRGB[(lin * scale).astype(np.int32)] * np.float32(1.0 / 255.0)
+                        dd = a_tgn[:, None, :] - test
+                        pen = ((dd[..., 0] ** 2 * 0.299 + dd[..., 1] ** 2 * 0.587
+                                + dd[..., 2] ** 2 * 0.114) * 0.75 + (dd @ RGBL_W) ** 2)
+                        bi = np.argmin(pen, axis=1)
+                        bv = pen[np.arange(m), bi]
+                        take = ok & (bv < best_pen)
+                        best_pen = np.where(take, bv, best_pen)
+                        best_c = np.where(take, bi, best_c)
+                        best_p = np.where(take, p, best_p)
+                    p *= 2
+                cnt = np.minimum(best_p, L - a_tot)
+                gi = nb[act, best_c]                   # index into self.uniq
+                mask = (pos >= a_tot[:, None]) & (pos < (a_tot + cnt)[:, None])
+                lst[act] = np.where(mask, gi[:, None].astype(np.uint8), lst[act])
+                so_far[act] = a_so + self._uniq_lin[gi] * cnt[:, None]
+                total[act] = a_tot + cnt
+                act = act[total[act] < L]
+            # luminance sort: the article's candidate list is ordered so
+            # the threshold matrix walks it from dark to light
+            order = np.argsort(self._uniq_lum[lst], axis=1, kind="stable")
+            lists[s:s + n] = np.take_along_axis(lst, order, axis=1)
+            plan_rgb[s:s + n] = np.clip(
+                np.rint(from_linear(so_far / float(L))), 0, 255).astype(np.uint8)
+        return lists, plan_rgb
+
+    def _lookup(self, codes):
+        """Plan ids for packed quantized target codes, solving+caching
+        any that are new."""
+        uc = np.unique(codes)
+        if self._keys.size:
+            new = uc[~np.isin(uc, self._keys, assume_unique=True)]
+        else:
+            new = uc
+        if new.size:
+            if self._keys.size + new.size > MIX_CACHE_MAX:
+                self._keys = np.zeros(0, dtype=np.int32)
+                self._lists = np.zeros((0, self.levels), dtype=np.uint8)
+                self._plan_rgb = np.zeros((0, 3), dtype=np.uint8)
+                new = uc
+            ut = np.stack([(new >> 16) & 255, (new >> 8) & 255, new & 255],
+                          axis=1).astype(np.float32)
+            nl, nrgb = self._solve(ut)
+            allk = np.concatenate([self._keys, new])
+            o = np.argsort(allk)
+            self._keys = allk[o]
+            self._lists = np.concatenate([self._lists, nl])[o]
+            self._plan_rgb = np.concatenate([self._plan_rgb, nrgb])[o]
+        return np.searchsorted(self._keys, codes)
+
+    def plan(self, frame):
+        """(H,W,3) uint8 source -> (idx (H,W) uint8 palette indices,
+        target (H,W,3) uint8 the mixture target each pixel aimed at)."""
+        H, W, _ = frame.shape
+        f = frame.reshape(-1, 3)
+        if self.amp >= 1.0:
+            tgt = f.astype(np.float32)
+        elif self.amp <= 0.0:
+            tgt = self.pal[_nearest_rgbl(f, self.pal)].astype(np.float32)
+        else:
+            # amplitude: gamma_mix()'s formula, in unrounded float -
+            # pull the dither target from the pixel's nearest palette
+            # colour toward its true source colour
+            near_lin = to_linear(self.pal[_nearest_rgbl(f, self.pal)])
+            tgt = from_linear(near_lin + (to_linear(f) - near_lin) * self.amp)
+        step = 1 << (8 - self.qbits)
+        q = np.clip(np.rint(tgt / step) * step, 0, 255).astype(np.int32)
+        codes = (q[:, 0] << 16) | (q[:, 1] << 8) | q[:, 2]
+        pid = self._lookup(codes)
+        # the article's indexing formula, generalised to our matrix:
+        #   list[ matrix_value * list_size / matrix_max ]
+        t = (BLUENOISE32[np.arange(H)[:, None] % 32, np.arange(W)[None, :] % 32]
+             * self.levels // 1024).reshape(-1)
+        idx = self.dmap[self._lists[pid, t]]
+        return idx.reshape(H, W), self._plan_rgb[pid].reshape(H, W, 3)
+
+
+# Planner cache: encode_clip alternates between a held palette and a
+# fresh keyframe palette, and the auto-budget search replays the same
+# clip several times, so a handful of live planners covers everything.
+_MIX_PLANNERS = {}
+_MIX_PLANNER_MAX = 4
+
+
+def mixture_planner(pal, amplitude=None):
+    key = (hashlib.blake2b(np.ascontiguousarray(pal, dtype=np.uint8).tobytes(),
+                           digest_size=16).digest(), _dither_amp(amplitude))
+    p = _MIX_PLANNERS.get(key)
+    if p is None:
+        if len(_MIX_PLANNERS) >= _MIX_PLANNER_MAX:
+            _MIX_PLANNERS.pop(next(iter(_MIX_PLANNERS)))
+        p = MixturePlanner(pal, amplitude)
+        _MIX_PLANNERS[key] = p
+    return p
+
+
 def _lattice_codes(rgb_flat):
     v = rgb_flat.astype(np.int32)
     return (v[:, 0] << 16) | (v[:, 1] << 8) | v[:, 2]
 
 
-def display_palette(composite, colors=256, amplitude=None):
+def display_palette(composite, colors=256, amplitude=None, mode=None):
     """Palette of `colors` DISTINCT displayable lattice colours for an
     (rows,W,3) composite: Pillow median-cut (keeps rare-but-salient
     colours), snapped to the lattice and deduped, then freed slots
     refilled with the most-frequent unused lattice colours of the
     ordered-dithered composite (what the dithered pixels will actually
-    ask for - amplitude must match the encode's own dither amplitude).
-    Entries are decoder-expanded 8-bit values; if the scene holds fewer
-    distinct lattice colours than `colors`, the tail duplicates entry 0
-    (never selected by nearest-match)."""
+    ask for). Entries are decoder-expanded 8-bit values; if the scene
+    holds fewer distinct lattice colours than `colors`, the tail
+    duplicates entry 0 (never selected by nearest-match).
+
+    The refill SPREAD probe follows the encode's own dither in offset
+    mode; in mixture mode it is pinned to PALETTE_SPREAD_AMP (see that
+    constant - it keeps palettes identical to the pre-Yliluoma encoder
+    so the wave's numbers measure the dither alone)."""
+    spread = (amplitude if _dither_mode(mode) == DITHER_MODE_OFFSET
+              else PALETTE_SPREAD_AMP)
     snapped = snap_to_lattice(adaptive_palette(composite, colors=colors))
     codes = _lattice_codes(snapped)
     seen = set()
@@ -1810,7 +2322,7 @@ def display_palette(composite, colors=256, amplitude=None):
             seen.add(c)
             kept.append(c)
     if len(kept) < colors:
-        dpost = snap_to_lattice(ordered_dither(composite, amplitude)).reshape(-1, 3)
+        dpost = snap_to_lattice(ordered_dither(composite, spread)).reshape(-1, 3)
         uniq, counts = np.unique(_lattice_codes(dpost), return_counts=True)
         for c in uniq[np.argsort(-counts)].tolist():
             if len(kept) >= colors:
@@ -1829,16 +2341,19 @@ def display_palette(composite, colors=256, amplitude=None):
     return pal
 
 
-def display_ceiling(frame, amplitude=None):
+def display_ceiling(frame, amplitude=None, mode=None):
     """Per-frame quality ceiling in DISPLAY space: the PSNR of the
-    frame's own best display_palette applied to its ordered-dithered
-    self - the wire-true analogue of the old 24-bit ADAPTIVE po_ceil
-    (drift triggers compare achieved PSNR against this, so both sides
-    of that comparison must live in the same space, at the SAME dither
-    amplitude as the encode itself)."""
-    pal = display_palette(frame, amplitude=amplitude)
-    _, dec = quantize_to_palette(ordered_dither(frame, amplitude), pal)
-    return psnr(frame, dec)
+    frame's own best display_palette applied to its dithered self - the
+    wire-true analogue of the old 24-bit ADAPTIVE po_ceil (drift
+    triggers compare achieved PSNR against this, so both sides of that
+    comparison must live in the same space, at the SAME dither amplitude
+    AND MODE as the encode itself)."""
+    m = _dither_mode(mode)
+    pal = display_palette(frame, amplitude=amplitude, mode=m)
+    sub = (frame if m == DITHER_MODE_OFFSET
+           else frame[::CEILING_STRIDE, ::CEILING_STRIDE])
+    _, dec = dither_quantize(sub, pal, amplitude=amplitude, mode=m)
+    return psnr(sub, dec)
 
 
 # Quantizer index-hysteresis deadzone (SP15 encoder-optimization wave):
@@ -1852,7 +2367,7 @@ def display_ceiling(frame, amplitude=None):
 # The existing drift-triggered keyframe (encode_clip DRIFT_T) bounds any
 # slow freeze-drift accumulation - the research's drift-accumulator caveat.
 #
-# Default 150 (squared RGB distance): a pixel keeps its old index while the
+# 150 (squared RGB distance): a pixel keeps its old index while the
 # old colour stays within ~sqrt(150) of the best match, aligning the
 # deadzone with the churn audit's "visually stable = max-channel source
 # move <= 10" population (scratchpad/research-op-economy.md section 5). On
@@ -1865,8 +2380,23 @@ def display_ceiling(frame, amplitude=None):
 # where the budget is not the binding constraint.
 HYSTERESIS_EPS = 150.0
 
+# The same deadzone expressed in RGBL units, for the opt-in mixture path
+# (which compares in RGBL throughout). RGBL is ANISOTROPIC - it weights
+# a luma error ~1.75x and a pure-chroma one 0.75x - so no single scalar
+# reproduces the Euclidean deadzone in every direction. This takes the
+# SMALLEST ratio (a blue-only error, 0.0985/1) so the mixture path's
+# deadzone is never LARGER than the default path's in any direction;
+# scaling on the grey axis instead measured as a visible blue/red cast
+# (frozen chroma), which is exactly what an over-wide deadzone does.
+HYSTERESIS_EPS_RGBL = 150.0 * 0.0985 / (255.0 * 255.0)
 
-def _nearest(vecs, cb, chunk=131072, want_dist=False):
+
+def _nearest(vecs, cb, chunk=32768, want_dist=False):
+    """Nearest-colour solve, PLAIN squared-Euclidean RGB. This is the
+    shipped default path and it is deliberately NOT the RGBL metric -
+    see the RGBL block above for the measurement that kept it that
+    way; _nearest_rgbl() below carries the perceptual metric for the
+    opt-in mixture dither."""
     vecs = vecs.astype(np.float32)
     cb = cb.astype(np.float32)
     cbn = np.sum(cb * cb, axis=1)
@@ -1883,6 +2413,14 @@ def _nearest(vecs, cb, chunk=131072, want_dist=False):
     if want_dist:
         return out, dout
     return out
+
+
+def _nearest_rgbl(vecs, cb, chunk=32768):
+    """Nearest-colour solve under the RGBL metric: both sides are
+    embedded into the 4-D space whose squared Euclidean distance IS
+    color_compare(), so this is the same matmul + argmin at 4/3 the
+    width. Used by the mixture dither only."""
+    return _nearest(_rgbl_embed(vecs), _rgbl_embed(cb), chunk=chunk)
 
 
 # ---------------------------------------------------------------------
@@ -1969,6 +2507,98 @@ def quantize_to_palette(rgb, pal, prev_idx=None, hysteresis_eps=None):
     return idx.reshape(H, W), dec
 
 
+# Dither-plan memo: same contract and same store as the quantization
+# memo above (enabled only inside auto_stream_budget, exact on hit).
+# Keyed on (frame bytes, palette bytes, amplitude, mode) - everything
+# the plan is a function of.
+# Small ALWAYS-ON plan cache. encode_clip asks for the same (frame,
+# palette) plan two or three times per frame - the drift probe, the
+# hysteresis re-quantize, and the keyframe-chunk quantize - and a plan
+# is by far the most expensive thing in the encoder, so a couple of
+# live entries removes most of the repeat work. Exact (a hit returns
+# what the solve would have returned), bounded, and independent of the
+# auto-budget memo below, which covers the whole-clip replay.
+_PLAN_LRU = {}
+_PLAN_LRU_MAX = 3
+
+
+def _dither_plan_memo(frame, pal, amp, mode):
+    key = ("plan", hashlib.blake2b(frame.tobytes(), digest_size=16).digest(),
+           hashlib.blake2b(pal.tobytes(), digest_size=16).digest(), amp, mode)
+    if _QUANT_MEMO is not None:
+        hit = _QUANT_MEMO.get(key)
+        if hit is not None:
+            return key, hit
+    return key, _PLAN_LRU.get(key)
+
+
+def dither_plan(frame, pal, amplitude=None, mode=None):
+    """The dither decision for one (frame, palette): returns
+    (idx (H,W) uint8 palette indices, target (H,W,3) uint8), where
+    `target` is the colour the dither was AIMING at for that pixel -
+    the offset-displaced source in offset mode, the mixture plan's own
+    achieved colour in mixture mode. Callers that need hysteresis
+    compare against `target`, so both modes share one rule.
+
+    Positionally deterministic in both modes: a pure function of
+    (x mod 32, y mod 32, source colour, palette, amplitude, mode)."""
+    global _QUANT_MEMO_BYTES
+    amp = _dither_amp(amplitude)
+    m = _dither_mode(mode)
+    key, hit = _dither_plan_memo(frame, pal, amp, m)
+    if hit is not None:
+        return hit
+    if m == DITHER_MODE_OFFSET:
+        tgt = ordered_dither(frame, amp)
+        idx, _ = quantize_to_palette(tgt, pal)   # plain-RGB nearest
+    else:
+        idx, tgt = mixture_planner(pal, amp).plan(frame)
+    out = (idx.astype(np.uint8), tgt)
+    if _QUANT_MEMO is not None:
+        cost = out[0].nbytes + out[1].nbytes
+        if _QUANT_MEMO_BYTES + cost <= QUANT_MEMO_MAX_BYTES:
+            _QUANT_MEMO[key] = out
+            _QUANT_MEMO_BYTES += cost
+    if len(_PLAN_LRU) >= _PLAN_LRU_MAX:
+        _PLAN_LRU.pop(next(iter(_PLAN_LRU)))
+    _PLAN_LRU[key] = out
+    return out
+
+
+def dither_quantize(frame, pal, amplitude=None, mode=None, prev_idx=None,
+                    hysteresis_eps=None):
+    """Dither + quantize (H,W,3) uint8 source to a 256-entry palette:
+    the single entry point every encode path uses. Returns (idx (H,W)
+    uint8, decoded rgb (H,W,3) uint8).
+
+    prev_idx + hysteresis_eps: index hysteresis (see HYSTERESIS_EPS) -
+    a pixel keeps its previous index whenever that index's colour is
+    within eps of the dither TARGET, i.e. whenever holding still costs
+    almost nothing against what this frame was aiming at. Used only
+    against a HELD palette (delta frames).
+
+    In OFFSET mode this is exactly the pre-2026-07-28 call chain
+    (ordered_dither -> quantize_to_palette), byte for byte."""
+    m = _dither_mode(mode)
+    if m == DITHER_MODE_OFFSET:
+        return quantize_to_palette(ordered_dither(frame, amplitude), pal,
+                                    prev_idx=prev_idx,
+                                    hysteresis_eps=hysteresis_eps)
+    idx, tgt = dither_plan(frame, pal, amplitude, m)
+    if prev_idx is not None and hysteresis_eps is not None:
+        # the mixture path compares in RGBL throughout, so its deadzone
+        # is the RGBL-scaled one (see HYSTERESIS_EPS_RGBL)
+        eps = (HYSTERESIS_EPS_RGBL if hysteresis_eps == HYSTERESIS_EPS
+               else hysteresis_eps)
+        t = tgt.reshape(-1, 3).astype(np.float32)
+        palf = pal.astype(np.float32)
+        cur = idx.reshape(-1).astype(np.int64)
+        pv = prev_idx.reshape(-1).astype(np.int64)
+        keep = color_compare(t, palf[pv]) <= color_compare(t, palf[cur]) + eps
+        idx = np.where(keep, pv, cur).astype(np.uint8).reshape(idx.shape)
+    return idx, pal[idx].reshape(frame.shape)
+
+
 def psnr(a, b):
     d = a.astype(np.float64) - b.astype(np.float64)
     mse = np.mean(d * d)
@@ -2035,7 +2665,7 @@ def _is_cut_at(chg, i, cut_t):
 # ---------------------------------------------------------------------
 
 def scene_palette(orig_frames, start_idx, scene_end_idx, max_samples=6, colors=256,
-                  amplitude=None):
+                  amplitude=None, mode=None):
     n = scene_end_idx - start_idx
     if n <= 1:
         idxs = [start_idx]
@@ -2046,7 +2676,7 @@ def scene_palette(orig_frames, start_idx, scene_end_idx, max_samples=6, colors=2
     # palette-collapse fix: palettes live in DISPLAY lattice space (256
     # distinct displayable colours, decoder-expanded) - see the
     # display_palette block for the mechanism.
-    return display_palette(composite, colors=colors, amplitude=amplitude)
+    return display_palette(composite, colors=colors, amplitude=amplitude, mode=mode)
 
 
 # ---------------------------------------------------------------------
@@ -2310,18 +2940,21 @@ SILENCE_U8 = 128
 # entry point (T1 step 8).
 # ---------------------------------------------------------------------
 
-def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dither, mono):
+def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dither,
+                    mono, dither_mode=None):
     """Extracts (orig (N,H,W,3) uint8 RGB frames, po_ceil, chg,
     audio_bytes, channels, rate) from a source file, reusing videnc.py's
     own ffmpeg plumbing (probe/crop/extract) - the canonical location
     for that logic per the kit's own docstring. Imported lazily to
     avoid a module-load cycle (videnc.py imports nxv2enc at top level).
     dither: the dither amplitude (0.0-1.0, None/legacy-bool ->
-    DITHER_AMP_DEFAULT) - po_ceil must be measured at the encode's own
-    amplitude or the drift triggers compare across spaces."""
+    DITHER_AMP_DEFAULT); dither_mode: "mixture" or "offset" - po_ceil
+    must be measured at the encode's own amplitude AND mode or the
+    drift triggers compare across spaces."""
     import videnc as _videnc
 
     dither_amp = _dither_amp(dither)
+    dither_mode = _dither_mode(dither_mode)
 
     input_path = Path(src_path)
     if not input_path.exists():
@@ -2380,7 +3013,7 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     po_ceil = np.empty(nframes)
     chg = np.zeros(nframes)
     for i in range(nframes):
-        po_ceil[i] = display_ceiling(orig[i], amplitude=dither_amp)
+        po_ceil[i] = display_ceiling(orig[i], amplitude=dither_amp, mode=dither_mode)
         if i:
             d = np.abs(orig[i].astype(np.int16) - orig[i - 1].astype(np.int16)).max(axis=2)
             chg[i] = float((d > 10).mean())
@@ -2392,7 +3025,7 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
 def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 budget_scale=1.0, merge_gaps=True, hysteresis=True,
                 staleness_refresh=True, return_surfaces=False,
-                dither_amp=None):
+                dither_amp=None, dither_mode=None):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -2409,8 +3042,9 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     raw = H * W
     column_major = (width == 320)
     dither_amp = _dither_amp(dither_amp)   # caller's po_ceil must be
-    # measured at this same amplitude (encode() threads one value to
-    # both _extract_source and here)
+    dither_mode = _dither_mode(dither_mode)   # measured at this same
+    # amplitude AND mode (encode() threads one pair to both
+    # _extract_source and here)
     # budget_scale (--stream-budget) scales BOTH delta caps - the
     # streaming-supply operating-point lever (keyframe span chunks are
     # deliberately NOT scaled: they are rare, amortized by the ring,
@@ -2426,16 +3060,17 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
 
     scene_cuts = detect_scene_cuts(chg)
 
-    # Palette-collapse fix: all quantization TARGETS are the ordered-
-    # dithered frames (position-deterministic - quiet content dithers
-    # identically every frame, so this feeds no churn to the delta
-    # coder); PSNR/staleness are still measured against the true
-    # source. Dithered PER-FRAME inside the loop below (review minor,
+    # Palette-collapse fix: all quantization TARGETS are DITHERED
+    # (position-deterministic - quiet content dithers identically every
+    # frame, so this feeds no churn to the delta coder); PSNR/staleness
+    # are still measured against the true source. Dithered PER-FRAME
+    # inside the loop below, through dither_quantize (review minor,
     # 2026-07-27: a precomputed (N,H,W,3) stack doubled encode_clip's
-    # peak RAM against the already-resident `orig` stack; ordered_dither
-    # is a pure position-deterministic function of one frame, so
-    # streaming it costs nothing but a cheap re-derive on the rare
-    # frame that references it twice).
+    # peak RAM against the already-resident `orig` stack). SP17
+    # Yliluoma wave: the mixture plan depends on the PALETTE as well as
+    # the frame, so the drift probe (held palette), the emission
+    # (held palette) and the keyframe chunk (fresh palette) each ask
+    # dither_quantize for their own - _PLAN_LRU keeps the repeats free.
 
     payloads = []
     kf_span_ranges = []
@@ -2462,7 +3097,6 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                                # (finding 2) - marks its chunk-frames' mode
 
     for i in range(N):
-        frame_dith = ordered_dither(orig[i], dither_amp)   # streaming, see note above
         start_kf = False
         trigger = None
         drift_for_stats = None   # T1 step 5: recorded for plain delta frames
@@ -2477,7 +3111,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             # index stickiness with palette drift and thrash the keyframe
             # trigger (freeze-drift). Emission below re-quantizes with
             # hysteresis; the trigger stays clean.
-            _, target_dec = quantize_to_palette(frame_dith, held_pal)
+            _, target_dec = dither_quantize(orig[i], held_pal,
+                                            dither_amp, dither_mode)
             drift = po_ceil[i] - psnr(orig[i], target_dec)
             drift_for_stats = drift
             in_refract = (i - last_kf_end) <= refract
@@ -2522,7 +3157,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
 
         if start_kf:
             scene_end = next((c for c in scene_cuts if c > i), N)
-            kf_pal = scene_palette(orig, i, scene_end, amplitude=dither_amp)
+            kf_pal = scene_palette(orig, i, scene_end, amplitude=dither_amp,
+                                   mode=dither_mode)
             planned = plan_kf_chunks(raw, fps, width, height)
             # Cut lookahead (T1 step 4): if this span would take >1
             # chunk AND the very next frame independently looks like a
@@ -2531,8 +3167,9 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             # surface (research-realfootage-results.md HAZARD FOUND).
             if len(planned) > 1 and prev_flat is not None and _is_cut_at(chg, i + 1, CUT_T):
                 prev_idx = unflatten_frame(prev_flat, height, width, column_major)
-                target_idx, target_dec = quantize_to_palette(
-                    frame_dith, held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
+                target_idx, target_dec = dither_quantize(
+                    orig[i], held_pal, dither_amp, dither_mode,
+                    prev_idx=prev_idx, hysteresis_eps=hyst_eps)
                 tflat = flatten_frame(target_idx, column_major)
                 prev_dec_flat = held_pal[prev_flat].astype(np.float32)
                 targ_dec_flat = held_pal[tflat].astype(np.float32)
@@ -2588,7 +3225,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
 
         if kf_chunks:
             s, L, first = kf_chunks.pop(0)
-            tidx, _ = quantize_to_palette(frame_dith, kf_pal)
+            tidx, _ = dither_quantize(orig[i], kf_pal, dither_amp, dither_mode)
             tflat = flatten_frame(tidx, column_major)
             staging[s:s + L] = tflat[s:s + L]
             is_last = not kf_chunks
@@ -2628,8 +3265,9 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             per_frame["psnr"].append(psnr(orig[i], dec_img))
         else:
             prev_idx = unflatten_frame(prev_flat, height, width, column_major)
-            target_idx, target_dec = quantize_to_palette(
-                frame_dith, held_pal, prev_idx=prev_idx, hysteresis_eps=hyst_eps)
+            target_idx, target_dec = dither_quantize(
+                orig[i], held_pal, dither_amp, dither_mode,
+                prev_idx=prev_idx, hysteresis_eps=hyst_eps)
             tflat = flatten_frame(target_idx, column_major)
             prev_dec_flat = held_pal[prev_flat].astype(np.float32)
             targ_dec_flat = held_pal[tflat].astype(np.float32)
@@ -2794,7 +3432,7 @@ def _apply_segments(prev_flat, target_flat, gcls, gstarts, glens):
 
 
 def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
-                   dither_amp=None):
+                   dither_amp=None, dither_mode=None):
     """SP15 3c DIRECT-SERVE encode (the raw-equivalent all-literal
     preset): every frame is a single-frame keyframe span (KSTART
     [+ PAL] + COPY + KFLIP) and the header sets the direct-serve hint
@@ -2811,6 +3449,7 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
     N = ex["nframes"]
     column_major = (width == 320)
     dither_amp = _dither_amp(dither_amp)
+    dither_mode = _dither_mode(dither_mode)
     cuts = [c for c in detect_scene_cuts(ex["chg"]) if 0 < c < N]
     bounds = [0] + cuts + [N]
     payloads = []
@@ -2818,10 +3457,10 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
     for s_i, e_i in zip(bounds[:-1], bounds[1:]):
         if s_i == e_i:
             continue
-        pal = scene_palette(orig, s_i, e_i, amplitude=dither_amp)
+        pal = scene_palette(orig, s_i, e_i, amplitude=dither_amp, mode=dither_mode)
         for i in range(s_i, e_i):
             # palette-collapse fix: dithered target, source-true PSNR
-            idx, dec = quantize_to_palette(ordered_dither(orig[i], dither_amp), pal)
+            idx, dec = dither_quantize(orig[i], pal, dither_amp, dither_mode)
             flat = flatten_frame(idx, column_major)
             payloads.append(emit_direct_frame_payload(
                 flat, pal if i == s_i else None))
@@ -2985,7 +3624,7 @@ def stream_gate_stats(result, ex, width, height, fps):
 def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
                         merge_gaps=True, hysteresis=True,
                         staleness_refresh=True, dither_amp=None,
-                        target_util=None,
+                        dither_mode=None, target_util=None,
                         max_probes=AUTO_BUDGET_MAX_PROBES):
     """SP17 T1. Derives the --stream-budget for this clip instead of
     making the author guess one, and returns the winning encode with it
@@ -3059,7 +3698,7 @@ def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
                                budget_scale=budget, merge_gaps=merge_gaps,
                                hysteresis=hysteresis,
                                staleness_refresh=staleness_refresh,
-                               dither_amp=dither_amp)
+                               dither_amp=dither_amp, dither_mode=dither_mode)
             proj, stats = stream_gate_stats(res, ex, width, height, fps)
             if stats is None:
                 # Resident (or empty): no supply gate applies at all.
@@ -3210,18 +3849,23 @@ def auto_budget_line(search):
 
 def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
-           dither=None, mono=False, merge_gaps=True, hysteresis=True,
+           dither=None, dither_mode=None, mono=False, merge_gaps=True, hysteresis=True,
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=None,
            budget_target=None, direct=False):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
-    dither (--dither): blue-noise dither amplitude, a float 0.0-1.0 as
-    a fraction of one lattice quantization step (DITHER_STEP). 0.0 is
-    pure nearest-level snap, 1.0 the historical full-step depth;
-    None (and either legacy boolean value - the old --dither flag was
-    an accepted-for-compatibility no-op) means DITHER_AMP_DEFAULT
-    (0.5). One value threads through extraction (po_ceil), the delta
-    pipeline and the direct preset alike - the ceiling and the targets
+    dither (--dither): dither strength, a float 0.0-1.0. In the default
+    MIXTURE mode (Yliluoma positional mixture dithering) it is the
+    fraction of each pixel's quantization error the dither is asked to
+    correct - 0.0 is pure nearest-colour, 1.0 full mixture; in OFFSET
+    mode (--dither-mode offset, the pre-2026-07-28 escape hatch) it is
+    the blue-noise offset depth as a fraction of one lattice
+    quantization step. None (and either legacy boolean value - the old
+    --dither flag was an accepted-for-compatibility no-op) means
+    DITHER_AMP_DEFAULT (0.5). dither_mode (--dither-mode): "mixture" or
+    "offset". One (amplitude, mode) pair threads through extraction
+    (po_ceil), the delta pipeline and the direct preset alike - the
+    ceiling and the targets
     must live at the same amplitude.
 
     quality_profile: only "max" is implemented in T1 (the dual-budget
@@ -3257,14 +3901,16 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     width, height = resolve_shape(shape)
     fps_val = 25.0 if fps is None else float(fps)
     dither_amp = _dither_amp(dither)   # validate once, up front
+    dmode = _dither_mode(dither_mode)
 
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
-                          ffmpeg, dither_amp, mono)
+                          ffmpeg, dither_amp, mono, dither_mode=dmode)
     if direct:
         # SP15 3c: the all-literal direct-serve preset - no delta
         # pipeline, no rate control; see _encode_direct.
         return _encode_direct(ex, width, height, fps_val, out_path,
-                              report_path, dither_amp=dither_amp)
+                              report_path, dither_amp=dither_amp,
+                              dither_mode=dmode)
     # SP17 T1: no explicit budget means DERIVE one (see
     # auto_stream_budget). The search hands back the winning pass, so
     # the accepted budget is never re-encoded.
@@ -3274,7 +3920,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
             ex, width, height, fps_val, cap_bytes_frac=cap_bytes_frac,
             merge_gaps=merge_gaps, hysteresis=hysteresis,
             staleness_refresh=staleness_refresh, dither_amp=dither_amp,
-            target_util=budget_target)
+            dither_mode=dmode, target_util=budget_target)
         stream_budget = auto_search["budget"]
         if stream_budget is None:
             # Every probe was over the line - fall through to the gate's
@@ -3291,7 +3937,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                               budget_scale=stream_budget,
                               merge_gaps=merge_gaps, hysteresis=hysteresis,
                               staleness_refresh=staleness_refresh,
-                              dither_amp=dither_amp)
+                              dither_amp=dither_amp, dither_mode=dmode)
 
     payloads = result["payloads"]
     nframes_out = len(payloads)

@@ -42,10 +42,19 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
   --width W          Layer 2 width for --aspect (256 or 320)
   --fps N            frames per second (default: 25; floors below)
   --mono             mono audio 23325 Hz (default: stereo 15625 Hz)
-  --dither AMP       blue-noise dither amplitude, 0.0-1.0 as a
-                     fraction of one quantization step (default 0.5;
-                     0 = pure nearest-level snap, 1 = a full step -
-                     deepest gradients, most visible pattern noise)
+  --dither AMP       dither strength, 0.0-1.0 (default 0.5). In the
+                     default offset mode: the blue-noise offset depth
+                     as a fraction of one lattice quantization step
+                     (0 = pure nearest-colour snap, 1 = a full step -
+                     deepest gradients, most visible pattern noise).
+                     In --dither-mode mixture: the fraction of each
+                     pixel's quantization error the dither is asked to
+                     correct (0 = no dither, 1 = the local mean
+                     reproduces the source)
+  --dither-mode M    dithering algorithm: offset (default) or mixture.
+                     offset = one global blue-noise offset per pixel,
+                     then nearest-colour; mixture = Yliluoma positional
+                     mixture dithering (opt-in, see below)
   --byte-cap F       delta per-frame byte cap as a fraction of the raw
                      surface (default 0.65)
   --stream-budget F  scale the delta quality caps to fit the streaming
@@ -239,6 +248,43 @@ Quantization targets are blue-noise ordered-dithered into the 9-bit
 display lattice (position-deterministic 32x32 void-and-cluster tile -
 temporally stable, so it feeds no churn to the delta coder); `--dither`
 sets the amplitude, 0.0-1.0 of a quantization step, default 0.5.
+
+`--dither-mode mixture` switches the dither to YLILUOMA POSITIONAL
+MIXTURE DITHERING (Joel Yliluoma, "Arbitrary-palette positional
+dithering algorithm", https://bisqwit.iki.fi/story/howto/dither/jy/ -
+algorithm 2): per target colour the encoder builds a 32-slot candidate
+list of palette entries whose GAMMA-CORRECT mean (gamma 2.2 - light
+adds linearly, 8-bit values do not) reproduces that colour, sorts it by
+luminance and indexes it with the same blue-noise tile. Every decision
+inside it uses the article's luminance-weighted "RGBL" colour metric
+(CIEDE2000 was deliberately not used - the article reports it works
+better on some pictures than others and can scatter yellow pixels).
+In this mode `--dither` means the fraction of each pixel's
+quantization error to correct.
+
+It is OPT-IN, and the default encode is byte-for-byte what it was
+before the feature landed. Measured across the eleven leg fixtures,
+mixture dithering:
+
+- loses 0.4-3.6 dB of per-pixel wire PSNR on every fixture;
+- is SPLIT on local-mean fidelity - clearly better on Jellyfish and
+  Sintel and at high amplitude generally, worse on Big Buck Bunny;
+- carries a systematic per-channel mean bias the offset dither does
+  not (Big Buck Bunny blue -3.1 vs -0.9 at amplitude 0.5): the RGBL
+  metric discounts chroma against luma by design;
+- costs up to 26% more wire bytes on colourful moving content, and
+  pushed one fixture from 72% to 92% budget-bound;
+- weakens two keyframe triggers - because it measures its quality
+  ceiling on a fully dithered frame, po_ceil drops BELOW the achieved
+  PSNR on most frames, so the drift and staleness keyframes stop
+  firing.
+
+Worth trying per title on gradient-heavy material where banding is the
+complaint; measure before shipping it.
+
+Both modes are a pure function of (x mod 32, y mod 32, source colour,
+palette, amplitude): no frame index, no randomness, no error diffusion,
+no dependence on neighbouring pixels' results.
 
 Encoder emission constraint: palette entries whose RRRGGGBB byte
 equals $FE are reserved - the player keeps Layer 2 transparency

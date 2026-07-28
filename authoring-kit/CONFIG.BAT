@@ -31,7 +31,8 @@ REM needs 24.40 or more, mono 18.22 or more (see SETUP.md).
 SET VIDFPS=
 
 REM Extra videnc options applied to every encode (e.g. --mono, or
-REM --dither 0.3 to soften the blue-noise dither below its 0.5 default).
+REM --dither 0.3 to soften the blue-noise dither below its 0.5 default,
+REM or --dither-mode mixture for the opt-in Yliluoma mixture dither).
 REM Full list: lib\videnc-README.md, or run the encoder with --help.
 SET VIDOPTS=
 

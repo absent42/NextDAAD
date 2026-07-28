@@ -87,6 +87,14 @@ if (-not $sources) { exit 0 }
 # taking a whole-length min). Copies in the 74-89 B band and every
 # multi-chunk fill re-price, so the per-frame T budget admits a
 # different amount of work and encodes emit different bytes.
+# NO BUMP for the SP17 Yliluoma wave (2026-07-28), deliberately: that
+# wave ADDED an opt-in dither (videnc --dither-mode mixture, plus the
+# gamma-correct mixing and luminance-weighted colour metric it needs)
+# and changed NOTHING on the default path. Verified, not assumed: the
+# leg fixtures re-encode SHA256-identical to the pre-wave encoder for
+# the same arguments. --dither-mode is part of the hashed argument list
+# below, so a title that opts in re-encodes on that alone. Bumping here
+# would have forced every cached title to re-encode for no byte change.
 $encoderGeneration = 'pal9g'
 
 function Get-ArgHash([string[]]$argList) {

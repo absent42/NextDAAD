@@ -223,12 +223,31 @@ def main(argv):
                      help="mono audio (23325 Hz) instead of the "
                           "default stereo (15625 Hz)")
     ap.add_argument("--dither", type=float, default=None, metavar="AMP",
-                     help="blue-noise dither amplitude, 0.0-1.0 as a "
-                          "fraction of one quantization step (default: "
-                          "0.5). 0 = pure nearest-level snap (no "
-                          "dither), 1 = a full step (the pre-2026-07-28 "
-                          "depth - strongest gradient recovery, most "
-                          "visible pattern noise on smooth content)")
+                     help="dither strength, 0.0-1.0 (default: 0.5). In "
+                          "the default offset mode it is the blue-noise "
+                          "offset depth as a fraction of one lattice "
+                          "quantization step (0 = pure nearest-colour "
+                          "snap, 1 = a full step). In --dither-mode "
+                          "mixture it is the fraction of each pixel's "
+                          "quantization error the dither is asked to "
+                          "correct (0 = no dither, 1 = the local mean "
+                          "reproduces the source)")
+    ap.add_argument("--dither-mode", dest="dither_mode",
+                     choices=list(nxv2enc.DITHER_MODES),
+                     default=nxv2enc.DITHER_MODE_DEFAULT,
+                     help="dithering algorithm (default: offset). "
+                          "'offset' = one global blue-noise offset per "
+                          "pixel, then nearest-colour. 'mixture' = "
+                          "Yliluoma positional mixture dithering "
+                          "(32-slot luminance-sorted candidate list "
+                          "indexed by the same blue-noise tile) - "
+                          "OPT-IN: it recovers gradients better on some "
+                          "content but loses per-pixel PSNR, carries a "
+                          "per-channel mean bias, weakens the drift and "
+                          "staleness keyframe triggers and can cost up "
+                          "to 26 percent more wire bytes. The default "
+                          "encode is byte-identical to what it was "
+                          "before this option existed")
     ap.add_argument("--no-merge", dest="no_merge", action="store_true",
                      help="disable the encoder-only gap-merge optimization "
                           "(SP15). Production encodes keep it ON; this is for "
@@ -334,7 +353,8 @@ def main(argv):
         str(input_path), args.output, shape=(width, height), fps=args.fps,
         quality_profile="max", report_path=args.report,
         start=args.start, duration=args.duration, ffmpeg=str(ffmpeg),
-        dither=args.dither, mono=args.mono, merge_gaps=not args.no_merge,
+        dither=args.dither, dither_mode=args.dither_mode,
+        mono=args.mono, merge_gaps=not args.no_merge,
         cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget,
         budget_target=args.budget_target, direct=args.direct)
 

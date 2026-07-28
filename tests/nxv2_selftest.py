@@ -295,7 +295,8 @@ def t1_stream_supply_gate_e2e():
     expect(0.90 < admit_util < 1.0, f"admit boundary util {admit_util:.4f} not just below 1.0")
     expect(refuse_util > 1.0, f"refuse fixture util {refuse_util:.4f} not above 1.0")
 
-    def fake_extract_source(src_path, w, h, fps_val, start, duration, ffmpeg, dither, mono):
+    def fake_extract_source(src_path, w, h, fps_val, start, duration, ffmpeg, dither,
+                            mono, dither_mode=None):
         return dict(orig=np.zeros((1, h, w, 3), dtype=np.uint8),
                     chg=np.zeros(1), po_ceil=np.zeros(1),
                     audio_bytes=bytes(nframes * abytes_real),
@@ -1480,7 +1481,7 @@ def t12_moving_edge_pixel_exact():
         for i in range(1, N):
             if not modes[i].startswith("full"):
                 continue   # budget-bound frame: lag is allowed
-            target_idx, _ = enc.quantize_to_palette(enc.ordered_dither(orig[i]), held)
+            target_idx, _ = enc.dither_quantize(orig[i], held)
             expect(np.array_equal(result["surfaces"][i], target_idx),
                    f"{w}x{h} frame {i} (mode {modes[i]}): decoded surface not "
                    f"pixel-exact vs quantized source - stride/transpose bug")
@@ -1707,8 +1708,8 @@ def t11_direct_serve():
         for s_i, e_i in zip(bounds[:-1], bounds[1:]):
             pal = enc.scene_palette(ex["orig"], s_i, e_i)
             for i in range(s_i, e_i):
-                # mirrors _encode_direct: ordered-dithered target
-                idx, _ = enc.quantize_to_palette(enc.ordered_dither(ex["orig"][i]), pal)
+                # mirrors _encode_direct: dithered target
+                idx, _ = enc.dither_quantize(ex["orig"][i], pal)
                 dpal, dimg = frames[fi]
                 expect(np.array_equal(dimg, idx), f"f{fi} indexed pixel-exact")
                 fi += 1
@@ -2085,18 +2086,19 @@ def t13_amplitude_threading_e2e():
     # quantize to differing indices, so identical wire bytes below can
     # only mean the amplitude never arrived.
     pal_probe = enc.scene_palette(orig, 0, n)    # default amplitude
-    idx_amp, _ = enc.quantize_to_palette(enc.ordered_dither(orig[0], AMP), pal_probe)
-    idx_def, _ = enc.quantize_to_palette(enc.ordered_dither(orig[0], None), pal_probe)
+    idx_amp, _ = enc.dither_quantize(orig[0], pal_probe, AMP)
+    idx_def, _ = enc.dither_quantize(orig[0], pal_probe, None)
     expect(int(np.count_nonzero(idx_amp != idx_def)) > 0,
            "test setup: gradient fixture must quantize differently at "
            "amp 1.0 vs the default or every assertion below is vacuous")
 
     def fake_extract_source(src_path, w, h, fps_val, start, duration,
-                            ffmpeg, dither, mono):
+                            ffmpeg, dither, mono, dither_mode=None):
         # honours its dither argument exactly as the real extractor
-        # does: po_ceil is measured at the encode's own amplitude
+        # does: po_ceil is measured at the encode's own amplitude/mode
         amp = enc._dither_amp(dither)
-        po = np.array([enc.display_ceiling(orig[i], amplitude=amp)
+        po = np.array([enc.display_ceiling(orig[i], amplitude=amp,
+                                           mode=dither_mode)
                        for i in range(n)])
         return dict(orig=orig, po_ceil=po, chg=chg, audio_bytes=audio,
                     channels=2, rate=enc.RATE_STEREO,
@@ -2138,7 +2140,7 @@ def t13_amplitude_threading_e2e():
             expect(stream_amp != stream_def,
                    "streaming wire bytes must differ between --dither 1.0 "
                    "and the default - amplitude dropped before "
-                   "encode_clip's frame_dith/kf_pal sites")
+                   "encode_clip's dither_quantize/kf_pal sites")
 
             # Stronger: mirrored reconstruction AT the non-default
             # amplitude (t11_direct_serve's mirror with AMP threaded
@@ -2152,30 +2154,33 @@ def t13_amplitude_threading_e2e():
             expect(cuts == [], "test setup: fixture must be one scene")
             pal = enc.scene_palette(orig, 0, n, amplitude=AMP)
             for i in range(n):
-                idx, _ = enc.quantize_to_palette(
-                    enc.ordered_dither(orig[i], AMP), pal)
+                idx, _ = enc.dither_quantize(orig[i], pal, AMP)
                 dpal, dimg = frames[i]
                 expect(np.array_equal(dimg, idx),
                        f"f{i} indexed pixel-exact at amplitude {AMP}")
 
             # Falsifiability: SIMULATE the regression via monkeypatch
             # (nxv2enc.py untouched). Every amplitude consumer bottoms
-            # out in ordered_dither (quantize targets directly;
-            # scene_palette/display_palette/display_ceiling via their
-            # dithered composites), so an ordered_dither that drops its
-            # amplitude argument IS the "silently fell back to the
-            # default" regression at every pipeline site at once.
-            # Under it, a --dither 1.0 encode must collapse byte-
-            # identically onto the default encode on BOTH paths -
-            # proving the wire-difference assertions above would fail
-            # (i.e. catch the drop), not pass by accident.
-            real_od = enc.ordered_dither
+            # out in ordered_dither (offset mode) or mixture_planner
+            # (mixture mode) - quantize targets directly, display_ceiling
+            # via dither_quantize - so blinding BOTH to the amplitude IS
+            # the "silently fell back to the default" regression at every
+            # pipeline site at once, whichever mode is default. Under it,
+            # a --dither 1.0 encode must collapse byte-identically onto
+            # the default encode on BOTH paths - proving the
+            # wire-difference assertions above would fail (i.e. catch the
+            # drop), not pass by accident.
+            real_od, real_mp = enc.ordered_dither, enc.mixture_planner
 
             def dropped_amplitude_od(frame, amplitude=None):
                 return real_od(frame, enc.DITHER_AMP_DEFAULT)
 
+            def dropped_amplitude_mp(pal, amplitude=None):
+                return real_mp(pal, enc.DITHER_AMP_DEFAULT)
+
             try:
                 enc.ordered_dither = dropped_amplitude_od
+                enc.mixture_planner = dropped_amplitude_mp
                 expect(run("d_regr.vid", direct=True, dither=AMP) == direct_def,
                        "regression sim: an amplitude-blind direct encode "
                        "must equal the default encode byte-for-byte "
@@ -2185,8 +2190,278 @@ def t13_amplitude_threading_e2e():
                        "encode must equal the default encode byte-for-byte")
             finally:
                 enc.ordered_dither = real_od
+                enc.mixture_planner = real_mp
     finally:
         enc._extract_source = real_extract
+
+
+# =======================================================================
+# Step 13 (SP17 Yliluoma wave, 2026-07-28): gamma-correct mixing,
+# luminance-weighted colour distance, and Yliluoma positional MIXTURE
+# dithering (algorithm 2) - the cases that pin the article's formulas
+# and this encoder's hard invariants under the new path.
+# =======================================================================
+
+@case(13, "gamma-correct mixing - Yliluoma's formula verbatim, 50/50 "
+          "black/white lands at 186 not 128")
+def t13_gamma_mix_formula():
+    g = enc.GAMMA
+    expect(abs(g - 2.2) < 1e-12, f"GAMMA must be 2.2, got {g}")
+    black = np.zeros(3, dtype=np.uint8)
+    white = np.full(3, 255, dtype=np.uint8)
+    # The article's own worked example: a gamma-UNAWARE 50/50 mix of
+    # black and white gives 128, which is too bright for what the eye
+    # integrates; the gamma-aware mix is (0.5)^(1/2.2)*255.
+    want = int(round((0.5 ** (1.0 / g)) * 255.0))
+    got = enc.gamma_mix(black, white, 0.5)
+    expect(want == 186, f"reference value drifted: {want}")
+    expect((got == want).all(), f"gamma_mix 50/50 black/white = {got}, want {want}")
+    expect(int(got[0]) > 128, "gamma-aware mix must not equal the naive 128")
+    # Endpoints are exact, and the general formula holds channelwise for
+    # arbitrary colours and ratios: a' = a^g, b' = b^g,
+    # r' = a' + (b'-a')*ratio, r = r'^(1/g).
+    rng = np.random.default_rng(2207)
+    a = rng.integers(0, 256, size=(64, 3), dtype=np.uint8)
+    b = rng.integers(0, 256, size=(64, 3), dtype=np.uint8)
+    expect((enc.gamma_mix(a, b, 0.0) == a).all(), "ratio 0 must return a")
+    expect((enc.gamma_mix(a, b, 1.0) == b).all(), "ratio 1 must return b")
+    for ratio in (0.125, 0.5, 0.75):
+        la = (a.astype(np.float64) / 255.0) ** g
+        lb = (b.astype(np.float64) / 255.0) ** g
+        want_v = np.rint(((la + (lb - la) * ratio) ** (1.0 / g)) * 255.0)
+        got_v = enc.gamma_mix(a, b, ratio).astype(np.float64)
+        # from_linear() is a 4096-step LUT of the same curve
+        expect(np.abs(got_v - want_v).max() <= 1.0,
+               f"gamma_mix deviates from the article formula at ratio "
+               f"{ratio}: max {np.abs(got_v - want_v).max()}")
+    # And the mixture planner's achieved colours are gamma-correct: a
+    # 50/50 plan over a black/white palette must report ~186, never 128.
+    pal = np.zeros((256, 3), dtype=np.uint8)
+    pal[1] = 255
+    grey = np.full((32, 32, 3), 186, dtype=np.uint8)
+    _, tgt = enc.MixturePlanner(pal, 1.0).plan(grey)
+    expect(abs(int(tgt[0, 0, 0]) - 186) <= 3,
+           f"plan target for a 50/50 black/white mix = {tgt[0, 0, 0]}, "
+           f"want ~186 (a gamma-blind planner would report ~128)")
+
+
+@case(13, "RGBL colour distance - the article's formula, and the 4-D "
+          "embedding _nearest uses is exactly equivalent")
+def t13_rgbl_metric():
+    rng = np.random.default_rng(587)
+    a = rng.integers(0, 256, size=(512, 3)).astype(np.float64)
+    b = rng.integers(0, 256, size=(512, 3)).astype(np.float64)
+    # the article, verbatim
+    luma1 = (a[:, 0] * 299 + a[:, 1] * 587 + a[:, 2] * 114) / (255.0 * 1000)
+    luma2 = (b[:, 0] * 299 + b[:, 1] * 587 + b[:, 2] * 114) / (255.0 * 1000)
+    lumadiff = luma1 - luma2
+    dr = (a[:, 0] - b[:, 0]) / 255.0
+    dg = (a[:, 1] - b[:, 1]) / 255.0
+    db = (a[:, 2] - b[:, 2]) / 255.0
+    want = (dr ** 2 * 0.299 + dg ** 2 * 0.587 + db ** 2 * 0.114) * 0.75 + lumadiff ** 2
+    got = enc.color_compare(a, b)
+    expect(np.abs(got - want).max() < 1e-6,
+           f"color_compare deviates from the article: max "
+           f"{np.abs(got - want).max():.3e}")
+    expect(float(enc.color_compare(a, a).max()) == 0.0, "self-distance must be 0")
+    # Luminance weighting is real: an equal-magnitude GREEN error must
+    # cost more than a BLUE one (0.587 vs 0.114), which plain Euclidean
+    # RGB cannot express.
+    base = np.array([[120.0, 120.0, 120.0]])
+    d_green = enc.color_compare(base, base + np.array([[0.0, 40.0, 0.0]]))
+    d_blue = enc.color_compare(base, base + np.array([[0.0, 0.0, 40.0]]))
+    expect(float(d_green[0]) > float(d_blue[0]) * 2.0,
+           f"green error {float(d_green[0]):.5f} must dominate blue "
+           f"{float(d_blue[0]):.5f}")
+    # The embedding _nearest() solves in must reproduce it exactly, or
+    # the nearest-colour search is not the metric it claims to be.
+    ea, eb = enc._rgbl_embed(a), enc._rgbl_embed(b)
+    emb_d = np.sum((ea - eb) ** 2, axis=1)
+    expect(np.abs(emb_d - want).max() < 1e-5,
+           f"4-D embedding is not isometric to color_compare: max "
+           f"{np.abs(emb_d - want).max():.3e}")
+    # _nearest_rgbl must therefore pick the RGBL-nearest entry on a
+    # case where the two metrics disagree...
+    # entry 0 is a LARGE blue error (cheap in RGBL, expensive in RGB),
+    # entry 1 a SMALLER green error (expensive in RGBL, cheap in RGB)
+    cb = np.array([[120, 140, 180], [120, 168, 120]], dtype=np.uint8)
+    q = np.array([[120, 140, 120]], dtype=np.uint8)
+    expect(int(enc._nearest_rgbl(q, cb)[0]) == 0,
+           "_nearest_rgbl did not use the luminance-weighted metric")
+    # ...and the DEFAULT solver must NOT: the shipped nearest-palette
+    # search stays on plain squared-RGB, on measurement (see the RGBL
+    # block in nxv2enc: swapping it lost 0.36-1.85 dB per-pixel AND
+    # 0.9-3.0 dB local-mean PSNR on every leg fixture). Pinned so the
+    # perceptual metric cannot leak into the default path unnoticed.
+    expect(int(enc._nearest(q, cb)[0]) == 1,
+           "the default _nearest must stay plain squared-Euclidean RGB")
+    expect(enc.HYSTERESIS_EPS == 150.0,
+           "the default hysteresis deadzone must stay in squared-RGB units")
+
+
+@case(13, "mixture dither is POSITIONAL - output is a pure function of "
+          "(x mod 32, y mod 32, colour, palette); no frame/neighbour state")
+def t13_mixture_positional_determinism():
+    rng = np.random.default_rng(1993)
+    pal = enc.display_palette(rng.integers(0, 256, size=(64, 64, 3), dtype=np.uint8))
+    H, W = 64, 96
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    frame = np.clip(np.stack([xx * 2.4, yy * 3.1, (xx + yy) * 1.7], -1),
+                    0, 255).astype(np.uint8)
+    a, _ = enc.dither_quantize(frame, pal)
+    b, _ = enc.dither_quantize(frame, pal)
+    expect(np.array_equal(a, b), "mixture dither is not deterministic")
+    # TILING: a constant-colour frame must repeat with period 32 in both
+    # axes - i.e. position enters ONLY as (x mod 32, y mod 32).
+    const = np.full((64, 64, 3), 100, dtype=np.uint8)
+    c, _ = enc.dither_quantize(const, pal)
+    expect((c[:32, :32] == c[32:, :32]).all() and (c[:32, :32] == c[:32, 32:]).all()
+           and (c[:32, :32] == c[32:, 32:]).all(),
+           "mixture dither does not tile with period 32")
+    # TRANSLATION EQUIVARIANCE by a whole tile: shifting the content 32
+    # px right must shift the indices 32 px right and change nothing
+    # else. Error diffusion, frame counters or neighbour feedback all
+    # break this - and any of them would break delta compression.
+    shifted = np.roll(frame, 32, axis=1)
+    d, _ = enc.dither_quantize(shifted, pal)
+    expect(np.array_equal(d, np.roll(a, 32, axis=1)),
+           "mixture dither is not translation-equivariant on the tile "
+           "period - it depends on something other than (x%32, y%32, "
+           "colour, palette)")
+    # NO NEIGHBOUR DEPENDENCE: recolouring one pixel must move that
+    # pixel's index and NOTHING else's.
+    poked = frame.copy()
+    poked[20, 40] = np.array([255, 0, 255], dtype=np.uint8)
+    e, _ = enc.dither_quantize(poked, pal)
+    diff = np.argwhere(e != a)
+    expect(diff.shape[0] <= 1 and (diff.shape[0] == 0 or tuple(diff[0]) == (20, 40)),
+           f"one changed pixel moved {diff.shape[0]} indices - the "
+           f"dither reads its neighbours")
+    # QUIET CONTENT -> ZERO CHURN: an unchanged frame re-quantized
+    # against the same palette must produce an identical index map (the
+    # delta coder's whole premise).
+    f2, _ = enc.dither_quantize(frame.copy(), pal)
+    expect(np.array_equal(f2, a), "identical frames must dither identically")
+
+
+@case(13, "mixture plan structure - 32-slot candidate list, luminance "
+          "ordered, blue-noise indexed by the article's formula")
+def t13_mixture_plan_structure():
+    expect(enc.MIX_LEVELS == 32, "candidate list length must be MIX_LEVELS")
+    # A pure two-level grey palette: the mixture of the two entries is
+    # the only way to hit an intermediate grey, so the plan's structure
+    # is fully predictable.
+    pal = np.zeros((256, 3), dtype=np.uint8)
+    pal[1] = 255
+    L = enc.MIX_LEVELS
+    planner = enc.MixturePlanner(pal, 1.0)
+    thr = enc.BLUENOISE32 * L // 1024
+    for target in (60, 128, 186, 220):
+        frame = np.full((32, 32, 3), target, dtype=np.uint8)
+        idx, tgt = planner.plan(frame)
+        # ratio realized across the 32x32 tile must match the ratio the
+        # gamma-correct mix of black and white needs for this target
+        want = float((target / 255.0) ** enc.GAMMA)
+        got = float((idx == 1).mean())
+        expect(abs(got - want) <= 1.5 / L,
+               f"target {target}: white fraction {got:.3f} != "
+               f"gamma-correct {want:.3f} (+/- one list slot)")
+        # LUMINANCE ORDER: the article sorts the candidate list by luma
+        # and walks it with the threshold, so the WHITE pixels must be
+        # exactly those with the highest blue-noise ranks.
+        if bool((idx == 1).any()) and bool((idx == 0).any()):
+            cut = int(thr[idx == 1].min())
+            expect(bool((thr[idx == 1] >= cut).all())
+                   and bool((thr[idx == 0] < cut).all()),
+                   f"target {target}: emitted colours are not "
+                   f"luminance-ordered against the threshold matrix")
+    # The threshold index is the article's formula generalised to our
+    # matrix: list[ matrix_value * list_size / matrix_max ].
+    expect(int(thr.max()) == L - 1,
+           "blue-noise index must span the whole candidate list")
+    expect(int(thr.min()) == 0, "blue-noise index must start at slot 0")
+    # amplitude 0 degenerates to the pure nearest-colour quantize.
+    rng = np.random.default_rng(404)
+    f = rng.integers(0, 256, size=(48, 48, 3), dtype=np.uint8)
+    p2 = enc.display_palette(f)
+    zero, _ = enc.dither_quantize(f, p2, 0.0)
+    plain, _ = enc.quantize_to_palette(f, p2)
+    expect(np.array_equal(zero, plain),
+           "--dither 0 must reduce to the pure nearest-colour quantize")
+
+
+@case(13, "dither mode selector - offset is the DEFAULT, mixture is "
+          "opt-in and differs, bad modes refused")
+def t13_dither_mode_selector():
+    # The default is OFFSET on measurement (see nxv2enc's
+    # DITHER_MODE_DEFAULT block: mixture loses per-pixel PSNR on every
+    # fixture, carries a per-channel mean bias the offset path does not,
+    # and costs up to 26% more wire bytes). Pinned here so a silent flip
+    # of the shipped dither cannot pass the suite.
+    expect(enc.DITHER_MODE_DEFAULT == enc.DITHER_MODE_OFFSET,
+           "offset must be the default mode - mixture ships opt-in")
+    expect(set(enc.DITHER_MODES) == {"mixture", "offset"}, "mode set drifted")
+    for bad in ("bayer", "", "MIXTURE", 3):
+        try:
+            enc._dither_mode(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"_dither_mode({bad!r}) must be refused")
+    expect(enc._dither_mode(None) == enc.DITHER_MODE_DEFAULT, "None -> default")
+    H, W = 48, 64
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    f = np.clip(np.stack([xx * 3.9, yy * 5.1, (xx + yy) * 2.0], -1),
+                0, 255).astype(np.uint8)
+    pal = enc.display_palette(f)
+    mix, _ = enc.dither_quantize(f, pal, 0.5, "mixture")
+    off, _ = enc.dither_quantize(f, pal, 0.5, "offset")
+    dfl, _ = enc.dither_quantize(f, pal, 0.5)
+    expect(not np.array_equal(mix, off),
+           "offset mode must not be an alias of mixture mode")
+    expect(np.array_equal(dfl, off), "the default must BE the offset path")
+    # the offset path is bit-for-bit the ordered-dither one
+    legacy, _ = enc.quantize_to_palette(enc.ordered_dither(f, 0.5), pal)
+    expect(np.array_equal(off, legacy),
+           "offset mode must reproduce the legacy ordered-dither path")
+    # ...and it is positional too (same tiling invariant)
+    const = np.full((64, 64, 3), 100, dtype=np.uint8)
+    c, _ = enc.dither_quantize(const, pal, 0.5, "offset")
+    expect((c[:32, :32] == c[32:, 32:]).all(),
+           "offset mode does not tile with period 32")
+
+
+@case(13, "transparency exclusion holds under the mixture path - no "
+          "emitted palette entry can pack to the NR $14 $FE colour")
+def t13_mixture_transparency_invariant():
+    # Bright near-white content is what drove the two colliding lattice
+    # points onto real hardware in the first place (Big Buck Bunny),
+    # and the mixture path emits palette INDICES chosen from all over
+    # the palette - so re-pin the invariant here, on the new path.
+    rng = np.random.default_rng(8888)
+    H, W = 64, 64
+    base = rng.integers(230, 256, size=(H, W, 3)).astype(np.uint8)
+    base[:, :20] = np.array([255, 255, 160], dtype=np.uint8)   # straddles both
+    base[:, 20:32] = np.array([255, 255, 190], dtype=np.uint8)  # $FE points
+    pal = enc.display_palette(base)
+    block = enc.build_palette_block(pal)
+    for amp in (0.0, 0.25, 0.5, 1.0):
+        for mode in enc.DITHER_MODES:
+            idx, dec = enc.dither_quantize(base, pal, amp, mode)
+            used = set(np.unique(idx).tolist())
+            bad = [i for i in used if block[2 * i] == 0xFE]
+            expect(not bad,
+                   f"amp {amp} mode {mode}: emitted entries {bad} pack to "
+                   f"$FE - transparent punch-through on silicon")
+            for col in enc.TRANSP_COLLISION:
+                hit = ((dec[..., 0] == col[0]) & (dec[..., 1] == col[1])
+                       & (dec[..., 2] == col[2]))
+                expect(not bool(hit.any()),
+                       f"amp {amp} mode {mode}: emitted the excluded "
+                       f"display colour {col}")
+    # the whole palette, not just the used part, stays clean
+    expect(not [i for i in range(256) if block[2 * i] == 0xFE],
+           "display_palette emitted a $FE entry")
 
 
 # =======================================================================

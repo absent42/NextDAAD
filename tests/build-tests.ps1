@@ -692,6 +692,12 @@ if ($Font) {
 # modelled cost of copies in the 74-89 B band and of every multi-chunk
 # fill changes and streamed encodes re-derive their op budget. See
 # $encoderGeneration 'pal9g' in authoring-kit/lib/video.ps1.
+# NO BUMP for the SP17 Yliluoma wave (2026-07-28), deliberately: it
+# ADDED an opt-in dither (videnc --dither-mode mixture) and left the
+# default path untouched - all six fixtures re-encode SHA256-identical
+# to the pre-wave encoder for the same arguments, verified, so a bump
+# would have forced a full re-encode for no byte change. See the same
+# note on $encoderGeneration in authoring-kit/lib/video.ps1.
 $vidLegSettlementTag = 'pal9f'
 
 if ($Vid) {
