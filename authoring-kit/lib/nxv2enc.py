@@ -266,10 +266,24 @@ TMODEL_COEFFS = {
                                 #   solve sitting 2 - both chunk differences give
                                 #   849.4 exactly; persistent-descriptor re-arm].
                                 #   sitting 1: 1273. hand count 683. model was 355
-    "fill_dma_min": 256,        # DMA fill chunk size (bytes); also the audio-safety
+    "fill_dma_min": 256,        # DMA fill CHUNK size (bytes); also the audio-safety
                                 #   cap (512B bursts starve the sample ISR - 35%
-                                #   tick shortfall, both sittings). DMA beats CPU
-                                #   fill at L >= 849/(17.0-5.1) = ~71 B
+                                #   tick shortfall, both sittings). Historic name -
+                                #   it is a chunk size, not a threshold; the
+                                #   threshold is run_dma_min below
+    "run_dma_min": 71,          # the PLAYER's fill kernel-select threshold
+                                #   (NXV2_RUN_DMA_MIN, src/nextdaad.inc): a fill
+                                #   chunk shorter than this goes unrolled-CPU.
+                                #   DERIVED break-even (2026-07-28):
+                                #   849.4/(17.17-5.11) = 70.43 B -> 71. See the
+                                #   .inc comment for the full derivation
+    "copy_dma_min": 74,         # the PLAYER's copy kernel-select threshold
+                                #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc): a
+                                #   chunk shorter than this goes LDI. DERIVED
+                                #   break-even (2026-07-28):
+                                #   1091.8/(20.25-5.31) = 73.08 B -> 74. Was 90
+                                #   (undocumented, 16 B late - a 74..89 B chunk
+                                #   paid up to +237.8 T of LDI it did not have to)
     "copy_dma_per_b": 5.31,     # T/byte mem-to-mem DMA COPY body [SILICON
                                 #   KF-vs-CD3 cross-row solve sitting 2, UNARMED
                                 #   (6.21 armed) - the armed tax is carried
@@ -283,13 +297,6 @@ TMODEL_COEFFS = {
     "copy_dma_chunk": 256,      # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
                                 #   the audio-safety burst cap the player clips
                                 #   every copy chunk to (vid_chunk_all)
-    "copy_dma_min": 90,         # the PLAYER's copy kernel-select threshold
-                                #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc): a
-                                #   chunk shorter than this goes LDI even though
-                                #   DMA already breaks even at
-                                #   1091.8/(20.25-5.31) = ~73 B. The model
-                                #   predicts what the player DOES, not the
-                                #   optimum - see _copy_t
     "header_rate": 0.0,         # count/colour byte parse - FOLDED into the
                                 #   dispatch envelopes above on silicon (see the
                                 #   envelope-convention note). model was 26.0
@@ -1001,14 +1008,38 @@ def _cost_skip_chunk(L):
 
 
 def _fill_t(L):
-    """Modeled fill T for L bytes: min of unrolled CPU fill and DMA fill
-    chunked at fill_dma_min (256B) bytes/chunk. Matches the op-economy
-    silicon fill model (scratchpad/research-op-economy.md section 0)."""
+    """Modeled fill-body T for L bytes, gated on the PLAYER's own kernel-
+    select rule - the same shape as _copy_t.
+
+    The player (src/video.asm vid_run_body) clips every fill chunk to
+    NXV2_DMA_CHUNK via vid_chunk_dst, then takes vid_fill_dma when the
+    chunk is 256 or >= NXV2_RUN_DMA_MIN (71) and vid_fill_cpu otherwise.
+    So the full 256 B chunks are DMA and only the trailing remainder is
+    re-selected - a 300 B fill is one DMA chunk plus a 44 B CPU tail,
+    NOT two DMA setups. The model must predict what the player DOES.
+
+    run_dma_min sits at the derived break-even
+    (849.4/(17.17-5.11) = 70.43 -> 71), so the gate costs nothing against
+    the unconstrained optimum. There is deliberately NO min(cpu, dma)
+    floor: above its threshold the player is COMMITTED to the DMA kernel,
+    so a min() would model a cheaper kernel than the player can select -
+    optimism is the exact failure mode this model exists to avoid. If a
+    future re-fit made DMA dearer above the threshold, the honest answer
+    is to re-derive the threshold (and the .inc constant with it), not to
+    let the model quietly price a kernel the player never runs."""
     tc = TMODEL_COEFFS
-    cpu = L * tc["fill_cpu"]
+    thr = tc["run_dma_min"]
+    if L < thr:
+        return L * tc["fill_cpu"]
     chunk = tc["fill_dma_min"]
-    dma = math.ceil(L / chunk) * tc["fill_dma_setup"] + L * tc["fill_dma_per_b"]
-    return min(cpu, dma)
+    full, rem = divmod(L, chunk)
+    dma = full * (tc["fill_dma_setup"] + chunk * tc["fill_dma_per_b"])
+    if rem:
+        if rem >= thr:
+            dma += tc["fill_dma_setup"] + rem * tc["fill_dma_per_b"]
+        else:
+            dma += rem * tc["fill_cpu"]
+    return dma
 
 
 def _cost_run_chunk(L):
@@ -1026,26 +1057,28 @@ def _copy_t(L, rate):
 
     The player (src/video.asm vid_copy_body/.seg) clips every copy chunk
     to NXV2_DMA_CHUNK via vid_chunk_all, then takes vid_copy_dma when the
-    chunk is 256 or >= NXV2_COPY_DMA_MIN (90) and vid_copy_ldi otherwise.
-    So a body under 90 B is priced as pure LDI even though DMA breaks
-    even at ~73 B, and a trailing sub-90 remainder after the full 256B
-    chunks is priced as LDI too - the model must predict what the player
-    DOES. (The player also splits on src/dest window room, which the
-    model cannot see; those splits only add setups, so this stays the
-    optimistic-but-close side of the real chunking.)
+    chunk is 256 or >= NXV2_COPY_DMA_MIN (74) and vid_copy_ldi otherwise.
+    So a body under 74 B is priced as pure LDI, and a trailing sub-74
+    remainder after the full 256B chunks is priced as LDI too - the model
+    must predict what the player DOES. (The player also splits on
+    src/dest window room, which the model cannot see; those splits only
+    add setups, so this stays the optimistic-but-close side of the real
+    chunking.)
 
-    Mirrors _fill_t's min(cpu, dma) shape. With the settled coefficients
-    DMA always wins at >= 90 B, so the min() is a floor-safety against a
-    future coefficient re-fit, not an active branch.
+    Mirrors _fill_t's chunk-and-gate shape. copy_dma_min sits at the
+    derived break-even (1091.8/(20.25-5.31) = 73.08 -> 74), so the gate
+    costs nothing against the unconstrained optimum, and there is
+    deliberately no min(cpu, dma) floor - see _fill_t for why (above its
+    threshold the player is committed to DMA; a floor would price a
+    kernel the player never runs).
 
     Restores the settlement term the T model dropped: task-2 measured
     DMA copy at 1091.8 T/chunk + 5.31 T/B (final settlement, CD1..CD4 +
     KF rows) but the model priced EVERY copy as LDI, over-pricing a 256B
     copy 5171 T vs ~2451 T on silicon - on the dominant op class."""
     tc = TMODEL_COEFFS
-    cpu = L * rate
     if L < tc["copy_dma_min"]:
-        return cpu
+        return L * rate
     chunk = tc["copy_dma_chunk"]
     full, rem = divmod(L, chunk)
     dma = full * (tc["copy_dma_setup"] + chunk * tc["copy_dma_per_b"])
@@ -1054,7 +1087,7 @@ def _copy_t(L, rate):
             dma += tc["copy_dma_setup"] + rem * tc["copy_dma_per_b"]
         else:
             dma += rem * rate
-    return min(cpu, dma)
+    return dma
 
 
 def _cost_copy_chunk(L):

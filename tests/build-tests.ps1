@@ -685,7 +685,14 @@ if ($Font) {
 # settlement measured (1091.8 T/chunk + 5.31 T/B) and had been dropped
 # from the encoder, so every streamed encode re-derives its per-frame
 # op budget. See $encoderGeneration 'pal9f' in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9e'
+# 'pal9f' = the 2026-07-28 DMA threshold derivation: NXV2_RUN_DMA_MIN
+# 64 -> 71 and NXV2_COPY_DMA_MIN 90 -> 74 (both re-derived as
+# setup/(cpu_rate - dma_rate) from the task-2 coefficients), with the
+# encoder's mirrors and _fill_t's chunk-and-gate moved to match, so the
+# modelled cost of copies in the 74-89 B band and of every multi-chunk
+# fill changes and streamed encodes re-derive their op budget. See
+# $encoderGeneration 'pal9g' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9f'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

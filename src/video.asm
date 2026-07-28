@@ -709,7 +709,7 @@ vid_fetch_ram:
 ; BC = count (vid_run_body also A = colour). Each iteration:
 ; normalize the dest (hop a finished column / cross a window seam),
 ; size a chunk against every binding room, run the kernel sized by
-; the settled crossovers (RUN >= 64B and COPY >= 90B go DMA, capped
+; the derived crossovers (RUN >= 71B and COPY >= 74B go DMA, capped
 ; at 256B per DI bracket - contracts noted in the file header).
 ; ---------------------------------------------------------------------
 vid_skip_body:
@@ -751,7 +751,7 @@ vid_run_body:
     sbc hl, bc
     ld (vidRemain), hl
     pop hl
-    ; kernel select (settlement crossover): >= 64 -> zxnDMA fill
+    ; kernel select (derived crossover, nextdaad.inc): >= 71 -> DMA fill
     ld a, b
     or a
     jr nz, .dma                  ; chunk == 256

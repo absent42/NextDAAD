@@ -79,7 +79,15 @@ if (-not $sources) { exit 0 }
 # priced entirely as LDI (~2.1x over-price at 256 B) on the dominant op
 # class, so the per-frame decode-T cap admits more work per frame and
 # streamed encodes emit different bytes.
-$encoderGeneration = 'pal9f'
+# 'pal9g' = the 2026-07-28 DMA threshold derivation: both PLAYER kernel
+# thresholds were re-derived from the task-2 coefficients and moved
+# (NXV2_RUN_DMA_MIN 64 -> 71, NXV2_COPY_DMA_MIN 90 -> 74), and the
+# encoder mirrors moved with them (copy_dma_min 90 -> 74, new
+# run_dma_min, _fill_t now chunk-and-gates like _copy_t instead of
+# taking a whole-length min). Copies in the 74-89 B band and every
+# multi-chunk fill re-price, so the per-frame T budget admits a
+# different amount of work and encodes emit different bytes.
+$encoderGeneration = 'pal9g'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

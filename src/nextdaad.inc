@@ -589,14 +589,57 @@ VOP_KSTART       equ $28
 NXV_NATIVE_H_MODE1 equ 256  ; mode-1 column stride (hardware-fixed)
 NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 
-; Kernel crossovers (task-2 silicon settlement, the settled
-; TMODEL_COEFFS): RUN fills go DMA at >= 64 bytes, COPY goes DMA
-; mem-to-mem at >= ~90 bytes; every DMA burst is capped at 256 bytes
-; (decoder contract 3 - a 512B burst starves the audio sample ISR,
-; measured 35% CTC tick shortfall; 1.2% at 256B).
+; Kernel crossovers - DERIVED, not guessed (2026-07-28). Both are the
+; break-even chunk length between the CPU body and the DMA body, from
+; the task-2 silicon settlement's decomposed coefficients
+; (.superpowers/sdd/task-2-final-settlement.md section 1, "Decomposed
+; silicon coefficients (joint solves, FE-subtracted)", core 3.02.04):
+;
+;   CPU unrolled fill body  17.17 T/B   (R8U vs R6U joint solve)
+;   DMA fill setup         849.4 T/chunk (RD1/RD2/RD3 chunk solve)
+;   DMA fill per byte        5.11 T/B   (RD3 residual @ 249 T/op)
+;   LDI copy body           20.25 T/B   (C8 vs C16 joint solve)
+;   DMA copy setup        1091.8 T/chunk (CD1..CD4 chunk solve)
+;   DMA copy per byte        5.31 T/B   (KF-vs-CD3 cross-row, UNARMED)
+;
+; A sub-256 chunk costs one setup, so DMA(L) = setup + per_b*L and
+; CPU(L) = body*L. Break-even L = setup / (body - per_b):
+;
+;   RUN  fill: 849.4 / (17.17 - 5.11) = 849.4 / 12.06 = 70.43 B
+;              L=70: CPU 1201.9 vs DMA 1207.1 -> CPU wins
+;              L=71: CPU 1219.1 vs DMA 1212.2 -> DMA wins   => 71
+;   COPY LDI : 1091.8 / (20.25 - 5.31) = 1091.8 / 14.94 = 73.08 B
+;              L=73: CPU 1478.3 vs DMA 1479.4 -> CPU wins
+;              L=74: CPU 1498.5 vs DMA 1484.7 -> DMA wins   => 74
+;
+; Two invariances make these the right numbers to compare against:
+;  - AUDIO TAX. The armed-decode tax is a uniform 1.170-1.173 on the
+;    per-op AND per-byte terms alike (settlement section 1, CD armed vs
+;    unarmed at c64/c128/c256), and the CPU body is stolen from by the
+;    same ISR, so both sides scale together and the crossover is
+;    unchanged. The unarmed coefficients are therefore the correct ones.
+;  - WINDOW SEAMS. Every 49152-byte solve row carries the same
+;    +0.129 T/B seam term (6 seams x ~1055 T / 49152 B) in BOTH its CPU
+;    and DMA per-byte figure, and it cancels in (body - per_b). Using
+;    the do-not-regress anchors 17.0 / 20.2 with seam-free DMA rates
+;    gives the same differences, hence the same crossovers.
+;
+; Previous values were 64 (RUN) and 90 (COPY) with no derivation
+; recorded anywhere: 64 took DMA ~6 B early (worst +77.5 T at L=64,
+; 7.1% of the body) and 90 took it 16 B late (worst +237.8 T at L=89,
+; 15.2% of the body). At 71/74 the player is optimal at every length.
+;
+; The encoder's T model MIRRORS these two constants
+; (authoring-kit/lib/nxv2enc.py TMODEL_COEFFS run_dma_min/copy_dma_min,
+; consumed by _fill_t/_copy_t): change one, change the other in the
+; same commit or the model stops predicting the player.
+;
+; Every DMA burst is capped at 256 bytes (decoder contract 3 - a 512B
+; burst starves the audio sample ISR, measured 35% CTC tick shortfall;
+; 1.2% at 256B).
 NXV2_DMA_CHUNK   equ 256
-NXV2_RUN_DMA_MIN equ 64
-NXV2_COPY_DMA_MIN equ 90
+NXV2_RUN_DMA_MIN equ 71
+NXV2_COPY_DMA_MIN equ 74
 
 ; Ring (3a resident / 3b streaming): pool banks holding the whole
 ; file (resident) or the circular prefetch buffer (streaming). The

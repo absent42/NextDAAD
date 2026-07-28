@@ -971,7 +971,14 @@ def t10_silicon_coeffs():
     expect(tc["copy_dma_setup"] == 1091.8, f"copy_dma_setup should be the silicon 1091.8, got {tc['copy_dma_setup']}")
     expect(tc["copy_dma_per_b"] == 5.31, f"copy_dma_per_b should be the silicon UNARMED 5.31, got {tc['copy_dma_per_b']}")
     expect(tc["copy_dma_chunk"] == 256, "copy DMA chunk must be the 256 B audio-safety cap (NXV2_DMA_CHUNK)")
-    expect(tc["copy_dma_min"] == 90, "copy DMA threshold must be the PLAYER's NXV2_COPY_DMA_MIN (90)")
+    # The two kernel-select thresholds, DERIVED 2026-07-28 from the same
+    # settlement rows (break-even = setup/(cpu_rate - dma_rate)):
+    # fill 849.4/(17.17-5.11) = 70.43 -> 71; copy 1091.8/(20.25-5.31)
+    # = 73.08 -> 74. They MIRROR src/nextdaad.inc NXV2_RUN_DMA_MIN /
+    # NXV2_COPY_DMA_MIN - if these pins fail because the player moved,
+    # the model moved with it or it has desynchronised from the player.
+    expect(tc["copy_dma_min"] == 74, "copy DMA threshold must be the PLAYER's NXV2_COPY_DMA_MIN (74)")
+    expect(tc["run_dma_min"] == 71, "fill DMA threshold must be the PLAYER's NXV2_RUN_DMA_MIN (71)")
     expect(tc["t_frame_fixed"] == 1132.0, "t_frame_fixed should be the silicon FE 1132")
     # Shape given explicitly (320x256, flat): composition_factor()'s
     # unknown-shape default is the pessimistic gapped factor now (fail-
@@ -1051,41 +1058,54 @@ def t10_silicon_coeffs():
         enc.TMODEL_COEFFS.update(saved)
 
 
-@case(10, "copy T model - mem-to-mem DMA term, gated on the PLAYER's NXV2_COPY_DMA_MIN")
+@case(10, "copy/fill T model - DMA terms gated on the PLAYER's derived kernel thresholds")
 def t10_copy_dma_model():
     tc = enc.TMODEL_COEFFS
     rate = tc["fetch_long"]
     setup, per_b, chunk, thr = (tc["copy_dma_setup"], tc["copy_dma_per_b"],
                                 tc["copy_dma_chunk"], tc["copy_dma_min"])
-    # RULE 1 - below the player's threshold the copy body is pure LDI,
-    # even though DMA already breaks even at 1091.8/(20.25-5.31) = ~73 B.
+    # RULE 1 - below the player's threshold the copy body is pure LDI.
     # The model predicts what the PLAYER DOES (src/video.asm vid_copy_body
-    # takes vid_copy_ldi under NXV2_COPY_DMA_MIN), not the optimum.
-    for L in (1, 16, 64, 73, 80, 89):
+    # takes vid_copy_ldi under NXV2_COPY_DMA_MIN).
+    for L in (1, 16, 64, 73):
         expect(abs(enc._copy_t(L, rate) - L * rate) < 1e-6,
                f"copy body of {L} B (< {thr}) must be priced as CPU/LDI, got {enc._copy_t(L, rate):.1f}")
-    # 89 B, one byte under the player's threshold, is the widest point of
-    # the deliberate player-matching penalty: DMA breaks even at ~73 B, so
-    # the 73-89 band is priced at the CPU rate the PLAYER really pays
-    # there (237.8 T dearer at 89 B), not at the cheaper DMA rate. 73
-    # itself is the crossover and must NOT be asserted on - the two
-    # prices are within 5 T of each other there.
-    expect(enc._copy_t(89, rate) > setup + 89 * per_b,
-           "the sub-threshold CPU price must be ABOVE what DMA would cost - "
-           "this is the deliberate player-matching penalty, not an accident")
-    # RULE 2 - at/above the threshold: min(cpu, dma), which at the settled
-    # coefficients is always the DMA price.
-    for L in (90, 128, 200, 255, 256):
+    # RULE 1b - the threshold SITS ON the break-even (2026-07-28
+    # derivation, src/nextdaad.inc: 1091.8/(20.25-5.31) = 73.08 -> 74),
+    # so the player's choice is the cheap one at every length. Pinned as
+    # a distance so it self-retunes with the coefficients: the constant
+    # in the .inc must stay the ceiling of setup/(cpu_rate - dma_rate).
+    # It was 90 before the derivation - 16 B late, and the 74-89 band
+    # paid up to +237.8 T of LDI for nothing.
+    breakeven = setup / (rate - per_b)
+    expect(abs(thr - breakeven) <= 1.5,
+           f"copy threshold {thr} must sit on the break-even {breakeven:.2f} B "
+           "(re-derive NXV2_COPY_DMA_MIN and this coefficient together)")
+    for L in range(1, thr):
+        expect(L * rate <= setup + L * per_b + 1e-9,
+               f"below the threshold LDI must be the CHEAPER kernel, fails at {L} B")
+    # RULE 2 - at/above the threshold: the DMA price, which the player is
+    # committed to (no min() floor - see _copy_t).
+    for L in (74, 128, 200, 255, 256):
         dma = setup + L * per_b
-        expect(abs(enc._copy_t(L, rate) - min(L * rate, dma)) < 1e-6,
-               f"copy body of {L} B must be min(cpu, dma), got {enc._copy_t(L, rate):.1f}")
+        expect(abs(enc._copy_t(L, rate) - dma) < 1e-6,
+               f"copy body of {L} B must be the DMA price, got {enc._copy_t(L, rate):.1f}")
     expect(abs(enc._copy_t(256, rate) - (setup + 256 * per_b)) < 1e-6,
            "a full 256 B chunk is priced at one DMA setup + 256 B of transfer")
-    # RULE 3 - the threshold is a real discontinuity: crossing it makes an
-    # 89 -> 90 byte copy CHEAPER. That is the player's own behaviour.
-    b89, t89 = enc.op_cost("copy", 89)
-    b90, t90 = enc.op_cost("copy", 90)
-    expect(t90 < t89, f"a 90 B copy must cost LESS than an 89 B one (kernel switch), {t90:.1f} !< {t89:.1f}")
+    # RULE 3 - with the threshold ON the break-even the kernel switch is
+    # no longer a cost DISCONTINUITY: a copy must never get cheaper by
+    # getting longer (that was the old threshold's signature - an 89 -> 90
+    # B copy used to cost LESS), and the step across the threshold must be
+    # under one byte of LDI.
+    prev = 0.0
+    for L in range(1, 601):
+        cur = enc._copy_t(L, rate)
+        expect(cur >= prev - 1e-9,
+               f"copy body price must not FALL as length grows: {L - 1} B "
+               f"{prev:.1f} -> {L} B {cur:.1f}")
+        prev = cur
+    expect(enc._copy_t(thr, rate) - enc._copy_t(thr - 1, rate) < rate,
+           "the step across the kernel threshold must be under one byte of LDI")
     # RULE 4 - multi-chunk: full 256 B chunks go DMA, a sub-threshold tail
     # goes LDI (the player re-selects per chunk).
     expect(abs(enc._copy_t(300, rate) - ((setup + chunk * per_b) + 44 * rate)) < 1e-6,
@@ -1123,6 +1143,39 @@ def t10_copy_dma_model():
         enc.TMODEL_COEFFS.update(saved)
     expect(abs(enc._copy_t(256, rate) - (setup + 256 * per_b)) < 1e-6,
            "coefficients restored")
+    # RULE 8 - the FILL model is gated the same way, on the player's own
+    # NXV2_RUN_DMA_MIN (src/video.asm vid_run_body re-selects per chunk),
+    # with the threshold on its own derived break-even
+    # 849.4/(17.17-5.11) = 70.43 -> 71. Before 2026-07-28 _fill_t took a
+    # bare min(cpu, dma) over the WHOLE length, which priced a 300 B fill
+    # as two DMA setups when the player really runs one DMA chunk and a
+    # CPU tail.
+    fcpu, fsetup, fper = tc["fill_cpu"], tc["fill_dma_setup"], tc["fill_dma_per_b"]
+    fchunk, fthr = tc["fill_dma_min"], tc["run_dma_min"]
+    fbreakeven = fsetup / (fcpu - fper)
+    expect(abs(fthr - fbreakeven) <= 1.5,
+           f"fill threshold {fthr} must sit on the break-even {fbreakeven:.2f} B "
+           "(re-derive NXV2_RUN_DMA_MIN and this coefficient together)")
+    for L in (1, 16, 64, fthr - 1):
+        expect(abs(enc._fill_t(L) - L * fcpu) < 1e-6,
+               f"fill body of {L} B (< {fthr}) must be priced as unrolled CPU fill")
+        expect(L * fcpu <= fsetup + L * fper + 1e-9,
+               f"below the threshold CPU fill must be the CHEAPER kernel, fails at {L} B")
+    for L in (fthr, 128, 255, fchunk):
+        expect(abs(enc._fill_t(L) - (fsetup + L * fper)) < 1e-6,
+               f"fill body of {L} B must be one DMA setup + transfer, got {enc._fill_t(L):.1f}")
+    expect(abs(enc._fill_t(300) - ((fsetup + fchunk * fper) + 44 * fcpu)) < 1e-6,
+           "a 300 B fill = one DMA chunk + a 44 B CPU tail (the player re-selects per chunk)")
+    expect(abs(enc._fill_t(2 * fchunk) - 2 * (fsetup + fchunk * fper)) < 1e-6,
+           "a 512 B fill = two DMA chunks")
+    saved = dict(enc.TMODEL_COEFFS)
+    try:
+        enc.TMODEL_COEFFS["run_dma_min"] = 1024
+        expect(abs(enc._fill_t(256) - 256 * fcpu) < 1e-6,
+               "raising run_dma_min must push a 256 B fill back onto the CPU price")
+    finally:
+        enc.TMODEL_COEFFS.clear()
+        enc.TMODEL_COEFFS.update(saved)
 
 
 @case(10, "optimal gap-merge - decoded output BYTE-IDENTICAL to un-merged, fewer ops, lower T")
