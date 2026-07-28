@@ -340,7 +340,7 @@ The build encodes every `VIDEO\NNN.mp4` with settings from
 |---------|---------|
 | `VIDASPECT` | Shape for every encode: a preset name, `WIDTHxHEIGHT`, or a bare aspect number (e.g. `2.35` - free height at 320 wide). Blank = `full`. |
 | `VIDFPS` | Frames per second. Blank = 25. |
-| `VIDOPTS` | Extra encoder options for every encode (e.g. `--mono --dither`). |
+| `VIDOPTS` | Extra encoder options for every encode (e.g. `--mono --dither 0.3`). |
 | `VIDOPTS_NNN` | Extra options for video `NNN` only (3-digit number), appended after `VIDOPTS`. For most repeated options videnc takes the last occurrence, so `VIDOPTS_NNN` wins over `VIDOPTS` - except `--aspect`, which videnc always takes over `--shape` regardless of order; a `VIDOPTS_NNN` that sets its own `--shape`/`--width`/`--aspect` still wins for shape (the encode pass suppresses `VIDASPECT` for that video rather than relying on order). |
 | `VIDPROFILE` | Deprecated v1 name, honored one release: `n0`-`n4` map to the nearest v2 shape (and, when `VIDFPS` is blank, that profile's own baked fps, floored to the audio-legal minimum) when `VIDASPECT` is blank. |
 
@@ -379,9 +379,12 @@ videnc.exe INPUT.mp4 VIDEO\001.vid --shape classic --start 00:00:03 --duration 4
 (or `python lib\videnc.py ...`, same options). `--shape` is a preset
 or `WIDTHxHEIGHT`; `--aspect` derives a free height instead;
 `--fps` sets the frame rate; `--start`/`--duration` cut a clip;
-`--mono` halves the audio stream; `--dither` Floyd-Steinberg dithers
-(default: no dither). Run with `--help` for the full list, and see
-`lib\videnc-README.md` for the options and format details.
+`--mono` halves the audio stream; `--dither` sets the blue-noise
+dither amplitude, 0.0-1.0 (default 0.5: 0 = no dither, hard banding
+on gradients; 1 = full-step dither, deepest gradients but the most
+visible pattern noise - set per title via `VIDOPTS`/`VIDOPTS_NNN`).
+Run with `--help` for the full list, and see `lib\videnc-README.md`
+for the options and format details.
 
 ### Streaming, resident and direct delivery
 

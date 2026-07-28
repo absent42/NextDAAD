@@ -212,10 +212,13 @@ def main(argv):
     ap.add_argument("--mono", action="store_true",
                      help="mono audio (23325 Hz) instead of the "
                           "default stereo (15625 Hz)")
-    ap.add_argument("--dither", action="store_true",
-                     help="accepted for compatibility; NXV v2 always "
-                          "ordered-dithers into the 9-bit display "
-                          "lattice (palette-collapse fix 2026-07-27)")
+    ap.add_argument("--dither", type=float, default=None, metavar="AMP",
+                     help="blue-noise dither amplitude, 0.0-1.0 as a "
+                          "fraction of one quantization step (default: "
+                          "0.5). 0 = pure nearest-level snap (no "
+                          "dither), 1 = a full step (the pre-2026-07-28 "
+                          "depth - strongest gradient recovery, most "
+                          "visible pattern noise on smooth content)")
     ap.add_argument("--no-merge", dest="no_merge", action="store_true",
                      help="disable the encoder-only gap-merge optimization "
                           "(SP15). Production encodes keep it ON; this is for "
@@ -275,6 +278,8 @@ def main(argv):
         raise SystemExit(f"error: --byte-cap must be in (0, 1], got {args.byte_cap}")
     if not (0 < args.stream_budget <= 1.0):
         raise SystemExit(f"error: --stream-budget must be in (0, 1], got {args.stream_budget}")
+    if args.dither is not None and not (0.0 <= args.dither <= 1.0):
+        raise SystemExit(f"error: --dither must be in [0, 1], got {args.dither}")
 
     if args.aspect is not None:
         width = args.width or 320

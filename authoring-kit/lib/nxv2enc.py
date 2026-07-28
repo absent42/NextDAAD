@@ -1319,12 +1319,14 @@ def adaptive_palette(rgb, colors=256):
 #      decode is byte-identical to the wire decode (PSNR is wire-true);
 #   2. build_palette_block writes the TRUE 9th blue bit (b>>5 & 1),
 #      doubling blue resolution (exact round-trip for lattice values);
-#   3. quantization targets are ordered-dithered (8x8 Bayer, amplitude
-#      = one lattice bin): position-deterministic, so temporally
-#      STABLE (no frame-to-frame dither churn feeding the delta coder),
-#      recovering the gradient depth the 512-colour gamut cannot carry
-#      flat (foggy/skin gradients: a frame often CONTAINS only ~36
-#      distinct lattice colours undithered).
+#   3. quantization targets are ordered-dithered (32x32 blue-noise
+#      threshold tile, amplitude a settable fraction of one lattice
+#      bin - see BLUENOISE32/DITHER_AMP_DEFAULT below): position-
+#      deterministic, so temporally STABLE (no frame-to-frame dither
+#      churn feeding the delta coder), recovering the gradient depth
+#      the 512-colour gamut cannot carry flat (foggy/skin gradients: a
+#      frame often CONTAINS only ~36 distinct lattice colours
+#      undithered).
 # ---------------------------------------------------------------------
 
 # 3-bit -> 8-bit expansion, the reference decoder's own rule
@@ -1367,30 +1369,96 @@ def snap_to_lattice(rgb):
     return out
 
 
-def _bayer8():
-    m = np.array([[0]], dtype=np.int32)
-    while m.shape[0] < 8:
-        m = np.block([[4 * m + 0, 4 * m + 2], [4 * m + 3, 4 * m + 1]])
-    return m
+# Ordered-dither threshold tile: 32x32 BLUE-NOISE rank matrix
+# (replaces the original 8x8 Bayer matrix, owner-approved 2026-07-28:
+# Bayer's regular crosshatch was visibly objectionable on smooth
+# content - Big Buck Bunny/jellyfish - on real hardware; blue noise
+# carries the same mean offset with no low-frequency structure).
+#
+# PROVENANCE: generated OFFLINE by the void-and-cluster algorithm
+# (Ulichney 1993) with a toroidally-wrapped Gaussian energy filter,
+# sigma 1.5, on a 32x32 tile; numpy default_rng seed 20260728;
+# generated 2026-07-28 by a scratchpad script (gen_bluenoise.py - the
+# generator is NOT shipped; this literal table is the single source of
+# truth). The table is a permutation of 0..1023 (every rank exactly
+# once - tests/nxv2_selftest.py asserts it); spectral check of the
+# half-threshold slice: low/high frequency energy ratio 0.021 (no
+# low-frequency clumping). NO RUNTIME RANDOMNESS: the dither stays a
+# pure position-deterministic function of (y mod 32, x mod 32) and the
+# amplitude - identical source pixels dither identically every frame,
+# a hard format requirement (zero delta churn on quiet content).
+BLUENOISE32 = np.array([
+     635,  488,  267,  695,   19,  746,  602,  447,  715,  922,  197,  827,   45,  675,  131,  339,  634,  171,  399,  537,  742,  920,  786,  205,  355,  730,  921,  271,   37,  908,  734,   67,
+     800,  137,  844,  994,  326,  899,  145, 1005,   51,  517,  632,  283,  574,  937,  436,  767,  907,  277, 1015,  673,   86,  299,  629,  477,  880,  132,  416,  507,  665,  368,  456,  216,
+     970,  378,  603,  187,  458,  539,  243,  648,  311,  761,  373,  989,  160,  796,  234,   92,  563,  472,   41,  820,  431,  168,  985,   58,  577,  688,  233, 1000,  166,  873,  770,  566,
+     260,  514,   80,  669,  781,   98,  864,  409,  823,  134,  872,   11,  408,  528,  324,  982,  712,  209,  601,  334,  905,  541,  719,  398,  285,  837,   22,  784,  551,  104,  313,   12,
+     855,  721,  895,  349,  946,  278,  708,   34,  576,  229,  473,  622,  737,  892,  660,   25,  383,  798,  962,  122,  661,  235,  860,  143,  955,  469,  637,  341,  438,  709,  956,  652,
+     164,  448,  223,   27,  429,  555,  977,  482,  912,  677,  958,  303,  108,  199,  459,  841,  154,  508,  288,  754,  484,    2,  347,  614,  758,   81,  931,  254,  897,  210,  494,  365,
+     105,  984,  597,  808,  656,  113,  208,  335,  146,  388,   63,  769,  567, 1020,  268,  591,  934,  674,   46,  885,  377,  973,  797,  509,  207,  369,  568,  135,  814,   40,  612,  828,
+     760,  530,  298,  926,  376,  753,  843,  611,  722,  865,  244,  497,  819,  402,   59,  743,  351,  228,  427,  570,  196,  647,  273,   96, 1019,  697,  446,  750,  641,  412, 1008,  284,
+     396,  679,   64,  162,  498,  261, 1013,   83,  433,  553,  971,  356,  136,  685,  863,  524,  115,  816, 1007,  733,  121,  840,  439,  582,  869,  290,   52,  961,  328,  167,  560,   78,
+     201,  963,  444,  884,  705,    7,  534,  310,  807,  190,   21,  633,  929,  218,  315,  975,  455,  608,   66,  314,  520,  952,   26,  773,  161,  500,  806,  236,  531,  915,  731,  881,
+     624,  812,  251,  583,  353,  943,  649,  144,  898,  682,  282,  762,  478,  588,   38,  662,  192,  275,  701,  903,  400,  237,  680,  323,  414,  900,  604,  129,  692,    5,  466,  346,
+     515,   29,  716,  123,  852,  220,  419,  757,  348,  483, 1003,  395,   88,  891,  795,  410,  933,  845,  496,  159,  803,  592,  114,  992,  723,   42,  371,  979,  428,  259,  804,  138,
+     308, 1022,  386,  489,  778,   87,  573,  964,   39,  594,  120,  861,  239,  340,  532,  127,  741,   20,  370,  643,   54,  932,  453,  533,  194,  645,  280,  756,  847,  593,  954,  671,
+     879,  578,  186,  928,  320,  670,  468,  265,  830,  206,  644,  510,  681,  988,  184,  631,  309,  569,  996,  249,  745,  337,  854,  266,  793,  927,  559,   77,  176,  385,   47,  227,
+     763,   70,  818,  623,   36, 1002,  148,  726,  390,  925,  301,  787,   14,  403,  752,  949,  463,  102,  874,  430,  543,  163,  693,   10,  422,  142,  475,  342,  997,  513,  725,  450,
+     367,  526,  270,  432,  747,  221,  878,  505,   65,  702,  440,  169,  848,  587,   72,  272,  825,  700,  204,  775,   93,  959,  389,  579, 1012,  713,  889,  606,  691,  256,  935,  153,
+     651,  993,   95,  916,  547,  380,  609,  312,  976,  556,  103,  957,  487,  217,  890,  523,  155,  391,  610,  319,  887,  626,  222,  832,   82,  305,  215,   30,  824,  109,  580,  839,
+     304,  213,  720,  332,  124,  829,    0,  764,  181,  822,  252,  627,  316,  727,  366,  654,  930,    3, 1018,  519,   60,  460,  736,  352,  525,  666,  789,  437,  322,  902,  405,    9,
+     950,  557,  859,  464,  696,  953,  262,  653,  471,  359,  689,  856,   28, 1006,  110,  777,  295,  457,  706,  250,  811,  173,  978,  107,  871,  150,  945,  538,  646,  180,  503,  782,
+     442,  156,   68,  615,  198,  415,  529,  911,  106,  995,   69,  516,  413,  607,  479,  202,  562,  851,  157,  919,  379,  659,  274,  600,  476,  382,  248,   44,  740, 1017,  258,  699,
+     358,  906,  774,  296,  987,   50,  776,  165,  397,  561,  771,  191,  913,  257,  813,  942,   97,  407,  616,   43,  765,  540,  909,   18,  759,  986,  620,  882,  362,  133,  599,   49,
+     522,  238,  664,  501,  834,  585,  333,  875,  711,  279,  888,  330,  663,   84,  375,  638,  732,  287,  966,  495,  321,  119,  421,  672,  318,  189,  493,   85,  801,  435,  936,  833,
+     724, 1004,   15,  384,  140,  245,  650,  474,   16,  625,  125,  490,  738,  981,  178,  499,   23,  794,  219,  684,  831,  983,  231,  790,  101,  850,  717,  281,  550,  678,  297,  193,
+     572,  126,  462,  886,  735,  938,   89, 1014,  226,  805,  968,  418,   33,  558,  849,  317, 1011,  565,  451,   73,  175,  595,  502,  894,  449,  584,  374,  998,  147,  893,   79,  424,
+     338,  817,  630,  289,  552,  345,  426,  749,  518,  372,  589,  188,  783,  263,  443,  676,  130,  867,  302,  940,  401,  739,   35,  344,  170,  948,    8,  640,  230,  491,  772,  960,
+     690,  174,  972,   55,  183,  821,  668,  158,  918,   62,  291,  901,  642,  941,   53,  768,  387,  203,  714,  619,  846,  255, 1021,  554,  704,  269,  779,  434,  835,  350,  618,   32,
+     276,  521,  417,  703,  917,  485,   24,  307,  617,  836,  707,  116,  357,  511,  225,  605,  904,  480,    6,  512,  128,  360,  667,   91,  876,  492,  141,  910,   74,  542,  182,  862,
+     944,  100,  788,  354,  575,  224,  868,  991,  461,  232,  420,  548,  866,   94,  990,  329,  112,  810,  999,  240,  785,  914,  452,  214,  766,  325,  590,  698,  293, 1009,  744,  445,
+     581,  658,  241, 1023,   75,  729,  393,  544,   99,  780,  947,  200,  748,  441,  799,  686,  549,  286,  657,  406,  546,   48,  598,  967,  404,   31,  951,  212,  423,  628,  117,  364,
+       1,  883,  465,  151,  636,  294,  792,  177,  683,  336,    4,  639,  292,  596,   61,  394,  185,  924,   71,  755,  179,  858,  306,  139,  655,  853,  527,  751,   57,  870,  247,  826,
+     195,  718,  331,  809,  939,  504,   56,  965,  586,  857,  506, 1016,  149,  896,  246,  974,  710,  467,  327,  613,  980,  481,  694,  815,  264,  454,  172,  343,  969,  470,  687,  536,
+     392,  923,   90,  564,  411,  211,  842,  361,  253,  111,  425,  728,  363,  486,  838,  535,   17,  791,  877,  118,  242,  381,   13,  545, 1010,   76,  621,  802,  571,  152,  300, 1001,
+], dtype=np.int32).reshape(32, 32)
+
+# Dither amplitude knob (owner-approved 2026-07-28): the per-pixel
+# offset is (threshold_norm - 0.5) * DITHER_STEP * amplitude, with
+# amplitude a float 0.0-1.0. 1.0 reproduces the historical full-
+# quantization-step depth; 0.0 is pure nearest-level snap (no dither).
+# DEFAULT 0.5: the full-step pattern read too strongly on smooth
+# content on real hardware (owner eyeball, Big Buck Bunny/jellyfish).
+# CLI: videnc --dither; kit config: VIDOPTS/VIDOPTS_NNN.
+DITHER_STEP = LATTICE_BIN
+DITHER_AMP_DEFAULT = 0.5
 
 
-BAYER8 = _bayer8()          # 8x8 ordered-dither threshold map, 0..63
-# One TRUE lattice bin (review MAJOR 1 fix, 2026-07-27): the old 32.0
-# was the >>5 TRUNCATING quantizer's bin width, ~12% narrower than the
-# actual nearest-level lattice spacing (255/7 = 36.43), under-dithering
-# the gradient recovery this pass exists for.
-DITHER_AMP = LATTICE_BIN
+def _dither_amp(amplitude):
+    """Normalize a dither-amplitude argument: None - and the legacy
+    boolean --dither flag, EITHER value (it was an accepted-for-
+    compatibility no-op) - mean DITHER_AMP_DEFAULT; anything else is a
+    float validated into 0.0-1.0."""
+    if amplitude is None or isinstance(amplitude, bool):
+        return DITHER_AMP_DEFAULT
+    a = float(amplitude)
+    if not (0.0 <= a <= 1.0):
+        raise ValueError(f"dither amplitude must be 0.0-1.0, got {amplitude}")
+    return a
 
 
-def ordered_dither(frame):
-    """8x8 Bayer ordered dither of an (H,W,3) uint8 frame, amplitude
-    one lattice bin, same offset on all three channels (no hue noise).
-    Position-deterministic: identical source pixels dither identically
-    every frame, so quiet content produces ZERO index churn."""
+def ordered_dither(frame, amplitude=None):
+    """Blue-noise ordered dither of an (H,W,3) uint8 frame: per-pixel
+    offset (threshold_norm - 0.5) * DITHER_STEP * amplitude, the same
+    offset on all three channels (no hue noise). Position-deterministic
+    (a pure function of y%32, x%32 and the amplitude): identical source
+    pixels dither identically every frame, so quiet content produces
+    ZERO index churn. amplitude None -> DITHER_AMP_DEFAULT; 0.0 returns
+    the frame unchanged (pure nearest snap happens downstream)."""
+    amp = _dither_amp(amplitude)
     H, W, _ = frame.shape
-    t = (BAYER8[np.arange(H)[:, None] % 8, np.arange(W)[None, :] % 8]
-         .astype(np.float32) + 0.5) / 64.0 - 0.5
-    f = frame.astype(np.float32) + (t * DITHER_AMP)[..., None]
+    t = ((BLUENOISE32[np.arange(H)[:, None] % 32, np.arange(W)[None, :] % 32]
+          .astype(np.float32) + 0.5) / 1024.0 - 0.5)
+    f = frame.astype(np.float32) + (t * (DITHER_STEP * amp))[..., None]
     return np.clip(f, 0.0, 255.0).astype(np.uint8)
 
 
@@ -1399,15 +1467,16 @@ def _lattice_codes(rgb_flat):
     return (v[:, 0] << 16) | (v[:, 1] << 8) | v[:, 2]
 
 
-def display_palette(composite, colors=256):
+def display_palette(composite, colors=256, amplitude=None):
     """Palette of `colors` DISTINCT displayable lattice colours for an
     (rows,W,3) composite: Pillow median-cut (keeps rare-but-salient
     colours), snapped to the lattice and deduped, then freed slots
     refilled with the most-frequent unused lattice colours of the
     ordered-dithered composite (what the dithered pixels will actually
-    ask for). Entries are decoder-expanded 8-bit values; if the scene
-    holds fewer distinct lattice colours than `colors`, the tail
-    duplicates entry 0 (never selected by nearest-match)."""
+    ask for - amplitude must match the encode's own dither amplitude).
+    Entries are decoder-expanded 8-bit values; if the scene holds fewer
+    distinct lattice colours than `colors`, the tail duplicates entry 0
+    (never selected by nearest-match)."""
     snapped = snap_to_lattice(adaptive_palette(composite, colors=colors))
     codes = _lattice_codes(snapped)
     seen = set()
@@ -1417,7 +1486,7 @@ def display_palette(composite, colors=256):
             seen.add(c)
             kept.append(c)
     if len(kept) < colors:
-        dpost = snap_to_lattice(ordered_dither(composite)).reshape(-1, 3)
+        dpost = snap_to_lattice(ordered_dither(composite, amplitude)).reshape(-1, 3)
         uniq, counts = np.unique(_lattice_codes(dpost), return_counts=True)
         for c in uniq[np.argsort(-counts)].tolist():
             if len(kept) >= colors:
@@ -1436,14 +1505,15 @@ def display_palette(composite, colors=256):
     return pal
 
 
-def display_ceiling(frame):
+def display_ceiling(frame, amplitude=None):
     """Per-frame quality ceiling in DISPLAY space: the PSNR of the
     frame's own best display_palette applied to its ordered-dithered
     self - the wire-true analogue of the old 24-bit ADAPTIVE po_ceil
     (drift triggers compare achieved PSNR against this, so both sides
-    of that comparison must live in the same space)."""
-    pal = display_palette(frame)
-    _, dec = quantize_to_palette(ordered_dither(frame), pal)
+    of that comparison must live in the same space, at the SAME dither
+    amplitude as the encode itself)."""
+    pal = display_palette(frame, amplitude=amplitude)
+    _, dec = quantize_to_palette(ordered_dither(frame, amplitude), pal)
     return psnr(frame, dec)
 
 
@@ -1581,7 +1651,8 @@ def _is_cut_at(chg, i, cut_t):
 # drift-trigger frequency.
 # ---------------------------------------------------------------------
 
-def scene_palette(orig_frames, start_idx, scene_end_idx, max_samples=6, colors=256):
+def scene_palette(orig_frames, start_idx, scene_end_idx, max_samples=6, colors=256,
+                  amplitude=None):
     n = scene_end_idx - start_idx
     if n <= 1:
         idxs = [start_idx]
@@ -1592,7 +1663,7 @@ def scene_palette(orig_frames, start_idx, scene_end_idx, max_samples=6, colors=2
     # palette-collapse fix: palettes live in DISPLAY lattice space (256
     # distinct displayable colours, decoder-expanded) - see the
     # display_palette block for the mechanism.
-    return display_palette(composite, colors=colors)
+    return display_palette(composite, colors=colors, amplitude=amplitude)
 
 
 # ---------------------------------------------------------------------
@@ -1840,8 +1911,13 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     audio_bytes, channels, rate) from a source file, reusing videnc.py's
     own ffmpeg plumbing (probe/crop/extract) - the canonical location
     for that logic per the kit's own docstring. Imported lazily to
-    avoid a module-load cycle (videnc.py imports nxv2enc at top level)."""
+    avoid a module-load cycle (videnc.py imports nxv2enc at top level).
+    dither: the dither amplitude (0.0-1.0, None/legacy-bool ->
+    DITHER_AMP_DEFAULT) - po_ceil must be measured at the encode's own
+    amplitude or the drift triggers compare across spaces."""
     import videnc as _videnc
+
+    dither_amp = _dither_amp(dither)
 
     input_path = Path(src_path)
     if not input_path.exists():
@@ -1895,11 +1971,12 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     # collapse fix - the old 24-bit ADAPTIVE reference over-stated the
     # ceiling by the whole lattice truncation, so drift never saw it;
     # the legacy --dither/FS reference flag is subsumed: ordered
-    # dithering into the lattice is now integral to the pipeline).
+    # dithering into the lattice is now integral to the pipeline, and
+    # --dither instead sets its amplitude - see _dither_amp).
     po_ceil = np.empty(nframes)
     chg = np.zeros(nframes)
     for i in range(nframes):
-        po_ceil[i] = display_ceiling(orig[i])
+        po_ceil[i] = display_ceiling(orig[i], amplitude=dither_amp)
         if i:
             d = np.abs(orig[i].astype(np.int16) - orig[i - 1].astype(np.int16)).max(axis=2)
             chg[i] = float((d > 10).mean())
@@ -1910,7 +1987,8 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
 
 def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 budget_scale=1.0, merge_gaps=True, hysteresis=True,
-                staleness_refresh=True, return_surfaces=False):
+                staleness_refresh=True, return_surfaces=False,
+                dither_amp=None):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -1926,6 +2004,9 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     assert (H, W) == (height, width)
     raw = H * W
     column_major = (width == 320)
+    dither_amp = _dither_amp(dither_amp)   # caller's po_ceil must be
+    # measured at this same amplitude (encode() threads one value to
+    # both _extract_source and here)
     # budget_scale (--stream-budget) scales BOTH delta caps - the
     # streaming-supply operating-point lever (keyframe span chunks are
     # deliberately NOT scaled: they are rare, amortized by the ring,
@@ -1977,7 +2058,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                                # (finding 2) - marks its chunk-frames' mode
 
     for i in range(N):
-        frame_dith = ordered_dither(orig[i])   # streaming, see note above
+        frame_dith = ordered_dither(orig[i], dither_amp)   # streaming, see note above
         start_kf = False
         trigger = None
         drift_for_stats = None   # T1 step 5: recorded for plain delta frames
@@ -2037,7 +2118,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
 
         if start_kf:
             scene_end = next((c for c in scene_cuts if c > i), N)
-            kf_pal = scene_palette(orig, i, scene_end)
+            kf_pal = scene_palette(orig, i, scene_end, amplitude=dither_amp)
             planned = plan_kf_chunks(raw, fps, width, height)
             # Cut lookahead (T1 step 4): if this span would take >1
             # chunk AND the very next frame independently looks like a
@@ -2214,7 +2295,8 @@ def _apply_segments(prev_flat, target_flat, gcls, gstarts, glens):
     return out
 
 
-def _encode_direct(ex, width, height, fps_val, out_path, report_path=None):
+def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
+                   dither_amp=None):
     """SP15 3c DIRECT-SERVE encode (the raw-equivalent all-literal
     preset): every frame is a single-frame keyframe span (KSTART
     [+ PAL] + COPY + KFLIP) and the header sets the direct-serve hint
@@ -2230,6 +2312,7 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None):
     orig = ex["orig"]
     N = ex["nframes"]
     column_major = (width == 320)
+    dither_amp = _dither_amp(dither_amp)
     cuts = [c for c in detect_scene_cuts(ex["chg"]) if 0 < c < N]
     bounds = [0] + cuts + [N]
     payloads = []
@@ -2237,10 +2320,10 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None):
     for s_i, e_i in zip(bounds[:-1], bounds[1:]):
         if s_i == e_i:
             continue
-        pal = scene_palette(orig, s_i, e_i)
+        pal = scene_palette(orig, s_i, e_i, amplitude=dither_amp)
         for i in range(s_i, e_i):
             # palette-collapse fix: dithered target, source-true PSNR
-            idx, dec = quantize_to_palette(ordered_dither(orig[i]), pal)
+            idx, dec = quantize_to_palette(ordered_dither(orig[i], dither_amp), pal)
             flat = flatten_frame(idx, column_major)
             payloads.append(emit_direct_frame_payload(
                 flat, pal if i == s_i else None))
@@ -2362,10 +2445,19 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None):
 
 def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
-           dither=False, mono=False, merge_gaps=True, hysteresis=True,
+           dither=None, mono=False, merge_gaps=True, hysteresis=True,
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=1.0,
            direct=False):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
+
+    dither (--dither): blue-noise dither amplitude, a float 0.0-1.0 as
+    a fraction of one lattice quantization step (DITHER_STEP). 0.0 is
+    pure nearest-level snap, 1.0 the historical full-step depth;
+    None (and either legacy boolean value - the old --dither flag was
+    an accepted-for-compatibility no-op) means DITHER_AMP_DEFAULT
+    (0.5). One value threads through extraction (po_ceil), the delta
+    pipeline and the direct preset alike - the ceiling and the targets
+    must live at the same amplitude.
 
     quality_profile: only "max" is implemented in T1 (the dual-budget
     streaming cap point from the research - cap_bytes=0.65x raw AND
@@ -2391,19 +2483,21 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
 
     width, height = resolve_shape(shape)
     fps_val = 25.0 if fps is None else float(fps)
+    dither_amp = _dither_amp(dither)   # validate once, up front
 
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
-                          ffmpeg, dither, mono)
+                          ffmpeg, dither_amp, mono)
     if direct:
         # SP15 3c: the all-literal direct-serve preset - no delta
         # pipeline, no rate control; see _encode_direct.
         return _encode_direct(ex, width, height, fps_val, out_path,
-                              report_path)
+                              report_path, dither_amp=dither_amp)
     result = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width, height,
                           fps_val, cap_bytes_frac=cap_bytes_frac,
                           budget_scale=stream_budget,
                           merge_gaps=merge_gaps, hysteresis=hysteresis,
-                          staleness_refresh=staleness_refresh)
+                          staleness_refresh=staleness_refresh,
+                          dither_amp=dither_amp)
 
     payloads = result["payloads"]
     nframes_out = len(payloads)

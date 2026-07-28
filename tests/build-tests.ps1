@@ -142,8 +142,8 @@
 #            name change forces a re-encode. Regenerate by deleting the
 #            relevant cache file and re-running -Vid, or directly with
 #            e.g.:
-#              python authoring-kit\lib\videnc.py tools\demo-files\Sintel_1080_10s_30MB.mp4 tests\out\001_full_pal9_leg_cache.vid --shape full --fps 25 --start 00:00:00 --duration 1.35
-#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\006_169_pal9_leg_cache.vid --shape 16:9 --fps 25 --start 00:00:00 --duration 5.0
+#              python authoring-kit\lib\videnc.py tools\demo-files\Sintel_1080_10s_30MB.mp4 tests\out\001_full_pal9c_leg_cache.vid --shape full --fps 25 --start 00:00:00 --duration 1.35
+#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\006_169_pal9c_leg_cache.vid --shape 16:9 --fps 25 --start 00:00:00 --duration 5.0
 #            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
 #            sd\*.VID is gitignored (owner edit).
 #            PRE-3a LONG-CLIP CACHES ARE OBSOLETE: the five 10-14MB
@@ -644,11 +644,15 @@ if ($Font) {
 # 5b47727 review): nearest-level lattice snap (was truncating >>5)
 # and DITHER_AMP corrected to the true lattice bin spacing (was ~12%
 # narrow) - the pal9 encodes were never hardware-eyeballed, so one
-# bump covers both the pal9 and pal9b output-shaping changes at once.
+# bump covers both the pal9 and pal9b output-shaping changes at once;
+# 'pal9c' = the 2026-07-28 blue-noise dither wave: 32x32 void-and-
+# cluster threshold tile replaces the 8x8 Bayer matrix and the default
+# dither amplitude drops to 0.5 of a quantization step (videnc
+# --dither knob) - every default-args encode's bytes change.
 # Used by BOTH -Vid and -VidLong cache names (the -VidLong per-entry
 # 'tag' only fingerprints CLI operating points, so it is equally
 # blind to this class).
-$vidLegSettlementTag = 'pal9b'
+$vidLegSettlementTag = 'pal9c'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

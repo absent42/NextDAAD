@@ -42,8 +42,10 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
   --width W          Layer 2 width for --aspect (256 or 320)
   --fps N            frames per second (default: 25; floors below)
   --mono             mono audio 23325 Hz (default: stereo 15625 Hz)
-  --dither           Floyd-Steinberg dither (default: no dither,
-                     matching the project's PNG recipe)
+  --dither AMP       blue-noise dither amplitude, 0.0-1.0 as a
+                     fraction of one quantization step (default 0.5;
+                     0 = pure nearest-level snap, 1 = a full step -
+                     deepest gradients, most visible pattern noise)
   --byte-cap F       delta per-frame byte cap as a fraction of the raw
                      surface (default 0.65)
   --stream-budget F  scale the delta quality caps to fit the streaming
@@ -129,9 +131,11 @@ file is an exact multiple of 512-byte SD blocks.
 Audio is unsigned 8-bit PCM, stereo 15625 Hz or mono 23325 Hz with
 `--mono`, full rate - no decimation. Palettes are scene-scoped
 adaptive 256-colour (NR $44 write order, RRRGGGBB + expanded 9th blue
-bit), refreshed by PAL opcodes when drift crosses the trigger;
-quantization uses `tools\png2nx.py`'s proven recipe (PIL ADAPTIVE,
-no dither by default, `--dither` for Floyd-Steinberg).
+bit), refreshed by PAL opcodes when drift crosses the trigger.
+Quantization targets are blue-noise ordered-dithered into the 9-bit
+display lattice (position-deterministic 32x32 void-and-cluster tile -
+temporally stable, so it feeds no churn to the delta coder); `--dither`
+sets the amplitude, 0.0-1.0 of a quantization step, default 0.5.
 
 ### Pixel order
 

@@ -658,7 +658,10 @@ def t6_zero_truncation():
     # DOWN, not up). Floor left at 3.5 (NOT raised - wire-true worst
     # only widened, did not shrink, the headroom, now ~0.52 dB) so
     # routine noise doesn't trip it while a real regression (keyframe-
-    # span or budget-scheduling defect) still does.
+    # span or budget-scheduling defect) still does. Re-verified under
+    # the 2026-07-28 blue-noise wave (32x32 void-and-cluster tile,
+    # default amplitude 0.5): the full suite passes with the floor
+    # unchanged.
     expect(worst_psnr_overall > 3.5,
            f"worst PSNR {worst_psnr_overall:.2f} below the SP15 T5 floor (measured 4.02 this review)")
 
@@ -1797,6 +1800,86 @@ def t12_no_audio_source_probe():
     expect(len(ex["audio_bytes"]) > 0, "silence fallback must still be non-empty")
     expect(all(b == enc.SILENCE_U8 for b in ex["audio_bytes"]),
            "audio bytes must be the unchanged SILENCE_U8 fill")
+
+
+# =======================================================================
+# Step 13: blue-noise dither + amplitude knob (2026-07-28 wave - the
+# 32x32 void-and-cluster tile replaces 8x8 Bayer; --dither scales it)
+# =======================================================================
+
+@case(13, "blue-noise table integrity - 32x32 permutation, deterministic, tiles")
+def t13_bluenoise_table_integrity():
+    bn = enc.BLUENOISE32
+    expect(bn.shape == (32, 32), f"table shape {bn.shape} != (32, 32)")
+    expect(sorted(bn.ravel().tolist()) == list(range(1024)),
+           "table is not a permutation of 0..1023 (histogram not exactly uniform)")
+    # Position determinism: the same frame dithers identically on every
+    # call (no runtime randomness anywhere - hard format requirement).
+    rng = np.random.default_rng(7)
+    f = rng.integers(0, 256, size=(48, 80, 3), dtype=np.uint8)
+    a = enc.ordered_dither(f, 1.0)
+    b = enc.ordered_dither(f, 1.0)
+    expect((a == b).all(), "ordered_dither is not deterministic")
+    # Tiling: the offset is a pure function of (y mod 32, x mod 32) -
+    # on a constant-colour frame the output must repeat with period 32
+    # in both axes.
+    const = np.full((64, 64, 3), 128, dtype=np.uint8)
+    d = enc.ordered_dither(const, 1.0)
+    expect((d[:32, :32] == d[32:, :32]).all() and (d[:32, :32] == d[:32, 32:]).all()
+           and (d[:32, :32] == d[32:, 32:]).all(),
+           "dither offsets do not tile with period 32")
+    # Same offset on all three channels (no hue noise), as before.
+    di = d.astype(np.int16) - 128
+    expect((di[..., 0] == di[..., 1]).all() and (di[..., 1] == di[..., 2]).all(),
+           "per-channel offsets differ - hue noise introduced")
+
+
+@case(13, "dither amplitude scaling - 0 = pure snap, 1 = full step, 0.5 = half")
+def t13_amplitude_scaling():
+    step = enc.DITHER_STEP
+    expect(abs(step - 255.0 / 7.0) < 1e-9, "DITHER_STEP must be the lattice bin 255/7")
+    const = np.full((32, 32, 3), 128, dtype=np.uint8)
+    # amp 0: frame passes through untouched -> quantization is the pure
+    # nearest-level snap.
+    z = enc.ordered_dither(const, 0.0)
+    expect((z == const).all(), "amplitude 0 must leave the frame unchanged")
+    rng = np.random.default_rng(11)
+    f = rng.integers(0, 256, size=(32, 32, 3), dtype=np.uint8)
+    expect((enc.snap_to_lattice(enc.ordered_dither(f, 0.0)) == enc.snap_to_lattice(f)).all(),
+           "amplitude 0 must reduce to the pure nearest-lattice snap")
+    # amp 1: offsets span one full quantization step across the tile
+    # (integer truncation costs at most ~2 codes of the span).
+    d1 = enc.ordered_dither(const, 1.0).astype(np.int16)
+    span1 = int(d1.max() - d1.min())
+    expect(abs(span1 - step) <= 2.0,
+           f"amplitude 1 span {span1} not ~one step ({step:.1f})")
+    # amp 0.5 (the default): half a step.
+    dh = enc.ordered_dither(const, 0.5).astype(np.int16)
+    spanh = int(dh.max() - dh.min())
+    expect(abs(spanh - step / 2) <= 2.0,
+           f"amplitude 0.5 span {spanh} not ~half a step ({step / 2:.1f})")
+
+
+@case(13, "dither amplitude default - 0.5, legacy args normalize, bad values refused")
+def t13_amplitude_default():
+    expect(enc.DITHER_AMP_DEFAULT == 0.5, "default amplitude must be 0.5")
+    rng = np.random.default_rng(13)
+    f = rng.integers(0, 256, size=(32, 48, 3), dtype=np.uint8)
+    expect((enc.ordered_dither(f) == enc.ordered_dither(f, 0.5)).all(),
+           "no-argument dither must equal the 0.5 default")
+    # legacy boolean --dither (the old accepted-for-compatibility flag)
+    # and None all mean the default - never 0.0/1.0.
+    for legacy in (None, False, True):
+        expect(enc._dither_amp(legacy) == enc.DITHER_AMP_DEFAULT,
+               f"_dither_amp({legacy!r}) must normalize to the default")
+    expect(enc._dither_amp(0.25) == 0.25, "a float passes through")
+    for bad in (-0.1, 1.5):
+        try:
+            enc._dither_amp(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"_dither_amp({bad}) must refuse out-of-range values")
 
 
 def main():

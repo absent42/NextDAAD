@@ -51,8 +51,13 @@ if (-not $sources) { exit 0 }
 # (display-lattice palettes + true 9th blue bit + ordered dither);
 # 'pal9b' = the palette-lattice review fix-wave (2026-07-27): nearest-
 # level lattice snap (was truncating) + corrected DITHER_AMP (was ~12%
-# narrow) - kit demos must re-encode with the snap fix too.
-$encoderGeneration = 'pal9b'
+# narrow); 'pal9c' = the 2026-07-28 blue-noise dither wave: 32x32
+# void-and-cluster threshold tile replaces 8x8 Bayer AND the default
+# dither amplitude drops to 0.5 of a quantization step (videnc
+# --dither sets it per encode; a --dither in VIDOPTS/VIDOPTS_NNN is
+# part of the hashed arg list below, so per-title overrides re-encode
+# on change - this stamp covers the DEFAULT-args output change).
+$encoderGeneration = 'pal9c'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')
