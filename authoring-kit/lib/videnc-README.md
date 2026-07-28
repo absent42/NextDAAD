@@ -115,53 +115,49 @@ remedy in the error message:
   the refusal message prints the live at-rate menu (stereo/mono
   heights, 0.90-margin variants, and the mono-floor maximum).
 
-A fourth check WARNS but never refuses:
+Delta-starvation diagnostics (measurements only, no verdict):
 
-- **Delta starvation.** Every streaming encode reports a line like
-  `delta budget-bound 42.4% (106/250 frames), worst 12-frame burst 100%
-  @f88, delta-frame PSNR p10 23.37 dB`. Budget-bound frames are frames
-  whose deltas did not fit the per-frame caps, so the encoder spent the
-  budget on the bands it could afford and deferred the rest; because
-  bands are 4 rows of paint order, the deferred bands show as stale
-  horizontal strips of older content. The encoder prints a
-  `warning: delta starvation` line on EITHER of two triggers:
+- **Delta stats line.** Every streaming encode prints a line like
+  `delta stats: budget-bound 42.4% (106/250 frames), peak 12-frame
+  window 100% @f88, delta-frame PSNR p10 23.37 dB`. Budget-bound frames
+  are frames whose deltas did not fit the per-frame caps, so the encoder
+  spent the budget on the bands it could afford and deferred the rest;
+  because bands are 4 rows of paint order, deferred bands show as stale
+  horizontal strips of older content. The window figure is the worst
+  concentrated run: the highest budget-bound fraction inside any
+  half-second window (12 frames at 25 fps, always half a second
+  whatever the `--fps`), and the frame it starts at, so you can go and
+  look at that moment. The delta-frame PSNR p10 is the 10th-percentile
+  PSNR over non-keyframe frames.
 
-  - **whole clip** - more than 8% of all frames are budget-bound, i.e.
-    the clip is starved throughout;
-  - **burst** - more than 60% of the frames inside some half-second
-    window are budget-bound, i.e. the clip is mostly fine but has a
-    concentrated run of ruined frames somewhere. The window is half a
-    second whatever the `--fps` (12 frames at 25 fps), and the report
-    line names the worst window and the frame it starts at, so you can
-    go and look at that moment. This trigger exists because the
-    whole-clip percentage is itself an average and hides short severe
-    runs: 15 consecutive budget-bound frames in a 250-frame clip is
-    only 6% - under the whole-clip trigger - yet at 25 fps that is
-    0.6 s of unbroken banding, which nobody misses.
+  **These are measurements, not a pass/fail.** There is NO automatic
+  starvation warning - the encoder will not tell you when a clip is
+  banded, and a high budget-bound percentage on its own does not mean
+  the picture is damaged. An earlier trigger on that percentage was
+  withdrawn as uncalibrated: fixture 008 measures 99.2% budget-bound
+  and is visually clean on hardware, while fixture 007 measures 36.4%
+  and bands visibly, so the count does not separate the two. Deferral
+  SEVERITY (how much of a bound frame went unpainted, and for how long)
+  is the likely signal, and it is not measured yet. Judge picture
+  quality by looking at the clip.
 
-  This matters because the streaming
-  gate is a whole-clip MEAN and is blind to it: fixture 007 (Sintel
-  fight, 256x192@25) passed at utilization 1.00 with a perfectly clean
-  transport on real hardware - zero underruns, zero depth clips - and
-  banded visibly, 42.4% of its frames budget-bound. Remedies, cheapest
-  first: lower `--dither` (the
-  strongest demand lever - 007 fell from 42.4% to 21.6% between
-  amplitude 0.5 and 0.0), a smaller shape or lower `--fps`, a calmer
-  source cut, a higher `--stream-budget` if the supply gate still
-  accepts it, or accept the visual cost when the clip is deliberate
-  stress content. The delta-frame PSNR p10 (10th-percentile PSNR over
-  non-keyframe frames) is reported alongside as a secondary
-  diagnostic; it moves far less than the bound fraction, which is why
-  the fraction is the trigger.
+  If a clip does band, the demand levers, cheapest first: lower
+  `--dither` (the strongest one - 007 fell from 42.4% to 21.6%
+  budget-bound between amplitude 0.5 and 0.0), a smaller shape or lower
+  `--fps`, a calmer source cut, a higher `--stream-budget` if the
+  supply gate still accepts it, or accept the visual cost when the clip
+  is deliberate stress content.
 
 `--report` writes a BuildReport JSON (shape, fps, PSNR mean/worst,
 keyframes, bytes, seconds-per-MB, degradation events, binding-budget
 histogram, and the starvation stats: `budget_bound_frames`,
 `bound_fraction`, `burst_window_frames`, `burst_peak_fraction`,
-`burst_peak_frame`, `delta_psnr_p10`, `starvation_warned`) for quality
-tracking. Direct-serve reports carry the same key set with the
-starvation keys zeroed (an all-literal stream has no deltas to starve),
-so one parser handles both modes.
+`burst_peak_frame`, `delta_psnr_p10`, `starvation_warned` - the last is
+the withdrawn trigger's retired verdict, recorded for re-derivation
+work and not a quality judgement) for quality tracking. Direct-serve
+reports carry the same key set with the starvation keys zeroed (an
+all-literal stream has no deltas to starve), so one parser handles both
+modes.
 
 ## Format authority
 
@@ -206,8 +202,11 @@ stride/gap padding is ever written to disk.
   clusters its heaviest frames tighter than the ring can absorb may
   still underrun at capacity. The gate's 0.90-utilization warning
   marks such at-capacity encodes. It also says nothing about picture
-  quality - see the delta-starvation warning above, which is the
-  signal for that.
+  quality.
+- Picture quality has no automatic check at all. The delta-starvation
+  stats above are reported but uncalibrated - no threshold on them
+  separates banded from clean content, so nothing warns you about a
+  banded encode. View the clip.
 - Large/long source clips decode the full frame set into memory
   before writing (fine for cutscene-length clips; not optimized for
   feature-length encodes).

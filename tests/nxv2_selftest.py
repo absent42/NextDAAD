@@ -2226,18 +2226,21 @@ def t14_lattice_exclusion_set():
 
 
 # =======================================================================
-# Step 15: delta-starvation gate (owner ruling 2026-07-28, "A + gate
-# now") - warn/report instrumentation over the streaming delta path.
-# The mean-rate supply gate is blind to starvation (007 passed it at
-# utilization 1.00 with clean transport counters while banding on
-# silicon); this gate counts budget-bound frames and reports the
-# delta-frame PSNR tail. It NEVER refuses an encode.
+# Step 15: delta-starvation DIAGNOSTICS - report-only instrumentation
+# over the streaming delta path. The mean-rate supply gate is blind to
+# picture damage (007 passed it at utilization 1.00 with clean transport
+# counters while banding on silicon); starvation_stats() counts
+# budget-bound frames, their worst concentrated window, and the
+# delta-frame PSNR tail.
 #
-# TWO triggers (burst-gate review closure 2026-07-28): the whole-clip
-# bound fraction, and the worst bound fraction over a sliding window of
-# STARVE_BURST_WINDOW_S seconds - because the whole-clip fraction is
-# itself a mean, and dilutes a short severe run (15 bound frames in 250
-# is 6%, under the 8% trigger, but 0.6 s of solid banding at 25 fps).
+# The WARNING these stats once fed was DEMOTED to report-only (owner
+# ruling 2026-07-28, second ruling): the bound-fraction axis is refuted
+# - fixture 008 measures 99.2% budget-bound and is visually CLEAN on
+# silicon, 007 measures 36.4% and BANDS - so count does not predict
+# visibility (severity probably does, and is unmeasured). These cases
+# therefore pin the STATS (definitions, window sizing, plumbing into
+# BuildReport/--report) and pin that NO warning line is emitted. The
+# retired threshold constants stay in the module for re-derivation.
 # =======================================================================
 
 def _starve_clip(N, h, w, motion):
@@ -2273,7 +2276,7 @@ def _burst_clip(N, h, w, b0, blen, motion=3):
     return orig
 
 
-@case(15, "starvation gate - starved synthetic encode reports a high budget-bound fraction and trips the threshold")
+@case(15, "starvation diagnostics - starved synthetic encode measures a high budget-bound fraction")
 def t15_starvation_trips():
     N, h, w = 24, 192, 256
     orig = _starve_clip(N, h, w, motion=3)
@@ -2290,16 +2293,16 @@ def t15_starvation_trips():
     expect(abs(st["bound_fraction"] - bound / N) < 1e-12, "bound_fraction = budget_bound / frames")
     expect(st["bound_fraction"] > 0.5,
            f"starved clip must be mostly budget-bound, got {st['bound_fraction']:.2f}")
-    expect(st["bound_fraction"] > enc.STARVE_WARN_BOUND_FRAC,
-           f"starved clip must trip the warning threshold "
-           f"({st['bound_fraction']:.3f} <= {enc.STARVE_WARN_BOUND_FRAC})")
+    expect(st["burst_peak_fraction"] >= st["bound_fraction"],
+           f"the peak window can never read below the whole-clip fraction, got "
+           f"{st['burst_peak_fraction']:.2f} < {st['bound_fraction']:.2f}")
     expect(0.0 < st["delta_psnr_p10"] < 40.0,
            f"delta p10 {st['delta_psnr_p10']} outside sane bounds")
     print(f"  [starved] bound {st['bound_fraction']:.1%} "
           f"({st['budget_bound']}/{st['frames']}), p10 {st['delta_psnr_p10']:.2f} dB")
 
 
-@case(15, "starvation gate - calm synthetic encode reports a near-zero bound fraction and does not warn")
+@case(15, "starvation diagnostics - calm synthetic encode measures a zero bound fraction and a null burst")
 def t15_starvation_quiet():
     N, h, w = 24, 192, 256
     orig = _starve_clip(N, h, w, motion=0)   # identical frames after the first
@@ -2309,22 +2312,22 @@ def t15_starvation_quiet():
     expect(st["budget_bound"] == 0,
            f"a static clip must have no budget-bound frame, got {st['budget_bound']}")
     expect(st["bound_fraction"] == 0.0, "bound_fraction must be exactly 0.0")
-    expect(st["bound_fraction"] <= enc.STARVE_WARN_BOUND_FRAC,
-           "a static clip must not trip the warning threshold")
     expect(st["delta_frames"] > 0, "the clip must contain delta frames to report a p10 over")
-    # SILENT ON BOTH PATHS - the burst window must not manufacture a
-    # warning out of a clip that has nothing to warn about.
+    # The burst window must not manufacture starvation out of a clip
+    # that has none - a zero clip reads zero on both measures.
     expect(st["burst_peak_fraction"] == 0.0,
-           f"a static clip's worst window must be 0.0, got {st['burst_peak_fraction']}")
-    expect(not enc.starvation_warns(st),
-           "a static clip must not warn on either the whole-clip or the burst path")
+           f"a static clip's peak window must be 0.0, got {st['burst_peak_fraction']}")
+    expect(st["burst_window_frames"] > 0,
+           "a non-empty clip must still report a window length")
 
 
-@case(15, "starvation gate - concentrated burst trips the WINDOW path while the whole-clip fraction stays under its threshold")
+@case(15, "starvation diagnostics - concentrated burst is visible in the WINDOW stat while the whole-clip fraction stays low")
 def t15_starvation_burst_path():
     # The whole-clip mean's blind spot: a short SEVERE run divided by a
     # long clip. fps 8.0 -> a 0.5 s window is 4 frames, so the clip can
     # stay small enough to encode quickly and still be ~25 windows long.
+    # The window stat is what makes such a run legible at all, which is
+    # why it survives the trigger's retirement as a reported figure.
     N, h, w, fps = 100, 96, 256, 8.0
     orig = _burst_clip(N, h, w, b0=40, blen=8)
     chg, po = _synth_clip(orig)
@@ -2333,67 +2336,75 @@ def t15_starvation_burst_path():
     expect(st["burst_window_frames"] == 4,
            f"window must be round(STARVE_BURST_WINDOW_S * fps) = 4 at {fps} fps, "
            f"got {st['burst_window_frames']}")
-    # (1) the whole-clip path alone would MISS this clip entirely...
-    expect(st["bound_fraction"] <= enc.STARVE_WARN_BOUND_FRAC,
-           f"the burst must stay diluted below the whole-clip threshold for this "
-           f"case to prove anything - got {st['bound_fraction']:.3f} > "
-           f"{enc.STARVE_WARN_BOUND_FRAC}")
-    # (2) ...and the window path catches it anyway.
-    expect(st["burst_peak_fraction"] > enc.STARVE_WARN_BURST_FRAC,
-           f"a saturated burst window must exceed the burst threshold, got "
-           f"{st['burst_peak_fraction']:.2f} <= {enc.STARVE_WARN_BURST_FRAC}")
-    expect(enc.starvation_warns(st),
-           "the gate must warn on the burst path alone")
+    # (1) the whole-clip fraction all but hides the run...
+    expect(st["bound_fraction"] < 0.10,
+           f"the burst must stay diluted in the whole-clip figure for this case "
+           f"to prove anything - got {st['bound_fraction']:.3f}")
+    # (2) ...and the window figure reports it plainly.
+    expect(st["burst_peak_fraction"] > 0.60,
+           f"a saturated burst window must read near 1.0, got "
+           f"{st['burst_peak_fraction']:.2f}")
+    expect(st["burst_peak_fraction"] > 5 * st["bound_fraction"],
+           f"the window figure must separate from the mean it exists to "
+           f"un-dilute, got {st['burst_peak_fraction']:.2f} vs "
+           f"{st['bound_fraction']:.3f}")
     expect(40 <= st["burst_peak_frame"] < 40 + 8 + st["burst_window_frames"],
            f"peak window must land on the burst, got frame {st['burst_peak_frame']}")
-    print(f"  [burst] whole-clip {st['bound_fraction']:.1%} (silent) | worst "
+    print(f"  [burst] whole-clip {st['bound_fraction']:.1%} | peak "
           f"{st['burst_window_frames']}-frame window "
-          f"{st['burst_peak_fraction']:.0%} @f{st['burst_peak_frame']} (warns)")
+          f"{st['burst_peak_fraction']:.0%} @f{st['burst_peak_frame']}")
 
 
-@case(15, "starvation gate - threshold values and stat definitions are what the comments claim")
+@case(15, "starvation diagnostics - stat definitions are what the docstring claims; retired thresholds still present but unused")
 def t15_starvation_threshold_and_definitions():
-    # The comment in nxv2enc.py derives 0.08 from four measured points:
-    # 007 banded at 0.456/0.424/0.364, 008 clean at 0.008. (The 0.008
-    # row is flagged UNRECONCILED in that comment - a re-encode of 008
-    # reads 0.992 - so this case pins the CONSTANT against the numbers
-    # as recorded, not the recording itself. If the anchor is
-    # re-measured, both thresholds and this case move together.)
+    # RETIRED constants (owner ruling 2026-07-28): the bound-fraction
+    # trigger was demoted to report-only because 008 measures 99.2%
+    # budget-bound while being visually CLEAN on silicon and 007
+    # measures 36.4% while BANDING - count does not predict visibility.
+    # The constants are deliberately KEPT (unreferenced by encode()'s
+    # output path) so the re-derivation has the old operating point to
+    # hand; this case pins that they are still there and unchanged, NOT
+    # that they are correct. Any re-derivation is expected to move
+    # them, and to move this case with them.
     t = enc.STARVE_WARN_BOUND_FRAC
-    expect(abs(t - 0.08) < 1e-12, f"STARVE_WARN_BOUND_FRAC changed to {t} - re-justify against the measured points")
-    expect(0.05 <= t <= 0.10, "threshold must stay in the separating 5-10% region")
-    expect(t >= 10 * 0.008, f"threshold {t} must sit an order of magnitude above the CLEAN 008 point (0.008)")
-    expect(t <= 0.364 / 3.0,
-           f"threshold {t} must stay well under the least-starved SILICON-CONFIRMED "
-           f"BANDED point (0.364 - the 0.216 row was never silicon-viewed)")
-
-    # Burst trigger: a fixed DURATION window and a much higher bar.
-    bw = enc.STARVE_BURST_WINDOW_S
+    expect(abs(t - 0.08) < 1e-12,
+           f"retired STARVE_WARN_BOUND_FRAC changed to {t} - it is a placeholder "
+           f"for re-derivation, not a live threshold")
     bt = enc.STARVE_WARN_BURST_FRAC
+    expect(abs(bt - 0.60) < 1e-12,
+           f"retired STARVE_WARN_BURST_FRAC changed to {bt} - same placeholder")
+    # starvation_warns() survives as the retired verdict recorded in the
+    # report; it must stay a pure function of those two constants.
+    expect(enc.starvation_warns(
+        {"bound_fraction": t + 0.01, "burst_peak_fraction": 0.0}),
+        "starvation_warns must still key off STARVE_WARN_BOUND_FRAC")
+    expect(enc.starvation_warns(
+        {"bound_fraction": 0.0, "burst_peak_fraction": bt + 0.01}),
+        "starvation_warns must still key off STARVE_WARN_BURST_FRAC")
+    expect(not enc.starvation_warns(
+        {"bound_fraction": t, "burst_peak_fraction": bt}),
+        "starvation_warns must be strict on both thresholds")
+
+    # LIVE measurement parameter: the window is a fixed DURATION, so it
+    # means the same thing to a viewer at any fps.
+    bw = enc.STARVE_BURST_WINDOW_S
     expect(abs(bw - 0.5) < 1e-12,
            f"STARVE_BURST_WINDOW_S changed to {bw} - re-justify the perceptual scale")
     expect(0.25 <= bw <= 1.0, "burst window must stay on the perceptually relevant scale")
-    expect(abs(bt - 0.60) < 1e-12,
-           f"STARVE_WARN_BURST_FRAC changed to {bt} - re-justify against the measured points")
-    expect(bt > 0.5, "a burst trigger below half a window would not mean 'mostly bound'")
-    expect(bt > t, "the burst threshold must sit above the whole-clip one, or the "
-                   "burst path is just a noisier restatement of the mean")
     # Window sizing is fps-derived so it means a fixed duration.
     for fps, want in ((25.0, 12), (50.0, 25), (10.0, 5), (2.0, 2)):
         per = {"mode": ["full"] * 400, "binding": ["none"] * 400, "psnr": [30.0] * 400}
         expect(enc.starvation_stats(per, fps)["burst_window_frames"] == want,
                f"window at {fps} fps must be {want} frames")
-    # The concrete review miss: 15 consecutive bound frames in 250 is
-    # 6% whole-clip (silent) but a fully saturated window (warns).
+    # The two figures measure different things: 15 consecutive bound
+    # frames in 250 is 6% whole-clip but a fully saturated 0.6 s window.
     per = {"mode": ["full"] * 250, "binding": ["none"] * 250, "psnr": [30.0] * 250}
     for i in range(100, 115):
         per["binding"][i] = "budget"
     st = enc.starvation_stats(per, 25.0)
     expect(abs(st["bound_fraction"] - 0.06) < 1e-12, "15/250 must read 6%")
-    expect(st["bound_fraction"] <= enc.STARVE_WARN_BOUND_FRAC, "6% must not trip the whole-clip path")
     expect(st["burst_peak_fraction"] == 1.0, "15 consecutive bound frames must saturate a 12-frame window")
     expect(st["burst_peak_frame"] == 100, f"peak window must start at 100, got {st['burst_peak_frame']}")
-    expect(enc.starvation_warns(st), "the burst path must catch the 0.6 s run the mean dilutes")
     # A clip SHORTER than one window gets a single whole-clip window.
     short = enc.starvation_stats(
         {"mode": ["full"] * 5, "binding": ["budget"] * 2 + ["none"] * 3, "psnr": [30.0] * 5}, 25.0)
@@ -2426,10 +2437,9 @@ def t15_starvation_threshold_and_definitions():
     expect(empty["burst_window_frames"] == 0 and empty["burst_peak_fraction"] == 0.0
            and empty["burst_peak_frame"] is None,
            "empty encode must report a null burst, not raise")
-    expect(not enc.starvation_warns(empty), "empty encode must not warn")
 
 
-@case(15, "starvation gate - --report JSON carries the same key set in both modes (direct zeroes, never omits)")
+@case(15, "starvation diagnostics - --report JSON carries the same key set in both modes (direct zeroes, never omits)")
 def t15_starvation_report_key_parity():
     if not SINTEL.exists() or not FFMPEG.exists():
         skip("Sintel source or ffmpeg not available")
@@ -2462,7 +2472,7 @@ def t15_starvation_report_key_parity():
                    f"deltas to starve), got {d[k]!r}")
 
 
-@case(15, "starvation gate - end-to-end: BuildReport fields, report line, warning only when starved (Sintel)")
+@case(15, "starvation diagnostics - end-to-end: BuildReport fields and report line, and NO warning either way (Sintel)")
 def t15_starvation_end_to_end():
     if not SINTEL.exists() or not FFMPEG.exists():
         skip("Sintel source or ffmpeg not available")
@@ -2481,40 +2491,44 @@ def t15_starvation_end_to_end():
                                      quality_profile="max", start="00:00:00", duration="2",
                                      ffmpeg=str(FFMPEG), stream_budget=sb, dither=0.25)
             outs[tag] = (report, buf.getvalue())
-            # Always REPORTED, whatever the verdict.
-            expect("delta budget-bound" in outs[tag][1],
-                   f"[{tag}] the report line must always print: {outs[tag][1]!r}")
+            # ALWAYS reported, and reported as a measurement only.
+            expect("delta stats: budget-bound" in outs[tag][1],
+                   f"[{tag}] the stats line must always print: {outs[tag][1]!r}")
             expect(report.delta_frames > 0, f"[{tag}] delta_frames must be counted")
             expect(report.bound_fraction ==
                    (report.budget_bound_frames / report.frames),
                    f"[{tag}] bound_fraction must match its own counters")
-            expect(report.starvation_warned ==
-                   (report.bound_fraction > enc.STARVE_WARN_BOUND_FRAC
-                    or report.burst_peak_fraction > enc.STARVE_WARN_BURST_FRAC),
-                   f"[{tag}] starvation_warned must follow EITHER threshold")
             expect(report.burst_window_frames == 12,
-                   f"[{tag}] 25 fps must give a 12-frame burst window, "
+                   f"[{tag}] 25 fps must give a 12-frame window, "
                    f"got {report.burst_window_frames}")
-            expect("burst" in outs[tag][1],
-                   f"[{tag}] the report line must carry the burst stat: {outs[tag][1]!r}")
+            expect("window" in outs[tag][1],
+                   f"[{tag}] the stats line must carry the window stat: {outs[tag][1]!r}")
+            expect(f"{report.delta_psnr_p10:.2f} dB" in outs[tag][1],
+                   f"[{tag}] the stats line must carry the p10 it reported: "
+                   f"{outs[tag][1]!r}")
+            # DEMOTED TO REPORT-ONLY (owner ruling 2026-07-28): no
+            # starvation verdict reaches the author on either leg.
+            expect("starvation" not in outs[tag][1],
+                   f"[{tag}] no starvation warning may be emitted: {outs[tag][1]!r}")
 
         starved_rep, starved_out = outs["starved"]
         calm_rep, calm_out = outs["calm"]
-        expect(starved_rep.bound_fraction > enc.STARVE_WARN_BOUND_FRAC,
+        # The stats still separate the two operating points, which is
+        # why they stay worth reporting even without a threshold on them.
+        expect(starved_rep.bound_fraction > calm_rep.bound_fraction,
+               f"the 0.2-budget encode must measure more budget-bound than the "
+               f"0.88-budget one, got {starved_rep.bound_fraction:.3f} vs "
+               f"{calm_rep.bound_fraction:.3f}")
+        expect(starved_rep.bound_fraction > 0.5,
                f"the 0.2-budget encode must starve, got {starved_rep.bound_fraction:.3f}")
-        expect(starved_rep.starvation_warned, "starved encode must set starvation_warned")
-        expect("warning: delta starvation" in starved_out,
-               f"starved encode must print the warning: {starved_out!r}")
-        for remedy in ("--dither", "--fps", "--stream-budget", "stress content"):
-            expect(remedy in starved_out, f"warning must name the {remedy} remedy: {starved_out!r}")
-        expect(calm_rep.bound_fraction <= enc.STARVE_WARN_BOUND_FRAC,
-               f"the 0.88-budget encode must not starve, got {calm_rep.bound_fraction:.3f}")
-        expect(calm_rep.burst_peak_fraction <= enc.STARVE_WARN_BURST_FRAC,
-               f"the calm encode must stay silent on the BURST path too, got "
-               f"{calm_rep.burst_peak_fraction:.2f}")
-        expect(not calm_rep.starvation_warned, "calm encode must not set starvation_warned")
-        expect("warning: delta starvation" not in calm_out,
-               f"calm encode must not print the warning: {calm_out!r}")
+        # The retired verdict is still RECORDED (for re-derivation) but
+        # never printed - it must stay consistent with its constants.
+        for tag, rep in (("starved", starved_rep), ("calm", calm_rep)):
+            expect(rep.starvation_warned ==
+                   (rep.bound_fraction > enc.STARVE_WARN_BOUND_FRAC
+                    or rep.burst_peak_fraction > enc.STARVE_WARN_BURST_FRAC),
+                   f"[{tag}] recorded starvation_warned must follow the retired "
+                   f"constants it is defined by")
         # Starvation costs picture: the starved encode's tail must be worse.
         expect(starved_rep.delta_psnr_p10 < calm_rep.delta_psnr_p10,
                f"starved p10 {starved_rep.delta_psnr_p10:.2f} should sit below "

@@ -195,10 +195,13 @@
 #            EXPECTED PICTURE for this fixture - the content out-
 #            demands the wire at 256x192@25 and no operating point is
 #            both at-ceiling and clean. It is 36.4% budget-bound at
-#            the shipped point, so videnc's delta-starvation gate
-#            warns on every 007 re-encode BY DESIGN; do not "fix" the
-#            warning by re-deriving the operating point. 008/009 sit
-#            near 1% and must stay quiet.
+#            the shipped point - videnc prints that as a measurement
+#            on every re-encode and NEVER warns about it (the
+#            starvation trigger was retired 2026-07-28 as
+#            uncalibrated: 008 reads 99.2% budget-bound and is clean
+#            on silicon, 007 reads 36.4% and bands, so the figure
+#            does not grade picture quality). Do not re-derive 007's
+#            operating point off these numbers.
 #            Cached at tests\out\00X_<shape>[_<tag>]_<settlementTag>_
 #            long_cache.vid like -Vid (encode once, copy after;
 #            delete a cache to re-encode; the operating point AND the
