@@ -2076,19 +2076,12 @@ def _fe_entries(blocks):
             for i in range(256) if b[2 * i] == 0xFE]
 
 
-@case(14, "no $FE-byte0 palette entry survives an encode of a near-white gradient clip")
-def t14_no_transparency_collision_on_wire():
-    # A near-white gradient (R=G=255, blue ramping through the 146/182
-    # lattice levels, slowly drifting so it is a real moving clip) slams
-    # the palette straight into (255,255,146)-(255,255,182). This case
-    # FAILS against the pre-fix encoder logic: display_palette's
-    # median-cut snap and dithered-composite refill both land on those
-    # two lattice points, and build_palette_block packs each to byte0
-    # $FE (verified on the real encodes: sd/008.VID and the kit bunny
-    # caches each carried both 9th-bit variants). The negative control
-    # below re-encodes with the remap disabled to prove the clip still
-    # slams the collision points - so this case cannot rot silently.
-    N, h, w = 12, 192, 256
+def _near_white_gradient(N, h, w):
+    """Near-white gradient clip (R=G=255, blue ramping through the
+    146/182 lattice levels, slowly drifting so it is a real moving
+    clip) - slams the palette straight into the two NR $14 = $FE
+    collision points (255,255,146)/(255,255,182). The ramp is x-only,
+    so any frame height hits the same lattice points."""
     xx = np.arange(w, dtype=np.float32)[None, :]
     orig = np.empty((N, h, w, 3), dtype=np.uint8)
     for i in range(N):
@@ -2096,6 +2089,22 @@ def t14_no_transparency_collision_on_wire():
         orig[i, ..., 0] = 255
         orig[i, ..., 1] = 255
         orig[i, ..., 2] = np.clip(ramp, 0, 255).astype(np.uint8)
+    return orig
+
+
+@case(14, "no $FE-byte0 palette entry survives an encode of a near-white gradient clip")
+def t14_no_transparency_collision_on_wire():
+    # The near-white gradient (_near_white_gradient) slams the palette
+    # straight into (255,255,146)-(255,255,182). This case FAILS
+    # against the pre-fix encoder logic: display_palette's median-cut
+    # snap and dithered-composite refill both land on those two lattice
+    # points, and build_palette_block packs each to byte0 $FE (verified
+    # on the real encodes: sd/008.VID and the kit bunny caches each
+    # carried both 9th-bit variants). The negative control below
+    # re-encodes with the remap disabled to prove the clip still slams
+    # the collision points - so this case cannot rot silently.
+    N, h, w = 12, 192, 256
+    orig = _near_white_gradient(N, h, w)
     chg, po = _synth_clip(orig)
 
     def encode_and_scan(tag):
@@ -2123,6 +2132,54 @@ def t14_no_transparency_collision_on_wire():
     expect(control != [], "negative control: pre-fix lattice must emit "
            "$FE entries for this clip (content no longer slams the "
            "collision points - test needs re-arming)")
+
+
+@case(14, "direct-serve path - same clip through _encode_direct, zero $FE-byte0 entries")
+def t14_no_transparency_collision_direct():
+    # Sibling of the wire case above, driving the DIRECT-SERVE preset
+    # (_encode_direct, as t11_direct_serve does) instead of
+    # encode_clip. The direct path derives its palettes on its OWN
+    # call sites (scene_palette per keyframe span, op_pal/
+    # build_palette_block inside emit_direct_frame_payload), so the
+    # shared-code argument is not relied on: a future regression scoped
+    # to the direct-serve palette path must trip this standalone
+    # assertion. 256x128 keeps the unconditional wire gate at-rate
+    # (t11_direct_serve's shape rationale); the gradient is x-only, so
+    # the shorter frame slams the same two collision points.
+    N, h, w = 12, 128, 256
+    orig = _near_white_gradient(N, h, w)
+    chg, _ = _synth_clip(orig)
+    abytes_real, abytes_pad = 1250, 1536
+    ex = dict(orig=orig, chg=chg,
+              audio_bytes=bytes(N * abytes_real), channels=2,
+              rate=enc.RATE_STEREO, abytes_real=abytes_real,
+              abytes_pad=abytes_pad, nframes=N)
+
+    def encode_and_scan(tag):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / f"transp_direct_{tag}.vid"
+            report = enc._encode_direct(ex, w, h, 25.0, p)
+            expect(report.mode == "direct", "direct-serve report mode")
+            blocks = _collect_pal_blocks(p)
+        expect(len(blocks) >= 1, "direct encode emitted no palette block at all")
+        return blocks
+
+    hits = _fe_entries(encode_and_scan("fixed"))
+    expect(hits == [],
+           f"direct-serve palette entries with byte0 $FE on the wire: {hits}")
+
+    # Negative control, mirroring the streaming case: the pre-fix
+    # lattice must emit $FE entries through the direct path too,
+    # proving this case bites rather than passing vacuously.
+    saved = enc.TRANSP_REMAP
+    try:
+        enc.TRANSP_REMAP = {}
+        control = _fe_entries(encode_and_scan("prefix"))
+    finally:
+        enc.TRANSP_REMAP = saved
+    expect(control != [], "negative control: pre-fix lattice must emit "
+           "$FE entries through the direct path (clip no longer slams "
+           "the collision points - test needs re-arming)")
 
 
 @case(14, "lattice exclusion - representable set excludes exactly the two collision points")

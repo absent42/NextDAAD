@@ -142,8 +142,8 @@
 #            name change forces a re-encode. Regenerate by deleting the
 #            relevant cache file and re-running -Vid, or directly with
 #            e.g.:
-#              python authoring-kit\lib\videnc.py tools\demo-files\Sintel_1080_10s_30MB.mp4 tests\out\001_full_pal9c_leg_cache.vid --shape full --fps 25 --start 00:00:00 --duration 1.35
-#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\006_169_pal9c_leg_cache.vid --shape 16:9 --fps 25 --start 00:00:00 --duration 5.0
+#              python authoring-kit\lib\videnc.py tools\demo-files\Sintel_1080_10s_30MB.mp4 tests\out\001_full_pal9d_leg_cache.vid --shape full --fps 25 --start 00:00:00 --duration 1.35
+#              python authoring-kit\lib\videnc.py tools\demo-files\1920x1080-25p.mp4 tests\out\006_169_pal9d_leg_cache.vid --shape 16:9 --fps 25 --start 00:00:00 --duration 5.0
 #            Same CSpect-running guard as -Rab/-UU/-Title/-Font.
 #            sd\*.VID is gitignored (owner edit).
 #            PRE-3a LONG-CLIP CACHES ARE OBSOLETE: the five 10-14MB
