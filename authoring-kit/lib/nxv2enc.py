@@ -502,6 +502,50 @@ STREAM_WARN_UTIL = 0.90
 STREAM_TARGET_UTIL = 0.90                       # suggestion target
 
 
+# ---------------------------------------------------------------------
+# DELTA-STARVATION GATE (owner ruling 2026-07-28, "A + gate now")
+# ---------------------------------------------------------------------
+# The supply gate above is a WHOLE-CLIP MEAN and is provably blind to
+# starvation: fixture 007 passed it at utilization 1.00 with every
+# transport counter clean on silicon (zero underruns, zero depth clips,
+# ERR=00) while the picture carried sustained horizontal banding. The
+# artifact is in the WIRE bytes, not the transport - when a frame's
+# deltas do not fit the per-frame caps, encode_delta spends the budget
+# on whole TILE_BAND bands (4 rows in mode-0 paint order) and the
+# deferred bands read as hard horizontal strips of stale content.
+#
+# So the honest quality signal is HOW OFTEN frames are budget-bound,
+# not the mean rate. Measured points (007 = Sintel fight, classic
+# 256x192@25 --stream-budget 0.85; 008 = BBB full 320x256 sb 0.51),
+# budget-bound = per_frame binding "budget", fraction of emitted frames:
+#
+#   007 --dither 1.00   114/250 = 45.6%   p10 21.94  worst banding
+#   007 --dither 0.50   106/250 = 42.4%   p10 23.37  SEVERELY banded on silicon
+#   007 --dither 0.25    91/250 = 36.4%   p10 24.68  still visibly banded on silicon
+#   007 --dither 0.00    54/250 = 21.6%   p10 25.88  (not silicon-viewed)
+#   008 (util 0.93)       2/252 =  0.8%   p10 25.97  visually CLEAN on silicon
+#
+# (The 007 diagnosis also quoted 123/250 for the shipped d0.50 file: that
+# is the WIRE-TRACE count of frames within 512 B of the byte ceiling, a
+# looser proxy. This gate counts the encoder's own binding label, which
+# is exact - a frame is budget-bound iff the full delta did not fit and
+# the region schedule ran. Both measures rank the points identically.)
+#
+# The bound FRACTION separates banded from clean by nearly two orders of
+# magnitude (35-46% banded vs 0.8% clean); p10 barely moves across the
+# same span (23.4 -> 26.0 dB), which is why the fraction is the trigger
+# and p10 is only a reported diagnostic. 0.08 sits an order of magnitude
+# above the clean fixture (0.8%) and well under a third of the least-
+# starved banded measurement (21.6%) - no measured point is anywhere
+# near it, so the value is not fitted to a knife edge.
+#
+# WARN/REPORT ONLY - this never refuses an encode. The wire gate above
+# handles physics (what the machine can carry); this one handles honesty
+# (what the author is about to ship). Deliberate at-capacity stress
+# fixtures (007) are expected to trip it.
+STARVE_WARN_BOUND_FRAC = 0.08
+
+
 def silicon_r(width, height):
     """Measured composed-player decode ratio (silicon/model) for this
     shape cluster. Gapped surfaces interpolate on height between the
@@ -1816,6 +1860,14 @@ class BuildReport:
     stream_busy_ms: float = 0.0
     stream_sd_ms: float = 0.0
     stream_demand_kbs: float = 0.0
+    # Delta-starvation gate (STARVE_WARN_BOUND_FRAC). Streaming encodes
+    # only - the direct-serve preset is all-literal, it has no deltas to
+    # starve, and leaves these at their zero defaults.
+    delta_frames: int = 0
+    budget_bound_frames: int = 0
+    bound_fraction: float = 0.0
+    delta_psnr_p10: float = 0.0
+    starvation_warned: bool = False
 
 
 # ---------------------------------------------------------------------
@@ -2298,11 +2350,52 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 surfaces.append(unflatten_frame(prev_flat, height, width, column_major).copy())
             per_frame["psnr"].append(psnr(orig[i], dec_img))
 
+    starve = starvation_stats(per_frame)
     return dict(payloads=payloads, kf_span_ranges=kf_span_ranges, decoded=decoded,
                 per_frame=per_frame, scene_cuts=scene_cuts, kf_events=kf_events,
                 staleness_events=staleness_events, kf_triggers=kf_triggers,
-                surfaces=surfaces,
+                surfaces=surfaces, starvation=starve,
                 held_pal_final=held_pal, usable_budget_ms=usable / TMODEL_COEFFS["clock_khz"])
+
+
+def starvation_stats(per_frame):
+    """Delta-starvation instrumentation for one streaming encode (see
+    STARVE_WARN_BOUND_FRAC). Pure measurement over encode_clip's own
+    per-frame records - it changes no wire byte.
+
+    Returns dict:
+      frames            emitted frames
+      delta_frames      frames outside a keyframe span
+      budget_bound      frames whose deltas did not fit the per-frame
+                        caps, so encode_delta fell back to the region
+                        (tile-band) schedule - binding == "budget"
+      bound_fraction    budget_bound / frames (0.0 for an empty encode)
+      delta_psnr_p10    10th-percentile PSNR over delta frames
+
+    Definitions match the 2026-07-28 007 diagnosis measurements the
+    threshold is derived from, so reported numbers stay comparable:
+      - bound_fraction's denominator is ALL emitted frames (not just
+        delta frames) - keyframe-span frames cannot be budget-bound, so
+        including them prices a starved clip against its whole length.
+      - delta_psnr_p10 excludes keyframe-span frames (mode "kf*"), which
+        carry the format-intrinsic dips: the startup repaint, the
+        one-frame stale hold before a cut's KFLIP, and the KFLIP frame
+        itself at a hard cut. Cut-adjacent DEFERRED-keyframe frames
+        (mode "...:deferred_kf") are ordinary delta frames and stay in,
+        exactly as the diagnosis measured them.
+    """
+    modes = per_frame["mode"]
+    n = len(modes)
+    delta_mask = [not m.startswith("kf") for m in modes]
+    bound = sum(1 for bd in per_frame["binding"] if bd == "budget")
+    dpsnr = [p for p, d in zip(per_frame["psnr"], delta_mask) if d]
+    return dict(
+        frames=n,
+        delta_frames=sum(1 for d in delta_mask if d),
+        budget_bound=bound,
+        bound_fraction=(bound / n) if n else 0.0,
+        delta_psnr_p10=float(np.percentile(np.array(dpsnr), 10)) if dpsnr else 0.0,
+    )
 
 
 def _mask_from_segments(gcls, gstarts, glens, n):
@@ -2613,6 +2706,29 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     for bd in per_frame["binding"]:
         hist[bd] = hist.get(bd, 0) + 1
 
+    # --- DELTA-STARVATION GATE (owner ruling 2026-07-28) ---
+    # Always REPORTED for a streaming encode, warned above
+    # STARVE_WARN_BOUND_FRAC. Never refuses: the supply gate above owns
+    # feasibility, this one owns disclosure (see the constant's comment
+    # for the four measured points behind the threshold).
+    starve = result.get("starvation") or starvation_stats(per_frame)
+    starvation_warned = starve["bound_fraction"] > STARVE_WARN_BOUND_FRAC
+    print(f"  delta budget-bound {starve['bound_fraction']:.1%} "
+          f"({starve['budget_bound']}/{starve['frames']} frames), "
+          f"delta-frame PSNR p10 {starve['delta_psnr_p10']:.2f} dB")
+    if starvation_warned:
+        print(f"  warning: delta starvation - "
+              f"{starve['bound_fraction']:.1%} of frames are budget-bound "
+              f"(> {STARVE_WARN_BOUND_FRAC:.0%}), delta-frame PSNR p10 "
+              f"{starve['delta_psnr_p10']:.2f} dB. Frames at the cap paint "
+              f"only the bands they can afford, so the deferred bands show "
+              f"as stale horizontal strips on hardware - the transport can "
+              f"be perfectly clean while the picture bands (007, silicon "
+              f"2026-07-28). Remedies: lower --dither (the cheapest demand "
+              f"lever), a smaller shape or lower --fps, a calmer source cut, "
+              f"a higher --stream-budget if the supply gate still accepts it, "
+              f"or accept the visual cost for deliberate stress content.")
+
     seconds = nframes_out / fps_val
     seconds_per_mb = seconds / (total_bytes / (1024 * 1024)) if total_bytes else 0.0
 
@@ -2629,6 +2745,11 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
         stream_busy_ms=stream_stats["busy_ms"] if stream_stats else 0.0,
         stream_sd_ms=stream_stats["sd_ms"] if stream_stats else 0.0,
         stream_demand_kbs=stream_stats["demand_kbs"] if stream_stats else 0.0,
+        delta_frames=starve["delta_frames"],
+        budget_bound_frames=starve["budget_bound"],
+        bound_fraction=starve["bound_fraction"],
+        delta_psnr_p10=starve["delta_psnr_p10"],
+        starvation_warned=starvation_warned,
     )
 
     if report_path:
@@ -2647,6 +2768,11 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                 stream_busy_ms=report.stream_busy_ms,
                 stream_sd_ms=report.stream_sd_ms,
                 stream_demand_kbs=report.stream_demand_kbs,
+                delta_frames=report.delta_frames,
+                budget_bound_frames=report.budget_bound_frames,
+                bound_fraction=report.bound_fraction,
+                delta_psnr_p10=report.delta_psnr_p10,
+                starvation_warned=report.starvation_warned,
                 scene_cuts=result["scene_cuts"], kf_span_ranges=result["kf_span_ranges"],
             ), f, indent=1)
 

@@ -2225,6 +2225,158 @@ def t14_lattice_exclusion_set():
         expect(dst in rep, f"{src}: replacement {dst} not representable")
 
 
+# =======================================================================
+# Step 15: delta-starvation gate (owner ruling 2026-07-28, "A + gate
+# now") - warn/report instrumentation over the streaming delta path.
+# The mean-rate supply gate is blind to starvation (007 passed it at
+# utilization 1.00 with clean transport counters while banding on
+# silicon); this gate counts budget-bound frames and reports the
+# delta-frame PSNR tail. It NEVER refuses an encode.
+# =======================================================================
+
+def _starve_clip(N, h, w, motion):
+    """Synthetic clip: a fixed dense noise texture rolled `motion` px per
+    frame. Palette stays stable (no keyframe thrash, no scene cuts) while
+    almost every pixel changes every frame - the demand shape that slams
+    the per-frame delta cap. motion=0 gives the calm control."""
+    rng = np.random.default_rng(1234)
+    base = rng.integers(0, 256, size=(h, w * 2, 3), dtype=np.uint8)
+    orig = np.empty((N, h, w, 3), dtype=np.uint8)
+    for i in range(N):
+        off = (i * motion) % w
+        orig[i] = base[:, off:off + w]
+    return orig
+
+
+@case(15, "starvation gate - starved synthetic encode reports a high budget-bound fraction and trips the threshold")
+def t15_starvation_trips():
+    N, h, w = 24, 192, 256
+    orig = _starve_clip(N, h, w, motion=3)
+    chg, po = _synth_clip(orig)
+    result = enc.encode_clip(orig, chg, po, w, h, 25.0)
+    st = result["starvation"]
+    expect(st == enc.starvation_stats(result["per_frame"]),
+           "encode_clip must surface exactly starvation_stats(per_frame)")
+    expect(st["frames"] == N, f"frames {st['frames']} != {N}")
+    # Cross-check the counter against the binding records it summarizes.
+    bound = sum(1 for b in result["per_frame"]["binding"] if b == "budget")
+    expect(st["budget_bound"] == bound,
+           f"budget_bound {st['budget_bound']} != binding-record count {bound}")
+    expect(abs(st["bound_fraction"] - bound / N) < 1e-12, "bound_fraction = budget_bound / frames")
+    expect(st["bound_fraction"] > 0.5,
+           f"starved clip must be mostly budget-bound, got {st['bound_fraction']:.2f}")
+    expect(st["bound_fraction"] > enc.STARVE_WARN_BOUND_FRAC,
+           f"starved clip must trip the warning threshold "
+           f"({st['bound_fraction']:.3f} <= {enc.STARVE_WARN_BOUND_FRAC})")
+    expect(0.0 < st["delta_psnr_p10"] < 40.0,
+           f"delta p10 {st['delta_psnr_p10']} outside sane bounds")
+    print(f"  [starved] bound {st['bound_fraction']:.1%} "
+          f"({st['budget_bound']}/{st['frames']}), p10 {st['delta_psnr_p10']:.2f} dB")
+
+
+@case(15, "starvation gate - calm synthetic encode reports a near-zero bound fraction and does not warn")
+def t15_starvation_quiet():
+    N, h, w = 24, 192, 256
+    orig = _starve_clip(N, h, w, motion=0)   # identical frames after the first
+    chg, po = _synth_clip(orig)
+    result = enc.encode_clip(orig, chg, po, w, h, 25.0)
+    st = result["starvation"]
+    expect(st["budget_bound"] == 0,
+           f"a static clip must have no budget-bound frame, got {st['budget_bound']}")
+    expect(st["bound_fraction"] == 0.0, "bound_fraction must be exactly 0.0")
+    expect(st["bound_fraction"] <= enc.STARVE_WARN_BOUND_FRAC,
+           "a static clip must not trip the warning threshold")
+    expect(st["delta_frames"] > 0, "the clip must contain delta frames to report a p10 over")
+
+
+@case(15, "starvation gate - threshold value and stat definitions are what the comment claims")
+def t15_starvation_threshold_and_definitions():
+    # The comment in nxv2enc.py derives 0.08 from four measured points:
+    # 007 banded at 0.456/0.424/0.364, 008 clean at 0.008.
+    t = enc.STARVE_WARN_BOUND_FRAC
+    expect(abs(t - 0.08) < 1e-12, f"STARVE_WARN_BOUND_FRAC changed to {t} - re-justify against the measured points")
+    expect(0.05 <= t <= 0.10, "threshold must stay in the separating 5-10% region")
+    expect(t >= 10 * 0.008, f"threshold {t} must sit an order of magnitude above the CLEAN 008 point (0.008)")
+    expect(t <= 0.364 / 3.0, f"threshold {t} must stay well under the least-starved BANDED point (0.364)")
+
+    # Definitions: denominator is ALL emitted frames; the p10 excludes
+    # keyframe-span frames (the format-intrinsic dips) but keeps
+    # deferred-keyframe delta frames.
+    per = {
+        "mode": ["kf", "kfhold", "kfflip", "full+merge", "region:3/48+merge",
+                 "region:1/48+merge:deferred_kf"],
+        "binding": ["kf", "kf", "kf", "none", "budget", "budget"],
+        "psnr": [4.0, 8.0, 12.0, 30.0, 20.0, 25.0],
+    }
+    st = enc.starvation_stats(per)
+    expect(st["frames"] == 6, "frames counts every emitted frame")
+    expect(st["delta_frames"] == 3, f"delta_frames {st['delta_frames']} != 3 (kf* excluded)")
+    expect(st["budget_bound"] == 2, f"budget_bound {st['budget_bound']} != 2")
+    expect(abs(st["bound_fraction"] - 2 / 6) < 1e-12,
+           "bound_fraction denominator must be ALL emitted frames, not just delta frames")
+    expect(abs(st["delta_psnr_p10"] - float(np.percentile([30.0, 20.0, 25.0], 10))) < 1e-9,
+           f"p10 {st['delta_psnr_p10']} must be the percentile over the three delta frames only "
+           "(kf dips excluded, deferred_kf kept)")
+    # Empty/degenerate input must not raise or divide by zero.
+    empty = enc.starvation_stats({"mode": [], "binding": [], "psnr": []})
+    expect(empty["bound_fraction"] == 0.0 and empty["delta_psnr_p10"] == 0.0,
+           "empty encode must report zeros, not raise")
+
+
+@case(15, "starvation gate - end-to-end: BuildReport fields, report line, warning only when starved (Sintel)")
+def t15_starvation_end_to_end():
+    if not SINTEL.exists() or not FFMPEG.exists():
+        skip("Sintel source or ffmpeg not available")
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as td:
+        outs = {}
+        # calm leg rides the same 0.88 operating point the step-7 case
+        # uses for Sintel classic (the supply gate's own named remedy);
+        # 2 s sits under the resident pool, so the gate itself is moot.
+        for tag, sb in (("starved", 0.2), ("calm", 0.88)):
+            out = Path(td) / f"starve_{tag}.vid"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                report = enc.encode(str(SINTEL), str(out), shape=(256, 192), fps=25.0,
+                                     quality_profile="max", start="00:00:00", duration="2",
+                                     ffmpeg=str(FFMPEG), stream_budget=sb, dither=0.25)
+            outs[tag] = (report, buf.getvalue())
+            # Always REPORTED, whatever the verdict.
+            expect("delta budget-bound" in outs[tag][1],
+                   f"[{tag}] the report line must always print: {outs[tag][1]!r}")
+            expect(report.delta_frames > 0, f"[{tag}] delta_frames must be counted")
+            expect(report.bound_fraction ==
+                   (report.budget_bound_frames / report.frames),
+                   f"[{tag}] bound_fraction must match its own counters")
+            expect(report.starvation_warned ==
+                   (report.bound_fraction > enc.STARVE_WARN_BOUND_FRAC),
+                   f"[{tag}] starvation_warned must follow the threshold")
+
+        starved_rep, starved_out = outs["starved"]
+        calm_rep, calm_out = outs["calm"]
+        expect(starved_rep.bound_fraction > enc.STARVE_WARN_BOUND_FRAC,
+               f"the 0.2-budget encode must starve, got {starved_rep.bound_fraction:.3f}")
+        expect(starved_rep.starvation_warned, "starved encode must set starvation_warned")
+        expect("warning: delta starvation" in starved_out,
+               f"starved encode must print the warning: {starved_out!r}")
+        for remedy in ("--dither", "--fps", "--stream-budget", "stress content"):
+            expect(remedy in starved_out, f"warning must name the {remedy} remedy: {starved_out!r}")
+        expect(calm_rep.bound_fraction <= enc.STARVE_WARN_BOUND_FRAC,
+               f"the 0.88-budget encode must not starve, got {calm_rep.bound_fraction:.3f}")
+        expect(not calm_rep.starvation_warned, "calm encode must not set starvation_warned")
+        expect("warning: delta starvation" not in calm_out,
+               f"calm encode must not print the warning: {calm_out!r}")
+        # Starvation costs picture: the starved encode's tail must be worse.
+        expect(starved_rep.delta_psnr_p10 < calm_rep.delta_psnr_p10,
+               f"starved p10 {starved_rep.delta_psnr_p10:.2f} should sit below "
+               f"calm p10 {calm_rep.delta_psnr_p10:.2f}")
+        print(f"  [starved sb0.2] bound {starved_rep.bound_fraction:.1%} "
+              f"p10 {starved_rep.delta_psnr_p10:.2f} dB | "
+              f"[calm sb0.88] bound {calm_rep.bound_fraction:.1%} "
+              f"p10 {calm_rep.delta_psnr_p10:.2f} dB")
+
+
 def main():
     passed, failed, skipped = 0, 0, 0
     last_step = None

@@ -188,6 +188,17 @@
 #            ceiling, which starved the deltas on the wire, so 007
 #            also carries --dither 0.25 and lands at util 0.981;
 #            008/009 target ~0.90).
+#            007 IS A DELIBERATE AT-CAPACITY STRESS FIXTURE (owner
+#            ruling 2026-07-28): its acceptance criterion is TRANSPORT
+#            (zero underruns, zero depth clips, ERR=00), proven twice
+#            on silicon. Visible horizontal banding is the DOCUMENTED
+#            EXPECTED PICTURE for this fixture - the content out-
+#            demands the wire at 256x192@25 and no operating point is
+#            both at-ceiling and clean. It is 36.4% budget-bound at
+#            the shipped point, so videnc's delta-starvation gate
+#            warns on every 007 re-encode BY DESIGN; do not "fix" the
+#            warning by re-deriving the operating point. 008/009 sit
+#            near 1% and must stay quiet.
 #            Cached at tests\out\00X_<shape>[_<tag>]_<settlementTag>_
 #            long_cache.vid like -Vid (encode once, copy after;
 #            delete a cache to re-encode; the operating point AND the
@@ -739,7 +750,10 @@ if ($VidLong) {
         # hardware; player exonerated, zero underruns). Fix (2026-07-28,
         # owner-track): keep sb 0.85, lower dither demand with --dither
         # 0.25 - util 0.981 (below the ceiling), delta-p10 24.68 vs the
-        # starved 23.37.
+        # starved 23.37. Owner ruling 2026-07-28: 007 STAYS this
+        # deliberate at-capacity stress fixture - it is still 36.4%
+        # budget-bound and still bands on silicon, which is the
+        # documented expected picture here (see the -VidLong header).
         '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.85', '--dither', '0.25'); tag = 'sb85d025' }
         '008.VID' = @{ shape = 'full';    src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.51'); tag = 'sb51' }
         # 009's operating point RE-DERIVED at the Card #5 gapped prices

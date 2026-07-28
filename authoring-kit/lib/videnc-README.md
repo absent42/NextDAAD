@@ -115,9 +115,35 @@ remedy in the error message:
   the refusal message prints the live at-rate menu (stereo/mono
   heights, 0.90-margin variants, and the mono-floor maximum).
 
+A fourth check WARNS but never refuses:
+
+- **Delta starvation.** Every streaming encode reports a line like
+  `delta budget-bound 42.4% (106/250 frames), delta-frame PSNR p10
+  23.37 dB`. Budget-bound frames are frames whose deltas did not fit
+  the per-frame caps, so the encoder spent the budget on the bands it
+  could afford and deferred the rest; because bands are 4 rows of
+  paint order, the deferred bands show as stale horizontal strips of
+  older content. Above 8% budget-bound frames the encoder prints a
+  `warning: delta starvation` line. This matters because the streaming
+  gate is a whole-clip MEAN and is blind to it: fixture 007 (Sintel
+  fight, 256x192@25) passed at utilization 1.00 with a perfectly clean
+  transport on real hardware - zero underruns, zero depth clips - and
+  banded visibly, 42.4% of its frames budget-bound. Clean fixture 008
+  sits at 0.8%. Remedies, cheapest first: lower `--dither` (the
+  strongest demand lever - 007 fell from 42.4% to 21.6% between
+  amplitude 0.5 and 0.0), a smaller shape or lower `--fps`, a calmer
+  source cut, a higher `--stream-budget` if the supply gate still
+  accepts it, or accept the visual cost when the clip is deliberate
+  stress content. The delta-frame PSNR p10 (10th-percentile PSNR over
+  non-keyframe frames) is reported alongside as a secondary
+  diagnostic; it moves far less than the bound fraction, which is why
+  the fraction is the trigger.
+
 `--report` writes a BuildReport JSON (shape, fps, PSNR mean/worst,
 keyframes, bytes, seconds-per-MB, degradation events, binding-budget
-histogram) for quality tracking.
+histogram, and the starvation stats: `budget_bound_frames`,
+`bound_fraction`, `delta_psnr_p10`, `starvation_warned`) for quality
+tracking.
 
 ## Format authority
 
@@ -161,7 +187,9 @@ stride/gap padding is ever written to disk.
 - The streaming gate is a whole-clip mean criterion: a clip that
   clusters its heaviest frames tighter than the ring can absorb may
   still underrun at capacity. The gate's 0.90-utilization warning
-  marks such at-capacity encodes.
+  marks such at-capacity encodes. It also says nothing about picture
+  quality - see the delta-starvation warning above, which is the
+  signal for that.
 - Large/long source clips decode the full frame set into memory
   before writing (fine for cutscene-length clips; not optimized for
   feature-length encodes).
