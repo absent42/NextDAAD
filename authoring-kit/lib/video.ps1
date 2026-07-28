@@ -56,8 +56,12 @@ if (-not $sources) { exit 0 }
 # dither amplitude drops to 0.5 of a quantization step (videnc
 # --dither sets it per encode; a --dither in VIDOPTS/VIDOPTS_NNN is
 # part of the hashed arg list below, so per-title overrides re-encode
-# on change - this stamp covers the DEFAULT-args output change).
-$encoderGeneration = 'pal9c'
+# on change - this stamp covers the DEFAULT-args output change);
+# 'pal9d' = the 2026-07-28 transparency-collision exclusion: palette
+# entries whose RRRGGGBB byte packs to $FE (the player's NR $14 global
+# transparency colour) punched transparent holes on real hardware -
+# the two colliding lattice points are now unrepresentable.
+$encoderGeneration = 'pal9d'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

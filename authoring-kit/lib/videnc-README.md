@@ -137,6 +137,19 @@ display lattice (position-deterministic 32x32 void-and-cluster tile -
 temporally stable, so it feeds no churn to the delta coder); `--dither`
 sets the amplitude, 0.0-1.0 of a quantization step, default 0.5.
 
+Encoder emission constraint: palette entries whose RRRGGGBB byte
+equals $FE are reserved - the player keeps Layer 2 transparency
+active during video with the global transparency colour NR $14 = $FE,
+and hardware transparency compares only that first palette byte (the
+9th blue bit is not compared), so such entries render as transparent
+holes over the blanked layer below. The encoder therefore excludes
+the two colliding lattice points, display colours (255,255,146) and
+(255,255,182), from its representable display lattice; palette
+derivation, the nearest-level snap and all quantization targets land
+on the nearest remaining lattice colour instead (blue-axis
+neighbours (255,255,109) and (255,255,219)), and the wire-true
+quality metrics measure the actually-displayed colour.
+
 ### Pixel order
 
 Mode-0 shapes are row-linear raster order; mode-1 shapes are

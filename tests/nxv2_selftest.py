@@ -2036,6 +2036,138 @@ def t13_amplitude_threading_e2e():
         enc._extract_source = real_extract
 
 
+# =======================================================================
+# Step 14: transparency-collision exclusion (pal9d, 2026-07-28). The
+# player keeps Layer 2 transparency ACTIVE during video with the global
+# transparency colour NR $14 = $FE; hardware transparency compares only
+# the palette entry's first byte (RRRGGGBB, the 9th blue bit is not
+# compared), so any emitted entry packing to byte0 $FE - display
+# colours (255,255,146) and (255,255,182), BOTH 9th-bit variants -
+# rendered as transparent holes (black punch-through in bright
+# regions, seen on real hardware in the Big Buck Bunny demo). The
+# encoder now excludes the two points from the representable lattice
+# (nxv2enc TRANSP_COLLISION/TRANSP_REMAP in snap_to_lattice).
+# =======================================================================
+
+
+def _collect_pal_blocks(vid_path):
+    """Every raw 512-byte PAL block of a .vid, captured through the
+    reference decoder's own stream walk (dec._decode_palette_block spy)
+    - exactly the bytes the player forwards to NR $44, no hand parsing."""
+    blocks = []
+    orig = dec._decode_palette_block
+
+    def spy(block):
+        blocks.append(bytes(block))
+        return orig(block)
+
+    dec._decode_palette_block = spy
+    try:
+        issues = dec.validate(vid_path)
+    finally:
+        dec._decode_palette_block = orig
+    expect(issues == [], f"validate() issues: {issues}")
+    return blocks
+
+
+def _fe_entries(blocks):
+    """(block_index, entry_index) pairs whose wire byte0 == $FE."""
+    return [(bi, i) for bi, b in enumerate(blocks)
+            for i in range(256) if b[2 * i] == 0xFE]
+
+
+@case(14, "no $FE-byte0 palette entry survives an encode of a near-white gradient clip")
+def t14_no_transparency_collision_on_wire():
+    # A near-white gradient (R=G=255, blue ramping through the 146/182
+    # lattice levels, slowly drifting so it is a real moving clip) slams
+    # the palette straight into (255,255,146)-(255,255,182). This case
+    # FAILS against the pre-fix encoder logic: display_palette's
+    # median-cut snap and dithered-composite refill both land on those
+    # two lattice points, and build_palette_block packs each to byte0
+    # $FE (verified on the real encodes: sd/008.VID and the kit bunny
+    # caches each carried both 9th-bit variants). The negative control
+    # below re-encodes with the remap disabled to prove the clip still
+    # slams the collision points - so this case cannot rot silently.
+    N, h, w = 12, 192, 256
+    xx = np.arange(w, dtype=np.float32)[None, :]
+    orig = np.empty((N, h, w, 3), dtype=np.uint8)
+    for i in range(N):
+        ramp = 96.0 + (xx + i * 4.0) % w * (136.0 / w)
+        orig[i, ..., 0] = 255
+        orig[i, ..., 1] = 255
+        orig[i, ..., 2] = np.clip(ramp, 0, 255).astype(np.uint8)
+    chg, po = _synth_clip(orig)
+
+    def encode_and_scan(tag):
+        result = enc.encode_clip(orig, chg, po, w, h, 25.0)
+        buf = _build_vid(result, w, h)
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / f"transp_{tag}.vid"
+            p.write_bytes(buf)
+            blocks = _collect_pal_blocks(p)
+        expect(len(blocks) >= 1, "encode emitted no palette block at all")
+        return blocks
+
+    hits = _fe_entries(encode_and_scan("fixed"))
+    expect(hits == [], f"palette entries with byte0 $FE on the wire: {hits}")
+
+    # Negative control: disable the remap (the pre-fix lattice) and
+    # confirm the SAME clip does emit $FE entries - proving this case
+    # bites the defect rather than passing vacuously.
+    saved = enc.TRANSP_REMAP
+    try:
+        enc.TRANSP_REMAP = {}
+        control = _fe_entries(encode_and_scan("prefix"))
+    finally:
+        enc.TRANSP_REMAP = saved
+    expect(control != [], "negative control: pre-fix lattice must emit "
+           "$FE entries for this clip (content no longer slams the "
+           "collision points - test needs re-arming)")
+
+
+@case(14, "lattice exclusion - representable set excludes exactly the two collision points")
+def t14_lattice_exclusion_set():
+    levels = enc.LATTICE_EXP3.tolist()
+    full = np.array([(r, g, b) for r in levels for g in levels for b in levels],
+                    dtype=np.uint8)
+    expect(full.shape == (512, 3), "full lattice must be 8x8x8")
+
+    def byte0(v):
+        return (int(v[0]) & 0xE0) | ((int(v[1]) >> 3) & 0x1C) | (int(v[2]) >> 6)
+
+    # The full lattice holds exactly two byte0==$FE points - the
+    # exclusion set matches the collision set, no over-exclusion.
+    fe_points = {tuple(int(c) for c in v) for v in full if byte0(v) == 0xFE}
+    expect(fe_points == set(enc.TRANSP_COLLISION),
+           f"byte0 $FE lattice points {fe_points} != TRANSP_COLLISION")
+
+    snapped = enc.snap_to_lattice(full)
+    moved = {tuple(int(c) for c in v)
+             for v in full[np.any(snapped != full, axis=1)]}
+    expect(moved == set(enc.TRANSP_COLLISION),
+           f"snap moved {moved}, expected exactly the two collision points")
+    rep = {tuple(int(c) for c in v) for v in snapped}
+    expect(rep == {tuple(int(c) for c in v) for v in full} - set(enc.TRANSP_COLLISION),
+           "representable set must be the full lattice minus the two collision points")
+    expect(all(byte0(v) != 0xFE for v in rep),
+           "a representable lattice point still packs to byte0 $FE")
+    # Idempotence: the representable set is a fixed point of the snap.
+    expect((enc.snap_to_lattice(snapped) == snapped).all(),
+           "snap must be idempotent on the representable set")
+
+    # Replacements sane: blue-axis neighbours (R=G=255 highlights keep
+    # their hue), one lattice level away, themselves representable:
+    # (255,255,146) -> (255,255,109) and (255,255,182) -> (255,255,219).
+    expect(enc.TRANSP_REMAP == {(255, 255, 146): (255, 255, 109),
+                                (255, 255, 182): (255, 255, 219)},
+           f"unexpected remap table {enc.TRANSP_REMAP}")
+    for src, dst in enc.TRANSP_REMAP.items():
+        expect(dst[:2] == src[:2], f"{src}: remap must stay on the blue axis")
+        expect(abs(dst[2] - src[2]) <= 37,
+               f"{src}: remap must move at most one lattice bin")
+        expect(dst in rep, f"{src}: replacement {dst} not representable")
+
+
 def main():
     passed, failed, skipped = 0, 0, 0
     last_step = None

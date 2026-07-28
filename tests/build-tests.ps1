@@ -649,11 +649,16 @@ if ($Font) {
 # 'pal9c' = the 2026-07-28 blue-noise dither wave: 32x32 void-and-
 # cluster threshold tile replaces the 8x8 Bayer matrix and the default
 # dither amplitude drops to 0.5 of a quantization step (videnc
-# --dither knob) - every default-args encode's bytes change.
+# --dither knob) - every default-args encode's bytes change;
+# 'pal9d' = the 2026-07-28 transparency-collision exclusion: palette
+# entries packing to byte0 $FE (the player's NR $14 global
+# transparency colour) rendered as transparent holes on real
+# hardware - the two colliding lattice points (255,255,146)/
+# (255,255,182) are excluded from the representable lattice.
 # Used by BOTH -Vid and -VidLong cache names (the -VidLong per-entry
 # 'tag' only fingerprints CLI operating points, so it is equally
 # blind to this class).
-$vidLegSettlementTag = 'pal9c'
+$vidLegSettlementTag = 'pal9d'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

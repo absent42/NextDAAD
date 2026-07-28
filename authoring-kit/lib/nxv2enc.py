@@ -1356,16 +1356,44 @@ def _nearest_lattice_lut():
 
 LATTICE_NEAREST = _nearest_lattice_lut()
 
+# Transparency-collision exclusion (pal9d, 2026-07-28): the player keeps
+# Layer 2 transparency ACTIVE during video with the global transparency
+# colour NR $14 = $FE (src/video.asm, TM_TRANSP_ATTR). Hardware
+# transparency is a colour compare on the palette entry's FIRST byte
+# only (RRRGGGBB) - the 9th blue bit is not compared - so any palette
+# entry whose byte0 packs to $FE (R=111, G=111, Bhi=10: display colours
+# (255,255,146) and (255,255,182), BOTH 9th-bit variants) renders as
+# transparent holes over the blanked layer below (black punch-through
+# in bright regions, seen on real hardware in the Big Buck Bunny demo).
+# The resident location-graphics path dodges this player-side
+# (src/overlay2.asm writes $FF); wire palettes are dodged HERE, at the
+# lattice level, so the two points are simply not representable: the
+# nearest-level snap, palette derivation and every quantization target
+# land on the nearest remaining lattice colour, and the wire-true
+# metrics automatically measure what is actually displayed. The remap
+# stays on the blue axis (R=G=255 highlights keep their hue; the
+# R/G-axis alternatives are 1/255 nearer in raw distance but tint
+# near-white highlights pink/green).
+TRANSP_COLLISION = ((255, 255, 146), (255, 255, 182))
+TRANSP_REMAP = {(255, 255, 146): (255, 255, 109),
+                (255, 255, 182): (255, 255, 219)}
+
 
 def snap_to_lattice(rgb):
     """Snap uint8 RGB (any shape, last axis 3) to the 9-bit display
     lattice, returning decoder-expanded 8-bit values (the colours the
     hardware will actually show). NEAREST-level snap (LATTICE_NEAREST),
-    not truncation - see _nearest_lattice_lut."""
+    not truncation - see _nearest_lattice_lut. The two NR $14 = $FE
+    transparency-collision points are excluded from the representable
+    lattice and remapped to their blue-axis neighbours (TRANSP_REMAP)."""
     out = np.empty_like(rgb)
     out[..., 0] = LATTICE_NEAREST[rgb[..., 0]]
     out[..., 1] = LATTICE_NEAREST[rgb[..., 1]]
     out[..., 2] = LATTICE_NEAREST[rgb[..., 2]]
+    for src, dst in TRANSP_REMAP.items():
+        hit = ((out[..., 0] == src[0]) & (out[..., 1] == src[1])
+               & (out[..., 2] == src[2]))
+        out[hit] = np.array(dst, dtype=out.dtype)
     return out
 
 
