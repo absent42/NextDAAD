@@ -270,6 +270,26 @@ TMODEL_COEFFS = {
                                 #   cap (512B bursts starve the sample ISR - 35%
                                 #   tick shortfall, both sittings). DMA beats CPU
                                 #   fill at L >= 849/(17.0-5.1) = ~71 B
+    "copy_dma_per_b": 5.31,     # T/byte mem-to-mem DMA COPY body [SILICON
+                                #   KF-vs-CD3 cross-row solve sitting 2, UNARMED
+                                #   (6.21 armed) - the armed tax is carried
+                                #   globally by audio_factor, exactly as the
+                                #   fill DMA terms are, so the unarmed rate is
+                                #   the right one here]
+    "copy_dma_setup": 1091.8,   # T per DMA copy chunk [SILICON CD1..CD4 chunk
+                                #   solve sitting 2: the three chunk differences
+                                #   give 1091.8 / 1091.6 / 1091.9]. sitting 1:
+                                #   1273 (under the 920 T/op attribution error)
+    "copy_dma_chunk": 256,      # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
+                                #   the audio-safety burst cap the player clips
+                                #   every copy chunk to (vid_chunk_all)
+    "copy_dma_min": 90,         # the PLAYER's copy kernel-select threshold
+                                #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc): a
+                                #   chunk shorter than this goes LDI even though
+                                #   DMA already breaks even at
+                                #   1091.8/(20.25-5.31) = ~73 B. The model
+                                #   predicts what the player DOES, not the
+                                #   optimum - see _copy_t
     "header_rate": 0.0,         # count/colour byte parse - FOLDED into the
                                 #   dispatch envelopes above on silicon (see the
                                 #   envelope-convention note). model was 26.0
@@ -379,6 +399,33 @@ TMODEL_COEFFS = {
 #     density would be the row that settles the shape.
 # Factor = worst DENSE gapped R x the same ~11% margin the 2026-07-25
 # calibration used: 1.023 x 1.12 = 1.15.
+#
+# ---------------------------------------------------------------------
+# OPEN - R WAS FITTED AGAINST THE PRE-SP17 T MODEL (2026-07-28).
+#
+# Every R above divides a SILICON measurement by a MODEL T/frame, and
+# the model side has since got cheaper: SP17 restored the mem-to-mem DMA
+# copy term the task-2 settlement measured but the encoder never wired
+# in (_copy_t / copy_dma_* in TMODEL_COEFFS). Re-costing the SAME
+# byte-identical anchor streams under both models:
+#
+#   | anchor stream (pal9d)  | copy% | old T/f | new T/f | new/old |
+#   |------------------------|-------|---------|---------|---------|
+#   | 001 320x256 flat       | 33.0% | 863,937 | 788,195 |  0.912  |
+#   | 002 256x192 flat       | 43.3% | 530,078 | 451,709 |  0.852  |
+#   | 003 320x192 gapped     | 46.1% | 802,212 | 674,736 |  0.841  |
+#   | 004 320x144 gapped     | 43.4% | 616,260 | 568,920 |  0.923  |
+#   | 005 256x144 flat       | 55.2% | 547,800 | 417,790 |  0.763  |
+#
+# Silicon T/frame does not move, so every R above scales by 1/(new/old)
+# - a rise of 1.09x to 1.31x. That eats the 11-12% margin both factors
+# claim, and on the worst rows lands ON or just past the anchor (005
+# flat 0.760 -> ~0.996 against a 1.00 factor; 003 dense gapped 1.005 ->
+# ~1.195 against a 1.15 factor). The factors are NOT re-fitted here:
+# doing it from these numbers alone would bake a paper correction into a
+# calibration whose whole authority is that it was measured. What this
+# needs is a stage-3a-style silicon re-confirm leg on the re-encoded
+# streams. UNTIL THEN, treat both factors as carrying no margin.
 # ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
     "flat":   1.00,   # worst observed 0.898 (001) - 11% margin, and the
@@ -972,12 +1019,51 @@ def _cost_run_chunk(L):
     return 4, tc["t_op_parse"] + 3 * tc["header_rate"] + fill_t
 
 
+def _copy_t(L, rate):
+    """Modeled copy-body T for L bytes: min of the LDI body and the
+    mem-to-mem DMA body, chunked at copy_dma_chunk (256B), gated on the
+    PLAYER's own kernel-select rule.
+
+    The player (src/video.asm vid_copy_body/.seg) clips every copy chunk
+    to NXV2_DMA_CHUNK via vid_chunk_all, then takes vid_copy_dma when the
+    chunk is 256 or >= NXV2_COPY_DMA_MIN (90) and vid_copy_ldi otherwise.
+    So a body under 90 B is priced as pure LDI even though DMA breaks
+    even at ~73 B, and a trailing sub-90 remainder after the full 256B
+    chunks is priced as LDI too - the model must predict what the player
+    DOES. (The player also splits on src/dest window room, which the
+    model cannot see; those splits only add setups, so this stays the
+    optimistic-but-close side of the real chunking.)
+
+    Mirrors _fill_t's min(cpu, dma) shape. With the settled coefficients
+    DMA always wins at >= 90 B, so the min() is a floor-safety against a
+    future coefficient re-fit, not an active branch.
+
+    Restores the settlement term the T model dropped: task-2 measured
+    DMA copy at 1091.8 T/chunk + 5.31 T/B (final settlement, CD1..CD4 +
+    KF rows) but the model priced EVERY copy as LDI, over-pricing a 256B
+    copy 5171 T vs ~2451 T on silicon - on the dominant op class."""
+    tc = TMODEL_COEFFS
+    cpu = L * rate
+    if L < tc["copy_dma_min"]:
+        return cpu
+    chunk = tc["copy_dma_chunk"]
+    full, rem = divmod(L, chunk)
+    dma = full * (tc["copy_dma_setup"] + chunk * tc["copy_dma_per_b"])
+    if rem:
+        if rem >= tc["copy_dma_min"]:
+            dma += tc["copy_dma_setup"] + rem * tc["copy_dma_per_b"]
+        else:
+            dma += rem * rate
+    return min(cpu, dma)
+
+
 def _cost_copy_chunk(L):
     tc = TMODEL_COEFFS
     rate = tc["fetch_long"] if L >= 64 else tc["fetch_short"]
+    body = _copy_t(L, rate)
     if L <= 255:
-        return 2 + L, tc["t_op_parse"] + 1 * tc["header_rate"] + L * rate
-    return 3 + L, tc["t_op_parse"] + 2 * tc["header_rate"] + L * rate
+        return 2 + L, tc["t_op_parse"] + 1 * tc["header_rate"] + body
+    return 3 + L, tc["t_op_parse"] + 2 * tc["header_rate"] + body
 
 
 def op_cost(kind, length):

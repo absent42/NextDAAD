@@ -680,7 +680,12 @@ if ($Font) {
 # Used by BOTH -Vid and -VidLong cache names (the -VidLong per-entry
 # 'tag' only fingerprints CLI operating points, so it is equally
 # blind to this class).
-$vidLegSettlementTag = 'pal9d'
+# 'pal9e' = the 2026-07-28 SP17 copy-DMA T-model restoration: the
+# decode-T model gained the mem-to-mem DMA copy term the task-2
+# settlement measured (1091.8 T/chunk + 5.31 T/B) and had been dropped
+# from the encoder, so every streamed encode re-derives its per-frame
+# op budget. See $encoderGeneration 'pal9f' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9e'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

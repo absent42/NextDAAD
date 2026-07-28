@@ -72,7 +72,14 @@ if (-not $sources) { exit 0 }
 # full budget sat between the 0.90 target and the 1.00 refusal line now
 # re-derives down to the target). Resident-sized clips are unaffected -
 # the search returns the ceiling on its first probe.
-$encoderGeneration = 'pal9e'
+# 'pal9f' = the SP17 copy-DMA T-model restoration: _cost_copy_chunk now
+# prices a copy body as min(LDI, mem-to-mem DMA) using the task-2
+# settlement's 1091.8 T/chunk + 5.31 T/B, gated on the player's own
+# NXV2_COPY_DMA_MIN (90 B) kernel-select rule. Copy was previously
+# priced entirely as LDI (~2.1x over-price at 256 B) on the dominant op
+# class, so the per-frame decode-T cap admits more work per frame and
+# streamed encodes emit different bytes.
+$encoderGeneration = 'pal9f'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

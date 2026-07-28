@@ -963,6 +963,15 @@ def t10_silicon_coeffs():
     expect(tc["fill_cpu"] == 17.0, f"fill_cpu should be the silicon 17.0, got {tc['fill_cpu']}")
     expect(tc["fill_dma_setup"] == 849.0, f"fill_dma_setup should be the silicon 849, got {tc['fill_dma_setup']}")
     expect(tc["fill_dma_per_b"] == 5.1, f"fill_dma_per_b should be the silicon 5.1, got {tc['fill_dma_per_b']}")
+    # SP17: the mem-to-mem DMA COPY terms. task-2-final-settlement.md
+    # measured these (CD1..CD4 chunk solve 1091.8 T/chunk; KF-vs-CD3
+    # cross-row solve 5.31 T/B unarmed) but they were never wired in -
+    # the model priced EVERY copy as LDI, ~2.1x over the silicon cost of
+    # a 256 B copy, on the DOMINANT op class.
+    expect(tc["copy_dma_setup"] == 1091.8, f"copy_dma_setup should be the silicon 1091.8, got {tc['copy_dma_setup']}")
+    expect(tc["copy_dma_per_b"] == 5.31, f"copy_dma_per_b should be the silicon UNARMED 5.31, got {tc['copy_dma_per_b']}")
+    expect(tc["copy_dma_chunk"] == 256, "copy DMA chunk must be the 256 B audio-safety cap (NXV2_DMA_CHUNK)")
+    expect(tc["copy_dma_min"] == 90, "copy DMA threshold must be the PLAYER's NXV2_COPY_DMA_MIN (90)")
     expect(tc["t_frame_fixed"] == 1132.0, "t_frame_fixed should be the silicon FE 1132")
     # Shape given explicitly (320x256, flat): composition_factor()'s
     # unknown-shape default is the pessimistic gapped factor now (fail-
@@ -1040,6 +1049,80 @@ def t10_silicon_coeffs():
     finally:
         enc.TMODEL_COEFFS.clear()
         enc.TMODEL_COEFFS.update(saved)
+
+
+@case(10, "copy T model - mem-to-mem DMA term, gated on the PLAYER's NXV2_COPY_DMA_MIN")
+def t10_copy_dma_model():
+    tc = enc.TMODEL_COEFFS
+    rate = tc["fetch_long"]
+    setup, per_b, chunk, thr = (tc["copy_dma_setup"], tc["copy_dma_per_b"],
+                                tc["copy_dma_chunk"], tc["copy_dma_min"])
+    # RULE 1 - below the player's threshold the copy body is pure LDI,
+    # even though DMA already breaks even at 1091.8/(20.25-5.31) = ~73 B.
+    # The model predicts what the PLAYER DOES (src/video.asm vid_copy_body
+    # takes vid_copy_ldi under NXV2_COPY_DMA_MIN), not the optimum.
+    for L in (1, 16, 64, 73, 80, 89):
+        expect(abs(enc._copy_t(L, rate) - L * rate) < 1e-6,
+               f"copy body of {L} B (< {thr}) must be priced as CPU/LDI, got {enc._copy_t(L, rate):.1f}")
+    # 89 B, one byte under the player's threshold, is the widest point of
+    # the deliberate player-matching penalty: DMA breaks even at ~73 B, so
+    # the 73-89 band is priced at the CPU rate the PLAYER really pays
+    # there (237.8 T dearer at 89 B), not at the cheaper DMA rate. 73
+    # itself is the crossover and must NOT be asserted on - the two
+    # prices are within 5 T of each other there.
+    expect(enc._copy_t(89, rate) > setup + 89 * per_b,
+           "the sub-threshold CPU price must be ABOVE what DMA would cost - "
+           "this is the deliberate player-matching penalty, not an accident")
+    # RULE 2 - at/above the threshold: min(cpu, dma), which at the settled
+    # coefficients is always the DMA price.
+    for L in (90, 128, 200, 255, 256):
+        dma = setup + L * per_b
+        expect(abs(enc._copy_t(L, rate) - min(L * rate, dma)) < 1e-6,
+               f"copy body of {L} B must be min(cpu, dma), got {enc._copy_t(L, rate):.1f}")
+    expect(abs(enc._copy_t(256, rate) - (setup + 256 * per_b)) < 1e-6,
+           "a full 256 B chunk is priced at one DMA setup + 256 B of transfer")
+    # RULE 3 - the threshold is a real discontinuity: crossing it makes an
+    # 89 -> 90 byte copy CHEAPER. That is the player's own behaviour.
+    b89, t89 = enc.op_cost("copy", 89)
+    b90, t90 = enc.op_cost("copy", 90)
+    expect(t90 < t89, f"a 90 B copy must cost LESS than an 89 B one (kernel switch), {t90:.1f} !< {t89:.1f}")
+    # RULE 4 - multi-chunk: full 256 B chunks go DMA, a sub-threshold tail
+    # goes LDI (the player re-selects per chunk).
+    expect(abs(enc._copy_t(300, rate) - ((setup + chunk * per_b) + 44 * rate)) < 1e-6,
+           "a 300 B copy = one DMA chunk + a 44 B LDI tail")
+    expect(abs(enc._copy_t(2 * chunk, rate) - 2 * (setup + chunk * per_b)) < 1e-6,
+           "a 512 B copy = two DMA chunks")
+    # RULE 5 - the restored term must never make copy MORE expensive than
+    # the old all-LDI model anywhere, and must be materially cheaper on
+    # the dominant large-copy class (256 B: 5171 T modelled vs ~2451 T on
+    # silicon - the ~2.1x over-price this test exists to prevent).
+    for L in (1, 63, 89, 90, 256, 1024, 65535):
+        expect(enc._copy_t(L, rate) <= L * rate + 1e-6,
+               f"the DMA term may only ever LOWER the {L} B copy price")
+    expect(abs((256 * rate) / enc._copy_t(256, rate) - 2.11) < 0.05,
+           f"a 256 B copy body was over-priced ~2.11x, got "
+           f"{(256 * rate) / enc._copy_t(256, rate):.2f}x")
+    # RULE 6 - agreement with the silicon rows the coefficients came from.
+    # CD3 (dma copy, 256 B chunks) measured 9.84 T/B over 1024 B ops;
+    # the KF row (43008 B COPY16, DMA256) measured 12.2 T/B ARMED, which
+    # de-rates to ~10.4 unarmed. Body-only rates, dispatch excluded.
+    expect(abs(enc._copy_t(1024, rate) / 1024 - 9.84) < 0.5,
+           f"1024 B copy body should sit on CD3's 9.84 T/B, got {enc._copy_t(1024, rate) / 1024:.2f}")
+    expect(9.0 < enc._copy_t(43008, rate) / 43008 < 10.6,
+           f"43008 B copy body should sit near the KF row's unarmed rate, "
+           f"got {enc._copy_t(43008, rate) / 43008:.2f}")
+    # RULE 7 - the gate is coefficient-driven, not hardcoded: move the
+    # player's threshold and the pricing must follow it.
+    saved = dict(enc.TMODEL_COEFFS)
+    try:
+        enc.TMODEL_COEFFS["copy_dma_min"] = 1024
+        expect(abs(enc._copy_t(256, rate) - 256 * rate) < 1e-6,
+               "raising copy_dma_min must push a 256 B copy back onto the CPU price")
+    finally:
+        enc.TMODEL_COEFFS.clear()
+        enc.TMODEL_COEFFS.update(saved)
+    expect(abs(enc._copy_t(256, rate) - (setup + 256 * per_b)) < 1e-6,
+           "coefficients restored")
 
 
 @case(10, "optimal gap-merge - decoded output BYTE-IDENTICAL to un-merged, fewer ops, lower T")
@@ -1359,7 +1442,7 @@ def t12_moving_edge_pixel_exact():
 # which LOSES decode-T for runs past the break-even).
 # =======================================================================
 
-@case(13, "review fix: run-absorb threshold wired - long runs stay RUN ops (lower T than force-absorbed), short runs still absorb")
+@case(13, "review fix: run-absorb threshold wired - long runs stay RUN ops (far fewer bytes than force-absorbed), short runs still absorb")
 def t13_run_absorb_threshold():
     tc = enc.TMODEL_COEFFS
     absorb_max = enc.merge_run_absorb_max()
@@ -1393,18 +1476,35 @@ def t13_run_absorb_threshold():
 
     # Force the OLD (unconditional-absorb) behaviour by making
     # merge_run_absorb_max() return +inf (fetch_long == fill_cpu -> denom
-    # <= 0) and re-merge the same segments - the guarded merge's modeled T
-    # must beat the force-absorbed T (the review finding's exact claim).
+    # <= 0) and re-merge the same segments.
     saved = dict(tc)
     try:
         tc["fill_cpu"] = tc["fetch_long"]
         expect(enc.merge_run_absorb_max() == float("inf"), "test setup: forced absorb_max should be +inf")
-        _, _, t_forced = enc.merge_delta_stream(gcls, gstarts, glens, target, prev, cap_bytes=n)
+        _, b_forced, t_forced = enc.merge_delta_stream(gcls, gstarts, glens, target, prev, cap_bytes=n)
     finally:
         tc.clear()
         tc.update(saved)
-    expect(mt < t_forced,
-           f"guarded merge T ({mt:.0f}) should be lower than force-absorbed T ({t_forced:.0f})")
+    # THE TRADE (SP17). Before the T model carried a mem-to-mem DMA copy
+    # term, absorbing re-priced the run's body at the 20.2 T/B LDI rate
+    # and the guard SAVED decode T outright - the review finding's
+    # original claim, and what this case used to assert. With copy bodies
+    # now priced at 1091.8 T/chunk + 5.31 T/B the arithmetic INVERTS at
+    # this length: absorbing is a few hundred T cheaper, so a pure-T
+    # reading would push the crossover from ~121 B out past 700 B.
+    #
+    # The guard is kept regardless, and this case now pins the reason:
+    # what it costs is decode T (noise), what it buys is WIRE BYTES (the
+    # binding constraint on every streamed fixture - spec E2). Absorbing
+    # a run turns 3-4 opcode bytes into L literal bytes.
+    expect(mb < b_forced / 2,
+           f"the guard's whole point is bytes: guarded {mb} B must be far under "
+           f"the force-absorbed {b_forced} B")
+    wire_ms_saved = (b_forced - mb) / enc.SD_WIRE_BYTES_PER_MS
+    decode_ms_cost = max(mt - t_forced, 0.0) / enc.TMODEL_COEFFS["clock_khz"]
+    expect(wire_ms_saved > 5 * decode_ms_cost,
+           f"the guard must buy far more frame time than it spends: "
+           f"{wire_ms_saved:.3f} ms of wire saved vs {decode_ms_cost:.3f} ms of decode spent")
 
     # --- short run (well under 100B) directly touching copy segments -
     # absorption must still happen (folded into one COPY, no standalone
@@ -2615,15 +2715,21 @@ def t16_autobudget_constants():
 
 @case(16, "auto-budget - converges inside the probe cap on a streaming clip, and never returns a REFUSED budget")
 def t16_autobudget_converges():
-    # Dense noise rolled 3 px/frame at classic shape: every pixel
-    # changes every frame, so the per-frame caps bind hard and the
-    # budget genuinely drives utilization. 80 frames keeps the file over
-    # the resident pool at every budget the search will try, so the
-    # supply gate applies throughout.
-    ex = _synth_ex(_starve_clip(80, 192, 256, motion=3))
-    search = enc.auto_stream_budget(ex, 256, 192, 25.0)
+    # Dense noise rolled 3 px/frame at FULL shape: every pixel changes
+    # every frame, so the per-frame caps bind hard and the budget
+    # genuinely drives utilization. 60 frames keeps the file over the
+    # resident pool at every budget the search will try, so the supply
+    # gate applies throughout.
+    #
+    # SHAPE RE-BASED at the SP17 copy-DMA model (320x256, was 256x192 at
+    # 80 frames): the case needs a clip the gate REFUSES at the 1.00
+    # ceiling, and the restored DMA copy term made the classic-shape
+    # version feasible there (ceiling probe 1.587 -> 0.969). The premise
+    # assertion below is what caught it; the full shape restores it.
+    ex = _synth_ex(_starve_clip(60, 256, 320, motion=3))
+    search = enc.auto_stream_budget(ex, 320, 256, 25.0)
     probes = search["probes"]
-    expect(not search["resident"], "80 noise frames must exceed the resident pool")
+    expect(not search["resident"], "60 full-shape noise frames must exceed the resident pool")
     expect(1 <= len(probes) <= enc.AUTO_BUDGET_MAX_PROBES,
            f"{len(probes)} probes exceeds the cap {enc.AUTO_BUDGET_MAX_PROBES}")
     expect(probes[0][0] == 1.00, "the first probe must be the honest ceiling")
@@ -2760,17 +2866,22 @@ def t16_autobudget_override_e2e():
 def t16_autobudget_plateau():
     if not SINTEL.exists() or not FFMPEG.exists():
         skip("demo source or ffmpeg not available")
-    # 3 s of Sintel classic at --dither 0.25 streams (over the resident
-    # pool) at utilization 0.9135 - just over the 0.90 target - and that
-    # figure does NOT move with the budget: 1.00/0.98/0.88 all read
-    # 0.9135, because the content is asking for less than the caps
-    # allow. The first budget that moves it at all is 0.60, which reads
-    # 0.81 at 61% budget-bound against 1.3%. Descending there would be a
-    # pure quality loss for 0.01 of supply, so the search must not.
-    ex = enc._extract_source(str(SINTEL), 256, 192, 25.0, "00:00:00", "3.0",
-                              str(FFMPEG), 0.25, False)
-    search = enc.auto_stream_budget(ex, 256, 192, 25.0, dither_amp=0.25)
-    expect(not search["resident"], "3 s of Sintel classic must exceed the resident pool")
+    # 5 s of Sintel classic at --dither 0.5 streams (over the resident
+    # pool) at utilization 0.9023 - just over the 0.90 target - and that
+    # figure does NOT move with the budget, because the content is asking
+    # for less than the caps allow. Descending would be a pure quality
+    # loss for a hundredth of supply, so the search must not.
+    #
+    # OPERATING POINT RE-BASED at the SP17 copy-DMA model (5 s / dither
+    # 0.5, was 3 s / dither 0.25): the case needs a content-limited clip
+    # whose plateau sits ABOVE the target, and the restored DMA copy term
+    # dropped the old point's utilization to 0.8432 - under the target,
+    # where the ceiling is simply accepted and no plateau is reported.
+    # The premise assertion at the end is what caught it.
+    ex = enc._extract_source(str(SINTEL), 256, 192, 25.0, "00:00:00", "5.0",
+                              str(FFMPEG), 0.5, False)
+    search = enc.auto_stream_budget(ex, 256, 192, 25.0, dither_amp=0.5)
+    expect(not search["resident"], "5 s of Sintel classic must exceed the resident pool")
     expect(search["plateau"], "this clip is content-limited - the search must say so")
     expect(search["budget"] == 1.00,
            f"a content-limited clip must keep the ceiling, got {search['budget']}")
