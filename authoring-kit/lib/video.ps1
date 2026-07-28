@@ -32,9 +32,12 @@
 #                 to the nearest v2 shape (and, when VIDFPS is blank,
 #                 the nearest legal fps for that v1 profile's own baked
 #                 rate) when VIDASPECT is blank.
-# An infeasible encode is REFUSED by videnc's supply gates with a
-# message naming the remedy (--stream-budget value, smaller shape,
-# lower fps, --mono) - fix the config and rebuild. Requires ffmpeg
+# The streaming --stream-budget is DERIVED per clip by videnc itself
+# (SP17 T1) - nothing here sets one, and a VIDOPTS/VIDOPTS_NNN that does
+# overrides that search. An encode no budget can make feasible is still
+# REFUSED by videnc's supply gates with a message naming the remedies
+# that remain (smaller shape, lower fps, --mono) - fix the config and
+# rebuild. Requires ffmpeg
 # (tools\ffmpeg\bin\ffmpeg.exe - see tools\README.txt); nothing here
 # is needed unless numeric-named .mp4 files exist in VIDEO\.
 
@@ -61,7 +64,15 @@ if (-not $sources) { exit 0 }
 # entries whose RRRGGGBB byte packs to $FE (the player's NR $14 global
 # transparency colour) punched transparent holes on real hardware -
 # the two colliding lattice points are now unrepresentable.
-$encoderGeneration = 'pal9d'
+# the two colliding lattice points are now unrepresentable;
+# 'pal9e' = SP17 T1 auto-budget (2026-07-28): --stream-budget now
+# DEFAULTS to a derived value instead of 1.0, so an encode with an
+# unchanged argument vector and no explicit budget can emit different
+# bytes than it did before (any streaming clip whose utilization at the
+# full budget sat between the 0.90 target and the 1.00 refusal line now
+# re-derives down to the target). Resident-sized clips are unaffected -
+# the search returns the ceiling on its first probe.
+$encoderGeneration = 'pal9e'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

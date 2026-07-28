@@ -2539,6 +2539,252 @@ def t15_starvation_end_to_end():
               f"p10 {calm_rep.delta_psnr_p10:.2f} dB")
 
 
+
+# =======================================================================
+# Step 16: AUTO-BUDGET (SP17 T1). --stream-budget is a supply ceiling,
+# not a quality dial - the E2 ladder measured every metric moving the
+# same way as it falls - so the encoder derives it instead of the author
+# guessing. These cases pin the four properties the derivation has to
+# have: it converges, an explicit budget still wins outright, it never
+# hands back a budget the supply gate would refuse, and it is
+# deterministic.
+# =======================================================================
+
+def _synth_ex(orig, fps=25.0, mono=False):
+    """An _extract_source-shaped dict for a synthetic (N,H,W,3) stack -
+    the four keys auto_stream_budget/stream_gate_stats actually read."""
+    N = orig.shape[0]
+    po = np.empty(N)
+    chg = np.zeros(N)
+    for i in range(N):
+        po[i] = enc.display_ceiling(orig[i])
+        if i:
+            d = np.abs(orig[i].astype(np.int16)
+                       - orig[i - 1].astype(np.int16)).max(axis=2)
+            chg[i] = float((d > 10).mean())
+    abytes_pad = enc.audio_layout(fps, 1 if mono else 2)[3]
+    return dict(orig=orig, chg=chg, po_ceil=po, abytes_pad=abytes_pad)
+
+
+def _small_streaming_ex():
+    """A SMALL synthetic clip that the supply gate still applies to,
+    made so by lowering the reference resident-pool constant for the
+    duration of the case. Cases about the search's mechanics (exactness,
+    determinism) need the gate to run but not 80 frames of it - the pool
+    size is not what they are testing. Returns (ex, restore); call
+    restore() from a finally."""
+    ex = _synth_ex(_starve_clip(16, 192, 256, motion=3))
+    saved = enc.STREAM_RESIDENT_POOL_B
+    enc.STREAM_RESIDENT_POOL_B = 64 * 1024
+
+    def restore():
+        enc.STREAM_RESIDENT_POOL_B = saved
+    return ex, restore
+
+
+@case(16, "auto-budget - target point and search constants are the ones the design argues for")
+def t16_autobudget_constants():
+    # The target is a MARGIN below the refusal line, not the line: SP17
+    # E6 measured a clip whose whole-clip mean was 0.981 carrying a p95
+    # frame of 1.071 and runs of 19 consecutive frames over budget.
+    expect(0.0 < enc.AUTO_BUDGET_TARGET_UTIL < 1.0,
+           f"target {enc.AUTO_BUDGET_TARGET_UTIL} must leave margin under 1.00")
+    # It is the gate's OWN suggestion target - the search and the gate's
+    # advice must name one operating point, not two.
+    expect(enc.AUTO_BUDGET_TARGET_UTIL == enc.STREAM_TARGET_UTIL,
+           "auto-budget target must be the supply gate's own suggestion target")
+    # ...and at or under the at-capacity warning line, so a derived
+    # encode never trips the warning that says it will band.
+    expect(enc.AUTO_BUDGET_TARGET_UTIL <= enc.STREAM_WARN_UTIL,
+           "a derived budget must never land in the at-capacity warning band")
+    expect(enc.AUTO_BUDGET_MAX_PROBES >= 2,
+           "the search needs at least a ceiling probe and one step")
+    expect(0.0 < enc.AUTO_BUDGET_TOL < 0.1, "accept band must be narrow but non-zero")
+    expect(enc.AUTO_BUDGET_MIN_SLOPE > 0.0, "plateau cut-off must be positive")
+    expect(0.0 < enc.AUTO_BUDGET_MIN < enc.AUTO_BUDGET_TARGET_UTIL,
+           "budget floor must sit under the target")
+    # The search's one model-informed step reads audio_sd_ms out of the
+    # gate stats; it must be the audio pad's share of the fetch term.
+    st = enc.stream_supply_check(400000.0, 25508.0, 1536, 25.0, 256, 192)
+    wire_eff = enc.SD_WIRE_BYTES_PER_MS * enc.TMODEL_COEFFS["audio_factor"]
+    expect(abs(st["audio_sd_ms"] - 1536 / wire_eff) < 1e-9,
+           "audio_sd_ms must be the invariant audio pad's own fetch time")
+    expect(0.0 < st["audio_sd_ms"] < st["sd_ms"],
+           "the audio pad is part of the fetch term, not all of it")
+
+
+@case(16, "auto-budget - converges inside the probe cap on a streaming clip, and never returns a REFUSED budget")
+def t16_autobudget_converges():
+    # Dense noise rolled 3 px/frame at classic shape: every pixel
+    # changes every frame, so the per-frame caps bind hard and the
+    # budget genuinely drives utilization. 80 frames keeps the file over
+    # the resident pool at every budget the search will try, so the
+    # supply gate applies throughout.
+    ex = _synth_ex(_starve_clip(80, 192, 256, motion=3))
+    search = enc.auto_stream_budget(ex, 256, 192, 25.0)
+    probes = search["probes"]
+    expect(not search["resident"], "80 noise frames must exceed the resident pool")
+    expect(1 <= len(probes) <= enc.AUTO_BUDGET_MAX_PROBES,
+           f"{len(probes)} probes exceeds the cap {enc.AUTO_BUDGET_MAX_PROBES}")
+    expect(probes[0][0] == 1.00, "the first probe must be the honest ceiling")
+    expect(probes[0][1] > 1.0,
+           f"this clip must be refused at the ceiling for the case to mean "
+           f"anything, got {probes[0][1]:.3f}")
+    b = search["budget"]
+    expect(b is not None, "a feasible budget exists for this clip - the search must find it")
+    expect(0.0 < b <= 1.0, f"derived budget {b} outside (0, 1]")
+    expect(round(b, 2) == b, f"derived budget {b} must be quotable to two decimals")
+    util = search["stats"]["utilization"]
+    # THE hard property: what comes back is never a budget the gate
+    # refuses. Everything else is a quality preference; this is a
+    # correctness bound.
+    expect(util <= 1.0, f"returned budget {b} measures utilization {util:.3f} > 1.00 - REFUSED")
+    expect(util <= search["target"] or search["plateau"],
+           f"a non-plateau result must reach the target: util {util:.3f} "
+           f"vs target {search['target']:.2f}")
+    # The winner is the HIGHEST budget that met the target - handing back
+    # a lower one would be throwing away picture for nothing (E2).
+    at_target = [pb for pb, pu in probes if pu is not None and pu <= search["target"]]
+    if at_target:
+        expect(b == max(at_target),
+               f"chosen {b} is not the highest budget that met the target {max(at_target)}")
+    print(f"  [converge] probes {[(pb, round(pu, 4)) for pb, pu in probes]} "
+          f"-> {b:.2f} @ util {util:.4f} in {search['elapsed']:.1f} s")
+
+
+@case(16, "auto-budget - the derived budget reproduces the same stream when passed explicitly (memo is exact)")
+def t16_autobudget_reproducible():
+    # The report line tells the author which --stream-budget to type; if
+    # typing it produced different bytes the line would be a lie. This
+    # also pins the search's quantization memo as a CACHE and not an
+    # approximation - the searched pass shares palette solves between
+    # probes, the plain pass computes them fresh.
+    ex, restore = _small_streaming_ex()
+    try:
+        search = enc.auto_stream_budget(ex, 256, 192, 25.0)
+        b = search["budget"]
+        plain = enc.encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], 256, 192,
+                                25.0, budget_scale=b)
+    finally:
+        restore()
+    expect(enc._QUANT_MEMO is None, "the memo must be off outside a search")
+    expect(len(plain["payloads"]) == len(search["result"]["payloads"]),
+           "frame count differs between the searched and the plain pass")
+    for i, (p, q) in enumerate(zip(plain["payloads"], search["result"]["payloads"])):
+        expect(p == q, f"frame {i} payload differs between searched and plain encode at budget {b}")
+
+
+@case(16, "auto-budget - deterministic: the same input derives the same budget and the same bytes")
+def t16_autobudget_deterministic():
+    ex, restore = _small_streaming_ex()
+    try:
+        a = enc.auto_stream_budget(ex, 256, 192, 25.0)
+        b = enc.auto_stream_budget(ex, 256, 192, 25.0)
+    finally:
+        restore()
+    expect(a["budget"] == b["budget"],
+           f"two searches over one input chose {a['budget']} and {b['budget']}")
+    expect([p for p, _ in a["probes"]] == [p for p, _ in b["probes"]],
+           "the probe ladder itself must be reproducible")
+    expect([round(u, 12) for _, u in a["probes"]] == [round(u, 12) for _, u in b["probes"]],
+           "the measured utilizations must be reproducible")
+    expect(a["result"]["payloads"] == b["result"]["payloads"],
+           "the written stream must be reproducible")
+
+
+@case(16, "auto-budget - an explicit --stream-budget wins outright; the default derives and reports")
+def t16_autobudget_override_e2e():
+    if not SINTEL.exists() or not FFMPEG.exists():
+        skip("demo source or ffmpeg not available")
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as td:
+        # 2 s of Sintel classic sits under the resident pool, so the
+        # supply gate is moot and the search's answer is the ceiling on
+        # its first probe - which makes it the cheapest honest end-to-end
+        # check of the WIRING (which budget reaches encode_clip, what the
+        # report records, what prints).
+        auto_out = Path(td) / "auto.vid"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            auto_rep = enc.encode(str(SINTEL), str(auto_out), shape=(256, 192),
+                                   fps=25.0, start="00:00:00", duration="2",
+                                   ffmpeg=str(FFMPEG))
+        auto_log = buf.getvalue()
+        expect(auto_rep.auto_budget, "the default must derive a budget")
+        expect("auto-budget: --stream-budget" in auto_log,
+               f"the derivation must be reported in one line: {auto_log!r}")
+        expect(f"--stream-budget {auto_rep.stream_budget:.2f}" in auto_log,
+               "the reported line must name the budget the report records")
+        expect(auto_rep.auto_budget_target == enc.AUTO_BUDGET_TARGET_UTIL,
+               "the reported target must be the default target")
+        expect(auto_rep.auto_budget_probes >= 1, "a search costs at least one probe")
+
+        # Explicit budget: no search, no line, and the value applies
+        # verbatim - a de-rated encode must actually be de-rated.
+        exp_out = Path(td) / "explicit.vid"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exp_rep = enc.encode(str(SINTEL), str(exp_out), shape=(256, 192),
+                                  fps=25.0, start="00:00:00", duration="2",
+                                  ffmpeg=str(FFMPEG), stream_budget=0.40)
+        exp_log = buf.getvalue()
+        expect(not exp_rep.auto_budget, "an explicit budget must not run the search")
+        expect(exp_rep.stream_budget == 0.40,
+               f"explicit budget must apply verbatim, report says {exp_rep.stream_budget}")
+        expect(exp_rep.auto_budget_probes == 0, "no probes may be spent on an explicit budget")
+        expect("auto-budget" not in exp_log,
+               f"an explicit budget must print no derivation line: {exp_log!r}")
+        expect(exp_out.stat().st_size < auto_out.stat().st_size,
+               "budget 0.40 must emit fewer bytes than the derived budget - "
+               "the override is not reaching the rate control")
+        # ...and the derived budget for a resident clip IS the ceiling,
+        # so the auto file must match a hand-set 1.00 byte for byte.
+        ceil_out = Path(td) / "ceiling.vid"
+        with contextlib.redirect_stdout(io.StringIO()):
+            enc.encode(str(SINTEL), str(ceil_out), shape=(256, 192), fps=25.0,
+                        start="00:00:00", duration="2", ffmpeg=str(FFMPEG),
+                        stream_budget=1.0)
+        expect(auto_rep.stream_budget == 1.0,
+               f"a resident clip's derived budget must be the ceiling, got "
+               f"{auto_rep.stream_budget}")
+        expect(ceil_out.read_bytes() == auto_out.read_bytes(),
+               "the derived-ceiling encode must be byte-identical to an explicit 1.00")
+        print(f"  [override] derived {auto_rep.stream_budget:.2f} "
+              f"({auto_rep.auto_budget_probes} probe(s), "
+              f"{auto_out.stat().st_size} B) vs explicit 0.40 "
+              f"({exp_out.stat().st_size} B)")
+
+
+@case(16, "auto-budget - a content-limited clip keeps its bytes instead of descending into starvation")
+def t16_autobudget_plateau():
+    if not SINTEL.exists() or not FFMPEG.exists():
+        skip("demo source or ffmpeg not available")
+    # 3 s of Sintel classic at --dither 0.25 streams (over the resident
+    # pool) at utilization 0.9135 - just over the 0.90 target - and that
+    # figure does NOT move with the budget: 1.00/0.98/0.88 all read
+    # 0.9135, because the content is asking for less than the caps
+    # allow. The first budget that moves it at all is 0.60, which reads
+    # 0.81 at 61% budget-bound against 1.3%. Descending there would be a
+    # pure quality loss for 0.01 of supply, so the search must not.
+    ex = enc._extract_source(str(SINTEL), 256, 192, 25.0, "00:00:00", "3.0",
+                              str(FFMPEG), 0.25, False)
+    search = enc.auto_stream_budget(ex, 256, 192, 25.0, dither_amp=0.25)
+    expect(not search["resident"], "3 s of Sintel classic must exceed the resident pool")
+    expect(search["plateau"], "this clip is content-limited - the search must say so")
+    expect(search["budget"] == 1.00,
+           f"a content-limited clip must keep the ceiling, got {search['budget']}")
+    util = search["stats"]["utilization"]
+    expect(util <= 1.0, f"the plateau answer is still gate-feasible, got {util:.3f}")
+    expect(util > search["target"],
+           "this case is only meaningful while the plateau sits above the target")
+    line = enc.auto_budget_line(search)
+    expect("content-limited" in line, f"the report line must disclose it: {line!r}")
+    expect(f"--stream-budget {search['budget']:.2f}" in line,
+           f"the report line must name the budget: {line!r}")
+    print(f"  [plateau] {line.strip()}")
+
+
 def main():
     passed, failed, skipped = 0, 0, 0
     last_step = None

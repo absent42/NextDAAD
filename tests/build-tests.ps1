@@ -133,7 +133,15 @@
 #            their bytes instead depend on nxv2enc.py's SOURCE-level
 #            silicon-settled constants (TMODEL_COEFFS,
 #            TMODEL_COMPOSITION_FACTOR, TMODEL_SILICON_R), which a CLI-
-#            arg hash cannot see. The 4814921 gapped resettlement
+#            arg hash cannot see. SP17 T1 note: --stream-budget now
+#            DEFAULTS to an automatic search, so "no such argument" also
+#            means these six ride the auto-budget defaults. All six are
+#            under the resident pool (largest is 006 at 1,039,360 B vs
+#            1,277,952), so the search returns the ceiling on its first
+#            probe and their bytes are unchanged - verified on 003 and
+#            006 at the pal9d tag. A future fixture that crosses the
+#            pool would NOT be, and would want an explicit budget or a
+#            tag bump. The 4814921 gapped resettlement
 #            (composition factor 1.55 -> 1.15) changed encoded output
 #            with no CLI-arg change at all, and silently restaged the
 #            stale pre-resettlement cache once already (SP15 T5 review

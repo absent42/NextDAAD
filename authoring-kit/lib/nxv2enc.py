@@ -503,6 +503,84 @@ STREAM_TARGET_UTIL = 0.90                       # suggestion target
 
 
 # ---------------------------------------------------------------------
+# AUTO-BUDGET (SP17 T1) - the encoder derives --stream-budget itself
+# ---------------------------------------------------------------------
+# WHY. --stream-budget is a SUPPLY CEILING, not a quality dial. SP17 E2
+# measured the whole ladder on one clip (Sintel classic, only the budget
+# varied): 0.85 -> util 1.00 / PSNR 25.27 / 42% of frames budget-bound;
+# 0.70 -> 0.89 / 23.83 / 66%; 0.55 -> 0.74 / 22.10 / 88%; 0.40 -> 0.56 /
+# 20.11 / 92%. Every metric moves the same way - a lower budget buys
+# nothing, it only starves the picture. There is exactly one right
+# answer per clip (the highest budget the wire can carry), no author can
+# guess it, and the default 1.0 is refused outright on ordinary content.
+# So the encoder searches for it, by default, and the author sets a
+# budget only to override that search.
+#
+# TARGET POINT (AUTO_BUDGET_TARGET_UTIL). "Highest accepted" is the
+# WRONG answer: the gate is a whole-clip MEAN (see its own limitation
+# block below), and SP17 E6 measured what a mean at the ceiling actually
+# contains - fixture 007 at mean utilization 0.981 has p95 1.071, max
+# 1.502, 138/250 frames instantaneously over budget in runs up to 19
+# consecutive frames (0.76 s). Owner silicon calls that band-and-judder,
+# not "fine, the ring absorbs it". The margin is derived from that same
+# row: p95/mean = 1.071/0.981 = 1.09, so holding the p95 frame at or
+# under 1.00 wants a mean at or under 1/1.09 = 0.917. 0.90 is the next
+# round figure below it, and it is already this module's own
+# STREAM_TARGET_UTIL - the point the supply gate's suggested_budget
+# aims at - so the automatic search and the gate's own advice now name
+# the same operating point instead of two different ones, and an
+# auto-derived encode never trips STREAM_WARN_UTIL either. Overridable
+# per encode (videnc --budget-target) for anyone re-deriving it against
+# fresh silicon.
+AUTO_BUDGET_TARGET_UTIL = STREAM_TARGET_UTIL
+
+# Accept band. A probe landing in [target - TOL, target] stops the
+# search: closing further costs a full encode pass and buys under half a
+# dB. The band is one-sided on purpose - the search never accepts a
+# probe ABOVE the target while it still has probes left.
+AUTO_BUDGET_TOL = 0.02
+
+# Cap on encode passes per clip, INCLUDING the first (budget 1.00) probe
+# and the pass whose payloads are ultimately written - the accepted
+# probe's stream is reused verbatim, so a converged search costs exactly
+# this many encode_clip passes and not one more. Measured (SP17 T1): 2
+# passes when the answer is the ceiling or the clip is content-limited,
+# 5 on the hardest case tried (Sintel classic at full 10 s - the E2
+# ladder clip - probing 1.00/0.85/0.65/0.72/0.71). 6 leaves one pass of
+# headroom without ever letting a kit BUILD run away.
+AUTO_BUDGET_MAX_PROBES = 6
+
+# Floor for a derived budget - matches stream_supply_check's own
+# suggested_budget clamp. Below this the picture is gone anyway and the
+# right answer is a smaller shape or a lower fps, which the gate's
+# refusal message already names.
+AUTO_BUDGET_MIN = 0.05
+
+# PLATEAU cut-off, in utilization per unit of budget, measured
+# CUMULATIVELY from the first (budget 1.00) probe - see the guard's own
+# comment in auto_stream_budget for why a single step is not evidence.
+# Above the point where the per-frame caps actually bind, utilization is
+# set by the CONTENT and a budget cut moves it barely at all; below that
+# point the E2 ladder measures a slope near 0.7-1.0 (0.85/0.70 ->
+# 1.00/0.89 is 0.73). Anything under 0.10 is the flat region, where a
+# further cut is pure picture loss for no supply relief - the search
+# stops there rather than paying it.
+AUTO_BUDGET_MIN_SLOPE = 0.10
+
+# Largest single UNBRACKETED downward step. The secant's slope early in
+# a search is read off points that may both sit on the plateau, which
+# understates how fast utilization falls once the cap bites; without a
+# leash one blind step lands deep in starvation and the probe budget is
+# spent climbing back out.
+AUTO_BUDGET_MAX_STEP = 0.20
+
+# Step taken when two consecutive probes measure the SAME utilization
+# and there is nothing feasible yet to stop on - the cut was too small
+# to bite, so take a real one.
+AUTO_BUDGET_STEP = 0.10
+
+
+# ---------------------------------------------------------------------
 # DELTA-STARVATION DIAGNOSTICS (report-only; thresholds RETIRED)
 # ---------------------------------------------------------------------
 # WHAT IS MEASURED, AND WHY IT IS WORTH MEASURING. The supply gate above
@@ -673,7 +751,7 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     suggested = ((period_ms * STREAM_TARGET_UTIL - audio_sd_ms) / scalable
                  if scalable > 0 else 1.0)
     return dict(utilization=util, busy_ms=busy_ms, sd_ms=sd_ms,
-                period_ms=period_ms,
+                period_ms=period_ms, audio_sd_ms=audio_sd_ms,
                 demand_kbs=mean_demand_bytes * float(fps) / 1024.0,
                 suggested_budget=max(0.05, min(1.0, suggested)))
 
@@ -1688,6 +1766,63 @@ def _nearest(vecs, cb, chunk=131072, want_dist=False):
     return out
 
 
+# ---------------------------------------------------------------------
+# QUANTIZATION MEMO (SP17 T1 auto-budget). _nearest() is 85% of
+# encode_clip's wall time, and its result is a pure function of (frame
+# pixels, palette) - NOT of --stream-budget. The auto-budget search runs
+# encode_clip several times over the same extracted frame stack at
+# different budgets, and the (frame, palette) pairs it presents are
+# identical every pass (measured 147/147 reuse across budgets 1.00/0.85/
+# 0.70/0.55 on Sintel classic): scene palettes come from the cut
+# detector, which reads `chg` - budget-independent. So the search
+# memoizes the nearest-colour solve and pays for it once.
+#
+# EXACTNESS. This is a cache, not an approximation: a hit returns the
+# bytes _nearest() would have computed, so a searched encode is
+# byte-identical to the same budget encoded straight. The memo is OFF
+# (None) outside auto_stream_budget - an explicit --stream-budget runs
+# the untouched path, which is what the wire-byte identity check pins.
+_QUANT_MEMO = None            # None = disabled; else {key: (idx, dist)}
+_QUANT_MEMO_BYTES = 0
+QUANT_MEMO_MAX_BYTES = 320 * 1024 * 1024   # stop caching past this;
+# a 15 s 320x256 clip (375 frames x ~410 KB/entry) fits inside it, and
+# a longer one degrades to plain recomputation rather than to swapping
+
+
+def _quant_memo_enable():
+    global _QUANT_MEMO, _QUANT_MEMO_BYTES
+    _QUANT_MEMO, _QUANT_MEMO_BYTES = {}, 0
+
+
+def _quant_memo_disable():
+    global _QUANT_MEMO, _QUANT_MEMO_BYTES
+    _QUANT_MEMO, _QUANT_MEMO_BYTES = None, 0
+
+
+def _quant_memo_solve(v, palf, rgb, pal):
+    """_nearest(v, palf, want_dist=True) through the memo when it is
+    enabled. Always solves WITH distances so one entry serves both the
+    hysteresis (delta) and plain (keyframe) call sites."""
+    global _QUANT_MEMO_BYTES
+    if _QUANT_MEMO is None:
+        idx, dist = _nearest(v, palf, want_dist=True)
+        return idx, dist
+    import hashlib
+    key = (hashlib.blake2b(rgb.tobytes(), digest_size=16).digest(),
+           hashlib.blake2b(pal.tobytes(), digest_size=16).digest())
+    hit = _QUANT_MEMO.get(key)
+    if hit is not None:
+        return hit
+    idx, dist = _nearest(v, palf, want_dist=True)
+    idx = idx.astype(np.uint8)      # palettes are 256 entries - lossless
+    entry = (idx, dist)
+    cost = idx.nbytes + dist.nbytes
+    if _QUANT_MEMO_BYTES + cost <= QUANT_MEMO_MAX_BYTES:
+        _QUANT_MEMO[key] = entry
+        _QUANT_MEMO_BYTES += cost
+    return entry
+
+
 def quantize_to_palette(rgb, pal, prev_idx=None, hysteresis_eps=None):
     """Quantize (H,W,3) uint8 RGB to a fixed 256-entry palette. Returns
     (idx (H,W) uint8, decoded rgb (H,W,3) uint8). Nearest-colour.
@@ -1701,12 +1836,14 @@ def quantize_to_palette(rgb, pal, prev_idx=None, hysteresis_eps=None):
     palf = pal.astype(np.float32)
     v = rgb.reshape(-1, 3).astype(np.float32)
     if prev_idx is not None and hysteresis_eps is not None:
-        idx, best_d = _nearest(v, palf, want_dist=True)
+        idx, best_d = _quant_memo_solve(v, palf, rgb, pal)
         pv = prev_idx.reshape(-1).astype(np.int64)
         diff = v - palf[pv]
         prev_d = np.sum(diff * diff, axis=1)
         keep = prev_d <= best_d + hysteresis_eps
         idx = np.where(keep, pv, idx).astype(np.uint8)
+    elif _QUANT_MEMO is not None:
+        idx = _quant_memo_solve(v, palf, rgb, pal)[0].astype(np.uint8)
     else:
         idx = _nearest(v, palf).astype(np.uint8)
     dec = pal[idx].reshape(H, W, 3)
@@ -1928,6 +2065,14 @@ class BuildReport:
     delta_psnr_p10: float = 0.0
     starvation_warned: bool = False     # RETIRED verdict, NOT a quality
                                         # judgement - see starvation_warns()
+    # SP17 T1 auto-budget: the budget this encode actually ran at, and
+    # how it was arrived at. stream_budget is authoritative whether it
+    # came from the author or from the search; auto_budget_probes is 0
+    # for an explicit budget (no search ran).
+    stream_budget: float = 1.0
+    auto_budget: bool = False           # True = derived, not author-set
+    auto_budget_target: float = 0.0     # the target the search aimed at
+    auto_budget_probes: int = 0         # encode passes the search spent
 
 
 # ---------------------------------------------------------------------
@@ -2685,16 +2830,270 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
                 burst_peak_frame=report.burst_peak_frame,
                 delta_psnr_p10=report.delta_psnr_p10,
                 starvation_warned=report.starvation_warned,
+                # Direct-serve has no delta budget to scale, so the
+                # auto-budget keys are emitted at their defaults for the
+                # same uniform-parse reason as the starvation ones.
+                stream_budget=report.stream_budget,
+                auto_budget=report.auto_budget,
+                auto_budget_target=report.auto_budget_target,
+                auto_budget_probes=report.auto_budget_probes,
+                auto_budget_ladder=[],
                 scene_cuts=cuts, kf_span_ranges=[[i, i] for i in range(nframes_out)],
             ), f, indent=1)
     return report
 
 
+def stream_gate_stats(result, ex, width, height, fps):
+    """The shipped supply gate's own arithmetic over an encode_clip()
+    result, factored out so the auto-budget search below and encode()'s
+    refusal path measure the SAME number (a search that optimised
+    against a second, near-copy of the gate is how a converged budget
+    ends up refused). Returns (projected_total_bytes, stats-or-None);
+    None means the gate does not apply - the file loads resident, or
+    there are no frames."""
+    payloads = result["payloads"]
+    n = len(payloads)
+    projected_total = HEADER_SIZE + sum(
+        ex["abytes_pad"] + ((len(p) + 511) // 512) * 512 for p in payloads)
+    if not n or projected_total <= STREAM_RESIDENT_POOL_B:
+        return projected_total, None
+    mean_t = sum(result["per_frame"]["t"]) / n
+    mean_demand = (projected_total - HEADER_SIZE) / n
+    return projected_total, stream_supply_check(
+        mean_t, mean_demand, ex["abytes_pad"], fps, width, height)
+
+
+def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
+                        merge_gaps=True, hysteresis=True,
+                        staleness_refresh=True, dither_amp=None,
+                        target_util=None,
+                        max_probes=AUTO_BUDGET_MAX_PROBES):
+    """SP17 T1. Derives the --stream-budget for this clip instead of
+    making the author guess one, and returns the winning encode with it
+    so nothing is encoded twice. Result dict: budget, result (the
+    encode_clip() output at that budget), stats (its gate stats, None
+    when the file loads resident), projected_total, probes (list of
+    (budget, util-or-None) in the order tried), elapsed, resident,
+    target.
+
+    SEARCH. Utilization rises smoothly and monotonically with the budget
+    (SP17 E2's ladder: 0.40/0.55/0.70/0.85 -> 0.56/0.74/0.89/1.00), so
+    the search is an interpolation, not a bisection:
+
+      probe 1   budget 1.00 - the honest ceiling. If the file is
+                resident, or already fits at 1.00, that IS the answer
+                and the search stops here at one encode pass.
+      probe 2   the supply gate's own linear solve from that 1.00
+                measurement (scale busy + the payload part of the fetch,
+                hold the invariant audio pad). SP17 E3 measured that the
+                gate's suggestion OSCILLATES near the ceiling - refused
+                at 0.90 it suggests 0.88, refused at 0.88 it suggests
+                0.89 - so a suggestion-following loop never converges.
+                Only the FIRST suggestion, from the 1.00 refusal, is
+                admissible, and that is the only place it is used here.
+      probe 3+  secant / regula falsi on MEASURED utilization through
+                the last two probes, clamped inside whatever bracket the
+                search has established.
+
+    Budgets are quoted to two decimals throughout - the value the report
+    line prints is the value that reproduces the file by hand, and the
+    finite grid also makes the loop terminate.
+
+    NEVER RETURNS A REFUSED BUDGET. Only a probe that MEASURED at or
+    under the target is returned; failing that, the least-loaded probe
+    still at or under 1.00 (see the winner block at the end). If every
+    probe was over 1.00 the search returns budget None and leaves
+    encode() to raise the gate's own refusal message, which names the
+    remedies a budget cannot fix (smaller shape, lower fps, shorter
+    clip).
+
+    PLATEAU. Utilization is monotone in the budget but not everywhere
+    RESPONSIVE to it: above the point where the caps bind, the content
+    sets the demand and cutting the budget buys nothing. The search
+    detects that flat region and refuses to descend into starvation for
+    a margin it cannot reach (AUTO_BUDGET_MIN_SLOPE), reporting the
+    outcome as content-limited.
+
+    COST. The nearest-colour palette solve is 85% of an encode pass and
+    depends only on (frame pixels, palette), never on the budget, so the
+    passes share one memo (see _quant_memo_solve) - after the first pass
+    a probe costs about a fifth of a full encode. Measured (SP17 T1): 1
+    pass when the ceiling already fits, 2 when the clip is
+    content-limited, 4-5 on genuinely over-demanding footage;
+    max_probes caps it."""
+    import time
+    target = AUTO_BUDGET_TARGET_UTIL if target_util is None else float(target_util)
+    t0 = time.time()
+    probes = []          # (budget, util or None) in probe order
+    measured = []        # (budget, util) - the secant's own history
+    kept = []            # (budget, util, result, stats, projected_total)
+    budget = 1.00
+    tried = set()
+    plateau = False
+
+    _quant_memo_enable()
+    try:
+        for k in range(max_probes):
+            tried.add(budget)
+            res = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width,
+                               height, fps, cap_bytes_frac=cap_bytes_frac,
+                               budget_scale=budget, merge_gaps=merge_gaps,
+                               hysteresis=hysteresis,
+                               staleness_refresh=staleness_refresh,
+                               dither_amp=dither_amp)
+            proj, stats = stream_gate_stats(res, ex, width, height, fps)
+            if stats is None:
+                # Resident (or empty): no supply gate applies at all.
+                probes.append((budget, None))
+                if not kept:
+                    # The ceiling itself loads resident - that IS the
+                    # answer, at one encode pass.
+                    return dict(budget=budget, result=res, stats=None,
+                                projected_total=proj, probes=probes,
+                                elapsed=time.time() - t0, resident=True,
+                                target=target, plateau=False)
+                # A LOWER budget shrank the file under the resident pool
+                # while the ceiling was over it. That is feasible by
+                # definition (nothing to stream), so record it as fully
+                # unloaded and stop - descending further can only cost
+                # picture. A higher budget that already met the target
+                # still outranks it in the winner block below.
+                kept.append((budget, 0.0, res, None, proj))
+                break
+            util = stats["utilization"]
+            probes.append((budget, util))
+            kept.append((budget, util, res, stats, proj))
+            feasible = [p for p in kept if p[1] <= 1.0]
+            at_target = [p for p in kept if p[1] <= target]
+
+            # PLATEAU GUARD. Above the point where the cap starts to
+            # bind, utilization is set by the CONTENT, not by the budget:
+            # cutting the budget there changes nothing until it does bite,
+            # and then it bites hard. Descending across that flat region
+            # trades a large quality loss for no supply relief at all -
+            # measured on Sintel classic 3 s, where budgets 1.00/0.98/0.88
+            # all read utilization 0.9135 and 0.60 was the first value to
+            # move it (to 0.81, at 61% budget-bound against 1.3%). So once
+            # cutting stops paying, stop cutting - provided something
+            # feasible is already in hand. When NOTHING is feasible yet, a
+            # flat step means the cut was simply too small, and the search
+            # must keep going or there is no file at all.
+            #
+            # The slope is measured CUMULATIVELY, from the highest budget
+            # probed down to here, never from the last step alone. Inside
+            # the binding region the response is a fine staircase (the
+            # region scheduler fits whole bands, so a 0.02 budget step can
+            # fit the same band count and read as flat) and a one-step
+            # test mistakes a stair tread for the plateau. The plateau is
+            # by construction the region at the TOP - once the caps bind
+            # they stay bound as the budget falls - so the whole descent
+            # is the honest evidence for whether they ever did.
+            if feasible and measured:
+                b_top, u_top = measured[0]
+                if b_top - budget >= 0.01 and \
+                        (u_top - util) / (b_top - budget) < AUTO_BUDGET_MIN_SLOPE:
+                    plateau = True
+            measured.append((budget, util))
+            if plateau:
+                break
+            lo = max(at_target, key=lambda p: p[0]) if at_target else None
+            over = [p for p in kept if p[1] > target]
+            hi = min(over, key=lambda p: p[0]) if over else None
+            lo_b = lo[0] if lo else None
+            hi_b = hi[0] if hi else None
+            if lo is not None and lo[1] >= target - AUTO_BUDGET_TOL:
+                break                          # inside the accept band
+            if lo_b is not None and hi_b is not None and hi_b - lo_b <= 0.011:
+                break                          # bracket at grid resolution
+            if k == max_probes - 1:
+                break
+
+            if len(measured) == 1:
+                # E3-admissible model step (see the docstring): the gate's
+                # own audio-invariant linear solve, used exactly once.
+                audio_sd = stats["audio_sd_ms"]
+                scalable = stats["busy_ms"] + stats["sd_ms"] - audio_sd
+                nxt = (budget * (stats["period_ms"] * target - audio_sd)
+                       / scalable) if scalable > 0 else budget * 0.9
+            else:
+                (b0, u0), (b1, u1) = measured[-2], measured[-1]
+                nxt = (b1 - AUTO_BUDGET_STEP if u1 == u0 else
+                       b1 + (target - u1) * (b1 - b0) / (u1 - u0))
+            if lo_b is not None and hi_b is not None:
+                nxt = min(max(nxt, lo_b + 0.005), hi_b - 0.005)
+            elif nxt < budget:
+                # Unbracketed extrapolation. The secant's slope is read
+                # off points that may still sit on the plateau, where it
+                # badly UNDER-states how fast utilization falls once the
+                # cap bites - left alone it overshoots into starvation.
+                # Cap the reach of one blind step.
+                nxt = max(nxt, min(tried) - AUTO_BUDGET_MAX_STEP)
+            if not feasible and k == max_probes - 2:
+                # Last probe available and still nothing the gate would
+                # accept: undershoot deliberately rather than spend it on
+                # a value that might land over the line again and leave
+                # the author with a refusal instead of a file.
+                nxt *= 0.85
+            nxt = round(min(1.0, max(AUTO_BUDGET_MIN, nxt)), 2)
+            if nxt in tried:
+                if lo_b is not None and hi_b is not None and hi_b - lo_b > 0.011:
+                    nxt = round((lo_b + hi_b) / 2.0, 2)
+                if nxt in tried:
+                    break                      # nothing new at 0.01 steps
+            budget = nxt
+    finally:
+        _quant_memo_disable()
+
+    # WINNER. First choice: the highest budget that measured at or under
+    # the target - the most bytes inside the safety margin. Failing that
+    # (a plateau clip whose content demand never falls to the target, or
+    # a search stopped by the probe cap), the least-loaded FEASIBLE probe
+    # - with ties inside one accept band broken toward the higher budget,
+    # since equal utilization at a higher budget is the same wire cost
+    # for a better picture (SP17 E2).
+    at_target = [p for p in kept if p[1] <= target]
+    feasible = [p for p in kept if p[1] <= 1.0]
+    if at_target:
+        winner = max(at_target, key=lambda p: p[0])
+    elif feasible:
+        u_min = min(p[1] for p in feasible)
+        winner = max((p for p in feasible if p[1] <= u_min + AUTO_BUDGET_TOL),
+                     key=lambda p: p[0])
+    else:
+        return dict(budget=None, result=None, stats=None,
+                    projected_total=None, probes=probes,
+                    elapsed=time.time() - t0, resident=False, target=target,
+                    plateau=plateau,
+                    worst=min(kept, key=lambda p: p[1]) if kept else None)
+    b, u, res, stats, proj = winner
+    return dict(budget=b, result=res, stats=stats, projected_total=proj,
+                probes=probes, elapsed=time.time() - t0,
+                resident=(stats is None), target=target,
+                plateau=(not at_target))
+
+
+def auto_budget_line(search):
+    """The one-line author-facing report for an auto-budget search, in
+    the same two-space indented style as the encoder's other progress
+    lines. Kept next to the search so the wording and the numbers stay
+    together."""
+    n = len(search["probes"])
+    plural = "" if n == 1 else "s"
+    where = ("resident, no supply gate" if search["resident"]
+             else f"util {search['stats']['utilization']:.2f}")
+    why = (f"target {search['target']:.2f} - content-limited, no lower "
+           f"budget relieves the wire" if search.get("plateau")
+           else f"target {search['target']:.2f}")
+    return (f"  auto-budget: --stream-budget {search['budget']:.2f} -> "
+            f"{where} ({why}) - "
+            f"{n} probe{plural}, {search['elapsed']:.1f} s")
+
+
 def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
            dither=None, mono=False, merge_gaps=True, hysteresis=True,
-           staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=1.0,
-           direct=False):
+           staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=None,
+           budget_target=None, direct=False):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     dither (--dither): blue-noise dither amplitude, a float 0.0-1.0 as
@@ -2719,6 +3118,14 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     resident pool (STREAM_RESIDENT_POOL_B) must pass
     stream_supply_check or this function refuses to write it.
 
+    stream_budget=None (the DEFAULT since SP17 T1) means DERIVE IT:
+    auto_stream_budget() searches for the highest budget whose measured
+    utilization still sits at or under budget_target (default
+    AUTO_BUDGET_TARGET_UTIL) and the winning pass's stream is written.
+    An explicit stream_budget wins outright and skips the search
+    entirely - manual control is unchanged, only the default is.
+    budget_target has no effect when stream_budget is explicit.
+
     direct (--direct, SP15 3c): the raw-equivalent all-literal preset -
     every frame a full keyframe repaint, header direct-serve hint set
     (flags bit1), gated by worst-frame WIRE feasibility instead of the
@@ -2739,12 +3146,33 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
         # pipeline, no rate control; see _encode_direct.
         return _encode_direct(ex, width, height, fps_val, out_path,
                               report_path, dither_amp=dither_amp)
-    result = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width, height,
-                          fps_val, cap_bytes_frac=cap_bytes_frac,
-                          budget_scale=stream_budget,
-                          merge_gaps=merge_gaps, hysteresis=hysteresis,
-                          staleness_refresh=staleness_refresh,
-                          dither_amp=dither_amp)
+    # SP17 T1: no explicit budget means DERIVE one (see
+    # auto_stream_budget). The search hands back the winning pass, so
+    # the accepted budget is never re-encoded.
+    auto_search = None
+    if stream_budget is None:
+        auto_search = auto_stream_budget(
+            ex, width, height, fps_val, cap_bytes_frac=cap_bytes_frac,
+            merge_gaps=merge_gaps, hysteresis=hysteresis,
+            staleness_refresh=staleness_refresh, dither_amp=dither_amp,
+            target_util=budget_target)
+        stream_budget = auto_search["budget"]
+        if stream_budget is None:
+            # Every probe was over the line - fall through to the gate's
+            # own refusal on the least infeasible one, which names the
+            # remedies no budget can supply.
+            worst = auto_search["worst"]
+            stream_budget, result = worst[0], worst[2]
+        else:
+            print(auto_budget_line(auto_search))
+            result = auto_search["result"]
+    else:
+        result = encode_clip(ex["orig"], ex["chg"], ex["po_ceil"], width, height,
+                              fps_val, cap_bytes_frac=cap_bytes_frac,
+                              budget_scale=stream_budget,
+                              merge_gaps=merge_gaps, hysteresis=hysteresis,
+                              staleness_refresh=staleness_refresh,
+                              dither_amp=dither_amp)
 
     payloads = result["payloads"]
     nframes_out = len(payloads)
@@ -2761,14 +3189,9 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     # ms/frame with an underrun every frame - correct output, wrong
     # wall time, VSTR1's exact silicon signature).
     abytes_pad = ex["abytes_pad"]
-    projected_total = HEADER_SIZE + sum(
-        abytes_pad + ((len(p) + 511) // 512) * 512 for p in payloads)
-    stream_stats = None
-    if projected_total > STREAM_RESIDENT_POOL_B and nframes_out:
-        mean_t = sum(result["per_frame"]["t"]) / nframes_out
-        mean_demand = (projected_total - HEADER_SIZE) / nframes_out
-        stream_stats = stream_supply_check(
-            mean_t, mean_demand, abytes_pad, fps_val, width, height)
+    projected_total, stream_stats = stream_gate_stats(
+        result, ex, width, height, fps_val)
+    if stream_stats is not None:
         if stream_stats["utilization"] > 1.0:
             eq_ms = stream_stats["busy_ms"] + stream_stats["sd_ms"]
             raise SystemExit(
@@ -2782,16 +3205,32 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                 f"bigger than the {STREAM_RESIDENT_POOL_B} B reference "
                 f"resident pool, so it MUST stream, and would play at "
                 f"~{eq_ms:.0f} ms/frame (target {stream_stats['period_ms']:.0f}) with an "
-                f"underrun every frame. Remedy: --stream-budget "
-                f"{stream_stats['suggested_budget']:.2f} (scales the "
-                f"delta caps to ~{STREAM_TARGET_UTIL:.0%} utilization), "
-                f"or a smaller shape, lower --fps, or a shorter/"
+                f"underrun every frame. Remedy: "
+                + (f"drop the explicit --stream-budget and let the "
+                   f"encoder derive one (or try --stream-budget "
+                   f"{stream_stats['suggested_budget']:.2f}), "
+                   if auto_search is None else
+                   f"the automatic budget search could not find a "
+                   f"feasible operating point in "
+                   f"{len(auto_search['probes'])} probes - this content "
+                   f"out-demands the wire at this shape/fps, so use ")
+                + f"a smaller shape, lower --fps, or a shorter/"
                 f"resident-sized clip.")
         elif stream_stats["utilization"] > STREAM_WARN_UTIL:
+            # Owner silicon, SP17 E6: an at-capacity MEAN is not a
+            # healthy encode that the ring quietly absorbs. Fixture 007
+            # at mean 0.981 measures p95 1.071 and runs of up to 19
+            # consecutive frames over budget - it bands and judders on
+            # real hardware. Only an explicit --stream-budget reaches
+            # this line now; the automatic search targets
+            # AUTO_BUDGET_TARGET_UTIL and never lands here.
             print(f"  warning: stream utilization "
                   f"{stream_stats['utilization']:.2f} (> {STREAM_WARN_UTIL:.2f}) - "
-                  f"at-capacity encode; bursts ride the ring, small "
-                  f"underrun counts possible on slow cards")
+                  f"at-capacity encode: the whole-clip mean hides "
+                  f"per-frame excursions well over 1.00, which read as "
+                  f"banding and judder on hardware. Drop the explicit "
+                  f"--stream-budget to let the encoder derive one at "
+                  f"~{AUTO_BUDGET_TARGET_UTIL:.2f}")
 
     header = pack_header(
         width=width, height=height, fps=fps_val, channels=ex["channels"],
@@ -2873,6 +3312,10 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
         burst_peak_frame=starve["burst_peak_frame"],
         delta_psnr_p10=starve["delta_psnr_p10"],
         starvation_warned=starvation_warned,
+        stream_budget=float(stream_budget),
+        auto_budget=auto_search is not None,
+        auto_budget_target=(auto_search["target"] if auto_search else 0.0),
+        auto_budget_probes=(len(auto_search["probes"]) if auto_search else 0),
     )
 
     if report_path:
@@ -2899,6 +3342,12 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                 burst_peak_frame=report.burst_peak_frame,
                 delta_psnr_p10=report.delta_psnr_p10,
                 starvation_warned=report.starvation_warned,
+                stream_budget=report.stream_budget,
+                auto_budget=report.auto_budget,
+                auto_budget_target=report.auto_budget_target,
+                auto_budget_probes=report.auto_budget_probes,
+                auto_budget_ladder=(
+                    [[b, u] for b, u in auto_search["probes"]] if auto_search else []),
                 scene_cuts=result["scene_cuts"], kf_span_ranges=result["kf_span_ranges"],
             ), f, indent=1)
 

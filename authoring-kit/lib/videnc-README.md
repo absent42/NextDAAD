@@ -49,8 +49,12 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
   --byte-cap F       delta per-frame byte cap as a fraction of the raw
                      surface (default 0.65)
   --stream-budget F  scale the delta quality caps to fit the streaming
-                     SD supply; the streaming gate's refusal message
-                     names the value to pass (default 1.0)
+                     SD supply. DEFAULT: derived automatically (see
+                     "Automatic stream budget"); pass a value to
+                     override the search outright
+  --budget-target U  target mean utilization for the automatic
+                     --stream-budget search (default 0.90); ignored
+                     when --stream-budget is given
   --direct           direct-serve preset (expert): all-literal
                      raw-equivalent encode served straight from SD -
                      strictly at-rate, see below
@@ -106,14 +110,69 @@ remedy in the error message:
   >= 18.22. Remedy: raise `--fps` or switch to `--mono`.
 - **Streaming supply.** A file bigger than the player's resident pool
   (~1.2 MB) must stream; if its mean demand exceeds the SD supply
-  rate the encode is refused with the exact `--stream-budget` that
-  fits. The suggestion is one linear solve - after a large change,
-  re-encode and let the gate re-check.
+  rate the encode is refused. With the automatic budget search (the
+  default) this is only reached when NO budget makes the clip
+  streamable, so the remedies the message names are the ones a budget
+  cannot supply: a smaller shape, a lower `--fps`, a shorter clip.
 - **Direct-serve wire (`--direct`).** Strictly at-rate, worst-frame
   checked, no slow-playback opt-out (TIGHTEN policy, owner ruling
   2026-07-26). At 25 fps stereo the envelope tops out around 256x133;
   the refusal message prints the live at-rate menu (stereo/mono
   heights, 0.90-margin variants, and the mono-floor maximum).
+
+## Automatic stream budget
+
+`--stream-budget` is a SUPPLY CEILING, not a quality dial. Lowering it
+does not "compress harder" - it hands the encoder fewer bytes per frame,
+so more of the picture is deferred and everything gets worse together.
+Measured on one clip with nothing but the budget varied:
+
+| budget | utilization | PSNR mean | frames budget-bound |
+|--------|-------------|-----------|---------------------|
+| 0.85   | 1.00        | 25.27     | 42%                 |
+| 0.70   | 0.89        | 23.83     | 66%                 |
+| 0.55   | 0.74        | 22.10     | 88%                 |
+| 0.40   | 0.56        | 20.11     | 92%                 |
+
+There is exactly one right value per clip - the highest the SD wire can
+carry - and it depends on the footage, so **the encoder finds it
+itself**. Every encode without an explicit `--stream-budget` prints what
+it chose:
+
+```
+  auto-budget: --stream-budget 0.72 -> util 0.90 (target 0.90) - 3 probes, 41.2 s
+```
+
+The value shown is the one to type if you ever want to reproduce that
+file by hand.
+
+**The target is 0.90, not 1.00, on purpose.** The supply gate measures a
+whole-clip MEAN, and a mean sitting at the ceiling still contains frames
+well over it: a fixture measured at mean 0.98 has a p95 frame of 1.07
+and runs of up to 19 consecutive frames over budget. On hardware that
+reads as banding and judder, so the search leaves margin for it.
+`--budget-target` moves the line if you are re-deriving it against your
+own card.
+
+**Content-limited clips.** Sometimes utilization barely responds to the
+budget, because the footage is asking for less than the cap allows - the
+budget is not what is limiting it. Cutting further would starve the
+picture without relieving the wire at all, so the search stops and says
+so:
+
+```
+  auto-budget: --stream-budget 1.00 -> util 0.91 (target 0.90 - content-limited, no lower budget relieves the wire) - 2 probes, 6.4 s
+```
+
+**Cost.** A search costs 1 to 5 encode passes, capped, and passes after
+the first are cheap (the palette solve is shared between them - it does
+not depend on the budget). A clip that loads resident, or that already
+fits at the full budget, costs one pass and stops.
+
+**Overriding.** An explicit `--stream-budget` wins outright: the search
+does not run, the value applies verbatim, and the supply gate checks it
+exactly as before - including the at-capacity warning above 0.90, which
+the automatic search never triggers.
 
 Delta-starvation diagnostics (measurements only, no verdict):
 
@@ -154,10 +213,14 @@ histogram, and the starvation stats: `budget_bound_frames`,
 `bound_fraction`, `burst_window_frames`, `burst_peak_fraction`,
 `burst_peak_frame`, `delta_psnr_p10`, `starvation_warned` - the last is
 the withdrawn trigger's retired verdict, recorded for re-derivation
-work and not a quality judgement) for quality tracking. Direct-serve
-reports carry the same key set with the starvation keys zeroed (an
-all-literal stream has no deltas to starve), so one parser handles both
-modes.
+work and not a quality judgement) for quality tracking. It also records
+the budget the encode actually ran at and how it was arrived at:
+`stream_budget`, `auto_budget` (true when derived), `auto_budget_target`,
+`auto_budget_probes`, and `auto_budget_ladder` - the (budget,
+utilization) pairs the search measured, in probe order. Direct-serve
+reports carry the same key set with the starvation and auto-budget keys
+at their defaults (an all-literal stream has no deltas to starve and no
+delta budget to scale), so one parser handles both modes.
 
 ## Format authority
 

@@ -31,8 +31,14 @@ All notable changes to NextDAAD are recorded here.
   (TIGHTEN ruling 2026-07-26, no slow-playback opt-out).
 - Encoder: quality-maximalist dual-budget rate control at
   silicon-measured prices; encode-time supply gates refuse infeasible
-  encodes with named remedies (--stream-budget suggestion, at-rate
-  direct envelope).
+  encodes with named remedies (at-rate direct envelope, smaller shape,
+  lower fps).
+- Streaming budget is derived per clip, not guessed: --stream-budget
+  now defaults to an automatic search for the highest budget the SD
+  wire carries, targeting 0.90 mean utilization (margin under the 1.00
+  refusal line, because a mean at the ceiling still bands and judders),
+  and the encoder reports what it chose. An explicit --stream-budget
+  still overrides it. The kit no longer ships per-clip budget values.
 - Exit-order fix: Layer 2 hidden across the mode restore - kills the
   exit flash when a mode-0 video ends inside a 320-wide game.
 - Kit: VIDPROFILE replaced by VIDASPECT (preset/WIDTHxHEIGHT/aspect

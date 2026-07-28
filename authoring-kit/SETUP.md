@@ -394,17 +394,44 @@ loaded whole and played from RAM; a bigger file streams from SD
 through a prefetch ring of the same banks. Either way playback runs at
 true rate.
 
-Because streaming has a fixed supply rate, the encoder checks every
-over-pool-size encode against it and *refuses* one that could not
-stream ("error: this encode cannot stream - mean supply utilization
-N.NN > 1.00 ..."). The message shows where the time goes (decode ms +
-SD fetch ms per frame period) and names the remedies: the exact
-`--stream-budget` value that fits (it scales the encoder's quality
-caps down to streamable), a smaller shape, a lower fps, or a shorter
-clip. `--stream-budget` is advisory-precise: after a large change,
-re-encode and let the gate re-check. A warning (not a refusal) above
-0.90 utilization means an at-capacity encode - fine on a healthy card,
-with the ring absorbing bursts.
+Because streaming has a fixed supply rate, every over-pool-size encode
+has to fit it. **You do not set that budget - the encoder derives it.**
+`--stream-budget` scales the encoder's per-frame quality caps to the
+wire, and it is a supply ceiling rather than a quality dial: lowering it
+does not compress harder, it hands the encoder fewer bytes, so more of
+the picture goes unpainted and PSNR, banding and stale area all get
+worse together. There is one right value per clip and it depends on the
+footage, so each encode searches for it and prints what it found:
+
+```
+  auto-budget: --stream-budget 0.72 -> util 0.90 (target 0.90) - 3 probes, 41.2 s
+```
+
+The value it prints is the one to type if you ever want to reproduce
+that file by hand. Passing `--stream-budget` yourself (via `VIDOPTS` or
+`VIDOPTS_NNN`) overrides the search outright - which is worth doing only
+to deliberately de-rate a clip, never as a guess.
+
+The target is **0.90, not 1.00, deliberately**. The supply check is a
+whole-clip mean, and a mean sitting at the ceiling still contains frames
+well over it - a fixture measured at mean 0.98 has a p95 frame of 1.07
+and runs of up to 19 consecutive frames over budget. On real hardware
+that shows as banding and judder, so the search leaves margin for it. An
+at-capacity encode is *not* "fine, the ring absorbs it"; if you set a
+budget by hand and see the warning above 0.90 utilization, that warning
+is telling you the picture will likely band. `--budget-target` moves the
+line if you are re-deriving it against your own card.
+
+Sometimes the search reports the clip as *content-limited*: utilization
+barely responds to the budget because the footage is asking for less
+than the caps allow. Cutting further would starve the picture without
+relieving the wire, so it stops and keeps the bytes.
+
+Where no budget makes a clip streamable at all, the encode is still
+*refused* ("error: this encode cannot stream - mean supply utilization
+N.NN > 1.00 ..."). The message shows where the time goes (decode ms + SD
+fetch ms per frame period) and names the remedies that remain: a smaller
+shape, a lower fps, or a shorter clip.
 
 **Direct-serve (expert).** `--direct` (per-video via `VIDOPTS_NNN`)
 writes an uncompressed encode the player serves straight from SD to
@@ -457,12 +484,14 @@ popping - an accepted limitation, not a bug to report.
 
 ### The starter game's demo clips
 
-`VIDEO\001.mp4` (encoded at the `full` 320x256 preset, streamed - its
-shipped `VIDOPTS_001` carries the `--stream-budget` the supply gate
-suggested) and `VIDEO\002.mp4` (encoded at `16:9` 320x192 via the
-shipped `VIDOPTS_002`) build with the kit so `GFX 13`/`GFX 14` work
-out of the box, and their `CONFIG.BAT` entries double as worked
-examples of per-video options. Try the verbs MOVIE (plays 001.VID
+`VIDEO\001.mp4` (encoded at the `full` 320x256 preset, streamed) and
+`VIDEO\002.mp4` (encoded at `16:9` 320x192 via the shipped
+`VIDOPTS_002`, the kit's one worked example of a per-video option)
+build with the kit so `GFX 13`/`GFX 14` work out of the box. Neither
+carries a `--stream-budget`: earlier releases shipped one per clip,
+hand-tuned to these cartoons, and it silently applied to whatever you
+dropped in as 001/002 and starved it. The encoder derives the budget
+per clip now. Try the verbs MOVIE (plays 001.VID
 once) and REEL (loops 002.VID until a key is pressed).
 
 ## 7. Troubleshooting
@@ -476,9 +505,10 @@ once) and REEL (loops 002.VID until a key is pressed).
 - "GAME.AKY is ... over the ... limit" - the tune is too large; shorten it or
   reduce channels in Arkos Tracker.
 - "this encode cannot stream" / "cannot play at rate" - the video encoder's
-  supply gate refused an infeasible encode; the message names the remedy
-  (a `--stream-budget` value, a smaller shape, lower fps, or `--mono`). See
-  "Video cutscenes", "Streaming, resident and direct delivery".
+  supply gate refused an infeasible encode. The automatic budget search runs
+  first, so reaching this means no budget makes the clip streamable: use a
+  smaller shape, lower fps, `--mono`, or a shorter clip. See "Video
+  cutscenes", "Streaming, resident and direct delivery".
 - "audio bytes/frame ... exceeds" - fps below the audio floor (stereo 24.40,
   mono 18.22); raise `VIDFPS` or add `--mono` to `VIDOPTS`.
 - Effects bank warnings are non-fatal - the game still builds without

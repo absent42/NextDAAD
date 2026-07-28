@@ -46,6 +46,16 @@ it before the format freezes). --report writes the BuildReport
 (mean/worst PSNR, keyframe count, bytes, binding-budget histogram) as
 JSON next to the output file.
 
+Stream budget (SP17 T1): --stream-budget is a SUPPLY ceiling, not a
+quality dial - every metric worsens monotonically as it falls - so no
+author should be guessing one. It is DERIVED by default:
+nxv2enc.auto_stream_budget searches for the highest budget whose
+measured utilization still sits at or under --budget-target (0.90,
+margin under the 1.00 refusal line because a whole-clip mean at the
+ceiling still bands and judders on hardware), and the encoder prints
+what it chose. An explicit --stream-budget skips the search and
+applies verbatim.
+
 Requires: Python 3, Pillow, numpy. An ffmpeg binary is required at run
 time (default: the project's own tools\\ffmpeg\\bin\\ffmpeg.exe,
 override with --ffmpeg).
@@ -230,12 +240,24 @@ def main(argv):
                      help="delta per-frame byte cap as a fraction of the "
                           "raw surface (default: 0.65)")
     ap.add_argument("--stream-budget", dest="stream_budget", type=float,
-                     default=1.0,
+                     default=None,
                      help="scale BOTH delta caps (bytes + decode-T) to fit "
-                          "the ring-streaming SD supply (default: 1.0). A "
-                          "file bigger than the resident pool must pass the "
-                          "streaming supply gate (nxv2enc.stream_supply_"
-                          "check) - its error names the value to pass here")
+                          "the ring-streaming SD supply. DEFAULT: derived "
+                          "automatically - the encoder searches for the "
+                          "highest budget whose measured utilization still "
+                          "sits at or under --budget-target and reports what "
+                          "it chose. Pass a value here to override the "
+                          "search outright (it then applies verbatim, gate "
+                          "and all)")
+    ap.add_argument("--budget-target", dest="budget_target", type=float,
+                     default=None, metavar="UTIL",
+                     help=f"target mean supply utilization for the automatic "
+                          f"--stream-budget search (default: "
+                          f"{nxv2enc.AUTO_BUDGET_TARGET_UTIL:.2f}). The "
+                          f"margin under 1.00 is deliberate: a whole-clip "
+                          f"mean at the ceiling still contains per-frame "
+                          f"excursions that band and judder on hardware. "
+                          f"Ignored when --stream-budget is given")
     ap.add_argument("--direct", action="store_true",
                      help="SP15 3c direct-serve preset: all-literal "
                           "raw-equivalent encode (every frame a full "
@@ -276,8 +298,10 @@ def main(argv):
     # match it rather than silently accept an out-of-contract value).
     if not (0 < args.byte_cap <= 1.0):
         raise SystemExit(f"error: --byte-cap must be in (0, 1], got {args.byte_cap}")
-    if not (0 < args.stream_budget <= 1.0):
+    if args.stream_budget is not None and not (0 < args.stream_budget <= 1.0):
         raise SystemExit(f"error: --stream-budget must be in (0, 1], got {args.stream_budget}")
+    if args.budget_target is not None and not (0 < args.budget_target <= 1.0):
+        raise SystemExit(f"error: --budget-target must be in (0, 1], got {args.budget_target}")
     if args.dither is not None and not (0.0 <= args.dither <= 1.0):
         raise SystemExit(f"error: --dither must be in [0, 1], got {args.dither}")
 
@@ -312,7 +336,7 @@ def main(argv):
         start=args.start, duration=args.duration, ffmpeg=str(ffmpeg),
         dither=args.dither, mono=args.mono, merge_gaps=not args.no_merge,
         cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget,
-        direct=args.direct)
+        budget_target=args.budget_target, direct=args.direct)
 
     stream_line = ""
     if report.mode == "direct":

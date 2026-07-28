@@ -42,15 +42,16 @@ REM --aspect, which videnc always takes over --shape regardless of order;
 REM a VIDOPTS_NNN that sets its own --shape/--width/--aspect still wins
 REM for shape, but via the encode pass suppressing VIDASPECT for that
 REM video rather than argument order. See lib\video.ps1's header comment.
-REM The values below are TUNED TO THE SHIPPED DEMO CLIPS (001.mp4/002.mp4)
-REM - delete these two lines when you replace them with your own videos,
-REM or they will silently apply to whatever you drop in as 001/002. The
-REM starter's demo clips use this: 001 keeps the full shape streamable
-REM with the --stream-budget value the encoder's supply gate suggested,
-REM 002 picks the 16:9 preset. See SETUP.md "Streaming, resident and
-REM direct delivery". The encode pass echoes each applied VIDOPTS_NNN.
-SET VIDOPTS_001=--stream-budget 0.50
-SET VIDOPTS_002=--shape 16:9 --stream-budget 0.52
+REM The encode pass echoes each applied VIDOPTS_NNN. The one line below is
+REM the worked example: video 002 is letterboxed 16:9 instead of the full
+REM shape. Delete it when you replace 002.mp4 with your own footage.
+REM NO --stream-budget IS SHIPPED HERE, AND NONE SHOULD BE. The kit used to
+REM carry per-clip --stream-budget values hand-tuned to the demo cartoons,
+REM which then silently applied to whatever the author dropped in as 001/002
+REM and starved it. The encoder now derives the budget itself for every clip
+REM and prints what it chose - set one by hand only to override that. See
+REM SETUP.md "Streaming, resident and direct delivery".
+SET VIDOPTS_002=--shape 16:9
 
 REM DEPRECATED (honored one release): the v1 profile name. n0-n4 map to the
 REM nearest v2 shape when VIDASPECT is blank. Use VIDASPECT instead.
