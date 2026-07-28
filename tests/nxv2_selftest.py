@@ -1882,6 +1882,160 @@ def t13_amplitude_default():
             raise AssertionError(f"_dither_amp({bad}) must refuse out-of-range values")
 
 
+@case(13, "dither amplitude threading e2e - non-default --dither reaches "
+          "both pipelines through encode(), mirrored at that amplitude")
+def t13_amplitude_threading_e2e():
+    # Reviewer gap (bf27725 follow-up): the three sibling t13 cases pin
+    # ordered_dither/_dither_amp in ISOLATION, but nothing proved a
+    # non-default amplitude survives the trip through the real encode()
+    # entry point into every pipeline site. The regressions this case
+    # exists to catch:
+    #   (a) encode() dropping its dither= kwarg before handing off to
+    #       _encode_direct / encode_clip (nxv2enc.py 2486/2494/2500);
+    #   (b) _encode_direct's scene_palette(..., amplitude=dither_amp)
+    #       or its quantize_to_palette(ordered_dither(orig[i],
+    #       dither_amp), ...) silently reverting to the 0.5 default
+    #       (nxv2enc.py 2323/2326);
+    #   (c) encode_clip's frame_dith / kf_pal sites likewise
+    #       (nxv2enc.py 2061/2121).
+    # Any of those would leave the rest of the suite green today:
+    # t11_direct_serve mirrors its reconstruction at the DEFAULT
+    # amplitude only, so a drop to the default is invisible to it.
+    # Follows the t1_stream_supply_gate_e2e precedent: _extract_source
+    # is monkeypatched (no ffmpeg) so encode()'s own threading, gates,
+    # header and file writing all run for real.
+    import tempfile as tf
+
+    width, height, n, fps = 256, 128, 4, 25.0   # t11's at-rate direct shape
+    AMP = 1.0                                    # clearly non-default (0.5)
+
+    # Gradient content: smooth ramps sit BETWEEN lattice levels almost
+    # everywhere, so the dither amplitude genuinely moves quantization
+    # results - flat/blocky content could quantize identically at every
+    # amplitude and make the wire-difference assertions below vacuous.
+    yy, xx = np.mgrid[0:height, 0:width].astype(np.float32)
+    orig = np.empty((n, height, width, 3), dtype=np.uint8)
+    for f in range(n):
+        r = (xx + yy + f * 7.0) * (255.0 / (width + height))
+        g = (xx * 1.3 + f * 5.0) * (255.0 / width)
+        b = (yy * 1.7 + f * 3.0) * (255.0 / height)
+        orig[f] = np.clip(np.stack([r, g, b], axis=-1), 0.0, 255.0).astype(np.uint8)
+    chg = np.zeros(n)
+    for f in range(1, n):
+        d = np.abs(orig[f].astype(np.int16) - orig[f - 1].astype(np.int16)).max(axis=2)
+        chg[f] = float((d > 10).mean())
+    abytes_real, abytes_pad = 1250, 1536         # stereo@25, as t11
+    audio = bytes([(i * 37) & 0xFF for i in range(n * abytes_real)])
+
+    # Setup sanity (anti-vacuity): this fixture IS amplitude-sensitive -
+    # under one shared palette the amp-1.0 and default dithered targets
+    # quantize to differing indices, so identical wire bytes below can
+    # only mean the amplitude never arrived.
+    pal_probe = enc.scene_palette(orig, 0, n)    # default amplitude
+    idx_amp, _ = enc.quantize_to_palette(enc.ordered_dither(orig[0], AMP), pal_probe)
+    idx_def, _ = enc.quantize_to_palette(enc.ordered_dither(orig[0], None), pal_probe)
+    expect(int(np.count_nonzero(idx_amp != idx_def)) > 0,
+           "test setup: gradient fixture must quantize differently at "
+           "amp 1.0 vs the default or every assertion below is vacuous")
+
+    def fake_extract_source(src_path, w, h, fps_val, start, duration,
+                            ffmpeg, dither, mono):
+        # honours its dither argument exactly as the real extractor
+        # does: po_ceil is measured at the encode's own amplitude
+        amp = enc._dither_amp(dither)
+        po = np.array([enc.display_ceiling(orig[i], amplitude=amp)
+                       for i in range(n)])
+        return dict(orig=orig, po_ceil=po, chg=chg, audio_bytes=audio,
+                    channels=2, rate=enc.RATE_STEREO,
+                    abytes_real=abytes_real, abytes_pad=abytes_pad,
+                    nframes=n)
+
+    real_extract = enc._extract_source
+    try:
+        enc._extract_source = fake_extract_source
+        with tf.TemporaryDirectory() as td_s:
+            td = Path(td_s)
+
+            def run(name, **kw):
+                out = td / name
+                enc.encode("dummy.mp4", str(out), shape=(width, height),
+                           fps=fps, **kw)
+                return out.read_bytes()
+
+            # the real entry point, both pipelines, both amplitudes
+            direct_amp = run("d_amp.vid", direct=True, dither=AMP)
+            direct_def = run("d_def.vid", direct=True)
+            stream_amp = run("s_amp.vid", dither=AMP)
+            stream_def = run("s_def.vid")
+
+            # determinism control: a re-run at the default is byte-
+            # identical, so any amp-vs-default difference below is the
+            # amplitude's doing and nothing else's.
+            expect(run("d_def2.vid", direct=True) == direct_def,
+                   "direct encode must be deterministic at a fixed amplitude")
+            expect(run("s_def2.vid") == stream_def,
+                   "streaming encode must be deterministic at a fixed amplitude")
+
+            # catches (a)+(b): amplitude reached the direct-serve sites
+            expect(direct_amp != direct_def,
+                   "direct-serve wire bytes must differ between --dither "
+                   "1.0 and the default - amplitude dropped before "
+                   "_encode_direct's scene_palette/quantize sites")
+            # catches (a)+(c): amplitude reached the streaming/delta sites
+            expect(stream_amp != stream_def,
+                   "streaming wire bytes must differ between --dither 1.0 "
+                   "and the default - amplitude dropped before "
+                   "encode_clip's frame_dith/kf_pal sites")
+
+            # Stronger: mirrored reconstruction AT the non-default
+            # amplitude (t11_direct_serve's mirror with AMP threaded
+            # through). Catches sites 2323 and 2326 INDIVIDUALLY -
+            # a palette built at the wrong amplitude or a target
+            # dithered at the wrong amplitude each desynchronizes the
+            # decoded indices from this independent reconstruction.
+            frames = list(dec.decode(td / "d_amp.vid"))
+            expect(len(frames) == n, "decoded frame count")
+            cuts = [c for c in enc.detect_scene_cuts(chg) if 0 < c < n]
+            expect(cuts == [], "test setup: fixture must be one scene")
+            pal = enc.scene_palette(orig, 0, n, amplitude=AMP)
+            for i in range(n):
+                idx, _ = enc.quantize_to_palette(
+                    enc.ordered_dither(orig[i], AMP), pal)
+                dpal, dimg = frames[i]
+                expect(np.array_equal(dimg, idx),
+                       f"f{i} indexed pixel-exact at amplitude {AMP}")
+
+            # Falsifiability: SIMULATE the regression via monkeypatch
+            # (nxv2enc.py untouched). Every amplitude consumer bottoms
+            # out in ordered_dither (quantize targets directly;
+            # scene_palette/display_palette/display_ceiling via their
+            # dithered composites), so an ordered_dither that drops its
+            # amplitude argument IS the "silently fell back to the
+            # default" regression at every pipeline site at once.
+            # Under it, a --dither 1.0 encode must collapse byte-
+            # identically onto the default encode on BOTH paths -
+            # proving the wire-difference assertions above would fail
+            # (i.e. catch the drop), not pass by accident.
+            real_od = enc.ordered_dither
+
+            def dropped_amplitude_od(frame, amplitude=None):
+                return real_od(frame, enc.DITHER_AMP_DEFAULT)
+
+            try:
+                enc.ordered_dither = dropped_amplitude_od
+                expect(run("d_regr.vid", direct=True, dither=AMP) == direct_def,
+                       "regression sim: an amplitude-blind direct encode "
+                       "must equal the default encode byte-for-byte "
+                       "(else this case could not catch the drop)")
+                expect(run("s_regr.vid", dither=AMP) == stream_def,
+                       "regression sim: an amplitude-blind streaming "
+                       "encode must equal the default encode byte-for-byte")
+            finally:
+                enc.ordered_dither = real_od
+    finally:
+        enc._extract_source = real_extract
+
+
 def main():
     passed, failed, skipped = 0, 0, 0
     last_step = None
