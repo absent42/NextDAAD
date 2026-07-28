@@ -525,6 +525,22 @@ STREAM_TARGET_UTIL = 0.90                       # suggestion target
 #   007 --dither 0.00    54/250 = 21.6%   p10 25.88  (not silicon-viewed)
 #   008 (util 0.93)       2/252 =  0.8%   p10 25.97  visually CLEAN on silicon
 #
+# UNRECONCILED, flagged 2026-07-28 (burst-gate review closure), NOT
+# silently corrected because the fix is an owner call: re-encoding 008
+# with its own build-tests recipe (BBB full 320x256, --stream-budget
+# 0.51, default dither) reproduces util 0.93 and p10 25.98 EXACTLY, but
+# reports 250/252 = 99.2% budget-bound, not 2/252. The row was re-run
+# against the SHIPPED gate code at commit 3ec26cb before this note was
+# written, so it is not a regression from anything here - and "2/252"
+# is "250/252" with two digits lost, which is what a transcription slip
+# looks like. If 99.2% is the true figure for a fixture that is
+# visually CLEAN on silicon, then bound_fraction does NOT separate
+# banded from clean the way the paragraph below claims, and BOTH
+# thresholds need re-deriving against a re-measured clean anchor. Until
+# an owner rules, the row stands as transcribed and the thresholds are
+# unchanged: the gate only ever warns, so the cost of the open question
+# is a possible false alarm on 008-class content, never a refusal.
+#
 # (The 007 diagnosis also quoted 123/250 for the shipped d0.50 file: that
 # is the WIRE-TRACE count of frames within 512 B of the byte ceiling, a
 # looser proxy. This gate counts the encoder's own binding label, which
@@ -536,14 +552,58 @@ STREAM_TARGET_UTIL = 0.90                       # suggestion target
 # same span (23.4 -> 26.0 dB), which is why the fraction is the trigger
 # and p10 is only a reported diagnostic. 0.08 sits an order of magnitude
 # above the clean fixture (0.8%) and well under a third of the least-
-# starved banded measurement (21.6%) - no measured point is anywhere
-# near it, so the value is not fitted to a knife edge.
+# starved SILICON-CONFIRMED banded measurement, the 36.4% 007 --dither
+# 0.25 row: 0.364/3 = 0.121, and 0.08 even clears the tighter 0.364/4 =
+# 0.091. The 21.6% row is deliberately NOT the reference - it was never
+# silicon-viewed, so it is not evidence of where banding becomes
+# visible. No measured point is anywhere near 0.08, so the value is not
+# fitted to a knife edge.
 #
 # WARN/REPORT ONLY - this never refuses an encode. The wire gate above
 # handles physics (what the machine can carry); this one handles honesty
 # (what the author is about to ship). Deliberate at-capacity stress
 # fixtures (007) are expected to trip it.
 STARVE_WARN_BOUND_FRAC = 0.08
+
+# BURST TRIGGER (concentrated-starvation blindness, review closure
+# 2026-07-28). STARVE_WARN_BOUND_FRAC alone is a WHOLE-CLIP MEAN and
+# carries exactly the "mean hides excursions" defect the supply gate's
+# own LIMITATION block below documents at length: a SHORT severe run is
+# divided by the whole clip and vanishes. Worked miss - 15 consecutive
+# budget-bound frames inside a 250-frame clip is 6.0%, under the 8%
+# trigger, yet at 25 fps that is 0.6 s of unbroken hard horizontal
+# banding, which no viewer misses. So the gate also slides a window over
+# the emitted frame sequence and takes the WORST window.
+#
+# Window LENGTH is a fixed DURATION, converted to frames per clip fps
+# (an fps-invariant window is the only one that means the same thing to
+# a viewer; a fixed frame count would be 0.5 s at 25 fps and 1.25 s at
+# 10 fps). 0.5 s is the perceptually relevant scale: below roughly a
+# quarter-second a stale band reads as a transient flicker that the eye
+# forgives, while half a second of held-stale strips reads unambiguously
+# as broken picture. It is also short enough not to re-dilute the very
+# excursions it exists to catch - the 15-frame miss above SATURATES a
+# 0.5 s (12-frame at 25 fps) window instead of being averaged away.
+#
+# Window THRESHOLD 0.60 - a window that is mostly bound is the signal.
+# It must sit well above the whole-clip 0.08 or the burst path would
+# just be a noisier restatement of the mean, firing on any ordinary
+# local cluster; 0.60 is 7.5x it. At 0.60 the majority of a half-second
+# is painting only the bands it can afford (a fully saturated window,
+# 1.00, is half a second of solid ruined frames). On the 008 row AS
+# TRANSCRIBED (2 bound frames in 252) even both adjacent give a worst
+# 12-frame window of 0.167, nowhere near 0.60 - but see the UNRECONCILED
+# note above: the clean anchor itself is an open question, and if it is
+# re-measured this threshold is re-derived with the other one.
+#
+# Measured on the real fixtures at this setting: the 3 s Sintel classic
+# reference encode (sb 0.85, d 0.25) peaks at a 12-frame window of 0.08
+# and stays SILENT on both paths, while 007 (the same source, full 10 s)
+# peaks at 1.00 at frame 88 and warns on both.
+#
+# EITHER trigger warns. Neither ever refuses.
+STARVE_BURST_WINDOW_S = 0.5
+STARVE_WARN_BURST_FRAC = 0.60
 
 
 def silicon_r(width, height):
@@ -1866,6 +1926,9 @@ class BuildReport:
     delta_frames: int = 0
     budget_bound_frames: int = 0
     bound_fraction: float = 0.0
+    burst_window_frames: int = 0        # sliding window length, frames
+    burst_peak_fraction: float = 0.0    # worst window's bound fraction
+    burst_peak_frame: int = None        # that window's first frame index
     delta_psnr_p10: float = 0.0
     starvation_warned: bool = False
 
@@ -2350,7 +2413,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 surfaces.append(unflatten_frame(prev_flat, height, width, column_major).copy())
             per_frame["psnr"].append(psnr(orig[i], dec_img))
 
-    starve = starvation_stats(per_frame)
+    starve = starvation_stats(per_frame, fps)
     return dict(payloads=payloads, kf_span_ranges=kf_span_ranges, decoded=decoded,
                 per_frame=per_frame, scene_cuts=scene_cuts, kf_events=kf_events,
                 staleness_events=staleness_events, kf_triggers=kf_triggers,
@@ -2358,44 +2421,89 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 held_pal_final=held_pal, usable_budget_ms=usable / TMODEL_COEFFS["clock_khz"])
 
 
-def starvation_stats(per_frame):
+def starvation_stats(per_frame, fps=25.0):
     """Delta-starvation instrumentation for one streaming encode (see
-    STARVE_WARN_BOUND_FRAC). Pure measurement over encode_clip's own
-    per-frame records - it changes no wire byte.
+    STARVE_WARN_BOUND_FRAC / STARVE_WARN_BURST_FRAC). Pure measurement
+    over encode_clip's own per-frame records - it changes no wire byte.
+
+    fps is the clip's frame rate, used ONLY to size the burst window in
+    frames so the window means a fixed DURATION (STARVE_BURST_WINDOW_S).
 
     Returns dict:
-      frames            emitted frames
-      delta_frames      frames outside a keyframe span
-      budget_bound      frames whose deltas did not fit the per-frame
-                        caps, so encode_delta fell back to the region
-                        (tile-band) schedule - binding == "budget"
-      bound_fraction    budget_bound / frames (0.0 for an empty encode)
-      delta_psnr_p10    10th-percentile PSNR over delta frames
+      frames              emitted frames
+      delta_frames        frames outside a keyframe span
+      budget_bound        frames whose deltas did not fit the per-frame
+                          caps, so encode_delta fell back to the region
+                          (tile-band) schedule - binding == "budget"
+      bound_fraction      budget_bound / frames (0.0 for an empty encode)
+      burst_window_frames sliding-window length in frames (0 if empty)
+      burst_peak_fraction worst bound fraction over any window (0.0 if
+                          empty) - the CONCENTRATED-starvation measure
+      burst_peak_frame    first frame index of that worst window (None
+                          if empty)
+      delta_psnr_p10      10th-percentile PSNR over delta frames
 
     Definitions match the 2026-07-28 007 diagnosis measurements the
-    threshold is derived from, so reported numbers stay comparable:
+    whole-clip threshold is derived from, so reported numbers stay
+    comparable:
       - bound_fraction's denominator is ALL emitted frames (not just
         delta frames) - keyframe-span frames cannot be budget-bound, so
         including them prices a starved clip against its whole length.
+      - the burst window uses the same denominator convention (every
+        emitted frame in the window), for the same reason: a run of
+        keyframe-span frames genuinely is not a run of banded ones.
       - delta_psnr_p10 excludes keyframe-span frames (mode "kf*"), which
         carry the format-intrinsic dips: the startup repaint, the
         one-frame stale hold before a cut's KFLIP, and the KFLIP frame
         itself at a hard cut. Cut-adjacent DEFERRED-keyframe frames
         (mode "...:deferred_kf") are ordinary delta frames and stay in,
         exactly as the diagnosis measured them.
+
+    Window sizing: round(STARVE_BURST_WINDOW_S * fps), floored at 2
+    frames (a 1-frame window would report a boolean, not a burst) and
+    clamped to the clip length - a clip shorter than one window gets a
+    single window over the whole clip, so its burst_peak_fraction equals
+    its bound_fraction and only the (much higher) burst threshold can
+    fire on it. Peak is taken over every window start, running-sum, O(n).
     """
     modes = per_frame["mode"]
     n = len(modes)
     delta_mask = [not m.startswith("kf") for m in modes]
-    bound = sum(1 for bd in per_frame["binding"] if bd == "budget")
+    bound_flags = [1 if bd == "budget" else 0 for bd in per_frame["binding"]]
+    bound = sum(bound_flags)
     dpsnr = [p for p, d in zip(per_frame["psnr"], delta_mask) if d]
+
+    win = 0
+    peak_frac = 0.0
+    peak_at = None
+    if n:
+        win = min(n, max(2, int(round(STARVE_BURST_WINDOW_S * float(fps)))))
+        run = sum(bound_flags[:win])
+        peak_run, peak_at = run, 0
+        for s in range(1, n - win + 1):
+            run += bound_flags[s + win - 1] - bound_flags[s - 1]
+            if run > peak_run:
+                peak_run, peak_at = run, s
+        peak_frac = peak_run / win
+
     return dict(
         frames=n,
         delta_frames=sum(1 for d in delta_mask if d),
         budget_bound=bound,
         bound_fraction=(bound / n) if n else 0.0,
+        burst_window_frames=win,
+        burst_peak_fraction=peak_frac,
+        burst_peak_frame=peak_at,
         delta_psnr_p10=float(np.percentile(np.array(dpsnr), 10)) if dpsnr else 0.0,
     )
+
+
+def starvation_warns(starve):
+    """The gate's verdict: warn when EITHER the whole-clip bound
+    fraction or the worst-window (burst) fraction is over its threshold.
+    One place so encode() and the tests cannot drift apart."""
+    return (starve["bound_fraction"] > STARVE_WARN_BOUND_FRAC
+            or starve["burst_peak_fraction"] > STARVE_WARN_BURST_FRAC)
 
 
 def _mask_from_segments(gcls, gstarts, glens, n):
@@ -2559,6 +2667,19 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
                 stream_utilization=report.stream_utilization,
                 stream_busy_ms=0.0, stream_sd_ms=report.stream_sd_ms,
                 stream_demand_kbs=report.stream_demand_kbs,
+                # Direct-serve is all-literal: no deltas, nothing to
+                # starve. The keys are emitted at their zero/None
+                # defaults anyway (as staleness_events already is) so a
+                # consumer can parse both modes' reports uniformly
+                # without missing-key handling.
+                delta_frames=report.delta_frames,
+                budget_bound_frames=report.budget_bound_frames,
+                bound_fraction=report.bound_fraction,
+                burst_window_frames=report.burst_window_frames,
+                burst_peak_fraction=report.burst_peak_fraction,
+                burst_peak_frame=report.burst_peak_frame,
+                delta_psnr_p10=report.delta_psnr_p10,
+                starvation_warned=report.starvation_warned,
                 scene_cuts=cuts, kf_span_ranges=[[i, i] for i in range(nframes_out)],
             ), f, indent=1)
     return report
@@ -2708,18 +2829,35 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
 
     # --- DELTA-STARVATION GATE (owner ruling 2026-07-28) ---
     # Always REPORTED for a streaming encode, warned above
-    # STARVE_WARN_BOUND_FRAC. Never refuses: the supply gate above owns
-    # feasibility, this one owns disclosure (see the constant's comment
-    # for the four measured points behind the threshold).
-    starve = result.get("starvation") or starvation_stats(per_frame)
-    starvation_warned = starve["bound_fraction"] > STARVE_WARN_BOUND_FRAC
+    # STARVE_WARN_BOUND_FRAC (whole clip) OR STARVE_WARN_BURST_FRAC
+    # (worst sliding window - concentrated bursts the mean dilutes).
+    # Never refuses: the supply gate above owns feasibility, this one
+    # owns disclosure (see the constants' comments for the measured
+    # points behind both thresholds).
+    starve = result.get("starvation") or starvation_stats(per_frame, fps_val)
+    starvation_warned = starvation_warns(starve)
     print(f"  delta budget-bound {starve['bound_fraction']:.1%} "
           f"({starve['budget_bound']}/{starve['frames']} frames), "
-          f"delta-frame PSNR p10 {starve['delta_psnr_p10']:.2f} dB")
+          f"worst {starve['burst_window_frames']}-frame burst "
+          f"{starve['burst_peak_fraction']:.0%}"
+          + (f" @f{starve['burst_peak_frame']}"
+             if starve['burst_peak_frame'] is not None else "")
+          + f", delta-frame PSNR p10 {starve['delta_psnr_p10']:.2f} dB")
     if starvation_warned:
+        trig = []
+        if starve["bound_fraction"] > STARVE_WARN_BOUND_FRAC:
+            trig.append(f"{starve['bound_fraction']:.1%} of all frames are "
+                        f"budget-bound (> {STARVE_WARN_BOUND_FRAC:.0%} "
+                        f"whole-clip)")
+        if starve["burst_peak_fraction"] > STARVE_WARN_BURST_FRAC:
+            trig.append(f"a {STARVE_BURST_WINDOW_S:g}s burst at frame "
+                        f"{starve['burst_peak_frame']} is "
+                        f"{starve['burst_peak_fraction']:.0%} budget-bound "
+                        f"over {starve['burst_window_frames']} frames "
+                        f"(> {STARVE_WARN_BURST_FRAC:.0%} burst)")
         print(f"  warning: delta starvation - "
-              f"{starve['bound_fraction']:.1%} of frames are budget-bound "
-              f"(> {STARVE_WARN_BOUND_FRAC:.0%}), delta-frame PSNR p10 "
+              + "; ".join(trig)
+              + f". Delta-frame PSNR p10 "
               f"{starve['delta_psnr_p10']:.2f} dB. Frames at the cap paint "
               f"only the bands they can afford, so the deferred bands show "
               f"as stale horizontal strips on hardware - the transport can "
@@ -2748,6 +2886,9 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
         delta_frames=starve["delta_frames"],
         budget_bound_frames=starve["budget_bound"],
         bound_fraction=starve["bound_fraction"],
+        burst_window_frames=starve["burst_window_frames"],
+        burst_peak_fraction=starve["burst_peak_fraction"],
+        burst_peak_frame=starve["burst_peak_frame"],
         delta_psnr_p10=starve["delta_psnr_p10"],
         starvation_warned=starvation_warned,
     )
@@ -2771,6 +2912,9 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                 delta_frames=report.delta_frames,
                 budget_bound_frames=report.budget_bound_frames,
                 bound_fraction=report.bound_fraction,
+                burst_window_frames=report.burst_window_frames,
+                burst_peak_fraction=report.burst_peak_fraction,
+                burst_peak_frame=report.burst_peak_frame,
                 delta_psnr_p10=report.delta_psnr_p10,
                 starvation_warned=report.starvation_warned,
                 scene_cuts=result["scene_cuts"], kf_span_ranges=result["kf_span_ranges"],
