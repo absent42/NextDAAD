@@ -272,6 +272,42 @@ L2MOD 90      verb
 LHIDE 91      verb
 LSHOW 100     verb
 
+; SP17 T5 Layer 2 SCROLL bring-up (run sheet .superpowers/sdd/
+; sp14a-task-4-report.md section 41.4). Ten DEBUG-only owner verbs on
+; ONE EXTERN vector (11 - overlay0.asm's l2scr_trampoline ->
+; overlay2.asm's l2scr_run), the parameter selecting a config row.
+; Every one of them: paints the existing DEBUG test card + its marker
+; blocks, then pans the Layer 2 hardware offset one step per frame
+; until ANY key is pressed; on exit the offsets return to 0, the
+; mode's full clip window is re-asserted and Layer 2 is hidden again
+; (unlike L2MOD, which leaves its card up - a mode-1 card covers all
+; but the bottom 16 lines, so leaving it up would mean typing the
+; next row's verb blind). Verb numbers 102-111 are
+; free (NXBEN's retired 102-116 block). Release's EXTERN 0 11 is
+; ext_stub - a silent no-op.
+;   LSX0/LSX1 - X offset wrap, mode-0 (256 wide) / mode-1 (320 wide,
+;     the 9-bit NR $16 + NR $71 offset)
+;   LSY0/LSY1 - Y offset wrap, mode-0 (192 high) / mode-1 (256 high)
+;   LSCX/LSCY - the same pans under an inset clip window (all four
+;     sides), mode-1: does the window stay put in SCREEN space?
+;   LSTA/LSTB - tear pair, mode-0, coarse 8px step: identical except
+;     LSTA writes the offset inside vblank and LSTB writes it with the
+;     raster mid-picture
+;   LSTC - same mid-raster write in mode-1, where the 9-bit offset
+;     needs TWO non-atomic register writes
+;   LS256 - static hold at exactly 256 (NR $71 bit 0 = 1, NR $16 = 0):
+;     the MSB proof and the pan-direction sign
+LSX0  102     verb
+LSX1  103     verb
+LSY0  104     verb
+LSY1  105     verb
+LSCX  106     verb
+LSCY  107     verb
+LSTA  108     verb
+LSTB  109     verb
+LSTC  110     verb
+LS256 111     verb
+
 ; NXBEN (the SP15 T2 decode-kernel bench, verbs 102-116) is RETIRED
 ; (SP15 3a): the format froze on its evidence (task-2 settlement,
 ; 2026-07-25), its kernels graduated into the production v2 decoder,
@@ -743,6 +779,52 @@ $pictureOK
                 DONE
 
 > LSHOW   _     EXTERN 0 10
+                DONE
+
+; SP17 T5 Layer 2 scroll bring-up owner verbs (see the vocabulary
+; block's own note). No text response of their own - each one runs a
+; self-contained pan loop that owns the screen until a key is pressed.
+; The status line naming the running probe is printed on the bottom
+; DEBUG row. CLS afterwards restores a normal text screen (the KTEST
+; precedent) now that the probe has hidden Layer 2 again.
+> LSX0    _     EXTERN 0 11
+                CLS
+                DONE
+
+> LSX1    _     EXTERN 1 11
+                CLS
+                DONE
+
+> LSY0    _     EXTERN 2 11
+                CLS
+                DONE
+
+> LSY1    _     EXTERN 3 11
+                CLS
+                DONE
+
+> LSCX    _     EXTERN 4 11
+                CLS
+                DONE
+
+> LSCY    _     EXTERN 5 11
+                CLS
+                DONE
+
+> LSTA    _     EXTERN 6 11
+                CLS
+                DONE
+
+> LSTB    _     EXTERN 7 11
+                CLS
+                DONE
+
+> LSTC    _     EXTERN 8 11
+                CLS
+                DONE
+
+> LS256   _     EXTERN 9 11
+                CLS
                 DONE
 
 ; NXBEN bench responses retired with the verbs (see the vocabulary

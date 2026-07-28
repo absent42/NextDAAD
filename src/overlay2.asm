@@ -3338,6 +3338,277 @@ l2mod_run:
     xor a                       ; A = 0: 256x192 mode-0
     jp l2_testcard
 
+; --- SP17 T5 Layer 2 SCROLL bring-up probes -------------------------
+; Owner run sheet: .superpowers/sdd/sp14a-task-4-report.md section 41.4.
+; T5 (global motion compensation) wants to encode a camera pan as "move
+; the Layer 2 offset by (dx,dy), repaint only the newly exposed edge".
+; Nothing about that can be designed until the offset registers'
+; behaviour is proven on silicon: the 9th X bit (NR $71, see
+; nextdaad.inc), whether the offset WRAPS cleanly at each mode's
+; width/height, whether the letterbox clip window the video player
+; programs stays fixed in SCREEN space while content scrolls under it,
+; and whether an offset write placed mid-raster tears.
+;
+; One EXTERN vector (11) serves every probe: A/B = a config index into
+; l2sCfg, so each owner verb is one table row, not one vector. The body
+; only PANS an existing picture - it draws nothing new: l2_testcard
+; (this file) paints the card and l2_bareprobe_marker stamps its four
+; solid blocks near the origin, which is the actual motion reference
+; (the gradient alone is featureless along one axis in each mode - flat
+; vertically in mode-0, flat horizontally in mode-1 - so the blocks,
+; not the ramp, are what makes a wrap unambiguous; they read as a
+; horizontal row of 4 in mode-0 and a vertical column of 4 in mode-1,
+; the stride difference the card exists to show).
+;
+; Every probe: draw, apply the config's clip window, program the start
+; offset, print one status line + debug.asm's shared register/clip/
+; scroll row, wait for the keyboard to clear (the ENTER that submitted
+; the verb), then step the offset once per frame until ANY key is
+; pressed. On exit the offsets go back to 0 and l2_clip_set re-asserts
+; the mode's full window, so the game is left in a normal state with
+; the card still on screen (the L2MOD precedent).
+
+L2S_OPT_CLIP equ %00000001      ; program the inset clip window first
+L2S_OPT_MID  equ %00000010      ; write the offset mid-raster, not in
+                                 ; the vertical blanking interval
+L2S_CFGLEN   equ 10             ; bytes per l2sCfg row
+L2S_CFGN     equ 10             ; rows (owner verbs)
+
+; The inset clip window used by the OPT_CLIP probes. All four sides are
+; inset so BOTH axes are observable in one row: if the window is in
+; screen space (what T5 needs) the rectangle stays nailed to the screen
+; while the picture pans inside it; if it is in surface space the
+; rectangle itself slides. X is in 2-pixel units for 320x256 (guide
+; 655-669), so 16..143 = screen pixels 32..287; Y is in pixel rows.
+L2S_CLIP_X1  equ 16
+L2S_CLIP_X2  equ 143
+L2S_CLIP_Y1  equ 48
+L2S_CLIP_Y2  equ 207
+
+; B = config index (h_extern leaves EXTERN's first parameter in BOTH A
+; and B; the trampoline's ovl_map_page clobbers A, so B is the one that
+; survives - the same reason l2mod_run exists). Out of range = silent
+; no-op. Corrupts everything.
+l2scr_run:
+    ld a, b
+    cp L2S_CFGN
+    ret nc
+    ld d, a
+    ld e, L2S_CFGLEN
+    mul d, e                     ; DE = index * row length (Z80N)
+    ld hl, l2sCfg
+    add hl, de
+    ld de, l2sMode               ; copy the row into the live block -
+    ld bc, L2S_CFGLEN            ; same field order, so one LDIR
+    ldir
+    ld a, (l2sMode)
+    call l2_testcard             ; mode + full clip + offsets 0 + draw
+    ld a, 3                      ; 4 marker blocks = the motion reference
+    call l2_bareprobe_marker
+    ld a, (l2sOpts)
+    and L2S_OPT_CLIP
+    call nz, l2scr_clip_inset
+    call l2scr_write             ; the start offset (0, or 256 for LS256)
+    ld hl, (l2sMsg)
+    call l2dbg_status            ; bottom row: which probe is running
+    ld hl, msgL2sX9
+    call dbg_puts
+    ld e, NR_L2_XOFS_MSB
+    call nr_read                 ; NR $71 reads back (guide: RW) - shows
+    call dbg_hex8                ; whether the 9th bit even latched
+    call l2dbg_status2           ; row above: 14/clipW/scroll/px readback
+    call l2scr_wait_release
+.loop:
+    ld a, (frameCounter)         ; one step per frame, IM2-paced
+    ld c, a
+.tick:
+    ld a, (frameCounter)
+    cp c
+    jr z, .tick
+    ld a, (l2sOpts)
+    and L2S_OPT_MID
+    jr z, .step                  ; default: write here, just after the
+                                  ; frame interrupt = inside vblank
+.mid:                             ; MID: spin until the raster is well
+    ld bc, 0                     ; inside the visible field, so the
+.midpoll:                         ; write lands mid-picture. A window
+    ld e, NR_RASTER_LSB          ; (100-149), not an exact line, since
+    call nr_read                 ; nr_read is not single-cycle (it
+    cp 100                       ; preserves BC, so the counter is
+    jr c, .midnext               ; safe). Raster readback beats a delay
+    cp 150                       ; loop - no CPU-speed dependency; no
+    jr c, .step                  ; MSB check needed either, since no
+.midnext:                         ; supported timing has more than 356
+    dec bc                       ; lines. The counter is a bail-out
+    ld a, b                      ; only: a core that never returns a
+    or c                         ; line in the window degrades this row
+    jr nz, .midpoll              ; to "write wherever we are" instead
+.step:                            ; of hanging the owner's sitting.
+    ld hl, (l2sOfs)
+    ld a, (l2sStep)
+    add hl, a                    ; Z80N ADD HL,A
+    ld de, (l2sLimit)
+    or a
+    sbc hl, de                   ; >= limit: keep the reduced value,
+    jr nc, .wrapped              ; else undo the subtraction
+    add hl, de
+.wrapped:
+    ld (l2sOfs), hl
+    call l2scr_write
+    call l2scr_anykey
+    jr z, .loop                  ; Z = nothing pressed: keep panning
+    xor a
+    nextreg NR_L2_XOFS_MSB, a    ; l2_clip_set only knows $16/$17
+    ld a, (l2sMode)
+    call l2_clip_set             ; offsets 0 + the mode's full window
+    call l2_disable              ; hand the screen back to the text
+                                  ; layer: a mode-1 card covers all but
+                                  ; the bottom 16 lines, so leaving it
+                                  ; up (the L2MOD convention) would make
+                                  ; the owner type the next row's verb
+                                  ; blind. The next probe re-enables it
+                                  ; (l2_testcard), and the game's next
+                                  ; location redraw restores real art.
+    ld hl, msgL2sDone
+    call l2dbg_status
+    jp l2scr_wait_release        ; don't leak the exit key into the parser
+
+; Program the current offset for the configured axis. Mode-1 X needs
+; two writes (low 8 bits then the NR $71 MSB) and they cannot be
+; atomic - LSB FIRST here, which is what the LSTC row probes: crossing
+; 256 mid-raster momentarily presents (old MSB, new LSB). Corrupts
+; AF, HL.
+l2scr_write:
+    ld hl, (l2sOfs)
+    ld a, (l2sAxis)
+    or a
+    jr nz, .yaxis
+    ld a, l
+    nextreg NR_L2_XOFS, a
+    ld a, (l2sMode)
+    or a
+    ret z                        ; mode-0: 8 bits is the whole offset
+    ld a, h
+    and 1
+    nextreg NR_L2_XOFS_MSB, a
+    ret
+.yaxis:
+    ld a, l
+    nextreg NR_L2_YOFS, a
+    ret
+
+; Program the inset window (constants above) and mirror it into the
+; clip shadow, so debug.asm's l2dbg_status2 reports the window that is
+; actually up - NR $18 cannot be read back (see l2_clip_set).
+; Corrupts AF.
+l2scr_clip_inset:
+    ld a, L2S_CLIP_X1
+    ld (l2ClipX1), a
+    ld a, L2S_CLIP_X2
+    ld (l2ClipX2), a
+    ld a, L2S_CLIP_Y1
+    ld (l2ClipY1), a
+    ld a, L2S_CLIP_Y2
+    ld (l2ClipY2), a
+    nextreg NR_CLIP_IDX, 1
+    nextreg NR_L2_CLIP, L2S_CLIP_X1
+    nextreg NR_L2_CLIP, L2S_CLIP_X2
+    nextreg NR_L2_CLIP, L2S_CLIP_Y1
+    nextreg NR_L2_CLIP, L2S_CLIP_Y2
+    ret
+
+; ZF CLEAR if any key is down: B = 0 selects all eight half-rows at
+; once, bits 4-0 are the key lines (1 = up). Raw port read for the
+; same reason debug.asm's l2dbg_t_held uses one - the matrix helpers
+; live in an overlay this code has no reason to page in. Corrupts
+; AF, BC.
+l2scr_anykey:
+    ld bc, $00FE
+    in a, (c)
+    and $1F
+    cp $1F
+    ret
+l2scr_wait_release:
+    call l2scr_anykey
+    jr nz, l2scr_wait_release
+    ret
+
+; Live config block - field order MUST match an l2sCfg row (LDIR).
+l2sMode:  db 0                  ; 0 = 256x192 mode-0, 1 = 320x256 mode-1
+l2sAxis:  db 0                  ; 0 = X, 1 = Y
+l2sStep:  db 0                  ; pixels per frame (0 = static hold)
+l2sOfs:   dw 0                  ; start offset, then the live one
+l2sLimit: dw 0                  ; offset wraps back to 0 at this value
+l2sOpts:  db 0                  ; L2S_OPT_*
+l2sMsg:   dw 0                  ; status line
+
+; Config rows - one per owner verb (tests/test.dsf, EXTERN n 11):
+;   0 LSX0  X wrap, mode-0 (8-bit offset only)
+;   1 LSX1  X wrap, mode-1 (9-bit offset: the NR $71 question)
+;   2 LSY0  Y wrap, mode-0 (192)
+;   3 LSY1  Y wrap, mode-1 (256)
+;   4 LSCX  clip window + X pan, mode-1
+;   5 LSCY  clip window + Y pan, mode-1
+;   6 LSTA  tear baseline: coarse step, write in vblank
+;   7 LSTB  tear probe: same step, write mid-raster
+;   8 LSTC  tear probe: mode-1 mid-raster, the two-register 9-bit write
+;   9 LS256 static hold at exactly 256 - the MSB proof, and the sign of
+;           the pan (which way the picture moves for a positive offset)
+l2sCfg:
+    db 0, 0, 2
+    dw 0, 256
+    db 0
+    dw msgL2s0
+    db 1, 0, 1                   ; step 1: sweeps EVERY mode-1 X offset,
+    dw 0, 320                    ; odd ones included (mode-1 clip X is in
+    db 0                         ; 2px units - the OFFSET is not, so an
+    dw msgL2s1                   ; odd-offset artifact would show here)
+    db 0, 1, 2
+    dw 0, 192
+    db 0
+    dw msgL2s2
+    db 1, 1, 2
+    dw 0, 256
+    db 0
+    dw msgL2s3
+    db 1, 0, 2
+    dw 0, 320
+    db L2S_OPT_CLIP
+    dw msgL2s4
+    db 1, 1, 2
+    dw 0, 256
+    db L2S_OPT_CLIP
+    dw msgL2s5
+    db 0, 0, 8
+    dw 0, 256
+    db 0
+    dw msgL2s6
+    db 0, 0, 8
+    dw 0, 256
+    db L2S_OPT_MID
+    dw msgL2s7
+    db 1, 0, 8
+    dw 0, 320
+    db L2S_OPT_MID
+    dw msgL2s8
+    db 1, 0, 0
+    dw 256, 320
+    db 0
+    dw msgL2s9
+
+msgL2s0: db "LSX0 X-WRAP M0 W256 STEP2 VBLANK", 0
+msgL2s1: db "LSX1 X-WRAP M1 W320 STEP1 VBLANK 9BIT", 0
+msgL2s2: db "LSY0 Y-WRAP M0 H192 STEP2 VBLANK", 0
+msgL2s3: db "LSY1 Y-WRAP M1 H256 STEP2 VBLANK", 0
+msgL2s4: db "LSCX CLIP+X M1 W320 STEP2 VBLANK", 0
+msgL2s5: db "LSCY CLIP+Y M1 H256 STEP2 VBLANK", 0
+msgL2s6: db "LSTA X M0 STEP8 VBLANK WRITE", 0
+msgL2s7: db "LSTB X M0 STEP8 MIDRASTER WRITE", 0
+msgL2s8: db "LSTC X M1 STEP8 MIDRASTER 9BIT WRITE", 0
+msgL2s9: db "LS256 STATIC XOFS 256 M1", 0
+msgL2sX9: db " NR71=", 0
+msgL2sDone: db "L2SCROLL DONE - OFFSETS 0, CLIP FULL", 0
+
  ENDIF
 
     DISPLAY "overlay2 ends at ", $, " headroom ", /D, OVL_LIMIT - $

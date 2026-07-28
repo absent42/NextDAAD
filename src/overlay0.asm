@@ -2299,6 +2299,26 @@ l2show_trampoline:
     ld a, OVL2_PAGE
     jp ovl_map_page
  ENDIF
+
+; EXTERN vector 11 (SP17 T5 Layer 2 scroll bring-up, run sheet
+; .superpowers/sdd/sp14a-task-4-report.md section 41.4): DEBUG-only
+; route for tests/test.dsf's ten LSxxx owner verbs, which prove the
+; Layer 2 offset registers on silicon (the 9th X bit NR $71, X/Y wrap
+; at both modes, clip-window interaction, mid-raster write tearing)
+; before T5 designs a pan around them. ONE vector for all ten: the
+; EXTERN's first parameter selects a config row in overlay2's l2sCfg,
+; so a new probe costs a table row, not a vector (11-15 are the last
+; free ones - 5 must stay ext_stub forever, suite check 44). Same
+; push-target/ovl_map_page idiom as the trampolines above; the config
+; index rides in B because ovl_map_page clobbers A (h_extern leaves
+; the parameter in both).
+ IFDEF DEBUG
+l2scr_trampoline:
+    ld hl, l2scr_run
+    push hl
+    ld a, OVL2_PAGE
+    jp ovl_map_page
+ ENDIF
 extVec:
     dw ext_stub, ext_stub, ext_stub, ext_xmes
     dw h_xpart, ext_stub
@@ -2315,7 +2335,12 @@ extVec:
  ELSE
     dw ext_stub, ext_stub, ext_stub ; vectors 8-10, release: stubs
  ENDIF
-    dw ext_stub, ext_stub, ext_stub, ext_stub, ext_stub ; vectors 11-15
+ IFDEF DEBUG
+    dw l2scr_trampoline           ; vector 11, DEBUG only (SP17 T5)
+ ELSE
+    dw ext_stub                   ; vector 11, release: stub
+ ENDIF
+    dw ext_stub, ext_stub, ext_stub, ext_stub ; vectors 12-15
 
 savedCurX: db 0
 savedCurY: db 0

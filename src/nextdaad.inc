@@ -261,6 +261,18 @@ NR_L2_CLIP      equ $18     ; Layer 2 clip window (X1,X2,Y1,Y2 - index-
 NR_CLIP_IDX     equ $1C     ; write bit0 = 1 resets the L2 clip index
 NR_L2_XOFS      equ $16     ; Layer 2 X pixel scroll offset (low 8 bits)
 NR_L2_YOFS      equ $17     ; Layer 2 Y pixel scroll offset
+; The 9th X bit. Guide chapter-next-layer2.tex 745-756: NR $71 bit 0 =
+; "MSB for X pixel offset", "only used for 320x256 and 640x256 modes.
+; Together with [$16] full 319 pixels offsets are available"; the port
+; table (chapter-next-ports.tex 192) marks it RW, so it reads back.
+; Bits 7-1 are reserved and must be 0. Mode-0 (256x192) ignores it.
+NR_L2_XOFS_MSB  equ $71
+; Read-only raster position (chapter-next-ports.tex 128-129): $1E =
+; MSB, $1F = the eight LSBs of the line currently being drawn. Used by
+; the DEBUG scroll probes to place a register write at a known point
+; on the visible raster instead of a CPU-speed-dependent delay loop.
+NR_RASTER_MSB   equ $1E
+NR_RASTER_LSB   equ $1F
 
 ; --- Engine (sub-project 3) ---
 PROC_DEPTH      equ 10
