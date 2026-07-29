@@ -201,46 +201,79 @@ def t1_stream_supply_gate():
     # silicon_r: measured composed-player ratios, cluster + interpolation
     expect(enc.silicon_r(256, 192) == enc.TMODEL_SILICON_R["flat_256"], "classic flat R")
     expect(enc.silicon_r(320, 256) == enc.TMODEL_SILICON_R["flat_320"], "full flat R")
-    # Card #5 settlement review fix: 144-192 is the MEASURED cluster
-    # (settled formula, untouched) - both ends must still land exactly
-    # on TMODEL_SILICON_R. Below 144 is UNMEASURED and now FLOORED (not
-    # capped) at 1.15, TMODEL_COMPOSITION_FACTOR["gapped"]'s worst-dense
-    # basis, since the settled ~0.02/48 slope makes the naive formula
-    # ~1.05-1.06 there - optimistic, not conservative, without the
-    # floor.
-    expect(enc.silicon_r(320, 192) == enc.TMODEL_SILICON_R["gapped_192"],
-           "gapped 192 matches the settled formula (measured cluster)")
-    expect(enc.silicon_r(320, 144) == enc.TMODEL_SILICON_R["gapped_144"],
-           "gapped 144 matches the settled formula (measured cluster)")
-    expect(enc.silicon_r(320, 100) == 1.15,
-           "sub-144 gapped extrapolation floored at 1.15 pending silicon")
+    # Card #8 (2026-07-28): the two gapped rows SWAPPED ORDER on
+    # re-measurement (h=192 R 1.258 vs h=144 R 1.118), which refutes the
+    # 1/height slope rather than re-fitting it. silicon_r() no longer
+    # interpolates - every gapped height gets the WORST measured gapped
+    # R, sub-144 included (still unmeasured, still not extrapolated).
+    worst_gapped = max(enc.TMODEL_SILICON_R["gapped_192"],
+                       enc.TMODEL_SILICON_R["gapped_144"])
+    expect(enc.silicon_r(320, 192) == worst_gapped,
+           "gapped 192 takes the worst measured gapped R")
+    expect(enc.silicon_r(320, 144) == worst_gapped,
+           "gapped 144 takes the worst measured gapped R (no interpolation)")
+    expect(enc.silicon_r(320, 100) == worst_gapped,
+           "sub-144 gapped is unmeasured - worst measured R, never an extrapolation")
     expect(enc.silicon_r(256, 100) == enc.TMODEL_SILICON_R["flat_256"],
-           "the sub-144 gapped floor must not leak into the flat 256 cluster")
+           "the gapped R must not leak into the flat 256 cluster")
+    # BUSY IS TRUE DECODE WALL TIME (Card #8): silicon_r carries R's own
+    # /af, so the gate divides by af again. These anchors state the
+    # busy_ms they mean and back-solve mean_t through that identity, so
+    # they stay pinned to the silicon figure and not to whatever
+    # silicon_r currently holds.
+    af = enc.TMODEL_COEFFS["audio_factor"]
+
+    def _mean_t_for(busy_ms, width, height):
+        return busy_ms * clock * af / enc.silicon_r(width, height)
+
+    expect(abs(enc.stream_supply_check(_mean_t_for(20.0, 320, 256), 20000.0,
+                                       1536, 25.0, 320, 256)["busy_ms"] - 20.0) < 1e-9,
+           "busy_ms must be the true silicon decode time the anchor names")
     # VSTR1 anchor: the first 008 encode (mean demand 43520 B/f incl
-    # 1536B audio pad, mean modeled busy 30.19 ms) is UNSTREAMABLE
-    t8 = 30.187 * clock / enc.silicon_r(320, 256)
+    # 1536B audio pad, true decode 30.19 ms) is UNSTREAMABLE
+    t8 = _mean_t_for(30.187, 320, 256)
     s8 = enc.stream_supply_check(t8, 43520.0, 1536, 25.0, 320, 256)
     expect(1.70 < s8["utilization"] < 1.80,
            f"008 anchor utilization {s8['utilization']:.2f} (silicon: collapsed)")
     expect(0.45 < s8["suggested_budget"] < 0.55, "008 suggestion ~0.51")
-    # VSTR0 anchor: the shipped 007 encode (25508 B/f, busy 16.73 ms)
-    # sits AT the ceiling and must still be admitted (silicon-healthy)
-    t7 = 16.729 * clock / enc.silicon_r(256, 192)
-    s7 = enc.stream_supply_check(t7, 25508.0, 1536, 25.0, 256, 192)
-    expect(0.97 < s7["utilization"] <= 1.0,
-           f"007 anchor utilization {s7['utilization']:.3f} (silicon: healthy)")
+    # CARD #8 BRACKET (2026-07-28) - the two fixtures that were measured
+    # end-to-end on silicon at THIS encoder generation, walked op-by-op
+    # from the staged bytes. They bracket the true ceiling from both
+    # sides, which is the whole basis of the corrected gate:
+    #   008 sb0.51 - underran 914/1286 and 1141/1508 frames on two runs,
+    #                ring pinned at depth 1 -> must be REFUSED
+    #   009 sb0.54 - zero underruns, min ring depth 42 -> must be ADMITTED
+    # The pre-Card #8 gate scored these 0.934 and 0.805: it admitted the
+    # one that chronically failed.
+    s008 = enc.stream_supply_check(357716.0, 28460.7, 1536, 25.0, 320, 256)
+    expect(s008["utilization"] > 1.0,
+           f"008 (silicon: 71-76% of frames underran) scores "
+           f"{s008['utilization']:.3f} - the gate must refuse it")
+    s009 = enc.stream_supply_check(310436.0, 23092.8, 1536, 25.0, 320, 192)
+    expect(s009["utilization"] < 1.0,
+           f"009 (silicon: zero underruns, min depth 42) scores "
+           f"{s009['utilization']:.3f} - the gate must admit it")
+    # ... and the corrected model reproduces 008's MEASURED frame time
+    # (42.0/42.1 ms across the two runs) to better than 2%.
+    predicted_008_ms = s008["busy_ms"] + s008["audio_ms"] + s008["sd_ms"]
+    expect(abs(predicted_008_ms - 42.05) < 0.85,
+           f"008 predicted frame {predicted_008_ms:.2f} ms vs 42.0/42.1 measured")
+    # the AUDIO phase is a real serial term the gate used to omit
+    expect(1.2 < s008["audio_ms"] < 1.5,
+           f"audio copy term {s008['audio_ms']:.3f} ms (silicon: 20-21.6 ticks/frame)")
     # suggestion self-consistency: scaling busy + payload-SD by the
-    # suggested budget lands the mean at STREAM_TARGET_UTIL
+    # suggested budget lands the mean at STREAM_TARGET_UTIL (the audio
+    # pad's fetch AND its copy cost are the invariant part)
     sug = s8["suggested_budget"]
-    af = enc.TMODEL_COEFFS["audio_factor"]
     wire_eff = enc.SD_WIRE_BYTES_PER_MS * af
     audio_sd = 1536 / wire_eff
-    scaled = (s8["busy_ms"] + (s8["sd_ms"] - audio_sd)) * sug + audio_sd
+    scaled = ((s8["busy_ms"] + (s8["sd_ms"] - audio_sd)) * sug
+              + audio_sd + s8["audio_ms"])
     expect(abs(scaled / s8["period_ms"] - enc.STREAM_TARGET_UTIL) < 0.01,
            "suggested budget lands the target utilization")
     # monotonicity: more demand can only raise utilization
-    expect(enc.stream_supply_check(t7, 30000.0, 1536, 25.0, 256, 192)["utilization"]
-           > s7["utilization"], "utilization monotonic in demand")
+    expect(enc.stream_supply_check(310436.0, 30000.0, 1536, 25.0, 320, 192)["utilization"]
+           > s009["utilization"], "utilization monotonic in demand")
 
 
 @case(1, "streaming supply gate - encode() end-to-end REFUSAL (no file "
@@ -698,21 +731,25 @@ def t7_report_and_validate():
     if not SINTEL.exists() or not BBB.exists() or not FFMPEG.exists():
         skip("demo sources or ffmpeg not available")
     with tempfile.TemporaryDirectory() as td:
-        # BBB at full shape is unstreamable at the default operating
-        # point (the Card #3 VSTR1 finding - the gate refuses it, see
-        # the gate case in step 1); encode it at the -VidLong fixture
-        # operating point. Sintel classic used to stream at the default
-        # point (~0.95, at-capacity); the palette-collapse fix's
-        # dithered targets push it to 1.02 and the gate refuses -
-        # encode at the gate's own named remedy (0.88, ~0.90 target),
-        # the same re-derivation Card #5 did for 009.
-        for clip, shape_name, (w, h), sb in (
-                (SINTEL, "256x192", (256, 192), 0.88),
-                (BBB, "320x256", (320, 256), 0.51)):
+        # Both clips are unstreamable at the 1.00 ceiling (BBB full was
+        # the Card #3 VSTR1 finding; Sintel classic joined it when the
+        # palette-collapse fix's dithered targets raised delta demand),
+        # so each needs an operating point under the gate.
+        #
+        # AUTO-DERIVED rather than pinned (Card #8, 2026-07-28). This
+        # case carried hand-derived budgets (0.88 / 0.51) that had to be
+        # re-derived by hand every time the T model or the gate moved -
+        # and the Card #8 gate correction refuses both. The budget is
+        # not what this case is about (ring/resident sizing, BuildReport
+        # fields, validate()), so it now rides the encoder's own search,
+        # which is the shipping default and cannot go stale.
+        for clip, shape_name, (w, h) in (
+                (SINTEL, "256x192", (256, 192)),
+                (BBB, "320x256", (320, 256))):
             out = Path(td) / f"{clip.stem}_{shape_name}.vid"
             report = enc.encode(str(clip), str(out), shape=(w, h), fps=25.0,
                                  quality_profile="max", start=None, duration="5",
-                                 ffmpeg=str(FFMPEG), stream_budget=sb)
+                                 ffmpeg=str(FFMPEG), stream_budget=None)
             expect(report.frames > 0, "BuildReport.frames > 0")
             expect(report.shape == (w, h), "BuildReport.shape")
             expect(out.stat().st_size % 512 == 0, "output file is a 512B block multiple")
@@ -983,25 +1020,33 @@ def t10_silicon_coeffs():
     expect(tc["t_frame_fixed"] == 1132.0, "t_frame_fixed should be the silicon FE 1132")
     # Shape given explicitly (320x256, flat): composition_factor()'s
     # unknown-shape default is the pessimistic gapped factor now (fail-
-    # safe fix), so a bare no-shape call here would no longer read
-    # 952000 - pin the flat baseline against the real flat shape instead.
-    expect(abs(enc.usable_budget_t(25.0, 320, 256) - 952000.0) < 1.0,
-           f"silicon usable budget @25 (flat 320x256) should be 952000 T, got {enc.usable_budget_t(25.0, 320, 256)}")
-    # Composed-player safety factor. Flat surfaces come in UNDER the
-    # model (worst 0.898, stage-3a leg 2026-07-25). Mode-1 LETTERBOX
-    # surfaces cost 1.20-1.40x it PRE-column-hop; the 3c inline hop
-    # collapsed the DENSE gapped rows onto the flat cluster (Card #5,
-    # 2026-07-26: 003 R=1.005, 004 R=1.023 on byte-identical streams),
-    # so the factor re-settled 1.55 -> 1.15. Pinned here so a
-    # coefficient re-fit cannot silently drop the de-rating that keeps
-    # a gapped clip inside one frame period.
+    # safe fix), so a bare no-shape call here would not read the flat
+    # cap - pin the flat baseline against the real flat shape instead.
+    # 1120000*0.85/1.14 = 835087.7 (Card #8 re-fit; was 952000 at 1.00)
+    expect(abs(enc.usable_budget_t(25.0, 320, 256) - 835087.7) < 1.0,
+           f"silicon usable budget @25 (flat 320x256) should be 835087.7 T, got {enc.usable_budget_t(25.0, 320, 256)}")
+    # Composed-player safety factor, RE-FITTED on silicon at the SP17 T
+    # model (Card #8, 2026-07-28). The restored mem-to-mem DMA copy term
+    # made the model ~15% cheaper, so every measured R rose and both
+    # factors lost their margin: flat 0.898 -> 1.021 against a 1.00
+    # factor, dense gapped 1.023 -> 1.258 against a 1.15 one - and 003
+    # duly missed its frame period on silicon (678 ticks vs 625). The
+    # rule is unchanged, worst-in-class x 1.12: flat 1.021 -> 1.14,
+    # gapped 1.258 -> 1.41. Pinned here so a coefficient re-fit cannot
+    # silently drop the de-rating that keeps a clip inside one period.
     cf = enc.TMODEL_COMPOSITION_FACTOR
-    expect(cf["flat"] == 1.00, f"flat composition factor should be 1.00, got {cf['flat']}")
-    expect(cf["gapped"] == 1.15, f"gapped composition factor should be 1.15, got {cf['gapped']}")
+    expect(cf["flat"] == 1.14, f"flat composition factor should be 1.14, got {cf['flat']}")
+    expect(cf["gapped"] == 1.41, f"gapped composition factor should be 1.41, got {cf['gapped']}")
     # the de-rating must still BE a de-rating, and must still exceed the
-    # worst measured dense gapped R (margin, not a coincidence)
-    expect(cf["gapped"] > enc.TMODEL_SILICON_R["gapped_144"] > enc.TMODEL_SILICON_R["gapped_192"],
+    # worst measured R in each class (margin, not a coincidence). The
+    # gapped height ORDER is deliberately not asserted - Card #8 inverted
+    # it, which is why silicon_r() stopped interpolating.
+    expect(cf["gapped"] > max(enc.TMODEL_SILICON_R["gapped_144"],
+                              enc.TMODEL_SILICON_R["gapped_192"]),
            "gapped factor must carry margin over the worst measured gapped R")
+    expect(cf["flat"] > max(enc.TMODEL_SILICON_R["flat_256"],
+                            enc.TMODEL_SILICON_R["flat_320"]),
+           "flat factor must carry margin over the worst measured flat R")
     expect(enc.is_gapped(320, 192) and enc.is_gapped(320, 144),
            "mode-1 sub-256 heights are gapped")
     expect(not enc.is_gapped(320, 256) and not enc.is_gapped(256, 144)
@@ -1009,21 +1054,21 @@ def t10_silicon_coeffs():
            "mode-1 full height and ALL mode-0 heights are flat (row-linear)")
     # The budget must actually de-rate for a gapped shape, and not for a
     # flat one - the whole point of threading the shape through.
-    expect(abs(enc.usable_budget_t(25.0, 320, 256) - 952000.0) < 1.0,
-           "flat 320x256 keeps the full 952000 T budget")
-    expect(abs(enc.usable_budget_t(25.0, 256, 144) - 952000.0) < 1.0,
-           "flat 256x144 keeps the full 952000 T budget")
+    expect(abs(enc.usable_budget_t(25.0, 320, 256) - 835087.7) < 1.0,
+           "flat 320x256 keeps the flat 835087.7 T budget")
+    expect(abs(enc.usable_budget_t(25.0, 256, 144) - 835087.7) < 1.0,
+           "flat 256x144 keeps the flat 835087.7 T budget")
     gb = enc.usable_budget_t(25.0, 320, 192)
-    # Independent literal, not re-derived from the 1.15 constant above -
+    # Independent literal, not re-derived from the 1.41 constant above -
     # a coefficient/factor typo that moved both numbers together would
-    # otherwise still pass this assertion. 1120000*0.85/1.15 = 827826.1
-    expect(abs(gb - 827826.1) < 1.0,
-           f"gapped 320x192 budget should be 827826.1 T, got {gb:.0f}")
+    # otherwise still pass this assertion. 1120000*0.85/1.41 = 675177.3
+    expect(abs(gb - 675177.3) < 1.0,
+           f"gapped 320x192 budget should be 675177.3 T, got {gb:.0f}")
     # Fail-safe default (nxv2enc.composition_factor): an unset/unknown
     # shape must resolve to the pessimistic gapped factor, not the
     # optimistic flat one.
-    expect(abs(enc.usable_budget_t(25.0) - 827826.1) < 1.0,
-           f"unknown-shape budget should fail safe to the gapped 827826.1 T, got {enc.usable_budget_t(25.0):.0f}")
+    expect(abs(enc.usable_budget_t(25.0) - 675177.3) < 1.0,
+           f"unknown-shape budget should fail safe to the gapped 675177.3 T, got {enc.usable_budget_t(25.0):.0f}")
     # ... and the keyframe chunk planner must shrink with it (a kf chunk
     # is one long COPY straight down the paint order - it crosses every
     # column boundary the gapped surface has).
@@ -3194,22 +3239,25 @@ def t16_autobudget_override_e2e():
 def t16_autobudget_plateau():
     if not SINTEL.exists() or not FFMPEG.exists():
         skip("demo source or ffmpeg not available")
-    # 5 s of Sintel classic at --dither 0.5 streams (over the resident
-    # pool) at utilization 0.9023 - just over the 0.90 target - and that
+    # 5 s of Sintel at 256x160 / --dither 0.5 streams (over the resident
+    # pool) at utilization 0.9248 - just over the 0.90 target - and that
     # figure does NOT move with the budget, because the content is asking
     # for less than the caps allow. Descending would be a pure quality
     # loss for a hundredth of supply, so the search must not.
     #
-    # OPERATING POINT RE-BASED at the SP17 copy-DMA model (5 s / dither
-    # 0.5, was 3 s / dither 0.25): the case needs a content-limited clip
-    # whose plateau sits ABOVE the target, and the restored DMA copy term
-    # dropped the old point's utilization to 0.8432 - under the target,
-    # where the ceiling is simply accepted and no plateau is reported.
-    # The premise assertion at the end is what caught it.
-    ex = enc._extract_source(str(SINTEL), 256, 192, 25.0, "00:00:00", "5.0",
+    # OPERATING POINT RE-BASED at the Card #8 gate correction (256x160,
+    # was 256x192 at the same 5 s / dither 0.5): the case needs a
+    # content-limited clip whose plateau sits ABOVE the target but under
+    # 1.0, and the corrected busy term put the classic-shape version's
+    # ceiling at 1.058-1.071 - refused, where the search descends and
+    # reports no plateau. The 32-line crop brings the same footage back
+    # inside the gate. (Previously re-based at the SP17 copy-DMA model,
+    # 3 s / dither 0.25 -> 5 s / dither 0.5, for the mirror-image
+    # reason.) The premise assertion at the end is what caught both.
+    ex = enc._extract_source(str(SINTEL), 256, 160, 25.0, "00:00:00", "5.0",
                               str(FFMPEG), 0.5, False)
-    search = enc.auto_stream_budget(ex, 256, 192, 25.0, dither_amp=0.5)
-    expect(not search["resident"], "5 s of Sintel classic must exceed the resident pool")
+    search = enc.auto_stream_budget(ex, 256, 160, 25.0, dither_amp=0.5)
+    expect(not search["resident"], "5 s of Sintel at 256x160 must exceed the resident pool")
     expect(search["plateau"], "this clip is content-limited - the search must say so")
     expect(search["budget"] == 1.00,
            f"a content-limited clip must keep the ceiling, got {search['budget']}")

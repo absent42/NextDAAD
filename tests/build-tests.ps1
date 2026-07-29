@@ -698,7 +698,16 @@ if ($Font) {
 # to the pre-wave encoder for the same arguments, verified, so a bump
 # would have forced a full re-encode for no byte change. See the same
 # note on $encoderGeneration in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9f'
+# BUMP pal9f -> pal9h (Card #8 silicon re-fit, 2026-07-28): the
+# composition factors were re-fitted on measured silicon (flat
+# 1.00 -> 1.14, gapped 1.15 -> 1.41 - 003 was missing its frame period
+# at the shipped value) and the streaming supply gate's busy term was
+# corrected to true decode wall time with the omitted AUDIO phase
+# added. TMODEL_COMPOSITION_FACTOR, TMODEL_SILICON_R and
+# stream_supply_check all moved, so every leg fixture re-encodes.
+# Tag jumps straight to pal9h to stay in step with
+# $encoderGeneration in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9h'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,
@@ -783,14 +792,24 @@ if ($VidLong) {
         # deliberate at-capacity stress fixture - it is still 36.4%
         # budget-bound and still bands on silicon, which is the
         # documented expected picture here (see the -VidLong header).
-        '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.85', '--dither', '0.25'); tag = 'sb85d025' }
-        '008.VID' = @{ shape = 'full';    src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.51'); tag = 'sb51' }
+        # CARD #8 (2026-07-28): all three streamed operating points are
+        # now AUTO-DERIVED. The corrected supply gate refuses every one
+        # of the hand-pinned budgets below (007 sb0.85+d0.25, 008 sb0.51,
+        # 009 sb0.54), and 008 is why: silicon underran it 914/1286 and
+        # 1141/1508 frames on two runs with the ring pinned at a depth of
+        # one sector, at a budget the OLD gate had passed at util 0.934.
+        # Hand-picking a replacement would just be the same guess at a
+        # moving target - the encoder's own search (SP17 T1, the shipping
+        # default) lands each clip at the 0.90 target under whatever the
+        # gate currently is, and re-derives itself when it next moves.
+        '007.VID' = @{ shape = 'classic'; src = (Join-Path $root 'tools\demo-files\Sintel_1080_10s_30MB.mp4'); extraArgs = @('--dither', '0.25'); tag = 'autod025' }
+        '008.VID' = @{ shape = 'full';    src = (Join-Path $root 'tools\demo-files\Big_Buck_Bunny_1080_10s_30MB.mp4'); extraArgs = @(); tag = 'auto' }
         # 009's operating point RE-DERIVED at the Card #5 gapped prices
         # (composition factor 1.55 -> 1.15, silicon_r gapped 1.20 -> 1.01):
         # the higher decode-T cap made 0.68 unstreamable (gate: util 1.58),
         # and 0.54 lands at util 0.892 - the same ~0.90 target the 3b
         # operating points were chosen against, now +0.63 dB richer
-        '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4'); extraArgs = @('--stream-budget', '0.54'); tag = 'sb54' }
+        '009.VID' = @{ shape = '16:9';    src = (Join-Path $root 'tools\demo-files\Jellyfish_1080_10s_30MB.mp4'); extraArgs = @(); tag = 'auto' }
         # SP15 3c: 010 = the DIRECT-SERVE leg (VDIR/VDIRL) - all-literal
         # raw-equivalent encode, header hint set; the player serves it
         # SD-to-surface with no ring.

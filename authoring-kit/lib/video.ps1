@@ -95,7 +95,13 @@ if (-not $sources) { exit 0 }
 # the same arguments. --dither-mode is part of the hashed argument list
 # below, so a title that opts in re-encodes on that alone. Bumping here
 # would have forced every cached title to re-encode for no byte change.
-$encoderGeneration = 'pal9g'
+# BUMP pal9g -> pal9h (Card #8 silicon re-fit, 2026-07-28): the
+# composition factors moved on measured silicon (flat 1.00 -> 1.14,
+# gapped 1.15 -> 1.41) and the streaming supply gate's busy term was
+# corrected to true decode wall time with the omitted AUDIO phase
+# added. Both change the per-frame T cap and the operating point a
+# streamed encode is admitted at, so every cached encode re-prices.
+$encoderGeneration = 'pal9h'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

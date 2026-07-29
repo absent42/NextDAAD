@@ -336,15 +336,16 @@ TMODEL_COEFFS = {
 #   R = (silicon DECODE T/frame) / (model T/frame / audio_factor)
 #   silicon T/frame = DECODE ticks / FRM * 1792 T   (CTC /16 x TC 112)
 #
-#   AF CONVENTION (cross-refer stream_supply_check's own note at :447):
-#   this formula divides the MODEL side by audio_factor before taking
-#   the ratio - af is folded into R's own calibration, once, here. The
-#   R values below feed TMODEL_SILICON_R, which stream_supply_check()
-#   later multiplies straight onto the RAW (undivided) model T/frame,
-#   applying audio_factor separately and only to the wire (SD fetch)
-#   term instead. Those are two DIFFERENT placements of the same af,
-#   not one convention used twice - see :447 for why they must not be
-#   reconciled without re-fitting both against the silicon anchors.
+#   AF CONVENTION (cross-refer stream_supply_check's own note): this
+#   formula divides the MODEL side by audio_factor before taking the
+#   ratio - af is folded into R's own calibration, once, here. So
+#   R x model_T = af x (true silicon decode T), and any consumer that
+#   wants the TRUE silicon decode time must divide by af again.
+#   stream_supply_check() now does exactly that (Card #8, 2026-07-28);
+#   it used to multiply R straight onto the raw model T and thereby
+#   price busy at 85% of the decode time silicon actually spends. That
+#   understatement was harmless while the T model was ~15% dearer than
+#   silicon and is not harmless now - see the gate's own block.
 #
 #   | fixture | shape             | gap | model T/f | silicon T/f | R     |
 #   |---------|-------------------|-----|-----------|-------------|-------|
@@ -409,39 +410,72 @@ TMODEL_COEFFS = {
 # calibration used: 1.023 x 1.12 = 1.15.
 #
 # ---------------------------------------------------------------------
-# OPEN - R WAS FITTED AGAINST THE PRE-SP17 T MODEL (2026-07-28).
+# SP17 RE-FIT - CLOSED ON SILICON (Card #8 Group A, 2026-07-28, core
+# 3.02.04, DEBUG nex BA2CA168). This block was OPEN: R had been fitted
+# against the PRE-SP17 T model, and SP17 then restored the mem-to-mem
+# DMA copy term the task-2 settlement measured but the encoder never
+# wired in (_copy_t / copy_dma_* in TMODEL_COEFFS), making the model
+# side ~15% cheaper. The paper prediction was that every R would rise
+# by 1.09x-1.31x and eat both margins. It was NOT re-fitted from that
+# arithmetic - a calibration whose authority is that it was measured
+# does not get corrected on paper. Card #8 measured it.
 #
-# Every R above divides a SILICON measurement by a MODEL T/frame, and
-# the model side has since got cheaper: SP17 restored the mem-to-mem DMA
-# copy term the task-2 settlement measured but the encoder never wired
-# in (_copy_t / copy_dma_* in TMODEL_COEFFS). Re-costing the SAME
-# byte-identical anchor streams under both models:
+# Same method, same 1792 T tick, same op-walk of the EXACT staged bytes
+# (sd\001-006, sizes verified against the card - no re-encode enters
+# the ratio):
 #
-#   | anchor stream (pal9d)  | copy% | old T/f | new T/f | new/old |
-#   |------------------------|-------|---------|---------|---------|
-#   | 001 320x256 flat       | 33.0% | 863,937 | 788,195 |  0.912  |
-#   | 002 256x192 flat       | 43.3% | 530,078 | 451,709 |  0.852  |
-#   | 003 320x192 gapped     | 46.1% | 802,212 | 674,736 |  0.841  |
-#   | 004 320x144 gapped     | 43.4% | 616,260 | 568,920 |  0.923  |
-#   | 005 256x144 flat       | 55.2% | 547,800 | 417,790 |  0.763  |
+#   | fixture | shape          | class        | model T/f | silicon T/f | R     |
+#   |---------|----------------|--------------|-----------|-------------|-------|
+#   | 001.VID | 320x256        | FLAT         |   785,622 |     931,260 | 1.008 |
+#   | 002.VID | 256x192        | FLAT         |   449,158 |     539,432 | 1.021 |
+#   | 005.VID | 256x144        | FLAT         |   416,927 |     500,506 | 1.020 |
+#   | 003.VID | 320x192 LB     | GAPPED dense |   757,852 |   1,121,362 | 1.258 |
+#   | 004.VID | 320x144 LB     | GAPPED dense |   565,430 |     743,972 | 1.118 |
+#   | 006.VID | 320x192 LB TC  | GAPPED SPARSE|   261,853 |     582,386 | 1.890 |
 #
-# Silicon T/frame does not move, so every R above scales by 1/(new/old)
-# - a rise of 1.09x to 1.31x. That eats the 11-12% margin both factors
-# claim, and on the worst rows lands ON or just past the anchor (005
-# flat 0.760 -> ~0.996 against a 1.00 factor; 003 dense gapped 1.005 ->
-# ~1.195 against a 1.15 factor). The factors are NOT re-fitted here:
-# doing it from these numbers alone would bake a paper correction into a
-# calibration whose whole authority is that it was measured. What this
-# needs is a stage-3a-style silicon re-confirm leg on the re-encoded
-# streams. UNTIL THEN, treat both factors as carrying no margin.
+# The prediction held and the margins were gone: flat 0.90 -> 1.01-1.02,
+# dense gapped 1.005/1.023 -> 1.258/1.118. Re-fitted by the same rule:
+#
+#   flat   = worst flat R  1.021 (002) x 1.12 = 1.144 -> 1.14
+#   gapped = worst DENSE R 1.258 (003) x 1.12 = 1.409 -> 1.41
+#
+# THE SHIPPED FACTORS WERE ALREADY BEING BLOWN THROUGH, and 003 proves
+# it directly rather than by extrapolation: its Card #8 row spends
+# 625.8 ticks/frame in DECODE ALONE (40.05 ms) and its whole frame
+# takes 678.0 ticks (43.4 ms) against a 625-tick period - the only row
+# in the set that misses its period. Every other fixture paces at
+# 616-622 ticks. At the shipped 1.15 the gapped cap is 827,826 T, which
+# at R 1.258 predicts 1,225,000 T = 43.8 ms on silicon; at 1.41 the cap
+# is 675,177 T and predicts 999,300 T = 35.7 ms, back inside the period
+# with the intended margin.
+#
+# HEIGHT SLOPE REFUTED. Card #5's gapped rows sloped with 1/height
+# (144 worse than 192, the crossing-rate story). Card #8 inverts it:
+# 003 (h=192) R 1.258 is now WORSE than 004 (h=144) R 1.118, on
+# fixtures whose density also changed. Two points that swapped order
+# are not a law in either direction, so silicon_r() no longer
+# interpolates on height - it returns the worst measured gapped R for
+# every gapped height. A third, genuinely intermediate gapped row is
+# still what would settle the shape.
+#
+# SPARSE ROW UNMOVED. 006 re-measures R 1.890 against Card #5's 1.916
+# - the disclosed model weakness (90% of the surface skipped every
+# frame, priced at 262 kT against 582 kT of silicon) is exactly where
+# it was, neither healed nor worse. It is still not a cap hazard: 006
+# spends 325.0 ticks (20.8 ms) of a 40 ms period and paces at 622.4
+# ticks. It does NOT drive the dense factor - the rule says worst DENSE.
 # ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
-    "flat":   1.00,   # worst observed 0.898 (001) - 11% margin, and the
-                       #   model is conservative here by construction
-    "gapped": 1.15,   # worst observed DENSE 1.023 (004, h=144) - 12%
-                       #   margin [Card #5 post-column-hop re-measure,
-                       #   2026-07-26]. Was 1.55 (pre-hop worst 1.401).
-                       #   Gapped cap @25fps: 614,194 -> 827,826 T
+    "flat":   1.14,   # worst observed 1.021 (002) - 12% margin [Card #8
+                       #   re-fit, 2026-07-28]. Was 1.00 against a
+                       #   worst-observed 0.898 that the T-model
+                       #   correction turned into 1.02.
+                       #   Flat cap @25fps: 952,000 -> 835,088 T
+    "gapped": 1.41,   # worst observed DENSE 1.258 (003, h=192) - 12%
+                       #   margin [Card #8 re-fit, 2026-07-28]. Was 1.15
+                       #   (Card #5 post-column-hop worst 1.023), and
+                       #   1.55 before the hop.
+                       #   Gapped cap @25fps: 827,826 -> 675,177 T
 }
 
 
@@ -483,7 +517,8 @@ def usable_budget_t(fps, width=None, height=None):
 # producer runs only in the pace slack a frame leaves, so the mean
 # demand (audio pad + padded payload per frame) must fit
 #
-#   busy_ms + demand_bytes / (wire * audio_factor)  <=  frame period
+#   busy_ms + audio_ms + demand_bytes / (wire * audio_factor)
+#                                                   <=  frame period
 #
 # The dual budget (bytes + decode-T) bounds PER-FRAME peaks only; it
 # happily emits every frame AT the decode-T cap, which leaves ~zero
@@ -500,38 +535,60 @@ def usable_budget_t(fps, width=None, height=None):
 #   - the ISR audio tax (audio_factor) applies to the pace-window
 #     reads as well - the producer's ini loops are CPU-driven.
 #   - busy uses TMODEL_SILICON_R, the MEASURED composed-player
-#     ratios from the stage-3a five-fixture table above - NOT the
-#     margined COMPOSITION factor, which de-rates the encode budget
-#     and would reject silicon-healthy encodes here (feasibility
-#     wants the honest estimate, budget de-rating wants the margin).
+#     ratios from the fixture table above - NOT the margined
+#     COMPOSITION factor, which de-rates the encode budget and would
+#     reject silicon-healthy encodes here (feasibility wants the
+#     honest estimate, budget de-rating wants the margin) - and it is
+#     converted to TRUE decode wall time (Card #8; see the function).
+#   - the AUDIO phase is serial with both, so it is subtracted too.
 #
-# Calibration anchors (Card #3 silicon, 2026-07-25):
-#   007 classic  utilization 1.00 -> HEALTHY (period 623.8/625 ticks,
-#                0 underruns - at capacity, and it held)
-#   008 full     utilization 1.74 -> COLLAPSED (predicted equilibrium
-#                ~70 ms/frame vs 65.5 observed; min depth 1)
+# Calibration anchors:
+#   007 classic  utilization 1.00 -> HEALTHY [Card #3, 2026-07-25]
+#                (period 623.8/625 ticks, 0 underruns - at capacity,
+#                and it held). Under the Card #8 gate this file reads
+#                ~1.07-1.10; see the RESIDUAL note in the function.
+#   008 full     utilization 1.74 -> COLLAPSED [Card #3] (predicted
+#                equilibrium ~70 ms/frame vs 65.5 observed; depth 1)
+#   008 sb0.51   utilization 0.934 under the PRE-Card #8 gate ->
+#                ADMITTED, and silicon underran it 914/1286 and
+#                1141/1508 frames on two runs, min depth 1 sector,
+#                frames 656-658 ticks vs a 625-tick period [Card #8,
+#                2026-07-28]. THE FAILURE THAT DROVE THE CORRECTION -
+#                the corrected gate reads it 1.060 and refuses it.
+#   009 sb0.54   utilization 0.805 pre-Card #8 / 0.970 corrected ->
+#                ADMITTED both ways, and silicon is CLEAN (zero
+#                underruns, min ring depth 42 blocks) [Card #8]. The
+#                pair 008/009 brackets the true ceiling from both
+#                sides, which is what makes the correction testable.
 # The infeasibility line is utilization > 1.0; STREAM_WARN_UTIL warns
 # above 0.90 (at-capacity encodes have no burst margin beyond the
 # ring). Files at or below STREAM_RESIDENT_POOL_B load RESIDENT on
 # the reference fresh-boot 2MB machine and skip the check (smaller
 # pools stream them too, disclosed on the leg card as underrun-prone).
 # ---------------------------------------------------------------------
-# SPARSE-GAPPED CAVEAT (Card #5): the gapped rows below are the DENSE
-# real-footage measurement. A SPARSE gapped stream (006-class: most of
-# the surface skipped every frame) runs R ~1.92, so busy_ms below is
-# ~2x optimistic for such content. It is not a streaming hazard because
+# SPARSE-GAPPED CAVEAT (Card #5, re-measured Card #8): the gapped rows
+# below are the DENSE real-footage measurement. A SPARSE gapped stream
+# (006-class: most of the surface skipped every frame) runs R ~1.89
+# (1.92 on Card #5 - unmoved), so busy_ms below is ~1.5x optimistic for
+# such content. It is not a streaming hazard because
 # the two terms are anti-correlated - sparseness that inflates R also
 # collapses the byte demand the wire term prices: a 006-class streamed
 # clip totals busy 20.2 ms + SD 6.0 ms = 0.66 utilization on the
 # measured numbers. Disclosed, not machined around (cf. the SKIP16
 # under-price, task-2-final-settlement section 5.3).
 TMODEL_SILICON_R = {
-    "flat_256": 0.84,   # measured 0.834 (002, 256x192) / 0.760 (005)
-    "flat_320": 0.90,   # measured 0.898 (001, 320x256 flat)
-    "gapped_192": 1.01,  # measured 1.005 (003, 320x192 LB) [Card #5
-                          #   post-column-hop; was 1.20 pre-hop]
-    "gapped_144": 1.03,  # measured 1.023 (004, 320x144 LB) [Card #5;
-                          #   was 1.40 pre-hop]
+    "flat_256": 1.02,   # measured 1.021 (002, 256x192) / 1.020 (005)
+                         #   [Card #8, 2026-07-28; was 0.84 against the
+                         #   pre-SP17 T model]
+    "flat_320": 1.01,   # measured 1.008 (001, 320x256 flat) [Card #8;
+                         #   was 0.90]
+    "gapped_192": 1.26,  # measured 1.258 (003, 320x192 LB) [Card #8;
+                          #   was 1.01 pre-SP17, 1.20 pre-column-hop]
+    "gapped_144": 1.12,  # measured 1.118 (004, 320x144 LB) [Card #8;
+                          #   was 1.03 pre-SP17, 1.40 pre-hop]. NOTE this
+                          #   is now BELOW gapped_192 - the height slope
+                          #   inverted, see the block above; silicon_r()
+                          #   no longer interpolates between them
 }
 
 SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon prefill floor -
@@ -544,14 +601,32 @@ SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon prefill floor -
                                                 # = 20.72 T/byte, ~7% cheaper -
                                                 # this constant is left at the
                                                 # OLDER, more conservative
-                                                # figure deliberately: it is
-                                                # part of the same silicon-
-                                                # anchor fit as the af
-                                                # convention note at :447, and
-                                                # moving it to 20.72 without
-                                                # re-checking the 007/008
-                                                # anchors would shift
-                                                # utilization for every file
+                                                # figure deliberately, and
+                                                # Card #8 EXONERATED it: see
+                                                # the wire-term note in
+                                                # stream_supply_check, which
+                                                # measures what the ring
+                                                # producer actually delivered
+                                                # on silicon (1163 B/ms) and
+                                                # finds wire x af = 1100 B/ms
+                                                # conservative by 5.5%, i.e.
+                                                # margin and not the defect
+
+# Per-frame AUDIO-COPY cost, in T per PADDED audio byte - the timeline's
+# own AUDIO phase (vid_aud_copy's 1250 B seam-walked LDIR into the
+# double buffer, plus the hand-off), which is serial with DECODE and
+# with the pace window and is therefore time the SD producer does NOT
+# have. The streaming gate omitted it entirely.
+#
+# DERIVED (Card #8, 2026-07-28) from the AUDIO phase of all eight Group
+# A rows at a 1536 B padded stereo layout: 19.88 / 20.09 / 20.60 /
+# 20.09 / 20.10 / 20.38 / 21.55 + 21.61 (008, two runs) / 20.81
+# ticks/frame. Taking the WORST, 21.61 ticks x 1792 T = 38,725 T over
+# 1536 padded bytes = 25.2 T/B -> 25.0. Expressed per padded byte
+# because that is the quantity the gate is handed; the copy itself is
+# one double-buffer half per frame, so the term tracks the layout.
+AUDIO_COPY_T_PER_B = 25.0
+
 STREAM_RESIDENT_POOL_B = 78 * 16384            # fresh-boot 2MB pool ring
 STREAM_WARN_UTIL = 0.90
 STREAM_TARGET_UTIL = 0.90                       # suggestion target
@@ -735,27 +810,23 @@ STARVE_BURST_WINDOW_S = 0.5
 
 
 def silicon_r(width, height):
-    """Measured composed-player decode ratio (silicon/model) for this
-    shape cluster. Gapped surfaces interpolate on height between the
-    two measured letterbox rows, 144-192 - the SETTLED, MEASURED
-    cluster (Card #5 settlement, 2026-07-26, R 1.005-1.023; see
-    .superpowers/sdd/card5-settlement-report.md section 1). Below 144
-    is UNMEASURED: the settled slope is ~0.02 R per 48 lines, so the
-    naive formula is only ~1.05-1.06 there and would hand out
-    optimistic extrapolation over a region the silicon rows never
-    covered. Floor it instead, at TMODEL_COMPOSITION_FACTOR["gapped"]'s
-    worst-dense basis (1.15), until a sub-144 silicon row lands."""
+    """Measured composed-player decode ratio for this shape cluster:
+    R = silicon T/frame / (model T/frame / audio_factor), so R x model_T
+    is af x the true silicon decode T (see the AF CONVENTION note in the
+    composition-factor block - a caller wanting true decode time divides
+    by af again).
+
+    NO HEIGHT INTERPOLATION (Card #8, 2026-07-28). Card #5's two gapped
+    rows sloped with 1/height and this function interpolated across
+    144-192 and floored below 144. Card #8 re-measured the same two
+    shapes and they SWAPPED ORDER (h=192 R 1.258, h=144 R 1.118), which
+    refutes the slope rather than re-fitting it. Every gapped height
+    therefore gets the WORST measured gapped R until a third,
+    intermediate gapped row settles the shape - including sub-144,
+    which remains unmeasured and must not be handed an extrapolation."""
     if not is_gapped(width, height):
         return TMODEL_SILICON_R["flat_320" if int(width) == 320 else "flat_256"]
-    h = int(height)
-    if h >= 192:
-        return TMODEL_SILICON_R["gapped_192"]
-    r = (TMODEL_SILICON_R["gapped_192"]
-         + (192 - h) / 48.0 * (TMODEL_SILICON_R["gapped_144"]
-                                - TMODEL_SILICON_R["gapped_192"]))
-    if h < 144:
-        return max(r, 1.15)
-    return r
+    return max(TMODEL_SILICON_R["gapped_192"], TMODEL_SILICON_R["gapped_144"])
 
 
 def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
@@ -763,50 +834,78 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     """Mean-rate streaming feasibility for an emitted stream. mean_t =
     mean modeled decode T/frame (TMODEL prices), mean_demand_bytes =
     mean (audio pad + 512-padded payload) per frame. Returns a dict:
-    utilization (busy + SD time over the frame period; > 1.0 is
-    unstreamable), busy_ms, sd_ms, period_ms, demand_kbs, and
-    suggested_budget (the --stream-budget scale that lands the mean at
-    STREAM_TARGET_UTIL, from the audio-demand-invariant solve)."""
+    utilization (busy + audio copy + SD time over the frame period;
+    > 1.0 is unstreamable), busy_ms, audio_ms, sd_ms, period_ms,
+    demand_kbs, and suggested_budget (the --stream-budget scale that
+    lands the mean at STREAM_TARGET_UTIL, from the audio-demand-
+    invariant solve)."""
     af = TMODEL_COEFFS["audio_factor"]
     clock = TMODEL_COEFFS["clock_khz"]
     period_ms = 1000.0 / float(fps)
     wire_eff = SD_WIRE_BYTES_PER_MS * af
-    # AF CONVENTION (documented, not a bug - review closure Important 2):
-    # audio_factor de-rates ONLY the wire (SD fetch) term above, via
-    # wire_eff. The busy (decode) term below multiplies silicon_r()
-    # straight onto mean_t, the RAW model T/frame - audio_factor never
-    # touches it. This is NOT the same convention as the R formula that
-    # produced these silicon_r/TMODEL_SILICON_R values in the first
-    # place (TMODEL_COMPOSITION_FACTOR block above, :296ish:
-    # R = silicon / (model / audio_factor) - af divides the MODEL side
-    # there, before the ratio is taken).
+    # THE BUSY TERM IS THE TRUE SILICON DECODE TIME (Card #8 correction,
+    # 2026-07-28). silicon_r() carries R's own /af (see the AF
+    # CONVENTION note in the composition-factor block), so R x mean_t is
+    # af x the decode time silicon actually spends; dividing by af here
+    # undoes that and leaves wall-clock decode. This term used to be
+    # mean_t * silicon_r / clock, defended as a deliberate second
+    # placement of af co-fitted with the wire floor - and it was
+    # measurably wrong on Card #8: for 008 it priced busy at 11.50 ms
+    # against a MEASURED DECODE phase of 16.18 ms (two runs, 252.8 and
+    # 252.4 ticks/frame). Two independent errors stacked: silicon_r was
+    # still fitted against the pre-SP17 T model (~15%), and the af
+    # division was never undone (~15%). The gate therefore admitted 008
+    # at utilization 0.934 - and silicon underran it on 71.1% and 75.7%
+    # of frames across two runs, ring pinned at a MINIMUM DEPTH OF ONE
+    # SECTOR throughout, frames stretched to 656-658 ticks (42.0 ms)
+    # against a 625-tick period. Both errors are fixed here (R re-fitted
+    # from Card #8's own rows; af undone).
     #
-    # The wire floor SD_WIRE_BYTES_PER_MS is ALSO not the settled
-    # silicon figure - it keeps the older, ~7% more conservative value
-    # (see its own definition comment above).
+    # THE WIRE TERM IS NOT THE DEFECT, and Card #8 says so with a
+    # measurement rather than an argument. In 008's chronic regime the
+    # producer never idles, so its whole pace window IS production time:
+    # 28,461 B/frame over a PACE phase of 381.4 ticks (run 1) and 383.0
+    # ticks (run 2) = 1166 and 1161 B/ms delivered, agreeing to 0.4%.
+    # wire_eff below is 1100 B/ms - 5.5% CONSERVATIVE against what the
+    # ring producer actually achieved. SD_WIRE_BYTES_PER_MS stays where
+    # it is (and so, therefore, does DIRECT_TRANSPORT_FACTOR, which is
+    # co-fitted to it): the af on the wire is doing the work of a
+    # transport de-rating - the same per-block open, token-wait and
+    # re-arm glue the direct path measured explicitly as 1.20 - not a
+    # second audio tax, and it is carrying real margin.
     #
-    # Both of these - the af placement here and the wire floor's
-    # conservatism - are CO-FITTED to the Card #3 silicon anchor points
-    # (007 classic healthy at util ~1.00, 008 full collapsed at ~1.74),
-    # not independently derived from first principles. A maintainer who
-    # "corrects" only one of them - e.g. dividing mean_t by af here to
-    # literally match the :296 R formula, or swapping in the settled
-    # 20.72 T/B wire figure - without re-fitting the other and
-    # re-checking both anchors will shift busy_ms/sd_ms and can refuse
-    # silicon-healthy encodes (007-class files) for no silicon reason.
-    # Change both together, against the anchors, or change neither.
-    busy_ms = mean_t * silicon_r(width, height) / clock
+    # VALIDATION. With both corrections the gate predicts 008's frame at
+    # busy 15.18 + audio 1.37 + wire 25.87 = 42.42 ms against 42.0/42.1
+    # ms measured on two runs (0.9%), and 009 at 38.80 ms - inside the
+    # period, which is what 009 measured (zero underruns, min ring depth
+    # 42 blocks). The gate refuses 008 at 1.060 and admits 009 at 0.970.
+    #
+    # RESIDUAL, STATED. The Card #3 007 anchor (silicon-healthy at
+    # 623.8/625 ticks, admitted at util ~1.00 by the old gate) reads
+    # ~1.07-1.10 here and would now be refused. That anchor's own DECODE
+    # phase was never transcribed, so its true decode is inferred from a
+    # class R, and an R of 0.78 rather than 0.834 - well inside that
+    # era's measured flat spread of 0.76-0.90 - reconciles it exactly.
+    # It is an under-determined point, not a counter-example, and the
+    # correction is the conservative direction on the one file that has
+    # been measured end-to-end. Re-transcribing a VSTR0 row with its
+    # DECODE phase would settle it.
+    busy_ms = mean_t * silicon_r(width, height) / af / clock
+    # the AUDIO phase: serial with decode and with the pace window, so
+    # it is period the producer never gets (see AUDIO_COPY_T_PER_B)
+    audio_ms = audio_pad_bytes * AUDIO_COPY_T_PER_B / clock
     sd_ms = mean_demand_bytes / wire_eff
-    util = (busy_ms + sd_ms) / period_ms
+    util = (busy_ms + audio_ms + sd_ms) / period_ms
     # scaling the operating point scales busy and the payload part of
-    # demand; the audio pad is invariant
+    # demand; the audio pad and its copy cost are invariant
     audio_sd_ms = audio_pad_bytes / wire_eff
     payload_sd_ms = sd_ms - audio_sd_ms
+    fixed = audio_sd_ms + audio_ms
     scalable = busy_ms + payload_sd_ms
-    suggested = ((period_ms * STREAM_TARGET_UTIL - audio_sd_ms) / scalable
+    suggested = ((period_ms * STREAM_TARGET_UTIL - fixed) / scalable
                  if scalable > 0 else 1.0)
-    return dict(utilization=util, busy_ms=busy_ms, sd_ms=sd_ms,
-                period_ms=period_ms, audio_sd_ms=audio_sd_ms,
+    return dict(utilization=util, busy_ms=busy_ms, audio_ms=audio_ms,
+                sd_ms=sd_ms, period_ms=period_ms, audio_sd_ms=audio_sd_ms,
                 demand_kbs=mean_demand_bytes * float(fps) / 1024.0,
                 suggested_budget=max(0.05, min(1.0, suggested)))
 
