@@ -11,6 +11,7 @@ Steps 4/6/7 hit the real demo sources (tools/demo-files/) via ffmpeg and
 run genuine (short-duration) encodes - they are the slow cases in this
 file by design (real-footage sanity anchors, not synthetic unit tests).
 """
+import inspect
 import sys
 import tempfile
 import traceback
@@ -3239,26 +3240,26 @@ def t16_autobudget_override_e2e():
 def t16_autobudget_plateau():
     if not SINTEL.exists() or not FFMPEG.exists():
         skip("demo source or ffmpeg not available")
-    # 5 s of Sintel at 256x112 / --dither 0.5 streams (over the resident
-    # pool) at utilization 0.9103 - just over the 0.90 target - and that
-    # figure does NOT move with the budget, because the content is asking
-    # for less than the caps allow. Descending would be a pure quality
-    # loss for a hundredth of supply, so the search must not.
+    # 5 s of Sintel at 256x152 / --dither 0.5 streams (over the resident
+    # pool) at utilization 0.935 - over the 0.90 target - and that figure
+    # does NOT move with the budget, because the content is asking for
+    # less than the caps allow. Descending would be a pure quality loss
+    # for a hundredth of supply, so the search must not.
     #
-    # OPERATING POINT RE-BASED at the SP17 adaptive tile ladder
-    # (256x112, was 256x152 at the same 5 s / dither 0.5): a bound frame
-    # now takes the finest ladder rung its byte spend allows, which
-    # costs decode-T, so utilization moves with the budget again at
-    # 256x152 (the search descends to 0.74 and reports no plateau).
-    # Forty fewer lines puts the same footage back on its plateau.
-    # (Previously re-based at the Card #8 gate correction, 256x192 ->
-    # 256x160; at the SP17 copy-DMA model, 3 s / dither 0.25 -> 5 s /
-    # dither 0.5; and at SP17 T0 source retiming, 256x160 -> 256x152.)
-    # The premise assertion at the end is what caught all four.
-    ex = enc._extract_source(str(SINTEL), 256, 112, 25.0, "00:00:00", "5.0",
+    # OPERATING POINT RE-BASED at the LADDER RE-CUT (256x152, back from
+    # 256x112): the pal9j ladder spent decode-T on sub-line rungs, which
+    # put utilization back under the budget's control at 256x152 and
+    # forced a re-base to 112. The re-cut ladder cannot spend supply, so
+    # 152 is content-limited again - the same operating point this case
+    # used before pal9j. (Previously re-based at the Card #8 gate
+    # correction, 256x192 -> 256x160; at the SP17 copy-DMA model, 3 s /
+    # dither 0.25 -> 5 s / dither 0.5; at SP17 T0 source retiming,
+    # 256x160 -> 256x152; and at the pal9j ladder, 152 -> 112.) The
+    # premise assertion at the end is what caught all five.
+    ex = enc._extract_source(str(SINTEL), 256, 152, 25.0, "00:00:00", "5.0",
                               str(FFMPEG), 0.5, False)
-    search = enc.auto_stream_budget(ex, 256, 112, 25.0, dither_amp=0.5)
-    expect(not search["resident"], "5 s of Sintel at 256x112 must exceed the resident pool")
+    search = enc.auto_stream_budget(ex, 256, 152, 25.0, dither_amp=0.5)
+    expect(not search["resident"], "5 s of Sintel at 256x152 must exceed the resident pool")
     expect(search["plateau"], "this clip is content-limited - the search must say so")
     expect(search["budget"] == 1.00,
            f"a content-limited clip must keep the ceiling, got {search['budget']}")
@@ -3517,45 +3518,95 @@ def t17_cli_and_arg_hash():
 
 
 # =======================================================================
-# Step 18: SP17 ADAPTIVE TILE LADDER
+# Step 18: SP17 ADAPTIVE TILE LADDER (re-cut 2026-07-30)
 # =======================================================================
 # The budget-bound schedule used to spend on a FIXED tile (TILE_BAND rows /
-# columns, 1024 B on the two 256-line shapes). SP17 replaces that with a
-# SPEND-PRESERVING LADDER - per bound frame, walk {32,64,128,256,band}
-# fine -> coarse and keep the FINEST rung that still spends >= 99% of the
-# best rung's bytes - and replaces the sqrt(err2) band-importance weight
-# with raw err2.
+# columns, 1024 B on the two 256-line shapes). SP17 replaces that with an
+# ADAPTIVE LADDER - per bound frame, walk the rungs fine -> coarse and keep
+# the finest ADMISSIBLE one - and replaces the sqrt(err2) band-importance
+# weight with raw err2.
 #
-# These cases pin the five things the rule has to get right: the rungs and
-# the threshold constant, the err2 weight (which orders bands differently
-# from sqrt and must), the spend-preservation invariant itself, the
-# decode-T inversion the invariant exists to prevent (a FIXED fine tile
-# saturates cap_t and strands byte budget - the ladder must not), and that
-# encode_clip really drives the ladder end to end.
+# The first cut of that ladder shipped as the literal (32,64,128,256,1024)
+# with byte spend as its only admissibility test, and owner silicon caught
+# it on fixture 007 (mode-0) the next day: displacement and tearing on a
+# clean transport. Both faults are pinned here.
+#   - SUB-LINE RUNGS. A rung finer than one paint-order line splits a row
+#     (mode-0) / column (mode-1) into independently-scheduled fragments.
+#     The re-cut ladder walks WHOLE LINES: 1, 2 and 4 of them (= quarter,
+#     half and whole band), so no rung can split a line on any shape.
+#   - UNPRICED DECODE-T. Byte spend guards the WIRE and is silent on T,
+#     but T is what the supply gate charges as busy_ms and what the
+#     auto-budget search pays for in budget - i.e. in wire bytes. The
+#     re-cut adds SUPPLY PRESERVATION: a finer rung is admissible only if
+#     the gate's own busy+wire arithmetic does not price it above the
+#     coarsest rung.
+#
+# These cases pin: the rungs and the two constants, the whole-line floor,
+# the err2 weight (which orders bands differently from sqrt and must), the
+# spend-preservation invariant, the supply-preservation invariant (the one
+# the regression needed), the decode-T inversion spend preservation exists
+# to prevent, and that encode_clip really drives the priced ladder end to
+# end.
 # =======================================================================
+
+
+def _price_for(width, height):
+    return enc.supply_price(width, height)
+
+
+def _ladder_costs(target, err2, prev, cap_b, cap_t, ladder):
+    """(rung -> (bytes, T)) for a single-rung schedule at each rung."""
+    out = {}
+    for g in ladder:
+        r = enc.encode_delta(target, err2, cap_b, cap_t, surface_flat=prev,
+                             tile_px=g)
+        out[g] = (r[3], r[4])
+    return out
+
+
+def _ladder_residuals(target, err2, prev, cap_b, cap_t, ladder):
+    """(rung -> err2 LEFT on the surface) for a single-rung schedule."""
+    out = {}
+    for g in ladder:
+        r = enc.encode_delta(target, err2, cap_b, cap_t, surface_flat=prev,
+                             tile_px=g)
+        m = enc._mask_from_segments(r[0], r[1], r[2], err2.size)
+        out[g] = float(err2[~m].sum())
+    return out
 
 
 def _ladder_spends(target, err2, prev, cap_b, cap_t, ladder):
     """(rung -> modelled bytes) for a single-rung schedule at each rung."""
-    return {g: enc.encode_delta(target, err2, cap_b, cap_t, surface_flat=prev,
-                                tile_px=g)[3] for g in ladder}
+    return {g: bt[0] for g, bt in
+            _ladder_costs(target, err2, prev, cap_b, cap_t, ladder).items()}
 
 
-def _expected_rung(spends, ladder, frac):
-    """The rule, spelled out independently of the implementation: finest
-    rung (ladder is fine -> coarse) whose spend is within `frac` of the
-    best spend on the ladder."""
-    best = max(spends.values())
+def _expected_rung(costs, ladder, frac, price, slack, resid):
+    """The rule, spelled out independently of the implementation: the finest
+    rung (ladder is fine -> coarse) that spends at least the coarsest rung's
+    bytes (and within `frac` of the best spend), is priced no higher than the
+    coarsest rung's supply cost, and leaves no more residual err2 than it.
+    Failing all of them, the coarsest rung - which is today's fixed band
+    scheduler, so falling back to it is by construction never worse than
+    what the ladder replaced."""
+    best = max(b for b, _ in costs.values())
+    coarse_b, coarse_t = costs[ladder[-1]]
+    floor_b = max(coarse_b, frac * best)
+    ceil_ms = enc.frame_supply_ms(coarse_b, coarse_t, price) * (1.0 + slack)
     for g in ladder:
-        if spends[g] >= frac * best:
+        b, t = costs[g]
+        if b >= floor_b and enc.frame_supply_ms(b, t, price) <= ceil_ms                 and resid[g] <= resid[ladder[-1]]:
             return g
     return ladder[-1]
 
 
-@case(18, "adaptive tile ladder - rungs, 0.99 spend threshold and the per-shape ladder")
+@case(18, "adaptive tile ladder - constants, and every rung is a WHOLE paint-order line")
 def t18_ladder_constants():
-    expect(enc.TILE_LADDER == (32, 64, 128, 256, 1024),
-           f"ladder rungs are pinned by the SP17 A/B: {enc.TILE_LADDER}")
+    expect(enc.TILE_LADDER_QUARTERS == (1, 2, 4),
+           f"ladder rungs are 1/2/4 quarter-bands: {enc.TILE_LADDER_QUARTERS}")
+    expect(not hasattr(enc, "TILE_LADDER"),
+           "the literal sub-line ladder (32,64,128,256,1024) is RETIRED - it "
+           "is what owner silicon read as displacement and tearing on 007")
     # 0.99, not 0.98 and emphatically not 1.00. Re-verification wave under
     # the shipped OFFSET dither default: 1.00 is an exact-tie requirement
     # that kicks the ladder off the finest rung on 56 of 132 bound frames
@@ -3563,41 +3614,66 @@ def t18_ladder_constants():
     # of fixture 008's wire. Anything outside [0.98, 0.99] is out of band.
     expect(enc.TILE_SPEND_FRAC == 0.99,
            f"spend-preservation threshold must be 0.99, got {enc.TILE_SPEND_FRAC}")
+    # ZERO, deliberately - 008 sits 0.001 of utilization under the
+    # auto-budget target at its own operating point, so any positive slack
+    # is a coin flip on whether its derived budget survives.
+    expect(enc.TILE_SUPPLY_SLACK == 0.0,
+           f"supply-preservation slack must be 0.0, got {enc.TILE_SUPPLY_SLACK}")
     # The COARSEST rung is the shape's own TILE_BAND band - i.e. exactly
     # today's fixed scheduler - so "spend-preserving" means "never less
-    # wire than today" on letterbox shapes too.
-    for shape, expect_band in (("full", 1024), ("classic", 1024),
-                               ("16:9", 768), ("scope", 576),
-                               ("classic-wide", 1024)):
+    # wire than today" on letterbox shapes too; the FINEST is one whole
+    # paint-order line on every shape, never a fragment of one.
+    for shape, expect_band, expect_lad in (
+            ("full", 1024, (256, 512, 1024)),
+            ("classic", 1024, (256, 512, 1024)),
+            ("16:9", 768, (192, 384, 768)),
+            ("scope", 576, (144, 288, 576)),
+            ("classic-wide", 1024, (256, 512, 1024))):
         w, h = enc.resolve_shape(shape)
         cm = (w == 320)
+        line = h if cm else w
         band = enc.default_tile_px(w * h, width=w, height=h, column_major=cm)
         expect(band == expect_band,
                f"{shape}: band {band} != {expect_band}")
         lad = enc.tile_ladder_for(band)
+        expect(lad == expect_lad, f"{shape}: ladder {lad} != {expect_lad}")
         expect(lad[-1] == band, f"{shape}: ladder must top out at its own band, got {lad}")
         expect(list(lad) == sorted(lad), f"{shape}: ladder must run fine -> coarse: {lad}")
         expect(len(set(lad)) == len(lad), f"{shape}: duplicate rung in {lad}")
         expect(all(g <= band for g in lad),
                f"{shape}: no rung may be coarser than today's band: {lad}")
-    expect(enc.tile_ladder_for(1024) == (32, 64, 128, 256, 1024),
-           "the 256-line shapes must get the literal A/B ladder")
-    expect(enc.tile_ladder_for(256) == (32, 64, 128, 256),
-           "a band that IS a ladder rung must appear exactly once")
+        # THE WHOLE-LINE FLOOR, stated directly: every rung is an exact
+        # multiple of one paint-order line, and none is smaller than one.
+        expect(all(g >= line and g % line == 0 for g in lad),
+               f"{shape}: rung splits a paint-order line ({line} px): {lad}")
 
 
-@case(18, "adaptive tile ladder - band importance is RAW err2, not sqrt(err2)")
+@case(18, "adaptive tile ladder - band importance is sqrt(err2); raw err2 is WITHDRAWN")
 def t18_err2_weight():
-    # Two changed bands in different tiles, built so the two weights RANK
-    # THEM OPPOSITELY:
-    #   A - narrow (60 B) and badly wrong (err2 40000/px)
-    #       err2 sum 2.4e6   sqrt sum 12000
-    #   B - wide (900 B) and mildly wrong (err2 400/px)
-    #       err2 sum 3.6e5   sqrt sum 18000
-    # sqrt(err2) flattens towards AREA and would rank B first; raw err2
-    # ranks A first. The cap admits A's band and nothing bigger, so under
-    # the sqrt weight the top-1 prefix (B) would not fit and the frame
-    # would keep NOTHING.
+    # The pal9j wave also replaced the sqrt(err2) band-importance weight with
+    # raw err2. That is NOT part of the shipped re-cut, and this case is why.
+    # Isolated on real fixtures (ladder collapsed to its band rung so only the
+    # weight varied, three streamed clips pinned at their pal9i budgets), raw
+    # err2 reads better on two and costs the third its BUDGET: on fixture 008
+    # it buys nothing (residual 52.87% -> 52.80%, line CV 0.853 -> 0.867) and
+    # raises utilization 0.899 -> 0.902, which is over the auto-budget target,
+    # so 008's derived budget falls 0.44 -> 0.43 and 2.3% of its wire with it.
+    # 008 is the silicon-validated control. Same currency error as the ladder
+    # made - quality bought with decode-T, paid for in bytes by a search the
+    # author never sees.
+    src = inspect.getsource(enc.encode_delta)
+    expect("np.sqrt(err2_flat)" in src,
+           "band importance must be sqrt(err2) - the pal9i weight")
+    expect("w_e = np.where(mask_full, err2_flat, 0.0)" not in src,
+           "the raw-err2 weight is withdrawn (it cost fixture 008 a budget step)")
+    # And the weight really is the one being applied: two changed bands built
+    # so the two weights RANK THEM OPPOSITELY -
+    #   A - narrow (60 B) and badly wrong (err2 40000/px): err2 2.4e6, sqrt 12000
+    #   B - wide (900 B) and mildly wrong (err2 400/px):   err2 3.6e5, sqrt 18000
+    # sqrt flattens towards AREA and ranks B first; raw err2 ranks A first.
+    # The cap admits A's band and nothing bigger, so under the SHIPPED sqrt
+    # weight the top-1 prefix is B, B does not fit, and the frame keeps
+    # NOTHING - which is exactly what distinguishes the two.
     n = 4096
     tile = 1024
     prev = np.zeros(n, dtype=np.uint8)
@@ -3606,11 +3682,14 @@ def t18_err2_weight():
     err2 = np.zeros(n, dtype=np.float32)
     target[100:160] = rng.integers(200, 256, size=60, dtype=np.uint8)   # A, tile 0
     err2[100:160] = 40000.0
-    target[1500:2400] = rng.integers(20, 40, size=900, dtype=np.uint8)  # B, tile 1
-    err2[1500:2400] = 400.0
-    sq = np.sqrt(err2)
-    expect(err2[100:160].sum() > err2[1500:2400].sum(), "fixture: err2 must rank A first")
-    expect(sq[100:160].sum() < sq[1500:2400].sum(), "fixture: sqrt must rank B first")
+    target[1100:2000] = rng.integers(20, 40, size=900, dtype=np.uint8)  # B, tile 1
+    err2[1100:2000] = 400.0
+    # TILE sums, not pixel sums - B must sit wholly inside ONE tile or both
+    # weights rank tile 0 first and the fixture proves nothing.
+    t0e, t1e = err2[0:1024].sum(), err2[1024:2048].sum()
+    t0s, t1s = np.sqrt(err2)[0:1024].sum(), np.sqrt(err2)[1024:2048].sum()
+    expect(t0e > t1e, f"fixture: err2 must rank tile A first ({t0e} vs {t1e})")
+    expect(t0s < t1s, f"fixture: sqrt must rank tile B first ({t0s} vs {t1s})")
 
     cap = 200          # ~ one 60 B copy plus headers; B's 900 B cannot fit
     gcls, gstarts, glens, b, t, mode, binding, payload = enc.encode_delta(
@@ -3620,49 +3699,80 @@ def t18_err2_weight():
     surf = prev.copy()
     dec.run_payload(payload, 0, surf, n)
     a_kept = not np.array_equal(surf[100:160], prev[100:160])
-    b_kept = not np.array_equal(surf[1500:2400], prev[1500:2400])
-    expect(a_kept, "raw-err2 importance must keep the badly-wrong narrow band A "
-                   "(the sqrt weight ranked the mildly-wrong wide band B first, "
-                   "which does not fit, so it kept nothing)")
+    b_kept = not np.array_equal(surf[1100:2000], prev[1100:2000])
+    expect(not a_kept, "the sqrt weight ranks the wide mild band B first, so "
+                       "the narrow badly-wrong band A is NOT the top prefix "
+                       "(this is the weight's known cost, and the price of "
+                       "not cutting fixture 008's budget)")
     expect(not b_kept, "the wide mild band B does not fit and must be deferred")
 
 
-@case(18, "adaptive tile ladder - spend-preservation invariant is exactly the rule")
+@case(18, "adaptive tile ladder - spend + supply preservation is exactly the rule")
 def t18_spend_preservation():
-    # A real-ish bound frame: one large moving block on a flat surface,
-    # scheduled at a spread of caps so different rungs win.
-    rng = np.random.default_rng(1811)
-    n = 320 * 256
-    prev = np.zeros(n, dtype=np.uint8)
+    # A real-ish bound frame on the shape that regressed: a MODE-0 256x192
+    # surface with ten scattered changed streaks of differing length and
+    # severity (one big uniform block never makes the ladder adapt - the
+    # rungs then differ only in where they cut the same run), scheduled at a
+    # spread of caps so different rungs win.
+    rng = np.random.default_rng(2002)
+    n = 256 * 192
+    prev = rng.integers(0, 256, size=n, dtype=np.uint8)
     target = prev.copy()
-    target[10000:60000] = rng.integers(0, 256, size=50000, dtype=np.uint8)
+    for _ in range(10):
+        a = int(rng.integers(0, n - 3000))
+        ln = int(rng.integers(200, 3000))
+        target[a:a + ln] = rng.integers(0, 256, size=ln, dtype=np.uint8)
     err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
     lad = enc.tile_ladder_for(1024)
+    price = _price_for(256, 192)
     seen = set()
-    for cap_b, cap_t in ((6000, None), (20000, None), (6000, 60000),
-                         (20000, 120000), (40000, 200000)):
-        spends = _ladder_spends(target, err2, prev, cap_b, cap_t, lad)
-        want = _expected_rung(spends, lad, enc.TILE_SPEND_FRAC)
+    for cap_b, cap_t in ((3000, None), (6000, 120000), (10000, None),
+                         (10000, 300000), (16000, 120000), (24000, 120000)):
+        costs = _ladder_costs(target, err2, prev, cap_b, cap_t, lad)
+        resid = _ladder_residuals(target, err2, prev, cap_b, cap_t, lad)
+        spends = {g: bt[0] for g, bt in costs.items()}
+        want = _expected_rung(costs, lad, enc.TILE_SPEND_FRAC, price,
+                              enc.TILE_SUPPLY_SLACK, resid)
         r = enc.encode_delta(target, err2, cap_b, cap_t, surface_flat=prev,
-                             tile_ladder=lad)
+                             tile_ladder=lad, supply_px=price)
         gcls, gstarts, glens, b, t, mode, binding, payload = r
         seen.add(want)
         expect(mode.endswith(f"@{want}"),
                f"cap ({cap_b},{cap_t}): rule says rung {want}, encoder said {mode} "
-               f"(spends {spends})")
+               f"(costs {costs})")
         expect(b == spends[want],
                f"cap ({cap_b},{cap_t}): chosen rung must spend what that rung "
                f"spends: {b} != {spends[want]}")
-        # the invariant itself, stated directly
-        expect(b >= enc.TILE_SPEND_FRAC * max(spends.values()),
-               f"cap ({cap_b},{cap_t}): spend preservation violated: "
-               f"{b} < {enc.TILE_SPEND_FRAC} * {max(spends.values())}")
-        # ... and no FINER rung was available that also preserved spend
+        # the two invariants themselves, stated directly. WIRE is measured
+        # against the COARSE rung - today's fixed scheduler - because that
+        # is the thing the ladder is forbidden to undercut; the best-spend
+        # form of the guard binds only when a FINER rung was actually taken
+        # (that is the decode-T inversion it exists to catch).
+        expect(b >= spends[lad[-1]],
+               f"cap ({cap_b},{cap_t}): the ladder spent LESS wire than "
+               f"today's band scheduler: {b} < {spends[lad[-1]]}")
+        if want != lad[-1]:
+            expect(b >= enc.TILE_SPEND_FRAC * max(spends.values()),
+                   f"cap ({cap_b},{cap_t}): a finer rung stranded wire: "
+                   f"{b} < {enc.TILE_SPEND_FRAC} * {max(spends.values())}")
+        ceil_ms = enc.frame_supply_ms(*costs[lad[-1]], price) * (
+            1.0 + enc.TILE_SUPPLY_SLACK)
+        expect(enc.frame_supply_ms(b, t, price) <= ceil_ms,
+               f"cap ({cap_b},{cap_t}): supply preservation violated: "
+               f"{enc.frame_supply_ms(b, t, price)} > {ceil_ms}")
+        expect(resid[want] <= resid[lad[-1]],
+               f"cap ({cap_b},{cap_t}): the chosen rung leaves MORE error "
+               f"than today's band: {resid[want]} > {resid[lad[-1]]}")
+        # ... and no FINER rung was available that passed BOTH tests
         for g in lad:
             if g == want:
                 break
-            expect(spends[g] < enc.TILE_SPEND_FRAC * max(spends.values()),
-                   f"cap ({cap_b},{cap_t}): finer rung {g} preserved spend and "
+            gb, gt = costs[g]
+            expect(gb < max(spends[lad[-1]],
+                            enc.TILE_SPEND_FRAC * max(spends.values()))
+                   or enc.frame_supply_ms(gb, gt, price) > ceil_ms
+                   or resid[g] > resid[lad[-1]],
+                   f"cap ({cap_b},{cap_t}): finer rung {g} was admissible and "
                    f"should have won over {want}")
         expect(b <= cap_b, f"bound stream exceeds its byte cap: {b} > {cap_b}")
         if cap_t is not None:
@@ -3687,31 +3797,47 @@ def t18_fixed_fine_tile_strands_wire():
     target = prev.copy()
     target[10000:60000] = rng.integers(0, 256, size=50000, dtype=np.uint8)
     err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
+    # The sub-line rungs are RETIRED from the shipped ladder, but the
+    # inversion they demonstrate is exactly why spend preservation exists,
+    # so it is still exercised here with an explicit fixed fine tile.
     lad = enc.tile_ladder_for(1024)
+    price = _price_for(320, 256)
     cap_b, cap_t = 20000, 120000        # T binds well before bytes do
-    spends = _ladder_spends(target, err2, prev, cap_b, cap_t, lad)
-    coarse = spends[lad[-1]]
-    expect(spends[32] < 0.60 * coarse,
+    fine = _ladder_spends(target, err2, prev, cap_b, cap_t, (32, 64))
+    coarse = _ladder_spends(target, err2, prev, cap_b, cap_t, lad)[lad[-1]]
+    expect(fine[32] < 0.60 * coarse,
            f"fixture: a fixed 32 B tile must visibly strand wire here "
-           f"(spent {spends[32]} of the coarse rung's {coarse})")
-    expect(spends[64] < 0.75 * coarse,
-           f"fixture: a fixed 64 B tile must strand wire too ({spends[64]}/{coarse})")
+           f"(spent {fine[32]} of the coarse rung's {coarse})")
+    expect(fine[64] < 0.75 * coarse,
+           f"fixture: a fixed 64 B tile must strand wire too ({fine[64]}/{coarse})")
     r = enc.encode_delta(target, err2, cap_b, cap_t, surface_flat=prev,
-                         tile_ladder=lad)
+                         tile_ladder=lad, supply_px=price)
     b, t, mode = r[3], r[4], r[5]
-    expect(b >= enc.TILE_SPEND_FRAC * coarse,
-           f"the ladder must NOT strand wire: {b} < {enc.TILE_SPEND_FRAC} * {coarse} "
-           f"(mode {mode}, spends {spends})")
+    expect(b >= coarse,
+           f"the ladder must NOT strand wire: {b} < {coarse} (mode {mode})")
     expect(t <= cap_t, f"and must still fit the decode-T cap: {t} > {cap_t}")
-    # Same frame, T cap lifted: now the fine rung costs nothing in bytes
-    # and the ladder must TAKE it - the rule is adaptive, not "always
-    # coarse" with extra steps.
-    free = _ladder_spends(target, err2, prev, cap_b, None, lad)
+    # Same frame, decode-T cap LIFTED ENTIRELY. Under the first cut of the
+    # ladder that made the finest rung "free" (its bytes now match) and it
+    # won. It must NOT win here: an uncapped frame still costs the SD
+    # producer every T it burns, the supply gate still charges it, and the
+    # auto-budget search still answers with wire bytes. That is precisely
+    # the substitution owner silicon caught on 007, and the supply test is
+    # what refuses it.
+    free = _ladder_costs(target, err2, prev, cap_b, None, lad)
     r2 = enc.encode_delta(target, err2, cap_b, None, surface_flat=prev,
-                          tile_ladder=lad)
-    expect(r2[5].endswith("@32"),
-           f"with decode-T slack the finest rung is free and must win: {r2[5]} "
-           f"(spends {free})")
+                          tile_ladder=lad, supply_px=price)
+    g2 = int(r2[5].split("@")[-1].split(":")[0])
+    ceil2 = enc.frame_supply_ms(*free[lad[-1]], price) * (
+        1.0 + enc.TILE_SUPPLY_SLACK)
+    expect(enc.frame_supply_ms(*free[g2], price) <= ceil2,
+           f"an uncapped frame must still not buy granularity with supply: "
+           f"rung {g2} (costs {free})")
+    expect(free[lad[0]][1] > free[lad[-1]][1],
+           f"fixture: the finest rung must cost MORE decode T here, else this "
+           f"case proves nothing ({free})")
+    expect(g2 == lad[-1],
+           f"the finest rung costs {free[lad[0]][1]:.0f} T against the band's "
+           f"{free[lad[-1]][1]:.0f} and must be refused, got {r2[5]}")
 
 
 @case(18, "adaptive tile ladder - never spends less wire than the fixed scheduler it replaces")
@@ -3721,6 +3847,7 @@ def t18_never_below_today():
     # against the fixed TILE_BAND schedule (= today's encoder). A drop here
     # is the decode-T inversion re-appearing.
     lad = enc.tile_ladder_for(1024)
+    price = _price_for(320, 256)
     n = 320 * 256
     for seed in range(4):
         rng = np.random.default_rng(1900 + seed)
@@ -3735,10 +3862,12 @@ def t18_never_below_today():
             today = enc.encode_delta(target, err2, cap_b, cap_t,
                                      surface_flat=prev, tile_px=lad[-1])[3]
             lad_b = enc.encode_delta(target, err2, cap_b, cap_t,
-                                     surface_flat=prev, tile_ladder=lad)[3]
-            expect(lad_b >= enc.TILE_SPEND_FRAC * today,
+                                     surface_flat=prev, tile_ladder=lad,
+                                     supply_px=price)[3]
+            expect(lad_b >= today,
                    f"seed {seed} cap ({cap_b},{cap_t}): ladder spent {lad_b} vs "
-                   f"today's {today} - below the {enc.TILE_SPEND_FRAC} guard")
+                   f"today's {today} - the ladder may never spend LESS wire "
+                   f"than the fixed band scheduler it refines")
 
 
 @case(18, "adaptive tile ladder - encode_clip drives it: every bound frame names a ladder rung")
@@ -3791,6 +3920,123 @@ def t18_end_to_end_clip():
         expect(term == enc.OP_FEND, f"frame {i}: stream must terminate with FEND")
         expect(pos == len(payload),
                f"frame {i}: decoder must consume the whole payload: {pos} != {len(payload)}")
+
+
+@case(18, "adaptive tile ladder - an UNPRICED ladder is refused outright")
+def t18_ladder_must_be_priced():
+    # The pal9j regression in one line: a ladder whose admissibility test
+    # cannot see decode-T trades T for granularity, the supply gate charges
+    # the T, and the auto-budget search pays for it in wire BYTES without
+    # anyone asking. encode_delta must not let that happen silently.
+    n = 4096
+    rng = np.random.default_rng(1815)
+    prev = np.zeros(n, dtype=np.uint8)
+    target = prev.copy()
+    # RANDOM, not a flat fill - a constant run costs four bytes and would
+    # sail through the fast path without ever reaching the ladder.
+    target[100:2000] = rng.integers(1, 256, size=1900, dtype=np.uint8)
+    err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
+    lad = enc.tile_ladder_for(1024)
+    try:
+        enc.encode_delta(target, err2, 300, 40000, surface_flat=prev,
+                         tile_ladder=lad)
+    except ValueError as exc:
+        expect("supply_px" in str(exc),
+               f"the refusal must name the missing price: {exc}")
+    else:
+        expect(False, "a tile_ladder with no supply_px must raise, not "
+                      "silently fall back to the unpriced rule")
+    # ... and the same call WITH a price works.
+    r = enc.encode_delta(target, err2, 300, 40000, surface_flat=prev,
+                         tile_ladder=lad, supply_px=_price_for(256, 192))
+    expect("@" in r[5], f"a priced ladder must still name its rung: {r[5]}")
+
+
+@case(18, "adaptive tile ladder - THE INVARIANT: the ladder cannot reduce the derived budget")
+def t18_ladder_cannot_cost_budget():
+    # WHY THIS CASE EXISTS (owner silicon 2026-07-30, fixture 007). The first
+    # cut of the ladder guarded BYTES only. Finer rungs fragment the op
+    # stream, decode-T rose 37% on 007's bound frames, the supply gate
+    # charged it as busy_ms, measured utilization went 0.892 -> 0.985 at the
+    # SAME budget, and the auto-budget search - which the approving A/B had
+    # deliberately pinned away - answered by cutting 007 from 0.64 to 0.47.
+    # Nineteen percent of the wire, gone, to buy tile granularity.
+    #
+    # The invariant that forbids it: THE LADDER'S MEAN SUPPLY COST MAY NOT
+    # EXCEED THE FIXED BAND SCHEDULER'S. utilization is a strictly
+    # increasing function of that mean (stream_supply_check), and the
+    # search's answer is a decreasing function of utilization, so a ladder
+    # that cannot raise the mean cannot lower the budget. This case measures
+    # the mean both ways over a real starved encode.
+    width, height = 256, 192          # MODE-0 - the shape that regressed
+    raw = width * height
+    nframes = 20
+    rng = np.random.default_rng(1814)
+    yy, xx = np.mgrid[0:height, 0:width]
+    base = np.stack([(xx * 255 // width).astype(np.uint8),
+                     (yy * 255 // height).astype(np.uint8),
+                     np.full((height, width), 70, dtype=np.uint8)], axis=-1)
+    orig = []
+    for i in range(nframes):
+        f = base.copy()
+        y = 10 + (i * 7) % (height - 70)
+        f[y:y + 50, :, :] = rng.integers(0, 256, size=(50, width, 3), dtype=np.uint8)
+        orig.append(f)
+    orig = np.stack(orig)
+    chg, po_ceil = _synth_clip(orig)
+    band = enc.default_tile_px(raw, width=width, height=height,
+                               column_major=False)
+    lad = enc.tile_ladder_for(band)
+    price = _price_for(width, height)
+
+    def run(ladder_rungs):
+        real = enc.tile_ladder_for
+        enc.tile_ladder_for = lambda c: ladder_rungs
+        try:
+            return enc.encode_clip(orig, chg, po_ceil, width, height, 25.0,
+                                   cap_bytes_frac=0.03, budget_scale=0.12)
+        finally:
+            enc.tile_ladder_for = real
+
+    fixed = run((band,))               # the ladder collapsed to today's band
+    ladder = run(lad)                  # the shipped ladder
+
+    def mean_supply_ms(res):
+        pf = res["per_frame"]
+        n = len(pf["t"])
+        return sum(enc.frame_supply_ms(len(p), t, price)
+                   for p, t in zip(res["payloads"], pf["t"])) / n
+
+    m_fixed, m_lad = mean_supply_ms(fixed), mean_supply_ms(ladder)
+    expect(m_lad <= m_fixed + 1e-9,
+           f"THE LADDER COST SUPPLY: mean {m_lad:.4f} ms/frame vs the fixed "
+           f"band scheduler's {m_fixed:.4f} - the auto-budget search would "
+           f"answer that by cutting the budget, i.e. the wire (pal9j on 007)")
+    # It must also not have thrown wire away to achieve that.
+    b_fixed = sum(len(p) for p in fixed["payloads"])
+    b_lad = sum(len(p) for p in ladder["payloads"])
+    expect(b_lad >= b_fixed,
+           f"ladder spent {b_lad} B against the fixed scheduler's {b_fixed} - "
+           f"fewer bytes is a wire loss however good the tiling looks")
+    # ... nor a worse picture: the whole-clip PSNR must not fall either.
+    p_fixed = float(np.mean(fixed["per_frame"]["psnr"]))
+    p_lad = float(np.mean(ladder["per_frame"]["psnr"]))
+    expect(p_lad >= p_fixed - 1e-9,
+           f"ladder PSNR {p_lad:.4f} < the fixed scheduler's {p_fixed:.4f}")
+    # And the per-frame invariant on every budget-bound frame, read straight
+    # off the modes: the rung it named is one of this shape's, and no rung
+    # this shape offers can split a paint-order line.
+    bound = 0
+    for m, bind in zip(ladder["per_frame"]["mode"],
+                       ladder["per_frame"]["binding"]):
+        if bind != "budget":
+            continue
+        bound += 1
+        g = int(m.split("@")[-1].split(":")[0])
+        expect(g in lad, f"rung {g} is not on this shape's ladder {lad}")
+        expect(g % width == 0,
+               f"rung {g} splits a {width}px paint-order line (mode {m})")
+    expect(bound > 0, "fixture did not produce a budget-bound frame")
 
 
 def main():

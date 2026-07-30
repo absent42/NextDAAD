@@ -128,7 +128,20 @@ if (-not $sources) { exit 0 }
 # transport, zero underruns; boat pan and church zoom both better than
 # the fixed schedule). Default-path change with no CLI argument, so
 # every cached encode with a budget-bound frame re-encodes.
-$encoderGeneration = 'pal9j'
+# BUMP pal9j -> pal9k (adaptive tile ladder RE-CUT, 2026-07-30): owner
+# silicon on the next sitting called fixture 007 (classic 256x192, mode-0)
+# "lots of displacement and tearing" on a completely clean transport - the
+# pal9j ladder took rungs FINER THAN ONE PAINT-ORDER LINE, which fragments
+# a row into independently-aged pieces, and the decode-T that fragmentation
+# costs was charged by the supply gate, so the auto-budget search cut 007
+# from 0.64 to 0.47 and 19% of its wire with it. Two rules replace the one:
+# the ladder now walks WHOLE LINES only (1/2/4 of them = quarter/half/whole
+# band, so (256,512,1024) on the 256-line shapes, (192,384,768) on 16:9,
+# (144,288,576) on scope), and a finer rung must preserve the frame's
+# modelled SUPPLY COST - the gate's own busy+wire prices - not just its
+# bytes. Default-path change with no CLI argument, so every cached encode
+# with a budget-bound frame re-encodes.
+$encoderGeneration = 'pal9k'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

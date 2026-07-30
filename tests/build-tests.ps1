@@ -725,7 +725,16 @@ if ($Font) {
 # byte-identical (no bound frame, or no rung beats the band) but
 # re-encode anyway because the tag is in their cache name. See
 # $encoderGeneration 'pal9j' in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9j'
+# BUMP pal9j -> pal9k (tile ladder RE-CUT, 2026-07-30): owner silicon read
+# the pal9j ladder as displacement and tearing on 007 (mode-0). Sub-line
+# rungs are struck - the ladder walks whole paint-order LINES now - and a
+# finer rung must preserve the frame's modelled SUPPLY cost, not just its
+# bytes, so it can no longer take decode-T that the auto-budget search
+# then pays for in wire (007's budget went 0.64 -> 0.47 under pal9j).
+# Every fixture with a budget-bound frame re-encodes; 002/005/006 come out
+# byte-identical again but re-encode because the tag is in their cache
+# name. See $encoderGeneration 'pal9k' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9k'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

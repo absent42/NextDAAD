@@ -1412,7 +1412,9 @@ TILE_BAND = 4
 # The rule that IS the fix is SPEND-PRESERVING. Per budget-bound frame, walk
 # the ladder fine -> coarse and keep the FINEST rung that still spends at
 # least TILE_SPEND_FRAC of the best (in practice the coarsest = today's)
-# rung's bytes. Finer granularity is taken only when it is FREE in wire
+# rung's bytes. (READ THE LADDER RE-CUT BLOCK BELOW BEFORE ACTING ON THIS
+# ONE: spend preservation is necessary and was never sufficient - the rungs
+# and the rest of the admissibility test were both re-cut on 2026-07-30.) Finer granularity is taken only when it is FREE in wire
 # terms, so the decode-T inversion cannot bite: a rung that saturates
 # decode-T while leaving bytes unspent fails the spend test and is rejected.
 #
@@ -1426,8 +1428,68 @@ TILE_BAND = 4
 #   0.98  acceptable, no leg prefers it.
 #   0.90  OUT OF BAND under offset - strands 3% of fixture 008's wire
 #         (benign under the opt-in mixture dither, not under the default).
-TILE_LADDER = (32, 64, 128, 256, 1024)
 TILE_SPEND_FRAC = 0.99
+
+# ---------------------------------------------------------------------
+# LADDER RE-CUT (2026-07-30, owner silicon caught the first cut)
+# ---------------------------------------------------------------------
+# The ladder above shipped as the literal (32, 64, 128, 256, 1024) with
+# spend-preservation as its only admissibility test. Owner silicon on the
+# very next sitting called fixture 007 (classic 256x192, MODE-0) "lots of
+# displacement and tearing" with a completely clean transport - worse than
+# the encoder it replaced - while the owner's own mode-1 clips improved.
+# Two faults, one root cause, both measured (scratchpad ladder-regression):
+#
+# 1. SUB-LINE RUNGS FRAGMENT THE PICTURE. A rung finer than one paint-order
+#    LINE cuts a scanline (mode-0) or a column (mode-1) into pieces that are
+#    scheduled independently, so one row can carry up to eight differently-
+#    AGED fragments side by side. That is not the "coherent regional lag"
+#    this scheduler exists to produce - it reads as displacement/tearing on
+#    moving edges. 007 took rung 32 (an EIGHTH of a row) on 184 of 184 bound
+#    frames; the owner-approved A/B ran on 320x256 mode-1 where the rule
+#    settled on 256 = exactly one column on 222 of 247 frames, so the
+#    sub-line region was approved by extrapolation and never eyeballed.
+#    Op-stream profile of the shipped 007: mean write patch 96.4 px -> 59.9,
+#    write ops/frame 195 -> 234, on 25% FEWER pixels painted per frame.
+#
+# 2. SUB-LINE RUNGS ALSO COST THE BYTE SUPPLY. Fragmenting runs multiplies
+#    per-op dispatch, so decode-T explodes: on 007 at a pinned 0.64 the
+#    shipped rule spent 1.37x the coarse rung's decode T to buy 1.7% more
+#    bytes. The supply gate charges that time (busy_ms), so measured
+#    utilization went 0.892 -> 0.985 at the SAME budget and the auto-budget
+#    search - which production always runs and the A/B deliberately pinned
+#    away - backed 007 off 0.64 to 0.47: 19% of the wire GONE, budget-bound
+#    frames 72.8% -> 93.6%. Spend preservation guards BYTES and is silent
+#    on T, and T is what sets the derived budget. That was the hole.
+#
+# THE RE-CUT, therefore, is two rules, not one:
+#
+#   (a) THE LADDER WALKS WHOLE LINES. Rungs are TILE_LADDER_QUARTERS
+#       quarter-bands - and a quarter band IS one paint-order line on every
+#       shape (default_tile_px = TILE_BAND lines), so the finest rung is one
+#       whole row (mode-0) / column (mode-1) and no rung can ever split one.
+#       This is a granularity floor in DISPLAY terms, which is the term the
+#       artifact is in; it also keeps exactly the rung the hardware A/B
+#       actually exercised and approved.
+#   (b) THE RUNG MUST BE FREE, AND MUST PAY. A finer rung is admissible only
+#       if it spends AT LEAST the coarsest rung's bytes, costs NO MORE than
+#       the coarsest rung's modelled SUPPLY - the supply gate's OWN busy +
+#       wire arithmetic, see supply_price() - and leaves NO MORE residual
+#       err2 on the surface. Finer tiling is then taken only where it is
+#       free in the currency that sets the budget AND actually improves the
+#       picture, so the derived budget cannot move, the byte supply cannot
+#       be traded away behind the author's back, and a rung cannot win on
+#       granularity alone.
+#
+# TILE_SUPPLY_SLACK is the tolerance on (b) and it is 0.0 DELIBERATELY.
+# Measured margin below the auto-budget target at the pal9i operating
+# points: 007 0.008, 009 0.005, 008 0.001. Fixture 008 - the silicon
+# control that underran once already - has one thousandth of utilization
+# in hand, so any positive slack is a coin flip on whether its budget
+# survives, and a budget step costs ~0.0105 of utilization to buy back.
+# "Free" therefore means free.
+TILE_LADDER_QUARTERS = (1, 2, 4)
+TILE_SUPPLY_SLACK = 0.0
 
 # Dissolve/pan detection (SP15 task-2b owner exhibit fix): a slow crossfade
 # or pan is a SUSTAINED elevated change fraction WITHOUT an impulse - the cut
@@ -1704,17 +1766,44 @@ def tile_ladder_for(coarsest):
     `coarsest` bytes (i.e. default_tile_px for that shape - today's fixed
     scheduler, which the ladder must never spend less wire than).
 
-    Returns TILE_LADDER's rungs finer than `coarsest`, then `coarsest`
-    itself, fine -> coarse. Deriving the top rung from the shape rather
-    than pinning the literal 1024 is what makes "spend-preserving" mean
-    "never spends less wire than TODAY" on every shape, letterbox
-    included: 001-full 320x256 and 002-classic 256x192 both give 1024
-    (the A/B's own ladder, exactly TILE_LADDER), while 003-16:9 320x192
-    gives 768 and 004-scope 320x144 gives 576 - on those the ladder must
-    NOT reach past their own band size or it would lag coarser than the
-    scheduler it replaces."""
+    The rungs are TILE_LADDER_QUARTERS QUARTER-BANDS, fine -> coarse, and a
+    quarter band is exactly one paint-order LINE on every shape, because
+    default_tile_px is TILE_BAND (= 4) lines: 001-full 320x256 and
+    002-classic 256x192 both give a band of 1024 and a ladder of
+    (256, 512, 1024) - one, two and four lines; 003-16:9 320x192 gives
+    (192, 384, 768) and 004-scope 320x144 gives (144, 288, 576). So the
+    finest rung is one whole row (mode-0) / column (mode-1) on every shape,
+    the coarsest is always today's fixed scheduler, and NO rung can ever
+    split a line (see the LADDER RE-CUT block: sub-line rungs are what the
+    owner's silicon read as displacement and tearing, and what took 37% more
+    decode T out of the byte supply)."""
     coarsest = int(coarsest)
-    return tuple(r for r in TILE_LADDER if r < coarsest) + (coarsest,)
+    line = max(1, coarsest // TILE_BAND)
+    return tuple(sorted({min(q * line, coarsest)
+                         for q in TILE_LADDER_QUARTERS} | {coarsest}))
+
+
+def supply_price(width, height):
+    """(ms per modelled decode T, ms per SD byte) for this surface - the
+    SAME two prices stream_supply_check charges, factored out so the tile
+    ladder's admissibility test and the supply gate cannot drift apart.
+
+    A ladder rung that raises a frame's supply cost raises the clip's
+    measured utilization, and the auto-budget search pays for that with
+    BUDGET - i.e. with wire bytes. Charging the rung the gate's own prices
+    is what makes "the ladder must not cost byte supply" an invariant of
+    the rule rather than an observation about one fixture."""
+    af = TMODEL_COEFFS["audio_factor"]
+    return (silicon_r(width, height) / af / TMODEL_COEFFS["clock_khz"],
+            1.0 / (SD_WIRE_BYTES_PER_MS * af))
+
+
+def frame_supply_ms(nbytes, t, price):
+    """A frame's modelled supply cost in ms at `price` (supply_price()):
+    decode busy time plus the SD time for its 512-padded payload. The
+    invariant audio pad is the same on every rung and is left out - only
+    DIFFERENCES between rungs are ever compared."""
+    return t * price[0] + (((int(nbytes) + 511) // 512) * 512) * price[1]
 
 
 def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
@@ -1736,7 +1825,7 @@ def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
 
 def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
                  surface_flat=None, merge_gaps=True, tile_px=None,
-                 tile_ladder=None):
+                 tile_ladder=None, supply_px=None):
     """Region-coherent budget-bound delta encoder. Returns
     (gcls, gstarts, glens, bytes, T, mode, binding, payload).
 
@@ -1758,11 +1847,33 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
     mode 'region:<kept>/<total>[+merge]'.
 
     ADAPTIVE TILE LADDER (tile_ladder given, as encode_clip always supplies -
-    see TILE_LADDER/TILE_SPEND_FRAC): the tile GRANULARITY is chosen per bound
-    frame instead of being fixed. Every rung is scheduled in full and the
-    FINEST rung that still spends >= TILE_SPEND_FRAC of the best rung's bytes
-    wins, so finer tiling is taken only when it costs no wire. mode gains an
-    '@<rung>' suffix naming the granularity that was used.
+    see tile_ladder_for() and the LADDER RE-CUT block): the tile GRANULARITY
+    is chosen per bound frame instead of being fixed. Every rung is scheduled
+    in full and the FINEST ADMISSIBLE rung wins; mode gains an '@<rung>'
+    suffix naming the granularity that was used. A rung is admissible when it
+    passes BOTH preservation tests:
+
+      WIRE   its bytes are >= the COARSEST rung's (never less wire than the
+             fixed band scheduler it refines) AND >= TILE_SPEND_FRAC of the
+             best rung's, so a finer rung can never strand budget the frame
+             was allowed to spend (the decode-T inversion).
+      SUPPLY its modelled supply cost - the gate's own busy + wire prices,
+             frame_supply_ms() at `supply_px` - is within TILE_SUPPLY_SLACK
+             of the COARSEST rung's, so a finer rung can never cost the clip
+             utilization, which is what the auto-budget search pays for in
+             BYTES. Requires supply_px; passing tile_ladder without it is a
+             programming error and raises, because a silently-unpriced ladder
+             is exactly the defect owner silicon caught on 2026-07-30.
+
+      PICTURE the err2 it LEAVES on the surface is no higher than the
+             coarsest rung's. Wire and supply preservation say a rung costs
+             nothing; neither says it BUYS anything, and a rung that spends
+             the same wire on a worse-chosen set of tiles is a pure loss that
+             then propagates through the surface into later frames.
+
+    The three together are the owner's own acceptance test made a per-frame
+    invariant: NEVER FEWER BYTES, NEVER MORE SUPPLY, NEVER A WORSE PICTURE
+    THAN TODAY. Nothing in the rule needs tuning to hold it.
 
     The returned (gcls, gstarts, glens) is always the CHANGED-segment list
     (un-merged) the caller walks to track the surface; payload is the chosen
@@ -1788,30 +1899,78 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
     if tile_px is None:
         tile_px = default_tile_px(n)
     if tile_ladder:
-        # ---- adaptive tile ladder (SP17) ----
-        # Schedule the frame at every rung, then keep the FINEST rung whose
-        # byte spend is within TILE_SPEND_FRAC of the best rung's. The best
-        # rung is the coarsest in practice (coarser bands buy more bytes per
-        # kept tile), so this is "as fine as the wire allows, never cheaper
-        # than today's scheduler" - and it is exactly what stops the mode-1
-        # decode-T inversion, where a fine rung saturates cap_t with byte
-        # budget left over. Cost: one full schedule per rung on BOUND frames
-        # only (the fast path above already returned for everything else).
+        # ---- adaptive tile ladder (SP17, re-cut 2026-07-30) ----
+        # Schedule the frame at every rung, then keep the finest rung that
+        # preserves the wire spend, the supply cost AND the picture (see the
+        # docstring and the LADDER RE-CUT block). Cost: one full schedule per
+        # rung on BOUND frames only (the fast path above already returned for
+        # everything else).
+        if supply_px is None:
+            raise ValueError(
+                "encode_delta: tile_ladder needs supply_px - an unpriced "
+                "ladder can trade decode-T for granularity and the "
+                "auto-budget search silently pays for it in wire bytes "
+                "(the pal9j regression); pass supply_price(width, height)")
         cands = [(rung, encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
                                      surface_flat=surface_flat,
                                      merge_gaps=merge_gaps, tile_px=rung))
                  for rung in tile_ladder]
         best_b = max(r[3] for _, r in cands)
+        coarse_b = cands[-1][1][3]
+        coarse_ms = frame_supply_ms(coarse_b, cands[-1][1][4], supply_px)
+        ceil_ms = coarse_ms * (1.0 + TILE_SUPPLY_SLACK)
+        # NEVER FEWER BYTES THAN TODAY - the coarsest rung IS today's fixed
+        # band scheduler - and never strand wire against the best rung either.
+        floor_b = max(coarse_b, TILE_SPEND_FRAC * best_b)
+
+        def _residual(r):
+            """err2 this candidate LEAVES on the surface."""
+            m = _mask_from_segments(r[0], r[1], r[2], n)
+            return float(err2_flat[~m].sum())
+
+        # ... AND NEVER A WORSE PICTURE. Wire and supply preservation say the
+        # rung costs nothing; they do not say it BUYS anything, and a rung
+        # that spends the same wire on a worse-chosen set of tiles is a pure
+        # loss whose damage then propagates (the next frame inherits the
+        # surface). Requiring the residual to fall too makes every rung the
+        # ladder takes a strict Pareto improvement on today's schedule -
+        # more picture, no more supply, no less wire.
+        coarse_res = _residual(cands[-1][1])
         for rung, r in cands:            # tile_ladder is fine -> coarse
-            if r[3] >= TILE_SPEND_FRAC * best_b:
+            if r[3] >= floor_b and \
+                    frame_supply_ms(r[3], r[4], supply_px) <= ceil_ms and \
+                    _residual(r) <= coarse_res:
                 gc, gs, gl, b, t, mode, binding, payload = r
                 return (gc, gs, gl, b, t, f"{mode}@{rung}", binding, payload)
+        # Unreachable in practice - the coarsest rung passes all three tests
+        # by construction (it IS the wire, supply and picture reference) -
+        # but the ladder must never fall out
+        # without an answer, and the answer is the fixed band scheduler it
+        # is allowed to refine and never to undercut.
+        rung, r = cands[-1]
+        gc, gs, gl, b, t, mode, binding, payload = r
+        return (gc, gs, gl, b, t, f"{mode}@{rung}", binding, payload)
     ntiles = (n + tile_px - 1) // tile_px
-    # Band importance is RAW ERROR ENERGY (SP17). sqrt(err2) flattens the
-    # ranking towards area and lets a wide, mildly-wrong band outrank a
-    # narrow, badly-wrong one; err2 spends the bound budget where the
-    # picture is actually broken. Measured with the ladder above.
-    w_e = np.where(mask_full, err2_flat, 0.0)
+    # Band importance is sqrt(err2) - the pal9i weight, RESTORED 2026-07-30.
+    # The pal9j wave switched it to raw err2 on the argument that sqrt
+    # flattens the ranking towards area. Isolated afterwards (the ladder
+    # collapsed to its band rung so ONLY the weight varied, three streamed
+    # fixtures pinned at their pal9i budgets), raw err2 measured:
+    #   007  resid 18.59 -> 17.75%, +0.16 dB px, +0.19 dB 4x4, util 0.892 ->
+    #        0.894 - a real gain.
+    #   009  resid 30.96 -> 28.28%, +0.28 dB px, +0.70 dB 4x4, but line CV
+    #        1.345 -> 1.418 and util 0.895 -> 0.906.
+    #   008  resid 52.87 -> 52.80% (nothing), line CV 0.853 -> 0.867, and
+    #        util 0.899 -> 0.902 - which is OVER the auto-budget target, so
+    #        008's derived budget falls 0.44 -> 0.43 and it loses 2.3% of its
+    #        wire for no quality at all.
+    # 008 is the silicon-validated control and it sits one THOUSANDTH of
+    # utilization under the target, so a weight that reorders bands into more
+    # decode-T is a budget cut on that fixture however well it reads
+    # elsewhere - the same currency error as the ladder's, in a different
+    # place. Re-propose it only with evidence that it does not raise
+    # utilization.
+    w_e = np.where(mask_full, np.sqrt(err2_flat), 0.0)
     pad = ntiles * tile_px - n
     band_imp = (np.concatenate([w_e, np.zeros(pad, dtype=w_e.dtype)])
                 if pad else w_e).reshape(ntiles, tile_px).sum(axis=1)
@@ -3368,9 +3527,14 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     # (mode-1) is contiguous in paint order, so shortfall lags coherent
     # horizontal/vertical strips. That band is the COARSEST rung of the
     # adaptive ladder (SP17) - encode_delta picks a finer granularity per
-    # bound frame whenever a finer one is free in bytes.
+    # bound frame whenever a finer one is free in bytes AND in supply, and
+    # actually improves the picture (LADDER RE-CUT).
     tile_px = default_tile_px(raw, width=width, height=height, column_major=column_major)
     tile_ladder = tile_ladder_for(tile_px)
+    # The ladder is priced with the SUPPLY GATE's own prices, so a finer
+    # rung can never buy granularity with the decode time the auto-budget
+    # search would otherwise have spent on wire bytes.
+    supply_px = supply_price(width, height)
 
     scene_cuts = detect_scene_cuts(chg)
 
@@ -3491,7 +3655,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 gcls, gstarts, glens, b, t, mode, binding, payload = encode_delta(
                     tflat, err2, cap_bytes, usable,
                     surface_flat=prev_flat, merge_gaps=merge_gaps,
-                    tile_px=tile_px, tile_ladder=tile_ladder)
+                    tile_px=tile_px, tile_ladder=tile_ladder,
+                    supply_px=supply_px)
                 prev_flat = np.where(_mask_from_segments(gcls, gstarts, glens, raw), tflat, prev_flat)
                 dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
                 payloads.append(payload)
@@ -3609,7 +3774,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             gcls, gstarts, glens, b, t, mode, binding, payload = encode_delta(
                 tflat, enc_err2, cap_bytes, usable,
                 surface_flat=prev_flat, merge_gaps=merge_gaps,
-                tile_px=tile_px, tile_ladder=tile_ladder)
+                tile_px=tile_px, tile_ladder=tile_ladder,
+                supply_px=supply_px)
             new_flat = _apply_segments(prev_flat, tflat, gcls, gstarts, glens)
             prev_flat = new_flat
             if staleness_refresh:
