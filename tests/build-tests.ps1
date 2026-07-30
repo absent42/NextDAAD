@@ -734,6 +734,13 @@ if ($Font) {
 # Every fixture with a budget-bound frame re-encodes; 002/005/006 come out
 # byte-identical again but re-encode because the tag is in their cache
 # name. See $encoderGeneration 'pal9k' in authoring-kit/lib/video.ps1.
+# NO BUMP for the SP17 supply-slack knob (2026-07-30), deliberately: it
+# ADDED an opt-in option (videnc --tile-slack, default 0.0 = off) and
+# left the default path untouched - all 11 leg/long fixtures re-encode
+# SHA256-identical to the pre-knob encoder for the same arguments,
+# verified, so a bump would have forced a full re-encode for no byte
+# change. See the same note on $encoderGeneration in
+# authoring-kit/lib/video.ps1.
 $vidLegSettlementTag = 'pal9k'
 
 if ($Vid) {

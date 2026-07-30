@@ -67,6 +67,12 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
   --budget-target U  target mean utilization for the automatic
                      --stream-budget search (default 0.90); ignored
                      when --stream-budget is given
+  --tile-slack F     OPT-IN, default 0.0 (off): let the budget-bound
+                     tile schedule take a finer WHOLE-LINE rung that
+                     costs a little more streaming supply. Quoted in
+                     fractions of the utilisation headroom between
+                     --budget-target and the 1.00 refusal line; 1.0 is
+                     the cap. See "Tile slack"
   --direct           direct-serve preset (expert): all-literal
                      raw-equivalent encode served straight from SD -
                      strictly at-rate, see below
@@ -246,6 +252,73 @@ fits at the full budget, costs one pass and stops.
 does not run, the value applies verbatim, and the supply gate checks it
 exactly as before - including the at-capacity warning above 0.90, which
 the automatic search never triggers.
+
+## Tile slack
+
+`--tile-slack` is the encoder's one opt-in picture knob and it is
+**off by default**. Leave it alone and nothing changes.
+
+**What it does.** When a frame's deltas do not fit the per-frame
+budgets, the encoder spends what it has on whole PAINT-ORDER LINES -
+rows at 256 wide, columns at 320 wide - and defers the rest, so
+shortfall reads as coherent regional lag instead of scattered
+patchwork. It picks the granularity per frame from a ladder of 1, 2 or
+4 lines, and by default it only takes a finer rung when that rung is
+FREE: no fewer bytes, no more streaming supply, no worse picture.
+"No more supply" is strict, and on most content it is what stops the
+finer rung being taken at all. `--tile-slack` relaxes that one test,
+and only that one: it lets the schedule pay a little supply for the
+one-line rung.
+
+**What it buys.** Measured on real 320x256 footage at a pinned budget:
+
+| clip | slack | rungs taken | stream util | local (4x4) PSNR | banding index |
+|:--|--:|:--|--:|--:|--:|
+| boat pan | 0.0 | 4-line x237, 2-line x10 | 0.882 | 32.02 | 0.912 |
+| boat pan | 0.5 | 1-line x195, 2-line x30, 4-line x22 | 0.890 | 32.33 | 0.910 |
+| church zoom | 0.0 | 4-line x205, 1-line x18 | 0.874 | 34.90 | 1.243 |
+| church zoom | 0.5 | 1-line x185, 2-line x26, 4-line x24 | 0.879 | 34.91 | 1.166 |
+
+So it is worth about a third of a dB of local PSNR on a pan and about
+6% off the per-line residual spread on a zoom, for roughly 0.005-0.008
+of utilisation. On quiet or already-fitting material it does nothing at
+all, because there are no budget-bound frames for it to act on. **This
+is content-dependent and that is the whole reason it is a per-title
+setting** - set it on the clip that needs it, in `VIDOPTS_NNN`.
+
+**Units and the cap.** The value is a fraction of the utilisation
+HEADROOM the encoder holds back for you: the margin between
+`--budget-target` (0.90) and the 1.00 refusal line. `1.0` spends all of
+it and is the cap - a higher value is refused, not clamped, because it
+is asking for margin that does not exist. In practice the useful range
+is small and it SATURATES: on both clips above, 0.5 and 1.0 give the
+same answer, and 0.25 is already most of the way there.
+
+**Try 0.5 first** on a title with sustained motion, then compare
+against the default and keep whichever you prefer.
+
+**What it costs, printed.** A non-zero value prints one line:
+
+```
+  tile-slack: 0.50 of headroom (target 0.90, per-frame supply allowance 5.56%) - stream util 0.890, margin 0.110 to the 1.00 refusal line
+```
+
+With the automatic budget search running (the default) the cost lands
+in one of two places and which one is content-dependent: either the
+utilisation simply rises inside the margin (boat pan: budget stayed
+0.40, util 0.882 -> 0.890), or the search answers by re-deriving a
+lower budget and the cost becomes BYTES (church zoom: 0.57 -> 0.56,
+util back down to 0.891). Watch for the second - on one demo clip
+here a budget step cost 3% of the wire and the picture came out
+slightly worse overall, which is exactly the trade this knob exists to
+let you judge rather than have made for you.
+
+**What it cannot do.** It cannot make the schedule split a row or a
+column. Sub-line granularity was tried, shipped, and read as
+displacement and tearing on real hardware; the whole-line floor is
+permanent and no value of this knob reaches it. It also cannot ship an
+unplayable file: an encode it pushes past the supply ceiling is refused
+by the same gate as ever, with the same message.
 
 Delta-starvation diagnostics (measurements only, no verdict):
 

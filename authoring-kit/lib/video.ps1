@@ -26,6 +26,17 @@
 #                 compensated interpolation for slow pans/zooms. Like
 #                 every option here it is part of the hashed argument
 #                 vector below, so changing it re-encodes that title.
+#                 --tile-slack (SP17, opt-in, default off) also lives
+#                 here, and is the clearest case for VIDOPTS_NNN rather
+#                 than VIDOPTS: it lets the budget-bound tile schedule
+#                 take a one-row/one-column rung instead of the
+#                 four-line band when that costs a little more streaming
+#                 supply, which measurably helps 320-wide pans and zooms
+#                 and does nothing for quiet material. Try
+#                 VIDOPTS_NNN=--tile-slack 0.15 on a moving title and
+#                 read the encoder's 'tile-slack:' line for what it
+#                 cost. Same hashing rule as everything else - setting
+#                 or changing it re-encodes that title and nothing else.
 #   VIDOPTS_NNN - extra options for video NNN only (3-digit number),
 #                 appended AFTER VIDOPTS. For most repeated options
 #                 videnc takes the last occurrence, so VIDOPTS_NNN wins
@@ -141,6 +152,16 @@ if (-not $sources) { exit 0 }
 # modelled SUPPLY COST - the gate's own busy+wire prices - not just its
 # bytes. Default-path change with no CLI argument, so every cached encode
 # with a budget-bound frame re-encodes.
+# NO BUMP for the SP17 supply-slack knob (2026-07-30), deliberately -
+# same discipline as the Yliluoma wave above. It ADDED an opt-in option
+# (videnc --tile-slack, default 0.0 = off) and changed NOTHING on the
+# default path: the default resolves to a supply allowance of exactly
+# 0.0, so the ladder's ceiling arithmetic is bit-for-bit what it was.
+# Verified, not assumed - all 11 leg/long fixtures re-encode
+# SHA256-identical to the pre-knob encoder for the same arguments.
+# --tile-slack is part of the hashed argument list below, so a title
+# that opts in re-encodes on that alone; bumping here would have forced
+# every cached title to re-encode for no byte change.
 $encoderGeneration = 'pal9k'
 
 function Get-ArgHash([string[]]$argList) {

@@ -413,9 +413,13 @@ rate differs from it is resampled in time (`blend`, the default;
 `--mono` halves the audio stream; `--dither` sets the blue-noise
 dither amplitude, 0.0-1.0 (default 0.5: 0 = no dither, hard banding
 on gradients; 1 = full-step dither, deepest gradients but the most
-visible pattern noise - set per title via `VIDOPTS`/`VIDOPTS_NNN`).
-Run with `--help` for the full list, and see `lib\videnc-README.md`
-for the options and format details.
+visible pattern noise - set per title via `VIDOPTS`/`VIDOPTS_NNN`);
+`--tile-slack` is the one opt-in picture knob (default off - on a
+title with sustained motion, `--tile-slack 0.5` lets the encoder work
+a row or column at a time instead of four when the budget runs out,
+which helps pans and zooms and does nothing for quiet material; the
+encoder prints what it cost). Run with `--help` for the full list, and
+see `lib\videnc-README.md` for the options and format details.
 
 ### Streaming, resident and direct delivery
 

@@ -33,6 +33,11 @@ SET VIDFPS=
 REM Extra videnc options applied to every encode (e.g. --mono, or
 REM --dither 0.3 to soften the blue-noise dither below its 0.5 default,
 REM or --dither-mode mixture for the opt-in Yliluoma mixture dither).
+REM --tile-slack (opt-in, default off) belongs in VIDOPTS_NNN rather
+REM than here: on a title with sustained motion --tile-slack 0.5 lets
+REM the budget-bound schedule work a row/column at a time instead of
+REM four, which measurably helps pans and zooms and does nothing for
+REM quiet material. See lib\videnc-README.md "Tile slack".
 REM Full list: lib\videnc-README.md, or run the encoder with --help.
 SET VIDOPTS=
 

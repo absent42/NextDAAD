@@ -71,6 +71,21 @@ ceiling still bands and judders on hardware), and the encoder prints
 what it chose. An explicit --stream-budget skips the search and
 applies verbatim.
 
+Tile slack (SP17, owner-approved 2026-07-30): --tile-slack is the ONE
+opt-in picture knob, and it is off by default. The budget-bound delta
+schedule spends on whole paint-order LINES, walking a ladder of 1/2/4
+of them per bound frame and keeping the finest rung that is free in
+bytes AND in modelled supply; --tile-slack relaxes the supply half of
+that, letting the ladder take the one-row/one-column rung when it costs
+a little more supply than the four-line band. What that buys is
+content-dependent - measurably better on 320-wide pans and zooms, worth
+nothing on quiet material - which is why it is per-title and not a
+default. It is quoted in fractions of the utilisation headroom between
+--budget-target and the 1.00 refusal line (1.0 = all of it, and the
+cap), the cost is printed as a 'tile-slack:' line, and the supply gate
+still refuses anything it pushes past the ceiling. The whole-line rung
+floor is not reachable from it at any value.
+
 Requires: Python 3, Pillow, numpy. An ffmpeg binary is required at run
 time (default: the project's own tools\\ffmpeg\\bin\\ffmpeg.exe,
 override with --ffmpeg).
@@ -455,6 +470,31 @@ def main(argv):
                           f"mean at the ceiling still contains per-frame "
                           f"excursions that band and judder on hardware. "
                           f"Ignored when --stream-budget is given")
+    ap.add_argument("--tile-slack", dest="tile_slack", type=float,
+                     default=None, metavar="FRAC",
+                     help=f"OPT-IN (default: "
+                          f"{nxv2enc.TILE_SLACK_DEFAULT:.1f} = off, output "
+                          f"unchanged). Lets the adaptive tile ladder take a "
+                          f"FINER whole-line rung - one row/column instead of "
+                          f"the four-line band - even when that rung costs "
+                          f"more modelled supply than the band, in exchange "
+                          f"for the picture it buys. Quoted in fractions of "
+                          f"the auto-budget utilisation HEADROOM, i.e. of the "
+                          f"margin between --budget-target "
+                          f"({nxv2enc.AUTO_BUDGET_TARGET_UTIL:.2f}) and the "
+                          f"1.00 refusal line: "
+                          f"{nxv2enc.TILE_SLACK_MAX:.1f} is the CAP and "
+                          f"spends all of that margin. The right value is "
+                          f"content-dependent - it helped 320-wide pans and "
+                          f"zooms on real hardware and does nothing for quiet "
+                          f"material - so try 0.5 first (it SATURATES around "
+                          f"there on measured footage) and read the "
+                          f"'tile-slack:' report line for what it cost. The "
+                          f"whole-line rung floor is NOT reachable from this "
+                          f"knob at any value (sub-line rungs tore on "
+                          f"silicon), and an encode this pushes past the "
+                          f"supply ceiling is REFUSED by the same gate as "
+                          f"ever, never quietly shipped")
     ap.add_argument("--direct", action="store_true",
                      help="SP15 3c direct-serve preset: all-literal "
                           "raw-equivalent encode (every frame a full "
@@ -501,6 +541,17 @@ def main(argv):
         raise SystemExit(f"error: --budget-target must be in (0, 1], got {args.budget_target}")
     if args.dither is not None and not (0.0 <= args.dither <= 1.0):
         raise SystemExit(f"error: --dither must be in [0, 1], got {args.dither}")
+    # The knob is capped at exactly the auto-budget margin (see nxv2enc's
+    # THE SUPPLY-SLACK KNOB block) - a value past it is not a stronger
+    # request, it is a request to spend margin that does not exist.
+    if args.tile_slack is not None and not (
+            0.0 <= args.tile_slack <= nxv2enc.TILE_SLACK_MAX):
+        raise SystemExit(
+            f"error: --tile-slack must be in [0.0, "
+            f"{nxv2enc.TILE_SLACK_MAX:.1f}], got {args.tile_slack} - it is "
+            f"quoted in fractions of the utilisation headroom between the "
+            f"budget target and the 1.00 refusal line, so "
+            f"{nxv2enc.TILE_SLACK_MAX:.1f} already spends all of it")
 
     if args.aspect is not None:
         width = args.width or 320
@@ -535,7 +586,7 @@ def main(argv):
         mono=args.mono, merge_gaps=not args.no_merge,
         cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget,
         budget_target=args.budget_target, direct=args.direct,
-        retime=args.retime)
+        retime=args.retime, tile_slack=args.tile_slack)
 
     stream_line = ""
     if report.mode == "direct":

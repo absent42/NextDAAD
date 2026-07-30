@@ -1481,15 +1481,136 @@ TILE_SPEND_FRAC = 0.99
 #       be traded away behind the author's back, and a rung cannot win on
 #       granularity alone.
 #
-# TILE_SUPPLY_SLACK is the tolerance on (b) and it is 0.0 DELIBERATELY.
+# TILE_SUPPLY_SLACK is the tolerance on (b) and its DEFAULT is 0.0.
 # Measured margin below the auto-budget target at the pal9i operating
 # points: 007 0.008, 009 0.005, 008 0.001. Fixture 008 - the silicon
 # control that underran once already - has one thousandth of utilization
 # in hand, so any positive slack is a coin flip on whether its budget
 # survives, and a budget step costs ~0.0105 of utilization to buy back.
-# "Free" therefore means free.
+# By default, therefore, "free" means free. The SUPPLY-SLACK KNOB block
+# below is how an author opts a single title out of that default; rule
+# (a), the whole-line floor, is NOT reachable from the knob or from
+# anywhere else.
 TILE_LADDER_QUARTERS = (1, 2, 4)
 TILE_SUPPLY_SLACK = 0.0
+
+
+# ---------------------------------------------------------------------
+# THE SUPPLY-SLACK KNOB (--tile-slack) - OPT-IN, DEFAULT OFF
+# ---------------------------------------------------------------------
+# WHY IT EXISTS. With rule (b) at TILE_SUPPLY_SLACK = 0.0 the ladder
+# buys almost nothing: it engages on 21 of 007's 183 bound frames, 8 of
+# 247 on 008, 12 of 249 on 009, and is a near no-op on the owner's own
+# footage. But the behaviour the owner SAW AND APPROVED on hardware was
+# the pal9j ladder on his own 320-wide clips, where it settled on the
+# ONE-COLUMN rung (256 B) on 222 of 247 frames. That gain was real, and
+# it was bought with SUPPLY - roughly one auto-budget step (util 0.880
+# -> 0.891 at a pinned budget on the boat pan). Owner ruling
+# (2026-07-30): ship the gain behind an opt-in knob, because the right
+# value is CONTENT-DEPENDENT - one-column granularity helped his 320-wide
+# pans and going finer wrecked the 256-wide fixture - which makes it a
+# per-clip setting, not a global default.
+#
+# WHAT IT RELAXES, AND WHAT IT CANNOT REACH. The knob moves rule (b)
+# ONLY. Rule (a), the whole-line floor, is not a tunable: sub-line rungs
+# are what owner silicon read as displacement and tearing, and they are
+# also what widened the write span from 58% to 70% of the surface on a
+# LIVE patched surface against a free-running frame clock. The ladder is
+# built by tile_ladder_for() from TILE_LADDER_QUARTERS alone - the knob
+# is not an input to it - and encode_delta re-asserts the floor on the
+# rungs it is handed, at every knob value. See t19 in the selftest.
+#
+# PARAMETERISATION: FRACTIONS OF THE AUTO-BUDGET UTILISATION HEADROOM.
+# The raw quantity rule (b) compares is a per-frame RELATIVE supply
+# allowance (ceil_ms = coarse_ms * (1 + s)), and a raw s is meaningless
+# to an author - it is a number in a unit nothing else in this encoder
+# is quoted in. What an author can reason about is the margin the
+# encoder is holding back on his behalf: the auto-budget search targets
+# AUTO_BUDGET_TARGET_UTIL (0.90) and the gate refuses above
+# STREAM_CEILING_UTIL (1.00), so there is exactly one pot of utilisation
+# the ladder could spend, and the knob is quoted as a FRACTION OF THAT
+# POT. --tile-slack 0.15 means "let the ladder spend up to 15% of the
+# margin between the target and the refusal line". 0.0 spends none of
+# it (today's behaviour, and the default); 1.0 spends all of it and the
+# knob cannot express more.
+#
+# THE CAP, AND WHERE IT COMES FROM. frame_supply_ms() IS the supply
+# gate's own per-frame busy + wire arithmetic, so the sum of it over the
+# clip is precisely the utilisation numerator the gate divides (less the
+# invariant audio pad, which no rung moves). A per-frame relative
+# allowance s therefore raises the clip's mean utilisation by AT MOST
+# s x u, where u is the utilisation the ladder's frames contribute -
+# bounded above by the clip's whole u. At the operating point the search
+# aims at, u = AUTO_BUDGET_TARGET_UTIL, so the worst case a knob value k
+# can land on is
+#
+#     u_max = AUTO_BUDGET_TARGET_UTIL x (1 + k x HEADROOM)
+#
+# and setting u_max = STREAM_CEILING_UTIL gives
+#
+#     HEADROOM = (STREAM_CEILING_UTIL - target) / target = 0.1111...
+#
+# i.e. k = TILE_SLACK_MAX = 1.0 spends the entire margin the target
+# holds back and NOT ONE PART MORE. That is the cap, and it is the
+# reason the knob is expressed in headroom units rather than in raw
+# relative supply: the cap is then 1.0 by construction and stays correct
+# if the target is ever re-derived (or overridden per encode with
+# --budget-target, which tile_slack_rel honours).
+#
+# The bound is loose in three independent directions - only BOUND frames
+# reach the ladder at all, only frames where a finer rung both wins and
+# actually costs more pay any of it, and with the default automatic
+# search the budget is re-derived so the realised utilisation comes back
+# to the target anyway (the knob's cost then shows up as BYTES, which is
+# what the report line makes visible). What the cap has to survive is
+# the OTHER case: an explicit --stream-budget, where nothing re-derives
+# and the utilisation simply rises. There the existing supply gate is
+# the backstop and it is unchanged - over 1.00 it REFUSES, it does not
+# emit a file that will not play. The knob can make an encode be
+# refused; it cannot make an unplayable file be written.
+STREAM_CEILING_UTIL = 1.0        # the gate's own refusal line
+TILE_SLACK_DEFAULT = 0.0         # OFF - today's supply-neutral ladder
+TILE_SLACK_MAX = 1.0             # the whole auto-budget margin, no more
+
+
+def tile_slack_headroom(target_util=None):
+    """The utilisation margin one unit of --tile-slack buys, as a
+    RELATIVE supply allowance: (ceiling - target) / target.
+
+    target_util defaults to AUTO_BUDGET_TARGET_UTIL - the point the
+    automatic search aims at and the point stream_supply_check's own
+    suggested_budget solves for. An explicit --budget-target moves it,
+    and the knob's meaning moves with it: raise the target and there is
+    less margin in the pot, so one unit of slack is worth less."""
+    tgt = AUTO_BUDGET_TARGET_UTIL if target_util is None else float(target_util)
+    if not (0.0 < tgt <= STREAM_CEILING_UTIL):
+        raise ValueError(f"budget target must be in (0, {STREAM_CEILING_UTIL}], "
+                          f"got {tgt}")
+    return (STREAM_CEILING_UTIL - tgt) / tgt
+
+
+def tile_slack_rel(knob, target_util=None):
+    """Resolve a --tile-slack knob value (in HEADROOM units, see the
+    block above) to the per-frame RELATIVE supply allowance rule (b)
+    charges - the number encode_delta actually compares against.
+
+    knob None means TILE_SLACK_DEFAULT, which is 0.0, which resolves to
+    0.0 exactly: the default path is bit-for-bit the supply-neutral
+    ladder and no arithmetic happens on it at all. Out-of-range values
+    RAISE rather than clamp - a mis-set knob is an author error worth a
+    message, and silently clamping 5.0 to 1.0 would hide the fact that
+    the request was nonsense."""
+    k = TILE_SLACK_DEFAULT if knob is None else float(knob)
+    if not (0.0 <= k <= TILE_SLACK_MAX):
+        raise ValueError(
+            f"tile slack must be in [0.0, {TILE_SLACK_MAX}], got {k} - the "
+            f"knob is quoted in fractions of the auto-budget utilisation "
+            f"headroom, and {TILE_SLACK_MAX} already spends ALL of the "
+            f"margin between the {AUTO_BUDGET_TARGET_UTIL:.2f} target and "
+            f"the {STREAM_CEILING_UTIL:.2f} refusal line")
+    if k == 0.0:
+        return 0.0
+    return k * tile_slack_headroom(target_util)
 
 # Dissolve/pan detection (SP15 task-2b owner exhibit fix): a slow crossfade
 # or pan is a SUSTAINED elevated change fraction WITHOUT an impulse - the cut
@@ -1779,8 +1900,15 @@ def tile_ladder_for(coarsest):
     decode T out of the byte supply)."""
     coarsest = int(coarsest)
     line = max(1, coarsest // TILE_BAND)
-    return tuple(sorted({min(q * line, coarsest)
-                         for q in TILE_LADDER_QUARTERS} | {coarsest}))
+    lad = tuple(sorted({min(q * line, coarsest)
+                        for q in TILE_LADDER_QUARTERS} | {coarsest}))
+    # The whole-line floor is a property of THIS function and of nothing
+    # else - no argument, and in particular no --tile-slack value, is an
+    # input to it. Asserted rather than merely arranged, so a future edit
+    # to TILE_LADDER_QUARTERS cannot re-introduce a sub-line rung quietly.
+    assert all(g >= line and g % line == 0 for g in lad), \
+        f"tile ladder {lad} splits a paint-order line ({line} B)"
+    return lad
 
 
 def supply_price(width, height):
@@ -1825,7 +1953,7 @@ def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
 
 def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
                  surface_flat=None, merge_gaps=True, tile_px=None,
-                 tile_ladder=None, supply_px=None):
+                 tile_ladder=None, supply_px=None, supply_slack=None):
     """Region-coherent budget-bound delta encoder. Returns
     (gcls, gstarts, glens, bytes, T, mode, binding, payload).
 
@@ -1858,12 +1986,16 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
              best rung's, so a finer rung can never strand budget the frame
              was allowed to spend (the decode-T inversion).
       SUPPLY its modelled supply cost - the gate's own busy + wire prices,
-             frame_supply_ms() at `supply_px` - is within TILE_SUPPLY_SLACK
-             of the COARSEST rung's, so a finer rung can never cost the clip
-             utilization, which is what the auto-budget search pays for in
-             BYTES. Requires supply_px; passing tile_ladder without it is a
-             programming error and raises, because a silently-unpriced ladder
-             is exactly the defect owner silicon caught on 2026-07-30.
+             frame_supply_ms() at `supply_px` - is within `supply_slack`
+             (default TILE_SUPPLY_SLACK = 0.0) of the COARSEST rung's, so by
+             default a finer rung can never cost the clip utilization, which
+             is what the auto-budget search pays for in BYTES. Requires
+             supply_px; passing tile_ladder without it is a programming error
+             and raises, because a silently-unpriced ladder is exactly the
+             defect owner silicon caught on 2026-07-30. supply_slack is the
+             OPT-IN --tile-slack knob, already resolved from headroom units
+             to a relative allowance by tile_slack_rel(); it relaxes THIS
+             test and nothing else - see THE SUPPLY-SLACK KNOB block.
 
       PICTURE the err2 it LEAVES on the surface is no higher than the
              coarsest rung's. Wire and supply preservation say a rung costs
@@ -1911,6 +2043,25 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
                 "ladder can trade decode-T for granularity and the "
                 "auto-budget search silently pays for it in wire bytes "
                 "(the pal9j regression); pass supply_price(width, height)")
+        # RULE (a), RE-ASSERTED HERE, AND DELIBERATELY NOT A FUNCTION OF
+        # supply_slack. The coarsest rung is the shape's TILE_BAND band, so
+        # one paint-order line is band // TILE_BAND and every rung must be a
+        # whole number of them. This is checked on the rungs encode_delta is
+        # actually handed rather than trusted from tile_ladder_for(), because
+        # the whole-line floor is the invariant the OPT-IN knob below must
+        # never be able to reach past: sub-line rungs are what owner silicon
+        # read as displacement and tearing, and no setting of any knob may
+        # produce one.
+        line_px = max(1, int(tile_ladder[-1]) // TILE_BAND)
+        if any(int(g) < line_px or int(g) % line_px for g in tile_ladder):
+            raise ValueError(
+                f"encode_delta: every ladder rung must be a WHOLE number of "
+                f"paint-order lines ({line_px} B each on this shape), got "
+                f"{tuple(tile_ladder)} - a sub-line rung splits a row/column "
+                f"into independently-aged fragments (displacement and tearing "
+                f"on owner silicon, 2026-07-30) and no --tile-slack value may "
+                f"produce one")
+        slack = TILE_SUPPLY_SLACK if supply_slack is None else float(supply_slack)
         cands = [(rung, encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
                                      surface_flat=surface_flat,
                                      merge_gaps=merge_gaps, tile_px=rung))
@@ -1918,7 +2069,7 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
         best_b = max(r[3] for _, r in cands)
         coarse_b = cands[-1][1][3]
         coarse_ms = frame_supply_ms(coarse_b, cands[-1][1][4], supply_px)
-        ceil_ms = coarse_ms * (1.0 + TILE_SUPPLY_SLACK)
+        ceil_ms = coarse_ms * (1.0 + slack)
         # NEVER FEWER BYTES THAN TODAY - the coarsest rung IS today's fixed
         # band scheduler - and never strand wire against the best rung either.
         floor_b = max(coarse_b, TILE_SPEND_FRAC * best_b)
@@ -3495,7 +3646,7 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
 def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 budget_scale=1.0, merge_gaps=True, hysteresis=True,
                 staleness_refresh=True, return_surfaces=False,
-                dither_amp=None, dither_mode=None):
+                dither_amp=None, dither_mode=None, tile_slack=None):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -3535,6 +3686,11 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     # rung can never buy granularity with the decode time the auto-budget
     # search would otherwise have spent on wire bytes.
     supply_px = supply_price(width, height)
+    # tile_slack is the ALREADY-RESOLVED relative supply allowance (the
+    # opt-in --tile-slack knob, converted out of headroom units by
+    # tile_slack_rel() at the one place that knows the budget target -
+    # encode()). None/0.0 is the default and is the supply-neutral rule.
+    tile_slack = TILE_SUPPLY_SLACK if tile_slack is None else float(tile_slack)
 
     scene_cuts = detect_scene_cuts(chg)
 
@@ -3656,7 +3812,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                     tflat, err2, cap_bytes, usable,
                     surface_flat=prev_flat, merge_gaps=merge_gaps,
                     tile_px=tile_px, tile_ladder=tile_ladder,
-                    supply_px=supply_px)
+                    supply_px=supply_px, supply_slack=tile_slack)
                 prev_flat = np.where(_mask_from_segments(gcls, gstarts, glens, raw), tflat, prev_flat)
                 dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
                 payloads.append(payload)
@@ -3775,7 +3931,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 tflat, enc_err2, cap_bytes, usable,
                 surface_flat=prev_flat, merge_gaps=merge_gaps,
                 tile_px=tile_px, tile_ladder=tile_ladder,
-                supply_px=supply_px)
+                supply_px=supply_px, supply_slack=tile_slack)
             new_flat = _apply_segments(prev_flat, tflat, gcls, gstarts, glens)
             prev_flat = new_flat
             if staleness_refresh:
@@ -4107,7 +4263,7 @@ def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
                         merge_gaps=True, hysteresis=True,
                         staleness_refresh=True, dither_amp=None,
                         dither_mode=None, target_util=None,
-                        max_probes=AUTO_BUDGET_MAX_PROBES):
+                        max_probes=AUTO_BUDGET_MAX_PROBES, tile_slack=None):
     """SP17 T1. Derives the --stream-budget for this clip instead of
     making the author guess one, and returns the winning encode with it
     so nothing is encoded twice. Result dict: budget, result (the
@@ -4180,7 +4336,8 @@ def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
                                budget_scale=budget, merge_gaps=merge_gaps,
                                hysteresis=hysteresis,
                                staleness_refresh=staleness_refresh,
-                               dither_amp=dither_amp, dither_mode=dither_mode)
+                               dither_amp=dither_amp, dither_mode=dither_mode,
+                               tile_slack=tile_slack)
             proj, stats = stream_gate_stats(res, ex, width, height, fps)
             if stats is None:
                 # Resident (or empty): no supply gate applies at all.
@@ -4329,11 +4486,35 @@ def auto_budget_line(search):
             f"{n} probe{plural}, {search['elapsed']:.1f} s")
 
 
+def tile_slack_line(knob, stats, target_util=None):
+    """The one-line author-facing report for a NON-ZERO --tile-slack, in
+    the same two-space indented style as auto_budget_line() above.
+
+    The knob spends margin, so the cost has to be VISIBLE - an author
+    who cannot see what he paid cannot judge whether he wanted it, and a
+    UI cannot surface a number the encoder never printed. Named here:
+    the slack as set, the relative supply allowance it resolved to, the
+    utilisation the encode actually landed at, and how much of the
+    margin to the refusal line is left. stats is stream_supply_check()'s
+    dict, or None for a resident file (no gate applies, so there is no
+    utilisation to quote and the knob cost nothing)."""
+    rel = tile_slack_rel(knob, target_util)
+    tgt = AUTO_BUDGET_TARGET_UTIL if target_util is None else float(target_util)
+    head = f"  tile-slack: {float(knob):.2f} of headroom (target {tgt:.2f}, " \
+           f"per-frame supply allowance {100.0 * rel:.2f}%)"
+    if stats is None:
+        return head + " - resident, no supply gate: cost nothing"
+    util = stats["utilization"]
+    return (head + f" - stream util {util:.3f}, margin "
+            f"{STREAM_CEILING_UTIL - util:.3f} to the "
+            f"{STREAM_CEILING_UTIL:.2f} refusal line")
+
+
 def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
            dither=None, dither_mode=None, mono=False, merge_gaps=True, hysteresis=True,
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=None,
-           budget_target=None, direct=False, retime=None):
+           budget_target=None, direct=False, retime=None, tile_slack=None):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     dither (--dither): dither strength, a float 0.0-1.0. In the default
@@ -4380,6 +4561,16 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     measurements they come from. A source ALREADY at fps is untouched
     in every mode, filter chain and bytes alike.
 
+    tile_slack (--tile-slack, SP17, owner-approved 2026-07-30): the
+    OPT-IN supply-slack knob for the adaptive tile ladder, in fractions
+    of the auto-budget utilisation headroom - 0.0 (the default) is the
+    supply-neutral ladder and byte-for-byte today's output, 1.0 spends
+    the entire margin between budget_target and the 1.00 refusal line
+    and is the cap. It relaxes the ladder's supply-preservation test
+    ONLY; the whole-line rung floor is not reachable from it at any
+    value. See THE SUPPLY-SLACK KNOB block for the parameterisation and
+    the cap's derivation. A non-zero value prints tile_slack_line().
+
     direct (--direct, SP15 3c): the raw-equivalent all-literal preset -
     every frame a full keyframe repaint, header direct-serve hint set
     (flags bit1), gated by worst-frame WIRE feasibility instead of the
@@ -4393,6 +4584,11 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     fps_val = 25.0 if fps is None else float(fps)
     dither_amp = _dither_amp(dither)   # validate once, up front
     dmode = _dither_mode(dither_mode)
+    # The one place that knows BOTH the knob and the budget target, so
+    # the headroom-unit -> relative-allowance conversion happens exactly
+    # once and everything downstream carries the resolved number.
+    slack_knob = TILE_SLACK_DEFAULT if tile_slack is None else float(tile_slack)
+    slack_rel = tile_slack_rel(slack_knob, budget_target)
 
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
                           ffmpeg, dither_amp, mono, dither_mode=dmode,
@@ -4400,6 +4596,12 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     if direct:
         # SP15 3c: the all-literal direct-serve preset - no delta
         # pipeline, no rate control; see _encode_direct.
+        if slack_knob:
+            # Said out loud rather than ignored: --direct has no delta
+            # schedule, so there is no tile ladder for the knob to relax.
+            print("  note: --tile-slack has no effect with --direct - the "
+                  "direct-serve preset repaints every frame in full and "
+                  "runs no tile schedule")
         return _encode_direct(ex, width, height, fps_val, out_path,
                               report_path, dither_amp=dither_amp,
                               dither_mode=dmode)
@@ -4412,7 +4614,8 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
             ex, width, height, fps_val, cap_bytes_frac=cap_bytes_frac,
             merge_gaps=merge_gaps, hysteresis=hysteresis,
             staleness_refresh=staleness_refresh, dither_amp=dither_amp,
-            dither_mode=dmode, target_util=budget_target)
+            dither_mode=dmode, target_util=budget_target,
+            tile_slack=slack_rel)
         stream_budget = auto_search["budget"]
         if stream_budget is None:
             # Every probe was over the line - fall through to the gate's
@@ -4429,7 +4632,8 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                               budget_scale=stream_budget,
                               merge_gaps=merge_gaps, hysteresis=hysteresis,
                               staleness_refresh=staleness_refresh,
-                              dither_amp=dither_amp, dither_mode=dmode)
+                              dither_amp=dither_amp, dither_mode=dmode,
+                              tile_slack=slack_rel)
 
     payloads = result["payloads"]
     nframes_out = len(payloads)
@@ -4448,6 +4652,12 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     abytes_pad = ex["abytes_pad"]
     projected_total, stream_stats = stream_gate_stats(
         result, ex, width, height, fps_val)
+    # The opt-in knob's cost, printed BEFORE the gate so it is on record
+    # even when the gate then refuses - "you spent margin and this is
+    # where it landed" is exactly the context a refusal needs. Silent at
+    # the default (0.0), which is every encode that did not ask for it.
+    if slack_knob:
+        print(tile_slack_line(slack_knob, stream_stats, budget_target))
     if stream_stats is not None:
         if stream_stats["utilization"] > 1.0:
             eq_ms = stream_stats["busy_ms"] + stream_stats["sd_ms"]
@@ -4478,16 +4688,37 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
             # healthy encode that the ring quietly absorbs. Fixture 007
             # at mean 0.981 measures p95 1.071 and runs of up to 19
             # consecutive frames over budget - it bands and judders on
-            # real hardware. Only an explicit --stream-budget reaches
-            # this line now; the automatic search targets
-            # AUTO_BUDGET_TARGET_UTIL and never lands here.
+            # real hardware.
+            #
+            # THREE WAYS TO GET HERE, and the remedy is different for
+            # each, so the message names the one that applies. It used
+            # to name only the first, on the argument that the automatic
+            # search targets AUTO_BUDGET_TARGET_UTIL and never lands
+            # above it - which is not true of a CONTENT-LIMITED search
+            # (the plateau guard stops rather than starving the picture
+            # for a margin it cannot reach), and is less true again now
+            # that --tile-slack can deliberately spend into this band.
+            # Telling an author to drop a --stream-budget he never set
+            # is worse than saying nothing.
+            if slack_knob:
+                remedy = (f"lower or drop --tile-slack (currently "
+                          f"{slack_knob:.2f}) - it is spending exactly this "
+                          f"margin by design")
+            elif auto_search is None:
+                remedy = (f"drop the explicit --stream-budget to let the "
+                          f"encoder derive one at "
+                          f"~{AUTO_BUDGET_TARGET_UTIL:.2f}")
+            else:
+                remedy = (f"the automatic search could not reach "
+                          f"~{AUTO_BUDGET_TARGET_UTIL:.2f} on this content - "
+                          f"a smaller shape, lower --fps, lower --dither or "
+                          f"a calmer cut are the levers a budget cannot "
+                          f"supply")
             print(f"  warning: stream utilization "
                   f"{stream_stats['utilization']:.2f} (> {STREAM_WARN_UTIL:.2f}) - "
                   f"at-capacity encode: the whole-clip mean hides "
                   f"per-frame excursions well over 1.00, which read as "
-                  f"banding and judder on hardware. Drop the explicit "
-                  f"--stream-budget to let the encoder derive one at "
-                  f"~{AUTO_BUDGET_TARGET_UTIL:.2f}")
+                  f"banding and judder on hardware. Remedy: {remedy}")
 
     header = pack_header(
         width=width, height=height, fps=fps_val, channels=ex["channels"],

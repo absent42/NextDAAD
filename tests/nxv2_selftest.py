@@ -4039,6 +4039,471 @@ def t18_ladder_cannot_cost_budget():
     expect(bound > 0, "fixture did not produce a budget-bound frame")
 
 
+# =======================================================================
+# Step 19: SP17 THE SUPPLY-SLACK KNOB (--tile-slack), opt-in, default off
+# =======================================================================
+# With the step-18 re-cut in place the ladder is supply-NEUTRAL and buys
+# almost nothing: 21 of 007's 183 bound frames, 8 of 247 on 008, 12 of 249
+# on 009. But the behaviour owner silicon SAW AND APPROVED was the pal9j
+# ladder on his own 320-wide footage taking the ONE-COLUMN rung (256 B) on
+# 222 of 247 frames, and that gain was bought with SUPPLY. Owner ruling
+# (2026-07-30): ship it behind an opt-in per-title knob, because the right
+# value is content-dependent.
+#
+# The knob relaxes rule (b), the supply-preservation test, and NOTHING
+# else. These cases pin, in order:
+#   - the constants, the default (OFF), and the CAP's derivation - the cap
+#     is exactly the auto-budget margin, so knob 1.0 lands the worst case
+#     on the refusal line and the knob cannot express more;
+#   - THE WHOLE-LINE FLOOR IS UNREACHABLE at every knob value, both in the
+#     ladder the encoder builds and in what encode_delta will accept;
+#   - default-off really is byte-for-byte today's encoder;
+#   - the knob moves the supply test only, monotonically;
+#   - the realised cost is bounded by the headroom the knob is quoted in
+#     (the arithmetic the cap rests on, measured over a real encode);
+#   - the supply gate still REFUSES rather than shipping an unplayable
+#     file, and the knob is nowhere in the gate's own arithmetic;
+#   - the CLI/kit plumbing, including the sidecar arg hash.
+# =======================================================================
+
+
+def _slack_clip(width, height, nframes=20, seed=1901, band=50, step=7):
+    """A starved synthetic streaming clip on the given shape - the same
+    recipe the step-18 cases use, factored out because three cases here
+    need one."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:height, 0:width]
+    base = np.stack([(xx * 255 // width).astype(np.uint8),
+                     (yy * 255 // height).astype(np.uint8),
+                     np.full((height, width), 70, dtype=np.uint8)], axis=-1)
+    frames = []
+    for i in range(nframes):
+        f = base.copy()
+        y = 10 + (i * step) % (height - band - 20)
+        f[y:y + band, :, :] = rng.integers(0, 256, size=(band, width, 3),
+                                           dtype=np.uint8)
+        frames.append(f)
+    orig = np.stack(frames)
+    chg, po_ceil = _synth_clip(orig)
+    return orig, chg, po_ceil
+
+
+@case(19, "supply-slack knob - constants, DEFAULT OFF, and the cap is exactly the auto-budget margin")
+def t19_slack_constants():
+    expect(enc.TILE_SLACK_DEFAULT == 0.0,
+           f"the knob must default to OFF, got {enc.TILE_SLACK_DEFAULT}")
+    expect(enc.TILE_SUPPLY_SLACK == 0.0,
+           f"the module default slack must stay 0.0, got {enc.TILE_SUPPLY_SLACK}")
+    expect(enc.TILE_SLACK_MAX == 1.0,
+           f"the cap is one whole headroom, got {enc.TILE_SLACK_MAX}")
+    expect(enc.STREAM_CEILING_UTIL == 1.0,
+           f"the gate's refusal line is 1.00, got {enc.STREAM_CEILING_UTIL}")
+    # DEFAULT OFF resolves to exactly zero - not nearly zero. Anything
+    # else would perturb ceil_ms and change today's output.
+    expect(enc.tile_slack_rel(None) == 0.0, "None must resolve to 0.0 exactly")
+    expect(enc.tile_slack_rel(0.0) == 0.0, "0.0 must resolve to 0.0 exactly")
+    expect(enc.tile_slack_rel(enc.TILE_SLACK_DEFAULT) == 0.0,
+           "the default must resolve to 0.0 exactly")
+
+    # THE CAP'S DERIVATION, checked as arithmetic rather than quoted as a
+    # number. frame_supply_ms IS the gate's per-frame busy+wire term, so a
+    # per-frame relative allowance s raises the clip mean by at most s x u,
+    # u <= the operating point. At the target that worst case is
+    #   target x (1 + knob x headroom)
+    # and at knob = TILE_SLACK_MAX it must land ON the refusal line - the
+    # entire margin the target holds back, and not one part more.
+    head = enc.tile_slack_headroom()
+    expect(abs(head - (enc.STREAM_CEILING_UTIL - enc.AUTO_BUDGET_TARGET_UTIL)
+               / enc.AUTO_BUDGET_TARGET_UTIL) < 1e-15,
+           f"headroom must be (ceiling - target)/target, got {head}")
+    worst = enc.AUTO_BUDGET_TARGET_UTIL * (
+        1.0 + enc.tile_slack_rel(enc.TILE_SLACK_MAX))
+    expect(abs(worst - enc.STREAM_CEILING_UTIL) < 1e-12,
+           f"the cap must land the worst case exactly on the refusal line, "
+           f"got {worst}")
+    expect(enc.tile_slack_rel(0.5) * 2.0 == enc.tile_slack_rel(1.0)
+           or abs(enc.tile_slack_rel(0.5) * 2.0
+                  - enc.tile_slack_rel(1.0)) < 1e-15,
+           "the knob must be linear in headroom units")
+
+    # A raised --budget-target leaves LESS margin in the pot, so one unit
+    # of slack must be worth less - the knob is quoted against the target
+    # actually in force, not against a baked constant.
+    expect(enc.tile_slack_rel(1.0, 0.95) < enc.tile_slack_rel(1.0, 0.90),
+           "a higher budget target must shrink what one unit of slack buys")
+    expect(abs(0.95 * (1.0 + enc.tile_slack_rel(1.0, 0.95))
+               - enc.STREAM_CEILING_UTIL) < 1e-12,
+           "the cap must track an overridden target too")
+
+    # Out of range RAISES - it does not clamp. A clamp would let a
+    # nonsense request (5.0) pass silently as the maximum.
+    for bad in (-0.01, 1.01, 5.0):
+        try:
+            enc.tile_slack_rel(bad)
+        except ValueError as exc:
+            expect("[0.0, 1.0]" in str(exc),
+                   f"the refusal must name the cap: {exc}")
+        else:
+            expect(False, f"tile slack {bad} must be refused, not clamped")
+
+
+@case(19, "supply-slack knob - THE WHOLE-LINE FLOOR IS UNREACHABLE at every knob value")
+def t19_whole_line_unreachable():
+    # The floor is rule (a) and it is PERMANENT. Sub-line rungs caused BOTH
+    # the budget collapse (fragmented runs cost 37% more decode-T, charged
+    # by the gate, paid for by the auto-budget search in wire) and the
+    # widened paint window (write span 58% -> 70% of a LIVE surface against
+    # a free-running frame clock). The knob relaxes the SUPPLY rule; it is
+    # not an input to the ladder at all, and this case says so three ways.
+    knobs = (0.0, 0.05, 0.15, 0.25, 0.5, 0.75, enc.TILE_SLACK_MAX)
+
+    # (1) The ladder itself is a pure function of the shape. tile_ladder_for
+    # takes no slack argument, and every rung it yields is a whole number of
+    # paint-order lines on every shape.
+    expect("slack" not in inspect.signature(enc.tile_ladder_for).parameters,
+           "the ladder builder must not take a slack argument")
+    for shape in ("full", "classic", "16:9", "scope", "classic-wide"):
+        w, h = enc.resolve_shape(shape)
+        cm = (w == 320)
+        line = h if cm else w
+        band = enc.default_tile_px(w * h, width=w, height=h, column_major=cm)
+        lad = enc.tile_ladder_for(band)
+        expect(all(g >= line and g % line == 0 for g in lad),
+               f"{shape}: rung splits a paint-order line ({line} B): {lad}")
+
+    # (2) encode_delta REFUSES a sub-line ladder outright - at every knob
+    # value, including the cap. This is the guard that makes the floor an
+    # invariant of the code rather than of one call site.
+    n = 4096
+    rng = np.random.default_rng(1901)
+    prev = np.zeros(n, dtype=np.uint8)
+    target = prev.copy()
+    target[100:2000] = rng.integers(1, 256, size=1900, dtype=np.uint8)
+    err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
+    price = _price_for(256, 192)
+    good = enc.tile_ladder_for(1024)
+    for knob in knobs:
+        rel = enc.tile_slack_rel(knob)
+        for bad in ((32, 64, 128, 256, 1024),      # the pal9j ladder
+                    (128, 256, 1024),              # half a line
+                    (256, 384, 1024)):             # 1.5 lines
+            try:
+                enc.encode_delta(target, err2, 300, 40000, surface_flat=prev,
+                                 tile_ladder=bad, supply_px=price,
+                                 supply_slack=rel)
+            except ValueError as exc:
+                expect("WHOLE number of paint-order lines" in str(exc),
+                       f"the refusal must name the floor: {exc}")
+            else:
+                expect(False, f"sub-line ladder {bad} must be refused at "
+                              f"--tile-slack {knob}")
+        # ... and the legal ladder still works at that same knob value.
+        r = enc.encode_delta(target, err2, 300, 40000, surface_flat=prev,
+                             tile_ladder=good, supply_px=price,
+                             supply_slack=rel)
+        expect(int(r[5].split("@")[-1]) in good,
+               f"knob {knob}: chosen rung not on the ladder ({r[5]})")
+
+    # (3) End to end on the shape that regressed: at the CAP, every
+    # budget-bound frame still names a whole-line rung.
+    width, height = 256, 192
+    orig, chg, po_ceil = _slack_clip(width, height)
+    band = enc.default_tile_px(width * height, width=width, height=height,
+                               column_major=False)
+    lad = enc.tile_ladder_for(band)
+    res = enc.encode_clip(orig, chg, po_ceil, width, height, 25.0,
+                          cap_bytes_frac=0.03, budget_scale=0.12,
+                          tile_slack=enc.tile_slack_rel(enc.TILE_SLACK_MAX))
+    bound = 0
+    for m, bind in zip(res["per_frame"]["mode"], res["per_frame"]["binding"]):
+        if bind != "budget":
+            continue
+        bound += 1
+        g = int(m.split("@")[-1].split(":")[0])
+        expect(g in lad, f"rung {g} is not on this shape's ladder {lad}")
+        expect(g % width == 0,
+               f"AT THE CAP, rung {g} splits a {width}px paint-order line "
+               f"(mode {m}) - the floor must not be reachable from the knob")
+    expect(bound > 0, "fixture did not produce a budget-bound frame")
+
+
+@case(19, "supply-slack knob - DEFAULT OFF is byte-for-byte today's encoder")
+def t19_default_off_identical():
+    # The knob ships DEFAULT OFF and must not change ANY current output.
+    # At slack 0 the supply ceiling is coarse_ms * 1.0 - an exact float
+    # identity, not an approximation - so the comparison below is a true
+    # byte identity and not a tolerance.
+    width, height = 256, 192
+    orig, chg, po_ceil = _slack_clip(width, height, seed=1902)
+    runs = {}
+    for tag, slack in (("omitted", None), ("zero", 0.0),
+                       ("resolved", enc.tile_slack_rel(0.0)),
+                       ("default", enc.tile_slack_rel(enc.TILE_SLACK_DEFAULT))):
+        runs[tag] = enc.encode_clip(orig, chg, po_ceil, width, height, 25.0,
+                                    cap_bytes_frac=0.03, budget_scale=0.12,
+                                    tile_slack=slack)
+    ref = runs["omitted"]
+    for tag, res in runs.items():
+        expect([bytes(p) for p in res["payloads"]]
+               == [bytes(p) for p in ref["payloads"]],
+               f"tile_slack={tag} changed the emitted payloads - the knob's "
+               f"default MUST be a no-op")
+        expect(res["per_frame"]["mode"] == ref["per_frame"]["mode"],
+               f"tile_slack={tag} changed the per-frame modes")
+    # Same at the encode_delta level, where the ceiling arithmetic lives.
+    n = 4096
+    rng = np.random.default_rng(1903)
+    prev = np.zeros(n, dtype=np.uint8)
+    target = prev.copy()
+    target[100:2600] = rng.integers(1, 256, size=2500, dtype=np.uint8)
+    err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
+    lad = enc.tile_ladder_for(1024)
+    price = _price_for(width, height)
+    a = enc.encode_delta(target, err2, 700, 60000, surface_flat=prev,
+                         tile_ladder=lad, supply_px=price)
+    b = enc.encode_delta(target, err2, 700, 60000, surface_flat=prev,
+                         tile_ladder=lad, supply_px=price, supply_slack=0.0)
+    expect(bytes(a[7]) == bytes(b[7]) and a[3] == b[3] and a[5] == b[5],
+           "supply_slack=0.0 must be identical to omitting it entirely")
+
+
+@case(19, "supply-slack knob - it relaxes the SUPPLY test only, and monotonically")
+def t19_relaxes_supply_only():
+    # A real-ish bound mode-0 frame (the step-18 recipe), scheduled over a
+    # spread of caps. Across the whole knob range the rule must stay the
+    # rule: whatever rung is chosen still passes SPEND and PICTURE, only
+    # the supply ceiling moves, and a bigger knob never picks a COARSER
+    # rung than a smaller one.
+    rng = np.random.default_rng(2002)
+    n = 256 * 192
+    prev = rng.integers(0, 256, size=n, dtype=np.uint8)
+    target = prev.copy()
+    for _ in range(10):
+        a = int(rng.integers(0, n - 3000))
+        ln = int(rng.integers(200, 3000))
+        target[a:a + ln] = rng.integers(0, 256, size=ln, dtype=np.uint8)
+    err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
+    lad = enc.tile_ladder_for(1024)
+    price = _price_for(256, 192)
+    knobs = (0.0, 0.1, 0.25, 0.5, 1.0)
+    relaxed = 0
+    checked = 0
+    for cap_b in range(1200, 9000, 340):
+        costs = _ladder_costs(target, err2, prev, cap_b, None, lad)
+        resid = _ladder_residuals(target, err2, prev, cap_b, None, lad)
+        picks = []
+        for knob in knobs:
+            rel = enc.tile_slack_rel(knob)
+            r = enc.encode_delta(target, err2, cap_b, None, surface_flat=prev,
+                                 tile_ladder=lad, supply_px=price,
+                                 supply_slack=rel)
+            got = int(r[5].split("@")[-1])
+            want = _expected_rung(costs, lad, enc.TILE_SPEND_FRAC, price,
+                                  rel, resid)
+            expect(got == want,
+                   f"cap {cap_b} knob {knob}: chose {got}, the rule says "
+                   f"{want} (costs {costs})")
+            # SPEND and PICTURE are NOT relaxed by the knob - any rung it
+            # takes still satisfies both at every value. (The fallback IS
+            # the coarsest rung - today's fixed band scheduler - and is
+            # exempt by construction: it is the reference the other two
+            # tests are stated against, not a candidate that passed them.)
+            if got != lad[-1]:
+                best = max(b for b, _ in costs.values())
+                floor_b = max(costs[lad[-1]][0], enc.TILE_SPEND_FRAC * best)
+                expect(costs[got][0] >= floor_b,
+                       f"cap {cap_b} knob {knob}: rung {got} strands wire - "
+                       f"the knob must not relax spend preservation")
+                expect(resid[got] <= resid[lad[-1]],
+                       f"cap {cap_b} knob {knob}: rung {got} leaves MORE "
+                       f"residual than the band - the knob must not relax "
+                       f"the picture test")
+            picks.append(got)
+            checked += 1
+        # Monotone: more slack can only buy a FINER (or equal) rung.
+        expect(picks == sorted(picks, reverse=True),
+               f"cap {cap_b}: rung choice must be non-increasing in slack, "
+               f"got {dict(zip(knobs, picks))}")
+        if picks[0] != picks[-1]:
+            relaxed += 1
+    expect(checked > 0, "no candidate frames scheduled")
+    expect(relaxed > 0,
+           "the knob never changed the outcome on this fixture - it would be "
+           "unfalsifiable here")
+    print(f"  [slack] {relaxed} of {len(range(1200, 9000, 340))} caps took a "
+          f"finer rung once the supply test was relaxed")
+
+
+@case(19, "supply-slack knob - the realised cost is bounded by the headroom it is quoted in")
+def t19_cost_is_bounded():
+    # THIS IS THE CAP'S ARITHMETIC, measured over a real encode rather
+    # than argued. frame_supply_ms is the gate's own per-frame busy+wire
+    # term, so the clip's MEAN of it is the utilisation numerator (less
+    # the invariant audio pad). If the mean at knob k never exceeds
+    # (1 + k x headroom) x the mean at knob 0, then a clip sitting at the
+    # 0.90 target cannot be pushed past 1.00 by any legal knob value -
+    # which is exactly what the cap claims.
+    width, height = 320, 256          # mode-1, the shape the owner's own
+    orig, chg, po_ceil = _slack_clip(  # approved A/B ran on
+        width, height, nframes=18, seed=1904, band=60, step=9)
+    price = _price_for(width, height)
+
+    def mean_supply_ms(res):
+        pf = res["per_frame"]
+        return sum(enc.frame_supply_ms(len(p), t, price)
+                   for p, t in zip(res["payloads"], pf["t"])) / len(pf["t"])
+
+    def run(knob):
+        return enc.encode_clip(orig, chg, po_ceil, width, height, 25.0,
+                               cap_bytes_frac=0.03, budget_scale=0.12,
+                               tile_slack=enc.tile_slack_rel(knob))
+
+    base = run(0.0)
+    m0 = mean_supply_ms(base)
+    for knob in (0.15, 0.5, enc.TILE_SLACK_MAX):
+        res = run(knob)
+        m = mean_supply_ms(res)
+        rel = enc.tile_slack_rel(knob)
+        expect(m <= m0 * (1.0 + rel) + 1e-9,
+               f"knob {knob}: mean supply {m:.4f} ms/frame exceeds the bound "
+               f"{m0 * (1.0 + rel):.4f} - the cap's derivation does not hold, "
+               f"so a legal knob value could push a title past the ceiling")
+        # ... and it never throws wire away to stay under that bound.
+        expect(sum(len(p) for p in res["payloads"])
+               >= sum(len(p) for p in base["payloads"]),
+               f"knob {knob} spent FEWER bytes than the default - the knob "
+               f"buys granularity, it must not trade wire for it")
+    # The worst legal landing point, stated: a clip at the target cannot
+    # reach the refusal line from inside the cap.
+    expect(enc.AUTO_BUDGET_TARGET_UTIL
+           * (1.0 + enc.tile_slack_rel(enc.TILE_SLACK_MAX))
+           <= enc.STREAM_CEILING_UTIL + 1e-12,
+           "the cap must not admit a value that lands past the refusal line")
+
+
+@case(19, "supply-slack knob - the supply gate still REFUSES; the knob is nowhere in its arithmetic")
+def t19_refusal_path_intact():
+    # BOUNDED SO IT CANNOT SHIP AN UNPLAYABLE FILE. The margin the knob
+    # spends is the same margin that protects fixture 008 - the file that
+    # underran 76% of its frames when the gate was optimistic. The knob is
+    # therefore forbidden anywhere in the gate's own arithmetic, and the
+    # existing refusal path must still fire under it.
+    gate = inspect.getsource(enc.stream_supply_check)
+    for word in ("slack", "tile_slack", "TILE_SUPPLY_SLACK", "TILE_SLACK"):
+        expect(word not in gate,
+               f"the supply gate must not know about the knob ({word} found) "
+               f"- the gate is the backstop and the knob must not move it")
+    src = inspect.getsource(enc.encode)
+    expect('if stream_stats["utilization"] > 1.0:' in src
+           and "raise SystemExit(" in src,
+           "encode() must still refuse an over-ceiling stream outright")
+    # The cost line is printed BEFORE the gate, so a refused encode still
+    # tells the author what the knob spent.
+    expect(src.index("tile_slack_line(") < src.index(
+        'if stream_stats["utilization"] > 1.0:'),
+           "the tile-slack cost line must print before the gate's refusal")
+    # The at-capacity WARNING band (0.90-1.00) is the margin the knob
+    # spends, so a warning raised while the knob is set must name the
+    # knob - not tell the author to drop a --stream-budget he never set.
+    expect("lower or drop --tile-slack" in src,
+           "the at-capacity warning must name --tile-slack when it is what "
+           "is spending the margin")
+
+    if not BBB.exists() or not FFMPEG.exists():
+        skip("demo source or ffmpeg not available")
+    import contextlib
+    import io
+    # A genuinely infeasible operating point (full 320x256 @25 at a PINNED
+    # --stream-budget 1.00, over the resident pool) must be refused with
+    # the SAME message at the cap as at the default - the knob cannot buy
+    # its way past the gate.
+    with tempfile.TemporaryDirectory() as td:
+        for knob in (None, enc.TILE_SLACK_MAX):
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf):
+                    enc.encode(str(BBB), str(Path(td) / "refused.vid"),
+                               shape=(320, 256), fps=25.0,
+                               start="00:00:03", duration="2.0",
+                               ffmpeg=str(FFMPEG), stream_budget=1.0,
+                               tile_slack=knob)
+            except SystemExit as exc:
+                expect("cannot stream" in str(exc),
+                       f"knob {knob}: expected the gate's refusal, got {exc}")
+            else:
+                expect(False, f"knob {knob}: an over-ceiling stream must be "
+                              f"REFUSED, not written")
+            if knob:
+                expect("tile-slack:" in buf.getvalue(),
+                       f"a refused encode must still report the knob's cost: "
+                       f"{buf.getvalue()!r}")
+
+
+@case(19, "supply-slack knob - report line, CLI plumbing, and the kit's sidecar arg hash")
+def t19_cli_and_arg_hash():
+    import hashlib
+    import subprocess
+    import re as _re
+
+    # THE REPORT LINE. The knob spends margin, so the cost must be
+    # visible: the slack as set, the utilisation reached, and what margin
+    # is left. Same two-space style as auto_budget_line.
+    stats = dict(utilization=0.9134)
+    line = enc.tile_slack_line(0.15, stats)
+    expect(line.startswith("  tile-slack: "),
+           f"the report line must match the encoder's line style: {line!r}")
+    expect("0.15" in line, "the line must name the slack that was set")
+    expect("0.913" in line, "the line must name the utilisation reached")
+    expect("0.087" in line, "the line must name the margin remaining")
+    expect("1.00 refusal line" in line,
+           "the line must name what the margin is measured to")
+    for ch in ("—", "–"):
+        expect(ch not in line, "no em/en dashes in encoder output")
+    expect(enc.tile_slack_line(0.15, None).endswith("cost nothing"),
+           "a resident file has no gate, so the line must say so")
+
+    # CLI: the option exists, is documented, is capped, and reaches the
+    # encoder.
+    help_out = subprocess.run(
+        [sys.executable, str(LIB / "videnc.py"), "--help"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ).stdout.decode("utf-8", "replace")
+    expect("--tile-slack" in help_out, "--tile-slack must appear in --help")
+    for word in ("OPT-IN", "headroom", "CAP"):
+        expect(word in help_out, f"--help must explain {word!r}")
+    for bad in ("1.5", "-0.1"):
+        r = subprocess.run(
+            [sys.executable, str(LIB / "videnc.py"), str(SINTEL), "x.vid",
+             "--tile-slack", bad, "--ffmpeg", str(FFMPEG)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        expect(r.returncode != 0, f"--tile-slack {bad} must be rejected")
+        expect(b"--tile-slack must be in" in r.stdout + r.stderr,
+               f"the rejection must name the cap for {bad}")
+    cli = (LIB / "videnc.py").read_text(encoding="utf-8")
+    expect("tile_slack=args.tile_slack" in cli,
+           "videnc.py must pass --tile-slack through to nxv2enc.encode")
+
+    # KIT: VIDOPTS/VIDOPTS_NNN pass through verbatim into the hashed
+    # argument vector, so a --tile-slack override forces a re-encode of
+    # that title and nothing else.
+    ps1 = (ROOT / "authoring-kit" / "lib" / "video.ps1").read_text(encoding="utf-8")
+    expect("--tile-slack" in ps1,
+           "video.ps1 must document --tile-slack for VIDOPTS/VIDOPTS_NNN")
+    m = _re.search(r"\$encoderGeneration = '([^']+)'", ps1)
+    expect(m, "video.ps1 must carry an $encoderGeneration stamp")
+    gen = m.group(1)
+
+    def kit_hash(arg_list):
+        return hashlib.md5(" ".join([gen] + arg_list).encode("utf-8")).hexdigest()[:8]
+
+    base = ["--shape", "full", "--fps", "25"]
+    expect(kit_hash(base) != kit_hash(base + ["--tile-slack", "0.15"]),
+           "a --tile-slack override must move the sidecar hash")
+    expect(kit_hash(base + ["--tile-slack", "0.15"])
+           != kit_hash(base + ["--tile-slack", "0.25"]),
+           "different --tile-slack values must hash differently")
+
+
 def main():
     passed, failed, skipped = 0, 0, 0
     last_step = None
