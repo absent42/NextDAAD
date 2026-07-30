@@ -464,6 +464,66 @@ TMODEL_COEFFS = {
 # it was, neither healed nor worse. It is still not a cap hazard: 006
 # spends 325.0 ticks (20.8 ms) of a 40 ms period and paces at 622.4
 # ticks. It does NOT drive the dense factor - the rule says worst DENSE.
+#
+# ---------------------------------------------------------------------
+# RE-CONFIRMED ON FRESH SILICON (2026-07-30, core 3.02.04, DEBUG nex
+# 847A6D80, era pal9h). The Card #8 re-fit was measured on the pal9f
+# staged bytes; the fixtures were then RE-ENCODED under the new factors,
+# so this sitting is an independent test of the fixed point: if the
+# factors are right, the re-encoded (smaller-budget) streams must come
+# back with the SAME R and now fit their period. Same method, same
+# 1792 T tick, op-walk of the exact pal9h staged bytes (the walk
+# consumes all nine files to the byte, header + audio pad + payload +
+# 512 B padding - no re-encode enters the ratio):
+#
+#   | fixture | shape         | class         | model T/f | silicon T/f | R     |
+#   |---------|---------------|---------------|-----------|-------------|-------|
+#   | 001.VID | 320x256       | FLAT at-cap   |   744,921 |     884,932 | 1.010 |
+#   | 002.VID | 256x192       | FLAT          |   449,340 |     539,950 | 1.021 |
+#   | 005.VID | 256x144       | FLAT          |   416,918 |     500,506 | 1.020 |
+#   | 003.VID | 320x192 LB    | GAPPED at-cap |   638,907 |     942,735 | 1.254 |
+#   | 004.VID | 320x144 LB    | GAPPED dense  |   564,510 |     741,888 | 1.117 |
+#   | 006.VID | 320x192 LB TC | GAPPED SPARSE |   261,761 |     582,271 | 1.891 |
+#   | 007.VID | 256x192 str   | FLAT sparse   |   338,195 |     412,633 | 1.037 |
+#   | 008.VID | 320x256 str   | FLAT sparse   |   276,289 |     351,100 | 1.080 |
+#   | 009.VID | 320x192 LB str| GAPPED sparse |   282,919 |     466,588 | 1.402 |
+#
+# EVERY Card #8 R REPRODUCES: 1.008->1.010, 1.021->1.021, 1.020->1.020,
+# 1.258->1.254, 1.118->1.117, 1.890->1.891 - inside 0.4%, against staged
+# bytes that moved by up to 15.7% (003's model T fell 757,852 ->
+# 638,907 as the tighter cap bit, and its silicon decode fell with it,
+# 1,121,362 -> 942,735). R is a property of the shape/density cluster,
+# not of the operating point, which is what makes the factor a fixed
+# point and not a moving target. The flat rows also repeat ACROSS
+# SITTINGS to ~0.1% on the raw tick counts.
+#
+# 003 NOW MAKES ITS PERIOD - the one row that missed it at pal9f. Its
+# phase sum is 590.7 ticks/frame (PACE 44.2 + AUDIO 19.9 + DECODE 526.1
+# + FLIP 0.5 + OTHER 0.2) against the 625-tick period: 34.3 ticks
+# (2.2 ms, 5.5%) of margin where Card #8 measured 678.0 ticks, 8.5%
+# OVER. DECODE alone went 625.8 -> 526.1 ticks (40.05 -> 33.67 ms), and
+# PACE is nonzero on all nine rows, so every fixture fits its period.
+#
+# FACTORS UNCHANGED. Worst at-cap flat R 1.021 x 1.12 = 1.14; worst
+# at-cap gapped R 1.254 x 1.12 = 1.404, and 1.41 ships - the shipped
+# gapped factor now carries its 12% margin plus 0.4%. Neither needs
+# moving. The at-cap rows are 001 (74% of frames within 3% of the cap),
+# 003 (96%) and 004 (98% of the cap at its peak); 002 and 005 are
+# content-limited (peak 0.61 / 0.53 of the cap) and 006/007/008/009 are
+# streamed at derived budgets, so none of those four can drive a cap
+# de-rating.
+#
+# THE SPARSE END, NOW WITH FOUR POINTS. R rises monotonically as
+# density falls, on both classes: flat 1.010-1.021 at-cap -> 1.037/1.080
+# on the two streamed flat clips (mean 0.33-0.41 of the cap), gapped
+# 1.254 at-cap -> 1.402 (009, streamed) -> 1.891 (006, test card, 8.6%
+# of the surface touched). 009 IS the intermediate gapped row Card #5
+# and Card #8 both asked for, and it says the two gapped clusters are
+# joined by a density slope rather than a height one - but it is a
+# STREAMED row at a derived budget, so it does NOT bear on the cap
+# de-rating (an at-cap frame is a DENSE frame by construction, and the
+# dense end is where the factor is fitted). It bears on the SUPPLY
+# GATE's busy term instead - see the note in stream_supply_check.
 # ---------------------------------------------------------------------
 TMODEL_COMPOSITION_FACTOR = {
     "flat":   1.14,   # worst observed 1.021 (002) - 12% margin [Card #8
@@ -560,6 +620,23 @@ def usable_budget_t(fps, width=None, height=None):
 #                underruns, min ring depth 42 blocks) [Card #8]. The
 #                pair 008/009 brackets the true ceiling from both
 #                sides, which is what makes the correction testable.
+#   008 pal9h    auto-derived budget 0.43, gate 0.879 -> ADMITTED, and
+#                silicon is CLEAN [2026-07-30, nex 847A6D80]: 772 frames
+#                (4 passes), ZERO underruns, zero depth clips, min ring
+#                depth 2103 blocks (1.08 MB = 44 frames of demand),
+#                624.5 ticks/frame against 625, ERR=00. THE CORRECTION'S
+#                OWN TEST PASSED - this is the file the pre-correction
+#                gate admitted at 0.934 and silicon underran on 71-76%
+#                of frames with the ring pinned at depth 1. Not
+#                over-corrected either: with the MEASURED R the true
+#                mean is 0.899 (the 0.90 target exactly) and the true
+#                ceiling (util 1.00) sits at sb ~0.48, so 0.43 is the
+#                intended ~10% p95 margin below capacity.
+#   009 pal9h    gate 0.896 -> ADMITTED, silicon CLEAN again (zero
+#                underruns, zero depth clips, FRM 252/252, 623.6
+#                ticks/frame; min depth 39 blocks is the play-once EOF
+#                drain) - no regression against the Card #8 row it
+#                repeats [2026-07-30].
 # The infeasibility line is utilization > 1.0; STREAM_WARN_UTIL warns
 # above 0.90 (at-capacity encodes have no burst margin beyond the
 # ring). Files at or below STREAM_RESIDENT_POOL_B load RESIDENT on
@@ -576,6 +653,16 @@ def usable_budget_t(fps, width=None, height=None):
 # clip totals busy 20.2 ms + SD 6.0 ms = 0.66 utilization on the
 # measured numbers. Disclosed, not machined around (cf. the SKIP16
 # under-price, task-2-final-settlement section 5.3).
+# 2026-07-30 EXTENDS THE CAVEAT TO EVERY CLASS AND PUTS NUMBERS ON IT:
+# the three STREAMED fixtures were measured directly (007 R 1.037, 008
+# 1.080, 009 1.402 vs the 1.02 / 1.01 / 1.26 below), so the table is
+# 1.6-10.1% optimistic on the sparse-because-budget-scaled files this
+# gate actually governs, not only on 006-class test cards. Still not a
+# hazard - all three ran silicon-clean and their TRUE utilizations are
+# 0.896 / 0.899 / 0.938 - and still disclosed rather than nudged: the
+# under-price is a DENSITY effect, and re-keying these entries on
+# density (instead of shape alone) is the honest fix, not a constant
+# bump that would over-price dense streams. See stream_supply_check.
 TMODEL_SILICON_R = {
     "flat_256": 1.02,   # measured 1.021 (002, 256x192) / 1.020 (005)
                          #   [Card #8, 2026-07-28; was 0.84 against the
@@ -880,16 +967,44 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     # period, which is what 009 measured (zero underruns, min ring depth
     # 42 blocks). The gate refuses 008 at 1.060 and admits 009 at 0.970.
     #
-    # RESIDUAL, STATED. The Card #3 007 anchor (silicon-healthy at
-    # 623.8/625 ticks, admitted at util ~1.00 by the old gate) reads
-    # ~1.07-1.10 here and would now be refused. That anchor's own DECODE
-    # phase was never transcribed, so its true decode is inferred from a
-    # class R, and an R of 0.78 rather than 0.834 - well inside that
-    # era's measured flat spread of 0.76-0.90 - reconciles it exactly.
-    # It is an under-determined point, not a counter-example, and the
-    # correction is the conservative direction on the one file that has
-    # been measured end-to-end. Re-transcribing a VSTR0 row with its
-    # DECODE phase would settle it.
+    # RESIDUAL SETTLED (2026-07-30 silicon, DEBUG nex 847A6D80, pal9h).
+    # Card #8 left this open: the Card #3 007 anchor was silicon-healthy
+    # at 623.8/625 ticks and admitted at util ~1.00 by the old gate, read
+    # ~1.07-1.10 under the correction, and its own DECODE phase had never
+    # been transcribed - so a low class R (0.78 rather than 0.834) was
+    # the available reconciliation. A VSTR0 row WITH its DECODE phase now
+    # exists (0000E0DE over 250 frames = 230.3 ticks = 14.74 ms/frame),
+    # and it REFUTES the low-R reading: 007-class content measures R
+    # 1.037 - at, and slightly ABOVE, the flat class value of 1.02, never
+    # anywhere near 0.78. So the old anchor's health at gate-util 1.00 is
+    # not explained by a cheap decode, and the correction stands on the
+    # measurement rather than on the conservative direction. What the old
+    # anchor actually was is an at-capacity operating point whose
+    # TRANSPORT counters were clean while the picture banded (SP17 E6),
+    # which is precisely the regime this gate now declines to admit.
+    # 007 remains the documented at-capacity stress fixture (owner
+    # ruling): on this sitting it still shows heavy horizontal banding
+    # with a completely clean transport (ERR=00, zero underruns, zero
+    # depth clips) at its auto-derived budget - and the walk says why,
+    # 67% of its frames are pinned at the BYTE cap (payload 21,086 B of
+    # a 21,086 B cap) rather than at the decode-T cap. That is content
+    # out-demanding the wire, not a supply defect.
+    #
+    # THE BUSY TERM IS OPTIMISTIC ON SPARSE STREAMS, QUANTIFIED. The
+    # three streamed fixtures measured on 2026-07-30 read R 1.037 (007),
+    # 1.080 (008) and 1.402 (009) against the class table's 1.02 / 1.01 /
+    # 1.26, because a stream at a derived budget is SPARSER than the
+    # at-cap rows the table was fitted on and R rises as density falls
+    # (see the composition-factor block's four-point sparse table). Busy
+    # is therefore under-priced by 1.6% / 6.5% / 10.1% on exactly the
+    # class of file this gate governs, and the true mean utilizations are
+    # 0.896 / 0.899 / 0.938 where the gate reports 0.890 / 0.879 / 0.896.
+    # All three are silicon-CLEAN, so this is margin consumed, not a
+    # failure - but it is the AUTO_BUDGET_TARGET_UTIL margin (0.90 held
+    # for p95 excursions) that is being consumed. The honest fix is a
+    # DENSITY-AWARE R rather than a nudge to the shape-keyed table (a
+    # nudge would over-price dense streams, which measure 1.25 at cap),
+    # so it is disclosed here and left to owner ratification.
     busy_ms = mean_t * silicon_r(width, height) / af / clock
     # the AUDIO phase: serial with decode and with the pace window, so
     # it is period the producer never gets (see AUDIO_COPY_T_PER_B)
