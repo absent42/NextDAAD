@@ -1656,6 +1656,11 @@ vid_play:
     ld a, VID_PAGE2              ; missing print) - 3c reclaim: the
     jp ovl_map_page              ; hot stub cluster moved cold
 .openret:
+ IFDEF DEBUG
+    ld a, b                      ; D1: neither name opened - vid_run is
+    or a                         ; never reached, so nothing would ever
+    call nz, nxb_ds_unsel        ; clear the bench selector
+ ENDIF
     ld a, b
     or a
     ret nz                       ; neither name opened
@@ -1680,6 +1685,19 @@ vid_run:
     ld e, NR_MMU7
     call nr_read
     ld (vidSvMmu7), a
+ IFDEF DEBUG
+    ; SP17 BENCH (A2): capture the PRE-BORROW MMU3 here too, hot, for
+    ; exactly the reason above. vid_run_l2setup_body borrows MMU3
+    ; ($6000-$7FFF) for the session audio window and only gives it back
+    ; at teardown - and VID_AUD_WIN IS TM_MAP, so the bench rows would
+    ; otherwise print into the audio bank and vanish. l2setup's own save
+    ; (vidSvMmu3) is a VID_PAGE2 cell the bench cannot reach from here,
+    ; hence this hot mirror. Used ONLY by nxb_tm_in/nxb_tm_out, which
+    ; bracket the row PRINTS - never a measured loop.
+    ld e, NR_MMU3
+    call nr_read
+    ld (nxbSvTm3), a
+ ENDIF
     ld hl, vid_run_orch_body
     push hl
     ld a, VID_PAGE2
@@ -1689,6 +1707,11 @@ vid_run:
     ; L2/ISRs/session cells all set). B != 0: failed open - the orch
     ; body already unwound (ring freed, stream closed, music tick
     ; restored, DEBUG verdict printed); nothing armed: plain return.
+ IFDEF DEBUG
+    ld a, b                      ; D1: this bail returns BEFORE the hook
+    or a                         ; below, so the selector would survive
+    call nz, nxb_ds_unsel        ; and hijack the next video verb
+ ENDIF
     ld a, b
     or a
     ret nz
@@ -1706,7 +1729,11 @@ vid_run:
     jr z, .nobench
     ld a, (vidDirect)
     or a
-    jr z, .nobench               ; not direct: fall through and play
+    jr nz, .dsbench
+    call nxb_ds_unsel            ; D1: not direct - fall through and
+    jr .nobench                  ; play, but do not leave the selector
+                                 ; set for the next video verb
+.dsbench:
     ld (vidDecSp), sp            ; abort anchor for the bench rows
     call nxb_ds_rows
     jp .restore
@@ -3336,6 +3363,9 @@ nxb_row:
     call nxb_line
     ld (nxbL1), hl
     ; ---- print: TAG O=xx R=xxxx F=xxxx D=xxxx ----
+    ; A2 bracket opens HERE, after nxbL1 is already latched: the
+    ; measured window is closed before either half of it runs.
+    call nxb_tm_in
     call nxb_at
     ld hl, (nxbTag)
     call dbg_puts
@@ -3360,7 +3390,8 @@ nxb_row:
     ld de, (nxbL0)
     or a
     sbc hl, de
-    jp dbg_hex16                 ; line delta, two's complement
+    call dbg_hex16               ; line delta, two's complement
+    jp nxb_tm_out
 nxb_body:
     jp 0                         ; SMC: the row's per-rep body
 
@@ -3372,6 +3403,46 @@ nxb_at:
     ld (nxbRow), a
     ld c, 0
     jp dbg_at
+
+; ---------------------------------------------------------------------
+; A2 - MMU3 PRINT BRACKET (direct-serve rows only).
+; vid_run_l2setup_body borrows MMU3 ($6000-$7FFF) for the session audio
+; window and only restores it at teardown, and VID_AUD_WIN IS TM_MAP -
+; so every cell tm_putc_at writes during a direct-serve row lands in the
+; audio bank and is thrown away with it. Put the real tilemap page back
+; for the PRINT and take it away again immediately after.
+; Both halves run OUTSIDE every measured window (nxb_row opens the
+; bracket only after nxbL1 has been read; the TOK tail times nothing),
+; so no row's raster delta can see either of them. Mapping a different
+; page into the SAME slot is timing-neutral in any case.
+; The standalone rows (NXBO/NXBC/NXBK) never borrowed MMU3 -
+; nxb_ops_setup zeroes vidDirect, which gates both halves to a no-op.
+; nxbSvTm3 is captured hot in vid_run; nxbSvAud3 in nxb_ds_rows.
+; Corrupts AF; preserves BC, DE, HL.
+; ---------------------------------------------------------------------
+nxb_tm_in:
+    ld a, (vidDirect)
+    or a
+    ret z
+    ld a, (nxbSvTm3)
+    nextreg NR_MMU3, a
+    ret
+nxb_tm_out:
+    ld a, (vidDirect)
+    or a
+    ret z
+    ld a, (nxbSvAud3)
+    nextreg NR_MMU3, a
+    ret
+
+; D1 - the direct-serve bench selector must never outlive the run that
+; set it: a stuck flags+248 diverts the NEXT VDIR/VDIRL/DPACE/DPACL into
+; the bench instead of playing. nxb_ds_rows self-clears on the taken
+; path; this is what the bails call. Corrupts AF.
+nxb_ds_unsel:
+    xor a
+    ld (flags+248), a
+    ret
 
 ; Read the raster line (NR $1E:$1F) with a bounded stability retry.
 ; Out: HL = line (9 bits). Corrupts AF, BC, D.
@@ -3472,6 +3543,9 @@ nxb_ds_rows:
     xor a
     ld (flags+248), a            ; self-clearing
     ld (nxbOps), a               ; no ops on these rows: O prints 00
+    ld e, NR_MMU3                ; A2: the session's borrowed audio page
+    call nr_read                 ; - put back after every print bracket
+    ld (nxbSvAud3), a
     ld a, NXB_ROW0
     ld (nxbRow), a
     ld hl, 0
@@ -3533,6 +3607,7 @@ nxb_ds_rows:
     ld (nxbTag), hl
     call nxb_row
     ; ---- TOK: the token-poll instrument ----
+    call nxb_tm_in               ; A2 bracket (nothing is timed here)
     call nxb_at
     ld hl, nxbTagTOK
     call dbg_puts
@@ -3543,9 +3618,12 @@ nxb_ds_rows:
     ld hl, nxbMsgN
     call dbg_puts
     ld hl, (vidTokCalls)
-    jp dbg_hex16                 ; no cleanup owed: the landing page
+    call dbg_hex16               ; no cleanup owed: the landing page
                                  ; is borrowed, not allocated, and
                                  ; MMU6 is restored by the teardown
+    jp nxb_tm_out                ; MMU3 back to the audio page: the
+                                 ; teardown restores it from vidSvMmu3
+                                 ; and must find what it left
 
 ; Per-row preamble (untimed): clear the section counter ONLY.
 ; vidDsCrcDue is WIRE TRUTH and must NOT be reset here (SP17 fix): a
@@ -3832,6 +3910,9 @@ nxbBankCnt:  db 0
 nxbSvMmu6:   db 0
 nxbSvMmu2:   db 0
 nxbSvAudEn:  db 0
+nxbSvTm3:    db 0            ; A2: pre-borrow MMU3 (the real tilemap
+                             ; page), captured hot in vid_run
+nxbSvAud3:   db 0            ; A2: the session's borrowed audio page
 
 ; Token-poll instrument accumulators (vid_sd_tok_h, above).
 vidTokPolls: dw 0
