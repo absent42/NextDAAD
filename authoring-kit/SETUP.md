@@ -319,6 +319,35 @@ for a target displayed aspect ratio - `--aspect 2.35` gives true
 cinema scope, with the 320-wide mode's non-square pixels corrected
 for automatically.
 
+**25 fps is the rate. Leave it alone.** The Next composites at 50 Hz,
+so 25 fps is the only rate whose frames each occupy a whole number of
+display frames - anything else beats against the 50 Hz composite and
+shows it. That is why 25 is the default, and there is no quality to be
+won by moving it.
+
+**Your footage is retimed for you.** Almost no source material is 25p:
+film is 24 (or 23.976), and most cameras and stock libraries shoot 30
+or 29.97. Every one of those has to be resampled in time on the way in.
+Left to itself, ffmpeg does that by picking the nearest source frame -
+which drops every 6th frame of a 30 fps clip (a visible 5 Hz stutter,
+measured as a 73 percent motion spike on every 5th encoded frame) and,
+worse, FREEZES one frame per second of a 24 fps clip. The encoder now
+BLENDS to the target rate instead, automatically, whenever the source
+rate is not the target rate. On measured footage that removes 91-97
+percent of the periodic judder and all of the 24 fps duplicates. It
+costs nothing in file bytes on content that is already at the streaming
+budget (there the budget sets the size, not the content) and about 2.3
+percent on content with headroom; picture quality goes slightly UP
+either way. Sources that are already 25p are not touched at all, and
+encode to exactly the bytes they did before.
+
+Two overrides, both per title via `VIDOPTS`/`VIDOPTS_NNN`:
+`--retime drop` restores the old nearest-frame behaviour, and
+`--retime mci` swaps blending for motion-compensated interpolation -
+the best choice for slow pans and zooms, and the wrong one for water,
+smoke, crowds or anything else that moves non-rigidly, where it tears.
+Blending is the safe default for everything.
+
 **fps floors.** Frame rate is free (default 25) down to a hard floor
 set by audio: the player feeds audio from 1280-byte double-buffer
 halves, so one frame may carry at most 1280 audio bytes. Stereo at
@@ -340,7 +369,7 @@ The build encodes every `VIDEO\NNN.mp4` with settings from
 |---------|---------|
 | `VIDASPECT` | Shape for every encode: a preset name, `WIDTHxHEIGHT`, or a bare aspect number (e.g. `2.35` - free height at 320 wide). Blank = `full`. |
 | `VIDFPS` | Frames per second. Blank = 25. |
-| `VIDOPTS` | Extra encoder options for every encode (e.g. `--mono --dither 0.3`). |
+| `VIDOPTS` | Extra encoder options for every encode (e.g. `--mono --dither 0.3`, or `--retime drop` to opt out of automatic retiming). |
 | `VIDOPTS_NNN` | Extra options for video `NNN` only (3-digit number), appended after `VIDOPTS`. For most repeated options videnc takes the last occurrence, so `VIDOPTS_NNN` wins over `VIDOPTS` - except `--aspect`, which videnc always takes over `--shape` regardless of order; a `VIDOPTS_NNN` that sets its own `--shape`/`--width`/`--aspect` still wins for shape (the encode pass suppresses `VIDASPECT` for that video rather than relying on order). |
 | `VIDPROFILE` | Deprecated v1 name, honored one release: `n0`-`n4` map to the nearest v2 shape (and, when `VIDFPS` is blank, that profile's own baked fps, floored to the audio-legal minimum) when `VIDASPECT` is blank. |
 
@@ -378,7 +407,9 @@ videnc.exe INPUT.mp4 VIDEO\001.vid --shape classic --start 00:00:03 --duration 4
 
 (or `python lib\videnc.py ...`, same options). `--shape` is a preset
 or `WIDTHxHEIGHT`; `--aspect` derives a free height instead;
-`--fps` sets the frame rate; `--start`/`--duration` cut a clip;
+`--fps` sets the frame rate; `--retime` picks how a source whose own
+rate differs from it is resampled in time (`blend`, the default;
+`drop`; `mci`); `--start`/`--duration` cut a clip;
 `--mono` halves the audio stream; `--dither` sets the blue-noise
 dither amplitude, 0.0-1.0 (default 0.5: 0 = no dither, hard banding
 on gradients; 1 = full-step dither, deepest gradients but the most

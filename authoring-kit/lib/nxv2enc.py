@@ -3155,7 +3155,7 @@ SILENCE_U8 = 128
 # ---------------------------------------------------------------------
 
 def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dither,
-                    mono, dither_mode=None):
+                    mono, dither_mode=None, retime=None):
     """Extracts (orig (N,H,W,3) uint8 RGB frames, po_ceil, chg,
     audio_bytes, channels, rate) from a source file, reusing videnc.py's
     own ffmpeg plumbing (probe/crop/extract) - the canonical location
@@ -3164,7 +3164,10 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     dither: the dither amplitude (0.0-1.0, None/legacy-bool ->
     DITHER_AMP_DEFAULT); dither_mode: "mixture" or "offset" - po_ceil
     must be measured at the encode's own amplitude AND mode or the
-    drift triggers compare across spaces."""
+    drift triggers compare across spaces. retime: how to resample the
+    source in TIME when its own rate differs from fps (videnc.
+    RETIME_MODES, None = the blended default) - the source rate comes
+    off the SAME banner probe as the dimensions, so detection is free."""
     import videnc as _videnc
 
     dither_amp = _dither_amp(dither)
@@ -3188,8 +3191,17 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     # bytes/frame <= AUD_HALF) rejects a doomed fps/channels combo
     # before the slow ffmpeg extraction, not after.
     rate, samples_per_frame, abytes_real, abytes_pad = audio_layout(fps_frac, channels)
+    # SP17 T0: resample in TIME to the target rate when the source is not
+    # already at it. Free to detect (same banner as the dimensions above),
+    # and a source already at the target takes no filter at all - so a 25p
+    # source encodes to exactly the bytes it did before retiming existed.
+    src_fps = _videnc.probe_source_fps(ffmpeg_path, input_path, stderr=probe_stderr)
+    stages, retime_line = _videnc.retime_plan(src_fps, fps_frac, width, height,
+                                               mode=retime)
+    print(retime_line)
     video_bytes, nframes = _videnc.extract_video(
-        ffmpeg_path, input_path, start, duration, width, height, fps_frac, crop=crop)
+        ffmpeg_path, input_path, start, duration, width, height, fps_frac,
+        crop=crop, stages=stages)
     if nframes == 0:
         raise SystemExit("error: no frames decoded - check input/--start/--duration")
     needed = nframes * abytes_real
@@ -4065,7 +4077,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
            dither=None, dither_mode=None, mono=False, merge_gaps=True, hysteresis=True,
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=None,
-           budget_target=None, direct=False):
+           budget_target=None, direct=False, retime=None):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     dither (--dither): dither strength, a float 0.0-1.0. In the default
@@ -4103,6 +4115,15 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     entirely - manual control is unchanged, only the default is.
     budget_target has no effect when stream_budget is explicit.
 
+    retime (--retime, SP17 T0): how a source whose own frame rate is
+    not fps gets resampled in TIME - "blend" (the default, a linear
+    blend of the two neighbouring source frames at 4x the target
+    resolution), "drop" (nearest source frame, the pre-SP17 behaviour)
+    or "mci" (motion-compensated interpolation, opt-in). None means the
+    default. videnc.retime_plan holds the filter strings and the wave
+    measurements they come from. A source ALREADY at fps is untouched
+    in every mode, filter chain and bytes alike.
+
     direct (--direct, SP15 3c): the raw-equivalent all-literal preset -
     every frame a full keyframe repaint, header direct-serve hint set
     (flags bit1), gated by worst-frame WIRE feasibility instead of the
@@ -4118,7 +4139,8 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     dmode = _dither_mode(dither_mode)
 
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
-                          ffmpeg, dither_amp, mono, dither_mode=dmode)
+                          ffmpeg, dither_amp, mono, dither_mode=dmode,
+                          retime=retime)
     if direct:
         # SP15 3c: the all-literal direct-serve preset - no delta
         # pipeline, no rate control; see _encode_direct.

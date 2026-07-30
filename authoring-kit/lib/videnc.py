@@ -39,6 +39,21 @@ CENTER-CROPPED to the shape's exact aspect before scaling - never
 stretched/squashed. See compute_center_crop's own docstring for the
 exact arithmetic.
 
+Retiming (SP17 T0): the Next composites at 50 Hz, so 25 fps is the only
+cadence-clean playback rate and --fps 25 is what nearly every title
+uses - but almost no source material is 25p. A 30/29.97 source reaching
+25 fps by nearest-frame selection drops every 6th frame, and the
+measured result is a 73 percent motion spike on every 5th OUTPUT frame
+(judder); a 24 fps source instead DUPLICATES one frame per second,
+which reads worse still. So whenever the probed source rate differs
+from --fps, the frames are now BLENDED to the target rate by default
+(retime_plan below has the filter strings and the measurements behind
+them). A source already at the target is left completely alone - the
+filter chain, and so the encoded bytes, are bit-identical to what they
+were before retiming existed. --retime drop restores the old
+nearest-frame behaviour; --retime mci opts into motion-compensated
+interpolation for slow global motion (pans/zooms).
+
 Quality: NXV v2 is a content-triggered-keyframe, dual-budget (bytes +
 modeled decode-T) delta codec - encode time is the main quality lever
 (nxv2enc.TMODEL_COEFFS is model-not-silicon; Task 2's bench replaces
@@ -76,6 +91,26 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FFMPEG = ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+
+# Source-rate retiming (SP17 T0). See retime_plan for the filter strings
+# and the measurements each one comes from.
+RETIME_MODES = ("blend", "drop", "mci")
+RETIME_MODE_DEFAULT = "blend"
+# Source/target rates closer together than this (in fps) count as the
+# SAME rate and no retiming filter is inserted at all. It only has to
+# absorb ffmpeg's own banner rounding - the banner prints two decimals
+# ("29.97 fps" for 30000/1001 = 29.970030), so 0.02 covers that with
+# room to spare while still separating every pair of real broadcast
+# rates (the closest are 23.976 and 24, 0.024 apart).
+RETIME_FPS_TOLERANCE = 0.02
+# Blended retiming runs at an INTERMEDIATE resolution, this multiple of
+# the target shape on each axis, and the result is then scaled down to
+# the target. Free (the retime wave measured 1.4-1.7 s either way) and
+# clearly better on Big Buck Bunny - cadence-folded judder 0.024 at 4x
+# vs 0.142 blending straight at 320x256 - because blending after the
+# downscale averages frames that have already lost the detail whose
+# displacement carries the motion.
+RETIME_INTERMEDIATE_SCALE = 4
 
 
 def fps_arg(fps: Fraction) -> str:
@@ -134,6 +169,121 @@ def probe_has_audio(ffmpeg, input_path, stderr=None):
     return re.search(r"Stream #\d+:\d+.*:\s*Audio:", stderr) is not None
 
 
+def probe_source_fps(ffmpeg, input_path, stderr=None):
+    """Returns the source's own nominal frame rate as a float, read from
+    the SAME ffmpeg stderr banner probe_dimensions() already parses (the
+    "..., 1920x1080 [SAR 1:1 DAR 16:9], 25137 kb/s, 29.97 fps, 29.97
+    tbr, ..." video-stream line), or None if the banner carries no fps
+    field at all - some containers report only tbr, and an unknown rate
+    must not be guessed at. Detection therefore costs no extra probe:
+    pass stderr= to reuse an already-fetched _probe_stderr() banner, as
+    nxv2enc._extract_source does.
+
+    The banner value is ROUNDED to two decimals by ffmpeg itself, so
+    29.97 here is really 30000/1001 - which is exactly why the
+    same-rate test below is a tolerance and not an equality."""
+    if stderr is None:
+        stderr = _probe_stderr(ffmpeg, input_path)
+    m = re.search(r",\s*(\d+(?:\.\d+)?)\s+fps[,\s]", stderr)
+    if not m:
+        return None
+    return float(m.group(1))
+
+
+def retime_plan(src_fps, target_fps, width, height, mode=RETIME_MODE_DEFAULT):
+    """Returns (stages, report_line): the ffmpeg -vf stages that carry
+    the frames from the (already-applied) crop to the target surface,
+    and the one-line report of what was decided.
+
+    The target rate is FIXED by the hardware, not chosen here: the Next
+    composites at 50 Hz, so 25 fps is the only cadence-clean rate and
+    every source that is not already at it has to be resampled in TIME
+    on the way in. How that resampling is done was measured across five
+    clips (SP17 T0 wave, 2026-07-28) on a cadence-folded judder metric -
+    peak-to-trough of the locally-normalised inter-frame motion, folded
+    on the beat cadence; 0 is perfectly even output motion:
+
+      mode   what ffmpeg does                     owner 001  BBB   JF
+      drop   nearest source frame (today)           0.458   0.736 0.473
+      blend  linear blend of the two neighbours     0.042   0.024 0.027
+      mci    motion-compensated interpolation       0.034   0.142 0.023
+
+    blend is the DEFAULT because it is the only one that is uniformly
+    good: it cuts the metric by 91-97 percent on every genuinely-30fps
+    source and never fails badly. mci is opt-in only - it is the best
+    method on slow global motion (the owner's boat pan reaches 0.012 at
+    its heaviest preset) but optical flow tears on non-rigid motion, and
+    the same heavy preset scores 0.087 on Jellyfish where blend scores
+    0.025. Nothing that can be WORSE than the default on ordinary
+    content is allowed to be the default.
+
+    Byte cost of blending: NIL on byte-starved content, which is what
+    any clip near the streaming supply ceiling is (the wave's clips ran
+    92.8-99.2 percent budget-bound, and blend landed within +/-0.6
+    percent of drop on bytes at an identical auto-budget and utilization
+    - the budget, not the content, is what sets the size). On content
+    with headroom the blended frames genuinely carry more detail and it
+    costs about 2.3 percent. Quality moves the right way either way:
+    +0.12 to +0.6 dB mean PSNR, +0.3 to +1.2 dB on the delta-frame p10.
+    Spatial blur is not a real cost at these sizes - 97.7-100.2 percent
+    of the source's spatial gradient survives.
+
+    mode "mci" uses the TARGET-resolution preset (minterpolate after the
+    downscale, not before it). The wave's three mci presets differ
+    mainly in cost: at 4x intermediate resolution obmc/bilat took 38-62 s
+    per clip and aobmc/bidir/vsbmc 82-144 s, against 5.5-7.3 s at the
+    target resolution - and the cheap one is not the worst one. It is
+    the BEST method measured on Jellyfish (0.023) and on Sintel (0.648
+    vs 0.734 for blend), and on the owner's own boat pan it scores 0.034
+    against 0.012 for the 20x-slower preset. A 20x encode-time
+    multiplier for the remaining margin is not a defensible default for
+    an opt-in flag, so the target-resolution preset is what --retime mci
+    means.
+
+    Passing src_fps=None (rate not detectable from the banner) falls
+    back to nearest-frame selection - the pre-SP17 behaviour - rather
+    than blending against a guessed rate."""
+    if mode is None:
+        mode = RETIME_MODE_DEFAULT
+    if mode not in RETIME_MODES:
+        raise SystemExit(f"error: --retime must be one of "
+                          f"{'/'.join(RETIME_MODES)}, got {mode!r}")
+    target = float(target_fps)
+    plain = [f"scale={width}:{height}"]
+    tgt_str = f"{target:g}"
+    if src_fps is None:
+        return plain, (f"  retime: source rate not detected - target "
+                       f"{tgt_str} fps, drop (nearest source frame)")
+    src_str = f"{float(src_fps):g}"
+    if abs(float(src_fps) - target) <= RETIME_FPS_TOLERANCE:
+        return plain, (f"  retime: source {src_str} fps already at "
+                       f"{tgt_str} fps target - not retimed")
+    if mode == "drop":
+        return plain, (f"  retime: source {src_str} fps -> target "
+                       f"{tgt_str} fps, drop (nearest source frame)")
+    # Exact rational for the filter's own fps option - the same
+    # limit_denominator(1000) nxv2enc uses for the encode rate, so
+    # e.g. --fps 16.67 becomes 50/3 here too, not a truncated decimal.
+    fps_frac = (target_fps if isinstance(target_fps, Fraction)
+                else Fraction(target_fps).limit_denominator(1000))
+    tgt_arg = fps_arg(fps_frac)
+    if mode == "mci":
+        stages = [f"scale={width}:{height}",
+                  f"minterpolate=fps={tgt_arg}:mi_mode=mci:"
+                  f"mc_mode=obmc:me_mode=bilat"]
+        return stages, (f"  retime: source {src_str} fps -> target "
+                        f"{tgt_str} fps, mci (minterpolate obmc/bilat "
+                        f"at {width}x{height})")
+    inter_w = width * RETIME_INTERMEDIATE_SCALE
+    inter_h = height * RETIME_INTERMEDIATE_SCALE
+    stages = [f"scale={inter_w}:{inter_h}",
+              f"framerate=fps={tgt_arg}",
+              f"scale={width}:{height}"]
+    return stages, (f"  retime: source {src_str} fps -> target "
+                    f"{tgt_str} fps, blend (framerate filter at "
+                    f"{inter_w}x{inter_h})")
+
+
 def compute_center_crop(src_w, src_h, target_w, target_h):
     """Returns (crop_w, crop_h, crop_x, crop_y) that center-crops a
     src_w x src_h source down to the target_w/target_h aspect ratio
@@ -163,7 +313,13 @@ def compute_center_crop(src_w, src_h, target_w, target_h):
 
 
 def extract_video(ffmpeg, input_path, start, duration, width, height, fps,
-                   crop=None):
+                   crop=None, stages=None):
+    """stages: the -vf stages from the crop to the target surface, as
+    built by retime_plan. None means the plain "scale=W:H" that was the
+    only thing here before retiming existed - so an unretimed call is
+    byte-identical to the pre-SP17 one, output "-r" included (the -r
+    stays in every case: with a retiming filter already at the target
+    rate it is a no-op, and without one it IS the retiming)."""
     args = []
     if start:
         args += ["-ss", start]
@@ -174,7 +330,7 @@ def extract_video(ffmpeg, input_path, start, duration, width, height, fps,
     if crop:
         crop_w, crop_h, crop_x, crop_y = crop
         vf.append(f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}")
-    vf.append(f"scale={width}:{height}")
+    vf += list(stages) if stages else [f"scale={width}:{height}"]
     args += ["-vf", ",".join(vf),
               "-r", fps_arg(fps),
               "-pix_fmt", "rgb24", "-f", "rawvideo", "-an", "pipe:1"]
@@ -219,6 +375,28 @@ def main(argv):
                           "derive_free_height; overrides --shape")
     ap.add_argument("--fps", type=float, default=25.0,
                      help="frames per second (default: 25)")
+    ap.add_argument("--retime", choices=list(RETIME_MODES),
+                     default=RETIME_MODE_DEFAULT,
+                     help="how to resample the source in TIME when its "
+                          "own frame rate differs from --fps (default: "
+                          "blend). The Next composites at 50 Hz, so 25 "
+                          "fps is the only cadence-clean rate and "
+                          "23.976/24/29.97/30 material has to be "
+                          "retimed to reach it. 'blend' = linear blend "
+                          "of the two neighbouring source frames, done "
+                          "at 4x the target resolution - cuts the "
+                          "measured judder by 91-97 percent, costs "
+                          "nothing in bytes on byte-starved content and "
+                          "about 2.3 percent on content with headroom. "
+                          "'drop' = nearest source frame, the pre-SP17 "
+                          "behaviour (drops every 6th frame of a 30 fps "
+                          "source, freezes one frame per second of a 24 "
+                          "fps one). 'mci' = motion-compensated "
+                          "interpolation - OPT-IN, best on slow global "
+                          "motion (pans, zooms), but optical flow tears "
+                          "on non-rigid motion where it loses to blend. "
+                          "A source already at --fps is never retimed "
+                          "in any mode")
     ap.add_argument("--mono", action="store_true",
                      help="mono audio (23325 Hz) instead of the "
                           "default stereo (15625 Hz)")
@@ -356,7 +534,8 @@ def main(argv):
         dither=args.dither, dither_mode=args.dither_mode,
         mono=args.mono, merge_gaps=not args.no_merge,
         cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget,
-        budget_target=args.budget_target, direct=args.direct)
+        budget_target=args.budget_target, direct=args.direct,
+        retime=args.retime)
 
     stream_line = ""
     if report.mode == "direct":

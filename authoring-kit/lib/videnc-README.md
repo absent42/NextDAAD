@@ -41,6 +41,9 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
                      (default 320); overrides --shape
   --width W          Layer 2 width for --aspect (256 or 320)
   --fps N            frames per second (default: 25; floors below)
+  --retime M         how to resample a source whose own frame rate is
+                     not --fps: blend (default), drop or mci. See
+                     "Frame rate and retiming"
   --mono             mono audio 23325 Hz (default: stereo 15625 Hz)
   --dither AMP       dither strength, 0.0-1.0 (default 0.5). In the
                      default offset mode: the blue-noise offset depth
@@ -103,6 +106,67 @@ aspect ratio, correcting for the 320-wide mode's non-square pixels
 distorted. Smaller shapes encode to visibly higher quality at the
 same playback budget - see the kit's SETUP.md "Video cutscenes" for
 the guidance page.
+
+## Frame rate and retiming
+
+The Next composites at 50 Hz. 25 fps is therefore the only rate whose
+frames each occupy a whole number of display frames (two), and it is
+the encoder default and what essentially every title should use. Any
+other rate beats against the 50 Hz composite and shows it. The playback
+rate is fixed by the hardware, not by the source.
+
+Almost no source material is 25p. `23.976`, `24`, `29.97` and `30` all
+have to be resampled in TIME on the way in, and how that is done is
+visible:
+
+- **drop** (nearest source frame) is what ffmpeg does by default and
+  what this encoder did before. A 30 fps source loses every 6th frame,
+  which lands as a 73 percent motion spike on every 5th OUTPUT frame -
+  a 5 Hz stutter. A 24 fps source is worse: it gains one DUPLICATED
+  frame per second (measured at a dead-regular 25-frame spacing), and a
+  periodic freeze reads worse than a periodic jump.
+- **blend** (the default) linearly blends the two neighbouring source
+  frames, at 4x the target resolution and then scaled down. On a
+  cadence-folded judder metric it cuts the periodic component by 91-97
+  percent on every genuinely-30 fps source measured, and removes 24 fps
+  duplicates entirely.
+- **mci** (`--retime mci`, opt-in) motion-compensates instead of
+  blending. It is the best method measured on slow global motion -
+  pans, zooms, drifting camera - and the worst thing to point at
+  non-rigid motion, where optical flow tears and it loses to plain
+  blending. Try it on a locked-off pan; do not reach for it by default.
+  It costs roughly 5-7 s per clip on top of the extraction.
+
+**A source already at the target rate is not touched at all** - no
+filter is inserted and the encode is byte-identical to what it was
+before retiming existed. The rate comes off the same ffmpeg banner
+probe that reads the source's dimensions, so detection costs nothing;
+rates within 0.02 fps of the target count as the target (ffmpeg prints
+the banner rate to two decimals). A source whose banner carries no
+frame rate at all falls back to nearest-frame selection rather than
+blending against a guess.
+
+**Byte cost.** Nil on content that is byte-starved, which is what any
+clip near the streaming supply ceiling is: there the encoder's budget,
+not the content, sets the size, and blended encodes landed within +/-0.6
+percent of dropped ones at an identical derived budget and utilization.
+On content with headroom the blended frames genuinely carry more detail
+and cost about 2.3 percent. Quality moves the right way either way:
++0.12 to +0.6 dB mean PSNR and +0.3 to +1.2 dB on the delta-frame p10.
+Blending does not measurably soften the picture at these sizes - 97.7
+to 100.2 percent of the source's spatial gradient survives.
+
+The encoder reports its decision on one line, e.g.
+
+```
+  retime: source 29.97 fps -> target 25 fps, blend (framerate filter at 1280x1024)
+  retime: source 25 fps already at 25 fps target - not retimed
+```
+
+In the kit, set `VIDOPTS=--retime drop` (or `VIDOPTS_NNN`) to opt a
+title out. `--retime` is part of the hashed argument vector the build
+caches encodes against, so changing it re-encodes that title
+automatically.
 
 ## Rate control and the supply gates
 

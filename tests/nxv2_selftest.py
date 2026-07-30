@@ -329,7 +329,7 @@ def t1_stream_supply_gate_e2e():
     expect(refuse_util > 1.0, f"refuse fixture util {refuse_util:.4f} not above 1.0")
 
     def fake_extract_source(src_path, w, h, fps_val, start, duration, ffmpeg, dither,
-                            mono, dither_mode=None):
+                            mono, dither_mode=None, retime=None):
         return dict(orig=np.zeros((1, h, w, 3), dtype=np.uint8),
                     chg=np.zeros(1), po_ceil=np.zeros(1),
                     audio_bytes=bytes(nframes * abytes_real),
@@ -2138,7 +2138,7 @@ def t13_amplitude_threading_e2e():
            "amp 1.0 vs the default or every assertion below is vacuous")
 
     def fake_extract_source(src_path, w, h, fps_val, start, duration,
-                            ffmpeg, dither, mono, dither_mode=None):
+                            ffmpeg, dither, mono, dither_mode=None, retime=None):
         # honours its dither argument exactly as the real extractor
         # does: po_ceil is measured at the encode's own amplitude/mode
         amp = enc._dither_amp(dither)
@@ -3239,25 +3239,26 @@ def t16_autobudget_override_e2e():
 def t16_autobudget_plateau():
     if not SINTEL.exists() or not FFMPEG.exists():
         skip("demo source or ffmpeg not available")
-    # 5 s of Sintel at 256x160 / --dither 0.5 streams (over the resident
-    # pool) at utilization 0.9248 - just over the 0.90 target - and that
+    # 5 s of Sintel at 256x152 / --dither 0.5 streams (over the resident
+    # pool) at utilization 0.9350 - just over the 0.90 target - and that
     # figure does NOT move with the budget, because the content is asking
     # for less than the caps allow. Descending would be a pure quality
     # loss for a hundredth of supply, so the search must not.
     #
-    # OPERATING POINT RE-BASED at the Card #8 gate correction (256x160,
-    # was 256x192 at the same 5 s / dither 0.5): the case needs a
-    # content-limited clip whose plateau sits ABOVE the target but under
-    # 1.0, and the corrected busy term put the classic-shape version's
-    # ceiling at 1.058-1.071 - refused, where the search descends and
-    # reports no plateau. The 32-line crop brings the same footage back
-    # inside the gate. (Previously re-based at the SP17 copy-DMA model,
-    # 3 s / dither 0.25 -> 5 s / dither 0.5, for the mirror-image
-    # reason.) The premise assertion at the end is what caught both.
-    ex = enc._extract_source(str(SINTEL), 256, 160, 25.0, "00:00:00", "5.0",
+    # OPERATING POINT RE-BASED at SP17 T0 source retiming (256x152, was
+    # 256x160 at the same 5 s / dither 0.5): Sintel is 24 fps, so it is
+    # now BLENDED to 25 instead of having one frame per second
+    # duplicated, and the blended frames ask for more delta - 256x160
+    # stopped being content-limited (the search descends to 0.83 and
+    # reports no plateau). Eight fewer lines puts the same footage back
+    # on its plateau. (Previously re-based at the Card #8 gate
+    # correction, 256x192 -> 256x160, and at the SP17 copy-DMA model,
+    # 3 s / dither 0.25 -> 5 s / dither 0.5, both for the mirror-image
+    # reason.) The premise assertion at the end is what caught all three.
+    ex = enc._extract_source(str(SINTEL), 256, 152, 25.0, "00:00:00", "5.0",
                               str(FFMPEG), 0.5, False)
-    search = enc.auto_stream_budget(ex, 256, 160, 25.0, dither_amp=0.5)
-    expect(not search["resident"], "5 s of Sintel at 256x160 must exceed the resident pool")
+    search = enc.auto_stream_budget(ex, 256, 152, 25.0, dither_amp=0.5)
+    expect(not search["resident"], "5 s of Sintel at 256x152 must exceed the resident pool")
     expect(search["plateau"], "this clip is content-limited - the search must say so")
     expect(search["budget"] == 1.00,
            f"a content-limited clip must keep the ceiling, got {search['budget']}")
@@ -3270,6 +3271,249 @@ def t16_autobudget_plateau():
     expect(f"--stream-budget {search['budget']:.2f}" in line,
            f"the report line must name the budget: {line!r}")
     print(f"  [plateau] {line.strip()}")
+
+
+# =======================================================================
+# Step 17: SOURCE RETIMING (SP17 T0). The Next composites at 50 Hz, so
+# 25 fps is the only cadence-clean rate - and almost no source material
+# is 25p. Reaching 25 by nearest-frame selection drops every 6th frame
+# of a 30 fps source (measured: a 73 percent motion spike on every 5th
+# OUTPUT frame) and FREEZES one frame per second of a 24 fps one, so
+# blended retiming is now the default. These cases pin the four things
+# the feature has to get right: detection off the existing banner probe,
+# the exact filter string of each of the three modes, the
+# do-absolutely-nothing behaviour when the source is already at the
+# target (an already-25p encode must stay byte-identical to the pre-SP17
+# encoder), and the kit sidecar hash noticing a --retime override.
+# =======================================================================
+
+PACE25 = ROOT / "tools" / "demo-files" / "1920x1080-25p.mp4"
+
+
+@case(17, "retime detection - source rate read off the existing banner probe")
+def t17_detect_source_fps():
+    import videnc
+    if not FFMPEG.exists():
+        skip("ffmpeg not available")
+    expected = [
+        (SINTEL, 24.0), (BBB, 30.0),
+        (ROOT / "tools" / "demo-files" / "Jellyfish_1080_10s_30MB.mp4", 29.97),
+        (PACE25, 25.0),
+    ]
+    seen = 0
+    for src, want in expected:
+        if not src.exists():
+            continue
+        got = videnc.probe_source_fps(FFMPEG, src)
+        expect(got is not None, f"no fps detected for {src.name}")
+        expect(abs(got - want) < 0.005,
+               f"{src.name}: detected {got} fps, expected {want}")
+        seen += 1
+    if not seen:
+        skip("no demo sources available")
+    # The banner is shared: passing a fetched stderr in must cost no
+    # extra ffmpeg process and must give the same answer.
+    stderr = videnc._probe_stderr(FFMPEG, PACE25 if PACE25.exists() else SINTEL)
+    src = PACE25 if PACE25.exists() else SINTEL
+    expect(videnc.probe_source_fps(FFMPEG, src, stderr=stderr)
+           == videnc.probe_source_fps(FFMPEG, src),
+           "shared-banner probe must agree with its own fresh probe")
+    # An unparseable banner is None (unknown), never a guess.
+    expect(videnc.probe_source_fps(FFMPEG, src, stderr="no video here") is None,
+           "a banner with no fps field must report None, not a guess")
+
+
+@case(17, "retime tolerance - banner rounding absorbed, real rates separated")
+def t17_tolerance():
+    import videnc
+    tol = videnc.RETIME_FPS_TOLERANCE
+    plain = ["scale=320:256"]
+    # Inside the tolerance (ffmpeg's own 2-decimal banner rounding of
+    # 30000/1001 etc.) = the same rate = no filter at all.
+    for src in (25.0, 25.0 + tol, 25.0 - tol, 25.0 + tol / 2):
+        stages, line = videnc.retime_plan(src, 25.0, 320, 256)
+        expect(stages == plain, f"{src} fps vs 25 must not retime: {stages}")
+        expect("not retimed" in line, f"report line for {src}: {line!r}")
+    # Outside it = a different rate = retimed.
+    for src in (25.0 + tol * 2, 25.0 - tol * 2, 24.0, 23.976, 29.97, 30.0):
+        stages, line = videnc.retime_plan(src, 25.0, 320, 256)
+        expect(stages != plain, f"{src} fps vs 25 must retime: {stages}")
+        expect("not retimed" not in line, f"report line for {src}: {line!r}")
+    # The tolerance has to be loose enough for the banner's own rounding
+    # (29.97 printed for 29.970030) and tight enough to keep the closest
+    # pair of real broadcast rates apart (23.976 vs 24, 0.024 apart).
+    expect(tol >= 0.001, f"tolerance {tol} too tight for banner rounding")
+    expect(tol < 0.024, f"tolerance {tol} would merge 23.976 and 24 fps")
+
+
+@case(17, "retime modes - exact filter strings for blend/drop/mci")
+def t17_mode_filters():
+    import videnc
+    expect(videnc.RETIME_MODE_DEFAULT == "blend",
+           "blended retiming must be the default")
+    expect(set(videnc.RETIME_MODES) == {"blend", "drop", "mci"},
+           f"unexpected mode set {videnc.RETIME_MODES}")
+
+    # blend: at an INTERMEDIATE resolution (4x the target on each axis),
+    # then down to the target - measured clearly better than blending at
+    # the target resolution on BBB (cadence-folded judder 0.024 vs 0.142)
+    # and free.
+    stages, line = videnc.retime_plan(29.97, 25.0, 320, 256, mode="blend")
+    expect(stages == ["scale=1280:1024", "framerate=fps=25", "scale=320:256"],
+           f"blend stages {stages}")
+    expect(line == "  retime: source 29.97 fps -> target 25 fps, blend "
+                   "(framerate filter at 1280x1024)", f"blend line {line!r}")
+    # ... and the intermediate shape tracks the target shape.
+    stages, _ = videnc.retime_plan(24.0, 25.0, 256, 192, mode="blend")
+    expect(stages == ["scale=1024:768", "framerate=fps=25", "scale=256:192"],
+           f"blend stages at classic {stages}")
+
+    # drop: the pre-SP17 behaviour - no filter at all, ffmpeg's own
+    # output -r does the nearest-frame selection.
+    stages, line = videnc.retime_plan(29.97, 25.0, 320, 256, mode="drop")
+    expect(stages == ["scale=320:256"], f"drop stages {stages}")
+    expect(line == "  retime: source 29.97 fps -> target 25 fps, drop "
+                   "(nearest source frame)", f"drop line {line!r}")
+
+    # mci: opt-in, at the TARGET resolution (5.5-7.3 s per clip against
+    # 82-144 s for the 4x aobmc preset, and not the worse of the two on
+    # any source measured).
+    stages, line = videnc.retime_plan(29.97, 25.0, 320, 256, mode="mci")
+    expect(stages == ["scale=320:256",
+                      "minterpolate=fps=25:mi_mode=mci:mc_mode=obmc:"
+                      "me_mode=bilat"], f"mci stages {stages}")
+    expect(line == "  retime: source 29.97 fps -> target 25 fps, mci "
+                   "(minterpolate obmc/bilat at 320x256)", f"mci line {line!r}")
+
+    # A non-integer target rate reaches the filter as an exact rational,
+    # not a truncated decimal (the same limit_denominator the encoder
+    # uses for the encode rate itself).
+    from fractions import Fraction
+    stages, _ = videnc.retime_plan(24.0, Fraction(50, 3), 320, 192, mode="blend")
+    expect("framerate=fps=50/3" in stages[1], f"rational fps arg {stages}")
+
+    # An unknown mode is refused outright, not silently defaulted.
+    try:
+        videnc.retime_plan(30.0, 25.0, 320, 256, mode="bilinear")
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("an unknown --retime mode must be refused")
+
+
+@case(17, "retime skip-at-target - a source already at --fps is untouched "
+          "in every mode, and an undetectable rate falls back to drop")
+def t17_skip_at_target():
+    import videnc
+    plain = ["scale=320:256"]
+    for mode in videnc.RETIME_MODES:
+        stages, line = videnc.retime_plan(25.0, 25.0, 320, 256, mode=mode)
+        expect(stages == plain,
+               f"mode {mode} must not touch a 25p source: {stages}")
+        expect(line == "  retime: source 25 fps already at 25 fps target - "
+                       "not retimed", f"skip line for {mode}: {line!r}")
+        # Unknown rate: never blend against a guess.
+        stages, line = videnc.retime_plan(None, 25.0, 320, 256, mode=mode)
+        expect(stages == plain, f"mode {mode} on an unknown rate: {stages}")
+        expect("not detected" in line, f"unknown-rate line: {line!r}")
+    # Same shape at a non-25 target: 25p material DOES retime then.
+    stages, _ = videnc.retime_plan(25.0, 20.0, 320, 256)
+    expect(stages != plain, "25p -> 20 fps must retime")
+
+
+@case(17, "retime end-to-end - already-25p bytes unchanged by the feature, "
+          "a 24 fps source genuinely re-encodes")
+def t17_end_to_end_identity():
+    import hashlib
+    import subprocess
+    if not FFMPEG.exists() or not PACE25.exists() or not SINTEL.exists():
+        skip("demo sources or ffmpeg not available")
+
+    def enc_sha(src, extra):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "r.vid"
+            cmd = [sys.executable, str(LIB / "videnc.py"), str(src), str(out),
+                   "--shape", "classic", "--fps", "25", "--duration", "0.6",
+                   "--ffmpeg", str(FFMPEG)] + extra
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+            expect(proc.returncode == 0,
+                   f"videnc.py failed:\n{proc.stderr.decode('utf-8', 'replace')}")
+            return (hashlib.sha256(out.read_bytes()).hexdigest(),
+                    proc.stdout.decode("utf-8", "replace"))
+
+    # 25p source: the default (blend) and the explicit opt-out (drop)
+    # must produce the SAME BYTES, because neither inserts a filter. That
+    # is the byte-identity guarantee for existing 25p titles - the only
+    # way the default can change their output is if the filter fires.
+    d_sha, d_out = enc_sha(PACE25, [])
+    o_sha, _ = enc_sha(PACE25, ["--retime", "drop"])
+    expect(d_sha == o_sha,
+           f"25p source: default {d_sha} != --retime drop {o_sha}")
+    expect("not retimed" in d_out,
+           f"25p encode must report the skip:\n{d_out}")
+
+    # 24 fps source: the default must genuinely differ from the opt-out.
+    s_default, s_out = enc_sha(SINTEL, [])
+    s_drop, _ = enc_sha(SINTEL, ["--retime", "drop"])
+    expect(s_default != s_drop,
+           "24 fps source: blended default must not equal --retime drop")
+    expect("-> target 25 fps, blend" in s_out,
+           f"24 fps encode must report the blend:\n{s_out}")
+
+
+@case(17, "retime CLI/kit plumbing - --retime is a real option and "
+          "participates in the kit's sidecar arg hash")
+def t17_cli_and_arg_hash():
+    import hashlib
+    import re as _re
+    import subprocess
+    help_out = subprocess.run(
+        [sys.executable, str(LIB / "videnc.py"), "--help"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ).stdout.decode("utf-8", "replace")
+    expect("--retime" in help_out, "--retime must appear in videnc.py --help")
+    for mode in ("blend", "drop", "mci"):
+        expect(mode in help_out, f"--retime {mode} must be documented in --help")
+    # argparse must reject an unknown mode before anything runs.
+    bad = subprocess.run(
+        [sys.executable, str(LIB / "videnc.py"), str(SINTEL), "x.vid",
+         "--retime", "nearest", "--ffmpeg", str(FFMPEG)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    expect(bad.returncode != 0, "an unknown --retime mode must be rejected")
+
+    # The kit passes VIDOPTS/VIDOPTS_NNN through verbatim into the hashed
+    # argument vector, so --retime rides that path with no special case.
+    # Pin BOTH halves of that: the script really does hash the option
+    # list it invokes the encoder with, and a --retime override really
+    # does move the hash.
+    ps1 = (ROOT / "authoring-kit" / "lib" / "video.ps1").read_text(encoding="utf-8")
+    expect("$videoArgs = @($effShapeArgs + $fpsArgs + $globalOpts + $perOpts)" in ps1,
+           "video.ps1 must build the arg vector from VIDOPTS + VIDOPTS_NNN")
+    expect("$hash = Get-ArgHash $videoArgs" in ps1,
+           "video.ps1 must hash that same vector")
+    expect("& $enc[0] $enc[1..($enc.Length)] $src.FullName $vid --ffmpeg $ffmpeg @encArgs" in ps1,
+           "video.ps1 must invoke the encoder with the hashed vector")
+    m = _re.search(r"\$encoderGeneration = '([^']+)'", ps1)
+    expect(m, "video.ps1 must carry an $encoderGeneration stamp")
+    gen = m.group(1)
+
+    def kit_hash(arg_list):
+        """Get-ArgHash's own rule, mirrored: MD5 of the generation stamp
+        joined to the argument vector by single spaces, first 8 hex."""
+        joined = " ".join([gen] + arg_list)
+        return hashlib.md5(joined.encode("utf-8")).hexdigest()[:8]
+
+    base = ["--shape", "full", "--fps", "25"]
+    expect(kit_hash(base) != kit_hash(base + ["--retime", "mci"]),
+           "a --retime override must move the sidecar hash (forcing a re-encode)")
+    expect(kit_hash(base + ["--retime", "drop"])
+           != kit_hash(base + ["--retime", "mci"]),
+           "different --retime modes must hash differently")
+    # And the generation stamp itself is salted in, which is what covers
+    # the DEFAULT-args output change this wave causes.
+    expect("(@($encoderGeneration) + $argList) -join ' '" in ps1,
+           "the generation stamp must be salted into the hash input")
 
 
 def main():

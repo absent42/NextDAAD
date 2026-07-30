@@ -707,7 +707,17 @@ if ($Font) {
 # stream_supply_check all moved, so every leg fixture re-encodes.
 # Tag jumps straight to pal9h to stay in step with
 # $encoderGeneration in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9h'
+# BUMP pal9h -> pal9i (SP17 T0 source retiming, 2026-07-30): videnc now
+# BLENDS a source whose own frame rate differs from --fps to the target
+# rate, where it used to take the nearest source frame (drop/duplicate).
+# No CLI argument changes, so this tag is the only thing that can see
+# it. Every fixture off a non-25p source re-encodes: Sintel is 24 fps
+# (001/002/004/007/010), Big Buck Bunny 30 (003/008), Jellyfish 29.97
+# (005/009). 006 and 011 come off tools\demo-files\1920x1080-25p.mp4 and
+# are byte-identical - the filter is skipped outright at the target
+# rate - but they re-encode anyway because the tag is in their cache
+# name. See $encoderGeneration 'pal9i' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9i'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

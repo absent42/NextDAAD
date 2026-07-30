@@ -17,7 +17,15 @@
 #                 (e.g. 2.35, or 2,35 in a comma-decimal locale) for a
 #                 derived free height at 320 wide. Blank = full (320x256).
 #   VIDFPS      - frames per second. Blank = 25 (the encoder default).
-#   VIDOPTS     - extra videnc options for every encode.
+#   VIDOPTS     - extra videnc options for every encode. --retime lives
+#                 here: the Next composites at 50 Hz so 25 fps is the
+#                 only cadence-clean rate, and any source that is not
+#                 already at VIDFPS is BLENDED to it automatically (SP17
+#                 T0). VIDOPTS=--retime drop restores the old nearest-
+#                 frame behaviour; --retime mci opts into motion-
+#                 compensated interpolation for slow pans/zooms. Like
+#                 every option here it is part of the hashed argument
+#                 vector below, so changing it re-encodes that title.
 #   VIDOPTS_NNN - extra options for video NNN only (3-digit number),
 #                 appended AFTER VIDOPTS. For most repeated options
 #                 videnc takes the last occurrence, so VIDOPTS_NNN wins
@@ -101,7 +109,17 @@ if (-not $sources) { exit 0 }
 # corrected to true decode wall time with the omitted AUDIO phase
 # added. Both change the per-frame T cap and the operating point a
 # streamed encode is admitted at, so every cached encode re-prices.
-$encoderGeneration = 'pal9h'
+# BUMP pal9h -> pal9i (SP17 T0 source retiming, 2026-07-30): a source
+# whose own frame rate differs from the target is now BLENDED to the
+# target rate instead of having frames dropped/duplicated by nearest-
+# frame selection. Default-path change with no CLI argument in sight, so
+# every cached encode of a 23.976/24/29.97/30 source re-encodes. Titles
+# whose sources are already 25p are NOT affected - the retiming filter
+# is skipped entirely at the target rate and those encodes are
+# byte-identical (verified: tools\demo-files\1920x1080-25p.mp4 at
+# --shape classic re-encodes to the same SHA256 as the pre-wave
+# encoder). --retime drop restores the old behaviour per title.
+$encoderGeneration = 'pal9i'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')
