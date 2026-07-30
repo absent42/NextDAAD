@@ -119,7 +119,16 @@ if (-not $sources) { exit 0 }
 # byte-identical (verified: tools\demo-files\1920x1080-25p.mp4 at
 # --shape classic re-encodes to the same SHA256 as the pre-wave
 # encoder). --retime drop restores the old behaviour per title.
-$encoderGeneration = 'pal9i'
+# BUMP pal9i -> pal9j (SP17 adaptive tile ladder, 2026-07-30): the
+# budget-bound delta schedule no longer spends on a FIXED tile. It walks
+# {32,64,128,256,band} per bound frame and keeps the finest rung that
+# still spends >= 99% of the best rung's bytes (nxv2enc TILE_LADDER /
+# TILE_SPEND_FRAC), and band importance is raw err2 instead of
+# sqrt(err2). Owner-approved on a hardware A/B (both arms clean
+# transport, zero underruns; boat pan and church zoom both better than
+# the fixed schedule). Default-path change with no CLI argument, so
+# every cached encode with a budget-bound frame re-encodes.
+$encoderGeneration = 'pal9j'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

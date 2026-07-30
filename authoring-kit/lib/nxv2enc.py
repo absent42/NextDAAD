@@ -807,8 +807,9 @@ AUTO_BUDGET_STEP = 0.10
 # while the picture carried sustained horizontal banding. The artifact
 # is in the WIRE bytes, not the transport - when a frame's deltas do not
 # fit the per-frame caps, encode_delta spends the budget on whole
-# TILE_BAND bands (4 rows in mode-0 paint order) and the deferred bands
-# read as hard horizontal strips of stale content. starvation_stats()
+# paint-order tiles (SP17: the finest ladder rung the byte spend allows,
+# coarsest TILE_BAND = 4 rows in mode-0) and the deferred tiles read as
+# strips of stale content. starvation_stats()
 # counts those budget-bound frames, their worst concentrated run, and
 # the delta-frame PSNR tail. Those measurements are sound and are
 # REPORTED on every streaming encode.
@@ -1399,6 +1400,35 @@ PHASE_FLOOR = 3.0 * THRESHOLDS[-1] ** 2 + 1.0   # just above the coarsest mask
 # regional lag not hard-edged stale patchwork. Tunable granularity.
 TILE_BAND = 4
 
+# ADAPTIVE TILE LADDER (SP17, owner-approved on a hardware A/B 2026-07-30).
+# TILE_BAND alone is too coarse for concentrated motion: at 1024 B a bound
+# frame buys whole 4-row/4-column bands, so a small fast-moving region drags
+# in its whole band and the byte budget buys far less picture than it could.
+# A FIXED fine tile is NOT the fix - it fragments the op stream, decode-T
+# saturates before the byte budget does, and the encode strands wire it was
+# allowed to spend (measured: fixed t64/t32 strand 18%/38% of fixture 008's
+# byte budget, and 008 is the silicon-validated control).
+#
+# The rule that IS the fix is SPEND-PRESERVING. Per budget-bound frame, walk
+# the ladder fine -> coarse and keep the FINEST rung that still spends at
+# least TILE_SPEND_FRAC of the best (in practice the coarsest = today's)
+# rung's bytes. Finer granularity is taken only when it is FREE in wire
+# terms, so the decode-T inversion cannot bite: a rung that saturates
+# decode-T while leaving bytes unspent fails the spend test and is rejected.
+#
+# THRESHOLD PROVENANCE - the band is narrow, do not re-tune by eye.
+# Re-verified under the shipped OFFSET dither default:
+#   1.00  WRONG - an exact-tie requirement kicks the ladder off the finest
+#         rung on 56 of 132 bound frames on a starved Sintel leg
+#         (-0.53 dB per-pixel, -0.87 dB 4x4).
+#   0.99  SHIPPED - ties or beats 0.98 on all three legs and restores
+#         decode-T headroom.
+#   0.98  acceptable, no leg prefers it.
+#   0.90  OUT OF BAND under offset - strands 3% of fixture 008's wire
+#         (benign under the opt-in mixture dither, not under the default).
+TILE_LADDER = (32, 64, 128, 256, 1024)
+TILE_SPEND_FRAC = 0.99
+
 # Dissolve/pan detection (SP15 task-2b owner exhibit fix): a slow crossfade
 # or pan is a SUSTAINED elevated change fraction WITHOUT an impulse - the cut
 # trigger misses it and incremental visible repair ghosts/seams. Route it
@@ -1669,6 +1699,24 @@ def default_tile_px(n, width=None, height=None, column_major=False):
     return max(256, n // 48)
 
 
+def tile_ladder_for(coarsest):
+    """The adaptive tile ladder to walk for a clip whose COARSEST rung is
+    `coarsest` bytes (i.e. default_tile_px for that shape - today's fixed
+    scheduler, which the ladder must never spend less wire than).
+
+    Returns TILE_LADDER's rungs finer than `coarsest`, then `coarsest`
+    itself, fine -> coarse. Deriving the top rung from the shape rather
+    than pinning the literal 1024 is what makes "spend-preserving" mean
+    "never spends less wire than TODAY" on every shape, letterbox
+    included: 001-full 320x256 and 002-classic 256x192 both give 1024
+    (the A/B's own ladder, exactly TILE_LADDER), while 003-16:9 320x192
+    gives 768 and 004-scope 320x144 gives 576 - on those the ladder must
+    NOT reach past their own band size or it would lag coarser than the
+    scheduler it replaces."""
+    coarsest = int(coarsest)
+    return tuple(r for r in TILE_LADDER if r < coarsest) + (coarsest,)
+
+
 def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
                    cap_bytes, cap_t, merge_gaps):
     """Cost a changed-segment list. Returns (bytes, T, payload, suffix) for
@@ -1687,7 +1735,8 @@ def _fit_candidate(gcls, gstarts, glens, target_flat, surface_flat,
 
 
 def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
-                 surface_flat=None, merge_gaps=True, tile_px=None):
+                 surface_flat=None, merge_gaps=True, tile_px=None,
+                 tile_ladder=None):
     """Region-coherent budget-bound delta encoder. Returns
     (gcls, gstarts, glens, bytes, T, mode, binding, payload).
 
@@ -1707,6 +1756,13 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
     grows each frame until a later tile schedule admits them. An all-skip
     frame always fits, so the dual-budget guarantee holds by construction.
     mode 'region:<kept>/<total>[+merge]'.
+
+    ADAPTIVE TILE LADDER (tile_ladder given, as encode_clip always supplies -
+    see TILE_LADDER/TILE_SPEND_FRAC): the tile GRANULARITY is chosen per bound
+    frame instead of being fixed. Every rung is scheduled in full and the
+    FINEST rung that still spends >= TILE_SPEND_FRAC of the best rung's bytes
+    wins, so finer tiling is taken only when it costs no wire. mode gains an
+    '@<rung>' suffix naming the granularity that was used.
 
     The returned (gcls, gstarts, glens) is always the CHANGED-segment list
     (un-merged) the caller walks to track the surface; payload is the chosen
@@ -1731,18 +1787,47 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
     # T than it can predict).
     if tile_px is None:
         tile_px = default_tile_px(n)
+    if tile_ladder:
+        # ---- adaptive tile ladder (SP17) ----
+        # Schedule the frame at every rung, then keep the FINEST rung whose
+        # byte spend is within TILE_SPEND_FRAC of the best rung's. The best
+        # rung is the coarsest in practice (coarser bands buy more bytes per
+        # kept tile), so this is "as fine as the wire allows, never cheaper
+        # than today's scheduler" - and it is exactly what stops the mode-1
+        # decode-T inversion, where a fine rung saturates cap_t with byte
+        # budget left over. Cost: one full schedule per rung on BOUND frames
+        # only (the fast path above already returned for everything else).
+        cands = [(rung, encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
+                                     surface_flat=surface_flat,
+                                     merge_gaps=merge_gaps, tile_px=rung))
+                 for rung in tile_ladder]
+        best_b = max(r[3] for _, r in cands)
+        for rung, r in cands:            # tile_ladder is fine -> coarse
+            if r[3] >= TILE_SPEND_FRAC * best_b:
+                gc, gs, gl, b, t, mode, binding, payload = r
+                return (gc, gs, gl, b, t, f"{mode}@{rung}", binding, payload)
     ntiles = (n + tile_px - 1) // tile_px
-    sqrt_e = np.where(mask_full, np.sqrt(err2_flat), 0.0)
-    band_imp = np.array([sqrt_e[ti * tile_px:(ti + 1) * tile_px].sum()
-                         for ti in range(ntiles)])
+    # Band importance is RAW ERROR ENERGY (SP17). sqrt(err2) flattens the
+    # ranking towards area and lets a wide, mildly-wrong band outrank a
+    # narrow, badly-wrong one; err2 spends the bound budget where the
+    # picture is actually broken. Measured with the ladder above.
+    w_e = np.where(mask_full, err2_flat, 0.0)
+    pad = ntiles * tile_px - n
+    band_imp = (np.concatenate([w_e, np.zeros(pad, dtype=w_e.dtype)])
+                if pad else w_e).reshape(ntiles, tile_px).sum(axis=1)
     order = [int(ti) for ti in np.argsort(-band_imp) if band_imp[ti] > 0.0]
+
+    # Rank per pixel, so _prefix_fit's selection mask is one vectorised
+    # compare instead of a Python loop over the kept bands (the ladder runs
+    # the binary search once per rung, so this inner cost now multiplies).
+    _rank = np.full(ntiles, len(order), dtype=np.int32)
+    for _p, _ti in enumerate(order):
+        _rank[_ti] = _p
+    _rank_px = np.repeat(_rank, tile_px)[:n]
 
     def _prefix_fit(k):
         """Exact (b, t, payload, sfx) for the top-k importance bands, or None."""
-        selmask = np.zeros(n, dtype=bool)
-        for ti in order[:k]:
-            a, z = ti * tile_px, min((ti + 1) * tile_px, n)
-            selmask[a:z] |= mask_full[a:z]
+        selmask = mask_full & (_rank_px < k)
         gc, gs, gl = segment(target_flat, selmask)
         r = _fit_candidate(gc, gs, gl, target_flat, surface_flat,
                            cap_bytes, cap_t, merge_gaps)
@@ -3281,8 +3366,11 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     hyst_eps = HYSTERESIS_EPS if hysteresis else None
     # Region-coherent tile size: a band of TILE_BAND rows (mode-0) / columns
     # (mode-1) is contiguous in paint order, so shortfall lags coherent
-    # horizontal/vertical strips.
+    # horizontal/vertical strips. That band is the COARSEST rung of the
+    # adaptive ladder (SP17) - encode_delta picks a finer granularity per
+    # bound frame whenever a finer one is free in bytes.
     tile_px = default_tile_px(raw, width=width, height=height, column_major=column_major)
+    tile_ladder = tile_ladder_for(tile_px)
 
     scene_cuts = detect_scene_cuts(chg)
 
@@ -3402,7 +3490,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 err2 = np.sum((targ_dec_flat - prev_dec_flat) ** 2, axis=1)
                 gcls, gstarts, glens, b, t, mode, binding, payload = encode_delta(
                     tflat, err2, cap_bytes, usable,
-                    surface_flat=prev_flat, merge_gaps=merge_gaps, tile_px=tile_px)
+                    surface_flat=prev_flat, merge_gaps=merge_gaps,
+                    tile_px=tile_px, tile_ladder=tile_ladder)
                 prev_flat = np.where(_mask_from_segments(gcls, gstarts, glens, raw), tflat, prev_flat)
                 dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
                 payloads.append(payload)
@@ -3519,7 +3608,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 enc_err2 = err2
             gcls, gstarts, glens, b, t, mode, binding, payload = encode_delta(
                 tflat, enc_err2, cap_bytes, usable,
-                surface_flat=prev_flat, merge_gaps=merge_gaps, tile_px=tile_px)
+                surface_flat=prev_flat, merge_gaps=merge_gaps,
+                tile_px=tile_px, tile_ladder=tile_ladder)
             new_flat = _apply_segments(prev_flat, tflat, gcls, gstarts, glens)
             prev_flat = new_flat
             if staleness_refresh:

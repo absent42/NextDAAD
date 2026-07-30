@@ -717,7 +717,15 @@ if ($Font) {
 # are byte-identical - the filter is skipped outright at the target
 # rate - but they re-encode anyway because the tag is in their cache
 # name. See $encoderGeneration 'pal9i' in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9i'
+# BUMP pal9i -> pal9j (SP17 adaptive tile ladder, 2026-07-30): the
+# budget-bound delta schedule walks {32,64,128,256,band} per bound frame
+# and keeps the finest rung that still spends >= 99% of the best rung's
+# bytes, with raw err2 band importance in place of sqrt(err2). Every
+# fixture with a budget-bound frame re-encodes; 002/005/006 come out
+# byte-identical (no bound frame, or no rung beats the band) but
+# re-encode anyway because the tag is in their cache name. See
+# $encoderGeneration 'pal9j' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9j'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,
