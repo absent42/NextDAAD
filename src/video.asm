@@ -3547,13 +3547,22 @@ nxb_ds_rows:
                                  ; is borrowed, not allocated, and
                                  ; MMU6 is restored by the teardown
 
-; Per-row preamble (untimed): clear the section counter and the CRC
-; flag. DTA's reader consumes its own CRC; every other row's blkopen
-; consumes the previous block's, so the flag has to start clean.
+; Per-row preamble (untimed): clear the section counter ONLY.
+; vidDsCrcDue is WIRE TRUTH and must NOT be reset here (SP17 fix): a
+; blkopen row's last rep leaves the block's 2 CRC bytes physically
+; unread on the wire with the flag set, and the NEXT row's first
+; blkopen is the thing that consumes them. Zeroing the flag between
+; rows made that blkopen skip the consume and hand the CRC bytes to
+; vid_sd_tok_h, which rejected them - ERR=FD (VID_ERR_TOKEN) on the
+; DTB row's first block, every run. The flag is already 0 with a
+; clean wire when the hook fires (the cold open's vid_read_block
+; consumes its own CRC), and DTA's vid_sd_blk_h likewise consumes its
+; own, so the DTA/DTI rows still start clean without touching it.
+; ROW ORDER RULE: any row that does NOT go through vid_ds_blkopen
+; (DTA today) may only be placed where the flag is already 0.
 nxb_ds_pre:
     xor a
     ld (vidDsFrmBlk), a
-    ld (vidDsCrcDue), a
     ret
 
 ; DTA settle (untimed): DTA read blocks straight off the open window
