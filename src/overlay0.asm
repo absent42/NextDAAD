@@ -433,38 +433,82 @@ h_chance:                       ; 10: true B% of the time
     jp c_false
 ; 16-bit xorshift, seeded at eng_init_game. Out A = 1..100.
 ; Preserves BC.
+;
+; SP16 (parser-bugs entry 3). This used to rotate (rrca/rlca) where a
+; xorshift needs to SHIFT, which made the state transform a tiny-order
+; permutation: every seed landed on a cycle of at most 16 states, the
+; shipped seed produced only six distinct RANDOM values, and CHANCE 50
+; fired 62% of the time. Now the real thing:
+;
+;   x ^= x << 7;  x ^= x >> 9;  x ^= x << 8
+;
+; period 65535 (verified exhaustively: the orbit is every non-zero
+; state exactly once). The constants are the Z80-cheap triple - a
+; shift by 8 is a register move (doc 06a "Shift Left/Right 8", 3
+; bytes), and 7 and 9 are each one move plus one shift (doc 06a
+; "Shift Left 7" fastest form, "Shift Right 9").
+;
+; Byte-level identities used below, with x = (H,L):
+;   x<<7 = ( (H&1)<<7 | L>>1 , (L&1)<<7 )   -> the SRL H/RR L/RRA form
+;   x>>9 = ( 0 , H>>1 )                     -> low byte only
+;   x<<8 = ( L , 0 )                        -> high byte only
+;
+; Output scaling is A = (x * 100) >> 16, +1. The old scaling folded the
+; state to one byte (H xor L) and reduced it mod 200 then mod 100,
+; which is NOT uniform over 1..100: 200..255 wrapped onto 1..56, so
+; those 56 values drew 3 tickets in 256 and the rest drew 2, and
+; CHANCE 50 would have fired 58.6% of the time even on a perfect
+; generator. Scaling the whole 16-bit state instead gives 655 or 656
+; states per outcome across the period - CHANCE 50 measures 50.00%
+; exactly - and matches what the references compute (jdaad _RANDOM:
+; floor(random()*100)+1). Two Z80N MUL D,E do the 16x8 product
+; (doc 11: MUL is the Next's one-instruction 8x8, 8T).
 rng_next:
     push bc
+    push de
     push hl
     ld hl, (rngState)
-    ld a, h
-    rrca
-    xor l
+    ; --- x ^= x << 7 ---
+    ld d, h
+    ld e, l                     ; DE = x
+    xor a
+    srl h
+    rr l
+    rra                         ; HL = x << 7 (doc 06a shift-left-7)
+    ld h, l
     ld l, a
     ld a, h
-    rlca
-    rlca
-    xor l
+    xor d
     ld h, a
     ld a, l
-    rrca
-    xor h
+    xor e
+    ld l, a                     ; HL = x ^ (x << 7)
+    ; --- x ^= x >> 9 --- (high byte of x>>9 is always 0)
+    ld a, h
+    srl a
+    xor l
     ld l, a
-    ld (rngState), hl
+    ; --- x ^= x << 8 --- (low byte of x<<8 is always 0)
     ld a, h
     xor l
-.reduce:
-    cp 200
-    jr c, .half
-    sub 200
-    jr .reduce
-.half:
-    cp 100
-    jr c, .fin
-    sub 100
-.fin:
-    inc a
+    ld h, a
+    ld (rngState), hl
+    ; --- A = (HL * 100) >> 16, then +1 -> 1..100 ---
+    ld d, 100
+    ld e, h
+    mul d, e                    ; Z80N: DE = H*100 (the 2^8-weighted half)
+    ld b, d
+    ld c, e                     ; BC = H*100
+    ld d, 100
+    ld e, l
+    mul d, e                    ; Z80N: DE = L*100
+    ld a, d                     ; A = (L*100) >> 8
+    add a, c                    ; ripple into the weighted half
+    ld a, b
+    adc a, 0                    ; A = (x*100) >> 16 = 0..99
+    inc a                       ; 1..100
     pop hl
+    pop de
     pop bc
     ret
 
@@ -1790,18 +1834,80 @@ sm_first_char:
     pop de
     ret
 
-; Shared confirmation: prints SM E, waits, folds case, compares to the
-; first char of SM C. In: E = prompt SM, C = compare SM. Out: ZF set =
-; reply starts with SM C's first char. Corrupts all.
+; Read one LINE of confirmation input: echo each printable character,
+; ENTER ends it, and the FIRST printable character is the answer.
+; Out: A = that character, or 0 for an empty line. Corrupts all.
+;
+; SP16 parser-bugs entry 4, SETTLED 2026-07-31 against the ORIGINAL ZX
+; interpreter. NextDAAD used to take a single keypress here, citing the
+; DAAD manual; jDAAD (_QUIT -> getPlayerOrders) and msx2daad (do_QUIT ->
+; prompt(false), whose doc comment says "the remainder of the entry is
+; discarded" - language that only makes sense for a line) both read a
+; line, leaving NextDAAD the outlier of three. The tie-breaker was run:
+; .superpowers/sdd/sp16-adjudications/zxadj.dsf on ASSETS/ZX/
+; ZXSPECTRUM/DS48IE3.BIN under ZEsarUX, driving QUIT to its SM12
+; prompt and then sending a bare Y with NO enter -
+;
+;     [after QUIT - SM12 prompt]      Are you sure?>_
+;     [after a bare Y with NO enter]  Are you sure?>Y_     (flag still 0)
+;     [after the following ENTER]     V=30 N=255 Q=1       (accepted)
+;
+; The Y is ECHOED into a line and nothing happens until ENTER. Full
+; transcript: sp16-adjudications/zxadj-transcript.txt. So NextDAAD was
+; wrong and now reads a line too.
+;
+; Scope of the reproduction: the original prompts through its full line
+; editor, this reads a line without in-line editing (no backspace, no
+; recall). inp_edit, which has all of that, lives in overlay1 and there
+; is no resident trampoline for overlay0 to reach it - ovl_map_page's
+; own contract is "call from resident code". What IS reproduced is the
+; part the divergence was about: the input is a LINE, nothing acts
+; until ENTER, and the first character decides.
+confirm_read:
+    xor a
+    ld (cfmFirst), a
+.key:
+    call key_wait_char
+    cp 13
+    jr z, .done
+    cp ' '
+    jr c, .key                  ; other controls: ignored, not echoed
+    cp 'a'                      ; fold to upper before BOTH the echo and
+    jr c, .fold                 ; the latch: key_scan's map is lowercase
+    cp 'z'+1                    ; only (no caps/symbol layer down here -
+    jr nc, .fold                ; that lives in overlay1's kb_char), and
+    sub 32                      ; classic DAAD input reads all-caps
+.fold:
+    ld c, a                     ; C = the char, for prn_char
+    ld a, (cfmFirst)
+    or a
+    jr nz, .echo
+    ld a, c
+    ld (cfmFirst), a            ; latch the first printable character
+.echo:
+    call prn_char
+    jr .key
+.done:
+    call prn_newline            ; the ENTER moves off the reply line
+    ld a, (cfmFirst)
+    ret
+cfmFirst: db 0
+
+; Shared confirmation: prints SM E, reads a line, folds case, compares
+; its first character to the first char of SM C. In: E = prompt SM,
+; C = compare SM. Out: ZF set = reply starts with SM C's first char.
+; An empty line never confirms (A = 0 matches no system message's first
+; character), which is jdaad's `if (inputBuffer != '')` guard.
+; Corrupts all.
 confirm:
-    push bc                     ; C = compare SM survives print/key/reset
+    push bc                     ; C = compare SM survives print/read/reset
     ld a, 0
     call print_msg
     call prn_newline
-    call key_wait_char
-    push af                     ; save key
+    call confirm_read
+    push af                     ; save the reply's first char
     call prn_reset_lines
-    pop af                      ; A = key
+    pop af                      ; A = reply's first char
     pop bc                      ; C = compare SM
     ld e, c
     push af
@@ -1823,8 +1929,14 @@ h_quit:                         ; 20: condition - Y (SM30) confirms quit
     jp nz, c_false
     call eng_set_done
     jp c_true
-h_end:                          ; 21: reply N (SM31) = exit to OS, any
-    ld e, 13                    ; other key = restart (manual 2004-2010)
+h_end:                          ; 21: a reply starting with N (SM31) =
+    ld e, 13                    ; exit to OS, anything else = restart.
+                                 ; The manual (2004-2010) describes this
+                                 ; as a keypress; SP16 measured the
+                                 ; original ZX interpreter reading a
+                                 ; LINE at the sibling QUIT prompt (see
+                                 ; confirm_read above), so END reads one
+                                 ; too - both go through confirm.
     ld c, 31
     call confirm
     jr z, .off

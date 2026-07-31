@@ -5,6 +5,19 @@
 INP_MAX         equ 127
 
 inpLine:    ds INP_MAX+1        ; editor line, ASCIIZ
+; SP16 B21 - the quoted section split out of the current order lives
+; here, ASCIIZ, empty when the order had no quote. It ALIASES inpLine
+; deliberately: by the time quote_split runs (h_parse .extract), the
+; typed line has already been ingested into inpPending and echoed by
+; the flag-49 bit-4 reprint, so inpLine is dead until the next
+; inp_edit refills it. That buys a full INP_MAX+1 store for zero
+; resident bytes, which matters - the resident has 121 bytes of
+; headroom and is frozen. The one thing it costs: SAVE/LOAD prompt
+; through inp_edit (sav_prompt, overlay1.asm), so a SAVE between a
+; PARSE 0 and a PARSE 1 would lose the quoted section. No reference
+; game does that - SAVE ends the entry - but it is the aliasing's only
+; observable edge, recorded here rather than discovered later.
+inpQuoted   equ inpLine
 inpPending: ds INP_MAX+1        ; orders after a separator, ASCIIZ
 inpLast:    ds INP_MAX+1        ; last submitted order (recall), ASCIIZ
 inpWord:    ds 6                ; current word, 5 chars + NUL, uppercase

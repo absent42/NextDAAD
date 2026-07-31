@@ -1357,13 +1357,32 @@ parse_order:
     ld (flags+FLAG_ADJ1), a
     jp .word                    ; out of jr range
 .post:
-    ; 1. convertible noun: verb empty, noun1 < 20 -> verb = noun1
+    ; 1. convertible noun: verb empty, noun1 <= 39 -> verb = noun1
     ;    (noun1 keeps its value - both hold the same code)
+    ;
+    ; SP16 D2, SETTLED 2026-07-31 on the ORIGINAL ZX interpreter. This
+    ; was 20 (following msx2daad's "id<20") against jdaad's "id<=39",
+    ; and the two references could not settle it. The lineage this
+    ; interpreter reimplements was asked directly: the fixture
+    ; .superpowers/sdd/sp16-adjudications/zxadj.dsf, compiled for the
+    ; classic 48K target and run against ASSETS/ZX/ZXSPECTRUM/
+    ; DS48IE3.BIN under ZEsarUX, types bare nouns of id 19, 20, 25, 39,
+    ; 40 and 60 and prints the resulting verb/noun flags:
+    ;
+    ;   19 -> V=19 N=19    39 -> V=39 N=39
+    ;   20 -> V=20 N=20    40 -> V=255 N=40
+    ;   25 -> V=25 N=25    60 -> V=255 N=60
+    ;
+    ; The boundary is exactly 39/40, i.e. jdaad's LAST_CONVERTIBLE_NOUN
+    ; = 39, and msx2daad's "< 20" is the deviation. Full transcript:
+    ; .superpowers/sdd/sp16-adjudications/zxadj-transcript.txt.
+    ; Visible effect: bare nouns with ids 20-39 now act as commands, as
+    ; they do on the machine this interpreter is a port of.
     ld a, (flags+FLAG_VERB)
     inc a
     jr nz, .p2
     ld a, (flags+FLAG_NOUN1)
-    cp 20
+    cp 40
     jr nc, .p2
     ld (flags+FLAG_VERB), a
 .p2:
@@ -1550,16 +1569,17 @@ obj2_resolve:
 h_parse:                        ; 73: condition-like. B = option.
     ld a, b
     or a
-    jr z, .p0
-    ; PARSE 1+ (quoted strings): deferred - fail as condition + done
-    call eng_set_done
-    jp ovl1_false
+    jp nz, .quoted              ; PARSE 1+ (B21) lives past .valid
 .p0:
     ; pending buffer empty?
     ld a, (inpPending)
     or a
     jr nz, .frombuf
-    ; fresh input: prompt, then edit
+    ; fresh input: prompt, then edit. SP16 B22 - the prompt and the
+    ; edit both run in flag 41's window when that flag names one
+    ; (jdaad calls PreserveStream BEFORE printing the prompt,
+    ; jdaad.js:1352).
+    call inp_stream_push
     xor a
     ld (inpFromBuf), a
     ld a, (flags+FLAG_PROMPT)
@@ -1597,16 +1617,26 @@ h_parse:                        ; 73: condition-like. B = option.
     call inp_edit
     jr nc, .got
     ; timeout during input: PARSE PASSES (the entry remainder is the
-    ; invalid-input/timeout handler; flag 49 bit 7 tells it why)
+    ; invalid-input/timeout handler; flag 49 bit 7 tells it why). The
+    ; stream still has to come back - jdaad's RestoreStream runs on the
+    ; timeout path too. The two option bits do NOT run here; that is
+    ; pre-existing behaviour and B22 leaves it alone.
+    call inp_stream_pop
     jp ovl1_true
 .got:
     ; post-edit input options (flag 49): bit 3 clear window,
-    ; bit 4 reprint the line in the current stream
+    ; bit 4 reprint the line in the current stream.
+    ; SP16 B22 - the ORDER here is jdaad's RestoreStream (jdaad.js:2316)
+    ; and it is load-bearing: bit 3 clears the INPUT window (still
+    ; selected), then the stream is restored, then bit 4 reprints into
+    ; the window the game was using before the input. Neither bit's own
+    ; behaviour changes.
     ld a, (flags+FLAG_TIMECTL)
     bit 3, a
     jr z, .nocls
     call win_cls
 .nocls:
+    call inp_stream_pop
     ld a, (flags+FLAG_TIMECTL)
     bit 4, a
     jr z, .noecho
@@ -1622,15 +1652,9 @@ h_parse:                        ; 73: condition-like. B = option.
     ld hl, inpPending
     ld (inpPtr), hl
 .extract:
-    ; reset the LS flags
-    ld a, 255
-    ld (flags+FLAG_VERB), a
-    ld (flags+FLAG_NOUN1), a
-    ld (flags+FLAG_ADJ1), a
-    ld (flags+FLAG_ADVERB), a
-    ld (flags+FLAG_PREP), a
-    ld (flags+FLAG_NOUN2), a
-    ld (flags+FLAG_ADJ2), a
+    call quote_split            ; SP16 B21: lift any "..." out of the
+                                 ; order into inpQuoted first
+    call ls_reset
     call parse_order
     ; consume the trailing separator and compact inpPending to the
     ; remainder (the next order), so the next PARSE reads it
@@ -1650,6 +1674,150 @@ h_parse:                        ; 73: condition-like. B = option.
 .valid:
     call eng_set_done
     jp ovl1_false
+.quoted:
+    ; SP16 B21 - PARSE 1+ re-runs the logical-sentence fill over the
+    ; quoted section lifted from the order by quote_split. No prompt,
+    ; no input, no pending_compact: inpPending's own cursor is not
+    ; involved, so the buffered-orders chain is untouched.
+    ;
+    ; The verdict is jdaad's: parseEnd ends with
+    ; "return result || (globalParseOption>0)" (jdaad.js:1548), i.e.
+    ; for PARSE 1 the condact's answer depends only on whether a quoted
+    ; section EXISTED - a quoted section that parses to nothing still
+    ; fails the condition and marks done, and no quoted section passes
+    ; it so the entry remainder (the game's handler) runs. msx2daad
+    ; differs here: useLiteralSentence returns whether a slot got
+    ; filled, so a quoted section of unknown words passes there. That
+    ; is a genuine reference disagreement, visible only on gibberish
+    ; inside the quotes; NextDAAD follows jdaad because jdaad is the
+    ; reference that models PARSE 1 as a re-parse of raw quoted TEXT,
+    ; which is this parser's shape too (msx2daad re-plays a token
+    ; buffer it filled during the first pass).
+    ld a, (inpQuoted)
+    or a
+    jp z, ovl1_true             ; nothing was quoted
+    ld hl, inpQuoted
+    ld (inpPtr), hl
+    call ls_reset
+    call parse_order
+    call eng_set_done
+    jp ovl1_false
+
+; Reset the seven logical-sentence flags to NULLWORD. Shared by PARSE 0
+; and PARSE 1 (jdaad parseEnd clears the same seven for both; the
+; pronoun memory 46/47 is deliberately NOT among them - msx2daad
+; PRP015 INC-02 and jdaad both persist it across sentences).
+ls_reset:
+    ld a, 255
+    ld (flags+FLAG_VERB), a
+    ld (flags+FLAG_NOUN1), a
+    ld (flags+FLAG_ADJ1), a
+    ld (flags+FLAG_ADVERB), a
+    ld (flags+FLAG_PREP), a
+    ld (flags+FLAG_NOUN2), a
+    ld (flags+FLAG_ADJ2), a
+    ret
+
+; SP16 B21. Lift a quoted section out of the order at (inpPtr) into
+; inpQuoted (ASCIIZ, empty when there is no quote), blanking it - both
+; quote characters included - in the order itself so the REMAINDER
+; still parses normally.
+;
+; The split follows msx2daad's parser() (daad_parser_sentences.c:55-62
+; and 128-136), which switches the logical-sentence buffer on the
+; opening quote and switches BACK on the closing one, so words after
+; the closing quote keep feeding the normal sentence. jdaad's parseB
+; (jdaad.js:1393-1397) instead truncates the order at the opening
+; quote and throws the tail away; on `SAY "HELLO" LOUDLY` msx2daad
+; still sees LOUDLY and jdaad does not. Blanking rather than
+; truncating gives msx2daad's answer and costs nothing - the order's
+; separator and terminator stay exactly where pending_compact expects
+; them.
+;
+; The scan stops at an order separator, so the quoted section cannot
+; run past the end of its own order. That matches both references,
+; which split the input into orders BEFORE looking for quotes.
+;
+; No length guard is needed: the quoted section is a substring of one
+; order inside inpPending (INP_MAX+1 bytes) minus at least the opening
+; quote, and inpQuoted is INP_MAX+1 bytes, so it always fits.
+; Corrupts AF, DE, HL.
+quote_split:
+    xor a
+    ld (inpQuoted), a           ; default: this order quoted nothing
+    ld hl, (inpPtr)
+.scan:
+    ld a, (hl)
+    or a
+    ret z                       ; end of input
+    call is_separator
+    ret z                       ; end of this order
+    cp '"'
+    jr z, .open
+    inc hl
+    jr .scan
+.open:
+    ld (hl), ' '                ; blank the opening quote
+    inc hl
+    ld de, inpQuoted
+.copy:
+    ld a, (hl)
+    or a
+    jr z, .fin                  ; unterminated quote: runs to the end
+    call is_separator
+    jr z, .fin                  ; unterminated quote: ends with the order
+    ld (hl), ' '                ; this character leaves the order
+    inc hl
+    cp '"'
+    jr z, .fin                  ; closing quote: blanked, not stored
+    ld (de), a
+    inc de
+    jr .copy
+.fin:
+    xor a
+    ld (de), a
+    ret
+
+; SP16 B22 - jdaad PreserveStream / RestoreStream (jdaad.js:2310-2325).
+; The input editor runs in the window named by flag 41 when that flag
+; names a real one, and the previously active window comes back
+; afterwards. INPUT (condact 96, h_input above) already stored the
+; stream in flag 41; only the switch was missing.
+;
+; What is deliberately NOT done: flag 63 (the current-window flag) is
+; left alone. jdaad backs up windows.activeWindow and never touches
+; the flag, so a game reading it during input still sees the window it
+; selected with WINDOW. The stash below is that backup - it is the
+; window POINTER rather than the number, so the restore cannot be
+; thrown off by a game writing flag 63 directly while input is open.
+; Corrupts AF, HL.
+inp_stream_push:
+    ld hl, (curWin)
+    ld (inpWinStash), hl
+    ld a, (flags+FLAG_INPUTSTREAM)
+    or a
+    ret z                       ; 0 = no input stream selected
+    cp WINDOW_COUNT
+    ret nc                      ; out of range: ignored, as in jdaad
+    jp win_select               ; flushes the old window's pending word
+inp_stream_pop:
+    ld hl, (curWin)
+    ld de, (inpWinStash)
+    or a
+    sbc hl, de
+    ret z                       ; push did not switch (flag 41 clear or
+                                 ; out of range) - do NOTHING, not even
+                                 ; the flush. A flush here on the common
+                                 ; no-INPUT path would emit a pending
+                                 ; wrapped word at a moment the engine
+                                 ; never used to, changing output for
+                                 ; every game that never calls INPUT.
+    call prn_flush              ; win_select's flush, done by hand
+    ld hl, (inpWinStash)        ; because the target is a pointer
+    ld (curWin), hl
+    ret
+
+inpWinStash: dw winTable
 
 ; Shift the unconsumed remainder of inpPending (from inpPtr, skipping
 ; one leading separator and spaces) to the front of inpPending.
