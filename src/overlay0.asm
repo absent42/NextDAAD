@@ -839,9 +839,16 @@ doall_cancel:
     ld (doallObj), a
     ret
 
-h_ok:                           ; 23: SM15 then DONE - refuse IS that
-    ld e, 15
-    jp refuse
+h_ok:                           ; 23: SM15 then DONE, and NOTHING else.
+    ld e, 15                    ; This is deliberately NOT refuse: since
+    call sysmsg                 ; SP16 B2 refuse also performs NEWTEXT,
+    call prn_newline            ; and OK is the standard tail of a
+    ld a, 1                     ; SUCCESSFUL response entry - killing the
+    jp eng_exit_table           ; compound tail there would silently drop
+                                ; the second half of "PUSH BUTTON AND GO
+                                ; NORTH". Both references print SM15 and
+                                ; DONE only (daad_condacts.c do_OK,
+                                ; jdaad.js _OK), as does the manual.
 
 h_get:                          ; 40
     ld a, b

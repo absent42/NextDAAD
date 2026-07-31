@@ -71,7 +71,15 @@ objname_print:
     jr z, .loop                 ; still in the article word
     ld a, e
 .emit:
-    ; capitalise first emitted letter for '@'
+    ; capitalise first emitted letter for '@' - SPANISH databases only.
+    ; Both references gate it on the language: msx2daad consumes the
+    ; modifier inside #ifdef LANG_ES (daad_msg.c printObjectMsgModif),
+    ; jDAAD honours ESCAPE_OBJNAME_CAPS only when isSpanish()
+    ; (jdaad.js:1636 / :550 = bit 0 of header byte 1). An English DDB
+    ; renders the name plain on both, so it does here too. This branch
+    ; was unreachable by accident until the msg_seek BC bracket above
+    ; was added; the language gate is what keeps the newly-live path
+    ; reference-correct rather than merely live.
     ld e, a
     ld a, d
     cp 1
@@ -79,6 +87,9 @@ objname_print:
     ld a, c
     cp '@'
     jr nz, .send
+    ld a, (ddbHeader+1)         ; target/machine + language byte
+    rrca                        ; bit 0 = Spanish
+    jr nc, .send
     ld a, e
     cp 'a'
     jr c, .send

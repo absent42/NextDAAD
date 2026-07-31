@@ -1044,13 +1044,15 @@ NORTH 0
         SKIP 1
 > _ _   MES "84 F#n"
 ; 85 a REFUSED GET changes nothing: flag 1 stands, the object stays put,
-; and the refusal's DONE aborts the rest of the entry (so the LET after
-; the GET must not run - the assertions live in the next entry).
+; and the refusal's DONE aborts the rest of the entry. The refused GET
+; is CONTAINED in PRO 20 - the refusal's DONE pops a whole PROCESS, so
+; running it inline here would abort PRO 1 itself and take checks 86
+; and the SUITES DONE tail with it. Same containment pattern as checks
+; 49 and 86 (PRO 17 / PRO 19).
 > _ _   DROP 3
         LET 37 0                ; hands always full -> SM27
         LET 124 0
-        GET 3
-        LET 124 1               ; unreachable
+        PROCESS 20
 > _ _   ABILITY 10 100
         ZERO 124
         EQ 1 1
@@ -1137,4 +1139,11 @@ NORTH 0
         PLUS 125 1
         AUTOG
         DONE
+/PRO 20
+; Refused-GET containment (85): with MAXCARR 0 the GET refuses SM27 and
+; performs DONE, which pops THIS process and returns to check 85's own
+; entry - so the LET below must never run and the assertions after the
+; PROCESS 20 call still get to run.
+> _ _   GET 3
+        LET 124 1               ; unreachable
 /END
