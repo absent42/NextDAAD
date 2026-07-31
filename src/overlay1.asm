@@ -1423,7 +1423,19 @@ parse_order:
     jp obj2_resolve
 
 ; Resolve flags 44/45 to an object: flag 25 num, 26 container, 27 loc,
-; 39/40 extended attributes (crossed order, as SETCO). Preference:
+; 39/40 extended attributes. SP16 A5 - the byte order is the DDB's,
+; not an arbitrary convention: the extended attributes are ONE
+; LITTLE-ENDIAN WORD in the file (drb.php generateObjectExtraAttr;
+; compliance report Appendix A probe 4 - attribute 0 alone compiles
+; to the bytes 01 00), so the FIRST file byte is the low byte, holding
+; attributes 0-7, and it belongs in flag 40 (and flag 59 for the
+; SETCO/current-object pair); the SECOND byte holds attributes 8-15
+; and belongs in flag 39 (58). msx2daad states the same assignment
+; outright: flags[fO2Att /*39*/] = extAttr2, flags[40] = extAttr1.
+; eng_load_objects (engine.asm) already stores the pair in flag
+; order - objTable+2 = attrs 8-15, +3 = attrs 0-7 - so the
+; sequential copy below is correct and stays in step with
+; obj_set_refs (overlay0.asm). Preference:
 ; pass 1 = objects present (carried, worn, or at the player's
 ; location); pass 2 = anywhere. Not found: 25/27 = 252, 26/39/40 = 0.
 obj2_resolve:
@@ -1449,7 +1461,8 @@ obj2_resolve:
     ld a, (numObj)
     cp b
     jr z, .miss
-    ; HL -> objTable entry (6 bytes/obj): loc,attr,ext lo,ext hi,noun,adj
+    ; HL -> objTable entry (6 bytes/obj): loc, attr, ext attrs 8-15,
+    ; ext attrs 0-7 (flag order, see the header above), noun, adj
     ; SP14c OV1-1: Z80N MUL D,E for the *6 stride (was 3x ADD HL,HL/DE -
     ; the same shift-add pattern obj_ptr itself used before batch A's
     ; E4 fix; this routine never calls obj_ptr, so E4 never reached it)
@@ -1506,10 +1519,10 @@ obj2_resolve:
 .ncon:
     ld (flags+FLAG_O2CON), a
     inc hl
-    ld a, (hl)                  ; extAttr first byte -> flag 39
+    ld a, (hl)                  ; objTable+2 = attrs 8-15 -> flag 39
     ld (flags+FLAG_O2ATT), a
     inc hl
-    ld a, (hl)                  ; extAttr second byte -> flag 40
+    ld a, (hl)                  ; objTable+3 = attrs 0-7  -> flag 40
     ld (flags+FLAG_O2ATT+1), a
     or a                        ; CF clear = found
     ret
@@ -2187,24 +2200,50 @@ ramSaveNObj: db 0
 ; direct bank-24 access here is BYTE LOADING through slot-6 windows
 ; inside data_save brackets (aud_load_song / aud_load_sfb).
 
-h_beep:                         ; 64: B = duration (cs), C = pitch
-    ld a, c                     ; pitch must be even and 24..222
-    and 1                       ; inclusive (jdaad pin: FREQ_TABLE has
-    ret nz                      ; 100 notes, index (pitch-24)/2 = 0..99)
-    ld a, c
+; SP16 A3 (docs/daad-compliance-report.md section 2): the compiler
+; SWAPS BEEP's two parameters for every ZX target, so a real database
+; carries the TONE in arg1 and the DURATION in arg2 - the reverse of
+; what the DAAD manual, jDAAD and msx2daad all document:
+;   drb.php:900-914
+;     if (($condact->Param2<48) || ($condact->Param2>238))
+;         ... replace the whole condact with PAUSE ...
+;     else if ($target=='ZX') // Zx Spectrum interpreter expects BEEP
+;                             // parameters in opposite order
+;     { swap Param1 and Param2 }
+; Probe (compliance report Appendix A probe 3): "BEEP 50 120" compiled
+; for "zx next" emits 64, 120, 30 - opcode, tone 120, then duration 30
+; (50 scaled by the target's 120/200 duration factor, A6).
+; This handler reads the COMPILED order and must not be "corrected"
+; back to the documented one: doing so plays the duration as a note.
+; Note also that DRB rewrites any BEEP whose tone falls outside 48..238
+; into a PAUSE before the swap, so a ZX-target DDB only ever reaches
+; here with a tone in that range.
+;
+; SP16 A4: the tone ceiling is 238, not 222. DRC emits tones up to 238
+; (octave 8 runs 216..238) and aud_periods.inc carries all 108 entries
+; for 24..238; the old 222 clamp threw away the top eight semitones.
+; jDAAD's own check accepts 24..238 against a 100-entry table and so
+; reads past the end of its own array - NextDAAD's table is the more
+; correct of the two, which is why the clamp moves rather than the
+; table shrinking.
+h_beep:                         ; 64: B = arg1 = tone, C = arg2 = duration (cs)
+    ld a, b                     ; tone must be even and 24..238
+    and 1                       ; inclusive - index (tone-24)/2 = 0..107,
+    ret nz                      ; the full audPeriods table
+    ld a, b
     cp 24
     ret c
-    cp 223
+    cp 239
     ret nc
-    ld a, b                     ; duration 0 = no-op
+    ld a, c                     ; duration 0 = no-op
     or a
     ret z
-    ld a, c
+    ld a, b
     sub 24
     srl a
-    ld (audReqIdx), a           ; period table index 0..99
-    ld a, b                     ; centiseconds -> frames at 50Hz:
-    srl a                       ; (B+1)/2, minimum 1
+    ld (audReqIdx), a           ; period table index 0..107
+    ld a, c                     ; centiseconds -> frames at 50Hz:
+    srl a                       ; (C+1)/2, minimum 1
     adc a, 0
     ld (audReqDur), a
     ld c, a                     ; C = frames for the wait below

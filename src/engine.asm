@@ -14,6 +14,33 @@ eng_init_game:
     ld (flags+FLAG_MAXCARR), a
     ld a, 10
     ld (flags+FLAG_STRENGTH), a
+    ; SP16 C1 (docs/daad-compliance-report.md section 4): flag 29
+    ; fGFlags is the capability byte a period game gates its artwork
+    ; on - "HASAT GMODE" (attribute 247 -> flag 29 bit 7) is the
+    ; canonical test, "HASAT MOUSE" (240 -> bit 0) the other. It was
+    ; never written, so every such game ran here as if text-only.
+    ; The value is DERIVED FROM THIS INTERPRETER'S CAPABILITIES, not
+    ; copied from jDAAD (owner ruling 2026-07-27): bit 7 because
+    ; Layer 2 location graphics exist, bit 0 because MOUSE (condact
+    ; 66) is implemented. Bits 1-6 are drawstring-machine options
+    ; (invisible draw, pictures off, wait-for-key, border) that this
+    ; interpreter does not have, so they stay clear.
+    ld a, %10000001              ; = 129
+    ld (flags+FLAG_GFLAGS), a
+    ; SP16 C2: flag 62 fScMode is the absolute screen-mode byte,
+    ; also never written. msx2daad's convention (daad_platform_msx2.c
+    ; gfxSetScreenModeFlags) is "16|SCREEN" - bit 4 marks a native
+    ; machine mode, distinguishing it from the ST (bits 0-3 = 0/1)
+    ; and PC (4/7/13) values the field originally carried - with
+    ; bits 0-3 naming the mode. Bit 7 means "palette switching
+    ; available", which the Next has (the template's own comment
+    ; reads "2=Text, 4=CGA, 13=EGA, 141=VGA"; jDAAD forces 14+128).
+    ; So: bit 7 + bit 4 + mode 0, where 0 mirrors l2Mode's own
+    ; encoding for Layer 2 256x192 256-colour, the boot default
+    ; (overlay2.asm l2_mode_set). Static - this interpreter does not
+    ; re-publish the byte when a game switches Layer 2 mode.
+    ld a, %10010000              ; = 144
+    ld (flags+FLAG_SCMODE), a
     ld a, (ddbHeader+HDR_NUMOBJ)
     ld (numObj), a
     ld c, 0
@@ -78,7 +105,22 @@ eng_load_objects:
     ld de, OBJ_SIZE
     add ix, de
     djnz .attrs
-    ; extended attributes (2 bytes each)
+    ; Extended attributes (2 bytes each). SP16 A5
+    ; (docs/daad-compliance-report.md section 2, Appendix A probe 4):
+    ; the DDB stores the 16 user attribute bits as ONE LITTLE-ENDIAN
+    ; WORD (drb.php generateObjectExtraAttr -> writeWord). HASAT n
+    ; addresses them as flags[59 - (n>>3)], so attributes 0-7 must
+    ; reach flag 59 and 8-15 flag 58 - i.e. flag 59 takes the word's
+    ; LOW byte, which is the FIRST byte in the file. A probe object
+    ; declared with only attribute 0 set compiles to the bytes
+    ; 01 00, and both references agree (jdaad.js:739-740,
+    ; daad_init.c:168-169 + daad_objects.c:56-57).
+    ; objTable therefore holds the pair in FLAG ORDER, high attribute
+    ; byte first: +2 = attrs 8-15 -> flag 58 / 39, +3 = attrs 0-7 ->
+    ; flag 59 / 40. This is the ONLY place the file's order is
+    ; interpreted; obj_set_refs (overlay0.asm) and obj2_resolve
+    ; (overlay1.asm) then copy +2/+3 out sequentially and both land
+    ; correctly. Do not "fix" the swap here without fixing both.
     ld a, (numObj)
     ld b, a
     ld ix, objTable
@@ -86,9 +128,9 @@ eng_load_objects:
     call rd_seek
 .extr:
     call rd_next
-    ld (ix+2), a
+    ld (ix+3), a                ; first file byte = LE low = attrs 0-7
     call rd_next
-    ld (ix+3), a
+    ld (ix+2), a                ; second file byte = attrs 8-15
     ld de, OBJ_SIZE
     add ix, de
     djnz .extr

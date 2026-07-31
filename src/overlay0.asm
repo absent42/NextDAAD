@@ -496,6 +496,13 @@ obj_move:
     ret
 
 ; A = obj: update flags 51, 54..59.
+; Flags 58/59 are the extended attribute pair. objTable holds it in
+; flag order (engine.asm eng_load_objects, SP16 A5): +2 = attributes
+; 8-15 -> flag 58, +3 = attributes 0-7 -> flag 59. HASAT n reads
+; flags[59 - (n>>3)], so flag 59 must be the DDB word's LOW byte,
+; which is the first byte in the file - the swap is done once, at
+; load time. The sequential copy below is therefore correct as
+; written and must stay in step with obj2_resolve (overlay1.asm).
 obj_set_refs:
     ld (flags+FLAG_CUROBJ), a
     call obj_ptr
@@ -519,10 +526,10 @@ obj_set_refs:
 .nwr:
     ld (flags+FLAG_COWR), a
     inc hl
-    ld a, (hl)
+    ld a, (hl)                  ; objTable+2 = attrs 8-15 -> flag 58
     ld (flags+FLAG_COATT), a
     inc hl
-    ld a, (hl)
+    ld a, (hl)                  ; objTable+3 = attrs 0-7  -> flag 59
     ld (flags+FLAG_COATT+1), a
     ret
 
@@ -1445,7 +1452,15 @@ kwcChar: db 0
 ; --- interaction / movement / stub condacts ---
 h_inkey:                        ; 111: condition; key -> flag 60
     call key_scan
-    ld (flags+FLAG_KEY1), a
+    ; SP16 (docs/daad-compliance-report.md section 4, "Flag 61"):
+    ; flag 61 (fKey2, the IBM extended code) must be cleared whenever
+    ; flag 60 is written - both references do it, this handler used to
+    ; write flag 60 alone and leave a previous game's value in 61.
+    ; This is the ONLY writer of flag 60 (grepped).
+    ld hl, flags+FLAG_KEY1      ; doc 07 (a): flags is ALIGN 256, so
+    ld (hl), a                  ; the pair is one INC L apart and the
+    inc l                       ; store leaves A and F alone for the
+    ld (hl), 0                  ; condition test below
     or a
     jp nz, c_true
     jp c_false

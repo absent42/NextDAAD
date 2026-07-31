@@ -283,6 +283,9 @@ OBJ_WORN        equ 253
 OBJ_CARRIED     equ 254
 LOC_HERE        equ 255
 FLAG_CARRIED_CT equ 1
+FLAG_GFLAGS     equ 29           ; fGFlags: bit 7 graphics available,
+                                 ; bit 0 mouse present. Tested as
+                                 ; HASAT GMODE (247) / HASAT MOUSE (240)
 FLAG_VERB       equ 33
 FLAG_NOUN1      equ 34
 FLAG_ADJ1       equ 35
@@ -301,7 +304,9 @@ FLAG_COWEI      equ 55
 FLAG_COCON      equ 56
 FLAG_COWR       equ 57
 FLAG_COATT      equ 58
-FLAG_KEY1       equ 60
+FLAG_KEY1       equ 60           ; INKEY key code; FLAG_KEY1+1 (61) is
+                                 ; fKey2, cleared whenever 60 is written
+FLAG_SCMODE     equ 62           ; fScMode: absolute screen mode byte
 FLAG_CURWIN     equ 63
 FLAG_O2NUM      equ 25
 FLAG_O2CON      equ 26

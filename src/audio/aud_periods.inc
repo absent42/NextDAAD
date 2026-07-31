@@ -1,6 +1,10 @@
 ; GENERATED - AY periods for jdaad FREQ_TABLE (clock 1773400Hz)
-; Entries 100-107 are an extrapolated octave jdaad lacks - dead under
-; h_beep's 222 pitch clamp (index 0..99).
+; Entries 100-107 are an extrapolated octave jdaad lacks (its own
+; FREQ_TABLE stops at 100 entries while its range check still accepts
+; tones up to 238, so jdaad reads past the end of its array there).
+; LIVE since SP16 A4 raised h_beep's tone ceiling from 222 to 238 -
+; DRC emits tones up to 238, so all 108 entries (tones 24..238, index
+; (tone-24)/2) are reachable.
 audPeriods:
     dw 4095, 4095, 4095, 4095, 4095, 4095
     dw 4095, 4095, 4095, 4030, 3804, 3590

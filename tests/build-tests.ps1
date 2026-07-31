@@ -1,10 +1,13 @@
-# Compiles tests\test.dsf (template), tests\condacts.dsf (suite) and
-# tests\doallnest.dsf (DOALL depth/error demo) with DRC (version 2
-# DDB), generates corrupt/oversize variants from the template, prints
+# Compiles tests\test.dsf (template), tests\condacts.dsf (suite),
+# tests\doallnest.dsf (DOALL depth/error demo) and tests\gmodegate.dsf
+# (SP16 GMODE graphics-gate fixture) with DRC (version 2 DDB),
+# generates corrupt/oversize variants from the template, prints
 # a header report. -Suite makes the suite DDB the active sd\GAME.DDB;
 # -Err4 makes the doallnest DDB active instead (deliberate error 4:
-# nested DOALL on the same process); -Rab compiles the modernised next-
-# only tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real
+# nested DOALL on the same process); -GMode makes the gmodegate DDB
+# active and stages the single Layer 2 picture it needs (see its own
+# block below); -Rab compiles the modernised next-only
+# tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real
 # commercial-quality DAAD game), makes that DDB active, and stages the
 # Layer 2 art (default N.NX2 -> sd\NNN.NX2); -UU compiles the owner-
 # authored tools\urban-upstart\URBAN_UPSTART.DSF (untracked vendor dir -
@@ -12,9 +15,10 @@
 # N.NXI/N.NX2 art exists there as-is (currently NXI-only) to sd\NNN.NXI.
 # The DDB switches are mutually exclusive - if more than one is given,
 # whichever copy runs last in this script wins: -Suite copies first,
-# -Err4 copies over it, -Rab copies over that, -UU copies over that, and
-# -Part copies last of all (both its files - see below), since its
-# block comes after -UU's. The template is active if no switch is given.
+# -Err4 copies over it, -GMode copies over that, -Rab copies over that,
+# -UU copies over that, and -Part copies last of all (both its files -
+# see below), since its block comes after -UU's. The template is
+# active if no switch is given.
 # Two-part fixture (SP11 Task 6), independent of the single-DDB switches
 # above except that it also writes sd\GAME.DDB (see the mutually-
 # exclusive note):
@@ -239,7 +243,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -300,6 +304,23 @@ try {
 }
 finally {
     Remove-Item "$dr\NDNEST.DSF", "$dr\NDNEST.json" -ErrorAction SilentlyContinue
+    Pop-Location
+}
+
+# SP16 Task 1 GMODE graphics-gate fixture. Compiled unconditionally,
+# like the suite and doallnest above, so a break in the DSF is caught
+# on a plain run; only -GMode makes it the active sd\GAME.DDB.
+Copy-Item "$PSScriptRoot\gmodegate.dsf" "$dr\NDGMODE.DSF" -Force
+Push-Location $dr
+try {
+    & .\TOOLS\DRC\DRF.exe zx next NDGMODE.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (gmodegate)" }
+    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDGMODE.json NDGMODE.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (gmodegate)" }
+    Move-Item NDGMODE.DDB "$root\tests\out\gmodegate.ddb" -Force
+}
+finally {
+    Remove-Item "$dr\NDGMODE.DSF", "$dr\NDGMODE.json" -ErrorAction SilentlyContinue
     Pop-Location
 }
 
@@ -368,6 +389,46 @@ if ($Suite) {
 }
 if ($Err4) {
     Copy-Item "$root\tests\out\doallnest.ddb" "$root\sd\GAME.DDB" -Force
+}
+
+$gmodeActive = $false
+if ($GMode) {
+    # SP16 Task 1 owner leg fixture: tests\gmodegate.dsf gates its
+    # PICTURE/DISPLAY on HASAT GMODE (flag 29 bit 7), so the leg needs
+    # exactly one Layer 2 picture staged at the player's location
+    # number - the fixture starts the player at location 1, so
+    # sd\001.NX2. Source is the Rabenstein art set (already converted,
+    # 320-wide NX2), reused rather than converted here: this script has
+    # no image-conversion step (see the -Rab block's own note).
+    # Same CSpect lock hazard as -Rab/-UU/-Title/-Font: a running
+    # emulator holds sd\ files open and the cleanup/copy fail
+    # piecemeal, leaving a mixed extension set the loader's probe chain
+    # resolves unpredictably. Refuse to stage rather than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial gmodegate fixture)"
+    }
+    Copy-Item "$root\tests\out\gmodegate.ddb" "$root\sd\GAME.DDB" -Force
+    # Stale-clean ONLY the files this switch owns - the six extension
+    # variants of the single number 001 - so a leftover 001.NXI from an
+    # earlier -Rab/-UU stage cannot win the probe chain, while every
+    # other staged number (and sd\001.VID, a different extension owned
+    # by -Vid) is left exactly as found.
+    foreach ($v in @('NX2', 'NXI', 'N2Z', 'NXZ', 'NX2.ZX0', 'NXI.ZX0')) {
+        Remove-Item "$root\sd\001.$v" -Force -ErrorAction SilentlyContinue
+    }
+    $gmodeArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
+    if (Test-Path $gmodeArt) {
+        Copy-Item $gmodeArt "$root\sd\001.NX2" -Force
+        "staged tools\Rabenstein-master\nextdaad\1.NX2 -> sd\001.NX2 (gmodegate picture)"
+    }
+    else {
+        # Not fatal: with the gate OPEN and no picture the fixture
+        # prints its "gate open, picture missing" branch, which still
+        # answers the question the leg is asking (is flag 29 bit 7
+        # published?). Say so rather than throwing.
+        "WARNING: $gmodeArt absent - gmodegate will report the gate result without a picture"
+    }
+    $gmodeActive = $true
 }
 
 $rabActive = $false
@@ -989,6 +1050,7 @@ elseif ($uuActive) { "active: urbanupstart" }
 elseif ($UU) { "active: urbanupstart (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
 elseif ($rabActive) { "active: rabenstein" }
 elseif ($Rab) { "active: rabenstein (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
+elseif ($gmodeActive) { "active: gmodegate (SP16 GMODE graphics-gate fixture)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($Suite) { "active: suite" }
 else { "active: template" }

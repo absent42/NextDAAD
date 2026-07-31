@@ -92,8 +92,22 @@ EXAMI 104 verb
 NORTH 0
 /1
 /OBJ
-/0    CARRIED     1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   LAMP _
-/1    0           2   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   BOX  _
+; Columns: number, starts at, weight, then c(ontainer) w(earable),
+; then the 16 extended attribute columns, then noun/adjective. The
+; DAAD template's own column ruler for those 16 reads
+;     5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+; i.e. attribute 15 LEFTMOST down to attribute 0 RIGHTMOST, across
+; the whole word (NOT per-byte). Verified against DRC 0.40/0.35
+; output, which is what SP16 check 47 pins:
+;     last column Y  -> extra-attribute bytes 01 00 (attribute 0)
+;     8th column Y   -> extra-attribute bytes 00 01 (attribute 8)
+; The DDB word is LITTLE ENDIAN (drb.php generateObjectExtraAttr),
+; so the first byte is attributes 0-7 and belongs in flag 59 (40 for
+; the second referenced object), the second is 8-15 and belongs in
+; flag 58 (39). Lamp carries attribute 0 and box/coin attribute 8 so
+; that check 47 can tell the two apart in both directions.
+/0    CARRIED     1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ Y   LAMP _
+/1    0           2   Y _  _ _ _ _ _ _ _ Y _ _ _ _ _ _ _ _   BOX  _
 /2    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ Y _ _ _ _ _ _ _ _   COIN _
 /3    0           1   _ Y  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   HAT  _
 /PRO 0
@@ -454,17 +468,29 @@ NORTH 0
         MES "46 OK#n"
         SKIP 1
 > _ _   MES "46 F#n"
-; 47 HASAT extended-attribute byte order: object 2 has attr 0 set in
-; /OBJ. Attr 0-7 land in flag 59, 8-15 in flag 58. HASAT 0 true and
-; HASNAT 8 true together pin the low/high byte assignment (finding 3).
-; NOTE: the 16 /OBJ attribute columns are per-byte MSB-first, i.e.
-; attrs 7..0 then 15..8 left to right, so attr 0 is the 8th column
-; (verified against DRC output: 8th-column Y compiles to extAttr word
-; $0100, whose second byte is flag 59 = attrs 0-7, matching msx2daad).
-> _ _   SETCO 2
+; 47 HASAT/HASNAT extended-attribute byte order (SP16 A5,
+; docs\daad-compliance-report.md section 2 + Appendix A probe 4).
+; HASAT n reads flags[59 - (n>>3)] bit (n&7), so attributes 0-7 must
+; land in flag 59 and 8-15 in flag 58; the DDB stores the pair as one
+; LITTLE-ENDIAN word, so flag 59 takes the FIRST file byte. The lamp
+; carries attribute 0 alone (bytes 01 00) and the coin attribute 8
+; alone (bytes 00 01) - see the /OBJ column note above - so this
+; check disambiguates the two directions: an interpreter with the
+; bytes crossed passes NEITHER half.
+; HISTORY: this check used to assert HASAT 0 on the coin, under a
+; comment claiming the 16 /OBJ columns were per-byte MSB-first (attr
+; 0 = 8th column). That reading of the column order was wrong - the
+; coin's 8th-column Y is attribute 8 - and the check passed only
+; because the interpreter's byte order was crossed the same way. Both
+; are fixed together; do not "restore" either half alone.
+> _ _   SETCO 0                 ; lamp: attribute 0 only
         HASAT 0
         HASNAT 1
         HASNAT 8
+        SETCO 2                 ; coin: attribute 8 only
+        HASAT 8
+        HASNAT 9
+        HASNAT 0
         MES "47 OK#n"
         SKIP 1
 > _ _   MES "47 F#n"
@@ -583,7 +609,13 @@ NORTH 0
         SKIP 1
 > _ _   MES "56 F#n"
 ; 57 noun2 + preposition + object-2 resolution (box = object 1,
-; container, at location 0; BOX noun id 50)
+; container, at location 0; BOX noun id 50). Flags 39/40 are the
+; SECOND referenced object's extended attribute pair and are the
+; third A5 site (obj2_resolve, overlay1.asm) - the only one HASAT
+; cannot reach, since HASAT always reads the 58/59 pair. The box
+; carries attribute 8 alone (bytes 00 01), so flag 39 (attrs 8-15)
+; must read 1 and flag 40 (attrs 0-7) must read 0; crossed bytes
+; give exactly the opposite pair.
 > _ _   MES "57 TYPE: get lamp in box#n"
         GOTO 0
         PARSE 0
@@ -594,6 +626,8 @@ NORTH 0
         EQ 25 1
         EQ 26 128
         EQ 27 0
+        EQ 39 1
+        EQ 40 0
         MES "57 OK#n"
         SKIP 1
 > _ _   MES "57 F#n"
@@ -700,11 +734,26 @@ NORTH 0
 ; ---- audio checks ----
 ; Audio QUALITY is owner-ear (CSpect + real hardware legs); these
 ; assert safe completion only.
-; 65 BEEP: a valid note returns after blocking ~0.1s; an odd pitch
+; 65 BEEP: a valid note returns after blocking ~0.1s; an odd tone
 ; and a zero duration are silent no-ops that still complete.
+; SP16 A3/A4 - DRC WRITES BEEP AS "BEEP duration tone" AND THEN SWAPS
+; THE TWO FOR EVERY ZX TARGET (drb.php:900-914), so "BEEP 10 60"
+; below reaches h_beep as arg1 = tone 60, arg2 = duration 6 (10
+; centiseconds scaled by the target's 120/200 factor). The source
+; order here is therefore unchanged, but its MEANING at the handler
+; is the reverse of what it used to be read as - before A3 this
+; whole check was a silent no-op, because h_beep read tone 60 as a
+; duration and duration 6 as a tone and rejected 6 as out of range.
+; DRC also rewrites any BEEP whose source tone falls outside 48..238
+; into a PAUSE before the swap, so 48 and 238 are the extremes a
+; database can actually carry - 238 is the A4 ceiling raise (was 222)
+; and exercises aud_periods.inc entries 100-107 for the first time.
+; Audio QUALITY is the owner ear leg; this asserts completion only.
 > _ _   BEEP 10 60
         BEEP 10 61
         BEEP 0 60
+        BEEP 10 48
+        BEEP 10 238
         MES "65 OK#n"
 ; 66 SFX: missing song no-ops (the suite SD carries no 200.AKY),
 ; play-effect with no effects bank no-ops (the suite SD carries no
@@ -920,6 +969,33 @@ NORTH 0
         MES "80 OK#n"
         SKIP 1
 > _ _   MES "80 F#n"
+; ---- SP16 Task 1 appended checks (81-) ----
+; Appended deliberately: the differential parser harness
+; (tests\parser) indexes its findings by turn, and every turn it
+; replays lands in checks 50-60, so anything added after check 80 is
+; unreachable from the replay and leaves the baseline turn numbering
+; untouched.
+; 81 INKEY clears flag 61. DAAD's INKEY publishes the key code in
+; flag 60 (fKey1) and the IBM extended code in flag 61 (fKey2);
+; both references clear 61 whenever they write 60, and h_inkey used
+; to write 60 alone, leaving whatever was in 61 (compliance report
+; section 4, "Flag 61"). Both flags are pre-poisoned so a handler
+; that skipped either write fails this check.
+; The PAUSE lets a key still physically down from check 80's typed
+; file name release before INKEY samples the matrix - INKEY is a
+; condition and its result is deliberately NOT gated on here: the
+; assertions live in the NEXT entry, so they run whether INKEY found
+; a key (entry falls off its end) or not (entry aborts at INKEY).
+> _ _   PAUSE 50
+        LET 60 66
+        LET 61 55
+        INKEY
+> _ _   ZERO 60                 ; INKEY overwrote the poison (no key
+                                ; down at the sample -> 0)
+        ZERO 61                 ; and cleared fKey2 alongside it
+        MES "81 OK#n"
+        SKIP 1
+> _ _   MES "81 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5

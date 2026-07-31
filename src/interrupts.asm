@@ -258,7 +258,7 @@ audEnable: db 0             ; sticky by design: armed once by the first
 ; 4 start-music, 5 init-effects, 6 start-sample, 7 stop-sample.
 ; The byte is now fully allocated - no further audio triggers planned.
 audRequest: db 0
-audReqIdx:  db 0            ; beep: period table index 0..99
+audReqIdx:  db 0            ; beep: period table index 0..107 (SP16 A4)
 audReqDur:  db 0            ; beep: duration in frames
 audReqSfx:  db 0            ; play-effect: effect number (>= 1)
 audReqLoop: db 0            ; start-music: 1 = loop, 0 = play once
