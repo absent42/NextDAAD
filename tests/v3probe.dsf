@@ -31,7 +31,10 @@
 ; executable spec (unitTests/src/tests_condacts_v3.c,
 ; test_HASAT_altflags / test_HASNAT_altflags) all honour it, so
 ; NextDAAD does too and the two legs are EXPECTED to disagree on flag
-; 116 (and on 115 in the alternative-bank entry). Recorded, not a bug.
+; 116, and on flag 116 ALONE: PRO 3's alternative-bank entry runs HASAT
+; and nothing else, so flag 115 is written only by the standard-bank
+; HASNAT, where both interpreters use base 59 and agree. Recorded, not
+; a bug.
 ;
 ; SETAT STAND-INS - read before editing PRO 2. DRF 0.40 has no SETAT
 ; keyword: its condact table calls slot 124 "dumb", 0 parameters
