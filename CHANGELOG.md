@@ -2,6 +2,201 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.3.1 - unreleased
+
+DAAD compliance sweep. NextDAAD now executes real DAAD databases with
+reference-correct behaviour across messages, object resolution, flags
+and refusal semantics, and accepts DAAD V3 databases so the standard
+DAAD-READY ZX Next authoring path works unmodified. Correctness only;
+no new features beyond V3.
+
+Three long-standing questions were settled by scripted measurement of
+the original ZX Spectrum 48K interpreter rather than by argument: the
+convertible-noun threshold, the QUIT/END confirmation input model, and
+the PARSE 1 rule. Where NextDAAD deliberately still differs from the
+reference interpreters, the reasons are now written down for authors
+in `authoring-kit/DIVERGENCES.md`.
+
+### DAAD V3
+
+- Version 3 databases load and run. Header version 2 or 3 is accepted;
+  everything version-specific is gated on the loaded header, so a
+  version 2 database behaves exactly as it did before.
+- V3 condacts implemented: XMES (120), INDIR (122, second-parameter
+  indirection - the one DRC emits automatically and cannot be avoided
+  in a V3 database) and SETAT (124, set/clear/toggle an attribute
+  bit). Under version 2 all three still raise runtime error 5, as
+  both references do.
+- V3 flag 53 bits: bit 0 (DOALL found no objects, set at DOALL entry
+  and cleared on the first object found), bit 1 (alternative attribute
+  flag bank at 91 rather than 59, honoured by HASAT, HASNAT and SETAT
+  alike), bit 4 (a preposition preceded noun 1), bit 5 (an
+  unrecognised word followed the verb). Bit 2 (suppress Spanish
+  enclitic pronouns) has nothing to suppress here - see below.
+- `PAUSE 0` under V3 means "wait for a key" (the GETKEY keyword), not
+  "wait 256 frames".
+- `SYNONYM` no longer marks the entry DONE under V3, and still does
+  under V2 - the DAAD platform split, with Z80 on the marking side.
+- The authoring kit still compiles version 2. Switching it to `-v3` is
+  an owner decision with three silent migration hazards, documented in
+  `authoring-kit/DIVERGENCES.md` section 6.
+
+### Object interaction and messages
+
+- GET, DROP, WEAR, REMOVE, PUTIN and TAKEOUT print their success
+  messages (SM36/SM37/SM38/SM39, and PUTIN/TAKEOUT's composite
+  SM44/SM45/SM51 output). The objects always moved; the player was
+  simply never told. Most visible with GET ALL and DROP ALL, which
+  were completely silent.
+- Refusal check order restored across the whole family, so the right
+  refusal message appears: DROP of an object lying at the player's
+  location answers SM49 rather than "I don't have one of those"; WEAR
+  tests location, worn and carried before wearability, which makes
+  SM49 reachable at all; REMOVE produces SM23 ("I'm not wearing one of
+  those") where it previously used SM50 for both cases; GET tests
+  weight before the hands-full count, which decides whether a GET ALL
+  against an over-strength load stops dead or keeps going.
+- A refusal now performs NEWTEXT, so it aborts the rest of a compound
+  order. `GET SWORD AND KILL ORC WITH IT` no longer attacks the orc
+  when the sword was refused. OK (condact 23) deliberately does not -
+  a successful entry ending in OK keeps the rest of the order alive.
+- The AUTO- family distinguishes "there is no such object anywhere"
+  from "that word is not an object": SM8 is printed for the latter, as
+  both references do.
+- TAKEOUT performs the weight check it never had.
+- Substituted object names are truncated at the first "." (both
+  references do this), so one `/OTX` entry can serve as both a short
+  name and a longer description. Plain LISTOBJ/LISTAT output is not
+  truncated.
+- The `@` escape's capitalisation is gated on the database language
+  and fires for Spanish databases only, matching jDAAD's own gate. It
+  had never fired at all before - a register clobber in the message
+  seek made whether it fired depend on where the database loaded.
+
+### Object resolution
+
+- Extended object attribute bytes are loaded in the right order.
+  `HASAT n` for attributes 0-7 was reading attributes 8-15 and vice
+  versa, silently corrupting every attribute test in every game.
+- A bare noun resolves against an object that carries an adjective:
+  `GET LAMP` finds a "QUAINT LAMP". A full adjective match still wins
+  over a partial one, so disambiguation between "RUSTY SWORD" and
+  "SHINY SWORD" is preserved.
+- Search priority restored for the whole AUTO- family and WHATO. The
+  "anywhere" sentinel collided with the object-carried location value,
+  so every "carried" pass was really an "anywhere" pass and could
+  match objects that had never been created. This also made AUTOT able
+  to take an object out of a container the player was nowhere near.
+- WHATO with no match clears flags 54-59 instead of leaving the
+  previous object's data in them.
+- SWAP is a raw exchange that no longer adjusts flag 1 (swapping two
+  carried objects used to leave it two too low) and sets the
+  referenced object; COPYOO sets the referenced object.
+- Zero-weight containers are magic bags: their contents no longer
+  transmit weight.
+
+### Listing and display
+
+- LISTOBJ and LISTAT honour flag 53 bit 6: clear (the default) lists
+  one object per line, set gives the continuous "a, b and c." form.
+  The continuous form used to be forced, which is not DAAD's default.
+- Flag 53 bit 7 ("objects were listed") is maintained on both the
+  LISTOBJ and the LISTAT path, set when objects were listed and
+  cleared when none were.
+- An empty LISTAT prints SM53 alone, with no extra newline.
+- A listing no longer overwrites the referenced object. Any LISTOBJ or
+  LISTAT silently re-pointed flags 51 and 54-59 at the last object it
+  listed.
+
+### Flow control
+
+- A DOALL that finds no matching object performs NEWTEXT and NOTDONE.
+  A DOALL that iterated and then ran out still completes DONE - the
+  two cases are distinct and were merged.
+- `EXIT n` with n non-zero reinitialises windows, flags and objects
+  and restarts the game. It used to do nothing at all.
+- `WINDOW n` with n out of range keeps the current window instead of
+  masking to window 0.
+- An out-of-range location raises runtime error 1 ("invalid location")
+  rather than error 7 ("bad message").
+- MOUSE sub-commands 4-7 are implemented: GETFINEMS (fine position
+  into three flags), POINTERMS (re-upload the built-in pointer into
+  sprite slot 0), DELTAXMS and DELTAYMS (the pointer hotspot offset -
+  not movement deltas, despite the symbol names). RESETMS also clears
+  the hotspot now.
+
+### Parser and input
+
+- `PARSE 1` re-parses the quoted section of the last order, so
+  `SAY "..."` style commands work. The rule was measured on the
+  original interpreter and no reference implements it correctly:
+  whether a quoted section exists decides whether the sentence flags
+  are refilled, and what it contains decides the condition.
+- `INPUT stream options` switches the active window for the duration
+  of the input and restores it afterwards.
+- QUIT and END read a LINE at the confirmation prompt - the reply is
+  echoed live and nothing happens until ENTER. NextDAAD used to act on
+  a single keypress; measurement of the original settled it against
+  NextDAAD, which was the outlier of three.
+- The convertible-noun threshold is 40, not 20: a bare noun with a
+  vocabulary id below 40 acts as a verb. Measured on the original.
+  Behaviour change worth knowing about - any noun numbered 20-39 now
+  acts as a command when typed on its own.
+
+### Flags
+
+- Flag 29 (graphics flags) reads 129 - bit 7 because Layer 2 location
+  graphics exist, bit 0 because the MOUSE condact is implemented. It
+  was never written at all, so a period game gating its picture
+  drawing on `HASAT GMODE` drew nothing on a machine whose headline
+  feature is Layer 2 artwork.
+- Flag 62 (screen mode) reads 144 at initialisation.
+- Flag 61 is cleared whenever flag 60 is written, matching INKEY's
+  documented pair behaviour.
+
+### Audio
+
+- BEEP plays the note and the length the compiler actually emitted.
+  DRC deliberately swaps BEEP's two parameters for ZX targets, so the
+  interpreter was reading the tone as a duration and the duration as a
+  pitch: most authored BEEPs played a wrong note or were silently
+  dropped.
+- BEEP's tone ceiling is 238 rather than 222, which recovers the top
+  eight semitones of octave 8 - the range DRC can actually emit.
+- RANDOM and CHANCE use a real 16-bit xorshift (period 65535) with
+  uniform output scaling. The old generator was degenerate: it could
+  return only six distinct values in a repeating cycle of eight, and
+  CHANCE 50 fired 62 per cent of the time. Any game whose behaviour
+  depended on the old sequence will now differ.
+- The two parked AY symptoms (nine-channel distortion, and a
+  post-STOPM restart at a lower tone) were instrumented and measured
+  against a phase-matched fresh-boot control on the real material. No
+  cause was attributed and no change was made; both are now hardware
+  listening tests rather than open code questions.
+
+### Compatibility
+
+- Save format is unchanged, and saves made before this release load
+  normally. They carry the old VALUES of flags 29, 53 and 62, though:
+  a pre-SP16 save restores flag 29 as 0, so a loaded game will take
+  the no-graphics branch of `HASAT GMODE` until something rewrites the
+  flag. Start a fresh game to pick up the new flag values.
+- Behaviour changes are the point of this release. A game tuned around
+  any of the old behaviour above - the silent GET, the forced
+  continuous listing, the old RNG sequence, the 20 convertible-noun
+  threshold - will play differently.
+
+### Authoring kit
+
+- New `DIVERGENCES.md`: the register of places where NextDAAD
+  deliberately differs from the reference DAAD interpreters, with what
+  each reference does, what NextDAAD does and why, and what it means
+  for a DSF. Also lists the reference-interpreter defects found while
+  adjudicating, so a difference against one particular reference is
+  not mistaken for a NextDAAD fault.
+- `SETUP.md`: MOUSE sub-command table updated for the full 0-7 set,
+  BEEP parameter order and tone range documented.
+
 ## v0.3.0 - 2026-07-27
 
 ### Video

@@ -557,6 +557,12 @@ DRC (the compiler) or the interpreter enforce it, and these notes
 exist so a compile error or a truncated feature makes sense when you
 hit it.
 
+For the places where NextDAAD deliberately behaves differently from
+the other DAAD interpreters - condact edge cases, message formatting,
+flag initialisation, the V3 database rules - see `DIVERGENCES.md`
+alongside this file. That page is the first thing to check when a game
+behaves differently here than it did on another interpreter.
+
 ### DDB size: the 31744-byte ceiling
 
 The DDB format DRC compiles for this target (the classic ZX addressing
@@ -646,6 +652,21 @@ older DRB versions. Trust what the compiler actually produces - test
 the tone/timing in CSpect or on hardware - over duration tables in
 older documentation.
 
+Two more compiler behaviours the interpreter now matches exactly:
+
+- **BEEP arguments are swapped for ZX targets.** DRB writes `BEEP tone
+  duration` into the database even though you author
+  `BEEP duration tone`, and NextDAAD reads the compiled order. Author
+  the documented order and let the compiler do its job.
+- **BEEP tones outside 48..238 become a PAUSE.** DRB rewrites the whole
+  condact before the swap, so a tone below 48 or above 238 never
+  reaches the interpreter as a note. Tones must also be even; an odd
+  tone is silent by design. The full 48..238 range now sounds,
+  including the top octave (216..238).
+
+Both PAUSE and BEEP durations are pre-scaled by the compiler on this
+target (a factor of 0.6). See `DIVERGENCES.md` section 1.
+
 ### Appendix D symbol names (SFX and MOUSE)
 
 DAAD Ready's Appendix D lists symbolic names for the sub-command
@@ -678,23 +699,22 @@ not compile. The compiler defines `PLAYFLI` (9) and `PLAYFLIL` (10).
 Sample numbers 1-254 may resolve to a WAV or fall back to an AY
 effect; 255 is reserved and always plays from the AY effects bank.
 
-### MOUSE sub-commands (partial support)
+### MOUSE sub-commands
 
-`MOUSE` support on this target is **partial**: sub-commands 0-3 are
-implemented, 4-7 are accepted but not supported. An unsupported
-sub-command no-ops silently (a DEBUG build shows a marker), the same
+All eight documented sub-commands (0-7) are implemented. A sub-command
+number above 7 no-ops silently (a DEBUG build shows a marker), the same
 idiom `SFX` uses above for a sub-command it does not recognise.
 
 | n | Symbol | Behaviour on this target |
 |---|--------|---------------------------|
-| 0 | `RESETMS` | Re-centre the pointer at (160,128), zero the buttons, and re-latch the movement baseline. |
+| 0 | `RESETMS` | Re-centre the pointer at (160,128), zero the buttons, clear the hotspot offset, and re-latch the movement baseline. |
 | 1 | `SHOWMS` | Show the hardware sprite pointer. |
 | 2 | `HIDEMS` | Hide the hardware sprite pointer. |
 | 3 | `GETMS` | Read mouse state into four flags starting at the first argument: `flags[n]` = buttons (idle 0, left 1, right 2, middle 4, chords additive - jdaad parity, not the raw Kempston byte), `flags[n+1]` = column 0-79 (X/8), `flags[n+2]` = row 0-31 (Y/8), `flags[n+3]` = column 0-53 (X/6). |
-| 4 | `GETFINEMS` | Not supported - accepted and ignored. |
-| 5 | `POINTERMS` | Not supported - accepted and ignored. Reserved for a future feature that switches between several loaded pointer shapes at runtime (see "Custom mouse pointer" above). |
-| 6 | `DELTAXMS` | Not supported - accepted and ignored. |
-| 7 | `DELTAYMS` | Not supported - accepted and ignored. |
+| 4 | `GETFINEMS` | Fine position into **three** flags: `flags[n]` = buttons (same convention as 3), `flags[n+1]` = X/2 (0-159), `flags[n+2]` = Y undivided (0-255). This is the DRC manual's VGA case, which is what a 320x256 pointer plane is; `flags[n+3]` is NOT written. |
+| 5 | `POINTERMS` | Re-upload the built-in pointer pattern into hardware sprite slot 0 and re-arm it. There are no `.PTR` pointer files on this target and only one pointer shape, so the parameter selects nothing; the sub exists so the documented `POINTERMS` then `SHOWMS` idiom always leaves slot 0 holding this interpreter's pointer, whatever else used the slot meanwhile. |
+| 6 | `DELTAXMS` | Set the pointer's hotspot X offset within its bitmap - **not** a movement delta, despite the symbol name. The reported coordinates do not change; the bitmap shifts so the hotspot pixel lands on the reported position. Floors at the plane origin rather than wrapping. |
+| 7 | `DELTAYMS` | As 6, for the hotspot Y offset. |
 
 ## 9. Multi-part games
 
