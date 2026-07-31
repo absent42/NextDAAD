@@ -726,13 +726,108 @@ obj_find_n1:
     ld d, $FE
     jp obj_find_pass
 
+; E = system message: print it. No newline is added - the references
+; add none either, and a message that wants one carries its own #n.
+sysmsg:
+    ld a, 0
+    jp print_msg
+
 ; E = system message: print + newline, exit the table as DONE.
 refuse:
-    ld a, 0
-    call print_msg
+    call sysmsg
+refuse_tail:                    ; message(s) already printed
     call prn_newline
-    ld a, 1
-    jp eng_exit_table
+    call h_newtext              ; SP16 B2: every refusal performs NEWTEXT
+    ld a, 1                     ; before DONE (msx2daad's do_NEWTEXT() +
+    jp eng_exit_table           ; do_DONE() tail), so a refused order kills
+                                ; the rest of a compound sentence
+
+; SP16 B9: the AUTO- family found nothing with its own search chain.
+; Both references then make ONE further pass over ALL locations.
+; Out: CF SET  = the noun is a real word that is not an object anywhere
+;                in the game, so SM8 ("I can't do that") is printed;
+;      CF CLEAR = the family's own "not here" message stands (the object
+;                exists somewhere, or Noun1 was not in the vocabulary).
+; Preserves BC and E (obj_find_pass touches neither).
+auto_probe:
+    push bc
+    ld d, $FE                   ; anywhere pass, obj_find_pass's own $FE
+    call obj_find_pass
+    pop bc
+    ret nc                      ; exists somewhere: family message
+    ld a, (flags+FLAG_NOUN1)
+    inc a                       ; 255 = not in the vocabulary -> 0
+    scf
+    ret nz                      ; real word, not an object: SM8
+    ccf                         ; CF clear: family message
+    ret
+
+; E = the family's "not here" message. B9 tail shared by AUTOG/AUTOD/
+; AUTOW/AUTOR/AUTOP (AUTOT's family message is a composite - see there).
+auto_end:
+    call auto_probe
+    jr nc, refuse
+    ld e, 8
+    jr refuse
+
+; CF SET while there is still room for one more carried object
+; (flag 1 < flag 37). Corrupts AF and E.
+hands_room:
+    ld a, (flags+FLAG_MAXCARR)
+    ld e, a
+    ld a, (flags+FLAG_CARRIED_CT)
+    cp e
+    ret
+
+; B = the object about to be picked up. CF SET when carried + worn +
+; that object would exceed flag 52. The running total saturates at 255
+; so an overloaded total cannot pass the check. Corrupts AF/DE,
+; preserves BC. Shared by GET and TAKEOUT (both reference interpreters
+; run the identical test in both).
+weight_bust:
+    ld a, b
+    push bc
+    call obj_weight_of
+    pop bc
+    ld d, a
+    push bc
+    push de
+    call weight_total
+    pop de
+    pop bc
+    add a, d
+    jr nc, .noovf
+    ld a, 255
+.noovf:
+    ld e, a
+    ld a, (flags+FLAG_STRENGTH)
+    cp e                        ; CF set = strength < total = too heavy
+    ret
+
+; E = leading system message, C = the container object. Prints the
+; PUTIN/TAKEOUT composite "<SMe> <container name> <SM51>" (msx2daad
+; _internal_putin / _internal_takeout). The name goes through the same
+; objname path the '_' escape uses, which reads flag 51, so flag 51
+; holds the CONTAINER for the duration and is put back afterwards -
+; the referenced object is game-visible state and must not shift.
+msg_in_obj:
+    push bc
+    call sysmsg
+    pop bc
+    ld a, (flags+FLAG_CUROBJ)
+    push af
+    ld a, c
+    ld (flags+FLAG_CUROBJ), a
+    ld c, ' '
+    call prn_char
+    ld a, '_'
+    call objname_print
+    ld c, ' '
+    call prn_char
+    pop af
+    ld (flags+FLAG_CUROBJ), a
+    ld e, 51
+    jp sysmsg
 
 ; Cancel any active DOALL loop (GET/TAKEOUT SM27 capacity refusal,
 ; manual 1137-1140, 1270-1273). Mirrors the DOALL-completion clear in
@@ -762,39 +857,22 @@ h_get:                          ; 40
     ld a, (flags+FLAG_PLAYER)
     cp e
     jr nz, .nothere
-    ld a, (flags+FLAG_MAXCARR)
-    ld e, a
-    ld a, (flags+FLAG_CARRIED_CT)
-    cp e
-    jr c, .cap
-    call doall_cancel           ; SM27 refusal cancels any DOALL
-    ld e, 27
+    call weight_bust            ; SP16 B3: WEIGHT is tested BEFORE the
+    jr nc, .cap                 ; hands-full count, not after it - the
+    ld e, 43                    ; order both references use
     jp refuse
 .cap:
-    ld a, b
-    push bc
-    call obj_weight_of
-    pop bc
-    ld d, a
-    push bc
-    push de
-    call weight_total
-    pop de
-    pop bc
-    add a, d
-    jr nc, .noovf
-    ld a, 255                   ; carried+object > 255: saturate so an
-.noovf:                         ; overloaded total cannot pass the check
-    ld e, a
-    ld a, (flags+FLAG_STRENGTH)
-    cp e
-    jr nc, .take
-    ld e, 43
+    call hands_room
+    jr c, .take
+    call doall_cancel           ; SM27 refusal cancels any DOALL
+    ld e, 27
     jp refuse
 .take:
     ld a, b
     ld c, OBJ_CARRIED
-    jp obj_move
+    call obj_move
+    ld e, 36                    ; SP16 B1: "I now have the _."
+    jp sysmsg
 .have:
     ld e, 25
     jp refuse
@@ -807,20 +885,27 @@ h_drop:                         ; 41
     call obj_set_refs
     ld a, b
     call obj_ptr
-    ld a, (hl)
-    cp OBJ_WORN
-    jr z, .worn
+    ld a, (hl)                  ; HL stays on the location byte for the
+    cp OBJ_WORN                 ; at-location test below (doc 01: cp (hl)
+    jr z, .worn                 ; is 1 byte against a 3-byte reload)
     cp OBJ_CARRIED
-    jr nz, .nothave
+    jr z, .drop
+    ld a, (flags+FLAG_PLAYER)   ; SP16 B4: an object lying at the
+    ld e, 28                    ; player's location answers SM49, not
+    cp (hl)                     ; the generic SM28
+    jr nz, .no
+    ld e, 49
+.no:
+    jp refuse
+.drop:
     ld a, (flags+FLAG_PLAYER)
     ld c, a
     ld a, b
-    jp obj_move
+    call obj_move
+    ld e, 39                    ; SP16 B1: "I've dropped the _."
+    jp sysmsg
 .worn:
     ld e, 24
-    jp refuse
-.nothave:
-    ld e, 28
     jp refuse
 
 h_wear:                         ; 42
@@ -828,18 +913,26 @@ h_wear:                         ; 42
     call obj_set_refs
     ld a, b
     call obj_ptr
-    ld d, (hl)
-    inc hl
-    bit 7, (hl)
-    jr z, .cant
+    ld d, (hl)                  ; SP16 B5: reference order is at-location,
+    ld a, (flags+FLAG_PLAYER)   ; worn, not-carried, not-wearable - the
+    cp d                        ; wearable test came FIRST here, which
+    jr z, .here                 ; hid SM49 completely
     ld a, d
     cp OBJ_WORN
     jr z, .already
     cp OBJ_CARRIED
     jr nz, .nothave
+    inc hl
+    bit 7, (hl)
+    jr z, .cant
     ld a, b
     ld c, OBJ_WORN
-    jp obj_move
+    call obj_move
+    ld e, 37                    ; SP16 B1: "I'm now wearing the _."
+    jp sysmsg
+.here:
+    ld e, 49
+    jp refuse
 .cant:
     ld e, 40
     jp refuse
@@ -855,28 +948,36 @@ h_remove:                       ; 39
     call obj_set_refs
     ld a, b
     call obj_ptr
-    ld d, (hl)
-    inc hl
-    bit 7, (hl)
-    jr z, .cant
+    ld d, (hl)                  ; SP16 B6: reference order is carried-or-
+    ld a, d                     ; at-location (SM50), not-worn (SM23),
+    cp OBJ_CARRIED              ; not-wearable, hands-full. SM23 was
+    jr z, .nowear               ; unreachable before this
+    ld a, (flags+FLAG_PLAYER)
+    cp d
+    jr z, .nowear
     ld a, d
     cp OBJ_WORN
     jr nz, .notworn
-    ld a, (flags+FLAG_MAXCARR)
-    ld e, a
-    ld a, (flags+FLAG_CARRIED_CT)
-    cp e
+    inc hl
+    bit 7, (hl)
+    jr z, .cant
+    call hands_room
     jr c, .rem
     ld e, 42
     jp refuse
 .rem:
     ld a, b
     ld c, OBJ_CARRIED
-    jp obj_move
+    call obj_move
+    ld e, 38                    ; SP16 B1: "I've removed the _."
+    jp sysmsg
 .cant:
     ld e, 41
     jp refuse
 .notworn:
+    ld e, 23
+    jp refuse
+.nowear:
     ld e, 50
     jp refuse
 
@@ -893,7 +994,7 @@ h_autog:                        ; 31: here, carried, worn
     call obj_find_pass
     jr nc, .go
     ld e, 26
-    jp refuse
+    jp auto_end                 ; SP16 B9
 .go:
     ld b, a
     jp h_get
@@ -901,7 +1002,7 @@ h_autod:                        ; 32: carried, worn, here
     call auto_cwh
     jr nc, .go
     ld e, 28
-    jp refuse
+    jp auto_end                 ; SP16 B9
 .go:
     ld b, a
     jp h_drop
@@ -909,7 +1010,7 @@ h_autow:                        ; 33: carried, worn, here
     call auto_cwh
     jr nc, .go
     ld e, 28
-    jp refuse
+    jp auto_end                 ; SP16 B9
 .go:
     ld b, a
     jp h_wear
@@ -925,7 +1026,7 @@ h_autor:                        ; 34: worn, carried, here
     call obj_find_pass
     jr nc, .go
     ld e, 23
-    jp refuse
+    jp auto_end                 ; SP16 B9
 .go:
     ld b, a
     jp h_remove
@@ -972,36 +1073,68 @@ h_putin:                        ; 90: carried obj B -> container loc C
     call obj_set_refs
     ld a, b
     call obj_ptr
-    ld a, (hl)
+    ld a, (hl)                  ; SP16 B7: worn -> SM24, at the player's
+    cp OBJ_WORN                 ; location -> SM49, anywhere else ->
+    jr z, .worn                 ; SM28 (only SM28 existed before)
     cp OBJ_CARRIED
-    jr nz, .nothave
-    ld a, b
-    jp obj_move
-.nothave:
+    jr z, .go
+    ld a, (flags+FLAG_PLAYER)
     ld e, 28
+    cp (hl)
+    jr nz, .no
+    ld e, 49
+.no:
     jp refuse
+.worn:
+    ld e, 24
+    jp refuse
+.go:
+    push bc
+    ld a, b
+    call obj_move               ; C = the container, flag 1 decremented
+    pop bc                      ; by obj_move's own carried-source rule
+    ld e, 44                    ; SP16 B1: "The _ is in the <name>."
+    jp msg_in_obj
 h_takeout:                      ; 91: obj B out of container loc C
     ld a, b
     call obj_set_refs
     ld a, b
     call obj_ptr
-    ld a, (hl)
+    ld a, (hl)                  ; SP16 B8: full reference ladder
+    cp OBJ_WORN
+    jr z, .have
+    cp OBJ_CARRIED
+    jr z, .have
+    ld d, a                     ; D = the object's location
+    ld a, (flags+FLAG_PLAYER)
+    ld e, 45                    ; at the player's location, not in the
+    cp d                        ; container: "The _ isn't in the <name>."
+    jr z, .named
+    ld a, d
     cp c
-    jr nz, .notin
-    ld a, (flags+FLAG_MAXCARR)
-    ld e, a
-    ld a, (flags+FLAG_CARRIED_CT)
-    cp e
-    jr nc, .full
-    ld a, b
-    ld c, OBJ_CARRIED
-    jp obj_move
-.full:
+    ld e, 52                    ; nowhere near the container: "There
+    jr nz, .named               ; isn't one of those in the <name>."
+    call weight_bust            ; restored: TAKEOUT had no weight test
+    jr nc, .cap
+    ld e, 43
+    jp refuse
+.cap:
+    call hands_room
+    jr c, .take
     call doall_cancel           ; SM27 refusal cancels any DOALL
     ld e, 27
     jp refuse
-.notin:
-    ld e, 52
+.take:
+    ld a, b
+    ld c, OBJ_CARRIED
+    call obj_move
+    ld e, 36                    ; SP16 B1: "I now have the _."
+    jp sysmsg
+.named:
+    call msg_in_obj
+    jp refuse_tail              ; composite already printed: newline,
+.have:                          ; NEWTEXT, DONE - refuse's own tail
+    ld e, 25
     jp refuse
 h_autop:                        ; 104: B = container loc; find Noun1.
     push bc                     ; obj_find_pass clobbers B (its loop
@@ -1013,7 +1146,7 @@ h_autop:                        ; 104: B = container loc; find Noun1.
     jp h_putin
 .none:
     ld e, 28
-    jp refuse
+    jp auto_end                 ; SP16 B9
 h_autot:                        ; 105: container first, then usual
     push bc
     ld d, b
@@ -1028,8 +1161,15 @@ h_autot:                        ; 105: container first, then usual
     ld c, d
     ld b, a
     jp h_takeout
-.none:
+.none:                          ; SP16 B9, composite family message:
+    ld c, d                     ; SM52 + the container's name + SM51
     ld e, 52
+    call auto_probe
+    jr c, .cant
+    call msg_in_obj
+    jp refuse_tail
+.cant:
+    ld e, 8
     jp refuse
 
 ; A = obj number -> A = true weight including container contents.

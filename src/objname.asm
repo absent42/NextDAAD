@@ -1,11 +1,17 @@
 ; Object-name printing (_/@ escapes) and the shared list engine.
 
-; A = '_' or '@'. Prints flag-51's OTX with the leading article word
-; stripped; '@' capitalises the first emitted letter. Reader bracketed
-; by rd_push/rd_pop, window by data_save/data_restore. No referenced
-; object ($FF) prints nothing. Tokens are expanded by the iterator, so
-; the article state machine sees every real character - a token
-; spanning the article boundary is handled correctly.
+; A = '_' or '@' (a message substitution) or 0 (plain list output).
+; Prints flag-51's OTX with the leading article word stripped; '@'
+; capitalises the first emitted letter. Reader bracketed by rd_push/
+; rd_pop, window by data_save/data_restore. No referenced object ($FF)
+; prints nothing. Tokens are expanded by the iterator, so the article
+; state machine sees every real character - a token spanning the
+; article boundary is handled correctly.
+; SP16 E3: a SUBSTITUTED name stops at the first "." (jDAAD's
+; stopAtDot, msx2daad's Spanish path - both references agree), so an
+; object text of "a quaint lamp. It is unlit." substitutes as "quaint
+; lamp". List output (A = 0) prints the name whole: the truncation is
+; a substitution rule, not a property of the object text.
 objname_print:
     ld c, a
     ld a, (flags+FLAG_CUROBJ)
@@ -22,8 +28,13 @@ objname_print:
     pop bc
     ld e, b
     ld a, 3
-    call msg_seek
-    jr c, .out
+    push bc                     ; msg_seek clobbers BC (its own
+    call msg_seek               ; ld bc,ddbHeader+$12) and C carries the
+    pop bc                      ; mode for BOTH the '@' capitalisation
+    jr c, .out                  ; test below and the E3 dot rule - the
+                                ; capitalisation was reading a clobbered
+                                ; C and could never fire (CF from
+                                ; msg_seek survives the pop)
     ld a, (tokActive)
     push af                     ; may run nested inside another stream
     xor a
@@ -47,6 +58,13 @@ objname_print:
     ld a, ' '
     jr .emit
 .chr:
+    cp '.'                      ; SP16 E3
+    jr nz, .keep
+    ld a, c
+    or a
+    jr nz, .fin                 ; substitution: the name ends here
+    ld a, '.'                   ; list output: the dot is part of the name
+.keep:
     ld e, a
     ld a, d
     or a
@@ -180,7 +198,7 @@ list_at:
     push de
     ld a, b
     ld (flags+FLAG_CUROBJ), a
-    ld a, '_'
+    xor a                       ; list output: no E3 dot truncation
     call objname_print
     pop de
     pop bc

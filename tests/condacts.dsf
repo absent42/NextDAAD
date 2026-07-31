@@ -996,6 +996,87 @@ NORTH 0
         MES "81 OK#n"
         SKIP 1
 > _ _   MES "81 F#n"
+; ---- SP16 Task 2 appended checks (82-86) ----
+; Same placement rule as 81 above: after check 80, so the differential
+; harness's turn indexing is untouched. These pin the FLAG 1 arithmetic
+; of the object-interaction wave (GET/DROP/WEAR/REMOVE/PUTIN/TAKEOUT
+; all print system messages now, and all of them move the object AND
+; adjust flag 1 on the success path only). The messages themselves are
+; a text-channel matter and are evidenced by the harness, not here.
+; 82 GET/DROP round trip: flag 1 up on the way in, down on the way out.
+> _ _   RESET                   ; lamp carried, box + hat at loc 0
+        GOTO 0
+        ABILITY 10 100          ; room and strength for anything here
+        EQ 1 1
+        GET 3
+        CARRIED 3
+        EQ 1 2
+        DROP 3
+        ISAT 3 0
+        EQ 1 1
+        MES "82 OK#n"
+        SKIP 1
+> _ _   MES "82 F#n"
+; 83 WEAR decrements flag 1 (worn is not carried), REMOVE increments it
+; back. The hat must be CARRIED first - WEAR on an object lying at the
+; player's location now refuses SM49 instead of wearing it.
+> _ _   GET 3
+        EQ 1 2
+        WEAR 3
+        WORN 3
+        EQ 1 1
+        REMOVE 3
+        CARRIED 3
+        EQ 1 2
+        MES "83 OK#n"
+        SKIP 1
+> _ _   MES "83 F#n"
+; 84 PUTIN decrements flag 1, TAKEOUT increments it. Object 1 (the box)
+; is the container; TAKEOUT now runs a weight test too, so the strength
+; set in 82 has to still cover the hat.
+> _ _   PUTIN 3 1
+        ISAT 3 1
+        EQ 1 1
+        TAKEOUT 3 1
+        CARRIED 3
+        EQ 1 2
+        MES "84 OK#n"
+        SKIP 1
+> _ _   MES "84 F#n"
+; 85 a REFUSED GET changes nothing: flag 1 stands, the object stays put,
+; and the refusal's DONE aborts the rest of the entry (so the LET after
+; the GET must not run - the assertions live in the next entry).
+> _ _   DROP 3
+        LET 37 0                ; hands always full -> SM27
+        LET 124 0
+        GET 3
+        LET 124 1               ; unreachable
+> _ _   ABILITY 10 100
+        ZERO 124
+        EQ 1 1
+        ISAT 3 0
+        MES "85 OK#n"
+        SKIP 1
+> _ _   MES "85 F#n"
+; 86 weight is tested BEFORE the hands-full count (compliance report
+; section 3, GET). This is the one ordering difference the state
+; channel can see: SM43 (too heavy) does NOT cancel a DOALL, SM27
+; (hands full) does. Both conditions are made true at once - strength
+; 0 and capacity 0 - so a weight-first GET refuses SM43 per object and
+; the DOALL runs to exhaustion (both objects at loc 0 counted), while a
+; count-first GET refuses SM27 and cancels after the first.
+> _ _   RESET
+        GOTO 0
+        LET 37 0                ; capacity 0 - hands full
+        LET 52 0                ; strength 0 - everything too heavy
+        LET 44 255              ; Noun2/Adj2 clear of any object
+        LET 45 255
+        LET 125 0
+        PROCESS 19
+        EQ 125 2
+        MES "86 OK#n"
+        SKIP 1
+> _ _   MES "86 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5
@@ -1047,4 +1128,13 @@ NORTH 0
 ; so the table-end pop propagates the cleared stamp, not a forced one.
 > _ _   MES "71 sub ran#n"
         EXTERN 0 7
+/PRO 19
+; Weight-before-count helper (86): AUTOG each object at loc 0 with both
+; capacity and strength at 0. The weight refusal (SM43) leaves the DOALL
+; alone, so the counter reaches 2; a count-first refusal (SM27) cancels
+; the DOALL and leaves it at 1.
+> _ _   DOALL 0
+        PLUS 125 1
+        AUTOG
+        DONE
 /END
