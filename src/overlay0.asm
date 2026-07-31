@@ -1453,9 +1453,18 @@ kwcChar: db 0
 h_inkey:                        ; 111: condition; key -> flag 60
     call key_scan
     ; SP16 (docs/daad-compliance-report.md section 4, "Flag 61"):
-    ; flag 61 (fKey2, the IBM extended code) must be cleared whenever
-    ; flag 60 is written - both references do it, this handler used to
-    ; write flag 60 alone and leave a previous game's value in 61.
+    ; flag 61 (fKey2, the IBM extended code) is cleared whenever flag
+    ; 60 is written. This handler used to write flag 60 alone and
+    ; leave a previous game's value in 61.
+    ; THE REFERENCES DISAGREE, so be precise about which one this
+    ; follows. jDAAD's _INKEY2 (jdaad.js:4111-4125) writes BOTH flags
+    ; on BOTH paths - hit: 60 = key, 61 = 0; miss: 60 = 0, 61 = 0.
+    ; msx2daad's do_INKEY (daad_condacts.c:644-651) writes flag 60
+    ; ONLY on a hit and never touches flag 61 at all; the one place it
+    ; clears fKey2 is the DAADV3 "PAUSE 0" GETKEY path (line 2100).
+    ; We follow jDAAD. key_scan returns 0 for "no key", so the code
+    ; below writes both flags unconditionally and lands on jDAAD's
+    ; behaviour for the hit and the miss alike.
     ; This is the ONLY writer of flag 60 (grepped).
     ld hl, flags+FLAG_KEY1      ; doc 07 (a): flags is ALIGN 256, so
     ld (hl), a                  ; the pair is one INC L apart and the
