@@ -1,0 +1,16 @@
+SP16 Task 7a ladder - per-channel content (identical on every rung)
+AY clock 1773400 Hz, 50 frames (1.00 s) per step, volume 11 (L9Q: 5)
+
+ch PSG voice   C      D      E      F      G      A      B      C+   
+---------------------------------------------------------------------
+1  1   root o4  424    377    336    317    283    252    224    212  
+2  1   root o5  212    189    168    159    141    126    112    106  
+3  1   root o3  847    755    673    635    566    504    449    424  
+4  2   3rd  o4  336    300    267    252    224    200    178    168  
+5  2   3rd  o5  168    150    133    126    112    100    89     84   
+6  2   3rd  o3  673    599    534    504    449    400    356    336  
+7  3   5th  o4  283    252    224    212    189    168    150    141  
+8  3   5th  o5  141    126    112    106    94     84     75     71   
+9  3   5th  o3  566    504    449    424    377    336    300    283  
+
+cells are AY tone periods (R0/R1 pairs), not note numbers

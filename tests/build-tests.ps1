@@ -65,6 +65,14 @@
 #            produced by the export script / aysconv.ps1) into sd\, after
 #            removing stale sd\*.AKY, sd\GAME.SFB, sd\*.WAV and sd\*.AYS;
 #            warns and skips if the folder is empty
+#   -AudLad  SP16 Task 7: make the tests\audlad.dsf DDB active AND stage
+#            the AY characterization ladder from tests\audio\ -
+#            L1/L3/L6/L9/L9Q.AKY -> sd\001..005.AKY, plus sd\GAME.AKY as
+#            a byte-identical copy of 001.AKY (the STOPM control: boot
+#            autoplay and the LAD1 verb then replay the SAME bytes).
+#            Owns sd\001..005.AKY and sd\GAME.AKY only; it stale-cleans
+#            every sd\*.AKY first, so it and -Aud are alternatives, not
+#            companions - run one or the other, never both.
 # Boot title screen (SP11 Task 1), independent of the DDB switches:
 #   -Title   stage the owner 320x256 title into sd\ - stale-cleans
 #            sd\DAAD.* variants then copies tools\demo-files\DAAD.NX2
@@ -248,7 +256,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -326,6 +334,23 @@ try {
 }
 finally {
     Remove-Item "$dr\NDGMODE.DSF", "$dr\NDGMODE.json" -ErrorAction SilentlyContinue
+    Pop-Location
+}
+
+# SP16 Task 7 AY ladder fixture. Compiled unconditionally, like the
+# suite, doallnest and gmodegate above, so a break in the DSF is caught
+# on a plain run; only -AudLad makes it the active sd\GAME.DDB.
+Copy-Item "$PSScriptRoot\audlad.dsf" "$dr\NDAUDLAD.DSF" -Force
+Push-Location $dr
+try {
+    & .\TOOLS\DRC\DRF.exe zx next NDAUDLAD.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (audlad)" }
+    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDAUDLAD.json NDAUDLAD.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (audlad)" }
+    Move-Item NDAUDLAD.DDB "$root\tests\out\audlad.ddb" -Force
+}
+finally {
+    Remove-Item "$dr\NDAUDLAD.DSF", "$dr\NDAUDLAD.json" -ErrorAction SilentlyContinue
     Pop-Location
 }
 
@@ -1135,6 +1160,57 @@ if ($Aud) {
     }
 }
 
+$audLadActive = $false
+if ($AudLad) {
+    # SP16 Task 7 owner leg fixture. Two jobs, both owned entirely by
+    # this switch: make tests\audlad.dsf the active DDB, and stage the
+    # five ladder songs tests\audio\mkladder.py generates.
+    #
+    # sd\GAME.AKY is a COPY OF 001.AKY, not a sixth song. That identity
+    # is the whole design of the #T7B STOPM leg: boot autoplay and the
+    # LAD1 verb then play the same bytes, so a pitch difference between
+    # them cannot be a difference in the material. Do not "tidy" this
+    # into a distinct GAME.AKY.
+    #
+    # Same CSpect lock hazard as -Aud/-Rab/-GMode: a running emulator
+    # holds sd\ files open and the copies fail piecemeal, leaving a
+    # partial ladder whose missing rungs read as silent no-ops.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial ladder)"
+    }
+    Copy-Item "$root\tests\out\audlad.ddb" "$root\sd\GAME.DDB" -Force
+    # Stale-clean every .AKY: -Aud and -AudLad stage different song sets
+    # under the same names, and a survivor from the other switch would
+    # silently answer a rung with the wrong material.
+    Remove-Item "$root\sd\*.AKY" -Force -ErrorAction SilentlyContinue
+    $ladSrc = "$root\tests\audio"
+    $ladMap = [ordered]@{ 'L1.AKY' = '001.AKY'; 'L3.AKY' = '002.AKY'; 'L6.AKY' = '003.AKY';
+                          'L9.AKY' = '004.AKY'; 'L9Q.AKY' = '005.AKY' }
+    $ladStaged = 0
+    foreach ($src in $ladMap.Keys) {
+        $p = Join-Path $ladSrc $src
+        if (Test-Path $p) {
+            Copy-Item $p "$root\sd\$($ladMap[$src])" -Force
+            $ladStaged++
+        }
+        else {
+            "WARNING: $p absent - rung $($ladMap[$src]) will be a silent no-op (run python tests\audio\mkladder.py)"
+        }
+    }
+    if (Test-Path "$root\sd\001.AKY") {
+        Copy-Item "$root\sd\001.AKY" "$root\sd\GAME.AKY" -Force
+        "staged $ladStaged ladder song(s) -> sd\001..005.AKY, sd\GAME.AKY = sd\001.AKY (STOPM control)"
+    }
+    else {
+        "WARNING: no sd\001.AKY - boot autoplay and the #T7B STOPM leg have nothing to play"
+    }
+    foreach ($f in @('001.AKY', '002.AKY', '003.AKY', '004.AKY', '005.AKY', 'GAME.AKY')) {
+        $p = "$root\sd\$f"
+        if (Test-Path $p) { "  sd\$f $((Get-Item $p).Length) bytes (song slot 10208)" }
+    }
+    $audLadActive = $true
+}
+
 $good = [System.IO.File]::ReadAllBytes("$root\sd\GAME.DDB")
 
 "size=$($good.Length) (hex $('{0:X4}' -f $good.Length))"
@@ -1148,6 +1224,7 @@ elseif ($rabActive) { "active: rabenstein" }
 elseif ($Rab) { "active: rabenstein (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
 elseif ($v3Active) { "active: v3probe (SP16 DAAD V3 fixture - header version 3)" }
 elseif ($gmodeActive) { "active: gmodegate (SP16 GMODE graphics-gate fixture)" }
+elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-scale fixture)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($Suite) { "active: suite" }
 else { "active: template" }

@@ -1039,6 +1039,200 @@ aud_psg3_write:
     pop de
     ret
 
+; --- DEBUG AY / player state mirror (SP16 Task 7b) -------------------
+
+ IFDEF DEBUG
+; aud_dbg_snap: mirror the WHOLE audible AY state - all three PSGs read
+; back off the chips, plus the AKY player's own register arrays and its
+; self-modified position cells - into the always-mapped staging ring at
+; AUD_STAGE0, once per frame, right after aud_tick (call site:
+; src\interrupts.asm im2_isr). A scripted ZEsarUX/DeZog leg then reads
+; 202 plain bytes out of the 64K map with no bank juggling and no
+; breakpoint choreography: the STOPM three-point dump (pre-STOPM,
+; post-STOPM, post-restart-MUSIC) is three reads of this block, and the
+; fresh-boot control is a fourth.
+;
+; WHY THE CHIP READBACK AND NOT JUST THE PLAYER ARRAYS. The player
+; rewrites R0-R13 from its arrays every frame, so the arrays are what
+; the player INTENDS; the chips are what is actually sounding. Anything
+; that writes the AY outside the player (aud_psg_silence on STOPM,
+; aud_beep_start, the AYS stream engine) shows up only in the readback.
+; Both are captured so a divergence between them is itself evidence.
+; ALL THREE PSGs, always - the PSG-park precedent (d79841c).
+;
+; WHY THE RING. AUD_STAGE0 is bank 5, MMU3, always mapped, so the block
+; is readable from mainline context without mapping bank 24; and it is
+; dead memory whenever no sample is playing. The smpFlags guard below
+; makes that conditional explicit - with a sample active the ring is the
+; DAC's and this routine does nothing (the leg it serves plays no
+; samples). ctc_isr is stopped whenever smpFlags bit 0 is clear
+; (aud_smp_stop resets the CTC), so nothing races these writes.
+;
+; DEBUG ONLY. Costs ~4k T per frame in the ISR (42 chip reads dominate)
+; and 202 bytes of the sample ring; neither exists in a Release build.
+; Called with the audio bank mapped, all registers already saved by the
+; ISR, so it corrupts freely.
+AUD_DBG_SNAP  equ AUD_STAGE0     ; mirror base (the sample ring)
+AUD_DBG_AY    equ $10            ; 3 x 14 chip registers
+AUD_DBG_ARR   equ $3A            ; 64 bytes of player register arrays
+AUD_DBG_CELL  equ $7A            ; AUD_DBG_NCELL words from the cell table
+AUD_DBG_NCELL equ 40             ; entries in aud_dbg_cells (ASSERTed below)
+AUD_DBG_SEQ2  equ AUD_DBG_CELL + 2*AUD_DBG_NCELL
+AUD_DBG_LEN   equ AUD_DBG_SEQ2 + 1
+
+aud_dbg_snap:
+    ld a, (smpFlags)
+    rrca
+    ret c                           ; a sample owns the ring - hands off
+    ld hl, aud_dbg_sig
+    ld de, AUD_DBG_SNAP
+    ld bc, 4
+    ldir                            ; +$00 signature "AYS1"
+    ld hl, audDbgSeq
+    inc (hl)
+    ld a, (hl)
+    ld (AUD_DBG_SNAP+$04), a        ; frame sequence (wraps at 256)
+    ld a, (audFlags)
+    ld (AUD_DBG_SNAP+$05), a
+    ld a, (audSongNum)
+    ld (AUD_DBG_SNAP+$06), a
+    ld a, (audPlayerUp)
+    ld (AUD_DBG_SNAP+$07), a
+    ld a, (aysFlags)
+    ld (AUD_DBG_SNAP+$08), a
+    ld a, (smpFlags)
+    ld (AUD_DBG_SNAP+$09), a
+    ld a, (audRequest)
+    ld (AUD_DBG_SNAP+$0A), a
+    ld a, (audRequest2)
+    ld (AUD_DBG_SNAP+$0B), a
+    ld hl, (audBeepFrames)
+    ld (AUD_DBG_SNAP+$0C), hl
+    ld a, (audEnable)
+    ld (AUD_DBG_SNAP+$0E), a
+    ld a, (audReqLoop)
+    ld (AUD_DBG_SNAP+$0F), a
+    ; --- chip readback: select the PSG, then each register 0-13 on
+    ; $FFFD and read the same port back. aud_psg3_select corrupts BC
+    ; only (preserves AF/DE/HL), so D survives as the register counter.
+    ld hl, AUD_DBG_SNAP+AUD_DBG_AY
+    ld a, $FF                       ; PSG 1, then $FE (PSG 2), $FD (PSG 3)
+.chip:
+    ld (audDbgSel), a
+    call aud_psg3_select
+    ld d, 0
+.reg:
+    ld bc, $FFFD
+    out (c), d                      ; register select
+    in a, (c)                       ; register value back off the chip
+    ld (hl), a
+    inc hl
+    inc d
+    ld a, d
+    cp 14
+    jr c, .reg
+    ld a, (audDbgSel)
+    dec a
+    cp $FC                          ; $FD was the last chip
+    jr nz, .chip
+    ; --- the player's four register arrays, one contiguous run
+    ld hl, PLY_AKY_PSG1SOFTWAREREGISTERARRAY
+    ld de, AUD_DBG_SNAP+AUD_DBG_ARR
+    ld bc, 64
+    ldir
+    ; --- the self-modified position cells, gathered through a table of
+    ; source addresses (doc 07, any-address word table). Two bytes are
+    ; taken from every cell including the byte-wide ones; the second
+    ; byte is then the following opcode, a constant, which is a free
+    ; tell-tale that the table entry still points where it should.
+    ld hl, aud_dbg_cells
+    ld de, AUD_DBG_SNAP+AUD_DBG_CELL
+    ld b, AUD_DBG_NCELL
+.cell:
+    ld c, (hl)
+    inc hl
+    ld a, (hl)
+    inc hl
+    push hl
+    ld l, c
+    ld h, a                         ; HL = the cell this entry names
+    ld a, (hl)
+    ld (de), a
+    inc hl
+    inc de
+    ld a, (hl)
+    ld (de), a
+    inc de
+    pop hl
+    djnz .cell
+    ; TEAR DETECTOR. The reader samples this block while the Z80 keeps
+    ; running, so a read can straddle a frame update and splice two
+    ; frames together - which shows up as a handful of "differences" in
+    ; exactly the bytes that change on a note boundary, and would be
+    ; mistaken for state residue. The sequence byte is written FIRST at
+    ; +$04 and copied LAST here: a reader that sees the two disagree
+    ; must discard the sample.
+    ld a, (audDbgSeq)
+    ld (AUD_DBG_SNAP+AUD_DBG_SEQ2), a
+    ret
+
+aud_dbg_sig:  db "AYS1"
+audDbgSeq:    db 0
+audDbgSel:    db 0
+
+; Every cell the AKY player self-modifies that carries POSITION or
+; PHASE, in the order the dump tables in the Task 7 report print them.
+; Sources are the labels the Arkos converter emitted (player_aky.asm) -
+; a rename there breaks the build here rather than dumping the wrong
+; addresses silently.
+aud_dbg_cells:
+    dw PLY_AKY_PATTERNFRAMECOUNTER+1        ; frames left in this pattern
+    dw PLY_AKY_PATTERNFRAMECOUNTER_OVER+1   ; linker read position
+    dw PLY_AKY_PTSOUNDEFFECTTABLE+1         ; GAME.SFB table (0 = none)
+    dw PLY_AKY_CHANNEL1_SOUNDEFFECTDATA     ; effect stream (0 = idle)
+    dw PLY_AKY_CHANNEL1_PTTRACK+1
+    dw PLY_AKY_CHANNEL2_PTTRACK+1
+    dw PLY_AKY_CHANNEL3_PTTRACK+1
+    dw PLY_AKY_CHANNEL4_PTTRACK+1
+    dw PLY_AKY_CHANNEL5_PTTRACK+1
+    dw PLY_AKY_CHANNEL6_PTTRACK+1
+    dw PLY_AKY_CHANNEL7_PTTRACK+1
+    dw PLY_AKY_CHANNEL8_PTTRACK+1
+    dw PLY_AKY_CHANNEL9_PTTRACK+1
+    dw PLY_AKY_CHANNEL1_PTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL2_PTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL3_PTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL4_PTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL5_PTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL6_PTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL7_PTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL8_PTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL9_PTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL1_WAITBEFORENEXTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL2_WAITBEFORENEXTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL3_WAITBEFORENEXTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL4_WAITBEFORENEXTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL5_WAITBEFORENEXTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL6_WAITBEFORENEXTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL7_WAITBEFORENEXTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL8_WAITBEFORENEXTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL9_WAITBEFORENEXTREGISTERBLOCK+1
+    dw PLY_AKY_CHANNEL1_REGISTERBLOCKLINESTATE_OPCODE
+    dw PLY_AKY_CHANNEL2_REGISTERBLOCKLINESTATE_OPCODE
+    dw PLY_AKY_CHANNEL3_REGISTERBLOCKLINESTATE_OPCODE
+    dw PLY_AKY_CHANNEL4_REGISTERBLOCKLINESTATE_OPCODE
+    dw PLY_AKY_CHANNEL5_REGISTERBLOCKLINESTATE_OPCODE
+    dw PLY_AKY_CHANNEL6_REGISTERBLOCKLINESTATE_OPCODE
+    dw PLY_AKY_CHANNEL7_REGISTERBLOCKLINESTATE_OPCODE
+    dw PLY_AKY_CHANNEL8_REGISTERBLOCKLINESTATE_OPCODE
+    dw PLY_AKY_CHANNEL9_REGISTERBLOCKLINESTATE_OPCODE
+    ASSERT ($ - aud_dbg_cells) / 2 == AUD_DBG_NCELL
+    ; the four arrays the LDIR above copies as one run must BE one run
+    ASSERT PLY_AKY_SFXREG6 + 1 - PLY_AKY_PSG1SOFTWAREREGISTERARRAY == 64
+    ; and the whole mirror must fit inside the sample ring it borrows
+    ASSERT AUD_DBG_LEN <= AUD_STAGE_RING
+ ENDIF
+
 ; --- AY period table -------------------------------------------------
 
 ; jdaad FREQ_TABLE periods, AY clock 1773400 Hz (see the generator in

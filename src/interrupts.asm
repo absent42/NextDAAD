@@ -176,6 +176,15 @@ im2_isr:
     nextreg $56, AUD_PAGE_LO
     nextreg $57, AUD_PAGE_HI
     call aud_tick
+ IFDEF DEBUG
+    call aud_dbg_snap        ; SP16 T7b: mirror all three PSGs + the AKY
+                             ; player's position cells into the staging
+                             ; ring for a scripted state dump. Bank 24 is
+                             ; mapped here and every register is already
+                             ; saved, so this is the only place the whole
+                             ; post-tick state is legible. Self-gated on
+                             ; smpFlags (a live sample owns that ring).
+ ENDIF
     pop de
     ld a, d
     nextreg $56, a
