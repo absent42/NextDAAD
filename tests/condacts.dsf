@@ -23,6 +23,10 @@ BAG   56  noun
 GEM   57  noun
 RUSTY 204 adjective
 SHINY 205 adjective
+; SP16 Task 4. XEXIT gates the EXIT 1 check (102) behind a TYPED verb so
+; it never fires on the automated leg - EXIT 1 restarts the whole game,
+; which would relaunch the suite from PRO 0 forever.
+XEXIT 105 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -1290,6 +1294,128 @@ NORTH 0
         MES "96 OK#n"
         SKIP 1
 > _ _   MES "96 F#n"
+; ---- SP16 Task 4 appended checks (97-102) ----
+; Same placement rule as 81 and 82-86 and 87-96: appended after check
+; 80, so the differential harness's turn indexing is untouched.
+; These pin the FLAG side of the listing and flow-control wave. The
+; listing FORM itself (continuous versus one-per-line) is a text-channel
+; property and is evidenced by the harness transcript, not here.
+;
+; Location 1 is the scratch location for 97-100: the suite's only other
+; location, and nothing is parked there (check 33's PLACE 2 1 puts the
+; coin back with PLACE 2 0 four lines later). Check 97 does not assume
+; that - it PROVES it, and fails loudly if some future check leaves an
+; object behind.
+;
+; 97 B16: flag 53 bit 7 ("objects were listed") must be MAINTAINED on
+; the LISTAT path, both ways. It used to be touched only by LISTOBJ:
+; LISTAT never set it when it listed something and never cleared it
+; when it listed nothing, which is the flag 53 divergence in
+; parser-bugs entry 5. Both references maintain it for both condacts
+; (jdaad.js:2379 listObjects sets 0x80 / clears it in the else arm;
+; daad_condacts.c:1922 _internal_listat clears F53_LISTED up front and
+; ORs it in per object printed).
+; The empty LISTAT here also exercises "SM53 alone" - NextDAAD used to
+; add a newline after it that neither reference produces. That is a
+; text-channel effect; only the bit is assertable from DSF.
+> _ _   LET 53 0                ; clear fOFlags, then let LISTAT drive it
+        LISTAT 1                ; nothing at location 1 -> SM53 alone
+        LT 53 128               ; bit 7 CLEAR: the empty LISTAT cleared it
+        PLACE 8 1               ; the bag becomes the only object there
+        LISTAT 1
+        GT 53 127               ; bit 7 SET from the LISTAT path too
+        MES "97 OK#n"
+        SKIP 1
+> _ _   MES "97 F#n"
+; 98 B16: bit 6 selects the listing form and list_at must READ it
+; without disturbing it. Bit 6 set = the continuous "a, b and c." form;
+; bit 6 clear = one object per line, which is the DEFAULT (flag 53
+; starts at 0) and is the form NextDAAD never produced because it
+; forced the continuous one. Here the bag is listed both ways; what is
+; assertable is that bit 6 survives and bit 7 lands on top of it.
+> _ _   LET 53 64               ; bit 6: continuous listing
+        LISTAT 1
+        EQ 53 192               ; bit 6 intact, bit 7 added
+        LET 53 0                ; back to the one-per-line default
+        LISTAT 1
+        EQ 53 128               ; bit 6 still clear, bit 7 still set
+        MES "98 OK#n"
+        SKIP 1
+> _ _   MES "98 F#n"
+; 99 B14 "caso A": a DOALL whose INITIAL search finds nothing performs
+; NEWTEXT and NOTDONE. It used to plain-pop, and because DOALL is
+; action-typed the dispatcher had already set the level's done-flag to
+; 1, so an empty DOALL exited the table as DONE. Contained in PRO 22 so
+; the NOTDONE lands on a level of its own and ISNDONE can read it back
+; through lastDone - the same containment pattern as checks 85 and 96.
+; The NEWTEXT half (the rest of a typed compound order is discarded) is
+; not assertable here, since it needs a compound order on the input
+; buffer: that is the harness's compound-abort script and the owner's
+; interactive leg.
+> _ _   PLACE 8 0               ; location 1 empty again
+        LET 53 0
+        LISTAT 1
+        LT 53 128               ; precondition PROVEN: nothing at loc 1
+        PROCESS 22              ; PRO 22 is a bare DOALL 1
+        ISNDONE                 ; caso A must exit the table NOTDONE
+        MES "99 OK#n"
+        SKIP 1
+> _ _   MES "99 F#n"
+; 100 B14 "caso B", the regression guard on 99: a DOALL that DID
+; iterate and has now run out must still complete the level as DONE.
+; Both references keep the two cases apart - msx2daad's
+; _internal_doall_continue carries the comment "No isDone/checkEntry/
+; lsBuffer mutation here (caso B per PCDAAD spec)" and its unit suite
+; carries D-CANCEL-2d, "DOALL exhausted *after iterating* must mark
+; DONE" - and NextDAAD reaches both through the one
+; eng_doall_next.exhausted label, so the split is by the entry value of
+; doallObj. Merging them would make a SUCCESSFUL "DROP ALL" answer
+; "I can't do that" and kill the rest of the player's order.
+> _ _   PLACE 8 1               ; exactly one object at location 1
+        PROCESS 23              ; PRO 23 is a bare DOALL 1
+        ISDONE                  ; caso B: iterated, then exhausted = DONE
+        PLACE 8 0               ; leave location 1 empty behind us
+        MES "100 OK#n"
+        SKIP 1
+> _ _   MES "100 F#n"
+; 101 B28: an out-of-range window number is IGNORED and the current
+; window stays selected. h_window masked the number with 7, so WINDOW 8
+; silently selected window 0 - a wrong window rather than a no-op. Both
+; references bail out (daad_condacts.c:1674 "if (window >= WINDOWS_NUM)
+; return;", jdaad.js:3455 "if (Parameter1 < NUM_WINDOWS)").
+; Flag 63 (fCurWin) is the observable. Nothing is printed between the
+; WINDOW calls, so the suite's own output stays in window 0.
+; The out-of-range value is passed INDIRECTLY: DRF rejects a literal
+; "WINDOW 8" at compile time ("Invalid window number, must be in the
+; 0-7 range"), so a literal cannot reach the interpreter at all. The
+; runtime guard is what this pins, and msx2daad's do_WINDOW reads its
+; parameter with getValueOrIndirection() before the same range test,
+; so the indirect form is the reference-faithful way to express it.
+> _ _   LET 110 8
+        WINDOW 1
+        EQ 63 1
+        WINDOW @110             ; out of range: ignored (was 8 AND 7 = 0)
+        EQ 63 1                 ; window 1 is STILL selected
+        WINDOW 0                ; restore the suite's window before MES
+        EQ 63 0
+        MES "101 OK#n"
+        SKIP 1
+> _ _   MES "101 F#n"
+; 102 B18 (OWNER LEG - typed verb, never fires automatically): EXIT n
+; with n non-zero is a full reset and restart, not a no-op. It was
+; routed to h_unimpl. There is no way to assert this in-suite: a
+; restart clears every flag and re-enters PRO 0, so any witness flag is
+; gone by the time anything could read it, and the suite would relaunch
+; itself forever. So the check is inverted and gated on a TYPED verb -
+; type XEXIT at the prompt:
+;   PASS = the screen clears and the suite runs again from check 1
+;          (flags cleared, objects reinitialised, PRO 0 re-entered).
+;   FAIL = "102 F" prints and the turn continues normally, which is
+;          exactly what the old h_unimpl no-op did.
+; The second entry is reachable ONLY if EXIT 1 returned to its caller.
+> XEXIT _ MES "102: EXIT 1 - expect a FULL RESTART now#n"
+        EXIT 1
+> XEXIT _ MES "102 F - EXIT 1 was a no-op#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5
@@ -1364,4 +1490,19 @@ NORTH 0
 ; PRO 20.
 > _ _   AUTOT 1
         LET 126 1               ; unreachable
+/PRO 22
+; Empty-DOALL containment (99, B14 "caso A"): location 1 holds nothing,
+; so the DOALL's INITIAL search finds no object and must cancel with
+; NEWTEXT + NOTDONE. The NOTDONE pops THIS process with its done-flag
+; at 0, which check 99 reads back with ISNDONE. A bare DOALL is the
+; whole entry on purpose - the level must end on the DOALL itself.
+> _ _   DOALL 1
+/PRO 23
+; Iterated-DOALL containment (100, B14 "caso B"): identical to PRO 22
+; except that location 1 holds exactly one object, so the DOALL DOES
+; iterate before running out. Exhaustion after iteration must leave the
+; level DONE (the done-flag DOALL's action typing already set), which
+; check 100 reads back with ISDONE. The two PROCesses differ only in
+; the world state, which is what makes the pair a real discriminator.
+> _ _   DOALL 1
 /END

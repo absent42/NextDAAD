@@ -620,12 +620,46 @@ eng_doall_next:
     inc b
     jr .scan
 .exhausted:
-    ld a, $FF
-    ld (doallObj), a
+    ; SP16 B14. BOTH references split the exhausted DOALL into two
+    ; cases, and NextDAAD reaches them through this one label, so the
+    ; ENTRY value of doallObj is the discriminator: h_doall resets it
+    ; to $FF before the initial scan (overlay0.asm:218), and
+    ; eng_pop_proc's step-4 re-entry only reaches here when it is NOT
+    ; $FF (:327-329). Nothing between entry and here writes it - .take
+    ; is the only writer and .take returns.
+    ;   caso A - the INITIAL scan found nothing at all: NEWTEXT then
+    ;     NOTDONE. msx2daad do_DOALL (daad_condacts.c:2286-2295,
+    ;     "Caso A", PCDAAD condacts.pas:1486-1491 cited) runs
+    ;     clearLogicalSentences() + isDone=false + popPROC; jDAAD's
+    ;     _DOALL else arm (jdaad.js:3578-3582) runs newtext();
+    ;     _NOTDONE();. Without this the level exits DONE - DOALL is
+    ;     action-typed, so the dispatcher had already set the done-flag
+    ;     to 1 - and the rest of the player's compound order survives.
+    ;   caso B - the DOALL DID iterate and has now run out: plain pop,
+    ;     completing the level as DONE. msx2daad is explicit that this
+    ;     arm must not be merged with caso A -
+    ;     _internal_doall_continue (:2265-2276) "No isDone/checkEntry/
+    ;     lsBuffer mutation here (caso B per PCDAAD spec)" - and
+    ;     unitTests/src/tests_condacts_v3.c carries D-CANCEL-2d,
+    ;     "DOALL exhausted *after iterating* must mark DONE", as a
+    ;     regression test against exactly that merge (a NOTDONE here
+    ;     made a successful DROP ALL answer "I can't do that" too).
+    ; NEWTEXT is h_newtext's whole body (clear inpPending, a resident
+    ; cell - overlay0.asm:1947-1950); h_newtext itself lives in
+    ; overlay0 and cannot be called from here, so the single store is
+    ; inlined.
+    ; NOTE for T6: caso A is the ONE place "DOALL found nothing at all"
+    ; is known, so flag 53 bit 0 belongs on that arm alone.
     xor a
     ld (doallLevel), a
-    ; complete as DONE: plain pop (SP14c E1 - shared tail, see eng_pop_proc)
-    jp eng_pop_tail
+    ld hl, doallObj
+    ld a, (hl)
+    ld (hl), $FF                ; reset for the next DOALL
+    inc a                       ; entry $FF -> 0/Z = caso A
+    jp nz, eng_pop_tail         ; caso B: complete as DONE, as before
+    xor a
+    ld (inpPending), a          ; caso A: NEWTEXT
+    jp eng_exit_table           ; then NOTDONE (A = 0) and pop
 
 ; --- condact properties: bit 7 = action, bits 0-1 = argc ---
 ; QUIT 20, MOVE 106, PICTURE 84, PARSE 73 deliberately typed as

@@ -1396,7 +1396,13 @@ h_desc:                         ; 19: location B, checked
     dec a
     cp b
     jr nc, .ok
-    ld a, 7
+    ld a, 1                     ; SP16 B30: a bad LOCATION is error 1,
+                                 ; not error 7 ("bad message") - the
+                                 ; message printers at :94 and :110 keep
+                                 ; 7 because theirs really is a message
+                                 ; number. msx2daad's printLocationMsg
+                                 ; raises errorCode(1) here
+                                 ; (daad_msg.c:76).
     jp err_raise
 .ok:
     ld e, b
@@ -1414,8 +1420,19 @@ h_listat:                       ; 74: B = location (arg1; DRC only
     ld c, 0
     jp list_at
 h_window:                       ; 78
-    ld a, b
-    and 7
+    ld a, b                     ; SP16 B28: an out-of-range window is
+    cp WINDOW_COUNT             ; IGNORED - the current window stays
+    ret nc                      ; selected. Masking with 7 made
+                                 ; WINDOW 8 select window 0, which is a
+                                 ; silently wrong window rather than a
+                                 ; no-op. Both references bail:
+                                 ; msx2daad "if (window >= WINDOWS_NUM)
+                                 ; return;" (daad_condacts.c:1674),
+                                 ; jDAAD "if (Parameter1 < NUM_WINDOWS)"
+                                 ; (jdaad.js:3455). win_select's own
+                                 ; internal AND 7 is now unreachable
+                                 ; from here but stays - it has other
+                                 ; callers.
     ld (flags+FLAG_CURWIN), a
     jp win_select
 h_mode:                         ; 81
@@ -1821,10 +1838,41 @@ h_end:                          ; 21: reply N (SM31) = exit to OS, any
     call audio_init             ; between the silence and the reset
     nextreg 2, 1
     jr $
-h_exit:                         ; 110: 0 = reset, else XPART stub
+h_exit:                         ; 110: 0 = hard reset, else full restart
     ld a, b
     or a
-    jp nz, h_unimpl
+    jr z, .hard
+    ; SP16 B18: a NON-ZERO EXIT restarts the whole game. It was routed
+    ; to h_unimpl (a no-op). The manual: "Any value other than 0 will
+    ; restart the whole game. Note that unlike RESTART which only
+    ; restarts processing, this will clear and reset windows etc."
+    ; Both references agree - msx2daad's do_EXIT runs initFlags();
+    ; do_RESET(); do_RESTART() (daad_condacts.c:2367), jDAAD's _EXIT
+    ; runs resetWindows(); resetFlags(); resetObjects(); _RESTART()
+    ; (jdaad.js:4081). eng_init_game IS that machinery here: it clears
+    ; all 256 flags, restores the SP16 C1/C2 defaults, rebuilds the
+    ; object table from the DDB (locations, attributes, names) and
+    ; recounts flag 1, then selects window 0 and empties the process
+    ; stack; windows_init re-establishes the eight windows' geometry,
+    ; which eng_init_game alone does not. h_restart's DOALL wipe
+    ; completes the RESTART half - eng_step then re-pushes PRO 0 from
+    ; the empty stack, exactly as h_end's restart branch above does.
+    ; On platforms with PARTS the value is a part number; that is
+    ; NextDAAD's separate XPART/EXTERN 4 mechanism and is untouched.
+    xor a
+    ld (wrapLen), a             ; drop any half-buffered word BEFORE the
+                                 ; window records are reset - win_select
+                                 ; (which windows_init falls into)
+                                 ; flushes through curWin, and a restart
+                                 ; discards pending display state rather
+                                 ; than spilling it at 0,0
+    call windows_init           ; also selects window 0
+    call eng_init_game          ; clears procSP and doallObj itself
+    xor a                       ; (engine.asm:48-53); doallLevel is the
+    ld (doallLevel), a          ; one piece of DOALL state it does NOT
+    ret                         ; touch, so h_restart's wipe needs only
+                                 ; this much on top to be complete
+.hard:
     di                          ; silence the PSGs before the reset -
     call audio_init             ; the AY keeps sounding its last note
     nextreg 2, 1                ; through nextreg 2,1 otherwise
@@ -2714,16 +2762,36 @@ h_call:                         ; 101: CALL (invoke machine code at an
 ; nextreg 2,1 hands off to NextZXOS instead of silently re-running
 ; dirty RAM), and no worse than the one-time jump every cold boot
 ; already accepts before mouseBaseSet's first latch.
+; SP16 B23. The DRC symbol set defines EIGHT sub-commands (RESETMS 0,
+; SHOWMS 1, HIDEMS 2, GETMS 3, GETFINEMS 4, POINTERMS 5, DELTAXMS 6,
+; DELTAYMS 7 - doc_en.html, "Appendix D - Symbols"); only 0-3 existed
+; here, and jDAAD implements only 0-3 too, so 4-7 had no reference to
+; adjudicate against. Semantics below are taken from the DRC manual's
+; own MOUSE table (doc_en.html, condact MOUSE) and mapped onto this
+; interpreter's pointer model; each handler states its mapping and why.
+; NOTE ON THE SYMBOL NAMES: DELTAXMS/DELTAYMS do NOT report mouse
+; movement deltas. The manual defines them as "Changes hotspot coord X
+; value" / "...Y value" - they MOVE THE POINTER'S HOTSPOT within the
+; pointer bitmap ("originally the hotspot in the pointer is at x=0,
+; y=0 ... if the pointer is a cross, you may want to put it at 5,5").
+; That is what is implemented.
+; Sub-command dispatch is a word table over the dense 0-7 set (doc 07
+; section (a)) rather than a compare chain: the added handlers sit past
+; jr range from the top of the routine, so a chain would have cost four
+; 5-byte cp/jp pairs against the table's 2 bytes per entry.
 h_mouse:
     ld a, c
-    cp 0
-    jr z, .reset
-    cp 1
-    jr z, .show
-    cp 2
-    jr z, .hide
-    cp 3
-    jr z, .read
+    cp 8
+    jr nc, .unknown
+    ld hl, mouseSubs
+    add a, a                    ; word table: index * 2
+    add hl, a                   ; Z80N ADD HL,A (doc 07 (a) / doc 10)
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl                   ; B and C reach the handler untouched
+    jp (hl)
+.unknown:
  IFDEF DEBUG                    ; unknown sub-command: no-op with a
     push bc                     ; marker, same idiom as h_sfx/h_gfx.
     push bc                     ; second push keeps C (the sub) safe
@@ -2745,6 +2813,12 @@ h_mouse:
     ld (mouseY), a              ; instead of jumping by whatever the
     xor a                       ; mouse did before this reset ran.
     ld (mouseBtn), a            ; Matches jdaad's sub 0 in spirit only -
+    ld (mouseHotX), a           ; SP16 B23: the sub 6/7 hotspot is part
+    ld (mouseHotY), a           ; of the pointer's geometry, so a real
+                                 ; mouse reset restores its (0,0) default
+                                 ; too - otherwise MOUSE 0 0 leaves the
+                                 ; bitmap shifted by whatever a previous
+                                 ; DELTAXMS/DELTAYMS set.
     ld bc, KMOUSE_X_PORT        ; jdaad's own case 0 is a no-op ("was
     in a, (c)                   ; ResetMouse() but it makes no sense in
     ld (mouseXraw), a           ; JS"); we DO maintain real state, so a
@@ -2835,6 +2909,96 @@ h_mouse:
     ld a, (mouseP1)
     ld h, high flags
     ld l, a
+    call mouse_btn_jd            ; A = buttons, jdaad convention; HL kept
+    ld (hl), a
+    inc l
+    ld a, (mouseCol80)
+    ld (hl), a
+    inc l
+    ld a, (mouseRow32)
+    ld (hl), a
+    inc l
+    ld a, (mouseCol53)
+    ld (hl), a
+    jp mouse_sprite_pos
+.fine:                           ; sub 4 GETFINEMS: "Similar to the
+                                 ; previous one, but in the flag+1 the X
+                                 ; position divided by 2 will be stored
+                                 ; if we are in VGA mode ... and in the
+                                 ; flag+2 the Y position ... not divided
+                                 ; if it is VGA" (DRC manual). Three
+                                 ; flags, not four - the manual's own
+                                 ; example is "MOUSE 100 4; Reads fine
+                                 ; position in flags 100, 101 and 102".
+                                 ; NextDAAD's pointer plane is 320x256
+                                 ; (MOUSE_X_MAX/MOUSE_Y_MAX), i.e. the
+                                 ; VGA case exactly: X/2 spans 0-159 and
+                                 ; undivided Y spans 0-255, so both fit
+                                 ; a flag with no clamp and no loss of
+                                 ; range. The SVGA halves are not used -
+                                 ; there is no wider plane here to name.
+    ld a, b
+    ld (mouseP1), a
+    call mouse_poll
+    ld hl, (mouseX)
+    srl h                        ; X/2 (doc 05: no single 16-bit shift
+    rr l                         ; right; SRL H / RR L is the idiom)
+    ld d, l                      ; D survives mouse_btn_jd (AF/BC only)
+    ld a, (mouseP1)
+    ld h, high flags
+    ld l, a
+    call mouse_btn_jd
+    ld (hl), a                   ; flag+0 = buttons, as sub 3
+    inc l
+    ld (hl), d                   ; flag+1 = X/2
+    inc l
+    ld a, (mouseY)
+    ld (hl), a                   ; flag+2 = Y, undivided
+    jp mouse_sprite_pos
+.pointer:                        ; sub 5 POINTERMS: "load the file with
+                                 ; PTR extension defined by first
+                                 ; parameter" (DOS only; 81-byte 9x9
+                                 ; bitmaps). NextDAAD has no PTR files
+                                 ; and exactly ONE pointer - the built-in
+                                 ; 16x16 arrow in hardware sprite pattern
+                                 ; slot 0 - so the pointer NUMBER has
+                                 ; nothing to select. Rather than a
+                                 ; silent no-op this re-uploads the
+                                 ; built-in pattern and re-arms the
+                                 ; mouseReady latch, so the documented
+                                 ; DAAD idiom "POINTERMS then SHOWMS"
+                                 ; always leaves slot 0 holding this
+                                 ; interpreter's pointer whatever else
+                                 ; has used the slot meanwhile. B is
+                                 ; accepted and ignored.
+    call mouse_pattern_load
+    ld a, 1
+    ld (mouseReady), a
+    ret
+.hotx:                           ; sub 6 DELTAXMS: hotspot X within the
+                                 ; pointer bitmap (NOT a movement delta -
+                                 ; see the routine header). The arrow's
+                                 ; hotspot is its tip at (0,0), which is
+                                 ; why mouse_sprite_pos uses mouseX/
+                                 ; mouseY as the sprite's own top-left.
+                                 ; A non-zero hotspot shifts the BITMAP
+                                 ; back by that much so the hotspot pixel
+                                 ; lands on the reported coordinate.
+                                 ; Applied immediately - mouse_sprite_pos
+                                 ; is safe to call while hidden.
+    ld a, b
+    ld (mouseHotX), a
+    jp mouse_sprite_pos
+.hoty:                           ; sub 7 DELTAYMS: hotspot Y, as above.
+    ld a, b
+    ld (mouseHotY), a
+    jp mouse_sprite_pos
+
+; Kempston button byte -> jdaad's author-facing convention, in A.
+; Split out of sub 3 so GETFINEMS reports buttons identically.
+; Corrupts AF, BC. PRESERVES DE and HL (sub 3/4 both hold the flag
+; pointer in HL across this call).
+mouse_btn_jd:
     ld a, (mouseBtn)             ; raw Kempston byte (mouseBtn's own
                                  ; internal latch stays untouched, raw,
                                  ; for mouse_poll/mouse_move_x/y's own
@@ -2849,8 +3013,10 @@ h_mouse:
                                  ; active-LOW, idle 7, Kempston order:
                                  ;   bit0 RIGHT  bit1 LEFT  bit2 MIDDLE  bits7-4 wheel
                                  ; jdaad implements only sub-commands
-                                 ; 0-3 (ours 4-7 no-ops are exact parity)
-                                 ; and has no wheel surface at all.
+                                 ; 0-3, so its authority covers the
+                                 ; button byte for BOTH of ours that
+                                 ; report one (3 and 4); it has no wheel
+                                 ; surface at all.
     cpl                          ; idle 0, pressed 1 now; still Kempston
                                  ; bit order (0=right,1=left,2=middle);
                                  ; bits 7-3 = inverted wheel noise
@@ -2875,19 +3041,21 @@ h_mouse:
                                  ; swap. Result: idle 0, left 1, right 2,
                                  ; middle 4, combinations additive -
                                  ; exact jdaad parity.
-    ld (hl), a
-    inc l
-    ld a, (mouseCol80)
-    ld (hl), a
-    inc l
-    ld a, (mouseRow32)
-    ld (hl), a
-    inc l
-    ld a, (mouseCol53)
-    ld (hl), a
-    jp mouse_sprite_pos
+    ret
 
 msgMouseUnk: db "MOUSE? ", 0
+
+; Sub-command vector table, dense 0-7 (doc 07 (a)). Placed after
+; h_mouse's body so its dot-locals still belong to h_mouse.
+mouseSubs:
+    dw h_mouse.reset             ; 0 RESETMS
+    dw h_mouse.show              ; 1 SHOWMS
+    dw h_mouse.hide              ; 2 HIDEMS
+    dw h_mouse.read              ; 3 GETMS
+    dw h_mouse.fine              ; 4 GETFINEMS
+    dw h_mouse.pointer           ; 5 POINTERMS
+    dw h_mouse.hotx              ; 6 DELTAXMS
+    dw h_mouse.hoty              ; 7 DELTAYMS
 
 ; Poll Kempston mouse hardware: latches mouseBtn (raw byte, bit0 right/
 ; bit1 left/bit2 middle/bits7-4 wheel), and accumulates mouseX/mouseY
@@ -3015,6 +3183,8 @@ mouse_sprite_pos:
     ld hl, (mouseX)
     ld de, SPRITE_BORDER
     add hl, de                  ; HL = mouseX+32 (9-bit, max 351)
+    ld a, (mouseHotX)           ; SP16 B23 sub 6: shift the bitmap back
+    call mouse_hotsub           ; so the hotspot pixel sits on mouseX
     ld a, l
     nextreg NR_SPRITE_X, a
     ld a, h
@@ -3023,6 +3193,8 @@ mouse_sprite_pos:
     ld l, a
     ld h, 0
     add hl, de                  ; HL = mouseY+32 (9-bit, max 287)
+    ld a, (mouseHotY)           ; SP16 B23 sub 7 (DE survives the call,
+    call mouse_hotsub           ; and so does B)
     ld a, l
     nextreg NR_SPRITE_Y, a
     ld a, b
@@ -3033,8 +3205,27 @@ mouse_sprite_pos:
     nextreg NR_SPRITE_ATTR2, a  ; bit 0 = Y's 9th bit; 8-bit anchor, 1x
     ret
 
+; HL = max(HL - A, 0). The hotspot is a byte, HL is the 9-bit sprite
+; coordinate, and a large hotspot near the plane's origin can underflow
+; - floored rather than wrapped so the pointer parks at the edge
+; instead of jumping to the far side. Corrupts AF, C. Preserves B, DE.
+mouse_hotsub:
+    or a
+    ret z                       ; hotspot 0 (the default): no work
+    ld c, a
+    ld a, l
+    sub c
+    ld l, a
+    ret nc
+    dec h                       ; borrow into the 9th bit
+    ret p                       ; H still 0 or 1: in range
+    ld hl, 0                    ; went negative: floor at the plane's 0
+    ret
+
 mouseX:       dw 160
 mouseY:       db 128
+mouseHotX:    db 0           ; SP16 B23 DELTAXMS: pointer hotspot within
+mouseHotY:    db 0           ; the bitmap, default (0,0) = the arrow tip
 mouseBtn:     db 0
 mouseXraw:    db 0
 mouseYraw:    db 0
