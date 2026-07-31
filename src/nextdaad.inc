@@ -84,7 +84,13 @@ BT_USED         equ 2
 ; --- DDB ---
 DDB_MAX_BANKS   equ 8
 DDB_HEADER_SIZE equ 34
-DDB_VERSION     equ 2
+DDB_VERSION     equ 2       ; lowest accepted header version; ddb_load
+                            ; takes 2 AND 3 (SP16 A1 - DAAD-READY's own
+                            ; ZXNEXT.BAT compiles with -v3). ddbVer is
+                            ; the resident copy of header byte 0 and the
+                            ; ONE V3 gate in the interpreter: 2 and 3
+                            ; differ in bit 0 alone, so every gate is a
+                            ; single BIT 0 test, never a CP (doc 06).
 DDB_MAGIC       equ 95      ; '_' at header offset 2
 DDB_ZX_BASE     equ $8400   ; classic ZX load base; pointers are absolute
 
@@ -299,6 +305,17 @@ FLAG_DOALL      equ 50
 FLAG_CUROBJ     equ 51
 FLAG_STRENGTH   equ 52
 FLAG_OFLAGS     equ 53
+; flag 53 bit masks. Bit 7 (something was listed) and bit 6 (continuous
+; listing) are V2 and are handled where they are used; the five below
+; are DAAD V3 (PRP013 V3-01, PCDAAD condacts.pas/parser.pas) and are
+; live only when ddbVer says 3.
+F53_DOALLNONE   equ $01     ; DOALL has not found an object yet
+F53_ALTFLAGS    equ $02     ; attribute bank based at flag 91, not 59
+F53_NOPRONOUN   equ $04     ; no enclitic pronouns for verbs >= 240
+                            ; (deferred D3 - NextDAAD has no enclitic
+                            ; pronoun machinery to suppress)
+F53_PREPFIRST   equ $10     ; a preposition arrived before noun1
+F53_UNRECWRD    equ $20     ; an unrecognised word followed the verb
 FLAG_COLOC      equ 54
 FLAG_COWEI      equ 55
 FLAG_COCON      equ 56

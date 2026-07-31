@@ -48,9 +48,29 @@ foreach ($line in ($Matches[1] -split "`n")) {
 }
 if ($vals.Count -ne 128) { throw "cprops parsed $($vals.Count) rows, expected 128" }
 
+# DAAD V3 opcodes (SP16 Task 6). DRF's table is authoritative only for
+# opcodes DRF ITSELF emits, and it never emits 120/122/124 - its rows
+# for them are the placeholder "dumb", 0 params. The V3 spellings reach
+# the DDB through DRB instead: source XMES is DRF record 128 (1 param,
+# a message number) which drb.php:842-855 rewrites to opcode 120 with
+# TWO parameters (offset LSB/MSB); INDIR (122, 1 parameter) has no
+# source keyword at all and is synthesised by drb.php:1136-1143 for any
+# '@' on a second parameter; SETAT (124, 2 parameters) likewise has no
+# keyword in DRF 0.40. Arities below are from the emitted byte stream
+# (verified against a -v3 compile) and PRP013's CONDACTS[] table.
+$v3Argc = @{ 120 = 2; 122 = 1; 124 = 2 }
+
 $bad = 0
 for ($n = 0; $n -lt 128; $n++) {
     $argc = $vals[$n] -band 3
+    if ($v3Argc.ContainsKey($n)) {
+        $want = $v3Argc[$n]
+        if ($argc -ne $want) {
+            "MISMATCH condact $n (V3): cprops argc=$argc expected=$want"
+            $bad++
+        }
+        continue
+    }
     $want = $drfParams[$n].params
     if ($argc -ne $want) {
         "MISMATCH condact $n ($($drfParams[$n].name)): cprops argc=$argc DRF=$want"
@@ -58,4 +78,4 @@ for ($n = 0; $n -lt 128; $n++) {
     }
 }
 if ($bad -gt 0) { throw "$bad cprops mismatches" }
-"cprops: all 128 rows match DRF"
+"cprops: all 128 rows match DRF (120/122/124 against the V3 arities)"

@@ -1272,11 +1272,22 @@ ingest_line:
 parse_order:
     xor a
     ld (prnSeen), a             ; pronoun-in-sentence marker
+    ; SP16 T6, V3: flag 53 bits 4 and 5 are recomputed per LOGICAL
+    ; SENTENCE, not per input line - msx2daad clears them at the top of
+    ; populateLogicalSentence for exactly that reason (PRP013 V3-02
+    ; step 3), and parse_order is the routine that runs once per order.
+    ; The three eng_* helpers are resident (engine.asm); overlay1 had 40
+    ; bytes of headroom when this landed and could not hold the bodies.
+    ld de, $00CF                ; OR 0, AND ~(F53_PREPFIRST|F53_UNRECWRD)
+    call eng_v3f53
 .word:
     call word_next
     jp c, .post                 ; out of jr range
     call voc_find
-    jr c, .word                 ; unknown word: skip
+    jr nc, .known
+    call eng_v3unrec            ; V3 bit 5: unrecognised word, and a
+    jr .word                    ; verb already in the sentence
+.known:
     ; slot-fill by type, first free slot only
     ld a, e
     or a
@@ -1334,6 +1345,7 @@ parse_order:
     jr nz, .word
     ld a, d
     ld (flags+FLAG_PREP), a
+    call eng_v3prep             ; V3 bit 4: preposition before noun1
     jr .word
 .adv:
     ld a, (flags+FLAG_ADVERB)
@@ -1341,11 +1353,11 @@ parse_order:
     jr nz, .word
     ld a, d
     ld (flags+FLAG_ADVERB), a
-    jr .word
-.pron:
+    jp .word                    ; out of jr range (SP16 T6 pushed .word
+.pron:                          ; back past the bit-5 arm)
     ld a, (prnSeen)
     or a
-    jr nz, .word                ; only the first pronoun acts
+    jp nz, .word                ; only the first pronoun acts
     inc a
     ld (prnSeen), a
     ld a, (flags+FLAG_NOUN1)

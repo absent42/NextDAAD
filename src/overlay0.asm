@@ -202,6 +202,12 @@ h_doall:                        ; 85: B = location (255 = here). Error
     ld a, 4
     jp err_raise
 .fresh:
+    ; SP16 T6, V3 flag 53 bit 0: SET on entry ("nothing found yet"),
+    ; CLEARED by eng_doall_next's .take on the first object. Two sites,
+    ; both references - see the note at .take (engine.asm). B is live
+    ; across this call and eng_v3f53 preserves it.
+    ld de, F53_DOALLNONE<<8 | $FF
+    call eng_v3f53
     ld a, b
     ld (doallLoc), a
     ld a, (procSP)
@@ -396,10 +402,23 @@ h_hasnat:                       ; 59
     and (hl)
     jp z, c_true
     jp c_false
-; B = param -> HL = flags + (59 - B/8), A = 1 << (B mod 8).
+; B = param -> HL = flags + (base - B/8), A = 1 << (B mod 8).
 ; DAAD numbers attributes DOWN from flag 59: attr 0-7 -> flag 59,
 ; 8-15 -> flag 58, WEARABLE 23 -> flag 57 bit 7, MOUSE 240 -> flag 29
-; bit 0 (manual 1062-1069). Corrupts AF, E.
+; bit 0 (manual 1062-1069). Corrupts AF, B, E, HL.
+;
+; SP16 T6, V3: flag 53 bit 1 moves the whole bank to base 91 instead -
+; flags 60-91, exactly 32 bytes, the same 256 attributes (PRP013 V3-04,
+; PCDAAD condacts.pas:1207-1218). This is the ONE addressing helper for
+; HASAT (58), HASNAT (59) and the new SETAT (124), so SP16 A5's byte
+; order and this base selection are shared by all three by construction
+; rather than by three copies agreeing.
+;
+; PCDAAD applies the bit-1 test on any database version; msx2daad gates
+; it on ISV3. NextDAAD follows msx2daad: under V2 flag 53's low bits are
+; the game's own property (only bits 6 and 7 are specified), and moving
+; the attribute bank out from under a V2 game that happens to store
+; something in bit 1 would be a regression, not a feature.
 hasat_ptr:
     ld a, b
     and 7
@@ -411,8 +430,16 @@ hasat_ptr:
     and $1F                     ; A = B / 8 (0..31)
     ld b, a
     ld a, 59
+    ld hl, ddbVer
+    bit 0, (hl)                 ; V3 database?
+    jr z, .base
+    ld hl, flags+FLAG_OFLAGS
+    bit 1, (hl)                 ; F53_ALTFLAGS
+    jr z, .base
+    ld a, 91                    ; alternative bank: flags 60-91
+.base:
     sub b
-    ld b, a                     ; B = 59 - B/8
+    ld b, a                     ; B = base - B/8
     call fptr
     ld a, 1
 .shift:
@@ -420,6 +447,58 @@ hasat_ptr:
     ret m
     add a, a
     jr .shift
+
+; --- DAAD V3 condacts (SP16 A2) ---
+; 120/122/124 are live opcodes only in a version 3 database. The
+; dispatcher no longer screens them (engine.asm), so each handler makes
+; the version call itself and a version 2 database gets the E5 it
+; always got, from here.
+h_v3only:
+    ld a, 5
+    jp err_raise
+
+h_setat:                        ; 124: B = attribute, C = operation
+    ld hl, ddbVer
+    bit 0, (hl)
+    jr z, h_v3only
+    call hasat_ptr              ; HL -> flag, A = bit mask, C survives
+    ld e, a
+    ld a, c
+    and 3                       ; operation AND 3 (PRP013 V3-08)
+    jr z, .clear                ; 0 = clear
+    dec a
+    jr z, .set                  ; 1 = set
+    ld a, (hl)                  ; 2 and 3 both toggle
+    xor e
+    ld (hl), a
+    ret
+.set:
+    ld a, (hl)
+    or e
+    ld (hl), a
+    ret
+.clear:
+    ld a, e
+    cpl
+    and (hl)
+    ld (hl), a
+    ret
+
+h_indir:                        ; 122: B = flag number
+    ld hl, ddbVer
+    bit 0, (hl)
+    jr z, h_v3only
+    ; Arm the dispatcher's one-shot arg2 override (engine.asm .noargs
+    ; carries the full mechanism note). The references patch the second
+    ; parameter byte of the following condact in the database image;
+    ; NextDAAD's bytecode lives behind a banked read window, so nothing
+    ; is written to it here.
+    call fptr
+    ld a, (hl)
+    ld (indirArg2), a
+    ld a, 1
+    ld (indirValid), a
+    ret
 h_random:                       ; 95: flags[B] = 1..100
     call rng_next
     call fptr
@@ -1782,6 +1861,26 @@ h_anykey:                       ; 24
     call wait_key_timeout
     jp prn_reset_lines
 h_pause:                        ; 35: B frames, 0 = 256
+    ; SP16 A2 tail. Under V3, PAUSE 0 is GETKEY: block for a keypress
+    ; and store it in flags 60/61, exactly as msx2daad's do_PAUSE V3
+    ; branch does (PRP013 V3-09). DRB compiles the GETKEY keyword to
+    ; PAUSE 0 and rejects it outside -v3 (drb.php:947-955), and a fresh
+    ; -v3 compile emits 23 00 for it. No prn_reset_lines on this arm -
+    ; the reference returns straight out, and GETKEY is a value read,
+    ; not a pager pause like ANYKEY.
+    ld a, b
+    or a
+    jr nz, .timed
+    ld hl, ddbVer
+    bit 0, (hl)
+    jr z, .timed                ; V2: 0 still means 256 frames
+    call key_wait_char
+    ld hl, flags+FLAG_KEY1      ; flags is ALIGN 256: the pair is one
+    ld (hl), a                  ; INC L apart (doc 07 (a))
+    inc l
+    ld (hl), 0
+    ret
+.timed:
     ld a, (frameCounter)
     ld e, a
 .wait:
@@ -2059,6 +2158,26 @@ h_move:                         ; 106: condition-like action. B = flag
     call data_restore
     pop hl
     jp c_false
+; SYNONYM verb noun (36). SP16 T6 / PRP019 V3-12: the substitution is
+; version-independent, the done-marking is not. Z80 and 6502 DAAD V2
+; mark DONE; the 68k sources had already stopped, and V3 makes that
+; official ("In V3, SYNONYM no longer marks DONE"). NextDAAD is a Z80
+; interpreter, so V2 keeps the mark.
+;
+; This is why cprops row 36 is condition-typed (engine.asm): an action
+; row has the dispatcher stamp the level done before the handler runs,
+; and the handler cannot un-stamp it without also wiping a done that an
+; EARLIER condact in the same entry set. Marking it here instead is
+; exact. Both arms return c_true, so the entry continues either way -
+; identical to the action row's post-dispatch path.
+;
+; Visible difference, and it is narrower here than in the references:
+; NextDAAD's ISDONE reads the last POPPED process's done flag rather
+; than an accumulating in-table one (compliance report B20, adjudicated
+; in NextDAAD's favour by the 1991 manual). tests_condacts_v3.c's
+; entry-level SYNONYM/ISDONE cases assume the accumulating model, so
+; the V2/V3 split shows up on the PROCESS n / ISDONE idiom rather than
+; within a single entry. See the task report.
 h_synonym:                      ; 36
     ld a, b
     cp 255
@@ -2067,9 +2186,14 @@ h_synonym:                      ; 36
 .noun:
     ld a, c
     cp 255
-    ret z
+    jr z, .done
     ld (flags+FLAG_NOUN1), a
-    ret
+.done:
+    ld hl, ddbVer
+    bit 0, (hl)
+    jp nz, c_true               ; V3: SYNONYM does not mark done
+    call eng_set_done
+    jp c_true
 h_newtext:                      ; 92: discard pending input orders so a
     xor a                       ; rejected order's compound tail dies
     ld (inpPending), a          ; (inpPending is resident)
@@ -2107,6 +2231,22 @@ ext_undone:                     ; EXTERN 0 7 (XUNDONE): clear the done
 ; file/read-fail paths. EXTERN is action-typed (cprops), so the
 ; engine never consults the CF this leaves - unlike a condition
 ; handler there is no success/failure contract to honour on return.
+; XMES lsb msb (condact 120) - the V3-native spelling of the same
+; thing, and a thin wrapper over the primitive below (SP16 A2; the
+; sav-machinery convention: overlays extend by adding routines on top
+; of the resident/existing primitive, never by relocating it). DRB
+; rewrites the source keyword XMES into opcode 120 with the 16-bit
+; 0.XMB offset split across the two parameters (drb.php:842-855), so
+; the offset arrives in B (LSB) and C (MSB) instead of B and extArg3.
+h_xmes:                         ; 120: B = offset LSB, C = offset MSB
+    ld hl, ddbVer
+    bit 0, (hl)
+    jp z, h_v3only              ; jr out of range from here
+    ld a, c
+    ld (extArg3), a
+    ld a, b
+    jp ext_xmes
+
 ext_xmes:
     ld l, a                     ; A = B = offset LSB (h_extern contract)
     ld a, (extArg3)

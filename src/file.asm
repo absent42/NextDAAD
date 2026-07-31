@@ -119,9 +119,17 @@ ddb_load:
     sbc hl, de
     jr c, .badhdr
 .sizeok:
+    ; SP16 A1: version 2 AND version 3 databases load. Nothing else in
+    ; the header differs between them (compliance report Appendix A
+    ; probe 2, re-confirmed 2026-07-31 on a fresh -v3 compile of
+    ; BLANK_EN.DSF: byte 2 = 95, numSys = 63, all thirteen pointer
+    ; words in the same places). The accepted pair is contiguous, so
+    ; one SUB/CP range test replaces the equality test at no extra
+    ; branch (doc 05 "range test by subtract-then-compare").
     ld a, (ddbHeader+0)
-    cp DDB_VERSION
-    jr nz, .badhdr
+    sub DDB_VERSION             ; 2 -> 0, 3 -> 1, anything else >= 2
+    cp 2                        ; (0/1 wrap high and fail the same way)
+    jr nc, .badhdr
     ld a, (ddbHeader+2)
     cp DDB_MAGIC
     jr nz, .badhdr
@@ -244,6 +252,10 @@ tmUp:        db 0           ; 1 once windows_init has run (tilemap live).
                             ; the tilemap live itself via txt_init) - kept
                             ; as a general tilemap-state flag in case
                             ; anything else needs it.
+; ddbVer IS header byte 0 - the resident header copy is already the
+; cached version cell, so the V3 gate costs no extra storage and cannot
+; drift out of step with the loaded database (SP16 T6).
+ddbVer:
 ddbHeader:   ds DDB_HEADER_SIZE
 
 ; --- .SAV file core -------------------------------------------------

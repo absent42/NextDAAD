@@ -366,12 +366,13 @@ eng_exec:
                                  ; is unneeded
     and $7F
     ld (curCondact), a
-    cp 120
-    jp z, .illegal               ; jr out of range once fn-3 consumption
-    cp 122                       ; is inserted below (~+145): illegal
-    jp z, .illegal               ; opcodes are a cold path, jp costs
-    cp 124                       ; nothing that matters here
-    jp z, .illegal
+    ; SP16 T6: 120/122/124 used to raise E5 here. They are now real
+    ; rows in cprops/cdisp (XMES, INDIR, SETAT) and the V2 raise moved
+    ; into h_v3only, which each of the three handlers jumps to when
+    ; ddbVer is not 3 - the E5 is KEPT for a version 2 database, just
+    ; raised one dispatch later, and 15 bytes of resident walker go
+    ; away with it. A V2 database never contains these opcodes anyway
+    ; (DRF rejects the syntax that produces them outside -v3).
     ; properties
     ld e, a
     ld d, 0
@@ -392,6 +393,31 @@ eng_exec:
     call rd_next
     ld c, a                     ; arg2
 .noargs:
+    ; SP16 A2 - V3 INDIR (122) one-shot second-parameter override.
+    ; h_indir leaves flags[flagno] in indirArg2 with indirValid set;
+    ; the very NEXT dispatch spends it on arg2 and clears it. DRB emits
+    ; INDIR immediately before its target and never anywhere else
+    ; (drb.php:1136-1143), re-dumped from a fresh -v3 compile
+    ; 2026-07-31: LET 100 @101 is 7A 65 33 64 65 = INDIR 101 / LET 100
+    ; 101, the placeholder byte being the flag number itself.
+    ; The references patch that byte in the database image; NextDAAD
+    ; reads its bytecode through a banked window, so the override lives
+    ; here instead - byte-equivalent, because the opcode's own $80
+    ; indirection bit reaches arg1 ONLY. Both mechanisms can be live at
+    ; once and DRC does emit that shape: LET @100 @101 compiles to
+    ; 7A 65 B3 64 65 (INDIR 101 / LET+$80 100 101), which means
+    ; flags[flags[100]] = flags[101] under either implementation.
+    ; Clearing unconditionally is what makes it one-shot; the only
+    ; dispatch path that skips this point is the $FF terminator, which
+    ; DRB never emits between an INDIR and its target.
+    ld hl, indirValid
+    ld a, (hl)
+    ld (hl), 0
+    or a
+    jr z, .noindir
+    dec hl                      ; indirArg2 sits one below indirValid
+    ld c, (hl)
+.noindir:
     ; XMESSAGE stream discipline: current DRC compiles XMESSAGE to a
     ; 3-parameter EXTERN (offset_lsb, 3, offset_msb) - the only
     ; 3-param shape it emits. Consume the third byte here, in the
@@ -461,10 +487,6 @@ eng_exec:
 .endentry:
     call data_restore           ; entry fell through its terminator:
     jp eng_next_entry           ; carry on with the next entry
-.illegal:
-    call data_restore
-    ld a, 5
-    jp err_raise
 
 ; Rebuild an absolute DDB pointer from rdPage/rdPtr.
 ; offset = (page-DDB_PAGE_FIRST)*$2000 + (rdPtr - DATA_WINDOW)
@@ -541,6 +563,14 @@ eng_ptr_abs:
 eng_ptr_abs_hist: ds 8
  ENDIF
 
+; V3 INDIR's one-shot arg2 override (SP16 A2). Placed HERE, before this
+; file's ALIGN 256/flags boundary, for the same reason as the histogram
+; above: pre-anchor slack rather than the scarce post-flags
+; RESIDENT_LIMIT budget. eng_exec reaches indirArg2 with DEC HL from
+; indirValid, so the ORDER of these two bytes is load-bearing.
+indirArg2:  db 0
+indirValid: db 0
+
 ; IX -> top stack record. Corrupts AF, DE, HL.
 eng_top_ix:
     ld a, (procSP)
@@ -565,6 +595,45 @@ eng_exit_table:
     pop af
     ld (ix+5), a
     jp eng_pop_proc
+
+; --- DAAD V3 flag 53 (SP16 T6) ---
+; Flag 53's V3 bits are written from THREE places in two different
+; overlays plus the resident DOALL walker, so the read-modify-write and
+; the version gate live here once, in the always-mapped resident, and
+; every caller is a LD DE/CALL pair. Keeping it resident is also what
+; lets overlay1's parser afford the feature at all - overlay1 had 40
+; bytes of DEBUG headroom when this landed.
+;
+;   eng_v3unrec  parser skipped an unrecognised word: set bit 5, but
+;                only once a verb is in the sentence (PCDAAD
+;                parser.pas:572 "if getFlag(FVERB) <> NO_WORD").
+;   eng_v3prep   parser stored a preposition: set bit 4, but only while
+;                noun1 is still empty (PCDAAD parser.pas:528).
+;   eng_v3f53    flag 53 = (flag 53 AND E) OR D. No-op on a version 2
+;                database - bits 0-5 of flag 53 are the game's own
+;                property under V2 and must not move.
+; All three clobber AF, DE, HL and preserve BC/IX/IY.
+eng_v3unrec:
+    ld a, (flags+FLAG_VERB)
+    inc a
+    ret z                       ; no verb yet: not "after the verb"
+    ld de, (F53_UNRECWRD<<8)|$FF
+    jr eng_v3f53
+eng_v3prep:
+    ld a, (flags+FLAG_NOUN1)
+    inc a
+    ret nz                      ; noun1 already filled: not "before"
+    ld de, (F53_PREPFIRST<<8)|$FF
+eng_v3f53:
+    ld hl, ddbVer
+    bit 0, (hl)                 ; version 2 and 3 differ in bit 0 alone
+    ret z
+    ld hl, flags+FLAG_OFLAGS
+    ld a, (hl)
+    and e
+    or d
+    ld (hl), a
+    ret
 
 ; --- DOALL ---
 ; Started by the DOALL handler (stores doallLoc, doallLevel, resets
@@ -598,6 +667,16 @@ eng_doall_next:
     cp (iy+5)
     jr z, .next
 .take:
+    ; SP16 T6, V3 flag 53 bit 0. BOTH references write this bit at TWO
+    ; sites, not one: SET at DOALL entry (h_doall) and CLEAR here, the
+    ; moment a first object is found - msx2daad daad_condacts.c:2280
+    ; and :2255, PCDAAD condacts.pas:1460/1467. Setting it only on the
+    ; caso-A arm below would leave the bit stale through a later
+    ; successful DOALL, which is why the NOTE that used to sit at
+    ; .exhausted (SP16 B14, "bit 0 belongs on that arm alone") is
+    ; superseded. B is live across this call and eng_v3f53 preserves it.
+    ld de, $00FE                ; OR 0, AND ~F53_DOALLNONE
+    call eng_v3f53
     ld a, b
     ld (doallObj), a
     ld (flags+FLAG_DOALL), a
@@ -648,8 +727,13 @@ eng_doall_next:
     ; cell - overlay0.asm:1947-1950); h_newtext itself lives in
     ; overlay0 and cannot be called from here, so the single store is
     ; inlined.
-    ; NOTE for T6: caso A is the ONE place "DOALL found nothing at all"
-    ; is known, so flag 53 bit 0 belongs on that arm alone.
+    ; SUPERSEDED NOTE (SP16 T6): this used to read "caso A is the ONE
+    ; place DOALL found nothing at all is known, so flag 53 bit 0
+    ; belongs on that arm alone". It does not - both references SET the
+    ; bit at DOALL entry and CLEAR it on the first object found, so
+    ; nothing is needed here: an exhausted-with-nothing DOALL simply
+    ; never reached the clear at .take. A caso-A-only SET would also
+    ; leave the bit lit through the NEXT, successful, DOALL.
     xor a
     ld (doallLevel), a
     ld hl, doallObj
@@ -680,7 +764,18 @@ cprops:
                                 ; game's redraw; done is set on every
                                 ; outcome (argc 1 matches DRF)
     db $80,$80,$80,$80,$80,$80  ; 29-34 CLS DROPALL AUTOG AUTOD AUTOW AUTOR
-    db $81,$82,$81,$81,$81,$81  ; 35-40 PAUSE SYNONYM GOTO MESSAGE REMOVE GET
+    db $81,2,$81,$81,$81,$81    ; 35-40 PAUSE SYNONYM GOTO MESSAGE REMOVE GET
+                                ; SYNONYM (36) is condition-typed, argc
+                                ; unchanged at 2: under V3 it must NOT
+                                ; mark the level done (PRP019 V3-12,
+                                ; tests_condacts_v3.c
+                                ; test_SYNONYM_v3_no_done), and an
+                                ; action-typed row would have the
+                                ; dispatcher stamp done BEFORE the
+                                ; handler could decide. h_synonym now
+                                ; calls eng_set_done itself on the V2
+                                ; path and always returns c_true, which
+                                ; is what the action row did.
     db $81,$81,$81,$81,$82,$82  ; 41-46 DROP WEAR DESTROY CREATE SWAP PLACE
     db $81,$81,$82,$82,$82      ; 47-51 SET CLEAR PLUS MINUS LET
     db $80,$81,$81              ; 52-54 NEWLINE PRINT SYSMESS
@@ -706,7 +801,26 @@ cprops:
     db 0                        ; 111   INKEY (C,0)
     db 2,2,0,0                  ; 112-115 BIGGER SMALLER ISDONE ISNDONE (C)
     db $81,$80,$81              ; 116-118 SKIP RESTART TAB
-    db $82,0,$82,0,$82,0        ; 119-124 COPYOF (119) COPYOO (121) COPYFO (123); 120/122/124 illegal
+    db $82,$82,$82,$81,$82,$82  ; 119-124 COPYOF XMES COPYOO INDIR
+                                ; COPYFO SETAT. SP16 A2: 120/122/124
+                                ; are the V3 opcodes and carry real
+                                ; arity - XMES lsb msb (A,2), INDIR
+                                ; flagno (A,1), SETAT value operation
+                                ; (A,2), matching PRP013's CONDACTS[]
+                                ; table and the bytes DRB emits. All
+                                ; three are action-typed ({do_X, 1} in
+                                ; msx2daad's condactList). On a version
+                                ; 2 database the arguments are consumed
+                                ; and the handler then raises E5, so a
+                                ; V2 database still dies on them.
+                                ; NOTE: DRF.exe's own parameter table
+                                ; still calls these three slots "dumb"
+                                ; with 0 params, because DRF never
+                                ; emits them - the source keywords are
+                                ; XMES (its record 128, 1 param) and
+                                ; the '@' second-parameter syntax, and
+                                ; DRB rewrites both. check-cprops.ps1
+                                ; carries the matching exception.
     db $82,$82,$80              ; 125-127 COPYFF COPYBF RESET
 
 ; --- dispatch table: 3 bytes per condact (page, addr lo, addr hi) ---
@@ -845,11 +959,11 @@ cdisp:
     DC h_restart                ; 117 RESTART
     DC h_tab                    ; 118 TAB
     DC h_copyof                  ; 119 COPYOF
-    DC h_unimpl                 ; 120 (unused)
+    DC h_xmes                   ; 120 XMES (V3)
     DC h_copyoo                  ; 121 COPYOO
-    DC h_unimpl                 ; 122 (unused)
+    DC h_indir                  ; 122 INDIR (V3)
     DC h_copyfo                  ; 123 COPYFO
-    DC h_unimpl                 ; 124 (unused)
+    DC h_setat                  ; 124 SETAT (V3)
     DC h_copyff                 ; 125 COPYFF
     DC h_copybf                 ; 126 COPYBF
     DC h_reset                   ; 127 RESET

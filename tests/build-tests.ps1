@@ -6,7 +6,10 @@
 # -Err4 makes the doallnest DDB active instead (deliberate error 4:
 # nested DOALL on the same process); -GMode makes the gmodegate DDB
 # active and stages the single Layer 2 picture it needs (see its own
-# block below); -Rab compiles the modernised next-only
+# block below); -V3 makes the v3probe DDB active - the ONLY fixture
+# here compiled with DRF's -v3, so its header byte 0 is 3 - together
+# with the sd\0.XMB its XMES probe reads (see its own block below);
+# -Rab compiles the modernised next-only
 # tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real
 # commercial-quality DAAD game), makes that DDB active, and stages the
 # Layer 2 art (default N.NX2 -> sd\NNN.NX2); -UU compiles the owner-
@@ -15,13 +18,15 @@
 # N.NXI/N.NX2 art exists there as-is (currently NXI-only) to sd\NNN.NXI.
 # The DDB switches are mutually exclusive - if more than one is given,
 # whichever copy runs last in this script wins: -Suite copies first,
-# -Err4 copies over it, -GMode copies over that, -Rab copies over that,
+# -Err4 copies over it, -GMode copies over that, -V3 over that,
+# -Rab copies over that,
 # -UU copies over that, and -Part copies last of all (both its files -
 # see below), since its block comes after -UU's. The template is
 # active if no switch is given.
 # Two-part fixture (SP11 Task 6), independent of the single-DDB switches
 # above except that it also writes sd\GAME.DDB (see the mutually-
-# exclusive note):
+# exclusive note - the copy order is -Suite, -Err4, -GMode, -V3, -Rab,
+# -UU, -Part, last one wins):
 #   -Part    compile and stage both halves of the NDPARTA.DSF/
 #            NDPARTB.DSF fixture pair. NDPARTA -> sd\GAME.DDB (part 1,
 #            byte-identical to a single-part game) + sd\0.XMB; NDPARTB
@@ -243,7 +248,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -321,6 +326,77 @@ try {
 }
 finally {
     Remove-Item "$dr\NDGMODE.DSF", "$dr\NDGMODE.json" -ErrorAction SilentlyContinue
+    Pop-Location
+}
+
+# SP16 Task 6 DAAD V3 fixture. The ONLY DDB this script builds with
+# DRF's -v3, so the only one whose header byte 0 is 3. It exercises the
+# three V3 opcodes (XMES 120, INDIR 122, SETAT 124), both attribute
+# banks, PAUSE 0 as GETKEY, flag 53's bits 0/4/5 and SYNONYM's V3
+# done-semantics; the DSF's own header lists which flag carries which
+# answer. Compiled unconditionally like the suite and gmodegate above -
+# a break in the DSF (or in DRF's -v3 handling) is then caught on a
+# plain run - but only -V3 makes it the active sd\GAME.DDB.
+#
+# tests\v3probe.dsf will NOT compile without -v3: DRF rejects '@' on a
+# second parameter and rejects GETKEY outside V3. Do not "simplify"
+# this to reuse the plain invocation above.
+#
+# SETAT stand-in patch. DRF 0.40 has no SETAT keyword at all - its
+# condact table calls slot 124 "dumb", 0 parameters - so each SETAT in
+# the fixture is authored as a LET of the same arity, tagged by a
+# preceding "LET 250 <n>", and the tagged LET's opcode is rewritten
+# from 51 to 124 here. The six-byte signature includes the tag
+# precisely so each one is unique in the image; anything other than
+# exactly one match means the fixture no longer says what its comments
+# say and the build stops. tests\parser\scripts\v3probe\run.py carries
+# the same table for the differential legs - keep the two in step.
+function Invoke-V3SetatPatch {
+    param([string]$Path)
+    $sites = @(
+        @{ tag = 7; p1 = 0; p2 = 1 },   # SETAT 0 1 - standard bank, set
+        @{ tag = 8; p1 = 0; p2 = 2 },   # SETAT 0 2 - standard bank, toggle
+        @{ tag = 9; p1 = 0; p2 = 1 }    # SETAT 0 1 - alternative bank
+    )
+    $b = [System.IO.File]::ReadAllBytes($Path)
+    foreach ($s in $sites) {
+        $sig = [byte[]](51, 250, $s.tag, 51, $s.p1, $s.p2)
+        $hits = @()
+        for ($i = 0; $i -le $b.Length - $sig.Length; $i++) {
+            $ok = $true
+            for ($j = 0; $j -lt $sig.Length; $j++) {
+                if ($b[$i + $j] -ne $sig[$j]) { $ok = $false; break }
+            }
+            if ($ok) { $hits += $i }
+        }
+        if ($hits.Count -ne 1) {
+            throw "v3probe SETAT stand-in tag $($s.tag): $($hits.Count) signature matches in $Path, expected exactly 1"
+        }
+        $b[$hits[0] + 3] = 124
+    }
+    [System.IO.File]::WriteAllBytes($Path, $b)
+}
+
+Copy-Item "$PSScriptRoot\v3probe.dsf" "$dr\NDV3.DSF" -Force
+Push-Location $dr
+try {
+    & .\TOOLS\DRC\DRF.exe zx next NDV3.DSF -v3
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (v3probe)" }
+    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDV3.json NDV3.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (v3probe)" }
+    $v3hdr = [System.IO.File]::ReadAllBytes("$dr\NDV3.DDB")
+    if ($v3hdr[0] -ne 3) {
+        throw "v3probe DDB header byte 0 is $($v3hdr[0]), expected 3 - did -v3 reach DRF?"
+    }
+    Invoke-V3SetatPatch "$dr\NDV3.DDB"
+    Move-Item NDV3.DDB "$root\tests\out\v3probe.ddb" -Force
+    # The XMES probe always compiles an xmessage, so 0.XMB is always
+    # emitted here - no Test-Path guard, an absence would be a real
+    # regression worth throwing on.
+    Move-Item '0.XMB' "$root\tests\out\v3probe.xmb" -Force
+}
+finally {
+    Remove-Item "$dr\NDV3.DSF", "$dr\NDV3.json", "$dr\NDV3.DDB", "$dr\0.XMB" -ErrorAction SilentlyContinue
     Pop-Location
 }
 
@@ -429,6 +505,26 @@ if ($GMode) {
         "WARNING: $gmodeArt absent - gmodegate will report the gate result without a picture"
     }
     $gmodeActive = $true
+}
+
+$v3Active = $false
+if ($V3) {
+    # SP16 Task 6: make the V3 database the active game. Same CSpect
+    # lock hazard as every other staging switch - a running emulator
+    # holds sd\ files open and the DDB/XMB pair would stage
+    # piecemeal, which for this fixture means XMES reading a stale
+    # 0.XMB from another fixture at the same offsets.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial v3probe fixture)"
+    }
+    Copy-Item "$root\tests\out\v3probe.ddb" "$root\sd\GAME.DDB" -Force
+    # Stale-clean ONLY what this switch owns: sd\0.XMB, which it
+    # immediately replaces with its own. Every other staged file is
+    # left exactly as found.
+    Remove-Item "$root\sd\0.XMB" -Force -ErrorAction SilentlyContinue
+    Copy-Item "$root\tests\out\v3probe.xmb" "$root\sd\0.XMB" -Force
+    "staged tests\out\v3probe.xmb -> sd\0.XMB (XMES probe text)"
+    $v3Active = $true
 }
 
 $rabActive = $false
@@ -1050,6 +1146,7 @@ elseif ($uuActive) { "active: urbanupstart" }
 elseif ($UU) { "active: urbanupstart (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
 elseif ($rabActive) { "active: rabenstein" }
 elseif ($Rab) { "active: rabenstein (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
+elseif ($v3Active) { "active: v3probe (SP16 DAAD V3 fixture - header version 3)" }
 elseif ($gmodeActive) { "active: gmodegate (SP16 GMODE graphics-gate fixture)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($Suite) { "active: suite" }
