@@ -22,8 +22,22 @@
 # burst of samples keyed by (linker position, frames-left-in-pattern) -
 # the AKY player's exact song phase - and the comparison is over phase
 # keys the two runs have in common. sd\GAME.AKY is a byte-identical copy
-# of sd\001.AKY (build-tests.ps1 -AudLad), so at equal phase the two
+# of sd\006.AKY (build-tests.ps1 -AudLad), so at equal phase the two
 # runs are playing literally the same bytes of the same song.
+#
+# WHICH MATERIAL. The default restart verb is LADR = 006.AKY = the kit's
+# own 9-channel tune - the material BOTH parked SP14b sightings were
+# actually heard on, and the one that uses noise, hardware envelopes and
+# retrigs. `--restart LAD1` runs the same comparison against the
+# synthetic single-channel rung instead: a much weaker stimulus, and NOT
+# byte-identical to the autoplay, so its control is only a
+# same-player-state control, not a same-material one.
+#
+# COLLECTION WINDOW. Both scenarios start collecting at their FIRST live
+# frame, so the frames immediately after PLY_AKY_INIT - where a DECAYING
+# residue would live, as opposed to a persistent one - are inside the
+# compared set. Settling first would have sampled the control's early
+# phases from its second pass and quietly dropped the transient.
 #
 # EMULATOR-MODEL CAVEAT. Everything here is ZEsarUX's model of the AY
 # and of the Next's Turbo Sound, not silicon. The register-array half of
@@ -49,6 +63,7 @@ ZESARUX = os.path.join(ROOT, "tools", "DAAD-READY", "TOOLS", "zesarux", "zesarux
 NEX = os.path.join(ROOT, "build", "nextdaad.nex")
 SD = os.path.join(ROOT, "sd")
 
+COLLECT_S = 25.0                # collection window per scenario
 SNAP = 0x7C00
 OFF_SEQ = 0x04
 OFF_AY = 0x10
@@ -257,7 +272,7 @@ def describe(off):
     return "%s %s" % (CELL_NAMES[n // 2], "lo" if n % 2 == 0 else "hi")
 
 
-def run_scenario(sd, port, do_stopm, log):
+def run_scenario(sd, port, do_stopm, log, restart="LADR"):
     proc = launch(sd, port)
     try:
         z = connect(proc, port)
@@ -268,9 +283,16 @@ def run_scenario(sd, port, do_stopm, log):
         # the song actually running.
         d0 = wait_for(z, lambda d: playing(d), 60, "boot autoplay")
         log.append(dump_text("--- boot autoplay (first frame with music live)", d0))
-        time.sleep(2.0)                     # let the tune get past its first note
         if not do_stopm:
-            return collect(z, 12.0), log
+            # Collect from the FIRST live frame, not after a settle: the
+            # repro's collection starts at its own first live frame
+            # after PLY_AKY_INIT, and the two sets must cover the same
+            # part of the song - including the restart transient, where
+            # a DECAYING residue would live. A settle here would leave
+            # the control's early phases sampled from its second pass
+            # and silently drop the transient out of the comparison.
+            return collect(z, COLLECT_S), log
+        time.sleep(2.0)                     # let the tune get past its first note
         pre = wait_for(z, playing, 10, "a clean pre-STOPM sample")
         log.append(dump_text("--- POINT 1: pre-STOPM", pre))
         z.keys("STOPM")
@@ -280,12 +302,15 @@ def run_scenario(sd, port, do_stopm, log):
         time.sleep(1.0)
         post2 = wait_for(z, lambda d: not playing(d), 10, "a clean post-STOPM sample")
         log.append(dump_text("--- POINT 2b: post-STOPM, one second later", post2))
-        z.keys("LAD1")
+        z.keys(restart)
         z.enter()
         rst = wait_for(z, lambda d: playing(d), 20, "MUSIC restart")
         log.append(dump_text("--- POINT 3: post-restart MUSIC (first live frame)", rst))
-        time.sleep(2.0)
-        return collect(z, 12.0), log
+        log.append("restart transient phase = %04X:%04X" % phase(rst))
+        # No settle: collection starts HERE, on the frames immediately
+        # after PLY_AKY_INIT, so the restart transient is inside the
+        # compared set (see the control branch above).
+        return collect(z, COLLECT_S), log
     finally:
         try:
             proc.terminate()
@@ -294,7 +319,23 @@ def run_scenario(sd, port, do_stopm, log):
         proc.wait(timeout=20)
 
 
-LADDER = [("LAD1", 1), ("LAD3", 3), ("LAD6", 6), ("LAD9", 9), ("LADQ", 9)]
+LADDER = [("LAD1", 1), ("LAD3", 3), ("LAD6", 6), ("LAD9", 9), ("LADQ", 9),
+          ("LADR", None)]
+
+
+def sounding(dump, only_psg=None):
+    """How many AY channels are actually making a noise: non-zero
+    volume, tone bit open in R7, and a non-zero period."""
+    live = 0
+    for p in range(3):
+        if only_psg is not None and p != only_psg:
+            continue
+        r = dump[OFF_AY + 14 * p: OFF_AY + 14 * p + 14]
+        for c in range(3):
+            tone = r[2 * c] | ((r[2 * c + 1] & 0x0F) << 8)
+            if (r[8 + c] & 0x1F) and not (r[7] & (1 << c)) and tone:
+                live += 1
+    return live
 
 
 def run_ladder(sd, port, log):
@@ -319,13 +360,30 @@ def run_ladder(sd, port, log):
             d = wait_for(z, playing, 20, verb)
             time.sleep(0.4)
             d = wait_for(z, playing, 5, verb + " settled")
-            live = 0
-            for p in range(3):
-                r = d[OFF_AY + 14 * p: OFF_AY + 14 * p + 14]
-                for c in range(3):
-                    tone = r[2 * c] | ((r[2 * c + 1] & 0x0F) << 8)
-                    if (r[8 + c] & 0x1F) and not (r[7] & (1 << c)) and tone:
-                        live += 1
+            live = sounding(d)
+            if channels is None:
+                # Real material: one instant proves nothing about how
+                # many voices the composer uses, so watch it for a while
+                # and report the peak and the per-PSG reach.
+                peak, psgs, best = 0, [False] * 3, d
+                end = time.monotonic() + 25.0
+                while time.monotonic() < end:
+                    q = z.read(SNAP, SNAP_LEN)
+                    if not intact(q) or not playing(q):
+                        continue
+                    n = sounding(q)
+                    if n > peak:
+                        peak, best = n, q
+                    for pi in range(3):
+                        if sounding(q, pi):
+                            psgs[pi] = True
+                log.append("--- rung %s: real material, %d channel(s) at "
+                           "the first sample, PEAK %d over 25 s, PSGs "
+                           "reached: %s" % (verb, live, peak,
+                           ", ".join("PSG%d" % (i + 1)
+                                     for i in range(3) if psgs[i]) or "none"))
+                log.append(fmt_ay(best))
+                continue
             log.append("--- rung %s: %d channel(s) expected, %d sounding"
                        % (verb, channels, live))
             log.append(fmt_ay(d))
@@ -344,6 +402,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--port", type=int, default=10077)
+    ap.add_argument("--restart", default="LADR",
+                    help="verb that restarts the music after STOPM. "
+                         "LADR (default) is the kit's real 9-channel tune "
+                         "and is byte-identical to the boot autoplay; LAD1 "
+                         "is the synthetic single-channel rung and is NOT")
     ap.add_argument("--ladder", action="store_true",
                     help="Task 7a: verify each ladder rung drives the "
                          "channels it claims, instead of the 7b STOPM dump")
@@ -369,16 +432,35 @@ def main():
 
     log = []
     log.append("=== CONTROL: fresh boot, autoplay only, no STOPM ===")
-    ctrl, log = run_scenario(sd, args.port, False, log)
+    ctrl, log = run_scenario(sd, args.port, False, log, args.restart)
     log.append("")
-    log.append("=== REPRO: fresh boot, autoplay -> STOPM -> LAD1 (same bytes) ===")
-    repro, log = run_scenario(sd, args.port + 1, True, log)
+    log.append("=== REPRO: fresh boot, autoplay -> STOPM -> %s ===" % args.restart)
+    repro, log = run_scenario(sd, args.port + 1, True, log, args.restart)
 
     common = sorted(set(ctrl) & set(repro))
     log.append("")
     log.append("=== PHASE-MATCHED COMPARISON ===")
     log.append("control samples %d, repro samples %d, phases in common %d"
                % (len(ctrl), len(repro), len(common)))
+    # M2: prove the restart transient is inside the compared set rather
+    # than asserting it. The line above only says how many phases match;
+    # this one says whether the frames right after PLY_AKY_INIT - where
+    # a DECAYING residue would live - are among them.
+    for line in log:
+        if line.startswith("restart transient phase = "):
+            tp = line.split("= ")[1].split(":")
+            tph = (int(tp[0], 16), int(tp[1], 16))
+            if tph in common:
+                d = diff(ctrl[tph], repro[tph])
+                log.append("restart transient phase %04X:%04X IS in the "
+                           "compared set - %s" % (tph[0], tph[1],
+                           "differs at %d offset(s)" % len(d) if d
+                           else "identical to the control"))
+            else:
+                log.append("WARNING: restart transient phase %04X:%04X is "
+                           "NOT in the compared set - the transient was "
+                           "not covered, widen COLLECT_S" % tph)
+            break
     if not common:
         log.append("NO COMMON PHASE - comparison impossible, widen the collect window")
     bad = 0

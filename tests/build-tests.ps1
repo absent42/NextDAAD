@@ -66,13 +66,16 @@
 #            removing stale sd\*.AKY, sd\GAME.SFB, sd\*.WAV and sd\*.AYS;
 #            warns and skips if the folder is empty
 #   -AudLad  SP16 Task 7: make the tests\audlad.dsf DDB active AND stage
-#            the AY characterization ladder from tests\audio\ -
-#            L1/L3/L6/L9/L9Q.AKY -> sd\001..005.AKY, plus sd\GAME.AKY as
-#            a byte-identical copy of 001.AKY (the STOPM control: boot
-#            autoplay and the LAD1 verb then replay the SAME bytes).
-#            Owns sd\001..005.AKY and sd\GAME.AKY only; it stale-cleans
-#            every sd\*.AKY first, so it and -Aud are alternatives, not
-#            companions - run one or the other, never both.
+#            the AY characterization ladder - L1/L3/L6/L9/L9Q.AKY from
+#            tests\audio\ -> sd\001..005.AKY, the kit's own 9-channel
+#            tune (converted here from the tracked
+#            authoring-kit\AUDIO\1.aks) -> sd\006.AKY, and sd\GAME.AKY
+#            as a byte-identical copy of 006.AKY - the STOPM control:
+#            boot autoplay and the LADR verb then replay the SAME
+#            bytes, on the real material. Owns sd\001..006.AKY and
+#            sd\GAME.AKY; stale-cleans the same set -Aud owns
+#            (*.AKY, GAME.SFB, *.WAV, *.AYS) first, so it and -Aud are
+#            alternatives, not companions - run one or the other.
 # Boot title screen (SP11 Task 1), independent of the DDB switches:
 #   -Title   stage the owner 320x256 title into sd\ - stale-cleans
 #            sd\DAAD.* variants then copies tools\demo-files\DAAD.NX2
@@ -1179,10 +1182,15 @@ if ($AudLad) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial ladder)"
     }
     Copy-Item "$root\tests\out\audlad.ddb" "$root\sd\GAME.DDB" -Force
-    # Stale-clean every .AKY: -Aud and -AudLad stage different song sets
-    # under the same names, and a survivor from the other switch would
-    # silently answer a rung with the wrong material.
+    # Stale-clean the SAME set -Aud owns, not just the .AKYs: the two
+    # switches stage different song sets under the same names, and a
+    # survivor from the other one would silently answer a rung with the
+    # wrong material (or leave a sample/stream the ladder never mentions
+    # able to fire from a stale request).
     Remove-Item "$root\sd\*.AKY" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$root\sd\GAME.SFB" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$root\sd\*.WAV" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$root\sd\*.AYS" -Force -ErrorAction SilentlyContinue
     $ladSrc = "$root\tests\audio"
     $ladMap = [ordered]@{ 'L1.AKY' = '001.AKY'; 'L3.AKY' = '002.AKY'; 'L6.AKY' = '003.AKY';
                           'L9.AKY' = '004.AKY'; 'L9Q.AKY' = '005.AKY' }
@@ -1197,14 +1205,52 @@ if ($AudLad) {
             "WARNING: $p absent - rung $($ladMap[$src]) will be a silent no-op (run python tests\audio\mkladder.py)"
         }
     }
-    if (Test-Path "$root\sd\001.AKY") {
-        Copy-Item "$root\sd\001.AKY" "$root\sd\GAME.AKY" -Force
-        "staged $ladStaged ladder song(s) -> sd\001..005.AKY, sd\GAME.AKY = sd\001.AKY (STOPM control)"
+    # Rung R - the REAL material. The kit's own 9-channel tune, which is
+    # what both parked SP14b sightings were actually heard on: the kit
+    # builds RELEASE\GAME.AKY and RELEASE\001.AKY from the same source
+    # (AUDIO\1.aks == AUDIO\STARTER.aks, lib\audio.bat), so they are
+    # byte-identical, and boot autoplay + MUSIC 1 played the same bytes
+    # at the 2026-07-23 STOPM sighting.
+    #
+    # Converted here from the TRACKED source rather than copied from the
+    # kit's RELEASE\ (which is gitignored build output and may be absent
+    # or stale): SongToAky with the kit's own flags reproduces
+    # RELEASE\GAME.AKY byte for byte (verified, sha256 89ac228e8a7e3147,
+    # 7487 bytes). authoring-kit\ is READ-ONLY here - the conversion
+    # writes to tests\out\, never back into the kit.
+    $realSrc = "$root\authoring-kit\AUDIO\1.aks"
+    $realOut = "$root\tests\out\real9.aky"
+    $s2a = "$root\tools\ArkosTracker3\tools\SongToAky.exe"
+    $realOk = $false
+    if ((Test-Path $realSrc) -and (Test-Path $s2a)) {
+        & $s2a -bin --encodingAddress 0xD800 $realSrc $realOut | Out-Null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $realOut)) { $realOk = $true }
+        else { "WARNING: SongToAky failed on $realSrc - rung R unavailable" }
+    }
+    if (-not $realOk -and (Test-Path "$root\authoring-kit\RELEASE\GAME.AKY")) {
+        # Fallback: the kit's own build output, if a build has been run.
+        Copy-Item "$root\authoring-kit\RELEASE\GAME.AKY" $realOut -Force
+        $realOk = $true
+        "rung R: SongToAky unavailable - used authoring-kit\RELEASE\GAME.AKY instead"
+    }
+    if ($realOk) {
+        Copy-Item $realOut "$root\sd\006.AKY" -Force
+        $ladStaged++
     }
     else {
-        "WARNING: no sd\001.AKY - boot autoplay and the #T7B STOPM leg have nothing to play"
+        "WARNING: no rung R material (need authoring-kit\AUDIO\1.aks + SongToAky, or a kit build) - LADR and the #T7B STOPM leg will be silent no-ops"
     }
-    foreach ($f in @('001.AKY', '002.AKY', '003.AKY', '004.AKY', '005.AKY', 'GAME.AKY')) {
+    # GAME.AKY is a copy of 006.AKY, NOT of a synthetic rung: boot
+    # autoplay and LADR must play the same bytes, on the real material,
+    # because that is the configuration the STOPM symptom was heard in.
+    if (Test-Path "$root\sd\006.AKY") {
+        Copy-Item "$root\sd\006.AKY" "$root\sd\GAME.AKY" -Force
+        "staged $ladStaged ladder song(s) -> sd\001..006.AKY, sd\GAME.AKY = sd\006.AKY (real material, STOPM control)"
+    }
+    else {
+        "WARNING: no sd\006.AKY - boot autoplay and the #T7B STOPM leg have nothing to play"
+    }
+    foreach ($f in @('001.AKY', '002.AKY', '003.AKY', '004.AKY', '005.AKY', '006.AKY', 'GAME.AKY')) {
         $p = "$root\sd\$f"
         if (Test-Path $p) { "  sd\$f $((Get-Item $p).Length) bytes (song slot 10208)" }
     }

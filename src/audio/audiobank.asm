@@ -1047,7 +1047,7 @@ aud_psg3_write:
 ; self-modified position cells - into the always-mapped staging ring at
 ; AUD_STAGE0, once per frame, right after aud_tick (call site:
 ; src\interrupts.asm im2_isr). A scripted ZEsarUX/DeZog leg then reads
-; 202 plain bytes out of the 64K map with no bank juggling and no
+; AUD_DBG_LEN (203) plain bytes out of the 64K map with no bank juggling and no
 ; breakpoint choreography: the STOPM three-point dump (pre-STOPM,
 ; post-STOPM, post-restart-MUSIC) is three reads of this block, and the
 ; fresh-boot control is a fourth.
@@ -1068,8 +1068,14 @@ aud_psg3_write:
 ; samples). ctc_isr is stopped whenever smpFlags bit 0 is clear
 ; (aud_smp_stop resets the CTC), so nothing races these writes.
 ;
-; DEBUG ONLY. Costs ~4k T per frame in the ISR (42 chip reads dominate)
-; and 202 bytes of the sample ring; neither exists in a Release build.
+; DEBUG ONLY. Costs ~9.4k T per frame in the ISR - instruction-counted,
+; not estimated: ~3.4k for the 42 chip selects+reads, ~4.2k for the
+; 40-cell gather loop, ~1.4k for the 64-byte array LDIR, the rest
+; header. That is ~1.7% of a 28 MHz frame, and it is why the Task 7 ear
+; cards for audio QUALITY are specified as Release legs - an ear leg
+; about distortion must not run with an extra instrument in the
+; interrupt path. Also costs AUD_DBG_LEN (203) bytes of the sample
+; ring. Neither cost exists in a Release build.
 ; Called with the audio bank mapped, all registers already saved by the
 ; ISR, so it corrupts freely.
 AUD_DBG_SNAP  equ AUD_STAGE0     ; mirror base (the sample ring)
