@@ -1664,6 +1664,7 @@ h_parse:                        ; 73: condition-like. B = option.
     ; makes the condact FAIL - aborting the entry, whose remainder is
     ; the game's invalid-input handler - and marks done. No verb AND
     ; no noun1 -> the condact PASSES so that handler runs.
+.verdict:
     ld a, (flags+FLAG_VERB)
     inc a
     jr nz, .valid
@@ -1680,28 +1681,46 @@ h_parse:                        ; 73: condition-like. B = option.
     ; no input, no pending_compact: inpPending's own cursor is not
     ; involved, so the buffered-orders chain is untouched.
     ;
-    ; The verdict is jdaad's: parseEnd ends with
-    ; "return result || (globalParseOption>0)" (jdaad.js:1548), i.e.
-    ; for PARSE 1 the condact's answer depends only on whether a quoted
-    ; section EXISTED - a quoted section that parses to nothing still
-    ; fails the condition and marks done, and no quoted section passes
-    ; it so the entry remainder (the game's handler) runs. msx2daad
-    ; differs here: useLiteralSentence returns whether a slot got
-    ; filled, so a quoted section of unknown words passes there. That
-    ; is a genuine reference disagreement, visible only on gibberish
-    ; inside the quotes; NextDAAD follows jdaad because jdaad is the
-    ; reference that models PARSE 1 as a re-parse of raw quoted TEXT,
-    ; which is this parser's shape too (msx2daad re-plays a token
-    ; buffer it filled during the first pass).
+    ; The rule below is MEASURED, not argued. The three references gave
+    ; three different answers - jdaad's parseEnd ends
+    ; "return result || (globalParseOption>0)" (jdaad.js:1548), so for
+    ; it the verdict is pure EXISTENCE; msx2daad's useLiteralSentence
+    ; returns whether ANY of the seven slots got filled - so the
+    ; original ZX interpreter was asked, on the rig in
+    ; .superpowers/sdd/sp16-adjudications/ (V/N are the sentence flags,
+    ; QV/QN the markers that show which way the condition went: 254 =
+    ; PARSE 1 PASSED, anything else = it FAILED; A is the adverb):
+    ;
+    ;   SAY FAST PLUGH  V=40  N=25  QV=254 A=55   no quotes: passes,
+    ;                                             flags left alone
+    ;   SAY ""          V=255 N=255 QV=254 A=255  empty quotes: flags
+    ;                                             CLEARED, passes
+    ;   SAY "ZZZZ"      V=255 N=255 QV=254 A=255  unknown words: same
+    ;   SAY "FAST"      V=255 N=255 QV=254 A=55   adverb only: FILLED
+    ;                                             the adverb, still passes
+    ;   SAY "PLUGH"     V=25  N=25  QV=25        verb+noun: FAILS
+    ;   SAY "N40"       V=255 N=40  QV=255       noun only: FAILS
+    ;
+    ; which is two rules, both simple:
+    ;   - EXISTENCE decides whether the fill runs at all. No quoted
+    ;     section and the sentence flags are not touched; a quoted
+    ;     section, even an empty one, clears them first.
+    ;   - CONTENT decides the condition, by exactly the test PARSE 0
+    ;     already uses - verb or noun1 present. "SAY "FAST"" is the
+    ;     discriminator: it demonstrably filled the adverb (A=55) and
+    ;     still passed, so msx2daad's any-slot rule is out, and it
+    ;     parsed nothing into verb/noun1 yet a quoted section existed,
+    ;     so jdaad's existence rule is out too.
+    ; Both references deviate; NextDAAD follows the machine it is a
+    ; port of. Falling into .verdict is what implements the second rule.
     ld a, (inpQuoted)
     or a
-    jp z, ovl1_true             ; nothing was quoted
+    jp z, ovl1_true             ; no quoted section at all: flags stay
     ld hl, inpQuoted
     ld (inpPtr), hl
     call ls_reset
     call parse_order
-    call eng_set_done
-    jp ovl1_false
+    jr .verdict
 
 ; Reset the seven logical-sentence flags to NULLWORD. Shared by PARSE 0
 ; and PARSE 1 (jdaad parseEnd clears the same seven for both; the
@@ -1760,6 +1779,23 @@ quote_split:
     ld (hl), ' '                ; blank the opening quote
     inc hl
     ld de, inpQuoted
+    ; A leading space, so that EMPTY quotes still leave inpQuoted
+    ; non-empty and h_parse can tell `SAY ""` (a quoted section that
+    ; happens to be empty) from `SAY JOHN` (no quoted section at all).
+    ; The original ZX interpreter distinguishes them - measured, see
+    ; h_parse's .quoted - and jdaad reaches the same end by forcing
+    ; playerOrderQuoted to " " with the comment "Because original
+    ; interpreters make a difference between 'SAY JOHN' and
+    ; 'SAY JOHN \"\"'" (jdaad.js:1401). A leading space is free:
+    ; word_next skips spaces before every word.
+    ;
+    ; It still fits. The quoted section is a substring of one order in
+    ; inpPending (INP_MAX chars) minus at least the opening quote, so at
+    ; most INP_MAX-1 characters; space + INP_MAX-1 + NUL = INP_MAX+1,
+    ; exactly inpQuoted's size.
+    ld a, ' '
+    ld (de), a
+    inc de
 .copy:
     ld a, (hl)
     or a
@@ -1790,7 +1826,7 @@ quote_split:
 ; selected with WINDOW. The stash below is that backup - it is the
 ; window POINTER rather than the number, so the restore cannot be
 ; thrown off by a game writing flag 63 directly while input is open.
-; Corrupts AF, HL.
+; Corrupts AF, C, DE, HL (push); AF, DE, HL (pop).
 inp_stream_push:
     ld hl, (curWin)
     ld (inpWinStash), hl
@@ -1799,6 +1835,23 @@ inp_stream_push:
     ret z                       ; 0 = no input stream selected
     cp WINDOW_COUNT
     ret nc                      ; out of range: ignored, as in jdaad
+    ; Already the active window? Then do NOTHING, not even the flush -
+    ; win_select flushes unconditionally (windows.asm), and jdaad's
+    ; PreserveStream in this case is a bare assignment of a window to
+    ; itself. Same defect class as the pop's guard below, opposite end:
+    ; a flush the engine never used to perform, on a path where nothing
+    ; actually moves.
+    ld c, a                     ; C = window number; it has to survive the
+    ld d, WIN_SIZE              ; compare, and a push/pop AF would restore
+    ld e, a                     ; F and throw the compare's own Z away
+    mul d, e                    ; Z80N: DE = WIN_SIZE * window number
+    ld hl, winTable
+    add hl, de
+    ld de, (inpWinStash)
+    or a                        ; CF clear for the sbc (A is still the
+    sbc hl, de                  ; window number here, non-zero, unchanged)
+    ret z                       ; flag 41 names the window already active
+    ld a, c
     jp win_select               ; flushes the old window's pending word
 inp_stream_pop:
     ld hl, (curWin)

@@ -1866,6 +1866,17 @@ sm_first_char:
 confirm_read:
     xor a
     ld (cfmFirst), a
+    ; Both locks, for the same two reasons inp_edit takes them (see its
+    ; head). wrapLock: prn_char otherwise BUFFERS printable non-space
+    ; characters into wrapBuf to wrap whole words (print.asm), so the
+    ; reply would not appear until the newline flushed it - the echo has
+    ; to be live, because live is what the original does
+    ; ("Are you sure?>Y" BEFORE enter). moreLock: without it a long
+    ; reply can push the line count over the More... pager, which would
+    ; then eat a keypress in the middle of a confirmation.
+    ld a, 1
+    ld (wrapLock), a
+    ld (moreLock), a
 .key:
     call key_wait_char
     cp 13
@@ -1888,7 +1899,12 @@ confirm_read:
     call prn_char
     jr .key
 .done:
-    call prn_newline            ; the ENTER moves off the reply line
+    call prn_newline            ; the ENTER moves off the reply line -
+                                 ; still under moreLock, so it cannot
+                                 ; trip the pager on the way out
+    xor a
+    ld (wrapLock), a
+    ld (moreLock), a
     ld a, (cfmFirst)
     ret
 cfmFirst: db 0
