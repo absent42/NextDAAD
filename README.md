@@ -3,7 +3,7 @@
 DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
-Project status (v0.3.0): 
+Project status (released: v0.3.0): 
 The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
 object model, process/DOALL dispatch, windows, printing, colour,
 carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
@@ -15,6 +15,24 @@ bounded by available RAM, full-screen video cutscene playback (GFX
 pointer (MOUSE), boot title screens, and native multi-part games
 (EXTERN n 4) are implemented. All 128 condacts are handled, but CALL
 is a documented no-op.
+
+Current development state (unreleased, CHANGELOG v0.3.1): a DAAD
+compliance sweep. The headline is **DAAD V3 database support** - the
+interpreter accepts DDB version 2 and 3, implements XMES/INDIR/SETAT,
+the V3 flag 53 bits, `PAUSE 0` as GETKEY and V3 SYNONYM semantics, so
+the standard DAAD-READY ZX Next authoring path (`ZXNEXT.BAT`, which
+compiles `-v3`) works unmodified and the authoring kit now compiles
+`-v3` by default. Alongside it: reference-correct object-interaction
+messages and refusal ordering (a refused GET now aborts the rest of a
+compound order, and success messages are printed at all), noun-only
+object resolution ("GET LAMP" finds a "QUAINT LAMP"), two parser
+behaviours adjudicated against the original ZX interpreter (QUIT/END
+read a line at the confirmation prompt; the convertible-noun threshold
+is 40), a real xorshift RNG behind RANDOM and CHANCE, and the BEEP
+parameter-order and tone-ceiling fix for ZX-target databases. See
+CHANGELOG.md for the full list and
+`authoring-kit/DIVERGENCES.md` for the deliberate divergences that
+remain.
 
 From v0.3.0 onwards, Next core 3.02.04+ is required for video playback.
 
@@ -43,7 +61,8 @@ From v0.3.0 onwards, Next core 3.02.04+ is required for video playback.
   chosen automatically, play-once or loop-until-keypress,
   PARTn-shadowed like other assets
 - Mouse input (MOUSE) via the Next's Kempston mouse ports, with a
-  hardware sprite pointer (sub-commands 0-3; buttons read
+  hardware sprite pointer (all eight documented sub-commands 0-7,
+  including fine coordinates and the pointer hotspot; buttons read
   jdaad-compatible: idle 0, left 1, right 2, middle 4)
 - Boot title screens: ship DAAD.NX2 or DAAD.NXI next to GAME.DDB and
   it displays at boot over the autoplay music until a keypress - no
@@ -59,7 +78,9 @@ From v0.3.0 onwards, Next core 3.02.04+ is required for video playback.
   2048-byte charset) or POINTER.SPR (16x16 sprite pattern) next to
   GAME.DDB - loaded at boot, per-part via PARTn\, no source changes
 - DDB loading and validation from SD card (esxDOS), with header/size
-  error handling
+  error handling - DAAD database version 2 and version 3 are both
+  accepted, and every V3-specific behaviour is gated on the loaded
+  header, so a version 2 database runs exactly as it always did
 - Full RAM detection and 8K bank allocator across the Next's extended
   memory map
 - SAVE/LOAD and RAMSAVE/RAMLOAD to esxDOS .SAV files, with failure handling
@@ -235,9 +256,14 @@ effect with SFX n 5. Every real exit or reset (declining END's play
 again prompt, EXIT 0, a fatal error) silences everything, including
 the CTC sample feed and the DAC.
 
-BEEP takes duration and pitch, matching the classic interpreters
-(jdaad-pinned): duration in centiseconds, pitch an even value 24-222
-mapping the classic semitone table. Odd or out-of-range pitches and
+BEEP takes duration and pitch as an author writes them, but note that
+DRC deliberately SWAPS the two for ZX targets when it compiles, so the
+database carries tone first and duration second - the interpreter
+reads the compiled order, which is what the original ZX interpreter
+does. Duration is in centiseconds; pitch is an even value 24-238
+mapping the classic semitone table (DRC rewrites any BEEP whose tone
+falls outside 48-238 into a PAUSE before the swap, so an authored game
+only ever ships tones in that range). Odd or out-of-range pitches and
 zero durations are no-ops. BEEP blocks for its duration and plays on
 the third AY. Pre-emption: an actively looping song and active sound
 effects both pre-empt BEEP - a BEEP during music is dropped by
@@ -326,9 +352,13 @@ multi-part switch, so PARTn\ copies give each part its own look.
   read as RRRGGGBB colour, value $E3 = transparent. Any Next sprite
   editor emits the format; the kit stages a ready-made file as-is.
 
-FONT2.CHR and upward, and the MOUSE POINTERMS sub-command, are
-reserved for a future runtime-switching feature - one font and one
-pointer shape at a time for now.
+FONT2.CHR and upward are reserved for a future runtime-switching
+feature - one font at a time for now. The MOUSE POINTERMS sub-command
+is implemented, but there is only one pointer shape to select: it
+re-uploads the built-in (or POINTER.SPR) pattern into hardware sprite
+slot 0 and re-arms it, so the documented POINTERMS-then-SHOWMS idiom
+always restores this interpreter's pointer if something else has used
+that slot.
 
 ## EXTERN and MALUVA
 
@@ -342,7 +372,9 @@ selecting one of 16 dispatch slots. NextDAAD implements three:
   More... paging as any DDB message - indistinguishable from native
   text. A missing or unreadable 0.XMB is a silent no-op - like a
   missing picture or audio asset elsewhere, the game simply
-  continues.
+  continues. In a version 3 database the same external text is
+  reachable through the native XMES opcode (120) with no EXTERN
+  vector involved; vector 3 stays for version 2 databases.
 - Vector 4 - XPART: switches the running game to part n (GAMEn.DDB),
   carrying the flags and object locations across - the multi-part
   game mechanism. The authoring kit's SETUP.md has the full
@@ -371,9 +403,13 @@ The bundled DRC toolchain is DRF 0.40 + DRB 0.36.
 
 `authoring-kit\` is a DAAD-Ready-style workflow for authors: drop in a `.DSF`
 (plus optional PNGs and Arkos audio), double-click `BUILD.BAT`, and get a
-ready-to-run `RELEASE\` SD-card folder with the pre-compiled interpreter. See
-`authoring-kit\SETUP.md` for the full guide. The tools it needs (not shipped in
-the repo):
+ready-to-run `RELEASE\` SD-card folder with the pre-compiled interpreter. It
+compiles a DAAD version 3 database (`-v3`), the same dialect as DAAD Ready's
+own ZX Next build script. See `authoring-kit\SETUP.md` for the full guide and
+`authoring-kit\DIVERGENCES.md` for the places where NextDAAD deliberately
+differs from the other DAAD interpreters (including the three checks an
+existing version 2 game needs before a V3 build). The tools it needs (not
+shipped in the repo):
 
 - DAAD Ready (DRC compiler + PHP): https://www.ngpaws.com/daadready/
 - Gfx2Next (PNG to Layer 2): https://www.rustypixels.uk/gfx2next/
@@ -397,14 +433,16 @@ If you wish to complile your own version of the interpreter the toolchain (not i
 - Clean: powershell -File build.ps1 -Clean
 - Test DDB: powershell -File tests\build-tests.ps1 regenerates
   sd\GAME.DDB and the corrupt/oversize variants in tests\out\ (add
-  -Suite to make the condact test suite DDB active - 80 checks
+  -Suite to make the condact test suite DDB active - 102 checks
   covering condact semantics, parser/conjunction handling, DOALL
   nesting, save/load, GFX/MOUSE/CALL, XMESSAGE and audio no-op
-  safety - or -Err4 for the nested-DOALL error demo; add -Rab or -UU
+  safety - or -Err4 for the nested-DOALL error demo; -GMode stages
+  the HASAT GMODE picture-gate fixture; -V3 stages the DAAD version 3
+  fixture (XMES/INDIR/SETAT and the V3 flag 53 bits); add -Rab or -UU
   to compile and stage a corpus game (Rabenstein or Urban Upstart)
   instead; -Part stages the two-part switching fixture; -Title stages
   the title-screen art; add -Aud to stage the test audio assets from
-  tools\audio_assets)
+  tools\audio_assets, or -AudLad for the AY channel-count ladder)
 - VS Code: build / run / clean tasks wrap the same script
 
 ## Troubleshooting

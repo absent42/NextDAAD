@@ -48,7 +48,8 @@ scaling in the interpreter would also break bit-compatibility with
 every other database compiled by the same toolchain.
 
 What to do: author your pauses against what you hear, not against the
-arithmetic. `PAUSE 167` gives about one second on this target.
+arithmetic. One second is `PAUSE 83` on this target - 83 x 0.6 = 50
+compiled frames at 50 Hz. `PAUSE 167` gives about two seconds.
 
 ---
 
@@ -98,13 +99,16 @@ wrong answer, which is the point.
 
 ### DESC 255 is an error, not "the player's location"
 
-`DESC 255` raises runtime error 7 on NextDAAD, as it does on msx2daad.
-jDAAD treats 255 as the player's location. Write `DESC @38` (flag 38 is
-the player's location) if that is what you meant.
+`DESC 255` raises runtime error 1 ("invalid location") on NextDAAD, as
+it does on msx2daad. jDAAD treats 255 as the player's location. Write
+`DESC @38` (flag 38 is the player's location) if that is what you
+meant.
 
-Note that `PLACE`, `AUTOP`-family and `AUTOT` parameters DO treat 255
-as "here", matching jDAAD - the 255 convention is not uniform across
-DAAD condacts in any interpreter.
+Note that `PLACE`, `PUTO` and `AUTOT` parameters DO treat 255 as
+"here", matching jDAAD - the 255 convention is not uniform across DAAD
+condacts in any interpreter, and it is not uniform inside NextDAAD
+either: `AUTOP` and `PUTIN` do not translate it, and hit the
+invalid-location error instead.
 
 ### GFX subs 9 and 10 are no-ops
 
@@ -306,8 +310,20 @@ not. If you need the current DOALL object's weight, `WEIGH @50 n` it.
 
 ## 6. DAAD V3
 
-NextDAAD loads both version 2 and version 3 databases. The kit's own
-`BUILD.BAT` still compiles version 2 (no `-v3`).
+NextDAAD loads both version 2 and version 3 databases.
+
+**The kit compiles version 3 by default.** `BUILD.BAT` passes `-v3` to
+DRF, the same as DAAD Ready's own `ZXNEXT.BAT`, so a DSF authored
+anywhere else in the DAAD ecosystem for this target builds here in the
+dialect its author compiled against. If you are bringing an existing
+version 2 game to the kit, read "Moving your game to V3" at the end of
+this section first - three things change silently.
+
+To compile version 2 instead, remove `-v3` from the DRF line in
+`lib\ddb.bat`, and from the matching line in `BUILD.BAT` if your game
+has `PART<n>\` folders. Both sites or neither: every part of a
+multi-part game must be the same dialect, because a part switch
+reloads a header while the flags carry across.
 
 ### Version 2 databases still reject the V3 opcodes
 
@@ -336,24 +352,45 @@ That split is the DAAD platform table's: the Z80 and 6502 interpreters
 mark, the 68000 sources do not. NextDAAD is a Z80 interpreter and
 marks. jDAAD never marks, in either version.
 
-### If you switch the kit to `-v3`
+### Moving your game to V3
 
-Three things change silently in an existing game. Grep your DSF for all
-three before adding `-v3` to the compile:
+A game written before the kit defaulted to `-v3` needs three checks.
+None of them produces a compile error - the game builds and runs, and
+misbehaves quietly - so grep for all three before you trust a V3 build
+of an existing game. The starter game bundled with the kit passes all
+three, and compiles byte-identically in both dialects apart from the
+version byte in its header.
 
-1. `SYNONYM` stops marking DONE. Any `SYNONYM ... / ISDONE` idiom
-   stops firing - no error, the entry just stops behaving.
-2. `PAUSE 0` stops meaning "wait 256 frames" and starts meaning "wait
-   for a key" (GETKEY).
-3. `HASAT` / `HASNAT` / `SETAT` start honouring flag 53 bit 1. A game
-   using flag 53's low bits as scratch will see its attribute reads
-   move bank.
+1. **`SYNONYM` stops marking the entry DONE.** Grep: `SYNONYM`. If any
+   of them is followed by an `ISDONE` that expects the synonym itself
+   to have counted as an action, that entry stops firing. Nothing
+   errors; the entry just stops behaving. This is the one real
+   migration hazard - it is silent and it is a logic change.
+2. **`PAUSE 0` stops meaning "wait 256 frames".** Grep: `PAUSE 0`.
+   Under V3 it is GETKEY - the game waits for a keypress instead of
+   about five seconds. Replace it with `PAUSE 255` (or whatever
+   duration you meant) if you wanted the wait.
+3. **`HASAT` / `HASNAT` / `SETAT` start honouring flag 53 bit 1.**
+   Grep: any write to flag 53 - `LET 53`, `SET 53`, `PLUS 53`,
+   `COPYFF`/`COPYBF` with 53 as the destination. Under V3, bit 1 moves
+   the attribute bank from flag 59 to flag 91, so a game using flag
+   53's low bits as scratch will find its attribute reads looking
+   somewhere else entirely. Note that under V3 the interpreter itself
+   also writes bits 0, 4 and 5 of flag 53, which it does not touch
+   under V2 - so a game that reads flag 53 as a whole value (`EQ 53 n`
+   rather than `HASAT`) will see different numbers even if it never
+   writes the flag.
 
-What you gain: second-parameter indirection (`LET 100 @101`), the
-`GETKEY` keyword, XMES as a native 3-byte opcode, and the V3 flag 53
-bits the DAAD Ready template already documents. Note that the bundled
-DRF 0.40 has no `SETAT` keyword at all, so opcode 124 is unreachable
-from DSF source whichever version you compile.
+What you gain by staying on V3: second-parameter indirection
+(`LET 100 @101`), the `GETKEY` keyword, XMES as a native 3-byte opcode
+instead of a 4-byte `EXTERN` call with no MALUVA vector involved, the
+V3 flag 53 bits the DAAD Ready template already documents, and a kit
+that matches the rest of the DAAD ecosystem for this target.
+
+Note that the bundled DRF 0.40 has no `SETAT` keyword at all, so
+opcode 124 is unreachable from DSF source whichever version you
+compile - the interpreter implements it for databases built by other
+means.
 
 ---
 

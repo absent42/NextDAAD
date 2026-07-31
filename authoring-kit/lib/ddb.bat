@@ -15,7 +15,17 @@ copy /Y "%GAME%.DSF" "%DR%\__ndb.DSF" >nul || (
     exit /b 1
 )
 pushd "%DR%"
-"%DRF%" zx next __ndb.DSF
+REM -v3 compiles a DAAD version 3 database, matching DAAD-READY's own
+REM ZXNEXT.BAT. Owner ruling 2026-08-01. The interpreter accepts
+REM version 2 and 3 alike, so this is a dialect choice, not a
+REM requirement: -v3 unlocks second-parameter indirection (LET 100
+REM @101), GETKEY, native XMES and the V3 flag 53 bits. Three things
+REM change silently in a game written for version 2 - SYNONYM stops
+REM marking DONE, PAUSE 0 becomes "wait for a key", and flag 53 bit 1
+REM starts switching the HASAT attribute bank. See DIVERGENCES.md,
+REM "Moving your game to V3". The per-part compile in BUILD.BAT must
+REM carry the same flag - both sites or neither.
+"%DRF%" zx next __ndb.DSF -v3
 if errorlevel 1 (
     popd
     del "%DR%\__ndb.*" 2>nul

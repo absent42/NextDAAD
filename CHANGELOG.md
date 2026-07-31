@@ -37,9 +37,18 @@ in `authoring-kit/DIVERGENCES.md`.
   "wait 256 frames".
 - `SYNONYM` no longer marks the entry DONE under V3, and still does
   under V2 - the DAAD platform split, with Z80 on the marking side.
-- The authoring kit still compiles version 2. Switching it to `-v3` is
-  an owner decision with three silent migration hazards, documented in
-  `authoring-kit/DIVERGENCES.md` section 6.
+- The authoring kit now compiles `-v3` by default, matching DAAD
+  Ready's own ZX Next build script, so a DSF authored elsewhere in the
+  DAAD ecosystem for this target builds here in the dialect its author
+  compiled against. Both DRF sites carry the flag - the main game and
+  each `PART<n>\` part - because every part of a multi-part game must
+  be the same dialect. An existing version 2 game needs three checks
+  before you trust a V3 build of it (SYNONYM done-marking, `PAUSE 0`,
+  and flag 53 bit 1): migration notes in
+  `authoring-kit/DIVERGENCES.md` section 6, "Moving your game to V3".
+  The bundled starter game passes all three and compiles
+  byte-identically in either dialect apart from its version byte. To
+  stay on version 2, remove `-v3` from `lib\ddb.bat` and `BUILD.BAT`.
 
 ### Object interaction and messages
 
@@ -124,6 +133,11 @@ in `authoring-kit/DIVERGENCES.md`.
   sprite slot 0), DELTAXMS and DELTAYMS (the pointer hotspot offset -
   not movement deltas, despite the symbol names). RESETMS also clears
   the hotspot now.
+- RANDOM and CHANCE use a real 16-bit xorshift (period 65535) with
+  uniform output scaling. The old generator was degenerate: it could
+  return only six distinct values in a repeating cycle of eight, and
+  CHANCE 50 fired 62 per cent of the time. Any game whose behaviour
+  depended on the old sequence will now differ.
 
 ### Parser and input
 
@@ -163,16 +177,14 @@ in `authoring-kit/DIVERGENCES.md`.
   dropped.
 - BEEP's tone ceiling is 238 rather than 222, which recovers the top
   eight semitones of octave 8 - the range DRC can actually emit.
-- RANDOM and CHANCE use a real 16-bit xorshift (period 65535) with
-  uniform output scaling. The old generator was degenerate: it could
-  return only six distinct values in a repeating cycle of eight, and
-  CHANCE 50 fired 62 per cent of the time. Any game whose behaviour
-  depended on the old sequence will now differ.
 - The two parked AY symptoms (nine-channel distortion, and a
   post-STOPM restart at a lower tone) were instrumented and measured
   against a phase-matched fresh-boot control on the real material. No
-  cause was attributed and no change was made; both are now hardware
-  listening tests rather than open code questions.
+  cause was attributed and no change was made. The measurement is
+  emulator-model evidence - it excludes register and player-state
+  residue inside ZEsarUX's model, and cannot speak for the analog
+  audio path - so both symptoms are now hardware listening tests
+  rather than open code questions.
 
 ### Compatibility
 
@@ -197,7 +209,7 @@ in `authoring-kit/DIVERGENCES.md`.
 - `SETUP.md`: MOUSE sub-command table updated for the full 0-7 set,
   BEEP parameter order and tone range documented.
 
-## v0.3.0 - 2026-07-27
+## v0.3.0 - unreleased
 
 ### Video
 

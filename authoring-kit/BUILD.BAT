@@ -154,7 +154,11 @@ for %%N in (2 3 4 5 6 7 8 9) do (
             exit /b 1
         )
         pushd "%DR%"
-        "%DRF%" zx next __ndbpart.DSF
+        REM -v3 as in lib\ddb.bat - every part must compile to the same
+        REM dialect as part 1, since a part switch reloads a header and
+        REM the flags carry across. See DIVERGENCES.md for the three
+        REM migration hazards.
+        "%DRF%" zx next __ndbpart.DSF -v3
         if errorlevel 1 (
             popd
             del "%DR%\__ndbpart.*" 2>nul

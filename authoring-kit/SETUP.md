@@ -98,6 +98,16 @@ The build stops at the first error with a message naming the cause (bad source,
 missing tool, wrong image width, over-size asset). A pure-text game with no
 `IMAGES\` or `AUDIO\` folder builds fine - graphics and audio are optional.
 
+**Database dialect:** the build compiles a DAAD **version 3** database
+(`DRF ... -v3`), the same as DAAD Ready's own ZX Next build script. The
+interpreter accepts version 2 and version 3 alike, so this is a dialect
+choice rather than a requirement, and it is what lets a DSF written
+anywhere else in the DAAD ecosystem for this target build here
+unchanged. If you are bringing an existing version 2 game into the kit,
+three things change silently - see "Moving your game to V3" in
+`DIVERGENCES.md` section 6, which also says how to compile version 2
+instead.
+
 ## 5. Output
 
 After a build, `RELEASE\` holds the complete SD-card image:
