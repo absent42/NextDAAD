@@ -45,3 +45,4 @@ authoring-kit/VIDEO/*.vid.args
 .superpowers/
 __pycache__/
 RELEASE.md
+tests/parser/work/*
