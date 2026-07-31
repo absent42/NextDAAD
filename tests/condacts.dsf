@@ -15,6 +15,14 @@ IT    201 pronoun
 SMALL 202 adjective
 IN    203 preposition
 EXAMI 104 verb
+; SP16 Task 3 (object resolution, checks 87-96). Nouns 54-57 and
+; adjectives 204/205 are new and collide with nothing above.
+SWORD 54  noun
+ROBE  55  noun
+BAG   56  noun
+GEM   57  noun
+RUSTY 204 adjective
+SHINY 205 adjective
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -84,6 +92,14 @@ EXAMI 104 verb
 /1 "an old box"
 /2 "a gold coin"
 /3 "a felt hat"
+; SP16 Task 3 objects (see /OBJ). Named so a substitution or a
+; container name in checks 87-96 has something to print.
+/4 "a rusty sword"
+/5 "a shiny sword"
+/6 "a small robe"
+/7 "a robe"
+/8 "a cloth bag"
+/9 "a green gem"
 /LTX
 /0 "Suite arena."
 /1 ""
@@ -110,6 +126,22 @@ NORTH 0
 /1    0           2   Y _  _ _ _ _ _ _ _ Y _ _ _ _ _ _ _ _   BOX  _
 /2    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ Y _ _ _ _ _ _ _ _   COIN _
 /3    0           1   _ Y  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   HAT  _
+; SP16 Task 3 (checks 87-96). All six start NOT_CREATED on purpose, so
+; no earlier check can see them: the DOALL-over-location-0 counters
+; (34, 49, 86) and the LISTAT of location 0 (36) skip them, and none of
+; them sits on a location number that WEIGH 1 (check 27) would read as
+; "inside object 1". They are CREATEd by the checks that need them.
+; 4/5 share a noun and BOTH carry an adjective - the D1 partial-match
+; case. 6/7 share a noun with the ADJECTIVED one first, so a resolver
+; that returns the first partial instead of holding out for the full
+; match picks the wrong one. 8 is the zero-weight "magic bag" (B29)
+; and 9 is what goes inside it.
+/4    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   SWORD RUSTY
+/5    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   SWORD SHINY
+/6    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   ROBE  SMALL
+/7    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   ROBE  _
+/8    NOT_CREATED 0   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   BAG   _
+/9    NOT_CREATED 5   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   GEM   _
 /PRO 0
 > _ _   CLS
         MESSAGE 0
@@ -1079,6 +1111,185 @@ NORTH 0
         MES "86 OK#n"
         SKIP 1
 > _ _   MES "86 F#n"
+; ---- SP16 Task 3 appended checks (87-96) ----
+; Object resolution: D1 (noun-only matching), B17 (WHATO null
+; semantics), B11/B12 (SWAP/COPYOO referenced object and flag 1), B29
+; (zero-weight containers), B10 (AUTOT's search chain). Same placement
+; rule as 81-86 - appended after check 80, so the differential
+; harness's turn indexing is untouched. Objects 4-9 (see /OBJ) exist
+; only for these checks and are CREATEd here, never earlier.
+;
+; 87 D1: a bare noun against objects that all have adjectives.
+; Noun1 = SWORD, no adjective. Objects 4 (RUSTY) and 5 (SHINY) share
+; the noun and NEITHER is adjectiveless, so before D1 the matcher
+; rejected both and flag 51 came back 255 - "GET SWORD" could not
+; reach a rusty sword. jDAAD records object 4 as a PARTIAL match and,
+; finding no full match anywhere in the pass, returns it.
+> _ _   RESET
+        GOTO 0
+        ABILITY 10 100          ; check 86 left capacity and strength 0
+        CREATE 4
+        CREATE 5
+        SETCO 0                 ; poison flag 51 with a REAL object, so
+        LET 34 54               ; a handler that writes nothing fails
+        LET 35 255
+        WHATO
+        EQ 51 4
+        MES "87 OK#n"
+        SKIP 1
+> _ _   MES "87 F#n"
+; 88 the adjective still disambiguates. SHINY SWORD must take object 5
+; even though object 4 shares the noun and comes first in the table -
+; this is what a blanket "ignore the adjective when it matches nothing"
+; rule would break, and why jDAAD's partial model was copied instead.
+> _ _   LET 35 205              ; Adj1 = SHINY
+        WHATO
+        EQ 51 5
+        MES "88 OK#n"
+        SKIP 1
+> _ _   MES "88 F#n"
+; 89 full beats partial WITHIN one pass. Bare ROBE meets object 6
+; (SMALL ROBE) first and records it as a partial, then must override it
+; with object 7, which has no adjective and is therefore a full match.
+; Table order is deliberately partial-first, so a first-match-wins
+; resolver answers 6 and fails here.
+> _ _   CREATE 6
+        CREATE 7
+        LET 34 55               ; Noun1 = ROBE
+        LET 35 255
+        WHATO
+        EQ 51 7
+        MES "89 OK#n"
+        SKIP 1
+> _ _   MES "89 F#n"
+; 90 and because partial/full resolves inside ONE location pass, the
+; search chain's location priority still wins: with the SMALL ROBE
+; CARRIED and the adjectiveless ROBE merely lying here, the carried
+; pass returns its partial (6) and the here pass, which holds the full
+; match, is never reached. A resolver that scanned all locations first
+; and picked the best match globally would answer 7.
+> _ _   GET 6
+        CARRIED 6
+        LET 34 55
+        LET 35 255
+        WHATO
+        EQ 51 6
+        MES "90 OK#n"
+        SKIP 1
+> _ _   MES "90 F#n"
+; 91 B17: a WHATO that finds nothing is referencedObject(NULLWORD) -
+; flag 51 = 255 AND flags 54-59 ZEROED (msx2daad substitutes an
+; all-zero nullObject). All six are pre-poisoned, so the old handler,
+; which wrote 51 alone and left 54-59 holding the previous object's
+; data, fails this.
+> _ _   LET 54 11
+        LET 55 22
+        LET 56 33
+        LET 57 44
+        LET 58 55
+        LET 59 66
+        LET 34 2                ; Noun1 = NORTH - no object has it
+        LET 35 255
+        WHATO
+        EQ 51 255
+        ZERO 54
+        ZERO 55
+        ZERO 56
+        ZERO 57
+        ZERO 58
+        ZERO 59
+        MES "91 OK#n"
+        SKIP 1
+> _ _   MES "91 F#n"
+; 92 B11: SWAP of two CARRIED objects must leave flag 1 alone - the
+; manual says "Flag 1 is not adjusted" outright. The old two-obj_move
+; implementation decremented once per object with no matching
+; increment, so this landed on 0 instead of 2. SWAP must also set the
+; referenced object to objno 2, which it never did at all.
+> _ _   SETCO 0                 ; flag 51 = 0 so EQ 51 6 below is real
+        CARRIED 0               ; the lamp
+        CARRIED 6               ; the small robe, from check 90
+        EQ 1 2
+        SWAP 0 6
+        EQ 1 2
+        CARRIED 0
+        CARRIED 6
+        EQ 51 6
+        MES "92 OK#n"
+        SKIP 1
+> _ _   MES "92 F#n"
+; 93 the exchange itself still works after losing obj_move: a carried
+; object and one lying here trade places. Flag 1 stays 2 either way
+; here (one carried object leaves as another arrives) - it is the
+; locations and the referenced object this pins.
+> _ _   ISAT 7 0                ; the adjectiveless robe is lying here
+        SWAP 6 7
+        ISAT 6 0
+        CARRIED 7
+        EQ 1 2
+        EQ 51 7
+        MES "93 OK#n"
+        SKIP 1
+> _ _   MES "93 F#n"
+; 94 B12: COPYOO keeps its move - jDAAD routes COPYOO through PLACE,
+; which does adjust flag 1 - but must also set the referenced object to
+; objno 2, which the manual requires of COPYOO exactly as it does of
+; SWAP.
+> _ _   SETCO 0
+        COPYOO 6 7              ; robe 7 joins robe 6 at location 0
+        ISAT 7 0
+        EQ 1 1                  ; robe 7 stopped being carried
+        EQ 51 7
+        MES "94 OK#n"
+        SKIP 1
+> _ _   MES "94 F#n"
+; 95 B29, the manual's "magic bag": a container of ZERO own weight
+; transmits zero for its contents too, so the weight recursion must not
+; descend into it. Object 8 weighs 0 and is a container, object 9
+; weighs 5 and goes inside it. The positive control is check 27, where
+; the box (own weight 2) DOES add its contents.
+> _ _   CREATE 8
+        CREATE 9
+        LET 111 8
+        COPYFO 111 9            ; the gem's location = object 8, i.e.
+                                ; inside the bag. PUTIN 9 8 would be the
+                                ; natural way to say this, but DRF
+                                ; validates a PUTIN container parameter
+                                ; as a LOCATION number and there is no
+                                ; location 8 - COPYFO writes the same
+                                ; byte with no such check.
+        LET 112 99
+        WEIGH 8 112
+        ZERO 112
+        WEIGH 9 112
+        EQ 112 5                ; the gem on its own still weighs 5
+        MES "95 OK#n"
+        SKIP 1
+> _ _   MES "95 F#n"
+; 96 B10: AUTOT's fallback chain is container, carried, worn, here -
+; and then it STOPS. It used to end in obj_find_n1's anywhere pass,
+; which reached objects the player was nowhere near; TAKEOUT refused
+; them, but not before making them the referenced object. Object 4 is
+; parked inside object 3 while the player stays at location 0 and the
+; searched container is object 1, so an anywhere pass is the only thing
+; that can see it. Note object 5 (SHINY SWORD) IS here and shares the
+; noun - it is rejected on the adjective, which keeps the here pass
+; honest. Contained in PRO 21 because the AUTOT refusal performs DONE -
+; same reason as check 85's PRO 20.
+> _ _   SETCO 0
+        LET 111 3
+        COPYFO 111 4            ; object 4 -> inside object 3
+        LET 34 54               ; Noun1 = SWORD
+        LET 35 204              ; Adj1 = RUSTY - object 4 exactly
+        LET 126 0
+        PROCESS 21
+> _ _   EQ 51 0                 ; nothing was referenced
+        COPYOF 4 110
+        EQ 110 3                ; and nothing moved
+        ZERO 126
+        MES "96 OK#n"
+        SKIP 1
+> _ _   MES "96 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5
@@ -1146,4 +1357,11 @@ NORTH 0
 ; PROCESS 20 call still get to run.
 > _ _   GET 3
         LET 124 1               ; unreachable
+/PRO 21
+; AUTOT containment (96): AUTOT finds nothing, prints its composite
+; family message and performs DONE, which pops THIS process and returns
+; to check 96's own entry instead of aborting PRO 1. Same pattern as
+; PRO 20.
+> _ _   AUTOT 1
+        LET 126 1               ; unreachable
 /END

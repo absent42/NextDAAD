@@ -605,26 +605,20 @@ h_place:                        ; 46: obj B to loc C (255 = HERE)
 .go:
     ld a, b
     jp obj_move
-h_swap:                         ; 45: exchange locations, flag-1 safe
-    ld a, b
-    call obj_ptr
-    ld a, (hl)                  ; A = loc(B)
-    push af                     ; obj_ptr corrupts AF/DE; stash across
-    ld a, c                     ; the second call rather than trust D
-    call obj_ptr
-    ld e, (hl)                  ; E = loc(C)
-    pop af
-    ld d, a                     ; D = loc(B)
-    push bc
-    push de
-    ld a, b
-    ld c, e
-    call obj_move               ; B -> old loc(C)
-    pop de
-    pop bc
-    ld a, c
-    ld c, d
-    jp obj_move                 ; C -> old loc(B)
+h_swap:                         ; 45: exchange locations
+    ld a, b                     ; SP16 B11: a RAW exchange of the two
+    call obj_ptr                ; location bytes. The manual is explicit
+    push hl                     ; - "Flag 1 is not adjusted" - so
+    ld a, c                     ; obj_move, which maintains the carried
+    call obj_ptr                ; count, must NOT be used: swapping two
+    pop de                      ; CARRIED objects went through obj_move
+    ld a, (de)                  ; twice and decremented flag 1 twice with
+    ld b, (hl)                  ; no matching increment, leaving it two
+    ld (hl), a                  ; too low. Both references assign the two
+    ld a, b                     ; location fields directly (jdaad.js:3172
+    ld (de), a                  ; _SWAP, msx2daad do_SWAP) and then set
+    ld a, c                     ; the referenced object to objno 2, which
+    jp obj_set_refs             ; NextDAAD never did at all
 h_setco:                        ; 56
     ld a, b
     jp obj_set_refs
@@ -650,9 +644,13 @@ h_copyoo:                       ; 121: loc(obj C) = loc(obj B)
     ld a, b
     call obj_ptr
     ld d, (hl)
-    ld a, c
-    ld c, d
-    jp obj_move
+    ld b, c                     ; SP16 B12: keep objno 2 across the move -
+    ld a, c                     ; obj_move preserves BC, and the manual's
+    ld c, d                     ; "the currently referenced object is set
+    call obj_move               ; to be Object objno 2" applies to COPYOO
+    ld a, b                     ; as well. The move itself stays: jDAAD
+    jp obj_set_refs             ; routes COPYOO through _PLACE, which does
+                                ; adjust flag 1 (jdaad.js:4198)
 h_copyfo:                       ; 123: loc(obj C) = flags[B]
     call fptr
     ld d, (hl)
@@ -660,17 +658,74 @@ h_copyfo:                       ; 123: loc(obj C) = flags[B]
     ld c, d
     jp obj_move
 h_whato:                        ; 100: find by Noun1/Adj1
-    call obj_find_n1
-    jr c, .none
-    jp obj_set_refs
-.none:
-    ld a, $FF
-    ld (flags+FLAG_CUROBJ), a
+    call obj_find_n1            ; carried, worn, here, anywhere - jDAAD's
+    jr c, .none                 ; _WHATO keeps the anywhere pass and says
+    jp obj_set_refs             ; so in its own comment (jdaad.js:3917)
+.none:                          ; SP16 B17: not found = referencedObject
+    ld a, $FF                   ; (NULLWORD), and msx2daad substitutes an
+    ld (flags+FLAG_CUROBJ), a   ; all-zero nullObject there (daad_init.c
+    ld hl, flags+FLAG_COLOC     ; :14, daad_objects.c:47), so flags 54-59
+    ld b, 6                     ; are ZEROED - they used to be left
+    xor a                       ; holding the PREVIOUS object's data
+.zero:
+    ld (hl), a
+    inc hl
+    djnz .zero
     ret
 
-; D = location to scan ($FE = anywhere). Matcher on Noun1/Adj1.
-; Out: A = object CF clear, else CF set. Preserves D.
+; The "scan every location" sentinel for D, below. It CANNOT be $FE:
+; that is OBJ_CARRIED (nextdaad.inc:283), and every "carried" pass in
+; this file loads exactly that value - so `ld d, OBJ_CARRIED` was
+; landing on the anywhere branch and scanning the whole table instead
+; of the carried objects. obj_find_n1 read [anywhere, worn, here,
+; anywhere], auto_cwh read [anywhere, worn, here], and the search
+; PRIORITY the AUTO- family is built on did not exist. Found while
+; testing D1, whose partial/full rule is priority-sensitive by
+; construction (see check 90 in tests/condacts.dsf). $FF is the only
+; safe value left: 0-251 are real locations, 252/253/254 are the object
+; specials, and no object's location byte is ever 255 - obj_move raises
+; error 2 rather than store one, and 255 as a CONDACT parameter means
+; "the player's location" and is translated before it gets here
+; (h_place, h_puto, and now h_autot).
+OBJ_ANYLOC      equ $FF
+
+; D = location to scan (OBJ_ANYLOC = anywhere). Matcher on Noun1/Adj1.
+; Out: A = object CF clear, else CF set. Preserves D and E.
+; Corrupts AF, B, C, HL, IY.
+;
+; SP16 D1 - jDAAD's partial-match rule, best-so-far in a single scan
+; (jdaad.js:756-781, getObjectByVocabularyAtLocation):
+;   FULL match    = noun equal AND (the adjectives are equal, or the
+;                   object's adjective is 255 "takes any adjective").
+;                   Wins outright, returns immediately.
+;   PARTIAL match = noun equal AND flags[35] == 255, i.e. the player
+;                   named no adjective. The FIRST partial is remembered
+;                   in C and the scan CONTINUES, because a full match
+;                   further down the table still beats it; the partial
+;                   is returned only if the scan ends without one.
+; Before this, flags[35] == 255 against an object that HAS an adjective
+; was no match at all, so "GET LAMP" could not reach a "QUAINT LAMP".
+; Keeping the partial subordinate to a full match is what preserves
+; disambiguation: with a RUSTY and a SHINY SWORD in the table,
+; "GET RUSTY SWORD" still takes the rusty one whatever the table order.
+;
+; The partial/full decision is deliberately resolved INSIDE one pass.
+; The AUTO- family and obj_find_n1 call this once per location, in
+; priority order, so a partial found here beats any match at a LOWER
+; priority location and loses to a full match at THIS one - which is
+; exactly what the references do, they run the whole matcher per
+; location too. auto_probe's all-locations existence probe (SP16 B9)
+; uses the same routine and simply gets a truer answer now: an object
+; whose adjective the player omitted counts as existing.
+;
+; obj2_resolve (overlay1.asm) resolves Noun2/Adj2 and stays LENIENT by
+; design: it accepts object-adj 255, player-adj 255, or an exact pair,
+; and takes the first candidate in table order with no full-beats-
+; partial preference (msx2daad's getObjectId rule, daad_objects.c:22).
+; The two agree on every input that has a full match; they can differ
+; only in WHICH candidate a bare noun picks when several share it.
 obj_find_pass:
+    ld c, $FF                   ; C = remembered partial, $FF = none
     ld b, 0
 .scan:
     ld a, (numObj)
@@ -684,7 +739,7 @@ obj_find_pass:
     pop de
     pop bc
     ld a, d
-    cp $FE
+    cp OBJ_ANYLOC
     jr z, .anyloc
     cp (hl)
     jr nz, .next
@@ -696,22 +751,37 @@ obj_find_pass:
     jr nz, .next
     ld a, (flags+FLAG_ADJ1)
     cp (iy+5)
-    jr z, .hit
+    jr z, .hit                  ; adjectives equal (both-255 included)
+    inc a                       ; flags[35] == 255: no adjective given
+    jr z, .partial
     ld a, (iy+5)
-    cp 255
+    inc a                       ; object adjective 255: takes any
     jr nz, .next
 .hit:
     ld a, b
     or a
     ret
+.partial:
+    ld a, c
+    inc a
+    jr nz, .next                ; already holding one - keep the FIRST
+    ld c, b
 .next:
     inc b
     jr .scan
 .miss:
+    ld a, c
+    inc a
     scf
+    ret z                       ; no full match and no partial
+    ld a, c                     ; no full match: the partial stands in
+    or a
     ret
 
-; Standard ordering: carried, worn, here, anywhere.
+; WHATO's ordering: carried, worn, here, anywhere. Since SP16 B10 this
+; is WHATO's alone - the anywhere pass is correct there (both references
+; keep it, jDAAD with a comment saying the documentation is wrong about
+; it) and wrong for AUTOT, which now calls auto_cwh instead.
 obj_find_n1:
     ld d, OBJ_CARRIED
     call obj_find_pass
@@ -723,7 +793,7 @@ obj_find_n1:
     ld d, a
     call obj_find_pass
     ret nc
-    ld d, $FE
+    ld d, OBJ_ANYLOC
     jp obj_find_pass
 
 ; E = system message: print it. No newline is added - the references
@@ -748,10 +818,12 @@ refuse_tail:                    ; message(s) already printed
 ;                in the game, so SM8 ("I can't do that") is printed;
 ;      CF CLEAR = the family's own "not here" message stands (the object
 ;                exists somewhere, or Noun1 was not in the vocabulary).
-; Preserves BC and E (obj_find_pass touches neither).
+; Preserves BC (via the bracket below - obj_find_pass uses B as its
+; loop counter and C as SP16 D1's partial-match slot) and E, which
+; obj_find_pass never touches.
 auto_probe:
     push bc
-    ld d, $FE                   ; anywhere pass, obj_find_pass's own $FE
+    ld d, OBJ_ANYLOC            ; obj_find_pass's own anywhere sentinel
     call obj_find_pass
     pop bc
     ret nc                      ; exists somewhere: family message
@@ -1155,15 +1227,29 @@ h_autop:                        ; 104: B = container loc; find Noun1.
     ld e, 28
     jp auto_end                 ; SP16 B9
 h_autot:                        ; 105: container first, then usual
+    ld a, b                     ; B == 255 -> the player's location, the
+    inc a                       ; same translation h_place and h_puto do
+    jr nz, .go                  ; and the one jDAAD's _AUTOT opens with
+    ld a, (flags+FLAG_PLAYER)   ; ("if (Parameter1 == LOC_HERE) ..."). It
+    ld b, a                     ; also keeps 255 out of D, which is now
+.go:                            ; obj_find_pass's anywhere sentinel
     push bc
     ld d, b
     call obj_find_pass          ; preserves D, clobbers B
     pop de                      ; D = container location
     jr nc, .found
     push de
-    call obj_find_n1            ; loads D per pass - bracket it
-    pop de
-    jr c, .none
+    call auto_cwh               ; loads D per pass - bracket it. SP16 B10:
+    pop de                      ; carried, worn, here and STOP. This used
+    jr c, .none                 ; to be obj_find_n1, whose fourth pass
+                                ; matches at ANY location - neither
+                                ; reference has an anywhere leg in AUTOT's
+                                ; search chain (jdaad.js:3991 _AUTOT), so
+                                ; NextDAAD could take an object out of a
+                                ; container the player was nowhere near.
+                                ; jDAAD's own anywhere pass there is the
+                                ; MESSAGE decision only, which is what
+                                ; auto_probe already does at .none below.
 .found:
     ld c, d
     ld b, a
@@ -1192,7 +1278,14 @@ owf_core:
     ld d, (hl)                  ; attrib byte
     ld a, d
     and $3F
-    ld b, a                     ; B = running total
+    ld b, a                     ; B = running total (LD does not touch F,
+    jr z, .fin                  ; so the AND's Z still stands here). SP16
+                                ; B29, the manual's "magic bag": a
+                                ; container of ZERO own weight transmits
+                                ; zero for its contents too, so the
+                                ; recursion is skipped outright
+                                ; (msx2daad _sumLocation only descends
+                                ; when w > 0, daad_getObjectWeight.c)
     bit 6, d
     jr z, .fin
     pop de

@@ -1438,6 +1438,19 @@ parse_order:
 ; obj_set_refs (overlay0.asm). Preference:
 ; pass 1 = objects present (carried, worn, or at the player's
 ; location); pass 2 = anywhere. Not found: 25/27 = 252, 26/39/40 = 0.
+;
+; SP16 D1 - matching rule, and how it relates to the Noun1 resolver.
+; This one is LENIENT and stays that way: within a pass it takes the
+; FIRST object whose noun matches and whose adjective is acceptable,
+; where acceptable means the object's adjective is 255, or the player's
+; adjective (flag 45) is 255, or the two are equal. There is no
+; full-beats-partial preference - that is msx2daad's getObjectId rule
+; (daad_objects.c:22) and it is what both references use for the second
+; object. obj_find_pass (overlay0.asm) resolves Noun1 with jDAAD's
+; stricter partial-match model, where a bare noun yields a PARTIAL that
+; a later exact-adjective match overrides. The two therefore agree on
+; every input for which a full match exists, and can differ only in
+; which candidate a bare noun selects when several objects share it.
 obj2_resolve:
     ld a, 1
     ld (o2Pass), a
