@@ -41,12 +41,19 @@
 ; hardware envelopes and retrigs, which is why the STOPM leg is run on
 ; IT and not on LAD1.
 ;
-; THE BEEP SCALE (#T7C). Task 1 changed BEEP's parameter order (arg1 =
-; tone, arg2 = duration in centiseconds) and raised the pitch ceiling
-; to 238, so tones 224-238 sound here for the first time. BEEPS walks
-; a C major scale and then the whole new top octave; ORDER plays two
-; beeps whose arguments are asymmetric in BOTH dimensions, so swapping
-; tone and duration changes what is heard (see ORDER's own comment).
+; THE BEEP SCALE (#T7C). AUTHORED ORDER IS "BEEP duration tone" - DRC
+; reads Param1 as the duration (scaling it by 0.6 for ZX/NEXT), reads
+; Param2 as the tone, REWRITES ANY BEEP WHOSE TONE IS OUTSIDE 48..238
+; INTO A PAUSE, and only then swaps the pair for every ZX target
+; (tools\DAAD-READY\TOOLS\DRC\drb.php:891-915). The interpreter
+; therefore receives arg1 = tone, arg2 = duration (Task 1 order), but
+; the SOURCE must be written duration first or every BEEP here silently
+; compiles to a PAUSE. Task 1 also raised the pitch ceiling to 238, so
+; tones 224-238 sound here for the first time. BEEPS walks a C major
+; scale and then the whole new top octave; ORDER plays two beeps whose
+; arguments are asymmetric in BOTH dimensions and whose swapped reading
+; is also fully audible, so a swap changes what is heard rather than
+; silencing it (see ORDER's own comment).
 
 ; System flags used by name (DAAD BLANK template spellings)
 #define fPlayer             38
@@ -200,42 +207,54 @@ SOUTH 0
           SFX 0 8
           DONE
 ; ---- the BEEP scale (EAR CARD #T7C) ----
-; Tones are the jdaad pitch numbers: even, 24..238, index (tone-24)/2
-; into the 108-entry equal-temperament table. 120 = C4.
-; Durations are CENTISECONDS (Task 1 order: BEEP tone duration).
+; AUTHORED ORDER IS "BEEP duration tone" - see the header. Param1 is
+; the duration in centiseconds BEFORE DRC's 0.6 ZX/NEXT scaling, so
+; 50 reaches the interpreter as 30 cs (15 frames, about a third of a
+; second). Param2 is the tone: the jdaad pitch number, even, and it
+; MUST be 48..238 or DRC turns the whole condact into a PAUSE. Index
+; into the 108-entry equal-temperament table is (tone-24)/2; 120 = C4.
 > BEEPS _ MES "BEEP C major scale from C4#n"
-          BEEP 120 30
-          BEEP 124 30
-          BEEP 128 30
-          BEEP 130 30
-          BEEP 134 30
-          BEEP 138 30
-          BEEP 142 30
-          BEEP 144 30
+          BEEP 50 120
+          BEEP 50 124
+          BEEP 50 128
+          BEEP 50 130
+          BEEP 50 134
+          BEEP 50 138
+          BEEP 50 142
+          BEEP 50 144
           MES "BEEP new top octave, tones 224-238#n"
-          BEEP 224 30
-          BEEP 226 30
-          BEEP 228 30
-          BEEP 230 30
-          BEEP 232 30
-          BEEP 234 30
-          BEEP 236 30
-          BEEP 238 30
+          BEEP 50 224
+          BEEP 50 226
+          BEEP 50 228
+          BEEP 50 230
+          BEEP 50 232
+          BEEP 50 234
+          BEEP 50 236
+          BEEP 50 238
           MES "BEEP scale done#n"
           DONE
 ; Parameter-order probe. Both beeps are deliberately ASYMMETRIC in
-; their two arguments, so a swap changes what is heard:
-;   as written : tone 100 for 30 cs, then tone 220 for 10 cs
-;   swapped    : tone 30 for 100 cs (a valid but MUCH lower note, held
-;                three times as long), then tone 10 - below the 24
-;                floor, so h_beep returns at once and it is SILENT with
-;                no delay at all (src\overlay1.asm cp 24 / ret c).
-; So the swap signature is "one long very low note, then nothing".
-; An earlier version used BEEP 100 100 for the first note; that is
-; symmetric in its arguments and detected nothing.
-> ORDER _ MES "BEEP order: low 30 cs, then high 10 cs#n"
-          BEEP 100 30
-          BEEP 220 10
+; their two arguments, and - unlike the earlier version - BOTH readings
+; of BOTH beeps are legal, sounding notes, so a swap is heard as a
+; DIFFERENT tune and not as silence (silence would be indistinguishable
+; from a dead BEEP path).
+; Authored durations 250 and 200 scale to 150 and 120 cs, so the DDB
+; carries tone 180 / dur 150 and tone 216 / dur 120.
+;   as written : tone 180 (1478 Hz) for 1.5 s, then tone 216 (4263 Hz)
+;                for 1.2 s - a RISING pair, both very high, ~2.7 s
+;                in total
+;   swapped    : tone 150 (623 Hz) for 1.8 s, then tone 120 (C4,
+;                262 Hz) for 2.2 s - a FALLING pair, both mid-range,
+;                ~4.0 s in total
+; So the swap signature is "two lower notes, falling instead of rising,
+; and half again as long overall". Both swapped tones are even and
+; inside h_beep's 24..238 window, so neither is rejected
+; (src\overlay1.asm h_beep). An earlier version used BEEP 100 100 for
+; the first note; that is symmetric in its arguments and detected
+; nothing.
+> ORDER _ MES "BEEP order: rising pair, high, about 2.7 s total#n"
+          BEEP 250 180
+          BEEP 200 216
           MES "BEEP order done#n"
           DONE
 /PRO 6

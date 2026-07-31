@@ -264,11 +264,13 @@ staged automatically by the existing multi-part asset copy (nothing extra
 to configure), and falls back to the root `POINTER.SPR` (or the default
 arrow, if none) if that part ships no pointer of its own.
 
-**Reserved for later.** `MOUSE` sub-command 5 (`POINTERMS`) is accepted
-and ignored on this target (see "MOUSE sub-commands" below) - reserved for
-a future feature that switches between several loaded pointer shapes at
-runtime. This version only ever shows the one pointer installed at boot
-or part-switch time.
+**Re-arming the pointer.** `MOUSE` sub-command 5 (`POINTERMS`) is
+implemented (see "MOUSE sub-commands" below): it re-uploads the built-in
+pointer pattern into hardware sprite slot 0 and re-arms it. There are no
+`.PTR` pointer files on this target and only one pointer shape, so the
+parameter selects nothing - what the sub-command guarantees is that the
+documented `POINTERMS` then `SHOWMS` idiom always leaves slot 0 holding
+this interpreter's pointer, whatever else used the slot meanwhile.
 
 ## Video cutscenes
 
