@@ -90,8 +90,10 @@
 ; THE THREE DECODER CONTRACTS (freeze caveat (c)) and where they live:
 ;   1. Misaligned-opcode validation: dispatch masks the fetched byte
 ;      with AND $C3 and rejects nonzero (VID_ERR_OP) - only offsets
-;      $00-$3C, multiples of 4, can reach the stub block, whose $24/
-;      $2C/$30-$3C slots are error stubs. Cost: +14T per op (AND 7T +
+;      $00-$3C, multiples of 4, can reach the stub block, whose $2C/
+;      $34-$3C slots are error stubs ($24/$30 = OCOPY8/16 since SP17
+;      T5a, per-session SMC gated on header flags bit3 - unarmed they
+;      are error stubs too). Cost: +14T per op (AND 7T +
 ;      untaken JR 7T; ~+16T at 28MHz with wait states) = 3.6-5.2% of
 ;      the settled 267-387T per-op envelopes (and ~0.5% of a
 ;      transfer-dominated real frame), bounded by design.
@@ -127,9 +129,13 @@
 ; multiply, zero table walk). Slots $08/$10/$1C (RUN8/COPY8/SKIP8) are
 ; SMC-patched per file by nxv2_open_body: flat fast handlers for
 ; mode-0 / mode-1 native-height files, gapped fast handlers (column-
-; room checks) for mode-1 letterbox files. Contract 1's AND $C3 mask
+; room checks) for mode-1 letterbox files. Slots $24/$30 (OCOPY8/16,
+; SP17 T5a) are per-session SMC too: armed only when the header
+; declares NXV2_FLAG_OCOPY and the session is not direct-serve,
+; otherwise error stubs (the capability bit is ENFORCED - an
+; undeclared use fails structurally). Contract 1's AND $C3 mask
 ; in the dispatch guarantees only offsets $00-$3C (multiples of 4)
-; ever land here; $24 (old $09), $2C (SCROLL), $30-$3C are error
+; ever land here; $2C (SCROLL, kept for T5b), $34-$3C are error
 ; stubs. Rubric 8: alignment + size asserted below.
 ; ---------------------------------------------------------------------
 vid_stub:
@@ -151,13 +157,13 @@ vid_stub:
     nop
     jp vid_op_kflip              ; $20 KFLIP
     nop
-    jp vid_op_bad                ; $24 reserved (old $09)
-    nop
+    jp vid_op_bad                ; $24 OCOPY8 (SMC: armed per session
+    nop                          ;      iff header flags bit3 - T5a)
     jp vid_op_kstart             ; $28 KSTART
     nop
     jp vid_op_bad                ; $2C SCROLL (reserved, errors)
     nop
-    jp vid_op_bad                ; $30 reserved
+    jp vid_op_bad                ; $30 OCOPY16 (SMC: as $24 - T5a)
     nop
     jp vid_op_bad                ; $34 reserved
     nop
@@ -370,12 +376,13 @@ vid_op_edge:
     call vid_src_next
     jr vid_next
 .instr:
-    ; opcode at $DFxx: if fewer than 3 operand bytes remain in the
-    ; window ($DFFD-$DFFF), take the byte-fetch slow path; otherwise
-    ; the fast fetch is safe for every op HEADER (max 3 operand
-    ; bytes; counted bodies re-check their own rooms).
+    ; opcode at $DFxx: if fewer than NXV2_MAX_OPERANDS (4) operand
+    ; bytes remain in the window ($DFFC-$DFFF), take the byte-fetch
+    ; slow path; otherwise the fast fetch is safe for every op HEADER
+    ; (max 4 operand bytes since T5a's OCOPY16 - the contract
+    ; amendment, design 1.3; counted bodies re-check their own rooms).
     ld a, l
-    cp $FD
+    cp $100 - NXV2_MAX_OPERANDS
     jr c, vid_next_fetch
     jp vid_slow_op
 
@@ -654,6 +661,10 @@ vid_slow_op:
     jr z, .c8
     cp VOP_COPY16
     jr z, .c16
+    cp VOP_OCOPY8
+    jr z, .oc8
+    cp VOP_OCOPY16
+    jr z, .oc16
     jp (iy)                      ; FEND/PAL/KFLIP/KSTART: no operands;
                                  ; reserved slots land on error stubs
 .s8:
@@ -693,6 +704,31 @@ vid_slow_op:
 .cj:
     jp vid_copy_body             ; SMC: vid_ds_copy_body when the
                                  ; session is direct-serve (3c)
+.oc16:
+    call vid_fetch
+    ld c, a
+    call vid_fetch
+    ld b, a
+    jr .ocj
+.oc8:
+    call vid_fetch
+    ld c, a
+    ld b, 0
+.ocj:
+    ; T5a slow-path parse (an OCOPY header straddling the window
+    ; seam). The fast path's gate is the SMC stub slot; this path
+    ; bypasses the stub, so it carries its own session gate
+    ; (vidOcEn) - checked AFTER the length parse so the gate refusal
+    ; and the armed path consume identical operand bytes.
+    ld (vidRemain), bc
+    call vid_fetch
+    ld c, a
+    call vid_fetch
+    ld b, a                      ; BC = off (signed LE)
+    ld a, (vidOcEn)
+    or a
+    jp z, vid_op_bad             ; capability bit clear / direct
+    jp vid_oc_off
 
 ; Fetch one source byte - SMC-VECTORED per session (3c direct-serve):
 ; the RAM window walk (resident/streaming) or the SD stream byte
@@ -709,6 +745,138 @@ vid_fetch_ram:
     ld a, (hl)
     inc hl
     ret
+
+; ---------------------------------------------------------------------
+; OCOPY8/OCOPY16 (SP17 T5a Wave 1, header flags bit3): copy nn cursor
+; bytes from the PREVIOUS frame at signed 16-bit ADDRESS-space byte
+; offset off - source byte address = dest byte address + off in the
+; surface's flat space (mode-1: 256 B per column, letterbox gap
+; included; mode-0: 256 B per row). Wave 1 ships the DISJOINT span
+; form ONLY: legal inside a KSTART..KFLIP span, where the dest is the
+; HIDDEN (back) surface and the source is always the FRONT (visible)
+; surface = the previous frame - no overlap class exists, so chunk
+; order is unobservable. Outside a span: VID_ERR_OP (the in-place
+; overlapped form is Wave 3). Zero length is a structural no-op
+; (kernel-guard parity with RUN/COPY); off = 0 is the legal pure
+; inherit copy.
+;   Engine: the UNCHANGED vid_copy_dma / vid_copy_ldi kernels, chunked
+; by the existing vid_dst_norm + vid_chunk_dst (dest column/window
+; rooms + the 256 B audio cap - contract 3 untouched) with
+; vid_chunk_src folding the SOURCE window room in. MMU6 is borrowed as
+; the source window for the op's duration: the operands are fully
+; consumed before any copying, the handler never reads the stream
+; again until it returns, and the ring page is restored from
+; vidSrcCurPage at op end. Every remap happens strictly OUTSIDE the
+; DI bracket and never changes during it (doc 11); MMU4/MMU5 are
+; never touched. Source bound: the computed source page must lie
+; inside the surface (0 <= relPage < vidDstPages) - out of range is
+; corrupt input, VID_ERR_SRCOVR (abort teardown restores MMU6/7 from
+; vidSvMmu6/7 - no extra restore path here, by design).
+; ---------------------------------------------------------------------
+vid_op_ocopy8:
+    ld c, (hl)
+    inc hl
+    ld b, 0
+    jr vid_oc_hdr
+vid_op_ocopy16:
+    ld c, (hl)
+    inc hl
+    ld b, (hl)
+    inc hl
+vid_oc_hdr:
+    ld (vidRemain), bc
+    ld c, (hl)
+    inc hl
+    ld b, (hl)                   ; BC = off (signed LE)
+    inc hl
+vid_oc_off:                      ; slow-path entry (operands parsed)
+    ld a, b
+    sra a
+    sra a
+    sra a
+    sra a
+    sra a                        ; A = off >> 13 (signed page delta)
+    ld (vidOcPg), a
+    ld a, b
+    and $1F
+    ld b, a
+    ld (vidOcRem), bc            ; off & $1FFF
+    ld a, (vidInSpan)
+    or a
+    jp z, vid_op_bad             ; Wave 1: the span form only
+    ld a, (l2BackBank)
+    add a, a
+    ld (vidOcDB), a              ; dest (hidden) surface base page
+    ld a, (l2FrontBank)
+    add a, a
+    ld (vidOcFP), a              ; source (front) surface base page
+    push hl                      ; park the stream cursor
+.seg:
+    ld bc, (vidRemain)
+    ld a, b
+    or c
+    jr z, .done
+    call vid_dst_norm            ; column hop + window seam
+    call vid_chunk_dst           ; BC = chunk (dest rooms + 256B cap)
+    push bc
+    ; --- source page + window ptr: srcAddr = dstAddr + off ---
+    ld a, d
+    and $1F
+    ld b, a
+    ld c, e                      ; BC = dest window offset (0..$1FFF)
+    ld hl, (vidOcRem)
+    add hl, bc                   ; HL = offset sum (0..$3FFE)
+    ld a, (vidOcPg)
+    bit 5, h
+    jr z, .nosp
+    inc a                        ; sum spilled a page
+    res 5, h
+.nosp:
+    ld c, a                      ; C = page delta (signed)
+    ld a, (vidOcDB)
+    ld b, a
+    ld a, (vidDstPage)
+    sub b                        ; A = dest page index (0..pages-1)
+    add a, c
+    ld c, a                      ; C = source page index (signed)
+    ld a, (vidDstPages)
+    dec a
+    cp c                         ; unsigned: negative reads >= $FC,
+    jr c, .srcovr                ; so one compare bounds both ends
+    ld a, (vidOcFP)
+    add a, c
+    nextreg NR_MMU6, a           ; map the source page (pre-bracket)
+    ld a, h
+    or $C0
+    ld h, a                      ; HL = VID_SRC_WIN + offset
+    pop bc
+    call vid_chunk_src           ; BC = min(chunk, src window room)
+    push hl
+    ld hl, (vidRemain)
+    or a
+    sbc hl, bc
+    ld (vidRemain), hl
+    pop hl
+    ; kernel select - vid_copy_body's own crossover, verbatim
+    ld a, b
+    or a
+    jr nz, .dma                  ; chunk == 256
+    ld a, c
+    cp NXV2_COPY_DMA_MIN
+    jr nc, .dma
+    call vid_copy_ldi
+    jr .seg
+.dma:
+    call vid_copy_dma
+    jr .seg
+.done:
+    pop hl                       ; stream cursor back
+    ld a, (vidSrcCurPage)
+    nextreg NR_MMU6, a           ; ring window back
+    jp vid_next
+.srcovr:
+    ld a, VID_ERR_SRCOVR
+    jp vid_dec_abort             ; SP anchor absorbs the pushes
 
 ; ---------------------------------------------------------------------
 ; Chunked bodies (graduated NXBEN slow bodies + column-gap awareness).
@@ -3194,6 +3362,14 @@ vidPalCtrl:      db 0            ; which L2 palette bank is DISPLAYED
                                  ; reliably readable - tracked in SW)
 vidRunColour:    db 0            ; DMA fill's FIXED port A source
 vidRemain:       dw 0
+; --- SP17 T5a OCOPY session/op cells ---
+vidOcPg:         db 0            ; off >> 13 (signed page delta)
+vidOcRem:        dw 0            ; off & $1FFF
+vidOcDB:         db 0            ; span dest surface base page (back*2)
+vidOcFP:         db 0            ; source surface base page (front*2)
+vidOcEn:         db 0            ; per-session gate for the slow-op
+                                 ; parse (the stub slots carry the
+                                 ; fast-path gate; staged together)
 vidAudNeed:      dw 0
 vidDecSp:        dw 0            ; frame-loop SP anchor (abort path)
 vidCtcTc:        db 0
@@ -4426,15 +4602,22 @@ nxv2_open_body:
     or a
     sbc hl, de
     jp nz, .badu
-    ; flags: delta stream set; bits 2-7 reserved-zero; bit1 = the
-    ; direct-serve hint - HONOURED from 3c (captured here, drives the
-    ; delivery decision at .geodone)
+    ; flags: delta stream set; bit1 = the direct-serve hint - HONOURED
+    ; from 3c (captured here, drives the delivery decision at
+    ; .geodone); bit3 = the OCOPY capability (SP17 T5a - captured
+    ; here, arms the two OCOPY stub slots in vid_stage_common); bit2 +
+    ; bits 4-7 reserved-zero and still REFUSED when set (forward
+    ; hygiene: the next extension inherits the same clean VID FMT?
+    ; refusal old players give an OCOPY file)
     ld a, (DATA_WINDOW + NXV2_OFF_FLAGS)
     ld c, a
     and NXV2_FLAG_DIRECT
     ld (vidHdrDirectC), a        ; 0 / NXV2_FLAG_DIRECT
     ld a, c
-    and %11111101
+    and NXV2_FLAG_OCOPY
+    ld (vidHdrOcopyC), a         ; 0 / NXV2_FLAG_OCOPY
+    ld a, c
+    and %11110101
     cp NXV2_FLAG_DELTA
     jp nz, .badu
     ; frame count: nonzero; < 65536 (a resident-size file cannot hold
@@ -5136,6 +5319,34 @@ vid_stage_common:
     ld hl, (vidFillD)
     ld (vidTlFillFrames + DATA_WINDOW - OVL_ORG), hl
  ENDIF
+    ; --- OCOPY capability (SP17 T5a): the two stub slots + the
+    ; slow-path gate are per-session SMC - ARMED only when the header
+    ; declares flags bit3 AND the session is not direct-serve (Wave 1:
+    ; the disjoint span form has no direct transport - Wave 3 adds the
+    ; vid_slow_op-served direct form). Unarmed they are error stubs,
+    ; so a file using the op without declaring it fails structurally
+    ; (VID_ERR_OP) instead of decoding by accident. Patched EVERY
+    ; open - a previous session may have left the other state. ---
+    ld hl, vid_op_ocopy8
+    ld de, vid_op_ocopy16
+    ld c, 1
+    ld a, (vidDeliverDir)
+    or a
+    jr nz, .ocoff
+    ld a, (vidHdrOcopyC)
+    or a
+    jr nz, .ocarm
+.ocoff:
+    ld hl, vid_op_bad
+    ld d, h
+    ld e, l
+    ld c, 0
+.ocarm:
+    ld a, c
+    ld (vidOcEn + DATA_WINDOW - OVL_ORG), a
+    ld (vid_stub + VOP_OCOPY8 + 1 + DATA_WINDOW - OVL_ORG), hl
+    ex de, hl
+    ld (vid_stub + VOP_OCOPY16 + 1 + DATA_WINDOW - OVL_ORG), hl
     ld a, (vidP_GapFlag)
     or a
     jr z, .flatset
@@ -5238,6 +5449,7 @@ vidDeliverStrm: db 0             ; 0 = resident, 1 = ring streaming
 vidDeliverDir: db 0              ; 1 = direct-serve (3c; wins over both)
 vidAudBankC:   db 0              ; the session audio bank (3c; 0 = none)
 vidHdrDirectC: db 0              ; header flags bit1 capture
+vidHdrOcopyC:  db 0              ; header flags bit3 capture (T5a)
 vidTotalBlkC:  dw 0              ; file blocks (direct setup scratch)
 vidLoadTgt:    ds 3              ; prefill byte target (size / ring)
 vidHdrCapC:    dw 0              ; header per-frame payload cap

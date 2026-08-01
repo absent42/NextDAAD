@@ -554,7 +554,10 @@ MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
 ;                 direct-serve hint (HONOURED from 3c: the file is
 ;                 served SD-to-surface, no ring - nxv2_open_body
 ;                 .direct_setup), bit2 = RESERVED band-palette
-;                 experiment, bits 3-7 reserved 0
+;                 experiment, bit3 = OCOPY capability (SP17 T5a - the
+;                 file uses OCOPY8/OCOPY16; enforced at open, see
+;                 NXV2_FLAG_OCOPY), bits 4-7 reserved 0 (any unknown
+;                 bit set = VID FMT? at open - forward hygiene)
 ;    13      1    keyframe policy byte (encoder bookkeeping, ignored)
 ;    14      3    frame count LE24
 ;    17      2    audio bytes/frame LE (REAL, pre-pad; the wire block
@@ -606,10 +609,23 @@ NXV2_FLAG_DELTA  equ 1      ; bit0 - must be set
 NXV2_FLAG_DIRECT equ 2      ; bit1 - direct-serve hint (3c: honoured -
                             ; the delivery decision routes the file
                             ; SD-to-surface, no ring)
+NXV2_FLAG_OCOPY  equ 8      ; bit3 - OFFSET-COPY capability (SP17 T5a,
+                            ; v2 extension under the 2026-07-28 freeze
+                            ; ruling - break available on merit): the
+                            ; file uses OCOPY8/OCOPY16. ENFORCED, not
+                            ; advisory: players without the feature
+                            ; refuse the file at open (the flags byte
+                            ; is validated whole - VID FMT?), and this
+                            ; player arms the two OCOPY stub slots only
+                            ; when the bit is set (clear -> the slots
+                            ; stay error stubs, so an undeclared use
+                            ; fails structurally, never by accident)
 
-; Opcode values (frozen, x4-scaled). Reserved: $24 (old $09), $2C
-; (SCROLL), $30-$3C, and every non-multiple-of-4/every value >= $40 -
-; all rejected by the production decoder (decoder contract 1).
+; Opcode values (v2 frozen set + the T5a extension, x4-scaled).
+; Reserved: $2C (SCROLL, kept for T5b), $34-$3C, and every
+; non-multiple-of-4/every value >= $40 - all rejected by the
+; production decoder (decoder contract 1). $24/$30 = OCOPY8/OCOPY16
+; (SP17 T5a; $24 was the old $09 slot) - gated by header flags bit3.
 VOP_FEND         equ $00
 VOP_SKIP16       equ $04
 VOP_RUN8         equ $08
@@ -619,7 +635,18 @@ VOP_COPY16       equ $14
 VOP_PAL          equ $18
 VOP_SKIP8        equ $1C
 VOP_KFLIP        equ $20
+VOP_OCOPY8       equ $24    ; SP17 T5a: nn(1) off(2 LE signed)
 VOP_KSTART       equ $28
+VOP_OCOPY16      equ $30    ; SP17 T5a: nn(2 LE) off(2 LE signed)
+
+; Max operand bytes any op header carries after its opcode byte -
+; OCOPY16 has FOUR (nl nh ol oh); everything else has at most 3.
+; vid_op_edge's fast-fetch window check derives from this (an opcode
+; byte at $DFxx takes the slow byte-fetch path unless all operand
+; bytes provably sit inside the source window) - the T5a contract
+; amendment (design section 1.3): forgetting it mis-parses an op at a
+; window seam.
+NXV2_MAX_OPERANDS equ 4
 
 NXV_NATIVE_H_MODE1 equ 256  ; mode-1 column stride (hardware-fixed)
 NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
