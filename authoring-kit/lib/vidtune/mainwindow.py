@@ -8,7 +8,7 @@ preview.py.
 """
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QLocale, Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -44,6 +44,17 @@ class MetricsBar(QWidget):
         layout.addWidget(QLabel("metrics"))
 
 
+def _float_validator(parent=None):
+    """QDoubleValidator pinned to the C locale (dot decimal point), so
+    input parsing does not depend on the host's system locale - every
+    settings string and the encoder argv are dot-decimal."""
+    validator = QDoubleValidator(parent)
+    locale = QLocale(QLocale.C)
+    locale.setNumberOptions(QLocale.RejectGroupSeparator)
+    validator.setLocale(locale)
+    return validator
+
+
 def _choice_values(knob):
     if knob.name == "shape":
         return list(SHAPE_PRESETS)
@@ -75,8 +86,18 @@ class SettingsPanel(QWidget):
         self._advanced_group = QGroupBox("Advanced")
         self._advanced_group.setCheckable(True)
         self._advanced_group.setChecked(False)
-        self._advanced_form = QFormLayout()
-        self._advanced_group.setLayout(self._advanced_form)
+
+        # setCheckable/setChecked alone only disables (grays out) a
+        # QGroupBox's children in Qt - it never hides them. Collapse is
+        # implemented explicitly: advanced rows live in an inner
+        # container whose visibility follows the checkbox, starting
+        # hidden to match the initial unchecked state.
+        self._advanced_content = QWidget()
+        self._advanced_form = QFormLayout(self._advanced_content)
+        self._advanced_content.setVisible(False)
+        group_layout = QVBoxLayout(self._advanced_group)
+        group_layout.addWidget(self._advanced_content)
+        self._advanced_group.toggled.connect(self._advanced_content.setVisible)
 
         self._extra_label = QLabel("")
         self._extra_label.setWordWrap(True)
@@ -112,6 +133,7 @@ class SettingsPanel(QWidget):
             self._rows[knob.name] = {
                 "knob": knob,
                 "label": label,
+                "widget": widget,
                 "getter": getter,
                 "setter": setter,
                 "reset_btn": reset_btn,
@@ -138,7 +160,7 @@ class SettingsPanel(QWidget):
 
         if knob.kind == "float":
             edit = QLineEdit()
-            edit.setValidator(QDoubleValidator())
+            edit.setValidator(_float_validator(edit))
             edit.textChanged.connect(self._on_edit)
 
             def getter(edit=edit):
