@@ -54,3 +54,30 @@ def test_summarize_report_tolerant(tmp_path):
     assert s.psnr_mean == 26.7
     assert s.wire_bytes == 1047552
     assert s.auto_budget is None            # absent key -> None, no KeyError
+
+
+def test_parse_auto_budget_malformed_numbers_does_not_raise():
+    # Bare dot should not match due to strict regex
+    d = parse_progress_line("  auto-budget: --stream-budget . -> util 0.90")
+    assert d is None
+
+
+def test_parse_delta_stats_malformed_numbers_does_not_raise():
+    # Malformed bound percentage should not match
+    d = parse_progress_line("  delta stats: budget-bound .% (106/250 frames), peak 12-frame window 100% @f88")
+    assert d is None
+
+
+def test_parse_tolerant_never_raises_on_edge_cases():
+    # Ensure function never raises ValueError on malformed numeric input
+    test_inputs = [
+        "auto-budget: --stream-budget . -> util 0.90",
+        "auto-budget: --stream-budget .. -> util ..",
+        "delta stats: budget-bound .% peak @f.",
+        "delta stats: budget-bound 100% peak @fabc",
+        "",
+    ]
+    for inp in test_inputs:
+        # Should never raise, should return None for unparseable
+        result = parse_progress_line(inp)
+        assert result is None or isinstance(result, dict)

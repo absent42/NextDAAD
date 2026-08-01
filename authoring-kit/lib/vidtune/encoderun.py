@@ -9,9 +9,9 @@ from pathlib import Path
 _MB = 1024 * 1024
 
 _AUTO_RE = re.compile(
-    r"auto-budget:\s+--stream-budget\s+([\d.]+)\s+->\s+util\s+([\d.]+)")
+    r"auto-budget:\s+--stream-budget\s+(\d+(?:\.\d+)?)\s+->\s+util\s+(\d+(?:\.\d+)?)")
 _DELTA_RE = re.compile(
-    r"delta stats:\s+budget-bound\s+([\d.]+)%.*@f(\d+)")
+    r"delta stats:\s+budget-bound\s+(\d+(?:\.\d+)?)%.*@f(\d+)")
 _RETIME_RE = re.compile(r"retime:\s+(.*)")
 _SLACK_RE = re.compile(r"tile-slack:\s+(.*)")
 
@@ -38,12 +38,18 @@ def resolve_encoder(kit_root, toolsdir):
 def parse_progress_line(line):
     m = _AUTO_RE.search(line)
     if m:
-        return {"kind": "auto-budget", "budget": float(m.group(1)),
-                "util": float(m.group(2))}
+        try:
+            return {"kind": "auto-budget", "budget": float(m.group(1)),
+                    "util": float(m.group(2))}
+        except ValueError:
+            return None
     m = _DELTA_RE.search(line)
     if m:
-        return {"kind": "delta-stats", "bound_pct": float(m.group(1)),
-                "peak_frame": int(m.group(2))}
+        try:
+            return {"kind": "delta-stats", "bound_pct": float(m.group(1)),
+                    "peak_frame": int(m.group(2))}
+        except ValueError:
+            return None
     m = _RETIME_RE.search(line)
     if m:
         return {"kind": "retime", "text": m.group(1)}
