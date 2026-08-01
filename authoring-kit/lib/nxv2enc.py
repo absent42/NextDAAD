@@ -253,30 +253,53 @@ TMODEL_COEFFS = {
                                 #   sitting 2: 20.25 incl ~0.13 of window-seam
                                 #   cost; body preserved by the wave exactly as
                                 #   promised]. sitting 1: 20.2. model was 22.1
-    "fetch_short": 20.2,        # T/byte [SILICON]. No separate short-burst body
-                                #   penalty exists: C8's 21.6 T/B row is fully the
-                                #   267 dispatch amortized over 192B + 20.2 body;
+    "fetch_short": 19.80,       # T/byte short-copy LDI body [SILICON NXBC
+                                #   sitting 3, 2026-08-01: C001..C073 CPU fit
+                                #   slope 19.797 T/B, residuals under 4 T].
+                                #   was 20.2 (= fetch_long); the short-burst
+                                #   rows resolve their own body now. No
+                                #   separate short-burst PENALTY exists -
                                 #   burst size is dispatch, priced separately
-    "t_skip": 130.0,            # SKIP8 op envelope [SILICON SK8 row sitting 2:
-                                #   129.9 T incl its count byte; hand count 121].
-                                #   sitting 1: 360. model was 45. NOTE the SKIP16
-                                #   op measures 295 T (S16 row), inflated by the
-                                #   8K window seams the 1024B skips cross - the
-                                #   single-key model prices both at the SKIP8
-                                #   value (disclosed under-price for 16-bit skips,
-                                #   bounded: skips are the cheapest ops)
-    "t_op_parse": 387.0,        # copy/run/pal per-op dispatch envelope [SILICON
-                                #   sitting 2: RUN8 solve 387 (hand count 383),
-                                #   COPY8/COPY16 solve 267 (hand count 267)]. The
-                                #   single-key model takes the MORE EXPENSIVE
-                                #   class - conservative for feasibility; the run
-                                #   envelope carries the computed-entry fill setup
-                                #   that the copy path does not. sitting 1: 920.
-                                #   model was 50. body priced separately
-    "fill_cpu": 17.0,           # T/byte unrolled CPU fill [SILICON R8U/R6U joint
-                                #   solve sitting 2: 17.17 incl ~0.13 seam cost;
-                                #   body unchanged by the wave as promised].
-                                #   sitting 1: 17.0. model was 13.2
+    "t_skip": 141.6,            # SKIP8 op envelope [SILICON NXBO SK00 row,
+                                #   sitting 3 (2026-08-01 NXBO/NXBC bench,
+                                #   production routines): 141.61 T incl its
+                                #   count byte]. sitting 2: 130 (prototype
+                                #   kernel). sitting 1: 360. model was 45
+    "t_skip16": 210.7,          # SKIP16 op envelope [SILICON NXBO S160 row
+                                #   sitting 3: 210.68 T - the slow-parser
+                                #   16-bit path costs +69 T over SK00]. The
+                                #   old single-key model priced SKIP16 at the
+                                #   SKIP8 value (disclosed 62% under-price);
+                                #   the second key retires that disclosure
+    "t_op_run": 487.2,          # RUN op dispatch envelope [SILICON NXBO
+                                #   sitting 3: RU01/RU17/F063/F070 joint fit
+                                #   envelope 487.21 T, body 16.703 T/B]. The
+                                #   run envelope carries the computed-entry
+                                #   fill setup the copy path does not - the
+                                #   measured RUN/COPY ratio 1.449 equals the
+                                #   sitting-2 387/267 ratio exactly, so the
+                                #   TWO-KEY SPLIT retires the old single-key
+                                #   "take the dearer class" compromise (387)
+                                #   that over-priced the DOMINANT copy class
+                                #   15% and under-priced runs 21%. sitting 2:
+                                #   387 single-key. body priced separately
+    "t_op_copy": 336.3,         # COPY op dispatch envelope [SILICON NXBC
+                                #   sitting 3: C001..C073 CPU fit envelope
+                                #   336.32 T, residuals under 4 T]. sitting 2
+                                #   measured the same class at 267 on the
+                                #   prototype kernel; the production dispatch
+                                #   carries more glue. body priced separately
+    "t_op_misc": 487.2,         # KSTART/KFLIP/FEND/PAL dispatch - UNMEASURED
+                                #   simple handlers, priced at the dearest
+                                #   measured envelope (t_op_run) by the same
+                                #   conservative-for-feasibility convention
+                                #   the single-key model used. Well under
+                                #   0.5% of any frame
+    "fill_cpu": 16.70,          # T/byte unrolled CPU fill [SILICON NXBO
+                                #   sitting 3: RUN fit slope 16.703 T/B on the
+                                #   production routine]. sitting 2: 17.17
+                                #   (R8U/R6U joint solve). sitting 1: 17.0.
+                                #   model was 13.2
     "fill_dma_per_b": 5.1,      # T/byte DMA fill body [SILICON RD chunk solve
                                 #   sitting 2, over-determined against the DMA-copy
                                 #   KF/CD3 cross-row solve]. Hardware term - the
@@ -317,15 +340,16 @@ TMODEL_COEFFS = {
                                 #   fast LDI path). Charged once per op in
                                 #   _copy_t's DMA branch - for >= 256 B ops
                                 #   (always slow-path) it is conservative
-                                #   double-cover of slack the single-key
-                                #   t_op_parse envelope already carries,
+                                #   double-cover of slack the copy
+                                #   dispatch envelope already carries,
                                 #   which is the model's safe direction
-    "copy_dma_per_b": 5.31,     # T/byte mem-to-mem DMA COPY body [SILICON
-                                #   KF-vs-CD3 cross-row solve sitting 2, UNARMED
-                                #   (6.21 armed) - the armed tax is carried
-                                #   globally by audio_factor, exactly as the
-                                #   fill DMA terms are, so the unarmed rate is
-                                #   the right one here]
+    "copy_dma_per_b": 5.08,     # T/byte mem-to-mem DMA COPY body [SILICON
+                                #   NXBC sitting 3: C074-C103 slow-body slope
+                                #   5.082 T/B, UNARMED]. sitting 2: 5.31
+                                #   (KF-vs-CD3 cross-row solve; 6.21 armed -
+                                #   the armed tax is carried globally by
+                                #   audio_factor, so the unarmed rate is the
+                                #   right one here)
     "copy_dma_setup": 1091.8,   # T per DMA copy chunk [SILICON CD1..CD4 chunk
                                 #   solve sitting 2: the three chunk differences
                                 #   give 1091.8 / 1091.6 / 1091.9]. sitting 1:
@@ -579,17 +603,24 @@ TMODEL_COEFFS = {
 # dense end is where the factor is fitted). It bears on the SUPPLY
 # GATE's busy term instead - see the note in stream_supply_check.
 # ---------------------------------------------------------------------
+# W4 RE-DERIVATION (2026-08-02, same standing rule: worst DENSE
+# measured R x 1.12). The two-key dispatch split made the model ~3.5-4%
+# cheaper on the calibration streams, so every recomputed R rose by the
+# same arithmetic (silicon numerator untouched) and the factors move
+# with them or the cap silently loses its margin: a cap-full of
+# NEW-model work is MORE silicon work than a cap-full of old-model
+# work. flat: worst dense 1.062 (002) x 1.12 = 1.189 -> 1.19; gapped:
+# worst dense 1.302 (003) x 1.12 = 1.458 -> 1.46. Caps @25fps:
+# flat 835,088 -> 800,000 T; gapped 675,177 -> 652,055 T (-4.2% / -3.4%
+# of budget, which is the honest price of the model having been
+# over-priced on the dominant copy class).
 TMODEL_COMPOSITION_FACTOR = {
-    "flat":   1.14,   # worst observed 1.021 (002) - 12% margin [Card #8
-                       #   re-fit, 2026-07-28]. Was 1.00 against a
-                       #   worst-observed 0.898 that the T-model
-                       #   correction turned into 1.02.
-                       #   Flat cap @25fps: 952,000 -> 835,088 T
-    "gapped": 1.41,   # worst observed DENSE 1.258 (003, h=192) - 12%
-                       #   margin [Card #8 re-fit, 2026-07-28]. Was 1.15
-                       #   (Card #5 post-column-hop worst 1.023), and
-                       #   1.55 before the hop.
-                       #   Gapped cap @25fps: 827,826 -> 675,177 T
+    "flat":   1.19,   # worst DENSE re-keyed R 1.062 (002) x 1.12 [W4,
+                       #   2026-08-02]. Was 1.14 (Card #8 re-fit at the
+                       #   single-key model, worst 1.021), 1.00 before.
+    "gapped": 1.46,   # worst DENSE re-keyed R 1.302 (003) x 1.12 [W4,
+                       #   2026-08-02]. Was 1.41 (Card #8, worst 1.258),
+                       #   1.15/1.55 before that.
 }
 
 
@@ -717,19 +748,55 @@ def usable_budget_t(fps, width=None, height=None):
 # under-price is a DENSITY effect, and re-keying these entries on
 # density (instead of shape alone) is the honest fix, not a constant
 # bump that would over-price dense streams. See stream_supply_check.
+# W4 RE-KEY (2026-08-02): the table is now DENSITY-keyed inside each
+# shape class - the 2026-07-30 sitting's own finding ("R rises
+# monotonically as density falls, on both classes") made actionable,
+# replacing the shape-only key that was 1.6-10.1% optimistic on exactly
+# the budget-scaled streamed files the supply gate governs. Each class
+# carries (density, R) anchors, where density = mean modeled decode-T
+# utilization of the shape's usable budget (the quantity the gate has
+# in hand); silicon_r() interpolates linearly between anchors and
+# CLAMPS to the nearest measured point outside them - no extrapolation.
+#
+# ANCHOR PROVENANCE - every R below is the W4 ARITHMETIC RECOMPUTE of a
+# measured row (R_new = R_measured x model_T_old / model_T_new, the
+# silicon numerator untouched; op-walk of the pal9l staged bytes under
+# both coefficient sets, W4 report table). Dense anchors: Card #8
+# (2026-07-28); streamed anchors: the 2026-07-30 sitting rows
+# 007/008/009. The recompute preserves R x model_T on the calibration
+# streams EXACTLY, so the gate's predicted decode time is unchanged
+# where it was calibrated (selftest-pinned):
+#
+#   | anchor | fixture | R meas | T old/new ratio | R re-keyed | density |
+#   |--------|---------|--------|-----------------|------------|---------|
+#   | flat_256 dense    | 002 | 1.021 | 1.03977 | 1.062 | 0.574 |
+#   | flat_256 streamed | 007 | 1.037 | 1.03300 | 1.071 | 0.416 |
+#   | flat_320 dense    | 001 | 1.008 | 1.04321 | 1.052 | 0.919 |
+#   | flat_320 streamed | 008 | 1.080 | 1.02407 | 1.106 | 0.342 |
+#   | gapped dense      | 003 | 1.258 | 1.03504 | 1.302 | 0.950 |
+#   | gapped streamed   | 009 | 1.402 | 1.02588 | 1.438 | 0.433 |
+#
+# Densities are quoted against the W4 caps (usable_budget_t at the
+# re-derived composition factors below) - the exact quantity the gate
+# computes for its own streams.
+#
+# Not anchored, disclosed: 005 (flat_256 dense, re-keyed 1.057 at
+# density 0.520) reads ~1% under the interpolated line - the line is
+# the conservative side and 002 stays the binding dense row, exactly as
+# the old worst-in-class key had it. 004 (gapped dense, re-keyed 1.165
+# at 0.878) is likewise below the gapped dense anchor - the class still
+# takes the WORST dense row (003), unchanged convention since Card #8
+# refuted the height slope. 006 (gapped SPARSE test card, re-keyed
+# 1.967 at density 0.386) sits far above the streamed anchor at nearly
+# the same density: mean-T density does not separate a skip-dominated
+# test card from a budget-scaled real clip, so the sparse end CLAMPS at
+# the streamed anchor and the 006-class under-price stays a disclosed
+# caveat exactly as before (not a hazard - sparseness collapses the
+# byte demand the wire term prices; see the block above).
 TMODEL_SILICON_R = {
-    "flat_256": 1.02,   # measured 1.021 (002, 256x192) / 1.020 (005)
-                         #   [Card #8, 2026-07-28; was 0.84 against the
-                         #   pre-SP17 T model]
-    "flat_320": 1.01,   # measured 1.008 (001, 320x256 flat) [Card #8;
-                         #   was 0.90]
-    "gapped_192": 1.26,  # measured 1.258 (003, 320x192 LB) [Card #8;
-                          #   was 1.01 pre-SP17, 1.20 pre-column-hop]
-    "gapped_144": 1.12,  # measured 1.118 (004, 320x144 LB) [Card #8;
-                          #   was 1.03 pre-SP17, 1.40 pre-hop]. NOTE this
-                          #   is now BELOW gapped_192 - the height slope
-                          #   inverted, see the block above; silicon_r()
-                          #   no longer interpolates between them
+    "flat_256": ((0.416, 1.071), (0.574, 1.062)),
+    "flat_320": ((0.342, 1.106), (0.919, 1.052)),
+    "gapped":   ((0.433, 1.438), (0.950, 1.302)),
 }
 
 SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon prefill floor -
@@ -951,24 +1018,39 @@ STARVE_WARN_BURST_FRAC = 0.60
 STARVE_BURST_WINDOW_S = 0.5
 
 
-def silicon_r(width, height):
-    """Measured composed-player decode ratio for this shape cluster:
-    R = silicon T/frame / (model T/frame / audio_factor), so R x model_T
-    is af x the true silicon decode T (see the AF CONVENTION note in the
-    composition-factor block - a caller wanting true decode time divides
-    by af again).
+def silicon_r(width, height, density=None):
+    """Measured composed-player decode ratio for this shape cluster at
+    this DENSITY (mean modeled decode-T utilization of the shape's
+    usable budget): R = silicon T/frame / (model T/frame / audio_factor),
+    so R x model_T is af x the true silicon decode T (see the AF
+    CONVENTION note in the composition-factor block - a caller wanting
+    true decode time divides by af again).
 
-    NO HEIGHT INTERPOLATION (Card #8, 2026-07-28). Card #5's two gapped
-    rows sloped with 1/height and this function interpolated across
-    144-192 and floored below 144. Card #8 re-measured the same two
-    shapes and they SWAPPED ORDER (h=192 R 1.258, h=144 R 1.118), which
-    refutes the slope rather than re-fitting it. Every gapped height
-    therefore gets the WORST measured gapped R until a third,
-    intermediate gapped row settles the shape - including sub-144,
-    which remains unmeasured and must not be handed an extrapolation."""
+    density None fails safe to the SPARSE-end anchor (the largest R in
+    the class) - the conservative direction for every planning-time
+    caller that cannot know its stream's density yet. Callers with a
+    dense-by-construction frame (keyframe chunks) pass density=1.0 and
+    clamp to the dense anchor.
+
+    W4 DENSITY KEY (2026-08-02): linear between the class's measured
+    anchors, clamped outside them - see the TMODEL_SILICON_R block for
+    the anchors, their provenance and the disclosed non-anchored rows.
+    NO HEIGHT INTERPOLATION on gapped shapes, unchanged since Card #8
+    refuted the height slope (h=192/h=144 swapped order): every gapped
+    height reads the one gapped class, worst dense row anchored."""
     if not is_gapped(width, height):
-        return TMODEL_SILICON_R["flat_320" if int(width) == 320 else "flat_256"]
-    return max(TMODEL_SILICON_R["gapped_192"], TMODEL_SILICON_R["gapped_144"])
+        key = "flat_320" if int(width) == 320 else "flat_256"
+    else:
+        key = "gapped"
+    (d_lo, r_lo), (d_hi, r_hi) = TMODEL_SILICON_R[key]
+    if density is None:
+        return max(r_lo, r_hi)
+    d = float(density)
+    if d <= d_lo:
+        return r_lo
+    if d >= d_hi:
+        return r_hi
+    return r_lo + (r_hi - r_lo) * (d - d_lo) / (d_hi - d_lo)
 
 
 def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
@@ -985,6 +1067,10 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     clock = TMODEL_COEFFS["clock_khz"]
     period_ms = 1000.0 / float(fps)
     wire_eff = SD_WIRE_BYTES_PER_MS * af
+    # W4 density re-key: the gate knows its stream's density exactly -
+    # mean modeled T over the shape's usable budget - so the busy term
+    # reads the density-keyed R instead of the shape-only worst
+    density = mean_t / usable_budget_t(fps, width, height)
     # THE BUSY TERM IS THE TRUE SILICON DECODE TIME (Card #8 correction,
     # 2026-07-28). silicon_r() carries R's own /af (see the AF
     # CONVENTION note in the composition-factor block), so R x mean_t is
@@ -1060,7 +1146,7 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     # DENSITY-AWARE R rather than a nudge to the shape-keyed table (a
     # nudge would over-price dense streams, which measure 1.25 at cap),
     # so it is disclosed here and left to owner ratification.
-    busy_ms = mean_t * silicon_r(width, height) / af / clock
+    busy_ms = mean_t * silicon_r(width, height, density) / af / clock
     # the AUDIO phase: serial with decode and with the pace window, so
     # it is period the producer never gets (see AUDIO_COPY_T_PER_B)
     audio_ms = audio_pad_bytes * AUDIO_COPY_T_PER_B / clock
@@ -1373,7 +1459,7 @@ def _cost_skip_chunk(L):
     tc = TMODEL_COEFFS
     if L <= 255:
         return 2, tc["t_skip"] + 1 * tc["header_rate"]
-    return 3, tc["t_skip"] + 2 * tc["header_rate"]
+    return 3, tc["t_skip16"] + 2 * tc["header_rate"]
 
 
 def _fill_t(L):
@@ -1415,8 +1501,8 @@ def _cost_run_chunk(L):
     tc = TMODEL_COEFFS
     fill_t = _fill_t(L)
     if L <= 255:
-        return 3, tc["t_op_parse"] + 2 * tc["header_rate"] + fill_t
-    return 4, tc["t_op_parse"] + 3 * tc["header_rate"] + fill_t
+        return 3, tc["t_op_run"] + 2 * tc["header_rate"] + fill_t
+    return 4, tc["t_op_run"] + 3 * tc["header_rate"] + fill_t
 
 
 def _copy_t(L, rate):
@@ -1477,8 +1563,8 @@ def _cost_copy_chunk(L):
     rate = tc["fetch_long"] if L >= 64 else tc["fetch_short"]
     body = _copy_t(L, rate)
     if L <= 255:
-        return 2 + L, tc["t_op_parse"] + 1 * tc["header_rate"] + body
-    return 3 + L, tc["t_op_parse"] + 2 * tc["header_rate"] + body
+        return 2 + L, tc["t_op_copy"] + 1 * tc["header_rate"] + body
+    return 3 + L, tc["t_op_copy"] + 2 * tc["header_rate"] + body
 
 
 def op_cost(kind, length):
@@ -1979,7 +2065,7 @@ def merge_kstar():
     fewer gaps worth bridging because a dispatch is no longer expensive)."""
     tc = TMODEL_COEFFS
     skip_disp = tc["t_skip"] + tc["header_rate"]      # SKIP8 op envelope
-    copy_disp = tc["t_op_parse"]
+    copy_disp = tc["t_op_copy"]
     return (skip_disp + copy_disp) / tc["fetch_long"]
 
 
@@ -2001,7 +2087,7 @@ def merge_run_absorb_max():
     denom = tc["fetch_long"] - tc["fill_cpu"]
     if denom <= 0:
         return float("inf")
-    return tc["t_op_parse"] / denom
+    return tc["t_op_run"] / denom
 
 
 def merge_delta_stream(gcls, gstarts, glens, target_flat, surface_flat,
@@ -2182,6 +2268,9 @@ def supply_price(width, height):
     is what makes "the ladder must not cost byte supply" an invariant of
     the rule rather than an observation about one fixture."""
     af = TMODEL_COEFFS["audio_factor"]
+    # density unknown at ladder-planning time -> silicon_r fails safe to
+    # the sparse-end (largest) R: a finer rung must justify itself at
+    # the dearest measured decode price (W4 density re-key)
     return (silicon_r(width, height) / af / TMODEL_COEFFS["clock_khz"],
             1.0 / (SD_WIRE_BYTES_PER_MS * af))
 
@@ -3662,8 +3751,10 @@ def kf_chunk_wire_cap_bytes(fps, width=None, height=None, abytes_pad=None,
     wire_eff = SD_WIRE_BYTES_PER_MS * af
     if abytes_pad is None:
         abytes_pad = _default_abytes_pad(fps)
+    # a keyframe chunk frame is DENSE by construction (one long copy
+    # at the cap), so it reads the dense-end anchor (W4 density re-key)
     r = silicon_r(width if width is not None else 320,
-                  height if height is not None else 192)
+                  height if height is not None else 192, density=1.0)
     # ms per literal byte: chunked-DMA decode (a keyframe chunk is
     # exactly the long DMA COPY the KF row measured) + SD wire
     dma_rate = tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"]
@@ -3737,10 +3828,10 @@ def kf_chunk_budget_bytes(fps, first, width=None, height=None,
     tc = TMODEL_COEFFS
     budget_t = usable_budget_t(fps, width, height) * 0.98 - tc["t_frame_fixed"]
     # the COPY op's own dispatch + the terminal FEND/KFLIP dispatch
-    fixed_t = 2 * tc["t_op_parse"]
+    fixed_t = tc["t_op_copy"] + tc["t_op_misc"]
     overhead_b = 4 + 1                       # COPY16 header + FEND/KFLIP
     if first:
-        fixed_t += tc["t_palette"] + 2 * tc["t_op_parse"]   # KSTART + PAL
+        fixed_t += tc["t_palette"] + 2 * tc["t_op_misc"]   # KSTART + PAL
         overhead_b += 1 + 1 + PAL_BLOCK_SIZE
     budget_t -= fixed_t
     # decode-T bound at the chunked-DMA rate, refined with the exact
@@ -3798,9 +3889,9 @@ def kf_chunk_cost(length, first):
     b, t = op_cost("copy", length)
     if first:
         b += 1 + 1 + PAL_BLOCK_SIZE   # KSTART op + PAL op + PAL block
-        t += TMODEL_COEFFS["t_op_parse"] + TMODEL_COEFFS["t_palette"]
+        t += TMODEL_COEFFS["t_op_misc"] + TMODEL_COEFFS["t_palette"]
     b += 1   # terminal op byte (FEND/KFLIP)
-    t += TMODEL_COEFFS["t_frame_fixed"] + TMODEL_COEFFS["t_op_parse"]
+    t += TMODEL_COEFFS["t_frame_fixed"] + TMODEL_COEFFS["t_op_misc"]
     return b, t
 
 
@@ -4332,7 +4423,7 @@ def encode_pan_span(target_flat, err2_flat, pred_flat, exposed_flat, off,
 
     def _cost(gcls, glens):
         b = 2                                   # KSTART + KFLIP bytes
-        t = TMODEL_COEFFS["t_frame_fixed"] + 2 * TMODEL_COEFFS["t_op_parse"]
+        t = TMODEL_COEFFS["t_frame_fixed"] + 2 * TMODEL_COEFFS["t_op_misc"]
         for c, L in zip(gcls, glens):
             c, L = int(c), int(L)
             if c == 0:
