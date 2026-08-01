@@ -6,6 +6,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from PySide6.QtCore import QObject, QProcess, Signal
+
 _MB = 1024 * 1024
 
 _AUTO_RE = re.compile(
@@ -88,3 +90,54 @@ def summarize_report(report):
         util=report.get("stream_utilization"),
         wire_bytes=report.get("total_bytes"),
     )
+
+
+class EncodeJob(QObject):
+    line = Signal(str)
+    progress = Signal(dict)
+    finished = Signal(int, dict)
+
+    def __init__(self, encoder_argv, ffmpeg, parent=None):
+        super().__init__(parent)
+        self._argv = list(encoder_argv)
+        self._ffmpeg = str(ffmpeg)
+        self._proc = None
+        self._tmp_out = None
+        self._tmp_rep = None
+        self._final_out = None
+
+    def start(self, input_path, output_path, args):
+        self._final_out = Path(output_path)
+        self._tmp_out = self._final_out.with_suffix(".vid.tmp")
+        self._tmp_rep = self._final_out.with_suffix(".report.tmp")
+        argv = (self._argv
+                + [str(input_path), str(self._tmp_out),
+                   "--ffmpeg", self._ffmpeg]
+                + list(args) + ["--report", str(self._tmp_rep)])
+        self._proc = QProcess(self)
+        self._proc.setProcessChannelMode(QProcess.MergedChannels)
+        self._proc.readyReadStandardOutput.connect(self._on_output)
+        self._proc.finished.connect(self._on_finished)
+        self._proc.start(argv[0], argv[1:])
+
+    def cancel(self):
+        if self._proc is not None:
+            self._proc.kill()
+
+    def _on_output(self):
+        data = bytes(self._proc.readAllStandardOutput()).decode(errors="replace")
+        for raw in data.splitlines():
+            self.line.emit(raw)
+            parsed = parse_progress_line(raw)
+            if parsed:
+                self.progress.emit(parsed)
+
+    def _on_finished(self, exit_code, _status):
+        report = {}
+        if exit_code == 0 and self._tmp_out.is_file():
+            self._tmp_out.replace(self._final_out)
+            report = read_report(self._tmp_rep)
+        else:
+            self._tmp_out.unlink(missing_ok=True)
+        self._tmp_rep.unlink(missing_ok=True)
+        self.finished.emit(exit_code, report)
