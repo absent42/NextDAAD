@@ -148,11 +148,9 @@ class EncodeJob(QObject):
         if error == QProcess.FailedToStart:
             program = self._argv[0] if self._argv else "encoder"
             self.line.emit(f"ERROR: encoder failed to start: {program}")
-            self._emit_finished(-1, {})
+            self._finalize(-1)
 
     def _on_finished(self, exit_code, _status):
-        if self._finished_emitted:
-            return
         if self._line_buffer:
             line_bytes = self._line_buffer.rstrip(b"\r")
             raw = line_bytes.decode(errors="replace")
@@ -160,6 +158,12 @@ class EncodeJob(QObject):
             parsed = parse_progress_line(raw)
             if parsed:
                 self.progress.emit(parsed)
+        self._finalize(exit_code)
+
+    def _finalize(self, exit_code):
+        if self._finished_emitted:
+            return
+        self._finished_emitted = True
         report = {}
         if exit_code == 0 and self._tmp_out.is_file():
             self._tmp_out.replace(self._final_out)
@@ -167,9 +171,5 @@ class EncodeJob(QObject):
         else:
             self._tmp_out.unlink(missing_ok=True)
         self._tmp_rep.unlink(missing_ok=True)
-        self._emit_finished(exit_code, report)
-
-    def _emit_finished(self, exit_code, report):
-        self._finished_emitted = True
         self.finished.emit(exit_code, report)
         self._proc = None

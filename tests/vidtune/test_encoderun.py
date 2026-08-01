@@ -170,15 +170,22 @@ def test_encode_job_double_start_raises(tmp_path, qtbot):
         pass
 
 
-def test_encode_job_failed_to_start(qtbot):
-    """Encoder that doesn't exist must emit finished(-1, {}) with error line."""
-    out = type('obj', (object,), {'read_bytes': lambda: None})()
+def test_encode_job_failed_to_start(tmp_path, qtbot):
+    """Encoder that doesn't exist must emit finished(-1, {}) with error line
+    and clean up any pre-existing tmp files."""
+    out = tmp_path / "001.vid"
+    tmp_out = out.with_suffix(".vid.tmp")
+    tmp_rep = out.with_suffix(".report.tmp")
+    tmp_out.write_bytes(b"STALE")
+    tmp_rep.write_text("stale")
     job = EncodeJob(["Z:/definitely/missing.exe"], ffmpeg="x")
     lines = []
     job.line.connect(lines.append)
     with qtbot.waitSignal(job.finished, timeout=15000) as blocker:
-        job.start("in.mp4", "out.vid", [])
+        job.start(tmp_path / "in.mp4", out, [])
     code, report = blocker.args
     assert code == -1
     assert report == {}
     assert any("ERROR" in line and "failed to start" in line for line in lines)
+    assert not tmp_out.exists()
+    assert not tmp_rep.exists()
