@@ -6150,7 +6150,12 @@ vid_raw_setup:
     ld a, e
     or d
     jr nz, .roomok
-    ld a, VID_ERR_FRAG           ; buffer full: cannot prove complete
+    ld a, VID_ERR_FRAG           ; buffer full: cannot prove complete.
+                                 ; NOT a false reject at 32 extents any
+                                 ; more - the buffer holds 33 entries
+                                 ; (VID_FILEMAP_ENT comment), so a
+                                 ; 32-extent file always leaves DE >= 1
+                                 ; and only 33+ extents land here
     scf
     ret
 .roomok:

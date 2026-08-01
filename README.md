@@ -305,7 +305,10 @@ whole pipeline runs without OS calls while a video plays. The tilemap
 text layer is hidden and letterbox bars render black for the duration;
 both restore on exit. Video needs a 2MB Next. Files should be
 reasonably contiguous on card - a file in more than 32 fragments
-refuses to play (defragment or re-copy the card). NXV is 50Hz-designed;
+refuses to play (exactly 32 is fine), and a clip large enough to
+stream (or direct-serve) rather than play from RAM has a tighter
+ceiling of 8 fragments; defragment or re-copy the card if a video
+refuses. NXV is 50Hz-designed;
 a 60Hz display gets slower playback and audio popping, an accepted
 limitation.
 

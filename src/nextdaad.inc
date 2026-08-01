@@ -152,11 +152,22 @@ CMD12_STOP_TRANSMISSION   equ 12|$40   ; = $4C
 CMD18_READ_MULTIPLE_BLOCK equ 18|$40   ; = $52
 ; --- distinct open/stream failure codes, chosen outside the esxDOS error
 ;     range so the bench can name them on the STRM row.
-VID_ERR_FRAG    equ $FE     ; file needs > VID_FILEMAP_ENT runs (run .defrag)
+VID_ERR_FRAG    equ $FE     ; file needs > 32 runs (run .defrag)
 VID_ERR_NOMAP   equ $FF     ; DISK_FILEMAP returned no entries
 VID_ERR_TOKEN   equ $FD     ; SD data token was not $FE (bad block token)
 VID_ERR_CMD     equ $FC     ; SD command R1 response was not 0 (CMD18 reject)
-VID_FILEMAP_ENT equ 32      ; filemap buffer capacity, 6 bytes/entry (192 B)
+VID_FILEMAP_ENT equ 33      ; filemap buffer capacity, 6 bytes/entry (198 B).
+                            ; 33, DELIBERATELY one above the documented
+                            ; 32-fragment ceiling (SP13 T1b Minor 3 fix):
+                            ; DISK_FILEMAP reports a FULL buffer (0 unused
+                            ; entries) identically for "exactly filled" and
+                            ; "truncated", so a full buffer can never prove
+                            ; the map complete and must refuse. With 32
+                            ; entries that falsely refused a file in EXACTLY
+                            ; 32 extents; with 33, a 32-extent file leaves
+                            ; one entry unused (provably complete) and only
+                            ; 33+ extents refuse - which is what the docs
+                            ; promise ("more than 32 fragments refuses").
 
 ; --- Tilemap text mode (sub-project 2) ---
 NR_TM_CTRL      equ $6B

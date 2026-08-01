@@ -529,10 +529,12 @@ scene-change choice when the story moves on - a choice, no longer a
 necessity.
 
 **Contiguity.** Videos stream from the SD card at a rate that assumes
-the file is reasonably contiguous. A heavily fragmented file (more
-than 32 fragments) refuses to play; defragment the card (or re-copy
-the file to a freshly formatted card) if a video will not start or
-stutters.
+the file is reasonably contiguous. A heavily fragmented file refuses
+to play: the ceiling is 32 fragments for a clip small enough to play
+from RAM (exactly 32 is fine, 33 refuses) and 8 fragments for a clip
+big enough to stream - or encoded direct-serve - off the card live.
+Defragment the card (or re-copy the file to a freshly formatted card)
+if a video will not start or stutters.
 
 **60Hz displays.** NXV is 50Hz-designed (frames present on the 50Hz
 vblank cadence); on a 60Hz display, expect slower playback and audio
