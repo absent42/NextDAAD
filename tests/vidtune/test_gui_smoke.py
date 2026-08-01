@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QDoubleValidator, QGuiApplication
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from vidtune import mainwindow as vt_mainwindow
 from vidtune.mainwindow import MainWindow, PreviewPane, SettingsPanel
@@ -742,3 +742,58 @@ def test_settings_panel_has_no_horizontal_scrollbar_on_launch(fixture_kit, qtbot
         pytest.skip(f"show()/waitExposed() unreliable in this environment: {exc}")
     QApplication.processEvents()
     assert win.settings_scroll.horizontalScrollBar().isVisible() is False
+
+
+# -- 2026-08-01 owner iteration: compact mode buttons + two transport rows --
+
+def test_mode_buttons_are_not_expanding(qtbot):
+    # Owner feedback: the three mode buttons (Encoded/Flicker/Heatmap)
+    # were stretching to fill the row, starving the video preview itself.
+    # Maximum (not the QPushButton default) keeps each sized to its own
+    # caption + style padding.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    for btn in pane._mode_buttons.values():
+        assert btn.sizePolicy().horizontalPolicy() == QSizePolicy.Maximum
+        assert btn.sizeHint().width() < 150   # caption + padding, not a stretched fill
+
+
+def test_transport_controls_split_into_two_compact_rows(qtbot):
+    # Row 1 is playback (play/pause, stop, step back/forward, loop); row 2
+    # is markers/scale (frame counter, Set In, Set Out, Clear, segment
+    # readout, 2x). All object names/attributes are unchanged - only the
+    # layout containers split - so this checks the resulting geometry
+    # rather than any new attribute.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    try:
+        pane.show()
+        qtbot.waitExposed(pane)
+        QApplication.processEvents()
+    except Exception as exc:
+        pytest.skip(f"show()/waitExposed() unreliable in this environment: {exc}")
+
+    playback_widgets = (pane._play_btn, pane._stop_btn, pane._step_back_btn,
+                        pane._step_fwd_btn, pane._loop_checkbox)
+    marker_widgets = (pane._frame_label, pane._set_in_btn, pane._set_out_btn,
+                      pane._clear_btn, pane._segment_label, pane._scale_btn)
+    playback_ys = [w.y() for w in playback_widgets]
+    marker_ys = [w.y() for w in marker_widgets]
+    # A couple of px of tolerance within a row: QCheckBox is a couple of
+    # px shorter than QPushButton, so Qt's row layout can vertically
+    # center it 1px off from its row-mates.
+    assert max(playback_ys) - min(playback_ys) <= 2    # row 1 is one row
+    assert max(marker_ys) - min(marker_ys) <= 2         # row 2 is one row
+    assert min(marker_ys) - max(playback_ys) > 5        # and row 2 sits below row 1
+
+
+def test_preview_pane_minimum_width_shrinks_after_two_row_split(qtbot):
+    # The single wide transport row used to be the dominant term in the
+    # pane's minimumSizeHint (~894px on this machine's style, per the
+    # earlier launch-geometry report) - splitting it into two compact
+    # rows should shrink that floor substantially, so MainWindow's
+    # geometry computation stops being driven by the transport row and
+    # falls back to the (smaller) 320-wide-at-2x image floor instead.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    assert pane.minimumSizeHint().width() < 680   # below PREVIEW_WIDTH's own floor

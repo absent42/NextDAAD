@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -155,10 +156,18 @@ class PreviewPane(QWidget):
             # sees the key - otherwise Qt routes Space to the just-clicked
             # button instead of the pane's flicker/play toggle.
             btn.setFocusPolicy(Qt.NoFocus)
+            # Maximum (not the QPushButton default Preferred-with-hstretch)
+            # keeps these three buttons sized to their own caption + style
+            # padding instead of expanding to fill the row - owner
+            # feedback (2026-08-01): the mode row was eating far more
+            # width than three short captions need, starving the video
+            # preview itself.
+            btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
             btn.clicked.connect(lambda checked=False, n=name: self.set_mode(n))
             mode_group.addButton(btn)
             mode_row.addWidget(btn)
             self._mode_buttons[name] = btn
+        mode_row.addStretch(1)
         self._mode_buttons["Encoded"].setChecked(True)
         _NEEDS_SOURCE_TOOLTIP = "needs a source comparison - run Preview Segment or Encode first"
         self._mode_buttons["Flicker"].setToolTip(_NEEDS_SOURCE_TOOLTIP)
@@ -199,13 +208,25 @@ class PreviewPane(QWidget):
                     self._scale_btn):
             btn.setFocusPolicy(Qt.NoFocus)
 
-        transport_row = QHBoxLayout()
+        # Two compact rows instead of one wide one (owner feedback,
+        # 2026-08-01): the single transport row's minimum width - driven
+        # by ~11 buttons/labels laid out side by side - was the dominant
+        # term in the pane's overall minimumSizeHint, starving the
+        # settings/preview split. Splitting playback controls from
+        # marker/scale controls roughly halves that floor. Object names
+        # and behaviour are unchanged - only which layout each widget
+        # sits in.
+        playback_row = QHBoxLayout()
         for w in (self._play_btn, self._stop_btn, self._step_back_btn,
-                  self._step_fwd_btn, self._loop_checkbox, self._frame_label,
-                  self._set_in_btn, self._set_out_btn, self._clear_btn,
-                  self._segment_label, self._scale_btn):
-            transport_row.addWidget(w)
-        transport_row.addStretch(1)
+                  self._step_fwd_btn, self._loop_checkbox):
+            playback_row.addWidget(w)
+        playback_row.addStretch(1)
+
+        marker_row = QHBoxLayout()
+        for w in (self._frame_label, self._set_in_btn, self._set_out_btn,
+                  self._clear_btn, self._segment_label, self._scale_btn):
+            marker_row.addWidget(w)
+        marker_row.addStretch(1)
 
         outer = QVBoxLayout(self)
         outer.addWidget(self._busy_label)
@@ -213,7 +234,8 @@ class PreviewPane(QWidget):
         outer.addWidget(self._hint_label)
         outer.addWidget(self._image_label, 1)
         outer.addLayout(mode_row)
-        outer.addLayout(transport_row)
+        outer.addLayout(playback_row)
+        outer.addLayout(marker_row)
 
         self._update_mode_buttons()
         self._update_segment_readout()
