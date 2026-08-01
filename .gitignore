@@ -49,3 +49,4 @@ authoring-kit/VIDEO/*.vid.args
 __pycache__/
 RELEASE.md
 tests/parser/work/*
+tests/parser/out/*
