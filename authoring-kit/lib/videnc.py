@@ -511,6 +511,20 @@ def main(argv):
                           "there is no slow-playback override. Use a "
                           "smaller shape, lower --fps, --mono, or drop "
                           "--direct for the delta encoder instead")
+    ap.add_argument("--direct-transport-factor", dest="direct_transport_factor",
+                     type=float, default=None, metavar="F",
+                     help="EXPERT OVERRIDE (SP17 T8 probe governance) for "
+                          "the direct-serve gate's transport factor - "
+                          "default None uses the shipping silicon-settled "
+                          "DIRECT_TRANSPORT_FACTOR (1.20, measured against "
+                          "the PRE-T8 transport). The T8 transport rebuild "
+                          "predicts 0.93-0.99; encode hardware-round probe "
+                          "files at the predicted rate with this flag "
+                          "instead of editing the constant - the default "
+                          "moves only after the NXBD re-run measures the "
+                          "true new rate. Probe files are diagnostic: "
+                          "expected to play IF the prediction holds. Only "
+                          "meaningful with --direct")
     ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
     ap.add_argument("--duration", help="clip duration in seconds")
     ap.add_argument("--report", help="write the BuildReport as JSON to "
@@ -541,6 +555,14 @@ def main(argv):
         raise SystemExit(f"error: --budget-target must be in (0, 1], got {args.budget_target}")
     if args.dither is not None and not (0.0 <= args.dither <= 1.0):
         raise SystemExit(f"error: --dither must be in [0, 1], got {args.dither}")
+    # Expert override, but not an unbounded one: below the bare-wire
+    # factor (1.0 would mean zero transport glue; the T8 prediction
+    # floor is 0.93) or above the measured pre-T8 1.20 it is a typo,
+    # not a probe.
+    if args.direct_transport_factor is not None and not (
+            0.5 <= args.direct_transport_factor <= 2.0):
+        raise SystemExit(f"error: --direct-transport-factor must be in "
+                         f"[0.5, 2.0], got {args.direct_transport_factor}")
     # The knob is capped at exactly the auto-budget margin (see nxv2enc's
     # THE SUPPLY-SLACK KNOB block) - a value past it is not a stronger
     # request, it is a request to spend margin that does not exist.
@@ -586,7 +608,8 @@ def main(argv):
         mono=args.mono, merge_gaps=not args.no_merge,
         cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget,
         budget_target=args.budget_target, direct=args.direct,
-        retime=args.retime, tile_slack=args.tile_slack)
+        retime=args.retime, tile_slack=args.tile_slack,
+        direct_transport_factor=args.direct_transport_factor)
 
     stream_line = ""
     if report.mode == "direct":

@@ -76,6 +76,13 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
   --direct           direct-serve preset (expert): all-literal
                      raw-equivalent encode served straight from SD -
                      strictly at-rate, see below
+  --direct-transport-factor F
+                     EXPERT override of the direct gate's transport
+                     factor (default: the shipping silicon-settled
+                     1.20). Exists for hardware-round probe encodes at
+                     the predicted post-T8 transport rate (0.93-0.99);
+                     the default moves only on a new measured rate.
+                     Only meaningful with --direct
   --no-merge         disable the gap-merge optimization (bench fixtures
                      only - production encodes keep it on)
   --start HH:MM:SS   clip start time (ffmpeg -ss)

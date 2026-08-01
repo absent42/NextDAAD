@@ -1967,6 +1967,55 @@ def t11_direct_gate():
                    f"the plain refusal must be the wire-gate message, got:\n{stderr2}")
 
 
+@case(11, "direct-serve transport-factor expert override - SP17 T8 probe "
+          "governance: default stays the silicon 1.20, the override "
+          "threads through the whole gate")
+def t11_direct_transport_override():
+    import inspect
+    import subprocess
+    # The governance contract: the SHIPPING default is untouched (the
+    # 1.20 pin lives in t11_direct_gate); the override is a per-call
+    # parameter, never a mutation of the constant.
+    frame = 1536 + 73 * 512
+    ds_def = enc.direct_supply_check(frame, 25.0)
+    ds_none = enc.direct_supply_check(frame, 25.0, transport_factor=None)
+    expect(ds_def == ds_none,
+           "transport_factor=None must be exactly the shipping default path")
+    # the override scales sd_ms/utilization EXACTLY linearly - it
+    # replaces the factor, nothing else in the arithmetic moves
+    tf_probe = 0.96
+    ds_ovr = enc.direct_supply_check(frame, 25.0, transport_factor=tf_probe)
+    expect(abs(ds_ovr["sd_ms"] / ds_def["sd_ms"] - tf_probe / enc.DIRECT_TRANSPORT_FACTOR) < 1e-9,
+           "the override must scale the wire time by factor/1.20 exactly")
+    expect(ds_ovr["period_ms"] == ds_def["period_ms"]
+           and ds_ovr["demand_kbs"] == ds_def["demand_kbs"],
+           "the override touches the transport rate only - period and demand are factor-free")
+    # the predicted post-T8 window (0.93-0.99) grows the direct
+    # envelope: at 0.96 the 256-wide stereo @25 envelope must reach the
+    # analysis's ~256x163-175 band (vs ~133 at 1.20)
+    raw_def = enc.direct_max_raw_bytes(25.0, 2, 1.0)
+    raw_ovr = enc.direct_max_raw_bytes(25.0, 2, 1.0, transport_factor=tf_probe)
+    expect(raw_ovr > raw_def,
+           "a smaller transport factor must grow the at-rate envelope")
+    expect(160 <= raw_ovr // 256 <= 180,
+           f"at factor 0.96 the 256-wide envelope should land in the "
+           f"predicted 163-175 line band, got 256x{raw_ovr // 256}")
+    expect(raw_def // 256 in (133, 134, 135),
+           f"at the shipping 1.20 the envelope stays ~256x133-135, got 256x{raw_def // 256}")
+    # plumbing: encode() and _encode_direct() carry the parameter, and
+    # the CLI exposes it
+    expect("direct_transport_factor" in inspect.signature(enc.encode).parameters,
+           "encode() must accept direct_transport_factor")
+    expect("direct_transport_factor" in inspect.signature(enc._encode_direct).parameters,
+           "_encode_direct() must accept direct_transport_factor")
+    help_out = subprocess.run(
+        [sys.executable, str(LIB / "videnc.py"), "--help"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ).stdout.decode("utf-8", "replace")
+    expect("--direct-transport-factor" in help_out,
+           "videnc.py --help must document --direct-transport-factor")
+
+
 @case(11, "direct-serve gate refusal - mono-floor menu entry hardened "
           "against the Fraction-rounding knife-edge (Card #5 review fix)")
 def t11_direct_gate_mono_floor_menu():

@@ -1103,6 +1103,26 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
 # as the streaming
 # gate carries - and like it, the factor is CO-FITTED to the wire floor
 # above: do not move SD_WIRE_BYTES_PER_MS without re-deriving this.
+#
+# GOVERNANCE (SP17 T8, 2026-08-01) - READ BEFORE TOUCHING THIS VALUE.
+# The player's direct transport was REBUILT in the T8 wave (vid_ds_xfer
+# inir arms -> computed-entry unrolled-ini run; vid_ds_pad byte loop ->
+# unrolled in a,(n) run; blkopen reload slim), which the NXBD analysis
+# prices at ~8.0-9.2 ms/frame recovered of the 42.44 ms the 1.20 factor
+# reproduces. The predicted new factor is
+#     factor_new = 1.20 * (42.44 - saved_ms) / 42.44  ~= 0.93-0.99
+# BUT 1.20 IS SILICON-SETTLED AGAINST THE OLD TRANSPORT AND THE
+# PREDICTION IS ARITHMETIC, NOT MEASUREMENT. The shipping default
+# therefore STAYS at 1.20 (conservative: every direct file it admits
+# stays playable on the new transport, which is strictly faster) until
+# the hardware round's NXBD RE-RUN measures the true new rate - only
+# then does this default move, re-fitted from the measured number.
+# Probe encodes at the predicted rate are staged through the EXPERT
+# OVERRIDE instead: videnc --direct-transport-factor (threaded through
+# encode(direct_transport_factor=...) below) overrides the gate for one
+# encode without touching this constant. Such probe files are
+# DIAGNOSTIC: they are expected to play IF the prediction holds, and a
+# pace-hold/slow probe is a measurement, not a defect.
 DIRECT_TRANSPORT_FACTOR = 1.20
 
 # Policy line (OWNER-FACING, Card #5 TIGHTEN ruling, 2026-07-26): at
@@ -1114,38 +1134,45 @@ DIRECT_TRANSPORT_FACTOR = 1.20
 # re-encoded inside the envelope rather than shipped slow.)
 
 
-def direct_supply_check(worst_frame_bytes, fps):
+def direct_supply_check(worst_frame_bytes, fps, transport_factor=None):
     """Direct-serve wire feasibility (SP15 3c, RECALIBRATED Card #5). A
     direct-serve session reads every byte of a frame section (audio
     blocks + payload blocks, padding included) off the SD wire INSIDE
     that frame's own period - the literal bytes are served straight to
-    the surface (inir transport, the whole point of the mode), and
-    there is NO ring to absorb bursts. The criterion is therefore the
-    WORST frame, not the clip mean (contrast stream_supply_check's
-    documented mean-rate limitation above). audio_factor de-rates the
-    wire exactly as the streaming gate does - the ISR sample tax
-    applies to the inir transport identically - and
+    the surface (the unrolled-ini transport, the whole point of the
+    mode), and there is NO ring to absorb bursts. The criterion is
+    therefore the WORST frame, not the clip mean (contrast
+    stream_supply_check's documented mean-rate limitation above).
+    audio_factor de-rates the wire exactly as the streaming gate does -
+    the ISR sample tax applies to the ini transport identically - and
     DIRECT_TRANSPORT_FACTOR carries the per-block/per-arm transport
     glue the first silicon rows measured (see its block above; the 3c
-    gate omitted it and ran 20% optimistic)."""
+    gate omitted it and ran 20% optimistic). transport_factor=None
+    means the shipping DIRECT_TRANSPORT_FACTOR; a number is the T8
+    expert override (see the governance block)."""
+    tf = (DIRECT_TRANSPORT_FACTOR if transport_factor is None
+          else float(transport_factor))
     af = TMODEL_COEFFS["audio_factor"]
     period_ms = 1000.0 / float(fps)
-    sd_ms = (worst_frame_bytes * DIRECT_TRANSPORT_FACTOR
+    sd_ms = (worst_frame_bytes * tf
              / (SD_WIRE_BYTES_PER_MS * af))
     return dict(utilization=sd_ms / period_ms, sd_ms=sd_ms,
                 period_ms=period_ms,
                 demand_kbs=worst_frame_bytes * float(fps) / 1024.0)
 
 
-def direct_max_raw_bytes(fps, channels=2, util=1.0):
+def direct_max_raw_bytes(fps, channels=2, util=1.0, transport_factor=None):
     """Largest RAW surface (width*height) a direct-serve encode can
     carry at this fps/channel count and utilization target, under the
     recalibrated gate. Inverse of direct_supply_check: the frame
     section is audio_pad + 512-rounded(payload), and the payload is
-    KSTART(1) + PAL(1+512) + COPY16(3) + raw + terminal(1)."""
+    KSTART(1) + PAL(1+512) + COPY16(3) + raw + terminal(1).
+    transport_factor as in direct_supply_check."""
+    tf = (DIRECT_TRANSPORT_FACTOR if transport_factor is None
+          else float(transport_factor))
     period_ms = 1000.0 / float(fps)
     budget_b = (period_ms * util * SD_WIRE_BYTES_PER_MS
-                * TMODEL_COEFFS["audio_factor"] / DIRECT_TRANSPORT_FACTOR)
+                * TMODEL_COEFFS["audio_factor"] / tf)
     # the audio pad comes from audio_layout, NOT a local rate guess -
     # mono runs at RATE_MONO (23325), not the stereo 15625, so a local
     # copy of that arithmetic gets the mono envelope wrong
@@ -4102,7 +4129,8 @@ def _apply_segments(prev_flat, target_flat, gcls, gstarts, glens):
 
 
 def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
-                   dither_amp=None, dither_mode=None):
+                   dither_amp=None, dither_mode=None,
+                   direct_transport_factor=None):
     """SP15 3c DIRECT-SERVE encode (the raw-equivalent all-literal
     preset): every frame is a single-frame keyframe span (KSTART
     [+ PAL] + COPY + KFLIP) and the header sets the direct-serve hint
@@ -4145,15 +4173,24 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
     # (Card #5, 2026-07-26 owner ruling): UNCONDITIONAL - utilization
     # > 1.00 always refuses, no accept-slow override exists. ---
     worst_frame = abytes_pad + per_frame_cap_blocks * 512
-    ds = direct_supply_check(worst_frame, fps_val)
+    tf = direct_transport_factor  # None = shipping DIRECT_TRANSPORT_FACTOR
+    if tf is not None:
+        # T8 expert override, said out loud on every use: probe encodes
+        # for the hardware round are DIAGNOSTIC (governance block at
+        # DIRECT_TRANSPORT_FACTOR).
+        print(f"  note: --direct-transport-factor {float(tf):g} overrides "
+              f"the silicon-settled {DIRECT_TRANSPORT_FACTOR:.2f} for this "
+              f"encode (T8 probe governance: the default moves only on the "
+              f"NXBD re-run's measured rate)")
+    ds = direct_supply_check(worst_frame, fps_val, transport_factor=tf)
     if ds["utilization"] > 1.0:
         # Full menu (both channel counts, at this fps AND at the mono
         # floor fps) so an expert sees every at-rate option in one
         # refusal, not just the shape they happened to try.
-        s_at = direct_max_raw_bytes(fps_val, 2, 1.0)
-        s_90 = direct_max_raw_bytes(fps_val, 2, 0.90)
-        m_at = direct_max_raw_bytes(fps_val, 1, 1.0)
-        m_90 = direct_max_raw_bytes(fps_val, 1, 0.90)
+        s_at = direct_max_raw_bytes(fps_val, 2, 1.0, transport_factor=tf)
+        s_90 = direct_max_raw_bytes(fps_val, 2, 0.90, transport_factor=tf)
+        m_at = direct_max_raw_bytes(fps_val, 1, 1.0, transport_factor=tf)
+        m_90 = direct_max_raw_bytes(fps_val, 1, 0.90, transport_factor=tf)
         mono_floor = min_fps_for(1)
         # menu-only hardening: mono_floor sits within a Fraction-
         # rounding tick of audio_layout's AUD_FRAME_MAX boundary by
@@ -4167,15 +4204,18 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
         # already shown to the user below) to land safely inside the
         # AUD_FRAME_MAX bucket instead of on its edge.
         mono_floor_safe = math.ceil(mono_floor * 100) / 100
-        m_floor_at = direct_max_raw_bytes(mono_floor_safe, 1, 1.0)
+        m_floor_at = direct_max_raw_bytes(mono_floor_safe, 1, 1.0,
+                                          transport_factor=tf)
+        eff_tf = DIRECT_TRANSPORT_FACTOR if tf is None else float(tf)
         raise SystemExit(
             f"error: this direct-serve encode cannot play at rate - "
             f"worst-frame wire utilization {ds['utilization']:.2f} > "
             f"1.00 ({worst_frame} B/frame needs {ds['sd_ms']:.1f} ms of "
             f"SD wire per {ds['period_ms']:.0f} ms frame; "
             f"{ds['demand_kbs']:.0f} KB/s vs the "
-            f"~{SD_WIRE_BYTES_PER_MS * TMODEL_COEFFS['audio_factor'] * 1000 / (1024 * DIRECT_TRANSPORT_FACTOR):.0f} KB/s "
-            f"measured direct-transport rate). Direct-serve has NO ring "
+            f"~{SD_WIRE_BYTES_PER_MS * TMODEL_COEFFS['audio_factor'] * 1000 / (1024 * eff_tf):.0f} KB/s "
+            f"direct-transport rate at factor {eff_tf:g}). "
+            f"Direct-serve has NO ring "
             f"to absorb bursts and NO slow-playback opt-out (TIGHTEN "
             f"policy, Card #5 2026-07-26 owner ruling: this gate is "
             f"unconditional above utilization 1.00). The envelope at "
@@ -4546,7 +4586,8 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
            dither=None, dither_mode=None, mono=False, merge_gaps=True, hysteresis=True,
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=None,
-           budget_target=None, direct=False, retime=None, tile_slack=None):
+           budget_target=None, direct=False, retime=None, tile_slack=None,
+           direct_transport_factor=None):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     dither (--dither): dither strength, a float 0.0-1.0. In the default
@@ -4608,7 +4649,16 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     (flags bit1), gated by worst-frame WIRE feasibility instead of the
     delta pipeline's dual budgets (see _encode_direct). TIGHTEN ruling
     (Card #5, 2026-07-26): the gate is unconditional - there is no
-    slow-playback opt-out at this or any layer above it."""
+    slow-playback opt-out at this or any layer above it.
+
+    direct_transport_factor (--direct-transport-factor, SP17 T8): the
+    EXPERT OVERRIDE for the direct gate's transport factor - None (the
+    default) is the shipping silicon-settled DIRECT_TRANSPORT_FACTOR;
+    a number replaces it for THIS encode only, so the hardware round
+    can stage probe files at the predicted post-T8 rate (0.93-0.99)
+    before the NXBD re-run moves the default. See the governance block
+    at the constant. Only meaningful with direct=True; ignored (with
+    a note) otherwise - the delta pipeline's gate does not use it."""
     if quality_profile != "max":
         raise ValueError(f"quality_profile {quality_profile!r} not implemented - only 'max'")
 
@@ -4636,7 +4686,14 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                   "runs no tile schedule")
         return _encode_direct(ex, width, height, fps_val, out_path,
                               report_path, dither_amp=dither_amp,
-                              dither_mode=dmode)
+                              dither_mode=dmode,
+                              direct_transport_factor=direct_transport_factor)
+    if direct_transport_factor is not None:
+        # Said out loud rather than ignored, same idiom as --tile-slack
+        # above: the streaming gate carries its own wire calibration and
+        # the override governs only the direct gate.
+        print("  note: --direct-transport-factor has no effect without "
+              "--direct - only the direct-serve wire gate reads it")
     # SP17 T1: no explicit budget means DERIVE one (see
     # auto_stream_budget). The search hands back the winning pass, so
     # the accepted budget is never re-encoded.

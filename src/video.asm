@@ -1437,7 +1437,7 @@ vid_dst_setup:
 ; 512-aligned, so HL is 0 at every section boundary and no cell is
 ; needed). Ops parse through the always-slow path (vid_fetch is
 ; vectored to vid_ds_byte); COPY literals ride vid_ds_copy_body's
-; inir transport straight to the surface; SKIP/RUN reuse the shared
+; unrolled-ini transport straight to the surface; SKIP/RUN reuse the shared
 ; dest-side bodies; FEND/PAL/KFLIP land on the ds handlers via the
 ; per-session stub slot patches. Terminal handlers ret to our caller.
 vid_decode_frame_ds:
@@ -2775,8 +2775,9 @@ vid_loop_rewind:
 ; SD wire to the Layer 2 surface, v1-style - no ring, no RAM pass.
 ; Composition: the whole decode runs the ALWAYS-SLOW op path
 ; (vid_fetch vectored to vid_ds_byte; SKIP/RUN reuse the shared
-; dest-side chunked bodies via the SMC exits; COPY literals inir
-; port->surface below; FEND/PAL/KFLIP/KSTART via the per-session stub
+; dest-side chunked bodies via the SMC exits; COPY literals through
+; the unrolled-ini transport port->surface below; FEND/PAL/KFLIP/
+; KSTART via the per-session stub
 ; slot patches). HL is the open block's remaining byte count for the
 ; entire armed session phase (frame sections are 512-aligned, so it
 ; is 0 at every section boundary). The CMD18 window is hot property
@@ -2787,12 +2788,19 @@ vid_loop_rewind:
 ; abort) and counts against the per-frame section bound
 ; (cap + apad + 1 blocks, staged at open) - a corrupt payload cannot
 ; read unboundedly; the token/R1 polls carry the settled bounds.
-; docs/Z80 citations: doc 01 (inir 21T/B - at the ~22.1T/B SPI wire
-; floor the transport is wire-bound by design), doc 05 (16-bit
-; min/clip chains), doc 08 (the per-session SMC vectors, patched
-; cold through the MMU6 window - rubric 3), doc 11 (no DMA-from-SPI
-; - measured-rejected; the inir arms stay <= 256B and IRQ-open, so
-; the audio ISR is never starved - the contract-3 concern class).
+; docs/Z80 citations: doc 01/04/08 (computed-entry unrolled-ini
+; transport, SP17 T8 - the NXBD sitting REFUTED the old "wire-bound
+; by design" claim here: the inir arms measured 26.75 T/B while the
+; same open CMD18 window served a 32x-unrolled ini block shape at
+; 19.55 T/B, and the SD data-token wait is only ~96 T/block (~3.1%
+; of the glue) - the transport is CPU-BOUND, so the primitive was
+; swapped for the unrolled run), doc 05 (16-bit min/clip chains),
+; doc 08 (the per-session SMC vectors, patched cold through the
+; MMU6 window - rubric 3), doc 11 (no DMA-from-SPI -
+; measured-rejected; the ini arms stay <= 256B and IRQ-open - ini
+; accepts an interrupt between instructions exactly as inir does
+; between iterations - so the audio ISR is never starved - the
+; contract-3 concern class).
 ;
 ; LATCH HAZARD (review fix, 3c): any ds op that selects a NextReg on
 ; the $243B/$253B pair ONCE and then relies on the latch across MORE
@@ -2855,14 +2863,17 @@ vid_ds_blkopen:
     ld hl, (vidStrmRunBlkH)
     ld a, h
     or l
-    jr nz, .run
+    jr nz, .rundec               ; common path: HL is already the run
+                                 ; count - reload only after the rare
+                                 ; fragment walk rewrites it (T8 slim,
+                                 ; -16T/block)
     call vid_win_close_h         ; fragment boundary / rewind resume:
     call vid_next_run_h          ; CMD12, next filemap run, CMD18
     jr c, .short
     call vid_win_open_h
     jr c, .cmdfail
-.run:
-    ld hl, (vidStrmRunBlkH)
+    ld hl, (vidStrmRunBlkH)      ; the fresh run's block count
+.rundec:
     dec hl
     ld (vidStrmRunBlkH), hl
     call vid_sd_tok_h            ; bounded token wait (shared)
@@ -2889,23 +2900,69 @@ vid_ds_blkopen:
 
 ; Discard the rest of the open block (every frame section is
 ; 512-aligned: sections end by discarding to the boundary). In/out:
-; HL = remaining count (0 on exit). Corrupts AF.
+; HL = remaining count (0 on exit). Corrupts AF (B is bracketed).
+; T8 unroll: computed-entry 32x in a,(n) run at ~11.4 T/B replaces
+; the old 5-instruction byte loop's ~37 T/B (NXBD DTB; 793 pad
+; B/frame = 0.85 ms/frame recovered). in a,(n) drives the upper
+; address byte from A - arbitrary here, exactly as the old loop's
+; own `in a,(PORT_SPI_DAT)` did from its second byte on; the SD
+; data port ignores it (shipping behaviour, unchanged). IRQ-open
+; throughout - no DI anywhere in this transport.
 vid_ds_pad:
     ld a, h
     or l
     ret z
-.d:
-    in a, (PORT_SPI_DAT)
-    dec hl
-    ld a, h
-    or l
-    jr nz, .d
+    push bc
+    ld a, l
+    and 31
+    jr z, .full
+    add a, a                     ; rem * 2 (in a,(n) = 2 bytes)
+    neg
+    add a, low (vid_ds_pblk + 64)
+    jr .set
+.full:
+    ld a, low vid_ds_pblk
+.set:
+    ld (.pe+1), a                ; low-byte SMC (page-asserted below)
+    add hl, 31                   ; Z80N ADD HL,nn (doc 05)
+    srl h
+    rr l
+    srl h
+    rr l
+    srl h
+    rr l
+    srl h
+    rr l
+    srl h
+    rr l                         ; L = passes = (count+31)/32 (1..16)
+    ld b, l                      ; djnz counter (in a,(n) is B-free)
+    ld hl, 0                     ; out contract: 0 remaining
+.pe:
+    jp vid_ds_pblk               ; low byte SMC-patched
+    ALIGN 64
+vid_ds_pblk:
+    DUP 32
+      in a, (PORT_SPI_DAT)
+    EDUP
+    djnz vid_ds_pblk
+    pop bc
     ret
+    ASSERT (low vid_ds_pblk) <= 256-64
 
-; Transfer BC bytes from the stream to (DE): inir arms <= 256 bytes,
-; interrupts open throughout (the audio ISR rides between arms - the
-; wire, not the CPU, is the floor). In: HL = block remain, DE = dest,
-; BC = count. Out: DE advanced, HL updated, BC = 0. Corrupts AF.
+; Transfer BC bytes from the stream to (DE): computed-entry
+; unrolled-ini arms <= 256 bytes, interrupts open throughout (ini
+; accepts an IRQ between instructions exactly as inir did between
+; iterations - the audio ISR rides through the arms unchanged). In:
+; HL = block remain, DE = dest, BC = count. Out: DE advanced, HL
+; updated, BC = 0. Corrupts AF.
+; T8 primitive swap (NXBD-measured): the old inir arms ran 26.75 T/B
+; while the identical open CMD18 window served the 32x-unrolled ini
+; block shape at 19.55 T/B - the transport is CPU-bound, not
+; wire-bound, so this is the doc 08/04 computed-entry kernel idiom
+; (vid_fill_cpu/vid_copy_ldi's own shape) pointed at the SD port:
+; ini 16T/B + 14T per 32-byte pass + ~60T arm entry ~= 16.4 T/B.
+; ~5.1KB payload + ~28.5KB raw-equivalent frames make this the
+; measured 7.19 ms/frame recovery.
 vid_ds_xfer:
 .loop:
     ld a, b
@@ -2923,7 +2980,7 @@ vid_ds_xfer:
     ld b, h
     ld c, l                      ; n = block remain
 .nok:
-    ld a, b                      ; clip n to 256 (one inir arm)
+    ld a, b                      ; clip n to 256 (one transport arm)
     or a
     jr z, .le                    ; < 256
     dec a
@@ -2941,18 +2998,49 @@ vid_ds_xfer:
     or a
     sbc hl, bc                   ; remaining -= n
     ex (sp), hl                  ; HL = block remain, TOS = remaining
-    ld b, a                      ; inir count (0 = 256)
-    ld c, PORT_SPI_DAT
-    ex de, hl                    ; HL = dest (inir writes (HL))
-    inir
+    ; --- the computed-entry unrolled-ini arm (header note) ---
+    ld c, a                      ; C = n low, scratch across the entry
+    and 31
+    jr z, .ifull
+    add a, a                     ; rem * 2 (ini = 2 bytes)
+    neg
+    add a, low (vid_ds_iblk + 64)
+    jr .iset
+.ifull:
+    ld a, low vid_ds_iblk
+.iset:
+    ld (.ie+1), a                ; low-byte SMC (page-asserted below)
+    ld a, c
+    dec a
+    rrca
+    rrca
+    rrca
+    rrca
+    rrca
+    and 7
+    inc a                        ; A = passes = ((n-1) mod 256)/32 + 1
+                                 ; (1..8; n = 256 -> 8)
+    ld c, PORT_SPI_DAT           ; ini port (B is ini's own scrap -
+                                 ; rubric 2, exactly as vid_sd_blk_h)
+    ex de, hl                    ; HL = dest (ini writes (HL))
+.ie:
+    jp vid_ds_iblk               ; low byte SMC-patched
+    ALIGN 64
+vid_ds_iblk:
+    DUP 32
+      ini
+    EDUP
+    dec a
+    jp nz, vid_ds_iblk
     ex de, hl                    ; HL = block remain, DE = dest'
     pop bc                       ; remaining
-    jr .loop
+    jp vid_ds_xfer.loop
+    ASSERT (low vid_ds_iblk) <= 256-64
 
 ; Direct COPY body: dest-normalized chunks (column hop + window seam
-; via the shared walkers), each served by the inir transport. No
-; 256-byte chunk cap here - that cap is the DMA DI-bracket contract
-; (contract 3), and this transport holds no DI at all (the inir arms
+; via the shared walkers), each served by the unrolled-ini transport.
+; No 256-byte chunk cap here - that cap is the DMA DI-bracket contract
+; (contract 3), and this transport holds no DI at all (the ini arms
 ; are internally <= 256 and IRQ-open). In: BC = literal count.
 vid_ds_copy_body:
     ld (vidRemain), bc
@@ -3763,11 +3851,20 @@ nxb_fail_row:
 ;               modelled term anywhere in it (the token wait, the CRC
 ;               consume, the 512-byte wire cost and the loop overhead
 ;               are byte-identical on both sides and cancel).
-;   DTB - DTI = vid_ds_pad's excess over a bare ini (the ~37 vs ~21
-;               T/B claim, measured).
-;   DTC - DTI = vid_ds_xfer's clip/min chain over a bare ini.
-;   DTD - DTC = 2 extra inir arms + 3 extra call entries = the
-;               per-arm price the ~144 arms/frame pay.
+;   DTB - DTI = vid_ds_pad's excess over a bare ini. T8 NOTE: the pad
+;               is now the unrolled in a,(n) run (~11.4 T/B), so this
+;               difference is expected NEGATIVE (~-4.6 T/B) - it
+;               verifies the pad unroll rather than the old ~37 vs
+;               ~21 T/B byte-loop claim, which the T8 wave retired.
+;   DTC - DTI = vid_ds_xfer's clip/min chain + arm-entry glue over a
+;               bare looped ini. T8 NOTE: the xfer transport is now
+;               the same 32x-ini block shape as the DTI reference, so
+;               the old inir-vs-ini primitive gap term is GONE from
+;               this difference - what remains is purely the per-arm
+;               chain/entry (expected small; this row verifies the
+;               primitive swap landed).
+;   DTD - DTC = 2 extra unrolled-ini arms + 3 extra call entries =
+;               the per-arm price the ~144 arms/frame pay.
 ;   TOK row   = the poll counters (vid_sd_tok_h's DEBUG instrument):
 ;               the data-token wait in POLLS, which is the one term
 ;               that is hardware and immovable.
