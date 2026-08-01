@@ -973,15 +973,23 @@ class _FakeSettleZ:
     `states` is one (moreLock, wrapLock) pair per poll and `fires` the
     CUMULATIVE page-capture counter the emulator would report on that
     same poll (nleg's breakpoint-driven page capture - see its module
-    docstring). Both advance together, driven by evaluate(), which is
-    the first thing settle() calls on every poll.
+    docstring). Both advance together, driven by the ERRCODE read, which
+    is the FIRST thing settle() does on every poll and the only thing it
+    does exactly once per poll - the counter is deliberately read more
+    than once when a page fires (captured_page re-checks it after
+    reading the dump), so it cannot be the clock here.
     """
 
     def __init__(self, states, fires, grid=None, errcodes=None,
-                 timeout_flags=(0, 0), toframes=b"\x00\x00"):
+                 timeout_flags=(0, 0), toframes=b"\x00\x00",
+                 confirms=None):
         assert len(states) == len(fires), "one fire count per poll"
         self.states = list(states)
         self.fires = list(fires)
+        # What the SECOND (moreLock, wrapLock) read of a poll sees, if
+        # it should differ from the first - i.e. what _ready_confirmed
+        # gets. None means "the same as the first", the ordinary case.
+        self.confirms = list(confirms) if confirms else None
         self.grid = grid                        # what the LIVE screen holds
         # Per-poll runtime-error code, so a case can make the interpreter
         # raise part-way through a settle.
@@ -992,6 +1000,8 @@ class _FakeSettleZ:
         self.enters = 0
         self.dismissals = 0
         self.evaluates = 0
+        self.polls = 0
+        self.lock_reads = 0
 
     def read_memory(self, addr, length):
         if addr == _FAKE_SYMS["INPTOFRAMES"]:
@@ -1000,11 +1010,21 @@ class _FakeSettleZ:
             return self.timeout_flags[:length]
         if length == 1:
             if addr == _FAKE_SYMS["ERRCODE"]:
-                v = self.errcodes[0]
-                if len(self.errcodes) > 1:
-                    self.errcodes.pop(0)        # one entry per poll
-                return bytes([v])
-            more, wrap = self.states[0]
+                if self.polls:                  # not the first poll
+                    self.states.pop(0)
+                    self.fires.pop(0)
+                    if self.confirms and len(self.confirms) > 1:
+                        self.confirms.pop(0)
+                    if len(self.errcodes) > 1:
+                        self.errcodes.pop(0)
+                self.polls += 1
+                self.lock_reads = 0
+                return bytes([self.errcodes[0]])
+            pair = self.states[0]
+            if self.lock_reads >= 2 and self.confirms:
+                pair = self.confirms[0]
+            self.lock_reads += 1
+            more, wrap = pair
             if addr == _FAKE_SYMS["MORELOCK"]:
                 return bytes([1 if more else 0])
             return bytes([1 if wrap else 0])
@@ -1021,9 +1041,6 @@ class _FakeSettleZ:
         self.enters += 1
 
     def evaluate(self, expr):
-        if self.evaluates:                      # not the first poll
-            self.states.pop(0)
-            self.fires.pop(0)
         self.evaluates += 1
         return str(self.fires[0])
 
@@ -1161,6 +1178,95 @@ def t9_two_pages_between_polls_raise_rather_than_truncate():
 
 
 @case
+def t9_both_locks_are_confirmed_before_a_turn_is_called_ready():
+    """(moreLock, wrapLock) == (1, 1) is NOT only the input editor.
+
+    prn_more_check sets BOTH locks together (src/print.asm:250-251) and
+    only releases wrapLock again once the SM32 prompt has been printed
+    (:257), so the pager passes through the editor's own signature on its
+    way to parking. A poll landing in that window ends the turn on a page
+    that has not finished drawing - seen live about one run in five once
+    tests/condacts.dsf's checks 103/104 took the last turn from one page
+    to four, with the transcript stopping dead at an unfiltered "More..."
+    row and the fixture still inside check 103.
+
+    Both ways out of that window are checked: wrapLock dropping, and the
+    page counter moving because the pager reached its park point.
+    """
+    # wrapLock drops on the confirmation read -> it was the pager
+    z = _FakeSettleZ([(True, True), (True, True)], fires=[0, 0],
+                     confirms=[(True, False), (True, True)])
+    leg = _fake_settle_leg(z, _write_dump(_dump_of([])))
+    leg.settle([])
+    assert z.polls == 2, (
+        "settle called the SM32 window READY and ended the turn on a "
+        "half-drawn page (stopped after %d poll(s))" % z.polls)
+
+    # the counter moves instead -> also the pager, also not READY. The
+    # page it announced is then picked up by the NEXT poll, exactly as a
+    # page announced any other way is.
+    z2 = _FakeSettleZ([(True, True)] * 3, fires=[0, 1, 1])
+    leg2 = _fake_settle_leg(z2, _write_dump(_dump_of(["More..."])))
+    real = z2.evaluate
+
+    def _fires_on_confirm(expr):
+        return "1" if z2.evaluates else real(expr)
+
+    z2.evaluate = _fires_on_confirm
+    leg2.settle([])
+    assert z2.polls >= 2, (
+        "a page parking during the confirmation read must not be READY")
+
+    # and the genuine editor still returns on the FIRST poll it is seen
+    z3 = _FakeSettleZ([(True, True)], fires=[0])
+    leg3 = _fake_settle_leg(z3, _write_dump(_dump_of([])))
+    leg3.settle([])
+    assert z3.polls == 1, (
+        "the confirmation must not cost an extra poll when the editor "
+        "really is ready: %d" % z3.polls)
+
+
+@case
+def t9_a_page_firing_while_the_dump_is_read_raises():
+    """Sampling the counter and reading the dump file are two separate
+    ZRCP round trips. A page firing BETWEEN them overwrites the dump with
+    a later page while the caller still believes it holds the one the
+    counter named - and settle()'s >1-per-poll guard cannot see it,
+    because the counter was already sampled. captured_page re-reads the
+    counter after the file and refuses on a mismatch, so that last silent
+    loss becomes a named failure."""
+    z = _FakeSettleZ([(True, False)], fires=[1])
+    leg = _fake_settle_leg(z, _write_dump(_dump_of(["page one"])))
+
+    real_evaluate = z.evaluate
+
+    def _racing_evaluate(expr):
+        # the FIRST read is settle()'s (the counter says 1); the second is
+        # captured_page's re-check, by which time another page has fired
+        if z.evaluates:
+            return "2"
+        return real_evaluate(expr)
+
+    z.evaluate = _racing_evaluate
+    try:
+        leg.settle([])
+    except RuntimeError as exc:
+        assert "gone" in str(exc), exc
+    else:
+        raise AssertionError(
+            "a page overwritten between the counter read and the file read "
+            "was accepted as if it were the page the counter named")
+
+    # and the ordinary case, where nothing fires in that window, is
+    # unaffected - the re-read must not become a second failure mode
+    z2 = _FakeSettleZ([(True, False), (True, True)], fires=[1, 1])
+    leg2 = _fake_settle_leg(z2, _write_dump(_dump_of(["page one"])))
+    pages = []
+    leg2.settle(pages)
+    assert len(pages) == 1 and pages[0][0].rstrip() == "page one", pages
+
+
+@case
 def t9_boot_settle_advances_past_a_lockless_wait_to_ready():
     """The boot settle must run the interpreter out to the SAME positive
     READY state jleg.js's own boot settle reaches, dismissing an
@@ -1185,7 +1291,7 @@ def t9_boot_settle_advances_past_a_lockless_wait_to_ready():
     assert leg.settle([], boot=True) is True
     assert z.enters == 1, (
         "boot must dismiss the pause and go on to READY, not park on it")
-    assert z.evaluates <= 7, (
+    assert z.polls <= 7, (
         "the announced-wait shortcut did not apply - boot waited out the "
         "long threshold on a wait the breakpoint had already named")
 
@@ -1223,9 +1329,9 @@ def t9_a_raised_runtime_error_ends_the_settle_at_once():
     z = _FakeSettleZ(polls, [0] * 4, errcodes=[0, 0, 3, 3])
     leg = _fake_settle_leg(z, _write_dump(_dump_of([])))
     leg.settle([])
-    assert z.evaluates <= 3, (
+    assert z.polls <= 3, (
         "settle kept polling after the interpreter halted (%d poll(s))"
-        % z.evaluates)
+        % z.polls)
     assert leg.fatal_error() == 3
 
 

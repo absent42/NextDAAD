@@ -215,14 +215,31 @@ class Zrcp:
         self.cmd("send-keys-ascii %d 13" % KEY_DELAY_MS,
                  wait=wait, deadline=wait + DEFAULT_DEADLINE)
 
-    # Emulated keyboard matrix rows, in set-ui-io-ports order (row 0
-    # first, joystick byte last). A ZERO bit is a PRESSED key.
-    #   row 0  CAPS Z X C V      row 4  6 7 8 9 0
-    #   row 1  G F D S A         row 5  Y U I O P
-    #   row 2  T R E W Q         row 6  H J K L ENTER
-    #   row 3  5 4 3 2 1         row 7  B N M SYM SPACE
+    # Emulated keyboard matrix rows, in set-ui-io-ports order: row 0
+    # first, then rows 1-7, then the joystick byte. A ZERO bit is a
+    # PRESSED key. Every row below is written BIT 4 FIRST, ending at bit
+    # 0 - the same order ZEsarUX's own `help set-ui-io-ports` prints them
+    # in, and the same order the key nearest the outside of the physical
+    # keyboard comes first:
+    #   row 0  V  C  X  Z  CAPS      row 4  6 7 8 9 0
+    #   row 1  G  F  D  S  A         row 5  Y U I O P
+    #   row 2  T  R  E  W  Q         row 6  H J K L ENTER
+    #   row 3  5  4  3  2  1         row 7  B N M SYM SPACE
+    # so bit 0 is CAPS on row 0, A on row 1, Q on row 2, 1 on row 3, 0 on
+    # row 4, P on row 5, ENTER on row 6 and SPACE on row 7.
+    #
+    # MEASURED CONSTRAINT, and it is not obvious: BIT 0 OF A ROW DOES NOT
+    # TAKE through set-ui-io-ports. Confirmed live against ZEsarUX 13.0
+    # in three separate probes - holding row 6 bit 0 (ENTER) or row 7 bit
+    # 0 (SPACE) had NO effect on the running interpreter at all, while
+    # `get-ui-io-ports` read the state back correctly the whole time, and
+    # row 7 bit 1 (SYMBOL SHIFT) and row 7 bit 3 (N, which echoed into the
+    # input line) both worked. Whatever the cause, anything driven from
+    # here must use a NON-bit-0 key. That is why the dismissal key below
+    # is SYMBOL SHIFT and not CAPS SHIFT, which is row 0 BIT 0 and would
+    # otherwise have been the obvious choice.
     MATRIX_IDLE = "FFFFFFFFFFFFFFFF00"
-    # SYMBOL SHIFT alone: row 7, bit 1.
+    # SYMBOL SHIFT alone: row 7 (the eighth byte), bit 1.
     MATRIX_SYM_SHIFT = "FFFFFFFFFFFFFFFD00"
 
     def hold_matrix(self, rows):
@@ -239,36 +256,48 @@ class Zrcp:
         self.cmd("set-ui-io-ports %s" % self.MATRIX_IDLE)
 
     def tap_dismiss_key(self, hold=0.12, settle=0.28):
-        """Press and release CAPS SHIFT, driving the emulated keyboard
+        """Press and release SYMBOL SHIFT, driving the emulated keyboard
         matrix directly.
 
         This is the key the harness uses to release a "More..." page or a
-        "press any key" pause, and it is CAPS SHIFT for one specific
-        reason: NextDAAD's kb_char maps a bare CAPS SHIFT (matrix code 0)
-        to 0 in ALL THREE of its tables - plain, caps and symbol
-        (src/overlay1.asm kbMapPlain/kbMapCaps/kbMapSym) - so the input
-        line editor ignores it completely, while wait_key
-        (src/print.asm), which only tests the five key bits of port $FE,
-        accepts it exactly like any other key.
+        "press any key" pause, and it is SYMBOL SHIFT for two reasons,
+        one about the interpreter and one about the emulator.
+
+        The interpreter: NextDAAD's kb_char maps a bare SYMBOL SHIFT
+        (matrix code 36) to 0 in ALL THREE of its tables - kbMapPlain,
+        kbMapCaps and kbMapSym, src/overlay1.asm - so the input line
+        editor ignores it completely, while wait_key (src/print.asm),
+        which only tests the five key bits of port $FE, accepts it
+        exactly like any other key.
 
         That difference is the whole point. Dismissing a pause with ENTER
-        used to hand the SAME keypress to two different readers: the
-        pause consumed it, the interpreter ran on to its next input
-        read while the key was still physically down for KEY_DELAY_MS,
-        and inp_edit took it as a submitted EMPTY LINE. One turn's worth
-        of script then answered the wrong prompt and every later turn was
-        compared against the wrong one - measured live against
-        tests/condacts.dsf's extended replay, where one run in three
-        desynchronised and ran the fixture to its end several turns early.
-        A key the editor cannot see closes that off at the source rather
-        than trying to out-time it.
+        used to hand the SAME keypress to two different readers. wait_key
+        polls the port directly and never touches kb_char's autorepeat
+        state, so the key stays NEW as far as the input editor is
+        concerned: the pause consumed it, the interpreter ran on to its
+        next input read while the key was still physically down for
+        KEY_DELAY_MS, kb_char saw a fresh press and inp_edit took it as a
+        submitted EMPTY LINE. One turn's worth of script then answered
+        the wrong prompt and every later turn was compared against the
+        wrong one - measured live against tests/condacts.dsf's extended
+        replay, where roughly one run in three desynchronised and ran the
+        fixture to its end several turns early. A key the editor cannot
+        see closes that off at the source rather than trying to out-time
+        it. (A command's own ENTER cannot do this - it goes THROUGH
+        kb_char, which then holds it off for 35 frames.)
+
+        The emulator: CAPS SHIFT would do the interpreter half just as
+        well - kb_char maps matrix code 0 to 0 too - but it is row 0 BIT
+        0, and bit 0 of a row does not take through set-ui-io-ports. See
+        the measured constraint recorded on MATRIX_IDLE above.
 
         set-ui-io-ports drives the matrix rows directly (a 0 bit is a
         pressed key), so both the press and the release are the harness's
         own decision - unlike send-keys-*, where the hold is whatever the
-        emulator decides. Row 0 is `CAPS Z X C V`, so 0xFE presses CAPS
-        SHIFT alone; all-0xFF is every key up. The trailing 00 is the
-        joystick byte, which must be sent and must stay 0.
+        emulator decides. Row 7 is `B N M SYM SPACE`, so 0xFD in the
+        EIGHTH byte presses SYMBOL SHIFT alone; all-0xFF is every key up.
+        The trailing 00 is the joystick byte, which must be sent and must
+        stay 0.
         """
         self.hold_matrix(self.MATRIX_SYM_SHIFT)
         time.sleep(hold)

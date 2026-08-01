@@ -225,10 +225,11 @@ function load(f) {
 for (const f of ['daad.jddb', 'images.js', 'font.js', 'jdaad.js']) load(f);
 
 // jdaad.js's StopSound() reaches straight for two audio objects with no
-// guard at all - `audioMusic.pause()` and `audioSFX.pause()` - and NEITHER
-// exists until PlaySound has actually started something. audioMusic is
-// declared and left undefined; audioSFX is not declared anywhere in the
-// file. So any "stop what is playing" with nothing playing throws, and
+// guard at all - `audioMusic.pause()` and `audioSFX.pause()`. Both ARE
+// declared (jdaad.js:891-892, `var audioSFX; var audioMusic;`) but both
+// are left UNDEFINED until PlaySound actually starts something, and a
+// bare `var` gives you undefined, not an object.
+// So any "stop what is playing" with nothing playing throws, and
 // jDAAD dies where NextDAAD no-ops: tests/condacts.dsf check 66's
 // `SFX 200 8` and check 68's `SFX 0 5` both do exactly that, and both
 // killed this leg outright the first time a script reached them.

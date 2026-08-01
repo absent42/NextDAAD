@@ -554,8 +554,21 @@ class NextLeg:
                 "waited out instead of captured"
                 % (PAGE_COUNT_VAR, reply, PAGE_BP_SYMBOL))
 
-    def captured_page(self):
-        """Decode the page the emulator dumped at the park point."""
+    def captured_page(self, fires):
+        """Decode the page the emulator dumped at the park point.
+
+        `fires` is the counter value that announced this page. It is
+        re-read AFTER the dump and must not have moved: reading the
+        counter and reading the file are two separate round trips, and a
+        page firing between them overwrites the dump with a LATER page
+        while the caller still believes it holds the one the counter
+        named. The delta>1 guard in settle() cannot see that - the
+        counter was already sampled - so this is the only place that
+        window can be closed. Raising loses nothing: it is the same
+        "a page's text went missing" condition, named at the point it
+        happens instead of appearing as an unexplained gap in the
+        transcript.
+        """
         try:
             data = self.page_dump.read_bytes()
         except OSError as exc:
@@ -568,6 +581,14 @@ class NextLeg:
                 "%s holds %d bytes, expected %d - a partial or stale page "
                 "dump would be decoded as screen content"
                 % (self.page_dump, len(data), GRID_BYTES))
+        now = self.page_fires()
+        if now != fires:
+            raise RuntimeError(
+                "a pager wait fired while page %d's dump was being read "
+                "(counter %d -> %d), so the dump on disk is a LATER page and "
+                "page %d's text is gone. Same loss the >1-per-poll guard "
+                "exists for, in the window between sampling the counter and "
+                "reading the file" % (fires, fires, now, fires))
         rows, _attrs = tilemap.decode(data)
         return rows
 
@@ -623,6 +644,34 @@ class NextLeg:
         more = self.z.read_memory(self.syms["MORELOCK"], 1)[0] != 0
         wrap = self.z.read_memory(self.syms["WRAPLOCK"], 1)[0] != 0
         return more, wrap
+
+    def _ready_confirmed(self, fires):
+        """Second opinion on a (moreLock, wrapLock) == (1, 1) reading.
+
+        That pair is documented as "the input editor is ready", and for
+        inp_edit and confirm_read it is. It is ALSO true, briefly, inside
+        prn_more_check: it sets moreLock and wrapLock together
+        (src/print.asm:250-251) and only releases wrapLock again after the
+        SM32 prompt has been printed (:257), so the pager passes through
+        the editor's own signature on its way to parking. The window is
+        short in Z80 terms but it is not short against a ZRCP round trip,
+        and it is entered once per page - so the more pages a turn fires,
+        the likelier a poll lands in it. Measured at roughly one run in
+        five once checks 103/104 took the last condacts turn from one page
+        to four.
+
+        Re-reading after a full poll interval separates the two: the pager
+        leaves that state within microseconds of emulated time, either
+        by dropping wrapLock or by reaching its park point and moving the
+        page counter, while the editor sits in it until a key arrives.
+        Both exits are checked; only "still both locks, counter unmoved"
+        is the editor.
+        """
+        time.sleep(SETTLE_POLL_S)
+        if self.page_fires() != fires:
+            return False                        # a page parked: it was SM32
+        more, wrap = self.more_state()
+        return more and wrap
 
     def disarm_input_timeout(self):
         """Zero inpTOFrames, the countdown EVERY DAAD wait in NextDAAD is
@@ -877,7 +926,7 @@ class NextLeg:
                         "timeout is expiring unattended or the poll interval "
                         "has grown past a whole page's worth of output"
                         % (delta, delta - 1))
-                page = self.captured_page()
+                page = self.captured_page(fires)
                 more, wrap = self.more_state()
                 last_more, last_wrap = more, wrap
                 pages.append(page)
@@ -920,6 +969,19 @@ class NextLeg:
                 continue
             more, wrap = self.more_state()
             last_more, last_wrap = more, wrap
+            if more and wrap and not self._ready_confirmed(fires):
+                # Both locks set is NOT only the input editor. Between
+                # print.asm:250 and print.asm:257 prn_more_check holds
+                # BOTH of them too, while the SM32 prompt is going onto
+                # the screen, and a poll landing in that window reads the
+                # pager as READY and ends the turn on a page that has not
+                # even finished drawing. Seen live, about one run in five
+                # once tests/condacts.dsf grew checks 103/104 and the last
+                # turn started firing four pages instead of one: the
+                # transcript stopped dead at an unfiltered "More..." row
+                # with the fixture still inside check 103.
+                time.sleep(SETTLE_POLL_S)
+                continue
             if more and wrap:
                 # Disarm once more on the way out. The disarm at the top
                 # of this poll happened BEFORE the lock read, so the
