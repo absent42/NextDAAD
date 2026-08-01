@@ -14,7 +14,7 @@ from pathlib import Path
 import nxv2enc
 
 from PySide6.QtCore import QLocale, Qt, Signal
-from PySide6.QtGui import QDoubleValidator, QFont
+from PySide6.QtGui import QDoubleValidator, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -424,6 +424,15 @@ class SettingsPanel(QWidget):
 
 
 class MainWindow(QMainWindow):
+    # Initial-geometry constants (owner-requested 2026-08-01: the window
+    # used to open needing a manual resize before the settings panel's
+    # scroll area stopped showing scrollbars). See _compute_initial_width.
+    _CLIP_LIST_WIDTH = 220
+    _PREVIEW_WIDTH = 320 * 2 + 40   # 320-wide clip at PreviewPane's 2x default + margins
+    _SPLITTER_SLACK = 24            # splitter handles + central layout margins
+    _SCROLLBAR_ALLOWANCE = 24       # headroom for a vertical scrollbar once the form is tall
+    _MIN_HEIGHT = 700
+
     def __init__(self, kit_root: Path):
         super().__init__()
         self.kit_root = Path(kit_root)
@@ -482,9 +491,9 @@ class MainWindow(QMainWindow):
         self.clip_list = QListWidget()
 
         self.settings_panel = SettingsPanel()
-        settings_scroll = QScrollArea()
-        settings_scroll.setWidgetResizable(True)
-        settings_scroll.setWidget(self.settings_panel)
+        self.settings_scroll = QScrollArea()
+        self.settings_scroll.setWidgetResizable(True)
+        self.settings_scroll.setWidget(self.settings_panel)
 
         self.preview = PreviewPane()
 
@@ -494,14 +503,18 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._banner)
         left_layout.addWidget(self.clip_list)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left_pane)
-        splitter.addWidget(self.preview)
-        splitter.addWidget(settings_scroll)
-        splitter.setStretchFactor(0, 20)
-        splitter.setStretchFactor(1, 50)
-        splitter.setStretchFactor(2, 30)
-        splitter.setSizes([200, 500, 300])
+        self._splitter = QSplitter(Qt.Horizontal)
+        self._splitter.addWidget(left_pane)
+        self._splitter.addWidget(self.preview)
+        self._splitter.addWidget(self.settings_scroll)
+        self._splitter.setStretchFactor(0, 20)
+        self._splitter.setStretchFactor(1, 50)
+        self._splitter.setStretchFactor(2, 30)
+        # Real sizes are set at the end of __init__ by
+        # _apply_initial_geometry(), once the settings panel has its real
+        # (post clip-selection) sizeHint to work from; this is just a
+        # placeholder so the splitter has something sane before then.
+        self._splitter.setSizes([200, 500, 300])
 
         self.preview_button = QPushButton("Preview Segment")
         self.encode_button = QPushButton("Encode Full")
@@ -521,7 +534,7 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         central_layout = QVBoxLayout(central)
-        central_layout.addWidget(splitter)
+        central_layout.addWidget(self._splitter)
         central_layout.addLayout(actions_row)
         central_layout.addWidget(self.metrics_bar)
         self.setCentralWidget(central)
@@ -548,7 +561,75 @@ class MainWindow(QMainWindow):
         self.clip_list.currentItemChanged.connect(self._on_current_item_changed)
         self._populate_clip_list()
         if self.clip_list.count():
-            self.clip_list.setCurrentRow(0)
+            self.clip_list.setCurrentRow(0)   # populates settings_panel before sizing below
+
+        self._apply_initial_geometry()
+
+    def _initial_pane_widths(self):
+        """(clip_list, preview, settings) floor widths for the default
+        layout. Preview and settings are each the LARGER of a nominal
+        target and the pane's own minimumSizeHint - PreviewPane's
+        transport row (Play/Stop/</>/Loop/Set In/Set Out/Clear/segment
+        readout/2x) has a real minimum width of its own (driven by the
+        host style's button metrics, not just the 320-wide-at-2x image),
+        and QSplitter.setSizes() silently overrides an under-sized
+        request to respect a child's minimumSizeHint - which is exactly
+        how a fixed 640px guess for the preview pane used to starve the
+        settings pane back down to its scrollbar-showing width."""
+        panel_width = max(
+            self.settings_panel.sizeHint().width()
+            + self.settings_scroll.frameWidth() * 2 + self._SCROLLBAR_ALLOWANCE,
+            self.settings_scroll.minimumSizeHint().width())
+        preview_width = max(self._PREVIEW_WIDTH,
+                            self.preview.minimumSizeHint().width())
+        return self._CLIP_LIST_WIDTH, preview_width, panel_width
+
+    def _compute_initial_width(self):
+        """Uncapped width the default layout needs to avoid the settings
+        panel's scroll area showing a horizontal scrollbar. Split out
+        from _apply_initial_geometry so it can be checked directly
+        against the screen-capped result (real screen size varies, esp.
+        under test)."""
+        clip_width, preview_width, panel_width = self._initial_pane_widths()
+        return clip_width + preview_width + panel_width + self._SPLITTER_SLACK
+
+    def _apply_initial_geometry(self):
+        """Sizes the window - and the splitter's initial pane widths - so
+        the default layout needs no manual resize on launch. Capped to
+        the primary screen's available geometry so this never opens
+        larger than the screen; the 20/50/30 clip-list/preview/settings
+        split from the original design is kept as the intent, but each
+        pane is floored at its own minimum requirement (see
+        _initial_pane_widths)."""
+        clip_width, preview_width, panel_width = self._initial_pane_widths()
+        total_width = clip_width + preview_width + panel_width + self._SPLITTER_SLACK
+        total_height = max(self.settings_panel.sizeHint().height() + 160,
+                           self._MIN_HEIGHT)
+
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            total_width = min(total_width, avail.width())
+            total_height = min(total_height, avail.height())
+
+        self.resize(total_width, total_height)
+        # QSplitter.setSizes() distributes against the splitter's OWN
+        # current width - before the window has ever been shown, a top-
+        # level widget's internal QMainWindowLayout (which sizes the
+        # central widget) and the central widget's own layout (which
+        # sizes the splitter) have not run yet, so both still reflect
+        # their pre-resize state despite the resize() just issued above.
+        # Explicitly activating each layout in turn (invalidating the
+        # central layout first, since a plain activate() is a no-op
+        # unless the layout is already marked dirty) is what makes the
+        # splitter's actual width - and therefore setSizes() below -
+        # correct instead of being computed against a stale, much
+        # smaller size.
+        self.layout().activate()
+        central_layout = self.centralWidget().layout()
+        central_layout.invalidate()
+        central_layout.activate()
+        self._splitter.setSizes([clip_width, preview_width, panel_width])
 
     def _resolve_ffmpeg(self):
         p = Path(self.cfg.toolsdir, "ffmpeg", "bin", "ffmpeg.exe")

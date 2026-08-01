@@ -98,7 +98,10 @@ class PreviewPane(QWidget):
         self.showing_source = False
         self.seg_in = None
         self.seg_out = None
-        self.scale = 1
+        self.scale = 2          # owner-requested default (2026-08-01);
+                                 # _scale_btn.setChecked(True) below keeps
+                                 # the toggle control and the initial
+                                 # render in sync with this
         self._playing = False
         self._heatmap_cache = {}
         self._last_buffer = None
@@ -181,6 +184,11 @@ class PreviewPane(QWidget):
         self._scale_btn = QPushButton("2x")
         self._scale_btn.setCheckable(True)
         self._scale_btn.toggled.connect(self._on_scale_toggled)
+        # Reflect the 2x default on the toggle itself; _on_scale_toggled
+        # re-sets self.scale (redundant with the __init__ default above,
+        # harmless) and calls _render() so the initial render already
+        # honours 2x once frames arrive.
+        self._scale_btn.setChecked(True)
 
         # Same NoFocus reasoning as the mode buttons above - every
         # clickable control in the transport row must give focus back to

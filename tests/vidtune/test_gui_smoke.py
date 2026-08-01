@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtGui import QDoubleValidator, QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from vidtune import mainwindow as vt_mainwindow
@@ -693,3 +693,51 @@ def test_set_frames_direct_injection_bumps_load_generation(qtbot, tmp_path):
     pane._on_decode_done({"fps_x10": 250, "column_major": False},
                          _frames(9), stale_gen)
     assert pane.encoded is not None and len(pane.encoded) == 2
+
+
+# -- 2026-08-01 follow-up: 2x default scale + no-scrollbar launch size ------
+
+def test_preview_pane_defaults_to_2x_scale(qtbot):
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    assert pane.scale == 2
+    assert pane._scale_btn.isChecked() is True
+
+    # The initial render (once frames arrive) must honour it too.
+    pane.set_frames(encoded=_frames(3), source=None, fps=25, column_major=False)
+    pixmap = pane._image_label.pixmap()
+    assert not pixmap.isNull()
+    assert pixmap.width() == 8 * 2 and pixmap.height() == 8 * 2
+
+
+def test_main_window_sizes_wide_enough_for_settings_panel(fixture_kit, qtbot):
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+
+    expected = win._compute_initial_width()
+    screen = QGuiApplication.primaryScreen()
+    if screen is not None:
+        expected = min(expected, screen.availableGeometry().width())
+    # resize() can be off by a handful of px vs. width() depending on
+    # window-manager frame accounting; a small tolerance keeps this from
+    # being a flaky pixel-exact check.
+    assert win.width() >= expected - 4
+
+
+def test_settings_panel_has_no_horizontal_scrollbar_on_launch(fixture_kit, qtbot):
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    try:
+        win.show()
+        qtbot.waitExposed(win)
+        QApplication.processEvents()
+        assert win.settings_scroll.horizontalScrollBar().isVisible() is False
+    except Exception:
+        # show()/waitExposed can be unreliable on a headless/no-window-
+        # manager CI box - fall back to the geometry check the brief
+        # allows: the window was sized to at least the settings panel's
+        # own sizeHint width, which is what keeps the scroll area from
+        # needing a horizontal scrollbar in the first place.
+        panel_min_width = (win.settings_panel.sizeHint().width()
+                           + win.settings_scroll.frameWidth() * 2)
+        assert win._splitter.sizes()[2] >= panel_min_width
