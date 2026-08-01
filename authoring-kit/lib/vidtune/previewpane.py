@@ -83,7 +83,14 @@ class PreviewPane(QWidget):
         self._last_buffer = None
         self._thread = None
         self._worker = None
+        self._threads = []            # decode threads still alive, oldest first
+        self._workers = []            # their matching workers - kept referenced
+        self._load_gen = 0            # bumped on every load(); stale decode
+                                       # results (from an abandoned prior
+                                       # load()) are dropped by comparing
+                                       # against this in _on_decode_done/failed
         self._pending_source = None
+        self._pending_column_major = False
 
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -176,11 +183,27 @@ class PreviewPane(QWidget):
         set_frames on the GUI thread. Either side may be None - source
         only (before first encode) or encoded only (extraction
         failed). Decode errors show in a red label; the tool stays
-        up."""
+        up.
+
+        A fresh call bumps self._load_gen; the decode-done/failed
+        callbacks capture their own generation number at connect time
+        and drop the result if a newer load() has started in the
+        meantime (self._load_gen has moved on) - this is what makes a
+        second load() while the first is still decoding safe: the
+        stale worker's result is ignored rather than clobbering
+        set_frames with the wrong pairing of encoded/source frames.
+        The stale thread/worker are not killed (decode_vid isn't
+        interruptible mid-read) - they are left to finish naturally,
+        kept referenced in self._threads/self._workers so they are
+        never garbage-collected out from under a still-running QThread,
+        and cleaned up (deleteLater) once their own finished signal
+        fires."""
         self._error_label.setVisible(False)
         self._error_label.setText("")
         self._pending_source = source_frames
         self._pending_column_major = column_major
+        self._load_gen += 1
+        gen = self._load_gen
 
         if vid_path is None:
             self._show_busy(False)
@@ -193,30 +216,63 @@ class PreviewPane(QWidget):
         worker = _DecodeWorker(vid_path)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.done.connect(self._on_decode_done)
-        worker.failed.connect(self._on_decode_failed)
+        worker.done.connect(lambda hdr, frames, gen=gen: self._on_decode_done(hdr, frames, gen))
+        worker.failed.connect(lambda msg, gen=gen: self._on_decode_failed(msg, gen))
         worker.done.connect(thread.quit)
         worker.failed.connect(thread.quit)
-        thread.finished.connect(thread.deleteLater)
-        # Keep references alive until the thread finishes.
+        thread.finished.connect(lambda t=thread, w=worker: self._on_thread_finished(t, w))
+        # Keep references alive until the thread's own finished signal
+        # fires - overwriting self._thread/self._worker on the next
+        # load() must not drop the only Python reference to a still-
+        # running QThread.
+        self._threads.append(thread)
+        self._workers.append(worker)
         self._thread = thread
         self._worker = worker
         thread.start()
 
-    def _on_decode_done(self, hdr, frames):
+    def _on_thread_finished(self, thread, worker):
+        if thread in self._threads:
+            self._threads.remove(thread)
+        if worker in self._workers:
+            self._workers.remove(worker)
+        if self._thread is thread:
+            self._thread = None
+        if self._worker is worker:
+            self._worker = None
+        thread.deleteLater()
+        worker.deleteLater()
+
+    def _on_decode_done(self, hdr, frames, gen):
+        if gen != self._load_gen:
+            return  # stale result from an abandoned load(); ignore
         self._show_busy(False)
         fps = hdr.get("fps_x10", int(DEFAULT_FPS * 10)) / 10.0
         column_major = hdr.get("column_major", self._pending_column_major)
         self.set_frames(encoded=frames, source=self._pending_source,
                          fps=fps, column_major=column_major)
 
-    def _on_decode_failed(self, message):
+    def _on_decode_failed(self, message, gen):
+        if gen != self._load_gen:
+            return  # stale result from an abandoned load(); ignore
         self._show_busy(False)
         self._error_label.setText(message)
         self._error_label.setVisible(True)
 
     def _show_busy(self, busy):
         self._busy_label.setVisible(busy)
+
+    def closeEvent(self, event):
+        self._shutdown_threads()
+        super().closeEvent(event)
+
+    def _shutdown_threads(self):
+        """Blocks until every in-flight decode thread has actually
+        stopped, so the pane never gets torn down out from under a
+        running QThread (Qt aborts/crashes on that)."""
+        for thread in list(self._threads):
+            thread.quit()
+            thread.wait()
 
     # -- mode / flicker -----------------------------------------------
 
@@ -361,13 +417,21 @@ class PreviewPane(QWidget):
         return None
 
     def _heatmap_frame(self, i):
+        # encoded/source frame counts are not guaranteed equal (e.g.
+        # extraction stopped short of the encode, or vice versa).
+        # Heatmap pixels only exist where both sides cover index i;
+        # beyond that, fall back to the encoded frame rather than
+        # raising or reusing a stale/clamped source index.
+        limit = min(len(self.encoded), len(self.source))
+        if i >= limit:
+            return self.encoded[i] if i < len(self.encoded) else None
         cached = self._heatmap_cache.get(i)
         if cached is not None:
             return cached
         src = self.source[i]
         enc = self.encoded[i]
         frame = diff_heatmap(src, enc)
-        if i > 0 and i - 1 < len(self.source) and i - 1 < len(self.encoded):
+        if i > 0 and i - 1 < limit:
             mask = stale_bands(self.source[i - 1], src, self.encoded[i - 1], enc,
                                 self.column_major)
             frame = self._tint_stale(frame, mask)

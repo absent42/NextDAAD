@@ -104,3 +104,35 @@ def test_heatmap_disabled_without_source(qtbot):
                     column_major=False)
     pane.set_mode("Heatmap")
     assert pane.mode == "Encoded"     # refused, falls back
+
+
+def test_load_generation_guard_ignores_stale_decode(qtbot):
+    # Simulates a second load() starting before a first decode lands:
+    # _load_gen has moved on by the time the stale worker's result
+    # arrives, so _on_decode_done/_on_decode_failed must drop it
+    # instead of clobbering the current frames.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=_frames(2), source=None, fps=25,
+                    column_major=False)
+    stale_gen = pane._load_gen  # snapshot before a newer load() starts
+    pane._load_gen += 1         # a newer load() has since begun
+
+    pane._on_decode_done({"fps_x10": 250, "column_major": False},
+                         _frames(9), stale_gen)
+    assert pane.encoded is not None and len(pane.encoded) == 2
+
+    pane._on_decode_failed("boom", stale_gen)
+    assert pane._error_label.text() == ""
+    assert pane._error_label.isVisibleTo(pane) is False
+
+
+def test_heatmap_handles_length_mismatch(qtbot):
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=_frames(5), source=_frames(3), fps=25,
+                    column_major=False)
+    pane.set_mode("Heatmap")
+    pane.seek(4)                      # beyond the 3-frame source
+    assert pane.mode == "Heatmap"
+    assert not pane._image_label.pixmap().isNull()
