@@ -201,6 +201,14 @@ def compare_runs_text(ref_lines, cmp_lines):
     the one channel that exists here: the first diverging turn is
     "primary", every later one "downstream". A length mismatch is
     reported the same way too, as a "truncated" entry.
+
+    Turn alignment is POSITIONAL - turn N against turn N, exactly as
+    compare_runs does it - and with one text channel there is no second
+    signal to catch a misalignment. A leg that swallowed or gained a turn
+    part-way through reports as a long run of downstream text
+    divergences, not as "these runs are out of step". If a differential
+    goes wrong from one turn onwards and stays wrong, suspect alignment
+    before reading the texts as evidence.
     """
     divergences = []
     n = min(len(ref_lines), len(cmp_lines))

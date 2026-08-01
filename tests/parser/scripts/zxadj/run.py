@@ -117,7 +117,9 @@ def run_section(name, out, port):
     work.mkdir(parents=True, exist_ok=True)
     built = zleg.build_tap(DSF, work)
     jsonl = work / "zx.jsonl"
-    zleg.play(work, script, jsonl, tap=built["tap"], port=port, verbose=False)
+    zleg.play(script, jsonl, tap=built["tap"], port=port,
+              charset=zleg.play_charset(None, built["charset"], built["tap"]),
+              sysmess=built["sysmess"], verbose=False)
 
     turns = [json.loads(l) for l in
              jsonl.read_text(encoding="utf-8").splitlines() if l.strip()]

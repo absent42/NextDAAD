@@ -428,6 +428,13 @@ def has_cursor(lines):
     which this leg never reads), so an idle prompt is a bit-identical
     screen with a cursor on the end - a positive "waiting for a line"
     read rather than an inference from silence.
+
+    The converse is a HEURISTIC and has a cost worth naming: a game that
+    legitimately holds a cursorless screen for longer than
+    PAUSE_STATIC_POLLS x SETTLE_POLL_S (about 2.2s) mid-turn will be
+    treated as paused and receive a keypress the script did not ask for.
+    Turns where that happened are marked pages_dismissed in the jsonl,
+    and ZLEG_DEBUG=1 prints each one.
     """
     return bool(lines) and lines[-1].endswith(zscreen.CURSOR)
 
@@ -505,6 +512,28 @@ def command_plan(cmd):
     return "after", [cmd], True
 
 
+def play_charset(explicit=None, built=None, tap=None):
+    """Which .CHR to DECODE with: explicit > as-built > beside the TAP.
+
+    The as-built charset is the one that matters and it is why this
+    function exists. build_tap resolves the font against the DSF's own
+    directory and hands it to daadmaker, so a game shipping its own
+    6-pixel font is BUILT with it - but the TAP it produces lands in a
+    work directory that contains no .CHR at all, so re-resolving against
+    the TAP would silently fall back to the stock AD8x6.CHR and decode
+    every redefined glyph wrongly. That is a silent mis-read surfacing as
+    text divergences, precisely the failure zscreen.resolve_charset
+    exists to prevent, and the first version of this leg had it: play()
+    re-resolved and the caller's built["charset"] was dropped on the
+    floor. Both call sites now go through here.
+    """
+    if explicit:
+        return Path(explicit)
+    if built:
+        return Path(built)
+    return zscreen.resolve_charset(tap)
+
+
 def prompt_set(sysmess):
     """The game's SM2..SM5 prompt texts, whitespace-normalised."""
     sysmess = sysmess or {}
@@ -575,14 +604,19 @@ def _emit_text(pre, captures, had_cursor, prompts=()):
     return out, redraw
 
 
-def play(workdir, script_path, out_path, tap=None, port=DEFAULT_PORT,
+def play(script_path, out_path, tap=None, port=DEFAULT_PORT,
          charset=None, more_prompt=None, sysmess=None, verbose=False):
     """Play `script_path` on the original interpreter, write jsonl.
 
     `tap` is the TAP to boot - build_tap's output, or a prebuilt one for
-    a shipped game with no source. Required: this function deliberately
-    does not go looking for a TAP in `workdir`, because picking one up by
+    a shipped game with no source. Required, and there is deliberately no
+    "find one in the work directory" fallback: picking a TAP up by
     guesswork is how a run ends up playing the previous game's build.
+
+    `charset` is the .CHR to DECODE with, and callers holding a
+    build_tap result must pass its "charset" through (via play_charset,
+    which both call sites use) - see that function for what goes wrong
+    otherwise.
 
     `sysmess` is the game's system-message table (build_tap returns one;
     load_sysmess reads one from a DRF json). It supplies the prompt
@@ -592,13 +626,22 @@ def play(workdir, script_path, out_path, tap=None, port=DEFAULT_PORT,
 
     The jsonl carries NO flags/objloc keys - see the module docstring.
     compare.compare_runs_text() is the comparison built for it.
+
+    THE JSONL IS NOT HASH-STABLE, and it is not meant to be. "screen"
+    and "screen_sha" record the final screen verbatim, which includes
+    whichever of SM2..SM5 the original picked for the next prompt - a
+    per-turn coin toss this leg cannot pin (PROMPT_SM). Two correct runs
+    of the same script routinely differ there. The "text" field is the
+    comparable channel: the pending prompt is trimmed out of it, and it
+    is what compare_runs_text reads. Do not gate anything on a hash of
+    this file; compare texts, or the screen of a fixture that prints its
+    own state.
     """
-    workdir = Path(workdir).resolve()
     commands = json.loads(Path(script_path).read_text(encoding="utf-8"))
     if not tap:
         raise ValueError("zleg.play needs a TAP - build one with build_tap()")
     tap = Path(tap).resolve()
-    table = zscreen.load_font(zscreen.resolve_charset(tap, charset))
+    table = zscreen.load_font(play_charset(charset, tap=tap))
     sysmess = sysmess or {}
     prompts = prompt_set(sysmess)
     if more_prompt is None:
@@ -737,11 +780,16 @@ def main(argv=None):
     work.mkdir(parents=True, exist_ok=True)
 
     tap = args.tap
+    built_charset = None
     if not tap:
         built = build_tap(args.dsf, work, lang=args.lang,
                           charset=args.charset)
         tap = built["tap"]
         sysmess = built["sysmess"]
+        # The font the TAP was BUILT with decodes it - never re-resolve
+        # against the work directory, which holds no .CHR. See
+        # play_charset.
+        built_charset = built["charset"]
         if not args.quiet:
             print("zleg: built %s (%d bytes) with %s"
                   % (tap.name, tap.stat().st_size, built["charset"].name))
@@ -752,8 +800,9 @@ def main(argv=None):
         if not sysmess and not args.quiet:
             print("zleg: no sysmess for %s - the random prompt line will "
                   "be left in the text" % Path(tap).name)
-    play(work, args.script, args.out, tap=tap, port=args.port,
-         charset=args.charset, more_prompt=args.more_prompt,
+    play(args.script, args.out, tap=tap, port=args.port,
+         charset=play_charset(args.charset, built_charset, tap),
+         more_prompt=args.more_prompt,
          sysmess=sysmess, verbose=not args.quiet)
     if not args.quiet:
         print("zleg: wrote %s" % args.out)

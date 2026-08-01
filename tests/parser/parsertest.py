@@ -156,39 +156,54 @@ def main(argv=None):
         # at module scope, so even an import-time fault in the new module
         # cannot reach a normal two-leg run.
         import zleg
-        zx_work = out / "zx"
-        zx_work.mkdir(parents=True, exist_ok=True)
-        tap = args.zx_tap
-        if tap:
-            sysmess = zleg.load_sysmess(Path(tap).with_suffix(".json"))
-        else:
-            zx_built = zleg.build_tap(built["dsf"], zx_work)
-            tap, sysmess = zx_built["tap"], zx_built["sysmess"]
-        zx_jsonl = out / "zx.jsonl"
-        # more_prompt comes from meta.json (jleg wrote it above, out of
-        # jDAAD's own getMessage) so the two legs filter the SAME string;
-        # sysmess supplies the SM2..SM5 prompt set, which only the ZX leg
-        # needs because only it cannot pin flag 42.
-        zleg.play(zx_work, args.script, zx_jsonl, tap=tap, port=args.zx_port,
-                  more_prompt=nleg.load_more_prompt(out), sysmess=sysmess)
-        zx = compare.load_jsonl(zx_jsonl)
-        # The ORIGINAL is the reference here, not NextDAAD: this leg
-        # exists to say what the lineage does, and a difference is
-        # NextDAAD deviating from it (or a known, documented reason why).
-        # The Next turns are copied, never mutated: `nd` is the list the
-        # jDAAD comparison above already used, and its findings are
-        # written by then, but a shared-list edit here would still be a
-        # trap for anyone who later moves this block.
-        nd_zx = [dict(t, text=zleg.trim_prompt_tail(t["text"], sysmess))
-                 for t in nd]
-        zres = compare.compare_runs_text(zx, nd_zx)
-        zleg.write_text_report(zres["divergences"], "ZX 48K original",
-                               "NextDAAD", out / "zx-report.md",
-                               out / "zx-findings.json",
-                               turns=zres["turns_compared"])
-        print("ZX leg: %d turn(s) compared, %d text divergence(s) -> %s"
-              % (zres["turns_compared"], len(zres["divergences"]),
-                 out / "zx-report.md"))
+        try:
+            zx_work = out / "zx"
+            zx_work.mkdir(parents=True, exist_ok=True)
+            tap, zx_charset = args.zx_tap, None
+            if tap:
+                sysmess = zleg.load_sysmess(Path(tap).with_suffix(".json"))
+            else:
+                zx_built = zleg.build_tap(built["dsf"], zx_work)
+                tap, sysmess = zx_built["tap"], zx_built["sysmess"]
+                # Decode with the font the TAP was BUILT with - the work
+                # directory holds no .CHR to re-resolve against, so a
+                # game shipping its own font would otherwise be read with
+                # the stock one. See zleg.play_charset.
+                zx_charset = zx_built["charset"]
+            zx_jsonl = out / "zx.jsonl"
+            # more_prompt comes from meta.json (jleg wrote it above, out
+            # of jDAAD's own getMessage) so the two legs filter the SAME
+            # string; sysmess supplies the SM2..SM5 prompt set, which
+            # only the ZX leg needs because only it cannot pin flag 42.
+            zleg.play(args.script, zx_jsonl, tap=tap, port=args.zx_port,
+                      charset=zleg.play_charset(None, zx_charset, tap),
+                      more_prompt=nleg.load_more_prompt(out), sysmess=sysmess)
+            zx = compare.load_jsonl(zx_jsonl)
+            # The ORIGINAL is the reference here, not NextDAAD: this leg
+            # exists to say what the lineage does, and a difference is
+            # NextDAAD deviating from it (or a known, documented reason
+            # why). The Next turns are copied, never mutated: `nd` is the
+            # list the jDAAD comparison above already used, and its
+            # findings are written by then, but a shared-list edit here
+            # would still be a trap for anyone who later moves this block.
+            nd_zx = [dict(t, text=zleg.trim_prompt_tail(t["text"], sysmess))
+                     for t in nd]
+            zres = compare.compare_runs_text(zx, nd_zx)
+            zleg.write_text_report(zres["divergences"], "ZX 48K original",
+                                   "NextDAAD", out / "zx-report.md",
+                                   out / "zx-findings.json",
+                                   turns=zres["turns_compared"])
+            print("ZX leg: %d turn(s) compared, %d text divergence(s) -> %s"
+                  % (zres["turns_compared"], len(zres["divergences"]),
+                     out / "zx-report.md"))
+        except Exception as exc:
+            # Advisory means advisory. findings.json and report.md are
+            # already written and the two-leg verdict already stands; a
+            # ZX build or emulator failure must not turn a completed run
+            # into a crash and take the exit status with it. Reported
+            # loudly, and the ZX outputs are simply absent.
+            print("ZX leg FAILED (advisory - the two-leg result above "
+                  "stands): %s: %s" % (type(exc).__name__, exc))
 
     # Exit status stays the two-leg verdict even with --zx. The ZX
     # differential is advisory coverage - it legitimately differs

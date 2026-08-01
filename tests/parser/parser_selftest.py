@@ -2267,24 +2267,26 @@ def zb6_pending_prompt_is_trimmed_from_both_sides():
     The ZX leg cannot pin flag 42 (no symbols for the original), so it
     drops the pending prompt from its own captures; trim_prompt_tail
     does the same to the Next side for the ZX comparison only.
+
+    The strings here are INVENTED, not lifted from any corpus game -
+    these cases test the mechanics, and game text does not belong in the
+    repository.
     """
     import zleg
-    sysmess = {2: "I await your command.", 3: "I'm ready for your "
-               "instructions. ", 4: "Tell me what to do.",
-               5: "Give me your command.", 32: "More...", 33: "\r>"}
+    sysmess = {2: "Orders, captain?", 3: "Your move. ",
+               4: "Well, what now then?", 5: "Speak.",
+               32: "More...", 33: "\r>"}
     assert zleg.input_row_text(sysmess) == ">"
     assert zleg.input_row_text({33: "#n>"}) == ">"
-    text = "The coachman blocks my path..\nI await your command.\n>"
-    assert zleg.trim_prompt_tail(text, sysmess) == \
-        "The coachman blocks my path.."
+    text = "A shut gate bars the way..\nOrders, captain?\n>"
+    assert zleg.trim_prompt_tail(text, sysmess) == "A shut gate bars the way.."
     # a different draw of the same random prompt, same result
-    text4 = "The coachman blocks my path..\nTell me what to do.\n>"
-    assert zleg.trim_prompt_tail(text4, sysmess) == \
-        "The coachman blocks my path.."
+    text4 = "A shut gate bars the way..\nSpeak.\n>"
+    assert zleg.trim_prompt_tail(text4, sysmess) == "A shut gate bars the way.."
     # the same words EARLIER in the turn are the game's own prose
-    keep = "I await your command.\nHe waits.\nTell me what to do.\n>"
+    keep = "Orders, captain?\nThe sentry waits.\nSpeak.\n>"
     assert zleg.trim_prompt_tail(keep, sysmess) == \
-        "I await your command.\nHe waits."
+        "Orders, captain?\nThe sentry waits."
     # with no system messages nothing is trimmed
     assert zleg.trim_prompt_tail(text, {}) == text
 
@@ -2293,13 +2295,50 @@ def zb6_pending_prompt_is_trimmed_from_both_sides():
 def zb6_emit_text_drops_the_prompt_but_keeps_history():
     """`pre` keeps the prompt rows on purpose - see zleg._emit_text."""
     import zleg
-    prompts = {"I await your command."}
-    pre = ["You are here.", "I await your command.", ">E_"]
-    post = ["You are here.", "I await your command.", ">E",
-            "You go east.", "I await your command.", ">_"]
+    prompts = {"Orders, captain?"}
+    pre = ["You are here.", "Orders, captain?", ">E_"]
+    post = ["You are here.", "Orders, captain?", ">E",
+            "You go east.", "Orders, captain?", ">_"]
     text, redraw = zleg._emit_text(pre, [post], True, prompts)
     assert text == ["You go east."], text
     assert redraw is False
+
+
+@case
+def zb6_play_decodes_with_the_font_the_tap_was_built_with():
+    """A game's own .CHR must survive into the DECODER, not just the build.
+
+    build_tap resolves the charset against the DSF's directory and hands
+    it to daadmaker; the TAP then lands in a work directory containing no
+    .CHR at all. Re-resolving there silently falls back to the stock
+    AD8x6.CHR, and a game shipping a redefined 6-pixel font is then built
+    with one font and read with another - a silent mis-decode that
+    surfaces as text divergences. Both call sites go through
+    play_charset for exactly this reason.
+    """
+    import tempfile
+    import zleg
+    import zscreen
+    with tempfile.TemporaryDirectory() as tmp:
+        gamedir = Path(tmp) / "game"
+        workdir = Path(tmp) / "work"
+        gamedir.mkdir()
+        workdir.mkdir()
+        own = gamedir / "AD8x6.CHR"
+        own.write_bytes(Path(zscreen.DEFAULT_CHARSET).read_bytes())
+        tap = workdir / "GAME.TAP"          # work dir holds no .CHR
+        tap.write_bytes(b"")
+
+        # what build_tap would have picked, from the game's own directory
+        built = zscreen.resolve_charset(gamedir / "game.dsf")
+        assert built == own, built
+        # ...and it is what play must decode with, not the stock font
+        assert zleg.play_charset(None, built, tap) == own
+        assert zleg.play_charset(None, None, tap) == zscreen.DEFAULT_CHARSET
+        # an explicit --charset still beats both
+        other = gamedir / "OTHER.CHR"
+        other.write_bytes(b"\0" * 1024)
+        assert zleg.play_charset(other, built, tap) == other
 
 
 @case
