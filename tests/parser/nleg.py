@@ -37,45 +37,114 @@ for the dismiss keypress, wrapLock reads 0. moreLock==1 AND wrapLock==1
 together, then, is a positive "the interpreter is genuinely ready, do not
 press anything" signal - not an absence-of-signal inference.
 
-A third wait state remains invisible to both locks: ANYKEY-style prompts
+A third wait state is invisible to both locks: ANYKEY-style prompts
 (src/overlay0.asm h_anykey calls wait_key_timeout directly, setting
 neither lock - wait_key_timeout itself only polls the keyboard port and
-stores no marker of its own). There is no memory signal for this state at
-all, so it is handled by a HEURISTIC, not a positive read: if the tilemap
-is unchanged for ANYKEY_STATIC_POLLS consecutive polls while the
-interpreter is still not READY, that is treated as a blocked ANYKEY-style
-wait. Turns where this heuristic fires are marked anykey_heuristic=True in
-the jsonl output so a later divergence on that turn can be judged in that
-light (see nleg.play).
+stores no marker of its own). Its SCREEN is now captured deterministically
+along with every MORE page (see the next section), but WHICH of the two
+kinds of wait fired cannot be read from a free-running breakpoint, so
+DISMISSING it is still decided by a heuristic: if the tilemap is unchanged
+for ANYKEY_STATIC_POLLS consecutive polls while the interpreter is still
+not READY, that is treated as a blocked ANYKEY-style wait and a key is
+sent. Turns where that happens are marked anykey_heuristic=True in the
+jsonl output so a later divergence on that turn can be judged in that
+light (see nleg.play). Two waits reach neither the locks NOR the pager's
+park point at all - wait_key_reset's $0C escape and overlay2's direct
+wait_key call - and the same heuristic is the only thing that finds them.
 
-KNOWN RESIDUAL - a "More..." page can be missed entirely, and this is NOT
-closed. wait_key (src/print.asm) is press-then-release: if a key is
-ALREADY down when it runs, it falls straight through to its release wait
-and returns. The Enter that submitted the command is held for
-KEY_DELAY_MS (150ms, zrcp.py), and a turn's output can reach the pager
-well inside that window - so the page is dismissed by the harness's own
-still-held keystroke, and with SETTLE_POLL_S at 100ms moreLock can go
-1 -> 0 between two polls with nothing observed. When that happens the page
-is never appended to `pages` and everything on it scrolls away
-uncaptured, which is a LARGER text loss than the prompt row the SM32
-filter deals with. It was seen live on tests/condacts.dsf turn 11 (two
-runs captured the page, a third did not, with identical interpreter
-state), and Dracula pages too, so this is not theoretical.
+PAGE CAPTURE IS BREAKPOINT-DRIVEN, NOT POLLED (Wave C item 4). Pages used
+to be captured the same way everything else is - by polling moreLock at
+SETTLE_POLL_S - and that lost whole pages. wait_key (src/print.asm) is
+press-then-release: if a key is ALREADY down when it runs, it falls
+straight through to its release wait and returns. The Enter that
+submitted the command is held for KEY_DELAY_MS (150ms, zrcp.py) and a
+turn's output can reach the pager well inside that window, so the page
+was dismissed by the harness's own still-held keystroke and moreLock went
+1 -> 0 between two polls with nothing observed. The page was then never
+appended to `pages` and everything on it scrolled away uncaptured. Seen
+live on tests/condacts.dsf turn 11 (two runs captured the page, a third
+did not, with identical interpreter state) and on Rabenstein turn 0,
+whose findings[0]["actual"] was the one field that varied run to run.
 
-What has been done about it: the SM32 filter (see load_more_prompt) and
-blank_prompt_rows remove the PROMPT ROW from both the emitted text and
-the ambiguity verdict, so the common case - page captured vs page
-dismissed, differing only by that one row - no longer perturbs
-findings.json at all. That is what made the reliability triples
-byte-identical. It does NOT cover a page whose OTHER content is lost.
+What replaces it: the EMULATOR captures the page, at the instruction
+where the pager parks, before anything can dismiss it.
 
-What would actually close it: capture pages from a breakpoint on
-prn_more_check rather than by polling two lock bytes, which needs the
-turn loop restructured around cpu-step/run instead of free-running
-execution. That is an architecture change, not a repair, and is
-deliberately not attempted here. Until then, treat a text divergence on a
-turn where the two legs' output lengths differ wildly as suspect, and
-re-run before promoting it.
+  * The park point is WAIT_KEY_TIMEOUT (src/print.asm, exported in
+    build/nextdaad.map - no src/ change was needed). It is reached from
+    exactly two places in the whole interpreter, confirmed by grepping
+    every call site: prn_more_check with E=$02, immediately after the
+    SM32 prompt has been printed and wrapLock released, and h_anykey
+    with E=$04. At that instruction the page is COMPLETE on screen -
+    prompt row included - and the interpreter is about to block. There
+    is no earlier deterministic point: moreLock goes up at the TOP of
+    prn_more_check, before SM32 is even printed.
+  * Two ZRCP breakpoints share that one PC condition (both are accepted
+    and both are taken by ZEsarUX's PC=XXXX optimizer - confirmed live
+    via get-breakpoints-optimized):
+        PAGE_BP_INDEX       action save-binary <workdir>/nleg-page.bin
+        PAGE_COUNT_BP_INDEX action let var0=var0+1
+    The lower index runs first, so by the time the counter moves the
+    dump on disk is already the page that moved it.
+  * settle() reads the counter (`evaluate var0`) once per poll. A counter
+    that moved means a page fired since the last poll, WHETHER OR NOT the
+    interpreter is still parked on it, and the dump file holds that
+    page's screen exactly as it stood at the park. Nothing is captured
+    from the live screen any more, so the poll interval no longer decides
+    what the transcript contains.
+
+Why an emulator-side capture rather than "break, capture, send the key,
+resume": in THIS configuration the emulator cannot be stopped by a
+breakpoint at all. Confirmed live against ZEsarUX 13.0 with `--vo null`:
+a breakpoint whose action is the default menu/break answers "Can not open
+menu: this video driver does not support menu." on every hit and
+execution CONTINUES - the CPU never pauses and the ZRCP prompt never
+changes. The only thing that stops on a breakpoint is `run` inside
+cpu-step mode, which would mean driving every turn as a chain of bounded
+`run <opcodes>` chunks: a different execution model (emulated time
+decoupled from wall clock) for the whole harness, re-timing every
+existing replay. The action-based capture gets the same guarantee - the
+page's content is recorded before any dismissal can happen - while
+leaving the free-running turn loop, and therefore the existing replay
+baselines, exactly as they were.
+
+Lifecycle: armed ONCE, right after _seed_rng_via_breakpoint, with the
+machine briefly back in cpu-step so no page can fire in the arming
+window; never re-armed per turn; never disarmed. The seed trap's own
+index is retired with disable-breakpoint (not disable-breakpoints, which
+is the global switch) so re-enabling for the pager cannot re-arm it.
+The fire counter is cumulative across the whole session and lives on
+NextLeg, so a page that fires during turn N is never re-counted in turn
+N+1. Nested pages need nothing special: each fire moves the counter by
+one and settle() loops until the counter stops moving and the locks say
+READY. A counter that moves by MORE than one between two polls means one
+page's dump was overwritten by the next before it could be read, and that
+raises rather than silently truncating - it cannot happen while the
+harness sends at most one keystroke per poll (a page can only be
+auto-dismissed by a still-held harness key, and wait_key needs a FRESH
+press for the page after it), but the assertion is what says so.
+
+Timeouts: the disarm-every-poll (see disarm_input_timeout) is unchanged
+and still covers the parked state, because the harness keeps polling
+while parked. The breakpoint fires BEFORE wait_key_timeout recomputes
+inpTOFrames from flag 48, so disarming at the fire would be pointless;
+what actually keeps a page from timing out is the same per-poll zeroing
+as before, which underflows the pager's countdown to 65535 frames.
+
+The jDAAD leg has no analogous race and needs no equivalent. jleg.js does
+not photograph a screen at all: jDAAD is a synchronous JS interpreter and
+every character it prints goes through sandbox.__out into a STRING that
+accumulates for the whole turn, so nothing can scroll away between
+observations. Its `waiting()` reads jDAAD's own inMORE/inANYKEY flags
+directly in the same thread that would clear them, and no emulated key
+can arrive except from the `key('Enter')` that settle() itself calls. Its
+model is already deterministic.
+
+Still true, and still the reason the SM32 filter exists: NextDAAD prints
+SM32 when it pages and jDAAD prints nothing at all, so the prompt row
+exists on one leg and can never exist on the other. load_more_prompt and
+blank_prompt_rows remove it from both the emitted text and the ambiguity
+verdict. That is a LEG DIFFERENCE, not a race, and it is unaffected by
+any of the above.
 
 Script entry forms - each is a LOGICAL instruction; each leg (this file
 and jleg.js) realises it the way its own input model requires:
@@ -104,6 +173,7 @@ and jleg.js) realises it the way its own input model requires:
              so the per-leg split is gone and both legs send key+Enter.
 """
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -149,14 +219,15 @@ ANYKEY_STATIC_POLLS = 4
 # run reliably stopped boot-settle at "Are you sure?" every time, but
 # inside the full test suite's timing it sometimes stopped many checks
 # earlier instead, at one of those transient gaps (a false positive, not
-# a race in the emulator itself). QUIT's "Are you sure?" (the fixture's
-# first genuine keypress wait) does not resolve on its own no matter how
-# long boot-settle waits - only the script's own "?" answer, sent
-# afterward as the first scripted turn, resolves it - so ANY threshold
-# comfortably above the longest plausible timed-condact gap will always
-# eventually and correctly land there. 3 seconds (30 polls) was chosen
-# with a wide safety margin over the ~0.1-0.3s condact delays actually
-# present in this fixture, while staying well under SETTLE_TIMEOUT_S.
+# a race in the emulator itself). 3 seconds (30 polls) was chosen with a
+# wide safety margin over the ~0.1-0.3s condact delays actually present
+# in this fixture, while staying well under SETTLE_TIMEOUT_S.
+#
+# It applies to a screen NO pager fire has accounted for. Once the
+# emulator's page-capture breakpoint has announced a wait and the screen
+# has not moved since, the wait is known to be real and settle() uses the
+# ordinary ANYKEY_STATIC_POLLS instead - a false positive is impossible
+# there, and Rabenstein's intro would otherwise cost 3 seconds per pause.
 BOOT_ANYKEY_STATIC_POLLS = 30
 
 # ZRCP breakpoint index used to trap eng_init_game's RNG seed write (see
@@ -198,6 +269,35 @@ SEED_BP_INDEX = 1
 # in stage_sd() below, once, at the source, rather than raising this
 # number (which was tried first and correctly did not help).
 SEED_RUN_DEADLINE_S = 60.0
+
+# Breakpoint-driven page capture (see the module docstring). Two indices
+# share ONE condition, PC=WAIT_KEY_TIMEOUT; the lower one writes the dump
+# so the file is on disk before the counter that announces it moves.
+PAGE_BP_INDEX = 2
+PAGE_COUNT_BP_INDEX = 3
+# ZEsarUX user variable the counting breakpoint increments. var0..var9
+# exist for exactly this; nothing else in this harness uses any of them.
+PAGE_COUNT_VAR = "var0"
+# Written by the emulator itself, inside the work directory, once per
+# page. Not a temp file: when a run is being diagnosed it is the last
+# page verbatim, and it is in the same place as every other artefact.
+PAGE_DUMP_NAME = "nleg-page.bin"
+# The interpreter's pager park point. Both call sites of this routine are
+# genuine "the screen is finished and we are about to block" states -
+# prn_more_check (E=$02) and h_anykey (E=$04).
+PAGE_BP_SYMBOL = "WAIT_KEY_TIMEOUT"
+
+# Set NLEG_DEBUG=1 (or nleg.DEBUG = True) to have settle() report every
+# decision it takes: pages captured, keys pressed, and where a settle
+# stopped. Those are the only places this leg does anything the script
+# did not ask for, so they are the first thing to look at when a replay
+# stops reproducing. Same switch as the ZX leg's ZLEG_DEBUG.
+DEBUG = bool(os.environ.get("NLEG_DEBUG"))
+
+
+def _dbg(fmt, *args):
+    if DEBUG:
+        print("nleg: " + (fmt % args if args else fmt), flush=True)
 
 
 def stage_sd(workdir, nex_path):
@@ -367,11 +467,109 @@ def _seed_rng_via_breakpoint(z, syms, nex_path):
 
 
 class NextLeg:
-    def __init__(self, z, syms, obj_count, obj_size):
+    def __init__(self, z, syms, obj_count, obj_size, page_dump=None):
         self.z = z
         self.syms = syms
         self.obj_count = obj_count
         self.obj_size = obj_size
+        # Where the emulator writes each captured page, and how many
+        # pages it has written so far. Both belong to the SESSION, not to
+        # a turn: the counter is cumulative, so a page that fires late in
+        # turn N and is only observed on turn N+1's first poll is still
+        # counted exactly once.
+        self.page_dump = Path(page_dump) if page_dump is not None else None
+        self.seen_fires = 0
+
+    # ---- breakpoint-driven page capture (see the module docstring) --------
+
+    def arm_page_capture(self):
+        """Arm the two pager breakpoints and take the counter baseline.
+
+        Called ONCE, straight after _seed_rng_via_breakpoint, with the
+        machine put briefly back into cpu-step: arming takes a few ZRCP
+        round trips, and the condacts fixture reaches its first MORE page
+        within a few hundred milliseconds of boot, so arming while the
+        interpreter free-runs would race the very first page.
+
+        The RNG-seed trap is retired by INDEX. enable_breakpoints() is a
+        global switch and _seed_rng_via_breakpoint leaves that switch off
+        with its own index still holding PC=SEEDOK; turning the switch
+        back on for the pager would re-arm it, and eng_init_game runs
+        again on a restart (EXIT n).
+        """
+        if self.page_dump is None:
+            raise RuntimeError(
+                "arm_page_capture needs a page_dump path - without it there "
+                "is nowhere for the emulator to write the captured page and "
+                "the whole point of the breakpoint is lost")
+        dump = self.page_dump.resolve()
+        if any(ch.isspace() for ch in str(dump)):
+            raise RuntimeError(
+                "the page dump path %r contains whitespace. ZRCP splits "
+                "save-binary's arguments on spaces, so the emulator would "
+                "write to a truncated path (or refuse) and every page would "
+                "be captured as whatever stale bytes were there before. "
+                "Use a work directory with no spaces in its path." % str(dump))
+        if dump.exists():
+            # A dump left by an earlier run must never be mistaken for
+            # this run's first page.
+            dump.unlink()
+
+        self.z.enter_cpu_step()
+        try:
+            self.z.enable_breakpoints()
+            self.z.disable_breakpoint(SEED_BP_INDEX)
+            cond = zrcp.pc_breakpoint_condition(self.syms[PAGE_BP_SYMBOL])
+            self.z.set_breakpoint(PAGE_BP_INDEX, cond)
+            self.z.set_breakpoint_action(
+                PAGE_BP_INDEX,
+                "save-binary %s %d %d" % (dump, TM_MAP, GRID_BYTES))
+            self.z.set_breakpoint(PAGE_COUNT_BP_INDEX, cond)
+            self.z.set_breakpoint_action(
+                PAGE_COUNT_BP_INDEX,
+                "let %s=%s+1" % (PAGE_COUNT_VAR, PAGE_COUNT_VAR))
+            # Baseline rather than reset: ZRCP has no "set variable"
+            # command outside a breakpoint action, and a baseline is
+            # equivalent - only the DELTA is ever used.
+            self.seen_fires = self.page_fires()
+        finally:
+            self.z.exit_cpu_step()
+
+    def page_fires(self):
+        """Cumulative number of times the pager park point has been
+        reached, as counted by the emulator itself.
+
+        A non-numeric reply means the counting breakpoint is not doing
+        what this module thinks it is, and settle() would then sit out its
+        whole timeout on every page instead of capturing it - so this
+        raises rather than defaulting to zero.
+        """
+        reply = self.z.evaluate(PAGE_COUNT_VAR).strip()
+        try:
+            return int(reply, 0)
+        except ValueError:
+            raise RuntimeError(
+                "`evaluate %s` answered %r, not a number - the page-capture "
+                "breakpoint (%s) is not counting, so MORE pages would be "
+                "waited out instead of captured"
+                % (PAGE_COUNT_VAR, reply, PAGE_BP_SYMBOL))
+
+    def captured_page(self):
+        """Decode the page the emulator dumped at the park point."""
+        try:
+            data = self.page_dump.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(
+                "the page counter moved but %s could not be read (%s) - the "
+                "save-binary breakpoint action did not produce a dump"
+                % (self.page_dump, exc))
+        if len(data) != GRID_BYTES:
+            raise RuntimeError(
+                "%s holds %d bytes, expected %d - a partial or stale page "
+                "dump would be decoded as screen content"
+                % (self.page_dump, len(data), GRID_BYTES))
+        rows, _attrs = tilemap.decode(data)
+        return rows
 
     def grid_rows(self):
         raw = self.z.read_memory(TM_MAP, GRID_BYTES)
@@ -472,40 +670,91 @@ class NextLeg:
         """
         self.z.write_memory(self.syms["INPTOFRAMES"], bytes([0, 0]))
 
-    def settle(self, pages, boot=False):
-        """Advance through MORE pages, capturing each one before it
-        scrolls away, until the interpreter is genuinely ready for the
-        next command - a POSITIVE stop condition (moreLock==1 AND
-        wrapLock==1), never inferred from the mere absence of a signal.
-        See the module docstring for why the earlier moreLock-only design
-        was wrong and how the pair fixes it.
+    def wait_for_input_wait_to_end(self):
+        """Block until the interpreter is no longer parked in a line read.
 
-        Returns True if the ANYKEY heuristic (see module docstring) fired
-        at least once while settling this turn, so the caller can record
-        it against the turn.
+        Only needed by a turn that sends NO keys (the allow_timeout
+        wait-turn, see load_script). Every other turn reaches settle()
+        having just pushed Enter through zrcp.enter()'s own real settle
+        sleep, so the editor has demonstrably moved on before the first
+        poll. A wait-turn pushes nothing, so settle() would find the
+        editor still parked - which is its READY condition - and return
+        instantly, ending the turn before the timeout it exists to
+        observe ever fires, and feeding the NEXT turn's keys into this
+        turn's prompt.
+
+        Deliberately does NOT disarm the countdown: the countdown is the
+        only thing that can end this wait.
+        """
+        deadline = time.time() + SETTLE_TIMEOUT_S
+        while time.time() < deadline:
+            more, wrap = self.more_state()
+            if not (more and wrap):
+                return
+            time.sleep(SETTLE_POLL_S)
+        raise TimeoutError(
+            "a wait-turn's input timeout never fired: the interpreter was "
+            "still parked in a line read %.0fs later. Either the fixture "
+            "did not arm TIME before this turn's read, or something is "
+            "still zeroing inpTOFrames" % SETTLE_TIMEOUT_S)
+
+    def settle(self, pages, boot=False, allow_timeout=False):
+        """Advance through MORE pages, each one already captured by the
+        emulator at the instruction where the pager parked, until the
+        interpreter is genuinely ready for the next command - a POSITIVE
+        stop condition (moreLock==1 AND wrapLock==1), never inferred from
+        the mere absence of a signal. See the module docstring for why the
+        earlier moreLock-only design was wrong and how the pair fixes it,
+        and for why pages are read from the emulator's own dump rather
+        than off the live screen.
+
+        Returns True if a keypress wait that sets NEITHER lock (ANYKEY and
+        friends) was walked through while settling this turn, so the
+        caller can record it against the turn.
+
+        `allow_timeout`: leave the interpreter's input-timeout countdown
+        alone for this settle instead of zeroing it on every poll, so a
+        fixture that ARMS a timeout (TIME n m) can have it actually
+        expire. Off by default and must stay off for every ordinary turn -
+        jDAAD cannot time out at all (jleg.js's sandbox stubs setTimeout
+        to a no-op), so an expiry on this leg alone is a
+        harness-manufactured divergence unless the script says out loud
+        that this turn is about the timeout and the reference leg is
+        given matching treatment. See play()'s handling of the
+        "allow_timeout" directive.
 
         `boot`: True only for the ONE-TIME settle before the first
-        scripted command (see nleg.play). During boot, the ANYKEY-style
-        static-screen heuristic is NOT auto-dismissed by pressing Enter -
-        it is treated as the boot-settle's own stopping point instead.
-        This matters for a confirmed, genuine architectural difference
-        between the two interpreters: NextDAAD's QUIT confirmation
-        (src/overlay0.asm `confirm`, via `key_wait_char`) sets neither
-        lock - exactly like an ordinary "Press any key" pause - but
-        jDAAD's equivalent (jdaad.js `_QUIT`, via `getPlayerOrders()`) is
-        a full LINE read, the SAME mechanism as its main command loop.
-        jleg.js's own boot settle (`waiting()`, which checks only
-        inANYKEY/inMORE) therefore does NOT auto-dismiss jDAAD's QUIT
-        prompt either - it stops there, leaving it for the script's first
-        real command to answer. Auto-dismissing NextDAAD's side of that
-        SAME prompt during boot (confirmed live) has NextDAAD consume it
-        with a blank keypress while jDAAD leaves it open - a genuine
-        turn-0 misalignment, not a bug in either interpreter. Per-turn
-        settling (boot=False, the default) is unaffected: MID-TURN
-        "Press any key"/"More..." pauses are still auto-dismissed exactly
-        as before, matching jDAAD's own per-turn settle(), which also
-        auto-dismisses those (both `inMORE` and `inANYKEY` there DO stop
-        `waiting()`'s loop and get a key pressed).
+        scripted command (see nleg.play). Its ONLY effect now is a larger
+        static-screen threshold (BOOT_ANYKEY_STATIC_POLLS) for the
+        backstop, because a fixture's timed condacts can make the screen
+        look static for the ordinary threshold's worth of time during a
+        boot-time self-test.
+
+        HISTORY, because the boot settle used to STOP on a lockless wait
+        instead of dismissing it, and that is no longer right. The reason
+        it stopped was NextDAAD's QUIT confirmation: it used to take a
+        single raw keypress, setting neither lock, so it looked exactly
+        like a "Press any key" pause, while jDAAD's `_QUIT` read a full
+        line - so dismissing it here consumed a prompt on one leg that
+        the other left open. SP16 Task 5 settled that (docs/parser-bugs.md
+        entry 4): NextDAAD's confirm_read reads a LINE too, and takes BOTH
+        locks while it does, so the QUIT prompt is now a POSITIVE READY
+        stop and cannot reach the static backstop at all.
+
+        Stopping short then became the harmful option, and Rabenstein is
+        the case that proves it: its intro ends on a genuine ANYKEY, so
+        the boot settle parked there while jleg.js's own boot settle -
+        which presses Enter for inANYKEY and inMORE alike - had already
+        run jDAAD's intro out to the command prompt. The first scripted
+        command was then TYPED INTO THE ANYKEY: its first character
+        dismissed the pause, the intro resumed printing while the
+        remaining characters were still going in, and how much of it
+        landed before `pre` was captured decided the turn's transcript.
+        That was the last run-to-run wobble in the Rabenstein replay,
+        left over after the page capture itself was made deterministic.
+        Boot now advances to the same positive READY state jleg.js
+        advances to, so the first turn is typed into an input editor on
+        both legs.
 
         Raises TimeoutError naming the last observed (moreLock, wrapLock)
         pair and whether the screen was static, rather than returning
@@ -518,6 +767,9 @@ class NextLeg:
         last_grid = None
         static_polls = 0
         last_more, last_wrap = None, None
+        # The screen of the most recent pager fire this settle could not
+        # attribute to a parked MORE page - see the fire branch below.
+        captured_wait = None
         while time.time() < deadline:
             # Stop whatever timeout the interpreter may have just armed,
             # on EVERY poll and before anything else. Three waits arm it
@@ -527,7 +779,60 @@ class NextLeg:
             # unconditionally clearing it once per poll is both cheaper
             # and more complete than trying to work out which wait (if
             # any) is currently running. See disarm_input_timeout.
-            self.disarm_input_timeout()
+            if not allow_timeout:
+                self.disarm_input_timeout()
+            # The page counter FIRST, ahead of the locks. A page fires,
+            # and is captured by the emulator, before either lock can say
+            # anything useful: moreLock is already up while SM32 is still
+            # being printed, and it can be down again by the next poll if
+            # a still-held harness key dismissed the page. The counter is
+            # the only signal that is true exactly once per page.
+            fires = self.page_fires()
+            if fires > self.seen_fires:
+                delta = fires - self.seen_fires
+                self.seen_fires = fires
+                if delta > 1:
+                    raise RuntimeError(
+                        "%d pager waits fired between two polls, but the "
+                        "emulator's dump only holds the last one - %d page(s) "
+                        "of text were lost. A page can normally only be "
+                        "auto-dismissed by a harness key that is still held "
+                        "(wait_key needs a FRESH press for the page after "
+                        "it), so more than one per poll means either a "
+                        "timeout is expiring unattended or the poll interval "
+                        "has grown past a whole page's worth of output"
+                        % (delta, delta - 1))
+                page = self.captured_page()
+                more, wrap = self.more_state()
+                last_more, last_wrap = more, wrap
+                pages.append(page)
+                _dbg("page %d captured (moreLock=%d wrapLock=%d)%s",
+                     fires, more, wrap, "" if (more and not wrap)
+                     else " - already dismissed or lockless wait")
+                if more and not wrap:
+                    # Still parked on the page: dismiss it ourselves.
+                    self.z.enter(wait=0.4)
+                    last_grid = None
+                    static_polls = 0
+                    captured_wait = None
+                else:
+                    # Press NOTHING. Either the page was already
+                    # dismissed by a harness key that was still held (the
+                    # interpreter has moved on and a key now would submit
+                    # an empty command line and burn a turn), or this
+                    # fire is h_anykey's, which sets no lock at all.
+                    # Those two are indistinguishable from here: the
+                    # register that tells them apart (E, $02 vs $04) is
+                    # readable only when the CPU is stopped, and a
+                    # free-running breakpoint cannot stop it - see the
+                    # module docstring. A genuine ANYKEY-class wait is
+                    # still found, and dismissed, by the static-screen
+                    # backstop below, exactly as it was before pages were
+                    # captured this way; remembering the page here just
+                    # stops that backstop appending the same screen a
+                    # second time.
+                    captured_wait = page
+                continue
             more, wrap = self.more_state()
             last_more, last_wrap = more, wrap
             if more and wrap:
@@ -540,35 +845,53 @@ class NextLeg:
                 # between polls - see disarm_input_timeout), but leaving
                 # the turn with a live countdown for no reason is the
                 # kind of gap that only shows up later, so close it.
-                self.disarm_input_timeout()
+                if not allow_timeout:
+                    self.disarm_input_timeout()
+                _dbg("settle READY after %d page(s)%s", len(pages),
+                     " [boot]" if boot else "")
                 return anykey_heuristic         # READY - press nothing.
-            cur = self.grid_rows()
             if more:
-                # moreLock set, wrapLock clear: a genuine MORE page.
-                # Capture it BEFORE advancing, or the text scrolls away
-                # and is lost forever.
-                pages.append(cur)
-                self.z.enter(wait=0.4)
-                last_grid = None
-                static_polls = 0
+                # moreLock up, wrapLock down, and the counter has not
+                # moved: prn_more_check has taken the lock but has not
+                # reached the park point yet - SM32 is still going onto
+                # the screen. Deliberately capture NOTHING here. This is
+                # the exact state the old polled design mistook for "a
+                # complete page", and reading the screen now would put a
+                # half-drawn page into the transcript.
+                time.sleep(SETTLE_POLL_S)
                 continue
-            # Neither lock set: either still mid-execution, or parked on
-            # an ANYKEY-style wait that sets no lock at all (heuristic -
-            # see module docstring).
+            # Neither lock set, and no page fired: either still
+            # mid-execution, or parked on a wait that reaches neither the
+            # locks nor WAIT_KEY_TIMEOUT. Only two such waits exist
+            # (wait_key_reset's $0C escape and overlay2's direct wait_key
+            # call), and neither announces itself, so they keep the
+            # static-screen heuristic as a backstop.
+            cur = self.grid_rows()
             if cur == last_grid:
                 static_polls += 1
             else:
                 static_polls = 0
                 last_grid = cur
-            threshold = BOOT_ANYKEY_STATIC_POLLS if boot else ANYKEY_STATIC_POLLS
+            if captured_wait is not None and cur == captured_wait:
+                # A pager fire ALREADY announced this exact screen and
+                # nothing has moved since, so this is a real parked wait,
+                # not a fixture's timed condact looking static. The long
+                # boot threshold exists only for the latter, so it does
+                # not apply here.
+                threshold = ANYKEY_STATIC_POLLS
+            else:
+                threshold = (BOOT_ANYKEY_STATIC_POLLS if boot
+                             else ANYKEY_STATIC_POLLS)
             if static_polls >= threshold:
-                if boot:
-                    # Boot-settle stops HERE rather than dismissing it -
-                    # see the boot= docstring above and
-                    # BOOT_ANYKEY_STATIC_POLLS's own comment for why this
-                    # threshold is much larger than the per-turn one.
-                    return False
-                pages.append(cur)
+                if cur != captured_wait:
+                    # Not the screen an unattributed pager fire already
+                    # put into `pages` (see the fire branch) - so it is a
+                    # wait that reached neither the locks nor
+                    # WAIT_KEY_TIMEOUT, and its screen is only available
+                    # from here.
+                    pages.append(cur)
+                captured_wait = None
+                _dbg("static-screen backstop dismissed a lockless wait")
                 self.z.enter(wait=0.4)
                 anykey_heuristic = True
                 last_grid = None
@@ -674,9 +997,71 @@ def blank_prompt_rows(rows, prompt):
     return [(" " * len(r) if r.strip() == prompt else r) for r in rows]
 
 
+def load_script(script_path):
+    """Read a command script and return one normalised dict per turn.
+
+    A script is a JSON list whose entries are EITHER a plain string (the
+    original form, and still the right one for almost every turn - see
+    the module docstring for "COMMAND"/"!X"/"?X") OR an object:
+
+        {"cmd": "GET LAMP"}                 same as the plain string
+        {"cmd": "", "allow_timeout": true}  type nothing, let the
+                                            interpreter's own input
+                                            timeout expire
+
+    An empty (or null) `cmd` is a turn that sends NO keys at all. It only
+    makes sense together with allow_timeout: something other than a
+    keystroke has to end the wait, and the interpreter's TIME countdown
+    is the only other thing that can.
+
+    `allow_timeout` is opt-in per turn and BOTH legs honour it - jleg.js
+    reads the same field. It exists for fixture checks that are ABOUT the
+    timeout (tests/condacts.dsf check 58 arms `TIME 2 0` and asserts flag
+    49 = 128); everywhere else the harness must keep stopping the clock,
+    because jDAAD cannot time out at all and a one-sided expiry is a
+    harness-manufactured divergence (docs/parser-bugs.md entry 5).
+    """
+    raw = json.loads(Path(script_path).read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError("%s is not a JSON list of turns" % script_path)
+    out = []
+    for i, entry in enumerate(raw):
+        if isinstance(entry, str):
+            out.append({"cmd": entry, "allow_timeout": False})
+            continue
+        if not isinstance(entry, dict):
+            raise ValueError(
+                "%s turn %d is %r - a script entry must be a string or an "
+                "object" % (script_path, i, entry))
+        unknown = set(entry) - {"cmd", "allow_timeout"}
+        if unknown:
+            raise ValueError(
+                "%s turn %d carries unknown key(s) %s. A misspelled "
+                "directive that is silently ignored is worse than a broken "
+                "script: the turn runs with the DEFAULT behaviour and the "
+                "run looks valid" % (script_path, i, sorted(unknown)))
+        cmd = entry.get("cmd") or ""
+        if not isinstance(cmd, str):
+            raise ValueError("%s turn %d: cmd must be a string or null"
+                             % (script_path, i))
+        allow = bool(entry.get("allow_timeout"))
+        if cmd == "" and not allow:
+            raise ValueError(
+                "%s turn %d sends no keys and does not allow a timeout - "
+                "nothing would ever end the wait" % (script_path, i))
+        out.append({"cmd": cmd, "allow_timeout": allow})
+    return out
+
+
+def script_commands(entries):
+    """The command strings of a loaded script, for callers that only want
+    the text (report.build_findings' verb narrowing, for one)."""
+    return [e["cmd"] for e in entries]
+
+
 def play(workdir, script_path, out_path, nex_path, port=10000):
     workdir = Path(workdir)
-    commands = json.loads(Path(script_path).read_text(encoding="utf-8"))
+    script = load_script(script_path)
     more_prompt = load_more_prompt(workdir)
     syms = symbols.load_symbols(ROOT / "build" / "nextdaad.map")
     obj_size = symbols.load_obj_size(ROOT / "src" / "nextdaad.inc")
@@ -697,13 +1082,19 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
     try:
         z = wait_for_port(proc, port)
         try:
-            leg = NextLeg(z, syms, obj_count, obj_size)
+            leg = NextLeg(z, syms, obj_count, obj_size,
+                          page_dump=workdir / PAGE_DUMP_NAME)
 
             # Pin the random stream to the same seed the jDAAD mirror uses -
             # via a boot-time breakpoint, not a plain write (see
             # _seed_rng_via_breakpoint's docstring for why a post-boot write
             # loses the race every time).
             _seed_rng_via_breakpoint(z, syms, sd / "nextdaad.nex")
+
+            # Hand page capture to the emulator before ANY of the game's
+            # output can page - see the module docstring's page-capture
+            # section and arm_page_capture itself.
+            leg.arm_page_capture()
 
             # Settle away everything the interpreter prints before its
             # first genuine input-wait (condacts.dsf's fixture runs a whole
@@ -717,7 +1108,9 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
             leg.settle([], boot=True)
 
             with open(out_path, "w", encoding="utf-8") as fh:
-                for i, cmd in enumerate(commands):
+                for i, entry in enumerate(script):
+                    cmd = entry["cmd"]
+                    allow_timeout = entry["allow_timeout"]
                     # Disable the input timeout for this turn. jleg.js
                     # writes the same flag (48) to the same value with the
                     # same per-turn cadence, so both legs run with
@@ -756,7 +1149,18 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
                     # became ready; repeated here so a turn reached by any
                     # other path (the boot settle's own stopping point,
                     # for one) still starts with the clock stopped.
-                    leg.disarm_input_timeout()
+                    #
+                    # ...unless this turn is explicitly ABOUT the timeout
+                    # (see load_script). Flag 48 above is still written,
+                    # and deliberately: inp_edit reads flag 48 ONCE at
+                    # entry and is already parked by now, so zeroing the
+                    # flag does not stop a countdown that is already
+                    # running - only inpTOFrames does - while leaving the
+                    # write in place keeps flag 48 itself, which IS
+                    # compared, written at the same logical point on both
+                    # legs.
+                    if not allow_timeout:
+                        leg.disarm_input_timeout()
                     # Force the fixed prompt - see PROMPT_SM above. The
                     # jDAAD leg writes the same value before each command.
                     z.write_memory(syms["FLAGS"] + FLAG_PROMPT,
@@ -801,7 +1205,15 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
                     # carrying it forward would reintroduce exactly the
                     # defect above.
                     pages = []
-                    if cmd.startswith("!"):
+                    if cmd == "":
+                        # A turn that types NOTHING: only reachable with
+                        # allow_timeout (load_script refuses it
+                        # otherwise), and the interpreter's own countdown
+                        # is what ends the wait. `pre` anchors before the
+                        # wait, and there is no echo to anchor after.
+                        pre = leg.grid_rows()
+                        leg.wait_for_input_wait_to_end()
+                    elif cmd.startswith("!"):
                         pre = leg.grid_rows()
                         for ch in cmd[1:]:
                             z.send_keys(ch)
@@ -839,7 +1251,8 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
                         z.send_keys(cmd)
                         pre = leg.grid_rows()
                         z.enter()
-                    anykey_heuristic = leg.settle(pages)
+                    anykey_heuristic = leg.settle(
+                        pages, allow_timeout=allow_timeout)
 
                     post = leg.grid_rows()
                     text_rows = []

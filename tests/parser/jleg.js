@@ -41,7 +41,30 @@ const { makeRng } = require('./rngmirror.js');
 const DIR = path.resolve(process.argv[2]);
 const scriptPath = process.argv[3];
 const outPath = process.argv[4];
-const commands = JSON.parse(fs.readFileSync(scriptPath, 'utf8'));
+// A script entry is EITHER a plain string (the three forms above) OR an
+// object {"cmd": "...", "allow_timeout": true} - see nleg.load_script,
+// which is the normative description and validates the same shapes. Both
+// legs must read the same script and honour the same directives, so the
+// normalisation is duplicated rather than one leg quietly ignoring a
+// directive it does not implement.
+const commands = JSON.parse(fs.readFileSync(scriptPath, 'utf8')).map((e, i) => {
+  if (typeof e === 'string') return { cmd: e, allow_timeout: false };
+  if (e === null || typeof e !== 'object' || Array.isArray(e))
+    throw new Error('script turn ' + i + ' is neither a string nor an object');
+  for (const k of Object.keys(e))
+    if (k !== 'cmd' && k !== 'allow_timeout')
+      throw new Error('script turn ' + i + ' carries unknown key "' + k
+        + '" - a misspelled directive that is silently ignored runs the '
+        + 'turn with DEFAULT behaviour and the run still looks valid');
+  const cmd = e.cmd == null ? '' : e.cmd;
+  if (typeof cmd !== 'string')
+    throw new Error('script turn ' + i + ': cmd must be a string or null');
+  const allow = !!e.allow_timeout;
+  if (cmd === '' && !allow)
+    throw new Error('script turn ' + i + ' sends no keys and does not allow '
+      + 'a timeout - nothing would ever end the wait');
+  return { cmd: cmd, allow_timeout: allow };
+});
 
 let out = '';
 const handlers = {};
@@ -293,7 +316,14 @@ function key(k, echo = true) {
 // "More..." pager - pressing Enter at the command prompt would burn a turn and
 // advance the game's timers, corrupting the test.
 const waiting = () => vm.runInContext('(typeof inANYKEY!=="undefined" && inANYKEY) || (typeof inMORE!=="undefined" && inMORE)', sandbox);
-function settle(cap = 400) { let n = 0; while (waiting() && n++ < cap) key('Enter'); return n; }
+// allowTimeout: this turn is one the script marked as being ABOUT the
+// interpreter's TIME countdown, so every wait released here stands in for
+// an expiry rather than a keypress - see forceTimeoutFlag below.
+function settle(cap = 400, allowTimeout = false) {
+  let n = 0;
+  while (waiting() && n++ < cap) { if (allowTimeout) forceTimeoutFlag(); key('Enter'); }
+  return n;
+}
 
 function stateVector() {
   return vm.runInContext(`
@@ -369,9 +399,41 @@ function emit(turn, command, text) {
   lines.push(JSON.stringify({ turn, command, text, flags, objloc, frame: 0 }));
 }
 
+// The jDAAD side of the "allow_timeout" directive.
+//
+// jDAAD has NO input timeout of any kind: the sandbox stubs setTimeout to
+// a no-op, and jdaad.js's readText never counts anything down. NextDAAD
+// does (src/print.asm wait_key_timeout, src/overlay1.asm inp_edit), and a
+// fixture check can be ABOUT that - tests/condacts.dsf check 58 arms
+// `TIME 2 0`, waits, and asserts flag 49 = 128. On a turn marked
+// allow_timeout the Next leg stops zeroing the countdown and lets the
+// expiry happen for real.
+//
+// The reference leg cannot do that, so it is given the SAME OBSERVABLE
+// STATE at the SAME LOGICAL POINT instead: flag 49 bit 7 ("a timeout
+// occurred") is set while jDAAD is parked on the wait the directive names,
+// and the wait is then released with an Enter that carries no text - which
+// is what an expired DAAD read leaves behind (inp_edit's .nopart arm sets
+// bit 7, clears bit 6 and returns an EMPTY line; an empty line makes
+// PARSE pass exactly as a timeout does). Same discipline as the RNG seed
+// and flag 42: force the two legs into the same state at the same point,
+// or mask it on both - never let one leg alone do something the other
+// physically cannot (docs/parser-bugs.md entry 5).
+//
+// What this does NOT do is test jDAAD's timeout, because there is none to
+// test. The differential value of such a turn is one-sided by nature: it
+// is the Next leg's own arm/expiry path being exercised, with the fixture's
+// EQ as the assertion, and the reference leg kept in step so the turns
+// after it still compare.
+const FTIMECTL = 49;
+function forceTimeoutFlag() {
+  vm.runInContext('flags.setFlag(' + FTIMECTL
+    + ', (flags.getFlag(' + FTIMECTL + ') | 0x80) & 0xFF)', sandbox);
+}
+
 settle();
 let turn = 0;
-for (const cmd of commands) {
+for (const { cmd, allow_timeout } of commands) {
   // fPrompt = 2 (SM2). Must not exceed the DDB's system message count or
   // NextDAAD falls through to SM33. The Next leg writes the same value, so
   // both legs take the fixed-prompt path instead of jDAAD's Math.random
@@ -395,9 +457,16 @@ for (const cmd of commands) {
   // sees (e.g. a genuine ANYKEY-style "Press any key" pause). NOT for
   // QUIT's "Are you sure?" - see "?X" below and this file's header
   // comment for why that specifically needs the full-line form instead.
-  if (cmd.startsWith('!')) {
+  if (cmd === '') {
+    // A turn that types nothing: only reachable with allow_timeout (the
+    // script normaliser above refuses it otherwise). Stand in for the
+    // expiry the Next leg is actually waiting out.
+    forceTimeoutFlag();
+    key('Enter');
+    settle(400, allow_timeout);
+  } else if (cmd.startsWith('!')) {
     for (const ch of cmd.slice(1)) key(ch);
-    settle();
+    settle(400, allow_timeout);
   } else if (cmd.startsWith('?')) {
     // "?X" answers a confirmation prompt - see header comment. Both
     // interpreters read a LINE there (entry 4, settled), so this sends
@@ -410,11 +479,11 @@ for (const cmd of commands) {
     // own echo by anchoring after it.
     for (const ch of cmd.slice(1)) key(ch, false);  // suppress echo of the key
     key('Enter');                                   // ...but not the result
-    settle();
+    settle(400, allow_timeout);
   } else {
     for (const ch of cmd) key(ch, false);   // suppress the typed-character echo
     key('Enter');                           // ...but not the turn's output
-    settle();
+    settle(400, allow_timeout);
   }
   emit(turn, cmd, out.replace(/\n{3,}/g, '\n\n'));
   turn++;

@@ -10,7 +10,6 @@ two interpreters agreed on every turn, 1 otherwise.
 Nothing this produces should ever be committed.
 """
 import argparse
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -137,7 +136,9 @@ def main(argv=None):
 
     condacts = symbols.load_condacts(ROOT / "src" / "engine.asm")
     dsf_text = Path(built["dsf"]).read_text(encoding="utf-8", errors="replace")
-    commands = json.loads(Path(args.script).read_text(encoding="utf-8"))
+    # Script entries may be objects carrying per-turn directives (see
+    # nleg.load_script); the report only wants the command text.
+    commands = nleg.script_commands(nleg.load_script(args.script))
 
     findings = report.build_findings(divs, condacts, dsf_text, commands=commands,
                                      nd_turns=nd)

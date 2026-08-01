@@ -270,6 +270,48 @@ class Zrcp:
     def disable_breakpoints(self):
         return self.cmd("disable-breakpoints")
 
+    def disable_breakpoint(self, index):
+        """Disable ONE breakpoint index, leaving the breakpoint system
+        itself on. Needed because `enable-breakpoints` is a global switch:
+        turning it back on after a `disable-breakpoints` re-arms every
+        index that still holds a condition, including ones a previous
+        phase of the run set for its own purposes (nleg's RNG-seed trap at
+        SEED_BP_INDEX is exactly that). Retiring the index is cheaper and
+        clearer than overwriting its condition with something that can
+        never match."""
+        reply = self.cmd("disable-breakpoint %d" % index)
+        check_error(reply)
+        return reply
+
+    def set_breakpoint_action(self, index, action):
+        """Attach an ACTION to breakpoint `index` (the same index's
+        condition fires it).
+
+        Actions matter here for one blunt reason, confirmed live against
+        ZEsarUX 13.0 with `--vo null`: the DEFAULT action ("menu"/"break")
+        DOES NOT STOP a free-running emulator in this configuration. The
+        emulator answers "Can not open menu: this video driver does not
+        support menu." on every hit and keeps executing - the CPU never
+        pauses, the ZRCP prompt never changes to "command@cpu-step> ", and
+        nothing is observable. Only `run` inside cpu-step mode stops on a
+        breakpoint (see run() above). A NON-menu action, however, does run
+        on every hit while free-running - which is what makes an
+        emulator-side capture (`save-binary`) possible without taking the
+        turn loop into cpu-step. See nleg.NextLeg.arm_page_capture."""
+        reply = self.cmd("set-breakpointaction %d %s" % (index, action))
+        check_error(reply)
+        return reply
+
+    def evaluate(self, expr):
+        """Evaluate a ZEsarUX debugger expression and return its reply.
+
+        Used to read back a user variable (var0..var9) that a breakpoint
+        action has been incrementing - ZRCP has no get-variable command,
+        and get-breakpointspasscount is NOT a fire counter (confirmed
+        live: it stays "0 0" across breakpoint hits, it reports the
+        configured pass-count limit, not hits)."""
+        return self.cmd("evaluate %s" % expr)
+
     def cpu_step(self):
         return self.cmd("cpu-step")
 
