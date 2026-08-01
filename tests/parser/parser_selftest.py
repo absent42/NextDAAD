@@ -58,10 +58,79 @@ def t1_condact_dispatch_is_complete():
     # Row 36 also changed in Task 6, but in cprops (action -> condition)
     # rather than here - the dispatch target is unchanged and must stay
     # unchanged, because h_synonym is now the thing that decides whether
-    # to mark done. This table is cdisp only; nothing in this selftest
-    # sees the cprops typing bit (tests/check-cprops.ps1 checks argc,
-    # which row 36 did not change).
+    # to mark done. This table is cdisp only; the cprops typing bit is
+    # pinned by t1_cprops_typing_bits below.
     assert cds[36] == "h_synonym", cds.get(36)
+
+
+@case
+def t1_cprops_typing_bits():
+    """Pin engine.asm's cprops ACTION/CONDITION bit for the rows where a
+    silent flip would change behaviour without failing anything else.
+
+    Nothing else checks this bit. tests/check-cprops.ps1 validates argc
+    (bits 0-1) against DRF.exe's parameter table and stops there, and
+    t1_condact_dispatch_is_complete pins cdisp's handler targets, which
+    a typing flip leaves untouched. So the only thing standing between a
+    reverted typing bit and a shipped interpreter today is a full replay
+    noticing the downstream behaviour change - late, expensive, and only
+    if the fixture happens to exercise that condact.
+
+    SP16 Task 6 is the concrete precedent: row 36 SYNONYM was flipped
+    from ACTION to CONDITION so h_synonym could decide for itself whether
+    to mark the level done (PRP019 V3-12: under V3 it must NOT). An
+    action-typed row has the dispatcher stamp `done` BEFORE the handler
+    runs, so reverting the bit silently reinstates the V2-only behaviour
+    with no build, argc or dispatch failure anywhere.
+
+    Rows pinned, and why each:
+      36  SYNONYM - the Task 6 change itself (action -> condition).
+      120 XMES / 122 INDIR / 124 SETAT - the DAAD V3 opcodes Task 6 made
+          live; all three action-typed, matching msx2daad's condactList.
+      20  QUIT, 73 PARSE, 84 PICTURE, 106 MOVE - deliberately
+          condition-typed against intuition (see cprops' own header
+          comment); exactly the rows a later reader is most likely to
+          "correct" to actions.
+      25  SAVE / 26 LOAD - condition-typed for the same reason, and
+          documented inline in the table.
+      0   AT and 21 END - ordinary control rows, one of each type, so a
+          wholesale table shift shows up here rather than only in the
+          interesting rows.
+    """
+    import symbols
+    cp = symbols.load_cprops(ROOT / "src" / "engine.asm")
+
+    ACTION, CONDITION = True, False
+    expected = {
+        0: (CONDITION, 1),      # AT
+        20: (CONDITION, 0),     # QUIT
+        21: (ACTION, 0),        # END
+        25: (CONDITION, 1),     # SAVE
+        26: (CONDITION, 1),     # LOAD
+        36: (CONDITION, 2),     # SYNONYM - SP16 T6
+        73: (CONDITION, 1),     # PARSE
+        84: (CONDITION, 1),     # PICTURE
+        106: (CONDITION, 1),    # MOVE
+        120: (ACTION, 2),       # XMES - V3
+        122: (ACTION, 1),       # INDIR - V3
+        124: (ACTION, 2),       # SETAT - V3
+    }
+    for n, (want_action, want_argc) in sorted(expected.items()):
+        got = cp[n]
+        is_action = bool(got & symbols.CPROPS_ACTION)
+        assert is_action == want_action, (
+            "cprops row %d is %s-typed (byte $%02X), expected %s-typed - "
+            "the typing bit decides whether the dispatcher stamps `done` "
+            "before the handler runs; see this test's docstring for why "
+            "this row is pinned"
+            % (n, "action" if is_action else "condition", got,
+               "action" if want_action else "condition"))
+        assert (got & symbols.CPROPS_ARGC) == want_argc, (
+            "cprops row %d has argc %d (byte $%02X), expected %d - "
+            "tests/check-cprops.ps1 validates argc against DRF and should "
+            "have caught this first; if it did not, the two readers "
+            "disagree about the table"
+            % (n, got & symbols.CPROPS_ARGC, got, want_argc))
 
 
 # ---- Task 2: tilemap -------------------------------------------------------
@@ -233,6 +302,27 @@ def t3_cls_marker_is_harness_annotation_not_content():
     assert normalise.tokens(ref) == normalise.tokens(nd)
     # Only the exact marker line goes; text that merely mentions it stays.
     assert "---[CLS]---" in normalise.tokens("the sign reads ---[CLS]--- here")
+
+
+@case
+def t3_cls_marker_breaks_the_paragraph():
+    """The marker contributes no WORDS, but it is still a separator - a
+    window clear means the text after it was never on screen with the
+    text before it, so running the two into one paragraph would be a
+    claim the capture does not support. It used to `continue` straight
+    past, which did exactly that.
+
+    Also pins the reason this was safe to change: compare.py compares
+    tokens(), which flattens paragraphs away, so no finding and no
+    replay hash moves.
+    """
+    import normalise
+    text = "You are in a hall.\n---[CLS]---\nYou are in a cave."
+    assert normalise.normalise(text) == ["You are in a hall.",
+                                         "You are in a cave."], \
+        normalise.normalise(text)
+    assert normalise.tokens(text) == normalise.tokens(
+        "You are in a hall.\nYou are in a cave.")
 
 
 # ---- Task 4: rng -----------------------------------------------------------
@@ -887,6 +977,13 @@ def t9_settle_disarms_the_timeout_on_every_poll():
     settle() must therefore clear the countdown on EVERY poll, not only
     when the editor goes ready. Pinned by counting the writes across a
     settle that walks a MORE page before becoming ready.
+
+    Plus ONE more on the way out. Each poll disarms BEFORE reading the
+    locks, so on the poll that reports READY the interpreter had the
+    whole read window to reach the command line and arm the countdown
+    itself - which is precisely what READY means it just did. Nothing
+    can expire in that gap (see disarm_input_timeout), but returning
+    with a live clock for no reason is a gap worth not having.
     """
     import nleg
 
@@ -919,9 +1016,10 @@ def t9_settle_disarms_the_timeout_on_every_poll():
     leg.settle(pages)
 
     disarms = [w for w in z.writes if w[0] == syms["INPTOFRAMES"]]
-    assert len(disarms) == 4, (
-        "expected one disarm per poll (4 polls), got %d - a wait the "
-        "harness parks on can now time out unobserved" % len(disarms))
+    assert len(disarms) == 5, (
+        "expected one disarm per poll (4 polls) plus one on the READY "
+        "return, got %d - a wait the harness parks on can now time out "
+        "unobserved" % len(disarms))
     assert all(d[1] == b"\x00\x00" for d in disarms), disarms
     assert len(pages) == 1 and z.enters == 1, (
         "the MORE page must still be captured and dismissed exactly once")
@@ -1369,7 +1467,20 @@ def t10_transcript_absent_when_no_findings():
 # shrinking it (because a candidate fault gets fixed or disproven) is
 # the goal; it should only grow if a genuinely new, confirmed divergence
 # is deliberately added.
-KNOWN_DIVERGENT_FLAGS = {29, 50, 53}
+#
+# Shrunk from {29, 50, 53} to {50} over SP16: flag 29 (fGFlags) was fixed
+# in Task 1 and flag 53 (the DOALL "nothing found" bit) in Task 4, and a
+# fresh clean run now sees neither. Flag 50 REMAINS, and it is not a
+# NextDAAD fault so far as anyone has shown: jDAAD saves and restores
+# flag 50 (FDOALL) per PROCESS-STACK LEVEL - stackPush stores
+# flags.getFlag(FDOALL) into the stack element (jdaad.js:853) and
+# stackPop writes it straight back (jdaad.js:841) - so a nested PROCESS
+# cannot see or keep the caller's DOALL flag. NextDAAD keeps flag 50
+# GLOBAL, and so does msx2daad, which is why the harness reports it on
+# every turn that crosses a process boundary. Which behaviour is correct
+# is an OWNER RULING STILL PENDING; until it lands this stays pinned as
+# a known divergence rather than being "fixed" in either direction.
+KNOWN_DIVERGENT_FLAGS = {50}
 # Re-baselined (objtable-stride-fix): nleg.py's objloc() previously read
 # obj_count CONSECUTIVE BYTES starting at OBJTABLE, but objTable
 # (src/engine.asm) is a 6-byte-per-record STRUCT ARRAY (OBJ_SIZE in
@@ -1488,10 +1599,13 @@ def t11_text_channel_known_limitation_pin():
 
     The consequence worth stating plainly, because it is what the whole
     repair was for: this fixture's text channel now AGREES on all 13
-    turns, so all 13 findings are state-only (flags 29/50/53, the
-    docs/parser-bugs.md entry 5 set). Any text finding that appears here
-    from now on is pointed evidence about a specific turn, not the
-    capture models disagreeing with each other on every turn alike.
+    turns, so the findings are state-only apart from the one "?" turn
+    described below. The only flag left in them is 50 - see
+    KNOWN_DIVERGENT_FLAGS above; flags 29 and 53 were in this set when
+    the pin was written and were fixed in SP16 Tasks 1 and 4. Any text
+    finding that appears here from now on is pointed evidence about a
+    specific turn, not the capture models disagreeing with each other on
+    every turn alike.
 
     Depends on t11_clean_run_matches_known_divergence_baseline
     (immediately above) having just produced e2e-clean's jsonl and

@@ -29,11 +29,19 @@ def normalise(text):
     """Return logical paragraphs. A blank line separates paragraphs;
     within a paragraph, wrapped lines are rejoined and whitespace runs
     collapse to a single space. The jleg.js CLS marker (see CLS_MARKER)
-    is dropped as harness annotation rather than content.
+    contributes no words - it is harness annotation, not content - but it
+    DOES break the paragraph, because a window clear is the strongest
+    separator there is: the text after it was never on screen with the
+    text before it. Skipping the line outright (which this used to do)
+    ran the two together into one paragraph and could join the last
+    sentence of a cleared screen to the first sentence of the next.
     """
     paras, current = [], []
     for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         if line.strip() == CLS_MARKER:
+            if current:
+                paras.append(" ".join(current))
+                current = []
             continue
         if line.strip():
             # Strip leading indentation: DAAD centres menu text with leading

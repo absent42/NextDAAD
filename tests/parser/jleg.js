@@ -193,17 +193,45 @@ vm.runInContext(`
   // is dropped from the reference capture rather than faked on the Next
   // side. Scoped to readText so a '_' printed by the GAME (message text,
   // an object name) is still captured and still compared.
-  var __cursorDraw = false;
+  //
+  // DEPTH COUNTER, not a boolean: if readText ever re-enters (directly,
+  // or via anything it calls that reaches the input line again), a
+  // boolean would be cleared by the INNER call's exit and leave the
+  // outer draw's cursor teed into the capture. Zero means "not drawing
+  // the input line"; anything above zero means at least one draw is in
+  // progress.
+  var __cursorDraw = 0;
+  // Only the LAST glyph of an input-line draw is the cursor - the string
+  // is (readTextStr + '_'), so every underscore before it belongs to the
+  // player's own typed text. Suppressing all of them (which this used to
+  // do) silently ate an underscore the user typed. Instead they are HELD
+  // here and released the moment any other character follows, so exactly
+  // one trailing underscore per draw is ever dropped.
+  var __pendingUnderscores = 0;
+  function __flushUnderscores() {
+    while (__pendingUnderscores > 0) { __pendingUnderscores--; __out('_'); }
+  }
   pixel = function () {};
   pixelRGB = function () {};
   writeChar = function (c) {
     var top = !__inWC; __inWC = true;
-    if (top && c >= 32 && c < 256 && !(__cursorDraw && c === 95))
-      __out(String.fromCharCode(c));
+    if (top && c >= 32 && c < 256) {
+      if (__cursorDraw && c === 95) {
+        __pendingUnderscores++;         // might be the cursor - decide later
+      } else {
+        __flushUnderscores();           // something followed: they were text
+        __out(String.fromCharCode(c));
+      }
+    }
     try { return __origWC.call(this, c); } finally { if (top) __inWC = false; }
   };
-  carriageReturn = function () { __out('\\n'); return __origCR.apply(this, arguments); };
-  clearCurrentWindow = function () { __out('\\n---[CLS]---\\n'); return __origCW.apply(this, arguments); };
+  // Both flush first: anything held back that is followed by a newline
+  // or a clear was not the trailing cursor, and must not be reordered
+  // after the thing that followed it. (The cursor itself cannot reach
+  // these - a wrap emits its newline BEFORE the overflowing character,
+  // never after the last one.)
+  carriageReturn = function () { __flushUnderscores(); __out('\\n'); return __origCR.apply(this, arguments); };
+  clearCurrentWindow = function () { __flushUnderscores(); __out('\\n---[CLS]---\\n'); return __origCW.apply(this, arguments); };
 
   // readText() is jdaad.js's input-line draw (called from
   // getPlayerOrders, and from _QUIT via the same path). It is called by
@@ -214,8 +242,19 @@ vm.runInContext(`
   // only the trailing cursor glyph is suppressed - see __cursorDraw.
   var __origRT = readText;
   readText = function () {
-    __cursorDraw = true;
-    try { return __origRT.apply(this, arguments); } finally { __cursorDraw = false; }
+    __cursorDraw++;
+    try {
+      return __origRT.apply(this, arguments);
+    } finally {
+      __cursorDraw--;
+      if (__cursorDraw === 0) {
+        // The outermost draw is done, so whatever is still held back is
+        // this line's trailing run. Exactly ONE of them is the cursor
+        // glyph; the rest were typed and must still be captured.
+        if (__pendingUnderscores > 0) __pendingUnderscores--;
+        __flushUnderscores();
+      }
+    }
   };
 
   // RANDOM (95) and CHANCE (10) must draw the SAME stream as the Z80
@@ -296,7 +335,19 @@ function stateVector() {
 {
   const numSys = vm.runInContext('DDB.header.numSys', sandbox);
   let meta;
-  if (!(numSys > 32)) {
+  // A malformed header must FAIL, not quietly become "this game has no
+  // pager prompt". The old test was `!(numSys > 32)`, which is true for
+  // undefined and for NaN as well as for a genuine small count, so a
+  // renamed or unparsed header field routed straight into the absent
+  // branch and the run continued with no filter at all - the one outcome
+  // the SM32 hard-fail work existed to rule out. Same treatment as the
+  // non-string sm32 read below.
+  if (typeof numSys !== 'number' || !Number.isInteger(numSys) || numSys < 0)
+    throw new Error('DDB.header.numSys read back as ' + typeof numSys + ' '
+      + String(numSys) + ', not a non-negative integer - the header is not '
+      + 'what this leg expects, and treating that as "no pager prompt" '
+      + 'would silently reintroduce a nondeterministic text divergence');
+  if (numSys <= 32) {
     meta = { sm32: null,
              sm32_status: 'absent: DDB declares ' + numSys + ' system messages' };
   } else {

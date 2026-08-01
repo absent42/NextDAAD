@@ -531,6 +531,16 @@ class NextLeg:
             more, wrap = self.more_state()
             last_more, last_wrap = more, wrap
             if more and wrap:
+                # Disarm once more on the way out. The disarm at the top
+                # of this poll happened BEFORE the lock read, so the
+                # interpreter had the whole read window to reach the
+                # command line and arm inpTOFrames itself - and READY is
+                # exactly the state in which it just did. Nothing depends
+                # on the ordering being airtight (the clock cannot expire
+                # between polls - see disarm_input_timeout), but leaving
+                # the turn with a live countdown for no reason is the
+                # kind of gap that only shows up later, so close it.
+                self.disarm_input_timeout()
                 return anykey_heuristic         # READY - press nothing.
             cur = self.grid_rows()
             if more:
@@ -576,6 +586,19 @@ def load_more_prompt(workdir):
     """This game's SM32 (the "More..." pager prompt), or None if the game
     genuinely has no SM32.
 
+    PRECONDITION - THE TWO LEGS ARE ORDERED: jleg.js MUST have already
+    run against this same workdir. It is the only thing that reads SM32,
+    because reading it means loading the DDB through jDAAD's own
+    getMessage inside jleg's vm sandbox; nothing on the Next side, and
+    nothing in prepare.py, has that machinery. prepare.py was considered
+    as the earlier home for this read and rejected: it would have to
+    spawn node and stand up a second jDAAD sandbox purely to fetch one
+    string, duplicating jleg's DDB load - a much larger change than
+    stating the order and failing clearly when it is not kept, which is
+    what the missing-file branch below does. Any new driver that calls
+    nleg.play() directly must run the jDAAD leg first; parsertest.py and
+    scripts/v3probe/run.py both do.
+
     jleg.js writes <workdir>/meta.json straight out of the DDB - see the
     comment there for why the prompt row must be dropped, and why the text
     comes from the game rather than a hardcoded literal.
@@ -592,10 +615,14 @@ def load_more_prompt(workdir):
     meta = Path(workdir) / "meta.json"
     if not meta.exists():
         raise RuntimeError(
-            "%s is missing - the jDAAD leg must write it before the Next "
-            "leg runs. Without it the pager prompt cannot be filtered and "
-            "the run would be nondeterministic; this is a harness failure, "
-            "not a game divergence." % meta)
+            "%s is missing. THE LEGS ARE ORDERED: tests/parser/jleg.js "
+            "must run against this workdir BEFORE nleg.play() is called - "
+            "it is the only leg that can read SM32 out of the DDB, and it "
+            "writes meta.json as it goes. If you are driving nleg.play() "
+            "yourself, run the jDAAD leg first (parsertest.py does: jleg, "
+            "then nleg). Without the prompt the pager row cannot be "
+            "filtered and the run would be nondeterministic; this is a "
+            "harness failure, not a game divergence." % meta)
     try:
         data = json.loads(meta.read_text(encoding="utf-8"))
     except (ValueError, OSError) as exc:
