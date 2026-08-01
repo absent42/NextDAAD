@@ -633,8 +633,24 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ;              L=70: CPU 1201.9 vs DMA 1207.1 -> CPU wins
 ;              L=71: CPU 1219.1 vs DMA 1212.2 -> DMA wins   => 71
 ;   COPY LDI : 1091.8 / (20.25 - 5.31) = 1091.8 / 14.94 = 73.08 B
-;              L=73: CPU 1478.3 vs DMA 1479.4 -> CPU wins
-;              L=74: CPU 1498.5 vs DMA 1484.7 -> DMA wins   => 74
+;              (kernel-only - superseded for COPY, see below)
+;
+; COPY CORRECTION (SP17 NXBC silicon, C073/C074 rows): the kernel-only
+; 73.08 derivation above priced the KERNELS and missed the
+; fast-handler -> slow-body PATH DIFFERENCE - an at-threshold COPY8
+; bails out of the fast handler into the slow chunked body to reach
+; the DMA kernel, and that path measured +128 T/op on silicon (C074
+; T_op markedly above C073's with the threshold at 74). Folding the
+; path term in: (1091.8 + 128) / 14.94 = 81.65 B modeled; the C073/
+; C074 pair measured the break-even at 81.4 B. => 81 (the measured
+; placement; the +-14 T/block row resolution makes 81 vs 82
+; indistinguishable, <= ~6 T/op either way).
+; RUN NOT MOVED: the same sitting measured the fill break-even at ~68
+; vs the shipped 71 - the shipped value takes CPU for 68-70 B fills
+; at a worst cost of ~35 T/op, on an op class the delta-stream census
+; shows barely executes (RUN = 0.003-6% of painted bytes, RUN16 never
+; emitted). Left at 71 with this note rather than churning the
+; player, the encoder mirror and the NXBK straddle rows for noise.
 ;
 ; Two invariances make these the right numbers to compare against:
 ;  - AUDIO TAX. The armed-decode tax is a uniform 1.170-1.173 on the
@@ -651,7 +667,11 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; Previous values were 64 (RUN) and 90 (COPY) with no derivation
 ; recorded anywhere: 64 took DMA ~6 B early (worst +77.5 T at L=64,
 ; 7.1% of the body) and 90 took it 16 B late (worst +237.8 T at L=89,
-; 15.2% of the body). At 71/74 the player is optimal at every length.
+; 15.2% of the body). The 2026-07-28 kernel-only values were 71/74;
+; COPY's 74 took the DMA path 7 B early once the +128 T path
+; difference is charged (worst +~104 T at L=74). At 71/81 the player
+; sits on the measured break-evens (RUN's residual ~35 T worst case
+; disclosed above).
 ;
 ; The encoder's T model MIRRORS these two constants
 ; (authoring-kit/lib/nxv2enc.py TMODEL_COEFFS run_dma_min/copy_dma_min,
@@ -663,7 +683,7 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; 1.2% at 256B).
 NXV2_DMA_CHUNK   equ 256
 NXV2_RUN_DMA_MIN equ 71
-NXV2_COPY_DMA_MIN equ 74
+NXV2_COPY_DMA_MIN equ 81
 
 ; Ring (3a resident / 3b streaming): pool banks holding the whole
 ; file (resident) or the circular prefetch buffer (streaming). The

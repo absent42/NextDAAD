@@ -190,34 +190,10 @@ dbg_hex16:
     ld a, l
     jr dbg_hex8
 
-; SP14c batch B (owner request, <=15B budget): report row for
-; engine.asm's ENG_PTR_ABS_HIST (SP14c batch A's E6 measurement
-; instrument, 8 saturating buckets, DDB page-crossing index 0-7).
-; Not wired into any automatic boot/key-hook path - the histogram is
-; only meaningful after real play, so this is a manual/debugger-
-; invoked call (breakpoint + step-into, or a temporary wire-in when
-; actually measuring), not a permanent boot-time cost. Caller
-; positions the cursor first (call dbg_at) if a specific row is
-; wanted; this routine just streams 8 hex-pairs from where the
-; cursor already is. B/HL are parked in the shadow bank (EXX) across
-; each dbg_hex8 call rather than the stack, since dbg_hex8 corrupts
-; BC/HL and mainline code owns the shadow set by project convention
-; (doc 02) - the ISR saves/restores it in full on its audio path, so
-; a frame tick mid-loop cannot disturb the parked state. No trailing
-; space between digit pairs (kept out of the 15-byte budget). Exists
-; only if the histogram itself survives future stripping - if
-; eng_ptr_abs_hist goes, delete this with it.
-dbg_hist_row:
-    ld hl, eng_ptr_abs_hist
-    ld b, 8
-.loop:
-    ld a, (hl)
-    inc hl
-    exx
-    call dbg_hex8
-    exx
-    djnz .loop
-    ret
+; (The SP14c E6 histogram report row dbg_hist_row lived here until the
+; SP17 T8 wave: the histogram's verdict landed in-code - Rabenstein
+; owner session, buckets 00 00 FF 00 00 00 00 00 - and the instrument
+; was stripped with eng_ptr_abs_hist at batch close, as promised.)
 
 ; SP14c gate follow-up (OV0-3 + OBJ1 measurement instrument): session-
 ; cumulative 16-bit iteration counter across the five deferred obj-

@@ -278,13 +278,29 @@ TMODEL_COEFFS = {
                                 #   DERIVED break-even (2026-07-28):
                                 #   849.4/(17.17-5.11) = 70.43 B -> 71. See the
                                 #   .inc comment for the full derivation
-    "copy_dma_min": 74,         # the PLAYER's copy kernel-select threshold
-                                #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc): a
-                                #   chunk shorter than this goes LDI. DERIVED
-                                #   break-even (2026-07-28):
-                                #   1091.8/(20.25-5.31) = 73.08 B -> 74. Was 90
-                                #   (undocumented, 16 B late - a 74..89 B chunk
-                                #   paid up to +237.8 T of LDI it did not have to)
+    "copy_dma_min": 81,         # the PLAYER's copy kernel-select threshold
+                                #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc).
+                                #   MEASURED break-even 81.4 B (SP17 NXBC
+                                #   C073/C074 silicon rows): the 2026-07-28
+                                #   kernel-only derivation (1091.8/(20.25-5.31)
+                                #   = 73.08 -> 74) missed the fast-handler ->
+                                #   slow-body PATH difference (copy_dma_path_t
+                                #   below); with it folded in the model gives
+                                #   (1091.8+128)/14.94 = 81.65, and silicon
+                                #   read 81.4. 81 is the measured placement
+                                #   (81 vs 82 is inside the row resolution).
+                                #   History: 90 (undocumented) -> 74
+                                #   (kernel-only) -> 81 (measured)
+    "copy_dma_path_t": 128.0,   # T/op fast-handler -> slow-body path
+                                #   difference a sub-256 COPY8 pays to REACH
+                                #   the DMA kernel (NXBC C073/C074: DMA at the
+                                #   old 74 threshold cost +128 T/op over the
+                                #   fast LDI path). Charged once per op in
+                                #   _copy_t's DMA branch - for >= 256 B ops
+                                #   (always slow-path) it is conservative
+                                #   double-cover of slack the single-key
+                                #   t_op_parse envelope already carries,
+                                #   which is the model's safe direction
     "copy_dma_per_b": 5.31,     # T/byte mem-to-mem DMA COPY body [SILICON
                                 #   KF-vs-CD3 cross-row solve sitting 2, UNARMED
                                 #   (6.21 armed) - the armed tax is carried
@@ -1300,8 +1316,8 @@ def _copy_t(L, rate):
 
     The player (src/video.asm vid_copy_body/.seg) clips every copy chunk
     to NXV2_DMA_CHUNK via vid_chunk_all, then takes vid_copy_dma when the
-    chunk is 256 or >= NXV2_COPY_DMA_MIN (74) and vid_copy_ldi otherwise.
-    So a body under 74 B is priced as pure LDI, and a trailing sub-74
+    chunk is 256 or >= NXV2_COPY_DMA_MIN (81) and vid_copy_ldi otherwise.
+    So a body under 81 B is priced as pure LDI, and a trailing sub-81
     remainder after the full 256B chunks is priced as LDI too - the model
     must predict what the player DOES. (The player also splits on
     src/dest window room, which the model cannot see; those splits only
@@ -1309,11 +1325,23 @@ def _copy_t(L, rate):
     chunking.)
 
     Mirrors _fill_t's chunk-and-gate shape. copy_dma_min sits at the
-    derived break-even (1091.8/(20.25-5.31) = 73.08 -> 74), so the gate
-    costs nothing against the unconstrained optimum, and there is
-    deliberately no min(cpu, dma) floor - see _fill_t for why (above its
-    threshold the player is committed to DMA; a floor would price a
-    kernel the player never runs).
+    MEASURED break-even (81.4 B, NXBC C073/C074 - the kernel-only
+    73.08 derivation missed the +128 T/op fast-handler -> slow-body
+    path difference, carried as copy_dma_path_t and charged once per
+    DMA-path op below), and there is deliberately no min(cpu, dma)
+    floor - see _fill_t for why (above its threshold the player is
+    committed to DMA; a floor would price a kernel the player never
+    runs).
+
+    Two disclosed edges of the measured threshold, both faithful to
+    what the player DOES: (1) at exactly copy_dma_min the DMA path can
+    price a few T above pure LDI (81 sits a fraction below the modeled
+    81.9 break-even - the measured placement, inside the bench row
+    resolution); (2) a sub-threshold REMAINDER after full 256 B chunks
+    is priced as LDI even where the bare DMA kernel would be cheaper,
+    because the player's single threshold constant governs the
+    in-slow-body re-select too - the model follows the player, not the
+    unconstrained optimum.
 
     Restores the settlement term the T model dropped: task-2 measured
     DMA copy at 1091.8 T/chunk + 5.31 T/B (final settlement, CD1..CD4 +
@@ -1324,7 +1352,8 @@ def _copy_t(L, rate):
         return L * rate
     chunk = tc["copy_dma_chunk"]
     full, rem = divmod(L, chunk)
-    dma = full * (tc["copy_dma_setup"] + chunk * tc["copy_dma_per_b"])
+    dma = tc["copy_dma_path_t"]
+    dma += full * (tc["copy_dma_setup"] + chunk * tc["copy_dma_per_b"])
     if rem:
         if rem >= tc["copy_dma_min"]:
             dma += tc["copy_dma_setup"] + rem * tc["copy_dma_per_b"]

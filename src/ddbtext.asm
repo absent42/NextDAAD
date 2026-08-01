@@ -41,24 +41,34 @@ rd_seek_page:
     ret
 
 ; Out: A = next byte. Remaps at the 8K boundary ($DFFF -> next page).
-; Preserves BC, DE, HL.
+; Preserves BC, DE, HL. Corrupts F.
+; SP14c DDB2 (landed after the 34-site cross-batch liveness audit,
+; batch-C findings): the per-call push af/pop af bracket is gone from
+; the hot path. The wrap test is bit 5,h - rdPtr lives in $C000-$DFFF
+; (H = $C0-$DF, bit 5 clear) and the only out-of-window value inc hl
+; can produce is exactly $E000 (bit 5 set) - so the byte simply stays
+; in A on the hot path (-29T/call; rd_next is plausibly the hottest
+; CALL in the interpreter - every text/token byte and every condact
+; argument fetch routes through it). The rare page-crossing branch
+; (once per 8K of stream) still brackets AF around its housekeeping.
 rd_next:
     push hl
     ld hl, (rdPtr)
     ld a, (hl)
     inc hl
     ld (rdPtr), hl
+    bit 5, h                    ; wrapped past $DFFF? (H == $E0)
+    jr nz, .wrap
+    pop hl
+    ret
+.wrap:
     push af
-    ld a, h
-    cp high DATA_WINDOW + $20   ; wrapped past $DFFF?
-    jr c, .done
     ld a, (rdPage)
     inc a
     ld (rdPage), a
     call data_map_page
     ld hl, DATA_WINDOW
     ld (rdPtr), hl
-.done:
     pop af
     pop hl
     ret

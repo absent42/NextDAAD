@@ -926,7 +926,16 @@ if ($Font) {
 # verified, so a bump would have forced a full re-encode for no byte
 # change. See the same note on $encoderGeneration in
 # authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9k'
+# BUMP pal9k -> pal9l (SP17 T8 wave copy-DMA threshold correction,
+# 2026-08-01): NXV2_COPY_DMA_MIN 74 -> 81 on the NXBC C073/C074
+# measurement (the kernel-only derivation missed the +128 T/op
+# fast-handler -> slow-body path difference; measured break-even 81.4)
+# with the encoder mirror (copy_dma_min + the new copy_dma_path_t term)
+# moved in the same commit. 74-80 B copies re-price as LDI and every
+# DMA-path copy op carries the path term, so the modelled decode-T
+# changes and every streamed fixture re-derives its op budget. See
+# $encoderGeneration 'pal9l' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9l'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

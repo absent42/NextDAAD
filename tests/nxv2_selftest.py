@@ -1071,13 +1071,19 @@ def t10_silicon_coeffs():
     expect(tc["copy_dma_setup"] == 1091.8, f"copy_dma_setup should be the silicon 1091.8, got {tc['copy_dma_setup']}")
     expect(tc["copy_dma_per_b"] == 5.31, f"copy_dma_per_b should be the silicon UNARMED 5.31, got {tc['copy_dma_per_b']}")
     expect(tc["copy_dma_chunk"] == 256, "copy DMA chunk must be the 256 B audio-safety cap (NXV2_DMA_CHUNK)")
-    # The two kernel-select thresholds, DERIVED 2026-07-28 from the same
-    # settlement rows (break-even = setup/(cpu_rate - dma_rate)):
-    # fill 849.4/(17.17-5.11) = 70.43 -> 71; copy 1091.8/(20.25-5.31)
-    # = 73.08 -> 74. They MIRROR src/nextdaad.inc NXV2_RUN_DMA_MIN /
+    # The two kernel-select thresholds. Fill: DERIVED 2026-07-28
+    # (849.4/(17.17-5.11) = 70.43 -> 71; the SP17 NXBK sitting measured
+    # ~68 - left at 71, worst ~35 T/op on an op class the census shows
+    # barely executes, see the .inc note). Copy: MEASURED 2026-08-01
+    # (NXBC C073/C074): the kernel-only 73.08 -> 74 derivation missed
+    # the +128 T/op fast-handler -> slow-body path difference; with it
+    # folded in, (1091.8+128)/(20.25-5.31) = 81.65 modeled, 81.4
+    # measured -> 81. They MIRROR src/nextdaad.inc NXV2_RUN_DMA_MIN /
     # NXV2_COPY_DMA_MIN - if these pins fail because the player moved,
     # the model moved with it or it has desynchronised from the player.
-    expect(tc["copy_dma_min"] == 74, "copy DMA threshold must be the PLAYER's NXV2_COPY_DMA_MIN (74)")
+    expect(tc["copy_dma_min"] == 81, "copy DMA threshold must be the PLAYER's NXV2_COPY_DMA_MIN (81)")
+    expect(tc["copy_dma_path_t"] == 128.0,
+           "copy DMA path term must be the measured C073/C074 +128 T/op")
     expect(tc["run_dma_min"] == 71, "fill DMA threshold must be the PLAYER's NXV2_RUN_DMA_MIN (71)")
     expect(tc["t_frame_fixed"] == 1132.0, "t_frame_fixed should be the silicon FE 1132")
     # Shape given explicitly (320x256, flat): composition_factor()'s
@@ -1172,63 +1178,78 @@ def t10_copy_dma_model():
     rate = tc["fetch_long"]
     setup, per_b, chunk, thr = (tc["copy_dma_setup"], tc["copy_dma_per_b"],
                                 tc["copy_dma_chunk"], tc["copy_dma_min"])
+    path = tc["copy_dma_path_t"]
     # RULE 1 - below the player's threshold the copy body is pure LDI.
     # The model predicts what the PLAYER DOES (src/video.asm vid_copy_body
-    # takes vid_copy_ldi under NXV2_COPY_DMA_MIN).
-    for L in (1, 16, 64, 73):
+    # takes vid_copy_ldi under NXV2_COPY_DMA_MIN). 74-80 are the band the
+    # 2026-08-01 correction moved BACK to LDI.
+    for L in (1, 16, 64, 73, 74, 80):
         expect(abs(enc._copy_t(L, rate) - L * rate) < 1e-6,
                f"copy body of {L} B (< {thr}) must be priced as CPU/LDI, got {enc._copy_t(L, rate):.1f}")
-    # RULE 1b - the threshold SITS ON the break-even (2026-07-28
-    # derivation, src/nextdaad.inc: 1091.8/(20.25-5.31) = 73.08 -> 74),
-    # so the player's choice is the cheap one at every length. Pinned as
-    # a distance so it self-retunes with the coefficients: the constant
-    # in the .inc must stay the ceiling of setup/(cpu_rate - dma_rate).
-    # It was 90 before the derivation - 16 B late, and the 74-89 band
-    # paid up to +237.8 T of LDI for nothing.
-    breakeven = setup / (rate - per_b)
+    # RULE 1b - the threshold SITS ON the break-even, WITH the measured
+    # fast-handler -> slow-body path difference folded in (NXBC
+    # C073/C074, 2026-08-01: the kernel-only 73.08 -> 74 placement cost
+    # +128 T/op at the seam). Modeled (1091.8+128)/(20.25-5.31) = 81.65;
+    # measured 81.4; shipped 81. Pinned as a distance so it self-retunes
+    # with the coefficients.
+    breakeven = (setup + path) / (rate - per_b)
     expect(abs(thr - breakeven) <= 1.5,
-           f"copy threshold {thr} must sit on the break-even {breakeven:.2f} B "
-           "(re-derive NXV2_COPY_DMA_MIN and this coefficient together)")
+           f"copy threshold {thr} must sit on the path-corrected break-even "
+           f"{breakeven:.2f} B "
+           "(re-derive NXV2_COPY_DMA_MIN and these coefficients together)")
     for L in range(1, thr):
-        expect(L * rate <= setup + L * per_b + 1e-9,
-               f"below the threshold LDI must be the CHEAPER kernel, fails at {L} B")
+        expect(L * rate <= setup + path + L * per_b + 1e-9,
+               f"below the threshold LDI must be the CHEAPER path, fails at {L} B")
     # RULE 2 - at/above the threshold: the DMA price, which the player is
-    # committed to (no min() floor - see _copy_t).
-    for L in (74, 128, 200, 255, 256):
-        dma = setup + L * per_b
+    # committed to (no min() floor - see _copy_t), path term included.
+    for L in (81, 128, 200, 255, 256):
+        dma = path + setup + L * per_b
         expect(abs(enc._copy_t(L, rate) - dma) < 1e-6,
-               f"copy body of {L} B must be the DMA price, got {enc._copy_t(L, rate):.1f}")
-    expect(abs(enc._copy_t(256, rate) - (setup + 256 * per_b)) < 1e-6,
-           "a full 256 B chunk is priced at one DMA setup + 256 B of transfer")
-    # RULE 3 - with the threshold ON the break-even the kernel switch is
-    # no longer a cost DISCONTINUITY: a copy must never get cheaper by
-    # getting longer (that was the old threshold's signature - an 89 -> 90
-    # B copy used to cost LESS), and the step across the threshold must be
-    # under one byte of LDI.
+               f"copy body of {L} B must be the DMA-path price, got {enc._copy_t(L, rate):.1f}")
+    expect(abs(enc._copy_t(256, rate) - (path + setup + 256 * per_b)) < 1e-6,
+           "a full 256 B chunk is priced at the path term + one DMA setup + 256 B of transfer")
+    # RULE 3 - the kernel switch must not be a large cost DISCONTINUITY.
+    # Two DISCLOSED exceptions exist now that the threshold sits on the
+    # measured OP-level break-even rather than the kernel-only one
+    # (_copy_t docstring): (a) the step ACROSS the op threshold is a
+    # couple of bytes of LDI, not under one (81 sits a fraction below
+    # the modeled 81.9); (b) a remainder crossing the threshold after
+    # full 256 B chunks can get CHEAPER (the bare kernel break-even is
+    # ~73 B but the player's single constant re-selects at 81 there
+    # too), bounded by thr*(rate-per_b) - setup ~= 114 T. Assert the
+    # bound rather than pretending monotonicity the player does not
+    # have.
+    seam_bound = thr * (rate - per_b) - setup + 1e-6
     prev = 0.0
     for L in range(1, 601):
         cur = enc._copy_t(L, rate)
-        expect(cur >= prev - 1e-9,
-               f"copy body price must not FALL as length grows: {L - 1} B "
-               f"{prev:.1f} -> {L} B {cur:.1f}")
+        expect(cur >= prev - seam_bound,
+               f"copy body price fell by more than the disclosed seam bound "
+               f"({seam_bound:.0f} T): {L - 1} B {prev:.1f} -> {L} B {cur:.1f}")
         prev = cur
-    expect(enc._copy_t(thr, rate) - enc._copy_t(thr - 1, rate) < rate,
-           "the step across the kernel threshold must be under one byte of LDI")
-    # RULE 4 - multi-chunk: full 256 B chunks go DMA, a sub-threshold tail
-    # goes LDI (the player re-selects per chunk).
-    expect(abs(enc._copy_t(300, rate) - ((setup + chunk * per_b) + 44 * rate)) < 1e-6,
-           "a 300 B copy = one DMA chunk + a 44 B LDI tail")
-    expect(abs(enc._copy_t(2 * chunk, rate) - 2 * (setup + chunk * per_b)) < 1e-6,
-           "a 512 B copy = two DMA chunks")
+    expect(enc._copy_t(thr, rate) - enc._copy_t(thr - 1, rate) < 2 * rate,
+           "the step across the kernel threshold must stay under two bytes of LDI")
+    expect(enc._copy_t(thr, rate) > enc._copy_t(thr - 1, rate),
+           "the op-level threshold step must still RISE (the path term is in the price)")
+    # RULE 4 - multi-chunk: full 256 B chunks go DMA (one path term per
+    # op), a sub-threshold tail goes LDI (the player re-selects per
+    # chunk).
+    expect(abs(enc._copy_t(300, rate) - (path + (setup + chunk * per_b) + 44 * rate)) < 1e-6,
+           "a 300 B copy = the path term + one DMA chunk + a 44 B LDI tail")
+    expect(abs(enc._copy_t(2 * chunk, rate) - (path + 2 * (setup + chunk * per_b))) < 1e-6,
+           "a 512 B copy = the path term + two DMA chunks")
     # RULE 5 - the restored term must never make copy MORE expensive than
-    # the old all-LDI model anywhere, and must be materially cheaper on
-    # the dominant large-copy class (256 B: 5171 T modelled vs ~2451 T on
-    # silicon - the ~2.1x over-price this test exists to prevent).
+    # the old all-LDI model at any tested length (at exactly thr the
+    # DMA path can price a few T above LDI - the measured placement,
+    # deliberately excluded here), and must stay materially cheaper on
+    # the dominant large-copy class (256 B: 5171 T all-LDI vs ~2579 T
+    # with the DMA + path terms, ~2.0x - the over-price this test
+    # exists to prevent was ~2.1x before the path term).
     for L in (1, 63, 89, 90, 256, 1024, 65535):
         expect(enc._copy_t(L, rate) <= L * rate + 1e-6,
                f"the DMA term may only ever LOWER the {L} B copy price")
-    expect(abs((256 * rate) / enc._copy_t(256, rate) - 2.11) < 0.05,
-           f"a 256 B copy body was over-priced ~2.11x, got "
+    expect(abs((256 * rate) / enc._copy_t(256, rate) - 2.00) < 0.05,
+           f"a 256 B copy body must price ~2.00x under all-LDI, got "
            f"{(256 * rate) / enc._copy_t(256, rate):.2f}x")
     # RULE 6 - agreement with the silicon rows the coefficients came from.
     # CD3 (dma copy, 256 B chunks) measured 9.84 T/B over 1024 B ops;
@@ -1249,7 +1270,7 @@ def t10_copy_dma_model():
     finally:
         enc.TMODEL_COEFFS.clear()
         enc.TMODEL_COEFFS.update(saved)
-    expect(abs(enc._copy_t(256, rate) - (setup + 256 * per_b)) < 1e-6,
+    expect(abs(enc._copy_t(256, rate) - (path + setup + 256 * per_b)) < 1e-6,
            "coefficients restored")
     # RULE 8 - the FILL model is gated the same way, on the player's own
     # NXV2_RUN_DMA_MIN (src/video.asm vid_run_body re-selects per chunk),
@@ -3355,26 +3376,27 @@ def t16_autobudget_override_e2e():
 def t16_autobudget_plateau():
     if not SINTEL.exists() or not FFMPEG.exists():
         skip("demo source or ffmpeg not available")
-    # 5 s of Sintel at 256x152 / --dither 0.5 streams (over the resident
-    # pool) at utilization 0.935 - over the 0.90 target - and that figure
+    # 5 s of Sintel at 256x148 / --dither 0.5 streams (over the resident
+    # pool) at utilization 0.922 - over the 0.90 target - and that figure
     # does NOT move with the budget, because the content is asking for
     # less than the caps allow. Descending would be a pure quality loss
     # for a hundredth of supply, so the search must not.
     #
-    # OPERATING POINT RE-BASED at the LADDER RE-CUT (256x152, back from
-    # 256x112): the pal9j ladder spent decode-T on sub-line rungs, which
-    # put utilization back under the budget's control at 256x152 and
-    # forced a re-base to 112. The re-cut ladder cannot spend supply, so
-    # 152 is content-limited again - the same operating point this case
-    # used before pal9j. (Previously re-based at the Card #8 gate
-    # correction, 256x192 -> 256x160; at the SP17 copy-DMA model, 3 s /
-    # dither 0.25 -> 5 s / dither 0.5; at SP17 T0 source retiming,
-    # 256x160 -> 256x152; and at the pal9j ladder, 152 -> 112.) The
-    # premise assertion at the end is what caught all five.
-    ex = enc._extract_source(str(SINTEL), 256, 152, 25.0, "00:00:00", "5.0",
+    # OPERATING POINT RE-BASED at the pal9l COPY-THRESHOLD CORRECTION
+    # (256x152 -> 256x148): copy_dma_min 74 -> 81 plus the measured
+    # copy_dma_path_t re-priced the decode-T term, which put 256x152's
+    # utilization back under the budget's control (probes descend 0.945
+    # -> 0.899). At 148 the clip is content-limited again (single probe,
+    # util 0.922). (Previously re-based at the Card #8 gate correction,
+    # 256x192 -> 256x160; at the SP17 copy-DMA model, 3 s / dither 0.25
+    # -> 5 s / dither 0.5; at SP17 T0 source retiming, 256x160 ->
+    # 256x152; at the pal9j ladder, 152 -> 112; and at the ladder
+    # re-cut, back to 152.) The premise assertion at the end is what
+    # caught all six.
+    ex = enc._extract_source(str(SINTEL), 256, 148, 25.0, "00:00:00", "5.0",
                               str(FFMPEG), 0.5, False)
-    search = enc.auto_stream_budget(ex, 256, 152, 25.0, dither_amp=0.5)
-    expect(not search["resident"], "5 s of Sintel at 256x152 must exceed the resident pool")
+    search = enc.auto_stream_budget(ex, 256, 148, 25.0, dither_amp=0.5)
+    expect(not search["resident"], "5 s of Sintel at 256x148 must exceed the resident pool")
     expect(search["plateau"], "this clip is content-limited - the search must say so")
     expect(search["budget"] == 1.00,
            f"a content-limited clip must keep the ceiling, got {search['budget']}")
@@ -3825,24 +3847,35 @@ def t18_err2_weight():
 @case(18, "adaptive tile ladder - spend + supply preservation is exactly the rule")
 def t18_spend_preservation():
     # A real-ish bound frame on the shape that regressed: a MODE-0 256x192
-    # surface with ten scattered changed streaks of differing length and
-    # severity (one big uniform block never makes the ladder adapt - the
-    # rungs then differ only in where they cut the same run), scheduled at a
-    # spread of caps so different rungs win.
+    # surface with scattered changed streaks (one big uniform block never
+    # makes the ladder adapt - the rungs then differ only in where they
+    # cut the same run), scheduled at a spread of caps so different rungs
+    # win.
+    #
+    # FIXTURE RE-BASED at the pal9l copy-threshold correction: the
+    # re-priced copy term (copy_dma_min 81 + copy_dma_path_t) raised the
+    # modeled decode-T of fragmented streams, so on the old fixture (ten
+    # 200-3000 px streaks) NO bound cap let a finer rung survive the
+    # supply-preservation guard any more and the diversity premise below
+    # went degenerate. Forty SHORT streaks (30-200 px) give the finer
+    # rungs real wire to save (a coarse band drags whole runs of
+    # unchanged noise along), which is the content class the ladder
+    # exists for - verified: the caps below resolve to rungs {1024, 512}
+    # under the new coefficients, all of them bound region frames.
     rng = np.random.default_rng(2002)
     n = 256 * 192
     prev = rng.integers(0, 256, size=n, dtype=np.uint8)
     target = prev.copy()
-    for _ in range(10):
-        a = int(rng.integers(0, n - 3000))
-        ln = int(rng.integers(200, 3000))
+    for _ in range(40):
+        a = int(rng.integers(0, n - 200))
+        ln = int(rng.integers(30, 200))
         target[a:a + ln] = rng.integers(0, 256, size=ln, dtype=np.uint8)
     err2 = (target.astype(np.float32) - prev.astype(np.float32)) ** 2
     lad = enc.tile_ladder_for(1024)
     price = _price_for(256, 192)
     seen = set()
-    for cap_b, cap_t in ((3000, None), (6000, 120000), (10000, None),
-                         (10000, 300000), (16000, 120000), (24000, 120000)):
+    for cap_b, cap_t in ((1500, None), (3000, None), (4000, None),
+                         (5000, 60000), (5000, None), (5000, 300000)):
         costs = _ladder_costs(target, err2, prev, cap_b, cap_t, lad)
         resid = _ladder_residuals(target, err2, prev, cap_b, cap_t, lad)
         spends = {g: bt[0] for g, bt in costs.items()}

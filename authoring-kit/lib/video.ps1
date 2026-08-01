@@ -162,7 +162,16 @@ if (-not $sources) { exit 0 }
 # --tile-slack is part of the hashed argument list below, so a title
 # that opts in re-encodes on that alone; bumping here would have forced
 # every cached title to re-encode for no byte change.
-$encoderGeneration = 'pal9k'
+# BUMP pal9k -> pal9l (SP17 T8 wave copy-DMA threshold correction,
+# 2026-08-01): the PLAYER's NXV2_COPY_DMA_MIN moved 74 -> 81 (NXBC
+# C073/C074 silicon: the kernel-only derivation missed the +128 T/op
+# fast-handler -> slow-body path difference; measured break-even 81.4)
+# and the encoder mirror moved with it (copy_dma_min 74 -> 81 plus the
+# new copy_dma_path_t term in _copy_t), so copies in the 74-80 B band
+# re-price as LDI and every DMA-path copy op carries the path term -
+# the per-frame decode-T budget admits a different amount of work and
+# streamed encodes emit different bytes for unchanged args.
+$encoderGeneration = 'pal9l'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

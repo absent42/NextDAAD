@@ -494,36 +494,13 @@ eng_ptr_abs:
     ld a, (rdPage)
     sub DDB_PAGE_FIRST           ; a = page index, PROVABLY 0..7 (rd_seek
                                  ; masks offset>>13 with AND 7, ddbtext.asm)
- IFDEF DEBUG
-    ; SP14c E6 histogram instrument (KEPT post-apply - owner's request;
-    ; one optional Urban Upstart cross-check remains, strips at batch
-    ; close). Bucket[a] counts condact dispatches with page-crossing
-    ; index a (0-7), saturating at 255. Preserves AF/HL/DE exactly
-    ; (push/pop brackets) - zero behavioural effect on the function.
-    ; Read-out: peek the 8 bytes at label ENG_PTR_ABS_HIST (see
-    ; build\nextdaad.map after assembly) in CSpect's/DeZog's memory
-    ; viewer. Verdict already landed (owner-measured Rabenstein
-    ; session, real gameplay): buckets = 00 00 FF 00 00 00 00 00 -
-    ; every condact dispatch that session hit page index a=2, nothing
-    ; else, ever (DRC places process tables at the END of the DDB, so
-    ; condact fetches always target the highest pages present).
-    push af
-    push hl
-    push de
-    ld e, a                     ; E = page index (0-7); A unchanged,
-    ld d, 0                     ; restored below by pop af regardless
-    ld hl, eng_ptr_abs_hist
-    add hl, de
-    ld a, (hl)
-    cp 255
-    jr z, .e6hist_sat
-    inc (hl)
-.e6hist_sat:
-    pop de
-    pop hl
-    pop af
- ENDIF
-    ; SP14c E6 (owner-endorsed on the histogram above): flat,
+    ; (The SP14c E6 histogram instrument lived here until the SP17 T8
+    ; wave - stripped at batch close as promised, verdict long landed:
+    ; owner-measured Rabenstein session read buckets
+    ; 00 00 FF 00 00 00 00 00 - every condact dispatch hit page index
+    ; a=2, nothing else, ever; DRC places process tables at the END of
+    ; the DDB, so condact fetches always target the highest pages.)
+    ; SP14c E6 (owner-endorsed on that histogram): flat,
     ; unconditional shift replaces the old data-dependent DEC-loop.
     ; a*$2000 = (a<<5) placed as the high byte of a 16-bit word (low
     ; byte 0), since $2000/$100 = $20 = 1<<5; exact for the full
@@ -551,17 +528,6 @@ eng_ptr_abs:
     ld de, DDB_ZX_BASE
     add hl, de
     ret
-
- IFDEF DEBUG
-; SP14c E6 histogram data (see eng_ptr_abs above). Deliberately placed
-; HERE - before this file's ALIGN 256/flags boundary - not after: the
-; SP14c T1 batch freed slack ahead of that boundary, and landing this
-; DEBUG-only diagnostic table there spends slack that is otherwise
-; invisible to the plan's tracked tail headroom, rather than the
-; scarcer post-flags RESIDENT_LIMIT budget. 8 bytes; verified (see
-; report) not to cross the 256-byte alignment threshold.
-eng_ptr_abs_hist: ds 8
- ENDIF
 
 ; V3 INDIR's one-shot arg2 override (SP16 A2). Placed HERE, before this
 ; file's ALIGN 256/flags boundary, for the same reason as the histogram

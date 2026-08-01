@@ -4099,9 +4099,11 @@ nxbTabOpd:
 ; Delta-stream census (250/252-frame Sintel and Big Buck Bunny
 ; encodes, both geometries): COPY p50 = 1 B (BBB) to 5 B (Sintel);
 ; 61-99% of all COPY ops are 1-8 B; p90 = 4-38 B; p99 = 8-103 B.
-; C073/C074 straddle the derived DMA crossover (NXV2_COPY_DMA_MIN =
-; 74); C256 is the COPY16 bulk-repaint path (40 keyframe ops carry
-; 16-21% of Sintel's copied bytes).
+; C080/C081 straddle the DMA crossover (NXV2_COPY_DMA_MIN = 81, the
+; measured 81.4 break-even - the rows that FOUND the old 74's missing
+; +128 T/op path difference were C073/C074, retired with it); C256 is
+; the COPY16 bulk-repaint path (40 keyframe ops carry 16-21% of
+; Sintel's copied bytes).
 nxbTabCpy:
     dw nxbTagC001
     db VOP_COPY8
@@ -4128,15 +4130,15 @@ nxbTabCpy:
     dw 38
     db 197
     dw 48
-    dw nxbTagC073
+    dw nxbTagC080
     db VOP_COPY8
-    dw 73
-    db 105
+    dw 80
+    db 96
     dw 64
-    dw nxbTagC074
+    dw nxbTagC081
     db VOP_COPY8
-    dw 74
-    db 103
+    dw 81
+    db 95
     dw 64
     dw nxbTagC103
     db VOP_COPY8
@@ -4222,8 +4224,8 @@ nxbTagC004: db "C004", 0
 nxbTagC008: db "C008", 0
 nxbTagC016: db "C016", 0
 nxbTagC038: db "C038", 0
-nxbTagC073: db "C073", 0
-nxbTagC074: db "C074", 0
+nxbTagC080: db "C080", 0
+nxbTagC081: db "C081", 0
 nxbTagC103: db "C103", 0
 nxbTagC256: db "C256", 0
 nxbTagF063: db "F063", 0

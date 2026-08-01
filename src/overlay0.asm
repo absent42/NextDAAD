@@ -2340,37 +2340,11 @@ ext_xmes:
     ld a, b                     ; zero bytes read = offset at/past EOF
     or c
     jr z, .failpost
- IFDEF DEBUG
-    ; XMB rider (xmb-corruption-report.md, "prescribed next instrument"
-    ; #1): print xmsOff and the first DECODED byte (DATA_WINDOW, post-
-    ; cpl - message bytes are 255-complemented, see this routine's own
-    ; header) immediately after this esx_fread, before the Sentinel
-    ; write or any print work touches the buffer. Row 31 (TM_ROWS-1),
-    ; col 68+: right of h_unimpl's own row-31/col-0 STUB marker, outside
-    ; every window the suite fixtures use (test.dsf's window is rows
-    ; 0-24) - same idiom already used for msgXmesFail below. Two XMES
-    ; runs on hardware in one session convict/clear the offset-18 seek
-    ; hypothesis: xmsOff=0 both times but the byte differs -> the seek
-    ; is landing wrong; both consistent -> the bug is not here. Only BC
-    ; (the byte count the Sentinel logic below needs) is live past this
-    ; point - bracketed; A/HL are already about to be freshly reloaded.
-    push bc
-    ld b, 31
-    ld c, 68
-    call dbg_at
-    ld a, 'O'
-    call dbg_putc
-    ld hl, (xmsOff)
-    call dbg_hex16
-    ld a, ' '
-    call dbg_putc
-    ld a, 'B'
-    call dbg_putc
-    ld a, (DATA_WINDOW)
-    cpl
-    call dbg_hex8
-    pop bc
- ENDIF
+    ; (The XMB rider instrument - xmb-corruption-report.md "prescribed
+    ; next instrument" #1, xmsOff + first-decoded-byte print - lived
+    ; here until the SP17 T8 wave: its B1 question was ANSWERED on
+    ; silicon, hypothesis 4b cleared, and the rider was stripped as
+    ; promised.)
     ; Sentinel: terminate the freshly-read chunk at DATA_WINDOW+BC with
     ; an encoded $0A ($F5 = NOT $0A) so txt_next_decoded (driven by
     ; print_msg.loop below) cannot run past genuinely-read bytes into
