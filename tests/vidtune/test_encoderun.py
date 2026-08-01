@@ -134,3 +134,51 @@ def test_encode_job_failure_keeps_previous(tmp_path, qtbot):
     assert report == {}
     assert out.read_bytes() == b"OLD"                  # untouched
     assert not out.with_suffix(".vid.tmp").exists()
+
+
+def test_encode_job_partial_line_buffering(qtbot):
+    """Partial lines split across chunks must be buffered and emitted complete."""
+    import pytest
+    job = EncodeJob(["python"], ffmpeg="x")
+    lines = []
+    job.line.connect(lines.append)
+
+    class MockProc:
+        def __init__(self):
+            self.data = b""
+        def readAllStandardOutput(self):
+            return self.data
+
+    job._proc = MockProc()
+    job._proc.data = b"  auto-budget: --stream"
+    job._on_output()
+    assert lines == []
+    job._proc.data = b"-budget 0.72 -> util 0.90 (target 0.90) - 1 probes, 0.1 s\n"
+    job._on_output()
+    assert len(lines) == 1
+    assert "auto-budget" in lines[0]
+
+
+def test_encode_job_double_start_raises(tmp_path, qtbot):
+    """Calling start() while a process is running must raise RuntimeError."""
+    import pytest
+    job = EncodeJob(_fake_encoder(tmp_path), ffmpeg="x")
+    job.start(tmp_path / "in.mp4", tmp_path / "001.vid", [])
+    with pytest.raises(RuntimeError, match="already running"):
+        job.start(tmp_path / "in.mp4", tmp_path / "002.vid", [])
+    with qtbot.waitSignal(job.finished, timeout=15000):
+        pass
+
+
+def test_encode_job_failed_to_start(qtbot):
+    """Encoder that doesn't exist must emit finished(-1, {}) with error line."""
+    out = type('obj', (object,), {'read_bytes': lambda: None})()
+    job = EncodeJob(["Z:/definitely/missing.exe"], ffmpeg="x")
+    lines = []
+    job.line.connect(lines.append)
+    with qtbot.waitSignal(job.finished, timeout=15000) as blocker:
+        job.start("in.mp4", "out.vid", [])
+    code, report = blocker.args
+    assert code == -1
+    assert report == {}
+    assert any("ERROR" in line and "failed to start" in line for line in lines)
