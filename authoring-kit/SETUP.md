@@ -433,6 +433,14 @@ which helps pans and zooms and does nothing for quiet material; the
 encoder prints what it cost). Run with `--help` for the full list, and
 see `lib\videnc-README.md` for the options and format details.
 
+Per-clip tuning has a GUI, too: run `VIDTUNE.BAT` (prefers the shipped
+`tools\vidtune\vidtune.exe`, falling back to `py -3 -m vidtune` /
+`python -m vidtune` if Python 3 with PySide6, numpy and Pillow is
+available instead). Pick a clip, preview a segment, adjust shape,
+fps, dither and the other knobs above, encode and accept - the
+settings land in `VIDOPTS_NNN` in `CONFIG.BAT`, so the next build (or
+a hand run of the encoder) reproduces the same encode.
+
 ### Streaming, resident and direct delivery
 
 Delivery is automatic - nothing to choose at authoring time. A file

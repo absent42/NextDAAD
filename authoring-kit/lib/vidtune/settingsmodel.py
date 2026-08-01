@@ -2,7 +2,9 @@
 
 The arg vector built here must be IDENTICAL to lib/video.ps1's - it is
 both the encode argv and the sidecar hash input. video.ps1 is the
-authority; tests/vidtune/test_settingsmodel.py carries its rule table."""
+authority; tests/vidtune/test_settingsmodel.py carries its rule table.
+
+Maintenance contract: repo docs/vidtune-maintenance.md"""
 import re
 from dataclasses import dataclass
 

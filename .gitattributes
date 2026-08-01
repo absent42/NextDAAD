@@ -1,3 +1,4 @@
 src/font.txt text eol=crlf
 src/font.chr binary
 authoring-kit/tools/videnc/videnc.exe filter=lfs diff=lfs merge=lfs -text
+authoring-kit/tools/vidtune/*.exe filter=lfs diff=lfs merge=lfs -text

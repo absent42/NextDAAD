@@ -13,6 +13,7 @@ Arkos Tracker  SongToAky/SongToSoundEffects/SongToYm   https://www.julien-nevo.c
 CSpect         Emulator for testing                    https://mdf200.itch.io/cspect                              tools\CSpect\
 ffmpeg         Video decode for cutscene encoding      https://www.gyan.dev/ffmpeg/builds/ (release essentials)   tools\ffmpeg\
 videnc.exe     Standalone NXV cutscene encoder         SHIPPED with this kit (first-party, built from ..\lib\videnc.py)  tools\videnc\
+vidtune.exe    Per-clip video tuning GUI               SHIPPED with this kit (first-party, built from ..\lib\vidtune\)  tools\vidtune\
 
 After extracting, these paths must exist:
   tools\DAAD-READY\TOOLS\DRC\DRF.exe
@@ -25,6 +26,7 @@ After extracting, these paths must exist:
   tools\CSpect\CSpect.exe
   tools\ffmpeg\bin\ffmpeg.exe (only needed for VIDEO\NNN.mp4 cutscenes)
   tools\videnc\videnc.exe (only needed for VIDEO\NNN.mp4 cutscenes)
+  tools\vidtune\vidtune.exe (only needed for interactive per-clip tuning)
 
 Video cutscenes (see ..\SETUP.md "Video cutscenes") ARE built by
 BUILD.BAT: drop a numeric-named source video (VIDEO\NNN.mp4) into
@@ -41,7 +43,10 @@ VIDFPS, VIDOPTS and per-video VIDOPTS_NNN in CONFIG.BAT (blank =
 full-screen 320x256 at 25 fps); run the encoder by hand for per-file
 control (--shape presets or WIDTHxHEIGHT, --aspect free heights,
 --fps, --start/--duration clipping, --mono, --dither and more - run
-it with -h, and see ..\lib\videnc-README.md).
+it with -h, and see ..\lib\videnc-README.md). Or run VIDTUNE.BAT (kit
+root) for the same per-clip control from a GUI: prefers vidtune.exe
+(shipped, no Python required), falls back to ..\lib\vidtune (needs
+Python 3 + PySide6, numpy, Pillow) if the exe is missing.
 
 Older .VID files are NOT playable by this interpreter any more: the
 NXV v2 rewrite (SP15) replaced NXV v1, which had replaced the six
