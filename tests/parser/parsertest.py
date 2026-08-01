@@ -75,6 +75,17 @@ def main(argv=None):
                     help="truncate the comparison at the primary divergence")
     ap.add_argument("--mutate-next-only", action="store_true",
                     help=argparse.SUPPRESS)   # negative-control hook
+    # ---- optional third leg (see the --zx block at the end of main) ----
+    ap.add_argument("--zx", action="store_true",
+                    help="additionally play the script on the ORIGINAL DAAD "
+                         "ZX 48K interpreter and write a NextDAAD-vs-ZX TEXT "
+                         "differential (zx-report.md). Off by default: the "
+                         "jDAAD/NextDAAD pair is the instrument, the ZX leg "
+                         "is coverage and adjudication.")
+    ap.add_argument("--zx-tap", default=None,
+                    help="prebuilt TAP for the ZX leg, instead of building "
+                         "one from the DSF (a shipped game with no source)")
+    ap.add_argument("--zx-port", type=int, default=10010)
     args = ap.parse_args(argv)
 
     out = Path(args.out) if args.out else (
@@ -134,6 +145,55 @@ def main(argv=None):
 
     print("%d turn(s) compared, %d finding(s) -> %s"
           % (result["turns_compared"], len(findings), out / "findings.json"))
+
+    if args.zx:
+        # The ZX leg runs AFTER everything above, reads nothing the two
+        # existing legs wrote except meta.json's pager prompt, and writes
+        # only zx-*. The default (no --zx) path therefore executes exactly
+        # the code it did before this flag existed - which is the point:
+        # the jDAAD/NextDAAD differential is the project's instrument and
+        # its replays must stay byte-identical. zleg is imported HERE, not
+        # at module scope, so even an import-time fault in the new module
+        # cannot reach a normal two-leg run.
+        import zleg
+        zx_work = out / "zx"
+        zx_work.mkdir(parents=True, exist_ok=True)
+        tap = args.zx_tap
+        if tap:
+            sysmess = zleg.load_sysmess(Path(tap).with_suffix(".json"))
+        else:
+            zx_built = zleg.build_tap(built["dsf"], zx_work)
+            tap, sysmess = zx_built["tap"], zx_built["sysmess"]
+        zx_jsonl = out / "zx.jsonl"
+        # more_prompt comes from meta.json (jleg wrote it above, out of
+        # jDAAD's own getMessage) so the two legs filter the SAME string;
+        # sysmess supplies the SM2..SM5 prompt set, which only the ZX leg
+        # needs because only it cannot pin flag 42.
+        zleg.play(zx_work, args.script, zx_jsonl, tap=tap, port=args.zx_port,
+                  more_prompt=nleg.load_more_prompt(out), sysmess=sysmess)
+        zx = compare.load_jsonl(zx_jsonl)
+        # The ORIGINAL is the reference here, not NextDAAD: this leg
+        # exists to say what the lineage does, and a difference is
+        # NextDAAD deviating from it (or a known, documented reason why).
+        # The Next turns are copied, never mutated: `nd` is the list the
+        # jDAAD comparison above already used, and its findings are
+        # written by then, but a shared-list edit here would still be a
+        # trap for anyone who later moves this block.
+        nd_zx = [dict(t, text=zleg.trim_prompt_tail(t["text"], sysmess))
+                 for t in nd]
+        zres = compare.compare_runs_text(zx, nd_zx)
+        zleg.write_text_report(zres["divergences"], "ZX 48K original",
+                               "NextDAAD", out / "zx-report.md",
+                               out / "zx-findings.json",
+                               turns=zres["turns_compared"])
+        print("ZX leg: %d turn(s) compared, %d text divergence(s) -> %s"
+              % (zres["turns_compared"], len(zres["divergences"]),
+                 out / "zx-report.md"))
+
+    # Exit status stays the two-leg verdict even with --zx. The ZX
+    # differential is advisory coverage - it legitimately differs
+    # wherever a game branches on the ZX subtarget, and a caller
+    # scripting the harness must not have that flip its exit code.
     return 1 if findings else 0
 
 

@@ -2094,6 +2094,263 @@ def t12_mouse_defect_fails_loudly():
     raise AssertionError("expected the MOUSE round trip to fail")
 
 
+# ---- Wave B: the ZX leg (zscreen decoder + zleg contracts) ----------------
+#
+# All pure functions: no emulator, no build. The end-to-end proof that the
+# leg still measures what the SP16 rig measured lives in
+# tests/parser/scripts/zxadj/run.py, which needs both.
+
+# A REAL DAAD ZX display file, captured off the SP16 adjudication fixture
+# booted on tools/DAAD-READY/ASSETS/ZX/ZXSPECTRUM/DS48IE3.BIN under
+# ZEsarUX (zlib+base64 of the 6144 bytes at 0x4000 - 428 characters, so
+# it lives in the test instead of as a binary fixture nobody can read).
+# Pinning a real screen is the point: a synthetic one built by this file
+# could only ever prove the decoder agrees with whatever this file
+# thinks the format is.
+ZX_BOOT_SCREEN_B64 = (
+    "eNrtlDFLw0AUxy9XJKcEdHDMcB6SpiIozqKpIM76KRxDszg+i0N6dejgEJcMGSTN2Mmx"
+    "dDD5HE6ldOmok0mEQopLsnjD+/HncfC44cfjPW9mtubgTaNVan6lgtTF14u4OulxU8sg"
+    "f7iVviyrNiWKIi1BbJA88v2I+1F9/234jeQWtSFgEGz47+X16lBV/77g5JqU/oL7kyb+"
+    "2dr/+A//j3eaik+hqr83Oyd98l34X3A/qf1/sIDxAvIq2wk9CuPdMK70h51Ry35xuqr6"
+    "71Chba3n/1Z//gYEBsQGJPyMjiFjkFX6iT2iJ8x5VHb/qaAMpN10/2+XMFjCa56bCb0P"
+    "MxZu+HdG1N53qKr+Pb24/8PUXKXioMH95+X9f8gDpjYHl0H1/t9Zz7QdnT5dEgRBEARB"
+    "EARBEARBEOQ/+AEAj2vD")
+ZX_BOOT_SCREEN_TEXT = [
+    "SP16 ZX ADJUDICATION",
+    "V=0 N=0 Q=0 QV=0 QN=0 A=0",
+    "What next?>_",
+]
+
+
+def _zx_boot_screen():
+    import base64
+    import zlib
+    return zlib.decompress(base64.b64decode(ZX_BOOT_SCREEN_B64))
+
+
+def _zx_addr(x, y):
+    """Display-file offset of byte column x on scanline y.
+
+    The CANONICAL ZX formula, deliberately spelled the standard way
+    rather than reusing zscreen.screen_bits' own bit decomposition -
+    otherwise a mistake in the de-interleave would cancel itself out and
+    the test would pass on a broken decoder.
+    """
+    return ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | x
+
+
+def _render(text, table_path=None, dy=0, col0=0):
+    """Draw `text` into a 6144-byte display file with a DAAD 6px font."""
+    from pathlib import Path as _P
+    import zscreen
+    font = _P(table_path or zscreen.DEFAULT_CHARSET).read_bytes()
+    px = bytearray(6144)
+    for i, ch in enumerate(text):
+        glyph = font[ord(ch) * 8:ord(ch) * 8 + 8]
+        x0 = (col0 + i) * 6
+        for row, byte in enumerate(glyph):
+            six = (byte >> 2) & 0x3F
+            y = dy + row
+            for b in range(6):
+                if (six >> (5 - b)) & 1:
+                    x = x0 + b
+                    px[_zx_addr(x >> 3, y)] |= 0x80 >> (x & 7)
+    return bytes(px)
+
+
+@case
+def zb1_decoder_reads_a_real_daad_zx_screen():
+    import zscreen
+    lines = zscreen.decode(_zx_boot_screen(), zscreen.load_font())
+    assert lines == ZX_BOOT_SCREEN_TEXT, lines
+
+
+@case
+def zb1_decoder_needs_the_six_pixel_font():
+    """The 8-pixel ROM-style charset decodes the same screen to nothing.
+
+    This is the measurement behind the whole module: DAAD's AD8x6.CHR
+    glyphs do not line up with 8-pixel cells, which is why ZEsarUX's
+    own get-ocr returns the empty string on these screens.
+    """
+    import zscreen
+    from pathlib import Path as _P
+    wide = _P(zscreen.DEFAULT_CHARSET).parent / "AD8x8.CHR"
+    if not wide.exists():                      # tools/ layout changed
+        return
+    lines = zscreen.decode(_zx_boot_screen(), zscreen.load_font(wide))
+    good = sum(1 for l in ZX_BOOT_SCREEN_TEXT if l in lines)
+    assert good == 0, "8px font unexpectedly read %d line(s): %r" % (good, lines)
+
+
+@case
+def zb2_screen_bits_deinterleaves_the_display_file():
+    import zscreen
+    px = bytearray(6144)
+    # Third 2, character row 3, pixel line 5 -> scanline 2*64+3*8+5 = 157.
+    px[_zx_addr(4, 157)] = 0x81
+    rows = zscreen.screen_bits(bytes(px))
+    assert sum(1 for r in rows if r) == 1, "more than one scanline lit"
+    row = rows[157]
+    assert (row >> (256 - 33)) & 1 == 1, "leftmost pixel of byte 4 not set"
+    assert (row >> (256 - 40)) & 1 == 1, "rightmost pixel of byte 4 not set"
+    assert (row >> (256 - 34)) & 1 == 0
+
+
+@case
+def zb3_decode_finds_the_vertical_phase():
+    """The text window scrolls by PIXEL rows - all eight phases decode."""
+    import zscreen
+    table = zscreen.load_font()
+    for dy in range(8):
+        lines = zscreen.decode(_render("HELLO WORLD", dy=dy), table)
+        assert lines == ["HELLO WORLD"], (dy, lines)
+
+
+@case
+def zb3_decode_without_the_phase_search_would_fail():
+    """Negative control for the case above: the WRONG phase is garbage."""
+    import zscreen
+    table = zscreen.load_font()
+    bits = zscreen.screen_bits(_render("HELLO WORLD", dy=3))
+    at_zero = "".join(zscreen.decode_at(bits, table, 0)).strip()
+    assert "HELLO" not in at_zero, at_zero
+    assert "?" in at_zero, at_zero
+
+
+@case
+def zb4_new_text_reports_scrolls_and_redraws():
+    import zscreen
+    prev = ["one", "two", "three"]
+    # nothing scrolled off, two lines appended
+    assert zscreen.new_text(prev, prev + ["four", "five"]) == (
+        ["four", "five"], False)
+    # scrolled by two
+    assert zscreen.new_text(prev, ["three", "four"]) == (["four"], False)
+    # unchanged
+    assert zscreen.new_text(prev, prev) == ([], False)
+    # window cleared: no shift explains it, whole screen is new AND the
+    # caller is told the capture is a redraw
+    assert zscreen.new_text(prev, ["alpha"]) == (["alpha"], True)
+    # first capture of a run
+    assert zscreen.new_text([], ["alpha"]) == (["alpha"], False)
+
+
+@case
+def zb5_zleg_script_contract_matches_the_other_legs():
+    """The three shared script entry forms, and their `pre` anchors."""
+    import zleg
+    assert zleg.command_plan("LOOK") == ("after", ["LOOK"], True)
+    assert zleg.command_plan("GET ALL") == ("after", ["GET ALL"], True)
+    # "!X" - raw keys, one at a time, no Enter
+    assert zleg.command_plan("!Y") == ("before", ["Y"], False)
+    assert zleg.command_plan("!YN") == ("before", ["Y", "N"], False)
+    # "?X" - a confirmation answer: one string plus Enter
+    assert zleg.command_plan("?Y") == ("before", ["Y"], True)
+
+
+@case
+def zb5_tracked_scripts_are_the_shared_format():
+    import json as _json
+    scripts = sorted((ROOT / "tests" / "parser" / "scripts").rglob("*.json"))
+    assert scripts, "no tracked scripts found"
+    for path in scripts:
+        cmds = _json.loads(path.read_text(encoding="utf-8"))
+        assert isinstance(cmds, list), path
+        assert cmds and all(isinstance(c, str) for c in cmds), path
+
+
+@case
+def zb6_pending_prompt_is_trimmed_from_both_sides():
+    """The random SM2..SM5 prompt and the SM33 input row leave the text.
+
+    The ZX leg cannot pin flag 42 (no symbols for the original), so it
+    drops the pending prompt from its own captures; trim_prompt_tail
+    does the same to the Next side for the ZX comparison only.
+    """
+    import zleg
+    sysmess = {2: "I await your command.", 3: "I'm ready for your "
+               "instructions. ", 4: "Tell me what to do.",
+               5: "Give me your command.", 32: "More...", 33: "\r>"}
+    assert zleg.input_row_text(sysmess) == ">"
+    assert zleg.input_row_text({33: "#n>"}) == ">"
+    text = "The coachman blocks my path..\nI await your command.\n>"
+    assert zleg.trim_prompt_tail(text, sysmess) == \
+        "The coachman blocks my path.."
+    # a different draw of the same random prompt, same result
+    text4 = "The coachman blocks my path..\nTell me what to do.\n>"
+    assert zleg.trim_prompt_tail(text4, sysmess) == \
+        "The coachman blocks my path.."
+    # the same words EARLIER in the turn are the game's own prose
+    keep = "I await your command.\nHe waits.\nTell me what to do.\n>"
+    assert zleg.trim_prompt_tail(keep, sysmess) == \
+        "I await your command.\nHe waits."
+    # with no system messages nothing is trimmed
+    assert zleg.trim_prompt_tail(text, {}) == text
+
+
+@case
+def zb6_emit_text_drops_the_prompt_but_keeps_history():
+    """`pre` keeps the prompt rows on purpose - see zleg._emit_text."""
+    import zleg
+    prompts = {"I await your command."}
+    pre = ["You are here.", "I await your command.", ">E_"]
+    post = ["You are here.", "I await your command.", ">E",
+            "You go east.", "I await your command.", ">_"]
+    text, redraw = zleg._emit_text(pre, [post], True, prompts)
+    assert text == ["You go east."], text
+    assert redraw is False
+
+
+@case
+def zb7_pager_prompt_is_removed_from_a_captured_page():
+    import zleg
+    page = ["line one", "line two", "More..."]
+    assert zleg.drop_pager_prompt(page, "More...") == ["line one", "line two"]
+    assert zleg.drop_pager_prompt(page, None) == page
+
+
+@case
+def zb8_zx_turns_have_no_state_channel():
+    """A ZX turn must NOT be comparable as if it had flags.
+
+    compare.compare_runs is the two-leg differential and a state-less
+    capture reaching it means a broken capture, so it has to fail loudly.
+    compare_runs_text is the path built for this leg.
+    """
+    import compare
+    zx = [{"turn": 0, "command": "LOOK", "text": "You are here."}]
+    nd = [{"turn": 0, "command": "LOOK", "text": "You are here.",
+           "flags": [0] * 256, "objloc": [0] * 8}]
+    try:
+        compare.compare_runs(zx, nd)
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("a state-less turn compared as if it had state")
+    assert compare.compare_runs_text(zx, nd)["divergences"] == []
+
+
+@case
+def zb8_text_only_comparison_ranks_and_truncates():
+    import compare
+    zx = [{"turn": 0, "command": "LOOK", "text": "You are here."},
+          {"turn": 1, "command": "N", "text": "You go north."},
+          {"turn": 2, "command": "S", "text": "You go south."}]
+    nd = [{"turn": 0, "command": "LOOK", "text": "You  are\nhere."},
+          {"turn": 1, "command": "N", "text": "You go NORTH."},
+          {"turn": 2, "command": "S", "text": "You went south."}]
+    res = compare.compare_runs_text(zx, nd)
+    assert res["turns_compared"] == 3
+    ranks = [(d["turn"], d["text_rank"], d["state_rank"])
+             for d in res["divergences"]]
+    assert ranks == [(1, "primary", None), (2, "downstream", None)], ranks
+    # a short run is reported as truncated, not silently ignored
+    res = compare.compare_runs_text(zx, nd[:1])
+    assert res["divergences"][-1]["class"] == "truncated"
+    assert res["divergences"][-1]["text_nd"] == "1 turns"
+
+
 def main():
     failed = 0
     for fn in CASES:

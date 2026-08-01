@@ -167,6 +167,73 @@ def compare_runs(ref_lines, nd_lines):
     return {"divergences": divergences, "primary": primary, "turns_compared": n}
 
 
+def compare_turns_text(ref, cmp_):
+    """TEXT-only turn comparison, for a leg that captures no state.
+
+    Added for the ZX leg (tests/parser/zleg.py), which plays the original
+    DAAD ZX interpreter and can read only the screen: there are no
+    symbols for that binary, so there is no flag or object channel to
+    compare at all. compare_turns() above deliberately raises on such a
+    capture (its turn dicts carry no "flags"/"objloc" keys), which is the
+    right behaviour for the two-leg differential - a missing state
+    channel there means a broken capture. This is the separate,
+    explicitly text-only path, NOT a relaxation of that one.
+    """
+    if normalise.tokens(ref["text"]) == normalise.tokens(cmp_["text"]):
+        return None
+    return {
+        "class": "text-only",
+        "turn": ref["turn"],
+        "command": ref["command"],
+        "flag_diffs": [],
+        "objloc_diffs": [],
+        "text_ref": ref["text"],
+        "text_nd": cmp_["text"],
+        "state_differs": False,
+        "text_differs": True,
+    }
+
+
+def compare_runs_text(ref_lines, cmp_lines):
+    """compare_runs() for the TEXT channel alone - see compare_turns_text.
+
+    Same primary/downstream ranking as the full comparison, restricted to
+    the one channel that exists here: the first diverging turn is
+    "primary", every later one "downstream". A length mismatch is
+    reported the same way too, as a "truncated" entry.
+    """
+    divergences = []
+    n = min(len(ref_lines), len(cmp_lines))
+    for i in range(n):
+        d = compare_turns_text(ref_lines[i], cmp_lines[i])
+        if d is not None:
+            divergences.append(d)
+
+    first = divergences[0]["turn"] if divergences else None
+    for d in divergences:
+        d["state_rank"] = None
+        d["text_rank"] = "primary" if d["turn"] == first else "downstream"
+
+    if len(ref_lines) != len(cmp_lines):
+        divergences.append({
+            "class": "truncated",
+            "state_rank": None,
+            "text_rank": "primary" if first is None else "downstream",
+            "turn": n,
+            "command": "",
+            "flag_diffs": [],
+            "objloc_diffs": [],
+            "text_ref": "%d turns" % len(ref_lines),
+            "text_nd": "%d turns" % len(cmp_lines),
+            "state_differs": False,
+            "text_differs": True,
+        })
+        if first is None:
+            first = n
+
+    return {"divergences": divergences, "primary": first, "turns_compared": n}
+
+
 def load_jsonl(path):
     with open(path, "r", encoding="utf-8") as fh:
         return [json.loads(line) for line in fh if line.strip()]
