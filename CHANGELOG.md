@@ -22,7 +22,7 @@ disagree with each other, three cases were settled rather than left
 open. Flag 50 (the DOALL object) stays a flat global as msx2daad has
 it, so jDAAD's per-level save/restore across PROCESS is the deviation
 - do not carry flag 50 across a PROCESS call. COPYOO keeps jDAAD's
-flag-1 adjustment, above. PUTIN/TAKEOUT's composite spacing took
+flag-1 adjustment, below. PUTIN/TAKEOUT's composite spacing took
 neither reference wholesale: msx2daad's leading space, jDAAD's absent
 trailing one.
 
