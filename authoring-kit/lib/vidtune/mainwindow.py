@@ -83,12 +83,18 @@ def _strip_argv_flags(argv, flags):
 
 
 def _parse_start_duration(argv):
+    """--start/--duration values pulled from an argv list, in seconds.
+    videnc documents --start as HH:MM:SS (a plain-seconds value is also
+    legal input); to_seconds handles both. This used to call float()
+    directly, which raised on any HH:MM:SS value and - via the broad
+    except in _extract_matching_source - silently dropped the Flicker/
+    Heatmap source comparison with no message at all."""
     start = duration = None
     for i, tok in enumerate(argv):
         if tok == "--start" and i + 1 < len(argv):
-            start = float(argv[i + 1])
+            start = to_seconds(argv[i + 1])
         elif tok == "--duration" and i + 1 < len(argv):
-            duration = float(argv[i + 1])
+            duration = to_seconds(argv[i + 1])
     return start, duration
 
 
@@ -107,6 +113,7 @@ class MetricsBar(QWidget):
         self._preview = None
         self._burst_peak_frame = None
 
+        self._clip_label = QLabel("")
         self._psnr_label = QLabel("psnr: -")
         self._bound_label = QLabel("bound: -")
         self._goto_burst_btn = QPushButton("go")
@@ -126,8 +133,9 @@ class MetricsBar(QWidget):
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        for w in (self._psnr_label, self._bound_label, self._goto_burst_btn,
-                  self._util_label, self._wire_label, self._status_label):
+        for w in (self._clip_label, self._psnr_label, self._bound_label,
+                  self._goto_burst_btn, self._util_label, self._wire_label,
+                  self._status_label):
             row.addWidget(w)
         row.addStretch(1)
         row.addWidget(self._progress)
@@ -149,9 +157,30 @@ class MetricsBar(QWidget):
     def set_preview(self, preview):
         self._preview = preview
 
-    def update_from(self, summary, pinned):
+    def clip_tag(self):
+        return self._clip_label.text()
+
+    def clear(self, num3=None):
+        """Resets the metrics figures to their empty state and updates
+        the clip tag. Called from MainWindow.select_clip on every clip
+        switch so a stale job's numbers (or a job that finishes for a
+        clip the user has since switched away from) never gets shown
+        without saying which clip it actually describes."""
+        self._psnr_label.setText("psnr: -")
+        self._bound_label.setText("bound: -")
+        self._burst_peak_frame = None
+        self._goto_burst_btn.setEnabled(False)
+        self._util_label.setText("util: -")
+        self._wire_label.setText("wire: -")
         self._failure_box.setVisible(False)
         self._failure_box.clear()
+        self._clip_label.setText(f"clip {num3}" if num3 is not None else "")
+
+    def update_from(self, summary, pinned, num3=None):
+        self._failure_box.setVisible(False)
+        self._failure_box.clear()
+        if num3 is not None:
+            self._clip_label.setText(f"clip {num3}")
         self._psnr_label.setText(
             "psnr: -" if summary.psnr_mean is None
             else f"psnr: {summary.psnr_mean:.2f} dB")
@@ -402,14 +431,32 @@ class MainWindow(QMainWindow):
         self.cfg_mtime = (self.kit_root / "CONFIG.BAT").stat().st_mtime
         self.stamp = read_generation_stamp(self.kit_root)
         self.clips = list_clips(self.kit_root)
-        self.kit_base = settingsmodel._kit_base(self.cfg)
+        try:
+            self.kit_base = settingsmodel._kit_base(self.cfg)
+        except (VidprofileUnsupported, ValueError):
+            # Bad VIDASPECT/VIDPROFILE in CONFIG.BAT - _populate_clip_list
+            # (called later in __init__) hits this same exception per
+            # clip and raises the red banner; this fallback only keeps
+            # construction from crashing before that point is reached
+            # (a bad VIDASPECT used to kill MainWindow.__init__ with no
+            # UI at all under --windowed).
+            self.kit_base = {k.name: k.default for k in KNOBS}
+            self.kit_base["extra"] = []
         self.session_edits: dict = {}
         self._current_clip = None
 
-        # Session-only budget pins and "last successful full encode"
-        # argv, per clip num3 - both reset when the window closes.
+        # Session-only budget pins, per-clip segment marks (start_s,
+        # dur_s), and "last successful full encode" argv, per clip
+        # num3 - all reset when the window closes. self.segments is
+        # the persistent store for Preview Segment's marks: previewpane
+        # resets the pane's own seg_in/seg_out at the end of every
+        # load() (including the preview load a segment run itself
+        # triggers), so this is what keeps a marked segment alive
+        # across a second Preview Segment click.
         self.pinned_budgets: dict = {}
         self.full_ok: dict = {}
+        self.segments: dict = {}
+        self._last_source_error = None
 
         self.scratch_dir = Path(tempfile.mkdtemp(prefix="vidtune-"))
         self.encoder_argv = resolve_encoder(self.kit_root, self.cfg.toolsdir)
@@ -538,14 +585,36 @@ class MainWindow(QMainWindow):
                 item = QListWidgetItem(f"{clip.num3}  {status}")
                 item.setData(Qt.UserRole, clip.num3)
                 self.clip_list.addItem(item)
-        except VidprofileUnsupported as exc:
+        except (VidprofileUnsupported, ValueError) as exc:
+            # ValueError is _shape_args rejecting a malformed VIDASPECT
+            # (e.g. "wide") - previously uncaught here, so a config typo
+            # took MainWindow.__init__ down with no UI under --windowed.
+            self.clip_list.clear()
             self._banner.setText(str(exc))
             self._banner.setVisible(True)
+            self._set_actions_enabled(False)
 
     def _on_current_item_changed(self, current, previous):
         if current is None:
             return
         self.select_clip(current.data(Qt.UserRole))
+
+    def _guarded(self, fn, *args):
+        """Runs fn(*args), catching a bad-config error - VidprofileUnsupported
+        (VIDPROFILE set without VIDASPECT) or ValueError (a malformed
+        VIDASPECT such as "wide") raised anywhere along the
+        build_arg_vector/_shape_args chain. Surfaces it in the same red
+        banner _populate_clip_list uses and disables the action
+        buttons, instead of letting it propagate out of a signal
+        handler and take the window down with no UI. Returns fn(*args),
+        or None on error."""
+        try:
+            return fn(*args)
+        except (VidprofileUnsupported, ValueError) as exc:
+            self._banner.setText(str(exc))
+            self._banner.setVisible(True)
+            self._set_actions_enabled(False)
+            return None
 
     def select_clip(self, num3: str):
         if self._current_clip is not None:
@@ -553,16 +622,38 @@ class MainWindow(QMainWindow):
         if num3 in self.session_edits:
             settings = self.session_edits[num3]
         else:
-            settings = effective_settings(self.cfg, num3)
+            settings = self._guarded(effective_settings, self.cfg, num3)
+            if settings is None:
+                settings = dict(self.kit_base)
         self.settings_panel.set_settings(settings, self.kit_base)
         self._current_clip = num3
         self._update_accept_enabled()
-        # A "budget provisional" (or other) status label belongs to the
-        # clip that was open when it was set - it must not carry over
-        # to a newly-selected clip with no job of its own running yet.
-        # (The rest of the metrics strip - PSNR etc from update_from -
-        # is pre-existing staleness on clip switch, out of scope here.)
+        # A "budget provisional" status label, the metrics figures, and
+        # the segment markers all belong to the clip that was open when
+        # they were set - none of them may carry over to a newly-
+        # selected clip: a stray marker would silently segment-limit an
+        # unrelated encode, and stale metrics/status would misattribute
+        # a job that hasn't run for this clip yet.
         self.metrics_bar.set_status("")
+        self.metrics_bar.clear(num3)
+        self.preview.clear()
+
+        clip = self._clip_by_num3(num3)
+        if clip is None:
+            return
+        state = self._guarded(clip_state, clip, self.cfg, self.stamp)
+        if state is None:
+            self.preview.clear_to_empty("clip state unavailable - see banner above")
+            return
+        _tuned, stale = state
+        if clip.vid.is_file() and not stale:
+            dims = self._guarded(self._resolve_dims, settings)
+            width = dims[0] if dims is not None else 320
+            self.preview.load(clip.vid, None, column_major=(width == 320))
+        else:
+            self.preview.clear_to_empty(
+                "no fresh preview yet - run Preview Segment or Encode Full "
+                "to generate one")
 
     def _clip_by_num3(self, num3):
         for clip in self.clips:
@@ -599,12 +690,24 @@ class MainWindow(QMainWindow):
     # -- argv construction ------------------------------------------------
 
     def preview_argv(self, num3):
+        """Builds the encoder argv for a Preview Segment run. The
+        segment is captured into self.segments[num3] (seconds, per
+        clip) as a side effect here, mirroring self.pinned_budgets:
+        previewpane.set_frames resets the pane's own live seg_in/
+        seg_out at the end of every load() - including the very
+        preview load a segment run is about to trigger - so a second
+        Preview Segment click with no fresh marks on the pane would
+        otherwise silently fall back to a full-clip encode. The stored
+        value is what actually drives the argv; live pane markers, when
+        present, both drive it AND refresh (overwrite) the stored
+        value - a re-mark replaces the old segment."""
         settings = self._current_settings(num3)
         argv = self._argv_for_settings(settings)
-        seg = None
-        if self.preview.seg_in is not None and self.preview.seg_out is not None:
-            fps = float(settings.get("fps") or 25)
-            seg = self.preview.segment_times(fps)
+        fps = float(settings.get("fps") or 25)
+        live = self.preview.segment_times(fps)
+        if live is not None:
+            self.segments[num3] = live
+        seg = self.segments.get(num3)
         if seg is not None:
             seg_start, seg_dur = seg
             base_start = to_seconds(settings.get("start"))
@@ -643,7 +746,11 @@ class MainWindow(QMainWindow):
 
     def _update_accept_enabled(self):
         num3 = self._current_clip
-        enabled = num3 is not None and self.full_ok.get(num3) == self.full_argv(num3)
+        if num3 is None:
+            self.accept_button.setEnabled(False)
+            return
+        argv = self._guarded(self.full_argv, num3)
+        enabled = argv is not None and self.full_ok.get(num3) == argv
         self.accept_button.setEnabled(bool(enabled))
 
     def _start_job(self, kind, num3, clip, output, argv):
@@ -670,24 +777,35 @@ class MainWindow(QMainWindow):
         clip = self._clip_by_num3(num3) if num3 is not None else None
         if clip is None or self._job is not None:
             return
+        argv = self._guarded(self.preview_argv, num3)
+        if argv is None:
+            return
         output = self.scratch_dir / f"preview_{num3}.vid"
-        self._start_job("preview", num3, clip, output, self.preview_argv(num3))
+        self._start_job("preview", num3, clip, output, argv)
 
     def on_encode_full(self):
         num3 = self._current_clip
         clip = self._clip_by_num3(num3) if num3 is not None else None
         if clip is None or self._job is not None:
             return
+        argv = self._guarded(self.full_argv, num3)
+        if argv is None:
+            return
         output = self.scratch_dir / f"full_{num3}.vid"
-        self._start_job("full", num3, clip, output, self.full_argv(num3))
+        self._start_job("full", num3, clip, output, argv)
 
     def on_encode_all_stale(self):
         if self._job is not None:
             return
-        self._all_queue = [c for c in self.clips
-                           if clip_state(c, self.cfg, self.stamp)[1]]
+        stale = self._guarded(self._stale_clips)
+        if stale is None:
+            return
+        self._all_queue = stale
         self._all_cancelled = False
         self._advance_all_queue()
+
+    def _stale_clips(self):
+        return [c for c in self.clips if clip_state(c, self.cfg, self.stamp)[1]]
 
     def _advance_all_queue(self):
         if self._all_cancelled or not self._all_queue:
@@ -695,7 +813,10 @@ class MainWindow(QMainWindow):
             self._set_actions_enabled(True)
             return
         clip = self._all_queue.pop(0)
-        argv = settingsmodel.build_arg_vector(self.cfg, clip.num3)
+        argv = self._guarded(settingsmodel.build_arg_vector, self.cfg, clip.num3)
+        if argv is None:
+            self._all_queue = []
+            return
         self._start_job("all", clip.num3, clip, clip.vid, argv)
 
     def _on_cancel_requested(self):
@@ -710,7 +831,10 @@ class MainWindow(QMainWindow):
 
     def on_accept(self):
         num3 = self._current_clip
-        if num3 is None or self.full_ok.get(num3) != self.full_argv(num3):
+        if num3 is None:
+            return
+        current_full_argv = self._guarded(self.full_argv, num3)
+        if current_full_argv is None or self.full_ok.get(num3) != current_full_argv:
             return   # guarded by the button state; defensive no-op
         if self.stamp is None:
             choice = QMessageBox.warning(
@@ -724,7 +848,10 @@ class MainWindow(QMainWindow):
         if clip is None:
             return
         settings = self._current_settings(num3)
-        opts = " ".join(settingsmodel.deviations(settings, self.cfg))
+        dev = self._guarded(settingsmodel.deviations, settings, self.cfg)
+        if dev is None:
+            return
+        opts = " ".join(dev)
         config_path = self.kit_root / "CONFIG.BAT"
         try:
             write_vidopts_line(config_path, num3, opts, expected_mtime=self.cfg_mtime)
@@ -747,7 +874,9 @@ class MainWindow(QMainWindow):
         # compute from CONFIG.BAT alone.
         self.cfg = parse_config(config_path)
         self.cfg_mtime = config_path.stat().st_mtime
-        saved_argv = settingsmodel.build_arg_vector(self.cfg, num3)
+        saved_argv = self._guarded(settingsmodel.build_arg_vector, self.cfg, num3)
+        if saved_argv is None:
+            return
         shutil.copyfile(self.scratch_dir / f"full_{num3}.vid", clip.vid)
         write_sidecar(clip.sidecar, self.stamp or "", saved_argv)
 
@@ -794,7 +923,7 @@ class MainWindow(QMainWindow):
 
     def _on_preview_success(self, num3, output, argv, summary):
         pinned = num3 in self.pinned_budgets
-        self.metrics_bar.update_from(summary, pinned)
+        self.metrics_bar.update_from(summary, pinned, num3)
         if pinned:
             self.metrics_bar.set_status("")
         else:
@@ -810,7 +939,7 @@ class MainWindow(QMainWindow):
         if summary.stream_budget is not None:
             self.pinned_budgets[num3] = summary.stream_budget
         self.full_ok[num3] = list(argv)
-        self.metrics_bar.update_from(summary, num3 in self.pinned_budgets)
+        self.metrics_bar.update_from(summary, num3 in self.pinned_budgets, num3)
         # A full encode always derives the budget from the whole clip -
         # never provisional - so any stale "provisional" label from an
         # earlier segment preview must not linger.
@@ -821,7 +950,7 @@ class MainWindow(QMainWindow):
     def _on_all_success(self, num3, argv, summary):
         clip = self._clip_by_num3(num3)
         write_sidecar(clip.sidecar, self.stamp or "", argv)
-        self.metrics_bar.update_from(summary, num3 in self.pinned_budgets)
+        self.metrics_bar.update_from(summary, num3 in self.pinned_budgets, num3)
         self.metrics_bar.set_status("")
         self._populate_clip_list()
 
@@ -830,6 +959,9 @@ class MainWindow(QMainWindow):
     def _load_preview(self, num3, vid_path, argv):
         source = self._extract_matching_source(num3, argv)
         self.preview.load(vid_path, source, column_major=False)
+        if self._last_source_error:
+            self.preview.show_error(
+                f"source comparison unavailable: {self._last_source_error}")
 
     def _resolve_dims(self, settings):
         aspect = settings.get("aspect")
@@ -846,9 +978,13 @@ class MainWindow(QMainWindow):
         """Best-effort: source frames shaped/retimed/trimmed to match
         the encode that just ran, for Flicker/Heatmap comparison. Runs
         ffmpeg synchronously on the GUI thread (busy cursor) - a known
-        polish gap, not a correctness one: any failure here just drops
-        back to an encoded-only preview, which PreviewPane already
-        supports."""
+        polish gap, not a correctness one: any failure here drops back
+        to an encoded-only preview, which PreviewPane already supports,
+        but the failure is recorded in self._last_source_error and
+        surfaced by the caller (_load_preview) into the pane's error
+        label - an HH:MM:SS --start used to fail here silently with no
+        message at all, back when this parsed with float()."""
+        self._last_source_error = None
         clip = self._clip_by_num3(num3)
         if clip is None or not clip.mp4.is_file():
             return None
@@ -866,5 +1002,6 @@ class MainWindow(QMainWindow):
                                       fps, retime, start, duration)
             finally:
                 QApplication.restoreOverrideCursor()
-        except Exception:
+        except Exception as exc:
+            self._last_source_error = str(exc)
             return None

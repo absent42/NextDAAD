@@ -118,6 +118,15 @@ class PreviewPane(QWidget):
         self._error_label.setWordWrap(True)
         self._error_label.setVisible(False)
 
+        # Neutral (non-error) status text for an empty pane - e.g. a
+        # newly-selected clip with no fresh .vid to preview yet - so
+        # that state reads as "nothing to show" rather than "broken".
+        self._hint_label = QLabel("")
+        self._hint_label.setStyleSheet(
+            "color: #dddddd; background-color: #333333; padding: 2px;")
+        self._hint_label.setWordWrap(True)
+        self._hint_label.setVisible(False)
+
         self._image_label = _ClickableLabel()
         self._image_label.setAlignment(Qt.AlignCenter)
         self._image_label.setMinimumSize(64, 64)
@@ -167,6 +176,7 @@ class PreviewPane(QWidget):
         outer = QVBoxLayout(self)
         outer.addWidget(self._busy_label)
         outer.addWidget(self._error_label)
+        outer.addWidget(self._hint_label)
         outer.addWidget(self._image_label, 1)
         outer.addLayout(mode_row)
         outer.addLayout(transport_row)
@@ -186,6 +196,7 @@ class PreviewPane(QWidget):
         self.seg_in = None
         self.seg_out = None
         self._heatmap_cache = {}
+        self._hint_label.setVisible(False)
         if self.mode == "Heatmap" and not self._heatmap_available():
             self.mode = "Encoded"
         self._update_mode_buttons()
@@ -279,6 +290,32 @@ class PreviewPane(QWidget):
 
     def _show_busy(self, busy):
         self._busy_label.setVisible(busy)
+
+    def show_error(self, message):
+        """Shows an error message without touching the current frames -
+        used when e.g. source extraction for the Flicker/Heatmap
+        comparison fails but the encoded preview itself already loaded
+        fine (an HH:MM:SS --start used to fail this silently with no
+        message at all)."""
+        self._error_label.setText(message)
+        self._error_label.setVisible(True)
+
+    def show_hint(self, message):
+        """Neutral (non-error) status text - used when the pane has no
+        frames to show yet."""
+        self._hint_label.setText(message or "")
+        self._hint_label.setVisible(bool(message))
+
+    def clear_to_empty(self, hint=None):
+        """Resets the pane to a blank state - no encoded/source frames,
+        segment markers cleared, any earlier error cleared - with an
+        optional hint label. Used by MainWindow.select_clip when the
+        newly-selected clip has no fresh .vid to preview yet."""
+        self._error_label.setVisible(False)
+        self._error_label.setText("")
+        self.set_frames(encoded=None, source=None, fps=self.fps,
+                        column_major=self.column_major)
+        self.show_hint(hint)
 
     def closeEvent(self, event):
         self._shutdown_threads()
