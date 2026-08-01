@@ -1,10 +1,11 @@
-"""Main window shell: clip list, preview placeholder, settings panel.
+"""Main window shell: clip list, preview pane, settings panel.
 
 Three-pane Studio layout (owner-approved wireframe): clip list (~20%),
-preview placeholder (~50%), settings panel in a scroll area (~30%),
-with a bottom metrics strip and a status bar. The preview pane is a
-plain placeholder until Task 9 wires the decode/heatmap views from
-preview.py.
+preview pane (~50%), settings panel in a scroll area (~30%), with a
+bottom metrics strip and a status bar. PreviewPane (playback, flicker
+toggle, heatmap, segment markers) lives in previewpane.py and is
+re-exported here so `from vidtune.mainwindow import PreviewPane` keeps
+working.
 """
 from pathlib import Path
 
@@ -30,7 +31,10 @@ from PySide6.QtWidgets import (
 
 from . import settingsmodel
 from .kitmodel import clip_state, list_clips, parse_config, read_generation_stamp
+from .previewpane import PreviewPane
 from .settingsmodel import KNOBS, SHAPE_PRESETS, VidprofileUnsupported, effective_settings
+
+__all__ = ["MainWindow", "MetricsBar", "PreviewPane", "SettingsPanel"]
 
 
 class MetricsBar(QWidget):
@@ -266,9 +270,7 @@ class MainWindow(QMainWindow):
         settings_scroll.setWidgetResizable(True)
         settings_scroll.setWidget(self.settings_panel)
 
-        preview_pane = QWidget()
-        preview_layout = QVBoxLayout(preview_pane)
-        preview_layout.addWidget(QLabel("preview"))
+        self.preview = PreviewPane()
 
         left_pane = QWidget()
         left_layout = QVBoxLayout(left_pane)
@@ -278,7 +280,7 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left_pane)
-        splitter.addWidget(preview_pane)
+        splitter.addWidget(self.preview)
         splitter.addWidget(settings_scroll)
         splitter.setStretchFactor(0, 20)
         splitter.setStretchFactor(1, 50)
