@@ -43,22 +43,35 @@ class _ClickableLabel(QLabel):
 class _DecodeWorker(QObject):
     """Runs decode_vid() off the GUI thread. Lives on its own QThread
     (moveToThread pattern, not a QThread subclass, per Qt's own
-    guidance) so a big .vid file never blocks the UI."""
+    guidance) so a big .vid file never blocks the UI.
 
-    done = Signal(dict, list)
-    failed = Signal(str)
+    The load() generation is carried in the signal payload (not a
+    lambda closure) on purpose: connecting done/failed to a bare
+    lambda gives the connection no receiver QObject, so Qt resolves
+    the implicit connection context to the SENDER - this worker, which
+    lives on the decode thread - and silently downgrades what looks
+    like a cross-thread signal to a Direct connection. The slot would
+    then run ON THE DECODE THREAD, mutating widgets from off the GUI
+    thread. Connecting to a bound method of the pane (a QObject that
+    lives on the GUI thread) instead gives Qt the correct receiver
+    affinity, so PySide auto-selects Qt.QueuedConnection and the slot
+    runs on the GUI thread as required."""
 
-    def __init__(self, vid_path):
+    done = Signal(object, object, int)     # hdr, frames, generation
+    failed = Signal(str, int)              # message, generation
+
+    def __init__(self, vid_path, gen):
         super().__init__()
         self.vid_path = vid_path
+        self.gen = gen
 
     def run(self):
         try:
             hdr, frames = decode_vid(self.vid_path)
         except Exception as exc:  # noqa: BLE001 - surfaced in the pane, not raised
-            self.failed.emit(str(exc))
+            self.failed.emit(str(exc), self.gen)
             return
-        self.done.emit(hdr, frames)
+        self.done.emit(hdr, frames, self.gen)
 
 
 class PreviewPane(QWidget):
@@ -213,11 +226,16 @@ class PreviewPane(QWidget):
 
         self._show_busy(True)
         thread = QThread(self)
-        worker = _DecodeWorker(vid_path)
+        worker = _DecodeWorker(vid_path, gen)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.done.connect(lambda hdr, frames, gen=gen: self._on_decode_done(hdr, frames, gen))
-        worker.failed.connect(lambda msg, gen=gen: self._on_decode_failed(msg, gen))
+        # Bound methods of self (a QObject living on the GUI thread)
+        # give Qt the correct receiver affinity for these cross-thread
+        # signals, so the connection is auto-promoted to Queued and
+        # the slots run on the GUI thread - see _DecodeWorker's
+        # docstring for why a lambda here would be wrong.
+        worker.done.connect(self._on_decode_done)
+        worker.failed.connect(self._on_decode_failed)
         worker.done.connect(thread.quit)
         worker.failed.connect(thread.quit)
         thread.finished.connect(lambda t=thread, w=worker: self._on_thread_finished(t, w))

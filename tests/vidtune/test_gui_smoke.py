@@ -1,5 +1,9 @@
+import threading
+
 import numpy as np
+from PySide6.QtCore import QThread
 from PySide6.QtGui import QDoubleValidator
+from PySide6.QtWidgets import QApplication
 
 from vidtune.mainwindow import MainWindow, PreviewPane, SettingsPanel
 from vidtune.kitmodel import KitConfig
@@ -136,3 +140,43 @@ def test_heatmap_handles_length_mismatch(qtbot):
     pane.seek(4)                      # beyond the 3-frame source
     assert pane.mode == "Heatmap"
     assert not pane._image_label.pixmap().isNull()
+
+
+class _ThreadRecordingPane(PreviewPane):
+    """Test-only subclass that records, on every _on_decode_done call,
+    which thread it actually ran on - the point of the generation-in-
+    signal-payload fix is that connecting worker.done to a bound
+    method (this override remains one) gives Qt the receiver affinity
+    it needs to auto-promote the connection to Queued, so the slot
+    runs on the GUI thread even though the signal is emitted from the
+    decode thread. A bare lambda receiver, which the fix replaced,
+    would run this on the decode thread instead - the previous
+    Critical regression this test guards against."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.decode_done_idents = []
+        self.decode_done_on_gui_thread = []
+
+    def _on_decode_done(self, hdr, frames, gen):
+        self.decode_done_idents.append(threading.get_ident())
+        self.decode_done_on_gui_thread.append(
+            QThread.currentThread() is QApplication.instance().thread())
+        super()._on_decode_done(hdr, frames, gen)
+
+
+def test_load_decode_callback_runs_on_gui_thread(qtbot, tmp_path):
+    from vidbuild import build_solid_vid   # helper, task 7
+
+    vid = tmp_path / "t.vid"
+    build_solid_vid(vid, width=256, height=1, colours=[5, 9])
+
+    pane = _ThreadRecordingPane()
+    qtbot.addWidget(pane)
+    gui_ident = threading.get_ident()
+
+    pane.load(vid, source_frames=None, column_major=False)
+    qtbot.waitUntil(lambda: pane.encoded is not None, timeout=5000)
+
+    assert pane.decode_done_idents == [gui_ident]
+    assert pane.decode_done_on_gui_thread == [True]
