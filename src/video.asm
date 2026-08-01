@@ -17,14 +17,15 @@
 ;                  (streaming-aware: circular wrap + walk bound),
 ;                  PAL/KSTART/KFLIP/FEND handlers, vid_pos24
 ;     then         vid_decode_frame/_ds + vid_dst_setup,
-;                  vid_src_seek / vid_aud_copy + vid_aud_queue,
-;                  vid_play / vid_run + the frame loop, vid_key_any,
-;                  the two audio CTC ISRs (3b double-buffer swap
-;                  tails), the 3b STREAMING PRODUCER + hot SD cluster
+;                  vid_src_seek / vid_aud_stage + vid_aud_pump (T10
+;                  circular feed), vid_play / vid_run + the frame
+;                  loop (T10 consumption-integrator pacing),
+;                  vid_key_any, the two audio CTC ISRs (T10 ring
+;                  wrap), the 3b STREAMING PRODUCER + hot SD cluster
 ;                  (gate/prod_step/win/cmd/tok/block - see its
 ;                  banner), the 3c DIRECT-SERVE cluster (ds_next/
-;                  byte/blkopen/pad/xfer/copy_body/pal/terminals/
-;                  aud_copy - see its banner), DEBUG timeline stamp
+;                  byte/blkopen/pad/xfer/copy_body/pal/terminals -
+;                  see its banner), DEBUG timeline stamp
 ;     then         hot cells (ring bank list, streaming + direct
 ;                  session cells, hot filemap, vidSvMmu6/7; the
 ;                  AUDIO BUFFER is NOT here any more - FOURTH RULE)
@@ -1541,29 +1542,161 @@ vid_src_seek:
     ret
 
 ; ---------------------------------------------------------------------
-; vid_aud_copy - copy the NEXT-to-play frame's REAL audio bytes from
-; the ring at vidFramePos into the IDLE vidAudBuf half (LDIR,
-; seam-walked), advance the cursors (vidFramePos; streaming also the
-; ring-linear cursor + depth), then QUEUE the filled half for the ISR
-; (vidAudNextPtr/End, vidAudNextRdy LAST - the release store) and
-; toggle the fill half. The ISR never reads the half being filled
-; (double buffer), so the 3a torn-read argument is now structural.
-; Corrupts AF, BC, DE, HL. Errors (a corrupt file whose audio runs
-; off the ring) abort via vid_src_next's own bounds checks.
+; CIRCULAR AUDIO FEED (SP17 T10). One 2560-byte ring (vidAudBuf,
+; NXV_AUD_RING): the ISR's read pointer (IX) free-runs around it and
+; the frame loop WRITES BEHIND the reader - a byte of frame f+1 lands
+; in a cell only after the reader has consumed the frame-f byte that
+; occupied it. Capacity per frame is therefore the whole ring (minus
+; NXV_AUD_GUARD), not one fixed half: the 24.40 fps stereo floor
+; moves to 12.28 with zero extra RAM (the playvid differential).
+;
+; PROTOCOL (three pieces, no ISR involvement beyond the ring wrap):
+;   vid_aud_stage - after present: arm the feed (vidAudFeedRem =
+;     real bytes of the NEXT frame's audio; ds: block-remain 0).
+;   vid_aud_pump  - copy up to BC bytes of the staged feed into the
+;     ring at vidAudWr, source-side seam-walked (ring/SD exactly as
+;     the old vid_aud_copy) and dest-side bounded by ROOM =
+;     ring - guard - (wr - rd mod ring). Called with a big budget
+;     right after staging (aBytes <= 1280 completes there - the
+;     pre-T10 shape), with NXV_AUD_PUMP_CHUNK from the .pace spin
+;     (the chasing writer for aBytes > 1280), and to completion at
+;     .paced (the force-finish backstop). The rd snapshot (push ix)
+;     only goes stale in the safe direction - the reader advances,
+;     so true room only grows while a chunk runs.
+;   the .pace consumption integrator - pacing (see the frame loop).
+;
+; Source-cursor bookkeeping is INCREMENTAL: each chunk advances
+; vidFramePos (and streaming vidRingRl, mod) by the bytes copied, so
+; vid_src_seek needs no offset variant; the pad slack (aBytesPad -
+; aBytes) and the streaming depth debit land once, at completion -
+; the final cursor state is byte-identical to the old one-shot copy.
+; UNDERRUN MODE: if the feed is late (chronically slow decode), the
+; reader plays STALE ring data (the previous lap) until the writer
+; catches up - bounded, self-recovering, the circular analogue of the
+; old held-last-sample. Corrupts AF, BC, DE, HL. Preserves IX (read
+; only - the ISR owns it). Errors abort via vid_src_next / the ds
+; fault funnels, exactly as before.
 ; ---------------------------------------------------------------------
-vid_aud_copy:
-    call vid_src_seek
-    ld de, (vidAudFillPtr)
-    ld bc, (vidABytes)
+vid_aud_stage:
+    ld hl, (vidABytes)
+    ld (vidAudFeedRem), hl
+    ld hl, 0
+    ld (vidDsAudBlkRem), hl      ; ds: the wire sits at a section
+    ret                          ; boundary here (vid_ds_done padded)
+
+; The consumption integrator (T10 pacing core): debit vidPaceRem by
+; the bytes the ISR consumed since the last call (read-pointer delta,
+; mod ring). Out: CF set = released (rem reached 0 or went negative -
+; rem stays stored either way; the ack at .paced carries sub-frame
+; deficit as catch-up). Called from every wait loop that can hold for
+; a while (.pace, .drainlast, the ring gate's force-fill, the .paced
+; force-finish) so the reader can never advance more than one ring
+; lap between calls in any non-degraded regime - the delta stays
+; mod-ring-unambiguous. Corrupts AF, DE, HL. Preserves BC, IX.
+vid_pace_poll:
+    push ix
+    pop hl                       ; HL = read pointer (atomic snapshot)
+    ld de, (vidAudRdPrev)
+    ld (vidAudRdPrev), hl
+    or a
+    sbc hl, de
+    jr nc, .d
+    ld de, NXV_AUD_RING          ; the reader wrapped the ring end
+    add hl, de
+.d:
+    ex de, hl                    ; DE = consumed bytes
+    ld hl, (vidPaceRem)
+    or a
+    sbc hl, de
+    ld (vidPaceRem), hl
+    ld a, h
+    or l
+    scf
+    ret z                        ; rem == 0: released
+    ld a, h
+    rlca                         ; CF = rem bit 15 (negative = late =
+    ret                          ; released with deficit)
+
+vid_aud_pump:
+    ld (vidAudBudget), bc
+.next:
+    ld bc, (vidAudFeedRem)
+    ld a, b
+    or c
+    ret z                        ; feed complete (or nothing staged)
+    ; n = min(feedRem, budget, room, ring tail) - BC rides the min
+    ld hl, (vidAudBudget)
+    or a
+    sbc hl, bc
+    jr nc, .bud                  ; budget >= feedRem: BC stands
+    ld bc, (vidAudBudget)
+.bud:
+    ; room = ring - guard - unplayed; unplayed = (wr - rd) mod ring
+    push ix
+    pop de                       ; DE = rd (single-instruction snap)
+    ld hl, (vidAudWr)
+    or a
+    sbc hl, de
+    jr nc, .unp
+    ld de, NXV_AUD_RING
+    add hl, de
+.unp:
+    ex de, hl                    ; DE = unplayed
+    ld hl, NXV_AUD_RING - NXV_AUD_GUARD
+    or a
+    sbc hl, de
+    ret c                        ; writer already at the guard: no room
+    or a
+    sbc hl, bc
+    jr nc, .room
+    add hl, bc
+    ld b, h
+    ld c, l                      ; BC = room
+.room:
+    ld a, b
+    or c
+    ret z                        ; no room this call (reader frees it
+                                 ; at the sample rate - callers re-poll)
+    ; clip to the ring tail: one chunk never straddles the wrap (the
+    ; write cursor wraps between chunks instead)
+    ld hl, vidAudBuf + NXV_AUD_RING
+    ld de, (vidAudWr)
+    or a
+    sbc hl, de                   ; HL = tail room (>= 1 by wrap rule)
+    or a
+    sbc hl, bc
+    jr nc, .tail
+    add hl, bc
+    ld b, h
+    ld c, l                      ; BC = tail room
+.tail:
+    push bc                      ; chunk byte count n, for accounting
+    ld a, (vidDirect)
+    or a
+    jr z, .ram
+    ; --- ds chunk: SD wire -> ring (vid_ds_xfer holds the CMD18
+    ; stream mid-block across calls via the block-remain cell) ---
+    ld de, (vidAudWr)
+    ld hl, (vidDsAudBlkRem)
+    call vid_ds_xfer             ; DE advanced, HL = block remain
+    ld (vidDsAudBlkRem), hl
+    jr .account
+.ram:
+    ; --- ring-source chunk: seek the consumer cursor, seam-walked
+    ; copy (the old vid_aud_copy segment loop, bounded by n) ---
+    call vid_src_seek            ; HL = src window cursor, MMU6 mapped
+    ld de, (vidAudWr)            ; (the seek corrupts BC - reload n
+    pop bc                       ; from the accounting save)
+    push bc
 .seg:
     ld (vidAudNeed), bc
-    ; room = $E000 - HL (never 0: seek/next leave HL < $E000)
+    ; src room = $E000 - HL (never 0: seek/next leave HL < $E000)
     xor a
     sub l
     ld c, a
     ld a, $E0
     sbc a, h
-    ld b, a                      ; BC = room
+    ld b, a                      ; BC = src room
     push hl
     ld hl, (vidAudNeed)
     or a
@@ -1577,25 +1710,97 @@ vid_aud_copy:
     ld a, b
     or c
     jr nz, .seg
-    jr .adv
+    jr .account
 .last:
     pop hl
     ld bc, (vidAudNeed)
     ldir
-.adv:
+.account:
+    pop bc                       ; BC = n
+    ; budget -= n; feedRem -= n
+    ld hl, (vidAudBudget)
+    or a
+    sbc hl, bc
+    ld (vidAudBudget), hl
+    ld hl, (vidAudFeedRem)
+    or a
+    sbc hl, bc
+    ld (vidAudFeedRem), hl
+    ; wr += n, wrap at the ring end (tail clip bounds the sum)
+    ld hl, (vidAudWr)
+    add hl, bc
+    ld de, vidAudBuf + NXV_AUD_RING
+    or a
+    sbc hl, de
+    jr z, .wrap                  ; landed exactly on the end
+    add hl, de
+    jr .wr
+.wrap:
+    ld hl, vidAudBuf
+.wr:
+    ld (vidAudWr), hl
+    ; consumer source cursor += n (ds has no RAM cursor: skip)
+    ld a, (vidDirect)
+    or a
+    jr nz, .fed
     ld hl, (vidFramePos)
-    ld bc, (vidABytesPad)
     add hl, bc
     ld (vidFramePos), hl
-    jr nc, .noc
+    jr nc, .fp
     ld hl, vidFramePos+2
     inc (hl)
-.noc:
+.fp:
     ld a, (vidStreaming)
     or a
-    jr z, vid_aud_queue
-    ; streaming: ring cursor += padded block (mod ringBytes), depth
-    ; -= its blocks (the gate's staged need covered them)
+    jr z, .fed
+    ld hl, (vidRingRl)
+    add hl, bc                   ; last BC use - vid_rl_mod corrupts it
+    ld a, (vidRingRl+2)
+    adc a, 0
+    call vid_rl_mod              ; A:HL mod ringBytes -> vidRingRl
+.fed:
+    ld hl, (vidAudFeedRem)
+    ld a, h
+    or l
+    jr z, .done
+    ld hl, (vidAudBudget)
+    ld a, h
+    or l
+    ret z                        ; budget spent - trickle continues
+    jp .next
+.done:
+    ; --- completion accounting, once per staged frame (the old .adv
+    ; tail): pad slack onto the cursors, streaming depth debit ---
+    ld a, (vidDirect)
+    or a
+    jr z, .ramdone
+    ld hl, (vidDsAudBlkRem)      ; ds: discard the section pad to the
+    call vid_ds_pad              ; block boundary (HL = 0 on exit)
+    ld (vidDsAudBlkRem), hl
+    ret
+.ramdone:
+    ld hl, (vidABytesPad)
+    ld de, (vidABytes)
+    or a
+    sbc hl, de
+    ld b, h
+    ld c, l                      ; BC = pad slack (0..511)
+    ld hl, (vidFramePos)
+    add hl, bc
+    ld (vidFramePos), hl
+    jr nc, .ps
+    ld hl, vidFramePos+2
+    inc (hl)
+.ps:
+    ld a, (vidStreaming)
+    or a
+    ret z                        ; resident complete
+    ld hl, (vidRingRl)
+    add hl, bc
+    ld a, (vidRingRl+2)
+    adc a, 0
+    call vid_rl_mod              ; A:HL mod ringBytes -> vidRingRl
+    ; depth -= audio-pad blocks (the gate's staged need covered them)
     ld a, (vidApadBlk)
     ld c, a
     ld b, 0
@@ -1611,30 +1816,6 @@ vid_aud_copy:
     ld hl, 0
 .dok:
     ld (vidRingDepth), hl
-    ld hl, (vidRingRl)
-    ld bc, (vidABytesPad)
-    add hl, bc
-    ld a, (vidRingRl+2)
-    adc a, 0
-    call vid_rl_mod              ; A:HL mod ringBytes -> vidRingRl
-    ; falls into vid_aud_queue
-; Hand the filled half to the ISR: Ptr/End first, Rdy LAST (the
-; release store) + fill-half toggle. Shared tail (3c): the direct-
-; serve audio read (vid_ds_aud_copy) queues through here too.
-vid_aud_queue:
-    ld hl, (vidAudFillPtr)
-    ld (vidAudNextPtr), hl
-    ld bc, (vidAudEndOff)        ; = real bytes - 1 (mono) / - 2
-    add hl, bc
-    ld (vidAudNextEnd), hl
-    ; toggle: other = (halfA + halfB) - current (mod 2^16)
-    ld de, (vidAudFillPtr)
-    ld hl, $FFFF & (vidAudBuf*2 + NXV_AUD_HALF)
-    or a
-    sbc hl, de
-    ld (vidAudFillPtr), hl
-    ld a, 1
-    ld (vidAudNextRdy), a
     ret
 
 ; ---------------------------------------------------------------------
@@ -1739,22 +1920,31 @@ vid_run:
     jp .restore
 .nobench:
  ENDIF
-    ; --- audio-0 preload (double buffer): fill half A and consume
-    ; the queue it posts - IX starts AT half A (the l2setup body
-    ; initialised both ISRs' end markers to half A's end), so Rdy is
-    ; re-cleared; the fill pointer is left on half B for frame 1.
+    ; --- audio-0 preload (T10 circular feed): prime the ring cells
+    ; and pump frame 0's audio into the empty ring in one go (room =
+    ; the whole ring minus the guard >= any legal frame). IX is set
+    ; here too - pre-arm it is just the pump's read-pointer snapshot
+    ; source; the CTC arm below re-primes it for the ISR.
     ld (vidDecSp), sp            ; abort anchor: the preload's ring
                                  ; walk / SD read can abort on corrupt
                                  ; input (.restore is safe pre-arm -
                                  ; the CTC park no-ops on an unarmed
                                  ; CTC)
-    call vid_aud_copy_any
-    xor a
-    ld (vidAudNextRdy), a
+    ld ix, vidAudBuf
+    ld hl, vidAudBuf
+    ld (vidAudWr), hl
+    ld (vidAudRdPrev), hl
+    ld hl, 0
+    ld (vidPaceRem), hl          ; frame 0's release is pre-paid: the
+                                 ; first .pace poll passes immediately
+    call vid_aud_stage
+    ld bc, $FFFF
+    call vid_aud_pump            ; completes: the ring was empty
     ; --- CTC retune (v1-proven sequence, carried verbatim): double
-    ; soft-reset, control word, IX + vidAudDone primed BEFORE the
-    ; time constant starts the timer (the postmortem ordering rule);
-    ; the IM2 stub + ISR end markers were patched cold, above. ---
+    ; soft-reset, control word, IX primed BEFORE the time constant
+    ; starts the timer (the postmortem ordering rule); the IM2 stub
+    ; was patched cold, above; the ISRs' ring-end wrap compares are
+    ; assembly constants now (T10) - nothing per-file to patch. ---
     ld bc, AUD_CTC_PORT
     ld a, AUD_CTC_RESET
     out (c), a
@@ -1762,8 +1952,6 @@ vid_run:
     ld a, AUD_CTC_CW16
     out (c), a                   ; control word - timer not running yet
     ld ix, vidAudBuf             ; the ISR's exclusive play pointer
-    ld a, 1
-    ld (vidAudDone), a           ; first .pace passes immediately
     ; --- SP17 T9: frame-clock VBLANK PHASE LOCK. The time-constant
     ; write below starts the whole playback clock (the CTC audio timer
     ; that everything else paces from), and until now it started at a
@@ -1800,21 +1988,38 @@ vid_run:
                                  ; phase-locked to the field (T9)
 
 ; ---------------------------------------------------------------------
-; The frame loop (3b double-buffer phasing). Per frame f: pace on the
-; boundary INTO frame f's audio (the ISR swapped into the half queued
-; last iteration; while waiting, the streaming producer prefetches SD
-; blocks into the ring) -> ring gate (streaming: frame f's payload +
-; frame f+1's audio must be buffered - shortfall = the counted
-; underrun pace-hold) -> decode/paint frame f's payload (delta:
-; visible surface; span chunks: hidden) -> present (KFLIP: palette
-; swap + bank flip; delta: palette swap if a PAL rode the frame) ->
-; QUEUE frame f+1's audio into the idle half (the ISR swaps at the
-; next boundary - no held-sample gap; loop mode rewinds the cursors
-; first, so pass N+1's frame-0 audio queues seamlessly; play-once
-; skips the queue on the last frame and the drain tail holds) -> key
-; check -> frame accounting. DEBUG: 5-phase stamps, one per
-; transition (AUDIO now brackets the queue copy AFTER present - the
-; copy left the pace path, which is the whole point of the fix).
+; The frame loop (T10 circular-feed phasing). Per frame f: pace on
+; CONSUMPTION of frame f-1's audio - the circular feed has no half-
+; boundary event, so the boundary detection moved from the ISR to a
+; MAINLINE CONSUMPTION INTEGRATOR: each .pace poll snapshots the
+; ISR's free-running read pointer (push ix - atomic), accumulates the
+; consumed delta (mod ring) and releases the frame when one frame's
+; real audio bytes have been consumed. PACING HANDOFF (T9+T10 design,
+; documented per the charter): the pacing SOURCE remains the audio
+; clock (the v1 principle - pacing derives from audio bytes, exact
+; for every legal file, zero long-run drift), and T9's field phase
+; lock makes that clock START at a fixed field phase; the per-mode
+; CTC tables are exact-divide against the field rate, so the release
+; cadence is field-locked end to end. Pure vblank COUNTING was
+; considered and rejected: the 8-bit header fps*10 field would have
+; become load-bearing (a format reinterpretation), and any rounding
+; between fps and bytes-per-frame would drift the free-running
+; reader/writer pair apart over long loops - consumption integration
+; has neither problem. While waiting, the spin TRICKLES the staged
+; next-frame audio into the ring behind the reader (the chasing
+; writer that funds the low-fps floor) and (streaming) produces SD
+; blocks. Then: force-finish the feed (normally a no-op) -> ring
+; gate -> decode/paint -> present -> STAGE frame f+1's audio + pump
+; what fits (aBytes <= 1280: everything, the pre-T10 shape; loop
+; mode rewinds the cursors first, so pass N+1's frame-0 audio feeds
+; seamlessly; play-once skips staging on the last frame and the
+; drain tail waits the audio out) -> key check -> frame accounting.
+; DEBUG: 5-phase stamps, one per transition. TIMELINE SEMANTICS
+; (T10): AUDIO brackets the stage + initial pump after present; for
+; aBytes > 1280 files the trickled remainder lands in PACE (pace is
+; idle-wait + feed-chase now). For every pre-T10-legal file (aBytes
+; <= 1280) the initial pump completes at once and the phase split
+; reads exactly as before. TOT is unchanged.
 ; ---------------------------------------------------------------------
 .frameloop:
  IFDEF DEBUG
@@ -1823,20 +2028,52 @@ vid_run:
  ENDIF
     ld (vidDecSp), sp            ; abort anchor for this iteration
 .pace:
-    ld a, (vidAudDone)           ; boundary into this frame's audio?
-    or a
-    jr nz, .paced
+    call vid_pace_poll           ; integrate consumption; CF = this
+    jr c, .paced                 ; frame's audio consumed (or past)
+    ; not yet: chase the reader with the staged feed, and (streaming)
+    ; produce SD blocks into the source ring
+    ld bc, NXV_AUD_PUMP_CHUNK
+    call vid_aud_pump            ; bounded chunk keeps the poll tight
     ld a, (vidStreaming)
     or a
-    jr z, .pace                  ; resident: plain spin (v1-identical)
+    jr z, .pace                  ; resident/direct: poll + pump only
     call vid_prod_step           ; one 512B block max, then re-check
     jr .pace                     ; (the 099 vidProdThrottle lever was
                                  ; RETIRED in 3c - its deliberate-
                                  ; underrun verdict is on record in
                                  ; Cards #3/#4; git holds the lever)
 .paced:
-    xor a
-    ld (vidAudDone), a           ; ack the boundary
+    ; ack: the next release needs one more frame's worth consumed.
+    ; Sub-frame lateness carries (bounded catch-up); a deficit of a
+    ; whole frame or more is dropped - the old Done-flag's collapsed-
+    ; boundary semantics (video runs late, audio stays continuous).
+    ld hl, (vidPaceRem)
+    ld de, (vidABytes)
+    add hl, de
+    ld a, h
+    or l
+    jr z, .rclamp
+    bit 7, h
+    jr z, .remok
+.rclamp:
+    ex de, hl                    ; rem = aBytes (excess deficit dropped)
+.remok:
+    ld (vidPaceRem), hl
+    ; the reader is entering the staged frame's audio NOW: force-
+    ; finish any outstanding feed. Normally a no-op (the pace spin
+    ; completed it); when late it is bounded - the armed CTC frees
+    ; ring room at the sample rate, so every pass makes progress.
+.ffin:
+    ld hl, (vidAudFeedRem)
+    ld a, h
+    or l
+    jr z, .fed
+    ld bc, $FFFF
+    call vid_aud_pump
+    call vid_pace_poll           ; keep the integrator honest across
+    jr .ffin                     ; a long finish (CF ignored - already
+                                 ; released; the debit carries)
+.fed:
     ld a, (vidStreaming)
     or a
     call nz, vid_ring_gate       ; streaming: hold until frame served
@@ -1893,23 +2130,25 @@ vid_run:
     ld a, VID_TL_AUDIO
     call vid_tl_stamp
  ENDIF
-    ; --- queue the NEXT frame's audio into the idle half ---
+    ; --- stage the NEXT frame's audio feed (T10) ---
     ld hl, (vidFramesLeft)
     dec hl
     ld a, h
     or l
-    jr nz, .qnext                ; frames follow: queue frame f+1
+    jr nz, .qnext                ; frames follow: stage frame f+1
     ld a, (vidLoopMode)
     or a
     jr z, .qskip                 ; last frame, play-once: nothing to
-                                 ; queue - the drain tail holds
-    ; loop restart: rewind the consumer BEFORE queueing pass N+1's
+                                 ; stage - the drain tail waits
+    ; loop restart: rewind the consumer BEFORE staging pass N+1's
     ; frame-0 audio (resident: RAM cursor only - no SD, no reopen,
     ; seam-free; streaming: ring cursor + the pass header block)
     call vid_loop_rewind
 .qnext:
-    call vid_aud_copy_any        ; fills + queues; ISR swaps at the
-                                 ; next boundary - zero held samples
+    call vid_aud_stage           ; arm the feed, then pump what fits
+    ld bc, $FFFF                 ; now (aBytes <= 1280: all of it -
+    call vid_aud_pump            ; the pre-T10 shape; bigger frames
+                                 ; trickle from the .pace spin)
 .qskip:
  IFDEF DEBUG
     ld a, VID_TL_OTHER
@@ -1935,11 +2174,14 @@ vid_run:
  ENDIF
     jp .frameloop
 .drainlast:
-    ; play-once: the last frame is showing; let its audio finish
-    ; (nothing queued - the ISR sets done and holds at the end)
-    ld a, (vidAudDone)
-    or a
-    jr z, .drainlast
+    ; play-once: the last frame is showing; wait its audio out with
+    ; the same consumption integrator as .pace (nothing staged, so no
+    ; pump - vidPaceRem still holds this frame's unconsumed bytes).
+    ; After release the reader free-runs into stale ring data for the
+    ; few instructions until .restore parks the CTC: a sample or two,
+    ; against the old tail's held last sample - both inaudible.
+    call vid_pace_poll
+    jr nc, .drainlast
     jr .restore
 .decfail:
     ; vid_dec_abort lands here, SP already reset to vidDecSp (A =
@@ -1987,25 +2229,24 @@ vid_key_any:
     ret
 
 ; ---------------------------------------------------------------------
-; Audio CTC ISRs - the v1 per-tick shape (pacing / IX-exclusivity /
-; banking-invariant design unchanged) plus the SP15 3b DOUBLE-BUFFER
-; SWAP TAIL (the structural-slow fix): the last-sample tick no longer
-; holds while the main loop copies the next frame's audio - if the
-; other vidAudBuf half is queued (vidAudNextRdy), the ISR swaps INTO
-; it in the same interrupt (IX + its own end-marker SMC) and the next
-; tick plays the new frame's first sample: a true 625-tick / 40.000ms
-; frame period (the 3a player held ~20 ticks per frame = 41.3ms, the
-; calibration wave's finding 5). No queue (main loop late, or the
-; drain tail after the last frame) = hold the last sample, exactly
-; the old behaviour. The per-tick path is byte-identical to 3a; the
-; swap tail runs once per frame. Handoff protocol: the main loop
-; writes vidAudNextPtr/End first and vidAudNextRdy LAST (the release
-; store); the ISR reads Rdy before either. Installed by
+; Audio CTC ISRs - the v1 per-tick shape (IX-exclusivity / banking-
+; invariant design unchanged) on the T10 CIRCULAR FEED: IX free-runs
+; around the whole 2560-byte ring and the ONLY boundary work left is
+; the wrap back to the ring base - an assembly-constant compare (the
+; ring geometry never changes), so the 3b per-file end-marker SMC and
+; the whole queued-half swap tail are GONE. The per-tick fast path is
+; byte-identical to 3b; the boundary path SHRANK from the ~150T swap
+; tail (Rdy test + IX reload + two SMC patches + the vidAudDone
+; store, once per frame) to a 26T wrap (ld ix,nn + jr, once per ring
+; LAP - every ~2 frames at 25fps, up to every frame near the floor).
+; Pacing moved OUT of the ISR entirely: the frame loop integrates
+; consumption from IX (see the frame-loop banner); vidAudDone no
+; longer exists. Feed-late behaviour: the reader plays STALE ring
+; data (previous lap) instead of holding the last sample - bounded,
+; self-recovering, documented at the pump banner. Installed by
 ; vid_run_l2setup_body patching IM2_CTC_STUB (mono or stereo per the
-; header's channel count); end markers initialised to half A + real
-; bytes - 1 (mono) / - 2 (stereo) before the CTC time constant starts
-; the timer, then owned by each ISR's own swap SMC (same-page - MMU7
-; = VID_PAGE for the whole armed window, doc 11 / rubric 3).
+; header's channel count); MMU7 = VID_PAGE for the whole armed
+; window (doc 11 / rubric 3).
 ; ---------------------------------------------------------------------
 video_ctc_isr:
     push af
@@ -2022,28 +2263,12 @@ video_ctc_isr:
     ld a, (ix+0)
     out (DAC_PORT), a
     ld a, ixl
-.cmplo:
-    cp 0                         ; patched: end address low byte
+    cp low (vidAudBuf + NXV_AUD_RING - 1)
     jr nz, .adv
     ld a, ixh
-.cmphi:
-    cp 0                         ; patched: end address high byte
+    cp high (vidAudBuf + NXV_AUD_RING - 1)
     jr nz, .adv
-    ; buffer end: swap into the queued half if the main loop has it
-    ; ready; else hold the last sample (main late / drain tail)
-    ld a, (vidAudNextRdy)
-    or a
-    jr z, .boundary
-    xor a
-    ld (vidAudNextRdy), a
-    ld ix, (vidAudNextPtr)
-    ld a, (vidAudNextEnd)
-    ld (.cmplo+1), a
-    ld a, (vidAudNextEnd+1)
-    ld (.cmphi+1), a
-.boundary:
-    ld a, 1
-    ld (vidAudDone), a
+    ld ix, vidAudBuf             ; ring wrap - the only boundary work
     jr .ret
 .adv:
     inc ix
@@ -2069,26 +2294,12 @@ video_ctc_isr_stereo:
     ld a, (ix+1)
     out (VID_DAC_RIGHT), a
     ld a, ixl
-.cmplo:
-    cp 0                         ; patched: end address low byte
+    cp low (vidAudBuf + NXV_AUD_RING - 2)
+    jr nz, .adv                  ; last PAIR address (ring size even -
+    ld a, ixh                    ; pairs never straddle the wrap)
+    cp high (vidAudBuf + NXV_AUD_RING - 2)
     jr nz, .adv
-    ld a, ixh
-.cmphi:
-    cp 0                         ; patched: end address high byte
-    jr nz, .adv
-    ld a, (vidAudNextRdy)        ; swap tail - see the mono ISR
-    or a
-    jr z, .boundary
-    xor a
-    ld (vidAudNextRdy), a
-    ld ix, (vidAudNextPtr)
-    ld a, (vidAudNextEnd)
-    ld (.cmplo+1), a
-    ld a, (vidAudNextEnd+1)
-    ld (.cmphi+1), a
-.boundary:
-    ld a, 1
-    ld (vidAudDone), a
+    ld ix, vidAudBuf             ; ring wrap - see the mono ISR
     jr .ret
 .adv:
     inc ix
@@ -2147,6 +2358,11 @@ vid_ring_gate:
  ENDIF
 .fill:
     call vid_prod_step
+    call vid_pace_poll           ; T10: an uncapped force-fill can
+                                 ; hold for frames - keep the
+                                 ; consumption integrator mod-ring-
+                                 ; unambiguous (CF ignored: the debit
+                                 ; against the coming frame carries)
     call .served
     jr c, .fill
     ret
@@ -2836,22 +3052,11 @@ vid_ds_done:
     pop af
     ret                          ; A = terminal, to the frame loop
 
-; Direct audio read: the next frame's real bytes port -> the idle
-; half, pad discarded, then the shared ISR queue handoff.
-vid_ds_aud_copy:
-    ld hl, 0                     ; sections are block-aligned
-    ld de, (vidAudFillPtr)
-    ld bc, (vidABytes)
-    call vid_ds_xfer
-    call vid_ds_pad
-    jp vid_aud_queue
-
-; Audio-copy dispatcher (3c): preload + the frame loop's queue call.
-vid_aud_copy_any:
-    ld a, (vidDirect)
-    or a
-    jp nz, vid_ds_aud_copy
-    jp vid_aud_copy
+; Direct audio feed (T10): the ds chunk transport lives INSIDE
+; vid_aud_pump (the vidDirect dispatch there) - the wire holds the
+; CMD18 stream mid-block across pump calls via vidDsAudBlkRem, and
+; the section pad is discarded once, at feed completion. No separate
+; ds copy routine remains.
 
 ; ---------------------------------------------------------------------
 ; Hot cells.
@@ -2915,7 +3120,8 @@ vidRingBytes:    ds 3            ; ring capacity in bytes (cnt << 14)
 vidRingCapBlk:   dw 0            ; ring capacity in 512B blocks
 vidRingDepth:    dw 0            ; buffered blocks (produced-consumed)
 vidNeedBlk:      dw 0            ; gate need: cap + apad + 1 blocks
-vidApadBlk:      db 0            ; audio section blocks (1..3)
+vidApadBlk:      db 0            ; audio section blocks (1..6 since
+                                 ; the T10 2544-byte frame bound)
 vidWalkMax:      db 0            ; per-seek source page-walk bound
 vidSrcWalks:     db 0
 vidRingPageCnt:  db 0            ; cnt * 2 (producer wrap modulus)
@@ -2941,22 +3147,29 @@ vidDsCrcDue:     db 0            ; an open block's CRC pends on the wire
 vidDsFrmBlk:     db 0            ; blocks consumed this frame section
 vidDsBound:      db 0            ; per-frame bound: cap + apad + 1
 
-; --- audio double-buffer cells (3b structural-slow fix) ---
-vidAudFillPtr:   dw 0            ; the half the next copy fills
-vidAudNextPtr:   dw 0            ; queued half (ISR swaps into it)
-vidAudNextEnd:   dw 0            ; its end-marker value
-vidAudNextRdy:   db 0            ; handoff release store, written LAST
-vidAudEndOff:    dw 0            ; real bytes - 1 (mono) / - 2 (stereo)
+; --- circular audio feed cells (SP17 T10) ---
+vidAudWr:        dw 0            ; ring write cursor (absolute; wraps
+                                 ; at vidAudBuf + NXV_AUD_RING)
+vidAudRdPrev:    dw 0            ; pace integrator: previous read-
+                                 ; pointer snapshot (IX is live)
+vidPaceRem:      dw 0            ; bytes of audio still to consume
+                                 ; before the next frame releases
+                                 ; (16-bit signed; <= 0 = released)
+vidAudFeedRem:   dw 0            ; staged frame's audio bytes still
+                                 ; to fetch into the ring
+vidAudBudget:    dw 0            ; vid_aud_pump per-call byte budget
+vidDsAudBlkRem:  dw 0            ; ds feed: open block remain carried
+                                 ; across resumable pump chunks
 
-; Double-buffered play feed - the ISR plays one NXV_AUD_HALF half via
-; IX while the frame loop fills the other; full rate, no decimation
-; (NXV_AUD_HALF bounds the header field at open). 3c: the buffer
-; lives in the session's AUDIO BANK, pinned at MMU3 for the whole
-; armed window (VID_AUD_WIN - the 2560-byte hot-page reclaim; see
-; the FOURTH RULE in the file header).
+; Circular play feed (T10) - the ISR free-runs IX around the whole
+; NXV_AUD_RING; the pump writes behind it (NXV_AUD_FRAME_MAX bounds
+; the header field at open). 3c: the buffer lives in the session's
+; AUDIO BANK, pinned at MMU3 for the whole armed window (VID_AUD_WIN
+; - the 2560-byte hot-page reclaim; see the FOURTH RULE in the file
+; header).
 vidAudBuf        equ VID_AUD_WIN
     ASSERT NXV_AUD_BUF_MAX <= $2000
-vidAudDone:      db 0
+    ASSERT NXV_AUD_RING == NXV_AUD_BUF_MAX
 
 ; Entry/exit symmetry captures (hot pair only - MMU6/7 are written
 ; hot pre-hop and read hot in .restore_tail; every other vidSv* cell
@@ -4135,19 +4348,20 @@ nxv2_open_body:
     or l
     jp z, .badu
     ld (vidP_Frames), hl
-    ; audio bytes/frame: nonzero, <= one vidAudBuf HALF (the 3b
-    ; double buffer: the ISR plays one half while the loop fills the
-    ; other - stereo 1250 / mono 933 both fit); pad = round-up-512
+    ; audio bytes/frame: nonzero, <= NXV_AUD_FRAME_MAX (SP17 T10
+    ; circular feed: the whole 2560-byte ring minus the writer guard
+    ; is one frame's capacity - stereo floor 12.28 fps, mono 9.17;
+    ; pre-T10 this bound was one 1280-byte half); pad = round-up-512
     ld hl, (DATA_WINDOW + NXV2_OFF_ABYTES)
     ld a, h
     or l
     jp z, .badu                  ; zero would wrap the copy LDIR
     ld (vidP_ABytes), hl
-    ld de, NXV_AUD_HALF
+    ld de, NXV_AUD_FRAME_MAX
     or a
     sbc hl, de
-    jr c, .abok                  ; real < half
-    jp nz, .badu                 ; real > half: overflow guard
+    jr c, .abok                  ; real < bound
+    jp nz, .badu                 ; real > bound: overflow guard
 .abok:
     ld hl, (vidP_ABytes)
     ld de, 511
@@ -4457,12 +4671,13 @@ nxv2_open_body:
     ; block rides between passes)
     ld hl, (vidP_ABytesPad)
     ld a, h
-    srl a                        ; pad >> 9 (pad <= 1536: 1..3 blocks)
+    srl a                        ; pad >> 9 (pad <= 3072: 1..6 blocks
+                                 ; since the T10 2544-byte frame bound)
     ld (vidApadBlkC), a
     ld b, a
     ld a, (vidCapBlkC)
     add a, b
-    inc a                        ; <= 244: no carry possible
+    inc a                        ; <= 247: no carry possible
     ld (vidNeedBlkC), a
     ; ring geometry from the allocated count
     ld a, (vidRingCntC)
@@ -4663,12 +4878,12 @@ nxv2_open_body:
     ld (vidCapBlkC), a
     ld hl, (vidP_ABytesPad)
     ld a, h
-    srl a                        ; pad >> 9 (1..3 blocks)
+    srl a                        ; pad >> 9 (1..6 blocks since T10)
     ld (vidApadBlkC), a
     ld b, a
     ld a, (vidCapBlkC)
     add a, b
-    inc a                        ; <= 244: no carry
+    inc a                        ; <= 247: no carry
     ld (vidNeedBlkC), a          ; the per-frame section bound
     ; file blocks (also the margin range check's bound)
     ld a, (vidSizeHi)
@@ -5289,34 +5504,11 @@ vid_run_l2setup_body:
     ld hl, video_ctc_isr_stereo
 .isrpicked:
     ld (IM2_CTC_STUB+1), hl
-    ; both ISRs' end markers: end = vidAudBuf + real - 1 (mono) / - 2
-    ; (stereo pair) - VID_PAGE code bytes, translated writes
-    ld hl, (vidP_ABytes)
-    ld de, vidAudBuf
-    add hl, de
-    dec hl                       ; mono end (real-1)
-    ld a, l
-    ld (video_ctc_isr.cmplo+1+DATA_WINDOW-OVL_ORG), a
-    ld a, h
-    ld (video_ctc_isr.cmphi+1+DATA_WINDOW-OVL_ORG), a
-    dec hl                       ; stereo end (real-2)
-    ld a, l
-    ld (video_ctc_isr_stereo.cmplo+1+DATA_WINDOW-OVL_ORG), a
-    ld a, h
-    ld (video_ctc_isr_stereo.cmphi+1+DATA_WINDOW-OVL_ORG), a
-    ; double-buffer cells (3b): the first fill lands in half A (the
-    ; end markers above already point there); the queue end offset =
-    ; real bytes - 1 (mono) / - 2 (stereo pair)
-    ld hl, vidAudBuf
-    ld (vidAudFillPtr+DATA_WINDOW-OVL_ORG), hl
-    ld hl, (vidP_ABytes)
-    dec hl
-    ld a, (vidP_AChan)
-    cp 2
-    jr nz, .endoff
-    dec hl
-.endoff:
-    ld (vidAudEndOff+DATA_WINDOW-OVL_ORG), hl
+    ; T10: no per-file ISR end markers any more - both ISRs' ring-end
+    ; wrap compares are assembly constants (the ring geometry never
+    ; changes); the feed cells are primed hot by the .orchret preload
+    ; (vidAudWr/RdPrev/PaceRem), and the feed state is zeroed below
+    ; with the rest of the session init
  IFDEF DEBUG
     ; timeline baseline: zero vidTlTicks..vidLoopPass (vidTlFillFrames
     ; sits outside the span - the open body already staged it)
@@ -5333,7 +5525,10 @@ vid_run_l2setup_body:
     ld (vidInSpan+DATA_WINDOW-OVL_ORG), a
     ld (vidPalPending+DATA_WINDOW-OVL_ORG), a
     ld (vidFramePos+2+DATA_WINDOW-OVL_ORG), a
-    ld (vidAudNextRdy+DATA_WINDOW-OVL_ORG), a
+    ld (vidAudFeedRem+DATA_WINDOW-OVL_ORG), a
+    ld (vidAudFeedRem+1+DATA_WINDOW-OVL_ORG), a
+    ld (vidDsAudBlkRem+DATA_WINDOW-OVL_ORG), a
+    ld (vidDsAudBlkRem+1+DATA_WINDOW-OVL_ORG), a
     ld hl, 512                   ; frame 0's audio follows the header
     ld (vidFramePos+DATA_WINDOW-OVL_ORG), hl
     ld hl, (vidFrames+DATA_WINDOW-OVL_ORG)

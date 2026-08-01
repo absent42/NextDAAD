@@ -199,7 +199,12 @@ if (-not $aspect -and $env:VIDPROFILE) {
             # deprecation shim; set VIDFPS explicitly if a per-video --mono
             # override needs a different floor than this global guess.
             $mono = $env:VIDOPTS -match '(^|\s)--mono(\s|$)'
-            $floor = if ($mono) { 18.22 } else { 24.40 }
+            # SP17 T10 circular-feed floors (nxv2enc.min_fps_for):
+            # stereo 12.28, mono 9.17 (were 24.40 / 18.22 with the old
+            # double-buffer halves). Every v1 profile rate (12.5-25)
+            # now sits above both floors, so the raise below is a
+            # no-op shim kept for safety against future floor moves.
+            $floor = if ($mono) { 9.17 } else { 12.28 }
             $orig = $profileFps[$prof]
             $profileFpsArg = if ($orig -lt $floor) { $floor } else { $orig }
             $fpsNote = if ($orig -lt $floor) {
@@ -235,7 +240,7 @@ if ($env:VIDFPS) {
     $fpsArgs = @('--fps', $env:VIDFPS)
 } elseif ($profileFpsArg) {
     # Invariant-culture string: $profileFpsArg is a computed [double]
-    # (18.22/24.40 or a v1 profile rate) - on a comma-decimal system its
+    # (9.17/12.28 or a v1 profile rate) - on a comma-decimal system its
     # default ToString would emit "24,4" and break videnc's own --fps
     # parsing, the same locale pitfall VIDASPECT's comma form works
     # around above.

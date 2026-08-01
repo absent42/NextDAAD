@@ -157,38 +157,99 @@ def t1_header_invalid():
         raise AssertionError("expected ValueError for short buffer")
 
 
-@case(1, "audio layout - NXV v2.0 player bound (1280B/frame half) enforced at encode time")
+@case(1, "audio layout - NXV player bound (T10 circular feed, 2544B/frame) enforced at encode time")
 def t1_audio_player_bound():
-    # The player's double-buffered audio feed caps real audio at
-    # NXV_AUD_HALF = 1280 bytes/frame (open rejects more with VID
-    # FMT?). audio_layout must refuse to lay out such an encode with
-    # a named error - stereo needs fps > ~24.40, mono fps > ~18.22.
-    # stereo 25 fps: 625*2 = 1250 <= 1280 - accepted
+    # SP17 T10: the player's circular audio feed caps real audio at
+    # NXV_AUD_FRAME_MAX = 2560 (ring) - 16 (writer guard) = 2544
+    # bytes/frame (open rejects more with VID FMT?). audio_layout
+    # must refuse to lay out such an encode with a named error -
+    # stereo needs fps >= ~12.28, mono fps >= ~9.17.
+    expect(enc.AUD_RING == 2560, "ring matches NXV_AUD_RING")
+    expect(enc.AUD_GUARD == 16, "guard matches NXV_AUD_GUARD")
+    expect(enc.AUD_FRAME_MAX == 2544, "bound = ring - guard")
+    # stereo 25 fps: 625*2 = 1250 <= 2544 - accepted (and its layout
+    # is BYTE-IDENTICAL to the pre-T10 layout: same samples/real/pad)
     rate, samples, real, padded = enc.audio_layout(25, 2)
-    expect(real == 1250 and real <= enc.AUD_HALF, "stereo 25fps fits")
-    # mono 20 fps: round(23325/20) = 1166 <= 1280 - accepted
+    expect((samples, real, padded) == (625, 1250, 1536),
+           "stereo 25fps layout unchanged by the bound move")
+    # mono 20 fps: round(23325/20) = 1166 - unchanged too
     rate, samples, real, padded = enc.audio_layout(20, 1)
-    expect(real == 1166 and real <= enc.AUD_HALF, "mono 20fps fits")
-    # stereo 20 fps: round(15625/20)*2 = 1562 > 1280 - rejected with
-    # the named floors and the --mono remedy (mono fits at 20)
+    expect((samples, real, padded) == (1166, 1166, 1536),
+           "mono 20fps layout unchanged by the bound move")
+    # stereo 20 fps: round(15625/20)*2 = 1562 - LEGAL now (was the
+    # canonical pre-T10 rejection)
+    rate, samples, real, padded = enc.audio_layout(20, 2)
+    expect(real == 1562, "stereo 20fps legal under the T10 bound")
+    # stereo 6 fps: round(15625/6)*2 = 5208 > 2544 - rejected with
+    # the named floors and the --mono remedy (mono fits at 12: no -
+    # at 6 mono is 3888 > 2544, so NO --mono remedy here)
     try:
-        enc.audio_layout(20, 2)
+        enc.audio_layout(6, 2)
     except SystemExit as e:
         msg = str(e)
-        expect("1280" in msg, "error names the 1280-byte player bound")
-        expect("24.40" in msg, "error names the stereo fps floor")
-        expect("18.22" in msg, "error names the mono fps floor")
-        expect("--mono" in msg, "error suggests --mono when mono fits")
+        expect("2544" in msg, "error names the 2544-byte player bound")
+        expect("12.28" in msg, "error names the stereo fps floor")
+        expect("9.17" in msg, "error names the mono fps floor")
+        expect("--mono" not in msg, "no --mono remedy when mono is over too")
     else:
-        raise AssertionError("stereo 20fps must be rejected (1562 > 1280)")
-    # floors are the boundary: just above passes, just below rejects
-    expect(enc.audio_layout(24.40, 2)[2] <= enc.AUD_HALF, "stereo 24.40 fits")
+        raise AssertionError("stereo 6fps must be rejected (5208 > 2544)")
+    # stereo 10 fps: 3126 > 2544 rejected, but mono at 10 fps is
+    # round(23325/10) = 2333 <= 2544, so the --mono remedy appears
     try:
-        enc.audio_layout(24.39, 2)
+        enc.audio_layout(10, 2)
+    except SystemExit as e:
+        expect("--mono" in str(e), "error suggests --mono when mono fits")
+    else:
+        raise AssertionError("stereo 10fps must be rejected (3126 > 2544)")
+    # floors are the boundary: just above passes, just below rejects
+    expect(enc.audio_layout(12.28, 2)[2] <= enc.AUD_FRAME_MAX, "stereo 12.28 fits")
+    try:
+        enc.audio_layout(12.27, 2)
     except SystemExit:
         pass
     else:
-        raise AssertionError("stereo 24.39fps must be rejected")
+        raise AssertionError("stereo 12.27fps must be rejected")
+    expect(enc.audio_layout(9.17, 1)[2] <= enc.AUD_FRAME_MAX, "mono 9.17 fits")
+    try:
+        enc.audio_layout(9.16, 1)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("mono 9.16fps must be rejected")
+    # the two headline unlocks (the hardware-round legs)
+    expect(enc.audio_layout(12.5, 2)[2] == 2500,
+           "320x256@12.5 stereo is legal now (2500 <= 2544)")
+    expect(enc.audio_layout(24, 2)[2] == 1302,
+           "native 24fps stereo is legal now (1302 <= 2544)")
+
+
+@case(1, "audio floor arithmetic - T10 circular-feed floors pinned (ring/guard derivation)")
+def t1_audio_floor_arithmetic():
+    # SP17 T10: pin the derivation, not just the outcomes. The bound
+    # is AUD_RING (2560, the same RAM the old halves used) minus
+    # AUD_GUARD (16, the writer's clearance from the read pointer);
+    # the floor formula is fps > rate/(smax + 0.5) with
+    # smax = AUD_FRAME_MAX // channels - identical formula to the
+    # pre-T10 floors, only the bound moved.
+    import math as _m
+    expect(enc.AUD_FRAME_MAX == enc.AUD_RING - enc.AUD_GUARD,
+           "bound derives from ring minus guard")
+    expect(abs(enc.min_fps_for(2) - 15625 / (2544 // 2 + 0.5)) < 1e-12,
+           "stereo floor = 15625/1272.5")
+    expect(abs(enc.min_fps_for(1) - 23325 / (2544 + 0.5)) < 1e-12,
+           "mono floor = 23325/2544.5")
+    # the user-facing (ceil to 0.01) floors named in every message
+    expect(_m.ceil(enc.min_fps_for(2) * 100) / 100 == 12.28,
+           "stereo floor rounds to 12.28")
+    expect(_m.ceil(enc.min_fps_for(1) * 100) / 100 == 9.17,
+           "mono floor rounds to 9.17")
+    # every layout at and above the shown floors respects the bound
+    for fps in (12.28, 12.5, 23.976, 24, 25):
+        expect(enc.audio_layout(fps, 2)[2] <= enc.AUD_FRAME_MAX,
+               f"stereo {fps} fps within the T10 bound")
+    for fps in (9.17, 10, 18.22, 24, 25):
+        expect(enc.audio_layout(fps, 1)[2] <= enc.AUD_FRAME_MAX,
+               f"mono {fps} fps within the T10 bound")
 
 
 @case(1, "streaming supply gate - silicon-calibrated (Card #3 VSTR0/VSTR1 anchors)")
@@ -296,8 +357,8 @@ def t1_stream_supply_gate_e2e():
     nframes = 50
     payload_len = 30000                      # bytes, fixed per frame
     abytes_real = 1250                       # stereo@25 (within the
-    abytes_pad = 1536                        # 1280 player bound the 3c
-                                             # pack_header defence now
+    abytes_pad = 1536                        # 2544 T10 player bound the
+                                             # 3c pack_header defence
                                              # enforces on every writer)
     channels, rate = 2, enc.RATE_STEREO
     payload_blocks = (payload_len + 511) // 512
@@ -1653,24 +1714,24 @@ def _synthetic_ex(n, width, height, seed=7, cut_at=None):
                 abytes_pad=abytes_pad, nframes=n)
 
 
-@case(11, "pack_header defence-in-depth - audio bytes over the 1280 player bound rejected")
+@case(11, "pack_header defence-in-depth - audio bytes over the 2544 player bound rejected")
 def t11_pack_header_bound():
     try:
         enc.pack_header(width=256, height=192, fps=25, channels=2,
                         arate=enc.RATE_STEREO, frame_count=1,
-                        audio_bytes_per_frame=enc.AUD_HALF + 1,
+                        audio_bytes_per_frame=enc.AUD_FRAME_MAX + 1,
                         ring_start_margin_blocks=0, per_frame_cap_blocks=1)
     except ValueError as e:
-        expect("1280" in str(e), "error names the 1280 player bound")
+        expect("2544" in str(e), "error names the 2544 player bound")
         expect("VID FMT" in str(e), "error names the player refusal")
     else:
-        raise AssertionError("pack_header must reject 1281 audio bytes/frame")
+        raise AssertionError("pack_header must reject 2545 audio bytes/frame")
     # the bound itself is legal
     hdr = enc.pack_header(width=256, height=192, fps=25, channels=2,
                           arate=enc.RATE_STEREO, frame_count=1,
-                          audio_bytes_per_frame=enc.AUD_HALF,
+                          audio_bytes_per_frame=enc.AUD_FRAME_MAX,
                           ring_start_margin_blocks=0, per_frame_cap_blocks=1)
-    expect(len(hdr) == 512, "1280 exactly is accepted")
+    expect(len(hdr) == 512, "2544 exactly is accepted")
 
 
 def _walk_ops(payload):
@@ -1910,30 +1971,35 @@ def t11_direct_gate():
           "against the Fraction-rounding knife-edge (Card #5 review fix)")
 def t11_direct_gate_mono_floor_menu():
     # Review finding: min_fps_for(1) is, BY CONSTRUCTION, the exact fps
-    # where audio_layout's real mono bytes/frame lands on the AUD_HALF
-    # boundary. Which side of the boundary Fraction rounding falls on
-    # there is a coin flip only a few ULP wide - a raise there inside
-    # the refusal-message builder (direct_max_raw_bytes -> audio_layout)
-    # would surface as an unrelated SystemExit ("... exceeds the NXV
-    # v2.0 player's per-frame audio bound ...") out of what should be
-    # the direct-serve wire-gate refusal. The fix rounds the floor UP
-    # to the nearest 0.01 fps (math.ceil(...*100)/100, the same idiom
-    # audio_layout's own "fits" floors already use) before feeding it
-    # back through direct_max_raw_bytes.
+    # where audio_layout's real mono bytes/frame lands on the
+    # AUD_FRAME_MAX boundary. Which side of the boundary Fraction
+    # rounding falls on there is a coin flip only a few ULP wide - a
+    # raise there inside the refusal-message builder
+    # (direct_max_raw_bytes -> audio_layout) would surface as an
+    # unrelated SystemExit ("... exceeds the NXV player's per-frame
+    # audio bound ...") out of what should be the direct-serve
+    # wire-gate refusal. The fix rounds the floor UP to the nearest
+    # 0.01 fps (math.ceil(...*100)/100, the same idiom audio_layout's
+    # own "fits" floors already use) before feeding it back through
+    # direct_max_raw_bytes.
     import math as _m
     mono_floor = enc.min_fps_for(1)
-    # demonstrate the knife-edge is real: a few ULP below the exact
-    # floor flips audio_layout's verdict (samples 1280 -> 1281, one
-    # over AUD_HALF) and direct_max_raw_bytes raises unguarded.
-    unlucky = mono_floor - 1e-6
+    # demonstrate the knife-edge is real: just below the exact floor
+    # audio_layout's verdict flips (samples 2544 -> 2545, one over
+    # AUD_FRAME_MAX) and direct_max_raw_bytes raises unguarded. The
+    # epsilon is floor-value-dependent (limit_denominator can absorb
+    # a too-small perturbation - at the T10 floor 1e-6 rounds back to
+    # the fitting side, where the old 18.22 floor raised at 1e-6);
+    # 1e-4 lands on the raising side of the new floor.
+    unlucky = mono_floor - 1e-4
     try:
         enc.direct_max_raw_bytes(unlucky, 1, 1.0)
     except SystemExit:
         pass
     else:
         raise AssertionError("test setup: expected the floor minus an "
-                             "ULP to demonstrate the raise this case "
-                             "guards against")
+                             "epsilon to demonstrate the raise this "
+                             "case guards against")
     # the fix's guard: rounding UP first, at the floor itself AND at
     # the unlucky perturbation, must render without raising either way.
     for fps in (mono_floor, unlucky):

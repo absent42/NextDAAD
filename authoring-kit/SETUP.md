@@ -361,11 +361,12 @@ smoke, crowds or anything else that moves non-rigidly, where it tears.
 Blending is the safe default for everything.
 
 **fps floors.** Frame rate is free (default 25) down to a hard floor
-set by audio: the player feeds audio from 1280-byte double-buffer
-halves, so one frame may carry at most 1280 audio bytes. Stereo at
-15625 Hz needs 24.40 fps or more; mono at 23325 Hz needs 18.22 fps or
-more. The encoder refuses an encode below the floor and names the
-remedy (raise fps, or switch to `--mono` if mono fits).
+set by audio: the player feeds audio through a 2560-byte circular
+ring, so one frame may carry at most 2544 audio bytes (the ring minus
+a small writer guard). Stereo at 15625 Hz needs 12.28 fps or more;
+mono at 23325 Hz needs 9.17 fps or more. The encoder refuses an
+encode below the floor and names the remedy (raise fps, or switch to
+`--mono` if mono fits).
 
 **Encode time is quality.** The encoder is deliberately slow - it
 spends its time squeezing the best picture into the fixed playback
@@ -564,8 +565,8 @@ once) and REEL (loops 002.VID until a key is pressed).
   first, so reaching this means no budget makes the clip streamable: use a
   smaller shape, lower fps, `--mono`, or a shorter clip. See "Video
   cutscenes", "Streaming, resident and direct delivery".
-- "audio bytes/frame ... exceeds" - fps below the audio floor (stereo 24.40,
-  mono 18.22); raise `VIDFPS` or add `--mono` to `VIDOPTS`.
+- "audio bytes/frame ... exceeds" - fps below the audio floor (stereo 12.28,
+  mono 9.17); raise `VIDFPS` or add `--mono` to `VIDOPTS`.
 - Effects bank warnings are non-fatal - the game still builds without
   `GAME.SFB`.
 

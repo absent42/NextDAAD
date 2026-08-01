@@ -184,9 +184,10 @@ refreshed pixels) rather than truncating frames.
 Three gates refuse infeasible encodes at encode time, each naming its
 remedy in the error message:
 
-- **Audio floor.** One frame may carry at most 1280 real audio bytes
-  (the player's double-buffer half). Stereo needs fps >= 24.40, mono
-  >= 18.22. Remedy: raise `--fps` or switch to `--mono`.
+- **Audio floor.** One frame may carry at most 2544 real audio bytes
+  (the player's 2560-byte circular audio ring minus a 16-byte writer
+  guard - SP17 T10). Stereo needs fps >= 12.28, mono >= 9.17. Remedy:
+  raise `--fps` or switch to `--mono`.
 - **Streaming supply.** A file bigger than the player's resident pool
   (~1.2 MB) must stream; if its mean demand exceeds the SD supply
   rate the encode is refused. With the automatic budget search (the

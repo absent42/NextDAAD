@@ -108,17 +108,17 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
         raise ValueError("frame_count out of the header's 24-bit range")
     if not (0 <= audio_bytes_per_frame < (1 << 16)):
         raise ValueError("audio_bytes_per_frame out of 16-bit range")
-    if audio_bytes_per_frame > AUD_HALF:
-        # v2.0 PLAYER BOUND defence-in-depth (3b review minor -> 3c):
-        # the player rejects such a header at open (VID FMT?), so no
-        # writer may build one. audio_layout() enforces this upstream
-        # for every real encode path; this guard catches any future
-        # caller that bypasses it.
+    if audio_bytes_per_frame > AUD_FRAME_MAX:
+        # PLAYER BOUND defence-in-depth (3b review minor -> 3c; bound
+        # moved by SP17 T10's circular feed): the player rejects such
+        # a header at open (VID FMT?), so no writer may build one.
+        # audio_layout() enforces this upstream for every real encode
+        # path; this guard catches any future caller that bypasses it.
         raise ValueError(
             f"audio_bytes_per_frame {audio_bytes_per_frame} exceeds the "
-            f"NXV v2.0 player bound of {AUD_HALF} bytes (one double-"
-            f"buffer half, NXV_AUD_HALF - the player refuses the file "
-            f"at open with VID FMT?)")
+            f"NXV player bound of {AUD_FRAME_MAX} bytes (the circular "
+            f"feed ring minus the writer guard, NXV_AUD_FRAME_MAX - the "
+            f"player refuses the file at open with VID FMT?)")
     if not (0 <= ring_start_margin_blocks < (1 << 16)):
         raise ValueError("ring_start_margin_blocks out of 16-bit range")
     if not (0 <= per_frame_cap_blocks < (1 << 16)):
@@ -3492,24 +3492,55 @@ def resolve_shape(shape):
 
 # ---------------------------------------------------------------------
 # Audio layout (unchanged from v1's own derivation - same rates, same
-# round(rate/fps) samples-per-frame rule) + the NXV v2.0 PLAYER BOUND:
-# the player's audio feed is double-buffered in two 1280-byte halves
-# (NXV_AUD_HALF, src/nextdaad.inc), and the open path rejects any
-# header declaring more than 1280 real audio bytes/frame ("VID FMT?").
-# The wire format itself allows more - this is a player capability
-# bound, enforced HERE so a doomed encode fails at encode time with a
-# named remedy instead of building a file that refuses to play.
+# round(rate/fps) samples-per-frame rule) + the NXV PLAYER BOUND
+# (SP17 T10, circular feed): the player's audio feed is ONE circular
+# 2560-byte ring (NXV_AUD_RING, src/nextdaad.inc) - the ISR's read
+# pointer free-runs around it and the frame loop writes behind it, so
+# capacity per frame is the WHOLE ring minus a small writer guard,
+# not one fixed half. The open path rejects any header declaring more
+# than AUD_FRAME_MAX real audio bytes/frame ("VID FMT?"). The wire
+# format itself allows more - this is a player capability bound,
+# enforced HERE so a doomed encode fails at encode time with a named
+# remedy instead of building a file that refuses to play.
+#
+# Derivation of the bound and the fps floors:
+#   AUD_RING      = 2560  - the same bytes the pre-T10 two 1280-byte
+#                           halves occupied (zero extra RAM)
+#   AUD_GUARD     = 16    - the writer keeps 16 bytes clear of the
+#                           read pointer. REQUIRED minimum is one
+#                           stereo pair (2 bytes): the player ISR's
+#                           (ix+0)/(ix+1) pair fetch is not atomic
+#                           against the writer's byte stores. The
+#                           room computation's read-pointer snapshot
+#                           only goes stale in the SAFE direction
+#                           (the reader advances, so true room only
+#                           grows), so 16 is a deliberate 8x safety
+#                           margin, stated conservative.
+#   AUD_FRAME_MAX = 2560 - 16 = 2544 real bytes/frame
+# Floors (min_fps_for, same formula as before): samples <= smax
+# requires rate/fps < smax + 0.5, i.e. fps > rate/(smax + 0.5) with
+# smax = AUD_FRAME_MAX // channels:
+#   stereo: 15625 / 1272.5 = 12.2790... -> fps >= 12.28
+#   mono:   23325 / 2544.5 = 9.1669...  -> fps >=  9.17
+# (pre-T10: 1280 -> stereo 24.40 / mono 18.22.) 320x256@12.5 stereo
+# (2500 B/frame) and native 24 fps stereo (1302 B/frame) are now
+# legal. LEGALITY ONLY changes: any previously legal (fps, channels)
+# lays out byte-identically (same rate/samples/real/padded - the
+# bound is a comparison, not an operand of the layout arithmetic).
 # ---------------------------------------------------------------------
 
-AUD_HALF = 1280   # matches NXV_AUD_HALF - one double-buffer half
+AUD_RING = 2560       # matches NXV_AUD_RING - the circular feed ring
+AUD_GUARD = 16        # matches NXV_AUD_GUARD - writer guard bytes
+AUD_FRAME_MAX = AUD_RING - AUD_GUARD  # matches NXV_AUD_FRAME_MAX
 
 
 def min_fps_for(channels):
-    """Lowest fps whose round(rate/fps)*channels fits AUD_HALF:
+    """Lowest fps whose round(rate/fps)*channels fits AUD_FRAME_MAX:
     samples <= smax requires rate/fps < smax + 0.5, i.e.
-    fps > rate/(smax + 0.5). Stereo ~24.40, mono ~18.22."""
+    fps > rate/(smax + 0.5). Stereo ~12.28, mono ~9.17 (T10 circular
+    feed; the pre-T10 half-buffer floors were 24.40 / 18.22)."""
     rate = RATE_STEREO if channels == 2 else RATE_MONO
-    return rate / (AUD_HALF // channels + 0.5)
+    return rate / (AUD_FRAME_MAX // channels + 0.5)
 
 
 def audio_layout(fps, channels):
@@ -3518,21 +3549,22 @@ def audio_layout(fps, channels):
     exact = Fraction(rate) / Fraction(fps).limit_denominator(1000)
     samples = int(exact + Fraction(1, 2))
     real = samples * channels
-    if real > AUD_HALF:
+    if real > AUD_FRAME_MAX:
         mode = "stereo" if channels == 2 else "mono"
         remedy = "raise --fps"
         if channels == 2:
             mono_fits = int(Fraction(RATE_MONO)
                             / Fraction(fps).limit_denominator(1000)
-                            + Fraction(1, 2)) <= AUD_HALF
+                            + Fraction(1, 2)) <= AUD_FRAME_MAX
             if mono_fits:
                 remedy += " or use --mono (mono fits at this fps)"
         import math as _math
         raise SystemExit(
             f"error: {real} audio bytes/frame ({mode} at {float(fps):g} "
-            f"fps) exceeds the NXV v2.0 player's per-frame audio bound "
-            f"of {AUD_HALF} bytes (one double-buffer half - a bigger "
-            f"frame is rejected at open with VID FMT?). Stereo requires "
+            f"fps) exceeds the NXV player's per-frame audio bound "
+            f"of {AUD_FRAME_MAX} bytes (the T10 circular feed ring "
+            f"minus the writer guard - a bigger frame is rejected at "
+            f"open with VID FMT?). Stereo requires "
             f"fps >= {_math.ceil(min_fps_for(2) * 100) / 100:.2f}, mono "
             f"fps >= {_math.ceil(min_fps_for(1) * 100) / 100:.2f} "
             f"(the floors themselves fit - 3b re-review wording fix); "
@@ -3582,8 +3614,8 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     from fractions import Fraction
     fps_frac = fps if isinstance(fps, Fraction) else Fraction(fps).limit_denominator(1000)
     channels = 1 if mono else 2
-    # Lay out the audio FIRST: the v2.0 player-bound guard (real
-    # bytes/frame <= AUD_HALF) rejects a doomed fps/channels combo
+    # Lay out the audio FIRST: the player-bound guard (real
+    # bytes/frame <= AUD_FRAME_MAX) rejects a doomed fps/channels combo
     # before the slow ffmpeg extraction, not after.
     rate, samples_per_frame, abytes_real, abytes_pad = audio_layout(fps_frac, channels)
     # SP17 T0: resample in TIME to the target rate when the source is not
@@ -4124,16 +4156,16 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
         m_90 = direct_max_raw_bytes(fps_val, 1, 0.90)
         mono_floor = min_fps_for(1)
         # menu-only hardening: mono_floor sits within a Fraction-
-        # rounding tick of audio_layout's AUD_HALF boundary by
+        # rounding tick of audio_layout's AUD_FRAME_MAX boundary by
         # construction (it IS the floor where real bytes/frame lands
-        # at exactly AUD_HALF), so feeding the exact float back through
+        # at exactly AUD_FRAME_MAX), so feeding the exact float back through
         # direct_max_raw_bytes -> audio_layout can trip its strict
         # SystemExit depending on which way the rounding falls - a
         # refusal-message computation must never itself raise. Round
         # the floor UP to the nearest 0.01 fps first (the same ceiling
         # idiom audio_layout's own "fits" floors use, and the precision
         # already shown to the user below) to land safely inside the
-        # AUD_HALF bucket instead of on its edge.
+        # AUD_FRAME_MAX bucket instead of on its edge.
         mono_floor_safe = math.ceil(mono_floor * 100) / 100
         m_floor_at = direct_max_raw_bytes(mono_floor_safe, 1, 1.0)
         raise SystemExit(
