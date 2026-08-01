@@ -81,6 +81,15 @@ MAX_HEIGHT_BY_WIDTH = {256: 192, 320: 256}
 FLAG_DELTA_STREAM = 1 << 0   # always 1 in v2
 FLAG_DIRECT_SERVE = 1 << 1   # direct-serve hint
 FLAG_BAND_PALETTE = 1 << 2   # RESERVED band-palette experiment
+FLAG_OCOPY = 1 << 3          # SP17 T5a: the file uses OCOPY8/OCOPY16.
+                             # ENFORCED capability: the player arms the
+                             # two OCOPY stub slots only when set, and
+                             # every player validates the whole flags
+                             # byte, so pre-T5a players refuse an OCOPY
+                             # file cleanly at open (VID FMT?). The
+                             # encoder sets it ONLY on clips that
+                             # actually emit the op - everything else
+                             # stays byte-compatible with old players
 
 RATE_STEREO = 15625   # 28,000,000/16/112 - matches v1's NXV_RATE_STEREO
 RATE_MONO = 23325      # matches v1's NXV_RATE_MONO
@@ -175,6 +184,7 @@ def unpack_header(buf):
         channels=buf[HDR_OFF_ACHAN],
         arate=int.from_bytes(buf[HDR_OFF_ARATE:HDR_OFF_ARATE + 2], "little"),
         flags=buf[HDR_OFF_FLAGS],
+        ocopy=bool(buf[HDR_OFF_FLAGS] & FLAG_OCOPY),
         kf_policy=buf[HDR_OFF_KFPOLICY],
         frame_count=int.from_bytes(buf[HDR_OFF_FRAMES:HDR_OFF_FRAMES + 3], "little"),
         audio_bytes_per_frame=int.from_bytes(buf[HDR_OFF_ABYTES:HDR_OFF_ABYTES + 2], "little"),
@@ -204,11 +214,20 @@ OP_COPY16 = 0x14   # nn (LE) literal bytes follow
 OP_PAL = 0x18      # full 512-byte palette block, NR $44 order
 OP_SKIP8 = 0x1C    # cursor += n (1-255)
 OP_KFLIP = 0x20    # end of final keyframe chunk: atomic flip + palette swap
+OP_OCOPY8 = 0x24   # SP17 T5a (header flags bit3): copy n (1-255) cursor
+                   # bytes from the PREVIOUS frame at signed 16-bit LE
+                   # ADDRESS-space byte offset (source byte address =
+                   # dest byte address + off in the surface's flat
+                   # space); Wave 1: legal only inside a KSTART..KFLIP
+                   # span (source = visible surface, dest = hidden)
 OP_KSTART = 0x28   # begin keyframe span: target = hidden surface; cursor = 0
 OP_SCROLL = 0x2C   # RESERVED, unimplemented in v2.0 - encoder never emits
+                   # (kept for T5b hardware scroll)
+OP_OCOPY16 = 0x30  # as OP_OCOPY8 with a 16-bit LE length
 
 VALID_OPS = frozenset({OP_FEND, OP_SKIP16, OP_RUN8, OP_RUN16, OP_COPY8,
-                        OP_COPY16, OP_PAL, OP_SKIP8, OP_KFLIP, OP_KSTART})
+                        OP_COPY16, OP_PAL, OP_SKIP8, OP_KFLIP, OP_KSTART,
+                        OP_OCOPY8, OP_OCOPY16})
 TERMINAL_OPS = frozenset({OP_FEND, OP_KFLIP})
 
 PAL_BLOCK_SIZE = 512
@@ -335,6 +354,25 @@ TMODEL_COEFFS = {
                                 #   [SILICON sitting 2: CD armed/unarmed = 1.170-
                                 #   1.173 at c64/c128/c256 -> 0.853; held at 0.85].
                                 #   sitting 1: 0.85. model was 0.89
+    # --- SP17 T5a OCOPY (HAND-COUNTED PESSIMISTIC, priced with the
+    # emitter in the same commit - the e7b38fd/2026-07-28 lesson: a
+    # mis-priced op makes the encoder defer work it can afford. The
+    # Wave 1 bring-up card measures both and Wave 2 fits them before
+    # any acceptance run.) The copy KERNEL terms are REUSED unchanged
+    # (copy_dma_setup/copy_dma_per_b/copy_dma_min/fetch_long): OCOPY
+    # rides vid_copy_dma / vid_copy_ldi verbatim. At these constants a
+    # full 256 B chunk models (1091.8+250)/256 + 5.31 = 10.55 T/B,
+    # i.e. ~11.2 T/B with the armed audio tax (the design's contiguous
+    # class); a 144 B fragmented-column chunk models 14.63 T/B model =
+    # ~15.1 T/B armed (the fragmented class). ---
+    "ocopy_parse": 500.0,       # per-op operand parse + span gate + base
+                                #   staging (hand count ~360 T incl the
+                                #   dispatch envelope; held pessimistic
+                                #   until the T5a card measures it)
+    "ocopy_chunk_t": 250.0,     # per-chunk source page/offset recompute
+                                #   + MMU6 map + bound check + source
+                                #   room fold (hand count ~190 T; design
+                                #   expected 150-250, priced at the top)
 }
 
 
@@ -1257,6 +1295,78 @@ def op_copy(payload):
             parts.append(bytes([OP_COPY16]) + c.to_bytes(2, "little") + payload[pos:pos + c])
             pos += c
     return b"".join(parts)
+
+
+def op_ocopy(n, off):
+    """SP17 T5a: serialize an OCOPY of n cursor bytes at signed
+    ADDRESS-space byte offset `off` (constant across count-field
+    chunks: the offset applies per byte, so splitting the length does
+    not change it). 16-bit chunks then an 8-bit tail, like every other
+    counted op."""
+    off = int(off)
+    if not (-32768 <= off <= 32767):
+        raise ValueError(f"OCOPY offset {off} outside signed 16-bit range")
+    ob = (off & 0xFFFF).to_bytes(2, "little")
+    parts = []
+    for L in _chunk_lengths(n):
+        if L <= 255:
+            parts.append(bytes([OP_OCOPY8, L]) + ob)
+        else:
+            parts.append(bytes([OP_OCOPY16]) + L.to_bytes(2, "little") + ob)
+    return b"".join(parts)
+
+
+def _ocopy_t(L, off, height, gapped, in_span=True):
+    """Modeled OCOPY body T for L cursor bytes: the UNCHANGED copy
+    kernels (vid_copy_dma / vid_copy_ldi at the settled rates) walked
+    in chunks the player's own rooms produce, plus the per-chunk
+    source recompute/MMU6-map/bound-check term (ocopy_chunk_t).
+
+    Chunk cap: 256 (the audio-contract DMA cap) folded with the COLUMN
+    room on gapped shapes (a chunk never crosses a column, so the
+    fragmented-column class pays more setups per byte - the walk's
+    non-contiguity tax); Wave 3's in-place form additionally folds
+    min(cap, |off|) when in_span is False (the memmove-equivalence
+    rule), which prices small negative offsets out of existence by
+    construction. Kernel select per chunk is the player's own
+    copy_dma_min gate - no min(cpu, dma) floor, same rule as
+    _fill_t/_copy_t (price what the player DOES)."""
+    tc = TMODEL_COEFFS
+    cap = tc["copy_dma_chunk"]
+    if not in_span:
+        cap = min(cap, max(1, abs(int(off))))
+    if gapped:
+        cap = min(cap, int(height))
+    L = int(L)
+    full, rem = divmod(L, cap)
+    t = 0.0
+    if full:
+        if cap >= tc["copy_dma_min"]:
+            per = tc["copy_dma_setup"] + cap * tc["copy_dma_per_b"]
+        else:
+            per = cap * tc["fetch_long"]
+        t += full * (per + tc["ocopy_chunk_t"])
+    if rem:
+        if rem >= tc["copy_dma_min"]:
+            t += tc["copy_dma_setup"] + rem * tc["copy_dma_per_b"]
+        else:
+            t += rem * tc["fetch_long"]
+        t += tc["ocopy_chunk_t"]
+    return t
+
+
+def ocopy_op_cost(length, off, height, gapped, in_span=True):
+    """(bytes, T) for an OCOPY of `length` cursor bytes, summed across
+    its count-field chunks. Byte cost is 4 (OCOPY8) / 5 (OCOPY16) per
+    chunk with ZERO payload - that is the whole point, and the model
+    must not accidentally charge one."""
+    tc = TMODEL_COEFFS
+    total_b, total_t = 0, 0.0
+    for L in _chunk_lengths(length):
+        total_b += 4 if L <= 255 else 5
+        total_t += tc["ocopy_parse"] + _ocopy_t(L, off, height, gapped,
+                                                in_span=in_span)
+    return total_b, total_t
 
 
 def _cost_skip_chunk(L):
@@ -2519,7 +2629,22 @@ def _dither_mode(mode):
     return m
 
 
-def ordered_dither(frame, amplitude=None):
+def _bluenoise_tile(H, W, phase=None):
+    """The (H,W) blue-noise threshold tile, its origin displaced by
+    `phase` = (px, py) pixels so the matrix travels WITH content
+    (SP17 T5a motion-locked dither: value previously at (y, x) appears
+    at (y+py, x+px)). phase None/(0,0) indexes exactly as the shipped
+    expression - byte-identical, asserted by the selftest - so
+    non-shifted content is bit-unchanged."""
+    if phase:
+        px, py = int(phase[0]) % 32, int(phase[1]) % 32
+    else:
+        px = py = 0
+    return BLUENOISE32[(np.arange(H)[:, None] - py) % 32,
+                       (np.arange(W)[None, :] - px) % 32]
+
+
+def ordered_dither(frame, amplitude=None, phase=None):
     """LEGACY (mode "offset") blue-noise ordered dither of an (H,W,3)
     uint8 frame: per-pixel offset (threshold_norm - 0.5) * DITHER_STEP *
     amplitude, the same offset on all three channels (no hue noise).
@@ -2527,15 +2652,17 @@ def ordered_dither(frame, amplitude=None):
     amplitude): identical source pixels dither identically every frame,
     so quiet content produces ZERO index churn. amplitude None ->
     DITHER_AMP_DEFAULT; 0.0 returns the frame unchanged (pure nearest
-    snap happens downstream).
+    snap happens downstream). phase (SP17 T5a): displaces the threshold
+    tile origin so the matrix travels with panning content - None/(0,0)
+    is byte-identical to the pre-T5a function.
 
     This is the DEFAULT dither path (see the DITHER_MODE_DEFAULT block
     above for why the Yliluoma mixture path ships opt-in), and it also
     drives the palette-refill spread probe (PALETTE_SPREAD_AMP)."""
     amp = _dither_amp(amplitude)
     H, W, _ = frame.shape
-    t = ((BLUENOISE32[np.arange(H)[:, None] % 32, np.arange(W)[None, :] % 32]
-          .astype(np.float32) + 0.5) / 1024.0 - 0.5)
+    t = ((_bluenoise_tile(H, W, phase).astype(np.float32) + 0.5)
+         / 1024.0 - 0.5)
     f = frame.astype(np.float32) + (t * (DITHER_STEP * amp))[..., None]
     return np.clip(f, 0.0, 255.0).astype(np.uint8)
 
@@ -2911,9 +3038,11 @@ class MixturePlanner:
             self._plan_rgb = np.concatenate([self._plan_rgb, nrgb])[o]
         return np.searchsorted(self._keys, codes)
 
-    def plan(self, frame):
+    def plan(self, frame, phase=None):
         """(H,W,3) uint8 source -> (idx (H,W) uint8 palette indices,
-        target (H,W,3) uint8 the mixture target each pixel aimed at)."""
+        target (H,W,3) uint8 the mixture target each pixel aimed at).
+        phase: threshold-tile origin displacement (SP17 T5a motion
+        lock) - None/(0,0) is byte-identical to the pre-T5a plan."""
         H, W, _ = frame.shape
         f = frame.reshape(-1, 3)
         if self.amp >= 1.0:
@@ -2932,7 +3061,7 @@ class MixturePlanner:
         pid = self._lookup(codes)
         # the article's indexing formula, generalised to our matrix:
         #   list[ matrix_value * list_size / matrix_max ]
-        t = (BLUENOISE32[np.arange(H)[:, None] % 32, np.arange(W)[None, :] % 32]
+        t = (_bluenoise_tile(H, W, phase)
              * self.levels // 1024).reshape(-1)
         idx = self.dmap[self._lists[pid, t]]
         return idx.reshape(H, W), self._plan_rgb[pid].reshape(H, W, 3)
@@ -3187,9 +3316,18 @@ _PLAN_LRU = {}
 _PLAN_LRU_MAX = 3
 
 
-def _dither_plan_memo(frame, pal, amp, mode):
+def _norm_phase(phase):
+    """Normalize a dither-phase argument to a hashable (px, py) mod-32
+    pair; None and (0,0) both mean the un-displaced tile."""
+    if not phase:
+        return (0, 0)
+    return (int(phase[0]) % 32, int(phase[1]) % 32)
+
+
+def _dither_plan_memo(frame, pal, amp, mode, phase=(0, 0)):
     key = ("plan", hashlib.blake2b(frame.tobytes(), digest_size=16).digest(),
-           hashlib.blake2b(pal.tobytes(), digest_size=16).digest(), amp, mode)
+           hashlib.blake2b(pal.tobytes(), digest_size=16).digest(), amp, mode,
+           phase)
     if _QUANT_MEMO is not None:
         hit = _QUANT_MEMO.get(key)
         if hit is not None:
@@ -3197,7 +3335,7 @@ def _dither_plan_memo(frame, pal, amp, mode):
     return key, _PLAN_LRU.get(key)
 
 
-def dither_plan(frame, pal, amplitude=None, mode=None):
+def dither_plan(frame, pal, amplitude=None, mode=None, phase=None):
     """The dither decision for one (frame, palette): returns
     (idx (H,W) uint8 palette indices, target (H,W,3) uint8), where
     `target` is the colour the dither was AIMING at for that pixel -
@@ -3206,18 +3344,23 @@ def dither_plan(frame, pal, amplitude=None, mode=None):
     compare against `target`, so both modes share one rule.
 
     Positionally deterministic in both modes: a pure function of
-    (x mod 32, y mod 32, source colour, palette, amplitude, mode)."""
+    (x mod 32, y mod 32, source colour, palette, amplitude, mode, and
+    the SP17 T5a motion-lock phase - None/(0,0) is the shipped
+    un-displaced tile, byte-identical to the pre-T5a plan)."""
     global _QUANT_MEMO_BYTES
     amp = _dither_amp(amplitude)
     m = _dither_mode(mode)
-    key, hit = _dither_plan_memo(frame, pal, amp, m)
+    ph = _norm_phase(phase)
+    key, hit = _dither_plan_memo(frame, pal, amp, m, ph)
     if hit is not None:
         return hit
     if m == DITHER_MODE_OFFSET:
-        tgt = ordered_dither(frame, amp)
+        tgt = (ordered_dither(frame, amp) if ph == (0, 0)
+               else ordered_dither(frame, amp, phase=ph))
         idx, _ = quantize_to_palette(tgt, pal)   # plain-RGB nearest
     else:
-        idx, tgt = mixture_planner(pal, amp).plan(frame)
+        idx, tgt = (mixture_planner(pal, amp).plan(frame) if ph == (0, 0)
+                    else mixture_planner(pal, amp).plan(frame, phase=ph))
     out = (idx.astype(np.uint8), tgt)
     if _QUANT_MEMO is not None:
         cost = out[0].nbytes + out[1].nbytes
@@ -3231,7 +3374,7 @@ def dither_plan(frame, pal, amplitude=None, mode=None):
 
 
 def dither_quantize(frame, pal, amplitude=None, mode=None, prev_idx=None,
-                    hysteresis_eps=None):
+                    hysteresis_eps=None, phase=None):
     """Dither + quantize (H,W,3) uint8 source to a 256-entry palette:
     the single entry point every encode path uses. Returns (idx (H,W)
     uint8, decoded rgb (H,W,3) uint8).
@@ -3242,14 +3385,25 @@ def dither_quantize(frame, pal, amplitude=None, mode=None, prev_idx=None,
     almost nothing against what this frame was aiming at. Used only
     against a HELD palette (delta frames).
 
+    phase (SP17 T5a): the motion-locked dither phase - threshold tile
+    displaced with the content. None/(0,0) leaves every byte of the
+    pipeline exactly as it was.
+
     In OFFSET mode this is exactly the pre-2026-07-28 call chain
     (ordered_dither -> quantize_to_palette), byte for byte."""
     m = _dither_mode(mode)
+    ph = _norm_phase(phase)
     if m == DITHER_MODE_OFFSET:
-        return quantize_to_palette(ordered_dither(frame, amplitude), pal,
+        # phase (0,0) takes the LEGACY call shape exactly - byte-for-
+        # byte the pre-T5a chain, and monkeypatch-compatible with
+        # two-argument ordered_dither doubles (the selftest's own
+        # negative controls)
+        dithered = (ordered_dither(frame, amplitude) if ph == (0, 0)
+                    else ordered_dither(frame, amplitude, phase=ph))
+        return quantize_to_palette(dithered, pal,
                                     prev_idx=prev_idx,
                                     hysteresis_eps=hysteresis_eps)
-    idx, tgt = dither_plan(frame, pal, amplitude, m)
+    idx, tgt = dither_plan(frame, pal, amplitude, m, phase=ph)
     if prev_idx is not None and hysteresis_eps is not None:
         # the mixture path compares in RGBL throughout, so its deadzone
         # is the RGBL-scaled one (see HYSTERESIS_EPS_RGBL)
@@ -3731,10 +3885,299 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
                 abytes_real=abytes_real, abytes_pad=abytes_pad, nframes=nframes)
 
 
+# ---------------------------------------------------------------------
+# SP17 T5a - OFFSET-COPY: global-motion detection + the PAN-SPAN frame
+# candidate (design authority: docs/superpowers/specs/
+# 2026-07-30-sp17-t5a-offset-copy-design.md; the estimator is the
+# Wave 0 harness ported). OPT-IN (--ocopy): the capability bit changes
+# file compatibility, so the AUTHOR opts in; with it absent every
+# encode is byte-identical to the pre-T5a encoder.
+#
+# A pan frame is emitted as a single-frame keyframe span
+#   KSTART + { OCOPY(shift) / COPY / RUN interleaved in cursor order,
+#   FULL coverage } + KFLIP
+# so the source of every OCOPY is the FRONT (visible) surface = the
+# previous frame, the dest is the HIDDEN surface, and presentation is
+# atomic (the E7 tear is gone for pan frames by construction). The two
+# Wave 0 prerequisites both engage ONLY on frames where a validated
+# whole-pixel shift is being emitted (the dither lock costs ~43% delta
+# churn on static content if applied globally - Wave 0 measured):
+#   (a) MOTION-SNAPPED RESAMPLING: the emitted sequence advances in
+#       whole pixels (fractional accumulator, sub-pixel warp of the
+#       remainder before quantising);
+#   (b) MOTION-LOCKED DITHER PHASE: the threshold tile origin advances
+#       by the same snapped shift (phase-0 output is byte-identical to
+#       the shipped dither - asserted by the selftest).
+# ---------------------------------------------------------------------
+
+# Global accept margin for the per-frame SSE validation: the shifted
+# prediction's residual energy (hysteresis-resolved, exposed edge
+# excluded) must be at most this fraction of the unshifted arm's, or
+# the frame is not a pan (a moving subject on a static background must
+# never be mis-encoded as one). C1 measured 7-17% false-accepts on
+# cut/flash content without the scene-cut guard, so frames on the
+# batch cut detector's boundaries never become pan frames at all.
+OCOPY_SSE_ACCEPT = 0.70
+
+# Pan-span admission ceiling (design section 3 - the affordability
+# table's own arithmetic). A pan frame is NOT admitted against the
+# budget-scaled per-frame delta cap: budget_scale exists to throttle
+# WIRE demand and a pan frame's wire is 25x smaller than the literal
+# frame it replaces, while its decode T is fixed at the full-surface
+# copy cost - scaling would forbid the feature exactly where it pays
+# (the keyframe chunks set the precedent: span frames are rare and
+# deliberately unscaled). It is also not de-rated by the COMPOSITION
+# factor: that margin was fitted on streams of hundreds of short ops
+# (dispatch churn, column-hop composition), and a pan frame is two or
+# three enormous ops whose work is per-chunk internal - the design
+# prices it at the measured silicon_r for the shape class instead
+# (hazard 2's pessimism is carried in ocopy_parse/ocopy_chunk_t, and
+# gapped shapes keep the pessimistic gapped R until the Wave 1 card
+# measures a pan-frame R). The 2% reserve mirrors kf_chunk_budget_
+# bytes. Reproduces the design's shape verdicts: 256-wide comfortable,
+# 320x144 workable, 320x256 tight, 320x192 LB infeasible-to-marginal.
+OCOPY_SPAN_UTIL = 0.98
+
+
+def ocopy_span_cap_t(fps, width, height):
+    """Model-T admission ceiling for one pan-span frame on this shape:
+    the frame period after the audio tax, at the shape's MEASURED
+    silicon ratio, with the keyframe chunks' 2% reserve."""
+    return (frame_period_t(fps) * TMODEL_COEFFS["audio_factor"]
+            * OCOPY_SPAN_UTIL / silicon_r(width, height))
+
+
+def _phase_corr(a, b):
+    """a, b: float32 luma (H,W). Returns (dx, dy, strength): content
+    displacement from a to b, sub-pixel, positive = right/down (the
+    Wave 0 estimator, ported verbatim - the peak-ratio sub-pixel
+    refinement validated to +-0.01 px against known 1/4-px shifts)."""
+    h, w = a.shape
+    wy = np.hanning(h).astype(np.float32)[:, None]
+    wx = np.hanning(w).astype(np.float32)[None, :]
+    A = np.fft.rfft2(a * wy * wx)
+    B = np.fft.rfft2(b * wy * wx)
+    R = np.conj(A) * B
+    R /= (np.abs(R) + 1e-9)
+    r = np.fft.irfft2(R, s=(h, w))
+    pk = int(np.argmax(r))
+    py, px = divmod(pk, w)
+    peak = r[py, px]
+
+    def sub(v0, vm, vp):
+        if vp >= vm:
+            return vp / (v0 + vp) if (v0 + vp) != 0 else 0.0
+        return -vm / (v0 + vm) if (v0 + vm) != 0 else 0.0
+
+    sy = sub(peak, r[(py - 1) % h, px], r[(py + 1) % h, px])
+    sx = sub(peak, r[py, (px - 1) % w], r[py, (px + 1) % w])
+    dy = py + sy
+    dx = px + sx
+    if dy > h / 2:
+        dy -= h
+    if dx > w / 2:
+        dx -= w
+    rr = r.copy()
+    for oy in range(-2, 3):
+        for ox in range(-2, 3):
+            rr[(py + oy) % h, (px + ox) % w] = -1e9
+    second = float(rr.max())
+    return float(dx), float(dy), float(peak / max(second, 1e-9))
+
+
+def estimate_global_motion(orig):
+    """Per-frame-pair global (dx, dy) by phase correlation on source
+    luma. Returns (mv (N,2) float increments, strength (N,))."""
+    N = orig.shape[0]
+    w = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    mv = np.zeros((N, 2))
+    strength = np.zeros(N)
+    prev = orig[0].astype(np.float32) @ w
+    for i in range(1, N):
+        cur = orig[i].astype(np.float32) @ w
+        dx, dy, s = _phase_corr(prev, cur)
+        mv[i] = (dx, dy)
+        strength[i] = s
+        prev = cur
+    return mv, strength
+
+
+def _shift_clamp2d(a, dy, dx):
+    """Edge-clamped integer shift of an (H,W[,C]) array: content moves
+    by (+dy, +dx). The Wave 0 shift_clamp, ported."""
+    if dy == 0 and dx == 0:
+        return a
+    h, w = a.shape[:2]
+    ys = np.clip(np.arange(h) - dy, 0, h - 1)
+    xs = np.clip(np.arange(w) - dx, 0, w - 1)
+    return a[ys][:, xs]
+
+
+def _warp_subpixel(frame, fx, fy):
+    """Bilinear sub-pixel warp of an (H,W,3) uint8 frame: content moves
+    by (+fx, +fy) pixels (|f| <= 0.5 in the snap use), edge-clamped.
+    This is the motion-snap remainder warp - it runs ONLY on frames
+    that emit a validated shift, so unshifted content is untouched."""
+    fx = float(fx)
+    fy = float(fy)
+    if fx == 0.0 and fy == 0.0:
+        return frame
+    H, W, _ = frame.shape
+    f = frame.astype(np.float32)
+    ys = np.arange(H, dtype=np.float32) - np.float32(fy)
+    xs = np.arange(W, dtype=np.float32) - np.float32(fx)
+    y0 = np.floor(ys).astype(np.int64)
+    x0 = np.floor(xs).astype(np.int64)
+    wy = (ys - y0).astype(np.float32)[:, None, None]
+    wx = (xs - x0).astype(np.float32)[None, :, None]
+    y0c = np.clip(y0, 0, H - 1)
+    y1c = np.clip(y0 + 1, 0, H - 1)
+    x0c = np.clip(x0, 0, W - 1)
+    x1c = np.clip(x0 + 1, 0, W - 1)
+    top = f[y0c][:, x0c] * (1.0 - wx) + f[y0c][:, x1c] * wx
+    bot = f[y1c][:, x0c] * (1.0 - wx) + f[y1c][:, x1c] * wx
+    out = top * (1.0 - wy) + bot * wy
+    return np.clip(out + 0.5, 0.0, 255.0).astype(np.uint8)
+
+
+def _exposed_mask2d(H, W, dsx, dsy):
+    """Pixels whose shifted-prediction source lies outside the frame -
+    the newly exposed edge bands. These are forced into the residual
+    (they may never ride an OCOPY: the source would be outside the
+    content / in the letterbox gap - the format's legality rule)."""
+    exp = np.zeros((H, W), dtype=bool)
+    if dsx > 0:
+        exp[:, :min(dsx, W)] = True
+    elif dsx < 0:
+        exp[:, max(0, W + dsx):] = True
+    if dsy > 0:
+        exp[:min(dsy, H), :] = True
+    elif dsy < 0:
+        exp[max(0, H + dsy):, :] = True
+    return exp
+
+
+def ocopy_offset(dsx, dsy, column_major):
+    """The single ADDRESS-space byte offset of a global (dsx, dsy)
+    whole-pixel shift: pred[x, y] = prev[x-dsx, y-dsy], and in the
+    surface's flat address space (256 B per column in mode-1 / per row
+    in mode-0) that is one constant `dest + off` for every byte.
+    Returns None when the offset does not fit the signed 16-bit
+    operand."""
+    off = -(dsx * 256 + dsy) if column_major else -(dsy * 256 + dsx)
+    if not (-32768 <= off <= 32767):
+        return None
+    return off
+
+
+def encode_pan_span(target_flat, err2_flat, pred_flat, exposed_flat, off,
+                    cap_bytes, cap_t, height, gapped, tile_px):
+    """Build the T5a pan-span frame candidate: KSTART + a FULL-COVERAGE
+    cursor walk (class 0 segments = OCOPY of the shifted prediction,
+    classes 1/2 = literal COPY/RUN residual) + KFLIP. Returns a dict
+    (payload/bytes/t/datamask/mode/kept/ntiles) or None when even the
+    all-OCOPY floor does not fit cap_t (the shape cannot afford the
+    full-surface copy - the design's admissibility rule).
+
+    Budget-bound path: importance-ordered prefix of whole paint-order
+    bands, exactly encode_delta's region scheduler except that a
+    DEFERRED band keeps the SHIFTED PREDICTION (an OCOPY) instead of
+    two-frames-stale content - running out of budget degrades into
+    motion-coherent softness, not a misaligned seam. The exposed edge
+    is forced into every candidate (its OCOPY source would be illegal).
+
+    Gap-merge note: tiny residual islands inside an OCOPY run are
+    absorbed by close_gaps (re-sent as literals - the LEGAL merge
+    direction: literals may replace predicted bytes, never the
+    reverse); merge_delta_stream itself is not used on pan frames."""
+    n = int(target_flat.size)
+    denoise = 3.0 * THRESHOLDS[0] * THRESHOLDS[0]
+    mask_full = close_gaps((err2_flat > denoise) | exposed_flat)
+
+    def _cost(gcls, glens):
+        b = 2                                   # KSTART + KFLIP bytes
+        t = TMODEL_COEFFS["t_frame_fixed"] + 2 * TMODEL_COEFFS["t_op_parse"]
+        for c, L in zip(gcls, glens):
+            c, L = int(c), int(L)
+            if c == 0:
+                bb, tt = ocopy_op_cost(L, off, height, gapped)
+            else:
+                bb, tt = op_cost(_KIND_BY_CLS[c], L)
+            b += bb
+            t += tt
+        return b, t
+
+    def _fit(selmask):
+        gc, gs, gl = segment(target_flat, selmask)
+        assert int(np.sum(gl)) == n, "pan span must cover every cursor byte"
+        b, t = _cost(gc, gl)
+        if b <= cap_bytes and (cap_t is None or t <= cap_t):
+            return gc, gs, gl, b, t
+        return None
+
+    # coverage/legality invariants: every candidate mask contains the
+    # exposed edge, so no OCOPY segment can reference an out-of-content
+    # source (nxv2dec validates the same rule from the wire side)
+    assert bool(np.all(mask_full[exposed_flat])), \
+        "exposed edge must be inside the residual mask"
+
+    res = _fit(mask_full)
+    kept, ntiles = None, 0
+    if res is None:
+        # ---- importance-ordered whole-band prefix (deferred = OCOPY) ----
+        ntiles = (n + tile_px - 1) // tile_px
+        w_e = np.where(mask_full & ~exposed_flat, np.sqrt(err2_flat), 0.0)
+        pad = ntiles * tile_px - n
+        band_imp = (np.concatenate([w_e, np.zeros(pad, dtype=w_e.dtype)])
+                    if pad else w_e).reshape(ntiles, tile_px).sum(axis=1)
+        order = [int(ti) for ti in np.argsort(-band_imp) if band_imp[ti] > 0.0]
+        _rank = np.full(ntiles, len(order), dtype=np.int32)
+        for _p, _ti in enumerate(order):
+            _rank[_ti] = _p
+        _rank_px = np.repeat(_rank, tile_px)[:n]
+
+        lo, hi = 0, len(order)
+        best_k, best = None, None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            r = _fit((mask_full & (_rank_px < mid)) | exposed_flat)
+            if r is not None:
+                best_k, best = mid, r
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        if best is None:
+            return None                          # even k=0 does not fit
+        res, kept = best, best_k
+
+    gc, gs, gl, b, t = res
+    parts = [bytes([OP_KSTART])]
+    datamask = np.zeros(n, dtype=bool)
+    for c, s, L in zip(gc, gs, gl):
+        c, s, L = int(c), int(s), int(L)
+        if L == 0:
+            continue
+        if c == 0:
+            parts.append(op_ocopy(L, off))
+        elif c == 1:
+            parts.append(op_copy(target_flat[s:s + L].tobytes()))
+            datamask[s:s + L] = True
+        elif c == 2:
+            parts.append(op_run(L, int(target_flat[s])))
+            datamask[s:s + L] = True
+        else:
+            raise ValueError(f"bad segment class {c}")
+    parts.append(bytes([OP_KFLIP]))
+    mode = "pan" if kept is None else f"pan:{kept}/{ntiles}"
+    return dict(payload=b"".join(parts), bytes=b, t=t, datamask=datamask,
+                mode=mode, kept=kept, ntiles=ntiles)
+
+
 def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 budget_scale=1.0, merge_gaps=True, hysteresis=True,
                 staleness_refresh=True, return_surfaces=False,
-                dither_amp=None, dither_mode=None, tile_slack=None):
+                dither_amp=None, dither_mode=None, tile_slack=None,
+                ocopy=False):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -3782,6 +4225,25 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
 
     scene_cuts = detect_scene_cuts(chg)
 
+    # --- SP17 T5a: global-motion track (OPT-IN; with ocopy False none
+    # of this state exists and every path below is byte-identical to
+    # the pre-T5a encoder). The snapped track: C = accumulated
+    # sub-pixel motion, S = its whole-pixel snap, ds = per-frame
+    # emitted shift, S - C = the sub-pixel warp remainder. ---
+    oc_gapped = is_gapped(width, height)
+    oc_cut_set = set(scene_cuts)
+    oc_cap_t = ocopy_span_cap_t(fps, width, height)
+    dphase = (0, 0)               # motion-locked dither phase accumulator
+    ocopy_frames = 0
+    ocopy_stats = []
+    if ocopy:
+        oc_mv, oc_strength = estimate_global_motion(orig)
+        oc_C = np.cumsum(oc_mv, axis=0)
+        oc_S = np.rint(oc_C).astype(np.int64)
+        oc_ds = np.diff(oc_S, axis=0, prepend=oc_S[:1])
+        oc_warp = oc_S - oc_C     # content shift that makes the frame
+                                   # sit exactly on its snapped position
+
     # Palette-collapse fix: all quantization TARGETS are DITHERED
     # (position-deterministic - quiet content dithers identically every
     # frame, so this feeds no churn to the delta coder); PSNR/staleness
@@ -3822,6 +4284,10 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
         start_kf = False
         trigger = None
         drift_for_stats = None   # T1 step 5: recorded for plain delta frames
+        # T5a: the accumulated motion-locked dither phase - None until
+        # a pan frame has advanced it (None keeps every dither call
+        # byte-identical to the pre-T5a pipeline)
+        ph_arg = dphase if (dphase[0] or dphase[1]) else None
         if kf_chunks:
             pass  # mid-span: keep painting the hidden surface
         elif held_pal is None:
@@ -3834,7 +4300,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             # trigger (freeze-drift). Emission below re-quantizes with
             # hysteresis; the trigger stays clean.
             _, target_dec = dither_quantize(orig[i], held_pal,
-                                            dither_amp, dither_mode)
+                                            dither_amp, dither_mode,
+                                            phase=ph_arg)
             drift = po_ceil[i] - psnr(orig[i], target_dec)
             drift_for_stats = drift
             in_refract = (i - last_kf_end) <= refract
@@ -3891,7 +4358,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 prev_idx = unflatten_frame(prev_flat, height, width, column_major)
                 target_idx, target_dec = dither_quantize(
                     orig[i], held_pal, dither_amp, dither_mode,
-                    prev_idx=prev_idx, hysteresis_eps=hyst_eps)
+                    prev_idx=prev_idx, hysteresis_eps=hyst_eps, phase=ph_arg)
                 tflat = flatten_frame(target_idx, column_major)
                 prev_dec_flat = held_pal[prev_flat].astype(np.float32)
                 targ_dec_flat = held_pal[tflat].astype(np.float32)
@@ -3942,6 +4409,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             kf_events += 1
             kf_triggers[trigger] = kf_triggers.get(trigger, 0) + 1
             span_start_frame = i
+            dphase = (0, 0)      # T5a: a keyframe span repaints fully
+                                  # at the shipped phase-0 dither
             if prev_flat is None:
                 prev_flat = np.zeros(raw, dtype=np.uint8)
                 held_pal = kf_pal
@@ -3991,7 +4460,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             prev_idx = unflatten_frame(prev_flat, height, width, column_major)
             target_idx, target_dec = dither_quantize(
                 orig[i], held_pal, dither_amp, dither_mode,
-                prev_idx=prev_idx, hysteresis_eps=hyst_eps)
+                prev_idx=prev_idx, hysteresis_eps=hyst_eps, phase=ph_arg)
             tflat = flatten_frame(target_idx, column_major)
             prev_dec_flat = held_pal[prev_flat].astype(np.float32)
             targ_dec_flat = held_pal[tflat].astype(np.float32)
@@ -4020,6 +4489,87 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 surface_flat=prev_flat, merge_gaps=merge_gaps,
                 tile_px=tile_px, tile_ladder=tile_ladder,
                 supply_px=supply_px, supply_slack=tile_slack)
+
+            # --- T5a PAN-SPAN candidate (design 4.4: cost both, take
+            # the cheaper that fits both caps). Guards: a nonzero
+            # snapped shift, a representable offset, and the SCENE-CUT
+            # guard (batch cut detector - C1 measured 7-17% false
+            # accepts on cut/flash content without it). ---
+            pan = None
+            if ocopy:
+                dsx, dsy = int(oc_ds[i][0]), int(oc_ds[i][1])
+                off = ocopy_offset(dsx, dsy, column_major)
+                if ((dsx or dsy) and off is not None
+                        and abs(dsx) < width and abs(dsy) < height
+                        and i not in oc_cut_set):
+                    # shifted arm: motion-snapped warp + motion-locked
+                    # dither phase + hysteresis against the SHIFTED
+                    # previous screen (both prerequisites engage only
+                    # here, never globally)
+                    pred2d = _shift_clamp2d(prev_idx, dsy, dsx)
+                    pan_ph = (dphase[0] + dsx, dphase[1] + dsy)
+                    warped = _warp_subpixel(orig[i], float(oc_warp[i][0]),
+                                            float(oc_warp[i][1]))
+                    pan_idx, _ = dither_quantize(
+                        warped, held_pal, dither_amp, dither_mode,
+                        prev_idx=pred2d, hysteresis_eps=hyst_eps,
+                        phase=pan_ph)
+                    pan_tflat = flatten_frame(pan_idx, column_major)
+                    pred_flat = flatten_frame(pred2d, column_major)
+                    pdec = held_pal[pan_tflat].astype(np.float32)
+                    rdec = held_pal[pred_flat].astype(np.float32)
+                    pan_err2 = np.sum((pdec - rdec) ** 2, axis=1)
+                    exposed_flat = flatten_frame(
+                        _exposed_mask2d(height, width, dsx, dsy),
+                        column_major)
+                    # per-frame SSE VALIDATION: the shifted residual
+                    # must beat the unshifted arm's by the margin
+                    sse_sh = float(pan_err2[~exposed_flat].sum())
+                    sse_un = float(err2.sum())
+                    if sse_sh <= OCOPY_SSE_ACCEPT * sse_un:
+                        pan = encode_pan_span(
+                            pan_tflat, pan_err2, pred_flat, exposed_flat,
+                            off, cap_bytes, oc_cap_t, height, oc_gapped,
+                            tile_px)
+                        if pan is not None:
+                            pan.update(tflat=pan_tflat, pred=pred_flat,
+                                       err2=pan_err2, ds=(dsx, dsy),
+                                       phase=pan_ph)
+
+            if pan is not None and pan["bytes"] <= b:
+                # the pan span wins: full coverage, atomic presentation
+                datamask = pan["datamask"]
+                prev_flat = np.where(datamask, pan["tflat"], pan["pred"])
+                if staleness_refresh:
+                    wrong = pan["err2"] > STALE_ERR2_FLOOR
+                    age = np.where(datamask, 0.0,
+                                   np.where(wrong, age + 1.0, 0.0))
+                dphase = (pan["phase"][0] % 32, pan["phase"][1] % 32)
+                ocopy_frames += 1
+                acc = 1.0 - float(datamask.mean())
+                ocopy_stats.append(dict(
+                    frame=i, dsx=pan["ds"][0], dsy=pan["ds"][1],
+                    acc=acc, bytes=int(pan["bytes"]), t=float(pan["t"]),
+                    delta_bytes=int(b)))
+                payloads.append(pan["payload"])
+                per_frame["bytes"].append(pan["bytes"])
+                per_frame["mode"].append(
+                    pan["mode"] + f"({pan['ds'][0]},{pan['ds'][1]})")
+                per_frame["binding"].append(
+                    "none" if pan["kept"] is None else "budget")
+                per_frame["drift"].append(
+                    drift_for_stats if drift_for_stats is not None
+                    else float("nan"))
+                per_frame["t"].append(pan["t"])
+                dec_img = unflatten_frame(held_pal[prev_flat], height,
+                                          width, column_major).astype(np.uint8)
+                decoded.append(dec_img)
+                if return_surfaces:
+                    surfaces.append(unflatten_frame(
+                        prev_flat, height, width, column_major).copy())
+                per_frame["psnr"].append(psnr(orig[i], dec_img))
+                continue
+
             new_flat = _apply_segments(prev_flat, tflat, gcls, gstarts, glens)
             prev_flat = new_flat
             if staleness_refresh:
@@ -4043,6 +4593,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 per_frame=per_frame, scene_cuts=scene_cuts, kf_events=kf_events,
                 staleness_events=staleness_events, kf_triggers=kf_triggers,
                 surfaces=surfaces, starvation=starve,
+                ocopy_frames=ocopy_frames, ocopy_stats=ocopy_stats,
                 held_pal_final=held_pal, usable_budget_ms=usable / TMODEL_COEFFS["clock_khz"])
 
 
@@ -4336,6 +4887,9 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
                 auto_budget_probes=report.auto_budget_probes,
                 auto_budget_ladder=[],
                 scene_cuts=cuts, kf_span_ranges=[[i, i] for i in range(nframes_out)],
+                # T5a: direct-serve never emits OCOPY (Wave 1 has no
+                # direct transport) - zero defaults for uniform parse
+                ocopy_frames=0, ocopy_stats=[],
             ), f, indent=1)
     return report
 
@@ -4364,7 +4918,8 @@ def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
                         merge_gaps=True, hysteresis=True,
                         staleness_refresh=True, dither_amp=None,
                         dither_mode=None, target_util=None,
-                        max_probes=AUTO_BUDGET_MAX_PROBES, tile_slack=None):
+                        max_probes=AUTO_BUDGET_MAX_PROBES, tile_slack=None,
+                        ocopy=False):
     """SP17 T1. Derives the --stream-budget for this clip instead of
     making the author guess one, and returns the winning encode with it
     so nothing is encoded twice. Result dict: budget, result (the
@@ -4438,7 +4993,7 @@ def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
                                hysteresis=hysteresis,
                                staleness_refresh=staleness_refresh,
                                dither_amp=dither_amp, dither_mode=dither_mode,
-                               tile_slack=tile_slack)
+                               tile_slack=tile_slack, ocopy=ocopy)
             proj, stats = stream_gate_stats(res, ex, width, height, fps)
             if stats is None:
                 # Resident (or empty): no supply gate applies at all.
@@ -4616,7 +5171,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            dither=None, dither_mode=None, mono=False, merge_gaps=True, hysteresis=True,
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=None,
            budget_target=None, direct=False, retime=None, tile_slack=None,
-           direct_transport_factor=None):
+           direct_transport_factor=None, ocopy=False):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     dither (--dither): dither strength, a float 0.0-1.0. In the default
@@ -4687,7 +5242,17 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     can stage probe files at the predicted post-T8 rate (0.93-0.99)
     before the NXBD re-run moves the default. See the governance block
     at the constant. Only meaningful with direct=True; ignored (with
-    a note) otherwise - the delta pipeline's gate does not use it."""
+    a note) otherwise - the delta pipeline's gate does not use it.
+
+    ocopy (--ocopy, SP17 T5a): OPT-IN offset-copy motion coding.
+    Detected whole-pixel global shifts are emitted as pan-span frames
+    (KSTART + OCOPY(shift) + literal residual + KFLIP - atomic
+    presentation) and the header sets the OCOPY capability bit (flags
+    bit3), which pre-T5a players refuse at open (VID FMT?) - that
+    compatibility change is exactly why the AUTHOR opts in rather
+    than the encoder defaulting it on. The bit is set only when at
+    least one pan frame was actually emitted. With ocopy absent (the
+    default) every encode is byte-identical to the pre-T5a encoder."""
     if quality_profile != "max":
         raise ValueError(f"quality_profile {quality_profile!r} not implemented - only 'max'")
 
@@ -4707,6 +5272,16 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     if direct:
         # SP15 3c: the all-literal direct-serve preset - no delta
         # pipeline, no rate control; see _encode_direct.
+        if ocopy:
+            # Said out loud rather than ignored, same idiom as the
+            # other flags: Wave 1's disjoint span form has no direct
+            # transport (the player disarms the OCOPY slots for direct
+            # sessions; Wave 3's vid_slow_op-served form is where the
+            # T5a/T8 compounding lands).
+            print("  note: --ocopy has no effect with --direct - the "
+                  "direct-serve preset repaints every frame in full "
+                  "and the Wave 1 player disarms OCOPY for direct "
+                  "sessions")
         if slack_knob:
             # Said out loud rather than ignored: --direct has no delta
             # schedule, so there is no tile ladder for the knob to relax.
@@ -4733,7 +5308,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
             merge_gaps=merge_gaps, hysteresis=hysteresis,
             staleness_refresh=staleness_refresh, dither_amp=dither_amp,
             dither_mode=dmode, target_util=budget_target,
-            tile_slack=slack_rel)
+            tile_slack=slack_rel, ocopy=ocopy)
         stream_budget = auto_search["budget"]
         if stream_budget is None:
             # Every probe was over the line - fall through to the gate's
@@ -4751,7 +5326,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                               merge_gaps=merge_gaps, hysteresis=hysteresis,
                               staleness_refresh=staleness_refresh,
                               dither_amp=dither_amp, dither_mode=dmode,
-                              tile_slack=slack_rel)
+                              tile_slack=slack_rel, ocopy=ocopy)
 
     payloads = result["payloads"]
     nframes_out = len(payloads)
@@ -4838,12 +5413,28 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                   f"per-frame excursions well over 1.00, which read as "
                   f"banding and judder on hardware. Remedy: {remedy}")
 
+    # T5a: the capability bit is set ONLY when at least one pan frame
+    # was actually emitted - a clip without a detected pan stays
+    # byte-compatible with pre-T5a players even under --ocopy.
+    oc_frames = int(result.get("ocopy_frames") or 0)
+    hdr_flags = FLAG_DELTA_STREAM | (FLAG_OCOPY if oc_frames else 0)
+    if ocopy:
+        oc_stats = result.get("ocopy_stats") or []
+        if oc_frames:
+            mean_acc = sum(s["acc"] for s in oc_stats) / len(oc_stats)
+            print(f"  ocopy: {oc_frames} pan frame(s), mean shift "
+                  f"acceptance {mean_acc:.1%}, header capability bit SET "
+                  f"(pre-T5a players refuse this file at open)")
+        else:
+            print("  ocopy: no pan frames emitted (no validated "
+                  "whole-pixel shift) - capability bit NOT set, file "
+                  "plays on pre-T5a players")
     header = pack_header(
         width=width, height=height, fps=fps_val, channels=ex["channels"],
         arate=ex["rate"], frame_count=nframes_out,
         audio_bytes_per_frame=ex["abytes_real"],
         ring_start_margin_blocks=ring_start_margin_blocks,
-        per_frame_cap_blocks=per_frame_cap_blocks)
+        per_frame_cap_blocks=per_frame_cap_blocks, flags=hdr_flags)
 
     abytes_pad = ex["abytes_pad"]
     audio_pad = bytes([SILENCE_U8]) * (abytes_pad - ex["abytes_real"])
@@ -4955,6 +5546,8 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                 auto_budget_ladder=(
                     [[b, u] for b, u in auto_search["probes"]] if auto_search else []),
                 scene_cuts=result["scene_cuts"], kf_span_ranges=result["kf_span_ranges"],
+                ocopy_frames=oc_frames,
+                ocopy_stats=result.get("ocopy_stats") or [],
             ), f, indent=1)
 
     return report
@@ -5063,6 +5656,10 @@ def walk_payload_ops(buf):
         elif op == OP_COPY16:
             need(2); cnt = int.from_bytes(buf[pos:pos + 2], "little"); pos += 2
             need(cnt); cursor += cnt; literals += cnt; pos += cnt
+        elif op == OP_OCOPY8:
+            need(3); cursor += buf[pos]; pos += 3
+        elif op == OP_OCOPY16:
+            need(4); cursor += int.from_bytes(buf[pos:pos + 2], "little"); pos += 4
         elif op == OP_PAL:
             need(PAL_BLOCK_SIZE); pos += PAL_BLOCK_SIZE
         else:

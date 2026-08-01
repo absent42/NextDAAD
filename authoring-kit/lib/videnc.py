@@ -525,6 +525,23 @@ def main(argv):
                           "true new rate. Probe files are diagnostic: "
                           "expected to play IF the prediction holds. Only "
                           "meaningful with --direct")
+    ap.add_argument("--ocopy", action="store_true",
+                     help="SP17 T5a OPT-IN: offset-copy motion coding. "
+                          "Detected whole-pixel global pans are emitted "
+                          "as OCOPY pan-span frames (the previous frame "
+                          "shifted on the Next itself for 4-5 wire bytes "
+                          "per op, full coverage, atomic presentation) "
+                          "with motion-snapped resampling and a motion-"
+                          "locked dither on exactly those frames. "
+                          "COMPATIBILITY: a file that emits the op sets "
+                          "the header OCOPY capability bit and is "
+                          "REFUSED at open (VID FMT?) by players built "
+                          "before the feature - which is why this is "
+                          "opt-in and not a default. A clip with no "
+                          "detected pan does not set the bit and stays "
+                          "fully compatible. Without this flag the "
+                          "encode is byte-identical to the pre-T5a "
+                          "encoder")
     ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
     ap.add_argument("--duration", help="clip duration in seconds")
     ap.add_argument("--report", help="write the BuildReport as JSON to "
@@ -609,7 +626,8 @@ def main(argv):
         cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget,
         budget_target=args.budget_target, direct=args.direct,
         retime=args.retime, tile_slack=args.tile_slack,
-        direct_transport_factor=args.direct_transport_factor)
+        direct_transport_factor=args.direct_transport_factor,
+        ocopy=args.ocopy)
 
     stream_line = ""
     if report.mode == "direct":

@@ -526,11 +526,14 @@ def t2_copy16_max():
     expect(np.array_equal(surface[:65535], data), "COPY16 max content")
 
 
-@case(2, "reserved-op rejection ($24 = old $09, $2C SCROLL, misaligned, $FF) - raises in decode mode, recorded in validate mode")
+@case(2, "reserved-op rejection ($2C SCROLL, $34, misaligned, $FF) - raises in decode mode, recorded in validate mode")
 def t2_reserved_op_rejection():
-    # Pre-scaled x4 opcode space: $24/$2C are the reserved slots, any
-    # non-multiple-of-4 byte (e.g. $02) is outside the set entirely.
-    for opcode in (0x24, enc.OP_SCROLL, 0x02, 0xFF):
+    # Pre-scaled x4 opcode space: $2C (SCROLL, kept for T5b) and
+    # $34-$3C are the reserved slots, any non-multiple-of-4 byte (e.g.
+    # $02) is outside the set entirely. $24/$30 left this set with SP17
+    # T5a (OCOPY8/OCOPY16) - their own structural gates are covered by
+    # the step-20 cases.
+    for opcode in (enc.OP_SCROLL, 0x34, 0x02, 0xFF):
         buf = bytes([opcode])
         surface = np.zeros(8, dtype=np.uint8)
         try:
@@ -4650,6 +4653,367 @@ def t19_cli_and_arg_hash():
     expect(kit_hash(base + ["--tile-slack", "0.15"])
            != kit_hash(base + ["--tile-slack", "0.25"]),
            "different --tile-slack values must hash differently")
+
+
+# =======================================================================
+# Step 20: SP17 T5a - OCOPY8/OCOPY16 (offset copy), Wave 1 disjoint
+# span form. Design authority: docs/superpowers/specs/
+# 2026-07-30-sp17-t5a-offset-copy-design.md.
+# =======================================================================
+
+
+def _oc_span_payload(parts):
+    return bytes([enc.OP_KSTART]) + b"".join(parts) + bytes([enc.OP_KFLIP])
+
+
+def _oc_run_span(payload, raw, vis, geom, declared=True, issues=None):
+    """Run a KSTART..KFLIP payload the way _iter_frames does: the span
+    body targets the hidden surface with the visible surface as the
+    frozen OCOPY source. Returns the hidden surface."""
+    hid = vis.copy()                      # the decoder's inherit model
+    pos, cursor, term = dec.run_payload(payload, 0, hid, raw, issues=issues)
+    expect(term == enc.OP_KSTART, "span payload must open with KSTART")
+    pos, cursor, term = dec.run_payload(payload, pos, hid, raw,
+                                        issues=issues, start_cursor=0,
+                                        ocopy_src=vis,
+                                        ocopy_declared=declared, geom=geom)
+    expect(term == enc.OP_KFLIP, f"span payload must close with KFLIP, got {term:#x}")
+    expect(pos == len(payload), "decoder must consume the whole payload")
+    return hid, cursor
+
+
+@case(20, "OCOPY op emit - chunking, byte layout, signed offset, zero-payload byte cost")
+def t20_ocopy_emit():
+    # 8-bit form: 4 bytes, 16-bit form: 5 bytes, offset two's complement LE
+    p = enc.op_ocopy(255, 5)
+    expect(p == bytes([enc.OP_OCOPY8, 255, 5, 0]), "OCOPY8 layout")
+    p = enc.op_ocopy(300, -256)
+    expect(p == bytes([enc.OP_OCOPY16]) + (300).to_bytes(2, "little")
+           + b"\x00\xff", "OCOPY16 layout, negative offset")
+    # chunking mirrors every other counted op: 16-bit chunks then an
+    # 8-bit tail, the SAME offset on every chunk
+    p = enc.op_ocopy(65535 + 100, 1234)
+    expect(p[:5] == bytes([enc.OP_OCOPY16]) + (65535).to_bytes(2, "little")
+           + (1234).to_bytes(2, "little"), "first chunk")
+    expect(p[5:] == bytes([enc.OP_OCOPY8, 100]) + (1234).to_bytes(2, "little"),
+           "tail chunk carries the same offset")
+    # byte cost is 4/5 per chunk with ZERO payload
+    b, t = enc.ocopy_op_cost(65535 + 100, 1234, 256, False)
+    expect(b == 9, f"ocopy bytes must be header-only (got {b})")
+    for bad in (32768, -32769):
+        try:
+            enc.op_ocopy(1, bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("out-of-range offset must be refused")
+
+
+@case(20, "OCOPY pricing - kernel reuse, column-room tax, Wave 3 |off| cap, no payload charge")
+def t20_ocopy_pricing():
+    tc = enc.TMODEL_COEFFS
+    expect("ocopy_parse" in tc and "ocopy_chunk_t" in tc,
+           "T5a coefficients must exist in TMODEL_COEFFS")
+    # flat: chunks of 256 at the UNCHANGED DMA copy rate + the chunk term
+    t_flat = enc._ocopy_t(2560, -512, 256, False)
+    per_chunk = tc["copy_dma_setup"] + 256 * tc["copy_dma_per_b"] + tc["ocopy_chunk_t"]
+    expect(abs(t_flat - 10 * per_chunk) < 1e-6, "flat chunk walk = 10 x 256B DMA chunks")
+    # gapped: the column room caps the chunk - the fragmented-column
+    # class pays more setups per byte (the walk's non-contiguity tax)
+    t_gap = enc._ocopy_t(2560, -512, 144, True)
+    expect(t_gap > t_flat, "gapped walk must price above flat (more setups)")
+    expect(t_gap / 2560 > 12.0, "gapped 144 class must sit near the design's 12.9 T/B")
+    # Wave 3 in-place rule: |off| folds into the cap and prices small
+    # negative offsets out of existence by construction
+    t16 = enc._ocopy_t(1000, -16, 256, False, in_span=False)
+    t64 = enc._ocopy_t(1000, -64, 256, False, in_span=False)
+    expect(t16 > t64 > enc._ocopy_t(1000, -256, 256, False, in_span=False),
+           "in-place pricing must fall as |off| grows")
+    # a full-coverage 320x256 ocopy must model in the design's class
+    # (~9.6-10.6 T/B model = ~11.2+ armed) and NEVER charge payload
+    b, t = enc.ocopy_op_cost(81920, -512, 256, False)
+    expect(9.5 < t / 81920 < 11.0, f"flat full-surface rate {t/81920:.2f} T/B out of class")
+    expect(b == 10, "two OCOPY16 chunks = 10 wire bytes for 80KB of coverage")
+
+
+@case(20, "motion-locked dither phase - phase 0 byte-identical, tile travels with content")
+def t20_dither_phase():
+    rng = np.random.default_rng(7)
+    f = rng.integers(0, 256, (37, 53, 3), dtype=np.uint8)
+    a = enc.ordered_dither(f, 0.5)
+    expect(np.array_equal(a, enc.ordered_dither(f, 0.5, phase=(0, 0))),
+           "phase (0,0) must be byte-identical to the shipped dither")
+    expect(np.array_equal(a, enc.ordered_dither(f, 0.5, phase=None)),
+           "phase None must be byte-identical to the shipped dither")
+    # the tile MOVES WITH the content: shifting content and phase
+    # together reproduces the same dither decisions on the overlap
+    H, W = 64, 96
+    dsx, dsy = 3, 2
+    base = rng.integers(0, 256, (H, W, 3), dtype=np.uint8)
+    shifted = enc._shift_clamp2d(base, dsy, dsx)
+    d0 = enc.ordered_dither(base, 0.5)
+    d1 = enc.ordered_dither(shifted, 0.5, phase=(dsx, dsy))
+    expect(np.array_equal(d1[dsy:, dsx:], d0[:H - dsy, :W - dsx]),
+           "a phase-locked dither of shifted content must equal the "
+           "shifted dither of the original (the T5a prediction identity)")
+    # mixture path: same phase law through dither_plan
+    pal = enc.display_palette(base, colors=64)
+    i0, _ = enc.dither_plan(base, pal, 0.5, "mixture")
+    i1, _ = enc.dither_plan(shifted, pal, 0.5, "mixture", phase=(dsx, dsy))
+    expect(np.array_equal(i1[dsy:, dsx:], i0[:H - dsy, :W - dsx]),
+           "mixture plan must obey the same phase law")
+
+
+@case(20, "OCOPY decode - gather parity both modes, flat + gapped, both signs, off=0, boundary lengths")
+def t20_ocopy_decode_parity():
+    rng = np.random.default_rng(11)
+    # mode-1 gapped (320x144): whole-column shift both signs + within-
+    # column vertical shift; mode-0 flat (256x131): row shifts; mode-1
+    # full (320x256) flat: off=0 pure inherit + boundary lengths
+    for W, H, gapped, cm in ((320, 144, True, True), (256, 131, False, False),
+                             (320, 256, False, True)):
+        raw = W * H
+        geom = (W, H, gapped)
+        vis = rng.integers(0, 256, raw, dtype=np.uint8)
+        colstride = H if cm else W    # cursor bytes per paint-order line
+
+        # +2 lines shift (dx=+2 in mode-1 terms): off = -2*256
+        off = -(2 * 256)
+        exposed = 2 * colstride
+        payload = _oc_span_payload([
+            enc.op_run(exposed, 0xAA),
+            enc.op_ocopy(raw - exposed, off)])
+        hid, _ = _oc_run_span(payload, raw, vis, geom)
+        expect(np.array_equal(hid[exposed:], vis[:raw - exposed]),
+               f"{W}x{H}: +2-line gather")
+        expect(np.all(hid[:exposed] == 0xAA), "residual literal band")
+
+        # -3 lines shift: off = +3*256, exposed at the END
+        off = 3 * 256
+        exposed = 3 * colstride
+        payload = _oc_span_payload([
+            enc.op_ocopy(raw - exposed, off),
+            enc.op_run(exposed, 0x55)])
+        hid, _ = _oc_run_span(payload, raw, vis, geom)
+        expect(np.array_equal(hid[:raw - exposed], vis[exposed:]),
+               f"{W}x{H}: -3-line gather")
+
+        # off = 0: the legal pure inherit copy
+        payload = _oc_span_payload([enc.op_ocopy(raw, 0)])
+        hid, _ = _oc_run_span(payload, raw, vis, geom)
+        expect(np.array_equal(hid, vis), f"{W}x{H}: off=0 pure inherit")
+
+    # boundary lengths on the big flat shape: 1 / 255 / 256 / 65535 +
+    # remainder, spans crossing the 8K window-seam positions (seams are
+    # a player concern - the reference decoder must be seam-blind)
+    W, H = 320, 256
+    raw = W * H
+    geom = (W, H, False)
+    vis = rng.integers(0, 256, raw, dtype=np.uint8)
+    parts = [enc.op_run(256, 7),
+             enc.op_ocopy(1, -256), enc.op_ocopy(255, -256),
+             enc.op_ocopy(256, -256), enc.op_ocopy(65535, -256),
+             enc.op_ocopy(raw - 256 - 1 - 255 - 256 - 65535, -256)]
+    hid, cur = _oc_run_span(_oc_span_payload(parts), raw, vis, geom)
+    expect(cur == raw, "span cursor must land exactly at the surface end")
+    expect(np.array_equal(hid[256:], vis[:raw - 256]),
+           "chunked gathers must compose to one clean shift")
+
+    # within-column vertical shift on the gapped shape (dy=+2, off=-2):
+    # one op per column body, tops as literals
+    W, H = 320, 144
+    raw = W * H
+    geom = (W, H, True)
+    vis = rng.integers(0, 256, raw, dtype=np.uint8)
+    parts = []
+    for col in range(W):
+        parts.append(enc.op_run(2, 0x11))
+        parts.append(enc.op_ocopy(H - 2, -2))
+    hid, _ = _oc_run_span(_oc_span_payload(parts), raw, vis, geom)
+    v2 = hid.reshape(W, H)
+    vv = vis.reshape(W, H)
+    expect(np.array_equal(v2[:, 2:], vv[:, :H - 2]),
+           "within-column vertical gather (every column)")
+
+
+@case(20, "OCOPY validation - capability pairing, span-only rule, gap legality, source bounds, n=0, span coverage")
+def t20_ocopy_validation():
+    rng = np.random.default_rng(13)
+    W, H = 320, 144
+    raw = W * H
+    geom = (W, H, True)
+    vis = rng.integers(0, 256, raw, dtype=np.uint8)
+
+    # (a) capability bit clear: structural refusal
+    issues = []
+    payload = _oc_span_payload([enc.op_ocopy(raw, 0)])
+    _oc_run_span(payload, raw, vis, geom, declared=False, issues=issues)
+    expect(any("capability" in s for s in issues),
+           f"undeclared OCOPY must be flagged: {issues}")
+
+    # (b) outside a span (Wave 1 rule) - raises in decode mode too
+    issues = []
+    dec.run_payload(enc.op_ocopy(16, 0) + bytes([enc.OP_FEND]), 0,
+                    np.zeros(raw, np.uint8), raw, issues=issues,
+                    ocopy_declared=True, geom=geom)
+    expect(any("outside a KSTART" in s for s in issues),
+           f"OCOPY outside a span must be flagged: {issues}")
+    try:
+        dec.run_payload(enc.op_ocopy(16, 0) + bytes([enc.OP_FEND]), 0,
+                        np.zeros(raw, np.uint8), raw,
+                        ocopy_declared=True, geom=geom)
+    except dec.Nxv2FormatError:
+        pass
+    else:
+        raise AssertionError("OCOPY outside a span must raise in decode mode")
+
+    # (c) gap legality: a vertical shift whose source dips into the
+    # letterbox gap ((addr+off) % 256 >= height)
+    issues = []
+    _oc_run_span(_oc_span_payload([enc.op_ocopy(H, 2),
+                                   enc.op_ocopy(raw - H, 0)]),
+                 raw, vis, geom, issues=issues)
+    expect(any("illegal source" in s for s in issues),
+           f"gap-source OCOPY must be flagged: {issues}")
+
+    # (d) source outside the surface (negative address)
+    issues = []
+    _oc_run_span(_oc_span_payload([enc.op_ocopy(raw, -(4 * 256))]),
+                 raw, vis, geom, issues=issues)
+    expect(any("illegal source" in s for s in issues),
+           f"out-of-surface OCOPY source must be flagged: {issues}")
+
+    # (e) n = 0 (corrupt input - the player treats it as a structural
+    # no-op, the reference decoder reports, same divergence contract
+    # as RUN8/COPY8 n=0)
+    issues = []
+    _oc_run_span(_oc_span_payload([bytes([enc.OP_OCOPY8, 0, 0, 0]),
+                                   enc.op_ocopy(raw, 0)]),
+                 raw, vis, geom, issues=issues)
+    expect(any("n=0" in s for s in issues), f"OCOPY n=0 must be flagged: {issues}")
+
+    # (f) span coverage: via validate() on a whole container - a span
+    # that reaches KFLIP with unwritten bytes must be flagged (the
+    # player performs NO inherit copy - the KF-inherit caveat)
+    import tempfile as tf
+    hdr = enc.pack_header(width=W, height=H, fps=25.0, channels=2,
+                          arate=enc.RATE_STEREO, frame_count=1,
+                          audio_bytes_per_frame=1250,
+                          ring_start_margin_blocks=1, per_frame_cap_blocks=200,
+                          flags=enc.FLAG_DELTA_STREAM | enc.FLAG_OCOPY)
+    apad = b"\x80" * 1536
+    partial = _oc_span_payload([enc.op_ocopy(raw - 100, -0)])   # 100-byte hole
+    pad = b"\x00" * ((-len(partial)) % 512)
+    with tf.TemporaryDirectory() as td:
+        p = Path(td) / "hole.vid"
+        p.write_bytes(hdr + apad + partial + pad)
+        issues = dec.validate(p)
+        expect(any("never written" in s for s in issues),
+               f"partial-coverage span must be flagged by validate(): {issues}")
+        # and the complement: a FULL-coverage ocopy span validates clean
+        full = _oc_span_payload([enc.op_ocopy(raw, 0)])
+        pad = b"\x00" * ((-len(full)) % 512)
+        p2 = Path(td) / "full.vid"
+        p2.write_bytes(hdr + apad + full + pad)
+        expect(dec.validate(p2) == [], f"full-coverage span must validate clean: {dec.validate(p2)}")
+        # header WITHOUT the capability bit + the same payload: flagged
+        hdr_no = enc.pack_header(width=W, height=H, fps=25.0, channels=2,
+                                 arate=enc.RATE_STEREO, frame_count=1,
+                                 audio_bytes_per_frame=1250,
+                                 ring_start_margin_blocks=1,
+                                 per_frame_cap_blocks=200)
+        p3 = Path(td) / "undecl.vid"
+        p3.write_bytes(hdr_no + apad + full + pad)
+        issues = dec.validate(p3)
+        expect(any("capability" in s for s in issues),
+               f"OCOPY without header bit3 must be flagged: {issues}")
+
+
+@case(20, "T5a end-to-end - synthetic exact pan through encode_clip: pan frames emitted, "
+          "nxv2dec + payload walker parity, byte-identity with the feature off")
+def t20_ocopy_end_to_end():
+    # Synthetic exact whole-pixel pan (the Wave 0 recipe at target
+    # resolution): a textured master panned 2 px/frame. The encoder
+    # must detect it, emit pan-span frames, and the reference decoder
+    # must reproduce the encoder's own surface bookkeeping exactly.
+    rng = np.random.default_rng(23)
+    W, H, n = 256, 128, 10
+    master = rng.integers(0, 256, (H, W + 2 * n, 3), dtype=np.uint8)
+    # smooth it a little so the palette is sane but keep texture
+    m = master.astype(np.float32)
+    m = (m + np.roll(m, 1, axis=1) + np.roll(m, 1, axis=0)) / 3.0
+    master = m.astype(np.uint8)
+    orig = np.stack([master[:, 2 * i:2 * i + W] for i in range(n)])
+    chg = np.zeros(n)
+    for f in range(1, n):
+        d = np.abs(orig[f].astype(np.int16) - orig[f - 1].astype(np.int16)).max(axis=2)
+        chg[f] = float((d > 10).mean())
+    po = np.array([enc.display_ceiling(orig[i]) for i in range(n)])
+
+    res = enc.encode_clip(orig, chg, po, W, H, 25.0, ocopy=True)
+    expect(res["ocopy_frames"] > 0,
+           f"a 2 px/frame exact pan must emit pan frames (got 0; modes "
+           f"{res['per_frame']['mode']})")
+    accs = [s["acc"] for s in res["ocopy_stats"]]
+    expect(max(accs) > 0.90,
+           f"exact-pan acceptance must be high, got {[f'{a:.2f}' for a in accs]}")
+
+    # container roundtrip: nxv2dec must reproduce the encoder's own
+    # decoded surfaces byte-exactly, and the payload walker must
+    # consume every payload
+    import tempfile as tf
+    payloads = res["payloads"]
+    hdr = enc.pack_header(width=W, height=H, fps=25.0, channels=2,
+                          arate=enc.RATE_STEREO, frame_count=len(payloads),
+                          audio_bytes_per_frame=1250,
+                          ring_start_margin_blocks=1,
+                          per_frame_cap_blocks=max(1, (max(len(p) for p in payloads) + 511) // 512),
+                          flags=enc.FLAG_DELTA_STREAM | enc.FLAG_OCOPY)
+    apad = b"\x80" * 1536
+    with tf.TemporaryDirectory() as td:
+        p = Path(td) / "pan.vid"
+        with open(p, "wb") as f:
+            f.write(hdr)
+            for pl in payloads:
+                f.write(apad)
+                f.write(pl)
+                f.write(b"\x00" * ((-len(pl)) % 512))
+        expect(dec.validate(p) == [], f"pan container must validate clean: {dec.validate(p)[:3]}")
+        frames = list(dec.decode(p))
+        expect(len(frames) == len(payloads), "decoded frame count")
+        for i, (pal, img) in enumerate(frames):
+            expect(np.array_equal(pal[img], res["decoded"][i]),
+                   f"frame {i}: nxv2dec decode differs from the encoder's own")
+    ocopy_ops = 0
+    for pl in payloads:
+        info = enc.walk_payload_ops(pl)   # raises on truncation/reserved
+        ocopy_ops += info["counts"].get(enc.OP_OCOPY8, 0)
+        ocopy_ops += info["counts"].get(enc.OP_OCOPY16, 0)
+    expect(ocopy_ops > 0, "payload walker must see the OCOPY ops")
+
+    # SCENE-CUT GUARD: a hard cut mid-clip must never be a pan frame
+    cutclip = orig.copy()
+    cutclip[n // 2:] = orig[::-1][:n - n // 2]  # unrelated content after the cut
+    chg2 = np.zeros(n)
+    for f in range(1, n):
+        d = np.abs(cutclip[f].astype(np.int16) - cutclip[f - 1].astype(np.int16)).max(axis=2)
+        chg2[f] = float((d > 10).mean())
+    po2 = np.array([enc.display_ceiling(cutclip[i]) for i in range(n)])
+    res2 = enc.encode_clip(cutclip, chg2, po2, W, H, 25.0, ocopy=True)
+    cuts = set(enc.detect_scene_cuts(chg2))
+    for i, m_ in enumerate(res2["per_frame"]["mode"]):
+        if i in cuts:
+            expect(not m_.startswith("pan"),
+                   f"frame {i} sits on a detected cut and must not be a pan frame ({m_})")
+
+    # BYTE-IDENTITY: with the feature off, the pan clip encodes exactly
+    # as the pre-T5a encoder (default parameter path)
+    r_off = enc.encode_clip(orig, chg, po, W, H, 25.0)
+    r_off2 = enc.encode_clip(orig, chg, po, W, H, 25.0, ocopy=False)
+    expect([bytes(p) for p in r_off["payloads"]] == [bytes(p) for p in r_off2["payloads"]],
+           "ocopy=False must be byte-identical to the default path")
+    expect(r_off["ocopy_frames"] == 0 and r_off["ocopy_stats"] == [],
+           "feature off: no ocopy bookkeeping")
 
 
 def main():

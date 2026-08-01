@@ -29,7 +29,7 @@ import numpy as np
 from nxv2enc import (
     HEADER_SIZE, unpack_header,
     OP_FEND, OP_SKIP16, OP_RUN8, OP_RUN16, OP_COPY8, OP_COPY16, OP_PAL,
-    OP_SKIP8, OP_KFLIP, OP_KSTART, TERMINAL_OPS,
+    OP_SKIP8, OP_KFLIP, OP_KSTART, OP_OCOPY8, OP_OCOPY16, TERMINAL_OPS,
     unflatten_frame,
 )
 
@@ -59,7 +59,9 @@ def _decode_palette_block(block):
     return pal
 
 
-def run_payload(buf, pos, surface, cursor_len, palette_out=None, issues=None, start_cursor=0):
+def run_payload(buf, pos, surface, cursor_len, palette_out=None, issues=None,
+                start_cursor=0, ocopy_src=None, ocopy_declared=False,
+                geom=None, covered=None):
     """Execute ops from buf[pos:] into `surface` (a mutable 1D uint8
     ndarray of length cursor_len, paint order) until a terminal op
     (FEND/KFLIP) or KSTART. Returns (new_pos, cursor, opcode).
@@ -72,6 +74,25 @@ def run_payload(buf, pos, surface, cursor_len, palette_out=None, issues=None, st
     stitching a span together pass the previous chunk's returned
     cursor back in here.
 
+    SP17 T5a OCOPY (Wave 1 span form):
+      ocopy_src       the SOURCE surface for OCOPY ops - the VISIBLE
+                      surface, frozen for the span's duration. None
+                      (the default) = OCOPY is illegal in this payload
+                      (outside a KSTART..KFLIP span - the Wave 1 rule).
+      ocopy_declared  the header capability bit (flags bit3). An OCOPY
+                      op in a file that did not declare it is a
+                      structural violation (the player's stub slots
+                      are error stubs in that state).
+      geom            (width, height, gapped) for the cursor<->address
+                      mapping and the gap-legality rule. Required for
+                      OCOPY; other ops ignore it.
+      covered         optional bool ndarray(cursor_len) - every byte
+                      WRITTEN (RUN/COPY/OCOPY) is marked, for the span
+                      full-coverage validation (the KF-inherit caveat:
+                      the real player performs NO inherit copy, so a
+                      coverage hole that looks fine here is garbage on
+                      silicon).
+
     If `issues` is a list, structural problems are appended to it and
     decoding continues on a best-effort basis (validate() mode);
     otherwise Nxv2FormatError is raised immediately (decode() mode)."""
@@ -80,6 +101,10 @@ def run_payload(buf, pos, surface, cursor_len, palette_out=None, issues=None, st
             issues.append(msg)
         else:
             raise Nxv2FormatError(msg)
+
+    def mark(a, b):
+        if covered is not None:
+            covered[a:b] = True
 
     cursor = start_cursor
     n = len(buf)
@@ -115,6 +140,7 @@ def run_payload(buf, pos, surface, cursor_len, palette_out=None, issues=None, st
                 fail(f"RUN8 cursor overrun: {cursor}+{cnt} > {cursor_len}")
                 cnt = max(0, cursor_len - cursor)
             surface[cursor:cursor + cnt] = colour
+            mark(cursor, cursor + cnt)
             cursor += cnt
         elif op == OP_RUN16:
             if pos + 3 > n:
@@ -124,6 +150,7 @@ def run_payload(buf, pos, surface, cursor_len, palette_out=None, issues=None, st
                 fail(f"RUN16 cursor overrun: {cursor}+{cnt} > {cursor_len}")
                 cnt = max(0, cursor_len - cursor)
             surface[cursor:cursor + cnt] = colour
+            mark(cursor, cursor + cnt)
             cursor += cnt
         elif op == OP_COPY8:
             if pos >= n:
@@ -138,6 +165,7 @@ def run_payload(buf, pos, surface, cursor_len, palette_out=None, issues=None, st
                 fail(f"COPY8 cursor overrun: {cursor}+{cnt} > {cursor_len}")
                 cnt = max(0, cursor_len - cursor)
             surface[cursor:cursor + cnt] = np.frombuffer(buf, dtype=np.uint8, count=cnt, offset=pos)
+            mark(cursor, cursor + cnt)
             pos += cnt
             cursor += cnt
         elif op == OP_COPY16:
@@ -151,7 +179,72 @@ def run_payload(buf, pos, surface, cursor_len, palette_out=None, issues=None, st
                 fail(f"COPY16 cursor overrun: {cursor}+{cnt} > {cursor_len}")
                 cnt = max(0, cursor_len - cursor)
             surface[cursor:cursor + cnt] = np.frombuffer(buf, dtype=np.uint8, count=cnt, offset=pos)
+            mark(cursor, cursor + cnt)
             pos += cnt
+            cursor += cnt
+        elif op in (OP_OCOPY8, OP_OCOPY16):
+            # SP17 T5a. Semantics: EXACT memmove of cnt cursor bytes
+            # from ocopy_src at signed ADDRESS-space offset `off`
+            # (source byte address = dest byte address + off). In the
+            # Wave 1 disjoint span form the source array (visible
+            # surface) is disjoint from the destination (hidden), so
+            # this is a pure vectorised gather - no ordering question
+            # exists (the Wave 3 in-place form's chunk <= |off| +
+            # reverse-order rule keeps it memmove-equivalent there
+            # too, so chunk order NEVER becomes observable).
+            hdrlen = 3 if op == OP_OCOPY8 else 4
+            if pos + hdrlen > n:
+                fail(f"truncated OCOPY{'8' if op == OP_OCOPY8 else '16'}")
+                return pos, cursor, OP_FEND
+            if op == OP_OCOPY8:
+                cnt = buf[pos]
+                off = int.from_bytes(buf[pos + 1:pos + 3], "little")
+            else:
+                cnt = int.from_bytes(buf[pos:pos + 2], "little")
+                off = int.from_bytes(buf[pos + 2:pos + 4], "little")
+            pos += hdrlen
+            if off >= 0x8000:
+                off -= 0x10000                     # signed 16-bit
+            if not ocopy_declared:
+                fail(f"OCOPY at byte {pos - hdrlen - 1} without the "
+                     f"header capability bit (flags bit3) - the player "
+                     f"refuses this structurally")
+            if ocopy_src is None:
+                fail(f"OCOPY at byte {pos - hdrlen - 1} outside a "
+                     f"KSTART..KFLIP span (Wave 1 ships the disjoint "
+                     f"span form only)")
+                cursor += cnt
+                continue
+            if cnt == 0:
+                fail(f"OCOPY with n=0 at byte {pos - hdrlen - 1} "
+                     f"(spec requires 1-255/1-65535)")
+            if cursor + cnt > cursor_len:
+                fail(f"OCOPY cursor overrun: {cursor}+{cnt} > {cursor_len}")
+                cnt = max(0, cursor_len - cursor)
+            if cnt:
+                width, cheight, gapped = geom
+                dst = np.arange(cursor, cursor + cnt, dtype=np.int64)
+                if gapped:
+                    a = (dst // cheight) * 256 + (dst % cheight) + off
+                    bad = ((a < 0) | (a % 256 >= cheight)
+                           | (a // 256 >= width))
+                    src_cur = (a // 256) * cheight + (a % 256)
+                else:
+                    a = dst + off
+                    bad = (a < 0) | (a >= cursor_len)
+                    src_cur = a
+                if bad.any():
+                    # gap-legality / surface-bound rule (format
+                    # contract): the source may never lie in the
+                    # letterbox gap or outside the content
+                    fail(f"OCOPY source outside the content: cursor "
+                         f"{cursor} len {cnt} off {off} has "
+                         f"{int(bad.sum())} illegal source byte(s)")
+                    good = ~bad
+                    surface[dst[good]] = ocopy_src[src_cur[good]]
+                else:
+                    surface[cursor:cursor + cnt] = ocopy_src[src_cur]
+                mark(cursor, cursor + cnt)
             cursor += cnt
         elif op == OP_PAL:
             if pos + 512 > n:
@@ -189,6 +282,9 @@ def _iter_frames(buf, hdr, issues=None):
     width, height = hdr["width"], hdr["height"]
     raw = width * height
     abytes_pad = _round_up_block(hdr["audio_bytes_per_frame"])
+    ocopy_declared = bool(hdr.get("ocopy"))
+    geom = (width, height,
+            hdr["column_major"] and height != 256)   # mode-1 letterbox
 
     visible_surface = np.zeros(raw, dtype=np.uint8)
     visible_palette = np.zeros((256, 3), dtype=np.uint8)
@@ -199,6 +295,13 @@ def _iter_frames(buf, hdr, issues=None):
     span_cursor = 0   # persists across a span's chunk-frame payloads; only
                        # KSTART resets it to 0 (format reference) - ordinary
                        # (non-span) payloads always start fresh at 0.
+    # Span full-coverage tracker (validate mode): the real player does
+    # NO visible->hidden inherit copy at KSTART (KF-inherit caveat) -
+    # keyframe/pan spans are encoder-guaranteed FULL repaints, so a
+    # coverage hole is invisible in this decoder's inherit model and
+    # GARBAGE on silicon. validate() therefore flags any span that
+    # reaches KFLIP without writing every cursor byte.
+    span_cover = np.zeros(raw, dtype=bool) if issues is not None else None
 
     pos = HEADER_SIZE
     n = len(buf)
@@ -214,7 +317,13 @@ def _iter_frames(buf, hdr, issues=None):
         start_cursor = span_cursor if in_span else 0
         pos, cursor, term = run_payload(buf, pos, target, raw,
                                          palette_out=pal_out, issues=issues,
-                                         start_cursor=start_cursor)
+                                         start_cursor=start_cursor,
+                                         ocopy_src=(visible_surface if in_span
+                                                    else None),
+                                         ocopy_declared=ocopy_declared,
+                                         geom=geom,
+                                         covered=(span_cover if in_span
+                                                  else None))
 
         if term == OP_KSTART:
             if in_span:
@@ -222,13 +331,20 @@ def _iter_frames(buf, hdr, issues=None):
             in_span = True
             span_frame_idx = fi
             hidden_surface[:] = visible_surface   # span starts from current visible content
+            if span_cover is not None:
+                span_cover[:] = False
             # KSTART is not itself terminal for the payload - the rest
             # of this frame's ops (PAL, COPY, .., FEND/KFLIP) continue
             # right after it, now targeting the hidden surface, cursor
-            # reset to 0 (KSTART's own effect).
+            # reset to 0 (KSTART's own effect). OCOPY becomes legal
+            # here: its source is the VISIBLE surface, which stays
+            # frozen until KFLIP (the player's front bank).
             pos, cursor, term2 = run_payload(buf, pos, hidden_surface, raw,
                                               palette_out=hidden_palette, issues=issues,
-                                              start_cursor=0)
+                                              start_cursor=0,
+                                              ocopy_src=visible_surface,
+                                              ocopy_declared=ocopy_declared,
+                                              geom=geom, covered=span_cover)
             term = term2
             if term == OP_KSTART:
                 fail(f"frame {fi}: duplicate KSTART inside one payload")
@@ -249,6 +365,12 @@ def _iter_frames(buf, hdr, issues=None):
         if term == OP_KFLIP:
             if not in_span:
                 fail(f"frame {fi}: KFLIP with no preceding KSTART")
+            elif span_cover is not None and not bool(span_cover.all()):
+                missing = int((~span_cover).sum())
+                fail(f"frame {fi}: keyframe span reached KFLIP with "
+                     f"{missing}/{raw} cursor bytes never written - "
+                     f"spans must cover every byte (the player performs "
+                     f"no inherit copy; a hole is garbage on silicon)")
             visible_surface[:] = hidden_surface
             visible_palette[:] = hidden_palette
             in_span = False

@@ -37,6 +37,17 @@
 #                 read the encoder's 'tile-slack:' line for what it
 #                 cost. Same hashing rule as everything else - setting
 #                 or changing it re-encodes that title and nothing else.
+#                 --ocopy (SP17 T5a, opt-in, default off) also lives
+#                 here (or per-title in VIDOPTS_NNN): offset-copy
+#                 motion coding - detected whole-pixel pans replay the
+#                 previous frame shifted on the Next itself for 4-5
+#                 wire bytes per op, with atomic presentation.
+#                 COMPATIBILITY: a title that emits the op sets the
+#                 header OCOPY capability bit and needs this kit's
+#                 interpreter or newer (older players refuse the file
+#                 at open with VID FMT?) - which is why the AUTHOR
+#                 opts in per title rather than the encoder defaulting
+#                 it on. Hashed like every other option.
 #   VIDOPTS_NNN - extra options for video NNN only (3-digit number),
 #                 appended AFTER VIDOPTS. For most repeated options
 #                 videnc takes the last occurrence, so VIDOPTS_NNN wins
@@ -171,6 +182,17 @@ if (-not $sources) { exit 0 }
 # re-price as LDI and every DMA-path copy op carries the path term -
 # the per-frame decode-T budget admits a different amount of work and
 # streamed encodes emit different bytes for unchanged args.
+# NO BUMP for the SP17 T5a offset-copy wave (2026-08-01), deliberately -
+# same discipline as the Yliluoma and supply-slack waves above. It ADDED
+# an opt-in option (videnc --ocopy, default off) and changed NOTHING on
+# the default path: the pan detector, the motion-snap warp and the
+# motion-locked dither phase all engage only under the flag, and the
+# dither's phase-0 path is byte-identical to the shipped one by
+# construction (selftest-asserted). Verified, not assumed - four leg
+# fixtures (full/classic/16:9/classic-wide recipes) re-encode
+# SHA256-identical to the pre-wave encoder for the same arguments.
+# --ocopy is part of the hashed argument list below, so a title that
+# opts in re-encodes on that alone.
 $encoderGeneration = 'pal9l'
 
 function Get-ArgHash([string[]]$argList) {
