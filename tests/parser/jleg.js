@@ -117,7 +117,20 @@ const sandbox = {
   console: quietConsole, document: documentStub, localStorage: localStorageStub,
   navigator: { userAgent: 'node', language: 'en' },
   location: { href: '', search: '' },
-  setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
+  // setTimeout runs its callback SYNCHRONOUSLY. jdaad.js is written for a
+  // browser event loop and defers real work through it - _INKEY hands its
+  // whole body to a 50ms timer, and delay() (PAUSE, BEEP) defers its busy
+  // wait by 1ms - so the previous no-op stub did not "skip the delay", it
+  // DROPPED THE WORK: execution stopped dead at the first INKEY and never
+  // came back, which is where tests/condacts.dsf check 81 walled the
+  // reference leg. Running the callback inline keeps jDAAD single-threaded
+  // and deterministic and gets the work done in the same order.
+  //
+  // The one thing that must NOT simply fire is jDAAD's own DAAD input
+  // timeout, which arms through this same call - see the
+  // inputTimeoutHandler gate installed after jdaad.js loads.
+  setTimeout: (fn) => { if (typeof fn === 'function') fn(); return 0; },
+  clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
   requestAnimationFrame: () => 0,
   Audio: function () { return { play() {}, pause() {}, addEventListener() {} }; },
   Image: function () { return { addEventListener() {}, set src(v) {} }; },
@@ -142,7 +155,21 @@ const sandbox = {
     };
   },
   alert: () => {}, $, jQuery: $,
-  Uint8Array, Uint8ClampedArray, Date, JSON, parseInt, parseFloat, String, Number, Array, Object, Boolean, isNaN,
+  // NOTE the absence of String. It used to be injected alongside these,
+  // and that BROKE SAVE and LOAD outright: jdaad.js extends the string
+  // type with its own helper (String.prototype.hexEncode, used by doSave
+  // and doLoad to build the localStorage key), and an injected host
+  // String means that extension lands on the HOST's String.prototype
+  // while every string jdaad.js actually creates inside the vm context
+  // carries the CONTEXT's - so doSave died with "filename.hexEncode is
+  // not a function" the first time a script typed a save name. A vm
+  // context has all of these intrinsics of its own; injecting a host
+  // copy only shadows the real one and splits the prototype chain. The
+  // rest are left in place because they are load-bearing here and have
+  // been exercised for the whole life of this harness, but any future
+  // "X is not a function" on a jdaad.js-added prototype method is this
+  // same fault - remove the intrinsic from this list, do not polyfill.
+  Uint8Array, Uint8ClampedArray, Date, JSON, parseInt, parseFloat, Number, Array, Object, Boolean, isNaN,
 };
 
 // The rng_next mirror. RANDOM (95) and CHANCE (10) must draw the SAME stream
@@ -196,6 +223,72 @@ function load(f) {
 
 // Order matters: the DDB and the font are plain data scripts.
 for (const f of ['daad.jddb', 'images.js', 'font.js', 'jdaad.js']) load(f);
+
+// jdaad.js's StopSound() reaches straight for two audio objects with no
+// guard at all - `audioMusic.pause()` and `audioSFX.pause()` - and NEITHER
+// exists until PlaySound has actually started something. audioMusic is
+// declared and left undefined; audioSFX is not declared anywhere in the
+// file. So any "stop what is playing" with nothing playing throws, and
+// jDAAD dies where NextDAAD no-ops: tests/condacts.dsf check 66's
+// `SFX 200 8` and check 68's `SFX 0 5` both do exactly that, and both
+// killed this leg outright the first time a script reached them.
+//
+// That unguarded access is a REAL jDAAD fault (reported as a finding, not
+// hidden here) - but a reference leg that crashes cannot be compared with
+// at all, so it is given the objects it assumes, in the same spirit as
+// the DOM and Audio stubs above. Both start "not playing"; the fields are
+// the ones jdaad.js touches (PlaySound sets .loop and calls .play()).
+vm.runInContext(`
+  if (typeof audioMusic === 'undefined' || !audioMusic)
+    audioMusic = { loop: false, play() {}, pause() {}, addEventListener() {} };
+  if (typeof audioSFX === 'undefined' || !audioSFX)
+    audioSFX = { loop: false, play() {}, pause() {}, addEventListener() {} };
+`, sandbox);
+
+// jDAAD DOES have the DAAD input timeout - readText, writeText's pager and
+// _ANYKEY all arm inputTimeoutHandler through setTimeout when flag 48 is
+// set and the matching flag 49 bit is on. It never used to fire only
+// because setTimeout was a no-op stub; now that callbacks run inline it
+// would fire the instant it is armed, on every turn, which no leg wants.
+//
+// So it is gated instead of disabled: OFF by default (both legs run every
+// ordinary turn with no timeout, docs/parser-bugs.md entry 5), ON for a
+// turn the script marked allow_timeout - and then it is jDAAD's OWN
+// handler that runs, setting jDAAD's own flags in jDAAD's own way. That
+// is the whole point of gating rather than faking: what the reference leg
+// does on a timeout stays evidence, including where it disagrees with
+// NextDAAD.
+vm.runInContext(`
+  var __timeoutArmed = false;
+  var __origInputTimeoutHandler = inputTimeoutHandler;
+  inputTimeoutHandler = function () {
+    if (!__timeoutArmed) return;
+    return __origInputTimeoutHandler.apply(this, arguments);
+  };
+`, sandbox);
+
+// jdaad.js's GFX palette sub-command writes the palette as a FLAT array
+// of bytes - colours[n*3], colours[n*3+1], colours[n*3+2] (jdaad.js:4412) -
+// while every reader indexes the same `colours` as an array of TRIPLES,
+// colours[n][0..2] (getFillStyle, pixel). One palette write therefore
+// replaces colours[0] (an array) with a number, and the NEXT window scroll
+// dies in getFillStyle with "Cannot read properties of undefined". That is
+// a real jDAAD defect, and tests/condacts.dsf check 74's `GFX 0 9` walks
+// straight into it - NextDAAD treats the same sub as a no-op.
+//
+// Reported as a finding, not hidden: it is shimmed here only because a
+// reference leg that throws cannot be compared with at all. Nothing is
+// lost by doing so - this harness captures CHARACTERS, and the value
+// getFillStyle returns goes to a canvas stub that ignores fillStyle
+// entirely, so the colour never reaches anything that is compared.
+vm.runInContext(`
+  var __origFillStyle = getFillStyle;
+  getFillStyle = function (colour) {
+    var e = colours[colour];
+    if (!e || e[0] === undefined) return '#000000';
+    return __origFillStyle(colour);
+  };
+`, sandbox);
 
 // --- capture text instead of drawing pixels -------------------------------
 // Keep the real routines so all the wrap / pager / cursor bookkeeping still
@@ -316,14 +409,7 @@ function key(k, echo = true) {
 // "More..." pager - pressing Enter at the command prompt would burn a turn and
 // advance the game's timers, corrupting the test.
 const waiting = () => vm.runInContext('(typeof inANYKEY!=="undefined" && inANYKEY) || (typeof inMORE!=="undefined" && inMORE)', sandbox);
-// allowTimeout: this turn is one the script marked as being ABOUT the
-// interpreter's TIME countdown, so every wait released here stands in for
-// an expiry rather than a keypress - see forceTimeoutFlag below.
-function settle(cap = 400, allowTimeout = false) {
-  let n = 0;
-  while (waiting() && n++ < cap) { if (allowTimeout) forceTimeoutFlag(); key('Enter'); }
-  return n;
-}
+function settle(cap = 400) { let n = 0; while (waiting() && n++ < cap) key('Enter'); return n; }
 
 function stateVector() {
   return vm.runInContext(`
@@ -401,34 +487,25 @@ function emit(turn, command, text) {
 
 // The jDAAD side of the "allow_timeout" directive.
 //
-// jDAAD has NO input timeout of any kind: the sandbox stubs setTimeout to
-// a no-op, and jdaad.js's readText never counts anything down. NextDAAD
-// does (src/print.asm wait_key_timeout, src/overlay1.asm inp_edit), and a
-// fixture check can be ABOUT that - tests/condacts.dsf check 58 arms
-// `TIME 2 0`, waits, and asserts flag 49 = 128. On a turn marked
-// allow_timeout the Next leg stops zeroing the countdown and lets the
-// expiry happen for real.
+// Both legs let the interpreter's OWN input timeout run on a turn the
+// script marks this way, and neither is told what the answer should be.
+// On the Next leg that means settle() stops zeroing inpTOFrames and
+// src/overlay1.asm's inp_edit (or src/print.asm's wait_key_timeout)
+// expires for real. Here it means opening the gate installed above, so
+// jdaad.js's own inputTimeoutHandler is allowed to run - it sets flag 49
+// the way jDAAD sets it, resumes the read the way jDAAD resumes it, and
+// any disagreement with NextDAAD that follows is a finding, not something
+// the harness papered over.
 //
-// The reference leg cannot do that, so it is given the SAME OBSERVABLE
-// STATE at the SAME LOGICAL POINT instead: flag 49 bit 7 ("a timeout
-// occurred") is set while jDAAD is parked on the wait the directive names,
-// and the wait is then released with an Enter that carries no text - which
-// is what an expired DAAD read leaves behind (inp_edit's .nopart arm sets
-// bit 7, clears bit 6 and returns an EMPTY line; an empty line makes
-// PARSE pass exactly as a timeout does). Same discipline as the RNG seed
-// and flag 42: force the two legs into the same state at the same point,
-// or mask it on both - never let one leg alone do something the other
-// physically cannot (docs/parser-bugs.md entry 5).
-//
-// What this does NOT do is test jDAAD's timeout, because there is none to
-// test. The differential value of such a turn is one-sided by nature: it
-// is the Next leg's own arm/expiry path being exercised, with the fixture's
-// EQ as the assertion, and the reference leg kept in step so the turns
-// after it still compare.
-const FTIMECTL = 49;
-function forceTimeoutFlag() {
-  vm.runInContext('flags.setFlag(' + FTIMECTL
-    + ', (flags.getFlag(' + FTIMECTL + ') | 0x80) & 0xFF)', sandbox);
+// A wait-turn (cmd === "") needs one extra step. Its read was armed
+// during the PREVIOUS turn, when the gate was shut, so the arming call
+// has already come and gone; the expiry is invoked here directly, at the
+// point in the script that asked for it.
+function withTimeoutAllowed(fn) {
+  vm.runInContext('__timeoutArmed = true;', sandbox);
+  try { return fn(); } finally {
+    vm.runInContext('__timeoutArmed = false;', sandbox);
+  }
 }
 
 settle();
@@ -457,34 +534,50 @@ for (const { cmd, allow_timeout } of commands) {
   // sees (e.g. a genuine ANYKEY-style "Press any key" pause). NOT for
   // QUIT's "Are you sure?" - see "?X" below and this file's header
   // comment for why that specifically needs the full-line form instead.
-  if (cmd === '') {
-    // A turn that types nothing: only reachable with allow_timeout (the
-    // script normaliser above refuses it otherwise). Stand in for the
-    // expiry the Next leg is actually waiting out.
-    forceTimeoutFlag();
-    key('Enter');
-    settle(400, allow_timeout);
-  } else if (cmd.startsWith('!')) {
-    for (const ch of cmd.slice(1)) key(ch);
-    settle(400, allow_timeout);
-  } else if (cmd.startsWith('?')) {
-    // "?X" answers a confirmation prompt - see header comment. Both
-    // interpreters read a LINE there (entry 4, settled), so this sends
-    // the key AND Enter, unlike "!", which sends no Enter. The typed
-    // character's echo is suppressed, exactly as for a plain command:
-    // both interpreters really do echo the reply now, but they draw
-    // different cursors behind it (jDAAD writes a "_" glyph, NextDAAD
-    // uses an inverted attribute the tilemap read cannot see), so
-    // comparing the echo compares cursor styling. nleg.py drops its
-    // own echo by anchoring after it.
-    for (const ch of cmd.slice(1)) key(ch, false);  // suppress echo of the key
-    key('Enter');                                   // ...but not the result
-    settle(400, allow_timeout);
-  } else {
-    for (const ch of cmd) key(ch, false);   // suppress the typed-character echo
-    key('Enter');                           // ...but not the turn's output
-    settle(400, allow_timeout);
-  }
+  const runTurn = () => {
+    if (cmd === '') {
+      // A turn that types nothing: only reachable with allow_timeout (the
+      // script normaliser above refuses it otherwise), and the read's own
+      // expiry is what ends it - see withTimeoutAllowed. Deliberately NOT
+      // key('Enter'): jdaad.js's readText ignores Enter outright on an empty
+      // line ("if (inputBuffer.length)"), so an empty submit is a no-op here
+      // and the two legs would silently walk out of step from this turn on.
+      const parked = vm.runInContext('inPARSE || inANYKEY', sandbox);
+      if (!parked)
+        throw new Error('turn ' + turn + ' is a wait-turn, but jDAAD is not '
+          + 'parked on a read - the script and the game are out of step and '
+          + 'every turn after this would be compared against the wrong one');
+      vm.runInContext('inputTimeoutHandler();', sandbox);
+      settle();
+    } else if (cmd.startsWith('!')) {
+      for (const ch of cmd.slice(1)) key(ch);
+      settle();
+    } else if (cmd.startsWith('?')) {
+      // "?X" answers a confirmation prompt - see header comment. Both
+      // interpreters read a LINE there (entry 4, settled), so this sends
+      // the key AND Enter, unlike "!", which sends no Enter. The typed
+      // character's echo is suppressed, exactly as for a plain command:
+      // both interpreters really do echo the reply now, but they draw
+      // different cursors behind it (jDAAD writes a "_" glyph, NextDAAD
+      // uses an inverted attribute the tilemap read cannot see), so
+      // comparing the echo compares cursor styling. nleg.py drops its
+      // own echo by anchoring after it.
+      for (const ch of cmd.slice(1)) key(ch, false);  // suppress echo of the key
+      key('Enter');                                   // ...but not the result
+      settle();
+    } else {
+      for (const ch of cmd) key(ch, false);   // suppress the typed-character echo
+      key('Enter');                           // ...but not the turn's output
+      settle();
+    }
+  };
+  // A turn marked allow_timeout runs with the gate open for its WHOLE
+  // body, not just the wait-turn's explicit expiry: a fixture that arms
+  // TIME and then pages (flag 49 bit 1) or hits ANYKEY (bit 2) arms the
+  // timer from inside the turn, and that arming has to be allowed to
+  // resolve the way jDAAD resolves it.
+  if (allow_timeout) withTimeoutAllowed(runTurn); else runTurn();
+
   emit(turn, cmd, out.replace(/\n{3,}/g, '\n\n'));
   turn++;
 }

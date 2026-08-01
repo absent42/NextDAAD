@@ -215,6 +215,67 @@ class Zrcp:
         self.cmd("send-keys-ascii %d 13" % KEY_DELAY_MS,
                  wait=wait, deadline=wait + DEFAULT_DEADLINE)
 
+    # Emulated keyboard matrix rows, in set-ui-io-ports order (row 0
+    # first, joystick byte last). A ZERO bit is a PRESSED key.
+    #   row 0  CAPS Z X C V      row 4  6 7 8 9 0
+    #   row 1  G F D S A         row 5  Y U I O P
+    #   row 2  T R E W Q         row 6  H J K L ENTER
+    #   row 3  5 4 3 2 1         row 7  B N M SYM SPACE
+    MATRIX_IDLE = "FFFFFFFFFFFFFFFF00"
+    # SYMBOL SHIFT alone: row 7, bit 1.
+    MATRIX_SYM_SHIFT = "FFFFFFFFFFFFFFFD00"
+
+    def hold_matrix(self, rows):
+        """Hold a keyboard matrix state until release_matrix() is called.
+
+        Unlike send-keys-*, where the emulator decides how long the key
+        stays down, this makes both edges the harness's own decision -
+        which is the only way to guarantee a key is GONE before the
+        interpreter's next input read starts - see tap_dismiss_key.
+        """
+        self.cmd("set-ui-io-ports %s" % rows)
+
+    def release_matrix(self):
+        self.cmd("set-ui-io-ports %s" % self.MATRIX_IDLE)
+
+    def tap_dismiss_key(self, hold=0.12, settle=0.28):
+        """Press and release CAPS SHIFT, driving the emulated keyboard
+        matrix directly.
+
+        This is the key the harness uses to release a "More..." page or a
+        "press any key" pause, and it is CAPS SHIFT for one specific
+        reason: NextDAAD's kb_char maps a bare CAPS SHIFT (matrix code 0)
+        to 0 in ALL THREE of its tables - plain, caps and symbol
+        (src/overlay1.asm kbMapPlain/kbMapCaps/kbMapSym) - so the input
+        line editor ignores it completely, while wait_key
+        (src/print.asm), which only tests the five key bits of port $FE,
+        accepts it exactly like any other key.
+
+        That difference is the whole point. Dismissing a pause with ENTER
+        used to hand the SAME keypress to two different readers: the
+        pause consumed it, the interpreter ran on to its next input
+        read while the key was still physically down for KEY_DELAY_MS,
+        and inp_edit took it as a submitted EMPTY LINE. One turn's worth
+        of script then answered the wrong prompt and every later turn was
+        compared against the wrong one - measured live against
+        tests/condacts.dsf's extended replay, where one run in three
+        desynchronised and ran the fixture to its end several turns early.
+        A key the editor cannot see closes that off at the source rather
+        than trying to out-time it.
+
+        set-ui-io-ports drives the matrix rows directly (a 0 bit is a
+        pressed key), so both the press and the release are the harness's
+        own decision - unlike send-keys-*, where the hold is whatever the
+        emulator decides. Row 0 is `CAPS Z X C V`, so 0xFE presses CAPS
+        SHIFT alone; all-0xFF is every key up. The trailing 00 is the
+        joystick byte, which must be sent and must stay 0.
+        """
+        self.hold_matrix(self.MATRIX_SYM_SHIFT)
+        time.sleep(hold)
+        self.release_matrix()
+        if settle:
+            time.sleep(settle)
+
     # ---- breakpoint / cpu-step control (Task 11 RNG-seed fix) -------------
     # Confirmed live against ZEsarUX 12.1 (`help set-breakpoint`, `help
     # run`, `help enter-cpu-step`): "run" only honours breakpoints and

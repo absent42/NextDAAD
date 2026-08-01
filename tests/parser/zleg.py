@@ -637,7 +637,22 @@ def play(script_path, out_path, tap=None, port=DEFAULT_PORT,
     this file; compare texts, or the screen of a fixture that prints its
     own state.
     """
-    commands = json.loads(Path(script_path).read_text(encoding="utf-8"))
+    # Shared script format, read through the same loader the other two
+    # legs use (nleg.load_script), so a directive this leg does not
+    # implement cannot be silently ignored - it is rejected by name.
+    import nleg
+    script = nleg.load_script(script_path)
+    unsupported = [i for i, e in enumerate(script)
+                   if e["allow_timeout"] or e["cmd"] == ""]
+    if unsupported:
+        raise ValueError(
+            "turn(s) %s of %s use the allow_timeout directive. The ZX leg "
+            "has no state channel and no way to read or force the original "
+            "interpreter's timeout flags, so it cannot realise that turn - "
+            "and playing it as an ordinary turn would put this leg out of "
+            "step with the other two from there on."
+            % (unsupported, script_path))
+    commands = nleg.script_commands(script)
     if not tap:
         raise ValueError("zleg.play needs a TAP - build one with build_tap()")
     tap = Path(tap).resolve()

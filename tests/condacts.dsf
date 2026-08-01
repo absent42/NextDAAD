@@ -1416,6 +1416,73 @@ NORTH 0
 > XEXIT _ MES "102: EXIT 1 - expect a FULL RESTART now#n"
         EXIT 1
 > XEXIT _ MES "102 F - EXIT 1 was a no-op#n"
+; ---- Wave C appended checks (103-104) ----
+; Same placement rule as 81-102: appended after them, so nothing before
+; here shifts. These two are about the PAGER, which no earlier check
+; exercises deliberately - every page this suite produces up to now is
+; incidental, a side effect of a screenful of OK lines.
+;
+; 103 the pager itself: printing more lines than the window holds must
+; fire "More...", wait, erase the prompt and CONTINUE THE ENTRY. The
+; witness flag is what makes that last part assertable - prn_more_check
+; (src/print.asm) saves and restores the outer reader position, its
+; in-flight push depth, the MMU-save shadow and the physical MMU slot
+; around the nested SM32 print, and a fault in any of that corrupts the
+; message stream the entry is still reading from rather than announcing
+; itself. 40 lines against a 32-row window (25 on jDAAD) guarantees at
+; least one page on both. The lines are NUMBERED rather than repeated
+; filler: the harness recovers a turn's new text by working out how far
+; the tilemap scrolled (tests/parser/tilemap.py scroll_delta), and forty
+; IDENTICAL rows make that shift ambiguous - measured, it silently
+; dropped nine of them. Distinct rows make the page countable, which is
+; the whole point of the check.
+; This is also the harness's live test of breakpoint-driven page capture
+; (tests/parser/nleg.py): a page fired here is captured by the emulator
+; at the pager's park point, so the lines below must appear in the
+; replay transcript IN FULL.
+> _ _   LET 123 103
+        MES "103 PAGER#n"
+        MES "01#n02#n03#n04#n05#n06#n07#n08#n09#n10#n"
+        MES "11#n12#n13#n14#n15#n16#n17#n18#n19#n20#n"
+        MES "21#n22#n23#n24#n25#n26#n27#n28#n29#n30#n"
+        MES "31#n32#n33#n34#n35#n36#n37#n38#n39#n40#n"
+        EQ 123 103
+        MES "103 OK#n"
+        SKIP 1
+> _ _   MES "103 F#n"
+; 104 the pager's TIMEOUT. TIME's second parameter is flag 49, the
+; timeout control byte: bit 1 arms the "More..." wait specifically
+; (src/print.asm prn_more_check passes E=$02 to wait_key_timeout, which
+; ANDs it against flag 49 and falls through to a plain, untimed wait_key
+; when the bit is clear). Nothing in this suite ever armed it before, so
+; wait_key_timeout's arm-and-expire path has never run at all - only its
+; not-armed fall-through has.
+;
+; A page fires with a 1-second timeout armed and NOBODY PRESSES A KEY:
+; the countdown must expire on its own and set flag 49 bit 7 on top of
+; the bit 1 that armed it, so 2 + 128 = 130.
+;
+; The disarm is a SEPARATE entry on purpose. An EQ that fails aborts its
+; entry, so a TIME 0 0 sitting after the assertion would be skipped on
+; exactly the run that failed - leaving the pager timeout armed for
+; everything after this check, including the SUITES DONE pause below.
+; The witness flag carries the verdict across the entry boundary instead.
+> _ _   LET 123 104
+        LET 127 0
+        TIME 1 2
+        MES "104 PAGER TIMEOUT - DO NOT PRESS A KEY#n"
+        MES "51#n52#n53#n54#n55#n56#n57#n58#n59#n60#n"
+        MES "61#n62#n63#n64#n65#n66#n67#n68#n69#n70#n"
+        MES "71#n72#n73#n74#n75#n76#n77#n78#n79#n80#n"
+        MES "81#n82#n83#n84#n85#n86#n87#n88#n89#n90#n"
+        EQ 49 130               ; bit 1 still armed, bit 7 = it expired
+        LET 127 1
+> _ _   TIME 0 0                ; ALWAYS disarm, whatever happened above
+        EQ 127 1
+        EQ 123 104
+        MES "104 OK#n"
+        SKIP 1
+> _ _   MES "104 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5

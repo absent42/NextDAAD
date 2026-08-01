@@ -963,7 +963,8 @@ def t9_prompt_is_blanked_in_the_grid_not_filtered_after():
     assert nleg.blank_prompt_rows(rows, None) == rows
 
 
-_FAKE_SYMS = {"MORELOCK": 1, "WRAPLOCK": 2, "INPTOFRAMES": 3}
+_FAKE_SYMS = {"MORELOCK": 1, "WRAPLOCK": 2, "INPTOFRAMES": 3, "ERRCODE": 4,
+              "FLAGS": 100}
 
 
 class _FakeSettleZ:
@@ -976,22 +977,42 @@ class _FakeSettleZ:
     the first thing settle() calls on every poll.
     """
 
-    def __init__(self, states, fires, grid=None):
+    def __init__(self, states, fires, grid=None, errcodes=None,
+                 timeout_flags=(0, 0), toframes=b"\x00\x00"):
         assert len(states) == len(fires), "one fire count per poll"
         self.states = list(states)
         self.fires = list(fires)
         self.grid = grid                        # what the LIVE screen holds
+        # Per-poll runtime-error code, so a case can make the interpreter
+        # raise part-way through a settle.
+        self.errcodes = list(errcodes) if errcodes else [0] * len(states)
+        self.timeout_flags = bytes(timeout_flags)   # flags 48, 49
+        self.toframes = bytes(toframes)             # inpTOFrames
         self.writes = []
         self.enters = 0
+        self.dismissals = 0
         self.evaluates = 0
 
     def read_memory(self, addr, length):
+        if addr == _FAKE_SYMS["INPTOFRAMES"]:
+            return self.toframes
+        if addr == _FAKE_SYMS["FLAGS"] + 48:
+            return self.timeout_flags[:length]
         if length == 1:
+            if addr == _FAKE_SYMS["ERRCODE"]:
+                v = self.errcodes[0]
+                if len(self.errcodes) > 1:
+                    self.errcodes.pop(0)        # one entry per poll
+                return bytes([v])
             more, wrap = self.states[0]
             if addr == _FAKE_SYMS["MORELOCK"]:
                 return bytes([1 if more else 0])
             return bytes([1 if wrap else 0])
         return self.grid if self.grid else bytes(length)   # the tilemap grid
+
+    def tap_dismiss_key(self, hold=0.0, settle=0.0):
+        self.dismissals += 1
+        self.enters += 1                        # "a key was sent" either way
 
     def write_memory(self, addr, data):
         self.writes.append((addr, bytes(data)))
@@ -1187,6 +1208,114 @@ def t9_allow_timeout_leaves_the_countdown_alone():
     leg2 = _fake_settle_leg(z2, _write_dump(_dump_of([])))
     leg2.settle([])
     assert z2.writes, "the DEFAULT must still disarm every poll"
+
+
+@case
+def t9_a_raised_runtime_error_ends_the_settle_at_once():
+    """err_raise (src/errors.asm) halts with interrupts off and spins
+    forever. No lock will change again and no page will ever fire, so a
+    settle that keeps polling for them just burns its whole timeout and
+    then blames the last lock pair - which says nothing about what
+    happened. tests/condacts.dsf reaches this state ON PURPOSE: its tail
+    chains PROCESS 5..14 to prove the PROC_DEPTH limit is enforced, and
+    error 3 IS the pass."""
+    polls = [(False, False)] * 4
+    z = _FakeSettleZ(polls, [0] * 4, errcodes=[0, 0, 3, 3])
+    leg = _fake_settle_leg(z, _write_dump(_dump_of([])))
+    leg.settle([])
+    assert z.evaluates <= 3, (
+        "settle kept polling after the interpreter halted (%d poll(s))"
+        % z.evaluates)
+    assert leg.fatal_error() == 3
+
+
+@case
+def t9_a_pager_timeout_turn_lets_the_page_expire_instead_of_pressing():
+    """When the FIXTURE has armed a pager timeout - flag 48 non-zero and
+    flag 49 bit 1, the same test wait_key_timeout itself makes - and the
+    script marked the turn allow_timeout, the harness must press NOTHING
+    at a page. Pressing is precisely what would stop the thing the check
+    measures (tests/condacts.dsf check 104). Without allow_timeout the
+    same state must still be dismissed normally."""
+    page = _dump_of(["104 PAGER TIMEOUT"])
+    polls = [(True, False), (True, False), (True, True)]
+
+    z = _FakeSettleZ(polls, [1, 1, 1], timeout_flags=(1, 0x02))
+    leg = _fake_settle_leg(z, _write_dump(page))
+    pages = []
+    leg.settle(pages, allow_timeout=True)
+    assert len(pages) == 1, pages
+    assert z.enters == 0, (
+        "a key was sent into a page the fixture armed a timeout for - the "
+        "timeout can now never expire and the check can never pass")
+
+    z2 = _FakeSettleZ(list(polls), [1, 1, 1], timeout_flags=(1, 0x02))
+    leg2 = _fake_settle_leg(z2, _write_dump(page))
+    leg2.settle([])                              # no directive
+    assert z2.enters == 1, (
+        "an ordinary turn must still dismiss the page: %d" % z2.enters)
+
+
+@case
+def t9_a_wait_turn_arms_the_countdown_once_and_ends_on_output():
+    """The wait-turn re-arms the countdown the harness itself zeroed, and
+    it must do so EXACTLY ONCE and stop on the screen moving.
+
+    Both halves are regressions. "Re-arm whenever inpTOFrames reads zero"
+    cascaded: the read that follows a timed-out one re-takes both locks
+    within microseconds (check 58's PARSE is followed straight away by
+    check 59's), so a poll never sees the gap, the re-arm fires again,
+    and the fixture ran several checks past where the script expected it
+    - one run in four, with every later turn then answering the wrong
+    prompt. "Wait for the locks to drop" is unusable as the exit for the
+    same reason; the screen moving is the event the turn is about.
+    """
+    import nleg
+
+    before = _dump_of(["58 WAIT - DO NOT TYPE", "What now?>"])
+    after = _dump_of(["58 WAIT - DO NOT TYPE", "What now?>", "58 OK"])
+    pre_rows, _ = __import__("tilemap").decode(before)
+
+    class _Z(_FakeSettleZ):
+        """Parked in a line read throughout: the locks NEVER drop, exactly
+        as they do not in the live case."""
+
+        def __init__(self):
+            super().__init__([(True, True)] * 40, [0] * 40, grid=before)
+            self.polls = 0
+
+        def read_memory(self, addr, length):
+            if addr == 0x6000 or length > 2:     # the tilemap grid
+                self.polls += 1
+                # the timed-out check prints its verdict a few polls in,
+                # but ONLY if the countdown was actually armed
+                if self.polls > 3 and self.toframes != b"\x00\x00":
+                    return after
+                return before
+            return super().read_memory(addr, length)
+
+    z = _Z()
+
+    def _write(addr, data):
+        z.writes.append((addr, bytes(data)))
+        if addr == _FAKE_SYMS["INPTOFRAMES"]:
+            z.toframes = bytes(data)
+
+    z.write_memory = _write
+    leg = _fake_settle_leg(z, _write_dump(before))
+    leg.wait_for_input_wait_to_end(pre_rows, arm_frames=100)
+
+    arms = [w for w in z.writes if w[0] == _FAKE_SYMS["INPTOFRAMES"]]
+    assert len(arms) == 1, (
+        "the countdown was armed %d times - each extra one times out the "
+        "NEXT read too and walks the fixture past the script" % len(arms))
+    assert arms[0][1] == bytes([100, 0]), arms
+
+    # And the duration comes from the fixture's own flag 48, converted the
+    # way inp_edit converts it (flag48 * 50).
+    z2 = _FakeSettleZ([(True, True)], [0], timeout_flags=(2, 0))
+    assert _fake_settle_leg(z2, _write_dump(before)).armed_timeout_frames() \
+        == 100
 
 
 @case
@@ -2495,13 +2624,16 @@ def zb5_zleg_script_contract_matches_the_other_legs():
 
 @case
 def zb5_tracked_scripts_are_the_shared_format():
-    import json as _json
+    import nleg
     scripts = sorted((ROOT / "tests" / "parser" / "scripts").rglob("*.json"))
     assert scripts, "no tracked scripts found"
     for path in scripts:
-        cmds = _json.loads(path.read_text(encoding="utf-8"))
-        assert isinstance(cmds, list), path
-        assert cmds and all(isinstance(c, str) for c in cmds), path
+        # load_script is the normative reader and validator - it raises on
+        # anything the three legs do not all agree on, so running it over
+        # every tracked script is the format check.
+        script = nleg.load_script(path)
+        assert script, path
+        assert all(isinstance(e["cmd"], str) for e in script), path
 
 
 @case

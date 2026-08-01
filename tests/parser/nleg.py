@@ -670,10 +670,51 @@ class NextLeg:
         """
         self.z.write_memory(self.syms["INPTOFRAMES"], bytes([0, 0]))
 
-    def wait_for_input_wait_to_end(self):
-        """Block until the interpreter is no longer parked in a line read.
+    def fatal_error(self):
+        """The interpreter's runtime-error code, or 0 if it has not raised.
 
-        Only needed by a turn that sends NO keys (the allow_timeout
+        err_raise (src/errors.asm) paints "Runtime error N" across row 0,
+        silences the AY, does `di` and then spins in `jr .halt` forever.
+        The machine is dead: no lock will ever change again, no page will
+        ever fire, and nothing the harness sends can be seen. Without this
+        read, settle() sits out its full SETTLE_TIMEOUT_S and then blames
+        the last (moreLock, wrapLock) pair, which says nothing at all
+        about what actually happened.
+
+        It is a real state the fixture reaches on purpose:
+        tests/condacts.dsf's tail chains PROCESS 5..14 to prove the
+        PROC_DEPTH limit is enforced, and error 3 IS the pass.
+        """
+        return self.z.read_memory(self.syms["ERRCODE"], 1)[0]
+
+    PAGER_TIMEOUT_BIT = 0x02
+
+    def pager_timeout_armed(self):
+        """True when the interpreter's OWN pager timeout would fire on a
+        page: a non-zero duration in flag 48 and bit 1 set in flag 49.
+
+        Exactly wait_key_timeout's test (src/print.asm: `and e` against
+        E=$02 from prn_more_check), read from the same two flags, so the
+        harness agrees with the interpreter about what is armed instead
+        of guessing from the script.
+        """
+        pair = self.z.read_memory(self.syms["FLAGS"] + FLAG_TIME, 2)
+        return bool(pair[0]) and bool(pair[1] & self.PAGER_TIMEOUT_BIT)
+
+    def armed_timeout_frames(self):
+        """flag 48 expressed the way inp_edit expresses it: frame count.
+
+        flag48*50 is inp_to_load's own arithmetic (src/overlay1.asm), so
+        a harness re-arm restores the value the interpreter itself would
+        have computed rather than inventing one. Must be read BEFORE the
+        turn's flag-48 write clears it.
+        """
+        return self.z.read_memory(self.syms["FLAGS"] + FLAG_TIME, 1)[0] * 50
+
+    def wait_for_input_wait_to_end(self, pre, arm_frames=0):
+        """Let ONE input read time out, and return when it has.
+
+        Only used by a turn that sends NO keys (the allow_timeout
         wait-turn, see load_script). Every other turn reaches settle()
         having just pushed Enter through zrcp.enter()'s own real settle
         sleep, so the editor has demonstrably moved on before the first
@@ -683,20 +724,46 @@ class NextLeg:
         observe ever fires, and feeding the NEXT turn's keys into this
         turn's prompt.
 
-        Deliberately does NOT disarm the countdown: the countdown is the
-        only thing that can end this wait.
+        The re-arm undoes pure harness interference. tests/condacts.dsf's
+        check 58 runs `TIME 2 0` and then `PARSE 0` in the MIDDLE of the
+        PREVIOUS turn's settle, so inp_edit reads flag 48, loads
+        inpTOFrames and parks - and that settle's own per-poll disarm then
+        zeroes the countdown before the turn even ends. inp_edit reads
+        flag 48 once at entry and treats a zero inpTOFrames as disarmed,
+        so nothing inside the interpreter can start the clock again.
+
+        EXACTLY ONCE, and the exit condition is the SCREEN, not the locks.
+        Both of those were learned the hard way. "The locks dropped" is
+        not a usable end-of-wait signal here, because the read that
+        follows re-takes them within microseconds - check 58's timeout is
+        followed immediately by check 59's own PARSE - so a poll can
+        never see the gap, and a re-arm that fires "whenever the
+        countdown reads zero" then arms THAT read too, and the next, and
+        the next. Measured live: one run in four ran the fixture four
+        checks past where the script expected it, and every later turn
+        answered the wrong prompt. Arming once and watching for the
+        screen to move (the timed-out check prints its verdict) ends the
+        turn on the event it is actually about.
         """
         deadline = time.time() + SETTLE_TIMEOUT_S
+        armed_once = not arm_frames
         while time.time() < deadline:
-            more, wrap = self.more_state()
-            if not (more and wrap):
-                return
+            if self.grid_rows() != pre:
+                return                          # the read ended: output moved
+            if not armed_once and self.z.read_memory(
+                    self.syms["INPTOFRAMES"], 2) == b"\x00\x00":
+                self.z.write_memory(
+                    self.syms["INPTOFRAMES"],
+                    bytes([arm_frames & 0xFF, (arm_frames >> 8) & 0xFF]))
+                armed_once = True
+                _dbg("re-armed the input timeout to %d frames", arm_frames)
             time.sleep(SETTLE_POLL_S)
         raise TimeoutError(
-            "a wait-turn's input timeout never fired: the interpreter was "
-            "still parked in a line read %.0fs later. Either the fixture "
-            "did not arm TIME before this turn's read, or something is "
-            "still zeroing inpTOFrames" % SETTLE_TIMEOUT_S)
+            "a wait-turn's input timeout never fired: nothing had been "
+            "printed %.0fs later, with %d frame(s) armed. Either the "
+            "fixture did not arm TIME before this turn's read, or the "
+            "check it belongs to prints nothing when it expires"
+            % (SETTLE_TIMEOUT_S, arm_frames))
 
     def settle(self, pages, boot=False, allow_timeout=False):
         """Advance through MORE pages, each one already captured by the
@@ -781,6 +848,14 @@ class NextLeg:
             # any) is currently running. See disarm_input_timeout.
             if not allow_timeout:
                 self.disarm_input_timeout()
+            # A raised runtime error ends the turn - and the session. The
+            # interpreter is halted with interrupts off and will never
+            # reach another lock, page or keypress, so every other signal
+            # below is frozen from here on. See fatal_error().
+            err = self.fatal_error()
+            if err:
+                _dbg("interpreter raised runtime error %d - halted", err)
+                return anykey_heuristic
             # The page counter FIRST, ahead of the locks. A page fires,
             # and is captured by the emulator, before either lock can say
             # anything useful: moreLock is already up while SM32 is still
@@ -810,8 +885,18 @@ class NextLeg:
                      fires, more, wrap, "" if (more and not wrap)
                      else " - already dismissed or lockless wait")
                 if more and not wrap:
-                    # Still parked on the page: dismiss it ourselves.
-                    self.z.enter(wait=0.4)
+                    if allow_timeout and self.pager_timeout_armed():
+                        # The fixture armed a pager timeout and this turn
+                        # is about it (see load_script). Pressing a key
+                        # here is exactly what would stop the thing being
+                        # measured, so the page is left to expire on its
+                        # own; the polls below just wait for moreLock to
+                        # drop.
+                        _dbg("leaving the page to its own timeout")
+                    else:
+                        # Still parked on the page: dismiss it ourselves.
+                        # NOT Enter - see zrcp.tap_dismiss_key.
+                        self.z.tap_dismiss_key()
                     last_grid = None
                     static_polls = 0
                     captured_wait = None
@@ -892,17 +977,20 @@ class NextLeg:
                     pages.append(cur)
                 captured_wait = None
                 _dbg("static-screen backstop dismissed a lockless wait")
-                self.z.enter(wait=0.4)
+                self.z.tap_dismiss_key()
                 anykey_heuristic = True
                 last_grid = None
                 static_polls = 0
                 continue
             time.sleep(SETTLE_POLL_S)
+        tail = [r.rstrip() for r in self.grid_rows() if r.strip()][-3:]
         raise TimeoutError(
             "interpreter did not settle within %.0fs - last observed "
-            "moreLock=%s wrapLock=%s, screen %s across the last %d poll(s)"
+            "moreLock=%s wrapLock=%s, screen %s across the last %d poll(s), "
+            "%d page(s) this turn. Last text on screen: %r"
             % (SETTLE_TIMEOUT_S, last_more, last_wrap,
-               "static" if static_polls > 0 else "changing", static_polls))
+               "static" if static_polls > 0 else "changing", static_polls,
+               len(pages), tail))
 
 
 def load_more_prompt(workdir):
@@ -1116,6 +1204,13 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
                     # same per-turn cadence, so both legs run with
                     # identical timeout state rather than the mismatch
                     # being a harness-manufactured "divergence" of its own.
+                    #
+                    # Read BEFORE it is cleared: a wait-turn re-arms the
+                    # countdown the harness itself zeroed, and needs the
+                    # duration the FIXTURE armed, which this write is
+                    # about to erase. See wait_for_input_wait_to_end.
+                    arm_frames = (leg.armed_timeout_frames()
+                                  if allow_timeout else 0)
                     z.write_memory(syms["FLAGS"] + FLAG_TIME, bytes([0]))
                     # ...and disarm the countdown inp_edit ALREADY loaded.
                     # Writing flag 48 alone does not stop a timeout that
@@ -1212,7 +1307,7 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
                         # is what ends the wait. `pre` anchors before the
                         # wait, and there is no echo to anchor after.
                         pre = leg.grid_rows()
-                        leg.wait_for_input_wait_to_end()
+                        leg.wait_for_input_wait_to_end(pre, arm_frames=arm_frames)
                     elif cmd.startswith("!"):
                         pre = leg.grid_rows()
                         for ch in cmd[1:]:
@@ -1281,6 +1376,7 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
                         prev = page
 
                     timed = leg.flags()[FLAG_TIME] != 0
+                    err = leg.fatal_error()
                     fh.write(json.dumps({
                         "turn": i,
                         "command": cmd,
@@ -1291,7 +1387,29 @@ def play(workdir, script_path, out_path, nex_path, port=10000):
                         "timing_sensitive": timed,
                         "text_ambiguous": ambiguous,
                         "anykey_heuristic": anykey_heuristic,
+                        "fatal_error": err,
                     }) + "\n")
+                    if err:
+                        # err_raise halts with interrupts off (see
+                        # fatal_error). Anything after this would be
+                        # played to a dead machine and silently recorded
+                        # as "the game printed nothing and changed
+                        # nothing" on every remaining turn - a wall of
+                        # divergences with no cause attached. This turn
+                        # IS written out first: whatever it captured up
+                        # to the error is real evidence, and for
+                        # tests/condacts.dsf the error IS the check.
+                        remaining = len(script) - (i + 1)
+                        if remaining:
+                            raise RuntimeError(
+                                "NextDAAD raised runtime error %d on turn %d "
+                                "(%r) and halted, but the script has %d more "
+                                "turn(s). A raised error must be the LAST "
+                                "thing a script drives - the machine is dead "
+                                "from here on." % (err, i, cmd, remaining))
+                        print("nleg: NextDAAD raised runtime error %d on the "
+                              "last turn and halted" % err)
+                        break
         finally:
             z.close()
     finally:
