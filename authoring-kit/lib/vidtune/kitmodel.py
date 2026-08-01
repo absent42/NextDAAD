@@ -3,9 +3,12 @@
 Mirrors lib/video.ps1's reading of the same file - that script is the
 authority; on any divergence, video.ps1 wins and this module is wrong.
 """
+import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .settingsmodel import build_arg_vector
 
 _SET_RE = re.compile(r"^\s*set\s+([A-Za-z0-9_]+)=(.*)$", re.IGNORECASE)
 
@@ -74,3 +77,32 @@ def list_clips(kit_root):
                           Path(str(vid) + ".args")))
     clips.sort(key=lambda c: c.num3)
     return clips
+
+
+_STAMP_RE = re.compile(r"^\$encoderGeneration = '([A-Za-z0-9]+)'", re.MULTILINE)
+
+
+def read_generation_stamp(kit_root):
+    ps1 = Path(kit_root, "lib", "video.ps1")
+    if not ps1.is_file():
+        return None
+    m = _STAMP_RE.search(ps1.read_text(errors="replace"))
+    return m.group(1) if m else None
+
+
+def arg_hash(stamp, args):
+    joined = " ".join([stamp] + list(args))
+    return hashlib.md5(joined.encode("utf-8")).hexdigest()[:8]
+
+
+def clip_state(clip, cfg, stamp):
+    tuned = clip.num3 in cfg.per_clip
+    if stamp is None or not clip.vid.is_file():
+        return tuned, True
+    if clip.vid.stat().st_mtime < clip.mp4.stat().st_mtime:
+        return tuned, True
+    if not clip.sidecar.is_file():
+        return tuned, True
+    want = arg_hash(stamp, build_arg_vector(cfg, clip.num3))
+    have = clip.sidecar.read_text(errors="replace").strip()
+    return tuned, have != want
