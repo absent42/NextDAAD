@@ -1000,8 +1000,12 @@ weight_bust:
     ret
 
 ; E = leading system message, C = the container object. Prints the
-; PUTIN/TAKEOUT composite "<SMe> <container name> <SM51>" (msx2daad
-; _internal_putin / _internal_takeout). The name goes through the same
+; PUTIN/TAKEOUT composite "<SMe> <container name><SM51>" (msx2daad
+; _internal_putin / _internal_takeout). There is NO space before SM51 -
+; owner ruling 2026-08-01 on parser-bugs entry 28: SM51 is "." in the
+; stock message table, so the trailing space rendered "the old box ."
+; The LEADING space stays (msx2daad prints it; jDAAD does not).
+; The name goes through the same
 ; objname path the '_' escape uses, which reads flag 51, so flag 51
 ; holds the CONTAINER for the duration and is put back afterwards -
 ; the referenced object is game-visible state and must not shift.
@@ -1017,8 +1021,6 @@ msg_in_obj:
     call prn_char
     ld a, '_'
     call objname_print
-    ld c, ' '
-    call prn_char
     pop af
     ld (flags+FLAG_CUROBJ), a
     ld e, 51
