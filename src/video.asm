@@ -1764,9 +1764,40 @@ vid_run:
     ld ix, vidAudBuf             ; the ISR's exclusive play pointer
     ld a, 1
     ld (vidAudDone), a           ; first .pace passes immediately
+    ; --- SP17 T9: frame-clock VBLANK PHASE LOCK. The time-constant
+    ; write below starts the whole playback clock (the CTC audio timer
+    ; that everything else paces from), and until now it started at a
+    ; RANDOM point in the 50Hz field - so the tear line of E7 DRIFTED
+    ; session to session. playvid parks a `halt` immediately before its
+    ; time-constant write (video_256x192_m_palette.asm:210-213) to
+    ; phase-lock the clock to the field. The v2 CTC rates are playvid's
+    ; own exact-divide rates (vidCtcTcNxvStereo/Mono track the field
+    ; rate per video mode), so only the INITIAL phase was wrong - this
+    ; wait makes the tear position deterministic.
+    ; MECHANISM: a frameCounter change poll, NOT halt, chosen with the
+    ; code read the charter asked for. Interrupts ARE enabled here (no
+    ; DI anywhere on the .orchret->arm path; the DI/EI pairs in the
+    ; orch bodies are closed brackets), so halt would work - but halt
+    ; wakes on ANY enabled source, and im2_init enables the expansion-
+    ; bus INT (NR $C4 bit 7, its own belt-and-braces note) alongside
+    ; the ULA, so a stray bus edge would end a halt OFF-phase.
+    ; frameCounter increments in exactly one place, the im2_isr ULA
+    ; field tick (interrupts.asm), and audEnable is frozen for the
+    ; session so that ISR runs its constant-time AF/HL fast path -
+    ; polling it waits for the FIELD specifically, with deterministic
+    ; release latency (ISR fast path + one poll iteration + the fixed
+    ; 35T to the OUT below, well under a scanline). Low byte only: it
+    ; changes every field, wrap included.
+    ld a, (frameCounter)
+    ld d, a
+.phase:
+    ld a, (frameCounter)
+    cp d
+    jr z, .phase                 ; released by the ULA field tick
     ld a, (vidCtcTc)
     ld bc, AUD_CTC_PORT
-    out (c), a                   ; time constant -> timer starts NOW
+    out (c), a                   ; time constant -> timer starts NOW,
+                                 ; phase-locked to the field (T9)
 
 ; ---------------------------------------------------------------------
 ; The frame loop (3b double-buffer phasing). Per frame f: pace on the
