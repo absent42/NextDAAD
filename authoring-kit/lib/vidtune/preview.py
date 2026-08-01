@@ -28,7 +28,22 @@ def extract_source(ffmpeg, mp4, width, height, fps, retime, start, duration):
     (read-only imports - parity by reuse, not reimplementation). Mirrors
     nxv2enc._extract_source's own call sequence: one shared probe banner
     for dimensions and source fps, a center crop, a retime plan, then
-    the raw RGB24 extraction."""
+    the raw RGB24 extraction.
+
+    start/duration are SECONDS as plain Python floats here (every vidtune
+    caller derives them from frame indices or a Knob via to_seconds()) -
+    videnc.extract_video's own CLI only ever sees argparse strings for
+    these (its --start/--duration have no `type=`), so it never
+    stringifies them itself: `-t` gets str(duration), but `-ss` gets the
+    raw `start` value unconverted. A truthy float start reaching
+    subprocess.run() there raises "TypeError: expected str, bytes or
+    os.PathLike object, not float" (owner-reported crash trace,
+    2026-08-01: Set In past frame 0, Set Out, Preview Segment - the
+    post-encode Flicker/Heatmap source re-extraction hit this on every
+    segment with a nonzero start). This is the seam between vidtune and
+    the pinned videnc module - stringify HERE, not in videnc.py itself,
+    matching the str(float(x)) formatting videnc's own CLI/vidtune's
+    argv already use elsewhere (mainwindow._fmt_seconds)."""
     ffmpeg = Path(ffmpeg)
     mp4 = Path(mp4)
     stderr = videnc._probe_stderr(ffmpeg, mp4)
@@ -38,7 +53,13 @@ def extract_source(ffmpeg, mp4, width, height, fps, retime, start, duration):
     src_fps = videnc.probe_source_fps(ffmpeg, mp4, stderr=stderr)
     stages, _retime_line = videnc.retime_plan(src_fps, fps_frac, width, height,
                                                mode=retime)
-    raw, n = videnc.extract_video(ffmpeg, mp4, start, duration,
+    # Falsy (None or 0.0) stays None rather than becoming the string
+    # "0.0" (itself truthy) - extract_video's own `if start:`/
+    # `if duration:` checks must see the same "omit the flag" case they
+    # did before this fix, not gain a redundant "-ss 0.0"/"-t 0.0".
+    start_arg = str(float(start)) if start else None
+    duration_arg = str(float(duration)) if duration else None
+    raw, n = videnc.extract_video(ffmpeg, mp4, start_arg, duration_arg,
                                   width, height, fps_frac, crop=crop,
                                   stages=stages)
     arr = np.frombuffer(raw, np.uint8).reshape(n, height, width, 3)
