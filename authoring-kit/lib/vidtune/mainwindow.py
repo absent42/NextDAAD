@@ -543,6 +543,7 @@ class MainWindow(QMainWindow):
         self.encode_all_button.clicked.connect(self.on_encode_all_stale)
         self.metrics_bar.cancel_requested.connect(self._on_cancel_requested)
         self.settings_panel.changed.connect(self._update_accept_enabled)
+        self.preview.cleared.connect(self._on_pane_cleared)
 
         self.clip_list.currentItemChanged.connect(self._on_current_item_changed)
         self._populate_clip_list()
@@ -654,6 +655,17 @@ class MainWindow(QMainWindow):
             self.preview.clear_to_empty(
                 "no fresh preview yet - run Preview Segment or Encode Full "
                 "to generate one")
+
+    def _on_pane_cleared(self):
+        """PreviewPane.cleared fires only from a user-initiated Clear
+        button click (see its docstring in previewpane.py) - never from
+        select_clip's own programmatic self.preview.clear() call. Pop
+        the current clip's captured segment so a cleared segment does
+        not silently re-apply on the next Preview Segment (it otherwise
+        survives in self.segments even though the pane's own seg_in/
+        seg_out are reset - see preview_argv's docstring)."""
+        if self._current_clip is not None:
+            self.segments.pop(self._current_clip, None)
 
     def _clip_by_num3(self, num3):
         for clip in self.clips:

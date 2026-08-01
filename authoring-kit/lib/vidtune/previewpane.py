@@ -79,6 +79,14 @@ class PreviewPane(QWidget):
     in/out segment markers (frame indices, converted to seconds for
     the encoder's --start/--duration via segment_times())."""
 
+    # Emitted only from a user-initiated Clear button click - NOT from
+    # the plain clear() method itself, which MainWindow.select_clip also
+    # calls (programmatically) to reset the pane's live markers when
+    # switching clips. If that programmatic clear also emitted this
+    # signal, switching to a clip would pop its own just-loaded stored
+    # segment out from under it (see MainWindow._on_pane_cleared).
+    cleared = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.encoded = None
@@ -139,11 +147,19 @@ class PreviewPane(QWidget):
         for name in MODES:
             btn = QPushButton(name)
             btn.setCheckable(True)
+            # NoFocus keeps keyboard focus on the pane itself (StrongFocus)
+            # after a click, so the Space handler in keyPressEvent still
+            # sees the key - otherwise Qt routes Space to the just-clicked
+            # button instead of the pane's flicker/play toggle.
+            btn.setFocusPolicy(Qt.NoFocus)
             btn.clicked.connect(lambda checked=False, n=name: self.set_mode(n))
             mode_group.addButton(btn)
             mode_row.addWidget(btn)
             self._mode_buttons[name] = btn
         self._mode_buttons["Encoded"].setChecked(True)
+        _NEEDS_SOURCE_TOOLTIP = "needs a source comparison - run Preview Segment or Encode first"
+        self._mode_buttons["Flicker"].setToolTip(_NEEDS_SOURCE_TOOLTIP)
+        self._mode_buttons["Heatmap"].setToolTip(_NEEDS_SOURCE_TOOLTIP)
 
         self._play_btn = QPushButton("Play")
         self._play_btn.clicked.connect(self.toggle_play)
@@ -160,16 +176,26 @@ class PreviewPane(QWidget):
         self._set_out_btn = QPushButton("Set Out")
         self._set_out_btn.clicked.connect(self.set_out)
         self._clear_btn = QPushButton("Clear")
-        self._clear_btn.clicked.connect(self.clear)
+        self._clear_btn.clicked.connect(self._on_clear_clicked)
+        self._segment_label = QLabel("segment: -")
         self._scale_btn = QPushButton("2x")
         self._scale_btn.setCheckable(True)
         self._scale_btn.toggled.connect(self._on_scale_toggled)
+
+        # Same NoFocus reasoning as the mode buttons above - every
+        # clickable control in the transport row must give focus back to
+        # the pane, not keep it, or Space stops reaching keyPressEvent.
+        for btn in (self._play_btn, self._stop_btn, self._step_back_btn,
+                    self._step_fwd_btn, self._loop_checkbox,
+                    self._set_in_btn, self._set_out_btn, self._clear_btn,
+                    self._scale_btn):
+            btn.setFocusPolicy(Qt.NoFocus)
 
         transport_row = QHBoxLayout()
         for w in (self._play_btn, self._stop_btn, self._step_back_btn,
                   self._step_fwd_btn, self._loop_checkbox, self._frame_label,
                   self._set_in_btn, self._set_out_btn, self._clear_btn,
-                  self._scale_btn):
+                  self._segment_label, self._scale_btn):
             transport_row.addWidget(w)
         transport_row.addStretch(1)
 
@@ -182,10 +208,17 @@ class PreviewPane(QWidget):
         outer.addLayout(transport_row)
 
         self._update_mode_buttons()
+        self._update_segment_readout()
 
     # -- frame injection / loading ----------------------------------
 
     def set_frames(self, encoded, source, fps, column_major):
+        # A direct injection path (set_frames is also called from
+        # load()'s vid_path-is-None branch and from clear_to_empty())
+        # must invalidate any in-flight decode the same way a fresh
+        # load() does, or a late decode-done callback for a now-
+        # abandoned load can still land afterwards.
+        self._load_gen += 1
         self._stop_playback()
         self.encoded = list(encoded) if encoded is not None else None
         self.source = list(source) if source is not None else None
@@ -199,7 +232,10 @@ class PreviewPane(QWidget):
         self._hint_label.setVisible(False)
         if self.mode == "Heatmap" and not self._heatmap_available():
             self.mode = "Encoded"
+        if self.mode == "Flicker" and self.source is None:
+            self.mode = "Encoded"
         self._update_mode_buttons()
+        self._update_segment_readout()
         self._render()
 
     def load(self, vid_path, source_frames, column_major):
@@ -311,6 +347,7 @@ class PreviewPane(QWidget):
         segment markers cleared, any earlier error cleared - with an
         optional hint label. Used by MainWindow.select_clip when the
         newly-selected clip has no fresh .vid to preview yet."""
+        self._load_gen += 1
         self._error_label.setVisible(False)
         self._error_label.setText("")
         self.set_frames(encoded=None, source=None, fps=self.fps,
@@ -337,7 +374,13 @@ class PreviewPane(QWidget):
     def set_mode(self, name):
         if name not in MODES:
             return
+        # Programmatic fallback kept for safety even though the buttons
+        # themselves are now disabled while unavailable (Finding 1) -
+        # set_mode can still be called directly (tests, future callers)
+        # with no source/encoded pairing to compare.
         if name == "Heatmap" and not self._heatmap_available():
+            name = "Encoded"
+        if name == "Flicker" and self.source is None:
             name = "Encoded"
         self.mode = name
         self._update_mode_buttons()
@@ -356,6 +399,12 @@ class PreviewPane(QWidget):
             btn.blockSignals(True)
             btn.setChecked(name == self.mode)
             btn.blockSignals(False)
+        # Flicker only needs source frames (it compares against the
+        # encoded frame at the same index); Heatmap needs both encoded
+        # and source. Without this, clicking either with no source
+        # silently fell back to showing the encoded frame with no
+        # indication anything was wrong (Finding 1).
+        self._mode_buttons["Flicker"].setEnabled(self.source is not None)
         self._mode_buttons["Heatmap"].setEnabled(self._heatmap_available())
 
     # -- transport ------------------------------------------------------
@@ -431,13 +480,39 @@ class PreviewPane(QWidget):
 
     def set_in(self):
         self.seg_in = self.frame_index
+        self._update_segment_readout()
 
     def set_out(self):
         self.seg_out = self.frame_index
+        self._update_segment_readout()
 
     def clear(self):
         self.seg_in = None
         self.seg_out = None
+        self._update_segment_readout()
+
+    def _on_clear_clicked(self):
+        """Clear button handler - the only path that emits cleared().
+        See the cleared signal's docstring for why programmatic clear()
+        calls (e.g. MainWindow.select_clip) must not emit it."""
+        self.clear()
+        self.cleared.emit()
+
+    def _update_segment_readout(self):
+        if self.seg_in is None and self.seg_out is None:
+            text = "segment: -"
+        elif self.seg_in is not None and self.seg_out is not None:
+            in_s = self.seg_in / self.fps
+            out_s = self.seg_out / self.fps
+            text = (f"segment: {in_s:.2f}s - {out_s:.2f}s "
+                    f"(f{self.seg_in}-f{self.seg_out})")
+        else:
+            def part(label, frame):
+                if frame is None:
+                    return f"{label}: -"
+                return f"{label}: f{frame} ({frame / self.fps:.2f}s)"
+            text = f"{part('in', self.seg_in)}  {part('out', self.seg_out)}"
+        self._segment_label.setText(text)
 
     def segment_times(self, fps):
         if self.seg_in is None or self.seg_out is None:

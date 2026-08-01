@@ -2,7 +2,7 @@ import threading
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import QApplication
 
@@ -505,3 +505,191 @@ def test_encode_all_stale_cancel_after_current_stops_queue(fixture_kit, qtbot, m
     want = arg_hash(win.stamp or "", build_arg_vector(win.cfg, clip1.num3))
     assert clip1.sidecar.read_text().strip() == want
     assert not clip2.vid.is_file()
+
+
+# -- 2026-08-01 UX defects 1-5 ----------------------------------------------
+
+_NEEDS_SOURCE_TOOLTIP = "needs a source comparison - run Preview Segment or Encode first"
+
+
+def test_flicker_and_heatmap_disabled_without_source(qtbot):
+    # Defect 1: Flicker used to silently fall back to the encoded frame
+    # when self.source was None, making Encoded and Flicker look
+    # identical with no explanation. Both buttons must start disabled
+    # (a fresh pane has no source yet) and carry an explanatory tooltip.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    assert pane._mode_buttons["Flicker"].isEnabled() is False
+    assert pane._mode_buttons["Heatmap"].isEnabled() is False
+    assert pane._mode_buttons["Flicker"].toolTip() == _NEEDS_SOURCE_TOOLTIP
+    assert pane._mode_buttons["Heatmap"].toolTip() == _NEEDS_SOURCE_TOOLTIP
+
+    # Encoded-only: Flicker still needs a source, Heatmap needs both.
+    pane.set_frames(encoded=_frames(3), source=None, fps=25, column_major=False)
+    assert pane._mode_buttons["Flicker"].isEnabled() is False
+    assert pane._mode_buttons["Heatmap"].isEnabled() is False
+
+    # Source arrives (a Preview Segment / Encode completed): both usable.
+    pane.set_frames(encoded=_frames(3), source=_frames(3), fps=25, column_major=False)
+    assert pane._mode_buttons["Flicker"].isEnabled() is True
+    assert pane._mode_buttons["Heatmap"].isEnabled() is True
+
+
+def test_flicker_enabled_with_source_only_heatmap_needs_both(qtbot):
+    # Flicker only compares source vs. encoded at the same index, so it
+    # only needs source frames; Heatmap needs both sides.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=None, source=_frames(3), fps=25, column_major=False)
+    assert pane._mode_buttons["Flicker"].isEnabled() is True
+    assert pane._mode_buttons["Heatmap"].isEnabled() is False
+
+
+def test_all_pane_buttons_have_no_focus_policy(qtbot):
+    # Defect 2: the pane is StrongFocus and keyPressEvent handles Space,
+    # but a QPushButton keeps focus after being clicked and Qt routes
+    # Space to whichever widget has focus - so every clickable control
+    # in the mode/transport rows must give focus back to the pane.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    buttons = list(pane._mode_buttons.values()) + [
+        pane._play_btn, pane._stop_btn, pane._step_back_btn, pane._step_fwd_btn,
+        pane._loop_checkbox, pane._set_in_btn, pane._set_out_btn, pane._clear_btn,
+        pane._scale_btn,
+    ]
+    assert buttons  # sanity: the loop below must not be vacuous
+    for btn in buttons:
+        assert btn.focusPolicy() == Qt.NoFocus
+
+
+def test_space_reaches_pane_flicker_toggle_after_button_click(qtbot):
+    # Verifies the actual behaviour the NoFocus fix protects: clicking a
+    # transport button must not steal keyboard focus from the pane, so
+    # Space still reaches keyPressEvent and toggles Flicker.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=_frames(5), source=_frames(5), fps=25, column_major=False)
+    pane.set_mode("Flicker")
+    pane.show()
+    pane._stop_btn.click()
+    pane.setFocus()
+    shown_before = pane.showing_source
+    qtbot.keyClick(pane, Qt.Key_Space)
+    assert pane.showing_source != shown_before
+
+
+def test_click_image_still_toggles_flicker(qtbot):
+    # The click-image-to-flicker path (_ClickableLabel) is independent of
+    # keyboard focus and must keep working after the NoFocus change.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=_frames(5), source=_frames(5), fps=25, column_major=False)
+    pane.set_mode("Flicker")
+    shown_before = pane.showing_source
+    pane._image_label.clicked.emit()
+    assert pane.showing_source != shown_before
+
+
+def test_segment_readout_lifecycle(qtbot):
+    # Defect 3: a segment readout label must track set_in/set_out/clear.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=_frames(50), source=None, fps=25, column_major=False)
+    assert pane._segment_label.text() == "segment: -"
+
+    pane.seek(10); pane.set_in()
+    assert pane._segment_label.text() == "in: f10 (0.40s)  out: -"
+
+    pane.seek(35); pane.set_out()
+    assert pane._segment_label.text() == "segment: 0.40s - 1.40s (f10-f35)"
+
+    pane.clear()
+    assert pane._segment_label.text() == "segment: -"
+
+
+def test_segment_readout_reset_by_set_frames(qtbot):
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=_frames(50), source=None, fps=25, column_major=False)
+    pane.seek(10); pane.set_in()
+    assert pane._segment_label.text() != "segment: -"
+
+    pane.set_frames(encoded=_frames(50), source=None, fps=25, column_major=False)
+    assert pane._segment_label.text() == "segment: -"
+
+
+def test_clear_button_pops_stored_segment(fixture_kit, qtbot):
+    # Defect 4 (parked residual A): a user-initiated Clear must forget a
+    # segment previously captured into MainWindow.segments by a Preview
+    # Segment run, or the cleared segment silently re-applies next time.
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    win.select_clip("001")
+    win.segments["001"] = (0.4, 1.0)   # simulate a captured Preview Segment
+
+    win.preview._clear_btn.click()     # the real user-facing Clear path
+
+    assert "001" not in win.segments
+    assert win.preview.seg_in is None and win.preview.seg_out is None
+
+
+def test_select_clip_programmatic_clear_does_not_pop_segment(fixture_kit, qtbot):
+    # select_clip's own self.preview.clear() call (resetting the pane's
+    # live markers on a clip switch) must NOT pop the just-marked clip's
+    # stored segment - only a user-initiated Clear does that.
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    win.select_clip("001")
+    win.segments["001"] = (0.4, 1.0)
+
+    win.select_clip("002")
+
+    assert win.segments.get("001") == (0.4, 1.0)
+
+
+def test_clear_to_empty_bumps_load_generation(qtbot, tmp_path):
+    # Defect 5 (parked residual B): clear_to_empty()/set_frames() must
+    # invalidate any in-flight decode by bumping _load_gen, or a stale
+    # decode for an abandoned clip can paint over the empty-pane hint of
+    # whatever clip is now selected.
+    from vidbuild import build_solid_vid   # helper, task 7
+
+    vid = tmp_path / "t.vid"
+    build_solid_vid(vid, width=256, height=1, colours=[5, 9])
+
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+
+    pane.load(vid, source_frames=None, column_major=False)   # start a load
+    stale_gen = pane._load_gen
+
+    pane.clear_to_empty(hint="switched to a preview-less clip")
+    assert pane._load_gen != stale_gen
+
+    # The now-stale decode "arrives late" - must be dropped, not applied
+    # over the hint.
+    pane._on_decode_done({"fps_x10": 250, "column_major": False},
+                         _frames(9), stale_gen)
+    assert pane.encoded is None
+    assert pane._hint_label.text() == "switched to a preview-less clip"
+    assert pane._hint_label.isVisibleTo(pane) is True
+
+
+def test_set_frames_direct_injection_bumps_load_generation(qtbot, tmp_path):
+    from vidbuild import build_solid_vid   # helper, task 7
+
+    vid = tmp_path / "t.vid"
+    build_solid_vid(vid, width=256, height=1, colours=[5, 9])
+
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+
+    pane.load(vid, source_frames=None, column_major=False)
+    stale_gen = pane._load_gen
+
+    pane.set_frames(encoded=_frames(2), source=None, fps=25, column_major=False)
+    assert pane._load_gen != stale_gen
+
+    pane._on_decode_done({"fps_x10": 250, "column_major": False},
+                         _frames(9), stale_gen)
+    assert pane.encoded is not None and len(pane.encoded) == 2
