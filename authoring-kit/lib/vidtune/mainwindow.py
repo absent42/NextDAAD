@@ -557,6 +557,12 @@ class MainWindow(QMainWindow):
         self.settings_panel.set_settings(settings, self.kit_base)
         self._current_clip = num3
         self._update_accept_enabled()
+        # A "budget provisional" (or other) status label belongs to the
+        # clip that was open when it was set - it must not carry over
+        # to a newly-selected clip with no job of its own running yet.
+        # (The rest of the metrics strip - PSNR etc from update_from -
+        # is pre-existing staleness on clip switch, out of scope here.)
+        self.metrics_bar.set_status("")
 
     def _clip_by_num3(self, num3):
         for clip in self.clips:

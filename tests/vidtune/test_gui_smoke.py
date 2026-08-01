@@ -222,5 +222,12 @@ def test_preview_success_labels_provisional_budget_until_full_encode(fixture_kit
     win._on_preview_success("001", None, [], summary)
     assert win.metrics_bar.status_text() == "budget provisional (derived on segment)"
 
+    # Switching clips must not carry clip 001's provisional label onto
+    # clip 002 - nothing has run a job for 002 yet.
+    win.select_clip("002")
+    assert win.metrics_bar.status_text() == ""
+
+    win.select_clip("001")
+    win._on_preview_success("001", None, [], summary)
     win._on_full_success("001", None, [], summary)
     assert win.metrics_bar.status_text() == ""
