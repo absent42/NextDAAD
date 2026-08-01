@@ -1956,9 +1956,22 @@ def t10_transcript_absent_when_no_findings():
 # stackPop writes it straight back (jdaad.js:841) - so a nested PROCESS
 # cannot see or keep the caller's DOALL flag. NextDAAD keeps flag 50
 # GLOBAL, and so does msx2daad, which is why the harness reports it on
-# every turn that crosses a process boundary. Which behaviour is correct
-# is an OWNER RULING STILL PENDING; until it lands this stays pinned as
-# a known divergence rather than being "fixed" in either direction.
+# every turn that crosses a process boundary.
+#
+# RULED 2026-08-01: accept and document. NextDAAD keeps the msx2daad
+# model and jDAAD's per-level save/restore is recorded as THE deviation,
+# because msx2daad shares NextDAAD's operating environment (a memory-
+# constrained 8-bit interpreter) where jDAAD is a browser interpreter
+# that can afford a saved copy on every process-stack push. No code
+# change was made and none will be: this is a PERMANENT documented
+# reference-deviation of class NOT-A-BUG (docs/parser-bugs.md entry 5,
+# authoring-kit/DIVERGENCES.md section 5).
+#
+# The pin therefore STAYS at exactly {50}, permanently. Note what it is
+# and is not: it is NOT a mask. The flag 50 rows keep appearing in every
+# findings.json, which is deliberate - visibility beats masking. What
+# the pin asserts is that flag 50 is the ONLY flag that ever diverges,
+# so if a second one ever joins it the assertion fails and someone looks.
 KNOWN_DIVERGENT_FLAGS = {50}
 # Re-baselined (objtable-stride-fix): nleg.py's objloc() previously read
 # obj_count CONSECUTIVE BYTES starting at OBJTABLE, but objTable

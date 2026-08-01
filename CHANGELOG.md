@@ -17,6 +17,15 @@ the PARSE 1 rule. Where NextDAAD deliberately still differs from the
 reference interpreters, the reasons are now written down for authors
 in `authoring-kit/DIVERGENCES.md`.
 
+Reference divergence rulings: where the two reference interpreters
+disagree with each other, three cases were settled rather than left
+open. Flag 50 (the DOALL object) stays a flat global as msx2daad has
+it, so jDAAD's per-level save/restore across PROCESS is the deviation
+- do not carry flag 50 across a PROCESS call. COPYOO keeps jDAAD's
+flag-1 adjustment, above. PUTIN/TAKEOUT's composite spacing took
+neither reference wholesale: msx2daad's leading space, jDAAD's absent
+trailing one.
+
 ### DAAD V3
 
 - Version 3 databases load and run. Header version 2 or 3 is accepted;
@@ -56,7 +65,11 @@ in `authoring-kit/DIVERGENCES.md`.
   messages (SM36/SM37/SM38/SM39, and PUTIN/TAKEOUT's composite
   SM44/SM45/SM51 output). The objects always moved; the player was
   simply never told. Most visible with GET ALL and DROP ALL, which
-  were completely silent.
+  were completely silent. The composite's final form is the leading
+  message, a space, the container's name, then SM51 with no space
+  before it - so a stock SM51 of "." renders "The hat is in the old
+  box." and not "... the old box ." The same form covers AUTOP, AUTOT
+  and TAKEOUT's two refusal messages, which share the helper.
 - Refusal check order restored across the whole family, so the right
   refusal message appears: DROP of an object lying at the player's
   location answers SM49 rather than "I don't have one of those"; WEAR
@@ -100,7 +113,10 @@ in `authoring-kit/DIVERGENCES.md`.
   previous object's data in them.
 - SWAP is a raw exchange that no longer adjusts flag 1 (swapping two
   carried objects used to leave it two too low) and sets the
-  referenced object; COPYOO sets the referenced object.
+  referenced object; COPYOO sets the referenced object and, unlike
+  SWAP, does adjust flag 1 - it is a one-way move that can take an
+  object out of the player's hands, so the carried count owes it a
+  decrement.
 - Zero-weight containers are magic bags: their contents no longer
   transmit weight.
 

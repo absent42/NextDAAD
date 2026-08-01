@@ -35,8 +35,8 @@ Both mechanisms are gone now:
   turn's capture may include stale rows" by checking for that caveat,
   rather than the harness deciding for them by hiding the difference.
 - `state_rank`/`text_rank` are tracked per CHANNEL, not globally. A flag
-  that diverges every turn - flag 29 used to, flag 50 still can on any
-  game that nests PROCESS around a DOALL - no longer drags
+  that diverges every turn - flag 29 used to, flag 50 permanently does
+  on any game that nests PROCESS around a DOALL - no longer drags
   every later, unrelated text divergence down to `downstream` just
   because it happened after some earlier flag divergence - a text
   finding's rank depends on whether it is the first TEXT divergence.
@@ -509,12 +509,21 @@ The baseline has shrunk to ONE flag. It was flags 29/50/53 plus objects
 artefacts (see entry 5's retraction note and `nleg.py`'s `objloc` - the
 object table is a 6-byte struct array, not a flat location array, and
 the old reader mis-strided it), flag 29 was fixed in SP16 Task 1 and
-flag 53 in Task 4. **Flag 50 remains, and it is not yet adjudicated:**
+flag 53 in Task 4. **Flag 50 remains, and it is RULED - permanently:**
 jDAAD saves and restores flag 50 (FDOALL) per process-stack level
 (`jdaad.js` `stackPush`/`stackPop`), while NextDAAD keeps it global -
-and so does msx2daad. Which is correct is an open owner ruling, so the
-selftest pins it as a known divergence rather than anyone "fixing" it in
-either direction.
+and so does msx2daad. The owner ruled on 2026-08-01 that NextDAAD keeps
+the msx2daad model, because msx2daad shares NextDAAD's operating
+environment where jDAAD is a browser interpreter; jDAAD's per-level
+save/restore is THE deviation. No code change was made and none will
+be - it is a permanent reference-deviation of class NOT-A-BUG
+(`docs/parser-bugs.md` entry 5).
+
+So the flag 50 rows are here to stay. Do not chase them, do not mask
+them, and do not "fix" flag 50 in either direction. The selftest pin is
+not a mask: the rows keep appearing in every findings.json on purpose,
+and the pin asserts that flag 50 is the ONLY flag that ever diverges,
+so a second one joining it still fails loudly.
 
 The end-to-end selftest case (`t11_clean_run_matches_known_divergence_baseline`
 in `tests/parser/parser_selftest.py`) therefore asserts the run matches a
@@ -542,11 +551,22 @@ something the changer must explain; neither is allowed to pass quietly.
 | replay | game + script | turns / findings | hash |
 | --- | --- | --- | --- |
 | condacts smoke | `tests/condacts.dsf` + `scripts/condacts/smoke.json` | 13 / 13 | `928a594e261f644b` |
-| condacts full | `tests/condacts.dsf` + `scripts/condacts/full.json` | 18 / 18 | `9b71ceb94559d564` (non-DEBUG build) |
-| " | " | " | `30980ccd254d6295` (DEBUG build - see the build-variant note below) |
+| condacts full | `tests/condacts.dsf` + `scripts/condacts/full.json` | 18 / 18 | `a580c0ffc7728263` (non-DEBUG build) |
+| " | " | " | `05bf07442b53a686` (DEBUG build - see the build-variant note below) |
 | dracula lamp | `tools/test-games/Dracula Part 1/dracula1.dsf` + `scripts/dracula/lamp.json` | 21 / 7 | `752950ee121abf2a` |
 | dracula compound | same game + `scripts/dracula/compound.json` | 17 / 4 | `2f403989f005cfc2` |
 | rabenstein d1 | `tools/Rabenstein-master/nextdaad/rabenstein.dsf` + `scripts/rabenstein/d1.json` | 6 / 6 | `6ed0e38dfc7e88eb` |
+
+Both condacts full pins were RE-BASELINED on 2026-08-01 by commit
+`cb1707d`, which removed the space before SM51 in the PUTIN/TAKEOUT
+composite message (`docs/parser-bugs.md` entry 28). `full.json` reaches
+that text at suite check 84 (PUTIN/TAKEOUT) and check 96 (AUTOT), so the
+captured transcript moved: exactly one line of `findings.json` differs
+per variant, and the only change on it is `old box .` becoming
+`old box.`. The superseded values were `9b71ceb94559d564` (non-DEBUG)
+and `30980ccd254d6295` (DEBUG); both were reproduced from a rebuilt
+pre-fix baseline before the new ones were pinned. The other four pins
+are untouched - none of those scripts reaches a composite.
 
 Rabenstein's pin is NEW as of commit `303abea` and supersedes the older
 "not hash-stable, compare the fields instead" instruction - that
@@ -576,9 +596,15 @@ not. It is the only script that drives handlers carrying `IFDEF DEBUG`
 diagnostics (SFX, XMESSAGE, GFX, and the E03 tail), and on a DEBUG build
 those land on the screen the harness captures - "65 OK  SFX? 12",
 "E03 P0C V64 N38 C4B" and so on - so the transcript, and the hash,
-change. Compare against `9b71ceb94559d564` only with a non-DEBUG
+change. Compare against `a580c0ffc7728263` only with a non-DEBUG
 `build/nextdaad.nex`, or it will "fail" for a reason that has nothing to
-do with the harness. Related: `build/nextdaad.map` and
+do with the harness. Confirm which variant you actually built before
+believing a comparison - `build.ps1` prints the resident headroom, and
+non-DEBUG is far larger (3712 vs 136 at the time of writing). That
+check matters: a `-Release` run whose write was blocked by a lock on
+`build/nextdaad.nex` will silently leave the previous DEBUG binary in
+place and reproduce the DEBUG hash, which reads as "the variants agree"
+rather than as a failed build. Related: `build/nextdaad.map` and
 `build/nextdaad.nex` must come from the SAME build - pointing `--nex` at
 an archived variant while the map belongs to a newer one makes the
 RNG-seed breakpoint miss and the run dies at boot.

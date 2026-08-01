@@ -139,25 +139,30 @@ COPYOO and SWAP.
 `SWAP` by contrast is a raw exchange and does **not** adjust flag 1 -
 the manual says so explicitly for SWAP and says nothing for COPYOO.
 
-Status: the COPYOO half of this is awaiting owner ratification and may
-change to msx2daad's raw form. If your game depends on flag 1 after a
-COPYOO of a carried object, recount with `ABILITY` or avoid the case.
+The reasoning: flag 1 is the carried-object count, so a condact that
+can move an object out of the player's hands owes it a decrement. The
+manual's one stated exception is SWAP, which exchanges two locations
+and so cannot change how many things are carried; COPYOO is a one-way
+move and is not that exception.
+
+If your game reads flag 1 immediately after a COPYOO and you want to
+be certain of the count on every interpreter, recount with `ABILITY`.
 
 ### PUTIN and TAKEOUT message spacing
 
 The composite message these condacts print is SM44 (or SM45 / SM52),
-then a space, then the container's name, then a space, then SM51.
-msx2daad emits both spaces; jDAAD omits the trailing one; the manual
-lists the three parts and mentions no spaces at all. NextDAAD follows
-msx2daad.
+then a space, then the container's name, then SM51 - with no space
+before SM51. With a typical SM51 of "." that renders as
 
-With a typical SM51 of "." that renders as `The hat is in the old box .`
-- the trailing space before the stop is visible. Author around it by
-giving SM44/SM45/SM51/SM52 texts that read correctly with a space
-between them, or by using your own message.
+    The hat is in the old box.
 
-Status: awaiting owner ratification; it is a one-line change to jDAAD's
-form if that is preferred.
+msx2daad emits a trailing space as well; jDAAD emits neither space;
+the manual lists the three parts and mentions no spaces at all.
+NextDAAD keeps msx2daad's leading space and drops its trailing one, so
+the stop follows the container's name directly.
+
+Write SM44, SM45 and SM52 without a trailing space of their own, and
+SM51 as the punctuation you want the sentence to end on.
 
 ### MOUSE sub-commands 6 and 7 are not movement deltas
 
@@ -278,10 +283,13 @@ NextDAAD.
 Consequence: after `PROCESS n` where process n ran a DOALL, flag 50
 holds the last object that DOALL touched on NextDAAD and msx2daad, and
 the pre-call value on jDAAD. Do not carry a value in flag 50 across a
-PROCESS call.
+PROCESS call - it will not survive the return on jDAAD.
 
-Status: owner ruling pending on whether to adopt jDAAD's per-level
-behaviour.
+This is settled and will not change. NextDAAD follows msx2daad here
+because msx2daad is the closer sibling: a memory-constrained 8-bit
+interpreter working under the same limits as this one, where jDAAD is
+a browser interpreter that can afford a saved copy of the flag on
+every process-stack push.
 
 ### Flags 29 and 62 report this machine's capabilities
 
