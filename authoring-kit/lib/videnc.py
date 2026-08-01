@@ -542,6 +542,31 @@ def main(argv):
                           "fully compatible. Without this flag the "
                           "encode is byte-identical to the pre-T5a "
                           "encoder")
+    ap.add_argument("--prefilter", nargs="?", const="hqdn3d=2:1.5:3:2.25",
+                     default=None, metavar="FILTER",
+                     help="OPT-IN (W4, default OFF - the extraction "
+                          "chain is untouched without it): light "
+                          "temporal denoise before scaling, an ffmpeg "
+                          "filter string. Bare --prefilter means "
+                          "hqdn3d=2:1.5:3:2.25 (half the hqdn3d "
+                          "defaults - conservative). Source grain is "
+                          "delta demand the wire pays for every frame; "
+                          "denoising trades a little texture for "
+                          "supply headroom. A MEASURED option for the "
+                          "authoring sitting, not a default")
+    ap.add_argument("--approx-cuts", dest="approx_cuts", action="store_true",
+                     help="EXPERIMENTAL OPT-IN (W4): on budget-bound "
+                          "frames, allow the encoder to satisfy the "
+                          "byte budget with APPROXIMATE full-coverage "
+                          "content (gain-per-byte line triage, cheap "
+                          "colour RUNs standing in for unaffordable "
+                          "exact repaints) instead of deferring whole "
+                          "bands - the C2 corpus experiment's measured "
+                          "policy win on cut-heavy starved clips (+4 to "
+                          "+9 dB 4x4 there). Wire format unchanged - "
+                          "files play on every shipped player. Without "
+                          "this flag the encode is byte-identical to "
+                          "the default encoder")
     ap.add_argument("--kf-cadence", dest="kf_cadence", type=float,
                      default=None, metavar="SECONDS",
                      help="keyframe cadence window in seconds (default: "
@@ -640,7 +665,8 @@ def main(argv):
         budget_target=args.budget_target, direct=args.direct,
         retime=args.retime, tile_slack=args.tile_slack,
         direct_transport_factor=args.direct_transport_factor,
-        ocopy=args.ocopy, kf_cadence=args.kf_cadence)
+        ocopy=args.ocopy, kf_cadence=args.kf_cadence,
+        approx_cuts=args.approx_cuts, prefilter=args.prefilter)
 
     stream_line = ""
     if report.mode == "direct":

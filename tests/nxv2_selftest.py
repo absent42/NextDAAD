@@ -5270,6 +5270,116 @@ def t21_silicon_r_rekey():
            "density 1.0 must clamp to the dense anchor")
 
 
+# =======================================================================
+# Step 22: SP17 W4 - the measured options: --approx-cuts (C2 policy
+# port, experimental) and --prefilter. Both OPT-IN: absent, the encode
+# is byte-identical to the default encoder.
+# =======================================================================
+
+
+def _w4_bound_clip():
+    """A clip whose delta frames are heavily budget-bound: dense noise
+    re-rolled every frame at a tiny budget."""
+    rng = np.random.default_rng(31)
+    W, H, n = 256, 64, 8
+    orig = rng.integers(0, 256, (n, H, W, 3), dtype=np.uint8)
+    # heavy smoothing so palettes are sane
+    o = orig.astype(np.float32)
+    o = (o + np.roll(o, 1, axis=1) + np.roll(o, 1, axis=2)) / 3.0
+    orig = o.astype(np.uint8)
+    chg = np.zeros(n); chg[1:] = 0.2   # below CUT_T - no cut keyframes
+    po = np.array([enc.display_ceiling(orig[i]) for i in range(n)])
+    lm = np.array([enc.display_ceilings(orig[i])[1] for i in range(n)])
+    return orig, chg, po, lm, W, H
+
+
+@case(22, "W4 --approx-cuts - triage engages on bound frames, decode parity, off = byte-identical")
+def t22_approx_cuts():
+    orig, chg, po, lm, W, H = _w4_bound_clip()
+    kw = dict(po_ceil_lm=lm, kf_cadence_s=0, budget_scale=0.05,
+              staleness_refresh=False, return_surfaces=True)
+    r_off = enc.encode_clip(orig, chg, po, W, H, 25.0, **kw)
+    r_def = enc.encode_clip(orig, chg, po, W, H, 25.0, approx_cuts=False, **kw)
+    expect([bytes(p) for p in r_off["payloads"]] == [bytes(p) for p in r_def["payloads"]],
+           "approx_cuts=False must be byte-identical to the default path")
+    expect(not any(m.startswith("triage:") for m in r_off["per_frame"]["mode"]),
+           "no triage frames without the flag")
+
+    r_on = enc.encode_clip(orig, chg, po, W, H, 25.0, approx_cuts=True, **kw)
+    tri_frames = [i for i, m in enumerate(r_on["per_frame"]["mode"])
+                  if m.startswith("triage:")]
+    expect(tri_frames != [],
+           f"a starved dense clip must engage the triage arm, modes "
+           f"{r_on['per_frame']['mode']}")
+    # caps still honoured on triage frames, and the wire really is only
+    # RUN/COPY/SKIP - decode parity through the reference decoder
+    cap_bytes = min(int(0.65 * 0.05 * W * H),
+                    enc.frame_wire_cap_bytes(25.0, 1536))
+    n = W * H
+    surface = enc.flatten_frame(
+        np.zeros((H, W), dtype=np.uint8), False).copy()
+    # replay every payload through the reference decoder and compare
+    # against the encoder's own surface bookkeeping frame by frame
+    for i, p in enumerate(r_on["payloads"]):
+        m = r_on["per_frame"]["mode"][i]
+        if m.startswith("triage:"):
+            expect(r_on["per_frame"]["bytes"][i] <= cap_bytes,
+                   f"triage frame {i} over the byte cap")
+        if not m.startswith("kf"):
+            pos, cursor, term = dec.run_payload(bytes(p), 0, surface, n,
+                                                issues=None)
+            expect(pos == len(p),
+                   f"frame {i} ({m}): decoder must consume the payload")
+            book = enc.flatten_frame(r_on["surfaces"][i], False)
+            expect(np.array_equal(surface, book),
+                   f"frame {i} ({m}): decoded surface != encoder bookkeeping")
+        else:
+            # keyframe-span frames use the hidden-surface machinery
+            # (covered by t3/t12) - resync to the encoder's bookkeeping
+            surface = enc.flatten_frame(r_on["surfaces"][i], False).copy()
+    # the policy's point: strictly less residual error than the band
+    # schedule on the frames it took (Pareto rule) - decoded quality on
+    # triage frames is at least as good overall
+    ps_on = np.array(r_on["per_frame"]["psnr"])[tri_frames]
+    ps_off = np.array(r_off["per_frame"]["psnr"])[tri_frames]
+    expect(float(ps_on.mean()) >= float(ps_off.mean()) - 0.01,
+           f"triage must not lose quality on the frames it takes: "
+           f"{ps_on.mean():.2f} vs {ps_off.mean():.2f}")
+
+
+@case(22, "W4 --prefilter - opt-in stage, absent leaves the extraction chain untouched")
+def t22_prefilter():
+    import subprocess
+    help_out = subprocess.run(
+        [sys.executable, str(LIB / "videnc.py"), "--help"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ).stdout.decode("utf-8", "replace")
+    expect("--prefilter" in help_out, "--prefilter must appear in --help")
+    expect("--approx-cuts" in help_out, "--approx-cuts must appear in --help")
+    expect("--kf-cadence" in help_out, "--kf-cadence must appear in --help")
+    expect("hqdn3d" in help_out, "--help must name the bare-flag filter")
+    for word in ("OPT-IN", "default OFF"):
+        expect(word in help_out, f"--prefilter help must say {word!r}")
+    cli = (LIB / "videnc.py").read_text(encoding="utf-8")
+    expect("prefilter=args.prefilter" in cli and "approx_cuts=args.approx_cuts" in cli
+           and "kf_cadence=args.kf_cadence" in cli,
+           "videnc.py must pass the three W4 options through to nxv2enc.encode")
+    # absent = untouched chain: the stage is prepended only when set
+    if not SINTEL.exists() or not FFMPEG.exists():
+        skip("Sintel source or ffmpeg not available")
+    ex_a = enc._extract_source(SINTEL, 256, 144, 25.0, None, "0.4",
+                               str(FFMPEG), None, False)
+    ex_b = enc._extract_source(SINTEL, 256, 144, 25.0, None, "0.4",
+                               str(FFMPEG), None, False, prefilter=None)
+    expect(np.array_equal(ex_a["orig"], ex_b["orig"]),
+           "prefilter=None must not change extraction")
+    ex_c = enc._extract_source(SINTEL, 256, 144, 25.0, None, "0.4",
+                               str(FFMPEG), None, False,
+                               prefilter="hqdn3d=2:1.5:3:2.25")
+    expect(not np.array_equal(ex_a["orig"], ex_c["orig"]),
+           "a set prefilter must actually filter the frames")
+
+
 def main():
     passed, failed, skipped = 0, 0, 0
     last_step = None
