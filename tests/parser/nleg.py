@@ -666,6 +666,14 @@ class NextLeg:
         page counter, while the editor sits in it until a key arrives.
         Both exits are checked; only "still both locks, counter unmoved"
         is the editor.
+
+        COST: one extra SETTLE_POLL_S of wall clock at EVERY turn end,
+        because a turn always ends on a (1, 1) reading and every one of
+        them is now confirmed. It never costs an extra loop ITERATION
+        when the editor really is ready - the confirmation happens inside
+        the poll that found it, and settle() returns from that same poll
+        (pinned by t9_both_locks_are_confirmed_before_a_turn_is_called_ready,
+        which asserts polls == 1 on a genuine editor).
         """
         time.sleep(SETTLE_POLL_S)
         if self.page_fires() != fires:
@@ -980,6 +988,17 @@ class NextLeg:
                 # turn started firing four pages instead of one: the
                 # transcript stopped dead at an unfiltered "More..." row
                 # with the fixture still inside check 103.
+                #
+                # This sleep is the SECOND on this path - _ready_confirmed
+                # has already slept one interval to take its reading - and
+                # one would do. Kept deliberately: the branch is reached
+                # only when a poll landed inside that window, roughly once
+                # per five runs of the extended replay rather than once
+                # per turn, so it costs 100ms on a rare event, while
+                # removing it changes the settle loop's live timing and
+                # would put the replay's reliability evidence back up for
+                # re-validation. Drop it if the loop is ever restructured
+                # for other reasons.
                 time.sleep(SETTLE_POLL_S)
                 continue
             if more and wrap:
