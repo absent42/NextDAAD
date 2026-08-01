@@ -6,6 +6,7 @@ from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import QApplication
 
 from vidtune.mainwindow import MainWindow, PreviewPane, SettingsPanel
+from vidtune.encoderun import MetricsSummary
 from vidtune.kitmodel import KitConfig
 from vidtune.settingsmodel import effective_settings
 
@@ -210,3 +211,16 @@ def test_accept_requires_full_encode(fixture_kit, qtbot):
     qtbot.addWidget(win)
     win.select_clip("001")
     assert not win.accept_button.isEnabled()
+
+
+def test_preview_success_labels_provisional_budget_until_full_encode(fixture_kit, qtbot):
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    win.select_clip("001")
+
+    summary = MetricsSummary(stream_budget=0.5)
+    win._on_preview_success("001", None, [], summary)
+    assert win.metrics_bar.status_text() == "budget provisional (derived on segment)"
+
+    win._on_full_success("001", None, [], summary)
+    assert win.metrics_bar.status_text() == ""

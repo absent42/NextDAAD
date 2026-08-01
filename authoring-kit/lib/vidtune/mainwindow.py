@@ -176,6 +176,9 @@ class MetricsBar(QWidget):
     def set_status(self, text):
         self._status_label.setText(text)
 
+    def status_text(self):
+        return self._status_label.text()
+
     def start_job(self):
         self._failure_box.setVisible(False)
         self._status_label.setText("")
@@ -602,6 +605,13 @@ class MainWindow(QMainWindow):
             argv = _strip_argv_flags(argv, ("--start", "--duration"))
             argv = argv + ["--start", _fmt_seconds(base_start + seg_start),
                            "--duration", _fmt_seconds(seg_dur)]
+        # Pin is keyed by clip num3 only (not by the settings that were
+        # in effect when it was captured) - it survives unrelated
+        # settings edits for the rest of the session. It is deliberately
+        # NOT invalidated on a settings change (e.g. a shape/duration
+        # edit after a full encode still reuses the last pinned budget
+        # for segment previews); full_argv never applies it, so a real
+        # full encode always re-derives the budget from scratch anyway.
         if num3 in self.pinned_budgets and settings.get("stream_budget") is None:
             argv = argv + ["--stream-budget", _fmt_seconds(self.pinned_budgets[num3])]
         return argv
@@ -779,7 +789,14 @@ class MainWindow(QMainWindow):
     def _on_preview_success(self, num3, output, argv, summary):
         pinned = num3 in self.pinned_budgets
         self.metrics_bar.update_from(summary, pinned)
-        if not pinned:
+        if pinned:
+            self.metrics_bar.set_status("")
+        else:
+            # No pin exists yet - this segment's auto-budget is only
+            # provisional (derived from a short window, not the full
+            # clip); label it on the metrics strip itself, not just the
+            # window status bar, per the brief.
+            self.metrics_bar.set_status("budget provisional (derived on segment)")
             self.statusBar().showMessage("budget provisional (derived on segment)")
         self._load_preview(num3, output, argv)
 
@@ -788,6 +805,10 @@ class MainWindow(QMainWindow):
             self.pinned_budgets[num3] = summary.stream_budget
         self.full_ok[num3] = list(argv)
         self.metrics_bar.update_from(summary, num3 in self.pinned_budgets)
+        # A full encode always derives the budget from the whole clip -
+        # never provisional - so any stale "provisional" label from an
+        # earlier segment preview must not linger.
+        self.metrics_bar.set_status("")
         self._load_preview(num3, output, argv)
         self._update_accept_enabled()
 
@@ -795,6 +816,7 @@ class MainWindow(QMainWindow):
         clip = self._clip_by_num3(num3)
         write_sidecar(clip.sidecar, self.stamp or "", argv)
         self.metrics_bar.update_from(summary, num3 in self.pinned_budgets)
+        self.metrics_bar.set_status("")
         self._populate_clip_list()
 
     # -- preview/source loading ----------------------------------------------
