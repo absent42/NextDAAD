@@ -42,10 +42,21 @@ from .configwrite import ConfigConflict, write_sidecar, write_vidopts_line
 from .encoderun import EncodeJob, resolve_encoder, summarize_report
 from .kitmodel import clip_state, list_clips, parse_config, read_generation_stamp
 from .preview import extract_source
-from .previewpane import PreviewPane
+from .previewpane import PreviewPane, SOURCE_PREVIEW_HINT
 from .settingsmodel import KNOBS, SHAPE_PRESETS, VidprofileUnsupported, effective_settings
 
 __all__ = ["MainWindow", "MetricsBar", "PreviewPane", "SettingsPanel"]
+
+# Owner-requested (2026-08-01): an un-encoded clip's source frames are
+# loaded into the pane so the user can scrub/mark a segment before any
+# encode has run (MainWindow._load_source_preview). Raw RGB24 frames are
+# (width * height * 3) bytes EACH - a 320x256 60s 25fps clip alone is
+# already ~350MB held live by the pane - so extraction is capped at this
+# many seconds of the clip rather than pulling the whole thing. Frame
+# indices still land on the SAME timeline the eventual encode will use
+# (target fps, clip-level trim - see _resolve_extraction_params), so a
+# marker set within the cap is still valid once a real encode runs.
+SOURCE_PREVIEW_CAP_SECONDS = 60.0
 
 
 def to_seconds(value):
@@ -733,9 +744,71 @@ class MainWindow(QMainWindow):
             width = dims[0] if dims is not None else 320
             self.preview.load(clip.vid, None, column_major=(width == 320))
         else:
+            # Owner-requested (2026-08-01): a clip with no fresh .vid
+            # used to leave the pane on the empty hint with nothing to
+            # scrub - step/Set In/Set Out had no frames to act on. Load
+            # the clip's SOURCE frames instead (capped, off the GUI
+            # thread) so segment selection is possible before any encode
+            # has run; _load_source_preview falls back to the same empty
+            # hint itself if extraction isn't currently possible (no
+            # source .mp4, no ffmpeg).
+            self._load_source_preview(num3, clip, settings)
+
+    def _load_source_preview(self, num3, clip, settings):
+        """Loads a not-yet-encoded clip's SOURCE frames into the pane
+        (encoded=None) so the user can scrub the timeline and mark
+        Set In/Set Out before ever running an encode. Extraction uses
+        the clip's EFFECTIVE settings - shape width/height, target fps,
+        retime, clip-level trim - resolved by _resolve_extraction_params
+        the SAME way _extract_matching_source resolves them post-encode,
+        so a marker set here already lines up with the eventual encode's
+        timeline (target-fps extraction is what makes that true - a
+        raw-source-fps preview would not). Runs off the GUI thread via
+        PreviewPane.load_source, since ffmpeg extraction is not fast;
+        duration capped at SOURCE_PREVIEW_CAP_SECONDS (see its module
+        docstring)."""
+        params = self._guarded(self._resolve_extraction_params, num3)
+        if params is None:
             self.preview.clear_to_empty(
                 "no fresh preview yet - run Preview Segment or Encode Full "
                 "to generate one")
+            return
+        ffmpeg, mp4, width, height, fps, retime = params
+        column_major = (width == 320)
+        start, duration, capped = self._source_preview_extract_args(settings)
+
+        hint = SOURCE_PREVIEW_HINT
+        if capped:
+            hint += f" (showing first {int(SOURCE_PREVIEW_CAP_SECONDS)}s of source)"
+
+        # extract_source is a pure function (ffmpeg subprocess + numpy) -
+        # no Qt widget access - so this closure is safe to actually run
+        # on PreviewPane's worker thread; everything it needs is already
+        # a plain value captured here on the GUI thread. Referenced
+        # unqualified (module-level `extract_source`, imported above) so
+        # tests can monkeypatch vt_mainwindow.extract_source the same
+        # way test_extract_matching_source_failure_logs_to_pane_not_silence
+        # already does for the post-encode path.
+        extract_fn = lambda: extract_source(ffmpeg, mp4, width, height, fps,
+                                            retime, start, duration)
+        self.preview.load_source(extract_fn, fps, column_major, hint=hint)
+
+    def _source_preview_extract_args(self, settings):
+        """(start, duration, capped) seconds for the un-encoded source-
+        preview path, from the clip's EFFECTIVE settings (the clip-level
+        start/duration Knobs) - duration capped at
+        SOURCE_PREVIEW_CAP_SECONDS. capped is True when the cap actually
+        shortened what would otherwise have been extracted (no
+        clip-level duration set, or one longer than the cap), so the
+        caller can show a "showing first Ns" note; False when the
+        clip's own --duration setting already fits inside the cap (the
+        full set segment was extracted, nothing was truncated)."""
+        start = to_seconds(settings.get("start"))
+        dur_setting = settings.get("duration")
+        clip_duration = to_seconds(dur_setting) if dur_setting is not None else None
+        if clip_duration is not None and clip_duration <= SOURCE_PREVIEW_CAP_SECONDS:
+            return start, clip_duration, False
+        return start, SOURCE_PREVIEW_CAP_SECONDS, True
 
     def _on_pane_cleared(self):
         """PreviewPane.cleared fires only from a user-initiated Clear
@@ -1067,6 +1140,27 @@ class MainWindow(QMainWindow):
             return int(w_str), int(h_str)
         return nxv2enc.resolve_shape(shape)
 
+    def _resolve_extraction_params(self, num3):
+        """Resolves (ffmpeg, mp4, width, height, fps, retime) from the
+        clip's EFFECTIVE settings - GUI-thread only, since
+        _current_settings()/self.settings_panel touch live Qt widgets.
+        Returns None if extraction isn't currently possible (no source
+        .mp4, no ffmpeg on this machine) - not an error, just nothing to
+        do. Shared by _extract_matching_source (post-encode Flicker/
+        Heatmap comparison) and _load_source_preview (the un-encoded
+        source-preview path) so both resolve dims/fps/retime the exact
+        same way - only start/duration differ between the two callers."""
+        clip = self._clip_by_num3(num3)
+        if clip is None or not clip.mp4.is_file():
+            return None
+        if self.ffmpeg is None or not Path(self.ffmpeg).is_file():
+            return None
+        settings = self._current_settings(num3)
+        width, height = self._resolve_dims(settings)
+        fps = float(settings.get("fps") or 25)
+        retime = settings.get("retime") or "blend"
+        return str(self.ffmpeg), clip.mp4, width, height, fps, retime
+
     def _extract_matching_source(self, num3, argv):
         """Best-effort: source frames shaped/retimed/trimmed to match
         the encode that just ran, for Flicker/Heatmap comparison. Runs
@@ -1078,20 +1172,15 @@ class MainWindow(QMainWindow):
         label - an HH:MM:SS --start used to fail here silently with no
         message at all, back when this parsed with float()."""
         self._last_source_error = None
-        clip = self._clip_by_num3(num3)
-        if clip is None or not clip.mp4.is_file():
-            return None
-        if self.ffmpeg is None or not Path(self.ffmpeg).is_file():
-            return None
         try:
-            settings = self._current_settings(num3)
-            width, height = self._resolve_dims(settings)
-            fps = float(settings.get("fps") or 25)
-            retime = settings.get("retime") or "blend"
+            params = self._resolve_extraction_params(num3)
+            if params is None:
+                return None
+            ffmpeg, mp4, width, height, fps, retime = params
             start, duration = _parse_start_duration(argv)
             QApplication.setOverrideCursor(Qt.WaitCursor)
             try:
-                return extract_source(str(self.ffmpeg), clip.mp4, width, height,
+                return extract_source(ffmpeg, mp4, width, height,
                                       fps, retime, start, duration)
             finally:
                 QApplication.restoreOverrideCursor()

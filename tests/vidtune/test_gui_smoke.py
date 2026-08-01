@@ -11,6 +11,7 @@ from vidtune import mainwindow as vt_mainwindow
 from vidtune.mainwindow import MainWindow, PreviewPane, SettingsPanel
 from vidtune.encoderun import MetricsSummary
 from vidtune.kitmodel import KitConfig, arg_hash, clip_state
+from vidtune.previewpane import NEEDS_SOURCE_TOOLTIP, NOT_ENCODED_TOOLTIP, SOURCE_PREVIEW_HINT
 from vidtune.settingsmodel import build_arg_vector, effective_settings
 
 
@@ -510,9 +511,6 @@ def test_encode_all_stale_cancel_after_current_stops_queue(fixture_kit, qtbot, m
 
 # -- 2026-08-01 UX defects 1-5 ----------------------------------------------
 
-_NEEDS_SOURCE_TOOLTIP = "needs a source comparison - run Preview Segment or Encode first"
-
-
 def test_flicker_and_heatmap_disabled_without_source(qtbot):
     # Defect 1: Flicker used to silently fall back to the encoded frame
     # when self.source was None, making Encoded and Flicker look
@@ -522,8 +520,8 @@ def test_flicker_and_heatmap_disabled_without_source(qtbot):
     qtbot.addWidget(pane)
     assert pane._mode_buttons["Flicker"].isEnabled() is False
     assert pane._mode_buttons["Heatmap"].isEnabled() is False
-    assert pane._mode_buttons["Flicker"].toolTip() == _NEEDS_SOURCE_TOOLTIP
-    assert pane._mode_buttons["Heatmap"].toolTip() == _NEEDS_SOURCE_TOOLTIP
+    assert pane._mode_buttons["Flicker"].toolTip() == NEEDS_SOURCE_TOOLTIP
+    assert pane._mode_buttons["Heatmap"].toolTip() == NEEDS_SOURCE_TOOLTIP
 
     # Encoded-only: Flicker still needs a source, Heatmap needs both.
     pane.set_frames(encoded=_frames(3), source=None, fps=25, column_major=False)
@@ -536,14 +534,21 @@ def test_flicker_and_heatmap_disabled_without_source(qtbot):
     assert pane._mode_buttons["Heatmap"].isEnabled() is True
 
 
-def test_flicker_enabled_with_source_only_heatmap_needs_both(qtbot):
-    # Flicker only compares source vs. encoded at the same index, so it
-    # only needs source frames; Heatmap needs both sides.
+def test_flicker_disabled_source_only_heatmap_needs_both(qtbot):
+    # Superseded 2026-08-01 (source-preview feature): Flicker used to be
+    # enabled on source-only frames (it only needs something to flick
+    # to), but an un-encoded clip's source-only preview now disables ALL
+    # THREE mode buttons (nothing has been encoded yet - Flicker has
+    # nothing to compare against, "Encoded" mode has nothing encoded to
+    # show). Heatmap still needs both sides regardless.
     pane = PreviewPane()
     qtbot.addWidget(pane)
     pane.set_frames(encoded=None, source=_frames(3), fps=25, column_major=False)
-    assert pane._mode_buttons["Flicker"].isEnabled() is True
+    assert pane._mode_buttons["Encoded"].isEnabled() is False
+    assert pane._mode_buttons["Flicker"].isEnabled() is False
     assert pane._mode_buttons["Heatmap"].isEnabled() is False
+    for name in ("Encoded", "Flicker", "Heatmap"):
+        assert pane._mode_buttons[name].toolTip() == NOT_ENCODED_TOOLTIP
 
 
 def test_all_pane_buttons_have_no_focus_policy(qtbot):
@@ -556,7 +561,7 @@ def test_all_pane_buttons_have_no_focus_policy(qtbot):
     buttons = list(pane._mode_buttons.values()) + [
         pane._play_btn, pane._stop_btn, pane._step_back_btn, pane._step_fwd_btn,
         pane._loop_checkbox, pane._set_in_btn, pane._set_out_btn, pane._clear_btn,
-        pane._scale_btn,
+        pane._scale_btn, pane._scrub_slider,
     ]
     assert buttons  # sanity: the loop below must not be vacuous
     for btn in buttons:
@@ -797,3 +802,134 @@ def test_preview_pane_minimum_width_shrinks_after_two_row_split(qtbot):
     pane = PreviewPane()
     qtbot.addWidget(pane)
     assert pane.minimumSizeHint().width() < 680   # below PREVIEW_WIDTH's own floor
+
+
+# -- 2026-08-01 owner iteration: un-encoded source preview + scrubber -------
+
+def test_source_only_set_frames_enables_transport_disables_modes(qtbot):
+    # A not-yet-encoded clip loads source-only frames (encoded=None) -
+    # stepping/seeking/markers/playback must all still work off
+    # _frame_count()'s source fallback, while all three mode buttons
+    # disable (nothing encoded to view/compare) with the "not encoded
+    # yet" tooltip, and the hint area says so too.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=None, source=_frames(10), fps=25, column_major=False)
+
+    assert pane.encoded is None
+    assert len(pane.source) == 10
+    for name in ("Encoded", "Flicker", "Heatmap"):
+        assert pane._mode_buttons[name].isEnabled() is False
+        assert pane._mode_buttons[name].toolTip() == NOT_ENCODED_TOOLTIP
+    assert pane._hint_label.text() == SOURCE_PREVIEW_HINT
+    assert pane._hint_label.isVisibleTo(pane) is True
+
+    # Stepping/seeking.
+    pane.step(+1)
+    assert pane.frame_index == 1
+    pane.seek(7)
+    assert pane.frame_index == 7
+    assert not pane._image_label.pixmap().isNull()
+
+    # Segment markers.
+    pane.seek(2); pane.set_in()
+    pane.seek(6); pane.set_out()
+    assert pane.segment_times(25.0) == (0.08, 0.16)
+
+    # Playback.
+    pane.play()
+    assert pane._playing is True
+    pane.pause()
+    assert pane._playing is False
+
+
+def test_scrub_slider_two_way_sync(qtbot):
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    assert pane._scrub_slider.focusPolicy() == Qt.NoFocus
+    assert pane._scrub_slider.isEnabled() is False   # no frames yet
+
+    pane.set_frames(encoded=_frames(10), source=None, fps=25, column_major=False)
+    assert pane._scrub_slider.isEnabled() is True
+    assert pane._scrub_slider.minimum() == 0
+    assert pane._scrub_slider.maximum() == 9
+
+    # seek() -> slider follows.
+    pane.seek(6)
+    assert pane._scrub_slider.value() == 6
+    pane.step(+1)
+    assert pane._scrub_slider.value() == 7
+
+    # slider -> seek() (drag/click - setValue emits valueChanged same as
+    # a real user drag would).
+    pane._scrub_slider.setValue(2)
+    assert pane.frame_index == 2
+
+    # Disables again once frames are cleared.
+    pane.clear_to_empty()
+    assert pane._scrub_slider.isEnabled() is False
+
+
+def test_select_clip_loads_source_preview_when_unencoded(fixture_kit, qtbot, monkeypatch):
+    # Owner feedback: un-encoded clips must be scrubbable for segment
+    # selection - select_clip on a clip with no fresh .vid now loads its
+    # SOURCE frames (off the GUI thread) instead of leaving the pane on
+    # the empty hint with nothing to act on.
+    stub_frames = _frames(5)
+    monkeypatch.setattr(vt_mainwindow, "extract_source",
+                        lambda *a, **kw: list(stub_frames))
+
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    fake_ffmpeg = fixture_kit / "fake_ffmpeg.exe"
+    fake_ffmpeg.write_bytes(b"x")
+    win.ffmpeg = fake_ffmpeg
+
+    win.select_clip("001")   # no .vid exists yet (fixture_kit) -> source-preview path
+
+    qtbot.waitUntil(lambda: win.preview.source is not None, timeout=5000)
+    assert win.preview.encoded is None
+    assert len(win.preview.source) == 5
+    assert win.preview._mode_buttons["Encoded"].isEnabled() is False
+    assert SOURCE_PREVIEW_HINT in win.preview._hint_label.text()
+
+
+def test_select_clip_source_preview_caps_long_duration_and_notes_it(fixture_kit, qtbot, monkeypatch):
+    captured = {}
+
+    def fake_extract_source(ffmpeg, mp4, width, height, fps, retime, start, duration):
+        captured["start"] = start
+        captured["duration"] = duration
+        return list(_frames(3))
+    monkeypatch.setattr(vt_mainwindow, "extract_source", fake_extract_source)
+
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    fake_ffmpeg = fixture_kit / "fake_ffmpeg.exe"
+    fake_ffmpeg.write_bytes(b"x")
+    win.ffmpeg = fake_ffmpeg
+
+    win.select_clip("001")   # no clip-level duration set -> capped
+
+    qtbot.waitUntil(lambda: win.preview.source is not None, timeout=5000)
+    assert captured["duration"] == vt_mainwindow.SOURCE_PREVIEW_CAP_SECONDS
+    assert (f"showing first {int(vt_mainwindow.SOURCE_PREVIEW_CAP_SECONDS)}s of source"
+            in win.preview._hint_label.text())
+
+
+def test_load_source_generation_guard_ignores_stale_extract(qtbot):
+    # Same guard shape as test_load_generation_guard_ignores_stale_decode,
+    # for the new extraction worker: a clip switch mid-extract must not
+    # let the abandoned extraction's result land afterwards.
+    pane = PreviewPane()
+    qtbot.addWidget(pane)
+    pane.set_frames(encoded=None, source=_frames(2), fps=25, column_major=False)
+    stale_gen = pane._load_gen   # snapshot before a newer load_source() starts
+    pane._load_gen += 1          # a newer load_source() has since begun
+
+    pane._on_extract_done(_frames(9), stale_gen)
+    assert pane.source is not None and len(pane.source) == 2
+
+    pane._on_extract_failed("boom", stale_gen)
+    assert pane._error_label.text() == ""
+    assert pane._error_label.isVisibleTo(pane) is False

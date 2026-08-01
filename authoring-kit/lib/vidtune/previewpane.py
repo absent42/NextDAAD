@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +29,9 @@ from .preview import decode_vid, diff_heatmap, stale_bands
 
 DEFAULT_FPS = 25.0
 MODES = ("Encoded", "Flicker", "Heatmap")
+NEEDS_SOURCE_TOOLTIP = "needs a source comparison - run Preview Segment or Encode first"
+NOT_ENCODED_TOOLTIP = "not encoded yet"
+SOURCE_PREVIEW_HINT = "source preview - not encoded yet"
 
 
 class _ClickableLabel(QLabel):
@@ -75,6 +79,33 @@ class _DecodeWorker(QObject):
         self.done.emit(hdr, frames, self.gen)
 
 
+class _ExtractWorker(QObject):
+    """Runs an arbitrary zero-arg extraction callable off the GUI thread
+    - used by PreviewPane.load_source() for ffmpeg-based extraction of
+    an un-encoded clip's source preview frames. Same QueuedConnection/
+    generation-in-payload reasoning as _DecodeWorker (see its docstring
+    for why a bare lambda receiver would be wrong). The callable itself
+    is built by the caller (MainWindow._load_source_preview) from plain
+    values only - no Qt widget access - so it is safe to actually run
+    here, on the extraction thread."""
+
+    done = Signal(object, int)     # frames, generation
+    failed = Signal(str, int)      # message, generation
+
+    def __init__(self, extract_fn, gen):
+        super().__init__()
+        self.extract_fn = extract_fn
+        self.gen = gen
+
+    def run(self):
+        try:
+            frames = self.extract_fn()
+        except Exception as exc:  # noqa: BLE001 - surfaced in the pane, not raised
+            self.failed.emit(str(exc), self.gen)
+            return
+        self.done.emit(frames, self.gen)
+
+
 class PreviewPane(QWidget):
     """Encoded/Flicker/Heatmap preview with transport controls and
     in/out segment markers (frame indices, converted to seconds for
@@ -116,6 +147,9 @@ class PreviewPane(QWidget):
                                        # against this in _on_decode_done/failed
         self._pending_source = None
         self._pending_column_major = False
+        self._pending_source_fps = None       # load_source()'s pending fps/
+        self._pending_source_column_major = False  # column_major/hint, set at
+        self._pending_source_hint = None      # call time, applied in _on_extract_done
 
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -169,9 +203,16 @@ class PreviewPane(QWidget):
             self._mode_buttons[name] = btn
         mode_row.addStretch(1)
         self._mode_buttons["Encoded"].setChecked(True)
-        _NEEDS_SOURCE_TOOLTIP = "needs a source comparison - run Preview Segment or Encode first"
-        self._mode_buttons["Flicker"].setToolTip(_NEEDS_SOURCE_TOOLTIP)
-        self._mode_buttons["Heatmap"].setToolTip(_NEEDS_SOURCE_TOOLTIP)
+        # Enabled state + tooltip for all three are set dynamically by
+        # _update_mode_buttons() (called at the end of __init__) - no
+        # static setToolTip here, since which of NEEDS_SOURCE_TOOLTIP /
+        # NOT_ENCODED_TOOLTIP applies depends on encoded/source state.
+
+        self._scrub_slider = QSlider(Qt.Horizontal)
+        self._scrub_slider.setFocusPolicy(Qt.NoFocus)   # same reasoning as the buttons below
+        self._scrub_slider.setEnabled(False)
+        self._scrub_slider.setRange(0, 0)
+        self._scrub_slider.valueChanged.connect(self._on_scrub_slider_changed)
 
         self._play_btn = QPushButton("Play")
         self._play_btn.clicked.connect(self.toggle_play)
@@ -234,6 +275,7 @@ class PreviewPane(QWidget):
         outer.addWidget(self._hint_label)
         outer.addWidget(self._image_label, 1)
         outer.addLayout(mode_row)
+        outer.addWidget(self._scrub_slider)
         outer.addLayout(playback_row)
         outer.addLayout(marker_row)
 
@@ -262,10 +304,21 @@ class PreviewPane(QWidget):
         self._hint_label.setVisible(False)
         if self.mode == "Heatmap" and not self._heatmap_available():
             self.mode = "Encoded"
-        if self.mode == "Flicker" and self.source is None:
+        if self.mode == "Flicker" and not (self.encoded is not None and self.source is not None):
             self.mode = "Encoded"
         self._update_mode_buttons()
         self._update_segment_readout()
+        self._sync_scrub_slider_range()
+        if self.encoded is None and self.source is not None:
+            # Un-encoded clip's source frames (MainWindow._load_source_preview)
+            # - flagged here (not just by the caller) so any direct
+            # set_frames(encoded=None, source=...) injection gets the
+            # same "not encoded yet" framing without every caller having
+            # to remember to say so. A caller with a more specific hint
+            # (e.g. the "showing first Ns of source" cap note) overrides
+            # this right after set_frames() returns - see
+            # _on_extract_done.
+            self.show_hint(SOURCE_PREVIEW_HINT)
         self._render()
 
     def load(self, vid_path, source_frames, column_major):
@@ -354,7 +407,67 @@ class PreviewPane(QWidget):
         self._error_label.setText(message)
         self._error_label.setVisible(True)
 
-    def _show_busy(self, busy):
+    def load_source(self, extract_fn, fps, column_major, hint=None):
+        """Runs extract_fn() (a zero-arg callable with NO Qt widget
+        access - see MainWindow._load_source_preview, which builds it
+        from plain values captured on the GUI thread before handing it
+        off) on a QThread, then injects the result as source-only frames
+        (encoded=None) via set_frames(). Used for a clip with no fresh
+        .vid yet, so the user can scrub the timeline and mark Set In/
+        Set Out before ever running an encode.
+
+        Same generation-guard pattern as load(): a fresh call bumps
+        self._load_gen, and the worker's done/failed signals carry the
+        generation they were started with, so switching clips mid-
+        extract drops the stale result (_on_extract_done/failed) instead
+        of painting it over whatever the user has since switched to."""
+        self._error_label.setVisible(False)
+        self._error_label.setText("")
+        self._pending_source_fps = fps
+        self._pending_source_column_major = column_major
+        self._pending_source_hint = hint
+        self._load_gen += 1
+        gen = self._load_gen
+
+        self._show_busy(True, "loading source...")
+        thread = QThread(self)
+        worker = _ExtractWorker(extract_fn, gen)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        # Bound methods of self - see _DecodeWorker's docstring for why
+        # this (not a bare lambda) is what gives Qt the receiver
+        # affinity needed to run these slots on the GUI thread.
+        worker.done.connect(self._on_extract_done)
+        worker.failed.connect(self._on_extract_failed)
+        worker.done.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(lambda t=thread, w=worker: self._on_thread_finished(t, w))
+        self._threads.append(thread)
+        self._workers.append(worker)
+        self._thread = thread
+        self._worker = worker
+        thread.start()
+
+    def _on_extract_done(self, frames, gen):
+        if gen != self._load_gen:
+            return  # stale result from an abandoned load_source(); ignore
+        self._show_busy(False)
+        self.set_frames(encoded=None, source=frames,
+                         fps=self._pending_source_fps,
+                         column_major=self._pending_source_column_major)
+        if self._pending_source_hint:
+            self.show_hint(self._pending_source_hint)
+
+    def _on_extract_failed(self, message, gen):
+        if gen != self._load_gen:
+            return  # stale result from an abandoned load_source(); ignore
+        self._show_busy(False)
+        self._error_label.setText(message)
+        self._error_label.setVisible(True)
+
+    def _show_busy(self, busy, text="Decoding..."):
+        if busy:
+            self._busy_label.setText(text)
         self._busy_label.setVisible(busy)
 
     def show_error(self, message):
@@ -410,7 +523,7 @@ class PreviewPane(QWidget):
         # with no source/encoded pairing to compare.
         if name == "Heatmap" and not self._heatmap_available():
             name = "Encoded"
-        if name == "Flicker" and self.source is None:
+        if name == "Flicker" and not (self.encoded is not None and self.source is not None):
             name = "Encoded"
         self.mode = name
         self._update_mode_buttons()
@@ -429,13 +542,28 @@ class PreviewPane(QWidget):
             btn.blockSignals(True)
             btn.setChecked(name == self.mode)
             btn.blockSignals(False)
-        # Flicker only needs source frames (it compares against the
-        # encoded frame at the same index); Heatmap needs both encoded
-        # and source. Without this, clicking either with no source
-        # silently fell back to showing the encoded frame with no
-        # indication anything was wrong (Finding 1).
-        self._mode_buttons["Flicker"].setEnabled(self.source is not None)
+
+        has_encoded = self.encoded is not None
+        has_source = self.source is not None
+
+        # Nothing is meaningfully "Encoded"/"Flicker"/"Heatmap" until
+        # something has actually been encoded - a not-yet-encoded clip's
+        # source-only preview (MainWindow._load_source_preview) disables
+        # all three, with a "not encoded yet" tooltip, rather than
+        # leaving Flicker/Encoded usable with nothing to compare or
+        # encode-view. Once encoded frames exist, Flicker/Heatmap fall
+        # back to the original per-button gating (each needs source too).
+        self._mode_buttons["Encoded"].setEnabled(has_encoded)
+        self._mode_buttons["Flicker"].setEnabled(has_encoded and has_source)
         self._mode_buttons["Heatmap"].setEnabled(self._heatmap_available())
+
+        for name, btn in self._mode_buttons.items():
+            if btn.isEnabled():
+                btn.setToolTip("")
+            elif not has_encoded and has_source:
+                btn.setToolTip(NOT_ENCODED_TOOLTIP)
+            else:
+                btn.setToolTip(NEEDS_SOURCE_TOOLTIP)
 
     # -- transport ------------------------------------------------------
 
@@ -454,9 +582,39 @@ class PreviewPane(QWidget):
         if n == 0:
             self.frame_index = 0
             self._update_frame_label()
+            self._sync_scrub_slider_value()
             return
         self.frame_index = max(0, min(int(i), n - 1))
         self._render()
+        self._sync_scrub_slider_value()
+
+    def _sync_scrub_slider_range(self):
+        """Range/enabled state follow the frame count - called from
+        set_frames() whenever encoded/source (and therefore
+        _frame_count()) change."""
+        n = self._frame_count()
+        self._scrub_slider.blockSignals(True)
+        self._scrub_slider.setRange(0, max(0, n - 1))
+        self._scrub_slider.setValue(self.frame_index)
+        self._scrub_slider.setEnabled(n > 0)
+        self._scrub_slider.blockSignals(False)
+
+    def _sync_scrub_slider_value(self):
+        """Slider follows frame_index - called from seek() (which is
+        also what step()/playback/_on_timer ultimately call), so drag/
+        click on the slider and programmatic seeks stay in sync in both
+        directions. blockSignals prevents this from re-triggering
+        _on_scrub_slider_changed -> seek() -> here in a loop."""
+        self._scrub_slider.blockSignals(True)
+        self._scrub_slider.setValue(self.frame_index)
+        self._scrub_slider.blockSignals(False)
+
+    def _on_scrub_slider_changed(self, value):
+        """User drag/click on the slider (programmatic updates are
+        blockSignals()-guarded in _sync_scrub_slider_value/range above,
+        so this only fires for real user interaction)."""
+        if value != self.frame_index:
+            self.seek(value)
 
     def play(self):
         if self._frame_count() == 0:
