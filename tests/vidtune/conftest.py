@@ -8,6 +8,11 @@ LIB = REPO / "authoring-kit" / "lib"
 sys.path.insert(0, str(LIB))          # vidtune package + nxv2dec/videnc siblings
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "slow: real-encode / integration tests, minutes not ms")
+
+
 @pytest.fixture
 def fixture_kit(tmp_path):
     """A minimal kit: CONFIG.BAT + VIDEO/ with two dummy sources."""
