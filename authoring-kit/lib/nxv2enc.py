@@ -1546,7 +1546,101 @@ IMPULSE_MEDIAN_WINDOW = 3
 STALE_DB = 3.0             # (1) staleness-bounded refresh: the decoded screen
                            #     may fall at most this far below the frame's own
                            #     quantize ceiling (po_ceil) before a forced
-                           #     keyframe - the hard staleness bound
+                           #     keyframe - the hard staleness bound.
+                           #     RETIRED AS A TRIGGER (SP17 W4, 2026-08-01):
+                           #     measured on the owner's own pan clip the
+                           #     PER-PIXEL decoded deficit runs NEGATIVE
+                           #     (-1.21 dB mean - the dither displacement
+                           #     penalty puts achieved per-pixel PSNR at or
+                           #     above po_ceil), so a +3.0 dB bar was
+                           #     structurally uncrossable on whole-frame
+                           #     slow drift. The staleness guard now
+                           #     compares in 4x4 LOCAL-MEAN space (see
+                           #     STALE_LM_DB below); this constant is kept
+                           #     for the per-frame diagnostics only.
+
+# ---------------------------------------------------------------------
+# LOCAL-MEAN (4x4) TRIGGER RE-BASE (SP17 W4, 2026-08-01). The palette-
+# lifecycle wave measured why the whole-frame staleness guard and the
+# drift trigger could not fire on slow whole-frame decay: both compared
+# PER-PIXEL PSNR against po_ceil, and per-pixel PSNR is dominated by
+# the deliberate dither displacement, which tracks the ceiling by
+# construction (001 pan: decoded deficit MEAN -1.21 dB against a +3.0
+# bar). The 4x4 local-mean metric cancels the dither grain and exposes
+# the accumulated structural error the triggers exist to bound - it is
+# also the metric every SP17 quality claim reads (palette-wave rule:
+# LOCAL-MEAN, never per-pixel).
+#
+# Thresholds DERIVED FROM THE CORPUS (W4 trigger-rebase measurement,
+# 2026-08-02: 12-clip C0 subset + the owner's two pan clips at their
+# shipped full-shape operating points, triggers silenced, per-frame
+# lm-deficit / lm-drift traces; full table in the W4 report):
+#
+#   lm DEFICIT (decoded screen vs the frame's own lm ceiling):
+#     clean/static      church 0.64 max, owner-002 0.69, bunny 2.13
+#     at-capacity       boat 5.88, owner-001 pan 5.61, dracula 7.24,
+#     equilibria        12 Monkeys 12.55, Miami Vice talk 13.75,
+#     (eyes accept)     jellyfish 14.91 - plateaus that OSCILLATE or
+#                       hold; the aging/phase machinery plus the 5 s
+#                       cadence keyframe bound them
+#     broken screens    Caprica bomb p50 12.3 max 24.5, car chase
+#     (C0 problem list) p50 16.6 max 23.5, sintel p50 16.8 max 27.6,
+#                       police car p90 22.7 max 26.3, From diner
+#                       p99 19.0 (the one straddler - it fired the old
+#                       px staleness twice as well)
+#
+# STALE_LM_DB = 15.0 sits ABOVE every visually-accepted plateau
+# measured (worst: jellyfish 14.91) and INSIDE every problem clip's
+# operating band - the triggers fire where the screen is genuinely
+# broken and cannot thrash the accepted equilibria. Slow decay below
+# the bar belongs to the cadence keyframe (KF_CADENCE_S_DEFAULT), which
+# the palette wave measured FREE at 5 s.
+#
+#   lm DRIFT (held-palette fit loss on a fresh quantize):
+#     palette-stable content maxes 0.00-0.15 dB (10x under the bar);
+#     missed-transition spikes read 1.50 (police car), 1.89 (car
+#     chase), 3.09 (sintel).
+# DRIFT_LM_T = 1.5 / 3.0 (refractory) keeps the old pair's shape in
+# the space where it can actually be crossed: silent on every stable
+# clip, fires exactly on the non-impulse palette breaks the cut
+# trigger misses.
+# ---------------------------------------------------------------------
+STALE_LM_DB = 15.0         # whole-frame staleness bar, 4x4 local-mean dB
+DRIFT_LM_T, DRIFT_LM_T_REFRACT = 1.5, 3.0   # held-palette lm drift bar
+
+# ---------------------------------------------------------------------
+# KEYFRAME CADENCE (SP17 W4 item 2, 2026-08-01). Measured (palette-
+# lifecycle wave, owner clips): a forced keyframe every 5 s on the 001
+# pan is FREE in bytes (-0.1%) and buys +0.39 dB 4x4 local-mean; a 2 s
+# cadence on 002 costs +9.3% bytes for +0.65 dB overall / +1.02 dB
+# last-tenth - real but not free. The default is the measured free
+# point; 0 disables. A cadence keyframe is emitted only when no NATURAL
+# keyframe (cut / dissolve / staleness / drift) has occurred within the
+# window, and never when the remaining clip cannot hold the full span
+# (a prophylactic keyframe must not buy tail-of-clip degradation).
+# ---------------------------------------------------------------------
+KF_CADENCE_S_DEFAULT = 5.0
+
+# ---------------------------------------------------------------------
+# KEYFRAME-SPAN PEAK PACING (SP17 W4 item T2, charter E5). Keyframe
+# chunks were sized by decode-T alone, so the byte peak was identical
+# (47,616 B) at every budget rung: 35.8-43.3 ms of SD wire ALONE
+# against a 40 ms frame period - every keyframe event a guaranteed
+# hitch, and blocks_max == hdr_cap_blocks on every fixture. The fix
+# bounds the PER-FRAME SUPPLY TIME of every span chunk frame (decode
+# busy + audio copy + SD wire for audio pad and 512-padded payload, the
+# supply gate's own prices) to this fraction of the frame period, which
+# splits oversized spans across more frames instead of hitching. 0.95
+# is the stated margin: 5% under the 1.00 infeasibility line, on wire
+# terms that are themselves conservative (Card #8 measured the
+# 1264 KB/s x af floor 5.5% under what the producer delivered).
+# Chosen over the charter's other two options because (a) scaling spans
+# with the budget multiplies span length on low-budget encodes that
+# never had a wire problem, and (b) a bare block-count cap ignores the
+# decode side of the same frame; bounding the modeled supply time
+# bounds both with one stated number.
+# ---------------------------------------------------------------------
+KF_SPAN_PEAK_UTIL = 0.95
 AGE_GAIN = 0.5             # (2) importance aging: a persistently-wrong, un-
                            #     updated pixel's importance grows by this per
                            #     frame (XDC precedent) so it eventually wins
@@ -3142,12 +3236,22 @@ def display_ceiling(frame, amplitude=None, mode=None):
     triggers compare achieved PSNR against this, so both sides of that
     comparison must live in the same space, at the SAME dither amplitude
     AND MODE as the encode itself)."""
+    return display_ceilings(frame, amplitude=amplitude, mode=mode)[0]
+
+
+def display_ceilings(frame, amplitude=None, mode=None):
+    """(per-pixel ceiling, 4x4 local-mean ceiling) for one frame - the
+    same fresh-palette dithered decode scored in both spaces at once
+    (one palette solve, one quantize). The lm ceiling is the reference
+    the W4 re-based drift/staleness triggers compare against; both
+    sides of each comparison must live in the same space at the same
+    dither amplitude and mode."""
     m = _dither_mode(mode)
     pal = display_palette(frame, amplitude=amplitude, mode=m)
     sub = (frame if m == DITHER_MODE_OFFSET
            else frame[::CEILING_STRIDE, ::CEILING_STRIDE])
     _, dec = dither_quantize(sub, pal, amplitude=amplitude, mode=m)
-    return psnr(sub, dec)
+    return psnr(sub, dec), psnr_lm(sub, dec)
 
 
 # Quantizer index-hysteresis deadzone (SP15 encoder-optimization wave):
@@ -3426,6 +3530,28 @@ def psnr(a, b):
     return 10.0 * np.log10(255.0 * 255.0 / mse)
 
 
+def _boxmean4(a):
+    """4x4 block means of an (H,W[,C]) array (trailing rows/cols beyond
+    a multiple of 4 are cropped - every Layer 2 shape is a multiple of 4
+    on both axes, so nothing is cropped in practice)."""
+    a = np.asarray(a, dtype=np.float64)
+    H = a.shape[0] & ~3
+    W = a.shape[1] & ~3
+    a = a[:H, :W]
+    if a.ndim == 2:
+        a = a[..., None]
+    return a.reshape(H // 4, 4, W // 4, 4, a.shape[-1]).mean(axis=(1, 3))
+
+
+def psnr_lm(a, b):
+    """4x4 LOCAL-MEAN PSNR - the palette-wave metric every SP17 quality
+    claim reads. Averaging 4x4 blocks before the PSNR cancels the
+    deliberate dither grain (which the per-pixel metric charges as
+    error), so this is the space where accumulated STRUCTURAL error is
+    visible - the drift/staleness triggers compare here (W4 re-base)."""
+    return psnr(_boxmean4(a), _boxmean4(b))
+
+
 def build_palette_block(pal_256x3):
     """256 entries x 2 bytes, NR $44 order: byte0 = RRRGGGBB (top
     bits), byte1 bit0 = the 9th (extended) blue bit, taken from the
@@ -3505,29 +3631,137 @@ def scene_palette(orig_frames, start_idx, scene_end_idx, max_samples=6, colors=2
 # the last. All chunks paint the HIDDEN surface; only KFLIP exposes it.
 # ---------------------------------------------------------------------
 
-def kf_chunk_budget_bytes(fps, first, width=None, height=None):
-    """Max keyframe literal bytes this frame's chunk may hold so the
-    modeled decode stays inside the usable per-frame T budget (2%
-    reserve). Ported from the research prototype's kf_chunk_cap,
-    re-costed for the real COPY op overhead (KSTART/PAL dispatch on
-    the first chunk). A keyframe chunk is one long COPY straight down
-    the paint order, so it crosses every column boundary a gapped
-    surface has - the composition factor applies here too."""
-    budget_t = usable_budget_t(fps, width, height) * 0.98 - TMODEL_COEFFS["t_frame_fixed"]
-    if first:
-        budget_t -= TMODEL_COEFFS["t_palette"]
-        budget_t -= 2 * TMODEL_COEFFS["t_op_parse"]   # KSTART + PAL dispatch
-    L = int(max(0.0, budget_t) / TMODEL_COEFFS["fetch_long"])
+def _default_abytes_pad(fps):
+    """Conservative (largest-layout) padded audio bytes/frame for
+    callers that do not thread the encode's real audio layout: the
+    STEREO layout at this fps (stereo pads more than mono, and a larger
+    pad shrinks the chunk - the safe direction for a peak bound)."""
+    try:
+        from fractions import Fraction
+        f = fps if isinstance(fps, Fraction) else Fraction(float(fps)).limit_denominator(1000)
+        return audio_layout(f, 2)[3]
+    except SystemExit:
+        # out-of-contract fps (the audio guard refuses it) - estimate
+        real = int(round(RATE_STEREO / float(fps))) * 2
+        return ((real + 511) // 512) * 512
+
+
+def kf_chunk_wire_cap_bytes(fps, width=None, height=None, abytes_pad=None,
+                            overhead_b=0, fixed_t=0.0):
+    """Max 512-padded PAYLOAD bytes a single frame may carry so its
+    whole modeled supply time - decode busy + the per-frame audio copy
+    + SD wire for the audio pad and the padded payload, at the supply
+    gate's own prices - stays within KF_SPAN_PEAK_UTIL of the frame
+    period (the T2/E5 peak pacing bound; see the constant's block).
+    overhead_b/fixed_t: payload bytes and decode T the frame spends
+    beside the literal body (op headers, PAL block, KSTART/KFLIP)."""
+    tc = TMODEL_COEFFS
+    af = tc["audio_factor"]
+    clock = tc["clock_khz"]
+    period_ms = 1000.0 / float(fps)
+    wire_eff = SD_WIRE_BYTES_PER_MS * af
+    if abytes_pad is None:
+        abytes_pad = _default_abytes_pad(fps)
+    r = silicon_r(width if width is not None else 320,
+                  height if height is not None else 192)
+    # ms per literal byte: chunked-DMA decode (a keyframe chunk is
+    # exactly the long DMA COPY the KF row measured) + SD wire
+    dma_rate = tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"]
+    busy_per_b = dma_rate * r / af / clock
+    wire_per_b = 1.0 / wire_eff
+    fixed_ms = ((fixed_t + tc["t_frame_fixed"]) * r / af / clock
+                + abytes_pad * AUDIO_COPY_T_PER_B / clock
+                + abytes_pad * wire_per_b)
+    avail_ms = KF_SPAN_PEAK_UTIL * period_ms - fixed_ms
+    if avail_ms <= 0:
+        return 1
+    L = int(avail_ms / (busy_per_b + wire_per_b))
+    # refine against the exact padded-payload wire cost until it fits
+    while L > 1:
+        padded = ((L + overhead_b + 511) // 512) * 512
+        t_body = _copy_t(L, tc["fetch_long"])
+        ms = (fixed_ms - abytes_pad * wire_per_b
+              + (t_body * r / af / clock)
+              + (abytes_pad + padded) * wire_per_b)
+        if ms <= KF_SPAN_PEAK_UTIL * period_ms:
+            break
+        L -= 512
     return max(L, 1)
 
 
-def plan_kf_chunks(raw_len, fps, width=None, height=None):
+def frame_wire_cap_bytes(fps, abytes_pad=None):
+    """Max unpadded PAYLOAD bytes whose 512-padded wire fetch, together
+    with the audio pad and the serial audio copy, fits KF_SPAN_PEAK_UTIL
+    of the frame period on SD wire time alone - the T2 peak bound in its
+    wire-only form, applied to the delta byte cap (delta decode-T is
+    separately capped by usable_budget_t)."""
+    tc = TMODEL_COEFFS
+    wire_eff = SD_WIRE_BYTES_PER_MS * tc["audio_factor"]
+    period_ms = 1000.0 / float(fps)
+    if abytes_pad is None:
+        abytes_pad = _default_abytes_pad(fps)
+    avail_ms = (KF_SPAN_PEAK_UTIL * period_ms
+                - abytes_pad * AUDIO_COPY_T_PER_B / tc["clock_khz"]
+                - abytes_pad / wire_eff)
+    if avail_ms <= 0:
+        return 1
+    padded = int(avail_ms * wire_eff) // 512 * 512
+    return max(padded, 1)
+
+
+def kf_chunk_budget_bytes(fps, first, width=None, height=None,
+                          abytes_pad=None):
+    """Max keyframe literal bytes this frame's chunk may hold. Two
+    bounds, the tighter wins:
+
+    DECODE-T: the modeled decode stays inside the usable per-frame T
+    budget (2% reserve), priced at the CHUNKED-DMA copy rate - a
+    keyframe chunk is exactly the long mem-to-mem DMA COPY the task-2
+    KF row measured, so the old fetch_long (LDI) pricing over-priced it
+    ~2.1x and under-sized nothing (flagged in e7b38fd's report,
+    deliberately left until this wave).
+
+    WIRE/SUPPLY (T2, charter E5): the frame's whole modeled supply time
+    (decode + audio copy + SD wire, the gate's prices) stays within
+    KF_SPAN_PEAK_UTIL of the frame period, so a keyframe event can
+    never demand more wire than a frame period buys - the peak is now
+    budget-independent by DESIGN instead of unbounded by accident.
+    abytes_pad: the encode's padded audio bytes/frame (None = the
+    conservative stereo layout for this fps).
+
+    Ported from the research prototype's kf_chunk_cap, re-costed for
+    the real COPY op overhead (KSTART/PAL dispatch on the first chunk).
+    A keyframe chunk is one long COPY straight down the paint order, so
+    it crosses every column boundary a gapped surface has - the
+    composition factor applies here too."""
+    tc = TMODEL_COEFFS
+    budget_t = usable_budget_t(fps, width, height) * 0.98 - tc["t_frame_fixed"]
+    # the COPY op's own dispatch + the terminal FEND/KFLIP dispatch
+    fixed_t = 2 * tc["t_op_parse"]
+    overhead_b = 4 + 1                       # COPY16 header + FEND/KFLIP
+    if first:
+        fixed_t += tc["t_palette"] + 2 * tc["t_op_parse"]   # KSTART + PAL
+        overhead_b += 1 + 1 + PAL_BLOCK_SIZE
+    budget_t -= fixed_t
+    # decode-T bound at the chunked-DMA rate, refined with the exact
+    # kernel-select model (sub-chunk remainders re-price as LDI)
+    dma_rate = tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"]
+    L_t = int(max(0.0, budget_t) / dma_rate)
+    while L_t > 1 and _copy_t(L_t, tc["fetch_long"]) > budget_t:
+        L_t -= 256
+    L_w = kf_chunk_wire_cap_bytes(fps, width, height, abytes_pad,
+                                  overhead_b=overhead_b, fixed_t=fixed_t)
+    return max(min(L_t, L_w), 1)
+
+
+def plan_kf_chunks(raw_len, fps, width=None, height=None, abytes_pad=None):
     """Returns a list of (start, length, first) chunks covering
     raw_len bytes, each sized to kf_chunk_budget_bytes."""
     chunks = []
     remaining, pos, first = raw_len, 0, True
     while remaining:
-        c = min(remaining, kf_chunk_budget_bytes(fps, first, width, height))
+        c = min(remaining, kf_chunk_budget_bytes(fps, first, width, height,
+                                                 abytes_pad))
         chunks.append((pos, c, first))
         pos += c
         remaining -= c
@@ -3874,13 +4108,15 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     # dithering into the lattice is now integral to the pipeline, and
     # --dither instead sets its amplitude - see _dither_amp).
     po_ceil = np.empty(nframes)
-    chg = np.zeros(nframes)
+    po_ceil_lm = np.empty(nframes)   # 4x4 local-mean ceiling (W4 trigger
+    chg = np.zeros(nframes)           # re-base) - same decode, second space
     for i in range(nframes):
-        po_ceil[i] = display_ceiling(orig[i], amplitude=dither_amp, mode=dither_mode)
+        po_ceil[i], po_ceil_lm[i] = display_ceilings(
+            orig[i], amplitude=dither_amp, mode=dither_mode)
         if i:
             d = np.abs(orig[i].astype(np.int16) - orig[i - 1].astype(np.int16)).max(axis=2)
             chg[i] = float((d > 10).mean())
-    return dict(orig=orig, po_ceil=po_ceil,
+    return dict(orig=orig, po_ceil=po_ceil, po_ceil_lm=po_ceil_lm,
                 chg=chg, audio_bytes=audio_bytes, channels=channels, rate=rate,
                 abytes_real=abytes_real, abytes_pad=abytes_pad, nframes=nframes)
 
@@ -4177,7 +4413,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 budget_scale=1.0, merge_gaps=True, hysteresis=True,
                 staleness_refresh=True, return_surfaces=False,
                 dither_amp=None, dither_mode=None, tile_slack=None,
-                ocopy=False):
+                ocopy=False, po_ceil_lm=None, abytes_pad=None,
+                kf_cadence_s=None):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -4197,13 +4434,36 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     dither_mode = _dither_mode(dither_mode)   # measured at this same
     # amplitude AND mode (encode() threads one pair to both
     # _extract_source and here)
+    # W4 trigger re-base: the drift/staleness comparisons live in 4x4
+    # local-mean space. A caller that did not thread po_ceil_lm (tests,
+    # standalone tooling) gets it derived here from the same per-frame
+    # fresh-palette decode _extract_source uses.
+    if po_ceil_lm is None:
+        po_ceil_lm = np.empty(N)
+        for _i in range(N):
+            po_ceil_lm[_i] = display_ceilings(
+                orig[_i], amplitude=dither_amp, mode=dither_mode)[1]
     # budget_scale (--stream-budget) scales BOTH delta caps - the
-    # streaming-supply operating-point lever (keyframe span chunks are
-    # deliberately NOT scaled: they are rare, amortized by the ring,
-    # and shrinking them just multiplies span length)
+    # streaming-supply operating-point lever. Keyframe span chunks are
+    # deliberately NOT budget-scaled (shrinking them with the budget
+    # just multiplies span length on encodes that never had a wire
+    # problem) - instead every chunk frame is bounded by the T2 peak
+    # pacing rule (KF_SPAN_PEAK_UTIL), which is budget-independent.
     usable = usable_budget_t(fps, width, height) * budget_scale
     refract = max(1, int(round(fps / 2)))
     cap_bytes = int(cap_bytes_frac * budget_scale * raw)
+    # The T2 peak WIRE bound applies to DELTA frames as well: a byte cap
+    # above the per-frame wire ceiling could emit a delta frame that no
+    # budget rung can fetch inside the period (reachable at budget ~1.0
+    # on the 320x256 shape, where 0.65 x raw = 53 KB of payload against
+    # a ~41 KB wire period). Delta decode-T is already capped by
+    # `usable`, so only the wire term is bounded here - the kf chunks
+    # above carry the full supply bound instead because their decode is
+    # not otherwise capped per frame.
+    cap_bytes = min(cap_bytes, frame_wire_cap_bytes(fps, abytes_pad))
+    # keyframe cadence (W4 item 2): frames per window; 0/None disables
+    kf_cadence_s = KF_CADENCE_S_DEFAULT if kf_cadence_s is None else float(kf_cadence_s)
+    cadence_frames = int(round(kf_cadence_s * fps)) if kf_cadence_s > 0 else 0
     hyst_eps = HYSTERESIS_EPS if hysteresis else None
     # Region-coherent tile size: a band of TILE_BAND rows (mode-0) / columns
     # (mode-1) is contiguous in paint order, so shortfall lags coherent
@@ -4224,6 +4484,9 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     tile_slack = TILE_SUPPLY_SLACK if tile_slack is None else float(tile_slack)
 
     scene_cuts = detect_scene_cuts(chg)
+    # full (non-first-shrunk) span length for the cadence end-of-clip
+    # guard - the chunk plan is content-independent, so one call serves
+    span_len_full = len(plan_kf_chunks(raw, fps, width, height, abytes_pad))
 
     # --- SP17 T5a: global-motion track (OPT-IN; with ocopy False none
     # of this state exists and every path below is byte-identical to
@@ -4259,6 +4522,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     payloads = []
     kf_span_ranges = []
     per_frame = {"bytes": [], "psnr": [], "mode": [], "binding": [], "drift": [],
+                 "drift_lm": [], "deficit_lm": [],   # W4 lm trigger diagnostics
                  "t": []}   # modeled decode T/frame (streaming supply check)
     decoded = []
     surfaces = []   # (return_surfaces) per-frame index surface the encoder
@@ -4284,6 +4548,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
         start_kf = False
         trigger = None
         drift_for_stats = None   # T1 step 5: recorded for plain delta frames
+        drift_lm_stats = None    # W4: lm-space trigger diagnostics for
+        deficit_lm_stats = None  # plain delta frames
         # T5a: the accumulated motion-locked dither phase - None until
         # a pan frame has advanced it (None keeps every dither call
         # byte-identical to the pre-T5a pipeline)
@@ -4304,9 +4570,14 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                                             phase=ph_arg)
             drift = po_ceil[i] - psnr(orig[i], target_dec)
             drift_for_stats = drift
+            # W4 re-base: held-palette fit loss in 4x4 local-mean space
+            # - the metric the dither grain cannot mask (the per-pixel
+            # drift above stays for the dissolve gate and diagnostics).
+            drift_lm = po_ceil_lm[i] - psnr_lm(orig[i], target_dec)
+            drift_lm_stats = drift_lm
             in_refract = (i - last_kf_end) <= refract
             ct = CUT_T_REFRACT if in_refract else CUT_T
-            dt = DRIFT_T_REFRACT if in_refract else DRIFT_T
+            dt = DRIFT_LM_T_REFRACT if in_refract else DRIFT_LM_T
             # Staleness of the ACTUAL decoded screen (held_pal[prev_flat]) vs
             # this source - the accumulated decoded error the drift trigger is
             # blind to (it only sees palette FIT). dec_now = current screen;
@@ -4318,6 +4589,13 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             # saturate the area gate (palette-collapse fix).
             dec_now = unflatten_frame(held_pal[prev_flat], height, width, column_major)
             decoded_deficit = po_ceil[i] - psnr(orig[i], dec_now)
+            # W4 re-base: the ACCUMULATED decoded error in local-mean
+            # space. The per-pixel deficit above is structurally pinned
+            # at/below zero by the dither displacement (measured -1.21
+            # dB mean on the owner's pan) and could never cross a +3 dB
+            # bar; the lm deficit is the error that actually grows.
+            deficit_lm = po_ceil_lm[i] - psnr_lm(orig[i], dec_now)
+            deficit_lm_stats = deficit_lm
             d_now = np.abs(target_dec.astype(np.int16) - dec_now.astype(np.int16)).max(axis=2)
             wrong_frac = float((d_now > 12).mean())
             # Dissolve/pan: sustained elevated change WITHOUT an impulse, WITH
@@ -4334,21 +4612,29 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                   and sustained_chg > DISSOLVE_CHG_T and drift > DISSOLVE_DRIFT_T):
                 start_kf, trigger = True, "dissolve"
             elif (staleness_refresh and not in_refract
-                  and decoded_deficit > STALE_DB and wrong_frac > WHOLE_FRAME_FRAC):
+                  and deficit_lm > STALE_LM_DB and wrong_frac > WHOLE_FRAME_FRAC):
                 # WHOLE-FRAME accumulated error -> atomic keyframe, not the
                 # incremental in-place repair (which would seam). Local
                 # staleness (small wrong_frac) is left to the aging + tile
                 # schedule to refresh coherently in the delta path.
                 start_kf, trigger = True, "staleness"
                 staleness_events += 1
-            elif drift > dt:
+            elif drift_lm > dt:
                 start_kf, trigger = True, "drift"
+            elif (cadence_frames and (i - last_kf_end) >= cadence_frames
+                  and span_len_full <= N - i):
+                # W4 keyframe cadence: no natural keyframe inside the
+                # window -> a prophylactic full repaint at the measured
+                # free point. Suppressed when the remaining clip cannot
+                # hold a full un-clamped span (a cadence keyframe must
+                # never buy tail-of-clip degradation events).
+                start_kf, trigger = True, "cadence"
 
         if start_kf:
             scene_end = next((c for c in scene_cuts if c > i), N)
             kf_pal = scene_palette(orig, i, scene_end, amplitude=dither_amp,
                                    mode=dither_mode)
-            planned = plan_kf_chunks(raw, fps, width, height)
+            planned = plan_kf_chunks(raw, fps, width, height, abytes_pad)
             # Cut lookahead (T1 step 4): if this span would take >1
             # chunk AND the very next frame independently looks like a
             # hard cut too, defer starting the span to i+1 instead -
@@ -4376,6 +4662,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 per_frame["mode"].append(mode + ":deferred_kf")
                 per_frame["binding"].append(binding)
                 per_frame["drift"].append(float("nan"))
+                per_frame["drift_lm"].append(float("nan"))
+                per_frame["deficit_lm"].append(float("nan"))
                 per_frame["t"].append(t)
                 decoded.append(dec_img)
                 if return_surfaces:
@@ -4427,6 +4715,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             per_frame["bytes"].append(len(payload))   # actual, not kf_chunk_cost's modeled estimate
             per_frame["binding"].append("kf")
             per_frame["drift"].append(float("nan"))
+            per_frame["drift_lm"].append(float("nan"))
+            per_frame["deficit_lm"].append(float("nan"))
             per_frame["t"].append(kf_chunk_cost(L, first)[1])
             if is_last:
                 prev_flat = staging
@@ -4560,6 +4850,12 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 per_frame["drift"].append(
                     drift_for_stats if drift_for_stats is not None
                     else float("nan"))
+                per_frame["drift_lm"].append(
+                    drift_lm_stats if drift_lm_stats is not None
+                    else float("nan"))
+                per_frame["deficit_lm"].append(
+                    deficit_lm_stats if deficit_lm_stats is not None
+                    else float("nan"))
                 per_frame["t"].append(pan["t"])
                 dec_img = unflatten_frame(held_pal[prev_flat], height,
                                           width, column_major).astype(np.uint8)
@@ -4581,6 +4877,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             per_frame["mode"].append(mode)
             per_frame["binding"].append(binding)
             per_frame["drift"].append(drift_for_stats if drift_for_stats is not None else float("nan"))
+            per_frame["drift_lm"].append(drift_lm_stats if drift_lm_stats is not None else float("nan"))
+            per_frame["deficit_lm"].append(deficit_lm_stats if deficit_lm_stats is not None else float("nan"))
             per_frame["t"].append(t)
             dec_img = unflatten_frame(held_pal[prev_flat], height, width, column_major).astype(np.uint8)
             decoded.append(dec_img)
@@ -4887,6 +5185,9 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
                 auto_budget_probes=report.auto_budget_probes,
                 auto_budget_ladder=[],
                 scene_cuts=cuts, kf_span_ranges=[[i, i] for i in range(nframes_out)],
+                # every direct frame is a full repaint - no trigger
+                # machinery runs, empty map for uniform parse (W4)
+                kf_triggers={},
                 # T5a: direct-serve never emits OCOPY (Wave 1 has no
                 # direct transport) - zero defaults for uniform parse
                 ocopy_frames=0, ocopy_stats=[],
@@ -4919,7 +5220,7 @@ def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
                         staleness_refresh=True, dither_amp=None,
                         dither_mode=None, target_util=None,
                         max_probes=AUTO_BUDGET_MAX_PROBES, tile_slack=None,
-                        ocopy=False):
+                        ocopy=False, kf_cadence_s=None):
     """SP17 T1. Derives the --stream-budget for this clip instead of
     making the author guess one, and returns the winning encode with it
     so nothing is encoded twice. Result dict: budget, result (the
@@ -4993,7 +5294,10 @@ def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
                                hysteresis=hysteresis,
                                staleness_refresh=staleness_refresh,
                                dither_amp=dither_amp, dither_mode=dither_mode,
-                               tile_slack=tile_slack, ocopy=ocopy)
+                               tile_slack=tile_slack, ocopy=ocopy,
+                               po_ceil_lm=ex.get("po_ceil_lm"),
+                               abytes_pad=ex.get("abytes_pad"),
+                               kf_cadence_s=kf_cadence_s)
             proj, stats = stream_gate_stats(res, ex, width, height, fps)
             if stats is None:
                 # Resident (or empty): no supply gate applies at all.
@@ -5171,7 +5475,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            dither=None, dither_mode=None, mono=False, merge_gaps=True, hysteresis=True,
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=None,
            budget_target=None, direct=False, retime=None, tile_slack=None,
-           direct_transport_factor=None, ocopy=False):
+           direct_transport_factor=None, ocopy=False, kf_cadence=None):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     dither (--dither): dither strength, a float 0.0-1.0. In the default
@@ -5244,6 +5548,13 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     at the constant. Only meaningful with direct=True; ignored (with
     a note) otherwise - the delta pipeline's gate does not use it.
 
+    kf_cadence (--kf-cadence, SP17 W4): keyframe cadence window in
+    SECONDS - a full keyframe span is forced whenever no natural
+    keyframe (cut / dissolve / staleness / drift) has occurred within
+    the window. None means KF_CADENCE_S_DEFAULT (5 s, the measured
+    free point: -0.1% bytes for +0.39 dB 4x4 on the owner's pan clip);
+    0 disables the cadence outright.
+
     ocopy (--ocopy, SP17 T5a): OPT-IN offset-copy motion coding.
     Detected whole-pixel global shifts are emitted as pan-span frames
     (KSTART + OCOPY(shift) + literal residual + KFLIP - atomic
@@ -5308,7 +5619,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
             merge_gaps=merge_gaps, hysteresis=hysteresis,
             staleness_refresh=staleness_refresh, dither_amp=dither_amp,
             dither_mode=dmode, target_util=budget_target,
-            tile_slack=slack_rel, ocopy=ocopy)
+            tile_slack=slack_rel, ocopy=ocopy, kf_cadence_s=kf_cadence)
         stream_budget = auto_search["budget"]
         if stream_budget is None:
             # Every probe was over the line - fall through to the gate's
@@ -5326,7 +5637,10 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                               merge_gaps=merge_gaps, hysteresis=hysteresis,
                               staleness_refresh=staleness_refresh,
                               dither_amp=dither_amp, dither_mode=dmode,
-                              tile_slack=slack_rel, ocopy=ocopy)
+                              tile_slack=slack_rel, ocopy=ocopy,
+                              po_ceil_lm=ex.get("po_ceil_lm"),
+                              abytes_pad=ex.get("abytes_pad"),
+                              kf_cadence_s=kf_cadence)
 
     payloads = result["payloads"]
     nframes_out = len(payloads)
@@ -5546,6 +5860,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                 auto_budget_ladder=(
                     [[b, u] for b, u in auto_search["probes"]] if auto_search else []),
                 scene_cuts=result["scene_cuts"], kf_span_ranges=result["kf_span_ranges"],
+                kf_triggers=result.get("kf_triggers", {}),
                 ocopy_frames=oc_frames,
                 ocopy_stats=result.get("ocopy_stats") or [],
             ), f, indent=1)

@@ -391,7 +391,7 @@ def t1_stream_supply_gate_e2e():
     expect(refuse_util > 1.0, f"refuse fixture util {refuse_util:.4f} not above 1.0")
 
     def fake_extract_source(src_path, w, h, fps_val, start, duration, ffmpeg, dither,
-                            mono, dither_mode=None, retime=None):
+                            mono, dither_mode=None, retime=None, **kw):
         return dict(orig=np.zeros((1, h, w, 3), dtype=np.uint8),
                     chg=np.zeros(1), po_ceil=np.zeros(1),
                     audio_bytes=bytes(nframes * abytes_real),
@@ -706,9 +706,12 @@ def t5_drift_under_trigger():
     result = _encode_clip(SINTEL, 256, 192, 25.0, "00:00:01", "4")
     if result is None:
         skip("Sintel source or ffmpeg not available")
-    drifts = result["per_frame"]["drift"]
-    bad = [(i, d) for i, d in enumerate(drifts) if not np.isnan(d) and d >= enc.DRIFT_T_REFRACT]
-    expect(bad == [], f"drift exceeded the refractory trigger on frames: {bad[:5]}")
+    # W4 re-base: the drift trigger lives in 4x4 local-mean space now -
+    # the guarantee is on drift_lm against the lm refractory bar (the
+    # per-pixel drift is diagnostics-only; it is structurally negative)
+    drifts = result["per_frame"]["drift_lm"]
+    bad = [(i, d) for i, d in enumerate(drifts) if not np.isnan(d) and d >= enc.DRIFT_LM_T_REFRACT]
+    expect(bad == [], f"lm drift exceeded the refractory trigger on frames: {bad[:5]}")
 
 
 @case(6, "dual-budget rate control - zero truncation on both research clips/shapes")
@@ -974,10 +977,10 @@ def t9_kf_span_end_of_clip_clamp():
     width, height = 256, 192   # 'classic' shape: raw=49152 falls in the T-model's 2-chunk range at 25fps
     raw = width * height
     planned = enc.plan_kf_chunks(raw, fps)
-    expect(len(planned) == 2,
-           f"test setup assumption broken: expected a 2-chunk keyframe plan at "
+    expect(len(planned) >= 2,
+           f"test setup assumption broken: expected a multi-chunk keyframe plan at "
            f"{width}x{height}@{fps}, got {len(planned)} - re-tune this test's shape "
-           f"if TMODEL_COEFFS changed")
+           f"if TMODEL_COEFFS changed (W4 peak pacing: 3 chunks here)")
 
     N = 6
     rng = np.random.default_rng(11)
@@ -2278,7 +2281,8 @@ def t13_amplitude_threading_e2e():
            "amp 1.0 vs the default or every assertion below is vacuous")
 
     def fake_extract_source(src_path, w, h, fps_val, start, duration,
-                            ffmpeg, dither, mono, dither_mode=None, retime=None):
+                            ffmpeg, dither, mono, dither_mode=None, retime=None,
+                            **kw):
         # honours its dither argument exactly as the real extractor
         # does: po_ceil is measured at the encode's own amplitude/mode
         amp = enc._dither_amp(dither)
@@ -4937,7 +4941,13 @@ def t20_ocopy_end_to_end():
     # must detect it, emit pan-span frames, and the reference decoder
     # must reproduce the encoder's own surface bookkeeping exactly.
     rng = np.random.default_rng(23)
-    W, H, n = 256, 128, 10
+    # H=96 keeps the STARTUP keyframe span single-chunk under the W4
+    # peak-pacing chunk sizes (raw 24576 < ~25 KB): this case tests PAN
+    # parity, and a multi-chunk startup span's hold frames have a
+    # display-bookkeeping convention of their own (encoder holds the
+    # incoming palette, the reference decoder the boot palette) that
+    # t3/t12 cover at surface level. W4: was 256x128.
+    W, H, n = 256, 96, 10
     master = rng.integers(0, 256, (H, W + 2 * n, 3), dtype=np.uint8)
     # smooth it a little so the palette is sane but keep texture
     m = master.astype(np.float32)
@@ -5014,6 +5024,158 @@ def t20_ocopy_end_to_end():
            "ocopy=False must be byte-identical to the default path")
     expect(r_off["ocopy_frames"] == 0 and r_off["ocopy_stats"] == [],
            "feature off: no ocopy bookkeeping")
+
+
+# =======================================================================
+# Step 21: SP17 W4 - keyframe-span peak pacing (T2/E5), keyframe
+# cadence, and the local-mean trigger re-base.
+# =======================================================================
+
+W4_SHAPES = [(320, 256), (256, 192), (320, 192), (320, 144), (256, 144)]
+
+
+def _kf_frame_supply_ms(L, first, width, height, abytes_pad, fps=25.0):
+    """Modeled supply time of one keyframe-span chunk frame at the
+    gate's own prices (decode busy + audio copy + SD wire)."""
+    tc = enc.TMODEL_COEFFS
+    af = tc["audio_factor"]
+    clock = tc["clock_khz"]
+    wire_eff = enc.SD_WIRE_BYTES_PER_MS * af
+    b, t = enc.kf_chunk_cost(L, first)
+    try:
+        # a keyframe chunk frame is dense by construction (one long
+        # copy at the cap) - the density-keyed model prices it at the
+        # dense anchor
+        r = enc.silicon_r(width, height, density=1.0)
+    except TypeError:      # pre-density-key silicon_r (commit order)
+        r = enc.silicon_r(width, height)
+    busy = t * r / af / clock
+    padded = ((b + 511) // 512) * 512
+    audio_ms = abytes_pad * enc.AUDIO_COPY_T_PER_B / clock
+    return busy + audio_ms + (abytes_pad + padded) / wire_eff, padded
+
+
+@case(21, "W4 T2 - keyframe-span chunk frames fit the frame period (peak pacing bound)")
+def t21_kf_peak_bound():
+    fps, apad = 25.0, 1536   # stereo, the largest layout
+    period = 1000.0 / fps
+    expect(0.90 <= enc.KF_SPAN_PEAK_UTIL < 1.0,
+           f"the peak bound must state a real margin under 1.00, got {enc.KF_SPAN_PEAK_UTIL}")
+    for w, h in W4_SHAPES:
+        for first in (True, False):
+            L = enc.kf_chunk_budget_bytes(fps, first, w, h, apad)
+            ms, padded = _kf_frame_supply_ms(L, first, w, h, apad, fps)
+            expect(ms <= enc.KF_SPAN_PEAK_UTIL * period + 0.15,
+                   f"{w}x{h} first={first}: kf chunk frame supply {ms:.2f} ms "
+                   f"exceeds the {enc.KF_SPAN_PEAK_UTIL:.2f} x {period:.0f} ms bound")
+            # the acceptance metric itself: WIRE time alone under the period
+            wire_ms = (apad + padded) / (enc.SD_WIRE_BYTES_PER_MS
+                                          * enc.TMODEL_COEFFS["audio_factor"])
+            expect(wire_ms < period,
+                   f"{w}x{h}: peak kf frame wire {wire_ms:.2f} ms >= period")
+            # ... and the decode-T budget contract is still honoured
+            expect(enc.kf_chunk_cost(L, first)[1]
+                   <= enc.usable_budget_t(fps, w, h) * 0.98 + 1.0,
+                   f"{w}x{h} first={first}: chunk decode T over the usable budget")
+        # the plan still covers the surface exactly, first chunk first
+        plan = enc.plan_kf_chunks(w * h, fps, w, h, apad)
+        expect(sum(c[1] for c in plan) == w * h, "plan must cover raw bytes")
+        expect(plan[0][2] and not any(f for _, _, f in plan[1:]),
+               "exactly the first chunk is 'first'")
+    # the DELTA byte cap is wire-bounded too (the 320x256 budget-1.0 hole:
+    # 0.65 x raw = 53 KB of payload against a ~41 KB wire period)
+    wc = enc.frame_wire_cap_bytes(fps, apad)
+    expect(wc + apad <= enc.KF_SPAN_PEAK_UTIL * period
+           * enc.SD_WIRE_BYTES_PER_MS * enc.TMODEL_COEFFS["audio_factor"] + 512,
+           "frame_wire_cap_bytes must respect the peak wire bound")
+    expect(wc < int(0.65 * 320 * 256),
+           "the wire cap must actually bind the 320x256 byte cap at budget 1.0")
+    # conservative default pad: omitting abytes_pad must never yield a
+    # BIGGER chunk than the stereo layout's own pad at the same fps
+    expect(enc.kf_chunk_budget_bytes(fps, False, 320, 256)
+           <= enc.kf_chunk_budget_bytes(fps, False, 320, 256, 1024),
+           "the default (stereo) pad must be the conservative direction")
+
+
+@case(21, "W4 - keyframe cadence: window honoured, 0 disables, tail guard, default pinned")
+def t21_kf_cadence():
+    expect(enc.KF_CADENCE_S_DEFAULT == 5.0,
+           f"cadence default must be the measured free point 5.0 s, got {enc.KF_CADENCE_S_DEFAULT}")
+    rng = np.random.default_rng(11)
+    W, H, n = 256, 64, 80   # 3.2 s at 25 fps
+    base = rng.integers(0, 256, (H, W, 3), dtype=np.uint8)
+    orig = np.repeat(base[None], n, axis=0).copy()
+    for i in range(n):        # tiny localized motion, no cuts, no drift
+        orig[i, (i % H):(i % H) + 1, :8] = (i * 5) % 255
+    chg = np.zeros(n); chg[1:] = 0.001
+    po = np.array([enc.display_ceiling(orig[i]) for i in range(n)])
+    lm = np.array([enc.display_ceilings(orig[i])[1] for i in range(n)])
+
+    r_off = enc.encode_clip(orig, chg, po, W, H, 25.0, po_ceil_lm=lm, kf_cadence_s=0)
+    expect("cadence" not in r_off["kf_triggers"], "cadence 0 must disable the trigger")
+
+    r_1s = enc.encode_clip(orig, chg, po, W, H, 25.0, po_ceil_lm=lm, kf_cadence_s=1.0)
+    expect(r_1s["kf_triggers"].get("cadence", 0) >= 2,
+           f"a 1 s cadence over 3.2 quiet seconds must fire repeatedly, got {r_1s['kf_triggers']}")
+    # window honoured: consecutive keyframe spans at least the window apart
+    spans = r_1s["kf_span_ranges"]
+    for (s0, e0), (s1, e1) in zip(spans, spans[1:]):
+        expect(s1 - e0 >= 25, f"cadence fired inside the window: span end {e0} -> start {s1}")
+
+    # default (5 s) never fires inside a 3.2 s quiet clip
+    r_def = enc.encode_clip(orig, chg, po, W, H, 25.0, po_ceil_lm=lm)
+    expect("cadence" not in r_def["kf_triggers"],
+           f"default 5 s cadence must not fire inside 3.2 s, got {r_def['kf_triggers']}")
+    # ... and the default path is byte-identical to an explicit 5.0
+    r_5 = enc.encode_clip(orig, chg, po, W, H, 25.0, po_ceil_lm=lm, kf_cadence_s=5.0)
+    expect([bytes(p) for p in r_def["payloads"]] == [bytes(p) for p in r_5["payloads"]],
+           "default cadence must be exactly 5.0 s")
+
+
+@case(21, "W4 - drift/staleness triggers re-based on the 4x4 local-mean metric")
+def t21_lm_trigger_rebase():
+    # the re-derived thresholds (W4 corpus derivation - see the
+    # STALE_LM_DB block in nxv2enc.py for the distribution table)
+    expect(enc.STALE_LM_DB == 15.0,
+           f"STALE_LM_DB must be the corpus-derived 15.0, got {enc.STALE_LM_DB}")
+    expect((enc.DRIFT_LM_T, enc.DRIFT_LM_T_REFRACT) == (1.5, 3.0),
+           f"DRIFT_LM thresholds must be the corpus-derived 1.5/3.0")
+    # the local-mean metric itself: dither-like +/-1 checkerboard noise is
+    # invisible to it (means cancel), a +8 uniform shift is fully charged
+    rng = np.random.default_rng(4)
+    a = rng.integers(8, 248, (64, 64, 3), dtype=np.uint8)
+    noise = ((np.indices((64, 64)).sum(axis=0) % 2) * 2 - 1)[..., None]
+    expect(enc.psnr_lm(a, (a.astype(np.int16) + noise).astype(np.uint8)) > 45.0,
+           "psnr_lm must cancel zero-mean dither grain")
+    shifted = np.clip(a.astype(np.int16) + 8, 0, 255).astype(np.uint8)
+    expect(abs(enc.psnr_lm(a, shifted) - enc.psnr(a, shifted)) < 1.0,
+           "psnr_lm must fully charge a structural (mean) shift")
+
+    # STRUCTURAL FIRING CASE: whole-frame slow luminance drift with a
+    # stable histogram and a starved budget - the decoded screen falls
+    # ever further behind. The retired per-pixel bar could not see this
+    # (achieved per-pixel PSNR tracks po_ceil through the dither
+    # displacement); the lm deficit crosses STALE_LM_DB and must fire.
+    W, H, n = 256, 64, 60
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+    base = np.stack([120 + 60 * np.sin(xx * 0.2), 120 + 60 * np.sin(yy * 0.17),
+                     120 + 60 * np.sin((xx + yy) * 0.11)], axis=2)
+    orig = np.empty((n, H, W, 3), dtype=np.uint8)
+    for i in range(n):
+        orig[i] = np.clip(base + i * 1.5, 0, 255).astype(np.uint8)  # slow global rise
+    chg = np.zeros(n)
+    for i in range(1, n):
+        d = np.abs(orig[i].astype(np.int16) - orig[i - 1].astype(np.int16)).max(axis=2)
+        chg[i] = float((d > 10).mean())
+    po = np.array([enc.display_ceiling(orig[i]) for i in range(n)])
+    lm = np.array([enc.display_ceilings(orig[i])[1] for i in range(n)])
+    r = enc.encode_clip(orig, chg, po, W, H, 25.0, po_ceil_lm=lm,
+                        budget_scale=0.05, kf_cadence_s=0)
+    fired = (r["kf_triggers"].get("staleness", 0)
+             + r["kf_triggers"].get("drift", 0)
+             + r["kf_triggers"].get("dissolve", 0))
+    expect(fired > 0,
+           f"a starved whole-frame drift must fire a re-based trigger, got {r['kf_triggers']}")
 
 
 def main():

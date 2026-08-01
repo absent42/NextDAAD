@@ -542,6 +542,16 @@ def main(argv):
                           "fully compatible. Without this flag the "
                           "encode is byte-identical to the pre-T5a "
                           "encoder")
+    ap.add_argument("--kf-cadence", dest="kf_cadence", type=float,
+                     default=None, metavar="SECONDS",
+                     help="keyframe cadence window in seconds (default: "
+                          "5.0): force a full keyframe span whenever no "
+                          "natural keyframe (cut/dissolve/staleness/"
+                          "drift) has occurred within the window - "
+                          "measured FREE in bytes at 5 s (-0.1%% for "
+                          "+0.39 dB 4x4 local-mean on a slow pan; a 2 s "
+                          "cadence costs +9.3%% bytes and is not the "
+                          "default). 0 disables the cadence")
     ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
     ap.add_argument("--duration", help="clip duration in seconds")
     ap.add_argument("--report", help="write the BuildReport as JSON to "
@@ -572,6 +582,9 @@ def main(argv):
         raise SystemExit(f"error: --budget-target must be in (0, 1], got {args.budget_target}")
     if args.dither is not None and not (0.0 <= args.dither <= 1.0):
         raise SystemExit(f"error: --dither must be in [0, 1], got {args.dither}")
+    if args.kf_cadence is not None and args.kf_cadence < 0:
+        raise SystemExit(f"error: --kf-cadence must be >= 0 seconds "
+                         f"(0 disables), got {args.kf_cadence}")
     # Expert override, but not an unbounded one: below the bare-wire
     # factor (1.0 would mean zero transport glue; the T8 prediction
     # floor is 0.93) or above the measured pre-T8 1.20 it is a typo,
@@ -627,7 +640,7 @@ def main(argv):
         budget_target=args.budget_target, direct=args.direct,
         retime=args.retime, tile_slack=args.tile_slack,
         direct_transport_factor=args.direct_transport_factor,
-        ocopy=args.ocopy)
+        ocopy=args.ocopy, kf_cadence=args.kf_cadence)
 
     stream_line = ""
     if report.mode == "direct":
