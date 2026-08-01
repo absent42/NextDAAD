@@ -49,3 +49,22 @@ def test_write_sidecar(tmp_path):
     sc = tmp_path / "003.vid.args"
     write_sidecar(sc, "pal9k", ["--mono"])
     assert sc.read_bytes() == arg_hash("pal9k", ["--mono"]).encode()  # no newline
+
+
+def test_insert_with_no_vidopts_anchor(tmp_path):
+    """Insert new VIDOPTS when no VIDOPTS* line exists anywhere.
+    Regression test: must not inject spurious blank line or lose trailing newline."""
+    cfg = tmp_path / "CONFIG.BAT"
+    original = b'@echo off\r\nSET GAME=\r\n'
+    cfg.write_bytes(original)
+
+    write_vidopts_line(cfg, "005", "--mono")
+    after = cfg.read_bytes()
+
+    # Should be original + new line with CRLF, no blank line injected
+    expected = original + b'SET VIDOPTS_005=--mono\r\n'
+    assert after == expected, f"Expected {expected!r}, got {after!r}"
+
+    # Verify parse_config reads it correctly
+    parsed = parse_config(cfg)
+    assert parsed.per_clip["005"] == "--mono"

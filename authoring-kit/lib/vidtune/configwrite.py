@@ -34,9 +34,17 @@ def write_vidopts_line(config_path, num3, opts, expected_mtime=None):
         else:
             del lines[idx]
     elif opts:
-        last = max((i for i, ln in enumerate(lines) if any_vidopts.match(ln)),
-                   default=len(lines) - 1)
-        lines.insert(last + 1, new_line)
+        # Find the LAST VIDOPTS line
+        vidopts_indices = [i for i, ln in enumerate(lines) if any_vidopts.match(ln)]
+        if vidopts_indices:
+            last = max(vidopts_indices)
+            lines.insert(last + 1, new_line)
+        else:
+            # No VIDOPTS line found, insert before trailing sentinel if present
+            if lines and lines[-1] == b'':
+                lines.insert(len(lines) - 1, new_line)
+            else:
+                lines.append(new_line)
 
     path.with_suffix(".BAT.bak").write_bytes(raw)
     path.write_bytes(eol.join(lines))
