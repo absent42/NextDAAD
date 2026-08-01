@@ -2455,22 +2455,28 @@ def t11_scroll_delta_rejects_blank_vs_blank_coincidence():
     row changed in place", not a whole-screen redraw.
     """
     import tilemap
+    # INVENTED text, deliberately: this case reproduces the SHAPE of a
+    # real capture (a status row, a wrapped description, a blank, an
+    # object list, a blank, the prompt row, with blank runs above and
+    # below), and the shape is the whole of what it tests. Game text
+    # belongs to the game, not to this repository - the same rule the
+    # Wave B review applied to the ZX cases.
     pre = [""] * 12 + [
-        "Forsaken Path".ljust(80),
-        "You are standing on a path deep in the Black Forest".ljust(80),
-        "from here, on a night like this".ljust(80),
-        "disappear without ever being seen again".ljust(80),
+        "Sunken Wharf".ljust(80),
+        "Rotten planking runs out over water you cannot see".ljust(80),
+        "the bottom of, and the pilings groan whenever".ljust(80),
+        "anything at all shifts its weight out there".ljust(80),
         "",
         "You notice:".ljust(80),
-        "carriage, horses and coachman.".ljust(80),
+        "a coil of rope, a bailing tin and the ferryman.".ljust(80),
         "",
         ">".ljust(80),
     ] + [""] * 11
     assert len(pre) == 32, len(pre)
     post = list(pre)
-    post[12] = "Forsaken Path - Turns: 1".ljust(80)   # only this row changed
+    post[12] = "Sunken Wharf - Turns: 1".ljust(80)    # only this row changed
     assert tilemap.scroll_delta(pre, post) is None, tilemap.scroll_delta(pre, post)
-    assert tilemap.new_text(pre, post) == ["Forsaken Path - Turns: 1"], \
+    assert tilemap.new_text(pre, post) == ["Sunken Wharf - Turns: 1"], \
         tilemap.new_text(pre, post)
     result = tilemap.transition(pre, post)
     assert result["shift"] is None, result

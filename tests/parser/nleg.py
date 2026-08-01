@@ -909,6 +909,19 @@ class NextLeg:
             # interpreter is halted with interrupts off and will never
             # reach another lock, page or keypress, so every other signal
             # below is frozen from here on. See fatal_error().
+            #
+            # ORDERING CAVEAT, deliberate and currently unreachable: this
+            # returns WITHOUT reading the page counter, so a page that
+            # fired, was auto-dismissed, and was followed by a runtime
+            # error all inside one poll window would be dropped unread -
+            # its dump is on disk but nothing appends it. Unreachable in
+            # the fixture that produces the only runtime error the
+            # harness drives: condacts.dsf's E03 is raised from a
+            # PROCESS chain that runs AFTER an ANYKEY the harness has to
+            # dismiss itself, so a poll always lands between the last
+            # page and the error. If a game is ever driven that can
+            # raise mid-page, read the counter first and drain it before
+            # returning.
             err = self.fatal_error()
             if err:
                 _dbg("interpreter raised runtime error %d - halted", err)
