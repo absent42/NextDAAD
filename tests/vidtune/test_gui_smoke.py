@@ -180,3 +180,33 @@ def test_load_decode_callback_runs_on_gui_thread(qtbot, tmp_path):
 
     assert pane.decode_done_idents == [gui_ident]
     assert pane.decode_done_on_gui_thread == [True]
+
+
+def test_preview_argv_pins_budget_and_segment(fixture_kit, qtbot):
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    win.select_clip("001")
+    win.pinned_budgets["001"] = 0.72
+    win.preview.set_frames(encoded=_frames(50), source=None, fps=25,
+                           column_major=False)
+    win.preview.seek(10); win.preview.set_in()
+    win.preview.seek(35); win.preview.set_out()
+    argv = win.preview_argv("001")
+    assert "--stream-budget" in argv and "0.72" in argv
+    assert "--start" in argv and "0.4" in argv
+    assert "--duration" in argv and "1.0" in argv
+
+
+def test_full_argv_never_pins(fixture_kit, qtbot):
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    win.select_clip("001")
+    win.pinned_budgets["001"] = 0.72
+    assert "--stream-budget" not in win.full_argv("001")
+
+
+def test_accept_requires_full_encode(fixture_kit, qtbot):
+    win = MainWindow(fixture_kit)
+    qtbot.addWidget(win)
+    win.select_clip("001")
+    assert not win.accept_button.isEnabled()
