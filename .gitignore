@@ -2,7 +2,10 @@
 !.vscode/launch.json
 !.vscode/tasks.json
 .tmp/*
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/parser-testing/
 CLAUDE.md
 docs/
 /tools/
