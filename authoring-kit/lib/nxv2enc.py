@@ -920,6 +920,78 @@ SD_WIRE_BYTES_PER_MS = 1264 * 1024 / 1000.0   # silicon prefill floor -
 # one double-buffer half per frame, so the term tracks the layout.
 AUDIO_COPY_T_PER_B = 25.0
 
+# ---------------------------------------------------------------------
+# LOW-FPS PACE CONTENTION (SP17, silicon 2026-08-02). The supply gate
+# below is EXACTLY fps-invariant by construction - every term is a
+# per-frame quantity over a per-frame period, so halving the fps doubles
+# both and the utilisation does not move. Silicon says that invariance
+# is wrong at 12.5 fps, and the player says why.
+#
+# THE PLAYER MECHANISM (src/video.asm, the T10 circular audio feed).
+# The writer may never be more than NXV_AUD_FRAME_MAX (2544) bytes ahead
+# of the ISR read pointer, and at the pace release the ring already
+# holds one whole frame of audio. So the NEXT frame's feed fits the
+# single post-present pump (the `.qnext` `ld bc,$FFFF` call) if and only
+# if 2 x aBytes <= 2544. Above that the remainder is ROOM-LIMITED and
+# trickles from the `.pace` spin - which is the SD producer's only
+# window. Each spin iteration is then
+#     vid_pace_poll -> vid_aud_pump (full path) -> ONE vid_prod_step
+# instead of poll -> `ret z` -> produce, so every produced 512 B block
+# now also pays a complete pump call: two room computations,
+# vid_src_seek (ring-page derive + MMU6 map + cursor spill), a ~12-15 B
+# LDIR, the budget/feedRem/write-pointer accounting and vid_rl_mod's
+# 24-bit modulo. Only the LDIR is charged today, through
+# AUDIO_COPY_T_PER_B; the rest is unpriced.
+#
+#   trickle_frac = max(0, 2*aBytes - AUD_FRAME_MAX) / aBytes
+#   25 fps stereo  aBytes 1250 -> 2500 <= 2544 -> 0.0000 (EXACTLY zero)
+#   25 fps mono    aBytes  933 -> 1866 <= 2544 -> 0.0000
+#   23.976 stereo  aBytes 1304                 -> 0.049
+#   20 fps stereo  aBytes 1562                 -> 0.371
+#   12.5 fps stereo aBytes 2500                -> 0.9824
+#
+# THE SILICON THAT FOUND IT (three independent rows, 2026-08-02, all
+# 320x256 stereo streamed, all admitted by the uncorrected gate):
+#   053 boat 12.5      gate 0.890 -> shallow ring
+#   054 Caprica lt 12.5 gate 0.898 -> shallow ring
+#   061 Caprica bm 12.5 gate 0.904 -> 2.9% OVER RATE, 85/107 underruns,
+#                                      min ring depth 4 blocks
+# The 25 fps arms of the same sources are clean at the same demand per
+# second (048 boat 522.3 KB/s vs 053 518.0; 060 Caprica bm 612.4 vs 061
+# 616.9), and the emitted op census matches per second (048/053: 8373 vs
+# 8410 ops/s, 16.86 vs 16.79 model T per payload byte) - so the missing
+# time is not decode, and silicon_r is not the defect. It is supply, and
+# it appears only where the pace loop is contended.
+#
+# AUD_PUMP_CALL_T is the HAND COUNT of that pump path from
+# src/video.asm (~1660 T unarmed, ~1950 T with the armed audio tax - the
+# gate's other terms are true wall time, so the armed figure is the one
+# used), NOT a fit to the desired verdict. The three rows above bracket
+# it at 1470-2890 T (1470 puts 054 at the 0.95 warn line, 2224 puts 061
+# exactly on the 1.00 refusal line, and 052 - clean at 12.5, util 0.727,
+# budget 1.00 - tolerates up to 7809 T), and the hand count sits inside
+# that bracket. MEASUREMENT ROW: a DEBUG timeline pair on the already
+# staged 048 (25 fps) and 053 (12.5 fps) - same source, same shape, same
+# demand per second - gives (PACE ticks / blocks produced) at each rate;
+# the difference divided by trickle_frac is this constant directly.
+# Card #8 already holds the 25 fps side (1163-1166 B/ms).
+#
+# RESIDUAL, DISCLOSED. At 1950 T the corrected gate reads the shipped
+# 061 at 0.988, not the 1.029 it measured - ~4% still optimistic on the
+# worst row (2224 T would put it exactly on the refusal line). The
+# re-budget absorbs it: 061 re-derives to ~0.84 and lands its TRUE
+# utilisation near 0.94. Named here so the measurement row above closes
+# it rather than a nudge.
+#
+# SCOPE. Streamed ring transport ONLY. The DIRECT path never runs the
+# producer (SD-to-surface, no ring) and has its own gate, and row 057
+# (320x256 @12.5 --direct) is silicon-clean - so direct_supply_check and
+# SD_WIRE_BYTES_PER_MS (co-fitted to DIRECT_TRANSPORT_FACTOR) are left
+# alone. At 25 fps the term is EXACTLY zero, so every silicon anchor the
+# gate is calibrated on (007/008/009, Card #3, Card #8) is untouched.
+# ---------------------------------------------------------------------
+AUD_PUMP_CALL_T = 1950.0
+
 STREAM_RESIDENT_POOL_B = 78 * 16384            # fresh-boot 2MB pool ring
 STREAM_WARN_UTIL = 0.90
 STREAM_TARGET_UTIL = 0.90                       # suggestion target
@@ -1138,16 +1210,31 @@ def silicon_r(width, height, density=None):
     return r_lo + (r_hi - r_lo) * (d - d_lo) / (d_hi - d_lo)
 
 
+def pace_trickle_frac(audio_real_bytes):
+    """Fraction of a frame's audio feed that is ROOM-LIMITED and must
+    trickle from the player's `.pace` spin (see the LOW-FPS PACE
+    CONTENTION block). 0.0 whenever 2 x aBytes fits the ring's usable
+    span, which is every fps the supply gate was calibrated at."""
+    a = float(audio_real_bytes or 0)
+    if a <= 0.0:
+        return 0.0
+    return max(0.0, min(1.0, (2.0 * a - AUD_FRAME_MAX) / a))
+
+
 def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
-                         width, height):
+                         width, height, audio_real_bytes=None):
     """Mean-rate streaming feasibility for an emitted stream. mean_t =
     mean modeled decode T/frame (TMODEL prices), mean_demand_bytes =
     mean (audio pad + 512-padded payload) per frame. Returns a dict:
-    utilization (busy + audio copy + SD time over the frame period;
-    > 1.0 is unstreamable), busy_ms, audio_ms, sd_ms, period_ms,
-    demand_kbs, and suggested_budget (the --stream-budget scale that
-    lands the mean at STREAM_TARGET_UTIL, from the audio-demand-
-    invariant solve)."""
+    utilization (busy + audio copy + SD time + pace-pump contention
+    over the frame period; > 1.0 is unstreamable), busy_ms, audio_ms,
+    sd_ms, pump_ms, period_ms, demand_kbs, and suggested_budget (the
+    --stream-budget scale that lands the mean at STREAM_TARGET_UTIL,
+    from the audio-demand-invariant solve). audio_real_bytes: the
+    encode's REAL (pre-pad) audio bytes/frame - the quantity the
+    player's ring room test uses; None (legacy callers) prices no pace
+    contention, which is correct at every fps at or above ~24.6 stereo
+    / ~18.3 mono."""
     af = TMODEL_COEFFS["audio_factor"]
     clock = TMODEL_COEFFS["clock_khz"]
     period_ms = 1000.0 / float(fps)
@@ -1236,17 +1323,27 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     # it is period the producer never gets (see AUDIO_COPY_T_PER_B)
     audio_ms = audio_pad_bytes * AUDIO_COPY_T_PER_B / clock
     sd_ms = mean_demand_bytes / wire_eff
-    util = (busy_ms + audio_ms + sd_ms) / period_ms
+    # PACE CONTENTION (see the LOW-FPS PACE CONTENTION block): when the
+    # audio feed is room-limited the producer pays one full vid_aud_pump
+    # per produced 512 B block over trickle_frac of the frame. EXACTLY
+    # zero at every calibrated fps, so this line cannot move a 25 fps
+    # encode by so much as a rounding tick.
+    pump_ms = (pace_trickle_frac(audio_real_bytes)
+               * (mean_demand_bytes / 512.0) * AUD_PUMP_CALL_T / clock)
+    util = (busy_ms + audio_ms + sd_ms + pump_ms) / period_ms
     # scaling the operating point scales busy and the payload part of
-    # demand; the audio pad and its copy cost are invariant
+    # demand; the audio pad and its copy cost are invariant. pump_ms is
+    # proportional to the produced blocks, so it scales too - which is
+    # what makes a contended clip RE-BUDGET rather than merely fail.
     audio_sd_ms = audio_pad_bytes / wire_eff
     payload_sd_ms = sd_ms - audio_sd_ms
     fixed = audio_sd_ms + audio_ms
-    scalable = busy_ms + payload_sd_ms
+    scalable = busy_ms + payload_sd_ms + pump_ms
     suggested = ((period_ms * STREAM_TARGET_UTIL - fixed) / scalable
                  if scalable > 0 else 1.0)
     return dict(utilization=util, busy_ms=busy_ms, audio_ms=audio_ms,
-                sd_ms=sd_ms, period_ms=period_ms, audio_sd_ms=audio_sd_ms,
+                sd_ms=sd_ms, pump_ms=pump_ms,
+                period_ms=period_ms, audio_sd_ms=audio_sd_ms,
                 demand_kbs=mean_demand_bytes * float(fps) / 1024.0,
                 suggested_budget=max(0.05, min(1.0, suggested)))
 
@@ -4075,6 +4172,7 @@ class BuildReport:
     stream_utilization: float = 0.0     # (busy + SD)/period, mean-rate
     stream_busy_ms: float = 0.0
     stream_sd_ms: float = 0.0
+    stream_pump_ms: float = 0.0
     stream_demand_kbs: float = 0.0
     # Delta-starvation diagnostics (report-only, see starvation_stats).
     # Streaming encodes only - the direct-serve preset is all-literal,
@@ -5105,6 +5203,7 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
                 stream_checked=True,
                 stream_utilization=report.stream_utilization,
                 stream_busy_ms=0.0, stream_sd_ms=report.stream_sd_ms,
+                stream_pump_ms=0.0,
                 stream_demand_kbs=report.stream_demand_kbs,
                 # Direct-serve is all-literal: no deltas, nothing to
                 # starve. The keys are emitted at their zero/None
@@ -5156,7 +5255,8 @@ def stream_gate_stats(result, ex, width, height, fps):
     mean_t = sum(result["per_frame"]["t"]) / n
     mean_demand = (projected_total - HEADER_SIZE) / n
     return projected_total, stream_supply_check(
-        mean_t, mean_demand, ex["abytes_pad"], fps, width, height)
+        mean_t, mean_demand, ex["abytes_pad"], fps, width, height,
+        audio_real_bytes=ex.get("abytes_real"))
 
 
 def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
@@ -5607,7 +5707,10 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                 f"error: this encode cannot stream - mean supply "
                 f"utilization {stream_stats['utilization']:.2f} > 1.00 "
                 f"(decode {stream_stats['busy_ms']:.1f} ms + SD fetch "
-                f"{stream_stats['sd_ms']:.1f} ms per {stream_stats['period_ms']:.0f} ms frame; "
+                f"{stream_stats['sd_ms']:.1f} ms"
+                + (f" + pace-pump contention {stream_stats['pump_ms']:.1f} ms"
+                   if stream_stats.get("pump_ms") else "")
+                + f" per {stream_stats['period_ms']:.0f} ms frame; "
                 f"{stream_stats['demand_kbs']:.0f} KB/s demand vs the "
                 f"~{SD_WIRE_BYTES_PER_MS * TMODEL_COEFFS['audio_factor'] * 1000 / 1024:.0f} KB/s "
                 f"pace-window wire rate). It is {projected_total} B - "
@@ -5747,6 +5850,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
         stream_utilization=stream_stats["utilization"] if stream_stats else 0.0,
         stream_busy_ms=stream_stats["busy_ms"] if stream_stats else 0.0,
         stream_sd_ms=stream_stats["sd_ms"] if stream_stats else 0.0,
+        stream_pump_ms=stream_stats["pump_ms"] if stream_stats else 0.0,
         stream_demand_kbs=stream_stats["demand_kbs"] if stream_stats else 0.0,
         delta_frames=starve["delta_frames"],
         budget_bound_frames=starve["budget_bound"],
@@ -5777,6 +5881,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                 stream_utilization=report.stream_utilization,
                 stream_busy_ms=report.stream_busy_ms,
                 stream_sd_ms=report.stream_sd_ms,
+                stream_pump_ms=report.stream_pump_ms,
                 stream_demand_kbs=report.stream_demand_kbs,
                 delta_frames=report.delta_frames,
                 budget_bound_frames=report.budget_bound_frames,

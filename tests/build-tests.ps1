@@ -965,7 +965,15 @@ if ($Font) {
 # 010/011 byte-identical; 008 re-encodes +3072 B and 009 -9728 B with
 # roll traffic in place of their cadence keyframes (kf events 2 -> 1
 # each). See $encoderGeneration 'pal9o' in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9o'
+# BUMP pal9o -> pal9p (SP17 low-fps supply + roll guards, 2026-08-02):
+# the streamed supply gate now prices the player's low-fps pace
+# contention (room-limited T10 audio feed stealing the SD producer's
+# only window - three 12.5 fps silicon rows over rate at gate 0.89-0.90)
+# and the W5 rolling refresh gains its two corpus-sweep guards. Every
+# leg/long fixture is 25 fps, where the contention term is EXACTLY zero,
+# so the gate change moves no fixture. See $encoderGeneration 'pal9p' in
+# authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9p'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

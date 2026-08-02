@@ -233,7 +233,20 @@ if (-not $sources) { exit 0 }
 # bytes; clips shorter than the window or cut-dense re-encode
 # byte-identical but re-encode anyway because the tag is in their
 # cache name.
-$encoderGeneration = 'pal9o'
+# BUMP pal9o -> pal9p (SP17 low-fps supply + roll guards, 2026-08-02),
+# ONE bump covering both default-path changes of this sitting:
+# - LOW-FPS PACE CONTENTION priced in the streamed supply gate. The gate
+#   was exactly fps-invariant by construction and its whole silicon
+#   calibration is at 25 fps; three 12.5 fps silicon rows ran over rate
+#   with ring underruns while it read them 0.89-0.90. Below ~24.6 fps
+#   stereo / ~18.3 mono the player's T10 audio feed is room-limited and
+#   trickles from the .pace spin, so every produced 512 B block also
+#   pays a full vid_aud_pump - unpriced until now (nxv2enc LOW-FPS PACE
+#   CONTENTION block). EXACTLY zero at 25 fps, so no 25 fps encode moves
+#   by a rounding tick; low-fps STREAMED clips re-derive a lower budget
+#   and emit different bytes. Direct-serve is untouched (its own gate,
+#   no ring producer - row 057 is silicon-clean at 320x256@12.5).
+$encoderGeneration = 'pal9p'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

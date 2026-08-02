@@ -5154,6 +5154,44 @@ def t21_silicon_r_rekey():
            "density 1.0 must clamp to the dense anchor")
 
 
+@case(21, "low-fps pace contention - trickle threshold, EXACT zero at every "
+          "calibrated fps, engages at 12.5, re-budgets rather than refuses")
+def t21_pace_contention():
+    # the threshold is the player's own ring arithmetic: the next
+    # frame's feed fits the single post-present pump iff 2A <= 2544
+    expect(enc.pace_trickle_frac(1250) == 0.0, "25 fps stereo must be EXACTLY zero")
+    expect(enc.pace_trickle_frac(933) == 0.0, "25 fps mono must be EXACTLY zero")
+    expect(enc.pace_trickle_frac(1272) == 0.0, "the boundary itself must be zero")
+    expect(enc.pace_trickle_frac(1273) > 0.0, "one byte past the boundary must engage")
+    expect(abs(enc.pace_trickle_frac(2500) - 0.9824) < 1e-4,
+           "12.5 fps stereo trickle fraction")
+    expect(enc.pace_trickle_frac(0) == 0.0, "no audio -> no contention")
+    # 25 fps: every returned field is BIT-identical with and without the
+    # new argument, which is what protects the 007/008/009 calibration
+    a = enc.stream_supply_check(3.0e5, 21000.0, 1536, 25.0, 320, 256)
+    b = enc.stream_supply_check(3.0e5, 21000.0, 1536, 25.0, 320, 256,
+                                audio_real_bytes=1250)
+    for k in ("utilization", "busy_ms", "audio_ms", "sd_ms", "suggested_budget"):
+        expect(a[k] == b[k], f"25 fps must not move: {k} {a[k]} != {b[k]}")
+    expect(b["pump_ms"] == 0.0, "25 fps pump term must be exactly zero")
+    # 12.5 fps stereo: the term engages, and it is proportional to the
+    # produced blocks so the suggested budget falls (re-budget, not a
+    # bare refusal)
+    c = enc.stream_supply_check(6.0e5, 42000.0, 2560, 12.5, 320, 256)
+    d = enc.stream_supply_check(6.0e5, 42000.0, 2560, 12.5, 320, 256,
+                                audio_real_bytes=2500)
+    expect(d["pump_ms"] > 4.0, f"12.5 fps must price contention (got {d['pump_ms']:.2f})")
+    expect(d["utilization"] > c["utilization"],
+           "12.5 fps utilization must rise once the contention is priced")
+    expect(d["suggested_budget"] < c["suggested_budget"],
+           "the derived budget must fall, so the search descends")
+    # the direct gate is a different path and must be untouched (row 057
+    # is silicon-clean at 320x256 @12.5 --direct)
+    expect("audio_real_bytes" not in
+           inspect.signature(enc.direct_supply_check).parameters,
+           "the direct gate must not carry the streamed contention term")
+
+
 # =======================================================================
 # Step 22: SP17 W4 - the measured option --prefilter. OPT-IN: absent,
 # the extraction chain is byte-identical to the default encoder.
