@@ -230,7 +230,16 @@ if (-not $sources) { exit 0 }
 # default off, byte-identical absent - selftest-asserted); they are
 # part of the hashed argument list, so a title that opts in re-encodes
 # on that alone (both live in VIDOPTS/VIDOPTS_NNN like --tile-slack).
-$encoderGeneration = 'pal9m'
+# BUMP pal9m -> pal9n (direct-gate silicon re-fit, 2026-08-02): the
+# direct-serve wire gate was re-fitted from the NXBD re-run + the
+# 056/057 whole-frame playback pair on the rebuilt T8 transport -
+# DIRECT_TRANSPORT_FACTOR 1.20 -> 1.00 (per-byte) plus the new fixed
+# DIRECT_FRAME_OVERHEAD_MS 2.2. Delta/streamed encodes and the shipped
+# direct fixtures (010/011-class shapes) re-encode byte-identical -
+# the gate shapes ADMISSION, not emitted bytes - but the admission
+# envelope moved (25 fps stereo 256x133 -> 256x153; 320x256@12.5 now
+# admitted), so the era marks which gate an encode was admitted under.
+$encoderGeneration = 'pal9n'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

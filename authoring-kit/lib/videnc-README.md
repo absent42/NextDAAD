@@ -77,12 +77,13 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
                      raw-equivalent encode served straight from SD -
                      strictly at-rate, see below
   --direct-transport-factor F
-                     EXPERT override of the direct gate's transport
-                     factor (default: the shipping silicon-settled
-                     1.20). Exists for hardware-round probe encodes at
-                     the predicted post-T8 transport rate (0.93-0.99);
-                     the default moves only on a new measured rate.
-                     Only meaningful with --direct
+                     EXPERT override of the direct gate's per-byte
+                     transport factor (default: the shipping
+                     silicon-settled 1.00, 2026-08-02 whole-frame
+                     re-fit; the gate's fixed 2.2 ms/frame transport
+                     overhead is not scaled by this flag). Exists for
+                     hardware-round probe encodes at a hypothesised
+                     rate. Only meaningful with --direct
   --no-merge         disable the gap-merge optimization (bench fixtures
                      only - production encodes keep it on)
   --start HH:MM:SS   clip start time (ffmpeg -ss)
@@ -203,9 +204,11 @@ remedy in the error message:
   cannot supply: a smaller shape, a lower `--fps`, a shorter clip.
 - **Direct-serve wire (`--direct`).** Strictly at-rate, worst-frame
   checked, no slow-playback opt-out (TIGHTEN policy, owner ruling
-  2026-07-26). At 25 fps stereo the envelope tops out around 256x133;
-  the refusal message prints the live at-rate menu (stereo/mono
-  heights, 0.90-margin variants, and the mono-floor maximum).
+  2026-07-26). At 25 fps stereo the envelope tops out around 256x153
+  (2026-08-02 silicon re-fit on the rebuilt transport; 12.5 fps
+  carries full-screen 320x256); the refusal message prints the live
+  at-rate menu (stereo/mono heights, 0.90-margin variants, and the
+  mono-floor maximum).
 
 ## Automatic stream budget
 

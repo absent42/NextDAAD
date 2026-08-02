@@ -493,12 +493,13 @@ shape, a lower fps, or a shorter clip.
 writes an uncompressed encode the player serves straight from SD to
 the screen - no delta decode, pixel-exact every frame. The catch is a
 strict at-rate envelope with no ring to absorb bursts: at 25 fps
-stereo it tops out around 256x133, and the gate refuses anything the
+stereo it tops out around 256x153 (full-screen 320x256 fits at 12.5
+fps), and the gate refuses anything the
 SD wire cannot sustain - there is deliberately no slow-playback
 opt-out (every shipped mode plays at true rate). The refusal message
 prints the live envelope menu for your width: the at-rate stereo and
-mono heights, and how far the mono fps floor opens it (256x187-class
-at 18.22 fps mono). For almost all content the normal delta encoder
+mono heights, and how far the mono fps floor opens it (full-screen
+territory). For almost all content the normal delta encoder
 is the better tool; `--direct` exists for encodes that must be
 pixel-exact.
 

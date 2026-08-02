@@ -513,18 +513,17 @@ def main(argv):
                           "--direct for the delta encoder instead")
     ap.add_argument("--direct-transport-factor", dest="direct_transport_factor",
                      type=float, default=None, metavar="F",
-                     help="EXPERT OVERRIDE (SP17 T8 probe governance) for "
-                          "the direct-serve gate's transport factor - "
-                          "default None uses the shipping silicon-settled "
-                          "DIRECT_TRANSPORT_FACTOR (1.20, measured against "
-                          "the PRE-T8 transport). The T8 transport rebuild "
-                          "predicts 0.93-0.99; encode hardware-round probe "
-                          "files at the predicted rate with this flag "
-                          "instead of editing the constant - the default "
-                          "moves only after the NXBD re-run measures the "
-                          "true new rate. Probe files are diagnostic: "
-                          "expected to play IF the prediction holds. Only "
-                          "meaningful with --direct")
+                     help="EXPERT OVERRIDE for the direct-serve gate's "
+                          "per-BYTE transport factor - default None uses "
+                          "the shipping DIRECT_TRANSPORT_FACTOR (1.00, "
+                          "the 2026-08-02 whole-frame silicon re-fit on "
+                          "the rebuilt T8 transport; the gate's fixed "
+                          "2.2 ms/frame transport overhead is NOT scaled "
+                          "by this flag). Probe encodes at a hypothesised "
+                          "rate go through this flag instead of editing "
+                          "the constant; probe files are diagnostic - a "
+                          "slow probe is a measurement, not a defect. "
+                          "Only meaningful with --direct")
     ap.add_argument("--ocopy", action="store_true",
                      help="SP17 T5a OPT-IN: offset-copy motion coding. "
                           "Detected whole-pixel global pans are emitted "
@@ -610,10 +609,9 @@ def main(argv):
     if args.kf_cadence is not None and args.kf_cadence < 0:
         raise SystemExit(f"error: --kf-cadence must be >= 0 seconds "
                          f"(0 disables), got {args.kf_cadence}")
-    # Expert override, but not an unbounded one: below the bare-wire
-    # factor (1.0 would mean zero transport glue; the T8 prediction
-    # floor is 0.93) or above the measured pre-T8 1.20 it is a typo,
-    # not a probe.
+    # Expert override, but not an unbounded one: far below the bare-wire
+    # byte factor (the 2026-08-02 re-fit measured 0.994 on silicon) or
+    # far above the pre-T8 1.20 it is a typo, not a probe.
     if args.direct_transport_factor is not None and not (
             0.5 <= args.direct_transport_factor <= 2.0):
         raise SystemExit(f"error: --direct-transport-factor must be in "

@@ -1244,26 +1244,92 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
 # gate carries - and like it, the factor is CO-FITTED to the wire floor
 # above: do not move SD_WIRE_BYTES_PER_MS without re-deriving this.
 #
-# GOVERNANCE (SP17 T8, 2026-08-01) - READ BEFORE TOUCHING THIS VALUE.
-# The player's direct transport was REBUILT in the T8 wave (vid_ds_xfer
-# inir arms -> computed-entry unrolled-ini run; vid_ds_pad byte loop ->
-# unrolled in a,(n) run; blkopen reload slim), which the NXBD analysis
-# prices at ~8.0-9.2 ms/frame recovered of the 42.44 ms the 1.20 factor
-# reproduces. The predicted new factor is
-#     factor_new = 1.20 * (42.44 - saved_ms) / 42.44  ~= 0.93-0.99
-# BUT 1.20 IS SILICON-SETTLED AGAINST THE OLD TRANSPORT AND THE
-# PREDICTION IS ARITHMETIC, NOT MEASUREMENT. The shipping default
-# therefore STAYS at 1.20 (conservative: every direct file it admits
-# stays playable on the new transport, which is strictly faster) until
-# the hardware round's NXBD RE-RUN measures the true new rate - only
-# then does this default move, re-fitted from the measured number.
-# Probe encodes at the predicted rate are staged through the EXPERT
-# OVERRIDE instead: videnc --direct-transport-factor (threaded through
-# encode(direct_transport_factor=...) below) overrides the gate for one
-# encode without touching this constant. Such probe files are
-# DIAGNOSTIC: they are expected to play IF the prediction holds, and a
-# pace-hold/slow probe is a measurement, not a defect.
-DIRECT_TRANSPORT_FACTOR = 1.20
+# GOVERNANCE (SP17 T8, 2026-08-01) - RESOLVED 2026-08-02, see the
+# re-fit below. The player's direct transport was REBUILT in the T8
+# wave (vid_ds_xfer inir arms -> computed-entry unrolled-ini run;
+# vid_ds_pad byte loop -> unrolled in a,(n) run - REVERTED to the byte
+# loop 2026-08-02, commit 01466ec, after the silicon ERR=FD regression;
+# blkopen reload slim). The W2 arithmetic predicted factor 0.93-0.99,
+# but 1.20 was silicon-settled against the OLD transport, so the
+# default was HELD at 1.20 until the hardware round's NXBD re-run
+# measured the true new rate. That re-run has now happened.
+#
+# RE-FITTED FROM FRESH SILICON (2026-08-02, owner hardware, DEBUG nex
+# 6404FC6E post-01466ec, 010.VID at pal9m, DeZog per-row and full-table
+# dumps in exact agreement). NXBD rows, raster lines (T = lines * 1824
+# over 128 blocks; instrument ~167 T/block inside the absolutes):
+#
+#   | row | new  | 07-30 | T/blk new | T/blk old | meaning            |
+#   |-----|------|-------|-----------|-----------|--------------------|
+#   | DTA |  731 |  731  |  10,417   |  10,417   | wire ref, unchanged|
+#   | DTI |  756 |  757  |  10,773   |  10,787   | blkopen slim ~-14 T|
+#   | DTB | 1670 | 1672  |  23,798   |  23,826   | pad revert confirmed|
+#   | DTC |  816 |  961  |  11,628   |  13,694   | xfer swap: -2,066 T|
+#   | DTD |  894 | 1023  |  12,740   |  14,578   | 4x128B arm shape   |
+#   | TOK | 640/640 (2.000 polls/blk, ~126 T token wait - unchanged)  |
+#
+# The unrolled-ini xfer landed: whole-block transport 22.4 T/B against
+# 26.4 pre-W2 (DTC absolutes less instrument). DTB-DTI is POSITIVE
+# again (+25.4 T/B pad excess, matching July-30 within the one-line
+# quantum) - the pad revert on silicon, as expected. DTD-DTC rose
+# 883 -> 1112 T (the computed-entry per-call price on short arms);
+# irrelevant to shipping, real chunks are block-sized.
+#
+# THE SHIPPING NUMBERS COME FROM WHOLE-FRAME PLAYBACK, same sitting,
+# same build (Card #8 discipline: fit what the transport DELIVERED).
+# Two direct probes at --direct-transport-factor 0.96:
+#   056  256x160@25 stereo:  TOT unwraps 638.79 ticks/frame = 40.882
+#        ms for the 43,008 B ordinary section (2.2% OVER period);
+#   057  320x256@12.5 stereo: TOT exactly 1250 ticks/frame, PACE 1366
+#        ticks/74 frames -> busy 78.819 ms for the 84,992 B section.
+# Two-point solve (direct sections are 512-aligned, so per-block and
+# per-byte fold into one rate; what remains is per-FRAME):
+#   rate r = 41,984 / (78.819 - 40.882) = 1106.7 B/ms armed
+#   fixed F = 40.882 - 43,008/r        = 2.021 ms/frame
+# r sits 0.6% ABOVE wire*af (1100.19 B/ms): the T8 xfer win took the
+# per-byte transport to the bare wire floor. The old FLAT factor can no
+# longer express the truth: the 25 fps refusal line needs an effective
+# 1.047 (056 measured 1.046) while 12.5 fps needs 1.020 (057 measured
+# 1.020) - NO single flat factor both refuses 256x160@25 (silicon: 2.2%
+# slow) and admits 320x256@12.5 (silicon: at rate, 0.7 ms true slack).
+# The fps-dependence IS a fixed per-frame term, so the gate now carries
+# TWO constants: a per-byte factor and a per-frame overhead. F's
+# attribution: the section-pad byte-loop discard (~1.0-1.1 ms at the
+# reverted ~46 T/B), the audio-feed trickle bookkeeping, op parse
+# (KSTART/COPY16/KFLIP, +PAL on cuts) and per-frame session glue.
+# Bench cross-check: DTC absolute (22.39 T/B unarmed) puts the armed
+# block rate at 1063 B/ms, 4% under the playback r - the bench's tight
+# loop hits every data-token wait cold where playback's between-block
+# work gives the card staging time; playback is the authority.
+#
+# SHIPPED VALUES AND MARGIN. Factor 1.00 (+0.6% over the measured
+# 0.994) and overhead 2.2 ms (+8.9% over the measured 2.021) - a
+# combined ~1.1% margin at the 25 fps refusal line, ~0.8% at 12.5 fps.
+# Admissions against this sitting's silicon:
+#   256x160@25 st  refused at util 1.044 (silicon: 2.2% over - correct)
+#   320x256@12.5 st admitted at 0.999    (silicon: at rate + slack)
+#   256x153@25 st  admitted at 0.997, predicted worst 39.49 ms (the
+#                  re-encoded 056 acceptance probe - must play at rate)
+#   256x133@25 st  (010/011 anchors) 0.881, predicted 34.4 ms - clean,
+#                  as this sitting's PICK 10/11 exact-TOT rows show.
+# Direct at-rate envelope under this gate (util 1.00 / 0.90):
+#   25   fps stereo  256x153 / 320x123   (0.90: 256x135 / 320x108)
+#   25   fps mono    256x155 / 320x124   (0.90: 256x137 / 320x110)
+#   12.5 fps stereo  full screen both widths (0.90: 320x228)
+#   12.5 fps mono    full screen both widths (0.90: 320x230)
+# The expert override videnc --direct-transport-factor still exists and
+# overrides the BYTE factor only - the frame overhead is measured
+# physics, not policy, and always applies. Do not move either constant
+# without a fresh whole-frame silicon pair; both are co-fitted to
+# SD_WIRE_BYTES_PER_MS * audio_factor exactly as before.
+DIRECT_TRANSPORT_FACTOR = 1.00
+
+# The per-frame direct transport overhead (ms) - the fixed term of the
+# 2026-08-02 two-point whole-frame fit above (measured 2.021, shipped
+# 2.2 with the margin argued there). Applies to every direct-serve
+# frame regardless of size or fps; the transport_factor expert override
+# does NOT scale it.
+DIRECT_FRAME_OVERHEAD_MS = 2.2
 
 # Policy line (OWNER-FACING, Card #5 TIGHTEN ruling, 2026-07-26): at
 # 1.20 the shipped 010 fixture (classic-wide 256x144 @25 stereo) scored
@@ -1284,18 +1350,23 @@ def direct_supply_check(worst_frame_bytes, fps, transport_factor=None):
     therefore the WORST frame, not the clip mean (contrast
     stream_supply_check's documented mean-rate limitation above).
     audio_factor de-rates the wire exactly as the streaming gate does -
-    the ISR sample tax applies to the ini transport identically - and
-    DIRECT_TRANSPORT_FACTOR carries the per-block/per-arm transport
-    glue the first silicon rows measured (see its block above; the 3c
-    gate omitted it and ran 20% optimistic). transport_factor=None
-    means the shipping DIRECT_TRANSPORT_FACTOR; a number is the T8
-    expert override (see the governance block)."""
+    the ISR sample tax applies to the ini transport identically. The
+    cost model is TWO-TERM (2026-08-02 whole-frame silicon re-fit, see
+    the DIRECT_TRANSPORT_FACTOR block): a per-byte factor on the wire
+    rate (DIRECT_TRANSPORT_FACTOR - the T8 rebuild took the per-block
+    transport to the bare wire floor) plus a fixed per-frame overhead
+    (DIRECT_FRAME_OVERHEAD_MS - pad discard, audio-feed bookkeeping,
+    op parse, session glue; the term a flat factor could not express,
+    which is why 25 fps and 12.5 fps silicon disagreed under one).
+    transport_factor=None means the shipping DIRECT_TRANSPORT_FACTOR;
+    a number is the expert override, which scales the BYTE term only -
+    the frame overhead is measured physics and always applies."""
     tf = (DIRECT_TRANSPORT_FACTOR if transport_factor is None
           else float(transport_factor))
     af = TMODEL_COEFFS["audio_factor"]
     period_ms = 1000.0 / float(fps)
     sd_ms = (worst_frame_bytes * tf
-             / (SD_WIRE_BYTES_PER_MS * af))
+             / (SD_WIRE_BYTES_PER_MS * af)) + DIRECT_FRAME_OVERHEAD_MS
     return dict(utilization=sd_ms / period_ms, sd_ms=sd_ms,
                 period_ms=period_ms,
                 demand_kbs=worst_frame_bytes * float(fps) / 1024.0)
@@ -1311,7 +1382,11 @@ def direct_max_raw_bytes(fps, channels=2, util=1.0, transport_factor=None):
     tf = (DIRECT_TRANSPORT_FACTOR if transport_factor is None
           else float(transport_factor))
     period_ms = 1000.0 / float(fps)
-    budget_b = (period_ms * util * SD_WIRE_BYTES_PER_MS
+    # the fixed per-frame overhead comes off the period BEFORE the
+    # byte budget is priced (inverse of direct_supply_check's two-term
+    # model; the override scales the byte term only, as there)
+    budget_b = ((period_ms * util - DIRECT_FRAME_OVERHEAD_MS)
+                * SD_WIRE_BYTES_PER_MS
                 * TMODEL_COEFFS["audio_factor"] / tf)
     # the audio pad comes from audio_layout, NOT a local rate guess -
     # mono runs at RATE_MONO (23325), not the stereo 15625, so a local
@@ -5333,9 +5408,10 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
         # for the hardware round are DIAGNOSTIC (governance block at
         # DIRECT_TRANSPORT_FACTOR).
         print(f"  note: --direct-transport-factor {float(tf):g} overrides "
-              f"the silicon-settled {DIRECT_TRANSPORT_FACTOR:.2f} for this "
-              f"encode (T8 probe governance: the default moves only on the "
-              f"NXBD re-run's measured rate)")
+              f"the silicon-settled {DIRECT_TRANSPORT_FACTOR:.2f} BYTE "
+              f"factor for this encode (the {DIRECT_FRAME_OVERHEAD_MS:g} "
+              f"ms/frame transport overhead still applies - 2026-08-02 "
+              f"whole-frame re-fit, see the governance block)")
     ds = direct_supply_check(worst_frame, fps_val, transport_factor=tf)
     if ds["utilization"] > 1.0:
         # Full menu (both channel counts, at this fps AND at the mono
@@ -5368,7 +5444,8 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
             f"SD wire per {ds['period_ms']:.0f} ms frame; "
             f"{ds['demand_kbs']:.0f} KB/s vs the "
             f"~{SD_WIRE_BYTES_PER_MS * TMODEL_COEFFS['audio_factor'] * 1000 / (1024 * eff_tf):.0f} KB/s "
-            f"direct-transport rate at factor {eff_tf:g}). "
+            f"direct-transport rate at byte factor {eff_tf:g} plus the "
+            f"{DIRECT_FRAME_OVERHEAD_MS:g} ms/frame transport overhead). "
             f"Direct-serve has NO ring "
             f"to absorb bursts and NO slow-playback opt-out (TIGHTEN "
             f"policy, Card #5 2026-07-26 owner ruling: this gate is "

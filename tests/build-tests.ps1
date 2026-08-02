@@ -944,7 +944,17 @@ if ($Font) {
 # and re-derived composition factors (flat 1.19 / gapped 1.46). Every
 # fixture re-encodes; streamed fixtures re-derive their budgets ~2-4%
 # tighter. See $encoderGeneration 'pal9m' in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9m'
+# BUMP pal9m -> pal9n (direct-gate silicon re-fit, 2026-08-02): the
+# direct-serve gate re-fitted from the NXBD re-run and the 056/057
+# whole-frame playback pair (DIRECT_TRANSPORT_FACTOR 1.20 -> 1.00
+# per-byte + the new fixed DIRECT_FRAME_OVERHEAD_MS 2.2). All 12 leg/
+# long fixtures re-encode BYTE-IDENTICAL (the gate moves admission,
+# not emitted bytes - 010/011 stay the 256x133 regression anchors,
+# verified by SHA on the re-encode); the bump records which gate an
+# encode was admitted under, since the direct envelope moved
+# (25 fps stereo 256x133 -> 256x153; 320x256@12.5 stereo now legal).
+# See $encoderGeneration 'pal9n' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9n'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

@@ -1945,26 +1945,45 @@ def t11_direct_gate():
         else:
             raise AssertionError("320x256@25 direct must be refused "
                                  "(raw 81920 B/frame over the wire)")
-    # DIRECT TRANSPORT RECALIBRATION (Card #5, 2026-07-26): the first
-    # silicon rows measured 663.4/663.6 ticks/frame on VDIR/VDIRL =
-    # 917 B/ms delivered against the 1100 B/ms the 3c gate assumed.
-    # The factor is pinned, and so is the row it reproduces.
-    expect(enc.DIRECT_TRANSPORT_FACTOR == 1.20,
-           f"direct transport factor should be the silicon 1.20, got {enc.DIRECT_TRANSPORT_FACTOR}")
-    mean_frame = 1536 + 73 * 512          # 010's ordinary (no-PAL) section
+    # DIRECT TRANSPORT RE-FIT (2026-08-02, DEBUG nex 6404FC6E, whole-
+    # frame two-point solve on probes 056/057 - see the governance
+    # block at DIRECT_TRANSPORT_FACTOR): the T8 rebuild took the
+    # per-byte transport to the bare wire floor (measured 0.994 of
+    # wire*af, shipped 1.00) and what remains is a fixed per-frame
+    # overhead (measured 2.021 ms, shipped 2.2). Both constants are
+    # pinned, and so are the silicon rows they reproduce.
+    expect(enc.DIRECT_TRANSPORT_FACTOR == 1.00,
+           f"direct transport byte factor should be the 2026-08-02 "
+           f"silicon 1.00, got {enc.DIRECT_TRANSPORT_FACTOR}")
+    expect(enc.DIRECT_FRAME_OVERHEAD_MS == 2.2,
+           f"direct frame overhead should be the 2026-08-02 silicon "
+           f"2.2 ms, got {enc.DIRECT_FRAME_OVERHEAD_MS}")
+    # probe 056's ordinary section (256x160@25 stereo, 43,008 B)
+    # measured 40.882 ms/frame on silicon; the gate must price it
+    # conservatively - above the measurement, but within ~1.5%
+    mean_frame = 1536 + 81 * 512
     ds = enc.direct_supply_check(mean_frame, 25.0)
-    expect(abs(ds["sd_ms"] - 42.44) < 0.05,
-           f"the recalibrated model must reproduce VDIR's 42.456 ms/frame, got {ds['sd_ms']:.3f}")
-    # classic-wide@25 stereo (the ORIGINALLY shipped 010 shape) is NOT
-    # at-rate - this is exactly the shape the TIGHTEN ruling refuses
-    # outright, with no override available at any layer.
-    worst = 1536 + 74 * 512               # + the scene-start PAL block
-    expect(1.05 < enc.direct_supply_check(worst, 25.0)["utilization"] < 1.10,
-           "classic-wide@25 direct scores ~1.075 under the recalibrated gate - "
-           "over 1.00, so it must now be refused unconditionally")
-    # the recalibrated at-rate envelope, and its monotonicity
+    expect(40.88 <= ds["sd_ms"] <= 41.5,
+           f"the re-fitted model must cover 056's measured 40.882 "
+           f"ms/frame conservatively, got {ds['sd_ms']:.3f}")
+    # 256x160@25 stereo (probe 056's shape, silicon: 2.2% OVER period)
+    # is NOT at-rate and must be refused
+    worst = 1536 + 82 * 512               # + the scene-start PAL block
+    expect(1.02 < enc.direct_supply_check(worst, 25.0)["utilization"] < 1.06,
+           "256x160@25 direct scores ~1.044 under the re-fitted gate - "
+           "over 1.00, so it must be refused unconditionally")
+    # 320x256@12.5 stereo (probe 057's shape, silicon: at rate with
+    # pace slack) must be ADMITTED - the T10+T8 full-screen mode
+    worst125 = 2560 + 162 * 512
+    u125 = enc.direct_supply_check(worst125, 12.5)["utilization"]
+    expect(0.99 < u125 <= 1.0,
+           f"320x256@12.5 stereo direct must be admitted at the edge "
+           f"(silicon at-rate), got {u125:.4f}")
+    # the re-fitted at-rate envelope, and its monotonicity
     raw25 = enc.direct_max_raw_bytes(25.0, 2, 1.0)
-    expect(34000 < raw25 < 34600, f"25fps stereo direct tops out ~34.3 KB raw, got {raw25}")
+    expect(39000 < raw25 < 39500, f"25fps stereo direct tops out ~38.5 KB raw, got {raw25}")
+    expect(raw25 // 256 == 153,
+           f"25fps stereo 256-wide envelope is 256x153, got 256x{raw25 // 256}")
     expect(enc.direct_supply_check(
         1536 + ((raw25 + 518 + 511) // 512) * 512, 25.0)["utilization"] <= 1.0,
         "direct_max_raw_bytes must actually pass its own gate")
@@ -2011,7 +2030,7 @@ def t11_direct_gate():
             # the encoder ever runs.
             out2 = Path(td) / "over_wire.vid"
             cmd = [sys.executable, str(LIB / "videnc.py"), str(SINTEL), str(out2),
-                   "--shape", "classic-wide", "--fps", "25", "--duration", "1",
+                   "--shape", "256x160", "--fps", "25", "--duration", "1",
                    "--direct", "--direct-accept-slow", "--ffmpeg", str(FFMPEG)]
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             expect(proc.returncode != 0,
@@ -2027,53 +2046,57 @@ def t11_direct_gate():
             # by argparse rejecting an unknown flag.
             out3 = Path(td) / "over_wire_plain.vid"
             cmd2 = [sys.executable, str(LIB / "videnc.py"), str(SINTEL), str(out3),
-                    "--shape", "classic-wide", "--fps", "25", "--duration", "1",
+                    "--shape", "256x160", "--fps", "25", "--duration", "1",
                     "--direct", "--ffmpeg", str(FFMPEG)]
             proc2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             expect(proc2.returncode != 0,
-                   "classic-wide@25 stereo --direct (util 1.075) must be "
-                   "refused with no other flags in play")
+                   "256x160@25 stereo --direct (util ~1.044, silicon "
+                   "2.2% over) must be refused with no other flags in play")
             expect(not out3.exists(), "no file written on the plain-flag refusal")
             stderr2 = proc2.stderr.decode("utf-8", "replace")
             expect("utilization" in stderr2 and "direct-serve" in stderr2,
                    f"the plain refusal must be the wire-gate message, got:\n{stderr2}")
 
 
-@case(11, "direct-serve transport-factor expert override - SP17 T8 probe "
-          "governance: default stays the silicon 1.20, the override "
-          "threads through the whole gate")
+@case(11, "direct-serve transport-factor expert override - scales the "
+          "BYTE term only (2026-08-02 two-term re-fit), threads "
+          "through the whole gate")
 def t11_direct_transport_override():
     import inspect
     import subprocess
-    # The governance contract: the SHIPPING default is untouched (the
-    # 1.20 pin lives in t11_direct_gate); the override is a per-call
-    # parameter, never a mutation of the constant.
+    # The governance contract: the SHIPPING defaults are untouched (the
+    # 1.00 + 2.2 ms pins live in t11_direct_gate); the override is a
+    # per-call parameter, never a mutation of the constant.
     frame = 1536 + 73 * 512
     ds_def = enc.direct_supply_check(frame, 25.0)
     ds_none = enc.direct_supply_check(frame, 25.0, transport_factor=None)
     expect(ds_def == ds_none,
            "transport_factor=None must be exactly the shipping default path")
-    # the override scales sd_ms/utilization EXACTLY linearly - it
-    # replaces the factor, nothing else in the arithmetic moves
+    # the override scales the BYTE term of sd_ms EXACTLY linearly and
+    # leaves the fixed frame overhead alone - nothing else moves
     tf_probe = 0.96
     ds_ovr = enc.direct_supply_check(frame, 25.0, transport_factor=tf_probe)
-    expect(abs(ds_ovr["sd_ms"] / ds_def["sd_ms"] - tf_probe / enc.DIRECT_TRANSPORT_FACTOR) < 1e-9,
-           "the override must scale the wire time by factor/1.20 exactly")
+    ovh = enc.DIRECT_FRAME_OVERHEAD_MS
+    expect(abs((ds_ovr["sd_ms"] - ovh) / (ds_def["sd_ms"] - ovh)
+               - tf_probe / enc.DIRECT_TRANSPORT_FACTOR) < 1e-9,
+           "the override must scale the byte term by factor/default "
+           "exactly, leaving the frame overhead fixed")
     expect(ds_ovr["period_ms"] == ds_def["period_ms"]
            and ds_ovr["demand_kbs"] == ds_def["demand_kbs"],
            "the override touches the transport rate only - period and demand are factor-free")
-    # the predicted post-T8 window (0.93-0.99) grows the direct
-    # envelope: at 0.96 the 256-wide stereo @25 envelope must reach the
-    # analysis's ~256x163-175 band (vs ~133 at 1.20)
+    # a smaller byte factor grows the envelope; at 0.96 (the historical
+    # probe rate) the 256-wide stereo @25 envelope reaches 256x159
+    # against 256x153 at the shipping 1.00
     raw_def = enc.direct_max_raw_bytes(25.0, 2, 1.0)
     raw_ovr = enc.direct_max_raw_bytes(25.0, 2, 1.0, transport_factor=tf_probe)
     expect(raw_ovr > raw_def,
            "a smaller transport factor must grow the at-rate envelope")
-    expect(160 <= raw_ovr // 256 <= 180,
-           f"at factor 0.96 the 256-wide envelope should land in the "
-           f"predicted 163-175 line band, got 256x{raw_ovr // 256}")
-    expect(raw_def // 256 in (133, 134, 135),
-           f"at the shipping 1.20 the envelope stays ~256x133-135, got 256x{raw_def // 256}")
+    expect(raw_ovr // 256 == 159,
+           f"at byte factor 0.96 the 256-wide envelope is 256x159, "
+           f"got 256x{raw_ovr // 256}")
+    expect(raw_def // 256 == 153,
+           f"at the shipping 1.00 the envelope is 256x153, "
+           f"got 256x{raw_def // 256}")
     # plumbing: encode() and _encode_direct() carry the parameter, and
     # the CLI exposes it
     expect("direct_transport_factor" in inspect.signature(enc.encode).parameters,
