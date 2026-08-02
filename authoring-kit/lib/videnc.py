@@ -536,19 +536,6 @@ def main(argv):
                           "denoising trades a little texture for "
                           "supply headroom. A MEASURED option for the "
                           "authoring sitting, not a default")
-    ap.add_argument("--approx-cuts", dest="approx_cuts", action="store_true",
-                     help="EXPERIMENTAL OPT-IN (W4): on budget-bound "
-                          "frames, allow the encoder to satisfy the "
-                          "byte budget with APPROXIMATE full-coverage "
-                          "content (gain-per-byte line triage, cheap "
-                          "colour RUNs standing in for unaffordable "
-                          "exact repaints) instead of deferring whole "
-                          "bands - the C2 corpus experiment's measured "
-                          "policy win on cut-heavy starved clips (+4 to "
-                          "+9 dB 4x4 there). Wire format unchanged - "
-                          "files play on every shipped player. Without "
-                          "this flag the encode is byte-identical to "
-                          "the default encoder")
     ap.add_argument("--kf-cadence", dest="kf_cadence", type=float,
                      default=None, metavar="SECONDS",
                      help="keyframe cadence window in seconds (default: "
@@ -650,8 +637,7 @@ def main(argv):
         budget_target=args.budget_target, direct=args.direct,
         retime=args.retime, tile_slack=args.tile_slack,
         direct_transport_factor=args.direct_transport_factor,
-        kf_cadence=args.kf_cadence,
-        approx_cuts=args.approx_cuts, prefilter=args.prefilter)
+        kf_cadence=args.kf_cadence, prefilter=args.prefilter)
 
     stream_line = ""
     if report.mode == "direct":

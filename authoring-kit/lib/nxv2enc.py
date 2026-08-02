@@ -2641,130 +2641,6 @@ def encode_delta(target_flat, err2_flat, cap_bytes, cap_t,
 
 
 # ---------------------------------------------------------------------
-# W4 EXPERIMENTAL: approximation-policy triage (--approx-cuts, opt-in).
-#
-# Provenance: corpus experiment C2 (C2-RESULTS.md bonus findings 1-3,
-# 2026-08-01). The VQ sim's +5.8 to +9.0 dB 4x4 wins on the NONE-KNOWN
-# frontier clips (fringe car chase, Caprica crowd, sintel, police car)
-# traced NOT to the codebook (update share 85-95% even there) but to
-# two POLICIES: (a) tile-granular greedy triage by gain-per-byte across
-# the WHOLE frame instead of the band-phase prefix schedule, and (b)
-# permission to paint an APPROXIMATION now rather than exact pixels
-# later. Both are encoder properties - the existing RUN/COPY stream
-# carries them, no new op class, no player change, files play on every
-# shipped player.
-#
-# This is the policy PORTED, not the sim: per budget-bound frame, every
-# paint-order LINE (the ladder re-cut's granularity floor - nothing
-# here may split a line) gets two candidates:
-#   exact  - COPY the line's target content        (cost ~2+line bytes)
-#   approx - RUN of the line's best single colour  (cost ~3 bytes)
-# ranked by gain/byte (gain = decoded-space SSE removed), greedily
-# admitted against the byte cap exactly as the C2 harness triaged
-# tiles, then re-costed EXACTLY (segment + gap-merge, both caps) and
-# adopted only when it fits AND leaves less residual error on the
-# surface than the band schedule it replaces - the same Pareto rule the
-# tile ladder uses. Aging treats approx-painted lines as still-wrong
-# (their residual keeps accruing age), so exact repair still arrives.
-#
-# OPT-IN because the eyes have not ruled: the W4 A/B arms live in
-# .superpowers/sdd/sp17-corpus/vids-w4/ for the sitting. With the flag
-# absent the encode is byte-identical to the default encoder.
-# ---------------------------------------------------------------------
-
-def encode_delta_triage(target_flat, err2_flat, prev_flat, held_pal,
-                        cap_bytes, cap_t, line_px, merge_gaps=True):
-    """Gain-per-byte line triage with permission to approximate.
-    Returns (vals, gcls, gstarts, glens, bytes, T, mode, payload,
-    approx_mask) - vals is the composed value buffer the caller applies
-    to the surface (target bytes on exact lines, the run colour on
-    approx lines) - or None when nothing profitable fits."""
-    n = int(target_flat.size)
-    line_px = max(1, int(line_px))
-    nl = n // line_px
-    if nl * line_px != n:
-        return None
-    palf = held_pal.astype(np.float32)
-    td = palf[target_flat].reshape(nl, line_px, 3)
-    e_stale = err2_flat.reshape(nl, line_px).sum(axis=1)
-    # best single palette colour per line: nearest entry to the line
-    # mean minimises the offset term of sum||td - pal[c]||^2 =
-    # sum||td - mean||^2 + L*||mean - pal[c]||^2
-    mline = td.mean(axis=1)                                   # (nl,3)
-    var = ((td - mline[:, None, :]) ** 2).sum(axis=(1, 2))    # (nl,)
-    d2 = ((mline[:, None, :] - palf[None, :, :]) ** 2).sum(axis=2)
-    best = np.argmin(d2, axis=1).astype(np.uint8)
-    e_approx = var + line_px * d2[np.arange(nl), best]
-    gain_e = e_stale
-    gain_a = e_stale - e_approx
-    cost_e = float(2 + line_px if line_px <= 255 else 3 + line_px)
-    cost_a = 3.0
-    # candidate list, C2 policy: both options per line, ranked by
-    # gain/byte, first admitted option wins the line
-    cg = np.concatenate([gain_e, gain_a])
-    cc = np.concatenate([np.full(nl, cost_e), np.full(nl, cost_a)])
-    cl = np.concatenate([np.arange(nl), np.arange(nl)])
-    ca = np.concatenate([np.zeros(nl, bool), np.ones(nl, bool)])
-    ok = cg > 1e-9
-    order = np.flatnonzero(ok)[np.argsort(-(cg[ok] / cc[ok]))]
-
-    painted = np.zeros(nl, dtype=np.int8)   # 0 none / 1 exact / 2 approx
-    ranked = []                              # admission order, for back-off
-    spent = 0.0
-    for ci in order.tolist():
-        li = int(cl[ci])
-        if painted[li]:
-            continue
-        c = float(cc[ci])
-        if spent + c > cap_bytes:
-            continue
-        painted[li] = 2 if ca[ci] else 1
-        ranked.append(li)
-        spent += c
-
-    def _build():
-        vals = prev_flat.copy()
-        mask = np.zeros(n, dtype=bool)
-        for li in np.flatnonzero(painted == 1).tolist():
-            s = li * line_px
-            vals[s:s + line_px] = target_flat[s:s + line_px]
-            mask[s:s + line_px] = True
-        for li in np.flatnonzero(painted == 2).tolist():
-            s = li * line_px
-            vals[s:s + line_px] = best[li]
-            mask[s:s + line_px] = True
-        gc, gs, gl = segment(vals, mask)
-        r = _fit_candidate(gc, gs, gl, vals, prev_flat,
-                           cap_bytes, cap_t, merge_gaps)
-        return vals, mask, gc, gs, gl, r
-
-    # exact re-cost; back off the lowest-ranked admissions until both
-    # caps hold (the greedy estimate ignores skip headers and merges)
-    for _ in range(24):
-        vals, mask, gc, gs, gl, r = _build()
-        if r is not None:
-            break
-        if not ranked:
-            return None
-        drop = max(1, len(ranked) // 8)
-        for li in ranked[-drop:]:
-            painted[li] = 0
-        ranked = ranked[:-drop]
-    else:
-        return None
-    b, t, payload, sfx = r
-    ne = int((painted == 1).sum())
-    na = int((painted == 2).sum())
-    if ne + na == 0:
-        return None
-    approx_mask = np.zeros(n, dtype=bool)
-    for li in np.flatnonzero(painted == 2).tolist():
-        approx_mask[li * line_px:(li + 1) * line_px] = True
-    mode = f"triage:{ne}+{na}/{nl}{sfx}"
-    return vals, gc, gs, gl, b, t, mode, payload, approx_mask
-
-
-# ---------------------------------------------------------------------
 # Paint-order flatten/unflatten (mode-1 column-major, mode-0 row-major)
 # ---------------------------------------------------------------------
 
@@ -4500,7 +4376,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 staleness_refresh=True, return_surfaces=False,
                 dither_amp=None, dither_mode=None, tile_slack=None,
                 po_ceil_lm=None, abytes_pad=None,
-                kf_cadence_s=None, approx_cuts=False):
+                kf_cadence_s=None):
     """Runs the full content-triggered-keyframe + dual-budget delta
     encoder over an already-extracted frame stack. Returns a dict:
     payloads (list[bytes], one per emitted frame - a multi-chunk
@@ -4905,60 +4781,6 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 tile_px=tile_px, tile_ladder=tile_ladder,
                 supply_px=supply_px, supply_slack=tile_slack)
 
-            # --- W4 EXPERIMENTAL approx-cuts triage (opt-in; see the
-            # encode_delta_triage block). Budget-bound frames only -
-            # the C2 policy port. Adopted only when it fits both caps
-            # AND leaves strictly less residual decoded error on the
-            # surface than the band schedule (Pareto, like the ladder).
-            if approx_cuts and binding == "budget":
-                tri = encode_delta_triage(
-                    tflat, err2, prev_flat, held_pal, cap_bytes, usable,
-                    max(1, tile_px // TILE_BAND), merge_gaps=merge_gaps)
-                if tri is not None:
-                    (tvals, tgc, tgs, tgl, tb, tt, tmode, tpayload,
-                     tapprox) = tri
-                    palf32 = held_pal.astype(np.float32)
-                    reg_mask = _mask_from_segments(gcls, gstarts, glens, raw)
-                    resid_region = float(err2[~reg_mask].sum())
-                    tri_flat = _apply_segments(prev_flat, tvals, tgc, tgs, tgl)
-                    resid_tri = float(
-                        ((palf32[tri_flat] - palf32[tflat]) ** 2).sum())
-                    if resid_tri < resid_region:
-                        tri_mask = _mask_from_segments(tgc, tgs, tgl, raw)
-                        prev_flat = tri_flat
-                        if staleness_refresh:
-                            # approx-painted lines are still wrong -
-                            # they keep accruing age so exact repair
-                            # still arrives
-                            updated = tri_mask & ~tapprox
-                            wrong = err2 > STALE_ERR2_FLOOR
-                            age = np.where(updated, 0.0,
-                                           np.where(wrong, age + 1.0, 0.0))
-                        payloads.append(tpayload)
-                        per_frame["bytes"].append(tb)
-                        per_frame["mode"].append(
-                            tmode + (":roll" if roll_idx is not None else ""))
-                        per_frame["binding"].append("budget")
-                        per_frame["drift"].append(
-                            drift_for_stats if drift_for_stats is not None
-                            else float("nan"))
-                        per_frame["drift_lm"].append(
-                            drift_lm_stats if drift_lm_stats is not None
-                            else float("nan"))
-                        per_frame["deficit_lm"].append(
-                            deficit_lm_stats if deficit_lm_stats is not None
-                            else float("nan"))
-                        per_frame["t"].append(tt)
-                        dec_img = unflatten_frame(
-                            held_pal[prev_flat], height, width,
-                            column_major).astype(np.uint8)
-                        decoded.append(dec_img)
-                        if return_surfaces:
-                            surfaces.append(unflatten_frame(
-                                prev_flat, height, width, column_major).copy())
-                        per_frame["psnr"].append(psnr(orig[i], dec_img))
-                        continue
-
             new_flat = _apply_segments(prev_flat, tflat, gcls, gstarts, glens)
             prev_flat = new_flat
             if staleness_refresh:
@@ -5342,7 +5164,7 @@ def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
                         staleness_refresh=True, dither_amp=None,
                         dither_mode=None, target_util=None,
                         max_probes=AUTO_BUDGET_MAX_PROBES, tile_slack=None,
-                        kf_cadence_s=None, approx_cuts=False):
+                        kf_cadence_s=None):
     """SP17 T1. Derives the --stream-budget for this clip instead of
     making the author guess one, and returns the winning encode with it
     so nothing is encoded twice. Result dict: budget, result (the
@@ -5419,8 +5241,7 @@ def auto_stream_budget(ex, width, height, fps, *, cap_bytes_frac=0.65,
                                tile_slack=tile_slack,
                                po_ceil_lm=ex.get("po_ceil_lm"),
                                abytes_pad=ex.get("abytes_pad"),
-                               kf_cadence_s=kf_cadence_s,
-                               approx_cuts=approx_cuts)
+                               kf_cadence_s=kf_cadence_s)
             proj, stats = stream_gate_stats(res, ex, width, height, fps)
             if stats is None:
                 # Resident (or empty): no supply gate applies at all.
@@ -5599,7 +5420,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=None,
            budget_target=None, direct=False, retime=None, tile_slack=None,
            direct_transport_factor=None, kf_cadence=None,
-           approx_cuts=False, prefilter=None):
+           prefilter=None):
     """Top-level NXV v2 encoder entry point. Returns a BuildReport.
 
     dither (--dither): dither strength, a float 0.0-1.0. In the default
@@ -5684,12 +5505,6 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     -0.1% bytes for +0.39 dB 4x4 on the owner's pan clip); 0 disables
     the cadence outright.
 
-    approx_cuts (--approx-cuts, W4): EXPERIMENTAL OPT-IN approximation
-    policy - budget-bound frames may spend their bytes on approximate
-    full-coverage content (gain-per-byte line triage) instead of
-    deferring whole bands; see the encode_delta_triage block. Wire
-    format unchanged. Absent = byte-identical to the default encoder.
-
     prefilter (--prefilter, W4): OPT-IN ffmpeg filter stage inserted at
     SOURCE resolution before scaling (bare flag = conservative hqdn3d
     temporal denoise). None (the default) leaves the extraction chain
@@ -5739,8 +5554,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
             merge_gaps=merge_gaps, hysteresis=hysteresis,
             staleness_refresh=staleness_refresh, dither_amp=dither_amp,
             dither_mode=dmode, target_util=budget_target,
-            tile_slack=slack_rel, kf_cadence_s=kf_cadence,
-            approx_cuts=approx_cuts)
+            tile_slack=slack_rel, kf_cadence_s=kf_cadence)
         stream_budget = auto_search["budget"]
         if stream_budget is None:
             # Every probe was over the line - fall through to the gate's
@@ -5761,8 +5575,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                               tile_slack=slack_rel,
                               po_ceil_lm=ex.get("po_ceil_lm"),
                               abytes_pad=ex.get("abytes_pad"),
-                              kf_cadence_s=kf_cadence,
-                              approx_cuts=approx_cuts)
+                              kf_cadence_s=kf_cadence)
 
     payloads = result["payloads"]
     nframes_out = len(payloads)

@@ -45,13 +45,7 @@
 #                 temporal denoise before scaling - source grain is
 #                 delta demand the wire pays for every frame; the bare
 #                 flag is a conservative hqdn3d. A measured per-title
-#                 option, not a default.
-#                 --approx-cuts (SP17 W4, EXPERIMENTAL opt-in, default
-#                 off): budget-bound frames may satisfy the budget with
-#                 approximate full-coverage content instead of
-#                 deferring bands - measured on the cut-heavy starved
-#                 corpus clips; wire format unchanged, plays on every
-#                 shipped player. All three hashed like every other
+#                 option, not a default. Both hashed like every other
 #                 option.
 #   VIDOPTS_NNN - extra options for video NNN only (3-digit number),
 #                 appended AFTER VIDOPTS. For most repeated options
@@ -209,10 +203,13 @@ if (-not $sources) { exit 0 }
 #   re-derived composition factors (flat 1.19, gapped 1.46)
 # Every streamed fixture re-derives its budget (~2-4% tighter);
 # resident fixtures re-encode for the trigger/cadence/pacing changes.
-# NO bump component for --prefilter/--approx-cuts (both opt-in,
-# default off, byte-identical absent - selftest-asserted); they are
-# part of the hashed argument list, so a title that opts in re-encodes
-# on that alone (both live in VIDOPTS/VIDOPTS_NNN like --tile-slack).
+# NO bump component for --prefilter (opt-in, default off, byte-
+# identical absent - selftest-asserted); it is part of the hashed
+# argument list, so a title that opts in re-encodes on that alone (it
+# lives in VIDOPTS/VIDOPTS_NNN like --tile-slack). --approx-cuts was
+# the wave's other opt-in and was REMOVED on 2026-08-02 (owner ruling,
+# A/B verdicts inside the noise floor) - its removal moves no default
+# bytes either.
 # BUMP pal9m -> pal9n (direct-gate silicon re-fit, 2026-08-02): the
 # direct-serve wire gate was re-fitted from the NXBD re-run + the
 # 056/057 whole-frame playback pair on the rebuilt T8 transport -
