@@ -977,7 +977,18 @@ if ($Font) {
 # (009's window used to strand 12 positions for 124 frames). Measured at
 # the bump, SHA-verified: see the table below. See $encoderGeneration
 # 'pal9p' in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9p'
+# BUMP pal9p -> pal9q (SP17 audio ring = the whole audio bank,
+# 2026-08-02): the player's circular audio feed ring grows 2560 -> 8192
+# bytes (the session audio bank was always an exclusive 8 KB page with
+# 5632 bytes idle), which removes the low-fps pace contention pal9p had
+# just priced, and the declarable per-frame audio bound moves
+# 2544 -> 3072. Every leg/long fixture is 25 fps, where the contention
+# term was ALREADY exactly zero and the audio layout is unchanged, so
+# all twelve re-encode BYTE-IDENTICAL - SHA-verified against the pal9p
+# caches. The tag moves because the encoder's constants did, which is
+# this switch's whole discipline. See $encoderGeneration 'pal9q' in
+# authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9q'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

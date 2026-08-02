@@ -567,14 +567,16 @@ MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
 ;    17      2    audio bytes/frame LE (REAL, pre-pad; the wire block
 ;                 is this rounded up to a 512 multiple). v2.0 PLAYER
 ;                 BOUND (SP17 T10, circular feed): the audio feed is
-;                 ONE circular NXV_AUD_RING (2560-byte) buffer, so
-;                 open REJECTS > NXV_AUD_FRAME_MAX (2544) real
-;                 bytes/frame (VID FMT?) - stereo needs fps >= 12.28,
-;                 mono >= 9.17; the encoder enforces this at encode
+;                 ONE circular NXV_AUD_RING (8192-byte) buffer, so
+;                 open REJECTS > NXV_AUD_FRAME_MAX (3072) real
+;                 bytes/frame (VID FMT?) - stereo needs fps >= 10.17,
+;                 mono >= 7.60; the encoder enforces this at encode
 ;                 time (audio_layout + a pack_header defence-in-depth
 ;                 guard). Wire field 16 bits; player capability bound
-;                 2544. (Pre-T10 the feed was two fixed 1280-byte
-;                 halves and the bound was 1280 - stereo floor 24.40.)
+;                 3072. (Pre-T10 the feed was two fixed 1280-byte
+;                 halves and the bound was 1280 - stereo floor 24.40;
+;                 the 2560-byte ring that replaced them bounded it at
+;                 2544 - stereo floor 12.28.)
 ;    19      2    ring start-margin in 512B blocks LE. ADVISORY to
 ;                 the v2.0 player: it prefills the ENTIRE ring (which
 ;                 dominates any margin the ring could honor) and
@@ -811,7 +813,7 @@ NR_MMU2          equ $52    ; slot 2 ($4000-$5FFF): the decode loop's
                             ; $4000-$5FFF while a video plays)
 NR_MMU3          equ $53    ; slot 3 ($6000-$7FFF): the session's
                             ; borrowed AUDIO window (SP15 3c - the
-                            ; 2560-byte double buffer moved OFF the
+                            ; audio feed buffer moved OFF the
                             ; hot code page into one pool bank pinned
                             ; here; same capture/restore pattern as
                             ; MMU2. Safe by the same freeze arguments:
@@ -857,14 +859,36 @@ NXV_RATE_MONO    equ 23325  ; 933 samples * 25fps = 23325 exactly - the
 
 NXV_PAL_BYTES    equ 512    ; PAL opcode block size (NR $44 order)
 
-; SP17 T10 - CIRCULAR AUDIO FEED. The same 2560 bytes the 3b double
-; buffer occupied, but as ONE ring: the ISR's read pointer (IX) free-
-; runs around it (wrap at the fixed ring end - the only boundary work
-; the ISR does now), and the frame loop's writer chases BEHIND the
-; reader, so capacity per frame is the WHOLE buffer instead of one
-; half - the playvid differential (video_256x192_m_palette.asm write
-; pointer / interrupts-common.asm read pointer), zero extra RAM.
-NXV_AUD_RING     equ 2560   ; the circular audio buffer (vidAudBuf)
+; SP17 T10 - CIRCULAR AUDIO FEED. ONE ring: the ISR's read pointer
+; (IX) free-runs around it (wrap at the fixed ring end - the only
+; boundary work the ISR does now), and the frame loop's writer chases
+; BEHIND the reader, so capacity per frame is the WHOLE buffer instead
+; of one half - the playvid differential (video_256x192_m_palette.asm
+; write pointer / interrupts-common.asm read pointer).
+;
+; RING SIZE = THE WHOLE AUDIO BANK (2026-08-02). The ring landed at
+; 2560 bytes because that is what the pre-T10 double buffer occupied,
+; but since SP15 3c vidAudBuf has owned a WHOLE 8 KB pool bank
+; (bank_alloc -> vidAudBankC, pinned at MMU3 for the session), so
+; 5632 of those bytes were allocated and idle. They are now the ring.
+; The defect that spent them: at the pace release the ring already
+; holds one whole frame, so the NEXT frame's feed fits the single
+; post-present pump only if 2*aBytes <= NXV_AUD_RING-NXV_AUD_GUARD.
+; At 25 fps stereo that is 2500 of 2544 and it fitted; at 12.5 fps it
+; is 5000 and 98% of the feed trickled out of the `.pace` spin - which
+; is the SD producer's only window - at the READER's byte rate. The
+; owner's 12.5 fps silicon rows spent 24-26 ms per frame in there
+; against 1.41 ms at 25 fps: ~8x pure waste, and the direct cause of
+; their ring underruns. With the whole bank the condition holds for
+; every legal file BY CONSTRUCTION (see NXV_AUD_FRAME_MAX).
+NXV_AUD_RING     equ 8192   ; the circular audio buffer (vidAudBuf) -
+                            ; the entire MMU3 window $6000-$7FFF, so
+                            ; the ring ends flush at the page top and
+                            ; the ISR's wrap compares stay a plain
+                            ; 8-bit low/high immediate pair (see
+                            ; video_ctc_isr: the compare shape and its
+                            ; T-state cost are IDENTICAL at any ring
+                            ; size - only the two constants move)
 NXV_AUD_GUARD    equ 16     ; writer keeps this many bytes clear of
                             ; the read pointer: the stereo ISR's
                             ; (ix+0)/(ix+1) pair fetch is not atomic
@@ -875,21 +899,44 @@ NXV_AUD_GUARD    equ 16     ; writer keeps this many bytes clear of
                             ; SAFE direction (the reader advances, so
                             ; true room only grows), hence 16 is a
                             ; deliberate 8x margin, not a lower bound
-NXV_AUD_FRAME_MAX equ NXV_AUD_RING-NXV_AUD_GUARD ; = 2544, largest
-                            ; per-frame REAL audio size any header may
-                            ; declare (validated at open). Floors:
-                            ; stereo fps > 2*15625/2544 -> >= 12.28;
-                            ; mono fps > 23325/2544 -> >= 9.17.
-                            ; 320x256@12.5 stereo (2500 B/frame) and
-                            ; native 24fps stereo (1302 B/frame) are
-                            ; both inside the bound now
+; Largest per-frame REAL audio size any header may declare (validated
+; at open). It is NO LONGER ring-guard: the ring grew past the point
+; where this bound is what limits the feed, and the binding constraint
+; moved to the streaming/direct gates' BLOCK arithmetic. Those are
+; 8-bit adds over 512-byte blocks (nxv2_open_body: need = cap + apad
+; + 1, and the ring-fit test need + apad + 2), and with the header cap
+; at its own maximum NXV2_STRM_CAP_MAX = 240 they hold iff
+; apad <= 6 blocks, i.e. iff the padded audio section is <= 3072 B.
+; That is a proven invariant with zero headroom today ("<= 247: no
+; carry", "<= 255"), so the declarable bound is pinned to it rather
+; than widened - a bound that keeps a proven invariant beats a bigger
+; one that silently breaks it (ring-guard would be 8176, apad 16, and
+; 240+16+1 wraps a byte).
+; CONTENTION-FREE BY CONSTRUCTION: 2*3072 = 6144 <= 8176 = ring-guard,
+; so EVERY legal file's next-frame feed fits the single post-present
+; pump with 2032 bytes to spare. There is no room-limited regime left
+; for any file the player will open.
+NXV_AUD_FRAME_MAX equ 3072  ; Floors: stereo fps > 2*15625/3072 ->
+                            ; >= 10.17; mono fps > 23325/3072 ->
+                            ; >= 7.60 (was 12.28 / 9.17 at 2544).
+                            ; 320x256@12.5 stereo (2500 B/frame),
+                            ; 12.5 mono (1866) and native 24 fps
+                            ; stereo (1302) are all inside it
+    ASSERT 2*NXV_AUD_FRAME_MAX <= NXV_AUD_RING-NXV_AUD_GUARD
 NXV_AUD_PUMP_CHUNK equ 256  ; pace-spin trickle chunk: one pump call
                             ; copies at most this much, keeping the
                             ; release-poll latency bounded (~a block's
-                            ; LDIR) while the writer chases the reader
-NXV_AUD_BUF_MAX  equ NXV_AUD_RING ; vidAudBuf's resident size (same
-                            ; 2560 bytes as the 3a buffer and the 3b
-                            ; halves - the T10 gain is layout, not RAM)
+                            ; LDIR) while the writer chases the reader.
+                            ; Also the pump's ROOM FLOOR: a room-
+                            ; limited partial smaller than this is not
+                            ; worth the ~1950 T pump path, so the pump
+                            ; returns and lets the caller poll instead
+                            ; (vid_aud_pump). Unreachable on any legal
+                            ; file now - kept as the degraded-regime
+                            ; and future-bound backstop
+NXV_AUD_BUF_MAX  equ NXV_AUD_RING ; vidAudBuf's resident size - the
+                            ; whole 8 KB session audio bank, nothing
+                            ; else lives in that page
 
 ; Short-read failure during the resident ring load (the file ended
 ; before its own F_FSTAT size was served). Outside the esxDOS error

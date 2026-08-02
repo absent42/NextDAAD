@@ -27,7 +27,7 @@ REM the same data rate - see VIDEO-PRESETS.md for which shape a clip wants.
 SET VIDASPECT=
 
 REM Frames per second for encoded cutscenes. Blank = 25. Audio floors: stereo
-REM needs 12.28 or more, mono 9.17 or more, so 12.5 is available with sound
+REM needs 10.17 or more, mono 7.60 or more, so 12.5 is available with sound
 REM on both (see VIDEO-PRESETS.md).
 SET VIDFPS=
 

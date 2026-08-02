@@ -260,7 +260,24 @@ if (-not $sources) { exit 0 }
 #   fixture 009 stranded 12 positions for 124 frames).
 #   Default-path change: any clip whose cadence fires emits different
 #   bytes; 008/009 are the only shipping fixtures affected.
-$encoderGeneration = 'pal9p'
+# BUMP pal9p -> pal9q (SP17 audio ring = the whole audio bank,
+# 2026-08-02). The player's circular audio feed ring goes 2560 -> 8192
+# bytes - the session audio bank was ALWAYS an exclusive 8 KB page and
+# 5632 bytes of it were allocated and idle. That removes the low-fps
+# pace contention pal9p had just priced: the next frame's feed now
+# completes in the single post-present pump at every legal fps, so
+# pace_trickle_frac is identically zero and the gate term it feeds is
+# a guard rather than a charge. The declarable per-frame audio bound
+# moves 2544 -> 3072 (pinned by the player's 8-bit block arithmetic,
+# not by the ring - see nxv2enc's derivation), lowering the fps floors
+# to stereo 10.17 / mono 7.60.
+# Default-path change: 25 fps encodes are BYTE-IDENTICAL (the term was
+# already exactly zero there); STREAMED clips below ~24.6 fps stereo /
+# ~18.3 mono re-derive a HIGHER budget - the 7.4-8.9% of the frame the
+# contention was charging is handed back to the picture - and emit
+# different bytes. AUDIO IS UNCHANGED in every case: same rates, same
+# samples/frame, same real and padded sizes, bit-identical payload.
+$encoderGeneration = 'pal9q'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')
@@ -298,11 +315,12 @@ if (-not $aspect -and $env:VIDPROFILE) {
             # override needs a different floor than this global guess.
             $mono = $env:VIDOPTS -match '(^|\s)--mono(\s|$)'
             # SP17 T10 circular-feed floors (nxv2enc.min_fps_for):
-            # stereo 12.28, mono 9.17 (were 24.40 / 18.22 with the old
-            # double-buffer halves). Every v1 profile rate (12.5-25)
-            # now sits above both floors, so the raise below is a
-            # no-op shim kept for safety against future floor moves.
-            $floor = if ($mono) { 9.17 } else { 12.28 }
+            # stereo 10.17, mono 7.60 (2544-byte bound: 12.28 / 9.17;
+            # pre-T10 double-buffer halves: 24.40 / 18.22). Every v1
+            # profile rate (12.5-25) sits above both floors, so the
+            # raise below is a no-op shim kept for safety against
+            # future floor moves.
+            $floor = if ($mono) { 7.60 } else { 10.17 }
             $orig = $profileFps[$prof]
             $profileFpsArg = if ($orig -lt $floor) { $floor } else { $orig }
             $fpsNote = if ($orig -lt $floor) {
@@ -338,7 +356,7 @@ if ($env:VIDFPS) {
     $fpsArgs = @('--fps', $env:VIDFPS)
 } elseif ($profileFpsArg) {
     # Invariant-culture string: $profileFpsArg is a computed [double]
-    # (9.17/12.28 or a v1 profile rate) - on a comma-decimal system its
+    # (7.60/10.17 or a v1 profile rate) - on a comma-decimal system its
     # default ToString would emit "24,4" and break videnc's own --fps
     # parsing, the same locale pitfall VIDASPECT's comma form works
     # around above.

@@ -157,17 +157,17 @@ def t1_header_invalid():
         raise AssertionError("expected ValueError for short buffer")
 
 
-@case(1, "audio layout - NXV player bound (T10 circular feed, 2544B/frame) enforced at encode time")
+@case(1, "audio layout - NXV player bound (T10 circular feed, 3072B/frame) enforced at encode time")
 def t1_audio_player_bound():
-    # SP17 T10: the player's circular audio feed caps real audio at
-    # NXV_AUD_FRAME_MAX = 2560 (ring) - 16 (writer guard) = 2544
-    # bytes/frame (open rejects more with VID FMT?). audio_layout
-    # must refuse to lay out such an encode with a named error -
-    # stereo needs fps >= ~12.28, mono fps >= ~9.17.
-    expect(enc.AUD_RING == 2560, "ring matches NXV_AUD_RING")
+    # SP17 T10: the player's circular audio feed is one ring in the
+    # session audio bank and NXV_AUD_FRAME_MAX caps a header's REAL
+    # audio at 3072 bytes/frame (open rejects more with VID FMT?).
+    # audio_layout must refuse to lay out such an encode with a named
+    # error - stereo needs fps >= ~10.17, mono fps >= ~7.60.
+    expect(enc.AUD_RING == 8192, "ring matches NXV_AUD_RING (whole audio bank)")
     expect(enc.AUD_GUARD == 16, "guard matches NXV_AUD_GUARD")
-    expect(enc.AUD_FRAME_MAX == 2544, "bound = ring - guard")
-    # stereo 25 fps: 625*2 = 1250 <= 2544 - accepted (and its layout
+    expect(enc.AUD_FRAME_MAX == 3072, "bound matches NXV_AUD_FRAME_MAX")
+    # stereo 25 fps: 625*2 = 1250 <= 3072 - accepted (and its layout
     # is BYTE-IDENTICAL to the pre-T10 layout: same samples/real/pad)
     rate, samples, real, padded = enc.audio_layout(25, 2)
     expect((samples, real, padded) == (625, 1250, 1536),
@@ -180,76 +180,94 @@ def t1_audio_player_bound():
     # canonical pre-T10 rejection)
     rate, samples, real, padded = enc.audio_layout(20, 2)
     expect(real == 1562, "stereo 20fps legal under the T10 bound")
-    # stereo 6 fps: round(15625/6)*2 = 5208 > 2544 - rejected with
+    # stereo 6 fps: round(15625/6)*2 = 5208 > 3072 - rejected with
     # the named floors and the --mono remedy (mono fits at 12: no -
-    # at 6 mono is 3888 > 2544, so NO --mono remedy here)
+    # at 6 mono is 3888 > 3072, so NO --mono remedy here)
     try:
         enc.audio_layout(6, 2)
     except SystemExit as e:
         msg = str(e)
-        expect("2544" in msg, "error names the 2544-byte player bound")
-        expect("12.28" in msg, "error names the stereo fps floor")
-        expect("9.17" in msg, "error names the mono fps floor")
+        expect("3072" in msg, "error names the 3072-byte player bound")
+        expect("10.17" in msg, "error names the stereo fps floor")
+        expect("7.60" in msg, "error names the mono fps floor")
         expect("--mono" not in msg, "no --mono remedy when mono is over too")
     else:
-        raise AssertionError("stereo 6fps must be rejected (5208 > 2544)")
-    # stereo 10 fps: 3126 > 2544 rejected, but mono at 10 fps is
-    # round(23325/10) = 2333 <= 2544, so the --mono remedy appears
+        raise AssertionError("stereo 6fps must be rejected (5208 > 3072)")
+    # stereo 10 fps: 3126 > 3072 rejected, but mono at 10 fps is
+    # round(23325/10) = 2333 <= 3072, so the --mono remedy appears
     try:
         enc.audio_layout(10, 2)
     except SystemExit as e:
         expect("--mono" in str(e), "error suggests --mono when mono fits")
     else:
-        raise AssertionError("stereo 10fps must be rejected (3126 > 2544)")
+        raise AssertionError("stereo 10fps must be rejected (3126 > 3072)")
     # floors are the boundary: just above passes, just below rejects
-    expect(enc.audio_layout(12.28, 2)[2] <= enc.AUD_FRAME_MAX, "stereo 12.28 fits")
+    expect(enc.audio_layout(10.17, 2)[2] <= enc.AUD_FRAME_MAX, "stereo 10.17 fits")
     try:
-        enc.audio_layout(12.27, 2)
+        enc.audio_layout(10.16, 2)
     except SystemExit:
         pass
     else:
-        raise AssertionError("stereo 12.27fps must be rejected")
-    expect(enc.audio_layout(9.17, 1)[2] <= enc.AUD_FRAME_MAX, "mono 9.17 fits")
+        raise AssertionError("stereo 10.16fps must be rejected")
+    expect(enc.audio_layout(7.6, 1)[2] <= enc.AUD_FRAME_MAX, "mono 7.60 fits")
     try:
-        enc.audio_layout(9.16, 1)
+        enc.audio_layout(7.59, 1)
     except SystemExit:
         pass
     else:
-        raise AssertionError("mono 9.16fps must be rejected")
+        raise AssertionError("mono 7.59fps must be rejected")
     # the two headline unlocks (the hardware-round legs)
     expect(enc.audio_layout(12.5, 2)[2] == 2500,
-           "320x256@12.5 stereo is legal now (2500 <= 2544)")
+           "320x256@12.5 stereo is legal (2500 <= 3072)")
     expect(enc.audio_layout(24, 2)[2] == 1302,
-           "native 24fps stereo is legal now (1302 <= 2544)")
+           "native 24fps stereo is legal (1302 <= 3072)")
 
 
-@case(1, "audio floor arithmetic - T10 circular-feed floors pinned (ring/guard derivation)")
+@case(1, "audio floor arithmetic - T10 circular-feed floors pinned (bound/ring derivation)")
 def t1_audio_floor_arithmetic():
-    # SP17 T10: pin the derivation, not just the outcomes. The bound
-    # is AUD_RING (2560, the same RAM the old halves used) minus
-    # AUD_GUARD (16, the writer's clearance from the read pointer);
-    # the floor formula is fps > rate/(smax + 0.5) with
-    # smax = AUD_FRAME_MAX // channels - identical formula to the
-    # pre-T10 floors, only the bound moved.
+    # SP17 T10: pin the derivation, not just the outcomes. The floor
+    # formula is fps > rate/(smax + 0.5) with smax = AUD_FRAME_MAX //
+    # channels - identical formula since the pre-T10 halves, only the
+    # bound moves. The bound is NO LONGER ring-guard (2026-08-02): the
+    # ring is the whole 8 KB audio bank, and AUD_FRAME_MAX is pinned
+    # instead by the player's 8-bit block arithmetic (cap 240 + apad
+    # + 1 must stay inside a byte, and the ring-fit test adds apad + 2
+    # on top, so apad <= 6 blocks = 3072 padded bytes).
     import math as _m
-    expect(enc.AUD_FRAME_MAX == enc.AUD_RING - enc.AUD_GUARD,
-           "bound derives from ring minus guard")
-    expect(abs(enc.min_fps_for(2) - 15625 / (2544 // 2 + 0.5)) < 1e-12,
-           "stereo floor = 15625/1272.5")
-    expect(abs(enc.min_fps_for(1) - 23325 / (2544 + 0.5)) < 1e-12,
-           "mono floor = 23325/2544.5")
+    expect(enc.AUD_RING == 8192 and enc.AUD_GUARD == 16,
+           "ring is the whole audio bank, guard unchanged")
+    expect(2 * enc.AUD_FRAME_MAX <= enc.AUD_RING - enc.AUD_GUARD,
+           "TWO max frames fit the ring's usable span - the feed is "
+           "one-pass by construction at every legal fps")
+    expect(((enc.AUD_FRAME_MAX + 511) // 512) <= 6,
+           "the padded section stays inside 6 blocks (the player's "
+           "8-bit cap+apad+1 and need+apad+2 adds)")
+    expect(abs(enc.min_fps_for(2) - 15625 / (3072 // 2 + 0.5)) < 1e-12,
+           "stereo floor = 15625/1536.5")
+    expect(abs(enc.min_fps_for(1) - 23325 / (3072 + 0.5)) < 1e-12,
+           "mono floor = 23325/3072.5")
     # the user-facing (ceil to 0.01) floors named in every message
-    expect(_m.ceil(enc.min_fps_for(2) * 100) / 100 == 12.28,
-           "stereo floor rounds to 12.28")
-    expect(_m.ceil(enc.min_fps_for(1) * 100) / 100 == 9.17,
-           "mono floor rounds to 9.17")
+    expect(_m.ceil(enc.min_fps_for(2) * 100) / 100 == 10.17,
+           "stereo floor rounds to 10.17")
+    expect(_m.ceil(enc.min_fps_for(1) * 100) / 100 == 7.60,
+           "mono floor rounds to 7.60")
     # every layout at and above the shown floors respects the bound
-    for fps in (12.28, 12.5, 23.976, 24, 25):
+    for fps in (10.17, 12.5, 23.976, 24, 25):
         expect(enc.audio_layout(fps, 2)[2] <= enc.AUD_FRAME_MAX,
                f"stereo {fps} fps within the T10 bound")
-    for fps in (9.17, 10, 18.22, 24, 25):
+    for fps in (7.6, 10, 18.22, 24, 25):
         expect(enc.audio_layout(fps, 1)[2] <= enc.AUD_FRAME_MAX,
                f"mono {fps} fps within the T10 bound")
+    # THE FIX THIS BOUND EXISTS TO GUARANTEE: no legal encode is
+    # room-limited in the player's post-present pump any more.
+    for fps in (7.6, 10.17, 12.5, 20, 23.976, 25):
+        for ch in (1, 2):
+            if ch == 2 and fps < 10.17:
+                continue
+            real = enc.audio_layout(fps, ch)[2]
+            expect(enc.pace_trickle_frac(real) == 0.0,
+                   f"{'stereo' if ch == 2 else 'mono'} {fps} fps feeds "
+                   f"in one pass (no pace contention)")
 
 
 @case(1, "streaming supply gate - silicon-calibrated (Card #3 VSTR0/VSTR1 anchors)")
@@ -1791,7 +1809,7 @@ def _synthetic_ex(n, width, height, seed=7, cut_at=None):
                 abytes_pad=abytes_pad, nframes=n)
 
 
-@case(11, "pack_header defence-in-depth - audio bytes over the 2544 player bound rejected")
+@case(11, "pack_header defence-in-depth - audio bytes over the 3072 player bound rejected")
 def t11_pack_header_bound():
     try:
         enc.pack_header(width=256, height=192, fps=25, channels=2,
@@ -1799,16 +1817,18 @@ def t11_pack_header_bound():
                         audio_bytes_per_frame=enc.AUD_FRAME_MAX + 1,
                         ring_start_margin_blocks=0, per_frame_cap_blocks=1)
     except ValueError as e:
-        expect("2544" in str(e), "error names the 2544 player bound")
+        expect(str(enc.AUD_FRAME_MAX) in str(e),
+               "error names the player bound")
         expect("VID FMT" in str(e), "error names the player refusal")
     else:
-        raise AssertionError("pack_header must reject 2545 audio bytes/frame")
+        raise AssertionError(
+            f"pack_header must reject {enc.AUD_FRAME_MAX + 1} audio bytes/frame")
     # the bound itself is legal
     hdr = enc.pack_header(width=256, height=192, fps=25, channels=2,
                           arate=enc.RATE_STEREO, frame_count=1,
                           audio_bytes_per_frame=enc.AUD_FRAME_MAX,
                           ring_start_margin_blocks=0, per_frame_cap_blocks=1)
-    expect(len(hdr) == 512, "2544 exactly is accepted")
+    expect(len(hdr) == 512, "the bound exactly is accepted")
 
 
 def _walk_ops(payload):
@@ -5154,37 +5174,51 @@ def t21_silicon_r_rekey():
            "density 1.0 must clamp to the dense anchor")
 
 
-@case(21, "low-fps pace contention - trickle threshold, EXACT zero at every "
-          "calibrated fps, engages at 12.5, re-budgets rather than refuses")
+@case(21, "low-fps pace contention - RESOLVED AT SOURCE: the whole-bank ring "
+          "makes the trickle term zero at every legal fps, guard still live")
 def t21_pace_contention():
-    # the threshold is the player's own ring arithmetic: the next
-    # frame's feed fits the single post-present pump iff 2A <= 2544
+    # The threshold is the player's own ring arithmetic: the next
+    # frame's feed fits the single post-present pump iff
+    # 2A <= AUD_RING - AUD_GUARD. That span was 2544 bytes and 12.5 fps
+    # stereo (A = 2500) missed it by 1956; it is 8176 now, and
+    # AUD_FRAME_MAX 3072 caps 2A at 6144, so NO ENCODABLE FILE can be
+    # room-limited. The term is kept as the live guard on that
+    # inequality - these cases pin both halves of it.
+    span = enc.AUD_RING - enc.AUD_GUARD
+    expect(span == 8176, "the usable span is the whole bank minus the guard")
     expect(enc.pace_trickle_frac(1250) == 0.0, "25 fps stereo must be EXACTLY zero")
     expect(enc.pace_trickle_frac(933) == 0.0, "25 fps mono must be EXACTLY zero")
-    expect(enc.pace_trickle_frac(1272) == 0.0, "the boundary itself must be zero")
-    expect(enc.pace_trickle_frac(1273) > 0.0, "one byte past the boundary must engage")
-    expect(abs(enc.pace_trickle_frac(2500) - 0.9824) < 1e-4,
-           "12.5 fps stereo trickle fraction")
+    expect(enc.pace_trickle_frac(2500) == 0.0,
+           "12.5 fps stereo - THE DEFECT ROW - must now be EXACTLY zero")
+    expect(enc.pace_trickle_frac(1866) == 0.0,
+           "12.5 fps mono must now be EXACTLY zero")
+    expect(enc.pace_trickle_frac(enc.AUD_FRAME_MAX) == 0.0,
+           "the largest declarable frame must still feed in one pass")
+    # the guard itself is still armed: the boundary is the ring's, and
+    # one byte past it engages
+    expect(enc.pace_trickle_frac(span // 2) == 0.0,
+           "the ring boundary itself must be zero")
+    expect(enc.pace_trickle_frac(span // 2 + 1) > 0.0,
+           "one byte past the ring boundary must still engage the term")
     expect(enc.pace_trickle_frac(0) == 0.0, "no audio -> no contention")
     # 25 fps: every returned field is BIT-identical with and without the
-    # new argument, which is what protects the 007/008/009 calibration
+    # argument, which is what protects the 007/008/009 calibration
     a = enc.stream_supply_check(3.0e5, 21000.0, 1536, 25.0, 320, 256)
     b = enc.stream_supply_check(3.0e5, 21000.0, 1536, 25.0, 320, 256,
                                 audio_real_bytes=1250)
     for k in ("utilization", "busy_ms", "audio_ms", "sd_ms", "suggested_budget"):
         expect(a[k] == b[k], f"25 fps must not move: {k} {a[k]} != {b[k]}")
     expect(b["pump_ms"] == 0.0, "25 fps pump term must be exactly zero")
-    # 12.5 fps stereo: the term engages, and it is proportional to the
-    # produced blocks so the suggested budget falls (re-budget, not a
-    # bare refusal)
+    # 12.5 fps stereo: NO LONGER CHARGED. Passing the audio bytes must
+    # now leave every field bit-identical too - that is the recovered
+    # budget, handed back to the picture.
     c = enc.stream_supply_check(6.0e5, 42000.0, 2560, 12.5, 320, 256)
     d = enc.stream_supply_check(6.0e5, 42000.0, 2560, 12.5, 320, 256,
                                 audio_real_bytes=2500)
-    expect(d["pump_ms"] > 4.0, f"12.5 fps must price contention (got {d['pump_ms']:.2f})")
-    expect(d["utilization"] > c["utilization"],
-           "12.5 fps utilization must rise once the contention is priced")
-    expect(d["suggested_budget"] < c["suggested_budget"],
-           "the derived budget must fall, so the search descends")
+    expect(d["pump_ms"] == 0.0,
+           f"12.5 fps must no longer be charged (got {d['pump_ms']:.2f})")
+    for k in ("utilization", "busy_ms", "audio_ms", "sd_ms", "suggested_budget"):
+        expect(c[k] == d[k], f"12.5 fps must not move either: {k}")
     # the direct gate is a different path and must be untouched (row 057
     # is silicon-clean at 320x256 @12.5 --direct)
     expect("audio_real_bytes" not in

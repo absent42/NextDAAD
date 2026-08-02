@@ -225,15 +225,16 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
         raise ValueError("audio_bytes_per_frame out of 16-bit range")
     if audio_bytes_per_frame > AUD_FRAME_MAX:
         # PLAYER BOUND defence-in-depth (3b review minor -> 3c; bound
-        # moved by SP17 T10's circular feed): the player rejects such
+        # moved by SP17 T10's circular feed, and again 2026-08-02 when
+        # the ring took the whole audio bank): the player rejects such
         # a header at open (VID FMT?), so no writer may build one.
         # audio_layout() enforces this upstream for every real encode
         # path; this guard catches any future caller that bypasses it.
         raise ValueError(
             f"audio_bytes_per_frame {audio_bytes_per_frame} exceeds the "
-            f"NXV player bound of {AUD_FRAME_MAX} bytes (the circular "
-            f"feed ring minus the writer guard, NXV_AUD_FRAME_MAX - the "
-            f"player refuses the file at open with VID FMT?)")
+            f"NXV player bound of {AUD_FRAME_MAX} bytes "
+            f"(NXV_AUD_FRAME_MAX - the player refuses the file at open "
+            f"with VID FMT?)")
     if not (0 <= ring_start_margin_blocks < (1 << 16)):
         raise ValueError("ring_start_margin_blocks out of 16-bit range")
     if not (0 <= per_frame_cap_blocks < (1 << 16)):
@@ -978,28 +979,55 @@ AUDIO_COPY_T_PER_B = 25.0
 # both and the utilisation does not move. Silicon says that invariance
 # is wrong at 12.5 fps, and the player says why.
 #
+# RESOLVED AT SOURCE 2026-08-02 - READ THIS FIRST. The player's ring is
+# now the WHOLE 8 KB audio bank (NXV_AUD_RING 2560 -> 8192) and the
+# declarable per-frame bound is pinned at 3072, so the room condition
+# below holds for EVERY legal file with 2032 bytes to spare and
+# trickle_frac is identically zero at every encodable fps. The term,
+# its constant and this whole derivation are KEPT - they are the record
+# of what the defect was and the guard that re-prices it should either
+# constant ever move again - but they no longer fire. What follows is
+# stated in the past tense where it describes the pre-fix player.
+#
 # THE PLAYER MECHANISM (src/video.asm, the T10 circular audio feed).
-# The writer may never be more than NXV_AUD_FRAME_MAX (2544) bytes ahead
-# of the ISR read pointer, and at the pace release the ring already
-# holds one whole frame of audio. So the NEXT frame's feed fits the
-# single post-present pump (the `.qnext` `ld bc,$FFFF` call) if and only
-# if 2 x aBytes <= 2544. Above that the remainder is ROOM-LIMITED and
-# trickles from the `.pace` spin - which is the SD producer's only
-# window. Each spin iteration is then
+# The writer may never be more than the ring's usable span (ring minus
+# the writer guard) ahead of the ISR read pointer, and at the pace
+# release the ring already holds one whole frame of audio. So the NEXT
+# frame's feed fits the single post-present pump (the `.qnext`
+# `ld bc,$FFFF` call) if and only if 2 x aBytes <= AUD_RING-AUD_GUARD.
+# That span was 2544 bytes; above it the remainder was ROOM-LIMITED and
+# trickled from the `.pace` spin - which is the SD producer's only
+# window. Each spin iteration was then
 #     vid_pace_poll -> vid_aud_pump (full path) -> ONE vid_prod_step
 # instead of poll -> `ret z` -> produce, so every produced 512 B block
-# now also pays a complete pump call: two room computations,
-# vid_src_seek (ring-page derive + MMU6 map + cursor spill), a ~12-15 B
-# LDIR, the budget/feedRem/write-pointer accounting and vid_rl_mod's
-# 24-bit modulo. Only the LDIR is charged today, through
-# AUDIO_COPY_T_PER_B; the rest is unpriced.
+# also paid a complete pump call: two room computations, vid_src_seek
+# (ring-page derive + MMU6 map + cursor spill), a ~12-15 B LDIR, the
+# budget/feedRem/write-pointer accounting and vid_rl_mod's 24-bit
+# modulo. Only the LDIR was charged, through AUDIO_COPY_T_PER_B; the
+# rest was unpriced. Worse, the chunk loop advanced at the READER's
+# rate (a byte per ~896 T against a 1300-1400 T loop pass), so the
+# owner's 12.5 fps silicon rows spent 24-26 ms/frame in there against
+# 1.41 ms at 25 fps - ~8x pure waste, with the SD producer stopped.
 #
-#   trickle_frac = max(0, 2*aBytes - AUD_FRAME_MAX) / aBytes
-#   25 fps stereo  aBytes 1250 -> 2500 <= 2544 -> 0.0000 (EXACTLY zero)
-#   25 fps mono    aBytes  933 -> 1866 <= 2544 -> 0.0000
-#   23.976 stereo  aBytes 1304                 -> 0.049
-#   20 fps stereo  aBytes 1562                 -> 0.371
-#   12.5 fps stereo aBytes 2500                -> 0.9824
+# AND THE TERM UNDER-READ IT BY ~4x, recorded here because
+# AUD_PUMP_CALL_T is the sort of constant that gets reused. pump_ms
+# priced the per-produced-BLOCK pump overhead (5.2-6.2 ms/frame on
+# 016/017/018) but not the reader-paced WAIT, which the AUDIO phase
+# measured at 21.8-23.4 ms/frame on top of the ~2.3 ms one-pass copy.
+# The error is one-directional and benign: the three clips re-derive
+# their budgets from the smaller figure (0.69/0.73/0.83 ->
+# 0.75/0.87/0.93), so they get back less picture than the player
+# actually recovered and run with margin rather than at the line.
+#
+#   trickle_frac = max(0, 2*aBytes - (AUD_RING-AUD_GUARD)) / aBytes
+#                                 at 2544 span    at 8176 span
+#   25 fps stereo   aBytes 1250 -> 0.0000          0.0000
+#   25 fps mono     aBytes  933 -> 0.0000          0.0000
+#   23.976 stereo   aBytes 1304 -> 0.0491          0.0000
+#   20 fps stereo   aBytes 1562 -> 0.3714          0.0000
+#   12.5 fps stereo aBytes 2500 -> 0.9824          0.0000
+#   12.5 fps mono   aBytes 1866 -> 0.6367          0.0000
+#   10.17 fps stereo (the floor, aBytes 3072)      0.0000
 #
 # THE SILICON THAT FOUND IT (three independent rows, 2026-08-02, all
 # 320x256 stereo streamed, all admitted by the uncorrected gate):
@@ -1027,19 +1055,20 @@ AUDIO_COPY_T_PER_B = 25.0
 # the difference divided by trickle_frac is this constant directly.
 # Card #8 already holds the 25 fps side (1163-1166 B/ms).
 #
-# RESIDUAL, DISCLOSED. At 1950 T the corrected gate reads the shipped
-# 061 at 0.988, not the 1.029 it measured - ~4% still optimistic on the
-# worst row (2224 T would put it exactly on the refusal line). The
-# re-budget absorbs it: 061 re-derives to ~0.84 and lands its TRUE
-# utilisation near 0.94. Named here so the measurement row above closes
-# it rather than a nudge.
+# RESIDUAL, DISCLOSED (superseded by the fix, kept for the record). At
+# 1950 T the corrected gate read the shipped 061 at 0.988, not the
+# 1.029 it measured - ~4% still optimistic on the worst row (2224 T
+# would put it exactly on the refusal line). That residual is moot on
+# the whole-bank ring: the term is zero, and what those three rows now
+# get back is the 7.4-8.9% of their frame the contention was charging.
 #
 # SCOPE. Streamed ring transport ONLY. The DIRECT path never runs the
 # producer (SD-to-surface, no ring) and has its own gate, and row 057
 # (320x256 @12.5 --direct) is silicon-clean - so direct_supply_check and
 # SD_WIRE_BYTES_PER_MS (co-fitted to DIRECT_TRANSPORT_FACTOR) are left
-# alone. At 25 fps the term is EXACTLY zero, so every silicon anchor the
-# gate is calibrated on (007/008/009, Card #3, Card #8) is untouched.
+# alone. At 25 fps the term was already EXACTLY zero, so every silicon
+# anchor the gate is calibrated on (007/008/009, Card #3, Card #8) was
+# untouched by the term and is untouched by its removal.
 # ---------------------------------------------------------------------
 AUD_PUMP_CALL_T = 1950.0
 
@@ -1265,11 +1294,20 @@ def pace_trickle_frac(audio_real_bytes):
     """Fraction of a frame's audio feed that is ROOM-LIMITED and must
     trickle from the player's `.pace` spin (see the LOW-FPS PACE
     CONTENTION block). 0.0 whenever 2 x aBytes fits the ring's usable
-    span, which is every fps the supply gate was calibrated at."""
+    span - which, since the ring became the whole audio bank, is EVERY
+    encodable fps: AUD_FRAME_MAX 3072 caps 2 x aBytes at 6144 against a
+    span of 8176. The function is kept as the live guard on that
+    inequality rather than hard-wired to zero, so that moving either
+    constant re-prices the gate instead of silently under-charging it.
+
+    NOTE the span is AUD_RING-AUD_GUARD, not AUD_FRAME_MAX: the two
+    were the same number until 2026-08-02 and this used the bound by
+    coincidence. The player's room test is against the ring."""
     a = float(audio_real_bytes or 0)
     if a <= 0.0:
         return 0.0
-    return max(0.0, min(1.0, (2.0 * a - AUD_FRAME_MAX) / a))
+    span = AUD_RING - AUD_GUARD
+    return max(0.0, min(1.0, (2.0 * a - span) / a))
 
 
 def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
@@ -1284,8 +1322,8 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     from the audio-demand-invariant solve). audio_real_bytes: the
     encode's REAL (pre-pad) audio bytes/frame - the quantity the
     player's ring room test uses; None (legacy callers) prices no pace
-    contention, which is correct at every fps at or above ~24.6 stereo
-    / ~18.3 mono."""
+    contention, which since 2026-08-02 is correct at EVERY encodable
+    fps (the ring is the whole audio bank - see pace_trickle_frac)."""
     af = TMODEL_COEFFS["audio_factor"]
     clock = TMODEL_COEFFS["clock_khz"]
     period_ms = 1000.0 / float(fps)
@@ -1377,8 +1415,9 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
     # PACE CONTENTION (see the LOW-FPS PACE CONTENTION block): when the
     # audio feed is room-limited the producer pays one full vid_aud_pump
     # per produced 512 B block over trickle_frac of the frame. EXACTLY
-    # zero at every calibrated fps, so this line cannot move a 25 fps
-    # encode by so much as a rounding tick.
+    # zero at every encodable fps since the player's ring became the
+    # whole audio bank, so this line cannot move ANY encode by so much
+    # as a rounding tick - it is the guard, not a live charge.
     pump_ms = (pace_trickle_frac(audio_real_bytes)
                * (mean_demand_bytes / 512.0) * AUD_PUMP_CALL_T / clock)
     util = (busy_ms + audio_ms + sd_ms + pump_ms) / period_ms
@@ -4349,18 +4388,25 @@ def resolve_shape(shape):
 # Audio layout (unchanged from v1's own derivation - same rates, same
 # round(rate/fps) samples-per-frame rule) + the NXV PLAYER BOUND
 # (SP17 T10, circular feed): the player's audio feed is ONE circular
-# 2560-byte ring (NXV_AUD_RING, src/nextdaad.inc) - the ISR's read
-# pointer free-runs around it and the frame loop writes behind it, so
-# capacity per frame is the WHOLE ring minus a small writer guard,
-# not one fixed half. The open path rejects any header declaring more
-# than AUD_FRAME_MAX real audio bytes/frame ("VID FMT?"). The wire
-# format itself allows more - this is a player capability bound,
-# enforced HERE so a doomed encode fails at encode time with a named
-# remedy instead of building a file that refuses to play.
+# ring in the session's audio bank (NXV_AUD_RING, src/nextdaad.inc) -
+# the ISR's read pointer free-runs around it and the frame loop writes
+# behind it, so capacity per frame is the WHOLE ring minus a small
+# writer guard, not one fixed half. The open path rejects any header
+# declaring more than AUD_FRAME_MAX real audio bytes/frame
+# ("VID FMT?"). The wire format itself allows more - this is a player
+# capability bound, enforced HERE so a doomed encode fails at encode
+# time with a named remedy instead of building a file that refuses to
+# play.
 #
 # Derivation of the bound and the fps floors:
-#   AUD_RING      = 2560  - the same bytes the pre-T10 two 1280-byte
-#                           halves occupied (zero extra RAM)
+#   AUD_RING      = 8192  - the WHOLE audio bank (2026-08-02). It sat
+#                           at 2560 (what the pre-T10 double buffer
+#                           had occupied) while the bank had always
+#                           been an exclusive 8 KB pool page, so 5632
+#                           bytes were allocated and idle. See the
+#                           LOW-FPS PACE CONTENTION block: the
+#                           room-limited feed it prices is exactly
+#                           what those bytes now buy back.
 #   AUD_GUARD     = 16    - the writer keeps 16 bytes clear of the
 #                           read pointer. REQUIRED minimum is one
 #                           stereo pair (2 bytes): the player ISR's
@@ -4371,29 +4417,56 @@ def resolve_shape(shape):
 #                           (the reader advances, so true room only
 #                           grows), so 16 is a deliberate 8x safety
 #                           margin, stated conservative.
-#   AUD_FRAME_MAX = 2560 - 16 = 2544 real bytes/frame
+#   AUD_FRAME_MAX = 3072  - NOT ring-guard (which is 8176). The bound
+#                           stopped being what the RING limits and
+#                           became what the player's streaming and
+#                           direct gates admit: both compute the
+#                           per-frame block need as an 8-bit
+#                           `cap + apad + 1`, and the streaming
+#                           ring-fit test adds `apad + 2` on top of
+#                           that, so with the header's own cap at its
+#                           documented maximum (NXV2_STRM_CAP_MAX =
+#                           240) they stay inside a byte if and only
+#                           if apad <= 6 blocks - i.e. iff the PADDED
+#                           audio section is <= 3072 B. Those adds
+#                           carry "<= 247: no carry possible" in
+#                           video.asm and have exactly zero headroom,
+#                           so the declarable bound is pinned to them
+#                           rather than widened: at 8176 a legal
+#                           header would give apad 16 and wrap the
+#                           byte (240 + 16 + 1 = 257).
+# CONTENTION-FREE BY CONSTRUCTION: 2 x 3072 = 6144 <= 8176, so every
+# legal file's next-frame feed completes in the player's single
+# post-present pump with 2032 bytes to spare - see pace_trickle_frac,
+# which is now identically zero for anything that can be encoded.
 # Floors (min_fps_for, same formula as before): samples <= smax
 # requires rate/fps < smax + 0.5, i.e. fps > rate/(smax + 0.5) with
 # smax = AUD_FRAME_MAX // channels:
-#   stereo: 15625 / 1272.5 = 12.2790... -> fps >= 12.28
-#   mono:   23325 / 2544.5 = 9.1669...  -> fps >=  9.17
-# (pre-T10: 1280 -> stereo 24.40 / mono 18.22.) 320x256@12.5 stereo
-# (2500 B/frame) and native 24 fps stereo (1302 B/frame) are now
-# legal. LEGALITY ONLY changes: any previously legal (fps, channels)
-# lays out byte-identically (same rate/samples/real/padded - the
-# bound is a comparison, not an operand of the layout arithmetic).
+#   stereo: 15625 / 1536.5 = 10.1692... -> fps >= 10.17
+#   mono:   23325 / 3072.5 =  7.5915... -> fps >=  7.60
+# (pre-T10: 1280 -> stereo 24.40 / mono 18.22; at the 2560-byte ring:
+# 2544 -> stereo 12.28 / mono 9.17.) 320x256@12.5 stereo (2500
+# B/frame) and native 24 fps stereo (1302 B/frame) stay legal.
+# LEGALITY ONLY changes: any previously legal (fps, channels) lays out
+# byte-identically (same rate/samples/real/padded - the bound is a
+# comparison, not an operand of the layout arithmetic), so the AUDIO
+# PAYLOAD of every existing encode is bit-for-bit unaffected.
 # ---------------------------------------------------------------------
 
-AUD_RING = 2560       # matches NXV_AUD_RING - the circular feed ring
+AUD_RING = 8192       # matches NXV_AUD_RING - the circular feed ring
 AUD_GUARD = 16        # matches NXV_AUD_GUARD - writer guard bytes
-AUD_FRAME_MAX = AUD_RING - AUD_GUARD  # matches NXV_AUD_FRAME_MAX
+AUD_FRAME_MAX = 3072  # matches NXV_AUD_FRAME_MAX - pinned by the
+                      # player's 8-bit block arithmetic, NOT by the
+                      # ring (see the derivation above)
+assert 2 * AUD_FRAME_MAX <= AUD_RING - AUD_GUARD
 
 
 def min_fps_for(channels):
     """Lowest fps whose round(rate/fps)*channels fits AUD_FRAME_MAX:
     samples <= smax requires rate/fps < smax + 0.5, i.e.
-    fps > rate/(smax + 0.5). Stereo ~12.28, mono ~9.17 (T10 circular
-    feed; the pre-T10 half-buffer floors were 24.40 / 18.22)."""
+    fps > rate/(smax + 0.5). Stereo ~10.17, mono ~7.60 (T10 circular
+    feed at the whole-bank ring; the 2560-byte ring gave 12.28 / 9.17
+    and the pre-T10 half-buffers 24.40 / 18.22)."""
     rate = RATE_STEREO if channels == 2 else RATE_MONO
     return rate / (AUD_FRAME_MAX // channels + 0.5)
 
@@ -4417,8 +4490,8 @@ def audio_layout(fps, channels):
         raise SystemExit(
             f"error: {real} audio bytes/frame ({mode} at {float(fps):g} "
             f"fps) exceeds the NXV player's per-frame audio bound "
-            f"of {AUD_FRAME_MAX} bytes (the T10 circular feed ring "
-            f"minus the writer guard - a bigger frame is rejected at "
+            f"of {AUD_FRAME_MAX} bytes (the T10 circular feed's "
+            f"per-frame section bound - a bigger frame is rejected at "
             f"open with VID FMT?). Stereo requires "
             f"fps >= {_math.ceil(min_fps_for(2) * 100) / 100:.2f}, mono "
             f"fps >= {_math.ceil(min_fps_for(1) * 100) / 100:.2f} "
