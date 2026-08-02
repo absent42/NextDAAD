@@ -971,8 +971,12 @@ if ($Font) {
 # only window - three 12.5 fps silicon rows over rate at gate 0.89-0.90)
 # and the W5 rolling refresh gains its two corpus-sweep guards. Every
 # leg/long fixture is 25 fps, where the contention term is EXACTLY zero,
-# so the gate change moves no fixture. See $encoderGeneration 'pal9p' in
-# authoring-kit/lib/video.ps1.
+# so the GATE change moves no fixture; what does move is the roll -
+# 008/009 are the only fixtures whose cadence fires, and the guards
+# change what their roll frames spend and when their window closes
+# (009's window used to strand 12 positions for 124 frames). Measured at
+# the bump, SHA-verified: see the table below. See $encoderGeneration
+# 'pal9p' in authoring-kit/lib/video.ps1.
 $vidLegSettlementTag = 'pal9p'
 
 if ($Vid) {

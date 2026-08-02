@@ -1922,15 +1922,55 @@ DRIFT_LM_T, DRIFT_LM_T_REFRACT = 1.5, 3.0   # held-palette lm drift bar
 # next frame, so contention lengthens the window (degrades the refresh
 # PERIOD); it never degrades the rate and never holds a frame.
 #
-# KF_ROLL_SHARE sizes the per-frame quota: the slice's worst-case
-# literal bytes may claim at most this fraction of the frame's own
-# delta byte cap, so N = ceil(raw / (KF_ROLL_SHARE * cap_bytes)) and a
-# lower budget stretches the window by construction. 0.5 is a stated
-# margin, not a fitted value: at least half of every roll frame's byte
-# cap is always left to the normal motion updates, and at the owner
-# pair's operating points (048 boat budget 0.42, 050 church 0.57,
-# 320x256) it lands N at 8 and 6 frames - the same order as the span
-# the roll replaces (4 chunk frames), spread thin instead of held.
+# KF_ROLL_SHARE sizes the per-frame quota CEILING: the slice's
+# worst-case literal bytes may claim at most this fraction of the
+# frame's own delta byte cap, so the nominal N = ceil(raw /
+# (KF_ROLL_SHARE * cap_bytes)) and a lower budget stretches the window
+# by construction. 0.5 is a stated margin, not a fitted value: at least
+# half of every roll frame's byte cap is always left to the normal
+# motion updates, and at the owner pair's operating points (048 boat
+# budget 0.42, 050 church 0.57, 320x256) it lands N at 8 and 6 frames -
+# the same order as the span the roll replaces (4 chunk frames), spread
+# thin instead of held.
+#
+# TWO GUARDS (corpus sweep .superpowers/sdd/sp17-corpus/ROLL-SWEEP.md,
+# verdict GO WITH CAVEAT; 90 matched pairs, 43/46 scored windows
+# improve, 150 held frames removed, but 33/46 still lose motion
+# coverage at the cadence position by up to -21%):
+#
+# (a) STRICTLY OPPORTUNISTIC. The roll may consume only byte budget the
+#     MOTION schedule did not want. Each armed frame is first scheduled
+#     WITHOUT the roll; the frame's quota is then min(KF_ROLL_SHARE
+#     ceiling, cap_bytes - motion bytes). A saturated frame leaves
+#     nothing, so it emits the motion-only schedule byte for byte and
+#     the pending positions carry over until slack appears. The sweep
+#     is unambiguous about why: all three corpus rows the roll made
+#     WORSE sit at byte-utilisation p95 0.998-0.999 (bunny sound
+#     classic, Pam Am Airport classic, jellyfish sound 16:9) - there the
+#     roll can only DISPLACE motion - while every large winner refreshes
+#     out of genuine slack (church byte-util p95 0.339-0.501, From car 2
+#     classic mean 0.472, 12 Monkeys classic mean 0.438), where the
+#     KF_ROLL_SHARE ceiling still binds and the behaviour is unchanged.
+#     Whole-clip quality cost of spending nothing on the saturated rows
+#     is within +-0.05 dB everywhere.
+#
+# (b) DISCHARGE ON "WAS UPDATED", NOT EXACT EQUALITY. The first
+#     implementation retired a forced position only when the surface
+#     later held the exact value it had been assigned. A position that
+#     WAS repainted, but to a different value because the content moved
+#     on between scheduling and emission, stayed pending forever - and
+#     `roll_pending is None` gates re-arming, so one stranded position
+#     disabled every future refresh for the rest of the clip. The sweep
+#     found it on 6 of 47 rows (fixture 009 stranded 12 positions for
+#     124 frames against a nominal N of 7). A slice is now discharged
+#     in the SAME frame, on the frame's own paint mask (plus positions
+#     that already held their fresh target when the slice was cut).
+#
+# NOT DONE, on the sweep's explicit guidance: the cadence mechanism is
+# not dropped (corpus clips are 6-19 s - too short to show what a
+# refresh prevents over a long title), the keyframe is not restored (it
+# is worse on 43 of 46 windows), and KF_ROLL_SHARE is not tuned (it sets
+# how thinly the tax is spread, not whether it is levied).
 # ---------------------------------------------------------------------
 KF_CADENCE_S_DEFAULT = 5.0
 KF_ROLL_SHARE = 0.5
@@ -4584,8 +4624,6 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     # W5 rolling-refresh state (the cadence path)
     last_roll_end = -10_000
     roll_pending = None   # bool[raw]: positions still owed a forced clean
-    roll_slice = None     # positions forced last frame (discharged next)
-    roll_expect = None    # fresh-target values those positions must hold
     roll_start_frame = None
     roll_events = 0
     roll_frames = 0
@@ -4600,18 +4638,6 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                                # (finding 2) - marks its chunk-frames' mode
 
     for i in range(N):
-        if roll_slice is not None:
-            # Rolling-refresh bookkeeping: a forced position is
-            # discharged once the surface holds its fresh target
-            # (painted last frame, or already clean); the rest CARRY
-            # OVER - contention lengthens the window, never the rate.
-            done = prev_flat[roll_slice] == roll_expect
-            roll_pending[roll_slice[done]] = False
-            roll_slice = roll_expect = None
-            if not roll_pending.any():
-                roll_pending = None
-                roll_windows.append((roll_start_frame, i - 1))
-                last_roll_end = i - 1
         start_kf = False
         trigger = None
         drift_for_stats = None   # T1 step 5: recorded for plain delta frames
@@ -4769,7 +4795,7 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 # a real keyframe repaints the whole surface - the
                 # in-flight roll is moot and the cadence clock restarts
                 # from this span's KFLIP
-                roll_pending = roll_slice = roll_expect = None
+                roll_pending = None
             if prev_flat is None:
                 prev_flat = np.zeros(raw, dtype=np.uint8)
                 held_pal = kf_pal
@@ -4823,68 +4849,100 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 orig[i], held_pal, dither_amp, dither_mode,
                 prev_idx=prev_idx, hysteresis_eps=hyst_eps)
             tflat = flatten_frame(target_idx, column_major)
-            roll_idx = None
+
+            def _schedule(tf, forced):
+                """err2 + the band schedule for one candidate target.
+                `forced` (or None) are roll positions boosted into the
+                mask. Called ONCE on a plain frame - the arithmetic and
+                its order are exactly what shipped - and a second time
+                only when the roll actually engages."""
+                pdec = held_pal[prev_flat].astype(np.float32)
+                tdec = held_pal[tf].astype(np.float32)
+                e2 = np.sum((tdec - pdec) ** 2, axis=1)
+                # err2 IS the decoded-surface-vs-target error, so importance
+                # already tracks accumulated wrongness; the death spiral is that
+                # a pixel persistently below the coarsest threshold never enters
+                # the mask.
+                # (2) AGING: boost a wrong pixel's err2 by its age so persistent
+                # small errors eventually cross the threshold / win the fallback.
+                # (3) PHASE-STAGGER: force a rotating 1/K slice of the wrong
+                # pixels over the coarsest mask floor so worst-case staleness
+                # ~K frames.
+                if staleness_refresh:
+                    ee = e2 * (1.0 + AGE_GAIN * age)
+                    bi = i % PHASE_REFRESH_K
+                    b0 = bi * raw // PHASE_REFRESH_K
+                    b1 = (bi + 1) * raw // PHASE_REFRESH_K
+                    band = np.zeros(raw, dtype=bool)
+                    band[b0:b1] = True
+                    force = band & (e2 > STALE_ERR2_FLOOR)
+                    ee = np.where(force, np.maximum(ee, PHASE_FLOOR), ee)
+                else:
+                    ee = e2
+                if forced is not None:
+                    # roll slice positions that still differ from their
+                    # fresh target must enter the mask this frame -
+                    # already-clean positions (err2 0) cost nothing
+                    rmask = np.zeros(raw, dtype=bool)
+                    rmask[forced] = True
+                    ee = np.where(rmask & (e2 > 0.0),
+                                  np.maximum(ee, PHASE_FLOOR), ee)
+                return e2, encode_delta(
+                    tf, ee, cap_bytes, usable,
+                    surface_flat=prev_flat, merge_gaps=merge_gaps,
+                    tile_px=tile_px, tile_ladder=tile_ladder,
+                    supply_px=supply_px, supply_slack=tile_slack)
+
+            err2, sched = _schedule(tflat, None)
+            roll_idx = roll_clean = None
             if roll_pending is not None:
-                # W5 rolling refresh: force-clean the next paint-order
-                # slice of pending positions to the FRESH non-sticky
-                # quantize under the HELD palette (fresh_idx - the
-                # drift probe's own decode, so this costs no extra
-                # quantize). The substitution makes the slice's whole
-                # residual (paint drift AND hysteresis stickiness)
-                # visible to err2 below; the PHASE_FLOOR boost further
-                # down puts it in the mask; the ordinary caps and band
-                # scheduler then price it like any other delta traffic.
-                roll_idx = np.flatnonzero(roll_pending)[:roll_quota]
-                fresh_flat = flatten_frame(fresh_idx, column_major)
-                tflat = tflat.copy()
-                tflat[roll_idx] = fresh_flat[roll_idx]
-                roll_slice = roll_idx
-                roll_expect = fresh_flat[roll_idx].copy()
-                roll_frames += 1
-            prev_dec_flat = held_pal[prev_flat].astype(np.float32)
-            targ_dec_flat = held_pal[tflat].astype(np.float32)
-            err2 = np.sum((targ_dec_flat - prev_dec_flat) ** 2, axis=1)
-            # err2 IS the decoded-surface-vs-target error, so importance already
-            # tracks accumulated wrongness; the death spiral is that a pixel
-            # persistently below the coarsest threshold never enters the mask.
-            # (2) AGING: boost a wrong pixel's err2 by its age so persistent
-            # small errors eventually cross the threshold / win the fallback.
-            # (3) PHASE-STAGGER: force a rotating 1/K slice of the wrong pixels
-            # over the coarsest mask floor so worst-case staleness ~K frames.
-            if staleness_refresh:
-                enc_err2 = err2 * (1.0 + AGE_GAIN * age)
-                wrong = err2 > STALE_ERR2_FLOOR
-                bi = i % PHASE_REFRESH_K
-                b0 = bi * raw // PHASE_REFRESH_K
-                b1 = (bi + 1) * raw // PHASE_REFRESH_K
-                band = np.zeros(raw, dtype=bool)
-                band[b0:b1] = True
-                force = band & wrong
-                enc_err2 = np.where(force, np.maximum(enc_err2, PHASE_FLOOR), enc_err2)
-            else:
-                enc_err2 = err2
-            if roll_idx is not None:
-                # roll slice positions that still differ from their
-                # fresh target must enter the mask this frame - already-
-                # clean positions (err2 0) cost nothing and discharge
-                # for free at the next frame's bookkeeping
-                rmask = np.zeros(raw, dtype=bool)
-                rmask[roll_idx] = True
-                enc_err2 = np.where(rmask & (err2 > 0.0),
-                                    np.maximum(enc_err2, PHASE_FLOOR),
-                                    enc_err2)
-            gcls, gstarts, glens, b, t, mode, binding, payload = encode_delta(
-                tflat, enc_err2, cap_bytes, usable,
-                surface_flat=prev_flat, merge_gaps=merge_gaps,
-                tile_px=tile_px, tile_ladder=tile_ladder,
-                supply_px=supply_px, supply_slack=tile_slack)
+                # GUARD (a) STRICTLY OPPORTUNISTIC (ROLLING REFRESH
+                # block): the roll gets only the byte budget the motion
+                # schedule above left unspent. On a saturated frame that
+                # is nothing, the motion-only schedule stands byte for
+                # byte, and the pending positions wait for slack.
+                free_bytes = cap_bytes - int(sched[3])
+                quota_i = min(roll_quota, max(0, free_bytes))
+                if quota_i:
+                    # force-clean the next paint-order slice of pending
+                    # positions to the FRESH non-sticky quantize under
+                    # the HELD palette (fresh_idx - the drift probe's own
+                    # decode, so this costs no extra quantize). The
+                    # substitution makes the slice's whole residual
+                    # (paint drift AND hysteresis stickiness) visible to
+                    # err2; the PHASE_FLOOR boost puts it in the mask;
+                    # the ordinary caps and band scheduler then price it
+                    # like any other delta traffic.
+                    roll_idx = np.flatnonzero(roll_pending)[:quota_i]
+                    fresh_flat = flatten_frame(fresh_idx, column_major)
+                    roll_clean = prev_flat[roll_idx] == fresh_flat[roll_idx]
+                    tflat = tflat.copy()
+                    tflat[roll_idx] = fresh_flat[roll_idx]
+                    err2, sched = _schedule(tflat, roll_idx)
+                    roll_frames += 1
+            gcls, gstarts, glens, b, t, mode, binding, payload = sched
 
             new_flat = _apply_segments(prev_flat, tflat, gcls, gstarts, glens)
             prev_flat = new_flat
+            updated = None
             if staleness_refresh:
                 updated = _mask_from_segments(gcls, gstarts, glens, raw)
                 wrong = err2 > STALE_ERR2_FLOOR
                 age = np.where(updated, 0.0, np.where(wrong, age + 1.0, 0.0))
+            if roll_idx is not None:
+                # GUARD (b) DISCHARGE ON "WAS UPDATED": a forced position
+                # retires when this frame PAINTED it (whatever value it
+                # landed on) or when it already held its fresh target
+                # when the slice was cut. The rest CARRY OVER -
+                # contention lengthens the window, never the rate - and
+                # nothing can strand, so the cadence always re-arms.
+                if updated is None:
+                    updated = _mask_from_segments(gcls, gstarts, glens, raw)
+                roll_pending[roll_idx[updated[roll_idx] | roll_clean]] = False
+                if not roll_pending.any():
+                    roll_pending = None
+                    roll_windows.append((roll_start_frame, i))
+                    last_roll_end = i
             payloads.append(payload)
             per_frame["bytes"].append(b)
             per_frame["mode"].append(
@@ -4899,17 +4957,6 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             if return_surfaces:
                 surfaces.append(unflatten_frame(prev_flat, height, width, column_major).copy())
             per_frame["psnr"].append(psnr(orig[i], dec_img))
-
-    if roll_slice is not None:
-        # final-frame roll bookkeeping (reporting only - nothing is
-        # emitted after the loop)
-        done = prev_flat[roll_slice] == roll_expect
-        roll_pending[roll_slice[done]] = False
-        roll_slice = roll_expect = None
-        if not roll_pending.any():
-            roll_pending = None
-            roll_windows.append((roll_start_frame, N - 1))
-            last_roll_end = N - 1
 
     starve = starvation_stats(per_frame, fps)
     return dict(payloads=payloads, kf_span_ranges=kf_span_ranges, decoded=decoded,

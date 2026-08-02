@@ -246,6 +246,20 @@ if (-not $sources) { exit 0 }
 #   by a rounding tick; low-fps STREAMED clips re-derive a lower budget
 #   and emit different bytes. Direct-serve is untouched (its own gate,
 #   no ring producer - row 057 is silicon-clean at 320x256@12.5).
+# - ROLLING REFRESH GUARDS from the corpus sweep (ROLL-SWEEP.md, GO
+#   WITH CAVEAT): the roll is now STRICTLY OPPORTUNISTIC - each armed
+#   frame is scheduled without it first, and the roll gets only the byte
+#   budget motion did not want, so a saturated clip emits the
+#   motion-only frame byte for byte (the sweep's three regressions all
+#   sit at byte-util p95 0.998-0.999) while the big winners, which
+#   refresh out of genuine slack, are unchanged. And a forced position
+#   now discharges on "was PAINTED this frame" instead of on exact value
+#   equality - the old test stranded any position repainted to a
+#   different value and, because roll_pending gates re-arming, one
+#   stranded position disabled every later refresh (6 of 47 sweep rows;
+#   fixture 009 stranded 12 positions for 124 frames).
+#   Default-path change: any clip whose cadence fires emits different
+#   bytes; 008/009 are the only shipping fixtures affected.
 $encoderGeneration = 'pal9p'
 
 function Get-ArgHash([string[]]$argList) {
