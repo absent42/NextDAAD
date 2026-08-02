@@ -941,3 +941,83 @@ def test_load_source_generation_guard_ignores_stale_extract(qtbot):
     pane._on_extract_failed("boom", stale_gen)
     assert pane._error_label.text() == ""
     assert pane._error_label.isVisibleTo(pane) is False
+
+
+# -- 2026-08-02 encoder-option drift: prefilter/kf_cadence/approx_cuts/ocopy -
+
+def test_flagstr_widget_round_trip(fixture_kit, qtbot):
+    from PySide6.QtWidgets import QCheckBox, QLineEdit
+
+    cfg = KitConfig()
+    panel = SettingsPanel()
+    qtbot.addWidget(panel)
+    s = effective_settings(cfg, "001")
+    panel.set_settings(s, s.copy())
+
+    container = panel._rows["prefilter"]["widget"]
+    box = container.findChild(QCheckBox)
+    edit = container.findChild(QLineEdit)
+    assert box is not None and edit is not None
+
+    # Off by default: unchecked, field disabled, placeholder shows the
+    # encoder's own const so "checked and empty" would clearly read as
+    # "the conservative default", not "broken".
+    assert box.isChecked() is False
+    assert edit.isEnabled() is False
+    assert edit.placeholderText() == "hqdn3d=2:1.5:3:2.25"
+    assert panel.get_settings()["prefilter"] is False
+
+    # Checked + empty -> True (on, encoder's own const default).
+    box.setChecked(True)
+    assert edit.isEnabled() is True
+    assert panel.get_settings()["prefilter"] is True
+
+    # Checked + filled -> the explicit filter string.
+    edit.setText("myfilter=1:2:3")
+    assert panel.get_settings()["prefilter"] == "myfilter=1:2:3"
+
+    # Unchecked again -> off, regardless of leftover text in the field.
+    box.setChecked(False)
+    assert edit.isEnabled() is False
+    assert panel.get_settings()["prefilter"] is False
+
+    # setter round-trip (set_settings): explicit string.
+    s_explicit = dict(s); s_explicit["prefilter"] = "customfilt=9"
+    panel.set_settings(s_explicit, s.copy())
+    assert box.isChecked() is True
+    assert edit.text() == "customfilt=9"
+    assert panel.get_settings()["prefilter"] == "customfilt=9"
+
+    # setter round-trip: True (on, default).
+    s_default = dict(s); s_default["prefilter"] = True
+    panel.set_settings(s_default, s.copy())
+    assert box.isChecked() is True
+    assert edit.text() == ""
+    assert panel.get_settings()["prefilter"] is True
+
+
+def test_new_knob_tooltips_present(fixture_kit, qtbot):
+    cfg = KitConfig()
+    panel = SettingsPanel()
+    qtbot.addWidget(panel)
+    s = effective_settings(cfg, "001")
+    panel.set_settings(s, s.copy())
+
+    assert "denoise" in panel._rows["prefilter"]["label"].toolTip()
+    assert "disables" in panel._rows["kf_cadence"]["label"].toolTip()
+    assert "budget-bound" in panel._rows["approx_cuts"]["label"].toolTip()
+    assert "offset-copy" in panel._rows["ocopy"]["label"].toolTip()
+
+
+def test_new_knobs_land_in_expected_form_level(fixture_kit, qtbot):
+    # prefilter is basic (front-line authoring guidance per VIDEO-
+    # PRESETS.md); kf_cadence/approx_cuts/ocopy are advanced.
+    cfg = KitConfig()
+    panel = SettingsPanel()
+    qtbot.addWidget(panel)
+    s = effective_settings(cfg, "001")
+    panel.set_settings(s, s.copy())
+
+    assert panel._rows["prefilter"]["knob"].level == "basic"
+    for name in ("kf_cadence", "approx_cuts", "ocopy"):
+        assert panel._rows[name]["knob"].level == "advanced"

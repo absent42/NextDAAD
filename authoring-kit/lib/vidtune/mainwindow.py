@@ -491,6 +491,8 @@ class SettingsPanel(QWidget):
             reset_btn.clicked.connect(
                 lambda checked=False, name=knob.name: self._reset(name))
             label = QLabel(knob.name)
+            if knob.tooltip:
+                label.setToolTip(knob.tooltip)
 
             row_box = QHBoxLayout()
             row_box.setContentsMargins(0, 0, 0, 0)
@@ -560,6 +562,50 @@ class SettingsPanel(QWidget):
                 box.blockSignals(False)
 
             return box, getter, setter
+
+        if knob.kind == "flagstr":
+            # Checkbox + a text field enabled only while checked -
+            # tri-state value (False/None off, True on-with-default,
+            # str on-with-explicit) via ONE row widget: --prefilter is
+            # argparse nargs="?" (bare flag = its own conservative
+            # const, an explicit value overrides it). The placeholder
+            # shows the const so an empty-but-checked box clearly reads
+            # as "the default", never as "nothing will happen".
+            container = QWidget()
+            inner = QHBoxLayout(container)
+            inner.setContentsMargins(0, 0, 0, 0)
+            inner.setSpacing(theme.UNIT)
+            box = QCheckBox()
+            edit = QLineEdit()
+            edit.setPlaceholderText(
+                knob.const if isinstance(knob.const, str) else "")
+            edit.setEnabled(False)
+            inner.addWidget(box)
+            inner.addWidget(edit, 1)
+
+            def _sync_enabled(checked, edit=edit):
+                edit.setEnabled(checked)
+            box.toggled.connect(_sync_enabled)
+            box.stateChanged.connect(self._on_edit)
+            edit.textChanged.connect(self._on_edit)
+
+            def getter(box=box, edit=edit):
+                if not box.isChecked():
+                    return False
+                text = edit.text()
+                return text if text != "" else True
+
+            def setter(value, box=box, edit=edit):
+                box.blockSignals(True)
+                edit.blockSignals(True)
+                checked = bool(value)   # True or a non-empty str -> checked
+                box.setChecked(checked)
+                edit.setEnabled(checked)
+                edit.setText(value if isinstance(value, str) else "")
+                box.blockSignals(False)
+                edit.blockSignals(False)
+
+            return container, getter, setter
 
         # str
         edit = QLineEdit()

@@ -88,3 +88,118 @@ def test_deviations_shape_included_when_changed():
 def test_deviations_empty_when_untouched():
     c = cfg(vid_aspect="scope", vid_opts="--mono")
     assert deviations(effective_settings(c, "001"), c) == []
+
+
+# --- new KNOBS (2026-08-02): prefilter/kf_cadence/approx_cuts/ocopy ------
+
+def test_parse_opts_prefilter_bare():
+    known, extra = parse_opts(split_opts("--prefilter"))
+    assert known["prefilter"] is True
+    assert extra == []
+
+
+def test_parse_opts_prefilter_with_value():
+    known, extra = parse_opts(split_opts("--prefilter myfilter=1:2:3"))
+    assert known["prefilter"] == "myfilter=1:2:3"
+    assert extra == []
+
+
+def test_parse_opts_prefilter_followed_by_another_flag():
+    # The next token is a value only if it does NOT start with "--" -
+    # "--prefilter --mono" is bare --prefilter (const default) then
+    # --mono, not --prefilter with value "--mono".
+    known, extra = parse_opts(split_opts("--prefilter --mono"))
+    assert known["prefilter"] is True
+    assert known["mono"] is True
+    assert extra == []
+
+
+def test_deviations_prefilter_three_states():
+    c = cfg()
+    base = effective_settings(c, "001")
+
+    off = dict(base)
+    assert deviations(off, c) == []                  # untouched: nothing
+
+    on_default = dict(base); on_default["prefilter"] = True
+    assert deviations(on_default, c) == ["--prefilter"]
+
+    on_explicit = dict(base); on_explicit["prefilter"] = "myfilter=1:2:3"
+    assert deviations(on_explicit, c) == ["--prefilter", "myfilter=1:2:3"]
+
+
+def test_parse_opts_and_deviations_kf_cadence():
+    known, extra = parse_opts(split_opts("--kf-cadence 2.5"))
+    assert known["kf_cadence"] == "2.5"
+    assert extra == []
+
+    c = cfg()
+    base = effective_settings(c, "001")
+    s = dict(base); s["kf_cadence"] = "2.5"
+    assert deviations(s, c) == ["--kf-cadence", "2.5"]
+
+
+def test_deviations_kf_cadence_zero_emits():
+    # videnc's argparse default is None but the encoder applies 5.0
+    # internally - "5.0" (the Knob default here) untouched must emit
+    # nothing, and "0" (a real value: it DISABLES the cadence) must
+    # still emit --kf-cadence 0, not be swallowed by a falsy check.
+    c = cfg()
+    base = effective_settings(c, "001")
+
+    untouched = dict(base)
+    assert deviations(untouched, c) == []
+
+    disabled = dict(base); disabled["kf_cadence"] = "0"
+    assert deviations(disabled, c) == ["--kf-cadence", "0"]
+
+
+def test_parse_opts_and_deviations_approx_cuts():
+    known, extra = parse_opts(split_opts("--approx-cuts"))
+    assert known["approx_cuts"] is True
+    assert extra == []
+
+    c = cfg()
+    base = effective_settings(c, "001")
+    s = dict(base); s["approx_cuts"] = True
+    assert deviations(s, c) == ["--approx-cuts"]
+
+
+def test_parse_opts_and_deviations_ocopy():
+    known, extra = parse_opts(split_opts("--ocopy"))
+    assert known["ocopy"] is True
+    assert extra == []
+
+    c = cfg()
+    base = effective_settings(c, "001")
+    s = dict(base); s["ocopy"] = True
+    assert deviations(s, c) == ["--ocopy"]
+
+
+def test_no_merge_and_direct_transport_factor_stay_unmapped():
+    # Deliberately excluded (bench-fixture-only / expert gate override) -
+    # they must still round-trip harmlessly through the extra passthrough.
+    known, extra = parse_opts(split_opts("--no-merge"))
+    assert "no_merge" not in known
+    assert extra == ["--no-merge"]
+
+    known2, extra2 = parse_opts(split_opts("--direct-transport-factor 1.1"))
+    assert "direct_transport_factor" not in known2
+    assert extra2 == ["--direct-transport-factor", "1.1"]
+
+
+def test_deviations_extra_pairwise_no_orphaned_value():
+    # Ledgered minor, now fixed: a global "--foo A" plus a per-clip
+    # "--foo B" used to filter token-by-token, keeping the orphaned "B"
+    # (its flag "--foo" was in base's extra, so excluded) and corrupting
+    # the arg vector. Whole (flag, value) UNITS must be diffed instead.
+    c = cfg(vid_opts="--foo A", per_clip={"003": "--foo B"})
+    s = effective_settings(c, "003")
+    assert s["extra"] == ["--foo", "A", "--foo", "B"]
+    assert deviations(s, c) == ["--foo", "B"]
+
+
+def test_deviations_extra_pairwise_unchanged_value_not_reemitted():
+    c = cfg(vid_opts="--foo A", per_clip={"003": "--foo A"})
+    s = effective_settings(c, "003")
+    assert deviations(s, c) == []
