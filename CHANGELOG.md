@@ -26,6 +26,33 @@ flag-1 adjustment, below. PUTIN/TAKEOUT's composite spacing took
 neither reference wholesale: msx2daad's leading space, jDAAD's absent
 trailing one.
 
+### Video encoder
+
+- Keyframe-span peak pacing: span chunks are re-priced at the real
+  chunked-DMA copy rate and every span chunk frame is bounded to 0.95
+  of the frame period at the supply gate's own prices (decode + audio
+  copy + SD wire), so a keyframe event can no longer demand more wire
+  than a frame period buys at any budget. The delta byte cap carries
+  the same wire bound.
+- Keyframe cadence (`--kf-cadence`, default 5 s, 0 disables): a forced
+  full keyframe when no natural keyframe occurred within the window -
+  measured free in bytes at the default (-0.1% for +0.39 dB 4x4
+  local-mean on a slow pan).
+- Drift/staleness keyframe triggers re-based on the 4x4 local-mean
+  metric: the per-pixel comparison was structurally uncrossable under
+  the dither displacement (measured -1.21 dB mean deficit); thresholds
+  re-derived from the 30-clip corpus (STALE_LM_DB 15.0, DRIFT_LM_T
+  1.5/3.0) so the triggers fire on genuinely broken screens and cannot
+  thrash the visually-accepted at-capacity equilibria.
+- Decode-time model: two-key dispatch split from the NXBO/NXBC
+  production-routine bench (RUN 487.2 T / COPY 336.3 T replaces the
+  single 387 T key; SKIP8 141.6 / SKIP16 210.7; fill 16.70 T/B, short
+  copy 19.80 T/B, DMA copy 5.08 T/B), with a pure arithmetic
+  silicon_r recompute (predicted decode time unchanged where it was
+  calibrated), the R table re-keyed on measured stream density, and
+  the composition factors re-derived by the standing rule (flat 1.19,
+  gapped 1.46). Streamed auto-budgets land ~2-4% tighter.
+
 ### DAAD V3
 
 - Version 3 databases load and run. Header version 2 or 3 is accepted;

@@ -935,7 +935,16 @@ if ($Font) {
 # DMA-path copy op carries the path term, so the modelled decode-T
 # changes and every streamed fixture re-derives its op budget. See
 # $encoderGeneration 'pal9l' in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9l'
+# BUMP pal9l -> pal9m (SP17 W4 encoder wave, 2026-08-02): keyframe-span
+# peak pacing (chunks re-priced at the chunked-DMA rate, per-frame
+# supply-bounded to 0.95 of the period - keyframe peaks no longer
+# out-demand the wire at any budget), 5 s keyframe cadence default,
+# drift/staleness triggers re-based on 4x4 local-mean PSNR, the
+# NXBO/NXBC two-key dispatch split with the silicon_r density re-key
+# and re-derived composition factors (flat 1.19 / gapped 1.46). Every
+# fixture re-encodes; streamed fixtures re-derive their budgets ~2-4%
+# tighter. See $encoderGeneration 'pal9m' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9m'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

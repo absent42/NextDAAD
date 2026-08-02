@@ -48,6 +48,22 @@
 #                 at open with VID FMT?) - which is why the AUTHOR
 #                 opts in per title rather than the encoder defaulting
 #                 it on. Hashed like every other option.
+#                 --kf-cadence SECONDS (SP17 W4) also lives here: the
+#                 keyframe cadence window, default 5 s (a forced full
+#                 keyframe when no natural one occurred within it -
+#                 measured free in bytes at the default), 0 disables.
+#                 --prefilter [FILTER] (SP17 W4, opt-in, default off):
+#                 temporal denoise before scaling - source grain is
+#                 delta demand the wire pays for every frame; the bare
+#                 flag is a conservative hqdn3d. A measured per-title
+#                 option, not a default.
+#                 --approx-cuts (SP17 W4, EXPERIMENTAL opt-in, default
+#                 off): budget-bound frames may satisfy the budget with
+#                 approximate full-coverage content instead of
+#                 deferring bands - measured on the cut-heavy starved
+#                 corpus clips; wire format unchanged, plays on every
+#                 shipped player. All three hashed like every other
+#                 option.
 #   VIDOPTS_NNN - extra options for video NNN only (3-digit number),
 #                 appended AFTER VIDOPTS. For most repeated options
 #                 videnc takes the last occurrence, so VIDOPTS_NNN wins
@@ -193,7 +209,28 @@ if (-not $sources) { exit 0 }
 # SHA256-identical to the pre-wave encoder for the same arguments.
 # --ocopy is part of the hashed argument list below, so a title that
 # opts in re-encodes on that alone.
-$encoderGeneration = 'pal9l'
+# BUMP pal9l -> pal9m (SP17 W4 encoder wave, 2026-08-02), ONE bump
+# covering every default-path change of the wave:
+# - keyframe-span peak pacing (charter E5): span chunks re-priced at
+#   the chunked-DMA copy rate and bounded per frame to 0.95 of the
+#   frame period at the supply gate's own prices; the delta byte cap
+#   is wire-capped the same way - keyframe peaks no longer exceed the
+#   wire period at any budget, spans get more/smaller chunks
+# - keyframe cadence: a forced keyframe when no natural one occurred
+#   within 5 s (videnc --kf-cadence, measured free at the default)
+# - drift/staleness triggers re-based on 4x4 local-mean PSNR
+#   (corpus-derived STALE_LM_DB 15.0, DRIFT_LM_T 1.5/3.0)
+# - the NXBO/NXBC two-key dispatch split (t_op_run 487.2 / t_op_copy
+#   336.3, t_skip 141.6/210.7, fill_cpu 16.70, fetch_short 19.80,
+#   copy_dma_per_b 5.08), the silicon_r density re-key and the
+#   re-derived composition factors (flat 1.19, gapped 1.46)
+# Every streamed fixture re-derives its budget (~2-4% tighter);
+# resident fixtures re-encode for the trigger/cadence/pacing changes.
+# NO bump component for --prefilter/--approx-cuts (both opt-in,
+# default off, byte-identical absent - selftest-asserted); they are
+# part of the hashed argument list, so a title that opts in re-encodes
+# on that alone (both live in VIDOPTS/VIDOPTS_NNN like --tile-slack).
+$encoderGeneration = 'pal9m'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')
