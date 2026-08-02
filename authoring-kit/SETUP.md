@@ -292,6 +292,12 @@ Video is designed for a 2MB Next (the standard fit on issue 2 boards
 and later): playback buffers through a large pool of RAM banks, and a
 1MB machine has too small a pool to hold or stream clips reliably.
 
+This section is the reference: what every setting is and what it does.
+For the practical decision - which route suits the clip in front of
+you, ready-made settings to copy for each kind of footage, and what to
+do about banding or a clip that will not play - see
+`VIDEO-PRESETS.md`.
+
 ### Shapes and quality
 
 An NXV file is fully self-describing (a real header - nothing to
@@ -331,11 +337,15 @@ for a target displayed aspect ratio - `--aspect 2.35` gives true
 cinema scope, with the 320-wide mode's non-square pixels corrected
 for automatically.
 
-**25 fps is the rate. Leave it alone.** The Next composites at 50 Hz,
-so 25 fps is the only rate whose frames each occupy a whole number of
-display frames - anything else beats against the 50 Hz composite and
-shows it. That is why 25 is the default, and there is no quality to be
-won by moving it.
+**25 fps is the rate for almost every clip.** The Next composites at
+50 Hz, so only a rate that divides 50 evenly gives frames that each
+occupy a whole number of display frames - anything else beats against
+the 50 Hz composite and shows it. 25 is the default and there is no
+quality to be won by nudging it. The one alternative worth
+considering is 12.5, which also divides 50 evenly and hands every
+frame twice the room: half the motion rate, bought deliberately, for a
+demanding clip that cannot be made to look right at 25. See
+`VIDEO-PRESETS.md`.
 
 **Your footage is retimed for you.** Almost no source material is 25p:
 film is 24 (or 23.976), and most cameras and stock libraries shoot 30
