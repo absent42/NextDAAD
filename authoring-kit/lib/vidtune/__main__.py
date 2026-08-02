@@ -6,12 +6,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # lib siblings
 
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
+from vidtune import theme
 from vidtune.kitmodel import find_kit_root
 from vidtune.mainwindow import MainWindow
 
 
 def main():
     app = QApplication(sys.argv)
+    # MainWindow styles itself too (so a test- or embedder-constructed
+    # window is themed); doing it here as well is what catches the
+    # things that are NOT its children - the kit picker below, message
+    # boxes, menus - so the tool has one look end to end.
+    app.setFont(theme.ui_font())
+    app.setStyleSheet(theme.stylesheet())
     root = find_kit_root(Path.cwd())
     if root is None:
         picked = QFileDialog.getExistingDirectory(

@@ -15,10 +15,41 @@ import videnc
 def decode_vid(vid_path):
     """Decodes an NXV v2 file. Returns (header dict, RGB frames list) -
     header from nxv2enc.unpack_header, frames (H, W, 3) uint8 with the
-    frame's own palette already applied."""
+    frame's own palette already applied.
+
+    The returned header carries two DERIVED keys the raw header does not
+    have, for the wire trace (see wiretrace.py):
+
+      frame_costs  - per-frame wire cost in bytes, block-rounded, i.e.
+                     what the player actually fetches for that frame
+      cap_bytes    - the per-frame cap those costs are judged against
+                     (per_frame_cap_blocks * 512), or None when the
+                     stream declares no cap
+      frame_terms  - the terminal opcode per frame, so a keyframe span
+                     (legitimately expensive) can be told apart from a
+                     delta frame that simply overran
+
+    This walks nxv2dec._iter_frames rather than its public decode(): the
+    costs are a by-product the walker already yields and decode() drops,
+    and the alternative - decode() for pixels plus a second walk for
+    costs - would decode every big clip twice on the pane's worker
+    thread. Maintenance contract: repo docs/vidtune-maintenance.md."""
     buf = Path(vid_path).read_bytes()
     hdr = nxv2enc.unpack_header(buf)
-    frames = [pal[idx] for pal, idx in nxv2dec.decode(vid_path)]
+    width, height, colmajor = hdr["width"], hdr["height"], hdr["column_major"]
+
+    frames, costs, terms = [], [], []
+    for pal, surf, term, _start, used in nxv2dec._iter_frames(buf, hdr,
+                                                              issues=None):
+        frames.append(pal[nxv2dec.unflatten_frame(surf, height, width, colmajor)])
+        costs.append(int(used))
+        terms.append(term)
+
+    cap_blocks = hdr.get("per_frame_cap_blocks", 0)
+    hdr = dict(hdr)
+    hdr["frame_costs"] = costs
+    hdr["frame_terms"] = terms
+    hdr["cap_bytes"] = cap_blocks * 512 if cap_blocks else None
     return hdr, frames
 
 

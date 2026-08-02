@@ -12,19 +12,25 @@ off-format width.
 import nxv2enc as enc
 
 
-def build_solid_vid(path, width, height, colours):
+def build_solid_vid(path, width, height, colours, cap_blocks=0):
     """Writes an NXV v2 file with one frame per entry in colours, each
     frame a solid fill of that palette index across the whole
     width*height surface (OP_RUN then OP_FEND, no PAL op - the decoder's
     default all-zero palette is fine for a solid-fill roundtrip check).
     fps=25, channels=2, audio_bytes_per_frame=0 (no audio block between
     payloads - nxv2dec._round_up_block(0) == 0, so this is legal and
-    keeps the fixture minimal)."""
+    keeps the fixture minimal).
+
+    cap_blocks declares a per-frame cap in the header, for tests that
+    need preview.decode_vid to report a cap_bytes for the wire trace to
+    judge costs against; 0 (the default) means the stream declares no
+    cap. A cap the fixture's own frames would exceed is rejected by the
+    decoder, so keep it at or above the frames' block cost."""
     raw = width * height
     hdr = enc.pack_header(
         width=width, height=height, fps=25, channels=2, arate=enc.RATE_STEREO,
         frame_count=len(colours), audio_bytes_per_frame=0,
-        ring_start_margin_blocks=0, per_frame_cap_blocks=0)
+        ring_start_margin_blocks=0, per_frame_cap_blocks=cap_blocks)
 
     def pad512(b):
         return b + bytes((-len(b)) % 512)

@@ -331,17 +331,25 @@ def test_select_clip_clears_and_tags_metrics(fixture_kit, qtbot):
                              util=0.8, wire_bytes=1234)
     win.metrics_bar.update_from(summary, False, "001")
     assert win.metrics_bar.clip_tag() == "clip 001"
-    assert win.metrics_bar._psnr_label.text() != "psnr: -"
+    # Each reading is now a caption plus a figure, so the value labels
+    # carry the figure alone and the name of the reading lives on the
+    # meter's caption.
+    assert win.metrics_bar._psnr_label.text() == "30.00 dB"
+    assert win.metrics_bar._psnr_meter.caption.text() == "psnr"
+    assert win.metrics_bar._wire_label.text() == "1,234 B"
 
     # A job finishing after a mid-job clip switch must not be mistaken
     # for the newly-selected clip's numbers: switching clears the
     # figures and re-tags immediately.
     win.select_clip("002")
     assert win.metrics_bar.clip_tag() == "clip 002"
-    assert win.metrics_bar._psnr_label.text() == "psnr: -"
-    assert win.metrics_bar._bound_label.text() == "bound: -"
-    assert win.metrics_bar._util_label.text() == "util: -"
-    assert win.metrics_bar._wire_label.text() == "wire: -"
+    assert win.metrics_bar._psnr_label.text() == "-"
+    assert win.metrics_bar._bound_label.text() == "-"
+    assert win.metrics_bar._util_label.text() == "-"
+    assert win.metrics_bar._wire_label.text() == "-"
+    # Captions survive the clear - the strip still says what the empty
+    # slots are for.
+    assert win.metrics_bar._util_meter.caption.text() == "utilisation"
 
 
 # -- Finding 3: a bad VIDASPECT must not crash the window -----------------

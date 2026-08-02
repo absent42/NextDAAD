@@ -13,8 +13,14 @@ from pathlib import Path
 
 import nxv2enc
 
-from PySide6.QtCore import QLocale, Qt, Signal
-from PySide6.QtGui import QDoubleValidator, QFont, QGuiApplication
+from PySide6.QtCore import QLocale, QRect, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QDoubleValidator,
+    QFont,
+    QGuiApplication,
+    QPainter,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -32,12 +38,15 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from . import settingsmodel
+from . import settingsmodel, theme
 from .configwrite import ConfigConflict, write_sidecar, write_vidopts_line
 from .encoderun import EncodeJob, resolve_encoder, summarize_report
 from .kitmodel import clip_state, list_clips, parse_config, read_generation_stamp
@@ -109,13 +118,51 @@ def _parse_start_duration(argv):
     return start, duration
 
 
+class _Meter(QWidget):
+    """One reading: a demoted caption over the figure itself.
+
+    "psnr: 30.00 dB" as a single run of body text gives the label and
+    the number equal billing, so a strip of them reads as a sentence
+    nobody scans. Splitting them lets the figure lead on size and
+    weight while the caption drops to tertiary ink - the same reading,
+    an order of magnitude faster to take in."""
+
+    def __init__(self, caption, parent=None):
+        super().__init__(parent)
+        self.caption = QLabel(caption)
+        self.caption.setFont(theme.caption_font())
+        self.caption.setStyleSheet(f"color: {theme.INK_FAINT};")
+        self.value = QLabel("-")
+        self.value.setFont(theme.figure_font(11, bold=True))
+        self.value.setStyleSheet(f"color: {theme.INK};")
+
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(1)
+        box.addWidget(self.caption)
+        box.addWidget(self.value)
+
+    def set_value(self, text, colour=None):
+        self.value.setText(text)
+        self.value.setStyleSheet(f"color: {colour or theme.INK};")
+
+    def set_caption(self, text):
+        self.caption.setText(text)
+
+
 class MetricsBar(QWidget):
     """Bottom strip: PSNR/bound-fraction/utilization/wire-bytes readout,
     a "go to worst burst" jump into the preview, an indeterminate
     progress bar + cancel button while a job runs, and (on job failure)
     a monospace read-only box with the encoder's raw output verbatim -
     policy: never paraphrase a gate refusal, show exactly what videnc
-    printed."""
+    printed.
+
+    Each reading is a _Meter (caption over figure). The `_psnr_label`/
+    `_bound_label`/`_util_label`/`_wire_label` attributes still exist and
+    are still the QLabels carrying the figures - they now hold the value
+    alone ("30.00 dB"), with the name of the reading in the meter's
+    caption rather than inlined into the same string."""
 
     cancel_requested = Signal()
 
@@ -124,15 +171,37 @@ class MetricsBar(QWidget):
         self._preview = None
         self._burst_peak_frame = None
 
+        # Identity chip, not a meter: it names what every figure beside
+        # it describes, so it leads the strip and takes the accent.
         self._clip_label = QLabel("")
-        self._psnr_label = QLabel("psnr: -")
-        self._bound_label = QLabel("bound: -")
-        self._goto_burst_btn = QPushButton("go")
+        self._clip_label.setFont(theme.figure_font(10, bold=True))
+        self._clip_label.setStyleSheet(
+            f"color: {theme.ACCENT};"
+            f"border: 1px solid {theme.rgba(theme.ACCENT, 0.35)};"
+            f"border-radius: {theme.RADIUS_CONTROL}px;"
+            f"padding: {theme.UNIT}px {theme.GAP_ROW}px;")
+
+        self._psnr_meter = _Meter("psnr")
+        self._bound_meter = _Meter("budget-bound")
+        self._util_meter = _Meter("utilisation")
+        self._wire_meter = _Meter("wire")
+        self._psnr_label = self._psnr_meter.value
+        self._bound_label = self._bound_meter.value
+        self._util_label = self._util_meter.value
+        self._wire_label = self._wire_meter.value
+
+        # The encoder's worst BURST WINDOW - not the same thing as the
+        # trace's tallest single bar, which is why this survives the
+        # trace being clickable. Relabelled from "go", which said
+        # nothing about where it went.
+        self._goto_burst_btn = QPushButton("worst burst")
+        self._goto_burst_btn.setToolTip(
+            "jump the preview to the encoder's worst burst window")
         self._goto_burst_btn.setEnabled(False)
         self._goto_burst_btn.clicked.connect(self._on_goto_burst)
-        self._util_label = QLabel("util: -")
-        self._wire_label = QLabel("wire: -")
+
         self._status_label = QLabel("")
+        self._status_label.setStyleSheet(f"color: {theme.PHOSPHOR};")
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)          # indeterminate
@@ -144,24 +213,34 @@ class MetricsBar(QWidget):
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        for w in (self._clip_label, self._psnr_label, self._bound_label,
-                  self._goto_burst_btn, self._util_label, self._wire_label,
-                  self._status_label):
-            row.addWidget(w)
+        row.setSpacing(theme.GAP_ZONE)
+        row.addWidget(self._clip_label)
+        row.addWidget(self._psnr_meter)
+        row.addWidget(self._bound_meter)
+        row.addWidget(self._util_meter)
+        row.addWidget(self._wire_meter)
+        # After the meters, not wedged between two of them: a button in
+        # the middle of the run breaks the rhythm the four readings
+        # otherwise read as.
+        row.addWidget(self._goto_burst_btn)
+        row.addWidget(self._status_label)
         row.addStretch(1)
         row.addWidget(self._progress)
         row.addWidget(self._cancel_btn)
 
         self._failure_box = QTextEdit()
         self._failure_box.setReadOnly(True)
-        font = QFont("Courier New")
+        font = theme.figure_font(9)
         font.setStyleHint(QFont.Monospace)
         self._failure_box.setFont(font)
         self._failure_box.setMaximumHeight(120)
+        self._failure_box.setStyleSheet(
+            f"border: 1px solid {theme.rgba(theme.FAULT, 0.5)};")
         self._failure_box.setVisible(False)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(4, 2, 4, 2)
+        outer.setContentsMargins(0, theme.GAP_ROW, 0, 0)
+        outer.setSpacing(theme.GAP_ROW)
         outer.addLayout(row)
         outer.addWidget(self._failure_box)
 
@@ -177,12 +256,12 @@ class MetricsBar(QWidget):
         switch so a stale job's numbers (or a job that finishes for a
         clip the user has since switched away from) never gets shown
         without saying which clip it actually describes."""
-        self._psnr_label.setText("psnr: -")
-        self._bound_label.setText("bound: -")
+        for meter in (self._psnr_meter, self._bound_meter,
+                      self._util_meter, self._wire_meter):
+            meter.set_value("-", theme.INK_GHOST)
+        self._util_meter.set_caption("utilisation")
         self._burst_peak_frame = None
         self._goto_burst_btn.setEnabled(False)
-        self._util_label.setText("util: -")
-        self._wire_label.setText("wire: -")
         self._failure_box.setVisible(False)
         self._failure_box.clear()
         self._clip_label.setText(f"clip {num3}" if num3 is not None else "")
@@ -192,26 +271,44 @@ class MetricsBar(QWidget):
         self._failure_box.clear()
         if num3 is not None:
             self._clip_label.setText(f"clip {num3}")
-        self._psnr_label.setText(
-            "psnr: -" if summary.psnr_mean is None
-            else f"psnr: {summary.psnr_mean:.2f} dB")
-        self._bound_label.setText(
-            "bound: -" if summary.bound_fraction is None
-            else f"bound: {summary.bound_fraction * 100:.1f}%")
+        self._psnr_meter.set_value(
+            "-" if summary.psnr_mean is None
+            else f"{summary.psnr_mean:.2f} dB",
+            None if summary.psnr_mean is not None else theme.INK_GHOST)
+        self._bound_meter.set_value(
+            "-" if summary.bound_fraction is None
+            else f"{summary.bound_fraction * 100:.1f}%",
+            None if summary.bound_fraction is not None else theme.INK_GHOST)
         self._burst_peak_frame = summary.burst_peak_frame
         self._goto_burst_btn.setEnabled(self._burst_peak_frame is not None)
+
+        # Utilisation is the figure that decides whether a clip ships, so
+        # it is the one reading allowed to change colour: at or over 1.0
+        # the stream does not fit, and just under it there is no room
+        # left for a settings change to spend.
         if summary.util is None:
-            util_text = "util: -"
+            self._util_meter.set_value("-", theme.INK_GHOST)
         else:
-            util_text = f"util: {summary.util:.2f}"
-            if pinned:
-                auto = summary.auto_budget
-                util_text += (f" (auto {auto:g}, pinned)" if auto is not None
-                             else " (pinned)")
-        self._util_label.setText(util_text)
-        self._wire_label.setText(
-            "wire: -" if summary.wire_bytes is None
-            else f"wire: {summary.wire_bytes} bytes")
+            if summary.util >= 1.0:
+                colour = theme.FAULT
+            elif summary.util >= 0.95:
+                colour = theme.PHOSPHOR
+            else:
+                colour = None
+            self._util_meter.set_value(f"{summary.util:.2f}", colour)
+        # The pin is a qualifier on the reading, not part of it - it
+        # belongs on the demoted caption line so the figure stays clean.
+        caption = "utilisation"
+        if pinned and summary.util is not None:
+            auto = summary.auto_budget
+            caption += (f" - auto {auto:g}, pinned" if auto is not None
+                        else " - pinned")
+        self._util_meter.set_caption(caption)
+
+        self._wire_meter.set_value(
+            "-" if summary.wire_bytes is None
+            else f"{summary.wire_bytes:,} B",
+            None if summary.wire_bytes is not None else theme.INK_GHOST)
 
     def set_status(self, text):
         self._status_label.setText(text)
@@ -236,6 +333,72 @@ class MetricsBar(QWidget):
     def _on_goto_burst(self):
         if self._preview is not None and self._burst_peak_frame is not None:
             self._preview.seek(self._burst_peak_frame)
+
+
+class _ClipDelegate(QStyledItemDelegate):
+    """Paints a clip row as a number plus a status, rather than one run
+    of text reading "001  stale".
+
+    The rail is the tool's navigation, and its whole job is answering
+    "which clips still need work" at a glance. A status word rendered in
+    the same ink and size as the clip number makes that a reading task;
+    a colour-coded dot and a demoted status caption make it a scan. The
+    item's own text() is left intact as the underlying data - only the
+    painting changes."""
+
+    STATUS_COLOURS = {
+        "stale": theme.PHOSPHOR,     # needs a re-encode
+        "tuned": theme.HEADROOM,     # has per-clip settings, up to date
+        "default": theme.INK_FAINT,  # riding the kit defaults
+    }
+    STATUS_ROLE = Qt.UserRole + 1
+    ROW_HEIGHT = 30
+
+    def sizeHint(self, option, index):
+        return QSize(super().sizeHint(option, index).width(), self.ROW_HEIGHT)
+
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        # Let the style (and therefore the stylesheet's ::item rules)
+        # draw the row background, hover and selection - then draw the
+        # content, with the base text blanked so it is not drawn twice.
+        opt.text = ""
+        widget = opt.widget
+        style = widget.style() if widget is not None else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, widget)
+
+        num3 = index.data(Qt.UserRole) or ""
+        status = index.data(self.STATUS_ROLE) or ""
+        colour = QColor(self.STATUS_COLOURS.get(status, theme.INK_FAINT))
+        selected = bool(opt.state & QStyle.State_Selected)
+
+        rect = option.rect.adjusted(theme.GAP_ROW, 0, -theme.GAP_ROW, 0)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(colour)
+        painter.drawEllipse(QRect(rect.left(), rect.center().y() - 2, 5, 5))
+
+        painter.setFont(theme.figure_font(10, bold=True))
+        painter.setPen(QColor(theme.INK if selected else theme.INK_DIM))
+        painter.drawText(rect.adjusted(theme.GAP_PANE + 2, 0, 0, 0),
+                         Qt.AlignVCenter | Qt.AlignLeft, str(num3))
+
+        painter.setFont(theme.caption_font())
+        painter.setPen(colour)
+        painter.drawText(rect, Qt.AlignVCenter | Qt.AlignRight, status)
+        painter.restore()
+
+
+def _rail_caption(text):
+    """Small tracked caption naming a pane. Three of these are what stop
+    the window reading as three undifferentiated boxes."""
+    label = QLabel(text)
+    label.setFont(theme.caption_font())
+    label.setStyleSheet(f"color: {theme.INK_FAINT}; padding-left: 2px;")
+    return label
 
 
 def _float_validator(parent=None):
@@ -277,6 +440,8 @@ class SettingsPanel(QWidget):
         self._updating = False
 
         self._basic_form = QFormLayout()
+        self._basic_form.setHorizontalSpacing(theme.GAP_PANE)
+        self._basic_form.setVerticalSpacing(theme.GAP_ROW)
         self._advanced_group = QGroupBox("Advanced")
         self._advanced_group.setCheckable(True)
         self._advanced_group.setChecked(False)
@@ -288,16 +453,28 @@ class SettingsPanel(QWidget):
         # hidden to match the initial unchecked state.
         self._advanced_content = QWidget()
         self._advanced_form = QFormLayout(self._advanced_content)
+        self._advanced_form.setHorizontalSpacing(theme.GAP_PANE)
+        self._advanced_form.setVerticalSpacing(theme.GAP_ROW)
         self._advanced_content.setVisible(False)
         group_layout = QVBoxLayout(self._advanced_group)
         group_layout.addWidget(self._advanced_content)
         self._advanced_group.toggled.connect(self._advanced_content.setVisible)
 
+        # Flags vidtune has no Knob row for, riding through untouched.
+        # Monospace because they are literal argv tokens, not prose.
         self._extra_label = QLabel("")
         self._extra_label.setWordWrap(True)
+        self._extra_label.setFont(theme.figure_font(8.5))
+        self._extra_label.setStyleSheet(
+            f"color: {theme.INK_FAINT}; background: {theme.INSET};"
+            f"border: 1px solid {theme.EDGE_SOFT};"
+            f"border-radius: {theme.RADIUS_CONTROL}px;"
+            f"padding: {theme.GAP_ROW}px;")
         self._extra_label.setVisible(False)
 
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, theme.GAP_ROW, 0)
+        outer.setSpacing(theme.GAP_PANE)
         outer.addLayout(self._basic_form)
         outer.addWidget(self._advanced_group)
         outer.addWidget(self._extra_label)
@@ -310,12 +487,14 @@ class SettingsPanel(QWidget):
             widget, getter, setter = self._make_widget(knob)
             reset_btn = QPushButton("reset")
             reset_btn.setVisible(False)
+            reset_btn.setToolTip("restore this knob to the kit default")
             reset_btn.clicked.connect(
                 lambda checked=False, name=knob.name: self._reset(name))
             label = QLabel(knob.name)
 
             row_box = QHBoxLayout()
             row_box.setContentsMargins(0, 0, 0, 0)
+            row_box.setSpacing(theme.UNIT)
             row_box.addWidget(widget, 1)
             row_box.addWidget(reset_btn)
             row_container = QWidget()
@@ -420,11 +599,18 @@ class SettingsPanel(QWidget):
         self.changed.emit()
 
     def _refresh_deviations(self):
+        """A knob that differs from the kit default is the answer to
+        "what have I actually changed on this clip", so it gets the
+        accent as well as the weight - bold alone, in a rail of fifteen
+        rows, is easy to miss."""
         for name, row in self._rows.items():
             deviating = row["getter"]() != self._kit_base.get(name)
             font = row["label"].font()
             font.setBold(deviating)
             row["label"].setFont(font)
+            row["label"].setStyleSheet(
+                f"color: {theme.ACCENT};" if deviating
+                else f"color: {theme.INK_DIM};")
             row["reset_btn"].setVisible(deviating)
 
     def _reset(self, name):
@@ -492,14 +678,24 @@ class MainWindow(QMainWindow):
         self._all_cancelled = False
 
         self.setWindowTitle("vidtune")
+        self.setStyleSheet(theme.stylesheet())
 
         self._banner = QLabel("")
         self._banner.setStyleSheet(
-            "background-color: #a02020; color: white; padding: 4px;")
+            f"background: {theme.FAULT}; color: {theme.INK};"
+            f"border-radius: {theme.RADIUS_CONTROL}px;"
+            f"padding: {theme.GAP_ROW}px;")
         self._banner.setVisible(False)
         self._banner.setWordWrap(True)
 
         self.clip_list = QListWidget()
+        self.clip_list.setItemDelegate(_ClipDelegate(self.clip_list))
+        self.clip_list.setUniformItemSizes(True)
+        # The delegate draws the number left and the status hard right
+        # inside whatever width the rail has, so there is never anything
+        # off to the side to scroll to - the bar Qt sizes from the item
+        # text would be a control that does nothing.
+        self.clip_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self.settings_panel = SettingsPanel()
         self.settings_scroll = QScrollArea()
@@ -511,16 +707,32 @@ class MainWindow(QMainWindow):
         left_pane = QWidget()
         left_layout = QVBoxLayout(left_pane)
         left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(theme.GAP_ROW)
+        left_layout.addWidget(_rail_caption("clips"))
         left_layout.addWidget(self._banner)
         left_layout.addWidget(self.clip_list)
+
+        settings_pane = QWidget()
+        settings_layout = QVBoxLayout(settings_pane)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.setSpacing(theme.GAP_ROW)
+        settings_layout.addWidget(_rail_caption("encode settings"))
+        settings_layout.addWidget(self.settings_scroll)
 
         self._splitter = QSplitter(Qt.Horizontal)
         self._splitter.addWidget(left_pane)
         self._splitter.addWidget(self.preview)
-        self._splitter.addWidget(self.settings_scroll)
-        self._splitter.setStretchFactor(0, 20)
-        self._splitter.setStretchFactor(1, 50)
-        self._splitter.setStretchFactor(2, 30)
+        self._splitter.addWidget(settings_pane)
+        self._splitter.setChildrenCollapsible(False)
+        # 16/60/24 rather than the original 20/50/30. The picture is what
+        # the tool exists to judge, so it takes the majority of the width
+        # outright; the settings rail is an instrument panel serving it,
+        # not its peer. Each pane is still floored at its own minimum by
+        # _initial_pane_widths, so the narrower rail can never squeeze the
+        # form back into showing scrollbars.
+        self._splitter.setStretchFactor(0, 16)
+        self._splitter.setStretchFactor(1, 60)
+        self._splitter.setStretchFactor(2, 24)
         # Real sizes are set at the end of __init__ by
         # _apply_initial_geometry(), once the settings panel has its real
         # (post clip-selection) sizeHint to work from; this is just a
@@ -529,15 +741,24 @@ class MainWindow(QMainWindow):
 
         self.preview_button = QPushButton("Preview Segment")
         self.encode_button = QPushButton("Encode Full")
+        # Accept is the one action that commits - it writes VIDOPTS_NNN
+        # into CONFIG.BAT and copies the encode into place. Everything
+        # else on this row is reversible experimentation, so Accept is
+        # the single primary and the rest stay quiet.
         self.accept_button = QPushButton("Accept")
+        self.accept_button.setProperty("primary", True)
         self.accept_button.setEnabled(False)
         self.encode_all_button = QPushButton("Encode All Stale")
 
         actions_row = QHBoxLayout()
+        actions_row.setSpacing(theme.GAP_ROW)
         actions_row.addWidget(self.preview_button)
         actions_row.addWidget(self.encode_button)
+        actions_row.addSpacing(theme.GAP_ROW)
         actions_row.addWidget(self.accept_button)
         actions_row.addStretch(1)
+        # A bulk action over every stale clip, not part of tuning the
+        # clip in front of you - held apart at the far end of the row.
         actions_row.addWidget(self.encode_all_button)
 
         self.metrics_bar = MetricsBar()
@@ -545,7 +766,10 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         central_layout = QVBoxLayout(central)
-        central_layout.addWidget(self._splitter)
+        central_layout.setContentsMargins(theme.GAP_PANE, theme.GAP_PANE,
+                                          theme.GAP_PANE, theme.GAP_ROW)
+        central_layout.setSpacing(theme.GAP_ZONE)
+        central_layout.addWidget(self._splitter, 1)
         central_layout.addLayout(actions_row)
         central_layout.addWidget(self.metrics_bar)
         self.setCentralWidget(central)
@@ -675,8 +899,11 @@ class MainWindow(QMainWindow):
                     status = "tuned"
                 else:
                     status = "default"
+                # text() stays the plain "001  stale" data string; the
+                # two roles are what _ClipDelegate actually paints from.
                 item = QListWidgetItem(f"{clip.num3}  {status}")
                 item.setData(Qt.UserRole, clip.num3)
+                item.setData(_ClipDelegate.STATUS_ROLE, status)
                 self.clip_list.addItem(item)
         except (VidprofileUnsupported, ValueError) as exc:
             # ValueError is _shape_args rejecting a malformed VIDASPECT

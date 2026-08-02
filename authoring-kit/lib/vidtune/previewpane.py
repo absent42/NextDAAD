@@ -25,13 +25,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .preview import decode_vid, diff_heatmap, stale_bands
+from .wiretrace import WireTrace
 
 DEFAULT_FPS = 25.0
 MODES = ("Encoded", "Flicker", "Heatmap")
 NEEDS_SOURCE_TOOLTIP = "needs a source comparison - run Preview Segment or Encode first"
 NOT_ENCODED_TOOLTIP = "not encoded yet"
 SOURCE_PREVIEW_HINT = "source preview - not encoded yet"
+
+# Empty states for the wire trace. A clip with no encode has no wire cost
+# to show - saying which of the two reasons applies beats a blank well.
+TRACE_EMPTY = "no clip loaded"
+TRACE_UNENCODED = "no wire data yet - encode to measure"
 
 
 class _ClickableLabel(QLabel):
@@ -157,25 +164,48 @@ class PreviewPane(QWidget):
         self._timer.timeout.connect(self._on_timer)
 
         self._busy_label = QLabel("Decoding...")
+        self._busy_label.setStyleSheet(
+            f"color: {theme.INK_FAINT}; padding: {theme.UNIT}px 0;")
         self._busy_label.setVisible(False)
 
+        # A fault is a fault - the encoder refused, or the file will not
+        # decode - so it is the only thing on this pane allowed to carry
+        # a filled colour. It stays a bar rather than a tint because the
+        # message underneath it is the encoder's own words.
         self._error_label = QLabel("")
-        self._error_label.setStyleSheet("color: white; background-color: #a02020; padding: 2px;")
+        self._error_label.setStyleSheet(
+            f"color: {theme.INK}; background: {theme.FAULT};"
+            f"border-radius: {theme.RADIUS_CONTROL}px;"
+            f"padding: {theme.UNIT}px {theme.GAP_ROW}px;")
         self._error_label.setWordWrap(True)
         self._error_label.setVisible(False)
 
         # Neutral (non-error) status text for an empty pane - e.g. a
         # newly-selected clip with no fresh .vid to preview yet - so
         # that state reads as "nothing to show" rather than "broken".
+        # Deliberately NOT a filled bar: nothing is wrong here, so it
+        # gets tertiary ink on the panel rather than a block of colour
+        # competing with the picture.
         self._hint_label = QLabel("")
         self._hint_label.setStyleSheet(
-            "color: #dddddd; background-color: #333333; padding: 2px;")
+            f"color: {theme.INK_FAINT}; background: {theme.RAISED};"
+            f"border: 1px solid {theme.EDGE_SOFT};"
+            f"border-radius: {theme.RADIUS_CONTROL}px;"
+            f"padding: {theme.UNIT}px {theme.GAP_ROW}px;")
         self._hint_label.setWordWrap(True)
         self._hint_label.setVisible(False)
 
+        # The grading surround. The picture is what this whole tool
+        # exists to judge, so it gets the darkest surface on screen
+        # directly behind it - a lighter chrome around a 256-colour
+        # still actively misrepresents how that still looks.
         self._image_label = _ClickableLabel()
         self._image_label.setAlignment(Qt.AlignCenter)
         self._image_label.setMinimumSize(64, 64)
+        self._image_label.setStyleSheet(
+            f"background: {theme.SURROUND};"
+            f"border: 1px solid {theme.EDGE_SOFT};"
+            f"border-radius: {theme.RADIUS_PANEL}px;")
         self._image_label.clicked.connect(self._on_image_clicked)
 
         self._mode_buttons = {}
@@ -208,6 +238,16 @@ class PreviewPane(QWidget):
         # static setToolTip here, since which of NEEDS_SOURCE_TOOLTIP /
         # NOT_ENCODED_TOOLTIP applies depends on encoded/source state.
 
+        # The wire trace and the scrub slider are one object visually:
+        # same x-axis, stacked with no gap, so a spike in the trace sits
+        # directly above the point on the slider that reaches it. The
+        # slider stays a real QSlider rather than becoming part of the
+        # custom widget - it already has the keyboard and drag handling
+        # a hand-rolled scrubber would have to reimplement badly.
+        self._trace = WireTrace()
+        self._trace.set_empty_text(TRACE_EMPTY)
+        self._trace.seek_requested.connect(self.seek)
+
         self._scrub_slider = QSlider(Qt.Horizontal)
         self._scrub_slider.setFocusPolicy(Qt.NoFocus)   # same reasoning as the buttons below
         self._scrub_slider.setEnabled(False)
@@ -223,7 +263,12 @@ class PreviewPane(QWidget):
         self._step_fwd_btn = QPushButton(">")
         self._step_fwd_btn.clicked.connect(lambda: self.step(+1))
         self._loop_checkbox = QCheckBox("Loop")
+        # Both readouts carry figures that change as you scrub, so both
+        # take the monospace face: a digit is always the same width and
+        # the labels beside them never jitter mid-playback.
         self._frame_label = QLabel("frame 0/0")
+        self._frame_label.setFont(theme.figure_font(9))
+        self._frame_label.setStyleSheet(f"color: {theme.INK_DIM};")
         self._set_in_btn = QPushButton("Set In")
         self._set_in_btn.clicked.connect(self.set_in)
         self._set_out_btn = QPushButton("Set Out")
@@ -231,6 +276,8 @@ class PreviewPane(QWidget):
         self._clear_btn = QPushButton("Clear")
         self._clear_btn.clicked.connect(self._on_clear_clicked)
         self._segment_label = QLabel("segment: -")
+        self._segment_label.setFont(theme.figure_font(9))
+        self._segment_label.setStyleSheet(f"color: {theme.INK_FAINT};")
         self._scale_btn = QPushButton("2x")
         self._scale_btn.setCheckable(True)
         self._scale_btn.toggled.connect(self._on_scale_toggled)
@@ -258,24 +305,39 @@ class PreviewPane(QWidget):
         # and behaviour are unchanged - only which layout each widget
         # sits in.
         playback_row = QHBoxLayout()
+        playback_row.setSpacing(theme.GAP_ROW)
         for w in (self._play_btn, self._stop_btn, self._step_back_btn,
                   self._step_fwd_btn, self._loop_checkbox):
             playback_row.addWidget(w)
         playback_row.addStretch(1)
 
         marker_row = QHBoxLayout()
+        marker_row.setSpacing(theme.GAP_ROW)
         for w in (self._frame_label, self._set_in_btn, self._set_out_btn,
                   self._clear_btn, self._segment_label, self._scale_btn):
             marker_row.addWidget(w)
         marker_row.addStretch(1)
 
+        # Rhythm, top to bottom: what am I looking at (mode row) - the
+        # picture, taking every pixel the pane can spare - where am I in
+        # it (trace + slider, fused into one timeline) - how do I move
+        # (transport). Groups are tight inside and separated by real air
+        # between, rather than everything sitting on one even gap.
+        timeline = QVBoxLayout()
+        timeline.setSpacing(2)
+        timeline.setContentsMargins(0, 0, 0, 0)
+        timeline.addWidget(self._trace)
+        timeline.addWidget(self._scrub_slider)
+
         outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(theme.GAP_ROW)
+        outer.addLayout(mode_row)
         outer.addWidget(self._busy_label)
         outer.addWidget(self._error_label)
         outer.addWidget(self._hint_label)
         outer.addWidget(self._image_label, 1)
-        outer.addLayout(mode_row)
-        outer.addWidget(self._scrub_slider)
+        outer.addLayout(timeline)
         outer.addLayout(playback_row)
         outer.addLayout(marker_row)
 
@@ -284,7 +346,8 @@ class PreviewPane(QWidget):
 
     # -- frame injection / loading ----------------------------------
 
-    def set_frames(self, encoded, source, fps, column_major):
+    def set_frames(self, encoded, source, fps, column_major,
+                   costs=None, terms=None, cap=None):
         # A direct injection path (set_frames is also called from
         # load()'s vid_path-is-None branch and from clear_to_empty())
         # must invalidate any in-flight decode the same way a fresh
@@ -309,6 +372,7 @@ class PreviewPane(QWidget):
         self._update_mode_buttons()
         self._update_segment_readout()
         self._sync_scrub_slider_range()
+        self._apply_trace(costs, terms, cap)
         if self.encoded is None and self.source is not None:
             # Un-encoded clip's source frames (MainWindow._load_source_preview)
             # - flagged here (not just by the caller) so any direct
@@ -320,6 +384,19 @@ class PreviewPane(QWidget):
             # _on_extract_done.
             self.show_hint(SOURCE_PREVIEW_HINT)
         self._render()
+
+    def _apply_trace(self, costs, terms, cap):
+        """Pushes the decoder's per-frame wire costs into the trace, or
+        puts it in the right empty state. Source-only frames (a clip
+        with no encode yet) have a timeline but no wire cost - that is
+        the TRACE_UNENCODED case, and it is a different thing from
+        having no clip open at all."""
+        self._trace.set_trace(costs or [], terms, cap)
+        self._trace.set_playhead(self.frame_index)
+        self._trace.set_segment(self.seg_in, self.seg_out)
+        if not costs:
+            self._trace.set_empty_text(
+                TRACE_UNENCODED if self._frame_count() else TRACE_EMPTY)
 
     def load(self, vid_path, source_frames, column_major):
         """Decodes vid_path (if given) on a QThread worker, then calls
@@ -398,7 +475,10 @@ class PreviewPane(QWidget):
         fps = hdr.get("fps_x10", int(DEFAULT_FPS * 10)) / 10.0
         column_major = hdr.get("column_major", self._pending_column_major)
         self.set_frames(encoded=frames, source=self._pending_source,
-                         fps=fps, column_major=column_major)
+                         fps=fps, column_major=column_major,
+                         costs=hdr.get("frame_costs"),
+                         terms=hdr.get("frame_terms"),
+                         cap=hdr.get("cap_bytes"))
 
     def _on_decode_failed(self, message, gen):
         if gen != self._load_gen:
@@ -583,10 +663,12 @@ class PreviewPane(QWidget):
             self.frame_index = 0
             self._update_frame_label()
             self._sync_scrub_slider_value()
+            self._trace.set_playhead(0)
             return
         self.frame_index = max(0, min(int(i), n - 1))
         self._render()
         self._sync_scrub_slider_value()
+        self._trace.set_playhead(self.frame_index)
 
     def _sync_scrub_slider_range(self):
         """Range/enabled state follow the frame count - called from
@@ -701,6 +783,7 @@ class PreviewPane(QWidget):
                 return f"{label}: f{frame} ({frame / self.fps:.2f}s)"
             text = f"{part('in', self.seg_in)}  {part('out', self.seg_out)}"
         self._segment_label.setText(text)
+        self._trace.set_segment(self.seg_in, self.seg_out)
 
     def segment_times(self, fps):
         if self.seg_in is None or self.seg_out is None:
