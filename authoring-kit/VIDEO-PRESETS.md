@@ -376,14 +376,19 @@ which scenes deserve it.
 
 ### Clip length limit
 
-This build refuses a video file of 16 MB or more, and says `VID SIZE?`
-on screen when it does. Divide 16 MB by the rate in the table above to
-get the longest clip each shape can carry: **about 15 seconds at full
-screen**, a little over 20 at 16:9. This is the reason section 2 sends
-anything long to the compressed route. The same limit applies to
-compressed clips, but at their much lower byte rate it works out to
-minutes rather than seconds, so in practice only the uncompressed
-route runs into it.
+A video file can be up to **256 MB**, and no clip may run past
+**65535 frames** - roughly 43 minutes at 25 fps, 87 at 12.5. Divide
+256 MB by the rate in the table above for the longest uncompressed
+clip each shape can carry: **about four minutes at full screen**, and
+longer at the smaller shapes. Compressed clips run at a much lower
+byte rate, so the same 256 MB carries several times as much of them -
+usually ten minutes or more, and the frame count only becomes the
+limit on very cheap material.
+
+You do not have to work either limit out yourself: the encoder checks
+both before it writes anything, and if a clip is over it says so, and
+names the longest clip your shape and frame rate can reach. Nothing it
+writes is too big to play.
 
 ---
 
@@ -438,8 +443,8 @@ look for it as soon as the cutscene fails to appear.
 | `VID FILE?` | There is no `NNN.VID` on the card for that video number. Check the number in your `GFX n 13`, and check the file reached `RELEASE\` and then the card. |
 | `VID FMT?` | The file is not a video this build can read - an old-format file, a file encoded with a newer option than the interpreter on the card supports, or a damaged copy. Re-encode it with this kit's encoder and re-copy it. |
 | `VID NOBANK2` | Not enough free memory to run the cutscene. Video needs a 2MB Next; on a 2MB machine this means the game had already filled memory, so play the cutscene at a quieter moment or reduce what is loaded around it. |
-| `VID SIZE?` | The clip is beyond what this build can play back - either the file is too large (section 6), or too little memory was free to buffer a clip of that shape. Shorten it, use a smaller shape, or move it to the compressed route. |
-| `VID FRAG?` | The file is scattered across too many pieces on the card to be read fast enough. Defragment the card, or copy the file onto a freshly formatted one. |
+| `VID SIZE?` | Too little memory was free to buffer a clip of that shape. Play the cutscene at a quieter moment, use a smaller shape, or move it to the compressed route. |
+| `VID FRAG?` | The file is scattered across too many pieces on the card to be read fast enough - or it is past the 256 MB ceiling (section 6), which no card layout can describe. Defragment the card, or copy the file onto a freshly formatted one. |
 
 If the encoder itself refuses to make the file, it says why and names
 the remedies in the same breath - it will not produce a video that

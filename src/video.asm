@@ -1291,6 +1291,12 @@ vid_op_fend:
 ; (consumed bytes rounded up to the 512-byte block - valid absolute
 ; rounding because every frame section is block-aligned), bounds-check
 ; against the file end, return A = terminal op to the frame loop.
+; CEILING LIFT (2026-08-02): the FILE unit is the 512-byte BLOCK. The
+; bound check and vidFileEnd count blocks, so the same 3-byte cells
+; address 8 GB instead of the 16 MB the old 24-bit BYTE quantities
+; reached. vidFramePos keeps BYTE granularity on the RESIDENT path
+; only - there it addresses the RAM image and vid_aud_pump advances it
+; by arbitrary chunk counts; the streaming cursor counts blocks.
 vid_dec_done:
     push af
     call vid_pos24               ; B:HL = pos24
@@ -1307,42 +1313,63 @@ vid_dec_done:
     ld a, (vidStreaming)
     or a
     jp nz, vid_dec_done_strm     ; B:HL = rounded RING position there
-.bound:
-    ; bounds: pos <= fileEnd (== on the last frame)
-    ld a, (vidFileEnd+2)
-    cp b
-    jr c, .ovr                   ; endHi < posHi
-    jr nz, .store                ; endHi > posHi
-    ld de, (vidFileEnd)
-    push hl
-    or a
-    sbc hl, de
-    pop hl
-    jr z, .store
-    jr nc, .ovr                  ; pos > end
-.store:
+    ; RESIDENT: B:HL is the file position in BYTES and is stored that
+    ; way; the bound runs in the file unit. pos is block-aligned here,
+    ; so pos >> 9 is exact and the comparison is the byte one verbatim.
     ld (vidFramePos), hl
     ld a, b
     ld (vidFramePos+2), a
+    ld l, h
+    ld h, b
+    srl h
+    rr l
+    ld b, 0                      ; B:HL = pos >> 9 (resident is ring-
+                                 ; bounded: B is always 0 here)
+.bound:
+    call vid_bound_chk           ; CF set = past the file end
+    jr c, .ovr
     pop af                       ; A = terminal op
     ret                          ; -> vid_decode_frame's caller
 .ovr:
     pop af
  IFDEF DEBUG
     ld (vidErrPos), hl           ; breadcrumb: the already-rounded
-    ld a, b                      ; linear pos this bound trip rejected
-    ld (vidErrPos+2), a
- ENDIF
+    ld a, b                      ; BLOCK position this bound trip
+    ld (vidErrPos+2), a          ; rejected (the file unit; the
+ ENDIF                           ; vid_dec_abort breadcrumb stays a
+                                 ; byte cursor)
     ld a, VID_ERR_SRCOVR
     jp vid_dec_abort_pos
+
+; File-position bound in the file unit (512-byte BLOCKS). In: B:HL =
+; candidate file position, blocks. Out: CF set = past vidFileEnd (the
+; SRCOVR trip); CF clear = at or inside the end (== on the last
+; frame). Corrupts AF, DE. Preserves B and HL.
+vid_bound_chk:
+    ld a, (vidFileEnd+2)
+    cp b
+    ret c                        ; endHi < posHi: over
+    jr nz, .in                   ; endHi > posHi: inside
+    ld de, (vidFileEnd)
+    push hl
+    or a
+    sbc hl, de
+    pop hl
+    ret z                        ; exactly the end: the last frame
+    ccf                          ; pos < end -> CF clear (inside);
+    ret                          ; pos > end -> CF set (over)
+.in:
+    or a
+    ret
 
 ; Streaming terminal tail: B:HL = the rounded-up RING-linear position
 ; the payload ended at (<= ringBytes: the round-up may land exactly on
 ; the wrap point - the mod folds it to 0). Derives the consumed byte
 ; count (mod ringBytes, valid because rlStart is block-aligned and one
 ; payload is far smaller than the ring), advances the ring cursor and
-; the depth gauge, then hands the FILE-relative candidate position to
-; vid_dec_done's shared bound check (the terminal op stays pushed).
+; the depth gauge, then hands the FILE-relative candidate position -
+; in BLOCKS, the file unit since the ceiling lift - to vid_dec_done's
+; shared bound check (the terminal op stays pushed).
 vid_dec_done_strm:
     ld (vidRlNew), hl
     ld a, b
@@ -1364,14 +1391,11 @@ vid_dec_done_strm:
     ld a, (vidRingBytes+2)
     adc a, c
 .cons:                           ; A:HL = consumed (512-multiple, > 0)
-    ld d, a                      ; D = consumed[23:16] (kept)
     ld b, a                      ; blocks = consumed >> 9 = (A:H) >> 1
     ld a, h
     srl b
     rra
     ld c, a                      ; BC = consumed blocks
-    push hl
-    push de
     ld hl, (vidRingDepth)
     or a
     sbc hl, bc
@@ -1384,14 +1408,16 @@ vid_dec_done_strm:
     ld hl, 0
 .dok:
     ld (vidRingDepth), hl
-    pop de
-    pop hl
-    ; framePos += consumed -> the shared bound check (B:HL candidate)
-    ld bc, (vidFramePos)
+    ; the STREAMING file cursor counts BLOCKS (no byte cursor exists
+    ; here - vid_src_seek reads vidRingRl): framePos += consumed
+    ; blocks, then the shared bound check (B:HL candidate).
+    ld hl, (vidFramePos)
     add hl, bc
     ld a, (vidFramePos+2)
-    adc a, d
+    adc a, 0
     ld b, a
+    ld (vidFramePos), hl
+    ld (vidFramePos+2), a
     jp vid_dec_done.bound
 
 ; Fold a ring-linear position (A:HL, < 2*ringBytes) into the ring:
@@ -1733,11 +1759,14 @@ vid_src_seek:
 ;     so true room only grows while a chunk runs.
 ;   the .pace consumption integrator - pacing (see the frame loop).
 ;
-; Source-cursor bookkeeping is INCREMENTAL: each chunk advances
-; vidFramePos (and streaming vidRingRl, mod) by the bytes copied, so
-; vid_src_seek needs no offset variant; the pad slack (aBytesPad -
-; aBytes) and the streaming depth debit land once, at completion -
-; the final cursor state is byte-identical to the old one-shot copy.
+; Source-cursor bookkeeping is INCREMENTAL: each chunk advances the
+; live BYTE cursor (resident vidFramePos / streaming vidRingRl, mod)
+; by the bytes copied, so vid_src_seek needs no offset variant; the
+; pad slack (aBytesPad - aBytes) and the streaming depth debit land
+; once, at completion - the final cursor state is byte-identical to
+; the old one-shot copy. The streaming FILE cursor is the one
+; exception: it counts BLOCKS (ceiling lift), so the whole padded
+; section is charged in one step at completion.
 ; UNDERRUN MODE: if the feed is late (chronically slow decode), the
 ; reader plays STALE ring data (the previous lap) until the writer
 ; catches up - bounded, self-recovering, the circular analogue of the
@@ -1907,20 +1936,25 @@ vid_aud_pump:
     ld hl, vidAudBuf
 .wr:
     ld (vidAudWr), hl
-    ; consumer source cursor += n (ds has no RAM cursor: skip)
+    ; consumer source cursor += n. RESIDENT: the byte cursor into the
+    ; RAM image. STREAMING: the ring-linear byte cursor only - the
+    ; FILE cursor counts BLOCKS since the ceiling lift and is charged
+    ; once, at feed completion (.strmdone). DIRECT: neither (the open
+    ; wire is the cursor).
+    ld a, (vidStreaming)
+    or a
+    jr nz, .rlonly
     ld a, (vidDirect)
     or a
     jr nz, .fed
     ld hl, (vidFramePos)
     add hl, bc
     ld (vidFramePos), hl
-    jr nc, .fp
+    jr nc, .fed
     ld hl, vidFramePos+2
     inc (hl)
-.fp:
-    ld a, (vidStreaming)
-    or a
-    jr z, .fed
+    jr .fed
+.rlonly:
     ld hl, (vidRingRl)
     add hl, bc                   ; last BC use - vid_rl_mod corrupts it
     ld a, (vidRingRl+2)
@@ -1953,25 +1987,37 @@ vid_aud_pump:
     sbc hl, de
     ld b, h
     ld c, l                      ; BC = pad slack (0..511)
-    ld hl, (vidFramePos)
-    add hl, bc
-    ld (vidFramePos), hl
-    jr nc, .ps
-    ld hl, vidFramePos+2
-    inc (hl)
-.ps:
     ld a, (vidStreaming)
     or a
-    ret z                        ; resident complete
+    jr nz, .strmdone
+    ld hl, (vidFramePos)         ; resident: the byte cursor takes the
+    add hl, bc                   ; pad slack
+    ld (vidFramePos), hl
+    ret nc
+    ld hl, vidFramePos+2
+    inc (hl)
+    ret
+.strmdone:
     ld hl, (vidRingRl)
     add hl, bc
     ld a, (vidRingRl+2)
     adc a, 0
     call vid_rl_mod              ; A:HL mod ringBytes -> vidRingRl
-    ; depth -= audio-pad blocks (the gate's staged need covered them)
+    ; the STREAMING file cursor counts BLOCKS: one whole audio section
+    ; is apadBlk blocks (== aBytesPad >> 9), charged once here - the
+    ; per-chunk byte advance the resident path takes has no meaning in
+    ; the file unit. BC then serves the depth debit unchanged.
     ld a, (vidApadBlk)
     ld c, a
     ld b, 0
+    ld hl, (vidFramePos)
+    add hl, bc
+    ld (vidFramePos), hl
+    jr nc, .fpnc
+    ld hl, vidFramePos+2
+    inc (hl)
+.fpnc:
+    ; depth -= audio-pad blocks (the gate's staged need covered them)
     ld hl, (vidRingDepth)
     or a
     sbc hl, bc
@@ -2549,8 +2595,9 @@ vid_ring_gate:
     or a
     sbc hl, de
     ret nc
-    ld hl, (vidStrmRemainBlk)
-    ld a, h
+    ld hl, (vidStrmRemainBlk)    ; 24-bit block remain (ceiling lift)
+    ld a, (vidStrmRemainBlk+2)
+    or h
     or l
     jr nz, .owe
     ld a, (vidLoopMode)
@@ -2576,6 +2623,9 @@ vid_prod_step:
     ld a, h
     or l
     jr nz, .have
+    ld a, (vidStrmRemainBlk+2)   ; 24-bit blocks (ceiling lift): a low
+    or a                         ; word of 0 with the high byte set is
+    jr nz, .have                 ; not "fully streamed"
     ld a, (vidLoopMode)          ; pass fully streamed
     or a
     ret z                        ; play-once: producer done
@@ -2586,6 +2636,8 @@ vid_prod_step:
     ld (vidStrmRunBlkH), hl
     ld hl, (vidTotalBlk)
     ld (vidStrmRemainBlk), hl
+    ld a, (vidTotalBlk+2)
+    ld (vidStrmRemainBlk+2), a
 .have:
     ld hl, (vidRingCapBlk)
     ld de, (vidRingDepth)
@@ -2645,10 +2697,19 @@ vid_prod_step:
     ld hl, (vidStrmRunBlkH)
     dec hl
     ld (vidStrmRunBlkH), hl
-    ld hl, (vidStrmRemainBlk)
+    ld hl, (vidStrmRemainBlk)    ; 24-bit block remain (> 0 here)
+    ld a, h
+    or l
+    jr z, .remb                  ; low word 0: borrow the high byte
+.remd:
     dec hl
     ld (vidStrmRemainBlk), hl
     ret
+.remb:
+    ld a, (vidStrmRemainBlk+2)
+    dec a
+    ld (vidStrmRemainBlk+2), a
+    jr .remd                     ; HL = 0 -> dec -> $FFFF
 .short:
     ld a, VID_ERR_SHORT
     jr .fault
@@ -2888,7 +2949,12 @@ vid_mf_restore_h:
 ; -= 1; the gate's staged +1 guaranteed it is buffered). Corrupts AF,
 ; BC, DE, HL.
 vid_loop_rewind:
-    ld hl, 512
+    ld hl, 512                   ; RESIDENT: the BYTE cursor past the
+    ld a, (vidStreaming)         ; header block. STREAMING: the file
+    or a                         ; cursor counts BLOCKS (ceiling lift),
+    jr z, .fp0                   ; so block 1. DIRECT: unused.
+    ld hl, 1
+.fp0:
     ld (vidFramePos), hl
     xor a
     ld (vidFramePos+2), a
@@ -2933,6 +2999,8 @@ vid_loop_rewind:
     ld (vidStrmRunBlkH), hl
     ld hl, (vidTotalBlk)
     ld (vidStrmRemainBlk), hl
+    ld a, (vidTotalBlk+2)
+    ld (vidStrmRemainBlk+2), a
     ld hl, 0
     call vid_ds_blkopen          ; run 0 reopened + the header block
     jp vid_ds_pad                ; discard all 512 header bytes
@@ -3022,10 +3090,11 @@ vid_ds_blkopen:
     ld a, (vidDsBound)
     cp c
     jr c, .ovr                   ; over the bound: corrupt payload
-    ld hl, (vidStrmRemainBlk)    ; whole-pass accounting
-    ld a, h
-    or l
-    jr z, .ovr                   ; reading past the file: corrupt
+    ld hl, (vidStrmRemainBlk)    ; whole-pass accounting (24-bit
+    ld a, h                      ; blocks since the ceiling lift; the
+    or l                         ; borrow arm is out of line, so the
+    jr z, .remb                  ; per-block path costs nothing extra)
+.remd:
     dec hl
     ld (vidStrmRemainBlk), hl
     ld hl, (vidStrmRunBlkH)
@@ -3052,6 +3121,13 @@ vid_ds_blkopen:
     pop bc
     ld hl, 512
     ret
+.remb:
+    ld a, (vidStrmRemainBlk+2)
+    or a
+    jr z, .ovr                   ; truly 0: reading past the file
+    dec a
+    ld (vidStrmRemainBlk+2), a
+    jr .remd                     ; HL = 0 -> dec -> $FFFF
 .short:
     ld a, VID_ERR_SHORT
     jr .fault
@@ -3315,8 +3391,10 @@ vidAChan:        db 0            ; 1 mono / 2 stereo
 vidABytes:       dw 0            ; REAL audio bytes/frame
 vidABytesPad:    dw 0            ; = (real + 511) & ~511 (wire block)
 vidFrames:       dw 0            ; container frame count
-vidFileEnd:      ds 3            ; file size (24-bit; == last frame's
-                                 ; rounded payload end)
+vidFileEnd:      ds 3            ; file size in 512-byte BLOCKS (24-bit
+                                 ; == last frame's rounded payload end;
+                                 ; blocks since the 2026-08-02 ceiling
+                                 ; lift - the byte form capped at 16MB)
 
 ; Resident ring (source): allocated pool banks, in load order. The
 ; seam walker derives page = bank*2 + parity, so only banks are
@@ -3326,7 +3404,12 @@ vidRingBanks:    ds VID_RING_MAX
 
 ; Decode session state.
 vidFramePos:     ds 3            ; linear file position of the current
-                                 ; frame section (24-bit, 512-aligned)
+                                 ; frame section (24-bit). RESIDENT: a
+                                 ; BYTE offset into the RAM image (the
+                                 ; ring bounds it at 1.25MB, and
+                                 ; vid_src_seek/vid_aud_pump need byte
+                                 ; granularity). STREAMING: 512-byte
+                                 ; BLOCKS (ceiling lift). DIRECT: unused
 vidFramesLeft:   dw 0
 vidSrcBankIdx:   db 0
 vidSrcParity:    db 0            ; 0 = bank's lower 8K page, 1 = upper
@@ -3371,8 +3454,10 @@ vidSrcWalks:     db 0
 vidRingPageCnt:  db 0            ; cnt * 2 (producer wrap modulus)
 vidWrPageLin:    db 0            ; producer write cursor: ring page +
 vidWrOfs:        dw 0            ; offset (0..$1FFF, 512-aligned)
-vidTotalBlk:     dw 0            ; whole-file blocks (producer rewind)
-vidStrmRemainBlk: dw 0           ; blocks still to stream this pass
+vidTotalBlk:     ds 3            ; whole-file blocks (producer rewind;
+                                 ; 24-bit since the ceiling lift - the
+                                 ; 16-bit form capped a file at 32MB)
+vidStrmRemainBlk: ds 3           ; blocks still to stream this pass
 vidStrmEntryIdx: db 0            ; hot filemap cursor
 vidStrmEntryCnt: db 0
 vidStrmRunBlkH:  dw 0            ; blocks left in the current run
@@ -4149,10 +4234,14 @@ nxb_ds_settle:
     or a
     sbc hl, de
     ld (vidStrmRunBlkH), hl
-    ld hl, (vidStrmRemainBlk)
+    ld hl, (vidStrmRemainBlk)    ; 24-bit block remain (ceiling lift)
     or a
     sbc hl, de
     ld (vidStrmRemainBlk), hl
+    ret nc
+    ld a, (vidStrmRemainBlk+2)
+    dec a
+    ld (vidStrmRemainBlk+2), a
     ret
 
 ; --- the five direct-row bodies ---
@@ -4449,7 +4538,8 @@ vidTokCalls: dw 0
 ; staged; B = 1 bad header / read error (VID FMT - v1 files land
 ; here; streaming adds: size not whole blocks, bad payload cap);
 ; B = 2 no pool bank at all; B = 3 no ring fits (pool below one
-; streamed frame's need + slack, or file >= 16MB); B = 4 too
+; streamed frame's need + slack; the file-size arm is RETIRED by the
+; ceiling lift - see vid_file_blocks); B = 4 too
 ; fragmented to stream (filemap exceeds the hot copy). On any failure
 ; the ring is freed and the stream closed. Corrupts everything.
 ; Rubric 3: every write to a VID_PAGE cell or code byte goes through
@@ -4712,17 +4802,20 @@ nxv2_open_body:
     ; arms. ---
     xor a
     ld (vidDeliverDir), a
+    ld (vidDeliverStrm), a       ; cleared for EVERY delivery, direct
+                                 ; included: the session init reads it
+                                 ; to pick the file cursor's UNIT, so a
+                                 ; previous session's 1 must not leak in
     ld a, (vidHdrDirectC)
     or a
     jp nz, .direct_setup
-    xor a
-    ld (vidDeliverStrm), a
-    ld a, (vidSizeHi+1)
-    or a
-    jp nz, .toobig               ; >= 16MB: over the 24-bit cursors
-    ld a, (vidSizeHi)
-    cp $20
-    jr c, .needcalc
+    ld a, (vidSizeHi+1)          ; CEILING LIFT: >= 16MB is no longer
+    or a                         ; a refusal - it is simply far past
+    jr nz, .ringmax              ; any ring, so it streams. The
+    ld a, (vidSizeHi)            ; size >> 14 arithmetic below is only
+    cp $20                       ; reached under 2MB, where its 24-bit
+    jr c, .needcalc              ; form is exact.
+.ringmax:
     ld a, VID_RING_MAX           ; >= 2MB: no ring holds it - stream
     jr .strmneed
 .needcalc:
@@ -4899,12 +4992,8 @@ nxv2_open_body:
     ; prefill fills the ENTIRE ring, which is >= any margin the ring
     ; could honor (a margin larger than the ring itself is served
     ; best-effort by the same full fill - documented in the report).
-    ld a, (vidSizeLo)
-    or a
-    jp nz, .badc
-    ld a, (vidSizeLo+1)
-    and 1
-    jp nz, .badc
+    call vid_file_blocks         ; size -> vidTotalBlkC (24-bit BLOCKS,
+    jp c, .badc                  ; the file unit); CF = not whole blocks
     ld hl, (vidHdrCapC)
     ld a, h
     or a
@@ -4919,16 +5008,15 @@ nxv2_open_body:
     ; margin as a fill target (full-ring prefill dominates any margin
     ; the ring could honor), but a margin claiming more blocks than
     ; the whole file is a corrupt header - reject it cheaply
-    ld a, (vidSizeHi)
-    ld h, a
-    ld a, (vidSizeLo+1)
-    ld l, a                      ; HL = size >> 8 (low byte 0, checked
-    srl h                        ; above)
-    rr l                         ; HL = file blocks (size >> 9)
+    ld a, (vidTotalBlkC+2)       ; > 65535 blocks: any 16-bit margin
+    or a                         ; is inside the file by construction
+    jr nz, .marok
+    ld hl, (vidTotalBlkC)
     ld de, (vidHdrMarginC)
     or a
     sbc hl, de
     jp c, .badc                  ; margin > file blocks
+.marok:
     ; gate need = audio-pad blocks + cap + 1 (the loop-pass header
     ; block rides between passes)
     ld hl, (vidP_ABytesPad)
@@ -5048,18 +5136,18 @@ nxv2_open_body:
     and $0F                      ; cap / 16
     add a, 3
     ld (vidWalkMax + DATA_WINDOW - OVL_ORG), a
-    ; totals: file blocks + blocks still owed this pass
-    ld a, (vidSizeHi)
-    ld h, a
-    ld a, (vidSizeLo+1)
-    ld l, a                      ; HL = size >> 8 (low byte 0)
-    srl h
-    rr l                         ; HL = size >> 9
+    ; totals: file blocks + blocks still owed this pass (24-bit
+    ; blocks since the ceiling lift)
+    ld hl, (vidTotalBlkC)
+    ld a, (vidTotalBlkC+2)
     ld (vidTotalBlk + DATA_WINDOW - OVL_ORG), hl
+    ld (vidTotalBlk+2 + DATA_WINDOW - OVL_ORG), a
     ld de, (vidRingCapBlkC)
     or a
     sbc hl, de                   ; received == ringBytes
+    sbc a, 0
     ld (vidStrmRemainBlk + DATA_WINDOW - OVL_ORG), hl
+    ld (vidStrmRemainBlk+2 + DATA_WINDOW - OVL_ORG), a
     ; run-cursor handoff (the open window continues mid-run)
     ld a, (vidEntCntC)
     ld (vidStrmEntryCnt + DATA_WINDOW - OVL_ORG), a
@@ -5119,15 +5207,11 @@ nxv2_open_body:
     ; leaving the window open at frame 0's audio for the handoff. ---
     ld a, 1
     ld (vidDeliverDir), a
-    ld a, (vidSizeLo)
-    or a
-    jp nz, .badc
-    ld a, (vidSizeLo+1)
-    and 1
-    jp nz, .badc
-    ld a, (vidSizeHi+1)
-    or a
-    jp nz, .badc                 ; >= 16MB: over the 24-bit sizes
+    call vid_file_blocks         ; size -> vidTotalBlkC (24-bit BLOCKS,
+    jp c, .badc                  ; the file unit); CF = not whole
+                                 ; blocks. CEILING LIFT: the >= 16MB
+                                 ; refusal that used to sit here (and
+                                 ; folded into VID FMT?) is GONE
     ld hl, (vidHdrCapC)
     ld a, h
     or a
@@ -5147,18 +5231,16 @@ nxv2_open_body:
     add a, b
     inc a                        ; <= 247: no carry
     ld (vidNeedBlkC), a          ; the per-frame section bound
-    ; file blocks (also the margin range check's bound)
-    ld a, (vidSizeHi)
-    ld h, a
-    ld a, (vidSizeLo+1)
-    ld l, a
-    srl h
-    rr l                         ; HL = size >> 9
-    ld (vidTotalBlkC), hl
+    ; advisory margin range check against the file blocks
+    ld a, (vidTotalBlkC+2)       ; > 65535 blocks: any 16-bit margin
+    or a                         ; is inside the file by construction
+    jr nz, .dmarok
+    ld hl, (vidTotalBlkC)
     ld de, (vidHdrMarginC)
     or a
     sbc hl, de
     jp c, .badc                  ; margin > file blocks: corrupt
+.dmarok:
     ; filemap must fit the hot copy
     ld hl, (vidStrmEntryEnd)
     ld de, vidFilemapBuf
@@ -5210,10 +5292,16 @@ nxv2_open_body:
     ld (vidDsBound + DATA_WINDOW - OVL_ORG), a
     ld a, (vidApadBlkC)
     ld (vidApadBlk + DATA_WINDOW - OVL_ORG), a
-    ld hl, (vidTotalBlkC)
+    ld hl, (vidTotalBlkC)        ; 24-bit blocks (ceiling lift)
+    ld a, (vidTotalBlkC+2)
     ld (vidTotalBlk + DATA_WINDOW - OVL_ORG), hl
-    dec hl                       ; the header block is consumed
+    ld (vidTotalBlk+2 + DATA_WINDOW - OVL_ORG), a
+    ld de, 1                     ; the header block is consumed
+    or a
+    sbc hl, de
+    sbc a, 0
     ld (vidStrmRemainBlk + DATA_WINDOW - OVL_ORG), hl
+    ld (vidStrmRemainBlk+2 + DATA_WINDOW - OVL_ORG), a
     ; run-cursor handoff: window OPEN one block into run 0
     ld a, (vidEntCntC)
     ld (vidStrmEntryCnt + DATA_WINDOW - OVL_ORG), a
@@ -5258,8 +5346,9 @@ nxv2_open_body:
     jr .fail
 .toobig:
     ld b, 3                      ; verdict: no ring fits (pool below
-                                 ; one streamed frame's need, or the
-                                 ; file is >= 16MB)
+                                 ; one streamed frame's need - the old
+                                 ; ">= 16MB" arm of this verdict is
+                                 ; RETIRED by the ceiling lift)
 .fail:
     push bc
     call vid_ring_free
@@ -5278,10 +5367,16 @@ nxv2_open_body:
 ; OPEN - the caller stages its delivery extras then closes with
 ; data_restore. Corrupts everything.
 vid_stage_common:
-    ld hl, (vidSizeLo)           ; fileEnd = size (staged with the
-    ld (vidP_FileEnd), hl        ; block, one LDIR)
-    ld a, (vidSizeHi)
-    ld (vidP_FileEnd+2), a
+    call vid_file_blocks         ; fileEnd = size in BLOCKS, the file
+    ld hl, (vidTotalBlkC)        ; unit since the ceiling lift (staged
+    ld (vidP_FileEnd), hl        ; with the block, one LDIR). CF is
+    ld a, (vidTotalBlkC+2)       ; IGNORED here: resident never
+    ld (vidP_FileEnd+2), a       ; required whole blocks, and a
+                                 ; truncating >>9 reproduces its old
+                                 ; byte compare exactly (the payload
+                                 ; position is rounded UP to a block
+                                 ; before every compare, so a ragged
+                                 ; tail failed the bound then too)
     call data_save
     ld a, VID_PAGE
     call data_map_page
@@ -5397,6 +5492,47 @@ vid_stage_common:
     ld (vid_stub + VOP_KFLIP + 1 + DATA_WINDOW - OVL_ORG), hl
     ret
 
+; ---------------------------------------------------------------------
+; vid_file_blocks - the CEILING LIFT's one conversion point: the
+; F_FSTAT byte size -> the FILE UNIT, 512-byte BLOCKS, stored 24-bit
+; to vidTotalBlkC. Every file-level cursor in the player counts blocks
+; now (vidTotalBlk / vidStrmRemainBlk / vidFileEnd / the streaming
+; vidFramePos), so the same 3-byte cells that capped a .VID at 16MB in
+; bytes reach 8GB. No size ceiling remains in the player: F_FSTAT's own
+; 32-bit byte size shifts down to at most 23 significant block bits, so
+; the whole addressable file space fits with a bit to spare (what binds
+; in practice is the fragment ceiling - VID_STRM_HOT_ENT extents of at
+; most 65535 blocks each, VID FRAG? above that).
+; Out: CF set = the size is NOT a whole number of 512-byte blocks
+; (every v2 frame section is block-aligned, so a valid encode's size
+; always is - this is the contract check both delivery setups used to
+; inline). vidTotalBlkC is stored either way. Corrupts AF, HL.
+; ---------------------------------------------------------------------
+vid_file_blocks:
+    ld a, (vidSizeHi+1)          ; size[31:24]
+    ld h, a
+    ld a, (vidSizeHi)            ; size[23:16]
+    ld l, a
+    ld a, (vidSizeLo+1)          ; size[15:8]
+    srl h
+    rr l
+    rra                          ; H:L:A = size >> 9, big-endian in
+    ld (vidTotalBlkC), a         ; registers - store little-endian
+    ld a, l
+    ld (vidTotalBlkC+1), a
+    ld a, h
+    ld (vidTotalBlkC+2), a
+    ld a, (vidSizeLo)            ; whole-block contract check
+    or a
+    scf
+    ret nz                       ; low byte set: not a block multiple
+    ld a, (vidSizeLo+1)
+    and 1
+    scf
+    ret nz                       ; bit 8 set: not a block multiple
+    or a                         ; CF clear
+    ret
+
 nxvMagic: db "NXVID"
 
 ; Cold staging twin of the hot parameter block (order/sizes MUST
@@ -5430,7 +5566,9 @@ vidDeliverDir: db 0              ; 1 = direct-serve (3c; wins over both)
 vidAudBankC:   db 0              ; the session audio bank (3c; 0 = none)
 vidHdrDirectC: db 0              ; header flags bit1 capture
 vidHdrOcopyC:  db 0              ; header flags bit3 capture (T5a)
-vidTotalBlkC:  dw 0              ; file blocks (direct setup scratch)
+vidTotalBlkC:  ds 3              ; file blocks, 24-bit (vid_file_blocks
+                                 ; writes it; both setups + the common
+                                 ; stager read it)
 vidLoadTgt:    ds 3              ; prefill byte target (size / ring)
 vidHdrCapC:    dw 0              ; header per-frame payload cap
 vidHdrMarginC: dw 0              ; header ring start-margin (advisory;
@@ -5819,7 +5957,12 @@ vid_run_l2setup_body:
     ld (vidAudFeedRem+1+DATA_WINDOW-OVL_ORG), a
     ld (vidDsAudBlkRem+DATA_WINDOW-OVL_ORG), a
     ld (vidDsAudBlkRem+1+DATA_WINDOW-OVL_ORG), a
-    ld hl, 512                   ; frame 0's audio follows the header
+    ld hl, 512                   ; frame 0's audio follows the header:
+    ld a, (vidDeliverStrm)       ; a BYTE offset for resident, ONE
+    or a                         ; BLOCK for streaming (its file cursor
+    jr z, .fp0                   ; counts blocks - ceiling lift; direct
+    ld hl, 1                     ; never reads the cell)
+.fp0:
     ld (vidFramePos+DATA_WINDOW-OVL_ORG), hl
     ld hl, (vidFrames+DATA_WINDOW-OVL_ORG)
     ld (vidFramesLeft+DATA_WINDOW-OVL_ORG), hl
@@ -6252,8 +6395,9 @@ vid_play_missing_print:
     jr vid_fail_puts
 
 ; Open/load failure print: B = 1 VID FMT / 2 no bank / 3 no ring fits
-; (pool below one streamed frame's need, or the file is >= 16MB) / 4
-; too fragmented to stream (filemap exceeds the hot copy - .defrag).
+; (pool below one streamed frame's need) / 4 too fragmented to stream
+; (filemap exceeds the hot copy - and the file-size ceiling that a
+; too-long clip now meets: VID_STRM_HOT_ENT extents of 65535 blocks).
 ; Corrupts B - the caller brackets it.
 vid_open_fail_print:
     ld a, b

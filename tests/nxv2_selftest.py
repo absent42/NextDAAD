@@ -2058,6 +2058,130 @@ def t11_direct_gate():
                    f"the plain refusal must be the wire-gate message, got:\n{stderr2}")
 
 
+@case(11, "TOTAL-SIZE admission gate - the player's file ceiling is "
+          "priced at encode time, projection exact to the written byte")
+def t11_total_size_gate():
+    import tempfile as tf
+    # --- the constant and its derivation (single source of truth,
+    # tied to the player's cursor width / hot filemap). ---
+    expect(enc.PLAYER_HOT_FILEMAP_ENTRIES == 8,
+           "PLAYER_HOT_FILEMAP_ENTRIES must track VID_STRM_HOT_ENT (8)")
+    expect(enc.PLAYER_FILEMAP_BLOCKS_PER_ENTRY == 65535,
+           "an esxDOS DISK_FILEMAP extent carries a 16-bit block count")
+    expect(enc.PLAYER_MAX_BLOCKS == 8 * 65535,
+           "PLAYER_MAX_BLOCKS is entries * blocks-per-entry")
+    expect(enc.PLAYER_MAX_BYTES == enc.PLAYER_MAX_BLOCKS * 512,
+           "PLAYER_MAX_BYTES is blocks * 512")
+    # The CEILING LIFT is the point of the constant: the player's
+    # file-level cursors count 512-byte BLOCKS now, so the old 24-bit
+    # BYTE ceiling (16 MiB, ~15.7 s of full-screen direct) is gone and
+    # the file ceiling is an order of magnitude past it.
+    expect(enc.PLAYER_MAX_BYTES > 16 * 1024 * 1024,
+           "the ceiling must be past the pre-lift 24-bit BYTE cursor "
+           "limit of 16 MiB - that limit is what the lift removed")
+    expect(enc.PLAYER_MAX_BYTES <= 1 << 33,
+           "the ceiling must stay inside the 24-bit BLOCK cursors (8 GiB)")
+
+    # --- the FRAME ceiling: the player validates the header's top
+    # frame-count byte as zero (16-bit frame counters), and the lift
+    # made that reachable - a cheap clip hits 65535 frames long before
+    # 256 MiB. Priced here and defended in pack_header. ---
+    expect(enc.PLAYER_MAX_FRAMES == 65535,
+           "the player's frame ceiling is its 16-bit counters")
+    enc.total_size_check(1024 * 65535, 65535, "streaming",
+                         256, 192, 25, 2)            # exactly at: admitted
+    try:
+        enc.total_size_check(1024 * 65536, 65536, "streaming",
+                             256, 192, 25, 2)
+    except SystemExit as e:
+        msg = str(e)
+        expect("65,535 frame" in msg, "refusal names the frame limit")
+        expect("VID FMT" in msg, "refusal names the player's own verdict")
+        expect("longest playable clip" in msg and "--duration" in msg,
+               "refusal names the max duration and the remedy")
+    else:
+        raise AssertionError("one frame over the ceiling must be refused")
+    try:
+        enc.pack_header(width=256, height=192, fps=25, channels=2,
+                        arate=enc.RATE_STEREO, frame_count=65536,
+                        audio_bytes_per_frame=1250,
+                        ring_start_margin_blocks=1, per_frame_cap_blocks=1)
+    except ValueError as e:
+        expect("65535" in str(e) and "VID FMT" in str(e),
+               "pack_header defends the frame bound with the player verdict")
+    else:
+        raise AssertionError("pack_header must reject 65536 frames")
+
+    # --- the SIZE check: boundary is inclusive, refusal names the
+    # limit AND the longest clip at this shape/rate. ---
+    enc.total_size_check(enc.PLAYER_MAX_BYTES, 3140, "direct-serve",
+                         320, 256, 12.5, 2)          # exactly at: admitted
+    try:
+        enc.total_size_check(enc.PLAYER_MAX_BYTES + 512, 3200,
+                             "direct-serve", 320, 256, 12.5, 2)
+    except SystemExit as e:
+        msg = str(e)
+        expect(f"{enc.PLAYER_MAX_BYTES:,}" in msg,
+               "refusal names the byte limit")
+        expect("VID FRAG" in msg,
+               "refusal names the player refusal an author would see")
+        expect("320x256" in msg and "12.5 fps" in msg and "stereo" in msg,
+               "refusal names the shape and rate it was measured at")
+        expect("longest playable clip" in msg and "--duration" in msg,
+               "refusal names the max duration and the remedy")
+    else:
+        raise AssertionError("one block over the ceiling must be refused")
+
+    # --- WIRING + PROJECTION EXACTNESS. Encode a real (tiny) direct
+    # clip, then re-run it with the ceiling pinned at the written size
+    # and one byte below: the projection is the writer's own arithmetic,
+    # so it must admit at exactly the file size and refuse one below. ---
+    real_max = enc.PLAYER_MAX_BYTES
+    ex = _synthetic_ex(3, 256, 128)
+    try:
+        with tf.TemporaryDirectory() as td:
+            out = Path(td) / "size.vid"
+            enc._encode_direct(ex, 256, 128, 12.5, out)
+            written = out.stat().st_size
+            expect(written % 512 == 0, "a .VID is whole 512-byte blocks")
+            out.unlink()
+            enc.PLAYER_MAX_BYTES = written        # projection == written
+            enc._encode_direct(ex, 256, 128, 12.5, out)
+            expect(out.stat().st_size == written,
+                   "at a ceiling of exactly the file size the encode is "
+                   "admitted and byte-identical")
+            out.unlink()
+            enc.PLAYER_MAX_BYTES = written - 1
+            try:
+                enc._encode_direct(ex, 256, 128, 12.5, out)
+            except SystemExit as e:
+                expect("file ceiling" in str(e),
+                       "the direct writer is guarded by the size gate")
+                expect(not out.exists(),
+                       "no file written when the size gate refuses")
+            else:
+                raise AssertionError("one byte under the written size "
+                                     "must be refused - the projection "
+                                     "is not the writer's arithmetic")
+    finally:
+        enc.PLAYER_MAX_BYTES = real_max
+
+    # --- EVERY .VID writer is guarded (the streaming path costs an
+    # ffmpeg extraction to reach, so it is pinned by inspection): the
+    # gate must sit between each writer's own def and its open(). ---
+    import re
+    src = (LIB / "nxv2enc.py").read_text(encoding="utf-8")
+    expect(src.count("def total_size_check(") == 1,
+           "the gate is defined exactly once")
+    writers = [m.start() for m in
+               re.finditer(r'with open\(out_path, "wb"\) as f:', src)]
+    expect(len(writers) == 2, f"expected 2 .VID writers, found {len(writers)}")
+    for at in writers:
+        body = src[src.rindex("\ndef ", 0, at):at]
+        expect("total_size_check(" in body,
+               "every .VID writer must run the size gate BEFORE writing")
+
+
 @case(11, "direct-serve transport-factor expert override - scales the "
           "BYTE term only (2026-08-02 two-term re-fit), threads "
           "through the whole gate")

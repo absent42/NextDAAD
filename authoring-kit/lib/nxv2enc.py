@@ -96,6 +96,97 @@ RATE_MONO = 23325      # matches v1's NXV_RATE_MONO
 
 KF_POLICY_V2 = 1   # encoder bookkeeping only - the player ignores this byte
 
+# ---------------------------------------------------------------------
+# PLAYER FILE-SIZE CEILING - the single source of truth for the largest
+# .VID this player can address. The encoder priced RATE and never TOTAL
+# SIZE, so it happily emitted files the player refused at open; the
+# admission check below (total_size_check) closes that.
+#
+# The player's file-level cursors count 512-BYTE BLOCKS since the
+# 2026-08-02 ceiling lift (src/video.asm: vidTotalBlk,
+# vidStrmRemainBlk, vidFileEnd and the streaming vidFramePos - 3 bytes
+# each; vid_file_blocks is the one conversion point). Before the lift
+# they were 24-bit BYTE quantities and the open path refused any file
+# >= 16,777,216 B outright - streamed with VID SIZE?, direct folded
+# into VID FMT?. At 24 bits of BLOCKS those same cells reach 8 GiB, so
+# the cursors are no longer what binds. Three structural limits sit
+# above the format, and the smallest governs:
+#
+#   * the 24-bit block cursors                       8 GiB
+#   * F_FSTAT hands the player a 32-bit byte size    4 GiB
+#   * the HOT FILEMAP holds VID_STRM_HOT_ENT = 8 extents, and esxDOS's
+#     DISK_FILEMAP entry carries a 16-bit block count, so a file needs
+#     at most 8 * 65535 blocks to be describable - above that even a
+#     perfectly contiguous file is refused VID FRAG? at open.
+#
+# The filemap ceiling governs. Bump PLAYER_MAX_BLOCKS only together
+# with VID_STRM_HOT_ENT in src/nextdaad.inc.
+PLAYER_HOT_FILEMAP_ENTRIES = 8      # VID_STRM_HOT_ENT
+PLAYER_FILEMAP_BLOCKS_PER_ENTRY = 65535   # esxDOS 16-bit extent count
+PLAYER_MAX_BLOCKS = (PLAYER_HOT_FILEMAP_ENTRIES
+                     * PLAYER_FILEMAP_BLOCKS_PER_ENTRY)
+PLAYER_MAX_BYTES = PLAYER_MAX_BLOCKS * 512      # 268,431,360 B
+
+# The OTHER limit the lift exposed: the header carries a 24-bit frame
+# count but the player validates the top byte as zero and runs 16-bit
+# frame counters (vidFrames / vidFramesLeft), so 65535 frames is the
+# hard bound - VID FMT? above it. It was unreachable while the file
+# ceiling was 16 MB (16384 frames at the 1024 B/frame floor); with the
+# ceiling at 256 MB a cheap compressed clip reaches it first, so it is
+# priced alongside the size.
+PLAYER_MAX_FRAMES = 65535
+
+
+def _clock(seconds):
+    return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
+
+
+def total_size_check(total_bytes, frames, mode, width, height, fps,
+                     channels):
+    """Admission check on the WHOLE FILE, run before a byte is written.
+
+    The rate gates upstream price one FRAME against the wire; nothing
+    priced the total, so a long clip at a legal rate could still be
+    unplayable - and was (SP17 W5 emitted 18 MB files against a 16 MB
+    player ceiling). Refuses on either whole-file bound the player
+    carries, naming the limit and the longest clip this shape/rate can
+    reach, so the remedy is arithmetic rather than trial and error.
+    total_bytes is the projected size (the writer's own arithmetic,
+    computed ahead of the write)."""
+    seconds = frames / float(fps) if fps else 0.0
+    chan = "stereo" if channels == 2 else "mono"
+    if frames > PLAYER_MAX_FRAMES:
+        max_seconds = PLAYER_MAX_FRAMES / float(fps)
+        raise SystemExit(
+            f"error: this {mode} encode is {frames:,} frames - over the "
+            f"NXV player's {PLAYER_MAX_FRAMES:,} frame ceiling (its "
+            f"frame counters are 16-bit), so the player would refuse it "
+            f"at open with VID FMT?. At {float(fps):g} fps the longest "
+            f"playable clip is {max_seconds:.1f} s ({_clock(max_seconds)}); "
+            f"this one is {seconds:.1f} s. Remedy: shorten the clip "
+            f"(--duration {max_seconds:.1f} or less), lower --fps, or "
+            f"split it across several .VID files and play them back to "
+            f"back.")
+    if total_bytes <= PLAYER_MAX_BYTES:
+        return
+    rate_bps = total_bytes / seconds if seconds else 0.0
+    max_seconds = (PLAYER_MAX_BYTES / rate_bps) if rate_bps else 0.0
+    raise SystemExit(
+        f"error: this {mode} encode is {total_bytes:,} B - over the NXV "
+        f"player's {PLAYER_MAX_BYTES:,} B "
+        f"({PLAYER_MAX_BYTES / (1024 * 1024):.1f} MiB) file ceiling, so "
+        f"the player would refuse it at open with VID FRAG? even on a "
+        f"perfectly unfragmented card (the ceiling is the hot filemap: "
+        f"{PLAYER_HOT_FILEMAP_ENTRIES} extents of at most "
+        f"{PLAYER_FILEMAP_BLOCKS_PER_ENTRY:,} 512-byte blocks). At this "
+        f"shape and rate ({width}x{height} @ {float(fps):g} fps {chan}, "
+        f"{rate_bps / 1024:.0f} KB/s) the longest playable clip is "
+        f"{max_seconds:.1f} s ({_clock(max_seconds)}); this one is "
+        f"{seconds:.1f} s. Remedy: shorten the clip (--duration "
+        f"{max_seconds:.1f} or less), use a smaller shape or a lower "
+        f"--fps, or split it across several .VID files and play them "
+        f"back to back.")
+
 
 def pack_header(*, width, height, fps, channels, arate, frame_count,
                  audio_bytes_per_frame, ring_start_margin_blocks,
@@ -115,6 +206,20 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
         raise ValueError(f"channels must be 1 or 2, got {channels}")
     if not (0 <= frame_count < (1 << 24)):
         raise ValueError("frame_count out of the header's 24-bit range")
+    if frame_count > PLAYER_MAX_FRAMES:
+        # PLAYER BOUND defence-in-depth, same idiom as the audio bound
+        # below: the player validates the header's top frame-count byte
+        # as zero and refuses anything above (VID FMT?), because its own
+        # frame counters are 16-bit. total_size_check() enforces this
+        # upstream for every real encode path with an author-facing
+        # remedy; this guard catches any future caller that bypasses it.
+        # Unreachable until the 2026-08-02 ceiling lift: the old 16 MB
+        # file ceiling capped a clip at 16384 frames.
+        raise ValueError(
+            f"frame_count {frame_count} exceeds the NXV player bound of "
+            f"{PLAYER_MAX_FRAMES} frames (the player's frame counters "
+            f"are 16-bit and it refuses a bigger count at open with "
+            f"VID FMT?)")
     if not (0 <= audio_bytes_per_frame < (1 << 16)):
         raise ValueError("audio_bytes_per_frame out of 16-bit range")
     if audio_bytes_per_frame > AUD_FRAME_MAX:
@@ -5590,6 +5695,16 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
               f"{ds['utilization']:.2f} (> {STREAM_WARN_UTIL:.2f}) - "
               f"at-capacity encode; slow cards may pace-hold")
 
+    # --- TOTAL-SIZE ADMISSION: the wire gate above prices ONE frame;
+    # nothing priced the whole file, and direct-serve is the shape that
+    # gets there fastest (a full-screen clip runs ~1 MB/s). Projected
+    # from the writer's own arithmetic, checked before a byte is
+    # written. ---
+    projected_total = HEADER_SIZE + sum(
+        abytes_pad + len(p) + (-len(p)) % 512 for p in payloads)
+    total_size_check(projected_total, nframes_out, "direct-serve",
+                     width, height, fps_val, ex["channels"])
+
     header = pack_header(
         width=width, height=height, fps=fps_val, channels=ex["channels"],
         arate=ex["rate"], frame_count=nframes_out,
@@ -6229,6 +6344,15 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                   f"at-capacity encode: the whole-clip mean hides "
                   f"per-frame excursions well over 1.00, which read as "
                   f"banding and judder on hardware. Remedy: {remedy}")
+
+    # --- TOTAL-SIZE ADMISSION: the supply gate above prices the mean
+    # FRAME against the wire; nothing priced the whole file. Projected
+    # from the writer's own arithmetic, checked before a byte is
+    # written. ---
+    projected_size = HEADER_SIZE + sum(
+        abytes_pad + len(p) + (-len(p)) % 512 for p in payloads)
+    total_size_check(projected_size, nframes_out, "streaming",
+                     width, height, fps_val, ex["channels"])
 
     # T5a: the capability bit is set ONLY when at least one pan frame
     # was actually emitted - a clip without a detected pan stays

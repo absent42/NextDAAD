@@ -786,9 +786,11 @@ VID_SRC_WIN      equ DATA_WINDOW ; $C000 MMU6 source (ring) window
 VID_ERR_OP       equ $FA    ; reserved/misaligned opcode (contract 1)
 ; VID_ERR_BIG ($F9) DROPPED (SP15 3b carried minor): nothing ever
 ; stored it - the size verdict is the open body's B=3 "VID SIZE?"
-; exit, which never reaches the timeline report. 3b streaming also
-; removed most of the class (any size < 16MB now plays); the residual
-; B=3 cases (ring below one frame's need, >= 16MB) keep the message.
+; exit, which never reaches the timeline report. 3b streaming removed
+; most of the class, and the 2026-08-02 CEILING LIFT removed the rest:
+; the file-level cursors count 512-byte BLOCKS now (video.asm
+; vid_file_blocks), so there is NO size arm left - B=3 means only
+; "the pool is below one streamed frame's need".
 VID_ERR_SRCOVR   equ $F8    ; payload ran past the loaded file
                             ; (streaming: or the per-frame source
                             ; page-walk bound tripped - corrupt input)
