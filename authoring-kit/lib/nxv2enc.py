@@ -460,7 +460,37 @@ TMODEL_COEFFS = {
                                 #   1273 (under the 920 T/op attribution error)
     "copy_dma_chunk": 256,      # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
                                 #   the audio-safety burst cap the player clips
-                                #   every copy chunk to (vid_chunk_all)
+                                #   every copy chunk to (vid_chunk_all).
+                                #   STEREO ONLY as of 2026-08-02. The player
+                                #   now caps a MONO session at
+                                #   NXV2_DMA_CHUNK_MONO = 128 B, because the
+                                #   mono audio ISR fires per SAMPLE (23325 Hz,
+                                #   period 1152-1408 T) and a 256 B chunk's DI
+                                #   bracket is ~1802 T - it ate a CTC tick per
+                                #   chunk and ran row 059 4.5% slow on silicon
+                                #   (src/nextdaad.inc NXV2_DMA_CHUNK_MONO,
+                                #   sp17-corpus/REDERIVATION.md 2-4).
+                                #   NOT MODELLED HERE, and the gap is NOT
+                                #   small: a recount over DECODE-COST.jsonl
+                                #   puts the 256 -> 128 cap at +66% DMA chunks
+                                #   and +19% of decode-T corpus-wide (lowering
+                                #   the cap is not the mirror of raising it -
+                                #   the mean DMA chunk is 172 B, so the
+                                #   129-256 B population, which dominates,
+                                #   splits in two). So a MONO stream is priced
+                                #   ~10-38% optimistic on decode, shape-
+                                #   dependent - on row 059 that is ~+3-6% of
+                                #   the frame budget (utilisation 0.897 ->
+                                #   ~0.93-0.99, still sustaining).
+                                #   Deliberately left un-repriced in the SP17
+                                #   silicon wave: the fix is a channel-keyed
+                                #   chunk cap threaded through _copy_t/_fill_t
+                                #   and their call sites, it changes MONO
+                                #   encoder output (era bump), and doing it
+                                #   inside the wave would have moved the one
+                                #   staged mono file that the player fix has
+                                #   to be confirmed against. 1 of 463 staged
+                                #   files is mono
     "header_rate": 0.0,         # count/colour byte parse - FOLDED into the
                                 #   dispatch envelopes above on silicon (see the
                                 #   envelope-convention note). model was 26.0
@@ -481,7 +511,28 @@ TMODEL_COEFFS = {
     "audio_factor": 0.85,       # usable budget after the armed-decode audio tax
                                 #   [SILICON sitting 2: CD armed/unarmed = 1.170-
                                 #   1.173 at c64/c128/c256 -> 0.853; held at 0.85].
-                                #   sitting 1: 0.85. model was 0.89
+                                #   sitting 1: 0.85. model was 0.89.
+                                #   STEREO ONLY, and NOT channel-keyed - the
+                                #   fit was taken at the stereo tick rate.
+                                #   The mono ISR is cheaper per tick (one DAC
+                                #   write and one inc ix fewer, ~145 T against
+                                #   ~190 T hand-counted) but fires 49% more
+                                #   often, so its duty is ~14% higher: scaling
+                                #   the measured 14.5% tax by that gives
+                                #   ~16.6%, i.e. an effective audio_factor of
+                                #   ~0.83 for mono. MONO streams are therefore
+                                #   admitted ~2-2.5% optimistically by
+                                #   stream_supply_check, direct_supply_check
+                                #   and the auto-budget
+                                #   (sp17-corpus/REDERIVATION.md 6.7). It
+                                #   stacks with the un-modelled mono chunk cap
+                                #   noted on copy_dma_chunk above, in the same
+                                #   direction, and is deferred with it - both
+                                #   change MONO encoder output and want one
+                                #   era bump and one re-encode between them.
+                                #   audio_ms (the feed copy) IS channel-
+                                #   correct: mono pads to 1024 B/frame against
+                                #   stereo's 1536
 }
 
 

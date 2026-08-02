@@ -754,7 +754,10 @@ vid_run_body:
 .next:
     jp z, vid_next               ; SMC: vid_ds_next when direct (3c)
     call vid_dst_norm
-    call vid_chunk_dst           ; BC = chunk (rooms + 256 cap)
+.chk:
+    call vid_chunk_dst           ; BC = chunk (rooms + the DMA cap);
+                                 ; SMC .chk+1 -> vid_chunk_dst_m on a
+                                 ; MONO session (128 B, see nextdaad.inc)
     push hl
     ld hl, (vidRemain)
     or a
@@ -764,7 +767,9 @@ vid_run_body:
     ; kernel select (derived crossover, nextdaad.inc): >= 71 -> DMA fill
     ld a, b
     or a
-    jr nz, .dma                  ; chunk == 256
+    jr nz, .dma                  ; chunk == the 256 stereo cap (a mono
+                                 ; session caps at 128, so B is always
+                                 ; 0 there and the length test decides)
     ld a, c
     cp NXV2_RUN_DMA_MIN
     jr nc, .dma
@@ -786,7 +791,10 @@ vid_copy_body:
     cp $E0
     call nc, vid_src_next
     call vid_dst_norm
-    call vid_chunk_all           ; BC = chunk (src+dest rooms + cap)
+.chk:
+    call vid_chunk_all           ; BC = chunk (src+dest rooms + cap);
+                                 ; SMC .chk+1 -> vid_chunk_all_m on a
+                                 ; MONO session (128 B, see nextdaad.inc)
     push hl
     ld hl, (vidRemain)
     or a
@@ -795,7 +803,9 @@ vid_copy_body:
     pop hl
     ld a, b
     or a
-    jr nz, .dma                  ; chunk == 256
+    jr nz, .dma                  ; chunk == the 256 stereo cap (a mono
+                                 ; session caps at 128, so B is always
+                                 ; 0 there and the length test decides)
     ld a, c
     cp NXV2_COPY_DMA_MIN
     jr nc, .dma
@@ -1023,6 +1033,29 @@ vid_chunk_dst:
     ret z                        ; == 256 exactly
 .clip:
     ld bc, NXV2_DMA_CHUNK
+    ret
+
+; The MONO pair. Same sizers, 128 B cap - the mono audio ISR fires per
+; SAMPLE (23325 Hz, period 1152-1408 T) and a 256 B chunk's DI bracket
+; is ~1802 T, so it eats a CTC tick per chunk and the whole clip runs
+; slow and flat (nextdaad.inc NXV2_DMA_CHUNK_MONO carries the full
+; derivation and the silicon evidence). Reached ONLY through the
+; per-session SMC in vid_stage_common, so the stereo pair above - the
+; path 462 of 463 staged files take - is byte-for-byte what shipped
+; and pays not one T for this.
+vid_chunk_all_m:
+    call vid_chunk_src
+    ; falls into vid_chunk_dst_m
+vid_chunk_dst_m:
+    call vid_chunk_dst_nocap
+    ld a, b
+    or a
+    jr nz, .clip                 ; >= 256: over the cap either way
+    ld a, c
+    cp NXV2_DMA_CHUNK_MONO+1
+    ret c                        ; <= 128: keep BC
+.clip:
+    ld bc, NXV2_DMA_CHUNK_MONO
     ret
 
 ; SKIP (and the inner step for the others): dest room only - column
@@ -5492,6 +5525,24 @@ vid_stage_common:
     ld (vid_stub + VOP_RUN8 + 1 + DATA_WINDOW - OVL_ORG), hl
     ld hl, vf_op_copy8
     ld (vid_stub + VOP_COPY8 + 1 + DATA_WINDOW - OVL_ORG), hl
+    ; --- DMA burst cap (SP17 mono DI fix): the two capped chunk
+    ; sizers are SMC-vectored per session from the header's channel
+    ; count - stereo keeps the 256 B pair, mono takes the 128 B pair.
+    ; vid_run_body is shared with direct-serve (a RUN >= 71 B arms the
+    ; DMA there too), so this patch covers a direct mono session as
+    ; well. Derivation + silicon evidence: nextdaad.inc
+    ; NXV2_DMA_CHUNK_MONO. ---
+    ld hl, vid_chunk_all
+    ld de, vid_chunk_dst
+    ld a, (vidP_AChan)
+    cp 2
+    jr z, .capset                ; 2 channels = stereo = 256 B
+    ld hl, vid_chunk_all_m
+    ld de, vid_chunk_dst_m
+.capset:
+    ld (vid_copy_body.chk + 1 + DATA_WINDOW - OVL_ORG), hl
+    ex de, hl
+    ld (vid_run_body.chk + 1 + DATA_WINDOW - OVL_ORG), hl
 .vec:
     ; --- per-session decode vectoring (3c direct-serve): the fetch
     ; vector, the shared bodies' exit jumps, slow-op's COPY body

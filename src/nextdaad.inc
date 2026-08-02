@@ -718,10 +718,53 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; consumed by _fill_t/_copy_t): change one, change the other in the
 ; same commit or the model stops predicting the player.
 ;
-; Every DMA burst is capped at 256 bytes (decoder contract 3 - a 512B
-; burst starves the audio sample ISR, measured 35% CTC tick shortfall;
-; 1.2% at 256B).
-NXV2_DMA_CHUNK   equ 256
+; Every DMA burst is capped, because the transfer runs inside a DI
+; bracket and a bracket longer than the audio ISR's period loses a
+; tick per chunk (the Z80 CTC latches ONE pending interrupt; a second
+; zero-count while the first is unacknowledged is lost). Re-derived
+; 2026-08-02 from the bench's own tick-shortfall table, four points on
+; one free parameter (.superpowers/sdd/sp17-corpus/REDERIVATION.md
+; sections 2-4 - it supersedes the "~1379 T bracket vs a 1400 T
+; deadline" arithmetic these constants used to quote, which was wrong
+; in BOTH terms):
+;
+;   bracket  B(chunk) = A + 5.082 * chunk,  A = 500 +/- 20 T
+;   deadline STEREO one ISR per L+R PAIR at 15625 Hz -> 1728..2112 T
+;            MONO   one ISR per SAMPLE  at 23325 Hz -> 1152..1408 T
+;            (16 x the per-video-mode CTC time constant, exactly)
+;
+; AUD_RATE_MAX (20000) is the SAMPLE engine's ceiling and has never
+; governed video: a video session repoints the CTC vector at
+; video_ctc_isr/_stereo and runs one of the two rates above.
+;
+; STEREO: B(256) = 1802 T against 1792 T (VGA0) - over by a hair, which
+; is exactly the 1.2% shortfall the bench measured at 256 B (35% at
+; 512 B). 256 stands.
+; MONO: B(256) = 1802 T against 1152-1408 T - over by 28-56%, i.e. the
+; whole clip runs slow and flat with no click (the DAC holds, the
+; sample pointer stalls, and pacing integrates from it). CONFIRMED on
+; silicon two ways: row 059 delivered 2387 frames where 2500 were due
+; over a matched LOOP window (4.5% slow) against stereo control 007's
+; 2507, and the DEBUG PLAY= instrument read it 5.8% over nominal
+; against 007's 0.8%. B(128) = 1150 T clears every VGA mode by
+; 4.2-18%; on HDMI (1152 T, the tightest and the one mode never
+; measured) it clears by 0.2% at A = 500 and can sit ~18 T over at
+; A = 520, where the residual loss is <= 1.0% - against 27% today.
+; Lower would buy HDMI margin at a steep price: capping at 128 already
+; adds 66% more DMA chunks / ~19% of decode-T corpus-wide (recount over
+; DECODE-COST.jsonl - lowering the cap is NOT the mirror of raising it,
+; because the mean DMA chunk is 172 B and the 129-256 B population
+; dominates), and 112 would add ~15-25% more again.
+; ONE fixed number per channel count, not a per-video-mode derivation
+; from the programmed CTC TC: the encoder's supply gate has to PRICE
+; the cap and cannot know which timing mode the machine will run in,
+; so a mode-dependent cap could only ever be priced at its worst case
+; anyway - which is this.
+NXV2_DMA_CHUNK   equ 256      ; stereo sessions (vid_chunk_all/_dst)
+NXV2_DMA_CHUNK_MONO equ 128   ; mono sessions (vid_chunk_all_m/_dst_m,
+                              ; SMC-selected per open by
+                              ; vid_stage_common from the header's
+                              ; channel count)
 NXV2_RUN_DMA_MIN equ 71
 NXV2_COPY_DMA_MIN equ 81
 
