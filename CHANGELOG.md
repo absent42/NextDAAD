@@ -26,35 +26,49 @@ flag-1 adjustment, below. PUTIN/TAKEOUT's composite spacing took
 neither reference wholesale: msx2daad's leading space, jDAAD's absent
 trailing one.
 
-### Video encoder
+### Video
 
-- Keyframe-span peak pacing: span chunks are re-priced at the real
-  chunked-DMA copy rate and every span chunk frame is bounded to 0.95
-  of the frame period at the supply gate's own prices (decode + audio
-  copy + SD wire), so a keyframe event can no longer demand more wire
-  than a frame period buys at any budget. The delta byte cap carries
-  the same wire bound.
-- Keyframe cadence (`--kf-cadence`, default 5 s, 0 disables): a forced
-  full keyframe when no natural keyframe occurred within the window -
-  measured free in bytes at the default (-0.1% for +0.39 dB 4x4
-  local-mean on a slow pan).
-- Drift/staleness keyframe triggers re-based on the 4x4 local-mean
-  metric: the per-pixel comparison was structurally uncrossable under
-  the dither displacement (measured -1.21 dB mean deficit); thresholds
-  re-derived from the 30-clip corpus (STALE_LM_DB 15.0, DRIFT_LM_T
-  1.5/3.0) so the triggers fire on genuinely broken screens and cannot
-  thrash the visually-accepted at-capacity equilibria.
-- Decode-time model: two-key dispatch split from the NXBO/NXBC
-  production-routine bench (RUN 487.2 T / COPY 336.3 T replaces the
-  single 387 T key; SKIP8 141.6 / SKIP16 210.7; fill 16.70 T/B, short
-  copy 19.80 T/B, DMA copy 5.08 T/B), with a pure arithmetic
-  silicon_r recompute (predicted decode time unchanged where it was
-  calibrated), the R table re-keyed on measured stream density, and
-  the composition factors re-derived by the standing rule (flat 1.19,
-  gapped 1.46). Streamed auto-budgets land ~2-4% tighter.
+- Keyframes no longer hitch: keyframe bursts are paced to fit inside
+  the frame period at every budget, removing the once-per-keyframe
+  stutter on streamed clips.
+- Frame-rate floors lowered: stereo audio now works down to 12.5 fps
+  (was 24.4) and mono to 9.2 (was 18.2), at no extra memory cost.
+  Half-rate encodes of demanding clips are now a real option - 12.5
+  fps doubles the byte and decode budget per frame, and 12.5 divides
+  the 50 Hz display evenly so playback cadence stays smooth.
+- Uncompressed (direct) playback got faster: the at-rate ceiling
+  grows from 256x133 to 256x153 at 25 fps stereo, and full-screen
+  320x256 at 12.5 fps stereo now plays - pixel-perfect video at the
+  full display size for content that delta compression handles badly.
+- Sources that are not 25 fps (most footage: 23.976/24/29.97/30) are
+  now retimed by blending instead of dropping frames, removing the
+  motion stutter the old method caused. Automatic when the source
+  rate differs from the target; `--retime drop` restores the old
+  behaviour, `--retime mci` selects motion-compensated interpolation
+  for slow pans. Genuine 25 fps sources are untouched. Note: on
+  uncompressed (direct) encodes the blend's mixed frames are
+  faithfully visible; `--retime drop` or `mci` may look better there.
+- `--kf-cadence SECONDS` (default 5, 0 disables): inserts a keyframe
+  when none has occurred naturally within the window. Keeps long
+  cut-less clips fresh at no measurable byte cost at the default.
+- Stale-picture recovery now works: the checks that should force a
+  keyframe when the picture has drifted too far from the source were
+  structurally unable to fire; they now trigger on genuinely broken
+  screens without disturbing clips that were already acceptable.
+- Streamed auto-budgets are derived slightly more conservatively, so
+  at-capacity clips keep a safety margin against stutter.
+- `--tile-slack 0..1` (default 0): lets the delta scheduler spend a
+  bounded slice of the supply margin on finer-grained updates - a
+  per-clip quality/margin trade for sustained-motion content.
 
 ### Fixes
 
+- A video file stored in exactly 32 fragments on the SD card was
+  falsely refused. The real limits are now enforced and documented:
+  resident clips up to 32 fragments, streamed and direct clips up to
+  8 (defragment the card or re-copy the file if a clip is refused).
+- The '!' glyph did not read as an exclamation mark; redrawn to match
+  the font's stroke and baseline (kit default.chr updated to match).
 - A video that fails to open now says why on screen (VID FILE?/VID
   FMT?/VID NOBANK2/VID SIZE?/VID FRAG?) instead of silently skipping
   the cutscene.
