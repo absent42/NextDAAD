@@ -50,3 +50,4 @@ __pycache__/
 RELEASE.md
 tests/parser/work/*
 tests/parser/out/*
+.interface-design/*
