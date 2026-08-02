@@ -332,6 +332,92 @@ NXBC  113     verb
 NXBK  114     verb
 NXBD  115     verb
 
+; BUILD WAVE W5 GRAND STAGING: numbered play. The staged library for
+; the build-then-judge sitting is dozens of NNN.VID files - far more
+; than fixed verbs can cover. PICK nn arms clip nn (the parsed noun's
+; word value is copied into user flag 140); GO plays the armed clip
+; once via GFX @140 13 (first-operand indirection - the engine
+; dereferences flag 140 at dispatch, engine.asm:443); LOOP plays it
+; looping via GFX @140 14 (any key exits). PLAY is a synonym of GO.
+; The number words below make the numerals themselves vocabulary
+; nouns with word value = the numeral (the parser tokenizes digits
+; like letters - word_next, overlay1.asm - so "pick 23" parses as
+; verb PICK + noun "23" = 23). Values 2-11/14/20 alias existing
+; movement/INVEN/ALL nouns - harmless synonymy, only the VALUE is
+; used. Range 1-64 + 99 covers the W5 manifest
+; (.superpowers/sdd/sp17-corpus/w5-manifest.md holds the number map).
+; Verb numbers 116-118: 116 is the last of the retired NXBEN block,
+; 117-118 were never assigned.
+PICK  116     verb
+GO    117     verb
+PLAY  117     verb
+LOOP  118     verb
+1     1       noun
+2     2       noun
+3     3       noun
+4     4       noun
+5     5       noun
+6     6       noun
+7     7       noun
+8     8       noun
+9     9       noun
+10    10      noun
+11    11      noun
+12    12      noun
+13    13      noun
+14    14      noun
+15    15      noun
+16    16      noun
+17    17      noun
+18    18      noun
+19    19      noun
+20    20      noun
+21    21      noun
+22    22      noun
+23    23      noun
+24    24      noun
+25    25      noun
+26    26      noun
+27    27      noun
+28    28      noun
+29    29      noun
+30    30      noun
+31    31      noun
+32    32      noun
+33    33      noun
+34    34      noun
+35    35      noun
+36    36      noun
+37    37      noun
+38    38      noun
+39    39      noun
+40    40      noun
+41    41      noun
+42    42      noun
+43    43      noun
+44    44      noun
+45    45      noun
+46    46      noun
+47    47      noun
+48    48      noun
+49    49      noun
+50    50      noun
+51    51      noun
+52    52      noun
+53    53      noun
+54    54      noun
+55    55      noun
+56    56      noun
+57    57      noun
+58    58      noun
+59    59      noun
+60    60      noun
+61    61      noun
+62    62      noun
+63    63      noun
+64    64      noun
+99    99      noun
+
 ;                       Verbs
 GET     20      verb
 TAKE    20      verb
@@ -990,6 +1076,44 @@ $pictureOK
 > NXBD    _     LET     248 1
                 GFX     10 13
                 PROCESS 10
+                DONE
+
+; BUILD WAVE W5 numbered play (see the vocabulary block note). PICK nn
+; copies the parsed noun's word value (the numeral) into user flag 140
+; - flag 140 is untouched by everything else in this template (120-123
+; MTEST, 130 KTEST, 248/250 bench, 255 init loop) and survives across
+; commands (PRO 6's flag-clearing loop only runs at game start). The
+; NOTEQ guard rejects a missing/unknown number word (fNoun stays 255,
+; NULLWORD) with a usage hint instead of arming clip 255. GO/PLAY and
+; LOOP dereference the flag at dispatch (GFX @140 13/14 - condact 87
+; with the indirection bit, so the DDB byte is $D7), guarded by
+; NOTZERO so an un-armed GO prints the hint rather than hunting for
+; 000.VID. Same PROCESS 10 post-video redraw convention as every
+; other video verb.
+> PICK    _     NOTEQ   fNoun 255
+                COPYFF  fNoun 140
+                MES "Clip "
+                PRINT 140
+                MES " armed - GO plays once, LOOP loops.#n"
+                DONE
+
+> PICK    _     MES "PICK needs a clip number, e.g. PICK 23 (see the W5 manifest).#n"
+                DONE
+
+> GO      _     NOTZERO 140
+                GFX     @140 13
+                PROCESS 10
+                DONE
+
+> GO      _     MES "No clip armed - PICK nn first.#n"
+                DONE
+
+> LOOP    _     NOTZERO 140
+                GFX     @140 14
+                PROCESS 10
+                DONE
+
+> LOOP    _     MES "No clip armed - PICK nn first.#n"
                 DONE
 
 ; The VSTG/VS* staged-entry ladder responses (verbs 88-91, 96-100)
