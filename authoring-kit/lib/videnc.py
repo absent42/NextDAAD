@@ -524,23 +524,6 @@ def main(argv):
                           "the constant; probe files are diagnostic - a "
                           "slow probe is a measurement, not a defect. "
                           "Only meaningful with --direct")
-    ap.add_argument("--ocopy", action="store_true",
-                     help="SP17 T5a OPT-IN: offset-copy motion coding. "
-                          "Detected whole-pixel global pans are emitted "
-                          "as OCOPY pan-span frames (the previous frame "
-                          "shifted on the Next itself for 4-5 wire bytes "
-                          "per op, full coverage, atomic presentation) "
-                          "with motion-snapped resampling and a motion-"
-                          "locked dither on exactly those frames. "
-                          "COMPATIBILITY: a file that emits the op sets "
-                          "the header OCOPY capability bit and is "
-                          "REFUSED at open (VID FMT?) by players built "
-                          "before the feature - which is why this is "
-                          "opt-in and not a default. A clip with no "
-                          "detected pan does not set the bit and stays "
-                          "fully compatible. Without this flag the "
-                          "encode is byte-identical to the pre-T5a "
-                          "encoder")
     ap.add_argument("--prefilter", nargs="?", const="hqdn3d=2:1.5:3:2.25",
                      default=None, metavar="FILTER",
                      help="OPT-IN (W4, default OFF - the extraction "
@@ -667,7 +650,7 @@ def main(argv):
         budget_target=args.budget_target, direct=args.direct,
         retime=args.retime, tile_slack=args.tile_slack,
         direct_transport_factor=args.direct_transport_factor,
-        ocopy=args.ocopy, kf_cadence=args.kf_cadence,
+        kf_cadence=args.kf_cadence,
         approx_cuts=args.approx_cuts, prefilter=args.prefilter)
 
     stream_line = ""
