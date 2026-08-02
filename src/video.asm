@@ -3068,54 +3068,34 @@ vid_ds_blkopen:
 
 ; Discard the rest of the open block (every frame section is
 ; 512-aligned: sections end by discarding to the boundary). In/out:
-; HL = remaining count (0 on exit). Corrupts AF (B is bracketed).
-; T8 unroll: computed-entry 32x in a,(n) run at ~11.4 T/B replaces
-; the old 5-instruction byte loop's ~37 T/B (NXBD DTB; 793 pad
-; B/frame = 0.85 ms/frame recovered). in a,(n) drives the upper
-; address byte from A - arbitrary here, exactly as the old loop's
-; own `in a,(PORT_SPI_DAT)` did from its second byte on; the SD
-; data port ignores it (shipping behaviour, unchanged). IRQ-open
-; throughout - no DI anywhere in this transport.
+; HL = remaining count (0 on exit). Corrupts AF.
+; SILICON REGRESSION REVERT (2026-08-02, first W2 silicon contact):
+; the T8 computed-entry 32x in a,(n) unroll read the SD data port at
+; 11 T-state spacing - the only sub-15T read train on any SPI path,
+; and the only silicon-unproven element of the W2 transport. On real
+; hardware every direct session died ERR=FD (VID_ERR_TOKEN) at the
+; first section boundary AFTER a pad ran (010/011 playback and the
+; NXBD bench alike), with the consumption arithmetic host-audited
+; exact - the drift is physical: reads spaced below the silicon
+; shifter's restart interval can return without consuming a wire
+; byte. Proven spacings are >= 15T (blkopen's CRC pair) and the 16T
+; ini train (vid_sd_blk_h / bench DTI, silicon-green); the measured
+; wire floor is ~21-22 T/B regardless (hardware checklist,
+; 2026-07-23 differential measurement), so a sub-16T pad buys
+; nothing even where it works. Reverted to the pre-T8 byte loop
+; (~37 T/B CPU, wire-bound in practice). The T8 xfer unroll below
+; KEEPS its win: its ini train is the silicon-proven DTI shape.
 vid_ds_pad:
     ld a, h
     or l
     ret z
-    push bc
-    ld a, l
-    and 31
-    jr z, .full
-    add a, a                     ; rem * 2 (in a,(n) = 2 bytes)
-    neg
-    add a, low (vid_ds_pblk + 64)
-    jr .set
-.full:
-    ld a, low vid_ds_pblk
-.set:
-    ld (.pe+1), a                ; low-byte SMC (page-asserted below)
-    add hl, 31                   ; Z80N ADD HL,nn (doc 05)
-    srl h
-    rr l
-    srl h
-    rr l
-    srl h
-    rr l
-    srl h
-    rr l
-    srl h
-    rr l                         ; L = passes = (count+31)/32 (1..16)
-    ld b, l                      ; djnz counter (in a,(n) is B-free)
-    ld hl, 0                     ; out contract: 0 remaining
-.pe:
-    jp vid_ds_pblk               ; low byte SMC-patched
-    ALIGN 64
-vid_ds_pblk:
-    DUP 32
-      in a, (PORT_SPI_DAT)
-    EDUP
-    djnz vid_ds_pblk
-    pop bc
+.d:
+    in a, (PORT_SPI_DAT)
+    dec hl
+    ld a, h
+    or l
+    jr nz, .d
     ret
-    ASSERT (low vid_ds_pblk) <= 256-64
 
 ; Transfer BC bytes from the stream to (DE): computed-entry
 ; unrolled-ini arms <= 256 bytes, interrupts open throughout (ini
@@ -4027,11 +4007,11 @@ nxb_fail_row:
 ;               modelled term anywhere in it (the token wait, the CRC
 ;               consume, the 512-byte wire cost and the loop overhead
 ;               are byte-identical on both sides and cancel).
-;   DTB - DTI = vid_ds_pad's excess over a bare ini. T8 NOTE: the pad
-;               is now the unrolled in a,(n) run (~11.4 T/B), so this
-;               difference is expected NEGATIVE (~-4.6 T/B) - it
-;               verifies the pad unroll rather than the old ~37 vs
-;               ~21 T/B byte-loop claim, which the T8 wave retired.
+;   DTB - DTI = vid_ds_pad's excess over a bare ini (the ~37 vs ~21
+;               T/B class). The byte loop is BACK: the T8 pad unroll
+;               was reverted 2026-08-02 after the silicon FD
+;               regression (see vid_ds_pad's banner) - this
+;               difference is expected POSITIVE again.
 ;   DTC - DTI = vid_ds_xfer's clip/min chain + arm-entry glue over a
 ;               bare looped ini. T8 NOTE: the xfer transport is now
 ;               the same 32x-ini block shape as the DTI reference, so
