@@ -1743,7 +1743,7 @@ STALE_DB = 3.0             # (1) staleness-bounded refresh: the decoded screen
 #     equilibria        12 Monkeys 12.55, Miami Vice talk 13.75,
 #     (eyes accept)     jellyfish 14.91 - plateaus that OSCILLATE or
 #                       hold; the aging/phase machinery plus the 5 s
-#                       cadence keyframe bound them
+#                       cadence refresh bound them
 #     broken screens    Caprica bomb p50 12.3 max 24.5, car chase
 #     (C0 problem list) p50 16.6 max 23.5, sintel p50 16.8 max 27.6,
 #                       police car p90 22.7 max 26.3, From diner
@@ -1754,8 +1754,9 @@ STALE_DB = 3.0             # (1) staleness-bounded refresh: the decoded screen
 # measured (worst: jellyfish 14.91) and INSIDE every problem clip's
 # operating band - the triggers fire where the screen is genuinely
 # broken and cannot thrash the accepted equilibria. Slow decay below
-# the bar belongs to the cadence keyframe (KF_CADENCE_S_DEFAULT), which
-# the palette wave measured FREE at 5 s.
+# the bar belongs to the cadence path (KF_CADENCE_S_DEFAULT - since W5
+# a rolling refresh, see the ROLLING REFRESH block), which the palette
+# wave measured FREE at 5 s.
 #
 #   lm DRIFT (held-palette fit loss on a fresh quantize):
 #     palette-stable content maxes 0.00-0.15 dB (10x under the bar);
@@ -1775,12 +1776,54 @@ DRIFT_LM_T, DRIFT_LM_T_REFRACT = 1.5, 3.0   # held-palette lm drift bar
 # pan is FREE in bytes (-0.1%) and buys +0.39 dB 4x4 local-mean; a 2 s
 # cadence on 002 costs +9.3% bytes for +0.65 dB overall / +1.02 dB
 # last-tenth - real but not free. The default is the measured free
-# point; 0 disables. A cadence keyframe is emitted only when no NATURAL
-# keyframe (cut / dissolve / staleness / drift) has occurred within the
-# window, and never when the remaining clip cannot hold the full span
-# (a prophylactic keyframe must not buy tail-of-clip degradation).
+# point; 0 disables. The cadence engages only when no NATURAL keyframe
+# (cut / dissolve / staleness / drift) has occurred within the window,
+# and never when the remaining clip cannot hold a nominal refresh
+# window (a prophylactic refresh must not buy tail-of-clip
+# degradation).
+#
+# ROLLING REFRESH (SP17 W5, owner-ruled 2026-08-02). The W4 cadence
+# emitted a full KEYFRAME SPAN, and owner silicon read it as "a paused
+# frame in the middle" of every ~10 s clip (048/049 boat, 050/051
+# church, 040/041 car chase) - bench rows EXACT rate, ZERO ring
+# underruns, so the pause is not a transport fault: a span's paced
+# repaint targets the HIDDEN surface, so the visible picture HOLDS for
+# the whole span (2-8 frame periods) until KFLIP. T2's peak pacing
+# removed the hitch; the hold was the residual visible cost.
+#
+# The cadence path therefore no longer emits a keyframe at all. It
+# schedules forced-clean coverage of the whole surface across N
+# consecutive ORDINARY delta frames (wire format untouched - the
+# refresh is plain RUN/COPY/SKIP traffic): each roll frame force-cleans
+# the next paint-order slice of pending positions to the FRESH
+# non-hysteresis quantize under the HELD palette (the drift probe's own
+# decode, so it costs no extra quantize) - which removes exactly what
+# the cadence keyframe removed short of a palette change: accumulated
+# paint drift and hysteresis index stickiness. Palette renewal remains
+# the business of the REAL triggers - cut/dissolve/staleness/drift
+# still emit true keyframe spans, because a genuinely broken screen
+# needs the atomic repaint.
+#
+# BUDGET HONESTY: the forced slice is substituted into the frame's
+# target and boosted to PHASE_FLOOR importance, then priced by the
+# SAME per-frame byte/decode-T caps and band scheduler as all other
+# delta traffic - no side budget, and the supply gate sees the real
+# emitted bytes. Positions the caps could not afford CARRY OVER to the
+# next frame, so contention lengthens the window (degrades the refresh
+# PERIOD); it never degrades the rate and never holds a frame.
+#
+# KF_ROLL_SHARE sizes the per-frame quota: the slice's worst-case
+# literal bytes may claim at most this fraction of the frame's own
+# delta byte cap, so N = ceil(raw / (KF_ROLL_SHARE * cap_bytes)) and a
+# lower budget stretches the window by construction. 0.5 is a stated
+# margin, not a fitted value: at least half of every roll frame's byte
+# cap is always left to the normal motion updates, and at the owner
+# pair's operating points (048 boat budget 0.42, 050 church 0.57,
+# 320x256) it lands N at 8 and 6 frames - the same order as the span
+# the roll replaces (4 chunk frames), spread thin instead of held.
 # ---------------------------------------------------------------------
 KF_CADENCE_S_DEFAULT = 5.0
+KF_ROLL_SHARE = 0.5
 
 # ---------------------------------------------------------------------
 # KEYFRAME-SPAN PEAK PACING (SP17 W4 item T2, charter E5). Keyframe
@@ -4782,9 +4825,14 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     tile_slack = TILE_SUPPLY_SLACK if tile_slack is None else float(tile_slack)
 
     scene_cuts = detect_scene_cuts(chg)
-    # full (non-first-shrunk) span length for the cadence end-of-clip
-    # guard - the chunk plan is content-independent, so one call serves
-    span_len_full = len(plan_kf_chunks(raw, fps, width, height, abytes_pad))
+    # W5 rolling refresh (the cadence path - see the ROLLING REFRESH
+    # block): per-frame forced-clean quota sized so the slice's
+    # worst-case literal bytes claim at most KF_ROLL_SHARE of the
+    # frame's own delta byte cap - the roll is priced INSIDE the
+    # existing caps, so a lower budget stretches the window (longer
+    # nominal N), never the rate.
+    roll_quota = max(1, int(KF_ROLL_SHARE * cap_bytes))
+    roll_nominal = -(-raw // roll_quota)   # ceil(raw / quota) frames
 
     # --- SP17 T5a: global-motion track (OPT-IN; with ocopy False none
     # of this state exists and every path below is byte-identical to
@@ -4833,6 +4881,15 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
     kf_pal = None
     staging = None
     last_kf_end = -10_000
+    # W5 rolling-refresh state (the cadence path)
+    last_roll_end = -10_000
+    roll_pending = None   # bool[raw]: positions still owed a forced clean
+    roll_slice = None     # positions forced last frame (discharged next)
+    roll_expect = None    # fresh-target values those positions must hold
+    roll_start_frame = None
+    roll_events = 0
+    roll_frames = 0
+    roll_windows = []     # completed (start_frame, end_frame) windows
     span_start_frame = None
     kf_events = 0
     staleness_events = 0
@@ -4843,6 +4900,18 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                                # (finding 2) - marks its chunk-frames' mode
 
     for i in range(N):
+        if roll_slice is not None:
+            # Rolling-refresh bookkeeping: a forced position is
+            # discharged once the surface holds its fresh target
+            # (painted last frame, or already clean); the rest CARRY
+            # OVER - contention lengthens the window, never the rate.
+            done = prev_flat[roll_slice] == roll_expect
+            roll_pending[roll_slice[done]] = False
+            roll_slice = roll_expect = None
+            if not roll_pending.any():
+                roll_pending = None
+                roll_windows.append((roll_start_frame, i - 1))
+                last_roll_end = i - 1
         start_kf = False
         trigger = None
         drift_for_stats = None   # T1 step 5: recorded for plain delta frames
@@ -4863,9 +4932,9 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             # index stickiness with palette drift and thrash the keyframe
             # trigger (freeze-drift). Emission below re-quantizes with
             # hysteresis; the trigger stays clean.
-            _, target_dec = dither_quantize(orig[i], held_pal,
-                                            dither_amp, dither_mode,
-                                            phase=ph_arg)
+            fresh_idx, target_dec = dither_quantize(orig[i], held_pal,
+                                                    dither_amp, dither_mode,
+                                                    phase=ph_arg)
             drift = po_ceil[i] - psnr(orig[i], target_dec)
             drift_for_stats = drift
             # W4 re-base: held-palette fit loss in 4x4 local-mean space
@@ -4919,14 +4988,20 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 staleness_events += 1
             elif drift_lm > dt:
                 start_kf, trigger = True, "drift"
-            elif (cadence_frames and (i - last_kf_end) >= cadence_frames
-                  and span_len_full <= N - i):
-                # W4 keyframe cadence: no natural keyframe inside the
-                # window -> a prophylactic full repaint at the measured
-                # free point. Suppressed when the remaining clip cannot
-                # hold a full un-clamped span (a cadence keyframe must
-                # never buy tail-of-clip degradation events).
-                start_kf, trigger = True, "cadence"
+            elif (cadence_frames and roll_pending is None
+                  and (i - max(last_kf_end, last_roll_end)) >= cadence_frames
+                  and roll_nominal <= N - i):
+                # W5 cadence ROLLING REFRESH (owner-ruled 2026-08-02):
+                # no natural keyframe inside the window -> forced-clean
+                # coverage spread across ordinary delta frames instead
+                # of the W4 keyframe span, whose paced repaint HELD the
+                # visible picture (the mid-clip pause owner silicon
+                # saw). Trigger-forced keyframes above stay real
+                # keyframes. Suppressed when the remaining clip cannot
+                # hold a nominal window (the span's own tail guard).
+                roll_pending = np.ones(raw, dtype=bool)
+                roll_start_frame = i
+                roll_events += 1
 
         if start_kf:
             scene_end = next((c for c in scene_cuts if c > i), N)
@@ -4995,6 +5070,11 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
             kf_events += 1
             kf_triggers[trigger] = kf_triggers.get(trigger, 0) + 1
             span_start_frame = i
+            if roll_pending is not None:
+                # a real keyframe repaints the whole surface - the
+                # in-flight roll is moot and the cadence clock restarts
+                # from this span's KFLIP
+                roll_pending = roll_slice = roll_expect = None
             dphase = (0, 0)      # T5a: a keyframe span repaints fully
                                   # at the shipped phase-0 dither
             if prev_flat is None:
@@ -5050,6 +5130,24 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 orig[i], held_pal, dither_amp, dither_mode,
                 prev_idx=prev_idx, hysteresis_eps=hyst_eps, phase=ph_arg)
             tflat = flatten_frame(target_idx, column_major)
+            roll_idx = None
+            if roll_pending is not None:
+                # W5 rolling refresh: force-clean the next paint-order
+                # slice of pending positions to the FRESH non-sticky
+                # quantize under the HELD palette (fresh_idx - the
+                # drift probe's own decode, so this costs no extra
+                # quantize). The substitution makes the slice's whole
+                # residual (paint drift AND hysteresis stickiness)
+                # visible to err2 below; the PHASE_FLOOR boost further
+                # down puts it in the mask; the ordinary caps and band
+                # scheduler then price it like any other delta traffic.
+                roll_idx = np.flatnonzero(roll_pending)[:roll_quota]
+                fresh_flat = flatten_frame(fresh_idx, column_major)
+                tflat = tflat.copy()
+                tflat[roll_idx] = fresh_flat[roll_idx]
+                roll_slice = roll_idx
+                roll_expect = fresh_flat[roll_idx].copy()
+                roll_frames += 1
             prev_dec_flat = held_pal[prev_flat].astype(np.float32)
             targ_dec_flat = held_pal[tflat].astype(np.float32)
             err2 = np.sum((targ_dec_flat - prev_dec_flat) ** 2, axis=1)
@@ -5072,6 +5170,16 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 enc_err2 = np.where(force, np.maximum(enc_err2, PHASE_FLOOR), enc_err2)
             else:
                 enc_err2 = err2
+            if roll_idx is not None:
+                # roll slice positions that still differ from their
+                # fresh target must enter the mask this frame - already-
+                # clean positions (err2 0) cost nothing and discharge
+                # for free at the next frame's bookkeeping
+                rmask = np.zeros(raw, dtype=bool)
+                rmask[roll_idx] = True
+                enc_err2 = np.where(rmask & (err2 > 0.0),
+                                    np.maximum(enc_err2, PHASE_FLOOR),
+                                    enc_err2)
             gcls, gstarts, glens, b, t, mode, binding, payload = encode_delta(
                 tflat, enc_err2, cap_bytes, usable,
                 surface_flat=prev_flat, merge_gaps=merge_gaps,
@@ -5195,7 +5303,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                                            np.where(wrong, age + 1.0, 0.0))
                         payloads.append(tpayload)
                         per_frame["bytes"].append(tb)
-                        per_frame["mode"].append(tmode)
+                        per_frame["mode"].append(
+                            tmode + (":roll" if roll_idx is not None else ""))
                         per_frame["binding"].append("budget")
                         per_frame["drift"].append(
                             drift_for_stats if drift_for_stats is not None
@@ -5225,7 +5334,8 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 age = np.where(updated, 0.0, np.where(wrong, age + 1.0, 0.0))
             payloads.append(payload)
             per_frame["bytes"].append(b)
-            per_frame["mode"].append(mode)
+            per_frame["mode"].append(
+                mode + (":roll" if roll_idx is not None else ""))
             per_frame["binding"].append(binding)
             per_frame["drift"].append(drift_for_stats if drift_for_stats is not None else float("nan"))
             per_frame["drift_lm"].append(drift_lm_stats if drift_lm_stats is not None else float("nan"))
@@ -5237,10 +5347,26 @@ def encode_clip(orig, chg, po_ceil, width, height, fps, cap_bytes_frac=0.65,
                 surfaces.append(unflatten_frame(prev_flat, height, width, column_major).copy())
             per_frame["psnr"].append(psnr(orig[i], dec_img))
 
+    if roll_slice is not None:
+        # final-frame roll bookkeeping (reporting only - nothing is
+        # emitted after the loop)
+        done = prev_flat[roll_slice] == roll_expect
+        roll_pending[roll_slice[done]] = False
+        roll_slice = roll_expect = None
+        if not roll_pending.any():
+            roll_pending = None
+            roll_windows.append((roll_start_frame, N - 1))
+            last_roll_end = N - 1
+
     starve = starvation_stats(per_frame, fps)
     return dict(payloads=payloads, kf_span_ranges=kf_span_ranges, decoded=decoded,
                 per_frame=per_frame, scene_cuts=scene_cuts, kf_events=kf_events,
                 staleness_events=staleness_events, kf_triggers=kf_triggers,
+                kf_roll_events=roll_events, kf_roll_frames=roll_frames,
+                kf_roll_windows=roll_windows,
+                kf_roll_pending=(int(roll_pending.sum())
+                                 if roll_pending is not None else 0),
+                kf_roll_nominal_frames=roll_nominal,
                 surfaces=surfaces, starvation=starve,
                 ocopy_frames=ocopy_frames, ocopy_stats=ocopy_stats,
                 held_pal_final=held_pal, usable_budget_ms=usable / TMODEL_COEFFS["clock_khz"])
@@ -5541,6 +5667,10 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
                 # every direct frame is a full repaint - no trigger
                 # machinery runs, empty map for uniform parse (W4)
                 kf_triggers={},
+                # W5 rolling refresh never runs on the direct preset
+                # (no delta path) - zero defaults for uniform parse
+                kf_roll_events=0, kf_roll_frames=0,
+                kf_roll_windows=[], kf_roll_pending=0,
                 # T5a: direct-serve never emits OCOPY (Wave 1 has no
                 # direct transport) - zero defaults for uniform parse
                 ocopy_frames=0, ocopy_stats=[],
@@ -5903,12 +6033,17 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     at the constant. Only meaningful with direct=True; ignored (with
     a note) otherwise - the delta pipeline's gate does not use it.
 
-    kf_cadence (--kf-cadence, SP17 W4): keyframe cadence window in
-    SECONDS - a full keyframe span is forced whenever no natural
-    keyframe (cut / dissolve / staleness / drift) has occurred within
-    the window. None means KF_CADENCE_S_DEFAULT (5 s, the measured
-    free point: -0.1% bytes for +0.39 dB 4x4 on the owner's pan clip);
-    0 disables the cadence outright.
+    kf_cadence (--kf-cadence, SP17 W4, re-shaped W5): keyframe cadence
+    window in SECONDS - whenever no natural keyframe (cut / dissolve /
+    staleness / drift) has occurred within the window, the encoder
+    schedules a ROLLING REFRESH: forced-clean coverage of the whole
+    surface spread across ordinary delta frames (W5 owner ruling
+    2026-08-02 - the W4 forced keyframe SPAN this replaces held the
+    visible picture for the whole paced repaint and read as a mid-clip
+    pause on silicon). Trigger-forced keyframes stay real keyframes.
+    None means KF_CADENCE_S_DEFAULT (5 s, the measured free point:
+    -0.1% bytes for +0.39 dB 4x4 on the owner's pan clip); 0 disables
+    the cadence outright.
 
     approx_cuts (--approx-cuts, W4): EXPERIMENTAL OPT-IN approximation
     policy - budget-bound frames may spend their bytes on approximate
@@ -6229,6 +6364,10 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
                     [[b, u] for b, u in auto_search["probes"]] if auto_search else []),
                 scene_cuts=result["scene_cuts"], kf_span_ranges=result["kf_span_ranges"],
                 kf_triggers=result.get("kf_triggers", {}),
+                kf_roll_events=result.get("kf_roll_events", 0),
+                kf_roll_frames=result.get("kf_roll_frames", 0),
+                kf_roll_windows=result.get("kf_roll_windows", []),
+                kf_roll_pending=result.get("kf_roll_pending", 0),
                 ocopy_frames=oc_frames,
                 ocopy_stats=result.get("ocopy_stats") or [],
             ), f, indent=1)

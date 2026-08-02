@@ -569,13 +569,17 @@ def main(argv):
     ap.add_argument("--kf-cadence", dest="kf_cadence", type=float,
                      default=None, metavar="SECONDS",
                      help="keyframe cadence window in seconds (default: "
-                          "5.0): force a full keyframe span whenever no "
-                          "natural keyframe (cut/dissolve/staleness/"
-                          "drift) has occurred within the window - "
-                          "measured FREE in bytes at 5 s (-0.1%% for "
-                          "+0.39 dB 4x4 local-mean on a slow pan; a 2 s "
-                          "cadence costs +9.3%% bytes and is not the "
-                          "default). 0 disables the cadence")
+                          "5.0): when no natural keyframe (cut/dissolve/"
+                          "staleness/drift) has occurred within the "
+                          "window, schedule a ROLLING REFRESH - forced-"
+                          "clean coverage of the whole screen spread "
+                          "across ordinary delta frames inside the "
+                          "normal per-frame budgets (no forced keyframe "
+                          "span: its paced repaint held the picture and "
+                          "read as a mid-clip pause on hardware). "
+                          "Measured FREE in bytes at 5 s as a keyframe "
+                          "(-0.1%% for +0.39 dB 4x4 local-mean on a "
+                          "slow pan). 0 disables the cadence")
     ap.add_argument("--start", help="ffmpeg -ss start time (HH:MM:SS)")
     ap.add_argument("--duration", help="clip duration in seconds")
     ap.add_argument("--report", help="write the BuildReport as JSON to "

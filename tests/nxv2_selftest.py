@@ -5164,12 +5164,11 @@ def t21_kf_peak_bound():
            "the default (stereo) pad must be the conservative direction")
 
 
-@case(21, "W4 - keyframe cadence: window honoured, 0 disables, tail guard, default pinned")
-def t21_kf_cadence():
-    expect(enc.KF_CADENCE_S_DEFAULT == 5.0,
-           f"cadence default must be the measured free point 5.0 s, got {enc.KF_CADENCE_S_DEFAULT}")
+def _w5_quiet_clip():
+    """The cadence test clip: quiet, cut-free, tiny localized motion -
+    3.2 s at 25 fps."""
     rng = np.random.default_rng(11)
-    W, H, n = 256, 64, 80   # 3.2 s at 25 fps
+    W, H, n = 256, 64, 80
     base = rng.integers(0, 256, (H, W, 3), dtype=np.uint8)
     orig = np.repeat(base[None], n, axis=0).copy()
     for i in range(n):        # tiny localized motion, no cuts, no drift
@@ -5177,26 +5176,89 @@ def t21_kf_cadence():
     chg = np.zeros(n); chg[1:] = 0.001
     po = np.array([enc.display_ceiling(orig[i]) for i in range(n)])
     lm = np.array([enc.display_ceilings(orig[i])[1] for i in range(n)])
+    return orig, chg, po, lm, W, H
+
+
+@case(21, "W5 - cadence rolling refresh: window honoured, 0 disables, tail guard, default pinned")
+def t21_kf_cadence():
+    expect(enc.KF_CADENCE_S_DEFAULT == 5.0,
+           f"cadence default must be the measured free point 5.0 s, got {enc.KF_CADENCE_S_DEFAULT}")
+    expect(0.0 < enc.KF_ROLL_SHARE <= 1.0,
+           f"KF_ROLL_SHARE must be a real fraction of the byte cap, got {enc.KF_ROLL_SHARE}")
+    orig, chg, po, lm, W, H = _w5_quiet_clip()
 
     r_off = enc.encode_clip(orig, chg, po, W, H, 25.0, po_ceil_lm=lm, kf_cadence_s=0)
     expect("cadence" not in r_off["kf_triggers"], "cadence 0 must disable the trigger")
+    expect(r_off["kf_roll_events"] == 0, "cadence 0 must disable the rolling refresh")
 
     r_1s = enc.encode_clip(orig, chg, po, W, H, 25.0, po_ceil_lm=lm, kf_cadence_s=1.0)
-    expect(r_1s["kf_triggers"].get("cadence", 0) >= 2,
-           f"a 1 s cadence over 3.2 quiet seconds must fire repeatedly, got {r_1s['kf_triggers']}")
-    # window honoured: consecutive keyframe spans at least the window apart
-    spans = r_1s["kf_span_ranges"]
-    for (s0, e0), (s1, e1) in zip(spans, spans[1:]):
-        expect(s1 - e0 >= 25, f"cadence fired inside the window: span end {e0} -> start {s1}")
+    # W5: the cadence path emits NO keyframe any more - it rolls
+    expect("cadence" not in r_1s["kf_triggers"],
+           f"the cadence path must not emit keyframes (W5 roll), got {r_1s['kf_triggers']}")
+    expect(len(r_1s["kf_span_ranges"]) == 1,
+           f"only the start span may exist, got {r_1s['kf_span_ranges']}")
+    expect(r_1s["kf_roll_events"] >= 2,
+           f"a 1 s cadence over 3.2 quiet seconds must roll repeatedly, got "
+           f"{r_1s['kf_roll_events']}")
+    wins = r_1s["kf_roll_windows"]
+    expect(len(wins) >= 2,
+           f"rolls must COMPLETE on an unbound clip, got {wins} "
+           f"(pending {r_1s['kf_roll_pending']})")
+    # window honoured: a roll starts at least the window after the last ends
+    for (s0, e0), (s1, e1) in zip(wins, wins[1:]):
+        expect(s1 - e0 >= 25, f"roll started inside the window: end {e0} -> start {s1}")
+    # tail guard: no roll is started that cannot nominally complete
+    expect(wins[-1][1] < len(orig),
+           "roll window must close inside the clip")
 
-    # default (5 s) never fires inside a 3.2 s quiet clip
+    # default (5 s) never engages inside a 3.2 s quiet clip
     r_def = enc.encode_clip(orig, chg, po, W, H, 25.0, po_ceil_lm=lm)
-    expect("cadence" not in r_def["kf_triggers"],
-           f"default 5 s cadence must not fire inside 3.2 s, got {r_def['kf_triggers']}")
+    expect("cadence" not in r_def["kf_triggers"] and r_def["kf_roll_events"] == 0,
+           f"default 5 s cadence must not engage inside 3.2 s, got "
+           f"{r_def['kf_triggers']} / {r_def['kf_roll_events']} rolls")
     # ... and the default path is byte-identical to an explicit 5.0
     r_5 = enc.encode_clip(orig, chg, po, W, H, 25.0, po_ceil_lm=lm, kf_cadence_s=5.0)
     expect([bytes(p) for p in r_def["payloads"]] == [bytes(p) for p in r_5["payloads"]],
            "default cadence must be exactly 5.0 s")
+
+
+@case(21, "W5 - rolling refresh: NO full-keyframe frame in the window, full clean coverage")
+def t21_kf_roll_coverage():
+    orig, chg, po, lm, W, H = _w5_quiet_clip()
+    r = enc.encode_clip(orig, chg, po, W, H, 25.0, po_ceil_lm=lm,
+                        kf_cadence_s=1.0, return_surfaces=True)
+    wins = r["kf_roll_windows"]
+    expect(len(wins) >= 1, f"at least one completed roll window, got {wins}")
+    modes = r["per_frame"]["mode"]
+    pf_bytes = r["per_frame"]["bytes"]
+    cap = min(int(0.65 * W * H), enc.frame_wire_cap_bytes(25.0))
+    hp = r["held_pal_final"]
+    amp, dm = enc._dither_amp(None), enc._dither_mode(None)
+    for s, e in wins:
+        seg = modes[s:e + 1]
+        # THE POINT OF THE FIX: a cadence window contains no single
+        # full-keyframe frame - nothing that holds the visible picture
+        expect(not any(m.startswith("kf") for m in seg),
+               f"cadence window {s}-{e} must contain NO keyframe-span frame, got {seg}")
+        expect(any(":roll" in m for m in seg),
+               f"window {s}-{e} frames must carry the :roll tag, got {seg}")
+        # budget honesty: roll frames obey the ordinary per-frame byte cap
+        for i in range(s, e + 1):
+            expect(pf_bytes[i] <= cap,
+                   f"roll frame {i} spent {pf_bytes[i]} B over the {cap} B cap")
+        # ... and full coverage: over the window, every surface position
+        # comes to hold the FRESH (non-sticky) held-palette quantize of
+        # the frame current when it was refreshed - verified against the
+        # encoder's own decoded surfaces, not its bookkeeping counters
+        covered = np.zeros(W * H, dtype=bool)
+        for i in range(s, e + 1):
+            fresh = enc.flatten_frame(
+                enc.dither_quantize(orig[i], hp, amp, dm)[0], False)
+            surf = enc.flatten_frame(r["surfaces"][i], False)
+            covered |= (surf == fresh)
+        expect(bool(covered.all()),
+               f"window {s}-{e}: {int((~covered).sum())} of {W * H} positions "
+               f"never reached a fresh-clean state")
 
 
 @case(21, "W4 - drift/staleness triggers re-based on the 4x4 local-mean metric")
