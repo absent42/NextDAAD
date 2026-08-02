@@ -67,15 +67,17 @@ KNOBS = [
     # the "5.0" reference.
     Knob("kf_cadence",    "--kf-cadence",    "float",  "5.0",    "advanced",
          tooltip="rolling-refresh window in seconds; 0 disables"),
-    Knob("approx_cuts",   "--approx-cuts",   "flag",   False,    "advanced",
-         tooltip="experimental: approximate full-coverage content on "
-                 "budget-bound frames instead of deferring bands"),
-    Knob("ocopy",         "--ocopy",         "flag",   False,    "advanced",
-         tooltip="opt-in: emit detected whole-pixel pans as offset-copy frames"),
     # Deliberately NOT added: --no-merge (bench-fixture-only; production
     # encodes keep merge-gaps on, this is not an authoring knob) and
     # --direct-transport-factor (expert override for the --direct gate's
     # transport-factor constant, out of scope for the tuning panel).
+    # --approx-cuts and --ocopy were mapped here briefly (2026-08-02) and
+    # REMOVED the same day when the owner pulled both options from the
+    # encoder - no Knob row for either now; an existing --approx-cuts/
+    # --ocopy in a user's VIDOPTS_NNN falls back to the extra passthrough
+    # (preserved verbatim on Accept - no migration/warning/strip here,
+    # videnc's own error is the correct surface once the encoder drops
+    # the flags for real).
 ]
 _BY_FLAG = {k.flag: k for k in KNOBS}
 _BY_NAME = {k.name: k for k in KNOBS}

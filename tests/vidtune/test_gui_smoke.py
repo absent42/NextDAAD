@@ -943,7 +943,7 @@ def test_load_source_generation_guard_ignores_stale_extract(qtbot):
     assert pane._error_label.isVisibleTo(pane) is False
 
 
-# -- 2026-08-02 encoder-option drift: prefilter/kf_cadence/approx_cuts/ocopy -
+# -- 2026-08-02 encoder-option drift: prefilter/kf_cadence -----------------
 
 def test_flagstr_widget_round_trip(fixture_kit, qtbot):
     from PySide6.QtWidgets import QCheckBox, QLineEdit
@@ -1005,13 +1005,11 @@ def test_new_knob_tooltips_present(fixture_kit, qtbot):
 
     assert "denoise" in panel._rows["prefilter"]["label"].toolTip()
     assert "disables" in panel._rows["kf_cadence"]["label"].toolTip()
-    assert "budget-bound" in panel._rows["approx_cuts"]["label"].toolTip()
-    assert "offset-copy" in panel._rows["ocopy"]["label"].toolTip()
 
 
 def test_new_knobs_land_in_expected_form_level(fixture_kit, qtbot):
     # prefilter is basic (front-line authoring guidance per VIDEO-
-    # PRESETS.md); kf_cadence/approx_cuts/ocopy are advanced.
+    # PRESETS.md); kf_cadence is advanced.
     cfg = KitConfig()
     panel = SettingsPanel()
     qtbot.addWidget(panel)
@@ -1019,5 +1017,4 @@ def test_new_knobs_land_in_expected_form_level(fixture_kit, qtbot):
     panel.set_settings(s, s.copy())
 
     assert panel._rows["prefilter"]["knob"].level == "basic"
-    for name in ("kf_cadence", "approx_cuts", "ocopy"):
-        assert panel._rows[name]["knob"].level == "advanced"
+    assert panel._rows["kf_cadence"]["knob"].level == "advanced"

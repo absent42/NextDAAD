@@ -90,7 +90,7 @@ def test_deviations_empty_when_untouched():
     assert deviations(effective_settings(c, "001"), c) == []
 
 
-# --- new KNOBS (2026-08-02): prefilter/kf_cadence/approx_cuts/ocopy ------
+# --- new KNOBS (2026-08-02): prefilter/kf_cadence ------------------------
 
 def test_parse_opts_prefilter_bare():
     known, extra = parse_opts(split_opts("--prefilter"))
@@ -154,28 +154,6 @@ def test_deviations_kf_cadence_zero_emits():
     assert deviations(disabled, c) == ["--kf-cadence", "0"]
 
 
-def test_parse_opts_and_deviations_approx_cuts():
-    known, extra = parse_opts(split_opts("--approx-cuts"))
-    assert known["approx_cuts"] is True
-    assert extra == []
-
-    c = cfg()
-    base = effective_settings(c, "001")
-    s = dict(base); s["approx_cuts"] = True
-    assert deviations(s, c) == ["--approx-cuts"]
-
-
-def test_parse_opts_and_deviations_ocopy():
-    known, extra = parse_opts(split_opts("--ocopy"))
-    assert known["ocopy"] is True
-    assert extra == []
-
-    c = cfg()
-    base = effective_settings(c, "001")
-    s = dict(base); s["ocopy"] = True
-    assert deviations(s, c) == ["--ocopy"]
-
-
 def test_no_merge_and_direct_transport_factor_stay_unmapped():
     # Deliberately excluded (bench-fixture-only / expert gate override) -
     # they must still round-trip harmlessly through the extra passthrough.
@@ -186,6 +164,22 @@ def test_no_merge_and_direct_transport_factor_stay_unmapped():
     known2, extra2 = parse_opts(split_opts("--direct-transport-factor 1.1"))
     assert "direct_transport_factor" not in known2
     assert extra2 == ["--direct-transport-factor", "1.1"]
+
+
+def test_approx_cuts_and_ocopy_removed_fall_back_to_extra():
+    # --approx-cuts and --ocopy were mapped as Knob rows briefly
+    # (2026-08-02) and REMOVED the same day when the owner pulled both
+    # options from the encoder. No special-casing: an existing
+    # --approx-cuts/--ocopy in a user's VIDOPTS_NNN simply falls back to
+    # the extra passthrough, preserved verbatim - the same graceful path
+    # every other unmapped flag takes.
+    known, extra = parse_opts(split_opts("--ocopy --approx-cuts"))
+    assert "ocopy" not in known and "approx_cuts" not in known
+    assert extra == ["--ocopy", "--approx-cuts"]
+
+    c = cfg(per_clip={"003": "--ocopy --approx-cuts"})
+    s = effective_settings(c, "003")
+    assert deviations(s, c) == ["--ocopy", "--approx-cuts"]
 
 
 def test_deviations_extra_pairwise_no_orphaned_value():
