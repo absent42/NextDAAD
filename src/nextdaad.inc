@@ -290,6 +290,11 @@ NR_L2_XOFS_MSB  equ $71
 ; on the visible raster instead of a CPU-speed-dependent delay loop.
 NR_RASTER_MSB   equ $1E
 NR_RASTER_LSB   equ $1F
+; DEBUG PLAY= instrument (src/video.asm vid_rl_poll): how many decode
+; chunks pass between raster reads. Chunks are at most 256 bytes, so 16
+; of them is well under a millisecond of decode - an order of magnitude
+; inside one 50Hz field, which is what the wrap detection needs.
+VID_RL_DIV      equ 16
 
 ; --- Engine (sub-project 3) ---
 PROC_DEPTH      equ 10

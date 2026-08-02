@@ -812,6 +812,17 @@ vid_copy_body:
 ; means "column finished, hop deferred to the next normalize".
 ; ---------------------------------------------------------------------
 vid_dst_norm:
+ IFDEF DEBUG
+    ; PLAY= raster clock (see vid_rl_poll). Decode is the ONLY stretch
+    ; of a frame with no wait loop in it, so the clock has to be read
+    ; from inside it or a long decode outlives a field and the wrap is
+    ; missed. Divided by VID_RL_DIV chunks - at most 256 B each, so the
+    ; poll interval is bounded well under one field on any content.
+    ld a, (vidRlDiv)
+    dec a
+    ld (vidRlDiv), a
+    call z, vid_rl_poll
+ ENDIF
     ld a, (vidGapFlag)
     or a
     jr z, .win
@@ -826,6 +837,130 @@ vid_dst_norm:
     cp $60
     ret c
     jp vid_dst_next              ; maps the next surface page, D -= $20
+
+ IFDEF DEBUG
+; ---------------------------------------------------------------------
+; PLAY= WALL-CLOCK INSTRUMENT (DEBUG only). Everything else in the
+; timeline is measured in video-CTC ISR ticks (vidTlTicks), and that is
+; STRUCTURALLY BLIND to a suppressed interrupt: the frame loop paces on
+; audio CONSUMPTION, so a tick the 256-byte DMA DI bracket swallowed is
+; simply never counted - the player waits for the same number of REAL
+; firings, takes longer in wall-clock, and TOT lands EXACTLY nominal.
+; Row 059 (mono) read TOT = 250 x 933 to the digit while running 4.5%
+; slow on silicon. Extra firings (ring underrun) DO show; missing ones
+; do not.
+;
+; CLOCK SOURCE: the read-only raster position, NR_RASTER_MSB/LSB. It is
+; a free-running hardware counter driven by the video timing generator -
+; no interrupt anywhere in its path - so no DI bracket of any length can
+; make it lose a count. frameCounter is NOT usable here: interrupts.asm
+; increments it inside im2_isr, so the same suppression that hides the
+; defect would hide it from the instrument (the ULA INT pulse is shorter
+; than the 1802 T DMA bracket, and ~12% of a heavy frame is spent inside
+; those brackets).
+;
+; RESOLUTION: this counts FIELD WRAPS, i.e. 50 Hz fields (20 ms). It
+; never needs the display's total line count - a wrap is simply the
+; raster value going down. Over a 10 s clip one field is 0.2%, against
+; a defect measured at 4.5%.
+;
+; Poll sites: vid_pace_poll (every wait loop - pace spin, audio force-
+; finish, ring-gate fill) and vid_dst_norm above (decode). Between them
+; no stretch of a frame goes unpolled for anywhere near a field.
+; DEBUG COST, disclosed: the divided decode poll adds ~0.2-0.3% to the
+; DECODE phase in DEBUG builds. Positions and meanings of every existing
+; field are unchanged.
+;
+; Out: nothing. Preserves BC, DE, HL, IX (vid_pace_poll's and
+; vid_dst_norm's contracts both need that). Corrupts AF only.
+; ---------------------------------------------------------------------
+vid_rl_poll:
+    push bc
+    push de
+    push hl
+    ld a, VID_RL_DIV
+    ld (vidRlDiv), a
+    ld bc, TBBLUE_REG_SEL
+    di                           ; the select/read pair must not be
+                                 ; split by an ISR that selects its own
+                                 ; register (nr_read's own rule); this
+                                 ; bracket is ~30 T, far below the DMA
+                                 ; brackets already in the frame
+.sample:
+    ld a, NR_RASTER_MSB
+    out (c), a
+    inc b                        ; TBBLUE_REG_ACC (low byte is shared)
+    in a, (c)
+    and 1
+    ld h, a
+    dec b
+    ld a, NR_RASTER_LSB
+    out (c), a
+    inc b
+    in a, (c)
+    ld l, a                      ; HL = 9-bit raster line
+    dec b
+    ld a, NR_RASTER_MSB
+    out (c), a
+    inc b
+    in a, (c)
+    and 1
+    cp h
+    jr nz, .sample               ; the line crossed 256 mid-read - the
+                                 ; MSB/LSB pair would be inconsistent
+                                 ; and could fake or hide a wrap
+    ei
+    ld de, (vidRlLast)
+    ld (vidRlLast), hl
+    or a
+    sbc hl, de
+    jr nc, .out                  ; line advanced (or stood still)
+    ld hl, (vidRlFields)         ; went DOWN = one more field elapsed
+    inc hl
+    ld (vidRlFields), hl
+    ld a, h
+    or l
+    jr nz, .out
+    ld hl, vidRlFields+2
+    inc (hl)
+.out:
+    pop hl
+    pop de
+    pop bc
+    ret
+
+; PLAY= bracket. Called from .presented - i.e. ONLY on a frame that
+; actually reaches the screen, so open, load, ring prefill, keyframe-
+; span HOLD frames and teardown are all outside the measured span
+; (the owner's specific requirement: time the playback, not the launch).
+; First call arms the start; every call moves the end. NOM= advances by
+; one frame's nominal field count (8.8 fixed point, vidNomStep, derived
+; at open from the header's own audio layout - the exact quantity the
+; player paces on). Corrupts AF, BC, DE, HL.
+vid_play_mark:
+    call vid_rl_poll             ; fresh read AT the present instant
+    ld hl, (vidNomStep)
+    ld de, (vidNomAcc)
+    add hl, de
+    ld (vidNomAcc), hl
+    ld a, (vidNomAcc+2)
+    adc a, 0
+    ld (vidNomAcc+2), a
+    ld hl, (vidRlFields)
+    ld a, (vidRlFields+2)
+    ld (vidPlayEnd), hl
+    ld (vidPlayEnd+2), a
+    ld bc, (vidPlayArmed)        ; B unused; C = the flag
+    ld a, c
+    or a
+    ret nz
+    ld a, 1
+    ld (vidPlayArmed), a
+    ld (vidPlayStart), hl
+    ld a, (vidPlayEnd+2)
+    ld (vidPlayStart+2), a
+    ret
+ ENDIF
 
 ; ---------------------------------------------------------------------
 ; Chunk sizing. In: HL = src, DE = dest (normalized), BC = remaining.
@@ -1626,6 +1761,12 @@ vid_aud_stage:
 ; lap between calls in any non-degraded regime - the delta stays
 ; mod-ring-unambiguous. Corrupts AF, DE, HL. Preserves BC, IX.
 vid_pace_poll:
+ IFDEF DEBUG
+    call vid_rl_poll             ; PLAY= clock: this routine is called
+                                 ; from every wait loop the frame loop
+                                 ; has, so the raster is read far more
+                                 ; often than once a field there
+ ENDIF
     push ix
     pop hl                       ; HL = read pointer (atomic snapshot)
     ld de, (vidAudRdPrev)
@@ -2160,20 +2301,24 @@ vid_run:
     nextreg NR_L2_BANK, a        ; NR $12 takes the 16K bank RAW
     ld a, b
     ld (l2BackBank), a
-    jr .present_done
+    jr .presented
 .delta:
     ld a, (vidInSpan)
     or a
     jr nz, .present_done         ; span hold frame: nothing presents
     ld a, (vidPalPending)        ; delta-frame PAL presents with its
     or a                         ; frame (nxv2dec applies PAL to the
-    jr z, .present_done          ; visible palette on delta frames)
+    jr z, .presented             ; visible palette on delta frames)
     ld a, (vidPalCtrl)
     xor $44
     ld (vidPalCtrl), a
     nextreg NR_PAL_CTRL, a
     xor a
     ld (vidPalPending), a
+.presented:                      ; reached ONLY when a frame actually
+ IFDEF DEBUG                     ; reaches the screen - the PLAY=
+    call vid_play_mark           ; bracket (span hold frames skip it)
+ ENDIF
 .present_done:
  IFDEF DEBUG
     ld a, VID_TL_AUDIO
@@ -3364,8 +3509,20 @@ vidDepthClip:    db 0            ; RING= row third field (3c): depth-
                                  ; bug the floor contained)
 vidTlFillFrames: dw 0            ; ring load/prefill duration, 50Hz
                                  ; frames (frameCounter delta)
+; PLAY= wall-clock instrument (see vid_rl_poll). Inside the report copy
+; span, OUTSIDE the zero span - vidRlDiv/vidRlLast/vidRlFields are
+; staged by the l2setup body with the rest of the session, and the
+; PLAY cells must survive the wipe for the same reason.
+vidRlDiv:        db 1            ; decode poll divider (counts down)
+vidRlLast:       dw 0            ; previous raster line (9-bit)
+vidRlFields:     ds 3            ; free-running 50Hz field count
+vidPlayArmed:    db 0            ; 0 until the first frame PRESENTS
+vidPlayStart:    ds 3            ; field count at the first present
+vidPlayEnd:      ds 3            ; field count at the latest present
+vidNomStep:      dw 0            ; nominal fields per frame, 8.8 fixed
+vidNomAcc:       ds 3            ; nominal fields accumulator, 8.8
 VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlTicks
-VID_TL_BLOCK_LEN equ vidTlFillFrames + 2 - vidTlTicks
+VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlTicks
 
 ; DEBUG timeline stamp: A = new phase id (VID_TL_*). Accumulates the
 ; tick delta since the previous stamp into the phase that was active,
@@ -4499,6 +4656,38 @@ nxv2_open_body:
     or a
     sbc hl, de
     jp nz, .badu
+ IFDEF DEBUG
+    ; PLAY=/NOM= (DEBUG): nominal 50Hz fields per frame in 8.8 fixed
+    ; point = 50*256 / fps = 128000 / (fps*10), from the header's own
+    ; fps*10 byte. Long division by repeated subtraction - at most 1024
+    ; passes, once per open, on the cold path. A zero/garbage fps byte
+    ; leaves the step at 0, which prints NOM=0000 rather than lying.
+    ld hl, 0                     ; quotient
+    ld a, (DATA_WINDOW + NXV2_OFF_FPSX10)
+    or a
+    jr z, .nomdone
+    ld c, a
+    ld b, 0                      ; BC = fps*10
+    ld de, 128000 % 65536
+    ld a, 128000 / 65536         ; A:DE = 128000
+.nomdiv:
+    push hl
+    ld h, d
+    ld l, e
+    or a
+    sbc hl, bc
+    ld d, h
+    ld e, l
+    pop hl
+    jr nc, .nomstep
+    dec a                        ; borrowed out of the high byte
+    jp m, .nomdone               ; underflow: the quotient is complete
+.nomstep:
+    inc hl
+    jr .nomdiv
+.nomdone:
+    ld (vidNomStepC), hl
+ ENDIF
     ; flags: delta stream set; bit1 = the direct-serve hint - HONOURED
     ; from 3c (captured here, drives the delivery decision at
     ; .geodone); EVERY other bit is reserved-zero and REFUSED when set.
@@ -5370,6 +5559,9 @@ vidHdrCapC:    dw 0              ; header per-frame payload cap
 vidHdrMarginC: dw 0              ; header ring start-margin (advisory;
                                  ; range-checked only, never a fill
                                  ; target - the prefill fills the ring)
+ IFDEF DEBUG
+vidNomStepC:   dw 0              ; PLAY=/NOM= nominal fields per frame
+ ENDIF                            ; (8.8 fixed) - staged at open
 vidCapBlkC:    db 0              ; validated cap (blocks)
 vidApadBlkC:   db 0
 vidNeedBlkC:   db 0
@@ -5741,6 +5933,23 @@ vid_run_l2setup_body:
     ld de, vidTlTicks+1+DATA_WINDOW-OVL_ORG
     ld bc, VID_TL_ZERO_LEN-1
     ldir
+    ; PLAY= baseline: its cells live after the zero span (so the open
+    ; body can stage vidNomStep before this runs), so they are cleared
+    ; here by name. vidRlDiv starts at 1 - the first vid_dst_norm of
+    ; the session polls immediately and seeds vidRlLast.
+    ld hl, vidRlLast+DATA_WINDOW-OVL_ORG
+    ld (hl), 0
+    ld de, vidRlLast+1+DATA_WINDOW-OVL_ORG
+    ld bc, vidPlayEnd+3-vidRlLast-1
+    ldir
+    ld a, 1
+    ld (vidRlDiv+DATA_WINDOW-OVL_ORG), a
+    xor a
+    ld (vidNomAcc+DATA_WINDOW-OVL_ORG), a
+    ld (vidNomAcc+1+DATA_WINDOW-OVL_ORG), a
+    ld (vidNomAcc+2+DATA_WINDOW-OVL_ORG), a
+    ld hl, (vidNomStepC)
+    ld (vidNomStep+DATA_WINDOW-OVL_ORG), hl
  ENDIF
     ; --- decode session init (3c: moved cold into this bracket -
     ; strictly pre-arm; the hot .orchret side arms right after; the
@@ -6984,6 +7193,29 @@ vid_tl_report_body:
     call dbg_puts                ; (SP15: 00 hidden-L2 / 03 / 05; row
     ld a, (vidSnapCntL)          ; is 38 of 80 columns with it)
     call dbg_hex8
+    ; PLAY row: the ONLY wall-clock figure in this report. Every other
+    ; number here is counted in video-CTC ISR ticks and is therefore
+    ; blind to a suppressed interrupt (see vid_rl_poll). PLAY is the
+    ; elapsed 50Hz FIELD count between the first and the last frame
+    ; that actually reached the screen - open, load, ring prefill,
+    ; keyframe-span holds at the head and teardown are all outside it.
+    ; NOM is the nominal field count the presented frames imply
+    ; (header fps). PLAY > NOM = the clip ran SLOW by that ratio;
+    ; PLAY == NOM = at rate. Both wrap at 65536 fields (21.8 min).
+    ld b, VID_TL_ROW0+6
+    ld c, 0
+    call dbg_at
+    ld hl, msgTlPlay
+    call dbg_puts
+    ld hl, (vidPlayEndL)
+    ld de, (vidPlayStartL)
+    or a
+    sbc hl, de
+    call dbg_hex16
+    ld hl, msgTlNom
+    call dbg_puts
+    ld hl, (vidNomAccL+1)        ; 8.8 fixed point -> whole fields
+    call dbg_hex16
     jr .done
 .nextrow:
     ld hl, vidTlRptRow
@@ -7044,6 +7276,8 @@ msgTlFill: db " FILL=", 0
 msgTlRing: db "RING   =", 0
 msgTlSlash: db "/", 0
 msgTlSnap: db " SNAP=", 0
+msgTlPlay: db "PLAY   =", 0
+msgTlNom:  db " NOM=", 0
 vidTlRptRow: db 0
 vidTlRptIdx: db 0
 vidSnapCntL: db 0                ; SNAP= mirror - written at open (the
@@ -7065,7 +7299,15 @@ vidRingMinL:      dw 0
 vidRingUnderL:    dw 0
 vidDepthClipL:    db 0
 vidTlFillFramesL: dw 0
-    ASSERT vidTlFillFramesL + 2 - vidTlTicksL == VID_TL_BLOCK_LEN
+vidRlDivL:        db 0
+vidRlLastL:       dw 0
+vidRlFieldsL:     ds 3
+vidPlayArmedL:    db 0
+vidPlayStartL:    ds 3
+vidPlayEndL:      ds 3
+vidNomStepL:      dw 0
+vidNomAccL:       ds 3
+    ASSERT vidNomAccL + 3 - vidTlTicksL == VID_TL_BLOCK_LEN
  ENDIF
 
     DISPLAY "video2 ends at ", $, " headroom ", /D, OVL_LIMIT - $
