@@ -15,6 +15,11 @@ The CLI front-end is `videnc.py`; the pipeline lives beside it in
 executable specification of the Z80 player, used by the encoder's own
 verification pass).
 
+This file is the reference for what every option means. For deciding
+which settings a particular clip wants, see `VIDEO-PRESETS.md` in the
+kit root - it routes by what kind of footage you have and what you are
+seeing on screen.
+
 ## Requirements
 
 - Python 3
@@ -73,6 +78,23 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
                      fractions of the utilisation headroom between
                      --budget-target and the 1.00 refusal line; 1.0 is
                      the cap. See "Tile slack"
+  --prefilter [F]    OPT-IN, default off: light temporal denoise before
+                     scaling, given as an ffmpeg filter string. Bare
+                     --prefilter means hqdn3d=2:1.5:3:2.25 (half the
+                     hqdn3d defaults - conservative). Source grain is
+                     delta demand the wire pays for on every frame, so
+                     denoising trades a little texture for supply
+                     headroom. Worth trying on grainy or noisy sources;
+                     it buys nothing on --direct, where a frame costs
+                     the same whatever is in it
+  --kf-cadence S     refresh cadence in seconds (default 5.0, 0
+                     disables): when no natural keyframe (cut,
+                     dissolve, staleness, drift) has occurred within
+                     the window, the encoder schedules forced-clean
+                     coverage of the whole screen spread across
+                     ordinary delta frames, so a long cut-less clip
+                     does not drift. Costs nothing measurable at the
+                     default
   --direct           direct-serve preset (expert): all-literal
                      raw-equivalent encode served straight from SD -
                      strictly at-rate, see below
@@ -123,11 +145,15 @@ the guidance page.
 
 ## Frame rate and retiming
 
-The Next composites at 50 Hz. 25 fps is therefore the only rate whose
-frames each occupy a whole number of display frames (two), and it is
-the encoder default and what essentially every title should use. Any
-other rate beats against the 50 Hz composite and shows it. The playback
-rate is fixed by the hardware, not by the source.
+The Next composites at 50 Hz, so a playback rate only stays smooth if
+each encoded frame occupies a whole number of display frames. 25 fps
+(two display frames each) is the encoder default and the right choice
+for most titles. 12.5 fps (four each) also divides evenly and is the
+one other rate that plays cleanly - it halves the motion rate but
+doubles the byte and decode budget every remaining frame gets, which
+is what makes full-screen uncompressed playback possible at all. Rates
+that do not divide 50 beat against the composite and show it. The
+playback rate is fixed by the hardware, not by the source.
 
 Almost no source material is 25p. `23.976`, `24`, `29.97` and `30` all
 have to be resampled in TIME on the way in, and how that is done is

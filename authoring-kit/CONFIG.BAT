@@ -23,7 +23,7 @@ REM (320x256 full-screen). Set a preset - full, 16:9, scope, classic,
 REM classic-wide - or an explicit WIDTHxHEIGHT (width 256 or 320, any height,
 REM e.g. 320x150), or a bare display-aspect number (e.g. 2.35) for a derived
 REM free height at 320 wide. Smaller shapes come out at higher quality for
-REM the same data rate - see SETUP.md "Video cutscenes".
+REM the same data rate - see VIDEO-PRESETS.md for which shape a clip wants.
 SET VIDASPECT=
 
 REM Frames per second for encoded cutscenes. Blank = 25. Audio floors: stereo
@@ -39,6 +39,10 @@ REM than here: on a title with sustained motion --tile-slack 0.5 lets
 REM the budget-bound schedule work a row/column at a time instead of
 REM four, which measurably helps pans and zooms and does nothing for
 REM quiet material. See lib\videnc-README.md "Tile slack".
+REM --prefilter (opt-in, default off) is the one to try on a grainy or
+REM noisy source: it denoises lightly before scaling, trading a little
+REM texture for supply headroom.
+REM Recommended settings per kind of clip: VIDEO-PRESETS.md.
 REM Full list: lib\videnc-README.md, or run the encoder with --help.
 SET VIDOPTS=
 
