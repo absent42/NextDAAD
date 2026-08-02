@@ -954,7 +954,18 @@ if ($Font) {
 # encode was admitted under, since the direct envelope moved
 # (25 fps stereo 256x133 -> 256x153; 320x256@12.5 stereo now legal).
 # See $encoderGeneration 'pal9n' in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9n'
+# BUMP pal9n -> pal9o (SP17 W5 cadence rolling refresh, 2026-08-02):
+# the cadence keyframe span (owner silicon: a mid-clip paused frame -
+# the span's paced repaint holds the visible surface until KFLIP) is
+# replaced by a rolling refresh expressed as ordinary delta frames
+# (forced-clean coverage inside the normal per-frame caps, carry-over
+# under contention). Measured at the bump (SHA-verified): legs 001-006
+# byte-identical (shorter than the 5 s window), 007 byte-identical
+# (its cuts fire natural keyframes inside every window), direct
+# 010/011 byte-identical; 008 re-encodes +3072 B and 009 -9728 B with
+# roll traffic in place of their cadence keyframes (kf events 2 -> 1
+# each). See $encoderGeneration 'pal9o' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9o'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

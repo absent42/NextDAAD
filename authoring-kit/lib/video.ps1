@@ -239,7 +239,21 @@ if (-not $sources) { exit 0 }
 # the gate shapes ADMISSION, not emitted bytes - but the admission
 # envelope moved (25 fps stereo 256x133 -> 256x153; 320x256@12.5 now
 # admitted), so the era marks which gate an encode was admitted under.
-$encoderGeneration = 'pal9n'
+# BUMP pal9n -> pal9o (SP17 W5 cadence rolling refresh, 2026-08-02):
+# the cadence path no longer emits a forced keyframe SPAN - owner
+# silicon read the span's paced repaint as "a paused frame in the
+# middle" of every ~10 s clip (the visible surface HOLDS for the whole
+# span until KFLIP; the transport was clean: exact rate, zero
+# underruns). It now schedules a ROLLING REFRESH: forced-clean
+# coverage of the surface spread across ordinary delta frames inside
+# the normal per-frame caps, with carry-over under contention (nxv2enc
+# ROLLING REFRESH block). Trigger-forced keyframes (cut/dissolve/
+# staleness/drift) are unchanged. Default-path change: any streamed
+# clip whose cadence fired (a quiet stretch >= 5 s) emits different
+# bytes; clips shorter than the window or cut-dense re-encode
+# byte-identical but re-encode anyway because the tag is in their
+# cache name.
+$encoderGeneration = 'pal9o'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')
