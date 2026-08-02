@@ -3,38 +3,18 @@
 DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
-Project status (released: v0.3.0): 
-The engine boots, loads and validates a DAAD DDB from SD, and runs it - 
-object model, process/DOALL dispatch, windows, printing, colour,
-carrying/wearing, movement, vocabulary-driven parser (TIME, INPUT,
-PARSE), file-backed save/load, Layer 2 location graphics
-(PICTURE/DISPLAY/GFX), AY audio (SFX/BEEP: music with streamed-song
-support, sound effects and speaker beeps), digitised sample playback
-bounded by available RAM, full-screen video cutscene playback (GFX
-13/14, aliased SFX 9/10), mouse input with a hardware sprite
-pointer (MOUSE), boot title screens, and native multi-part games
-(EXTERN n 4) are implemented. All 128 condacts are handled, but CALL
-is a documented no-op.
-
-Current development state (unreleased, CHANGELOG v0.3.1): a DAAD
-compliance sweep. The headline is **DAAD V3 database support** - the
-interpreter accepts DDB version 2 and 3, implements XMES/INDIR/SETAT,
-the V3 flag 53 bits, `PAUSE 0` as GETKEY and V3 SYNONYM semantics, so
-the standard DAAD-READY ZX Next authoring path (`ZXNEXT.BAT`, which
-compiles `-v3`) works unmodified and the authoring kit now compiles
-`-v3` by default. Alongside it: reference-correct object-interaction
-messages and refusal ordering (a refused GET now aborts the rest of a
-compound order, and success messages are printed at all), noun-only
-object resolution ("GET LAMP" finds a "QUAINT LAMP"), two parser
-behaviours adjudicated against the original ZX interpreter (QUIT/END
-read a line at the confirmation prompt; the convertible-noun threshold
-is 40), a real xorshift RNG behind RANDOM and CHANCE, and the BEEP
-parameter-order and tone-ceiling fix for ZX-target databases. See
-CHANGELOG.md for the full list and
-`authoring-kit/DIVERGENCES.md` for the deliberate divergences that
-remain.
-
-From v0.3.0 onwards, Next core 3.02.04+ is required for video playback.
+NextDAAD runs real DAAD games end to end: it loads and validates a DDB
+from SD card (version 2 and version 3 databases both accepted), then
+drives the full object model, vocabulary-driven parser and process
+engine - conjunction-handling sentence parsing, PROCESS/DOALL dispatch,
+carrying/wearing/containers, and file-backed SAVE/LOAD - across all 128
+condacts. On top of that it adds capabilities: Layer 2 location graphics up to 320x256 in 256
+colours, full-screen NXV video cutscenes with synchronised digitised
+audio, AY music and sound effects across the Turbo Sound Next's three
+PSGs, digitised WAV sample playback, mouse input with a hardware
+sprite pointer, custom fonts, boot title screens, and native
+multi-part games. An accompanying authoring kit wraps the DRC compiler
+and asset converters into a single build step for authors.
 
 ## Features
 
@@ -331,7 +311,8 @@ gates that refuse an unstreamable or off-rate file and name the remedy
 `VIDEO\NNN.mp4` (preferring the standalone `videnc.exe` build of the
 same encoder when present - shipped with the kit, no Python needed).
 See `authoring-kit/SETUP.md`'s "Video cutscenes" section and
-`authoring-kit/lib/videnc-README.md`.
+`authoring-kit/lib/videnc-README.md`. A GUI, VidTune
+(`authoring-kit/lib/vidtune`), is also available for per-clip encoding.
 
 Compatibility note: In emulators, video playback does not currently 
 work correctly, use actual ZX Next hardware with core 3.02.04+
