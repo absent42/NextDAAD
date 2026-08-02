@@ -5537,11 +5537,10 @@ vid_run_orch_body:
     ld a, VID_PAGE
     jp ovl_map_page
 .fail:
- IFDEF DEBUG
     push bc
-    call vid_open_fail_print     ; per-verdict message (plain call)
-    pop bc
- ENDIF
+    call vid_open_fail_print     ; per-verdict message (plain call;
+    pop bc                       ; Release-visible, owner ruling
+                                 ; 2026-08-02 - see the print block)
     ; nothing armed, nothing displayed, ring freed: only the music
     ; freeze needs reversing (the PSG park recovers on the next tick)
     ld a, (vidSvAudEnable)
@@ -6217,11 +6216,10 @@ vid_open_video_body:
     ld b, 0
     jr nc, .haveresult
     ld b, 1
- IFDEF DEBUG
     push bc
-    call vid_play_missing_print  ; "VID FILE?" (plain call, 3c)
-    pop bc
- ENDIF
+    call vid_play_missing_print  ; "VID FILE?" (plain call, 3c;
+    pop bc                       ; Release-visible, owner ruling
+                                 ; 2026-08-02 - see the print block)
 .haveresult:
     ld hl, vid_play.openret
     push hl
@@ -6230,46 +6228,66 @@ vid_open_video_body:
 
 vidExtVid: db ".VID", 0
 
- IFDEF DEBUG
-; DEBUG-only diagnostic prints - all reached strictly pre-arm, all
-; plain same-page calls now (3c). Release stays silent on every
-; failure, as v1 did.
+; Open-failure diagnostic prints - BOTH BUILDS (owner ruling
+; 2026-08-02): the kit ships only the Release interpreter, and a video
+; refused in silence (missing file, bad format, no banks, too big, too
+; fragmented) gave the author no clue - the game just carried on with
+; no cutscene. Only THIS failure class becomes Release-visible; every
+; other dbg_* print stays stubbed out of Release (debug.asm), so these
+; two routines print via the resident tm_putc_at instead of the dbg
+; console (one route in both builds - no double print in DEBUG).
+; Safe from here because both call sites fire strictly pre-arm: the
+; video never started, no L2/mode switch happened (vid_run_l2setup_body
+; runs only on success), the game's tilemap at TM_MAP ($6000, MMU3) is
+; still live and mapped - the open path only brackets MMU6 (data_save/
+; data_restore, closed on every failure exit) and MMU7 (this page);
+; MMU2/MMU3 are captured, never remapped, pre-arm. Row 23 col 0 is the
+; position the old DEBUG dbg_at path used; pair 7 (white ink on black
+; paper, attr 14) is txt_init's palette - the same attr dbg_putc_tm
+; and errors.asm's Release fatal path already rely on. The game
+; continues after the print (non-fatal, unchanged) and its own window
+; scrolling may later overwrite the text - a diagnostic, not a HUD.
 vid_play_missing_print:
-    ld b, 23
-    ld c, 0
-    call dbg_at
     ld hl, msgVidMissing
-    jp dbg_puts
+    jr vid_fail_puts
 
 ; Open/load failure print: B = 1 VID FMT / 2 no bank / 3 no ring fits
 ; (pool below one streamed frame's need, or the file is >= 16MB) / 4
 ; too fragmented to stream (filemap exceeds the hot copy - .defrag).
 ; Corrupts B - the caller brackets it.
 vid_open_fail_print:
-    push bc
-    ld b, 23
-    ld c, 0
-    call dbg_at
-    pop bc
     ld a, b
     cp 2
     ld hl, msgVidBadFmt
-    jr c, .have                  ; B = 1
+    jr c, vid_fail_puts          ; B = 1
     ld hl, msgVidNoBank2
-    jr z, .have                  ; B = 2
+    jr z, vid_fail_puts          ; B = 2
     cp 4
     ld hl, msgVidTooBig
-    jr c, .have                  ; B = 3
+    jr c, vid_fail_puts          ; B = 3
     ld hl, msgVidFrag            ; B = 4
-.have:
-    jp dbg_puts
+; HL = ASCIIZ. Prints at row 23 col 0, white on black (pair 7),
+; straight through the resident tm_putc_at (overlay1 calls it the same
+; way). Corrupts AF, BC, DE, HL.
+vid_fail_puts:
+    ld bc, 23*256+0              ; B = row 23, C = col 0
+    ld e, 7*2                    ; pair 7: white ink (7), black paper (0)
+.loop:
+    ld a, (hl)
+    or a
+    ret z
+    push hl
+    call tm_putc_at              ; preserves BC, DE
+    pop hl
+    inc hl
+    inc c
+    jr .loop
 
 msgVidMissing:  db "VID FILE?", 0
 msgVidNoBank2:  db "VID NOBANK2", 0
 msgVidBadFmt:   db "VID FMT?", 0
 msgVidTooBig:   db "VID SIZE?", 0
 msgVidFrag:     db "VID FRAG?", 0
- ENDIF
 
 ; ---------------------------------------------------------------------
 ; vid_stream_open_body - the real open (carried; IX = filename in,

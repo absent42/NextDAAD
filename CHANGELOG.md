@@ -53,6 +53,12 @@ trailing one.
   the composition factors re-derived by the standing rule (flat 1.19,
   gapped 1.46). Streamed auto-budgets land ~2-4% tighter.
 
+### Fixes
+
+- A video that fails to open now says why on screen (VID FILE?/VID
+  FMT?/VID NOBANK2/VID SIZE?/VID FRAG?) instead of silently skipping
+  the cutscene.
+
 ### DAAD V3
 
 - Version 3 databases load and run. Header version 2 or 3 is accepted;
