@@ -46,7 +46,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import settingsmodel, theme
+from . import presets, settingsmodel, theme
+from .presetrow import LadderPanel, RouteMenuButton
 from .configwrite import ConfigConflict, write_sidecar, write_vidopts_line
 from .encoderun import EncodeJob, resolve_encoder, summarize_report
 from .kitmodel import clip_state, list_clips, parse_config, read_generation_stamp
@@ -472,11 +473,46 @@ class SettingsPanel(QWidget):
             f"padding: {theme.GAP_ROW}px;")
         self._extra_label.setVisible(False)
 
+        # Routing is the coarse decision the individual knobs refine, so
+        # it sits above them - in its own form layout, so "route" lines
+        # up with "shape"/"fps" in the same label column rather than
+        # floating free above the panel.
+        self._route_button = RouteMenuButton(self._route_context)
+        self._route_button.route_chosen.connect(self._on_route_chosen)
+        route_form = QFormLayout()
+        route_form.setHorizontalSpacing(theme.GAP_PANE)
+        route_form.setVerticalSpacing(theme.GAP_ROW)
+        route_label = QLabel("route")
+        route_label.setToolTip(
+            "presets from VIDEO-PRESETS.md - a complete answer for a class "
+            "of footage")
+        route_form.addRow(route_label, self._route_button)
+
+        # Preset 6. Collapsed by default and phrased as the question the
+        # author actually arrives with, rather than as a feature name.
+        self._ladder_panel = LadderPanel(self.get_settings)
+        self._ladder_panel.apply_values.connect(self._on_apply_values)
+        self._ladder_panel.route_chosen.connect(self._on_route_chosen)
+        self._ladder_group = QGroupBox("Still banding?")
+        self._ladder_group.setCheckable(True)
+        self._ladder_group.setChecked(False)
+        self._ladder_content = QWidget()
+        ladder_inner = QVBoxLayout(self._ladder_content)
+        ladder_inner.setContentsMargins(0, 0, 0, 0)
+        ladder_inner.addWidget(self._ladder_panel)
+        self._ladder_content.setVisible(False)
+        ladder_layout = QVBoxLayout(self._ladder_group)
+        ladder_layout.addWidget(self._ladder_content)
+        self._ladder_group.toggled.connect(self._on_ladder_toggled)
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, theme.GAP_ROW, 0)
         outer.setSpacing(theme.GAP_PANE)
+        outer.addLayout(route_form)
+        outer.addSpacing(theme.GAP_ROW)
         outer.addLayout(self._basic_form)
         outer.addWidget(self._advanced_group)
+        outer.addWidget(self._ladder_group)
         outer.addWidget(self._extra_label)
         outer.addStretch(1)
 
@@ -632,6 +668,7 @@ class SettingsPanel(QWidget):
         self._extra_label.setVisible(bool(self._extra))
         self._updating = False
         self._refresh_deviations()
+        self._refresh_ladder()
 
     def get_settings(self):
         out = {name: row["getter"]() for name, row in self._rows.items()}
@@ -642,6 +679,7 @@ class SettingsPanel(QWidget):
         if self._updating:
             return
         self._refresh_deviations()
+        self._refresh_ladder()
         self.changed.emit()
 
     def _refresh_deviations(self):
@@ -663,7 +701,56 @@ class SettingsPanel(QWidget):
         row = self._rows[name]
         row["setter"](self._kit_base.get(name))
         self._refresh_deviations()
+        self._refresh_ladder()
         self.changed.emit()
+
+    # -- presets ---------------------------------------------------------
+
+    def _route_context(self):
+        """Live (settings, kit_base) for the route menu. Handed in as a
+        callable, not a snapshot, because every delta line the menu shows
+        is relative to what the panel holds at the moment it opens."""
+        return self.get_settings(), dict(self._kit_base)
+
+    def _on_route_chosen(self, key):
+        route = presets.route_by_key(key)
+        if route is None:
+            return
+        self._stamp(presets.apply_route(self.get_settings(),
+                                        self._kit_base, route))
+
+    def _on_apply_values(self, values):
+        settings = self.get_settings()
+        settings.update(values)
+        self._stamp(settings)
+
+    def _stamp(self, settings):
+        """Writes a settings dict into the widgets as a single edit.
+
+        Only the knob rows are touched - `extra` passthrough tokens are
+        never in self._rows, so they ride through untouched, and segment
+        markers are not settings at all. Nothing is persisted here:
+        Accept still turns whatever ends up in the panel into
+        VIDOPTS_NNN through deviations(), exactly as a hand edit would."""
+        self._updating = True
+        for name, row in self._rows.items():
+            row["setter"](settings.get(name))
+        self._updating = False
+        self._refresh_deviations()
+        self._refresh_ladder()
+        self.changed.emit()
+
+    def _on_ladder_toggled(self, checked):
+        self._ladder_content.setVisible(checked)
+        if checked:
+            self._ladder_panel.refresh()
+
+    def _refresh_ladder(self):
+        # Only while it is actually open: the steps are derived on every
+        # refresh, and rebuilding six rows behind a collapsed group on
+        # each keystroke is work nobody sees.
+        if self._ladder_group.isChecked():
+            self._ladder_panel.refresh()
 
 
 class MainWindow(QMainWindow):
