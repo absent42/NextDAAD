@@ -36,9 +36,9 @@ and asset converters into a single build step for authors.
 - Video cutscenes (GFX 13/14, aliased as the classic SFX 9/10 PLAYFLI/
   PLAYFLIL): native NXV v2 delta-video .VID playback, shapes from
   full-screen 320x256@25 down to free heights, 256 colours with
-  scene-scoped adaptive palettes, full-rate DAC audio (stereo 15625 Hz
-  or mono 23325 Hz), resident/ring-streamed/direct-served delivery
-  chosen automatically, play-once or loop-until-keypress,
+  scene-scoped adaptive palettes, full-rate DAC audio (stereo 15625 Hz),
+  resident/ring-streamed/direct-served delivery chosen automatically,
+  play-once or loop-until-keypress,
   PARTn-shadowed like other assets
 - Mouse input (MOUSE) via the Next's Kempston mouse ports, with a
   hardware sprite pointer (all eight documented sub-commands 0-7,
@@ -271,11 +271,11 @@ flipped atomically, scene-scoped adaptive 256-colour palettes - at
 roughly 7:1 smaller than raw. Any shape is a valid encode: five presets
 (full 320x256, 16:9 320x192, scope 320x144, classic 256x192,
 classic-wide 256x144) plus free heights down to a single line, at any
-fps (default 25) above the audio floors (stereo 24.40, mono 18.22).
+fps (default 25) above the audio floor (24.40).
 
-Audio is full-rate unsigned 8-bit PCM - stereo at 15625 Hz by default,
-mono at 23325 Hz - played through the Next's DAC ports by a CTC-timed
-interrupt feed. Frames present at vblank; delivery is automatic per
+Audio is full-rate unsigned 8-bit PCM - stereo at 15625 Hz - played
+through the Next's DAC ports by a CTC-timed interrupt feed. Frames
+present at vblank; delivery is automatic per
 file: at or below the resident bank pool (~1.2 MB) the clip plays from
 RAM, above it the clip streams through a prefetch ring of pool banks,
 and encoder-hinted direct-serve clips play uncompressed straight from
