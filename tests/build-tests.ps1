@@ -76,6 +76,19 @@
 #            sd\GAME.AKY; stale-cleans the same set -Aud owns
 #            (*.AKY, GAME.SFB, *.WAV, *.AYS) first, so it and -Aud are
 #            alternatives, not companions - run one or the other.
+#   -SfxDi   sampled-SFX DI-exposure EAR fixture: make the
+#            tests\sfxdi.dsf DDB active AND stage the two steady-tone
+#            stimuli tests\audio\mktone.py generates (440 Hz, 48000
+#            bytes = the reserved 48K audio floor) as sd\001.WAV
+#            (16000 Hz, the only rate this project ships) and
+#            sd\002.WAV (20000 Hz = AUD_RATE_MAX, README's published
+#            ceiling). Stale-cleans the same audio set -Aud/-AudLad own
+#            and stages NO .AKY at all - a playing song would put the
+#            AKY player's own ~5500 T per-frame DI hold under both
+#            phases of the readout. Run sheet (mode caveat, predicted
+#            frequencies, pass criteria):
+#            .superpowers\sdd\sfx-di-audible-test.md. An alternative to
+#            -Aud/-AudLad, not a companion.
 # Boot title screen (SP11 Task 1), independent of the DDB switches:
 #   -Title   stage the owner 320x256 title into sd\ - stale-cleans
 #            sd\DAAD.* variants then copies tools\demo-files\DAAD.NX2
@@ -259,7 +272,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -356,6 +369,72 @@ finally {
     Remove-Item "$dr\NDAUDLAD.DSF", "$dr\NDAUDLAD.json" -ErrorAction SilentlyContinue
     Pop-Location
 }
+
+# Sampled-SFX DI-exposure ear fixture (2026-08-03). Compiled
+# unconditionally like the four above so a break in the DSF is caught on
+# a plain run; only -SfxDi makes it the active sd\GAME.DDB.
+#
+# THE COMPILED BYTES ARE ASSERTED, not assumed. This is a STIMULUS
+# fixture - what the interpreter receives is the whole experiment - and
+# DRC rewrites stimulus condacts silently: it multiplies every PAUSE by
+# getBaseLength/DEFAULT_NOTE_DURAION (120/200 = 0.6 for ZX NEXT,
+# drb.php:871-879 + 1509-1551), exactly as it rewrites out-of-range
+# BEEPs into PAUSEs. The authored PAUSE 63 must therefore arrive as 38
+# frames (0.76 s at 50 Hz), and the burst must arrive as forty
+# CONTIGUOUS GFX 0 0 - a 120-byte run that cannot occur by coincidence.
+# If either check fails the fixture no longer says what its comments
+# say, and the ear leg would be measuring something else.
+Copy-Item "$PSScriptRoot\sfxdi.dsf" "$dr\NDSFXDI.DSF" -Force
+Push-Location $dr
+try {
+    & .\TOOLS\DRC\DRF.exe zx next NDSFXDI.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (sfxdi)" }
+    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDSFXDI.json NDSFXDI.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (sfxdi)" }
+    Move-Item NDSFXDI.DDB "$root\tests\out\sfxdi.ddb" -Force
+}
+finally {
+    Remove-Item "$dr\NDSFXDI.DSF", "$dr\NDSFXDI.json" -ErrorAction SilentlyContinue
+    Pop-Location
+}
+
+function Find-ByteRuns {
+    # Every start offset of $needle in $hay. Plain scan - the images
+    # here are tens of KB, so nothing cleverer is warranted.
+    param([byte[]]$hay, [byte[]]$needle)
+    $hits = @()
+    for ($i = 0; $i -le $hay.Length - $needle.Length; $i++) {
+        $ok = $true
+        for ($j = 0; $j -lt $needle.Length; $j++) {
+            if ($hay[$i + $j] -ne $needle[$j]) { $ok = $false; break }
+        }
+        if ($ok) { $hits += $i }
+    }
+    return , $hits
+}
+
+$sfxdiBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxdi.ddb")
+# 40 x GFX 0 0 = opcode 87 ($57) with both params 0, forty times over.
+$gfxRun = [byte[]]@(0..119 | ForEach-Object { if ($_ % 3 -eq 0) { 87 } else { 0 } })
+$gfxHits = Find-ByteRuns $sfxdiBytes $gfxRun
+if ($gfxHits.Count -ne 1) {
+    throw "sfxdi: expected exactly one 40x'GFX 0 0' run (120 bytes of 57 00 00) in tests\out\sfxdi.ddb, found $($gfxHits.Count)"
+}
+# PAUSE ($23) 38 - the authored 63 after DRC's 0.6 ZX NEXT scaling.
+$pauseHits = Find-ByteRuns $sfxdiBytes ([byte[]]@(35, 38))
+if ($pauseHits.Count -lt 2) {
+    throw "sfxdi: expected both reference phases to compile to PAUSE 38 (23 26); found $($pauseHits.Count) occurrences - DRC's duration scaling has changed"
+}
+# The three sample calls: SFX 1 2 / SFX 2 2 (load + loop) and SFX 0 5
+# (stop both kinds). Opcode 18 = $12.
+foreach ($s in @(@{ n = 'SFX 1 2'; b = [byte[]]@(18, 1, 2) },
+                 @{ n = 'SFX 2 2'; b = [byte[]]@(18, 2, 2) },
+                 @{ n = 'SFX 0 5'; b = [byte[]]@(18, 0, 5) })) {
+    if ((Find-ByteRuns $sfxdiBytes $s.b).Count -lt 1) {
+        throw "sfxdi: '$($s.n)' not present in tests\out\sfxdi.ddb"
+    }
+}
+"sfxdi.ddb: 40x GFX 0 0 run at offset $($gfxHits[0]), PAUSE 38 x$($pauseHits.Count), SFX 1 2 / 2 2 / 0 5 all present"
 
 # SP16 Task 6 DAAD V3 fixture. The ONLY DDB this script builds with
 # DRF's -v3, so the only one whose header byte 0 is 3. It exercises the
@@ -1326,6 +1405,54 @@ if ($AudLad) {
     $audLadActive = $true
 }
 
+$sfxDiActive = $false
+if ($SfxDi) {
+    # Sampled-SFX DI-exposure ear leg. Two jobs, both owned entirely by
+    # this switch: make tests\sfxdi.dsf the active DDB, and stage the
+    # two steady tones tests\audio\mktone.py generates.
+    #
+    # NO SONG IS STAGED, DELIBERATELY. The AKY player masks the CTC feed
+    # ~5500 T every frame while a song plays - a CONTINUOUS ~0.67% rate
+    # error at 16 kHz that would sit under the reference phases as well
+    # as the burst and blunt the very comparison this leg exists to
+    # make. Do not "helpfully" add a GAME.AKY here.
+    #
+    # Same CSpect lock hazard as -Aud/-AudLad: a running emulator holds
+    # sd\ files open and the copies fail piecemeal, leaving a fixture
+    # whose missing WAV reads as a silent no-op rather than as an error.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial ear fixture)"
+    }
+    Copy-Item "$root\tests\out\sfxdi.ddb" "$root\sd\GAME.DDB" -Force
+    # Stale-clean the same set -Aud/-AudLad own: a survivor from either
+    # would give the fixture the wrong material under the right name
+    # (001.WAV especially), and a stray .AKY would autoplay.
+    Remove-Item "$root\sd\*.AKY" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$root\sd\GAME.SFB" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$root\sd\*.WAV" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$root\sd\*.AYS" -Force -ErrorAction SilentlyContinue
+    # Generated, not committed: 96 KB of pure sine that is a byte-exact
+    # function of four constants. Same rule badwav/truncwav follow above.
+    & python "$PSScriptRoot\audio\mktone.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\audio\mktone.py failed" }
+    $toneMap = [ordered]@{ 'tone440_16k.wav' = '001.WAV'; 'tone440_20k.wav' = '002.WAV' }
+    foreach ($src in $toneMap.Keys) {
+        $p = "$root\tests\out\$src"
+        if (-not (Test-Path $p)) { throw "mktone.py produced no $src" }
+        # aud_load_wav takes the rate verbatim from the fmt chunk and
+        # nothing in the pipeline resamples, so the staged header rate IS
+        # the played rate - re-read it here rather than trusting the name.
+        $wb = [System.IO.File]::ReadAllBytes($p)
+        $wrate = [System.BitConverter]::ToUInt32($wb, 24)
+        $wbits = [System.BitConverter]::ToUInt16($wb, 34)
+        $wch = [System.BitConverter]::ToUInt16($wb, 22)
+        if ($wch -ne 1 -or $wbits -ne 8) { throw "$src is not mono 8-bit (ch=$wch bits=$wbits) - aud_load_wav would reject it" }
+        Copy-Item $p "$root\sd\$($toneMap[$src])" -Force
+        "staged tests\out\$src -> sd\$($toneMap[$src])  $($wb.Length) bytes, $wrate Hz mono 8-bit"
+    }
+    $sfxDiActive = $true
+}
+
 $good = [System.IO.File]::ReadAllBytes("$root\sd\GAME.DDB")
 
 "size=$($good.Length) (hex $('{0:X4}' -f $good.Length))"
@@ -1340,6 +1467,7 @@ elseif ($Rab) { "active: rabenstein (sd\GAME.DDB copy failed, see warning above 
 elseif ($v3Active) { "active: v3probe (SP16 DAAD V3 fixture - header version 3)" }
 elseif ($gmodeActive) { "active: gmodegate (SP16 GMODE graphics-gate fixture)" }
 elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-scale fixture)" }
+elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture - see .superpowers\sdd\sfx-di-audible-test.md)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($Suite) { "active: suite" }
 else { "active: template" }

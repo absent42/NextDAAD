@@ -1,0 +1,284 @@
+; NextDAAD sampled-SFX DI-exposure ear fixture (2026-08-03).
+;
+; Compiled by tests\build-tests.ps1 on every run; staged as the active
+; sd\GAME.DDB by tests\build-tests.ps1 -SfxDi, which also generates the
+; two stimulus tones with tests\audio\mktone.py and stages them as
+; sd\001.WAV (16 kHz) and sd\002.WAV (20 kHz).
+;
+; RUN SHEET: .superpowers\sdd\sfx-di-audible-test.md. Read it before
+; running - one leg of this test is MODE-SENSITIVE and gives a false
+; negative on VGA4/VGA5/VGA6.
+;
+; WHAT IT MAKES AUDIBLE
+; overlay2's dma_copy programmed and ran each picture-copy chunk inside
+; one DI bracket. Before 4cda75e that bracket was 1904 T, longer than
+; the sampled-SFX CTC period at every rate at or above ~14.2 kHz - so a
+; graphics copy running under a playing sample SUPPRESSED CTC ticks.
+; Nothing is dropped, clicked or truncated: ctc_isr simply does not run,
+; the DAC holds its previous byte one extra period, and the effect plays
+; LONG AND FLAT. The only observable is PITCH.
+;
+; WHY GFX 0 0 AND NOT A LOCATION PICTURE. The mechanism is duty-cycle
+; limited: what matters is the fraction of wall time spent inside DI
+; brackets. A DISPLAY 0 location blit is only 21% in-DI (its 62 ms is
+; dominated by gfx_row_fetch's LDIR staging), which at the shipped
+; 16 kHz on HDMI is 2.47% slow for 62 ms - 43 cents, at or below the
+; percept threshold, and an ear cannot certify it. GFX 0/1 runs the same
+; dma_copy back to back with almost nothing between the brackets: 78%
+; in-DI, 9.14% slow, and it can be repeated without limit. Same defect,
+; same code path, roughly 4x the amplitude - a steady 440 Hz tone drops
+; to 399.8 Hz (1.66 semitones) the instant the burst starts and snaps
+; back when it stops.
+;
+; l2Mode is 0 (256x192) here and stays 0: nothing in this fixture loads
+; a picture or a video, and those are the only things that call
+; l2_mode_set. So each GFX 0 0 is 384 dma_copy calls / 34.8 ms on HDMI
+; before the fix and 44.5 ms after it. Staging a 320-wide title or
+; picture alongside this fixture would make the surface 320x256 and
+; every GFX 0 0 640 calls instead - the PITCH is unchanged (the duty
+; cycle is the same 78%), only the burst gets longer. Stage nothing else.
+;
+; NO MUSIC. The AKY player holds interrupts off ~5500 T every frame
+; while a song plays, which costs the sample engine a CONTINUOUS ~0.67%
+; at 16 kHz - a standing pitch error that would sit under both phases
+; and blunt the comparison. -SfxDi stale-cleans sd\*.AKY and stages
+; none, so nothing autoplays and the reference phases are clean.
+;
+; THE TONE. tests\audio\mktone.py: 48000 bytes (exactly the 48K reserved
+; audio floor, banks 25-27, so the load cannot fail on pool pressure),
+; 8-bit unsigned mono, full-scale 440 Hz, centred on 128 = DAC_SILENCE,
+; a whole number of cycles end to end (1320 at 16 kHz, 1056 at 20 kHz).
+; Played with SFX n 2 = LOOPED: aud_smp_copy rewinds the source mid-copy
+; and the ring never sees the seam, so the tone runs continuously for as
+; long as the leg needs and there is no run-out to mistake for a result.
+; A missing WAV is a documented silent no-op (h_sfx falls through to the
+; AY-effect path, and no GAME.SFB is staged) - so if you hear nothing at
+; all, that is a STAGING miss, not an audio result.
+;
+; SEQUENCE (T16 and T20 share it; T16 also runs once automatically at
+; boot, so the readout needs no typing):
+;   1/3  0.76 s of clean reference tone, no graphics
+;   2/3  40 back-to-back GFX 0 0 surface copies
+;   3/3  0.76 s of clean reference tone again, then stop
+; The burst TAKES LONGER after the fix (~1.4 s -> ~1.8 s). That is the
+; ruled-for cost, not a symptom. The pitch is the readout, not the
+; duration.
+;
+; PAUSE IS SCALED BY DRC. drb.php multiplies every PAUSE by
+; getBaseLength/DEFAULT_NOTE_DURAION = 120/200 = 0.6 for the ZX NEXT
+; target, so the authored PAUSE 63 reaches the interpreter as 38 frames
+; = 0.76 s at 50 Hz. Do not "correct" 63 to 38 here or the reference
+; phases halve. build-tests.ps1 asserts the compiled byte.
+
+; System flags used by name (DAAD BLANK template spellings)
+#define fPlayer             38
+#define fDarkF              28
+
+/CTL
+_
+/VOC
+NORTH  2  noun
+SOUTH  3  noun
+LOOK   4  verb
+T16    60 verb
+T20    61 verb
+HUSH   62 verb
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "I didn't understand."
+/7  "I can't go in that direction."
+/8  "I can't do that."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 "Press any key."
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+/MTX
+/0 "NEXTDAAD SAMPLED-SFX DI EXPOSURE - EAR FIXTURE#n"
+/OTX
+/0 "a brass lamp"
+/LTX
+/0 ""
+/1 "The listening room."
+/CON
+/0
+NORTH 1
+/1
+SOUTH 0
+/OBJ
+/0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/PRO 0
+> _ _   AT 0
+        PROCESS 6
+> _ _   WINDOW 1
+        WINAT 0 0
+        WINSIZE 25 127
+        CLEAR fDarkF
+> _ _   WINDOW 1
+        DESC @fPlayer
+> _ _   PROCESS 1
+/PRO 1
+> _ _   PARSE 0
+        REDO
+> _ _   PROCESS 5
+        ISDONE
+        REDO
+> _ _   MOVE fPlayer
+        CLS
+        RESTART
+> _ _   SYSMESS 8
+        REDO
+/PRO 5
+; ---- the shipped-rate leg (001.WAV, 16000 Hz) ----
+; GFX 0 6 clears the BACK surface to transparent first, so the 40
+; copies below move a known-clean surface onto the front and the text
+; stays readable. It is setup, not stimulus - it runs before the tone
+; starts.
+> T16 _   MES "#nLEG 16 kHz - 001.WAV, the rate everything ships#n"
+          GFX 0 6
+          SFX 1 2
+          PROCESS 7
+          DONE
+; ---- the published-ceiling leg (002.WAV, 20000 Hz) ----
+; 20000 Hz is AUD_RATE_MAX - what README.md and authoring-kit\SETUP.md
+; publish as supported and what a DAAD-DOS SOUNDS set drops in at. It
+; is NOT a rate anything in this project ships, so this leg exercises
+; the documented surface, not the shipped one. Predicted drop is 2.7x
+; the 16 kHz leg's.
+> T20 _   MES "#nLEG 20 kHz - 002.WAV, README's published maximum#n"
+          GFX 0 6
+          SFX 2 2
+          PROCESS 7
+          DONE
+; ---- panic stop ----
+> HUSH _  MES "#ntone stopped#n"
+          SFX 0 5
+          DONE
+/PRO 7
+; The three phases. Each MES lands immediately before the phase it
+; names, so the phase-2 line marks the pitch-drop onset and the phase-3
+; line marks the snap-back.
+> _ _   MES "1/3 REFERENCE - steady 440 Hz, no graphics#n"
+        PAUSE 63
+> _ _   MES "2/3 BURST - 40 x GFX 0 0 surface copies#n"
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+        GFX 0 0
+> _ _   MES "3/3 REFERENCE - steady 440 Hz again#n"
+        PAUSE 63
+        SFX 0 5
+        MES "leg done#n"
+/PRO 6
+> _ _   WINDOW 1
+        WINAT 0 0
+        WINSIZE 25 127
+        PAPER 0
+        INK 7
+        CLS
+        MESSAGE 0
+> _ _   MES "A steady 440 Hz tone, then 40 GFX 0 0 surface#n"
+        MES "copies, then the tone again. Listen for PITCH,#n"
+        MES "not for duration - the burst is MEANT to take#n"
+        MES "longer on the fixed build.#n#n"
+        MES "T16   16 kHz leg (001.WAV) - the shipped rate#n"
+        MES "T20   20 kHz leg (002.WAV) - README's maximum#n"
+        MES "HUSH  stop the tone#n#n"
+        MES "Run sheet: sfx-di-audible-test.md#n"
+; The 16 kHz leg runs once here, at boot, so the readout needs no
+; typing at all. Same four condacts as T16 in /PRO 5 - the verb table
+; cannot be reused for this because no verb has been parsed yet.
+> _ _   MES "#nAUTO-RUN: 16 kHz leg#n"
+        GFX 0 6
+        SFX 1 2
+        PROCESS 7
+        GOTO 1
+/END
