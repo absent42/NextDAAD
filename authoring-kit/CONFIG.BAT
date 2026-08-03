@@ -26,12 +26,11 @@ REM free height at 320 wide. Smaller shapes come out at higher quality for
 REM the same data rate - see VIDEO-PRESETS.md for which shape a clip wants.
 SET VIDASPECT=
 
-REM Frames per second for encoded cutscenes. Blank = 25. Audio floors: stereo
-REM needs 10.17 or more, mono 7.60 or more, so 12.5 is available with sound
-REM on both (see VIDEO-PRESETS.md).
+REM Frames per second for encoded cutscenes. Blank = 25. Audio floor: 10.17
+REM or more, so 12.5 is available with sound (see VIDEO-PRESETS.md).
 SET VIDFPS=
 
-REM Extra videnc options applied to every encode (e.g. --mono, or
+REM Extra videnc options applied to every encode (e.g.
 REM --dither 0.3 to soften the blue-noise dither below its 0.5 default,
 REM or --dither-mode mixture for the opt-in Yliluoma mixture dither).
 REM --tile-slack (opt-in, default off) belongs in VIDOPTS_NNN rather

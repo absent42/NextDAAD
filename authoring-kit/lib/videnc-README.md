@@ -49,7 +49,6 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
   --retime M         how to resample a source whose own frame rate is
                      not --fps: blend (default), drop or mci. See
                      "Frame rate and retiming"
-  --mono             mono audio 23325 Hz (default: stereo 15625 Hz)
   --dither AMP       dither strength, 0.0-1.0 (default 0.5). In the
                      default offset mode: the blue-noise offset depth
                      as a fraction of one lattice quantization step
@@ -221,8 +220,7 @@ remedy in the error message:
 - **Audio floor.** One frame may carry at most 3072 real audio bytes
   (the player's per-frame audio section bound - SP17 T10; the circular
   feed ring itself is the whole 8 KB audio bank and holds two of them
-  at once). Stereo needs fps >= 10.17, mono >= 7.60. Remedy: raise
-  `--fps` or switch to `--mono`.
+  at once). Needs fps >= 10.17. Remedy: raise `--fps`.
 - **Streaming supply.** A file bigger than the player's resident pool
   (~1.2 MB) must stream; if its mean demand exceeds the SD supply
   rate the encode is refused. With the automatic budget search (the
@@ -234,8 +232,8 @@ remedy in the error message:
   2026-07-26). At 25 fps stereo the envelope tops out around 256x153
   (2026-08-02 silicon re-fit on the rebuilt transport; 12.5 fps
   carries full-screen 320x256); the refusal message prints the live
-  at-rate menu (stereo/mono heights, 0.90-margin variants, and the
-  mono-floor maximum).
+  at-rate menu (the at-rate height, its 0.90-margin variant, and the
+  maximum at the audio floor fps).
 
 ## Automatic stream budget
 
@@ -415,8 +413,8 @@ and opcode documentation is the comment block in `src\nextdaad.inc`
 is the executable specification of the player. Every section of the
 file is an exact multiple of 512-byte SD blocks.
 
-Audio is unsigned 8-bit PCM, stereo 15625 Hz or mono 23325 Hz with
-`--mono`, full rate - no decimation. Palettes are scene-scoped
+Audio is unsigned 8-bit PCM, stereo 15625 Hz, full rate - no
+decimation. A mono source is converted to stereo automatically. Palettes are scene-scoped
 adaptive 256-colour (NR $44 write order, RRRGGGBB + expanded 9th blue
 bit), refreshed by PAL opcodes when drift crosses the trigger.
 Quantization targets are blue-noise ordered-dithered into the 9-bit

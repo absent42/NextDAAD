@@ -65,7 +65,7 @@
 # (SP17 T1) - nothing here sets one, and a VIDOPTS/VIDOPTS_NNN that does
 # overrides that search. An encode no budget can make feasible is still
 # REFUSED by videnc's supply gates with a message naming the remedies
-# that remain (smaller shape, lower fps, --mono) - fix the config and
+# that remain (smaller shape, lower fps) - fix the config and
 # rebuild. Requires ffmpeg
 # (tools\ffmpeg\bin\ffmpeg.exe - see tools\README.txt); nothing here
 # is needed unless numeric-named .mp4 files exist in VIDEO\.
@@ -239,7 +239,7 @@ if (-not $sources) { exit 0 }
 #   was exactly fps-invariant by construction and its whole silicon
 #   calibration is at 25 fps; three 12.5 fps silicon rows ran over rate
 #   with ring underruns while it read them 0.89-0.90. Below ~24.6 fps
-#   stereo / ~18.3 mono the player's T10 audio feed is room-limited and
+#   the player's T10 audio feed is room-limited and
 #   trickles from the .pace spin, so every produced 512 B block also
 #   pays a full vid_aud_pump - unpriced until now (nxv2enc LOW-FPS PACE
 #   CONTENTION block). EXACTLY zero at 25 fps, so no 25 fps encode moves
@@ -309,22 +309,16 @@ if (-not $aspect -and $env:VIDPROFILE) {
         $aspect = $map[$prof]
         $shapeNote = "shape '$(if ($aspect) { $aspect } else { 'full' })'"
         if (-not $env:VIDFPS -and $profileFps.ContainsKey($prof)) {
-            # Channel count is only known globally at this point (VIDOPTS,
-            # not any per-video VIDOPTS_NNN) - good enough for a one-release
-            # deprecation shim; set VIDFPS explicitly if a per-video --mono
-            # override needs a different floor than this global guess.
-            $mono = $env:VIDOPTS -match '(^|\s)--mono(\s|$)'
-            # SP17 T10 circular-feed floors (nxv2enc.min_fps_for):
-            # stereo 10.17, mono 7.60 (2544-byte bound: 12.28 / 9.17;
-            # pre-T10 double-buffer halves: 24.40 / 18.22). Every v1
-            # profile rate (12.5-25) sits above both floors, so the
-            # raise below is a no-op shim kept for safety against
-            # future floor moves.
-            $floor = if ($mono) { 7.60 } else { 10.17 }
+            # SP17 T10 circular-feed floor (nxv2enc.min_fps_for):
+            # 10.17 (2544-byte bound: 12.28; pre-T10 double-buffer
+            # halves: 24.40). Every v1 profile rate (12.5-25) sits
+            # above it, so the raise below is a no-op shim kept for
+            # safety against future floor moves.
+            $floor = 10.17
             $orig = $profileFps[$prof]
             $profileFpsArg = if ($orig -lt $floor) { $floor } else { $orig }
             $fpsNote = if ($orig -lt $floor) {
-                "fps $profileFpsArg (v1 $prof was ${orig}fps, below the $(if ($mono) { 'mono' } else { 'stereo' }) floor $floor - raised to it)"
+                "fps $profileFpsArg (v1 $prof was ${orig}fps, below the audio floor $floor - raised to it)"
             } else {
                 "fps $profileFpsArg (v1 $prof's own rate)"
             }

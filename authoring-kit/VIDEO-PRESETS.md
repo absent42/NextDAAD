@@ -449,7 +449,7 @@ look for it as soon as the cutscene fails to appear.
 If the encoder itself refuses to make the file, it says why and names
 the remedies in the same breath - it will not produce a video that
 cannot play. The two you are most likely to meet are a frame rate
-below the audio floor (raise `--fps`, or add `--mono`) and an
+below the audio floor (raise `--fps`) and an
 uncompressed shape that will not fit at rate, which prints the exact
 list of shapes that do fit at your chosen width. Take one from that
 list.

@@ -26,9 +26,10 @@ true cinema scope), correcting for Layer 2 mode-1's non-square pixels
 is independent of shape (the v1 profiles baked one fixed fps per
 profile; v2 does not) - default 25.
 
-Audio: full rate always, same two rates as v1 (chosen so the CTC time
-constant divides cleanly on every video mode): stereo 15625 Hz, mono
-23325 Hz (nxv2enc.RATE_STEREO/RATE_MONO). Samples/frame = round(rate/
+Audio: full rate always, stereo 15625 Hz - the same rate v1 used,
+chosen so the CTC time constant divides cleanly on every video mode
+(nxv2enc.RATE_STEREO). A mono SOURCE is handled automatically: ffmpeg
+duplicates its single channel into both. Samples/frame = round(rate/
 fps) - the achieved rate drifts a few Hz from nominal on some fps
 values, disclosed here as it was for v1.
 
@@ -356,13 +357,24 @@ def extract_video(ffmpeg, input_path, start, duration, width, height, fps,
 
 
 def extract_audio(ffmpeg, input_path, start, duration, channels, rate):
+    """Decode the source audio to 8-bit unsigned PCM at `rate`.
+
+    -ac is pinned to 2, NOT to `channels`: stereo is the only layout
+    the NXV format carries, and ffmpeg's channel-count filter upmixes
+    a MONO source transparently (it duplicates the single channel into
+    both), so a mono source needs no author action and produces the
+    same wire bytes a stereo source of the same material would. The
+    `channels` argument is kept - and asserted - so a caller that ever
+    drifted from 2 fails here rather than writing a file the player
+    refuses at open."""
+    assert channels == 2, f"NXV audio is stereo only, got {channels}"
     args = []
     if start:
         args += ["-ss", start]
     args += ["-i", str(input_path)]
     if duration:
         args += ["-t", str(duration)]
-    args += ["-vn", "-ac", str(channels), "-ar", str(rate),
+    args += ["-vn", "-ac", "2", "-ar", str(rate),
               "-f", "u8", "pipe:1"]
     return run_ffmpeg(ffmpeg, args, "audio")
 
@@ -412,9 +424,6 @@ def main(argv):
                           "on non-rigid motion where it loses to blend. "
                           "A source already at --fps is never retimed "
                           "in any mode")
-    ap.add_argument("--mono", action="store_true",
-                     help="mono audio (23325 Hz) instead of the "
-                          "default stereo (15625 Hz)")
     ap.add_argument("--dither", type=float, default=None, metavar="AMP",
                      help="dither strength, 0.0-1.0 (default: 0.5). In "
                           "the default offset mode it is the blue-noise "
@@ -509,7 +518,7 @@ def main(argv):
                           "worst-frame utilization above 1.00 refuses "
                           "outright, and prints the at-rate envelope; "
                           "there is no slow-playback override. Use a "
-                          "smaller shape, lower --fps, --mono, or drop "
+                          "smaller shape, lower --fps, or drop "
                           "--direct for the delta encoder instead")
     ap.add_argument("--direct-transport-factor", dest="direct_transport_factor",
                      type=float, default=None, metavar="F",
@@ -625,14 +634,14 @@ def main(argv):
         print(f"  source {src_w}x{src_h} aspect already matches "
               f"{width}x{height} - no crop, straight scale")
 
-    print(f"encoding {width}x{height} @ {args.fps} fps "
-          f"({'mono' if args.mono else 'stereo'}) -> {args.output}")
+    print(f"encoding {width}x{height} @ {args.fps} fps (stereo) "
+          f"-> {args.output}")
     report = nxv2enc.encode(
         str(input_path), args.output, shape=(width, height), fps=args.fps,
         quality_profile="max", report_path=args.report,
         start=args.start, duration=args.duration, ffmpeg=str(ffmpeg),
         dither=args.dither, dither_mode=args.dither_mode,
-        mono=args.mono, merge_gaps=not args.no_merge,
+        merge_gaps=not args.no_merge,
         cap_bytes_frac=args.byte_cap, stream_budget=args.stream_budget,
         budget_target=args.budget_target, direct=args.direct,
         retime=args.retime, tile_slack=args.tile_slack,

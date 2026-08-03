@@ -553,8 +553,11 @@ MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
 ;                 block-alignment rule any more)
 ;     8      1    fps*10 low byte - informational only (pacing derives
 ;                 from audio bytes, as v1 proved)
-;     9      1    audio channels: 1 mono / 2 stereo
-;    10      2    audio rate Hz LE (15625 stereo / 23325 mono)
+;     9      1    audio channels - MUST BE 2. Mono (1) was a supported
+;                 pairing until 2026-08-03 and is now REFUSED at open
+;                 (VID FMT?); see NXV2_OFF_ACHAN below. The field stays
+;                 in the wire format at its frozen offset
+;    10      2    audio rate Hz LE (15625, the stereo pair rate)
 ;    12      1    flags: bit0 = delta stream (always 1 in v2), bit1 =
 ;                 direct-serve hint (HONOURED from 3c: the file is
 ;                 served SD-to-surface, no ring - nxv2_open_body
@@ -569,8 +572,8 @@ MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-
 ;                 BOUND (SP17 T10, circular feed): the audio feed is
 ;                 ONE circular NXV_AUD_RING (8192-byte) buffer, so
 ;                 open REJECTS > NXV_AUD_FRAME_MAX (3072) real
-;                 bytes/frame (VID FMT?) - stereo needs fps >= 10.17,
-;                 mono >= 7.60; the encoder enforces this at encode
+;                 bytes/frame (VID FMT?) - which needs fps >= 10.17;
+;                 the encoder enforces this at encode
 ;                 time (audio_layout + a pack_header defence-in-depth
 ;                 guard). Wire field 16 bits; player capability bound
 ;                 3072. (Pre-T10 the feed was two fixed 1280-byte
@@ -602,7 +605,25 @@ NXV2_OFF_VERSION equ 5
 NXV2_OFF_WIDTH   equ 6      ; width CODE (0/1), not a pixel count
 NXV2_OFF_HEIGHT  equ 7
 NXV2_OFF_FPSX10  equ 8
-NXV2_OFF_ACHAN   equ 9
+NXV2_OFF_ACHAN   equ 9      ; MONO IS WITHDRAWN (2026-08-03, owner
+                            ; ruling). This field is still READ and
+                            ; still VALIDATED - nxv2_open_body refuses
+                            ; anything but 2 with VID FMT?. That
+                            ; refusal is load-bearing, not tidiness: a
+                            ; channels = 1 file played through the
+                            ; surviving stereo ISR would interleave its
+                            ; single channel across both DACs at the
+                            ; wrong rate. The offset is FROZEN wire
+                            ; format and the value is only ever 2.
+                            ; Mono's one advantage was a higher sample
+                            ; rate (23325 vs 15625 Hz) for fewer bytes,
+                            ; but both are 8-bit so quantisation, not
+                            ; bandwidth, sets the floor - and it cost
+                            ; 49% more interrupts plus (since the
+                            ; tick-loss fix) a 128 B DMA burst cap
+                            ; worth +92% decode on the one mono clip
+                            ; ever built. Decode is the binding
+                            ; constraint for picture; mono spent it
 NXV2_OFF_ARATE   equ 10
 NXV2_OFF_FLAGS   equ 12
 NXV2_OFF_KFPOL   equ 13
@@ -731,42 +752,36 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; in BOTH terms):
 ;
 ;   bracket  B(chunk) = A + 5.082 * chunk,  A = 500 +/- 20 T
-;   deadline STEREO one ISR per L+R PAIR at 15625 Hz -> 1728..2112 T
-;            MONO   one ISR per SAMPLE  at 23325 Hz -> 1152..1408 T
-;            (16 x the per-video-mode CTC time constant, exactly)
+;   deadline one ISR per L+R PAIR at 15625 Hz -> 1728..2112 T
+;            (16 x the per-video-mode CTC time constant, exactly;
+;            1728 T is HDMI, the tightest, and 2112 T is VGA6)
 ;
 ; AUD_RATE_MAX (20000) is the SAMPLE engine's ceiling and has never
 ; governed video: a video session repoints the CTC vector at
-; video_ctc_isr/_stereo and runs one of the two rates above.
+; video_ctc_isr_stereo and runs the rate above.
 ;
-; STEREO: B(256) = 1802 T against 1792 T (VGA0) - over by a hair, which
-; is exactly the 1.2% shortfall the bench measured at 256 B (35% at
-; 512 B). 256 stands.
-; MONO: B(256) = 1802 T against 1152-1408 T - over by 28-56%, i.e. the
-; whole clip runs slow and flat with no click (the DAC holds, the
-; sample pointer stalls, and pacing integrates from it). CONFIRMED on
-; silicon two ways: row 059 delivered 2387 frames where 2500 were due
-; over a matched LOOP window (4.5% slow) against stereo control 007's
-; 2507, and the DEBUG PLAY= instrument read it 5.8% over nominal
-; against 007's 0.8%. B(128) = 1150 T clears every VGA mode by
-; 4.2-18%; on HDMI (1152 T, the tightest and the one mode never
-; measured) it clears by 0.2% at A = 500 and can sit ~18 T over at
-; A = 520, where the residual loss is <= 1.0% - against 27% today.
-; Lower would buy HDMI margin at a steep price: capping at 128 already
-; adds 66% more DMA chunks / ~19% of decode-T corpus-wide (recount over
-; DECODE-COST.jsonl - lowering the cap is NOT the mirror of raising it,
-; because the mean DMA chunk is 172 B and the 129-256 B population
-; dominates), and 112 would add ~15-25% more again.
-; ONE fixed number per channel count, not a per-video-mode derivation
-; from the programmed CTC TC: the encoder's supply gate has to PRICE
-; the cap and cannot know which timing mode the machine will run in,
-; so a mode-dependent cap could only ever be priced at its worst case
+; B(256) = 1802 T against 1792 T (VGA0) - over by a hair, which is
+; exactly the 1.2% shortfall the bench measured at 256 B (35% at
+; 512 B). 256 stands, with that shortfall ACCEPTED and disclosed.
+;
+; WHAT DROPPING MONO DID AND DID NOT DO (2026-08-03). The tightest
+; deadline the format can select rose from 1152 T (mono HDMI) to
+; 1728 T (stereo HDMI), so the 28-56% MONO overshoot - which cost the
+; one mono clip ever built a measured 4.5% slow-and-flat playback -
+; is gone with the path that produced it. THAT IS ALL IT DID. B(256)
+; is still 1802 T, still 4.3% over stereo HDMI and 0.6% over VGA0, so
+; the ~1.2% shortfall above is UNCHANGED and 256 is still the right
+; number by a hair rather than by margin. Removing mono does NOT make
+; 384 or 512 reachable either: 384's transfer ALONE is 1951 T and its
+; bracket 2453 T, over the LARGEST stereo period on any video mode
+; (VGA6 2112 T) by 16%, and zxnDMA burst mode cannot release the bus
+; on a memory-to-memory transfer (REDERIVATION.md 4.4).
+; ONE fixed number, not a per-video-mode derivation from the
+; programmed CTC TC: the encoder's supply gate has to PRICE the cap
+; and cannot know which timing mode the machine will run in, so a
+; mode-dependent cap could only ever be priced at its worst case
 ; anyway - which is this.
-NXV2_DMA_CHUNK   equ 256      ; stereo sessions (vid_chunk_all/_dst)
-NXV2_DMA_CHUNK_MONO equ 128   ; mono sessions (vid_chunk_all_m/_dst_m,
-                              ; SMC-selected per open by
-                              ; vid_stage_common from the header's
-                              ; channel count)
+NXV2_DMA_CHUNK   equ 256      ; vid_chunk_all / vid_chunk_dst
 NXV2_RUN_DMA_MIN equ 71
 NXV2_COPY_DMA_MIN equ 81
 
@@ -843,19 +858,14 @@ VID_ERR_SRCOVR   equ $F8    ; payload ran past the loaded file
                             ; page-walk bound tripped - corrupt input)
 VID_ERR_DSTOVR   equ $F7    ; cursor ran past the Layer 2 surface
 
-; Supported audio rate set (T4 design step, T1's derivation method,
-; CW16 across every video mode - see vidCtcTcNxvStereo/Mono, video.asm,
-; and the task report's TC tables). Any other header rate = VID FMT?.
+; The supported audio rate - ONE since mono was withdrawn (T4 design
+; step, T1's derivation method, CW16 across every video mode - see
+; vidCtcTcNxvStereo, video.asm, and the task report's TC tables). Any
+; other header rate = VID FMT?.
 NXV_RATE_STEREO  equ 15625  ; 28,000,000/16/112 = 15625 exactly (VGA0) -
                             ; the same "nice" CTC rate em00k's CTCAudio
                             ; and this project's own SP10 music/SFX
                             ; engine already use (aud_clk16_tab.asm docs)
-NXV_RATE_MONO    equ 23325  ; 933 samples * 25fps = 23325 exactly - the
-                            ; SAME true rate the old fmt4/5 mono format
-                            ; already derived (VID_RATE4_X10's own
-                            ; "233*100=23300, not exact" disclosure,
-                            ; sp13-task-2-report.md) - reused verbatim,
-                            ; not a new number
 
 NXV_PAL_BYTES    equ 512    ; PAL opcode block size (NR $44 order)
 
@@ -916,12 +926,10 @@ NXV_AUD_GUARD    equ 16     ; writer keeps this many bytes clear of
 ; so EVERY legal file's next-frame feed fits the single post-present
 ; pump with 2032 bytes to spare. There is no room-limited regime left
 ; for any file the player will open.
-NXV_AUD_FRAME_MAX equ 3072  ; Floors: stereo fps > 2*15625/3072 ->
-                            ; >= 10.17; mono fps > 23325/3072 ->
-                            ; >= 7.60 (was 12.28 / 9.17 at 2544).
-                            ; 320x256@12.5 stereo (2500 B/frame),
-                            ; 12.5 mono (1866) and native 24 fps
-                            ; stereo (1302) are all inside it
+NXV_AUD_FRAME_MAX equ 3072  ; Floor: fps > 2*15625/3072 -> >= 10.17
+                            ; (was 12.28 at 2544). 320x256@12.5
+                            ; (2500 B/frame) and native 24 fps
+                            ; (1302) are both inside it
     ASSERT 2*NXV_AUD_FRAME_MAX <= NXV_AUD_RING-NXV_AUD_GUARD
 NXV_AUD_PUMP_CHUNK equ 256  ; pace-spin trickle chunk: one pump call
                             ; copies at most this much, keeping the

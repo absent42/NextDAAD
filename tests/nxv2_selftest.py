@@ -126,6 +126,13 @@ def t1_header_invalid():
         dict(width=256, height=192, fps=25, channels=3, arate=15625,
              frame_count=1, audio_bytes_per_frame=0, ring_start_margin_blocks=0,
              per_frame_cap_blocks=0),
+        # MONO REFUSED (2026-08-03): channels == 1 used to be a legal
+        # header. It is now refused by the encoder exactly as the
+        # player refuses it at open (VID FMT?) - two halves of one
+        # contract, and the reason NXV2_OFF_ACHAN is still validated.
+        dict(width=256, height=192, fps=25, channels=1, arate=15625,
+             frame_count=1, audio_bytes_per_frame=0, ring_start_margin_blocks=0,
+             per_frame_cap_blocks=0),
         dict(width=256, height=192, fps=25, channels=2, arate=15625,
              frame_count=1 << 24, audio_bytes_per_frame=0, ring_start_margin_blocks=0,
              per_frame_cap_blocks=0),
@@ -163,71 +170,70 @@ def t1_audio_player_bound():
     # session audio bank and NXV_AUD_FRAME_MAX caps a header's REAL
     # audio at 3072 bytes/frame (open rejects more with VID FMT?).
     # audio_layout must refuse to lay out such an encode with a named
-    # error - stereo needs fps >= ~10.17, mono fps >= ~7.60.
+    # error - the floor is fps >= ~10.17.
     expect(enc.AUD_RING == 8192, "ring matches NXV_AUD_RING (whole audio bank)")
     expect(enc.AUD_GUARD == 16, "guard matches NXV_AUD_GUARD")
     expect(enc.AUD_FRAME_MAX == 3072, "bound matches NXV_AUD_FRAME_MAX")
-    # stereo 25 fps: 625*2 = 1250 <= 3072 - accepted (and its layout
+    # 25 fps: 625*2 = 1250 <= 3072 - accepted (and its layout
     # is BYTE-IDENTICAL to the pre-T10 layout: same samples/real/pad)
     rate, samples, real, padded = enc.audio_layout(25, 2)
     expect((samples, real, padded) == (625, 1250, 1536),
-           "stereo 25fps layout unchanged by the bound move")
-    # mono 20 fps: round(23325/20) = 1166 - unchanged too
-    rate, samples, real, padded = enc.audio_layout(20, 1)
-    expect((samples, real, padded) == (1166, 1166, 1536),
-           "mono 20fps layout unchanged by the bound move")
-    # stereo 20 fps: round(15625/20)*2 = 1562 - LEGAL now (was the
+           "25fps layout unchanged by the bound move")
+    expect(rate == enc.RATE_STEREO, "one rate, the stereo pair rate")
+    # MONO IS REFUSED (2026-08-03): channels == 1 was a supported
+    # layout and is now a ValueError here, matching pack_header and
+    # the player's own open-time VID FMT?.
+    for bad in (1, 0, 3):
+        try:
+            enc.audio_layout(20, bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"audio_layout must refuse channels={bad}")
+    # 20 fps: round(15625/20)*2 = 1562 - LEGAL now (was the
     # canonical pre-T10 rejection)
     rate, samples, real, padded = enc.audio_layout(20, 2)
-    expect(real == 1562, "stereo 20fps legal under the T10 bound")
-    # stereo 6 fps: round(15625/6)*2 = 5208 > 3072 - rejected with
-    # the named floors and the --mono remedy (mono fits at 12: no -
-    # at 6 mono is 3888 > 3072, so NO --mono remedy here)
+    expect(real == 1562, "20fps legal under the T10 bound")
+    # 6 fps: round(15625/6)*2 = 5208 > 3072 - rejected, naming the
+    # bound and the floor. No --mono remedy exists any more.
     try:
         enc.audio_layout(6, 2)
     except SystemExit as e:
         msg = str(e)
         expect("3072" in msg, "error names the 3072-byte player bound")
-        expect("10.17" in msg, "error names the stereo fps floor")
-        expect("7.60" in msg, "error names the mono fps floor")
-        expect("--mono" not in msg, "no --mono remedy when mono is over too")
+        expect("10.17" in msg, "error names the fps floor")
+        expect("--mono" not in msg, "the withdrawn --mono is never suggested")
     else:
-        raise AssertionError("stereo 6fps must be rejected (5208 > 3072)")
-    # stereo 10 fps: 3126 > 3072 rejected, but mono at 10 fps is
-    # round(23325/10) = 2333 <= 3072, so the --mono remedy appears
+        raise AssertionError("6fps must be rejected (5208 > 3072)")
+    # 10 fps: 3126 > 3072 - rejected, and the only remedy offered is a
+    # higher fps (mono used to fit here and used to be suggested)
     try:
         enc.audio_layout(10, 2)
     except SystemExit as e:
-        expect("--mono" in str(e), "error suggests --mono when mono fits")
+        expect("--mono" not in str(e), "no --mono remedy exists")
+        expect("raise --fps" in str(e), "the remedy is a higher fps")
     else:
-        raise AssertionError("stereo 10fps must be rejected (3126 > 3072)")
-    # floors are the boundary: just above passes, just below rejects
-    expect(enc.audio_layout(10.17, 2)[2] <= enc.AUD_FRAME_MAX, "stereo 10.17 fits")
+        raise AssertionError("10fps must be rejected (3126 > 3072)")
+    # the floor is the boundary: just above passes, just below rejects
+    expect(enc.audio_layout(10.17, 2)[2] <= enc.AUD_FRAME_MAX, "10.17 fits")
     try:
         enc.audio_layout(10.16, 2)
     except SystemExit:
         pass
     else:
-        raise AssertionError("stereo 10.16fps must be rejected")
-    expect(enc.audio_layout(7.6, 1)[2] <= enc.AUD_FRAME_MAX, "mono 7.60 fits")
-    try:
-        enc.audio_layout(7.59, 1)
-    except SystemExit:
-        pass
-    else:
-        raise AssertionError("mono 7.59fps must be rejected")
+        raise AssertionError("10.16fps must be rejected")
     # the two headline unlocks (the hardware-round legs)
     expect(enc.audio_layout(12.5, 2)[2] == 2500,
-           "320x256@12.5 stereo is legal (2500 <= 3072)")
+           "320x256@12.5 is legal (2500 <= 3072)")
     expect(enc.audio_layout(24, 2)[2] == 1302,
-           "native 24fps stereo is legal (1302 <= 3072)")
+           "native 24fps is legal (1302 <= 3072)")
 
 
 @case(1, "audio floor arithmetic - T10 circular-feed floors pinned (bound/ring derivation)")
 def t1_audio_floor_arithmetic():
     # SP17 T10: pin the derivation, not just the outcomes. The floor
     # formula is fps > rate/(smax + 0.5) with smax = AUD_FRAME_MAX //
-    # channels - identical formula since the pre-T10 halves, only the
+    # 2 - identical formula since the pre-T10 halves, only the
     # bound moves. The bound is NO LONGER ring-guard (2026-08-02): the
     # ring is the whole 8 KB audio bank, and AUD_FRAME_MAX is pinned
     # instead by the player's 8-bit block arithmetic (cap 240 + apad
@@ -242,32 +248,21 @@ def t1_audio_floor_arithmetic():
     expect(((enc.AUD_FRAME_MAX + 511) // 512) <= 6,
            "the padded section stays inside 6 blocks (the player's "
            "8-bit cap+apad+1 and need+apad+2 adds)")
-    expect(abs(enc.min_fps_for(2) - 15625 / (3072 // 2 + 0.5)) < 1e-12,
-           "stereo floor = 15625/1536.5")
-    expect(abs(enc.min_fps_for(1) - 23325 / (3072 + 0.5)) < 1e-12,
-           "mono floor = 23325/3072.5")
-    # the user-facing (ceil to 0.01) floors named in every message
-    expect(_m.ceil(enc.min_fps_for(2) * 100) / 100 == 10.17,
-           "stereo floor rounds to 10.17")
-    expect(_m.ceil(enc.min_fps_for(1) * 100) / 100 == 7.60,
-           "mono floor rounds to 7.60")
-    # every layout at and above the shown floors respects the bound
+    expect(abs(enc.min_fps_for() - 15625 / (3072 // 2 + 0.5)) < 1e-12,
+           "floor = 15625/1536.5")
+    # the user-facing (ceil to 0.01) floor named in every message
+    expect(_m.ceil(enc.min_fps_for() * 100) / 100 == 10.17,
+           "floor rounds to 10.17")
+    # every layout at and above the shown floor respects the bound
     for fps in (10.17, 12.5, 23.976, 24, 25):
         expect(enc.audio_layout(fps, 2)[2] <= enc.AUD_FRAME_MAX,
-               f"stereo {fps} fps within the T10 bound")
-    for fps in (7.6, 10, 18.22, 24, 25):
-        expect(enc.audio_layout(fps, 1)[2] <= enc.AUD_FRAME_MAX,
-               f"mono {fps} fps within the T10 bound")
+               f"{fps} fps within the T10 bound")
     # THE FIX THIS BOUND EXISTS TO GUARANTEE: no legal encode is
     # room-limited in the player's post-present pump any more.
-    for fps in (7.6, 10.17, 12.5, 20, 23.976, 25):
-        for ch in (1, 2):
-            if ch == 2 and fps < 10.17:
-                continue
-            real = enc.audio_layout(fps, ch)[2]
-            expect(enc.pace_trickle_frac(real) == 0.0,
-                   f"{'stereo' if ch == 2 else 'mono'} {fps} fps feeds "
-                   f"in one pass (no pace contention)")
+    for fps in (10.17, 12.5, 20, 23.976, 25):
+        real = enc.audio_layout(fps, 2)[2]
+        expect(enc.pace_trickle_frac(real) == 0.0,
+               f"{fps} fps feeds in one pass (no pace contention)")
 
 
 @case(1, "streaming supply gate - silicon-calibrated (Card #3 VSTR0/VSTR1 anchors)")
@@ -431,7 +426,7 @@ def t1_stream_supply_gate_e2e():
     expect(refuse_util > 1.0, f"refuse fixture util {refuse_util:.4f} not above 1.0")
 
     def fake_extract_source(src_path, w, h, fps_val, start, duration, ffmpeg, dither,
-                            mono, dither_mode=None, retime=None, **kw):
+                            dither_mode=None, retime=None, **kw):
         return dict(orig=np.zeros((1, h, w, 3), dtype=np.uint8),
                     chg=np.zeros(1), po_ceil=np.zeros(1),
                     audio_bytes=bytes(nframes * abytes_real),
@@ -606,7 +601,7 @@ def t3_keyframe_span():
     pal_a = rng.integers(0, 256, size=(256, 3), dtype=np.uint8)
     pal_a_rt = dec._decode_palette_block(enc.build_palette_block(pal_a))   # what the wire roundtrip actually yields
 
-    hdr = enc.pack_header(width=width, height=height, fps=25, channels=1, arate=enc.RATE_MONO,
+    hdr = enc.pack_header(width=width, height=height, fps=25, channels=2, arate=enc.RATE_STEREO,
                            frame_count=3, audio_bytes_per_frame=0,
                            ring_start_margin_blocks=0, per_frame_cap_blocks=0)
 
@@ -645,7 +640,7 @@ def t3_keyframe_span():
 def t3_unterminated_span():
     width, height = 256, 1
     raw = width * height
-    hdr = enc.pack_header(width=width, height=height, fps=25, channels=1, arate=enc.RATE_MONO,
+    hdr = enc.pack_header(width=width, height=height, fps=25, channels=2, arate=enc.RATE_STEREO,
                            frame_count=1, audio_bytes_per_frame=0,
                            ring_start_margin_blocks=0, per_frame_cap_blocks=0)
     payload = bytes([enc.OP_KSTART]) + enc.op_pal(np.zeros((256, 3), dtype=np.uint8)) + \
@@ -682,7 +677,7 @@ def t3_validate_robustness():
         # Valid header claiming 5 frames, but the file only contains
         # payload data for 1 (truncated mid-stream, e.g. a partial SD
         # write) - validate() must report it, not raise or hang.
-        hdr = enc.pack_header(width=256, height=1, fps=25, channels=1, arate=enc.RATE_MONO,
+        hdr = enc.pack_header(width=256, height=1, fps=25, channels=2, arate=enc.RATE_STEREO,
                                frame_count=5, audio_bytes_per_frame=0,
                                ring_start_margin_blocks=0, per_frame_cap_blocks=0)
         one_frame = enc.op_skip(256) + bytes([enc.OP_FEND])
@@ -717,7 +712,7 @@ def _extract(clip_path, width, height, fps, start, duration):
         if not clip_path.exists() or not FFMPEG.exists():
             return None
         _EXTRACT_CACHE[key] = enc._extract_source(
-            clip_path, width, height, fps, start, duration, str(FFMPEG), dither=False, mono=False)
+            clip_path, width, height, fps, start, duration, str(FFMPEG), dither=False)
     return _EXTRACT_CACHE[key]
 
 
@@ -1054,7 +1049,7 @@ def t9_kf_span_end_of_clip_clamp():
     expect(any(enc.OP_KFLIP in p for p in result["payloads"]),
            "expected an OP_KFLIP byte in the payload stream")
 
-    hdr = enc.pack_header(width=width, height=height, fps=fps, channels=1, arate=enc.RATE_MONO,
+    hdr = enc.pack_header(width=width, height=height, fps=fps, channels=2, arate=enc.RATE_STEREO,
                            frame_count=len(result["payloads"]), audio_bytes_per_frame=0,
                            ring_start_margin_blocks=0, per_frame_cap_blocks=0)
     buf = hdr + b"".join(p + bytes((-len(p)) % 512) for p in result["payloads"])
@@ -1601,7 +1596,7 @@ def t11_staleness_bounded():
 def _build_vid(result, w, h, fps=25.0):
     """Assemble a decodable .vid buffer from an encode_clip result."""
     payloads = result["payloads"]
-    hdr = enc.pack_header(width=w, height=h, fps=fps, channels=1, arate=enc.RATE_MONO,
+    hdr = enc.pack_header(width=w, height=h, fps=fps, channels=2, arate=enc.RATE_STEREO,
                            frame_count=len(payloads), audio_bytes_per_frame=0,
                            ring_start_margin_blocks=0, per_frame_cap_blocks=0)
     return hdr + b"".join(p + bytes((-len(p)) % 512) for p in payloads)
@@ -1962,8 +1957,8 @@ def t11_direct_gate():
             msg = str(e)
             expect("direct-serve" in msg, "error names the mode")
             expect("utilization" in msg, "error names the utilization")
-            expect("stereo" in msg and "mono" in msg,
-                   "refusal states the envelope for BOTH channel counts (the full menu)")
+            expect("tops out at" in msg and "audio floor" in msg,
+                   "refusal states the at-rate envelope and the floor entry (the full menu)")
             expect("accept-slow" not in msg.lower(),
                    "refusal must not mention a slow-playback override that no longer exists")
             expect(not out.exists(), "no file written on refusal")
@@ -2005,15 +2000,15 @@ def t11_direct_gate():
            f"320x256@12.5 stereo direct must be admitted at the edge "
            f"(silicon at-rate), got {u125:.4f}")
     # the re-fitted at-rate envelope, and its monotonicity
-    raw25 = enc.direct_max_raw_bytes(25.0, 2, 1.0)
+    raw25 = enc.direct_max_raw_bytes(25.0, 1.0)
     expect(39000 < raw25 < 39500, f"25fps stereo direct tops out ~38.5 KB raw, got {raw25}")
     expect(raw25 // 256 == 153,
            f"25fps stereo 256-wide envelope is 256x153, got 256x{raw25 // 256}")
     expect(enc.direct_supply_check(
         1536 + ((raw25 + 518 + 511) // 512) * 512, 25.0)["utilization"] <= 1.0,
         "direct_max_raw_bytes must actually pass its own gate")
-    expect(enc.direct_max_raw_bytes(18.22, 1, 1.0) > raw25,
-           "a lower fps / mono admits a bigger direct surface")
+    expect(enc.direct_max_raw_bytes(18.22, 1.0) > raw25,
+           "a lower fps admits a bigger direct surface")
     # 010/011's chosen re-encode point (256x133@25 stereo) must actually
     # be at-rate under the gate - the positive-path complement to the
     # 320x256 refusal above.
@@ -2236,8 +2231,8 @@ def t11_direct_transport_override():
     # a smaller byte factor grows the envelope; at 0.96 (the historical
     # probe rate) the 256-wide stereo @25 envelope reaches 256x159
     # against 256x153 at the shipping 1.00
-    raw_def = enc.direct_max_raw_bytes(25.0, 2, 1.0)
-    raw_ovr = enc.direct_max_raw_bytes(25.0, 2, 1.0, transport_factor=tf_probe)
+    raw_def = enc.direct_max_raw_bytes(25.0, 1.0)
+    raw_ovr = enc.direct_max_raw_bytes(25.0, 1.0, transport_factor=tf_probe)
     expect(raw_ovr > raw_def,
            "a smaller transport factor must grow the at-rate envelope")
     expect(raw_ovr // 256 == 159,
@@ -2260,11 +2255,11 @@ def t11_direct_transport_override():
            "videnc.py --help must document --direct-transport-factor")
 
 
-@case(11, "direct-serve gate refusal - mono-floor menu entry hardened "
+@case(11, "direct-serve gate refusal - fps-floor menu entry hardened "
           "against the Fraction-rounding knife-edge (Card #5 review fix)")
-def t11_direct_gate_mono_floor_menu():
-    # Review finding: min_fps_for(1) is, BY CONSTRUCTION, the exact fps
-    # where audio_layout's real mono bytes/frame lands on the
+def t11_direct_gate_fps_floor_menu():
+    # Review finding: min_fps_for() is, BY CONSTRUCTION, the exact fps
+    # where audio_layout's real bytes/frame lands on the
     # AUD_FRAME_MAX boundary. Which side of the boundary Fraction
     # rounding falls on there is a coin flip only a few ULP wide - a
     # raise there inside the refusal-message builder
@@ -2273,20 +2268,19 @@ def t11_direct_gate_mono_floor_menu():
     # audio bound ...") out of what should be the direct-serve
     # wire-gate refusal. The fix rounds the floor UP to the nearest
     # 0.01 fps (math.ceil(...*100)/100, the same idiom audio_layout's
-    # own "fits" floors already use) before feeding it back through
-    # direct_max_raw_bytes.
+    # own "fits" floor already uses) before feeding it back through
+    # direct_max_raw_bytes. (The menu entry was the MONO floor until
+    # mono was withdrawn on 2026-08-03; the knife-edge is a property
+    # of the floor, not of the channel count, so the case survives the
+    # removal unchanged in substance.)
     import math as _m
-    mono_floor = enc.min_fps_for(1)
-    # demonstrate the knife-edge is real: just below the exact floor
-    # audio_layout's verdict flips (samples 2544 -> 2545, one over
-    # AUD_FRAME_MAX) and direct_max_raw_bytes raises unguarded. The
-    # epsilon is floor-value-dependent (limit_denominator can absorb
-    # a too-small perturbation - at the T10 floor 1e-6 rounds back to
-    # the fitting side, where the old 18.22 floor raised at 1e-6);
-    # 1e-4 lands on the raising side of the new floor.
-    unlucky = mono_floor - 1e-4
+    fps_floor = enc.min_fps_for()
+    # demonstrate the knife-edge is real: at and just below the exact
+    # floor audio_layout's verdict flips (real 3072 -> 3074, over
+    # AUD_FRAME_MAX) and direct_max_raw_bytes raises unguarded.
+    unlucky = fps_floor - 1e-4
     try:
-        enc.direct_max_raw_bytes(unlucky, 1, 1.0)
+        enc.direct_max_raw_bytes(unlucky, 1.0)
     except SystemExit:
         pass
     else:
@@ -2295,28 +2289,28 @@ def t11_direct_gate_mono_floor_menu():
                              "case guards against")
     # the fix's guard: rounding UP first, at the floor itself AND at
     # the unlucky perturbation, must render without raising either way.
-    for fps in (mono_floor, unlucky):
+    for fps in (fps_floor, unlucky):
         safe = _m.ceil(fps * 100) / 100
-        m_floor_at = enc.direct_max_raw_bytes(safe, 1, 1.0)
-        expect(m_floor_at > 0,
-               f"direct_max_raw_bytes at the rounded mono floor "
-               f"({safe}) must not raise, got {m_floor_at}")
+        floor_at = enc.direct_max_raw_bytes(safe, 1.0)
+        expect(floor_at > 0,
+               f"direct_max_raw_bytes at the rounded fps floor "
+               f"({safe}) must not raise, got {floor_at}")
     # end-to-end: the real refusal path (320x256@25, same shape the
-    # sibling gate case above refuses) must render the mono-floor menu
+    # sibling gate case above refuses) must render the floor menu
     # entry using this same guarded computation - not just be correct
     # in isolation.
     import tempfile as tf
     ex = _synthetic_ex(2, 320, 256)
     with tf.TemporaryDirectory() as td:
-        out = Path(td) / "toobig_monofloor.vid"
+        out = Path(td) / "toobig_fpsfloor.vid"
         try:
             enc._encode_direct(ex, 320, 256, 25.0, out)
         except SystemExit as e:
             msg = str(e)
-            expect("mono floor" in msg,
-                   f"refusal names the mono-floor envelope entry, got:\n{msg}")
+            expect("audio floor" in msg,
+                   f"refusal names the fps-floor envelope entry, got:\n{msg}")
             expect("player's per-frame audio bound" not in msg,
-                   f"the mono-floor menu computation must not leak an "
+                   f"the floor menu computation must not leak an "
                    f"audio_layout error into the refusal, got:\n{msg}")
             expect(not out.exists(), "no file written on refusal")
         else:
@@ -2346,7 +2340,7 @@ def t12_no_audio_source_probe():
     buf = io.StringIO()
     with contextlib.redirect_stderr(buf):
         ex = enc._extract_source(SINTEL, 256, 192, 25.0, "00:00:01", "1",
-                                  str(FFMPEG), dither=False, mono=False)
+                                  str(FFMPEG), dither=False)
     captured = buf.getvalue()
     expect("no audio stream" in captured,
            f"expected the one-line no-audio note, got: {captured!r}")
@@ -2498,7 +2492,7 @@ def t13_amplitude_threading_e2e():
            "amp 1.0 vs the default or every assertion below is vacuous")
 
     def fake_extract_source(src_path, w, h, fps_val, start, duration,
-                            ffmpeg, dither, mono, dither_mode=None, retime=None,
+                            ffmpeg, dither, dither_mode=None, retime=None,
                             **kw):
         # honours its dither argument exactly as the real extractor
         # does: po_ceil is measured at the encode's own amplitude/mode
@@ -3280,7 +3274,7 @@ def t15_starvation_report_key_parity():
     import contextlib
     import io
     import json
-    # 256x128 mono at 25 fps is inside the direct-serve wire envelope
+    # 256x128 at 25 fps is inside the direct-serve wire envelope
     # (256x135 at-rate); 1 s keeps both legs cheap.
     with tempfile.TemporaryDirectory() as td:
         reps = {}
@@ -3289,7 +3283,7 @@ def t15_starvation_report_key_parity():
             with contextlib.redirect_stdout(io.StringIO()):
                 enc.encode(str(SINTEL), str(Path(td) / f"kp_{tag}.vid"),
                            shape=(256, 128), fps=25.0, duration="1",
-                           ffmpeg=str(FFMPEG), mono=True, direct=direct,
+                           ffmpeg=str(FFMPEG), direct=direct,
                            report_path=str(rp))
             reps[tag] = json.loads(rp.read_text())
         expect(set(reps["direct"]) == set(reps["streaming"]),
@@ -3384,7 +3378,7 @@ def t15_starvation_end_to_end():
 # deterministic.
 # =======================================================================
 
-def _synth_ex(orig, fps=25.0, mono=False):
+def _synth_ex(orig, fps=25.0):
     """An _extract_source-shaped dict for a synthetic (N,H,W,3) stack -
     the four keys auto_stream_budget/stream_gate_stats actually read."""
     N = orig.shape[0]
@@ -3396,7 +3390,7 @@ def _synth_ex(orig, fps=25.0, mono=False):
             d = np.abs(orig[i].astype(np.int16)
                        - orig[i - 1].astype(np.int16)).max(axis=2)
             chg[i] = float((d > 10).mean())
-    abytes_pad = enc.audio_layout(fps, 1 if mono else 2)[3]
+    abytes_pad = enc.audio_layout(fps, 2)[3]
     return dict(orig=orig, chg=chg, po_ceil=po, abytes_pad=abytes_pad)
 
 
@@ -3617,7 +3611,7 @@ def t16_autobudget_plateau():
     # back to 152; at pal9l, 152 -> 148.) The premise assertion at the
     # end is what caught all seven.
     ex = enc._extract_source(str(SINTEL), 256, 152, 25.0, "00:00:00", "5.0",
-                              str(FFMPEG), 0.5, False)
+                              str(FFMPEG), 0.5)
     search = enc.auto_stream_budget(ex, 256, 152, 25.0, dither_amp=0.5)
     expect(not search["resident"], "5 s of Sintel at 256x152 must exceed the resident pool")
     expect(search["plateau"], "this clip is content-limited - the search must say so")
@@ -5187,11 +5181,11 @@ def t21_pace_contention():
     span = enc.AUD_RING - enc.AUD_GUARD
     expect(span == 8176, "the usable span is the whole bank minus the guard")
     expect(enc.pace_trickle_frac(1250) == 0.0, "25 fps stereo must be EXACTLY zero")
-    expect(enc.pace_trickle_frac(933) == 0.0, "25 fps mono must be EXACTLY zero")
+    expect(enc.pace_trickle_frac(1302) == 0.0, "24 fps must be EXACTLY zero")
     expect(enc.pace_trickle_frac(2500) == 0.0,
-           "12.5 fps stereo - THE DEFECT ROW - must now be EXACTLY zero")
-    expect(enc.pace_trickle_frac(1866) == 0.0,
-           "12.5 fps mono must now be EXACTLY zero")
+           "12.5 fps - THE DEFECT ROW - must now be EXACTLY zero")
+    expect(enc.pace_trickle_frac(1562) == 0.0,
+           "20 fps must now be EXACTLY zero")
     expect(enc.pace_trickle_frac(enc.AUD_FRAME_MAX) == 0.0,
            "the largest declarable frame must still feed in one pass")
     # the guard itself is still armed: the boundary is the ring's, and
@@ -5256,13 +5250,13 @@ def t22_prefilter():
     if not SINTEL.exists() or not FFMPEG.exists():
         skip("Sintel source or ffmpeg not available")
     ex_a = enc._extract_source(SINTEL, 256, 144, 25.0, None, "0.4",
-                               str(FFMPEG), None, False)
+                               str(FFMPEG), None)
     ex_b = enc._extract_source(SINTEL, 256, 144, 25.0, None, "0.4",
-                               str(FFMPEG), None, False, prefilter=None)
+                               str(FFMPEG), None, prefilter=None)
     expect(np.array_equal(ex_a["orig"], ex_b["orig"]),
            "prefilter=None must not change extraction")
     ex_c = enc._extract_source(SINTEL, 256, 144, 25.0, None, "0.4",
-                               str(FFMPEG), None, False,
+                               str(FFMPEG), None,
                                prefilter="hqdn3d=2:1.5:3:2.25")
     expect(not np.array_equal(ex_a["orig"], ex_c["orig"]),
            "a set prefilter must actually filter the frames")

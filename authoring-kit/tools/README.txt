@@ -42,7 +42,7 @@ install Pillow numpy). The encode shape and options are VIDASPECT,
 VIDFPS, VIDOPTS and per-video VIDOPTS_NNN in CONFIG.BAT (blank =
 full-screen 320x256 at 25 fps); run the encoder by hand for per-file
 control (--shape presets or WIDTHxHEIGHT, --aspect free heights,
---fps, --start/--duration clipping, --mono, --dither and more - run
+--fps, --start/--duration clipping, --dither and more - run
 it with -h, and see ..\lib\videnc-README.md). Or run VIDTUNE.BAT (kit
 root) for the same per-clip control from a GUI: prefers vidtune.exe
 (shipped, no Python required), falls back to ..\lib\vidtune (needs

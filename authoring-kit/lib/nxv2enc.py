@@ -58,7 +58,9 @@ HDR_OFF_VERSION = 5        # 1  version = 2
 HDR_OFF_WIDTHCODE = 6      # 1  width code: 0 = 256 (mode-0), 1 = 320 (mode-1)
 HDR_OFF_HEIGHT = 7         # 1  height: 1-255 lines, 0 = 256 (free heights)
 HDR_OFF_FPSX10 = 8         # 1  fps*10 low byte, informational only
-HDR_OFF_ACHAN = 9          # 1  audio channels: 1 mono / 2 stereo
+HDR_OFF_ACHAN = 9          # 1  audio channels - ALWAYS 2. Frozen wire
+                           #    field: mono (1) was withdrawn
+                           #    2026-08-03 and the player refuses it
 HDR_OFF_ARATE = 10         # 2  audio rate Hz LE
 HDR_OFF_FLAGS = 12         # 1  flags (see FLAG_* below)
 HDR_OFF_KFPOLICY = 13      # 1  keyframe policy byte (encoder bookkeeping)
@@ -93,7 +95,16 @@ FLAG_OCOPY = 1 << 3          # RETIRED SP17 T5a offset-copy capability
                              # re-use bit3 for anything else
 
 RATE_STEREO = 15625   # 28,000,000/16/112 - matches v1's NXV_RATE_STEREO
-RATE_MONO = 23325      # matches v1's NXV_RATE_MONO
+                      # and is the ONLY rate the player accepts. Mono
+                      # (23325 Hz, one ISR per sample) was withdrawn
+                      # 2026-08-03: its only advantage was a higher
+                      # sample rate for fewer bytes, but both modes are
+                      # 8-bit so quantisation sets the quality floor,
+                      # and it charged 49% more interrupts plus a 128 B
+                      # DMA burst cap against DECODE - the binding
+                      # constraint for picture. A mono SOURCE is still
+                      # accepted and is upmixed to stereo by ffmpeg
+                      # (videnc.extract_audio passes -ac 2)
 
 KF_POLICY_V2 = 1   # encoder bookkeeping only - the player ignores this byte
 
@@ -155,7 +166,7 @@ def total_size_check(total_bytes, frames, mode, width, height, fps,
     total_bytes is the projected size (the writer's own arithmetic,
     computed ahead of the write)."""
     seconds = frames / float(fps) if fps else 0.0
-    chan = "stereo" if channels == 2 else "mono"
+    chan = "stereo"                 # the only channel count v2 carries
     if frames > PLAYER_MAX_FRAMES:
         max_seconds = PLAYER_MAX_FRAMES / float(fps)
         raise SystemExit(
@@ -203,8 +214,12 @@ def pack_header(*, width, height, fps, channels, arate, frame_count,
     if not (1 <= height <= max_height):
         raise ValueError(f"height must be 1-{max_height} for width {width} "
                           f"(Layer 2 mode-{CODE_BY_WIDTH[width]} has {max_height} lines), got {height}")
-    if channels not in (1, 2):
-        raise ValueError(f"channels must be 1 or 2, got {channels}")
+    if channels != 2:
+        # Mono withdrawn 2026-08-03 (owner ruling). The FIELD stays -
+        # it is frozen wire format at offset 9 - and the player still
+        # validates it, refusing anything but 2 with VID FMT? at open.
+        # This is the encoder half of that contract.
+        raise ValueError(f"channels must be 2, got {channels}")
     if not (0 <= frame_count < (1 << 24)):
         raise ValueError("frame_count out of the header's 24-bit range")
     if frame_count > PLAYER_MAX_FRAMES:
@@ -462,36 +477,15 @@ TMODEL_COEFFS = {
     "copy_dma_chunk": 256,      # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
                                 #   the audio-safety burst cap the player clips
                                 #   every copy chunk to (vid_chunk_all).
-                                #   STEREO ONLY as of 2026-08-02. The player
-                                #   now caps a MONO session at
-                                #   NXV2_DMA_CHUNK_MONO = 128 B, because the
-                                #   mono audio ISR fires per SAMPLE (23325 Hz,
-                                #   period 1152-1408 T) and a 256 B chunk's DI
-                                #   bracket is ~1802 T - it ate a CTC tick per
-                                #   chunk and ran row 059 4.5% slow on silicon
-                                #   (src/nextdaad.inc NXV2_DMA_CHUNK_MONO,
-                                #   sp17-corpus/REDERIVATION.md 2-4).
-                                #   NOT MODELLED HERE, and the gap is NOT
-                                #   small: a recount over DECODE-COST.jsonl
-                                #   puts the 256 -> 128 cap at +66% DMA chunks
-                                #   and +19% of decode-T corpus-wide (lowering
-                                #   the cap is not the mirror of raising it -
-                                #   the mean DMA chunk is 172 B, so the
-                                #   129-256 B population, which dominates,
-                                #   splits in two). So a MONO stream is priced
-                                #   ~10-38% optimistic on decode, shape-
-                                #   dependent - on row 059 that is ~+3-6% of
-                                #   the frame budget (utilisation 0.897 ->
-                                #   ~0.93-0.99, still sustaining).
-                                #   Deliberately left un-repriced in the SP17
-                                #   silicon wave: the fix is a channel-keyed
-                                #   chunk cap threaded through _copy_t/_fill_t
-                                #   and their call sites, it changes MONO
-                                #   encoder output (era bump), and doing it
-                                #   inside the wave would have moved the one
-                                #   staged mono file that the player fix has
-                                #   to be confirmed against. 1 of 463 staged
-                                #   files is mono
+                                #   UNCONDITIONALLY CORRECT since 2026-08-03.
+                                #   It carried a "STEREO ONLY" caveat while a
+                                #   mono session took a 128 B cap the model
+                                #   could not see (which mispriced a mono
+                                #   stream ~10-38% optimistic on decode); mono
+                                #   was withdrawn with the cap that served it,
+                                #   so there is now exactly ONE cap, the
+                                #   player always applies it, and this value
+                                #   models the player exactly
     "header_rate": 0.0,         # count/colour byte parse - FOLDED into the
                                 #   dispatch envelopes above on silicon (see the
                                 #   envelope-convention note). model was 26.0
@@ -513,27 +507,17 @@ TMODEL_COEFFS = {
                                 #   [SILICON sitting 2: CD armed/unarmed = 1.170-
                                 #   1.173 at c64/c128/c256 -> 0.853; held at 0.85].
                                 #   sitting 1: 0.85. model was 0.89.
-                                #   STEREO ONLY, and NOT channel-keyed - the
-                                #   fit was taken at the stereo tick rate.
-                                #   The mono ISR is cheaper per tick (one DAC
-                                #   write and one inc ix fewer, ~145 T against
-                                #   ~190 T hand-counted) but fires 49% more
-                                #   often, so its duty is ~14% higher: scaling
-                                #   the measured 14.5% tax by that gives
-                                #   ~16.6%, i.e. an effective audio_factor of
-                                #   ~0.83 for mono. MONO streams are therefore
-                                #   admitted ~2-2.5% optimistically by
-                                #   stream_supply_check, direct_supply_check
-                                #   and the auto-budget
-                                #   (sp17-corpus/REDERIVATION.md 6.7). It
-                                #   stacks with the un-modelled mono chunk cap
-                                #   noted on copy_dma_chunk above, in the same
-                                #   direction, and is deferred with it - both
-                                #   change MONO encoder output and want one
-                                #   era bump and one re-encode between them.
-                                #   audio_ms (the feed copy) IS channel-
-                                #   correct: mono pads to 1024 B/frame against
-                                #   stereo's 1536
+                                #   UNCONDITIONALLY CORRECT since 2026-08-03.
+                                #   The fit was taken at the stereo tick rate,
+                                #   which used to make it a "STEREO ONLY"
+                                #   caveat: the mono ISR was cheaper per tick
+                                #   (~145 T against ~190 T hand-counted) but
+                                #   fired 49% more often, ~14% more duty, an
+                                #   effective 0.83 - so mono streams were
+                                #   admitted ~2-2.5% optimistically
+                                #   (sp17-corpus/REDERIVATION.md 6.7). Mono is
+                                #   withdrawn, there is one tick rate, and
+                                #   this coefficient is fitted at it
 }
 
 
@@ -1021,13 +1005,11 @@ AUDIO_COPY_T_PER_B = 25.0
 #
 #   trickle_frac = max(0, 2*aBytes - (AUD_RING-AUD_GUARD)) / aBytes
 #                                 at 2544 span    at 8176 span
-#   25 fps stereo   aBytes 1250 -> 0.0000          0.0000
-#   25 fps mono     aBytes  933 -> 0.0000          0.0000
-#   23.976 stereo   aBytes 1304 -> 0.0491          0.0000
-#   20 fps stereo   aBytes 1562 -> 0.3714          0.0000
-#   12.5 fps stereo aBytes 2500 -> 0.9824          0.0000
-#   12.5 fps mono   aBytes 1866 -> 0.6367          0.0000
-#   10.17 fps stereo (the floor, aBytes 3072)      0.0000
+#   25 fps      aBytes 1250 -> 0.0000          0.0000
+#   23.976 fps  aBytes 1304 -> 0.0491          0.0000
+#   20 fps      aBytes 1562 -> 0.3714          0.0000
+#   12.5 fps    aBytes 2500 -> 0.9824          0.0000
+#   10.17 fps   (the floor, aBytes 3072)       0.0000
 #
 # THE SILICON THAT FOUND IT (three independent rows, 2026-08-02, all
 # 320x256 stereo streamed, all admitted by the uncorrected gate):
@@ -1585,10 +1567,8 @@ def stream_supply_check(mean_t, mean_demand_bytes, audio_pad_bytes, fps,
 #   256x133@25 st  (010/011 anchors) 0.881, predicted 34.4 ms - clean,
 #                  as this sitting's PICK 10/11 exact-TOT rows show.
 # Direct at-rate envelope under this gate (util 1.00 / 0.90):
-#   25   fps stereo  256x153 / 320x123   (0.90: 256x135 / 320x108)
-#   25   fps mono    256x155 / 320x124   (0.90: 256x137 / 320x110)
-#   12.5 fps stereo  full screen both widths (0.90: 320x228)
-#   12.5 fps mono    full screen both widths (0.90: 320x230)
+#   25   fps  256x153 / 320x123   (0.90: 256x135 / 320x108)
+#   12.5 fps  full screen both widths (0.90: 320x228)
 # The expert override videnc --direct-transport-factor still exists and
 # overrides the BYTE factor only - the frame overhead is measured
 # physics, not policy, and always applies. Do not move either constant
@@ -1644,12 +1624,12 @@ def direct_supply_check(worst_frame_bytes, fps, transport_factor=None):
                 demand_kbs=worst_frame_bytes * float(fps) / 1024.0)
 
 
-def direct_max_raw_bytes(fps, channels=2, util=1.0, transport_factor=None):
+def direct_max_raw_bytes(fps, util=1.0, transport_factor=None):
     """Largest RAW surface (width*height) a direct-serve encode can
-    carry at this fps/channel count and utilization target, under the
-    recalibrated gate. Inverse of direct_supply_check: the frame
-    section is audio_pad + 512-rounded(payload), and the payload is
-    KSTART(1) + PAL(1+512) + COPY16(3) + raw + terminal(1).
+    carry at this fps and utilization target, under the recalibrated
+    gate. Inverse of direct_supply_check: the frame section is
+    audio_pad + 512-rounded(payload), and the payload is KSTART(1) +
+    PAL(1+512) + COPY16(3) + raw + terminal(1).
     transport_factor as in direct_supply_check."""
     tf = (DIRECT_TRANSPORT_FACTOR if transport_factor is None
           else float(transport_factor))
@@ -1661,9 +1641,8 @@ def direct_max_raw_bytes(fps, channels=2, util=1.0, transport_factor=None):
                 * SD_WIRE_BYTES_PER_MS
                 * TMODEL_COEFFS["audio_factor"] / tf)
     # the audio pad comes from audio_layout, NOT a local rate guess -
-    # mono runs at RATE_MONO (23325), not the stereo 15625, so a local
-    # copy of that arithmetic gets the mono envelope wrong
-    apad = audio_layout(fps, channels)[3]
+    # one source of truth for the rate/rounding arithmetic
+    apad = audio_layout(fps)[3]
     payload_blocks = int((budget_b - apad) // 512)
     return max(0, payload_blocks * 512 - (1 + 1 + PAL_BLOCK_SIZE + 3 + 1))
 
@@ -4080,9 +4059,9 @@ def scene_palette(orig_frames, start_idx, scene_end_idx, max_samples=6, colors=2
 
 def _default_abytes_pad(fps):
     """Conservative (largest-layout) padded audio bytes/frame for
-    callers that do not thread the encode's real audio layout: the
-    STEREO layout at this fps (stereo pads more than mono, and a larger
-    pad shrinks the chunk - the safe direction for a peak bound)."""
+    callers that do not thread the encode's real audio layout - the
+    layout at this fps (a larger pad shrinks the chunk, which is the
+    safe direction for a peak bound)."""
     try:
         from fractions import Fraction
         f = fps if isinstance(fps, Fraction) else Fraction(float(fps)).limit_denominator(1000)
@@ -4439,15 +4418,14 @@ def resolve_shape(shape):
 # legal file's next-frame feed completes in the player's single
 # post-present pump with 2032 bytes to spare - see pace_trickle_frac,
 # which is now identically zero for anything that can be encoded.
-# Floors (min_fps_for, same formula as before): samples <= smax
+# Floor (min_fps_for, same formula as before): samples <= smax
 # requires rate/fps < smax + 0.5, i.e. fps > rate/(smax + 0.5) with
-# smax = AUD_FRAME_MAX // channels:
-#   stereo: 15625 / 1536.5 = 10.1692... -> fps >= 10.17
-#   mono:   23325 / 3072.5 =  7.5915... -> fps >=  7.60
-# (pre-T10: 1280 -> stereo 24.40 / mono 18.22; at the 2560-byte ring:
-# 2544 -> stereo 12.28 / mono 9.17.) 320x256@12.5 stereo (2500
-# B/frame) and native 24 fps stereo (1302 B/frame) stay legal.
-# LEGALITY ONLY changes: any previously legal (fps, channels) lays out
+# smax = AUD_FRAME_MAX // 2:
+#   15625 / 1536.5 = 10.1692... -> fps >= 10.17
+# (pre-T10: 1280 -> 24.40; at the 2560-byte ring: 2544 -> 12.28.)
+# 320x256@12.5 (2500 B/frame) and native 24 fps (1302 B/frame) stay
+# legal.
+# LEGALITY ONLY changes: any previously legal fps lays out
 # byte-identically (same rate/samples/real/padded - the bound is a
 # comparison, not an operand of the layout arithmetic), so the AUDIO
 # PAYLOAD of every existing encode is bit-for-bit unaffected.
@@ -4461,42 +4439,41 @@ AUD_FRAME_MAX = 3072  # matches NXV_AUD_FRAME_MAX - pinned by the
 assert 2 * AUD_FRAME_MAX <= AUD_RING - AUD_GUARD
 
 
-def min_fps_for(channels):
-    """Lowest fps whose round(rate/fps)*channels fits AUD_FRAME_MAX:
+def min_fps_for():
+    """Lowest fps whose round(RATE_STEREO/fps)*2 fits AUD_FRAME_MAX:
     samples <= smax requires rate/fps < smax + 0.5, i.e.
-    fps > rate/(smax + 0.5). Stereo ~10.17, mono ~7.60 (T10 circular
-    feed at the whole-bank ring; the 2560-byte ring gave 12.28 / 9.17
-    and the pre-T10 half-buffers 24.40 / 18.22)."""
-    rate = RATE_STEREO if channels == 2 else RATE_MONO
-    return rate / (AUD_FRAME_MAX // channels + 0.5)
+    fps > rate/(smax + 0.5), with smax = AUD_FRAME_MAX // 2. ~10.17
+    (T10 circular feed at the whole-bank ring; the 2560-byte ring gave
+    12.28 and the pre-T10 half-buffers 24.40). Took a `channels`
+    argument until 2026-08-03 - mono's floor was 7.60."""
+    return RATE_STEREO / (AUD_FRAME_MAX // 2 + 0.5)
 
 
-def audio_layout(fps, channels):
+def audio_layout(fps, channels=2):
+    """Audio layout for one frame: (rate, samples, real, padded).
+
+    channels is retained because the layout arithmetic genuinely uses
+    it (real = samples * channels) and because it is a frozen header
+    field - but 2 is the only value the format carries since mono was
+    withdrawn, and anything else is refused here as it is at open."""
     from fractions import Fraction
-    rate = RATE_STEREO if channels == 2 else RATE_MONO
+    if channels != 2:
+        raise ValueError(f"channels must be 2, got {channels}")
+    rate = RATE_STEREO
     exact = Fraction(rate) / Fraction(fps).limit_denominator(1000)
     samples = int(exact + Fraction(1, 2))
     real = samples * channels
     if real > AUD_FRAME_MAX:
-        mode = "stereo" if channels == 2 else "mono"
-        remedy = "raise --fps"
-        if channels == 2:
-            mono_fits = int(Fraction(RATE_MONO)
-                            / Fraction(fps).limit_denominator(1000)
-                            + Fraction(1, 2)) <= AUD_FRAME_MAX
-            if mono_fits:
-                remedy += " or use --mono (mono fits at this fps)"
         import math as _math
         raise SystemExit(
-            f"error: {real} audio bytes/frame ({mode} at {float(fps):g} "
-            f"fps) exceeds the NXV player's per-frame audio bound "
+            f"error: {real} audio bytes/frame at {float(fps):g} "
+            f"fps exceeds the NXV player's per-frame audio bound "
             f"of {AUD_FRAME_MAX} bytes (the T10 circular feed's "
             f"per-frame section bound - a bigger frame is rejected at "
-            f"open with VID FMT?). Stereo requires "
-            f"fps >= {_math.ceil(min_fps_for(2) * 100) / 100:.2f}, mono "
-            f"fps >= {_math.ceil(min_fps_for(1) * 100) / 100:.2f} "
-            f"(the floors themselves fit - 3b re-review wording fix); "
-            f"{remedy}.")
+            f"open with VID FMT?). The lowest playable rate is "
+            f"fps >= {_math.ceil(min_fps_for() * 100) / 100:.2f} "
+            f"(the floor itself fits - 3b re-review wording fix); "
+            f"raise --fps.")
     padded = ((real + 511) // 512) * 512
     return rate, samples, real, padded
 
@@ -4510,7 +4487,7 @@ SILENCE_U8 = 128
 # ---------------------------------------------------------------------
 
 def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dither,
-                    mono, dither_mode=None, retime=None, prefilter=None):
+                    dither_mode=None, retime=None, prefilter=None):
     """Extracts (orig (N,H,W,3) uint8 RGB frames, po_ceil, chg,
     audio_bytes, channels, rate) from a source file, reusing videnc.py's
     own ffmpeg plumbing (probe/crop/extract) - the canonical location
@@ -4541,9 +4518,11 @@ def _extract_source(src_path, width, height, fps, start, duration, ffmpeg, dithe
     crop = _videnc.compute_center_crop(src_w, src_h, width, height)
     from fractions import Fraction
     fps_frac = fps if isinstance(fps, Fraction) else Fraction(fps).limit_denominator(1000)
-    channels = 1 if mono else 2
+    channels = 2                 # the only channel count v2 carries; a
+                                 # mono SOURCE is upmixed by ffmpeg's
+                                 # -ac 2 in videnc.extract_audio
     # Lay out the audio FIRST: the player-bound guard (real
-    # bytes/frame <= AUD_FRAME_MAX) rejects a doomed fps/channels combo
+    # bytes/frame <= AUD_FRAME_MAX) rejects a doomed fps
     # before the slow ffmpeg extraction, not after.
     rate, samples_per_frame, abytes_real, abytes_pad = audio_layout(fps_frac, channels)
     # SP17 T0: resample in TIME to the target rate when the source is not
@@ -5263,15 +5242,13 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
               f"whole-frame re-fit, see the governance block)")
     ds = direct_supply_check(worst_frame, fps_val, transport_factor=tf)
     if ds["utilization"] > 1.0:
-        # Full menu (both channel counts, at this fps AND at the mono
-        # floor fps) so an expert sees every at-rate option in one
-        # refusal, not just the shape they happened to try.
-        s_at = direct_max_raw_bytes(fps_val, 2, 1.0, transport_factor=tf)
-        s_90 = direct_max_raw_bytes(fps_val, 2, 0.90, transport_factor=tf)
-        m_at = direct_max_raw_bytes(fps_val, 1, 1.0, transport_factor=tf)
-        m_90 = direct_max_raw_bytes(fps_val, 1, 0.90, transport_factor=tf)
-        mono_floor = min_fps_for(1)
-        # menu-only hardening: mono_floor sits within a Fraction-
+        # Full menu (at this fps AND at the audio floor fps) so an
+        # expert sees every at-rate option in one refusal, not just
+        # the shape they happened to try.
+        s_at = direct_max_raw_bytes(fps_val, 1.0, transport_factor=tf)
+        s_90 = direct_max_raw_bytes(fps_val, 0.90, transport_factor=tf)
+        fps_floor = min_fps_for()
+        # menu-only hardening: fps_floor sits within a Fraction-
         # rounding tick of audio_layout's AUD_FRAME_MAX boundary by
         # construction (it IS the floor where real bytes/frame lands
         # at exactly AUD_FRAME_MAX), so feeding the exact float back through
@@ -5279,12 +5256,12 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
         # SystemExit depending on which way the rounding falls - a
         # refusal-message computation must never itself raise. Round
         # the floor UP to the nearest 0.01 fps first (the same ceiling
-        # idiom audio_layout's own "fits" floors use, and the precision
+        # idiom audio_layout's own "fits" floor uses, and the precision
         # already shown to the user below) to land safely inside the
         # AUD_FRAME_MAX bucket instead of on its edge.
-        mono_floor_safe = math.ceil(mono_floor * 100) / 100
-        m_floor_at = direct_max_raw_bytes(mono_floor_safe, 1, 1.0,
-                                          transport_factor=tf)
+        fps_floor_safe = math.ceil(fps_floor * 100) / 100
+        floor_at = direct_max_raw_bytes(fps_floor_safe, 1.0,
+                                        transport_factor=tf)
         eff_tf = DIRECT_TRANSPORT_FACTOR if tf is None else float(tf)
         raise SystemExit(
             f"error: this direct-serve encode cannot play at rate - "
@@ -5299,14 +5276,12 @@ def _encode_direct(ex, width, height, fps_val, out_path, report_path=None,
             f"to absorb bursts and NO slow-playback opt-out (TIGHTEN "
             f"policy, Card #5 2026-07-26 owner ruling: this gate is "
             f"unconditional above utilization 1.00). The envelope at "
-            f"{fps_val:g}fps, {width}-wide: stereo tops out at "
+            f"{fps_val:g}fps, {width}-wide: it tops out at "
             f"{width}x{s_at // width} at-rate ({width}x{s_90 // width} "
-            f"with the 0.90 burst margin every other gate carries); "
-            f"mono tops out at {width}x{m_at // width} at-rate "
-            f"({width}x{m_90 // width} at 0.90). Dropping to the "
-            f"{mono_floor:.2f}fps mono floor opens the envelope to "
-            f"{width}x{m_floor_at // width}. Use a smaller shape, lower "
-            f"--fps, switch to --mono, or drop --direct and let the "
+            f"with the 0.90 burst margin every other gate carries). "
+            f"Dropping to the {fps_floor:.2f}fps audio floor opens the "
+            f"envelope to {width}x{floor_at // width}. Use a smaller "
+            f"shape, lower --fps, or drop --direct and let the "
             f"delta encoder compress it.")
     elif ds["utilization"] > STREAM_WARN_UTIL:
         print(f"  warning: direct-serve wire utilization "
@@ -5687,7 +5662,7 @@ def tile_slack_line(knob, stats, target_util=None):
 
 def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
            report_path=None, start=None, duration=None, ffmpeg=None,
-           dither=None, dither_mode=None, mono=False, merge_gaps=True, hysteresis=True,
+           dither=None, dither_mode=None, merge_gaps=True, hysteresis=True,
            staleness_refresh=True, cap_bytes_frac=0.65, stream_budget=None,
            budget_target=None, direct=False, retime=None, tile_slack=None,
            direct_transport_factor=None, kf_cadence=None,
@@ -5794,7 +5769,7 @@ def encode(src_path, out_path, *, shape=None, fps=None, quality_profile="max",
     slack_rel = tile_slack_rel(slack_knob, budget_target)
 
     ex = _extract_source(src_path, width, height, fps_val, start, duration,
-                          ffmpeg, dither_amp, mono, dither_mode=dmode,
+                          ffmpeg, dither_amp, dither_mode=dmode,
                           retime=retime, prefilter=prefilter)
     if direct:
         # SP15 3c: the all-literal direct-serve preset - no delta

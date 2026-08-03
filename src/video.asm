@@ -756,10 +756,7 @@ vid_run_body:
 .next:
     jp z, vid_next               ; SMC: vid_ds_next when direct (3c)
     call vid_dst_norm
-.chk:
-    call vid_chunk_dst           ; BC = chunk (rooms + the DMA cap);
-                                 ; SMC .chk+1 -> vid_chunk_dst_m on a
-                                 ; MONO session (128 B, see nextdaad.inc)
+    call vid_chunk_dst           ; BC = chunk (rooms + the DMA cap)
     push hl
     ld hl, (vidRemain)
     or a
@@ -769,9 +766,7 @@ vid_run_body:
     ; kernel select (derived crossover, nextdaad.inc): >= 71 -> DMA fill
     ld a, b
     or a
-    jr nz, .dma                  ; chunk == the 256 stereo cap (a mono
-                                 ; session caps at 128, so B is always
-                                 ; 0 there and the length test decides)
+    jr nz, .dma                  ; chunk == the 256 cap
     ld a, c
     cp NXV2_RUN_DMA_MIN
     jr nc, .dma
@@ -793,10 +788,7 @@ vid_copy_body:
     cp $E0
     call nc, vid_src_next
     call vid_dst_norm
-.chk:
-    call vid_chunk_all           ; BC = chunk (src+dest rooms + cap);
-                                 ; SMC .chk+1 -> vid_chunk_all_m on a
-                                 ; MONO session (128 B, see nextdaad.inc)
+    call vid_chunk_all           ; BC = chunk (src+dest rooms + cap)
     push hl
     ld hl, (vidRemain)
     or a
@@ -805,9 +797,7 @@ vid_copy_body:
     pop hl
     ld a, b
     or a
-    jr nz, .dma                  ; chunk == the 256 stereo cap (a mono
-                                 ; session caps at 128, so B is always
-                                 ; 0 there and the length test decides)
+    jr nz, .dma                  ; chunk == the 256 cap
     ld a, c
     cp NXV2_COPY_DMA_MIN
     jr nc, .dma
@@ -859,9 +849,9 @@ vid_dst_norm:
 ; audio CONSUMPTION, so a tick the 256-byte DMA DI bracket swallowed is
 ; simply never counted - the player waits for the same number of REAL
 ; firings, takes longer in wall-clock, and TOT lands EXACTLY nominal.
-; Row 059 (mono) read TOT = 250 x 933 to the digit while running 4.5%
-; slow on silicon. Extra firings (ring underrun) DO show; missing ones
-; do not.
+; The withdrawn mono format proved it: row 059 read TOT = 250 x 933 to
+; the digit while running 4.5% slow on silicon. Extra firings (ring
+; underrun) DO show; missing ones do not.
 ;
 ; CLOCK SOURCE: the read-only raster position, NR_RASTER_MSB/LSB. It is
 ; a free-running hardware counter driven by the video timing generator -
@@ -1037,29 +1027,6 @@ vid_chunk_dst:
     ret z                        ; == 256 exactly
 .clip:
     ld bc, NXV2_DMA_CHUNK
-    ret
-
-; The MONO pair. Same sizers, 128 B cap - the mono audio ISR fires per
-; SAMPLE (23325 Hz, period 1152-1408 T) and a 256 B chunk's DI bracket
-; is ~1802 T, so it eats a CTC tick per chunk and the whole clip runs
-; slow and flat (nextdaad.inc NXV2_DMA_CHUNK_MONO carries the full
-; derivation and the silicon evidence). Reached ONLY through the
-; per-session SMC in vid_stage_common, so the stereo pair above - the
-; path 462 of 463 staged files take - is byte-for-byte what shipped
-; and pays not one T for this.
-vid_chunk_all_m:
-    call vid_chunk_src
-    ; falls into vid_chunk_dst_m
-vid_chunk_dst_m:
-    call vid_chunk_dst_nocap
-    ld a, b
-    or a
-    jr nz, .clip                 ; >= 256: over the cap either way
-    ld a, c
-    cp NXV2_DMA_CHUNK_MONO+1
-    ret c                        ; <= 128: keep BC
-.clip:
-    ld bc, NXV2_DMA_CHUNK_MONO
     ret
 
 ; SKIP (and the inner step for the others): dest room only - column
@@ -1851,11 +1818,10 @@ vid_aud_stage:
 ; safe. The gap between two polls spans AUDIO + DECODE + FLIP + the
 ; loop tail - no vid_pace_poll runs inside the decode - so it is a
 ; whole frame period at best. The reader laps the ring in
-; NXV_AUD_RING / 31250 s stereo (23325 mono). At the old 2560-byte
-; ring that was 81.9 ms against an 80 ms period at 12.5 fps: a 2.4%
-; margin, on exactly the rows that were measured running 2.9% OVER
-; rate - i.e. the alias was reachable. At 8192 it is 262 ms stereo /
-; 351 ms mono, 3.3x and 4.4x the period. Corrupts AF, DE, HL.
+; NXV_AUD_RING / 31250 s. At the old 2560-byte ring that was 81.9 ms
+; against an 80 ms period at 12.5 fps: a 2.4% margin, on exactly the
+; rows that were measured running 2.9% OVER rate - i.e. the alias was
+; reachable. At 8192 it is 262 ms, 3.3x the period. Corrupts AF, DE, HL.
 ; Preserves BC, IX.
 vid_pace_poll:
  IFDEF DEBUG
@@ -2266,8 +2232,8 @@ vid_run:
     ; session to session. playvid parks a `halt` immediately before its
     ; time-constant write (video_256x192_m_palette.asm:210-213) to
     ; phase-lock the clock to the field. The v2 CTC rates are playvid's
-    ; own exact-divide rates (vidCtcTcNxvStereo/Mono track the field
-    ; rate per video mode), so only the INITIAL phase was wrong - this
+    ; own exact-divide rate (vidCtcTcNxvStereo tracks the field rate
+    ; per video mode), so only the INITIAL phase was wrong - this
     ; wait makes the tear position deterministic.
     ; MECHANISM: a frameCounter change poll, NOT halt, chosen with the
     ; code read the charter asked for. Interrupts ARE enabled here (no
@@ -2509,9 +2475,9 @@ vid_run:
     out (c), a
     out (c), a
     ld a, DAC_SILENCE
-    out (DAC_PORT), a
-    out (VID_DAC_LEFT), a        ; park all three DAC ports either
-    out (VID_DAC_RIGHT), a       ; ISR could have driven
+    out (DAC_PORT), a            ; park all three DAC ports: the video
+    out (VID_DAC_LEFT), a        ; ISR drives the stereo pair, and the
+    out (VID_DAC_RIGHT), a       ; aborted sample engine held DAC_PORT
     call vid_win_close_h         ; the CMD18 window is HOT property
                                  ; when a session held one (streaming/
                                  ; direct): CMD12 + deselect + MF
@@ -2544,7 +2510,7 @@ vid_key_any:
     ret
 
 ; ---------------------------------------------------------------------
-; Audio CTC ISRs - the v1 per-tick shape (IX-exclusivity / banking-
+; Audio CTC ISR - the v1 per-tick shape (IX-exclusivity / banking-
 ; invariant design unchanged) on the T10 CIRCULAR FEED: IX free-runs
 ; around the whole 8192-byte ring and the ONLY boundary work left is
 ; the wrap back to the ring base - an assembly-constant compare (the
@@ -2559,28 +2525,26 @@ vid_key_any:
 ; THE PLAYER, so they were re-verified by hand when the ring grew from
 ; 2560 to 8192 (2026-08-02). The INSTRUCTION SHAPE is unchanged and so
 ; is its cost - the ring size moves only the two 8-bit IMMEDIATES:
-;   mono   ring end-1 $69FF -> $7FFF: cp $FF unchanged / cp $69 -> $7F
-;   stereo ring end-2 $69FE -> $7FFE: cp $FE unchanged / cp $69 -> $7F
-; Both bases sit at $..00 and both sizes are whole pages, so the ring
-; end keeps its $FF/$FE low byte: the high compare is still reached on
-; exactly 1 tick in 256 (mono) / 1 in 128 (stereo, ixl even), no
-; compare widened to 16 bits, and nothing became a `ld hl`/`sbc` pair.
+;   ring end-2 $69FE -> $7FFE: cp $FE unchanged / cp $69 -> $7F
+; The base sits at $..00 and the size is a whole number of pages, so
+; the ring end keeps its $FE low byte: the high compare is still
+; reached on exactly 1 tick in 128 (ixl even), no compare widened to
+; 16 bits, and nothing became a `ld hl`/`sbc` pair.
 ; Hand count at 28 MHz (nominal +1 per opcode fetch and per memory
 ; read, doc 01), IM2 acknowledge 22 T + the JP stub 13 T included:
 ;
-;   path             mono before/after     stereo before/after
-;   fast (compare+advance)   45 T / 45 T        57 T / 57 T
-;   low hit, high miss       73 T / 73 T        85 T / 85 T
-;   wrap                     88 T / 88 T        88 T / 88 T
-;   WHOLE ISR, typical      164 T / 164 T      212 T / 212 T
-;   WHOLE ISR, worst        207 T / 207 T      243 T / 243 T
+;   path                     before/after
+;   fast (compare+advance)   57 T / 57 T
+;   low hit, high miss       85 T / 85 T
+;   wrap                     88 T / 88 T
+;   WHOLE ISR, typical      212 T / 212 T
+;   WHOLE ISR, worst        243 T / 243 T
 ;
 ; Not one T-state moved; the only change is that the 88 T wrap arrives
 ; once per 8192 ticks instead of once per 2560, so the MEAN ISR is
 ; 0.01 T cheaper. Against the TIGHTEST period the format can select -
-; mono HDMI 1152 T (REDERIVATION.md sec 3) - the worst mono tick is
-; 18.0% of the period, margin 82%; stereo HDMI 1728 T against 243 T is
-; margin 86%.
+; stereo HDMI 1728 T (REDERIVATION.md sec 3) - the worst tick is 14.1%
+; of the period, margin 86%.
 ; WHY 8192 AND NOT 7680: 7680 ($1E00) is equally page-aligned and
 ; would have cost exactly the same compares, so the cheap-compare test
 ; does not separate them. 8192 wins on the other two: it is the WHOLE
@@ -2600,39 +2564,14 @@ vid_key_any:
 ; longer exists. Feed-late behaviour: the reader plays STALE ring
 ; data (previous lap) instead of holding the last sample - bounded,
 ; self-recovering, documented at the pump banner. Installed by
-; vid_run_l2setup_body patching IM2_CTC_STUB (mono or stereo per the
-; header's channel count); MMU7 = VID_PAGE for the whole armed
-; window (doc 11 / rubric 3).
+; vid_run_l2setup_body patching IM2_CTC_STUB; MMU7 = VID_PAGE for the
+; whole armed window (doc 11 / rubric 3).
+;
+; ONE ISR, because the format carries ONE channel count. The mono
+; twin (one DAC write per SAMPLE at 23325 Hz) was withdrawn with mono
+; itself on 2026-08-03 - see nextdaad.inc NXV2_OFF_ACHAN. The routine
+; below is UNCHANGED by that removal, byte for byte.
 ; ---------------------------------------------------------------------
-video_ctc_isr:
-    push af
- IFDEF DEBUG
-    ld a, (vidTlTicks)           ; timeline clock - A only, no HL/IX
-    inc a
-    ld (vidTlTicks), a
-    jr nz, .tlnc
-    ld a, (vidTlTicks+1)
-    inc a
-    ld (vidTlTicks+1), a
-.tlnc:
- ENDIF
-    ld a, (ix+0)
-    out (DAC_PORT), a
-    ld a, ixl
-    cp low (vidAudBuf + NXV_AUD_RING - 1)
-    jr nz, .adv
-    ld a, ixh
-    cp high (vidAudBuf + NXV_AUD_RING - 1)
-    jr nz, .adv
-    ld ix, vidAudBuf             ; ring wrap - the only boundary work
-    jr .ret
-.adv:
-    inc ix
-.ret:
-    pop af
-    ei
-    reti
-
 video_ctc_isr_stereo:
     push af
  IFDEF DEBUG
@@ -2655,7 +2594,7 @@ video_ctc_isr_stereo:
     ld a, ixh                    ; pairs never straddle the wrap)
     cp high (vidAudBuf + NXV_AUD_RING - 2)
     jr nz, .adv
-    ld ix, vidAudBuf             ; ring wrap - see the mono ISR
+    ld ix, vidAudBuf             ; ring wrap - the only boundary work
     jr .ret
 .adv:
     inc ix
@@ -3535,7 +3474,6 @@ vidDstPages:     db 0            ; dest surface span: 10 (mode-1) / 6
 vidClipY1:       db 0
 vidClipY2:       db 0
 vidYofs:         db 0
-vidAChan:        db 0            ; 1 mono / 2 stereo
 vidABytes:       dw 0            ; REAL audio bytes/frame
 vidABytesPad:    dw 0            ; = (real + 511) & ~511 (wire block)
 vidFrames:       dw 0            ; container frame count
@@ -4814,18 +4752,18 @@ nxv2_open_body:
     cp NXV_NATIVE_H_MODE0+1
     jp nc, .badu                 ; > 192
 .h_ok:
-    ; channels + rate must pair (the supported set)
+    ; channels + rate must pair. STEREO IS THE ONLY SUPPORTED PAIRING
+    ; (mono withdrawn 2026-08-03) and this test is what enforces it:
+    ; a channels = 1 header falls through cp 2 to .badu -> B = 1 ->
+    ; "VID FMT?" at OPEN, before the CTC is programmed, before the ISR
+    ; vector is patched and before a byte of payload is decoded. It
+    ; MUST stay: without it a mono file would be accepted and played
+    ; through the stereo ISR, which would interleave the single
+    ; channel across both DACs at the wrong rate.
     ld a, (DATA_WINDOW + NXV2_OFF_ACHAN)
-    ld (vidP_AChan), a
-    cp 1
-    jr z, .mono
     cp 2
     jp nz, .badu
     ld de, NXV_RATE_STEREO
-    jr .ratechk
-.mono:
-    ld de, NXV_RATE_MONO
-.ratechk:
     ld hl, (DATA_WINDOW + NXV2_OFF_ARATE)
     or a
     sbc hl, de
@@ -4890,9 +4828,9 @@ nxv2_open_body:
     ld (vidP_Frames), hl
     ; audio bytes/frame: nonzero, <= NXV_AUD_FRAME_MAX (SP17 T10
     ; circular feed: 3072 B, the largest section the streaming/direct
-    ; gates' 8-bit block arithmetic admits - stereo floor 10.17 fps,
-    ; mono 7.60; two of these still fit the 8192 B ring, which is what
-    ; keeps the feed one-pass at every legal fps); pad = round-up-512
+    ; gates' 8-bit block arithmetic admits - fps floor 10.17; two of
+    ; these still fit the 8192 B ring, which is what keeps the feed
+    ; one-pass at every legal fps); pad = round-up-512
     ld hl, (DATA_WINDOW + NXV2_OFF_ABYTES)
     ld a, h
     or l
@@ -5615,24 +5553,6 @@ vid_stage_common:
     ld (vid_stub + VOP_RUN8 + 1 + DATA_WINDOW - OVL_ORG), hl
     ld hl, vf_op_copy8
     ld (vid_stub + VOP_COPY8 + 1 + DATA_WINDOW - OVL_ORG), hl
-    ; --- DMA burst cap (SP17 mono DI fix): the two capped chunk
-    ; sizers are SMC-vectored per session from the header's channel
-    ; count - stereo keeps the 256 B pair, mono takes the 128 B pair.
-    ; vid_run_body is shared with direct-serve (a RUN >= 71 B arms the
-    ; DMA there too), so this patch covers a direct mono session as
-    ; well. Derivation + silicon evidence: nextdaad.inc
-    ; NXV2_DMA_CHUNK_MONO. ---
-    ld hl, vid_chunk_all
-    ld de, vid_chunk_dst
-    ld a, (vidP_AChan)
-    cp 2
-    jr z, .capset                ; 2 channels = stereo = 256 B
-    ld hl, vid_chunk_all_m
-    ld de, vid_chunk_dst_m
-.capset:
-    ld (vid_copy_body.chk + 1 + DATA_WINDOW - OVL_ORG), hl
-    ex de, hl
-    ld (vid_run_body.chk + 1 + DATA_WINDOW - OVL_ORG), hl
 .vec:
     ; --- per-session decode vectoring (3c direct-serve): the fetch
     ; vector, the shared bodies' exit jumps, slow-op's COPY body
@@ -5728,7 +5648,6 @@ vidP_DstPages: db 0
 vidP_ClipY1:   db 0
 vidP_ClipY2:   db 0
 vidP_Yofs:     db 0
-vidP_AChan:    db 0
 vidP_ABytes:   dw 0
 vidP_ABytesPad: dw 0
 vidP_Frames:   dw 0
@@ -6094,29 +6013,21 @@ vid_run_l2setup_body:
     otir
     ei
     ; CTC time constant: table-driven from the live video-timing mode
-    ; and the header's channel count (carried v1 tables/derivation)
+    ; (carried v1 table/derivation). ONE table since mono went - the
+    ; open path refuses any channel count but 2, so the rate is always
+    ; NXV_RATE_STEREO.
     ld e, NR_VIDEO_TIMING
     call nr_read
     and 7
     ld c, a
     ld b, 0
-    ld a, (vidP_AChan)
-    ld hl, vidCtcTcNxvMono
-    cp 2
-    jr nz, .gottctab
     ld hl, vidCtcTcNxvStereo
-.gottctab:
     add hl, bc
     ld a, (hl)
     ld (vidCtcTc+DATA_WINDOW-OVL_ORG), a
-    ; IM2_CTC_STUB (ISR select) - RESIDENT memory, single atomic
+    ; IM2_CTC_STUB (ISR vector) - RESIDENT memory, single atomic
     ; LD (nn),HL; strictly before the CTC arm (hot, after this body)
-    ld a, (vidP_AChan)
-    ld hl, video_ctc_isr
-    cp 2
-    jr nz, .isrpicked
     ld hl, video_ctc_isr_stereo
-.isrpicked:
     ld (IM2_CTC_STUB+1), hl
     ; T10: no per-file ISR end markers any more - both ISRs' ring-end
     ; wrap compares are assembly constants (the ring geometry never
@@ -6204,13 +6115,12 @@ vidDmaInit:
     db %10000010                 ; WR5: stop on end of block (one-shot)
 vidDmaInit_len equ $ - vidDmaInit
 
-; Per-video-mode CTC time constants for the two supported audio rates
-; (carried verbatim from v1 - same rates, same derivation; see git
-; history for the full per-mode error tables).
+; Per-video-mode CTC time constants for the ONE supported audio rate
+; (carried verbatim from v1 - same rate, same derivation; see git
+; history for the full per-mode error tables and for the mono table
+; that stood beside this one until 2026-08-03).
 vidCtcTcNxvStereo:
     db 112, 114, 117, 120, 124, 128, 132, 108
-vidCtcTcNxvMono:
-    db 75, 76, 78, 80, 83, 85, 88, 72
 
 ; ---------------------------------------------------------------------
 ; vid_run_restore_body - the teardown (reached from vid_run's

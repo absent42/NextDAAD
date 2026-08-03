@@ -314,9 +314,9 @@ width (256 or 320) by any height from 1 line to the mode's full 192 or
 | `classic-wide` | 256x144 | 256-wide, bordered + letterboxed | 16:9 | Cheapest widescreen of all. |
 
 All shapes default to 25 fps and carry 256-colour pictures with
-adaptive palettes and full-rate audio - stereo at 15625 Hz by default,
-mono at 23325 Hz with `--mono`. No decimation: what the encoder writes
-is what plays. Letterbox bars cost zero file bytes (the player renders
+adaptive palettes and full-rate stereo audio at 15625 Hz. A mono
+source needs nothing from you - it is converted to stereo
+automatically. No decimation: what the encoder writes is what plays. Letterbox bars cost zero file bytes (the player renders
 them black). Sources are centre-cropped to the shape's exact displayed
 aspect, never distorted.
 
@@ -370,11 +370,10 @@ the best choice for slow pans and zooms, and the wrong one for water,
 smoke, crowds or anything else that moves non-rigidly, where it tears.
 Blending is the safe default for everything.
 
-**fps floors.** Frame rate is free (default 25) down to a hard floor
-set by audio: one frame may carry at most 3072 audio bytes. Stereo at
-15625 Hz needs 10.17 fps or more; mono at 23325 Hz needs 7.60 fps or
-more. The encoder refuses an encode below the floor and names the
-remedy (raise fps, or switch to `--mono` if mono fits).
+**fps floor.** Frame rate is free (default 25) down to a hard floor
+set by audio: one frame may carry at most 3072 audio bytes, so 15625 Hz
+stereo needs 10.17 fps or more. The encoder refuses an encode below the
+floor and names the remedy (raise fps).
 
 **Encode time is quality.** The encoder is deliberately slow - it
 spends its time squeezing the best picture into the fixed playback
@@ -390,7 +389,7 @@ The build encodes every `VIDEO\NNN.mp4` with settings from
 |---------|---------|
 | `VIDASPECT` | Shape for every encode: a preset name, `WIDTHxHEIGHT`, or a bare aspect number (e.g. `2.35` - free height at 320 wide). Blank = `full`. |
 | `VIDFPS` | Frames per second. Blank = 25. |
-| `VIDOPTS` | Extra encoder options for every encode (e.g. `--mono --dither 0.3`, or `--retime drop` to opt out of automatic retiming). |
+| `VIDOPTS` | Extra encoder options for every encode (e.g. `--dither 0.3`, or `--retime drop` to opt out of automatic retiming). |
 | `VIDOPTS_NNN` | Extra options for video `NNN` only (3-digit number), appended after `VIDOPTS`. For most repeated options videnc takes the last occurrence, so `VIDOPTS_NNN` wins over `VIDOPTS` - except `--aspect`, which videnc always takes over `--shape` regardless of order; a `VIDOPTS_NNN` that sets its own `--shape`/`--width`/`--aspect` still wins for shape (the encode pass suppresses `VIDASPECT` for that video rather than relying on order). |
 | `VIDPROFILE` | Deprecated v1 name, honored one release: `n0`-`n4` map to the nearest v2 shape (and, when `VIDFPS` is blank, that profile's own baked fps, floored to the audio-legal minimum) when `VIDASPECT` is blank. |
 
@@ -431,7 +430,7 @@ or `WIDTHxHEIGHT`; `--aspect` derives a free height instead;
 `--fps` sets the frame rate; `--retime` picks how a source whose own
 rate differs from it is resampled in time (`blend`, the default;
 `drop`; `mci`); `--start`/`--duration` cut a clip;
-`--mono` halves the audio stream; `--dither` sets the blue-noise
+`--dither` sets the blue-noise
 dither amplitude, 0.0-1.0 (default 0.5: 0 = no dither, hard banding
 on gradients; 1 = full-step dither, deepest gradients but the most
 visible pattern noise - set per title via `VIDOPTS`/`VIDOPTS_NNN`);
@@ -505,9 +504,9 @@ stereo it tops out around 256x153 (full-screen 320x256 fits at 12.5
 fps), and the gate refuses anything the
 SD wire cannot sustain - there is deliberately no slow-playback
 opt-out (every shipped mode plays at true rate). The refusal message
-prints the live envelope menu for your width: the at-rate stereo and
-mono heights, and how far the mono fps floor opens it (full-screen
-territory). For almost all content the normal delta encoder
+prints the live envelope menu for your width: the at-rate height, the
+same height with a 0.90 margin, and how far dropping to the audio floor
+fps opens it (full-screen territory). For almost all content the normal delta encoder
 is the better tool; `--direct` exists for encodes that must be
 pixel-exact.
 
@@ -574,10 +573,10 @@ once) and REEL (loops 002.VID until a key is pressed).
 - "this encode cannot stream" / "cannot play at rate" - the video encoder's
   supply gate refused an infeasible encode. The automatic budget search runs
   first, so reaching this means no budget makes the clip streamable: use a
-  smaller shape, lower fps, `--mono`, or a shorter clip. See "Video
+  smaller shape, lower fps, or a shorter clip. See "Video
   cutscenes", "Streaming, resident and direct delivery".
-- "audio bytes/frame ... exceeds" - fps below the audio floor (stereo 10.17,
-  mono 7.60); raise `VIDFPS` or add `--mono` to `VIDOPTS`.
+- "audio bytes/frame ... exceeds" - fps below the audio floor (10.17); raise
+  `VIDFPS`.
 - Effects bank warnings are non-fatal - the game still builds without
   `GAME.SFB`.
 
