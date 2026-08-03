@@ -357,23 +357,36 @@ l2_flip_swap:
 ; transferred, so there is no status poll anywhere. NEVER: burst mode,
 ; auto-restart, a live counter read, or a refeed while enabled.
 ;
-; Chunks are capped at DMA_CHUNK_MAX (256) bytes. MARGIN CORRECTION
-; (SP17, 2026-07-28): this comment used to claim "roughly 1.1k T-states
-; (~40us at 28MHz) per chunk ... comfortably inside" one CTC period.
-; That was WRONG in both figures and the word "comfortably" was a
-; falsehood a reviewer would have trusted. SP14c T4 re-derived the
-; 256-byte bracket at 1379 T = ~49.3us (.superpowers/sdd/sp14c-t4-
-; settlement-report.md:54-69), against a 50us CTC period at
-; AUD_RATE_MAX 20000: the real margin is ~1.4%, not ~38%. The cap is
-; still the right one - the settlement kept 256 because a 512-byte
-; burst measured a 35% CTC tick shortfall against 1.2% at 256 - but it
-; sits AT the edge of the SP10 rule, not comfortably inside it, and
-; anything that lengthens this bracket (a bigger cap, extra work
-; inside the DI) crosses it. The SP17 bench's F256/K256 rows measure
-; the bracket on silicon (card section 42, row group 4). Between
-; chunks interrupts are live - ctc_isr catches up (the ring absorbs
-; the jitter) and a pending frame tick runs with the DMA idle, so the
-; hazard window closes again every chunk.
+; Chunks are capped at DMA_CHUNK_MAX (256) bytes. MARGIN CORRECTION,
+; TWICE. The comment first claimed "roughly 1.1k T-states (~40us at
+; 28MHz) per chunk ... comfortably inside" one CTC period. SP14c T4
+; (2026-07-28) replaced that with 1379 T = ~49.3us against a 50us
+; period and a ~1.4% margin. BOTH WERE WRONG, and the second by 31%:
+; the SP17 bench rows landed and the bracket was re-derived from the
+; measured tick-shortfall table, four points on one free parameter
+; (.superpowers/sdd/sp17-corpus/REDERIVATION.md sections 2-3):
+;
+;     B(chunk) = A + 5.082 * chunk,  A = 500 +/- 20 T
+;     B(256)   = 1802 T = 64.4 us
+;
+; 1379 T understated it because it priced the transfer at the RTL's
+; 4 T/B rather than the 5.082 T/B the 28 MHz universal wait actually
+; produces, and used a 16-byte arm at nominal T-states.
+;
+; THIS ROUTINE IS THE GRAPHICS BLIT, so its deadline is the SAMPLE
+; engine's, not the video player's: ctc_isr can be armed at up to
+; AUD_RATE_MAX 20000 Hz, period 1400 T. B(256) = 1802 T EXCEEDS THAT
+; BY 29%. There is no margin here; there is an overrun, and a
+; sample-playback blit can lose one CTC tick per chunk. That is a
+; pre-existing exposure, disclosed here rather than papered over -
+; and it is NOT the video player's exposure, which runs its own ISR
+; at 15625 Hz (period 1728-2112 T; see nextdaad.inc NXV2_DMA_CHUNK).
+; The cap is still the right one: 512 B measured a 35% tick shortfall
+; against 1.2% at 256, and anything that lengthens this bracket (a
+; bigger cap, extra work inside the DI) makes it strictly worse.
+; Between chunks interrupts are live - ctc_isr catches up (the ring
+; absorbs the jitter) and a pending frame tick runs with the DMA
+; idle, so the hazard window closes again every chunk.
 ;
 ; Splits BC into <=256-byte chunks and loops; returns once the whole
 ; length has transferred. Corrupts AF, BC, DE, HL - matches LDIR's own

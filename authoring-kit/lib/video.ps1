@@ -277,7 +277,28 @@ if (-not $sources) { exit 0 }
 # contention was charging is handed back to the picture - and emit
 # different bytes. AUDIO IS UNCHANGED in every case: same rates, same
 # samples/frame, same real and padded sizes, bit-identical payload.
-$encoderGeneration = 'pal9q'
+# BUMP pal9q -> pal9r (SP17 provenance re-derivation on the fresh
+# silicon, 2026-08-03). Two encoder-visible corrections, both of
+# quantity rather than of measurement:
+# - merge_kstar's denominator was fetch_long (20.2 T/B), the cost of
+#   EXECUTING a bridged byte. The encoder is spending a WIRE byte to
+#   buy decode time, so the right price is its OPPORTUNITY COST at the
+#   supply gate - the exchange rate lambda, measured at 19.9 T/B. The
+#   two are unrelated quantities that happened to agree to 1.5%, so
+#   the threshold barely moves (23.66 -> 24.02) but the coupling to an
+#   LDI kernel rate is gone. Interior skips of EXACTLY 24 bytes now
+#   bridge where they did not: that is the whole behavioural change,
+#   and 24 is the top of both measured clips' skip histograms, so
+#   gapped/detailed content moves and flat content may not.
+# - a 16-bit-operand COPY no longer pays copy_dma_path_t. It has no
+#   fast handler to bail out of; it pays the measured slow-parser
+#   entry (t_skip16 - t_skip = 69.1 T) instead. Model error on the
+#   K256 silicon row falls from +2.91% to +0.80%, i.e. the model got
+#   LESS conservative on the op class that carries every keyframe
+#   bulk repaint, so budget-bound frames may admit slightly more.
+# Mono removal (same sitting) changes NO output - verified
+# byte-identical on fixture 001 - so it is not what this bump is for.
+$encoderGeneration = 'pal9r'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

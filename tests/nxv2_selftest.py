@@ -1217,20 +1217,37 @@ def t10_silicon_coeffs():
     expect(gap_plan[0][1] < flat_plan[0][1],
            f"the gapped plan's first chunk must be smaller: "
            f"{gap_plan[0][1]} !< {flat_plan[0][1]}")
-    # K* derives from the coefficients (self-retunes). At the W4 split
-    # a bridge saves a SKIP8 + a COPY dispatch: (141.6+336.3)/20.2 =
-    # 23.7 B (was 25.6 at the single 387 key).
+    # K* derives from the coefficients (self-retunes). A bridge saves a
+    # SKIP8 + a COPY dispatch, and the bytes it costs are priced at the
+    # SUPPLY EXCHANGE RATE - the opportunity cost of a wire byte -
+    # NOT at any kernel's execution rate: (141.6+336.3)/19.9 = 24.0 B.
+    # (It was 23.7 while the denominator was fetch_long 20.2; the two
+    # quantities are unrelated and agreed only by coincidence - see
+    # merge_kstar, re-derived 2026-08-03.)
     ks = enc.merge_kstar()
-    expect(23.2 < ks < 24.2, f"silicon K* should be ~23.7 B, got {ks:.1f}")
+    expect(23.5 < ks < 24.5, f"silicon K* should be ~24.0 B, got {ks:.1f}")
+    expect(abs(ks - (141.6 + 336.3) / enc.SUPPLY_EXCHANGE_T_PER_BYTE) < 1e-9,
+           "K* is the dispatch saving over the supply exchange rate")
     saved = dict(enc.TMODEL_COEFFS)
     try:
         enc.TMODEL_COEFFS["t_op_copy"] = 150.0
         ks2 = enc.merge_kstar()
         expect(ks2 < ks, f"K* must fall when dispatch falls: {ks2:.1f} !< {ks:.1f}")
-        expect(abs(ks2 - (141.6 + 150) / 20.2) < 0.1, "K* recomputes from live coeffs")
+        expect(abs(ks2 - (141.6 + 150) / enc.SUPPLY_EXCHANGE_T_PER_BYTE) < 0.1,
+               "K* recomputes from live coeffs")
+        # DECOUPLED FROM THE LDI KERNEL (the point of the re-derivation):
+        # moving the copy body rate must NOT move a merge threshold.
+        enc.TMODEL_COEFFS["fetch_long"] = 30.0
+        expect(abs(enc.merge_kstar() - ks2) < 1e-9,
+               "K* must not move when fetch_long moves - the coupling that "
+               "made 23.66 right for the wrong reason is gone")
     finally:
         enc.TMODEL_COEFFS.clear()
         enc.TMODEL_COEFFS.update(saved)
+    # shape-awareness comes free with the lam argument: a gapped shape
+    # exchanges at 15.3-16.5 T/B, which RAISES K* there
+    expect(enc.merge_kstar(16.0) > ks,
+           "a gapped-shape lam must raise K*, not lower it")
 
 
 @case(10, "copy/fill T model - DMA terms gated on the PLAYER's derived kernel thresholds")
@@ -1262,13 +1279,30 @@ def t10_copy_dma_model():
         expect(L * rate <= setup + path + L * per_b + 1e-9,
                f"below the threshold LDI must be the CHEAPER path, fails at {L} B")
     # RULE 2 - at/above the threshold: the DMA price, which the player is
-    # committed to (no min() floor - see _copy_t), path term included.
+    # committed to (no min() floor - see _copy_t), op-class entry cost
+    # included. The ENTRY COST is the fast-handler -> slow-body path
+    # difference for an 8-bit-operand op, and the measured slow-parser
+    # entry (t_skip16 - t_skip) for a 16-bit-operand one, which has no
+    # fast handler to bail out of (_copy_t, REDERIVATION.md 6.4).
+    entry16 = tc["t_skip16"] - tc["t_skip"]
+    expect(abs(entry16 - 69.1) < 1e-6, "the slow-parser entry is 69.1 T")
+    def entry(L):
+        return path if L <= 255 else entry16
     for L in (81, 128, 200, 255, 256):
-        dma = path + setup + L * per_b
+        dma = entry(L) + setup + L * per_b
         expect(abs(enc._copy_t(L, rate) - dma) < 1e-6,
                f"copy body of {L} B must be the DMA-path price, got {enc._copy_t(L, rate):.1f}")
-    expect(abs(enc._copy_t(256, rate) - (path + setup + 256 * per_b)) < 1e-6,
-           "a full 256 B chunk is priced at the path term + one DMA setup + 256 B of transfer")
+    expect(abs(enc._copy_t(256, rate) - (entry16 + setup + 256 * per_b)) < 1e-6,
+           "a full 256 B chunk is priced at the slow-parser entry + one DMA setup + 256 B of transfer")
+    # K256 SILICON (2775.90 T/op, NXBK): the whole op - dispatch
+    # envelope + entry + body - must land inside 1% of it. Charging
+    # path_t here instead read +2.91% conservative; this is the 2.1 pp
+    # the correction bought on the class that carries every keyframe
+    # bulk repaint.
+    k256 = tc["t_op_copy"] + enc._copy_t(256, rate)
+    expect(abs(k256 / 2775.90 - 1.0) < 0.01,
+           f"a 256 B COPY16 must model within 1% of the K256 silicon row "
+           f"(2775.90 T), got {k256:.1f} ({100 * (k256 / 2775.90 - 1):+.2f}%)")
     # RULE 3 - the kernel switch must not be a large cost DISCONTINUITY.
     # Two DISCLOSED exceptions exist now that the threshold sits on the
     # measured OP-level break-even rather than the kernel-only one
@@ -1295,10 +1329,10 @@ def t10_copy_dma_model():
     # RULE 4 - multi-chunk: full 256 B chunks go DMA (one path term per
     # op), a sub-threshold tail goes LDI (the player re-selects per
     # chunk).
-    expect(abs(enc._copy_t(300, rate) - (path + (setup + chunk * per_b) + 44 * rate)) < 1e-6,
-           "a 300 B copy = the path term + one DMA chunk + a 44 B LDI tail")
-    expect(abs(enc._copy_t(2 * chunk, rate) - (path + 2 * (setup + chunk * per_b))) < 1e-6,
-           "a 512 B copy = the path term + two DMA chunks")
+    expect(abs(enc._copy_t(300, rate) - (entry16 + (setup + chunk * per_b) + 44 * rate)) < 1e-6,
+           "a 300 B copy = the entry term + one DMA chunk + a 44 B LDI tail")
+    expect(abs(enc._copy_t(2 * chunk, rate) - (entry16 + 2 * (setup + chunk * per_b))) < 1e-6,
+           "a 512 B copy = the entry term + two DMA chunks")
     # RULE 5 - the restored term must never make copy MORE expensive than
     # the old all-LDI model at any tested length (at exactly thr the
     # DMA path can price a few T above LDI - the measured placement,
@@ -1309,9 +1343,10 @@ def t10_copy_dma_model():
     for L in (1, 63, 89, 90, 256, 1024, 65535):
         expect(enc._copy_t(L, rate) <= L * rate + 1e-6,
                f"the DMA term may only ever LOWER the {L} B copy price")
-    # (256*20.2)/(128 + 1091.8 + 256*5.08) = 2.05 at the W4 NXBC slope
-    expect(abs((256 * rate) / enc._copy_t(256, rate) - 2.05) < 0.05,
-           f"a 256 B copy body must price ~2.05x under all-LDI, got "
+    # (256*20.2)/(69.1 + 1091.8 + 256*5.08) = 2.10 at the W4 NXBC slope
+    # (2.05 while a COPY16 was charged the 128 T path term as well)
+    expect(abs((256 * rate) / enc._copy_t(256, rate) - 2.10) < 0.05,
+           f"a 256 B copy body must price ~2.10x under all-LDI, got "
            f"{(256 * rate) / enc._copy_t(256, rate):.2f}x")
     # RULE 6 - agreement with the silicon rows the coefficients came from.
     # CD3 (dma copy, 256 B chunks) measured 9.84 T/B over 1024 B ops;
@@ -1332,7 +1367,7 @@ def t10_copy_dma_model():
     finally:
         enc.TMODEL_COEFFS.clear()
         enc.TMODEL_COEFFS.update(saved)
-    expect(abs(enc._copy_t(256, rate) - (path + setup + 256 * per_b)) < 1e-6,
+    expect(abs(enc._copy_t(256, rate) - (entry16 + setup + 256 * per_b)) < 1e-6,
            "coefficients restored")
     # RULE 8 - the FILL model is gated the same way, on the player's own
     # NXV2_RUN_DMA_MIN (src/video.asm vid_run_body re-selects per chunk),

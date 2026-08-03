@@ -708,12 +708,37 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; C074 pair measured the break-even at 81.4 B. => 81 (the measured
 ; placement; the +-14 T/block row resolution makes 81 vs 82
 ; indistinguishable, <= ~6 T/op either way).
-; RUN NOT MOVED: the same sitting measured the fill break-even at ~68
-; vs the shipped 71 - the shipped value takes CPU for 68-70 B fills
-; at a worst cost of ~35 T/op, on an op class the delta-stream census
-; shows barely executes (RUN = 0.003-6% of painted bytes, RUN16 never
-; emitted). Left at 71 with this note rather than churning the
-; player, the encoder mirror and the NXBK straddle rows for noise.
+;
+; BOTH DENOMINATORS RE-DERIVED 2026-08-03 (REDERIVATION.md 6.2/6.3).
+; NEITHER VALUE MOVES; both derivations were quoting the wrong
+; quantity, which is the failure mode that drifts silently:
+;
+;   COPY: 14.94 is fetch_long 20.25 minus 5.31. fetch_long is the
+;   >= 64 B LDI body, but the ops that DECIDE this crossover are
+;   73-83 B and run fetch_short. At sitting-3 coefficients the honest
+;   arithmetic is (1091.8 + 128) / (19.797 - 5.082) = 82.90 B. Cost of
+;   holding 81: DMA taken ~2 B early, worst +28 T/op at L=81, on ~0.3%
+;   of ops - inside the row resolution that placed it. HELD AT 81.
+;
+;   RUN: 17.17 and 5.11 are both superseded (fill_cpu is 16.703 and the
+;   DMA fill rate ~5.0). Solving the two envelopes directly off the
+;   fresh NXBK rows - CPU 476.7 + 16.703 L from F063/F070, DMA
+;   1289.6 + 4.888 L from F071/F256 - gives 812.9/11.815 = 68.8 -> 69.
+;   HELD AT 71: taking CPU for 69-70 B fills costs <= 34 T/op on a
+;   class the delta-stream census shows barely executes (RUN =
+;   0.003-6% of painted bytes, RUN16 never emitted, 0.00-0.08% of
+;   corpus decode-T). Churning the player, the encoder mirror and the
+;   NXBK straddle rows for that is not worth it.
+;
+; WHY RUN CHARGES NO PATH TERM AND COPY DOES - now MEASURED, not
+; assumed. The same fresh rows give the RUN op envelopes on both
+; sides: E_cpu = 1528.97 - 63*16.703 = 476.7 T, and E_dma =
+; (1636.57 - 71*4.888) - 849.0 = 440.6 T. The DMA path's envelope is
+; ~36 T BELOW the CPU path's - a NEGATIVE path difference - because
+; t_op_run was fitted on CPU-fill rows and carries the computed-entry
+; fill setup (ld a,c / and 15 / add a,a / neg / ...) that the DMA path
+; never executes. So the COPY/RUN asymmetry is correct. Do not
+; "fix" it.
 ;
 ; Two invariances make these the right numbers to compare against:
 ;  - AUDIO TAX. The armed-decode tax is a uniform 1.170-1.173 on the

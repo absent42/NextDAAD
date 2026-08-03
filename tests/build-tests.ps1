@@ -988,7 +988,14 @@ if ($Font) {
 # caches. The tag moves because the encoder's constants did, which is
 # this switch's whole discipline. See $encoderGeneration 'pal9q' in
 # authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9q'
+# BUMP pal9q -> pal9r (SP17 provenance re-derivation, 2026-08-03): two
+# silicon-settled constants in nxv2enc.py moved - merge_kstar is priced
+# on the supply exchange rate (19.9 T/B) instead of fetch_long, and a
+# 16-bit-operand COPY pays the measured slow-parser entry instead of
+# copy_dma_path_t. Both are default-path, so this switch's rule fires.
+# Measured at the bump, SHA-verified: see the table below.
+# See $encoderGeneration 'pal9r' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9r'
 
 if ($Vid) {
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,

@@ -437,9 +437,20 @@ TMODEL_COEFFS = {
     "run_dma_min": 71,          # the PLAYER's fill kernel-select threshold
                                 #   (NXV2_RUN_DMA_MIN, src/nextdaad.inc): a fill
                                 #   chunk shorter than this goes unrolled-CPU.
-                                #   DERIVED break-even (2026-07-28):
-                                #   849.4/(17.17-5.11) = 70.43 B -> 71. See the
-                                #   .inc comment for the full derivation
+                                #   The 2026-07-28 derivation
+                                #   849.4/(17.17-5.11) = 70.43 -> 71 quoted TWO
+                                #   SUPERSEDED coefficients (17.17 became
+                                #   fill_cpu 16.703; 5.11 became ~5.0). Fresh
+                                #   NXBK rows (2026-08-03) solve the two
+                                #   envelopes directly - CPU 476.7 + 16.703 L
+                                #   against DMA 1289.6 + 4.888 L - and put the
+                                #   crossover at 68.8 -> 69.
+                                #   VALUE HELD AT 71: taking CPU for 69-70 B
+                                #   fills costs <= 34 T/op on a class that is
+                                #   0.00-0.08% of corpus decode-T. See the
+                                #   .inc comment for the full derivation and
+                                #   for why RUN correctly charges NO path
+                                #   term (measured at -36 T, not assumed)
     "copy_dma_min": 81,         # the PLAYER's copy kernel-select threshold
                                 #   (NXV2_COPY_DMA_MIN, src/nextdaad.inc).
                                 #   MEASURED break-even 81.4 B (SP17 NXBC
@@ -447,10 +458,19 @@ TMODEL_COEFFS = {
                                 #   kernel-only derivation (1091.8/(20.25-5.31)
                                 #   = 73.08 -> 74) missed the fast-handler ->
                                 #   slow-body PATH difference (copy_dma_path_t
-                                #   below); with it folded in the model gives
-                                #   (1091.8+128)/14.94 = 81.65, and silicon
-                                #   read 81.4. 81 is the measured placement
-                                #   (81 vs 82 is inside the row resolution).
+                                #   below).
+                                #   DENOMINATOR CORRECTED 2026-08-03: the
+                                #   shipped arithmetic (1091.8+128)/14.94 =
+                                #   81.65 used fetch_long 20.25, but
+                                #   fetch_long is the >= 64 B LDI body and the
+                                #   ops that DECIDE this crossover are 73-83 B
+                                #   and run fetch_short. At sitting-3
+                                #   coefficients (1091.8+128)/(19.797-5.082)
+                                #   = 82.90. VALUE HELD AT 81 (the measured
+                                #   placement; silicon read 81.4, and the
+                                #   correction only means DMA is taken ~2 B
+                                #   early, worst +28 T/op at L=81 on ~0.3% of
+                                #   ops - inside the row resolution).
                                 #   History: 90 (undocumented) -> 74
                                 #   (kernel-only) -> 81 (measured)
     "copy_dma_path_t": 128.0,   # T/op fast-handler -> slow-body path
@@ -458,11 +478,15 @@ TMODEL_COEFFS = {
                                 #   the DMA kernel (NXBC C073/C074: DMA at the
                                 #   old 74 threshold cost +128 T/op over the
                                 #   fast LDI path). Charged once per op in
-                                #   _copy_t's DMA branch - for >= 256 B ops
-                                #   (always slow-path) it is conservative
-                                #   double-cover of slack the copy
-                                #   dispatch envelope already carries,
-                                #   which is the model's safe direction
+                                #   _copy_t's DMA branch, and ONLY on
+                                #   8-bit-operand ops since 2026-08-03: a
+                                #   >= 256 B op has no fast handler to bail
+                                #   out of, so it pays the measured
+                                #   slow-parser entry (t_skip16 - t_skip)
+                                #   instead. Charging path_t there was a
+                                #   deliberate double-cover and it was the
+                                #   WHOLE of the model's 2.9% pessimism on
+                                #   K256 (REDERIVATION.md 6.4)
     "copy_dma_per_b": 5.08,     # T/byte mem-to-mem DMA COPY body [SILICON
                                 #   NXBC sitting 3: C074-C103 slow-body slope
                                 #   5.082 T/B, UNARMED]. sitting 2: 5.31
@@ -1802,7 +1826,23 @@ def _copy_t(L, rate):
         return L * rate
     chunk = tc["copy_dma_chunk"]
     full, rem = divmod(L, chunk)
-    dma = tc["copy_dma_path_t"]
+    # OP-CLASS ENTRY COST (2026-08-03, REDERIVATION.md 6.4). An
+    # 8-BIT-operand COPY reaches the DMA kernel by bailing out of the
+    # fast LDI handler into the slow chunked body, and pays the
+    # measured path difference copy_dma_path_t for doing so. A
+    # 16-BIT-operand COPY (L >= 256) has NO fast handler to bail out
+    # of - it enters the slow parser directly - so it never pays that
+    # difference. What it does pay is the slow parser's own wider
+    # entry, measured as the SKIP16-vs-SKIP8 envelope delta
+    # (t_skip16 - t_skip = 69.1 T). Charging path_t there instead was
+    # deliberate "conservative double-cover", and the K256 silicon row
+    # measures exactly what that cost: modelled +2.91% against
+    # silicon, +0.80% with this term. Independent support: the same
+    # construction reads a RUN16 envelope of 386.3 T off F256 and a
+    # COPY16 envelope of 383.6 T off K256 - two different op classes
+    # landing 0.7% apart on the shared slow-parser entry.
+    dma = (tc["copy_dma_path_t"] if L <= 255
+           else tc["t_skip16"] - tc["t_skip"])
     dma += full * (tc["copy_dma_setup"] + chunk * tc["copy_dma_per_b"])
     if rem:
         if rem >= tc["copy_dma_min"]:
@@ -2391,19 +2431,67 @@ def emit_delta_ops(target_flat, gcls, gstarts, glens):
 # DP upper bound the research measured (64-84% T cut at D=920).
 # ---------------------------------------------------------------------
 
-def merge_kstar():
+# THE SUPPLY EXCHANGE RATE - what one WIRE byte is worth in decode
+# T-states at the clip-level supply gate. Measured in
+# sp17-corpus/DECODE-COST.md section 3c from the shipped gate's own
+# arithmetic:
+#
+#     1 wire byte = 1/(SD_WIRE x af) ms = 9.089e-4 ms
+#     1 decode T  = R/af/clock ms       = 4.48e-5 ms   (church-050)
+#     ---------------------------------------------------------------
+#     1 wire byte = 19.9 decode T-states   (19.6-20.2 on flat shapes,
+#                                           15.3-16.5 on gapped ones)
+#
+# This is an OPPORTUNITY COST, not an execution cost: it is what the
+# encoder gives up in decode budget when it spends a byte on the wire,
+# and both sides of that trade are priced against the same frame period
+# by stream_supply_check. It is deliberately NOT keyed to any kernel -
+# see merge_kstar for the error that made.
+SUPPLY_EXCHANGE_T_PER_BYTE = 19.9
+
+
+def merge_kstar(lam=None):
     """Interior-skip bridge crossover K* (bytes). Bridging a SKIP that
     sits between two data ops merges SKIP+COPY into a single COPY: it
-    saves the skip dispatch AND one copy dispatch and costs K bytes at the
-    copy body rate, so it wins while K < (D_skip + D_copy) / copy_rate.
-    Derived from TMODEL_COEFFS - self-tunes with the coefficients (91 B at
-    the old model's D=920/skip920; ~63 B at sitting-1 silicon D=920/skip360;
-    ~26 B at sitting-2 silicon D=387/skip130 - the optimized kernels make
-    fewer gaps worth bridging because a dispatch is no longer expensive)."""
+    saves the skip dispatch AND one copy dispatch, and costs K EXTRA
+    WIRE BYTES.
+
+        K* = (t_skip + header_rate + t_op_copy) / lam
+
+    DENOMINATOR RE-DERIVED 2026-08-03 (REDERIVATION.md section 7). The
+    numerator was never in question - bridging removes one SKIP
+    dispatch and one COPY dispatch, 477.9 T of decode, exactly. The
+    denominator was: it used to be fetch_long (20.2 T/B), which is what
+    it costs the PLAYER to EXECUTE a bridged byte. But the question the
+    encoder is asking is "should I spend a wire byte to buy decode
+    time?", so the price of a bridged byte is its OPPORTUNITY COST -
+    the supply exchange rate lam above.
+
+    The two are unrelated quantities that happened to agree to 1.5%, so
+    the shipped 23.66 was right for the wrong reason; the value moves
+    to 24.02 and the COUPLING to fetch_long - under which an
+    improvement to the LDI kernel would silently move a MERGE threshold
+    that has nothing to do with LDI - is gone. (DECODE-COST.md once
+    proposed 9.345 T/B, the DMA marginal rate, giving 51.1 B: that is
+    the SAME category error on the other kernel, it would more than
+    double the threshold, and it is struck in that file.)
+
+    lam=None means SUPPLY_EXCHANGE_T_PER_BYTE, the flat-shape default.
+    Passing a shape-specific lam makes the threshold shape-aware for
+    free: gapped (letterbox) shapes exchange at 15.3-16.5 T/B, which
+    raises K* to 29-31 B there - and DECODE-COST.md measures the gapped
+    clips as the ones with the most merge headroom.
+
+    History of the value: 91 B at the old model's D=920/skip920; ~63 B
+    at sitting-1 silicon; ~26 B at sitting-2's D=387/skip130 - the
+    optimized kernels make fewer gaps worth bridging because a dispatch
+    is no longer expensive."""
     tc = TMODEL_COEFFS
+    if lam is None:
+        lam = SUPPLY_EXCHANGE_T_PER_BYTE
     skip_disp = tc["t_skip"] + tc["header_rate"]      # SKIP8 op envelope
     copy_disp = tc["t_op_copy"]
-    return (skip_disp + copy_disp) / tc["fetch_long"]
+    return (skip_disp + copy_disp) / lam
 
 
 def merge_run_absorb_max():
@@ -2419,7 +2507,28 @@ def merge_run_absorb_max():
     run longer than this threshold LOST decode-T instead of saving it. A
     run segment longer than this value is now kept as its own standalone
     RUN op regardless of adjacency; only runs at or under it still fold
-    into a neighbouring copy region."""
+    into a neighbouring copy region.
+
+    VALUE HELD, DERIVATION DISCLOSED (2026-08-03, REDERIVATION.md 6.6).
+    139.2 B is NOT re-derived here, on purpose - RUN is 0.00-0.08% of
+    corpus decode-T, so moving it churns encoder output on a class that
+    cannot pay for the regression it would need. But three faults in the
+    derivation are recorded so nobody trusts it further than it goes:
+
+    1. WRONG COPY RATE. A region of <= 139 B runs fetch_short, not
+       fetch_long: 487.2/(19.797-16.703) = 157.5 B, 13% higher.
+    2. WRONG REGIME FOR THE CASE THAT MATTERS. If the absorbing COPY is
+       already on the DMA path its marginal rate is 5.082 T/B, BELOW
+       fill_cpu 16.703 - the denominator goes negative and absorption
+       always wins, at any length. One global answer cannot express
+       that, so this function declines absorptions that would win.
+    3. NUMERICALLY FRAGILE BY CONSTRUCTION. The denominator is a
+       difference of two nearly equal remeasured coefficients (3.5 out
+       of 20), so a 3% move in either moves the threshold 17%. Its
+       history for one unchanged physical fact: 152.2 -> 125.6 ->
+       139.3 -> 157.5 at sitting-3 rates. A proper fix is regime-aware
+       (it has to know which kernel the absorbing copy will run), not a
+       coefficient swap."""
     tc = TMODEL_COEFFS
     denom = tc["fetch_long"] - tc["fill_cpu"]
     if denom <= 0:
