@@ -28,6 +28,14 @@ NR_INT_CTRL     equ $C0     ; maskable int mode: bits 7-5 IM2 vector base,
 NR_INT_EN_1     equ $C4     ; int enables: bit 0 ULA, bit 1 line, bit 7 expansion
 NR_INT_EN_2     equ $C5     ; int enables: bit n = CTC channel n
 NR_INT_EN_3     equ $C6     ; int enables: UART Rx/Tx
+; Which interrupters may interrupt a RUNNING zxnDMA (hardware IM2 only) -
+; the $C4/$C5/$C6 enable trio's exact mirror at +8. Dev guide
+; chapter-next-interrupts.tex:296-301 (the feature) and :512-564 (the bit
+; layouts). NO RESET VALUE IS DOCUMENTED for any of the three, so im2_init
+; writes all three explicitly - see the comment there.
+NR_DMA_INT_EN_1 equ $CC     ; DMA pre-emption: bit 0 ULA, bit 1 line
+NR_DMA_INT_EN_2 equ $CD     ; DMA pre-emption: bit n = CTC channel n
+NR_DMA_INT_EN_3 equ $CE     ; DMA pre-emption: UART Rx/Tx
 
 ; --- Resident memory layout (in 16K bank 2, $8000-$BFFF) ---
 CODE_ORG        equ $8000

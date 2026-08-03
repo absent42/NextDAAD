@@ -343,63 +343,95 @@ l2_flip_swap:
 ; HAZARD: the frame ISR's full-context path (audEnable != 0 - sticky
 ; once set, so effectively true for the whole session after the first
 ; note of boot music) saves and REMAPS MMU6/7 around aud_tick
-; (interrupts.asm:155-173) to reach the audio banks, then restores them
-; before it returns. A DMA transfer left running across that tick would
+; (interrupts.asm) to reach the audio banks, then restores them before
+; it returns. A DMA transfer left running across that tick would
 ; therefore run through the AUDIO banks' mapping instead of the
 ; caller's - corrupting the picture and trashing audio state. LDIR was
 ; immune (the CPU simply suspends mid-instruction; the ISR restores the
-; map before LDIR resumes on the far side). So every chunk here is
-; programmed AND run to completion inside ONE DI bracket, in one-shot
-; CONTINUOUS mode: with interrupts off nothing else needs the bus,
-; continuous holds the bus to completion (no burst hand-back), and
-; completion is IMPLICIT - the final OUT (dma_prog's WR6 enable byte)
-; does not return to the next instruction until the whole chunk has
-; transferred, so there is no status poll anywhere. NEVER: burst mode,
-; auto-restart, a live counter read, or a refeed while enabled.
+; map before LDIR resumes on the far side).
 ;
-; Chunks are capped at DMA_CHUNK_MAX (128 B since 2026-08-03; was 256).
-; THE BRACKET, HAND-COUNTED. The figure for this path has been wrong
-; FOUR times - "roughly 1.1k T-states (~40us)", SP14c T4's 1379 T, the
-; 2026-08-02 re-derivation's 1802 T, and this header's own ~1871 T with
-; A ~= 570. Nothing below is inherited except ONE named measured
-; constant, and that one reconciles against two shipped arms.
+; THAT HAZARD IS NOW CLOSED BY HARDWARE, NOT BY A DI (2026-08-03).
+; im2_init writes nextreg $CC = 0, which forbids the ULA frame interrupt
+; (and the line interrupt) from EVER interrupting a running DMA, and
+; nextreg $CD = %00000001, which admits exactly one source: CTC channel
+; 0, the DAC sample timer, whose ISR is MMU-free by explicit contract.
+; So the mapping a transfer was armed with is the mapping it finishes
+; under, and the per-chunk di/ei that used to enforce that is DELETED.
+; Every chunk is still a one-shot CONTINUOUS transfer: continuous holds
+; the bus to completion (no burst hand-back) and completion is IMPLICIT
+; - the final OUT (dma_prog's WR6 enable byte) does not return to the
+; next instruction until the whole chunk has transferred, so there is no
+; status poll anywhere. NEVER: burst mode, auto-restart, a live counter
+; read, or a refeed while enabled.
 ;
-;     B(chunk) = A + 5.082 * chunk
-;       5.082 T/B is the silicon-FITTED zxnDMA 2/2-cycle rate at 28 MHz
-;       (REDERIVATION.md 2.2, threat #7 CONFIRMED), not the RTL's
-;       nominal 4 T/B - pricing it at 4 is what made 1379 T wrong.
-;     A = (code inside the DI) + 183 T of zxnDMA disable/load/enable
-;       sequencing latency, which elapses between the $CF load byte and
-;       transfer completion and is therefore INSIDE the bracket. The
-;       183 T is the one inherited quantity: A(video, 13-byte OTIR arm)
-;       = 500 +/- 20 T (REDERIVATION.md 2.2b, four-point inversion of
-;       the bench tick-shortfall table) minus that arm's own 317 T of
-;       code. It reproduces the SHIPPED video fix's published A for
-;       BOTH its arms to the T - copy 5+11*19+5+183 = 402, fill
-;       5+13*19+5+183 = 440 - so it is not a free parameter here.
+; WHY THE DI HAD TO GO, AND WHY IT WAS NEVER THE GOVERNING QUANTITY.
+; CONTINUOUS mode "runs to completion without allowing the CPU to run"
+; (dev guide chapter-next-dma.tex WR4 bits 6-5; tools/NextZXOS/docs/
+; extra-hw/dma/zxndma.txt). The CPU is BUS-STALLED for the whole
+; transfer, so the window in which ctc_isr cannot reach the DAC was
+; never the di/ei pair - it was A + r*chunk, of which the DI was only
+; the ~219 T arm upload. Hardware IM2 CACHES a held request rather than
+; losing it, so nothing was ever dropped and the PITCH was always exact;
+; what the delay does is stretch one step of the reconstruction
+; staircase and shorten the next, and that is an in-band error pulse.
+; The owner heard it as gross distortion on tests/sfxdi.dsf, at constant
+; pitch, on every leg - which is why four rounds of shortening the
+; bracket never fixed it and why chunk size is no longer the knob.
+; Confirmed on silicon 2026-08-03 (real Next, HDMI): this build stayed
+; CLEAN through a forty-call GFX 0 0 burst under a 16 kHz effect, and an
+; independent build with the DMA replaced by LDIR was clean too.
+;
+; PROVENANCE NOTE ON THE TRANSFER RATE r. The clean 16 kHz leg bounds
+; the blocking window below one HDMI period, W(256) = A + 256r < 1680 T
+; with A = 603 T, hence r < 4.21 T/byte on THIS path - the RTL-nominal
+; 4 T/B for 2+2 cycle timing, not the 5.082 T/B fitted from the video
+; kernels (those write Layer 2 and pay its auto-slowdown; dma_copy moves
+; through an MMU window and does not). A stopwatch cross-check on the
+; same run put a GFX 0 0 at roughly 25 ms against the ~44.5 ms the
+; 5.082 figure predicts, which agrees. BOTH ARE BOUNDS, NOT FITS: every
+; figure below is still quoted at 5.082 T/B, deliberately, because
+; nothing is to be re-fitted on an ear-and-stopwatch reading. A proper
+; re-fit needs a bench row with the CTC armed at a sample-engine TC
+; (REDERIVATION.md recommendation #7).
+;
+; Chunks are capped at DMA_CHUNK_MAX. THE COST MODEL, HAND-COUNTED -
+; still the right arithmetic for how LONG a chunk takes, now that it is
+; no longer the arithmetic of a deadline. The figure for this path had
+; been wrong four times ("roughly 1.1k T-states", SP14c T4's 1379 T, the
+; 2026-08-02 re-derivation's 1802 T, this header's own ~1871 T) before
+; it was re-counted; nothing below is inherited except ONE named
+; measured constant, and that one reconciles against two shipped arms.
+;
+;     W(chunk) = A + 5.082 * chunk
+;       5.082 T/B is the zxnDMA 2/2-cycle rate FITTED FROM THE VIDEO
+;       KERNELS at 28 MHz (REDERIVATION.md 2.2). It is an upper bound
+;       here - see the provenance note above, r < 4.21 T/B on this path
+;       - and is kept deliberately, because a pessimistic cost model is
+;       the safe direction and nothing is to be re-fitted on an ear.
+;     A = (arm upload) + 183 T of zxnDMA disable/load/enable sequencing
+;       latency, which elapses between the $CF load byte and transfer
+;       completion. The 183 T is the one inherited quantity: A(video,
+;       13-byte OTIR arm) = 500 +/- 20 T (REDERIVATION.md 2.2b,
+;       four-point inversion of the bench tick-shortfall table) minus
+;       that arm's own 317 T of code. It reproduces the SHIPPED video
+;       fix's published A for BOTH its arms to the T - copy
+;       5+11*19+5+183 = 402, fill 5+13*19+5+183 = 440 - so it is not a
+;       free parameter here.
 ;     28 MHz rule (docs/Z80/01-instruction-timing.md): +1 T on every
 ;       opcode fetch and every memory read, none on I/O or writes.
 ;       OTIR = 24 T/byte repeating, 19 T final; OUTINB (Z80N ED 90) is
 ;       a flat 19 T/byte.
 ;
-; BEFORE - 16-byte dma_prog uploaded by OTIR, with the pointer/counter
-; setup INSIDE the DI (OTIR needs B and C, so unlike the video kernels
-; this routine could not leave them outside):
-;     di 5 + ld hl 13 + ld b 9 + ld c 9 + otir(16 B) 379 + ei 5 = 420
-;     A = 420 + 183 = 603 T;  B(256) = 603 + 1301.0 = 1904 T (68.0 us)
+;     16-byte OTIR arm (before 4cda75e)   A = 603 T
+;     11-byte OUTINB arm (now)            A = 402 T
+;       W(128) = 402 + 650.5  = 1052.5 T (37.6 us)
+;       W(256) = 402 + 1301.0 = 1703.0 T (60.8 us)
 ;
-; NOW - 11-byte arm uploaded by unrolled OUTINB, HL/BC loaded OUTSIDE
-; the DI, cap 128:
-;     di 5 + 11 * outinb 209 + ei 5 = 219
-;     A = 219 + 183 = 402 T;  B(128) = 402 + 650.5 = 1052.5 T (37.6 us)
-;
-; THE DEADLINE IS THE SAMPLE ENGINE'S, not the video player's. ctc_isr
-; (interrupts.asm) feeds the DAC one byte per CTC zero-count, and a Z80
-; CTC channel latches exactly ONE pending interrupt - so a bracket
-; longer than one period costs a tick. The period is 16 * TC T-states
-; EXACTLY (the CTC input clock and the CPU clock are the same FPGA
-; system clock, so this is clock-independent), with TC =
-; floor(clk16/rate) from aud_ctc_params / aud_clk16_tab (overlay1):
+; WHAT THE PERIOD TABLE IS NOW FOR. ctc_isr feeds the DAC one byte per
+; CTC zero-count; the period is 16 * TC T-states EXACTLY (the CTC input
+; clock and the CPU clock are the same FPGA system clock, so this is
+; clock-independent), with TC = floor(clk16/rate) from aud_ctc_params /
+; aud_clk16_tab (overlay1):
 ;
 ;     rate       VGA0  VGA1  VGA2  VGA3  VGA4  VGA5  VGA6  HDMI
 ;     16000 Hz   1744  1776  1840  1872  1936  2000  2048  1680
@@ -413,35 +445,25 @@ l2_flip_swap:
 ; "1400 T" DEADLINE CORRESPONDED TO NEITHER: it assumed a flat 28 MHz
 ; and ignored both the TC floor and HDMI's 27 MHz clock.
 ;
-;     B(256) = 1904 T was OVER at 16 kHz on VGA0-VGA3 and HDMI, and
-;       over at 20 kHz in every mode: -41.7% at the worst legally
-;       selectable corner (20 kHz HDMI). Break-even 14706 Hz on VGA0,
-;       14181 Hz on HDMI.
-;     B(128) = 1052.5 T clears every rate/mode pair with margin:
-;       +37.4% (16 kHz HDMI) .. +48.6% (16 kHz VGA6),
-;       +21.7% (20 kHz HDMI) .. +36.1% (20 kHz VGA6);
-;       +20.2% at 20 kHz HDMI with A at the pessimistic 422, and still
-;       +7.1% under REDERIVATION.md 10.2's ISR-adjacency correction
-;       (a 196 T ctc_isr body sitting immediately before the bracket).
-;       Its own break-even is 26516 Hz on VGA0 / 25569 Hz on HDMI, both
-;       ABOVE AUD_RATE_MAX - so aud_load_wav cannot accept a rate this
-;       bracket would miss a tick at. The exposure is closed by
-;       construction, not merely by the rates that happen to ship.
-;       The cap alone, without the code work below, would have given
-;       only +6.7% (B = 1253.5 T), would NOT have survived the
-;       ISR-adjacency correction (-7.8%), and would have been SLOWER
-;       into the bargain: 3218 T per 256 B call against 2956 T here,
-;       DISPLAY 0 at 68.6 ms instead of 66.8. The code work buys back a
-;       quarter of what the cap costs.
+; W VS P IS NO LONGER A CONSTRAINT AT ALL. It used to be read as "a
+; chunk longer than one period costs a tick", and the whole 2026-08-03
+; cap fit was built on it. That is retired: the pre-emption permission
+; means the DAC feed is serviced INSIDE the transfer, so W may exceed P
+; freely - a longer chunk simply admits more CTC edges, each of which is
+; taken on time. The table stays because the period is still the right
+; scale for reasoning about the path, not because anything must fit
+; under it.
 ;
-; NOTHING WAS EVER LOST OR CLICKED by the old bracket. The producer is
-; consumption-paced (aud_smp_copy fills only the ring's free space), so
-; a suppressed tick simply holds the DAC one period longer and cannot
-; be lapped: the sample plays LONG AND FLAT. At the shipped 16 kHz on
-; HDMI that was 2.47% slow across a 62 ms location blit = 1.5 ms of
-; accumulated lag, 0.43 semitone, once per location change. Graceful,
-; monotone, and inaudible to every automated check - which is exactly
-; how it survived from SP11 to here.
+; NOTHING WAS EVER LOST OR CLICKED. The producer is consumption-paced
+; (aud_smp_copy fills only the ring's free space), so it cannot lap the
+; consumer, and hardware IM2 holds a request raised during a stall
+; instead of losing it - so the sample COUNT, and therefore the pitch,
+; were always exact. The defect was purely one of OUTPUT TIMING: each
+; blocking window delayed one DAC update by a large fraction of a sample
+; period and the next one caught up. That is inaudible to every
+; automated check and invisible to every pitch-based model, which is
+; exactly how it survived from SP11 to 2026-08-03 and why the first
+; three explanations of it were all wrong.
 ;
 ; THE COST, AND WHY THE OWNER RULED FOR IT. A location picture draws
 ; ONCE and then sits there: this path has no budget and no frame
@@ -482,12 +504,20 @@ l2_flip_swap:
 ; and after any dma_copy, on every exit path. No state cell, no
 ; cross-module coupling, no runtime test.
 ;
-; Between chunks interrupts are live - ctc_isr catches up (the ring
-; absorbs the jitter) and a pending frame tick runs with the DMA idle,
-; so the hazard window closes again every chunk. Anything that
-; lengthens this bracket (a bigger cap, extra work inside the DI) makes
-; it strictly worse: 512 B measured a 35% tick shortfall on the video
-; ISR against 1.2% at 256.
+; INTERRUPTS ARE LIVE THROUGHOUT, including across the transfer itself.
+; ctc_isr is admitted mid-chunk by $CD bit 0 and services the DAC on
+; time; a pending frame tick is held by $CC = 0 until the chunk ends and
+; then runs with the DMA idle, exactly as it did between chunks before.
+; ONE CONSEQUENCE TO KNOW ABOUT (dev guide, Alvin Albrecht): when the
+; DMA yields for an interrupt the CPU executes ONE mainline instruction
+; before the interrupt is seen, and RETI returns the bus to the DMA. The
+; instruction that follows the arm here is `pop bc`, then pointer
+; arithmetic that only reads dma_prog's own already-loaded fields - so a
+; slip costs nothing. It would only matter if enough edges landed in one
+; chunk to walk the mainline back round to .loop, where dma_prog is
+; re-patched and re-armed; at the shipped rates a chunk sees at most one
+; or two. Anything that shortens the tail below the arm, or moves a DMA
+; write earlier, must be re-checked against that.
 ;
 ; Splits BC into <=DMA_CHUNK_MAX-byte chunks and loops; returns once the
 ; whole length has transferred. Corrupts AF, BC, DE, HL - matches LDIR's
@@ -506,8 +536,8 @@ l2_flip_swap:
 ; them before the blocks exist. The ASSERTs after the blocks pin them to
 ; the real lengths, so an edit that forgets an unroll count fails the
 ; build instead of desyncing the DMA (video.asm's kernels, same shape).
-DMA_ARM_LEN     equ 11           ; per-chunk arm, inside the DI bracket
-DMA_STATIC_LEN  equ 5            ; per-call prefix, interrupts live
+DMA_ARM_LEN     equ 11           ; per-chunk arm (program + run)
+DMA_STATIC_LEN  equ 5            ; per-call prefix (port modes + stop)
     ASSERT DMA_CHUNK_MAX >= 1    ; chunk = min(BC, cap): a zero cap would
                                   ; loop forever programming empty blocks
     ASSERT DMA_CHUNK_MAX <= 254  ; alen's high byte is a constant 0, and
@@ -542,16 +572,16 @@ dma_copy:
                                   ; are rebuilt below from dma_prog's own
                                   ; fields, which the upload only reads,
                                   ; never writes
-    ld hl, dma_prog              ; pointer/counter setup OUTSIDE the DI -
-    ld bc, DMA_PORT              ; OUTINB leaves B alone, so unlike OTIR
-                                  ; it does not force these inside
-    di
+    ld hl, dma_prog              ; INTERRUPTS STAY LIVE ACROSS THE ARM
+    ld bc, DMA_PORT              ; (2026-08-03): the frame ISR is barred
+                                  ; from a running DMA by nextreg $CC = 0
+                                  ; and the DAC feed is deliberately let
+                                  ; in by $CD bit 0 - see the header and
+                                  ; im2_init
     DUP DMA_ARM_LEN
-      outinb                     ; program + run to completion, entirely
-    EDUP                          ; inside this one DI bracket (see
-                                  ; header) - the ei below is reached
-                                  ; only once the chunk is fully moved
-    ei
+      outinb                     ; program + run to completion - the $87
+    EDUP                          ; enable is the last byte and does not
+                                  ; return until the chunk has moved
     pop bc
     ld h, b
     ld l, c                      ; HL = remaining length (pre-chunk)
@@ -574,7 +604,7 @@ dma_copy:
 ; auto-restart, ever (WR5). SPLIT 2026-08-03 (see dma_copy's header):
 ; the five STATIC bytes are dma_prog_static, sent once per CALL with
 ; interrupts live; dma_prog below is the 11-byte per-CHUNK arm, the only
-; thing inside the DI bracket. .aaddr/.alen/.baddr are patched in place
+; thing re-sent per chunk. .aaddr/.alen/.baddr are patched in place
 ; first, each chunk.
 ;
 ; Bytes verified against docs/Z80_DMA_Chip__ps0179.pdf's WR0/WR1/WR2/

@@ -47,6 +47,80 @@ im2_init:
                                          ; and CTCAudio set only NR C0 and still work
                                          ; - this is dev-guide-documented belt-and-
                                          ; braces (hardware checklist verifies which)
+    ; DMA PRE-EMPTION PERMISSIONS (NR $CC/$CD/$CE) - 2026-08-03, CONFIRMED
+    ; ON SILICON. The zxnDMA's mem-to-mem transfers run in CONTINUOUS mode,
+    ; which "runs to completion without allowing the CPU to run" (dev guide
+    ; chapter-next-dma.tex, WR4 bits 6-5; tools/NextZXOS/docs/extra-hw/dma/
+    ; zxndma.txt says the same). The CPU is BUS-STALLED for the whole
+    ; transfer and no ei can shorten that, so a picture blit used to hold
+    ; ctc_isr off the DAC for ~1900 T per chunk - not a lost tick (hardware
+    ; IM2 CACHES a held request) but a late one, which pulse-width-mangles
+    ; the reconstruction staircase. That is audible, and it is what the
+    ; owner heard as gross distortion on tests/sfxdi.dsf. In hardware IM2
+    ; (nextreg $C0 bit 0, set above) the stall can be broken PER SOURCE:
+    ; $CC/$CD/$CE choose which interrupters may interrupt a running DMA
+    ; (chapter-next-interrupts.tex:296-301 for the feature, :512-564 for the
+    ; bit layouts). With these three writes plus the deletion of dma_copy's
+    ; per-chunk di/ei, a 16 kHz sampled effect stayed CLEAN through a forty-
+    ; call GFX 0 0 burst that was grossly distorted before (owner, real
+    ; Next, HDMI). An independent LDIR-only build was clean too, so the
+    ; bus-stall mechanism is confirmed twice over.
+    ;
+    ; ALL THREE ARE WRITTEN EXPLICITLY. The dev guide gives the bit layouts
+    ; but states NO reset value for any of the three registers, so the
+    ; ambient default is unknown in both directions - and both directions
+    ; matter. A restrictive default would deny the permission this fix
+    ; needs; a PERMISSIVE one would mean the frame ISR could already have
+    ; been pre-empting every DMA in the tree, with only the DI suppressing
+    ; it. Writing all three settles it either way.
+    nextreg NR_DMA_INT_EN_1, 0           ; $CC = 0: neither the ULA frame
+                                         ; interrupt (bit 0) nor the line
+                                         ; interrupt (bit 1) may EVER interrupt
+                                         ; a DMA. MANDATORY, not tidiness:
+                                         ; im2_isr's full-context path REMAPS
+                                         ; MMU6/7 around aud_tick, so a
+                                         ; transfer left running across a frame
+                                         ; tick would read and write through the
+                                         ; AUDIO banks' mapping instead of the
+                                         ; caller's - a corrupt picture and
+                                         ; trashed audio state. That hazard is
+                                         ; the ORIGINAL reason dma_copy carried
+                                         ; a DI at all (see its header in
+                                         ; overlay2.asm); $CC = 0 is what
+                                         ; replaces the DI, and it must never be
+                                         ; relaxed without re-reading that
+                                         ; hazard note.
+    nextreg NR_DMA_INT_EN_2, %00000001   ; $CD bit 0 = CTC channel 0, the DAC
+                                         ; sample timer - the ONE source allowed
+                                         ; to pre-empt a DMA. Safe because its
+                                         ; ISR is MMU-free BY EXPLICIT CONTRACT:
+                                         ; ctc_isr (below) saves only AF/HL and
+                                         ; touches no MMU slot, no $243B/$253B
+                                         ; register-select pair, no banked
+                                         ; memory and never the DMA port - the
+                                         ; same contract that already makes it
+                                         ; nestable inside im2_isr. A transfer
+                                         ; resumed after it therefore sees
+                                         ; exactly the mapping it was armed
+                                         ; with. Channels 1-7 stay barred here
+                                         ; and are not enabled in $C5 either.
+                                         ; NOTE FOR THE VIDEO PATH: video.asm
+                                         ; repoints IM2_CTC_STUB to
+                                         ; video_ctc_isr_stereo while a clip
+                                         ; plays, so this permission also
+                                         ; applies to the video player's own DMA
+                                         ; kernels. That ISR meets the same
+                                         ; contract (AF/IX only, the DAC pair,
+                                         ; and the MMU3 ring pinned for the
+                                         ; whole session) - but the combination
+                                         ; is awaiting its own silicon leg, see
+                                         ; .superpowers/sdd/video-dmairq-
+                                         ; runsheet.md.
+    nextreg NR_DMA_INT_EN_3, 0           ; $CE = 0: no UART source may interrupt
+                                         ; a DMA. Nothing here uses the UARTs
+                                         ; and $C6 is never written, so this
+                                         ; closes an ambient default that would
+                                         ; otherwise simply be inherited.
     im 2
     ; SP11 frame-tick fix: prime the hw-IM2 daisy chain before releasing
     ; interrupts. Entering hw-IM2 mode (nextreg $C0 bit 0 = 1, above) can leave a
@@ -215,6 +289,12 @@ im2_isr:
 ; EXCEPT the AKY player calls, which are DI-bracketed in aud_tick: the player
 ; repoints SP into song data / RETTABLE, and a nested interrupt-acceptance push
 ; would corrupt it (see aud_tick .gate and the SP-repoint contract).
+; SINCE 2026-08-03 THAT CONTRACT IS ALSO WHAT LETS THIS ISR PRE-EMPT A
+; RUNNING zxnDMA (nextreg $CD bit 0, set in im2_init): a transfer that
+; resumes after this body must find the MMU map exactly as it was armed,
+; which is true only because nothing here writes a slot. Adding an MMU
+; write, a $243B/$253B select, a banked-memory access or a DMA-port touch
+; to this routine would silently corrupt every DMA in the tree.
 ; It outputs (smpPlayPtr), then advances with a branchless power-of-two wrap;
 ; when play has caught the producer (smpPlayPtr == smpWritePtr) it holds the
 ; current byte - natural hold-last; aud_smp_tick pads a DAC_SILENCE guard at W
