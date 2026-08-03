@@ -1074,9 +1074,47 @@ if ($Font) {
 # copy_dma_path_t. Both are default-path, so this switch's rule fires.
 # Measured at the bump, SHA-verified: see the table below.
 # See $encoderGeneration 'pal9r' in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9r'
+# BUMP pal9r -> pal9s (SP17 DMA DI-bracket fix, 2026-08-03): the
+# player's audio-safety burst cap NXV2_DMA_CHUNK moved 256 -> 240 and
+# the encoder's copy_dma_chunk/fill_dma_min moved with it, so every
+# clip re-prices its DMA bodies ~0.6% dearer in decode-T and
+# budget-bound frames admit marginally less. Default-path, so this
+# switch's rule fires. This tag was left at 'pal9r' for one day after
+# 446f33d bumped $encoderGeneration - see the sync assertion below,
+# which exists so that cannot happen again.
+# See $encoderGeneration 'pal9s' in authoring-kit/lib/video.ps1.
+$vidLegSettlementTag = 'pal9s'
+
+# INVARIANT: $vidLegSettlementTag MUST equal $encoderGeneration in
+# authoring-kit/lib/video.ps1. They are one stamp with two homes - the
+# kit's per-title encode-cache key and this harness's fixture-cache key
+# - and both exist to force a re-encode when a silicon-settled constant
+# in nxv2enc.py moves. If they drift, one side keeps serving a cache
+# encoded under the OLD constants and nothing says so. Assert it at the
+# point of use rather than at script load, so a desync fails the video
+# staging switches and leaves the unrelated DDB fixtures alone.
+function Assert-VidEraInSync {
+    $videoPs1 = Join-Path $root 'authoring-kit\lib\video.ps1'
+    if (-not (Test-Path -LiteralPath $videoPs1)) {
+        throw "$videoPs1 missing - cannot verify the encoder era stamp"
+    }
+    # single-quoted pattern: the `$ must reach the regex engine as a
+    # literal, and a double-quoted string would expand it away
+    $m = [regex]::Match((Get-Content -LiteralPath $videoPs1 -Raw),
+                        '(?m)^\s*\$encoderGeneration\s*=\s*''([^'']+)''')
+    if (-not $m.Success) {
+        throw "no `$encoderGeneration assignment found in $videoPs1 - the era-stamp sync check needs one"
+    }
+    if ($m.Groups[1].Value -ne $vidLegSettlementTag) {
+        throw ("encoder era stamp DESYNC: video.ps1 `$encoderGeneration = '$($m.Groups[1].Value)' " +
+               "but build-tests.ps1 `$vidLegSettlementTag = '$vidLegSettlementTag'. " +
+               "Bump both together (they key two encode caches off the same encoder state) " +
+               "and add the matching BUMP note in each file.")
+    }
+}
 
 if ($Vid) {
+    Assert-VidEraInSync
     # SP15 T1 NXV v2 LEG SET fixtures (SP15 3a calibration wave,
     # 2026-07-25) - see the -Vid switch's own header comment above for
     # the full shape/source/start/duration mapping and the pre-3a
@@ -1133,6 +1171,7 @@ if ($Vid) {
 }
 
 if ($VidLong) {
+    Assert-VidEraInSync
     # SP15 3b STREAMING leg fixtures - full-duration research-clip
     # encodes bigger than the pool ring (see the -VidLong header
     # comment). Cached like -Vid; does not touch sd\001-006.VID.

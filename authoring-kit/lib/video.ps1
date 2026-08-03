@@ -322,6 +322,12 @@ if (-not $sources) { exit 0 }
 # less and those clips emit different bytes. Clips that are byte-bound
 # or well inside the decode cap are unchanged. AUDIO IS UNCHANGED in
 # every case.
+# PAIRED STAMP: tests\build-tests.ps1's $vidLegSettlementTag keys the
+# repo's own fixture encode caches off this same encoder state and MUST
+# carry the identical value - bump the two together, with a BUMP note in
+# each. That harness asserts the pair agrees before it stages any video
+# fixture (Assert-VidEraInSync); they drifted for a day on 2026-08-03,
+# which is what the assertion exists to prevent.
 $encoderGeneration = 'pal9s'
 
 function Get-ArgHash([string[]]$argList) {
