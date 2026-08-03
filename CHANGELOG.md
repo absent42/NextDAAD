@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.3.1 - unreleased
+## v0.3.1 - 03/08/2026
 
 DAAD compliance sweep. NextDAAD now executes real DAAD databases with
 reference-correct behaviour across messages, object resolution, flags
@@ -371,7 +371,7 @@ error from the encoder. Delete the option; nothing replaces it.
 - Fixed: multi-PSG AKY tunes left PSG 3 unparked on video entry,
   an audible frozen tone under video. Entry now parks all three PSGs.
 
-## v0.2.0 - 2026-07-23
+## v0.2.0 - 23/07/2028
 
 Cutscene video playback, hardware-measured performance work,
 and a self-contained authoring pipeline.
@@ -428,7 +428,7 @@ and a self-contained authoring pipeline.
   WAV staged in RELEASE.
 - Kit interpreter republished (plays NXV).
 
-## v0.1.0 - 2026-07-20
+## v0.1.0 - 20/07/2026
 
 Initial release. DAAD interpreter for the ZX Spectrum Next:
 all 128 condacts (CALL as a documented no-op), DDB loading and
