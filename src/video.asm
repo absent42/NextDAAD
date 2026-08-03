@@ -100,8 +100,9 @@
 ;   2. Early-FEND tail semantics: the decoder only writes what ops
 ;      write - no surface clears anywhere - so an early FEND leaves
 ;      the untouched frame tail exactly as it stands (patch-in-place).
-;   3. DMA chunks <= 256B: every chunk path is capped at NXV2_DMA_CHUNK
-;      by vid_chunk_dst/vid_chunk_all before a DMA kernel can see it.
+;   3. DMA chunks <= NXV2_DMA_CHUNK (240 B): every chunk path is
+;      capped by vid_chunk_dst/vid_chunk_all before a DMA kernel can
+;      see it, so no DI bracket outlives one audio ISR period.
 ; CORRUPT-INPUT DIVERGENCE NOTE (3b carried minor): a RUN8/COPY8 with
 ; n = 0 is a SILENT NO-OP here (the kernels' structural zero-count
 ; guards) where nxv2dec raises. The encoder never emits n = 0, so the
@@ -763,10 +764,8 @@ vid_run_body:
     sbc hl, bc
     ld (vidRemain), hl
     pop hl
-    ; kernel select (derived crossover, nextdaad.inc): >= 71 -> DMA fill
-    ld a, b
-    or a
-    jr nz, .dma                  ; chunk == the 256 cap
+    ; kernel select (derived crossover, nextdaad.inc): >= 71 -> DMA
+    ; fill. B is 0 by vid_chunk_dst's post-condition (cap <= 255).
     ld a, c
     cp NXV2_RUN_DMA_MIN
     jr nc, .dma
@@ -795,11 +794,8 @@ vid_copy_body:
     sbc hl, bc
     ld (vidRemain), hl
     pop hl
-    ld a, b
-    or a
-    jr nz, .dma                  ; chunk == the 256 cap
-    ld a, c
-    cp NXV2_COPY_DMA_MIN
+    ld a, c                      ; B is 0 by vid_chunk_all's post-
+    cp NXV2_COPY_DMA_MIN         ; condition (cap <= 255)
     jr nc, .dma
     call vid_copy_ldi
     jr .seg
@@ -818,9 +814,10 @@ vid_dst_norm:
     ; PLAY= raster clock (see vid_rl_poll). Decode has no wait loop in
     ; it, so the clock has to be read from inside it or a long decode
     ; outlives a field and the wrap is missed. Divided by VID_RL_DIV:
-    ; one call per CHUNK, and every RAM kernel caps a chunk at 256 B,
-    ; so 16 of them is ~1.7 ms - the poll-gap table in vid_rl_poll
-    ; carries the bound for every site, this one included.
+    ; one call per CHUNK, and every RAM kernel caps a chunk at
+    ; NXV2_DMA_CHUNK (240 B), so 16 of them is under ~1.7 ms - the
+    ; poll-gap table in vid_rl_poll carries the bound for every site,
+    ; this one included.
     ld a, (vidRlDiv)
     dec a
     ld (vidRlDiv), a
@@ -1014,17 +1011,20 @@ vid_play_close:
 vid_chunk_all:
     call vid_chunk_src
     ; falls into vid_chunk_dst
-; RUN: dest room + the 256B DMA cap (contract 3).
+; RUN: dest room + the DMA cap (contract 3). NXV2_DMA_CHUNK is 240 -
+; a single-byte cap since 2026-08-03 - so the test is a plain 16-bit
+; "> cap" and the post-condition is B == 0 ALWAYS, which is what lets
+; vid_run_body's and vid_copy_body's kernel selects drop their
+; high-byte test.
+    ASSERT NXV2_DMA_CHUNK <= 255
 vid_chunk_dst:
     call vid_chunk_dst_nocap
     ld a, b
     or a
-    ret z                        ; < 256
-    dec a
-    jr nz, .clip                 ; >= 512
+    jr nz, .clip                 ; >= 256
     ld a, c
-    or a
-    ret z                        ; == 256 exactly
+    cp NXV2_DMA_CHUNK+1
+    ret c                        ; <= cap: keep BC
 .clip:
     ld bc, NXV2_DMA_CHUNK
     ret
@@ -1495,20 +1495,76 @@ vid_pos24:
 ; ---------------------------------------------------------------------
 ; zxnDMA kernels (graduated NXBEN persistent-descriptor scheme; doc
 ; 11's one-shot law verbatim: DI-bracketed CONTINUOUS one-shots, the
-; $87 enable is the last byte so the otir returns only when the
-; transfer is done; chunks <= 256B - contract 3). The never-changing
-; WR2 (port B memory/increment/timing) + WR5 (stop on end) are
-; programmed once per session (vid_run_l2setup_body); each chunk's
-; arm block carries its own WR0/WR1 (fill and copy interleave freely
-; inside one frame, so the port A mode travels with every arm - +4
-; otir bytes/chunk vs the bench's per-row split, ~84T against the
-; 849/1092T measured setups).
+; $87 enable is the last byte so the upload returns only when the
+; transfer is done; chunks <= NXV2_DMA_CHUNK - contract 3). WR2 (port
+; B memory/increment/timing) + WR5 (stop on end) + WR1 (port A
+; INCREMENTING/timing) are programmed once per session (vidDmaInit,
+; sent by vid_run_l2setup_body; nxbDmaInit is the bench's twin).
+;
+; DESCRIPTOR SPLIT (2026-08-03). The two arms used to differ in ONE
+; register - WR1's port A mode, FIXED for the fill and INCREMENTING
+; for the copy - and both carried it so fill and copy could interleave
+; freely inside a frame. WR1 sets D6, which obliges its timing byte to
+; follow, so that is a 2-byte pair. The interleave is real but
+; ONE-SIDED: DMA fills are 0.003% of ops (the whole SP17 corpus emits
+; ONE, a 125 B chunk in fplane-full - DECODE-COST.jsonl body_dmafill),
+; so the pair now lives in the session init and the COPY arm - the
+; 99.997% - no longer carries it. vid_fill_dma sends WR1 = FIXED
+; inside its own arm exactly as before and RE-SENDS WR1 =
+; INCREMENTING afterwards, outside its DI bracket (the DMA is idle
+; there - WR5 is stop-on-end-of-block - so it is a register write, not
+; a transfer). Behaviour-neutral BY CONSTRUCTION: no state cell, no
+; runtime test, and the copy path pays nothing. The other two full
+; descriptors in the tree both leave WR1 = INCREMENTING (vidSnapDmaArm
+; here, dma_prog in overlay2), so neither can break the invariant.
+;
+; UPLOAD PRIMITIVE. The arm goes out with an unrolled OUTINB run
+; (Z80N ED 90, out (BC),(HL); HL++, B untouched) instead of OTIR -
+; the shape vid_op_pal already uses on NR $44. At 28 MHz (doc 01: +1
+; wait on every opcode fetch and every memory read, none on I/O) OTIR
+; is 24 T/byte repeating and 19 T final; OUTINB is a flat 19 T/byte.
+; This is a DMA-CONTROLLER port ($6B), NOT an SD/SPI read train - the
+; 16 T spacing floor that reverted vid_ds_pad (commit 01466ec, ERR=FD)
+; governs PORT_SPI_DAT reads and has nothing to say here.
+;
+; THE DI BRACKET, HAND-COUNTED (this is the third time these numbers
+; have been wrong in this file, so nothing below is inherited):
+;
+;   arm block lengths, from the source bytes: copy 11, fill 13. The
+;   comments here used to say 15 and REDERIVATION.md 2.1 hand-counted
+;   15; both were wrong - the assembler's own _len symbols are the
+;   authority and the ASSERTs below pin them.
+;
+;   OTIR 13 B (both arms, before)   12 x 24 + 19 = 307 T
+;   OUTINB 11 B (copy, after)       11 x 19      = 209 T   -98 T
+;   OUTINB 13 B (fill, after)       13 x 19      = 247 T   -60 T
+;
+;   B(chunk) = A + rate * chunk, with A measured by inversion of the
+;   bench tick-shortfall table (REDERIVATION.md 2.2b, four points on
+;   one free parameter) at A = 500 +/- 20 T for the 13-byte OTIR arm:
+;
+;     copy  A = 402 (382..422)   B(240) = 402 + 5.082*240 = 1621.7 T
+;     fill  A = 440 (420..460)   B(240) = 440 + 5.100*240 = 1664.0 T
+;
+;   against the TIGHTEST stereo audio period the format can select,
+;   HDMI's 16 x TC 108 = 1728 T: 6.15% / 3.70% margin at nominal A,
+;   4.99% / 2.55% at the pessimistic end of A's band. Every other
+;   video timing mode is looser (VGA0 1792 T .. VGA6 2112 T). See
+;   nextdaad.inc NXV2_DMA_CHUNK for the full margin table and for why
+;   the cap moved 256 -> 240 in the same change.
 ; ---------------------------------------------------------------------
+
+; Arm lengths as assembly-time constants: the DUP counts below need
+; them before the blocks exist. The ASSERTs after the blocks pin them
+; to the real lengths, so an edit to either arm that forgets its
+; unroll count fails the build instead of desyncing the DMA.
+VID_CPARM_LEN   equ 11
+VID_FIARM_LEN   equ 13
 
 ; RUN fill via DMA: port A FIXED at vidRunColour (this page - always
 ; mapped at MMU7 while armed), port B incrementing across the chunk.
-; In: HL src (preserved), DE dest, BC chunk (64..256). Out: DE +=
-; chunk. 5.1 T/B + 849T/chunk (settlement RD rows).
+; In: HL src (preserved), DE dest, BC chunk (71..NXV2_DMA_CHUNK). Out:
+; DE += chunk. 5.1 T/B + 849T/chunk (settlement RD rows).
 vid_fill_dma:
     ld (vidDmaFiArm.blen), bc
     ld (vidDmaFiArm.bdst), de
@@ -1517,17 +1573,23 @@ vid_fill_dma:
     ex de, hl                    ; DE += chunk (before BC dies)
     push hl
     ld hl, vidDmaFiArm
-    ld bc, (vidDmaFiArm_len << 8) | DMA_PORT
-    di
-    otir                         ; arm + run: continuous one-shot
+    ld bc, DMA_PORT              ; B is OUTINB's spare (address high
+    di                           ; byte only; OTIR ran this port with
+    DUP VID_FIARM_LEN            ; B = 12..0 already)
+      outinb                     ; arm + run: continuous one-shot
+    EDUP
     ei
+    ld hl, vidDmaWr1Inc          ; put port A back to INCREMENTING for
+    ld b, 2                      ; the copy arm (descriptor split,
+    otir                         ; header) - DMA idle, interrupts live
     pop hl
     ret
 
 ; COPY via DMA: mem-to-mem, source = MMU6 ring window, dest = MMU2
 ; surface window (both pinned across the DI bracket - doc 11's
-; banking hazard rule). In: HL src, DE dest, BC chunk (90..256).
-; Out: HL/DE advanced. 5.31 T/B + 1092T/chunk (settlement CD rows).
+; banking hazard rule). In: HL src, DE dest, BC chunk
+; (81..NXV2_DMA_CHUNK). Out: HL/DE advanced. 5.082 T/B + 1092T/chunk
+; (settlement CD rows).
 vid_copy_dma:
     ld (vidDmaCpArm.asrc), hl
     ld (vidDmaCpArm.blen), bc
@@ -1539,18 +1601,20 @@ vid_copy_dma:
     push hl
     push de
     ld hl, vidDmaCpArm
-    ld bc, (vidDmaCpArm_len << 8) | DMA_PORT
+    ld bc, DMA_PORT
     di
-    otir
+    DUP VID_CPARM_LEN
+      outinb
+    EDUP
     ei
     pop de
     pop hl
     ret
 
 ; Arm programs (zxndma.txt WR bit tables; overlay2.asm dma_prog is
-; the canonical full program these derive from). WR2/WR5 persist
+; the canonical full program these derive from). WR1/WR2/WR5 persist
 ; from the session init (vidDmaInit, sent by vid_run_l2setup_body).
-vidDmaFiArm:                     ; per-chunk fill arm (15 bytes)
+vidDmaFiArm:                     ; per-chunk fill arm (13 bytes)
     db $83                       ; WR6: disable (known-clean re-entry)
     db %01111101                 ; WR0: A->B; A addr + length follow
     dw vidRunColour              ; port A = the colour cell (FIXED)
@@ -1565,22 +1629,28 @@ vidDmaFiArm:                     ; per-chunk fill arm (15 bytes)
     db $87                       ; WR6: enable - LAST byte; the CPU
                                  ; stalls here until the transfer ends
 vidDmaFiArm_len equ $ - vidDmaFiArm
+    ASSERT vidDmaFiArm_len == VID_FIARM_LEN
 
-vidDmaCpArm:                     ; per-chunk copy arm (15 bytes)
+; The WR1 pair the copy arm no longer carries: the session default
+; (vidDmaInit / nxbDmaInit send it), and vid_fill_dma's restore.
+vidDmaWr1Inc:
+    db %01010100                 ; WR1: A memory, INCREMENTING, timing
+    db %00000010                 ; A cycle length 2
+
+vidDmaCpArm:                     ; per-chunk copy arm (11 bytes)
     db $83                       ; WR6: disable
     db %01111101                 ; WR0: A->B; A addr + length follow
 .asrc:
     dw 0                         ; port A = source (patched)
 .blen:
     dw 0                         ; block length, exact count (patched)
-    db %01010100                 ; WR1: A memory, INCREMENTING, timing
-    db %00000010                 ; A cycle length 2
     db %10101101                 ; WR4: CONTINUOUS, port B addr follows
 .bdst:
     dw 0                         ; port B = dest (patched)
     db $CF                       ; WR6: load
     db $87                       ; WR6: enable - LAST byte
 vidDmaCpArm_len equ $ - vidDmaCpArm
+    ASSERT vidDmaCpArm_len == VID_CPARM_LEN
 
 ; ---------------------------------------------------------------------
 ; vid_decode_frame - decode ONE frame payload from the ring at
@@ -4550,11 +4620,15 @@ nxbTabKrn:
     dw 96
     dw 0
 
-; zxnDMA WR2/WR5 one-time program - the VID_PAGE-local twin of
+; zxnDMA WR1/WR2/WR5 one-time program - the VID_PAGE-local twin of
 ; vidDmaInit (VID_PAGE2, unreachable from here). Byte-for-byte the
-; same four bytes; if that block ever changes, this one moves with it.
+; same six bytes; if that block ever changes, this one moves with it.
+; The bench CALLS vid_copy_dma/vid_fill_dma, so it inherits the
+; descriptor split and must establish the same WR1 default.
 nxbDmaInit:
     db $83                       ; WR6: disable (clean slate)
+    db %01010100                 ; WR1: A memory, INCREMENTING, timing
+    db %00000010                 ; A cycle length 2
     db %01010000                 ; WR2: B memory, incrementing, timing
     db %00000010                 ; B cycle length 2 (no prescaler)
     db %10000010                 ; WR5: stop on end of block (one-shot)
@@ -6130,9 +6204,15 @@ vid_pal_black:
     djnz .l
     ret
 
-; zxnDMA session init program (WR2 + WR5; see the hot arm blocks).
+; zxnDMA session init program (WR1 + WR2 + WR5; see the hot arm
+; blocks). WR1 joined this block with the 2026-08-03 descriptor split:
+; the hot COPY arm no longer carries port A's mode, so the session
+; default IS incrementing and only vid_fill_dma ever departs from it
+; (and restores it immediately).
 vidDmaInit:
     db $83                       ; WR6: disable (clean slate)
+    db %01010100                 ; WR1: A memory, INCREMENTING, timing
+    db %00000010                 ; A cycle length 2
     db %01010000                 ; WR2: B memory, incrementing, timing
     db %00000010                 ; B cycle length 2 (no prescaler)
     db %10000010                 ; WR5: stop on end of block (one-shot)

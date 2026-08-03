@@ -358,35 +358,56 @@ l2_flip_swap:
 ; auto-restart, a live counter read, or a refeed while enabled.
 ;
 ; Chunks are capped at DMA_CHUNK_MAX (256) bytes. MARGIN CORRECTION,
-; TWICE. The comment first claimed "roughly 1.1k T-states (~40us at
-; 28MHz) per chunk ... comfortably inside" one CTC period. SP14c T4
-; (2026-07-28) replaced that with 1379 T = ~49.3us against a 50us
-; period and a ~1.4% margin. BOTH WERE WRONG, and the second by 31%:
-; the SP17 bench rows landed and the bracket was re-derived from the
-; measured tick-shortfall table, four points on one free parameter
-; (.superpowers/sdd/sp17-corpus/REDERIVATION.md sections 2-3):
+; THREE TIMES NOW. The comment first claimed "roughly 1.1k T-states
+; (~40us at 28MHz) per chunk ... comfortably inside" one CTC period.
+; SP14c T4 (2026-07-28) replaced that with 1379 T = ~49.3us against a
+; 50us period and a ~1.4% margin. The 2026-08-02 re-derivation
+; replaced that with 1802 T. ALL THREE WERE WRONG. 1379 T priced the
+; transfer at the RTL's 4 T/B rather than the 5.082 T/B the 28 MHz
+; universal wait produces; 1802 T then borrowed the VIDEO player's A
+; wholesale, and this routine's descriptor is not the video player's.
+; Hand-counted here, from these bytes:
 ;
-;     B(chunk) = A + 5.082 * chunk,  A = 500 +/- 20 T
-;     B(256)   = 1802 T = 64.4 us
-;
-; 1379 T understated it because it priced the transfer at the RTL's
-; 4 T/B rather than the 5.082 T/B the 28 MHz universal wait actually
-; produces, and used a 16-byte arm at nominal T-states.
+;     B(chunk) = A + 5.082 * chunk
+;     dma_prog is 16 bytes (it re-sends WR1/WR2/WR5 every chunk,
+;       where the video kernels hoist them to a session init)
+;     OTIR at 28 MHz = 24 T/byte repeating, 19 T final
+;       -> upload = 15*24 + 19 = 379 T, i.e. 72 T ABOVE the video
+;          player's old 13-byte arm (307 T)
+;     A ~= 500 + 72 = ~570 T   (the video player's A = 500 +/- 20 T,
+;       measured by inverting the bench tick-shortfall table -
+;       .superpowers/sdd/sp17-corpus/REDERIVATION.md 2.2b - plus the
+;       hand-counted upload difference; the zxnDMA's own disable/
+;       load/enable sequencing residual is common to both)
+;     B(256)   = ~1871 T = ~66.8 us
 ;
 ; THIS ROUTINE IS THE GRAPHICS BLIT, so its deadline is the SAMPLE
 ; engine's, not the video player's: ctc_isr can be armed at up to
-; AUD_RATE_MAX 20000 Hz, period 1400 T. B(256) = 1802 T EXCEEDS THAT
-; BY 29%. There is no margin here; there is an overrun, and a
+; AUD_RATE_MAX 20000 Hz, period 1400 T. B(256) = ~1871 T EXCEEDS THAT
+; BY ~34%. There is no margin here; there is an overrun, and a
 ; sample-playback blit can lose one CTC tick per chunk. That is a
-; pre-existing exposure, disclosed here rather than papered over -
-; and it is NOT the video player's exposure, which runs its own ISR
-; at 15625 Hz (period 1728-2112 T; see nextdaad.inc NXV2_DMA_CHUNK).
-; The cap is still the right one: 512 B measured a 35% tick shortfall
-; against 1.2% at 256, and anything that lengthens this bracket (a
-; bigger cap, extra work inside the DI) makes it strictly worse.
+; pre-existing exposure, disclosed here rather than papered over.
+;
+; IT IS NOT THE VIDEO PLAYER'S EXPOSURE, and the video player's was
+; FIXED on 2026-08-03 (nextdaad.inc NXV2_DMA_CHUNK; video.asm's
+; zxnDMA kernel header): its stereo ISR runs at 15625 Hz (period
+; 1728-2112 T), its cap went 256 -> 240, and its arm was split and
+; moved to unrolled OUTINB, landing its bracket at 1621.7 T with
+; 6.2% margin against the tightest period. THE SAME MEDICINE IS
+; AVAILABLE HERE and was deliberately not taken in that change,
+; because it does not cure this patient: hoisting WR1/WR2/WR5 to a
+; one-time program (16 -> 11 bytes) and uploading with unrolled OUTINB
+; puts A at ~400 T and B(256) at ~1701 T, still ~21% over 1400 T.
+; Closing THIS exposure needs the cap as well - ~196 B after that
+; work, or ~163 B without it - and that trade (a 31-57% chunk-count
+; rise on every location repaint, plus ~30 bytes on this overlay)
+; belongs to whoever prices the sample engine, not to the video task.
 ; Between chunks interrupts are live - ctc_isr catches up (the ring
 ; absorbs the jitter) and a pending frame tick runs with the DMA
-; idle, so the hazard window closes again every chunk.
+; idle, so the hazard window closes again every chunk. Anything that
+; lengthens this bracket (a bigger cap, extra work inside the DI)
+; makes it strictly worse: 512 B measured a 35% tick shortfall on the
+; video ISR against 1.2% at 256.
 ;
 ; Splits BC into <=256-byte chunks and loops; returns once the whole
 ; length has transferred. Corrupts AF, BC, DE, HL - matches LDIR's own

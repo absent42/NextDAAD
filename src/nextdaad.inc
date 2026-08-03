@@ -769,44 +769,98 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; Every DMA burst is capped, because the transfer runs inside a DI
 ; bracket and a bracket longer than the audio ISR's period loses a
 ; tick per chunk (the Z80 CTC latches ONE pending interrupt; a second
-; zero-count while the first is unacknowledged is lost). Re-derived
-; 2026-08-02 from the bench's own tick-shortfall table, four points on
-; one free parameter (.superpowers/sdd/sp17-corpus/REDERIVATION.md
-; sections 2-4 - it supersedes the "~1379 T bracket vs a 1400 T
-; deadline" arithmetic these constants used to quote, which was wrong
-; in BOTH terms):
+; zero-count while the first is unacknowledged is lost). The lost tick
+; does NOT skip a sample - the ISR simply does not run, the DAC holds,
+; IX does not advance, and since the frame loop paces off IX the whole
+; clip plays LONG AND FLAT with no click. That silence is why this
+; shipped for months as an "accepted ~1.2% shortfall".
 ;
-;   bracket  B(chunk) = A + 5.082 * chunk,  A = 500 +/- 20 T
+;   bracket  B(chunk) = A + 5.082 * chunk
 ;   deadline one ISR per L+R PAIR at 15625 Hz -> 1728..2112 T
 ;            (16 x the per-video-mode CTC time constant, exactly;
 ;            1728 T is HDMI, the tightest, and 2112 T is VGA6)
 ;
-; AUD_RATE_MAX (20000) is the SAMPLE engine's ceiling and has never
-; governed video: a video session repoints the CTC vector at
-; video_ctc_isr_stereo and runs the rate above.
+; A was measured 2026-08-02 by inverting the bench's own tick-
+; shortfall table, four points on one free parameter, at
+; A = 500 +/- 20 T (REDERIVATION.md 2.2b). AUD_RATE_MAX (20000) is the
+; SAMPLE engine's ceiling and has never governed video: a video
+; session repoints the CTC vector at video_ctc_isr_stereo.
 ;
-; B(256) = 1802 T against 1792 T (VGA0) - over by a hair, which is
-; exactly the 1.2% shortfall the bench measured at 256 B (35% at
-; 512 B). 256 stands, with that shortfall ACCEPTED and disclosed.
+; THE DEFECT, AND WHAT FIXED IT (2026-08-03). At the old cap
+; B(256) = 1801 T, which is 4.2% OVER stereo HDMI's 1728 T - the
+; owner's own display - so every chunk spanning a tick boundary
+; suppressed that interrupt. The PLAY= instrument found five staged
+; rows running long with TOT exactly nominal and zero ring underruns
+; (039 +5.2%, 007 +2.4%, 019 +2.8%, 037 +2.9%, 038 +2.1%), which is
+; this mechanism's signature.
 ;
-; WHAT DROPPING MONO DID AND DID NOT DO (2026-08-03). The tightest
-; deadline the format can select rose from 1152 T (mono HDMI) to
-; 1728 T (stereo HDMI), so the 28-56% MONO overshoot - which cost the
-; one mono clip ever built a measured 4.5% slow-and-flat playback -
-; is gone with the path that produced it. THAT IS ALL IT DID. B(256)
-; is still 1802 T, still 4.3% over stereo HDMI and 0.6% over VGA0, so
-; the ~1.2% shortfall above is UNCHANGED and 256 is still the right
-; number by a hair rather than by margin. Removing mono does NOT make
-; 384 or 512 reachable either: 384's transfer ALONE is 1951 T and its
+; SIZE HONESTY - it is NOT the whole of those rows. An exact op-walk
+; of those five shipped files counts their DMA chunks and prices the
+; loss at nchunks * (B - P) / wall_T:
+;
+;   row  chunks@256  predicted  observed   residual
+;   039     24,012     0.65%     +5.20%     +4.55%
+;   007     21,581     0.58%     +2.40%     +1.82%
+;   019     29,280     0.79%     +2.80%     +2.01%
+;   037     17,470     0.53%     +2.93%     +2.40%
+;   038     20,815     0.66%     +2.10%     +1.44%
+;
+; So this cap change removes 0.5-0.8 percentage points and takes THIS
+; mechanism to a structural zero on every video timing mode. The
+; residual 1.4-4.6 pp has a different cause and does NOT rank with DMA
+; density (019 has the most chunks per unit time and the second-lowest
+; overrun; 039 has fewer and the highest). Do not close the
+; slow-and-flat playback question on this change alone.
+;
+; Two changes closed the DI exposure, and each alone would have been
+; too thin (margins against HDMI 1728 T, at nominal A and at the
+; pessimistic end of its +/-20 T band):
+;
+;   as shipped     A = 500, cap 256   B = 1801.0   -4.22% / -5.38%
+;   code only      A = 402, cap 256   B = 1703.0   +1.45% / +0.29%
+;   cap only       A = 500, cap 240   B = 1719.7   +0.48% / -0.68%
+;   BOTH (shipped) A = 402, cap 240   B = 1621.7   +6.15% / +5.00%
+;
+; A fell 98 T because the per-chunk copy arm lost the WR1 pair to the
+; session init (descriptor split - fill is 0.003% of ops and restores
+; it) and now uploads with unrolled OUTINB at 19 T/B instead of OTIR
+; at 24 T/B. Both are hand-counted from the source bytes in
+; video.asm's zxnDMA kernel header; the arms are 11 B (copy) and 13 B
+; (fill), NOT the 15 the old comments and REDERIVATION.md 2.1 claimed.
+; Full per-mode margin table, both kernels, in that header.
+;
+; WHY 240 AND WHAT IT COSTS. 0.9% of worst-case margin is not enough
+; for a defect that ships silently, and A's uncertainty is entirely in
+; its LEVEL (inferred) not in the 98 T reduction (hand-counted), so
+; the remaining slack was bought from the cap. Cost, measured by an
+; exact op-walk of the shipped corpus wire bytes (not extrapolated
+; from histograms): +0.609% of corpus decode-T and +1.35% chunks.
+; Per clip it is +0.02..0.11% on every DECODE-bound clip (boat-048
+; +0.068%, church-050 +0.045%, boat-169 +0.055%, anchor-004 +0.106%,
+; fplane-full +0.375%); the only clips over 1% - snow-021 +1.97%,
+; snow-024 +1.81%, boat-classic +1.68% - are exactly the three
+; DECODE-COST.md classes as BYTE-bound (decode utilisation 0.79/0.81/
+; 0.51 against byte utilisation 0.96/0.96/0.98), where decode-T is not
+; the binding constraint. That is the mirror of REDERIVATION.md
+; section 5's own finding that a decode SAVING on those clips buys no
+; picture. Lowering is not the mirror of raising: the same walk prices
+; 256 -> 128 at +13.3% decode-T / +34.0% chunks.
+;
+; STILL NOT REACHABLE UPWARDS: 384's transfer ALONE is 1951 T and its
 ; bracket 2453 T, over the LARGEST stereo period on any video mode
 ; (VGA6 2112 T) by 16%, and zxnDMA burst mode cannot release the bus
-; on a memory-to-memory transfer (REDERIVATION.md 4.4).
+; on a memory-to-memory transfer (REDERIVATION.md 4.4). The prize was
+; never there either - 1.9%/3.6% of corpus decode-T, concentrated in
+; byte-bound clips that cannot spend it (REDERIVATION.md 5).
+;
 ; ONE fixed number, not a per-video-mode derivation from the
 ; programmed CTC TC: the encoder's supply gate has to PRICE the cap
 ; and cannot know which timing mode the machine will run in, so a
 ; mode-dependent cap could only ever be priced at its worst case
-; anyway - which is this.
-NXV2_DMA_CHUNK   equ 256      ; vid_chunk_all / vid_chunk_dst
+; anyway - which is this. It must also be <= 255: vid_chunk_dst's
+; single-byte compare and both kernel selects depend on it (ASSERTed
+; in video.asm).
+NXV2_DMA_CHUNK   equ 240      ; vid_chunk_all / vid_chunk_dst
 NXV2_RUN_DMA_MIN equ 71
 NXV2_COPY_DMA_MIN equ 81
 

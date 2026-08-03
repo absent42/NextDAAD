@@ -298,7 +298,31 @@ if (-not $sources) { exit 0 }
 #   bulk repaint, so budget-bound frames may admit slightly more.
 # Mono removal (same sitting) changes NO output - verified
 # byte-identical on fixture 001 - so it is not what this bump is for.
-$encoderGeneration = 'pal9r'
+# BUMP pal9r -> pal9s (SP17 DMA DI-bracket fix, 2026-08-03). The
+# player's audio-safety burst cap NXV2_DMA_CHUNK moves 256 -> 240, so
+# copy_dma_chunk and fill_dma_min move with it - the T model exists to
+# predict what the player DOES, and the player now chunks at 240.
+# Why: at 256 the DI bracket around a DMA chunk measured 1801 T against
+# stereo HDMI's 1728 T audio period, so any chunk spanning a tick
+# boundary SUPPRESSED that interrupt - the DAC held, the sample pointer
+# stalled, and since the frame loop paces off that pointer the clip ran
+# long and flat with no click. Five silicon PLAY= rows read +2.1% to
+# +5.2% over nominal with TOT exactly nominal on every one; an exact
+# op-walk of those five files attributes 0.5-0.8 pp of that to this
+# mechanism, so the change closes a real contributor, not the whole
+# overrun (see src/nextdaad.inc NXV2_DMA_CHUNK for the per-row table
+# and the unexplained residual). The player's per-chunk arm was also
+# shortened 98 T in the same change (descriptor split + unrolled
+# OUTINB upload); the two together land the bracket at 1621.7 T,
+# 6.2% inside the tightest period.
+# Default-path change: every clip re-prices its DMA bodies ~0.6% dearer
+# in decode-T (exact op-walk of the shipped corpus: +0.02-0.11% on
+# decode-bound clips, up to +2.0% on byte-bound ones where decode-T is
+# not the binding constraint), so budget-bound frames admit marginally
+# less and those clips emit different bytes. Clips that are byte-bound
+# or well inside the decode cap are unchanged. AUDIO IS UNCHANGED in
+# every case.
+$encoderGeneration = 'pal9s'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

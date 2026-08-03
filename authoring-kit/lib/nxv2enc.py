@@ -425,15 +425,18 @@ TMODEL_COEFFS = {
                                 #   KF/CD3 cross-row solve]. Hardware term - the
                                 #   wave cannot change it; sitting 1's 4.5 was an
                                 #   artifact of attributing 920 T/op. model was 4.0
-    "fill_dma_setup": 849.0,    # T per 256B DMA fill chunk [SILICON RD1/RD2/RD3
+    "fill_dma_setup": 849.0,    # T per DMA fill chunk [SILICON RD1/RD2/RD3
                                 #   solve sitting 2 - both chunk differences give
                                 #   849.4 exactly; persistent-descriptor re-arm].
                                 #   sitting 1: 1273. hand count 683. model was 355
-    "fill_dma_min": 256,        # DMA fill CHUNK size (bytes); also the audio-safety
-                                #   cap (512B bursts starve the sample ISR - 35%
-                                #   tick shortfall, both sittings). Historic name -
-                                #   it is a chunk size, not a threshold; the
-                                #   threshold is run_dma_min below
+    "fill_dma_min": 240,        # DMA fill CHUNK size (bytes); the SAME
+                                #   audio-safety cap as copy_dma_chunk - the
+                                #   player clips both through vid_chunk_dst,
+                                #   so these two must move together. 256 -> 240
+                                #   on 2026-08-03 with the DI-bracket fix (see
+                                #   copy_dma_chunk). Historic name - it is a
+                                #   chunk size, not a threshold; the threshold
+                                #   is run_dma_min below
     "run_dma_min": 71,          # the PLAYER's fill kernel-select threshold
                                 #   (NXV2_RUN_DMA_MIN, src/nextdaad.inc): a fill
                                 #   chunk shorter than this goes unrolled-CPU.
@@ -498,7 +501,7 @@ TMODEL_COEFFS = {
                                 #   solve sitting 2: the three chunk differences
                                 #   give 1091.8 / 1091.6 / 1091.9]. sitting 1:
                                 #   1273 (under the 920 T/op attribution error)
-    "copy_dma_chunk": 256,      # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
+    "copy_dma_chunk": 240,      # DMA copy chunk size (bytes) = NXV2_DMA_CHUNK,
                                 #   the audio-safety burst cap the player clips
                                 #   every copy chunk to (vid_chunk_all).
                                 #   UNCONDITIONALLY CORRECT since 2026-08-03.
@@ -509,7 +512,26 @@ TMODEL_COEFFS = {
                                 #   was withdrawn with the cap that served it,
                                 #   so there is now exactly ONE cap, the
                                 #   player always applies it, and this value
-                                #   models the player exactly
+                                #   models the player exactly.
+                                #   256 -> 240 on 2026-08-03: at 256 the
+                                #   player's DI bracket was 1801 T against
+                                #   stereo HDMI's 1728 T period, so every
+                                #   chunk that spanned a tick boundary
+                                #   suppressed that audio interrupt and the
+                                #   clip ran slow and flat (five silicon PLAY=
+                                #   rows +2.1% to +5.2% over nominal; an exact
+                                #   op-walk attributes 0.5-0.8 pp of that to
+                                #   this mechanism - a real contributor, not
+                                #   the whole overrun). The player's arm was
+                                #   shortened 98 T in the same change and the
+                                #   cap bought the rest of the margin
+                                #   - 1621.7 T, 6.2% inside the tightest
+                                #   period. See src/nextdaad.inc
+                                #   NXV2_DMA_CHUNK for the full derivation,
+                                #   the per-mode margin table, and the
+                                #   measured cost of the drop (+0.609% of
+                                #   corpus decode-T, all of it over 1% falling
+                                #   on byte-bound clips)
     "header_rate": 0.0,         # count/colour byte parse - FOLDED into the
                                 #   dispatch envelopes above on silicon (see the
                                 #   envelope-convention note). model was 26.0
@@ -1745,10 +1767,10 @@ def _fill_t(L):
     select rule - the same shape as _copy_t.
 
     The player (src/video.asm vid_run_body) clips every fill chunk to
-    NXV2_DMA_CHUNK via vid_chunk_dst, then takes vid_fill_dma when the
-    chunk is 256 or >= NXV2_RUN_DMA_MIN (71) and vid_fill_cpu otherwise.
-    So the full 256 B chunks are DMA and only the trailing remainder is
-    re-selected - a 300 B fill is one DMA chunk plus a 44 B CPU tail,
+    NXV2_DMA_CHUNK (240) via vid_chunk_dst, then takes vid_fill_dma when
+    the chunk is >= NXV2_RUN_DMA_MIN (71) and vid_fill_cpu otherwise.
+    So the full 240 B chunks are DMA and only the trailing remainder is
+    re-selected - a 300 B fill is one DMA chunk plus a 60 B CPU tail,
     NOT two DMA setups. The model must predict what the player DOES.
 
     run_dma_min sits at the derived break-even
@@ -1785,14 +1807,15 @@ def _cost_run_chunk(L):
 
 def _copy_t(L, rate):
     """Modeled copy-body T for L bytes: min of the LDI body and the
-    mem-to-mem DMA body, chunked at copy_dma_chunk (256B), gated on the
+    mem-to-mem DMA body, chunked at copy_dma_chunk (240B), gated on the
     PLAYER's own kernel-select rule.
 
     The player (src/video.asm vid_copy_body/.seg) clips every copy chunk
-    to NXV2_DMA_CHUNK via vid_chunk_all, then takes vid_copy_dma when the
-    chunk is 256 or >= NXV2_COPY_DMA_MIN (81) and vid_copy_ldi otherwise.
+    to NXV2_DMA_CHUNK (240) via vid_chunk_all, then takes vid_copy_dma
+    when the chunk is >= NXV2_COPY_DMA_MIN (81) and vid_copy_ldi
+    otherwise.
     So a body under 81 B is priced as pure LDI, and a trailing sub-81
-    remainder after the full 256B chunks is priced as LDI too - the model
+    remainder after the full 240B chunks is priced as LDI too - the model
     must predict what the player DOES. (The player also splits on
     src/dest window room, which the model cannot see; those splits only
     add setups, so this stays the optimistic-but-close side of the real
@@ -1811,7 +1834,7 @@ def _copy_t(L, rate):
     what the player DOES: (1) at exactly copy_dma_min the DMA path can
     price a few T above pure LDI (81 sits a fraction below the modeled
     81.9 break-even - the measured placement, inside the bench row
-    resolution); (2) a sub-threshold REMAINDER after full 256 B chunks
+    resolution); (2) a sub-threshold REMAINDER after full 240 B chunks
     is priced as LDI even where the bare DMA kernel would be cheaper,
     because the player's single threshold constant governs the
     in-slow-body re-select too - the model follows the player, not the
@@ -4284,8 +4307,12 @@ def kf_chunk_budget_bytes(fps, first, width=None, height=None,
     # kernel-select model (sub-chunk remainders re-price as LDI)
     dma_rate = tc["copy_dma_setup"] / tc["copy_dma_chunk"] + tc["copy_dma_per_b"]
     L_t = int(max(0.0, budget_t) / dma_rate)
+    # descend by ONE CHUNK per step - each step is exactly one DMA setup
+    # plus one chunk of transfer. This was a hardcoded 256 until
+    # 2026-08-03, when the cap moved to 240 and left the step describing
+    # a chunk size the player no longer uses.
     while L_t > 1 and _copy_t(L_t, tc["fetch_long"]) > budget_t:
-        L_t -= 256
+        L_t -= tc["copy_dma_chunk"]
     L_w = kf_chunk_wire_cap_bytes(fps, width, height, abytes_pad,
                                   overhead_b=overhead_b, fixed_t=fixed_t)
     return max(min(L_t, L_w), 1)
