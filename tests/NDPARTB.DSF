@@ -124,7 +124,8 @@ CHEST 52 noun
         MES "PB CARRY F#n"
 
 ; Entry 3: PARTn asset probe proof. Part A's own 0.XMB is staged at the
-; SD root (sd\0.XMB); part B's is staged separately at sd\PART2\0.XMB,
+; game's own root - the directory it was launched from, sd\PART\0.XMB;
+; part B's is staged separately at sd\PART\PART2\0.XMB,
 ; with DIFFERENT bytes at the same internal offset. XMES only prints
 ; this clean sentence if ext_xmes's PARTn\ probe (SP11 Task 5) actually
 ; won the race against the root file - a probe that wrongly fell

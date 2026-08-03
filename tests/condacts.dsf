@@ -858,7 +858,7 @@ NORTH 0
 > _ _   MES "71 F#n"
 ; 72 XMESSAGE (EXTERN vector 3): the real meta-condact, so DRC emits
 ; both the 3-parameter EXTERN (offset_lsb, 3, offset_msb) and the
-; 0.XMB entry (staged as sd\0.XMB by build-tests.ps1 -Suite).
+; 0.XMB entry (staged as sd\SUITE\0.XMB by build-tests.ps1 -Suite).
 ; ext_xmes claims the XMES pool bank, seeks/reads 0.XMB and prints
 ; through the standard DDB text machinery (rd_seek_page). EXTERN is
 ; action-typed, so the engine never gates entry continuation on its

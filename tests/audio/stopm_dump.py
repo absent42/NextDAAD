@@ -21,8 +21,8 @@
 # report the tune's own motion as a difference. So each run COLLECTS a
 # burst of samples keyed by (linker position, frames-left-in-pattern) -
 # the AKY player's exact song phase - and the comparison is over phase
-# keys the two runs have in common. sd\GAME.AKY is a byte-identical copy
-# of sd\006.AKY (build-tests.ps1 -AudLad), so at equal phase the two
+# keys the two runs have in common. GAME.AKY is a byte-identical copy
+# of 006.AKY in sd\AUDLAD\ (build-tests.ps1 -AudLad), so at equal phase the two
 # runs are playing literally the same bytes of the same song.
 #
 # WHICH MATERIAL. The default restart verb is LADR = 006.AKY = the kit's

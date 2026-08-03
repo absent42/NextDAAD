@@ -1,4 +1,12 @@
-param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit)
+# -Run mounts ONE staged leg folder as the emulated card. tests\
+# build-tests.ps1 stages into sd\<LEG>\ subfolders (see its LEG FOLDERS
+# header block) rather than the sd\ root, and a NextDAAD game reads
+# GAME.DDB and every asset from the directory it was launched from - so
+# the folder, not sd\, is what has to be the card root.
+#   -Leg <name>   mount sd\<name>\ (SUITE, VID, SFXDI, RAB, ...)
+#   (omitted)     mount the most recently staged sd\*\GAME.DDB's folder,
+#                 falling back to sd\ itself if nothing is staged
+param([switch]$Run, [switch]$Clean, [switch]$Release, [switch]$Force1MB, [switch]$Kit, [string]$Leg)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 Push-Location $root
@@ -30,7 +38,19 @@ try {
         Write-Host "placed authoring-kit\nextdaad.nex (kit interpreter refreshed)"
     }
     if ($Run) {
-        & "$root\tools\CSpect\CSpect.exe" -w3 -zxnext -esc -mmc="$root\sd\" "$root\build\nextdaad.nex"
+        if ($Leg) {
+            $mmc = "$root\sd\$Leg"
+            if (-not (Test-Path -LiteralPath "$mmc\GAME.DDB")) {
+                throw "no $mmc\GAME.DDB - stage that leg first (tests\build-tests.ps1 -$Leg or the switch that owns it)"
+            }
+        }
+        else {
+            $staged = Get-ChildItem "$root\sd\*\GAME.DDB" -ErrorAction SilentlyContinue |
+                      Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $mmc = if ($staged) { $staged.DirectoryName } else { "$root\sd" }
+        }
+        Write-Host "mounting $mmc\ as the card"
+        & "$root\tools\CSpect\CSpect.exe" -w3 -zxnext -esc -mmc="$mmc\" "$root\build\nextdaad.nex"
     }
 }
 finally { Pop-Location }

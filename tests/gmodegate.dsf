@@ -1,9 +1,10 @@
 ; NextDAAD SP16 Task 1 fixture - the GMODE graphics gate.
 ;
 ; Compiled by tests\build-tests.ps1 on every run; staged as the active
-; sd\GAME.DDB by tests\build-tests.ps1 -GMode, which also stages the
-; one Layer 2 picture it needs as sd\001.NX2. Owner leg instructions
-; are in the SP16 Task 1 report (DEBUG build, real hardware).
+; GAME.DDB in sd\GMODE\ by tests\build-tests.ps1 -GMode, which also
+; stages the one Layer 2 picture it needs as 001.NX2 in that same
+; folder. Owner leg instructions are in the SP16 Task 1 report (DEBUG
+; build, real hardware).
 ;
 ; WHAT IT PINS
 ; DAAD flag 29 (fGFlags) is the capability byte a period game tests

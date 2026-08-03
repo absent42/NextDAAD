@@ -1,12 +1,30 @@
-# Decodes a message from sd\GAME.DDB exactly as the Z80 pipeline does.
+# Decodes a message from a staged GAME.DDB exactly as the Z80 pipeline
+# does.
 # Usage: decode-ddb.ps1 -Kind system|user|location|object -Number N
+#                      [-Leg SUITE|RAB|SFXDI|...]
+# build-tests.ps1 stages into sd\<LEG>\ subfolders (see its LEG FOLDERS
+# header block), never the sd\ root, so -Leg picks which staged game to
+# read. Omitted, it takes the most recently written sd\*\GAME.DDB - i.e.
+# whatever the last build-tests.ps1 run staged, which is what this tool
+# was always pointed at back when there was only one.
 param(
     [Parameter(Mandatory)][ValidateSet('system','user','location','object')][string]$Kind,
-    [Parameter(Mandatory)][int]$Number
+    [Parameter(Mandatory)][int]$Number,
+    [string]$Leg
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
-$b = [IO.File]::ReadAllBytes("$root\sd\GAME.DDB")
+if ($Leg) {
+    $ddb = Join-Path $root "sd\$Leg\GAME.DDB"
+    if (-not (Test-Path -LiteralPath $ddb)) { throw "no $ddb - stage that leg first (tests\build-tests.ps1)" }
+}
+else {
+    $ddb = Get-ChildItem "$root\sd\*\GAME.DDB" -ErrorAction SilentlyContinue |
+           Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+    if (-not $ddb) { throw "no sd\*\GAME.DDB staged - run tests\build-tests.ps1 first" }
+    "# reading $ddb" | Write-Host
+}
+$b = [IO.File]::ReadAllBytes($ddb)
 $base = 0x8400
 function W($o) { $b[$o] + 256 * $b[$o+1] }
 $countOff = @{ system = 6; user = 5; location = 4; object = 3 }[$Kind]

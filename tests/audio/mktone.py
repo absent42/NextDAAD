@@ -1,9 +1,10 @@
 # Steady-tone WAV generator for the sampled-SFX DI-exposure ear test
 # (tests\sfxdi.dsf, run sheet .superpowers\sdd\sfx-di-audible-test.md).
 #
-# Produces the two stimulus files tests\build-tests.ps1 -SfxDi stages as
-# sd\001.WAV (16 kHz, the only rate this project has ever shipped) and
-# sd\002.WAV (20 kHz, AUD_RATE_MAX - what README/SETUP.md publish as the
+# Produces the two stimulus files tests\build-tests.ps1 -SfxDi stages
+# into sd\SFXDI\ as
+# 001.WAV (16 kHz, the only rate this project has ever shipped) and
+# 002.WAV (20 kHz, AUD_RATE_MAX - what README/SETUP.md publish as the
 # supported ceiling and what a DAAD-DOS SOUNDS set drops in at).
 #
 # WHY A TONE AND NOT REAL MATERIAL. The defect under test suppresses CTC

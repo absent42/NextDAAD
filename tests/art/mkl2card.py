@@ -3,7 +3,7 @@
 # .superpowers\sdd\sfx-di-audible-test.md).
 #
 # Produces tests\out\l2card.nxi, which tests\build-tests.ps1 -SfxDi
-# stages as sd\001.NXI - the ONE picture the fixture loads with
+# stages as sd\SFXDI\001.NXI - the ONE picture the fixture loads with
 # PICTURE 1 and then blits, over and over, with DISPLAY 0.
 #
 # WHY A GENERATED CARD AND NOT CORPUS ART. The fixture's visual job is

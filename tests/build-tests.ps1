@@ -1,44 +1,115 @@
+# ===================================================================
+# LEG FOLDERS - nothing is staged into the sd\ ROOT any more
+# ===================================================================
+# 2026-08-03 (owner: "putting everything in the same sd folder is too
+# messy, it needs subfolders"). Every staging switch used to write into
+# the sd\ root, so each leg's files landed on top of the last one's and
+# each switch's stale-clean only removed the file types IT owned. Three
+# vacuous passes came out of that in one evening:
+#   - a stale 001.NX2 from a video stage HIJACKED PICTURE 1 away from a
+#     freshly staged 001.NXI (the picture loader probes .NX2 first), so
+#     a Layer 2 DMA test silently drew corpus art down the CPU scatter
+#     path instead;
+#   - a leftover boot title starved the graphics cache and turned burst
+#     picture draws into no-ops;
+#   - a leftover .AKY set the audio-enabled flag and destroyed a
+#     fixture's silent control leg.
+# EVERY run now stages into exactly ONE self-contained subfolder of sd\,
+# chosen by the switches given. A NextDAAD game opens GAME.DDB and all
+# its assets by RELATIVE name (src\file.asm ddb_load, src\errors.asm
+# ddbName), so the cwd it was launched from IS its asset directory: copy
+# the one folder to the card, launch the .nex inside it, and no other
+# leg's leftovers are reachable even in principle.
+#
+#   switch(es)          folder        active GAME.DDB
+#   ------------------  ------------  --------------------------------
+#   (none) / -Aud       sd\TEMPLATE\  tests\test.dsf (the template)
+#   -Vid / -VidLong     sd\VID\       template (the VID*/PICK verbs)
+#   -NxBench            sd\NXBENCH\   template (the NXB* verbs)
+#   -Suite              sd\SUITE\     tests\condacts.dsf
+#   -Err4               sd\ERR4\      tests\doallnest.dsf
+#   -GMode              sd\GMODE\     tests\gmodegate.dsf
+#   -V3                 sd\V3\        tests\v3probe.dsf
+#   -Rab                sd\RAB\       Rabenstein
+#   -UU                 sd\UU\        Urban Upstart
+#   -Part               sd\PART\      NDPARTA + PART2\ shadow
+#   -AudLad             sd\AUDLAD\    tests\audlad.dsf
+#   -SfxDi              sd\SFXDI\     tests\sfxdi.dsf
+#   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
+#    never touched by this script)
+#
+# ONE FOLDER PER INVOCATION. If more than one leg switch is given the
+# LAST one in the table above wins - the same last-copy-wins order the
+# DDB switches always had, so the folder and the active DDB can never
+# disagree. Modifier switches (-Aud, -Title, -Font, -Gfx256, -GfxZx0)
+# have no folder of their own; they stage into whichever leg folder the
+# run resolved to, exactly as they used to stage alongside whatever was
+# in the root.
+#
+# STALE-CLEAN IS PER FOLDER. The resolved folder is emptied ONCE at the
+# start of staging and then filled, so a re-stage is always a known
+# state and no per-file-type cleaning is needed (or kept - the old
+# sd\*.AKY / sd\*.WAV / six-art-extension sweeps are gone; they existed
+# only because the root was shared). Consequence worth knowing:
+# -Vid and -VidLong share sd\VID\, so GIVE THEM TOGETHER
+# (`-Vid -VidLong`) when you want 001-011+099 on the card. That is what
+# the leg cards already ask for and the encodes are cached in
+# tests\out\, so the second switch costs file copies, not encodes.
+#
+# THE .nex IS STAGED TOO. build\nextdaad.nex is copied into the leg
+# folder as NEXTDAAD.NEX (skipped with a warning if you have not built
+# yet), so the folder is genuinely self-contained: one folder to copy,
+# one file to launch. The run prints both at the end.
+#
+# The sd\ ROOT is no longer read by anything this script stages. Files
+# left there by earlier runs are inert - they are not deleted here
+# (they are not this script's to delete any more), so clear them by
+# hand once you are happy.
+# ===================================================================
+#
 # Compiles tests\test.dsf (template), tests\condacts.dsf (suite),
 # tests\doallnest.dsf (DOALL depth/error demo) and tests\gmodegate.dsf
 # (SP16 GMODE graphics-gate fixture) with DRC (version 2 DDB),
 # generates corrupt/oversize variants from the template, prints
-# a header report. -Suite makes the suite DDB the active sd\GAME.DDB;
+# a header report. -Suite makes the suite DDB the active GAME.DDB;
 # -Err4 makes the doallnest DDB active instead (deliberate error 4:
 # nested DOALL on the same process); -GMode makes the gmodegate DDB
 # active and stages the single Layer 2 picture it needs (see its own
 # block below); -V3 makes the v3probe DDB active - the ONLY fixture
 # here compiled with DRF's -v3, so its header byte 0 is 3 - together
-# with the sd\0.XMB its XMES probe reads (see its own block below);
+# with the 0.XMB its XMES probe reads (see its own block below);
 # -Rab compiles the modernised next-only
 # tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real
 # commercial-quality DAAD game), makes that DDB active, and stages the
-# Layer 2 art (default N.NX2 -> sd\NNN.NX2); -UU compiles the owner-
+# Layer 2 art (default N.NX2 -> NNN.NX2); -UU compiles the owner-
 # authored tools\urban-upstart\URBAN_UPSTART.DSF (untracked vendor dir -
 # never edit it here), makes that DDB active, and stages whatever
-# N.NXI/N.NX2 art exists there as-is (currently NXI-only) to sd\NNN.NXI.
+# N.NXI/N.NX2 art exists there as-is (currently NXI-only) to NNN.NXI.
+# All destinations are inside the run's leg folder - see the LEG
+# FOLDERS block at the top.
 # The DDB switches are mutually exclusive - if more than one is given,
 # whichever copy runs last in this script wins: -Suite copies first,
 # -Err4 copies over it, -GMode copies over that, -V3 over that,
 # -Rab copies over that,
-# -UU copies over that, and -Part copies last of all (both its files -
-# see below), since its block comes after -UU's. The template is
-# active if no switch is given.
+# -UU copies over that, then -Part, then -AudLad, then -SfxDi last of
+# all, in the order their blocks appear below. $legName is resolved in
+# exactly that order, so the folder and the active DDB always agree.
+# The template is active if no switch is given.
 # Two-part fixture (SP11 Task 6), independent of the single-DDB switches
-# above except that it also writes sd\GAME.DDB (see the mutually-
-# exclusive note - the copy order is -Suite, -Err4, -GMode, -V3, -Rab,
-# -UU, -Part, last one wins):
+# above except that it also writes GAME.DDB (see the mutually-
+# exclusive note above):
 #   -Part    compile and stage both halves of the NDPARTA.DSF/
-#            NDPARTB.DSF fixture pair. NDPARTA -> sd\GAME.DDB (part 1,
-#            byte-identical to a single-part game) + sd\0.XMB; NDPARTB
-#            -> sd\GAME2.DDB (part 2) + sd\PART2\0.XMB (directory
-#            created if absent). The two 0.XMB files hold DIFFERENT
+#            NDPARTB.DSF fixture pair, into sd\PART\. NDPARTA ->
+#            GAME.DDB (part 1, byte-identical to a single-part game)
+#            + 0.XMB; NDPARTB -> GAME2.DDB (part 2) + PART2\0.XMB
+#            (directory created if absent). The two 0.XMB files hold DIFFERENT
 #            content at overlapping offsets by design - NDPARTB.DSF's
 #            own XMES line only reads back clean if the interpreter's
 #            PARTn\ probe (SP11 Task 5) actually wins over the root
 #            file; a wrong probe reads part A's bytes at part B's
 #            offsets instead (garbled/wrong text, not a crash). Same
-#            CSpect-running guard as -Rab/-UU; stale-cleans sd\GAME2.DDB
-#            and both 0.XMB files before restaging. The fixture pair's
+#            CSpect-running guard as -Rab/-UU; sd\PART\ is emptied
+#            before restaging like every leg folder. The fixture pair's
 #            own PRO 0 logic (owner leg only - run ./build.ps1 -Run
 #            after staging, see each DSF's own header comment for the
 #            full transcript) exercises all four part-switch primitives
@@ -53,8 +124,8 @@
 #            (the fixture suggests "pt").
 # Art-staging modifiers (effective only with -Rab, combinable):
 #   -Gfx256  stage the 256-wide N.NXI set instead of the N.NX2s
-#   -GfxZx0  ZX0-compress each staged file (sd\NNN.NX2.ZX0 / with
-#            -Gfx256 sd\NNN.NXI.ZX0) so the interpreter's compressed
+#   -GfxZx0  ZX0-compress each staged file (NNN.NX2.ZX0 / with
+#            -Gfx256 NNN.NXI.ZX0) so the interpreter's compressed
 #            picture path is exercised
 #   (-UU always stages whatever single art shape ships in
 #    tools\urban-upstart - no modifiers; that corpus has no parallel
@@ -62,34 +133,35 @@
 # Audio staging (combinable with any DDB switch):
 #   -Aud     stage the test audio assets from tools\audio_assets\
 #            (GAME.AKY, 001.AKY, GAME.SFB, 001.WAV, 001.AYS, 002.AYS -
-#            produced by the export script / aysconv.ps1) into sd\, after
-#            removing stale sd\*.AKY, sd\GAME.SFB, sd\*.WAV and sd\*.AYS;
-#            warns and skips if the folder is empty
+#            produced by the export script / aysconv.ps1) into the leg
+#            folder (sd\TEMPLATE\ on its own); warns and skips if the
+#            source folder is empty
 #   -AudLad  SP16 Task 7: make the tests\audlad.dsf DDB active AND stage
-#            the AY characterization ladder - L1/L3/L6/L9/L9Q.AKY from
-#            tests\audio\ -> sd\001..005.AKY, the kit's own 9-channel
+#            the AY characterization ladder into sd\AUDLAD\ -
+#            L1/L3/L6/L9/L9Q.AKY from
+#            tests\audio\ -> 001..005.AKY, the kit's own 9-channel
 #            tune (converted here from the tracked
-#            authoring-kit\AUDIO\1.aks) -> sd\006.AKY, and sd\GAME.AKY
+#            authoring-kit\AUDIO\1.aks) -> 006.AKY, and GAME.AKY
 #            as a byte-identical copy of 006.AKY - the STOPM control:
 #            boot autoplay and the LADR verb then replay the SAME
-#            bytes, on the real material. Owns sd\001..006.AKY and
-#            sd\GAME.AKY; stale-cleans the same set -Aud owns
-#            (*.AKY, GAME.SFB, *.WAV, *.AYS) first, so it and -Aud are
-#            alternatives, not companions - run one or the other.
-#   -SfxDi   sampled-SFX DI-exposure EAR fixture: make the
+#            bytes, on the real material. sd\AUDLAD\ holds nothing
+#            else, so it and -Aud are alternatives, not companions -
+#            run one or the other.
+#   -SfxDi   sampled-SFX DI-exposure EAR fixture, staged into sd\SFXDI\:
+#            make the
 #            tests\sfxdi.dsf DDB active AND stage the two steady-tone
 #            stimuli tests\audio\mktone.py generates (440 Hz, 48000
-#            bytes = the reserved 48K audio floor) as sd\001.WAV
+#            bytes = the reserved 48K audio floor) as 001.WAV
 #            (16000 Hz, the only rate this project ships) and
-#            sd\002.WAV (20000 Hz = AUD_RATE_MAX, README's published
+#            002.WAV (20000 Hz = AUD_RATE_MAX, README's published
 #            ceiling). ALSO stages the Layer 2 corruption-detector card
-#            tests\art\mkl2card.py generates as sd\001.NXI (256x128,
-#            256-WIDE so DISPLAY 0 reaches gfx_row_copy256 -> dma_copy),
-#            stale-cleaning all six art extension variants of number 001
-#            first so a leftover 001.NX2 cannot win the probe chain and
-#            route the blit down the CPU scatter path instead.
-#            Stale-cleans the same audio set -Aud/-AudLad own
-#            and stages NO .AKY at all - a playing song would put the
+#            tests\art\mkl2card.py generates as 001.NXI (256x128,
+#            256-WIDE so DISPLAY 0 reaches gfx_row_copy256 -> dma_copy).
+#            A leftover 001.NX2 winning the probe chain and routing the
+#            blit down the CPU scatter path is now impossible by
+#            construction: sd\SFXDI\ is emptied first and holds nothing
+#            but this fixture's own four files (plus the .nex).
+#            Stages NO .AKY at all - a playing song would put the
 #            AKY player's own ~5500 T per-frame DI hold under both
 #            phases of the readout. The fixture stops and waits for a
 #            KEYPRESS at every phase boundary (rev 2a) so a symptom can
@@ -100,30 +172,32 @@
 #            criteria): .superpowers\sdd\sfx-di-audible-test.md. An
 #            alternative to -Aud/-AudLad, not a companion.
 # Boot title screen (SP11 Task 1), independent of the DDB switches:
-#   -Title   stage the owner 320x256 title into sd\ - stale-cleans
-#            sd\DAAD.* variants then copies tools\demo-files\DAAD.NX2
+#   -Title   stage the owner 320x256 title into the run's leg folder -
+#            copies tools\demo-files\DAAD.NX2
 #            (converted from demo-files\DAAD.png via tools\png2nx.py).
 #            tools\demo-files is the home for NEWLY CREATED test
 #            graphics/sound/video assets (owner convention 2026-07-19;
 #            existing asset dirs stay where they are). Not committed
-#            (sd\ is gitignored). Default (no -Title) leaves sd\
-#            untouched.
+#            (sd\ is gitignored). Default (no -Title) stages no title -
+#            and since the leg folder is emptied every run, a title can
+#            no longer survive into a leg that did not ask for one (it
+#            used to, and starved the graphics cache when it did).
 # Custom font (SP12 Task 2), independent of the DDB switches:
-#   -Font    stage a visually distinctive custom font into sd\ - stale-
-#            cleans sd\FONT.CHR then runs authoring-kit\lib\fontconv.ps1
+#   -Font    stage a visually distinctive custom font into the run's leg
+#            folder - runs authoring-kit\lib\fontconv.ps1
 #            on tools\demo-files\fonts\Crews\Spectrum\Crews.ch8 (a 768-
 #            byte classic ZX charset, chars 32-127 - the "Crews" ZX-
 #            Origins font: a bold, tilted, graffiti-style face, chosen
 #            for being obviously different from the interpreter's plain
 #            embedded font at a glance, and shipped as a single file with
 #            no bold/script weight variants to disambiguate). No test
-#            binary is committed - fontconv.ps1 builds sd\FONT.CHR fresh
+#            binary is committed - fontconv.ps1 builds FONT.CHR fresh
 #            each run from the source .ch8 plus authoring-kit\lib\
 #            default.chr. Same CSpect-running guard as -Title (locked
 #            sd\ files cause a partial fixture). Default (no -Font)
-#            leaves sd\ untouched.
-#            SP12 Task 3 rides the same switch: -Font ALSO stale-cleans
-#            sd\POINTER.SPR then generates a fresh 256-byte fixture
+#            stages no font.
+#            SP12 Task 3 rides the same switch: -Font ALSO generates a
+#            fresh 256-byte POINTER.SPR fixture
 #            in-script (a 16x16 solid green square, 2px $E3 transparent
 #            border, 1px black outline - obviously different from the
 #            interpreter's default black/white arrow at a glance). No
@@ -131,8 +205,8 @@
 # Video benchmark fixtures (SP13 Task 1, NXV v2 rewrite SP15 T1; LEG SET
 # switched to the SP15 3a calibration-wave fixtures 2026-07-25),
 # independent of the DDB switches:
-#   -Vid     stage the CURRENT LEG SET into sd\001.VID..sd\006.VID - the
-#            SAME six fixtures the owner leg card stages
+#   -Vid     stage the CURRENT LEG SET into sd\VID\001.VID..006.VID -
+#            the SAME six fixtures the owner leg card stages
 #            (.superpowers\sdd\sp14a-task-4-report.md section 37 + its
 #            CALIBRATION WAVE addendum), short real-footage/test-card
 #            CUTS sized to the ~950 KB resident ring - NOT full-clip
@@ -146,12 +220,14 @@
 #            v2 has SHAPE presets instead (full/16:9/scope/classic/
 #            classic-wide, nxv2enc.PRESETS), each encoded here at 25fps
 #            stereo. VIDBENCH (DEBUG builds only, tests\test.dsf)
-#            always benches sd\001.VID (full, the highest data-rate
-#            shape - the conservative gate). Stale-cleans ONLY the
-#            files this switch owns, sd\001.VID..sd\006.VID (SP15 T5
-#            review fix: a bare sd\*.VID wipe used to also delete
-#            007-011.VID/099.VID, breaking a -Vid-then-VidLong combined
-#            stage). Source -> dest mapping (shape, source clip, exact
+#            always benches 001.VID (full, the highest data-rate
+#            shape - the conservative gate). Stale-cleaning is now the
+#            leg folder's, not this switch's: sd\VID\ is emptied once at
+#            the start of the run and -Vid/-VidLong then fill it, so
+#            GIVE THEM TOGETHER (`-Vid -VidLong`) for the full
+#            001-011+099 card - the SP15 T5 per-file scoping this switch
+#            used to carry existed only to survive the shared root.
+#            Source -> dest mapping (shape, source clip, exact
 #            --start/--duration - these values reproduce the leg-staged
 #            bytes byte-for-byte, the encoder being deterministic):
 #              001.VID <- full          (320x256 mode-1, Sintel_1080_10s_30MB.mp4 @00:00:00 dur 1.35)
@@ -168,8 +244,8 @@
 #            tests\out\00X_<shape>_<settlementTag>_leg_cache.vid and
 #            only regenerated when that cache file is missing -
 #            tests\out\ is gitignored (persists across runs, unlike
-#            sd\001-006.VID which this switch always stale-cleans
-#            first). $vidLegSettlementTag below is an EXPLICIT TAG BUMP
+#            sd\VID\, which is emptied at the start of every staging
+#            run). $vidLegSettlementTag below is an EXPLICIT TAG BUMP
 #            discipline, not a hash: unlike -VidLong's per-entry 'tag'
 #            (sb51/sb54/direct/directpace), which fingerprints a CLI
 #            operating-point argument, 001-006 take no such argument -
@@ -206,7 +282,7 @@
 #            drift. Long-clip staging returned as -VidLong (below)
 #            when SP15 3b (streaming) landed; -Vid always means this
 #            short leg set.
-#   -VidLong stage the SP15 3b STREAMING leg fixtures into sd\ - the
+#   -VidLong stage the SP15 3b STREAMING leg fixtures into sd\VID\ - the
 #            three research clips at FULL 10s duration (they exceed
 #            the ~1.25MB pool ring and exercise the 3b prefetch
 #            producer across multiple ring wraps), plus the
@@ -257,12 +333,13 @@
 #            long_cache.vid like -Vid (encode once, copy after;
 #            delete a cache to re-encode; the operating point AND the
 #            settlement tag are part of the cache name, so changing
-#            either re-encodes). Does NOT touch
-#            sd\001-006.VID, so it can be staged alongside -Vid.
+#            either re-encodes). Shares sd\VID\ with -Vid - give the two
+#            switches TOGETHER for the full 001-011+099 card.
 #            Verbs: VSTR0/VSTR1/VSTR2/VSTRU (tests\test.dsf). Same
 #            CSpect-lock guard.
 #   -NxBench   stage the SP15 T2 decode-kernel bench payloads into
-#              sd\NXB0.BIN..sd\NXB9.BIN (nxv2enc.py --bench-fixtures -
+#              sd\NXBENCH\NXB0.BIN..NXB9.BIN (nxv2enc.py
+#              --bench-fixtures -
 #              raw opcode-stream payloads, no header/audio/padding; see
 #              that mode's own comment block for the file-by-file
 #              shapes, and .superpowers\sdd\sp14a-task-4-report.md
@@ -271,7 +348,7 @@
 #              tests\out\002_classic_cache.vid, which is encoded first
 #              if missing (slow - same cache rule as -Vid). Fixture
 #              set + manifest land in tests\out\nxbench\ then copy to
-#              sd\ (stale-clean first). Same CSpect-lock guard as the
+#              the leg folder. Same CSpect-lock guard as the
 #              other staging switches. sd\ is gitignored.
 #   -Nxv2Test  run tests\nxv2_selftest.py (plain python, no pytest -
 #              header/opcode/keyframe-span roundtrips, scene-cut
@@ -286,9 +363,61 @@ param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
+$sd = Join-Path $root 'sd'
+
+# ---- leg folder (see the LEG FOLDERS block at the top) -------------
+# Resolved in the SAME order the DDB copies used to run in, so the last
+# switch given wins and the folder can never disagree with the active
+# GAME.DDB. Modifier switches (-Aud/-Title/-Font/-Gfx256/-GfxZx0) have
+# no entry here - they stage into whatever this resolves to.
+$legName = 'TEMPLATE'
+if ($Vid -or $VidLong) { $legName = 'VID' }
+if ($NxBench)          { $legName = 'NXBENCH' }
+if ($Suite)            { $legName = 'SUITE' }
+if ($Err4)             { $legName = 'ERR4' }
+if ($GMode)            { $legName = 'GMODE' }
+if ($V3)               { $legName = 'V3' }
+if ($Rab)              { $legName = 'RAB' }
+if ($UU)               { $legName = 'UU' }
+if ($Part)             { $legName = 'PART' }
+if ($AudLad)           { $legName = 'AUDLAD' }
+if ($SfxDi)            { $legName = 'SFXDI' }
+$leg = Join-Path $sd $legName
+
+function Reset-LegDir {
+    # Empty the run's leg folder, then recreate it. This is the ONLY
+    # stale-clean in the script now - the per-file-type sweeps every
+    # switch used to carry (sd\*.AKY, sd\*.WAV, the six art extension
+    # variants, sd\DAAD.*, sd\00[1-6].VID) existed solely because the
+    # sd\ root was shared, and each one only removed the kinds ITS own
+    # switch owned, which is exactly how a stale 001.NX2 / DAAD.NX2 /
+    # *.AKY survived into a leg that never asked for it.
+    #
+    # Deliberately narrow: the name must be one of the known leg
+    # folders and the resolved path must sit directly under sd\, so a
+    # recursive delete can never be pointed anywhere else (and never at
+    # sd\ itself, sd\L2DMA\, or anything outside sd\).
+    param([string]$Name)
+    $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
+               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI')
+    if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
+    $p = Join-Path $sd $Name
+    if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
+    if (Test-Path -LiteralPath $p) {
+        Get-ChildItem -LiteralPath $p -Force | Remove-Item -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force $p | Out-Null
+}
 
 New-Item -ItemType Directory -Force "$root\tests\out" | Out-Null
+New-Item -ItemType Directory -Force $sd | Out-Null
 
+# The COMPILE half of this script writes nothing into sd\ - every
+# fixture lands in tests\out\ and the STAGING section further down copies
+# whichever ones the run's switches ask for into the one leg folder.
+# Keeping the two halves apart is what makes cross-contamination
+# impossible by construction rather than by careful cleaning.
+$templateXmb = $false
 Copy-Item "$PSScriptRoot\test.dsf" "$dr\NDTEST.DSF" -Force
 Push-Location $dr
 try {
@@ -296,15 +425,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "DRF failed" }
     & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDTEST.json NDTEST.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed" }
-    Move-Item NDTEST.DDB "$root\sd\GAME.DDB" -Force
+    Move-Item NDTEST.DDB "$root\tests\out\template.ddb" -Force
     # tests\test.dsf has no XMESSAGE yet (Task 5 adds the verb), so DRB
     # emits no 0.XMB for the template - tolerate absence. Wired now so
-    # Task 5 needs no script change: stage sd\0.XMB in the same
-    # default/template path the DDB copy above uses, right after it.
+    # Task 5 needs no script change: $templateXmb makes the staging
+    # section copy it next to the template DDB when it does appear.
     if (Test-Path '0.XMB') {
         Move-Item '0.XMB' "$root\tests\out\template.xmb" -Force
-        Copy-Item "$root\tests\out\template.xmb" "$root\sd\0.XMB" -Force
-        "staged tests\out\template.xmb -> sd\0.XMB"
+        $templateXmb = $true
     }
 }
 finally {
@@ -364,7 +492,7 @@ finally {
 
 # SP16 Task 1 GMODE graphics-gate fixture. Compiled unconditionally,
 # like the suite and doallnest above, so a break in the DSF is caught
-# on a plain run; only -GMode makes it the active sd\GAME.DDB.
+# on a plain run; only -GMode makes it the active GAME.DDB (sd\GMODE\).
 Copy-Item "$PSScriptRoot\gmodegate.dsf" "$dr\NDGMODE.DSF" -Force
 Push-Location $dr
 try {
@@ -381,7 +509,7 @@ finally {
 
 # SP16 Task 7 AY ladder fixture. Compiled unconditionally, like the
 # suite, doallnest and gmodegate above, so a break in the DSF is caught
-# on a plain run; only -AudLad makes it the active sd\GAME.DDB.
+# on a plain run; only -AudLad makes it the active GAME.DDB (sd\AUDLAD\).
 Copy-Item "$PSScriptRoot\audlad.dsf" "$dr\NDAUDLAD.DSF" -Force
 Push-Location $dr
 try {
@@ -398,7 +526,7 @@ finally {
 
 # Sampled-SFX DMA pre-emption fixture, rev 2 (2026-08-03). Compiled
 # unconditionally like the four above so a break in the DSF is caught on
-# a plain run; only -SfxDi makes it the active sd\GAME.DDB.
+# a plain run; only -SfxDi makes it the active GAME.DDB (sd\SFXDI\).
 #
 # THE COMPILED BYTES ARE ASSERTED, not assumed. This is a STIMULUS
 # fixture - what the interpreter receives is the whole experiment - and
@@ -615,7 +743,7 @@ foreach ($chk in @(
 # done-semantics; the DSF's own header lists which flag carries which
 # answer. Compiled unconditionally like the suite and gmodegate above -
 # a break in the DSF (or in DRF's -v3 handling) is then caught on a
-# plain run - but only -V3 makes it the active sd\GAME.DDB.
+# plain run - but only -V3 makes it the active GAME.DDB (sd\V3\).
 #
 # tests\v3probe.dsf will NOT compile without -v3: DRF rejects '@' on a
 # second parameter and rejects GETKEY outside V3. Do not "simplify"
@@ -679,7 +807,10 @@ finally {
     Pop-Location
 }
 
-$good = [System.IO.File]::ReadAllBytes("$root\sd\GAME.DDB")
+# The corrupt/oversize variants are derived from the TEMPLATE image (as
+# they always were - this read used to sit after the template's own
+# template's own sd\GAME.DDB write and before any leg switch overwrote it).
+$good = [System.IO.File]::ReadAllBytes("$root\tests\out\template.ddb")
 
 $bad = [byte[]]$good.Clone()
 $bad[0] = 9                                  # wrong version byte
@@ -717,33 +848,60 @@ $truncWav.AddRange([System.Text.Encoding]::ASCII.GetBytes("data"))
 $truncWav.AddRange([System.BitConverter]::GetBytes([UInt32]1000))  # data size (promised, not delivered)
 [System.IO.File]::WriteAllBytes("$root\tests\out\truncwav.bin", $truncWav.ToArray())
 
+# ===================================================================
+# STAGING - from here down, everything writes into $leg and nowhere else
+# ===================================================================
+# The CSpect guard was per-switch; it is hoisted here because the folder
+# reset below is now the first thing any run does to sd\, and a running
+# emulator holding a file open would leave the folder half-emptied - the
+# same partial-fixture hazard each switch used to guard against, just
+# earlier. The per-switch guards are left in place (harmless, and they
+# document the hazard at each site).
+if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+    throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
+}
+Reset-LegDir $legName
+# Default active game = the template. Every leg switch below overwrites
+# it with its own DDB, in the documented last-one-wins order.
+Copy-Item "$root\tests\out\template.ddb" "$leg\GAME.DDB" -Force
+# ...but its 0.XMB rides along ONLY where the template is actually the
+# active game. In the shared root the template's XMB was staged
+# unconditionally and every later leg inherited it (a foreign XMB beside
+# a foreign DDB - harmless only because those fixtures happen not to
+# call XMES). A self-contained folder should hold that leg's files and
+# nothing else, and the legs with their own XMB (-Suite/-V3/-Part) stage
+# it themselves below.
+if ($templateXmb -and ($legName -in @('TEMPLATE', 'VID', 'NXBENCH'))) {
+    Copy-Item "$root\tests\out\template.xmb" "$leg\0.XMB" -Force
+    "staged tests\out\template.xmb -> sd\$legName\0.XMB"
+}
+
 if ($Suite) {
     # Suite semantics assume no sample/music/effects assets staged EXCEPT
-    # the one 002.AYS stream check 76 loads - an earlier -Aud run's other
-    # residue would reroute checks 66/69 through the sample path and an
-    # out-of-range AY effect, and a stray 200.AYS would break check 75.
-    # Stale-clean every audio kind first (including *.AYS), then copy the
-    # 098/099 fixtures and the single 002.AYS in.
-    Remove-Item "$root\sd\*.WAV", "$root\sd\*.AKY", "$root\sd\*.AYS", "$root\sd\GAME.SFB", "$root\sd\0.XMB" -Force -ErrorAction SilentlyContinue
-    Copy-Item "$root\tests\out\condacts.ddb" "$root\sd\GAME.DDB" -Force
-    Copy-Item "$root\tests\out\truncwav.bin" "$root\sd\098.WAV" -Force
-    Copy-Item "$root\tests\out\badwav.bin" "$root\sd\099.WAV" -Force
-    Copy-Item "$root\tests\out\condacts.xmb" "$root\sd\0.XMB" -Force
-    "staged tests\out\condacts.xmb -> sd\0.XMB"
+    # the one 002.AYS stream check 76 loads - other residue would reroute
+    # checks 66/69 through the sample path and an out-of-range AY effect,
+    # and a stray 200.AYS would break check 75. sd\SUITE\ was emptied
+    # above and only ever holds what this block puts in it, so no
+    # per-kind stale-clean is needed (or possible to get wrong).
+    Copy-Item "$root\tests\out\condacts.ddb" "$leg\GAME.DDB" -Force
+    Copy-Item "$root\tests\out\truncwav.bin" "$leg\098.WAV" -Force
+    Copy-Item "$root\tests\out\badwav.bin" "$leg\099.WAV" -Force
+    Copy-Item "$root\tests\out\condacts.xmb" "$leg\0.XMB" -Force
+    "staged tests\out\condacts.xmb -> sd\$legName\0.XMB"
     # Streamed-song fixture for check 76 (SFX 2 7). Optional: if the audio
     # export has not been run the check still passes as a clean no-op, so
     # warn and continue rather than fail the suite build.
     $ays2 = "$root\tools\audio_assets\002.AYS"
     if (Test-Path $ays2) {
-        Copy-Item $ays2 "$root\sd\002.AYS" -Force
-        "staged tools\audio_assets\002.AYS -> sd\002.AYS (check 76)"
+        Copy-Item $ays2 "$leg\002.AYS" -Force
+        "staged tools\audio_assets\002.AYS -> sd\$legName\002.AYS (check 76)"
     }
     else {
         "WARNING: $ays2 absent - check 76 will no-op (run the audio export / aysconv.ps1 to exercise the stream path)"
     }
 }
 if ($Err4) {
-    Copy-Item "$root\tests\out\doallnest.ddb" "$root\sd\GAME.DDB" -Force
+    Copy-Item "$root\tests\out\doallnest.ddb" "$leg\GAME.DDB" -Force
 }
 
 $gmodeActive = $false
@@ -752,29 +910,24 @@ if ($GMode) {
     # PICTURE/DISPLAY on HASAT GMODE (flag 29 bit 7), so the leg needs
     # exactly one Layer 2 picture staged at the player's location
     # number - the fixture starts the player at location 1, so
-    # sd\001.NX2. Source is the Rabenstein art set (already converted,
+    # 001.NX2. Source is the Rabenstein art set (already converted,
     # 320-wide NX2), reused rather than converted here: this script has
     # no image-conversion step (see the -Rab block's own note).
     # Same CSpect lock hazard as -Rab/-UU/-Title/-Font: a running
-    # emulator holds sd\ files open and the cleanup/copy fail
+    # emulator holds sd\ files open and the copies fail
     # piecemeal, leaving a mixed extension set the loader's probe chain
     # resolves unpredictably. Refuse to stage rather than warn.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial gmodegate fixture)"
     }
-    Copy-Item "$root\tests\out\gmodegate.ddb" "$root\sd\GAME.DDB" -Force
-    # Stale-clean ONLY the files this switch owns - the six extension
-    # variants of the single number 001 - so a leftover 001.NXI from an
-    # earlier -Rab/-UU stage cannot win the probe chain, while every
-    # other staged number (and sd\001.VID, a different extension owned
-    # by -Vid) is left exactly as found.
-    foreach ($v in @('NX2', 'NXI', 'N2Z', 'NXZ', 'NX2.ZX0', 'NXI.ZX0')) {
-        Remove-Item "$root\sd\001.$v" -Force -ErrorAction SilentlyContinue
-    }
+    Copy-Item "$root\tests\out\gmodegate.ddb" "$leg\GAME.DDB" -Force
+    # No per-extension stale-clean: sd\GMODE\ was emptied at the top of
+    # the staging section, so this 001.NX2 is the ONLY number-001 art in
+    # the folder and the loader's probe chain has nothing else to find.
     $gmodeArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
     if (Test-Path $gmodeArt) {
-        Copy-Item $gmodeArt "$root\sd\001.NX2" -Force
-        "staged tools\Rabenstein-master\nextdaad\1.NX2 -> sd\001.NX2 (gmodegate picture)"
+        Copy-Item $gmodeArt "$leg\001.NX2" -Force
+        "staged tools\Rabenstein-master\nextdaad\1.NX2 -> sd\$legName\001.NX2 (gmodegate picture)"
     }
     else {
         # Not fatal: with the gate OPEN and no picture the fixture
@@ -796,13 +949,12 @@ if ($V3) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial v3probe fixture)"
     }
-    Copy-Item "$root\tests\out\v3probe.ddb" "$root\sd\GAME.DDB" -Force
-    # Stale-clean ONLY what this switch owns: sd\0.XMB, which it
-    # immediately replaces with its own. Every other staged file is
-    # left exactly as found.
-    Remove-Item "$root\sd\0.XMB" -Force -ErrorAction SilentlyContinue
-    Copy-Item "$root\tests\out\v3probe.xmb" "$root\sd\0.XMB" -Force
-    "staged tests\out\v3probe.xmb -> sd\0.XMB (XMES probe text)"
+    Copy-Item "$root\tests\out\v3probe.ddb" "$leg\GAME.DDB" -Force
+    # sd\V3\ holds this fixture's 0.XMB and no other - the stale-XMB
+    # hazard the old per-file clean guarded against cannot arise in a
+    # folder that was emptied at the top of the staging section.
+    Copy-Item "$root\tests\out\v3probe.xmb" "$leg\0.XMB" -Force
+    "staged tests\out\v3probe.xmb -> sd\$legName\0.XMB (XMES probe text)"
     $v3Active = $true
 }
 
@@ -829,12 +981,12 @@ if ($Rab) {
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (rabenstein)" }
         Copy-Item NDRAB.DDB "$root\tests\out\rabenstein.ddb" -Force
         try {
-            Copy-Item NDRAB.DDB "$root\sd\GAME.DDB" -Force
+            Copy-Item NDRAB.DDB "$leg\GAME.DDB" -Force
             Remove-Item NDRAB.DDB -ErrorAction SilentlyContinue
             $rabActive = $true
         }
         catch {
-            "WARNING: could not copy to sd\GAME.DDB (likely locked by a running CSpect - close it and copy $dr\NDRAB.DDB across manually): $_"
+            "WARNING: could not copy to sd\$legName\GAME.DDB (likely locked by a running CSpect - close it and copy $dr\NDRAB.DDB across manually): $_"
         }
     }
     finally {
@@ -847,7 +999,7 @@ if ($Rab) {
     # N.NX2 (320-wide) by default, N.NXI (256-wide) with -Gfx256.
     # -GfxZx0 compresses each file at staging time with z88dk-zx0
     # (tools\z88dk\bin; -q quick mode keeps the pass to seconds, the
-    # ratio difference does not matter for tests) into sd\NNN.<ext>.ZX0
+    # ratio difference does not matter for tests) into NNN.<ext>.ZX0
     # - a single whole-file ZX0 stream, which the interpreter's
     # gfx_depack accepts exactly like Gfx2Next's own two-stream output.
     # Gfx2Next itself only compresses at CONVERSION time, from an 8-bit
@@ -856,9 +1008,10 @@ if ($Rab) {
     # (same for N.NXI; -zx0 APPENDS ".zx0" to the output name). This
     # script has no image-conversion step - the Rabenstein art ships
     # pre-converted - so -GfxZx0 compresses the shipped files instead.
-    # Stale variants of each staged number are removed first so the
-    # loader's probe chain (NX2.ZX0 -> N2Z -> NX2 -> NXI.ZX0 -> NXZ ->
-    # NXI) cannot pick up a leftover from a previous staging run.
+    # No per-number stale-variant sweep any more: sd\RAB\ was emptied at
+    # the top of the staging section, so exactly ONE shape per number
+    # exists and the loader's probe chain (NX2.ZX0 -> N2Z -> NX2 ->
+    # NXI.ZX0 -> NXZ -> NXI) has no leftover to pick up.
     $srcExt = if ($Gfx256) { 'NXI' } else { 'NX2' }
     $zx0 = "$root\tools\z88dk\bin\z88dk-zx0.exe"
     $staged = 0
@@ -866,15 +1019,12 @@ if ($Rab) {
         $art = $_
         $padded = '{0:D3}' -f [int]$art.BaseName
         try {
-            foreach ($stale in @('NX2', 'NXI', 'N2Z', 'NXZ', 'NX2.ZX0', 'NXI.ZX0')) {
-                Remove-Item "$root\sd\$padded.$stale" -Force -ErrorAction SilentlyContinue
-            }
             if ($GfxZx0) {
-                & $zx0 -f -q $art.FullName "$root\sd\$padded.$srcExt.ZX0" | Out-Null
+                & $zx0 -f -q $art.FullName "$leg\$padded.$srcExt.ZX0" | Out-Null
                 if ($LASTEXITCODE -ne 0) { throw "z88dk-zx0 exited $LASTEXITCODE" }
             }
             else {
-                Copy-Item $art.FullName "$root\sd\$padded.$srcExt" -Force
+                Copy-Item $art.FullName "$leg\$padded.$srcExt" -Force
             }
             $staged++
         }
@@ -883,7 +1033,7 @@ if ($Rab) {
         }
     }
     $shape = $srcExt + $(if ($GfxZx0) { '.ZX0' } else { '' })
-    "staged $staged Rabenstein art file(s) -> sd\NNN.$shape"
+    "staged $staged Rabenstein art file(s) -> sd\$legName\NNN.$shape"
 }
 
 $uuActive = $false
@@ -907,12 +1057,12 @@ if ($UU) {
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (urbanupstart)" }
         Copy-Item NDUU.DDB "$root\tests\out\urbanupstart.ddb" -Force
         try {
-            Copy-Item NDUU.DDB "$root\sd\GAME.DDB" -Force
+            Copy-Item NDUU.DDB "$leg\GAME.DDB" -Force
             Remove-Item NDUU.DDB -ErrorAction SilentlyContinue
             $uuActive = $true
         }
         catch {
-            "WARNING: could not copy to sd\GAME.DDB (likely locked by a running CSpect - close it and copy $dr\NDUU.DDB across manually): $_"
+            "WARNING: could not copy to sd\$legName\GAME.DDB (likely locked by a running CSpect - close it and copy $dr\NDUU.DDB across manually): $_"
         }
     }
     finally {
@@ -925,25 +1075,23 @@ if ($UU) {
     # present, else NXI (256-wide) - today only the NXI set ships (~91
     # files, gaps in the numbering tolerated). No -Gfx256/-GfxZx0
     # modifiers: this corpus ships one art shape, so stage exactly what
-    # exists. Same stale-variant cleanup per staged number as -Rab, so a
-    # leftover Rabenstein NX2 at the same number cannot survive alongside it.
+    # exists. No stale-variant sweep for the same reason as -Rab: sd\UU\
+    # was emptied at the top of the staging section, so a Rabenstein NX2
+    # at the same number is not even in this folder.
     $uuExt = if (Get-ChildItem "$uuSrc\*.NX2" -ErrorAction SilentlyContinue) { 'NX2' } else { 'NXI' }
     $uuStaged = 0
     Get-ChildItem "$uuSrc\*.$uuExt" | Where-Object { $_.BaseName -match '^\d+$' } | ForEach-Object {
         $art = $_
         $padded = '{0:D3}' -f [int]$art.BaseName
         try {
-            foreach ($stale in @('NX2', 'NXI', 'N2Z', 'NXZ', 'NX2.ZX0', 'NXI.ZX0')) {
-                Remove-Item "$root\sd\$padded.$stale" -Force -ErrorAction SilentlyContinue
-            }
-            Copy-Item $art.FullName "$root\sd\$padded.$uuExt" -Force
+            Copy-Item $art.FullName "$leg\$padded.$uuExt" -Force
             $uuStaged++
         }
         catch {
             "WARNING: could not stage $($art.Name) (likely locked by a running CSpect - close it and retry): $_"
         }
     }
-    "staged $uuStaged Urban Upstart art file(s) -> sd\NNN.$uuExt"
+    "staged $uuStaged Urban Upstart art file(s) -> sd\$legName\NNN.$uuExt"
 }
 
 $partActive = $false
@@ -954,16 +1102,16 @@ if ($Part) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial part staging)"
     }
-    New-Item -ItemType Directory -Force "$root\sd\PART2" | Out-Null
-    # Stale-clean both DDBs' worth of previous output before restaging -
-    # sd\GAME.DDB itself is always overwritten below (-Force), but the
-    # other three are only ever written by this switch, so a stale copy
-    # from an interrupted/older run would otherwise survive untouched.
-    Remove-Item "$root\sd\GAME.DDB", "$root\sd\0.XMB", "$root\sd\GAME2.DDB", "$root\sd\PART2\0.XMB" -Force -ErrorAction SilentlyContinue
+    # sd\PART\ was emptied at the top of the staging section, so all four
+    # files below are this run's own; only the PARTn\ shadow directory
+    # has to be (re)created.
+    New-Item -ItemType Directory -Force "$leg\PART2" | Out-Null
 
-    # Part A (root) -> sd\GAME.DDB + sd\0.XMB. Part 1 is root-only by
-    # design (h_xpart/xpart_build_name), so this is byte-identical to
-    # staging any other single-part DDB as the active game.
+    # Part A (leg-folder root) -> GAME.DDB + 0.XMB. Part 1 is root-only
+    # by design (h_xpart/xpart_build_name), and "root" here means the
+    # directory the game was launched from - the leg folder - so this is
+    # byte-identical to staging any other single-part DDB as the active
+    # game.
     Copy-Item "$PSScriptRoot\NDPARTA.DSF" "$dr\NDPARTA.DSF" -Force
     Push-Location $dr
     try {
@@ -977,21 +1125,21 @@ if ($Part) {
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (NDPARTA)" }
         & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDPARTA.json NDPARTA.DDB
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (NDPARTA)" }
-        Move-Item NDPARTA.DDB "$root\sd\GAME.DDB" -Force
+        Move-Item NDPARTA.DDB "$leg\GAME.DDB" -Force
         # NDPARTA.DSF always uses XMESSAGE (its own header comment) -
         # no Test-Path guard, matching -Suite's own condacts.xmb
         # handling: an absence here is a real regression worth throwing
         # on, not a silently-tolerated gap like the plain template.
         if (-not (Test-Path '0.XMB')) { throw "NDPARTA.DSF produced no 0.XMB - XMESSAGE missing from the source?" }
         Move-Item '0.XMB' "$root\tests\out\parta.xmb" -Force
-        Copy-Item "$root\tests\out\parta.xmb" "$root\sd\0.XMB" -Force
+        Copy-Item "$root\tests\out\parta.xmb" "$leg\0.XMB" -Force
     }
     finally {
         Remove-Item "$dr\NDPARTA.DSF", "$dr\NDPARTA.json" -ErrorAction SilentlyContinue
         Pop-Location
     }
 
-    # Part 2 -> sd\GAME2.DDB + sd\PART2\0.XMB (the PARTn\ shadow the
+    # Part 2 -> GAME2.DDB + PART2\0.XMB (the PARTn\ shadow the
     # interpreter's asset probe expects - SP11 Task 5).
     Copy-Item "$PSScriptRoot\NDPARTB.DSF" "$dr\NDPARTB.DSF" -Force
     Push-Location $dr
@@ -1001,10 +1149,10 @@ if ($Part) {
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (NDPARTB)" }
         & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDPARTB.json NDPARTB.DDB
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (NDPARTB)" }
-        Move-Item NDPARTB.DDB "$root\sd\GAME2.DDB" -Force
+        Move-Item NDPARTB.DDB "$leg\GAME2.DDB" -Force
         if (-not (Test-Path '0.XMB')) { throw "NDPARTB.DSF produced no 0.XMB - XMES missing from the source?" }
         Move-Item '0.XMB' "$root\tests\out\partb.xmb" -Force
-        Copy-Item "$root\tests\out\partb.xmb" "$root\sd\PART2\0.XMB" -Force
+        Copy-Item "$root\tests\out\partb.xmb" "$leg\PART2\0.XMB" -Force
     }
     finally {
         Remove-Item "$dr\NDPARTB.DSF", "$dr\NDPARTB.json" -ErrorAction SilentlyContinue
@@ -1012,58 +1160,58 @@ if ($Part) {
     }
 
     $partActive = $true
-    $partaSize = (Get-Item "$root\sd\GAME.DDB").Length
-    $partbSize = (Get-Item "$root\sd\GAME2.DDB").Length
-    $partaXmbSize = (Get-Item "$root\sd\0.XMB").Length
-    $partbXmbSize = (Get-Item "$root\sd\PART2\0.XMB").Length
-    "staged NDPARTA -> sd\GAME.DDB ($partaSize bytes) + sd\0.XMB ($partaXmbSize bytes)"
-    "staged NDPARTB -> sd\GAME2.DDB ($partbSize bytes) + sd\PART2\0.XMB ($partbXmbSize bytes)"
+    $partaSize = (Get-Item "$leg\GAME.DDB").Length
+    $partbSize = (Get-Item "$leg\GAME2.DDB").Length
+    $partaXmbSize = (Get-Item "$leg\0.XMB").Length
+    $partbXmbSize = (Get-Item "$leg\PART2\0.XMB").Length
+    "staged NDPARTA -> sd\$legName\GAME.DDB ($partaSize bytes) + sd\$legName\0.XMB ($partaXmbSize bytes)"
+    "staged NDPARTB -> sd\$legName\GAME2.DDB ($partbSize bytes) + sd\$legName\PART2\0.XMB ($partbXmbSize bytes)"
 }
 
 if ($Title) {
     # SP11 Task 1 owner leg fixture: title_present/title_boot (overlay2.asm)
-    # probe sd\DAAD.* at boot, so the owner-eye-leg needs one staged.
+    # probe DAAD.* at boot, so the owner-eye-leg needs one staged.
     # The owner-authored 320x256 title (tools\demo-files\DAAD.png) is
     # converted to tools\demo-files\DAAD.NX2 by tools\png2nx.py
     # (ADAPTIVE 256, gfx2next -bitmap -pal-embed; 82432 bytes =
     # 512 pal + 320x256).
-    # Stale DAAD.* variants are cleared first so exactly one title is
-    # staged and the NX2-first probe order is what the leg exercises.
+    # No DAAD.* variant sweep: the leg folder was emptied at the top of
+    # the staging section, so exactly one title is present and the
+    # NX2-first probe order is what the leg exercises. The flip side
+    # matters more - a leg that does NOT pass -Title now gets no title
+    # at all, where a survivor in the shared root used to starve the
+    # graphics cache and silently turn burst picture draws into no-ops.
     # Same CSpect lock hazard as -Rab/-UU: refuse to stage rather than
     # warn.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial title fixture)"
     }
-    foreach ($v in @('NX2', 'NXI', 'N2Z', 'NXZ', 'NX2.ZX0', 'NXI.ZX0')) {
-        Remove-Item "$root\sd\DAAD.$v" -Force -ErrorAction SilentlyContinue
-    }
-    Copy-Item "$root\tools\demo-files\DAAD.NX2" "$root\sd\DAAD.NX2" -Force
-    "staged tools\demo-files\DAAD.NX2 -> sd\DAAD.NX2 (320x256 owner title)"
+    Copy-Item "$root\tools\demo-files\DAAD.NX2" "$leg\DAAD.NX2" -Force
+    "staged tools\demo-files\DAAD.NX2 -> sd\$legName\DAAD.NX2 (320x256 owner title)"
 }
 
 if ($Font) {
     # SP12 Task 2 owner leg fixture: font_load (overlay2.asm) probes
-    # sd\FONT.CHR at boot (and PARTn\FONT.CHR for parts >= 2), so the
+    # FONT.CHR at boot (and PARTn\FONT.CHR for parts >= 2), so the
     # owner-eye-leg needs one staged. tools\demo-files\fonts\Crews is a
     # 768-byte classic ZX charset (chars 32-127) - a bold, tilted,
     # graffiti-style face, visually distinctive from the interpreter's
     # plain embedded font at a glance. No test binary is committed
     # (authoring-kit hard rule for this task): fontconv.ps1 builds the
-    # full 2048-byte sd\FONT.CHR fresh each run from the .ch8 source
+    # full 2048-byte FONT.CHR fresh each run from the .ch8 source
     # plus authoring-kit\lib\default.chr.
     # Same CSpect lock hazard as -Rab/-UU/-Title: refuse to stage rather
     # than warn.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial font fixture)"
     }
-    Remove-Item "$root\sd\FONT.CHR" -Force -ErrorAction SilentlyContinue
     $fontSrc = "$root\tools\demo-files\fonts\Crews\Spectrum\Crews.ch8"
-    & "$root\authoring-kit\lib\fontconv.ps1" -In $fontSrc -Out "$root\sd\FONT.CHR" | Out-Null
-    $fontSize = (Get-Item "$root\sd\FONT.CHR").Length
-    "staged tools\demo-files\fonts\Crews\Spectrum\Crews.ch8 -> sd\FONT.CHR ($fontSize bytes, via fontconv.ps1)"
+    & "$root\authoring-kit\lib\fontconv.ps1" -In $fontSrc -Out "$leg\FONT.CHR" | Out-Null
+    $fontSize = (Get-Item "$leg\FONT.CHR").Length
+    "staged tools\demo-files\fonts\Crews\Spectrum\Crews.ch8 -> sd\$legName\FONT.CHR ($fontSize bytes, via fontconv.ps1)"
 
     # SP12 Task 3 owner leg fixture: pointer_load (overlay0.asm) probes
-    # sd\POINTER.SPR at boot (and PARTn\POINTER.SPR for parts >= 2), so
+    # POINTER.SPR at boot (and PARTn\POINTER.SPR for parts >= 2), so
     # the owner-eye-leg needs one staged alongside the font fixture just
     # above - same switch, no separate -Pointer flag. No binary is
     # committed (same policy as the font fixture): the 256 bytes are
@@ -1072,7 +1220,6 @@ if ($Font) {
     # $1C (pure green, RGB332) fill - a shape and colour obviously
     # different from mousePattern's own compiled-in black/white diagonal
     # arrow (overlay0.asm) at a glance.
-    Remove-Item "$root\sd\POINTER.SPR" -Force -ErrorAction SilentlyContinue
     $ptr = New-Object byte[] 256
     for ($y = 0; $y -lt 16; $y++) {
         for ($x = 0; $x -lt 16; $x++) {
@@ -1086,8 +1233,8 @@ if ($Font) {
             $ptr[$y * 16 + $x] = $b
         }
     }
-    [System.IO.File]::WriteAllBytes("$root\sd\POINTER.SPR", $ptr)
-    "staged a generated 16x16 green square (2px `$E3 border, `$00 outline) -> sd\POINTER.SPR (256 bytes)"
+    [System.IO.File]::WriteAllBytes("$leg\POINTER.SPR", $ptr)
+    "staged a generated 16x16 green square (2px `$E3 border, `$00 outline) -> sd\$legName\POINTER.SPR (256 bytes)"
 }
 
 # Bump this whenever a silicon-settled constant OR output-shaping
@@ -1295,11 +1442,11 @@ if ($Vid) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
     }
-    # SP15 T5 review fix: scope the stale-clean to the files THIS switch
-    # owns (001-006) - a bare sd\*.VID wipe also deleted -VidLong's
-    # 007-011.VID/099.VID, breaking a combined -Vid + -VidLong stage
-    # (card section 40.5 needs 001-011+099 staged together).
-    Remove-Item "$root\sd\00[1-6].VID" -Force -ErrorAction SilentlyContinue
+    # No stale-clean here: sd\VID\ is emptied once at the top of the
+    # staging section and -Vid/-VidLong both fill it, which is why they
+    # must be given TOGETHER for the 001-011+099 card (section 40.5).
+    # The SP15 T5 per-file scoping this used to carry was a workaround
+    # for the shared root and has no job left.
     $vidOutDir = Join-Path $root 'tests\out'
     New-Item -ItemType Directory -Force $vidOutDir | Out-Null
     # dest file -> (NXV v2 shape preset, source clip, --start, --duration)
@@ -1321,32 +1468,33 @@ if ($Vid) {
         $start = $vidLegMap[$dest].start
         $duration = $vidLegMap[$dest].duration
         if (-not (Test-Path -LiteralPath $src)) {
-            "WARNING: $src missing - sd\$dest not generated"
+            "WARNING: $src missing - sd\$legName\$dest not generated"
             continue
         }
         $shapeTag = $shape -replace ':', ''
         $cache = Join-Path $vidOutDir "$([IO.Path]::GetFileNameWithoutExtension($dest))_${shapeTag}_${vidLegSettlementTag}_leg_cache.vid"
         if (-not (Test-Path -LiteralPath $cache)) {
-            "encoding sd\$dest (shape $shape, source $(Split-Path -Leaf $src), start $start dur $duration) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
+            "encoding sd\$legName\$dest (shape $shape, source $(Split-Path -Leaf $src), start $start dur $duration) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
             # canonical encoder lives in the kit (see -Vid header); repo
             # tools ffmpeg passed explicitly - the kit default resolves
             # to authoring-kit\tools\ffmpeg, absent on a fresh clone
             & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --start $start --duration $duration --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe"
-            if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$dest not staged" }
+            if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$legName\$dest not staged" }
         }
         if (Test-Path -LiteralPath $cache) {
-            Copy-Item -LiteralPath $cache -Destination "$root\sd\$dest" -Force
+            Copy-Item -LiteralPath $cache -Destination "$leg\$dest" -Force
             $vidStaged++
         }
     }
-    "staged $vidStaged video fixture(s) -> sd\001.VID..sd\006.VID (NXV v2 leg set: full/classic/16:9/scope/classic-wide/16:9-card, sp14a-task-4-report.md section 37)"
+    "staged $vidStaged video fixture(s) -> sd\$legName\001.VID..006.VID (NXV v2 leg set: full/classic/16:9/scope/classic-wide/16:9-card, sp14a-task-4-report.md section 37)"
 }
 
 if ($VidLong) {
     Assert-VidEraInSync
     # SP15 3b STREAMING leg fixtures - full-duration research-clip
     # encodes bigger than the pool ring (see the -VidLong header
-    # comment). Cached like -Vid; does not touch sd\001-006.VID.
+    # comment). Cached like -Vid, and shares sd\VID\ with it: give both
+    # switches in one invocation for the full 001-011+099 card.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial video fixture)"
     }
@@ -1417,7 +1565,7 @@ if ($VidLong) {
         $shape = $vidLongMap[$dest].shape
         $src = $vidLongMap[$dest].src
         if (-not (Test-Path -LiteralPath $src)) {
-            "WARNING: $src missing - sd\$dest not generated"
+            "WARNING: $src missing - sd\$legName\$dest not generated"
             continue
         }
         $shapeTag = $shape -replace ':', ''
@@ -1432,12 +1580,12 @@ if ($VidLong) {
         if ($vidLongMap[$dest].start)    { $cut += @('--start', $vidLongMap[$dest].start) }
         if ($vidLongMap[$dest].duration) { $cut += @('--duration', $vidLongMap[$dest].duration) }
         if (-not (Test-Path -LiteralPath $cache)) {
-            "encoding sd\$dest (shape $shape, source $(Split-Path -Leaf $src), $(if ($cut) { "cut $($vidLongMap[$dest].start) dur $($vidLongMap[$dest].duration)" } else { 'FULL duration' })) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
+            "encoding sd\$legName\$dest (shape $shape, source $(Split-Path -Leaf $src), $(if ($cut) { "cut $($vidLongMap[$dest].start) dur $($vidLongMap[$dest].duration)" } else { 'FULL duration' })) via videnc.py - slow, cached at tests\out\$(Split-Path -Leaf $cache) after this run..."
             & python "$root\authoring-kit\lib\videnc.py" $src $cache --shape $shape --fps 25 --ffmpeg "$root\tools\ffmpeg\bin\ffmpeg.exe" @($vidLongMap[$dest].extraArgs) @cut
-            if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$dest not staged" }
+            if ($LASTEXITCODE -ne 0) { throw "videnc.py failed (exit $LASTEXITCODE) - sd\$legName\$dest not staged" }
         }
         if (Test-Path -LiteralPath $cache) {
-            Copy-Item -LiteralPath $cache -Destination "$root\sd\$dest" -Force
+            Copy-Item -LiteralPath $cache -Destination "$leg\$dest" -Force
             $vidLongStaged++
         }
     }
@@ -1445,11 +1593,11 @@ if ($VidLong) {
     # THROTTLE for video 99 is RETIRED - VSTRU is a plain streamed
     # regression leg now; the drill's verdict is on record in Cards
     # #3/#4 and git holds the lever.)
-    if (Test-Path -LiteralPath "$root\sd\007.VID") {
-        Copy-Item -LiteralPath "$root\sd\007.VID" -Destination "$root\sd\099.VID" -Force
+    if (Test-Path -LiteralPath "$leg\007.VID") {
+        Copy-Item -LiteralPath "$leg\007.VID" -Destination "$leg\099.VID" -Force
         $vidLongStaged++
     }
-    "staged $vidLongStaged long fixture(s) -> sd\007-011.VID + sd\099.VID (SP15 3b/3c streaming + direct leg set: VSTR0/VSTR1/VSTR2/VSTRU/VDIR/DPACE, sp14a-task-4-report.md sections 38/39)"
+    "staged $vidLongStaged long fixture(s) -> sd\$legName\007-011.VID + 099.VID (SP15 3b/3c streaming + direct leg set: VSTR0/VSTR1/VSTR2/VSTRU/VDIR/DPACE, sp14a-task-4-report.md sections 38/39)"
 }
 
 if ($NxBench) {
@@ -1478,13 +1626,14 @@ if ($NxBench) {
     $nxbDir = Join-Path $root 'tests\out\nxbench'
     & python "$root\authoring-kit\lib\nxv2enc.py" --bench-fixtures $nxbDir --segment $nxbCache
     if ($LASTEXITCODE -ne 0) { throw "nxv2enc.py --bench-fixtures failed (exit $LASTEXITCODE)" }
-    Remove-Item "$root\sd\NXB*.BIN" -Force -ErrorAction SilentlyContinue
+    # No NXB*.BIN stale-clean: sd\NXBENCH\ was emptied at the top of the
+    # staging section.
     $nxbStaged = 0
     Get-ChildItem "$nxbDir\NXB*.BIN" | ForEach-Object {
-        Copy-Item $_.FullName "$root\sd\$($_.Name)" -Force
+        Copy-Item $_.FullName "$leg\$($_.Name)" -Force
         $nxbStaged++
     }
-    "staged $nxbStaged bench payload(s) -> sd\NXB0.BIN..sd\NXB9.BIN (manifest: tests\out\nxbench\nxbench-manifest.txt)"
+    "staged $nxbStaged bench payload(s) -> sd\$legName\NXB0.BIN..NXB9.BIN (manifest: tests\out\nxbench\nxbench-manifest.txt)"
 }
 
 if ($Nxv2Test) {
@@ -1498,16 +1647,13 @@ if ($Nxv2Test) {
 
 if ($Aud) {
     # Same CSpect lock hazard as the art staging: a running emulator
-    # holds sd\ files open and the cleanup/copies fail piecemeal.
+    # holds sd\ files open and the copies fail piecemeal.
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial audio sets)"
     }
-    # Stale-audio cleanup first so a previous staging run cannot leak
-    # a song the current asset set no longer provides.
-    Remove-Item "$root\sd\*.AKY" -Force -ErrorAction SilentlyContinue
-    Remove-Item "$root\sd\GAME.SFB" -Force -ErrorAction SilentlyContinue
-    Remove-Item "$root\sd\*.WAV" -Force -ErrorAction SilentlyContinue
-    Remove-Item "$root\sd\*.AYS" -Force -ErrorAction SilentlyContinue
+    # No per-kind stale-audio cleanup: the leg folder was emptied at the
+    # top of the staging section, so a song the current asset set no
+    # longer provides cannot leak in from an earlier run.
     $audSrc = "$root\tools\audio_assets"
     $audFiles = @()
     if (Test-Path $audSrc) {
@@ -1517,8 +1663,8 @@ if ($Aud) {
         "WARNING: -Aud given but $audSrc has no assets (run the audio export script first) - skipped"
     }
     else {
-        $audFiles | ForEach-Object { Copy-Item $_.FullName "$root\sd\$($_.Name)" -Force }
-        "staged $($audFiles.Count) audio asset(s) -> sd\ ($(($audFiles | ForEach-Object Name) -join ', '))"
+        $audFiles | ForEach-Object { Copy-Item $_.FullName "$leg\$($_.Name)" -Force }
+        "staged $($audFiles.Count) audio asset(s) -> sd\$legName\ ($(($audFiles | ForEach-Object Name) -join ', '))"
     }
 }
 
@@ -1528,7 +1674,7 @@ if ($AudLad) {
     # this switch: make tests\audlad.dsf the active DDB, and stage the
     # five ladder songs tests\audio\mkladder.py generates.
     #
-    # sd\GAME.AKY is a COPY OF 001.AKY, not a sixth song. That identity
+    # GAME.AKY is a COPY OF 001.AKY, not a sixth song. That identity
     # is the whole design of the #T7B STOPM leg: boot autoplay and the
     # LAD1 verb then play the same bytes, so a pitch difference between
     # them cannot be a difference in the material. Do not "tidy" this
@@ -1540,16 +1686,11 @@ if ($AudLad) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial ladder)"
     }
-    Copy-Item "$root\tests\out\audlad.ddb" "$root\sd\GAME.DDB" -Force
-    # Stale-clean the SAME set -Aud owns, not just the .AKYs: the two
-    # switches stage different song sets under the same names, and a
-    # survivor from the other one would silently answer a rung with the
-    # wrong material (or leave a sample/stream the ladder never mentions
-    # able to fire from a stale request).
-    Remove-Item "$root\sd\*.AKY" -Force -ErrorAction SilentlyContinue
-    Remove-Item "$root\sd\GAME.SFB" -Force -ErrorAction SilentlyContinue
-    Remove-Item "$root\sd\*.WAV" -Force -ErrorAction SilentlyContinue
-    Remove-Item "$root\sd\*.AYS" -Force -ErrorAction SilentlyContinue
+    Copy-Item "$root\tests\out\audlad.ddb" "$leg\GAME.DDB" -Force
+    # sd\AUDLAD\ holds this ladder and nothing else - -Aud's own song set
+    # under the same names, or a sample/stream the ladder never mentions,
+    # is in a different folder entirely. The old cross-kind stale-clean
+    # was the shared root's problem, not this switch's.
     $ladSrc = "$root\tests\audio"
     $ladMap = [ordered]@{ 'L1.AKY' = '001.AKY'; 'L3.AKY' = '002.AKY'; 'L6.AKY' = '003.AKY';
                           'L9.AKY' = '004.AKY'; 'L9Q.AKY' = '005.AKY' }
@@ -1557,7 +1698,7 @@ if ($AudLad) {
     foreach ($src in $ladMap.Keys) {
         $p = Join-Path $ladSrc $src
         if (Test-Path $p) {
-            Copy-Item $p "$root\sd\$($ladMap[$src])" -Force
+            Copy-Item $p "$leg\$($ladMap[$src])" -Force
             $ladStaged++
         }
         else {
@@ -1593,7 +1734,7 @@ if ($AudLad) {
         "rung R: SongToAky unavailable - used authoring-kit\RELEASE\GAME.AKY instead"
     }
     if ($realOk) {
-        Copy-Item $realOut "$root\sd\006.AKY" -Force
+        Copy-Item $realOut "$leg\006.AKY" -Force
         $ladStaged++
     }
     else {
@@ -1602,16 +1743,16 @@ if ($AudLad) {
     # GAME.AKY is a copy of 006.AKY, NOT of a synthetic rung: boot
     # autoplay and LADR must play the same bytes, on the real material,
     # because that is the configuration the STOPM symptom was heard in.
-    if (Test-Path "$root\sd\006.AKY") {
-        Copy-Item "$root\sd\006.AKY" "$root\sd\GAME.AKY" -Force
-        "staged $ladStaged ladder song(s) -> sd\001..006.AKY, sd\GAME.AKY = sd\006.AKY (real material, STOPM control)"
+    if (Test-Path "$leg\006.AKY") {
+        Copy-Item "$leg\006.AKY" "$leg\GAME.AKY" -Force
+        "staged $ladStaged ladder song(s) -> sd\$legName\001..006.AKY, GAME.AKY = 006.AKY (real material, STOPM control)"
     }
     else {
-        "WARNING: no sd\006.AKY - boot autoplay and the #T7B STOPM leg have nothing to play"
+        "WARNING: no sd\$legName\006.AKY - boot autoplay and the #T7B STOPM leg have nothing to play"
     }
     foreach ($f in @('001.AKY', '002.AKY', '003.AKY', '004.AKY', '005.AKY', '006.AKY', 'GAME.AKY')) {
-        $p = "$root\sd\$f"
-        if (Test-Path $p) { "  sd\$f $((Get-Item $p).Length) bytes (song slot 10208)" }
+        $p = "$leg\$f"
+        if (Test-Path $p) { "  sd\$legName\$f $((Get-Item $p).Length) bytes (song slot 10208)" }
     }
     $audLadActive = $true
 }
@@ -1622,17 +1763,20 @@ if ($SfxDi) {
     # entirely by this switch: make tests\sfxdi.dsf the active DDB,
     # stage the two steady tones tests\audio\mktone.py generates, and
     # stage the Layer 2 corruption-detector card tests\art\mkl2card.py
-    # generates as sd\001.NXI.
+    # generates as 001.NXI.
     #
     # THE CARD IS NOT OPTIONAL AND MUST BE .NXI. gfx_blit routes
     # 256-wide art to gfx_row_copy256 -> dma_copy (one DMA call per
     # row) and 320-wide art to gfx_row_scatter320, a CPU column scatter
     # with no DMA branch at all. gfxExtTab is what decides which: NX2
     # rows are mode 1 / width 320, NXI rows mode 0 / width 256, and the
-    # NX2 variants probe FIRST. So a leftover sd\001.NX2 from an earlier
-    # -Rab/-GMode stage would win the chain, draw through the scatter
-    # path and leave the fixture exercising nothing - which is why all
-    # six extension variants of number 001 are stale-cleaned below.
+    # NX2 variants probe FIRST. A leftover 001.NX2 from an earlier
+    # -Rab/-GMode stage winning the chain, drawing through the scatter
+    # path and leaving the fixture exercising nothing IS WHAT HAPPENED
+    # (2026-08-03, the vacuous run that motivated the leg folders).
+    # sd\SFXDI\ is emptied at the top of the staging section and holds
+    # this fixture's four files and nothing else, so no other art of
+    # number 001 exists for the probe chain to find.
     #
     # NO SONG IS STAGED, DELIBERATELY. The AKY player masks the CTC feed
     # ~5500 T every frame while a song plays - a CONTINUOUS ~0.67% rate
@@ -1646,14 +1790,11 @@ if ($SfxDi) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial ear fixture)"
     }
-    Copy-Item "$root\tests\out\sfxdi.ddb" "$root\sd\GAME.DDB" -Force
-    # Stale-clean the same set -Aud/-AudLad own: a survivor from either
-    # would give the fixture the wrong material under the right name
-    # (001.WAV especially), and a stray .AKY would autoplay.
-    Remove-Item "$root\sd\*.AKY" -Force -ErrorAction SilentlyContinue
-    Remove-Item "$root\sd\GAME.SFB" -Force -ErrorAction SilentlyContinue
-    Remove-Item "$root\sd\*.WAV" -Force -ErrorAction SilentlyContinue
-    Remove-Item "$root\sd\*.AYS" -Force -ErrorAction SilentlyContinue
+    Copy-Item "$root\tests\out\sfxdi.ddb" "$leg\GAME.DDB" -Force
+    # No cross-kind audio stale-clean: -Aud/-AudLad material under the
+    # right name (001.WAV especially) and a stray autoplaying .AKY are
+    # both in other folders now. Nothing this fixture does not stage is
+    # in sd\SFXDI\.
     # Generated, not committed: 96 KB of pure sine that is a byte-exact
     # function of four constants. Same rule badwav/truncwav follow above.
     & python "$PSScriptRoot\audio\mktone.py" "$root\tests\out"
@@ -1670,15 +1811,12 @@ if ($SfxDi) {
         $wbits = [System.BitConverter]::ToUInt16($wb, 34)
         $wch = [System.BitConverter]::ToUInt16($wb, 22)
         if ($wch -ne 1 -or $wbits -ne 8) { throw "$src is not mono 8-bit (ch=$wch bits=$wbits) - aud_load_wav would reject it" }
-        Copy-Item $p "$root\sd\$($toneMap[$src])" -Force
-        "staged tests\out\$src -> sd\$($toneMap[$src])  $($wb.Length) bytes, $wrate Hz mono 8-bit"
+        Copy-Item $p "$leg\$($toneMap[$src])" -Force
+        "staged tests\out\$src -> sd\$legName\$($toneMap[$src])  $($wb.Length) bytes, $wrate Hz mono 8-bit"
     }
     # The Layer 2 card. Generated, not committed - a byte-exact function
     # of the constants in tests\art\mkl2card.py, same rule the tones and
     # the badwav/truncwav variants follow.
-    foreach ($v in @('NX2.ZX0', 'N2Z', 'NX2', 'NXI.ZX0', 'NXZ', 'NXI')) {
-        Remove-Item "$root\sd\001.$v" -Force -ErrorAction SilentlyContinue
-    }
     & python "$PSScriptRoot\art\mkl2card.py" "$root\tests\out"
     if ($LASTEXITCODE -ne 0) { throw "tests\art\mkl2card.py failed" }
     $cardSrc = "$root\tests\out\l2card.nxi"
@@ -1698,22 +1836,35 @@ if ($SfxDi) {
     $bad254 = 0
     for ($i = 512; $i -lt $cardData.Length; $i++) { if ($cardData[$i] -eq 254) { $bad254++ } }
     if ($bad254 -ne 0) { throw "l2card.nxi uses palette index 254 in $bad254 pixel(s) - that index is reserved transparent, the card would show false holes" }
-    Copy-Item $cardSrc "$root\sd\001.NXI" -Force
-    "staged tests\out\l2card.nxi -> sd\001.NXI  $cardBytes bytes, 256x$cardRows, no pixel uses index 254"
+    Copy-Item $cardSrc "$leg\001.NXI" -Force
+    "staged tests\out\l2card.nxi -> sd\$legName\001.NXI  $cardBytes bytes, 256x$cardRows, no pixel uses index 254"
     $sfxDiActive = $true
 }
 
-$good = [System.IO.File]::ReadAllBytes("$root\sd\GAME.DDB")
+# The interpreter itself, so the folder is genuinely self-contained -
+# one folder to copy, one file to launch. Not a rebuild: whatever
+# build\nextdaad.nex currently holds is what gets staged (build.ps1 is
+# the only thing that makes it).
+$nexSrc = "$root\build\nextdaad.nex"
+if (Test-Path $nexSrc) {
+    Copy-Item $nexSrc "$leg\NEXTDAAD.NEX" -Force
+    "staged build\nextdaad.nex -> sd\$legName\NEXTDAAD.NEX ($((Get-Item $nexSrc).Length) bytes)"
+}
+else {
+    "WARNING: no build\nextdaad.nex - sd\$legName\ has no interpreter to launch (run .\build.ps1)"
+}
+
+$good = [System.IO.File]::ReadAllBytes("$leg\GAME.DDB")
 
 "size=$($good.Length) (hex $('{0:X4}' -f $good.Length))"
 "version=$($good[0]) target=$('{0:X2}' -f $good[1]) magic=$($good[2])"
 $ptrs = for ($i = 8; $i -lt 34; $i += 2) { '{0:X4}' -f ($good[$i] + 256 * $good[$i+1]) }
 "pointers: $($ptrs -join ' ')"
-if ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - sd\GAME2.DDB + sd\PART2\0.XMB also staged)" }
+if ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - GAME2.DDB + PART2\0.XMB also staged)" }
 elseif ($uuActive) { "active: urbanupstart" }
-elseif ($UU) { "active: urbanupstart (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
+elseif ($UU) { "active: urbanupstart (GAME.DDB copy failed, see warning above - stale DDB still active)" }
 elseif ($rabActive) { "active: rabenstein" }
-elseif ($Rab) { "active: rabenstein (sd\GAME.DDB copy failed, see warning above - stale DDB still active)" }
+elseif ($Rab) { "active: rabenstein (GAME.DDB copy failed, see warning above - stale DDB still active)" }
 elseif ($v3Active) { "active: v3probe (SP16 DAAD V3 fixture - header version 3)" }
 elseif ($gmodeActive) { "active: gmodegate (SP16 GMODE graphics-gate fixture)" }
 elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-scale fixture)" }
@@ -1721,9 +1872,15 @@ elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture - se
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($Suite) { "active: suite" }
 else { "active: template" }
-if ($partActive) {
-    # Confirm the four files this switch is responsible for, not the
-    # whole (possibly art-laden, from an earlier -Rab/-UU run) sd\ tree.
-    $part2Entries = Get-ChildItem "$root\sd\PART2" -Force | ForEach-Object { $_.Name } | Sort-Object
-    "sd\PART2\ contents: $($part2Entries -join ', ')"
+
+# ---- what to copy, what to launch ---------------------------------
+$legFiles = @(Get-ChildItem -LiteralPath $leg -Force -Recurse -File | Sort-Object FullName)
+$legBytes = ($legFiles | Measure-Object -Property Length -Sum).Sum
+""
+"=== sd\$legName\ - $($legFiles.Count) file(s), $legBytes bytes ==="
+foreach ($f in $legFiles) {
+    $rel = $f.FullName.Substring($leg.Length + 1)
+    "  {0,-18} {1,12}" -f $rel, $f.Length
 }
+"COPY   sd\$legName\  (the whole folder, to the card)"
+"LAUNCH NEXTDAAD.NEX  (from inside that folder - the game reads GAME.DDB and every asset from its own directory)"

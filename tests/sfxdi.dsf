@@ -1,10 +1,13 @@
 ; NextDAAD sampled-SFX DMA pre-emption fixture (2026-08-03, rev 2).
 ;
 ; Compiled by tests\build-tests.ps1 on every run; staged as the active
-; sd\GAME.DDB by tests\build-tests.ps1 -SfxDi, which also generates the
-; two stimulus tones with tests\audio\mktone.py (sd\001.WAV 16 kHz,
-; sd\002.WAV 20 kHz) and the Layer 2 corruption-detector card with
-; tests\art\mkl2card.py (sd\001.NXI, 256x128).
+; GAME.DDB in sd\SFXDI\ by tests\build-tests.ps1 -SfxDi, which also
+; generates the two stimulus tones with tests\audio\mktone.py (001.WAV
+; 16 kHz, 002.WAV 20 kHz) and the Layer 2 corruption-detector card with
+; tests\art\mkl2card.py (001.NXI, 256x128). sd\SFXDI\ is emptied and
+; refilled on every -SfxDi run and holds nothing but those four files
+; plus a NEXTDAAD.NEX copy of build\nextdaad.nex - copy the folder to
+; the card and launch from inside it.
 ;
 ; RUN SHEET: .superpowers\sdd\sfx-di-audible-test.md. Read it before
 ; running - one leg is MODE-SENSITIVE and gives a false negative on
@@ -47,7 +50,7 @@
 ; ------------------------------------------------------------------
 ; WHAT THIS FIXTURE PUTS ON SCREEN, AND WHY EACH PIECE IS THERE
 ; ------------------------------------------------------------------
-; THE CARD. PICTURE 1 + DISPLAY 0 loads sd\001.NXI - a 256x128
+; THE CARD. PICTURE 1 + DISPLAY 0 loads 001.NXI - a 256x128
 ; generated card (tests\art\mkl2card.py) of flat colour bands, a 16-step
 ; ramp, a 2x2 checkerboard, a solid white block and a caption. gfx_blit
 ; ends with l2_enable, so the card IS Layer 2 coming up: if you can read
@@ -140,7 +143,7 @@
 ; NO MUSIC. The AKY player holds interrupts off ~5500 T every frame
 ; while a song plays, a CONTINUOUS ~0.67% rate error at 16 kHz that
 ; would sit under both reference phases and the burst alike. -SfxDi
-; stale-cleans sd\*.AKY and stages none.
+; stages no .AKY at all, and sd\SFXDI\ holds nothing it did not stage.
 ;
 ; ------------------------------------------------------------------
 ; EVERY PHASE BOUNDARY IS A KEYPRESS PAUSE (rev 2a, owner request)
