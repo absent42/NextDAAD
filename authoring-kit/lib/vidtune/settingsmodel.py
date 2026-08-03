@@ -39,7 +39,12 @@ class Knob:
 KNOBS = [
     Knob("shape",         "--shape",         "choice", "full",   "basic"),
     Knob("fps",           "--fps",           "float",  "25",     "basic"),
-    Knob("mono",          "--mono",          "flag",   False,    "basic"),
+    # --mono was REMOVED here 2026-08-02 alongside the encoder/player:
+    # videnc dropped it from argparse entirely and now hard-asserts
+    # stereo-only audio (videnc.py:370). No Knob row for it; an existing
+    # --mono in a user's VIDOPTS_NNN falls back to the extra passthrough
+    # (preserved verbatim on Accept) - same graceful path as the
+    # earlier --approx-cuts/--ocopy removal, no migration/strip added.
     Knob("dither",        "--dither",        "float",  "0.5",    "basic"),
     Knob("tile_slack",    "--tile-slack",    "float",  "0.0",    "basic"),
     # prefilter is basic, not advanced: the kit's own VIDEO-PRESETS.md

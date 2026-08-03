@@ -29,10 +29,10 @@ def test_argvec_bare_aspect_comma_locale():
 
 
 def test_argvec_fps_and_opts_order():
-    c = cfg(vid_aspect="scope", vid_fps="20", vid_opts="--mono",
+    c = cfg(vid_aspect="scope", vid_fps="20", vid_opts="--direct",
             per_clip={"003": "--tile-slack 0.5"})
     assert build_arg_vector(c, "003") == [
-        "--shape", "scope", "--fps", "20", "--mono", "--tile-slack", "0.5"]
+        "--shape", "scope", "--fps", "20", "--direct", "--tile-slack", "0.5"]
 
 
 def test_argvec_per_clip_shape_suppresses_global():
@@ -57,17 +57,17 @@ def test_argvec_bad_aspect_raises():
 
 def test_parse_opts_known_and_unknown():
     known, extra = parse_opts(split_opts(
-        "--dither 0.3 --mono --no-merge --dither 0.4"))
+        "--dither 0.3 --direct --no-merge --dither 0.4"))
     assert known["dither"] == "0.4"      # last occurrence wins
-    assert known["mono"] is True
+    assert known["direct"] is True
     assert extra == ["--no-merge"]
 
 
 def test_effective_settings_layering():
-    c = cfg(vid_opts="--dither 0.3", per_clip={"003": "--dither 0.6 --mono"})
+    c = cfg(vid_opts="--dither 0.3", per_clip={"003": "--dither 0.6 --direct"})
     s = effective_settings(c, "003")
     assert s["dither"] == "0.6"
-    assert s["mono"] is True
+    assert s["direct"] is True
     assert s["retime"] == "blend"        # untouched default
 
 
@@ -86,7 +86,7 @@ def test_deviations_shape_included_when_changed():
 
 
 def test_deviations_empty_when_untouched():
-    c = cfg(vid_aspect="scope", vid_opts="--mono")
+    c = cfg(vid_aspect="scope", vid_opts="--direct")
     assert deviations(effective_settings(c, "001"), c) == []
 
 
@@ -106,11 +106,11 @@ def test_parse_opts_prefilter_with_value():
 
 def test_parse_opts_prefilter_followed_by_another_flag():
     # The next token is a value only if it does NOT start with "--" -
-    # "--prefilter --mono" is bare --prefilter (const default) then
-    # --mono, not --prefilter with value "--mono".
-    known, extra = parse_opts(split_opts("--prefilter --mono"))
+    # "--prefilter --direct" is bare --prefilter (const default) then
+    # --direct, not --prefilter with value "--direct".
+    known, extra = parse_opts(split_opts("--prefilter --direct"))
     assert known["prefilter"] is True
-    assert known["mono"] is True
+    assert known["direct"] is True
     assert extra == []
 
 
@@ -180,6 +180,23 @@ def test_approx_cuts_and_ocopy_removed_fall_back_to_extra():
     c = cfg(per_clip={"003": "--ocopy --approx-cuts"})
     s = effective_settings(c, "003")
     assert deviations(s, c) == ["--ocopy", "--approx-cuts"]
+
+
+def test_mono_removed_falls_back_to_extra():
+    # --mono was REMOVED from the encoder AND player (2026-08-02) -
+    # videnc dropped it from argparse entirely and now hard-asserts
+    # stereo-only audio. No special-casing: an existing --mono in a
+    # user's VIDOPTS_NNN simply falls back to the extra passthrough,
+    # preserved verbatim - the same graceful path --approx-cuts/--ocopy
+    # take. Once the encoder rejects it, the user sees videnc's own
+    # error in the verbatim failure box.
+    known, extra = parse_opts(split_opts("--mono"))
+    assert "mono" not in known
+    assert extra == ["--mono"]
+
+    c = cfg(per_clip={"003": "--mono"})
+    s = effective_settings(c, "003")
+    assert deviations(s, c) == ["--mono"]
 
 
 def test_deviations_extra_pairwise_no_orphaned_value():

@@ -22,9 +22,9 @@ def test_update_existing_line_preserves_rest(fixture_kit):
 
 
 def test_insert_new_line_after_last_vidopts(fixture_kit):
-    write_vidopts_line(fixture_kit / "CONFIG.BAT", "005", "--mono")
+    write_vidopts_line(fixture_kit / "CONFIG.BAT", "005", "--direct")
     cfg = parse_config(fixture_kit / "CONFIG.BAT")
-    assert cfg.per_clip["005"] == "--mono"
+    assert cfg.per_clip["005"] == "--direct"
     assert cfg.per_clip["002"] == "--shape 16:9"   # untouched
     text = config_bytes(fixture_kit)
     assert text.index(b"VIDOPTS_002") < text.index(b"VIDOPTS_005")
@@ -41,14 +41,14 @@ def test_mtime_conflict_refused(fixture_kit):
     path = fixture_kit / "CONFIG.BAT"
     stale_mtime = path.stat().st_mtime - 100
     with pytest.raises(ConfigConflict):
-        write_vidopts_line(path, "002", "--mono", expected_mtime=stale_mtime)
+        write_vidopts_line(path, "002", "--direct", expected_mtime=stale_mtime)
     assert b"--shape 16:9" in config_bytes(fixture_kit)   # unchanged
 
 
 def test_write_sidecar(tmp_path):
     sc = tmp_path / "003.vid.args"
-    write_sidecar(sc, "pal9k", ["--mono"])
-    assert sc.read_bytes() == arg_hash("pal9k", ["--mono"]).encode()  # no newline
+    write_sidecar(sc, "pal9k", ["--direct"])
+    assert sc.read_bytes() == arg_hash("pal9k", ["--direct"]).encode()  # no newline
 
 
 def test_insert_with_no_vidopts_anchor(tmp_path):
@@ -58,13 +58,13 @@ def test_insert_with_no_vidopts_anchor(tmp_path):
     original = b'@echo off\r\nSET GAME=\r\n'
     cfg.write_bytes(original)
 
-    write_vidopts_line(cfg, "005", "--mono")
+    write_vidopts_line(cfg, "005", "--direct")
     after = cfg.read_bytes()
 
     # Should be original + new line with CRLF, no blank line injected
-    expected = original + b'SET VIDOPTS_005=--mono\r\n'
+    expected = original + b'SET VIDOPTS_005=--direct\r\n'
     assert after == expected, f"Expected {expected!r}, got {after!r}"
 
     # Verify parse_config reads it correctly
     parsed = parse_config(cfg)
-    assert parsed.per_clip["005"] == "--mono"
+    assert parsed.per_clip["005"] == "--direct"
