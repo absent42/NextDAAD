@@ -109,7 +109,8 @@ aud_tick:
     ld hl, AUD_SONG_ORG
     di                              ; player repoints SP - no CTC nest
     call PLY_AKY_INIT               ; also zeroes the effect channels
-    ei
+    call aud_env_arm                ; and force the first envelope
+    ei                              ; retrigger (see aud_env_arm)
     ld a, 1
     ld (audPlayerUp), a
     ld a, (audFlags)
@@ -296,6 +297,7 @@ aud_music_stop:
     push hl
     ld hl, audSilenceSong
     call PLY_AKY_INIT
+    call aud_env_arm
     pop hl
     ld (PLY_AKY_CHANNEL1_SOUNDEFFECTDATA), hl
     ld a, 1
@@ -327,8 +329,99 @@ aud_ensure_player:
     ret nz
     ld hl, audSilenceSong
     call PLY_AKY_INIT
+    call aud_env_arm
     ld a, 1
     ld (audPlayerUp), a
+    ret
+
+; --- envelope retrigger arm (SP16 Task 7 follow-up) ------------------
+
+; Poison the AKY player's four R13 (envelope shape) shadow cells with
+; $FF so the first hardware-envelope note of a newly started song is
+; guaranteed to WRITE R13 and therefore RETRIGGER the envelope
+; generator. Called after every PLY_AKY_INIT - all three sites, which
+; are the only ones in the tree (aud_tick's start-music, aud_music_stop
+; and aud_ensure_player above).
+;
+; THE DEFECT. PLY_AKY_SENDPSGREGISTERS_SPECTRUMRELATED pushes R0-R12
+; out unconditionally through an outi chain, but writes R13 only when
+; the value CHANGES (player_aky.asm:740 "ld a,(hl) / inc hl / cp (hl) /
+; jr z,...REGISTER13_END"), because a write to R13 restarts the
+; envelope generator on AY silicon and a per-frame rewrite would
+; retrigger every envelope fifty times a second. The byte it compares
+; against is the shadow cell immediately after R13 in each hardware
+; register array. PLY_AKY_INIT does not clear those cells - its whole
+; reset set is the linker position, the nine REGISTERBLOCKLINESTATE
+; opcodes, the pattern frame counter and the three SOUNDEFFECTDATA
+; words - and aud_psg_silence writes only R7/R8/R9/R10. So a restarted
+; song whose first envelope note asks for the shape already sitting in
+; the shadow never retriggers: a hold-type shape stays parked at its
+; terminal level, the buzzer's content is gone and only the tone
+; generator's fundamental remains, which is what "the tune came back at
+; a lower tone" describes. Shape $0A is also a triangle one octave
+; below $08 at the same envelope period.
+;
+; WHY A REGISTER DUMP CANNOT SEE IT. The discriminator is the WRITE
+; EVENT, not a value: control (shadow differed, R13 written, envelope
+; retriggered, shadow updated) and repro (shadow already matched, write
+; skipped, envelope not retriggered) end the frame byte-identical, and
+; the envelope generator's phase, direction and step counter are not
+; registers on any AY. The SP16 T7 three-point dump returned 654 of 654
+; byte-identical for exactly this reason; its dismissal of the R13
+; residue rested on "the next PLY_AKY_PLAY rewrites R0-R13
+; unconditionally" - true of R0-R12, false for R13.
+;
+; WHY $FF. R13 is a 4-bit register and the player masks every shape it
+; stores ("and $f" on the hardware path, "and $7 / add a,$8" on the
+; effects path), so a shadow of $FF can never equal a real shape and
+; the cp always mismatches. This is not an invention: $FF is the
+; player's OWN retrig idiom - a register block flagged retrig does
+; "ld (iy+3),$ff" (player_aky.asm:495) and the effects stream does the
+; same to PLY_AKY_SFXRETRIG (:134). This routine files exactly the
+; event the song data files for a retrig-flagged note.
+;
+; CORRECT BY CONSTRUCTION, two ways.
+; 1. It cannot cause an unwanted retrigger in normal play. The poison
+;    is consumed by the first R13 write after it, which stores the real
+;    shape into the shadow (player_aky.asm:744 "ld (hl),a"); from the
+;    next frame on, the comparison is against a genuine value again and
+;    the per-frame suppression works exactly as before. One forced
+;    write per song start, zero per-frame cost, cold paths only.
+; 2. It cannot mis-set an envelope. The VALUE written to R13 still
+;    comes from the song data via the register array - only the "skip
+;    the write" optimisation is defeated, and only for one note. The
+;    poison byte is never sent to the chip: the shadow is compared and
+;    overwritten, never output.
+; The two silence-song sites force that one write on channels the
+; silence song holds at volume 0, so nothing is audible. An effect live
+; on PSG 3 across a STOPM gets one extra envelope restart on its next
+; frame - the same event its own data files on any retrig-flagged note.
+;
+; THE FOUR CELLS. PSG 1's is named; PSG 2's and PSG 3's are the unnamed
+; +3 offsets of their hardware register arrays (the Disark conversion
+; named only PSG 1's); the fourth is PLY_AKY_SFXRETRIG. PSG 3's is the
+; persistent one - each frame the player LDIRs PSG 3's software +
+; hardware arrays into the SFX array (player_aky.asm:461) and copies
+; the shadow back afterwards (:473), so PLY_AKY_SFXRETRIG is a
+; per-frame working copy. Poisoning it too is belt-and-braces, 3 bytes.
+;
+; NOTHING ELSE LEAVES A STALE SHADOW that this misses. No other code in
+; the tree writes R13 through the shadow: aud_psg_silence,
+; aud_beep_start / aud_beep_silence and video.asm's video-entry
+; .psgpark touch only R0/R1/R7/R8/R9/R10. The AYS stream engine
+; (aud_ays_tick) writes whatever registers its frame mask selects
+; straight to the chip with no shadow at all, so it CAN desynchronise
+; chip from shadow - covered here, because a stream and an AKY song are
+; mutually exclusive and the next song start comes through
+; PLY_AKY_INIT.
+;
+; Corrupts AF. Preserves BC, DE, HL, IX, IY.
+aud_env_arm:
+    ld a, $FF
+    ld (PLY_AKY_PSG1RETRIG), a                  ; PSG 1 (named cell)
+    ld (PLY_AKY_PSG2HARDWAREREGISTERARRAY+3), a ; PSG 2
+    ld (PLY_AKY_PSG3HARDWAREREGISTERARRAY+3), a ; PSG 3 (persistent)
+    ld (PLY_AKY_SFXRETRIG), a                   ; PSG 3's frame copy
     ret
 
 ; Silence one PSG: A = Turbo Sound select value ($FF/$FE/$FD).

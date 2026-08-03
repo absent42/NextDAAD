@@ -20,6 +20,26 @@ hw_init:
     call nr_read
     or %00001010                ; bit 3 DACs, bit 1 Turbo Sound
     nextreg NR_PERIPH3, a
+    ; NR $06 (Peripheral 2) bits 1:0 - the AUDIO CHIP MODE - is
+    ; DELIBERATELY NOT ASSERTED, and this is the record of why, so it
+    ; is not re-derived. The primary documentation contradicts itself
+    ; three ways on the encoding: registers.txt says "00 = YM, 01 = AY,
+    ; 10 = ZXN-8950, 11 = Hold all AY in reset"; config.txt's
+    ; user-facing psgmode says "AY (0), YM (1), reserved (2) and
+    ; disabled (3)", inverting AY and YM; the dev guide gives a third
+    ; reading of value 10 ("Disabled"). Two of the four values are
+    ; silence or a different chip model, so writing one blind risks
+    ; muting the game on whichever machines the other document
+    ; describes correctly. The accepted consequence: two Next machines
+    ; can run this interpreter with different PSG models, an AY/YM
+    ; difference of envelope resolution and volume curve - timbre and
+    ; loudness, not pitch. Resolve by reading the inherited value on
+    ; real hardware first; only then consider asserting it. NR $09
+    ; (per-AY mono bits) and NR $08 bits 5/4 (stereo mode, internal
+    ; speaker) are inherited for the same reason - the or-mask above
+    ; can only set bits, so it never disturbs them, and nexload
+    ; explicitly refuses to touch the internal speaker ("a user
+    ; setting, not a game setting").
     jp ula_cls
 
 ; Clear ULA pixels, set attrs to white ink on black paper.

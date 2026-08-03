@@ -3108,6 +3108,8 @@ vid_sd_blk_h:
     or a
     ret
 
+; Multiface disable/restore, streaming half. NR $06 audio-chip-mode
+; note: see vid_mf_disable - the same %11110111 mask, same verdict.
 vid_mf_disable_h:
     ld e, NR_PERIPH2
     call nr_read
@@ -7205,6 +7207,20 @@ vid_sd_cmd:
     ret
 
 ; Multiface disable/restore around the raw window (carried).
+;
+; NR $06 IS ALSO THE AUDIO CHIP MODE REGISTER (bits 1:0), and this pair
+; plus vid_mf_disable_h / vid_mf_restore_h are the only writes to it in
+; the tree. Recorded here because SP16 Task 7's clock grep was scoped
+; to the audio path and never reached video.asm - do not re-derive it.
+; VERIFIED against tools/NextZXOS/docs/extra-hw/io-port-system/
+; registers.txt, "0x06 (06) => Peripheral 2 Setting": "and %11110111"
+; clears bit 3 (enable multiface nmi by M1 button) and nothing else, so
+; bits 1:0 (audio chip mode) and bit 6 (divert BEEP to internal
+; speaker) survive a raw SD window intact. No live audio bug here.
+; vid_mf_restore writes the whole saved byte back and is equally
+; mode-preserving PROVIDED it is paired: vidMfSave / vidMfSaveH are
+; static 0 slots, so an unpaired restore would write $00 and set audio
+; chip mode %00. Every call site is paired - latent shape, not a bug.
 vid_mf_disable:
     ld e, NR_PERIPH2
     call nr_read
