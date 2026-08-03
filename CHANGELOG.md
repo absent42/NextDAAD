@@ -26,20 +26,50 @@ flag-1 adjustment, below. PUTIN/TAKEOUT's composite spacing took
 neither reference wholesale: msx2daad's leading space, jDAAD's absent
 trailing one.
 
+### Breaking change: mono cutscene audio is gone
+
+`--mono` no longer exists. Cutscene audio is stereo, always. Mono cost
+more playback time than it saved and made no audible difference
+against 8-bit sound, so it was not worth keeping. A mono source still
+needs nothing from you - the encoder puts it on both channels
+automatically, as it always did.
+
+If a game or a `CONFIG.BAT` still carries `--mono` in `VIDOPTS` or
+`VIDOPTS_NNN`, the build now stops on it with an unrecognised-argument
+error from the encoder. Delete the option; nothing replaces it.
+
 ### Video
 
+- A video file can now be up to 256 MB, lifted from 16 MB. An
+  uncompressed clip goes from about fifteen seconds to about four
+  minutes at full screen; a compressed clip is limited instead by a
+  frame count worth roughly 43 minutes at 25 fps. The encoder checks
+  both before it writes anything, so an over-size clip is refused at
+  build time with a message naming the limit and the longest clip
+  your shape and frame rate can reach - it used to write a file the
+  player then refused to open.
+- The mid-clip pause is gone. A long clip with no cuts used to hold
+  the picture still for about a sixth of a second every few seconds,
+  while the whole screen was refreshed at once. That refresh is now
+  spread across ordinary frames, so nothing stops. `--kf-cadence
+  SECONDS` (default 5, 0 disables) still sets how often it happens,
+  and still costs nothing measurable at the default.
+- Half-rate clips play at their true rate. A 12.5 fps streamed clip
+  ran slightly slow, with the audio buffer running dry underneath it.
+  Both are fixed, and the encoder now allows for what the slower rate
+  costs when it sizes a clip to the card.
 - Keyframes no longer hitch: keyframe bursts are paced to fit inside
   the frame period at every budget, removing the once-per-keyframe
   stutter on streamed clips.
-- Frame-rate floors lowered: stereo audio now works down to 12.5 fps
-  (was 24.4) and mono to 9.2 (was 18.2), at no extra memory cost.
-  Half-rate encodes of demanding clips are now a real option - 12.5
-  fps doubles the byte and decode budget per frame, and 12.5 divides
-  the 50 Hz display evenly so playback cadence stays smooth.
+- The audio frame-rate floor is lower: 10.17 fps, down from 24.4, at
+  no extra memory cost. Half-rate encodes of demanding clips are a
+  real option now - 12.5 fps doubles the byte and decode budget per
+  frame, and divides the 50 Hz display evenly so playback cadence
+  stays smooth.
 - Uncompressed (direct) playback got faster: the at-rate ceiling
-  grows from 256x133 to 256x153 at 25 fps stereo, and full-screen
-  320x256 at 12.5 fps stereo now plays - pixel-perfect video at the
-  full display size for content that delta compression handles badly.
+  grows from 256x133 to 256x153 at 25 fps, and full-screen 320x256 at
+  12.5 fps now plays - pixel-perfect video at the full display size
+  for content that delta compression handles badly.
 - Sources that are not 25 fps (most footage: 23.976/24/29.97/30) are
   now retimed by blending instead of dropping frames, removing the
   motion stutter the old method caused. Automatic when the source
@@ -48,9 +78,16 @@ trailing one.
   for slow pans. Genuine 25 fps sources are untouched. Note: on
   uncompressed (direct) encodes the blend's mixed frames are
   faithfully visible; `--retime drop` or `mci` may look better there.
-- `--kf-cadence SECONDS` (default 5, 0 disables): inserts a keyframe
-  when none has occurred naturally within the window. Keeps long
-  cut-less clips fresh at no measurable byte cost at the default.
+- `--prefilter` (opt-in, off by default): a light denoise before
+  scaling, for grainy or noisy sources. Grain is detail the
+  compressed route pays for on every single frame, so giving up a
+  little of it buys back room for everything else in the picture.
+  Bare `--prefilter` uses a conservative setting; it buys nothing on
+  an uncompressed encode, where a frame costs the same whatever is
+  in it.
+- Removed: `--ocopy` (offset copy) and `--approx-cuts` (cut
+  approximation). Neither improved the picture, and offset copy made
+  it worse.
 - Stale-picture recovery now works: the checks that should force a
   keyframe when the picture has drifted too far from the source were
   structurally unable to fire; they now trigger on genuinely broken
@@ -63,6 +100,13 @@ trailing one.
 
 ### Fixes
 
+- Sampled sound effects no longer distort while a picture is being
+  drawn. An effect playing across a location picture or any screen
+  redraw came out buzzy and rough - a grating edge on the sound that
+  cleared the moment the picture finished. It affected every game
+  using sampled effects, on every build, from the day sampled effects
+  were added.
+- Location pictures draw slightly faster, out of the same work.
 - A video file stored in exactly 32 fragments on the SD card was
   falsely refused. The real limits are now enforced and documented:
   resident clips up to 32 fragments, streamed and direct clips up to
@@ -240,20 +284,16 @@ trailing one.
   dropped.
 - BEEP's tone ceiling is 238 rather than 222, which recovers the top
   eight semitones of octave 8 - the range DRC can actually emit.
-- The two parked AY symptoms (nine-channel distortion, and a
-  post-STOPM restart at a lower tone) were instrumented and measured
-  against a phase-matched fresh-boot control on the real material. No
-  cause was attributed and no change was made. The measurement is
-  emulator-model evidence - it excludes register and player-state
-  residue inside ZEsarUX's model, and cannot speak for the analog
-  audio path - so both symptoms are now hardware listening tests
-  rather than open code questions.
+- Two AY music symptoms are still open and not fixed here: distortion
+  when all nine channels are driven at once, and a tune restarting at
+  a lower tone after STOPM. Both were investigated for this release
+  without a cause being found.
 
 ### Compatibility
 
 - Save format is unchanged, and saves made before this release load
   normally. They carry the old VALUES of flags 29, 53 and 62, though:
-  a pre-SP16 save restores flag 29 as 0, so a loaded game will take
+  an older save restores flag 29 as 0, so a loaded game will take
   the no-graphics branch of `HASAT GMODE` until something rewrites the
   flag. Start a fresh game to pick up the new flag values.
 - Behaviour changes are the point of this release. A game tuned around
@@ -269,6 +309,16 @@ trailing one.
   for a DSF. Also lists the reference-interpreter defects found while
   adjudicating, so a difference against one particular reference is
   not mistaken for a NextDAAD fault.
+- New `VIDEO-PRESETS.md`: how to choose video settings for your own
+  footage. Which of the two routes suits which kind of clip, six
+  ready-made blocks of settings to copy, a step-by-step ladder to
+  work down when a clip bands, how much card space a clip costs and
+  how long one can run, and what each on-screen video error means.
+- New `VIDTUNE.BAT`: a video tuning window. Pick a clip, preview a
+  segment of it, change the shape, frame rate, dither and the rest,
+  encode and accept - the settings are written into `VIDOPTS_NNN` in
+  `CONFIG.BAT`, so the next build reproduces exactly what you
+  previewed. Ships ready to run; no Python needed.
 - `SETUP.md`: MOUSE sub-command table updated for the full 0-7 set,
   BEEP parameter order and tone range documented.
 
