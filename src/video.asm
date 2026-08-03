@@ -1899,13 +1899,36 @@ vid_aud_pump:
     ; the reader has just released is ~8x pure waste - it was 77 calls
     ; a frame moving ~14 bytes each on the 12.5 fps rows. Below the
     ; chunk size, return and let the caller poll; the room only grows.
-    ; Never taken on a legal file since the ring became the whole bank
-    ; (NXV_AUD_FRAME_MAX guarantees the feed fits in one pass), so
-    ; this is the degraded-regime backstop, not the fix.
+    ;
+    ; THE FLOOR IS min(NXV_AUD_PUMP_CHUNK, feedRem), NOT THE CONSTANT
+    ; (corrected 2026-08-03). NXV_AUD_PUMP_CHUNK was derived as the
+    ; pace-spin TRICKLE chunk and was given this second, unrelated job
+    ; without re-deriving it. Holding out for a whole chunk of room is
+    ; only sound while the feed still WANTS a whole chunk: with 100
+    ; bytes left to feed and 90 bytes of room the old test refused the
+    ; 90 and waited for 256 bytes the feed can never consume - up to
+    ; 8.2 ms of dead spin in .ffin, which runs BEFORE the ring gate and
+    ; therefore produces no SD blocks while it waits. So: room >= 256
+    ; always proceeds; below that, proceed anyway once the feed itself
+    ; wants less than a chunk (feedRem high byte zero), which is the
+    ; only case where "wait for more room" cannot be repaid.
+    ;
+    ; UNREACHABLE ON ANY LEGAL FILE, and kept correct anyway. The
+    ; ASSERT below (2*NXV_AUD_FRAME_MAX <= NXV_AUD_RING-NXV_AUD_GUARD,
+    ; nextdaad.inc) makes every declarable frame's feed fit the single
+    ; post-present pump in one pass, so no room-limited partial arises
+    ; at all. This is the degraded-regime and future-bound backstop -
+    ; the kind of code that is only ever read after something else has
+    ; already gone wrong, which is exactly why it must not be subtly
+    ; wrong when it is.
     ASSERT NXV_AUD_PUMP_CHUNK == 256
     ld a, h
     or a
-    ret z                        ; room < NXV_AUD_PUMP_CHUNK: re-poll
+    jr nz, .rlim                 ; room >= 256: a whole chunk is there
+    ld a, (vidAudFeedRem+1)
+    or a
+    ret nz                       ; feed still wants >= 256: hold out
+.rlim:
     ld b, h
     ld c, l                      ; BC = room
 .room:
