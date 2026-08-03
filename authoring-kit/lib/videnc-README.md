@@ -214,7 +214,7 @@ The encoder is quality-maximalist under two per-frame caps: a byte cap
 coefficients. It degrades gracefully (coarser thresholds, fewer
 refreshed pixels) rather than truncating frames.
 
-Three gates refuse infeasible encodes at encode time, each naming its
+Four gates refuse infeasible encodes at encode time, each naming its
 remedy in the error message:
 
 - **Audio floor.** One frame may carry at most 3072 real audio bytes
@@ -234,6 +234,13 @@ remedy in the error message:
   carries full-screen 320x256); the refusal message prints the live
   at-rate menu (the at-rate height, its 0.90-margin variant, and the
   maximum at the audio floor fps).
+- **Whole-file size and length.** A `.VID` may be at most 268,431,360 B
+  (256 MiB) and 65535 frames, whichever binds first - the player's hot
+  filemap and its 16-bit frame counters. Both bounds are checked on
+  every route before a byte is written, and the refusal names the one
+  it hit plus the longest clip this shape and rate can reach. Remedy:
+  shorten the clip, use a smaller shape or a lower `--fps`, or split it
+  across several `.VID` files played back to back.
 
 ## Automatic stream budget
 
@@ -414,7 +421,8 @@ is the executable specification of the player. Every section of the
 file is an exact multiple of 512-byte SD blocks.
 
 Audio is unsigned 8-bit PCM, stereo 15625 Hz, full rate - no
-decimation. A mono source is converted to stereo automatically. Palettes are scene-scoped
+decimation. A mono source is converted to stereo automatically.
+Palettes are scene-scoped
 adaptive 256-colour (NR $44 write order, RRRGGGBB + expanded 9th blue
 bit), refreshed by PAL opcodes when drift crosses the trigger.
 Quantization targets are blue-noise ordered-dithered into the 9-bit

@@ -46,8 +46,9 @@ footage decides which failure you would rather have.
 Answer these in order and stop at the first one that fits.
 
 1. **Is the clip longer than about 15 seconds?**
-   Compressed. Uncompressed clips cannot reach that length at full
-   screen, and not much beyond it at any shape (section 6). Go to
+   Compressed. Uncompressed costs about 1 MB for every second of
+   screen time, so past this point it is spending more of the card
+   than most games can spare on one scene (section 6). Go to
    **Preset 5**.
 
 2. **Does the picture mostly hold still?** A slow zoom, a slow pan, a
@@ -251,8 +252,10 @@ than it gives, so this is not a default.
 
 ### Preset 5 - Long cutscene
 
-**For:** anything over about 15 seconds. Length forces the compressed
-route (section 6), so the quality decision moves to the shape.
+**For:** anything over about 15 seconds. At that length uncompressed
+costs more card space than a game usually has to give (section 6), so
+the compressed route is the practical one and the quality decision
+moves to the shape.
 
 ```
 SET VIDOPTS_001=--shape 16:9 --tile-slack 0.5

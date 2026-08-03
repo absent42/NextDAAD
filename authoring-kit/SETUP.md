@@ -577,6 +577,12 @@ once) and REEL (loops 002.VID until a key is pressed).
   cutscenes", "Streaming, resident and direct delivery".
 - "audio bytes/frame ... exceeds" - fps below the audio floor (10.17); raise
   `VIDFPS`.
+- "over the NXV player's ... file ceiling" / "... frame ceiling" - the clip is
+  too big or too long for the player: a `.VID` can be at most 256 MB and
+  65535 frames. The message names the longest clip your shape and frame rate
+  can reach. Shorten the clip, use a smaller shape or a lower `VIDFPS`, or
+  split it across several videos played back to back. See
+  `VIDEO-PRESETS.md` section 6.
 - Effects bank warnings are non-fatal - the game still builds without
   `GAME.SFB`.
 
