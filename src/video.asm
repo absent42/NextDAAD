@@ -1514,9 +1514,11 @@ vid_pos24:
 ; INCREMENTING afterwards, outside its DI bracket (the DMA is idle
 ; there - WR5 is stop-on-end-of-block - so it is a register write, not
 ; a transfer). Behaviour-neutral BY CONSTRUCTION: no state cell, no
-; runtime test, and the copy path pays nothing. The other two full
+; runtime test, and the copy path pays nothing. The two other
 ; descriptors in the tree both leave WR1 = INCREMENTING (vidSnapDmaArm
-; here, dma_prog in overlay2), so neither can break the invariant.
+; here, a full descriptor; and overlay2's dma_copy, which took this same
+; split later the same day and re-sends the WR1 pair in its own per-CALL
+; prefix), so neither can break the invariant.
 ;
 ; UPLOAD PRIMITIVE. The arm goes out with an unrolled OUTINB run
 ; (Z80N ED 90, out (BC),(HL); HL++, B untouched) instead of OTIR -
@@ -1611,9 +1613,11 @@ vid_copy_dma:
     pop hl
     ret
 
-; Arm programs (zxndma.txt WR bit tables; overlay2.asm dma_prog is
-; the canonical full program these derive from). WR1/WR2/WR5 persist
-; from the session init (vidDmaInit, sent by vid_run_l2setup_body).
+; Arm programs (zxndma.txt WR bit tables; overlay2.asm's dma_prog +
+; dma_prog_static pair is the canonical full program these derive from -
+; it was one 16-byte block when these arms were written, and took the
+; same split later on 2026-08-03). WR1/WR2/WR5 persist from the session
+; init (vidDmaInit, sent by vid_run_l2setup_body).
 vidDmaFiArm:                     ; per-chunk fill arm (13 bytes)
     db $83                       ; WR6: disable (known-clean re-entry)
     db %01111101                 ; WR0: A->B; A addr + length follow

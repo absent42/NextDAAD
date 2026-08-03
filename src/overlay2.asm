@@ -357,62 +357,143 @@ l2_flip_swap:
 ; transferred, so there is no status poll anywhere. NEVER: burst mode,
 ; auto-restart, a live counter read, or a refeed while enabled.
 ;
-; Chunks are capped at DMA_CHUNK_MAX (256) bytes. MARGIN CORRECTION,
-; THREE TIMES NOW. The comment first claimed "roughly 1.1k T-states
-; (~40us at 28MHz) per chunk ... comfortably inside" one CTC period.
-; SP14c T4 (2026-07-28) replaced that with 1379 T = ~49.3us against a
-; 50us period and a ~1.4% margin. The 2026-08-02 re-derivation
-; replaced that with 1802 T. ALL THREE WERE WRONG. 1379 T priced the
-; transfer at the RTL's 4 T/B rather than the 5.082 T/B the 28 MHz
-; universal wait produces; 1802 T then borrowed the VIDEO player's A
-; wholesale, and this routine's descriptor is not the video player's.
-; Hand-counted here, from these bytes:
+; Chunks are capped at DMA_CHUNK_MAX (128 B since 2026-08-03; was 256).
+; THE BRACKET, HAND-COUNTED. The figure for this path has been wrong
+; FOUR times - "roughly 1.1k T-states (~40us)", SP14c T4's 1379 T, the
+; 2026-08-02 re-derivation's 1802 T, and this header's own ~1871 T with
+; A ~= 570. Nothing below is inherited except ONE named measured
+; constant, and that one reconciles against two shipped arms.
 ;
 ;     B(chunk) = A + 5.082 * chunk
-;     dma_prog is 16 bytes (it re-sends WR1/WR2/WR5 every chunk,
-;       where the video kernels hoist them to a session init)
-;     OTIR at 28 MHz = 24 T/byte repeating, 19 T final
-;       -> upload = 15*24 + 19 = 379 T, i.e. 72 T ABOVE the video
-;          player's old 13-byte arm (307 T)
-;     A ~= 500 + 72 = ~570 T   (the video player's A = 500 +/- 20 T,
-;       measured by inverting the bench tick-shortfall table -
-;       .superpowers/sdd/sp17-corpus/REDERIVATION.md 2.2b - plus the
-;       hand-counted upload difference; the zxnDMA's own disable/
-;       load/enable sequencing residual is common to both)
-;     B(256)   = ~1871 T = ~66.8 us
+;       5.082 T/B is the silicon-FITTED zxnDMA 2/2-cycle rate at 28 MHz
+;       (REDERIVATION.md 2.2, threat #7 CONFIRMED), not the RTL's
+;       nominal 4 T/B - pricing it at 4 is what made 1379 T wrong.
+;     A = (code inside the DI) + 183 T of zxnDMA disable/load/enable
+;       sequencing latency, which elapses between the $CF load byte and
+;       transfer completion and is therefore INSIDE the bracket. The
+;       183 T is the one inherited quantity: A(video, 13-byte OTIR arm)
+;       = 500 +/- 20 T (REDERIVATION.md 2.2b, four-point inversion of
+;       the bench tick-shortfall table) minus that arm's own 317 T of
+;       code. It reproduces the SHIPPED video fix's published A for
+;       BOTH its arms to the T - copy 5+11*19+5+183 = 402, fill
+;       5+13*19+5+183 = 440 - so it is not a free parameter here.
+;     28 MHz rule (docs/Z80/01-instruction-timing.md): +1 T on every
+;       opcode fetch and every memory read, none on I/O or writes.
+;       OTIR = 24 T/byte repeating, 19 T final; OUTINB (Z80N ED 90) is
+;       a flat 19 T/byte.
 ;
-; THIS ROUTINE IS THE GRAPHICS BLIT, so its deadline is the SAMPLE
-; engine's, not the video player's: ctc_isr can be armed at up to
-; AUD_RATE_MAX 20000 Hz, period 1400 T. B(256) = ~1871 T EXCEEDS THAT
-; BY ~34%. There is no margin here; there is an overrun, and a
-; sample-playback blit can lose one CTC tick per chunk. That is a
-; pre-existing exposure, disclosed here rather than papered over.
+; BEFORE - 16-byte dma_prog uploaded by OTIR, with the pointer/counter
+; setup INSIDE the DI (OTIR needs B and C, so unlike the video kernels
+; this routine could not leave them outside):
+;     di 5 + ld hl 13 + ld b 9 + ld c 9 + otir(16 B) 379 + ei 5 = 420
+;     A = 420 + 183 = 603 T;  B(256) = 603 + 1301.0 = 1904 T (68.0 us)
 ;
-; IT IS NOT THE VIDEO PLAYER'S EXPOSURE, and the video player's was
-; FIXED on 2026-08-03 (nextdaad.inc NXV2_DMA_CHUNK; video.asm's
-; zxnDMA kernel header): its stereo ISR runs at 15625 Hz (period
-; 1728-2112 T), its cap went 256 -> 240, and its arm was split and
-; moved to unrolled OUTINB, landing its bracket at 1621.7 T with
-; 6.2% margin against the tightest period. THE SAME MEDICINE IS
-; AVAILABLE HERE and was deliberately not taken in that change,
-; because it does not cure this patient: hoisting WR1/WR2/WR5 to a
-; one-time program (16 -> 11 bytes) and uploading with unrolled OUTINB
-; puts A at ~400 T and B(256) at ~1701 T, still ~21% over 1400 T.
-; Closing THIS exposure needs the cap as well - ~196 B after that
-; work, or ~163 B without it - and that trade (a 31-57% chunk-count
-; rise on every location repaint, plus ~30 bytes on this overlay)
-; belongs to whoever prices the sample engine, not to the video task.
+; NOW - 11-byte arm uploaded by unrolled OUTINB, HL/BC loaded OUTSIDE
+; the DI, cap 128:
+;     di 5 + 11 * outinb 209 + ei 5 = 219
+;     A = 219 + 183 = 402 T;  B(128) = 402 + 650.5 = 1052.5 T (37.6 us)
+;
+; THE DEADLINE IS THE SAMPLE ENGINE'S, not the video player's. ctc_isr
+; (interrupts.asm) feeds the DAC one byte per CTC zero-count, and a Z80
+; CTC channel latches exactly ONE pending interrupt - so a bracket
+; longer than one period costs a tick. The period is 16 * TC T-states
+; EXACTLY (the CTC input clock and the CPU clock are the same FPGA
+; system clock, so this is clock-independent), with TC =
+; floor(clk16/rate) from aud_ctc_params / aud_clk16_tab (overlay1):
+;
+;     rate       VGA0  VGA1  VGA2  VGA3  VGA4  VGA5  VGA6  HDMI
+;     16000 Hz   1744  1776  1840  1872  1936  2000  2048  1680
+;     20000 Hz   1392  1424  1472  1488  1536  1600  1648  1344
+;
+; 16000 Hz is the only rate this project has ever shipped (the kit's
+; AUDIO/001.wav, the runbook's 002.WAV - aud_load_wav takes the rate
+; verbatim from the WAV header and nothing in the pipeline resamples),
+; and 20000 Hz = AUD_RATE_MAX is what README/SETUP.md publish as
+; supported and what a DAAD-DOS SOUNDS set drops in at. THE INHERITED
+; "1400 T" DEADLINE CORRESPONDED TO NEITHER: it assumed a flat 28 MHz
+; and ignored both the TC floor and HDMI's 27 MHz clock.
+;
+;     B(256) = 1904 T was OVER at 16 kHz on VGA0-VGA3 and HDMI, and
+;       over at 20 kHz in every mode: -41.7% at the worst legally
+;       selectable corner (20 kHz HDMI). Break-even 14706 Hz on VGA0,
+;       14181 Hz on HDMI.
+;     B(128) = 1052.5 T clears every rate/mode pair with margin:
+;       +37.4% (16 kHz HDMI) .. +48.6% (16 kHz VGA6),
+;       +21.7% (20 kHz HDMI) .. +36.1% (20 kHz VGA6);
+;       +20.2% at 20 kHz HDMI with A at the pessimistic 422, and still
+;       +7.1% under REDERIVATION.md 10.2's ISR-adjacency correction
+;       (a 196 T ctc_isr body sitting immediately before the bracket).
+;       Its own break-even is 26516 Hz on VGA0 / 25569 Hz on HDMI, both
+;       ABOVE AUD_RATE_MAX - so aud_load_wav cannot accept a rate this
+;       bracket would miss a tick at. The exposure is closed by
+;       construction, not merely by the rates that happen to ship.
+;       The cap alone, without the code work below, would have given
+;       only +6.7% (B = 1253.5 T), would NOT have survived the
+;       ISR-adjacency correction (-7.8%), and would have been SLOWER
+;       into the bargain: 3218 T per 256 B call against 2956 T here,
+;       DISPLAY 0 at 68.6 ms instead of 66.8. The code work buys back a
+;       quarter of what the cap costs.
+;
+; NOTHING WAS EVER LOST OR CLICKED by the old bracket. The producer is
+; consumption-paced (aud_smp_copy fills only the ring's free space), so
+; a suppressed tick simply holds the DAC one period longer and cannot
+; be lapped: the sample plays LONG AND FLAT. At the shipped 16 kHz on
+; HDMI that was 2.47% slow across a 62 ms location blit = 1.5 ms of
+; accumulated lag, 0.43 semitone, once per location change. Graceful,
+; monotone, and inaudible to every automated check - which is exactly
+; how it survived from SP11 to here.
+;
+; THE COST, AND WHY THE OWNER RULED FOR IT. A location picture draws
+; ONCE and then sits there: this path has no budget and no frame
+; deadline of any kind (the N0/N1/N2 profile budgets belong to the
+; VIDEO player, which never calls this routine). Owner's ruling: "for
+; sampled sound effects and location picture drawing the audio quality
+; shouldn't suffer for a slight slow down in picture drawing." So:
+; DISPLAY 0 on 256-wide art 62.2 -> 66.8 ms (+7.5%); GFX 0/1 33.6 ->
+; 42.9 ms (256x192) and 56.0 -> 71.5 ms (320x256), and no shipped or
+; corpus game uses those two condacts. 320-wide LOCATION art is
+; untouched: gfx_blit routes it to gfx_row_scatter320, a CPU column
+; scatter that never had a DMA branch (see its own header).
+;
+; WHY 128 AND NOT 196 / 208 / 240. Both callers hand this routine
+; exactly 256 bytes, so EVERY cap from 129 to 255 splits into the same
+; TWO chunks that 128 does - identical cost, less margin. 128 is free.
+;
+; THE CAP WAS NOT A ONE-CONSTANT EDIT. It used to be hard-wired to 256:
+; .full set alen low = 0 and alen high = `high DMA_CHUNK_MAX`, which is
+; ZERO for any cap below 256 - a zero-length block and a dead transfer.
+; The dispatch test ("B != 0, so remaining > 255, so chunk = 256") was
+; wrong for a sub-256 cap as well. The general form below - chunk =
+; min(BC, cap), with alen's high byte a CONSTANT 0 (ASSERTed) - is nine
+; bytes SHORTER than what it replaced.
+;
+; DESCRIPTOR SPLIT (2026-08-03), the same treatment the video kernels
+; took in 446f33d. dma_prog's five STATIC bytes (the WR1 pair, the WR2
+; pair, WR5) left the per-chunk arm for dma_prog_static, sent ONCE PER
+; CALL at the top of this routine WITH INTERRUPTS LIVE - the DMA is
+; idle there (WR5 = stop on end of block), so those are register
+; writes, not a transfer; it is exactly the idiom vid_fill_dma uses to
+; restore WR1 after its own bracket. PER-CALL, NEVER A SESSION INIT: a
+; session init would make this overlay depend on video-player state and
+; would break the invariant recorded at video.asm:1517 (the descriptors
+; outside the video kernel leave WR1 = INCREMENTING). As written that
+; invariant HOLDS - dma_copy sends WR1 = INCREMENTING on entry to every
+; call and never departs from it, so WR1 is INCREMENTING both during
+; and after any dma_copy, on every exit path. No state cell, no
+; cross-module coupling, no runtime test.
+;
 ; Between chunks interrupts are live - ctc_isr catches up (the ring
-; absorbs the jitter) and a pending frame tick runs with the DMA
-; idle, so the hazard window closes again every chunk. Anything that
-; lengthens this bracket (a bigger cap, extra work inside the DI)
-; makes it strictly worse: 512 B measured a 35% tick shortfall on the
-; video ISR against 1.2% at 256.
+; absorbs the jitter) and a pending frame tick runs with the DMA idle,
+; so the hazard window closes again every chunk. Anything that
+; lengthens this bracket (a bigger cap, extra work inside the DI) makes
+; it strictly worse: 512 B measured a 35% tick shortfall on the video
+; ISR against 1.2% at 256.
 ;
-; Splits BC into <=256-byte chunks and loops; returns once the whole
-; length has transferred. Corrupts AF, BC, DE, HL - matches LDIR's own
-; end state exactly (HL/DE left just past the last byte moved, BC = 0),
-; so it drops into any LDIR call site with no other change needed.
+; Splits BC into <=DMA_CHUNK_MAX-byte chunks and loops; returns once the
+; whole length has transferred. Corrupts AF, BC, DE, HL - matches LDIR's
+; own end state exactly (HL/DE left just past the last byte moved,
+; BC = 0), so it drops into any LDIR call site with no other change
+; needed.
 ;
 ; Unconditional since SP14a T4's follow-up wave (was IFDEF DMA_GFX,
 ; A/B against a -NoDmaGfx CPU-only LDIR fallback) - the owner's DMA-
@@ -420,39 +501,54 @@ l2_flip_swap:
 ; build: location-art DMA blit mid-sample-playback, clean draw), so
 ; -NoDmaGfx and its fallback retired together (build.ps1, and every
 ; call site below).
+
+; Arm/prefix lengths as assembly-time constants: the DUP counts need
+; them before the blocks exist. The ASSERTs after the blocks pin them to
+; the real lengths, so an edit that forgets an unroll count fails the
+; build instead of desyncing the DMA (video.asm's kernels, same shape).
+DMA_ARM_LEN     equ 11           ; per-chunk arm, inside the DI bracket
+DMA_STATIC_LEN  equ 5            ; per-call prefix, interrupts live
+    ASSERT DMA_CHUNK_MAX >= 1    ; chunk = min(BC, cap): a zero cap would
+                                  ; loop forever programming empty blocks
+    ASSERT DMA_CHUNK_MAX <= 254  ; alen's high byte is a constant 0, and
+                                  ; the `cp DMA_CHUNK_MAX+1` below must
+                                  ; stay inside one byte
 dma_copy:
+    ld hl, dma_prog_static       ; per-call descriptor prefix, INTERRUPTS
+    ld bc, DMA_PORT              ; LIVE (see header): the DMA is idle, so
+    DUP DMA_STATIC_LEN           ; WR1/WR2/WR5 are plain register writes.
+      outinb                     ; B is OUTINB's spare (address high byte
+    EDUP                         ; only - $6B decodes on the low byte)
 .loop:
     ld a, b
     or c
     ret z                        ; BC == 0: entire length transferred
     ld a, b
     or a
-    jr nz, .full                 ; B != 0: remaining > 255, chunk = 256
+    jr nz, .full                 ; B != 0: remaining > 255 -> capped
     ld a, c                      ; B == 0: remaining = C, in 1..255
-    ld (dma_prog.alen), a
-    xor a
-    ld (dma_prog.alen+1), a
-    jr .patch
+    cp DMA_CHUNK_MAX+1
+    jr c, .patch                 ; C <= cap: chunk = C (the tail chunk)
 .full:
-    xor a
-    ld (dma_prog.alen), a
-    ld a, high DMA_CHUNK_MAX
-    ld (dma_prog.alen+1), a      ; chunk = DMA_CHUNK_MAX (256 = $0100)
+    ld a, DMA_CHUNK_MAX          ; chunk = cap
 .patch:
+    ld (dma_prog.alen), a        ; chunk length LOW byte; the high byte
+                                  ; is a constant 0 in the arm (cap <=
+                                  ; 254, ASSERTed above) - never patched
     ld (dma_prog.aaddr), hl      ; this chunk's source start
     ld (dma_prog.baddr), de      ; this chunk's dest start
-    push bc                      ; only BC needs saving across the OTIR
-                                  ; (it repurposes B/C as its own byte
-                                  ; counter/port); HL/DE are rebuilt
-                                  ; below from dma_prog's own fields,
-                                  ; which the OTIR only reads, never
-                                  ; writes
+    push bc                      ; only BC needs saving across the arm
+                                  ; upload (BC carries the port); HL/DE
+                                  ; are rebuilt below from dma_prog's own
+                                  ; fields, which the upload only reads,
+                                  ; never writes
+    ld hl, dma_prog              ; pointer/counter setup OUTSIDE the DI -
+    ld bc, DMA_PORT              ; OUTINB leaves B alone, so unlike OTIR
+                                  ; it does not force these inside
     di
-    ld hl, dma_prog
-    ld b, dma_prog_len
-    ld c, DMA_PORT
-    otir                         ; program + run to completion, entirely
-                                  ; inside this one DI bracket (see
+    DUP DMA_ARM_LEN
+      outinb                     ; program + run to completion, entirely
+    EDUP                          ; inside this one DI bracket (see
                                   ; header) - the ei below is reached
                                   ; only once the chunk is fully moved
     ei
@@ -475,8 +571,11 @@ dma_copy:
 
 ; zxnDMA one-shot program: mem-to-mem, port A (source) -> port B (dest),
 ; both memory/incrementing, CONTINUOUS mode, stop on end of block - no
-; auto-restart, ever (WR5 below). Re-sent whole by dma_copy's OTIR every
-; chunk; .aaddr/.alen/.baddr are patched in place first, each call.
+; auto-restart, ever (WR5). SPLIT 2026-08-03 (see dma_copy's header):
+; the five STATIC bytes are dma_prog_static, sent once per CALL with
+; interrupts live; dma_prog below is the 11-byte per-CHUNK arm, the only
+; thing inside the DI bracket. .aaddr/.alen/.baddr are patched in place
+; first, each chunk.
 ;
 ; Bytes verified against docs/Z80_DMA_Chip__ps0179.pdf's WR0/WR1/WR2/
 ; WR4/WR5/WR6 bit tables (the PDF is scan-only in this checkout, no
@@ -508,6 +607,24 @@ dma_copy:
 ; N-1): the datasheet's classic-Z80-DMA off-by-one does not apply to
 ; the zxnDMA (zxndma.txt states this explicitly; the retired SP8
 ; engine's own comment records the same empirical finding).
+; The static half: port modes + the one-shot stop, sent once per
+; dma_copy CALL with interrupts LIVE. These registers persist across the
+; arm's own WR6 disable/load/enable, which is why the arm need not carry
+; them. WR1 = INCREMENTING here is also what keeps video.asm:1517's
+; invariant true from this side.
+dma_prog_static:
+    db %01010100                 ; WR1: A memory, incrementing, timing
+                                  ; byte follows
+    db %00000010                 ; A cycle length 2
+    db %01010000                 ; WR2: B memory, incrementing, timing
+                                  ; byte follows
+    db %00000010                 ; B cycle length 2, no prescaler
+    db %10000010                 ; WR5 $82: /ce only, STOP on end of
+                                  ; block (see header: never auto-restart)
+dma_prog_static_len equ $ - dma_prog_static
+    ASSERT dma_prog_static_len == DMA_STATIC_LEN
+
+; The per-chunk arm: everything that changes, plus load + enable.
 dma_prog:
     db $83                       ; WR6: disable (clean slate before load)
     db %01111101                 ; WR0: A->B, port A addr + block length
@@ -516,23 +633,20 @@ dma_prog:
 .aaddr:
     dw 0                         ; port A start = source (patched)
 .alen:
-    dw 0                         ; block length, exact count (patched)
-    db %01010100                 ; WR1: A memory, incrementing, timing
-                                  ; byte follows
-    db %00000010                 ; A cycle length 2
-    db %01010000                 ; WR2: B memory, incrementing, timing
-                                  ; byte follows
-    db %00000010                 ; B cycle length 2, no prescaler
+    db 0                         ; block length LOW, exact count (patched)
+    db 0                         ; block length HIGH - CONSTANT 0, never
+                                  ; patched: DMA_CHUNK_MAX <= 254 is
+                                  ; ASSERTed, and dma_copy's tail reads
+                                  ; this pair back as a 16-bit ld de,(nn)
     db %10101101                 ; WR4: CONTINUOUS mode, port B addr
                                   ; (low+high) follows
 .baddr:
     dw 0                         ; port B start = dest (patched)
-    db %10000010                 ; WR5 $82: /ce only, STOP on end of
-                                  ; block (see header: never auto-restart)
     db $CF                       ; WR6: load
     db $87                       ; WR6: enable - this OUT does not return
                                   ; until the chunk has fully transferred
 dma_prog_len equ $ - dma_prog
+    ASSERT dma_prog_len == DMA_ARM_LEN
 
 ; --- DMA timing measurement (SP11 Task 2, diagnostic, OFF by default) ---
 ; frameCounter deltas (src/interrupts.asm - incremented once per frame

@@ -459,9 +459,25 @@ AUD_STAGE_RING  equ 1024    ; power-of-two ring $7C00-$7FFF: the CTC ISR plays
 ; for the frame-ISR MMU6/7 hazard that forces every chunk into its own
 ; DI bracket, one-shot CONTINUOUS mode - never burst, auto-restart, or
 ; a live status/counter read.
-DMA_CHUNK_MAX   equ 256     ; zxnDMA one-shot cap per DI bracket - dma_copy
+DMA_CHUNK_MAX   equ 128     ; zxnDMA one-shot cap per DI bracket - dma_copy
                             ; splits any longer request into pieces this
-                            ; size or smaller
+                            ; size or smaller. 256 -> 128 on 2026-08-03:
+                            ; B(256) = 1904 T overran the SAMPLED-SFX ISR
+                            ; period at every rate at or above ~14.2 kHz,
+                            ; including the 16 kHz everything ships and the
+                            ; 20 kHz README/SETUP.md publish, so a picture
+                            ; draw during a sample suppressed CTC ticks and
+                            ; played the sample long and flat. With the
+                            ; same-day descriptor split B(128) = 1052.5 T,
+                            ; which clears the worst legal corner (20 kHz
+                            ; HDMI, 1344 T) by 21.7%. NOT A ONE-CONSTANT
+                            ; KNOB: dma_copy used to derive the block
+                            ; length as `high DMA_CHUNK_MAX`, zero for any
+                            ; cap under 256 - read its header before
+                            ; touching this. 129..255 all split 256 into
+                            ; the same two chunks 128 does, for less
+                            ; margin at identical cost; below 128 costs a
+                            ; third chunk per call.
 GFX_DMA_MIN_LEN equ 64      ; design threshold: below this LDIR wins on
                             ; programming overhead (documentation only -
                             ; both current call sites move a fixed 256
