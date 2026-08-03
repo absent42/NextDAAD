@@ -4,12 +4,16 @@
 ; --- Version (SP10 Task 10) ---
 ; Single source of truth for the boot-time version stamp text: DEBUG's
 ; msgTitle and RELEASE's boot_banner (both debug.asm) print this exact
-; string, so the two build variants cannot drift apart. v0.3.0 is the
+; string, so the two build variants cannot drift apart. v0.3.0 was the
 ; SP15 milestone (NXV v2 delta video with resident/streamed/direct
 ; delivery, L2 snapshot/restore - automatic picture return after a
-; cutscene); the "0.x" line runs until public testing earns v1.0 (see
-; RELEASE.md).
-    DEFINE VERSION_STR "NEXTDAAD V0.3.0"
+; cutscene). v0.3.1 is the DAAD compliance sweep plus DAAD V3 database
+; support, the SP17 video motion work (file ceiling 16 MB -> 256 MB,
+; mid-clip pause removed, half-rate clips at true rate, mono cutscene
+; audio dropped) and the sampled-sound fix - effects no longer distort
+; while a picture is drawn. The "0.x" line runs until public testing
+; earns v1.0 (see RELEASE.md).
+    DEFINE VERSION_STR "NEXTDAAD V0.3.1"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00
