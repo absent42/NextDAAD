@@ -467,25 +467,28 @@ AUD_STAGE_RING  equ 1024    ; power-of-two ring $7C00-$7FFF: the CTC ISR plays
 ; for the frame-ISR MMU6/7 hazard that forces every chunk into its own
 ; DI bracket, one-shot CONTINUOUS mode - never burst, auto-restart, or
 ; a live status/counter read.
-DMA_CHUNK_MAX   equ 128     ; zxnDMA one-shot cap per DI bracket - dma_copy
-                            ; splits any longer request into pieces this
-                            ; size or smaller. 256 -> 128 on 2026-08-03:
-                            ; B(256) = 1904 T overran the SAMPLED-SFX ISR
-                            ; period at every rate at or above ~14.2 kHz,
-                            ; including the 16 kHz everything ships and the
-                            ; 20 kHz README/SETUP.md publish, so a picture
-                            ; draw during a sample suppressed CTC ticks and
-                            ; played the sample long and flat. With the
-                            ; same-day descriptor split B(128) = 1052.5 T,
-                            ; which clears the worst legal corner (20 kHz
-                            ; HDMI, 1344 T) by 21.7%. NOT A ONE-CONSTANT
-                            ; KNOB: dma_copy used to derive the block
-                            ; length as `high DMA_CHUNK_MAX`, zero for any
-                            ; cap under 256 - read its header before
-                            ; touching this. 129..255 all split 256 into
-                            ; the same two chunks 128 does, for less
-                            ; margin at identical cost; below 128 costs a
-                            ; third chunk per call.
+DMA_CHUNK_MAX   equ 256     ; zxnDMA one-shot cap per arm - dma_copy splits
+                            ; any longer request into pieces this size or
+                            ; smaller. Cut to 128 on 2026-08-03 to shorten
+                            ; the blocking window, then RESTORED to 256 the
+                            ; same day once silicon showed the window's
+                            ; length is not the governing quantity: the DAC
+                            ; feed is admitted INSIDE a running transfer by
+                            ; nextreg $CD bit 0 (im2_init), so a longer
+                            ; chunk simply admits more CTC edges and each is
+                            ; still serviced on time. Both callers hand
+                            ; dma_copy exactly 256 bytes, so 256 makes every
+                            ; call ONE chunk: ~780 T saved per call, about
+                            ; -5.4 ms on a location DISPLAY 0 and -10.7 ms
+                            ; on GFX 0/1 at 256x192. A ONE-CONSTANT KNOB
+                            ; NOW, but it did not use to be one - dma_copy
+                            ; derived the block length as
+                            ; `high DMA_CHUNK_MAX` (zero for any cap under
+                            ; 256), and its 128-era replacement pinned the
+                            ; high byte to a constant 0 (which barred 256).
+                            ; The current 16-bit form is general over
+                            ; 1..256 and ASSERTs both ends; read dma_copy's
+                            ; header before changing it anyway.
 GFX_DMA_MIN_LEN equ 64      ; design threshold: below this LDIR wins on
                             ; programming overhead (documentation only -
                             ; both current call sites move a fixed 256

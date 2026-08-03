@@ -465,29 +465,42 @@ l2_flip_swap:
 ; exactly how it survived from SP11 to 2026-08-03 and why the first
 ; three explanations of it were all wrong.
 ;
-; THE COST, AND WHY THE OWNER RULED FOR IT. A location picture draws
-; ONCE and then sits there: this path has no budget and no frame
-; deadline of any kind (the N0/N1/N2 profile budgets belong to the
-; VIDEO player, which never calls this routine). Owner's ruling: "for
-; sampled sound effects and location picture drawing the audio quality
-; shouldn't suffer for a slight slow down in picture drawing." So:
-; DISPLAY 0 on 256-wide art 62.2 -> 66.8 ms (+7.5%); GFX 0/1 33.6 ->
-; 42.9 ms (256x192) and 56.0 -> 71.5 ms (320x256), and no shipped or
-; corpus game uses those two condacts. 320-wide LOCATION art is
-; untouched: gfx_blit routes it to gfx_row_scatter320, a CPU column
-; scatter that never had a DMA branch (see its own header).
+; WHY THE CAP IS 256 AGAIN. It was cut to 128 earlier the same day to
+; shorten the blocking window, on the model that a window longer than
+; one CTC period cost a tick. That model is dead (see above): the DAC
+; feed is now serviced INSIDE the transfer, so the window's length no
+; longer buys anything and the 128 was pure cost. Both callers hand this
+; routine exactly 256 bytes, so 256 makes every call ONE chunk instead
+; of two, saving per call one arm upload (209 T), one zxnDMA sequencing
+; residual (183 T) and one pass of the loop glue (~390 T) - about 780 T,
+; or 27.9 us at 28 MHz. On the model that priced cap 128 at DISPLAY 0
+; 66.8 ms and GFX 0/1 42.9 ms (256x192) / 71.5 ms (320x256):
 ;
-; WHY 128 AND NOT 196 / 208 / 240. Both callers hand this routine
-; exactly 256 bytes, so EVERY cap from 129 to 255 splits into the same
-; TWO chunks that 128 does - identical cost, less margin. 128 is free.
+;     DISPLAY 0, 256-wide art   192 calls   -5.4 ms  ->  61.4 ms
+;     GFX 0/1, 256x192          384 calls  -10.7 ms  ->  32.2 ms
+;     GFX 0/1, 320x256          640 calls  -17.8 ms  ->  53.7 ms
 ;
-; THE CAP WAS NOT A ONE-CONSTANT EDIT. It used to be hard-wired to 256:
-; .full set alen low = 0 and alen high = `high DMA_CHUNK_MAX`, which is
-; ZERO for any cap below 256 - a zero-length block and a dead transfer.
-; The dispatch test ("B != 0, so remaining > 255, so chunk = 256") was
-; wrong for a sub-256 cap as well. The general form below - chunk =
-; min(BC, cap), with alen's high byte a CONSTANT 0 (ASSERTed) - is nine
-; bytes SHORTER than what it replaced.
+; and all three are UPPER bounds, because the model still prices the
+; transfer at 5.082 T/B where silicon bounds this path under 4.21.
+; 320-wide LOCATION art is untouched either way: gfx_blit routes it to
+; gfx_row_scatter320, a CPU column scatter that never had a DMA branch
+; (see its own header). The owner's ruling that made the 128 acceptable
+; - "for sampled sound effects and location picture drawing the audio
+; quality shouldn't suffer for a slight slow down in picture drawing" -
+; no longer has to be spent: the audio is fixed AND the draw is faster.
+;
+; ANY CAP IN 1..256 IS NOW LEGAL, and that is deliberate. The routine
+; used to hard-wire 256 by setting alen's low byte to 0 and its high
+; byte to `high DMA_CHUNK_MAX`, which is ZERO for every cap below 256 -
+; a zero-length block and a dead transfer - and its dispatch test ("B
+; != 0, so remaining > 255, so chunk = 256") was wrong for a sub-256 cap
+; too. The 2026-08-03 rewrite made the selection a general
+; chunk = min(BC, cap) but paid for it with an alen high byte pinned to
+; a constant 0, which barred 256. The form below is general in BOTH
+; directions: one 16-bit compare, one 16-bit store, cap free anywhere
+; in 1..256, three bytes dearer than the byte-wise version it replaces.
+; NEITHER TRAP MAY RETURN. If a future change wants a different cap it
+; is now genuinely a one-constant edit, and the ASSERTs enforce it.
 ;
 ; DESCRIPTOR SPLIT (2026-08-03), the same treatment the video kernels
 ; took in 446f33d. dma_prog's five STATIC bytes (the WR1 pair, the WR2
@@ -540,9 +553,12 @@ DMA_ARM_LEN     equ 11           ; per-chunk arm (program + run)
 DMA_STATIC_LEN  equ 5            ; per-call prefix (port modes + stop)
     ASSERT DMA_CHUNK_MAX >= 1    ; chunk = min(BC, cap): a zero cap would
                                   ; loop forever programming empty blocks
-    ASSERT DMA_CHUNK_MAX <= 254  ; alen's high byte is a constant 0, and
-                                  ; the `cp DMA_CHUNK_MAX+1` below must
-                                  ; stay inside one byte
+    ASSERT DMA_CHUNK_MAX <= 256  ; the arm's block length is a 16-bit
+                                  ; field written whole, so the cap is
+                                  ; free anywhere in 1..256 - including
+                                  ; exactly 256, which the byte-wise
+                                  ; selection this replaced could not
+                                  ; express (see the header)
 dma_copy:
     ld hl, dma_prog_static       ; per-call descriptor prefix, INTERRUPTS
     ld bc, DMA_PORT              ; LIVE (see header): the DMA is idle, so
@@ -552,19 +568,20 @@ dma_copy:
 .loop:
     ld a, b
     or c
-    ret z                        ; BC == 0: entire length transferred
-    ld a, b
-    or a
-    jr nz, .full                 ; B != 0: remaining > 255 -> capped
-    ld a, c                      ; B == 0: remaining = C, in 1..255
-    cp DMA_CHUNK_MAX+1
-    jr c, .patch                 ; C <= cap: chunk = C (the tail chunk)
-.full:
-    ld a, DMA_CHUNK_MAX          ; chunk = cap
-.patch:
-    ld (dma_prog.alen), a        ; chunk length LOW byte; the high byte
-                                  ; is a constant 0 in the arm (cap <=
-                                  ; 254, ASSERTed above) - never patched
+    ret z                        ; BC == 0: entire length transferred.
+                                  ; `or c` also clears CF for the sbc
+    push hl                      ; HL doubles as the 16-bit compare
+    ld hl, DMA_CHUNK_MAX         ; scratch - the source pointer comes
+    sbc hl, bc                   ; straight back below. CF <=> cap <
+    ld hl, DMA_CHUNK_MAX         ; remaining, i.e. take the whole cap
+    jr c, .len
+    ld h, b
+    ld l, c                      ; else chunk = remaining: the tail
+.len:
+    ld (dma_prog.alen), hl       ; chunk length, BOTH bytes - which is
+    pop hl                       ; what makes a cap of exactly 256
+                                  ; expressible; the tail below reads the
+                                  ; same pair back as one ld de,(nn)
     ld (dma_prog.aaddr), hl      ; this chunk's source start
     ld (dma_prog.baddr), de      ; this chunk's dest start
     push bc                      ; only BC needs saving across the arm
@@ -663,11 +680,11 @@ dma_prog:
 .aaddr:
     dw 0                         ; port A start = source (patched)
 .alen:
-    db 0                         ; block length LOW, exact count (patched)
-    db 0                         ; block length HIGH - CONSTANT 0, never
-                                  ; patched: DMA_CHUNK_MAX <= 254 is
-                                  ; ASSERTed, and dma_copy's tail reads
-                                  ; this pair back as a 16-bit ld de,(nn)
+    dw 0                         ; block length, EXACT count, patched as
+                                  ; one 16-bit field (dma_copy writes both
+                                  ; bytes and its tail reads them back as
+                                  ; one ld de,(nn)) - that is what lets
+                                  ; DMA_CHUNK_MAX be 256
     db %10101101                 ; WR4: CONTINUOUS mode, port B addr
                                   ; (low+high) follows
 .baddr:
