@@ -91,10 +91,14 @@
 #            Stale-cleans the same audio set -Aud/-AudLad own
 #            and stages NO .AKY at all - a playing song would put the
 #            AKY player's own ~5500 T per-frame DI hold under both
-#            phases of the readout. Run sheet (mode caveat, predicted
-#            frequencies, pass criteria):
-#            .superpowers\sdd\sfx-di-audible-test.md. An alternative to
-#            -Aud/-AudLad, not a companion.
+#            phases of the readout. The fixture stops and waits for a
+#            KEYPRESS at every phase boundary (rev 2a) so a symptom can
+#            be attributed to the phase that produced it - the owner
+#            drives it a phase at a time, and each burst still runs
+#            uninterrupted inside its phase. Run sheet (mode caveat,
+#            predicted frequencies, boundary-by-boundary checklist, pass
+#            criteria): .superpowers\sdd\sfx-di-audible-test.md. An
+#            alternative to -Aud/-AudLad, not a companion.
 # Boot title screen (SP11 Task 1), independent of the DDB switches:
 #   -Title   stage the owner 320x256 title into sd\ - stale-cleans
 #            sd\DAAD.* variants then copies tools\demo-files\DAAD.NX2
@@ -399,6 +403,31 @@ finally {
 #   PICTURE 1 must be there at all, since a fixture that never loads
 #     the card is exactly the vacuous shape rev 2 exists to replace.
 # If any check fails the fixture no longer says what its comments say.
+#
+# REV 2a ADDS THE EIGHT KEYPRESS BOUNDARIES (owner request: the phases
+# ran too fast to attribute a symptom to one). The wait is ANYKEY
+# (opcode 24 = $18, ZERO parameters) - NOT "PAUSE 0": this fixture is
+# compiled by the plain "DRF.exe zx next" call above with no -v3, its
+# header version byte is 2 (asserted below), and PAUSE 0 only means
+# GETKEY under V3. Having no operand, ANYKEY is also immune to the
+# duration rescaling that the PAUSE checks exist to catch.
+# Each site is pinned by the condacts AROUND it (MES = 77 = $4D one
+# param, PROCESS = 75 = $4B, PAUSE = $23, SFX = $12), never by a message
+# number - DRC reallocates those whenever any string is edited:
+#   8 x "MES <n> ANYKEY" total, and no more - the whole pause set;
+#   1 x ANYKEY, MES, PAUSE 38   - the card-up boundary before phase 1/5;
+#   2 x PAUSE 38, MES, ANYKEY   - the 1/5 boundary and the control
+#                                 leg's closing hold;
+#   2 x MES, ANYKEY, PROCESS 10 - the two boundaries that hand straight
+#                                 into the shared burst;
+#   1 x SFX 0 5, MES, MES, ANYKEY - the boundary after the final phase;
+#   and, by offset from the three burst runs, the boundaries that close
+#     phases 2/5, 3/5 and 4/5.
+# The same offsets prove the NEGATIVE that matters more: nothing sits
+# INSIDE a burst. The 24-DISPLAY and 20-pair runs are already asserted
+# contiguous, and the four held renders are checked to be 4 bytes apart,
+# so no pause can have fallen between them - each burst still runs at
+# full speed, which is the load under test.
 Copy-Item "$PSScriptRoot\sfxdi.dsf" "$dr\NDSFXDI.DSF" -Force
 Push-Location $dr
 try {
@@ -428,7 +457,31 @@ function Find-ByteRuns {
     return , $hits
 }
 
+function Find-MaskedRuns {
+    # As Find-ByteRuns, but $null in $pattern matches any byte. Used by
+    # the sfxdi ANYKEY checks below to anchor each keypress boundary on
+    # its neighbouring condacts while leaving the MES message number - a
+    # value DRC reallocates whenever any string in the DSF changes -
+    # unconstrained.
+    param([byte[]]$hay, [object[]]$pattern)
+    $hits = @()
+    for ($i = 0; $i -le $hay.Length - $pattern.Length; $i++) {
+        $ok = $true
+        for ($j = 0; $j -lt $pattern.Length; $j++) {
+            if ($null -ne $pattern[$j] -and $hay[$i + $j] -ne $pattern[$j]) { $ok = $false; break }
+        }
+        if ($ok) { $hits += $i }
+    }
+    return , $hits
+}
+
 $sfxdiBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxdi.ddb")
+# ANYKEY is the V2 wait-for-key condact and this fixture must stay V2 -
+# under V3 the interpreter reads PAUSE 0 as GETKEY and SYNONYM changes
+# its done-semantics, neither of which this experiment wants to vary.
+if ($sfxdiBytes[0] -ne 2) {
+    throw "sfxdi: DDB header version byte is $($sfxdiBytes[0]), expected 2 - the fixture is compiled WITHOUT -v3 and its ANYKEY waits assume V2"
+}
 # The accumulator: 20 x (GFX 0 1 + GFX 0 0). Opcode 87 = $57, two
 # params each, so one pair is 57 00 01 57 00 00 and the run is 120
 # bytes. This is the phase whose damage PERSISTS (each copy's source is
@@ -453,6 +506,15 @@ $heldHits = Find-ByteRuns $sfxdiBytes ([byte[]]@(28, 0, 35, 24))
 if ($heldHits.Count -ne 4) {
     throw "sfxdi: expected exactly four 'DISPLAY 0 + PAUSE 24' held renders (1C 00 23 18); found $($heldHits.Count) - DRC's duration scaling has changed"
 }
+# ...and the four must be back to back, 4 bytes apart. This is the check
+# that a keypress boundary has not been dropped INSIDE phase 3/5: the
+# pauses are interstitial by design and a burst interrupted mid-run is
+# no longer the load the fixture exists to apply.
+for ($i = 1; $i -lt 4; $i++) {
+    if (($heldHits[$i] - $heldHits[$i - 1]) -ne 4) {
+        throw "sfxdi: held renders $($i-1) and $i are $($heldHits[$i] - $heldHits[$i-1]) bytes apart, expected 4 - something has been inserted inside phase 3/5"
+    }
+}
 # PAUSE ($23) 38 - the authored 63 after DRC's 0.6 ZX NEXT scaling.
 # Three sites: the two tone reference phases and the control leg's hold.
 $pauseHits = Find-ByteRuns $sfxdiBytes ([byte[]]@(35, 38))
@@ -473,7 +535,62 @@ foreach ($s in @(@{ n = 'SFX 1 2'; b = [byte[]]@(18, 1, 2) },
         throw "sfxdi: '$($s.n)' not present in tests\out\sfxdi.ddb"
     }
 }
-"sfxdi.ddb: 24x DISPLAY 0 at $($dispHits[0]), 4x held render, 20x GFX 0 1/0 0 at $($gfxHits[0]), PAUSE 38 x$($pauseHits.Count), PICTURE 1 + SFX 1 2 / 2 2 / 0 5 all present"
+
+# ---- the eight keypress boundaries (rev 2a) -----------------------
+# ANYKEY = 24 = $18, no parameters; every site is "MES <caption> ANYKEY".
+# Eight and only eight: before phase 1/5 and after each of the five in a
+# tone leg, plus the control leg's own card-up and closing boundaries.
+# A ninth would mean a pause has landed somewhere unintended.
+$akAll = Find-MaskedRuns $sfxdiBytes @(77, $null, 24)
+if ($akAll.Count -ne 8) {
+    throw "sfxdi: expected exactly eight 'MES <n> + ANYKEY' keypress boundaries (4D ?? 18) in tests\out\sfxdi.ddb, found $($akAll.Count)"
+}
+# Named sites, each anchored on what follows or precedes it:
+#   ANYKEY, MES, PAUSE 38     - the card-up boundary that opens a tone
+#                               leg, immediately before phase 1/5;
+#   PAUSE 38, MES, ANYKEY     - x2: the 1/5 boundary and the control
+#                               leg's closing hold;
+#   MES, ANYKEY, PROCESS 10   - x2: the two boundaries that hand
+#                               straight into the shared burst (the tone
+#                               leg's 1/5 one and the control leg's);
+#   SFX 0 5, MES, MES, ANYKEY - the final boundary, after the tone has
+#                               been stopped and the card left held.
+foreach ($site in @(
+        @{ n = 'card-up boundary before phase 1/5 (ANYKEY, MES, PAUSE 38)'; p = @(24, 77, $null, 35, 38); c = 1 },
+        @{ n = 'phase 1/5 + control-leg closing boundaries (PAUSE 38, MES, ANYKEY)'; p = @(35, 38, 77, $null, 24); c = 2 },
+        @{ n = 'boundaries handing into the shared burst (MES, ANYKEY, PROCESS 10)'; p = @(77, $null, 24, 75, 10); c = 2 },
+        @{ n = 'final boundary after phase 5/5 (SFX 0 5, MES, MES, ANYKEY)'; p = @(18, 0, 5, 77, $null, 77, $null, 24); c = 1 })) {
+    $hits = Find-MaskedRuns $sfxdiBytes $site.p
+    if ($hits.Count -ne $site.c) {
+        throw "sfxdi: expected $($site.c) x '$($site.n)'; found $($hits.Count)"
+    }
+}
+# The three burst boundaries, read off the runs themselves so no offset
+# is hard-coded. Phase 2/5's caption sits immediately before its run
+# with nothing between; the boundary that CLOSES 2/5 is the FF ending
+# that entry followed by 'MES <n> ANYKEY MES <n>' introducing 3/5, and
+# the same shape closes 3/5 ahead of the GFX run and closes 4/5 after
+# it. Any pause that had fallen inside a run would break these.
+$d = $dispHits[0]; $h = $heldHits[0]; $g = $gfxHits[0]
+foreach ($chk in @(
+        @{ n = 'MES caption immediately before the 24x DISPLAY run'; o = $d - 2; v = 77 },
+        @{ n = 'entry end (FF) immediately after the 24x DISPLAY run'; o = $d + 48; v = 255 },
+        @{ n = 'phase 2/5 closing MES'; o = $d + 49; v = 77 },
+        @{ n = 'phase 2/5 closing ANYKEY'; o = $d + 51; v = 24 },
+        @{ n = 'phase 3/5 caption MES before the held renders'; o = $h - 2; v = 77 },
+        @{ n = 'phase 2/5 closing ANYKEY ahead of the held renders'; o = $h - 3; v = 24 },
+        @{ n = 'phase 3/5 closing MES'; o = $g - 5; v = 77 },
+        @{ n = 'phase 3/5 closing ANYKEY'; o = $g - 3; v = 24 },
+        @{ n = 'phase 4/5 caption MES immediately before the GFX run'; o = $g - 2; v = 77 },
+        @{ n = 'entry end (FF) immediately after the GFX run'; o = $g + 120; v = 255 },
+        @{ n = 'phase 4/5 closing MES'; o = $g + 121; v = 77 },
+        @{ n = 'phase 4/5 closing ANYKEY'; o = $g + 123; v = 24 })) {
+    if ($sfxdiBytes[$chk.o] -ne $chk.v) {
+        throw ("sfxdi: $($chk.n) - expected byte $('{0:X2}' -f $chk.v) at offset $($chk.o), found " +
+               "$('{0:X2}' -f $sfxdiBytes[$chk.o]) - the phase/pause structure has moved")
+    }
+}
+"sfxdi.ddb: v$($sfxdiBytes[0]), 24x DISPLAY 0 at $($dispHits[0]), 4x held render contiguous at $($heldHits[0]), 20x GFX 0 1/0 0 at $($gfxHits[0]), PAUSE 38 x$($pauseHits.Count), 8 ANYKEY boundaries at $($akAll -join ','), PICTURE 1 + SFX 1 2 / 2 2 / 0 5 all present"
 
 # SP16 Task 6 DAAD V3 fixture. The ONLY DDB this script builds with
 # DRF's -v3, so the only one whose header byte 0 is 3. It exercises the
