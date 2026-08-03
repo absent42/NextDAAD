@@ -314,6 +314,22 @@ finally {
 
 & "$PSScriptRoot\check-cprops.ps1"
 
+# overlay2's dma_copy contract, checked against the EMITTED BYTES of the
+# current build\nextdaad.nex (tests\dma_contract.py has the full why).
+# This runs on every invocation, not behind a switch: dma_copy carries
+# every 256-wide picture row and every GFX 0/1, NOTHING host-side renders
+# a picture, and the routine has now been broken three times by edits
+# that assembled perfectly clean - most recently one that walked the blit
+# out of the slot 6 window and over overlay2's own code at $E000. There
+# is no emulator leg here to catch that; this is the substitute.
+if ((Test-Path "$root\build\nextdaad.nex") -and (Test-Path "$root\build\nextdaad.sld")) {
+    & python "$PSScriptRoot\dma_contract.py"
+    if ($LASTEXITCODE -ne 0) { throw "tests\dma_contract.py failed - overlay2's dma_copy is mis-emitting its DMA descriptors, do not run this build on hardware" }
+}
+else {
+    "WARNING: no build\nextdaad.nex + .sld - dma_copy contract check SKIPPED (run .\build.ps1 first)"
+}
+
 Copy-Item "$PSScriptRoot\condacts.dsf" "$dr\NDSUITE.DSF" -Force
 Push-Location $dr
 try {

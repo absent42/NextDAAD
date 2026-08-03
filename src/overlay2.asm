@@ -560,11 +560,29 @@ DMA_STATIC_LEN  equ 5            ; per-call prefix (port modes + stop)
                                   ; selection this replaced could not
                                   ; express (see the header)
 dma_copy:
+    push hl                      ; THE CALLER'S SOURCE POINTER AND LENGTH
+    push bc                      ; MUST SURVIVE THE PREFIX BELOW, which
+                                  ; needs HL and BC for its own OUTINB
+                                  ; stream. Omitting this pair is the
+                                  ; 2026-08-03 regression (4cda75e): .loop
+                                  ; then read HL = dma_prog and BC = $006B
+                                  ; = DMA_PORT as its source and length, so
+                                  ; every call copied 107 bytes of this
+                                  ; overlay's own code instead of the
+                                  ; caller's buffer AND returned DE only
+                                  ; 107 further on. gfx_row_copy256 walks
+                                  ; its destination by that returned DE, so
+                                  ; the 256-wide picture blit marched past
+                                  ; the slot 6 window and wrote 47 bytes
+                                  ; over $E000 - overlay2's own entry, live
+                                  ; in slot 7 - on row 76 of every draw.
     ld hl, dma_prog_static       ; per-call descriptor prefix, INTERRUPTS
     ld bc, DMA_PORT              ; LIVE (see header): the DMA is idle, so
     DUP DMA_STATIC_LEN           ; WR1/WR2/WR5 are plain register writes.
       outinb                     ; B is OUTINB's spare (address high byte
     EDUP                         ; only - $6B decodes on the low byte)
+    pop bc                       ; back to the caller's length ...
+    pop hl                       ; ... and source; DE was never touched
 .loop:
     ld a, b
     or c
