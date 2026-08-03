@@ -1,74 +1,157 @@
-; NextDAAD sampled-SFX DI-exposure ear fixture (2026-08-03).
+; NextDAAD sampled-SFX DMA pre-emption fixture (2026-08-03, rev 2).
 ;
 ; Compiled by tests\build-tests.ps1 on every run; staged as the active
 ; sd\GAME.DDB by tests\build-tests.ps1 -SfxDi, which also generates the
-; two stimulus tones with tests\audio\mktone.py and stages them as
-; sd\001.WAV (16 kHz) and sd\002.WAV (20 kHz).
+; two stimulus tones with tests\audio\mktone.py (sd\001.WAV 16 kHz,
+; sd\002.WAV 20 kHz) and the Layer 2 corruption-detector card with
+; tests\art\mkl2card.py (sd\001.NXI, 256x128).
 ;
 ; RUN SHEET: .superpowers\sdd\sfx-di-audible-test.md. Read it before
-; running - one leg of this test is MODE-SENSITIVE and gives a false
-; negative on VGA4/VGA5/VGA6.
+; running - one leg is MODE-SENSITIVE and gives a false negative on
+; VGA4/VGA5/VGA6.
 ;
-; WHAT IT MAKES AUDIBLE
-; overlay2's dma_copy programmed and ran each picture-copy chunk inside
-; one DI bracket. Before 4cda75e that bracket was 1904 T, longer than
-; the sampled-SFX CTC period at every rate at or above ~14.2 kHz - so a
-; graphics copy running under a playing sample SUPPRESSED CTC ticks.
-; Nothing is dropped, clicked or truncated: ctc_isr simply does not run,
-; the DAC holds its previous byte one extra period, and the effect plays
-; LONG AND FLAT. The only observable is PITCH.
+; ------------------------------------------------------------------
+; WHY REV 2 EXISTS - THE VACUOUS HALF OF REV 1
+; ------------------------------------------------------------------
+; Rev 1 played a tone and hammered 40 x GFX 0 0 while the owner
+; listened. It was ALSO meant to prove the picture came through
+; undamaged, and it could not: the burst copied a surface that was
+; never displayed. The owner's report was exact - "NO TILE LAYER
+; DISTORTION, LAYER 2 NOT ACTIVE DURING TEST". There was nothing on
+; screen to corrupt, so the visual result meant nothing.
 ;
-; WHY GFX 0 0 AND NOT A LOCATION PICTURE. The mechanism is duty-cycle
-; limited: what matters is the fraction of wall time spent inside DI
-; brackets. A DISPLAY 0 location blit is only 21% in-DI (its 62 ms is
-; dominated by gfx_row_fetch's LDIR staging), which at the shipped
-; 16 kHz on HDMI is 2.47% slow for 62 ms - 43 cents, at or below the
-; percept threshold, and an ear cannot certify it. GFX 0/1 runs the same
-; dma_copy back to back with almost nothing between the brackets: 78%
-; in-DI, 9.14% slow, and it can be repeated without limit. Same defect,
-; same code path, roughly 4x the amplitude - a steady 440 Hz tone drops
-; to 399.8 Hz (1.66 semitones) the instant the burst starts and snaps
-; back when it stops.
+; That matters because commit 2ef1088 did TWO things and rev 1 could
+; only prove one of them:
+;   nextreg $CD bit 0 = 1  PERMITS the DAC timer interrupt to pre-empt
+;                          a running DMA. PROVEN by rev 1: a clean tone
+;                          through the burst is only possible if
+;                          ctc_isr reached the CPU mid-transfer.
+;   nextreg $CC = 0        BARS the ULA frame interrupt from doing so.
+;                          UNPROVEN. im2_isr's full-context path remaps
+;                          MMU6/7 around aud_tick; the same commit
+;                          DELETED dma_copy's di/ei, which used to bar
+;                          the frame tick by masking it at the CPU. The
+;                          dev guide gives $CC's bit layout
+;                          (chapter-next-interrupts.tex:512-521) but
+;                          states NO reset value, and this codebase had
+;                          never written the register before 2ef1088.
 ;
-; l2Mode is 0 (256x192) here and stays 0: nothing in this fixture loads
-; a picture or a video, and those are the only things that call
-; l2_mode_set. So each GFX 0 0 is 384 dma_copy calls / 34.8 ms on HDMI
-; before the fix and 44.5 ms after it. Staging a 320-wide title or
-; picture alongside this fixture would make the surface 320x256 and
-; every GFX 0 0 640 calls instead - the PITCH is unchanged (the duty
-; cycle is the same 78%), only the burst gets longer. Stage nothing else.
+; The video passes B and C do NOT cover this. video.asm's own kernels
+; (vid_copy_dma :1595, vid_fill_dma :1570) still carry di/ei around
+; their arms AND their transfers, so the frame ISR cannot reach the CPU
+; during a video DMA whatever $CC says. dma_copy (overlay2.asm:562) is
+; the ONLY transfer in the tree that runs with interrupts live, so it is
+; the only place the $CC permission is load-bearing - and location
+; picture drawing is the only shipped thing that reaches it.
+;
+; ------------------------------------------------------------------
+; WHAT THIS FIXTURE PUTS ON SCREEN, AND WHY EACH PIECE IS THERE
+; ------------------------------------------------------------------
+; THE CARD. PICTURE 1 + DISPLAY 0 loads sd\001.NXI - a 256x128
+; generated card (tests\art\mkl2card.py) of flat colour bands, a 16-step
+; ramp, a 2x2 checkerboard, a solid white block and a caption. gfx_blit
+; ends with l2_enable, so the card IS Layer 2 coming up: if you can read
+; "L2 DMA TEST" the layer is live and the burst below has something to
+; damage. If you cannot, STOP - see "IF THE CARD NEVER APPEARS" in the
+; run sheet. The card uses palette indices 0..15 only and NEVER index
+; 254, which l2_palette_load reserves as the sole transparent entry, so
+; any transparency inside the card is damage rather than art.
+;
+; THE RED BACKDROP. WINDOW 2 paints a solid red tilemap block at rows
+; 5..18, columns 12..67 - wholly INSIDE the area the card covers, with
+; margin. Layer 2 sits above the tilemap (l2_enable sets NR $15 = S L U),
+; so with an intact card the red is completely hidden. Red showing
+; through is a byte the copy did not write: l2_clear_back pre-fills the
+; back surface with $FE = transparent before every blit, so an unwritten
+; destination is a hole, not stale pixels. That turns the weakest part
+; of a visual check - noticing a few wrong bytes - into a binary one.
+; Geometry: Layer 2 in 256x192 mode is inset 32 px from the tilemap
+; origin on both axes (chapter-next-tilemap.tex:18,
+; chapter-next-layer2.tex:308), so the 128-row card covers tilemap rows
+; 4..19 and columns 8..71. The text window sits at rows 20..31, clear of
+; it; the header at rows 0..3, above it.
+;
+; ------------------------------------------------------------------
+; THE PERSISTENCE PROBLEM, AND HOW THE BURST ANSWERS IT
+; ------------------------------------------------------------------
+; DISPLAY 0 re-renders the whole surface from the pristine cached
+; source and flips. A damaged render is therefore replaced by the next
+; clean one: damage NEVER accumulates on this path and a rare fault is
+; a sub-frame flash. That is the shipped path and it must be exercised,
+; but on its own it is a poor detector. So the burst is three phases:
+;
+;   2/5  24 x DISPLAY 0, back to back. The real scenario - a location
+;        picture drawing under a playing effect - at the highest rate
+;        the condact allows. Each render holds ~75 ms (4 frames), which
+;        is watchable for a band-sized artifact but not for a speck.
+;        JUDGED LIVE.
+;   3/5  4 x (DISPLAY 0 + PAUSE). Same path, each render HELD half a
+;        second so a single damaged render cannot flash past. The cost
+;        of the hold is that the DMA duty cycle drops, which is why it
+;        is a separate phase and not the whole burst.
+;   4/5  20 x (GFX 0 1 + GFX 0 0). THE ACCUMULATOR. GFX 0 1 copies
+;        front->back, GFX 0 0 copies back->front, both through
+;        l2_copy_back_front -> dma_copy. Each copy's SOURCE is the
+;        previous copy's DESTINATION, so every damaged byte is carried
+;        forward into every later copy and into the final image. Damage
+;        adds up over the whole phase instead of being overwritten, and
+;        the result stays on the visible surface indefinitely after the
+;        burst ends. Sensitivity scales with the iteration count rather
+;        than with the instantaneous fault rate, and the verdict is read
+;        off a still image at leisure instead of caught in flight.
+;        It is also the densest DMA in the fixture - 768 dma_copy calls
+;        per iteration at ~73% of wall time inside a transfer, against
+;        ~10% for a DISPLAY - so it carries the audio readout too.
+;
+; Phase 4 is seeded by phase 3's last render, so damage from that render
+; is carried into the accumulation as well.
+;
+; ------------------------------------------------------------------
+; THE CONTROL LEG - RUNS ONCE, AT BOOT, BEFORE ANY SOUND
+; ------------------------------------------------------------------
+; im2_isr only remaps MMU6/7 on its full-context path, which is gated on
+; audEnable - zero from main.asm until the first sample or song, and
+; STICKY once set (interrupts.asm:338). -SfxDi stages no .AKY, so at
+; boot, before any SFX, the frame ISR is provably MMU-free and the
+; hazard under test cannot exist. The control leg runs the IDENTICAL
+; burst (the same PROCESS 10 table - not a copy of it) in that state.
+;
+; A clean control followed by a damaged tone leg isolates exactly one
+; variable. A control that is ITSELF damaged means the copy path has an
+; unrelated defect and nothing below it can be read as an answer about
+; $CC. The control CANNOT be repeated without a reboot: audEnable never
+; goes back to zero, so any later run of it would silently not be a
+; control. That is why there is no verb for it.
+;
+; ------------------------------------------------------------------
+; THE TONE
+; ------------------------------------------------------------------
+; tests\audio\mktone.py: 48000 bytes (exactly the 48K reserved audio
+; floor, banks 25-27, so the load cannot fail on pool pressure), 8-bit
+; unsigned mono, full-scale 440 Hz, centred on 128 = DAC_SILENCE, a
+; whole number of cycles end to end (1320 at 16 kHz, 1056 at 20 kHz).
+; Played with SFX n 2 = LOOPED: aud_smp_copy rewinds the source mid-copy
+; and the ring never sees the seam, so the tone runs for as long as the
+; leg needs and there is no run-out to mistake for a result. A missing
+; WAV is a documented silent no-op (h_sfx falls through to the AY-effect
+; path, and no GAME.SFB is staged) - so silence is a STAGING miss, not
+; an audio result.
 ;
 ; NO MUSIC. The AKY player holds interrupts off ~5500 T every frame
-; while a song plays, which costs the sample engine a CONTINUOUS ~0.67%
-; at 16 kHz - a standing pitch error that would sit under both phases
-; and blunt the comparison. -SfxDi stale-cleans sd\*.AKY and stages
-; none, so nothing autoplays and the reference phases are clean.
+; while a song plays, a CONTINUOUS ~0.67% rate error at 16 kHz that
+; would sit under both reference phases and the burst alike. -SfxDi
+; stale-cleans sd\*.AKY and stages none.
 ;
-; THE TONE. tests\audio\mktone.py: 48000 bytes (exactly the 48K reserved
-; audio floor, banks 25-27, so the load cannot fail on pool pressure),
-; 8-bit unsigned mono, full-scale 440 Hz, centred on 128 = DAC_SILENCE,
-; a whole number of cycles end to end (1320 at 16 kHz, 1056 at 20 kHz).
-; Played with SFX n 2 = LOOPED: aud_smp_copy rewinds the source mid-copy
-; and the ring never sees the seam, so the tone runs continuously for as
-; long as the leg needs and there is no run-out to mistake for a result.
-; A missing WAV is a documented silent no-op (h_sfx falls through to the
-; AY-effect path, and no GAME.SFB is staged) - so if you hear nothing at
-; all, that is a STAGING miss, not an audio result.
-;
-; SEQUENCE (T16 and T20 share it; T16 also runs once automatically at
-; boot, so the readout needs no typing):
-;   1/3  0.76 s of clean reference tone, no graphics
-;   2/3  40 back-to-back GFX 0 0 surface copies
-;   3/3  0.76 s of clean reference tone again, then stop
-; The burst TAKES LONGER after the fix (~1.4 s -> ~1.8 s). That is the
-; ruled-for cost, not a symptom. The pitch is the readout, not the
-; duration.
-;
-; PAUSE IS SCALED BY DRC. drb.php multiplies every PAUSE by
-; getBaseLength/DEFAULT_NOTE_DURAION = 120/200 = 0.6 for the ZX NEXT
-; target, so the authored PAUSE 63 reaches the interpreter as 38 frames
-; = 0.76 s at 50 Hz. Do not "correct" 63 to 38 here or the reference
-; phases halve. build-tests.ps1 asserts the compiled byte.
+; ------------------------------------------------------------------
+; PAUSE IS SCALED BY DRC
+; ------------------------------------------------------------------
+; drb.php multiplies every PAUSE by getBaseLength/DEFAULT_NOTE_DURAION
+; = 120/200 = 0.6 for the ZX NEXT target, so the authored PAUSE 63
+; reaches the interpreter as 38 frames (0.76 s at 50 Hz) and the
+; authored PAUSE 40 as 24 frames (0.48 s - chosen because 40 x 0.6 is
+; exactly 24, with no rounding to argue about). Do not "correct" either
+; number here. build-tests.ps1 asserts both compiled bytes, along with
+; the 24-DISPLAY run and the 20-pair GFX run.
 
 ; System flags used by name (DAAD BLANK template spellings)
 #define fPlayer             38
@@ -146,7 +229,7 @@ HUSH   62 verb
 /59 "File name error."
 /60 "Type in name of file."
 /MTX
-/0 "NEXTDAAD SAMPLED-SFX DI EXPOSURE - EAR FIXTURE#n"
+/0 "NEXTDAAD - LAYER 2 DMA PRE-EMPTION FIXTURE"
 /OTX
 /0 "a brass lamp"
 /LTX
@@ -163,10 +246,6 @@ SOUTH 0
 > _ _   AT 0
         PROCESS 6
 > _ _   WINDOW 1
-        WINAT 0 0
-        WINSIZE 25 127
-        CLEAR fDarkF
-> _ _   WINDOW 1
         DESC @fPlayer
 > _ _   PROCESS 1
 /PRO 1
@@ -182,102 +261,180 @@ SOUTH 0
         REDO
 /PRO 5
 ; ---- the shipped-rate leg (001.WAV, 16000 Hz) ----
-; GFX 0 6 clears the BACK surface to transparent first, so the 40
-; copies below move a known-clean surface onto the front and the text
-; stays readable. It is setup, not stimulus - it runs before the tone
-; starts.
-> T16 _   MES "#nLEG 16 kHz - 001.WAV, the rate everything ships#n"
-          GFX 0 6
+> T16 _   WINDOW 1
+          CLS
+          MES "LEG 16 kHz - 001.WAV, the shipped rate#n"
+          PROCESS 9
           SFX 1 2
           PROCESS 7
           DONE
 ; ---- the published-ceiling leg (002.WAV, 20000 Hz) ----
 ; 20000 Hz is AUD_RATE_MAX - what README.md and authoring-kit\SETUP.md
 ; publish as supported and what a DAAD-DOS SOUNDS set drops in at. It
-; is NOT a rate anything in this project ships, so this leg exercises
-; the documented surface, not the shipped one. Predicted drop is 2.7x
-; the 16 kHz leg's.
-> T20 _   MES "#nLEG 20 kHz - 002.WAV, README's published maximum#n"
-          GFX 0 6
+; is NOT a rate anything in this project ships.
+> T20 _   WINDOW 1
+          CLS
+          MES "LEG 20 kHz - 002.WAV, README's maximum#n"
+          PROCESS 9
           SFX 2 2
           PROCESS 7
           DONE
 ; ---- panic stop ----
-> HUSH _  MES "#ntone stopped#n"
+> HUSH _  MES "tone stopped#n"
           SFX 0 5
           DONE
 /PRO 7
-; The three phases. Each MES lands immediately before the phase it
-; names, so the phase-2 line marks the pitch-drop onset and the phase-3
-; line marks the snap-back.
-> _ _   MES "1/3 REFERENCE - steady 440 Hz, no graphics#n"
+; A tone leg: reference, the shared burst, reference. Each MES lands
+; immediately before the phase it names.
+> _ _   MES "1/5 REF - steady 440 Hz, no graphics#n"
         PAUSE 63
-> _ _   MES "2/3 BURST - 40 x GFX 0 0 surface copies#n"
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-        GFX 0 0
-> _ _   MES "3/3 REFERENCE - steady 440 Hz again#n"
+        PROCESS 10
+> _ _   MES "5/5 REF - steady 440 Hz again#n"
         PAUSE 63
         SFX 0 5
-        MES "leg done#n"
-/PRO 6
+        MES "leg done - JUDGE THE HELD CARD NOW#n"
+/PRO 8
+; The control leg. Runs ONCE, from PRO 6, before any SFX has been
+; issued - so audEnable is still 0, im2_isr takes its MMU-free fast
+; path, and the hazard under test cannot occur. Same PROCESS 10 burst
+; as the tone legs, byte for byte.
 > _ _   WINDOW 1
+        CLS
+        MES "CONTROL - same burst, NO sound. The frame ISR#n"
+        MES "cannot remap MMU while audEnable is 0.#n"
+        PROCESS 9
+        PROCESS 10
+> _ _   MES "CONTROL DONE. The card above is your reference:#n"
+        MES "damage HERE is not about the interrupt fix.#n"
+        PAUSE 63
+/PRO 9
+; Bring the card up. PICTURE is a CONDITION, so a failed load aborts
+; this entry and the next one reports it instead of the fixture
+; silently testing nothing - which is exactly how rev 1 failed.
+> _ _   PICTURE 1
+        DISPLAY 0
+        DONE
+> _ _   MES "*** PICTURE 1 FAILED - no 001.NXI staged.#n"
+        MES "*** STOP. Nothing below is a result.#n"
+        DONE
+/PRO 10
+; THE SHARED BURST - phases 2, 3 and 4. Called by both the control leg
+; and every tone leg, so the two runs differ in exactly one thing:
+; whether a sample is playing.
+> _ _   MES "2/5 BURST - 24 x DISPLAY 0 (watch it live)#n"
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+        DISPLAY 0
+> _ _   MES "3/5 HELD - 4 x DISPLAY 0, each held 0.5 s#n"
+        DISPLAY 0
+        PAUSE 40
+        DISPLAY 0
+        PAUSE 40
+        DISPLAY 0
+        PAUSE 40
+        DISPLAY 0
+        PAUSE 40
+> _ _   MES "4/5 ACCUMULATE - 20 x GFX 0 1 + GFX 0 0#n"
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+        GFX 0 1
+        GFX 0 0
+/PRO 6
+; Screen layout. Layer 2 (256x128 card) covers tilemap rows 4..19 and
+; columns 8..71, so:
+;   WINDOW 0  rows 0..3    header, always above the card
+;   WINDOW 2  rows 5..18   the red backdrop, wholly under the card
+;   WINDOW 1  rows 20..31  the running text, always below the card
+> _ _   WINDOW 0
         WINAT 0 0
-        WINSIZE 25 127
+        WINSIZE 4 80
         PAPER 0
         INK 7
         CLS
         MESSAGE 0
-> _ _   MES "A steady 440 Hz tone, then 40 GFX 0 0 surface#n"
-        MES "copies, then the tone again. Listen for PITCH,#n"
-        MES "not for duration - the burst is MEANT to take#n"
-        MES "longer on the fixed build.#n#n"
-        MES "T16   16 kHz leg (001.WAV) - the shipped rate#n"
-        MES "T20   20 kHz leg (002.WAV) - README's maximum#n"
-        MES "HUSH  stop the tone#n#n"
+> _ _   WINDOW 2
+        WINAT 5 12
+        WINSIZE 14 56
+        PAPER 2
+        INK 6
+        CLS
+> _ _   WINDOW 1
+        WINAT 20 0
+        WINSIZE 12 127
+        PAPER 0
+        INK 7
+        CLEAR fDarkF
+        CLS
+        MES "The red block is BEHIND Layer 2. An intact#n"
+        MES "card hides it completely. Red showing through#n"
+        MES "the card is a byte the copy did not write.#n"
+        MES "T16 / T20 repeat a leg, HUSH stops the tone.#n"
         MES "Run sheet: sfx-di-audible-test.md#n"
-; The 16 kHz leg runs once here, at boot, so the readout needs no
-; typing at all. Same four condacts as T16 in /PRO 5 - the verb table
-; cannot be reused for this because no verb has been parsed yet.
-> _ _   MES "#nAUTO-RUN: 16 kHz leg#n"
-        GFX 0 6
+> _ _   PROCESS 8
+; The 16 kHz leg then runs once, automatically, so the primary readout
+; needs no typing. Same shape as T16 in /PRO 5 - the verb table cannot
+; be reused here because no verb has been parsed yet.
+> _ _   WINDOW 1
+        CLS
+        MES "AUTO-RUN: 16 kHz leg#n"
+        PROCESS 9
         SFX 1 2
         PROCESS 7
         GOTO 1

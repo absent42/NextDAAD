@@ -82,7 +82,13 @@
 #            bytes = the reserved 48K audio floor) as sd\001.WAV
 #            (16000 Hz, the only rate this project ships) and
 #            sd\002.WAV (20000 Hz = AUD_RATE_MAX, README's published
-#            ceiling). Stale-cleans the same audio set -Aud/-AudLad own
+#            ceiling). ALSO stages the Layer 2 corruption-detector card
+#            tests\art\mkl2card.py generates as sd\001.NXI (256x128,
+#            256-WIDE so DISPLAY 0 reaches gfx_row_copy256 -> dma_copy),
+#            stale-cleaning all six art extension variants of number 001
+#            first so a leftover 001.NX2 cannot win the probe chain and
+#            route the blit down the CPU scatter path instead.
+#            Stale-cleans the same audio set -Aud/-AudLad own
 #            and stages NO .AKY at all - a playing song would put the
 #            AKY player's own ~5500 T per-frame DI hold under both
 #            phases of the readout. Run sheet (mode caveat, predicted
@@ -370,7 +376,7 @@ finally {
     Pop-Location
 }
 
-# Sampled-SFX DI-exposure ear fixture (2026-08-03). Compiled
+# Sampled-SFX DMA pre-emption fixture, rev 2 (2026-08-03). Compiled
 # unconditionally like the four above so a break in the DSF is caught on
 # a plain run; only -SfxDi makes it the active sd\GAME.DDB.
 #
@@ -379,11 +385,20 @@ finally {
 # DRC rewrites stimulus condacts silently: it multiplies every PAUSE by
 # getBaseLength/DEFAULT_NOTE_DURAION (120/200 = 0.6 for ZX NEXT,
 # drb.php:871-879 + 1509-1551), exactly as it rewrites out-of-range
-# BEEPs into PAUSEs. The authored PAUSE 63 must therefore arrive as 38
-# frames (0.76 s at 50 Hz), and the burst must arrive as forty
-# CONTIGUOUS GFX 0 0 - a 120-byte run that cannot occur by coincidence.
-# If either check fails the fixture no longer says what its comments
-# say, and the ear leg would be measuring something else.
+# BEEPs into PAUSEs. So every number the experiment depends on is
+# re-read out of the DDB here:
+#   PAUSE 63 -> 38 frames (0.76 s), the two tone reference phases plus
+#     the control leg's closing hold;
+#   PAUSE 40 -> 24 frames (0.48 s), the four held renders - authored 40
+#     precisely because 40 x 0.6 is exactly 24, with no rounding to
+#     argue about;
+#   the dense phase must arrive as TWENTY-FOUR contiguous DISPLAY 0
+#     (48 bytes of 1C 00) and the accumulator as TWENTY contiguous
+#     GFX 0 1 + GFX 0 0 pairs (120 bytes) - runs that cannot occur by
+#     coincidence;
+#   PICTURE 1 must be there at all, since a fixture that never loads
+#     the card is exactly the vacuous shape rev 2 exists to replace.
+# If any check fails the fixture no longer says what its comments say.
 Copy-Item "$PSScriptRoot\sfxdi.dsf" "$dr\NDSFXDI.DSF" -Force
 Push-Location $dr
 try {
@@ -414,16 +429,40 @@ function Find-ByteRuns {
 }
 
 $sfxdiBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxdi.ddb")
-# 40 x GFX 0 0 = opcode 87 ($57) with both params 0, forty times over.
-$gfxRun = [byte[]]@(0..119 | ForEach-Object { if ($_ % 3 -eq 0) { 87 } else { 0 } })
+# The accumulator: 20 x (GFX 0 1 + GFX 0 0). Opcode 87 = $57, two
+# params each, so one pair is 57 00 01 57 00 00 and the run is 120
+# bytes. This is the phase whose damage PERSISTS (each copy's source is
+# the previous copy's destination), so its length is the fixture's
+# sensitivity and is pinned exactly.
+$gfxRun = [byte[]]@(1..20 | ForEach-Object { 87, 0, 1, 87, 0, 0 })
 $gfxHits = Find-ByteRuns $sfxdiBytes $gfxRun
 if ($gfxHits.Count -ne 1) {
-    throw "sfxdi: expected exactly one 40x'GFX 0 0' run (120 bytes of 57 00 00) in tests\out\sfxdi.ddb, found $($gfxHits.Count)"
+    throw "sfxdi: expected exactly one 20x'GFX 0 1 + GFX 0 0' run (120 bytes) in tests\out\sfxdi.ddb, found $($gfxHits.Count)"
+}
+# The dense shipped-path phase: 24 contiguous DISPLAY 0. Opcode 28 =
+# $1C, one param, so 48 bytes of 1C 00. gfx_blit routes the staged
+# 256-wide card to gfx_row_copy256 -> dma_copy, one call per row.
+$dispRun = [byte[]]@(1..24 | ForEach-Object { 28, 0 })
+$dispHits = Find-ByteRuns $sfxdiBytes $dispRun
+if ($dispHits.Count -ne 1) {
+    throw "sfxdi: expected exactly one 24x'DISPLAY 0' run (48 bytes of 1C 00) in tests\out\sfxdi.ddb, found $($dispHits.Count)"
+}
+# The four HELD renders: DISPLAY 0 followed by PAUSE 24 (authored 40 x
+# DRC's 0.6). Without the hold a damaged render flashes past in ~75 ms.
+$heldHits = Find-ByteRuns $sfxdiBytes ([byte[]]@(28, 0, 35, 24))
+if ($heldHits.Count -ne 4) {
+    throw "sfxdi: expected exactly four 'DISPLAY 0 + PAUSE 24' held renders (1C 00 23 18); found $($heldHits.Count) - DRC's duration scaling has changed"
 }
 # PAUSE ($23) 38 - the authored 63 after DRC's 0.6 ZX NEXT scaling.
+# Three sites: the two tone reference phases and the control leg's hold.
 $pauseHits = Find-ByteRuns $sfxdiBytes ([byte[]]@(35, 38))
-if ($pauseHits.Count -lt 2) {
-    throw "sfxdi: expected both reference phases to compile to PAUSE 38 (23 26); found $($pauseHits.Count) occurrences - DRC's duration scaling has changed"
+if ($pauseHits.Count -lt 3) {
+    throw "sfxdi: expected the reference phases and the control hold to compile to PAUSE 38 (23 26); found $($pauseHits.Count) occurrences - DRC's duration scaling has changed"
+}
+# PICTURE 1 (opcode 84 = $54): without it Layer 2 never comes up and
+# the whole visual leg is vacuous - the rev 1 failure, asserted against.
+if ((Find-ByteRuns $sfxdiBytes ([byte[]]@(84, 1))).Count -lt 1) {
+    throw "sfxdi: 'PICTURE 1' (54 01) not present in tests\out\sfxdi.ddb - the fixture would never bring Layer 2 up"
 }
 # The three sample calls: SFX 1 2 / SFX 2 2 (load + loop) and SFX 0 5
 # (stop both kinds). Opcode 18 = $12.
@@ -434,7 +473,7 @@ foreach ($s in @(@{ n = 'SFX 1 2'; b = [byte[]]@(18, 1, 2) },
         throw "sfxdi: '$($s.n)' not present in tests\out\sfxdi.ddb"
     }
 }
-"sfxdi.ddb: 40x GFX 0 0 run at offset $($gfxHits[0]), PAUSE 38 x$($pauseHits.Count), SFX 1 2 / 2 2 / 0 5 all present"
+"sfxdi.ddb: 24x DISPLAY 0 at $($dispHits[0]), 4x held render, 20x GFX 0 1/0 0 at $($gfxHits[0]), PAUSE 38 x$($pauseHits.Count), PICTURE 1 + SFX 1 2 / 2 2 / 0 5 all present"
 
 # SP16 Task 6 DAAD V3 fixture. The ONLY DDB this script builds with
 # DRF's -v3, so the only one whose header byte 0 is 3. It exercises the
@@ -1446,9 +1485,21 @@ if ($AudLad) {
 
 $sfxDiActive = $false
 if ($SfxDi) {
-    # Sampled-SFX DI-exposure ear leg. Two jobs, both owned entirely by
-    # this switch: make tests\sfxdi.dsf the active DDB, and stage the
-    # two steady tones tests\audio\mktone.py generates.
+    # Sampled-SFX DMA pre-emption leg (rev 2). Three jobs, all owned
+    # entirely by this switch: make tests\sfxdi.dsf the active DDB,
+    # stage the two steady tones tests\audio\mktone.py generates, and
+    # stage the Layer 2 corruption-detector card tests\art\mkl2card.py
+    # generates as sd\001.NXI.
+    #
+    # THE CARD IS NOT OPTIONAL AND MUST BE .NXI. gfx_blit routes
+    # 256-wide art to gfx_row_copy256 -> dma_copy (one DMA call per
+    # row) and 320-wide art to gfx_row_scatter320, a CPU column scatter
+    # with no DMA branch at all. gfxExtTab is what decides which: NX2
+    # rows are mode 1 / width 320, NXI rows mode 0 / width 256, and the
+    # NX2 variants probe FIRST. So a leftover sd\001.NX2 from an earlier
+    # -Rab/-GMode stage would win the chain, draw through the scatter
+    # path and leave the fixture exercising nothing - which is why all
+    # six extension variants of number 001 are stale-cleaned below.
     #
     # NO SONG IS STAGED, DELIBERATELY. The AKY player masks the CTC feed
     # ~5500 T every frame while a song plays - a CONTINUOUS ~0.67% rate
@@ -1489,6 +1540,33 @@ if ($SfxDi) {
         Copy-Item $p "$root\sd\$($toneMap[$src])" -Force
         "staged tests\out\$src -> sd\$($toneMap[$src])  $($wb.Length) bytes, $wrate Hz mono 8-bit"
     }
+    # The Layer 2 card. Generated, not committed - a byte-exact function
+    # of the constants in tests\art\mkl2card.py, same rule the tones and
+    # the badwav/truncwav variants follow.
+    foreach ($v in @('NX2.ZX0', 'N2Z', 'NX2', 'NXI.ZX0', 'NXZ', 'NXI')) {
+        Remove-Item "$root\sd\001.$v" -Force -ErrorAction SilentlyContinue
+    }
+    & python "$PSScriptRoot\art\mkl2card.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkl2card.py failed" }
+    $cardSrc = "$root\tests\out\l2card.nxi"
+    if (-not (Test-Path $cardSrc)) { throw "mkl2card.py produced no l2card.nxi" }
+    # gfx_derive_height reads the row count out of the FILE LENGTH -
+    # (bytes - 512) / 256 - and rejects a partial trailing row or more
+    # than 192 rows in 256-wide mode, so the size is the one thing that
+    # has to be right for the card to load at all.
+    $cardBytes = (Get-Item $cardSrc).Length
+    if ((($cardBytes - 512) % 256) -ne 0) { throw "l2card.nxi is $cardBytes bytes - not 512 + a whole number of 256-byte rows" }
+    $cardRows = ($cardBytes - 512) / 256
+    if ($cardRows -lt 1 -or $cardRows -gt 192) { throw "l2card.nxi derives $cardRows rows - gfx_derive_height rejects anything outside 1..192 in 256-wide mode" }
+    # No pixel may be index 254: l2_palette_load reserves it as the sole
+    # transparent entry, so a card that used it would show holes on a
+    # PERFECT copy and the red backdrop under it would read as damage.
+    $cardData = [System.IO.File]::ReadAllBytes($cardSrc)
+    $bad254 = 0
+    for ($i = 512; $i -lt $cardData.Length; $i++) { if ($cardData[$i] -eq 254) { $bad254++ } }
+    if ($bad254 -ne 0) { throw "l2card.nxi uses palette index 254 in $bad254 pixel(s) - that index is reserved transparent, the card would show false holes" }
+    Copy-Item $cardSrc "$root\sd\001.NXI" -Force
+    "staged tests\out\l2card.nxi -> sd\001.NXI  $cardBytes bytes, 256x$cardRows, no pixel uses index 254"
     $sfxDiActive = $true
 }
 
