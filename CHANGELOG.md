@@ -100,6 +100,13 @@ error from the encoder. Delete the option; nothing replaces it.
 
 ### Fixes
 
+- `ISDONE` and `ISNDONE` now report everything done since the current
+  process table was entered, which is what both reference interpreters
+  do. Previously they reported only the last sub-process that ended, so
+  an `ISDONE` with no `PROCESS` in front of it read a stale result from
+  whichever table happened to finish last. `SKIP` and `REDO` no longer
+  count as actions for this, again matching both references. The common
+  idiom - `PROCESS n` followed by `ISDONE` - behaves exactly as before.
 - The `@` message escape now substitutes the referenced object's name
   only in Spanish databases, matching jDAAD and DAAD Ready's own escape
   table, where `@` is "the same as the underscore, but the article has
