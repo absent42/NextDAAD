@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.3.1 - 03/08/2026
+## v0.3.1 - 04/08/2026
 
 DAAD compliance sweep. NextDAAD now executes real DAAD databases with
 reference-correct behaviour across messages, object resolution, flags
