@@ -10,10 +10,21 @@ eng_init_game:
     ld bc, 255
     ld (hl), 0
     ldir
-    ld a, 4
-    ld (flags+FLAG_MAXCARR), a
-    ld a, 10
-    ld (flags+FLAG_STRENGTH), a
+    ; FLAGS 37 (max carried) AND 52 (strength) ARE DELIBERATELY LEFT AT
+    ; ZERO - do not "restore" the manual's 4 and 10 here (owner ruling
+    ; 2026-08-04). NEITHER reference pre-initialises them: msx2daad's
+    ; initFlags is a bare "memset(flags, 0, 256)" followed only by the
+    ; screen-mode flags (daad/daad_init.c:110-118), and fMaxCarr /
+    ; fStrength are written in exactly one place, do_ABILITY
+    ; (daad_condacts.c:1597-8); jDAAD's resetFlags loops every flag to 0
+    ; with no exceptions (jdaad.js:575-581) and only _ABILITY writes
+    ; them. Setting them here was a literal reading of the manual
+    ; against BOTH references, the same shape as the two defects the
+    ; TestUnitDAAD adoption turned up. Games set their own limits: the
+    ; standard DAAD idiom is "LET fStrength 10 / LET fMaxCarr n" in the
+    ; RESET process (what STARTER.DSF, Rabenstein, Urban Upstart and
+    ; every surveyed corpus game do) or an explicit ABILITY. Suite
+    ; check 04 pins the zeros.
     ; SP16 C1 (docs/daad-compliance-report.md section 4): flag 29
     ; fGFlags is the capability byte a period game gates its artwork
     ; on - "HASAT GMODE" (attribute 247 -> flag 29 bit 7) is the

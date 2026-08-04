@@ -337,16 +337,6 @@ affected. Deferred, not refused.
 
 ## 5. Flags
 
-### Flags 37 and 52 start at 4 and 10
-
-The manual gives 4 objects carried and strength 10 as the initial
-values, and NextDAAD sets them at initialisation. Neither reference
-does - both leave 0 until the game issues `ABILITY`.
-
-Practical effect: a game that forgets `ABILITY` can carry four objects
-on NextDAAD and none on the references. Issue `ABILITY` explicitly in
-your initialisation process so your game behaves the same everywhere.
-
 ### Flag 50 (the DOALL object) is global
 
 jDAAD saves and restores flag 50 across every process-stack push and

@@ -168,8 +168,28 @@ NORTH 0
         MES "03 OK#n"
         SKIP 1
 > _ _   MES "03 F#n"
-> _ _   NOTZERO 37
-        MES "04 OK#n"
+; 04 INVERTED 2026-08-04 (owner ruling). This check used to read
+; "NOTZERO 37" and pin the pre-initialisation of flag 37 to 4 and flag
+; 52 to 10 at eng_init_game. Neither reference does that - msx2daad
+; memsets every flag to zero and writes fMaxCarr/fStrength only in
+; do_ABILITY, and jDAAD's resetFlags has no exceptions either - so the
+; pre-init was removed and this check now pins its ABSENCE.
+;
+; It must stay HERE, at the top of the table: the suite's own first
+; ABILITY is check 33 (line ~271 below) and several later checks LET 37
+; and 52 directly, so anything further down would read those instead.
+; Safe against a re-run because it cannot happen - PRO 1's last entry
+; chains PRO 5..14 into the E03 process-stack overflow, and err_raise
+; is terminal (src/errors.asm "both funnels are terminal and never
+; return"), so this table executes exactly once per session. Checks
+; 01-03 above touch flag 100 only.
+;
+; The screen label carries its meaning because "04 OK" alone would now
+; mean the opposite of what it meant before; it keeps "04 OK" as its
+; leading token so the eye-scan and the 114-line count are unchanged.
+> _ _   ZERO 37
+        ZERO 52
+        MES "04 OK 37/52 ZERO#n"
         SKIP 1
 > _ _   MES "04 F#n"
 ; ---- suite 1: comparisons, indirection, decimal ----
