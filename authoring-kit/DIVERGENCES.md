@@ -337,33 +337,6 @@ affected. Deferred, not refused.
 
 ## 5. Flags
 
-### Flags 37 and 52 start at 0, so set your own carrying limits
-
-Recorded because the behaviour changed, not because it differs - this
-is now what both references do. Until 2026-08-04 NextDAAD set flag 37
-(objects carried) to 4 and flag 52 (strength) to 10 at startup, on the
-manual's word. Neither reference does: msx2daad zeroes every flag and
-writes the pair only in `ABILITY`, and jDAAD's flag reset has no
-exceptions. NextDAAD now starts both at 0 as they do.
-
-What this changes: a game that never sets them could carry four objects
-here and none on any other interpreter. Now it carries none everywhere,
-which is at least consistent - but it means the failure is silent and
-looks like a broken `GET`.
-
-Set them yourself in your RESET process. Either form works and both are
-in wide use:
-
-    ABILITY 4 10
-
-or the equivalent
-
-    LET     fMaxCarr 4
-    LET     fStrength 10
-
-Every game in this project's test corpus already does one or the other,
-and so does `STARTER.DSF`, so a game started from the kit is unaffected.
-
 ### Flag 50 (the DOALL object) is global
 
 jDAAD saves and restores flag 50 across every process-stack push and
