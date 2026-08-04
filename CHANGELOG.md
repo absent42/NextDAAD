@@ -100,6 +100,15 @@ error from the encoder. Delete the option; nothing replaces it.
 
 ### Fixes
 
+- The `@` message escape now substitutes the referenced object's name
+  only in Spanish databases, matching jDAAD and DAAD Ready's own escape
+  table, where `@` is "the same as the underscore, but the article has
+  its first letter uppercased - only works for Spanish interpreter". In
+  an English database `@` is an ordinary printable character, so a
+  message containing `-@@-` now prints `-@@-`. It used to substitute in
+  every language, which silently ate any literal `@` an English message
+  contained. The underscore is unaffected and still substitutes in
+  every language.
 - Sampled sound effects no longer distort while a picture is being
   drawn. An effect playing across a location picture or any screen
   redraw came out buzzy and rough - a grating edge on the sound that
