@@ -70,8 +70,11 @@
 # ===================================================================
 #
 # Compiles tests\test.dsf (template), tests\condacts.dsf (suite),
-# tests\doallnest.dsf (DOALL depth/error demo) and tests\gmodegate.dsf
-# (SP16 GMODE graphics-gate fixture) with DRC (version 2 DDB),
+# tests\doallnest.dsf (DOALL depth/error demo), tests\gmodegate.dsf
+# (SP16 GMODE graphics-gate fixture) and tests\debugflag.dsf (DRC's
+# -D debug marker - the one fixture compiled twice, with and without
+# DRB's -d, and asserted in bytes rather than staged) with DRC
+# (version 2 DDB),
 # generates corrupt/oversize variants from the template, prints
 # a header report. -Suite makes the suite DDB the active GAME.DDB;
 # -Err4 makes the doallnest DDB active instead (deliberate error 4:
@@ -640,6 +643,32 @@ finally {
     Pop-Location
 }
 
+# DRC debug-marker fixture. Compiled unconditionally like the five above,
+# and the ONLY fixture here compiled TWICE from one DRF pass: plain, and
+# again through DRB's -d ("forced debug mode"), which is what makes DRB
+# keep the fake DEBUG condact instead of dropping it (drb.php:1114).
+# There is no leg switch and no staging - the whole experiment is the
+# emitted bytes, asserted below. tests\debugflag.dsf's own header
+# explains what each of its three shapes is for, including the optional
+# owner leg (copy tests\out\debugflag-debug.ddb into a leg folder as
+# GAME.DDB and boot it).
+Copy-Item "$PSScriptRoot\debugflag.dsf" "$dr\NDDBGF.DSF" -Force
+Push-Location $dr
+try {
+    & .\TOOLS\DRC\DRF.exe zx next NDDBGF.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (debugflag)" }
+    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDDBGF.json NDDBGF.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (debugflag)" }
+    Move-Item NDDBGF.DDB "$root\tests\out\debugflag.ddb" -Force
+    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDDBGF.json NDDBGF.DDB -d
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (debugflag -d)" }
+    Move-Item NDDBGF.DDB "$root\tests\out\debugflag-debug.ddb" -Force
+}
+finally {
+    Remove-Item "$dr\NDDBGF.DSF", "$dr\NDDBGF.json" -ErrorAction SilentlyContinue
+    Pop-Location
+}
+
 function Find-ByteRuns {
     # Every start offset of $needle in $hay. Plain scan - the images
     # here are tens of KB, so nothing cleverer is warranted.
@@ -789,6 +818,89 @@ foreach ($chk in @(
     }
 }
 "sfxdi.ddb: v$($sfxdiBytes[0]), 24x DISPLAY 0 at $($dispHits[0]), 4x held render contiguous at $($heldHits[0]), 20x GFX 0 1/0 0 at $($gfxHits[0]), PAUSE 38 x$($pauseHits.Count), 8 ANYKEY boundaries at $($akAll -join ','), PICTURE 1 + SFX 1 2 / 2 2 / 0 5 all present"
+
+# ---- DRC's -D debug marker, both halves of the contract -------------
+# HALF ONE: what DRC EMITS. tests\debugflag.dsf has three DEBUG lines;
+# with -d they must arrive as three bare $DC opcode bytes at the
+# authored positions and nothing else. Message numbers are masked out
+# (DRC reallocates those whenever any string in a DSF is edited) but
+# every opcode is pinned.
+$dbgPlain = [System.IO.File]::ReadAllBytes("$root\tests\out\debugflag.ddb")
+$dbgDebug = [System.IO.File]::ReadAllBytes("$root\tests\out\debugflag-debug.ddb")
+# ZERO PARAMETERS, proved rather than assumed: one DRF pass, two DRB
+# runs, three DEBUG lines, three bytes. Anything with an operand would
+# make this 6 or 9 - and an interpreter that skipped only the opcode of
+# an operand-carrying marker would desynchronise the whole entry stream.
+if (($dbgDebug.Length - $dbgPlain.Length) -ne 3) {
+    throw ("debugflag: -d grew the DDB by $($dbgDebug.Length - $dbgPlain.Length) bytes " +
+           "(plain $($dbgPlain.Length), -d $($dbgDebug.Length)), expected exactly 3 for three DEBUG lines - " +
+           "DRC's fake debug condact is no longer a bare zero-parameter opcode")
+}
+# PRO 1: DEBUG ($DC) / ISNDONE (115 = $73) / MESSAGE n (38 = $26) /
+# DONE (22 = $16). The marker must not mark the table done: NextDAAD's
+# dispatcher stamps done BEFORE dispatch for any Action row, and $DC's
+# low seven bits are 92 = NEWTEXT, an Action - so a marker that reached
+# the condact table would fail this ISNDONE and take the fixture's
+# second entry ("FAIL") instead.
+if ((Find-MaskedRuns $dbgDebug @(0xDC, 0x73, 0x26, $null, 0x16)).Count -ne 1) {
+    throw "debugflag: expected exactly one 'DEBUG + ISNDONE + MESSAGE n + DONE' (DC 73 26 ?? 16) in tests\out\debugflag-debug.ddb"
+}
+if ((Find-MaskedRuns $dbgPlain @(0x73, 0x26, $null, 0x16)).Count -ne 1 -or
+    (Find-ByteRuns $dbgPlain ([byte[]]@(0xDC, 0x73))).Count -ne 0) {
+    throw "debugflag: without -d the same entry must be plain 'ISNDONE + MESSAGE n + DONE' (73 26 ?? 16) with no marker - DRB is no longer dropping the fake DEBUG condact"
+}
+# PRO 2 (never executed - only PRO 0 runs by itself and nothing does
+# PROCESS 2) is THE AMBIGUITY CHECK, in bytes: a real NEWTEXT sits
+# between two markers, and it is $5C, not $DC. $DC's other possible
+# reading is NEWTEXT with the indirection bit, and DRB only sets that
+# bit on a condact that HAS parameters (drb.php:1130) while NEWTEXT has
+# none (DRF's own table, checked row by row by check-cprops.ps1) - so
+# intercepting $DC cannot shadow any real condact. The trailing $16 is
+# PRO 1's fallback DONE, immediately before PRO 2's entry.
+if ((Find-ByteRuns $dbgDebug ([byte[]]@(0x16, 0xDC, 0x5C, 0xDC, 0xFF))).Count -ne 1) {
+    throw "debugflag: expected exactly one 'DEBUG + NEWTEXT + DEBUG' (DC 5C DC) run in tests\out\debugflag-debug.ddb - the marker and a real NEWTEXT must be distinguishable in the byte stream"
+}
+if ((Find-ByteRuns $dbgPlain ([byte[]]@(0x16, 0x5C, 0xFF))).Count -ne 1) {
+    throw "debugflag: expected exactly one bare NEWTEXT (5C) entry in tests\out\debugflag.ddb"
+}
+
+# HALF TWO: what the INTERPRETER does with it, read out of the emitted
+# image the same way tests\dma_contract.py reads dma_copy's descriptors.
+# eng_exec (src\engine.asm) must test for $DC BEFORE the $7F indirection
+# mask and loop back to its own fetch, so the marker is consumed without
+# reaching cprops/cdisp at all. In emitted bytes that is:
+#   .fetch: CD lo hi     call rd_next
+#           32 lo hi     ld (curOpcode), a
+#           FE FF        cp $FF          (entry terminator)
+#           CA lo hi     jp z, .endentry
+#           FE DC        cp $DC          <- the marker test
+#           28 F1        jr z, .fetch    (-15, back to the call)
+#           E6 7F        and $7F         <- the mask it must precede
+# The jr displacement is recomputed here rather than hard-coded, so the
+# check says "the skip goes back to the fetch" instead of "the byte is
+# F1". Same skip-with-a-warning rule as the dma_copy contract above: a
+# tree with no build yet is not a failure.
+if (Test-Path "$root\build\nextdaad.nex") {
+    $nex = [System.IO.File]::ReadAllBytes("$root\build\nextdaad.nex")
+    $guard = Find-MaskedRuns $nex @(0xFE, 0xFF, 0xCA, $null, $null, 0xFE, 0xDC, 0x28, $null, 0xE6, 0x7F)
+    if ($guard.Count -ne 1) {
+        throw ("debug marker: expected exactly one 'cp `$FF / jp z / cp `$DC / jr z / and `$7F' dispatcher guard in build\nextdaad.nex, found $($guard.Count) - " +
+               "eng_exec no longer intercepts DRC's debug condact ahead of the indirection mask, so a -D compile would run NEWTEXT at every marker")
+    }
+    $g = $guard[0]
+    $disp = $nex[$g + 8]
+    if ($disp -gt 127) { $disp -= 256 }
+    $target = $g + 9 + $disp                  # PC after the 2-byte jr, plus displacement
+    if ($target -ne ($g - 6) -or $nex[$g - 6] -ne 0xCD -or $nex[$g - 3] -ne 0x32) {
+        throw ("debug marker: the `$DC skip in build\nextdaad.nex jumps to offset $target, expected $($g - 6) - " +
+               "the re-fetch must land on eng_exec's own 'call rd_next', or a skipped marker leaves the stream pointer wrong")
+    }
+    "debugflag: -d adds exactly 3 bytes (DC x3, no operands); NEWTEXT stays 5C; eng_exec guard at nex offset $g re-fetches to $target"
+}
+else {
+    "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"
+    "debugflag: -d adds exactly 3 bytes (DC x3, no operands); NEWTEXT stays 5C"
+}
 
 # SP16 Task 6 DAAD V3 fixture. The ONLY DDB this script builds with
 # DRF's -v3, so the only one whose header byte 0 is 3. It exercises the

@@ -345,12 +345,32 @@ eng_pop_tail:
 eng_exec:
     call data_save
     call rd_seek
+.fetch:
     call rd_next                ; opcode byte
     ld (curOpcode), a
     cp $FF                      ; $FF = entry terminator (DRC emits it
     jp z, .endentry             ; on every fall-through entry); CP keeps
                                  ; A intact so the reload below (SP14c E2)
                                  ; is unneeded
+    ; DRC's debug marker. Compiling with DRB's -D flag emits
+    ; FAKE_DEBUG_CONDACT_CODE = 220 = $DC verbatim into the process
+    ; tables (drb.php:18 + 1114/1145), a ZEsarUX breakpoint marker with
+    ; ZERO parameters - the opcode byte and nothing else (proved: three
+    ; DEBUG lines cost exactly three DDB bytes, tests\build-tests.ps1).
+    ; It has to be caught HERE, before the mask below, because $DC & $7F
+    ; is 92 = NEWTEXT: every marker would otherwise discard the player's
+    ; pending compound order AND stamp the table done (cprops row 92 is
+    ; an Action, and the stamp happens BEFORE dispatch, so no handler
+    ; could decline it), silently, mid-entry. $DC is unambiguous:
+    ; the mask's other reading is NEWTEXT with the indirection bit, and
+    ; DRB only sets that bit on a condact with parameters (drb.php:1130)
+    ; while NEWTEXT has none, so real NEWTEXT is always plain $5C.
+    ; Skipping by re-fetching (rd_next has already stepped over the
+    ; marker, and it re-pages itself) is what makes it genuinely
+    ; invisible: no print, no done stamp, no flow change, and a live
+    ; one-shot INDIR override still lands on the condact that follows.
+    cp $DC
+    jr z, .fetch
     and $7F
     ld (curCondact), a
     ; SP16 T6: 120/122/124 used to raise E5 here. They are now real
