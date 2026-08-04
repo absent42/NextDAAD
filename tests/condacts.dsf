@@ -27,6 +27,12 @@ SHINY 205 adjective
 ; it never fires on the automated leg - EXIT 1 restarts the whole game,
 ; which would relaunch the suite from PRO 0 forever.
 XEXIT 105 verb
+; Article-stripping checks (109-110). Nouns 58-60 are new and collide
+; with nothing above - deliberately NOT SWORD/ROBE, so objects 10-12
+; cannot perturb the D1 partial-match resolution checks 87-96.
+KEYS  58  noun
+ANVIL 59  noun
+ROPE  60  noun
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -104,6 +110,22 @@ XEXIT 105 verb
 /7 "a robe"
 /8 "a cloth bag"
 /9 "a green gem"
+; Article-stripping objects (checks 109-110, owner ruling 2026-08-05).
+; Each text is chosen for what it does to the article matcher:
+;   10 "some silver keys" - the "some " case (nothing else in this
+;      fixture starts with an article other than "a "/"an ").
+;   11 "rusty anvil"      - a first word that is NOT an article, which
+;      must SURVIVE substitution. This is the owner's "rusty sword"
+;      case; the noun is ANVIL rather than SWORD only so it cannot
+;      reach checks 87-96.
+;   12 "somersault rope"  - matches "some" for four characters and then
+;      diverges on the fifth, where the space should be. The deepest
+;      case the no-peek matcher has to unwind, and the one a
+;      buffer-and-replay implementation gets wrong (it prints "rope",
+;      or "somersault rope" out of order).
+/10 "some silver keys"
+/11 "rusty anvil"
+/12 "somersault rope"
 /LTX
 /0 "Suite arena."
 /1 ""
@@ -146,6 +168,11 @@ NORTH 0
 /7    NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   ROBE  _
 /8    NOT_CREATED 0   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   BAG   _
 /9    NOT_CREATED 5   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   GEM   _
+; Article-stripping objects (checks 109-110). NOT_CREATED like 4-9, so
+; no earlier check can see them; 109/110 place them themselves.
+/10   NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   KEYS  _
+/11   NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   ANVIL _
+/12   NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   ROPE  _
 /PRO 0
 > _ _   CLS
         MESSAGE 0
@@ -1591,6 +1618,62 @@ NORTH 0
         MES "108 OK#n"
         SKIP 1
 > _ _   MES "108 F#n"
+; ---- article-stripping checks (109-110) ----
+; Same placement rule as 81-108: appended after them, so nothing before
+; here shifts. NOTHING in this suite tested article handling at all,
+; which is exactly how the defect below survived to silicon.
+;
+; THE RULE (owner ruling 2026-08-05):
+;   LIST output strips NOTHING - LISTOBJ/LISTAT/inventory print the
+;   object text whole, article and all. Confirmed on real hardware by
+;   the owner against DSNEXTE3.BIN, DAAD Ready's own ZX Next
+;   interpreter. NextDAAD ran ONE state machine for both callers and
+;   discarded every character up to the first space, so "a pair of
+;   dungarees" listed as "pair of dungarees" - and a text with NO
+;   space in it printed nothing at all, on either path.
+;   SUBSTITUTION ("_" in a message) strips a leading "a ", "an " or
+;   "some " and nothing else, case-insensitively. A first word that is
+;   NOT one of those survives: jDAAD removes the first word whatever it
+;   is (jdaad.js:1588), which destroys descriptive text, and NextDAAD
+;   deliberately does not - it follows msx2daad's article-only rule
+;   (daad_msg.c:127-133) plus "some " per DAAD Ready's manual.
+;
+; BOTH ARE VISUAL, like checks 35-38: no condact reads printed text
+; back, so the OK line only says the check RAN. Score them by reading
+; the lines - each printed name must equal the [expected] beside it,
+; character for character. A " F" is impossible here by construction.
+;
+; The '@' (capitalising) escape cannot be covered from this fixture at
+; all: print.asm's prn_decoded treats '@' as an ordinary character
+; unless header byte 1 bit 0 says the database is SPANISH, and this
+; fixture is compiled EN. It needs a Spanish DDB - owner leg.
+> _ _   SETCO 0
+        MES "109 SUB [brass lamp] = _#n"
+        SETCO 1
+        MES "109 SUB [old box] = _#n"
+        SETCO 10
+        MES "109 SUB [silver keys] = _#n"
+        SETCO 11
+        MES "109 SUB [rusty anvil] = _#n"
+        SETCO 12
+        MES "109 SUB [somersault rope] = _#n"
+        MES "109 OK#n"
+; 110 the LIST half. Location 1 rather than 0, because check 100 leaves
+; it EMPTY ("PLACE 8 0 - leave location 1 empty behind us") and nothing
+; between there and here parks anything on it - so the three names below
+; are the WHOLE listing and a fourth line is itself a failure. Location
+; 1 doubles as "inside object 1", the box, which is why the fixture has
+; always been careful with it; the PLACE 8 0 below is belt and braces
+; against a future edit that forgets. Flag 53 bit 6 clear = one object
+; per line, which is also the default.
+> _ _   PLACE 8 0
+        PLACE 10 1
+        PLACE 11 1
+        PLACE 12 1
+        LET 53 0
+        MES "110 LIST expect: some silver keys | rusty anvil | somersault rope#n110 LIST actual, one per line and nothing else:#n"
+        LISTAT 1
+        MES "110 OK#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5

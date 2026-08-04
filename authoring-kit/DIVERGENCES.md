@@ -199,18 +199,38 @@ test asserted the literal reading.
 
 ### Article stripping in substituted names
 
-When an object's text is substituted into a message, the first word of
-that text is stripped, whatever it is. jDAAD does the same for English
-("we have to remove the first word, whatever it is"); msx2daad strips
-only a leading "a " or "an ". NextDAAD matches jDAAD.
+When an object's text is substituted into a message, NextDAAD removes a
+leading **"a "**, **"an "** or **"some "** - matched without regard to
+case - and nothing else. Any other first word survives: an object text
+of "rusty sword" substitutes as "rusty sword", not "sword".
 
-So an object text of "a rusty sword" substitutes as "rusty sword", and
-a text of "rusty sword" substitutes as "sword". Write your `/OTX`
-entries with a leading article.
+The references disagree here and NextDAAD has picked a side. msx2daad
+removes a leading "a " or "an " and nothing else. jDAAD removes the
+first word **whatever it is** ("In English, we have to remove the first
+word, whatever it is"), which quietly destroys descriptive text -
+"rusty sword" becomes "sword", "scattered debris" becomes "debris",
+"two horses" becomes "horses". The manual describes the article rule
+NextDAAD implements: "If an object description starts with 'a' or
+'some' in English games ... that underscore will be replaced by the
+object text without the article". "some " comes from that sentence -
+msx2daad does not handle it, jDAAD only removes it as a first word like
+any other.
 
-Plain LISTOBJ / LISTAT output is NOT article-stripped and NOT truncated
-- the object text is listed whole. Only substitution into a message
-strips and truncates.
+What it means for your DSF: the stock system messages already supply
+their own "the" ("You now have the _."), so write `/OTX` entries as
+"a lamp", "an axe" or "some rope" and let the message provide the
+article. An `/OTX` beginning with any other word keeps that word, so
+"the priest" reads back as "You now have the the priest." - drop the
+"the" and write "priest", which also lists correctly.
+
+Leading spaces are not touched either: the article has to be the
+literal start of the text, as in msx2daad. jDAAD strips leading blanks
+before it looks for the article.
+
+Listings are not affected at all. LISTOBJ, LISTAT and the inventory
+print the object text whole, article included - the same as msx2daad,
+jDAAD and DAAD Ready's own ZX Next interpreter, measured directly on
+hardware.
 
 ### Substituted names stop at the first "."
 
