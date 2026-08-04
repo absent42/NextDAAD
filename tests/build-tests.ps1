@@ -35,6 +35,8 @@
 #   -Part               sd\PART\      NDPARTA + PART2\ shadow
 #   -AudLad             sd\AUDLAD\    tests\audlad.dsf
 #   -SfxDi              sd\SFXDI\     tests\sfxdi.dsf
+#   -Uto                sd\UTO\       tools\TEST.DSF     (V2)
+#   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
 #    never touched by this script)
 #
@@ -171,6 +173,56 @@
 #            predicted frequencies, boundary-by-boundary checklist, pass
 #            criteria): .superpowers\sdd\sfx-di-audible-test.md. An
 #            alternative to -Aud/-AudLad, not a companion.
+# THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
+# this project did not write - and the only one whose SOURCE is not in
+# this repository:
+#
+#   LICENCE. tools\TEST.DSF is Uto's TestUnitDAAD
+#   (https://github.com/Utodev/TestUnitDAAD), GPL-3.0. NextDAAD does not
+#   vendor it and MUST NOT: copying it in - or committing anything
+#   derived from it, the compiled DDB included - would either breach the
+#   copyleft terms or force this project's own licensing to change.
+#   It is treated exactly like DRC, gfx2next and ffmpeg: an owner-
+#   supplied third-party tool that lives under the gitignored tools\ and
+#   is CONSUMED, never redistributed. The owner downloads it himself;
+#   both blocks below read it in place, and every artefact they produce
+#   lands in tests\out\ or sd\, both gitignored. Do not "tidy" a copy
+#   into tests\ - a modified GPL file is still GPL.
+#
+#   -Uto     make the V2 build of Uto's own DAAD compliance test the
+#            active GAME.DDB, in sd\UTO\. Written by the author of the
+#            DRC compiler this project targets, "to test compatibility
+#            of the new interpreters". It is the one fixture whose value
+#            depends on NOT being edited: it encodes what the DAAD
+#            ecosystem considers correct rather than what this project
+#            assumed, so a failure is a finding about the interpreter
+#            and must never be "fixed" in the DSF.
+#            SELF-SCORING. Each condact gets a positive test and usually
+#            a negative one; a pass prints "<CONDACT> ... OK", a failure
+#            prints "* <CONDACT> ERROR!" and DONEs out of PROCESS 1, so
+#            the run STOPS at the first failure and the last line on
+#            screen names it. 64 OK lines = a full V2 pass. The visual
+#            half that follows is operator-scored (it prints what it
+#            expects to look like). Needs NOTHING but the DDB - no art,
+#            no audio, no 0.XMB, no save file, and no typed input at all
+#            (its /PRO 0 runs the whole test at boot). An alternative to
+#            every other DDB switch, not a companion.
+#            If tools\TEST.DSF is absent a plain run just warns and
+#            skips the two compiles; asking for -Uto/-UtoV3 without it
+#            throws, with the download URL in the message.
+#            Run sheet: .superpowers\sdd\uto-compliance-runsheet.md
+#   -UtoV3   the same source compiled WITH -v3, into sd\UTOV3\. The DSF
+#            carries two #ifdef "V3" blocks that DRF only compiles in
+#            when -v3 is given (-v3 defines the symbol V3): SETAT x3
+#            (set/clear/toggle on flag 57 via attribute 16) and second-
+#            parameter indirection (LET 200 @100), plus a GETKEY leg in
+#            the visual half. 68 OK lines = a full V3 pass. This is the
+#            only INDEPENDENT test of the SP16 V3 work - v3probe.dsf is
+#            ours. Worth noting for whoever next touches v3probe: this
+#            DRF build has real SETAT and GETKEY keywords (SETAT emits
+#            opcode 124 directly, GETKEY compiles to PAUSE 0), so the
+#            Invoke-V3SetatPatch stand-in below may no longer be needed
+#            there - not changed here, out of this fixture's scope.
 # Boot title screen (SP11 Task 1), independent of the DDB switches:
 #   -Title   stage the owner 320x256 title into the run's leg folder -
 #            copies tools\demo-files\DAAD.NX2
@@ -359,7 +411,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -382,6 +434,8 @@ if ($UU)               { $legName = 'UU' }
 if ($Part)             { $legName = 'PART' }
 if ($AudLad)           { $legName = 'AUDLAD' }
 if ($SfxDi)            { $legName = 'SFXDI' }
+if ($Uto)              { $legName = 'UTO' }
+if ($UtoV3)            { $legName = 'UTOV3' }
 $leg = Join-Path $sd $legName
 
 function Reset-LegDir {
@@ -399,7 +453,7 @@ function Reset-LegDir {
     # sd\ itself, sd\L2DMA\, or anything outside sd\).
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
-               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI')
+               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'UTO', 'UTOV3')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -805,6 +859,151 @@ try {
 finally {
     Remove-Item "$dr\NDV3.DSF", "$dr\NDV3.json", "$dr\NDV3.DDB", "$dr\0.XMB" -ErrorAction SilentlyContinue
     Pop-Location
+}
+
+# ===================================================================
+# UTO'S OWN DAAD COMPLIANCE TEST - the one third-party fixture here
+# ===================================================================
+# tools\TEST.DSF is Uto's TestUnitDAAD - the DAAD compliance test
+# written by the author of the DRC compiler this project targets, "to
+# test compatibility of the new interpreters". Compiled IN PLACE from
+# tools\ (gitignored, owner-supplied) BOTH ways, like every other
+# fixture above - so a DSF or toolchain break is caught on a plain run -
+# with only -Uto / -UtoV3 making either DDB the active GAME.DDB.
+#
+# GPL-3.0 - CONSUMED, NEVER REDISTRIBUTED. See the licence paragraph in
+# the switch documentation at the top of this file. Neither the source
+# nor either compiled DDB may be committed: the source stays in
+# gitignored tools\, the DDBs land in gitignored tests\out\ and are
+# staged into gitignored sd\. Do not copy the DSF into tests\.
+#
+# WHY TWO BUILDS. The file is titled a V2 test and its non-visual half
+# is pure V2, but it also carries two #ifdef "V3" blocks. DRF's -v3
+# defines the symbol V3 (its "[additional symbols]" mechanism, confirmed
+# against DRF 0.40), so -v3 both raises the header version byte to 3 AND
+# switches those blocks in. The two builds are therefore genuinely
+# different tests, not the same test at two header bytes, and each gets
+# its own leg folder.
+#
+# THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi above: the whole
+# point of a third-party fixture is that it says what its author wrote,
+# so the things that would silently hollow it out are re-read out of the
+# DDB rather than assumed.
+#   header byte 0 - 2 for the V2 build, 3 for the V3 build;
+#   the V3-only condacts - the three SETAT sites (opcode 124 = $7C,
+#     attribute 16, ops set/clear/toggle) must be present exactly once
+#     each in the V3 image and ABSENT ENTIRELY from the V2 image. That
+#     pair is what proves #ifdef "V3" resolved the way each build
+#     intends; without the negative half a V2 build that silently
+#     compiled the V3 blocks would look identical from the outside;
+#   GETKEY - DRB compiles the V3 GETKEY keyword down to PAUSE 0
+#     ($23 $00), which is exactly the byte pair the interpreter reads as
+#     GETKEY under V3 and as a zero-length pause under V2. Asserted
+#     present (followed by its PRINT of flag 60) in the V3 image and
+#     absent from the V2 one;
+#   the boot chain - RESET, CLEAR 100/101/102, SET 200 followed by
+#     PROCESS 1 and EXIT 0. This fixture takes NO typed input: /PRO 0
+#     runs the whole test at boot and restarts. If that chain is not in
+#     the image the leg boots to a prompt and tests nothing, which is
+#     the vacuous shape worth asserting against.
+#
+# ABSENT SOURCE. tools\ is gitignored and owner-supplied, so a fresh
+# clone will not have TEST.DSF until the owner downloads it. A plain run
+# then WARNS and skips both compiles (it must not break every other
+# fixture over an optional third-party file); asking for -Uto/-UtoV3
+# without it THROWS, with the URL. Same shape as every other
+# owner-provisioned input this script consumes.
+$utoDsf = "$root\tools\TEST.DSF"
+$utoUrl = 'https://github.com/Utodev/TestUnitDAAD'
+$utoBuilt = $false
+$utoSetat = @(@{ n = 'SETAT 16 1 (set)';    b = [byte[]]@(124, 16, 1) },
+              @{ n = 'SETAT 16 0 (clear)';  b = [byte[]]@(124, 16, 0) },
+              @{ n = 'SETAT 16 2 (toggle)'; b = [byte[]]@(124, 16, 2) })
+# GETKEY -> PAUSE 0, pinned by the PRINT 60 that reads the key back.
+$utoGetkey = [byte[]]@(35, 0, 53, 60)
+# RESET, CLEAR 100, CLEAR 101, CLEAR 102, SET 200 - the head of /PRO 0.
+$utoBoot = [byte[]]@(127, 48, 100, 48, 101, 48, 102, 47, 200)
+
+function Assert-UtoImage {
+    # $Ver = expected header byte 0; $WantV3 = whether the #ifdef "V3"
+    # blocks should have compiled in.
+    param([string]$Path, [int]$Ver, [bool]$WantV3)
+    $b = [System.IO.File]::ReadAllBytes($Path)
+    if ($b[0] -ne $Ver) {
+        throw "utotest: DDB header byte 0 is $($b[0]), expected $Ver - did the -v3 flag reach DRF (or reach it when it should not have)?"
+    }
+    foreach ($s in $utoSetat) {
+        $n = (Find-ByteRuns $b $s.b).Count
+        if ($WantV3 -and $n -ne 1) {
+            throw "utotest V3 build: expected exactly one '$($s.n)' (opcode 124) in $Path, found $n - the #ifdef ""V3"" block did not compile in"
+        }
+        if ((-not $WantV3) -and $n -ne 0) {
+            throw "utotest V2 build: '$($s.n)' present in $Path - the #ifdef ""V3"" block compiled into a build that must stay V2"
+        }
+    }
+    $g = (Find-ByteRuns $b $utoGetkey).Count
+    if ($WantV3 -and $g -ne 1) {
+        throw "utotest V3 build: expected exactly one GETKEY (compiled as PAUSE 0 + PRINT 60, 23 00 35 3C) in $Path, found $g"
+    }
+    if ((-not $WantV3) -and $g -ne 0) {
+        throw "utotest V2 build: a GETKEY (23 00 35 3C) is present in $Path - that block must not compile without -v3"
+    }
+    if ((Find-ByteRuns $b $utoBoot).Count -ne 1) {
+        throw "utotest: the /PRO 0 boot chain (RESET, CLEAR 100/101/102, SET 200) is not in $Path exactly once - the fixture would not self-start"
+    }
+    foreach ($s in @(@{ n = 'PROCESS 1'; b = [byte[]]@(75, 1) },
+                     @{ n = 'EXIT 0';    b = [byte[]]@(110, 0) },
+                     @{ n = 'DOALL 1';   b = [byte[]]@(85, 1) })) {
+        if ((Find-ByteRuns $b $s.b).Count -lt 1) {
+            throw "utotest: '$($s.n)' not present in $Path"
+        }
+    }
+    return $b.Length
+}
+
+if (-not (Test-Path -LiteralPath $utoDsf)) {
+    if ($Uto -or $UtoV3) {
+        throw "-Uto/-UtoV3 need tools\TEST.DSF and it is not there. It is Uto's TestUnitDAAD (GPL-3.0), a third-party file this repository deliberately does NOT vendor - download it from $utoUrl and put TEST.DSF in tools\, then re-run."
+    }
+    "WARNING: tools\TEST.DSF absent - Uto's third-party compliance test not built (download from $utoUrl into tools\ to enable -Uto/-UtoV3)"
+}
+else {
+    Copy-Item $utoDsf "$dr\NDUTO.DSF" -Force
+    Push-Location $dr
+    try {
+        & .\TOOLS\DRC\DRF.exe zx next NDUTO.DSF
+        if ($LASTEXITCODE -ne 0) { throw "DRF failed (utotest V2)" }
+        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDUTO.json NDUTO.DDB
+        if ($LASTEXITCODE -ne 0) { throw "DRB failed (utotest V2)" }
+        Move-Item NDUTO.DDB "$root\tests\out\utotest.ddb" -Force
+    }
+    finally {
+        # The DSF copy is a build temporary inside the toolchain dir, the
+        # same way every other fixture here is compiled, and is removed
+        # again on the way out - tools\ ends the run exactly as it began.
+        # No 0.XMB either: the fixture uses no XMESSAGE. Swept anyway so a
+        # stray one from an earlier compile cannot ride along.
+        Remove-Item "$dr\NDUTO.DSF", "$dr\NDUTO.json", "$dr\NDUTO.DDB", "$dr\0.XMB" -ErrorAction SilentlyContinue
+        Pop-Location
+    }
+    $utoV2Len = Assert-UtoImage "$root\tests\out\utotest.ddb" 2 $false
+
+    Copy-Item $utoDsf "$dr\NDUTO3.DSF" -Force
+    Push-Location $dr
+    try {
+        & .\TOOLS\DRC\DRF.exe zx next NDUTO3.DSF -v3
+        if ($LASTEXITCODE -ne 0) { throw "DRF failed (utotest V3)" }
+        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDUTO3.json NDUTO3.DDB
+        if ($LASTEXITCODE -ne 0) { throw "DRB failed (utotest V3)" }
+        Move-Item NDUTO3.DDB "$root\tests\out\utotest_v3.ddb" -Force
+    }
+    finally {
+        Remove-Item "$dr\NDUTO3.DSF", "$dr\NDUTO3.json", "$dr\NDUTO3.DDB", "$dr\0.XMB" -ErrorAction SilentlyContinue
+        Pop-Location
+    }
+    $utoV3Len = Assert-UtoImage "$root\tests\out\utotest_v3.ddb" 3 $true
+    $utoBuilt = $true
+    "utotest (tools\TEST.DSF, GPL-3.0, not redistributed): V2 image $utoV2Len bytes (no V3 blocks), V3 image $utoV3Len bytes (SETAT x3 + GETKEY in)"
 }
 
 # The corrupt/oversize variants are derived from the TEMPLATE image (as
@@ -1841,6 +2040,34 @@ if ($SfxDi) {
     $sfxDiActive = $true
 }
 
+# Uto's compliance test. Nothing to stage but the DDB - deliberately:
+# the fixture loads no picture, plays no sound, reads no 0.XMB and takes
+# no typed input, so sd\UTO\ / sd\UTOV3\ hold exactly GAME.DDB and the
+# .nex. Anything else in there would be residue.
+#
+# The DDB is a derivative of a GPL-3.0 source and sd\ is gitignored -
+# it goes to the owner's card and nowhere else. Never commit it, and
+# never publish sd\UTO\ / sd\UTOV3\ as a release artefact.
+$utoActive = $false
+$utoV3Active = $false
+if ($Uto -or $UtoV3) {
+    # Unreachable with the source absent - the compile section throws
+    # first - but the guard keeps the staging half honest on its own.
+    if (-not $utoBuilt) { throw "-Uto/-UtoV3: no utotest DDB was built (see the tools\TEST.DSF message above)" }
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
+    }
+    # -UtoV3 last-wins, matching the $legName order resolved at the top.
+    if ($UtoV3) {
+        Copy-Item "$root\tests\out\utotest_v3.ddb" "$leg\GAME.DDB" -Force
+        $utoV3Active = $true
+    }
+    else {
+        Copy-Item "$root\tests\out\utotest.ddb" "$leg\GAME.DDB" -Force
+        $utoActive = $true
+    }
+}
+
 # The interpreter itself, so the folder is genuinely self-contained -
 # one folder to copy, one file to launch. Not a rebuild: whatever
 # build\nextdaad.nex currently holds is what gets staged (build.ps1 is
@@ -1869,6 +2096,8 @@ elseif ($v3Active) { "active: v3probe (SP16 DAAD V3 fixture - header version 3)"
 elseif ($gmodeActive) { "active: gmodegate (SP16 GMODE graphics-gate fixture)" }
 elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-scale fixture)" }
 elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture - see .superpowers\sdd\sfx-di-audible-test.md)" }
+elseif ($utoV3Active) { "active: utotest V3 (Uto's THIRD-PARTY DAAD compliance test, header version 3 - self-scoring, 68 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
+elseif ($utoActive) { "active: utotest V2 (Uto's THIRD-PARTY DAAD compliance test - self-scoring, 64 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($Suite) { "active: suite" }
 else { "active: template" }
