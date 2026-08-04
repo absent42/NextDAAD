@@ -104,11 +104,16 @@ error from the encoder. Delete the option; nothing replaces it.
   reference interpreters. PICTURE marked it nowhere at all; MOVE marked
   it only when it found a connection. Both now mark it on every exit,
   including their failing ones. This is visible to `ISDONE`/`ISNDONE`
-  only when the condact under test is the first Action in its table -
-  the pattern that changes is a movement or artwork attempt isolated in
-  its own process and then tested with `ISNDONE`. Use the condact's own
-  success or failure to gate the entry instead; see `DIVERGENCES.md`.
-  PICTURE still fails its entry when no art loads.
+  only when the condact under test is the first Action in its table.
+  One authoring pattern changes: a `PROCESS` whose table is just a
+  `MOVE`, tested afterwards with `ISNDONE` to print "I can't go in that
+  direction", no longer prints it - the failed MOVE now marks the table
+  done, so the `ISNDONE` fails and the entry stops. It behaved that way
+  on both references all along. Test the movement directly instead:
+  MOVE is itself a condition, so let it gate the entry and put the
+  message in the following entry, which reads the same on every
+  interpreter. The same applies to PICTURE, which still fails its own
+  entry when no art loads.
 - Flags 37 (objects carried) and 52 (strength) are no longer
   pre-initialised to 4 and 10 and now start at 0, matching both
   references - neither pre-initialises them, and both write the pair
