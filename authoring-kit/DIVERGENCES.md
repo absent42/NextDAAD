@@ -179,17 +179,22 @@ the full table.
 
 ### The `@` escape, and capitalisation
 
-Both `_` and `@` substitute the referenced object's name into a
-message, in every language. msx2daad does the same; jDAAD honours `@`
-only for Spanish databases. NextDAAD matches the majority, so an
-English message containing a literal `@` will lose it - write your `@`
-signs as something else, or accept the substitution.
+`_` substitutes the referenced object's name into a message in every
+language. `@` is the **capitalising** form of the same escape and it
+exists for **Spanish databases only** - DAAD Ready's own escape table
+says so ("Same as the underscore, but the article has its first letter
+uppercased. Only works for Spanish interpreter"), and jDAAD gates it on
+exactly that. NextDAAD does the same.
 
-The difference between the two escapes is capitalisation: `@` is meant
-to capitalise the substituted name. That is now gated on the database
-language and fires for **Spanish databases only**, matching jDAAD's own
-gate and msx2daad's `LANG_ES` build. In an English database `@` and `_`
-render identically.
+So in an English database `@` is an ordinary printable character: a
+message containing `-@@-` prints `-@@-`. In a Spanish database `@`
+substitutes the name with its first letter capitalised, and `_`
+substitutes it unchanged.
+
+msx2daad substitutes on both characters in every language; NextDAAD
+used to follow it, which silently ate literal `@` signs out of English
+messages. That was corrected once the DRC toolchain's own compliance
+test asserted the literal reading.
 
 ### Article stripping in substituted names
 

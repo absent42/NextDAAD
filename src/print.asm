@@ -50,9 +50,30 @@ prn_decoded:
     cp $0F
     jr z, .gfxoff
     cp '_'
-    jr z, .objname
+    jr z, .objname              ; always a substitution, every database
     cp '@'
-    jr z, .objname
+    jr nz, .plain
+    ; '@' is the CAPITALISED object-name escape and it exists ONLY in
+    ; Spanish databases - DAAD_Ready_Documentation_V2.md's escape table:
+    ; "@ | Same as the underscore, but the article has its first letter
+    ; uppercased. Only works for Spanish interpreter." In an English
+    ; database '@' is an ordinary printable character. jDAAD gates it on
+    ; exactly this bit (jdaad.js:1636 `(mychar == ESCAPE_OBJNAME) ||
+    ; ((mychar == ESCAPE_OBJNAME_CAPS) && DDB.isSpanish())`, isSpanish =
+    ; bit 0 of header byte 1, jdaad.js:550). msx2daad substitutes on
+    ; both unconditionally (daad_print.c:128) and that is what NextDAAD
+    ; copied - it rendered Uto's own compliance fixture message 148
+    ; ("-@@-", printed by its PRINTAT/SAVEAT/BACKAT check) as two object
+    ; names. The compiler side agrees with jDAAD: DRC never reads the
+    ; /CTL null-word character at all (drb.php:1811-1813 writes the
+    ; SUB-MACHINE id into header byte 2, and DAAD Ready's own manual
+    ; calls /CTL "obsolete and not used anymore"), so byte 2 is not a
+    ; per-game substitution character to read - it is 95 in every
+    ; database this interpreter accepts (file.asm's DDB_MAGIC check).
+    ld hl, ddbHeader+1          ; target/machine + language byte
+    bit 0, (hl)                 ; bit 0 = Spanish (drb.php: ES and PT)
+    jr nz, .objname
+.plain:
     ld c, a
     jr prn_char
 .gfxon:

@@ -103,7 +103,20 @@ DDB_VERSION     equ 2       ; lowest accepted header version; ddb_load
                             ; ONE V3 gate in the interpreter: 2 and 3
                             ; differ in bit 0 alone, so every gate is a
                             ; single BIT 0 test, never a CP (doc 06).
-DDB_MAGIC       equ 95      ; '_' at header offset 2
+DDB_MAGIC       equ 95      ; header offset 2. HISTORICALLY the /CTL null
+                            ; word (hence 95 = '_'), but DRC does not read
+                            ; /CTL at all any more: drb.php:1811-1813
+                            ; ("This byte stored the null character,
+                            ; usually underscore, as set in /CTL section.
+                            ; That's why all classic DDBs have same value:
+                            ; 95. For new targets (MSX2) we use that byte
+                            ; for subtarget information.") writes
+                            ; getSubMachineIDByTarget(), which returns 95
+                            ; for every target but MSX2. It is a magic
+                            ; number here, NOT a substitution character to
+                            ; read - see print.asm's prn_decoded. jDAAD
+                            ; agrees: it parses byte 2 as "the95" and
+                            ; never reads it again (jdaad.js:470).
 DDB_ZX_BASE     equ $8400   ; classic ZX load base; pointers are absolute
 
 ; --- ddb_load result codes ---

@@ -2,7 +2,11 @@
 
 ; A = '_' or '@' (a message substitution) or 0 (plain list output).
 ; Prints flag-51's OTX with the leading article word stripped; '@'
-; capitalises the first emitted letter. Reader bracketed by rd_push/
+; capitalises the first emitted letter. '@' only ever reaches here from
+; a SPANISH database - print.asm's prn_decoded filters it out for every
+; other language, where '@' is an ordinary printable character - so the
+; language test at .emit below is now belt-and-braces for this entry
+; point's own contract rather than the only gate. Reader bracketed by rd_push/
 ; rd_pop, window by data_save/data_restore. No referenced object ($FF)
 ; prints nothing. Tokens are expanded by the iterator, so the article
 ; state machine sees every real character - a token spanning the
