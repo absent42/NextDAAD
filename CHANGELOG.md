@@ -100,6 +100,14 @@ error from the encoder. Delete the option; nothing replaces it.
 
 ### Fixes
 
+- Compiling with DRC's debug flag no longer breaks the game. The
+  markers DRC writes into the process tables for the ZEsarUX debugger
+  were being read as `NEWTEXT`, so every marker silently threw away the
+  rest of a multi-command order - a debug build stopped obeying commands
+  half way through, with no error and nothing on screen to explain it.
+  NextDAAD now steps over them, so a debug build plays exactly like a
+  normal one. Every other DAAD interpreter still has this bug; see
+  `DIVERGENCES.md`.
 - `ISDONE` and `ISNDONE` now report everything done since the current
   process table was entered, which is what both reference interpreters
   do. Previously they reported only the last sub-process that ended, so
@@ -197,10 +205,11 @@ error from the encoder. Delete the option; nothing replaces it.
   references do this), so one `/OTX` entry can serve as both a short
   name and a longer description. Plain LISTOBJ/LISTAT output is not
   truncated.
-- The `@` escape's capitalisation is gated on the database language
-  and fires for Spanish databases only, matching jDAAD's own gate. It
-  had never fired at all before - a register clobber in the message
-  seek made whether it fired depend on where the database loaded.
+- In a Spanish database, `@`'s capitalisation now actually happens. A
+  register clobber in the message seek meant it had never fired at
+  all, and whether the branch was even reached depended on where the
+  database happened to load. (What `@` does per language is covered
+  under Fixes, above.)
 
 ### Object resolution
 

@@ -135,6 +135,26 @@ picture-driven - each picture carries its own embedded palette - so
 there is nothing for a numbered palette slot to hold. Both subs are
 accepted and do nothing.
 
+### DEBUG markers are ignored, so a -D build plays normally
+
+Compiling with DRB's `-d` flag writes a marker into the process tables
+wherever you put a `DEBUG` line, for the ZEsarUX debugger to find.
+
+NextDAAD steps over those markers and does nothing with them. Every
+other DAAD interpreter runs them: the marker is opcode 220, and the
+standard dispatcher masks the top bit off it, which turns it into
+`NEWTEXT`. That silently throws away the rest of a multi-command order,
+so on those interpreters a debug build stops obeying `GET SWORD AND
+KILL ORC` half way through, with nothing on screen to explain it. This
+is the one place NextDAAD differs from all of them deliberately.
+
+What it means for you: a `-D` build plays exactly like a normal one,
+and you can leave `DEBUG` lines in while you work. What you do not get
+is a breakpoint - ZEsarUX does not yet recognise NextDAAD as a DAAD
+interpreter, so its DAAD debugger is unavailable to us either way, and
+a `DEBUG` line is simply inert. Do not use one expecting the run to
+stop.
+
 ### CREATE / DESTROY / PLACE do not set the referenced object
 
 msx2daad sets the referenced object (flags 51, 54-59) in all three;

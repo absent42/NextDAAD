@@ -87,9 +87,16 @@
 # tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real
 # commercial-quality DAAD game), makes that DDB active, and stages the
 # Layer 2 art (default N.NX2 -> NNN.NX2); -UU compiles the owner-
-# authored tools\urban-upstart\URBAN_UPSTART.DSF (untracked vendor dir -
+# authored tools\urban-upstart\URBAN-UPSTART.DSF (untracked vendor dir -
 # never edit it here), makes that DDB active, and stages whatever
-# N.NXI/N.NX2 art exists there as-is (currently NXI-only) to NNN.NXI.
+# N.NXI/N.NX2 art exists there as-is to NNN.NXI. In practice that is
+# NOTHING: the vendor dir holds 10 PNGs and no converted art at all, so
+# -UU stages 0 files and the leg runs TEXT-ONLY. (This went unnoticed
+# because the leg could never run - see the DSF filename note below.)
+# This script has no image-conversion step by design - Rabenstein's art
+# ships pre-converted - so giving -UU pictures means converting the
+# PNGs with tools\png2nx.py to somewhere OUTSIDE the read-only vendor
+# dir and pointing $uuSrc's art scan at it. Owner's call, not done.
 # All destinations are inside the run's leg folder - see the LEG
 # FOLDERS block at the top.
 # The DDB switches are mutually exclusive - if more than one is given,
@@ -1353,13 +1360,25 @@ if ($UU) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial/mixed art sets)"
     }
-    # tools\urban-upstart\URBAN_UPSTART.DSF is OWNER-AUTHORED and the vendor
+    # tools\urban-upstart\URBAN-UPSTART.DSF is OWNER-AUTHORED and the vendor
     # dir is untracked working material - never edit it here. Compiled
     # exactly like rabenstein.dsf above: copy into DAAD-READY, run DRF/DRB
     # with no preprocessing, and let a DRC failure abort the script (its
     # error surfacing is the point - do not swallow it).
+    # NOTE the HYPHEN. This read URBAN_UPSTART.DSF (underscore) from the
+    # day it was written, which matches nothing in the vendor dir, so -UU
+    # could never have staged - it died on a bare Copy-Item error that
+    # named no cause. The only underscore file there is
+    # "URBAN_UPSTART 0.1.DSF", a 16 KB 2020 relic; the real game is the
+    # 124 KB hyphenated one. Do not "tidy" this back.
     $uuSrc = "$root\tools\urban-upstart"
-    Copy-Item "$uuSrc\URBAN_UPSTART.DSF" "$dr\NDUU.DSF" -Force
+    $uuDsf = "$uuSrc\URBAN-UPSTART.DSF"
+    if (-not (Test-Path $uuDsf)) {
+        $found = (Get-ChildItem "$uuSrc\*.DSF" -ErrorAction SilentlyContinue |
+                  ForEach-Object { $_.Name }) -join ', '
+        throw "-UU source missing: $uuDsf`n  .DSF files present in ${uuSrc}: $(if ($found) { $found } else { '(none)' })"
+    }
+    Copy-Item $uuDsf "$dr\NDUU.DSF" -Force
     Push-Location $dr
     try {
         & .\TOOLS\DRC\DRF.exe zx next NDUU.DSF
