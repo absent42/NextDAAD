@@ -323,7 +323,10 @@ VID_RL_DIV      equ 16
 
 ; --- Engine (sub-project 3) ---
 PROC_DEPTH      equ 10
-PREC_SIZE       equ 6       ; proc(1) entryPtr(2) condactPtr(2) done(1)
+PREC_SIZE       equ 5       ; proc(1) entryPtr(2) condactPtr(2)
+                            ; the done state is NOT per level - it is the
+                            ; single isDone cell (engine.asm), as in both
+                            ; reference interpreters
 OBJ_SIZE        equ 6
 OBJ_NOT_CREATED equ 252
 OBJ_WORN        equ 253

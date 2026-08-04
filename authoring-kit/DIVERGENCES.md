@@ -55,24 +55,41 @@ compiled frames at 50 Hz. `PAUSE 167` gives about two seconds.
 
 ## 2. Condacts
 
-### ISDONE / ISNDONE look at the last sub-process only
+### ISDONE / ISNDONE count everything done since the table was entered
 
-NextDAAD's ISDONE succeeds if the last table that ENDED did so after
-executing at least one action - it reads the result of the most
-recently popped process. Both msx2daad and jDAAD instead keep a single
-"done" flag that any action condact in the current table also sets, so
-their ISDONE is true if anything at all has happened since the table
-was entered.
+Recorded because the behaviour changed, not because it differs: this is
+now what both references do.
 
-The manual's wording ("Succeeds if the last table ended by exiting
-after executing at least one Action") supports NextDAAD's reading, and
-in the normal idiom
+There is one "done" state for the whole interpreter. Every Action
+condact sets it. Entering a process table clears it - and only that
+clears it - so after
 
     PROCESS 5
     ISDONE ...
 
-the two are identical. They differ only if you use ISDONE with no
-preceding PROCESS in the same table. Write the PROCESS.
+the answer is about process 5 and nothing else, however much the
+calling entry did beforehand. `ISNDONE` is the exact complement. SKIP
+and REDO are not Actions for this purpose and do not set it, matching
+both references.
+
+The consequence worth knowing is the case with no `PROCESS` in front of
+it. In
+
+    > GET SCARF   AUTOG
+                  ISDONE
+                  ...
+
+the `ISDONE` reports the `AUTOG` immediately above it. NextDAAD used to
+report the last sub-process that had ended instead, on a literal
+reading of the manual ("Succeeds if the last table ended by exiting
+after executing at least one Action"), which made that entry read
+whatever a previous `PROCESS` had left behind. The DRC toolchain's own
+compliance test asserts the accumulating reading, so that is what
+NextDAAD does.
+
+If your game predates this and relies on the old reading, the fix is
+the same one that always made the intent explicit: put the `PROCESS`
+in the entry.
 
 ### DISPLAY on a tilemap-text platform
 

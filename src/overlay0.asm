@@ -154,13 +154,13 @@ h_skip:                         ; 116: jump B (signed) + 1 entries on.
     ld (ix+4), a
     ret
 
-h_isdone:                       ; 114: lastDone != 0
-    ld a, (lastDone)
-    or a
-    jp nz, c_true
+h_isdone:                       ; 114: anything done since this table
+    ld a, (isDone)              ; was entered - a PROCESS push is what
+    or a                        ; clears isDone, so after PROCESS n the
+    jp nz, c_true               ; answer is that sub-process's alone
     jp c_false
-h_isndone:                      ; 115: lastDone == 0
-    ld a, (lastDone)
+h_isndone:                      ; 115: the complement of ISDONE
+    ld a, (isDone)
     or a
     jp z, c_true
     jp c_false
@@ -2167,19 +2167,18 @@ h_move:                         ; 106: condition-like action. B = flag
 ; interpreter, so V2 keeps the mark.
 ;
 ; This is why cprops row 36 is condition-typed (engine.asm): an action
-; row has the dispatcher stamp the level done before the handler runs,
+; row has the dispatcher stamp the table done before the handler runs,
 ; and the handler cannot un-stamp it without also wiping a done that an
 ; EARLIER condact in the same entry set. Marking it here instead is
 ; exact. Both arms return c_true, so the entry continues either way -
 ; identical to the action row's post-dispatch path.
 ;
-; Visible difference, and it is narrower here than in the references:
-; NextDAAD's ISDONE reads the last POPPED process's done flag rather
-; than an accumulating in-table one (compliance report B20, adjudicated
-; in NextDAAD's favour by the 1991 manual). tests_condacts_v3.c's
-; entry-level SYNONYM/ISDONE cases assume the accumulating model, so
-; the V2/V3 split shows up on the PROCESS n / ISDONE idiom rather than
-; within a single entry. See the task report.
+; ISDONE now reads the accumulating isDone cell, so the V2/V3 split is
+; visible WITHIN a single entry, exactly as it is in the references:
+; tests_condacts_v3.c's entry-level SYNONYM/ISDONE cases were written
+; against that model. (Until the SP18 fix NextDAAD read the last POPPED
+; process's flag instead - compliance report B20 - and those cases could
+; only show up on the PROCESS n / ISDONE idiom.)
 h_synonym:                      ; 36
     ld a, b
     cp 255
@@ -2216,10 +2215,9 @@ h_extern:                       ; 61: fn C via vector, A = B on entry
     ex de, hl
     jp (hl)
 ext_undone:                     ; EXTERN 0 7 (XUNDONE): clear the done
-    call eng_top_ix             ; stamp the engine wrote before
-    xor a                       ; dispatching this action - the entry
-    ld (ix+5), a                ; continues, the level reads notdone
-    ret
+    xor a                       ; stamp the engine wrote before
+    ld (isDone), a              ; dispatching this action - the entry
+    ret                         ; continues, the table reads notdone
 
 ; EXTERN offset_lsb 3 offset_msb (XMESSAGE): print a message from
 ; the DRC-emitted external text file 0.XMB. The engine has already

@@ -226,8 +226,9 @@ eng_push_proc:
     ld (hl), 0                  ; condactPtr = 0 -> "at entry header"
     inc hl
     ld (hl), 0
-    inc hl
-    ld (hl), 0                  ; done-flag
+    xor a                       ; entering a table clears the done state:
+    ld (isDone), a              ; msx2daad pushPROC "isDone = false",
+                                ; jDAAD _PROCESS "done = false"
     ld hl, procSP
     inc (hl)
     ret
@@ -236,8 +237,8 @@ eng_push_proc:
 eng_rec_ptr:
     ld a, (procSP)
 eng_rec_ptr_a:                  ; entry with A = level
-    ld e, a                      ; SP14c E5: DE = 6*level (PREC_SIZE) via
-    ld d, 6                      ; Z80N MUL (was shift-add *2/*4/+de)
+    ld e, a                      ; SP14c E5: DE = 5*level (PREC_SIZE) via
+    ld d, PREC_SIZE              ; Z80N MUL (was shift-add *2/*4/+de)
     mul d, e
     ld hl, procStack
     add hl, de
@@ -316,8 +317,11 @@ eng_next_entry:
     ld (ix+4), a
     ret
 
-; Pop the top process. The popped level's done-flag becomes lastDone
-; (ISDONE/ISNDONE) and ORs into the caller's done-flag.
+; Pop the top process. isDone is deliberately left ALONE here, so the
+; caller reads whatever the sub-process accumulated - that is what makes
+; PROCESS n / ISDONE report the sub-process's result and nothing else.
+; Both references get this from isDone being one global that only the
+; push clears (msx2daad _popPROC and jDAAD's stackPop touch neither).
 eng_pop_proc:
     ld a, (doallLevel)
     ld b, a
@@ -327,30 +331,13 @@ eng_pop_proc:
     ld a, (doallObj)
     inc a
     jp nz, eng_doall_next       ; DOALL live on this level: iterate
-; Shared tail (SP14c E1): this exact 36-byte sequence was duplicated
-; verbatim as eng_doall_next's .plainpop2 (dead-code duplication found
-; in the SP14c sweep) - both plain-pop paths (normal pop and DOALL-
-; exhausted pop) now share this one body via a tail JP.
+; Shared tail (SP14c E1): both plain-pop paths (normal pop and DOALL-
+; exhausted pop) reach this one body, the second via a tail JP. It used
+; to be 36 bytes of done-flag propagation; the single isDone cell left
+; nothing here but the stack pointer.
 eng_pop_tail:
-    ld a, (procSP)
-    dec a
-    ld (procSP), a
-    call eng_rec_ptr_a
-    ld de, 5
-    add hl, de
-    ld a, (hl)                  ; popped done-flag
-    ld (lastDone), a
-    ld b, a
-    ld a, (procSP)
-    or a
-    ret z                       ; stack empty; eng_step restarts PRO 0
-    dec a
-    call eng_rec_ptr_a
-    ld de, 5
-    add hl, de
-    ld a, (hl)
-    or b
-    ld (hl), a                  ; propagate done into caller
+    ld hl, procSP               ; stack empty is fine: eng_step restarts
+    dec (hl)                    ; PRO 0, and that push clears isDone
     ret
 
 ; Execute the condact at IX's condactPtr (HL already = that pointer
@@ -450,16 +437,19 @@ eng_exec:
     ld b, (hl)
     pop hl
 .direct:
-    ; actions mark the level done BEFORE dispatch: handlers like
-    ; PROCESS/DONE/RESTART change the stack, so marking after the
-    ; call would stamp the wrong record
+    ; Actions mark done BEFORE dispatch, because DONE/NOTDONE and the
+    ; caso-A DOALL arm write the final value themselves and must not be
+    ; overwritten afterwards. bit 6 = "action that does NOT mark done":
+    ; SKIP and REDO are action-typed only so that the dispatcher ignores
+    ; their CF, and neither reference counts them as an Action for
+    ; ISDONE (msx2daad condactList flags 0, jDAAD _SKIP/_REDO set no
+    ; done). So the stamp fires on bit 7 set AND bit 6 clear.
+    ; eng_set_done preserves BC/DE/HL/IX, so the argument bytes and the
+    ; record pointer survive it.
     ld a, (curProps)
-    bit 7, a
-    jr z, .nodone
-    push bc
-    call eng_set_done
-    pop bc
-.nodone:
+    and $C0
+    cp $80
+    call z, eng_set_done
     ; dispatch
     ld a, (curCondact)
     ld e, a
@@ -478,7 +468,7 @@ eng_exec:
     ; post: only conditions consult CF
     ld a, (curProps)
     bit 7, a
-    ret nz                      ; action: done already recorded
+    ret nz                      ; action: its done state is already set
     ret nc                      ; condition passed: continue entry
     call eng_top_ix             ; condition failed: next entry
     jp eng_next_entry
@@ -546,20 +536,20 @@ eng_top_ix:
     pop ix
     ret
 
-; Set the current level's done-flag (QUIT/MOVE success path).
+; Mark the current table done. Also called directly by the handlers
+; whose done-marking is conditional (QUIT, MOVE, SYNONYM under V2,
+; PARSE, SAVE, LOAD). Corrupts A only - BC/DE/HL/IX all survive, which
+; is what lets eng_exec stamp between fetching the arguments and
+; dispatching.
 eng_set_done:
-    call eng_top_ix
     ld a, 1
-    ld (ix+5), a
+    ld (isDone), a
     ret
 
 ; DONE/NOTDONE support: force table end for the top process.
-; In: A = 1 done, 0 notdone (overwrites the level's done-flag).
+; In: A = 1 done, 0 notdone (overwrites isDone).
 eng_exit_table:
-    push af
-    call eng_top_ix
-    pop af
-    ld (ix+5), a
+    ld (isDone), a
     jp eng_pop_proc
 
 ; --- DAAD V3 flag 53 (SP16 T6) ---
@@ -711,7 +701,13 @@ eng_doall_next:
     ld (inpPending), a          ; caso A: NEWTEXT
     jp eng_exit_table           ; then NOTDONE (A = 0) and pop
 
-; --- condact properties: bit 7 = action, bits 0-1 = argc ---
+; --- condact properties: bit 7 = action, bit 6 = no done, argc = 0-1 --
+; Bit 7 says "the dispatcher ignores this handler's CF" AND "stamp the
+; table done before dispatch". Those two are not the same property:
+; SKIP (116) and REDO (108) need the first and must not have the second,
+; because neither reference counts them as an Action for ISDONE
+; (msx2daad's condactList flags them 0; jDAAD's _SKIP/_REDO set no
+; done). Bit 6 splits them apart - $C0/$C1 = action, does not mark done.
 ; QUIT 20, MOVE 106, PICTURE 84, PARSE 73 deliberately typed as
 ; conditions (PARSE: CF gates entry continuation - see check 58, which
 ; relies on a failed/timed-out PARSE aborting its entry).
@@ -763,10 +759,13 @@ cprops:
     db $81,$82,$80,$80,$82      ; 95-99 RANDOM INPUT SAVEAT BACKAT PRINTAT
     db $80,$82,$81,$80,$81,$81  ; 100-105 WHATO CALL PUTO NOTDONE AUTOP AUTOT (CALL argc 2)
     db 1                        ; 106   MOVE (C,1 - condition-like)
-    db $82,$80,$80,$81          ; 107-110 WINSIZE REDO CENTRE EXIT
+    db $82,$C0,$80,$81          ; 107-110 WINSIZE REDO CENTRE EXIT
+                                ; REDO is $C0: action-typed for CF, but
+                                ; not an Action for ISDONE
     db 0                        ; 111   INKEY (C,0)
     db 2,2,0,0                  ; 112-115 BIGGER SMALLER ISDONE ISNDONE (C)
-    db $81,$80,$81              ; 116-118 SKIP RESTART TAB
+    db $C1,$80,$81              ; 116-118 SKIP RESTART TAB
+                                ; SKIP is $C1 for the same reason as REDO
     db $82,$82,$82,$81,$82,$82  ; 119-124 COPYOF XMES COPYOO INDIR
                                 ; COPYFO SETAT. SP16 A2: 120/122/124
                                 ; are the V3 opcodes and carry real
@@ -948,7 +947,10 @@ objTable:   ds 256*OBJ_SIZE
 numObj:     db 0
 procStack:  ds PROC_DEPTH*PREC_SIZE
 procSP:     db 0
-lastDone:   db 0
+isDone:     db 0                ; ISDONE/ISNDONE. ONE cell for the whole
+                                ; machine, cleared only by a process
+                                ; push, set by every Action condact -
+                                ; msx2daad's isDone, jDAAD's done
 curOpcode:  db 0
 curCondact: db 0
 curProps:   db 0

@@ -845,10 +845,10 @@ NORTH 0
 > _ _   MES "70 F#n"
 ; 71 XUNDONE (EXTERN 0 7): PRO 18's entry prints a witness message then
 ; runs EXTERN 0 7 and falls through its terminator (no DONE/NOTDONE) -
-; the MES action stamps done=1 pre-dispatch, XUNDONE's ext_undone then
-; clears it back to 0 on the same record. The table then runs out
-; (single-entry process), eng_pop_proc propagates that record's done
-; into lastDone, so ISNDONE here must pass. Also pins that the engine's
+; the MES action stamps isDone=1 pre-dispatch, XUNDONE's ext_undone then
+; clears it back to 0. The table then runs out (single-entry process)
+; and the pop leaves isDone exactly as PRO 18 left it, which is what
+; the containment buys: ISNDONE here must pass. Also pins that the
 ; new EXTERN fn-3 stream-consumption (curCondact 61, arg2 3) leaves the
 ; plain 2-arg EXTERN 0 7 encoding alone (arg2 7 <> 3, no 3rd byte read).
 > _ _   PROCESS 18
@@ -1344,10 +1344,11 @@ NORTH 0
 > _ _   MES "98 F#n"
 ; 99 B14 "caso A": a DOALL whose INITIAL search finds nothing performs
 ; NEWTEXT and NOTDONE. It used to plain-pop, and because DOALL is
-; action-typed the dispatcher had already set the level's done-flag to
-; 1, so an empty DOALL exited the table as DONE. Contained in PRO 22 so
-; the NOTDONE lands on a level of its own and ISNDONE can read it back
-; through lastDone - the same containment pattern as checks 85 and 96.
+; action-typed the dispatcher had already set isDone to 1, so an empty
+; DOALL exited the table as DONE. Contained in PRO 22 so the NOTDONE
+; lands on a table of its own - the PROCESS 22 push clears isDone, so
+; the three actions above it cannot mask the result the way they would
+; in a bare entry - the same containment pattern as checks 85 and 96.
 ; The NEWTEXT half (the rest of a typed compound order is discarded) is
 ; not assertable here, since it needs a compound order on the input
 ; buffer: that is the harness's compound-abort script and the owner's
@@ -1560,15 +1561,15 @@ NORTH 0
 /PRO 22
 ; Empty-DOALL containment (99, B14 "caso A"): location 1 holds nothing,
 ; so the DOALL's INITIAL search finds no object and must cancel with
-; NEWTEXT + NOTDONE. The NOTDONE pops THIS process with its done-flag
-; at 0, which check 99 reads back with ISNDONE. A bare DOALL is the
-; whole entry on purpose - the level must end on the DOALL itself.
+; NEWTEXT + NOTDONE. The NOTDONE pops THIS process with isDone at 0,
+; which check 99 reads back with ISNDONE. A bare DOALL is the whole
+; entry on purpose - the table must end on the DOALL itself.
 > _ _   DOALL 1
 /PRO 23
 ; Iterated-DOALL containment (100, B14 "caso B"): identical to PRO 22
 ; except that location 1 holds exactly one object, so the DOALL DOES
 ; iterate before running out. Exhaustion after iteration must leave the
-; level DONE (the done-flag DOALL's action typing already set), which
+; table DONE (the isDone stamp DOALL's action typing already set), which
 ; check 100 reads back with ISDONE. The two PROCesses differ only in
 ; the world state, which is what makes the pair a real discriminator.
 > _ _   DOALL 1

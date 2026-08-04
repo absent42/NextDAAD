@@ -220,11 +220,15 @@ IN      50  preposition
           DONE
 ; ---- SYNONYM done-semantics ----
 ; PRP019 V3-12: Z80 DAAD V2 marks DONE after SYNONYM, V3 does not. The
-; probe is routed through a sub-process so it reads the same on
-; NextDAAD, whose ISDONE reports the last POPPED process rather than an
-; accumulating in-table flag (compliance report B20). Under V3 both
-; interpreters must leave flag 118 at 0; flip this DDB's header byte 0
-; to 2 and the same bytecode must leave it at 1.
+; probe is routed through a sub-process, which is the shape that reads
+; the same on every interpreter: the PROCESS push clears the done state,
+; so the LET above it cannot mask the answer and the ISDONE reports
+; PRO 4's SYNONYM and nothing else. (It had to be written this way for
+; the pre-SP18 engine, which read the last POPPED process instead of an
+; accumulating flag - compliance report B20 - and it stays correct now
+; that ISDONE accumulates.) Under V3 both interpreters must leave flag
+; 118 at 0; flip this DDB's header byte 0 to 2 and the same bytecode
+; must leave it at 1.
 ;
 ; The fall-through entry is headed SYN, not "_ _": a catch-all here
 ; would shadow every entry BELOW it, and this one has to be last
