@@ -91,6 +91,38 @@ If your game predates this and relies on the old reading, the fix is
 the same one that always made the intent explicit: put the `PROCESS`
 in the entry.
 
+### PICTURE and MOVE mark the table done, whatever they return
+
+Recorded for the same reason as the entry above - the behaviour
+changed, and it changed towards the references rather than away from
+them. Both of these condacts can fail: `PICTURE` fails when there is no
+loadable art for that number, and `MOVE` fails when the location has no
+connection for the current verb. Until 2026-08-04 NextDAAD left the
+"done" state untouched on those failures, and `PICTURE` never set it at
+all. Both references set it on every path, so NextDAAD now does too.
+
+What this changes for you is `ISDONE` and `ISNDONE`, and only when the
+condact under test is the first Action in its table. The pattern that
+moves is a movement or artwork attempt isolated in its own process:
+
+    > _ _   PROCESS 30      ; process 30 is just: MOVE 38
+            ISNDONE
+            SYSMESS 7       ; "I can't go in that direction."
+
+That entry used to fire its message when the move failed. It no longer
+does - the failed `MOVE` marks the table done, so `ISNDONE` fails and
+the entry stops. It behaved that way on jDAAD and msx2daad all along.
+
+Test the movement the direct way instead, which reads the same on every
+interpreter: `MOVE` is itself a condition, so let it gate the entry.
+
+    > _ _   MOVE 38         ; succeeded: fall through and carry on
+            ...
+    > _ _   SYSMESS 7       ; reached only when the MOVE failed
+
+The same applies to `PICTURE` - use its own success or failure to
+choose the branch rather than reading `ISDONE` afterwards.
+
 ### DISPLAY on a tilemap-text platform
 
 - `DISPLAY n` with a non-zero value clears the Layer 2 picture surface
@@ -460,6 +492,7 @@ own source during the SP16 compliance sweep.
 | jDAAD | CHANCE uses `floor(random*101) <= p`, a 101-value off-by-one. |
 | jDAAD | RAMLOAD restores flags 0..n-1 where the manual says 0..n inclusive. |
 | jDAAD | BEEP accepts tones 24..238 against a 100-entry period table, reading past the end of its own array. |
+| jDAAD | MOVE marks the table done only when it FAILS - the success arm returns before the trailing `done = true`. Every other condact of its kind marks done on all paths, and msx2daad does here too. |
 | msx2daad | The convertible-noun threshold is 20; the original's is 40. |
 | msx2daad | A sentence containing nothing but a pronoun counts as parsed. |
 

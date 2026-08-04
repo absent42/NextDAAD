@@ -2118,6 +2118,36 @@ h_move:                         ; 106: condition-like action. B = flag
                                  ; below; rd_next (used in .pair) preserves
                                  ; DE, so D is safe once reloaded after the
                                  ; last rd_seek.
+                                 ;
+                                 ; MOVE MARKS THE TABLE DONE ON ALL THREE
+                                 ; EXITS (owner ruling 2026-08-04): the
+                                 ; verb bail below, .match and .nomatch.
+                                 ; msx2daad is the model - its row is
+                                 ; { do_MOVE, 1 } (daad_condacts.c:49) and
+                                 ; the dispatcher's "isDone |= ce->flag"
+                                 ; (:204) runs after do_MOVE returns down
+                                 ; ANY of its paths, including the
+                                 ; "if (flags[fVerb]<14)" guard (:1543)
+                                 ; falling straight through to
+                                 ; "checkEntry = false" (:1554). jdaad
+                                 ; marks on failure only - _MOVE's
+                                 ; success arm "return"s at jdaad.js:4048
+                                 ; before the trailing "done = true" at
+                                 ; :4053 - which reads as a jdaad bug,
+                                 ; hence msx2daad.
+                                 ;
+                                 ; Stamped at ENTRY rather than three
+                                 ; times: nothing between here and the
+                                 ; three exits can abort the handler (the
+                                 ; readers and fptr all return normally,
+                                 ; and no path pushes a process, which is
+                                 ; the only thing that CLEARS isDone), so
+                                 ; entry-once and exit-thrice are the same
+                                 ; set for 6 fewer bytes. eng_set_done
+                                 ; corrupts A only, so B - the flag
+                                 ; number - survives, and A is reloaded on
+                                 ; the next line anyway.
+    call eng_set_done
     ld a, (flags+FLAG_VERB)
     cp 14
     jp nc, c_false
@@ -2154,8 +2184,7 @@ h_move:                         ; 106: condition-like action. B = flag
     call data_restore
     pop hl                      ; HL = flags+B pointer
     ld (hl), c
-    call eng_set_done
-    jp c_true
+    jp c_true                   ; (done already stamped at entry)
 .nomatch:
     call data_restore
     pop hl

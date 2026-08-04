@@ -1484,6 +1484,93 @@ NORTH 0
         MES "104 OK#n"
         SKIP 1
 > _ _   MES "104 F#n"
+; ---- done-marking checks (105-108) ----
+; Appended after 103-104 under the same placement rule: nothing before
+; here shifts. These four close the coverage gap that let MOVE and
+; PICTURE go years without marking the table done on every path (owner
+; ruling 2026-08-04) - no check we or Uto run touched it, which is
+; exactly why it survived.
+;
+; MESSAGE-TABLE CEILING - READ BEFORE ADDING ANY MORE MES LITERALS.
+; This fixture sat at EXACTLY 255 user messages (the byte-wide count's
+; ceiling) before these checks landed, so every literal added from here
+; on SPILLS. DRF handles it silently and correctly: the overflow
+; literals are allocated as SYSTEM messages instead and the emitted
+; opcode changes from MES 77 ($4D) to SYSMESS 54 ($36). Verified in the
+; compiled DDB, not assumed - "106 F" through "SUITES DONE" are now
+; SM61-SM66, plus SM67/SM68 for /PRO 14's and /PRO 18's literals, and
+; the header's sysmess count went 61 -> 69 so h_sysmess's bounds check
+; still passes. No behavioural change: SYSMESS and MES share cprops
+; typing ($81, action, marks done) and the same print_msg tail, so
+; /PRO 18's "MES stamps done" premise for check 71 still holds. The
+; margin is thin though - the interpreter's own highest system message
+; is SM60 (src: SM12..SM60), i.e. the spill begins one slot above it.
+;
+; HOW THEY WORK. ISDONE reads ONE accumulating cell, so an ISDONE placed
+; straight after the condact under test would read every earlier stamp
+; in this table too (every MES above has set it). A PROCESS push is the
+; only thing that CLEARS the cell, and the matching pop leaves it alone,
+; so a helper table whose ONLY condact is the one under test reports
+; that condact's stamp and nothing else. Same instrument as checks
+; 31/32. The helpers are PRO 24-26 at the foot of this file, and the
+; caller sets up flag 33 and the location flag HERE, before the push -
+; a LET inside the helper is action-typed and would stamp done itself,
+; which would make every one of these pass vacuously.
+;
+; 105 MOVE's SUCCESS arm. Already marked before the ruling (h_move
+; called eng_set_done on .match), so this is a regression pin, not new
+; behaviour: verb 2 = NORTH, which location 0's connection list has.
+> _ _   LET 33 2
+        LET 121 0
+        PROCESS 24
+        ISDONE
+        EQ 121 0                ; and it still MOVEd (NORTH 0 -> 0)
+        MES "105 OK#n"
+        SKIP 1
+> _ _   MES "105 F#n"
+; 106 MOVE's NO-MATCH arm - NEW behaviour. Verb 3 = SOUTH, which
+; location 0's connection list does not have, so h_move reaches
+; .nomatch and fails the entry. Before the ruling that path returned
+; c_false without ever stamping, and this printed F.
+> _ _   LET 33 3
+        LET 122 0
+        PROCESS 25
+        ISDONE
+        MES "106 OK#n"
+        SKIP 1
+> _ _   MES "106 F#n"
+; 107 MOVE's VERB-BAIL arm - NEW behaviour, and the exit neither
+; reference reaches the same way: msx2daad's "if (flags[fVerb]<14)"
+; guard falls through to checkEntry = false and the dispatcher stamps
+; anyway, while jdaad has no guard at all. Verb 20 is >= 14, so h_move
+; bails at "cp 14 / jp nc, c_false" before it reads the flag - which is
+; why this reuses PRO 25's MOVE 122 unchanged. The EQ pins that the
+; flag came back untouched; it cannot tell the bail apart from .nomatch
+; (location 1 has no connections, so that arm would leave 1 as well,
+; and both arms mark done now by design) - it is the bail that runs.
+> _ _   LET 33 20
+        LET 122 1
+        PROCESS 25
+        ISDONE
+        EQ 122 1
+        MES "107 OK#n"
+        SKIP 1
+> _ _   MES "107 F#n"
+; 108 PICTURE marks done - NEW behaviour. Same missing-art premise as
+; check 64: sd\SUITE\ holds no 200.*, every probe in the extension
+; chain misses, gfx_load fails clean and h_picture reports false, so
+; PRO 26's single entry aborts and the table ends. Before the ruling
+; PICTURE stamped done NOWHERE (ovl2_true/ovl2_false touch carry only,
+; and its cprops row is condition-typed so the dispatcher stamps
+; nothing either), and this printed F. The success arm cannot be
+; asserted from this leg - the suite deliberately stages no art at all
+; - but h_picture stamps at ENTRY, so success and failure are the same
+; single instruction and this check covers both.
+> _ _   PROCESS 26
+        ISDONE
+        MES "108 OK#n"
+        SKIP 1
+> _ _   MES "108 F#n"
 > _ _   MES "SUITES DONE - KEY FOR E03#n"
         ANYKEY
         PROCESS 5
@@ -1573,4 +1660,19 @@ NORTH 0
 ; check 100 reads back with ISDONE. The two PROCesses differ only in
 ; the world state, which is what makes the pair a real discriminator.
 > _ _   DOALL 1
+/PRO 24
+; Done-marking helper (105): MOVE's success arm, alone in its table.
+; ONE condact and no other - see the checks' own header for why
+; anything else here (a LET, a MES) would make them pass vacuously.
+> _ _   MOVE 121
+/PRO 25
+; Done-marking helper (106 and 107): MOVE's two failing arms. Which one
+; runs is decided by flag 33 in the caller - verb 3 reaches .nomatch,
+; verb 20 bails at the "cp 14" guard without reading flag 122 at all.
+> _ _   MOVE 122
+/PRO 26
+; Done-marking helper (108): PICTURE with no art staged. The condition
+; fails, so this entry aborts and the table ends on it; the isDone the
+; pop propagates is whatever h_picture stamped.
+> _ _   PICTURE 200
 /END

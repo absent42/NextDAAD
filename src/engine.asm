@@ -557,9 +557,13 @@ eng_top_ix:
     ret
 
 ; Mark the current table done. Also called directly by the handlers
-; whose done-marking is conditional (QUIT, MOVE, SYNONYM under V2,
-; PARSE, SAVE, LOAD). Corrupts A only - BC/DE/HL/IX all survive, which
-; is what lets eng_exec stamp between fetching the arguments and
+; that are condition-typed for their CF but still have to mark done:
+; QUIT, MOVE, PICTURE, SYNONYM under V2, PARSE, SAVE, LOAD. MOVE and
+; PICTURE stamp UNCONDITIONALLY at handler entry (both references mark
+; them on every path) and are the only two called from an overlay other
+; than 0/1 - PICTURE's call comes from overlay2, which is legal because
+; this routine is resident. Corrupts A only - BC/DE/HL/IX all survive,
+; which is what lets eng_exec stamp between fetching the arguments and
 ; dispatching.
 eng_set_done:
     ld a, 1
@@ -730,7 +734,10 @@ eng_doall_next:
 ; done). Bit 6 splits them apart - $C0/$C1 = action, does not mark done.
 ; QUIT 20, MOVE 106, PICTURE 84, PARSE 73 deliberately typed as
 ; conditions (PARSE: CF gates entry continuation - see check 58, which
-; relies on a failed/timed-out PARSE aborting its entry).
+; relies on a failed/timed-out PARSE aborting its entry). MOVE and
+; PICTURE are condition-typed for the CF alone: both references mark
+; them done on EVERY path, so their handlers call eng_set_done at entry
+; instead (suite checks 105-108).
 cprops:
     db 1,1,1,1, 1,1,1,1         ; 0-7   AT..NOTWORN (C,1)
     db 1,1,1,1, 1,2,2,2         ; 8-15  CARRIED..LT (EQ/GT/LT C,2)
@@ -772,7 +779,9 @@ cprops:
     db 2,2                      ; 79-80 NOTEQ NOTSAME (C,2)
     db $81,$82,$82              ; 81-83 MODE WINAT TIME
     db 1                        ; 84    PICTURE (C,1 - fails the entry when
-                                ;       no loadable art exists, like jdaad)
+                                ;       no loadable art exists, like jdaad;
+                                ;       h_picture stamps done itself on
+                                ;       every exit, as both references do)
     db $81,$82,$82              ; 85-87 DOALL MOUSE GFX (MOUSE argc 2)
     db 2                        ; 88    ISNOTAT (C,2)
     db $82,$82,$82,$80,$82,$81  ; 89-94 WEIGH PUTIN TAKEOUT NEWTEXT ABILITY WEIGHT

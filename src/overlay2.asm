@@ -310,7 +310,28 @@ GFX_SRC_END equ DATA_WINDOW+$2000   ; first address past the slot 6 window
 ; condactResult through ovl2_false. jdaad's fallback probe of
 ; jDAADSounds is not carried over - sampled SFX are a separate
 ; subsystem here. Corrupts everything.
+;
+; PICTURE MARKS THE TABLE DONE ON EVERY EXIT (owner ruling 2026-08-04).
+; Both references do it unconditionally: msx2daad's condactList row is
+; { do_PICTURE, 1 } and the dispatcher runs "isDone |= ce->flag" after
+; EVERY handler (daad_condacts.c:44,204); jdaad's _PICTURE (jdaad.js
+; :3505) ends with a trailing "done = true" at :3528, reached on all
+; three of its branches. NextDAAD marked it NOWHERE - ovl2_true/ovl2_false
+; touch carry only, and cprops row 84 is condition-typed so the
+; dispatcher stamps nothing either.
+;
+; The row STAYS condition-typed. Bit 7 would also make the dispatcher
+; ignore this handler's CF, which is what fails the entry when no
+; loadable art exists - the half that deliberately matches jdaad. So
+; the stamp is made here instead, at ENTRY: gfx_load returns by RET on
+; every path (no error longjmp - see its own header), so entry and
+; "every exit path" are the same set, and one call covers both. Legal
+; from overlay2 because eng_set_done is RESIDENT (engine.asm, $8000-
+; $BA00, mapped in slots 4/5 at all times); this overlay already calls
+; resident services (data_save, bank_alloc, bank_free). eng_set_done
+; corrupts A only, so B - the picture number - survives it.
 h_picture:
+    call eng_set_done
     ld a, b
     call gfx_load
     jp c, ovl2_false
