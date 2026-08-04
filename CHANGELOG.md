@@ -100,6 +100,23 @@ error from the encoder. Delete the option; nothing replaces it.
 
 ### Fixes
 
+- PICTURE and MOVE now mark the process table done, matching both
+  reference interpreters. PICTURE marked it nowhere at all; MOVE marked
+  it only when it found a connection. Both now mark it on every exit,
+  including their failing ones. This is visible to `ISDONE`/`ISNDONE`
+  only when the condact under test is the first Action in its table -
+  the pattern that changes is a movement or artwork attempt isolated in
+  its own process and then tested with `ISNDONE`. Use the condact's own
+  success or failure to gate the entry instead; see `DIVERGENCES.md`.
+  PICTURE still fails its entry when no art loads.
+- Flags 37 (objects carried) and 52 (strength) are no longer
+  pre-initialised to 4 and 10 and now start at 0, matching both
+  references - neither pre-initialises them, and both write the pair
+  only in `ABILITY`. Set your own limits in your RESET process with
+  `ABILITY`, or with `LET fMaxCarr` / `LET fStrength`. Every corpus game
+  and `STARTER.DSF` already does, so a game started from the kit is
+  unaffected; a game that set neither could carry four objects here and
+  none anywhere else, and now carries none everywhere.
 - Compiling with DRC's debug flag no longer breaks the game. The
   markers DRC writes into the process tables for the ZEsarUX debugger
   were being read as `NEWTEXT`, so every marker silently threw away the
