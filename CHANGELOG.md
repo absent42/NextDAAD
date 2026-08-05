@@ -100,6 +100,31 @@ error from the encoder. Delete the option; nothing replaces it.
 
 ### Fixes
 
+- Object names are no longer article-stripped when they are listed.
+  LISTOBJ, LISTAT, the inventory and LOOK print the object text exactly
+  as authored - "a pair of dungarees", not "pair of dungarees" -
+  matching DAAD Ready's own ZX Next interpreter and both reference
+  interpreters. The strip was being applied on every path instead of
+  only to message substitution.
+- Substituting an object name into a message now removes only a leading
+  "a ", "an ", "some " or "the ", whatever the case, and keeps any
+  other first word. So "rusty sword" substitutes as "rusty sword"
+  rather than "sword". jDAAD removes the first word whatever it is;
+  NextDAAD deliberately does not, because it destroys descriptive text -
+  in one surveyed game it was deleting the character's name from every
+  object described as "'Alapetia'; a wig maker". The trade is that a
+  game written for the old behaviour, with object texts like "my
+  wallet", will now read "the my wallet" in a message that supplies its
+  own article. See `authoring-kit/DIVERGENCES.md`.
+- An object text with no space in it used to print nothing at all, in
+  listings as well as substitutions. It now prints.
+- The capitalising `@` escape, which applies to Spanish databases only,
+  now capitalises the first character of a name that carries no
+  article, not just one that followed a stripped article.
+- Abandoning an object name part-way through a compressed token no
+  longer leaks a level of the text reader's stack, which could leave
+  the following text reading from the wrong place. This affected the
+  existing "." truncation rule as well as the new article scan.
 - PICTURE and MOVE now mark the process table done, matching both
   reference interpreters. PICTURE marked it nowhere at all; MOVE marked
   it only when it found a connection. Both now mark it on every exit,
