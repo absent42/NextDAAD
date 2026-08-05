@@ -200,28 +200,33 @@ test asserted the literal reading.
 ### Article stripping in substituted names
 
 When an object's text is substituted into a message, NextDAAD removes a
-leading **"a "**, **"an "** or **"some "** - matched without regard to
-case - and nothing else. Any other first word survives: an object text
-of "rusty sword" substitutes as "rusty sword", not "sword".
+leading **"a "**, **"an "**, **"some "** or **"the "** - matched
+without regard to case - and nothing else. Any other first word
+survives: an object text of "rusty sword" substitutes as "rusty
+sword", not "sword".
 
 The references disagree here and NextDAAD has picked a side. msx2daad
 removes a leading "a " or "an " and nothing else. jDAAD removes the
 first word **whatever it is** ("In English, we have to remove the first
 word, whatever it is"), which quietly destroys descriptive text -
 "rusty sword" becomes "sword", "scattered debris" becomes "debris",
-"two horses" becomes "horses". The manual describes the article rule
-NextDAAD implements: "If an object description starts with 'a' or
-'some' in English games ... that underscore will be replaced by the
-object text without the article". "some " comes from that sentence -
-msx2daad does not handle it, jDAAD only removes it as a first word like
-any other.
+"two horses" becomes "horses", and a text like "'Alapetia'; a wig
+maker" loses the character's own name. The manual describes the
+article rule NextDAAD starts from: "If an object description starts
+with 'a' or 'some' in English games ... that underscore will be
+replaced by the object text without the article". "some " comes from
+that sentence; "the " was added on a survey of 323 object texts across
+nine games, in which 27 begin with "the" against 231 with "a"/"an" and
+15 with "some".
 
-What it means for your DSF: the stock system messages already supply
-their own "the" ("You now have the _."), so write `/OTX` entries as
-"a lamp", "an axe" or "some rope" and let the message provide the
-article. An `/OTX` beginning with any other word keeps that word, so
-"the priest" reads back as "You now have the the priest." - drop the
-"the" and write "priest", which also lists correctly.
+What it means for your DSF: the stock system messages supply their own
+"the" ("You now have the _."), so write `/OTX` entries as "a lamp",
+"an axe", "some rope" or "the key" - all four read correctly. An
+`/OTX` beginning with any other word keeps that word, which is the
+point: "rusty sword" stays "rusty sword". The cost of that choice is
+that a game authored against jDAAD's first-word rule can still read
+oddly - a text of "my wallet" gives "You now have the my wallet."
+Write those without the possessive.
 
 Leading spaces are not touched either: the article has to be the
 literal start of the text, as in msx2daad. jDAAD strips leading blanks

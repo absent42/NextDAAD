@@ -22,9 +22,11 @@
 ;   calls printObjectMsg (daad_condacts.c:1941), the printer that does
 ;   NOT strip (daad_msg.c:88); jDAAD's listObjects passes replace=false
 ;   (jdaad.js:2396) where its four substitution sites pass true.
-;   SUBSTITUTION (A = '_' or '@') strips a leading "a ", "an " or
-;   "some " and NOTHING else, case-insensitively (msx2daad uses
-;   strnicmp). Any other first word survives: an object text of "rusty
+;   SUBSTITUTION (A = '_' or '@') strips a leading "a ", "an ",
+;   "some " or "the " and NOTHING else, case-insensitively (msx2daad
+;   uses strnicmp). The matcher is objname_article, at the foot of
+;   ddbtext.asm - see there for the set's evidence and its accepted
+;   limits. Any other first word survives: an object text of "rusty
 ;   sword" substitutes as "rusty sword", not "sword". That is a
 ;   deliberate departure from jDAAD, which removes the first word
 ;   whatever it is ("In English, we have to remove the first word,
@@ -33,7 +35,8 @@
 ;   and "an ") extended with "some " per DAAD Ready's manual ("If an
 ;   object description starts with 'a' or 'some' in English games ...
 ;   that underscore will be replaced by the object text without the
-;   article"). DSNEXTE3.BIN itself cannot be doing article-WORD
+;   article") and with "the " per the owner's corpus survey.
+;   DSNEXTE3.BIN itself cannot be doing article-WORD
 ;   matching at all: the whole 7976-byte image holds no CP 's'/'S' and
 ;   no CP 't'/'T', and its only CP 'a'/'A' sites are letter-range
 ;   classifiers - so it cannot be testing for "some", "the" or even
@@ -163,105 +166,16 @@ objname_chk:
     call data_restore
     jp rd_pop
 
-; Abandoning a text stream part-way through a token leaves the level
-; txt_next_decoded's .tokref pushed on the reader save stack: .intok
-; only pops it when the token's last character is read. Whoever stops
-; early has to unwind it, or the next rd_pop restores the TOKEN TABLE
-; position over the caller's and the stack never comes back to depth.
-; At most one level can be pending - token bytes are raw 7-bit and
-; cannot themselves reference a token, so .tokref never nests. Two
-; callers stop early: the article scan's rewind, and the SP16 E3 dot
-; truncation, which has been able to leak since E3 landed. DRC/DRB as
-; measured 2026-08-05 does NOT tokenise the /OTX table at all (zero
-; token references across all 13 suite and all 55 Rabenstein object
-; texts, while their system messages are heavily tokenised), so no
-; fixture here reaches this - but the DDB format allows it, other
-; toolchains use it, and correctness must not rest on one compiler's
-; choice of what to compress.
-objname_untok:
-    ld a, (tokActive)
-    or a
-    ret z
-    jp rd_pop
-
-; Eat a leading English article from the object-text stream. Entered
-; only for a SUBSTITUTED name (C = '_' or '@'); B = the object number,
-; which is what makes the rewind below possible. Preserves BC.
-;
-; THE NO-PEEK PROBLEM. Characters arrive from txt_next_decoded, a
-; decoding iterator - tokens expand mid-stream and there is no way to
-; look ahead and put a character back. Buffering the candidate prefix
-; and replaying it verbatim on a miss would need a 4-byte resident
-; buffer plus a replay loop that has to re-enter the capitalisation
-; path in the right order. Instead the stream is REWOUND: the object
-; number is still in B, so a miss simply re-runs the same "msg_seek
-; kind 3" this routine's caller used and clears tokActive (the state
-; the caller had just set up), putting the reader back byte-for-byte
-; at the start of the text. Nothing has been emitted at this point -
-; the scan is pure lookahead - so a rewind is invisible and the main
-; loop then prints the name whole, in order, in its authored case.
-; A token spanning the article boundary is handled by construction:
-; the scan sees expanded characters and the rewind restores the
-; PRE-token reader position, not a position inside one.
-;
-; Case folding is RES 5: 'a'-'z' -> 'A'-'Z', and ' ' ($20) -> $00, so a
-; zero test IS the space test. Only letters and the separating space
-; are ever compared, and decoded characters are 7-bit, so nothing else
-; can alias into the set.
-objname_article:
-    call .nxt
-    jr c, .no                   ; empty text
-    cp 'A'
-    jr z, .an
-    cp 'S'
-    jr nz, .no
-    ld hl, .some
-.sloop:
-    ld a, (hl)
-    inc hl
-    inc a
-    ret z                       ; sentinel: the whole of "some " is gone
-    dec a
-    ld e, a
-    call .nxt
-    jr c, .no
-    cp e
-    jr z, .sloop
-    jr .no
-.some:
-    db "OME", 0, $FF            ; folded "ome "; $FF ends the pattern
-.an:
-    call .nxt
-    jr c, .no
-    or a
-    ret z                       ; "a " consumed
-    cp 'N'
-    jr nz, .no
-    call .nxt
-    jr c, .no
-    or a
-    ret z                       ; "an " consumed
-.no:                            ; not an article - put the stream back
-    call objname_untok          ; the scan can stop INSIDE a token
-    xor a
-    ld (tokActive), a           ; the rewind point is a fresh stream
-    ld e, b
-    ld a, 3
-    push bc                     ; msg_seek clobbers BC (ld bc,ddbHeader+$12)
-    call msg_seek
-    pop bc
-    ret
-.nxt:
-    push bc
-    push de
-    push hl                     ; .sloop walks the pattern in HL and the
-    call txt_next_decoded       ; iterator's TOKEN path clobbers it
-    pop hl                      ; (ld hl,(ddbHeader+HDR_TOKENS), rd_pop).
-    pop de                      ; DRB happens not to tokenise /OTX, but
-    pop bc                      ; the format allows it - see objname_untok
-    ret c                       ; CF = end of text (POP leaves flags alone)
-    res 5, a
-    ret
+; objname_article and objname_untok used to live here. They are now at
+; the foot of ddbtext.asm - PRE-ANCHOR, i.e. before engine.asm's
+; "ALIGN 256 / flags / ASSERT flags == $A200". Post-anchor bytes come
+; straight off the RESIDENT_LIMIT headroom; pre-anchor bytes are
+; absorbed by the ALIGN pad and cost nothing until the pad runs out.
+; The move is pure placement: same global labels, same resident block,
+; no paging involved (this file already calls msg_seek,
+; txt_next_decoded and rd_pop across the anchor in the same
+; direction), and both routines stay directly callable from here.
+; ddbtext.asm is where every symbol they touch already lives.
 
 ; A = location value, C = 0 LISTAT / 1 LISTOBJ.
 ;

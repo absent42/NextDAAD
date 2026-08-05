@@ -974,6 +974,19 @@ cdisp:
     DC h_reset                   ; 127 RESET
 
 ; --- engine data (flags 256-aligned) ---
+; The ALIGN pad is a HARD CEILING on pre-flags code, not slack. Bytes
+; added anywhere before this point are free - they fill padding rather
+; than the RESIDENT_LIMIT headroom main.asm reports - right up until
+; the pad runs out, at which point flags snaps to $A300 and the ASSERT
+; below fires. That makes it worth printing, because the number is
+; invisible otherwise and two budgets now compete: this pad, and the
+; post-anchor headroom. ddbtext.asm's objname_article/objname_untok
+; are deliberate ballast between them - move that pair either way to
+; rebalance (2026-08-05: the pair moved IN, DEBUG pad 139 -> 36).
+; READ THE DEBUG FIGURE: DEBUG carries the most pre-anchor code and is
+; always the tightest variant (2026-08-05: DEBUG 36, Force1MB 73,
+; Release 121), so a Release-only check will read 3x too generous.
+    DISPLAY "pre-flags pad ", /D, $A200 - $, " bytes free"
     ALIGN 256
 flags:      ds 256
 ; SP14c batch B gate follow-up (rubric 7): flags is a frozen-address

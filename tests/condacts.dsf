@@ -33,6 +33,7 @@ XEXIT 105 verb
 KEYS  58  noun
 ANVIL 59  noun
 ROPE  60  noun
+GATE  61  noun
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -122,10 +123,18 @@ ROPE  60  noun
 ;      diverges on the fifth, where the space should be. The deepest
 ;      case the no-peek matcher has to unwind, and the one a
 ;      buffer-and-replay implementation gets wrong (it prints "rope",
-;      or "somersault rope" out of order).
+;      or "somersault rope" out of order). "some" and "the" share one
+;      pattern walker in the interpreter, so this covers the "theatre"
+;      shape on the "the" arm too - one fixture, both arms.
+;   13 "the iron gate"    - the "the " case (owner ruling 2026-08-05 on
+;      a 323-text corpus survey: 27 object texts start with "the", 19
+;      of them in MYST_EN). TWO words survive the strip on purpose - a
+;      matcher that ate one word too many would print "gate" and a
+;      one-word expectation could not tell that apart.
 /10 "some silver keys"
 /11 "rusty anvil"
 /12 "somersault rope"
+/13 "the iron gate"
 /LTX
 /0 "Suite arena."
 /1 ""
@@ -173,6 +182,7 @@ NORTH 0
 /10   NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   KEYS  _
 /11   NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   ANVIL _
 /12   NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   ROPE  _
+/13   NOT_CREATED 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   GATE  _
 /PRO 0
 > _ _   CLS
         MESSAGE 0
@@ -1631,12 +1641,13 @@ NORTH 0
 ;   discarded every character up to the first space, so "a pair of
 ;   dungarees" listed as "pair of dungarees" - and a text with NO
 ;   space in it printed nothing at all, on either path.
-;   SUBSTITUTION ("_" in a message) strips a leading "a ", "an " or
-;   "some " and nothing else, case-insensitively. A first word that is
-;   NOT one of those survives: jDAAD removes the first word whatever it
-;   is (jdaad.js:1588), which destroys descriptive text, and NextDAAD
-;   deliberately does not - it follows msx2daad's article-only rule
-;   (daad_msg.c:127-133) plus "some " per DAAD Ready's manual.
+;   SUBSTITUTION ("_" in a message) strips a leading "a ", "an ",
+;   "some " or "the " and nothing else, case-insensitively. A first
+;   word that is NOT one of those survives: jDAAD removes the first
+;   word whatever it is (jdaad.js:1588), which destroys descriptive
+;   text, and NextDAAD deliberately does not - it follows msx2daad's
+;   article-only rule (daad_msg.c:127-133), plus "some " per DAAD
+;   Ready's manual and "the " per the owner's 323-text corpus survey.
 ;
 ; BOTH ARE VISUAL, like checks 35-38: no condact reads printed text
 ; back, so the OK line only says the check RAN. Score them by reading
@@ -1657,6 +1668,8 @@ NORTH 0
         MES "109 SUB [rusty anvil] = _#n"
         SETCO 12
         MES "109 SUB [somersault rope] = _#n"
+        SETCO 13
+        MES "109 SUB [iron gate] = _#n"
         MES "109 OK#n"
 ; 110 the LIST half. Location 1 rather than 0, because check 100 leaves
 ; it EMPTY ("PLACE 8 0 - leave location 1 empty behind us") and nothing
