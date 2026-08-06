@@ -20,11 +20,10 @@
 ; ink 15, "bright white on white": unreadable anyway, so losing it as
 ; an opaque option costs nothing in practice) - is reserved as the
 ; transparent marker (see TM_TRANSP_PAIR/TM_TRANSP_ATTR, nextdaad.inc).
-; txt_init programs NR $14 = TM_TRANSP_ATTR (pair 127's even/paper
-; index, 254); tm_clear_blank below writes that attribute with
-; GLYPH_SPACE (all-zero bitmap, verified in font.chr - every pixel
-; then reads the pair's even index, matching NR $14 exactly) so the
-; whole cell shows Layer 2 (or whatever's beneath) through untouched.
+; txt_init programs NR $14 with L2_TRANSP_COLOUR - Layer 2's transparent
+; colour, Layer 2's business, not a tilemap attribute. tm_clear_blank
+; below writes TM_ATTR_DEFAULT with GLYPH_SPACE, so a blanked cell
+; renders as ordinary black paper, the same as a printed one.
 ; A custom FONT.CHR (font_load, overlay2.asm - the only supported custom-
 ; font route as of SP12 T1; the legacy GAME.CHR probe this comment used
 ; to name has been retired) that redefines glyph 32 with non-zero pixels
