@@ -291,7 +291,11 @@ DATA_WINDOW     equ $C000   ; slot 6 window base (8K)
 ; --- Layer 2 (sub-project 4) ---
 NR_L2_BANK      equ $12     ; starting 16K bank of Layer 2 (bits 6-0)
 NR_L2_CTRL      equ $70     ; bits 5-4 resolution, bits 3-0 palette offset
-NR_L2_TRANSP    equ $14     ; transparent colour index (Layer 2/ULA/LoRes)
+NR_L2_TRANSP    equ $14     ; transparent COLOUR (Layer 2/ULA/LoRes), compared
+                            ; against the top 8 bits of the final colour, so
+                            ; 2 of 512 RGB333 colours match any value - the
+                            ; guide's register table (chapter-next-layer2
+                            ; .tex:619) calls this an "index" and is wrong
 NR_LAYERS       equ $15     ; bits 4-2 S/L/U layer priority (alias of
                             ; NR_SPRITES - same register, different role here)
 L2_PORT         equ $123B   ; bit 1 Layer 2 visible, bit 0 write paging slot0

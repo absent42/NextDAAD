@@ -277,8 +277,9 @@ l2_palette_load:
     call l2_pal9_run
     ; fall through to the stamp
 
-; Force entry 254 = the reserved transparent colour (l2_palette_load
-; header). Every palette-programming path ends here. Corrupts AF.
+; Force entry 255 (L2_TRANSP_INDEX) = the reserved transparent colour
+; (l2_palette_load header). Every palette-programming path ends here.
+; Corrupts AF.
 l2_pal9_stamp:
     nextreg NR_PAL_INDEX, L2_TRANSP_INDEX
     nextreg NR_PAL_VALUE9, L2_TRANSP_COLOUR
