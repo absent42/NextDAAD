@@ -6016,6 +6016,8 @@ vidSvNr43:       db 0            ; captured constant (PAL_L2_FIRST) -
                                  ; NR $43 is not readable (v1 finding)
 vidSvNr6b:       db 0            ; presentation isolation: tilemap
 vidSvNr4a:       db 0            ; presentation isolation: fallback
+vidSvNr14:       db 0            ; presentation isolation: transparency
+                                 ; colour - restored on every real exit
 
 ; SP15 L2 snapshot cells (page-local like vidSv*): the reserved pool
 ; bank list + the first-palette readback. vidSnapCnt = 0 means no
@@ -6066,6 +6068,9 @@ vid_run_l2setup_body:
     ld a, PAL_L2_FIRST
     ld (vidSvNr43), a            ; page-local (3c cell move)
     ld (vidPalCtrl+DATA_WINDOW-OVL_ORG), a
+    ld e, NR_L2_TRANSP
+    call nr_read
+    ld (vidSvNr14), a            ; page-local (3c cell move)
     ; mode + full-width clip (v2 width code: 1 = 320/mode-1)
     ld a, (vidP_Shape)
     or a
@@ -6317,6 +6322,8 @@ vid_run_restore_body:
     nextreg NR_TM_CTRL, a
     ld a, (vidSvNr4a)
     nextreg NR_FALLBACK, a
+    ld a, (vidSvNr14)
+    nextreg NR_L2_TRANSP, a
     ld a, (vidSvMmu2)
     nextreg NR_MMU2, a
     ld a, (vidSvMmu3)            ; the borrowed audio window (3c)
