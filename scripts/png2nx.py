@@ -63,9 +63,26 @@ RESERVED_INDEX = 255
 ART_COLOURS = RESERVED_INDEX          # 255 usable colours: 0..254
 
 # 24-bit form of L2_TRANSP_COLOUR ($E3 = RGB332 7,0,3) as a paint
-# program shows it. Both 9-bit colours sharing those top 8 bits are
-# transparent, so warn on either.
+# program shows it - used only in the warning TEXT, since authors
+# think in paint-program values. The canonical (224, 0, 192) triple is
+# not the only collision: see _packs_to_transparent below.
 TRANSPARENT_RGB = (224, 0, 192)
+
+# Packed RGB332 byte gfx2next/the interpreter compare against (NR $14
+# hardware compare, L2_TRANSP_COLOUR in src/nextdaad.inc). Must match
+# nxv2enc.build_palette_block's L2_TRANSPARENT_BYTE0 and the
+# interpreter's own l2_palette_load dodge - if any of the three move,
+# all three move.
+L2_TRANSPARENT_BYTE0 = 0xE3
+
+
+def _packs_to_transparent(r, g, b):
+    """True when this 24-bit colour packs to the reserved RGB332 value.
+    Hardware compares the PACKED byte, not the 24-bit triple, so a whole
+    region of near-magenta collides - not just the canonical
+    (224, 0, 192). Packing must match nxv2enc.build_palette_block and
+    the interpreter's own l2_palette_load dodge."""
+    return ((r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6)) == L2_TRANSPARENT_BYTE0
 
 
 def quantize(im, name="image"):
@@ -82,13 +99,18 @@ def quantize(im, name="image"):
 
     # Report, do not silently alter: the interpreter's palette dodge
     # would shift a colliding entry one step of the blue field without
-    # telling the author anything.
+    # telling the author anything. Test against the PACKED byte, not
+    # the 24-bit triple - PIL's adaptive clustering can land a
+    # centroid anywhere in the region that packs to $E3, not just on
+    # the canonical (224, 0, 192).
     for i in range(0, min(len(pal), ART_COLOURS * 3), 3):
-        if tuple(pal[i:i + 3]) == TRANSPARENT_RGB:
+        r, g, b = pal[i:i + 3]
+        if _packs_to_transparent(r, g, b):
             print("WARNING: %s uses the reserved transparency colour "
-                  "#E000C0 at palette index %d - those pixels would show "
-                  "through to the text layer. Change the colour slightly."
-                  % (name, i // 3))
+                  "#E000C0 (or a near-magenta packing to the same "
+                  "RGB332 byte) at palette index %d - those pixels "
+                  "would show through to the text layer. Change the "
+                  "colour slightly." % (name, i // 3))
     return idx_img
 
 
