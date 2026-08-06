@@ -50,7 +50,7 @@ l2_mode_set:
     nextreg NR_L2_CTRL, a
     ld a, (l2FrontBank)
     nextreg NR_L2_BANK, a
-    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
+    nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR
     pop af
     jp l2_clip_set                ; also zeroes the scroll offset, then ret
 
@@ -136,9 +136,9 @@ l2_disable:
     nextreg NR_DISPLAY_CTRL, a
     ret
 
-; Fill a Layer 2 surface with the current NR $14 transparent colour
-; (guide 616-620) - read back rather than assumed, though l2_mode_set
-; always programs it to TM_TRANSP_ATTR first. With Layer 2 on top
+; Fill a Layer 2 surface with L2_TRANSP_INDEX, the reserved pixel value
+; whose palette entry l2_pal9_stamp holds at the transparent colour.
+; With Layer 2 on top
 ; (l2_enable) a pixel whose palette output equals that colour lets the
 ; tilemap/ULA below show through. Page count per l2Mode: 256x192 = 6 x
 ; 8K pages, 320x256 = 10 x 8K pages (guide 160/306). A flat memset
@@ -162,9 +162,10 @@ l2_clear_back:
 l2_clear_at:
     ld (l2PageCur), a
     call data_save
-    ld e, NR_L2_TRANSP
-    call nr_read
-    ld (l2FillByte), a
+    ld a, L2_TRANSP_INDEX        ; the reserved PIXEL value. This used to
+    ld (l2FillByte), a           ; read NR $14 back and use the COLOUR as
+                                 ; a pixel index - it only worked because
+                                 ; the two numbers happened to coincide.
     ld a, (l2Mode)
     or a
     jr nz, .m320
@@ -263,9 +264,10 @@ l2_palette_load:
 .l8:
     ld a, (hl)
     inc hl
-    cp TM_TRANSP_ATTR            ; colour collision with the reserved
-    jr nz, .w8                   ; transparent colour: dodge to $FF
-    ld a, $FF
+    cp L2_TRANSP_COLOUR          ; colour collision with the reserved
+    jr nz, .w8                   ; transparent colour: dodge one step of
+    ld a, L2_TRANSP_COLOUR-1     ; the B field, still magenta, no longer
+                                 ; transparent
 .w8:
     nextreg NR_PAL_VALUE, a
     djnz .l8
@@ -278,9 +280,13 @@ l2_palette_load:
 ; Force entry 254 = the reserved transparent colour (l2_palette_load
 ; header). Every palette-programming path ends here. Corrupts AF.
 l2_pal9_stamp:
-    nextreg NR_PAL_INDEX, TM_TRANSP_ATTR
-    nextreg NR_PAL_VALUE9, TM_TRANSP_ATTR
-    nextreg NR_PAL_VALUE9, 0     ; blue LSB 0, priority 0
+    nextreg NR_PAL_INDEX, L2_TRANSP_INDEX
+    nextreg NR_PAL_VALUE9, L2_TRANSP_COLOUR
+    nextreg NR_PAL_VALUE9, 0     ; blue LSB 0, and priority 0 - bit 7 of
+                                 ; the second write is Layer 2 colour
+                                 ; PRIORITY (chapter-next-palette.tex:279)
+                                 ; and a priority bit on the transparent
+                                 ; entry would be actively harmful.
     ret
 
 ; Program B 9-bit palette entries (0 = 256) from HL via NR $44, with
@@ -292,9 +298,9 @@ l2_pal9_run:
 .l9:
     ld a, (hl)
     inc hl
-    cp TM_TRANSP_ATTR            ; dodge the RRRGGGBB byte only - the
+    cp L2_TRANSP_COLOUR          ; dodge the RRRGGGBB byte only - the
     jr nz, .w9                   ; compare ignores the second byte
-    ld a, $FF
+    ld a, L2_TRANSP_COLOUR-1
 .w9:
     nextreg NR_PAL_VALUE9, a
     ld a, (hl)

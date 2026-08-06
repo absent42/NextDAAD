@@ -6072,7 +6072,7 @@ vid_run_l2setup_body:
     jr z, .l2mode0
     ld a, NXV_NR70_MODE1
     nextreg NR_L2_CTRL, a
-    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
+    nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR
     nextreg NR_CLIP_IDX, 1
     xor a
     nextreg NR_L2_CLIP, a        ; X1 = 0 (full-bleed)
@@ -6082,7 +6082,7 @@ vid_run_l2setup_body:
 .l2mode0:
     xor a
     nextreg NR_L2_CTRL, a
-    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR
+    nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR
     nextreg NR_CLIP_IDX, 1
     xor a
     nextreg NR_L2_CLIP, a

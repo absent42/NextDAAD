@@ -45,9 +45,12 @@ txt_init:
     ld a, GLYPH_SPACE
     call tm_fill_rect
     nextreg NR_ULA_CTRL, ULA_OFF
-    nextreg NR_L2_TRANSP, TM_TRANSP_ATTR  ; text-mode tilemap transparency
-                                 ; compare index (also Layer 2's - shared
-                                 ; register, see the header comment above)
+    nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR  ; shared register; Layer 2 is
+                                 ; its real owner (overlay2's l2_mode_set
+                                 ; sets the same value). Written here too
+                                 ; so it is correct before Layer 2 comes
+                                 ; up - though $E3 is also the hardware
+                                 ; reset value, so this is belt and braces.
     nextreg NR_TM_CTRL, TM_CTRL_ON
     ret
 

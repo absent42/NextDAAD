@@ -903,6 +903,33 @@ if (Test-Path "$root\build\nextdaad.nex") {
                "the re-fetch must land on eng_exec's own 'call rd_next', or a skipped marker leaves the stream pointer wrong")
     }
     "debugflag: -d adds exactly 3 bytes (DC x3, no operands); NEWTEXT stays 5C; eng_exec guard at nex offset $g re-fetches to $target"
+
+    # --- Layer 2 transparency contract (SP18 Priority 0) ---
+    # NR $14 is a COLOUR compare against the top 8 bits of the 9-bit palette
+    # entry (wiki Global_Transparency_Colour_Register: "compared only by the
+    # MSB bits of the final colour"; chapter-next-tilemap.tex:357). $E3 is the
+    # hardware reset value and the conventional chroma-key. The reserved PIXEL
+    # index is 255 and is a different kind of thing entirely - the two used to
+    # be the same number (254) and that was the whole defect.
+
+    # nextreg NR_L2_TRANSP($14), L2_TRANSP_COLOUR($E3)  ->  ED 91 14 E3
+    $tr = Find-ByteRuns $nex ([byte[]]@(0xED, 0x91, 0x14, 0xE3))
+    if ($tr.Count -lt 1) {
+        throw "L2 transparency: no 'nextreg `$14,`$E3' in build\nextdaad.nex - Layer 2 is not on the standard transparent colour"
+    }
+    $old = Find-ByteRuns $nex ([byte[]]@(0xED, 0x91, 0x14, 0xFE))
+    if ($old.Count -ne 0) {
+        throw "L2 transparency: found $($old.Count) 'nextreg `$14,`$FE' write(s) - the old cream transparency colour is still being programmed"
+    }
+
+    # l2_pal9_stamp: index 255 <- colour $E3, priority bit clear.
+    #   ED 91 40 FF   nextreg NR_PAL_INDEX,  L2_TRANSP_INDEX
+    #   ED 91 44 E3   nextreg NR_PAL_VALUE9, L2_TRANSP_COLOUR
+    #   ED 91 44 00   nextreg NR_PAL_VALUE9, 0   (blue LSB 0, priority 0)
+    $stamp = Find-ByteRuns $nex ([byte[]]@(0xED,0x91,0x40,0xFF, 0xED,0x91,0x44,0xE3, 0xED,0x91,0x44,0x00))
+    if ($stamp.Count -ne 1) {
+        throw "L2 transparency: expected exactly one index-255/colour-`$E3 palette stamp, found $($stamp.Count) - l2_pal9_stamp is not reserving the right entry (or is not clearing the NR `$44 priority bit, chapter-next-palette.tex:279)"
+    }
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"

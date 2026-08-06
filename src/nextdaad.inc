@@ -242,6 +242,28 @@ TM_TRANSP_ATTR  equ TM_TRANSP_PAIR*2  ; = 254: attribute byte for a
                             ; programmed into NR_L2_TRANSP so hardware
                             ; treats that exact index as transparent
 
+; --- Layer 2 transparency: a COLOUR and an INDEX, deliberately separate ---
+; These were one constant (TM_TRANSP_ATTR) doing both jobs plus a third,
+; which is what tied Layer 2's transparent colour to a tilemap attribute
+; encoding. Never merge them again.
+L2_TRANSP_COLOUR equ $E3    ; RGB332 COLOUR written to NR_L2_TRANSP, and
+                            ; stamped into L2_TRANSP_INDEX. $E3 is the
+                            ; hardware reset value (chapter-next-layer2
+                            ; .tex:619) and 24-bit 0xE000C0 in a paint
+                            ; program. The compare is against the TOP 8
+                            ; BITS of the 9-bit entry, so TWO of the 512
+                            ; RGB333 colours are transparent - the 9th bit
+                            ; cannot rescue an entry, which is why
+                            ; l2_palette_load must dodge colliding art.
+                            ; Sprites already use $E3 via NR $4B's own
+                            ; reset default (overlay0.asm), so this makes
+                            ; the whole interpreter consistent.
+L2_TRANSP_INDEX  equ 255    ; PIXEL VALUE the interpreter writes to punch
+                            ; a hole in a Layer 2 surface. NOT a colour
+                            ; and NOT related to any tilemap attribute.
+                            ; scripts/png2nx.py quantizes to 255 colours
+                            ; so art never uses this index.
+
 ; --- Banking skeleton (sub-project 3) ---
 DDB_PAGE_FIRST  equ 32      ; DDB bank 16 = 8K pages 32..47
 BANK_OVL0       equ 28      ; overlay page 0 lives in bank 28 (lower 8K)
