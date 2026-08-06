@@ -225,6 +225,10 @@ TM_DEFS_MSB     equ $34     ; ($7400-$4000)>>8
 TM_COLS         equ 80
 TM_ROWS         equ 32
 GLYPH_SPACE     equ $20
+TM_ATTR_DEFAULT equ 7*2     ; pair 7 = paper 0 (black), ink 7 (white) -
+                            ; what txt_init sets and every print path
+                            ; re-sets, so a blanked cell matches a
+                            ; printed one instead of showing paper
 ULA_OFF         equ $80     ; NR_ULA_CTRL bit 7
 NR_TM_TRANSP    equ $4C     ; normal tilemap mode's transparent index -
                             ; NOT what we use: text mode (TM_CTRL_ON bit3)

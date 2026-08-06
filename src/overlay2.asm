@@ -3353,10 +3353,10 @@ msgFontBad:   db "FONT BAD", 0
 
 TC_MARK_COLOUR equ 255           ; distinct from the gradient's low end
 
-; A = 0 (256x192) or 1 (320x256) on entry. Clears the tilemap over the
-; card area to the reserved transparent attribute (tm_clear_transparent,
-; tilemap.asm; the bottom TWO rows are left for debug.asm's status
-; lines), then delegates to l2_bareprobe_draw for the L2 recipe + draw.
+; A = 0 (256x192) or 1 (320x256) on entry. Clears the card area to blank
+; cells at the default attribute (tm_clear_blank, tilemap.asm; the
+; bottom TWO rows are left for debug.asm's status lines), then delegates
+; to l2_bareprobe_draw for the L2 recipe + draw.
 ; Uses the Next's default identity Layer 2 palette (index N = colour N
 ; out of reset, chapter-next-palette.tex line 18) so no palette load is
 ; needed. The card-area clear and the 320-mode 240-line bound (see
@@ -3368,8 +3368,8 @@ l2_testcard:
     ld b, 0
     ld c, 0
     ld d, TM_ROWS-2               ; card area only; bottom TWO rows are
-    ld e, TM_COLS                 ; debug.asm's status lines, left opaque
-    call tm_clear_transparent
+    ld e, TM_COLS                 ; debug.asm's status lines, left as they are
+    call tm_clear_blank
     pop af
     jp l2_bareprobe_draw
 

@@ -21,7 +21,7 @@
 ; an opaque option costs nothing in practice) - is reserved as the
 ; transparent marker (see TM_TRANSP_PAIR/TM_TRANSP_ATTR, nextdaad.inc).
 ; txt_init programs NR $14 = TM_TRANSP_ATTR (pair 127's even/paper
-; index, 254); tm_clear_transparent below writes that attribute with
+; index, 254); tm_clear_blank below writes that attribute with
 ; GLYPH_SPACE (all-zero bitmap, verified in font.chr - every pixel
 ; then reads the pair's even index, matching NR $14 exactly) so the
 ; whole cell shows Layer 2 (or whatever's beneath) through untouched.
@@ -37,7 +37,7 @@ txt_init:
     nextreg NR_TM_DEF_BASE, TM_DEFS_MSB
     call tm_palette_init
     call tm_font_init
-    ld a, 7*2                   ; pair 7 = paper 0 ink 7 (white on black)
+    ld a, TM_ATTR_DEFAULT        ; pair 7 = paper 0 ink 7 (white on black)
     ld (tmAttr), a
     ld bc, 0                    ; SP14c batch B TM3
     ld d, TM_ROWS
@@ -175,15 +175,22 @@ tm_fill_rect:
     jr nz, .rows
     ret
 
-; B=top, C=left, D=height, E=width. General display-pipeline primitive:
-; fill the rect with GLYPH_SPACE at the reserved transparent attribute
-; (TM_TRANSP_ATTR), so Layer 2 (or whatever's beneath) shows through
-; every cell. Task 4's DISPLAY integration should route any "clear the
-; picture area of the tilemap" step through this rather than
-; tm_fill_rect + GLYPH_SPACE with an opaque attribute, which paints
-; solid paper instead of exposing Layer 2. Corrupts all registers.
-tm_clear_transparent:
-    ld a, TM_TRANSP_ATTR
+; B=top, C=left, D=height, E=width. Blank the rect: GLYPH_SPACE at the
+; ORDINARY default attribute, so an untouched cell renders exactly like
+; a printed one - black paper.
+;
+; This was tm_clear_transparent and it never made anything transparent.
+; It wrote pair 127, whose paper is dadPalette[7], so it painted opaque
+; DAAD white; the 2026-08-06 green probe showed that white at boot, in
+; the parser and around the test card. Nothing needs tilemap
+; transparency: Layer 2 sits ABOVE the tilemap (NR $15 = %000, "S L U")
+; and punches DOWN to reveal text, so a transparent tilemap cell would
+; only expose the ULA, which this interpreter never draws.
+;
+; Leaves tmAttr at the default - harmless, every print path sets its
+; own. Corrupts all registers.
+tm_clear_blank:
+    ld a, TM_ATTR_DEFAULT
     ld (tmAttr), a
     ld a, GLYPH_SPACE
     jp tm_fill_rect

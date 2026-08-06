@@ -600,7 +600,7 @@ l2_dbg_hook:
 ;            bound) - that black border is expected, not a fault.
 ;   Stage 1: + im2_init (also EI - ISR live, frameCounter ticking).
 ;            Still no tilemap, same black surround. 2 marker blocks.
-;   Stage 2: + txt_init (tilemap on) + tm_clear_transparent over the
+;   Stage 2: + txt_init (tilemap on) + tm_clear_blank over the
 ;            card area + one status line. 3 marker blocks.
 ;   Stage 3: the full testcard flow (as the T-hook's 256x192 leg,
 ;            including its register/clip-shadow dump).
@@ -685,7 +685,7 @@ l2_bareprobe_hook:
     ld bc, 0
     ld d, TM_ROWS-1
     ld e, TM_COLS
-    call tm_clear_transparent
+    call tm_clear_blank
     ld a, 2
     call l2_bareprobe_marker      ; 3 blocks
     ld hl, msgBareStage2

@@ -75,12 +75,12 @@ main:
     ; while it runs), before the engine's first draw. Safe for
     ; fatal(): it re-arms the tilemap itself (txt_init) and paints its
     ; own bar and message; every print path re-sets tmAttr, so leaving
-    ; it on the transparent attribute here binds nothing downstream.
+    ; it on the default attribute here binds nothing downstream.
     ld b, 0
     ld c, 0
     ld d, TM_ROWS
     ld e, TM_COLS
-    call tm_clear_transparent
+    call tm_clear_blank
     ; SP7 boot autoplay: probe GAME.AKY/GAME.SFB (loaders live in
     ; overlay1; the dispatcher-owned slot 7 is free at boot). Fail-
     ; silent when absent - same esxDOS discipline as every loader.
