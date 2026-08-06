@@ -199,6 +199,30 @@ l2_clear_at:
 ; for edit and as the active display palette, auto-increment on,
 ; guide 203-230), index reset to 0 (NR $40 = 0). Corrupts AF, BC, HL.
 ;
+; OPEN DESIGN QUESTION (owner, 2026-08-06) - THE VALUE $FE IS A POOR
+; ONE FOR ARTISTS AND THE CONSTRAINT THAT PICKED IT IS SPURIOUS.
+; $FE was inherited from TM_TRANSP_ATTR, a TILEMAP ATTRIBUTE byte
+; (pair 127 x 2, forced even by the pair encoding). But the tilemap
+; sits BELOW Layer 2 (l2_enable sets NR $15 = %000, "S L U"), so
+; Layer 2 punches DOWN to reveal text and nothing ever needs to show
+; through the tilemap - the tilemap's encoding has no business fixing
+; Layer 2's transparent COLOUR. The coupling is already dead in fact:
+; tilemap entry 254 holds dadPalette[7] = $DB, not $FE, so tilemap
+; cells are not transparent by this mechanism today and nothing is
+; broken by that. The two just share a number.
+; What the artist actually pays: $FE is RGB333 (7,7,4/5) = 24-bit
+; (255,255,146)/(255,255,182) - a WARM CREAM. Candlelight, parchment,
+; skin highlight, aged paper: colours an adventure artist reaches for
+; constantly, and l2_palette_load's dodge alters them SILENTLY.
+; The hardware default $E3 would be far kinder - magenta, the
+; conventional chroma-key artists already avoid, documented for paint
+; programs as 24-bit 0xE000C0 (Stefan Bylund's zxnext_layer2,
+; https://github.com/stefanbylund/zxnext_layer2, which is also the
+; clearest statement of the compare semantics below). Changing it
+; means separating the L2 transparent COLOUR from TM_TRANSP_ATTR (the
+; attribute stays 254; only the colour moves), and is a
+; hardware-visible change needing an owner leg - NOT done here.
+;
 ; Transparency invariant: NR $14 transparency is a COLOUR compare, not
 ; an index compare - the hardware matches each Layer 2 pixel's final
 ; RRRGGGBB palette output against the register (wiki.specnext.dev/
@@ -209,9 +233,16 @@ l2_clear_at:
 ; black, and the $FE surface fill rendered opaque black over the text
 ; rows). So a loaded palette must reserve one colour for punch-through:
 ; - copy loops dodge collisions: any entry whose FIRST byte equals
-;   TM_TRANSP_ATTR ($FE) is written as $FF instead - one blue LSB off,
-;   imperceptible; only the RRRGGGBB byte is compared, so dodging it
-;   suffices (the 9-bit second byte passes through as supplied). Art
+;   TM_TRANSP_ATTR ($FE) is written as $FF instead. Only the RRRGGGBB
+;   byte is compared, so dodging it suffices (the 9-bit second byte
+;   passes through as supplied) - and it is also NECESSARY, because
+;   the compare is against the top 8 bits of the 9-bit entry, which
+;   means TWO of the 512 RGB333 colours match any given transparency
+;   value and the 9th bit cannot rescue an entry. Size of the nudge,
+;   stated correctly: the byte's low two bits are B2,B1, so $FE -> $FF
+;   moves blue from 4/5 to 6/7 - TWO steps on the 0-7 scale, not "one
+;   LSB" as this comment claimed until 2026-08-06. Imperceptible on a
+;   near-white either way, but do not repeat the smaller figure. Art
 ;   scan: 3/12/13.NX2 each carry one $FE-coloured entry that would
 ;   otherwise punch unintended holes;
 ; - entry 254 is then stamped $FE via the 9-bit pair (NR $44 = $FE,
