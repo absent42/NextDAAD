@@ -1911,7 +1911,28 @@ gfx_direct_read256:
 ; ("Standard" ZX0 decoder, https://github.com/einar-saukas/ZX0,
 ; BSD-licensed / freely reusable with attribution; the copy shipped
 ; with z88dk at tools/z88dk/libsrc/_DEVELOPMENT/compress/zx0/z80/
-; dzx0_standard.asm was the vendoring source). Control flow, the
+; dzx0_standard.asm was the vendoring source).
+;
+; FORMAT: ZX0 CLASSIC (v1), and that is a hard requirement - ZX0 v2
+; changed the stream format and the two are mutually unreadable.
+; Measured 2026-08-05, all three components agree:
+;   - tools/z88dk/bin/z88dk-zx0.exe reports "ZX0 v1.5" and offers only
+;     -f/-b/-q. The -classic switch that selects this format exists
+;     only in ZX0 v2 and later, so a build without it PREDATES the
+;     change and emits v1 unconditionally.
+;   - gfx2next's built-in compressor is the same vintage (-zx0-back /
+;     -zx0-quick mirror v1.5's -b/-q; there is no -zx0-classic), and
+;     produces BYTE-IDENTICAL output to z88dk-zx0 on the same input:
+;     30720 bytes of Rabenstein art -> 6563 bytes from both. ZX0 is an
+;     optimal compressor, so two independent binaries agreeing exactly
+;     means one format and one encoder generation.
+;   - this decoder came from the z88dk tree shipping that same v1.5
+;     tool, so encoder and decoder match by construction.
+; A ZX0 stream carries NO magic number and NO version field, so
+; upgrading either tool to v2 would break picture loading SILENTLY -
+; corrupt output or a bare zx0_fail, with nothing pointing at the
+; compressor. Re-run the byte-identical comparison above after any
+; tool bump. Control flow, the
 ; interlaced-Elias reader and the negative-offset arithmetic are kept
 ; verbatim; only the three memory primitives differ, because here
 ; neither the source nor the destination is flat memory:
