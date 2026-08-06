@@ -230,21 +230,14 @@ TM_ATTR_DEFAULT equ 7*2     ; pair 7 = paper 0 (black), ink 7 (white) -
                             ; re-sets, so a blanked cell matches a
                             ; printed one instead of showing paper
 ULA_OFF         equ $80     ; NR_ULA_CTRL bit 7
-NR_TM_TRANSP    equ $4C     ; normal tilemap mode's transparent index -
-                            ; NOT what we use: text mode (TM_CTRL_ON bit3)
-                            ; checks NR_L2_TRANSP ($14) instead - see
-                            ; chapter-next-tilemap.tex line 357
-TM_TRANSP_PAIR  equ 127     ; reserved SP6 pair (paper=7, ink=15) - the
-                            ; one (paper,ink) combo sacrificed as the
-                            ; transparent-cell marker (bright-white-on-
-                            ; white is unreadable anyway, so losing it as
-                            ; an opaque combo costs nothing practical)
-TM_TRANSP_ATTR  equ TM_TRANSP_PAIR*2  ; = 254: attribute byte for a
-                            ; transparent cell (paired with GLYPH_SPACE,
-                            ; whose all-zero bitmap keeps every pixel on
-                            ; the pair's even/paper index) AND the value
-                            ; programmed into NR_L2_TRANSP so hardware
-                            ; treats that exact index as transparent
+NR_TM_TRANSP    equ $4C     ; NORMAL tilemap mode's transparent index -
+                            ; an INDEX compare, applied before the
+                            ; palette offset (chapter-next-tilemap.tex
+                            ; :294-303). NOT what we use: text mode
+                            ; (TM_CTRL_ON bit 3) checks NR_L2_TRANSP
+                            ; ($14) as a COLOUR instead (:357). We rely
+                            ; on neither - the tilemap has no
+                            ; transparency at all now, see tm_clear_blank.
 
 ; --- Layer 2 transparency: a COLOUR and an INDEX, deliberately separate ---
 ; These were one constant (TM_TRANSP_ATTR) doing both jobs plus a third,

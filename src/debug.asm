@@ -491,7 +491,7 @@ l2dbg_status_regs:
     jp dbg_hex8
 
 ; Second status row (TM_ROWS-2, also reserved by overlay2's
-; l2_testcard): NR $14 (global transparency index, expect $FE), the
+; l2_testcard): NR $14 (global transparency colour, expect $E3), the
 ; Layer 2 clip window SHADOW (clipW= - overlay2's l2ClipX1/X2/Y1/Y2,
 ; NOT a hardware readback: NR $18 cannot be read back, see l2_clip_set),
 ; the scroll offset (NR $16/$17, expect $00 $00), and one live pixel

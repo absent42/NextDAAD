@@ -30,7 +30,7 @@ ovl2_false:
 ; swaps the surface roles FIRST and then calls here, so the
 ; resolution and the new front bank land back-to-back (see
 ; l2_flip_swap's header for the glitch-window math) - and the global
-; transparent colour (NR $14 = TM_TRANSP_ATTR): with Layer 2 on top
+; transparent colour (NR $14 = L2_TRANSP_COLOUR): with Layer 2 on top
 ; (l2_enable) a pixel whose palette output equals this colour falls
 ; through to the tilemap/ULA below, so the L2 recipe sets it itself.
 ; txt_init programs the same register/value for the tilemap - shared,
@@ -200,58 +200,45 @@ l2_clear_at:
 ; for edit and as the active display palette, auto-increment on,
 ; guide 203-230), index reset to 0 (NR $40 = 0). Corrupts AF, BC, HL.
 ;
-; OPEN DESIGN QUESTION (owner, 2026-08-06) - THE VALUE $FE IS A POOR
-; ONE FOR ARTISTS AND THE CONSTRAINT THAT PICKED IT IS SPURIOUS.
-; $FE was inherited from TM_TRANSP_ATTR, a TILEMAP ATTRIBUTE byte
-; (pair 127 x 2, forced even by the pair encoding). But the tilemap
-; sits BELOW Layer 2 (l2_enable sets NR $15 = %000, "S L U"), so
-; Layer 2 punches DOWN to reveal text and nothing ever needs to show
-; through the tilemap - the tilemap's encoding has no business fixing
-; Layer 2's transparent COLOUR. The coupling is already dead in fact:
-; tilemap entry 254 holds dadPalette[7] = $DB, not $FE, so tilemap
-; cells are not transparent by this mechanism today and nothing is
-; broken by that. The two just share a number.
-; What the artist actually pays: $FE is RGB333 (7,7,4/5) = 24-bit
-; (255,255,146)/(255,255,182) - a WARM CREAM. Candlelight, parchment,
-; skin highlight, aged paper: colours an adventure artist reaches for
-; constantly, and l2_palette_load's dodge alters them SILENTLY.
-; The hardware default $E3 would be far kinder - magenta, the
-; conventional chroma-key artists already avoid, documented for paint
-; programs as 24-bit 0xE000C0 (Stefan Bylund's zxnext_layer2,
-; https://github.com/stefanbylund/zxnext_layer2, which is also the
-; clearest statement of the compare semantics below). Changing it
-; means separating the L2 transparent COLOUR from TM_TRANSP_ATTR (the
-; attribute stays 254; only the colour moves), and is a
-; hardware-visible change needing an owner leg - NOT done here.
+; Transparency contract (settled 2026-08-06, SP18 Priority 0):
+; L2_TRANSP_COLOUR ($E3) is a COLOUR in NR $14; L2_TRANSP_INDEX (255) is
+; the PIXEL value the interpreter writes to punch a hole. They are
+; separate on purpose - one constant used to be both, plus a tilemap
+; attribute, which is how Layer 2 ended up transparent on a warm cream
+; (255,255,146) that artists actually use.
 ;
 ; Transparency invariant: NR $14 transparency is a COLOUR compare, not
-; an index compare - the hardware matches each Layer 2 pixel's final
-; RRRGGGBB palette output against the register (wiki.specnext.dev/
-; NextReg:$14 "Global Transparency", and guide chapter-next-layer2.tex
-; line 71 "transparent colour of Layer 2"; the guide's register table
-; at line 619 says "index", but the owner's milestone run proved the
-; colour reading: all 21 Rabenstein NX2 palettes map entry 254 to
-; black, and the $FE surface fill rendered opaque black over the text
-; rows). So a loaded palette must reserve one colour for punch-through:
+; an index compare - the hardware matches the TOP 8 BITS of each Layer 2
+; pixel's final RRRGGGBB palette output against the register
+; (https://wiki.specnext.dev/Global_Transparency_Colour_Register,
+; "compared only by the MSB bits of the final colour", and guide
+; chapter-next-layer2.tex line 71 "transparent colour of Layer 2"; the
+; guide's OWN register table at line 619 calls it an "index" - that
+; entry is simply wrong, the wiki page and the owner's milestone run
+; both confirm the colour reading: all 21 Rabenstein NX2 palettes map
+; entry 254 to black, and the $FE surface fill rendered opaque black
+; over the text rows). So a loaded palette must reserve one colour for
+; punch-through:
 ; - copy loops dodge collisions: any entry whose FIRST byte equals
-;   TM_TRANSP_ATTR ($FE) is written as $FF instead. Only the RRRGGGBB
-;   byte is compared, so dodging it suffices (the 9-bit second byte
-;   passes through as supplied) - and it is also NECESSARY, because
-;   the compare is against the top 8 bits of the 9-bit entry, which
-;   means TWO of the 512 RGB333 colours match any given transparency
-;   value and the 9th bit cannot rescue an entry. Size of the nudge,
-;   stated correctly: the byte's low two bits are B2,B1, so $FE -> $FF
-;   moves blue from 4/5 to 6/7 - TWO steps on the 0-7 scale, not "one
-;   LSB" as this comment claimed until 2026-08-06. Imperceptible on a
-;   near-white either way, but do not repeat the smaller figure. Art
-;   scan: 3/12/13.NX2 each carry one $FE-coloured entry that would
-;   otherwise punch unintended holes;
-; - entry 254 is then stamped $FE via the 9-bit pair (NR $44 = $FE,
-;   then 0: blue LSB 0, priority 0 - chosen over an NR $41 write so
-;   the priority bit is explicitly cleared), making index 254 the ONLY
-;   transparent entry after ANY l2_palette_load. No Rabenstein art
-;   uses pixel value $FE, so reserving the index costs nothing; the
-;   DEBUG test card's identity palette already satisfied the invariant.
+;   L2_TRANSP_COLOUR ($E3) is written as L2_TRANSP_COLOUR-1 ($E2)
+;   instead. Only the RRRGGGBB byte is compared, so dodging it
+;   suffices (the 9-bit second byte passes through as supplied) - and
+;   it is also NECESSARY, because the compare is against the top 8
+;   bits of the 9-bit entry, which means TWO of the 512 RGB333 colours
+;   match any given transparency value and the 9th bit cannot rescue
+;   an entry. The nudge: RGB332's low two bits are the BLUE field, so
+;   $E3 -> $E2 moves blue from 3/3 to 2/3 - ONE step on the 0-3 scale,
+;   imperceptible on a colour this saturated. Any art whose palette
+;   happens to land on $E3 would otherwise punch unintended holes;
+; - entry 255 (L2_TRANSP_INDEX) is then stamped $E3 via the 9-bit pair
+;   (NR $44 = L2_TRANSP_COLOUR, then 0: blue LSB 0, priority 0 -
+;   chosen over an NR $41 write so the priority bit is explicitly
+;   cleared), making index 255 the ONLY transparent entry after ANY
+;   l2_palette_load. No Rabenstein art uses pixel value 255
+;   (L2_TRANSP_INDEX, nextdaad.inc: png2nx.py quantizes to 255 colours
+;   so art never reaches it), so reserving the index costs nothing;
+;   the DEBUG test card's identity palette already satisfied the
+;   invariant.
 l2_palette_load:
     ld a, b
     push af
@@ -291,7 +278,7 @@ l2_pal9_stamp:
     ret
 
 ; Program B 9-bit palette entries (0 = 256) from HL via NR $44, with
-; the $FE collision dodge (l2_palette_load header). The caller owns
+; the L2_TRANSP_COLOUR collision dodge (l2_palette_load header). The caller owns
 ; the NR $43/$40 setup and the final l2_pal9_stamp - split out so
 ; gfx_direct_stream can feed the 512-byte palette through gfxRowBuf
 ; in two 256-byte halves. Corrupts AF, B, HL.

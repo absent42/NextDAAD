@@ -12,23 +12,21 @@
 ; dadPalette holds the 16 DAAD colours; entry 2k = dadPalette[paper],
 ; entry 2k+1 = dadPalette[ink].
 ;
-; Text-mode transparency (chapter-next-tilemap.tex line 357) is NOT
-; the normal tilemap mode's NR $4C - it's checked against NR $14
-; (NR_L2_TRANSP), the SAME register Layer 2/ULA/LoRes use. Since the
-; 128-pair scheme above already covers all 256 tilemap palette entries
-; with real paper/ink combinations, one combo - pair 127 (paper 7,
-; ink 15, "bright white on white": unreadable anyway, so losing it as
-; an opaque option costs nothing in practice) - is reserved as the
-; transparent marker (see TM_TRANSP_PAIR/TM_TRANSP_ATTR, nextdaad.inc).
-; txt_init programs NR $14 with L2_TRANSP_COLOUR - Layer 2's transparent
-; colour, Layer 2's business, not a tilemap attribute. tm_clear_blank
-; below writes TM_ATTR_DEFAULT with GLYPH_SPACE, so a blanked cell
-; renders as ordinary black paper, the same as a printed one.
-; A custom FONT.CHR (font_load, overlay2.asm - the only supported custom-
-; font route as of SP12 T1; the legacy GAME.CHR probe this comment used
-; to name has been retired) that redefines glyph 32 with non-zero pixels
-; would reintroduce ink-coloured specks in "transparent" cells - out of
-; scope here, flagged for whoever wires up Task 4's picture display.
+; NO TRANSPARENCY HERE, deliberately. The 128-pair scheme above covers
+; all 256 palette entries with real paper/ink combinations, and none of
+; them is reserved: Layer 2 sits ABOVE the tilemap (NR $15 = %000,
+; "S L U") and punches DOWN to reveal text, so nothing ever needs to
+; show through the tilemap - a transparent cell would only expose the
+; ULA, which this interpreter never draws.
+;
+; Until 2026-08-06 pair 127 was sacrificed as a "transparent" marker and
+; tm_clear_transparent wrote it. It never worked: text-mode transparency
+; is a COLOUR compare against NR $14 (chapter-next-tilemap.tex:357), and
+; pair 127's paper entry holds dadPalette[7] ($DB), which never equalled
+; NR $14. The cells were plain opaque DAAD white, which is why nobody
+; noticed - a working transparency would have exposed the ULA's own
+; white default, so success and failure looked nearly identical. Pair
+; 127 is now an ordinary (paper 7, ink 15) combination again.
 
 ; Switch the display to tilemap text mode. Corrupts all registers.
 txt_init:
