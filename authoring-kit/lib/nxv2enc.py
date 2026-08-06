@@ -352,6 +352,11 @@ TERMINAL_OPS = frozenset({OP_FEND, OP_KFLIP})
 
 PAL_BLOCK_SIZE = 512
 
+# Layer 2 global transparency colour (NR $14 = $E3, the hardware reset
+# value; L2_TRANSP_COLOUR in src/nextdaad.inc). Must match the
+# interpreter - if one moves, both move.
+L2_TRANSPARENT_BYTE0 = 0xE3
+
 # ---------------------------------------------------------------------
 # TMODEL_COEFFS - Z80N decode+fetch T-state costs. SILICON-SETTLED on the
 # SECOND NXBEN sitting (core 3.02.04 KS3 TEST core, 2026-07-25), which
@@ -4123,6 +4128,18 @@ def build_palette_block(pal_256x3):
         r, g, b = (int(pal_256x3[i, 0]), int(pal_256x3[i, 1]), int(pal_256x3[i, 2]))
         byte0 = (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6)
         byte1 = (b >> 5) & 1
+        if byte0 == L2_TRANSPARENT_BYTE0:
+            # This entry would be TRANSPARENT on hardware: NR $14
+            # compares against byte0 only, so both 9-bit colours
+            # sharing it punch through mid-clip. The video player has
+            # no dodge of its own - unlike pictures, whose
+            # l2_palette_load catches this - so it must be fixed here.
+            # byte0's low 2 bits are the TOP 2 bits of the 3-bit blue
+            # field (weight 2 each), so -1 here moves blue TWO steps
+            # on the 0-7 scale (e.g. 6 -> 4), not one - still magenta,
+            # no longer transparent, a subtle shift no viewer would
+            # register in motion.
+            byte0 -= 1
         out[i * 2] = byte0
         out[i * 2 + 1] = byte1
     return bytes(out)

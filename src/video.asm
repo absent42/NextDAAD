@@ -6110,7 +6110,7 @@ vid_run_l2setup_body:
     ; stale content misread in the new mode) until the first
     ; keyframe's PAL + KFLIP present real colour - kills the entry
     ; flash class outright. Black ($00) can never equal the
-    ; TM_TRANSP_ATTR colour, so the surface stays fully opaque.
+    ; L2_TRANSP_COLOUR value, so the surface stays fully opaque.
     call vid_pal_black
     ; zxnDMA session init: the never-changing WR2 (port B memory/
     ; increment/cycle-2) + WR5 (stop on end) - each chunk's arm block
