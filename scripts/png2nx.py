@@ -54,16 +54,41 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_GFX2NEXT = ROOT / "tools" / "gfx2next" / "gfx2next.exe"
 
 
-def quantize(im):
-    """RGB -> 8-bit paletted image: PIL ADAPTIVE 256-colour palette,
-    dither NONE. Palette is padded to the full 256 entries (768 bytes)
-    so gfx2next always sees a complete palette, even when the source
-    used fewer than 256 distinct colours."""
-    idx_img = im.convert("P", palette=Image.Palette.ADAPTIVE, colors=256,
-                          dither=Image.Dither.NONE)
+# Palette index 255 is reserved for the Layer 2 transparent colour
+# (L2_TRANSP_INDEX in src/nextdaad.inc). The interpreter stamps that
+# entry on every picture load, so any PIXEL using it would be punched
+# into a hole. Quantizing to 255 colours keeps art in 0-254 and makes
+# the collision impossible rather than merely unlikely.
+RESERVED_INDEX = 255
+ART_COLOURS = RESERVED_INDEX          # 255 usable colours: 0..254
+
+# 24-bit form of L2_TRANSP_COLOUR ($E3 = RGB332 7,0,3) as a paint
+# program shows it. Both 9-bit colours sharing those top 8 bits are
+# transparent, so warn on either.
+TRANSPARENT_RGB = (224, 0, 192)
+
+
+def quantize(im, name="image"):
+    """RGB -> 8-bit paletted image: PIL ADAPTIVE palette, dither NONE.
+
+    Uses 255 colours, not 256, so index 255 stays free for the Layer 2
+    transparent entry. Palette is still padded to the full 256 entries
+    (768 bytes) so gfx2next always sees a complete palette."""
+    idx_img = im.convert("P", palette=Image.Palette.ADAPTIVE,
+                          colors=ART_COLOURS, dither=Image.Dither.NONE)
     pal = idx_img.getpalette() or []
     pal = pal + [0] * (768 - len(pal))
     idx_img.putpalette(pal)
+
+    # Report, do not silently alter: the interpreter's palette dodge
+    # would shift a colliding entry one step of the blue field without
+    # telling the author anything.
+    for i in range(0, min(len(pal), ART_COLOURS * 3), 3):
+        if tuple(pal[i:i + 3]) == TRANSPARENT_RGB:
+            print("WARNING: %s uses the reserved transparency colour "
+                  "#E000C0 at palette index %d - those pixels would show "
+                  "through to the text layer. Change the colour slightly."
+                  % (name, i // 3))
     return idx_img
 
 
@@ -128,7 +153,7 @@ def main(argv):
 
     with tempfile.TemporaryDirectory(prefix="png2nx_") as tmp:
         work_dir = Path(tmp)
-        idx_img = quantize(im)
+        idx_img = quantize(im, name=str(src_path))
         tmp_png = work_dir / "src.png"
         idx_img.save(tmp_png)
 
