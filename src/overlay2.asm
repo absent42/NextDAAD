@@ -1917,9 +1917,9 @@ gfx_direct_read256:
 ; changed the stream format and the two are mutually unreadable.
 ; Measured 2026-08-05, all three components agree:
 ;   - tools/z88dk/bin/z88dk-zx0.exe reports "ZX0 v1.5" and offers only
-;     -f/-b/-q. The -classic switch that selects this format exists
-;     only in ZX0 v2 and later, so a build without it PREDATES the
-;     change and emits v1 unconditionally.
+;     -f/-b/-q. The -c switch that asks a v2 compressor for this
+;     "classic" format exists only from ZX0 v2 on, so a build without
+;     it PREDATES the change and emits v1 unconditionally.
 ;   - gfx2next's built-in compressor is the same vintage (-zx0-back /
 ;     -zx0-quick mirror v1.5's -b/-q; there is no -zx0-classic), and
 ;     produces BYTE-IDENTICAL output to z88dk-zx0 on the same input:
@@ -1932,7 +1932,22 @@ gfx_direct_read256:
 ; upgrading either tool to v2 would break picture loading SILENTLY -
 ; corrupt output or a bare zx0_fail, with nothing pointing at the
 ; compressor. Re-run the byte-identical comparison above after any
-; tool bump. Control flow, the
+; tool bump.
+;
+; AND DO NOT CHASE v2 FOR SPEED. Its README claims only that the new
+; format lets decompressors be "slightly smaller and run slightly
+; faster", unquantified, and gfx2next embeds its OWN compressor - so
+; v2 would need a gfx2next release emitting it, z88dk-zx0 upgraded in
+; lockstep and this decoder changed to match, all at once, or pictures
+; break with no diagnostic. The real speed lever is the DECODER
+; VARIANT, which reads the same v1 stream: upstream measures Standard
+; (68 bytes, what this is) against Turbo (126, ~21% faster), Fast
+; (187, ~25%) and Mega (673, ~28%), and z88dk ships all four. Temper
+; those figures before believing them here: they are measured against
+; LDIR into flat memory, while this port replaces the copies with
+; byte-at-a-time banked-window access that would not speed up at all,
+; so the realisable share is well under 21% and needs measuring rather
+; than assuming. Control flow, the
 ; interlaced-Elias reader and the negative-offset arithmetic are kept
 ; verbatim; only the three memory primitives differ, because here
 ; neither the source nor the destination is flat memory:
