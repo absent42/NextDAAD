@@ -1,4 +1,4 @@
-# NX2 / NXI picture format - reference for tool authors
+# Picture format - NX2 and NXI
 
 What NextDAAD's location-graphics loader accepts, for anyone writing a
 converter, exporter or paint-tool plugin that emits these files.
