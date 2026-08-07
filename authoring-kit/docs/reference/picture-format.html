@@ -190,11 +190,9 @@ switch.</p>
 exist for plain-FAT setups without long filenames. Either works.</p>
 <h2 id="8-checklist-for-an-exporter">8. Checklist for an exporter</h2>
 <ul>
-<li>[ ] Quantise opaque artwork into <strong>indices 0-254</strong> - 255 colours, not<ol start="256">
-<li>Emit pixel index 255 only where you mean transparency, and
-  not at all otherwise.</li>
-</ol>
-</li>
+<li>[ ] Quantise opaque artwork into <strong>indices 0-254</strong> (255 colours, not
+      256). Emit pixel index 255 only where you mean transparency, and
+      not at all otherwise.</li>
 <li>[ ] Transparent pixels, if any, use index 255 and no other index.</li>
 <li>[ ] Never emit byte 0 = <code>$E3</code> except at index 255 - test after your
       channel conversion, not before it.</li>

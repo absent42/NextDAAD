@@ -5,11 +5,12 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.3.2 - 7 August 2026
 
-- Location pictures use the Spectrum Next's standard transparency
-  magenta, and the reserved palette slot is index 255. Keep that colour
-  out of your artwork and quantize to 255 colours - see
-  [Graphics](graphics.md) for what the build warns about and what it
-  cannot check.
+- Location pictures can now have holes. Palette slot 255 is reserved:
+  paint the Spectrum Next's standard transparency magenta into that slot
+  and pixels drawn with it show the text layer through. If you do not
+  want a hole, quantize your art to 255 colours (indices 0-254) instead
+  and leave slot 255 unused - see [Graphics](graphics.md) for what the
+  build warns about and what it cannot check.
 - The screen no longer shows a white background before a game's first
   picture, or in any area a game has not painted.
 - The kit's documentation is now a manual you read in a browser. Open

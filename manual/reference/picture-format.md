@@ -171,8 +171,8 @@ exist for plain-FAT setups without long filenames. Either works.
 
 ## 8. Checklist for an exporter
 
-- [ ] Quantise opaque artwork into **indices 0-254** - 255 colours, not
-      256. Emit pixel index 255 only where you mean transparency, and
+- [ ] Quantise opaque artwork into **indices 0-254** (255 colours, not
+      256). Emit pixel index 255 only where you mean transparency, and
       not at all otherwise.
 - [ ] Transparent pixels, if any, use index 255 and no other index.
 - [ ] Never emit byte 0 = `$E3` except at index 255 - test after your

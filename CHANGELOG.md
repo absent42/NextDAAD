@@ -4,10 +4,11 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.3.2 - 07/08/2026
 
-- Location pictures use the Spectrum Next's standard transparency
-  colour, magenta #E000C0. The reserved palette index moved to 255. 
-  Keep #E000C0 out
-  of your artwork and keep it to 255 colours - the kit converts the PNG
+- Location pictures can have holes. The reserved palette index moved to
+  255: paint the Spectrum Next's standard transparency magenta,
+  #FF00FF, into that slot and pixels drawn with it show the text layer
+  through. Quantize to 255 colours (indices 0-254) and leave slot 255
+  unused when you do not want transparency - the kit converts the PNG
   you supply as-is, it does not re-quantize. Uncompressed
   location art and title screens are audited after conversion and
   warned about; COMPRESS=1 output cannot be checked, because a

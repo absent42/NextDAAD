@@ -117,12 +117,17 @@ table so your transparent colour is last.
 
 **The build reports how many transparent pixels a converted picture has,
 but only with `COMPRESS=0`.** A compressed picture has no readable
-palette, so a `COMPRESS=1` build reports nothing at all, neither the
-count nor the warnings below. If you ship compressed art, run one build
-with `COMPRESS=0` and read them from that.
+palette, so a `COMPRESS=1` build reports nothing at all - neither that
+count nor the palette-collision warning described in
+[Picture format](reference/picture-format.md#9-verifying-your-output). If
+you ship compressed art, run one build with `COMPRESS=0` and read them
+from that.
 
-The count is the only way to confirm the hole is the size you intended,
-and the only way to catch one you did not ask for.
+The count is the quickest way to confirm the hole is the size you
+intended, and to catch one you did not ask for. You can also run the
+audit script directly against a converted file, as
+[Picture format](reference/picture-format.md#9-verifying-your-output)
+describes.
 
 **A picture with no slot-255 pixels is fully opaque**, which is the
 normal case - and the case you get by quantizing to 255 colours, indices
