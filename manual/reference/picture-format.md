@@ -3,10 +3,9 @@
 What NextDAAD's location-graphics loader accepts, for anyone writing a
 converter, exporter or paint-tool plugin that emits these files.
 
-Every statement here was verified against the interpreter's own loader
-(`src/overlay2.asm`) rather than transcribed from an older document.
-Where the loader REFUSES a file, that is called out - it refuses rather
-than misrendering, so a rejected picture simply does not appear.
+A file that breaks any rule here is refused by the loader rather than
+misrendered - a rejected picture simply does not appear. Section 6 lists
+what gets refused.
 
 ---
 
@@ -39,10 +38,9 @@ file must therefore be exactly `512 + width * height` bytes.
 One byte per pixel, each byte a palette index 0-255.
 
 **Row-major, in both shapes** - `width` bytes for row 0, then row 1, and
-so on. This is worth stating plainly because the Layer 2 *video memory*
-for 320-wide mode is column-major, and the interpreter's own internals
-describe it that way; that is a property of the hardware surface, not of
-this file. **The loader performs the scatter. Write rows.**
+so on. This holds for 320-wide too, even though its Layer 2 video memory
+is column-major on the hardware; that is a property of the display
+surface, not of this file. **Write rows.**
 
 ## 4. Palette entries
 

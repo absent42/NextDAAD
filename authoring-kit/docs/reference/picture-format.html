@@ -11,10 +11,9 @@
 <h1 id="picture-format-nx2-and-nxi">Picture format - NX2 and NXI</h1>
 <p>What NextDAAD's location-graphics loader accepts, for anyone writing a
 converter, exporter or paint-tool plugin that emits these files.</p>
-<p>Every statement here was verified against the interpreter's own loader
-(<code>src/overlay2.asm</code>) rather than transcribed from an older document.
-Where the loader REFUSES a file, that is called out - it refuses rather
-than misrendering, so a rejected picture simply does not appear.</p>
+<p>A file that breaks any rule here is refused by the loader rather than
+misrendered - a rejected picture simply does not appear. Section 6 lists
+what gets refused.</p>
 <hr />
 <h2 id="1-the-two-shapes">1. The two shapes</h2>
 <table>
@@ -54,10 +53,9 @@ file must therefore be exactly <code>512 + width * height</code> bytes.</p>
 <h2 id="3-pixel-data">3. Pixel data</h2>
 <p>One byte per pixel, each byte a palette index 0-255.</p>
 <p><strong>Row-major, in both shapes</strong> - <code>width</code> bytes for row 0, then row 1, and
-so on. This is worth stating plainly because the Layer 2 <em>video memory</em>
-for 320-wide mode is column-major, and the interpreter's own internals
-describe it that way; that is a property of the hardware surface, not of
-this file. <strong>The loader performs the scatter. Write rows.</strong></p>
+so on. This holds for 320-wide too, even though its Layer 2 video memory
+is column-major on the hardware; that is a property of the display
+surface, not of this file. <strong>Write rows.</strong></p>
 <h2 id="4-palette-entries">4. Palette entries</h2>
 <p>256 entries, 2 bytes each, in index order:</p>
 <pre><code>byte 0 : RRRGGGBB   the top 8 bits of a 9-bit colour

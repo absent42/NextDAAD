@@ -6,6 +6,7 @@ src/ -> build/nextdaad.nex -> authoring-kit/nextdaad.nex.
 
 Run via build.ps1 -Kit, or directly for a quick regenerate.
 """
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -68,9 +69,11 @@ def main():
         body = markdown.markdown(
             text, extensions=["tables", "fenced_code", "toc", "sane_lists"]
         )
-        # Links between source documents point at .md; the shipped pages
-        # are .html, so rewrite them.
-        body = body.replace('.md"', '.html"').replace(".md#", ".html#")
+        # Source documents link to each other as .md; the shipped pages are
+        # .html. Anchored to href= on purpose: a blind replace would also
+        # rewrite a literal .md" inside a code sample, silently corrupting
+        # it, and code blocks are not escaped against that.
+        body = re.sub(r'(href="[^"]*?)\.md(["#])', r'\1.html\2', body)
         depth = len(rel.parts) - 1
         css = ("../" * depth) + "style.css"
         html_path.write_text(
