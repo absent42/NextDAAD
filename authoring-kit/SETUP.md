@@ -194,15 +194,15 @@ and 160-255 are reachable only through the extended/upper-charset routes
 above and keep `default.chr`'s originals unless your `FONT.CHR` supplies the
 full 2048 bytes.
 
-**Glyph 32 (space) must stay blank.** The tilemap driver relies on glyph 32
-having an all-zero bitmap - it is what gets painted, at the reserved
-transparent attribute, into any cell that should show Layer 2 (or whatever
-sits beneath the tilemap) through untouched. A `FONT.CHR` that redefines
-glyph 32 with non-zero pixels will show ink-coloured specks in those
-"transparent" cells instead. `fontconv.ps1` warns (does not fail) if the
-input's glyph 32 is non-zero; a hand-built or straight-passthrough
-`FONT.CHR` is not checked at boot, so verify this yourself if you edit
-glyph 32.
+**Glyph 32 (space) must stay blank.** Every cell the engine blanks - an
+untouched area, a scrolled-in row, anything not yet printed - is filled
+with glyph 32 at the ordinary default attribute (black paper, white ink),
+the same attribute a normal printed cell uses. A `FONT.CHR` that redefines
+glyph 32 with non-zero pixels puts those pixels in the ink colour, so
+blanked cells show white specks instead of clean black paper.
+`fontconv.ps1` warns (does not fail) if the input's glyph 32 is non-zero;
+a hand-built or straight-passthrough `FONT.CHR` is not checked at boot,
+so verify this yourself if you edit glyph 32.
 
 **Per-part fonts.** For a part >= 2, `FONT.CHR` is one of the shadowed
 asset kinds - see section 9, "Shadowed assets": a `PART<n>\FONT.CHR`

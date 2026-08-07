@@ -37,13 +37,13 @@
 # digest for both.
 #
 # Glyph 32 (space) constraint: the tilemap driver relies on glyph 32
-# having an all-zero bitmap (src/tilemap.asm's GLYPH_SPACE comment) -
-# it is painted, at the reserved transparent attribute, into any cell
-# that should show Layer 2 (or whatever is beneath the tilemap) through
-# untouched. A custom font that redefines glyph 32 with non-zero pixels
-# reintroduces ink-coloured specks in those "transparent" cells. This is
-# a WARNING, not a build failure - authors overriding glyph 32
-# deliberately are not blocked, just told.
+# having an all-zero bitmap (src/tilemap.asm's tm_clear_blank comment) -
+# every cell the engine blanks is filled with glyph 32 at the ordinary
+# default attribute (black paper, white ink), same as a printed cell. A
+# custom font that redefines glyph 32 with non-zero pixels puts those
+# pixels in the ink colour, so blanked cells show white specks instead
+# of clean black paper. This is a WARNING, not a build failure - authors
+# overriding glyph 32 deliberately are not blocked, just told.
 #
 # Usage: fontconv.ps1 -In <path to 2048 or 768 byte font file> [-Out FONT.CHR]
 param(
@@ -70,14 +70,14 @@ function Test-GlyphSpace([byte[]]$table, [int]$offset) {
 switch ($inBytes.Length) {
     2048 {
         if (-not (Test-GlyphSpace $inBytes (32 * 8))) {
-            Write-Warning "$In : glyph 32 (space) is not all-zero - the tilemap driver relies on it staying blank for transparent cells (see src/tilemap.asm's GLYPH_SPACE comment); the font will still install as given"
+            Write-Warning "$In : glyph 32 (space) is not all-zero - the tilemap driver relies on it staying blank, or blanked cells show ink-coloured specks instead of clean black paper (see src/tilemap.asm's tm_clear_blank comment); the font will still install as given"
         }
         [System.IO.File]::WriteAllBytes($Out, $inBytes)
         "$Out : source=$In shape=2048 (full table, passthrough) bytes=$($inBytes.Length)"
     }
     768 {
         if (-not (Test-GlyphSpace $inBytes 0)) {
-            Write-Warning "$In : glyph 32 (space, the charset's first entry) is not all-zero - the tilemap driver relies on it staying blank for transparent cells (see src/tilemap.asm's GLYPH_SPACE comment); the font will still install as given"
+            Write-Warning "$In : glyph 32 (space, the charset's first entry) is not all-zero - the tilemap driver relies on it staying blank, or blanked cells show ink-coloured specks instead of clean black paper (see src/tilemap.asm's tm_clear_blank comment); the font will still install as given"
         }
         $outBytes = [System.IO.File]::ReadAllBytes($defaultChr)
         [System.Array]::Copy($inBytes, 0, $outBytes, 32 * 8, 768)
