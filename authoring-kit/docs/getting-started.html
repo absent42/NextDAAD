@@ -236,6 +236,42 @@ Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.</p>
 <p>Warnings are different from errors. Anything about the sound-effects
 bank, or about picture transparency, is advisory - the build carries on
 and the game still ships.</p>
+<h2 id="when-the-game-will-not-start">When the game will not start</h2>
+<p>A build that finished can still fail on the card. These are the
+interpreter's own messages, printed across the top line of the screen -
+with the border changing colour as a second signal, in case the failure
+came before the text layer was up. All of them stop the interpreter;
+reset or power-cycle to try again.</p>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NextDAAD: DDB missing - E1</code></td>
+<td>There is no <code>GAME.DDB</code> beside the interpreter, or the card could not be read at all. Copy the <strong>contents</strong> of <code>RELEASE\</code> to the card root, not the folder itself.</td>
+</tr>
+<tr>
+<td><code>NextDAAD: DDB oversize - E2</code></td>
+<td><code>GAME.DDB</code> is larger than the interpreter will load. See <a href="reference/limits.html">Limits</a>.</td>
+</tr>
+<tr>
+<td><code>NextDAAD: DDB bad header - E3</code></td>
+<td>The file is there but is not a database this build can load - a truncated or corrupted copy, most often. Rebuild and copy it again.</td>
+</tr>
+<tr>
+<td><code>NextDAAD: RUNTIME ERROR - E&lt;n&gt;</code></td>
+<td>The engine hit a fault while running your game. The digit names it: 1 is an invalid location and 4 a nested <code>DOALL</code>, both covered in <a href="known-differences.html">Known differences</a> and <a href="platform-notes.html">Platform notes</a>; 5 is a version 3 opcode in a version 2 database, see <a href="daad-v3.html">DAAD V3</a>.</td>
+</tr>
+<tr>
+<td><code>NextDAAD: RD STACK - E9</code></td>
+<td>The text reader ran out of nesting depth. This should not happen with a database this kit compiled - if it does, it is worth reporting.</td>
+</tr>
+</tbody>
+</table>
 <p>Once a build runs, the game itself may still behave differently from how
 it did on another DAAD interpreter. <a href="platform-notes.html">Platform
 notes</a> is the place to look first.</p>

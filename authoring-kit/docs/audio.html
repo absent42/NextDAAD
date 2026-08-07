@@ -28,6 +28,16 @@ on this target.</p>
   <code>SFX n 7</code>.</li>
 </ul>
 <p><code>SFX n 8</code> stops music of either kind.</p>
+<p><strong>Compose for three PSGs - nine channels.</strong> The Next's Turbo Sound has
+three AY chips, and the resident song player is built for exactly that
+shape. A <code>.aks</code> written for one or two PSGs converts without complaint
+and then does not play at all: the interpreter checks the channel count
+as it loads and refuses anything but nine, so the <code>SFX</code> that selects it
+is silently a no-op. Nothing in the build catches this for you. Set the
+song to 3 PSGs in Arkos Tracker and leave the channels you do not want
+empty - unused channels cost nothing and stay silent. (A streamed
+<code>STREAM_NNN.aks</code> is not restricted this way; the rule is the resident
+player's.)</p>
 <p><strong>The song slot is 10208 bytes</strong>, and a lot of real multi-channel tunes
 do not fit it. If the build stops with <code>over the 10208 song limit</code>, you
 have two choices: shorten the tune or reduce its channels, or rename the
@@ -66,6 +76,21 @@ fixed buffer, so there is no single limit to quote. As a working rule,
 Beyond that a sample competes with picture caching and streamed songs
 for the remaining memory, so test a large one on the memory
 configuration you expect players to have.</p>
+<p><strong>A restart does not stop the sound.</strong> Restarting play from inside the
+game - <code>RESTART</code>, or answering <code>END</code>'s prompt to play again - leaves the
+music and any playing sample running straight through, the same way they
+survive a <code>SAVE</code> and <code>LOAD</code>. Stop or change them yourself with
+<code>SFX n 7</code> / <code>SFX 0 8</code> and <code>SFX n 5</code> if a new game should start quiet.
+Leaving the game for real - declining the play-again prompt, <code>EXIT 0</code>, a
+fatal error - silences everything.</p>
+<p><strong>Repeats are free.</strong> Only the first play of a given sample number reads
+the card; the payload stays resident and plays instantly every time
+after that, until a different number is asked for. A sound you fire
+often costs the card read once.</p>
+<p><strong>Testing samples in an emulator.</strong> A sample playing over music drags
+the music's tempo down under CSpect. That is the emulator, not your
+game - on real hardware the tune holds its tempo while a sample plays.
+Judge the mix on hardware before you change anything.</p>
 <h2 id="beep-tones">BEEP tones</h2>
 <p><code>BEEP</code> plays a single tone through the AY. Write it the way the DAAD
 manual documents - duration first, then tone - and let the compiler
@@ -78,6 +103,13 @@ handle the rest.</p>
   to 238 range sounds, top octave included.</li>
 <li><strong>Tones must be even.</strong> An odd tone is silent by design.</li>
 </ul>
+<p><strong>Music and effects win.</strong> <code>BEEP</code> sounds on the third AY, the same chip
+the music and the sound effects use, and they have priority: a <code>BEEP</code>
+asked for while a looping song or a sound effect is playing is dropped
+and never sounds. The condact still blocks for its full duration, so the
+timing of everything around it is unchanged - you simply hear nothing.
+Use a sound effect, not a <code>BEEP</code>, for a sting over music; once a
+play-once tune (<code>SFX n 6</code>) has finished, <code>BEEP</code> sounds again.</p>
 <p><strong>Durations are scaled at compile time.</strong> Both <code>BEEP</code> and <code>PAUSE</code>
 durations are multiplied by this target's own note length on the way
 into the database, so a duration you authored is not the duration that

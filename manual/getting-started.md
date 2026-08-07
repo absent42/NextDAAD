@@ -140,6 +140,22 @@ Warnings are different from errors. Anything about the sound-effects
 bank, or about picture transparency, is advisory - the build carries on
 and the game still ships.
 
+## When the game will not start
+
+A build that finished can still fail on the card. These are the
+interpreter's own messages, printed across the top line of the screen -
+with the border changing colour as a second signal, in case the failure
+came before the text layer was up. All of them stop the interpreter;
+reset or power-cycle to try again.
+
+| Message | What to do |
+|---|---|
+| `NextDAAD: DDB missing - E1` | There is no `GAME.DDB` beside the interpreter, or the card could not be read at all. Copy the **contents** of `RELEASE\` to the card root, not the folder itself. |
+| `NextDAAD: DDB oversize - E2` | `GAME.DDB` is larger than the interpreter will load. See [Limits](reference/limits.md). |
+| `NextDAAD: DDB bad header - E3` | The file is there but is not a database this build can load - a truncated or corrupted copy, most often. Rebuild and copy it again. |
+| `NextDAAD: RUNTIME ERROR - E<n>` | The engine hit a fault while running your game. The digit names it: 1 is an invalid location and 4 a nested `DOALL`, both covered in [Known differences](known-differences.md) and [Platform notes](platform-notes.md); 5 is a version 3 opcode in a version 2 database, see [DAAD V3](daad-v3.md). |
+| `NextDAAD: RD STACK - E9` | The text reader ran out of nesting depth. This should not happen with a database this kit compiled - if it does, it is worth reporting. |
+
 Once a build runs, the game itself may still behave differently from how
 it did on another DAAD interpreter. [Platform
 notes](platform-notes.md) is the place to look first.

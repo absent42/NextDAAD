@@ -74,6 +74,36 @@ coordinate. If your pointer is a cross, you probably want its hotspot at
 <p>All eight sub-commands, 0 to 7, are implemented. The full table is in
 <a href="reference/symbols.html">Symbols</a>, and <a href="customising.html">Customising</a>
 covers supplying your own pointer artwork.</p>
+<h3 id="extern-implements-three-vectors"><code>EXTERN</code> implements three vectors</h3>
+<p><code>EXTERN n v</code> picks one of sixteen dispatch vectors - the mechanism MALUVA
+used to bolt extra features onto older DAAD. Three of them do something
+here:</p>
+<ul>
+<li><strong>Vector 3, <code>XMESSAGE</code></strong> - print external text held in <code>0.XMB</code>. It
+  reads exactly like a message stored in the database: same token
+  expansion, same word wrap, same More... paging. A missing or
+  unreadable <code>0.XMB</code> prints nothing and the game carries on. In a
+  version 3 database the native <code>XMES</code> opcode reaches the same text with
+  no <code>EXTERN</code> involved; the vector stays for version 2 databases. See
+  <a href="reference/limits.html">Limits</a>.</li>
+<li><strong>Vector 4, <code>XPART</code></strong> - switch the running game to another part. See
+  <a href="multi-part-games.html">Multi-part games</a>.</li>
+<li><strong>Vector 7, <code>XUNDONE</code></strong> - clear the current action's done stamp, for a
+  <code>SYNONYM</code>-style entry that should not count as a completed turn.</li>
+</ul>
+<p><strong>Every other vector is a safe no-op.</strong> The condact is consumed and play
+continues. The rest of classic MALUVA - <code>XPICTURE</code>, <code>XSAVE</code>, <code>XLOAD</code>,
+<code>XBEEP</code>, <code>XSPEED</code>, <code>XNEXTCLS</code>, <code>XNEXTRST</code> - is deprecated in the compiler
+in favour of engine features this target covers natively:
+<code>PICTURE</code>/<code>DISPLAY</code> for pictures, <code>SAVE</code>/<code>LOAD</code> for game state, <code>EXIT</code>
+for a reset, and <code>SFX</code> for sound.</p>
+<p>Two things are deliberately unavailable. The compiler's <code>-X</code>
+(<code>dumpToXMB</code>) switch, which would route all of a game's text through
+<code>0.XMB</code> rather than only the text you asked for by name, is not
+implemented. And <strong>do not hand-write <code>EXTERN n 3</code></strong> for anything else:
+vector 3 has a three-byte encoding of its own, and the engine always
+consumes the matching third byte whenever it sees that shape, so any
+other use of a literal 3 there misaligns every condact after it.</p>
 <h3 id="autog-searches-here-then-carried-then-worn"><code>AUTOG</code> searches here, then carried, then worn</h3>
 <p><code>AUTOG</code> - the condact behind a <code>GET</code> entry that takes its object from
 what the player typed rather than from a number in your source - looks

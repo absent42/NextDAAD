@@ -21,6 +21,12 @@ the root copy for that part only.
 RAM banks, and a 1MB machine has too small a pool to hold or stream
 clips reliably.
 
+**Video needs real hardware to watch.** Cutscenes do not play correctly
+under emulation: the player reads the card directly and paces itself off
+a hardware timer, and no emulator currently reproduces both well enough
+to run a clip through. The rest of your game tests in an emulator as
+usual - only the cutscenes need a real machine.
+
 The kit can encode the same piece of footage two completely different
 ways, and on this hardware that choice decides more about how a
 cutscene looks than every other setting put together. Pick the right

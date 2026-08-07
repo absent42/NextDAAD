@@ -23,6 +23,17 @@ Compose in Arkos Tracker 3 and drop the `.aks` files into `AUDIO\`:
 
 `SFX n 8` stops music of either kind.
 
+**Compose for three PSGs - nine channels.** The Next's Turbo Sound has
+three AY chips, and the resident song player is built for exactly that
+shape. A `.aks` written for one or two PSGs converts without complaint
+and then does not play at all: the interpreter checks the channel count
+as it loads and refuses anything but nine, so the `SFX` that selects it
+is silently a no-op. Nothing in the build catches this for you. Set the
+song to 3 PSGs in Arkos Tracker and leave the channels you do not want
+empty - unused channels cost nothing and stay silent. (A streamed
+`STREAM_NNN.aks` is not restricted this way; the rule is the resident
+player's.)
+
 **The song slot is 10208 bytes**, and a lot of real multi-channel tunes
 do not fit it. If the build stops with `over the 10208 song limit`, you
 have two choices: shorten the tune or reduce its channels, or rename the
@@ -70,6 +81,24 @@ Beyond that a sample competes with picture caching and streamed songs
 for the remaining memory, so test a large one on the memory
 configuration you expect players to have.
 
+**A restart does not stop the sound.** Restarting play from inside the
+game - `RESTART`, or answering `END`'s prompt to play again - leaves the
+music and any playing sample running straight through, the same way they
+survive a `SAVE` and `LOAD`. Stop or change them yourself with
+`SFX n 7` / `SFX 0 8` and `SFX n 5` if a new game should start quiet.
+Leaving the game for real - declining the play-again prompt, `EXIT 0`, a
+fatal error - silences everything.
+
+**Repeats are free.** Only the first play of a given sample number reads
+the card; the payload stays resident and plays instantly every time
+after that, until a different number is asked for. A sound you fire
+often costs the card read once.
+
+**Testing samples in an emulator.** A sample playing over music drags
+the music's tempo down under CSpect. That is the emulator, not your
+game - on real hardware the tune holds its tempo while a sample plays.
+Judge the mix on hardware before you change anything.
+
 ## BEEP tones
 
 `BEEP` plays a single tone through the AY. Write it the way the DAAD
@@ -83,6 +112,14 @@ Two rules the compiler enforces before your game ever runs:
   duration, so it becomes a silent wait rather than a note. The whole 48
   to 238 range sounds, top octave included.
 - **Tones must be even.** An odd tone is silent by design.
+
+**Music and effects win.** `BEEP` sounds on the third AY, the same chip
+the music and the sound effects use, and they have priority: a `BEEP`
+asked for while a looping song or a sound effect is playing is dropped
+and never sounds. The condact still blocks for its full duration, so the
+timing of everything around it is unchanged - you simply hear nothing.
+Use a sound effect, not a `BEEP`, for a sting over music; once a
+play-once tune (`SFX n 6`) has finished, `BEEP` sounds again.
 
 **Durations are scaled at compile time.** Both `BEEP` and `PAUSE`
 durations are multiplied by this target's own note length on the way

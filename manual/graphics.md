@@ -46,6 +46,23 @@ Setting `COMPRESS=1` in `CONFIG.BAT` ZX0-compresses each converted
 picture, which makes for a much smaller SD card image. The interpreter
 decompresses on load, so nothing else changes.
 
+## The classic bordered screen
+
+256-wide art gives you the traditional Spectrum look - a picture sitting
+in the paper area with a coloured surround around it. To lay your text
+out to match, keep your windows inside the paper area of the 80x32 text
+grid, which spans rows 4 to 27 and columns 8 to 71. `WINAT 4 8` with
+`WINSIZE 24 64` is the whole classic screen.
+
+`BORDER 0` to `BORDER 7` sets the surround, exactly as it always did.
+What it colours here is everything outside the artwork and the text: the
+old ULA screen is switched off on this target, so the interpreter maps
+`BORDER` onto the Next's own fallback colour instead of the ULA border
+register. The result on screen is the one you expect.
+
+320-wide art covers the border area as well, so `BORDER` only shows in a
+game laid out the classic way.
+
 ## Text colours are never at risk
 
 Text is drawn on its own layer with its own fixed palette. A picture's

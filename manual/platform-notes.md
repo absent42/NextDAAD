@@ -88,6 +88,39 @@ All eight sub-commands, 0 to 7, are implemented. The full table is in
 [Symbols](reference/symbols.md), and [Customising](customising.md)
 covers supplying your own pointer artwork.
 
+### `EXTERN` implements three vectors
+
+`EXTERN n v` picks one of sixteen dispatch vectors - the mechanism MALUVA
+used to bolt extra features onto older DAAD. Three of them do something
+here:
+
+- **Vector 3, `XMESSAGE`** - print external text held in `0.XMB`. It
+  reads exactly like a message stored in the database: same token
+  expansion, same word wrap, same More... paging. A missing or
+  unreadable `0.XMB` prints nothing and the game carries on. In a
+  version 3 database the native `XMES` opcode reaches the same text with
+  no `EXTERN` involved; the vector stays for version 2 databases. See
+  [Limits](reference/limits.md).
+- **Vector 4, `XPART`** - switch the running game to another part. See
+  [Multi-part games](multi-part-games.md).
+- **Vector 7, `XUNDONE`** - clear the current action's done stamp, for a
+  `SYNONYM`-style entry that should not count as a completed turn.
+
+**Every other vector is a safe no-op.** The condact is consumed and play
+continues. The rest of classic MALUVA - `XPICTURE`, `XSAVE`, `XLOAD`,
+`XBEEP`, `XSPEED`, `XNEXTCLS`, `XNEXTRST` - is deprecated in the compiler
+in favour of engine features this target covers natively:
+`PICTURE`/`DISPLAY` for pictures, `SAVE`/`LOAD` for game state, `EXIT`
+for a reset, and `SFX` for sound.
+
+Two things are deliberately unavailable. The compiler's `-X`
+(`dumpToXMB`) switch, which would route all of a game's text through
+`0.XMB` rather than only the text you asked for by name, is not
+implemented. And **do not hand-write `EXTERN n 3`** for anything else:
+vector 3 has a three-byte encoding of its own, and the engine always
+consumes the matching third byte whenever it sees that shape, so any
+other use of a literal 3 there misaligns every condact after it.
+
 ### `AUTOG` searches here, then carried, then worn
 
 `AUTOG` - the condact behind a `GET` entry that takes its object from
