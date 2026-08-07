@@ -13,11 +13,10 @@
 this target is not quite like the other machines DAAD runs on.</p>
 <p>Nothing on this page is going to change. Some of it is forced by the
 hardware - text lives on the tilemap here and pictures live on Layer 2,
-which are two separate surfaces rather than one screen. Some of it is a
-rule that was settled by measuring the original ZX Spectrum interpreter,
-the lineage this one reimplements, and following it. Either way, this is
-how the target works, and it is what to read first when a game behaves
-differently here than it did somewhere else.</p>
+which are two separate surfaces rather than one screen. The rest is
+settled by choice. Either way, this is how the target works, and it is
+what to read first when a game behaves differently here than it did
+somewhere else.</p>
 <p>For behaviour that is <em>not</em> settled - differences we mean to remove -
 see <a href="known-differences.html">Known differences</a>.</p>
 <h2 id="timing">Timing</h2>
@@ -75,6 +74,35 @@ coordinate. If your pointer is a cross, you probably want its hotspot at
 <p>All eight sub-commands, 0 to 7, are implemented. The full table is in
 <a href="reference/symbols.html">Symbols</a>, and <a href="customising.html">Customising</a>
 covers supplying your own pointer artwork.</p>
+<h3 id="autog-searches-here-then-carried-then-worn"><code>AUTOG</code> searches here, then carried, then worn</h3>
+<p><code>GET</code> with no object named - the <code>AUTOG</code> condact - looks for the named
+noun at the player's location first, then among carried objects, then
+among worn ones, and takes the first it finds.</p>
+<p>That order only shows when the same noun matches more than one object at
+once. If your game can have a duplicate both carried and worn, the
+carried one is the one <code>GET</code> resolves to here. jDAAD tries worn before
+carried, so a game written against it can pick up the other object.
+Where it matters, name the object explicitly rather than relying on the
+search order.</p>
+<h3 id="end-confirms-against-sm31"><code>END</code> confirms against SM31</h3>
+<p><code>END</code> prints SM13 and reads a line. A reply beginning with SM31's first
+character ends the session; anything else restarts the game. (<code>QUIT</code> is
+the mirror image: it prints SM12 and confirms on SM30's first
+character.)</p>
+<p>Write SM30 as your "yes" word and SM31 as your "no" word, and both read
+correctly. A game whose system message table was written against jDAAD,
+which tests <code>END</code> against SM30 instead, will show the wrong prompt
+wording or act on the wrong reply here - so check SM30 and SM31 when you
+bring one across.</p>
+<h3 id="ramload-n-restores-flags-0-to-n-inclusive"><code>RAMLOAD n</code> restores flags 0 to n inclusive</h3>
+<p><code>RAMLOAD</code> with a flag argument restores object locations in full and
+flags <strong>0 to n inclusive</strong> - that is, n + 1 flags. <code>RAMLOAD 10</code> restores
+eleven flags, 0 through 10.</p>
+<p>jDAAD stops one short, at 0 to n - 1. A game that leans on the partial
+restore to protect a particular flag will find that flag restored here
+and not there, or the other way round, with nothing on screen to say so.
+Choose an argument that leaves an unused flag on the boundary and the
+question stops mattering.</p>
 <h2 id="text-and-messages">Text and messages</h2>
 <h3 id="capitalises-and-only-in-spanish-databases"><code>@</code> capitalises, and only in Spanish databases</h3>
 <p><code>_</code> substitutes the referenced object's name into a message, in every
@@ -141,9 +169,12 @@ are outside one.</p>
   condact is implemented. <code>HASAT GMODE</code> is therefore true here, so a
   period game that gates its picture drawing on <code>HASAT GMODE</code> does draw
   its pictures. Bit 0 is set whether or not a mouse is plugged in.</li>
-<li><strong>Flag 62</strong>, the screen mode byte, reads <strong>144</strong>. The byte is
-  machine-specific by definition, so test it for what you need rather
-  than comparing it against a particular number.</li>
+<li><strong>Flag 62</strong>, the screen mode byte, reads <strong>144</strong>: bit 7 for "palette
+  switching is available", bit 4 for "a native machine mode, not one of
+  the original ST or PC values", and the low four bits naming the mode -
+  0 here, for Layer 2 at 256x192 in 256 colours. Test the bit you care
+  about rather than comparing the whole byte against a number; every
+  machine puts a different value in it.</li>
 </ul>
 <p>Both are written once when the game starts and are not rewritten if the
 game switches Layer 2 mode later.</p>

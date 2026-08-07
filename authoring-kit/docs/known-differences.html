@@ -41,10 +41,11 @@ companions in flags 54 to 59 - still holds whatever it held before.</p>
 say so explicitly with <code>SETCO n</code>. That works on every interpreter and
 costs one condact.</p>
 <h3 id="copyoo-adjusts-flag-1"><code>COPYOO</code> adjusts flag 1</h3>
-<p><code>COPYOO objno1 objno2</code> copies object 1's location to object 2. If object
-2 was being carried, flag 1 - the carried count - is decremented to
-match. <code>SWAP</code> behaves differently: it is a raw exchange of two
-locations and never touches flag 1.</p>
+<p><code>COPYOO objno1 objno2</code> copies object 1's location to object 2, and flag
+1 - the carried count - is adjusted to match: down if the move takes
+object 2 out of the player's hands, up if it puts one into them.
+<code>SWAP</code> behaves differently: it is a raw exchange of two locations and
+never touches flag 1.</p>
 <p>Interpreters disagree about this, so if your game reads flag 1
 immediately after a <code>COPYOO</code> and you want to be sure of the number
 everywhere, recount first with <code>ABILITY</code>.</p>

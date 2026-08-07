@@ -5,11 +5,10 @@ this target is not quite like the other machines DAAD runs on.
 
 Nothing on this page is going to change. Some of it is forced by the
 hardware - text lives on the tilemap here and pictures live on Layer 2,
-which are two separate surfaces rather than one screen. Some of it is a
-rule that was settled by measuring the original ZX Spectrum interpreter,
-the lineage this one reimplements, and following it. Either way, this is
-how the target works, and it is what to read first when a game behaves
-differently here than it did somewhere else.
+which are two separate surfaces rather than one screen. The rest is
+settled by choice. Either way, this is how the target works, and it is
+what to read first when a game behaves differently here than it did
+somewhere else.
 
 For behaviour that is *not* settled - differences we mean to remove -
 see [Known differences](known-differences.md).
@@ -88,6 +87,44 @@ coordinate. If your pointer is a cross, you probably want its hotspot at
 All eight sub-commands, 0 to 7, are implemented. The full table is in
 [Symbols](reference/symbols.md), and [Customising](customising.md)
 covers supplying your own pointer artwork.
+
+### `AUTOG` searches here, then carried, then worn
+
+`GET` with no object named - the `AUTOG` condact - looks for the named
+noun at the player's location first, then among carried objects, then
+among worn ones, and takes the first it finds.
+
+That order only shows when the same noun matches more than one object at
+once. If your game can have a duplicate both carried and worn, the
+carried one is the one `GET` resolves to here. jDAAD tries worn before
+carried, so a game written against it can pick up the other object.
+Where it matters, name the object explicitly rather than relying on the
+search order.
+
+### `END` confirms against SM31
+
+`END` prints SM13 and reads a line. A reply beginning with SM31's first
+character ends the session; anything else restarts the game. (`QUIT` is
+the mirror image: it prints SM12 and confirms on SM30's first
+character.)
+
+Write SM30 as your "yes" word and SM31 as your "no" word, and both read
+correctly. A game whose system message table was written against jDAAD,
+which tests `END` against SM30 instead, will show the wrong prompt
+wording or act on the wrong reply here - so check SM30 and SM31 when you
+bring one across.
+
+### `RAMLOAD n` restores flags 0 to n inclusive
+
+`RAMLOAD` with a flag argument restores object locations in full and
+flags **0 to n inclusive** - that is, n + 1 flags. `RAMLOAD 10` restores
+eleven flags, 0 through 10.
+
+jDAAD stops one short, at 0 to n - 1. A game that leans on the partial
+restore to protect a particular flag will find that flag restored here
+and not there, or the other way round, with nothing on screen to say so.
+Choose an argument that leaves an unused flag on the boundary and the
+question stops mattering.
 
 ## Text and messages
 
@@ -175,9 +212,12 @@ are outside one.
   condact is implemented. `HASAT GMODE` is therefore true here, so a
   period game that gates its picture drawing on `HASAT GMODE` does draw
   its pictures. Bit 0 is set whether or not a mouse is plugged in.
-- **Flag 62**, the screen mode byte, reads **144**. The byte is
-  machine-specific by definition, so test it for what you need rather
-  than comparing it against a particular number.
+- **Flag 62**, the screen mode byte, reads **144**: bit 7 for "palette
+  switching is available", bit 4 for "a native machine mode, not one of
+  the original ST or PC values", and the low four bits naming the mode -
+  0 here, for Layer 2 at 256x192 in 256 colours. Test the bit you care
+  about rather than comparing the whole byte against a number; every
+  machine puts a different value in it.
 
 Both are written once when the game starts and are not rewritten if the
 game switches Layer 2 mode later.

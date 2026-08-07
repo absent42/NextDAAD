@@ -45,10 +45,11 @@ costs one condact.
 
 ### `COPYOO` adjusts flag 1
 
-`COPYOO objno1 objno2` copies object 1's location to object 2. If object
-2 was being carried, flag 1 - the carried count - is decremented to
-match. `SWAP` behaves differently: it is a raw exchange of two
-locations and never touches flag 1.
+`COPYOO objno1 objno2` copies object 1's location to object 2, and flag
+1 - the carried count - is adjusted to match: down if the move takes
+object 2 out of the player's hands, up if it puts one into them.
+`SWAP` behaves differently: it is a raw exchange of two locations and
+never touches flag 1.
 
 Interpreters disagree about this, so if your game reads flag 1
 immediately after a `COPYOO` and you want to be sure of the number

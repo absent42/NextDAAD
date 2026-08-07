@@ -200,10 +200,15 @@ option; nothing replaces it.</p>
 </ul>
 <h2 id="020-23-july-2026">0.2.0 - 23 July 2026</h2>
 <ul>
-<li>Cutscene video: the native NXV format, an encoder that ships with the
-  kit, and a build step that encodes <code>VIDEO\NNN.mp4</code> for you and caches
-  the result. Playback with <code>GFX n 13</code> and <code>GFX n 14</code>.</li>
+<li>Cutscene video: the native NXV format and a build step that encodes
+  <code>VIDEO\NNN.mp4</code> for you and caches the result. Playback with
+  <code>GFX n 13</code> and <code>GFX n 14</code>.</li>
+<li><code>videnc.exe</code> ships with the kit, so no Python is needed to encode a
+  cutscene. ffmpeg is the only extra download video authoring wants.</li>
 <li>AY music is parked during a cutscene and resumes after it.</li>
+<li>Deleting a source no longer leaves its converted file behind in
+  <code>RELEASE\</code>. A tune or picture you remove from the kit folder is
+  cleared out on the next build instead of lingering on the card.</li>
 <li>Keyboard fixes: the symbol-shift map was off by one from F onward, and
   CAPS+2 typed a literal 2 instead of toggling caps lock.</li>
 <li>Font fixes: a proper ampersand and pound sign in place of the euro
