@@ -35,6 +35,7 @@
 #   -Part               sd\PART\      NDPARTA + PART2\ shadow
 #   -AudLad             sd\AUDLAD\    tests\audlad.dsf
 #   -SfxDi              sd\SFXDI\     tests\sfxdi.dsf
+#   -L2Holes            sd\L2HOLES\   tests\l2holes.dsf
 #   -Uto                sd\UTO\       tools\TEST.DSF     (V2)
 #   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
@@ -103,7 +104,8 @@
 # whichever copy runs last in this script wins: -Suite copies first,
 # -Err4 copies over it, -GMode copies over that, -V3 over that,
 # -Rab copies over that,
-# -UU copies over that, then -Part, then -AudLad, then -SfxDi last of
+# -UU copies over that, then -Part, then -AudLad, then -SfxDi, then
+# -L2Holes last of
 # all, in the order their blocks appear below. $legName is resolved in
 # exactly that order, so the folder and the active DDB always agree.
 # The template is active if no switch is given.
@@ -183,6 +185,23 @@
 #            predicted frequencies, boundary-by-boundary checklist, pass
 #            criteria): .superpowers\sdd\sfx-di-audible-test.md. An
 #            alternative to -Aud/-AudLad, not a companion.
+#   -L2Holes Layer 2 TRANSPARENCY / punch-out fixture, staged into
+#            sd\L2HOLES\: make the tests\l2holes.dsf DDB active AND
+#            stage the punch-out card tests\art\mkl2holes.py generates
+#            as 001.NXI (256x192). The inverse of -SfxDi's card - that
+#            one must contain NO transparent pixel, this one is made of
+#            them. The DSF fills all 80x32 tilemap cells with a position
+#            ruler ("12-16DG." = row 12, column 16, tag DG), the card
+#            covers it with opaque Layer 2 and punches index-255 holes
+#            at known places, so what you read THROUGH a hole names the
+#            hole without counting cells on the glass. .NXI and not
+#            .NX2 deliberately: gfxExtTab routes NXI to mode 0 / width
+#            256 and NX2 to mode 1 / width 320, the NX2 variants probe
+#            FIRST, and a 320-wide surface would cover the control
+#            margin the fixture reads its verdict from. Run sheet (hole
+#            table, what a failure of each hole means):
+#            docs\superpowers\l2-holes-run-sheet.md. An alternative to
+#            every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
 # this repository:
@@ -421,7 +440,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$L2Holes, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -444,6 +463,7 @@ if ($UU)               { $legName = 'UU' }
 if ($Part)             { $legName = 'PART' }
 if ($AudLad)           { $legName = 'AUDLAD' }
 if ($SfxDi)            { $legName = 'SFXDI' }
+if ($L2Holes)          { $legName = 'L2HOLES' }
 if ($Uto)              { $legName = 'UTO' }
 if ($UtoV3)            { $legName = 'UTOV3' }
 $leg = Join-Path $sd $legName
@@ -463,7 +483,8 @@ function Reset-LegDir {
     # sd\ itself, sd\L2DMA\, or anything outside sd\).
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
-               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'UTO', 'UTOV3')
+               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'L2HOLES',
+               'UTO', 'UTOV3')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -791,6 +812,44 @@ finally {
     Pop-Location
 }
 
+# Layer 2 TRANSPARENCY / punch-out fixture (2026-08-07). Compiled
+# unconditionally like the six above so a break in the DSF is caught on a
+# plain run; only -L2Holes makes it the active GAME.DDB (sd\L2HOLES\).
+#
+# THE TOOLCHAIN IS RUN OUT OF TREE HERE, and this is the ONE fixture that
+# does. Every block above copies its DSF INTO tools\DAAD-READY and
+# compiles with the cwd set there, which WRITES INTO tools\ - read-only
+# working material that git cannot restore. Rather than convert the older
+# blocks (a separate change, with its own risk), this one runs DRF.exe and
+# DRB.PHP by absolute path with the cwd set to tests\out\l2holes-work and
+# writes nothing under tools\ at all. The result is byte-identical: DRF
+# takes the DSF path as an argument, and DRB's default compression tokens
+# are embedded in the PHP (drb.php's $compressionJSON_EN), read from an
+# external file only when a <name>.tok sits next to the input - which is
+# true in neither location.
+#
+# The .json is KEPT, not deleted like the others: the ruler verification
+# below reads the compiled messages back out of it.
+#
+# No -v3, deliberately. The fixture's header version must stay 2 (asserted
+# below); nothing here depends on a V3 condact, and a V3 header would
+# change SYNONYM/attribute semantics under a fixture whose whole value is
+# that exactly one thing moves.
+$l2holesWork = Join-Path $root 'tests\out\l2holes-work'
+New-Item -ItemType Directory -Force $l2holesWork | Out-Null
+Copy-Item "$PSScriptRoot\l2holes.dsf" "$l2holesWork\NDL2HOLE.DSF" -Force
+Push-Location $l2holesWork
+try {
+    & "$dr\TOOLS\DRC\DRF.exe" zx next NDL2HOLE.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (l2holes)" }
+    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDL2HOLE.json NDL2HOLE.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (l2holes)" }
+    Copy-Item NDL2HOLE.DDB "$root\tests\out\l2holes.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 function Find-ByteRuns {
     # Every start offset of $needle in $hay. Plain scan - the images
     # here are tens of KB, so nothing cleverer is warranted.
@@ -940,6 +999,108 @@ foreach ($chk in @(
     }
 }
 "sfxdi.ddb: v$($sfxdiBytes[0]), 24x DISPLAY 0 at $($dispHits[0]), 4x held render contiguous at $($heldHits[0]), 20x GFX 0 1/0 0 at $($gfxHits[0]), PAUSE 38 x$($pauseHits.Count), 8 ANYKEY boundaries at $($akAll -join ','), PICTURE 1 + SFX 1 2 / 2 2 / 0 5 all present"
+
+# ---- l2holes: the ruler, cell by cell, then the compiled bytes ------
+# THE RULER IS THE INSTRUMENT, and its column accounting is fragile in a
+# way nothing downstream would notice: NextDAAD buffers non-space
+# characters and flushes on a space (src\print.asm prn_char/prn_flush),
+# so each MES must be exactly 15 non-space characters plus ONE trailing
+# space. A trailing space eaten by an editor would silently merge two
+# segments, shift every column left and re-colour the row - and the card
+# would then be judged against a ruler that lies. This restates the hole
+# table from tests\art\mkl2holes.py INDEPENDENTLY, so a hole that moves
+# without its tag moving fails the build instead of the run.
+$l2holesJson = Get-Content "$l2holesWork\NDL2HOLE.json" -Raw | ConvertFrom-Json
+$l2hMsgs = @{}
+foreach ($m in $l2holesJson.messages) { $l2hMsgs[[int]$m.Value] = [string]$m.Text }
+$l2hProcs = @{}
+foreach ($p in $l2holesJson.processes) { $l2hProcs[[int]$p.Value] = $p.entries }
+
+$l2hTags = @{
+    '4,1' = 'TL'; '5,1' = 'TL'; '4,8' = 'TR'; '5,8' = 'TR'
+    '26,1' = 'BL'; '27,1' = 'BL'; '26,8' = 'BR'; '27,8' = 'BR'
+    '15,2' = 'DG'; '16,2' = 'DG'; '17,2' = 'DG'
+    '16,4' = 'CT'; '16,5' = 'CT'; '18,4' = 'CT'
+    '15,6' = 'RN'; '15,7' = 'RN'; '13,6' = 'RN'
+    '20,2' = '32'; '21,2' = '32'; '20,4' = '16'; '21,4' = '16'; '20,6' = '08'
+    '21,3' = '4C'
+    '9,3' = 'E3'; '9,4' = 'E3'; '10,3' = 'E3'; '11,4' = 'E3'
+    '9,5' = 'E7'; '9,6' = 'E7'; '10,6' = 'E7'; '11,5' = 'E7'
+}
+
+$l2hRows = @()
+foreach ($tbl in 2, 3) {
+    if (-not $l2hProcs.ContainsKey($tbl)) { throw "l2holes: process $tbl is missing - the ruler would be blank" }
+    foreach ($e in $l2hProcs[$tbl]) {
+        $texts = @()
+        $inks = @()
+        foreach ($c in $e.condacts) {
+            if ($c.Condact -eq 'MES') { $texts += $l2hMsgs[[int]$c.Param1] }
+            elseif ($c.Condact -eq 'INK') { $inks += [int]$c.Param1 }
+            else { throw "l2holes: unexpected condact '$($c.Condact)' inside the ruler fill" }
+        }
+        if ($texts.Count -ne 5 -or $inks.Count -ne 5) {
+            throw "l2holes: ruler row $($l2hRows.Count) has $($inks.Count) INK / $($texts.Count) MES, expected 5 of each"
+        }
+        $l2hRows += , @{ text = ($texts -join ''); parts = $texts; inks = $inks }
+    }
+}
+if ($l2hRows.Count -ne 32) { throw "l2holes: the ruler has $($l2hRows.Count) rows, expected 32" }
+
+for ($r = 0; $r -lt 32; $r++) {
+    $row = $l2hRows[$r]
+    $last = ($r -eq 31)
+    # 31 is one cell short on purpose: an 80th character there would wrap,
+    # newline and scroll the whole screen up by one (win_newline,
+    # src\windows.asm), destroying row 0.
+    $wantLen = if ($last) { 79 } else { 80 }
+    if ($row.text.Length -ne $wantLen) {
+        throw "l2holes: row $r is $($row.text.Length) columns, expected $wantLen"
+    }
+    for ($i = 0; $i -lt 5; $i++) {
+        $p = $row.parts[$i]
+        $wantSeg = if ($last -and $i -eq 4) { 15 } else { 16 }
+        if ($p.Length -ne $wantSeg) { throw "l2holes: row $r segment $i is $($p.Length) chars, expected $wantSeg" }
+        if (-not $p.EndsWith(' ')) { throw "l2holes: row $r segment $i has no trailing space - it would not flush (see src\print.asm prn_flush)" }
+        if ($p.Substring(0, $p.Length - 1).Contains(' ')) { throw "l2holes: row $r segment $i has an interior space - the column accounting assumes exactly one, at the end" }
+    }
+    if ($r -eq 0 -or $r -eq 31) { continue }   # legend rows, not ruler rows
+    for ($u = 0; $u -lt 10; $u++) {
+        $cell = $row.text.Substring(8 * $u, 8)
+        $want = '{0:d2}-{1:d2}' -f $r, (8 * $u)
+        if ($cell.Substring(0, 5) -ne $want) {
+            throw "l2holes: row $r unit $u reads '$cell', expected it to start '$want'"
+        }
+        $t = $cell.Substring(5, 2)
+        $key = "$r,$u"
+        if ($l2hTags.ContainsKey($key)) {
+            if ($t -ne $l2hTags[$key]) { throw "l2holes: row $r unit $u is tagged '$t', the card uncovers '$($l2hTags[$key])' there" }
+        }
+        elseif ($r -lt 4 -or $r -gt 27 -or $u -eq 0 -or $u -eq 9) {
+            if ($t -ne 'CM') { throw "l2holes: row $r unit $u is in the control margin but tagged '$t', not CM" }
+        }
+    }
+}
+
+# The JSON above is the front end's view. These are the bytes the
+# interpreter will actually execute - checked because DRC has rewritten
+# stimulus condacts under this project before (see the sfxdi block).
+$l2holesBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\l2holes.ddb")
+if ($l2holesBytes[0] -ne 2) {
+    throw "l2holes: DDB header version byte is $($l2holesBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+}
+foreach ($s in @(
+        @{ n = 'MODE 2 (the More... pager off - without it the fill stops at 31 lines)'; b = [byte[]]@(81, 2) },
+        @{ n = 'WINSIZE 32 80 (the full-screen ruler window)'; b = [byte[]]@(107, 32, 80) },
+        @{ n = 'WINAT 31 79 + WINSIZE 1 1 (the ANYKEY parking window)'; b = [byte[]]@(82, 31, 79, 107, 1, 1) },
+        @{ n = 'PAPER 1 (dark blue - the binary hole detector)'; b = [byte[]]@(65, 1) },
+        @{ n = 'PICTURE 1 (the card)'; b = [byte[]]@(84, 1) },
+        @{ n = 'DISPLAY 0 (card up)'; b = [byte[]]@(28, 0) },
+        @{ n = 'DISPLAY 1 (card cleared - the A/B reference state)'; b = [byte[]]@(28, 1) },
+        @{ n = 'ANYKEY (the toggle wait)'; b = [byte[]]@(24) })) {
+    if ((Find-ByteRuns $l2holesBytes $s.b).Count -lt 1) { throw "l2holes: '$($s.n)' is not present in tests\out\l2holes.ddb" }
+}
+"l2holes.ddb: $($l2holesBytes.Length) bytes, v$($l2holesBytes[0]), ruler 32 rows x 80 columns verified from the compiled messages ($($l2hTags.Count) hole tags), MODE 2 / WINSIZE 32 80 / WINAT 31 79 / PAPER 1 / PICTURE 1 / DISPLAY 0 / DISPLAY 1 / ANYKEY all present"
 
 # ---- DRC's -D debug marker, both halves of the contract -------------
 # HALF ONE: what DRC EMITS. tests\debugflag.dsf has three DEBUG lines;
@@ -2345,6 +2506,80 @@ if ($SfxDi) {
     $sfxDiActive = $true
 }
 
+$l2holesActive = $false
+if ($L2Holes) {
+    # Layer 2 TRANSPARENCY / punch-out leg. Two jobs, both owned entirely
+    # by this switch: make tests\l2holes.dsf the active DDB, and stage the
+    # punch-out card tests\art\mkl2holes.py generates as 001.NXI.
+    #
+    # THE CARD IS NOT OPTIONAL AND MUST BE .NXI. gfxExtTab routes NXI rows
+    # to mode 0 / width 256 and NX2 rows to mode 1 / width 320, and the
+    # NX2 variants probe FIRST. A 320-wide surface would cover the control
+    # margin this fixture reads its verdict from, so a leftover 001.NX2
+    # winning the chain would not merely change the path (the -SfxDi
+    # hazard) - it would move the picture out from under the ruler.
+    # sd\L2HOLES\ is emptied at the top of the staging section and holds
+    # this fixture's three files and nothing else, so no other art of
+    # number 001 exists for the probe chain to find.
+    #
+    # Same CSpect lock hazard as -Aud/-AudLad/-SfxDi, and the same
+    # refusal: a running emulator holds sd\ files open, the copies fail
+    # one at a time, and a missing 001.NXI makes PICTURE fail - the
+    # fixture would then be reporting on staging rather than on Layer 2.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
+    }
+    Copy-Item "$root\tests\out\l2holes.ddb" "$leg\GAME.DDB" -Force
+    # Generated, not committed - a byte-exact function of the constants in
+    # tests\art\mkl2holes.py, the same rule the tones and the -SfxDi card
+    # follow. That script asserts its own invariants and decodes the file
+    # back; the checks here are the independent half, from the staging
+    # side, in the terms the interpreter will read it.
+    & python "$PSScriptRoot\art\mkl2holes.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkl2holes.py failed" }
+    $holeSrc = "$root\tests\out\l2holes.nxi"
+    if (-not (Test-Path $holeSrc)) { throw "mkl2holes.py produced no l2holes.nxi" }
+    $hole = [System.IO.File]::ReadAllBytes($holeSrc)
+    # gfx_derive_height (src\overlay2.asm) takes the row count from the
+    # FILE LENGTH alone - (bytes - 512) / 256 - and rejects anything
+    # outside 1..192 in 256-wide mode, so the size is the one thing that
+    # must be right for the card to load at all. Pinned to 192 here, not
+    # merely bounded: this card must be full-screen or the holes near the
+    # bottom edge would have no Layer 2 to punch through.
+    if ((($hole.Length - 512) % 256) -ne 0) { throw "l2holes.nxi is $($hole.Length) bytes - not 512 + a whole number of 256-byte rows" }
+    $holeRows = ($hole.Length - 512) / 256
+    if ($holeRows -ne 192) { throw "l2holes.nxi derives $holeRows rows - this card must be the full-screen 192 (gfx_derive_height's mode 0 ceiling)" }
+    # Exactly one non-255 palette entry may pack to $E3, and that entry IS
+    # the collision-dodge test (l2_palette_load nudges any entry whose
+    # byte0 equals L2_TRANSP_COLOUR to $E2): two would make a hole
+    # ambiguous, none would make the E3 block a plain magenta rectangle
+    # testing nothing.
+    $e3 = @()
+    for ($i = 0; $i -lt 256; $i++) { if ($hole[2 * $i] -eq 0xE3) { $e3 += $i } }
+    if ($e3.Count -ne 1 -or $e3[0] -ne 14) {
+        throw "l2holes.nxi: palette entries packing to `$E3 are ($($e3 -join ',')), expected exactly index 14 - the dodge test is not armed"
+    }
+    if ($hole[510] -eq 0xE3) {
+        throw "l2holes.nxi: palette entry 255 packs to `$E3 - it must carry the bright-green stamp-failure signature instead (see the card's header)"
+    }
+    # Index 255 (L2_TRANSP_INDEX) must be PRESENT. This card is the exact
+    # inverse of -SfxDi's l2card.nxi, which must contain none: there, an
+    # index-255 pixel would be a false hole; here, no index-255 pixel at
+    # all means nothing to see through and the fixture tests nothing.
+    $holePixels = 0
+    $maxIdx = 0
+    for ($i = 512; $i -lt $hole.Length; $i++) {
+        $v = $hole[$i]
+        if ($v -eq 255) { $holePixels++ }
+        elseif ($v -gt $maxIdx) { $maxIdx = $v }
+    }
+    if ($holePixels -lt 1) { throw "l2holes.nxi has no index-255 pixel - it would punch no holes and test nothing" }
+    if ($maxIdx -gt 15) { throw "l2holes.nxi uses palette index $maxIdx, which has no colour" }
+    Copy-Item $holeSrc "$leg\001.NXI" -Force
+    "staged tests\out\l2holes.nxi -> sd\$legName\001.NXI  $($hole.Length) bytes, 256x$holeRows, $holePixels transparent pixel(s), index 14 = the `$E3 dodge entry, entry 255 = `$$('{0:X2}' -f $hole[510]) (green, must never be seen)"
+    $l2holesActive = $true
+}
+
 # Uto's compliance test. Nothing to stage but the DDB - deliberately:
 # the fixture loads no picture, plays no sound, reads no 0.XMB and takes
 # no typed input, so sd\UTO\ / sd\UTOV3\ hold exactly GAME.DDB and the
@@ -2401,6 +2636,7 @@ elseif ($v3Active) { "active: v3probe (SP16 DAAD V3 fixture - header version 3)"
 elseif ($gmodeActive) { "active: gmodegate (SP16 GMODE graphics-gate fixture)" }
 elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-scale fixture)" }
 elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture - see .superpowers\sdd\sfx-di-audible-test.md)" }
+elseif ($l2holesActive) { "active: l2holes (Layer 2 transparency / punch-out fixture - see docs\superpowers\l2-holes-run-sheet.md)" }
 elseif ($utoV3Active) { "active: utotest V3 (Uto's THIRD-PARTY DAAD compliance test, header version 3 - self-scoring, 68 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
 elseif ($utoActive) { "active: utotest V2 (Uto's THIRD-PARTY DAAD compliance test - self-scoring, 64 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
