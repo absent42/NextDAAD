@@ -96,9 +96,9 @@
 # -UU stages 0 files and the leg runs TEXT-ONLY. (This went unnoticed
 # because the leg could never run - see the DSF filename note below.)
 # This script has no image-conversion step by design - Rabenstein's art
-# ships pre-converted - so giving -UU pictures means converting the
-# PNGs with tools\png2nx.py to somewhere OUTSIDE the read-only vendor
-# dir and pointing $uuSrc's art scan at it. Owner's call, not done.
+# ships pre-converted - so giving -UU pictures means running gfx2next
+# on the PNGs to somewhere OUTSIDE the read-only vendor dir and
+# pointing $uuSrc's art scan at it. Owner's call, not done.
 # All destinations are inside the run's leg folder - see the LEG
 # FOLDERS block at the top.
 # The DDB switches are mutually exclusive - if more than one is given,
@@ -292,8 +292,8 @@
 #            there - not changed here, out of this fixture's scope.
 # Boot title screen (SP11 Task 1), independent of the DDB switches:
 #   -Title   stage the owner 320x256 title into the run's leg folder -
-#            copies tools\demo-files\DAAD.NX2
-#            (converted from demo-files\DAAD.png via tools\png2nx.py).
+#            copies tools\demo-files\DAAD.NX2, a gfx2next-converted
+#            Layer 2 picture (ADAPTIVE 256, -bitmap -pal-embed).
 #            tools\demo-files is the home for NEWLY CREATED test
 #            graphics/sound/video assets (owner convention 2026-07-19;
 #            existing asset dirs stay where they are). Not committed
@@ -566,16 +566,16 @@ finally {
 
 & "$PSScriptRoot\check-cprops.ps1"
 
-# ---- Layer 2 transparency constants: four files, one pair of values ----
+# ---- Layer 2 transparency constants: three files, one pair of values ----
 # The transparent COLOUR ($E3) and the reserved INDEX (255) are written
-# out longhand in four places in three languages - src/nextdaad.inc is
-# canonical, and the other three are the converters and the kit's audit
+# out longhand in three places in two languages - src/nextdaad.inc is
+# canonical, and the other two are the kit's encoder and its audit
 # script. There is no shared header they can include, so the only thing
 # that keeps them together is this check. A silent divergence is the
 # nastiest shape of failure available here: the interpreter would dodge
 # one colour while a converter reserved another, and nothing would say
 # so until art punched holes on hardware. Runs on EVERY invocation - it
-# is source-only, needs no build, and costs four file reads.
+# is source-only, needs no build, and costs three file reads.
 function Assert-TranspConstantsInSync {
     # file -> @{ colour = <regex>; index = <regex> }; each regex must
     # capture the literal in group 1. Index is optional (nxv2enc.py only
@@ -584,10 +584,6 @@ function Assert-TranspConstantsInSync {
         'src\nextdaad.inc' = @{
             colour = '(?m)^\s*L2_TRANSP_COLOUR\s+equ\s+\$([0-9A-Fa-f]+)'
             index  = '(?m)^\s*L2_TRANSP_INDEX\s+equ\s+(\d+)'
-        }
-        'scripts\png2nx.py' = @{
-            colour = '(?m)^\s*L2_TRANSPARENT_BYTE0\s*=\s*0x([0-9A-Fa-f]+)'
-            index  = '(?m)^\s*RESERVED_INDEX\s*=\s*(\d+)'
         }
         'authoring-kit\lib\nxv2enc.py' = @{
             colour = '(?m)^\s*L2_TRANSPARENT_BYTE0\s*=\s*0x([0-9A-Fa-f]+)'
@@ -603,12 +599,12 @@ function Assert-TranspConstantsInSync {
     foreach ($rel in $sites.Keys) {
         $path = Join-Path $root $rel
         if (-not (Test-Path -LiteralPath $path)) {
-            throw "L2 transparency constant sync: $rel is missing - the four-file agreement check needs it (if the file moved, update Assert-TranspConstantsInSync)"
+            throw "L2 transparency constant sync: $rel is missing - the three-file agreement check needs it (if the file moved, update Assert-TranspConstantsInSync)"
         }
         $text = Get-Content -LiteralPath $path -Raw
         $m = [regex]::Match($text, $sites[$rel].colour)
         if (-not $m.Success) {
-            throw "L2 transparency constant sync: no transparent-colour definition found in $rel (pattern '$($sites[$rel].colour)') - it was renamed or deleted, so nothing is holding the four files together any more"
+            throw "L2 transparency constant sync: no transparent-colour definition found in $rel (pattern '$($sites[$rel].colour)') - it was renamed or deleted, so nothing is holding the three files together any more"
         }
         $colours[$rel] = [Convert]::ToInt32($m.Groups[1].Value, 16)
         if ($sites[$rel].index) {
@@ -628,10 +624,10 @@ function Assert-TranspConstantsInSync {
             $detail = ($pair.v.Keys | ForEach-Object { "$_ = $($pair.v[$_].ToString($pair.f))" }) -join '; '
             throw ("L2 transparency $($pair.n) DESYNC: src\nextdaad.inc says $($want.ToString($pair.f)) but " +
                    (($bad | ForEach-Object { "$_ says $($pair.v[$_].ToString($pair.f))" }) -join ' and ') +
-                   ". All four copies must move together - $detail")
+                   ". All three copies must move together - $detail")
         }
     }
-    "L2 transparency constants agree across 4 files: colour `$$($colours['src\nextdaad.inc'].ToString('X2')), index $($indices['src\nextdaad.inc'])"
+    "L2 transparency constants agree across 3 files: colour `$$($colours['src\nextdaad.inc'].ToString('X2')), index $($indices['src\nextdaad.inc'])"
 }
 Assert-TranspConstantsInSync
 
@@ -1987,10 +1983,9 @@ if ($Part) {
 if ($Title) {
     # SP11 Task 1 owner leg fixture: title_present/title_boot (overlay2.asm)
     # probe DAAD.* at boot, so the owner-eye-leg needs one staged.
-    # The owner-authored 320x256 title (tools\demo-files\DAAD.png) is
-    # converted to tools\demo-files\DAAD.NX2 by tools\png2nx.py
-    # (ADAPTIVE 256, gfx2next -bitmap -pal-embed; 82432 bytes =
-    # 512 pal + 320x256).
+    # tools\demo-files\DAAD.NX2 is the owner-authored 320x256 title,
+    # a gfx2next-converted Layer 2 picture (ADAPTIVE 256,
+    # -bitmap -pal-embed; 82432 bytes = 512 pal + 320x256).
     # No DAAD.* variant sweep: the leg folder was emptied at the top of
     # the staging section, so exactly one title is present and the
     # NX2-first probe order is what the leg exercises. The flip side

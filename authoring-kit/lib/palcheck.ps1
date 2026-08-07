@@ -4,14 +4,13 @@
 # checks read the file the interpreter will actually load.
 # Advisory only: always exits 0, never fails a build.
 #
-# FOUR FILES carry these values and must agree - src/nextdaad.inc is
+# THREE FILES carry these values and must agree - src/nextdaad.inc is
 # canonical:
 #   src/nextdaad.inc          L2_TRANSP_COLOUR / L2_TRANSP_INDEX
-#   scripts/png2nx.py         L2_TRANSPARENT_BYTE0 / RESERVED_INDEX
 #   authoring-kit/lib/nxv2enc.py    L2_TRANSPARENT_BYTE0
 #   authoring-kit/lib/palcheck.ps1  $TRANSP / $RESERVED (here)
-# If either value moves, all four move. tests/build-tests.ps1 parses all
-# four and fails if they disagree.
+# If either value moves, all three move. tests/build-tests.ps1 parses all
+# three and fails if they disagree.
 param([Parameter(Mandatory=$true)][string]$Path)
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path $Path)) { exit 0 }

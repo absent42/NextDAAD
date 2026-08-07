@@ -353,14 +353,13 @@ TERMINAL_OPS = frozenset({OP_FEND, OP_KFLIP})
 PAL_BLOCK_SIZE = 512
 
 # Layer 2 global transparency colour (NR $14 = $E3, the hardware reset
-# value; L2_TRANSP_COLOUR in src/nextdaad.inc). FOUR FILES carry these
+# value; L2_TRANSP_COLOUR in src/nextdaad.inc). THREE FILES carry these
 # values and must agree - src/nextdaad.inc is canonical:
 #   src/nextdaad.inc          L2_TRANSP_COLOUR / L2_TRANSP_INDEX
-#   scripts/png2nx.py         L2_TRANSPARENT_BYTE0 / RESERVED_INDEX
 #   authoring-kit/lib/nxv2enc.py    L2_TRANSPARENT_BYTE0 (here)
 #   authoring-kit/lib/palcheck.ps1  $TRANSP / $RESERVED
-# If either value moves, all four move. tests/build-tests.ps1 parses all
-# four and fails if they disagree.
+# If either value moves, all three move. tests/build-tests.ps1 parses all
+# three and fails if they disagree.
 L2_TRANSPARENT_BYTE0 = 0xE3
 
 # ---------------------------------------------------------------------
