@@ -118,6 +118,7 @@ for %%P in ("IMAGES\POINTER.png" "IMAGES\POINTER1.png" "IMAGES\POINTER2.png" ^
             "IMAGES\POINTER6.png" "IMAGES\POINTER7.png" "IMAGES\POINTER8.png" ^
             "IMAGES\POINTER9.png") do (
     if exist %%P (
+        set "SPRSIZE="
         del "%%~nP.spr" 2>nul
         "%GFX%" -sprites -pal-std -pal-none %%P >nul 2>&1
         if errorlevel 1 (
@@ -127,6 +128,18 @@ for %%P in ("IMAGES\POINTER.png" "IMAGES\POINTER1.png" "IMAGES\POINTER2.png" ^
         )
         if not exist "%%~nP.spr" (
             echo ERROR: gfx2next produced no output for %%~nxP
+            exit /b 1
+        )
+        REM gfx2next does not reject a wrong-sized source cleanly (a too-
+        REM small image exits 0 with no output, already caught above; a
+        REM too-large one exits 0 and writes >256 bytes, several sprites
+        REM concatenated). The interpreter rejects anything that is not
+        REM exactly 256 bytes silently, so check the byte count itself
+        REM here rather than let a bad file reach RELEASE\ unremarked.
+        for /f %%S in ('powershell -NoProfile -Command "([System.IO.File]::ReadAllBytes('%%~nP.spr')).Length"') do set "SPRSIZE=%%S"
+        if not "!SPRSIZE!"=="256" (
+            echo ERROR: %%~nxP converted to !SPRSIZE! bytes, not 256 - the source must be exactly 16x16
+            del "%%~nP.spr" 2>nul
             exit /b 1
         )
         move /Y "%%~nP.spr" "RELEASE\%%~nP.SPR" >nul
