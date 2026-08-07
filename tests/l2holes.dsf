@@ -1,0 +1,673 @@
+; NextDAAD Layer 2 TRANSPARENCY + hardware fixture (2026-08-07, rev 1).
+;
+; Compiled and staged by tests\stage-l2holes.ps1, which also generates
+; the punch-out card with tests\art\mkl2holes.py (001.NXI, 256x192) and
+; copies build\nextdaad.nex in. sd\L2HOLES\ is emptied and refilled on
+; every run and holds nothing but GAME.DDB, 001.NXI and NEXTDAAD.NEX -
+; copy the folder to the card and launch NEXTDAAD.NEX from inside it.
+;
+; RUN SHEET: docs\superpowers\l2-holes-run-sheet.md. Read it before
+; running; it names every hole and says what a failure of each one means.
+;
+; This fixture is NOT staged by tests\build-tests.ps1 and has no switch
+; there. It is a standalone owner instrument.
+;
+; ------------------------------------------------------------------
+; WHAT THIS FIXTURE PUTS ON SCREEN, AND WHY EACH PIECE IS THERE
+; ------------------------------------------------------------------
+; THE TEXT, FIRST. Window 0 is the WHOLE tilemap - 80 columns by 32 rows,
+; every cell written, paper 1 (dark blue). The text is a position ruler:
+; the screen is divided into ten 8-column UNITS per row, and unit u of
+; row r reads
+;
+;     rr - cc t t .        e.g.  "12-16DG."  row 12, column 16, tag DG
+;
+; so ANY 8 columns of ANY row states its own row number, its own column
+; number and the name of whatever is meant to be showing there. That is
+; the entire point: Layer 2 covers this text, the card punches holes in
+; Layer 2, and what you read through a hole tells you which hole it is
+; without counting cells on the glass.
+;
+; The eighth character of every unit is a spacer, and every SECOND unit
+; ends with a real space rather than a dot. Those spaces are structural,
+; not decoration: NextDAAD buffers printable non-space characters into
+; wrapBuf and only emits them when a space arrives or the buffer reaches
+; the window width (src\print.asm, prn_char / prn_flush). Each MES here
+; is exactly 15 non-space characters followed by one space, so it flushes
+; at a known column with the INK that was set immediately before it.
+; Without that space the characters would sit in the buffer and be
+; emitted later under a LATER ink, and the whole colour layout would
+; collapse onto one colour per row. Do not "tidy" the trailing spaces
+; away, and do not merge two MES lines into one.
+;
+; PER-CHARACTER COLOUR. Five INK changes per row, one per 16-column
+; segment, stepping through six inks (15 14 13 7 6 10 - bright white,
+; bright yellow, bright cyan, white, yellow, bright red) with the phase
+; advanced by the row number, so the colours run in diagonal bands. Per
+; character colour is a tilemap feature this build owns (each cell holds
+; its own paper/ink pair, src\tilemap.asm) and a fixture that fills the
+; whole tilemap should exercise it. GREEN IS DELIBERATELY NOT IN THE INK
+; SET - see "the green signature" below.
+;
+; THE LAST ROW IS ONE CELL SHORT, BY DESIGN. win_newline scrolls the
+; window when the cursor advances past the last row (src\windows.asm),
+; and printing an 80th character on row 31 would wrap, newline, and
+; scroll the whole screen up by one - destroying row 0. Row 31 therefore
+; stops at column 78 and cell (31,79) is left as the CLS blank. It is in
+; the control margin and carries nothing.
+;
+; THE CARD. PICTURE 1 + DISPLAY 0 loads 001.NXI - a 256x192 generated
+; card (tests\art\mkl2holes.py) that is FULL SCREEN for a 256-wide
+; picture: gfx_derive_height caps mode 0 at 192 rows. It covers tilemap
+; ROWS 4..27 and COLUMNS 8..71 exactly, because Layer 2 in 256x192 mode
+; is inset 32 pixels from the tilemap origin on both axes (dev guide
+; chapter-next-tilemap.tex:18 "Tilemap layer overlaps ULA by 32 pixels on
+; each side", chapter-next-layer2.tex:308), so L2 row r lands on tilemap
+; row r/8 + 4 and L2 column c on tilemap column c/4 + 8.
+;
+; PICTURE is a CONDITION, so a failed load aborts its entry and the next
+; one clears the screen and says so, instead of the fixture silently
+; testing nothing - which is exactly how the 2026-08-03 sfxdi run failed.
+;
+; ------------------------------------------------------------------
+; THE CONTROL MARGIN - tagged CM, and it must ALWAYS be readable
+; ------------------------------------------------------------------
+; The card cannot reach tilemap columns 0..7 or 72..79, nor rows 0..3 or
+; 28..31. Every unit in that margin is tagged CM and it is a CONTROL: it
+; is outside Layer 2's footprint entirely, so it must stay legible with
+; the card up, with the card cleared, and in every state in between.
+;
+; CM text that is covered, blanked or corrupted is NOT a transparency
+; result. It means Layer 2 is being displayed in the wrong mode or at the
+; wrong origin (a 320x256 surface WOULD cover the margin), or that the
+; tilemap itself has been damaged. Nothing below can be read as an answer
+; about transparency until the CM ring is intact.
+;
+; ------------------------------------------------------------------
+; THE HOLES, AND WHAT EACH ONE ANSWERS
+; ------------------------------------------------------------------
+; Thirteen holes at index 255 (L2_TRANSP_INDEX, src\nextdaad.inc:266 -
+; the one value l2_pal9_stamp makes transparent after any picture load).
+; Each is placed so the text under it names it:
+;
+;   TL TR BL BR   32x16 corner holes on the extreme corner pixels - the
+;                 first and last bytes of the first and last rows. Each
+;                 shows two rows of ONE whole text unit: "04-08TL" and
+;                 "05-08TL" top left, "04-64TR" top right, "26-08BL" and
+;                 "26-64BR" at the bottom. A corner that shows white
+;                 frame instead of text is a clipped or short blit.
+;   DG            a 48x48 right triangle with a one-pixel-per-row
+;                 diagonal edge, tapering to a SINGLE PIXEL at the top.
+;                 Tagged DG on unit 2, readable at rows 15..17. A stepped
+;                 or squared-off edge means transparency is being decided
+;                 per byte-run rather than per pixel.
+;   CT            the centre hole, a radius-24 disc at the middle of the
+;                 screen. Tagged CT on units 4 and 5, rows 13..19; the
+;                 widest row (16) shows both.
+;   RN            a ring, outer radius 23, inner radius 6, with an OPAQUE
+;                 ISLAND in the middle. Tagged RN on units 6 and 7. The
+;                 island is the test: if it disappears, transparency is
+;                 being applied by area instead of by pixel value.
+;   32 16 08      the size ladder: 32x32, 16x16 and 8x8 square holes,
+;                 tagged with their own pixel size on units 2, 4 and 6 of
+;                 rows 20..23.
+;   4C            a 4x8 hole - EXACTLY ONE TILEMAP CELL, the smallest
+;                 hole that can still show a readable character. It sits
+;                 on the tag of unit 3 row 21 and shows the single
+;                 character "4".
+;   (2x2, 1x1)    two sub-cell holes with no readable glyph: a 2x2 pixel
+;                 hole at row 21 column 46 and a ONE PIXEL hole at row 21
+;                 column 59. Both sit at the top-left corner of their
+;                 cell, which is blank in every glyph, so each shows a
+;                 dot of the DARK BLUE PAPER. Each sits at the centre of
+;                 a sand-coloured target patch with a red crosshair,
+;                 because a one-byte hole in a 49,152-byte picture cannot
+;                 be found by scanning. The 1x1 hole is the single most
+;                 sensitive element in this fixture.
+;
+; ------------------------------------------------------------------
+; THE DODGE TEST - two blocks that must BOTH stay opaque
+; ------------------------------------------------------------------
+; Tilemap rows 9..11 carry two adjacent magenta blocks, labelled E3 and
+; E7 in black. The left one uses a palette entry whose RRRGGGBB byte
+; packs to $E3 = L2_TRANSP_COLOUR; the right one uses the safe escape
+; (7,1,7), which packs to $E7. l2_pal9_run (src\overlay2.asm:293)
+; rewrites any $E3 entry to $E2 before programming it, so BOTH blocks
+; must render as magenta - E3 very slightly duller and less blue than E7 -
+; and NEITHER may show text.
+;
+; If the E3 block shows text, the dodge failed, and any artist whose
+; palette happens to contain saturated magenta gets holes punched through
+; their own picture. The text under those blocks is tagged so the verdict
+; is not a matter of remembering which side is which: units 3 and 4 of
+; rows 9..11 read E3, units 5 and 6 read E7.
+;
+; ------------------------------------------------------------------
+; THE GREEN SIGNATURE - a colour that must never appear
+; ------------------------------------------------------------------
+; Palette entry 255 in the card FILE is bright green (0,7,0). It should
+; never reach the screen: l2_pal9_stamp overwrites entry 255 with $E3
+; after the copy loop on every path. Green is used nowhere else on the
+; card and is excluded from this fixture's ink set, so if the holes come
+; up bright green instead of showing text, the stamp did not run. That is
+; a different fault from the holes not being punched at all, and it now
+; has its own signature instead of both looking like "wrong colour".
+;
+; ------------------------------------------------------------------
+; DARK BLUE IS THE BINARY DETECTOR
+; ------------------------------------------------------------------
+; Paper 1 = dadPalette[1] = RGB333 (0,0,6) (src\tilemap.asm:247). The
+; card carries no blue at all apart from white and the two magentas, and
+; no large flat blue area anywhere. So blue INSIDE the card footprint is
+; a hole and nothing else - which is what makes the 1x1 and 2x2 holes
+; judgeable at all, since no glyph is readable at that size and the
+; colour is the entire readout.
+;
+; ------------------------------------------------------------------
+; THE A/B TOGGLE - the only interaction
+; ------------------------------------------------------------------
+; There is no parser. A parser prompt would print into the full-screen
+; window and scroll the ruler away. Every keypress calls PROCESS 4, which
+; alternates DISPLAY 1 (clear the Layer 2 plane to transparent - the
+; WHOLE ruler is then visible and is the reference reading) and DISPLAY 0
+; (blit the card again). Comparing the two states IS the test: with the
+; card cleared you read what SHOULD be under each hole, with the card up
+; you read what actually is.
+;
+; SYSMESS 16 IS A SINGLE SPACE, AND THE KEY WAIT HAPPENS IN A 1x1 WINDOW.
+; h_anykey prints SM16 before it blocks (src\overlay0.asm:1858). Printed
+; into the full-screen window at the end of row 31 it would wrap, newline
+; and scroll the entire screen. Window 1 is therefore a 1x1 window parked
+; on cell (31,79) - the one cell row 31 leaves blank - and is selected
+; before the loop: prn_char swallows a space at column 0
+; (src\print.asm:127), so ANYKEY prints nothing at all, however many
+; times it runs. Do not give SM16 real text and do not run ANYKEY with
+; window 0 selected.
+;
+; NO SOUND, NO MUSIC, NO SECOND PICTURE. Nothing is staged but the card,
+; so a symptom cannot be an audio interaction, a song's interrupt hold or
+; a stale asset winning the probe chain. The probe chain matters here:
+; NX2 variants are tried FIRST, so a leftover 001.NX2 would route the
+; blit through gfx_row_scatter320 and change the geometry under the test.
+; sd\L2HOLES\ is emptied on every stage and holds three files.
+
+; System flags used by name (DAAD BLANK template spellings)
+#define fPlayer             38
+#define fToggle             100
+
+/CTL
+_
+/VOC
+NORTH  2  noun
+SOUTH  3  noun
+LOOK   4  verb
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "I didn't understand."
+/7  "I can't go in that direction."
+/8  "I can't do that."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 " "
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+/MTX
+/0 "NEXTDAAD - LAYER 2 TRANSPARENCY / PUNCH-OUT FIXTURE"
+/OTX
+/0 "a brass lamp"
+/LTX
+/0 ""
+/1 ""
+/CON
+/0
+NORTH 1
+/1
+SOUTH 0
+/OBJ
+/0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/PRO 0
+; The driver. Location 0 is the "not painted yet" state: the first pass
+; paints the ruler and brings the card up, then moves to location 1 so
+; every later pass is just the toggle. eng_run re-enters PRO 0 whenever
+; the process stack unwinds (src\engine.asm:187), so this IS the loop -
+; there is no PARSE anywhere in this fixture and nothing ever prints a
+; prompt over the ruler.
+> _ _   AT 0
+        PROCESS 1
+        GOTO 1
+        DONE
+> _ _   ANYKEY
+        PROCESS 4
+        DONE
+/PRO 1
+; Screen build, in the only order that works: the full-screen window is
+; sized and cleared BEFORE anything is printed into it, the ruler is
+; printed top to bottom, and only then does the card go up - so a fault
+; in the blit cannot be confused with a half-drawn ruler.
+;
+; MODE 2 disables the "More..." pager for window 0 (h_mode writes
+; WIN_FLAGS, bit 1 = disable More - src\overlay0.asm:1563). Without it
+; the pager fires after 31 printed lines, stops the fill dead and prints
+; SM32 across the ruler.
+> _ _   WINDOW 0
+        WINAT 0 0
+        WINSIZE 32 80
+        MODE 2
+        PAPER 1
+        INK 15
+        CLS
+        PROCESS 2
+        PROCESS 3
+; The 1x1 parking window for every later ANYKEY - see the header.
+> _ _   WINDOW 1
+        WINAT 31 79
+        WINSIZE 1 1
+        MODE 2
+        PAPER 1
+        INK 15
+> _ _   PICTURE 1
+        DISPLAY 0
+        DONE
+> _ _   WINDOW 0
+        CLS
+        INK 10
+        MES "***-PICTURE-1-F "
+        MES "AILED-NO-001-NX "
+        MES "I-STAGED-STOP-N "
+        MES "OTHING-BELOW-IS "
+        MES "-A-RESULT...... "
+        DONE
+/PRO 4
+; The A/B toggle. Flag 100 remembers which state the screen is in.
+; DISPLAY 1 clears the Layer 2 plane to the transparent index and flips
+; (h_display's non-zero arm, src\overlay2.asm:924) so the WHOLE ruler
+; shows; DISPLAY 0 re-blits the staged card. Nothing else changes - the
+; tilemap is never reprinted, so any difference between the two states
+; belongs to Layer 2 alone.
+> _ _   ZERO fToggle
+        DISPLAY 1
+        SET fToggle
+        DONE
+> _ _   DISPLAY 0
+        CLEAR fToggle
+        DONE
+/PRO 2
+; Ruler rows 0..15. One entry per row, five INK + MES pairs per entry,
+; each MES exactly 15 non-space characters plus the flushing space.
+; Generated to match the hole table tests\art\mkl2holes.py prints; if a
+; hole moves, that table moves and these tags move with it.
+> _ _   INK 15
+        MES "L2-HOLES-CARD-C "
+        INK 15
+        MES "ELLS-READ-RR-CC "
+        INK 15
+        MES "-TAG-CARD-COVER "
+        INK 15
+        MES "S-R04-R27-C08-C "
+        INK 15
+        MES "71............. "
+> _ _   INK 14
+        MES "01-00CM.01-08CM "
+        INK 13
+        MES "01-16CM.01-24CM "
+        INK 7
+        MES "01-32CM.01-40CM "
+        INK 6
+        MES "01-48CM.01-56CM "
+        INK 10
+        MES "01-64CM.01-72CM "
+> _ _   INK 13
+        MES "02-00CM.02-08CM "
+        INK 7
+        MES "02-16CM.02-24CM "
+        INK 6
+        MES "02-32CM.02-40CM "
+        INK 10
+        MES "02-48CM.02-56CM "
+        INK 15
+        MES "02-64CM.02-72CM "
+> _ _   INK 7
+        MES "03-00CM.03-08CM "
+        INK 6
+        MES "03-16CM.03-24CM "
+        INK 10
+        MES "03-32CM.03-40CM "
+        INK 15
+        MES "03-48CM.03-56CM "
+        INK 14
+        MES "03-64CM.03-72CM "
+> _ _   INK 6
+        MES "04-00CM.04-08TL "
+        INK 10
+        MES "04-16...04-24.. "
+        INK 15
+        MES "04-32...04-40.. "
+        INK 14
+        MES "04-48...04-56.. "
+        INK 13
+        MES "04-64TR.04-72CM "
+> _ _   INK 10
+        MES "05-00CM.05-08TL "
+        INK 15
+        MES "05-16...05-24.. "
+        INK 14
+        MES "05-32...05-40.. "
+        INK 13
+        MES "05-48...05-56.. "
+        INK 7
+        MES "05-64TR.05-72CM "
+> _ _   INK 15
+        MES "06-00CM.06-08.. "
+        INK 14
+        MES "06-16...06-24.. "
+        INK 13
+        MES "06-32...06-40.. "
+        INK 7
+        MES "06-48...06-56.. "
+        INK 6
+        MES "06-64...06-72CM "
+> _ _   INK 14
+        MES "07-00CM.07-08.. "
+        INK 13
+        MES "07-16...07-24.. "
+        INK 7
+        MES "07-32...07-40.. "
+        INK 6
+        MES "07-48...07-56.. "
+        INK 10
+        MES "07-64...07-72CM "
+> _ _   INK 13
+        MES "08-00CM.08-08.. "
+        INK 7
+        MES "08-16...08-24.. "
+        INK 6
+        MES "08-32...08-40.. "
+        INK 10
+        MES "08-48...08-56.. "
+        INK 15
+        MES "08-64...08-72CM "
+> _ _   INK 7
+        MES "09-00CM.09-08.. "
+        INK 6
+        MES "09-16...09-24E3 "
+        INK 10
+        MES "09-32E3.09-40E7 "
+        INK 15
+        MES "09-48E7.09-56.. "
+        INK 14
+        MES "09-64...09-72CM "
+> _ _   INK 6
+        MES "10-00CM.10-08.. "
+        INK 10
+        MES "10-16...10-24E3 "
+        INK 15
+        MES "10-32E3.10-40E7 "
+        INK 14
+        MES "10-48E7.10-56.. "
+        INK 13
+        MES "10-64...10-72CM "
+> _ _   INK 10
+        MES "11-00CM.11-08.. "
+        INK 15
+        MES "11-16...11-24E3 "
+        INK 14
+        MES "11-32E3.11-40E7 "
+        INK 13
+        MES "11-48E7.11-56.. "
+        INK 7
+        MES "11-64...11-72CM "
+> _ _   INK 15
+        MES "12-00CM.12-08.. "
+        INK 14
+        MES "12-16DG.12-24.. "
+        INK 13
+        MES "12-32...12-40.. "
+        INK 7
+        MES "12-48RN.12-56RN "
+        INK 6
+        MES "12-64...12-72CM "
+> _ _   INK 14
+        MES "13-00CM.13-08.. "
+        INK 13
+        MES "13-16DG.13-24.. "
+        INK 7
+        MES "13-32CT.13-40CT "
+        INK 6
+        MES "13-48RN.13-56RN "
+        INK 10
+        MES "13-64...13-72CM "
+> _ _   INK 13
+        MES "14-00CM.14-08.. "
+        INK 7
+        MES "14-16DG.14-24.. "
+        INK 6
+        MES "14-32CT.14-40CT "
+        INK 10
+        MES "14-48RN.14-56RN "
+        INK 15
+        MES "14-64...14-72CM "
+> _ _   INK 7
+        MES "15-00CM.15-08.. "
+        INK 6
+        MES "15-16DG.15-24.. "
+        INK 10
+        MES "15-32CT.15-40CT "
+        INK 15
+        MES "15-48RN.15-56RN "
+        INK 14
+        MES "15-64...15-72CM "
+/PRO 3
+; Ruler rows 16..31. Row 31 stops at column 78 - see the header.
+> _ _   INK 6
+        MES "16-00CM.16-08.. "
+        INK 10
+        MES "16-16DG.16-24.. "
+        INK 15
+        MES "16-32CT.16-40CT "
+        INK 14
+        MES "16-48RN.16-56RN "
+        INK 13
+        MES "16-64...16-72CM "
+> _ _   INK 10
+        MES "17-00CM.17-08.. "
+        INK 15
+        MES "17-16DG.17-24.. "
+        INK 14
+        MES "17-32CT.17-40CT "
+        INK 13
+        MES "17-48RN.17-56RN "
+        INK 7
+        MES "17-64...17-72CM "
+> _ _   INK 15
+        MES "18-00CM.18-08.. "
+        INK 14
+        MES "18-16...18-24.. "
+        INK 13
+        MES "18-32CT.18-40CT "
+        INK 7
+        MES "18-48...18-56.. "
+        INK 6
+        MES "18-64...18-72CM "
+> _ _   INK 14
+        MES "19-00CM.19-08.. "
+        INK 13
+        MES "19-16...19-24.. "
+        INK 7
+        MES "19-32CT.19-40CT "
+        INK 6
+        MES "19-48...19-56.. "
+        INK 10
+        MES "19-64...19-72CM "
+> _ _   INK 13
+        MES "20-00CM.20-08.. "
+        INK 7
+        MES "20-1632.20-24.. "
+        INK 6
+        MES "20-3216.20-40.. "
+        INK 10
+        MES "20-4808.20-56.. "
+        INK 15
+        MES "20-64...20-72CM "
+> _ _   INK 7
+        MES "21-00CM.21-08.. "
+        INK 6
+        MES "21-1632.21-244C "
+        INK 10
+        MES "21-3216.21-40.. "
+        INK 15
+        MES "21-48...21-56.. "
+        INK 14
+        MES "21-64...21-72CM "
+> _ _   INK 6
+        MES "22-00CM.22-08.. "
+        INK 10
+        MES "22-1632.22-24.. "
+        INK 15
+        MES "22-32...22-40.. "
+        INK 14
+        MES "22-48...22-56.. "
+        INK 13
+        MES "22-64...22-72CM "
+> _ _   INK 10
+        MES "23-00CM.23-08.. "
+        INK 15
+        MES "23-1632.23-24.. "
+        INK 14
+        MES "23-32...23-40.. "
+        INK 13
+        MES "23-48...23-56.. "
+        INK 7
+        MES "23-64...23-72CM "
+> _ _   INK 15
+        MES "24-00CM.24-08.. "
+        INK 14
+        MES "24-16...24-24.. "
+        INK 13
+        MES "24-32...24-40.. "
+        INK 7
+        MES "24-48...24-56.. "
+        INK 6
+        MES "24-64...24-72CM "
+> _ _   INK 14
+        MES "25-00CM.25-08.. "
+        INK 13
+        MES "25-16...25-24.. "
+        INK 7
+        MES "25-32...25-40.. "
+        INK 6
+        MES "25-48...25-56.. "
+        INK 10
+        MES "25-64...25-72CM "
+> _ _   INK 13
+        MES "26-00CM.26-08BL "
+        INK 7
+        MES "26-16...26-24.. "
+        INK 6
+        MES "26-32...26-40.. "
+        INK 10
+        MES "26-48...26-56.. "
+        INK 15
+        MES "26-64BR.26-72CM "
+> _ _   INK 7
+        MES "27-00CM.27-08BL "
+        INK 6
+        MES "27-16...27-24.. "
+        INK 10
+        MES "27-32...27-40.. "
+        INK 15
+        MES "27-48...27-56.. "
+        INK 14
+        MES "27-64BR.27-72CM "
+> _ _   INK 6
+        MES "28-00CM.28-08CM "
+        INK 10
+        MES "28-16CM.28-24CM "
+        INK 15
+        MES "28-32CM.28-40CM "
+        INK 14
+        MES "28-48CM.28-56CM "
+        INK 13
+        MES "28-64CM.28-72CM "
+> _ _   INK 10
+        MES "29-00CM.29-08CM "
+        INK 15
+        MES "29-16CM.29-24CM "
+        INK 14
+        MES "29-32CM.29-40CM "
+        INK 13
+        MES "29-48CM.29-56CM "
+        INK 7
+        MES "29-64CM.29-72CM "
+> _ _   INK 15
+        MES "30-00CM.30-08CM "
+        INK 14
+        MES "30-16CM.30-24CM "
+        INK 13
+        MES "30-32CM.30-40CM "
+        INK 7
+        MES "30-48CM.30-56CM "
+        INK 6
+        MES "30-64CM.30-72CM "
+> _ _   INK 15
+        MES "ANY-KEY-TOGGLES "
+        INK 15
+        MES "-LAYER-2-OFF-TH "
+        INK 15
+        MES "EN-ON-RUN-SHEET "
+        INK 15
+        MES "-L2-HOLES-RUN-S "
+        INK 15
+        MES "HEET-MD....... "
+/END
