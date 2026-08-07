@@ -89,6 +89,12 @@ showing the text layer beneath.
 
 Quantise to **255 colours (indices 0-254)**, not 256.
 
+An exporter that wants to emit transparency puts the author's transparent
+colour in slot 255 and writes index 255 for those pixels. The colour in
+slot 255 is overwritten on load, so its value does not matter to the
+result; `#FF00FF` is the convention because it matches the sprite path
+and previews as obvious magenta in an editor.
+
 ### Byte 0 = `$E3` is reserved
 
 The Spectrum Next's global transparency colour is the RGB332 value
@@ -162,6 +168,7 @@ exist for plain-FAT setups without long filenames. Either works.
 ## 8. Checklist for an exporter
 
 - [ ] Quantise to at most **255** colours; never emit pixel index 255.
+- [ ] Transparent pixels, if any, use index 255 and no other index.
 - [ ] Never emit byte 0 = `$E3` except at index 255 - test after your
       channel conversion, not before it.
 - [ ] Write **512 bytes** of palette, padded, even for a small palette.

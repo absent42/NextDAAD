@@ -136,13 +136,22 @@ palette, where slot N previews as colour N, so the indices you export
 are already the correct output bytes. Then save exactly 256 bytes as
 `POINTER.SPR`.
 
-Gfx2Next's sprite mode does emit this exact raw format for a 16x16
-indexed PNG, but it is deliberately not wired into the build: it only
-comes out right if the source PNG's palette was authored with index N
-already equal to RGB332 colour N. A normal "quantize to a nice-looking
-palette" export - the workflow location art uses - silently produces the
-wrong pointer colours. Use it only if you have set up that identity
-palette on purpose; otherwise build the file in a sprite or hex editor.
+Gfx2Next can produce this file directly from a 16x16 indexed PNG:
+
+```
+gfx2next -sprites -pal-std -pal-none pointer.png POINTER.SPR
+```
+
+Paint `#FF00FF` for the transparent pixels, exactly as you would for a
+picture; it comes out as the transparent value. Black and white come out
+as the same bytes the default arrow uses.
+
+`-pal-std` is what makes this work - it converts your colours to the
+Next's standard palette, which is the one the pointer is displayed
+against. Without it Gfx2Next builds its own palette and emits indices
+into it, and since nothing loads that palette the pointer comes out in
+the wrong colours while still being exactly 256 bytes and passing every
+check.
 
 ### Per-part pointers
 
