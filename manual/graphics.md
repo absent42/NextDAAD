@@ -27,7 +27,10 @@ The **width decides the shape**, and only two widths are accepted:
 | **320** pixels | `NNN.NX2` | Full screen, border area included |
 | **256** pixels | `NNN.NXI` | The classic paper area, inset by the border on every side |
 
-Any other width stops the build with `expected a 320 or 256 wide PNG`.
+Any other width stops the build with `expected a 320 or 256 wide PNG
+named with a picture number`. The same message covers the other half of
+the rule: the file name must contain a number, so `cellar.png` is
+refused as surely as a 512-wide image is.
 
 Height is free: up to 256 rows for 320-wide art, up to 192 rows for
 256-wide art. A picture shorter than the full screen is drawn
@@ -51,18 +54,22 @@ prose, however extreme its palette.
 
 ## Transparency: keep magenta out of your artwork
 
-One colour and one palette slot are reserved so pictures can let text
-show through. Both are yours to avoid - the kit converts the PNG you
-supply and never recolours or re-quantizes it for you.
+One palette slot is reserved so pictures can let text show through, and
+one colour is reserved alongside it. Both are yours to work around - the
+kit converts the PNG you supply and never recolours or re-quantizes it
+for you.
 
 **Do not paint with `#E000C0`** (224, 0, 192), the Spectrum Next's
-standard transparency magenta. Any pixel of that colour becomes a hole
-showing the text layer beneath, wherever it sits in the palette. Near
-neighbours of that magenta count too - anything with red 224 or above,
+standard transparency magenta. It will not come out the colour you
+painted: as it loads a picture, the interpreter moves every palette
+entry of that colour two steps down the blue scale, so those pixels
+render as a slightly different magenta. They stay opaque - the shift is
+what stops them becoming holes - but it happens silently, and it catches
+near neighbours of that colour too: anything with red 224 or above,
 green below 32, and blue 192 or above lands on the same hardware value.
-It is the conventional chroma-key colour, so most palettes steer clear
-of it naturally, and shifting a deliberate magenta a shade or two away
-is enough.
+Magenta is the conventional chroma-key colour, so most palettes steer
+clear of it naturally. If you do want magenta in a picture, pick one a
+shade or two away and it ships exactly as painted.
 
 **Quantize to 255 colours, indices 0-254.** Palette slot 255 is
 reserved for the transparent entry and is overwritten on every picture

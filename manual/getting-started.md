@@ -64,6 +64,13 @@ are all optional and the build skips whatever is absent.
 | `NEXFILE` | The interpreter to ship. Default `nextdaad.nex`. |
 | `VIDASPECT`, `VIDFPS`, `VIDOPTS`, `VIDOPTS_NNN` | Cutscene encoding - see [Video](video.md). |
 
+**Local overrides.** If a file named `CONFIG.local.BAT` sits beside
+`CONFIG.BAT`, it is loaded straight after it, so anything it sets wins.
+Put settings that belong to your machine rather than to the game there -
+a different `TOOLSDIR`, or `RUN=0` for an unattended build - and
+`CONFIG.BAT` stays as the settings you would hand to someone else along
+with the game.
+
 ## Build and run
 
 - **`BUILD.BAT`** - double-click it. It compiles the database, converts

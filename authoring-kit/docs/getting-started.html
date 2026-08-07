@@ -122,6 +122,12 @@ are all optional and the build skips whatever is absent.</p>
 </tr>
 </tbody>
 </table>
+<p><strong>Local overrides.</strong> If a file named <code>CONFIG.local.BAT</code> sits beside
+<code>CONFIG.BAT</code>, it is loaded straight after it, so anything it sets wins.
+Put settings that belong to your machine rather than to the game there -
+a different <code>TOOLSDIR</code>, or <code>RUN=0</code> for an unattended build - and
+<code>CONFIG.BAT</code> stays as the settings you would hand to someone else along
+with the game.</p>
 <h2 id="build-and-run">Build and run</h2>
 <ul>
 <li><strong><code>BUILD.BAT</code></strong> - double-click it. It compiles the database, converts

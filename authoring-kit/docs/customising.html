@@ -57,9 +57,11 @@ ever reaches part of it:</p>
   directly, with no mirroring - the extended and graphics glyphs.</li>
 </ul>
 <p>In practice a 768-byte classic charset covers everything a typical DAAD
-game prints. Glyphs 0 to 31, 128 to 159 and 160 to 255 are reachable
+game prints. Glyphs 16 to 31, 128 to 159 and 160 to 255 are reachable
 only through the routes above, and keep the built-in font's originals
-unless your <code>FONT.CHR</code> supplies the full 2048 bytes.</p>
+unless your <code>FONT.CHR</code> supplies the full 2048 bytes. <strong>Glyphs 0 to 15 no
+print path reaches at all</strong> - a <code>FONT.CHR</code> may define them, but nothing
+will ever draw them.</p>
 <h3 id="glyph-32-must-stay-blank">Glyph 32 must stay blank</h3>
 <p>Every cell the engine blanks - an untouched area, a row scrolled in,
 anything not yet printed - is filled with glyph 32 at the ordinary
