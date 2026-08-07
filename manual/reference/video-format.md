@@ -218,9 +218,9 @@ Four gates refuse infeasible encodes at encode time, each naming its
 remedy in the error message:
 
 - **Audio floor.** One frame may carry at most 3072 real audio bytes
-  (the player's per-frame audio section bound - SP17 T10; the circular
-  feed ring itself is the whole 8 KB audio bank and holds two of them
-  at once). Needs fps >= 10.17. Remedy: raise `--fps`.
+  (the player's per-frame audio section bound; the circular feed ring
+  itself is the whole 8 KB audio bank and holds two of them at once).
+  Needs fps >= 10.17. Remedy: raise `--fps`.
 - **Streaming supply.** A file bigger than the player's resident pool
   (~1.2 MB) must stream; if its mean demand exceeds the SD supply
   rate the encode is refused. With the automatic budget search (the
@@ -228,8 +228,8 @@ remedy in the error message:
   streamable, so the remedies the message names are the ones a budget
   cannot supply: a smaller shape, a lower `--fps`, a shorter clip.
 - **Direct-serve wire (`--direct`).** Strictly at-rate, worst-frame
-  checked, no slow-playback opt-out (TIGHTEN policy, owner ruling
-  2026-07-26). At 25 fps stereo the envelope tops out around 256x153
+  checked, with no slow-playback opt-out. At 25 fps stereo the
+  envelope tops out around 256x153
   (2026-08-02 silicon re-fit on the rebuilt transport; 12.5 fps
   carries full-screen 320x256); the refusal message prints the live
   at-rate menu (the at-rate height, its 0.90-margin variant, and the
@@ -401,8 +401,7 @@ keyframes, bytes, seconds-per-MB, degradation events, binding-budget
 histogram, and the starvation stats: `budget_bound_frames`,
 `bound_fraction`, `burst_window_frames`, `burst_peak_fraction`,
 `burst_peak_frame`, `delta_psnr_p10`, `starvation_warned` - the last is
-the withdrawn trigger's retired verdict, recorded for re-derivation
-work and not a quality judgement) for quality tracking. It also records
+a recorded field, not a quality judgement) for quality tracking. It also records
 the budget the encode actually ran at and how it was arrived at:
 `stream_budget`, `auto_budget` (true when derived), `auto_budget_target`,
 `auto_budget_probes`, and `auto_budget_ladder` - the (budget,
