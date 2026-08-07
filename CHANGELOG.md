@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.3.2 - unreleased
+## v0.3.2 - 07/08/2026
 
 - Location pictures use the Spectrum Next's standard transparency
   colour, magenta #E000C0. The reserved palette index moved to 255. 
