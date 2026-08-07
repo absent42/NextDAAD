@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DAAD V3 - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="daad-v3">DAAD V3</h1>
+<p>The kit compiles your game as a <strong>DAAD version 3</strong> database. The
+interpreter loads both version 2 and version 3, so nothing forces you
+either way, but version 3 is what <code>BUILD.BAT</code> produces unless you change
+it - and a game written for version 2 changes behaviour in three places
+when you rebuild it here.</p>
+<p>If you are starting a new game, there is nothing to do: write it, build
+it, and the V3 features below are simply available.</p>
+<h2 id="what-version-3-gives-you">What version 3 gives you</h2>
+<ul>
+<li><strong>Second-parameter indirection</strong> - <code>LET 100 @101</code> and the same form on
+  other condacts, where the second parameter is taken from a flag rather
+  than written literally.</li>
+<li><strong><code>GETKEY</code></strong> as a keyword of its own, waiting for a keypress.</li>
+<li><strong><code>XMES</code></strong> as a native 3-byte opcode rather than a 4-byte <code>EXTERN</code>
+  call with a MALUVA vector behind it. See
+  <a href="reference/limits.html">Limits</a> for what XMESSAGE and XMES cost.</li>
+<li><strong>The flag 53 attribute bits</strong>, below.</li>
+</ul>
+<h2 id="moving-an-existing-version-2-game-to-v3">Moving an existing version 2 game to V3</h2>
+<p>Three things change, none of them produces a compile error, and all
+three misbehave quietly. Grep your source for all three before you trust
+a V3 build of an older game.</p>
+<p><strong>1. <code>SYNONYM</code> stops marking the entry DONE.</strong></p>
+<p>Grep: <code>SYNONYM</code>. If any of them is followed by an <code>ISDONE</code> that expects
+the synonym itself to have counted as an action, that entry stops
+firing. Nothing errors; the entry just stops behaving. This is the one
+real migration hazard - it is silent and it is a logic change.</p>
+<p><strong>2. <code>PAUSE 0</code> stops meaning "wait 256 frames".</strong></p>
+<p>Grep: <code>PAUSE 0</code>. Under V3 it is GETKEY, so the game waits for a keypress
+instead of about five seconds. Replace it with <code>PAUSE 255</code>, or whatever
+duration you actually meant, if you wanted the wait.</p>
+<p><strong>3. <code>HASAT</code> / <code>HASNAT</code> / <code>SETAT</code> start honouring flag 53 bit 1.</strong></p>
+<p>Grep for any write to flag 53 - <code>LET 53</code>, <code>SET 53</code>, <code>PLUS 53</code>, or a
+<code>COPYFF</code>/<code>COPYBF</code> with 53 as the destination. Under V3, bit 1 of flag 53
+moves the attribute flag bank from flag 59 to flag 91, so a game using
+flag 53's low bits as scratch will find its attribute reads looking
+somewhere else entirely.</p>
+<p>There is a second half to this one: under V3 the interpreter itself also
+writes bits 0, 4 and 5 of flag 53, which it does not touch under V2. A
+game that reads flag 53 as a whole value - <code>EQ 53 n</code> rather than <code>HASAT</code>
+- will see different numbers even if it never writes the flag.</p>
+<p>The starter game that ships with the kit passes all three checks, and
+compiles byte-identically in either dialect apart from the version byte
+in its header.</p>
+<h2 id="flag-53-bit-1-and-the-alternative-attribute-bank">Flag 53 bit 1 and the alternative attribute bank</h2>
+<p>Under version 3, bit 1 of flag 53 moves the attribute flag bank from
+flag 59 to flag 91. <code>HASAT</code>, <code>HASNAT</code> and <code>SETAT</code> all honour it, so you
+can set the bit, write with <code>SETAT</code>, and read the same attributes back
+with <code>HASAT</code>.</p>
+<p>The bank switch is gated on the database being version 3. Under version
+2 the interpreter never looks at flag 53 bit 1, so a version 2 game is
+free to use flag 53 as scratch.</p>
+<h2 id="the-version-3-opcodes">The version 3 opcodes</h2>
+<p>Opcodes 120 (<code>XMES</code>), 122 (<code>INDIR</code>) and 124 (<code>SETAT</code>) are live only when
+the database header says version 3. In a version 2 database they raise
+runtime error 5. The compiler will not emit them into a version 2
+database in the first place, so ordinary authoring never reaches that
+error - it matters only if you are producing DDBs by some other route.</p>
+<h2 id="compiling-version-2-instead">Compiling version 2 instead</h2>
+<p>Remove <code>-v3</code> from the DRF line in <code>lib\ddb.bat</code>. If your game has
+<code>PART&lt;n&gt;\</code> folders, remove it from the matching line in <code>BUILD.BAT</code> as
+well.</p>
+<p><strong>Both sites or neither.</strong> Every part of a
+<a href="multi-part-games.html">multi-part game</a> must be the same dialect, because
+a part switch reloads a header while the flags carry across.</p>
+</main>
+</body>
+</html>

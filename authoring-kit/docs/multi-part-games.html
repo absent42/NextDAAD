@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-part games - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="multi-part-games">Multi-part games</h1>
+<p>A game can ship as several separate DDBs - "parts" - that switch between
+each other at runtime with <code>EXTERN n 4</code> (MALUVA's <code>XPART n</code>). The two
+usual reasons are a game too large for one DDB's
+<a href="reference/limits.html">31744-byte ceiling</a>, and a natural chapter or
+episode structure.</p>
+<p>This is entirely optional. A single-part game, which is what the kit
+builds by default, never touches any of the machinery below.</p>
+<h2 id="laying-the-parts-out">Laying the parts out</h2>
+<ul>
+<li><strong>Part 1 is your main <code>.DSF</code></strong> in the kit folder, built exactly as it
+  always was and staged as <code>GAME.DDB</code> at the SD root. Nothing about a
+  single-part build changes.</li>
+<li><strong>Parts 2 to 9</strong> - the supported range - each get a <code>PART&lt;n&gt;\</code> folder
+  in the kit directory, holding exactly one <code>.DSF</code> (auto-detected the
+  same way as the main game) plus that part's own already-converted art
+  and audio, if any.</li>
+<li><code>BUILD.BAT</code> compiles each <code>PART&lt;n&gt;\</code> DSF the same way as the main game
+  and stages the result as <code>RELEASE\GAME&lt;n&gt;.DDB</code> and
+  <code>RELEASE\PART&lt;n&gt;\0.XMB</code> if that part uses XMESSAGE or XMES. It then
+  copies every other file from <code>PART&lt;n&gt;\</code> into <code>RELEASE\PART&lt;n&gt;\</code>
+  untouched.</li>
+<li>On the SD card that becomes <code>GAME.DDB</code>, <code>GAME2.DDB</code>, <code>GAME3.DDB</code> and
+  so on at the root, alongside <code>PART2\</code>, <code>PART3\</code> folders holding each
+  part's own shadowed assets.</li>
+</ul>
+<p><strong>Part folders take converted files, not sources.</strong> Put ready-to-use
+<code>.NX2</code>, <code>.NXI</code>, <code>.AKY</code>, <code>.AYS</code>, <code>.WAV</code>, <code>.VID</code>, <code>GAME.SFB</code>, <code>FONT.CHR</code>
+and <code>POINTER.SPR</code> files in a <code>PART&lt;n&gt;\</code> folder - not <code>.png</code> or <code>.aks</code>
+sources. Only the main kit folder's <code>IMAGES\</code> and <code>AUDIO\</code> are
+converted.</p>
+<p>A part switch opens its target by the exact name <code>GAMEn.DDB</code>, so a stray
+file beside it - a <code>GAMEn.DSF</code> source left next to the compiled DDB, say
+- is ignored and harmless.</p>
+<h2 id="switching-parts">Switching parts</h2>
+<ul>
+<li><code>EXTERN n 4</code> (<code>XPART n</code> under MALUVA) switches the running game to
+  part <code>n</code>, 1 to 9. It loads <code>GAMEn.DDB</code> (<code>GAME.DDB</code> for part 1) from
+  the SD root.</li>
+<li><strong>If that file is not there, the switch is a silent no-op.</strong> The game
+  keeps running in the current part, unaffected. A game that ships an
+  <code>EXTERN n 4</code> trigger must also ship that part's DDB, or the trigger
+  quietly does nothing.</li>
+<li>A successful switch is a <strong>fresh entry</strong> into the new part, not a
+  resume. It starts at the new part's own <code>PRO 0</code>, never at wherever the
+  <code>EXTERN</code> was called from.</li>
+</ul>
+<h2 id="shadowed-assets">Shadowed assets</h2>
+<p>For a part of 2 or above, these asset kinds are looked for in
+<code>PART&lt;n&gt;\&lt;name&gt;</code> <strong>first</strong>, and fall back to the game root if they are
+not there:</p>
+<ul>
+<li>location art (the whole extension probe runs under <code>PART&lt;n&gt;\</code>, then
+  again at the root if that whole pass misses) - see
+  <a href="graphics.html">Graphics</a></li>
+<li><code>NNN.WAV</code> samples, and numbered <code>NNN.AYS</code> / <code>NNN.AKY</code> songs, and
+  <code>GAME.SFB</code> - see <a href="audio.html">Audio</a></li>
+<li><code>NNN.VID</code> videos - see <a href="video.html">Video</a></li>
+<li><code>0.XMB</code> external message text</li>
+<li><code>FONT.CHR</code> and <code>POINTER.SPR</code> - see <a href="customising.html">Customising</a></li>
+</ul>
+<p><strong>Root-only, never shadowed:</strong> the title screen (<code>DAAD.*</code>, shown once at
+cold boot), and the boot-autoplay default song (<code>GAME.AYS</code> /
+<code>GAME.AKY</code>). The music sub-commands' <code>n=255</code> sentinel - the "play
+<code>GAME.AYS</code>/<code>GAME.AKY</code>" case, see <a href="reference/symbols.html">Symbols</a> - is
+also always root-only and behaves identically from every part. <code>SFX 255
+6</code> or <code>SFX 255 7</code> plays the game's theme from anywhere. That is by
+design, not an override that failed.</p>
+<p>Part 1 never looks in <code>PART&lt;n&gt;\</code> at all, so a part-1-only game is
+byte-identical to a plain single-part build.</p>
+<h2 id="what-carries-across-a-switch-what-does-not">What carries across a switch, what does not</h2>
+<ul>
+<li><strong>All 256 flags carry verbatim.</strong> Score, turns, and every other system
+  or user flag survive a switch unchanged (caveat 6).</li>
+<li><strong>Object locations carry by index</strong>, for as many objects as both parts
+  define in common (caveats 1, 2, 4).</li>
+<li><strong>Object attributes and descriptions do not carry.</strong> Weight,
+  container and wearable bits, extended attributes, and text always come
+  from the currently active part's own DDB (caveat 3).</li>
+<li><strong>Vocabulary is per-part and entirely independent.</strong> A word's
+  spelling, its ID, and whether it exists at all can differ freely
+  between parts. Only OBJECT NUMBERS need a shared convention across
+  parts (caveat 1); vocabulary needs none.</li>
+</ul>
+<h2 id="save-load-and-ramsave-across-parts">Save, load and RAMSAVE across parts</h2>
+<p>SAVE always records the current part number in the file, and LOAD reads
+it back and switches automatically if it differs from the running part.
+A cross-part LOAD is a part entry, exactly like <code>EXTERN n 4</code>, not a
+resume (caveat 7). Save files share one filename namespace in the game
+root regardless of part (caveat 9) - SAVE and LOAD never look inside
+<code>PART&lt;n&gt;\</code>.</p>
+<p><strong>Only distribute save files your own build wrote, and do not hand-edit
+them.</strong> Save files are length-detected, and a malformed or hand-edited
+file can be misclassified. The outcome is always bounded to a wrong-part
+restore or a clean rejection, never file corruption, but it is a
+pointless class of bug to invite.</p>
+<p>RAMSAVE and RAMLOAD (caveat 8) use one buffer that also survives a
+switch, so a RAMLOAD taken two parts later still restores to wherever
+the RAMSAVE was last taken - the "died, try again" checkpoint feature. A
+cross-part RAMLOAD is always a full restore: it ignores RAMLOAD's
+"restore up to flagno" partial-restore argument, which only applies
+within the same part. Refresh RAMSAVE in the new part's <code>PRO 0</code> after a
+switch if you want the checkpoint to track it.</p>
+<h2 id="author-caveats">Author caveats</h2>
+<ol>
+<li><strong>OBJECT NUMBERING IS YOUR CONTRACT.</strong> The carry copies object
+   locations BY INDEX. Object 7 in part 1 must mean the same thing as
+   object 7 in part 2, or a carried lamp becomes whatever part 2 defined
+   at that index. Keep a shared object-numbering map across parts, and
+   define cross-part objects at the same indexes in every part.</li>
+<li><strong>THE WHOLE TABLE CARRIES, NOT JUST THE INVENTORY.</strong> Objects left in
+   part-1 rooms arrive in part 2 holding part-1 location NUMBERS, which
+   now name different rooms, or nothing. If only carried and worn
+   objects matter across a boundary, have the new part's <code>PRO 0</code> re-PLACE
+   or ABSENT everything else - the classic housekeeping idiom.</li>
+<li><strong>Attributes are per-part.</strong> Weight, container and wearable bits, and
+   descriptions come from the ACTIVE part's DDB, so a carried object
+   weighs what part 2 says it weighs.</li>
+<li><strong>Object counts may differ.</strong> Objects the new part defines beyond the
+   old part's count start at the new part's compiled initial locations.</li>
+<li><strong>Inventory limits are per-part (CTL).</strong> Arriving with more carried
+   objects than the new part's limit is stable until the next GET.
+   Authors who lower the limit should handle the overflow in <code>PRO 0</code>.</li>
+<li><strong>ALL 256 FLAGS CARRY - there is no clean slate.</strong> A part that
+   assumes its scratch flags start at zero must zero them in <code>PRO 0</code>, or
+   the previous part must clear them before switching. System flags carry
+   too: score and turns carry naturally, and the location flag holds a
+   part-1 room number until <code>PRO 0</code> places the player. Always set the
+   start location first.</li>
+<li><strong>SAVE and LOAD.</strong> A save records flags, objects and part; loading it
+   from ANY part lands in the SAVED part, and every caveat above applies
+   to the restored state exactly as it does to a live switch. A
+   cross-part LOAD enters the saved part at <code>PRO 0</code> rather than resuming
+   mid-turn; a same-part LOAD behaves as classic DAAD.</li>
+<li><strong>RAMSAVE is ONE SLOT and survives switches.</strong> A RAMLOAD two parts
+   later restores to wherever the RAMSAVE was taken. That is the
+   death-retry feature - but a stale slot restores a stale part, so
+   authors using RAMSAVE for checkpoints should refresh it after each
+   switch, with a RAMSAVE in <code>PRO 0</code>.</li>
+<li><strong>Save files share one namespace</strong> in the game root regardless of
+   part; identical names overwrite across parts.</li>
+</ol>
+<h2 id="compiling-every-part-the-same-way">Compiling every part the same way</h2>
+<p>Every part of a multi-part game must be compiled in the same DAAD
+dialect, because a part switch reloads a header while the flags carry
+across. If you change the compiler version away from the kit default,
+change it for the main game and for the <code>PART&lt;n&gt;\</code> folders together -
+both sites or neither. See <a href="daad-v3.html">DAAD V3</a>.</p>
+</main>
+</body>
+</html>

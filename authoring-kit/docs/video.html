@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="video">Video</h1>
+<p>Full-screen, full-motion cutscenes with synchronised audio, in
+NextDAAD's own NXV format.</p>
+<p>Drop a video source in <code>VIDEO\</code>, named by video number. <code>VIDEO\001.mp4</code>
+is encoded by the build to <code>VIDEO\001.vid</code> and staged as
+<code>RELEASE\001.VID</code>; a pre-encoded <code>VIDEO\001.vid</code> with no <code>.mp4</code> beside
+it is staged as it is.</p>
+<p>Your game plays one with <code>GFX n 13</code> (play once) or <code>GFX n 14</code> (loop
+until any key), where <code>n</code> is the video number - <code>GFX 3 13</code> plays
+<code>003.VID</code>. The classic DOS DAAD symbols <code>SFX n 9</code> (<code>PLAYFLI</code>) and
+<code>SFX n 10</code> (<code>PLAYFLIL</code>) do the same thing - see
+<a href="reference/symbols.html">Symbols</a>.</p>
+<p>In a <a href="multi-part-games.html">multi-part game</a>, <code>PART&lt;n&gt;\NNN.VID</code> shadows
+the root copy for that part only.</p>
+<p><strong>Video needs a 2MB Next.</strong> Playback buffers through a large pool of
+RAM banks, and a 1MB machine has too small a pool to hold or stream
+clips reliably.</p>
+<p>The kit can encode the same piece of footage two completely different
+ways, and on this hardware that choice decides more about how a
+cutscene looks than every other setting put together. Pick the right
+route and the defaults are usually enough; pick the wrong one and no
+amount of tuning rescues it. Sections 1 and 2 below are that decision.</p>
+<h2 id="shapes">Shapes</h2>
+<p>An NXV file is fully self-describing - there is nothing to select at
+the DSF level. A clip is encoded to a <em>shape</em>: any Layer 2 width (256
+or 320) by any height from one line to the mode's full 192 or 256.
+Five preset shapes ship:</p>
+<table>
+<thead>
+<tr>
+<th>Preset</th>
+<th>Shape</th>
+<th>Screen mode</th>
+<th>Displayed aspect</th>
+<th>Character</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>full</code></td>
+<td>320x256</td>
+<td>320-wide, full height</td>
+<td>4:3, edge to edge</td>
+<td>The whole screen. Heaviest data rate, so quality gives way first.</td>
+</tr>
+<tr>
+<td><code>16:9</code></td>
+<td>320x192</td>
+<td>320-wide, letterboxed</td>
+<td>16:9</td>
+<td>The sweet spot for modern widescreen sources.</td>
+</tr>
+<tr>
+<td><code>scope</code></td>
+<td>320x144</td>
+<td>320-wide, letterboxed</td>
+<td>~2.35:1</td>
+<td>Cinematic scope. Small surface, high quality.</td>
+</tr>
+<tr>
+<td><code>classic</code></td>
+<td>256x192</td>
+<td>256-wide, bordered</td>
+<td>4:3</td>
+<td>The classic Spectrum frame. Cheapest 4:3.</td>
+</tr>
+<tr>
+<td><code>classic-wide</code></td>
+<td>256x144</td>
+<td>256-wide, bordered + letterboxed</td>
+<td>16:9</td>
+<td>Cheapest widescreen of all.</td>
+</tr>
+</tbody>
+</table>
+<p>Every shape carries 256-colour pictures with adaptive palettes and
+full-rate stereo audio at 15625 Hz. A mono source is converted to
+stereo for you. Letterbox bars cost no file bytes at all - the player
+draws them black. Sources are centre-cropped to the shape's displayed
+aspect, never distorted.</p>
+<p><strong>Settle the shape before anything else.</strong> Because the crop is a crop,
+a 16:9 source encoded into the 4:3 <code>full</code> shape loses its sides. Match
+the shape to how your footage is framed first, then pick a route.</p>
+<p><strong>Smaller shapes come out better.</strong> The player's data budget is fixed,
+so quality scales inversely with pixel count: <code>classic</code> has two-thirds
+the pixels of <code>full</code>, so at the same data rate each pixel gets about
+1.7 times the bytes. If a clip looks rough at <code>full</code>, re-encode it
+letterboxed. Two things qualify that: hard content - constant
+whole-frame motion, noise, fades - eats budget whatever the shape, and
+the letterboxed 320-wide shapes carry a decode surcharge for their
+gapped surface, which makes <code>16:9</code> the usual best trade for a
+widescreen source.</p>
+<p><strong>Free heights.</strong> Beyond the presets, any <code>WIDTHxHEIGHT</code> is a valid
+shape (<code>320x150</code>, <code>256x100</code> and so on), and <code>--aspect</code> derives the
+height for a target displayed aspect ratio - <code>--aspect 2.35</code> gives true
+cinema scope, with the 320-wide mode's non-square pixels corrected for
+automatically.</p>
+<h2 id="1-the-two-routes">1. The two routes</h2>
+<p><strong>Compressed</strong> is the default and needs no options. It sends only what
+changed between frames, so it is very efficient on footage that largely
+holds still, and it can run at the full 25 fps at the full 320x256
+screen size on that kind of material. Its weakness is fine detail
+moving everywhere at once: when the frame asks for more than the card
+can deliver, parts of the picture are left to catch up on a later
+frame, and that shows as <strong>banding</strong> - stripes or blocks that lag
+behind the rest of the image, usually vertical on the full-width shapes
+and most obvious in water, weather and gradients.</p>
+<p><strong>Uncompressed</strong> (<code>--direct</code>) sends every frame whole, straight from
+the card to the screen. It cannot band, because nothing is ever left
+behind - every pixel of every frame is exactly what the encoder
+produced. Its weakness is size: it costs about 1 MB for every second of
+screen time, which limits both how long a clip can be and how much
+picture you can have at 25 fps.</p>
+<p>Neither route is better. They fail in different directions, and the
+footage decides which failure you would rather have.</p>
+<h2 id="2-pick-your-route-in-30-seconds">2. Pick your route in 30 seconds</h2>
+<p>Answer these in order and stop at the first one that fits.</p>
+<ol>
+<li>
+<p><strong>Is the clip longer than about 15 seconds?</strong>
+   Compressed. Uncompressed costs about 1 MB for every second of screen
+   time, so past this point it is spending more of the card than most
+   games can spare on one scene (section 6). Go to <strong>Preset 5</strong>.</p>
+</li>
+<li>
+<p><strong>Does the picture mostly hold still?</strong> A slow zoom, a slow pan, a
+   held shot, a talking head, a title card, a mostly-static scene with
+   one thing moving in it.
+   Compressed, at full screen, at 25 fps. This is the cheapest good
+   result in the kit and it is already the default. Go to <strong>Preset 1</strong>.</p>
+</li>
+<li>
+<p><strong>Is fine detail moving across the whole frame?</strong> Water, rain,
+   falling snow, smoke, foliage, crowds, a camera moving over textured
+   ground. This is the class compressed video handles worst, and the one
+   where uncompressed wins outright.
+   Then ask which you would rather keep:
+   - <strong>The big picture</strong> - full 320x256, at half the motion rate. Go to
+     <strong>Preset 2</strong>.
+   - <strong>The motion</strong> - full 25 fps, at a smaller picture. Go to
+     <strong>Preset 3</strong>.</p>
+</li>
+<li>
+<p><strong>Is the source grainy, noisy or heavily textured?</strong> Old film,
+   high-ISO footage, heavy compression artefacts in the source.
+   Whichever preset the answers above gave you, add the line from
+   <strong>Preset 4</strong>.</p>
+</li>
+<li>
+<p><strong>Anything else</strong> - start compressed with the defaults (<strong>Preset
+   1</strong>). If the result bands, work down <strong>Preset 6</strong>.</p>
+</li>
+</ol>
+<h2 id="3-where-these-settings-go">3. Where these settings go</h2>
+<p>Three ways to apply them, all equivalent.</p>
+<p><strong>Per video, in <code>CONFIG.BAT</code>.</strong> Set <code>VIDOPTS_NNN</code> for the video number,
+and the next build re-encodes that clip:</p>
+<pre><code>SET VIDOPTS_001=--direct --shape full --fps 12.5
+</code></pre>
+<p>This is the normal place for anything in this document, because these
+are per-clip decisions - one cutscene may want one route and the next
+another. <code>VIDASPECT</code>, <code>VIDFPS</code> and <code>VIDOPTS</code> apply to <em>every</em> clip in
+the game, so use those only for something you genuinely want everywhere.</p>
+<p><strong>By hand</strong>, for a one-off encode or to cut a clip from a longer source:</p>
+<pre><code>tools\videnc\videnc.exe source.mp4 VIDEO\001.vid --direct --shape full --fps 12.5 --start 00:01:12 --duration 8
+</code></pre>
+<p>Keep the source file outside <code>VIDEO\</code> when you do this. The build
+re-encodes any <code>VIDEO\NNN.mp4</code> whose settings it does not recognise, so
+a <code>VIDEO\001.mp4</code> sitting next to your hand-made <code>VIDEO\001.vid</code> will
+overwrite it on the next build. A <code>.vid</code> with no <code>.mp4</code> beside it is
+used exactly as you made it.</p>
+<p><strong>In the tuner.</strong> <code>VIDTUNE.BAT</code> puts the same settings behind a preview
+window; when you accept an encode it writes the matching <code>VIDOPTS_NNN</code>
+line into <code>CONFIG.BAT</code> for you.</p>
+<p><strong>Before you drop your own footage into <code>VIDEO\001.mp4</code> or <code>002.mp4</code>,
+read the <code>VIDOPTS_NNN</code> lines already in <code>CONFIG.BAT</code>.</strong> Those were
+written for the demo clips that ship with the kit. Options that suited
+a cartoon will not suit your footage, and they apply silently to
+whatever file you put in that slot. Delete or replace them.</p>
+<h3 id="the-builds-own-encode-settings">The build's own encode settings</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>VIDASPECT</code></td>
+<td>Shape for every encode: a preset name, <code>WIDTHxHEIGHT</code>, or a bare aspect number (<code>2.35</code>, a free height at 320 wide). Blank = <code>full</code>.</td>
+</tr>
+<tr>
+<td><code>VIDFPS</code></td>
+<td>Frames per second for every encode. Blank = 25.</td>
+</tr>
+<tr>
+<td><code>VIDOPTS</code></td>
+<td>Extra encoder options for every encode (<code>--dither 0.3</code>, say).</td>
+</tr>
+<tr>
+<td><code>VIDOPTS_NNN</code></td>
+<td>Extra options for video <code>NNN</code> only (3-digit number), appended after <code>VIDOPTS</code>.</td>
+</tr>
+<tr>
+<td><code>VIDPROFILE</code></td>
+<td>An older way of naming the shape (<code>n0</code> to <code>n4</code>), read only when <code>VIDASPECT</code> is blank. Use <code>VIDASPECT</code> instead.</td>
+</tr>
+</tbody>
+</table>
+<p>For most repeated options the encoder takes the last occurrence, so
+<code>VIDOPTS_NNN</code> wins over <code>VIDOPTS</code>. Shape is guaranteed rather than left
+to order: a <code>VIDOPTS_NNN</code> that sets its own <code>--shape</code>, <code>--width</code> or
+<code>--aspect</code> always wins, because the encode pass suppresses <code>VIDASPECT</code>
+for that video.</p>
+<p>The <code>.vid</code> beside the source is an encode cache, keyed on both the
+<code>.mp4</code>'s timestamp and the effective <code>VIDASPECT</code>/<code>VIDFPS</code>/<code>VIDOPTS</code>/
+<code>VIDOPTS_NNN</code> settings for that video (kept in a sidecar,
+<code>VIDEO\NNN.vid.args</code>). Change any of them and the clip re-encodes by
+itself - there is nothing to delete by hand.</p>
+<p><strong>Encode time is quality.</strong> The encoder is deliberately slow: it spends
+its time squeezing the best picture into the fixed playback budget.
+Expect minutes per clip, once per source change.</p>
+<h2 id="4-the-presets">4. The presets</h2>
+<p>Each one is a complete answer for a class of footage. Copy the
+<code>CONFIG.BAT</code> line, adjust the video number, build.</p>
+<h3 id="preset-1-quiet-scene">Preset 1 - Quiet scene</h3>
+<p><strong>For:</strong> slow zooms and pans, held shots, talking heads, title cards,
+establishing shots, anything where most of the frame is the same from
+one moment to the next.</p>
+<pre><code>SET VIDOPTS_001=
+</code></pre>
+<p>Nothing at all - the kit defaults are the right answer for this
+material. Full 320x256, 25 fps, stereo.</p>
+<p>Optional, and worth trying on this class if the motion is continuous (a
+zoom or pan that never stops rather than a static shot):</p>
+<pre><code>SET VIDOPTS_001=--tile-slack 0.5
+</code></pre>
+<p><strong>You get:</strong> the whole screen, at full motion rate, with room to spare.
+Footage in this class typically uses less than half of what the card can
+deliver, so the picture is not fighting for space.</p>
+<p><strong>You pay:</strong> nothing. Do not send this kind of clip to the uncompressed
+route - it looks the same and costs roughly three times the card space.</p>
+<h3 id="preset-2-full-screen-action">Preset 2 - Full-screen action</h3>
+<p><strong>For:</strong> detailed sustained motion filling the whole frame - sea,
+weather, falling snow, crowds, smoke - where you want the picture at
+full size and can accept less fluid motion.</p>
+<pre><code>SET VIDOPTS_001=--direct --shape full --fps 12.5
+</code></pre>
+<p>For a 16:9 source, use its own shape instead - the half-rate envelope
+has room for every shape:</p>
+<pre><code>SET VIDOPTS_001=--direct --shape 16:9 --fps 12.5
+</code></pre>
+<p><strong>You get:</strong> the full 320x256 screen with no banding whatsoever, every
+frame pixel-exact. On the footage this route is meant for, the
+difference is not subtle - detail that the compressed route turns into
+flat stripes stays as detail.</p>
+<p><strong>You pay:</strong> two things, both real. About twice the card space of the
+compressed version of the same clip, and half the motion rate - 12.5
+frames a second instead of 25. Motion is noticeably less smooth. It is
+still a clean cadence, so there is no stutter or beat on top of the
+reduced rate, but it reads as half-rate and you should look at it before
+committing.</p>
+<p>Expect the encoder to print an at-capacity warning about wire
+utilization on this preset. Full-screen uncompressed sits at the top of
+what the card can carry, by design; that is what makes it possible at
+all. It plays at rate on a healthy, defragmented card.</p>
+<h3 id="preset-3-action-at-full-rate">Preset 3 - Action at full rate</h3>
+<p><strong>For:</strong> the same detailed motion as Preset 2, when smooth movement
+matters more than picture size.</p>
+<pre><code>SET VIDOPTS_001=--direct --shape 256x153
+</code></pre>
+<p>For a cinematic wide framing at full width instead:</p>
+<pre><code>SET VIDOPTS_001=--direct --shape 320x123
+</code></pre>
+<p><strong>You get:</strong> the full 25 fps, no banding, every frame pixel-exact.
+Motion looks the way it looked in the source.</p>
+<p><strong>You pay:</strong> the picture is smaller. <code>256x153</code> plays in the bordered
+256-wide frame; <code>320x123</code> uses the full width but is heavily
+letterboxed. There is no full-screen version of this preset - 25 fps
+uncompressed and 320x256 do not fit down the same wire.</p>
+<p>These two shapes are the practical maximum at 25 fps with stereo audio.
+If you ask for more, the encoder refuses and prints the exact sizes that
+do fit for your chosen width - use one of those.</p>
+<h3 id="preset-4-grainy-or-noisy-source">Preset 4 - Grainy or noisy source</h3>
+<p><strong>For:</strong> film grain, sensor noise, heavy source compression, or any
+footage that looks busy even where nothing is moving. Grain is motion as
+far as the encoder is concerned, and it is paid for on every single
+frame.</p>
+<p>Add <code>--prefilter</code> to whichever preset you are already using - it is an
+extra option, not a route of its own:</p>
+<pre><code>SET VIDOPTS_001=--shape 16:9 --tile-slack 0.5 --prefilter
+</code></pre>
+<p><code>--prefilter</code> runs a light temporal denoise before encoding. It can be
+given an explicit ffmpeg filter string if you want to control it, but
+the bare form is deliberately conservative and is the one to try first.</p>
+<p><strong>You get:</strong> a modest improvement on genuinely grainy material - enough
+to be worth an encode, not enough to change a bad route into a good one.
+Compare the two encodes before keeping it. It does most on the
+compressed route, where every speck of grain is charged for on every
+frame; on the uncompressed route a frame costs the same whatever is in
+it, so denoising there only changes how the picture looks.</p>
+<p><strong>You pay:</strong> a little fine texture. On clean sources it takes away more
+than it gives, so this is not a default.</p>
+<h3 id="preset-5-long-cutscene">Preset 5 - Long cutscene</h3>
+<p><strong>For:</strong> anything over about 15 seconds. At that length uncompressed
+costs more card space than a game usually has to give (section 6), so
+the compressed route is the practical one and the quality decision moves
+to the shape.</p>
+<pre><code>SET VIDOPTS_001=--shape 16:9 --tile-slack 0.5
+</code></pre>
+<p>Or, for a 4:3 framing that still needs the room:</p>
+<pre><code>SET VIDOPTS_001=--shape classic --tile-slack 0.5
+</code></pre>
+<p><strong>You get:</strong> the compressed route working with headroom instead of
+against a wall. A smaller shape has real room to spare where full
+320x256 has none, and that headroom is what stops banding. Drop
+<code>--tile-slack</code> if the clip is a series of static shots rather than
+continuous movement - it does nothing there.</p>
+<p><strong>You pay:</strong> picture area. A letterboxed or bordered clip is smaller on
+screen. This is the trade the compressed route offers and there is no
+way around it at length.</p>
+<p>If a long sequence really needs to be full-screen and full-motion,
+consider cutting it into separate numbered clips played one after
+another. Each play is its own load, so expect a beat between them - this
+works for a sequence with natural cuts, not for one continuous shot.</p>
+<h3 id="preset-6-when-it-still-bands">Preset 6 - When it still bands</h3>
+<p>Work down this list, re-encoding and looking at each step. Stop at the
+first one that fixes it. The order is cheapest-first in terms of what it
+costs you on screen, not by how much each one helps - step 2 is the
+biggest lever of the six, but it is also the first one that takes
+something away.</p>
+<ol>
+<li>
+<p><strong><code>--tile-slack 0.5</code>.</strong> The one picture knob worth trying on any clip
+   with continuous motion. Costs a little of the encoder's safety
+   margin, helps pans and zooms, does nothing on static material.
+   (Compressed encodes only - there is nothing for it to act on in an
+   uncompressed one.)</p>
+</li>
+<li>
+<p><strong>A smaller shape.</strong> <code>16:9</code>, then <code>scope</code>, then <code>classic-wide</code>. This
+   works because shape is the real problem: the full screen leaves
+   nothing spare, and a smaller one has genuine room. Match the shape to
+   your framing so the crop does not hurt.</p>
+</li>
+<li>
+<p><strong><code>--prefilter</code></strong>, if the source has any grain or noise in it (Preset
+   4).</p>
+</li>
+<li>
+<p><strong><code>--fps 12.5</code>.</strong> Halves the motion rate and gives every remaining
+   frame twice the room. The same trade Preset 2 makes, on the
+   compressed route.</p>
+</li>
+<li>
+<p><strong>The uncompressed route</strong> - Preset 2 or Preset 3. If the clip is
+   short enough to fit, this ends the argument: banding is not possible
+   there.</p>
+</li>
+<li>
+<p><strong>Shorten or re-frame the shot.</strong> A four-second version of a
+   difficult shot at a shape that works beats twelve seconds of stripes.</p>
+</li>
+</ol>
+<p><strong>What not to do: do not set <code>--stream-budget</code> by hand.</strong> It is not a
+quality dial. It tells the encoder how much the card can supply, and
+lowering it does not compress harder - it hands the encoder less room,
+so more of the picture goes unpainted and everything gets worse at once.
+The encoder works out the right value for each clip and prints it. See
+<a href="reference/video-delivery.html">Video delivery</a>.</p>
+<h2 id="5-frame-rate-and-matching-your-source">5. Frame rate, and matching your source</h2>
+<p><strong>25 fps is the rate for almost every clip.</strong> The Next composites at
+50 Hz, so only a rate that divides 50 evenly gives frames that each
+occupy a whole number of display frames - anything else beats against
+the 50 Hz composite and shows it. 25 is the default and there is no
+quality to be won by nudging it. The one alternative worth considering
+is 12.5, which also divides 50 evenly and hands every frame twice the
+room: half the motion rate, bought deliberately, for a demanding clip
+that cannot be made to look right at 25.</p>
+<p><strong>There is a floor.</strong> One frame may carry at most 3072 audio bytes, so
+15625 Hz stereo needs 10.17 fps or more. The encoder refuses an encode
+below the floor and names the remedy - raise the frame rate.</p>
+<p><strong>Your footage is retimed for you.</strong> Almost no source material is 25p:
+film is 24 (or 23.976), and most cameras and stock libraries shoot 30 or
+29.97. Every one of those has to be resampled in time on the way in, and
+how that is done is visible. The encoder blends to the target rate,
+automatically, whenever the source rate is not the target rate. A source
+that is already at the target rate is not touched at all.</p>
+<p>Two overrides, both per title via <code>VIDOPTS</code>/<code>VIDOPTS_NNN</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Use it for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>(nothing)</td>
+<td>The default blend. Correct for most footage, and always correct if you are unsure.</td>
+</tr>
+<tr>
+<td><code>--retime mci</code></td>
+<td>Slow pans and zooms. Reconstructs the in-between motion rather than mixing two frames, and on slow-moving material that reads as smoother. Wrong for water, smoke, crowds and anything else that moves non-rigidly, where it tears.</td>
+</tr>
+<tr>
+<td><code>--retime drop</code></td>
+<td>Fast or heavily cut material. Picks the nearest source frame and keeps it sharp, at the cost of an uneven cadence - a 30 fps source loses every 6th frame, and a 24 fps source gains a duplicate once a second.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>This matters more on the uncompressed route.</strong> Uncompressed playback
+reproduces every frame exactly as the encoder made it, blended
+in-between frames included, so if you can see the blend you will see it
+clearly. On a slow uncompressed shot try <code>--retime mci</code>; on a fast cut
+one try <code>--retime drop</code>.</p>
+<h2 id="6-space-on-the-card-and-how-long-a-clip-can-be">6. Space on the card, and how long a clip can be</h2>
+<p><strong>Uncompressed costs about 1 MB for every second of screen time -
+roughly 60 MB a minute</strong> at full screen. At 25 fps that is effectively a
+fixed rate whatever shape you choose, because every shape that fits at
+25 fps is already at the limit of what the card can carry. At 12.5 fps
+there is room below the limit, so a smaller shape genuinely costs less.</p>
+<table>
+<thead>
+<tr>
+<th>Preset</th>
+<th>Shape and rate</th>
+<th>Card space</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2</td>
+<td>320x256 at 12.5 fps</td>
+<td>about 1.06 MB per second</td>
+</tr>
+<tr>
+<td>2</td>
+<td>320x192 at 12.5 fps</td>
+<td>about 0.81 MB per second</td>
+</tr>
+<tr>
+<td>3</td>
+<td>256x153 at 25 fps</td>
+<td>about 1.02 MB per second</td>
+</tr>
+<tr>
+<td>3</td>
+<td>320x123 at 25 fps</td>
+<td>about 1.02 MB per second</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Compressed clips are typically a third to a half the size of the same
+footage uncompressed</strong>, and quiet material is far cheaper still - it
+varies with the content, which is the whole point of the route. The
+encoder prints the finished size, and the <code>.vid</code> file in <code>VIDEO\</code> is the
+file that goes on the card.</p>
+<p>Budget accordingly. Three uncompressed cutscenes of twelve seconds each
+is most of 40 MB - fine on a modern card, but it is the largest thing in
+most games by a wide margin, and it is worth deciding early which scenes
+deserve it.</p>
+<h3 id="clip-length-limit">Clip length limit</h3>
+<p>A video file can be up to <strong>256 MB</strong>, and no clip may run past <strong>65535
+frames</strong> - roughly 43 minutes at 25 fps, 87 at 12.5. Divide 256 MB by
+the rate in the table above for the longest uncompressed clip each shape
+can carry: <strong>about four minutes at full screen</strong>, and longer at the
+smaller shapes. Compressed clips run at a much lower byte rate, so the
+same 256 MB carries several times as much of them - usually ten minutes
+or more, and the frame count only becomes the limit on very cheap
+material.</p>
+<p>You do not have to work either limit out yourself: the encoder checks
+both before it writes anything, and if a clip is over it says so, and
+names the longest clip your shape and frame rate can reach. Nothing it
+writes is too big to play.</p>
+<h2 id="7-if-it-does-not-look-right">7. If it does not look right</h2>
+<p><strong>Bands or stripes across the picture.</strong> Parts of the frame are lagging
+behind, most visible in water, weather, gradients and fine texture. This
+is the compressed route running out of room. Work down Preset 6.</p>
+<p><strong>Juddery or stuttering motion, at a regular beat.</strong> The source frame
+rate is being resampled badly. Check section 5 - if you have set
+<code>--retime drop</code>, remove it, and if you have not set anything, try
+<code>--retime mci</code> on slow material.</p>
+<p><strong>Motion that steps rather than flows, but at a steady even cadence.</strong> A
+half-rate encode looks like this and is meant to - Preset 2 trades
+motion for picture size on purpose. If you did not ask for <code>--fps 12.5</code>,
+check that no <code>VIDFPS</code> or <code>VIDOPTS</code> line in <code>CONFIG.BAT</code> is setting it
+for every clip.</p>
+<p><strong>The whole clip runs slow, with the audio popping.</strong> That is a 60Hz
+display, not the encode. Playback is designed for a 50Hz display; on a
+60Hz one, expect slower playback and audio popping. No setting fixes it.</p>
+<p><strong>A pause, or a frame that holds, in the middle of a clip.</strong> Usually the
+card, not the encode - a fragmented file cannot be read fast enough to
+keep up. Defragment the card, or copy the file onto a freshly formatted
+one, and try again. If it survives that, and the clip is uncompressed,
+it is sitting at the top of what your card can deliver: move to a
+smaller shape or to the compressed route.</p>
+<p><strong>Gradients step visibly - skies, fades, soft lighting.</strong> Raise the
+dither with <code>--dither 0.8</code>. If instead what you are seeing is the dither
+pattern itself, as a fine speckle over flat areas, lower it with
+<code>--dither 0.3</code>. The default is 0.5 and suits most footage.</p>
+<p><strong>Everything looks worse than it did, across every clip.</strong> Check
+<code>VIDOPTS</code> and <code>VIDASPECT</code> in <code>CONFIG.BAT</code> - those apply to every video
+in the game. Per-clip settings belong in <code>VIDOPTS_NNN</code>.</p>
+<h2 id="8-if-it-will-not-play">8. If it will not play</h2>
+<p>A cutscene that cannot start prints a short message on screen and the
+game carries on without it. It is a diagnostic rather than part of the
+display, so the game's own text can scroll over it a moment later - look
+for it as soon as the cutscene fails to appear.</p>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>VID FILE?</code></td>
+<td>There is no <code>NNN.VID</code> on the card for that video number. Check the number in your <code>GFX n 13</code>, and check the file reached <code>RELEASE\</code> and then the card.</td>
+</tr>
+<tr>
+<td><code>VID FMT?</code></td>
+<td>The file is not a video this build can read - a file encoded with a newer option than the interpreter on the card supports, or a damaged copy. Re-encode it with this kit's encoder and re-copy it.</td>
+</tr>
+<tr>
+<td><code>VID NOBANK2</code></td>
+<td>Not enough free memory to run the cutscene. Video needs a 2MB Next; on a 2MB machine this means the game had already filled memory, so play the cutscene at a quieter moment or reduce what is loaded around it.</td>
+</tr>
+<tr>
+<td><code>VID SIZE?</code></td>
+<td>Too little memory was free to buffer a clip of that shape. Play the cutscene at a quieter moment, use a smaller shape, or move it to the compressed route.</td>
+</tr>
+<tr>
+<td><code>VID FRAG?</code></td>
+<td>The file is scattered across too many pieces on the card to be read fast enough - or it is past the 256 MB ceiling (section 6), which no card layout can describe. Defragment the card, or copy the file onto a freshly formatted one.</td>
+</tr>
+</tbody>
+</table>
+<p>If the encoder itself refuses to make the file, it says why and names
+the remedies in the same breath - it will not produce a video that
+cannot play. The two you are most likely to meet are a frame rate below
+the audio floor (raise <code>--fps</code>) and an uncompressed shape that will not
+fit at rate, which prints the exact list of shapes that do fit at your
+chosen width. Take one from that list.</p>
+<h2 id="9-encoding-tools">9. Encoding tools</h2>
+<p>The build's encode pass needs an encoder and ffmpeg, both resolved from
+<code>TOOLSDIR</code> (see <a href="getting-started.html">Getting started</a>):</p>
+<ul>
+<li><strong><code>videnc.exe</code></strong> (<code>tools\videnc\videnc.exe</code>) - the standalone encoder,
+  which ships with the kit. No Python needed, nothing to download, and
+  it is preferred automatically.</li>
+<li><strong><code>lib\videnc.py</code></strong> - the same encoder as a script, the fallback if
+  <code>videnc.exe</code> is ever missing. Needs Python 3, Pillow and numpy
+  (<code>pip install Pillow numpy</code>).</li>
+<li><strong>ffmpeg</strong> (<code>tools\ffmpeg\bin\ffmpeg.exe</code>) - required either way, for
+  reading the source video. <code>tools\README.txt</code> has the download.</li>
+</ul>
+<p>None of this is needed for pre-encoded <code>.vid</code> files - a kit with only
+<code>.vid</code> sources, or with no <code>VIDEO\</code> at all, builds with no encoder
+present.</p>
+<p>Run the encoder by hand for per-file control or to cut a clip from a
+longer source:</p>
+<pre><code>videnc.exe INPUT.mp4 VIDEO\001.vid --shape classic --start 00:00:03 --duration 4
+</code></pre>
+<p><code>python lib\videnc.py ...</code> takes the same options. The ones this
+document uses:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--shape S</code></td>
+<td>A preset name or <code>WIDTHxHEIGHT</code> (width 256 or 320). Default <code>full</code>.</td>
+</tr>
+<tr>
+<td><code>--aspect A</code></td>
+<td>Derive a free height from a displayed aspect ratio instead; pairs with <code>--width</code> (default 320) and wins over <code>--shape</code>.</td>
+</tr>
+<tr>
+<td><code>--fps N</code></td>
+<td>Frames per second. Default 25.</td>
+</tr>
+<tr>
+<td><code>--retime M</code></td>
+<td>How a source at another rate is resampled: <code>blend</code> (default), <code>drop</code> or <code>mci</code>.</td>
+</tr>
+<tr>
+<td><code>--dither AMP</code></td>
+<td>Blue-noise dither amplitude, 0.0 to 1.0. Default 0.5: 0 is no dither and hard banding on gradients, 1 is the deepest gradients and the most visible pattern noise.</td>
+</tr>
+<tr>
+<td><code>--tile-slack F</code></td>
+<td>Off by default. On a title with sustained motion, <code>--tile-slack 0.5</code> lets the encoder work a row or column at a time instead of four when the budget runs out. Helps pans and zooms, does nothing on quiet material.</td>
+</tr>
+<tr>
+<td><code>--prefilter</code></td>
+<td>Light temporal denoise before encoding (Preset 4). Takes an ffmpeg filter string if you want to name your own.</td>
+</tr>
+<tr>
+<td><code>--direct</code></td>
+<td>The uncompressed route (Preset 2 and Preset 3).</td>
+</tr>
+<tr>
+<td><code>--start HH:MM:SS</code>, <code>--duration S</code></td>
+<td>Cut a clip out of a longer source.</td>
+</tr>
+</tbody>
+</table>
+<p><a href="reference/video-format.html">Video format</a> lists the full set, and
+documents every option and the NXV file layout;
+<a href="reference/video-delivery.html">Video delivery</a> covers how a clip is
+loaded and played, and what happens to the screen and to game audio
+around it.</p>
+<p>Per-clip tuning has a GUI too: run <code>VIDTUNE.BAT</code>. Pick a clip, preview a
+segment, adjust shape, frame rate, dither and the other knobs above,
+encode and accept - the settings land in <code>VIDOPTS_NNN</code> in <code>CONFIG.BAT</code>,
+so the next build reproduces the same encode.</p>
+<h2 id="the-starter-games-demo-clips">The starter game's demo clips</h2>
+<p><code>VIDEO\001.mp4</code> and <code>VIDEO\002.mp4</code> build with the kit so the video
+condacts work out of the box. 001 encodes at the <code>full</code> 320x256 default;
+002 has <code>SET VIDOPTS_002=--shape 16:9</code> in <code>CONFIG.BAT</code>, the kit's one
+worked example of a per-video option. Try the verbs MOVIE, which plays
+<code>001.VID</code> once, and REEL, which loops <code>002.VID</code> until a key is pressed.</p>
+</main>
+</body>
+</html>
