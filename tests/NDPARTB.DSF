@@ -112,7 +112,7 @@ CHEST 52 noun
 ; Entry 1: carry-through proof. Flags 100/101 and object 1's CARRIED
 ; location all arrived from part A verbatim - all 256 flags copy across
 ; a switch, and object locations copy by index for as many objects as
-; both parts define in common (see authoring-kit\SETUP.md's multi-part
+; both parts define in common (see manual\multi-part-games.md's
 ; "Author caveats" for the full rules a real game must follow).
 > _ _   EQ 103 0
         EQ 100 77

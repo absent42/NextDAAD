@@ -1965,7 +1965,7 @@ def t10_transcript_absent_when_no_findings():
 # that can afford a saved copy on every process-stack push. No code
 # change was made and none will be: this is a PERMANENT documented
 # reference-deviation of class NOT-A-BUG (docs/parser-bugs.md entry 5,
-# authoring-kit/DIVERGENCES.md section 5).
+# manual/known-differences.md).
 #
 # The pin therefore STAYS at exactly {50}, permanently. Note what it is
 # and is not: it is NOT a mask. The flag 50 rows keep appearing in every

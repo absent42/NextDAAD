@@ -25,7 +25,7 @@ def _base(**overrides):
     return cfg, s
 
 
-# -- preset CONTENT matches VIDEO-PRESETS.md ----------------------------
+# -- preset CONTENT matches manualideo.md ----------------------------
 
 EXPECTED = {
     "quiet":          {},
@@ -152,7 +152,7 @@ def test_flag_deltas_read_as_plus_and_minus():
 # -- requirement 5: never offer --stream-budget -------------------------
 
 def test_nothing_in_the_preset_system_sets_stream_budget():
-    # VIDEO-PRESETS.md preset 6 is explicit that setting this by hand can
+    # manualideo.md preset 6 is explicit that setting this by hand can
     # only make the picture worse than the encoder's own answer.
     for route in presets.all_routes():
         assert "stream_budget" not in route.values

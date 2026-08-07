@@ -309,7 +309,7 @@ SOUTH 0
           PROCESS 7
           DONE
 ; ---- the published-ceiling leg (002.WAV, 20000 Hz) ----
-; 20000 Hz is AUD_RATE_MAX - what README.md and authoring-kit\SETUP.md
+; 20000 Hz is AUD_RATE_MAX - what manualudio.md
 ; publish as supported and what a DAAD-DOS SOUNDS set drops in at. It
 ; is NOT a rate anything in this project ships.
 > T20 _   WINDOW 1
