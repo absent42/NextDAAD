@@ -42,7 +42,7 @@
 ;   classifiers - so it cannot be testing for "some", "the" or even
 ;   "a"/"an" as words. Its substitution rule is therefore very
 ;   probably jDAAD's first-word strip, and this is a deliberate
-;   divergence from it (authoring-kit/DIVERGENCES.md carries it).
+;   divergence from it (manual/platform-notes.md carries it).
 ;   LEADING SPACES are not stripped. The article has to be the literal
 ;   start of the text. msx2daad does the same (strnicmp against the
 ;   raw buffer); jDAAD alone eats them, and only in the pathological

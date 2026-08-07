@@ -3,7 +3,8 @@ NextDAAD Authoring Kit - Required Tools
 
 These tools are NOT included (they are third-party, and some may not be
 redistributed). Download each and extract it into the matching folder below,
-then double-click BUILD.BAT in the kit root. See ..\SETUP.md for full details.
+then double-click BUILD.BAT in the kit root. See ..\docs\index.html for the
+full manual (start with "Getting started").
 
 Tool           Provides                                Download                                                   Extract into
 -------------  --------------------------------------  ---------------------------------------------------------  --------------------------
@@ -28,7 +29,7 @@ After extracting, these paths must exist:
   tools\videnc\videnc.exe (only needed for VIDEO\NNN.mp4 cutscenes)
   tools\vidtune\vidtune.exe (only needed for interactive per-clip tuning)
 
-Video cutscenes (see ..\SETUP.md "Video cutscenes") ARE built by
+Video cutscenes (see ..\docs\video.html) ARE built by
 BUILD.BAT: drop a numeric-named source video (VIDEO\NNN.mp4) into
 VIDEO\ and the build encodes it to the interpreter's native NXV v2
 format, caching the result as VIDEO\NNN.vid (re-encoded only when the

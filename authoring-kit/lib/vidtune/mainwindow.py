@@ -484,8 +484,8 @@ class SettingsPanel(QWidget):
         route_form.setVerticalSpacing(theme.GAP_ROW)
         route_label = QLabel("route")
         route_label.setToolTip(
-            "presets from VIDEO-PRESETS.md - a complete answer for a class "
-            "of footage")
+            "presets from the Video page of the manual - a complete answer "
+            "for a class of footage")
         route_form.addRow(route_label, self._route_button)
 
         # Preset 6. Collapsed by default and phrased as the question the

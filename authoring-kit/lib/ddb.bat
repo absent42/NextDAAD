@@ -22,8 +22,8 @@ REM requirement: -v3 unlocks second-parameter indirection (LET 100
 REM @101), GETKEY, native XMES and the V3 flag 53 bits. Three things
 REM change silently in a game written for version 2 - SYNONYM stops
 REM marking DONE, PAUSE 0 becomes "wait for a key", and flag 53 bit 1
-REM starts switching the HASAT attribute bank. See DIVERGENCES.md,
-REM "Moving your game to V3". The per-part compile in BUILD.BAT must
+REM starts switching the HASAT attribute bank. See ..\docs\daad-v3.html,
+REM "Moving an existing version 2 game to V3". The per-part compile in BUILD.BAT must
 REM carry the same flag - both sites or neither.
 "%DRF%" zx next __ndb.DSF -v3
 if errorlevel 1 (

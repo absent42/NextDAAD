@@ -507,7 +507,7 @@ $pictureOK
                 MESSAGE "What was that noise?"
                 DONE
 
-; Video cutscenes (NXV format, see the kit's SETUP.md): GFX n 13 plays
+; Video cutscenes (NXV format, see the kit's docs\video.html): GFX n 13 plays
 ; NNN.VID once, GFX n 14 loops it until a key is pressed. The player
 ; restores the location picture and its colours automatically when the
 ; video ends - no redraw is needed (MOVIE below is just the play).

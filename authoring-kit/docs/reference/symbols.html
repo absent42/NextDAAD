@@ -139,6 +139,58 @@ idiom <code>SFX</code> uses for a sub-command it does not recognise.</p>
 </tr>
 </tbody>
 </table>
+<h2 id="gfx-sub-commands">GFX sub-commands</h2>
+<p><code>GFX n s</code> takes the sub-command in its <strong>second</strong> parameter, <code>s</code>. There
+are no symbolic names for these - Appendix D covers <code>SFX</code> and <code>MOUSE</code>
+only - so write the number.</p>
+<p>For every sub-command except 13 and 14 the first parameter <code>n</code> is
+ignored: the buffer operations act on the whole surface and take no
+argument. For 13 and 14, <code>n</code> is the video number.</p>
+<p>"Front" is the surface you can see; "back" is the off-screen one you
+draw into. A sub-command that is not in the table below is accepted and
+does nothing at all, so a game that uses one still runs (a DEBUG build
+prints a marker). That covers 3, 4, 7, 8, 11, 12 and everything from 15
+up, as well as 9 and 10 - see
+<a href="../platform-notes.html">Platform notes</a> for why the numbered palette
+store and recall have nothing to act on here.</p>
+<table>
+<thead>
+<tr>
+<th>s</th>
+<th>Behaviour on this target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Copy the back surface onto the front one, in place. What you drew off-screen becomes visible; the two surfaces keep their identities.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Copy the front surface onto the back one, in place - the reverse of 0.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Swap the front and back surfaces, and show the new front immediately. Nothing is copied, so this is the cheap way to present an off-screen frame.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Clear the front surface - the visible one - in place.</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Clear the back surface.</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Play video <code>n</code> (<code>NNN.VID</code>) once. Identical to <code>SFX n 9</code> (<code>PLAYFLI</code>). See <a href="../video.html">Video</a>.</td>
+</tr>
+<tr>
+<td>14</td>
+<td>As 13, looped until a key is pressed. Identical to <code>SFX n 10</code> (<code>PLAYFLIL</code>).</td>
+</tr>
+</tbody>
+</table>
 </main>
 </body>
 </html>

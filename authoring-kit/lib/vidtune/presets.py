@@ -3,9 +3,11 @@
 Pure logic - no Qt - so the semantics below can be tested without a
 widget. The Qt surface lives in presetrow.py.
 
-CONTENT AUTHORITY is `authoring-kit/VIDEO-PRESETS.md` section 4. Every
-option string here is transcribed from it; if a preset changes there,
-this file follows. Maintenance contract: repo docs/vidtune-maintenance.md.
+CONTENT AUTHORITY is the manual's Video page, section 4 "The presets" -
+`authoring-kit/docs/video.html`. Every option string here is transcribed
+from it; if a preset changes there, this file follows. That page is
+GENERATED, so edit it at its repo source, not in the kit: maintenance
+contract repo docs/vidtune-maintenance.md.
 
 The six things in that doc are three different kinds of object, and this
 module keeps them apart:
@@ -56,7 +58,7 @@ class Route:
     variant: "Route" = None           # the same route at a different crop
 
 
-# Transcribed from VIDEO-PRESETS.md section 4. Preset 1 is "nothing at
+# Transcribed from docs\video.html section 4. Preset 1 is "nothing at
 # all - the kit defaults are the right answer", which is why its values
 # are empty: applying it IS the reset.
 ROUTES = (
@@ -265,7 +267,7 @@ def ladder_steps(settings):
 def ladder_blocked_reason(settings):
     """Why the whole ladder does not apply, or "" when it does.
 
-    An uncompressed encode cannot band at all (VIDEO-PRESETS.md preset 3:
+    An uncompressed encode cannot band at all (docs\video.html preset 3:
     "no banding, every frame pixel-exact"), so offering banding remedies
     against one would be advising a fix for a problem that cannot occur -
     and step 1 in particular has nothing to act on there."""

@@ -160,8 +160,9 @@ class RouteMenuButton(QPushButton):
         super().__init__(CHOOSE_TEXT, parent)
         self._context = context
         self.setToolTip(
-            "apply a route from VIDEO-PRESETS.md - resets the route knobs "
-            "to kit defaults first, leaving prefilter and trim alone")
+            "apply a route from the Video page of the manual - resets the "
+            "route knobs to kit defaults first, leaving prefilter and trim "
+            "alone")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         # Left-aligned, because it spans the full value column: centred
         # text on a control this wide reads as a big action button

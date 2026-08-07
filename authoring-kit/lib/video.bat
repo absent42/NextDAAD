@@ -12,7 +12,7 @@ REM      CONFIG.BAT (blank = full 320x256 at 25 fps).
 REM   VIDEO\NNN.vid - pre-encoded native NXV file, staged as-is.
 REM Both end up as RELEASE\NNN.VID, played by GFX n 13 (once) / GFX n 14
 REM (loop), aliased as the classic SFX n 9/10 (PLAYFLI/PLAYFLIL). See
-REM SETUP.md's "Video cutscenes" section. MakeVid .VID files are NOT
+REM ..\docs\video.html for cutscene authoring. MakeVid .VID files are NOT
 REM playable any more (the interpreter plays only native NXV) - re-encode
 REM from the original video source. Same numeric-name pattern as the WAV
 REM block in lib\audio.bat.

@@ -16,6 +16,17 @@ All notable changes to NextDAAD are recorded here.
   picture, or in any area a game has not painted. The tilemap was
   filling those cells with white paper while claiming to make them
   transparent.
+- The authoring kit's documentation is now a generated HTML manual at
+  `authoring-kit\docs\`, written as Markdown in `manual\` and built by
+  `scripts\build_manual.py`. The five stand-alone guides are gone and
+  their content redistributed: `SETUP.md` across getting-started,
+  graphics, audio, video, customising, multi-part-games and daad-v3;
+  `DIVERGENCES.md` across platform-notes and known-differences;
+  `VIDEO-PRESETS.md` into video; `NX2-FORMAT.md` into
+  reference/picture-format; `lib\videnc-README.md` into
+  reference/video-format. Older entries below that name a deleted file
+  refer to it under its old name; the mapping above is where its
+  content now lives.
 
 ## v0.3.1 - 04/08/2026
 
@@ -458,7 +469,7 @@ error from the encoder. Delete the option; nothing replaces it.
 - Fixed: multi-PSG AKY tunes left PSG 3 unparked on video entry,
   an audible frozen tone under video. Entry now parks all three PSGs.
 
-## v0.2.0 - 23/07/2028
+## v0.2.0 - 23/07/2026
 
 Cutscene video playback, hardware-measured performance work,
 and a self-contained authoring pipeline.

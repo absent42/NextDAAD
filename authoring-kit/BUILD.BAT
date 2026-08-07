@@ -62,8 +62,9 @@ if not exist "RELEASE" md "RELEASE"
 del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\*.VID" "RELEASE\*.WAV" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" "RELEASE\FONT.CHR" "RELEASE\POINTER.SPR" 2>nul
 REM ---- remove stale multi-part output too, so a part removed since the
 REM      last build (its PART<n> folder deleted) cannot leave a stray
-REM      GAME<n>.DDB or PART<n>\ behind on the SD card - see SETUP.md's
-REM      multi-part games section, "no stray GAME<n>.D* files" warning.
+REM      GAME<n>.DDB or PART<n>\ behind on the SD card - see
+REM      docs\multi-part-games.html, "Switching parts" (no stray files
+REM      beside a part's GAME<n>.DDB).
 for %%N in (2 3 4 5 6 7 8 9) do (
     del /Q "RELEASE\GAME%%N.DDB" 2>nul
     if exist "RELEASE\PART%%N" rd /S /Q "RELEASE\PART%%N"
@@ -100,12 +101,12 @@ if exist "FONT.CHR" (
 )
 
 REM ---- ready-made mouse pointer (SP12 T3): a kit-root POINTER.SPR - a
-REM      raw 256-byte 16x16 8-bit hardware sprite pattern, see SETUP.md's
-REM      "Custom mouse pointer" section for the format and a sprite-editor
+REM      raw 256-byte 16x16 8-bit hardware sprite pattern, see
+REM      docs\customising.html "Custom mouse pointer" for the format and a sprite-editor
 REM      workflow - is staged to RELEASE\ as-is, no conversion wired in
 REM      here (gfx2next's -sprites mode CAN emit this exact raw format,
 REM      but only comes out correct with palette authoring this kit does
-REM      not verify - see SETUP.md's "Custom mouse pointer" section).
+REM      not verify - see docs\customising.html "Custom mouse pointer").
 REM      Mirrors the ready-made FONT.CHR staging just above and
 REM      lib\gfx.bat's ready-made DAAD.* title staging (9fe5557). No
 REM      POINTER.SPR in the kit root is normal (the default arrow plays)
@@ -156,8 +157,8 @@ for %%N in (2 3 4 5 6 7 8 9) do (
         pushd "%DR%"
         REM -v3 as in lib\ddb.bat - every part must compile to the same
         REM dialect as part 1, since a part switch reloads a header and
-        REM the flags carry across. See DIVERGENCES.md for the three
-        REM migration hazards.
+        REM the flags carry across. See docs\daad-v3.html "Moving an
+        REM existing version 2 game to V3" for the three migration hazards.
         "%DRF%" zx next __ndbpart.DSF -v3
         if errorlevel 1 (
             popd

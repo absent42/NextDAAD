@@ -495,7 +495,7 @@ l2_flip_swap:
 ; 16000 Hz is the only rate this project has ever shipped (the kit's
 ; AUDIO/001.wav, the runbook's 002.WAV - aud_load_wav takes the rate
 ; verbatim from the WAV header and nothing in the pipeline resamples),
-; and 20000 Hz = AUD_RATE_MAX is what README/SETUP.md publish as
+; and 20000 Hz = AUD_RATE_MAX is what README/manual/audio.md publish as
 ; supported and what a DAAD-DOS SOUNDS set drops in at. THE INHERITED
 ; "1400 T" DEADLINE CORRESPONDED TO NEITHER: it assumed a flat 28 MHz
 ; and ignored both the TC floor and HDMI's 27 MHz clock.

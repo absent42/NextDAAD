@@ -48,3 +48,31 @@ idiom `SFX` uses for a sub-command it does not recognise.
 | 5 | `POINTERMS` | Re-upload the built-in pointer pattern into hardware sprite slot 0 and re-arm it. There are no `.PTR` pointer files on this target and only one pointer shape, so the parameter selects nothing; the sub exists so the documented `POINTERMS` then `SHOWMS` idiom always leaves slot 0 holding this interpreter's pointer, whatever else used the slot meanwhile. |
 | 6 | `DELTAXMS` | Set the pointer's hotspot X offset within its bitmap - **not** a movement delta, despite the symbol name. The reported coordinates do not change; the bitmap shifts so the hotspot pixel lands on the reported position. Floors at the plane origin rather than wrapping. |
 | 7 | `DELTAYMS` | As 6, for the hotspot Y offset. |
+
+## GFX sub-commands
+
+`GFX n s` takes the sub-command in its **second** parameter, `s`. There
+are no symbolic names for these - Appendix D covers `SFX` and `MOUSE`
+only - so write the number.
+
+For every sub-command except 13 and 14 the first parameter `n` is
+ignored: the buffer operations act on the whole surface and take no
+argument. For 13 and 14, `n` is the video number.
+
+"Front" is the surface you can see; "back" is the off-screen one you
+draw into. A sub-command that is not in the table below is accepted and
+does nothing at all, so a game that uses one still runs (a DEBUG build
+prints a marker). That covers 3, 4, 7, 8, 11, 12 and everything from 15
+up, as well as 9 and 10 - see
+[Platform notes](../platform-notes.md) for why the numbered palette
+store and recall have nothing to act on here.
+
+| s | Behaviour on this target |
+|---|---------------------------|
+| 0 | Copy the back surface onto the front one, in place. What you drew off-screen becomes visible; the two surfaces keep their identities. |
+| 1 | Copy the front surface onto the back one, in place - the reverse of 0. |
+| 2 | Swap the front and back surfaces, and show the new front immediately. Nothing is copied, so this is the cheap way to present an off-screen frame. |
+| 5 | Clear the front surface - the visible one - in place. |
+| 6 | Clear the back surface. |
+| 13 | Play video `n` (`NNN.VID`) once. Identical to `SFX n 9` (`PLAYFLI`). See [Video](../video.md). |
+| 14 | As 13, looped until a key is pressed. Identical to `SFX n 10` (`PLAYFLIL`). |

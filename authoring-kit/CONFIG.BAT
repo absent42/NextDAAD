@@ -23,11 +23,11 @@ REM (320x256 full-screen). Set a preset - full, 16:9, scope, classic,
 REM classic-wide - or an explicit WIDTHxHEIGHT (width 256 or 320, any height,
 REM e.g. 320x150), or a bare display-aspect number (e.g. 2.35) for a derived
 REM free height at 320 wide. Smaller shapes come out at higher quality for
-REM the same data rate - see VIDEO-PRESETS.md for which shape a clip wants.
+REM the same data rate - see docs\video.html for which shape a clip wants.
 SET VIDASPECT=
 
 REM Frames per second for encoded cutscenes. Blank = 25. Audio floor: 10.17
-REM or more, so 12.5 is available with sound (see VIDEO-PRESETS.md).
+REM or more, so 12.5 is available with sound (see docs\video.html).
 SET VIDFPS=
 
 REM Extra videnc options applied to every encode (e.g.
@@ -41,7 +41,7 @@ REM quiet material. See docs\reference\video-format.html "Tile slack".
 REM --prefilter (opt-in, default off) is the one to try on a grainy or
 REM noisy source: it denoises lightly before scaling, trading a little
 REM texture for supply headroom.
-REM Recommended settings per kind of clip: VIDEO-PRESETS.md.
+REM Recommended settings per kind of clip: docs\video.html "The presets".
 REM Full list: docs\reference\video-format.html, or run the encoder with --help.
 SET VIDOPTS=
 
@@ -60,7 +60,7 @@ REM carry per-clip --stream-budget values hand-tuned to the demo cartoons,
 REM which then silently applied to whatever the author dropped in as 001/002
 REM and starved it. The encoder now derives the budget itself for every clip
 REM and prints what it chose - set one by hand only to override that. See
-REM SETUP.md "Streaming, resident and direct delivery".
+REM docs\reference\video-delivery.html "Streaming, resident and direct delivery".
 SET VIDOPTS_002=--shape 16:9
 
 REM DEPRECATED (honored one release): the v1 profile name. n0-n4 map to the

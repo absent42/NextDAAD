@@ -12,6 +12,19 @@ game behaves, how it builds, or what the kit gives you, it is here.
   cannot check.
 - The screen no longer shows a white background before a game's first
   picture, or in any area a game has not painted.
+- The kit's documentation is now a manual you read in a browser. Open
+  `docs\index.html`. The old single-file guides are gone and their
+  contents are spread across the pages that own each subject:
+  `SETUP.md` across [Getting started](getting-started.md),
+  [Graphics](graphics.md), [Audio](audio.md), [Video](video.md),
+  [Customising](customising.md), [Multi-part games](multi-part-games.md)
+  and [DAAD V3](daad-v3.md); `DIVERGENCES.md` across
+  [Platform notes](platform-notes.md) and
+  [Known differences](known-differences.md); `VIDEO-PRESETS.md` into
+  [Video](video.md); `NX2-FORMAT.md` into
+  [Picture format](reference/picture-format.md); and the encoder's own
+  readme into [Video format](reference/video-format.md). Nothing was
+  dropped.
 
 ## 0.3.1 - 4 August 2026
 

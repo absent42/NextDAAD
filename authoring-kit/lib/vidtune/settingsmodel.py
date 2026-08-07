@@ -47,7 +47,7 @@ KNOBS = [
     # earlier --approx-cuts/--ocopy removal, no migration/strip added.
     Knob("dither",        "--dither",        "float",  "0.5",    "basic"),
     Knob("tile_slack",    "--tile-slack",    "float",  "0.0",    "basic"),
-    # prefilter is basic, not advanced: the kit's own VIDEO-PRESETS.md
+    # prefilter is basic, not advanced: the kit's own docs\video.html
     # makes it Preset 4 and step 3 of the Preset 6 anti-banding ladder -
     # front-line authoring guidance, not an expert knob.
     Knob("prefilter",     "--prefilter",     "flagstr", False,   "basic",

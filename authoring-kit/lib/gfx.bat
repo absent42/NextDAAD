@@ -56,7 +56,7 @@ echo   %COUNT% image^(s^) converted
 
 REM ---- title screen (SP11): IMAGES\DAAD.png converts through the same
 REM      gfx2next call as numbered art, but is never numbered - it is
-REM      root-only (see SETUP.md "Title screens") so the output keeps the
+REM      root-only (see ..\docs\graphics.html "Title screens") so the output keeps the
 REM      DAAD basename instead of a picture number.
 if exist "IMAGES\DAAD.png" (
     set "TWIDTH="

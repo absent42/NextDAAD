@@ -27,4 +27,4 @@ Everything you need to build a DAAD game for the ZX Spectrum Next.
 - [Video format](reference/video-format.md) - NXV and the encoder options
 - [Video delivery](reference/video-delivery.md) - how clips are loaded and played
 - [Limits](reference/limits.md) - sizes and ceilings
-- [Symbols](reference/symbols.md) - SFX and MOUSE sub-commands, DAAD symbol names
+- [Symbols](reference/symbols.md) - SFX, MOUSE and GFX sub-commands, DAAD symbol names
