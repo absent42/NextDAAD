@@ -78,48 +78,36 @@ game laid out the classic way.</p>
 <p>Text is drawn on its own layer with its own fixed palette. A picture's
 palette only ever reaches Layer 2, so no artwork can recolour your
 prose, however extreme its palette.</p>
-<h2 id="transparency-one-reserved-index-one-reserved-colour">Transparency: one reserved index, one reserved colour</h2>
-<p>They behave differently. The reserved <strong>index</strong> punches holes in a
-picture. The reserved <strong>colour</strong> is silently altered. Neither is
-enforced for you - the kit converts every colour in your PNG the same
-way, rounding each to the nearest shade the Next can show, and leaves
-both hazards to you.</p>
-<p><strong>Quantize to 255 colours, indices 0-254.</strong> Palette slot 255 is
-reserved: the interpreter overwrites it with the transparent colour on
-every picture load, so any pixel drawn with index 255 becomes a hole
-showing the text layer beneath. Most paint programs let you set the
-palette size directly when exporting an indexed PNG.</p>
-<p><strong>Keep near-saturated magenta out of artwork you want unaltered.</strong> One
-colour is reserved for transparency, and a palette entry landing on it
-is moved two steps down the blue scale as the picture loads - so the
-pixels stay opaque, but come out a slightly different magenta from the
-one you painted, with nothing on screen to tell you. In the colours you
-pick in a paint program, that is <strong>every</strong> colour with red 238 or above,
-green 18 or below, and blue 201 or above - the whole box converts to the
-reserved colour, not merely part of it - and two of them, (255, 0, 219)
-and (255, 0, 255), already are that colour exactly. Nothing outside that
-corner of the colour space is affected, so ordinary artwork never trips
-it, and if you want a hot magenta, moving any one channel out of the box
-is enough: the colour is then converted like any other, with no shift
-applied to it.</p>
-<p><strong>If you write <code>.NX2</code> files yourself</strong> with your own converter, the rule
-is exact and does not depend on any quantizer: no palette entry may have
-byte 0 equal to <code>$E3</code>, except index 255. See <a href="reference/picture-format.html">Picture
-format</a>.</p>
-<p><strong>The check warns, it never fails.</strong> The build reads back each converted
-picture's palette - the one the interpreter will load - and prints a
-warning naming the file and the offending palette index if it finds
-either hazard. It does not stop, because a deliberate transparent area
-is a perfectly good reason to have one.</p>
-<p>Two things it cannot audit:</p>
-<ul>
-<li>anything built with <code>COMPRESS=1</code> - a compressed file has no readable
-  palette, so a compressed build produces no transparency warnings at
-  all, and</li>
-<li>ready-made title art supplied already compressed.</li>
-</ul>
-<p>If you want the check on art you normally ship compressed, run one build
-with <code>COMPRESS=0</code> and read the warnings.</p>
+<h2 id="transparency">Transparency</h2>
+<p><strong>Paint <code>#FF00FF</code> into palette slot 255. Those pixels are transparent</strong>,
+and the text layer shows through them.</p>
+<p>That is what makes a full-screen picture with a hole in it possible: put
+the hole where your text window will sit, and the picture frames the
+text on all sides instead of sitting above it.</p>
+<p><strong>The colour has to be in slot 255.</strong> Only that slot is transparent. The
+same magenta anywhere else in your palette comes out opaque, with
+nothing on screen to tell you why, so if your hole renders as solid
+magenta that is the first thing to check. Most editors let you set a
+specific palette slot: in Aseprite you can edit the entry directly, and
+in an indexed export from other tools you may need to reorder the colour
+table so your transparent colour is last.</p>
+<p>The build reports how many transparent pixels a converted picture has,
+so you can confirm the hole is the size you intended.</p>
+<p><strong>A picture with no slot-255 pixels is fully opaque</strong>, which is the
+normal case. A picture shorter than the full screen is drawn
+top-aligned, and the screen below it stays transparent, so a text window
+under the art shows through without your having to draw anything.</p>
+<p><strong>Draw hole edges hard.</strong> One flat colour, no anti-aliasing and no
+dithering across the boundary. A soft edge leaves a fringe of
+near-magenta pixels that are ordinary opaque colours, so the hole gets a
+magenta halo instead of a clean edge.</p>
+<p><strong>Near-saturated magenta elsewhere is altered slightly.</strong> Any colour
+that converts to the reserved value - red 238 or above, green 18 or
+below, and blue 201 or above - is moved two steps down the blue scale as
+the picture loads, so it stays opaque but comes out a slightly different
+magenta than you painted. This exists so that a stray highlight cannot
+punch a hole you did not ask for. If you want a hot magenta somewhere in
+the artwork, moving any one channel out of that range is enough.</p>
 <h2 id="title-screens">Title screens</h2>
 <p>Ship <code>IMAGES\DAAD.png</code> and the game shows it at cold boot, over the
 boot music if you have any, until a key is pressed. Then play begins as
