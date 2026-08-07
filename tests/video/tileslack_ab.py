@@ -684,8 +684,8 @@ def print_tables(results):
                   f"| {rep['auto_budget_probes']} |")
     # ---- what the encoder itself said. The budget line, the tile-slack
     # cost line and any gate WARNING are operational facts no column above
-    # carries, and the at-capacity warning is the most important thing this
-    # measurement found.
+    # carries. The at-capacity warning is expected at slack 0.5 (most clips
+    # cross the line there) - it is reported as context, not as a finding.
     print()
     print("=" * 78)
     print("WHAT THE ENCODER SAID (its own lines, verbatim)")
@@ -710,26 +710,35 @@ def print_tables(results):
     if warned:
         wu = warn_util()
         print()
-        print("#" * 78)
-        print("## AT-CAPACITY FINDING - THE HEADLINE OF THIS RUN")
-        print("#" * 78)
+        print("-" * 78)
+        print("AT-CAPACITY NOTE - EXPECTED AT SLACK 0.5")
+        print("-" * 78)
         for lab, slack, util in warned:
             print(f"  {lab} at --tile-slack {slack:.1f}: utilisation "
                   f"{util:.3f}"
                   + (f" against STREAM_WARN_UTIL {wu:.2f}" if wu else "")
                   + " - OVER THE LINE")
         print()
-        print("Applying the manual's own '--tile-slack 0.5' suggestion to "
-              "THE KIT'S OWN")
-        print("DEMO CLIPS trips the encoder's at-capacity warning. That is "
-              "the footage")
-        print("every new author starts from, so this is a live authoring "
-              "trap, not a")
-        print("laboratory curiosity. The gate's own words: the whole-clip "
-              "mean hides")
-        print("per-frame excursions well over 1.00, which read as banding "
-              "and judder on")
-        print("hardware.")
+        print("This is normal for the knob, not a fault of these clips - "
+              "most clips")
+        print("cross the line at slack 0.5, because spending headroom on "
+              "finer rungs is")
+        print("what the flag does (owner, 2026-08-07). It is context for "
+              "reading the")
+        print("result, not something to judge.")
+        print()
+        print("It does matter for interpretation: arm B is spending margin "
+              "the supply")
+        print("gate would rather keep, so judder or audio break-up on arm B "
+              "is a SUPPLY")
+        print("cost, which is a different finding from 'the picture looks "
+              "worse'.")
+        print()
+        print("Open question this run does not settle: if most clips trip "
+              "the line at")
+        print("0.5, the warning carries little signal at that setting. "
+              "Whether 0.90 is")
+        print("the right line for slack encodes is an owner ruling.")
         print()
         print("It is REPORTED, not fixed. Nothing here changes the encoder, "
               "the default")
