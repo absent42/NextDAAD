@@ -3061,8 +3061,12 @@ title_present:
 ; (clear+flip) shape so the game starts on a clean Layer 2 with no
 ; title art left behind. Music keeps playing throughout -
 ; aud_boot_probe already started it, nothing here touches audio.
-; Returns via a threaded one-way hop into overlay0's pointer_load (SP12
-; T3, the shared .toPointer tail below), whose own plain ret then pops
+; Returns via a threaded one-way hop into overlay0's pointer_load_boot
+; (SP12 T3 wired the .toPointer hop; pointer_load_boot itself seeds the
+; live buffer from the pristine arrow before pointer_load's own base-
+; shape probe runs - see that routine's header, overlay0.asm, for why
+; neither this call nor switch_to_part can be relied on to have seeded
+; it first), whose tail-jp into pointer_load's plain ret then pops
 ; whatever was on the stack before this whole chain began - thanks to
 ; the chain's stack trick (overlay1.asm), that is still aud_boot_probe's
 ; own caller (main.asm), unchanged from before SP12 T3 - the same final
@@ -3128,15 +3132,20 @@ title_boot:
     call font_load
 .toPointer:                        ; SP12 T3: one-way OVL2->OVL0 hop -
                                    ; font_load/h_display are already this
-                                   ; page, but pointer_load lives in
-                                   ; overlay0, so it needs the established
-                                   ; trampoline (push target, ld a,
-                                   ; OVL0_PAGE, jp ovl_map_page - the
-                                   ; switch_to_part precedent, overlay0.
-                                   ; asm). See this routine's header for
-                                   ; where pointer_load's own ret finally
+                                   ; page, but the pointer machinery
+                                   ; lives in overlay0, so it needs the
+                                   ; established trampoline (push target,
+                                   ; ld a, OVL0_PAGE, jp ovl_map_page -
+                                   ; the switch_to_part precedent,
+                                   ; overlay0.asm). The target is
+                                   ; pointer_load_boot, not pointer_load
+                                   ; directly, so the live buffer is
+                                   ; seeded from the pristine arrow
+                                   ; before the base-shape probe runs -
+                                   ; see this routine's header for where
+                                   ; pointer_load's own ret finally
                                    ; lands.
-    ld hl, pointer_load
+    ld hl, pointer_load_boot
     push hl
     ld a, OVL0_PAGE
     jp ovl_map_page

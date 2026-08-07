@@ -2649,6 +2649,9 @@ switch_to_part:
     ; still valid here (before the "point of no return" SP reset just
     ; below), so this call/ret is fully balanced and leaves nothing
     ; behind.
+    ld a, $FF
+    ld (ptrCur), a               ; part switch re-probes the base shape
+    xor a
     call pointer_load
     ; Point of no return: abandon the old (deep, process-interpreter)
     ; stack entirely and enter the new part from scratch (nothing on
@@ -3229,19 +3232,48 @@ h_mouse:
 .pointer:                        ; sub 5 POINTERMS: "load the file with
                                  ; PTR extension defined by first
                                  ; parameter" (DOS only; 81-byte 9x9
-                                 ; bitmaps). NextDAAD has no PTR files
-                                 ; and exactly ONE pointer - the built-in
-                                 ; 16x16 arrow in hardware sprite pattern
-                                 ; slot 0 - so the pointer NUMBER has
-                                 ; nothing to select. Rather than a
-                                 ; silent no-op this re-uploads the
-                                 ; built-in pattern and re-arms the
-                                 ; mouseReady latch, so the documented
-                                 ; DAAD idiom "POINTERMS then SHOWMS"
-                                 ; always leaves slot 0 holding this
-                                 ; interpreter's pointer whatever else
-                                 ; has used the slot meanwhile. B is
-                                 ; accepted and ignored.
+                                 ; bitmaps, colours indices into a per-
+                                 ; picture 256-colour palette). NextDAAD
+                                 ; has no per-picture palette for a
+                                 ; pointer to index into, so .PTR files
+                                 ; remain unsupported and untranslatable;
+                                 ; the parameter is repurposed as a
+                                 ; shape NUMBER instead (0-9): 0 is the
+                                 ; built-in 16x16 arrow (hardware sprite
+                                 ; pattern slot 0), then POINTER.SPR over
+                                 ; it if one exists; 1-9 are
+                                 ; POINTERn.SPR - see ptr_name_build/
+                                 ; pointer_load, below. Out of range is a
+                                 ; re-arm only, same as before. The
+                                 ; re-arm guarantee is unchanged: every
+                                 ; call re-uploads and re-arms mouseReady
+                                 ; below, so the documented DAAD idiom
+                                 ; "POINTERMS then SHOWMS" always leaves
+                                 ; slot 0 holding this interpreter's
+                                 ; pointer whatever else has used the
+                                 ; slot meanwhile.
+    ld a, b
+    cp 10
+    jr nc, .ptrarm               ; out of range: re-arm only, as before
+    ld hl, ptrCur
+    cp (hl)
+    jr z, .ptrarm                ; same shape already live: skip the SD
+                                 ; read but STILL re-upload below - sub
+                                 ; 5's documented guarantee is that slot
+                                 ; 0 holds your pointer whatever else
+                                 ; used it, and that must not weaken
+    or a
+    jr nz, .ptrfile
+    call ptr_arrow_install       ; 0: built-in arrow first, then
+    xor a                        ; POINTER.SPR over it if one exists
+    ld (ptrCur), a
+    jr .ptrload                  ; A is already 0 - do NOT fall through to
+                                 ; `ld a,b`; ptr_arrow_install corrupts BC
+.ptrfile:
+    ld a, b
+.ptrload:
+    call pointer_load
+.ptrarm:
     call mouse_pattern_load
     ld a, 1
     ld (mouseReady), a
@@ -3523,7 +3555,7 @@ mouseCol53:   db 0
 ; Row 5  BWWWWB..........      Row 13 BWWWWWWWWWWWWB..
 ; Row 6  BWWWWWB.........      Row 14 BWWWWWWWWWWWWWB.
 ; Row 7  BWWWWWWB........      Row 15 BWWWWWWWWWWWWWWB
-mousePattern:
+mouseArrow:
     db $00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
     db $00,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
     db $00,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
@@ -3541,53 +3573,113 @@ mousePattern:
     db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3
     db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00
 
+; The LIVE pattern mouse_pattern_load uploads. Initialised from
+; mouseArrow at boot; pointer_load overwrites it. Kept separate so
+; MOUSE 0 5 can restore the built-in arrow after a numbered shape has
+; replaced it - the pointer's analogue of tm_font_init, and the reason
+; it costs 256 bytes of this page rather than nothing.
+mousePattern: ds 256
+
 ; --- SP12 Task 3: custom mouse pointer load (boot + part switch) ---
 ;
-; Step 1 ground truth: mousePattern (above) is a plain `db` table
-; assembled into overlay0's code page - overlay pages are ordinary RAM
-; at runtime (not ROM), so it is writable, and nothing else in this
-; codebase writes it (grepped: mouse_pattern_load only ever READS it,
-; via its fixed `ld hl, mousePattern` source address - the only write
-; site is this routine's own ldir below). mouseReady (above) is the
-; "pattern already uploaded to hardware sprite slot 0" latch h_mouse's
-; sub-1 checks (.show, above): 0 = mouse_pattern_load runs on the next
-; MOUSE 1, then mouseReady is set to 1 so it does not run again until
-; something clears it - exactly the hook this routine uses: overwrite
-; mousePattern, then clear mouseReady so the NEXT MOUSE 1 (existing
-; lazy-upload code, unmodified) re-OTIRs the new bytes to hardware.
-; Zero mouse-machinery changes needed.
+; Step 1 ground truth: mouseArrow (above) is a plain `db` table
+; assembled into overlay0's code page, read-only in practice - nothing
+; ever writes it. mousePattern (also above) is the LIVE `ds 256`
+; buffer mouse_pattern_load actually uploads (its fixed
+; `ld hl, mousePattern` source address never changes); it has exactly
+; two writers: ptr_arrow_install's ldir (mouseArrow -> mousePattern,
+; the revert-to-built-in path, below) and this routine's own ldir
+; further down (a successfully validated POINTER.SPR/POINTERn.SPR).
+; mouseReady (above) is the "pattern already uploaded to hardware
+; sprite slot 0" latch h_mouse's sub-1 checks (.show, above): 0 =
+; mouse_pattern_load runs on the next MOUSE 1, then mouseReady is set
+; to 1 so it does not run again until something clears it - exactly the
+; hook both writers use: overwrite mousePattern, then clear mouseReady
+; so the NEXT MOUSE 1 (existing lazy-upload code, unmodified) re-OTIRs
+; the new bytes to hardware. Zero mouse-machinery changes needed.
 ;
-; Load a custom pointer: PARTn\POINTER.SPR (curPart >= 2) then
-; POINTER.SPR, a raw 256-byte 16x16 8-bit hardware sprite pattern (see
-; mousePattern's own header above for the format: $E3 transparent
-; border/fill, hotspot at the (0,0) corner). Absent = silent
-; (mousePattern keeps its compiled-in arrow); wrong size = silent +
-; DEBUG marker. Never reads straight into the live mousePattern: MOUSE 1
-; can fire at any time and re-OTIR whatever is there the instant
-; mouseReady reads 0, so a short/failed read must never leave the live
-; buffer half-overwritten - the file lands in swapStage first (scratch-
-; then-install) and is only ldir'd into mousePattern once the exact size
-; is confirmed. Exact-size validation (BC checked, not CF alone - the
-; F_READ/F_WRITE count lesson) plus a 1-byte-overshoot probe mirror
-; font_load's own FONT.CHR check byte for byte (overlay2.asm, SP12 T1).
+; Restore the built-in arrow into the live buffer. Corrupts AF, BC, DE, HL.
+ptr_arrow_install:
+    ld hl, mouseArrow
+    ld de, mousePattern
+    ld bc, 256
+    ldir
+    xor a
+    ld (mouseReady), a           ; force the next MOUSE 1 to re-OTIR
+    ret
+
+; A = shape number 0-9 -> ptrNameBuf = "POINTER.SPR",0 for 0, or
+; "POINTERn.SPR",0 for 1-9, with ptrNameLen set to the byte count
+; including the NUL. "POINTER9" is 8 characters, so every generated
+; name is still 8.3. Corrupts AF, BC, DE, HL.
+ptr_name_build:
+    ld (ptrNum), a
+    ld hl, ptrNameStem
+    ld de, ptrNameBuf
+    ld bc, 7                     ; "POINTER"
+    ldir
+    ld a, (ptrNum)
+    or a
+    ld c, 12                     ; "POINTER.SPR" + NUL
+    jr z, .ext                   ; ld c does not touch flags
+    add a, '0'
+    ld (de), a
+    inc de
+    ld c, 13                     ; "POINTERn.SPR" + NUL
+.ext:
+    ld a, c
+    ld (ptrNameLen), a
+    ld hl, ptrNameExt
+    ld bc, 5                     ; ".SPR" + NUL
+    ldir
+    ret
+
+; A = shape number (0-9); ptr_name_build (above) turns it into
+; POINTER.SPR (0) or POINTER<n>.SPR (1-9) in ptrNameBuf. Load:
+; PARTn\<name> (curPart >= 2) then <name> at the root, a raw 256-byte
+; 16x16 8-bit hardware sprite pattern (see mouseArrow's own header
+; above for the format: $E3 transparent border/fill, hotspot at the
+; (0,0) corner). Absent = silent (the previously-installed pattern
+; stays); wrong size = silent + DEBUG marker. Never reads straight into
+; the live mousePattern: MOUSE 1 can fire at any time and re-OTIR
+; whatever is there the instant mouseReady reads 0, so a short/failed
+; read must never leave the live buffer half-overwritten - the file
+; lands in swapStage first (scratch-then-install) and is only ldir'd
+; into mousePattern once the exact size is confirmed. Exact-size
+; validation (BC checked, not CF alone - the F_READ/F_WRITE count
+; lesson) plus a 1-byte-overshoot probe mirror font_load's own FONT.CHR
+; check byte for byte (overlay2.asm, SP12 T1). ptrCur is only written
+; after that final ldir, so a failed load (absent file, wrong size, no
+; drive) leaves it exactly as it was and a later retry of the same
+; number is never short-circuited by MOUSE sub 5's already-installed
+; check.
 ;
 ; Scratch buffer: swapStage (512 bytes, above) reused rather than a new
 ; static buffer or a bank_alloc dance - it is directly addressable from
 ; this page with no DATA_WINDOW mapping needed (unlike font_load's
 ; 2048-byte FONT.CHR, which does not fit this page's margin as a static
 ; buffer - see that routine's header), and 257 bytes fits its capacity
-; trivially. Safety of the reuse: swapStage is idle outside a live part
-; switch (nothing touches it at boot before the first switch), and at
-; switch time this routine's own call site (switch_to_part's .noobjs,
-; above) runs AFTER swapStage's flags/object-location payload has
-; already been fully installed into flags/objTable - the install loop
-; immediately above .noobjs is the LAST reader of that payload, so by
-; the time control reaches here swapStage is free scratch, exactly the
-; ordering the task brief requires (verified directly against
+; trivially. Safety of the reuse: swapStage only ever holds a LIVE,
+; not-yet-consumed payload strictly within a single h_xpart/
+; xpart_load_entry -> switch_to_part call chain (both producers hand
+; off to switch_to_part immediately, with no intervening ret to the
+; condact dispatcher), so it is idle at every OTHER entry to this
+; routine - including MOUSE n 5 (h_mouse.pointer, above), reachable at
+; any point during normal play with no part switch anywhere on the call
+; stack; the Z80 has one call stack and no condact pre-emption (im2_isr/
+; ctc_isr, interrupts.asm, only ever drive music/sample timing), so
+; that window and this one can never overlap. Within the part-switch
+; chain, this routine's own call site (switch_to_part's .noobjs, above)
+; runs AFTER swapStage's flags/object-location payload has already been
+; fully installed into flags/objTable - the install loop immediately
+; above .noobjs is the LAST reader of that payload, so by the time
+; control reaches here swapStage is free scratch, exactly the ordering
+; the original task brief required (verified directly against
 ; switch_to_part's own instruction order, not assumed).
 ;
 ; Corrupts AF, BC, DE, HL, IX.
 pointer_load:
+    call ptr_name_build          ; A = shape number, in
     ld a, (curPart)
     dec a
     jr z, .rootonly              ; curPart == 1: skip straight to the
@@ -3609,8 +3701,10 @@ pointer_load:
     ld (hl), '\'
     inc hl                        ; hl = ptrNamePart+6
     ex de, hl
-    ld hl, ptrName                ; copy "POINTER.SPR",0 verbatim (12 bytes)
-    ld bc, 12
+    ld hl, ptrNameBuf            ; copy the built name (12 or 13 bytes)
+    ld a, (ptrNameLen)
+    ld c, a
+    ld b, 0
     ldir
     call esx_getsetdrv
     jr c, .rootonly
@@ -3623,7 +3717,7 @@ pointer_load:
                                   ; PARTn\ fallback above
     call esx_getsetdrv
     ret c                         ; no drive at all: silent, buffer untouched
-    ld ix, ptrName
+    ld ix, ptrNameBuf
     ld b, ESX_MODE_READ
     call esx_fopen
     ret c                         ; no POINTER.SPR either: silent, untouched
@@ -3650,12 +3744,15 @@ pointer_load:
     jr nz, .bad                     ; a successful 1-byte read here means
                                     ; the file is LONGER than 256: reject
     ld hl, swapStage                 ; exact size confirmed: scratch ->
-    ld de, mousePattern               ; live buffer (the only write to
-    ld bc, 256                        ; mousePattern anywhere but its own
-    ldir                               ; compiled-in initialiser above)
+    ld de, mousePattern               ; live buffer (this ldir and
+    ld bc, 256                        ; ptr_arrow_install's, above, are
+    ldir                               ; mousePattern's only two writers)
     xor a
     ld (mouseReady), a               ; force the next MOUSE 1 to re-OTIR
-    jr .close                        ; the new pattern to hardware
+                                     ; the new pattern to hardware
+    ld a, (ptrNum)                   ; installed: remember which
+    ld (ptrCur), a
+    jr .close
 .bad:
  IFDEF DEBUG                        ; wrong size: no-op with a marker,
     ld b, 29                        ; same idiom as h_sfx/h_mouse/
@@ -3669,20 +3766,38 @@ pointer_load:
     call esx_fclose
     ret
 
+; Boot-only glue for title_boot's one-way OVL2->OVL0 hop (overlay2.asm,
+; .toPointer): neither this call nor switch_to_part is guaranteed to
+; run before the game's first MOUSE 1 (h_mouse's own header, above), so
+; the live buffer is never uninitialised - the pristine arrow goes down
+; FIRST, then the base-shape probe runs over it exactly as MOUSE 0 5
+; does, including that same ptrCur=0 pre-set (h_mouse.pointer's sub 5
+; body, above) so an absent POINTER.SPR still leaves shape 0 correctly
+; cached instead of $FF/unknown. A is set explicitly AFTER
+; ptr_arrow_install's corrupting call, not inherited from it - see that
+; same sub 5 body for the discipline and why it matters. Both calls
+; live on this page, so one hop from overlay2 is enough; pointer_load's
+; own ret still lands on whatever title_boot's caller was, unchanged.
+; Corrupts AF, BC, DE, HL, IX (the union of both calls).
+pointer_load_boot:
+    call ptr_arrow_install
+    xor a                        ; base shape number, explicit
+    ld (ptrCur), a                ; installed: same pre-set as MOUSE 0 5
+    jp pointer_load
+
 ; SP12 T3 pointer-load state, overlay0-local - parallel to fontHandle/
 ; fontNamePart's own PARTn machinery (overlay2.asm), but no scratch bank
 ; is needed here (see pointer_load's header: swapStage is directly
 ; addressable from this page already).
 ptrHandle:    db $FF              ; esxDOS handle, $FF = none open
-; "PARTn\POINTER.SPR",0 = 6 ("PARTn\") + 12 ("POINTER.SPR",0) = 18 bytes.
-; The task brief's plan said `ds 17` - that arithmetic undercounted:
-; "POINTER.SPR" is 11 characters, +1 for the NUL terminator = 12 (not
-; 11), so 6+12 = 18 is the correct total, used here instead.
-ptrNamePart:  ds 18
-ptrName:      db "POINTER.SPR", 0  ; root fallback name AND the PARTn\
-                                   ; suffix (copied into ptrNamePart+6,
-                                   ; 12 bytes - the fontNamePart/fontName
-                                   ; reuse idiom, overlay2.asm SP12 T1)
+ptrNum:       db 0                ; number being built/loaded
+ptrNameLen:   db 12               ; bytes in ptrNameBuf including the NUL
+ptrCur:       db $FF              ; installed shape, $FF = unknown
+ptrNameBuf:   ds 13               ; "POINTERn.SPR",0 worst case
+; "PARTm\" (6) + the longest built name (13)
+ptrNamePart:  ds 19
+ptrNameStem:  db "POINTER"
+ptrNameExt:   db ".SPR", 0
 msgPtrBad:    db "PTR BAD", 0
 
 ; Relocated from errors.asm (post-flags resident there had no room to
