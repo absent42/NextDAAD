@@ -36,6 +36,8 @@ try {
     if ($Kit) {
         Copy-Item "$root\build\nextdaad.nex" "$root\authoring-kit\nextdaad.nex" -Force
         Write-Host "placed authoring-kit\nextdaad.nex (kit interpreter refreshed)"
+        & python "$root\scripts\build_manual.py"
+        if ($LASTEXITCODE -ne 0) { throw "manual generation failed - the kit would ship stale or missing docs" }
     }
     if ($Run) {
         if ($Leg) {

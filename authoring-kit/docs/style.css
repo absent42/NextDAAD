@@ -1,0 +1,29 @@
+/* NextDAAD manual. Self-contained by requirement: the authoring kit
+   must work with no network. No CDN, no webfonts. */
+:root { color-scheme: light dark; }
+body {
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  margin: 0; padding: 2rem 1rem; background: #fbfbfa; color: #1c1c1c;
+}
+main { max-width: 46rem; margin: 0 auto; }
+h1, h2, h3 { line-height: 1.25; margin: 2rem 0 .6rem; }
+h1 { font-size: 1.9rem; border-bottom: 2px solid #d8d8d4; padding-bottom: .3rem; }
+h2 { font-size: 1.4rem; }
+h3 { font-size: 1.1rem; }
+code, pre { font-family: ui-monospace, Consolas, "Courier New", monospace; }
+code { background: #efeee9; padding: .1em .35em; border-radius: 3px; font-size: .92em; }
+pre { background: #efeee9; padding: .8rem 1rem; overflow-x: auto; border-radius: 4px; }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; display: block; overflow-x: auto; }
+th, td { border: 1px solid #d8d8d4; padding: .45rem .6rem; text-align: left; }
+th { background: #efeee9; }
+a { color: #14507d; }
+blockquote { margin: 1rem 0; padding: .1rem 1rem; border-left: 4px solid #d8d8d4; color: #444; }
+@media (prefers-color-scheme: dark) {
+  body { background: #16181a; color: #e6e6e6; }
+  h1 { border-bottom-color: #333; }
+  code, pre, th { background: #23262a; }
+  th, td { border-color: #333; }
+  a { color: #7fb5df; }
+  blockquote { border-left-color: #333; color: #b8b8b8; }
+}

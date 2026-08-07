@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Picture format - NX2 and NXI - NextDAAD</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<main>
+<h1 id="picture-format-nx2-and-nxi">Picture format - NX2 and NXI</h1>
+<p>What NextDAAD's location-graphics loader accepts, for anyone writing a
+converter, exporter or paint-tool plugin that emits these files.</p>
+<p>Every statement here was verified against the interpreter's own loader
+(<code>src/overlay2.asm</code>) rather than transcribed from an older document.
+Where the loader REFUSES a file, that is called out - it refuses rather
+than misrendering, so a rejected picture simply does not appear.</p>
+<hr />
+<h2 id="1-the-two-shapes">1. The two shapes</h2>
+<table>
+<thead>
+<tr>
+<th>Extension</th>
+<th>Width</th>
+<th>Max height</th>
+<th>Screen coverage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.NX2</code></td>
+<td><strong>320</strong> px</td>
+<td><strong>256</strong> rows</td>
+<td>Full screen, border included</td>
+</tr>
+<tr>
+<td><code>.NXI</code></td>
+<td><strong>256</strong> px</td>
+<td><strong>192</strong> rows</td>
+<td>Classic paper area, inset by the border</td>
+</tr>
+</tbody>
+</table>
+<p>Width is implied by the extension. It is not stored in the file.</p>
+<p>Files are named <code>NNN.NX2</code> / <code>NNN.NXI</code>, where <code>NNN</code> is the DAAD picture
+number, zero-padded to three digits (<code>001</code>, <code>042</code>).</p>
+<h2 id="2-file-layout">2. File layout</h2>
+<pre><code>offset 0     : 512 bytes  palette   (256 entries x 2 bytes)
+offset 512   : W*H bytes  pixel data (1 byte per pixel, row-major)
+</code></pre>
+<p>Nothing else. No header, no magic number, no footer, no padding.</p>
+<p><strong>Height is derived from the file size</strong>, as <code>(size - 512) / width</code>. The
+file must therefore be exactly <code>512 + width * height</code> bytes.</p>
+<h2 id="3-pixel-data">3. Pixel data</h2>
+<p>One byte per pixel, each byte a palette index 0-255.</p>
+<p><strong>Row-major, in both shapes</strong> - <code>width</code> bytes for row 0, then row 1, and
+so on. This is worth stating plainly because the Layer 2 <em>video memory</em>
+for 320-wide mode is column-major, and the interpreter's own internals
+describe it that way; that is a property of the hardware surface, not of
+this file. <strong>The loader performs the scatter. Write rows.</strong></p>
+<h2 id="4-palette-entries">4. Palette entries</h2>
+<p>256 entries, 2 bytes each, in index order:</p>
+<pre><code>byte 0 : RRRGGGBB   the top 8 bits of a 9-bit colour
+byte 1 : bit 0      the 9th (least significant) blue bit
+         bit 7      Layer 2 priority (see below)
+         bits 1-6   must be 0
+</code></pre>
+<p>So each colour is RGB333 - 3 bits per channel, 512 possible colours -
+packed across two bytes. Byte 0 carries R(3) G(3) and the TOP TWO blue
+bits; byte 1 bit 0 carries the remaining blue bit.</p>
+<p>Converting 8-bit-per-channel source colour to byte 0:</p>
+<pre><code>byte0 = (r &amp; 0xE0) | ((g &gt;&gt; 3) &amp; 0x1C) | (b &gt;&gt; 6)
+byte1 = (b &gt;&gt; 5) &amp; 1
+</code></pre>
+<p><strong>Priority bit.</strong> Bit 7 of byte 1 marks a colour as always-on-top,
+above all other layers regardless of layer ordering. NextDAAD passes it
+through unchanged, so you may set it deliberately - but leave it 0
+unless you mean it, and never set it on the reserved entry below.</p>
+<p><strong>A full 512-byte palette is required even if the art uses fewer
+colours.</strong> Pad unused entries with zeros.</p>
+<h2 id="5-reserved-one-index-and-one-colour">5. Reserved: one index and one colour</h2>
+<h3 id="index-255-is-reserved">Index 255 is reserved</h3>
+<p>The interpreter stamps palette entry 255 with the transparent colour on
+every picture load. <strong>Any pixel drawn with index 255 becomes a hole</strong>
+showing the text layer beneath.</p>
+<p>Quantise to <strong>255 colours (indices 0-254)</strong>, not 256.</p>
+<h3 id="the-colour-e000c0-is-reserved">The colour #E000C0 is reserved</h3>
+<p>The Spectrum Next's global transparency colour is magenta - 24-bit
+<strong><code>#E000C0</code></strong> (224, 0, 192), which packs to byte 0 = <code>$E3</code>. It is the
+value the hardware register holds after a reset, and the same colour
+Next sprites use.</p>
+<p><strong>Transparency is a COLOUR compare, not an index compare.</strong> The hardware
+matches the top 8 bits of a palette entry - byte 0 only - against that
+value. Two consequences:</p>
+<ol>
+<li><strong>Both 9-bit colours sharing byte 0 = <code>$E3</code> are transparent</strong>, whatever
+   index they sit at. The 9th blue bit cannot rescue an entry.</li>
+<li><strong>A whole region of near-magenta collides</strong>, not just the exact
+   triple: any colour with <code>r</code> in 224-255, <code>g</code> in 0-31, <code>b</code> in 192-255
+   packs to <code>$E3</code>.</li>
+</ol>
+<p>NextDAAD defends against this - an art entry whose byte 0 is <code>$E3</code> is
+shifted two steps down the blue scale (still magenta, imperceptible in a
+picture) so a deliberate magenta renders rather than punching a hole.
+<strong>But do not rely on that</strong>: it alters the author's colour silently. Keep
+<code>#E000C0</code> and its near neighbours out of the palette.</p>
+<h2 id="6-what-the-loader-refuses">6. What the loader REFUSES</h2>
+<p>A file failing any of these is rejected, and the picture does not
+display. It is never misrendered.</p>
+<ul>
+<li>Smaller than 512 bytes (no complete palette).</li>
+<li>Exactly 512 bytes (no pixel data).</li>
+<li><code>(size - 512)</code> not an exact multiple of the width - a partial trailing
+  row.</li>
+<li>More than 192 rows for a 256-wide file.</li>
+<li>More than 256 rows for a 320-wide file.</li>
+</ul>
+<h2 id="7-optional-zx0-compression">7. Optional ZX0 compression</h2>
+<p>Pictures may be ZX0-compressed. The interpreter decompresses on load.</p>
+<p><strong>Use ZX0 CLASSIC (v1) format, not v2.</strong> The two are mutually
+unreadable and a ZX0 stream carries no version marker, so a v2 file
+fails silently or renders as garbage. Compressors predating ZX0 v2 emit
+v1 unconditionally; a v2-capable compressor needs its <code>-c</code> (classic)
+switch.</p>
+<p>The compressed bytes must decompress to exactly the layout in section 2.</p>
+<p>Extensions, tried in this order (compressed wins over raw):</p>
+<table>
+<thead>
+<tr>
+<th>Order</th>
+<th>Name</th>
+<th>Shape</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>NNN.NX2.ZX0</code></td>
+<td>320, compressed</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>NNN.N2Z</code></td>
+<td>320, compressed (8.3 synonym)</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>NNN.NX2</code></td>
+<td>320, raw</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>NNN.NXI.ZX0</code></td>
+<td>256, compressed</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>NNN.NXZ</code></td>
+<td>256, compressed (8.3 synonym)</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>NNN.NXI</code></td>
+<td>256, raw</td>
+</tr>
+</tbody>
+</table>
+<p>The double extension is what Gfx2Next emits; the three-letter synonyms
+exist for plain-FAT setups without long filenames. Either works.</p>
+<h2 id="8-checklist-for-an-exporter">8. Checklist for an exporter</h2>
+<ul>
+<li>[ ] Quantise to at most <strong>255</strong> colours; never emit pixel index 255.</li>
+<li>[ ] Keep <code>#E000C0</code> (224, 0, 192) and near-magenta out of the palette.</li>
+<li>[ ] Write <strong>512 bytes</strong> of palette, padded, even for a small palette.</li>
+<li>[ ] Pack each entry as <code>byte0 = (r &amp; 0xE0) | ((g &gt;&gt; 3) &amp; 0x1C) | (b &gt;&gt; 6)</code>,
+      <code>byte1 = (b &gt;&gt; 5) &amp; 1</code>, byte 1 bits 1-7 zero.</li>
+<li>[ ] Write pixels <strong>row-major</strong>, <code>width</code> bytes per row.</li>
+<li>[ ] Total size exactly <code>512 + width * height</code>.</li>
+<li>[ ] Height within 192 (256-wide) or 256 (320-wide).</li>
+<li>[ ] If compressing, <strong>ZX0 v1 classic</strong>.</li>
+<li>[ ] Name it <code>NNN.NX2</code> or <code>NNN.NXI</code>.</li>
+</ul>
+<h2 id="9-verifying-your-output">9. Verifying your output</h2>
+<p><code>authoring-kit/lib/palcheck.ps1</code> audits a converted file for the two
+transparency hazards and reports which palette index offends:</p>
+<pre><code>powershell -File authoring-kit\lib\palcheck.ps1 path\to\001.NX2
+</code></pre>
+<p>It is advisory - it warns and exits 0, and it only understands
+uncompressed files.</p>
+</main>
+</body>
+</html>
