@@ -3,7 +3,7 @@
 DAAD text adventure interpreter for the ZX Spectrum Next, written in
 Z80 assembly using the Next extended instruction set.
 
-NextDAAD runs real DAAD games end to end: it loads and validates a DDB
+NextDAAD runs DAAD games end to end: it loads and validates a DDB
 from SD card (version 2 and version 3 databases both accepted), then
 drives the full object model, vocabulary-driven parser and process
 engine - conjunction-handling sentence parsing, PROCESS/DOALL dispatch,
@@ -130,7 +130,7 @@ are usable for art, with one reservation:
   sit at. Any art entry that would collide is shifted two steps down
   the blue scale - still magenta, imperceptible in a picture - so a
   deliberate magenta renders rather than punching a hole.
-- Our own converter (scripts/png2nx.py) reserves index 255 and warns
+- The converter (scripts/png2nx.py) reserves index 255 and warns
   if a source contains the reserved colour. The authoring kit's path
   runs Gfx2Next on your own 8-bit PNG, so it cannot re-quantise for
   you - it audits the converted file and warns instead. Neither stops
