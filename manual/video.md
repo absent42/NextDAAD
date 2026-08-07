@@ -53,7 +53,7 @@ a 16:9 source encoded into the 4:3 `full` shape loses its sides. Match
 the shape to how your footage is framed first, then pick a route.
 
 **Smaller shapes come out better.** The player's data budget is fixed,
-so quality scales inversely with pixel count: `classic` has two-thirds
+so quality scales inversely with pixel count: `classic` has three-fifths
 the pixels of `full`, so at the same data rate each pixel gets about
 1.7 times the bytes. If a clip looks rough at `full`, re-encode it
 letterboxed. Two things qualify that: hard content - constant
