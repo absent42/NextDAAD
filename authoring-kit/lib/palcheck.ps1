@@ -31,7 +31,7 @@ for ($i = 0; $i -lt 512; $i += 2) {
     if ($b[$i] -eq $TRANSP -and ($i / 2) -ne $RESERVED) { $hits += ($i / 2) }
 }
 if ($hits.Count -gt 0) {
-    Write-Output "WARN: $name has the transparency colour #E000C0 at palette index $($hits -join ', ') - the interpreter shifts those entries two steps down the blue scale on load, so they render as a slightly different magenta than you painted. Change the colour slightly in your source art."
+    Write-Output "WARN: $name has a colour that converts to the reserved transparency value (byte 0 = `$E3) at palette index $($hits -join ', ') - the interpreter shifts those entries two steps down the blue scale on load, so they render as a slightly different magenta than you painted. Move that colour out of near-saturated magenta (red 238 or above, green 18 or below, blue 201 or above) in your source art."
 }
 
 # 2. Any pixel using the reserved index becomes a hole when the

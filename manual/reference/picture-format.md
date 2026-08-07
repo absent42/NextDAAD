@@ -64,6 +64,13 @@ byte0 = (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6)
 byte1 = (b >> 5) & 1
 ```
 
+That truncation is the simpler choice - a mask and a shift, no table -
+but it costs accuracy: it can leave a channel up to 31 away from the
+source value on a 0-255 scale, where rounding to the nearest of the
+eight levels 0, 36, 73, 109, 146, 182, 219, 255 is never more than 18
+out, and it sends a wider band of near-magenta onto the reserved value
+(section 5).
+
 **Priority bit.** Bit 7 of byte 1 marks a colour as always-on-top,
 above all other layers regardless of layer ordering. NextDAAD passes it
 through unchanged, so you may set it deliberately - but leave it 0
@@ -159,7 +166,8 @@ exist for plain-FAT setups without long filenames. Either works.
       channel conversion, not before it.
 - [ ] Write **512 bytes** of palette, padded, even for a small palette.
 - [ ] Pack each entry as `byte0 = (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6)`,
-      `byte1 = (b >> 5) & 1`, byte 1 bits 1-7 zero.
+      `byte1 = (b >> 5) & 1`, byte 1 bits 1-7 zero - the simple
+      truncating conversion, with the accuracy cost noted in section 4.
 - [ ] Write pixels **row-major**, `width` bytes per row.
 - [ ] Total size exactly `512 + width * height`.
 - [ ] Height within 192 (256-wide) or 256 (320-wide).

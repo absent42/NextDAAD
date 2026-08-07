@@ -56,8 +56,9 @@ prose, however extreme its palette.
 
 They behave differently. The reserved **index** punches holes in a
 picture. The reserved **colour** is silently altered. Neither is
-enforced for you - the kit converts the PNG you supply and never
-recolours or re-quantizes it.
+enforced for you - the kit converts every colour in your PNG the same
+way, rounding each to the nearest shade the Next can show, and leaves
+both hazards to you.
 
 **Quantize to 255 colours, indices 0-254.** Palette slot 255 is
 reserved: the interpreter overwrites it with the transparent colour on
@@ -70,12 +71,14 @@ colour is reserved for transparency, and a palette entry landing on it
 is moved two steps down the blue scale as the picture loads - so the
 pixels stay opaque, but come out a slightly different magenta from the
 one you painted, with nothing on screen to tell you. In the colours you
-pick in a paint program, the region at risk is **red 238 or above, green
-18 or below, and blue 201 or above**; the two that land on it exactly
-are (255, 0, 219) and (255, 0, 255). Nothing outside that corner of the
-colour space is affected, so ordinary artwork never trips it - and if
-you want a hot magenta, moving any one channel out of that box ships it
-exactly as painted.
+pick in a paint program, that is **every** colour with red 238 or above,
+green 18 or below, and blue 201 or above - the whole box converts to the
+reserved colour, not merely part of it - and two of them, (255, 0, 219)
+and (255, 0, 255), already are that colour exactly. Nothing outside that
+corner of the colour space is affected, so ordinary artwork never trips
+it, and if you want a hot magenta, moving any one channel out of the box
+is enough: the colour is then converted like any other, with no shift
+applied to it.
 
 **If you write `.NX2` files yourself** with your own converter, the rule
 is exact and does not depend on any quantizer: no palette entry may have

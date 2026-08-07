@@ -67,8 +67,9 @@ prose, however extreme its palette.</p>
 <h2 id="transparency-one-reserved-index-one-reserved-colour">Transparency: one reserved index, one reserved colour</h2>
 <p>They behave differently. The reserved <strong>index</strong> punches holes in a
 picture. The reserved <strong>colour</strong> is silently altered. Neither is
-enforced for you - the kit converts the PNG you supply and never
-recolours or re-quantizes it.</p>
+enforced for you - the kit converts every colour in your PNG the same
+way, rounding each to the nearest shade the Next can show, and leaves
+both hazards to you.</p>
 <p><strong>Quantize to 255 colours, indices 0-254.</strong> Palette slot 255 is
 reserved: the interpreter overwrites it with the transparent colour on
 every picture load, so any pixel drawn with index 255 becomes a hole
@@ -79,12 +80,14 @@ colour is reserved for transparency, and a palette entry landing on it
 is moved two steps down the blue scale as the picture loads - so the
 pixels stay opaque, but come out a slightly different magenta from the
 one you painted, with nothing on screen to tell you. In the colours you
-pick in a paint program, the region at risk is <strong>red 238 or above, green
-18 or below, and blue 201 or above</strong>; the two that land on it exactly
-are (255, 0, 219) and (255, 0, 255). Nothing outside that corner of the
-colour space is affected, so ordinary artwork never trips it - and if
-you want a hot magenta, moving any one channel out of that box ships it
-exactly as painted.</p>
+pick in a paint program, that is <strong>every</strong> colour with red 238 or above,
+green 18 or below, and blue 201 or above - the whole box converts to the
+reserved colour, not merely part of it - and two of them, (255, 0, 219)
+and (255, 0, 255), already are that colour exactly. Nothing outside that
+corner of the colour space is affected, so ordinary artwork never trips
+it, and if you want a hot magenta, moving any one channel out of the box
+is enough: the colour is then converted like any other, with no shift
+applied to it.</p>
 <p><strong>If you write <code>.NX2</code> files yourself</strong> with your own converter, the rule
 is exact and does not depend on any quantizer: no palette entry may have
 byte 0 equal to <code>$E3</code>, except index 255. See <a href="reference/picture-format.html">Picture

@@ -70,6 +70,12 @@ bits; byte 1 bit 0 carries the remaining blue bit.</p>
 <pre><code>byte0 = (r &amp; 0xE0) | ((g &gt;&gt; 3) &amp; 0x1C) | (b &gt;&gt; 6)
 byte1 = (b &gt;&gt; 5) &amp; 1
 </code></pre>
+<p>That truncation is the simpler choice - a mask and a shift, no table -
+but it costs accuracy: it can leave a channel up to 31 away from the
+source value on a 0-255 scale, where rounding to the nearest of the
+eight levels 0, 36, 73, 109, 146, 182, 219, 255 is never more than 18
+out, and it sends a wider band of near-magenta onto the reserved value
+(section 5).</p>
 <p><strong>Priority bit.</strong> Bit 7 of byte 1 marks a colour as always-on-top,
 above all other layers regardless of layer ordering. NextDAAD passes it
 through unchanged, so you may set it deliberately - but leave it 0
@@ -180,7 +186,8 @@ exist for plain-FAT setups without long filenames. Either works.</p>
       channel conversion, not before it.</li>
 <li>[ ] Write <strong>512 bytes</strong> of palette, padded, even for a small palette.</li>
 <li>[ ] Pack each entry as <code>byte0 = (r &amp; 0xE0) | ((g &gt;&gt; 3) &amp; 0x1C) | (b &gt;&gt; 6)</code>,
-      <code>byte1 = (b &gt;&gt; 5) &amp; 1</code>, byte 1 bits 1-7 zero.</li>
+      <code>byte1 = (b &gt;&gt; 5) &amp; 1</code>, byte 1 bits 1-7 zero - the simple
+      truncating conversion, with the accuracy cost noted in section 4.</li>
 <li>[ ] Write pixels <strong>row-major</strong>, <code>width</code> bytes per row.</li>
 <li>[ ] Total size exactly <code>512 + width * height</code>.</li>
 <li>[ ] Height within 192 (256-wide) or 256 (320-wide).</li>
