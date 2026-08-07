@@ -31,16 +31,18 @@ for ($i = 0; $i -lt 512; $i += 2) {
     if ($b[$i] -eq $TRANSP -and ($i / 2) -ne $RESERVED) { $hits += ($i / 2) }
 }
 if ($hits.Count -gt 0) {
-    Write-Output "WARN: $name has a colour that converts to the reserved transparency value (byte 0 = `$E3) at palette index $($hits -join ', ') - the interpreter shifts those entries two steps down the blue scale on load, so they render as a slightly different magenta than you painted. Move that colour out of near-saturated magenta (red 238 or above, green 18 or below, blue 201 or above) in your source art."
+    Write-Output "WARN: $name has a colour that converts to the reserved transparency value (byte 0 = `$E3) at palette index $($hits -join ', '). If you meant those pixels to be transparent, move that colour to palette slot $RESERVED - only that slot is transparent. If you did not, the interpreter shifts the entry two steps down the blue scale on load, so it renders as a slightly different magenta than you painted; move the colour out of near-saturated magenta (red 238 or above, green 18 or below, blue 201 or above) in your source art."
 }
 
-# 2. Any pixel using the reserved index becomes a hole when the
-#    interpreter stamps that entry.
-$used = $false
+# 2. Pixels using the reserved index are deliberate transparency - the
+#    interpreter stamps that entry on load so they show the text layer
+#    through. Report the count so an author can confirm the hole is the
+#    size they meant, but never warn: this is the feature working.
+$transparent = 0
 for ($i = 512; $i -lt $b.Length; $i++) {
-    if ($b[$i] -eq $RESERVED) { $used = $true; break }
+    if ($b[$i] -eq $RESERVED) { $transparent++ }
 }
-if ($used) {
-    Write-Output "WARN: $name uses palette index $RESERVED, which is reserved for transparency - those pixels will become holes. Reduce your source art to 255 colours."
+if ($transparent -gt 0) {
+    Write-Output "$name has $transparent transparent pixel(s) at palette index $RESERVED."
 }
 exit 0
