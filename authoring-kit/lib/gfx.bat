@@ -45,6 +45,9 @@ for %%F in ("IMAGES\*.png") do (
             exit /b 1
         )
         move /Y "%%~nF.nxi!ZSUF!" "RELEASE\!NUM!.!MODE!!ZSUF!" >nul
+        REM Advisory palette audit - never fails the build. Skipped for
+        REM ZX0 output, whose palette is compressed and not readable here.
+        if not defined ZSUF powershell -NoProfile -ExecutionPolicy Bypass -File "lib\palcheck.ps1" "RELEASE\!NUM!.!MODE!"
         set /a COUNT+=1
         echo   image %%~nxF -^> !NUM!.!MODE!!ZSUF!
     )

@@ -1,0 +1,40 @@
+# Audit a converted Layer 2 picture for transparency hazards.
+# gfx2next -pal-embed writes a 512-byte palette (256 x 2-byte 9-bit
+# entries, RRRGGGBB then blue LSB) followed by the pixel bytes, so both
+# checks read the file the interpreter will actually load.
+# Advisory only: always exits 0, never fails a build.
+#
+# $TRANSP/$RESERVED below must agree with L2_TRANSP_COLOUR/L2_TRANSP_INDEX
+# in src/nextdaad.inc, and their two other copies: L2_TRANSPARENT_BYTE0 in
+# scripts/png2nx.py and in authoring-kit/lib/nxv2enc.py. Four places, keep
+# them in sync.
+param([Parameter(Mandatory=$true)][string]$Path)
+$ErrorActionPreference = 'Stop'
+if (-not (Test-Path $Path)) { exit 0 }
+$b = [System.IO.File]::ReadAllBytes($Path)
+if ($b.Length -lt 512) { exit 0 }        # compressed or not a raw picture
+
+$TRANSP = 0xE3      # L2_TRANSP_COLOUR
+$RESERVED = 255     # L2_TRANSP_INDEX
+$name = Split-Path $Path -Leaf
+
+# 1. Any palette entry whose RRRGGGBB byte matches punches holes. The
+#    compare ignores the 9th bit, so only the even bytes matter.
+$hits = @()
+for ($i = 0; $i -lt 512; $i += 2) {
+    if ($b[$i] -eq $TRANSP -and ($i / 2) -ne $RESERVED) { $hits += ($i / 2) }
+}
+if ($hits.Count -gt 0) {
+    Write-Output "WARN: $name has the transparency colour #E000C0 at palette index $($hits -join ', ') - those pixels will show the text layer through the picture. Change the colour slightly in your source art."
+}
+
+# 2. Any pixel using the reserved index becomes a hole when the
+#    interpreter stamps that entry.
+$used = $false
+for ($i = 512; $i -lt $b.Length; $i++) {
+    if ($b[$i] -eq $RESERVED) { $used = $true; break }
+}
+if ($used) {
+    Write-Output "WARN: $name uses palette index $RESERVED, which is reserved for transparency - those pixels will become holes. Reduce your source art to 255 colours."
+}
+exit 0
