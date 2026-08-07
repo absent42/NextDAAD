@@ -142,9 +142,12 @@ Gfx2Next can produce this file directly from a 16x16 indexed PNG:
 gfx2next -sprites -pal-std -pal-none pointer.png POINTER.SPR
 ```
 
-Paint `#FF00FF` for the transparent pixels, exactly as you would for a
-picture; it comes out as the transparent value. Black and white come out
-as the same bytes the default arrow uses.
+Paint `#FF00FF` for the transparent pixels and `-pal-std` converts them
+to the transparent value. Here it is the **colour** that decides, and
+the palette slot it sits in does not matter - the reverse of a Layer 2
+picture, where transparency comes from slot 255 and the colour in that
+slot is irrelevant. Black and white come out as the same bytes the
+default arrow uses.
 
 `-pal-std` is what makes this work - it converts your colours to the
 Next's standard palette, which is the one the pointer is displayed

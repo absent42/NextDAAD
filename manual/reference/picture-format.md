@@ -87,7 +87,11 @@ The interpreter stamps palette entry 255 with the transparent colour on
 every picture load. **Any pixel drawn with index 255 becomes a hole**
 showing the text layer beneath.
 
-Quantise to **255 colours (indices 0-254)**, not 256.
+Quantise the **opaque** artwork into **indices 0-254** - 255 colours,
+not 256. Index 255 is emitted deliberately, for transparent pixels, or
+not at all. An exporter with no transparency to write must therefore
+leave it unused: a plain 256-colour quantisation puts stray pixels on it
+and every one of them is a hole.
 
 An exporter that wants to emit transparency puts the author's transparent
 colour in slot 255 and writes index 255 for those pixels. The colour in
@@ -167,7 +171,9 @@ exist for plain-FAT setups without long filenames. Either works.
 
 ## 8. Checklist for an exporter
 
-- [ ] Quantise to at most **255** colours; never emit pixel index 255.
+- [ ] Quantise opaque artwork into **indices 0-254** - 255 colours, not
+      256. Emit pixel index 255 only where you mean transparency, and
+      not at all otherwise.
 - [ ] Transparent pixels, if any, use index 255 and no other index.
 - [ ] Never emit byte 0 = `$E3` except at index 255 - test after your
       channel conversion, not before it.
@@ -183,8 +189,10 @@ exist for plain-FAT setups without long filenames. Either works.
 
 ## 9. Verifying your output
 
-`authoring-kit/lib/palcheck.ps1` audits a converted file for the two
-transparency hazards and reports which palette index offends:
+`authoring-kit/lib/palcheck.ps1` audits a converted file's transparency.
+It warns about a palette entry that collides with the reserved colour,
+naming the index, and it reports how many pixels use index 255 - a count
+rather than a warning, since deliberate transparency is legitimate:
 
 ```
 powershell -File authoring-kit\lib\palcheck.ps1 path\to\001.NX2

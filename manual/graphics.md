@@ -20,6 +20,14 @@ Every source PNG must be an **8-bit paletted (indexed) PNG**. Truecolour
 images are rejected - quantize to an indexed palette in your paint
 program before exporting.
 
+**Quantize to 255 colours, indices 0-254.** Palette slot 255 is
+reserved: pixels drawn with it become transparent holes. Leaving it
+unused is what keeps a picture fully opaque, and it is the setting you
+want unless you are deliberately putting a hole in the art - see
+[Transparency](#transparency) below. Most paint programs let you set the
+palette size directly when exporting an indexed PNG; a plain 256-colour
+export can scatter a few pixels onto slot 255 without your noticing.
+
 The **width decides the shape**, and only two widths are accepted:
 
 | Width | Becomes | On screen |
@@ -35,8 +43,9 @@ refused as surely as a 512-wide image is.
 Height is free: up to 256 rows for 320-wide art, up to 192 rows for
 256-wide art. A picture shorter than the full screen is drawn
 **top-aligned**, and the screen below it stays transparent, so a text
-window under the art shows through. That is the usual way to combine a
-picture with a description.
+window under the art shows through without your having to draw anything.
+That is the usual way to combine a picture with a description, and it
+needs nothing transparent in the artwork itself.
 
 If you are using 256-wide art, lay your text windows out the classic
 way, inside the paper area - the picture occupies the middle of the
@@ -79,6 +88,25 @@ That is what makes a full-screen picture with a hole in it possible: put
 the hole where your text window will sit, and the picture frames the
 text on all sides instead of sitting above it.
 
+**Where the hole goes.** Text is an 80x32 grid of characters, and a
+320-wide picture covers exactly the same area of screen, so one
+character cell is **4 picture pixels wide and 8 tall**. To place a hole
+for a window opened with `WINAT row column` and `WINSIZE height width`:
+
+```
+left   = column x 4        width in pixels  = width  x 4
+top    = row    x 8        height in pixels = height x 8
+```
+
+So `WINAT 20 4` with `WINSIZE 10 72` wants a hole 288 x 80 pixels with
+its top-left corner at pixel (16, 160) of a 320x256 PNG.
+
+256-wide art uses the same cell sizes but sits inset by 32 pixels on
+every side, so take 8 off the column and 4 off the row before
+converting. That is the arithmetic behind the classic paper area
+described above: columns 8 to 71 is 64 cells, 64 x 4 = 256 pixels
+across, and rows 4 to 27 is 24 cells, 24 x 8 = 192 pixels down.
+
 **The colour has to be in slot 255.** Only that slot is transparent. The
 same magenta anywhere else in your palette comes out opaque, with
 nothing on screen to tell you why, so if your hole renders as solid
@@ -87,13 +115,20 @@ specific palette slot: in Aseprite you can edit the entry directly, and
 in an indexed export from other tools you may need to reorder the colour
 table so your transparent colour is last.
 
-The build reports how many transparent pixels a converted picture has,
-so you can confirm the hole is the size you intended.
+**The build reports how many transparent pixels a converted picture has,
+but only with `COMPRESS=0`.** A compressed picture has no readable
+palette, so a `COMPRESS=1` build reports nothing at all, neither the
+count nor the warnings below. If you ship compressed art, run one build
+with `COMPRESS=0` and read them from that.
+
+The count is the only way to confirm the hole is the size you intended,
+and the only way to catch one you did not ask for.
 
 **A picture with no slot-255 pixels is fully opaque**, which is the
-normal case. A picture shorter than the full screen is drawn
-top-aligned, and the screen below it stays transparent, so a text window
-under the art shows through without your having to draw anything.
+normal case - and the case you get by quantizing to 255 colours, indices
+0-254, as above. A 256-colour export instead leaves slot 255 in play,
+and a handful of pixels landing there become a handful of holes in the
+shipped picture.
 
 **Draw hole edges hard.** One flat colour, no anti-aliasing and no
 dithering across the boundary. A soft edge leaves a fringe of

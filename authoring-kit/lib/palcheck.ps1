@@ -1,4 +1,6 @@
-# Audit a converted Layer 2 picture for transparency hazards.
+# Audit a converted Layer 2 picture's transparency - one warning (a
+# colour colliding with the reserved value) and one count (pixels on the
+# reserved index).
 # gfx2next -pal-embed writes a 512-byte palette (256 x 2-byte 9-bit
 # entries, RRRGGGBB then blue LSB) followed by the pixel bytes, so both
 # checks read the file the interpreter will actually load.
@@ -33,15 +35,17 @@ if ($hits.Count -gt 0) {
     Write-Output "WARN: $name has a colour that converts to the reserved transparency value (byte 0 = `$E3) at palette index $($hits -join ', '). If you meant those pixels to be transparent, move that colour to palette slot $RESERVED - only that slot is transparent. If you did not, the interpreter shifts the entry two steps down the blue scale on load, so it renders as a slightly different magenta than you painted; move the colour out of near-saturated magenta (red 238 or above, green 18 or below, blue 201 or above) in your source art."
 }
 
-# 2. Pixels using the reserved index are deliberate transparency - the
-#    interpreter stamps that entry on load so they show the text layer
-#    through. Report the count so an author can confirm the hole is the
-#    size they meant, but never warn: this is the feature working.
+# 2. Pixels using the reserved index are transparency - the interpreter
+#    stamps that entry on load so they show the text layer through.
+#    Never warn: deliberate transparency is the feature working. But a
+#    plain 256-colour export scatters pixels onto index 255 by accident,
+#    and those are holes too, so the count names the remedy for an
+#    author who did not intend any.
 $transparent = 0
 for ($i = 512; $i -lt $b.Length; $i++) {
     if ($b[$i] -eq $RESERVED) { $transparent++ }
 }
 if ($transparent -gt 0) {
-    Write-Output "$name has $transparent transparent pixel(s) at palette index $RESERVED."
+    Write-Output "$name has $transparent transparent pixel(s) at palette index $RESERVED. They show the text layer through. If you did not mean this picture to have holes, quantize your source art to 255 colours (indices 0-254) so index $RESERVED stays unused, and re-convert."
 }
 exit 0

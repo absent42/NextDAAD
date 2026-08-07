@@ -87,7 +87,11 @@ colours.</strong> Pad unused entries with zeros.</p>
 <p>The interpreter stamps palette entry 255 with the transparent colour on
 every picture load. <strong>Any pixel drawn with index 255 becomes a hole</strong>
 showing the text layer beneath.</p>
-<p>Quantise to <strong>255 colours (indices 0-254)</strong>, not 256.</p>
+<p>Quantise the <strong>opaque</strong> artwork into <strong>indices 0-254</strong> - 255 colours,
+not 256. Index 255 is emitted deliberately, for transparent pixels, or
+not at all. An exporter with no transparency to write must therefore
+leave it unused: a plain 256-colour quantisation puts stray pixels on it
+and every one of them is a hole.</p>
 <p>An exporter that wants to emit transparency puts the author's transparent
 colour in slot 255 and writes index 255 for those pixels. The colour in
 slot 255 is overwritten on load, so its value does not matter to the
@@ -186,7 +190,11 @@ switch.</p>
 exist for plain-FAT setups without long filenames. Either works.</p>
 <h2 id="8-checklist-for-an-exporter">8. Checklist for an exporter</h2>
 <ul>
-<li>[ ] Quantise to at most <strong>255</strong> colours; never emit pixel index 255.</li>
+<li>[ ] Quantise opaque artwork into <strong>indices 0-254</strong> - 255 colours, not<ol start="256">
+<li>Emit pixel index 255 only where you mean transparency, and
+  not at all otherwise.</li>
+</ol>
+</li>
 <li>[ ] Transparent pixels, if any, use index 255 and no other index.</li>
 <li>[ ] Never emit byte 0 = <code>$E3</code> except at index 255 - test after your
       channel conversion, not before it.</li>
@@ -201,8 +209,10 @@ exist for plain-FAT setups without long filenames. Either works.</p>
 <li>[ ] Name it <code>NNN.NX2</code> or <code>NNN.NXI</code>.</li>
 </ul>
 <h2 id="9-verifying-your-output">9. Verifying your output</h2>
-<p><code>authoring-kit/lib/palcheck.ps1</code> audits a converted file for the two
-transparency hazards and reports which palette index offends:</p>
+<p><code>authoring-kit/lib/palcheck.ps1</code> audits a converted file's transparency.
+It warns about a palette entry that collides with the reserved colour,
+naming the index, and it reports how many pixels use index 255 - a count
+rather than a warning, since deliberate transparency is legitimate:</p>
 <pre><code>powershell -File authoring-kit\lib\palcheck.ps1 path\to\001.NX2
 </code></pre>
 <p>It is advisory - it warns and exits 0, and it only understands
