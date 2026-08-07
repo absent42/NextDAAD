@@ -931,13 +931,15 @@ h_display:
     nextreg NR_L2_BANK, a
     ret
 
-; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused - every
-; implemented sub's buffer operation takes no meaningful P1 (jdaad
-; parity: jdaad.js's _GFX() switches on Parameter2 alone - Parameter1
-; only matters to its palette-store subs 9/10, which have no
+; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused by every
+; sub except 16 (the font number - see .font/GFX_SUB_FONT below) -
+; every OTHER implemented sub's buffer operation takes no meaningful P1
+; (jdaad parity: jdaad.js's _GFX() switches on Parameter2 alone -
+; Parameter1 only matters to its palette-store subs 9/10, which have no
 ; NextDAAD analogue, see below). Sub map pinned against the DAAD
 ; condact reference (GFX Routines, condact 87) and jdaad.js _GFX()/
-; DB*() (ASSETS/HTML/jdaad.js ~3676/~4360):
+; DB*() (ASSETS/HTML/jdaad.js ~3676/~4360), plus sub 16 (NextDAAD-only,
+; not in that reference):
 ;   0 = copy the BACK (render) surface onto FRONT (visible), in place
 ;       - l2_copy_back_front; jdaad's DBBuffertoScreen draws the back
 ;       canvas onto the visible one the same way, so this needs no NR
@@ -957,9 +959,13 @@ h_display:
 ;   9/10 = jdaad's numbered-palette store/recall (flag-offset RGB
 ;       triples into a software colour table) - no NextDAAD analogue,
 ;       Layer 2 palette load is picture-driven only; documented no-op
-;   3/4/7/8/11+ (and jdaad's 13/14 MP4-via-SFX redirect) = no
+;   3/4/7/8/11-15 (and jdaad's 13/14 MP4-via-SFX redirect) = no
 ;       NextDAAD analogue either (graphics/text-buffer split, video
 ;       playback); documented no-op
+;   16 = install font B (0 = base - the embedded table, then FONT.CHR
+;       over it if one exists; 1-9 = FONT<n>.CHR) - NextDAAD-only, no
+;       jdaad/DAAD-reference analogue; GFX_SUB_FONT (nextdaad.inc) -
+;       see .font below
 ; Every no-op sub falls to the shared DEBUG marker below rather than
 ; overlay0's h_unimpl - overlay2 must not call overlay0 (header
 ; discipline) - inline, resident dbg_* helpers only, mirrors h_sfx's
@@ -1042,11 +1048,13 @@ h_gfx:
                                  ; TM_DEFS
     or a
     jr nz, .fontfile
-    call tm_font_init            ; 0: lay the embedded table down FIRST,
-    xor a                        ; so a revert still works when no
-    ld (fontCur), a              ; FONT.CHR exists. This is exactly the
-                                 ; boot order. tm_font_init is resident,
-                                 ; so it is reachable from here.
+    call tm_font_init            ; 0: lay the embedded table down FIRST, so a
+    xor a                        ; revert still works when no FONT.CHR exists.
+    ld (fontCur), a              ; A is 0 here, which is the number we want, so
+    jp font_load                 ; jump directly - do NOT fall through to a
+                                 ; `ld a,b`, because tm_font_init is documented
+                                 ; as corrupting all registers and B's survival
+                                 ; is not guaranteed.
 .fontfile:
     ld a, b
     jp font_load
