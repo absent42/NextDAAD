@@ -28,10 +28,17 @@ FORBIDDEN = [
      "$FE was the transparency colour before 2026-08-06; it is $E3 now"),
     (r"index\s+254|entry\s+254",
      "the reserved palette index is 255, not 254"),
-    (r"all\s+256\s+(slots|colours|colors)",
+    (r"all\s+256\s+(?:\w+\s+)?(?:slots|colours|colors|entries|indices)"
+     r"(?!.{0,80}\b255\b)",
      "255 slots are usable for art - index 255 is reserved"),
     (r"one\s+blue\s+LSB",
      "the collision nudge moves blue TWO steps of the 0-7 scale, not one"),
+    # Sprites have a transparent COLOUR, never a transparent attribute -
+    # the only thing that ever had a "transparent attribute" was the
+    # deleted tilemap mechanism. A hit here is either describing that
+    # deleted mechanism (a real catch) or misdescribing sprites (also
+    # worth fixing, by saying "colour" instead). Do not loosen this on
+    # the assumption it is over-broad; it isn't.
     (r"transparent\s+attribute",
      "the tilemap has no transparency; that attribute was deleted"),
     (r"TM_TRANSP_ATTR|TM_TRANSP_PAIR",
