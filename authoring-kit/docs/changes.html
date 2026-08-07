@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What changed - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="what-changed">What changed</h1>
+<p>Changes an author can see, newest first. If a release changed how your
+game behaves, how it builds, or what the kit gives you, it is here.</p>
+<h2 id="unreleased">Unreleased</h2>
+<ul>
+<li>Location pictures use the Spectrum Next's standard transparency
+  magenta, and the reserved palette slot is index 255. Keep that colour
+  out of your artwork and quantize to 255 colours - see
+  <a href="graphics.html">Graphics</a> for what the build warns about and what it
+  cannot check.</li>
+<li>The screen no longer shows a white background before a game's first
+  picture, or in any area a game has not painted.</li>
+</ul>
+<h2 id="031-4-august-2026">0.3.1 - 4 August 2026</h2>
+<p>A compliance release. NextDAAD now runs real DAAD databases the way the
+reference interpreters do across messages, object resolution, flags and
+refusals, and it accepts DAAD version 3 databases, so the standard DAAD
+Ready authoring path for this target works unmodified.</p>
+<p><strong>Behaviour changes are the point of this release.</strong> A game tuned around
+any of the old behaviour below - the silent <code>GET</code>, the forced continuous
+listing, the old random sequence, the old convertible-noun threshold -
+plays differently now.</p>
+<h3 id="breaking-cutscene-audio-is-always-stereo">Breaking: cutscene audio is always stereo</h3>
+<p>The --mono encoder option is gone. Mono cost more playback time than it
+saved and made no audible difference against 8-bit sound. A mono source
+still needs nothing from you; it is put on both channels automatically.</p>
+<p>If a <code>CONFIG.BAT</code> still carries --mono in <code>VIDOPTS</code> or <code>VIDOPTS_NNN</code>,
+the build now stops with an unrecognised-argument error. Delete the
+option; nothing replaces it.</p>
+<h3 id="daad-v3">DAAD V3</h3>
+<ul>
+<li>Version 3 databases load and run, and the kit compiles <code>-v3</code> by
+  default. A version 2 database behaves exactly as it did before.</li>
+<li><code>XMES</code>, second-parameter indirection and <code>SETAT</code> are implemented, as
+  are the version 3 flag 53 bits. <code>PAUSE 0</code> under version 3 means "wait
+  for a key". <code>SYNONYM</code> no longer marks its entry done under version 3.</li>
+<li>An existing version 2 game needs three checks before you trust a
+  version 3 build of it - see <a href="daad-v3.html">DAAD V3</a>.</li>
+</ul>
+<h3 id="objects-and-messages">Objects and messages</h3>
+<ul>
+<li><code>GET</code>, <code>DROP</code>, <code>WEAR</code>, <code>REMOVE</code>, <code>PUTIN</code> and <code>TAKEOUT</code> print their
+  success messages. The objects always moved; the player was simply
+  never told. <code>GET ALL</code> and <code>DROP ALL</code> were completely silent.</li>
+<li>Refusal messages come out in the right order across the whole family,
+  so the message that appears is the one that fits. A refusal now
+  performs <code>NEWTEXT</code> and aborts the rest of a compound order, so
+  <code>GET SWORD AND KILL ORC WITH IT</code> no longer attacks the orc when the
+  sword was refused. <code>OK</code> deliberately does not abort.</li>
+<li>The AUTO- family tells "there is no such object anywhere" apart from
+  "that word is not an object".</li>
+<li><code>TAKEOUT</code> performs the weight check it never had.</li>
+<li>Object names are no longer article-stripped in listings. <code>LISTOBJ</code>,
+  <code>LISTAT</code>, the inventory and <code>LOOK</code> print the text as authored - "a
+  pair of dungarees", not "pair of dungarees".</li>
+<li>Substituting a name into a message removes only a leading "a ",
+  "an ", "some " or "the ", and keeps any other first word, so "rusty
+  sword" stays "rusty sword". A substituted name is also truncated at
+  the first ".". See <a href="platform-notes.html">Platform notes</a>.</li>
+<li>An object text with no space in it used to print nothing at all. It
+  now prints.</li>
+<li>Abandoning a name part-way through no longer leaves the text that
+  follows reading from the wrong place.</li>
+<li><code>@</code> substitutes only in Spanish databases now, matching DAAD Ready's
+  own escape table. In an English database <code>@</code> is an ordinary printable
+  character, so a message containing <code>-@@-</code> prints <code>-@@-</code>; it used to
+  eat any literal <code>@</code> an English message contained. In a Spanish
+  database its capitalisation now actually happens.</li>
+<li>Extended object attributes are loaded in the right order. <code>HASAT</code> for
+  attributes 0-7 was reading 8-15 and the other way round, which
+  silently corrupted every attribute test in every game.</li>
+<li>A bare noun resolves against an object that carries an adjective, so
+  <code>GET LAMP</code> finds a "QUAINT LAMP". A full adjective match still beats a
+  partial one.</li>
+<li>Search priority is restored for the AUTO- family and <code>WHATO</code>. Every
+  "carried" pass was really an "anywhere" pass, which could match
+  objects that had never been created and let <code>AUTOT</code> take something out
+  of a container the player was nowhere near.</li>
+<li><code>WHATO</code> with no match clears flags 54-59 instead of leaving the
+  previous object's data in them.</li>
+<li><code>SWAP</code> is a raw exchange that no longer adjusts flag 1, and sets the
+  referenced object. <code>COPYOO</code> sets the referenced object and does adjust
+  flag 1.</li>
+<li>Zero-weight containers are magic bags: their contents no longer
+  transmit weight.</li>
+</ul>
+<h3 id="listings-and-flow">Listings and flow</h3>
+<ul>
+<li><code>LISTOBJ</code> and <code>LISTAT</code> honour flag 53 bit 6 - clear lists one object
+  per line, set gives the continuous "a, b and c." form. The continuous
+  form used to be forced. Flag 53 bit 7 is maintained on both paths, and
+  an empty <code>LISTAT</code> prints SM53 alone.</li>
+<li>A listing no longer overwrites the referenced object.</li>
+<li><code>ISDONE</code> and <code>ISNDONE</code> report everything done since the current
+  process table was entered. <code>SKIP</code> and <code>REDO</code> no longer count.</li>
+<li><code>PICTURE</code> and <code>MOVE</code> mark the process table done on every exit,
+  including their failing ones. <strong>One authoring pattern changes:</strong> a
+  <code>PROCESS</code> holding only a <code>MOVE</code>, tested afterwards with <code>ISNDONE</code> to
+  print "I can't go in that direction", no longer prints it. Let <code>MOVE</code>
+  gate the entry itself and put the message in the following entry,
+  which reads the same everywhere.</li>
+<li>A <code>DOALL</code> that finds nothing performs <code>NEWTEXT</code> and <code>NOTDONE</code>; one
+  that iterated and ran out still completes done.</li>
+<li><code>EXIT n</code> with n non-zero restarts the game. It used to do nothing.</li>
+<li><code>WINDOW n</code> out of range keeps the current window instead of falling
+  back to window 0.</li>
+<li>An out-of-range location raises runtime error 1, not error 7.</li>
+<li><code>RANDOM</code> and <code>CHANCE</code> use a real generator. The old one returned six
+  distinct values in a repeating cycle of eight, and <code>CHANCE 50</code> fired
+  62 per cent of the time. Any game that depended on the old sequence
+  now differs.</li>
+</ul>
+<h3 id="parser-and-input">Parser and input</h3>
+<ul>
+<li><code>PARSE 1</code> re-parses the quoted section of the last order, so
+  <code>SAY "..."</code> commands work - see <a href="platform-notes.html">Platform notes</a>.</li>
+<li><code>INPUT stream options</code> switches the active window for the input and
+  restores it afterwards.</li>
+<li><code>QUIT</code> and <code>END</code> read a whole line at the confirmation prompt, echoed
+  live, and act on ENTER. They used to act on a single keypress.</li>
+<li>The convertible-noun threshold is 40, not 20. <strong>Any noun numbered
+  20-39 now acts as a command when typed on its own.</strong></li>
+</ul>
+<h3 id="flags">Flags</h3>
+<ul>
+<li>Flag 29 reads 129 and flag 62 reads 144. Flag 29 was never written at
+  all, so a game gating its artwork on <code>HASAT GMODE</code> drew nothing.</li>
+<li>Flags 37 and 52 start at 0 rather than 4 and 10. Set your own limits
+  in your reset process with <code>ABILITY</code>, or <code>LET fMaxCarr</code> /
+  <code>LET fStrength</code>. Every corpus game and the starter already do.</li>
+<li>Flag 61 is cleared whenever flag 60 is written.</li>
+<li>Saves made before this release still load, but they carry the old
+  values of flags 29, 53 and 62. Start a fresh game to pick up the
+  current ones.</li>
+</ul>
+<h3 id="audio">Audio</h3>
+<ul>
+<li><code>BEEP</code> plays the note and the length the compiler actually emitted.
+  The two parameters were being read the wrong way round, so most
+  authored <code>BEEP</code>s played a wrong note or were dropped. The tone ceiling
+  is 238 rather than 222, which recovers the top eight semitones.</li>
+<li>Sampled sound effects no longer distort while a picture is drawn.</li>
+<li>Two AY music symptoms remain open: distortion when all nine channels
+  are driven at once, and a tune restarting at a lower tone after
+  <code>STOPM</code>.</li>
+</ul>
+<h3 id="video">Video</h3>
+<ul>
+<li>A clip can be up to 256 MB, lifted from 16 MB, and the encoder refuses
+  an over-size clip at build time with a message naming the limit -
+  it used to write a file the player then refused to open. See
+  <a href="reference/limits.html">Limits</a>.</li>
+<li>Shapes replace the five fixed profiles: <code>full</code>, <code>16:9</code>, <code>scope</code>,
+  <code>classic</code> and <code>classic-wide</code>, plus any explicit width by height and a
+  free height derived from an aspect ratio. Delivery - resident,
+  streamed or direct - is chosen automatically.</li>
+<li>The mid-clip pause is gone, keyframes no longer hitch, and half-rate
+  clips play at their true rate.</li>
+<li>Sources that are not 25 fps are retimed by blending rather than by
+  dropping frames, which removes the motion stutter the old method
+  caused. <code>--retime</code> selects the other methods.</li>
+<li>The frame-rate floor for sound is 10.17 fps, down from 24.4, so a
+  12.5 fps encode of a demanding clip is a real option.</li>
+<li>Uncompressed playback reaches 256x153 at 25 fps, and full-screen
+  320x256 at 12.5 fps.</li>
+<li>The streaming budget is derived per clip rather than guessed, and the
+  encoder reports what it chose. The kit no longer ships per-clip budget
+  values.</li>
+<li>New: <code>--prefilter</code> for grainy sources and <code>--tile-slack</code> for
+  sustained motion. Removed: offset copy and cut approximation, neither
+  of which improved the picture.</li>
+<li>Stale-picture recovery now works, so a screen that has drifted too far
+  from the source is refreshed.</li>
+<li>A clip stored in exactly 32 fragments on the card was falsely refused.
+  The real limits are 32 fragments for a resident clip and 8 for a
+  streamed or direct one.</li>
+<li>A cutscene that fails to open now says why on screen instead of
+  silently skipping.</li>
+<li>Video needs a 2MB Next. A 1MB machine has too small a memory pool to
+  hold or stream clips reliably.</li>
+</ul>
+<h3 id="the-kit">The kit</h3>
+<ul>
+<li>New <code>VIDTUNE.BAT</code>: pick a clip, preview a segment, change the shape,
+  frame rate and dither, encode and accept - the settings are written
+  into <code>VIDOPTS_NNN</code> in <code>CONFIG.BAT</code>, so the next build reproduces what
+  you previewed. Ships ready to run.</li>
+<li>Location pictures draw slightly faster.</li>
+<li>The "!" glyph was redrawn to match the font's stroke and baseline.</li>
+</ul>
+<h2 id="020-23-july-2026">0.2.0 - 23 July 2026</h2>
+<ul>
+<li>Cutscene video: the native NXV format, an encoder that ships with the
+  kit, and a build step that encodes <code>VIDEO\NNN.mp4</code> for you and caches
+  the result. Playback with <code>GFX n 13</code> and <code>GFX n 14</code>.</li>
+<li>AY music is parked during a cutscene and resumes after it.</li>
+<li>Keyboard fixes: the symbol-shift map was off by one from F onward, and
+  CAPS+2 typed a literal 2 instead of toggling caps lock.</li>
+<li>Font fixes: a proper ampersand and pound sign in place of the euro
+  sign and apostrophe the inherited font carried.</li>
+</ul>
+<h2 id="010-20-july-2026">0.1.0 - 20 July 2026</h2>
+<p>First release: a DAAD interpreter for the ZX Spectrum Next, with Layer 2
+location graphics, tilemap text, AY music and sound effects, sampled
+sound, and the authoring kit that builds an SD card image from your DSF.</p>
+</main>
+</body>
+</html>

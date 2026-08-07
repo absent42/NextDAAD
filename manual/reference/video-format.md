@@ -16,9 +16,9 @@ executable specification of the Z80 player, used by the encoder's own
 verification pass).
 
 This file is the reference for what every option means. For deciding
-which settings a particular clip wants, see `VIDEO-PRESETS.md` in the
-kit root - it routes by what kind of footage you have and what you are
-seeing on screen.
+which settings a particular clip wants, see [Video](../video.md) - it
+routes by what kind of footage you have and what you are seeing on
+screen.
 
 ## Requirements
 
@@ -138,8 +138,7 @@ Any explicit `WIDTHxHEIGHT` is also valid (height 1-192 at 256 wide,
 aspect ratio, correcting for the 320-wide mode's non-square pixels
 (x1.067). Sources are centre-cropped to the target aspect, never
 distorted. Smaller shapes encode to visibly higher quality at the
-same playback budget - see the kit's SETUP.md "Video cutscenes" for
-the guidance page.
+same playback budget - see [Video](../video.md) for the guidance page.
 
 ## Frame rate and retiming
 

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Known differences - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="known-differences">Known differences</h1>
+<p><strong>This page is meant to disappear.</strong></p>
+<p>Everything on it is a place where NextDAAD does not yet do what a DAAD
+author has the right to expect, and every entry is written to be
+deleted: when the difference goes, so does its entry. Nothing here is a
+decision we mean to keep.</p>
+<p>That is what separates this page from <a href="platform-notes.html">Platform notes</a>,
+which is the opposite list - behaviour that is settled, whether the
+hardware forced it or we chose it, and that is not going to move. If
+something surprises you, check there first; it is much the longer list.</p>
+<p>Each entry below says what happens today and what to write instead. The
+workarounds are all things that read correctly on every DAAD
+interpreter, so a game written around them keeps working when the
+difference is fixed.</p>
+<h2 id="locations">Locations</h2>
+<h3 id="desc-255-is-an-error-not-here"><code>DESC 255</code> is an error, not "here"</h3>
+<p><code>DESC 255</code> raises runtime error 1, "invalid location". Write <code>DESC @38</code>
+instead - flag 38 holds the player's location - which is unambiguous
+everywhere.</p>
+<p>The wider problem is that 255 does not mean the same thing in every
+condact. It is translated to the player's location in <code>PLACE</code>, <code>PUTO</code>
+and <code>AUTOT</code> parameters, and it is not translated in <code>AUTOP</code> or <code>PUTIN</code>,
+which hit the invalid-location error instead. Until that is even, use
+255 only in the three condacts that accept it, and write <code>@38</code> anywhere
+else you mean "here".</p>
+<h2 id="objects">Objects</h2>
+<h3 id="create-destroy-and-place-do-not-set-the-referenced-object"><code>CREATE</code>, <code>DESTROY</code> and <code>PLACE</code> do not set the referenced object</h3>
+<p>After any of the three, the referenced object - flag 51 and its
+companions in flags 54 to 59 - still holds whatever it held before.</p>
+<p>If you need the referenced object to follow the object you just moved,
+say so explicitly with <code>SETCO n</code>. That works on every interpreter and
+costs one condact.</p>
+<h3 id="copyoo-adjusts-flag-1"><code>COPYOO</code> adjusts flag 1</h3>
+<p><code>COPYOO objno1 objno2</code> copies object 1's location to object 2. If object
+2 was being carried, flag 1 - the carried count - is decremented to
+match. <code>SWAP</code> behaves differently: it is a raw exchange of two
+locations and never touches flag 1.</p>
+<p>Interpreters disagree about this, so if your game reads flag 1
+immediately after a <code>COPYOO</code> and you want to be sure of the number
+everywhere, recount first with <code>ABILITY</code>.</p>
+<h3 id="putin-and-takeout-space-their-message-differently-elsewhere"><code>PUTIN</code> and <code>TAKEOUT</code> space their message differently elsewhere</h3>
+<p>The composite message these condacts print is SM44 (or SM45, or SM52),
+then a space, then the container's name, then SM51 with no space before
+it. With the stock SM51 of "." that gives</p>
+<pre><code>The hat is in the old box.
+</code></pre>
+<p>Other interpreters put the spaces in different places, so a game whose
+system messages were tuned against one of them can come out with a
+doubled or a missing space here. Write SM44, SM45 and SM52 with no
+trailing space of their own, and SM51 as the punctuation you want the
+sentence to end on; that reads correctly on all of them.</p>
+<h2 id="flags">Flags</h2>
+<h3 id="flag-50-does-not-survive-a-process-call">Flag 50 does not survive a <code>PROCESS</code> call</h3>
+<p>Flag 50 holds the object a <code>DOALL</code> is currently working on, and it is a
+plain global here. After <code>PROCESS n</code>, where process n ran a <code>DOALL</code> of
+its own, flag 50 holds the last object that <code>DOALL</code> touched rather than
+whatever you left in it. Some interpreters save and restore it around
+the call.</p>
+<p>Do not carry a value in flag 50 across a <code>PROCESS</code> call. Use one of the
+general-purpose flags for anything you need to survive.</p>
+<h3 id="flag-55-is-not-set-while-a-doall-runs">Flag 55 is not set while a <code>DOALL</code> runs</h3>
+<p>The weight of the object a <code>DOALL</code> has just reached is not published
+into flag 55. If you need it inside the loop, ask for it directly with
+<code>WEIGH @50 n</code>.</p>
+<h2 id="spanish-databases">Spanish databases</h2>
+<p>Two pieces of Spanish support are missing. Only Spanish databases are
+affected; an English game sees none of this.</p>
+<h3 id="articles-are-not-replaced-in-a-substituted-name">Articles are not replaced in a substituted name</h3>
+<p>Substituting an object name into a message leaves a Spanish article as
+the author wrote it - "Un palo" substitutes as "Un palo". Other
+interpreters replace it with the definite form, giving "El palo".</p>
+<p>For now, write the <code>/OTX</code> text so that it reads correctly unchanged in
+the messages that use it, or supply your own wording in the message
+rather than relying on the substitution to adjust the article.</p>
+<h3 id="enclitic-pronouns-are-not-implemented">Enclitic pronouns are not implemented</h3>
+<p>Verbs ending -LO, -LA, -LOS or -LAS do not inject a pronoun token, so a
+player typing <code>COGELO</code> does not get the "it" the verb is carrying. Flag
+53 bit 2, the V3 bit that suppresses enclitics, consequently has nothing
+to suppress.</p>
+<p>Ask for the pronoun as a separate word in your vocabulary until this
+lands.</p>
+</main>
+</body>
+</html>

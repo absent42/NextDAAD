@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Platform notes - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="platform-notes">Platform notes</h1>
+<p>How a DAAD game behaves on the ZX Spectrum Next, in the places where
+this target is not quite like the other machines DAAD runs on.</p>
+<p>Nothing on this page is going to change. Some of it is forced by the
+hardware - text lives on the tilemap here and pictures live on Layer 2,
+which are two separate surfaces rather than one screen. Some of it is a
+rule that was settled by measuring the original ZX Spectrum interpreter,
+the lineage this one reimplements, and following it. Either way, this is
+how the target works, and it is what to read first when a game behaves
+differently here than it did somewhere else.</p>
+<p>For behaviour that is <em>not</em> settled - differences we mean to remove -
+see <a href="known-differences.html">Known differences</a>.</p>
+<h2 id="timing">Timing</h2>
+<h3 id="pause-and-beep-durations-are-scaled-by-the-compiler"><code>PAUSE</code> and <code>BEEP</code> durations are scaled by the compiler</h3>
+<p>This one is not the interpreter. <strong>The compiler rewrites the number
+before the interpreter ever sees it.</strong> DRC multiplies every <code>PAUSE</code> and
+<code>BEEP</code> duration by this target's own note length, 0.6, on the way into
+the database: <code>PAUSE 100</code> in your source compiles to <code>PAUSE 60</code>, and
+<code>BEEP 50 120</code> compiles with a duration of 30. The interpreter then waits
+exactly the number of frames the database asks for, at 50 Hz.</p>
+<p>The consequence is that a pause you authored as one second lasts about
+0.6 of a second.</p>
+<p><strong>Author against what you hear, not against the arithmetic.</strong> One second
+is <code>PAUSE 83</code> on this target - 83 scaled by 0.6 is 50 frames at 50 Hz.
+<code>PAUSE 167</code> gives about two seconds. Duration tables in older DAAD or
+MALUVA guides were written for other targets, so treat them as a
+starting point and check the result by ear.</p>
+<p><code>XPLAY</code>'s generated notes are scaled the same way. See
+<a href="audio.html">Audio</a> for the rest of what the compiler does to a <code>BEEP</code>.</p>
+<h2 id="pictures-and-the-screen">Pictures and the screen</h2>
+<h3 id="display-works-on-the-picture-layer-not-on-text"><code>DISPLAY</code> works on the picture layer, not on text</h3>
+<p><code>DISPLAY n</code> with a non-zero value clears the Layer 2 picture surface and
+flips it into view. It does <strong>not</strong> clear text, because on this machine
+text is not on the picture layer at all. The old DAAD idiom <code>DISPLAY @0</code>
+- "clear the screen when it is dark" - therefore does not clear your
+prose here. Use <code>CLS</code> for text and <code>DISPLAY</code> for pictures; they are two
+different surfaces and each condact reaches one of them.</p>
+<p><code>DISPLAY 0</code> re-draws the current picture. It always does the work, even
+if the same picture is already on screen, so it is not free - do not put
+one inside a tight loop and expect it to cost nothing.</p>
+<h3 id="gfx-sub-commands-9-and-10-do-nothing"><code>GFX</code> sub-commands 9 and 10 do nothing</h3>
+<p>These are the numbered palette store and recall. On this target a
+picture carries its own palette and loads it as the picture loads, so
+there is no numbered palette slot for them to write to or read from.
+Both sub-commands are accepted and do nothing at all, so a game that
+uses them still runs; it simply gets no palette change.</p>
+<p>The <code>GFX</code> sub-commands that <em>are</em> implemented here - the buffer copies
+and swaps, the surface clears, and video playback on 13 and 14 - are
+listed in <a href="reference/symbols.html">Symbols</a> and <a href="video.html">Video</a>.</p>
+<h2 id="condacts">Condacts</h2>
+<h3 id="a-doall-inside-a-doall-stops-with-error-4">A <code>DOALL</code> inside a <code>DOALL</code> stops with error 4</h3>
+<p>There is one <code>DOALL</code> at a time. If a sub-process called from inside a
+<code>DOALL</code> starts its own, the game stops with runtime error 4 rather than
+quietly producing the wrong answer.</p>
+<p>Do not nest <code>DOALL</code> loops. The loud failure is the point: a nested
+<code>DOALL</code> has no correct meaning here, and finding that out as an error on
+screen is better than finding it out as an inventory that silently lost
+half its objects.</p>
+<h3 id="mouse-6-and-7-set-the-pointer-hotspot"><code>MOUSE</code> 6 and 7 set the pointer hotspot</h3>
+<p>Despite the symbol names <code>DELTAXMS</code> and <code>DELTAYMS</code>, these two do not
+report how far the mouse moved. They set the hotspot offset inside the
+pointer bitmap - the pixel of your artwork that lands on the reported
+coordinate. If your pointer is a cross, you probably want its hotspot at
+5,5 rather than at the top-left corner.</p>
+<p>All eight sub-commands, 0 to 7, are implemented. The full table is in
+<a href="reference/symbols.html">Symbols</a>, and <a href="customising.html">Customising</a>
+covers supplying your own pointer artwork.</p>
+<h2 id="text-and-messages">Text and messages</h2>
+<h3 id="capitalises-and-only-in-spanish-databases"><code>@</code> capitalises, and only in Spanish databases</h3>
+<p><code>_</code> substitutes the referenced object's name into a message, in every
+language. <code>@</code> is the capitalising form of the same escape and it exists
+for <strong>Spanish databases only</strong>.</p>
+<p>So in an English database <code>@</code> is an ordinary printable character: a
+message containing <code>-@@-</code> prints <code>-@@-</code>. In a Spanish database, <code>@</code>
+substitutes the name with its first letter uppercased and <code>_</code>
+substitutes it unchanged.</p>
+<p>If you are bringing in a game whose English messages relied on <code>@</code>
+substituting, change those to <code>_</code>.</p>
+<h3 id="article-stripping-in-substituted-names">Article stripping in substituted names</h3>
+<p>When an object's text is substituted into a message, a leading <strong>"a "</strong>,
+<strong>"an "</strong>, <strong>"some "</strong> or <strong>"the "</strong> is removed - matched whatever the
+case - and nothing else is. Any other first word survives: an object
+text of "rusty sword" substitutes as "rusty sword", not "sword".</p>
+<p>The stock system messages supply their own article ("You now have the
+_."), so write your <code>/OTX</code> entries as "a lamp", "an axe", "some rope" or
+"the key" and all four read correctly. An <code>/OTX</code> beginning with any
+other word keeps that word, which is the point - a descriptive name
+stays intact.</p>
+<p>Leading spaces are not touched. The article has to be the literal start
+of the text.</p>
+<p><strong>Porting note.</strong> jDAAD removes the first word whatever it is. A game
+written against that will have object texts that only read correctly
+when the first word is thrown away - "my wallet" gives "You now have the
+my wallet." here. Rewrite those few texts without the possessive.</p>
+<p>Listings are not affected at all. <code>LISTOBJ</code>, <code>LISTAT</code> and the inventory
+print the object text whole, article included.</p>
+<h3 id="a-substituted-name-stops-at-the-first">A substituted name stops at the first "."</h3>
+<p>A substituted object name is truncated at the first full stop. An object
+text of "a quaint lamp. It is unlit." reads as "quaint lamp" inside a
+message and prints whole in a listing, so one <code>/OTX</code> entry can serve as
+both a short name and a longer description.</p>
+<h2 id="the-parser">The parser</h2>
+<h3 id="a-bare-noun-numbered-below-40-acts-as-a-verb">A bare noun numbered below 40 acts as a verb</h3>
+<p>If the player types a noun on its own and gives no verb, DAAD moves the
+noun into the verb slot when its vocabulary id is below 40. Ids 39 and
+below convert; 40 and above do not.</p>
+<p><strong>What to do with that:</strong> any noun you number in the 20-39 band will act
+as a command when it is typed bare. If you have a noun that must never
+be a verb, number it 40 or above. Direction words and other words meant
+to work when typed on their own belong below 40.</p>
+<h3 id="parse-1-and-quoted-text"><code>PARSE 1</code> and quoted text</h3>
+<p><code>PARSE 1</code> re-parses the quoted section of the last order. Two separate
+rules govern it, and it is worth knowing which is which:</p>
+<ul>
+<li><strong>Whether a quoted section exists</strong> decides whether the sentence flags
+  are refilled. <code>SAY HELLO</code>, with no quotes, leaves the current sentence
+  untouched. <code>SAY ""</code>, with empty quotes, clears it.</li>
+<li><strong>What the quoted section contains</strong> decides the condition, by the
+  same "a verb or a noun was found" test <code>PARSE 0</code> uses. <code>SAY "PLUGH"</code>
+  fails the condition, because it filled a verb. <code>SAY "FAST"</code> passes -
+  an adverb on its own is not a sentence. <code>SAY "ZZZZ"</code> passes.</li>
+</ul>
+<p>Words after the closing quote still parse into the normal sentence, and
+convertible nouns are converted inside a quoted section exactly as they
+are outside one.</p>
+<h2 id="flags-the-interpreter-publishes">Flags the interpreter publishes</h2>
+<h3 id="flags-29-and-62-describe-this-machine">Flags 29 and 62 describe this machine</h3>
+<ul>
+<li><strong>Flag 29</strong>, the graphics capability byte, reads <strong>129</strong>: bit 7
+  because Layer 2 location graphics exist, bit 0 because the <code>MOUSE</code>
+  condact is implemented. <code>HASAT GMODE</code> is therefore true here, so a
+  period game that gates its picture drawing on <code>HASAT GMODE</code> does draw
+  its pictures. Bit 0 is set whether or not a mouse is plugged in.</li>
+<li><strong>Flag 62</strong>, the screen mode byte, reads <strong>144</strong>. The byte is
+  machine-specific by definition, so test it for what you need rather
+  than comparing it against a particular number.</li>
+</ul>
+<p>Both are written once when the game starts and are not rewritten if the
+game switches Layer 2 mode later.</p>
+<p>A save file made before these flags were published carries the old
+values, so an old save restores flag 29 as 0 and takes the no-graphics
+branch of <code>HASAT GMODE</code> until something rewrites it. Start a fresh game
+to pick up the current values.</p>
+<h2 id="debug-builds">Debug builds</h2>
+<h3 id="a-d-build-plays-exactly-like-a-normal-one">A <code>-D</code> build plays exactly like a normal one</h3>
+<p>Compiling with the debug flag writes a marker into the process tables
+wherever you put a <code>DEBUG</code> line. NextDAAD steps over those markers and
+carries on.</p>
+<p><strong>This is the only DAAD interpreter where that works.</strong> Everywhere else
+the marker is read as <code>NEWTEXT</code>, which throws away the rest of a
+multi-command order - so a debug build stops obeying <code>GET SWORD AND KILL
+ORC</code> half way through, with nothing on screen to say why. Here it does
+not, so you can leave <code>DEBUG</code> lines in your source while you work and
+build with or without the flag without the game changing under you.</p>
+<p>What a <code>DEBUG</code> line does not give you is a breakpoint. There is no
+debugger attached to it on this target, so the line is simply inert. Do
+not write one expecting the run to stop.</p>
+</main>
+</body>
+</html>

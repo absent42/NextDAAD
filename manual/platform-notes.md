@@ -1,0 +1,207 @@
+# Platform notes
+
+How a DAAD game behaves on the ZX Spectrum Next, in the places where
+this target is not quite like the other machines DAAD runs on.
+
+Nothing on this page is going to change. Some of it is forced by the
+hardware - text lives on the tilemap here and pictures live on Layer 2,
+which are two separate surfaces rather than one screen. Some of it is a
+rule that was settled by measuring the original ZX Spectrum interpreter,
+the lineage this one reimplements, and following it. Either way, this is
+how the target works, and it is what to read first when a game behaves
+differently here than it did somewhere else.
+
+For behaviour that is *not* settled - differences we mean to remove -
+see [Known differences](known-differences.md).
+
+## Timing
+
+### `PAUSE` and `BEEP` durations are scaled by the compiler
+
+This one is not the interpreter. **The compiler rewrites the number
+before the interpreter ever sees it.** DRC multiplies every `PAUSE` and
+`BEEP` duration by this target's own note length, 0.6, on the way into
+the database: `PAUSE 100` in your source compiles to `PAUSE 60`, and
+`BEEP 50 120` compiles with a duration of 30. The interpreter then waits
+exactly the number of frames the database asks for, at 50 Hz.
+
+The consequence is that a pause you authored as one second lasts about
+0.6 of a second.
+
+**Author against what you hear, not against the arithmetic.** One second
+is `PAUSE 83` on this target - 83 scaled by 0.6 is 50 frames at 50 Hz.
+`PAUSE 167` gives about two seconds. Duration tables in older DAAD or
+MALUVA guides were written for other targets, so treat them as a
+starting point and check the result by ear.
+
+`XPLAY`'s generated notes are scaled the same way. See
+[Audio](audio.md) for the rest of what the compiler does to a `BEEP`.
+
+## Pictures and the screen
+
+### `DISPLAY` works on the picture layer, not on text
+
+`DISPLAY n` with a non-zero value clears the Layer 2 picture surface and
+flips it into view. It does **not** clear text, because on this machine
+text is not on the picture layer at all. The old DAAD idiom `DISPLAY @0`
+- "clear the screen when it is dark" - therefore does not clear your
+prose here. Use `CLS` for text and `DISPLAY` for pictures; they are two
+different surfaces and each condact reaches one of them.
+
+`DISPLAY 0` re-draws the current picture. It always does the work, even
+if the same picture is already on screen, so it is not free - do not put
+one inside a tight loop and expect it to cost nothing.
+
+### `GFX` sub-commands 9 and 10 do nothing
+
+These are the numbered palette store and recall. On this target a
+picture carries its own palette and loads it as the picture loads, so
+there is no numbered palette slot for them to write to or read from.
+Both sub-commands are accepted and do nothing at all, so a game that
+uses them still runs; it simply gets no palette change.
+
+The `GFX` sub-commands that *are* implemented here - the buffer copies
+and swaps, the surface clears, and video playback on 13 and 14 - are
+listed in [Symbols](reference/symbols.md) and [Video](video.md).
+
+## Condacts
+
+### A `DOALL` inside a `DOALL` stops with error 4
+
+There is one `DOALL` at a time. If a sub-process called from inside a
+`DOALL` starts its own, the game stops with runtime error 4 rather than
+quietly producing the wrong answer.
+
+Do not nest `DOALL` loops. The loud failure is the point: a nested
+`DOALL` has no correct meaning here, and finding that out as an error on
+screen is better than finding it out as an inventory that silently lost
+half its objects.
+
+### `MOUSE` 6 and 7 set the pointer hotspot
+
+Despite the symbol names `DELTAXMS` and `DELTAYMS`, these two do not
+report how far the mouse moved. They set the hotspot offset inside the
+pointer bitmap - the pixel of your artwork that lands on the reported
+coordinate. If your pointer is a cross, you probably want its hotspot at
+5,5 rather than at the top-left corner.
+
+All eight sub-commands, 0 to 7, are implemented. The full table is in
+[Symbols](reference/symbols.md), and [Customising](customising.md)
+covers supplying your own pointer artwork.
+
+## Text and messages
+
+### `@` capitalises, and only in Spanish databases
+
+`_` substitutes the referenced object's name into a message, in every
+language. `@` is the capitalising form of the same escape and it exists
+for **Spanish databases only**.
+
+So in an English database `@` is an ordinary printable character: a
+message containing `-@@-` prints `-@@-`. In a Spanish database, `@`
+substitutes the name with its first letter uppercased and `_`
+substitutes it unchanged.
+
+If you are bringing in a game whose English messages relied on `@`
+substituting, change those to `_`.
+
+### Article stripping in substituted names
+
+When an object's text is substituted into a message, a leading **"a "**,
+**"an "**, **"some "** or **"the "** is removed - matched whatever the
+case - and nothing else is. Any other first word survives: an object
+text of "rusty sword" substitutes as "rusty sword", not "sword".
+
+The stock system messages supply their own article ("You now have the
+_."), so write your `/OTX` entries as "a lamp", "an axe", "some rope" or
+"the key" and all four read correctly. An `/OTX` beginning with any
+other word keeps that word, which is the point - a descriptive name
+stays intact.
+
+Leading spaces are not touched. The article has to be the literal start
+of the text.
+
+**Porting note.** jDAAD removes the first word whatever it is. A game
+written against that will have object texts that only read correctly
+when the first word is thrown away - "my wallet" gives "You now have the
+my wallet." here. Rewrite those few texts without the possessive.
+
+Listings are not affected at all. `LISTOBJ`, `LISTAT` and the inventory
+print the object text whole, article included.
+
+### A substituted name stops at the first "."
+
+A substituted object name is truncated at the first full stop. An object
+text of "a quaint lamp. It is unlit." reads as "quaint lamp" inside a
+message and prints whole in a listing, so one `/OTX` entry can serve as
+both a short name and a longer description.
+
+## The parser
+
+### A bare noun numbered below 40 acts as a verb
+
+If the player types a noun on its own and gives no verb, DAAD moves the
+noun into the verb slot when its vocabulary id is below 40. Ids 39 and
+below convert; 40 and above do not.
+
+**What to do with that:** any noun you number in the 20-39 band will act
+as a command when it is typed bare. If you have a noun that must never
+be a verb, number it 40 or above. Direction words and other words meant
+to work when typed on their own belong below 40.
+
+### `PARSE 1` and quoted text
+
+`PARSE 1` re-parses the quoted section of the last order. Two separate
+rules govern it, and it is worth knowing which is which:
+
+- **Whether a quoted section exists** decides whether the sentence flags
+  are refilled. `SAY HELLO`, with no quotes, leaves the current sentence
+  untouched. `SAY ""`, with empty quotes, clears it.
+- **What the quoted section contains** decides the condition, by the
+  same "a verb or a noun was found" test `PARSE 0` uses. `SAY "PLUGH"`
+  fails the condition, because it filled a verb. `SAY "FAST"` passes -
+  an adverb on its own is not a sentence. `SAY "ZZZZ"` passes.
+
+Words after the closing quote still parse into the normal sentence, and
+convertible nouns are converted inside a quoted section exactly as they
+are outside one.
+
+## Flags the interpreter publishes
+
+### Flags 29 and 62 describe this machine
+
+- **Flag 29**, the graphics capability byte, reads **129**: bit 7
+  because Layer 2 location graphics exist, bit 0 because the `MOUSE`
+  condact is implemented. `HASAT GMODE` is therefore true here, so a
+  period game that gates its picture drawing on `HASAT GMODE` does draw
+  its pictures. Bit 0 is set whether or not a mouse is plugged in.
+- **Flag 62**, the screen mode byte, reads **144**. The byte is
+  machine-specific by definition, so test it for what you need rather
+  than comparing it against a particular number.
+
+Both are written once when the game starts and are not rewritten if the
+game switches Layer 2 mode later.
+
+A save file made before these flags were published carries the old
+values, so an old save restores flag 29 as 0 and takes the no-graphics
+branch of `HASAT GMODE` until something rewrites it. Start a fresh game
+to pick up the current values.
+
+## Debug builds
+
+### A `-D` build plays exactly like a normal one
+
+Compiling with the debug flag writes a marker into the process tables
+wherever you put a `DEBUG` line. NextDAAD steps over those markers and
+carries on.
+
+**This is the only DAAD interpreter where that works.** Everywhere else
+the marker is read as `NEWTEXT`, which throws away the rest of a
+multi-command order - so a debug build stops obeying `GET SWORD AND KILL
+ORC` half way through, with nothing on screen to say why. Here it does
+not, so you can leave `DEBUG` lines in your source while you work and
+build with or without the flag without the game changing under you.
+
+What a `DEBUG` line does not give you is a breakpoint. There is no
+debugger attached to it on this target, so the line is simply inert. Do
+not write one expecting the run to stop.

@@ -23,9 +23,9 @@ source.</p>
 executable specification of the Z80 player, used by the encoder's own
 verification pass).</p>
 <p>This file is the reference for what every option means. For deciding
-which settings a particular clip wants, see <code>VIDEO-PRESETS.md</code> in the
-kit root - it routes by what kind of footage you have and what you are
-seeing on screen.</p>
+which settings a particular clip wants, see <a href="../video.html">Video</a> - it
+routes by what kind of footage you have and what you are seeing on
+screen.</p>
 <h2 id="requirements">Requirements</h2>
 <ul>
 <li>Python 3</li>
@@ -169,8 +169,7 @@ by hand for per-file control or clipping.</p>
 aspect ratio, correcting for the 320-wide mode's non-square pixels
 (x1.067). Sources are centre-cropped to the target aspect, never
 distorted. Smaller shapes encode to visibly higher quality at the
-same playback budget - see the kit's SETUP.md "Video cutscenes" for
-the guidance page.</p>
+same playback budget - see <a href="../video.html">Video</a> for the guidance page.</p>
 <h2 id="frame-rate-and-retiming">Frame rate and retiming</h2>
 <p>The Next composites at 50 Hz, so a playback rate only stays smooth if
 each encoded frame occupies a whole number of display frames. 25 fps
