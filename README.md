@@ -2,16 +2,16 @@
 
 NextDAAD runs [DAAD](https://github.com/daad-adventure-writer/daad) text
 adventures on the ZX Spectrum Next. It is written in Z80 assembly using
-the Next's extended instruction set, and it loads a game the way the
-original interpreters did - drop `GAME.DDB` on an SD card and play.
+the Next's extended instruction set.
 
-What it adds is the machine underneath: Layer 2 location pictures in
+What it adds on top: Layer 2 location pictures up to 320x256 in
 8-bit colour, full-screen video cutscenes with sound, AY music and
-sampled audio across the Turbo Sound Next's three chips, an 80-column
-text display, mouse input, and games that span several databases.
+sampled audio across the Turbo Sound Next's three chips and DACs, 
+an 80-column tilemap based text display, mouse input, and games 
+that span several databases.
 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
-means editing your source and double-clicking one batch file.
+for NextDAAD means just editing your source and double-clicking one batch file.
 
 ## What it runs on
 
@@ -79,14 +79,14 @@ A packaged kit, holding only what an author needs, is on the
 
 ## Building the interpreter
 
-The toolchain lives in `tools\` and is not part of the repository:
+If you wish to modify or build your own version of the interperter rather than 
+using the pre-built version included in the authroing kit, the toolchain lives in 
+`tools\` and is not part of the repository:
 [sjasmplus](https://github.com/z00m128/sjasmplus),
 [CSpect](https://mdf200.itch.io/cspect),
 [DeZog](https://github.com/maziac/DeZog),
 [Gfx2Next](https://www.rustypixels.uk/gfx2next/),
-[Disark](https://julien-nevo.com/disark/) and
-[Rasm](https://github.com/EdouardBERGE/rasm), plus DRC via
-[DAAD Ready](https://www.ngpaws.com/daadready/).
+DRC via [DAAD Ready](https://www.ngpaws.com/daadready/).
 
 ```
 powershell -File build.ps1            # debug build
