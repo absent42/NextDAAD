@@ -10,11 +10,13 @@
 <main>
 <h1 id="video-delivery">Video delivery</h1>
 <h2 id="streaming-resident-and-direct-delivery">Streaming, resident and direct delivery</h2>
-<p>Delivery is automatic - nothing to choose at authoring time. A file
-that fits the player's RAM bank pool (about 1.2 MB on a fresh boot) is
-loaded whole and played from RAM; a bigger file streams from SD
-through a prefetch ring of the same banks. Either way playback runs at
-true rate.</p>
+<p>Resident or streamed is automatic - nothing to choose at authoring
+time. A file that fits the player's RAM bank pool (about 1.2 MB on a
+fresh boot) is loaded whole and played from RAM; a bigger file streams
+from SD through a prefetch ring of the same banks. Either way playback
+runs at true rate.</p>
+<p>Direct-serve is the exception: it is a per-clip opt-in you set
+yourself, described at the end of this section.</p>
 <p>Because streaming has a fixed supply rate, every over-pool-size encode
 has to fit it. <strong>You do not set that budget - the encoder derives it.</strong>
 <code>--stream-budget</code> scales the encoder's per-frame quality caps to the
@@ -31,7 +33,7 @@ that file by hand. Passing <code>--stream-budget</code> yourself (via <code>VIDO
 to deliberately de-rate a clip, never as a guess.</p>
 <p>The target is <strong>0.90, not 1.00, deliberately</strong>. The supply check is a
 whole-clip mean, and a mean sitting at the ceiling still contains frames
-well over it - a fixture measured at mean 0.98 has a p95 frame of 1.07
+well over it - a test clip measured at mean 0.98 has a p95 frame of 1.07
 and runs of up to 19 consecutive frames over budget. On real hardware
 that shows as banding and judder, so the search leaves margin for it. An
 at-capacity encode is <em>not</em> "fine, the ring absorbs it"; if you set a
@@ -47,19 +49,19 @@ relieving the wire, so it stops and keeps the bytes.</p>
 N.NN &gt; 1.00 ..."). The message shows where the time goes (decode ms + SD
 fetch ms per frame period) and names the remedies that remain: a smaller
 shape, a lower fps, or a shorter clip.</p>
-<p><strong>Direct-serve (expert).</strong> <code>--direct</code> (per-video via <code>VIDOPTS_NNN</code>)
-writes an uncompressed encode the player serves straight from SD to
-the screen - no delta decode, pixel-exact every frame. The catch is a
-strict at-rate envelope with no ring to absorb bursts: at 25 fps
-stereo it tops out around 256x153 (full-screen 320x256 fits at 12.5
-fps), and the gate refuses anything the
-SD wire cannot sustain - there is deliberately no slow-playback
-opt-out (every shipped mode plays at true rate). The refusal message
-prints the live envelope menu for your width: the at-rate height, the
-same height with a 0.90 margin, and how far dropping to the audio floor
-fps opens it (full-screen territory). For almost all content the normal delta encoder
-is the better tool; <code>--direct</code> exists for encodes that must be
-pixel-exact.</p>
+<p><strong>Direct-serve (expert opt-in).</strong> <code>--direct</code> (per-video via
+<code>VIDOPTS_NNN</code>) writes an uncompressed encode the player serves straight
+from SD to the screen - no delta decode, pixel-exact every frame. It is
+never chosen for you; you ask for it. The catch is a strict at-rate
+envelope with no ring to absorb bursts: at 25 fps stereo it tops out
+around 256x153 (full-screen 320x256 fits at 12.5 fps), and the gate
+refuses anything the SD wire cannot sustain - there is deliberately no
+slow-playback opt-out (every shipped mode plays at true rate). The
+refusal message prints the live envelope menu for your width: the
+at-rate height, the same height with a 0.90 margin, and how far
+dropping to the audio floor fps opens it (full-screen territory). For
+almost all content the normal delta encoder is the better tool;
+<code>--direct</code> exists for encodes that must be pixel-exact.</p>
 <h2 id="playback-notes">Playback notes</h2>
 <p><strong>Game audio during playback.</strong> A cutscene owns the sound hardware
 while it plays: a playing sample is stopped, not resumed afterwards; AY
@@ -75,13 +77,11 @@ is re-shown - no post-video redraw is needed (the starter's MOVIE verb
 is just the play). Details worth knowing: the hidden back surface is
 NOT preserved (its contents are undefined after a video - only matters
 if a game draws there directly), the snapshot reserves a few memory
-banks per session (a video refuses with <code>VID NOBANK2</code> if the pool
-cannot cover it - on the 2MB baseline that takes a heavily-loaded pool
-(gfx cache pressure) to bite; unexpanded/1MB machines are outside
-video support entirely, since the shared allocator pool there is only
-the 14-bank base model with no expansion banks behind it - the same
-<code>VID NOBANK2</code> path, just triggered far more readily), and a text-only
-game with the picture layer hidden pays nothing. A full
+banks per session (a video refuses with <code>VID NOBANK2</code> if the memory
+pool cannot cover them - on a 2MB machine that takes a heavily loaded
+pool, meaning picture-cache pressure, to bite; a 1MB machine is outside
+video support entirely and hits the same refusal far more readily), and
+a text-only game with the picture layer hidden pays nothing. A full
 redescribe (<code>CLS</code> then <code>RESTART</code>, the starter's REEL verb) remains a
 scene-change choice when the story moves on - a choice, no longer a
 necessity.</p>

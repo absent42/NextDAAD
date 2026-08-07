@@ -6,8 +6,8 @@ the Next's extended instruction set.
 
 What it adds on top: Layer 2 location pictures up to 320x256 in
 8-bit colour, full-screen video cutscenes with sound, AY music and
-sampled audio across the Turbo Sound Next's three chips and DACs, 
-an 80-column tilemap based text display, mouse input, and games 
+sampled audio across the Turbo Sound Next's three chips and DACs,
+an 80-column tilemap based text display, mouse input, and games
 that span several databases.
 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
@@ -79,8 +79,8 @@ A packaged kit, holding only what an author needs, is on the
 
 ## Building the interpreter
 
-If you wish to modify or build your own version of the interperter rather than 
-using the pre-built version included in the authroing kit, the toolchain lives in 
+If you wish to modify or build your own version of the interpreter rather than
+using the pre-built version included in the authoring kit, the toolchain lives in
 `tools\` and is not part of the repository:
 [sjasmplus](https://github.com/z00m128/sjasmplus),
 [CSpect](https://mdf200.itch.io/cspect),

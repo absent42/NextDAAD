@@ -2,13 +2,12 @@
 
 ## Appendix D symbol names (SFX and MOUSE)
 
-DAAD Ready's Appendix D lists symbolic names for the sub-command
+[DAAD Ready's manual](https://www.ngpaws.com/daadready/doc_en.html)
+lists, in its Appendix D, symbolic names for the sub-command
 argument of `SFX` and `MOUSE` (`PLAYSFX`, `SHOWMS`, and so on). The
 bundled DRF compiler predefines every one of them, and a DSF written
 with the symbolic form compiles byte-identical to the same DSF written
-with the raw number - use whichever reads better. Confirmed by
-compiling a test suite both ways and comparing the resulting DDBs
-byte-for-byte.
+with the raw number - use whichever reads better.
 
 **Typo warning:** the DAAD Ready manual's own Appendix D table names
 value 10 `FPLAYFLIL`. That is a documentation typo - `FPLAYFLIL` does
@@ -45,7 +44,7 @@ idiom `SFX` uses for a sub-command it does not recognise.
 | 2 | `HIDEMS` | Hide the hardware sprite pointer. |
 | 3 | `GETMS` | Read mouse state into four flags starting at the first argument: `flags[n]` = buttons (idle 0, left 1, right 2, middle 4, chords additive - jdaad parity, not the raw Kempston byte), `flags[n+1]` = column 0-79 (X/8), `flags[n+2]` = row 0-31 (Y/8), `flags[n+3]` = column 0-53 (X/6). |
 | 4 | `GETFINEMS` | Fine position into **three** flags: `flags[n]` = buttons (same convention as 3), `flags[n+1]` = X/2 (0-159), `flags[n+2]` = Y undivided (0-255). This is the DRC manual's VGA case, which is what a 320x256 pointer plane is; `flags[n+3]` is NOT written. |
-| 5 | `POINTERMS` | Re-upload the built-in pointer pattern into hardware sprite slot 0 and re-arm it. There are no `.PTR` pointer files on this target and only one pointer shape, so the parameter selects nothing; the sub exists so the documented `POINTERMS` then `SHOWMS` idiom always leaves slot 0 holding this interpreter's pointer, whatever else used the slot meanwhile. |
+| 5 | `POINTERMS` | Re-upload the pointer pattern into hardware sprite slot 0 and re-arm it. There are no `.PTR` pointer files on this target and only one pointer shape at a time, so the parameter selects nothing; the sub exists so the documented `POINTERMS` then `SHOWMS` idiom always leaves slot 0 holding your pointer - the `POINTER.SPR` you supplied if you supplied one, the default arrow otherwise - whatever else used the slot meanwhile. See [Customising](../customising.md). |
 | 6 | `DELTAXMS` | Set the pointer's hotspot X offset within its bitmap - **not** a movement delta, despite the symbol name. The reported coordinates do not change; the bitmap shifts so the hotspot pixel lands on the reported position. Floors at the plane origin rather than wrapping. |
 | 7 | `DELTAYMS` | As 6, for the hotspot Y offset. |
 

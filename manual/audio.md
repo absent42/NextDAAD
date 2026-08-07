@@ -74,12 +74,19 @@ resampling - so pick the rate when you export.
 file, so a sample and an AY effect cannot both use number 7. Numbers 1
 to 254 work either way; 255 always plays from the AY bank.
 
-**Size.** Samples load into whatever memory is free rather than one
-fixed buffer, so there is no single limit to quote. As a working rule,
-**up to 48K always fits**, on any machine, whatever else is loaded.
-Beyond that a sample competes with picture caching and streamed songs
-for the remaining memory, so test a large one on the memory
-configuration you expect players to have.
+**Size.** A WAV's audio payload may be at most **1 MB**. That ceiling is
+checked before any memory is claimed, so a bigger file is refused
+outright however much memory is free. Below it there is no fixed
+per-sample buffer - samples load into whatever memory is free - and as a
+working rule **up to 48K always fits**, on any machine, whatever else is
+loaded. Between 48K and the ceiling a sample competes with picture
+caching and streamed songs for the remaining memory, so test a large one
+on the memory configuration you expect players to have.
+
+**Bringing samples over from DOS.** A DAAD Ready DOS game's `SOUNDS`
+set - at most 32000 bytes per effect, sampled 5000 to 20000 Hz -
+already fits every limit above, so those files drop straight in
+unconverted.
 
 **A restart does not stop the sound.** Starting over from inside the
 game leaves the music and any playing sample running straight through,
@@ -103,16 +110,20 @@ Judge the mix on hardware before you change anything.
 ## BEEP tones
 
 `BEEP` plays a single tone through the AY. Write it the way the DAAD
-manual documents - duration first, then tone - and let the compiler
-handle the rest.
+manual documents (see [Getting started](getting-started.md)) - duration
+first, then tone - and let the compiler handle the rest.
 
-Two rules the compiler enforces before your game ever runs:
+Three rules turn a `BEEP` you wrote into silence, and none of them
+raises a compile error:
 
 - **Tones outside 48 to 238 are not tones.** The compiler rewrites any
   `BEEP` with a tone below 48 or above 238 into a `PAUSE` of the same
   duration, so it becomes a silent wait rather than a note. The whole 48
   to 238 range sounds, top octave included.
 - **Tones must be even.** An odd tone is silent by design.
+- **A duration of 0 does nothing at all.** A `BEEP` with duration 0
+  returns immediately: no tone, and no wait either. Give every tone a
+  duration of at least 1.
 
 **Music and effects win.** `BEEP` sounds on the third AY, the same chip
 the music and the sound effects use, and they have priority: a `BEEP`

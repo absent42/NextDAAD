@@ -1,14 +1,12 @@
 # Video format - NXV and the encoder
 
-`lib/videnc.py` (the ONE canonical copy - it ships in the authoring kit
-and the repo's test harness consumes it from here) encodes any video
-ffmpeg can read into NextDAAD's native NXV v2 `.VID` format: a
-FLIC-lineage delta format (SKIP/RUN/COPY/palette opcodes over the
-Layer 2 surface, keyframes composed hidden and flipped atomically,
-scene-scoped adaptive palettes) with any shape from five presets to
-free heights, roughly 7:1 smaller than the old raw format. NXV v2 is
-the only output; v1 files no longer play - re-encode from the original
-source.
+`lib/videnc.py`, in the authoring kit, encodes any video ffmpeg can
+read into NextDAAD's native NXV v2 `.VID` format: a FLIC-lineage delta
+format (SKIP/RUN/COPY/palette opcodes over the Layer 2 surface,
+keyframes composed hidden and flipped atomically, scene-scoped adaptive
+palettes) with any shape from five presets to free heights, roughly 7:1
+smaller than the old raw format. NXV v2 is the only output; v1 files no
+longer play - re-encode from the original source.
 
 The CLI front-end is `videnc.py`; the pipeline lives beside it in
 `nxv2enc.py` (encoder) and `nxv2dec.py` (the reference decoder - the
@@ -27,7 +25,7 @@ screen.
 - numpy (`pip install numpy`) - the delta/rate-control math.
 - ffmpeg. Default: `tools\ffmpeg\bin\ffmpeg.exe` relative to the kit
   root (see `tools\README.txt` for the download). Override with
-  `--ffmpeg PATH` (the repo's test harness passes its own copy).
+  `--ffmpeg PATH`.
 
 The standalone `videnc.exe` (shipped in the kit at
 `tools\videnc\videnc.exe`, built from this script with PyInstaller)
@@ -101,11 +99,10 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
                      EXPERT override of the direct gate's per-byte
                      transport factor (default 1.00; the gate's fixed
                      2.2 ms/frame transport overhead is not scaled by
-                     this flag). Exists for hardware-round probe
-                     encodes at a hypothesised rate. Only meaningful
-                     with --direct
-  --no-merge         disable the gap-merge optimization (bench fixtures
-                     only - production encodes keep it on)
+                     this flag). For probe encodes against a
+                     hypothesised SD rate. Only meaningful with --direct
+  --no-merge         disable the gap-merge optimization (a measurement
+                     aid - production encodes keep it on)
   --start HH:MM:SS   clip start time (ffmpeg -ss)
   --duration S       clip duration in seconds
   --report PATH      write the encode's BuildReport as JSON
@@ -156,12 +153,12 @@ Almost no source material is 25p. `23.976`, `24`, `29.97` and `30` all
 have to be resampled in TIME on the way in, and how that is done is
 visible:
 
-- **drop** (nearest source frame) is what ffmpeg does by default and
-  what this encoder did before. A 30 fps source loses every 6th frame,
-  which lands as a 73 percent motion spike on every 5th OUTPUT frame -
-  a 5 Hz stutter. A 24 fps source is worse: it gains one DUPLICATED
-  frame per second (measured at a dead-regular 25-frame spacing), and a
-  periodic freeze reads worse than a periodic jump.
+- **drop** (nearest source frame) is what ffmpeg does by default. A 30
+  fps source loses every 6th frame, which lands as a 73 percent motion
+  spike on every 5th OUTPUT frame - a 5 Hz stutter. A 24 fps source is
+  worse: it gains one DUPLICATED frame per second (measured at a
+  dead-regular 25-frame spacing), and a periodic freeze reads worse than
+  a periodic jump.
 - **blend** (the default) linearly blends the two neighbouring source
   frames, at 4x the target resolution and then scaled down. On a
   cadence-folded judder metric it cuts the periodic component by 91-97
@@ -175,13 +172,12 @@ visible:
   It costs roughly 5-7 s per clip on top of the extraction.
 
 **A source already at the target rate is not touched at all** - no
-filter is inserted and the encode is byte-identical to what it was
-before retiming existed. The rate comes off the same ffmpeg banner
-probe that reads the source's dimensions, so detection costs nothing;
-rates within 0.02 fps of the target count as the target (ffmpeg prints
-the banner rate to two decimals). A source whose banner carries no
-frame rate at all falls back to nearest-frame selection rather than
-blending against a guess.
+filter is inserted and the frames go through exactly as they are. The
+rate comes off the same ffmpeg banner probe that reads the source's
+dimensions, so detection costs nothing; rates within 0.02 fps of the
+target count as the target (ffmpeg prints the banner rate to two
+decimals). A source whose banner carries no frame rate at all falls back
+to nearest-frame selection rather than blending against a guess.
 
 **Byte cost.** Nil on content that is byte-starved, which is what any
 clip near the streaming supply ceiling is: there the encoder's budget,
@@ -232,10 +228,11 @@ remedy in the error message:
   at-rate height, its 0.90-margin variant, and the maximum at the
   audio floor fps).
 - **Whole-file size and length.** A `.VID` may be at most 268,431,360 B
-  (256 MiB) and 65535 frames, whichever binds first - the player's hot
-  filemap and its 16-bit frame counters. Both bounds are checked on
-  every route before a byte is written, and the refusal names the one
-  it hit plus the longest clip this shape and rate can reach. Remedy:
+  (just under 256 MiB) and 65535 frames, whichever binds first - the
+  player's hot filemap and its 16-bit frame counters. Both bounds are
+  checked on every route before a byte is written, and the refusal names
+  the one it hit plus the longest clip this shape and rate can reach.
+  Remedy:
   shorten the clip, use a smaller shape or a lower `--fps`, or split it
   across several `.VID` files played back to back.
 
@@ -267,7 +264,7 @@ file by hand.
 
 **The target is 0.90, not 1.00, on purpose.** The supply gate measures a
 whole-clip MEAN, and a mean sitting at the ceiling still contains frames
-well over it: a fixture measured at mean 0.98 has a p95 frame of 1.07
+well over it: a test clip measured at mean 0.98 has a p95 frame of 1.07
 and runs of up to 19 consecutive frames over budget. On hardware that
 reads as banding and judder, so the search leaves margin for it.
 `--budget-target` moves the line if you are re-deriving it against your
@@ -354,9 +351,9 @@ slightly worse overall, which is exactly the trade this knob exists to
 let you judge rather than have made for you.
 
 **What it cannot do.** It cannot make the schedule split a row or a
-column. Sub-line granularity was tried, shipped, and read as
-displacement and tearing on real hardware; the whole-line floor is
-permanent and no value of this knob reaches it. It also cannot ship an
+column. Partial lines read as displacement and tearing on real
+hardware, so the whole-line floor is permanent and no value of this
+knob reaches past it. It also cannot ship an
 unplayable file: an encode it pushes past the supply ceiling is refused
 by the same gate as ever, with the same message.
 
@@ -378,20 +375,19 @@ Delta-starvation diagnostics (measurements only, no verdict):
   **These are measurements, not a pass/fail.** There is NO automatic
   starvation warning - the encoder will not tell you when a clip is
   banded, and a high budget-bound percentage on its own does not mean
-  the picture is damaged. An earlier trigger on that percentage was
-  withdrawn as uncalibrated: fixture 008 measures 99.2% budget-bound
-  and is visually clean on hardware, while fixture 007 measures 36.4%
-  and bands visibly, so the count does not separate the two. Deferral
+  the picture is damaged. The percentage does not separate banded from
+  clean content: a clip measuring 99.2% budget-bound can be visually
+  clean on hardware while one measuring 36.4% bands visibly. Deferral
   SEVERITY (how much of a bound frame went unpainted, and for how long)
-  is the likely signal, and it is not measured yet. Judge picture
-  quality by looking at the clip.
+  is the likely signal, and it is not measured. Judge picture quality
+  by looking at the clip.
 
   If a clip does band, the demand levers, cheapest first: lower
-  `--dither` (the strongest one - 007 fell from 42.4% to 21.6%
-  budget-bound between amplitude 0.5 and 0.0), a smaller shape or lower
-  `--fps`, a calmer source cut, a higher `--stream-budget` if the
-  supply gate still accepts it, or accept the visual cost when the clip
-  is deliberate stress content.
+  `--dither` (the strongest one - a banding clip measured here fell
+  from 42.4% to 21.6% budget-bound between amplitude 0.5 and 0.0), a
+  smaller shape or lower `--fps`, a calmer source cut, a higher
+  `--stream-budget` if the supply gate still accepts it, or accept the
+  visual cost when the clip is deliberately demanding.
 
 `--report` writes a BuildReport JSON (shape, fps, PSNR mean/worst,
 keyframes, bytes, seconds-per-MB, degradation events, binding-budget
@@ -411,13 +407,13 @@ delta budget to scale), so one parser handles both modes.
 
 The NXV v2 wire format - the 512-byte header, the opcode set and the
 byte values - is frozen: it is not revised between releases, so a tool
-written against it stays correct. If you are writing one, in order of
-usefulness: `lib\nxv2dec.py` in the kit is the executable
-specification of the Z80 player, so what it does with a stream IS the
-format's behaviour; `lib\nxv2enc.py`, beside it, carries the matching
-constants; and the authoritative header and opcode documentation is
-the comment block in `src\nextdaad.inc` in the NextDAAD repository.
-Every section of the file is an exact multiple of 512-byte SD blocks.
+written against it stays correct. If you are writing one, the kit
+carries the format's definition, in order of usefulness:
+`lib\nxv2dec.py` is the executable specification of the player, so what
+it does with a stream IS the format's behaviour, and `lib\nxv2enc.py`,
+beside it, carries the matching header layout, opcode set and
+constants. Every section of the file is an exact multiple of 512-byte
+SD blocks.
 
 Audio is unsigned 8-bit PCM, stereo 15625 Hz, full rate - no
 decimation. A mono source is converted to stereo automatically.
@@ -442,18 +438,17 @@ better on some pictures than others and can scatter yellow pixels).
 In this mode `--dither` means the fraction of each pixel's
 quantization error to correct.
 
-It is OPT-IN, and the default encode is byte-for-byte what it was
-before the feature landed. Measured across the eleven leg fixtures,
-mixture dithering:
+It is OPT-IN: without `--dither-mode mixture` nothing about your encode
+changes. Measured across eleven test clips, mixture dithering:
 
-- loses 0.4-3.6 dB of per-pixel wire PSNR on every fixture;
+- loses 0.4-3.6 dB of per-pixel wire PSNR on every one of them;
 - is SPLIT on local-mean fidelity - clearly better on Jellyfish and
   Sintel and at high amplitude generally, worse on Big Buck Bunny;
 - carries a systematic per-channel mean bias the offset dither does
   not (Big Buck Bunny blue -3.1 vs -0.9 at amplitude 0.5): the RGBL
   metric discounts chroma against luma by design;
 - costs up to 26% more wire bytes on colourful moving content, and
-  pushed one fixture from 72% to 92% budget-bound;
+  pushed one of them from 72% to 92% budget-bound;
 - weakens two keyframe triggers - because it measures its quality
   ceiling on a fully dithered frame, po_ceil drops BELOW the achieved
   PSNR on most frames, so the drift and staleness keyframes stop

@@ -27,10 +27,6 @@ game behaves, how it builds, or what the kit gives you, it is here.
   [Video](video.md); `NX2-FORMAT.md` into
   [Picture format](reference/picture-format.md); and the encoder's own
   readme into [Video format](reference/video-format.md).
-  Every piece of authoring guidance came with them. The one thing that
-  did not is the table comparing the other DAAD interpreters' own
-  defects against each other, which told you nothing about writing a
-  game for this one.
 
 ## 0.3.1 - 4 August 2026
 
@@ -176,11 +172,13 @@ option; nothing replaces it.
 - A clip can be up to 256 MB, lifted from 16 MB, and the encoder refuses
   an over-size clip at build time with a message naming the limit -
   it used to write a file the player then refused to open. See
-  [Limits](reference/limits.md).
+  [Video](video.md) section 6 and
+  [Video format](reference/video-format.md).
 - Shapes replace the five fixed profiles: `full`, `16:9`, `scope`,
   `classic` and `classic-wide`, plus any explicit width by height and a
-  free height derived from an aspect ratio. Delivery - resident,
-  streamed or direct - is chosen automatically.
+  free height derived from an aspect ratio. Whether a clip plays
+  resident or streams is chosen for you; direct-serve is a separate
+  per-clip opt-in (`--direct` in `VIDOPTS_NNN`).
 - The mid-clip pause is gone, keyframes no longer hitch, and half-rate
   clips play at their true rate.
 - Sources that are not 25 fps are retimed by blending rather than by

@@ -70,12 +70,18 @@ resampling - so pick the rate when you export.</p>
 <code>NNN.WAV</code> first and falls back to the effects bank if there is no such
 file, so a sample and an AY effect cannot both use number 7. Numbers 1
 to 254 work either way; 255 always plays from the AY bank.</p>
-<p><strong>Size.</strong> Samples load into whatever memory is free rather than one
-fixed buffer, so there is no single limit to quote. As a working rule,
-<strong>up to 48K always fits</strong>, on any machine, whatever else is loaded.
-Beyond that a sample competes with picture caching and streamed songs
-for the remaining memory, so test a large one on the memory
-configuration you expect players to have.</p>
+<p><strong>Size.</strong> A WAV's audio payload may be at most <strong>1 MB</strong>. That ceiling is
+checked before any memory is claimed, so a bigger file is refused
+outright however much memory is free. Below it there is no fixed
+per-sample buffer - samples load into whatever memory is free - and as a
+working rule <strong>up to 48K always fits</strong>, on any machine, whatever else is
+loaded. Between 48K and the ceiling a sample competes with picture
+caching and streamed songs for the remaining memory, so test a large one
+on the memory configuration you expect players to have.</p>
+<p><strong>Bringing samples over from DOS.</strong> A DAAD Ready DOS game's <code>SOUNDS</code>
+set - at most 32000 bytes per effect, sampled 5000 to 20000 Hz -
+already fits every limit above, so those files drop straight in
+unconverted.</p>
 <p><strong>A restart does not stop the sound.</strong> Starting over from inside the
 game leaves the music and any playing sample running straight through,
 the same way they survive a <code>SAVE</code> and <code>LOAD</code>. <code>RESTART</code>, a confirmed
@@ -94,15 +100,19 @@ game - on real hardware the tune holds its tempo while a sample plays.
 Judge the mix on hardware before you change anything.</p>
 <h2 id="beep-tones">BEEP tones</h2>
 <p><code>BEEP</code> plays a single tone through the AY. Write it the way the DAAD
-manual documents - duration first, then tone - and let the compiler
-handle the rest.</p>
-<p>Two rules the compiler enforces before your game ever runs:</p>
+manual documents (see <a href="getting-started.html">Getting started</a>) - duration
+first, then tone - and let the compiler handle the rest.</p>
+<p>Three rules turn a <code>BEEP</code> you wrote into silence, and none of them
+raises a compile error:</p>
 <ul>
 <li><strong>Tones outside 48 to 238 are not tones.</strong> The compiler rewrites any
   <code>BEEP</code> with a tone below 48 or above 238 into a <code>PAUSE</code> of the same
   duration, so it becomes a silent wait rather than a note. The whole 48
   to 238 range sounds, top octave included.</li>
 <li><strong>Tones must be even.</strong> An odd tone is silent by design.</li>
+<li><strong>A duration of 0 does nothing at all.</strong> A <code>BEEP</code> with duration 0
+  returns immediately: no tone, and no wait either. Give every tone a
+  duration of at least 1.</li>
 </ul>
 <p><strong>Music and effects win.</strong> <code>BEEP</code> sounds on the third AY, the same chip
 the music and the sound effects use, and they have priority: a <code>BEEP</code>

@@ -29,6 +29,24 @@ ffmpeg is the only extra download cutscenes need.
 If you keep your tools somewhere else, point `TOOLSDIR` in `CONFIG.BAT`
 at that folder instead.
 
+## Learning DAAD itself
+
+This manual covers what is specific to the Next: the kit, the build,
+and how each condact behaves on this target. It does not teach the DAAD
+language. For that:
+
+- **The [DAAD Ready manual](https://www.ngpaws.com/daadready/doc_en.html)**
+  covers the DSF source format, the condact set, the system flags and
+  the symbol tables (its Appendix D is the one these pages cite). It is
+  the reference to write your adventure against.
+- **The original DAAD manual** is in the `Docs` folder of the
+  [DAAD project](https://github.com/daad-adventure-writer/daad). It is
+  the fuller treatment of the language, worth reading once you know your
+  way around DAAD Ready.
+
+[DAAD Ready](https://www.ngpaws.com/daadready/) itself you need
+installed anyway - the kit compiles your source with its DRC compiler.
+
 ## Where your files go
 
 Everything the build reads lives in the kit folder:

@@ -2,11 +2,14 @@
 
 ## Streaming, resident and direct delivery
 
-Delivery is automatic - nothing to choose at authoring time. A file
-that fits the player's RAM bank pool (about 1.2 MB on a fresh boot) is
-loaded whole and played from RAM; a bigger file streams from SD
-through a prefetch ring of the same banks. Either way playback runs at
-true rate.
+Resident or streamed is automatic - nothing to choose at authoring
+time. A file that fits the player's RAM bank pool (about 1.2 MB on a
+fresh boot) is loaded whole and played from RAM; a bigger file streams
+from SD through a prefetch ring of the same banks. Either way playback
+runs at true rate.
+
+Direct-serve is the exception: it is a per-clip opt-in you set
+yourself, described at the end of this section.
 
 Because streaming has a fixed supply rate, every over-pool-size encode
 has to fit it. **You do not set that budget - the encoder derives it.**
@@ -28,7 +31,7 @@ to deliberately de-rate a clip, never as a guess.
 
 The target is **0.90, not 1.00, deliberately**. The supply check is a
 whole-clip mean, and a mean sitting at the ceiling still contains frames
-well over it - a fixture measured at mean 0.98 has a p95 frame of 1.07
+well over it - a test clip measured at mean 0.98 has a p95 frame of 1.07
 and runs of up to 19 consecutive frames over budget. On real hardware
 that shows as banding and judder, so the search leaves margin for it. An
 at-capacity encode is *not* "fine, the ring absorbs it"; if you set a
@@ -47,19 +50,19 @@ N.NN > 1.00 ..."). The message shows where the time goes (decode ms + SD
 fetch ms per frame period) and names the remedies that remain: a smaller
 shape, a lower fps, or a shorter clip.
 
-**Direct-serve (expert).** `--direct` (per-video via `VIDOPTS_NNN`)
-writes an uncompressed encode the player serves straight from SD to
-the screen - no delta decode, pixel-exact every frame. The catch is a
-strict at-rate envelope with no ring to absorb bursts: at 25 fps
-stereo it tops out around 256x153 (full-screen 320x256 fits at 12.5
-fps), and the gate refuses anything the
-SD wire cannot sustain - there is deliberately no slow-playback
-opt-out (every shipped mode plays at true rate). The refusal message
-prints the live envelope menu for your width: the at-rate height, the
-same height with a 0.90 margin, and how far dropping to the audio floor
-fps opens it (full-screen territory). For almost all content the normal delta encoder
-is the better tool; `--direct` exists for encodes that must be
-pixel-exact.
+**Direct-serve (expert opt-in).** `--direct` (per-video via
+`VIDOPTS_NNN`) writes an uncompressed encode the player serves straight
+from SD to the screen - no delta decode, pixel-exact every frame. It is
+never chosen for you; you ask for it. The catch is a strict at-rate
+envelope with no ring to absorb bursts: at 25 fps stereo it tops out
+around 256x153 (full-screen 320x256 fits at 12.5 fps), and the gate
+refuses anything the SD wire cannot sustain - there is deliberately no
+slow-playback opt-out (every shipped mode plays at true rate). The
+refusal message prints the live envelope menu for your width: the
+at-rate height, the same height with a 0.90 margin, and how far
+dropping to the audio floor fps opens it (full-screen territory). For
+almost all content the normal delta encoder is the better tool;
+`--direct` exists for encodes that must be pixel-exact.
 
 ## Playback notes
 
@@ -78,13 +81,11 @@ is re-shown - no post-video redraw is needed (the starter's MOVIE verb
 is just the play). Details worth knowing: the hidden back surface is
 NOT preserved (its contents are undefined after a video - only matters
 if a game draws there directly), the snapshot reserves a few memory
-banks per session (a video refuses with `VID NOBANK2` if the pool
-cannot cover it - on the 2MB baseline that takes a heavily-loaded pool
-(gfx cache pressure) to bite; unexpanded/1MB machines are outside
-video support entirely, since the shared allocator pool there is only
-the 14-bank base model with no expansion banks behind it - the same
-`VID NOBANK2` path, just triggered far more readily), and a text-only
-game with the picture layer hidden pays nothing. A full
+banks per session (a video refuses with `VID NOBANK2` if the memory
+pool cannot cover them - on a 2MB machine that takes a heavily loaded
+pool, meaning picture-cache pressure, to bite; a 1MB machine is outside
+video support entirely and hits the same refusal far more readily), and
+a text-only game with the picture layer hidden pays nothing. A full
 redescribe (`CLS` then `RESTART`, the starter's REEL verb) remains a
 scene-change choice when the story moves on - a choice, no longer a
 necessity.
