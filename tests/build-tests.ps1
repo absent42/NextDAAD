@@ -635,6 +635,12 @@ function Assert-TranspConstantsInSync {
 }
 Assert-TranspConstantsInSync
 
+# Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py
+# has the full why): a paletted PNG with the transparent colour in the
+# reserved slot must survive gfx2next with its palette index intact.
+& python "$PSScriptRoot\art\pngchain.py"
+if ($LASTEXITCODE -ne 0) { throw "tests\art\pngchain.py failed - the PNG-to-transparency chain is broken" }
+
 function Assert-ManualFresh {
     # authoring-kit\docs is GENERATED and SHIPPED. A .md edited without
     # regenerating ships stale HTML to authors - the same silent-staleness
