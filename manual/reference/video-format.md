@@ -472,13 +472,15 @@ equals $E3 are reserved - the player keeps Layer 2 transparency
 active during video with the global transparency colour NR $14 = $E3,
 and hardware transparency compares only that first palette byte (the
 9th blue bit is not compared), so such entries render as transparent
-holes over the blanked layer below. In paint-program terms, avoid
-#E000C0 (224, 0, 192) and near neighbours of it. The encoder therefore
+holes over the blanked layer below. The encoder therefore
 excludes the two colliding lattice points, display colours (255,0,219)
 and (255,0,255), from its representable display lattice; palette
 derivation, the nearest-level snap and all quantization targets land
 on the nearest remaining lattice colour instead, and the wire-true
-quality metrics measure the actually-displayed colour.
+quality metrics measure the actually-displayed colour. Nothing is
+asked of the source material: near-saturated magenta in the footage
+(red 238 or above, green 18 or below, blue 201 or above) is snapped
+like any other value, to the nearest colour the lattice still offers.
 
 ### Pixel order
 
