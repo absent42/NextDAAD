@@ -82,26 +82,34 @@ colours.</strong> Pad unused entries with zeros.</p>
 every picture load. <strong>Any pixel drawn with index 255 becomes a hole</strong>
 showing the text layer beneath.</p>
 <p>Quantise to <strong>255 colours (indices 0-254)</strong>, not 256.</p>
-<h3 id="the-colour-e000c0-is-reserved">The colour #E000C0 is reserved</h3>
-<p>The Spectrum Next's global transparency colour is magenta - 24-bit
-<strong><code>#E000C0</code></strong> (224, 0, 192), which packs to byte 0 = <code>$E3</code>. It is the
-value the hardware register holds after a reset, and the same colour
+<h3 id="byte-0-e3-is-reserved">Byte 0 = <code>$E3</code> is reserved</h3>
+<p>The Spectrum Next's global transparency colour is the RGB332 value
+<code>$E3</code> - full red, no green, and both top bits of the blue field set. It
+is what the hardware register holds after a reset, and the same colour
 Next sprites use.</p>
+<p><strong>No palette entry may carry byte 0 = <code>$E3</code>, except index 255.</strong> That is
+the whole rule, and it is exact.</p>
 <p><strong>Transparency is a COLOUR compare, not an index compare.</strong> The hardware
-matches the top 8 bits of a palette entry - byte 0 only - against that
-value. Two consequences:</p>
+matches byte 0 of a palette entry and nothing else. Two consequences:</p>
 <ol>
-<li><strong>Both 9-bit colours sharing byte 0 = <code>$E3</code> are transparent</strong>, whatever
-   index they sit at. The 9th blue bit cannot rescue an entry.</li>
-<li><strong>A whole region of near-magenta collides</strong>, not just the exact
-   triple: any colour with <code>r</code> in 224-255, <code>g</code> in 0-31, <code>b</code> in 192-255
-   packs to <code>$E3</code>.</li>
+<li><strong>Both 9-bit colours whose byte 0 is <code>$E3</code> are transparent</strong> - the
+   display colours (255, 0, 219) and (255, 0, 255) - whatever index they
+   sit at. The 9th blue bit cannot rescue an entry.</li>
+<li><strong>Which 24-bit source colours reach <code>$E3</code> depends on your own channel
+   conversion</strong>, so test byte 0 after converting rather than screening
+   RGB888 values beforehand. The truncating conversion in section 4
+   sends everything with <code>r</code> 224-255, <code>g</code> 0-31, <code>b</code> 192-255 to <code>$E3</code>.
+   Rounding each channel to the nearest of the eight levels 0, 36, 73,
+   109, 146, 182, 219, 255 - the more faithful conversion, and the one
+   Gfx2Next performs - narrows that to <code>r</code> 238-255, <code>g</code> 0-18, <code>b</code>
+   201-255. Note which side <code>#E000C0</code> (224, 0, 192) falls: caught by the
+   first, safe under the second. It is the naive left-justified
+   expansion of <code>$E3</code>, not a colour on the display lattice.</li>
 </ol>
 <p>NextDAAD defends against this - an art entry whose byte 0 is <code>$E3</code> is
 shifted two steps down the blue scale (still magenta, imperceptible in a
 picture) so a deliberate magenta renders rather than punching a hole.
-<strong>But do not rely on that</strong>: it alters the author's colour silently. Keep
-<code>#E000C0</code> and its near neighbours out of the palette.</p>
+<strong>But do not rely on that</strong>: it alters the author's colour silently.</p>
 <h2 id="6-what-the-loader-refuses">6. What the loader REFUSES</h2>
 <p>A file failing any of these is rejected, and the picture does not
 display. It is never misrendered.</p>
@@ -168,7 +176,8 @@ exist for plain-FAT setups without long filenames. Either works.</p>
 <h2 id="8-checklist-for-an-exporter">8. Checklist for an exporter</h2>
 <ul>
 <li>[ ] Quantise to at most <strong>255</strong> colours; never emit pixel index 255.</li>
-<li>[ ] Keep <code>#E000C0</code> (224, 0, 192) and near-magenta out of the palette.</li>
+<li>[ ] Never emit byte 0 = <code>$E3</code> except at index 255 - test after your
+      channel conversion, not before it.</li>
 <li>[ ] Write <strong>512 bytes</strong> of palette, padded, even for a small palette.</li>
 <li>[ ] Pack each entry as <code>byte0 = (r &amp; 0xE0) | ((g &gt;&gt; 3) &amp; 0x1C) | (b &gt;&gt; 6)</code>,
       <code>byte1 = (b &gt;&gt; 5) &amp; 1</code>, byte 1 bits 1-7 zero.</li>

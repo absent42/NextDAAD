@@ -82,28 +82,37 @@ showing the text layer beneath.
 
 Quantise to **255 colours (indices 0-254)**, not 256.
 
-### The colour #E000C0 is reserved
+### Byte 0 = `$E3` is reserved
 
-The Spectrum Next's global transparency colour is magenta - 24-bit
-**`#E000C0`** (224, 0, 192), which packs to byte 0 = `$E3`. It is the
-value the hardware register holds after a reset, and the same colour
+The Spectrum Next's global transparency colour is the RGB332 value
+`$E3` - full red, no green, and both top bits of the blue field set. It
+is what the hardware register holds after a reset, and the same colour
 Next sprites use.
 
-**Transparency is a COLOUR compare, not an index compare.** The hardware
-matches the top 8 bits of a palette entry - byte 0 only - against that
-value. Two consequences:
+**No palette entry may carry byte 0 = `$E3`, except index 255.** That is
+the whole rule, and it is exact.
 
-1. **Both 9-bit colours sharing byte 0 = `$E3` are transparent**, whatever
-   index they sit at. The 9th blue bit cannot rescue an entry.
-2. **A whole region of near-magenta collides**, not just the exact
-   triple: any colour with `r` in 224-255, `g` in 0-31, `b` in 192-255
-   packs to `$E3`.
+**Transparency is a COLOUR compare, not an index compare.** The hardware
+matches byte 0 of a palette entry and nothing else. Two consequences:
+
+1. **Both 9-bit colours whose byte 0 is `$E3` are transparent** - the
+   display colours (255, 0, 219) and (255, 0, 255) - whatever index they
+   sit at. The 9th blue bit cannot rescue an entry.
+2. **Which 24-bit source colours reach `$E3` depends on your own channel
+   conversion**, so test byte 0 after converting rather than screening
+   RGB888 values beforehand. The truncating conversion in section 4
+   sends everything with `r` 224-255, `g` 0-31, `b` 192-255 to `$E3`.
+   Rounding each channel to the nearest of the eight levels 0, 36, 73,
+   109, 146, 182, 219, 255 - the more faithful conversion, and the one
+   Gfx2Next performs - narrows that to `r` 238-255, `g` 0-18, `b`
+   201-255. Note which side `#E000C0` (224, 0, 192) falls: caught by the
+   first, safe under the second. It is the naive left-justified
+   expansion of `$E3`, not a colour on the display lattice.
 
 NextDAAD defends against this - an art entry whose byte 0 is `$E3` is
 shifted two steps down the blue scale (still magenta, imperceptible in a
 picture) so a deliberate magenta renders rather than punching a hole.
-**But do not rely on that**: it alters the author's colour silently. Keep
-`#E000C0` and its near neighbours out of the palette.
+**But do not rely on that**: it alters the author's colour silently.
 
 ## 6. What the loader REFUSES
 
@@ -146,7 +155,8 @@ exist for plain-FAT setups without long filenames. Either works.
 ## 8. Checklist for an exporter
 
 - [ ] Quantise to at most **255** colours; never emit pixel index 255.
-- [ ] Keep `#E000C0` (224, 0, 192) and near-magenta out of the palette.
+- [ ] Never emit byte 0 = `$E3` except at index 255 - test after your
+      channel conversion, not before it.
 - [ ] Write **512 bytes** of palette, padded, even for a small palette.
 - [ ] Pack each entry as `byte0 = (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6)`,
       `byte1 = (b >> 5) & 1`, byte 1 bits 1-7 zero.

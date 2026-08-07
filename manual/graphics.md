@@ -52,34 +52,41 @@ Text is drawn on its own layer with its own fixed palette. A picture's
 palette only ever reaches Layer 2, so no artwork can recolour your
 prose, however extreme its palette.
 
-## Transparency: keep magenta out of your artwork
+## Transparency: one reserved index, one reserved colour
 
-One palette slot is reserved so pictures can let text show through, and
-one colour is reserved alongside it. Both are yours to work around - the
-kit converts the PNG you supply and never recolours or re-quantizes it
-for you.
-
-**Do not paint with `#E000C0`** (224, 0, 192), the Spectrum Next's
-standard transparency magenta. It will not come out the colour you
-painted: as it loads a picture, the interpreter moves every palette
-entry of that colour two steps down the blue scale, so those pixels
-render as a slightly different magenta. They stay opaque - the shift is
-what stops them becoming holes - but it happens silently, and it catches
-near neighbours of that colour too: anything with red 224 or above,
-green below 32, and blue 192 or above lands on the same hardware value.
-Magenta is the conventional chroma-key colour, so most palettes steer
-clear of it naturally. If you do want magenta in a picture, pick one a
-shade or two away and it ships exactly as painted.
+They behave differently. The reserved **index** punches holes in a
+picture. The reserved **colour** is silently altered. Neither is
+enforced for you - the kit converts the PNG you supply and never
+recolours or re-quantizes it.
 
 **Quantize to 255 colours, indices 0-254.** Palette slot 255 is
-reserved for the transparent entry and is overwritten on every picture
-load, so any pixel drawn with it becomes a hole. Most paint programs let
-you set the palette size directly when exporting an indexed PNG.
+reserved: the interpreter overwrites it with the transparent colour on
+every picture load, so any pixel drawn with index 255 becomes a hole
+showing the text layer beneath. Most paint programs let you set the
+palette size directly when exporting an indexed PNG.
 
-**The check warns, it never fails.** The build audits each converted
-picture and prints a warning naming the file and the offending palette
-index if it finds either hazard. It does not stop, because a deliberate
-transparent area is a perfectly good reason to have one.
+**Keep near-saturated magenta out of artwork you want unaltered.** One
+colour is reserved for transparency, and a palette entry landing on it
+is moved two steps down the blue scale as the picture loads - so the
+pixels stay opaque, but come out a slightly different magenta from the
+one you painted, with nothing on screen to tell you. In the colours you
+pick in a paint program, the region at risk is **red 238 or above, green
+18 or below, and blue 201 or above**; the two that land on it exactly
+are (255, 0, 219) and (255, 0, 255). Nothing outside that corner of the
+colour space is affected, so ordinary artwork never trips it - and if
+you want a hot magenta, moving any one channel out of that box ships it
+exactly as painted.
+
+**If you write `.NX2` files yourself** with your own converter, the rule
+is exact and does not depend on any quantizer: no palette entry may have
+byte 0 equal to `$E3`, except index 255. See [Picture
+format](reference/picture-format.md).
+
+**The check warns, it never fails.** The build reads back each converted
+picture's palette - the one the interpreter will load - and prints a
+warning naming the file and the offending palette index if it finds
+either hazard. It does not stop, because a deliberate transparent area
+is a perfectly good reason to have one.
 
 Two things it cannot audit:
 

@@ -22,7 +22,9 @@ $TRANSP = 0xE3      # L2_TRANSP_COLOUR
 $RESERVED = 255     # L2_TRANSP_INDEX
 $name = Split-Path $Path -Leaf
 
-# 1. Any palette entry whose RRRGGGBB byte matches punches holes. The
+# 1. Any palette entry whose RRRGGGBB byte matches is shifted on load
+#    (l2_palette_load writes $E2 instead), so it renders a different
+#    magenta than the author painted rather than punching a hole. The
 #    compare ignores the 9th bit, so only the even bytes matter.
 $hits = @()
 for ($i = 0; $i -lt 512; $i += 2) {
