@@ -55,10 +55,11 @@ grid, which spans rows 4 to 27 and columns 8 to 71. `WINAT 4 8` with
 `WINSIZE 24 64` is the whole classic screen.
 
 `BORDER 0` to `BORDER 7` sets the surround, exactly as it always did.
-What it colours here is everything outside the artwork and the text: the
-old ULA screen is switched off on this target, so the interpreter maps
-`BORDER` onto the Next's own fallback colour instead of the ULA border
-register. The result on screen is the one you expect.
+What it colours here is everything outside the artwork and the text.
+There is no classic border on this target - the text layer covers the
+whole display, edge to edge, and the old ULA screen is switched off
+underneath it - so the interpreter colours the area the picture and the
+text do not reach instead. The result on screen is the one you expect.
 
 320-wide art covers the border area as well, so `BORDER` only shows in a
 game laid out the classic way.

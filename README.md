@@ -13,12 +13,14 @@ text display, mouse input, and games that span several databases.
 An [authoring kit](#for-authors) ships alongside it, so writing a game
 means editing your source and double-clicking one batch file.
 
-## What you need
+## What it runs on
 
 - A ZX Spectrum Next (or an accurate emulator) with an SD card. Video
   cutscenes need 2MB of RAM and a real machine - everything else runs
   under emulation.
-- A compiled DAAD database. Version 2 and version 3 databases both run.
+- A game, meaning a compiled DAAD database and its assets on the card.
+  The authoring kit below builds one for you, and existing version 2 and
+  version 3 databases both run as they are.
 
 ## Features
 

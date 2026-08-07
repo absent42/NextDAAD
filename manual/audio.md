@@ -81,13 +81,14 @@ Beyond that a sample competes with picture caching and streamed songs
 for the remaining memory, so test a large one on the memory
 configuration you expect players to have.
 
-**A restart does not stop the sound.** Restarting play from inside the
-game - `RESTART`, or answering `END`'s prompt to play again - leaves the
-music and any playing sample running straight through, the same way they
-survive a `SAVE` and `LOAD`. Stop or change them yourself with
-`SFX n 7` / `SFX 0 8` and `SFX n 5` if a new game should start quiet.
-Leaving the game for real - declining the play-again prompt, `EXIT 0`, a
-fatal error - silences everything.
+**A restart does not stop the sound.** Starting over from inside the
+game leaves the music and any playing sample running straight through,
+the same way they survive a `SAVE` and `LOAD`. `RESTART`, a confirmed
+`QUIT` and answering `END`'s prompt to play again all leave the sound
+alone. Stop or change it yourself with `SFX n 7` / `SFX 0 8` and
+`SFX n 5` if a new game should start quiet. Leaving the game for real -
+declining the play-again prompt, `EXIT 0`, a fatal error - silences
+everything.
 
 **Repeats are free.** Only the first play of a given sample number reads
 the card; the payload stays resident and plays instantly every time

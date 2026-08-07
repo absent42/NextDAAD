@@ -143,10 +143,11 @@ and the game still ships.
 ## When the game will not start
 
 A build that finished can still fail on the card. These are the
-interpreter's own messages, printed across the top line of the screen -
-with the border changing colour as a second signal, in case the failure
-came before the text layer was up. All of them stop the interpreter;
-reset or power-cycle to try again.
+interpreter's own messages. Each one paints a magenta bar right across
+the top row of the screen and prints itself into it in white, so it is
+legible whatever the game had drawn - and it appears in a release build
+as readily as a debug one. All of them stop the interpreter; reset or
+power-cycle to try again.
 
 | Message | What to do |
 |---|---|
