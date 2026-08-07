@@ -13,10 +13,16 @@
 ; ------------------------------------------------------------------
 ; WHAT THIS FIXTURE IS FOR
 ; ------------------------------------------------------------------
-; --tile-slack is the encoder's one opt-in picture knob. The manual carries
-; a benchmark table for it (four rows: two clips at 0.0 and 0.5, with
-; columns for rungs taken, stream utilisation, local 4x4 PSNR and a banding
-; index) and tests\video\tileslack_ab.py re-measures every cell of it.
+; --tile-slack is the encoder's one opt-in picture knob and the manual tells
+; authors to "try 0.5 first" on a title with sustained motion. This fixture
+; asks the question an author actually has: does it help on THE FOOTAGE THAT
+; SHIPS IN THE BOX - the authoring kit's own two demo clips.
+;
+; IT IS NOT A REPRODUCTION OF THE MANUAL'S BENCHMARK TABLE. That table was
+; measured on two clips ("boat pan", "church zoom") that are not in this
+; repository at all. Nothing here is compared against it, and nothing here
+; confirms or refutes it. tests\video\tileslack_ab.py measures these two
+; clips as a fresh baseline of their own.
 ;
 ; THIS FIXTURE ANSWERS THE HALF NO METRIC ANSWERS: what the clip LOOKS
 ; like, moving, on a real ZX Spectrum Next. The owner's own stock footage
@@ -28,13 +34,15 @@
 ; ------------------------------------------------------------------
 ; WHAT IS STAGED - TWO A/B PAIRS, ONE VARIABLE
 ; ------------------------------------------------------------------
-;   001.VID   PAIR 1  boat pan     ARM A  --tile-slack 0.0
-;   002.VID   PAIR 1  boat pan     ARM B  --tile-slack 0.5
-;   003.VID   PAIR 2  church zoom  ARM A  --tile-slack 0.0
-;   004.VID   PAIR 2  church zoom  ARM B  --tile-slack 0.5
+;   001.VID   PAIR 1  bunny      ARM A  --tile-slack 0.0
+;   002.VID   PAIR 1  bunny      ARM B  --tile-slack 0.5
+;   003.VID   PAIR 2  jellyfish  ARM A  --tile-slack 0.0
+;   004.VID   PAIR 2  jellyfish  ARM B  --tile-slack 0.5
 ;
 ; Both pairs are `full` 320x256 @25, Layer 2 mode-1, encoded from
-; authoring-kit\VIDEO\001.mp4 and 002.mp4 - the whole clip in each case.
+; authoring-kit\VIDEO\001.mp4 (Big Buck Bunny) and 002.mp4 (jellyfish) -
+; the whole 10 s in each case. Clip identities were verified by ffprobe and
+; by looking at an extracted frame, not taken from any document.
 ; Within a pair NOTHING differs but the knob: same source, same cut, same
 ; shape, same fps, same dither, same retime, same everything else, and the
 ; STREAM BUDGET IS PINNED on arm B to the value arm A derived, so the
@@ -89,14 +97,14 @@ LOOK   4  verb
 ; command the owner types already says which arm it is: 0 = arm A (0.0),
 ; 5 = arm B (0.5). An L prefix means LOOP.
 MENU  80  verb
-PAN0  81  verb
-PAN5  82  verb
-LPAN0 83  verb
-LPAN5 84  verb
-ZOM0  85  verb
-ZOM5  86  verb
-LZOM0 87  verb
-LZOM5 88  verb
+BUN0  81  verb
+BUN5  82  verb
+LBUN0 83  verb
+LBUN5 84  verb
+JEL0  85  verb
+JEL5  86  verb
+LJEL0 87  verb
+LJEL5 88  verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -164,15 +172,15 @@ LZOM5 88  verb
 ; Messages 1-4 are the ARM LABELS. Each names the pair, the clip, the arm,
 ; the exact encoder option and the file, so a photograph of the screen is
 ; enough to say which encode was on the glass.
-/1 "PAIR 1  BOAT PAN     ARM A  --tile-slack 0.0  (001.VID)"
-/2 "PAIR 1  BOAT PAN     ARM B  --tile-slack 0.5  (002.VID)"
-/3 "PAIR 2  CHURCH ZOOM  ARM A  --tile-slack 0.0  (003.VID)"
-/4 "PAIR 2  CHURCH ZOOM  ARM B  --tile-slack 0.5  (004.VID)"
+/1 "PAIR 1  BUNNY      ARM A  --tile-slack 0.0  (001.VID)"
+/2 "PAIR 1  BUNNY      ARM B  --tile-slack 0.5  (002.VID)"
+/3 "PAIR 2  JELLYFISH  ARM A  --tile-slack 0.0  (003.VID)"
+/4 "PAIR 2  JELLYFISH  ARM B  --tile-slack 0.5  (004.VID)"
 /5 "LOOPS - PRESS ANY KEY TO STOP IT"
 /6 "PLAYS ONCE"
 /7 "Press any key to start."
 /8 "JUST PLAYED"
-/9 "COMMANDS#nPAN0   PAN5    boat pan, once      (arm A / arm B)#nLPAN0  LPAN5   boat pan, loops#nZOM0   ZOM5    church zoom, once   (arm A / arm B)#nLZOM0  LZOM5   church zoom, loops#nMENU           this list again#nThe digit is the --tile-slack value: 0 = arm A, 5 = arm B.#nWatch each pair BACK TO BACK, never from memory."
+/9 "COMMANDS#nBUN0   BUN5    bunny, once       (arm A / arm B)#nLBUN0  LBUN5   bunny, loops#nJEL0   JEL5    jellyfish, once   (arm A / arm B)#nLJEL0  LJEL5   jellyfish, loops#nMENU           this list again#nThe digit is the --tile-slack value: 0 = arm A, 5 = arm B.#nWatch each pair BACK TO BACK, never from memory."
 /OTX
 /0 "a brass lamp"
 /LTX
@@ -226,8 +234,8 @@ SOUTH 0
 ; src\overlay2.asm -> vid_play, src\video.asm) - the same one the -Vid and
 ; -VidLong legs drive.
 
-; ---- PAIR 1: boat pan ----
-> PAN0    _     PROCESS 7
+; ---- PAIR 1: bunny ----
+> BUN0    _     PROCESS 7
                 MESSAGE 1
                 INK 13
                 MESSAGE 6
@@ -238,7 +246,7 @@ SOUTH 0
                 PROCESS 10
                 DONE
 
-> PAN5    _     PROCESS 7
+> BUN5    _     PROCESS 7
                 MESSAGE 2
                 INK 13
                 MESSAGE 6
@@ -249,7 +257,7 @@ SOUTH 0
                 PROCESS 10
                 DONE
 
-> LPAN0   _     PROCESS 7
+> LBUN0   _     PROCESS 7
                 MESSAGE 1
                 INK 13
                 MESSAGE 5
@@ -260,7 +268,7 @@ SOUTH 0
                 PROCESS 10
                 DONE
 
-> LPAN5   _     PROCESS 7
+> LBUN5   _     PROCESS 7
                 MESSAGE 2
                 INK 13
                 MESSAGE 5
@@ -271,8 +279,8 @@ SOUTH 0
                 PROCESS 10
                 DONE
 
-; ---- PAIR 2: church zoom ----
-> ZOM0    _     PROCESS 7
+; ---- PAIR 2: jellyfish ----
+> JEL0    _     PROCESS 7
                 MESSAGE 3
                 INK 13
                 MESSAGE 6
@@ -283,7 +291,7 @@ SOUTH 0
                 PROCESS 10
                 DONE
 
-> ZOM5    _     PROCESS 7
+> JEL5    _     PROCESS 7
                 MESSAGE 4
                 INK 13
                 MESSAGE 6
@@ -294,7 +302,7 @@ SOUTH 0
                 PROCESS 10
                 DONE
 
-> LZOM0   _     PROCESS 7
+> LJEL0   _     PROCESS 7
                 MESSAGE 3
                 INK 13
                 MESSAGE 5
@@ -305,7 +313,7 @@ SOUTH 0
                 PROCESS 10
                 DONE
 
-> LZOM5   _     PROCESS 7
+> LJEL5   _     PROCESS 7
                 MESSAGE 4
                 INK 13
                 MESSAGE 5

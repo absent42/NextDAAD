@@ -1,15 +1,31 @@
 #!/usr/bin/env python3
-"""tile-slack A/B - a repeatable measurement of --tile-slack 0.0 vs 0.5.
+"""tile-slack A/B - a repeatable measurement of --tile-slack 0.0 vs 0.5
+on THE AUTHORING KIT'S OWN TWO DEMO CLIPS.
 
 WHY THIS EXISTS
 ---------------
-manual/reference/video-format.md carries a four-row benchmark table for
---tile-slack (two clips, two slack values, four columns). No row of it is
-reproducible from anything in this repository, and the nearest live source
-- the SUPPLY-SLACK KNOB block in authoring-kit/lib/nxv2enc.py - records the
-same experiment on the same clip with DIFFERENT numbers. This script
-re-measures the experiment from scratch so the owner can see, cell by cell,
-which of the document's figures the current encoder reproduces.
+--tile-slack is the encoder's one opt-in picture knob and the manual tells
+authors to "try 0.5 first" on a title with sustained motion. The question
+this script answers is the one an author actually has: DOES IT HELP ON THE
+FOOTAGE THEY GET IN THE BOX - authoring-kit/VIDEO/001.mp4 (the bunny clip)
+and 002.mp4 (the jellyfish clip). It is a fresh baseline for those two
+clips and nothing else.
+
+IT IS NOT A REPRODUCTION OF THE MANUAL'S BENCHMARK TABLE, AND MUST NOT BE
+READ AS ONE. That table (manual/reference/video-format.md, "Tile slack" ->
+"What it buys") was measured on two clips called "boat pan" and "church
+zoom" which are NOT in this repository - they are silent 2560x1440 and
+3840x2160 sources that live outside it. An earlier draft of this script
+mapped those names onto VIDEO/001.mp4 and 002.mp4 on the strength of a
+stale table in .superpowers/sdd/sp14a-task-4-report.md section 43.2, and
+printed a cell-by-cell comparison against the manual. That comparison was
+between two different pieces of footage and it is GONE. The manual's table
+remains unreproduced, and is recorded there as unconfirmable; nothing here
+changes it or compares against it.
+
+THE LESSON, since this project keeps hitting it: a document's file mapping
+is a claim, not a fact. Two minutes of ffprobe and one extracted frame
+would have caught it. Verify the mapping before you measure through it.
 
 It MEASURES. It does not rule. Nothing here edits the manual, the encoder or
 the authoring kit - authoring-kit/lib is imported read-only.
@@ -34,15 +50,15 @@ that budget would write. The predecessor verified that byte-identically.
 
 WHERE THE NUMBERS COME FROM - read this before quoting any of them
 ------------------------------------------------------------------
-The --report BuildReport JSON carries exactly ONE of the document's four
-columns. The others do not exist in it and are computed here:
+The --report BuildReport JSON carries exactly ONE of the four quantities
+worth having. The others do not exist in it and are computed here:
 
   rungs taken       NOT IN THE REPORT. Recovered from encode_clip's own
                     per-frame "mode" strings, which carry an "@<rung>"
                     suffix in PIXELS (nxv2enc.encode_delta). Converted to
-                    LINES by dividing by one paint-order line, so the units
-                    match the document's "4-line x237" form. Exact - this is
-                    the encoder's own record of what it picked, not an
+                    LINES by dividing by one paint-order line, because the
+                    artifact is in display terms. Exact - this is the
+                    encoder's own record of what it picked, not an
                     inference.
   stream util       report["stream_utilization"]. Straight from the report,
                     the one column that needs no reconstruction.
@@ -54,12 +70,9 @@ columns. The others do not exist in it and are computed here:
                     Reimplemented here from decoded frames, to the
                     definition the predecessor card recorded: the per-line
                     residual coefficient of variation. Spelled out in
-                    banding_index() below. READ THAT DOCSTRING BEFORE
-                    COMPARING IT WITH THE DOCUMENT'S COLUMN - it is a
-                    faithful implementation of the stated definition, but
-                    the estimator that produced the document's figure was
-                    never published, so the two are not known to be on the
-                    same scale.
+                    banding_index() below. IT IS AN ARM-TO-ARM DIRECTION
+                    ONLY - the absolute value is on this script's own
+                    scale and means nothing on its own. See that docstring.
 
 HOW THE PER-FRAME DATA IS OBTAINED
 ----------------------------------
@@ -84,9 +97,9 @@ with the table.
 
 USAGE
 -----
-    python tests/video/tileslack_ab.py             # measure and print
-    python tests/video/tileslack_ab.py --force     # ignore cached results
-    python tests/video/tileslack_ab.py --clip boat # one clip only
+    python tests/video/tileslack_ab.py              # measure and print
+    python tests/video/tileslack_ab.py --force      # ignore cached results
+    python tests/video/tileslack_ab.py --clip bunny # one clip only
 
 Work directory: tests/out/tileslack/ (gitignored). Results are cached on a
 key made of the encoder hashes, the source hash and the encode arguments, so
@@ -112,23 +125,31 @@ KIT_LIB = ROOT / "authoring-kit" / "lib"
 FFMPEG = ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
 WORK = ROOT / "tests" / "out" / "tileslack"
 
-# The two clips the document's table names. Both are encoded at the SHAPE
-# the document measured ("real 320x256 footage") and the predecessor card
-# staged (full, mode-1, 25 fps), which is NOT what authoring-kit/CONFIG.BAT
-# would use for 002 (VIDOPTS_002=--shape 16:9) - see the report.
+# THE TWO CLIPS THE AUTHORING KIT SHIPS. Identities verified directly -
+# ffprobe for the shape, an extracted frame looked at for the content - not
+# taken from any document:
 #
-# NO --start / --duration. The predecessor card cut boat pan at
-# --start 00:00:02 for 10.0 s and church zoom to 9.5 s; neither cut is
-# reproducible against the source files now in authoring-kit/VIDEO (both are
-# exactly 10.000 s, so a 2 s start cannot yield a 10 s clip). The whole clip
-# is the one cut that is unambiguous today.
+#   VIDEO/001.mp4  Big Buck Bunny, 320x256 @25, 10.000 s, already at the
+#                  full shape (no crop, straight scale)
+#   VIDEO/002.mp4  jellyfish, 256x192 @25, 10.000 s (upscaled to 320x256
+#                  by the encode, which is why its absolute PSNR is lower
+#                  than the bunny's - that is the source, not the knob)
+#
+# Both encoded `full` 320x256 at 25 fps, the kit's own default shape, so
+# the two arms of each pair differ in exactly one thing. NOTE that the
+# kit's CONFIG.BAT sets VIDOPTS_002=--shape 16:9, so a kit BUILD encodes
+# 002 at 320x192; this test uses `full` for both because the tile ladder's
+# behaviour is shape-dependent and holding the shape fixed across the two
+# pairs is what makes them comparable to each other.
+#
+# NO --start / --duration: the whole 10.000 s of each, 250 frames.
 CLIPS = {
-    "boat": {
-        "label": "boat pan",
+    "bunny": {
+        "label": "bunny",
         "src": ROOT / "authoring-kit" / "VIDEO" / "001.mp4",
     },
-    "church": {
-        "label": "church zoom",
+    "jellyfish": {
+        "label": "jellyfish",
         "src": ROOT / "authoring-kit" / "VIDEO" / "002.mp4",
     },
 }
@@ -147,33 +168,25 @@ ARMS = (0.0, 0.5)
 # discourage running it.
 #   1  first cut
 #   2  rung reader fixed - the ":roll" suffix encode_clip appends AFTER
-#      the "@<rung>" made an end-anchored match miss half the boat pan's
-#      bound frames; raw mode strings are now stored with the result
+#      the "@<rung>" made an end-anchored match miss half the bunny
+#      clip's bound frames; raw mode strings are now stored with the result
 MEASURE_VERSION = 2
 
-# manual/reference/video-format.md, the "What it buys" table under
-# "Tile slack". Quoted here ONLY to be printed beside the measurement.
-# NOT a target, NOT an assertion - nothing in this script fails because a
-# measured cell disagrees with one of these.
-DOC = {
-    ("boat", 0.0): {
-        "rungs": "4-line x237, 2-line x10",
-        "util": 0.882, "psnr4": 32.02, "band": 0.912,
-    },
-    ("boat", 0.5): {
-        "rungs": "1-line x195, 2-line x30, 4-line x22",
-        "util": 0.890, "psnr4": 32.33, "band": 0.910,
-    },
-    ("church", 0.0): {
-        "rungs": "4-line x205, 1-line x18",
-        "util": 0.874, "psnr4": 34.90, "band": 1.243,
-    },
-    ("church", 0.5): {
-        "rungs": "1-line x185, 2-line x26, 4-line x24",
-        "util": 0.879, "psnr4": 34.91, "band": 1.166,
-    },
-}
-DOC_SOURCE = "manual/reference/video-format.md, 'Tile slack' -> 'What it buys'"
+# NO TABLE OF PUBLISHED FIGURES IS QUOTED HERE, DELIBERATELY. The manual's
+# --tile-slack benchmark table was measured on two clips that are not in
+# this repository, so printing it beside these numbers would invite a
+# comparison between different footage. This script's output stands on its
+# own as a baseline for the kit's own clips. Do not add one back.
+
+# The encoder's at-capacity line - nxv2enc.STREAM_WARN_UTIL. Read from the
+# encoder at run time rather than copied, so it cannot drift.
+def warn_util():
+    try:
+        sys.path.insert(0, str(KIT_LIB))
+        import nxv2enc
+        return float(nxv2enc.STREAM_WARN_UTIL)
+    except Exception:                                # noqa: BLE001
+        return None
 
 
 # ---------------------------------------------------------------------
@@ -241,17 +254,17 @@ def banding_index(orig, dec, modes, column_major):
       Lower is better: the un-updated error is spread evenly rather than
       piling into whole lines.
 
-    WHAT THIS IS NOT. The estimator that produced the document's banding
-    index column was never published. This one follows the definition the
+    WHAT THIS IS NOT. It is not an encoder quantity and it is not
+    comparable with any published figure. It follows the definition the
     predecessor card recorded (sp14a-task-4-report.md section 43.5) and
     computes it post-hoc from decoded frames, which is the only route open
     to a script that may not modify the encoder. The encoder's own internal
     residual is an err2 quantity in palette space, and it does NOT include
     the quantization/dither floor that a source-vs-decoded difference does.
-    A uniform floor damps a coefficient of variation, so this number can sit
-    LOWER than an encoder-internal one on the same clip. The arm-to-arm
-    DIRECTION and RATIO are the parts to read; treat the absolute value as
-    this script's own scale, not as the document's.
+    A uniform floor damps a coefficient of variation, so this number sits
+    LOWER than an encoder-internal one would on the same clip. READ THE
+    ARM-TO-ARM DIRECTION AND SIZE, NOTHING ELSE - the absolute value is on
+    this script's own scale and carries no meaning outside this comparison.
     """
     import numpy as np
     cvs, peaks = [], []
@@ -273,8 +286,8 @@ def banding_index(orig, dec, modes, column_major):
 
 
 def rungs_from_modes(modes, line_px):
-    """The document's "rungs taken" column, from encode_clip's own
-    per-frame mode strings.
+    """The "rungs taken" column, from encode_clip's own per-frame mode
+    strings.
 
     A bound frame's mode carries "@<rung>" with the rung in PIXELS, and may
     carry a further ":roll" suffix after it (rolling-refresh frames), so the
@@ -421,11 +434,11 @@ def run_worker(clip, slack, pin, out_dir):
         # and it may carry a further ":roll" suffix on rolling-refresh
         # frames (encode_clip appends it AFTER the rung) - so the rung is
         # matched up to the next colon or the end of the string, never
-        # anchored at the end. Anchoring it undercounted the boat pan by
-        # half on the first run of this script.
+        # anchored at the end. Anchoring it undercounted the bunny clip
+        # by half on the first run of this script.
         # One paint-order line is `height` px in column-major mode-1 and
         # `width` px in row-major mode-0 (nxv2enc.default_tile_px), so the
-        # rung in LINES - the document's unit - is the ratio.
+        # rung in LINES - the unit the artifact is in - is the ratio.
         out["modes"] = list(modes[:n])       # kept raw: the rung column is
                                              # then recomputable from a
                                              # cached result, with no
@@ -462,9 +475,17 @@ def run_worker(clip, slack, pin, out_dir):
 # ---------------------------------------------------------------------
 
 def cache_key(clip, slack, pin, ident):
+    """What a cached result is keyed on: everything that decides the
+    NUMBERS, and nothing that decides what they are CALLED.
+
+    The clip's NAME is deliberately not in here - the source file's hash
+    already identifies the clip, exactly and without depending on anyone's
+    label being right. This fixture was relabelled once already (it shipped
+    naming two clips it does not contain), and a rename is not a reason to
+    spend twenty minutes re-encoding footage that has not changed."""
     spec = CLIPS[clip]
     return hashlib.sha256(json.dumps({
-        "clip": clip, "slack": slack, "pin": pin,
+        "slack": slack, "pin": pin,
         "src": sha256(spec["src"]),
         "enc": ident["nxv2enc_sha256"], "cli": ident["videnc_sha256"],
         # This script too: it computes three of the four columns, so a
@@ -476,13 +497,20 @@ def cache_key(clip, slack, pin, ident):
     }, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def refresh_derived(got):
+def refresh_derived(got, clip=None):
     """Recompute the columns that are pure functions of the stored raw
-    data. The worker stores encode_clip's per-frame mode strings verbatim,
-    so a correction to the rung reader applies to CACHED results without
+    data, and re-stamp the clip's NAME.
+
+    The worker stores encode_clip's per-frame mode strings verbatim, so a
+    correction to the rung reader applies to CACHED results without
     re-encoding anything - which matters, because a full arm-A pass is
-    minutes and a miscounted rung column looks exactly like a real
-    disagreement with the document."""
+    minutes and a miscounted rung column looks exactly like a real result.
+    The name is re-stamped for the same reason: a cached result carries
+    whatever the clip was called when it was encoded, and the numbers do
+    not change when that turns out to have been wrong."""
+    if clip:
+        got["clip"] = clip
+        got["label"] = CLIPS[clip]["label"]
     if got.get("status") == "ok" and got.get("modes"):
         w, h = got["report"]["shape"]
         (got["rungs_taken"], got["rungs_by_lines"],
@@ -500,7 +528,7 @@ def encode_arm(clip, slack, pin, ident, force):
             got = json.loads(met.read_text())
             if got.get("cache_key") == key:
                 print(f"  {tag}: cached ({got['status']})")
-                return refresh_derived(got)
+                return refresh_derived(got, clip)
         except Exception:                            # noqa: BLE001
             pass
     argv = [sys.executable, str(Path(__file__).resolve()),
@@ -517,24 +545,25 @@ def encode_arm(clip, slack, pin, ident, force):
     got = json.loads(met.read_text())
     got["cache_key"] = key
     met.write_text(json.dumps(got, indent=1))
-    return refresh_derived(got)
+    return refresh_derived(got, clip)
 
 
 def fmt(v, spec="{:.3f}"):
     return "-" if v is None else spec.format(v)
 
 
-def delta(measured, doc, spec="{:+.3f}"):
-    if measured is None or doc is None:
+def arm_delta(b, a, spec="{:+.3f}"):
+    """Arm B minus arm A - the only comparison this script makes."""
+    if a is None or b is None:
         return "-"
-    return spec.format(measured - doc)
+    return spec.format(b - a)
 
 
 def print_tables(results):
     ident = identity()
     print()
     print("=" * 78)
-    print("TILE-SLACK A/B - MEASURED")
+    print("TILE-SLACK A/B ON THE AUTHORING KIT'S OWN DEMO CLIPS - MEASURED")
     print("=" * 78)
     print(f"repo commit        {ident['commit']} ({ident['branch']})")
     print(f"nxv2enc.py sha256  {ident['nxv2enc_sha256']}")
@@ -546,11 +575,19 @@ def print_tables(results):
           f"all other options at their shipped defaults")
     print("budget             derived by the encoder on ARM A (slack 0.0), "
           "then PINNED on ARM B")
+    print("NOT a reproduction of the manual's --tile-slack benchmark table.")
+    print("That table was measured on two clips (\"boat pan\", \"church "
+          "zoom\") that are")
+    print("NOT in this repository. Nothing here is compared against it and "
+          "nothing here")
+    print("confirms or refutes it - it stays recorded in the manual as "
+          "unconfirmable.")
     print()
     for clip in CLIPS:
         r = results.get((clip, 0.0))
         if r and r.get("status") == "ok":
-            print(f"{CLIPS[clip]['label']:<12} {CLIPS[clip]['src'].name}  "
+            print(f"{CLIPS[clip]['label']:<10} authoring-kit/VIDEO/"
+                  f"{CLIPS[clip]['src'].name}  "
                   f"sha256 {r['source_sha256'][:16]}  "
                   f"pin {r['report']['stream_budget']:.2f} "
                   f"({r['report']['auto_budget_probes']} probes)  "
@@ -575,45 +612,39 @@ def print_tables(results):
                   f"| {fmt(r['psnr_4x4'], '{:.2f}')} "
                   f"| {fmt(r['banding_index'])} |")
 
+    # ---- THE ONLY COMPARISON THIS SCRIPT MAKES: arm B minus arm A, within
+    # a clip, at the same pinned budget. One variable, two settings.
     print()
     print("=" * 78)
-    print("THE DOCUMENT'S TABLE, FOR COMPARISON")
+    print("WHAT THE KNOB DID - ARM B (0.5) MINUS ARM A (0.0), PER CLIP")
     print("=" * 78)
-    print(DOC_SOURCE)
-    print()
-    print(head)
-    print("|:--|--:|:--|--:|--:|--:|")
+    print("| clip | stream util | local (4x4) PSNR | banding index "
+          "| bytes | 1-line rung |")
+    print("|:--|--:|--:|--:|--:|--:|")
     for clip in CLIPS:
-        for slack in ARMS:
-            d = DOC[(clip, slack)]
-            print(f"| {CLIPS[clip]['label']} | {slack:.1f} | {d['rungs']} "
-                  f"| {d['util']:.3f} | {d['psnr4']:.2f} | {d['band']:.3f} |")
+        a, b = results.get((clip, 0.0)), results.get((clip, 0.5))
+        lab = CLIPS[clip]["label"]
+        if not a or not b or a.get("status") != "ok" or b.get("status") != "ok":
+            print(f"| {lab} | NOT MEASURED | - | - | - | - |")
+            continue
+        a1 = a["rungs_by_lines"].get("1", 0)
+        b1 = b["rungs_by_lines"].get("1", 0)
+        print(f"| {lab} "
+              f"| {arm_delta(b['report']['stream_utilization'], a['report']['stream_utilization'])} "
+              f"| {arm_delta(b['psnr_4x4'], a['psnr_4x4'], '{:+.2f}')} dB "
+              f"| {arm_delta(b['banding_index'], a['banding_index'])} "
+              f"| {b['vid_bytes'] - a['vid_bytes']:+,} "
+              f"| {a1} -> {b1} frames |")
+    print()
+    print("Lower banding index is better (the un-updated error is spread "
+          "evenly rather")
+    print("than piling into whole lines). Higher PSNR is better. Higher "
+          "utilisation is")
+    print("the COST - see the at-capacity section below.")
 
     print()
     print("=" * 78)
-    print("MEASURED MINUS DOCUMENT")
-    print("=" * 78)
-    print("| clip | slack | rungs taken | stream util | local (4x4) PSNR "
-          "| banding index |")
-    print("|:--|--:|:--|--:|--:|--:|")
-    for clip in CLIPS:
-        for slack in ARMS:
-            r = results.get((clip, slack))
-            d = DOC[(clip, slack)]
-            lab = CLIPS[clip]["label"]
-            if not r or r.get("status") != "ok":
-                print(f"| {lab} | {slack:.1f} | - | - | - | - |")
-                continue
-            same = (r["rungs_taken"] == d["rungs"])
-            print(f"| {lab} | {slack:.1f} | "
-                  f"{'SAME' if same else 'DIFFERENT'} "
-                  f"| {delta(r['report']['stream_utilization'], d['util'])} "
-                  f"| {delta(r['psnr_4x4'], d['psnr4'], '{:+.2f}')} "
-                  f"| {delta(r['banding_index'], d['band'])} |")
-
-    print()
-    print("=" * 78)
-    print("WHAT EACH COLUMN IS, AND HOW FAR TO TRUST THE COMPARISON")
+    print("WHAT EACH COLUMN IS, AND HOW FAR TO TRUST IT")
     print("=" * 78)
     print(
         "rungs taken       EXACT. encode_clip's own per-frame mode strings,\n"
@@ -625,16 +656,17 @@ def print_tables(results):
         "                  source and decoded stacks. Not in the report -\n"
         "                  report['mean_psnr'] is PER-PIXEL, a different\n"
         "                  number, and must not be read into this column.\n"
-        "banding index     RECOMPUTED, NOT RECOVERED. The estimator behind the\n"
-        "                  document's column was never published. This is the\n"
-        "                  recorded DEFINITION (per-line residual coefficient\n"
-        "                  of variation) implemented post-hoc from decoded\n"
-        "                  frames - see banding_index() in this file for the\n"
-        "                  exact arithmetic. Read the arm-to-arm direction and\n"
-        "                  ratio; do NOT read the absolute value as the\n"
-        "                  document's quantity.")
+        "banding index     RECOMPUTED, AND AN ARM-TO-ARM DIRECTION ONLY. No\n"
+        "                  encoder or report field holds this quantity; it is\n"
+        "                  the recorded DEFINITION (per-line residual\n"
+        "                  coefficient of variation) implemented post-hoc from\n"
+        "                  decoded frames - see banding_index() in this file\n"
+        "                  for the exact arithmetic. Its ABSOLUTE value is on\n"
+        "                  this script's own scale and is not comparable with\n"
+        "                  any published figure. Read the sign and the size of\n"
+        "                  the arm-to-arm move, nothing else.")
     print()
-    print("Supporting figures the document's table does not carry:")
+    print("Supporting figures:")
     print("| clip | slack | budget | bytes | per-pixel PSNR | bound% "
           "| ladder frames | line peak | probes |")
     print("|:--|--:|--:|--:|--:|--:|--:|--:|--:|")
@@ -651,10 +683,9 @@ def print_tables(results):
                   f"| {fmt(r['line_peak'], '{:.2f}')} "
                   f"| {rep['auto_budget_probes']} |")
     # ---- what the encoder itself said. The budget line, the tile-slack
-    # cost line and any gate WARNING are operational facts that no column
-    # of the document's table carries, and the at-capacity warning in
-    # particular is a reason to distrust an arm's picture on hardware
-    # whatever its metrics say.
+    # cost line and any gate WARNING are operational facts no column above
+    # carries, and the at-capacity warning is the most important thing this
+    # measurement found.
     print()
     print("=" * 78)
     print("WHAT THE ENCODER SAID (its own lines, verbatim)")
@@ -674,22 +705,47 @@ def print_tables(results):
             for ln in keep:
                 print(f"  {ln}")
                 if "warning:" in ln or "error:" in ln:
-                    warned.append((CLIPS[clip]["label"], slack))
+                    warned.append((CLIPS[clip]["label"], slack,
+                                   r["report"]["stream_utilization"]))
     if warned:
+        wu = warn_util()
         print()
-        for lab, slack in warned:
-            print(f"NOTE: {lab} at slack {slack:.1f} tripped the encoder's "
-                  f"own gate message above.")
-        print("An at-capacity encode is not a picture verdict, but it is a "
-              "reason to watch")
-        print("that arm for JUDDER and audio breakup specifically (run "
-              "sheet, leg 3), and")
-        print("the predecessor card DISCARDED such a pair and re-encoded "
-              "both arms at a")
-        print("lower pinned budget rather than compare across it "
-              "(sp14a-task-4-report.md")
-        print("section 43.6). Whether to do that here is a ruling, not a "
-              "measurement.")
+        print("#" * 78)
+        print("## AT-CAPACITY FINDING - THE HEADLINE OF THIS RUN")
+        print("#" * 78)
+        for lab, slack, util in warned:
+            print(f"  {lab} at --tile-slack {slack:.1f}: utilisation "
+                  f"{util:.3f}"
+                  + (f" against STREAM_WARN_UTIL {wu:.2f}" if wu else "")
+                  + " - OVER THE LINE")
+        print()
+        print("Applying the manual's own '--tile-slack 0.5' suggestion to "
+              "THE KIT'S OWN")
+        print("DEMO CLIPS trips the encoder's at-capacity warning. That is "
+              "the footage")
+        print("every new author starts from, so this is a live authoring "
+              "trap, not a")
+        print("laboratory curiosity. The gate's own words: the whole-clip "
+              "mean hides")
+        print("per-frame excursions well over 1.00, which read as banding "
+              "and judder on")
+        print("hardware.")
+        print()
+        print("It is REPORTED, not fixed. Nothing here changes the encoder, "
+              "the default")
+        print("(still 0.0, off) or the manual. Two things follow for whoever "
+              "acts on it:")
+        print("  - watch those arms for JUDDER and audio breakup "
+              "specifically (run sheet,")
+        print("    leg 3) - a picture verdict and a supply verdict are "
+              "different findings;")
+        print("  - the predecessor card DISCARDED a pair in this state and "
+              "re-encoded both")
+        print("    arms at a lower pinned budget rather than compare across "
+              "it")
+        print("    (sp14a-task-4-report.md section 43.6). Whether to do that "
+              "here is a")
+        print("    ruling, not a measurement.")
 
     print()
     print("THE NUMBERS AND THE PICTURE CAN DISAGREE. Nothing above judges "

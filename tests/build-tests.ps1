@@ -206,25 +206,36 @@
 #   -TileSlack
 #            --tile-slack A/B fixture, staged into sd\TILESLK\: make the
 #            tests\tileslack.dsf DDB active AND stage FOUR encodes of the
-#            authoring kit's own two clips as two A/B PAIRS -
-#            001/002.VID = boat pan (authoring-kit\VIDEO\001.mp4) at
-#            --tile-slack 0.0 and 0.5, 003/004.VID = church zoom
+#            authoring kit's own two DEMO clips as two A/B PAIRS -
+#            001/002.VID = the BUNNY clip (authoring-kit\VIDEO\001.mp4) at
+#            --tile-slack 0.0 and 0.5, 003/004.VID = the JELLYFISH clip
 #            (002.mp4) at the same two values. Both pairs are full
 #            320x256 @25 mode-1, whole clip, and within a pair NOTHING
 #            differs but the knob: the stream budget is DERIVED on arm A
 #            and PINNED on arm B, so the finer tile rung cannot move its
 #            own supply ceiling and flatter itself.
+#            NOT A REPRODUCTION OF THE MANUAL'S --tile-slack BENCHMARK
+#            TABLE. That table was measured on two clips ("boat pan",
+#            "church zoom") which are NOT in this repository - they are
+#            large silent sources that live outside it. This leg asks
+#            whether the knob helps on the footage that ships in the box,
+#            and nothing here is compared against that table.
 #            THE ENCODES COME FROM tests\video\tileslack_ab.py, not from
 #            a videnc call here. That script owns the experiment - it
 #            derives the pin, runs the four encodes, caches them under
-#            tests\out\tileslack\ and prints the manual's benchmark table
-#            beside what it measured. Staging runs it (cached: a re-stage
+#            tests\out\tileslack\ and prints what it measured.
+#            Staging runs it (cached: a re-stage
 #            after a completed measurement costs file copies, not
 #            encodes) and copies its OWN output files, so the numbers on
 #            the page and the picture on the glass are the same bytes.
 #            The fixture is the half no metric answers: --tile-slack is a
 #            MOTION knob and the owner's own footage banded and juddered
-#            on kit defaults after the whole fixture deck passed. Run
+#            on kit defaults after the whole fixture deck passed. NOTE the
+#            AT-CAPACITY FINDING: BOTH slack-0.5 arms measure over
+#            STREAM_WARN_UTIL (0.912 against 0.90) and print the encoder's
+#            own at-capacity warning, so applying the manual's "try 0.5
+#            first" advice to the kit's own demo clips trips it - watch
+#            those arms for JUDDER and audio breakup specifically. Run
 #            sheet (what to look for on each pair, what an outcome means,
 #            and why the numbers and the picture can disagree):
 #            docs\superpowers\tileslack-ab-run-sheet.md. An alternative
@@ -1178,14 +1189,14 @@ if (-not $tsProcs.ContainsKey(5)) { throw "tileslack: process 5 (the verb table)
 
 # verb -> (video number, GFX sub-op, label message, slack, loops)
 $tsArms = @(
-    @{ verb = 'PAN0';  vid = 1; sub = 13; msg = 1; slack = '0.0'; loop = $false },
-    @{ verb = 'PAN5';  vid = 2; sub = 13; msg = 2; slack = '0.5'; loop = $false },
-    @{ verb = 'LPAN0'; vid = 1; sub = 14; msg = 1; slack = '0.0'; loop = $true },
-    @{ verb = 'LPAN5'; vid = 2; sub = 14; msg = 2; slack = '0.5'; loop = $true },
-    @{ verb = 'ZOM0';  vid = 3; sub = 13; msg = 3; slack = '0.0'; loop = $false },
-    @{ verb = 'ZOM5';  vid = 4; sub = 13; msg = 4; slack = '0.5'; loop = $false },
-    @{ verb = 'LZOM0'; vid = 3; sub = 14; msg = 3; slack = '0.0'; loop = $true },
-    @{ verb = 'LZOM5'; vid = 4; sub = 14; msg = 4; slack = '0.5'; loop = $true }
+    @{ verb = 'BUN0';  vid = 1; sub = 13; msg = 1; slack = '0.0'; loop = $false; clip = 'BUNNY' },
+    @{ verb = 'BUN5';  vid = 2; sub = 13; msg = 2; slack = '0.5'; loop = $false; clip = 'BUNNY' },
+    @{ verb = 'LBUN0'; vid = 1; sub = 14; msg = 1; slack = '0.0'; loop = $true;  clip = 'BUNNY' },
+    @{ verb = 'LBUN5'; vid = 2; sub = 14; msg = 2; slack = '0.5'; loop = $true;  clip = 'BUNNY' },
+    @{ verb = 'JEL0';  vid = 3; sub = 13; msg = 3; slack = '0.0'; loop = $false; clip = 'JELLYFISH' },
+    @{ verb = 'JEL5';  vid = 4; sub = 13; msg = 4; slack = '0.5'; loop = $false; clip = 'JELLYFISH' },
+    @{ verb = 'LJEL0'; vid = 3; sub = 14; msg = 3; slack = '0.0'; loop = $true;  clip = 'JELLYFISH' },
+    @{ verb = 'LJEL5'; vid = 4; sub = 14; msg = 4; slack = '0.5'; loop = $true;  clip = 'JELLYFISH' }
 )
 foreach ($a in $tsArms) {
     $entry = @($tsProcs[5] | Where-Object { ([string]$_.Entry).Split(' ')[0] -eq $a.verb })
@@ -1212,6 +1223,12 @@ foreach ($a in $tsArms) {
     $wantFile = '{0:d3}.VID' -f $a.vid
     if ($text -notlike "*$wantFile*") { throw "tileslack: label message $($a.msg) ('$text') does not name $wantFile, which is what $($a.verb) plays" }
     if ($text -notlike "*--tile-slack $($a.slack)*") { throw "tileslack: label message $($a.msg) ('$text') does not name --tile-slack $($a.slack)" }
+    # And the CLIP. The verb, the video number and the caption must all agree
+    # on WHICH of the kit's two demo clips this arm is - the fixture was
+    # relabelled once already (it shipped naming clips it does not contain),
+    # and a caption naming the wrong clip is exactly as unattributable as a
+    # caption naming the wrong arm.
+    if ($text -notlike "*$($a.clip)*") { throw "tileslack: label message $($a.msg) ('$text') does not name $($a.clip), which is the clip $($a.verb) plays" }
     $mode = @($cs | Where-Object { $_.Condact -eq 'MESSAGE' -and [int]$_.Param1 -eq $(if ($a.loop) { 5 } else { 6 }) })
     if ($mode.Count -ne 1) { throw "tileslack: $($a.verb) does not print its $(if ($a.loop) { 'LOOPS' } else { 'PLAYS ONCE' }) line exactly once" }
 }
@@ -2746,10 +2763,10 @@ if ($TileSlack) {
     if ($LASTEXITCODE -ne 0) { throw "tests\video\tileslack_ab.py failed (exit $LASTEXITCODE) - sd\$legName\ not staged" }
     # dest -> the measurement script's own cache name (clip + slack)
     $tsMap = [ordered]@{
-        '001.VID' = 'boat_s000.vid'
-        '002.VID' = 'boat_s050.vid'
-        '003.VID' = 'church_s000.vid'
-        '004.VID' = 'church_s050.vid'
+        '001.VID' = 'bunny_s000.vid'
+        '002.VID' = 'bunny_s050.vid'
+        '003.VID' = 'jellyfish_s000.vid'
+        '004.VID' = 'jellyfish_s050.vid'
     }
     $tsWork = Join-Path $root 'tests\out\tileslack'
     $tsInfo = @()
@@ -2786,7 +2803,7 @@ if ($TileSlack) {
     # identical files and report "no difference", which would read as a
     # verdict on the picture instead of a fact about the encode. Said here,
     # loudly, rather than discovered on the glass.
-    foreach ($p in @(@{ n = 'PAIR 1 boat pan'; a = 0; b = 1 }, @{ n = 'PAIR 2 church zoom'; a = 2; b = 3 })) {
+    foreach ($p in @(@{ n = 'PAIR 1 bunny'; a = 0; b = 1 }, @{ n = 'PAIR 2 jellyfish'; a = 2; b = 3 })) {
         $x = $tsInfo[$p.a]; $y = $tsInfo[$p.b]
         if ($x.frames -ne $y.frames) {
             throw "tileslack: $($p.n) arms have $($x.frames) and $($y.frames) frames - they are not the same cut and cannot be compared"
@@ -2797,7 +2814,7 @@ if ($TileSlack) {
         $d = 100.0 * ($y.bytes - $x.bytes) / $x.bytes
         "$($p.n): $($x.dest) $($x.bytes) B vs $($y.dest) $($y.bytes) B ($('{0:+0.00;-0.00;0.00}' -f $d)%), $($x.frames) frames each, arms differ"
     }
-    "staged 4 tile-slack fixture(s) -> sd\$legName\001-004.VID (two A/B pairs: 001/002 boat pan, 003/004 church zoom, 320x256 @25 mode-1; odd = --tile-slack 0.0, even = 0.5)"
+    "staged 4 tile-slack fixture(s) -> sd\$legName\001-004.VID (two A/B pairs: 001/002 the BUNNY clip, 003/004 the JELLYFISH clip - the authoring kit's own demo footage, 320x256 @25 mode-1; odd = --tile-slack 0.0, even = 0.5)"
     $tileSlackActive = $true
 }
 
