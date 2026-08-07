@@ -1,16 +1,14 @@
 ; NextDAAD Layer 2 TRANSPARENCY + hardware fixture (2026-08-07, rev 1).
 ;
-; Compiled and staged by tests\stage-l2holes.ps1, which also generates
-; the punch-out card with tests\art\mkl2holes.py (001.NXI, 256x192) and
-; copies build\nextdaad.nex in. sd\L2HOLES\ is emptied and refilled on
-; every run and holds nothing but GAME.DDB, 001.NXI and NEXTDAAD.NEX -
-; copy the folder to the card and launch NEXTDAAD.NEX from inside it.
+; Compiled and staged by tests\build-tests.ps1 -L2Holes, which also
+; generates the punch-out card with tests\art\mkl2holes.py (001.NXI,
+; 256x192) and copies build\nextdaad.nex in. sd\L2HOLES\ is emptied and
+; refilled on every run and holds nothing but GAME.DDB, 001.NXI and
+; NEXTDAAD.NEX - copy the folder to the card and launch NEXTDAAD.NEX
+; from inside it.
 ;
 ; RUN SHEET: docs\superpowers\l2-holes-run-sheet.md. Read it before
 ; running; it names every hole and says what a failure of each one means.
-;
-; This fixture is NOT staged by tests\build-tests.ps1 and has no switch
-; there. It is a standalone owner instrument.
 ;
 ; ------------------------------------------------------------------
 ; WHAT THIS FIXTURE PUTS ON SCREEN, AND WHY EACH PIECE IS THERE
