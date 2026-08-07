@@ -99,12 +99,11 @@ python lib\videnc.py INPUT OUTPUT.VID [options]
                      strictly at-rate, see below
   --direct-transport-factor F
                      EXPERT override of the direct gate's per-byte
-                     transport factor (default: the shipping
-                     silicon-settled 1.00, 2026-08-02 whole-frame
-                     re-fit; the gate's fixed 2.2 ms/frame transport
-                     overhead is not scaled by this flag). Exists for
-                     hardware-round probe encodes at a hypothesised
-                     rate. Only meaningful with --direct
+                     transport factor (default 1.00; the gate's fixed
+                     2.2 ms/frame transport overhead is not scaled by
+                     this flag). Exists for hardware-round probe
+                     encodes at a hypothesised rate. Only meaningful
+                     with --direct
   --no-merge         disable the gap-merge optimization (bench fixtures
                      only - production encodes keep it on)
   --start HH:MM:SS   clip start time (ffmpeg -ss)
@@ -229,11 +228,10 @@ remedy in the error message:
   cannot supply: a smaller shape, a lower `--fps`, a shorter clip.
 - **Direct-serve wire (`--direct`).** Strictly at-rate, worst-frame
   checked, with no slow-playback opt-out. At 25 fps stereo the
-  envelope tops out around 256x153
-  (2026-08-02 silicon re-fit on the rebuilt transport; 12.5 fps
-  carries full-screen 320x256); the refusal message prints the live
-  at-rate menu (the at-rate height, its 0.90-margin variant, and the
-  maximum at the audio floor fps).
+  envelope tops out around 256x153 (12.5 fps carries full-screen
+  320x256); the refusal message prints the live at-rate menu (the
+  at-rate height, its 0.90-margin variant, and the maximum at the
+  audio floor fps).
 - **Whole-file size and length.** A `.VID` may be at most 268,431,360 B
   (256 MiB) and 65535 frames, whichever binds first - the player's hot
   filemap and its 16-bit frame counters. Both bounds are checked on
@@ -412,12 +410,15 @@ delta budget to scale), so one parser handles both modes.
 
 ## Format authority
 
-The NXV v2 wire format (512-byte header, opcode set, byte values) was
-FROZEN 2026-07-25 on silicon bench evidence. The authoritative header
-and opcode documentation is the comment block in `src\nextdaad.inc`
-(repo) with matching constants in `lib\nxv2enc.py`; `lib\nxv2dec.py`
-is the executable specification of the player. Every section of the
-file is an exact multiple of 512-byte SD blocks.
+The NXV v2 wire format - the 512-byte header, the opcode set and the
+byte values - is frozen: it is not revised between releases, so a tool
+written against it stays correct. If you are writing one, in order of
+usefulness: `lib\nxv2dec.py` in the kit is the executable
+specification of the Z80 player, so what it does with a stream IS the
+format's behaviour; `lib\nxv2enc.py`, beside it, carries the matching
+constants; and the authoritative header and opcode documentation is
+the comment block in `src\nextdaad.inc` in the NextDAAD repository.
+Every section of the file is an exact multiple of 512-byte SD blocks.
 
 Audio is unsigned 8-bit PCM, stereo 15625 Hz, full rate - no
 decimation. A mono source is converted to stereo automatically.

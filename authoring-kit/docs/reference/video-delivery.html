@@ -64,8 +64,10 @@ pixel-exact.</p>
 <p><strong>Game audio during playback.</strong> A cutscene owns the sound hardware
 while it plays: a playing sample is stopped, not resumed afterwards; AY
 music is frozen in place (paused, not stopped) and resumes
-automatically the instant playback ends. No author action needed either
-way.</p>
+automatically the instant playback ends; and a BEEP still sounding when
+the video starts is cut short, staying silent for the rest of its
+nominal duration rather than resuming. No author action is needed for
+any of them.</p>
 <p><strong>Automatic picture restore.</strong> When a cutscene ends, the player puts
 the screen back by itself: the visible picture surface AND its palette
 are snapshotted before the video starts and restored before the screen
