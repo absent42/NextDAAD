@@ -57,7 +57,7 @@
 ; "L2 DMA TEST" the layer is live and the burst below has something to
 ; damage. If you cannot, STOP - see "IF THE CARD NEVER APPEARS" in the
 ; run sheet. The card uses palette indices 0..15 only and NEVER index
-; 254, which l2_palette_load reserves as the sole transparent entry, so
+; 255, which l2_palette_load reserves as the sole transparent entry, so
 ; any transparency inside the card is damage rather than art.
 ;
 ; THE RED BACKDROP. WINDOW 2 paints a solid red tilemap block at rows
@@ -65,7 +65,7 @@
 ; margin. Layer 2 sits above the tilemap (l2_enable sets NR $15 = S L U),
 ; so with an intact card the red is completely hidden. Red showing
 ; through is a byte the copy did not write: l2_clear_back pre-fills the
-; back surface with $FE = transparent before every blit, so an unwritten
+; back surface with $FF = transparent before every blit, so an unwritten
 ; destination is a hole, not stale pixels. That turns the weakest part
 ; of a visual check - noticing a few wrong bytes - into a binary one.
 ; Geometry: Layer 2 in 256x192 mode is inset 32 px from the tilemap

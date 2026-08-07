@@ -2330,15 +2330,18 @@ if ($SfxDi) {
     if ((($cardBytes - 512) % 256) -ne 0) { throw "l2card.nxi is $cardBytes bytes - not 512 + a whole number of 256-byte rows" }
     $cardRows = ($cardBytes - 512) / 256
     if ($cardRows -lt 1 -or $cardRows -gt 192) { throw "l2card.nxi derives $cardRows rows - gfx_derive_height rejects anything outside 1..192 in 256-wide mode" }
-    # No pixel may be index 254: l2_palette_load reserves it as the sole
+    # No pixel may be index 255 (L2_TRANSP_INDEX, src\nextdaad.inc):
+    # l2_palette_load's closing l2_pal9_stamp reserves it as the sole
     # transparent entry, so a card that used it would show holes on a
     # PERFECT copy and the red backdrop under it would read as damage.
+    # mkl2card.py asserts the same thing from the generator side (it uses
+    # indices 0..15); this is the independent half, from the staging side.
     $cardData = [System.IO.File]::ReadAllBytes($cardSrc)
-    $bad254 = 0
-    for ($i = 512; $i -lt $cardData.Length; $i++) { if ($cardData[$i] -eq 254) { $bad254++ } }
-    if ($bad254 -ne 0) { throw "l2card.nxi uses palette index 254 in $bad254 pixel(s) - that index is reserved transparent, the card would show false holes" }
+    $bad255 = 0
+    for ($i = 512; $i -lt $cardData.Length; $i++) { if ($cardData[$i] -eq 255) { $bad255++ } }
+    if ($bad255 -ne 0) { throw "l2card.nxi uses palette index 255 in $bad255 pixel(s) - that index is reserved transparent, the card would show false holes" }
     Copy-Item $cardSrc "$leg\001.NXI" -Force
-    "staged tests\out\l2card.nxi -> sd\$legName\001.NXI  $cardBytes bytes, 256x$cardRows, no pixel uses index 254"
+    "staged tests\out\l2card.nxi -> sd\$legName\001.NXI  $cardBytes bytes, 256x$cardRows, no pixel uses index 255"
     $sfxDiActive = $true
 }
 

@@ -96,6 +96,16 @@ def main():
     enc = (ROOT / "authoring-kit/lib/videnc.py").read_text(
         encoding="utf-8", errors="replace")
     real = set(re.findall(r"add_argument\(\s*['\"](--[a-z0-9-]+)", enc))
+    # argparse ADDS -h/--help itself, so it is accepted without ever
+    # appearing in an add_argument call - scanning only those calls made
+    # a documented `--help` look undocumented. The flag is real unless
+    # the parser opts out with add_help=False, so read that rather than
+    # whitelisting the name unconditionally: a parser built with
+    # add_help=False really would reject `--help` and the manual really
+    # would be wrong to document it.
+    if not re.search(r"ArgumentParser\((?:[^()]|\([^()]*\))*add_help\s*=\s*False",
+                     enc, re.DOTALL):
+        real.update({"--help"})
     documented = set(re.findall(r"`(--[a-z0-9-]+)`", joined))
     for flag in sorted(documented - real):
         failures.append(
