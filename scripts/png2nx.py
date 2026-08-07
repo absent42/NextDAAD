@@ -69,10 +69,14 @@ ART_COLOURS = RESERVED_INDEX          # 255 usable colours: 0..254
 TRANSPARENT_RGB = (224, 0, 192)
 
 # Packed RGB332 byte gfx2next/the interpreter compare against (NR $14
-# hardware compare, L2_TRANSP_COLOUR in src/nextdaad.inc). Must match
-# nxv2enc.build_palette_block's L2_TRANSPARENT_BYTE0 and the
-# interpreter's own l2_palette_load dodge - if any of the three move,
-# all three move.
+# hardware compare, L2_TRANSP_COLOUR in src/nextdaad.inc). FOUR FILES
+# carry these values and must agree - src/nextdaad.inc is canonical:
+#   src/nextdaad.inc          L2_TRANSP_COLOUR / L2_TRANSP_INDEX
+#   scripts/png2nx.py         L2_TRANSPARENT_BYTE0 / RESERVED_INDEX (here)
+#   authoring-kit/lib/nxv2enc.py    L2_TRANSPARENT_BYTE0
+#   authoring-kit/lib/palcheck.ps1  $TRANSP / $RESERVED
+# If either value moves, all four move. tests/build-tests.ps1 parses all
+# four and fails if they disagree.
 L2_TRANSPARENT_BYTE0 = 0xE3
 
 

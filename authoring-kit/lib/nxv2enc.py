@@ -353,10 +353,14 @@ TERMINAL_OPS = frozenset({OP_FEND, OP_KFLIP})
 PAL_BLOCK_SIZE = 512
 
 # Layer 2 global transparency colour (NR $14 = $E3, the hardware reset
-# value; L2_TRANSP_COLOUR in src/nextdaad.inc). Must match the
-# interpreter AND scripts/png2nx.py's own L2_TRANSPARENT_BYTE0 (the
-# picture path's matching dodge) - if any of the three move, all three
-# move.
+# value; L2_TRANSP_COLOUR in src/nextdaad.inc). FOUR FILES carry these
+# values and must agree - src/nextdaad.inc is canonical:
+#   src/nextdaad.inc          L2_TRANSP_COLOUR / L2_TRANSP_INDEX
+#   scripts/png2nx.py         L2_TRANSPARENT_BYTE0 / RESERVED_INDEX
+#   authoring-kit/lib/nxv2enc.py    L2_TRANSPARENT_BYTE0 (here)
+#   authoring-kit/lib/palcheck.ps1  $TRANSP / $RESERVED
+# If either value moves, all four move. tests/build-tests.ps1 parses all
+# four and fails if they disagree.
 L2_TRANSPARENT_BYTE0 = 0xE3
 
 # ---------------------------------------------------------------------
@@ -3136,6 +3140,18 @@ LATTICE_NEAREST = _nearest_lattice_lut()
 # automatically measure what is actually displayed - build_palette_block's
 # safety net alone would let the encoder pick, and score, a colour it
 # never actually emits.
+#
+# THE TWO MECHANISMS DELIBERATELY DISAGREE ON WHERE $E3 GOES - the
+# lattice remaps (255,0,219) -> (255,0,182) and (255,0,255) ->
+# (255,36,255), while build_palette_block just subtracts 1 from byte0;
+# the dodge's destination is unreachable for any lattice-derived palette,
+# so the two never produce the same output and neither is a check on the
+# other. The consequence for TESTS: because the dodge scrubs $E3 from the
+# wire UNCONDITIONALLY, no assertion on emitted wire bytes can ever prove
+# this exclusion works - it passes even with TRANSP_REMAP emptied. Assert
+# at the PRE-DODGE RGB layer (what the encoder chose) instead. Four
+# assertions in this branch were hollow for exactly this reason before
+# anyone noticed; do not write a fifth.
 TRANSP_COLLISION = ((255, 0, 219), (255, 0, 255))
 TRANSP_REMAP = {(255, 0, 219): (255, 0, 182),
                 (255, 0, 255): (255, 36, 255)}

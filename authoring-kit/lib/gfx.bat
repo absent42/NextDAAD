@@ -80,6 +80,11 @@ if exist "IMAGES\DAAD.png" (
         exit /b 1
     )
     move /Y "DAAD.nxi!ZSUF!" "RELEASE\DAAD.!TMODE!!ZSUF!" >nul
+    REM Advisory palette audit, same as numbered art above - a title
+    REM screen loads through the same l2_palette_load/l2_pal9_stamp path
+    REM and carries exactly the same transparency hazard. Skipped for ZX0
+    REM output, whose palette is compressed and not readable here.
+    if not defined ZSUF powershell -NoProfile -ExecutionPolicy Bypass -File "lib\palcheck.ps1" "RELEASE\DAAD.!TMODE!"
     echo   title DAAD.png -^> DAAD.!TMODE!!ZSUF!
     set "TITLECONVERTED=1"
 )
@@ -98,6 +103,12 @@ if not defined TITLECONVERTED (
     )
     if defined TFOUND (
         copy /Y "!TFOUND!" "RELEASE\!TFOUND!" >nul
+        REM Advisory palette audit. Staged as-is means the kit never saw
+        REM the source art, so this is the ONLY check these files get.
+        REM Only the two uncompressed names have a readable palette; the
+        REM ZX0 variants (.ZX0/.N2Z/.NXZ) cannot be audited at all.
+        if /I "!TFOUND!"=="DAAD.NX2" powershell -NoProfile -ExecutionPolicy Bypass -File "lib\palcheck.ps1" "RELEASE\!TFOUND!"
+        if /I "!TFOUND!"=="DAAD.NXI" powershell -NoProfile -ExecutionPolicy Bypass -File "lib\palcheck.ps1" "RELEASE\!TFOUND!"
         echo   title !TFOUND! -^> RELEASE\!TFOUND! ^(ready-made, staged as-is^)
     )
 )

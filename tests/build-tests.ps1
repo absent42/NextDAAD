@@ -506,6 +506,75 @@ finally {
 
 & "$PSScriptRoot\check-cprops.ps1"
 
+# ---- Layer 2 transparency constants: four files, one pair of values ----
+# The transparent COLOUR ($E3) and the reserved INDEX (255) are written
+# out longhand in four places in three languages - src/nextdaad.inc is
+# canonical, and the other three are the converters and the kit's audit
+# script. There is no shared header they can include, so the only thing
+# that keeps them together is this check. A silent divergence is the
+# nastiest shape of failure available here: the interpreter would dodge
+# one colour while a converter reserved another, and nothing would say
+# so until art punched holes on hardware. Runs on EVERY invocation - it
+# is source-only, needs no build, and costs four file reads.
+function Assert-TranspConstantsInSync {
+    # file -> @{ colour = <regex>; index = <regex> }; each regex must
+    # capture the literal in group 1. Index is optional (nxv2enc.py only
+    # deals with the colour), colour is not.
+    $sites = [ordered]@{
+        'src\nextdaad.inc' = @{
+            colour = '(?m)^\s*L2_TRANSP_COLOUR\s+equ\s+\$([0-9A-Fa-f]+)'
+            index  = '(?m)^\s*L2_TRANSP_INDEX\s+equ\s+(\d+)'
+        }
+        'scripts\png2nx.py' = @{
+            colour = '(?m)^\s*L2_TRANSPARENT_BYTE0\s*=\s*0x([0-9A-Fa-f]+)'
+            index  = '(?m)^\s*RESERVED_INDEX\s*=\s*(\d+)'
+        }
+        'authoring-kit\lib\nxv2enc.py' = @{
+            colour = '(?m)^\s*L2_TRANSPARENT_BYTE0\s*=\s*0x([0-9A-Fa-f]+)'
+            index  = $null
+        }
+        'authoring-kit\lib\palcheck.ps1' = @{
+            colour = '(?m)^\s*\$TRANSP\s*=\s*0x([0-9A-Fa-f]+)'
+            index  = '(?m)^\s*\$RESERVED\s*=\s*(\d+)'
+        }
+    }
+    $colours = [ordered]@{}
+    $indices = [ordered]@{}
+    foreach ($rel in $sites.Keys) {
+        $path = Join-Path $root $rel
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "L2 transparency constant sync: $rel is missing - the four-file agreement check needs it (if the file moved, update Assert-TranspConstantsInSync)"
+        }
+        $text = Get-Content -LiteralPath $path -Raw
+        $m = [regex]::Match($text, $sites[$rel].colour)
+        if (-not $m.Success) {
+            throw "L2 transparency constant sync: no transparent-colour definition found in $rel (pattern '$($sites[$rel].colour)') - it was renamed or deleted, so nothing is holding the four files together any more"
+        }
+        $colours[$rel] = [Convert]::ToInt32($m.Groups[1].Value, 16)
+        if ($sites[$rel].index) {
+            $mi = [regex]::Match($text, $sites[$rel].index)
+            if (-not $mi.Success) {
+                throw "L2 transparency constant sync: no reserved-index definition found in $rel (pattern '$($sites[$rel].index)')"
+            }
+            $indices[$rel] = [int]$mi.Groups[1].Value
+        }
+    }
+    foreach ($pair in @(@{ n = 'transparent COLOUR'; v = $colours; f = 'X2' },
+                        @{ n = 'reserved INDEX';    v = $indices; f = 'D' })) {
+        $canon = 'src\nextdaad.inc'
+        $want = $pair.v[$canon]
+        $bad = @($pair.v.Keys | Where-Object { $pair.v[$_] -ne $want })
+        if ($bad.Count -gt 0) {
+            $detail = ($pair.v.Keys | ForEach-Object { "$_ = $($pair.v[$_].ToString($pair.f))" }) -join '; '
+            throw ("L2 transparency $($pair.n) DESYNC: src\nextdaad.inc says $($want.ToString($pair.f)) but " +
+                   (($bad | ForEach-Object { "$_ says $($pair.v[$_].ToString($pair.f))" }) -join ' and ') +
+                   ". All four copies must move together - $detail")
+        }
+    }
+    "L2 transparency constants agree across 4 files: colour `$$($colours['src\nextdaad.inc'].ToString('X2')), index $($indices['src\nextdaad.inc'])"
+}
+Assert-TranspConstantsInSync
+
 # overlay2's dma_copy contract, checked against the EMITTED BYTES of the
 # current build\nextdaad.nex (tests\dma_contract.py has the full why).
 # This runs on every invocation, not behind a switch: dma_copy carries

@@ -4,10 +4,14 @@
 # checks read the file the interpreter will actually load.
 # Advisory only: always exits 0, never fails a build.
 #
-# $TRANSP/$RESERVED below must agree with L2_TRANSP_COLOUR/L2_TRANSP_INDEX
-# in src/nextdaad.inc, and their two other copies: L2_TRANSPARENT_BYTE0 in
-# scripts/png2nx.py and in authoring-kit/lib/nxv2enc.py. Four places, keep
-# them in sync.
+# FOUR FILES carry these values and must agree - src/nextdaad.inc is
+# canonical:
+#   src/nextdaad.inc          L2_TRANSP_COLOUR / L2_TRANSP_INDEX
+#   scripts/png2nx.py         L2_TRANSPARENT_BYTE0 / RESERVED_INDEX
+#   authoring-kit/lib/nxv2enc.py    L2_TRANSPARENT_BYTE0
+#   authoring-kit/lib/palcheck.ps1  $TRANSP / $RESERVED (here)
+# If either value moves, all four move. tests/build-tests.ps1 parses all
+# four and fails if they disagree.
 param([Parameter(Mandatory=$true)][string]$Path)
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path $Path)) { exit 0 }

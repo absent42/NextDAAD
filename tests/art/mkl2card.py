@@ -10,20 +10,21 @@
 # to answer "did dma_copy move every byte to the right place", and the
 # image IS the instrument. Real location art is the worst possible
 # instrument for that: it is high-detail, so a few wrong bytes hide in
-# the texture, and its adaptive palette can legitimately use index 254
-# - which l2_palette_load stamps TRANSPARENT - so a correct blit can
-# show holes and a hole means nothing. Every property below exists to
-# make a specific class of damage impossible to miss and impossible to
-# fake.
+# the texture, and its adaptive palette can legitimately land an entry
+# on the transparent COLOUR $E3 - which l2_palette_load then rewrites
+# under it - so a correct blit can show holes and a hole means nothing.
+# Every property below exists to make a specific class of damage
+# impossible to miss and impossible to fake.
 #
-#   NO PIXEL IS EVER INDEX 254. Only indices 0..15 are used, and every
-#     palette entry from 16 up is black. l2_palette_load reserves 254
-#     as the sole transparent entry after ANY picture load (see its own
-#     header, overlay2.asm), so with 254 unused ANY transparency inside
-#     the card's area is damage, full stop - either a byte the copy
-#     failed to write (the back surface is pre-cleared to $FE by
-#     l2_clear_back) or a byte it wrote from the wrong place. That is
-#     what makes the tilemap backdrop under the card a binary detector:
+#   NO PIXEL IS EVER INDEX 255. Only indices 0..15 are used, and every
+#     palette entry from 16 up is black. l2_palette_load reserves 255
+#     (L2_TRANSP_INDEX) as the sole transparent entry after ANY picture
+#     load (see its own header, overlay2.asm), so with 255 unused ANY
+#     transparency inside the card's area is damage, full stop - either
+#     a byte the copy failed to write (the back surface is pre-cleared
+#     to index 255 by l2_clear_back) or a byte it wrote from the wrong
+#     place. That is what makes the tilemap backdrop under the card a
+#     binary detector:
 #     the fixture prints a solid red block behind the picture, and red
 #     showing through is not a judgement call.
 #   FLAT FIELDS. The eight colour bands and the white block are single-
@@ -66,8 +67,10 @@
 #
 # Written by hand rather than through tools\png2nx.py (PNG + gfx2next
 # -pal-embed, the canonical route for real art) because that route's
-# ADAPTIVE 256 palette is exactly the property this card must not have:
-# it chooses its own indices and can land on 254.
+# ADAPTIVE palette is exactly the property this card must not have: it
+# picks its own colours, so which index carries which colour - and
+# whether any entry lands on $E3 and gets rewritten - is not under the
+# card's control.
 
 import os
 import struct
@@ -77,11 +80,16 @@ WIDTH = 256
 HEIGHT = 128
 
 # --- palette ------------------------------------------------------
-# 16 used entries, 3 bits per channel. None of these encode to $FE
-# (which would be r=7 g=7 b=4or5): l2_palette_load rewrites any entry
-# whose first byte is $FE to $FF to stop it punching an unintended
-# hole, and an entry silently rewritten under us would be one more
-# thing the card could not vouch for.
+# 16 used entries, 3 bits per channel. None of these encode to $E3
+# (L2_TRANSP_COLOUR - which is r=7 g=0 b=6or7, i.e. pure magenta):
+# l2_palette_load rewrites any entry whose first byte is $E3 to $E2 to
+# stop it punching an unintended hole, and an entry silently rewritten
+# under us would be one more thing the card could not vouch for. That
+# is why entry 6 is (7,1,7) and not the obvious (7,0,7): one step of
+# green off pure magenta packs to $E7 instead of $E3, is left alone by
+# the loader, and is still magenta to the eye. It is the same escape
+# the video encoder picks for the same colour (nxv2enc.py TRANSP_REMAP
+# maps (255,0,255) -> (255,36,255), which is exactly this entry).
 COLOURS = [
     (0, 0, 0),      # 0  black      - borders and rules
     (7, 7, 7),      # 1  white
@@ -89,7 +97,7 @@ COLOURS = [
     (0, 7, 0),      # 3  green
     (0, 0, 7),      # 4  blue
     (7, 7, 0),      # 5  yellow
-    (7, 0, 7),      # 6  magenta
+    (7, 1, 7),      # 6  magenta (NOT (7,0,7) - that packs to $E3, see above)
     (0, 7, 7),      # 7  cyan
     (7, 3, 0),      # 8  orange
     (3, 3, 3),      # 9  grey
@@ -117,7 +125,7 @@ def pal_bytes():
         else:
             r = g = b = 0
         first = (r << 5) | (g << 2) | (b >> 1)
-        assert first != 0xFE, "entry %d encodes to $FE - l2_palette_load would rewrite it" % i
+        assert first != 0xE3, "entry %d encodes to $E3 - l2_palette_load would rewrite it" % i
         out.append(first)
         out.append(b & 1)
     return bytes(out)
@@ -204,8 +212,11 @@ def build():
     for row in px:
         flat.extend(row)
     assert len(flat) == WIDTH * HEIGHT
+    # Reserved index FIRST: the broader "no index without a colour"
+    # check below subsumes it, so it must report before that one or its
+    # message can never be seen.
+    assert 255 not in flat, "index 255 is reserved transparent - see the header"
     assert max(flat) < len(COLOURS), "a pixel used an index with no colour"
-    assert 254 not in flat, "index 254 is reserved transparent - see the header"
     return bytes(flat)
 
 

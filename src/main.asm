@@ -66,8 +66,9 @@ main:
     call l2_dbg_hook             ; Layer 2 bring-up test card (Task 2);
                                   ; no-op unless T is held (debug.asm)
  ENDIF
-    ; Game takeover: wipe the FULL tilemap to the transparent
-    ; attribute. The boot diagnostics have sat in rows 0-11 since
+    ; Game takeover: wipe the FULL tilemap to blank cells at the
+    ; default attribute (tm_clear_blank - the tilemap has no
+    ; transparency). The boot diagnostics have sat in rows 0-11 since
     ; dbg_engage_tilemap and the game windows never cover those rows,
     ; so they would stay resident behind Layer 2 art and reappear
     ; through every transparent pixel. After the DEBUG T-hook (which

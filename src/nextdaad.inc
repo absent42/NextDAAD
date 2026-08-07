@@ -243,6 +243,14 @@ NR_TM_TRANSP    equ $4C     ; NORMAL tilemap mode's transparent index -
 ; These were one constant (TM_TRANSP_ATTR) doing both jobs plus a third,
 ; which is what tied Layer 2's transparent colour to a tilemap attribute
 ; encoding. Never merge them again.
+;
+; FOUR FILES CARRY THESE VALUES - this one is canonical, and if either
+; moves, all four move:
+;   src/nextdaad.inc          L2_TRANSP_COLOUR / L2_TRANSP_INDEX (here)
+;   scripts/png2nx.py         L2_TRANSPARENT_BYTE0 / RESERVED_INDEX
+;   authoring-kit/lib/nxv2enc.py    L2_TRANSPARENT_BYTE0
+;   authoring-kit/lib/palcheck.ps1  $TRANSP / $RESERVED
+; tests/build-tests.ps1 parses all four and fails if they disagree.
 L2_TRANSP_COLOUR equ $E3    ; RGB332 COLOUR written to NR_L2_TRANSP, and
                             ; stamped into L2_TRANSP_INDEX. $E3 is the
                             ; hardware reset value (chapter-next-layer2

@@ -679,8 +679,23 @@ Two practical rules:
   Index 255 is reserved for the transparency entry, and any pixel using
   it becomes a hole.
 
-The build warns you if either rule is broken; it does not stop, because
-a warning is usually what you want when the colour was deliberate.
+Nothing enforces either rule for you - the kit converts the PNG you
+supply and does not recolour or re-quantize it, so keeping to 255
+colours and avoiding #E000C0 is your job in the paint program.
+
+What the build does is audit the converted files and warn. It never
+stops, because a warning is usually what you want when the colour was
+deliberate. What is audited:
+
+- numbered location art (`IMAGES\NNN.png`), and
+- the title screen, whether converted from `IMAGES\DAAD.png` or staged
+  ready-made as `DAAD.NX2`/`DAAD.NXI`.
+
+What is NOT audited: anything built with `COMPRESS=1`, and ready-made
+title art supplied in a compressed form (`.ZX0`/`.N2Z`/`.NXZ`). A
+compressed file has no readable palette, so there is nothing to check -
+with `COMPRESS=1` you get no transparency warnings at all. If you want
+the check, run one build with `COMPRESS=0` and read the warnings.
 
 ### AYS streamed songs
 

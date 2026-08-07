@@ -226,19 +226,27 @@ l2_clear_at:
 ;   it is also NECESSARY, because the compare is against the top 8
 ;   bits of the 9-bit entry, which means TWO of the 512 RGB333 colours
 ;   match any given transparency value and the 9th bit cannot rescue
-;   an entry. The nudge: RGB332's low two bits are the BLUE field, so
-;   $E3 -> $E2 moves blue from 3/3 to 2/3 - ONE step on the 0-3 scale,
-;   imperceptible on a colour this saturated. Any art whose palette
-;   happens to land on $E3 would otherwise punch unintended holes;
+;   an entry. The nudge, on the 9-bit path both real callers use
+;   (l2_palette_load B=1 and gfx_direct_stream, via l2_pal9_run):
+;   byte0's low two bits are the TOP TWO of the 3-bit blue field and
+;   the second byte carries its LSB, so $E3 -> $E2 moves blue TWO
+;   steps on the 0-7 scale (7 -> 5, or 6 -> 4 - the untouched LSB
+;   decides which), still saturated magenta, no longer transparent.
+;   On the 8-bit path (B=0, no live caller) the same -1 is ONE step
+;   on that format's 0-3 blue scale, 3/3 -> 2/3. Same byte, different
+;   arithmetic - the scale depends on the format, so always say which.
+;   nxv2enc.py's build_palette_block states the 9-bit form too. Any
+;   art whose palette lands on $E3 would otherwise punch holes;
 ; - entry 255 (L2_TRANSP_INDEX) is then stamped $E3 via the 9-bit pair
 ;   (NR $44 = L2_TRANSP_COLOUR, then 0: blue LSB 0, priority 0 -
 ;   chosen over an NR $41 write so the priority bit is explicitly
 ;   cleared), making index 255 the ONLY transparent entry after ANY
 ;   l2_palette_load. No Rabenstein art uses pixel value 255
 ;   (L2_TRANSP_INDEX, nextdaad.inc: png2nx.py quantizes to 255 colours
-;   so art never reaches it), so reserving the index costs nothing;
-;   the DEBUG test card's identity palette already satisfied the
-;   invariant.
+;   so art never reaches it), so reserving the index costs nothing.
+;   The DEBUG test card DOES paint pixel 255 (TC_MARK_COLOUR), but it
+;   never calls l2_palette_load - it runs on the reset identity
+;   palette, where 255 is white - so the invariant is untouched by it.
 l2_palette_load:
     ld a, b
     push af
@@ -253,8 +261,8 @@ l2_palette_load:
     inc hl
     cp L2_TRANSP_COLOUR          ; colour collision with the reserved
     jr nz, .w8                   ; transparent colour: dodge one step of
-    ld a, L2_TRANSP_COLOUR-1     ; the B field, still magenta, no longer
-                                 ; transparent
+    ld a, L2_TRANSP_COLOUR-1     ; this format's 0-3 B field, still
+                                 ; magenta, no longer transparent
 .w8:
     nextreg NR_PAL_VALUE, a
     djnz .l8
@@ -288,7 +296,8 @@ l2_pal9_run:
     inc hl
     cp L2_TRANSP_COLOUR          ; dodge the RRRGGGBB byte only - the
     jr nz, .w9                   ; compare ignores the second byte
-    ld a, L2_TRANSP_COLOUR-1
+    ld a, L2_TRANSP_COLOUR-1     ; = TWO steps of the 9-bit 0-7 blue
+                                 ; scale (header), the LSB is untouched
 .w9:
     nextreg NR_PAL_VALUE9, a
     ld a, (hl)
@@ -1770,7 +1779,7 @@ gfx_evict_fix:
 ; so the file is closed and REOPENED (gfx_open_chain deterministically
 ; re-finds the same file) and the 512 bytes are programmed in two
 ; 256-byte halves through the shared l2_pal9_run + l2_pal9_stamp (the
-; same $FE dodge and entry-254 stamp as l2_palette_load). Finally the
+; same $E3 dodge and entry-255 stamp as l2_palette_load). Finally the
 ; flip, exactly as gfx_blit ends. NOTHING is cached and the caller
 ; clears the stage: the result is transient, a revisit reloads.
 ; WHY RAW ONLY: a compressed fallback would have to depack directly
@@ -1884,10 +1893,10 @@ gfx_direct_stream:
     jr c, .palfail
     ld hl, gfxRowBuf
     ld b, 128                   ; 128 9-bit entries per 256-byte half
-    call l2_pal9_run            ; shared $FE-dodge programming loop
+    call l2_pal9_run            ; shared $E3-dodge programming loop
     pop bc
     djnz .pal
-    call l2_pal9_stamp          ; entry 254 = the reserved transparent
+    call l2_pal9_stamp          ; entry 255 = the reserved transparent
     ld a, (gfxHandle)
     call esx_fclose
     ld a, $FF
@@ -2501,8 +2510,9 @@ zx0_ref_read:
 ; front throughout), then the surfaces flip. Sequence: stage the mode
 ; in l2Mode (variable only - the hardware keeps displaying the old
 ; picture in the old mode), clear the back surface to the transparent
-; colour (also pre-clears the remainder below a short picture to
-; $FE), copy the pixel rows top-aligned, load the file's embedded
+; INDEX (l2_clear fills with L2_TRANSP_INDEX, the reserved pixel value
+; 255 - not a colour; that also pre-clears the remainder below a short
+; picture), copy the pixel rows top-aligned, load the file's embedded
 ; 512-byte 9-bit palette (deliberately LAST before the flip: the
 ; palette is global, so the old picture wears the new colours only
 ; for the ~1ms the load takes instead of the whole render), then
@@ -3338,7 +3348,12 @@ msgFontBad:   db "FONT BAD", 0
 
  IFDEF DEBUG
 
-TC_MARK_COLOUR equ 255           ; distinct from the gradient's low end
+TC_MARK_COLOUR equ 255           ; distinct from the gradient's low end.
+; NOTE: this numerically EQUALS L2_TRANSP_INDEX, and tc_gradient_256
+; writes pixel 255 on every row. Safe only because l2_testcard runs on
+; the reset identity palette (255 = white) and never calls
+; l2_palette_load, which is what would stamp 255 transparent. If this
+; card ever loads a palette, change TC_MARK_COLOUR first.
 
 ; A = 0 (256x192) or 1 (320x256) on entry. Clears the card area to blank
 ; cells at the default attribute (tm_clear_blank, tilemap.asm; the
@@ -3362,7 +3377,7 @@ l2_testcard:
 
 ; A = 0/1 as above. The L2 recipe (mode_set incl. clip+scroll, enable
 ; incl. priority, clear-to-transparent) plus the gradient + corner-
-; marker draw - l2_testcard's guts MINUS the tilemap-transparent clear.
+; marker draw - l2_testcard's guts MINUS the tilemap card-area clear.
 ; Split out for the bare-metal isolation ladder (debug.asm's
 ; l2_bareprobe_hook): its stages 0-1 have no tilemap yet, so they call
 ; this directly instead of l2_testcard. Corrupts everything.

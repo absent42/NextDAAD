@@ -30,9 +30,9 @@ def test_warns_on_near_magenta_not_just_canonical():
     """(230, 8, 200) is NOT the canonical (224, 0, 192) triple, but it
     packs to the same RGB332 byte $E3 that hardware compares against:
         r=230 -> r&0xE0       = 0xE0
-        g=8   -> (g>>3)&0x1C  = 0x01
+        g=8   -> (g>>3)&0x1C  = 0x00   (8>>3 = 1, and 1 & 0x1C = 0)
         b=200 -> b>>6         = 0x03
-        byte0                 = 0xE0|0x01|0x03 = 0xE3
+        byte0                 = 0xE0|0x00|0x03 = 0xE3
     An exact-tuple check against only (224, 0, 192) would miss this
     and stay silent while hardware still punches a hole. Single-colour
     image so PIL's adaptive palette preserves the triple exactly (no

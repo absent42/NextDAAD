@@ -2922,7 +2922,7 @@ def t13_dither_mode_selector():
 
 
 @case(13, "transparency exclusion holds under the mixture path - no "
-          "emitted palette entry can pack to the NR $14 $E3 colour")
+          "CHOSEN palette entry can pack to the NR $14 $E3 colour")
 def t13_mixture_transparency_invariant():
     # The hazard region moved from near-white (the old cream $FE) to
     # near-magenta - bright red and blue, near-zero green - when NR $14
@@ -2936,15 +2936,30 @@ def t13_mixture_transparency_invariant():
     base[:, :20] = np.array([255, 0, 205], dtype=np.uint8)    # straddles both
     base[:, 20:32] = np.array([255, 0, 245], dtype=np.uint8)  # $E3 points
     pal = enc.display_palette(base)
-    block = enc.build_palette_block(pal)
+
+    # PRE-DODGE layer, exactly as t14's _collect_pal_rgb does it (Task
+    # 4c). build_palette_block scrubs any byte0 == $E3 unconditionally
+    # (9efd280), so asserting on ITS output bytes would be unsatisfiable
+    # for any input whatsoever - a check that cannot fail proves
+    # nothing. Pack the RGB the encoder CHOSE with build_palette_block's
+    # own formula instead: that is the layer the lattice exclusion
+    # defends, and the layer that can actually go wrong.
+    def _byte0(rgb):
+        r, g, b = int(rgb[0]), int(rgb[1]), int(rgb[2])
+        return (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6)
+
+    pal_byte0 = [_byte0(pal[i]) for i in range(256)]
     for amp in (0.0, 0.25, 0.5, 1.0):
         for mode in enc.DITHER_MODES:
             idx, dec = enc.dither_quantize(base, pal, amp, mode)
             used = set(np.unique(idx).tolist())
-            bad = [i for i in used if block[2 * i] == 0xE3]
+            bad = [i for i in used if pal_byte0[i] == 0xE3]
             expect(not bad,
-                   f"amp {amp} mode {mode}: emitted entries {bad} pack to "
-                   f"$E3 - transparent punch-through on silicon")
+                   f"amp {amp} mode {mode}: chose palette entries {bad} "
+                   f"({[tuple(int(c) for c in pal[i]) for i in bad]}) that "
+                   f"pack to $E3 - only build_palette_block's unconditional "
+                   f"dodge would keep that off the wire, and it would be "
+                   f"scoring a colour it never emits")
             for col in enc.TRANSP_COLLISION:
                 hit = ((dec[..., 0] == col[0]) & (dec[..., 1] == col[1])
                        & (dec[..., 2] == col[2]))
@@ -2952,8 +2967,8 @@ def t13_mixture_transparency_invariant():
                        f"amp {amp} mode {mode}: emitted the excluded "
                        f"display colour {col}")
     # the whole palette, not just the used part, stays clean
-    expect(not [i for i in range(256) if block[2 * i] == 0xE3],
-           "display_palette emitted an $E3 entry")
+    expect(not [i for i in range(256) if pal_byte0[i] == 0xE3],
+           "display_palette chose an entry packing to $E3")
 
 
 # =======================================================================
