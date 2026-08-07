@@ -919,6 +919,30 @@ finally {
     Pop-Location
 }
 
+# Font/pointer switching stimulus fixture (SP18 Task 1, 2026-08-07).
+# Compiled unconditionally like every block above so a break in the DSF
+# is caught on a plain run; there is no leg switch and no staging for
+# it - the whole point is the compiled bytes, asserted below.
+#
+# OUT OF TREE, for the same reason as l2holes/tileslack above and by the
+# same means: DRF.exe and DRB.PHP are run by absolute path with the cwd
+# set to tests\out\fontsw-work, so nothing is written under tools\ -
+# read-only working material git cannot restore.
+$fontswWork = Join-Path $root 'tests\out\fontsw-work'
+New-Item -ItemType Directory -Force $fontswWork | Out-Null
+Copy-Item "$PSScriptRoot\fontsw.dsf" "$fontswWork\NDFONTSW.DSF" -Force
+Push-Location $fontswWork
+try {
+    & "$dr\TOOLS\DRC\DRF.exe" zx next NDFONTSW.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (fontsw)" }
+    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDFONTSW.json NDFONTSW.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (fontsw)" }
+    Copy-Item NDFONTSW.DDB "$root\tests\out\fontsw.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 function Find-ByteRuns {
     # Every start offset of $needle in $hay. Plain scan - the images
     # here are tens of KB, so nothing cleverer is warranted.
@@ -1257,6 +1281,26 @@ foreach ($a in $tsArms) {
     }
 }
 "tileslack.ddb: $($tsBytes.Length) bytes, v$($tsBytes[0]), 8 A/B arms verified (label message, --tile-slack value and GFX n 13/14 agree for each), videos 1-4 only, MODE 2 / WINSIZE 32 80 / DISPLAY 1 / ANYKEY all present"
+
+# --- fontsw: the font/pointer switching stimulus ---
+$fontswBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\fontsw.ddb")
+if ($fontswBytes[0] -ne 2) {
+    throw "fontsw: DDB header version byte is $($fontswBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+}
+# GFX is opcode 87 ($57), MOUSE is 86 ($56); both take two parameters,
+# so each call is three bytes. Assert DRC emitted the sub-commands we
+# authored rather than something it rewrote.
+foreach ($c in @(@{ n = 'GFX 2 16';  b = [byte[]]@(87, 2, 16) },
+                 @{ n = 'GFX 0 16';  b = [byte[]]@(87, 0, 16) },
+                 @{ n = 'GFX 3 16';  b = [byte[]]@(87, 3, 16) },
+                 @{ n = 'MOUSE 2 5'; b = [byte[]]@(86, 2, 5) },
+                 @{ n = 'MOUSE 1 5'; b = [byte[]]@(86, 1, 5) },
+                 @{ n = 'MOUSE 0 5'; b = [byte[]]@(86, 0, 5) })) {
+    if ((Find-ByteRuns $fontswBytes $c.b).Count -lt 1) {
+        throw "fontsw: '$($c.n)' not present in tests\out\fontsw.ddb - DRC did not emit the authored condact"
+    }
+}
+"fontsw.ddb: v$($fontswBytes[0]), GFX 2/0/3 16 and MOUSE 2/1/0 5 all present as authored"
 
 # ---- DRC's -D debug marker, both halves of the contract -------------
 # HALF ONE: what DRC EMITS. tests\debugflag.dsf has three DEBUG lines;

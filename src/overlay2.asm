@@ -980,6 +980,8 @@ h_gfx:
     jr z, .vidonce
     cp GFX_SUB_VID_LOOP
     jr z, .vidloop
+    cp GFX_SUB_FONT
+    jr z, .font
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
     push bc                     ; across dbg_puts (corrupts BC) for
@@ -1025,6 +1027,29 @@ h_gfx:
     push hl
     ld a, VID_PAGE
     jp ovl_map_page
+.font:                           ; sub 16: install font B. 0 is the base
+                                 ; (the embedded table, then FONT.CHR
+                                 ; over it if one exists); 1-9 are
+                                 ; FONT<n>.CHR. Out of range is a no-op,
+                                 ; matching every other sub's tolerance.
+    ld a, b
+    cp 10
+    ret nc
+    ld hl, fontCur
+    cp (hl)
+    ret z                        ; already installed: nothing to do at
+                                 ; all - nothing else in the tree writes
+                                 ; TM_DEFS
+    or a
+    jr nz, .fontfile
+    call tm_font_init            ; 0: lay the embedded table down FIRST,
+    xor a                        ; so a revert still works when no
+    ld (fontCur), a              ; FONT.CHR exists. This is exactly the
+                                 ; boot order. tm_font_init is resident,
+                                 ; so it is reachable from here.
+.fontfile:
+    ld a, b
+    jp font_load
 
 msgGfxUnk: db "GFX? ", 0
 
@@ -3072,6 +3097,7 @@ title_boot:
     call gfx_load_rollback         ; transient: hand the banks straight
                                    ; back - no cache entry ever existed
     call wait_key                  ; block for any key (print.asm)
+    xor a                          ; base font
     call font_load                 ; after-keypress path (see header note)
     ld b, 1
     call h_display                 ; h_display's non-zero shape: clear
@@ -3090,6 +3116,7 @@ title_boot:
                                    ; load failure falls in via .rollback
                                    ; just above - both silent, normal
                                    ; boot either way
+    xor a                          ; base font
     call font_load
 .toPointer:                        ; SP12 T3: one-way OVL2->OVL0 hop -
                                    ; font_load/h_display are already this
@@ -3202,20 +3229,53 @@ title_blit:
 ; after the swap (tmAttr and the tilemap palette are independent of the
 ; glyph bitmaps).
 ;
-; Load a custom font: PARTn\FONT.CHR (curPart >= 2) then FONT.CHR,
-; standard DAAD 2048-byte charset (256 chars x 8 rows, 1bpp). Absent =
-; silent (the embedded font stays); wrong size = silent + DEBUG
-; marker. Never esx_fread's straight into TM_DEFS: a short/failed read
-; must never corrupt the live glyph table the tilemap may be actively
-; displaying (mid-game part switch), so the file lands in a transient
-; bank_alloc'd 16K scratch bank first (mapped into slot 6/DATA_WINDOW
-; via data_save/data_map_page - ext_xmes's own idiom, overlay0.asm) and
-; is only ldir'd into TM_DEFS once the exact size is confirmed - scratch-
+; A = font number 0-9 -> fontNameBuf = "FONT.CHR",0 for 0, or
+; "FONTn.CHR",0 for 1-9, with fontNameLen set to the byte count
+; including the NUL (the PARTn\ prefix copy needs it, since the name is
+; no longer a fixed 9 bytes). Range is the caller's problem - h_gfx
+; rejects 10+ before ever reaching here. Corrupts AF, BC, DE, HL.
+font_name_build:
+    ld (fontNum), a
+    ld hl, fontNameStem
+    ld de, fontNameBuf
+    ld bc, 4                     ; "FONT"
+    ldir                         ; DE -> fontNameBuf+4
+    ld a, (fontNum)
+    or a
+    ld c, 9                      ; "FONT.CHR" + NUL
+    jr z, .ext                   ; ld c does not touch flags
+    add a, '0'
+    ld (de), a
+    inc de
+    ld c, 10                     ; "FONTn.CHR" + NUL
+.ext:
+    ld a, c
+    ld (fontNameLen), a
+    ld hl, fontNameExt
+    ld bc, 5                     ; ".CHR" + NUL
+    ldir
+    ret
+
+; A = font number (0-9); font_name_build (above) turns it into
+; FONT.CHR (0) or FONT<n>.CHR (1-9) in fontNameBuf. Load: PARTn\<name>
+; (curPart >= 2) then <name> at the root, standard DAAD 2048-byte
+; charset (256 chars x 8 rows, 1bpp). Absent = silent (the previously-
+; installed table stays); wrong size = silent + DEBUG marker. Never
+; esx_fread's straight into TM_DEFS: a short/failed read must never
+; corrupt the live glyph table the tilemap may be actively displaying
+; (mid-game part switch), so the file lands in a transient bank_alloc'd
+; 16K scratch bank first (mapped into slot 6/DATA_WINDOW via
+; data_save/data_map_page - ext_xmes's own idiom, overlay0.asm) and is
+; only ldir'd into TM_DEFS once the exact size is confirmed - scratch-
 ; then-install. Exact-size validation (BC checked, not CF alone - the
 ; F_READ/F_WRITE count lesson) plus the 1-byte-overshoot probe mirror
-; tm_font_init's own GAME.CHR check byte for byte. Corrupts AF, BC, DE,
-; HL, IX.
+; tm_font_init's own GAME.CHR check byte for byte. fontCur is only
+; written after that final ldir, so a failed load (absent file, wrong
+; size, no free bank, no drive) leaves it exactly as it was and a later
+; retry of the same number is never short-circuited by GFX sub 16's
+; already-installed check. Corrupts AF, BC, DE, HL, IX.
 font_load:
+    call font_name_build         ; A = font number, in
     ld a, (curPart)
     dec a
     jr z, .rootonly              ; curPart == 1: skip straight to the
@@ -3236,8 +3296,10 @@ font_load:
     ld (hl), '\'
     inc hl                        ; hl = fontNamePart+6
     ex de, hl
-    ld hl, fontName                ; copy "FONT.CHR",0 verbatim (9 bytes)
-    ld bc, 9
+    ld hl, fontNameBuf           ; copy the built name (9 or 10 bytes)
+    ld a, (fontNameLen)
+    ld c, a
+    ld b, 0
     ldir
     call esx_getsetdrv
     jr c, .rootonly
@@ -3250,7 +3312,7 @@ font_load:
                                   ; PARTn\ fallback above
     call esx_getsetdrv
     ret c                         ; no drive at all: silent, table untouched
-    ld ix, fontName
+    ld ix, fontNameBuf
     ld b, ESX_MODE_READ
     call esx_fopen
     ret c                         ; no FONT.CHR either: silent, table untouched
@@ -3291,6 +3353,8 @@ font_load:
     ld de, TM_DEFS                   ; live table (the only write to
     ld bc, 2048                      ; TM_DEFS anywhere in this routine)
     ldir
+    ld a, (fontNum)              ; installed: remember which, so a repeat
+    ld (fontCur), a              ; request is a genuine no-op
     jr .close
 .bad:
  IFDEF DEBUG                        ; wrong size: no-op with a marker,
@@ -3314,6 +3378,11 @@ font_load:
 ; there once this whole chain finishes (T3's chained-hop precedent).
 ; Corrupts everything.
 font_load_switch:
+    ld a, $FF                    ; a part switch re-probes the base font;
+    ld (fontCur), a              ; mark the cache unknown so a game that
+                                 ; re-selects the same number after the
+                                 ; switch is not short-circuited
+    xor a                        ; base font
     call font_load
     ld hl, aud_load_sfb
     push hl
@@ -3325,11 +3394,15 @@ font_load_switch:
 ; for why the read never targets TM_DEFS directly.
 fontHandle:   db $FF              ; esxDOS handle, $FF = none open
 fontBank:     db $FF              ; transient scratch 16K bank while held
-; "PARTn\FONT.CHR",0 = 6 ("PARTn\") + 9 ("FONT.CHR",0) = 15 bytes
-fontNamePart: ds 15
-fontName:     db "FONT.CHR", 0    ; root fallback name AND the PARTn\
-                                  ; suffix (copied into fontNamePart+6,
-                                  ; 9 bytes - the xmsName/ext_xmes reuse)
+fontNum:      db 0                ; number being built/loaded
+fontNameLen:  db 9                ; bytes in fontNameBuf including the NUL
+fontCur:      db $FF              ; installed font, $FF = unknown. $FF at
+                                  ; boot so the first install always runs.
+fontNameBuf:  ds 10               ; "FONTn.CHR",0 worst case
+; "PARTm\" (6) + the longest built name (10)
+fontNamePart: ds 16
+fontNameStem: db "FONT"
+fontNameExt:  db ".CHR", 0
 msgFontBad:   db "FONT BAD", 0
 
 ; --- DEBUG bring-up test card ---
