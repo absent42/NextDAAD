@@ -616,6 +616,11 @@ function Assert-ManualIndexed {
 Assert-ManualFresh
 Assert-ManualIndexed
 
+if (Test-Path (Join-Path $root 'manual')) {
+    & python "$PSScriptRoot\manual_facts.py"
+    if ($LASTEXITCODE -ne 0) { throw "tests\manual_facts.py failed - the manual contradicts the source" }
+}
+
 # overlay2's dma_copy contract, checked against the EMITTED BYTES of the
 # current build\nextdaad.nex (tests\dma_contract.py has the full why).
 # This runs on every invocation, not behind a switch: dma_copy carries
