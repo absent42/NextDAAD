@@ -100,14 +100,26 @@ if exist "FONT.CHR" (
     echo   font FONT.CHR -^> RELEASE\FONT.CHR ^(ready-made, staged as-is^)
 )
 
+REM ---- numbered ready-made fonts (SP18): FONT1.CHR..FONT9.CHR are the
+REM      runtime-selectable fonts GFX n 16 installs. Same as FONT.CHR
+REM      above - already full 2048-byte tables, staged as-is. Absent is
+REM      normal (a game that never switches fonts ships none).
+for %%N in (1 2 3 4 5 6 7 8 9) do (
+    if exist "FONT%%N.CHR" (
+        copy /Y "FONT%%N.CHR" "RELEASE\FONT%%N.CHR" >nul
+        echo   font FONT%%N.CHR -^> RELEASE\FONT%%N.CHR ^(ready-made, staged as-is^)
+    )
+)
+
 REM ---- ready-made mouse pointer (SP12 T3): a kit-root POINTER.SPR - a
 REM      raw 256-byte 16x16 8-bit hardware sprite pattern, see
 REM      docs\customising.html "Custom mouse pointer" for the format and
 REM      a sprite-editor workflow - is staged to RELEASE\ as-is, no
-REM      conversion wired in here (gfx2next's -sprites mode CAN emit
-REM      this exact raw format, but only comes out correct with palette
-REM      authoring this kit does not verify - see docs\customising.html
-REM      "Custom mouse pointer").
+REM      conversion run here. IMAGES\POINTER.png is the source-art
+REM      alternative (SP18): lib\gfx.bat converts it via gfx2next -sprites
+REM      -pal-std before this stage runs, so a kit-root POINTER.SPR staged
+REM      here overwrites that conversion when both are present - keep
+REM      only one.
 REM      Mirrors the ready-made FONT.CHR staging just above and
 REM      lib\gfx.bat's ready-made DAAD.* title staging (9fe5557). No
 REM      POINTER.SPR in the kit root is normal (the default arrow plays)
@@ -117,6 +129,19 @@ REM      (SP11 T6), same as any other per-part asset.
 if exist "POINTER.SPR" (
     copy /Y "POINTER.SPR" "RELEASE\POINTER.SPR" >nul
     echo   pointer POINTER.SPR -^> RELEASE\POINTER.SPR ^(ready-made, staged as-is^)
+)
+
+REM ---- numbered ready-made pointers (SP18): POINTER1.SPR..POINTER9.SPR
+REM      are the runtime-selectable pointers MOUSE n 5 installs. Same as
+REM      POINTER.SPR above - already full 256-byte sprite patterns,
+REM      staged as-is (and likewise overwriting IMAGES\POINTERn.png's
+REM      conversion in lib\gfx.bat when both are present). Absent is
+REM      normal (a game that never switches pointers ships none).
+for %%N in (1 2 3 4 5 6 7 8 9) do (
+    if exist "POINTER%%N.SPR" (
+        copy /Y "POINTER%%N.SPR" "RELEASE\POINTER%%N.SPR" >nul
+        echo   pointer POINTER%%N.SPR -^> RELEASE\POINTER%%N.SPR ^(ready-made, staged as-is^)
+    )
 )
 
 REM ---- multi-part games (SP11 Task 6): PART2\..PART9\ source folders,
