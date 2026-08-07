@@ -575,6 +575,47 @@ function Assert-TranspConstantsInSync {
 }
 Assert-TranspConstantsInSync
 
+function Assert-ManualFresh {
+    # authoring-kit\docs is GENERATED and SHIPPED. A .md edited without
+    # regenerating ships stale HTML to authors - the same silent-staleness
+    # failure the frozen .exe files had. Fail loudly instead.
+    $src = Join-Path $root 'manual'
+    if (-not (Test-Path $src)) { return }
+    $out = Join-Path $root 'authoring-kit\docs'
+    foreach ($md in Get-ChildItem $src -Recurse -Filter *.md) {
+        $rel = $md.FullName.Substring($src.Length + 1) -replace '\.md$', '.html'
+        $html = Join-Path $out $rel
+        if (-not (Test-Path $html)) {
+            throw "manual: $rel has no generated HTML - run .\build.ps1 -Kit (or python scripts\build_manual.py)"
+        }
+        if ((Get-Item $html).LastWriteTime -lt $md.LastWriteTime) {
+            throw "manual: $($md.Name) is newer than its generated HTML - run .\build.ps1 -Kit before committing"
+        }
+    }
+}
+
+function Assert-ManualIndexed {
+    # A page nobody links to is a page nobody reads. Every document must
+    # be reachable from the index. Checked one way only (document -> index),
+    # so the index may name a document that does not exist yet during the
+    # build-out; the reverse would block incremental work.
+    $src = Join-Path $root 'manual'
+    if (-not (Test-Path $src)) { return }
+    $indexPath = Join-Path $src 'index.md'
+    if (-not (Test-Path $indexPath)) { throw "manual: no index.md" }
+    $index = Get-Content $indexPath -Raw
+    foreach ($md in Get-ChildItem $src -Recurse -Filter *.md) {
+        if ($md.Name -eq 'index.md') { continue }
+        $rel = ($md.FullName.Substring($src.Length + 1) -replace '\\', '/')
+        if ($index -notmatch [regex]::Escape($rel)) {
+            throw "manual: $rel is not linked from index.md - add it or nobody will find it"
+        }
+    }
+}
+
+Assert-ManualFresh
+Assert-ManualIndexed
+
 # overlay2's dma_copy contract, checked against the EMITTED BYTES of the
 # current build\nextdaad.nex (tests\dma_contract.py has the full why).
 # This runs on every invocation, not behind a switch: dma_copy carries
