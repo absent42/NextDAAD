@@ -2,6 +2,21 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.3.2 - unreleased
+
+- Location pictures use the Spectrum Next's standard transparency
+  colour, magenta #E000C0. The reserved palette index moved to 255. 
+  Keep #E000C0 out
+  of your artwork and keep it to 255 colours - the kit converts the PNG
+  you supply as-is, it does not re-quantize. Uncompressed
+  location art and title screens are audited after conversion and
+  warned about; COMPRESS=1 output cannot be checked, because a
+  compressed file has no readable palette.
+- The screen no longer shows a white background before a game's first
+  picture, or in any area a game has not painted. The tilemap was
+  filling those cells with white paper while claiming to make them
+  transparent.
+
 ## v0.3.1 - 04/08/2026
 
 DAAD compliance sweep. NextDAAD now executes real DAAD databases with
@@ -187,20 +202,6 @@ error from the encoder. Delete the option; nothing replaces it.
 - A video that fails to open now says why on screen (VID FILE?/VID
   FMT?/VID NOBANK2/VID SIZE?/VID FRAG?) instead of silently skipping
   the cutscene.
-- Location pictures use the Spectrum Next's standard transparency
-  colour, magenta #E000C0, instead of a pale cream. The old colour was
-  one an artist might genuinely use - candlelight, parchment, skin
-  highlight - and any such pixel silently became a hole showing the
-  text layer. The reserved palette index moved to 255. Keep #E000C0 out
-  of your artwork and keep it to 255 colours - the kit converts the PNG
-  you supply as-is, it does not re-quantize for you. Uncompressed
-  location art and title screens are audited after conversion and
-  warned about; COMPRESS=1 output cannot be checked, because a
-  compressed file has no readable palette.
-- The screen no longer shows a white background before a game's first
-  picture, or in any area a game has not painted. The tilemap was
-  filling those cells with white paper while claiming to make them
-  transparent.
 
 ### DAAD V3
 
