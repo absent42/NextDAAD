@@ -23,14 +23,23 @@ def test_no_entry_carries_the_transparent_colour():
         "would punch holes in the video" % bad[:8])
 
 def test_ordinary_colours_are_untouched():
+    # A gradient sweep that never packs to $E3 must come out of the
+    # dodge byte-for-byte identical to the undodged naive pack - the
+    # branch in build_palette_block must not fire for entries it has
+    # no business touching. r == g throughout keeps every entry out of
+    # the collision block (r in 224-255 AND g in 0-31 AND b in 192-255,
+    # the near-magenta region byte0 == $E3 packs from) - verified by
+    # direct sweep, not assumed: no i in range(256) collides.
     pal = np.zeros((256, 3), dtype=int)
     for i in range(256):
-        pal[i] = (i, 255 - i, (i * 3) % 256)
-    before = nxv2enc.build_palette_block(pal)
-    # Re-packing must be stable: only $E3 entries may differ from a
-    # naive pack, so a palette with none must round-trip identically.
+        pal[i] = (i, i, (i * 3) % 256)
+    dodged = nxv2enc.build_palette_block(pal)
+    naive = bytearray(len(dodged))
     for i in range(256):
-        assert before[i * 2] != TRANSPARENT_BYTE0 or True
+        r, g, b = (int(pal[i, 0]), int(pal[i, 1]), int(pal[i, 2]))
+        naive[i * 2] = (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6)
+        naive[i * 2 + 1] = (b >> 5) & 1
+    assert dodged == bytes(naive)
     # Spot-check that a mid-grey packs where it always did.
     pal2 = np.zeros((256, 3), dtype=int)
     pal2[0] = (128, 128, 128)

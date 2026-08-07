@@ -354,7 +354,9 @@ PAL_BLOCK_SIZE = 512
 
 # Layer 2 global transparency colour (NR $14 = $E3, the hardware reset
 # value; L2_TRANSP_COLOUR in src/nextdaad.inc). Must match the
-# interpreter - if one moves, both move.
+# interpreter AND scripts/png2nx.py's own L2_TRANSPARENT_BYTE0 (the
+# picture path's matching dodge) - if any of the three move, all three
+# move.
 L2_TRANSPARENT_BYTE0 = 0xE3
 
 # ---------------------------------------------------------------------
