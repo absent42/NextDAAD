@@ -1781,8 +1781,14 @@ if ($Font) {
 # switch's rule fires. This tag was left at 'pal9r' for one day after
 # 446f33d bumped $encoderGeneration - see the sync assertion below,
 # which exists so that cannot happen again.
-# See $encoderGeneration 'pal9s' in authoring-kit/lib/video.ps1.
-$vidLegSettlementTag = 'pal9s'
+# BUMP pal9s -> pal9t (Layer 2 transparency colour move to $E3, encoder
+# side, 2026-08-07): build_palette_block's byte0 dodge and the older
+# TRANSP_COLLISION/TRANSP_REMAP lattice exclusion (in snap_to_lattice)
+# both moved from guarding the old cream $FE pair to the live $E3 pair
+# ((255,0,219)/(255,0,255)) - default-path, so this switch's rule
+# fires. See $encoderGeneration 'pal9t' in authoring-kit/lib/video.ps1
+# for the full account.
+$vidLegSettlementTag = 'pal9t'
 
 # INVARIANT: $vidLegSettlementTag MUST equal $encoderGeneration in
 # authoring-kit/lib/video.ps1. They are one stamp with two homes - the

@@ -2922,27 +2922,29 @@ def t13_dither_mode_selector():
 
 
 @case(13, "transparency exclusion holds under the mixture path - no "
-          "emitted palette entry can pack to the NR $14 $FE colour")
+          "emitted palette entry can pack to the NR $14 $E3 colour")
 def t13_mixture_transparency_invariant():
-    # Bright near-white content is what drove the two colliding lattice
-    # points onto real hardware in the first place (Big Buck Bunny),
-    # and the mixture path emits palette INDICES chosen from all over
-    # the palette - so re-pin the invariant here, on the new path.
+    # The hazard region moved from near-white (the old cream $FE) to
+    # near-magenta - bright red and blue, near-zero green - when NR $14
+    # became $E3. The mixture path emits palette INDICES chosen from
+    # all over the palette, so re-pin the invariant here, on the new
+    # path and the new hazard region.
     rng = np.random.default_rng(8888)
     H, W = 64, 64
     base = rng.integers(230, 256, size=(H, W, 3)).astype(np.uint8)
-    base[:, :20] = np.array([255, 255, 160], dtype=np.uint8)   # straddles both
-    base[:, 20:32] = np.array([255, 255, 190], dtype=np.uint8)  # $FE points
+    base[..., 1] = rng.integers(0, 26, size=(H, W)).astype(np.uint8)
+    base[:, :20] = np.array([255, 0, 205], dtype=np.uint8)    # straddles both
+    base[:, 20:32] = np.array([255, 0, 245], dtype=np.uint8)  # $E3 points
     pal = enc.display_palette(base)
     block = enc.build_palette_block(pal)
     for amp in (0.0, 0.25, 0.5, 1.0):
         for mode in enc.DITHER_MODES:
             idx, dec = enc.dither_quantize(base, pal, amp, mode)
             used = set(np.unique(idx).tolist())
-            bad = [i for i in used if block[2 * i] == 0xFE]
+            bad = [i for i in used if block[2 * i] == 0xE3]
             expect(not bad,
                    f"amp {amp} mode {mode}: emitted entries {bad} pack to "
-                   f"$FE - transparent punch-through on silicon")
+                   f"$E3 - transparent punch-through on silicon")
             for col in enc.TRANSP_COLLISION:
                 hit = ((dec[..., 0] == col[0]) & (dec[..., 1] == col[1])
                        & (dec[..., 2] == col[2]))
@@ -2950,21 +2952,22 @@ def t13_mixture_transparency_invariant():
                        f"amp {amp} mode {mode}: emitted the excluded "
                        f"display colour {col}")
     # the whole palette, not just the used part, stays clean
-    expect(not [i for i in range(256) if block[2 * i] == 0xFE],
-           "display_palette emitted a $FE entry")
+    expect(not [i for i in range(256) if block[2 * i] == 0xE3],
+           "display_palette emitted an $E3 entry")
 
 
 # =======================================================================
-# Step 14: transparency-collision exclusion (pal9d, 2026-07-28). The
-# player keeps Layer 2 transparency ACTIVE during video with the global
-# transparency colour NR $14 = $FE; hardware transparency compares only
-# the palette entry's first byte (RRRGGGBB, the 9th blue bit is not
-# compared), so any emitted entry packing to byte0 $FE - display
-# colours (255,255,146) and (255,255,182), BOTH 9th-bit variants -
-# rendered as transparent holes (black punch-through in bright
-# regions, seen on real hardware in the Big Buck Bunny demo). The
-# encoder now excludes the two points from the representable lattice
-# (nxv2enc TRANSP_COLLISION/TRANSP_REMAP in snap_to_lattice).
+# Step 14: transparency-collision exclusion (pal9d, 2026-07-28;
+# retargeted pal9t, 2026-08-07). The player keeps Layer 2 transparency
+# ACTIVE during video with the global transparency colour NR $14;
+# hardware transparency compares only the palette entry's first byte
+# (RRRGGGBB, the 9th blue bit is not compared), so any emitted entry
+# packing to that byte0 - originally the cream $FE, black punch-through
+# in bright regions, seen on real hardware in the Big Buck Bunny demo -
+# renders as transparent holes. NR $14 is now $E3; the live collision
+# points are display colours (255,0,219) and (255,0,255), BOTH 9th-bit
+# variants. The encoder excludes the two points from the representable
+# lattice (nxv2enc TRANSP_COLLISION/TRANSP_REMAP in snap_to_lattice).
 # =======================================================================
 
 
@@ -2989,45 +2992,93 @@ def _collect_pal_blocks(vid_path):
 
 
 def _fe_entries(blocks):
-    """(block_index, entry_index) pairs whose wire byte0 == $FE."""
+    """(block_index, entry_index) pairs whose wire byte0 == $E3 (the
+    live NR $14 transparent colour - name kept from the original $FE
+    check for a smaller diff, see the Step 14 header above)."""
     return [(bi, i) for bi, b in enumerate(blocks)
-            for i in range(256) if b[2 * i] == 0xFE]
+            for i in range(256) if b[2 * i] == 0xE3]
+
+
+def _collect_pal_rgb(encode_fn):
+    """Run encode_fn() with build_palette_block spied so every 24-bit
+    RGB palette it is asked to pack is captured BEFORE its own byte0
+    -1 dodge runs - i.e. what the encoder's colour selection actually
+    chose, not what reached the wire. build_palette_block's dodge
+    (9efd280) is unconditional and independent of TRANSP_REMAP, so
+    since the retarget it also scrubs $E3 off the WIRE even with
+    TRANSP_REMAP disabled - a wire-byte negative control can no longer
+    prove the lattice exclusion bites (see the two t14 wire cases
+    below). This is the layer where it still can: it inspects what the
+    encoder offered to build_palette_block, not what build_palette_block
+    did about it. Returns (result, list-of-pal_256x3-copies)."""
+    calls = []
+    orig = enc.build_palette_block
+
+    def spy(pal_256x3):
+        calls.append(np.array(pal_256x3, copy=True))
+        return orig(pal_256x3)
+
+    enc.build_palette_block = spy
+    try:
+        result = encode_fn()
+    finally:
+        enc.build_palette_block = orig
+    return result, calls
+
+
+def _transp_rgb_hits(pal_rgb_calls):
+    """TRANSP_COLLISION 24-bit RGB entries found across captured
+    pre-dodge palettes - the lattice-exclusion-specific hit, as opposed
+    to _fe_entries' wire-byte check."""
+    hits = []
+    collision = set(enc.TRANSP_COLLISION)
+    for ci, pal in enumerate(pal_rgb_calls):
+        for i in range(pal.shape[0]):
+            rgb = tuple(int(c) for c in pal[i])
+            if rgb in collision:
+                hits.append((ci, i, rgb))
+    return hits
 
 
 def _near_white_gradient(N, h, w):
-    """Near-white gradient clip (R=G=255, blue ramping through the
-    146/182 lattice levels, slowly drifting so it is a real moving
-    clip) - slams the palette straight into the two NR $14 = $FE
-    collision points (255,255,146)/(255,255,182). The ramp is x-only,
-    so any frame height hits the same lattice points."""
+    """Magenta hazard gradient clip (R=255, G=0, blue ramping through
+    the 182/219/255 lattice levels, slowly drifting so it is a real
+    moving clip) - slams the palette straight into the two NR $14 = $E3
+    collision points (255,0,219)/(255,0,255). Name kept from the
+    original near-white ($FE) generator for a smaller diff - the
+    hazard region itself moved from near-white to near-magenta when NR
+    $14 became $E3. The ramp is x-only, so any frame height hits the
+    same lattice points."""
     xx = np.arange(w, dtype=np.float32)[None, :]
     orig = np.empty((N, h, w, 3), dtype=np.uint8)
     for i in range(N):
-        ramp = 96.0 + (xx + i * 4.0) % w * (136.0 / w)
+        ramp = 182.0 + (xx + i * 4.0) % w * (73.0 / w)
         orig[i, ..., 0] = 255
-        orig[i, ..., 1] = 255
+        orig[i, ..., 1] = 0
         orig[i, ..., 2] = np.clip(ramp, 0, 255).astype(np.uint8)
     return orig
 
 
-@case(14, "no $FE-byte0 palette entry survives an encode of a near-white gradient clip")
+@case(14, "no $E3-byte0 palette entry survives an encode of a magenta-hazard gradient clip")
 def t14_no_transparency_collision_on_wire():
-    # The near-white gradient (_near_white_gradient) slams the palette
-    # straight into (255,255,146)-(255,255,182). This case FAILS
+    # The magenta-hazard gradient (_near_white_gradient) slams the
+    # palette straight into (255,0,219)-(255,0,255). This case FAILS
     # against the pre-fix encoder logic: display_palette's median-cut
     # snap and dithered-composite refill both land on those two lattice
-    # points, and build_palette_block packs each to byte0 $FE (verified
-    # on the real encodes: sd/008.VID and the kit bunny caches each
-    # carried both 9th-bit variants). The negative control below
-    # re-encodes with the remap disabled to prove the clip still slams
-    # the collision points - so this case cannot rot silently.
+    # points, and build_palette_block packs each to byte0 $E3. The
+    # negative control below re-encodes with the remap disabled to
+    # prove the clip still slams the collision points - so this case
+    # cannot rot silently.
     N, h, w = 12, 192, 256
     orig = _near_white_gradient(N, h, w)
     chg, po = _synth_clip(orig)
 
-    def encode_and_scan(tag):
+    def do_encode():
         result = enc.encode_clip(orig, chg, po, w, h, 25.0)
         buf = _build_vid(result, w, h)
+        return buf
+
+    def encode_and_scan(tag, buf):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / f"transp_{tag}.vid"
             p.write_bytes(buf)
@@ -3035,24 +3086,40 @@ def t14_no_transparency_collision_on_wire():
         expect(len(blocks) >= 1, "encode emitted no palette block at all")
         return blocks
 
-    hits = _fe_entries(encode_and_scan("fixed"))
-    expect(hits == [], f"palette entries with byte0 $FE on the wire: {hits}")
+    buf, pal_calls = _collect_pal_rgb(do_encode)
+    hits = _fe_entries(encode_and_scan("fixed", buf))
+    expect(hits == [], f"palette entries with byte0 $E3 on the wire: {hits}")
+    rgb_hits = _transp_rgb_hits(pal_calls)
+    expect(rgb_hits == [], f"encoder selected the excluded collision "
+           f"colour(s) internally, before the wire dodge: {rgb_hits}")
 
-    # Negative control: disable the remap (the pre-fix lattice) and
-    # confirm the SAME clip does emit $FE entries - proving this case
-    # bites the defect rather than passing vacuously.
+    # Negative control: disable the lattice exclusion (the pre-fix
+    # lattice) and confirm the SAME clip does select a collision colour
+    # internally - proving this case bites the defect rather than
+    # passing vacuously. build_palette_block's OWN byte0 dodge
+    # (independent of TRANSP_REMAP, added 9efd280) still scrubs $E3 off
+    # the final WIRE bytes either way - that is the "two mechanisms
+    # must agree, not fight" property - so the control checks the
+    # PRE-dodge RGB selection, which only the lattice exclusion guards.
     saved = enc.TRANSP_REMAP
     try:
         enc.TRANSP_REMAP = {}
-        control = _fe_entries(encode_and_scan("prefix"))
+        control_buf, control_pal_calls = _collect_pal_rgb(do_encode)
+        control_wire_hits = _fe_entries(encode_and_scan("prefix", control_buf))
     finally:
         enc.TRANSP_REMAP = saved
-    expect(control != [], "negative control: pre-fix lattice must emit "
-           "$FE entries for this clip (content no longer slams the "
-           "collision points - test needs re-arming)")
+    control_rgb_hits = _transp_rgb_hits(control_pal_calls)
+    expect(control_rgb_hits != [], "negative control: pre-fix lattice "
+           "must select an excluded collision colour internally for "
+           "this clip (content no longer slams the collision points - "
+           "test needs re-arming)")
+    expect(control_wire_hits == [], "build_palette_block's own byte0 "
+           "dodge must still keep $E3 off the wire even with the "
+           "lattice exclusion disabled - the two mechanisms must not "
+           "fight")
 
 
-@case(14, "direct-serve path - same clip through _encode_direct, zero $FE-byte0 entries")
+@case(14, "direct-serve path - same clip through _encode_direct, zero $E3-byte0 entries")
 def t14_no_transparency_collision_direct():
     # Sibling of the wire case above, driving the DIRECT-SERVE preset
     # (_encode_direct, as t11_direct_serve does) instead of
@@ -3073,31 +3140,52 @@ def t14_no_transparency_collision_direct():
               rate=enc.RATE_STEREO, abytes_real=abytes_real,
               abytes_pad=abytes_pad, nframes=N)
 
-    def encode_and_scan(tag):
+    def do_encode(tag):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / f"transp_direct_{tag}.vid"
             report = enc._encode_direct(ex, w, h, 25.0, p)
             expect(report.mode == "direct", "direct-serve report mode")
+            return p.read_bytes()
+
+    def scan(buf):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "transp_direct_scan.vid"
+            p.write_bytes(buf)
             blocks = _collect_pal_blocks(p)
         expect(len(blocks) >= 1, "direct encode emitted no palette block at all")
         return blocks
 
-    hits = _fe_entries(encode_and_scan("fixed"))
+    buf, pal_calls = _collect_pal_rgb(lambda: do_encode("fixed"))
+    hits = _fe_entries(scan(buf))
     expect(hits == [],
-           f"direct-serve palette entries with byte0 $FE on the wire: {hits}")
+           f"direct-serve palette entries with byte0 $E3 on the wire: {hits}")
+    rgb_hits = _transp_rgb_hits(pal_calls)
+    expect(rgb_hits == [], f"direct-serve encoder selected the excluded "
+           f"collision colour(s) internally, before the wire dodge: {rgb_hits}")
 
-    # Negative control, mirroring the streaming case: the pre-fix
-    # lattice must emit $FE entries through the direct path too,
-    # proving this case bites rather than passing vacuously.
+    # Negative control, mirroring the streaming case: disable the
+    # lattice exclusion and confirm the pre-fix lattice still selects a
+    # collision colour internally through the direct path too - proving
+    # this case bites rather than passing vacuously. build_palette_block's
+    # own byte0 dodge (independent of TRANSP_REMAP) still keeps $E3 off
+    # the wire either way, so the control checks the pre-dodge RGB
+    # selection, which only the lattice exclusion guards.
     saved = enc.TRANSP_REMAP
     try:
         enc.TRANSP_REMAP = {}
-        control = _fe_entries(encode_and_scan("prefix"))
+        control_buf, control_pal_calls = _collect_pal_rgb(lambda: do_encode("prefix"))
+        control_wire_hits = _fe_entries(scan(control_buf))
     finally:
         enc.TRANSP_REMAP = saved
-    expect(control != [], "negative control: pre-fix lattice must emit "
-           "$FE entries through the direct path (clip no longer slams "
-           "the collision points - test needs re-arming)")
+    control_rgb_hits = _transp_rgb_hits(control_pal_calls)
+    expect(control_rgb_hits != [], "negative control: pre-fix lattice "
+           "must select an excluded collision colour internally through "
+           "the direct path too (clip no longer slams the collision "
+           "points - test needs re-arming)")
+    expect(control_wire_hits == [], "build_palette_block's own byte0 "
+           "dodge must still keep $E3 off the direct-serve wire even "
+           "with the lattice exclusion disabled - the two mechanisms "
+           "must not fight")
 
 
 @case(14, "lattice exclusion - representable set excludes exactly the two collision points")
@@ -3110,11 +3198,11 @@ def t14_lattice_exclusion_set():
     def byte0(v):
         return (int(v[0]) & 0xE0) | ((int(v[1]) >> 3) & 0x1C) | (int(v[2]) >> 6)
 
-    # The full lattice holds exactly two byte0==$FE points - the
+    # The full lattice holds exactly two byte0==$E3 points - the
     # exclusion set matches the collision set, no over-exclusion.
-    fe_points = {tuple(int(c) for c in v) for v in full if byte0(v) == 0xFE}
+    fe_points = {tuple(int(c) for c in v) for v in full if byte0(v) == 0xE3}
     expect(fe_points == set(enc.TRANSP_COLLISION),
-           f"byte0 $FE lattice points {fe_points} != TRANSP_COLLISION")
+           f"byte0 $E3 lattice points {fe_points} != TRANSP_COLLISION")
 
     snapped = enc.snap_to_lattice(full)
     moved = {tuple(int(c) for c in v)
@@ -3124,23 +3212,41 @@ def t14_lattice_exclusion_set():
     rep = {tuple(int(c) for c in v) for v in snapped}
     expect(rep == {tuple(int(c) for c in v) for v in full} - set(enc.TRANSP_COLLISION),
            "representable set must be the full lattice minus the two collision points")
-    expect(all(byte0(v) != 0xFE for v in rep),
-           "a representable lattice point still packs to byte0 $FE")
+    expect(all(byte0(v) != 0xE3 for v in rep),
+           "a representable lattice point still packs to byte0 $E3")
     # Idempotence: the representable set is a fixed point of the snap.
     expect((enc.snap_to_lattice(snapped) == snapped).all(),
            "snap must be idempotent on the representable set")
 
-    # Replacements sane: blue-axis neighbours (R=G=255 highlights keep
-    # their hue), one lattice level away, themselves representable:
-    # (255,255,146) -> (255,255,109) and (255,255,182) -> (255,255,219).
-    expect(enc.TRANSP_REMAP == {(255, 255, 146): (255, 255, 109),
-                                (255, 255, 182): (255, 255, 219)},
+    # Replacements: the pair collides because both blue-axis levels
+    # (219, 255) pack to the same byte0 blue subfield (see the
+    # TRANSP_COLLISION header comment in nxv2enc.py). (255,0,219) still
+    # has a blue-axis neighbour below it, so it moves there exactly as
+    # the old $FE remap moved its lower point down. (255,0,255) sits at
+    # the TOP of the blue axis with no upward neighbour - unlike the
+    # old pair - so it moves on the GREEN axis instead, to a distinct
+    # target rather than collapsing onto (255,0,182) too.
+    expect(enc.TRANSP_REMAP == {(255, 0, 219): (255, 0, 182),
+                                (255, 0, 255): (255, 36, 255)},
            f"unexpected remap table {enc.TRANSP_REMAP}")
-    for src, dst in enc.TRANSP_REMAP.items():
-        expect(dst[:2] == src[:2], f"{src}: remap must stay on the blue axis")
-        expect(abs(dst[2] - src[2]) <= 37,
-               f"{src}: remap must move at most one lattice bin")
-        expect(dst in rep, f"{src}: replacement {dst} not representable")
+    lo_src, lo_dst = (255, 0, 219), (255, 0, 182)
+    hi_src, hi_dst = (255, 0, 255), (255, 36, 255)
+    expect(enc.TRANSP_REMAP[lo_src] == lo_dst,
+           "lower collision point must move down the blue axis")
+    expect(lo_dst[:2] == lo_src[:2],
+           "lower point's remap must stay on the blue axis (R, G unchanged)")
+    expect(abs(lo_dst[2] - lo_src[2]) <= 37,
+           "lower point's remap must move at most one lattice bin")
+    expect(enc.TRANSP_REMAP[hi_src] == hi_dst,
+           "upper collision point must move on the green axis (no blue headroom)")
+    expect(hi_dst[0] == hi_src[0] and hi_dst[2] == hi_src[2],
+           "upper point's remap must keep red and blue at the lattice ceiling")
+    expect(abs(hi_dst[1] - hi_src[1]) <= 37,
+           "upper point's remap must move at most one lattice bin")
+    expect(lo_dst != hi_dst,
+           "remap targets must remain distinct - no collapse onto one lattice colour")
+    for dst in (lo_dst, hi_dst):
+        expect(dst in rep, f"replacement {dst} not representable")
 
 
 # =======================================================================

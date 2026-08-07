@@ -3087,36 +3087,68 @@ def _nearest_lattice_lut():
 
 LATTICE_NEAREST = _nearest_lattice_lut()
 
-# Transparency-collision exclusion (pal9d, 2026-07-28): the player keeps
-# Layer 2 transparency ACTIVE during video with the global transparency
-# colour NR $14 = $FE (src/video.asm, TM_TRANSP_ATTR). Hardware
-# transparency is a colour compare on the palette entry's FIRST byte
-# only (RRRGGGBB) - the 9th blue bit is not compared - so any palette
-# entry whose byte0 packs to $FE (R=111, G=111, Bhi=10: display colours
-# (255,255,146) and (255,255,182), BOTH 9th-bit variants) renders as
-# transparent holes over the blanked layer below (black punch-through
-# in bright regions, seen on real hardware in the Big Buck Bunny demo).
+# Transparency-collision exclusion (pal9d, 2026-07-28; retargeted pal9t,
+# 2026-08-07). ORIGIN, kept for the record: the player keeps Layer 2
+# transparency ACTIVE during video with the global transparency colour
+# NR $14. Hardware transparency is a colour compare on the palette
+# entry's FIRST byte only (RRRGGGBB) - the 9th blue bit is not compared
+# - so any palette entry whose byte0 packs to that reserved value
+# renders as transparent holes over the blanked layer below
+# (black punch-through in bright regions, seen on real hardware in the
+# Big Buck Bunny demo). At the time this exclusion was written NR $14
+# was the cream $FE (R=111, G=111, Bhi=10: display colours (255,255,146)
+# and (255,255,182), both 9th-bit variants), and the fix moved one
+# collision point down the blue axis and the other up, keeping R=G=255
+# highlights on-hue.
+#
+# CURRENT STATE: the transparent colour is now $E3 (L2_TRANSP_COLOUR,
+# src/nextdaad.inc; TM_TRANSP_ATTR no longer exists as a symbol - it was
+# split into L2_TRANSP_COLOUR and L2_TRANSP_INDEX). The cream pair above
+# is harmless since Task 1 of the transparency-colour move and is no
+# longer excluded; $E3's pair - (255,0,219) and (255,0,255), both
+# 9th-bit variants (R=111, G=000, Bhi=11) - is the live hazard and is
+# excluded instead. Verify by packing through
+# (r & 0xE0) | ((g >> 3) & 0x1C) | (b >> 6): both give $E3.
+#
+# REMAP DECISION: unlike the cream pair, $E3's pair does not have one
+# point free to move up and one free to move down - (255,0,255) is
+# already at the TOP of the blue axis, with no upward neighbour to move
+# to. (255,0,219) keeps the old trick and moves one lattice step down
+# the blue axis, to (255,0,182). (255,0,255) moves on the GREEN axis
+# instead, to (255,36,255) - one step up, the only axis with headroom -
+# rather than also moving down the blue axis onto the same target as
+# the first point: collapsing two distinct source colours onto one
+# output colour would be a small extra loss of information for no
+# reason, when an unused axis is right there. Hue preservation matters
+# far less here than it did for the cream pair's near-white highlights:
+# $E3 is a colour authors are told to avoid outright, and is rare in
+# real footage, so a green-axis nudge on the one point that needs it is
+# an easy trade.
+#
 # The resident location-graphics path dodges this player-side
-# (src/overlay2.asm writes $FF); wire palettes are dodged HERE, at the
-# lattice level, so the two points are simply not representable: the
-# nearest-level snap, palette derivation and every quantization target
-# land on the nearest remaining lattice colour, and the wire-true
-# metrics automatically measure what is actually displayed. The remap
-# stays on the blue axis (R=G=255 highlights keep their hue; the
-# R/G-axis alternatives are 1/255 nearer in raw distance but tint
-# near-white highlights pink/green).
-TRANSP_COLLISION = ((255, 255, 146), (255, 255, 182))
-TRANSP_REMAP = {(255, 255, 146): (255, 255, 109),
-                (255, 255, 182): (255, 255, 219)}
+# (src/overlay2.asm writes L2_TRANSP_COLOUR-1 = $E2); the video player
+# has no such dodge of its own, so build_palette_block (below) applies
+# the matching -1 byte0 nudge as a final safety net on emission. THIS
+# exclusion is the earlier, upstream defence: it makes the two points
+# simply not representable at the lattice level, so the nearest-level
+# snap, palette derivation and every quantization target land on the
+# nearest remaining lattice colour, and the wire-true quality metrics
+# automatically measure what is actually displayed - build_palette_block's
+# safety net alone would let the encoder pick, and score, a colour it
+# never actually emits.
+TRANSP_COLLISION = ((255, 0, 219), (255, 0, 255))
+TRANSP_REMAP = {(255, 0, 219): (255, 0, 182),
+                (255, 0, 255): (255, 36, 255)}
 
 
 def snap_to_lattice(rgb):
     """Snap uint8 RGB (any shape, last axis 3) to the 9-bit display
     lattice, returning decoder-expanded 8-bit values (the colours the
     hardware will actually show). NEAREST-level snap (LATTICE_NEAREST),
-    not truncation - see _nearest_lattice_lut. The two NR $14 = $FE
+    not truncation - see _nearest_lattice_lut. The two NR $14 = $E3
     transparency-collision points are excluded from the representable
-    lattice and remapped to their blue-axis neighbours (TRANSP_REMAP)."""
+    lattice and remapped (TRANSP_REMAP) - see the header comment above
+    TRANSP_COLLISION for why the two targets take different axes."""
     out = np.empty_like(rgb)
     out[..., 0] = LATTICE_NEAREST[rgb[..., 0]]
     out[..., 1] = LATTICE_NEAREST[rgb[..., 1]]
