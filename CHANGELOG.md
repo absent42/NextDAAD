@@ -187,6 +187,18 @@ error from the encoder. Delete the option; nothing replaces it.
 - A video that fails to open now says why on screen (VID FILE?/VID
   FMT?/VID NOBANK2/VID SIZE?/VID FRAG?) instead of silently skipping
   the cutscene.
+- Location pictures use the Spectrum Next's standard transparency
+  colour, magenta #E000C0, instead of a pale cream. The old colour was
+  one an artist might genuinely use - candlelight, parchment, skin
+  highlight - and any such pixel silently became a hole showing the
+  text layer. The reserved palette index moved to 255 and the converter
+  now keeps art to 255 colours, so a full-palette picture can no longer
+  collide with it. Keep #E000C0 out of your artwork; the build warns if
+  it appears.
+- The screen no longer shows a white background before a game's first
+  picture, or in any area a game has not painted. The tilemap was
+  filling those cells with white paper while claiming to make them
+  transparent.
 
 ### DAAD V3
 

@@ -664,6 +664,24 @@ picture caching and streamed songs for the remaining RAM - test on the
 RAM configuration (1MB/2MB) you expect players to use if you rely on a
 large sample.
 
+### Transparency: keep magenta out of your artwork
+
+One colour is reserved so pictures can let text show through:
+**#E000C0** (224, 0, 192) - the Spectrum Next's standard transparency
+magenta. Any pixel of that colour in a location picture becomes a hole
+showing the text layer beneath.
+
+Two practical rules:
+
+- Do not use #E000C0 in your art. It is the conventional chroma-key
+  colour, so most palettes avoid it naturally.
+- Leave one palette index spare - use at most 255 colours, not 256.
+  Index 255 is reserved for the transparency entry, and any pixel using
+  it becomes a hole.
+
+The build warns you if either rule is broken; it does not stop, because
+a warning is usually what you want when the colour was deliberate.
+
 ### AYS streamed songs
 
 The AKY song slot (`<GAME>.aks`/`NNN.aks`, section 2) is fixed-size -
