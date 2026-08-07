@@ -75,9 +75,10 @@ coordinate. If your pointer is a cross, you probably want its hotspot at
 <a href="reference/symbols.html">Symbols</a>, and <a href="customising.html">Customising</a>
 covers supplying your own pointer artwork.</p>
 <h3 id="autog-searches-here-then-carried-then-worn"><code>AUTOG</code> searches here, then carried, then worn</h3>
-<p><code>GET</code> with no object named - the <code>AUTOG</code> condact - looks for the named
-noun at the player's location first, then among carried objects, then
-among worn ones, and takes the first it finds.</p>
+<p><code>AUTOG</code> - the condact behind a <code>GET</code> entry that takes its object from
+what the player typed rather than from a number in your source - looks
+for that noun at the player's location first, then among carried
+objects, then among worn ones, and takes the first it finds.</p>
 <p>That order only shows when the same noun matches more than one object at
 once. If your game can have a duplicate both carried and worn, the
 carried one is the one <code>GET</code> resolves to here. jDAAD tries worn before
@@ -90,10 +91,10 @@ character ends the session; anything else restarts the game. (<code>QUIT</code> 
 the mirror image: it prints SM12 and confirms on SM30's first
 character.)</p>
 <p>Write SM30 as your "yes" word and SM31 as your "no" word, and both read
-correctly. A game whose system message table was written against jDAAD,
-which tests <code>END</code> against SM30 instead, will show the wrong prompt
-wording or act on the wrong reply here - so check SM30 and SM31 when you
-bring one across.</p>
+correctly. The prompt itself is SM13 either way; what differs is which
+message the reply is tested against - jDAAD tests <code>END</code> against SM30
+instead, so a game whose message table was written for it can act on the
+wrong reply here. Check SM30 and SM31 when you bring one across.</p>
 <h3 id="ramload-n-restores-flags-0-to-n-inclusive"><code>RAMLOAD n</code> restores flags 0 to n inclusive</h3>
 <p><code>RAMLOAD</code> with a flag argument restores object locations in full and
 flags <strong>0 to n inclusive</strong> - that is, n + 1 flags. <code>RAMLOAD 10</code> restores
@@ -103,6 +104,10 @@ restore to protect a particular flag will find that flag restored here
 and not there, or the other way round, with nothing on screen to say so.
 Choose an argument that leaves an unused flag on the boundary and the
 question stops mattering.</p>
+<p><strong>One exception.</strong> In a <a href="multi-part-games.html">multi-part game</a>, a
+<code>RAMLOAD</code> whose snapshot was taken in a different part is always a full
+restore - the argument is ignored entirely, and every flag comes back.
+The partial restore only applies within one part.</p>
 <h2 id="text-and-messages">Text and messages</h2>
 <h3 id="capitalises-and-only-in-spanish-databases"><code>@</code> capitalises, and only in Spanish databases</h3>
 <p><code>_</code> substitutes the referenced object's name into a message, in every

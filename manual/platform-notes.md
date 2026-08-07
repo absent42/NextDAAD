@@ -90,9 +90,10 @@ covers supplying your own pointer artwork.
 
 ### `AUTOG` searches here, then carried, then worn
 
-`GET` with no object named - the `AUTOG` condact - looks for the named
-noun at the player's location first, then among carried objects, then
-among worn ones, and takes the first it finds.
+`AUTOG` - the condact behind a `GET` entry that takes its object from
+what the player typed rather than from a number in your source - looks
+for that noun at the player's location first, then among carried
+objects, then among worn ones, and takes the first it finds.
 
 That order only shows when the same noun matches more than one object at
 once. If your game can have a duplicate both carried and worn, the
@@ -109,10 +110,10 @@ the mirror image: it prints SM12 and confirms on SM30's first
 character.)
 
 Write SM30 as your "yes" word and SM31 as your "no" word, and both read
-correctly. A game whose system message table was written against jDAAD,
-which tests `END` against SM30 instead, will show the wrong prompt
-wording or act on the wrong reply here - so check SM30 and SM31 when you
-bring one across.
+correctly. The prompt itself is SM13 either way; what differs is which
+message the reply is tested against - jDAAD tests `END` against SM30
+instead, so a game whose message table was written for it can act on the
+wrong reply here. Check SM30 and SM31 when you bring one across.
 
 ### `RAMLOAD n` restores flags 0 to n inclusive
 
@@ -125,6 +126,11 @@ restore to protect a particular flag will find that flag restored here
 and not there, or the other way round, with nothing on screen to say so.
 Choose an argument that leaves an unused flag on the boundary and the
 question stops mattering.
+
+**One exception.** In a [multi-part game](multi-part-games.md), a
+`RAMLOAD` whose snapshot was taken in a different part is always a full
+restore - the argument is ignored entirely, and every flag comes back.
+The partial restore only applies within one part.
 
 ## Text and messages
 
