@@ -46,9 +46,13 @@ costs one condact.</p>
 object 2 out of the player's hands, up if it puts one into them.
 <code>SWAP</code> behaves differently: it is a raw exchange of two locations and
 never touches flag 1.</p>
-<p>Interpreters disagree about this, so if your game reads flag 1
-immediately after a <code>COPYOO</code> and you want to be sure of the number
-everywhere, recount first with <code>ABILITY</code>.</p>
+<p>Interpreters disagree about this, so a game that reads flag 1
+immediately after a <code>COPYOO</code> can see a different number elsewhere.
+There is no condact that recounts the carried objects on demand -
+<code>ABILITY</code> only sets the carry limits in flags 37 and 52, and the
+condacts that do rebuild the count all restart the game. If the exact
+number matters at that point, set flag 1 yourself rather than waiting
+for a recount.</p>
 <h3 id="putin-and-takeout-space-their-message-differently-elsewhere"><code>PUTIN</code> and <code>TAKEOUT</code> space their message differently elsewhere</h3>
 <p>The composite message these condacts print is SM44 (or SM45, or SM52),
 then a space, then the container's name, then SM51 with no space before

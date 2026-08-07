@@ -51,9 +51,13 @@ object 2 out of the player's hands, up if it puts one into them.
 `SWAP` behaves differently: it is a raw exchange of two locations and
 never touches flag 1.
 
-Interpreters disagree about this, so if your game reads flag 1
-immediately after a `COPYOO` and you want to be sure of the number
-everywhere, recount first with `ABILITY`.
+Interpreters disagree about this, so a game that reads flag 1
+immediately after a `COPYOO` can see a different number elsewhere.
+There is no condact that recounts the carried objects on demand -
+`ABILITY` only sets the carry limits in flags 37 and 52, and the
+condacts that do rebuild the count all restart the game. If the exact
+number matters at that point, set flag 1 yourself rather than waiting
+for a recount.
 
 ### `PUTIN` and `TAKEOUT` space their message differently elsewhere
 

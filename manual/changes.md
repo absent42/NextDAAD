@@ -3,7 +3,7 @@
 Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## Unreleased
+## 0.3.2 - unreleased
 
 - Location pictures use the Spectrum Next's standard transparency
   magenta, and the reserved palette slot is index 255. Keep that colour

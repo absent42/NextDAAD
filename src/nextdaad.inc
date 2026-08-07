@@ -11,9 +11,14 @@
 ; support, the SP17 video motion work (file ceiling 16 MB -> 256 MB,
 ; mid-clip pause removed, half-rate clips at true rate, mono cutscene
 ; audio dropped) and the sampled-sound fix - effects no longer distort
-; while a picture is drawn. The "0.x" line runs until public testing
+; while a picture is drawn. v0.3.2 moves Layer 2 transparency to the
+; Next's standard scheme (reserved palette INDEX 255 stamped with the
+; global transparency COLOUR $E3, no dependence on tilemap transparency
+; attributes), fixes the white background that showed before a game's
+; first picture, and replaces the kit's stand-alone guides with a
+; generated HTML manual. The "0.x" line runs until public testing
 ; earns v1.0 (see RELEASE.md).
-    DEFINE VERSION_STR "NEXTDAAD V0.3.1"
+    DEFINE VERSION_STR "NEXTDAAD V0.3.2"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00
