@@ -24,10 +24,15 @@ stored externally in `0.XMB`, a file DRC writes during compilation
 whenever your DSF uses either condact (staged into `RELEASE\`
 automatically - see below). Two limits to know:
 
-- **511 characters per call, practical limit.** A single XMESSAGE/XMES
-  call is not meant to hold a full page of text. For longer passages,
-  chain several calls back to back - use XMES (no added newline) for
-  the earlier calls so the text reads as one continuous block, and
+- **No per-call length limit on this target.** The DAAD manual gives
+  511 characters per call. That figure belongs to the +3 and 128K
+  interpreters, which swap each message through a 512-byte buffer, and
+  the compiler applies it only when you build for one of those targets.
+  Building for the Next, a single call is bounded only by the 64K total
+  below. Keep to 511 anyway if the same source may also be built for a
+  +3 or 128K release. For readability rather than for any limit, long
+  passages still read better chained - use XMES (no added newline) for
+  the earlier calls so the text runs as one continuous block, and
   XMESSAGE (or a trailing newline token) only for the last one.
 - **64K total, compiled.** `0.XMB` holds the compiled (token-compressed)
   bytes of every XMESSAGE/XMES call in your whole game, back to back,
