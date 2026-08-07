@@ -43,7 +43,7 @@ VIDFPS, VIDOPTS and per-video VIDOPTS_NNN in CONFIG.BAT (blank =
 full-screen 320x256 at 25 fps); run the encoder by hand for per-file
 control (--shape presets or WIDTHxHEIGHT, --aspect free heights,
 --fps, --start/--duration clipping, --dither and more - run
-it with -h, and see ..\lib\videnc-README.md). Or run VIDTUNE.BAT (kit
+it with -h, and see ..\docs\reference\video-format.html). Or run VIDTUNE.BAT (kit
 root) for the same per-clip control from a GUI: prefers vidtune.exe
 (shipped, no Python required), falls back to ..\lib\vidtune (needs
 Python 3 + PySide6, numpy, Pillow) if the exe is missing.

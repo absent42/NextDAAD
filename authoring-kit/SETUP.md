@@ -439,7 +439,7 @@ title with sustained motion, `--tile-slack 0.5` lets the encoder work
 a row or column at a time instead of four when the budget runs out,
 which helps pans and zooms and does nothing for quiet material; the
 encoder prints what it cost). Run with `--help` for the full list, and
-see `lib\videnc-README.md` for the options and format details.
+see `docs\reference\video-format.html` for the options and format details.
 
 Per-clip tuning has a GUI, too: run `VIDTUNE.BAT` (prefers the shipped
 `tools\vidtune\vidtune.exe`, falling back to `py -3 -m vidtune` /

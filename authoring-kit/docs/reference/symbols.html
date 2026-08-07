@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symbols - NextDAAD</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<main>
+<h1 id="symbols">Symbols</h1>
+<h2 id="appendix-d-symbol-names-sfx-and-mouse">Appendix D symbol names (SFX and MOUSE)</h2>
+<p>DAAD Ready's Appendix D lists symbolic names for the sub-command
+argument of <code>SFX</code> and <code>MOUSE</code> (<code>PLAYSFX</code>, <code>SHOWMS</code>, and so on). The
+bundled DRF compiler predefines every one of them, and a DSF written
+with the symbolic form compiles byte-identical to the same DSF written
+with the raw number - use whichever reads better. Confirmed by
+compiling a test suite both ways and comparing the resulting DDBs
+byte-for-byte.</p>
+<p><strong>Typo warning:</strong> the DAAD Ready manual's own Appendix D table names
+value 10 <code>FPLAYFLIL</code>. That is a documentation typo - <code>FPLAYFLIL</code> does
+not compile. The compiler defines <code>PLAYFLI</code> (9) and <code>PLAYFLIL</code> (10).</p>
+<h2 id="sfx-sub-commands">SFX sub-commands</h2>
+<table>
+<thead>
+<tr>
+<th>n</th>
+<th>Symbol</th>
+<th>Behaviour on this target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>PLAYSFX</code></td>
+<td>Play <code>NNN.WAV</code> once. If no matching WAV exists, the same number plays as an AY sound effect from the effects bank instead.</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>PLAYSFXL</code></td>
+<td>As 1, looped.</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>PLAYSFXF</code></td>
+<td>Same as <code>PLAYSFX</code> (1) - the DOS-specific file-rate byte does not exist in this toolchain's DDB output, so the WAV's own header rate plays.</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>PLAYSFXFL</code></td>
+<td>Same as <code>PLAYSFXL</code> (2), for the same reason.</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>STOPSFX</code></td>
+<td>Stop whichever effect kind is currently active (sample and AY).</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>PLAYDRO</code></td>
+<td>Play music once - a GAME-numbered AYS stream is tried first, an AKY song plays if none exists. On DOS these condacts played OPL music; on this target they are the music surface.</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>PLAYDROL</code></td>
+<td>As 6, looped.</td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>STOPDRO</code></td>
+<td>Stop music of both kinds (AYS stream and AKY song).</td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>PLAYFLI</code></td>
+<td>Play video <code>NNN.VID</code> once - the classic DOS video symbol, now real: identical to <code>GFX n 13</code>. See <a href="../video.html">Video</a> for cutscene playback.</td>
+</tr>
+<tr>
+<td>10</td>
+<td><code>PLAYFLIL</code></td>
+<td>As 9, looped until a key is pressed - identical to <code>GFX n 14</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Sample numbers 1-254 may resolve to a WAV or fall back to an AY
+effect; 255 is reserved and always plays from the AY effects bank.</p>
+<h2 id="mouse-sub-commands">MOUSE sub-commands</h2>
+<p>All eight documented sub-commands (0-7) are implemented. A sub-command
+number above 7 no-ops silently (a DEBUG build shows a marker), the same
+idiom <code>SFX</code> uses for a sub-command it does not recognise.</p>
+<table>
+<thead>
+<tr>
+<th>n</th>
+<th>Symbol</th>
+<th>Behaviour on this target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td><code>RESETMS</code></td>
+<td>Re-centre the pointer at (160,128), zero the buttons, clear the hotspot offset, and re-latch the movement baseline.</td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>SHOWMS</code></td>
+<td>Show the hardware sprite pointer.</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>HIDEMS</code></td>
+<td>Hide the hardware sprite pointer.</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>GETMS</code></td>
+<td>Read mouse state into four flags starting at the first argument: <code>flags[n]</code> = buttons (idle 0, left 1, right 2, middle 4, chords additive - jdaad parity, not the raw Kempston byte), <code>flags[n+1]</code> = column 0-79 (X/8), <code>flags[n+2]</code> = row 0-31 (Y/8), <code>flags[n+3]</code> = column 0-53 (X/6).</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>GETFINEMS</code></td>
+<td>Fine position into <strong>three</strong> flags: <code>flags[n]</code> = buttons (same convention as 3), <code>flags[n+1]</code> = X/2 (0-159), <code>flags[n+2]</code> = Y undivided (0-255). This is the DRC manual's VGA case, which is what a 320x256 pointer plane is; <code>flags[n+3]</code> is NOT written.</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>POINTERMS</code></td>
+<td>Re-upload the built-in pointer pattern into hardware sprite slot 0 and re-arm it. There are no <code>.PTR</code> pointer files on this target and only one pointer shape, so the parameter selects nothing; the sub exists so the documented <code>POINTERMS</code> then <code>SHOWMS</code> idiom always leaves slot 0 holding this interpreter's pointer, whatever else used the slot meanwhile.</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>DELTAXMS</code></td>
+<td>Set the pointer's hotspot X offset within its bitmap - <strong>not</strong> a movement delta, despite the symbol name. The reported coordinates do not change; the bitmap shifts so the hotspot pixel lands on the reported position. Floors at the plane origin rather than wrapping.</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>DELTAYMS</code></td>
+<td>As 6, for the hotspot Y offset.</td>
+</tr>
+</tbody>
+</table>
+</main>
+</body>
+</html>

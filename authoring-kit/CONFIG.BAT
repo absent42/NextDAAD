@@ -37,12 +37,12 @@ REM --tile-slack (opt-in, default off) belongs in VIDOPTS_NNN rather
 REM than here: on a title with sustained motion --tile-slack 0.5 lets
 REM the budget-bound schedule work a row/column at a time instead of
 REM four, which measurably helps pans and zooms and does nothing for
-REM quiet material. See lib\videnc-README.md "Tile slack".
+REM quiet material. See docs\reference\video-format.html "Tile slack".
 REM --prefilter (opt-in, default off) is the one to try on a grainy or
 REM noisy source: it denoises lightly before scaling, trading a little
 REM texture for supply headroom.
 REM Recommended settings per kind of clip: VIDEO-PRESETS.md.
-REM Full list: lib\videnc-README.md, or run the encoder with --help.
+REM Full list: docs\reference\video-format.html, or run the encoder with --help.
 SET VIDOPTS=
 
 REM Per-video overrides: VIDOPTS_NNN (3-digit video number) appends options

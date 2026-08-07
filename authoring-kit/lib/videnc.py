@@ -384,7 +384,7 @@ def main(argv):
 
     ap = argparse.ArgumentParser(
         description="Encode a video file into NextDAAD's native NXV v2 "
-                    "format (see lib/videnc-README.md).")
+                    "format (see docs/reference/video-format.html).")
     ap.add_argument("input", help="any video file ffmpeg can read")
     ap.add_argument("output", help="destination .VID file")
     ap.add_argument("--shape", default=None,

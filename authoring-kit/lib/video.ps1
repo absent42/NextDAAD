@@ -482,9 +482,10 @@ if (-not (Test-Path $ffmpeg)) {
 # and the kit's own tools\ (a TOOLSDIR override - e.g. the maintainer's
 # CONFIG.local.BAT pointing at the repo toolchain - must not hide the
 # kit-slot exe). Python candidates are probed for BOTH Pillow and numpy
-# (both are hard dependencies of nxv2enc.py - see videnc-README.md), not
-# mere presence: py -3 and python can be different installs, and picking
-# one missing either package fails mid-encode.
+# (both are hard dependencies of nxv2enc.py - see
+# docs\reference\video-format.html), not mere presence: py -3 and python
+# can be different installs, and picking one missing either package
+# fails mid-encode.
 $kitRoot = Split-Path -Parent $PSScriptRoot
 $enc = $null
 $exeCandidates = @(
