@@ -36,6 +36,7 @@
 #   -AudLad             sd\AUDLAD\    tests\audlad.dsf
 #   -SfxDi              sd\SFXDI\     tests\sfxdi.dsf
 #   -L2Holes            sd\L2HOLES\   tests\l2holes.dsf
+#   -TileSlack          sd\TILESLK\   tests\tileslack.dsf
 #   -Uto                sd\UTO\       tools\TEST.DSF     (V2)
 #   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
@@ -105,7 +106,7 @@
 # -Err4 copies over it, -GMode copies over that, -V3 over that,
 # -Rab copies over that,
 # -UU copies over that, then -Part, then -AudLad, then -SfxDi, then
-# -L2Holes last of
+# -L2Holes, then -TileSlack last of
 # all, in the order their blocks appear below. $legName is resolved in
 # exactly that order, so the folder and the active DDB always agree.
 # The template is active if no switch is given.
@@ -202,6 +203,32 @@
 #            table, what a failure of each hole means):
 #            docs\superpowers\l2-holes-run-sheet.md. An alternative to
 #            every other DDB switch, not a companion.
+#   -TileSlack
+#            --tile-slack A/B fixture, staged into sd\TILESLK\: make the
+#            tests\tileslack.dsf DDB active AND stage FOUR encodes of the
+#            authoring kit's own two clips as two A/B PAIRS -
+#            001/002.VID = boat pan (authoring-kit\VIDEO\001.mp4) at
+#            --tile-slack 0.0 and 0.5, 003/004.VID = church zoom
+#            (002.mp4) at the same two values. Both pairs are full
+#            320x256 @25 mode-1, whole clip, and within a pair NOTHING
+#            differs but the knob: the stream budget is DERIVED on arm A
+#            and PINNED on arm B, so the finer tile rung cannot move its
+#            own supply ceiling and flatter itself.
+#            THE ENCODES COME FROM tests\video\tileslack_ab.py, not from
+#            a videnc call here. That script owns the experiment - it
+#            derives the pin, runs the four encodes, caches them under
+#            tests\out\tileslack\ and prints the manual's benchmark table
+#            beside what it measured. Staging runs it (cached: a re-stage
+#            after a completed measurement costs file copies, not
+#            encodes) and copies its OWN output files, so the numbers on
+#            the page and the picture on the glass are the same bytes.
+#            The fixture is the half no metric answers: --tile-slack is a
+#            MOTION knob and the owner's own footage banded and juddered
+#            on kit defaults after the whole fixture deck passed. Run
+#            sheet (what to look for on each pair, what an outcome means,
+#            and why the numbers and the picture can disagree):
+#            docs\superpowers\tileslack-ab-run-sheet.md. An alternative
+#            to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
 # this repository:
@@ -440,7 +467,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$L2Holes, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -464,6 +491,7 @@ if ($Part)             { $legName = 'PART' }
 if ($AudLad)           { $legName = 'AUDLAD' }
 if ($SfxDi)            { $legName = 'SFXDI' }
 if ($L2Holes)          { $legName = 'L2HOLES' }
+if ($TileSlack)        { $legName = 'TILESLK' }
 if ($Uto)              { $legName = 'UTO' }
 if ($UtoV3)            { $legName = 'UTOV3' }
 $leg = Join-Path $sd $legName
@@ -484,7 +512,7 @@ function Reset-LegDir {
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'L2HOLES',
-               'UTO', 'UTOV3')
+               'TILESLK', 'UTO', 'UTOV3')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -850,6 +878,34 @@ finally {
     Pop-Location
 }
 
+# --tile-slack A/B fixture (2026-08-07). Compiled unconditionally like
+# every block above so a break in the DSF is caught on a plain run; only
+# -TileSlack makes it the active GAME.DDB (sd\TILESLK\).
+#
+# OUT OF TREE, for the same reason as l2holes above and by the same means:
+# DRF.exe and DRB.PHP are run by absolute path with the cwd set to
+# tests\out\tileslack-work, so nothing is written under tools\ - read-only
+# working material git cannot restore.
+#
+# The .json is KEPT: the verification below reads the compiled verb table
+# and messages back out of it, so an arm label that drifts away from the
+# video number it plays is caught in the COMPILED bytes rather than by
+# reading the DSF twice.
+$tileSlackWork = Join-Path $root 'tests\out\tileslack-work'
+New-Item -ItemType Directory -Force $tileSlackWork | Out-Null
+Copy-Item "$PSScriptRoot\tileslack.dsf" "$tileSlackWork\NDTILESL.DSF" -Force
+Push-Location $tileSlackWork
+try {
+    & "$dr\TOOLS\DRC\DRF.exe" zx next NDTILESL.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (tileslack)" }
+    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDTILESL.json NDTILESL.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (tileslack)" }
+    Copy-Item NDTILESL.DDB "$root\tests\out\tileslack.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 function Find-ByteRuns {
     # Every start offset of $needle in $hay. Plain scan - the images
     # here are tens of KB, so nothing cleverer is warranted.
@@ -1101,6 +1157,87 @@ foreach ($s in @(
     if ((Find-ByteRuns $l2holesBytes $s.b).Count -lt 1) { throw "l2holes: '$($s.n)' is not present in tests\out\l2holes.ddb" }
 }
 "l2holes.ddb: $($l2holesBytes.Length) bytes, v$($l2holesBytes[0]), ruler 32 rows x 80 columns verified from the compiled messages ($($l2hTags.Count) hole tags), MODE 2 / WINSIZE 32 80 / WINAT 31 79 / PAPER 1 / PICTURE 1 / DISPLAY 0 / DISPLAY 1 / ANYKEY all present"
+
+# ---- tileslack: the LABEL must name the file that actually plays -----
+# THE ONE FAULT THIS FIXTURE CANNOT SURVIVE is a label that disagrees with
+# the video it introduces: the owner would then judge arm B and write it
+# down as arm A, and the run would be worse than worthless because nothing
+# on screen would say so. The DSF prints the label from one message number
+# and plays the clip from a separate GFX parameter, so the two CAN drift.
+# This restates the arm table INDEPENDENTLY of the DSF and checks it in the
+# COMPILED output: for each verb, the entry must carry the expected
+# GFX <video> <13|14>, must print the expected message BOTH times (before
+# and after playback), and that message's TEXT must itself name the same
+# video file and the same --tile-slack value.
+$tsJson = Get-Content "$tileSlackWork\NDTILESL.json" -Raw | ConvertFrom-Json
+$tsMsgs = @{}
+foreach ($m in $tsJson.messages) { $tsMsgs[[int]$m.Value] = [string]$m.Text }
+$tsProcs = @{}
+foreach ($p in $tsJson.processes) { $tsProcs[[int]$p.Value] = $p.entries }
+if (-not $tsProcs.ContainsKey(5)) { throw "tileslack: process 5 (the verb table) is missing" }
+
+# verb -> (video number, GFX sub-op, label message, slack, loops)
+$tsArms = @(
+    @{ verb = 'PAN0';  vid = 1; sub = 13; msg = 1; slack = '0.0'; loop = $false },
+    @{ verb = 'PAN5';  vid = 2; sub = 13; msg = 2; slack = '0.5'; loop = $false },
+    @{ verb = 'LPAN0'; vid = 1; sub = 14; msg = 1; slack = '0.0'; loop = $true },
+    @{ verb = 'LPAN5'; vid = 2; sub = 14; msg = 2; slack = '0.5'; loop = $true },
+    @{ verb = 'ZOM0';  vid = 3; sub = 13; msg = 3; slack = '0.0'; loop = $false },
+    @{ verb = 'ZOM5';  vid = 4; sub = 13; msg = 4; slack = '0.5'; loop = $false },
+    @{ verb = 'LZOM0'; vid = 3; sub = 14; msg = 3; slack = '0.0'; loop = $true },
+    @{ verb = 'LZOM5'; vid = 4; sub = 14; msg = 4; slack = '0.5'; loop = $true }
+)
+foreach ($a in $tsArms) {
+    $entry = @($tsProcs[5] | Where-Object { ([string]$_.Entry).Split(' ')[0] -eq $a.verb })
+    if ($entry.Count -ne 1) { throw "tileslack: process 5 has $($entry.Count) entries for verb $($a.verb), expected exactly 1" }
+    $cs = $entry[0].condacts
+    $gfx = @($cs | Where-Object { $_.Condact -eq 'GFX' })
+    if ($gfx.Count -ne 1) { throw "tileslack: $($a.verb) has $($gfx.Count) GFX condacts, expected 1" }
+    if ([int]$gfx[0].Param1 -ne $a.vid -or [int]$gfx[0].Param2 -ne $a.sub) {
+        throw "tileslack: $($a.verb) compiles to GFX $($gfx[0].Param1) $($gfx[0].Param2), expected GFX $($a.vid) $($a.sub)"
+    }
+    # The label, printed before playback and again after it. Both must be
+    # the SAME message, and it must be the one this arm is named by.
+    $lab = @($cs | Where-Object { $_.Condact -eq 'MESSAGE' -and [int]$_.Param1 -eq $a.msg })
+    if ($lab.Count -ne 2) {
+        throw "tileslack: $($a.verb) prints label message $($a.msg) $($lab.Count) time(s), expected 2 (before and after playback)"
+    }
+    if ($cs[0].Condact -ne 'PROCESS' -or [int]$cs[0].Param1 -ne 7) {
+        throw "tileslack: $($a.verb) does not open with PROCESS 7 (the screen header) - the label could be printed over a stale screen"
+    }
+    # The message TEXT is the thing the owner actually reads. It has to
+    # name this arm's own file and its own knob value, or a correct GFX
+    # parameter would still be introduced by the wrong caption.
+    $text = [string]$tsMsgs[$a.msg]
+    $wantFile = '{0:d3}.VID' -f $a.vid
+    if ($text -notlike "*$wantFile*") { throw "tileslack: label message $($a.msg) ('$text') does not name $wantFile, which is what $($a.verb) plays" }
+    if ($text -notlike "*--tile-slack $($a.slack)*") { throw "tileslack: label message $($a.msg) ('$text') does not name --tile-slack $($a.slack)" }
+    $mode = @($cs | Where-Object { $_.Condact -eq 'MESSAGE' -and [int]$_.Param1 -eq $(if ($a.loop) { 5 } else { 6 }) })
+    if ($mode.Count -ne 1) { throw "tileslack: $($a.verb) does not print its $(if ($a.loop) { 'LOOPS' } else { 'PLAYS ONCE' }) line exactly once" }
+}
+# Every video number staged must be reachable, and no other one may be:
+# a GFX naming an unstaged number plays nothing and would read as a clip
+# that "did not band", which is the most dangerous false result here.
+$tsVids = @($tsProcs[5] | ForEach-Object { $_.condacts } | Where-Object { $_.Condact -eq 'GFX' } | ForEach-Object { [int]$_.Param1 } | Sort-Object -Unique)
+if (($tsVids -join ',') -ne '1,2,3,4') { throw "tileslack: the verb table plays videos ($($tsVids -join ',')), expected exactly 1,2,3,4" }
+
+$tsBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\tileslack.ddb")
+if ($tsBytes[0] -ne 2) { throw "tileslack: DDB header version byte is $($tsBytes[0]), expected 2" }
+foreach ($s in @(
+        @{ n = 'MODE 2 (the More... pager off - without it the menu pages)'; b = [byte[]]@(81, 2) },
+        @{ n = 'WINSIZE 32 80 (the full-screen text window)'; b = [byte[]]@(107, 32, 80) },
+        @{ n = 'DISPLAY 1 (clears Layer 2 after playback - without it the last frame covers the label)'; b = [byte[]]@(28, 1) },
+        @{ n = 'ANYKEY (the read-the-label gate before playback)'; b = [byte[]]@(24) })) {
+    if ((Find-ByteRuns $tsBytes $s.b).Count -lt 1) { throw "tileslack: '$($s.n)' is not present in tests\out\tileslack.ddb" }
+}
+# GFX_OPCODE 87 (tools\DAAD-READY\TOOLS\DRC\drb.php) - all eight arms, in
+# bytes, independently of the JSON above.
+foreach ($a in $tsArms) {
+    if ((Find-ByteRuns $tsBytes ([byte[]]@(87, $a.vid, $a.sub))).Count -lt 1) {
+        throw "tileslack: GFX $($a.vid) $($a.sub) ($($a.verb)) is not present in tests\out\tileslack.ddb"
+    }
+}
+"tileslack.ddb: $($tsBytes.Length) bytes, v$($tsBytes[0]), 8 A/B arms verified (label message, --tile-slack value and GFX n 13/14 agree for each), videos 1-4 only, MODE 2 / WINSIZE 32 80 / DISPLAY 1 / ANYKEY all present"
 
 # ---- DRC's -D debug marker, both halves of the contract -------------
 # HALF ONE: what DRC EMITS. tests\debugflag.dsf has three DEBUG lines;
@@ -2580,6 +2717,90 @@ if ($L2Holes) {
     $l2holesActive = $true
 }
 
+$tileSlackActive = $false
+if ($TileSlack) {
+    # --tile-slack A/B leg. Two jobs, both owned entirely by this switch:
+    # make tests\tileslack.dsf the active DDB, and stage the four encodes
+    # tests\video\tileslack_ab.py produces as 001-004.VID.
+    #
+    # THE ENCODES ARE NOT MADE HERE. That script owns the experiment -
+    # it derives the stream budget on arm A, pins it on arm B, runs the
+    # four encodes, and measures the manual's benchmark table off them.
+    # Staging copies ITS OUTPUT, so the picture the owner judges is the
+    # same bytes the table was measured from, not a second encode that
+    # merely used the same arguments. It caches on the encoder hashes and
+    # the source hash, so a re-stage after a completed measurement costs
+    # file copies rather than four encodes.
+    #
+    # Same CSpect lock hazard as -Vid/-VidLong/-L2Holes, and the same
+    # refusal rather than a warning: a running emulator holds sd\ files
+    # open, the copies fail one at a time, and a leg missing one arm of a
+    # pair is an A/B with nothing to compare against - which is exactly
+    # the failure that cannot be noticed on the glass.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files leave a partial A/B - one arm of a pair missing is not detectable on screen)"
+    }
+    Copy-Item "$root\tests\out\tileslack.ddb" "$leg\GAME.DDB" -Force
+    "running tests\video\tileslack_ab.py (four encodes, cached in tests\out\tileslack\ - slow the first time)..."
+    & python "$root\tests\video\tileslack_ab.py"
+    if ($LASTEXITCODE -ne 0) { throw "tests\video\tileslack_ab.py failed (exit $LASTEXITCODE) - sd\$legName\ not staged" }
+    # dest -> the measurement script's own cache name (clip + slack)
+    $tsMap = [ordered]@{
+        '001.VID' = 'boat_s000.vid'
+        '002.VID' = 'boat_s050.vid'
+        '003.VID' = 'church_s000.vid'
+        '004.VID' = 'church_s050.vid'
+    }
+    $tsWork = Join-Path $root 'tests\out\tileslack'
+    $tsInfo = @()
+    foreach ($dest in $tsMap.Keys) {
+        $src = Join-Path $tsWork $tsMap[$dest]
+        if (-not (Test-Path -LiteralPath $src)) {
+            throw "tileslack: $($tsMap[$dest]) was not produced - an arm is missing and the pair cannot be judged (check the script's own output above; a supply-gate refusal is reported there, not here)"
+        }
+        # Independent header verification, from the staging side, in the
+        # terms the PLAYER will read the file (nxv2enc.pack_header): magic
+        # "NXVID", version 2, width code 1 = 320 (mode-1) and the height
+        # sentinel 0 = 256 lines, FLAG_DELTA_STREAM set, stereo. A pair
+        # whose two arms were encoded at different SHAPES would not be an
+        # A/B at all, and nothing on screen would say so.
+        $srcLen = (Get-Item $src).Length
+        if ($srcLen -le 512) { throw "tileslack: $($tsMap[$dest]) is $srcLen bytes - header only or empty, the encode did not complete" }
+        $h = [byte[]]::new(24)
+        $fs = [System.IO.File]::OpenRead($src)
+        try { [void]$fs.Read($h, 0, 24) } finally { $fs.Close() }
+        if ([System.Text.Encoding]::ASCII.GetString($h, 0, 5) -ne 'NXVID') { throw "tileslack: $($tsMap[$dest]) has no NXVID magic" }
+        if ($h[5] -ne 2) { throw "tileslack: $($tsMap[$dest]) is NXV version $($h[5]), expected 2" }
+        if ($h[6] -ne 1) { throw "tileslack: $($tsMap[$dest]) width code is $($h[6]), expected 1 (320 wide, mode-1) - the manual's table is measured on 320x256" }
+        if ($h[7] -ne 0) { throw "tileslack: $($tsMap[$dest]) height byte is $($h[7]), expected the 256-line sentinel 0" }
+        if (($h[12] -band 1) -ne 1) { throw "tileslack: $($tsMap[$dest]) does not carry FLAG_DELTA_STREAM - the tile schedule this test is about only exists on the delta path" }
+        if ($h[9] -ne 2) { throw "tileslack: $($tsMap[$dest]) declares $($h[9]) audio channels, expected 2" }
+        $frames = $h[14] + 256 * $h[15] + 65536 * $h[16]
+        Copy-Item -LiteralPath $src -Destination "$leg\$dest" -Force
+        $tsInfo += , @{ dest = $dest; frames = $frames; bytes = $srcLen
+                        hash = (Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash }
+    }
+    # THE TWO ARMS OF A PAIR MUST DIFFER, and must be the same clip. If a
+    # pair's arms came out byte-identical the knob did nothing on that
+    # content and there is NOTHING to see - the owner would stare at two
+    # identical files and report "no difference", which would read as a
+    # verdict on the picture instead of a fact about the encode. Said here,
+    # loudly, rather than discovered on the glass.
+    foreach ($p in @(@{ n = 'PAIR 1 boat pan'; a = 0; b = 1 }, @{ n = 'PAIR 2 church zoom'; a = 2; b = 3 })) {
+        $x = $tsInfo[$p.a]; $y = $tsInfo[$p.b]
+        if ($x.frames -ne $y.frames) {
+            throw "tileslack: $($p.n) arms have $($x.frames) and $($y.frames) frames - they are not the same cut and cannot be compared"
+        }
+        if ($x.hash -eq $y.hash) {
+            throw "tileslack: $($p.n) arms are BYTE-IDENTICAL - --tile-slack changed nothing on this content, so there is no A/B to run (that is a finding about the encoder, not a staging fault: report it and do not judge the picture)"
+        }
+        $d = 100.0 * ($y.bytes - $x.bytes) / $x.bytes
+        "$($p.n): $($x.dest) $($x.bytes) B vs $($y.dest) $($y.bytes) B ($('{0:+0.00;-0.00;0.00}' -f $d)%), $($x.frames) frames each, arms differ"
+    }
+    "staged 4 tile-slack fixture(s) -> sd\$legName\001-004.VID (two A/B pairs: 001/002 boat pan, 003/004 church zoom, 320x256 @25 mode-1; odd = --tile-slack 0.0, even = 0.5)"
+    $tileSlackActive = $true
+}
+
 # Uto's compliance test. Nothing to stage but the DDB - deliberately:
 # the fixture loads no picture, plays no sound, reads no 0.XMB and takes
 # no typed input, so sd\UTO\ / sd\UTOV3\ hold exactly GAME.DDB and the
@@ -2637,6 +2858,7 @@ elseif ($gmodeActive) { "active: gmodegate (SP16 GMODE graphics-gate fixture)" }
 elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-scale fixture)" }
 elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture - see .superpowers\sdd\sfx-di-audible-test.md)" }
 elseif ($l2holesActive) { "active: l2holes (Layer 2 transparency / punch-out fixture - see docs\superpowers\l2-holes-run-sheet.md)" }
+elseif ($tileSlackActive) { "active: tileslack (--tile-slack A/B fixture, two pairs - see docs\superpowers\tileslack-ab-run-sheet.md)" }
 elseif ($utoV3Active) { "active: utotest V3 (Uto's THIRD-PARTY DAAD compliance test, header version 3 - self-scoring, 68 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
 elseif ($utoActive) { "active: utotest V2 (Uto's THIRD-PARTY DAAD compliance test - self-scoring, 64 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }

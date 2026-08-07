@@ -1,0 +1,375 @@
+; NextDAAD --tile-slack A/B fixture (2026-08-07, rev 1).
+;
+; Compiled and staged by tests\build-tests.ps1 -TileSlack, which also runs
+; tests\video\tileslack_ab.py to produce the four encodes and copies
+; build\nextdaad.nex in. sd\TILESLK\ is emptied and refilled on every run
+; and holds nothing but GAME.DDB, 001-004.VID and NEXTDAAD.NEX - copy the
+; folder to the card and launch NEXTDAAD.NEX from inside it.
+;
+; RUN SHEET: docs\superpowers\tileslack-ab-run-sheet.md. Read it before
+; running; it says what to look for on each pair and what a given outcome
+; means.
+;
+; ------------------------------------------------------------------
+; WHAT THIS FIXTURE IS FOR
+; ------------------------------------------------------------------
+; --tile-slack is the encoder's one opt-in picture knob. The manual carries
+; a benchmark table for it (four rows: two clips at 0.0 and 0.5, with
+; columns for rungs taken, stream utilisation, local 4x4 PSNR and a banding
+; index) and tests\video\tileslack_ab.py re-measures every cell of it.
+;
+; THIS FIXTURE ANSWERS THE HALF NO METRIC ANSWERS: what the clip LOOKS
+; like, moving, on a real ZX Spectrum Next. The owner's own stock footage
+; banded and juddered on kit defaults after the whole fixture deck passed,
+; so a metrics-improved verdict does not settle whether the picture
+; improved. A still panel cannot judge a MOTION artifact and neither can a
+; PSNR figure.
+;
+; ------------------------------------------------------------------
+; WHAT IS STAGED - TWO A/B PAIRS, ONE VARIABLE
+; ------------------------------------------------------------------
+;   001.VID   PAIR 1  boat pan     ARM A  --tile-slack 0.0
+;   002.VID   PAIR 1  boat pan     ARM B  --tile-slack 0.5
+;   003.VID   PAIR 2  church zoom  ARM A  --tile-slack 0.0
+;   004.VID   PAIR 2  church zoom  ARM B  --tile-slack 0.5
+;
+; Both pairs are `full` 320x256 @25, Layer 2 mode-1, encoded from
+; authoring-kit\VIDEO\001.mp4 and 002.mp4 - the whole clip in each case.
+; Within a pair NOTHING differs but the knob: same source, same cut, same
+; shape, same fps, same dither, same retime, same everything else, and the
+; STREAM BUDGET IS PINNED on arm B to the value arm A derived, so the
+; finer tile rung cannot move its own supply ceiling and flatter itself.
+;
+; The four files are the SAME BYTES the measurement script measured - the
+; staging step copies its cached output rather than re-encoding, so the
+; numbers on the page and the picture on the glass are the same encode.
+;
+; ------------------------------------------------------------------
+; BOTH ARMS OF A PAIR CAN LOOP, AND THAT IS DELIBERATE
+; ------------------------------------------------------------------
+; Every arm has a play-once verb and a LOOPING verb (any key ends a loop).
+; The predecessor card (.superpowers\sdd\sp14a-task-4-report.md section
+; 43.2) staged ONE looping arm against three play-once ones and had to warn
+; that the asymmetry cut in the looping arm's favour, because a looping
+; clip gives the eye repeated passes. Here the two arms of a pair are
+; equally easy to stare at, so that correction is not needed.
+;
+; ------------------------------------------------------------------
+; THE LABEL - the owner must never have to guess which arm is playing
+; ------------------------------------------------------------------
+; Layer 2 sits ABOVE the tilemap and a 320x256 video covers the whole
+; surface, so no caption can be visible DURING playback. The label is
+; therefore printed twice, either side of it:
+;
+;   BEFORE  the arm is named in full and the fixture waits for a key, so
+;           playback starts only once the label has been read;
+;   AFTER   DISPLAY 1 clears the Layer 2 plane (l2_clear walks 10 pages in
+;           mode 1, src\overlay2.asm) and the same label is reprinted under
+;           "JUST PLAYED", followed by the menu.
+;
+; If the text does NOT come back after a clip, the plane did not clear -
+; that is a Layer 2 fault, not a video one, and the run sheet says so.
+;
+; NO PICTURE, NO SOUND ASSETS, NO MUSIC. Nothing is staged but the four
+; encodes, so a symptom cannot be a stale asset winning the picture probe
+; chain, a song's interrupt hold, or an audio interaction. The clips carry
+; their own audio inside the NXV stream.
+
+; System flags used by name (DAAD BLANK template spellings)
+#define fPlayer             38
+#define fVerb               33
+
+/CTL
+_
+/VOC
+NORTH  2  noun
+SOUTH  3  noun
+LOOK   4  verb
+; The A/B verbs. The digit in each name IS the --tile-slack value, so the
+; command the owner types already says which arm it is: 0 = arm A (0.0),
+; 5 = arm B (0.5). An L prefix means LOOP.
+MENU  80  verb
+PAN0  81  verb
+PAN5  82  verb
+LPAN0 83  verb
+LPAN5 84  verb
+ZOM0  85  verb
+ZOM5  86  verb
+LZOM0 87  verb
+LZOM5 88  verb
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "Not a command here - type MENU for the list."
+/7  "I can't go in that direction."
+/8  "Not a command here - type MENU for the list."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 "Press any key."
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+/MTX
+/0 "NEXTDAAD TILE-SLACK A/B FIXTURE"
+; Messages 1-4 are the ARM LABELS. Each names the pair, the clip, the arm,
+; the exact encoder option and the file, so a photograph of the screen is
+; enough to say which encode was on the glass.
+/1 "PAIR 1  BOAT PAN     ARM A  --tile-slack 0.0  (001.VID)"
+/2 "PAIR 1  BOAT PAN     ARM B  --tile-slack 0.5  (002.VID)"
+/3 "PAIR 2  CHURCH ZOOM  ARM A  --tile-slack 0.0  (003.VID)"
+/4 "PAIR 2  CHURCH ZOOM  ARM B  --tile-slack 0.5  (004.VID)"
+/5 "LOOPS - PRESS ANY KEY TO STOP IT"
+/6 "PLAYS ONCE"
+/7 "Press any key to start."
+/8 "JUST PLAYED"
+/9 "COMMANDS#nPAN0   PAN5    boat pan, once      (arm A / arm B)#nLPAN0  LPAN5   boat pan, loops#nZOM0   ZOM5    church zoom, once   (arm A / arm B)#nLZOM0  LZOM5   church zoom, loops#nMENU           this list again#nThe digit is the --tile-slack value: 0 = arm A, 5 = arm B.#nWatch each pair BACK TO BACK, never from memory."
+/OTX
+/0 "a brass lamp"
+/LTX
+/0 ""
+/1 ""
+/CON
+/0
+NORTH 1
+/1
+SOUTH 0
+/OBJ
+/0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/PRO 0
+; Main loop. Location 0 is the "not set up yet" state: the first pass
+; builds the window and prints the menu, then moves to location 1 so every
+; later pass is just the parser.
+> _ _   AT 0
+        PROCESS 6
+        GOTO 1
+> _ _   PROCESS 1
+/PRO 1
+; Turn loop, the gmodegate shape: parse, run the verb table, complain if
+; nothing matched. There is no map and no object handling to do.
+> _ _   PARSE 0
+        REDO
+> _ _   PROCESS 5
+        ISDONE
+        REDO
+> _ _   NEWTEXT
+        LT fVerb 14
+        SYSMESS 7
+        REDO
+> _ _   SYSMESS 8
+        REDO
+/PRO 5
+; ---- THE VERB TABLE - eight arms, two pairs, one shape each ----
+; Every entry is the same nine steps and they only differ in WHICH label
+; message and WHICH video number they name:
+;
+;   PROCESS 7   clear the screen, print the fixture title
+;   MESSAGE n   the arm label (1-4)
+;   INK/MESSAGE  LOOPS (5) or PLAYS ONCE (6)
+;   PROCESS 8   "press any key to start", then wait
+;   GFX n 13    play once      /  GFX n 14   loop, any key ends it
+;   PROCESS 9   clear Layer 2, print "JUST PLAYED"
+;   MESSAGE n   the SAME arm label, so the screen still names what you
+;               just watched
+;   PROCESS 10  the menu
+;
+; GFX n 13/14 is the documented player dispatch surface (h_gfx sub 13/14,
+; src\overlay2.asm -> vid_play, src\video.asm) - the same one the -Vid and
+; -VidLong legs drive.
+
+; ---- PAIR 1: boat pan ----
+> PAN0    _     PROCESS 7
+                MESSAGE 1
+                INK 13
+                MESSAGE 6
+                PROCESS 8
+                GFX 1 13
+                PROCESS 9
+                MESSAGE 1
+                PROCESS 10
+                DONE
+
+> PAN5    _     PROCESS 7
+                MESSAGE 2
+                INK 13
+                MESSAGE 6
+                PROCESS 8
+                GFX 2 13
+                PROCESS 9
+                MESSAGE 2
+                PROCESS 10
+                DONE
+
+> LPAN0   _     PROCESS 7
+                MESSAGE 1
+                INK 13
+                MESSAGE 5
+                PROCESS 8
+                GFX 1 14
+                PROCESS 9
+                MESSAGE 1
+                PROCESS 10
+                DONE
+
+> LPAN5   _     PROCESS 7
+                MESSAGE 2
+                INK 13
+                MESSAGE 5
+                PROCESS 8
+                GFX 2 14
+                PROCESS 9
+                MESSAGE 2
+                PROCESS 10
+                DONE
+
+; ---- PAIR 2: church zoom ----
+> ZOM0    _     PROCESS 7
+                MESSAGE 3
+                INK 13
+                MESSAGE 6
+                PROCESS 8
+                GFX 3 13
+                PROCESS 9
+                MESSAGE 3
+                PROCESS 10
+                DONE
+
+> ZOM5    _     PROCESS 7
+                MESSAGE 4
+                INK 13
+                MESSAGE 6
+                PROCESS 8
+                GFX 4 13
+                PROCESS 9
+                MESSAGE 4
+                PROCESS 10
+                DONE
+
+> LZOM0   _     PROCESS 7
+                MESSAGE 3
+                INK 13
+                MESSAGE 5
+                PROCESS 8
+                GFX 3 14
+                PROCESS 9
+                MESSAGE 3
+                PROCESS 10
+                DONE
+
+> LZOM5   _     PROCESS 7
+                MESSAGE 4
+                INK 13
+                MESSAGE 5
+                PROCESS 8
+                GFX 4 14
+                PROCESS 9
+                MESSAGE 4
+                PROCESS 10
+                DONE
+
+> MENU    _     PROCESS 7
+                PROCESS 10
+                DONE
+
+> LOOK    _     PROCESS 7
+                PROCESS 10
+                DONE
+/PRO 6
+; One-shot setup. The text window is the WHOLE tilemap - there is no
+; picture window here, because a 320x256 video owns the entire Layer 2
+; surface while it plays and the menu owns the whole screen while it does
+; not.
+;
+; MODE 2 disables the "More..." pager for this window (h_mode writes
+; WIN_FLAGS bit 1, src\overlay0.asm). Without it the menu would page.
+> _ _   WINDOW 1
+        WINAT 0 0
+        WINSIZE 32 80
+        MODE 2
+        PAPER 0
+        INK 7
+        CLS
+        PROCESS 7
+        PROCESS 10
+/PRO 7
+; Screen header. Called before every arm and by MENU/LOOK.
+> _ _   WINDOW 1
+        CLS
+        INK 15
+        MESSAGE 0
+        NEWLINE
+        INK 14
+/PRO 8
+; The gate before playback: the label above has been printed, so the clip
+; cannot start before it has been read.
+> _ _   NEWLINE
+        INK 7
+        MESSAGE 7
+        ANYKEY
+/PRO 9
+; Post-playback. DISPLAY 1 clears the Layer 2 plane to the transparent
+; index (h_display's non-zero arm -> l2_clear, src\overlay2.asm) so the
+; tilemap under it is readable again - without it the clip's last frame
+; would sit over the text. The tilemap itself is never touched by the
+; player, so the reprint below is the only thing that writes it.
+> _ _   DISPLAY 1
+        WINDOW 1
+        CLS
+        INK 15
+        MESSAGE 8
+        INK 14
+/PRO 10
+; The menu.
+> _ _   NEWLINE
+        INK 7
+        MESSAGE 9
+/END
