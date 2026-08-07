@@ -242,8 +242,8 @@ l2_clear_at:
 ;   chosen over an NR $41 write so the priority bit is explicitly
 ;   cleared), making index 255 the ONLY transparent entry after ANY
 ;   l2_palette_load. No Rabenstein art uses pixel value 255
-;   (L2_TRANSP_INDEX, nextdaad.inc: png2nx.py quantizes to 255 colours
-;   so art never reaches it), so reserving the index costs nothing.
+;   (L2_TRANSP_INDEX, nextdaad.inc: art is supplied quantized to 255
+;   colours, so nothing reaches it), so reserving the index costs nothing.
 ;   The DEBUG test card DOES paint pixel 255 (TC_MARK_COLOUR), but it
 ;   never calls l2_palette_load - it runs on the reset identity
 ;   palette, where 255 is white - so the invariant is untouched by it.

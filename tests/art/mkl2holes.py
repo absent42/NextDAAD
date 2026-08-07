@@ -158,8 +158,8 @@
 #     down, NOT transparent.
 #   BLOCK "E7", index 15 = RGB333 (7,1,7). One step of green off pure
 #     magenta packs to $E7, is left alone by both copy loops, and renders
-#     exactly as authored. It is the same escape png2nx.py and
-#     nxv2enc.py's TRANSP_REMAP pick for the same colour.
+#     exactly as authored. It is the same escape nxv2enc.py's
+#     TRANSP_REMAP picks for the same colour.
 #
 # PASS: both blocks are magenta, E3 very slightly duller/less blue than
 # E7, and NEITHER shows text. FAIL: the E3 block shows text - the dodge
@@ -202,10 +202,11 @@
 # 8-bit palette indices, row-major. gfx_blit skips the leading 512 for
 # the pixel stream and rewinds to offset 0 for l2_palette_load format 1.
 #
-# Written by hand rather than through tools\png2nx.py for the same reason
-# mkl2card.py is: that route's ADAPTIVE palette picks its own colours, so
-# which index carries which colour - and whether any entry lands on $E3 -
-# would not be under this card's control. Here it is the entire point.
+# Written by hand rather than converted from a PNG through gfx2next for
+# the same reason mkl2card.py is: that route's ADAPTIVE palette picks its
+# own colours, so which index carries which colour - and whether any
+# entry lands on $E3 - would not be under this card's control. Here it
+# is the entire point.
 
 import os
 import sys

@@ -249,13 +249,12 @@ NR_TM_TRANSP    equ $4C     ; NORMAL tilemap mode's transparent index -
 ; which is what tied Layer 2's transparent colour to a tilemap attribute
 ; encoding. Never merge them again.
 ;
-; FOUR FILES CARRY THESE VALUES - this one is canonical, and if either
-; moves, all four move:
+; THREE FILES CARRY THESE VALUES - this one is canonical, and if either
+; moves, all three move:
 ;   src/nextdaad.inc          L2_TRANSP_COLOUR / L2_TRANSP_INDEX (here)
-;   scripts/png2nx.py         L2_TRANSPARENT_BYTE0 / RESERVED_INDEX
 ;   authoring-kit/lib/nxv2enc.py    L2_TRANSPARENT_BYTE0
 ;   authoring-kit/lib/palcheck.ps1  $TRANSP / $RESERVED
-; tests/build-tests.ps1 parses all four and fails if they disagree.
+; tests/build-tests.ps1 parses all three and fails if they disagree.
 L2_TRANSP_COLOUR equ $E3    ; RGB332 COLOUR written to NR_L2_TRANSP, and
                             ; stamped into L2_TRANSP_INDEX. $E3 is the
                             ; hardware reset value (chapter-next-layer2
@@ -271,8 +270,8 @@ L2_TRANSP_COLOUR equ $E3    ; RGB332 COLOUR written to NR_L2_TRANSP, and
 L2_TRANSP_INDEX  equ 255    ; PIXEL VALUE the interpreter writes to punch
                             ; a hole in a Layer 2 surface. NOT a colour
                             ; and NOT related to any tilemap attribute.
-                            ; scripts/png2nx.py quantizes to 255 colours
-                            ; so art never uses this index.
+                            ; Authors supply art quantized to 255 colours,
+                            ; so index 255 stays free for transparency.
 
 ; --- Banking skeleton (sub-project 3) ---
 DDB_PAGE_FIRST  equ 32      ; DDB bank 16 = 8K pages 32..47

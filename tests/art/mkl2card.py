@@ -65,8 +65,8 @@
 # is DERIVED by gfx_derive_height as (filesize - 512) / 256, so the row
 # count is carried by the file length alone and 128 must divide exactly.
 #
-# Written by hand rather than through tools\png2nx.py (PNG + gfx2next
-# -pal-embed, the canonical route for real art) because that route's
+# Written by hand rather than converted from a PNG through gfx2next
+# -pal-embed (the canonical route for real art) because that route's
 # ADAPTIVE palette is exactly the property this card must not have: it
 # picks its own colours, so which index carries which colour - and
 # whether any entry lands on $E3 and gets rewritten - is not under the
