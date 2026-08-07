@@ -96,6 +96,40 @@ if errorlevel 1 ( pause & exit /b 1 )
 call "%~dp0lib\assemble.bat"
 if errorlevel 1 ( pause & exit /b 1 )
 
+REM ---- classic charsets (SP18): a kit-root FONT.ch8 / FONT<n>.ch8 is a
+REM      768-byte classic ZX charset (chars 32-127). Convert it here so
+REM      the author does not have to remember the command, the same way
+REM      IMAGES\*.png is converted rather than staged. A ready-made
+REM      FONT<n>.CHR staged below overwrites the converted result, so a
+REM      hand-built full table always wins. RELEASE\FONT<n>.CHR was
+REM      already wiped by the stale-clean near the top of this script, so
+REM      a .ch8 removed since the last build cannot leave a stray
+REM      converted .CHR behind either - this loop only ever recreates
+REM      what it finds a source for.
+REM      NOTE: "if errorlevel 1 (...) else (...)", not "cmd || (...)"
+REM      followed by more commands in the same if-exist block - verified
+REM      empirically that once a command follows the closing ")" of a
+REM      "|| ( ... exit /b 1 )" inside the same enclosing parens, cmd.exe
+REM      still stops (no further iterations, no further script) but the
+REM      PROCESS exit code silently resets to 0, so a caller checking
+REM      errorlevel after this script never sees the failure. Keeping
+REM      exit /b 1 as the last statement in every enclosing block avoids
+REM      it - same class of hazard lib\audio.bat's STREAM_*.aks loop
+REM      comment already documents, different trigger.
+for %%F in ("FONT.ch8" "FONT1.ch8" "FONT2.ch8" "FONT3.ch8" "FONT4.ch8" ^
+            "FONT5.ch8" "FONT6.ch8" "FONT7.ch8" "FONT8.ch8" "FONT9.ch8") do (
+    if exist %%F (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "lib\fontconv.ps1" -In %%F -Out "RELEASE\%%~nF.CHR"
+        if errorlevel 1 (
+            echo ERROR: fontconv failed converting %%F
+            pause
+            exit /b 1
+        ) else (
+            echo   font %%~nxF -^> RELEASE\%%~nF.CHR ^(converted, 768 -^> 2048^)
+        )
+    )
+)
+
 REM ---- ready-made font (SP12 T2): a kit-root FONT.CHR - already a full
 REM      2048-byte glyph table, see lib\fontconv.ps1 for how to make one
 REM      from a classic 768-byte ZX charset - is staged to RELEASE\ as-is,
