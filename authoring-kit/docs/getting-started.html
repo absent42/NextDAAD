@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="getting-started">Getting started</h1>
+<p>The authoring kit turns your DAAD source into a folder you copy straight
+onto an SD card. It compiles the database, converts your artwork and
+audio, stages the interpreter beside them, and can launch an emulator on
+the result. There is nothing to assemble by hand.</p>
+<h2 id="what-you-need">What you need</h2>
+<p>Windows: the build scripts are Windows batch files.</p>
+<p>The interpreter itself, <code>nextdaad.nex</code>, already sits in the kit folder.
+The tools below do not - they are third-party, and some may not be
+redistributed. Download each and extract it into the kit's <code>tools\</code>
+folder at the path shown.</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Provides</th>
+<th>Extract into</th>
+<th>Needed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DAAD Ready</td>
+<td>the DRC compiler (<code>DRF.exe</code>, <code>DRB.PHP</code>) and PHP</td>
+<td><code>tools\DAAD-READY\</code></td>
+<td>always</td>
+</tr>
+<tr>
+<td>Gfx2Next</td>
+<td>PNG to Layer 2 picture conversion</td>
+<td><code>tools\gfx2next\</code></td>
+<td>only with an <code>IMAGES\</code> folder</td>
+</tr>
+<tr>
+<td>Arkos Tracker 3</td>
+<td><code>SongToAky.exe</code>, <code>SongToSoundEffects.exe</code>, <code>SongToYm.exe</code></td>
+<td><code>tools\ArkosTracker3\tools\</code></td>
+<td>only with <code>.aks</code> audio</td>
+</tr>
+<tr>
+<td>CSpect</td>
+<td>emulator, to play the result without hardware</td>
+<td><code>tools\CSpect\</code></td>
+<td>to run the build</td>
+</tr>
+<tr>
+<td>ffmpeg</td>
+<td>reads your video sources</td>
+<td><code>tools\ffmpeg\</code></td>
+<td>only when encoding an <code>.mp4</code> cutscene</td>
+</tr>
+</tbody>
+</table>
+<p><code>tools\README.txt</code> lists the download addresses and the exact executable
+paths the build checks for. The video encoder ships with the kit, so
+ffmpeg is the only extra download cutscenes need.</p>
+<p>If you keep your tools somewhere else, point <code>TOOLSDIR</code> in <code>CONFIG.BAT</code>
+at that folder instead.</p>
+<h2 id="where-your-files-go">Where your files go</h2>
+<p>Everything the build reads lives in the kit folder:</p>
+<ul>
+<li><strong>Your adventure</strong>, as a single <code>.DSF</code> file in the kit folder. With
+  exactly one there, the build finds it by itself; otherwise name it in
+  <code>GAME</code> in <code>CONFIG.BAT</code> (base name, no extension).</li>
+<li><strong><code>IMAGES\</code></strong> - location pictures as <code>001.png</code>, <code>002.png</code> and so on,
+  plus <code>DAAD.png</code> for a title screen. See <a href="graphics.html">Graphics</a> for
+  the art rules.</li>
+<li><strong><code>AUDIO\</code></strong> - Arkos <code>.aks</code> music and effects, and <code>.wav</code> samples. See
+  <a href="audio.html">Audio</a>.</li>
+<li><strong><code>VIDEO\</code></strong> - cutscene sources as <code>001.mp4</code> (or a pre-encoded
+  <code>001.vid</code>). See <a href="video.html">Video</a>.</li>
+<li><strong>Ready-made files in the kit folder itself</strong> - a <code>FONT.CHR</code> custom
+  font or a <code>POINTER.SPR</code> mouse pointer (see
+  <a href="customising.html">Customising</a>), or already-converted title art. These
+  are copied through untouched.</li>
+</ul>
+<p>A pure-text game needs none of these folders. Graphics, audio and video
+are all optional and the build skips whatever is absent.</p>
+<h2 id="configuration">Configuration</h2>
+<p><code>CONFIG.BAT</code> holds every setting:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GAME</code></td>
+<td>Base name of your <code>.DSF</code>. Blank = auto-detect the single <code>.DSF</code>.</td>
+</tr>
+<tr>
+<td><code>COMPRESS</code></td>
+<td><code>1</code> = ZX0-compress pictures (smaller files); <code>0</code> = raw.</td>
+</tr>
+<tr>
+<td><code>RUN</code></td>
+<td><code>1</code> = launch CSpect after a successful build; <code>0</code> = build only.</td>
+</tr>
+<tr>
+<td><code>TOOLSDIR</code></td>
+<td>Folder holding the tools above. Default <code>tools</code>.</td>
+</tr>
+<tr>
+<td><code>NEXFILE</code></td>
+<td>The interpreter to ship. Default <code>nextdaad.nex</code>.</td>
+</tr>
+<tr>
+<td><code>VIDASPECT</code>, <code>VIDFPS</code>, <code>VIDOPTS</code>, <code>VIDOPTS_NNN</code></td>
+<td>Cutscene encoding - see <a href="video.html">Video</a>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="build-and-run">Build and run</h2>
+<ul>
+<li><strong><code>BUILD.BAT</code></strong> - double-click it. It compiles the database, converts
+  graphics and audio, encodes any new video, copies the interpreter,
+  and launches CSpect if <code>RUN=1</code>. It finishes with
+  <code>BUILD OK: RELEASE\ is ready to copy to an SD card</code>.</li>
+<li><strong><code>RUN.BAT</code></strong> - launches CSpect on whatever is already in <code>RELEASE\</code>,
+  without rebuilding.</li>
+<li><strong><code>CLEAN.BAT</code></strong> - empties <code>RELEASE\</code> and clears the compiler's staged
+  intermediates.</li>
+</ul>
+<p>The build stops at the first error, with a message naming the cause. It
+clears the converted assets out of <code>RELEASE\</code> before it starts, so a
+picture or tune you delete from the kit folder cannot linger there from
+an earlier build.</p>
+<p>Your database is compiled as DAAD version 3. If you are bringing in a
+game written for version 2, three behaviours change silently - see
+<a href="daad-v3.html">DAAD V3</a>.</p>
+<h2 id="what-comes-out">What comes out</h2>
+<p><code>RELEASE\</code> is the finished SD card image. Copy its <strong>contents</strong> (not the
+folder) to the root of the card. It holds:</p>
+<ul>
+<li><code>nextdaad.nex</code> - the interpreter, the file you launch.</li>
+<li><code>GAME.DDB</code> - your compiled adventure.</li>
+<li><code>0.XMB</code> - external message text, if your game uses XMESSAGE or XMES.
+  It must stay beside <code>GAME.DDB</code>; without it those messages silently
+  print nothing.</li>
+<li><code>NNN.NX2</code> / <code>NNN.NXI</code> - converted location pictures, and <code>DAAD.NX2</code> /
+  <code>DAAD.NXI</code> for a title screen (with a <code>.zx0</code> suffix when
+  <code>COMPRESS=1</code>).</li>
+<li><code>GAME.AKY</code>, <code>NNN.AKY</code>, <code>NNN.AYS</code>, <code>GAME.SFB</code>, <code>NNN.WAV</code> - converted
+  and copied audio.</li>
+<li><code>NNN.VID</code> - encoded cutscenes.</li>
+<li><code>FONT.CHR</code>, <code>POINTER.SPR</code> - your custom font and pointer, if you
+  supplied them.</li>
+</ul>
+<h2 id="the-starter-game">The starter game</h2>
+<p><code>STARTER.DSF</code> ships with the kit along with example graphics, audio and
+video, so a first build works before you have written anything. It shows
+the Next-specific condacts in use - <code>PICTURE</code>/<code>DISPLAY</code> for location
+art, <code>SFX</code> for music and effects, <code>BEEP</code> for tones, <code>GFX</code> for cutscenes.
+Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.</p>
+<h2 id="when-the-build-fails">When the build fails</h2>
+<table>
+<thead>
+<tr>
+<th>Message</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>set GAME in CONFIG.BAT</code></td>
+<td>The kit folder holds no <code>.DSF</code>, or more than one. Set <code>GAME</code> to the base name of the one you want.</td>
+</tr>
+<tr>
+<td><code>required tool missing</code></td>
+<td>The named path does not exist. Install that tool there, or fix <code>TOOLSDIR</code> / <code>NEXFILE</code>.</td>
+</tr>
+<tr>
+<td><code>CSpect is running - close it before building</code></td>
+<td>CSpect holds the <code>RELEASE\</code> files open. Close it and build again.</td>
+</tr>
+<tr>
+<td><code>DRF failed compiling</code> / <code>DRB failed building the DDB</code></td>
+<td>The compiler rejected your source. Its own output above the message names the line.</td>
+</tr>
+<tr>
+<td><code>GAME.DDB is N bytes, over the 131072 limit</code></td>
+<td>The database is too large to ship. See <a href="reference/limits.html">Limits</a>.</td>
+</tr>
+<tr>
+<td><code>gfx2next not found</code></td>
+<td>Install Gfx2Next, or fix <code>TOOLSDIR</code>.</td>
+</tr>
+<tr>
+<td><code>expected a 320 or 256 wide PNG</code></td>
+<td>Resize the named image to exactly 320 or 256 pixels wide.</td>
+</tr>
+<tr>
+<td><code>must be a paletted 8-bit PNG</code></td>
+<td>Export the image again as an indexed-colour PNG. Truecolour is rejected.</td>
+</tr>
+<tr>
+<td><code>GAME.AKY is N bytes, over the 10208 song limit</code></td>
+<td>The tune does not fit the song slot. Shorten it, reduce channels, or stream it - see <a href="audio.html">Audio</a>.</td>
+</tr>
+<tr>
+<td><code>SongToAky not found</code> / <code>SongToYm not found</code></td>
+<td>Install Arkos Tracker 3, or fix <code>TOOLSDIR</code>.</td>
+</tr>
+<tr>
+<td><code>this encode cannot stream</code> / <code>cannot play at rate</code></td>
+<td>No encode of that clip fits the playback budget. Use a smaller shape, a lower frame rate, or a shorter clip - see <a href="reference/video-delivery.html">Video delivery</a>.</td>
+</tr>
+<tr>
+<td><code>audio bytes/frame ... exceeds</code></td>
+<td>The frame rate is below the floor sound needs. Raise <code>VIDFPS</code>.</td>
+</tr>
+<tr>
+<td><code>over the NXV player's ... ceiling</code></td>
+<td>The clip is too big or too long to play. The message names the longest clip your shape and frame rate allow.</td>
+</tr>
+</tbody>
+</table>
+<p>Warnings are different from errors. Anything about the sound-effects
+bank, or about picture transparency, is advisory - the build carries on
+and the game still ships.</p>
+<p>Once a build runs, the game itself may still behave differently from how
+it did on another DAAD interpreter. <a href="platform-notes.html">Platform
+notes</a> is the place to look first.</p>
+</main>
+</body>
+</html>

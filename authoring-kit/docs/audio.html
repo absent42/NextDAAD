@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="audio">Audio</h1>
+<p>Background music, sound effects and digital samples, all from the
+<code>AUDIO\</code> folder. Everything here is optional - a game with no <code>AUDIO\</code>
+folder builds and plays fine.</p>
+<p>Music and effects are selected in your game with the <code>SFX</code> condact.
+<a href="reference/symbols.html">Symbols</a> lists every sub-command and what it does
+on this target.</p>
+<h2 id="music">Music</h2>
+<p>Compose in Arkos Tracker 3 and drop the <code>.aks</code> files into <code>AUDIO\</code>:</p>
+<ul>
+<li><strong><code>&lt;GAME&gt;.aks</code></strong> - your theme. It plays automatically at boot, and
+  <code>SFX 255 6</code> (once) or <code>SFX 255 7</code> (looped) plays it again from
+  anywhere in the game.</li>
+<li><strong><code>NNN.aks</code></strong> - numbered songs, played by <code>SFX n 6</code> (once) or
+  <code>SFX n 7</code> (looped).</li>
+<li><strong><code>STREAM_NNN.aks</code></strong> - a song too big for the song slot, streamed from
+  the SD card instead. Selected exactly the same way, with <code>SFX n 6</code> /
+  <code>SFX n 7</code>.</li>
+</ul>
+<p><code>SFX n 8</code> stops music of either kind.</p>
+<p><strong>The song slot is 10208 bytes</strong>, and a lot of real multi-channel tunes
+do not fit it. If the build stops with <code>over the 10208 song limit</code>, you
+have two choices: shorten the tune or reduce its channels, or rename the
+source to <code>STREAM_NNN.aks</code> and let it stream. Streamed songs have no
+fixed slot size - they are bounded only by free memory - at the cost of
+reading from the card while they play. Streaming needs Arkos Tracker 3's
+<code>SongToYm.exe</code> installed; the rest of the conversion is automatic.</p>
+<h2 id="ay-sound-effects">AY sound effects</h2>
+<p>Build your effects as a single Arkos sound-effects bank named
+<strong><code>&lt;GAME&gt;_FX.aks</code></strong>. Effects from it play with <code>SFX n 1</code> (once) or
+<code>SFX n 2</code> (looped), and <code>SFX n 5</code> stops whatever effect is sounding.</p>
+<p>The effects bank has 2048 bytes to fit into. If it comes out larger, or
+the effects tool is not installed, the build <strong>warns and carries on
+without it</strong> - your game still builds and plays, just silently where the
+effects would have been.</p>
+<h2 id="digital-samples">Digital samples</h2>
+<p>Drop 8-bit WAV files into <code>AUDIO\</code> named by number - <code>001.wav</code>,
+<code>002.wav</code> - and they are copied to the release untouched. Play one with
+<code>SFX n 1</code> (once) or <code>SFX n 2</code> (looped), the same sub-commands the AY
+effects bank uses.</p>
+<p><strong>You supply the file in the right format; nothing converts it for
+you.</strong> It must be:</p>
+<ul>
+<li>PCM, <strong>mono</strong>, <strong>8-bit unsigned</strong>,</li>
+<li>sampled between <strong>3500 and 20000 Hz</strong>.</li>
+</ul>
+<p>It plays back at whatever rate its own header declares - there is no
+resampling - so pick the rate when you export.</p>
+<p><strong>Samples and AY effects share one set of numbers.</strong> <code>SFX n 1</code> looks for
+<code>NNN.WAV</code> first and falls back to the effects bank if there is no such
+file, so a sample and an AY effect cannot both use number 7. Numbers 1
+to 254 work either way; 255 always plays from the AY bank.</p>
+<p><strong>Size.</strong> Samples load into whatever memory is free rather than one
+fixed buffer, so there is no single limit to quote. As a working rule,
+<strong>up to 48K always fits</strong>, on any machine, whatever else is loaded.
+Beyond that a sample competes with picture caching and streamed songs
+for the remaining memory, so test a large one on the memory
+configuration you expect players to have.</p>
+<h2 id="beep-tones">BEEP tones</h2>
+<p><code>BEEP</code> plays a single tone through the AY. Write it the way the DAAD
+manual documents - duration first, then tone - and let the compiler
+handle the rest.</p>
+<p>Two rules the compiler enforces before your game ever runs:</p>
+<ul>
+<li><strong>Tones outside 48 to 238 are not tones.</strong> The compiler rewrites any
+  <code>BEEP</code> with a tone below 48 or above 238 into a <code>PAUSE</code> of the same
+  duration, so it becomes a silent wait rather than a note. The whole 48
+  to 238 range sounds, top octave included.</li>
+<li><strong>Tones must be even.</strong> An odd tone is silent by design.</li>
+</ul>
+<p><strong>Durations are scaled at compile time.</strong> Both <code>BEEP</code> and <code>PAUSE</code>
+durations are multiplied by this target's own note length on the way
+into the database, so a duration you authored is not the duration that
+ships. <code>XPLAY</code>'s generated notes are scaled the same way. If you are
+copying timings out of an older DAAD or MALUVA guide, treat its duration
+tables as a starting point and check the result by ear.</p>
+</main>
+</body>
+</html>
