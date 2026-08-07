@@ -115,15 +115,26 @@ windows the classic way, inside the paper area.
 
 Text colours are safe by construction: text renders on the tilemap
 layer with its own fixed 16-colour classic ULA palette, while picture
-palettes are written only to the Layer 2 palette. All 256 slots
+palettes are written only to the Layer 2 palette. 255 of the 256 slots
 are usable for art, with one reservation:
 
-- Palette index 254 is the transparency index. The interpreter forces
-  its colour to the global transparent colour after every palette
-  load, and any art palette entry whose colour would collide with it
-  is shifted by one blue LSB (imperceptible). Art should simply avoid
-  drawing with index 254; Gfx2Next output does not need any special
-  treatment otherwise.
+- Palette index 255 is reserved, and the transparent colour is the
+  Spectrum Next standard magenta - #E000C0 (224, 0, 192), the value
+  NR $14 holds after a reset, and the same colour Next sprites use.
+  The interpreter stamps index 255 with it after every palette load,
+  so any pixel drawn with index 255 becomes a hole showing the text
+  layer beneath. Keep art to 255 colours.
+- Transparency is a COLOUR compare, not an index compare: hardware
+  matches the top 8 bits of a palette entry against NR $14, so both
+  9-bit colours sharing those bits are transparent whatever index they
+  sit at. Any art entry that would collide is shifted two steps down
+  the blue scale - still magenta, imperceptible in a picture - so a
+  deliberate magenta renders rather than punching a hole.
+- Our own converter (scripts/png2nx.py) reserves index 255 and warns
+  if a source contains the reserved colour. The authoring kit's path
+  runs Gfx2Next on your own 8-bit PNG, so it cannot re-quantise for
+  you - it audits the converted file and warns instead. Neither stops
+  the build.
 
 ### Title screens
 
