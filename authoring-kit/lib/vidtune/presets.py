@@ -58,9 +58,9 @@ class Route:
     variant: "Route" = None           # the same route at a different crop
 
 
-# Transcribed from docs\video.html section 4. Preset 1 is "nothing at
-# all - the kit defaults are the right answer", which is why its values
-# are empty: applying it IS the reset.
+# Transcribed from authoring-kit/docs/video.html section 4. Preset 1 is
+# "nothing at all - the kit defaults are the right answer", which is why
+# its values are empty: applying it IS the reset.
 ROUTES = (
     Route("quiet", "Quiet scene",
           "slow zooms and pans, held shots, talking heads, title cards",
@@ -267,10 +267,11 @@ def ladder_steps(settings):
 def ladder_blocked_reason(settings):
     """Why the whole ladder does not apply, or "" when it does.
 
-    An uncompressed encode cannot band at all (docs\video.html preset 3:
-    "no banding, every frame pixel-exact"), so offering banding remedies
-    against one would be advising a fix for a problem that cannot occur -
-    and step 1 in particular has nothing to act on there."""
+    An uncompressed encode cannot band at all (preset 3 in
+    authoring-kit/docs/video.html: "no banding, every frame
+    pixel-exact"), so offering banding remedies against one would be
+    advising a fix for a problem that cannot occur - and step 1 in
+    particular has nothing to act on there."""
     if is_uncompressed(settings):
         return ("this clip is on the uncompressed route, where banding is "
                 "not possible - these remedies are for compressed encodes")

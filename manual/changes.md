@@ -17,14 +17,20 @@ game behaves, how it builds, or what the kit gives you, it is here.
   contents are spread across the pages that own each subject:
   `SETUP.md` across [Getting started](getting-started.md),
   [Graphics](graphics.md), [Audio](audio.md), [Video](video.md),
-  [Customising](customising.md), [Multi-part games](multi-part-games.md)
-  and [DAAD V3](daad-v3.md); `DIVERGENCES.md` across
-  [Platform notes](platform-notes.md) and
-  [Known differences](known-differences.md); `VIDEO-PRESETS.md` into
+  [Customising](customising.md), [Multi-part games](multi-part-games.md),
+  [DAAD V3](daad-v3.md), [Limits](reference/limits.md),
+  [Symbols](reference/symbols.md) and
+  [Video delivery](reference/video-delivery.md); `DIVERGENCES.md` across
+  [Platform notes](platform-notes.md),
+  [Known differences](known-differences.md) and
+  [DAAD V3](daad-v3.md); `VIDEO-PRESETS.md` into
   [Video](video.md); `NX2-FORMAT.md` into
   [Picture format](reference/picture-format.md); and the encoder's own
-  readme into [Video format](reference/video-format.md). Nothing was
-  dropped.
+  readme into [Video format](reference/video-format.md).
+  Every piece of authoring guidance came with them. The one thing that
+  did not is the table comparing the other DAAD interpreters' own
+  defects against each other, which told you nothing about writing a
+  game for this one.
 
 ## 0.3.1 - 4 August 2026
 

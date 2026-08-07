@@ -102,11 +102,12 @@ if exist "FONT.CHR" (
 
 REM ---- ready-made mouse pointer (SP12 T3): a kit-root POINTER.SPR - a
 REM      raw 256-byte 16x16 8-bit hardware sprite pattern, see
-REM      docs\customising.html "Custom mouse pointer" for the format and a sprite-editor
-REM      workflow - is staged to RELEASE\ as-is, no conversion wired in
-REM      here (gfx2next's -sprites mode CAN emit this exact raw format,
-REM      but only comes out correct with palette authoring this kit does
-REM      not verify - see docs\customising.html "Custom mouse pointer").
+REM      docs\customising.html "Custom mouse pointer" for the format and
+REM      a sprite-editor workflow - is staged to RELEASE\ as-is, no
+REM      conversion wired in here (gfx2next's -sprites mode CAN emit
+REM      this exact raw format, but only comes out correct with palette
+REM      authoring this kit does not verify - see docs\customising.html
+REM      "Custom mouse pointer").
 REM      Mirrors the ready-made FONT.CHR staging just above and
 REM      lib\gfx.bat's ready-made DAAD.* title staging (9fe5557). No
 REM      POINTER.SPR in the kit root is normal (the default arrow plays)

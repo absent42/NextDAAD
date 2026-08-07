@@ -20,13 +20,16 @@ All notable changes to NextDAAD are recorded here.
   `authoring-kit\docs\`, written as Markdown in `manual\` and built by
   `scripts\build_manual.py`. The five stand-alone guides are gone and
   their content redistributed: `SETUP.md` across getting-started,
-  graphics, audio, video, customising, multi-part-games and daad-v3;
-  `DIVERGENCES.md` across platform-notes and known-differences;
-  `VIDEO-PRESETS.md` into video; `NX2-FORMAT.md` into
+  graphics, audio, video, customising, multi-part-games, daad-v3,
+  reference/limits, reference/symbols and reference/video-delivery;
+  `DIVERGENCES.md` across platform-notes, known-differences and
+  daad-v3; `VIDEO-PRESETS.md` into video; `NX2-FORMAT.md` into
   reference/picture-format; `lib\videnc-README.md` into
-  reference/video-format. Older entries below that name a deleted file
-  refer to it under its old name; the mapping above is where its
-  content now lives.
+  reference/video-format. Dropped rather than moved: DIVERGENCES
+  section 7 (the reference-interpreter defect table) and section 8
+  (provenance). Older entries below that name a deleted file refer to
+  it under its old name; the mapping above is where its content now
+  lives.
 
 ## v0.3.1 - 04/08/2026
 
