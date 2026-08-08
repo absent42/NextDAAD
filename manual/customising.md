@@ -234,6 +234,40 @@ outside the kit. Either way, a ready-made `.SPR` in the kit folder wins
 over a converted PNG of the same number, so keep only one source per
 shape.
 
+### Exporting from a sprite editor
+
+Sprite editors often have a Next export script - Aseprite's is the one
+most people use. These write one byte per pixel, and that byte is the
+pixel's **palette index**. They write nothing else: no palette file, and
+no transparency handling.
+
+That is the right format, but only if two things are true of the file
+you are exporting, and neither is true by default.
+
+**Your editor's palette must be the Next standard palette**, the one
+where slot N holds RGB332 colour N. This interpreter never loads a
+sprite palette, so the hardware reads each exported byte as a colour
+directly. If you draw against your editor's own palette, an index of 255
+does not mean "whatever I put in slot 255", it means colour 255, which is
+white.
+
+**Transparency has to be painted, not alpha.** An alpha channel does not
+survive the export: the script reads each pixel's index and ignores its
+opacity, so a background you left transparent comes out as an ordinary
+opaque colour. Paint it in **slot 227** instead, which is `$E3`, the
+transparent value.
+
+Get either wrong and the symptom is the same, and it is a quiet one: a
+file that is exactly 256 bytes, passes every size check the kit and the
+interpreter apply, and renders as a solid block of the wrong colour with
+your artwork somewhere inside it. Nothing reports an error, because
+nothing can tell a wrong colour from an intended one.
+
+If loading the Next standard palette into your editor is awkward, use
+the PNG route above instead. Export an ordinary PNG with `#FF00FF` for
+the transparent pixels and let `-pal-std` do the mapping for you; that
+path cares about the colours you drew, not the slots they sit in.
+
 ### Per-part pointers
 
 As with fonts, a `PART<n>\POINTER.SPR` (and likewise
