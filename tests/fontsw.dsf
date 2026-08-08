@@ -159,7 +159,7 @@ LOOK   4  verb
 /2 "FONT 3 is absent - this must still read as font 0#n"
 /3 "Pointer shape 2 - blue. Offset 8 pixels right and 8 pixels down from the cursor position, on purpose - watch that it holds through every shape change below. Move the mouse, then press a key to continue.#n"
 /4 "Pointer shape 1 - red. Same 8/8 offset - confirm it is still there after this shape change. Move the mouse, then press a key to continue.#n"
-/5 "Pointer shape 0 - the base pointer, green. Same 8/8 offset - confirm it is still there after this last shape change. Move the mouse, then press a key to continue.#n"
+/5 "Pointer shape 0 - the base pointer. No POINTER.SPR is staged here, so this must be the interpreter's own built-in arrow - black outline, white fill, tip at the top left. Same 8/8 offset - confirm it is still there after this last shape change. Move the mouse, then press a key to continue.#n"
 /OTX
 /0 "a brass lamp"
 /LTX

@@ -3012,14 +3012,24 @@ if ($FontSw) {
     # 0 showing and the game running (MESSAGE 2) - staging one here would
     # make that leg of the fixture vacuous.
 
-    # Three colour-coded pointer shapes (MOUSE 2/1/0 5) via
-    # New-PointerFixture (defined near Reset-LegDir above), so which
-    # shape is live is answerable by eye: base green (matches -Font's
-    # own POINTER.SPR), shape 1 red, shape 2 blue.
-    [System.IO.File]::WriteAllBytes("$leg\POINTER.SPR",  (New-PointerFixture 0x1C))  # green
+    # Two colour-coded numbered pointer shapes (MOUSE 2 5 / MOUSE 1 5)
+    # via New-PointerFixture (defined near Reset-LegDir above), so which
+    # shape is live is answerable by eye: shape 1 red, shape 2 blue.
+    #
+    # Deliberately NO root POINTER.SPR staged, for the same reason there
+    # is no FONT3.CHR above. Shape 0 is the BASE pointer, which means
+    # POINTER.SPR when the game ships one and the interpreter's built-in
+    # arrow when it does not - so staging one here would hide the
+    # built-in arrow behind it and the fixture's MOUSE 0 5 step would
+    # only ever prove that a file loads, which shapes 1 and 2 already
+    # prove. Leaving it out makes that step show the built-in arrow,
+    # which is what every game gets by default and is otherwise not
+    # exercised anywhere in the harness. The POINTER.SPR-overrides-the-
+    # arrow path stays covered by the -Font modifier leg, which stages
+    # exactly that and no numbered shapes.
     [System.IO.File]::WriteAllBytes("$leg\POINTER1.SPR", (New-PointerFixture 0xE0))  # red
     [System.IO.File]::WriteAllBytes("$leg\POINTER2.SPR", (New-PointerFixture 0x03))  # blue
-    "staged 3 generated pointer fixtures -> sd\$legName\POINTER.SPR (green) / POINTER1.SPR (red) / POINTER2.SPR (blue), 256 bytes each"
+    "staged 2 generated pointer fixtures -> sd\$legName\POINTER1.SPR (red) / POINTER2.SPR (blue), 256 bytes each; no root POINTER.SPR, so MOUSE 0 5 shows the built-in arrow"
 
     $fontSwActive = $true
 }
