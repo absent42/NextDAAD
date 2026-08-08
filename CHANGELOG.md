@@ -43,6 +43,10 @@ All notable changes to NextDAAD are recorded here.
 - A failure inside the multi-part build loop returns exit code 1. It
   printed the error and stopped, but reported success to anything
   checking the exit code.
+- The video player's DMA transfers can now be interrupted by the audio
+  ISR instead of blocking it (interrupt-controller-guarded, DI
+  brackets removed). Verified on hardware; no user-visible behaviour
+  change beyond steadier audio timing during video playback.
 
 ## v0.3.2 - 07/08/2026
 

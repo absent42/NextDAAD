@@ -115,8 +115,11 @@ im2_init:
                                          ; session, RETI exit). Since SP18
                                          ; item 5 the video kernels run
                                          ; unbracketed and this permission is
-                                         ; their only guard - silicon leg
-                                         ; pending, wording final on pass.
+                                         ; their only guard (silicon leg
+                                         ; PASSED 2026-08-08: corruption gate
+                                         ; byte-exact on every staged clip
+                                         ; including the fill path; core
+                                         ; 3.02.04).
     nextreg NR_DMA_INT_EN_3, 0           ; $CE = 0: no UART source may interrupt
                                          ; a DMA. Nothing here uses the UARTs
                                          ; and $C6 is never written, so this

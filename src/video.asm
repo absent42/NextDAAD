@@ -106,7 +106,9 @@
 ;      compare, ASSERTed <= 255); its original rationale - the DI
 ;      bracket had to fit one audio ISR period - retired when the
 ;      kernels dropped their brackets (SP18 item 5, silicon leg
-;      pending; see the zxnDMA kernel header).
+;      PASSED 2026-08-08: corruption gate byte-exact on every staged
+;      clip including the fill path; core 3.02.04; see the zxnDMA
+;      kernel header).
 ; CORRUPT-INPUT DIVERGENCE NOTE (3b carried minor): a RUN8/COPY8 with
 ; n = 0 is a SILENT NO-OP here (the kernels' structural zero-count
 ; guards) where nxv2dec raises. The encoder never emits n = 0, so the
