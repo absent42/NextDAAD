@@ -59,9 +59,16 @@ there is no numbered palette slot for them to write to or read from.
 Both sub-commands are accepted and do nothing at all, so a game that
 uses them still runs; it simply gets no palette change.
 
+Sub 15 is a no-op for a different reason. On MSX and C64 it is
+`XSPLITSCR`, a split-screen toggle; this target has no split-screen
+mode, so 15 is accepted and does nothing here too. Worth stating
+explicitly now that its neighbour, sub 16, installs a font - see
+[Customising](customising.md).
+
 The `GFX` sub-commands that *are* implemented here - the buffer copies
-and swaps, the surface clears, and video playback on 13 and 14 - are
-listed in [Symbols](reference/symbols.md) and [Video](video.md).
+and swaps, the surface clears, video playback on 13 and 14, and font
+installation on 16 - are listed in [Symbols](reference/symbols.md),
+[Video](video.md) and [Customising](customising.md).
 
 ## Condacts
 
@@ -84,9 +91,11 @@ pointer bitmap - the pixel of your artwork that lands on the reported
 coordinate. If your pointer is a cross, you probably want its hotspot at
 5,5 rather than at the top-left corner.
 
-All eight sub-commands, 0 to 7, are implemented. The full table is in
+All eight sub-commands, 0 to 7, are implemented. A pointer shape switch
+(`MOUSE n 5`) does not move or reset the hotspot these two set - it
+stays wherever you last put it. The full table is in
 [Symbols](reference/symbols.md), and [Customising](customising.md)
-covers supplying your own pointer artwork.
+covers supplying your own pointer artwork, base and numbered alike.
 
 ### `EXTERN` implements three vectors
 
