@@ -3794,9 +3794,11 @@ vid_tl_stamp:
     call vid_rl_poll             ; LNF/LNL probe: fresh wall sample at
                                  ; the boundary itself (the divided
                                  ; poll sites leave the last sample up
-                                 ; to one poll gap stale). Cost ~250 T
-                                 ; per stamp, 5 stamps per frame -
-                                 ; ~0.1% of a frame slot. Preserves
+                                 ; to one poll gap stale). Wall clock:
+                                 ; poll ~340 T + accumulate ~400 T =
+                                 ; ~740 T/stamp, ~3,700 T across the 5
+                                 ; stamps = ~0.34% of a 25fps frame
+                                 ; slot - DEBUG only. Preserves
                                  ; BC/DE/HL/IX, corrupts AF (saved)
     ld hl, (vidTlTicks)
     ld de, (vidTlLastTick)
