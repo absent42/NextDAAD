@@ -2366,6 +2366,19 @@ vid_run:
     ld bc, AUD_CTC_PORT
     out (c), a                   ; time constant -> timer starts NOW,
                                  ; phase-locked to the field (T9)
+ IFDEF DEBUG
+    ; LNF/LNL probe baseline: seed the prev cells from a fresh raster
+    ; sample AT the arm, so the first stamp interval carries only the
+    ; arm->stamp window - matching the tick clock, whose vidTlTicks
+    ; starts counting at this arm (the preload pump and the phase
+    ; wait above stay out of the wall books, exactly as they are out
+    ; of the tick books)
+    call vid_rl_poll
+    ld hl, (vidRlFields)
+    ld (vidLnPrevF), hl
+    ld hl, (vidRlLast)
+    ld (vidLnPrevL), hl
+ ENDIF
 
 ; ---------------------------------------------------------------------
 ; The frame loop (T10 circular-feed phasing). Per frame f: pace on
@@ -3747,6 +3760,30 @@ vidNomStep:      dw 0            ; nominal fields per frame, 8.8 fixed
 vidNomAcc:       ds 3            ; nominal fields accumulator, 8.8
 VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlTicks
 VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlTicks
+; LNF/LNL wall-clock probe (clip-039 regression): per-phase WALL time
+; in raster units, accumulated by vid_tl_stamp at the same boundaries
+; and to the same OLD phase as vidTlAcc's tick deltas, so that
+; LOST(phase) = wall_ticks(phase) - ticks(phase) is computable
+; offline. MODE-BLIND on the Z80 side (the HDMI machine-line
+; structure is not pinned by the local docs): vidLnA = per-phase sums
+; of vidRlFields deltas (16-bit), vidLnB = per-phase sums of SIGNED
+; raw 9-bit raster-line differences (32-bit, range -511..+511 per
+; stamp); the report prints both plus NR $11 & 7 and the conversion
+; wall_ticks = R*A + (R/L)*B happens offline (R = ticks per field,
+; L = machine lines per field for the printed mode). These cells sit
+; OUTSIDE the zero span AND outside the report copy span: zeroed by
+; name in the l2setup body, read LIVE by the report under its own
+; map bracket (the mirror block was NOT extended - VID_PAGE2 is the
+; tightest page in the DEBUG image, and post-park the cells are
+; static, so a live read is equivalent). The prev cells re-seed from
+; a fresh vid_rl_poll at the CTC arm, so the first stamp interval
+; carries only the arm->stamp window - the same window the tick
+; clock itself starts with.
+vidLnPrevF:      dw 0            ; vidRlFields at the last stamp
+vidLnPrevL:      dw 0            ; raw 9-bit raster line at last stamp
+vidLnA:          ds VID_TL_PHASES*2   ; per-phase field-delta sums
+vidLnB:          ds VID_TL_PHASES*4   ; per-phase signed line-diff sums
+VID_LN_LEN       equ vidLnB + VID_TL_PHASES*4 - vidLnPrevF
 
 ; DEBUG timeline stamp: A = new phase id (VID_TL_*). Accumulates the
 ; tick delta since the previous stamp into the phase that was active,
@@ -3754,6 +3791,13 @@ VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlTicks
 ; Never touches IX (the ISR's pointer). Corrupts AF, BC, DE, HL.
 vid_tl_stamp:
     push af
+    call vid_rl_poll             ; LNF/LNL probe: fresh wall sample at
+                                 ; the boundary itself (the divided
+                                 ; poll sites leave the last sample up
+                                 ; to one poll gap stale). Cost ~250 T
+                                 ; per stamp, 5 stamps per frame -
+                                 ; ~0.1% of a frame slot. Preserves
+                                 ; BC/DE/HL/IX, corrupts AF (saved)
     ld hl, (vidTlTicks)
     ld de, (vidTlLastTick)
     ld (vidTlLastTick), hl
@@ -3781,6 +3825,63 @@ vid_tl_stamp:
     inc hl
     inc (hl)
 .noc:
+    ; --- LNF/LNL wall accumulation: SAME boundary, SAME old phase as
+    ; the tick delta above (vidTlLastPhase is not overwritten until
+    ; the pop below). Field-count delta first (16-bit, unsigned) ---
+    ld hl, (vidRlFields)
+    ld de, (vidLnPrevF)
+    ld (vidLnPrevF), hl
+    or a
+    sbc hl, de
+    ex de, hl                    ; DE = field-count delta
+    ld a, (vidTlLastPhase)
+    add a, a                     ; dw table
+    ld l, a
+    ld h, 0
+    ld bc, vidLnA
+    add hl, bc
+    ld a, e
+    add a, (hl)
+    ld (hl), a
+    inc hl
+    ld a, d
+    adc a, (hl)
+    ld (hl), a
+    ; --- raw raster-line difference, SIGNED (both operands 9-bit, so
+    ; the 16-bit subtract is exact in -511..+511), sign-extended into
+    ; the phase's 32-bit vidLnB sum ---
+    ld hl, (vidRlLast)
+    ld de, (vidLnPrevL)
+    ld (vidLnPrevL), hl
+    or a
+    sbc hl, de
+    ex de, hl                    ; DE = signed line diff
+    ld a, (vidTlLastPhase)
+    add a, a
+    add a, a                     ; 4-byte table
+    ld l, a
+    ld h, 0
+    ld bc, vidLnB
+    add hl, bc
+    ld a, d
+    add a, a                     ; CF = sign bit of the diff
+    sbc a, a                     ; A = $00/$FF sign-extension byte
+    ld c, a                      ; (BC's base-address role is spent)
+    ld a, e
+    add a, (hl)
+    ld (hl), a
+    inc hl
+    ld a, d
+    adc a, (hl)
+    ld (hl), a
+    inc hl
+    ld a, c
+    adc a, (hl)
+    ld (hl), a
+    inc hl
+    ld a, c
+    adc a, (hl)
+    ld (hl), a
     pop af
     ld (vidTlLastPhase), a
     or a                         ; VID_TL_PACE == 0
@@ -6186,6 +6287,15 @@ vid_run_l2setup_body:
     ld (vidNomAcc+2+DATA_WINDOW-OVL_ORG), a
     ld hl, (vidNomStepC)
     ld (vidNomStep+DATA_WINDOW-OVL_ORG), hl
+    ; LNF/LNL probe cells: outside the zero span (like the PLAY cells
+    ; above) so they are cleared here by name; the prev cells re-seed
+    ; from a fresh poll at the CTC arm, so a zero here can never leak
+    ; pre-session wall time into the accumulators
+    ld hl, vidLnPrevF+DATA_WINDOW-OVL_ORG
+    ld (hl), 0
+    ld de, vidLnPrevF+1+DATA_WINDOW-OVL_ORG
+    ld bc, VID_LN_LEN-1
+    ldir
  ENDIF
     ; --- decode session init (3c: moved cold into this bracket -
     ; strictly pre-arm; the hot .orchret side arms right after; the
@@ -7466,6 +7576,77 @@ vid_tl_report_body:
     ld de, vidTlTicksL
     ld bc, VID_TL_BLOCK_LEN
     ldir
+    ; LNF/LNL rows (rows 22/23): per-phase wall clock in raster
+    ; units, PACE/AUDIO/DECODE/FLIP/OTHER order - read LIVE off the
+    ; hot page under the map bracket the LDIR above already holds
+    ; (the mirror was not extended: this page is the tightest in the
+    ; DEBUG image, and the hot cells are static once the CTC parks).
+    ; LNF = 16-bit sums of vidRlFields deltas; MODE = NR $11 & 7, the
+    ; offline divisor pick; LNL = 32-bit SIGNED sums of raw 9-bit
+    ; raster-line differences, printed high word first. Offline:
+    ; wall_ticks = R*A + (R/L)*B per phase (R = ticks per field, L =
+    ; machine lines per field for MODE), LOST = wall_ticks - ticks.
+    ld b, 22
+    call dbg_at0
+    ld hl, msgTlLnf
+    call dbg_puts
+    ld hl, vidLnA + DATA_WINDOW - OVL_ORG
+    ld b, VID_TL_PHASES
+.lnf:
+    push bc
+    push hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl
+    call dbg_hex16
+    pop hl
+    inc hl
+    inc hl
+    pop bc
+    dec b
+    jr z, .lnfmode
+    push bc
+    push hl
+    ld hl, msgTlSlash
+    call dbg_puts
+    pop hl
+    pop bc
+    jr .lnf
+.lnfmode:
+    ld hl, msgTlMode
+    call dbg_puts
+    ld e, NR_VIDEO_TIMING
+    call nr_read
+    and 7
+    add a, '0'                   ; 0-7: always a single hex digit
+    call dbg_putc
+    ld b, 23
+    call dbg_at0
+    ld hl, msgTlLnl
+    call dbg_puts
+    ld hl, vidLnB + DATA_WINDOW - OVL_ORG
+    ld b, VID_TL_PHASES
+.lnl:
+    push bc
+    push hl
+    call vid_tl_print32          ; high word first, 8 hex digits
+    pop hl
+    inc hl
+    inc hl
+    inc hl
+    inc hl
+    pop bc
+    dec b
+    jr z, .lnldone
+    push bc
+    push hl
+    ld hl, msgTlSlash
+    call dbg_puts
+    pop hl
+    pop bc
+    jr .lnl
+.lnldone:
     call data_restore
     ld a, VID_TL_ROW0
     ld (vidTlRptRow), a
@@ -7653,6 +7834,9 @@ msgTlSnap: db " SNAP=", 0
 msgTlPlay: db "PLAY   =", 0
 msgTlNom:  db " NOM=", 0
 msgTlChk:  db " CHK=", 0
+msgTlLnf:  db "LNF    =", 0
+msgTlLnl:  db "LNL    =", 0
+msgTlMode: db " MODE=", 0
 vidTlRptRow: db 0
 vidTlRptIdx: db 0
 vidSnapCntL: db 0                ; SNAP= mirror - written at open (the
