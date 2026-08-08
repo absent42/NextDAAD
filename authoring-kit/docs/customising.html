@@ -152,10 +152,12 @@ the hotspot within the bitmap if you want it elsewhere - see
 <p><code>POINTER.SPR</code> is shape 0, the base. Nine more can sit beside it in the
 kit folder: <code>POINTER1.SPR</code> to <code>POINTER9.SPR</code>. <code>MOUSE n 5</code> (<code>POINTERMS</code>)
 installs shape <code>n</code> and re-arms hardware sprite slot 0: <code>MOUSE 3 5</code>
-switches to <code>POINTER3.SPR</code>; <code>MOUSE 0 5</code> returns to the built-in arrow,
-even after a numbered shape has replaced it. A missing or wrong-size
-file is a silent no-op: whatever shape is currently installed stays,
-and the game plays on.</p>
+switches to <code>POINTER3.SPR</code>; <code>MOUSE 0 5</code> returns to the base. It lays the
+built-in arrow down first and only then looks for <code>POINTER.SPR</code>, so
+shape 0 always reaches a known shape even after a numbered shape has
+replaced it - <code>POINTER.SPR</code> if your game ships one, the built-in arrow
+if it does not. A missing or wrong-size file is a silent no-op: whatever
+shape is currently installed stays, and the game plays on.</p>
 <p>The hotspot set by <code>MOUSE 6</code> (<code>DELTAXMS</code>) and <code>MOUSE 7</code> (<code>DELTAYMS</code>) is
 <strong>unchanged by a shape switch</strong> - it stays wherever you last put it. If
 a new shape needs a different hotspot, set it again after selecting the
@@ -169,6 +171,11 @@ are already the correct output bytes. Then save exactly 256 bytes as
 <p>Gfx2Next can produce this file directly from a 16x16 indexed PNG:</p>
 <pre><code>gfx2next -sprites -pal-std -pal-none pointer.png POINTER.SPR
 </code></pre>
+<p>Gfx2Next forces a lowercase extension on the output whatever name you
+give it, so that lands as <code>POINTER.spr</code> and you rename it - which is all
+the kit's own build does after converting a PNG. It only matters
+cosmetically: Windows, FAT and esxDOS all match the name regardless of
+case, so the interpreter finds <code>POINTER.spr</code> just as happily.</p>
 <p>Paint <code>#FF00FF</code> for the transparent pixels and <code>-pal-std</code> converts them
 to the transparent value. Here it is the <strong>colour</strong> that decides, and
 the palette slot it sits in does not matter - the reverse of a Layer 2
@@ -198,9 +205,9 @@ ships none.</p>
 base font (see <a href="#custom-fonts">Custom fonts</a> above): it re-probes for
 <code>POINTER.SPR</code> without first restoring the built-in arrow. If neither the
 new part nor the root ships one, whatever shape was active stays active
-rather than reverting - only <code>MOUSE 0 5</code> is guaranteed to reach the
-built-in arrow. A game that wants a numbered shape after a part switch
-re-selects it with <code>MOUSE n 5</code>.</p>
+rather than reverting - only <code>MOUSE 0 5</code> is guaranteed to reach a known
+shape. A game that wants a numbered shape after a part switch re-selects
+it with <code>MOUSE n 5</code>.</p>
 <p><code>MOUSE n 5</code> (<code>POINTERMS</code>) is the shape switch described above: it
 re-uploads the chosen pattern into hardware sprite slot 0 and re-arms
 it, every time, even when the shape requested is already the one

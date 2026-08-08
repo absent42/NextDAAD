@@ -59,7 +59,7 @@ there is no numbered palette slot for them to write to or read from.
 Both sub-commands are accepted and do nothing at all, so a game that
 uses them still runs; it simply gets no palette change.
 
-Sub 15 is a no-op for a different reason. On MSX and C64 it is
+Sub 15 is a no-op for a different reason. On CPC and C64 it is
 `XSPLITSCR`, a split-screen toggle; this target has no split-screen
 mode, so 15 is accepted and does nothing here too. Worth stating
 explicitly now that its neighbour, sub 16, installs a font - see

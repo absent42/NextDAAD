@@ -180,10 +180,12 @@ the hotspot within the bitmap if you want it elsewhere - see
 `POINTER.SPR` is shape 0, the base. Nine more can sit beside it in the
 kit folder: `POINTER1.SPR` to `POINTER9.SPR`. `MOUSE n 5` (`POINTERMS`)
 installs shape `n` and re-arms hardware sprite slot 0: `MOUSE 3 5`
-switches to `POINTER3.SPR`; `MOUSE 0 5` returns to the built-in arrow,
-even after a numbered shape has replaced it. A missing or wrong-size
-file is a silent no-op: whatever shape is currently installed stays,
-and the game plays on.
+switches to `POINTER3.SPR`; `MOUSE 0 5` returns to the base. It lays the
+built-in arrow down first and only then looks for `POINTER.SPR`, so
+shape 0 always reaches a known shape even after a numbered shape has
+replaced it - `POINTER.SPR` if your game ships one, the built-in arrow
+if it does not. A missing or wrong-size file is a silent no-op: whatever
+shape is currently installed stays, and the game plays on.
 
 The hotspot set by `MOUSE 6` (`DELTAXMS`) and `MOUSE 7` (`DELTAYMS`) is
 **unchanged by a shape switch** - it stays wherever you last put it. If
@@ -203,6 +205,12 @@ Gfx2Next can produce this file directly from a 16x16 indexed PNG:
 ```
 gfx2next -sprites -pal-std -pal-none pointer.png POINTER.SPR
 ```
+
+Gfx2Next forces a lowercase extension on the output whatever name you
+give it, so that lands as `POINTER.spr` and you rename it - which is all
+the kit's own build does after converting a PNG. It only matters
+cosmetically: Windows, FAT and esxDOS all match the name regardless of
+case, so the interpreter finds `POINTER.spr` just as happily.
 
 Paint `#FF00FF` for the transparent pixels and `-pal-std` converts them
 to the transparent value. Here it is the **colour** that decides, and
@@ -238,9 +246,9 @@ A part switch reinstalls the base pointer the same way it reinstalls the
 base font (see [Custom fonts](#custom-fonts) above): it re-probes for
 `POINTER.SPR` without first restoring the built-in arrow. If neither the
 new part nor the root ships one, whatever shape was active stays active
-rather than reverting - only `MOUSE 0 5` is guaranteed to reach the
-built-in arrow. A game that wants a numbered shape after a part switch
-re-selects it with `MOUSE n 5`.
+rather than reverting - only `MOUSE 0 5` is guaranteed to reach a known
+shape. A game that wants a numbered shape after a part switch re-selects
+it with `MOUSE n 5`.
 
 `MOUSE n 5` (`POINTERMS`) is the shape switch described above: it
 re-uploads the chosen pattern into hardware sprite slot 0 and re-arms

@@ -1126,8 +1126,9 @@ SFX_SUB_VID_LOOP equ 10
 
 GFX_SUB_FONT     equ 16          ; NextDAAD: install font n (0 = base).
                                  ; 0-15 are all allocated by DAAD across
-                                 ; its targets - 15 is XSPLITSCR on MSX
-                                 ; and C64 - so this starts past the
+                                 ; its targets - 15 is XSPLITSCR on CPC
+                                 ; and C64 (DRC rejects it on every other
+                                 ; target) - so this starts past the
                                  ; classic block. MSX also uses 128/129.
 
 ; DAC ports (ports.txt, tools/ZXNextOS/docs/extra-hw/io-port-system/

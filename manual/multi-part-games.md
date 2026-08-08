@@ -29,8 +29,8 @@ builds by default, never touches any of the machinery below.
 
 **Part folders take converted files, not sources.** Put ready-to-use
 `.NX2`, `.NXI`, `.AKY`, `.AYS`, `.WAV`, `.VID`, `GAME.SFB`, `FONT.CHR`
-and `POINTER.SPR` files in a `PART<n>\` folder - not `.png` or `.aks`
-sources. Only the main kit folder's `IMAGES\` and `AUDIO\` are
+to `FONT9.CHR` and `POINTER.SPR` to `POINTER9.SPR` files in a `PART<n>\`
+folder - not `.png` or `.aks` sources. Only the main kit folder's `IMAGES\` and `AUDIO\` are
 converted.
 
 A part switch opens its target by the exact name `GAMEn.DDB`, so a stray
@@ -63,7 +63,9 @@ not there:
   `GAME.SFB` - see [Audio](audio.md)
 - `NNN.VID` videos - see [Video](video.md)
 - `0.XMB` external message text
-- `FONT.CHR` and `POINTER.SPR` - see [Customising](customising.md)
+- `FONT.CHR`, and numbered `FONT1.CHR` to `FONT9.CHR`, and
+  `POINTER.SPR`, and numbered `POINTER1.SPR` to `POINTER9.SPR` - see
+  [Customising](customising.md)
 
 **Root-only, never shadowed:** the title screen (`DAAD.*`, shown once at
 cold boot), and the boot-autoplay default song (`GAME.AYS` /

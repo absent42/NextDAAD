@@ -932,7 +932,8 @@ h_display:
     ret
 
 ; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused by every
-; sub except 16 (the font number - see .font/GFX_SUB_FONT below) -
+; sub except 13, 14 and 16 - the video number for 13/14 (see .vidgo
+; below) and the font number for 16 (see .font/GFX_SUB_FONT below);
 ; every OTHER implemented sub's buffer operation takes no meaningful P1
 ; (jdaad parity: jdaad.js's _GFX() switches on Parameter2 alone -
 ; Parameter1 only matters to its palette-store subs 9/10, which have no
@@ -1048,13 +1049,33 @@ h_gfx:
                                  ; TM_DEFS
     or a
     jr nz, .fontfile
-    call tm_font_init            ; 0: lay the embedded table down FIRST, so a
+    ld (hl), $FF                 ; 0: mark the cache UNKNOWN before installing
+                                 ; anything. HL still holds fontCur from the
+                                 ; already-installed test above (nothing since
+                                 ; has touched it), so this costs one byte LESS
+                                 ; than the old post-hoc `ld (fontCur),a`.
+                                 ; font_load writes fontCur=0 itself, but only
+                                 ; once FONT.CHR is actually in TM_DEFS, so
+                                 ; every way it can fail - absent FONT.CHR,
+                                 ; wrong size, no drive, exhausted bank pool -
+                                 ; leaves $FF and a later GFX 0 16 retries.
+                                 ; Pre-setting 0 here was a lie whenever
+                                 ; font_load then failed with a FONT.CHR that
+                                 ; does exist, and a PERMANENT one, because the
+                                 ; `ret z` above would swallow every retry. $FF
+                                 ; only ever costs a redundant re-probe when
+                                 ; there is no FONT.CHR at all, which is
+                                 ; invisible: tm_font_init below has already
+                                 ; put the correct embedded table down.
+    call tm_font_init            ; lay the embedded table down FIRST, so a
     xor a                        ; revert still works when no FONT.CHR exists.
-    ld (fontCur), a              ; A is 0 here, which is the number we want, so
-    jp font_load                 ; jump directly - do NOT fall through to a
+    jp font_load                 ; A is 0 here, which is the number we want, so
+                                 ; jump directly - do NOT fall through to a
                                  ; `ld a,b`, because tm_font_init is documented
                                  ; as corrupting all registers and B's survival
-                                 ; is not guaranteed.
+                                 ; is not guaranteed. The `xor a` must stay for
+                                 ; the same reason - it is font_load's argument,
+                                 ; not a leftover of the write above.
 .fontfile:
     ld a, b
     jp font_load
@@ -3286,11 +3307,22 @@ font_name_build:
 ; only ldir'd into TM_DEFS once the exact size is confirmed - scratch-
 ; then-install. Exact-size validation (BC checked, not CF alone - the
 ; F_READ/F_WRITE count lesson) plus the 1-byte-overshoot probe mirror
-; tm_font_init's own GAME.CHR check byte for byte. fontCur is only
-; written after that final ldir, so a failed load (absent file, wrong
-; size, no free bank, no drive) leaves it exactly as it was and a later
-; retry of the same number is never short-circuited by GFX sub 16's
-; already-installed check. Corrupts AF, BC, DE, HL, IX.
+; tm_font_init's own GAME.CHR check byte for byte. THIS ROUTINE only
+; ever writes fontCur after that final ldir, so a failed load (absent
+; file, wrong size, no free bank, no drive) leaves it exactly as this
+; routine found it. Note that its CALLERS do write it beforehand, and
+; both write $FF (unknown), never a number: h_gfx's .font pre-sets $FF
+; for the n=0 path before laying the embedded table down, and
+; font_load_switch does the same across a part switch. So the invariant
+; that actually holds system-wide is the one that matters - fontCur
+; NAMES A NUMBER only when that number's glyphs are genuinely in
+; TM_DEFS, so GFX sub 16's already-installed check can never
+; short-circuit a retry of a font that failed to install. The no-free-
+; bank path is the one that made this load-bearing: bank_alloc has no
+; eviction fallback and the picture cache holds pool banks, so a
+; mid-game GFX n 16 against a warm cache is a REACHABLE failure, unlike
+; the boot and part-switch calls that ran against a fresh pool.
+; Corrupts AF, BC, DE, HL, IX.
 font_load:
     call font_name_build         ; A = font number, in
     ld a, (curPart)
@@ -3337,6 +3369,14 @@ font_load:
     ld (fontHandle), a
     call bank_alloc                ; transient scratch bank (banks.asm)
     jr nc, .haveBank
+ IFDEF DEBUG                        ; pool exhausted: no-op with a marker, same
+    ld b, 29                        ; idiom as .bad below. bank_alloc has no
+    ld c, 70                        ; eviction fallback and gfx_bank_get holds
+    call dbg_at                     ; picture-cache banks indefinitely, so a
+    ld hl, msgFontNoBk              ; warm cache CAN starve a mid-game GFX n 16
+    call dbg_puts                   ; - the one caller that runs against one.
+ ENDIF                              ; Release stays silent here, as it does on
+                                    ; every other failure on this path.
     ld a, (fontHandle)
     call esx_fclose
     ret                            ; no free bank: silent, table untouched
@@ -3421,6 +3461,8 @@ fontNamePart: ds 16
 fontNameStem: db "FONT"
 fontNameExt:  db ".CHR", 0
 msgFontBad:   db "FONT BAD", 0
+msgFontNoBk:  db "FONT NOBK", 0    ; 9 chars at column 70 - fits the 80-column
+                                   ; row, same as msgFontBad above
 
 ; --- DEBUG bring-up test card ---
 ; Owner-driven hardware verification hook, wired from debug.asm's

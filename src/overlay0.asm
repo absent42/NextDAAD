@@ -2999,9 +2999,13 @@ h_call:                         ; 101: CALL (invoke machine code at an
 ; wider ceiling is future-safe spec compliance, not a reachable case
 ; today. X/6 (0-53) is unchanged jdaad parity (319/6 floors to 53
 ; exactly, so it never clamps either).
-; Pointer: hardware sprite 0, a 16x16 solid arrow (mousePattern,
-; below). NR $15 bits 0-1 are read-modify-written UNCONDITIONALLY on
-; every sub-1 call, preserving every other bit (layer priority etc):
+; Pointer: hardware sprite 0, a 16x16 pattern - the built-in solid
+; arrow (mouseArrow, below) until a POINTER.SPR/POINTERn.SPR replaces
+; it in the live upload buffer (mousePattern, also below - a plain
+; ds 256, blank at assembly time; see ptr_arrow_install/pointer_load
+; for which of them writes it when). NR $15 bits 0-1 are read-modify-
+; written UNCONDITIONALLY on every sub-1 call, preserving every other
+; bit (layer priority etc):
 ; bit 0 is sprite visibility; bit 1 is "sprites over border" - per
 ; registers.txt (0x15) and the sprites chapter ("sprites can be made
 ; visible or invisible when over the border... specified by port 15"),
@@ -3457,8 +3461,13 @@ mouse_clamp:
     pop hl
     ret
 
-; One-time upload of the 16x16 arrow pattern to hardware sprite pattern
-; slot 0. Port $303B selects the slot (chapter-next-sprites, "Loading
+; Upload the live 16x16 pattern (mousePattern - the built-in arrow, or
+; whatever POINTER.SPR/POINTERn.SPR last replaced it with) to hardware
+; sprite pattern slot 0. NOT one-time: MOUSE 1 runs it lazily whenever
+; mouseReady reads 0 (which either mousePattern writer clears), and
+; MOUSE n 5 calls it unconditionally on every single call, shape change
+; or not - that is sub 5's re-arm guarantee (h_mouse.pointer, above).
+; Port $303B selects the slot (chapter-next-sprites, "Loading
 ; Patterns into FPGA Memory"), port $xx5B streams the 256 bytes with
 ; auto-increment; B=0 into SPRITE_PAT_PORT's OTIR gives exactly 256
 ; iterations (nextdaad.inc). Corrupts AF, BC, HL.
@@ -3580,7 +3589,9 @@ mouseArrow:
 ; it costs 256 bytes of this page rather than nothing.
 mousePattern: ds 256
 
-; --- SP12 Task 3: custom mouse pointer load (boot + part switch) ---
+; --- SP12 Task 3: custom mouse pointer load ---
+; Three triggers, not two: boot, a part switch, and (SP18) MOUSE n 5 at
+; any point during play.
 ;
 ; Step 1 ground truth: mouseArrow (above) is a plain `db` table
 ; assembled into overlay0's code page, read-only in practice - nothing
@@ -3648,11 +3659,24 @@ ptr_name_build:
 ; into mousePattern once the exact size is confirmed. Exact-size
 ; validation (BC checked, not CF alone - the F_READ/F_WRITE count
 ; lesson) plus a 1-byte-overshoot probe mirror font_load's own FONT.CHR
-; check byte for byte (overlay2.asm, SP12 T1). ptrCur is only written
-; after that final ldir, so a failed load (absent file, wrong size, no
-; drive) leaves it exactly as it was and a later retry of the same
-; number is never short-circuited by MOUSE sub 5's already-installed
-; check.
+; check byte for byte (overlay2.asm, SP12 T1). THIS ROUTINE only ever
+; writes ptrCur after that final ldir, so a failed load (absent file,
+; wrong size, no drive) leaves it exactly as this routine found it.
+; Note that its CALLER h_mouse.pointer does write it beforehand, for
+; the n=0 path, and unlike the font mirror it legitimately writes 0
+; rather than $FF: shape 0 means "the built-in arrow, then POINTER.SPR
+; over it if one exists", and ptr_arrow_install has already put the
+; arrow in the live buffer by then, so every way THIS routine can then
+; fail still leaves shape 0 genuinely installed and ptrCur=0 honest.
+; That asymmetry with font_load is real and not an oversight: the font
+; path has a fourth failure mode (no free bank) that this one does not,
+; because it stages 2048 bytes through a bank_alloc'd scratch bank that
+; a warm picture cache can starve, whereas this routine stages through
+; the static swapStage below and cannot fail that way at all.
+; So the invariant holds on both sides: Cur NAMES A NUMBER only when
+; that number's data is genuinely live, and MOUSE sub 5's already-
+; installed check can never short-circuit a retry of a shape that
+; failed to install.
 ;
 ; Scratch buffer: swapStage (512 bytes, above) reused rather than a new
 ; static buffer or a bank_alloc dance - it is directly addressable from

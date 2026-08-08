@@ -36,8 +36,8 @@ builds by default, never touches any of the machinery below.</p>
 </ul>
 <p><strong>Part folders take converted files, not sources.</strong> Put ready-to-use
 <code>.NX2</code>, <code>.NXI</code>, <code>.AKY</code>, <code>.AYS</code>, <code>.WAV</code>, <code>.VID</code>, <code>GAME.SFB</code>, <code>FONT.CHR</code>
-and <code>POINTER.SPR</code> files in a <code>PART&lt;n&gt;\</code> folder - not <code>.png</code> or <code>.aks</code>
-sources. Only the main kit folder's <code>IMAGES\</code> and <code>AUDIO\</code> are
+to <code>FONT9.CHR</code> and <code>POINTER.SPR</code> to <code>POINTER9.SPR</code> files in a <code>PART&lt;n&gt;\</code>
+folder - not <code>.png</code> or <code>.aks</code> sources. Only the main kit folder's <code>IMAGES\</code> and <code>AUDIO\</code> are
 converted.</p>
 <p>A part switch opens its target by the exact name <code>GAMEn.DDB</code>, so a stray
 file beside it - a <code>GAMEn.DSF</code> source left next to the compiled DDB, say
@@ -67,7 +67,9 @@ not there:</p>
   <code>GAME.SFB</code> - see <a href="audio.html">Audio</a></li>
 <li><code>NNN.VID</code> videos - see <a href="video.html">Video</a></li>
 <li><code>0.XMB</code> external message text</li>
-<li><code>FONT.CHR</code> and <code>POINTER.SPR</code> - see <a href="customising.html">Customising</a></li>
+<li><code>FONT.CHR</code>, and numbered <code>FONT1.CHR</code> to <code>FONT9.CHR</code>, and
+  <code>POINTER.SPR</code>, and numbered <code>POINTER1.SPR</code> to <code>POINTER9.SPR</code> - see
+  <a href="customising.html">Customising</a></li>
 </ul>
 <p><strong>Root-only, never shadowed:</strong> the title screen (<code>DAAD.*</code>, shown once at
 cold boot), and the boot-autoplay default song (<code>GAME.AYS</code> /
