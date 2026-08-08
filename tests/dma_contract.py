@@ -334,6 +334,12 @@ def outinb_run(buf, min_len):
 
 def check_video_kernels(syms):
     # 1. Neither hot kernel brackets its arm train in di/ei.
+    #    DELIBERATELY an adjacency check (F3 immediately before the
+    #    train, FB immediately after), NOT a span-wide F3/FB scan:
+    #    operand bytes of unrelated instructions in the span can
+    #    legitimately equal F3/FB, so a span-wide scan would
+    #    false-positive. A reinstated bracket has to sit hard against
+    #    the train to bracket it, which is exactly what this catches.
     for name, lo, hi, arm_len in (
         ("vid_fill_dma", "vid_fill_dma", "vid_copy_dma", 13),
         ("vid_copy_dma", "vid_copy_dma", "vidDmaFiArm", 11),

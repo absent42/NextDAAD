@@ -857,6 +857,11 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; clip plays LONG AND FLAT with no click. That silence is why this
 ; shipped for months as an "accepted ~1.2% shortfall".
 ;
+; RETIRED (SP18 item 5): the video kernels' DI brackets are gone, so
+; this deadline mechanism is historical (silicon leg pending); the
+; cap stays for the structural reasons stated at the end of this
+; block (one fixed number, <= 255).
+;
 ;   bracket  B(chunk) = A + 5.082 * chunk
 ;   deadline one ISR per L+R PAIR at 15625 Hz -> 1728..2112 T
 ;            (16 x the per-video-mode CTC time constant, exactly;
@@ -909,7 +914,9 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ; at 24 T/B. Both are hand-counted from the source bytes in
 ; video.asm's zxnDMA kernel header; the arms are 11 B (copy) and 13 B
 ; (fill), NOT the 15 the old comments and REDERIVATION.md 2.1 claimed.
-; Full per-mode margin table, both kernels, in that header.
+; The margin arithmetic lives HERE; that header now carries the
+; live-interrupts contract (its DI-era margin table retired with the
+; brackets).
 ;
 ; WHY 240 AND WHAT IT COSTS. 0.9% of worst-case margin is not enough
 ; for a defect that ships silently, and A's uncertainty is entirely in

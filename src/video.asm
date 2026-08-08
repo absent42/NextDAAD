@@ -1498,9 +1498,14 @@ vid_pos24:
 
 ; ---------------------------------------------------------------------
 ; zxnDMA kernels (graduated NXBEN persistent-descriptor scheme; doc
-; 11's one-shot law verbatim: DI-bracketed CONTINUOUS one-shots, the
-; $87 enable is the last byte so the upload returns only when the
-; transfer is done; chunks <= NXV2_DMA_CHUNK - contract 3). WR2 (port
+; 11's one-shot law minus its DI clause: CONTINUOUS one-shots,
+; programmed once, run to completion, the $87 enable is the last
+; byte. The DI-bracket clause is SUPERSEDED - interrupts are live and
+; the governing contract is the INTERRUPTS ARE LIVE THROUGHOUT block
+; below: the CPU normally stalls at the enable until the transfer
+; ends, but a yield can run tail instructions mid-transfer, so "the
+; upload returns only when the transfer is done" is no longer
+; absolute; chunks <= NXV2_DMA_CHUNK - contract 3). WR2 (port
 ; B memory/increment/timing) + WR5 (stop on end) + WR1 (port A
 ; INCREMENTING/timing) are programmed once per session (vidDmaInit,
 ; sent by vid_run_l2setup_body; nxbDmaInit is the bench's twin).
@@ -1515,10 +1520,11 @@ vid_pos24:
 ; so the pair now lives in the session init and the COPY arm - the
 ; 99.997% - no longer carries it. vid_fill_dma sends WR1 = FIXED
 ; inside its own arm exactly as before and RE-SENDS WR1 =
-; INCREMENTING afterwards, outside its DI bracket (the DMA is idle
-; there - WR5 is stop-on-end-of-block - so it is a register write, not
-; a transfer). Behaviour-neutral BY CONSTRUCTION: no state cell, no
-; runtime test, and the copy path pays nothing. The two other
+; INCREMENTING after the arm train; the DMA is idle by the time the
+; CPU reaches the restore (WR5 is stop-on-end-of-block; three-yields
+; bound, see the pre-emption contract below), so it is a register
+; write, not a transfer. Behaviour-neutral BY CONSTRUCTION: no state
+; cell, no runtime test, and the copy path pays nothing. The two other
 ; descriptors in the tree both leave WR1 = INCREMENTING (vidSnapDmaArm
 ; here, a full descriptor; and overlay2's dma_copy, which took this same
 ; split later the same day and re-sends the WR1 pair in its own per-CALL
@@ -1593,8 +1599,9 @@ vid_fill_dma:
     ret
 
 ; COPY via DMA: mem-to-mem, source = MMU6 ring window, dest = MMU2
-; surface window (both pinned across the DI bracket - doc 11's
-; banking hazard rule). In: HL src, DE dest, BC chunk
+; surface window (both pinned across the transfer - the custodian is
+; $CC = 0 barring the frame ISR from a running DMA plus the permitted
+; ISRs' MMU-free contract, not a DI). In: HL src, DE dest, BC chunk
 ; (81..NXV2_DMA_CHUNK). Out: HL/DE advanced. 5.082 T/B + 1092T/chunk
 ; (settlement CD rows).
 vid_copy_dma:
@@ -6121,8 +6128,9 @@ vid_run_l2setup_body:
     ; L2_TRANSP_COLOUR value, so the surface stays fully opaque.
     call vid_pal_black
     ; zxnDMA session init: the never-changing WR2 (port B memory/
-    ; increment/cycle-2) + WR5 (stop on end) - each chunk's arm block
-    ; (hot) carries its own WR0/WR1 (doc 11 one-shot law; DI bracket)
+    ; increment/cycle-2) + WR5 (stop on end) - register writes only,
+    ; the DMA is idle here. Each chunk's arm block (hot) carries its
+    ; own WR0/WR1 and runs with interrupts live (kernel header)
     ld hl, vidDmaInit
     ld bc, (vidDmaInit_len << 8) | DMA_PORT
     di
@@ -6396,18 +6404,27 @@ vid_snap_save_body:
 
  IFDEF DEBUG
 ; ---------------------------------------------------------------------
-; CHK= (SP18 item 5): 32-bit byte sum of the visible (front) Layer 2
-; surface, taken at teardown BEFORE the snapshot restore repaints it.
-; Cross-build instrument: identical CHK on two builds for the same
-; clip means the final surfaces are byte-identical - the binary
-; verdict on whether a pre-empted DMA transfer resumed uncorrupted.
-; Walk order: ascending 8K pages from the front-bank base, $4000-
-; $5FFF each via MMU2 - the same walk vid_snap_copy uses. Runs only
-; on the teardown path, so cost (~3.4M T at 320x256) is invisible to
-; playback and lands AFTER the PLAY= end stamp. If the session had no
-; snapshot (vidSnapCnt = 0) the sum is left at zero. MMU2 is left on
-; the last walked page - vid_snap_copy immediately re-drives MMU2 per
-; page and the exit bracket restores the game mapping, same as today.
+; CHK= (SP18 item 5): 32-bit byte sum of BOTH Layer 2 decode
+; surfaces, taken at teardown BEFORE the snapshot restore repaints
+; the game set. Cross-build instrument: identical CHK on two builds
+; for the same clip means the final surfaces are byte-identical - the
+; binary verdict on whether a pre-empted DMA transfer resumed
+; uncorrupted. The player double-buffers (KFLIP swaps NR $12 between
+; the two bank sets captured at entry), so a single-set sum would
+; miss corruption confined to the other decode buffer since its last
+; keyframe repaint. Walk order, fixed for determinism: the game set
+; first (vidSvNr12 - the snapshot target; == vidSvL2Front by the
+; game's NR $12 = front invariant), then the player back set
+; (vidSvL2Back) - each as ascending 8K pages, $4000-$5FFF via MMU2,
+; the same walk vid_snap_copy uses. Summing both sets also makes CHK
+; independent of the session's KFLIP parity. Runs only on the
+; teardown path, so cost (~74 T/byte nominal + M1 waits, both sets:
+; ~12-14M T at 320x256, ~0.45-0.5 s at 28 MHz - a visible pause on
+; DEBUG teardown) is invisible to playback and lands AFTER the PLAY=
+; end stamp. If the session had no snapshot (vidSnapCnt = 0) the sum
+; is left at zero. MMU2 is left on the last walked page -
+; vid_snap_copy immediately re-drives MMU2 per page and the exit
+; bracket restores the game mapping, same as today.
 ; ---------------------------------------------------------------------
 vid_chk_surface:
     xor a
@@ -6422,15 +6439,27 @@ vid_chk_surface:
     ld b, h                      ; B'  = 0 (C' is the byte carrier)
     exx
     ld a, (vidSnapCnt)
-    add a, a                     ; A = 8K page count (6 or 10)
+    add a, a                     ; A = 8K pages per set (6 or 10)
     ret z                        ; no snapshot banks - leave CHK zero
-    ld d, a                      ; D = pages remaining
-    ld e, 0                      ; E = page index
-.page:
+    ld d, a                      ; D = pages remaining (set 1)
     ld a, (vidSvNr12)
+    call .walkset                ; game set (snapshot target) first
+    ld a, (vidSnapCnt)
     add a, a
-    add a, e
-    nextreg NR_MMU2, a           ; front bank page E into $4000
+    ld d, a                      ; D = pages remaining (set 2)
+    ld a, (vidSvL2Back)
+    call .walkset                ; then the player back set
+    exx
+    ld (vidChkSumL), hl
+    ld (vidChkSumL+2), de
+    exx
+    ret
+.walkset:                        ; A = 16K bank base, D = 8K pages
+    add a, a
+    ld e, a                      ; E = current 8K page
+.page:
+    ld a, e
+    nextreg NR_MMU2, a           ; page E of the set into $4000
     ld hl, $4000
     ld bc, $2000
 .byte:
@@ -6450,10 +6479,6 @@ vid_chk_surface:
     inc e
     dec d
     jr nz, .page
-    exx
-    ld (vidChkSumL), hl
-    ld (vidChkSumL+2), de
-    exx
     ret
 vidChkSumL: ds 4                 ; little-endian 32-bit sum (report
                                  ; prints high word first)
