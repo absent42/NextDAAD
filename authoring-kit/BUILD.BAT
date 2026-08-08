@@ -106,16 +106,20 @@ REM      already wiped by the stale-clean near the top of this script, so
 REM      a .ch8 removed since the last build cannot leave a stray
 REM      converted .CHR behind either - this loop only ever recreates
 REM      what it finds a source for.
-REM      NOTE: "if errorlevel 1 (...) else (...)", not "cmd || (...)"
-REM      followed by more commands in the same if-exist block - verified
-REM      empirically that once a command follows the closing ")" of a
-REM      "|| ( ... exit /b 1 )" inside the same enclosing parens, cmd.exe
-REM      still stops (no further iterations, no further script) but the
-REM      PROCESS exit code silently resets to 0, so a caller checking
-REM      errorlevel after this script never sees the failure. Keeping
-REM      exit /b 1 as the last statement in every enclosing block avoids
-REM      it - same class of hazard lib\audio.bat's STREAM_*.aks loop
-REM      comment already documents, different trigger.
+REM      NOTE: the "else" here is load-bearing. Verified empirically:
+REM      inside a for loop, an "exit /b 1" in a nested block returns 0 to
+REM      the caller whenever any command follows that block's closing ")"
+REM      within the same enclosing parens. cmd.exe still stops (no further
+REM      iterations, no further script) but the PROCESS exit code silently
+REM      resets to 0, so a caller checking errorlevel never sees the
+REM      failure. The trigger is the trailing command, NOT the "||" form -
+REM      plain "if errorlevel 1 ( ... exit /b 1 )" is affected exactly the
+REM      same way. Two shapes are safe: "if errorlevel 1 (...) else (...)",
+REM      which leaves nothing after the block, as used here; or ending the
+REM      block with "goto :label" and putting "exit /b 1" at top level, as
+REM      the multi-part loop below does for its seven failure sites. Same
+REM      class of hazard lib\audio.bat's STREAM_*.aks loop comment already
+REM      documents, different trigger.
 for %%F in ("FONT.ch8" "FONT1.ch8" "FONT2.ch8" "FONT3.ch8" "FONT4.ch8" ^
             "FONT5.ch8" "FONT6.ch8" "FONT7.ch8" "FONT8.ch8" "FONT9.ch8") do (
     if exist %%F (
@@ -215,13 +219,13 @@ for %%N in (2 3 4 5 6 7 8 9) do (
         if not "!_pn!"=="1" (
             echo ERROR: PART%%N\ has !_pn! .DSF files - keep exactly one game source per part folder
             pause
-            exit /b 1
+            goto :part_fail
         )
         echo Building part %%N ^(!PGAME!^) ...
         copy /Y "PART%%N\!PGAME!.DSF" "%DR%\__ndbpart.DSF" >nul || (
             echo ERROR: could not stage PART%%N\!PGAME!.DSF into %DR%
             pause
-            exit /b 1
+            goto :part_fail
         )
         pushd "%DR%"
         REM -v3 as in lib\ddb.bat - every part must compile to the same
@@ -234,7 +238,7 @@ for %%N in (2 3 4 5 6 7 8 9) do (
             del "%DR%\__ndbpart.*" 2>nul
             echo ERROR: DRF failed compiling PART%%N\!PGAME!.DSF - check the source
             pause
-            exit /b 1
+            goto :part_fail
         )
         REM pre-clean stale 0.XMB - see the same-shaped comment in
         REM lib\ddb.bat for why (%DR% is shared across every compile).
@@ -245,7 +249,7 @@ for %%N in (2 3 4 5 6 7 8 9) do (
             del "%DR%\__ndbpart.*" 2>nul
             echo ERROR: DRB failed building part %%N's DDB
             pause
-            exit /b 1
+            goto :part_fail
         )
         popd
         for %%A in ("%DR%\__ndbpart.DDB") do set "DDBSZ=%%~zA"
@@ -253,7 +257,7 @@ for %%N in (2 3 4 5 6 7 8 9) do (
             del "%DR%\__ndbpart.*" 2>nul
             echo ERROR: GAME%%N.DDB is !DDBSZ! bytes, over the 131072 limit
             pause
-            exit /b 1
+            goto :part_fail
         )
         move /Y "%DR%\__ndbpart.DDB" "RELEASE\GAME%%N.DDB" >nul
         del "%DR%\__ndbpart.DSF" "%DR%\__ndbpart.json" "%DR%\__ndbpart.___" 2>nul
@@ -263,7 +267,7 @@ for %%N in (2 3 4 5 6 7 8 9) do (
             copy /Y "%DR%\0.XMB" "RELEASE\PART%%N\0.XMB" >nul || (
                 echo ERROR: could not stage 0.XMB into RELEASE\PART%%N
                 pause
-                exit /b 1
+                goto :part_fail
             )
             echo   XMB -^> RELEASE\PART%%N\0.XMB
         )
@@ -274,7 +278,7 @@ for %%N in (2 3 4 5 6 7 8 9) do (
                 if errorlevel 1 (
                     echo ERROR: could not stage %%F into RELEASE\PART%%N
                     pause
-                    exit /b 1
+                    goto :part_fail
                 )
                 set /a PCOUNT+=1
             )
@@ -282,6 +286,16 @@ for %%N in (2 3 4 5 6 7 8 9) do (
         echo   !PCOUNT! asset^(s^) staged -^> RELEASE\PART%%N\
     )
 )
+REM      Every failure inside the loop above ends its block with
+REM      "goto :part_fail" rather than "exit /b 1" - see the exit-code
+REM      note above the classic-charset loop for why an "exit /b 1"
+REM      buried in a nested block returns 0 to the caller. Each site
+REM      still does its own popd/del cleanup before the goto, so
+REM      pushd/popd stays balanced and %DR% is left clean on every path.
+goto :parts_done
+:part_fail
+exit /b 1
+:parts_done
 
 echo BUILD OK: RELEASE\ is ready to copy to an SD card
 if "%RUN%"=="1" call "%~dp0RUN.BAT"
