@@ -44,7 +44,7 @@ idiom `SFX` uses for a sub-command it does not recognise.
 | 2 | `HIDEMS` | Hide the hardware sprite pointer. |
 | 3 | `GETMS` | Read mouse state into four flags starting at the first argument: `flags[n]` = buttons (idle 0, left 1, right 2, middle 4, chords additive - jdaad parity, not the raw Kempston byte), `flags[n+1]` = column 0-79 (X/8), `flags[n+2]` = row 0-31 (Y/8), `flags[n+3]` = column 0-53 (X/6). |
 | 4 | `GETFINEMS` | Fine position into **three** flags: `flags[n]` = buttons (same convention as 3), `flags[n+1]` = X/2 (0-159), `flags[n+2]` = Y undivided (0-255). This is the DRC manual's VGA case, which is what a 320x256 pointer plane is; `flags[n+3]` is NOT written. |
-| 5 | `POINTERMS` | Re-upload the pointer pattern into hardware sprite slot 0 and re-arm it. There are no `.PTR` pointer files on this target and only one pointer shape at a time, so the parameter selects nothing; the sub exists so the documented `POINTERMS` then `SHOWMS` idiom always leaves slot 0 holding your pointer - the `POINTER.SPR` you supplied if you supplied one, the default arrow otherwise - whatever else used the slot meanwhile. See [Customising](../customising.md). |
+| 5 | `POINTERMS` | Install pointer shape `n` (the first parameter) into hardware sprite slot 0 and re-arm it. `n` 0 always reaches a known shape - the built-in arrow, then `POINTER.SPR` over it if one exists; `n` 1-9 select `POINTER1.SPR` to `POINTER9.SPR`, and a missing or wrong-size file for that number is a silent no-op - the previously-installed shape stays. Classic `.PTR` pointer files remain unsupported: DOS DAAD loads their bytes as indices into a 256-colour palette it reloads per picture, so the same file renders in different colours depending on the current location graphic, with no fixed table here to translate against. Every call re-uploads and re-arms regardless, so the documented `POINTERMS` then `SHOWMS` idiom always leaves slot 0 holding your pointer, whatever else used the slot meanwhile. See [Customising](../customising.md). |
 | 6 | `DELTAXMS` | Set the pointer's hotspot X offset within its bitmap - **not** a movement delta, despite the symbol name. The reported coordinates do not change; the bitmap shifts so the hotspot pixel lands on the reported position. Floors at the plane origin rather than wrapping. |
 | 7 | `DELTAYMS` | As 6, for the hotspot Y offset. |
 
@@ -54,17 +54,18 @@ idiom `SFX` uses for a sub-command it does not recognise.
 are no symbolic names for these - Appendix D covers `SFX` and `MOUSE`
 only - so write the number.
 
-For every sub-command except 13 and 14 the first parameter `n` is
+For every sub-command except 13, 14 and 16 the first parameter `n` is
 ignored: the buffer operations act on the whole surface and take no
-argument. For 13 and 14, `n` is the video number.
+argument. For 13 and 14, `n` is the video number; for 16, it is the font
+number.
 
 "Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
-prints a marker). That covers 3, 4, 7, 8, 11, 12 and everything from 15
-up, as well as 9 and 10 - see
-[Platform notes](../platform-notes.md) for why the numbered palette
-store and recall have nothing to act on here.
+prints a marker). That covers 3, 4, 7, 8, 11, 12 and 15, and everything
+from 17 up, as well as 9 and 10 - see
+[Platform notes](../platform-notes.md) for why 9, 10 and 15 have nothing
+to act on here.
 
 | s | Behaviour on this target |
 |---|---------------------------|
@@ -75,3 +76,4 @@ store and recall have nothing to act on here.
 | 6 | Clear the back surface. |
 | 13 | Play video `n` (`NNN.VID`) once. Identical to `SFX n 9` (`PLAYFLI`). See [Video](../video.md). |
 | 14 | As 13, looped until a key is pressed. Identical to `SFX n 10` (`PLAYFLIL`). |
+| 16 | Install font `n`. `n` 0 is the base font - the embedded table, then `FONT.CHR` over it if one exists; 1-9 select `FONT1.CHR` to `FONT9.CHR`. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See [Customising](../customising.md). |

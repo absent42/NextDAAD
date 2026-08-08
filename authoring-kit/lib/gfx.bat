@@ -21,7 +21,14 @@ if not exist "%GFX%" (
 )
 set "COUNT=0"
 for %%F in ("IMAGES\*.png") do (
-    if /I not "%%~nxF"=="DAAD.png" (
+    REM POINTER.png/POINTER1..9.png are mouse-pointer art (16x16 sprites,
+    REM converted separately below - SP18), not numbered location pictures;
+    REM excluded here so they do not fail this loop's 320/256-wide check.
+    set "ISPOINTER="
+    for %%Q in (POINTER.png POINTER1.png POINTER2.png POINTER3.png POINTER4.png POINTER5.png POINTER6.png POINTER7.png POINTER8.png POINTER9.png) do (
+        if /I "%%~nxF"=="%%Q" set "ISPOINTER=1"
+    )
+    if /I not "%%~nxF"=="DAAD.png" if not defined ISPOINTER (
         set "NUM="
         set "MODE="
         for /f "tokens=1,2" %%A in ('powershell -NoProfile -ExecutionPolicy Bypass -File "lib\pnginfo.ps1" "%%~fF"') do (
@@ -87,6 +94,57 @@ if exist "IMAGES\DAAD.png" (
     if not defined ZSUF powershell -NoProfile -ExecutionPolicy Bypass -File "lib\palcheck.ps1" "RELEASE\DAAD.!TMODE!"
     echo   title DAAD.png -^> DAAD.!TMODE!!ZSUF!
     set "TITLECONVERTED=1"
+)
+
+REM ---- pointer artwork (SP18): IMAGES\POINTER.png and POINTER1..9.png
+REM      convert to the raw 256-byte 16x16 8bpp pattern the interpreter
+REM      loads - the source-art alternative to a ready-made POINTER.SPR/
+REM      POINTERn.SPR (see BUILD.BAT's ready-made mouse pointer staging;
+REM      POINTERn.SPR is what MOUSE n 5 installs). -pal-std is
+REM      LOAD-BEARING: without it gfx2next emits the source PNG's raw
+REM      palette indices, which are indices into a palette nothing ever
+REM      loads, so the pointer renders in arbitrary colours while still
+REM      being exactly 256 bytes and passing every check here. -pal-none
+REM      suppresses the .nxp nobody reads. Transparent pixels must be
+REM      #FF00FF in the source art - verified: black -> $00, white ->
+REM      $FF, #FF00FF -> $E3 (the sprite transparency index). gfx2next
+REM      writes to the CWD by input basename, so clear any stale output
+REM      first and MOVE the result - the same idiom the location-art
+REM      loop above uses. No IMAGES\POINTER*.png is normal (a game that
+REM      never switches pointers, or ships a ready-made .SPR instead)
+REM      and not an error.
+for %%P in ("IMAGES\POINTER.png" "IMAGES\POINTER1.png" "IMAGES\POINTER2.png" ^
+            "IMAGES\POINTER3.png" "IMAGES\POINTER4.png" "IMAGES\POINTER5.png" ^
+            "IMAGES\POINTER6.png" "IMAGES\POINTER7.png" "IMAGES\POINTER8.png" ^
+            "IMAGES\POINTER9.png") do (
+    if exist %%P (
+        set "SPRSIZE="
+        del "%%~nP.spr" 2>nul
+        "%GFX%" -sprites -pal-std -pal-none %%P >nul 2>&1
+        if errorlevel 1 (
+            echo ERROR: gfx2next failed on %%~nxP - must be a paletted 8-bit 16x16 PNG
+            del "%%~nP.spr" 2>nul
+            exit /b 1
+        )
+        if not exist "%%~nP.spr" (
+            echo ERROR: gfx2next produced no output for %%~nxP
+            exit /b 1
+        )
+        REM gfx2next does not reject a wrong-sized source cleanly (a too-
+        REM small image exits 0 with no output, already caught above; a
+        REM too-large one exits 0 and writes >256 bytes, several sprites
+        REM concatenated). The interpreter rejects anything that is not
+        REM exactly 256 bytes silently, so check the byte count itself
+        REM here rather than let a bad file reach RELEASE\ unremarked.
+        for /f %%S in ('powershell -NoProfile -Command "([System.IO.File]::ReadAllBytes('%%~nP.spr')).Length"') do set "SPRSIZE=%%S"
+        if not "!SPRSIZE!"=="256" (
+            echo ERROR: %%~nxP converted to !SPRSIZE! bytes, not 256 - the source must be exactly 16x16
+            del "%%~nP.spr" 2>nul
+            exit /b 1
+        )
+        move /Y "%%~nP.spr" "RELEASE\%%~nP.SPR" >nul
+        echo   pointer %%~nxP -^> RELEASE\%%~nP.SPR ^(gfx2next -sprites -pal-std^)
+    )
 )
 
 :title_readymade

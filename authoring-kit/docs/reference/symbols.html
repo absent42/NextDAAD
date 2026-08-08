@@ -124,7 +124,7 @@ idiom <code>SFX</code> uses for a sub-command it does not recognise.</p>
 <tr>
 <td>5</td>
 <td><code>POINTERMS</code></td>
-<td>Re-upload the pointer pattern into hardware sprite slot 0 and re-arm it. There are no <code>.PTR</code> pointer files on this target and only one pointer shape at a time, so the parameter selects nothing; the sub exists so the documented <code>POINTERMS</code> then <code>SHOWMS</code> idiom always leaves slot 0 holding your pointer - the <code>POINTER.SPR</code> you supplied if you supplied one, the default arrow otherwise - whatever else used the slot meanwhile. See <a href="../customising.html">Customising</a>.</td>
+<td>Install pointer shape <code>n</code> (the first parameter) into hardware sprite slot 0 and re-arm it. <code>n</code> 0 always reaches a known shape - the built-in arrow, then <code>POINTER.SPR</code> over it if one exists; <code>n</code> 1-9 select <code>POINTER1.SPR</code> to <code>POINTER9.SPR</code>, and a missing or wrong-size file for that number is a silent no-op - the previously-installed shape stays. Classic <code>.PTR</code> pointer files remain unsupported: DOS DAAD loads their bytes as indices into a 256-colour palette it reloads per picture, so the same file renders in different colours depending on the current location graphic, with no fixed table here to translate against. Every call re-uploads and re-arms regardless, so the documented <code>POINTERMS</code> then <code>SHOWMS</code> idiom always leaves slot 0 holding your pointer, whatever else used the slot meanwhile. See <a href="../customising.html">Customising</a>.</td>
 </tr>
 <tr>
 <td>6</td>
@@ -142,16 +142,17 @@ idiom <code>SFX</code> uses for a sub-command it does not recognise.</p>
 <p><code>GFX n s</code> takes the sub-command in its <strong>second</strong> parameter, <code>s</code>. There
 are no symbolic names for these - Appendix D covers <code>SFX</code> and <code>MOUSE</code>
 only - so write the number.</p>
-<p>For every sub-command except 13 and 14 the first parameter <code>n</code> is
+<p>For every sub-command except 13, 14 and 16 the first parameter <code>n</code> is
 ignored: the buffer operations act on the whole surface and take no
-argument. For 13 and 14, <code>n</code> is the video number.</p>
+argument. For 13 and 14, <code>n</code> is the video number; for 16, it is the font
+number.</p>
 <p>"Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
-prints a marker). That covers 3, 4, 7, 8, 11, 12 and everything from 15
-up, as well as 9 and 10 - see
-<a href="../platform-notes.html">Platform notes</a> for why the numbered palette
-store and recall have nothing to act on here.</p>
+prints a marker). That covers 3, 4, 7, 8, 11, 12 and 15, and everything
+from 17 up, as well as 9 and 10 - see
+<a href="../platform-notes.html">Platform notes</a> for why 9, 10 and 15 have nothing
+to act on here.</p>
 <table>
 <thead>
 <tr>
@@ -187,6 +188,10 @@ store and recall have nothing to act on here.</p>
 <tr>
 <td>14</td>
 <td>As 13, looped until a key is pressed. Identical to <code>SFX n 10</code> (<code>PLAYFLIL</code>).</td>
+</tr>
+<tr>
+<td>16</td>
+<td>Install font <code>n</code>. <code>n</code> 0 is the base font - the embedded table, then <code>FONT.CHR</code> over it if one exists; 1-9 select <code>FONT1.CHR</code> to <code>FONT9.CHR</code>. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See <a href="../customising.html">Customising</a>.</td>
 </tr>
 </tbody>
 </table>

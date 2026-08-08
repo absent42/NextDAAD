@@ -41,7 +41,8 @@ for NextDAAD means just editing your source and double-clicking one batch file.
 - **80x32 text** - a tilemap text driver with per-character colour and
   its own 80-column font
 - **Custom fonts and pointers** - drop in a `FONT.CHR` or a
-  `POINTER.SPR` and the interpreter picks them up at boot
+  `POINTER.SPR` and the interpreter picks them up at boot, and a game
+  can switch between up to ten of each while it runs
 - **Mouse input** - Kempston mouse with a hardware sprite pointer
 - **Multi-part games** - switch between databases at runtime with flags
   and objects intact, with per-part assets and saves that load from any
@@ -118,6 +119,7 @@ the Markdown, never the generated HTML.
 - Mike Dailly for [CSpect](https://mdf200.itch.io/cspect)
 - z00m for [sjasmplus](https://github.com/z00m128/sjasmplus)
 - Stefan Vogt for [The Curse of Rabenstein](https://github.com/ByteProject/Rabenstein) which was used during development testing
+- tadaskay for the [mouse pointer sprite](https://tadaskay.itch.io/pixelated-cursors-16x16)
 
 ## Licence
 

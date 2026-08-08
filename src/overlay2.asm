@@ -931,13 +931,16 @@ h_display:
     nextreg NR_L2_BANK, a
     ret
 
-; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused - every
-; implemented sub's buffer operation takes no meaningful P1 (jdaad
-; parity: jdaad.js's _GFX() switches on Parameter2 alone - Parameter1
-; only matters to its palette-store subs 9/10, which have no
+; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused by every
+; sub except 13, 14 and 16 - the video number for 13/14 (see .vidgo
+; below) and the font number for 16 (see .font/GFX_SUB_FONT below);
+; every OTHER implemented sub's buffer operation takes no meaningful P1
+; (jdaad parity: jdaad.js's _GFX() switches on Parameter2 alone -
+; Parameter1 only matters to its palette-store subs 9/10, which have no
 ; NextDAAD analogue, see below). Sub map pinned against the DAAD
 ; condact reference (GFX Routines, condact 87) and jdaad.js _GFX()/
-; DB*() (ASSETS/HTML/jdaad.js ~3676/~4360):
+; DB*() (ASSETS/HTML/jdaad.js ~3676/~4360), plus sub 16 (NextDAAD-only,
+; not in that reference):
 ;   0 = copy the BACK (render) surface onto FRONT (visible), in place
 ;       - l2_copy_back_front; jdaad's DBBuffertoScreen draws the back
 ;       canvas onto the visible one the same way, so this needs no NR
@@ -957,9 +960,13 @@ h_display:
 ;   9/10 = jdaad's numbered-palette store/recall (flag-offset RGB
 ;       triples into a software colour table) - no NextDAAD analogue,
 ;       Layer 2 palette load is picture-driven only; documented no-op
-;   3/4/7/8/11+ (and jdaad's 13/14 MP4-via-SFX redirect) = no
+;   3/4/7/8/11-15 (and jdaad's 13/14 MP4-via-SFX redirect) = no
 ;       NextDAAD analogue either (graphics/text-buffer split, video
 ;       playback); documented no-op
+;   16 = install font B (0 = base - the embedded table, then FONT.CHR
+;       over it if one exists; 1-9 = FONT<n>.CHR) - NextDAAD-only, no
+;       jdaad/DAAD-reference analogue; GFX_SUB_FONT (nextdaad.inc) -
+;       see .font below
 ; Every no-op sub falls to the shared DEBUG marker below rather than
 ; overlay0's h_unimpl - overlay2 must not call overlay0 (header
 ; discipline) - inline, resident dbg_* helpers only, mirrors h_sfx's
@@ -980,6 +987,8 @@ h_gfx:
     jr z, .vidonce
     cp GFX_SUB_VID_LOOP
     jr z, .vidloop
+    cp GFX_SUB_FONT
+    jr z, .font
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
     push bc                     ; across dbg_puts (corrupts BC) for
@@ -1025,6 +1034,51 @@ h_gfx:
     push hl
     ld a, VID_PAGE
     jp ovl_map_page
+.font:                           ; sub 16: install font B. 0 is the base
+                                 ; (the embedded table, then FONT.CHR
+                                 ; over it if one exists); 1-9 are
+                                 ; FONT<n>.CHR. Out of range is a no-op,
+                                 ; matching every other sub's tolerance.
+    ld a, b
+    cp 10
+    ret nc
+    ld hl, fontCur
+    cp (hl)
+    ret z                        ; already installed: nothing to do at
+                                 ; all - nothing else in the tree writes
+                                 ; TM_DEFS
+    or a
+    jr nz, .fontfile
+    ld (hl), $FF                 ; 0: mark the cache UNKNOWN before installing
+                                 ; anything. HL still holds fontCur from the
+                                 ; already-installed test above (nothing since
+                                 ; has touched it), so this costs one byte LESS
+                                 ; than the old post-hoc `ld (fontCur),a`.
+                                 ; font_load writes fontCur=0 itself, but only
+                                 ; once FONT.CHR is actually in TM_DEFS, so
+                                 ; every way it can fail - absent FONT.CHR,
+                                 ; wrong size, no drive, exhausted bank pool -
+                                 ; leaves $FF and a later GFX 0 16 retries.
+                                 ; Pre-setting 0 here was a lie whenever
+                                 ; font_load then failed with a FONT.CHR that
+                                 ; does exist, and a PERMANENT one, because the
+                                 ; `ret z` above would swallow every retry. $FF
+                                 ; only ever costs a redundant re-probe when
+                                 ; there is no FONT.CHR at all, which is
+                                 ; invisible: tm_font_init below has already
+                                 ; put the correct embedded table down.
+    call tm_font_init            ; lay the embedded table down FIRST, so a
+    xor a                        ; revert still works when no FONT.CHR exists.
+    jp font_load                 ; A is 0 here, which is the number we want, so
+                                 ; jump directly - do NOT fall through to a
+                                 ; `ld a,b`, because tm_font_init is documented
+                                 ; as corrupting all registers and B's survival
+                                 ; is not guaranteed. The `xor a` must stay for
+                                 ; the same reason - it is font_load's argument,
+                                 ; not a leftover of the write above.
+.fontfile:
+    ld a, b
+    jp font_load
 
 msgGfxUnk: db "GFX? ", 0
 
@@ -3028,8 +3082,12 @@ title_present:
 ; (clear+flip) shape so the game starts on a clean Layer 2 with no
 ; title art left behind. Music keeps playing throughout -
 ; aud_boot_probe already started it, nothing here touches audio.
-; Returns via a threaded one-way hop into overlay0's pointer_load (SP12
-; T3, the shared .toPointer tail below), whose own plain ret then pops
+; Returns via a threaded one-way hop into overlay0's pointer_load_boot
+; (SP12 T3 wired the .toPointer hop; pointer_load_boot itself seeds the
+; live buffer from the pristine arrow before pointer_load's own base-
+; shape probe runs - see that routine's header, overlay0.asm, for why
+; neither this call nor switch_to_part can be relied on to have seeded
+; it first), whose tail-jp into pointer_load's plain ret then pops
 ; whatever was on the stack before this whole chain began - thanks to
 ; the chain's stack trick (overlay1.asm), that is still aud_boot_probe's
 ; own caller (main.asm), unchanged from before SP12 T3 - the same final
@@ -3072,6 +3130,7 @@ title_boot:
     call gfx_load_rollback         ; transient: hand the banks straight
                                    ; back - no cache entry ever existed
     call wait_key                  ; block for any key (print.asm)
+    xor a                          ; base font
     call font_load                 ; after-keypress path (see header note)
     ld b, 1
     call h_display                 ; h_display's non-zero shape: clear
@@ -3090,18 +3149,24 @@ title_boot:
                                    ; load failure falls in via .rollback
                                    ; just above - both silent, normal
                                    ; boot either way
+    xor a                          ; base font
     call font_load
 .toPointer:                        ; SP12 T3: one-way OVL2->OVL0 hop -
                                    ; font_load/h_display are already this
-                                   ; page, but pointer_load lives in
-                                   ; overlay0, so it needs the established
-                                   ; trampoline (push target, ld a,
-                                   ; OVL0_PAGE, jp ovl_map_page - the
-                                   ; switch_to_part precedent, overlay0.
-                                   ; asm). See this routine's header for
-                                   ; where pointer_load's own ret finally
+                                   ; page, but the pointer machinery
+                                   ; lives in overlay0, so it needs the
+                                   ; established trampoline (push target,
+                                   ; ld a, OVL0_PAGE, jp ovl_map_page -
+                                   ; the switch_to_part precedent,
+                                   ; overlay0.asm). The target is
+                                   ; pointer_load_boot, not pointer_load
+                                   ; directly, so the live buffer is
+                                   ; seeded from the pristine arrow
+                                   ; before the base-shape probe runs -
+                                   ; see this routine's header for where
+                                   ; pointer_load's own ret finally
                                    ; lands.
-    ld hl, pointer_load
+    ld hl, pointer_load_boot
     push hl
     ld a, OVL0_PAGE
     jp ovl_map_page
@@ -3202,20 +3267,64 @@ title_blit:
 ; after the swap (tmAttr and the tilemap palette are independent of the
 ; glyph bitmaps).
 ;
-; Load a custom font: PARTn\FONT.CHR (curPart >= 2) then FONT.CHR,
-; standard DAAD 2048-byte charset (256 chars x 8 rows, 1bpp). Absent =
-; silent (the embedded font stays); wrong size = silent + DEBUG
-; marker. Never esx_fread's straight into TM_DEFS: a short/failed read
-; must never corrupt the live glyph table the tilemap may be actively
-; displaying (mid-game part switch), so the file lands in a transient
-; bank_alloc'd 16K scratch bank first (mapped into slot 6/DATA_WINDOW
-; via data_save/data_map_page - ext_xmes's own idiom, overlay0.asm) and
-; is only ldir'd into TM_DEFS once the exact size is confirmed - scratch-
+; A = font number 0-9 -> fontNameBuf = "FONT.CHR",0 for 0, or
+; "FONTn.CHR",0 for 1-9, with fontNameLen set to the byte count
+; including the NUL (the PARTn\ prefix copy needs it, since the name is
+; no longer a fixed 9 bytes). Range is the caller's problem - h_gfx
+; rejects 10+ before ever reaching here. Corrupts AF, BC, DE, HL.
+font_name_build:
+    ld (fontNum), a
+    ld hl, fontNameStem
+    ld de, fontNameBuf
+    ld bc, 4                     ; "FONT"
+    ldir                         ; DE -> fontNameBuf+4
+    ld a, (fontNum)
+    or a
+    ld c, 9                      ; "FONT.CHR" + NUL
+    jr z, .ext                   ; ld c does not touch flags
+    add a, '0'
+    ld (de), a
+    inc de
+    ld c, 10                     ; "FONTn.CHR" + NUL
+.ext:
+    ld a, c
+    ld (fontNameLen), a
+    ld hl, fontNameExt
+    ld bc, 5                     ; ".CHR" + NUL
+    ldir
+    ret
+
+; A = font number (0-9); font_name_build (above) turns it into
+; FONT.CHR (0) or FONT<n>.CHR (1-9) in fontNameBuf. Load: PARTn\<name>
+; (curPart >= 2) then <name> at the root, standard DAAD 2048-byte
+; charset (256 chars x 8 rows, 1bpp). Absent = silent (the previously-
+; installed table stays); wrong size = silent + DEBUG marker. Never
+; esx_fread's straight into TM_DEFS: a short/failed read must never
+; corrupt the live glyph table the tilemap may be actively displaying
+; (mid-game part switch), so the file lands in a transient bank_alloc'd
+; 16K scratch bank first (mapped into slot 6/DATA_WINDOW via
+; data_save/data_map_page - ext_xmes's own idiom, overlay0.asm) and is
+; only ldir'd into TM_DEFS once the exact size is confirmed - scratch-
 ; then-install. Exact-size validation (BC checked, not CF alone - the
 ; F_READ/F_WRITE count lesson) plus the 1-byte-overshoot probe mirror
-; tm_font_init's own GAME.CHR check byte for byte. Corrupts AF, BC, DE,
-; HL, IX.
+; tm_font_init's own GAME.CHR check byte for byte. THIS ROUTINE only
+; ever writes fontCur after that final ldir, so a failed load (absent
+; file, wrong size, no free bank, no drive) leaves it exactly as this
+; routine found it. Note that its CALLERS do write it beforehand, and
+; both write $FF (unknown), never a number: h_gfx's .font pre-sets $FF
+; for the n=0 path before laying the embedded table down, and
+; font_load_switch does the same across a part switch. So the invariant
+; that actually holds system-wide is the one that matters - fontCur
+; NAMES A NUMBER only when that number's glyphs are genuinely in
+; TM_DEFS, so GFX sub 16's already-installed check can never
+; short-circuit a retry of a font that failed to install. The no-free-
+; bank path is the one that made this load-bearing: bank_alloc has no
+; eviction fallback and the picture cache holds pool banks, so a
+; mid-game GFX n 16 against a warm cache is a REACHABLE failure, unlike
+; the boot and part-switch calls that ran against a fresh pool.
+; Corrupts AF, BC, DE, HL, IX.
 font_load:
+    call font_name_build         ; A = font number, in
     ld a, (curPart)
     dec a
     jr z, .rootonly              ; curPart == 1: skip straight to the
@@ -3236,8 +3345,10 @@ font_load:
     ld (hl), '\'
     inc hl                        ; hl = fontNamePart+6
     ex de, hl
-    ld hl, fontName                ; copy "FONT.CHR",0 verbatim (9 bytes)
-    ld bc, 9
+    ld hl, fontNameBuf           ; copy the built name (9 or 10 bytes)
+    ld a, (fontNameLen)
+    ld c, a
+    ld b, 0
     ldir
     call esx_getsetdrv
     jr c, .rootonly
@@ -3250,7 +3361,7 @@ font_load:
                                   ; PARTn\ fallback above
     call esx_getsetdrv
     ret c                         ; no drive at all: silent, table untouched
-    ld ix, fontName
+    ld ix, fontNameBuf
     ld b, ESX_MODE_READ
     call esx_fopen
     ret c                         ; no FONT.CHR either: silent, table untouched
@@ -3258,6 +3369,14 @@ font_load:
     ld (fontHandle), a
     call bank_alloc                ; transient scratch bank (banks.asm)
     jr nc, .haveBank
+ IFDEF DEBUG                        ; pool exhausted: no-op with a marker, same
+    ld b, 29                        ; idiom as .bad below. bank_alloc has no
+    ld c, 70                        ; eviction fallback and gfx_bank_get holds
+    call dbg_at                     ; picture-cache banks indefinitely, so a
+    ld hl, msgFontNoBk              ; warm cache CAN starve a mid-game GFX n 16
+    call dbg_puts                   ; - the one caller that runs against one.
+ ENDIF                              ; Release stays silent here, as it does on
+                                    ; every other failure on this path.
     ld a, (fontHandle)
     call esx_fclose
     ret                            ; no free bank: silent, table untouched
@@ -3291,6 +3410,8 @@ font_load:
     ld de, TM_DEFS                   ; live table (the only write to
     ld bc, 2048                      ; TM_DEFS anywhere in this routine)
     ldir
+    ld a, (fontNum)              ; installed: remember which, so a repeat
+    ld (fontCur), a              ; request is a genuine no-op
     jr .close
 .bad:
  IFDEF DEBUG                        ; wrong size: no-op with a marker,
@@ -3314,6 +3435,11 @@ font_load:
 ; there once this whole chain finishes (T3's chained-hop precedent).
 ; Corrupts everything.
 font_load_switch:
+    ld a, $FF                    ; a part switch re-probes the base font;
+    ld (fontCur), a              ; mark the cache unknown so a game that
+                                 ; re-selects the same number after the
+                                 ; switch is not short-circuited
+    xor a                        ; base font
     call font_load
     ld hl, aud_load_sfb
     push hl
@@ -3325,12 +3451,18 @@ font_load_switch:
 ; for why the read never targets TM_DEFS directly.
 fontHandle:   db $FF              ; esxDOS handle, $FF = none open
 fontBank:     db $FF              ; transient scratch 16K bank while held
-; "PARTn\FONT.CHR",0 = 6 ("PARTn\") + 9 ("FONT.CHR",0) = 15 bytes
-fontNamePart: ds 15
-fontName:     db "FONT.CHR", 0    ; root fallback name AND the PARTn\
-                                  ; suffix (copied into fontNamePart+6,
-                                  ; 9 bytes - the xmsName/ext_xmes reuse)
+fontNum:      db 0                ; number being built/loaded
+fontNameLen:  db 9                ; bytes in fontNameBuf including the NUL
+fontCur:      db $FF              ; installed font, $FF = unknown. $FF at
+                                  ; boot so the first install always runs.
+fontNameBuf:  ds 10               ; "FONTn.CHR",0 worst case
+; "PARTm\" (6) + the longest built name (10)
+fontNamePart: ds 16
+fontNameStem: db "FONT"
+fontNameExt:  db ".CHR", 0
 msgFontBad:   db "FONT BAD", 0
+msgFontNoBk:  db "FONT NOBK", 0    ; 9 chars at column 70 - fits the 80-column
+                                   ; row, same as msgFontBad above
 
 ; --- DEBUG bring-up test card ---
 ; Owner-driven hardware verification hook, wired from debug.asm's

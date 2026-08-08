@@ -2,6 +2,48 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.4.0 - unreleased
+
+- Games can change text font while they run. `GFX n 16` installs font
+  n: 0 is the base font - the embedded table, then `FONT.CHR` over it
+  if one is staged - and 1 to 9 select `FONT1.CHR` to `FONT9.CHR`.
+  `PART<m>\` overrides apply per number, as they already did for
+  `FONT.CHR`. The tilemap reads the glyph table live, so a switch
+  restyles text already on screen with no redraw. Sub-command 16 and
+  not 15, because 15 is `XSPLITSCR` on CPC and C64 and a ported game
+  using it would otherwise change font instead of doing nothing.
+- `MOUSE n 5` (`POINTERMS`) honours its parameter, which it previously
+  accepted and discarded. Shape 0 is the base pointer, 1 to 9 select
+  `POINTER1.SPR` to `POINTER9.SPR`. Selecting the shape already
+  installed skips the card read but still re-uploads the pattern and
+  re-arms it, so the documented `POINTERMS` then `SHOWMS` sequence
+  keeps its guarantee. The hotspot set by `DELTAXMS` and `DELTAYMS` is
+  not touched by a shape change.
+- The built-in mouse pointer is a conventional arrow cursor in place of
+  the solid diagonal triangle, and is now held as a pristine copy
+  separate from the live upload buffer, so `MOUSE 0 5` can restore it
+  after a numbered shape has overwritten it.
+- A missing or wrong-size font or pointer file stays a silent no-op:
+  whatever is installed remains and the game plays on.
+- The kit stages `FONT1.CHR` to `FONT9.CHR` and `POINTER1.SPR` to
+  `POINTER9.SPR`, converts `IMAGES\POINTER.png` and `IMAGES\POINTER1.png`
+  to `POINTER9.png` with gfx2next, and converts a kit-root `FONT.ch8`
+  or `FONT1.ch8` to `FONT9.ch8` with `fontconv.ps1`. A ready-made
+  `.CHR` or `.SPR` still wins over a converted source of the same
+  number.
+- `fontconv.ps1` gains `-Base`, which pads a 768-byte classic charset
+  against a font you supply rather than the kit default, so a second
+  font keeps the glyphs you defined in the first.
+- The build now fails when a converted pointer is not exactly 256
+  bytes instead of staging it. A 32x32 source produced 1024 bytes at
+  exit 0, which the interpreter then rejected silently, so the author
+  saw no error from either end.
+- Deleting a numbered font or pointer source no longer leaves its
+  converted file behind in `RELEASE\`.
+- A failure inside the multi-part build loop returns exit code 1. It
+  printed the error and stopped, but reported success to anything
+  checking the exit code.
+
 ## v0.3.2 - 07/08/2026
 
 - Location pictures can have holes. The reserved palette index moved to

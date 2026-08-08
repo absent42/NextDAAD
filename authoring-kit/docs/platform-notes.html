@@ -53,9 +53,15 @@ picture carries its own palette and loads it as the picture loads, so
 there is no numbered palette slot for them to write to or read from.
 Both sub-commands are accepted and do nothing at all, so a game that
 uses them still runs; it simply gets no palette change.</p>
+<p>Sub 15 is a no-op for a different reason. On CPC and C64 it is
+<code>XSPLITSCR</code>, a split-screen toggle; this target has no split-screen
+mode, so 15 is accepted and does nothing here too. Worth stating
+explicitly now that its neighbour, sub 16, installs a font - see
+<a href="customising.html">Customising</a>.</p>
 <p>The <code>GFX</code> sub-commands that <em>are</em> implemented here - the buffer copies
-and swaps, the surface clears, and video playback on 13 and 14 - are
-listed in <a href="reference/symbols.html">Symbols</a> and <a href="video.html">Video</a>.</p>
+and swaps, the surface clears, video playback on 13 and 14, and font
+installation on 16 - are listed in <a href="reference/symbols.html">Symbols</a>,
+<a href="video.html">Video</a> and <a href="customising.html">Customising</a>.</p>
 <h2 id="condacts">Condacts</h2>
 <h3 id="a-doall-inside-a-doall-stops-with-error-4">A <code>DOALL</code> inside a <code>DOALL</code> stops with error 4</h3>
 <p>There is one <code>DOALL</code> at a time. If a sub-process called from inside a
@@ -71,9 +77,11 @@ report how far the mouse moved. They set the hotspot offset inside the
 pointer bitmap - the pixel of your artwork that lands on the reported
 coordinate. If your pointer is a cross, you probably want its hotspot at
 5,5 rather than at the top-left corner.</p>
-<p>All eight sub-commands, 0 to 7, are implemented. The full table is in
+<p>All eight sub-commands, 0 to 7, are implemented. A pointer shape switch
+(<code>MOUSE n 5</code>) does not move or reset the hotspot these two set - it
+stays wherever you last put it. The full table is in
 <a href="reference/symbols.html">Symbols</a>, and <a href="customising.html">Customising</a>
-covers supplying your own pointer artwork.</p>
+covers supplying your own pointer artwork, base and numbered alike.</p>
 <h3 id="extern-implements-three-vectors"><code>EXTERN</code> implements three vectors</h3>
 <p><code>EXTERN n v</code> picks one of sixteen dispatch vectors - the mechanism MALUVA
 used to bolt extra features onto older DAAD. Three of them do something
