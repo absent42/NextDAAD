@@ -111,11 +111,12 @@ im2_init:
                                          ; applies to the video player's own DMA
                                          ; kernels. That ISR meets the same
                                          ; contract (AF/IX only, the DAC pair,
-                                         ; and the MMU3 ring pinned for the
-                                         ; whole session) - but the combination
-                                         ; is awaiting its own silicon leg, see
-                                         ; .superpowers/sdd/video-dmairq-
-                                         ; runsheet.md.
+                                         ; the MMU3 ring pinned for the whole
+                                         ; session, RETI exit). Since SP18
+                                         ; item 5 the video kernels run
+                                         ; unbracketed and this permission is
+                                         ; their only guard - silicon leg
+                                         ; pending, wording final on pass.
     nextreg NR_DMA_INT_EN_3, 0           ; $CE = 0: no UART source may interrupt
                                          ; a DMA. Nothing here uses the UARTs
                                          ; and $C6 is never written, so this
@@ -295,6 +296,8 @@ im2_isr:
 ; which is true only because nothing here writes a slot. Adding an MMU
 ; write, a $243B/$253B select, a banked-memory access or a DMA-port touch
 ; to this routine would silently corrupt every DMA in the tree.
+; The exit instruction is part of the contract too: RETI is what hands
+; the bus back to a suspended DMA - never change it to RET.
 ; It outputs (smpPlayPtr), then advances with a branchless power-of-two wrap;
 ; when play has caught the producer (smpPlayPtr == smpWritePtr) it holds the
 ; current byte - natural hold-last; aud_smp_tick pads a DAC_SILENCE guard at W

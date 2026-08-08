@@ -102,7 +102,11 @@
 ;      the untouched frame tail exactly as it stands (patch-in-place).
 ;   3. DMA chunks <= NXV2_DMA_CHUNK (240 B): every chunk path is
 ;      capped by vid_chunk_dst/vid_chunk_all before a DMA kernel can
-;      see it, so no DI bracket outlives one audio ISR period.
+;      see it. The cap is encoder-priced and structural (single-byte
+;      compare, ASSERTed <= 255); its original rationale - the DI
+;      bracket had to fit one audio ISR period - retired when the
+;      kernels dropped their brackets (SP18 item 5, silicon leg
+;      pending; see the zxnDMA kernel header).
 ; CORRUPT-INPUT DIVERGENCE NOTE (3b carried minor): a RUN8/COPY8 with
 ; n = 0 is a SILENT NO-OP here (the kernels' structural zero-count
 ; guards) where nxv2dec raises. The encoder never emits n = 0, so the
@@ -2667,6 +2671,11 @@ vid_key_any:
 ; twin (one DAC write per SAMPLE at 23325 Hz) was withdrawn with mono
 ; itself on 2026-08-03 - see nextdaad.inc NXV2_OFF_ACHAN. The routine
 ; below is UNCHANGED by that removal, byte for byte.
+; DMA-PRE-EMPTION CONTRACT (SP18 item 5): this ISR may run INSIDE a
+; suspended video DMA transfer ($CD bit 0). It is MMU-free, never
+; touches port $6B, and MUST EXIT VIA RETI - the RETI is what returns
+; the bus to the DMA (dev guide interrupts chapter). A RET exit, an
+; MMU write, or a DMA-port touch here corrupts a resumed transfer.
 ; ---------------------------------------------------------------------
 video_ctc_isr_stereo:
     push af
@@ -6560,7 +6569,18 @@ vid_snap_copy:
     ld bc, (vidSnapDmaArm_len << 8) | DMA_PORT
     di
     otir                         ; program + run to completion in ONE
-    ei                           ; DI bracket (doc 11's one-shot law)
+    ei                           ; DI bracket - THE LAST ONE LEFT, and
+                                 ; deliberate: the snapshot runs
+                                 ; strictly pre-CTC-arm / post-CTC-park
+                                 ; (orch order: entry -> open -> snap
+                                 ; save -> l2setup arms; .restore parks
+                                 ; before snap restore), so no
+                                 ; permitted edge exists and dropping
+                                 ; the DI would only admit the frame
+                                 ; ISR mid-arm for zero gain. That
+                                 ; ordering is load-bearing - do not
+                                 ; reshuffle. dma_contract.py asserts
+                                 ; this bracket PRESENT.
     pop de
     pop bc
     inc d                        ; both windows advance 256
