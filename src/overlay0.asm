@@ -3548,24 +3548,35 @@ mouseCol80:   db 0
 mouseRow32:   db 0
 mouseCol53:   db 0
 
-; 16x16 solid-arrow hardware sprite pattern, 8-bit colour index per
+; 16x16 arrow-cursor hardware sprite pattern, 8-bit colour index per
 ; pixel (chapter-next-sprites: 256 bytes/pattern slot for 8-bit
 ; sprites). Hotspot (registration point) is the tip at (0,0), matching
 ; mouse_sprite_pos's use of mouseX/mouseY as the sprite's own (0,0)
-; corner - left edge and diagonal hypotenuse outlined in $00 (RGB332
-; black), $FF fill (RGB332 white), $E3 transparent (NR $4B's hardware
+; corner - a conventional pointer arrow outlined in $00 (RGB332 black)
+; with $FF fill (RGB332 white), on $E3 transparent (NR $4B's hardware
 ; soft-reset default, registers.txt: "soft reset = 0xe3" - nothing in
 ; this codebase reprograms it, so relying on it needs no extra write).
-; Row 0  B...............      Row 8  BWWWWWWWB.......
-; Row 1  BB..............      Row 9  BWWWWWWWWB......
-; Row 2  BWB.............      Row 10 BWWWWWWWWWB.....
-; Row 3  BWWB............      Row 11 BWWWWWWWWWWB....
-; Row 4  BWWWB...........      Row 12 BWWWWWWWWWWWB...
-; Row 5  BWWWWB..........      Row 13 BWWWWWWWWWWWWB..
-; Row 6  BWWWWWB.........      Row 14 BWWWWWWWWWWWWWB.
-; Row 7  BWWWWWWB........      Row 15 BWWWWWWWWWWWWWWB
+;
+; ON THE THREE BYTE VALUES, because pointer art arrives wrong otherwise:
+; a sprite pattern byte here is a COLOUR, not a palette index. This
+; interpreter never loads a sprite palette, so the hardware's default
+; identity palette applies and byte N renders as RGB332 colour N. Sprite
+; editors and exporters that emit palette INDICES alongside their own
+; palette file therefore do not drop straight in - their background
+; index renders as whatever colour that number happens to be, opaque,
+; instead of vanishing. Only $E3 is transparent, and it is transparent
+; by INDEX compare (NR $4B), so exactly one byte value ever punches
+; through - unlike Layer 2, where the compare is on colour and two of
+; the 512 entries match.
+; Row 0  BB..............      Row 8  BWWWBBBBB.......
+; Row 1  BWB.............      Row 9  BWWB............
+; Row 2  BWWB............      Row 10 BWB.............
+; Row 3  BWWWB...........      Row 11 BB..............
+; Row 4  BWWWWB..........      Row 12 ................
+; Row 5  BWWWWWB.........      Row 13 ................
+; Row 6  BWWWWWWB........      Row 14 ................
+; Row 7  BWWWWWWWB.......      Row 15 ................
 mouseArrow:
-    db $00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
     db $00,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
     db $00,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
     db $00,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
@@ -3574,13 +3585,14 @@ mouseArrow:
     db $00,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
     db $00,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
     db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3
-    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3
-    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3
-    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3,$E3
-    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3,$E3
-    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3,$E3
-    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00,$E3
-    db $00,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF,$00
+    db $00,$FF,$FF,$FF,$00,$00,$00,$00,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$FF,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $00,$00,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
+    db $E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3,$E3
 
 ; The LIVE pattern mouse_pattern_load uploads. Initialised from
 ; mouseArrow at boot; pointer_load overwrites it. Kept separate so
