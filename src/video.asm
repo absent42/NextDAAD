@@ -6413,18 +6413,25 @@ vid_snap_save_body:
 ; the two bank sets captured at entry), so a single-set sum would
 ; miss corruption confined to the other decode buffer since its last
 ; keyframe repaint. Walk order, fixed for determinism: the game set
-; first (vidSvNr12 - the snapshot target; == vidSvL2Front by the
-; game's NR $12 = front invariant), then the player back set
-; (vidSvL2Back) - each as ascending 8K pages, $4000-$5FFF via MMU2,
-; the same walk vid_snap_copy uses. Summing both sets also makes CHK
-; independent of the session's KFLIP parity. Runs only on the
-; teardown path, so cost (~74 T/byte nominal + M1 waits, both sets:
-; ~12-14M T at 320x256, ~0.45-0.5 s at 28 MHz - a visible pause on
-; DEBUG teardown) is invisible to playback and lands AFTER the PLAY=
-; end stamp. If the session had no snapshot (vidSnapCnt = 0) the sum
-; is left at zero. MMU2 is left on the last walked page -
-; vid_snap_copy immediately re-drives MMU2 per page and the exit
-; bracket restores the game mapping, same as today.
+; first (vidSvNr12 == vidSvL2Front by the game's NR $12 = front
+; invariant), then the player back set (vidSvL2Back) - each as
+; ascending 8K pages, $4000-$5FFF via MMU2, the same walk
+; vid_snap_copy uses. Summing both sets also makes CHK independent
+; of the session's KFLIP parity. The page count is keyed to the
+; CLIP's own mode (vidP_Shape, staged at open, unclobbered through
+; teardown), NOT the snapshot geometry: vidSnapCnt describes the
+; GAME's pre-video screen and is 0 whenever Layer 2 was hidden
+; pre-video, but the player's surfaces exist in every armed session.
+; So CHK runs in EVERY armed session, independent of whether a game
+; picture was on screen (SNAP= does not gate it; the bank bases are
+; captured unconditionally at entry) - a CHK of 00000000 is a
+; failure signature, not an idle reading. Runs only on the teardown
+; path, so cost (~74 T/byte nominal + M1 waits, both sets: ~12-14M T
+; at 320x256, ~0.45-0.5 s at 28 MHz - a visible pause on DEBUG
+; teardown) is invisible to playback and lands AFTER the PLAY= end
+; stamp. MMU2 is left on the last walked page - vid_snap_copy
+; immediately re-drives MMU2 per page and the exit bracket restores
+; the game mapping, same as today.
 ; ---------------------------------------------------------------------
 vid_chk_surface:
     xor a
@@ -6438,14 +6445,17 @@ vid_chk_surface:
     ld e, l                      ; DE' = sum high 16
     ld b, h                      ; B'  = 0 (C' is the byte carrier)
     exx
-    ld a, (vidSnapCnt)
-    add a, a                     ; A = 8K pages per set (6 or 10)
-    ret z                        ; no snapshot banks - leave CHK zero
+    ld a, (vidP_Shape)           ; clip width code: 0 = 256/mode-0
+    or a
+    ld a, 6                      ; mode 0: 3 banks = 6 pages per set
+    jr z, .cnt
+    ld a, 10                     ; mode 1: 5 banks = 10 pages per set
+.cnt:
     ld d, a                      ; D = pages remaining (set 1)
+    push af
     ld a, (vidSvNr12)
-    call .walkset                ; game set (snapshot target) first
-    ld a, (vidSnapCnt)
-    add a, a
+    call .walkset                ; game set first
+    pop af
     ld d, a                      ; D = pages remaining (set 2)
     ld a, (vidSvL2Back)
     call .walkset                ; then the player back set
