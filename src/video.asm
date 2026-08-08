@@ -6386,6 +6386,71 @@ vid_snap_save_body:
     ld a, 1                      ; direction: save (L2 -> pool)
     jp vid_snap_copy             ; tail call - rets to the orch body
 
+ IFDEF DEBUG
+; ---------------------------------------------------------------------
+; CHK= (SP18 item 5): 32-bit byte sum of the visible (front) Layer 2
+; surface, taken at teardown BEFORE the snapshot restore repaints it.
+; Cross-build instrument: identical CHK on two builds for the same
+; clip means the final surfaces are byte-identical - the binary
+; verdict on whether a pre-empted DMA transfer resumed uncorrupted.
+; Walk order: ascending 8K pages from the front-bank base, $4000-
+; $5FFF each via MMU2 - the same walk vid_snap_copy uses. Runs only
+; on the teardown path, so cost (~3.4M T at 320x256) is invisible to
+; playback and lands AFTER the PLAY= end stamp. If the session had no
+; snapshot (vidSnapCnt = 0) the sum is left at zero. MMU2 is left on
+; the last walked page - vid_snap_copy immediately re-drives MMU2 per
+; page and the exit bracket restores the game mapping, same as today.
+; ---------------------------------------------------------------------
+vid_chk_surface:
+    xor a
+    ld (vidChkSumL), a
+    ld (vidChkSumL+1), a
+    ld (vidChkSumL+2), a
+    ld (vidChkSumL+3), a
+    exx
+    ld hl, 0                     ; HL' = sum low 16
+    ld d, h
+    ld e, l                      ; DE' = sum high 16
+    ld b, h                      ; B'  = 0 (C' is the byte carrier)
+    exx
+    ld a, (vidSnapCnt)
+    add a, a                     ; A = 8K page count (6 or 10)
+    ret z                        ; no snapshot banks - leave CHK zero
+    ld d, a                      ; D = pages remaining
+    ld e, 0                      ; E = page index
+.page:
+    ld a, (vidSvNr12)
+    add a, a
+    add a, e
+    nextreg NR_MMU2, a           ; front bank page E into $4000
+    ld hl, $4000
+    ld bc, $2000
+.byte:
+    ld a, (hl)
+    inc hl
+    exx
+    ld c, a
+    add hl, bc                   ; low16 += byte
+    jr nc, .nc
+    inc de                       ; carry into high16
+.nc:
+    exx
+    dec bc
+    ld a, b
+    or c
+    jr nz, .byte
+    inc e
+    dec d
+    jr nz, .page
+    exx
+    ld (vidChkSumL), hl
+    ld (vidChkSumL+2), de
+    exx
+    ret
+vidChkSumL: ds 4                 ; little-endian 32-bit sum (report
+                                 ; prints high word first)
+ ENDIF
+
 ; ---------------------------------------------------------------------
 ; vid_snap_restore_body - restore matrix step 4b (SP15): pixels then
 ; palette written back while Layer 2 is still hidden (called between
@@ -6399,6 +6464,9 @@ vid_snap_save_body:
 ; Corrupts everything.
 ; ---------------------------------------------------------------------
 vid_snap_restore_body:
+ IFDEF DEBUG
+    call vid_chk_surface         ; CHK= snapshot of the final surface,
+ ENDIF                           ; before the restore repaints it
     ld a, (vidSnapCnt)
     or a
     ret z
@@ -7462,6 +7530,12 @@ vid_tl_report_body:
     call dbg_puts
     ld hl, (vidNomAccL+1)        ; 8.8 fixed point -> whole fields
     call dbg_hex16
+    ld hl, msgTlChk
+    call dbg_puts
+    ld hl, (vidChkSumL+2)        ; high word first - the row reads as
+    call dbg_hex16               ; one big-endian 8-digit number
+    ld hl, (vidChkSumL)
+    call dbg_hex16
     jr .done
 .nextrow:
     ld hl, vidTlRptRow
@@ -7524,6 +7598,7 @@ msgTlSlash: db "/", 0
 msgTlSnap: db " SNAP=", 0
 msgTlPlay: db "PLAY   =", 0
 msgTlNom:  db " NOM=", 0
+msgTlChk:  db " CHK=", 0
 vidTlRptRow: db 0
 vidTlRptIdx: db 0
 vidSnapCntL: db 0                ; SNAP= mirror - written at open (the
