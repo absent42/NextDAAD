@@ -4,23 +4,21 @@ NextDAAD runs [DAAD](https://github.com/daad-adventure-writer/daad) text
 adventures on the ZX Spectrum Next. It is written in Z80 assembly using
 the Next's extended instruction set.
 
-What it adds on top: Layer 2 location pictures up to 320x256 in
-8-bit colour, full-screen video cutscenes with sound, AY music and
-sampled audio across the Turbo Sound Next's three chips and DACs,
-an 80-column tilemap based text display, mouse input, and games
-that span several databases.
+In addition to the standard DAAD features it adds Layer 2 location pictures 
+up to 320x256 in 8-bit colour, full-screen video cutscenes with sound, AY music and
+sampled sound effects across the Turbo Sound Next's three chips and DACs,
+an 80-column tilemap based text display with switchable fonts, mouse input, 
+and games that span several databases.
 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
 for NextDAAD means just editing your source and double-clicking one batch file.
 
-## What it runs on
+## Requirements
 
-- A ZX Spectrum Next (or an accurate emulator) with an SD card. Video
+- A ZX Spectrum Next (or an emulator) with an SD card. Video
   cutscenes need 2MB of RAM and a real machine - everything else runs
   under emulation.
-- A game, meaning a compiled DAAD database and its assets on the card.
-  The authoring kit below builds one for you, and existing version 2 and
-  version 3 databases both run as they are.
+- A DAAD DSF source file or a compiled DAAD database, and its assets on the card. The authoring kit builds one for you, and existing version 2 and version 3 databases both run as they are.
 
 ## Features
 
@@ -123,8 +121,11 @@ the Markdown, never the generated HTML.
 
 ## Licence
 
-MIT - see [LICENSE](LICENSE). [CHANGELOG.md](CHANGELOG.md) records what
-changed in each version.
+MIT - see [LICENSE](LICENSE).
+
+## Changelog
+
+[CHANGELOG.md](CHANGELOG.md) records what changed in each version.
 
 ## Disclaimer
 
