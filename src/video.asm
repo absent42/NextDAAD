@@ -1529,31 +1529,33 @@ vid_pos24:
 ; 16 T spacing floor that reverted vid_ds_pad (commit 01466ec, ERR=FD)
 ; governs PORT_SPI_DAT reads and has nothing to say here.
 ;
-; THE DI BRACKET, HAND-COUNTED (this is the third time these numbers
-; have been wrong in this file, so nothing below is inherited):
+; INTERRUPTS ARE LIVE THROUGHOUT - arm and transfer (SP18 item 5; the
+; treatment overlay2's dma_copy took on 2026-08-03). ctc_isr /
+; video_ctc_isr_stereo are admitted mid-chunk by nextreg $CD bit 0 and
+; service the DAC on time; the frame ISR is barred from a running DMA
+; by $CC = 0 and a pending frame tick runs when the chunk ends. Both
+; permitted ISRs are MMU-free, never touch port $6B, and exit via
+; RETI (which is what hands the bus back to the DMA - dev guide
+; interrupts chapter, Alvin Albrecht).
 ;
-;   arm block lengths, from the source bytes: copy 11, fill 13. The
-;   comments here used to say 15 and REDERIVATION.md 2.1 hand-counted
-;   15; both were wrong - the assembler's own _len symbols are the
-;   authority and the ASSERTs below pin them.
+; THE ONE CONSEQUENCE TO KNOW ABOUT: when the DMA yields for an
+; interrupt the CPU executes ONE mainline instruction before the
+; interrupt is seen, and RETI returns the bus to the DMA. The copy
+; tail (pop/pop/ret) is harmless at any depth. The fill tail reaches
+; a DMA-port write (the WR1 restore otir) THREE instructions past its
+; arm, so it would take three yields inside one bracket to touch the
+; port mid-transfer - and the tightest CTC period the format can
+; select (HDMI stereo, 1728 T) admits at most two edges against a
+; fill bracket of 1664 T (1745.6 T even at a 256 cap). Anything that
+; shortens either tail, or moves a DMA write earlier, must be
+; re-checked against that bound. tests/dma_contract.py pins the
+; emitted shape (no F3/FB around the arm trains).
 ;
-;   OTIR 13 B (both arms, before)   12 x 24 + 19 = 307 T
-;   OUTINB 11 B (copy, after)       11 x 19      = 209 T   -98 T
-;   OUTINB 13 B (fill, after)       13 x 19      = 247 T   -60 T
-;
-;   B(chunk) = A + rate * chunk, with A measured by inversion of the
-;   bench tick-shortfall table (REDERIVATION.md 2.2b, four points on
-;   one free parameter) at A = 500 +/- 20 T for the 13-byte OTIR arm:
-;
-;     copy  A = 402 (382..422)   B(240) = 402 + 5.082*240 = 1621.7 T
-;     fill  A = 440 (420..460)   B(240) = 440 + 5.100*240 = 1664.0 T
-;
-;   against the TIGHTEST stereo audio period the format can select,
-;   HDMI's 16 x TC 108 = 1728 T: 6.15% / 3.70% margin at nominal A,
-;   4.99% / 2.55% at the pessimistic end of A's band. Every other
-;   video timing mode is looser (VGA0 1792 T .. VGA6 2112 T). See
-;   nextdaad.inc NXV2_DMA_CHUNK for the full margin table and for why
-;   the cap moved 256 -> 240 in the same change.
+; HISTORICAL: the brackets these kernels carried until SP18 enforced
+; "the whole bracket fits inside one audio ISR period", the constraint
+; that priced the arm at copy A = 402 T / fill A = 440 T and moved the
+; chunk cap 256 -> 240 (nextdaad.inc NXV2_DMA_CHUNK still records the
+; arithmetic; the cap stays for its own structural reasons).
 ; ---------------------------------------------------------------------
 
 ; Arm lengths as assembly-time constants: the DUP counts below need
@@ -1576,14 +1578,13 @@ vid_fill_dma:
     push hl
     ld hl, vidDmaFiArm
     ld bc, DMA_PORT              ; B is OUTINB's spare (address high
-    di                           ; byte only; OTIR ran this port with
-    DUP VID_FIARM_LEN            ; B = 12..0 already)
-      outinb                     ; arm + run: continuous one-shot
-    EDUP
-    ei
+    DUP VID_FIARM_LEN            ; byte only; OTIR ran this port with
+      outinb                     ; B = 12..0 already) - arm + run:
+    EDUP                         ; continuous one-shot, interrupts LIVE
     ld hl, vidDmaWr1Inc          ; put port A back to INCREMENTING for
-    ld b, 2                      ; the copy arm (descriptor split,
-    otir                         ; header) - DMA idle, interrupts live
+    ld b, 2                      ; the copy arm (descriptor split); the
+    otir                         ; DMA is idle by the time the CPU gets
+                                 ; here - three-yields bound, header
     pop hl
     ret
 
@@ -1604,11 +1605,9 @@ vid_copy_dma:
     push de
     ld hl, vidDmaCpArm
     ld bc, DMA_PORT
-    di
     DUP VID_CPARM_LEN
-      outinb
+      outinb                     ; arm + run, interrupts LIVE (header)
     EDUP
-    ei
     pop de
     pop hl
     ret
