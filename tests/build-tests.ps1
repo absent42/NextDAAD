@@ -39,6 +39,7 @@
 #   -TileSlack          sd\TILESLK\   tests\tileslack.dsf
 #   -Uto                sd\UTO\       tools\TEST.DSF     (V2)
 #   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
+#   -FontSw             sd\FONTSW\    tests\fontsw.dsf
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
 #    never touched by this script)
 #
@@ -314,13 +315,19 @@
 #            each run from the source .ch8 plus authoring-kit\lib\
 #            default.chr. Same CSpect-running guard as -Title (locked
 #            sd\ files cause a partial fixture). Default (no -Font)
-#            stages no font.
+#            stages no font. The Crews source ships as a .zip under
+#            tools\demo-files\fonts and is not always extracted (SP18) -
+#            -Font degrades to staging no font (a warning, not a throw)
+#            rather than fail the whole run over a missing demo archive.
 #            SP12 Task 3 rides the same switch: -Font ALSO generates a
 #            fresh 256-byte POINTER.SPR fixture
 #            in-script (a 16x16 solid green square, 2px $E3 transparent
 #            border, 1px black outline - obviously different from the
 #            interpreter's default black/white arrow at a glance). No
-#            test binary is committed for this either.
+#            test binary is committed for this either. The generator
+#            (New-PointerFixture, SP18) takes a fill colour, so the same
+#            code also produces the three colour-coded shapes the
+#            -FontSw leg below stages.
 # Video benchmark fixtures (SP13 Task 1, NXV v2 rewrite SP15 T1; LEG SET
 # switched to the SP15 3a calibration-wave fixtures 2026-07-25),
 # independent of the DDB switches:
@@ -478,7 +485,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -505,6 +512,7 @@ if ($L2Holes)          { $legName = 'L2HOLES' }
 if ($TileSlack)        { $legName = 'TILESLK' }
 if ($Uto)              { $legName = 'UTO' }
 if ($UtoV3)            { $legName = 'UTOV3' }
+if ($FontSw)           { $legName = 'FONTSW' }
 $leg = Join-Path $sd $legName
 
 function Reset-LegDir {
@@ -523,7 +531,7 @@ function Reset-LegDir {
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'L2HOLES',
-               'TILESLK', 'UTO', 'UTOV3')
+               'TILESLK', 'UTO', 'UTOV3', 'FONTSW')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -531,6 +539,25 @@ function Reset-LegDir {
         Get-ChildItem -LiteralPath $p -Force | Remove-Item -Recurse -Force
     }
     New-Item -ItemType Directory -Force $p | Out-Null
+}
+
+# 16x16 8-bit hardware sprite pattern (POINTER.SPR / POINTERn.SPR), a
+# solid $fill square with a 2px $E3 (hardware transparent) border and a
+# 1px $00 (black) outline - only the fill colour varies, so which shape
+# is live is answerable by eye (SP12 Task 3's original green square,
+# generalised for SP18 Task 5's three colour-coded shapes: green/red/
+# blue for POINTER.SPR/POINTER1.SPR/POINTER2.SPR).
+function New-PointerFixture([byte]$fill) {
+    $p = New-Object byte[] 256
+    for ($y = 0; $y -lt 16; $y++) {
+        for ($x = 0; $x -lt 16; $x++) {
+            if ($x -lt 2 -or $x -gt 13 -or $y -lt 2 -or $y -gt 13) { $b = 0xE3 }
+            elseif ($x -eq 2 -or $x -eq 13 -or $y -eq 2 -or $y -eq 13) { $b = 0x00 }
+            else { $b = $fill }
+            $p[$y * 16 + $x] = $b
+        }
+    }
+    return $p
 }
 
 New-Item -ItemType Directory -Force "$root\tests\out" | Out-Null
@@ -921,8 +948,12 @@ finally {
 
 # Font/pointer switching stimulus fixture (SP18 Task 1, 2026-08-07).
 # Compiled unconditionally like every block above so a break in the DSF
-# is caught on a plain run; there is no leg switch and no staging for
-# it - the whole point is the compiled bytes, asserted below.
+# is caught on a plain run, whether or not -FontSw is given - the byte
+# assertions below run every time. -FontSw (SP18 Task 5) is the leg
+# switch that stages this DDB plus its numbered font/pointer assets into
+# sd\FONTSW\ (see that switch's own block in the STAGING section below);
+# a plain run with no switches still compiles and asserts fontsw.ddb, it
+# just does not stage it anywhere.
 #
 # OUT OF TREE, for the same reason as l2holes/tileslack above and by the
 # same means: DRF.exe and DRB.PHP are run by absolute path with the cwd
@@ -2060,35 +2091,33 @@ if ($Font) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial font fixture)"
     }
+    # tools\demo-files\fonts\Crews ships as Crews.zip and is not always
+    # extracted (owner-provisioned demo material, not this repo's to
+    # unpack) - degrade to no custom font rather than let fontconv.ps1
+    # throw on a missing source. That matches "Default (no -Font) stages
+    # no font" above: without the archive, -Font stages nothing either,
+    # just with a warning explaining why.
     $fontSrc = "$root\tools\demo-files\fonts\Crews\Spectrum\Crews.ch8"
-    & "$root\authoring-kit\lib\fontconv.ps1" -In $fontSrc -Out "$leg\FONT.CHR" | Out-Null
-    $fontSize = (Get-Item "$leg\FONT.CHR").Length
-    "staged tools\demo-files\fonts\Crews\Spectrum\Crews.ch8 -> sd\$legName\FONT.CHR ($fontSize bytes, via fontconv.ps1)"
+    if (Test-Path $fontSrc) {
+        & "$root\authoring-kit\lib\fontconv.ps1" -In $fontSrc -Out "$leg\FONT.CHR" | Out-Null
+        $fontSize = (Get-Item "$leg\FONT.CHR").Length
+        "staged tools\demo-files\fonts\Crews\Spectrum\Crews.ch8 -> sd\$legName\FONT.CHR ($fontSize bytes, via fontconv.ps1)"
+    }
+    else {
+        "WARNING: $fontSrc absent (Crews.zip not extracted under tools\demo-files\fonts) - FONT.CHR not staged, the embedded font will show instead"
+    }
 
     # SP12 Task 3 owner leg fixture: pointer_load (overlay0.asm) probes
     # POINTER.SPR at boot (and PARTn\POINTER.SPR for parts >= 2), so
     # the owner-eye-leg needs one staged alongside the font fixture just
     # above - same switch, no separate -Pointer flag. No binary is
-    # committed (same policy as the font fixture): the 256 bytes are
-    # generated right here, a 16x16 solid square with a 2px $E3
-    # (hardware transparent) border, a 1px $00 (black) outline, and a
-    # $1C (pure green, RGB332) fill - a shape and colour obviously
-    # different from mousePattern's own compiled-in black/white diagonal
-    # arrow (overlay0.asm) at a glance.
-    $ptr = New-Object byte[] 256
-    for ($y = 0; $y -lt 16; $y++) {
-        for ($x = 0; $x -lt 16; $x++) {
-            if ($x -lt 2 -or $x -gt 13 -or $y -lt 2 -or $y -gt 13) {
-                $b = 0xE3                          # transparent border
-            } elseif ($x -eq 2 -or $x -eq 13 -or $y -eq 2 -or $y -eq 13) {
-                $b = 0x00                          # black outline
-            } else {
-                $b = 0x1C                          # green fill
-            }
-            $ptr[$y * 16 + $x] = $b
-        }
-    }
-    [System.IO.File]::WriteAllBytes("$leg\POINTER.SPR", $ptr)
+    # committed (same policy as the font fixture): New-PointerFixture
+    # (defined above) generates the 256 bytes right here, a 16x16 solid
+    # square with a 2px $E3 (hardware transparent) border, a 1px $00
+    # (black) outline, and a $1C (pure green, RGB332) fill - a shape and
+    # colour obviously different from mouseArrow's own compiled-in
+    # black/white diagonal arrow (overlay0.asm) at a glance.
+    [System.IO.File]::WriteAllBytes("$leg\POINTER.SPR", (New-PointerFixture 0x1C))
     "staged a generated 16x16 green square (2px `$E3 border, `$00 outline) -> sd\$legName\POINTER.SPR (256 bytes)"
 }
 
@@ -2891,6 +2920,71 @@ if ($Uto -or $UtoV3) {
     }
 }
 
+$fontSwActive = $false
+if ($FontSw) {
+    # SP18 Task 5 owner leg fixture: tests\fontsw.dsf drives GFX n 16
+    # (font switching) and MOUSE n 5 (pointer switching) end to end.
+    # Unlike -Font (a modifier - see the header comment above - that only
+    # ever decorates whichever leg is already active and never sets the
+    # active GAME.DDB), this stimulus has to BE the game, so it gets its
+    # own leg and its own folder, exactly as -GMode's does for
+    # gmodegate.dsf.
+    # Same CSpect lock hazard as every other staging switch: refuse to
+    # stage rather than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
+    }
+    Copy-Item "$root\tests\out\fontsw.ddb" "$leg\GAME.DDB" -Force
+
+    # FONT.CHR: reuse -Font's own source (the Crews .ch8) when the demo
+    # archive happens to be extracted; fall back to a plain copy of
+    # authoring-kit\lib\default.chr otherwise, so this leg never fails on
+    # an unextracted third-party archive. Either way GFX 0 16's revert-
+    # to-base step (tests\fontsw.dsf MESSAGE 1) has a file to find - the
+    # fallback is just not visually distinct from the embedded table
+    # (default.chr IS that table, byte for byte - see fontconv.ps1's own
+    # header note), which only affects the LOOK of the revert step, not
+    # whether it runs cleanly.
+    $fontSrc = "$root\tools\demo-files\fonts\Crews\Spectrum\Crews.ch8"
+    if (Test-Path $fontSrc) {
+        & "$root\authoring-kit\lib\fontconv.ps1" -In $fontSrc -Out "$leg\FONT.CHR" | Out-Null
+        $fontSize = (Get-Item "$leg\FONT.CHR").Length
+        "staged tools\demo-files\fonts\Crews\Spectrum\Crews.ch8 -> sd\$legName\FONT.CHR ($fontSize bytes, via fontconv.ps1)"
+    }
+    else {
+        Copy-Item "$root\authoring-kit\lib\default.chr" "$leg\FONT.CHR" -Force
+        "staged authoring-kit\lib\default.chr -> sd\$legName\FONT.CHR ($((Get-Item "$leg\FONT.CHR").Length) bytes, Crews.ch8 not extracted here - GFX 0 16 still has a base font file to find)"
+    }
+
+    # FONT2.CHR: the base font emboldened (each row OR'd with itself
+    # shifted right 1px). Visibly heavier than FONT.CHR at a glance,
+    # which is the whole job of the fixture - and derived, so no binary
+    # is committed and no external font archive has to be extracted
+    # first (GFX 2 16, tests\fontsw.dsf MESSAGE 0).
+    $bold = [System.IO.File]::ReadAllBytes("$root\authoring-kit\lib\default.chr")
+    for ($i = 0; $i -lt $bold.Length; $i++) {
+        $bold[$i] = [byte](($bold[$i] -bor ($bold[$i] -shr 1)) -band 0xFF)
+    }
+    [System.IO.File]::WriteAllBytes("$leg\FONT2.CHR", $bold)
+    "staged a generated emboldened default.chr -> sd\$legName\FONT2.CHR (2048 bytes)"
+
+    # Deliberately NO FONT3.CHR staged: tests\fontsw.dsf's GFX 3 16 exists
+    # to prove an absent numbered font is a silent no-op that leaves font
+    # 0 showing and the game running (MESSAGE 2) - staging one here would
+    # make that leg of the fixture vacuous.
+
+    # Three colour-coded pointer shapes (MOUSE 2/1/0 5) via
+    # New-PointerFixture (defined near Reset-LegDir above), so which
+    # shape is live is answerable by eye: base green (matches -Font's
+    # own POINTER.SPR), shape 1 red, shape 2 blue.
+    [System.IO.File]::WriteAllBytes("$leg\POINTER.SPR",  (New-PointerFixture 0x1C))  # green
+    [System.IO.File]::WriteAllBytes("$leg\POINTER1.SPR", (New-PointerFixture 0xE0))  # red
+    [System.IO.File]::WriteAllBytes("$leg\POINTER2.SPR", (New-PointerFixture 0x03))  # blue
+    "staged 3 generated pointer fixtures -> sd\$legName\POINTER.SPR (green) / POINTER1.SPR (red) / POINTER2.SPR (blue), 256 bytes each"
+
+    $fontSwActive = $true
+}
+
 # The interpreter itself, so the folder is genuinely self-contained -
 # one folder to copy, one file to launch. Not a rebuild: whatever
 # build\nextdaad.nex currently holds is what gets staged (build.ps1 is
@@ -2910,7 +3004,8 @@ $good = [System.IO.File]::ReadAllBytes("$leg\GAME.DDB")
 "version=$($good[0]) target=$('{0:X2}' -f $good[1]) magic=$($good[2])"
 $ptrs = for ($i = 8; $i -lt 34; $i += 2) { '{0:X4}' -f ($good[$i] + 256 * $good[$i+1]) }
 "pointers: $($ptrs -join ' ')"
-if ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - GAME2.DDB + PART2\0.XMB also staged)" }
+if ($fontSwActive) { "active: fontsw (SP18 font/pointer switching fixture)" }
+elseif ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - GAME2.DDB + PART2\0.XMB also staged)" }
 elseif ($uuActive) { "active: urbanupstart" }
 elseif ($UU) { "active: urbanupstart (GAME.DDB copy failed, see warning above - stale DDB still active)" }
 elseif ($rabActive) { "active: rabenstein" }
