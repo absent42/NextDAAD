@@ -3,6 +3,40 @@
 Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.4.0 - unreleased
+
+- Your game can change its text font while it runs. `GFX n 16` installs
+  font n: 0 is the base font, and 1 to 9 are `FONT1.CHR` to `FONT9.CHR`
+  in the kit folder. The whole screen restyles at once, including text
+  already printed, because the hardware reads the glyph table live. A
+  part switch reinstalls the base font, so re-select a numbered one
+  after switching part. See [Customising](customising.md).
+- `MOUSE n 5` (`POINTERMS`) now selects a pointer shape, where before
+  the number did nothing. Shape 0 is the base pointer, and 1 to 9 are
+  `POINTER1.SPR` to `POINTER9.SPR`. The hotspot you set with `MOUSE 6`
+  and `MOUSE 7` is not disturbed by a shape change.
+- The built-in mouse pointer is now a conventional arrow cursor. If
+  your game ships no `POINTER.SPR`, `MOUSE 0 5` returns to it even
+  after a numbered shape has been shown.
+- A font or pointer file that is missing or the wrong size is ignored,
+  as before: whatever is already installed stays and your game carries
+  on.
+- The build converts and stages the numbered files for you. Drop
+  `IMAGES\POINTER1.png` to `POINTER9.png` in for pointer artwork, or a
+  classic 768-byte `FONT1.ch8` to `FONT9.ch8` in the kit folder for
+  fonts. A ready-made `.CHR` or `.SPR` still wins over a converted
+  source of the same number.
+- `lib\fontconv.ps1` takes a new `-Base` option so a second font can be
+  padded against your own first font instead of the built-in one, which
+  is how you keep custom glyphs across a font change.
+- The build now stops with an error if a converted pointer is not
+  exactly 256 bytes, rather than staging a file the interpreter would
+  silently refuse. A 32x32 source is the usual cause; pointers are
+  16x16.
+- [Customising](customising.md) gains a section on exporting a pointer
+  from a sprite editor, and why an export can be exactly the right size
+  and still come out as a solid block of the wrong colour.
+
 ## 0.3.2 - 7 August 2026
 
 - Location pictures can now have holes. Palette slot 255 is reserved:
