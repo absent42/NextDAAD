@@ -1326,12 +1326,51 @@ foreach ($c in @(@{ n = 'GFX 2 16';  b = [byte[]]@(87, 2, 16) },
                  @{ n = 'GFX 3 16';  b = [byte[]]@(87, 3, 16) },
                  @{ n = 'MOUSE 2 5'; b = [byte[]]@(86, 2, 5) },
                  @{ n = 'MOUSE 1 5'; b = [byte[]]@(86, 1, 5) },
-                 @{ n = 'MOUSE 0 5'; b = [byte[]]@(86, 0, 5) })) {
+                 @{ n = 'MOUSE 0 5'; b = [byte[]]@(86, 0, 5) },
+                 @{ n = 'MOUSE 8 6 (DELTAXMS hotspot)'; b = [byte[]]@(86, 8, 6) },
+                 @{ n = 'MOUSE 8 7 (DELTAYMS hotspot)'; b = [byte[]]@(86, 8, 7) })) {
     if ((Find-ByteRuns $fontswBytes $c.b).Count -lt 1) {
         throw "fontsw: '$($c.n)' not present in tests\out\fontsw.ddb - DRC did not emit the authored condact"
     }
 }
-"fontsw.ddb: v$($fontswBytes[0]), GFX 2/0/3 16 and MOUSE 2/1/0 5 all present as authored"
+# SP18 Task 1 rev 2: the live tracking loop (MOUSE 100 3 = GETMS, the
+# poll, immediately followed by INKEY then a forward SKIP) is authored
+# three times, once per shape. DRF resolves all three to the SAME
+# relative distance - SKIP is relative to the CURRENT entry, not an
+# absolute address, and in every copy the go-back entry is exactly one
+# entry on and the loop's exit target exactly two on - so all three
+# compile to the byte-identical stream asserted below, and DRB stores
+# that stream ONCE, pointing three separate entry headers at it
+# (confirmed against DRF's own NDFONTSW.json: 10 distinct process-0
+# entries, three of them sharing one physical offset in the .ddb, three
+# more sharing another). COUNT HERE IS CORRECTLY 1, NOT 3 - that is
+# DRB's normal dedup of identical trailing condact streams, not a
+# rewrite, and must not be "fixed" to expect 3. Asserting the full
+# 6-byte run (rather than stopping at the MOUSE 8/6 and 8/7 hotspot
+# calls the task called "at minimum") is what would actually catch a
+# wrong label resolution: a bad SKIP distance breaks this exact byte
+# run even though MOUSE 100 3 alone would still be present.
+if ((Find-ByteRuns $fontswBytes ([byte[]]@(86, 100, 3, 111, 116, 1))).Count -lt 1) {
+    throw "fontsw: 'MOUSE 100 3 + INKEY + SKIP 1' not present in tests\out\fontsw.ddb - the tracking loop's forward exit did not compile as authored"
+}
+# The go-back entry (a bare SKIP back to the poll) - same dedup
+# reasoning as above; all three copies compile to SKIP -2 (254, "the
+# previous one" per the DAAD manual) and share one physical offset.
+if ((Find-ByteRuns $fontswBytes ([byte[]]@(116, 254))).Count -lt 1) {
+    throw "fontsw: 'SKIP 254' (the tracking loop's go-back jump) not present in tests\out\fontsw.ddb"
+}
+# Debounce PAUSE after every loop exit: authored 25, DRC's ZX NEXT 0.6
+# PAUSE scaling (tests\sfxdi.dsf's own header has the derivation) makes
+# it exactly 15 with no rounding to argue about. Unlike the shared loop
+# bodies above, these three ARE physically distinct runs - each is
+# immediately followed by a different next condact (a different shape's
+# MOUSE n 5, or END) - so nothing dedups them and the count is pinned
+# at exactly 3, one per shape.
+$fontswPauseHits = Find-ByteRuns $fontswBytes ([byte[]]@(35, 15))
+if ($fontswPauseHits.Count -ne 3) {
+    throw "fontsw: expected exactly 3 'PAUSE 25 -> 15' debounce holds (23 0F); found $($fontswPauseHits.Count) - DRC's duration scaling has changed, or a loop exit lost its debounce"
+}
+"fontsw.ddb: v$($fontswBytes[0]), GFX 2/0/3 16, MOUSE 2/1/0 5, the 8/8 hotspot, the GETMS tracking loop and its x3 debounce PAUSE all present as authored"
 
 # ---- DRC's -D debug marker, both halves of the contract -------------
 # HALF ONE: what DRC EMITS. tests\debugflag.dsf has three DEBUG lines;
