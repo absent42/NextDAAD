@@ -3100,9 +3100,14 @@ aud_boot_probe:
     ld (sfxChan0+SMPB_FLAGS), a ; clear a stale sample-active bit: a looping
                                 ; sample must not replay a recycled bank
                                 ; table after a warm boot
-    call aud_smp_chan1_init     ; SP18 item 7 Task 2: seed channel 1's constant
-                                ; block members (ring/cursor/CTC/DAC port) -
-                                ; page 48 is already mapped into this slot
+    call aud_sfx_init_tramp     ; SP18 item 7 Task 2/11: seed BOTH channels'
+                                ; constant block members (ring/cursor/CTC/DAC
+                                ; port, window descriptor, stream cells) and
+                                ; pin the floor banks. The seed itself is cold
+                                ; SFX_PAGE code; the resident trampoline maps
+                                ; it into slot 7 (which this page occupies)
+                                ; and back. Page 48 is already in slot 6,
+                                ; which the seed needs for channel 1's block
     call data_restore
     ld a, $FF
     ld (smpLoadedNum), a        ; keep-last cold on any (warm) boot
@@ -3921,7 +3926,7 @@ aud_load_ays:
 ; effects claim nothing (they stream through fixed floor-page windows),
 ; so aysPageTab is the only table base these are ever handed, and the
 ; floor pass below always finds banks 25-27 already BT_USED (marked once
-; at boot by aud_smp_chan1_init, which owns them as the effect windows)
+; at boot by aud_sfx_init, which owns them as the effect windows)
 ; and falls straight through to the pool. Shape kept intact for the one
 ; client that remains.
 ;
@@ -4041,7 +4046,7 @@ aud_banks_claim:
 ;
 ; THERE IS NO FLOOR SPECIAL CASE any more (SP18 item 7 Task 5). Banks
 ; 25-27, pages 50-55, are the two channels' effect windows and are pinned
-; BT_USED at boot by aud_smp_chan1_init, so aud_banks_claim's floor pass
+; BT_USED at boot by aud_sfx_init, so aud_banks_claim's floor pass
 ; never appends them to a claim table and they can never appear in a
 ; release list. The branch that used to return them to BT_RESERVED is
 ; DELETED rather than left unreachable: had it ever run it would have

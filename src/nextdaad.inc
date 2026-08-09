@@ -540,7 +540,7 @@ AUD_STRTAB_MAX  equ 128     ; stream page-table capacity (128 x 8K =
 SMP_FLOOR_FIRST equ 25      ; audio floor: banks 25-27. Since SP18 item 7
 SMP_FLOOR_LAST  equ 27      ; Task 5 these hold the two channels' effect
                             ; windows PERMANENTLY (see SFX_WIN_PAGES
-                            ; below); aud_smp_chan1_init marks them
+                            ; below); aud_sfx_init marks them
                             ; BT_USED at boot so aud_banks_claim's floor
                             ; pass (still used by the AYS stream client)
                             ; always skips them and takes pool banks

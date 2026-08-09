@@ -1135,6 +1135,73 @@ sfx_dbg_row:
 msgSfxRow: db "SFX=", 0
  ENDIF
 
+; Seed the channels' CONSTANT block members (SP18 item 7 Task 2, moved
+; here from page 48 by Task 11): ring base/mask, the resident cursor
+; addresses, the CTC port, the DAC port, the window descriptor and the
+; stream cell group. These never change across a start/stop cycle
+; (unlike FLAGS/TABIDX/OFF/P/W/LEN/REMAIN, which aud_smp_start
+; reinitialises every call) and CTCCTRL/CTCTC (which aud_smp_start
+; latches from the mailbox every call), so a one-shot seed at boot is
+; enough.
+;
+; WHY IT LIVES ON SFX_PAGE. It is cold, boot-only code - it runs once per
+; (warm or cold) boot and never again - and page-48 code space is the
+; binding budget of this sub-project, competed for by the per-frame pump.
+; This page has thousands of bytes free. The cost is the resident
+; aud_sfx_init_tramp (main.asm), needed because overlay1's aud_boot_probe
+; is the only caller and overlay1 shares the slot-7 window with this page.
+;
+; Called with slot 6 = AUD_PAGE_LO (channel 1's block and both window
+; descriptors are page-48 data) and slot 7 = SFX_PAGE. Runs with
+; interrupts enabled, mainline context. Corrupts AF, BC, DE, HL, IX.
+aud_sfx_init:
+    ld ix, sfxChan0
+    ld (ix+SMPB_RINGH), AUD_STAGE0 >> 8
+    ld (ix+SMPB_RINGM), (AUD_STAGE_RING-1) >> 8
+    ld hl, smpPlayPtr
+    ld (ix+SMPB_PLAYPTR), l
+    ld (ix+SMPB_PLAYPTR+1), h
+    ld hl, smpWritePtr
+    ld (ix+SMPB_WRITEPTR), l
+    ld (ix+SMPB_WRITEPTR+1), h
+    ld hl, AUD_CTC_PORT
+    ld (ix+SMPB_CTCPORT), l
+    ld (ix+SMPB_CTCPORT+1), h
+    ld (ix+SMPB_DACPORT), DAC_PORT
+    ld hl, sfxWin0                   ; this channel's window descriptor
+    ld (ix+SMPB_WINTAB), l
+    ld (ix+SMPB_WINTAB+1), h
+    ld hl, sfxStrm0                  ; and its stream cell group, on this
+    ld (ix+SMPB_STRM), l             ; page - every per-channel stream
+    ld (ix+SMPB_STRM+1), h           ; access is made through this pointer
+    ld (ix+SMPB_DEPTH), 0            ; nothing staged until a load runs
+    ld (ix+SMPB_DEPTH+1), 0
+    ; Withdraw the audio floor from the bank allocator, once, at boot.
+    ; Banks 25-27 are the two channels' effect windows PERMANENTLY as of
+    ; SP18 item 7 Task 5; before that they were a first-come floor
+    ; aud_banks_claim handed to whichever audio client asked first. The
+    ; AYS stream client still calls aud_banks_claim, whose floor pass
+    ; takes any bank still marked BT_RESERVED - so mark all three
+    ; BT_USED here and that pass finds them taken and falls through to
+    ; the pool, which is exactly its own documented "already claimed by
+    ; the other client: skip" path. This runs from aud_boot_probe,
+    ; before the GAME.AYS probe, and bank_table_init has already reset
+    ; the table by then on every (warm or cold) boot. bankTable is
+    ; resident, so it is writable from this page with no mapping.
+    ; THIS PIN IS THE ONLY THING KEEPING THE WINDOWS OUT OF THE
+    ; ALLOCATOR: nothing may hand banks 25-27 back to BT_RESERVED or
+    ; BT_FREE while the interpreter runs. aud_banks_release's old floor
+    ; branch, which did exactly that, is deleted for this reason
+    ; (overlay1.asm).
+    ld hl, bankTable+SMP_FLOOR_FIRST
+    ld b, SMP_FLOOR_LAST-SMP_FLOOR_FIRST+1
+    ld a, BT_USED
+.floor:
+    ld (hl), a
+    inc hl
+    djnz .floor
+    ret
+
 ; --- refiller cells (SP18 item 7 Task 6) ------------------------------
 sfxSeekBlk:     dw 0             ; sfx_run_seek working block counter
 sfxTickBudget:  db 0             ; blocks left this tick, all channels

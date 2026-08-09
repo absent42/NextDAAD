@@ -181,6 +181,39 @@ boot_data_init:
     INCLUDE "objname.asm"
     INCLUDE "debug.asm"
 
+; --- SP18 item 7 Task 11: resident tail (POST-anchor) -----------------
+; These two live here rather than beside the other audio cells in
+; interrupts.asm because that file is entirely PRE-anchor: it is included
+; above, ahead of engine.asm's ALIGN 256, and every byte added there
+; comes out of the pre-flags pad, which has 3 bytes free in DEBUG. This
+; point is past the anchor, so these draw on the resident tail the ASSERT
+; below guards instead. interrupts.asm's audio-cell block carries a
+; pointer comment to here.
+
+; Call aud_sfx_init (SFX_PAGE) on overlay1's behalf, exactly as
+; sfx_open_tramp (banks.asm) does for sfx_stream_open: overlay1 and
+; SFX_PAGE share the slot-7 window, so the nextreg that pages the init in
+; also pages the caller out, and the map/call/unmap has to run from
+; resident memory. Slot 7 goes back to OVL1_PAGE before returning, so
+; aud_boot_probe resumes on its own page. Slot 6 must already hold
+; AUD_PAGE_LO - channel 1's block and both window descriptors are page-48
+; data - which aud_boot_probe maps before it calls in.
+aud_sfx_init_tramp:
+    nextreg NR_MMU7, SFX_PAGE
+    call aud_sfx_init
+    nextreg NR_MMU7, OVL1_PAGE
+    ret
+
+; Channel 2's sampled-effect pump state block (SMPB_* offsets in
+; nextdaad.inc), seeded once at boot by aud_sfx_init. RESIDENT, unlike
+; channel 1's sfxChan0, which is page-48 data: page 48 is this
+; sub-project's binding budget, and an always-mapped block costs the pump
+; nothing, since every aud_smp_* routine reaches its block IX-relative
+; and so does not care which slot it is in. Being always mapped also
+; removes the "page 48 must be in slot 6" precondition from any future
+; reader of channel 2's state, mainline or ISR.
+sfxChan1: ds SMPB_SIZE
+
     ASSERT $ <= RESIDENT_LIMIT
     DISPLAY "resident ends at ", $, " headroom ", /D, RESIDENT_LIMIT - $
 

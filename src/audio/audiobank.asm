@@ -1104,63 +1104,13 @@ aud_smp_copy:
     ld (ix+SMPB_W+1), h
     ret
 
-; Seed channel 1's constant block members (SP18 item 7 Task 2): ring base/
-; mask, the resident cursor addresses, the CTC port and the DAC port. These
-; never change across a start/stop cycle (unlike FLAGS/TABIDX/OFF/P/W/LEN/
-; REMAIN, which aud_smp_start reinitialises every call) and CTCCTRL/CTCTC
-; (which aud_smp_start latches from the mailbox every call), so a one-shot
-; seed here is enough. Called from aud_boot_probe (overlay1.asm) right
-; after it maps AUD_PAGE_LO into this slot - kept as a page-48 routine
-; (not inlined at the call site) because overlay1's own headroom is far
-; tighter than page-48's. Runs with interrupts enabled, mainline context.
-; Corrupts AF, BC, HL, DE, IX.
-aud_smp_chan1_init:
-    ld ix, sfxChan0
-    ld (ix+SMPB_RINGH), AUD_STAGE0 >> 8
-    ld (ix+SMPB_RINGM), (AUD_STAGE_RING-1) >> 8
-    ld hl, smpPlayPtr
-    ld (ix+SMPB_PLAYPTR), l
-    ld (ix+SMPB_PLAYPTR+1), h
-    ld hl, smpWritePtr
-    ld (ix+SMPB_WRITEPTR), l
-    ld (ix+SMPB_WRITEPTR+1), h
-    ld hl, AUD_CTC_PORT
-    ld (ix+SMPB_CTCPORT), l
-    ld (ix+SMPB_CTCPORT+1), h
-    ld (ix+SMPB_DACPORT), DAC_PORT
-    ld hl, sfxWin0                   ; this channel's window descriptor
-    ld (ix+SMPB_WINTAB), l
-    ld (ix+SMPB_WINTAB+1), h
-    ld hl, sfxStrm0                  ; and its stream cell group, on
-    ld (ix+SMPB_STRM), l             ; SFX_PAGE (Task 11 parameterises
-    ld (ix+SMPB_STRM+1), h           ; the stream accesses through this)
-    ld (ix+SMPB_DEPTH), 0            ; nothing staged until a load runs
-    ld (ix+SMPB_DEPTH+1), 0
-    ; Withdraw the audio floor from the bank allocator, once, at boot.
-    ; Banks 25-27 are the two channels' effect windows PERMANENTLY as of
-    ; SP18 item 7 Task 5; before that they were a first-come floor
-    ; aud_banks_claim handed to whichever audio client asked first. The
-    ; AYS stream client still calls aud_banks_claim, whose floor pass
-    ; takes any bank still marked BT_RESERVED - so mark all three
-    ; BT_USED here and that pass finds them taken and falls through to
-    ; the pool, which is exactly its own documented "already claimed by
-    ; the other client: skip" path. This runs from aud_boot_probe,
-    ; before the GAME.AYS probe, and bank_table_init has already reset
-    ; the table by then on every (warm or cold) boot. bankTable is
-    ; resident, so it is writable from this page with no mapping.
-    ; THIS PIN IS THE ONLY THING KEEPING THE WINDOWS OUT OF THE
-    ; ALLOCATOR: nothing may hand banks 25-27 back to BT_RESERVED or
-    ; BT_FREE while the interpreter runs. aud_banks_release's old floor
-    ; branch, which did exactly that, is deleted for this reason
-    ; (overlay1.asm).
-    ld hl, bankTable+SMP_FLOOR_FIRST
-    ld b, SMP_FLOOR_LAST-SMP_FLOOR_FIRST+1
-    ld a, BT_USED
-.floor:
-    ld (hl), a
-    inc hl
-    djnz .floor
-    ret
+; (SP18 item 7 Task 11: the cold boot-only seed routine that used to sit
+; here - aud_smp_chan1_init - moved to SFX_PAGE as aud_sfx_init, where it
+; also seeds channel 2. It runs once per boot and never again, so it had
+; no business holding page-48 code space, which is this sub-project's
+; binding budget; the move gave that space back to the per-frame pump.
+; overlay1's aud_boot_probe now reaches it through the resident
+; aud_sfx_init_tramp.)
 
 ; Copy scratch, in page-48 CODE space (slot 6, mapped throughout aud_tick).
 ; aud_smp_copy stages the source position + copy plan here BEFORE it windows a
@@ -1211,7 +1161,7 @@ sfxChan0:  ds SMPB_SIZE           ; channel 1 pump state (SP18 item 7)
 ; two halves). Static initialisers rather than a boot-time fill: the
 ; floor is a fixed assembly-time map now, exactly like the DAC ring
 ; base, and it is withdrawn from the bank allocator once (see
-; aud_smp_chan1_init) instead of being claimed per load. This retires
+; aud_sfx_init) instead of being claimed per load. This retires
 ; smpPageTab/smpPageCnt (129 bytes) with the whole claim-the-payload
 ; model they served.
 sfxWin0:
