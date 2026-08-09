@@ -2,6 +2,7 @@
 ; Foundation: boot, memory, DDB loading. See docs/superpowers/specs.
 
     DEVICE ZXSPECTRUMNEXT
+    SLDOPT COMMENT WPMEM, LOGPOINT, ASSERTION
     INCLUDE "nextdaad.inc"
 
     ORG CODE_ORG
