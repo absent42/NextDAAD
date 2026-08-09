@@ -70,8 +70,10 @@ All notable changes to NextDAAD are recorded here.
 - The recommended WAV sample rate is now 15625 Hz, which divides the
   hardware's own timing clock exactly on six of the eight video modes.
   16000 Hz - what existing NextDAAD samples use - remains fully
-  supported with under 0.34% pitch error on the other two modes; the
-  supported range is unchanged at 3500-20000 Hz.
+  supported: the clock varies by video mode and 16000 rarely divides it
+  exactly, so it plays a little sharp on most modes, up to about 0.7%
+  in the worst case and inaudible in practice; the supported range is
+  unchanged at 3500-20000 Hz.
 
 ## v0.3.2 - 07/08/2026
 

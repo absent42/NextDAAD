@@ -69,13 +69,14 @@ you.** It must be:
 It plays back at whatever rate its own header declares - there is no
 resampling - so pick the rate when you export. **15625 Hz is the
 recommended rate**: it divides the hardware's own timing clock exactly
-on six of the eight video modes, so the sample plays at true pitch with
-no per-mode rounding at all. 16000 Hz - the rate most existing NextDAAD
-samples already use - stays fully supported: on the two modes where
-15625 does not divide exactly, the rounding is under half a percent
-either way, well below what an ear can catch. Nothing about an existing
-WAV needs to change; 15625 Hz is only worth picking for new samples
-where you want the theoretical best case.
+on six of the eight video modes, so on those modes the sample plays at
+exactly the authored pitch, with no rounding at all. 16000 Hz - the
+rate most existing NextDAAD samples already use - stays fully
+supported: the hardware's own clock varies by video mode and 16000
+rarely divides it exactly, so it plays a little sharp on most modes, up
+to about 0.7% in the worst case - inaudible in a game sound effect.
+Nothing about an existing WAV needs to change; 15625 Hz is only worth
+picking for new samples where you want the theoretical best case.
 
 **Samples and AY effects share one set of numbers.** `SFX n 1` looks for
 `NNN.WAV` first and falls back to the effects bank if there is no such
@@ -88,17 +89,17 @@ Samples play on either of two independent hardware channels, mixed
 together in the output and both centred, so two effects can sound at
 once. `SFX n 1` and `SFX n 2` choose a channel for you automatically:
 
-- if a channel is already holding number `n` from a previous play, it
-  plays there again - even if that channel is still playing it, in
-  which case the effect simply restarts in place rather than a second
-  copy starting elsewhere;
-- otherwise, an idle channel that is not reserved (see below) takes it;
+- if a channel that is not reserved (see below) is already holding
+  number `n` from a previous play, it plays there again - even if that
+  channel is still playing it, in which case the effect simply
+  restarts in place rather than a second copy starting elsewhere;
+- otherwise, an idle channel that is not reserved takes it;
 - if both channels are busy, one is taken over: a channel currently
   playing a one-shot effect is taken in preference to one playing a
   loop, and between two one-shots the older one goes. A reserved
   channel (see below) is never taken over, playing or not;
-- if both channels are busy and reserved, the new effect is simply
-  dropped - nothing plays, and nothing queues.
+- if both channels are reserved - playing or not - the new effect is
+  simply dropped: nothing plays, and nothing queues.
 
 Reserve a channel for an effect with these four sub-commands, so
 nothing else can take it from under you while you need it there. Each
