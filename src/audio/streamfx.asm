@@ -290,13 +290,20 @@ sfx_mf_restore:
 ;
 ; In:  A  = effect number 1-254 (this channel's keep-last key)
 ;      L  = the open esxDOS handle
+;      H  = payload length, bits 16-23 (the WAV data chunk's own size)
+;      BC = payload length, bits 0-15
 ;      DE = data offset - the file offset of the FIRST PAYLOAD BYTE,
 ;           which overlay1's chunk walk tracked while it validated
 ;      IX = channel block (page 48)
+; The payload length comes in because the staging loop reads the file's
+; REAL size, not the data chunk's claimed size, so a lying chunk header
+; can no longer be caught by a short read the way the old loader caught
+; it. It is checked against F_FSTAT below instead.
 ; Out: CF clear = window staged, consumer anchored, flags committed.
-;      CF set   = refused; the handle is closed and the block's
-;                 STREAMING/COMPLETE bits are clear, so aud_load_wav
-;                 falls back to the AY effect exactly as it always has.
+;      CF set   = refused; the handle is closed and the block's cache
+;                 bits (STREAMING, COMPLETE, REWIND) are all clear, so
+;                 aud_load_wav falls back to the AY effect exactly as it
+;                 always has.
 ; Corrupts everything.
 ;
 ; STAGING IS VERBATIM FROM FILE OFFSET 0 - the WAV header stages with the
@@ -315,6 +322,9 @@ sfx_stream_open:
     ld (sfxOpenNum), a
     ld (sfxChanPtr), ix
     ld (sfxDataOff0), de
+    ld (sfxPayLen), bc
+    ld a, h
+    ld (sfxPayLenHi), a
     ld a, l
     ld (sfxNewHandle), a
     ; cache eviction: a previous STREAMING open on this channel left its
@@ -422,6 +432,33 @@ sfx_stream_open:
     or a
     sbc hl, de
     jp nc, .refuse
+    ; PAYLOAD CONSISTENCY (Task 5 review I1): the data chunk's declared
+    ; size has to fit inside the file that actually exists, i.e.
+    ; dataOff + payload <= fileBytes. The old loader got this for free -
+    ; it read exactly `payload` bytes and rejected the short read ("the
+    ; data chunk lied"). The staging loop reads the file's REAL size
+    ; instead, so its own short-read test can only catch a file that
+    ; shrinks mid-load; without this test a WAV claiming 100000 bytes of
+    ; payload in a 1000-byte file would stage COMPLETE and the pump would
+    ; play 99000 bytes of stale window content. Refuse, exactly as
+    ; before, which reaches the caller's AY fallback.
+    ld hl, (sfxDataOff0)
+    ld bc, (sfxPayLen)
+    add hl, bc
+    ld a, (sfxPayLenHi)
+    adc a, 0                     ; A:HL = dataOff + payload (24-bit)
+    jp c, .refuse                ; carried out of 24 bits: absurd
+    ld c, a
+    ld a, (sfxFstatBuf+9)        ; fileBytes bits 16-23
+    cp c
+    jp c, .refuse                ; fileHi < endHi: payload runs past EOF
+    jp nz, .lenok                ; fileHi > endHi: fits with room over
+    ld de, (sfxFstatBuf+7)       ; equal high bytes: compare low words
+    ex de, hl                    ; HL = fileLo, DE = endLo
+    or a
+    sbc hl, de
+    jp c, .refuse                ; fileLo < endLo: runs past EOF
+.lenok:
     ; stage min(fileBytes, SFX_WIN_BYTES) - the whole file when it fits
     ld a, (sfxFstatBuf+9)
     or a
@@ -526,6 +563,11 @@ sfx_stream_open:
 .depthok:
     ld (ix+SMPB_DEPTH), l
     ld (ix+SMPB_DEPTH+1), h
+    ld (sfxDepth0), hl           ; banked for the loop rewind: a COMPLETE
+                                 ; window is permanent, so its rewind
+                                 ; restores exactly this figure (it goes
+                                 ; into the descriptor below, where the
+                                 ; page-48 pump can reach it)
     ; consumer cursor AND the loop-rewind anchor: window page
     ; dataOff >> 13, offset dataOff & $1FFF. Both land in the window
     ; descriptor as well as the block, because the pump rewinds to them
@@ -553,11 +595,18 @@ sfx_stream_open:
     ld (hl), e
     inc hl
     ld (hl), d
-    ; flags: bits 2/3 are the loader's, bits 0/1 the pump's. Nothing can
-    ; be active here (aud_load_wav stops and waits before it calls in),
-    ; but preserve them anyway rather than assume.
+    inc hl
+    ld de, (sfxDepth0)           ; SFXW_DEPTH0 follows the anchor
+    ld (hl), e
+    inc hl
+    ld (hl), d
+    ; flags: bits 2-4 are the loader's and the refiller's, bits 0/1 the
+    ; pump's. Nothing can be active here (aud_load_wav stops and waits
+    ; before it calls in), but preserve bits 0/1 rather than assume. A
+    ; fresh open always clears bit 4 REWIND: this window has just been
+    ; staged, so the refiller owes it no re-stage.
     ld a, (ix+SMPB_FLAGS)
-    and %11110011
+    and %11100011
     ld c, a
     ld a, (sfxWhole)
     or a
@@ -621,8 +670,9 @@ sfx_stream_open:
     ld (sfxKeep0), a
     ld ix, (sfxChanPtr)
     ld a, (ix+SMPB_FLAGS)
-    and %11110011                ; STREAMING and COMPLETE both off
-    ld (ix+SMPB_FLAGS), a
+    and %11100011                ; the refusal funnel is one of the two
+    ld (ix+SMPB_FLAGS), a        ; cache invalidations: STREAMING,
+                                 ; COMPLETE and REWIND all off
     ld (ix+SMPB_DEPTH), 0
     ld (ix+SMPB_DEPTH+1), 0
     scf
@@ -677,6 +727,13 @@ sfxChanPtr:   dw 0               ; caller's channel block (IX is the
 sfxOpenNum:   db 0               ; effect number this open is for
 sfxNewHandle: db 0               ; incoming handle, held across the
                                  ; stale-handle eviction
+sfxPayLen:    dw 0               ; WAV data chunk size, bits 0-15 (from
+sfxPayLenHi:  db 0               ; overlay1) and bits 16-23 - checked
+                                 ; against the real file size, since the
+                                 ; staging loop no longer reads exactly
+                                 ; this many bytes
+sfxDepth0:    dw 0               ; DEPTH at the anchor, on its way into
+                                 ; the descriptor's SFXW_DEPTH0
 sfxWhole:     db 0               ; 1 = the whole file fits the window
 sfxStageLen:  dw 0               ; bytes this open stages (<= window)
 sfxStageRem:  dw 0               ; staging loop: bytes still to read

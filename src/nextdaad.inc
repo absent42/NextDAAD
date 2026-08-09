@@ -556,11 +556,37 @@ SMPB_DEPTH    equ 27   ; dw: staged-minus-consumed 512-byte window blocks
 SMPB_STRM     equ 29   ; dw: address of this channel's stream cell group
                        ;     (SFX_PAGE); Task 11 parameterises through it
 SMPB_SIZE     equ 31   ; (was 14 before SP18 item 7 Task 2's parameterisation)
-; SMPB_FLAGS bits: 0 active, 1 looping, 2 STREAMING (the refiller still
-; owes this channel blocks), 3 COMPLETE (the whole file is staged in the
-; window; the refiller is idle and a re-trigger rewinds for free). Bits
-; 2/3 are the LOADER's (sfx_stream_open); aud_smp_start preserves them
-; when it writes bits 0/1, aud_smp_stop clears the block on stop.
+; SMPB_FLAGS bit semantics (settled by the SP18 item 7 Task 5 review
+; ruling: bits 0/1 are PLAYBACK state, bits 2-4 describe the WINDOW and
+; the channel's CACHE, and a deliberate stop must not throw the cache
+; away or a re-trigger stops being cheap):
+;   bit 0 ACTIVE   - playback. Set by aud_smp_start, cleared by any stop.
+;   bit 1 LOOPING  - playback. Ditto.
+;   bit 2 STREAMING- the refiller owes this channel blocks. Set by
+;                    sfx_stream_open on a file too big for the window.
+;                    CLEARED BY A STOP: it is the refiller's own gate and
+;                    a stopped channel must not be refilled. The cached
+;                    stream itself survives the stop and is recoverable
+;                    from the stream cells - see below.
+;   bit 3 COMPLETE - the whole file is staged in the window. PRESERVED
+;                    ACROSS A STOP: the window keeps its contents, so the
+;                    re-trigger rewind stays free, and the pump's rewind
+;                    needs the bit after a stop/restart cycle.
+;   bit 4 REWIND   - a loop rewind happened on a STREAMING channel, so
+;                    the window no longer holds the payload start. The
+;                    refiller must re-stage from the run list at the
+;                    anchor block and clear this bit before the consumer
+;                    may take another byte; SMPB_DEPTH is 0 meanwhile.
+;                    Never set on a COMPLETE channel (its window is
+;                    permanent, so its rewind is served from RAM).
+; Bits 2-4 are the LOADER's and the REFILLER's; aud_smp_start preserves
+; them when it writes bits 0/1; aud_smp_stop keeps bit 3 and clears the
+; rest; only sfx_stream_open's refusal funnel and an eviction by a
+; DIFFERENT effect number invalidate the cache (bits 2-4 all cleared).
+; Distinguishing a stopped-but-cached channel from an idle/empty one is
+; therefore: bit 3 set = a COMPLETE window is cached; sfxHandle0 != $FF =
+; a stream (handle + hot filemap) is cached, with sfxKeep0 holding its
+; effect number; neither = idle/empty. Tasks 6 and 12 read exactly those.
 
 ; --- SP18 item 7: the per-channel effect window ------------------------
 ; Each channel consumes its effect through a CIRCULAR window of
@@ -575,14 +601,20 @@ SFX_WIN_BYTES equ SFX_WIN_PAGES*$2000   ; 24576 = 1.5 s at 16 kHz
 SFX_WIN_BLKS  equ SFX_WIN_PAGES*16      ; 48 card blocks in a full window
 ; Window descriptor, one per channel in page-48 data (SMPB_WINTAB points
 ; at it): the SFX_WIN_PAGES page numbers, then the consumer's payload
-; START ANCHOR. Blocks stage VERBATIM from file offset 0 (WAV header
-; included), so the consumer starts at the data chunk's own offset and
-; every loop rewind returns to exactly that position. The anchor lives
-; here, not in the SFX_PAGE stream cells, because the pump is page-48
-; code and cannot see SFX_PAGE.
+; START ANCHOR, then the DEPTH that anchor implies. Blocks stage VERBATIM
+; from file offset 0 (WAV header included), so the consumer starts at the
+; data chunk's own offset and every loop rewind returns to exactly that
+; position. All three live here, not in the SFX_PAGE stream cells,
+; because the pump is page-48 code and cannot see SFX_PAGE.
 SFXW_STIDX    equ SFX_WIN_PAGES         ; db: start window-page index
 SFXW_STOFF    equ SFX_WIN_PAGES+1       ; dw: start offset inside it
-SFXW_SIZE     equ SFX_WIN_PAGES+3
+SFXW_DEPTH0   equ SFX_WIN_PAGES+3       ; dw: SMPB_DEPTH as it stood at
+                                        ; the anchor when the open staged
+                                        ; the window. A COMPLETE channel's
+                                        ; window is permanent, so its loop
+                                        ; rewind restores this figure
+                                        ; verbatim (see aud_smp_copy).
+SFXW_SIZE     equ SFX_WIN_PAGES+5
 
 ; --- DMA picture copies (SP11 Task 2) ---
 ; zxnDMA one-shot mem-to-mem chunk copies for Layer 2 picture work

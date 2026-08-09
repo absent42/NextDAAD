@@ -3472,7 +3472,10 @@ aud_load_wav:
     call data_map_page
     ld ix, sfxChan0             ; Task 12 makes this the allocated channel
     ld de, (wavDataOff)         ; first payload byte (consumer anchor)
-    ld a, (audHandle)
+    ld bc, (wavLen)             ; declared payload length, 24-bit: the
+    ld a, (wavLenHi)            ; open checks it against the file's real
+    ld h, a                     ; size (a lying data chunk used to be
+    ld a, (audHandle)           ; caught by the deleted loop's short read)
     ld l, a
     ld a, (wavReqNum)
     call sfx_open_tramp         ; resident: slot 7 <- SFX_PAGE, call, back
@@ -4033,9 +4036,21 @@ aud_banks_claim:
 
 ; aud_banks_release: HL = page table base, B = page count. Frees every
 ; bank exactly once - pages come in pairs (bank*2, bank*2+1), so step by
-; 2 and take bank = page/2: floor pages (50..55) back to BT_RESERVED, the
-; rest via bank_free. Then zeroes the count byte at (base +
-; AUD_STRTAB_MAX). Safe on B = 0. Corrupts AF, BC, DE, HL.
+; 2 and take bank = page/2, all of them via bank_free. Then zeroes the
+; count byte at (base + AUD_STRTAB_MAX). Safe on B = 0.
+;
+; THERE IS NO FLOOR SPECIAL CASE any more (SP18 item 7 Task 5). Banks
+; 25-27, pages 50-55, are the two channels' effect windows and are pinned
+; BT_USED at boot by aud_smp_chan1_init, so aud_banks_claim's floor pass
+; never appends them to a claim table and they can never appear in a
+; release list. The branch that used to return them to BT_RESERVED is
+; DELETED rather than left unreachable: had it ever run it would have
+; made two live windows claimable again by the very next call, silently
+; handing an AYS stream the pages an effect is playing out of. Every page
+; that reaches this loop now is a pool page, which is what bank_free
+; expects.
+; Corrupts AF, BC, HL. (DE was only the deleted branch's index scratch;
+; bank_free itself leaves DE untouched.)
 aud_banks_release:
     ld (smpRelTab), hl          ; stash base for the count-byte zero
     ld a, b
@@ -4048,21 +4063,8 @@ aud_banks_release:
     inc hl                      ; step past the page pair
     push hl
     push bc
-    cp SMP_FLOOR_FIRST*2
-    jr c, .relpool              ; page < 50: pool bank
-    cp (SMP_FLOOR_LAST+1)*2
-    jr nc, .relpool             ; page >= 56: pool bank
-    srl a                       ; floor bank = page / 2
-    ld e, a
-    ld d, 0
-    ld hl, bankTable
-    add hl, de
-    ld (hl), BT_RESERVED        ; floor bank back to reserved, NOT free
-    jr .relnext
-.relpool:
     srl a                       ; pool bank = page / 2
     call bank_free
-.relnext:
     pop bc
     pop hl
     djnz .rellp

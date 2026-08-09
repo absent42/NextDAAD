@@ -486,8 +486,9 @@ aud_smp_start:
     or 1                        ; bit 0 (active)
     ld c, a
     ld a, (ix+SMPB_FLAGS)
-    and %00001100               ; bits 2/3 (STREAMING/COMPLETE) are the
-    or c                        ; loader's - only bits 0/1 are ours
+    and %00011100               ; bits 2-4 (STREAMING/COMPLETE/REWIND)
+    or c                        ; belong to the loader and the refiller -
+                                ; only bits 0/1 are the pump's
     ld (ix+SMPB_FLAGS), a       ; set BEFORE the copy (it reads the loop bit)
     ; play starts at the ring base; the CTC is not running yet, so the
     ; resident cursor write below needs no DI bracket. Ring base and the
@@ -544,9 +545,21 @@ aud_smp_start:
 ; aud_smp_tick's play-once drain end). DAC_SILENCE is the unsigned midpoint $80
 ; (unsigned everywhere on the OUT path) - see nextdaad.inc.
 ; Precondition: IX = channel block (sfxChan0).
+;
+; FLAGS on a stop (SP18 item 7 Task 5 review ruling; full bit semantics
+; at nextdaad.inc's SMPB_FLAGS block): bits 0/1 are playback and go;
+; bit 2 STREAMING is the refiller's gate and must go too, or a stopped
+; channel would keep being refilled; bit 4 REWIND is meaningless without
+; bit 2. Bit 3 COMPLETE SURVIVES: the window still holds every byte of
+; the file, so the re-trigger rewind is still free and the pump's own
+; loop-rewind branch still needs to know its window is permanent after a
+; stop/restart cycle. The cached STREAM (handle, hot filemap, keep-last
+; number) survives in the stream cells, not in a flag - only the refusal
+; funnel and an eviction by a different effect number invalidate it.
 aud_smp_stop:
-    xor a
-    ld (ix+SMPB_FLAGS), a
+    ld a, (ix+SMPB_FLAGS)
+    and %00001000               ; keep COMPLETE, drop active/loop/
+    ld (ix+SMPB_FLAGS), a       ; STREAMING/REWIND
     ld a, AUD_CTC_RESET         ; double soft-reset: timer stops, no more CTC ints
     ld c, (ix+SMPB_CTCPORT)
     ld b, (ix+SMPB_CTCPORT+1)
@@ -654,6 +667,49 @@ aud_smp_anchor:
     inc hl
     ld d, (hl)
     ex de, hl                    ; HL = start offset, A = start page idx
+    ret
+
+; Re-credit SMPB_DEPTH for a loop rewind (SP18 item 7 Task 5 review C1).
+; The rewind un-consumes the whole payload, so leaving DEPTH where the
+; forward pass drove it (0, for anything that reached its end) would
+; break the accounting identity stated at the debit site: the consumer
+; would read "nothing available" with a full window in front of it.
+;
+; COMPLETE channel: the window holds every byte of the file permanently
+; and blocks are never re-staged, so the rewound position implies exactly
+; the DEPTH the open computed for the anchor. sfx_stream_open banked that
+; figure in the descriptor (SFXW_DEPTH0) precisely so this can restore it
+; verbatim, with no arithmetic and no dependence on what the forward pass
+; did.
+;
+; STREAMING channel: NOT serviceable from RAM. The producer has been
+; overwriting the window all the way round while the consumer walked, so
+; by definition the payload start is long gone. The honest answer is to
+; declare the window empty (DEPTH = 0) and raise SMPB_FLAGS bit 4 REWIND.
+; HANDOFF TO TASK 6: its refiller must treat bit 4 as "re-seek the run
+; list to the block holding the anchor (window offset TABIDX*$2000+OFF,
+; file block (TABIDX*$2000+OFF)/512), re-stage from there, then clear
+; bit 4 and credit DEPTH as usual"; until it does, DEPTH stays 0 and the
+; consumer clamp Task 6 adds will starve the channel rather than replay
+; stale window bytes. Nothing else in Task 5 reads bit 4.
+; Corrupts AF, DE, HL; preserves BC, IX.
+aud_smp_rewind_depth:
+    bit 3, (ix+SMPB_FLAGS)       ; COMPLETE?
+    jr z, .streaming
+    ld l, (ix+SMPB_WINTAB)
+    ld h, (ix+SMPB_WINTAB+1)
+    ld de, SFXW_DEPTH0
+    add hl, de
+    ld a, (hl)
+    ld (ix+SMPB_DEPTH), a
+    inc hl
+    ld a, (hl)
+    ld (ix+SMPB_DEPTH+1), a
+    ret
+.streaming:
+    ld (ix+SMPB_DEPTH), 0
+    ld (ix+SMPB_DEPTH+1), 0
+    set 4, (ix+SMPB_FLAGS)       ; the refiller owes a re-stage
     ret
 
 ; SMPB_DEPTH -= A (512-byte blocks the consumer has just finished with),
@@ -808,6 +864,7 @@ aud_smp_copy:
     ld (smpCpIdx), a            ; (seamless - the ring never notices the
     ld (smpCpOff), hl           ; seam), NOT to window byte 0: the WAV
                                 ; header stages in front of the payload
+    call aud_smp_rewind_depth   ; and re-credit DEPTH for the new position
     ld hl, (smpCpLen)
     ld (smpCpRemLo), hl
     ld a, (smpCpLenHi)
@@ -870,6 +927,19 @@ aud_smp_copy:
     ; so the two sides balance exactly even when the anchor sits in the
     ; MIDDLE of a block: that block stays credited and is debited here
     ; when the consumer crosses the NEXT boundary, like any other.
+    ;
+    ; The identity holds ACROSS A LOOP REWIND as well, which is the one
+    ; case the debit alone cannot express: a rewind moves the consumer
+    ; backwards by the whole payload, so DEPTH is RE-CREDITED there
+    ; rather than debited (aud_smp_rewind_depth, above - a COMPLETE
+    ; window restores the anchor's banked DEPTH, a STREAMING one
+    ; declares itself empty and hands the re-stage to the refiller).
+    ; DEPTH is therefore an exact "blocks staged and not yet finished
+    ; with" figure at every point, not merely within one forward pass.
+    ; Two riders for whoever adds the consumer clamp: DEPTH is
+    ; block-granular, so it over-reports by up to 511 bytes at the tail
+    ; of a payload (the last partial block stays credited) and must be
+    ; combined with REMAIN, never trusted alone.
     ;
     ; Arithmetic: off is 0..$2000 and (H:L) >> 9 == H >> 1 for any such
     ; value (L < 256 can never carry into bit 9), so the crossings a
@@ -994,6 +1064,11 @@ aud_smp_chan1_init:
     ; before the GAME.AYS probe, and bank_table_init has already reset
     ; the table by then on every (warm or cold) boot. bankTable is
     ; resident, so it is writable from this page with no mapping.
+    ; THIS PIN IS THE ONLY THING KEEPING THE WINDOWS OUT OF THE
+    ; ALLOCATOR: nothing may hand banks 25-27 back to BT_RESERVED or
+    ; BT_FREE while the interpreter runs. aud_banks_release's old floor
+    ; branch, which did exactly that, is deleted for this reason
+    ; (overlay1.asm).
     ld hl, bankTable+SMP_FLOOR_FIRST
     ld b, SMP_FLOOR_LAST-SMP_FLOOR_FIRST+1
     ld a, BT_USED
@@ -1049,9 +1124,11 @@ sfxWin0:
     db SMP_PAGE_FIRST+0, SMP_PAGE_FIRST+1, SMP_PAGE_FIRST+2
     db 0                             ; start window-page index (anchor)
     dw 0                             ; start offset inside that page
+    dw 0                             ; DEPTH implied by that anchor
 sfxWin1:
     db SMP_PAGE_FIRST+3, SMP_PAGE_FIRST+4, SMP_PAGE_FIRST+5
     db 0
+    dw 0
     dw 0
     ASSERT sfxWin1 - sfxWin0 == SFXW_SIZE
 
