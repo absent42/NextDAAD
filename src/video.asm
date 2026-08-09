@@ -2616,9 +2616,15 @@ vid_run:
     out (c), a
     out (c), a
     ld a, DAC_SILENCE
-    out (DAC_PORT), a            ; park all three DAC ports: the video
+    out (DAC_PORT), a            ; park all four DAC ports: the video
     out (VID_DAC_LEFT), a        ; ISR drives the stereo pair, and the
     out (VID_DAC_RIGHT), a       ; aborted sample engine held DAC_PORT
+    out (DAC2_PORT), a           ; SP18 item 7 Task 10: channel 2's DAC,
+                                 ; parked here too for symmetry - its own
+                                 ; CTC (channel 1) is never repointed by
+                                 ; video (only channel 0's vector is, for
+                                 ; the stereo feed above) so it needs no
+                                 ; reset/restore here, only this park
     call vid_win_close_h         ; the CMD18 window is HOT property
                                  ; when a session held one (streaming/
                                  ; direct): CMD12 + deselect + MF

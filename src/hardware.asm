@@ -76,10 +76,29 @@ audio_init:
     ld bc, AUD_CTC_PORT
     out (c), a
     out (c), a
+    ; SP18 item 7 Task 10: mirror the same double soft-reset for channel 2's
+    ; CTC. Same reasoning as channel 1 above - reached from boot and every
+    ; teardown, each of which then DIs indefinitely, so this is what stops
+    ; those DI sections from starving an active channel-2 feed too. Nothing
+    ; drives channel 2 yet (Task 11), but the reset is unconditional and
+    ; harmless either way, exactly like channel 1's at boot. AUD_CTC2_PORT
+    ; is AUD_CTC_PORT with B+1 ($183B -> $193B, same low byte) - inc b
+    ; instead of a fresh ld bc reload; A still holds AUD_CTC_RESET.
+    inc b
+    out (c), a
+    out (c), a
     ld a, DAC_SILENCE               ; park the DAC at silence. DAC_SILENCE is the
     ld bc, DAC_PORT                 ; unsigned midpoint $80 (unsigned everywhere on
     out (c), a                      ; the OUT path - real-hardware and CSpect).
                                     ; See nextdaad.inc.
+    out (DAC2_PORT), a              ; SP18 item 7 Task 10: park channel 2's DAC
+                                    ; pair too, same silence value. Compact
+                                    ; out(n),a form (video.asm's own idiom for
+                                    ; these ports): the DAC hardware decodes the
+                                    ; low address byte only, any upper byte (see
+                                    ; nextdaad.inc), so this is exact - unlike
+                                    ; the CTC above, which needs the full
+                                    ; 16-bit BC port and so keeps ld bc/out(c),a.
     ld e, $FD                       ; PSG 3, then $FE (2), then $FF (1)
 .psg:
     ld bc, $FFFD

@@ -508,15 +508,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-#   -Sfx2Asserts  opt-in gate for Assert-SfxDualChannel (SP18 item 7 /
-#                 Task 8): checks build\nextdaad.nex for nextreg $C5
-#                 and $CD writing %00000011 (both CTC channels 0+1) and
-#                 for the stale single-channel %00000001 writes being
-#                 gone. Written RED ahead of Task 10's channel-2 work -
-#                 this switch keeps the failure out of the default run
-#                 until then. Task 10 removes the gate and makes the
-#                 call unconditional.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$Sfx2Asserts)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -1115,10 +1107,9 @@ function Find-Bytes {
 function Assert-SfxDualChannel {
     # SP18 item 7 / Task 8: written RED, ahead of Task 10's channel-2
     # CTC plumbing. nextreg $C5/$CD must enable BOTH CTC channels (bits
-    # 0+1, %00000011); the tree at this commit still writes the old
-    # single-channel value (bit 0 only, %00000001), so this throws
-    # until Task 10 lands. Gated behind -Sfx2Asserts until then (see
-    # the call site).
+    # 0+1, %00000011). Task 10 landed ctc2_isr, the vector 8 carve and
+    # the NR $C5/$CD bit-1 writes, so this now runs unconditionally on
+    # every harness invocation and passes.
     param([byte[]]$nex)
     # nextreg $C5, %00000011  ->  ED 91 C5 03
     if (-not (Find-Bytes $nex ([byte[]]@(0xED, 0x91, 0xC5, 0x03)))) {
@@ -1659,12 +1650,9 @@ if (Test-Path "$root\build\nextdaad.nex") {
         throw "tm_clear_blank: the old attribute-254 clear is still present - uncovered cells will still paint opaque DAAD white"
     }
 
-    if ($Sfx2Asserts) {
-        # SP18 item 7 / Task 8: opt-in until Task 10 lands channel 2 -
-        # the assert is RED on the current tree by design. Task 10
-        # removes this gate and calls Assert-SfxDualChannel unconditionally.
-        Assert-SfxDualChannel $nex
-    }
+    # SP18 item 7 / Task 10 landed channel 2's CTC plumbing, so this
+    # runs unconditionally now (was gated behind -Sfx2Asserts, retired).
+    Assert-SfxDualChannel $nex
 }
 else {
     "WARNING: no build\nextdaad.nex - eng_exec debug-marker guard check SKIPPED (run .\build.ps1 first)"

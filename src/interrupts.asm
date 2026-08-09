@@ -28,6 +28,22 @@ im2_init:
     ld a, IM2_CTC_STUB & $FF
     ld (IM2_TABLE + IM2_CTC_VEC), a      ; table[V] = low(ctc_stub); table[V+1]
                                          ; is already the $BE fill (= high stub)
+    ; SP18 item 7 Task 10: channel 2's carve skips the stub-trampoline
+    ; indirection channel 1 uses just above. That indirection exists
+    ; ONLY because it lets table[V+1] (the target's high byte) keep the
+    ; uniform $BE fill unwritten, by routing through IM2_CTC_STUB - a
+    ; stub deliberately placed IN the $BE00-$BEFF page - rather than
+    ; ctc_isr's own real (non-$BE-page) address, saving one table byte
+    ; write at the cost of installing the stub. For channel 2 it is
+    ; both cheaper and simpler to write BOTH table bytes directly with
+    ; ctc2_isr's real address: LD (nn),HL stores L then H, so one
+    ; instruction covers table[V]=low(ctc2_isr) and table[V+1]=
+    ; high(ctc2_isr) together. The CPU then jumps straight to ctc2_isr
+    ; on this vector - no second-level JP, no runtime-written stub.
+    ; IM2_CTC2_STUB (nextdaad.inc) stays reserved beside IM2_CTC_STUB
+    ; for layout symmetry but is not written here.
+    ld hl, ctc2_isr
+    ld (IM2_TABLE + IM2_CTC2_VEC), hl
     ld a, IM2_TABLE >> 8
     ld i, a
     ; Enter Next hardware IM2 mode. This GLOBAL switch relocates the ULA's own
@@ -43,10 +59,14 @@ im2_init:
                                          ; default) + ULA int (bit 0), set explicitly
                                          ; so the frame tick never depends on ambient
                                          ; NextZXOS state (dev-guide example shape)
-    nextreg NR_INT_EN_2, %00000001       ; enable CTC channel 0 int (NR C5). playvid
-                                         ; and CTCAudio set only NR C0 and still work
-                                         ; - this is dev-guide-documented belt-and-
-                                         ; braces (hardware checklist verifies which)
+    nextreg NR_INT_EN_2, %00000011       ; enable CTC channels 0+1 int (NR C5).
+                                         ; playvid and CTCAudio set only NR C0 and
+                                         ; still work for their own single channel -
+                                         ; this is dev-guide-documented belt-and-
+                                         ; braces (hardware checklist verifies which).
+                                         ; SP18 item 7 Task 10: bit 1 added for
+                                         ; channel 2's CTC (ctc2_isr, above) - same
+                                         ; belt-and-braces reasoning, one channel over.
     ; DMA PRE-EMPTION PERMISSIONS (NR $CC/$CD/$CE) - 2026-08-03, CONFIRMED
     ; ON SILICON. The zxnDMA's mem-to-mem transfers run in CONTINUOUS mode,
     ; which "runs to completion without allowing the CPU to run" (dev guide
@@ -90,10 +110,10 @@ im2_init:
                                          ; replaces the DI, and it must never be
                                          ; relaxed without re-reading that
                                          ; hazard note.
-    nextreg NR_DMA_INT_EN_2, %00000001   ; $CD bit 0 = CTC channel 0, the DAC
-                                         ; sample timer - the ONE source allowed
-                                         ; to pre-empt a DMA. Safe because its
-                                         ; ISR is MMU-free BY EXPLICIT CONTRACT:
+    nextreg NR_DMA_INT_EN_2, %00000011   ; $CD bit 0 = CTC channel 0, the DAC
+                                         ; sample timer - one of the two sources
+                                         ; allowed to pre-empt a DMA. Safe because
+                                         ; its ISR is MMU-free BY EXPLICIT CONTRACT:
                                          ; ctc_isr (below) saves only AF/HL and
                                          ; touches no MMU slot, no $243B/$253B
                                          ; register-select pair, no banked
@@ -102,7 +122,7 @@ im2_init:
                                          ; nestable inside im2_isr. A transfer
                                          ; resumed after it therefore sees
                                          ; exactly the mapping it was armed
-                                         ; with. Channels 1-7 stay barred here
+                                         ; with. Channels 2-7 stay barred here
                                          ; and are not enabled in $C5 either.
                                          ; NOTE FOR THE VIDEO PATH: video.asm
                                          ; repoints IM2_CTC_STUB to
@@ -120,6 +140,19 @@ im2_init:
                                          ; byte-exact on every staged clip
                                          ; including the fill path; core
                                          ; 3.02.04).
+                                         ; SP18 item 7 Task 10: bit 1 = CTC
+                                         ; channel 1, SFX channel 2's DAC sample
+                                         ; timer, admitted under the IDENTICAL
+                                         ; MMU-free/RETI contract - ctc2_isr
+                                         ; (above) saves only AF/HL, touches no
+                                         ; MMU slot, no register-select pair, no
+                                         ; banked memory and never the DMA port,
+                                         ; the sole condition of admission stated
+                                         ; above. Nothing drives channel 2 yet
+                                         ; (Task 11 wires the pump/mailbox), so
+                                         ; this permission is armed ahead of use,
+                                         ; exactly as channel 0's already is
+                                         ; before the first sample plays.
     nextreg NR_DMA_INT_EN_3, 0           ; $CE = 0: no UART source may interrupt
                                          ; a DMA. Nothing here uses the UARTs
                                          ; and $C6 is never written, so this
@@ -357,6 +390,55 @@ ctc_isr:
 ; accesses so the ISR never reads a torn value.
 smpPlayPtr:  dw AUD_STAGE0
 smpWritePtr: dw AUD_STAGE0
+
+; SP18 item 7 Task 10: channel 2's per-sample DAC feeder, fired by CTC
+; channel 1 through its carved IM2 vector (byte IM2_CTC2_VEC = 8). SAME
+; CONTRACT as ctc_isr above, verbatim: saves ONLY AF and HL, touches NO
+; MMU slot, NO register-select pair, NO banked memory - just this
+; channel's resident ring pointers, the ring at AUD_STAGE2 (a candidate
+; address, OP1/V1-gated - see nextdaad.inc), and one raw OUT to
+; DAC2_PORT. That is what makes it nestable anywhere the frame ISR EIs,
+; and it is the sole condition of admission to NR $CD (DMA pre-emption
+; permission, im2_init) - identical reasoning to ctc_isr's own header,
+; not repeated here. RETI is part of the contract: never change it to
+; RET. It outputs (smp2PlayPtr), then advances with the same
+; branchless power-of-two wrap as channel 1, holding the last byte when
+; play has caught the producer (aud_smp_tick pads a DAC_SILENCE guard
+; at W on drain, exactly as channel 1's tick does). Cost ~167T body,
+; same shape as ctc_isr; ei precedes reti so the body is non-reentrant
+; against a second CTC edge on this same channel.
+; Nothing starts channel 2 yet (Task 11 wires the pump/mailbox) - this
+; ISR is wired and armable but its ring stays at rest until then.
+ctc2_isr:
+    push af
+    push hl
+    ld hl, (smp2PlayPtr)
+    ld a, (hl)
+    out (DAC2_PORT), a
+    ld a, (smp2WritePtr)
+    cp l
+    jr nz, .adv
+    ld a, (smp2WritePtr+1)
+    cp h
+    jr z, .done                  ; play caught producer: hold last byte
+.adv:
+    inc hl
+    ld a, h
+    and (AUD_STAGE2_RING-1) >> 8
+    or AUD_STAGE2 >> 8
+    ld h, a
+    ld (smp2PlayPtr), hl
+.done:
+    pop hl
+    pop af
+    ei
+    reti
+
+; Resident ring cursors for channel 2, same discipline as smpPlayPtr/
+; smpWritePtr above (single-producer/single-consumer, tick DI-brackets
+; its 16-bit accesses).
+smp2PlayPtr:  dw AUD_STAGE2
+smp2WritePtr: dw AUD_STAGE2
 
 audEnable: db 0             ; sticky by design: armed once by the first
                             ; audio use, never re-cleared - the cheap
