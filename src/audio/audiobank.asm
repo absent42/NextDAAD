@@ -73,6 +73,7 @@ aud_tick:
     bit 7, (hl)
     jr z, .no7
     res 7, (hl)
+    ld ix, sfxChan0
     call aud_smp_stop
     ld hl, audRequest
 .no7:
@@ -80,6 +81,7 @@ aud_tick:
     bit 6, (hl)
     jr z, .no6
     res 6, (hl)
+    ld ix, sfxChan0
     call aud_smp_start
     ld hl, audRequest
 .no6:
@@ -200,7 +202,8 @@ aud_tick:
     ld h, 0
     ld (audBeepFrames), hl
 .noreq:
-    call aud_smp_tick           ; sample refeed (self-gated on smpFlags)
+    ld ix, sfxChan0
+    call aud_smp_tick           ; sample refeed (self-gated on SMPB_FLAGS)
     call aud_ays_tick           ; stream replay (self-gated on aysFlags);
                                 ; runs regardless of audFlags, like the
                                 ; sample refeed - the stream drives its
@@ -449,37 +452,44 @@ aud_psg_silence:
 ; on 50Hz block-quantisation gaps): a 1K power-of-two ring at $7C00 is played
 ; one byte per CTC interrupt by ctc_isr (raw out to $DF) and refilled from the
 ; banked page-table source by aud_smp_tick at 50Hz. No DMA, no byte-counter
-; reads, no per-frame reprogram gap - the CTC self-paces the DAC. smpW is the
-; producer offset (owned by the copy); smpPlayPtr/smpWritePtr (resident) are
-; the ISR's absolute cursors. aud_smp_start seeds an empty ring, fills it once,
-; publishes the write pointer, then programs and starts CTC channel 0.
+; reads, no per-frame reprogram gap - the CTC self-paces the DAC. SMPB_W is
+; the producer offset (owned by the copy); smpPlayPtr/smpWritePtr (resident)
+; are the ISR's absolute cursors. aud_smp_start seeds an empty ring, fills it
+; once, publishes the write pointer, then programs and starts CTC channel 0.
+; Precondition: IX = channel block (sfxChan0).
 aud_smp_start:
     xor a
-    ld (smpTabIdx), a           ; source at the first page-table entry
-    ld hl, 0
-    ld (smpOff), hl
-    ld (smpP), hl               ; ring empty: play offset == write offset == 0
-    ld (smpW), hl
+    ld (ix+SMPB_TABIDX), a      ; source at the first page-table entry
+    ld (ix+SMPB_OFF), a
+    ld (ix+SMPB_OFF+1), a
+    ld (ix+SMPB_P), a           ; ring empty: play offset == write offset == 0
+    ld (ix+SMPB_P+1), a
+    ld (ix+SMPB_W), a
+    ld (ix+SMPB_W+1), a
     ld hl, (audReqSmpLen)       ; 24-bit payload length (bytes not yet copied)
-    ld (smpLen), hl
-    ld (smpRemain), hl
+    ld (ix+SMPB_LEN), l
+    ld (ix+SMPB_LEN+1), h
+    ld (ix+SMPB_REMAIN), l
+    ld (ix+SMPB_REMAIN+1), h
     ld a, (audReqSmpLenHi)
-    ld (smpLenHi), a
-    ld (smpRemainHi), a
+    ld (ix+SMPB_LEN+2), a
+    ld (ix+SMPB_REMAIN+2), a
     ld a, (audReqSmpLoop)
     and 1
     add a, a                    ; -> bit 1 (loop)
     or 1                        ; bit 0 (active)
-    ld (smpFlags), a            ; set BEFORE the copy (it reads the loop bit)
+    ld (ix+SMPB_FLAGS), a       ; set BEFORE the copy (it reads the loop bit)
     ld hl, AUD_STAGE0           ; play starts at the ring base; the CTC is not
     ld (smpPlayPtr), hl         ; running yet, so this needs no DI bracket
     ; fill the ring from the source (backpressure caps the copy at ring-1)
-    call aud_smp_copy           ; advances smpW
-    ld hl, (smpW)
+    call aud_smp_copy           ; advances SMPB_W
+    ld l, (ix+SMPB_W)
+    ld h, (ix+SMPB_W+1)
     ld de, AUD_STAGE0
     add hl, de
     ld (smpWritePtr), hl        ; write = ring base + bytes filled
-    ld hl, (smpW)               ; nothing staged (zero-length sample): leave CTC off
+    ld l, (ix+SMPB_W)           ; nothing staged (zero-length sample): leave CTC off
+    ld h, (ix+SMPB_W+1)
     ld a, h
     or l
     ret z
@@ -500,9 +510,10 @@ aud_smp_start:
 ; clear the active flag. Idempotent. Runs in ISR context (also reached from
 ; aud_smp_tick's play-once drain end). DAC_SILENCE is the unsigned midpoint $80
 ; (unsigned everywhere on the OUT path) - see nextdaad.inc.
+; Precondition: IX = channel block (sfxChan0).
 aud_smp_stop:
     xor a
-    ld (smpFlags), a
+    ld (ix+SMPB_FLAGS), a
     ld a, AUD_CTC_RESET         ; double soft-reset: timer stops, no more CTC ints
     ld bc, AUD_CTC_PORT
     out (c), a
@@ -519,42 +530,49 @@ aud_smp_stop:
 ; emptied. The 16-bit accesses to the shared cursors are DI-bracketed (~20T, far
 ; under one CTC period) so a nested ctc_isr never reads a torn value. No DMA, no
 ; counter reads, no DAC-hold window - the old f-prime exchange is gone.
+; Precondition: IX = channel block (sfxChan0).
 aud_smp_tick:
-    ld a, (smpFlags)
+    ld a, (ix+SMPB_FLAGS)
     rrca
     ret nc                      ; bit 0 clear: nothing active
-    ; snapshot the ISR's play cursor -> smpP offset (atomic vs a CTC nest)
+    ; snapshot the ISR's play cursor -> SMPB_P offset (atomic vs a CTC nest)
     di
     ld hl, (smpPlayPtr)
     ei
     ld de, AUD_STAGE0
     or a
     sbc hl, de                  ; HL = smpPlayPtr - base = play offset (0..ring-1)
-    ld (smpP), hl
-    call aud_smp_copy           ; fill [W, P) from source; advance smpW
+    ld (ix+SMPB_P), l
+    ld (ix+SMPB_P+1), h
+    call aud_smp_copy           ; fill [W, P) from source; advance SMPB_W
     ; drain handling BEFORE publish: on play-once exhaustion pad a DAC_SILENCE
     ; guard at the write slot so a nested ctc_isr that catches write reads
     ; silence, never a stale ring byte.
-    ld a, (smpFlags)
+    ld a, (ix+SMPB_FLAGS)
     bit 1, a
     jr nz, .publish             ; loop mode: the copy rewinds, never drains
-    ld hl, (smpRemain)
-    ld a, (smpRemainHi)
+    ld l, (ix+SMPB_REMAIN)
+    ld h, (ix+SMPB_REMAIN+1)
+    ld a, (ix+SMPB_REMAIN+2)
     or h
     or l
     jr nz, .publish             ; source not exhausted yet
-    ld hl, (smpW)               ; drained: silence guard at the write slot
+    ld l, (ix+SMPB_W)           ; drained: silence guard at the write slot
+    ld h, (ix+SMPB_W+1)
     ld de, AUD_STAGE0
     add hl, de
     ld (hl), DAC_SILENCE
-    ld hl, (smpP)               ; has play (snapshot) caught write?
-    ld de, (smpW)
+    ld l, (ix+SMPB_P)           ; has play (snapshot) caught write?
+    ld h, (ix+SMPB_P+1)
+    ld e, (ix+SMPB_W)
+    ld d, (ix+SMPB_W+1)
     or a
     sbc hl, de
     jr nz, .publish             ; tail still draining: publish + wait a tick
     jp aud_smp_stop             ; drained + emptied: stop (CTC off, DAC parked)
 .publish:
-    ld hl, (smpW)
+    ld l, (ix+SMPB_W)
+    ld h, (ix+SMPB_W+1)
     ld de, AUD_STAGE0
     add hl, de
     di
@@ -576,29 +594,32 @@ aud_min16:
     ld l, e                     ; HL >= DE: HL = DE
     ret
 
-; aud_smp_copy: copy source bytes into the staging ring at smpW, advancing
-; smpW/smpOff/smpTabIdx/smpRemain. toFill starts at the whole ring and is
-; clamped to source remain (play-once, so it stops exactly at the payload end)
-; and to ring free space MINUS 1 (backpressure - guarantees the copy can never
-; reach smpP, so it can never overwrite an unplayed byte ctc_isr is about to
+; aud_smp_copy: copy source bytes into the staging ring at SMPB_W, advancing
+; SMPB_W/OFF/TABIDX/REMAIN. toFill starts at the whole ring and is clamped to
+; source remain (play-once, so it stops exactly at the payload end) and to
+; ring free space MINUS 1 (backpressure - guarantees the copy can never reach
+; SMPB_P, so it can never overwrite an unplayed byte ctc_isr is about to
 ; read). The copy wraps at the physical ring end exactly as it splits at source-
 ; page boundaries. Loop mode rewinds the source (off/idx/remain) mid-copy and
 ; keeps going - the ring never notices the seam.
 ;
-; DISJOINTNESS: ctc_isr reads at smpPlayPtr, whose offset the tick snapshots into
-; smpP before this runs; this writes [W, W+toFill) at W. With occupied = (W-P)
-; mod ring, free = ring-occupied, the backpressure clamp caps toFill at free-1,
-; so W+toFill never reaches P - the play cursor only moves further away while
-; this runs (single-producer/single-consumer), so the write region stays
-; disjoint from the byte the ISR is reading.
+; DISJOINTNESS: ctc_isr reads at smpPlayPtr, whose offset the tick snapshots
+; into SMPB_P before this runs; this writes [W, W+toFill) at W. With occupied
+; = (W-P) mod ring, free = ring-occupied, the backpressure clamp caps toFill
+; at free-1, so W+toFill never reaches P - the play cursor only moves further
+; away while this runs (single-producer/single-consumer), so the write region
+; stays disjoint from the byte the ISR is reading.
 ;
-; SLOT DISCIPLINE (identical to the SP8/ring machinery): phase A snapshots the
-; source position + copy plan into slot-6 (page 48) scratch while state is
-; readable (slot 7 = AUD_PAGE_HI); phase B windows source pages at $E000 via
+; SLOT DISCIPLINE: phase A snapshots the source position + copy plan into
+; slot-6 (page 48) scratch, reading the channel block (also page 48, slot 6 -
+; IX-relative, no slot dependency); phase B windows source pages at $E000 via
 ; slot 7 and copies to the bank-5 ring ($7C00.., MMU3 always mapped) reading
-; the plan from scratch; phase C restores slot 7 = AUD_PAGE_HI and writes the
-; advanced position back to $FFE0. smpPageTab stays in slot 6 throughout.
-; Corrupts everything.
+; the plan from scratch; phase C restores slot 7 = AUD_PAGE_HI (required by
+; the rest of aud_tick, which reads audFlags/audBeep*/audSongNum/audPlayerUp
+; at $FFE0 - not by this routine's own state any more) and writes the
+; advanced position back to the channel block. smpPageTab stays in slot 6
+; throughout. Precondition: IX = channel block (sfxChan0). Corrupts
+; everything except IX.
 aud_smp_copy:
     ; --- phase A: toFill = the whole ring; the play-once and backpressure clamps
     ; below cut it to min(source remain, free-1). The CTC self-paces the DAC, so
@@ -608,23 +629,26 @@ aud_smp_copy:
     ld (smpCpTo), hl            ; toFill = ring (pre-clamp)
     ; play-once: clamp toFill to source remain (24-bit hi-byte shortcut). Loop
     ; skips this - the fill loop rewinds mid-copy instead of stopping at remain.
-    ld a, (smpFlags)
+    ld a, (ix+SMPB_FLAGS)
     bit 1, a
     jr nz, .bp                  ; loop mode
-    ld a, (smpRemainHi)
+    ld a, (ix+SMPB_REMAIN+2)
     or a
     jr nz, .bp                  ; remain > 64K: chunk (<= ring) always fits
     ld hl, (smpCpTo)
-    ld de, (smpRemain)
+    ld e, (ix+SMPB_REMAIN)
+    ld d, (ix+SMPB_REMAIN+1)
     or a
     sbc hl, de
     jr c, .bp                   ; toFill < remain: keep toFill
     ld (smpCpTo), de            ; else toFill = remain
 .bp:
     ; backpressure: toFill = min(toFill, free-1); free = ring - occupied,
-    ; occupied = (smpW - smpP) mod ring.
-    ld hl, (smpW)
-    ld de, (smpP)
+    ; occupied = (SMPB_W - SMPB_P) mod ring.
+    ld l, (ix+SMPB_W)
+    ld h, (ix+SMPB_W+1)
+    ld e, (ix+SMPB_P)
+    ld d, (ix+SMPB_P+1)
     or a
     sbc hl, de                  ; W - P
     jr nc, .occ
@@ -642,21 +666,25 @@ aud_smp_copy:
     jr c, .snap                 ; toFill < free-1: keep (smpCpTo already set)
     ld (smpCpTo), de            ; toFill >= free-1: clamp to free-1
 .snap:
-    ld a, (smpTabIdx)
+    ld a, (ix+SMPB_TABIDX)
     ld (smpCpIdx), a
-    ld hl, (smpOff)
+    ld l, (ix+SMPB_OFF)
+    ld h, (ix+SMPB_OFF+1)
     ld (smpCpOff), hl
-    ld hl, (smpRemain)
+    ld l, (ix+SMPB_REMAIN)
+    ld h, (ix+SMPB_REMAIN+1)
     ld (smpCpRemLo), hl
-    ld a, (smpRemainHi)
+    ld a, (ix+SMPB_REMAIN+2)
     ld (smpCpRemHi), a
-    ld hl, (smpLen)
+    ld l, (ix+SMPB_LEN)
+    ld h, (ix+SMPB_LEN+1)
     ld (smpCpLen), hl
-    ld a, (smpLenHi)
+    ld a, (ix+SMPB_LEN+2)
     ld (smpCpLenHi), a
-    ld hl, (smpW)
+    ld l, (ix+SMPB_W)
+    ld h, (ix+SMPB_W+1)
     ld (smpCpDst), hl           ; working ring dest offset (0-AUD_STAGE_RING)
-    ld a, (smpFlags)
+    ld a, (ix+SMPB_FLAGS)
     and %00000010               ; loop bit
     ld (smpCpLoop), a
     ; --- phase B: fill loop (copies run through slot 7 = source page) ---
@@ -761,23 +789,29 @@ aud_smp_copy:
     ld (smpCpRemHi), a          ; remain -= seg (24-bit)
     jp .fill
 .filldone:
-    nextreg $57, AUD_PAGE_HI    ; slot 7 back to the state page BEFORE $FFE0
+    nextreg $57, AUD_PAGE_HI    ; slot 7 back to the state page - required by the
+                                ; rest of aud_tick (audFlags/audBeep*/audSongNum/
+                                ; audPlayerUp at $FFE0), not by the writes below
     ld a, (smpCpIdx)            ; write back the advanced source position + W
-    ld (smpTabIdx), a
+    ld (ix+SMPB_TABIDX), a
     ld hl, (smpCpOff)
-    ld (smpOff), hl
+    ld (ix+SMPB_OFF), l
+    ld (ix+SMPB_OFF+1), h
     ld hl, (smpCpRemLo)
-    ld (smpRemain), hl
+    ld (ix+SMPB_REMAIN), l
+    ld (ix+SMPB_REMAIN+1), h
     ld a, (smpCpRemHi)
-    ld (smpRemainHi), a
+    ld (ix+SMPB_REMAIN+2), a
     ld hl, (smpCpDst)
-    ld (smpW), hl              ; W advanced by the bytes actually copied
+    ld (ix+SMPB_W), l           ; W advanced by the bytes actually copied
+    ld (ix+SMPB_W+1), h
     ret
 
 ; Copy scratch, in page-48 CODE space (slot 6, mapped throughout aud_tick).
 ; aud_smp_copy stages the source position + copy plan here BEFORE it windows a
-; source page through slot 7, so the walk survives the remap; the $FFE0 smp*
-; state is only touched with slot 7 = AUD_PAGE_HI (phases A and C). All bytes
+; source page through slot 7, so the walk survives the remap; the channel
+; block (sfxChan0, IX-relative) is also page 48, so it needs no slot 7
+; discipline at all - only phase B's source-page window does. All bytes
 ; here are transient per-copy scratch.
 smpCpTo:    dw 0    ; bytes still to copy this call (toFill)
 smpCpOff:   dw 0    ; working offset inside the source page (0-$1FFF)
@@ -789,6 +823,13 @@ smpCpLenHi: db 0    ; payload length high
 smpCpDst:   dw 0    ; working ring dest offset (0-AUD_STAGE_RING)
 smpCpLoop:  db 0    ; loop-mode snapshot for this copy
 smpCpSeg:   dw 0    ; this segment's byte count (saved across LDIR)
+
+; Per-channel sampled-effect pump state (SP18 item 7), SMPB_* offsets
+; in nextdaad.inc. Page-48 data space, pinned in slot 6 for the whole of
+; aud_tick - no slot-restore ordering applies to these members. IX is
+; seeded to the channel block by each call site before an aud_smp_*
+; routine runs.
+sfxChan0:  ds SMPB_SIZE           ; channel 1 pump state (SP18 item 7)
 
 ; Sample stream page list + count, in page-48 CODE space (slot 6). The
 ; ISR reads them from slot 6, which stays mapped throughout aud_tick, so
@@ -1155,10 +1196,10 @@ aud_psg3_write:
 ;
 ; WHY THE RING. AUD_STAGE0 is bank 5, MMU3, always mapped, so the block
 ; is readable from mainline context without mapping bank 24; and it is
-; dead memory whenever no sample is playing. The smpFlags guard below
+; dead memory whenever no sample is playing. The SMPB_FLAGS guard below
 ; makes that conditional explicit - with a sample active the ring is the
 ; DAC's and this routine does nothing (the leg it serves plays no
-; samples). ctc_isr is stopped whenever smpFlags bit 0 is clear
+; samples). ctc_isr is stopped whenever SMPB_FLAGS bit 0 is clear
 ; (aud_smp_stop resets the CTC), so nothing races these writes.
 ;
 ; DEBUG ONLY. Costs ~9.4k T per frame in the ISR - instruction-counted,
@@ -1180,7 +1221,8 @@ AUD_DBG_SEQ2  equ AUD_DBG_CELL + 2*AUD_DBG_NCELL
 AUD_DBG_LEN   equ AUD_DBG_SEQ2 + 1
 
 aud_dbg_snap:
-    ld a, (smpFlags)
+    ld ix, sfxChan0
+    ld a, (ix+SMPB_FLAGS)
     rrca
     ret c                           ; a sample owns the ring - hands off
     ld hl, aud_dbg_sig
@@ -1199,7 +1241,7 @@ aud_dbg_snap:
     ld (AUD_DBG_SNAP+$07), a
     ld a, (aysFlags)
     ld (AUD_DBG_SNAP+$08), a
-    ld a, (smpFlags)
+    ld a, (ix+SMPB_FLAGS)
     ld (AUD_DBG_SNAP+$09), a
     ld a, (audRequest)
     ld (AUD_DBG_SNAP+$0A), a
@@ -1397,16 +1439,5 @@ audSongNum:    db $FF                ; $FF = none/GAME.AKY
 audPlayerUp:   db 0                  ; 1 once PLY_AKY_INIT has run
                                      ; (aud_ensure_player gate; reset
                                      ; by aud_boot_probe on warm boot)
-smpFlags:      db 0                  ; bit 0 sample active, bit 1 looping
-smpTabIdx:     db 0                  ; current source index into smpPageTab (page 48)
-smpOff:        dw 0                  ; source read offset inside that page (0-$1FFF)
-smpRemain:     dw 0                  ; source bytes not yet copied, low word
-smpRemainHi:   db 0                  ; source bytes not yet copied, high byte
-smpLen:        dw 0                  ; payload length (loop rewind), low word
-smpLenHi:      db 0                  ; payload length (loop rewind), high byte
-smpP:          dw 0                  ; ring PLAY offset - per-tick snapshot of
-                                     ; smpPlayPtr (0..AUD_STAGE_RING-1), read by
-                                     ; the copy's backpressure and the drain check
-smpW:          dw 0                  ; ring WRITE offset - next copy lands here
     ASSERT audFlags == AUD_STATE
     ASSERT $ <= $10000               ; bank ends inside the 64K map

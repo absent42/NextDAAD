@@ -505,13 +505,26 @@ AUD_STAGE0      equ $7C00   ; ring base, bank 5 upper region - ALWAYS mapped
                             ; (MMU3), above divMMC's $0000-$3FFF, free after
                             ; TM_DEFS ($7400-$7BFF); ends exactly at $8000
 AUD_STAGE_RING  equ 1024    ; power-of-two ring $7C00-$7FFF: the CTC ISR plays
-                            ; smpPlayPtr, the 50Hz tick refills smpW from the
+                            ; smpPlayPtr, the 50Hz tick refills SMPB_W from the
                             ; page-table source. 1K = 51ms at 20kHz - ample vs
                             ; the 20ms refill period. Base $7C00 is 1K-aligned so
                             ; the ISR wraps with a branchless AND/OR mask on H.
     ASSERT AUD_STAGE0 + AUD_STAGE_RING == $8000   ; ISR wrap tests H == $80
     ASSERT AUD_STAGE_RING >= 2*(AUD_RATE_MAX/50)  ; ring > 1 frame of consumption
                             ; so a tick always refills before the ISR underruns
+
+; --- SP18 item 7: per-channel sampled-effect pump state ----------------
+; One block per channel, in AUD_PAGE_LO (48) data space - pinned in slot 6
+; for the whole of aud_tick, so pump code may touch it at any point with
+; no slot-restore ordering. IX = block base inside aud_smp_* routines.
+SMPB_FLAGS    equ 0    ; bit0 active, bit1 looping (bits 2+ Task 5/12)
+SMPB_TABIDX   equ 1    ; consumer window-page index
+SMPB_OFF      equ 2    ; dw: consumer offset in current page (0-$1FFF)
+SMPB_REMAIN   equ 4    ; dw+db: 24-bit payload bytes remaining
+SMPB_LEN      equ 7    ; dw+db: 24-bit payload length (loop rewind)
+SMPB_P        equ 10   ; dw: DAC-ring PLAY offset snapshot
+SMPB_W        equ 12   ; dw: DAC-ring WRITE offset
+SMPB_SIZE     equ 14
 
 ; --- DMA picture copies (SP11 Task 2) ---
 ; zxnDMA one-shot mem-to-mem chunk copies for Layer 2 picture work

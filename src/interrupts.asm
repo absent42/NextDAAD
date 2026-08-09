@@ -261,7 +261,7 @@ im2_isr:
                              ; mapped here and every register is already
                              ; saved, so this is the only place the whole
                              ; post-tick state is legible. Self-gated on
-                             ; smpFlags (a live sample owns that ring).
+                             ; SMPB_FLAGS (a live sample owns that ring).
  ENDIF
     pop de
     ld a, d

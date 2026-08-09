@@ -3090,17 +3090,17 @@ aud_boot_probe:
     xor a
     ld (DATA_WINDOW+audFlags-$E000), a
     ld (DATA_WINDOW+audPlayerUp-$E000), a
-    ld (DATA_WINDOW+smpFlags-$E000), a  ; clear a stale sample-active bit:
-                                ; a looping sample must not replay a
-                                ; recycled bank table after a warm boot
     ld a, $FF
     ld (DATA_WINDOW+audSongNum-$E000), a
-    ld a, AUD_PAGE_LO           ; smpPageCnt/aysFlags/aysPageCnt live in page
-    call data_map_page          ; 48 code space: a stale stream page count or
-    xor a                       ; active bit must not survive a warm boot
-    ld (smpPageCnt), a          ; (bank_table_init recycles the banks)
-    ld (aysFlags), a            ; stream-active off (sibling of smpFlags)
+    ld a, AUD_PAGE_LO           ; smpPageCnt/aysFlags/aysPageCnt/sfxChan0 live
+    call data_map_page          ; in page 48 code space: a stale stream page
+    xor a                       ; count or active bit must not survive a warm
+    ld (smpPageCnt), a          ; boot (bank_table_init recycles the banks)
+    ld (aysFlags), a            ; stream-active off (sibling of SMPB_FLAGS)
     ld (aysPageCnt), a          ; stream page count cold
+    ld (sfxChan0+SMPB_FLAGS), a ; clear a stale sample-active bit: a looping
+                                ; sample must not replay a recycled bank
+                                ; table after a warm boot
     call data_restore
     ld a, $FF
     ld (smpLoadedNum), a        ; keep-last cold on any (warm) boot
