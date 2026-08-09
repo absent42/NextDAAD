@@ -817,6 +817,96 @@ msgSfxFrag: db "SFX FRAG?", 0
  ENDIF
 
 ; ---------------------------------------------------------------------
+; sfx_stream_rewind - the CACHED REWIND of a STREAMED effect (owner
+; ruling, SP18 item 7 Task 12 fix).
+;
+; A file that fits the window is COMPLETE and its re-trigger costs
+; nothing at all. A file that does NOT fit used to pay the whole open
+; ritual again on every trigger - F_OPEN, the RIFF/fmt/data chunk walk,
+; F_SEEK, the priming read, F_SEEK, DISK_FILEMAP, F_FSTAT - even though
+; the channel was still holding the handle and the hot filemap of that
+; exact file. The spec's cached-rewind says it should not: reuse what is
+; held and pay only the window re-staging.
+;
+; That is what this entry does. It skips every one of those calls and
+; rejoins the ordinary open at its staging loop, so the staging itself,
+; the depth arithmetic, the consumer anchor, the window descriptor write
+; and the STREAMING commit are the SAME CODE, not a copy.
+;
+; VALIDITY - the test, stated. sfx_alloc decides it, because it is
+; already walking both channels' blocks: the effect number must equal
+; the candidate channel's SMPB_KEEP, the channel must NOT be COMPLETE
+; (that case has its own, cheaper free rewind), and SFXS_HANDLE must not
+; be $FF. That last one is the whole condition, and it is sufficient
+; rather than merely suggestive:
+;   - only sfx_stream_open's .streaming arm leaves a handle held; the
+;     COMPLETE arm closes it and writes $FF, and so does the refusal
+;     funnel. So a held handle means "this channel is carrying a cached
+;     STREAM", which in turn means the file exceeded the window;
+;   - the hot filemap and the run cursor live in the same channel's
+;     SFXS_CTX and are only ever rewritten by an open ON THIS CHANNEL or
+;     by this channel's own refiller leg, so a held handle and a matching
+;     SMPB_KEEP mean the cached map belongs to the cached file;
+;   - the refiller's error eviction clears SMPB_KEEP (leaving the handle
+;     held for the funnel to close later), so an evicted stream fails the
+;     number test and takes the full open, which closes the stale handle
+;     at .fresh.
+; SFXS_FILEBLK and SFXS_DATAOFF are likewise still the cached file's, so
+; neither F_FSTAT nor the chunk walk has anything to re-establish.
+;
+; STAGING RESTARTS AT FILE OFFSET 0, not at the payload: blocks stage
+; VERBATIM from 0 in this design (the WAV header stages with the payload
+; and the CONSUMER skips it, see sfx_stream_open's header), so "the start
+; of payload staging" is offset 0 and sfx_seek0 is exactly the right
+; seek. The consumer's anchor is rebuilt from SFXS_DATAOFF by the shared
+; tail, as on a fresh open.
+;
+; The caller must have STOPPED THIS CHANNEL AND WAITED, exactly as
+; aud_load_wav does before a fresh stage - h_sfx calls sfx_stop_wait
+; first. That is not politeness: the re-stage overwrites the window the
+; pump is reading, and the stop is also what shuts sfx_chan_refill's gate
+; (aud_smp_stop clears bit 2 STREAMING) for the whole of the staging,
+; which is only re-raised at .streaming after the last write.
+;
+; In:  A bit 0 = channel index (0 = channel 1). Slot 6 = AUD_PAGE_LO,
+;      slot 7 = SFX_PAGE, mainline.
+; Out: CF clear = window re-staged and STREAMING re-armed; the caller
+;      files its normal start, and the refiller carries on from
+;      SFXS_STAGED (SFXS_SEEK = 1 makes its first burst re-seek the run
+;      cursor there through sfx_run_seek).
+;      CF set = the re-stage failed. The refusal funnel has already
+;      closed the handle and invalidated both keep cells, so THE CALLER
+;      MUST RETRY THE FULL OPEN ONCE and only fall back to the AY effect
+;      if that fails too - a card hiccup on the cached path must not cost
+;      the effect. h_sfx implements exactly that retry shape.
+; Corrupts everything.
+sfx_stream_rewind:
+    rrca                             ; bit 0 -> CF
+    ld ix, sfxChan0
+    jr nc, .chosen
+    ld ix, sfxChan1
+.chosen:
+    ld (sfxChanPtr), ix
+    ld l, (ix+SMPB_STRM)
+    ld h, (ix+SMPB_STRM+1)
+    ld (sfxCellPtr), hl
+    push hl
+    pop iy
+    ld a, (iy+SFXS_HANDLE)
+    ld (sfxNewHandle), a             ; THE HELD HANDLE - no F_OPEN, and
+                                     ; sfx_seek0 and the staging loop both
+                                     ; read it from here, so they need no
+                                     ; change at all
+    ld a, (ix+SMPB_KEEP)
+    ld (sfxOpenNum), a               ; the same number the tail re-writes
+                                     ; into both keep cells
+    ld hl, SFX_WIN_BYTES             ; a cached stream is over the window
+    xor a                            ; by definition, so the stage length
+                                     ; is the full window and sfxWhole is
+                                     ; 0 - the .partial arm's own constants
+    jp sfx_stream_open.setstage
+
+; ---------------------------------------------------------------------
 ; THE CHANNEL ALLOCATOR (SP18 item 7 Task 12)
 ;
 ; One entry point serves every channel decision the SFX condact makes:
@@ -839,12 +929,19 @@ msgSfxFrag: db "SFX FRAG?", 0
 ;                 either, so there is nowhere to put this effect. A
 ;                 DEBUG marker says so; the condact is a no-op.
 ;      CF clear = allocated (or unpinned). A bit 0 = the channel index
-;                 (0 = channel 1, 1 = channel 2); A bit 7 set = FREE
-;                 REWIND - that channel's window already holds this exact
-;                 effect whole, the shared start parameters have been
-;                 re-committed from the channel's own latches, and the
-;                 caller must NOT call aud_load_wav: it just files the
-;                 start.
+;                 (0 = channel 1, 1 = channel 2), plus at most one of:
+;                 bit 7 = FREE REWIND - that channel's window already
+;                   holds this exact effect WHOLE (COMPLETE). No card
+;                   traffic at all: the caller must NOT call
+;                   aud_load_wav, it just files the start.
+;                 bit 6 = CACHED REWIND - that channel is still holding
+;                   the handle and hot filemap of this exact STREAMED
+;                   file. The caller calls sfx_stream_rewind instead of
+;                   aud_load_wav: no F_OPEN, no chunk walk, no
+;                   DISK_FILEMAP, no F_FSTAT, only the window re-stage.
+;                 On BOTH of those the shared audReqSmp* start parameters
+;                 have already been re-committed here from the channel's
+;                 own latches. Neither bit set = the ordinary full open.
 ; Preserves B. Corrupts AF, C, DE, HL, IX.
 ; Preconditions: slot 6 = AUD_PAGE_LO, slot 7 = SFX_PAGE, mainline
 ; context (it takes no interrupt-sensitive action and does not halt).
@@ -855,8 +952,9 @@ msgSfxFrag: db "SFX FRAG?", 0
 ;     set here; from now on auto-allocation may not touch that channel.
 ;   auto (subs 1/2)
 ;     (a) a channel that already CACHES this effect number and is not
-;         pinned. Cheapest possible outcome: either a free rewind
-;         (COMPLETE) or at worst a re-open that evicts nothing else.
+;         pinned. Cheapest possible outcome: a free rewind (COMPLETE) or
+;         a cached rewind (a held stream), and at worst a re-open that
+;         evicts nothing else.
 ;     (b) an IDLE, unpinned channel (SMPB_FLAGS bit 0 clear). A pinned
 ;         channel is skipped EVEN WHEN IDLE - the pin is a reservation,
 ;         not a busy flag (owner ruling).
@@ -968,13 +1066,30 @@ sfx_alloc:
                                      ; always takes its channel, so there
                                      ; is nothing to test first
     ; ---- commit: IX = the chosen block, E = its index ----------------
+    ; Three outcomes, cheapest first. The number must match either way -
+    ; a different effect always takes the full open, which evicts.
 .take:
-    ld a, (ix+SMPB_FLAGS)
-    and %00001000                    ; COMPLETE and the same number = the
-    jr z, .fresh                     ; whole effect is already in this
-    ld a, (ix+SMPB_KEEP)             ; channel's window: a free rewind,
-    cp c                             ; no card traffic at all
+    ld a, (ix+SMPB_KEEP)
+    cp c
     jr nz, .fresh
+    ld a, (ix+SMPB_FLAGS)
+    and %00001000                    ; COMPLETE: the whole effect is
+    ld a, $80                        ; already in this channel's window -
+    jr nz, .hit                      ; a FREE REWIND, no card traffic
+    ; not COMPLETE, but the number matches: this channel may still be
+    ; holding the handle and hot filemap of that same file from a
+    ; STREAMING open. SFXS_HANDLE is $FF unless it is (the COMPLETE arm
+    ; and the refusal funnel both write $FF), so one test settles it -
+    ; the full validity argument is at sfx_stream_rewind's header.
+    ld l, (ix+SMPB_STRM)
+    ld h, (ix+SMPB_STRM+1)
+    ld a, (hl)                       ; SFXS_HANDLE is offset 0
+    inc a
+    jr z, .fresh                     ; $FF: nothing held, full open
+    ld a, $40                        ; a CACHED REWIND: re-stage only
+.hit:
+    ld d, a                          ; the verdict bit survives the
+                                     ; parameter copy below
     ; The audReqSmp* start parameters are SHARED by both channels
     ; (aud_tick's header states the limitation): the values standing in
     ; them may be the OTHER channel's last load. A free rewind skips
@@ -992,7 +1107,7 @@ sfx_alloc:
     ld (audReqSmpLen+1), a
     ld a, (ix+SMPB_LEN+2)
     ld (audReqSmpLenHi), a
-    ld a, $80
+    ld a, d                          ; $80 free rewind / $40 cached rewind
     or e                             ; also clears CF
     ret
 .fresh:

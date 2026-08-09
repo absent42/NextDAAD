@@ -2605,11 +2605,28 @@ h_sfx:                          ; 18: B = n, C = sub-command
     call sfx_alloc_call         ; the resident trampoline). CF = both
     ret c                       ; channels pinned: trigger dropped, with
                                 ; a DEBUG marker printed there
-    ld (sfxSel), a              ; bit 0 = channel, bit 7 = free rewind
+    ld (sfxSel), a              ; bit 0 = channel, bit 7 = free rewind,
+    ld e, a                     ; bit 6 = cached rewind of a STREAM
     and %10000000
     jr nz, .started             ; cached whole: no card traffic at all,
                                 ; and sfx_alloc has already re-committed
                                 ; this channel's start parameters
+    bit 6, e                    ; this channel still holds the handle and
+    jr z, .fullopen             ; hot filemap of THIS number's file: the
+                                ; spec's cached rewind. Skip F_OPEN, the
+                                ; chunk walk, DISK_FILEMAP and F_FSTAT -
+                                ; only the window re-staging is owed
+    call sfx_stop_wait          ; the re-stage overwrites a live window
+    ld a, e
+    call sfx_rewind_call
+    jr nc, .started
+                                ; the cached path failed and its refusal
+                                ; funnel has already invalidated the
+                                ; cache: RETRY THE FULL OPEN ONCE, and
+                                ; only if that fails too take the AY
+                                ; fallback. A card hiccup on the cheap
+                                ; path must not cost the effect
+.fullopen:
     ld a, b
     push bc                     ; aud_load_wav corrupts BC (the WAV
     call aud_load_wav           ; filename decade-loop clobbers B
@@ -2711,19 +2728,63 @@ h_sfx:                          ; 18: B = n, C = sub-command
 
 msgSfxUnk: db "SFX? ", 0
 
-; Call sfx_alloc (SFX_PAGE) with page 48 in slot 6 - it reads sfxChan0
-; there, and sfxChan1/the mailbox/frameCounter resident. A and CF cross
-; both trampolines untouched (nextreg writes neither), and data_save/
-; data_map_page/data_restore corrupt AF only, so the allocator's verdict
-; comes back intact. BC survives too (nr_read preserves it), which is
-; what lets h_sfx keep the effect number in B across this call.
-sfx_alloc_call:
+; Stop the sample playing on the channel sfxSel bit 0 names, and wait
+; until aud_tick has consumed the stop. Called by aud_load_wav before it
+; stages, and by h_sfx before a cached rewind re-stages - both overwrite
+; the channel's window, and a playing sample must never be overwritten.
+; The wait is also what shuts sfx_chan_refill's gate for the duration:
+; aud_smp_stop clears SMPB_FLAGS bit 2 STREAMING, which is that gate.
+; audEnable = 0 means the ISR never reaches aud_tick: nothing can be
+; playing and the bit would never be consumed - skip the wait rather
+; than hang. The OTHER channel is deliberately left alone: two effects
+; play together, and a load on one must not silence the other.
+; Corrupts AF, HL.
+sfx_stop_wait:
+    ld a, (audEnable)
+    or a
+    ret z
+    ld a, (sfxSel)
+    rrca
+    jr c, .ch2
+    ld hl, audRequest
+    res 6, (hl)                 ; a pending un-consumed start must not
+    set 7, (hl)                 ; fire mid-load
+.wait1:
+    halt
+    ld a, (audRequest)
+    and %10000000
+    jr nz, .wait1
+    ret
+.ch2:
+    ld hl, audRequest2          ; channel 2's pair, the exact mirror
+    res 3, (hl)
+    set 2, (hl)
+.wait2:
+    halt
+    ld a, (audRequest2)
+    and %00000100
+    jr nz, .wait2
+    ret
+
+; Call a routine on SFX_PAGE with page 48 in slot 6 - sfx_alloc reads
+; sfxChan0 there (sfxChan1, the mailbox and frameCounter are resident),
+; and sfx_stream_rewind needs it for the block and the window descriptor.
+; A and CF cross both trampolines untouched (nextreg writes neither), and
+; data_save/data_map_page/data_restore corrupt AF only, so the callee's
+; verdict comes back intact. HL survives them too, which is what lets the
+; target address be loaded before the bracket; BC survives (nr_read
+; preserves it), which is what lets h_sfx keep the effect number in B.
+sfx_alloc_call:                 ; A = allocator request code
+    ld hl, sfx_alloc
+    jr sfx_page_bracket
+sfx_rewind_call:                ; A bit 0 = channel index
+    ld hl, sfx_stream_rewind
+sfx_page_bracket:
     push af
     call data_save
     ld a, AUD_PAGE_LO
     call data_map_page
     pop af
-    ld hl, sfx_alloc
     call sfx_page_call
     push af
     call data_restore
@@ -3373,36 +3434,9 @@ aud_load_wav:
                                 ; read this IS the offset of the first
                                 ; payload byte - which the window's
                                 ; consumer anchor needs
-    ; stop any sample playing ON THIS CHANNEL before its window is
-    ; overwritten. audEnable = 0 means the ISR never reaches aud_tick:
-    ; nothing can be playing and the bit would never be consumed - skip
-    ; the wait. The OTHER channel is deliberately left alone: two effects
-    ; play together, and a load on one must not silence the other.
-    ld a, (audEnable)
-    or a
-    jr z, .stopped
-    ld a, (sfxSel)
-    rrca
-    jr c, .stop2
-    ld hl, audRequest
-    res 6, (hl)                 ; a pending un-consumed start must not
-    set 7, (hl)                 ; fire mid-load
-.waitstop:
-    halt
-    ld a, (audRequest)
-    and %10000000
-    jr nz, .waitstop
-    jr .stopped
-.stop2:
-    ld hl, audRequest2          ; channel 2's pair, the exact mirror
-    res 3, (hl)
-    set 2, (hl)
-.waitstop2:
-    halt
-    ld a, (audRequest2)
-    and %00000100
-    jr nz, .waitstop2
-.stopped:
+    call sfx_stop_wait          ; stop the sample playing ON THIS CHANNEL
+                                ; and wait for the stop to be consumed,
+                                ; before the staging overwrites its window
     ; The channel's SMPB_KEEP is NOT invalidated here. Nothing before
     ; sfx_stream_open touches the window, so a header rejection below
     ; leaves the previously cached effect intact and still free to

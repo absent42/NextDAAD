@@ -60,11 +60,13 @@ All notable changes to NextDAAD are recorded here.
 - A sampled effect's length is no longer bounded by the old 1 MB
   payload ceiling or by free memory at all. Files up to 24K per
   channel stage into a fixed window and replay for free on every
-  re-trigger; larger files stream from the card, re-streaming on each
-  trigger, with a brief last-sample hold rather than silence at a
-  looping effect's seam. A file split across more than 8 SD card
-  fragments is refused, the same ceiling streamed video already uses -
-  defragment the card.
+  re-trigger; larger files stream from the card, and a re-trigger on
+  the channel still holding the file reuses what that channel has open
+  instead of searching the card again, so a repeat play costs only a
+  window refill. Streamed effects have a brief last-sample hold rather
+  than silence at a looping effect's seam. A file split across more
+  than 8 SD card fragments is refused, the same ceiling streamed video
+  already uses - defragment the card.
 - The recommended WAV sample rate is now 15625 Hz, which divides the
   hardware's own timing clock exactly on six of the eight video modes.
   16000 Hz - what existing NextDAAD samples use - remains fully
