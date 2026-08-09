@@ -14,12 +14,18 @@
 ; read F on entry to any of these calls, and cardBusy_clear's "jr" tail
 ; preserves the CF/A result esxDOS just set completely untouched back to
 ; the wrapper's own caller. HL itself is already documented as corrupted
-; by every one of these wrappers (see the tail-call comment on the
-; overlay1.asm sav_append_part-style helpers) so reusing it here adds no
-; new corruption. The one exception is esx_fseek, whose caller loads L
-; with the esxDOS seek-mode selector before the call (see vid_raw_seek0)
-; - that entry brackets cardBusy_set in push/pop hl so L survives into
-; the rst untouched. The SFX refiller (frame ISR, Task 6) gates on
+; by every one of these wrappers (see aud_part_open's tail-call comment,
+; overlay1.asm:2651-2652: "a plain tail-call into esx_fopen, so this
+; routine's own corruption set is exactly esx_fopen's: Corrupts AF, BC,
+; DE, HL, IX") so reusing it here adds no new corruption. esx_fseek's
+; caller (vid_raw_seek0) also sets L before the call, but the seek mode
+; esxDOS actually reads is IXL, not L - L is set only belt-and-braces
+; and is unread on this raw rst $08 caller path (settled finding,
+; overlay0.asm:2337-2349, SP11 T5 rider M2), so HL is just as safe for
+; cardBusy_set to clobber-and-reload here as everywhere else. esx_fseek
+; still brackets the call in push/pop hl anyway (see there) - belt-and-
+; braces at zero cost, matching the caller's own posture, not a
+; correctness requirement. The SFX refiller (frame ISR, Task 6) gates on
 ; cardBusy before touching the card - it must never run while any
 ; wrapper below is mid-call.
 cardBusy_set:
@@ -57,9 +63,10 @@ esx_fwrite:
     jr cardBusy_clear
 
 esx_fseek:
-    push hl                 ; L = esxDOS seek mode (caller's contract) -
-    call cardBusy_set       ; cardBusy_set clobbers HL internally, so
-    pop hl                  ; save/restore around it rather than after
+    push hl                 ; the mode esxDOS reads is IXL, not L (see
+    call cardBusy_set       ; the header comment above) - L is unread
+    pop hl                  ; here, so this save/restore is belt-and-
+                             ; braces only, not a correctness need
     rst $08
     db ESX_F_SEEK
     jr cardBusy_clear

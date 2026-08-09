@@ -24,9 +24,9 @@
 ;   (jdaad.js:2396) where its four substitution sites pass true.
 ;   SUBSTITUTION (A = '_' or '@') strips a leading "a ", "an ",
 ;   "some " or "the " and NOTHING else, case-insensitively (msx2daad
-;   uses strnicmp). The matcher is objname_article, at the foot of
-;   ddbtext.asm - see there for the set's evidence and its accepted
-;   limits. Any other first word survives: an object text of "rusty
+;   uses strnicmp). The matcher is objname_article, further down this
+;   file - see there for the set's evidence and its accepted limits.
+;   Any other first word survives: an object text of "rusty
 ;   sword" substitutes as "rusty sword", not "sword". That is a
 ;   deliberate departure from jDAAD, which removes the first word
 ;   whatever it is ("In English, we have to remove the first word,
