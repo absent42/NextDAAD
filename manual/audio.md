@@ -134,14 +134,14 @@ An effect's length is no longer capped by memory - a WAV of any size
 plays. Files up to 24K per channel stage entirely into a fixed area
 kept for the purpose; once staged they replay instantly and for free,
 however many times you trigger them and whatever else is loaded. A
-larger file streams from the card as it plays instead, and it keeps its
-place on the channel that played it: the allocator remembers which
-channel last played the number, and a repeat trigger goes straight back
-to that channel and picks the file up where it left it, without opening
-or searching the card again. All a repeat costs is refilling the
-channel's window from the start - a fraction of the first play's work,
-and no rummaging at all. Budget that refill for anything over 24K;
-anything under it is free to fire as often as you like.
+larger file streams from the card as it plays instead, and the channel
+that played it keeps hold of it: the allocator remembers which channel
+last played the number, and a repeat trigger goes straight back to that
+channel and restarts the effect from the beginning without re-opening
+it or searching the card again. All a repeat costs is refilling the
+channel's window - a fraction of the first play's work, and no
+rummaging at all. Budget that refill for anything over 24K; anything
+under it is free to fire as often as you like.
 
 The saving only survives while the channel is still holding the file.
 Play a different effect on that channel - or let the allocator steal it

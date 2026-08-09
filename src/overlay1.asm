@@ -2618,7 +2618,13 @@ h_sfx:                          ; 18: B = n, C = sub-command
                                 ; only the window re-staging is owed
     call sfx_stop_wait          ; the re-stage overwrites a live window
     ld a, e
-    call sfx_rewind_call
+    push bc                     ; B is the effect number and this call
+    call sfx_rewind_call        ; DOES NOT preserve it: sfx_stream_rewind
+    pop bc                      ; runs the staging tail, whose LDIR and
+                                ; esx_fread both own BC. Every CF exit is
+                                ; downstream of them, so the retry below
+                                ; would otherwise build a filename from
+                                ; a read count. (pop bc leaves CF)
     jr nc, .started
                                 ; the cached path failed and its refusal
                                 ; funnel has already invalidated the
@@ -2772,8 +2778,14 @@ sfx_stop_wait:
 ; A and CF cross both trampolines untouched (nextreg writes neither), and
 ; data_save/data_map_page/data_restore corrupt AF only, so the callee's
 ; verdict comes back intact. HL survives them too, which is what lets the
-; target address be loaded before the bracket; BC survives (nr_read
-; preserves it), which is what lets h_sfx keep the effect number in B.
+; target address be loaded before the bracket.
+;
+; BC IS THE CALLEE'S, NOT THIS BRACKET'S. The bracket itself preserves it
+; (nr_read pushes it), but that says nothing about what runs inside:
+; sfx_alloc preserves B deliberately, and sfx_stream_rewind does NOT -
+; it runs the staging tail, whose LDIR and esx_fread both own BC. A
+; caller keeping a value in BC across a call through here must know
+; which callee it is asking for, and h_sfx pushes around the rewind.
 sfx_alloc_call:                 ; A = allocator request code
     ld hl, sfx_alloc
     jr sfx_page_bracket
@@ -3342,9 +3354,15 @@ sfxReq:     db 0                ; h_sfx: the allocator request code for
                                 ; this trigger (0 auto, 1/2 pin a channel)
 sfxSel:     db 0                ; h_sfx: the allocator's verdict - bit 0 =
                                 ; the resolved channel (0 = channel 1),
-                                ; bit 7 = free rewind. aud_load_wav reads
-                                ; bit 0 for the stop bit it files and the
-                                ; block it stages into
+                                ; bit 7 = free rewind (the window already
+                                ; holds this effect whole), bit 6 = cached
+                                ; rewind (this channel still holds the
+                                ; handle and hot filemap of this streamed
+                                ; file), neither = a full open. At most
+                                ; one of 6/7 is ever set. sfx_stop_wait
+                                ; and aud_load_wav read bit 0 for the stop
+                                ; bit they file and the block they stage
+                                ; into
 
 ; --- WAV sample loader (SP8) ----------------------------------------
 

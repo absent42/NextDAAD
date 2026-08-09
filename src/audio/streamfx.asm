@@ -756,10 +756,17 @@ sfx_stream_open:
                                  ; NOT a free rewind: bit 3 COMPLETE is
                                  ; clear on this arm, and sfx_alloc's
                                  ; free-rewind test demands both. A repeat
-                                 ; trigger therefore re-runs the whole
-                                 ; open, and the eviction at .fresh above
-                                 ; closes the cached handle first, so
-                                 ; re-opening leaks nothing.
+                                 ; trigger of this number on this channel
+                                 ; takes the CACHED REWIND instead
+                                 ; (sfx_stream_rewind): the handle left
+                                 ; held here and the hot filemap beside it
+                                 ; are exactly what lets it skip F_OPEN,
+                                 ; the chunk walk, DISK_FILEMAP and
+                                 ; F_FSTAT and re-stage the window alone.
+                                 ; A trigger of a DIFFERENT number re-runs
+                                 ; the whole open, and the eviction at
+                                 ; .fresh above closes this handle first,
+                                 ; so re-opening leaks nothing.
     or a
     ret
 .frag:
@@ -1090,13 +1097,16 @@ sfx_alloc:
 .hit:
     ld d, a                          ; the verdict bit survives the
                                      ; parameter copy below
-    ; The audReqSmp* start parameters are SHARED by both channels
-    ; (aud_tick's header states the limitation): the values standing in
-    ; them may be the OTHER channel's last load. A free rewind skips
-    ; aud_load_wav, which is what would otherwise have re-committed
-    ; them, so re-commit here from this channel's OWN latches -
-    ; aud_smp_start wrote SMPB_CTCCTRL/CTCTC and SMPB_LEN from the
-    ; mailbox the last time this very effect started here.
+    ; Reached by BOTH rewind verdicts, and both need this. The audReqSmp*
+    ; start parameters are SHARED by the two channels (aud_tick's header
+    ; states the limitation), so the values standing in them may be the
+    ; OTHER channel's last load. aud_load_wav is what would ordinarily
+    ; re-commit them, and neither rewind goes through it - the free one
+    ; touches nothing at all, the cached one enters the staging tail past
+    ; the point where aud_ctc_params would have run. So re-commit here
+    ; from this channel's OWN latches: aud_smp_start wrote
+    ; SMPB_CTCCTRL/CTCTC and SMPB_LEN from the mailbox the last time this
+    ; very effect started on this very channel.
     ld a, (ix+SMPB_CTCCTRL)
     ld (audReqSmpCtrl), a
     ld a, (ix+SMPB_CTCTC)

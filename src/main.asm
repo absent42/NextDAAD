@@ -200,11 +200,14 @@ boot_data_init:
 ; both callers map it first.
 ;
 ; Generic (HL) rather than one trampoline per callee because the resident
-; tail is the scarcest pool in the project: aud_sfx_init and sfx_alloc
-; share these 14 bytes. sfx_open_tramp stays separate - sfx_stream_open
-; takes its parameters in A/L/DE/IX, so HL is not free there.
+; tail is the scarcest pool in the project: aud_sfx_init, sfx_alloc and
+; sfx_stream_rewind all share these 14 bytes. sfx_open_tramp stays
+; separate - sfx_stream_open takes its parameters in A/L/DE/IX, so HL is
+; not free there.
 ; Corrupts DE. A and F cross both ways untouched: nextreg (ED 91) writes
-; neither, so a callee's return value and carry survive the unmap.
+; neither, so a callee's return value and carry survive the unmap. Every
+; other register is whatever the CALLEE leaves - this is a plain call
+; with a page swap around it, not a preserving wrapper.
 sfx_page_call:
     nextreg NR_MMU7, SFX_PAGE
     ld de, .back
