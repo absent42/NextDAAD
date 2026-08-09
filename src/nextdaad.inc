@@ -530,11 +530,11 @@ AUD_CTC_CW256   equ $A5     ; %10100101: as CW16 but prescaler /256
 ; a fixed constant would clamp sharply on the faster clocks
 AUD_RATE_MIN    equ 3500    ; validated sample-rate floor (aud_load_wav)
 AUD_RATE_MAX    equ 20000   ; the 1K ring holds > 1 frame of this rate
-; AUD_SMP_MAX (the old 1MB sample payload ceiling) is DELETED with SP18
-; item 7 Task 5: effects stream through a fixed 24K window, so no design
-; element caps effect length against RAM any more. aud_load_wav keeps
-; only the 24-bit sanity bound (data size byte 3 nonzero = absurd, size
-; 0 = malformed).
+; Effects stream through a fixed 24K window: no design element caps
+; effect length against RAM (AUD_SMP_MAX, the old 1MB payload ceiling,
+; went with it - SP18 item 7 Task 5). aud_load_wav keeps only the
+; 24-bit sanity bound (data size byte 3 nonzero = absurd, size 0 =
+; malformed).
 AUD_STRTAB_MAX  equ 128     ; stream page-table capacity (128 x 8K =
                             ; 1MB per stream; one table per client)
 SMP_FLOOR_FIRST equ 25      ; audio floor: banks 25-27. Since SP18 item 7
@@ -598,8 +598,11 @@ SMPB_STAMP    equ 31   ; dw: frameCounter when aud_smp_start last started
                        ;     an effect here. The allocator's tie-break -
                        ;     between two equally stealable channels the
                        ;     OLDEST start loses. Read as an unsigned
-                       ;     frameCounter-minus-stamp age, so the 16-bit
-                       ;     wrap (~21.8 min) needs no special case.
+                       ;     frameCounter-minus-stamp age: ages beyond
+                       ;     65535 frames (~21.8 min) alias, so oldest-
+                       ;     first may steal the wrong channel - bounded
+                       ;     (a steal, not a hang) and accepted, not a
+                       ;     case needing special-casing here.
 SMPB_KEEP     equ 33   ; db: effect number this channel's window holds
                        ;     (0 = nothing). The OVERLAY-visible half of
                        ;     the keep-last cache: SFXS_KEEP is the same

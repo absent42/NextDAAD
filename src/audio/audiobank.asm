@@ -537,9 +537,14 @@ aud_smp_start:
     ld hl, (frameCounter)       ; stamp the start: the allocator steals the
     ld (ix+SMPB_STAMP), l       ; OLDEST of two equally stealable channels,
     ld (ix+SMPB_STAMP+1), h     ; and this is what "oldest" is measured from
-    ; play starts at the ring base; the CTC is not running yet, so the
-    ; resident cursor write below needs no DI bracket. Ring base and the
-    ; cursor address are both channel-block members (SMPB_RINGH/PLAYPTR).
+    ; play starts at the ring base; the CTC is not running yet on a cold
+    ; start, OR mid-restart (a same-tick COMPLETE re-trigger files a start
+    ; with no stop, so this can also run against a live CTC) where a torn
+    ; cursor write stays inside the ring for both ring bases (high byte
+    ; $7C-$7F / $44-$47, low 00) - at most a one-byte skip / one-tick-
+    ; early audio, bounded - so the resident cursor write below needs no
+    ; DI bracket either way. Ring base and the cursor address are both
+    ; channel-block members (SMPB_RINGH/PLAYPTR).
     ld h, (ix+SMPB_RINGH)
     ld l, 0                     ; HL = ring base
     ld e, (ix+SMPB_PLAYPTR)
@@ -1172,7 +1177,8 @@ aud_smp_copy:
 ; no business holding page-48 code space, which is this sub-project's
 ; binding budget; the move gave that space back to the per-frame pump.
 ; overlay1's aud_boot_probe now reaches it through the resident
-; aud_sfx_init_tramp.)
+; sfx_page_call trampoline (main.asm) - Task 12 generalised the old
+; per-callee aud_sfx_init_tramp into this one shared (HL) routine.)
 
 ; Copy scratch, in page-48 CODE space (slot 6, mapped throughout aud_tick).
 ; aud_smp_copy stages the source position + copy plan here BEFORE it windows a

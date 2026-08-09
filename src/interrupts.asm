@@ -498,7 +498,8 @@ sfbCount:       db 0        ; GAME.SFB effect count ((table[0]-$D000)/2);
 ; Bits 2/3 are the exact mirror of audRequest bits 7/6 (channel 1's
 ; stop/start), consumed stop-before-start in the same pass, and are
 ; equally safe to halt-wait on from mainline - video.asm's entry abort
-; files bit 7 here and bit 2 there and waits until BOTH are clear.
+; files audRequest bit 7 (channel 1) and audRequest2 bit 2 (channel 2,
+; this byte) and waits until BOTH are clear.
 ; The audReqSmp* PARAMETER cells below are shared by both channels; see
 ; the limitation stated at aud_tick's header (audiobank.asm).
 ; Edge-triggered: aud_tick clears each bit it consumes (single res,

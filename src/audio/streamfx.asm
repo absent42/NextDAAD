@@ -1728,8 +1728,10 @@ msgSfxRow: db "SFX=", 0
 ; (warm or cold) boot and never again - and page-48 code space is the
 ; binding budget of this sub-project, competed for by the per-frame pump.
 ; This page has thousands of bytes free. The cost is the resident
-; aud_sfx_init_tramp (main.asm), needed because overlay1's aud_boot_probe
-; is the only caller and overlay1 shares the slot-7 window with this page.
+; sfx_page_call trampoline (main.asm, shared with sfx_alloc and
+; sfx_stream_rewind since Task 12), needed because overlay1's
+; aud_boot_probe is the only caller here and overlay1 shares the slot-7
+; window with this page.
 ;
 ; Called with slot 6 = AUD_PAGE_LO (channel 1's block and both window
 ; descriptors are page-48 data) and slot 7 = SFX_PAGE. Runs with
@@ -1791,6 +1793,17 @@ aud_sfx_init:
     ld (ix+SMPB_DEPTH), 0
     ld (ix+SMPB_DEPTH+1), 0
     ld (ix+SMPB_KEEP), 0
+    ; SFXS_HANDLE cold-reset hardening (final review Minor 3): sfxStrm0/1's
+    ; SFXS_HANDLE start at $FF via the assembly-time initialiser (below),
+    ; which only applies to a true cold load - a warm re-entry (nextreg
+    ; 2,1, dirty RAM) leaves whatever handle number the previous session
+    ; last held. A stale handle here can alias an incoming one, and the
+    ; eviction at sfx_stream_open:.fresh would then close the FRESH handle
+    ; instead of the stale one. Poison both explicitly, every boot, for
+    ; the same reason SMPB_FLAGS/KEEP are cleared above.
+    ld a, $FF
+    ld (sfxStrm0+SFXS_HANDLE), a
+    ld (sfxStrm1+SFXS_HANDLE), a
     ; Withdraw the audio floor from the bank allocator, once, at boot.
     ; Banks 25-27 are the two channels' effect windows PERMANENTLY as of
     ; SP18 item 7 Task 5; before that they were a first-come floor
@@ -1898,9 +1911,12 @@ sfxStgIdx:    db 0               ; staging loop: window page index
 ; points at its own group (seeded by aud_sfx_init) and every access here
 ; is IY-relative through that pointer, so one body serves both channels.
 ; Layout: the SFXS_*/SFXC_* equates at the top of this file.
-; Assembly-time initialisers rather than a boot-time fill: $FF in
-; SFXS_HANDLE is "no cached stream", which is the correct cold state, and
-; everything else is zero.
+; Assembly-time initialisers for the true cold load: $FF in SFXS_HANDLE is
+; "no cached stream", the correct cold state, and everything else is
+; zero. aud_sfx_init ALSO pokes SFXS_HANDLE to $FF explicitly on every
+; boot (warm included) - the assembly-time value alone survives a true
+; cold load but not a warm re-entry's dirty RAM, and a stale handle here
+; could alias an incoming one (final review Minor 3).
 sfxStrm0:
     db $FF                       ; SFXS_HANDLE
     db 0                         ; SFXS_KEEP

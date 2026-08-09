@@ -7017,8 +7017,16 @@ vid_stream_open_body:
     jr c, vid_stream_open_openfail
     ld a, (vidHandle)            ; F_FSTAT - legal AFTER FILEMAP,
     ld ix, vidFstatBuf           ; before the card streams
-    rst $08
-    db ESX_F_FSTAT
+    call esx_fstat                ; bracketed (fix wave, SP18 item 7
+                                 ; final review Finding 1): the Task 4
+                                 ; exemption claimed vid_run_orch_body
+                                 ; only reaches this open cluster AFTER
+                                 ; vid_run_entry_body's sample-channel
+                                 ; abort - false, vid_play runs the
+                                 ; whole open cluster FIRST and only
+                                 ; then jp vid_run, so a STREAMING
+                                 ; channel's refiller could burst CMD18
+                                 ; here with cardBusy clear
     jr c, vid_stream_open_openfail
     ld hl, (vidFstatBuf+7)
     ld (vidSizeLo), hl
@@ -7058,8 +7066,11 @@ vid_raw_setup:
     ld a, (vidHandle)
     ld ix, vidFilemapBuf
     ld de, VID_FILEMAP_ENT
-    rst $08
-    db ESX_DISK_FILEMAP
+    call esx_filemap              ; bracketed (fix wave, SP18 item 7
+                                 ; final review Finding 1 - see the
+                                 ; F_FSTAT call above for the corrected
+                                 ; ordering); esx_filemap preserves
+                                 ; A/F/DE/HL exactly as raw esxDOS would
     ret c                        ; A = esxDOS error, CF set
     ; DE = unused entries, HL = address past last written entry
     ld (vidCardFlags), a
