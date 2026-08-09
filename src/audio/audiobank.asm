@@ -28,11 +28,26 @@
 ; bytes are resident at $8xxx, visible from ISR context regardless of
 ; the slot 6/7 mapping. Each set bit is consumed with a single res on
 ; the resident byte - atomic against mainline because the ISR runs
-; with interrupts off. Consumption order is 7 (stop sample), 6 (start
-; sample), 5 (init effects), 3 (stop music), 4 (start music), 2 (stop
-; effect), 1 (play effect), 0 (beep) so that a stale stop filed while
-; audio was off can never kill a same-frame start. The sample refeed
-; (aud_smp_tick) runs every tick regardless of audFlags.
+; with interrupts off. Consumption order across BOTH mailbox bytes is
+; audRequest2 0 (stop stream), 1 (start stream), 2 (stop sample ch2),
+; 3 (start sample ch2), then audRequest 7 (stop sample ch1), 6 (start
+; sample ch1), 5 (init effects), 3 (stop music), 4 (start music), 2
+; (stop effect), 1 (play effect), 0 (beep) so that a stale stop filed
+; while audio was off can never kill a same-frame start - the rule is
+; per channel and per client, and both sample channels obey it.
+; The sample refeed (aud_smp_tick, once per channel) runs every tick
+; regardless of audFlags.
+;
+; SHARED START PARAMETERS - A STATED LIMITATION (SP18 item 7 Task 11).
+; The start bits are per channel but the parameter cells they read are
+; NOT: audReqSmpCtrl/Tc/Len/LenHi/Loop are single copies. Both start
+; bits are consumed in ONE pass through this chain, reading the same
+; cells, so two starts filed in the same frame would take the same
+; rate, length and loop mode. Nothing does that today (mainline files
+; one start per condact execution) and the allocator that picks a
+; channel files one start at a time, so the ordering that matters -
+; stop before start, per channel - holds regardless. Filing two starts
+; in one frame would need a second parameter set first.
 ;
 ; Player gate: PLY_AKY_PLAY runs when audFlags bit 0 (music) OR bit 2
 ; (effect active) is set - the player is also what advances PSG-3
@@ -63,17 +78,39 @@ aud_tick:
     jr z, .no2start
     res 1, (hl)
     call aud_ays_start
+    ld hl, audRequest2
 .no2start:
+    ; bits 2/3: SAMPLE CHANNEL 2 stop/start (SP18 item 7 Task 11), the
+    ; exact mirror of audRequest bits 7/6 for channel 1 below - same
+    ; stop-before-start rule, same single-res consumption, same
+    ; halt-wait compatibility for a mainline filer that waits for its
+    ; bit to clear (video.asm's entry abort files bits from BOTH bytes
+    ; and waits on both). IX is seeded once for the pair: aud_smp_stop
+    ; and aud_smp_start both preserve it, and nothing between them
+    ; touches it.
+    ld ix, sfxChan1
+    bit 2, (hl)
+    jr z, .no2s2
+    res 2, (hl)
+    call aud_smp_stop
+    ld hl, audRequest2
+.no2s2:
+    bit 3, (hl)
+    jr z, .no2s3
+    res 3, (hl)
+    call aud_smp_start
+.no2s3:
     ld hl, audRequest
     ld a, (hl)
     or a
     jp z, .noreq
     ; bit 7: stop sample (before bit 6: a stale stop must not kill a
-    ; same-frame start - mirrors the bit 3/4 music rule)
+    ; same-frame start - mirrors the bit 3/4 music rule). IX is seeded
+    ; once for the pair, as for channel 2 above.
+    ld ix, sfxChan0
     bit 7, (hl)
     jr z, .no7
     res 7, (hl)
-    ld ix, sfxChan0
     call aud_smp_stop
     ld hl, audRequest
 .no7:
@@ -81,7 +118,6 @@ aud_tick:
     bit 6, (hl)
     jr z, .no6
     res 6, (hl)
-    ld ix, sfxChan0
     call aud_smp_start
     ld hl, audRequest
 .no6:
@@ -202,8 +238,12 @@ aud_tick:
     ld h, 0
     ld (audBeepFrames), hl
 .noreq:
-    ld ix, sfxChan0
-    call aud_smp_tick           ; sample refeed (self-gated on SMPB_FLAGS)
+    ld ix, sfxChan0             ; both sampled-effect channels are pumped
+    call aud_smp_tick           ; every tick, each self-gated on its own
+    ld ix, sfxChan1             ; SMPB_FLAGS bit 0. IX must be reseeded:
+    call aud_smp_tick           ; aud_smp_tick preserves it, but the AKY
+                                ; player calls above do not, so neither
+                                ; seed can be hoisted out of this chain.
                                 ; (the SFX stream refiller runs after this
                                 ; tick returns - the dispatch is sited in
                                 ; im2_isr, see its comment there)
@@ -904,9 +944,23 @@ aud_smp_copy:
     add hl, de                  ; restore HL = available
     ld (smpCpTo), hl
  IFDEF DEBUG
-    ld hl, (sfxUnderrun0)
+    ; Per-channel underrun counter. Which block IX points at is the only
+    ; thing that distinguishes the two channels in here, so compare it
+    ; rather than infer anything from where the blocks happen to sit
+    ; (sfxChan0 is page-48 data, sfxChan1 is resident).
+    push ix
+    pop hl
+    ld de, sfxChan0
+    or a
+    sbc hl, de
+    ld hl, sfxUnderrun0
+    jr z, .uctr
+    ld hl, sfxUnderrun1
+.uctr:
+    inc (hl)                    ; 16-bit increment through (HL)
+    jr nz, .snap
     inc hl
-    ld (sfxUnderrun0), hl
+    inc (hl)
  ENDIF
 .snap:
     ld a, (ix+SMPB_TABIDX)
@@ -1132,13 +1186,15 @@ smpCpBlk:   db 0    ; 512-block index inside the page before a segment,
                     ; held across the advance for the DEPTH debit
 
  IFDEF DEBUG
-; SFX= report row, second field (SP18 item 7 Task 6). Counts the copies
-; on which the streaming frontier clamp above was the binding limit -
-; a real underrun, i.e. the refiller could not keep the window ahead of
-; the DAC. Page-48 data because the PUMP writes it and cannot reach
-; SFX_PAGE; the row printer that reads it lives beside the other two
+; SFX= report row, second field of each channel's triple (SP18 item 7
+; Task 6, per channel since Task 11). Counts the copies on which the
+; streaming frontier clamp above was the binding limit - a real underrun,
+; i.e. the refiller could not keep that channel's window ahead of its
+; DAC. Page-48 data because the PUMP writes them and cannot reach
+; SFX_PAGE; the row printer that reads them lives beside the other
 ; counters on SFX_PAGE and runs with page 48 still in slot 6.
 sfxUnderrun0: dw 0
+sfxUnderrun1: dw 0
  ENDIF
 
 ; Per-channel sampled-effect pump state (SP18 item 7), SMPB_* offsets

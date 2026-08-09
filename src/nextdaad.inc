@@ -591,7 +591,9 @@ SMPB_CTCTC    equ 24   ; db: latched CTC time constant
 SMPB_WINTAB   equ 25   ; dw: address of this channel's window descriptor
 SMPB_DEPTH    equ 27   ; dw: staged-minus-consumed 512-byte window blocks
 SMPB_STRM     equ 29   ; dw: address of this channel's stream cell group
-                       ;     (SFX_PAGE); Task 11 parameterises through it
+                       ;     (SFX_PAGE, SFXS_* layout in streamfx.asm);
+                       ;     the open and the refiller hold it in IY, which
+                       ;     is how one body serves both channels
 SMPB_SIZE     equ 31   ; (was 14 before SP18 item 7 Task 2's parameterisation)
 ; SMPB_FLAGS bit semantics (settled by the SP18 item 7 Task 5 review
 ; ruling: bits 0/1 are PLAYBACK state, bits 2-4 describe the WINDOW and
@@ -621,9 +623,10 @@ SMPB_SIZE     equ 31   ; (was 14 before SP18 item 7 Task 2's parameterisation)
 ; rest; only sfx_stream_open's refusal funnel and an eviction by a
 ; DIFFERENT effect number invalidate the cache (bits 2-4 all cleared).
 ; Distinguishing a stopped-but-cached channel from an idle/empty one is
-; therefore: bit 3 set = a COMPLETE window is cached; sfxHandle0 != $FF =
-; a stream (handle + hot filemap) is cached, with sfxKeep0 holding its
-; effect number; neither = idle/empty. Tasks 6 and 12 read exactly those.
+; therefore: bit 3 set = a COMPLETE window is cached; the channel's own
+; SFXS_HANDLE != $FF = a stream (handle + hot filemap) is cached, with
+; SFXS_KEEP holding its effect number; neither = idle/empty. Both stream
+; cells are per channel, reached through SMPB_STRM.
 
 ; --- SP18 item 7: the per-channel effect window ------------------------
 ; Each channel consumes its effect through a CIRCULAR window of

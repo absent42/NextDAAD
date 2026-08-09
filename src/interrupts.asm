@@ -444,6 +444,15 @@ ctc2_isr:
 smp2PlayPtr:  dw AUD_STAGE2
 smp2WritePtr: dw AUD_STAGE2
 
+; Channel 2's pump state block, sfxChan1, is resident too but is NOT
+; declared here: this file is entirely pre-anchor (included ahead of
+; engine.asm's ALIGN 256) and the pre-flags pad it draws on has no room
+; for a 31-byte block. It sits in the post-anchor resident tail, declared
+; at the foot of main.asm beside aud_sfx_init_tramp. Channel 1's block,
+; sfxChan0, is page-48 data (audiobank.asm) - the asymmetry is a budget
+; decision and nothing else, since every aud_smp_* routine reaches its
+; block IX-relative and so does not care which it gets.
+
 audEnable: db 0             ; sticky by design: armed once by the first
                             ; audio use, never re-cleared - the cheap
                             ; ISR fast path only serves pre-first-audio
@@ -478,12 +487,22 @@ smpLoadedNum:   db $FF      ; keep-last: sample number resident in the
 sfbCount:       db 0        ; GAME.SFB effect count ((table[0]-$D000)/2);
                             ; 0 = no bank loaded - h_sfx bounds guard
 
-; SP10 banked-stream request mailbox (client 2: AYS streamed song).
+; SP10 banked-stream request mailbox (client 2: AYS streamed song), and
+; since SP18 item 7 Task 11 also sampled-effect CHANNEL 2's stop/start.
 ; Streams are music, so their stop/start mirror audRequest bits 3/4 and
 ; are consumed BEFORE the audRequest chain in aud_tick (a stale stop
 ; filed while audio was off can never kill a same-frame start).
-; audRequest2 bits: 0 = stop stream, 1 = start stream. Edge-triggered:
-; aud_tick clears each bit it consumes (single res, atomic vs mainline).
+; audRequest2 bits:
+;   0 = stop stream          2 = stop sample channel 2
+;   1 = start stream         3 = start sample channel 2
+; Bits 2/3 are the exact mirror of audRequest bits 7/6 (channel 1's
+; stop/start), consumed stop-before-start in the same pass, and are
+; equally safe to halt-wait on from mainline - video.asm's entry abort
+; files bit 7 here and bit 2 there and waits until BOTH are clear.
+; The audReqSmp* PARAMETER cells below are shared by both channels; see
+; the limitation stated at aud_tick's header (audiobank.asm).
+; Edge-triggered: aud_tick clears each bit it consumes (single res,
+; atomic vs mainline).
 audRequest2: db 0
 audReq2Loop: db 0          ; start-stream: 1 = loop, 0 = play once
 

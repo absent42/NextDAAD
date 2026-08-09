@@ -38,6 +38,69 @@
     MMU 7, SFX_PAGE, OVL_ORG
 sfx_page_base:
 
+; --- per-channel stream cell group (SP18 item 7 Tasks 5/6, parameterised
+; by Task 11) ----------------------------------------------------------
+; One group per channel, both on this page. SMPB_STRM in the channel
+; block holds the group's address (seeded by aud_sfx_init), and IY holds
+; it for the duration of any routine here that touches per-channel state
+; - which is how one body serves both channels rather than being forked.
+;
+; The group has two halves. The FRONT half is the channel's own stream
+; bookkeeping. The BACK half (SFXS_CTX) is its RUN CONTEXT: the hot
+; filemap plus the card-side cursor. That has to be per-channel because
+; the two channels stream different files, but the SD routines below are
+; byte-for-byte clones of the video player's silicon-proven bodies and
+; address their cells absolutely - so instead of rewriting them, the
+; refiller SWAPS one channel's context into those shared working cells
+; for the duration of its leg and copies it back out (sfx_ctx_load /
+; sfx_ctx_save). The working cells are therefore ISR-only scratch, and
+; sfx_stream_open (mainline) writes the channel's context DIRECTLY, never
+; through them - which is what keeps a mainline open on one channel from
+; corrupting a live refill on the other.
+SFX_HOT_ENT   equ 8              ; same streaming ceiling as video
+SFXS_HANDLE   equ 0              ; db: open handle while a stream is
+                                 ;     cached on this channel; $FF none
+SFXS_KEEP     equ 1              ; db: effect number cached here
+SFXS_FILEBLK  equ 2              ; dw: total card blocks in the file,
+                                 ;     from F_FSTAT (16 bits covers any
+                                 ;     file up to 32 MB; the open refuses
+                                 ;     anything from 16 MB up as absurd)
+SFXS_STAGED   equ 4              ; dw: blocks staged so far (producer)
+SFXS_DATAOFF  equ 6              ; dw: file offset of the first payload
+                                 ;     byte
+SFXS_PROD     equ 8              ; db: window block (0-47) the producer
+                                 ;     writes next; equals (consumer
+                                 ;     block + DEPTH) mod 48 and staged
+                                 ;     mod 48, both of which the credit
+                                 ;     step keeps true
+SFXS_SEEK     equ 9              ; db: 1 = the run cursor still has to be
+                                 ;     seeked to SFXS_STAGED (set by the
+                                 ;     open, whose staging bypassed the
+                                 ;     run list)
+SFXS_DELIV    equ 10             ; db: 1 = this stream has delivered at
+                                 ;     least one block through the wire
+SFXS_FAILCNT  equ 11             ; db: consecutive failed ticks
+ IFDEF DEBUG
+SFXS_BLKS     equ 12             ; dw: blocks refilled (SFX= row)
+SFXS_FAILS    equ 14             ; db: failed ticks, saturating (SFX= row)
+SFXS_CTX      equ 15
+ ELSE
+SFXS_CTX      equ 12
+ ENDIF
+; Run context, laid out to match the shared working cells EXACTLY (the
+; swap is one LDIR each way, so the orders must not drift; the ASSERT at
+; the working cells pins it).
+SFXC_MAP      equ 0                    ; ds SFX_HOT_ENT*6
+SFXC_IDX      equ SFX_HOT_ENT*6        ; db
+SFXC_CNT      equ SFX_HOT_ENT*6+1      ; db
+SFXC_ADDRLO   equ SFX_HOT_ENT*6+2      ; dw
+SFXC_ADDRHI   equ SFX_HOT_ENT*6+4      ; dw
+SFXC_BLK      equ SFX_HOT_ENT*6+6      ; dw
+SFXC_FLAGS    equ SFX_HOT_ENT*6+8      ; db (card id + addressing unit)
+SFX_CTX_SIZE  equ SFX_HOT_ENT*6+9
+SFX_STRM_SIZE equ SFXS_CTX + SFX_CTX_SIZE
+    ASSERT SFXS_CTX + SFXC_FLAGS < 128  ; IY displacements are signed
+
 ; Advance to the next hot filemap run. CF set = map exhausted.
 ; Corrupts AF, C, DE, HL.
 ; Clone of video.asm's vid_next_run_h (:2955-2988, commit 29be065).
@@ -319,27 +382,51 @@ sfx_mf_restore:
 ; through overlay1's keep-last check. A larger file stages its first
 ; SFX_WIN_BYTES, is flagged STREAMING, and keeps its handle and hot
 ; filemap as this channel's cached stream for the refiller.
+;
+; PER-CHANNEL ADDRESSING (Task 11). Every cell this routine owns lives in
+; the channel's own group, reached IY-relative through SMPB_STRM - that
+; is what makes one body serve both channels. Two riders:
+;   - IY IS RELOADED FROM sfxCellPtr AFTER EVERY esxDOS CALL. The esxDOS
+;     register contract does not promise IY back, and this path makes a
+;     dozen calls. IX gets the same treatment through sfxChanPtr, for the
+;     different reason that esxDOS reads IX as its buffer register.
+;   - the handle is read from sfxNewHandle, not from the group, once it
+;     has been adopted at .fresh: the two hold the same value from there
+;     to the end, and the plain absolute read needs no live IY.
+; The RUN CONTEXT (hot filemap, run cursor) is written straight into the
+; channel's group here, NEVER into the shared working cells the refiller
+; swaps through. That is load-bearing: this runs from mainline with
+; cardBusy clear between esxDOS calls, so a frame ISR can land in the
+; middle of it and refill the OTHER channel, which owns those working
+; cells while it does.
 sfx_stream_open:
     ld (sfxOpenNum), a
     ld (sfxChanPtr), ix
-    ld (sfxDataOff0), de
     ld (sfxPayLen), bc
     ld a, h
     ld (sfxPayLenHi), a
     ld a, l
     ld (sfxNewHandle), a
+    ld l, (ix+SMPB_STRM)         ; IY = this channel's stream cell group
+    ld h, (ix+SMPB_STRM+1)
+    ld (sfxCellPtr), hl
+    push hl
+    pop iy
+    ld (iy+SFXS_DATAOFF), e
+    ld (iy+SFXS_DATAOFF+1), d
     ; cache eviction: a previous STREAMING open on this channel left its
     ; handle cached (one cached stream per channel). Close it before
     ; adopting the new one - esxDOS handles are a small pool and a
     ; re-trigger must not leak one per open.
-    ld a, (sfxHandle0)
+    ld a, (iy+SFXS_HANDLE)
     inc a
     jr z, .fresh
     dec a
     call esx_fclose
+    ld iy, (sfxCellPtr)
 .fresh:
     ld a, (sfxNewHandle)
-    ld (sfxHandle0), a
+    ld (iy+SFXS_HANDLE), a
     ; --- filemap ritual, in the sector-cache ordering law's exact order:
     ; F_SEEK 0, a one-byte F_READ to prime the touched-file cache, F_SEEK
     ; 0 again, DISK_FILEMAP, and only THEN F_FSTAT. video.asm's
@@ -348,19 +435,20 @@ sfx_stream_open:
     ; the lot and the frame-ISR refiller can never overlap one.
     call sfx_seek0
     jp c, .refuse
-    ld a, (sfxHandle0)
+    ld a, (sfxNewHandle)
     ld ix, sfxProbeByte
     ld bc, 1
     call esx_fread
     jp c, .refuse
     call sfx_seek0
     jp c, .refuse
-    ld a, (sfxHandle0)
+    ld a, (sfxNewHandle)
     ld ix, sfxColdMap
     ld de, SFX_COLD_ENT
     call esx_filemap
     jp c, .refuse
-    ld (sfxCardFlags), a
+    ld iy, (sfxCellPtr)
+    ld (iy+SFXS_CTX+SFXC_FLAGS), a
     ld a, e
     or d
     jp z, .frag                  ; buffer full: completeness unprovable.
@@ -385,24 +473,31 @@ sfx_stream_open:
                                  ; caller fall back to the AY effect -
                                  ; the file stays playable by loading
                                  ; nothing, and authors defrag
-    ld (sfxRunCnt), a
+    ld (iy+SFXS_CTX+SFXC_CNT), a
     xor a
-    ld (sfxRunIdx), a
-    ; the hot map is what the refiller walks: copy the runs across
+    ld (iy+SFXS_CTX+SFXC_IDX), a
+    ; the hot map is what the refiller walks: copy the runs into THIS
+    ; channel's run context (never the shared working cells - see the
+    ; routine header)
     ld a, b
     add a, a
     add a, b
     add a, a                     ; entries * 6 (<= 48)
     ld c, a
     ld b, 0
+    push iy
+    pop de
+    ld hl, SFXS_CTX+SFXC_MAP
+    add hl, de
+    ex de, hl                    ; DE = this channel's hot filemap
     ld hl, sfxColdMap
-    ld de, sfxHotMap
     ldir
     ; F_FSTAT - legal only after the filemap, per the ordering law
-    ld a, (sfxHandle0)
+    ld a, (sfxNewHandle)
     ld ix, sfxFstatBuf
     call esx_fstat
     jp c, .refuse
+    ld iy, (sfxCellPtr)
     ld a, (sfxFstatBuf+10)       ; size >= 16 MB: absurd, refuse
     or a
     jp nz, .refuse
@@ -423,12 +518,14 @@ sfx_stream_open:
     ld h, a                      ; HL = (size + 511) >> 8
     srl h
     rr l                         ; HL = (size + 511) >> 9 (<= 32768)
-    ld (sfxFileBlk0), hl
+    ld (iy+SFXS_FILEBLK), l
+    ld (iy+SFXS_FILEBLK+1), h
     ; the consumer anchor has to land INSIDE the window: a WAV whose
     ; payload starts more than a whole window into the file (pathological
     ; leading chunks) cannot be played by a design that stages verbatim
     ; from offset 0. Refuse rather than index off the end of the list.
-    ld hl, (sfxDataOff0)
+    ld l, (iy+SFXS_DATAOFF)
+    ld h, (iy+SFXS_DATAOFF+1)
     ld de, SFX_WIN_BYTES
     or a
     sbc hl, de
@@ -443,7 +540,8 @@ sfx_stream_open:
     ; payload in a 1000-byte file would stage COMPLETE and the pump would
     ; play 99000 bytes of stale window content. Refuse, exactly as
     ; before, which reaches the caller's AY fallback.
-    ld hl, (sfxDataOff0)
+    ld l, (iy+SFXS_DATAOFF)
+    ld h, (iy+SFXS_DATAOFF+1)
     ld bc, (sfxPayLen)
     add hl, bc
     ld a, (sfxPayLenHi)
@@ -517,7 +615,7 @@ sfx_stream_open:
     add hl, a                    ; Z80N (doc 05)
     ld a, (hl)
     call data_map_page           ; slot 6 <- this window page
-    ld a, (sfxHandle0)
+    ld a, (sfxNewHandle)
     ld ix, DATA_WINDOW
     ld bc, (sfxStgWin)
     call esx_fread
@@ -539,6 +637,7 @@ sfx_stream_open:
     ld a, AUD_PAGE_LO            ; slot 6 back for the block writes
     call data_map_page
     ld ix, (sfxChanPtr)
+    ld iy, (sfxCellPtr)
     ; staged blocks = ceil(stagedBytes / 512) (<= SFX_WIN_BLKS)
     ld hl, (sfxStageLen)
     ld de, 511
@@ -546,13 +645,15 @@ sfx_stream_open:
     ld l, h
     ld h, 0
     srl l                        ; HL = (stagedBytes + 511) >> 9
-    ld (sfxStagedBlk0), hl
+    ld (iy+SFXS_STAGED), l
+    ld (iy+SFXS_STAGED+1), h
     ; DEPTH = staged blocks MINUS the whole blocks the consumer skips
     ; outright (its anchor sits past them - the WAV header). The block
     ; the anchor sits INSIDE is counted: it is debited when the consumer
     ; crosses the next 512 boundary, exactly like any other block. See
     ; the invariant stated in full at aud_smp_copy's debit site.
-    ld de, (sfxDataOff0)
+    ld e, (iy+SFXS_DATAOFF)
+    ld d, (iy+SFXS_DATAOFF+1)
     ld a, d
     srl a                        ; A = dataOff >> 9 = whole blocks
     ld e, a                      ;     skipped ((H:L) >> 9 == H >> 1)
@@ -564,7 +665,7 @@ sfx_stream_open:
 .depthok:
     ld (ix+SMPB_DEPTH), l
     ld (ix+SMPB_DEPTH+1), h
-    ld (sfxDepth0), hl           ; banked for the loop rewind: a COMPLETE
+    ld (sfxDepthTmp), hl         ; banked for the loop rewind: a COMPLETE
                                  ; window is permanent, so its rewind
                                  ; restores exactly this figure (it goes
                                  ; into the descriptor below, where the
@@ -573,7 +674,8 @@ sfx_stream_open:
     ; dataOff >> 13, offset dataOff & $1FFF. Both land in the window
     ; descriptor as well as the block, because the pump rewinds to them
     ; on every loop pass, long after this page is unmapped.
-    ld de, (sfxDataOff0)
+    ld e, (iy+SFXS_DATAOFF)
+    ld d, (iy+SFXS_DATAOFF+1)
     ld a, d
     and $E0
     rlca
@@ -597,7 +699,7 @@ sfx_stream_open:
     inc hl
     ld (hl), d
     inc hl
-    ld de, (sfxDepth0)           ; SFXW_DEPTH0 follows the anchor
+    ld de, (sfxDepthTmp)         ; SFXW_DEPTH0 follows the anchor
     ld (hl), e
     inc hl
     ld (hl), d
@@ -615,12 +717,12 @@ sfx_stream_open:
     ld a, c
     or %00001000                 ; COMPLETE: the whole file is resident
     ld (ix+SMPB_FLAGS), a
-    ld a, (sfxHandle0)           ; nothing more to read: release it
+    ld a, (sfxNewHandle)         ; nothing more to read: release it
     call esx_fclose
-    ld a, $FF
-    ld (sfxHandle0), a
+    ld iy, (sfxCellPtr)
+    ld (iy+SFXS_HANDLE), $FF
     ld a, (sfxOpenNum)
-    ld (sfxKeep0), a
+    ld (iy+SFXS_KEEP), a
     ld (smpLoadedNum), a         ; arm the free rewind: a repeat trigger
     or a                         ; of this number costs zero card traffic
     ret
@@ -629,17 +731,16 @@ sfx_stream_open:
     or %00000100                 ; STREAMING: the refiller owes blocks
     ld (ix+SMPB_FLAGS), a
     ; hand the refiller a virgin run cursor. Staging above went through
-    ; esxDOS F_READ, not the run list, so sfxRunAddrLo/Hi and sfxRunBlk
-    ; mean nothing yet: sfxSeek0 tells the first burst to seek the list
-    ; to sfxStagedBlk0 before it opens a window. sfxDeliv0/sfxFailCnt0
-    ; are this stream's failure state (see aud_sfx_refill's header).
-    ld a, 1
-    ld (sfxSeek0), a
-    xor a
-    ld (sfxDeliv0), a
-    ld (sfxFailCnt0), a
+    ; esxDOS F_READ, not the run list, so the context's run address and
+    ; block count mean nothing yet: SFXS_SEEK tells the first burst to
+    ; seek the list to SFXS_STAGED before it opens a window.
+    ; SFXS_DELIV/SFXS_FAILCNT are this stream's failure state (see
+    ; aud_sfx_refill's header).
+    ld (iy+SFXS_SEEK), 1
+    ld (iy+SFXS_DELIV), 0
+    ld (iy+SFXS_FAILCNT), 0
     ld a, (sfxOpenNum)
-    ld (sfxKeep0), a             ; handle + hot filemap stay open as this
+    ld (iy+SFXS_KEEP), a         ; handle + hot filemap stay open as this
                                  ; channel's cached stream (spec keep-open
                                  ; ruling), for the refiller
     ld a, $FF
@@ -668,17 +769,17 @@ sfx_stream_open:
     ld a, AUD_PAGE_LO            ; a window page may still be in slot 6
     call data_map_page
 .refuse:
-    ld a, (sfxHandle0)
+    ld a, (sfxNewHandle)
     inc a
     jr z, .noclose
     dec a
     call esx_fclose
 .noclose:
+    ld iy, (sfxCellPtr)
+    ld (iy+SFXS_HANDLE), $FF
+    ld (iy+SFXS_KEEP), 0
     ld a, $FF
-    ld (sfxHandle0), a
     ld (smpLoadedNum), a         ; nothing cached on this channel
-    xor a
-    ld (sfxKeep0), a
     ld ix, (sfxChanPtr)
     ld a, (ix+SMPB_FLAGS)
     and %11100011                ; the refusal funnel is one of the two
@@ -689,15 +790,18 @@ sfx_stream_open:
     scf
     ret
 
-; F_SEEK this channel's handle to absolute offset 0. Clone of the video
-; player's vid_raw_seek0 - IXL is the seek-mode byte esxDOS reads; L is
-; set belt-and-braces, matching that caller's posture.
+; F_SEEK the handle this open is working with to absolute offset 0. Clone
+; of the video player's vid_raw_seek0 - IXL is the seek-mode byte esxDOS
+; reads; L is set belt-and-braces, matching that caller's posture.
+; sfxNewHandle rather than the channel's own cell so this needs no live
+; IY (see sfx_stream_open's header): from .fresh onward the two hold the
+; same value, and every call site is past .fresh.
 sfx_seek0:
     ld bc, 0
     ld de, 0
     ld l, 0
     ld ix, 0
-    ld a, (sfxHandle0)
+    ld a, (sfxNewHandle)
     jp esx_fseek
 
  IFDEF DEBUG
@@ -765,9 +869,10 @@ msgSfxFrag: db "SFX FRAG?", 0
 ; is retried up to SFX_FAIL_LIMIT consecutive ticks.
 ;
 ; ERROR EVICTION. When the limit is reached the channel's stop is filed
-; through the existing resident mailbox (audRequest bit 7, consumed at
-; the top of the next aud_tick) and the cache is invalidated by clearing
-; bits 2/4 and zeroing sfxKeep0. sfxHandle0 KEEPS the real handle: this
+; through the existing resident mailbox (channel 1: audRequest bit 7;
+; channel 2: audRequest2 bit 2 - both consumed at the top of the next
+; aud_tick) and the cache is invalidated by clearing bits 2/4 and zeroing
+; SFXS_KEEP. SFXS_HANDLE KEEPS the real handle: this
 ; runs in ISR context and esxDOS is mainline-only, so the refiller must
 ; not call F_CLOSE. sfx_stream_open's eviction step closes whatever
 ; handle it finds cached before it adopts a new one, so the next WAV
@@ -785,16 +890,70 @@ aud_sfx_refill:
     or a
     ret nz                       ; mainline owns the card this tick
     ld a, SFX_TICK_CAP
-    ld (sfxTickBudget), a
-    ld ix, sfxChan0
-    jp sfx_chan_refill           ; Task 11 appends the sfxChan1 walk
+    ld (sfxTickBudget), a        ; ONE budget for both channels; the
+    ld ix, sfxChan0              ; per-channel SFX_BURST_CAP is re-armed
+    call sfx_chan_refill         ; inside each leg. Channel 1 is served
+    ld ix, sfxChan1              ; FIRST, so on a tick where the shared
+    jp sfx_chan_refill           ; budget runs out it is channel 2 that
+                                 ; waits - a fixed, stated priority
+                                 ; rather than an emergent one
 
-; One channel's burst. IX = channel block (page 48, slot 6).
-; Corrupts AF, BC, DE, HL; preserves IX.
+; One channel's leg. IX = channel block (sfxChan0 is page-48 data in
+; slot 6, sfxChan1 is resident; both are reached IX-relative, so neither
+; placement matters here).
+;
+; The gate is tested BEFORE the run context is swapped in, so an idle or
+; COMPLETE channel costs three instructions and no copying. Everything
+; past the gate runs with IY = this channel's stream cell group and its
+; run context in the shared working cells; sfx_ctx_save on the way out is
+; unconditional, which is why the body's every exit is a plain ret.
+; Corrupts AF, BC, DE, HL, IY; preserves IX.
 sfx_chan_refill:
     ld a, (ix+SMPB_FLAGS)
     and %00010100                ; STREAMING or REWIND owed?
     ret z
+    ld l, (ix+SMPB_STRM)         ; IY = this channel's stream cell group
+    ld h, (ix+SMPB_STRM+1)
+    push hl
+    pop iy
+    call sfx_ctx_load
+    call sfx_chan_body
+    ; fall through to sfx_ctx_save
+
+; The run-context swap. sfx_ctx_load copies this channel's saved context
+; (hot filemap + card cursor) into the shared working cells the SD clones
+; address absolutely; sfx_ctx_save copies whatever the leg left there
+; back. The two layouts are identical by construction (the SFXC_* block
+; at the top of this file, ASSERTed against the working cells), so each
+; direction is one LDIR - 57 bytes, about 1.2k T. A tick in which BOTH
+; channels are streaming therefore pays four of them, under 5k T, which
+; is well inside 1% of a 28 MHz frame; a tick in which neither is pays
+; none, because the gate is upstream.
+; Corrupts AF, BC, DE, HL; preserves IX, IY.
+sfx_ctx_save:
+    push iy
+    pop de
+    ld hl, SFXS_CTX
+    add hl, de
+    ex de, hl                    ; DE = this channel's saved context
+    ld hl, sfxHotMap
+    ld bc, SFX_CTX_SIZE
+    ldir
+    ret
+sfx_ctx_load:
+    push iy
+    pop hl
+    ld de, SFXS_CTX
+    add hl, de                   ; HL = this channel's saved context
+    ld de, sfxHotMap
+    ld bc, SFX_CTX_SIZE
+    ldir
+    ret
+
+; The body of one channel's leg. IX = channel block, IY = stream cell
+; group, run context already in the shared working cells.
+; Corrupts AF, BC, DE, HL; preserves IX, IY.
+sfx_chan_body:
     bit 4, (ix+SMPB_FLAGS)
     jr z, .cursor
     ; --- REWIND servicing (the Task 5 handoff at aud_smp_rewind_depth).
@@ -811,37 +970,37 @@ sfx_chan_refill:
     call sfx_run_seek
     pop hl
     jp c, .shortfile
-    ld (sfxStagedBlk0), hl
-    ld a, l                      ; window block == file block below 48,
-    ld (sfxProdBlk0), a          ; and the open refuses a larger anchor
+    ld (iy+SFXS_STAGED), l
+    ld (iy+SFXS_STAGED+1), h
+    ld (iy+SFXS_PROD), l         ; window block == file block below 48,
+                                 ; and the open refuses a larger anchor
     ld (ix+SMPB_DEPTH), 0
     ld (ix+SMPB_DEPTH+1), 0
     res 4, (ix+SMPB_FLAGS)
     set 2, (ix+SMPB_FLAGS)
-    xor a
-    ld (sfxSeek0), a
+    ld (iy+SFXS_SEEK), 0
     jr .burst
 .cursor:
-    ld a, (sfxSeek0)
+    ld a, (iy+SFXS_SEEK)
     or a
     jr z, .burst                 ; the cursor is where the last tick left it
     ; first burst of this stream: the open staged through esxDOS, not
     ; through the run list, so the card cursor has to be seeked to the
     ; block the staging stopped at before a window may be opened.
-    ld hl, (sfxStagedBlk0)
+    ld l, (iy+SFXS_STAGED)
+    ld h, (iy+SFXS_STAGED+1)
     call sfx_run_seek
     jp c, .shortfile
-    ld hl, (sfxStagedBlk0)
+    ld l, (iy+SFXS_STAGED)
+    ld h, (iy+SFXS_STAGED+1)
 .mod:
     ld de, SFX_WIN_BLKS          ; producer window block = staged mod 48.
     or a                         ; Bounded: the open sets STREAMING only
     sbc hl, de                   ; after staging exactly one full window,
     jr nc, .mod                  ; so this runs at most twice.
     add hl, de
-    ld a, l
-    ld (sfxProdBlk0), a
-    xor a
-    ld (sfxSeek0), a
+    ld (iy+SFXS_PROD), l
+    ld (iy+SFXS_SEEK), 0
 .burst:
     ld a, SFX_BURST_CAP
     ld (sfxBurstBudget), a
@@ -849,7 +1008,7 @@ sfx_chan_refill:
     ; window room: SMPB_DEPTH counts blocks staged and not yet finished
     ; with, so the free part of the 48-block window is SFX_WIN_BLKS-DEPTH
     ; and the write frontier is (consumer block + DEPTH) mod 48, which is
-    ; what sfxProdBlk0 tracks.
+    ; what SFXS_PROD tracks.
     ld a, (ix+SMPB_DEPTH+1)
     or a
     jp nz, .done                 ; DEPTH never exceeds 48 - belt and braces
@@ -858,8 +1017,10 @@ sfx_chan_refill:
     jp nc, .done                 ; window full
     ; blocks left in the FILE. F_FSTAT's ceil(size/512) is the authority:
     ; filemap runs cover whole clusters and over-report the tail.
-    ld hl, (sfxFileBlk0)
-    ld de, (sfxStagedBlk0)
+    ld l, (iy+SFXS_FILEBLK)
+    ld h, (iy+SFXS_FILEBLK+1)
+    ld e, (iy+SFXS_STAGED)
+    ld d, (iy+SFXS_STAGED+1)
     or a
     sbc hl, de
     jp z, .eof
@@ -878,14 +1039,14 @@ sfx_chan_refill:
     jr nz, .open
     call sfx_win_close
     call sfx_next_run
-    jr c, .shortfile             ; map exhausted with blocks still owed
+    jp c, .shortfile             ; map exhausted with blocks still owed
 .open:
     call sfx_win_open            ; CMD18 at the run cursor (idempotent)
-    jr c, .wirefail
+    jp c, .wirefail
     ; destination: window page list[prod >> 4], byte (prod & 15) * 512.
     ; The page NUMBER is read out of the descriptor while page 48 is
     ; still in slot 6; only then is the window page mapped over it.
-    ld a, (sfxProdBlk0)
+    ld a, (iy+SFXS_PROD)
     rrca
     rrca
     rrca
@@ -896,7 +1057,7 @@ sfx_chan_refill:
     add hl, a                    ; Z80N (doc 05)
     ld a, (hl)
     nextreg NR_MMU6, a           ; window page over slot 6 (page 48 out)
-    ld a, (sfxProdBlk0)
+    ld a, (iy+SFXS_PROD)
     and 15                       ; 16 blocks per 8K page - a block never
     add a, a                     ; straddles one, so block*512 is just a
     add a, DATA_WINDOW >> 8      ; high byte
@@ -904,39 +1065,41 @@ sfx_chan_refill:
     ld l, 0
     call sfx_sd_blk              ; 512 bytes + CRC skip, interrupts ON
     nextreg NR_MMU6, AUD_PAGE_LO ; page 48 back before anything reads it;
-    jr c, .wirefail              ; nextreg leaves F alone, so the CF from
+    jp c, .wirefail              ; nextreg leaves F alone, so the CF from
                                  ; sfx_sd_blk survives the restore
     ; --- credit the block on both sides
     inc (ix+SMPB_DEPTH)
     jr nz, .dhi
     inc (ix+SMPB_DEPTH+1)
 .dhi:
-    ld hl, (sfxStagedBlk0)
+    ld l, (iy+SFXS_STAGED)
+    ld h, (iy+SFXS_STAGED+1)
     inc hl
-    ld (sfxStagedBlk0), hl
+    ld (iy+SFXS_STAGED), l
+    ld (iy+SFXS_STAGED+1), h
     ld hl, (sfxRunBlk)
     dec hl
     ld (sfxRunBlk), hl
     call sfx_addr_next
-    ld a, (sfxProdBlk0)
+    ld a, (iy+SFXS_PROD)
     inc a
     cp SFX_WIN_BLKS
     jr c, .pok
     xor a                        ; the window is CIRCULAR
 .pok:
-    ld (sfxProdBlk0), a
-    ld a, 1
-    ld (sfxDeliv0), a            ; this stream has now delivered a block
-    xor a
-    ld (sfxFailCnt0), a          ; success ends any run of failed ticks
+    ld (iy+SFXS_PROD), a
+    ld (iy+SFXS_DELIV), 1        ; this stream has now delivered a block
+    ld (iy+SFXS_FAILCNT), 0      ; success ends any run of failed ticks
     ld hl, sfxBurstBudget
     dec (hl)
     ld hl, sfxTickBudget
     dec (hl)
  IFDEF DEBUG
-    ld hl, (sfxRefillBlks0)
+    ld l, (iy+SFXS_BLKS)
+    ld h, (iy+SFXS_BLKS+1)
     inc hl
-    ld (sfxRefillBlks0), hl
+    ld (iy+SFXS_BLKS), l
+    ld (iy+SFXS_BLKS+1), h
  ENDIF
     jp .blk
 .eof:
@@ -944,7 +1107,7 @@ sfx_chan_refill:
     ; the refiller owes this channel nothing more: clear bit 2. Bit 3
     ; COMPLETE is NOT set - the file never fitted the window, and the
     ; documented discrimination test still finds the cached stream by
-    ; sfxHandle0 != $FF. Playback ends the usual way, off SMPB_REMAIN. A
+    ; SFXS_HANDLE != $FF. Playback ends the usual way, off SMPB_REMAIN. A
     ; loop rewind raises bit 4 and the servicing above re-arms bit 2.
     res 2, (ix+SMPB_FLAGS)
 .done:
@@ -954,40 +1117,51 @@ sfx_chan_refill:
     ; the run list ran out with blocks still owed: the filemap and the
     ; F_FSTAT block count disagree (a stale map, or the file shrank).
     ; Nothing about that is retryable.
-    ld a, SFX_FAIL_LIMIT
-    ld (sfxFailCnt0), a
+    ld (iy+SFXS_FAILCNT), SFX_FAIL_LIMIT
     jr .funnel
 .wirefail:
-    ld a, (sfxDeliv0)
+    ld a, (iy+SFXS_DELIV)
     or a
     jr nz, .bump
-    ld a, SFX_FAIL_LIMIT         ; first block of the stream: no raw SD
-    ld (sfxFailCnt0), a          ; path here (see the header)
-    jr .funnel
+    ld (iy+SFXS_FAILCNT), SFX_FAIL_LIMIT   ; first block of the
+    jr .funnel                             ; stream: no raw SD path
+                                           ; here (see the header)
 .bump:
-    ld hl, sfxFailCnt0
-    inc (hl)
+    inc (iy+SFXS_FAILCNT)
 .funnel:
  IFDEF DEBUG
-    ld hl, sfxFails0
-    inc (hl)
+    inc (iy+SFXS_FAILS)
     jr nz, .nowrap
-    dec (hl)                     ; saturate rather than wrap to 0
+    dec (iy+SFXS_FAILS)          ; saturate rather than wrap to 0
 .nowrap:
  ENDIF
     call sfx_win_close           ; a rejected open already deselected the
                                  ; card and restored MF, and this is
                                  ; idempotent, so it cannot double-restore
-    ld a, (sfxFailCnt0)
+    ld a, (iy+SFXS_FAILCNT)
     cp SFX_FAIL_LIMIT
     ret c
     res 2, (ix+SMPB_FLAGS)       ; error eviction (see the header)
     res 4, (ix+SMPB_FLAGS)
+    ; File the stop in THIS channel's mailbox bit - the existing resident
+    ; path, consumed at the top of the next aud_tick: channel 1 is
+    ; audRequest bit 7, channel 2 is audRequest2 bit 2. Which block IX
+    ; points at is the only thing that distinguishes them, so compare it
+    ; rather than infer anything from where the two blocks happen to sit.
+    push ix
+    pop hl
+    ld de, sfxChan0
+    or a
+    sbc hl, de
+    jr nz, .ev2
     ld hl, audRequest
-    set 7, (hl)                  ; stop sample - the existing mailbox path,
-                                 ; consumed at the top of the next aud_tick
-    xor a
-    ld (sfxKeep0), a             ; no effect number is cached any more
+    set 7, (hl)                  ; one instruction, so it cannot tear
+    jr .evfiled                  ; against anything - the same discipline
+.ev2:                            ; every other filer here uses
+    ld hl, audRequest2
+    set 2, (hl)
+.evfiled:
+    ld (iy+SFXS_KEEP), 0         ; no effect number is cached any more
     ret
 
 ; A = the file block holding this channel's payload anchor. The anchor is
@@ -1085,11 +1259,16 @@ sfx_run_seek:
 ; ticks, in the project's dbg_at + dbg_puts + dbg_hex idiom (the dbg_*
 ; helpers are resident, so they are as reachable from this page as the
 ; SFX FRAG marker above proves). Printed once per tick from the
-; refiller's entry, and only once one of the three counters is nonzero,
-; so a build that never streams keeps its screen. Every counter is
+; refiller's entry, and only once one of the six counters is nonzero, so
+; a build that never streams keeps its screen. Every counter is
 ; accumulated strictly OUTSIDE the wire polls, so the instrument cannot
-; distort a bounded wait. sfxUnderrun0 is page-48 data (the pump writes
-; it and cannot see this page); slot 6 still holds page 48 here.
+; distort a bounded wait. The underrun counters are page-48 data (the
+; pump writes them and cannot see this page); slot 6 still holds page 48
+; here.
+;
+; Task 11 made the row DUAL: "SFX=rrrr/uuuu/ff rrrr/uuuu/ff", channel 1
+; then channel 2, 29 columns starting at column 43 (it was 16 columns at
+; 56 with one channel). Row 31 is otherwise unused by the game.
 ;
 ; CURSOR DISCIPLINE. This is the first ISR-context user of the dbg_*
 ; console, and dbgX/dbgY are a SHARED cursor pair: a mainline dbg_puts
@@ -1100,7 +1279,11 @@ sfx_run_seek:
 ; The .show path is the only one that moves the cursor, so the save sits
 ; there rather than at the counter gate.
 sfx_dbg_row:
-    ld hl, (sfxRefillBlks0)
+    ld hl, (sfxStrm0+SFXS_BLKS)
+    ld a, h
+    or l
+    jr nz, .show
+    ld hl, (sfxStrm1+SFXS_BLKS)
     ld a, h
     or l
     jr nz, .show
@@ -1108,30 +1291,54 @@ sfx_dbg_row:
     ld a, h
     or l
     jr nz, .show
-    ld a, (sfxFails0)
+    ld hl, (sfxUnderrun1)
+    ld a, h
+    or l
+    jr nz, .show
+    ld a, (sfxStrm0+SFXS_FAILS)
+    or a
+    jr nz, .show
+    ld a, (sfxStrm1+SFXS_FAILS)
     or a
     ret z
 .show:
     ld hl, (dbgX)                ; dbgY follows dbgX: one word is the
     push hl                      ; whole mainline cursor
     ld b, 31
-    ld c, 56
+    ld c, 43
     call dbg_at
     ld hl, msgSfxRow
     call dbg_puts
-    ld hl, (sfxRefillBlks0)
-    call dbg_hex16
-    ld a, '/'
+    ld iy, sfxStrm0
+    ld hl, sfxUnderrun0
+    call .one
+    ld a, ' '
     call dbg_putc
-    ld hl, (sfxUnderrun0)
-    call dbg_hex16
-    ld a, '/'
-    call dbg_putc
-    ld a, (sfxFails0)
-    call dbg_hex8
+    ld iy, sfxStrm1
+    ld hl, sfxUnderrun1
+    call .one
     pop hl
     ld (dbgX), hl                ; mainline resumes exactly where it was
     ret
+; One channel's rrrr/uuuu/ff. IY = its stream cell group, HL = its
+; page-48 underrun counter. The dbg_* helpers touch neither.
+.one:
+    push hl
+    ld l, (iy+SFXS_BLKS)
+    ld h, (iy+SFXS_BLKS+1)
+    call dbg_hex16
+    ld a, '/'
+    call dbg_putc
+    pop hl
+    ld a, (hl)
+    inc hl
+    ld h, (hl)
+    ld l, a
+    call dbg_hex16
+    ld a, '/'
+    call dbg_putc
+    ld a, (iy+SFXS_FAILS)
+    jp dbg_hex8
 msgSfxRow: db "SFX=", 0
  ENDIF
 
@@ -1176,6 +1383,37 @@ aud_sfx_init:
     ld (ix+SMPB_STRM+1), h           ; access is made through this pointer
     ld (ix+SMPB_DEPTH), 0            ; nothing staged until a load runs
     ld (ix+SMPB_DEPTH+1), 0
+    ; Channel 2 (SP18 item 7 Task 11), the same members with its own
+    ; hardware and its own window/cells: the AUD_STAGE2 ring (same 1K
+    ; power-of-two shape, so the same wrap mask), the smp2* resident
+    ; cursors ctc2_isr plays, CTC channel 1 and DAC2_PORT ($B3, DACs
+    ; B+C), window descriptor sfxWin1 (pages 53/54/55) and cell group
+    ; sfxStrm1. SMPB_FLAGS is cleared here for the same reason
+    ; aud_boot_probe clears channel 1's: the block is RESIDENT, so a warm
+    ; re-entry (nextreg 2,1 with dirty RAM) would otherwise resurrect a
+    ; stale active or looping bit against a rebuilt bank table.
+    ld ix, sfxChan1
+    ld (ix+SMPB_FLAGS), 0
+    ld (ix+SMPB_RINGH), AUD_STAGE2 >> 8
+    ld (ix+SMPB_RINGM), (AUD_STAGE2_RING-1) >> 8
+    ld hl, smp2PlayPtr
+    ld (ix+SMPB_PLAYPTR), l
+    ld (ix+SMPB_PLAYPTR+1), h
+    ld hl, smp2WritePtr
+    ld (ix+SMPB_WRITEPTR), l
+    ld (ix+SMPB_WRITEPTR+1), h
+    ld hl, AUD_CTC2_PORT
+    ld (ix+SMPB_CTCPORT), l
+    ld (ix+SMPB_CTCPORT+1), h
+    ld (ix+SMPB_DACPORT), DAC2_PORT
+    ld hl, sfxWin1
+    ld (ix+SMPB_WINTAB), l
+    ld (ix+SMPB_WINTAB+1), h
+    ld hl, sfxStrm1
+    ld (ix+SMPB_STRM), l
+    ld (ix+SMPB_STRM+1), h
+    ld (ix+SMPB_DEPTH), 0
+    ld (ix+SMPB_DEPTH+1), 0
     ; Withdraw the audio floor from the bank allocator, once, at boot.
     ; Banks 25-27 are the two channels' effect windows PERMANENTLY as of
     ; SP18 item 7 Task 5; before that they were a first-come floor
@@ -1203,35 +1441,45 @@ aud_sfx_init:
     ret
 
 ; --- refiller cells (SP18 item 7 Task 6) ------------------------------
+; Channel-independent scratch only. Everything that used to live here per
+; channel (producer block, seek/deliver/fail state, the DEBUG counters)
+; moved into the per-channel groups below when Task 11 parameterised the
+; refiller.
 sfxSeekBlk:     dw 0             ; sfx_run_seek working block counter
 sfxTickBudget:  db 0             ; blocks left this tick, all channels
 sfxBurstBudget: db 0             ; blocks left this channel this tick
-sfxProdBlk0:    db 0             ; window block (0-47) the producer writes
-                                 ; next; equals (consumer block + DEPTH)
-                                 ; mod 48 and staged mod 48, both of which
-                                 ; the credit step keeps true
-sfxSeek0:       db 0             ; 1 = the run cursor still has to be
-                                 ; seeked to sfxStagedBlk0 (set by the
-                                 ; open, whose staging bypassed the list)
-sfxDeliv0:      db 0             ; 1 = this stream has delivered at least
-                                 ; one block through the wire
-sfxFailCnt0:    db 0             ; consecutive failed ticks
-
- IFDEF DEBUG
-sfxRefillBlks0: dw 0             ; blocks refilled this session
-sfxFails0:      db 0             ; failed ticks (saturating)
- ENDIF
+sfxCellPtr:     dw 0             ; the current channel's stream cell group
+                                 ; (IY), parked here so it can be reloaded
+                                 ; after an esxDOS call - see the reload
+                                 ; note at sfx_stream_open
 
 ; --- streaming cells (SP18 item 7 Task 3) -----------------------------
-SFX_HOT_ENT   equ 8              ; same streaming ceiling as video
+; sfxHotMap through sfxCardFlags are the SHARED RUN-CONTEXT WORKING SET:
+; the SD clones below address them absolutely, so only one channel's
+; context can be in them at a time. The refiller owns them - it swaps the
+; channel it is about to serve in at the top of that channel's leg and
+; back out at the bottom (sfx_ctx_load / sfx_ctx_save), so nothing
+; outside a leg may rely on their contents. Their order and total size
+; MUST match the SFXC_* layout above; the ASSERT below pins that.
+; sfxWinOpen and sfxMfSave are deliberately OUTSIDE the swapped block:
+; they describe the CARD, not a channel (one CMD18 window and one
+; Multiface state exist at a time, and every leg closes its window before
+; it returns), so swapping them would be wrong as well as wasteful.
 sfxHotMap:    ds SFX_HOT_ENT*6   ; 6-byte runs: addrLo(2) addrHi(2) blocks(2)
 sfxRunIdx:    db 0
 sfxRunCnt:    db 0
 sfxRunAddrLo: dw 0
 sfxRunAddrHi: dw 0
 sfxRunBlk:    dw 0               ; blocks left in the open/current run
-sfxWinOpen:   db 0
 sfxCardFlags: db 0
+    ASSERT $ - sfxHotMap == SFX_CTX_SIZE
+    ASSERT sfxRunIdx - sfxHotMap == SFXC_IDX
+    ASSERT sfxRunCnt - sfxHotMap == SFXC_CNT
+    ASSERT sfxRunAddrLo - sfxHotMap == SFXC_ADDRLO
+    ASSERT sfxRunAddrHi - sfxHotMap == SFXC_ADDRHI
+    ASSERT sfxRunBlk - sfxHotMap == SFXC_BLK
+    ASSERT sfxCardFlags - sfxHotMap == SFXC_FLAGS
+sfxWinOpen:   db 0
 sfxMfSave:    db 0
 
 ; --- open-ritual cells (SP18 item 7 Task 5) ---------------------------
@@ -1261,7 +1509,7 @@ sfxPayLenHi:  db 0               ; overlay1) and bits 16-23 - checked
                                  ; against the real file size, since the
                                  ; staging loop no longer reads exactly
                                  ; this many bytes
-sfxDepth0:    dw 0               ; DEPTH at the anchor, on its way into
+sfxDepthTmp:  dw 0               ; DEPTH at the anchor, on its way into
                                  ; the descriptor's SFXW_DEPTH0
 sfxWhole:     db 0               ; 1 = the whole file fits the window
 sfxStageLen:  dw 0               ; bytes this open stages (<= window)
@@ -1269,20 +1517,39 @@ sfxStageRem:  dw 0               ; staging loop: bytes still to read
 sfxStgWin:    dw 0               ; staging loop: this page's byte count
 sfxStgIdx:    db 0               ; staging loop: window page index
 
-; Per-channel stream cell group. SMPB_STRM points here (seeded by
-; aud_smp_chan1_init); Task 11 parameterises the accesses through it,
-; which is why the group is contiguous. Task 5 has one channel, so it
-; addresses these absolutely.
+; The two per-channel stream cell groups. SMPB_STRM in each channel block
+; points at its own group (seeded by aud_sfx_init) and every access here
+; is IY-relative through that pointer, so one body serves both channels.
+; Layout: the SFXS_*/SFXC_* equates at the top of this file.
+; Assembly-time initialisers rather than a boot-time fill: $FF in
+; SFXS_HANDLE is "no cached stream", which is the correct cold state, and
+; everything else is zero.
 sfxStrm0:
-sfxHandle0:    db $FF            ; open handle while STREAMING; $FF none
-sfxKeep0:      db 0              ; effect number cached on this channel
-sfxFileBlk0:   dw 0              ; total card blocks in the file, clamped
-                                 ; to F_FSTAT's size (16 bits covers any
-                                 ; file up to 32 MB; the open refuses
-                                 ; anything from 16 MB up as absurd)
-sfxStagedBlk0: dw 0              ; blocks staged so far (producer side)
-sfxDataOff0:   dw 0              ; file offset of the first payload byte
-SFX_STRM_SIZE  equ $ - sfxStrm0
+    db $FF                       ; SFXS_HANDLE
+    db 0                         ; SFXS_KEEP
+    dw 0, 0, 0                   ; SFXS_FILEBLK / SFXS_STAGED / SFXS_DATAOFF
+    db 0, 0, 0, 0                ; SFXS_PROD / SEEK / DELIV / FAILCNT
+ IFDEF DEBUG
+    dw 0                         ; SFXS_BLKS
+    db 0                         ; SFXS_FAILS
+ ENDIF
+    ASSERT $ - sfxStrm0 == SFXS_CTX
+    ds SFX_CTX_SIZE              ; SFXS_CTX: this channel's run context
+                                 ; (hot filemap + card cursor), swapped
+                                 ; into the shared working cells above
+                                 ; for the duration of its refiller leg
+    ASSERT $ - sfxStrm0 == SFX_STRM_SIZE
+sfxStrm1:
+    db $FF
+    db 0
+    dw 0, 0, 0
+    db 0, 0, 0, 0
+ IFDEF DEBUG
+    dw 0
+    db 0
+ ENDIF
+    ds SFX_CTX_SIZE
+    ASSERT sfxStrm1 - sfxStrm0 == SFX_STRM_SIZE
 
  IFDEF DEBUG
 ; Token-poll instrument accumulators (sfx_sd_tok, above).
