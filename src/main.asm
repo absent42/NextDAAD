@@ -189,6 +189,7 @@ boot_data_init:
     INCLUDE "overlay2.asm"
     INCLUDE "video.asm"
     INCLUDE "audio/audiobank.asm"
+    INCLUDE "audio/streamfx.asm"
 
     CSPECTMAP "build/nextdaad.map"
     SAVENEX OPEN "build/nextdaad.nex", main, STACK_TOP

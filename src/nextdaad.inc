@@ -88,6 +88,20 @@ BANK_L2BACK_LAST equ 34     ; gfx_blit renders here, then flips NR $12)
 ; video.asm's own eviction comments at each moved routine.
 BANK_POOL_B     equ 36
 VID_PAGE2       equ 70      ; = 35*2, lower 8K of the withdrawn bank
+SFX_PAGE        equ 71      ; = 35*2+1, upper 8K of the SAME withdrawn
+                            ; bank (SP18 item 7 T3: SD-streamed sampled-
+                            ; effect transport clones). Bank 35 is
+                            ; already wholly excluded from bank_alloc
+                            ; (the comment above; bank_table_init's free-
+                            ; pool loop starts at BANK_POOL_B=36), so
+                            ; this sibling page needs no further banks
+                            ; .asm change - it is unreachable to the
+                            ; allocator from assembly time, exactly like
+                            ; VID_PAGE2. Populated by src/audio/streamfx
+                            ; .asm's own `MMU 7, SFX_PAGE, OVL_ORG` +
+                            ; main.asm's INCLUDE, picked up by SAVENEX
+                            ; AUTO - same zero-resident-cost mechanism as
+                            ; VID_PAGE/VID_PAGE2 above.
 BANK_BASE_LAST  equ 47
 BANK_EXP_FIRST  equ 48      ; 48-111 expansion pool when detected
 BANK_EXP_LAST   equ 111
