@@ -1651,7 +1651,7 @@ if (Test-Path "$root\build\nextdaad.nex") {
     }
 
     # SP18 item 7 / Task 10 landed channel 2's CTC plumbing, so this
-    # runs unconditionally now (was gated behind -Sfx2Asserts, retired).
+    # now runs unconditionally on every harness invocation.
     Assert-SfxDualChannel $nex
 }
 else {

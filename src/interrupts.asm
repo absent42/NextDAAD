@@ -29,19 +29,23 @@ im2_init:
     ld (IM2_TABLE + IM2_CTC_VEC), a      ; table[V] = low(ctc_stub); table[V+1]
                                          ; is already the $BE fill (= high stub)
     ; SP18 item 7 Task 10: channel 2's carve skips the stub-trampoline
-    ; indirection channel 1 uses just above. That indirection exists
-    ; ONLY because it lets table[V+1] (the target's high byte) keep the
-    ; uniform $BE fill unwritten, by routing through IM2_CTC_STUB - a
-    ; stub deliberately placed IN the $BE00-$BEFF page - rather than
-    ; ctc_isr's own real (non-$BE-page) address, saving one table byte
-    ; write at the cost of installing the stub. For channel 2 it is
-    ; both cheaper and simpler to write BOTH table bytes directly with
-    ; ctc2_isr's real address: LD (nn),HL stores L then H, so one
-    ; instruction covers table[V]=low(ctc2_isr) and table[V+1]=
-    ; high(ctc2_isr) together. The CPU then jumps straight to ctc2_isr
-    ; on this vector - no second-level JP, no runtime-written stub.
-    ; IM2_CTC2_STUB (nextdaad.inc) stays reserved beside IM2_CTC_STUB
-    ; for layout symmetry but is not written here.
+    ; indirection channel 1 uses just above. That indirection is NOT
+    ; kept for fill-byte economy alone (letting table[V+1], the target's
+    ; high byte, stay the uniform $BE fill unwritten) - it is ALSO the
+    ; runtime hijack point: video.asm rewrites IM2_CTC_STUB+1 (this same
+    ; 3-byte JP's target field) to swap channel 0's ISR to
+    ; video_ctc_isr_stereo for a clip's duration and back, leaving the
+    ; table entry itself untouched throughout. The stub is what makes
+    ; that swap a single 2-byte write instead of a table rewrite -
+    ; removing it (e.g. by "optimising" channel 1 to this same direct
+    ; write) would silently stop installing video's stereo ISR.
+    ; Channel 2 has NO such stub because nothing today repoints channel
+    ; 2's ISR at runtime - the direct table write below is safe only in
+    ; that absence, which is why it costs less. A future channel-2
+    ; hijack (mirroring video's channel-1 trick) must either install a
+    ; JP at IM2_CTC2_STUB first and point the table at IT instead
+    ; (channel 1's shape), or keep writing IM2_TABLE + IM2_CTC2_VEC
+    ; directly on each hijack/release, as this carve already does here.
     ld hl, ctc2_isr
     ld (IM2_TABLE + IM2_CTC2_VEC), hl
     ld a, IM2_TABLE >> 8

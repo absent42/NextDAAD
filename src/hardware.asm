@@ -84,7 +84,8 @@ audio_init:
     ; harmless either way, exactly like channel 1's at boot. AUD_CTC2_PORT
     ; is AUD_CTC_PORT with B+1 ($183B -> $193B, same low byte) - inc b
     ; instead of a fresh ld bc reload; A still holds AUD_CTC_RESET.
-    inc b
+    inc b                            ; depends on AUD_CTC2_PORT == AUD_CTC_PORT
+                                     ; + $0100, asserted in nextdaad.inc
     out (c), a
     out (c), a
     ld a, DAC_SILENCE               ; park the DAC at silence. DAC_SILENCE is the

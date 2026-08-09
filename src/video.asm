@@ -2619,12 +2619,24 @@ vid_run:
     out (DAC_PORT), a            ; park all four DAC ports: the video
     out (VID_DAC_LEFT), a        ; ISR drives the stereo pair, and the
     out (VID_DAC_RIGHT), a       ; aborted sample engine held DAC_PORT
-    out (DAC2_PORT), a           ; SP18 item 7 Task 10: channel 2's DAC,
-                                 ; parked here too for symmetry - its own
-                                 ; CTC (channel 1) is never repointed by
-                                 ; video (only channel 0's vector is, for
-                                 ; the stereo feed above) so it needs no
-                                 ; reset/restore here, only this park
+    out (DAC2_PORT), a           ; SP18 item 7 Task 10: channel 2's DAC park,
+                                 ; NOT a safety clearance. DAC2_PORT $B3
+                                 ; drives DACs B+C - exactly VID_DAC_LEFT
+                                 ; ($F3, B) and VID_DAC_RIGHT ($F9, C), the
+                                 ; two DACs the video stereo feed uses. This
+                                 ; teardown never seizes CTC channel 1 (only
+                                 ; channel 0's vector is repointed, above),
+                                 ; so a LIVE channel 2 would keep writing
+                                 ; DACs B/C underneath a running clip's
+                                 ; stereo feed for the clip's whole
+                                 ; duration - this single park at exit does
+                                 ; not prevent that. Nothing arms channel 2
+                                 ; yet, so there is no live conflict today,
+                                 ; but channel 2 MUST be stopped before a
+                                 ; clip starts once it can run; Task 11
+                                 ; (which wires the mailbox that can start
+                                 ; it) is what has to add that stop - this
+                                 ; park alone is not it.
     call vid_win_close_h         ; the CMD18 window is HOT property
                                  ; when a session held one (streaming/
                                  ; direct): CMD12 + deselect + MF

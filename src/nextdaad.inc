@@ -62,11 +62,17 @@ IM2_CTC_VEC     equ 6       ; CTC channel 0 vector byte in Next hardware-IM2 mod
                             ; "ld l,6 ; CTC vectors 3*2 (WORDS)".
 IM2_CTC2_STUB   equ $BEC5   ; RESERVED beside IM2_CTC_STUB ($BEC2-4) for layout
                             ; symmetry - im2_init does NOT write a JP here.
-                            ; Channel 2's table entry points straight at
-                            ; ctc2_isr instead (im2_init's own comment there
-                            ; has the byte-cost reasoning); this slot stays
-                            ; free in case a future need for an actual stub
-                            ; arises.
+                            ; Channel 2's table entry (IM2_TABLE + IM2_CTC2_VEC)
+                            ; points straight at ctc2_isr instead (im2_init's
+                            ; own comment there has the byte-cost reasoning
+                            ; and the asymmetry against channel 1's stub).
+                            ; A future runtime hijack of channel 2 (mirroring
+                            ; video.asm's channel 1/IM2_CTC_STUB+1 swap) must
+                            ; either install a JP here first and repoint the
+                            ; table at it, or keep writing
+                            ; IM2_TABLE + IM2_CTC2_VEC directly on each
+                            ; hijack/release - either works, but doing
+                            ; nothing does not: this slot is inert today.
 IM2_CTC2_VEC    equ 8       ; CTC channel 1 vector byte: 2*(3+channel) = 2*4 = 8,
                             ; same formula as IM2_CTC_VEC one channel over.
 NR_INT_C0_VAL   equ %00000001 ; hardware IM2 mode: vector base (bits 7:5) 0, bit 0 = 1.
@@ -510,6 +516,12 @@ NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6), 7 = HDM
 ; "28,000,000 / 16 / 15625 = 112".
 AUD_CTC_PORT    equ $183B   ; CTC channel 0 (lowest = highest IM2 priority; ch3=joystick)
 AUD_CTC2_PORT   equ $193B   ; CTC channel 1 - SFX channel 2's per-sample timer
+    ASSERT AUD_CTC2_PORT == AUD_CTC_PORT + $0100   ; audio_init's CTC2 reset
+                            ; reaches this port by `inc b` off AUD_CTC_PORT's
+                            ; already-loaded BC, not by loading AUD_CTC2_PORT
+                            ; itself - this pins that shortcut's assumption so
+                            ; a future edit to either constant fails the build
+                            ; instead of silently resetting the wrong channel
 AUD_CTC_RESET   equ $03     ; control word: soft reset (D1) + no TC (D2=0); written
                             ; twice = the Next's unknown-state channel reset (ports.txt)
 AUD_CTC_CW16    equ $85     ; %10000101: int en, timer, /16, auto-trig, TC follows, control
@@ -548,13 +560,13 @@ AUD_STAGE_RING  equ 1024    ; power-of-two ring $7C00-$7FFF: the CTC ISR plays
 ; SP18 item 7 Task 10: channel 2's own 1K DAC ring. AUD_STAGE2 is a
 ; CANDIDATE address, not yet pinned - Task 9's static sweep clears
 ; $4400-$47FF (inside the classic ULA pixel screen, believed dead once
-; the tilemap/Layer 2 are up) as buildable, but OP1 stays open until
-; the owner's V1 silicon leg (item7-runsheet.md) comes back PASS.
+; the tilemap/Layer 2 are up) as buildable, but OP1 stays open pending
+; the owner's V1 silicon placement check on real hardware.
 ; Shippability gate, not a build gate: ctc2_isr reads/writes this
 ; range regardless, and nothing DRIVES channel 2 until Task 11.
 AUD_STAGE2      equ $4400   ; candidate - OP1/V1 gate before shipping
 AUD_STAGE2_RING equ 1024    ; same power-of-two ring shape as AUD_STAGE_RING
-    ASSERT (AUD_STAGE2 & $03FF) == 0
+    ASSERT (AUD_STAGE2 & (AUD_STAGE2_RING-1)) == 0
     ASSERT AUD_STAGE2_RING >= 2*(AUD_RATE_MAX/50)
 
 ; --- SP18 item 7: per-channel sampled-effect pump state ----------------
