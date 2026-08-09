@@ -47,6 +47,29 @@ All notable changes to NextDAAD are recorded here.
   ISR instead of blocking it (interrupt-controller-guarded, DI
   brackets removed). Verified on hardware; no user-visible behaviour
   change beyond steadier audio timing during video playback.
+- Sampled effects (`SFX n 1` / `SFX n 2`) now play on either of two
+  independent hardware channels, mixed together and both centred, so
+  two effects can sound at once. Auto-allocation prefers the channel
+  already caching the number, then an idle channel, then steals a
+  one-shot over a loop (oldest first); a channel can be reserved
+  outright with the new sub-commands 11-14 (play once/looped, pinned
+  to channel 1 or 2) and released with 15/16 or the existing 5 (now
+  the documented superset: stops both sampled channels and the AY
+  effect, releasing both reservations). `SFX 255` still always plays
+  from the AY bank and never reserves a channel.
+- A sampled effect's length is no longer bounded by the old 1 MB
+  payload ceiling or by free memory at all. Files up to 24K per
+  channel stage into a fixed window and replay for free on every
+  re-trigger; larger files stream from the card, re-streaming on each
+  trigger, with a brief last-sample hold rather than silence at a
+  looping effect's seam. A file split across more than 8 SD card
+  fragments is refused, the same ceiling streamed video already uses -
+  defragment the card.
+- The recommended WAV sample rate is now 15625 Hz, which divides the
+  hardware's own timing clock exactly on six of the eight video modes.
+  16000 Hz - what existing NextDAAD samples use - remains fully
+  supported with under 0.34% pitch error on the other two modes; the
+  supported range is unchanged at 3500-20000 Hz.
 
 ## v0.3.2 - 07/08/2026
 

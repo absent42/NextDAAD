@@ -31,6 +31,24 @@ not compile. The compiler defines `PLAYFLI` (9) and `PLAYFLIL` (10).
 Sample numbers 1-254 may resolve to a WAV or fall back to an AY
 effect; 255 is reserved and always plays from the AY effects bank.
 
+## SFX sub-commands 11-16 (channel reservation)
+
+These six are a NextDAAD extension - they are not in DAAD Ready's
+Appendix D and the compiler predefines no symbolic names for them, so
+write the raw number. They let a game reserve one of the two sample
+channels for an effect rather than letting sub 1/2 pick automatically.
+See [Audio](../audio.md) for the full explanation, including what a
+reservation does and does not survive.
+
+| n | Behaviour on this target |
+|---|---------------------------|
+| 11 | Play `NNN.WAV` once, reserved to sample channel 1. |
+| 12 | As 11, looped. |
+| 13 | Play `NNN.WAV` once, reserved to sample channel 2. |
+| 14 | As 13, looped. |
+| 15 | Stop sample channel 1 and release its reservation. |
+| 16 | Stop sample channel 2 and release its reservation. |
+
 ## MOUSE sub-commands
 
 All eight documented sub-commands (0-7) are implemented. A sub-command

@@ -83,6 +83,47 @@ not compile. The compiler defines <code>PLAYFLI</code> (9) and <code>PLAYFLIL</c
 </table>
 <p>Sample numbers 1-254 may resolve to a WAV or fall back to an AY
 effect; 255 is reserved and always plays from the AY effects bank.</p>
+<h2 id="sfx-sub-commands-11-16-channel-reservation">SFX sub-commands 11-16 (channel reservation)</h2>
+<p>These six are a NextDAAD extension - they are not in DAAD Ready's
+Appendix D and the compiler predefines no symbolic names for them, so
+write the raw number. They let a game reserve one of the two sample
+channels for an effect rather than letting sub 1/2 pick automatically.
+See <a href="../audio.html">Audio</a> for the full explanation, including what a
+reservation does and does not survive.</p>
+<table>
+<thead>
+<tr>
+<th>n</th>
+<th>Behaviour on this target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>11</td>
+<td>Play <code>NNN.WAV</code> once, reserved to sample channel 1.</td>
+</tr>
+<tr>
+<td>12</td>
+<td>As 11, looped.</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Play <code>NNN.WAV</code> once, reserved to sample channel 2.</td>
+</tr>
+<tr>
+<td>14</td>
+<td>As 13, looped.</td>
+</tr>
+<tr>
+<td>15</td>
+<td>Stop sample channel 1 and release its reservation.</td>
+</tr>
+<tr>
+<td>16</td>
+<td>Stop sample channel 2 and release its reservation.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="mouse-sub-commands">MOUSE sub-commands</h2>
 <p>All eight documented sub-commands (0-7) are implemented. A sub-command
 number above 7 no-ops silently (a DEBUG build shows a marker), the same

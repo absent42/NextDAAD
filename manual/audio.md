@@ -67,21 +67,92 @@ you.** It must be:
 - sampled between **3500 and 20000 Hz**.
 
 It plays back at whatever rate its own header declares - there is no
-resampling - so pick the rate when you export.
+resampling - so pick the rate when you export. **15625 Hz is the
+recommended rate**: it divides the hardware's own timing clock exactly
+on six of the eight video modes, so the sample plays at true pitch with
+no per-mode rounding at all. 16000 Hz - the rate most existing NextDAAD
+samples already use - stays fully supported: on the two modes where
+15625 does not divide exactly, the rounding is under half a percent
+either way, well below what an ear can catch. Nothing about an existing
+WAV needs to change; 15625 Hz is only worth picking for new samples
+where you want the theoretical best case.
 
 **Samples and AY effects share one set of numbers.** `SFX n 1` looks for
 `NNN.WAV` first and falls back to the effects bank if there is no such
 file, so a sample and an AY effect cannot both use number 7. Numbers 1
 to 254 work either way; 255 always plays from the AY bank.
 
-**Size.** A WAV's audio payload may be at most **1 MB**. That ceiling is
-checked before any memory is claimed, so a bigger file is refused
-outright however much memory is free. Below it there is no fixed
-per-sample buffer - samples load into whatever memory is free - and as a
-working rule **up to 48K always fits**, on any machine, whatever else is
-loaded. Between 48K and the ceiling a sample competes with picture
-caching and streamed songs for the remaining memory, so test a large one
-on the memory configuration you expect players to have.
+## Two sample channels
+
+Samples play on either of two independent hardware channels, mixed
+together in the output and both centred, so two effects can sound at
+once. `SFX n 1` and `SFX n 2` choose a channel for you automatically:
+
+- if a channel is already holding number `n` from a previous play, it
+  plays there again - even if that channel is still playing it, in
+  which case the effect simply restarts in place rather than a second
+  copy starting elsewhere;
+- otherwise, an idle channel that is not reserved (see below) takes it;
+- if both channels are busy, one is taken over: a channel currently
+  playing a one-shot effect is taken in preference to one playing a
+  loop, and between two one-shots the older one goes. A reserved
+  channel (see below) is never taken over, playing or not;
+- if both channels are busy and reserved, the new effect is simply
+  dropped - nothing plays, and nothing queues.
+
+Reserve a channel for an effect with these four sub-commands, so
+nothing else can take it from under you while you need it there. Each
+always takes its channel outright, stopping whatever was playing there
+before, reserved or not:
+
+| n | Effect |
+|---|--------|
+| 11 | Play `NNN.WAV` once, reserved to channel 1 |
+| 12 | As 11, looped |
+| 13 | Play `NNN.WAV` once, reserved to channel 2 |
+| 14 | As 13, looped |
+| 15 | Stop channel 1 and release its reservation |
+| 16 | Stop channel 2 and release its reservation |
+
+A reservation lasts until you release it with 15, 16, or `SFX n 5`
+below - including if the sample failed to load. A `NNN.WAV` that turns
+out to be missing still reserves the channel it was asked for, because
+the reservation is made before the file is opened; release it
+explicitly rather than assuming a failed play left the channel free.
+`SFX 255` always plays the AY effects bank on any of these
+sub-commands, and never reserves a channel either - a reservation only
+ever applies to a WAV sample.
+
+`SFX n 5` stops everything sampled - whichever effect is playing on
+either channel - and the AY effect too, and releases both
+reservations. It is the "make it quiet" reset to reach for between
+scenes.
+
+## Length and streaming
+
+An effect's length is no longer capped by memory - a WAV of any size
+plays. Files up to 24K per channel stage entirely into a fixed area
+kept for the purpose; once staged they replay instantly and for free,
+however many times you trigger them and whatever else is loaded. A
+larger file streams from the card as it plays instead, and a repeat
+trigger streams it again from the start - the allocator remembers which
+channel last played the number, so a repeat goes straight back to that
+channel rather than searching or stealing, but the card is still read
+afresh each time, the way a streamed song is. Budget a card read per
+play for anything over 24K; anything under it is free to fire as often
+as you like.
+
+A streamed (over 24K) looping effect has one audible quirk at the loop
+point: instead of a silent gap while the next lap catches up, the last
+sample briefly holds - a short click or hold rather than silence. It is
+easy to miss on most material, but worth an ear check on anything that
+leans on a clean loop.
+
+**Effects split across more than 8 pieces on the card are refused
+outright**, whatever their size - the same ceiling [video](video.md)
+files are held to. The build stages files contiguously so this is rare
+in practice, but a heavily used or badly fragmented card can produce
+one. Defragment the card if a large effect will not play.
 
 **Bringing samples over from DOS.** A DAAD Ready DOS game's `SOUNDS`
 set - at most 32000 bytes per effect, sampled 5000 to 20000 Hz -
@@ -96,11 +167,6 @@ alone. Stop or change it yourself with `SFX n 7` / `SFX 0 8` and
 `SFX n 5` if a new game should start quiet. Leaving the game for real -
 declining the play-again prompt, `EXIT 0`, a fatal error - silences
 everything.
-
-**Repeats are free.** Only the first play of a given sample number reads
-the card; the payload stays resident and plays instantly every time
-after that, until a different number is asked for. A sound you fire
-often costs the card read once.
 
 **Testing samples in an emulator.** A sample playing over music drags
 the music's tempo down under CSpect. That is the emulator, not your

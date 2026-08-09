@@ -36,6 +36,19 @@ game behaves, how it builds, or what the kit gives you, it is here.
 - [Customising](customising.md) gains a section on exporting a pointer
   from a sprite editor, and why an export can be exactly the right size
   and still come out as a solid block of the wrong colour.
+- Sound effects and samples can now play two at once. `SFX n 1` and
+  `SFX n 2` pick a channel for you automatically, or you can reserve
+  one outright with the new sub-commands 11 to 16. See
+  [Audio](audio.md) for the full two-channel picture, including how a
+  channel gets taken over when both are busy.
+- A sample's length is no longer limited by memory - files of any size
+  now play, small ones from a fast fixed area and large ones streamed
+  from the card. See [Audio](audio.md) for what changes at 24K and
+  what a very large looping effect sounds like at its seam.
+- 15625 Hz is now the recommended rate for new WAV samples, because it
+  matches the hardware's own clock on most video modes. Existing
+  samples at 16000 Hz keep working exactly as before - nothing needs
+  re-exporting.
 
 ## 0.3.2 - 7 August 2026
 
