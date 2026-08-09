@@ -204,6 +204,9 @@ aud_tick:
 .noreq:
     ld ix, sfxChan0
     call aud_smp_tick           ; sample refeed (self-gated on SMPB_FLAGS)
+                                ; (the SFX stream refiller runs after this
+                                ; tick returns - the dispatch is sited in
+                                ; im2_isr, see its comment there)
     call aud_ays_tick           ; stream replay (self-gated on aysFlags);
                                 ; runs regardless of audFlags, like the
                                 ; sample refeed - the stream drives its
@@ -707,8 +710,22 @@ aud_smp_rewind_depth:
     ld (ix+SMPB_DEPTH+1), a
     ret
 .streaming:
-    ld (ix+SMPB_DEPTH), 0
-    ld (ix+SMPB_DEPTH+1), 0
+    ld hl, 0
+    ld (ix+SMPB_DEPTH), l
+    ld (ix+SMPB_DEPTH+1), h
+    ; AND END THIS COPY AT THE SEAM (SP18 item 7 Task 6). The caller is
+    ; mid-fill: it rewound the cursor and is about to reload remain from
+    ; LEN and keep copying. Every byte it would copy now comes from a
+    ; window position the producer overwrote passes ago, and the frontier
+    ; clamp cannot stop it - that clamp is computed once, before the
+    ; copy, from the PRE-rewind DEPTH. Zeroing toFill drops the caller
+    ; straight through its own top-of-loop test into .filldone, which
+    ; commits the rewound position normally. The ring simply gets a
+    ; shorter fill this frame and the drain pad holds silence; the
+    ; refiller re-stages from the anchor on the next tick and the clamp
+    ; takes over from there. Without this the loop seam of a > 24K effect
+    ; plays up to a ring's worth of stale window bytes.
+    ld (smpCpTo), hl
     set 4, (ix+SMPB_FLAGS)       ; the refiller owes a re-stage
     ret
 
@@ -822,8 +839,55 @@ aud_smp_copy:
     ex de, hl                   ; HL = toFill, DE = free-1
     or a
     sbc hl, de
-    jr c, .snap                 ; toFill < free-1: keep (smpCpTo already set)
+    jr c, .strm                 ; toFill < free-1: keep (smpCpTo already set)
     ld (smpCpTo), de            ; toFill >= free-1: clamp to free-1
+.strm:
+    ; STREAMING FRONTIER CLAMP (SP18 item 7 Task 6). A channel the
+    ; refiller is still feeding may only be pumped as far as the refiller
+    ; has actually STAGED, or a starved stream replays stale window bytes
+    ; instead of falling silent and recovering. The available figure is
+    ; the identity recorded at the debit site below:
+    ;     available = SMPB_DEPTH*512 - (SMPB_OFF & $1FF)
+    ; i.e. whole staged blocks ahead of the consumer, less how far into
+    ; the block it currently sits. Applied LAST, after the play-once and
+    ; backpressure clamps, so "it bit" means the staged frontier - not
+    ; the ring and not the payload - was the binding limit; that is what
+    ; the DEBUG underrun counter records.
+    ; GATED ON BITS 2/4 ONLY. A COMPLETE window (bit 3) holds the whole
+    ; file permanently, and a stream whose refiller reached EOF (all
+    ; three bits clear, window holding the tail) holds every byte the
+    ; consumer can still want; neither may be penalised by a
+    ; block-granular figure. DEPTH's high byte is not read: the
+    ; refiller's room gate and the open both cap DEPTH at SFX_WIN_BLKS,
+    ; and were it ever larger this would under-report and starve, which
+    ; is the safe direction.
+    ld a, (ix+SMPB_FLAGS)
+    and %00010100               ; STREAMING or REWIND owed
+    jr z, .snap
+    ld a, (ix+SMPB_DEPTH)
+    add a, a                    ; DEPTH*512 = (DEPTH*2) * 256
+    ld h, a
+    ld l, 0
+    ld a, (ix+SMPB_OFF+1)
+    and 1
+    ld d, a
+    ld e, (ix+SMPB_OFF)         ; DE = OFF & $1FF (bytes into the block)
+    or a
+    sbc hl, de                  ; HL = available (negative only when
+    jr nc, .avail               ; DEPTH is 0 mid-block, i.e. a REWIND
+    ld hl, 0                    ; the refiller has not serviced yet)
+.avail:
+    ld de, (smpCpTo)
+    or a
+    sbc hl, de
+    jr nc, .snap                ; available >= toFill: nothing to clamp
+    add hl, de                  ; restore HL = available
+    ld (smpCpTo), hl
+ IFDEF DEBUG
+    ld hl, (sfxUnderrun0)
+    inc hl
+    ld (sfxUnderrun0), hl
+ ENDIF
 .snap:
     ld a, (ix+SMPB_TABIDX)
     ld (smpCpIdx), a
@@ -1096,6 +1160,16 @@ smpCpLoop:  db 0    ; loop-mode snapshot for this copy
 smpCpSeg:   dw 0    ; this segment's byte count (saved across LDIR)
 smpCpBlk:   db 0    ; 512-block index inside the page before a segment,
                     ; held across the advance for the DEPTH debit
+
+ IFDEF DEBUG
+; SFX= report row, second field (SP18 item 7 Task 6). Counts the copies
+; on which the streaming frontier clamp above was the binding limit -
+; a real underrun, i.e. the refiller could not keep the window ahead of
+; the DAC. Page-48 data because the PUMP writes it and cannot reach
+; SFX_PAGE; the row printer that reads it lives beside the other two
+; counters on SFX_PAGE and runs with page 48 still in slot 6.
+sfxUnderrun0: dw 0
+ ENDIF
 
 ; Per-channel sampled-effect pump state (SP18 item 7), SMPB_* offsets
 ; in nextdaad.inc. Page-48 data space, pinned in slot 6 for the whole of

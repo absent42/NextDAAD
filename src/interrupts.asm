@@ -254,6 +254,23 @@ im2_isr:
     nextreg $56, AUD_PAGE_LO
     nextreg $57, AUD_PAGE_HI
     call aud_tick
+    ; SFX stream refiller (SP18 item 7 Task 6), AFTER the pump: it tops
+    ; the effect windows up from the card in short CMD18 bursts, and is
+    ; self-gated on cardBusy and on the channel's SMPB_FLAGS bits 2/4.
+    ; It needs exactly what aud_tick returns with - page 48 in slot 6
+    ; (the channel block, its window descriptor) - and it hands slot 6
+    ; back as AUD_PAGE_LO itself; only slot 7 has to be swapped, because
+    ; SFX_PAGE shares that window with the state page. Slot 7 goes back
+    ; to AUD_PAGE_HI for aud_dbg_snap's $FFE0 reads (the ISR's own MMU
+    ; restore below would cover mainline regardless).
+    ; SITED HERE, NOT INSIDE aud_tick, for one reason: page 48 is the
+    ; binding budget of this sub-project and the two nextregs plus the
+    ; call cost 11 of its bytes, against 59 free in this resident region.
+    ; Nothing else moves - this is still one call per frame, immediately
+    ; after the sample pump, with the same slot 6/7 state either way.
+    nextreg NR_MMU7, SFX_PAGE
+    call aud_sfx_refill
+    nextreg NR_MMU7, AUD_PAGE_HI
  IFDEF DEBUG
     call aud_dbg_snap        ; SP16 T7b: mirror all three PSGs + the AKY
                              ; player's position cells into the staging
