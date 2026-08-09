@@ -3,36 +3,72 @@
 ; Reads into banked memory go through the $C000 window; ddb_load
 ; saves and restores the window mapping around all paging.
 
+; Every wrapper below brackets its rst $08 with the resident cardBusy
+; flag (interrupts.asm): set before the call, cleared after it returns.
+; cardBusy_set/cardBusy_clear (just below) are the whole bracket body,
+; shared by every wrapper - the pre-flags pad (engine.asm ALIGN 256) has
+; no room for seven separate inline brackets, so the set/clear logic is
+; centralised here and each wrapper only pays for a call in and a jump
+; out. Both routines work through HL (SET/RES b,(HL), neither of which
+; touches any flag) and never touch A or F: esxDOS is not documented to
+; read F on entry to any of these calls, and cardBusy_clear's "jr" tail
+; preserves the CF/A result esxDOS just set completely untouched back to
+; the wrapper's own caller. HL itself is already documented as corrupted
+; by every one of these wrappers (see the tail-call comment on the
+; overlay1.asm sav_append_part-style helpers) so reusing it here adds no
+; new corruption. The one exception is esx_fseek, whose caller loads L
+; with the esxDOS seek-mode selector before the call (see vid_raw_seek0)
+; - that entry brackets cardBusy_set in push/pop hl so L survives into
+; the rst untouched. The SFX refiller (frame ISR, Task 6) gates on
+; cardBusy before touching the card - it must never run while any
+; wrapper below is mid-call.
+cardBusy_set:
+    ld hl, cardBusy
+    set 0, (hl)
+    ret
+cardBusy_clear:
+    ld hl, cardBusy
+    res 0, (hl)
+    ret
+
 esx_getsetdrv:
+    call cardBusy_set
     xor a
     rst $08
     db ESX_GETSETDRV
-    ret
+    jr cardBusy_clear
 
 esx_fopen:
+    call cardBusy_set
     rst $08
     db ESX_F_OPEN
-    ret
+    jr cardBusy_clear
 
 esx_fread:
+    call cardBusy_set
     rst $08
     db ESX_F_READ
-    ret
+    jr cardBusy_clear
 
 esx_fwrite:
+    call cardBusy_set
     rst $08
     db ESX_F_WRITE
-    ret
+    jr cardBusy_clear
 
 esx_fseek:
+    push hl                 ; L = esxDOS seek mode (caller's contract) -
+    call cardBusy_set       ; cardBusy_set clobbers HL internally, so
+    pop hl                  ; save/restore around it rather than after
     rst $08
     db ESX_F_SEEK
-    ret
+    jr cardBusy_clear
 
 esx_fclose:
+    call cardBusy_set
     rst $08
     db ESX_F_CLOSE
-    ret
+    jr cardBusy_clear
 
  IFDEF DEBUG
 ; DeZog quality-of-life fallback (see ddb_load_debug_retry, below): F_CHDIR
@@ -40,9 +76,10 @@ esx_fclose:
 ; error code on failure. Only reachable via ddb_load_debug_retry, so
 ; DEBUG-only - Release never emits this.
 esx_fchdir:
+    call cardBusy_set
     rst $08
     db ESX_F_CHDIR
-    ret
+    jr cardBusy_clear
  ENDIF
 
 ; Load GAME.DDB into 8K pages DDB_PAGE_FIRST.. via slot 6.

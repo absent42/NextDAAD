@@ -345,6 +345,12 @@ audEnable: db 0             ; sticky by design: armed once by the first
                             ; audio use, never re-cleared - the cheap
                             ; ISR fast path only serves pre-first-audio
 
+cardBusy:  db 0             ; nonzero while mainline is inside an esxDOS
+                            ; call (SPI wire + DivMMC paging both live);
+                            ; the SFX refiller (frame ISR) must not touch
+                            ; the card while this is set - single-byte
+                            ; store, atomic against the ISR
+
 ; SP7 audio request mailbox (Task 4). Overlay condact handlers cannot
 ; call bank-24 code (overlay1 owns slot 7), so they file requests in
 ; these resident bytes; aud_tick (ISR, bank mapped) consumes them the
