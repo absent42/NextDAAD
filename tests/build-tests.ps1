@@ -508,7 +508,15 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
+#   -Sfx2Asserts  opt-in gate for Assert-SfxDualChannel (SP18 item 7 /
+#                 Task 8): checks build\nextdaad.nex for nextreg $C5
+#                 and $CD writing %00000011 (both CTC channels 0+1) and
+#                 for the stale single-channel %00000001 writes being
+#                 gone. Written RED ahead of Task 10's channel-2 work -
+#                 this switch keeps the failure out of the default run
+#                 until then. Task 10 removes the gate and makes the
+#                 call unconditional.
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$Sfx2Asserts)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -1095,6 +1103,41 @@ function Find-MaskedRuns {
     return , $hits
 }
 
+function Find-Bytes {
+    # Boolean presence check on top of Find-ByteRuns. Not the same as a
+    # bare 'if (Find-ByteRuns ...)': PowerShell collapses a one-element
+    # array to the truthiness of that single element, so a hit at
+    # offset 0 would read as $false. .Count -gt 0 sidesteps that.
+    param([byte[]]$hay, [byte[]]$needle)
+    return (Find-ByteRuns $hay $needle).Count -gt 0
+}
+
+function Assert-SfxDualChannel {
+    # SP18 item 7 / Task 8: written RED, ahead of Task 10's channel-2
+    # CTC plumbing. nextreg $C5/$CD must enable BOTH CTC channels (bits
+    # 0+1, %00000011); the tree at this commit still writes the old
+    # single-channel value (bit 0 only, %00000001), so this throws
+    # until Task 10 lands. Gated behind -Sfx2Asserts until then (see
+    # the call site).
+    param([byte[]]$nex)
+    # nextreg $C5, %00000011  ->  ED 91 C5 03
+    if (-not (Find-Bytes $nex ([byte[]]@(0xED, 0x91, 0xC5, 0x03)))) {
+        throw "SFX2: NR `$C5 is not enabling CTC channels 0+1"
+    }
+    # nextreg $CD, %00000011  ->  ED 91 CD 03
+    if (-not (Find-Bytes $nex ([byte[]]@(0xED, 0x91, 0xCD, 0x03)))) {
+        throw "SFX2: NR `$CD does not admit both CTC channels"
+    }
+    # the old single-channel writes must be GONE
+    if (Find-Bytes $nex ([byte[]]@(0xED, 0x91, 0xC5, 0x01))) {
+        throw "SFX2: stale NR `$C5,1 write present"
+    }
+    if (Find-Bytes $nex ([byte[]]@(0xED, 0x91, 0xCD, 0x01))) {
+        throw "SFX2: stale NR `$CD,1 write present"
+    }
+    "SFX2: NR `$C5/`$CD both enable CTC channels 0+1 (ED 91 C5/CD 03), no stale single-channel writes"
+}
+
 $sfxdiBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxdi.ddb")
 # ANYKEY is the V2 wait-for-key condact and this fixture must stay V2 -
 # under V3 the interpreter reads PAUSE 0 as GETKEY and SYNONYM changes
@@ -1614,6 +1657,13 @@ if (Test-Path "$root\build\nextdaad.nex") {
     $stale = Find-MaskedRuns $nex @(0x3E, 0xFE, 0x32, $null, $null, 0x3E, 0x20, 0xC3)
     if ($stale.Count -ne 0) {
         throw "tm_clear_blank: the old attribute-254 clear is still present - uncovered cells will still paint opaque DAAD white"
+    }
+
+    if ($Sfx2Asserts) {
+        # SP18 item 7 / Task 8: opt-in until Task 10 lands channel 2 -
+        # the assert is RED on the current tree by design. Task 10
+        # removes this gate and calls Assert-SfxDualChannel unconditionally.
+        Assert-SfxDualChannel $nex
     }
 }
 else {
