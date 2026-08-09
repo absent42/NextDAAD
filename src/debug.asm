@@ -787,71 +787,11 @@ aud_dmaprobe:
     db $87                      ; WR6: enable
 .proglen equ $ - .prog
 
-; --- Ring-2 placement probe (SP18 item 7 Task 9, spec OP1) -----------
-; V1 silicon instruments for the AUD_STAGE2 candidate: $4400-$47FF (1K)
-; inside the classic ULA pixel screen ($4000-$57FF), believed dead once
-; the tilemap/Layer 2 are up. RING2FILL primes the candidate with a
-; $A5 sentinel; RING2CHK scans it back and reports the first mismatch
-; (address + byte, via dbg_hex16/dbg_hex8) or "OK". Owner-invoked only,
-; via a debugger CALL to the symbol - no automatic call site exists
-; anywhere in the boot or engine flow, so Release carries none of this
-; (the whole block is IFDEF DEBUG).
-;
-; TIMING PRECONDITION: only call these once dbgTilemap=1 (i.e. after
-; dbg_engage_tilemap has run - boot has reached the parser). Before
-; that point dbg_puts/dbg_putc route through the ULA-pixel fallback
-; (this file, above), which plots at H = $40 + (y AND $18) .. +7 - rows
-; 0-7 land on H=$40-$47, overlapping this exact candidate ($44-$47).
-; An early call would have its OWN status print corrupt the region
-; under test. Neither routine calls dbg_cls for the same reason: it
-; unconditionally clears the WHOLE ULA screen via ula_cls (hardware.asm).
-;
-; Byte budget: DEBUG resident tail: 3 bytes free after these verbs
-; (was 59 before them - sjasmplus's own DISPLAY headroom line).
-RING2_BASE equ $4400
-RING2_LEN  equ $0400              ; 1K
-RING2_ROW  equ 20                 ; fixed row: repeat calls overwrite,
-                                  ; not scroll
-
-; Fill RING2_BASE..+RING2_LEN-1 with $A5. No screen output (RING2CHK,
-; called right after, both confirms the fill and reports it). Corrupts
-; AF, BC, DE, HL.
-ring2_fill:
-    ld hl, RING2_BASE
-    ld de, RING2_BASE+1
-    ld bc, RING2_LEN-1
-    ld (hl), $A5
-    ldir
-    ret
-
-; Scan RING2_BASE..+RING2_LEN-1 for the first byte != $A5. Prints "OK"
-; on row RING2_ROW if the whole range is intact, else the mismatching
-; address (4 hex digits) then a space then its byte (2 hex digits) on
-; that same row. Corrupts everything (dbg_* helpers' own contract).
-ring2_chk:
-    ld b, RING2_ROW
-    call dbg_at0
-    ld hl, RING2_BASE
-    ld bc, RING2_LEN
-.loop:
-    ld a, (hl)
-    cp $A5
-    jr nz, .bad
-    inc hl
-    dec bc
-    ld a, b
-    or c
-    jr nz, .loop
-    ld hl, .msgok
-    jp dbg_puts
-.bad:
-    push af                     ; mismatching byte value (dbg_hex16
-                                 ; below would corrupt it otherwise)
-    call dbg_hex16              ; HL is still the mismatch address
-    call dbg_space
-    pop af
-    jp dbg_hex8
-.msgok: db "OK", 0
+; Ring-2 placement probe (RING2_BASE/ring2_fill/ring2_chk, SP18 item 7
+; Task 9) relocated to overlay0.asm by Task 10 - the resident DEBUG
+; tail had only 3 bytes free after Task 9 landed them here, and Task 10
+; needs ~40-45 for ctc2_isr and its cursors. See overlay0.asm for the
+; routines and the relocation rationale.
 
 dbg_font:
     INCBIN "../tools/DAAD-READY/ASSETS/CHARSET/AD8x8.CHR"   ; 2048 bytes, 256 glyphs

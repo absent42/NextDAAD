@@ -3845,5 +3845,86 @@ msgRuntimeErr: db "NextDAAD: RUNTIME ERROR - E", 0
 ; Reader stack depth overflow (ddbtext.asm's rd_push/rd_pop).
 msgRdStack:    db "NextDAAD: RD STACK - E9", 0
 
+; --- Ring-2 placement probe (SP18 item 7 Task 9, spec OP1; relocated
+; from src/debug.asm by Task 10 - resident's DEBUG tail had only 3
+; bytes free after Task 9 landed these here, and Task 10's ctc2_isr +
+; cursors need ~40-45 more, so these two verbs (~56 bytes) moved to
+; make room). ------------------------------------------------------
+; V1 silicon instruments for the AUD_STAGE2 candidate: $4400-$47FF (1K)
+; inside the classic ULA pixel screen ($4000-$57FF), believed dead once
+; the tilemap/Layer 2 are up. RING2FILL primes the candidate with a
+; $A5 sentinel; RING2CHK scans it back and reports the first mismatch
+; (address + byte, via dbg_hex16/dbg_hex8) or "OK". Owner-invoked only,
+; via a debugger CALL to the symbol - no automatic call site exists
+; anywhere in the boot or engine flow, so Release carries none of this
+; (both routines are IFDEF DEBUG).
+;
+; RELOCATION IS SAFE: the routines' documented invocation precondition
+; (below) is "CALL only once the interpreter is idle at the parser
+; prompt", and the parser prompt is reached only with overlay0 mapped
+; into slot 7 - it is the dispatcher's own condact-handler page, and
+; nothing else can be mapped there while mainline waits on input. So
+; moving these verbs onto overlay0 adds no new constraint beyond the
+; one they already had: a debugger CALL to their address at the idle
+; prompt lands on the correct bytes either way. They still call
+; resident dbg_* helpers (fine to reach from an overlay page - the
+; call itself does not depend on which page is mapped) and touch only
+; $4400-$47FF, which is always mapped regardless of slot 7's content.
+;
+; TIMING PRECONDITION: only call these once dbgTilemap=1 (i.e. after
+; dbg_engage_tilemap has run - boot has reached the parser). Before
+; that point dbg_puts/dbg_putc route through debug.asm's ULA-pixel
+; fallback, which plots at H = $40 + (y AND $18) .. +7 - rows 0-7 land
+; on H=$40-$47, overlapping this exact candidate ($44-$47). An early
+; call would have its OWN status print corrupt the region under test.
+; Neither routine calls dbg_cls for the same reason: it unconditionally
+; clears the WHOLE ULA screen via ula_cls (hardware.asm).
+ IFDEF DEBUG
+RING2_BASE equ $4400
+RING2_LEN  equ $0400              ; 1K
+RING2_ROW  equ 20                 ; fixed row: repeat calls overwrite,
+                                  ; not scroll
+
+; Fill RING2_BASE..+RING2_LEN-1 with $A5. No screen output (RING2CHK,
+; called right after, both confirms the fill and reports it). Corrupts
+; AF, BC, DE, HL.
+ring2_fill:
+    ld hl, RING2_BASE
+    ld de, RING2_BASE+1
+    ld bc, RING2_LEN-1
+    ld (hl), $A5
+    ldir
+    ret
+
+; Scan RING2_BASE..+RING2_LEN-1 for the first byte != $A5. Prints "OK"
+; on row RING2_ROW if the whole range is intact, else the mismatching
+; address (4 hex digits) then a space then its byte (2 hex digits) on
+; that same row. Corrupts everything (dbg_* helpers' own contract).
+ring2_chk:
+    ld b, RING2_ROW
+    call dbg_at0
+    ld hl, RING2_BASE
+    ld bc, RING2_LEN
+.loop:
+    ld a, (hl)
+    cp $A5
+    jr nz, .bad
+    inc hl
+    dec bc
+    ld a, b
+    or c
+    jr nz, .loop
+    ld hl, .msgok
+    jp dbg_puts
+.bad:
+    push af                     ; mismatching byte value (dbg_hex16
+                                 ; below would corrupt it otherwise)
+    call dbg_hex16              ; HL is still the mismatch address
+    call dbg_space
+    pop af
+    jp dbg_hex8
+.msgok: db "OK", 0
+ ENDIF
+
     DISPLAY "overlay0 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
