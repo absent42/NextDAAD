@@ -1,14 +1,21 @@
 ; NextDAAD SP18 item 7 Task 7 fixture - the dual-channel SD-streamed
-; sampled-effect wire smoke.
+; sampled-effect wire smoke. Task 14b added a picture load, the
+; standard save/load path, a second >24K streamed effect and a
+; video-playback verb, so real SD-card art and save-file traffic and a
+; video clip can run concurrent with a streamed effect, and a fresh
+; open of a DIFFERENT >24K number can be contrasted against a cached
+; rewind of effect 1.
 ;
 ; Compiled by tests\build-tests.ps1 on every run (a break in the DSF is
 ; caught even without the leg switch, same rule the other fixtures
 ; follow); staged as the active GAME.DDB in sd\SFXLONG\ by
-; tests\build-tests.ps1 -SfxLong, which also generates and stages the
-; two stimulus WAVs described below as 001.WAV and 002.WAV. sd\SFXLONG\
-; is emptied and refilled on every -SfxLong run and holds nothing but
-; those two files plus a NEXTDAAD.NEX copy of build\nextdaad.nex - copy
-; the folder to the card and launch from inside it.
+; tests\build-tests.ps1 -SfxLong, which also generates and stages three
+; stimulus WAVs (001-003.WAV), a Layer 2 test card (001.NXI) and,
+; opportunistically, a video clip (001.VID) as described below.
+; sd\SFXLONG\ is emptied and refilled on every -SfxLong run and holds
+; nothing but this fixture's own files plus a NEXTDAAD.NEX copy of
+; build\nextdaad.nex - copy the folder to the card and launch from
+; inside it.
 ;
 ; ------------------------------------------------------------------
 ; WHY THIS FIXTURE EXISTS
@@ -30,7 +37,7 @@
 ; ZEsarUX section below).
 ;
 ; ------------------------------------------------------------------
-; THE TWO EFFECTS
+; THE EFFECTS
 ; ------------------------------------------------------------------
 ; Effect 1 (001.WAV) - THE STREAMER. ~200000 bytes of payload (200044
 ; bytes on disk with the 44-byte RIFF/fmt/data header), 16000 Hz mono
@@ -46,30 +53,74 @@
 ; keeps working exactly as it always did while the other channel is
 ; mid-stream.
 ;
-; Both files are generated inline in tests\build-tests.ps1's -SfxLong
-; staging block (a 20-line PowerShell RIFF/fmt/data writer, the same
+; Effect 3 (003.WAV) - THE SECOND STREAMER (Task 14b). ~100000 bytes of
+; payload (100044 bytes on disk), same rate/format - also over
+; SFX_WIN_BYTES, so it takes the STREAMING arm too. A second, DISTINCT
+; >24K number from effect 1: triggering a fresh full open of effect 3
+; does not touch whatever channel already holds effect 1's cached
+; handle and hot filemap, so the two can be contrasted (a fresh open's
+; delay vs a cached rewind's) without one disturbing the other.
+;
+; All three files are generated inline in tests\build-tests.ps1's
+; -SfxLong staging block (a PowerShell RIFF/fmt/data writer, the same
 ; idiom the truncwav/badwav suite fixtures already use elsewhere in
 ; that script) - deterministic whole-cycle 8-bit sine payloads centred
 ; on 128 (DAC_SILENCE), same construction as tests\audio\mktone.py's
 ; tones, so re-running the stager reproduces the exact same bytes.
 ; Nothing here is a copy of a Python-generated file: the brief called
-; for an inline generator specifically because these two sizes are not
+; for an inline generator specifically because these sizes are not
 ; shared with any other fixture's tone.
+;
+; ------------------------------------------------------------------
+; THE PICTURE, SAVE/LOAD AND VIDEO ASSETS (Task 14b)
+; ------------------------------------------------------------------
+; 001.NXI - a 256-wide Layer 2 test card, tests\art\mkl2card.py's
+; output (the smaller of the two cards tests\art\ generates - the
+; other, mkl2holes.py's, is pinned to a full-screen 192 rows). Byte-
+; identical to the card -SfxDi already stages as its own 001.NXI - its
+; own header already documents it as reusable by any fixture that just
+; needs "the ONE picture PICTURE 1 loads and DISPLAY 0 blits", so
+; nothing new was generated for this. PIC loads and shows it - real SD
+; card art traffic, concurrent with a streamed effect.
+;
+; SAVE/LOAD - the standard DAAD condacts (SAVE 0 / LOAD 0, the same
+; argument sibling fixtures such as tests\test.dsf use), exercising
+; the real SD save-file path concurrent with a streamed effect.
+;
+; 001.VID - a video clip. -SfxLong stages whichever -Vid leg encode is
+; already cached in tests\out\ (the smallest *_leg_cache.vid found
+; there); this fixture does not encode anything itself. If no cache
+; exists yet (a fresh clone with no prior -Vid run), 001.VID is left
+; unstaged and VID's SFX 1 9 reports a clean miss rather than playing
+; anything - run -Vid once first to populate the cache, then re-stage.
+; VID plays video 1 once through the SAME condact family (opcode 18)
+; the sample effects use, so a video-abort can be exercised while a
+; streamed effect is active.
 ;
 ; ------------------------------------------------------------------
 ; THE VERBS
 ; ------------------------------------------------------------------
-; SFX B C: B = effect number, C = sub. Only subs 1 (play once), 2 (play
-; looped) and 5 (stop all channels) are shipped - subs 11-16 do not
-; exist yet and must not be used here.
+; SFX B C: B = effect/video number, C = sub. This fixture uses subs 1
+; (play once), 2 (play looped), 5 (stop all channels) and, from Task
+; 14b, 9 (play video once - PLAYFLI in manual/reference/symbols.md's
+; Appendix D table, identical to GFX n 13). Subs 3/4/6/7/8/10 and the
+; per-channel pin API (11-16) are shipped on this target too but are
+; exercised by other fixtures (tests\sfx2.dsf covers 11-16), not here.
 ;   PLAY1  SFX 1 1   effect 1 (the streamer) once
 ;   LOOP1  SFX 1 2   effect 1 (the streamer) looped
 ;   PLAY2  SFX 2 1   effect 2 (the complete file) once
 ;   LOOP2  SFX 2 2   effect 2 (the complete file) looped
-;   STOP   SFX 0 5   stop every playing channel (both effects)
+;   PLAY3  SFX 3 1   effect 3 (the second streamer) once
+;   LOOP3  SFX 3 2   effect 3 (the second streamer) looped
+;   STOP   SFX 0 5   stop every playing channel (all three effects)
+;   PIC    PICTURE 1 / DISPLAY 0   load and show the staged test card
+;   SAVE   SAVE 0    save the game (standard DAAD save-file prompt)
+;   LOAD   LOAD 0    load the game (standard DAAD load-file prompt)
+;   VID    SFX 1 9   play video 1 once
 ; Boot autoplay triggers LOOP1 automatically (see /PRO 6) so the
 ; ZEsarUX smoke below needs no typing at all past launching the .nex -
-; the verbs exist for exercising the other subs and effect 2 by hand.
+; the verbs exist for exercising the other subs, effect 2, effect 3,
+; the picture, save/load and video by hand.
 ;
 ; ------------------------------------------------------------------
 ; THE DDB BYTE-ASSERT (the fixture-stimulus rule)
@@ -79,8 +130,10 @@
 ; what the interpreter actually receives is verified against the
 ; compiled bytes, not assumed from this source. tests\build-tests.ps1
 ; dumps tests\out\sfxlong.ddb and asserts SFX 1 1, SFX 1 2, SFX 2 1,
-; SFX 2 2 and SFX 0 5 (opcode 18 = $12) are all present as authored,
-; the same idiom the sfxdi/fontsw blocks already use.
+; SFX 2 2, SFX 3 1, SFX 3 2, SFX 1 9 and SFX 0 5 (opcode 18 = $12), plus
+; PICTURE 1 (opcode 84), DISPLAY 0 (opcode 28), SAVE 0 (opcode 25) and
+; LOAD 0 (opcode 26), are all present as authored, the same idiom the
+; sfxdi/l2holes/fontsw blocks already use.
 ;
 ; ------------------------------------------------------------------
 ; ZESARUX MANUAL WIRE SMOKE (owner procedure - not automated)
@@ -146,6 +199,12 @@ LOOP1  61 verb
 PLAY2  62 verb
 LOOP2  63 verb
 STOP   64 verb
+PIC    65 verb
+SAVE   66 verb
+LOAD   67 verb
+PLAY3  68 verb
+LOOP3  69 verb
+VID    70 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -258,6 +317,33 @@ SOUTH 0
 > LOOP2 _ MES "effect 2 (complete) looped - SFX 2 2#n"
           SFX 2 2
           DONE
+; ---- effect 3, 003.WAV, the second streamer (> SFX_WIN_BYTES, a
+; DIFFERENT number from effect 1 - Task 14b) ----
+> PLAY3 _ MES "effect 3 (second streamer) once - SFX 3 1#n"
+          SFX 3 1
+          DONE
+> LOOP3 _ MES "effect 3 (second streamer) looped - SFX 3 2#n"
+          SFX 3 2
+          DONE
+; ---- picture: real SD art load concurrent with streaming (Task 14b) ----
+> PIC   _ MES "picture 1 - PICTURE 1 / DISPLAY 0#n"
+          PICTURE 1
+          DISPLAY 0
+          DONE
+; ---- save/load: real SD save-file I/O concurrent with streaming
+; (Task 14b) - the standard DAAD condacts, same argument and CLS/
+; RESTART pattern tests\test.dsf's SAVE/LOAD verbs use ----
+> SAVE  _ SAVE 0
+          CLS
+          RESTART
+> LOAD  _ LOAD 0
+          CLS
+          RESTART
+; ---- video: a video-playback verb concurrent with streaming
+; (Task 14b) - SFX 1 9 = PLAYFLI, video 1 once ----
+> VID   _ MES "video 1 once - SFX 1 9#n"
+          SFX 1 9
+          DONE
 ; ---- stop everything ----
 > STOP  _ MES "all channels stopped - SFX 0 5#n"
           SFX 0 5
@@ -271,9 +357,14 @@ SOUTH 0
         CLS
         MESSAGE 0
 > _ _   MES "001.WAV effect 1, > 24K, STREAMING#n"
-        MES "002.WAV effect 2, <= 24K, COMPLETE#n#n"
+        MES "002.WAV effect 2, <= 24K, COMPLETE#n"
+        MES "003.WAV effect 3, > 24K, STREAMING#n#n"
         MES "PLAY1 / LOOP1              effect 1 once / looped#n"
         MES "PLAY2 / LOOP2              effect 2 once / looped#n"
+        MES "PLAY3 / LOOP3              effect 3 once / looped#n"
+        MES "PIC                        load + show picture 1#n"
+        MES "SAVE / LOAD                save / load the game#n"
+        MES "VID                        play video 1 once#n"
         MES "STOP                       stop every channel#n#n"
         MES "Boot autoplay starts LOOP1 automatically.#n"
 ; Boot autoplay - the ZEsarUX wire smoke needs no typed input at all:

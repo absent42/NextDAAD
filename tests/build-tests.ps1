@@ -192,17 +192,29 @@
 #            alternative to -Aud/-AudLad, not a companion.
 #   -SfxLong SD-streamed sampled-effect wire fixture (SP18 item 7 Task 7),
 #            staged into sd\SFXLONG\: make the tests\sfxlong.dsf DDB
-#            active AND stage two generated WAVs (16000 Hz mono 8-bit,
+#            active AND stage three generated WAVs (16000 Hz mono 8-bit,
 #            same deterministic whole-cycle sine construction as
 #            tests\audio\mktone.py, generated inline here rather than by
 #            a script) as 001.WAV (effect 1, ~200000 bytes of payload -
 #            over SFX_WIN_BYTES/24576, forces the STREAMING arm of
-#            sfx_stream_open) and 002.WAV (effect 2, ~16000 bytes of
+#            sfx_stream_open), 002.WAV (effect 2, ~16000 bytes of
 #            payload - under the threshold, takes the COMPLETE/free-
-#            hybrid arm). Verbs PLAY1/LOOP1 (effect 1) and PLAY2/LOOP2
-#            (effect 2) map to SFX 1/2 1/2, STOP maps to SFX 0 5; boot
-#            autoplay starts LOOP1 with no typing needed. The compiled
-#            SFX condact bytes are asserted below (opcode 18) on every
+#            hybrid arm) and 003.WAV (effect 3, ~100000 bytes of payload -
+#            a SECOND, distinct STREAMING number, added Task 14b so a
+#            fresh full open can be contrasted against a cached rewind of
+#            effect 1). Verbs PLAY1/LOOP1 (effect 1), PLAY2/LOOP2 (effect
+#            2) and PLAY3/LOOP3 (effect 3) map to SFX 1/2/3 1/2, STOP maps
+#            to SFX 0 5; boot autoplay starts LOOP1 with no typing needed.
+#            Also stages 001.NXI (Task 14b: tests\art\mkl2card.py's
+#            generated Layer 2 card, the same file -SfxDi stages, for the
+#            PIC verb's PICTURE 1 / DISPLAY 0) and, opportunistically,
+#            001.VID (Task 14b: the smallest cached -Vid leg encode
+#            already sitting in tests\out\, for the VID verb's SFX 1 9 -
+#            no video encoder is run by this switch; if no cache exists
+#            yet, 001.VID is left unstaged and staging warns rather than
+#            fails). SAVE/LOAD are the standard DAAD condacts (SAVE 0 /
+#            LOAD 0). The compiled condact bytes (SFX opcode 18, PICTURE
+#            84, DISPLAY 28, SAVE 25, LOAD 26) are asserted below on every
 #            run, whether or not this switch is given - the fixture-
 #            stimulus rule, DRC can silently rewrite condacts. This leg
 #            proves the STREAMING arm is reachable and byte-correct;
@@ -1549,16 +1561,27 @@ if ($fontswPauseHits.Count -ne 3) {
 # THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/fontsw above: DRC
 # can silently rewrite condacts, so what the interpreter actually
 # receives is verified here rather than assumed from the DSF. SFX is
-# opcode 18 = $12, two parameters, so each call is three bytes.
+# opcode 18 = $12, two parameters, so each call is three bytes. Task
+# 14b added PICTURE (84), DISPLAY (28), SAVE (25) and LOAD (26), all
+# one-parameter condacts (two bytes each), plus the SFX 3 x / SFX 1 9
+# sub-commands - same guard, same idiom the sfxdi/l2holes blocks
+# already use for their own PICTURE 1 / DISPLAY 0 checks.
 $sfxLongBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxlong.ddb")
 if ($sfxLongBytes[0] -ne 2) {
     throw "sfxlong: DDB header version byte is $($sfxLongBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
 }
-foreach ($s in @(@{ n = 'SFX 1 1 (PLAY1, effect 1 once)';  b = [byte[]]@(18, 1, 1) },
-                 @{ n = 'SFX 1 2 (LOOP1, effect 1 looped)'; b = [byte[]]@(18, 1, 2) },
-                 @{ n = 'SFX 2 1 (PLAY2, effect 2 once)';  b = [byte[]]@(18, 2, 1) },
-                 @{ n = 'SFX 2 2 (LOOP2, effect 2 looped)'; b = [byte[]]@(18, 2, 2) },
-                 @{ n = 'SFX 0 5 (STOP, stop-all)';        b = [byte[]]@(18, 0, 5) })) {
+foreach ($s in @(@{ n = 'SFX 1 1 (PLAY1, effect 1 once)';    b = [byte[]]@(18, 1, 1) },
+                 @{ n = 'SFX 1 2 (LOOP1, effect 1 looped)';   b = [byte[]]@(18, 1, 2) },
+                 @{ n = 'SFX 2 1 (PLAY2, effect 2 once)';    b = [byte[]]@(18, 2, 1) },
+                 @{ n = 'SFX 2 2 (LOOP2, effect 2 looped)';   b = [byte[]]@(18, 2, 2) },
+                 @{ n = 'SFX 3 1 (PLAY3, effect 3 once)';    b = [byte[]]@(18, 3, 1) },
+                 @{ n = 'SFX 3 2 (LOOP3, effect 3 looped)';   b = [byte[]]@(18, 3, 2) },
+                 @{ n = 'SFX 1 9 (VID, video 1 once)';       b = [byte[]]@(18, 1, 9) },
+                 @{ n = 'SFX 0 5 (STOP, stop-all)';          b = [byte[]]@(18, 0, 5) },
+                 @{ n = 'PICTURE 1 (PIC)';                   b = [byte[]]@(84, 1) },
+                 @{ n = 'DISPLAY 0 (PIC)';                   b = [byte[]]@(28, 0) },
+                 @{ n = 'SAVE 0 (SAVE)';                     b = [byte[]]@(25, 0) },
+                 @{ n = 'LOAD 0 (LOAD)';                     b = [byte[]]@(26, 0) })) {
     if ((Find-ByteRuns $sfxLongBytes $s.b).Count -lt 1) {
         throw "sfxlong: '$($s.n)' not present in tests\out\sfxlong.ddb - DRC did not emit the authored condact"
     }
@@ -1571,7 +1594,7 @@ $loop1Hits = (Find-ByteRuns $sfxLongBytes ([byte[]]@(18, 1, 2))).Count
 if ($loop1Hits -lt 2) {
     throw "sfxlong: expected SFX 1 2 (18 01 02) at least twice (the LOOP1 verb and the boot autoplay trigger); found $loop1Hits"
 }
-"sfxlong.ddb: v$($sfxLongBytes[0]), SFX 1 1 / 1 2 / 2 1 / 2 2 / 0 5 all present, SFX 1 2 occurs $loop1Hits times (verb + boot autoplay)"
+"sfxlong.ddb: v$($sfxLongBytes[0]), SFX 1 1 / 1 2 / 2 1 / 2 2 / 3 1 / 3 2 / 1 9 / 0 5 all present, PICTURE 1 / DISPLAY 0 / SAVE 0 / LOAD 0 all present, SFX 1 2 occurs $loop1Hits times (verb + boot autoplay)"
 
 # --- sfx2: the two-channel sampled-effect API fixture ---
 # THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/sfxlong/fontsw
@@ -3030,9 +3053,11 @@ if ($SfxDi) {
 
 $sfxLongActive = $false
 if ($SfxLong) {
-    # SD-streamed sampled-effect wire fixture (SP18 item 7 Task 7). Two
-    # jobs, both owned entirely by this switch: make tests\sfxlong.dsf
-    # the active DDB, and generate + stage the two stimulus WAVs.
+    # SD-streamed sampled-effect wire fixture (SP18 item 7 Task 7).
+    # Owned entirely by this switch: make tests\sfxlong.dsf the active
+    # DDB, and generate + stage the three stimulus WAVs, the PIC verb's
+    # picture and (opportunistically) the VID verb's clip - the last
+    # three assets added by Task 14b.
     #
     # Same CSpect lock hazard as every other staging switch: refuse to
     # stage rather than leave a partial leg folder whose missing WAV
@@ -3062,11 +3087,21 @@ if ($SfxLong) {
     $completePath = "$root\tests\out\sfxlong_complete.wav"
     [System.IO.File]::WriteAllBytes($completePath, $completeWav)
 
+    # Effect 3: 003.WAV, THE SECOND STREAMER (Task 14b). 100000 bytes of
+    # payload is also over SFX_WIN_BYTES, taking the STREAMING arm - a
+    # second, DISTINCT >24K number from effect 1, so a fresh full open
+    # of this number can be contrasted against a cached rewind of effect
+    # 1 without one disturbing the other's channel state. 440 Hz over
+    # 100000 bytes at 16000 Hz is 2750.0 whole cycles.
+    $stream2Wav = New-SfxLongWav -Rate 16000 -ToneHz 440.0 -PayloadBytes 100000
+    $stream2Path = "$root\tests\out\sfxlong_stream2.wav"
+    [System.IO.File]::WriteAllBytes($stream2Path, $stream2Wav)
+
     # aud_load_wav takes the rate/channels/bits verbatim from the fmt
     # chunk and rejects anything but mono 8-bit - re-read the generated
     # header rather than trusting the generator arguments, same rule
     # the -SfxDi tone staging follows.
-    $wavMap = [ordered]@{ $streamPath = '001.WAV'; $completePath = '002.WAV' }
+    $wavMap = [ordered]@{ $streamPath = '001.WAV'; $completePath = '002.WAV'; $stream2Path = '003.WAV' }
     foreach ($src in $wavMap.Keys) {
         $wb = [System.IO.File]::ReadAllBytes($src)
         $wrate = [System.BitConverter]::ToUInt32($wb, 24)
@@ -3083,6 +3118,53 @@ if ($SfxLong) {
         Copy-Item $src "$leg\$dest" -Force
         "staged $src -> sd\$legName\$dest  $($wb.Length) bytes, $wrate Hz mono 8-bit, $arm arm"
     }
+
+    # 001.NXI: the PIC verb's picture (Task 14b). Reuses
+    # tests\art\mkl2card.py's generated Layer 2 corruption-detector card
+    # byte-for-byte - the same deterministic file -SfxDi stages as its
+    # own 001.NXI - rather than inventing a second generator; that
+    # script's own header already documents the card as reusable by any
+    # fixture that just needs "the ONE picture PICTURE 1 loads and
+    # DISPLAY 0 blits". 256-wide (.NXI) and 128 rows, the smaller of the
+    # two cards tests\art\ ships (tests\art\mkl2holes.py's card is
+    # pinned to a full-screen 192 rows).
+    & python "$PSScriptRoot\art\mkl2card.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkl2card.py failed" }
+    $picSrc = "$root\tests\out\l2card.nxi"
+    if (-not (Test-Path $picSrc)) { throw "mkl2card.py produced no l2card.nxi" }
+    # gfx_derive_height reads the row count out of the FILE LENGTH -
+    # (bytes - 512) / 256 - and rejects a partial trailing row or more
+    # than 192 rows in 256-wide mode, so the size is the one thing that
+    # has to be right for the card to load at all.
+    $picBytes = (Get-Item $picSrc).Length
+    if ((($picBytes - 512) % 256) -ne 0) { throw "l2card.nxi is $picBytes bytes - not 512 + a whole number of 256-byte rows" }
+    $picRows = ($picBytes - 512) / 256
+    if ($picRows -lt 1 -or $picRows -gt 192) { throw "l2card.nxi derives $picRows rows - gfx_derive_height rejects anything outside 1..192 in 256-wide mode" }
+    Copy-Item $picSrc "$leg\001.NXI" -Force
+    "staged tests\out\l2card.nxi -> sd\$legName\001.NXI  $picBytes bytes, 256x$picRows (PIC verb picture)"
+
+    # 001.VID: the VID verb's clip (Task 14b). This task does not run
+    # the video encoder (tools\ is read-only, and encoding is slow and
+    # owner-gated) - it reuses whichever short leg-cache encode a prior
+    # -Vid run already left in tests\out\, picking the smallest. Any
+    # valid encode works regardless of the shape/number it was
+    # originally cached under: the player reads geometry from the
+    # file's own NXV v2 header, not from the SD file number that names
+    # it (see the -VidLong staging block's own header-verification
+    # comment above). Excludes -VidLong's *_long_cache.vid family
+    # (multi-MB streaming clips - the wrong order of magnitude for this
+    # verb). Sorted by Length then Name so the choice is deterministic
+    # (does not depend on filesystem enumeration order) even when two
+    # cached files tie on size.
+    $vidSrc = Get-ChildItem "$root\tests\out\*_leg_cache.vid" -ErrorAction SilentlyContinue | Sort-Object Length, Name | Select-Object -First 1
+    if ($vidSrc) {
+        Copy-Item $vidSrc.FullName "$leg\001.VID" -Force
+        "staged tests\out\$($vidSrc.Name) -> sd\$legName\001.VID  $($vidSrc.Length) bytes (smallest cached -Vid leg encode; VID verb)"
+    }
+    else {
+        "WARNING: no tests\out\*_leg_cache.vid found - sd\$legName\001.VID NOT staged. Run 'tests\build-tests.ps1 -Vid' once to populate the cache (encodes and caches 001-006.VID), then re-run -SfxLong to pick it up. The VID verb (SFX 1 9) reports a clean miss with nothing staged, rather than failing."
+    }
+
     $sfxLongActive = $true
 }
 
