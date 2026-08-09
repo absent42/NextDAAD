@@ -573,7 +573,7 @@ AUD_STAGE2_RING equ 1024    ; same power-of-two ring shape as AUD_STAGE_RING
 ; One block per channel, in AUD_PAGE_LO (48) data space - pinned in slot 6
 ; for the whole of aud_tick, so pump code may touch it at any point with
 ; no slot-restore ordering. IX = block base inside aud_smp_* routines.
-SMPB_FLAGS    equ 0    ; bit0 active, bit1 looping (bits 2+ Task 5/12)
+SMPB_FLAGS    equ 0    ; bit0 active, bit1 looping, bits 2-5 below
 SMPB_TABIDX   equ 1    ; consumer window-page index
 SMPB_OFF      equ 2    ; dw: consumer offset in current page (0-$1FFF)
 SMPB_REMAIN   equ 4    ; dw+db: 24-bit payload bytes remaining
@@ -594,7 +594,22 @@ SMPB_STRM     equ 29   ; dw: address of this channel's stream cell group
                        ;     (SFX_PAGE, SFXS_* layout in streamfx.asm);
                        ;     the open and the refiller hold it in IY, which
                        ;     is how one body serves both channels
-SMPB_SIZE     equ 31   ; (was 14 before SP18 item 7 Task 2's parameterisation)
+SMPB_STAMP    equ 31   ; dw: frameCounter when aud_smp_start last started
+                       ;     an effect here. The allocator's tie-break -
+                       ;     between two equally stealable channels the
+                       ;     OLDEST start loses. Read as an unsigned
+                       ;     frameCounter-minus-stamp age, so the 16-bit
+                       ;     wrap (~21.8 min) needs no special case.
+SMPB_KEEP     equ 33   ; db: effect number this channel's window holds
+                       ;     (0 = nothing). The OVERLAY-visible half of
+                       ;     the keep-last cache: SFXS_KEEP is the same
+                       ;     number on SFX_PAGE, which overlay1 cannot
+                       ;     read (they share the slot-7 window), so the
+                       ;     allocator and the free-rewind test use this
+                       ;     copy. With SMPB_FLAGS bit 3 set it means the
+                       ;     WHOLE effect is resident - a re-trigger of
+                       ;     that number costs no card traffic at all.
+SMPB_SIZE     equ 34   ; (was 14 before SP18 item 7 Task 2's parameterisation)
 ; SMPB_FLAGS bit semantics (settled by the SP18 item 7 Task 5 review
 ; ruling: bits 0/1 are PLAYBACK state, bits 2-4 describe the WINDOW and
 ; the channel's CACHE, and a deliberate stop must not throw the cache
@@ -618,15 +633,25 @@ SMPB_SIZE     equ 31   ; (was 14 before SP18 item 7 Task 2's parameterisation)
 ;                    may take another byte; SMPB_DEPTH is 0 meanwhile.
 ;                    Never set on a COMPLETE channel (its window is
 ;                    permanent, so its rewind is served from RAM).
-; Bits 2-4 are the LOADER's and the REFILLER's; aud_smp_start preserves
-; them when it writes bits 0/1; aud_smp_stop keeps bit 3 and clears the
-; rest; only sfx_stream_open's refusal funnel and an eviction by a
-; DIFFERENT effect number invalidate the cache (bits 2-4 all cleared).
+;   bit 5 PINNED   - an SFX sub 11-14 reserved this channel for itself
+;                    (SP18 item 7 Task 12). AUTO-ALLOCATION NEVER TOUCHES
+;                    A PINNED CHANNEL, idle or not: the pin is a
+;                    reservation, not a busy flag. Only subs 15/16 (stop
+;                    that channel) and sub 5 (stop everything) clear it,
+;                    so neither a stop from the video abort nor an error
+;                    eviction releases it. Owned by the allocator alone -
+;                    aud_smp_start and aud_smp_stop both preserve it.
+; Bits 2-4 are the LOADER's and the REFILLER's, bit 5 the ALLOCATOR's;
+; aud_smp_start preserves 2-5 when it writes bits 0/1; aud_smp_stop keeps
+; bits 3 and 5 and clears the rest; only sfx_stream_open's refusal funnel
+; and an eviction by a DIFFERENT effect number invalidate the cache
+; (bits 2-4 all cleared, bit 5 untouched).
 ; Distinguishing a stopped-but-cached channel from an idle/empty one is
 ; therefore: bit 3 set = a COMPLETE window is cached; the channel's own
 ; SFXS_HANDLE != $FF = a stream (handle + hot filemap) is cached, with
 ; SFXS_KEEP holding its effect number; neither = idle/empty. Both stream
-; cells are per channel, reached through SMPB_STRM.
+; cells are per channel, reached through SMPB_STRM. SMPB_KEEP above
+; mirrors SFXS_KEEP for readers that cannot map SFX_PAGE.
 
 ; --- SP18 item 7: the per-channel effect window ------------------------
 ; Each channel consumes its effect through a CIRCULAR window of

@@ -723,8 +723,15 @@ sfx_stream_open:
     ld (iy+SFXS_HANDLE), $FF
     ld a, (sfxOpenNum)
     ld (iy+SFXS_KEEP), a
-    ld (smpLoadedNum), a         ; arm the free rewind: a repeat trigger
-    or a                         ; of this number costs zero card traffic
+    ld (ix+SMPB_KEEP), a         ; arm THIS CHANNEL's free rewind: with bit
+                                 ; 3 COMPLETE just set above, a repeat
+                                 ; trigger of this number on this channel
+                                 ; costs zero card traffic (sfx_alloc's
+                                 ; own test). The block copy is what the
+                                 ; allocator reads - it runs on SFX_PAGE
+                                 ; but is called from overlay1, which
+                                 ; cannot see SFXS_KEEP
+    or a
     ret
 .streaming:
     ld a, c
@@ -741,17 +748,18 @@ sfx_stream_open:
     ld (iy+SFXS_FAILCNT), 0
     ld a, (sfxOpenNum)
     ld (iy+SFXS_KEEP), a         ; handle + hot filemap stay open as this
-                                 ; channel's cached stream (spec keep-open
-                                 ; ruling), for the refiller
-    ld a, $FF
-    ld (smpLoadedNum), a         ; ...but the FREE-REWIND cache is not
-                                 ; armed for a stream in flight in this
-                                 ; task: a repeat trigger re-runs the
-                                 ; whole open (Task 6's refiller settles
-                                 ; rewind semantics for a live stream).
-                                 ; The eviction at .fresh above closes
-                                 ; the cached handle first, so re-opening
-                                 ; leaks nothing.
+    ld (ix+SMPB_KEEP), a         ; channel's cached stream (spec keep-open
+                                 ; ruling), for the refiller, and the
+                                 ; block copy tells the allocator which
+                                 ; channel to prefer for a re-trigger of
+                                 ; this number.
+                                 ; NOT a free rewind: bit 3 COMPLETE is
+                                 ; clear on this arm, and sfx_alloc's
+                                 ; free-rewind test demands both. A repeat
+                                 ; trigger therefore re-runs the whole
+                                 ; open, and the eviction at .fresh above
+                                 ; closes the cached handle first, so
+                                 ; re-opening leaks nothing.
     or a
     ret
 .frag:
@@ -778,13 +786,13 @@ sfx_stream_open:
     ld iy, (sfxCellPtr)
     ld (iy+SFXS_HANDLE), $FF
     ld (iy+SFXS_KEEP), 0
-    ld a, $FF
-    ld (smpLoadedNum), a         ; nothing cached on this channel
     ld ix, (sfxChanPtr)
+    ld (ix+SMPB_KEEP), 0         ; nothing cached on this channel
     ld a, (ix+SMPB_FLAGS)
     and %11100011                ; the refusal funnel is one of the two
     ld (ix+SMPB_FLAGS), a        ; cache invalidations: STREAMING,
-                                 ; COMPLETE and REWIND all off
+                                 ; COMPLETE and REWIND all off (bit 5
+                                 ; PINNED is the allocator's and stays)
     ld (ix+SMPB_DEPTH), 0
     ld (ix+SMPB_DEPTH+1), 0
     scf
@@ -806,6 +814,243 @@ sfx_seek0:
 
  IFDEF DEBUG
 msgSfxFrag: db "SFX FRAG?", 0
+ ENDIF
+
+; ---------------------------------------------------------------------
+; THE CHANNEL ALLOCATOR (SP18 item 7 Task 12)
+;
+; One entry point serves every channel decision the SFX condact makes:
+; picking a channel for a play trigger (subs 1/2 auto, 11-14 pinned) and
+; releasing a pin (subs 15/16 and 5). It lives HERE rather than in
+; overlay1 for space - overlay1 is the tightest code pool this
+; sub-project touches and this page has thousands of bytes free - and it
+; can live here because everything it reads is either page-48 data
+; (sfxChan0, in slot 6 for the whole call) or resident (sfxChan1, the
+; mailbox parameter cells, frameCounter). overlay1 reaches it through
+; sfx_page_call (main.asm, resident), because overlay1 and this page
+; share the slot-7 window.
+;
+; In:  A = request. 0 = auto-allocate, 1 = pin channel 1, 2 = pin
+;          channel 2, 3 = unpin channel 1, 4 = unpin channel 2,
+;          5 = unpin both.
+;      B = effect number (1-254), for the play requests.
+; Out: CF set   = the trigger is DROPPED. Both channels are pinned by
+;                 the other subs and auto-allocation may not touch
+;                 either, so there is nowhere to put this effect. A
+;                 DEBUG marker says so; the condact is a no-op.
+;      CF clear = allocated (or unpinned). A bit 0 = the channel index
+;                 (0 = channel 1, 1 = channel 2); A bit 7 set = FREE
+;                 REWIND - that channel's window already holds this exact
+;                 effect whole, the shared start parameters have been
+;                 re-committed from the channel's own latches, and the
+;                 caller must NOT call aud_load_wav: it just files the
+;                 start.
+; Preserves B. Corrupts AF, C, DE, HL, IX.
+; Preconditions: slot 6 = AUD_PAGE_LO, slot 7 = SFX_PAGE, mainline
+; context (it takes no interrupt-sensitive action and does not halt).
+;
+; THE DECISION TREE, in order:
+;   explicit (subs 11-14) - the named channel, always, whatever is
+;     playing on it and whether or not it is already pinned. The pin is
+;     set here; from now on auto-allocation may not touch that channel.
+;   auto (subs 1/2)
+;     (a) a channel that already CACHES this effect number and is not
+;         pinned. Cheapest possible outcome: either a free rewind
+;         (COMPLETE) or at worst a re-open that evicts nothing else.
+;     (b) an IDLE, unpinned channel (SMPB_FLAGS bit 0 clear). A pinned
+;         channel is skipped EVEN WHEN IDLE - the pin is a reservation,
+;         not a busy flag (owner ruling).
+;     (c) STEAL an unpinned ACTIVE channel: a ONE-SHOT (bit 1 clear)
+;         before a LOOP, and between two of the same kind the one whose
+;         SMPB_STAMP is oldest.
+;     (d) nothing left - drop, with the DEBUG marker.
+; Channel 1 is the fixed preference at every tie in (a) and (b).
+;
+; STEALING AND THE MAILBOX. Nothing is filed here. The caller stops the
+; victim through aud_load_wav, which files the chosen channel's stop bit
+; and HALT-WAITS for it to be consumed before a single byte is staged -
+; so the victim's playback is provably over before its window is
+; overwritten, and its stop and the new start land in different frames.
+; A same-tick stop-then-start on ONE channel would be legal anyway
+; (aud_tick consumes audRequest2 bit 2 before bit 3 and audRequest bit 7
+; before bit 6, all in one pass - see aud_tick's header), but no path
+; here relies on it.
+sfx_alloc:
+    ld c, b                          ; C = effect number; B is the
+                                     ; caller's and must survive (its AY
+                                     ; fallback still needs it)
+    cp 3
+    jp nc, .unpin
+    or a
+    jp nz, .explicit
+    ; ---- (a) a channel that already caches this number ---------------
+    ld ix, sfxChan0
+    ld e, 0
+    call .cached
+    jp z, .take
+    ld ix, sfxChan1
+    inc e
+    call .cached
+    jp z, .take
+    ; ---- (b) an idle, unpinned channel -------------------------------
+    ld ix, sfxChan0
+    ld e, 0
+    call .idle
+    jp z, .take
+    ld ix, sfxChan1
+    inc e
+    call .idle
+    jp z, .take
+    ; ---- (c) steal ---------------------------------------------------
+    ld d, 0                          ; D = the stealable mask
+    ld ix, sfxChan0
+    call .victim
+    jr nz, .nv0
+    inc d
+.nv0:
+    ld ix, sfxChan1
+    call .victim
+    jr nz, .nv1
+    set 1, d
+.nv1:
+    ld a, d
+    dec a
+    jr z, .take0                     ; mask 1: only channel 1
+    dec a
+    jr z, .take1                     ; mask 2: only channel 2
+    dec a
+    jp nz, .drop                     ; mask 0: both pinned - dropped
+    ; both stealable: a one-shot goes before a loop
+    ld a, (sfxChan0+SMPB_FLAGS)
+    and %00000010
+    ld e, a
+    ld a, (sfxChan1+SMPB_FLAGS)
+    and %00000010
+    cp e
+    jr z, .oldest
+    or a
+    jr z, .take1                     ; channel 2 is the one-shot
+    jr .take0
+.oldest:
+    ; age = frameCounter - stamp, unsigned, so the 16-bit wrap is
+    ; handled by the subtraction itself. Bigger age = older = victim.
+    ld hl, (frameCounter)
+    ld de, (sfxChan0+SMPB_STAMP)
+    or a
+    sbc hl, de
+    push hl
+    ld hl, (frameCounter)
+    ld de, (sfxChan1+SMPB_STAMP)
+    or a
+    sbc hl, de
+    pop de                           ; DE = channel 1's age
+    or a
+    sbc hl, de                       ; channel 2's age - channel 1's
+    jr c, .take0                     ; channel 2 is the younger, so
+                                     ; channel 1 is the older victim
+.take1:
+    ld ix, sfxChan1
+    ld e, 1
+    jr .take
+.take0:
+    ld ix, sfxChan0
+    ld e, 0
+    jr .take
+    ; ---- explicit pin (subs 11-14) -----------------------------------
+.explicit:
+    dec a                            ; 0 = channel 1, 1 = channel 2
+    ld e, a
+    ld ix, sfxChan0
+    jr z, .expin
+    ld ix, sfxChan1
+.expin:
+    set 5, (ix+SMPB_FLAGS)           ; the reservation. An explicit pin
+                                     ; always takes its channel, so there
+                                     ; is nothing to test first
+    ; ---- commit: IX = the chosen block, E = its index ----------------
+.take:
+    ld a, (ix+SMPB_FLAGS)
+    and %00001000                    ; COMPLETE and the same number = the
+    jr z, .fresh                     ; whole effect is already in this
+    ld a, (ix+SMPB_KEEP)             ; channel's window: a free rewind,
+    cp c                             ; no card traffic at all
+    jr nz, .fresh
+    ; The audReqSmp* start parameters are SHARED by both channels
+    ; (aud_tick's header states the limitation): the values standing in
+    ; them may be the OTHER channel's last load. A free rewind skips
+    ; aud_load_wav, which is what would otherwise have re-committed
+    ; them, so re-commit here from this channel's OWN latches -
+    ; aud_smp_start wrote SMPB_CTCCTRL/CTCTC and SMPB_LEN from the
+    ; mailbox the last time this very effect started here.
+    ld a, (ix+SMPB_CTCCTRL)
+    ld (audReqSmpCtrl), a
+    ld a, (ix+SMPB_CTCTC)
+    ld (audReqSmpTc), a
+    ld a, (ix+SMPB_LEN)
+    ld (audReqSmpLen), a
+    ld a, (ix+SMPB_LEN+1)
+    ld (audReqSmpLen+1), a
+    ld a, (ix+SMPB_LEN+2)
+    ld (audReqSmpLenHi), a
+    ld a, $80
+    or e                             ; also clears CF
+    ret
+.fresh:
+    ld a, e                          ; A = index, CF clear (ld sets none,
+    or a                             ; but be explicit - the caller reads
+    ret                              ; CF as the drop verdict)
+.drop:
+ IFDEF DEBUG
+    ; inline marker, same idiom as .frag above and h_sfx's unknown
+    ; sub-command block. B is the caller's effect number and is clobbered
+    ; here, which is safe on exactly this path: a dropped trigger returns
+    ; from h_sfx without reading it again.
+    ld b, 30
+    ld c, 50
+    call dbg_at
+    ld hl, msgSfxBusy
+    call dbg_puts
+ ENDIF
+    scf
+    ret
+    ; ---- pin release (subs 15/16 and 5) ------------------------------
+.unpin:
+    sub 2                            ; 1 = channel 1, 2 = channel 2,
+    ld e, a                          ; 3 = both
+    bit 0, e
+    jr z, .unp2
+    ld hl, sfxChan0+SMPB_FLAGS
+    res 5, (hl)
+.unp2:
+    bit 1, e
+    jr z, .unpd
+    ld hl, sfxChan1+SMPB_FLAGS
+    res 5, (hl)
+.unpd:
+    or a                             ; A is the non-zero mask, so this
+    ret                              ; clears CF: not a drop
+; Z = this channel caches effect C and is not pinned. SMPB_KEEP 0 means
+; "nothing cached" and effect numbers start at 1, so no special case.
+.cached:
+    ld a, (ix+SMPB_FLAGS)
+    and %00100000
+    ret nz
+    ld a, (ix+SMPB_KEEP)
+    cp c
+    ret
+; Z = this channel is ACTIVE and not pinned (a stealable victim).
+.victim:
+    call .idle
+    dec a
+    ret
+; Z = this channel is idle and not pinned.
+.idle:
+    ld a, (ix+SMPB_FLAGS)
+    and %00100001
+    ret
+
+ IFDEF DEBUG
+msgSfxBusy: db "SFX BUSY?", 0
  ENDIF
 
 ; ---------------------------------------------------------------------
@@ -1161,7 +1406,10 @@ sfx_chan_body:
     ld hl, audRequest2
     set 2, (hl)
 .evfiled:
-    ld (iy+SFXS_KEEP), 0         ; no effect number is cached any more
+    ld (iy+SFXS_KEEP), 0         ; no effect number is cached any more -
+    ld (ix+SMPB_KEEP), 0         ; both copies, or the allocator would
+                                 ; keep steering re-triggers at a channel
+                                 ; whose stream has just been evicted
     ret
 
 ; A = the file block holding this channel's payload anchor. The anchor is
@@ -1383,6 +1631,9 @@ aud_sfx_init:
     ld (ix+SMPB_STRM+1), h           ; access is made through this pointer
     ld (ix+SMPB_DEPTH), 0            ; nothing staged until a load runs
     ld (ix+SMPB_DEPTH+1), 0
+    ld (ix+SMPB_KEEP), 0             ; and nothing cached: a warm re-entry
+                                     ; must not offer a free rewind into a
+                                     ; window this boot never staged
     ; Channel 2 (SP18 item 7 Task 11), the same members with its own
     ; hardware and its own window/cells: the AUD_STAGE2 ring (same 1K
     ; power-of-two shape, so the same wrap mask), the smp2* resident
@@ -1414,6 +1665,7 @@ aud_sfx_init:
     ld (ix+SMPB_STRM+1), h
     ld (ix+SMPB_DEPTH), 0
     ld (ix+SMPB_DEPTH+1), 0
+    ld (ix+SMPB_KEEP), 0
     ; Withdraw the audio floor from the bank allocator, once, at boot.
     ; Banks 25-27 are the two channels' effect windows PERMANENTLY as of
     ; SP18 item 7 Task 5; before that they were a first-come floor

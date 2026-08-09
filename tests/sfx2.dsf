@@ -1,0 +1,320 @@
+; NextDAAD SP18 item 7 Task 12 fixture - the two-channel sampled-effect
+; API: auto-allocation, stealing, pinned channels and per-channel stops.
+;
+; Compiled by tests\build-tests.ps1 on every run (a break in the DSF is
+; caught even without the leg switch, same rule the other fixtures
+; follow); staged as the active GAME.DDB in sd\SFX2\ by
+; tests\build-tests.ps1 -Sfx2, which also generates and stages the three
+; stimulus WAVs described below as 001.WAV, 002.WAV and 003.WAV.
+; sd\SFX2\ is emptied and refilled on every -Sfx2 run and holds nothing
+; but those three files plus a NEXTDAAD.NEX copy of build\nextdaad.nex -
+; copy the folder to the card and launch from inside it.
+;
+; ------------------------------------------------------------------
+; WHY THIS FIXTURE EXISTS
+; ------------------------------------------------------------------
+; Task 11 wired sampled-effect channel 2 end to end but nothing in DAAD
+; could trigger it. Task 12 lands the author-facing API on top:
+;
+;   SFX n 1 / SFX n 2    play effect n once / looped, on a channel the
+;                        interpreter picks (AUTO-ALLOCATION)
+;   SFX n 11 / SFX n 12  the same, PINNED to channel 1
+;   SFX n 13 / SFX n 14  the same, PINNED to channel 2
+;   SFX 0 15 / SFX 0 16  stop channel 1 / channel 2 and release its pin
+;   SFX 0 5              stop BOTH sampled channels and the AY effect,
+;                        and release both pins (the superset)
+;
+; Auto-allocation prefers a channel that already caches the requested
+; effect, then an idle unpinned channel, then STEALS one: a one-shot
+; before a loop, and between two of the same kind the one that started
+; longer ago. A PINNED channel is never taken by auto-allocation, even
+; when it is idle - the pin is a reservation. With both channels pinned
+; an auto trigger is DROPPED (a DEBUG build prints "SFX BUSY?" at row
+; 30, column 50).
+;
+; ------------------------------------------------------------------
+; THE THREE EFFECTS
+; ------------------------------------------------------------------
+; Effect 1 (001.WAV) - 16000 bytes of payload, 440 Hz, 16000 Hz mono
+; 8-bit unsigned. Under SFX_WIN_BYTES (24576, src\nextdaad.inc), so it
+; takes the COMPLETE arm: the whole file is resident in the channel's
+; window and nothing streams.
+;
+; Effect 2 (002.WAV) - 12000 bytes of payload, 880 Hz (an octave up, so
+; the two are audibly distinguishable when they play together), same
+; rate and format. Also COMPLETE.
+;
+; Effect 3 (003.WAV) - 40000 bytes of payload, 220 Hz (an octave down).
+; OVER SFX_WIN_BYTES, so it takes the STREAMING arm. It exists to be the
+; THIRD, unseen effect the steal and pin-reject verbs trigger - a number
+; neither channel caches, which is what forces the allocator past its
+; two cheap cases and into the steal/drop decision.
+;
+; All three are generated inline in tests\build-tests.ps1's -Sfx2
+; staging block by the same deterministic whole-cycle sine writer the
+; -SfxLong leg uses (New-SfxLongWav): 8-bit unsigned, centred on 128 =
+; DAC_SILENCE, whole cycles only so a loop seam does not click.
+;
+; ------------------------------------------------------------------
+; THE VERBS
+; ------------------------------------------------------------------
+;   PLAY1 / LOOP1   SFX 1 1  / SFX 1 2    effect 1, auto-allocated
+;   PLAY2 / LOOP2   SFX 2 1  / SFX 2 2    effect 2, auto-allocated
+;   DUO             SFX 1 2 + SFX 2 2     both effects at once, auto -
+;                                         the headline claim, and what
+;                                         boot autoplay triggers
+;   PIN1  / PIN1L   SFX 1 11 / SFX 1 12   effect 1 PINNED to channel 1
+;   PIN2  / PIN2L   SFX 2 13 / SFX 2 14   effect 2 PINNED to channel 2
+;   STOP1 / STOP2   SFX 0 15 / SFX 0 16   stop that channel, unpin it
+;   STOP            SFX 0 5               stop everything, unpin both
+;   STEAL           SFX 1 2, SFX 2 1, SFX 3 1
+;                   loop on auto (channel 1), one-shot on auto (channel
+;                   2), then a third, uncached effect. Neither channel
+;                   is idle and neither is pinned, so the allocator
+;                   steals - and it must take the ONE-SHOT (channel 2),
+;                   never the loop. PASS: the 440 Hz loop keeps running,
+;                   the 880 Hz one-shot is replaced by effect 3.
+;   BOTH            SFX 1 12, SFX 2 14, SFX 3 1
+;                   pin both channels, then trigger a third effect on
+;                   auto. Both channels are pinned, so there is nowhere
+;                   to put it: the trigger is DROPPED. PASS: nothing
+;                   changes audibly and a DEBUG build prints "SFX BUSY?".
+;                   Type STOP afterwards to release both pins.
+;
+; ------------------------------------------------------------------
+; THE DDB BYTE-ASSERT (the fixture-stimulus rule)
+; ------------------------------------------------------------------
+; DRC silently rewrites some condacts (BEEP tone range, PAUSE duration
+; scaling - see tests\audlad.dsf and tests\sfxdi.dsf's own headers), so
+; what the interpreter actually receives is verified against the
+; compiled bytes, not assumed from this source. tests\build-tests.ps1
+; dumps tests\out\sfx2.ddb and asserts that every SFX condact below
+; (opcode 18 = $12) is present with its authored sub-command byte,
+; INCLUDING the six new ones 11-16 - a DRC that clamped or remapped an
+; unknown sub-command would otherwise ship a fixture that tests nothing.
+;
+; ------------------------------------------------------------------
+; CSPECT EXPECTATION
+; ------------------------------------------------------------------
+; Effects 1 and 2 are both under 24K, so both take the COMPLETE arm and
+; BOTH CHANNELS PLAY CONCURRENTLY UNDER CSPECT - no raw SD is involved
+; on that path. DUO (and boot autoplay) is therefore audible there as
+; two overlapping tones, and every steal/pin/stop verb is observable by
+; ear plus the DEBUG markers.
+;
+; Effect 3 is the exception, and expected: it stages its first
+; SFX_WIN_BYTES through ordinary esxDOS reads and then the refiller's
+; raw-SPI CMD18 polls find nothing behind CSpect's SD emulation and
+; fail. Bounded by SFX_FAIL_LIMIT, so the channel stops cleanly rather
+; than hanging. The STEAL verb's verdict is unaffected - what it proves
+; is WHICH channel was taken, and that is decided before a single card
+; block is read.
+;
+; On ZEsarUX the same effect 3 is refused earlier still, at the filemap:
+; a DEBUG build prints "SFX FRAG?" (row 30, column 60) and falls back to
+; the AY effect. That marker is itself useful - it says the allocator
+; RETURNED a channel rather than dropping the trigger, which is exactly
+; what distinguishes a steal from a rejection.
+;
+; Audio fidelity verdicts belong on silicon, not here.
+
+; System flags used by name (DAAD BLANK template spellings)
+#define fPlayer             38
+#define fDarkF              28
+
+/CTL
+_
+/VOC
+NORTH  2  noun
+SOUTH  3  noun
+LOOK   4  verb
+PLAY1  60 verb
+LOOP1  61 verb
+PLAY2  62 verb
+LOOP2  63 verb
+DUO    64 verb
+PIN1   65 verb
+PIN1L  66 verb
+PIN2   67 verb
+PIN2L  68 verb
+STOP1  69 verb
+STOP2  70 verb
+STOP   71 verb
+STEAL  72 verb
+BOTH   73 verb
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "I didn't understand."
+/7  "I can't go in that direction."
+/8  "I can't do that."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 "Press any key."
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+/MTX
+/0 "NEXTDAAD TWO-CHANNEL SFX FIXTURE (SP18 ITEM 7 TASK 12)#n"
+/OTX
+/0 "a brass lamp"
+/LTX
+/0 ""
+/1 "The listening room."
+/CON
+/0
+NORTH 1
+/1
+SOUTH 0
+/OBJ
+/0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/PRO 0
+> _ _   AT 0
+        PROCESS 6
+> _ _   WINDOW 1
+        WINAT 0 0
+        WINSIZE 25 127
+        CLEAR fDarkF
+> _ _   WINDOW 1
+        DESC @fPlayer
+> _ _   PROCESS 1
+/PRO 1
+> _ _   PARSE 0
+        REDO
+> _ _   PROCESS 5
+        ISDONE
+        REDO
+> _ _   MOVE fPlayer
+        CLS
+        RESTART
+> _ _   SYSMESS 8
+        REDO
+/PRO 5
+; ---- auto-allocated: the interpreter picks the channel ----
+> PLAY1 _ MES "effect 1 once, auto - SFX 1 1#n"
+          SFX 1 1
+          DONE
+> LOOP1 _ MES "effect 1 looped, auto - SFX 1 2#n"
+          SFX 1 2
+          DONE
+> PLAY2 _ MES "effect 2 once, auto - SFX 2 1#n"
+          SFX 2 1
+          DONE
+> LOOP2 _ MES "effect 2 looped, auto - SFX 2 2#n"
+          SFX 2 2
+          DONE
+> DUO   _ MES "both effects at once, auto - SFX 1 2 + SFX 2 2#n"
+          SFX 1 2
+          SFX 2 2
+          DONE
+; ---- pinned to a named channel ----
+> PIN1  _ MES "effect 1 once on channel 1 - SFX 1 11#n"
+          SFX 1 11
+          DONE
+> PIN1L _ MES "effect 1 looped on channel 1 - SFX 1 12#n"
+          SFX 1 12
+          DONE
+> PIN2  _ MES "effect 2 once on channel 2 - SFX 2 13#n"
+          SFX 2 13
+          DONE
+> PIN2L _ MES "effect 2 looped on channel 2 - SFX 2 14#n"
+          SFX 2 14
+          DONE
+; ---- per-channel and global stops ----
+> STOP1 _ MES "channel 1 stopped and unpinned - SFX 0 15#n"
+          SFX 0 15
+          DONE
+> STOP2 _ MES "channel 2 stopped and unpinned - SFX 0 16#n"
+          SFX 0 16
+          DONE
+> STOP  _ MES "everything stopped, both pins released - SFX 0 5#n"
+          SFX 0 5
+          DONE
+; ---- the steal case: the one-shot loses, the loop survives ----
+> STEAL _ MES "loop on auto, one-shot on auto, then a third effect#n"
+          MES "PASS: 440 Hz loop survives, 880 Hz one-shot is taken#n"
+          SFX 1 2
+          SFX 2 1
+          SFX 3 1
+          DONE
+; ---- the pin-reject case: both channels reserved, trigger dropped ----
+> BOTH  _ MES "both channels pinned, then a third effect on auto#n"
+          MES "PASS: nothing changes, DEBUG prints SFX BUSY?#n"
+          SFX 1 12
+          SFX 2 14
+          SFX 3 1
+          DONE
+/PRO 6
+> _ _   WINDOW 1
+        WINAT 0 0
+        WINSIZE 25 127
+        PAPER 0
+        INK 7
+        CLS
+        MESSAGE 0
+> _ _   MES "001.WAV effect 1, 440 Hz, COMPLETE#n"
+        MES "002.WAV effect 2, 880 Hz, COMPLETE#n"
+        MES "003.WAV effect 3, 220 Hz, STREAMING#n#n"
+        MES "PLAY1 LOOP1 PLAY2 LOOP2    auto-allocated#n"
+        MES "DUO                        both at once#n"
+        MES "PIN1 PIN1L PIN2 PIN2L      pinned to a channel#n"
+        MES "STOP1 STOP2 STOP           stop one / stop all#n"
+        MES "STEAL                      one-shot loses to the loop#n"
+        MES "BOTH                       both pinned, trigger dropped#n#n"
+        MES "Boot autoplay starts DUO automatically.#n"
+; Boot autoplay - two concurrent looping effects with no typing at all,
+; which is the whole point of the task. STOP clears them.
+> _ _   SFX 1 2
+        SFX 2 2
+        GOTO 1
+/END

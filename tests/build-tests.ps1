@@ -36,6 +36,7 @@
 #   -AudLad             sd\AUDLAD\    tests\audlad.dsf
 #   -SfxDi              sd\SFXDI\     tests\sfxdi.dsf
 #   -SfxLong            sd\SFXLONG\   tests\sfxlong.dsf
+#   -Sfx2               sd\SFX2\      tests\sfx2.dsf
 #   -L2Holes            sd\L2HOLES\   tests\l2holes.dsf
 #   -TileSlack          sd\TILESLK\   tests\tileslack.dsf
 #   -Uto                sd\UTO\       tools\TEST.DSF     (V2)
@@ -108,7 +109,7 @@
 # -Err4 copies over it, -GMode copies over that, -V3 over that,
 # -Rab copies over that,
 # -UU copies over that, then -Part, then -AudLad, then -SfxDi, then
-# -SfxLong, then
+# -SfxLong, then -Sfx2, then
 # -L2Holes, then -TileSlack last of
 # all, in the order their blocks appear below. $legName is resolved in
 # exactly that order, so the folder and the active DDB always agree.
@@ -210,6 +211,34 @@
 #            fails) can only be read on ZEsarUX or real hardware - the
 #            manual wire-smoke procedure is documented in
 #            tests\sfxlong.dsf's own header, not automated here.
+#   -Sfx2    TWO-CHANNEL sampled-effect API fixture (SP18 item 7 Task
+#            12), staged into sd\SFX2\: make the tests\sfx2.dsf DDB
+#            active AND stage three generated WAVs (16000 Hz mono
+#            8-bit, the same deterministic whole-cycle sine writer the
+#            -SfxLong leg uses) as 001.WAV (effect 1, 16000 bytes of
+#            payload, 440 Hz - under SFX_WIN_BYTES so it plays COMPLETE),
+#            002.WAV (effect 2, 12000 bytes, 880 Hz - also COMPLETE) and
+#            003.WAV (effect 3, 40000 bytes, 220 Hz - over the threshold,
+#            the STREAMING arm). Verbs cover auto-allocation (SFX n 1/2),
+#            the pinned channels (SFX n 11/12/13/14), the per-channel
+#            stops (SFX 0 15/16), the stop-all superset (SFX 0 5), the
+#            STEAL case (a loop and a one-shot on auto, then a third
+#            effect - the one-shot must lose) and the pin-reject case
+#            (both channels pinned, third trigger dropped). Boot
+#            autoplay starts BOTH effects looping, so the headline
+#            claim needs no typing. The compiled SFX condact bytes are
+#            asserted below (opcode 18) on every run whether or not this
+#            switch is given, INCLUDING the six new sub-commands 11-16 -
+#            the fixture-stimulus rule, DRC can silently rewrite
+#            condacts.
+#            CSPECT: effects 1 and 2 are both COMPLETE, so BOTH CHANNELS
+#            PLAY CONCURRENTLY there and every steal/pin/stop verb is
+#            observable by ear plus the DEBUG markers ("SFX BUSY?" at
+#            row 30 column 50 for a dropped trigger). Effect 3 streams
+#            and so dies cleanly on CSpect's SD emulation after
+#            SFX_FAIL_LIMIT ticks, which is expected and does not affect
+#            what the steal verb proves. An alternative to -Aud/-AudLad/
+#            -SfxDi/-SfxLong, not a companion.
 #   -L2Holes Layer 2 TRANSPARENCY / punch-out fixture, staged into
 #            sd\L2HOLES\: make the tests\l2holes.dsf DDB active AND
 #            stage the punch-out card tests\art\mkl2holes.py generates
@@ -508,7 +537,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -532,6 +561,7 @@ if ($Part)             { $legName = 'PART' }
 if ($AudLad)           { $legName = 'AUDLAD' }
 if ($SfxDi)            { $legName = 'SFXDI' }
 if ($SfxLong)          { $legName = 'SFXLONG' }
+if ($Sfx2)             { $legName = 'SFX2' }
 if ($L2Holes)          { $legName = 'L2HOLES' }
 if ($TileSlack)        { $legName = 'TILESLK' }
 if ($Uto)              { $legName = 'UTO' }
@@ -554,7 +584,7 @@ function Reset-LegDir {
     # sd\ itself, sd\L2DMA\, or anything outside sd\).
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
-               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG',
+               'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
                'L2HOLES', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
@@ -937,6 +967,27 @@ try {
     & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDSFXLNG.json NDSFXLNG.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (sfxlong)" }
     Copy-Item NDSFXLNG.DDB "$root\tests\out\sfxlong.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
+# Two-channel sampled-effect API fixture (SP18 item 7 Task 12). Compiled
+# unconditionally like every fixture above so a break in the DSF is
+# caught on a plain run; only -Sfx2 makes it the active GAME.DDB
+# (sd\SFX2\). No -v3, deliberately - the fixture uses nothing V3-only and
+# its header version must stay 2 like every other fixture here. Built out
+# of tree for the same reason and by the same means as sfxlong above.
+$sfx2Work = Join-Path $root 'tests\out\sfx2-work'
+New-Item -ItemType Directory -Force $sfx2Work | Out-Null
+Copy-Item "$PSScriptRoot\sfx2.dsf" "$sfx2Work\NDSFX2.DSF" -Force
+Push-Location $sfx2Work
+try {
+    & "$dr\TOOLS\DRC\DRF.exe" zx next NDSFX2.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (sfx2)" }
+    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDSFX2.json NDSFX2.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (sfx2)" }
+    Copy-Item NDSFX2.DDB "$root\tests\out\sfx2.ddb" -Force
 }
 finally {
     Pop-Location
@@ -1521,6 +1572,56 @@ if ($loop1Hits -lt 2) {
     throw "sfxlong: expected SFX 1 2 (18 01 02) at least twice (the LOOP1 verb and the boot autoplay trigger); found $loop1Hits"
 }
 "sfxlong.ddb: v$($sfxLongBytes[0]), SFX 1 1 / 1 2 / 2 1 / 2 2 / 0 5 all present, SFX 1 2 occurs $loop1Hits times (verb + boot autoplay)"
+
+# --- sfx2: the two-channel sampled-effect API fixture ---
+# THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/sfxlong/fontsw
+# above, and here it is load-bearing rather than routine: sub-commands
+# 11-16 are new, and a DRC that clamped, remapped or dropped an unknown
+# SFX sub-command would ship a fixture that silently tests the old
+# single-channel behaviour instead. SFX is opcode 18 = $12, two
+# parameters, so each call is three bytes.
+$sfx2Bytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfx2.ddb")
+if ($sfx2Bytes[0] -ne 2) {
+    throw "sfx2: DDB header version byte is $($sfx2Bytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+}
+foreach ($s in @(@{ n = 'SFX 1 1 (PLAY1, auto, once)';        b = [byte[]]@(18, 1, 1) },
+                 @{ n = 'SFX 1 2 (LOOP1, auto, looped)';      b = [byte[]]@(18, 1, 2) },
+                 @{ n = 'SFX 2 1 (PLAY2, auto, once)';        b = [byte[]]@(18, 2, 1) },
+                 @{ n = 'SFX 2 2 (LOOP2, auto, looped)';      b = [byte[]]@(18, 2, 2) },
+                 @{ n = 'SFX 3 1 (the third, uncached effect)'; b = [byte[]]@(18, 3, 1) },
+                 @{ n = 'SFX 1 11 (PIN1, channel 1, once)';   b = [byte[]]@(18, 1, 11) },
+                 @{ n = 'SFX 1 12 (PIN1L, channel 1, looped)'; b = [byte[]]@(18, 1, 12) },
+                 @{ n = 'SFX 2 13 (PIN2, channel 2, once)';   b = [byte[]]@(18, 2, 13) },
+                 @{ n = 'SFX 2 14 (PIN2L, channel 2, looped)'; b = [byte[]]@(18, 2, 14) },
+                 @{ n = 'SFX 0 15 (STOP1, stop channel 1)';   b = [byte[]]@(18, 0, 15) },
+                 @{ n = 'SFX 0 16 (STOP2, stop channel 2)';   b = [byte[]]@(18, 0, 16) },
+                 @{ n = 'SFX 0 5 (STOP, the stop-all superset)'; b = [byte[]]@(18, 0, 5) })) {
+    if ((Find-ByteRuns $sfx2Bytes $s.b).Count -lt 1) {
+        throw "sfx2: '$($s.n)' not present in tests\out\sfx2.ddb - DRC did not emit the authored condact"
+    }
+}
+# The STEAL verb is a THREE-CONDACT sequence and its order is the whole
+# test (loop first, then the one-shot, then the uncached third effect):
+# assert the three land contiguously, so a DRC reorder or an inserted
+# condact cannot quietly turn it into a different experiment.
+$stealRun = [byte[]]@(18, 1, 2, 18, 2, 1, 18, 3, 1)
+if ((Find-ByteRuns $sfx2Bytes $stealRun).Count -ne 1) {
+    throw "sfx2: expected exactly one contiguous STEAL sequence (SFX 1 2 + SFX 2 1 + SFX 3 1); found $((Find-ByteRuns $sfx2Bytes $stealRun).Count)"
+}
+# Likewise the pin-reject sequence: pin channel 1, pin channel 2, then
+# an auto trigger with nowhere to go.
+$bothRun = [byte[]]@(18, 1, 12, 18, 2, 14, 18, 3, 1)
+if ((Find-ByteRuns $sfx2Bytes $bothRun).Count -ne 1) {
+    throw "sfx2: expected exactly one contiguous pin-reject sequence (SFX 1 12 + SFX 2 14 + SFX 3 1); found $((Find-ByteRuns $sfx2Bytes $bothRun).Count)"
+}
+# Boot autoplay (/PRO 6) issues SFX 1 2 + SFX 2 2 as a pair, and the DUO
+# verb issues the same pair - so that two-condact run must occur twice.
+$duoRun = [byte[]]@(18, 1, 2, 18, 2, 2)
+$duoHits = (Find-ByteRuns $sfx2Bytes $duoRun).Count
+if ($duoHits -ne 2) {
+    throw "sfx2: expected exactly two 'SFX 1 2 + SFX 2 2' pairs (the DUO verb and the boot autoplay); found $duoHits"
+}
+"sfx2.ddb: v$($sfx2Bytes[0]), subs 1/2/5 and all six of 11-16 present as authored, STEAL and pin-reject sequences contiguous, DUO pair occurs $duoHits times (verb + boot autoplay)"
 
 # ---- DRC's -D debug marker, both halves of the contract -------------
 # HALF ONE: what DRC EMITS. tests\debugflag.dsf has three DEBUG lines;
@@ -2985,6 +3086,74 @@ if ($SfxLong) {
     $sfxLongActive = $true
 }
 
+$sfx2Active = $false
+if ($Sfx2) {
+    # Two-channel sampled-effect API fixture (SP18 item 7 Task 12). Two
+    # jobs, both owned entirely by this switch: make tests\sfx2.dsf the
+    # active DDB, and generate + stage the three stimulus WAVs.
+    #
+    # Same CSpect lock hazard as every other staging switch: refuse to
+    # stage rather than leave a partial leg folder whose missing WAV
+    # reads as a silent no-op.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
+    }
+    Copy-Item "$root\tests\out\sfx2.ddb" "$leg\GAME.DDB" -Force
+
+    # Effects 1 and 2 are BOTH under SFX_WIN_BYTES (24576,
+    # src\nextdaad.inc) on purpose: that is the COMPLETE arm, which is
+    # the only sampled path CSpect can run end to end, so the two
+    # channels really do play together there. An octave apart so a
+    # listener can tell which channel survived a steal. Effect 3 is over
+    # the threshold and takes the STREAMING arm - it exists to be a
+    # number NEITHER channel caches, which is what forces the allocator
+    # past its two cheap cases into the steal/drop decision.
+    # New-SfxLongWav throws unless the tone divides the payload into
+    # whole cycles, so a size/rate typo here is caught immediately
+    # rather than shipping a clicking loop seam.
+    $sfx2Specs = @(
+        @{ dest = '001.WAV'; hz = 440.0; len = 16000; path = "$root\tests\out\sfx2_e1.wav" },
+        @{ dest = '002.WAV'; hz = 880.0; len = 12000; path = "$root\tests\out\sfx2_e2.wav" },
+        @{ dest = '003.WAV'; hz = 220.0; len = 40000; path = "$root\tests\out\sfx2_e3.wav" }
+    )
+    foreach ($spec in $sfx2Specs) {
+        $w = New-SfxLongWav -Rate 16000 -ToneHz $spec.hz -PayloadBytes $spec.len
+        [System.IO.File]::WriteAllBytes($spec.path, $w)
+    }
+    # aud_load_wav takes the rate/channels/bits verbatim from the fmt
+    # chunk and rejects anything but mono 8-bit - re-read each generated
+    # header rather than trusting the generator arguments, the same rule
+    # the -SfxDi and -SfxLong tone staging follow.
+    foreach ($spec in $sfx2Specs) {
+        $wb = [System.IO.File]::ReadAllBytes($spec.path)
+        $wrate = [System.BitConverter]::ToUInt32($wb, 24)
+        $wbits = [System.BitConverter]::ToUInt16($wb, 34)
+        $wch = [System.BitConverter]::ToUInt16($wb, 22)
+        if ($wch -ne 1 -or $wbits -ne 8) { throw "$($spec.path) is not mono 8-bit (ch=$wch bits=$wbits) - aud_load_wav would reject it" }
+        # F_FSTAT reports the WHOLE FILE size (header included), and that
+        # is exactly what sfx_stream_open compares against SFX_WIN_BYTES
+        # (src\audio\streamfx.asm .lenok) - no header adjustment on
+        # either side.
+        $winBytes = 24576
+        $arm = if ($wb.Length -gt $winBytes) { 'STREAMING' } else { 'COMPLETE' }
+        Copy-Item $spec.path "$leg\$($spec.dest)" -Force
+        "staged $($spec.path) -> sd\$legName\$($spec.dest)  $($wb.Length) bytes, $wrate Hz mono 8-bit, $($spec.hz) Hz, $arm arm"
+    }
+    # The two short effects MUST both take the COMPLETE arm or the leg
+    # stops proving concurrent playback under CSpect, and effect 3 MUST
+    # take the STREAMING arm or the steal case stops being a steal.
+    $e1 = (Get-Item "$leg\001.WAV").Length
+    $e2 = (Get-Item "$leg\002.WAV").Length
+    $e3 = (Get-Item "$leg\003.WAV").Length
+    if ($e1 -gt 24576 -or $e2 -gt 24576) {
+        throw "sfx2: 001.WAV ($e1) and 002.WAV ($e2) must both be <= SFX_WIN_BYTES (24576) so both channels play COMPLETE"
+    }
+    if ($e3 -le 24576) {
+        throw "sfx2: 003.WAV ($e3) must exceed SFX_WIN_BYTES (24576) - it is the uncached third effect the steal case needs"
+    }
+    $sfx2Active = $true
+}
+
 $l2holesActive = $false
 if ($L2Holes) {
     # Layer 2 TRANSPARENCY / punch-out leg. Two jobs, both owned entirely
@@ -3276,6 +3445,7 @@ elseif ($gmodeActive) { "active: gmodegate (SP16 GMODE graphics-gate fixture)" }
 elseif ($audLadActive) { "active: audlad (SP16 Task 7 AY ladder / STOPM / BEEP-scale fixture)" }
 elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture - see .superpowers\sdd\sfx-di-audible-test.md)" }
 elseif ($sfxLongActive) { "active: sfxlong (SD-streamed sampled-effect wire fixture - SP18 item 7 Task 7)" }
+elseif ($sfx2Active) { "active: sfx2 (two-channel sampled-effect API fixture - SP18 item 7 Task 12)" }
 elseif ($l2holesActive) { "active: l2holes (Layer 2 transparency / punch-out fixture - see docs\superpowers\l2-holes-run-sheet.md)" }
 elseif ($tileSlackActive) { "active: tileslack (--tile-slack A/B fixture, two pairs - see docs\superpowers\tileslack-ab-run-sheet.md)" }
 elseif ($utoV3Active) { "active: utotest V3 (Uto's THIRD-PARTY DAAD compliance test, header version 3 - self-scoring, 68 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }

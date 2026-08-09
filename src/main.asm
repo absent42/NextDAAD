@@ -190,17 +190,27 @@ boot_data_init:
 ; below guards instead. interrupts.asm's audio-cell block carries a
 ; pointer comment to here.
 
-; Call aud_sfx_init (SFX_PAGE) on overlay1's behalf, exactly as
+; Call HL (a routine on SFX_PAGE) on overlay1's behalf, exactly as
 ; sfx_open_tramp (banks.asm) does for sfx_stream_open: overlay1 and
-; SFX_PAGE share the slot-7 window, so the nextreg that pages the init in
-; also pages the caller out, and the map/call/unmap has to run from
-; resident memory. Slot 7 goes back to OVL1_PAGE before returning, so
-; aud_boot_probe resumes on its own page. Slot 6 must already hold
-; AUD_PAGE_LO - channel 1's block and both window descriptors are page-48
-; data - which aud_boot_probe maps before it calls in.
-aud_sfx_init_tramp:
+; SFX_PAGE share the slot-7 window, so the nextreg that pages the callee
+; in also pages the caller out, and the map/call/unmap has to run from
+; resident memory. Slot 7 goes back to OVL1_PAGE before returning, so the
+; caller resumes on its own page. Slot 6 must already hold AUD_PAGE_LO
+; where the callee touches channel 1's block or a window descriptor -
+; both callers map it first.
+;
+; Generic (HL) rather than one trampoline per callee because the resident
+; tail is the scarcest pool in the project: aud_sfx_init and sfx_alloc
+; share these 14 bytes. sfx_open_tramp stays separate - sfx_stream_open
+; takes its parameters in A/L/DE/IX, so HL is not free there.
+; Corrupts DE. A and F cross both ways untouched: nextreg (ED 91) writes
+; neither, so a callee's return value and carry survive the unmap.
+sfx_page_call:
     nextreg NR_MMU7, SFX_PAGE
-    call aud_sfx_init
+    ld de, .back
+    push de
+    jp (hl)
+.back:
     nextreg NR_MMU7, OVL1_PAGE
     ret
 

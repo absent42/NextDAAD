@@ -2522,17 +2522,24 @@ h_sfx:                          ; 18: B = n, C = sub-command
     cp 4                        ; plan-time probe) - header rate plays
     jr z, .smp2
     cp 5
-    jr z, .stopfx
+    jp z, .stopfx
     cp 6
-    jr z, .playonce
+    jp z, .playonce
     cp 7
-    jr z, .playloop
+    jp z, .playloop
     cp 8
-    jr z, .stopmusic
+    jp z, .stopmusic
     cp SFX_SUB_VID_ONCE
-    jr z, .vidonce
+    jp z, .vidonce
     cp SFX_SUB_VID_LOOP
-    jr z, .vidloop
+    jp z, .vidloop
+    cp 11                       ; 11-16: the per-channel API (spec D6).
+    jr c, .unk                  ; 11/12 = play n once/looped PINNED to
+    cp 15                       ; channel 1, 13/14 the same for channel
+    jr c, .pinplay              ; 2, 15/16 = stop that channel and
+    cp 17                       ; release its pin. Decoded arithmetically
+    jp c, .pinstop              ; rather than with six more cp/jr pairs
+.unk:
  IFDEF DEBUG                    ; unknown sub-command: no-op with a
     push bc                     ; marker. Inline - overlay1 must NOT
     ld b, 30                    ; call overlay0's h_unimpl; the dbg_*
@@ -2547,18 +2554,62 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ret
 .smp1:                          ; sample probe first, play once
     xor a
-    jr .smp
+    jr .smpset
 .smp2:                          ; sample probe first, looped
     ld a, 1
-.smp:
+.smpset:
     ld (audReqSmpLoop), a
+    xor a                       ; request 0 = auto-allocate a channel
+    jr .smpgo
+.pinplay:                       ; 11-14 -> a NAMED channel + the loop bit
+    sub 11                      ; 0-3: bit 0 = looped, bit 1 = channel 2
+    ld e, a
+    and 1
+    ld (audReqSmpLoop), a
+    srl e
+    inc e                       ; E = 1 (channel 1) or 2 (channel 2), the
+    ld a, e                     ; allocator's pin request codes
+.smpgo:                         ; A = allocator request (0 auto, 1/2 pin)
+    ld (sfxReq), a
     ld a, b
     or a                        ; numbers are >= 1 (both kinds)
     ret z
-    inc a                       ; n = 255 is reserved: it collides with
-    jr z, .effect               ; smpLoadedNum's $FF "none" sentinel
-                                ; (Task 3 review) - samples are 1-254,
-                                ; 255 goes straight to the AY bank
+    inc a                       ; n = 255 is reserved: the API routes it
+    jr z, .effect               ; straight to the AY effects bank (Task 3
+                                ; review) - samples are 1-254. Applies to
+                                ; the pinned subs identically
+    ; The audReqSmp* start parameters are SHARED by both channels
+    ; (audiobank.asm's aud_tick header). A start already filed and not
+    ; yet consumed would be started with the parameters THIS trigger is
+    ; about to commit, so let it go first. Two SFX condacts in one turn
+    ; is the reachable case: the ordinary path halt-waits inside
+    ; aud_load_wav and would drain it anyway, but a free rewind touches
+    ; the card not at all and would not. audEnable 0 means aud_tick never
+    ; runs, and then nothing can be pending either: every start filed
+    ; below is followed by audEnable in the same breath.
+    ld a, (audEnable)
+    or a
+    jr z, .alloc
+.pend:
+    ld a, (audRequest)
+    and %01000000
+    ld e, a
+    ld a, (audRequest2)
+    and %00001000
+    or e
+    jr z, .alloc
+    halt
+    jr .pend
+.alloc:
+    ld a, (sfxReq)              ; resolve the channel (SFX_PAGE, through
+    call sfx_alloc_call         ; the resident trampoline). CF = both
+    ret c                       ; channels pinned: trigger dropped, with
+                                ; a DEBUG marker printed there
+    ld (sfxSel), a              ; bit 0 = channel, bit 7 = free rewind
+    and %10000000
+    jr nz, .started             ; cached whole: no card traffic at all,
+                                ; and sfx_alloc has already re-committed
+                                ; this channel's start parameters
     ld a, b
     push bc                     ; aud_load_wav corrupts BC (the WAV
     call aud_load_wav           ; filename decade-loop clobbers B
@@ -2566,9 +2617,17 @@ h_sfx:                          ; 18: B = n, C = sub-command
                                 ; the .effect fallback below. CF = no/
                                 ; invalid NNN.WAV (pop bc leaves flags)
     jr c, .effect               ; -> AY effect fallback (SP7 path)
-    ld hl, audRequest
-    set 6, (hl)
-    jr .enable
+.started:
+    ld a, (sfxSel)              ; file the RESOLVED channel's start bit,
+    rrca                        ; never both: one start per condact, so
+    jr c, .start2               ; the shared parameter cells are only
+    ld hl, audRequest           ; ever read by the channel that wrote
+    set 6, (hl)                 ; them
+    jp .enable
+.start2:
+    ld hl, audRequest2
+    set 3, (hl)
+    jp .enable
 .effect:                        ; AY effect B on PSG 3 (SP7, loop only
     ld a, b                     ; if authored looping). Both entry
                                 ; paths (the n=255 fallthrough, the
@@ -2583,12 +2642,30 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ld (audReqSfx), a
     ld hl, audRequest
     set 1, (hl)
-    jr .enable
-.stopfx:                        ; stop WHICHEVER kind is active
+    jp .enable
+.pinstop:                       ; 15/16: stop that channel, release pin
+    sub 14                      ; 1 = channel 1, 2 = channel 2
+    jr .stopgo
+.stopfx:                        ; 5: the documented SUPERSET - both
+    ld hl, audRequest           ; sampled channels AND the AY effect,
+    set 2, (hl)                 ; and both pins released
+    ld a, 3
+.stopgo:                        ; A = channel mask, bit 0 ch1, bit 1 ch2
+    ld e, a
+    rrca
+    jr nc, .nost1
     ld hl, audRequest
-    set 2, (hl)                 ; AY effect
-    set 7, (hl)                 ; sample
-    ret                         ; audEnable already set if anything on
+    set 7, (hl)                 ; channel 1's stop
+.nost1:
+    bit 1, e
+    jr z, .nost2
+    ld hl, audRequest2
+    set 2, (hl)                 ; channel 2's stop, the exact mirror
+.nost2:
+    ld a, e
+    add a, 2                    ; 3/4/5 = the allocator's unpin requests
+    jp sfx_alloc_call           ; audEnable is already set if anything is
+                                ; playing, so the stops will be consumed
 .stopmusic:
     ld hl, audRequest
     set 3, (hl)                 ; stop AKY music
@@ -2633,6 +2710,25 @@ h_sfx:                          ; 18: B = n, C = sub-command
     jp ovl_map_page
 
 msgSfxUnk: db "SFX? ", 0
+
+; Call sfx_alloc (SFX_PAGE) with page 48 in slot 6 - it reads sfxChan0
+; there, and sfxChan1/the mailbox/frameCounter resident. A and CF cross
+; both trampolines untouched (nextreg writes neither), and data_save/
+; data_map_page/data_restore corrupt AF only, so the allocator's verdict
+; comes back intact. BC survives too (nr_read preserves it), which is
+; what lets h_sfx keep the effect number in B across this call.
+sfx_alloc_call:
+    push af
+    call data_save
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    pop af
+    ld hl, sfx_alloc
+    call sfx_page_call
+    push af
+    call data_restore
+    pop af
+    ret
 
 ; --- song / effects-bank loaders ------------------------------------
 
@@ -3100,7 +3196,8 @@ aud_boot_probe:
     ld (sfxChan0+SMPB_FLAGS), a ; clear a stale sample-active bit: a looping
                                 ; sample must not replay a recycled bank
                                 ; table after a warm boot
-    call aud_sfx_init_tramp     ; SP18 item 7 Task 2/11: seed BOTH channels'
+    ld hl, aud_sfx_init
+    call sfx_page_call          ; SP18 item 7 Task 2/11: seed BOTH channels'
                                 ; constant block members (ring/cursor/CTC/DAC
                                 ; port, window descriptor, stream cells) and
                                 ; pin the floor banks. The seed itself is cold
@@ -3109,8 +3206,6 @@ aud_boot_probe:
                                 ; and back. Page 48 is already in slot 6,
                                 ; which the seed needs for channel 1's block
     call data_restore
-    ld a, $FF
-    ld (smpLoadedNum), a        ; keep-last cold on any (warm) boot
     xor a
     ld (sfbCount), a            ; 0 until aud_load_sfb below confirms it
     ld a, 1
@@ -3182,6 +3277,13 @@ audStride:  db 0                ; linker entry stride for the walk
 audWalkVal: dw 0                ; word scratch for the split windows
 audProbe:   db 0                ; oversize one-byte probe target
 bpTarget:   dw 0                ; h_beep frameCounter target
+sfxReq:     db 0                ; h_sfx: the allocator request code for
+                                ; this trigger (0 auto, 1/2 pin a channel)
+sfxSel:     db 0                ; h_sfx: the allocator's verdict - bit 0 =
+                                ; the resolved channel (0 = channel 1),
+                                ; bit 7 = free rewind. aud_load_wav reads
+                                ; bit 0 for the stop bit it files and the
+                                ; block it stages into
 
 ; --- WAV sample loader (SP8) ----------------------------------------
 
@@ -3198,33 +3300,30 @@ bpTarget:   dw 0                ; h_beep frameCounter target
 ; with that call: nothing here allocates banks any more, and no design
 ; element caps effect length against RAM.
 ;
-; Keep-last: when A is already the channel's cached number the SD is not
-; touched at all (params persist in the audReqSmp* bytes, and the window
-; still holds the payload, so the restart is a free rewind). Only a
-; COMPLETE load arms that cache - sfx_stream_open leaves smpLoadedNum
-; $FF for a STREAMING one, so a repeat trigger re-runs the open.
+; Keep-last is NOT tested here any more (SP18 item 7 Task 12): with two
+; channels the question is which channel caches the number, and sfx_alloc
+; answers it before this routine is reached. A free rewind never gets
+; here at all - h_sfx files the start straight away.
 ;
-; Any active sample is stopped (mailbox bit 7 + consumed-wait) before the
-; staging overwrites the window - a playing sample must never be
-; overwritten.
+; THE CHANNEL IS sfxSel BIT 0, the allocator's verdict. Everything below
+; that used to be channel 1 by construction - the stop bit filed and
+; waited on, and the block handed to sfx_stream_open - follows it.
+;
+; The chosen channel's active sample is stopped (its mailbox stop bit +
+; consumed-wait) before the staging overwrites the window - a playing
+; sample must never be overwritten, and that wait is also what makes a
+; STEAL safe: the victim is provably silent before its cache is evicted.
 ; Out: CF clear = window staged + audReqSmpCtrl/Tc/Len/LenHi committed
 ; (audReqSmpLoop is the CALLER's, set before or after);
 ; CF set = missing/malformed/short-read/too fragmented. Any failure past
-; the keep-last check leaves the previous sample stopped and the cache
-; cold; a missing file (open fails first) leaves the previous sample
-; untouched.
+; the stop leaves that channel's sample stopped but its cache INTACT -
+; nothing before sfx_stream_open touches the window, so the effect it
+; already held is still resident and still free to rewind; the open's own
+; refusal funnel is what clears the cache when staging really started. A
+; missing file (open fails first) leaves the previous sample untouched.
 ; Corrupts everything.
 aud_load_wav:
     ld (wavReqNum), a
-    ; keep-last: same number already resident -> instant success, no
-    ; SD touch, no stop (a replay restarts via aud_smp_start's state
-    ; reinit; the old in-flight chunk tail is at most one frame)
-    ld hl, smpLoadedNum
-    cp (hl)
-    jr nz, .load
-    or a                        ; CF clear
-    ret
-.load:
     ; build "NNN.WAV" (decade idiom, same as aud_load_song)
     ld hl, audName
     ld b, '0'-1
@@ -3274,12 +3373,17 @@ aud_load_wav:
                                 ; read this IS the offset of the first
                                 ; payload byte - which the window's
                                 ; consumer anchor needs
-    ; stop any playing sample before the window is overwritten.
-    ; audEnable = 0 means the ISR never reaches aud_tick: nothing can
-    ; be playing and the bit would never be consumed - skip the wait.
+    ; stop any sample playing ON THIS CHANNEL before its window is
+    ; overwritten. audEnable = 0 means the ISR never reaches aud_tick:
+    ; nothing can be playing and the bit would never be consumed - skip
+    ; the wait. The OTHER channel is deliberately left alone: two effects
+    ; play together, and a load on one must not silence the other.
     ld a, (audEnable)
     or a
     jr z, .stopped
+    ld a, (sfxSel)
+    rrca
+    jr c, .stop2
     ld hl, audRequest
     res 6, (hl)                 ; a pending un-consumed start must not
     set 7, (hl)                 ; fire mid-load
@@ -3288,9 +3392,22 @@ aud_load_wav:
     ld a, (audRequest)
     and %10000000
     jr nz, .waitstop
+    jr .stopped
+.stop2:
+    ld hl, audRequest2          ; channel 2's pair, the exact mirror
+    res 3, (hl)
+    set 2, (hl)
+.waitstop2:
+    halt
+    ld a, (audRequest2)
+    and %00000100
+    jr nz, .waitstop2
 .stopped:
-    ld a, $FF
-    ld (smpLoadedNum), a        ; loading invalidates the cached one
+    ; The channel's SMPB_KEEP is NOT invalidated here. Nothing before
+    ; sfx_stream_open touches the window, so a header rejection below
+    ; leaves the previously cached effect intact and still free to
+    ; rewind; the open's own refusal funnel clears both keep cells when
+    ; staging really has started.
     ; (SP18 item 7 Task 5: no bank release here any more. The window
     ; pages are fixed floor pages the channel owns permanently, so
     ; nothing is claimed or freed per load - the stop-wait above is all
@@ -3475,7 +3592,12 @@ aud_load_wav:
     call data_save
     ld a, AUD_PAGE_LO
     call data_map_page
-    ld ix, sfxChan0             ; Task 12 makes this the allocated channel
+    ld ix, sfxChan0             ; the allocated channel's block, per
+    ld a, (sfxSel)              ; sfxSel bit 0 - sfxChan0 is page-48 data
+    rrca                        ; (just mapped into slot 6 above),
+    jr nc, .blkok               ; sfxChan1 is resident
+    ld ix, sfxChan1
+.blkok:
     ld de, (wavDataOff)         ; first payload byte (consumer anchor)
     ld bc, (wavLen)             ; declared payload length, 24-bit: the
     ld a, (wavLenHi)            ; open checks it against the file's real
@@ -3493,7 +3615,9 @@ aud_load_wav:
     ; commit: derive the CTC control word + time constant from the sample
     ; rate and the live video-timing mode, fill the mailbox. The ring
     ; self-paces at the CTC rate, so no per-frame chunk sizing is needed.
-    ; smpLoadedNum is sfx_stream_open's (only a COMPLETE load arms it).
+    ; SMPB_KEEP is sfx_stream_open's; aud_smp_start latches these same
+    ; parameters into the channel's block, which is where a later free
+    ; rewind of this effect re-commits them from.
     ld de, (wavFmt+4)           ; rate
     call aud_ctc_params         ; sets audReqSmpCtrl + audReqSmpTc
     ld hl, (wavLen)

@@ -500,7 +500,7 @@ aud_psg_silence:
 ; the producer offset (owned by the copy); smpPlayPtr/smpWritePtr (resident)
 ; are the ISR's absolute cursors. aud_smp_start seeds an empty ring, fills it
 ; once, publishes the write pointer, then programs and starts CTC channel 0.
-; Precondition: IX = channel block (sfxChan0).
+; Precondition: IX = channel block (sfxChan0 or sfxChan1).
 aud_smp_start:
     xor a
     ld (ix+SMPB_P), a           ; ring empty: play offset == write offset == 0
@@ -529,10 +529,14 @@ aud_smp_start:
     or 1                        ; bit 0 (active)
     ld c, a
     ld a, (ix+SMPB_FLAGS)
-    and %00011100               ; bits 2-4 (STREAMING/COMPLETE/REWIND)
-    or c                        ; belong to the loader and the refiller -
+    and %00111100               ; bits 2-4 (STREAMING/COMPLETE/REWIND)
+    or c                        ; belong to the loader and the refiller
+                                ; and bit 5 (PINNED) to the allocator -
                                 ; only bits 0/1 are the pump's
     ld (ix+SMPB_FLAGS), a       ; set BEFORE the copy (it reads the loop bit)
+    ld hl, (frameCounter)       ; stamp the start: the allocator steals the
+    ld (ix+SMPB_STAMP), l       ; OLDEST of two equally stealable channels,
+    ld (ix+SMPB_STAMP+1), h     ; and this is what "oldest" is measured from
     ; play starts at the ring base; the CTC is not running yet, so the
     ; resident cursor write below needs no DI bracket. Ring base and the
     ; cursor address are both channel-block members (SMPB_RINGH/PLAYPTR).
@@ -587,7 +591,7 @@ aud_smp_start:
 ; clear the active flag. Idempotent. Runs in ISR context (also reached from
 ; aud_smp_tick's play-once drain end). DAC_SILENCE is the unsigned midpoint $80
 ; (unsigned everywhere on the OUT path) - see nextdaad.inc.
-; Precondition: IX = channel block (sfxChan0).
+; Precondition: IX = channel block (sfxChan0 or sfxChan1).
 ;
 ; FLAGS on a stop (SP18 item 7 Task 5 review ruling; full bit semantics
 ; at nextdaad.inc's SMPB_FLAGS block): bits 0/1 are playback and go;
@@ -599,10 +603,14 @@ aud_smp_start:
 ; stop/restart cycle. The cached STREAM (handle, hot filemap, keep-last
 ; number) survives in the stream cells, not in a flag - only the refusal
 ; funnel and an eviction by a different effect number invalidate it.
+; Bit 5 PINNED survives too: a stop is not a release. Only SFX subs 15/16
+; and sub 5 clear a pin, so the video abort and the refiller's error
+; eviction (both of which come through here) leave the author's channel
+; reservation standing.
 aud_smp_stop:
     ld a, (ix+SMPB_FLAGS)
-    and %00001000               ; keep COMPLETE, drop active/loop/
-    ld (ix+SMPB_FLAGS), a       ; STREAMING/REWIND
+    and %00101000               ; keep COMPLETE and PINNED, drop active/
+    ld (ix+SMPB_FLAGS), a       ; loop/STREAMING/REWIND
     ld a, AUD_CTC_RESET         ; double soft-reset: timer stops, no more CTC ints
     ld c, (ix+SMPB_CTCPORT)
     ld b, (ix+SMPB_CTCPORT+1)
@@ -625,7 +633,7 @@ aud_smp_stop:
 ; emptied. The 16-bit accesses to the shared cursors are DI-bracketed (~20T, far
 ; under one CTC period) so a nested ctc_isr never reads a torn value. No DMA, no
 ; counter reads, no DAC-hold window - the old f-prime exchange is gone.
-; Precondition: IX = channel block (sfxChan0).
+; Precondition: IX = channel block (sfxChan0 or sfxChan1).
 aud_smp_tick:
     ld a, (ix+SMPB_FLAGS)
     rrca
@@ -838,7 +846,7 @@ aud_min16:
 ; at $FFE0 - not by this routine's own state any more) and writes the
 ; advanced position back to the channel block. Page 48 (the window page
 ; list, the channel block and this scratch) stays in slot 6 throughout.
-; Precondition: IX = channel block (sfxChan0). Corrupts everything
+; Precondition: IX = channel block (sfxChan0 or sfxChan1). Corrupts everything
 ; except IX.
 aud_smp_copy:
     ; --- phase A: toFill = the whole ring; the play-once and backpressure clamps

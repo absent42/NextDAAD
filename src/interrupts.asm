@@ -447,8 +447,8 @@ smp2WritePtr: dw AUD_STAGE2
 ; Channel 2's pump state block, sfxChan1, is resident too but is NOT
 ; declared here: this file is entirely pre-anchor (included ahead of
 ; engine.asm's ALIGN 256) and the pre-flags pad it draws on has no room
-; for a 31-byte block. It sits in the post-anchor resident tail, declared
-; at the foot of main.asm beside aud_sfx_init_tramp. Channel 1's block,
+; for a block this size. It sits in the post-anchor resident tail, declared
+; at the foot of main.asm beside sfx_page_call. Channel 1's block,
 ; sfxChan0, is page-48 data (audiobank.asm) - the asymmetry is a budget
 ; decision and nothing else, since every aud_smp_* routine reaches its
 ; block IX-relative and so does not care which it gets.
@@ -480,10 +480,10 @@ audReqSmpCtrl:  db 0        ; start-sample: CTC control word ($85 /16, $A5 /256)
 audReqSmpTc:    db 0        ; start-sample: CTC time constant (rate + video mode)
 audReqSmpLen:   dw 0        ; start-sample: payload bytes, low word (24-bit)
 audReqSmpLenHi: db 0        ; start-sample: payload bytes, high byte
-smpLoadedNum:   db $FF      ; keep-last: sample number resident in the
-                            ; claimed page-table banks ($FF = none); owned
-                            ; by aud_load_wav, reset by aud_boot_probe on
-                            ; (warm) boot
+; The keep-last number used to be a single resident byte here
+; (smpLoadedNum). SP18 item 7 Task 12 retired it: with two channels the
+; question is not "what is loaded" but "WHICH CHANNEL caches this
+; effect", so the number lives per channel in SMPB_KEEP instead.
 sfbCount:       db 0        ; GAME.SFB effect count ((table[0]-$D000)/2);
                             ; 0 = no bank loaded - h_sfx bounds guard
 
