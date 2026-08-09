@@ -353,7 +353,10 @@ NR_RASTER_LSB   equ $1F
 ; DEBUG PLAY= instrument (src/video.asm vid_rl_poll): how many decode
 ; chunks pass between raster reads. Chunks are at most 256 bytes, so 16
 ; of them is well under a millisecond of decode - an order of magnitude
-; inside one 50Hz field, which is what the wrap detection needs.
+; inside one 50Hz field, which is what the wrap detection needs. Also
+; drives vidRlSpinDiv, the same cadence applied to the pace-spin/pump
+; wait-loop poll sites (Phase 2-POLL causation probe, 2026-08-09) - see
+; the safety-floor arithmetic at vidRlSpinDiv in video.asm.
 VID_RL_DIV      equ 16
 
 ; --- Engine (sub-project 3) ---

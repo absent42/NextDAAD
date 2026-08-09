@@ -876,8 +876,12 @@ vid_dst_norm:
 ; only ONE is counted and 20 ms is lost. Every stretch of a frame must
 ; therefore be polled at an interval bounded well under one field:
 ;
-;   vid_pace_poll   every wait-loop pass (pace spin, ring-gate force-
-;                   fill, drain tail)                        << 1 ms
+;   vid_pace_poll   every VID_RL_DIV = 16 wait-loop passes (pace spin,
+;                   ring-gate force-fill, drain tail) - Phase 2-POLL
+;                   (2026-08-09): was every pass, divided via the
+;                   shared vidRlSpinDiv cell once poll density was
+;                   shown to cause the measured CTC tick loss; see the
+;                   safety-floor arithmetic at vidRlSpinDiv     ~6.4 ms
 ;   vid_dst_norm    every VID_RL_DIV = 16 decode chunks; a RAM-kernel
 ;                   chunk is <= 256 B, worst 16 x 2392 T      ~1.7 ms
 ;   vid_ds_blkopen  the same divider on the direct-serve wire. A ds
@@ -886,7 +890,9 @@ vid_dst_norm:
 ;                   8 KB window - ~5.6 ms of unrolled ini that
 ;                   vid_dst_norm alone would let 16 of stack up. One
 ;                   blkopen per 512 B bounds it                ~5.6 ms
-;   vid_aud_pump    every feed chunk - see below               ~2.6 ms
+;   vid_aud_pump    every VID_RL_DIV = 16 feed chunks - Phase 2-POLL,
+;                   same shared vidRlSpinDiv cadence as vid_pace_poll
+;                   above (was every chunk)                     ~2.6 ms
 ;
 ; THE PUMP SITE is the one the first cut of this instrument missed, and
 ; it cost 12-20% of PLAY on every 12.5 fps row (016/017/018 read PLAY
@@ -919,6 +925,9 @@ vid_rl_poll:
     push hl
     ld a, VID_RL_DIV
     ld (vidRlDiv), a
+    ld (vidRlSpinDiv), a         ; Phase 2-POLL: SPIN divider shares
+                                 ; this reset, same pattern as vidRlDiv
+                                 ; (decode/ds pair) - see vidRlSpinDiv
     ld bc, TBBLUE_REG_SEL
     di                           ; the select/read pair must not be
                                  ; split by an ISR that selects its own
@@ -1911,7 +1920,12 @@ vid_aud_stage:
 ; Preserves BC, IX.
 vid_pace_poll:
  IFDEF DEBUG
-    call vid_rl_poll             ; PLAY= clock: this routine is called
+    ; Phase 2-POLL causation probe: divided 1-in-16 via vidRlSpinDiv
+    ; (was every pass - see the safety-floor arithmetic there).
+    ld a, (vidRlSpinDiv)
+    dec a
+    ld (vidRlSpinDiv), a
+    call z, vid_rl_poll           ; PLAY= clock: this routine is called
                                  ; from every wait loop the frame loop
                                  ; has, so the raster is read far more
                                  ; often than once a field there
@@ -1943,7 +1957,12 @@ vid_aud_pump:
     ld (vidAudBudget), bc
 .next:
  IFDEF DEBUG
-    call vid_rl_poll             ; PLAY= clock. With an unbounded budget
+    ; Phase 2-POLL causation probe: divided 1-in-16 via vidRlSpinDiv,
+    ; shared with vid_pace_poll's cell (was every pass).
+    ld a, (vidRlSpinDiv)
+    dec a
+    ld (vidRlSpinDiv), a
+    call z, vid_rl_poll           ; PLAY= clock. With an unbounded budget
                                  ; and a full ring this loop chases the
                                  ; READER, so one call runs for tens of
                                  ; ms at low fps - the single biggest
@@ -3762,6 +3781,34 @@ vidNomStep:      dw 0            ; nominal fields per frame, 8.8 fixed
 vidNomAcc:       ds 3            ; nominal fields accumulator, 8.8
 VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlTicks
 VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlTicks
+; Phase 2-POLL causation probe (2026-08-09): SPIN-side poll divider.
+; vid_pace_poll (the .pace/.ffin/.drainlast/ring-gate wait-loop sites)
+; and vid_aud_pump's .next chunk loop both called vid_rl_poll on EVERY
+; pass; measurement showed CTC-tick loss proportional to that poll
+; density (resident clip: ~2,500 lost/s at full cadence) while the
+; decode path, already divided 1-in-16 via vidRlDiv, loses ~0. This
+; cell applies the same VID_RL_DIV = 16 divider to the two SPIN sites,
+; sharing one budget between them (mirrors vidRlDiv, shared between
+; vid_dst_norm and vid_ds_blkopen) and reset by vid_rl_poll alongside
+; vidRlDiv.
+;
+; SAFETY FLOOR: vid_rl_poll infers a field wrap from a 9-bit raster
+; DECREASE, so a poll must land at least once per field (312 lines =
+; 20 ms) or PLAY undercounts. A spin pass is ~0.4 ms streamed (faster
+; resident), so 16 passes between polls is a worst case of
+; 16 x 0.4 ms = ~6.4 ms streamed - inside the 20 ms floor with ~3x
+; margin (20 / 6.4 ~ 3.1x). NOT applied to vid_tl_stamp (5x/frame,
+; needs a fresh sample every call for stamp-accurate walls) or the
+; decode-path divider (vidRlDiv, unchanged).
+;
+; This cell sits AFTER vidNomAcc, outside VID_TL_BLOCK_LEN (the
+; report's mirrored span) and outside VID_LN_LEN - nothing reads it
+; for the report, so it needs no page-local mirror entry; it only
+; drives a poll/no-poll decision. Zeroed (seeded to 1, like vidRlDiv)
+; with the other PLAY= cells at session init.
+vidRlSpinDiv:    db 1            ; SPIN poll divider (counts down);
+                                 ; shares the VID_RL_DIV cadence and
+                                 ; the vid_rl_poll reset with vidRlDiv
 ; LNF/LNL wall-clock probe (clip-039 regression): per-phase WALL time
 ; in raster units, accumulated by vid_tl_stamp at the same boundaries
 ; and to the same OLD phase as vidTlAcc's tick deltas, so that
@@ -6285,6 +6332,8 @@ vid_run_l2setup_body:
     ldir
     ld a, 1
     ld (vidRlDiv+DATA_WINDOW-OVL_ORG), a
+    ld (vidRlSpinDiv+DATA_WINDOW-OVL_ORG), a  ; Phase 2-POLL: seeded
+                                 ; the same way, for the same reason
     xor a
     ld (vidNomAcc+DATA_WINDOW-OVL_ORG), a
     ld (vidNomAcc+1+DATA_WINDOW-OVL_ORG), a
