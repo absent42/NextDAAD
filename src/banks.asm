@@ -32,6 +32,19 @@ ovl_map_page:
     nextreg NR_MMU7, a
     ret
 
+; Call sfx_stream_open (SFX_PAGE) on overlay1's behalf. overlay1 and
+; SFX_PAGE share the slot-7 window, so the nextreg that pages the stream
+; code in also pages the caller out: the map/call/unmap sequence has to
+; run from resident memory, exactly like ovl_map_page above. Slot 7 goes
+; back to OVL1_PAGE before returning, so aud_load_wav resumes on its own
+; page. Register contract is sfx_stream_open's own (A/L/DE/IX in, CF and
+; A out); nextreg affects no flag, so the result crosses back untouched.
+sfx_open_tramp:
+    nextreg NR_MMU7, SFX_PAGE
+    call sfx_stream_open
+    nextreg NR_MMU7, OVL1_PAGE
+    ret
+
 ; Detect expansion RAM (banks 48-111) by write/read-back of two
 ; patterns in bank 48. Preserves the probed byte. CSpect always has
 ; expansion; real unexpanded hardware is the FORCE_1MB code path.

@@ -277,6 +277,372 @@ sfx_mf_restore:
     nextreg NR_PERIPH2, a
     ret
 
+; ---------------------------------------------------------------------
+; sfx_stream_open - the open ritual, window staging and the free hybrid
+; (SP18 item 7 Task 5). Turns an already-open, already-header-validated
+; WAV file into a staged channel window.
+;
+; Runs from MAINLINE (overlay1's aud_load_wav, through the resident
+; sfx_open_tramp - overlay1 shares this slot-7 window, so the map/call/
+; unmap has to happen from resident code). Slot 6 holds AUD_PAGE_LO on
+; entry; this routine borrows it for the window pages while staging and
+; hands it back as AUD_PAGE_LO on every exit path.
+;
+; In:  A  = effect number 1-254 (this channel's keep-last key)
+;      L  = the open esxDOS handle
+;      DE = data offset - the file offset of the FIRST PAYLOAD BYTE,
+;           which overlay1's chunk walk tracked while it validated
+;      IX = channel block (page 48)
+; Out: CF clear = window staged, consumer anchored, flags committed.
+;      CF set   = refused; the handle is closed and the block's
+;                 STREAMING/COMPLETE bits are clear, so aud_load_wav
+;                 falls back to the AY effect exactly as it always has.
+; Corrupts everything.
+;
+; STAGING IS VERBATIM FROM FILE OFFSET 0 - the WAV header stages with the
+; payload. The card side of this feature reads whole 512-byte blocks at
+; addresses taken from the filemap, so no byte-shifting is possible on
+; the wire; the CONSUMER skips the header instead, by starting at the
+; data offset (the window descriptor's anchor, nextdaad.inc SFXW_STIDX).
+;
+; THE FREE HYBRID: a file that fits the window stages whole, is flagged
+; COMPLETE and has its handle closed - it is resident, costs no further
+; card traffic, and a repeat trigger of the same number rewinds for free
+; through overlay1's keep-last check. A larger file stages its first
+; SFX_WIN_BYTES, is flagged STREAMING, and keeps its handle and hot
+; filemap as this channel's cached stream for the refiller.
+sfx_stream_open:
+    ld (sfxOpenNum), a
+    ld (sfxChanPtr), ix
+    ld (sfxDataOff0), de
+    ld a, l
+    ld (sfxNewHandle), a
+    ; cache eviction: a previous STREAMING open on this channel left its
+    ; handle cached (one cached stream per channel). Close it before
+    ; adopting the new one - esxDOS handles are a small pool and a
+    ; re-trigger must not leak one per open.
+    ld a, (sfxHandle0)
+    inc a
+    jr z, .fresh
+    dec a
+    call esx_fclose
+.fresh:
+    ld a, (sfxNewHandle)
+    ld (sfxHandle0), a
+    ; --- filemap ritual, in the sector-cache ordering law's exact order:
+    ; F_SEEK 0, a one-byte F_READ to prime the touched-file cache, F_SEEK
+    ; 0 again, DISK_FILEMAP, and only THEN F_FSTAT. video.asm's
+    ; vid_raw_setup / vid_stream_open_body are the proven template. Every
+    ; esxDOS call goes through a file.asm wrapper, so cardBusy brackets
+    ; the lot and the frame-ISR refiller can never overlap one.
+    call sfx_seek0
+    jp c, .refuse
+    ld a, (sfxHandle0)
+    ld ix, sfxProbeByte
+    ld bc, 1
+    call esx_fread
+    jp c, .refuse
+    call sfx_seek0
+    jp c, .refuse
+    ld a, (sfxHandle0)
+    ld ix, sfxColdMap
+    ld de, SFX_COLD_ENT
+    call esx_filemap
+    jp c, .refuse
+    ld (sfxCardFlags), a
+    ld a, e
+    or d
+    jp z, .frag                  ; buffer full: completeness unprovable.
+                                 ; The buffer holds one more entry than
+                                 ; the 32-extent case, so a 32-extent
+                                 ; file always leaves DE >= 1 and only
+                                 ; 33+ extents land here
+    ld de, sfxColdMap
+    or a
+    sbc hl, de                   ; HL = bytes written (an exact x6)
+    jp z, .refuse                ; empty map: nothing to stream
+    ld b, 0
+    ld de, 6
+.count:
+    inc b
+    or a
+    sbc hl, de
+    jr nz, .count                ; B = run count (1..SFX_COLD_ENT)
+    ld a, b
+    cp SFX_HOT_ENT+1
+    jp nc, .frag                 ; more than 8 runs: refuse and let the
+                                 ; caller fall back to the AY effect -
+                                 ; the file stays playable by loading
+                                 ; nothing, and authors defrag
+    ld (sfxRunCnt), a
+    xor a
+    ld (sfxRunIdx), a
+    ; the hot map is what the refiller walks: copy the runs across
+    ld a, b
+    add a, a
+    add a, b
+    add a, a                     ; entries * 6 (<= 48)
+    ld c, a
+    ld b, 0
+    ld hl, sfxColdMap
+    ld de, sfxHotMap
+    ldir
+    ; F_FSTAT - legal only after the filemap, per the ordering law
+    ld a, (sfxHandle0)
+    ld ix, sfxFstatBuf
+    call esx_fstat
+    jp c, .refuse
+    ld a, (sfxFstatBuf+10)       ; size >= 16 MB: absurd, refuse
+    or a
+    jp nz, .refuse
+    ld hl, (sfxFstatBuf+7)
+    ld a, (sfxFstatBuf+9)
+    ld c, a
+    or h
+    or l
+    jp z, .refuse                ; zero-length file
+    ; total card blocks = ceil(size / 512). This is the CLAMP the
+    ; refiller stops at: filemap runs cover whole FAT clusters and
+    ; over-report the tail, so F_FSTAT's size is the authority.
+    ld a, c
+    ld de, 511
+    add hl, de
+    adc a, 0                     ; A:HL = size + 511 (24-bit)
+    ld l, h
+    ld h, a                      ; HL = (size + 511) >> 8
+    srl h
+    rr l                         ; HL = (size + 511) >> 9 (<= 32768)
+    ld (sfxFileBlk0), hl
+    ; the consumer anchor has to land INSIDE the window: a WAV whose
+    ; payload starts more than a whole window into the file (pathological
+    ; leading chunks) cannot be played by a design that stages verbatim
+    ; from offset 0. Refuse rather than index off the end of the list.
+    ld hl, (sfxDataOff0)
+    ld de, SFX_WIN_BYTES
+    or a
+    sbc hl, de
+    jp nc, .refuse
+    ; stage min(fileBytes, SFX_WIN_BYTES) - the whole file when it fits
+    ld a, (sfxFstatBuf+9)
+    or a
+    jr nz, .partial              ; >= 64K: far past the window
+    ld hl, (sfxFstatBuf+7)
+    ld de, SFX_WIN_BYTES+1
+    or a
+    sbc hl, de
+    jr nc, .partial              ; fileBytes > SFX_WIN_BYTES
+    ld hl, (sfxFstatBuf+7)
+    ld a, 1                      ; whole file: the free-hybrid path
+    jr .setstage
+.partial:
+    ld hl, SFX_WIN_BYTES
+    xor a
+.setstage:
+    ld (sfxWhole), a
+    ld (sfxStageRem), hl
+    ld (sfxStageLen), hl
+    ; snapshot the window page list while page 48 is still in slot 6 -
+    ; the staging loop below puts window pages there instead.
+    ld ix, (sfxChanPtr)
+    ld l, (ix+SMPB_WINTAB)
+    ld h, (ix+SMPB_WINTAB+1)
+    ld de, sfxWinPg
+    ld bc, SFX_WIN_PAGES
+    ldir
+    ; --- staging: esxDOS F_READ, one 8K window page at a time through
+    ; slot 6. Mainline esxDOS rather than raw CMD18 by design: nothing
+    ; is playing yet so there is no jitter concern, it reuses the loader
+    ; loop the sample engine has always used, and it keeps every effect
+    ; that fits the window fully playable under CSpect, which has no raw
+    ; SPI path at all. Only the in-playback refiller speaks CMD18.
+    call sfx_seek0
+    jp c, .refusemap
+    xor a
+    ld (sfxStgIdx), a
+.stage:
+    ld hl, (sfxStageRem)
+    ld a, h
+    or l
+    jr z, .staged
+    ld de, $2000
+    or a
+    sbc hl, de
+    jr nc, .fullwin
+    ld hl, (sfxStageRem)         ; partial final page
+    jr .setwin
+.fullwin:
+    ld hl, $2000
+.setwin:
+    ld (sfxStgWin), hl
+    ld hl, sfxWinPg
+    ld a, (sfxStgIdx)
+    add hl, a                    ; Z80N (doc 05)
+    ld a, (hl)
+    call data_map_page           ; slot 6 <- this window page
+    ld a, (sfxHandle0)
+    ld ix, DATA_WINDOW
+    ld bc, (sfxStgWin)
+    call esx_fread
+    jp c, .refusemap
+    ld hl, (sfxStgWin)
+    or a
+    sbc hl, bc                   ; requested - actually read
+    jp nz, .refusemap            ; short read: the file lied about its
+                                 ; own size between F_FSTAT and here
+    ld hl, (sfxStageRem)
+    ld bc, (sfxStgWin)
+    or a
+    sbc hl, bc
+    ld (sfxStageRem), hl
+    ld hl, sfxStgIdx
+    inc (hl)
+    jr .stage
+.staged:
+    ld a, AUD_PAGE_LO            ; slot 6 back for the block writes
+    call data_map_page
+    ld ix, (sfxChanPtr)
+    ; staged blocks = ceil(stagedBytes / 512) (<= SFX_WIN_BLKS)
+    ld hl, (sfxStageLen)
+    ld de, 511
+    add hl, de
+    ld l, h
+    ld h, 0
+    srl l                        ; HL = (stagedBytes + 511) >> 9
+    ld (sfxStagedBlk0), hl
+    ; DEPTH = staged blocks MINUS the whole blocks the consumer skips
+    ; outright (its anchor sits past them - the WAV header). The block
+    ; the anchor sits INSIDE is counted: it is debited when the consumer
+    ; crosses the next 512 boundary, exactly like any other block. See
+    ; the invariant stated in full at aud_smp_copy's debit site.
+    ld de, (sfxDataOff0)
+    ld a, d
+    srl a                        ; A = dataOff >> 9 = whole blocks
+    ld e, a                      ;     skipped ((H:L) >> 9 == H >> 1)
+    ld d, 0
+    or a
+    sbc hl, de
+    jr nc, .depthok
+    ld hl, 0                     ; anchor past everything staged: floor
+.depthok:
+    ld (ix+SMPB_DEPTH), l
+    ld (ix+SMPB_DEPTH+1), h
+    ; consumer cursor AND the loop-rewind anchor: window page
+    ; dataOff >> 13, offset dataOff & $1FFF. Both land in the window
+    ; descriptor as well as the block, because the pump rewinds to them
+    ; on every loop pass, long after this page is unmapped.
+    ld de, (sfxDataOff0)
+    ld a, d
+    and $E0
+    rlca
+    rlca
+    rlca                         ; A = dataOff >> 13
+    ld c, a
+    ld a, d
+    and $1F
+    ld d, a                      ; DE = dataOff & $1FFF
+    ld (ix+SMPB_TABIDX), c
+    ld (ix+SMPB_OFF), e
+    ld (ix+SMPB_OFF+1), d
+    ld l, (ix+SMPB_WINTAB)
+    ld h, (ix+SMPB_WINTAB+1)
+    ld bc, SFXW_STIDX
+    add hl, bc                   ; HL -> the descriptor's anchor bytes
+    ld a, (ix+SMPB_TABIDX)
+    ld (hl), a
+    inc hl
+    ld (hl), e
+    inc hl
+    ld (hl), d
+    ; flags: bits 2/3 are the loader's, bits 0/1 the pump's. Nothing can
+    ; be active here (aud_load_wav stops and waits before it calls in),
+    ; but preserve them anyway rather than assume.
+    ld a, (ix+SMPB_FLAGS)
+    and %11110011
+    ld c, a
+    ld a, (sfxWhole)
+    or a
+    jr z, .streaming
+    ld a, c
+    or %00001000                 ; COMPLETE: the whole file is resident
+    ld (ix+SMPB_FLAGS), a
+    ld a, (sfxHandle0)           ; nothing more to read: release it
+    call esx_fclose
+    ld a, $FF
+    ld (sfxHandle0), a
+    ld a, (sfxOpenNum)
+    ld (sfxKeep0), a
+    ld (smpLoadedNum), a         ; arm the free rewind: a repeat trigger
+    or a                         ; of this number costs zero card traffic
+    ret
+.streaming:
+    ld a, c
+    or %00000100                 ; STREAMING: the refiller owes blocks
+    ld (ix+SMPB_FLAGS), a
+    ld a, (sfxOpenNum)
+    ld (sfxKeep0), a             ; handle + hot filemap stay open as this
+                                 ; channel's cached stream (spec keep-open
+                                 ; ruling), for the refiller
+    ld a, $FF
+    ld (smpLoadedNum), a         ; ...but the FREE-REWIND cache is not
+                                 ; armed for a stream in flight in this
+                                 ; task: a repeat trigger re-runs the
+                                 ; whole open (Task 6's refiller settles
+                                 ; rewind semantics for a live stream).
+                                 ; The eviction at .fresh above closes
+                                 ; the cached handle first, so re-opening
+                                 ; leaks nothing.
+    or a
+    ret
+.frag:
+ IFDEF DEBUG
+    ; inline marker, same idiom as h_sfx's unknown-sub-command block -
+    ; the dbg_* helpers are resident, so they are as reachable from this
+    ; page as they are from any overlay.
+    ld b, 30
+    ld c, 60
+    call dbg_at
+    ld hl, msgSfxFrag
+    call dbg_puts
+ ENDIF
+.refusemap:
+    ld a, AUD_PAGE_LO            ; a window page may still be in slot 6
+    call data_map_page
+.refuse:
+    ld a, (sfxHandle0)
+    inc a
+    jr z, .noclose
+    dec a
+    call esx_fclose
+.noclose:
+    ld a, $FF
+    ld (sfxHandle0), a
+    ld (smpLoadedNum), a         ; nothing cached on this channel
+    xor a
+    ld (sfxKeep0), a
+    ld ix, (sfxChanPtr)
+    ld a, (ix+SMPB_FLAGS)
+    and %11110011                ; STREAMING and COMPLETE both off
+    ld (ix+SMPB_FLAGS), a
+    ld (ix+SMPB_DEPTH), 0
+    ld (ix+SMPB_DEPTH+1), 0
+    scf
+    ret
+
+; F_SEEK this channel's handle to absolute offset 0. Clone of the video
+; player's vid_raw_seek0 - IXL is the seek-mode byte esxDOS reads; L is
+; set belt-and-braces, matching that caller's posture.
+sfx_seek0:
+    ld bc, 0
+    ld de, 0
+    ld l, 0
+    ld ix, 0
+    ld a, (sfxHandle0)
+    jp esx_fseek
+
+ IFDEF DEBUG
+msgSfxFrag: db "SFX FRAG?", 0
+ ENDIF
+
 ; --- streaming cells (SP18 item 7 Task 3) -----------------------------
 SFX_HOT_ENT   equ 8              ; same streaming ceiling as video
 sfxHotMap:    ds SFX_HOT_ENT*6   ; 6-byte runs: addrLo(2) addrHi(2) blocks(2)
@@ -288,6 +654,49 @@ sfxRunBlk:    dw 0               ; blocks left in the open/current run
 sfxWinOpen:   db 0
 sfxCardFlags: db 0
 sfxMfSave:    db 0
+
+; --- open-ritual cells (SP18 item 7 Task 5) ---------------------------
+SFX_COLD_ENT  equ 33             ; cold filemap capacity, 6 bytes/entry
+                                 ; (198 B). One MORE than the 32-extent
+                                 ; case, so a full buffer always means
+                                 ; "33 runs or more" and never a false
+                                 ; reject - the same sizing (and the same
+                                 ; reasoning) as the video player's own
+                                 ; filemap buffer. This buffer is the
+                                 ; DISK_FILEMAP destination and so must
+                                 ; sit at $4000 or above: it does, at
+                                 ; $E000+, exactly as the video one does.
+sfxColdMap:   ds SFX_COLD_ENT*6
+sfxFstatBuf:  ds 11              ; F_FSTAT: +7 (4 bytes LE) = file size
+sfxProbeByte: db 0               ; one-byte sector-cache primer target
+sfxWinPg:     ds SFX_WIN_PAGES   ; window page list, snapshotted out of
+                                 ; page 48 before staging borrows slot 6
+sfxChanPtr:   dw 0               ; caller's channel block (IX is the
+                                 ; esxDOS buffer register, so it cannot
+                                 ; survive the reads)
+sfxOpenNum:   db 0               ; effect number this open is for
+sfxNewHandle: db 0               ; incoming handle, held across the
+                                 ; stale-handle eviction
+sfxWhole:     db 0               ; 1 = the whole file fits the window
+sfxStageLen:  dw 0               ; bytes this open stages (<= window)
+sfxStageRem:  dw 0               ; staging loop: bytes still to read
+sfxStgWin:    dw 0               ; staging loop: this page's byte count
+sfxStgIdx:    db 0               ; staging loop: window page index
+
+; Per-channel stream cell group. SMPB_STRM points here (seeded by
+; aud_smp_chan1_init); Task 11 parameterises the accesses through it,
+; which is why the group is contiguous. Task 5 has one channel, so it
+; addresses these absolutely.
+sfxStrm0:
+sfxHandle0:    db $FF            ; open handle while STREAMING; $FF none
+sfxKeep0:      db 0              ; effect number cached on this channel
+sfxFileBlk0:   dw 0              ; total card blocks in the file, clamped
+                                 ; to F_FSTAT's size (16 bits covers any
+                                 ; file up to 32 MB; the open refuses
+                                 ; anything from 16 MB up as absurd)
+sfxStagedBlk0: dw 0              ; blocks staged so far (producer side)
+sfxDataOff0:   dw 0              ; file offset of the first payload byte
+SFX_STRM_SIZE  equ $ - sfxStrm0
 
  IFDEF DEBUG
 ; Token-poll instrument accumulators (sfx_sd_tok, above).

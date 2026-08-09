@@ -77,7 +77,7 @@ aud_tick:
     call aud_smp_stop
     ld hl, audRequest
 .no7:
-    ; bit 6: start the sample staged in the smpPageTab pages
+    ; bit 6: start the sample staged in the channel's page window
     bit 6, (hl)
     jr z, .no6
     res 6, (hl)
@@ -447,7 +447,8 @@ aud_psg_silence:
 
 ; --- sampled sound engine (SP10 CTC per-sample DAC feed) -------------
 
-; Start the sample staged in smpPageTab by aud_load_wav. Runs in ISR context.
+; Start the sample staged in the channel's page window by aud_load_wav /
+; sfx_stream_open. Runs in ISR context.
 ; SP10 CTC pivot (supersedes the SP8/f-prime DMA ring - three DMA designs died
 ; on 50Hz block-quantisation gaps): a 1K power-of-two ring at $7C00 is played
 ; one byte per CTC interrupt by ctc_isr (raw out to $DF) and refilled from the
@@ -459,13 +460,18 @@ aud_psg_silence:
 ; Precondition: IX = channel block (sfxChan0).
 aud_smp_start:
     xor a
-    ld (ix+SMPB_TABIDX), a      ; source at the first page-table entry
-    ld (ix+SMPB_OFF), a
-    ld (ix+SMPB_OFF+1), a
     ld (ix+SMPB_P), a           ; ring empty: play offset == write offset == 0
     ld (ix+SMPB_P+1), a
     ld (ix+SMPB_W), a
     ld (ix+SMPB_W+1), a
+    ; The consumer starts at the PAYLOAD, not at window byte 0: blocks
+    ; stage verbatim from file offset 0, so the WAV header sits in front
+    ; of it. sfx_stream_open wrote that anchor into the channel's window
+    ; descriptor; loop rewind (aud_smp_copy) returns to the same place.
+    call aud_smp_anchor
+    ld (ix+SMPB_TABIDX), a
+    ld (ix+SMPB_OFF), l
+    ld (ix+SMPB_OFF+1), h
     ld hl, (audReqSmpLen)       ; 24-bit payload length (bytes not yet copied)
     ld (ix+SMPB_LEN), l
     ld (ix+SMPB_LEN+1), h
@@ -478,6 +484,10 @@ aud_smp_start:
     and 1
     add a, a                    ; -> bit 1 (loop)
     or 1                        ; bit 0 (active)
+    ld c, a
+    ld a, (ix+SMPB_FLAGS)
+    and %00001100               ; bits 2/3 (STREAMING/COMPLETE) are the
+    or c                        ; loader's - only bits 0/1 are ours
     ld (ix+SMPB_FLAGS), a       ; set BEFORE the copy (it reads the loop bit)
     ; play starts at the ring base; the CTC is not running yet, so the
     ; resident cursor write below needs no DI bracket. Ring base and the
@@ -627,6 +637,43 @@ aud_smp_tick:
     ei
     ret
 
+; Load this channel's payload-start anchor out of its window descriptor:
+; A = window page index, HL = byte offset inside that page. Two callers
+; (aud_smp_start's initial cursor, aud_smp_copy's loop rewind) is why
+; this is a routine rather than the same six loads twice. Reads page-48
+; data only, so it is legal at any point in the tick, including while
+; slot 7 windows a source page. Corrupts AF, DE, HL; preserves BC, IX.
+aud_smp_anchor:
+    ld l, (ix+SMPB_WINTAB)
+    ld h, (ix+SMPB_WINTAB+1)
+    ld de, SFXW_STIDX
+    add hl, de
+    ld a, (hl)
+    inc hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl                    ; HL = start offset, A = start page idx
+    ret
+
+; SMPB_DEPTH -= A (512-byte blocks the consumer has just finished with),
+; floored at 0 - the video streaming discipline: each side owns its own
+; cursor and the shared counter clamps rather than underflows.
+; Corrupts AF, DE, HL; preserves BC, IX.
+aud_smp_debit:
+    ld e, a
+    ld d, 0
+    ld l, (ix+SMPB_DEPTH)
+    ld h, (ix+SMPB_DEPTH+1)
+    or a
+    sbc hl, de
+    jr nc, .store
+    ld hl, 0
+.store:
+    ld (ix+SMPB_DEPTH), l
+    ld (ix+SMPB_DEPTH+1), h
+    ret
+
 ; HL = min(HL, DE); DE preserved; corrupts AF. Segment-cap helper for the copy
 ; loop - a plain unsigned 16-bit compare (sbc + CF), exact for every offset and
 ; length it is handed here. Lives in page-48 code, touches no state - safe to
@@ -664,9 +711,10 @@ aud_min16:
 ; the plan from scratch; phase C restores slot 7 = AUD_PAGE_HI (required by
 ; the rest of aud_tick, which reads audFlags/audBeep*/audSongNum/audPlayerUp
 ; at $FFE0 - not by this routine's own state any more) and writes the
-; advanced position back to the channel block. smpPageTab stays in slot 6
-; throughout. Precondition: IX = channel block (sfxChan0). Corrupts
-; everything except IX.
+; advanced position back to the channel block. Page 48 (the window page
+; list, the channel block and this scratch) stays in slot 6 throughout.
+; Precondition: IX = channel block (sfxChan0). Corrupts everything
+; except IX.
 aud_smp_copy:
     ; --- phase A: toFill = the whole ring; the play-once and backpressure clamps
     ; below cut it to min(source remain, free-1). The CTC self-paces the DAC, so
@@ -756,10 +804,10 @@ aud_smp_copy:
     ld a, (smpCpLoop)
     or a
     jp z, .filldone             ; play-once drained: stop (toFill is already 0)
-    xor a                       ; loop: rewind to the payload start (seamless)
-    ld (smpCpIdx), a
-    ld hl, 0
-    ld (smpCpOff), hl
+    call aud_smp_anchor         ; loop: rewind to the payload start
+    ld (smpCpIdx), a            ; (seamless - the ring never notices the
+    ld (smpCpOff), hl           ; seam), NOT to window byte 0: the WAV
+                                ; header stages in front of the payload
     ld hl, (smpCpLen)
     ld (smpCpRemLo), hl
     ld a, (smpCpLenHi)
@@ -796,10 +844,11 @@ aud_smp_copy:
     ld de, (smpCpDst)
     add hl, de
     ex de, hl                   ; DE = dest abs
-    ld a, (smpCpIdx)            ; slot 7 <- smpPageTab[idx] (page 48, slot 6)
-    ld l, a
-    ld h, 0
-    ld bc, smpPageTab
+    ld a, (smpCpIdx)            ; slot 7 <- window page list[idx]; the
+    ld l, a                     ; list is this channel's own (page 48,
+    ld h, 0                     ; slot 6), reached through SMPB_WINTAB
+    ld c, (ix+SMPB_WINTAB)
+    ld b, (ix+SMPB_WINTAB+1)
     add hl, bc
     ld a, (hl)
     nextreg $57, a              ; window the source page at $E000
@@ -810,18 +859,50 @@ aud_smp_copy:
     ld bc, (smpCpSeg)
     ldir                        ; copy seg bytes (src slot 7 -> ring bank 5)
     ; advance off (page roll at $2000), dstOff (ring wrap), toFill, remain
-    ld bc, (smpCpSeg)
+    ;
+    ; DEPTH INVARIANT (SP18 item 7 Task 5). SMPB_DEPTH counts 512-byte
+    ; window blocks that the PRODUCER has staged and the CONSUMER has not
+    ; yet finished with. The producer (sfx_stream_open here, the refiller
+    ; from Task 6 on) credits one per block written; the consumer debits
+    ; one per 512-byte boundary its window position crosses, which is
+    ; what this block does. The open pre-debits the whole blocks the
+    ; consumer skips outright - its anchor starts past the WAV header -
+    ; so the two sides balance exactly even when the anchor sits in the
+    ; MIDDLE of a block: that block stays credited and is debited here
+    ; when the consumer crosses the NEXT boundary, like any other.
+    ;
+    ; Arithmetic: off is 0..$2000 and (H:L) >> 9 == H >> 1 for any such
+    ; value (L < 256 can never carry into bit 9), so the crossings a
+    ; segment makes are just the difference of the two halved high
+    ; bytes. Blocks never straddle a window page (16 blocks per 8K page),
+    ; so this stays exact across the roll below: a roll means the segment
+    ; ended exactly on $2000 = boundary 16, and the next segment restarts
+    ; at boundary 0 of the next page.
     ld hl, (smpCpOff)
+    ld a, h
+    srl a
+    ld (smpCpBlk), a            ; block index before this segment
+    ld bc, (smpCpSeg)
     add hl, bc
     ld (smpCpOff), hl           ; off += seg
     ld a, h
+    srl a                       ; block index after it (0..16)
+    ld hl, smpCpBlk
+    sub (hl)                    ; A = boundaries crossed by this segment
+    call nz, aud_smp_debit
+    ld hl, (smpCpOff)
+    ld a, h
     cp $20
-    jr c, .noroll               ; off < $2000: same source page
-    sub $20                     ; rolled: off -= $2000, next table page
+    jr c, .noroll               ; off < $2000: same window page
+    sub $20                     ; rolled: off -= $2000, next window page
     ld h, a
     ld (smpCpOff), hl
     ld a, (smpCpIdx)
     inc a
+    cp SFX_WIN_PAGES
+    jr c, .idxok
+    xor a                       ; the window is CIRCULAR: wrap mod 3
+.idxok:
     ld (smpCpIdx), a
 .noroll:
     ld bc, (smpCpSeg)
@@ -878,7 +959,7 @@ aud_smp_copy:
 ; after it maps AUD_PAGE_LO into this slot - kept as a page-48 routine
 ; (not inlined at the call site) because overlay1's own headroom is far
 ; tighter than page-48's. Runs with interrupts enabled, mainline context.
-; Corrupts AF, HL, DE, IX.
+; Corrupts AF, BC, HL, DE, IX.
 aud_smp_chan1_init:
     ld ix, sfxChan0
     ld (ix+SMPB_RINGH), AUD_STAGE0 >> 8
@@ -893,6 +974,33 @@ aud_smp_chan1_init:
     ld (ix+SMPB_CTCPORT), l
     ld (ix+SMPB_CTCPORT+1), h
     ld (ix+SMPB_DACPORT), DAC_PORT
+    ld hl, sfxWin0                   ; this channel's window descriptor
+    ld (ix+SMPB_WINTAB), l
+    ld (ix+SMPB_WINTAB+1), h
+    ld hl, sfxStrm0                  ; and its stream cell group, on
+    ld (ix+SMPB_STRM), l             ; SFX_PAGE (Task 11 parameterises
+    ld (ix+SMPB_STRM+1), h           ; the stream accesses through this)
+    ld (ix+SMPB_DEPTH), 0            ; nothing staged until a load runs
+    ld (ix+SMPB_DEPTH+1), 0
+    ; Withdraw the audio floor from the bank allocator, once, at boot.
+    ; Banks 25-27 are the two channels' effect windows PERMANENTLY as of
+    ; SP18 item 7 Task 5; before that they were a first-come floor
+    ; aud_banks_claim handed to whichever audio client asked first. The
+    ; AYS stream client still calls aud_banks_claim, whose floor pass
+    ; takes any bank still marked BT_RESERVED - so mark all three
+    ; BT_USED here and that pass finds them taken and falls through to
+    ; the pool, which is exactly its own documented "already claimed by
+    ; the other client: skip" path. This runs from aud_boot_probe,
+    ; before the GAME.AYS probe, and bank_table_init has already reset
+    ; the table by then on every (warm or cold) boot. bankTable is
+    ; resident, so it is writable from this page with no mapping.
+    ld hl, bankTable+SMP_FLOOR_FIRST
+    ld b, SMP_FLOOR_LAST-SMP_FLOOR_FIRST+1
+    ld a, BT_USED
+.floor:
+    ld (hl), a
+    inc hl
+    djnz .floor
     ret
 
 ; Copy scratch, in page-48 CODE space (slot 6, mapped throughout aud_tick).
@@ -911,6 +1019,8 @@ smpCpLenHi: db 0    ; payload length high
 smpCpDst:   dw 0    ; working ring dest offset (0-AUD_STAGE_RING)
 smpCpLoop:  db 0    ; loop-mode snapshot for this copy
 smpCpSeg:   dw 0    ; this segment's byte count (saved across LDIR)
+smpCpBlk:   db 0    ; 512-block index inside the page before a segment,
+                    ; held across the advance for the DEPTH debit
 
 ; Per-channel sampled-effect pump state (SP18 item 7), SMPB_* offsets
 ; in nextdaad.inc. Page-48 data space, pinned in slot 6 for the whole of
@@ -919,14 +1029,31 @@ smpCpSeg:   dw 0    ; this segment's byte count (saved across LDIR)
 ; routine runs.
 sfxChan0:  ds SMPB_SIZE           ; channel 1 pump state (SP18 item 7)
 
-; Sample stream page list + count, in page-48 CODE space (slot 6). The
-; ISR reads them from slot 6, which stays mapped throughout aud_tick, so
-; they are readable even while slot 7 windows a source page. aud_load_wav
-; fills them (bank 24 page 48 mapped into slot 6) via aud_banks_claim;
-; aud_boot_probe zeroes smpPageCnt on warm boot. smpPageCnt sits at
-; smpPageTab+AUD_STRTAB_MAX - aud_banks_claim/release address it there.
-smpPageTab:   ds AUD_STRTAB_MAX
-smpPageCnt:   db 0
+; Per-channel effect WINDOW DESCRIPTORS (SP18 item 7 Task 5), addressed
+; through SMPB_WINTAB. Layout (nextdaad.inc SFXW_*): the SFX_WIN_PAGES
+; window page numbers, then the consumer's payload-start anchor, which
+; sfx_stream_open writes and the pump reads on start and on every loop
+; rewind. Page-48 data, so the pump may touch it at any point in the
+; tick.
+;
+; The pages ARE the audio floor, banks 25-27, split into plain low and
+; high halves: channel 1 takes 50/51/52 (bank 25's two halves plus bank
+; 26's lower), channel 2 takes 53/54/55 (bank 26's upper plus bank 27's
+; two halves). Static initialisers rather than a boot-time fill: the
+; floor is a fixed assembly-time map now, exactly like the DAC ring
+; base, and it is withdrawn from the bank allocator once (see
+; aud_smp_chan1_init) instead of being claimed per load. This retires
+; smpPageTab/smpPageCnt (129 bytes) with the whole claim-the-payload
+; model they served.
+sfxWin0:
+    db SMP_PAGE_FIRST+0, SMP_PAGE_FIRST+1, SMP_PAGE_FIRST+2
+    db 0                             ; start window-page index (anchor)
+    dw 0                             ; start offset inside that page
+sfxWin1:
+    db SMP_PAGE_FIRST+3, SMP_PAGE_FIRST+4, SMP_PAGE_FIRST+5
+    db 0
+    dw 0
+    ASSERT sfxWin1 - sfxWin0 == SFXW_SIZE
 
 ; (SP10 CTC pivot: the zxnDMA sample-program template retired here - the CTC
 ; per-sample ISR replaces DMA burst playback entirely. The DMA is now free for
@@ -956,7 +1083,7 @@ smpPageCnt:   db 0
 ; could not support. The one page-49 datum the walk needs, audFlags (for
 ; PSG-3 suppression), is snapshotted into aysSup BEFORE slot 7 is remapped
 ; off page 49. overlay1 reaches this same state through a page-48 window
-; (aud_load_ays / aud_boot_probe), exactly as it does smpPageTab.
+; (aud_load_ays / aud_boot_probe), exactly as it does the channel block.
 
 ; aud_ays_start: begin the stream loaded into aysPageTab. Position = 0,
 ; remain = aysLen; audReq2Loop (resident) selects loop (bit 1) vs once.
@@ -1128,8 +1255,9 @@ aud_ays_tick:
 ; (remain hits 0 and aud_ays_tick's loop/stop runs before any read), so
 ; slot 7 is left on the final page and never dereferenced past the table.
 ; This is the proven no-read-past-the-table invariant - not a reliance on
-; the aysPageCnt byte sitting adjacent to aysPageTab (it does, mirroring
-; smpPageTab, but the guard here means that adjacency is never reached).
+; the aysPageCnt byte sitting adjacent to aysPageTab (it does, the shape
+; aud_banks_claim expects, but the guard here means that adjacency is
+; never reached).
 ; Slot 7 holds the live source page on entry and exit. Corrupts AF, HL.
 ; Preserves BC, DE, IX, IY.
 aud_ays_rdb:
@@ -1509,6 +1637,7 @@ audSilenceEnd:                      ; aud_tick's terminal watch treats
                                     ; as "the song is over"
 
     ASSERT $ <= AUD_SFB_ORG          ; player+tick+beep+table fit 4K
+    DISPLAY "page 48 ends at ", $, " headroom ", /D, AUD_SFB_ORG - $
 
 ; --- effects bank / song / state ------------------------------------
 

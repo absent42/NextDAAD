@@ -505,15 +505,20 @@ AUD_CTC_CW256   equ $A5     ; %10100101: as CW16 but prescaler /256
 ; a fixed constant would clamp sharply on the faster clocks
 AUD_RATE_MIN    equ 3500    ; validated sample-rate floor (aud_load_wav)
 AUD_RATE_MAX    equ 20000   ; the 1K ring holds > 1 frame of this rate
-AUD_SMP_MAX     equ 1048576 ; sample payload sanity ceiling (1MB = 64
-                            ; banks; allocator success is the real
-                            ; bound - this just rejects absurd WAVs
-                            ; before touching the allocator)
+; AUD_SMP_MAX (the old 1MB sample payload ceiling) is DELETED with SP18
+; item 7 Task 5: effects stream through a fixed 24K window, so no design
+; element caps effect length against RAM any more. aud_load_wav keeps
+; only the 24-bit sanity bound (data size byte 3 nonzero = absurd, size
+; 0 = malformed).
 AUD_STRTAB_MAX  equ 128     ; stream page-table capacity (128 x 8K =
                             ; 1MB per stream; one table per client)
-SMP_FLOOR_FIRST equ 25      ; reserved audio floor: banks 25-27 are
-SMP_FLOOR_LAST  equ 27      ; claimed first so a 48K load ALWAYS
-                            ; works regardless of pool pressure
+SMP_FLOOR_FIRST equ 25      ; audio floor: banks 25-27. Since SP18 item 7
+SMP_FLOOR_LAST  equ 27      ; Task 5 these hold the two channels' effect
+                            ; windows PERMANENTLY (see SFX_WIN_PAGES
+                            ; below); aud_smp_chan1_init marks them
+                            ; BT_USED at boot so aud_banks_claim's floor
+                            ; pass (still used by the AYS stream client)
+                            ; always skips them and takes pool banks
 SMP_PAGE_FIRST  equ 50      ; bank 25 lower 8K; floor banks' first page
 AUD_STAGE0      equ $7C00   ; ring base, bank 5 upper region - ALWAYS mapped
                             ; (MMU3), above divMMC's $0000-$3FFF, free after
@@ -546,7 +551,38 @@ SMPB_CTCPORT  equ 20   ; dw: CTC channel port ($183B / $193B)
 SMPB_DACPORT  equ 22   ; db: DAC port ($DF / $B3)
 SMPB_CTCCTRL  equ 23   ; db: latched CTC control word for this effect
 SMPB_CTCTC    equ 24   ; db: latched CTC time constant
-SMPB_SIZE     equ 25   ; (was 14 before SP18 item 7 Task 2's parameterisation)
+SMPB_WINTAB   equ 25   ; dw: address of this channel's window descriptor
+SMPB_DEPTH    equ 27   ; dw: staged-minus-consumed 512-byte window blocks
+SMPB_STRM     equ 29   ; dw: address of this channel's stream cell group
+                       ;     (SFX_PAGE); Task 11 parameterises through it
+SMPB_SIZE     equ 31   ; (was 14 before SP18 item 7 Task 2's parameterisation)
+; SMPB_FLAGS bits: 0 active, 1 looping, 2 STREAMING (the refiller still
+; owes this channel blocks), 3 COMPLETE (the whole file is staged in the
+; window; the refiller is idle and a re-trigger rewinds for free). Bits
+; 2/3 are the LOADER's (sfx_stream_open); aud_smp_start preserves them
+; when it writes bits 0/1, aud_smp_stop clears the block on stop.
+
+; --- SP18 item 7: the per-channel effect window ------------------------
+; Each channel consumes its effect through a CIRCULAR window of
+; SFX_WIN_PAGES 8K pages out of the audio floor banks 25-27. This
+; replaces "the whole payload is resident in a claimed page list": files
+; up to SFX_WIN_BYTES stage whole (COMPLETE - the free hybrid, resident
+; semantics and free re-trigger preserved), larger files stage their
+; first SFX_WIN_BYTES and the refiller tops the window up while it plays
+; (STREAMING). 512-byte card blocks never straddle a page: 16 per page.
+SFX_WIN_PAGES equ 3
+SFX_WIN_BYTES equ SFX_WIN_PAGES*$2000   ; 24576 = 1.5 s at 16 kHz
+SFX_WIN_BLKS  equ SFX_WIN_PAGES*16      ; 48 card blocks in a full window
+; Window descriptor, one per channel in page-48 data (SMPB_WINTAB points
+; at it): the SFX_WIN_PAGES page numbers, then the consumer's payload
+; START ANCHOR. Blocks stage VERBATIM from file offset 0 (WAV header
+; included), so the consumer starts at the data chunk's own offset and
+; every loop rewind returns to exactly that position. The anchor lives
+; here, not in the SFX_PAGE stream cells, because the pump is page-48
+; code and cannot see SFX_PAGE.
+SFXW_STIDX    equ SFX_WIN_PAGES         ; db: start window-page index
+SFXW_STOFF    equ SFX_WIN_PAGES+1       ; dw: start offset inside it
+SFXW_SIZE     equ SFX_WIN_PAGES+3
 
 ; --- DMA picture copies (SP11 Task 2) ---
 ; zxnDMA one-shot mem-to-mem chunk copies for Layer 2 picture work

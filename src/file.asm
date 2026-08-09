@@ -77,6 +77,31 @@ esx_fclose:
     db ESX_F_CLOSE
     jr cardBusy_clear
 
+; A = handle, IX = 11-byte buffer. Out: CF set + A = esxDOS error.
+; Buffer +7 (4 bytes, little-endian) is the file size.
+esx_fstat:
+    call cardBusy_set
+    rst $08
+    db ESX_F_FSTAT
+    jr cardBusy_clear
+
+; A = handle, IX = entry buffer (must be at $4000 or above - esxDOS
+; writes it with the DivMMC RAM paged in over the low 16K), DE = buffer
+; capacity in 6-byte entries. Out: CF set + A = esxDOS error; on success
+; A = card/granularity flags, DE = UNUSED entries, HL = address one past
+; the last entry written. HL is a RESULT here, unlike every other wrapper
+; above, so this one saves it across cardBusy_clear (which works through
+; HL) instead of tail-jumping into it. cardBusy_clear touches neither A
+; nor F, so the flags/A results still cross back untouched.
+esx_filemap:
+    call cardBusy_set
+    rst $08
+    db ESX_DISK_FILEMAP
+    push hl
+    call cardBusy_clear
+    pop hl
+    ret
+
  IFDEF DEBUG
 ; DeZog quality-of-life fallback (see ddb_load_debug_retry, below): F_CHDIR
 ; ($a9). In: A=drive specifier, IX=ASCIIZ path. Out: CF set + A=esxDOS

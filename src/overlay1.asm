@@ -3092,10 +3092,9 @@ aud_boot_probe:
     ld (DATA_WINDOW+audPlayerUp-$E000), a
     ld a, $FF
     ld (DATA_WINDOW+audSongNum-$E000), a
-    ld a, AUD_PAGE_LO           ; smpPageCnt/aysFlags/aysPageCnt/sfxChan0 live
-    call data_map_page          ; in page 48 code space: a stale stream page
-    xor a                       ; count or active bit must not survive a warm
-    ld (smpPageCnt), a          ; boot (bank_table_init recycles the banks)
+    ld a, AUD_PAGE_LO           ; aysFlags/aysPageCnt/sfxChan0 live in page
+    call data_map_page          ; 48 code space: a stale stream page count
+    xor a                       ; or active bit must not survive a warm boot
     ld (aysFlags), a            ; stream-active off (sibling of SMPB_FLAGS)
     ld (aysPageCnt), a          ; stream page count cold
     ld (sfxChan0+SMPB_FLAGS), a ; clear a stale sample-active bit: a looping
@@ -3182,20 +3181,33 @@ bpTarget:   dw 0                ; h_beep frameCounter target
 ; --- WAV sample loader (SP8) ----------------------------------------
 
 ; aud_load_wav: A = sample number (1-255). Probes NNN.WAV, validates
-; RIFF/fmt (PCM, mono, 8-bit, rate 3500-20000), claims an allocated page
-; list (floor banks 25-27 first, then the pool) via aud_banks_claim and
-; streams the data payload into it through the slot-6 window, then
-; derives the CTC control word + time constant from the header rate and
-; the live video-timing mode. Keep-last: when A is already resident the SD
-; read is skipped entirely (params persist in the audReqSmp* bytes). Any
-; active sample is stopped (mailbox bit 7 + consumed-wait) and its banks
-; released before the new claim - a playing sample must never be overwritten.
-; Out: CF clear = payload resident + audReqSmpCtrl/Tc/Len/LenHi committed
+; RIFF/fmt (PCM, mono, 8-bit, rate 3500-20000), then hands the open file
+; to sfx_stream_open (SFX_PAGE, through the resident sfx_open_tramp),
+; which stages it into the channel's 24K page window and flags the
+; channel COMPLETE (whole file resident) or STREAMING. Finally it derives
+; the CTC control word + time constant from the header rate and the live
+; video-timing mode.
+;
+; SP18 item 7 Task 5 replaced the old "claim a page list for the whole
+; payload" loop (aud_banks_claim over smpPageTab, up to AUD_SMP_MAX)
+; with that call: nothing here allocates banks any more, and no design
+; element caps effect length against RAM.
+;
+; Keep-last: when A is already the channel's cached number the SD is not
+; touched at all (params persist in the audReqSmp* bytes, and the window
+; still holds the payload, so the restart is a free rewind). Only a
+; COMPLETE load arms that cache - sfx_stream_open leaves smpLoadedNum
+; $FF for a STREAMING one, so a repeat trigger re-runs the open.
+;
+; Any active sample is stopped (mailbox bit 7 + consumed-wait) before the
+; staging overwrites the window - a playing sample must never be
+; overwritten.
+; Out: CF clear = window staged + audReqSmpCtrl/Tc/Len/LenHi committed
 ; (audReqSmpLoop is the CALLER's, set before or after);
-; CF set = missing/malformed/oversize/short-read. On any failure past the
-; keep-last check the previous sample is stopped AND its banks released
-; (smpPageCnt 0, no banks held); a missing file (open fails first) leaves
-; the previous sample untouched.
+; CF set = missing/malformed/short-read/too fragmented. Any failure past
+; the keep-last check leaves the previous sample stopped and the cache
+; cold; a missing file (open fails first) leaves the previous sample
+; untouched.
 ; Corrupts everything.
 aud_load_wav:
     ld (wavReqNum), a
@@ -3250,7 +3262,14 @@ aud_load_wav:
                                  ; rule as aud_load_song)
 .partopened:
     ld (audHandle), a
-    ; stop any playing sample before the banks move under the DMA.
+    ld hl, 0
+    ld (wavDataOff), hl         ; file position tracker: .read accumulates
+                                ; every byte it consumes, so the moment
+                                ; the data chunk's own header has been
+                                ; read this IS the offset of the first
+                                ; payload byte - which the window's
+                                ; consumer anchor needs
+    ; stop any playing sample before the window is overwritten.
     ; audEnable = 0 means the ISR never reaches aud_tick: nothing can
     ; be playing and the bit would never be consumed - skip the wait.
     ld a, (audEnable)
@@ -3266,19 +3285,11 @@ aud_load_wav:
     jr nz, .waitstop
 .stopped:
     ld a, $FF
-    ld (smpLoadedNum), a        ; loading invalidates the resident one
-    ; release any previous sample's banks now that the engine is provably
-    ; idle (the stop-wait consumed the stop, so the ISR is off the sample)
-    ; and BEFORE the new claim - never while the ISR might walk them. page
-    ; 48 into slot 6 for smpPageTab/smpPageCnt; slot 6 is free here.
-    call data_save
-    ld a, AUD_PAGE_LO
-    call data_map_page
-    ld hl, smpPageTab
-    ld a, (smpPageCnt)
-    ld b, a
-    call aud_banks_release      ; safe on B=0 (first load); zeroes smpPageCnt
-    call data_restore
+    ld (smpLoadedNum), a        ; loading invalidates the cached one
+    ; (SP18 item 7 Task 5: no bank release here any more. The window
+    ; pages are fixed floor pages the channel owns permanently, so
+    ; nothing is claimed or freed per load - the stop-wait above is all
+    ; the "engine is provably off the source" this needs.)
     ; RIFF header: "RIFF" dd size "WAVE"
     ld ix, wavHdr
     ld bc, 12
@@ -3389,9 +3400,10 @@ aud_load_wav:
     ld a, (wavGotFmt)
     or a
     jp z, .failclose
-    ; 32-bit data size: wavHdr+4 low word, wavHdr+6 high word. Reject the
-    ; absurd top byte, then range-check the 24-bit size against AUD_SMP_MAX
-    ; (the allocator is the real bound; this only rejects insane WAVs).
+    ; 32-bit data size: wavHdr+4 low word, wavHdr+6 high word. Only the
+    ; 24-bit sanity bound survives here - AUD_SMP_MAX (the old 1MB cap)
+    ; is DELETED with SP18 item 7 Task 5, because the window streams and
+    ; no length cap remains by design.
     ld a, (wavHdr+7)            ; size bits 24-31
     or a
     jp nz, .failclose          ; > 16MB: absurd
@@ -3401,14 +3413,6 @@ aud_load_wav:
     or h
     or l
     jp z, .failclose           ; empty data: malformed
-    ld a, d                    ; range: size <= AUD_SMP_MAX ($100000)
-    cp AUD_SMP_MAX >> 16       ; high byte vs $10
-    jr c, .datok               ; < $10: within the cap
-    jp nz, .failclose          ; > $10: over the cap
-    ld a, h                    ; == $10: low word must be zero
-    or l
-    jp nz, .failclose
-.datok:
     ld (wavLen), hl            ; 24-bit payload length: low word
     ld a, d
     ld (wavLenHi), a           ; high byte
@@ -3449,118 +3453,47 @@ aud_load_wav:
     jp c, .failclose
     jr .skiploop
 .stream:
-    ; claim an allocated page list for the 24-bit payload, then stream it
-    ; window-by-window over smpPageTab. page 48 into slot 6 for the table
-    ; writes: aud_banks_claim needs it mapped (it does not self-bracket).
+    ; Hand the open file to the stream page: it captures the filemap,
+    ; stages the window through slot 6 and commits the channel's flags
+    ; and consumer anchor. Page 48 goes into slot 6 first - the channel
+    ; block lives there and sfx_stream_open reads and writes it
+    ; IX-relative (it hands slot 6 back as AUD_PAGE_LO on every exit,
+    ; and data_restore below returns the caller's own mapping).
+    ;
+    ; DAC signedness: the WAV bytes stage UNSIGNED, verbatim - no
+    ; load-time transform anywhere. The CPU-OUT DAC path is unsigned on
+    ; both silicon and CSpect, so one convention holds everywhere (full
+    ; evidence at nextdaad.inc DAC_SILENCE). The retired -DDAC_CSPECT
+    ; accommodation used to XOR $80 over every byte on the way in; it is
+    ; gone now that unsigned is empirically pinned, and the staging path
+    ; is a straight esxDOS read into the window pages.
     call data_save
     ld a, AUD_PAGE_LO
     call data_map_page
-    ld a, (wavLenHi)            ; A:DE = 24-bit payload byte count
-    ld de, (wavLen)
-    ld hl, smpPageTab
-    call aud_banks_claim
-    jp c, .claimfail            ; allocation failed: nothing held
-    ; init the 24-bit streaming counter and the table index
-    ld hl, (wavLen)
-    ld (wavRem), hl
-    ld a, (wavLenHi)
-    ld (wavRemHi), a
-    xor a
-    ld (wavIdx), a
-.pageloop:
-    ld hl, (wavRem)            ; 24-bit remaining == 0 -> done
-    ld a, (wavRemHi)
-    or h
-    or l
-    jr z, .streamed
-    ; this window = min(remaining, $2000)
-    ld a, (wavRemHi)
-    or a
-    jr nz, .fullwin            ; high byte set: remaining >= 64K > $2000
-    ld hl, (wavRem)
-    ld de, $2000
-    or a
-    sbc hl, de
-    jr nc, .fullwin           ; remaining low word >= $2000
-    ld hl, (wavRem)            ; partial final window: remLo bytes
-    jr .setwin
-.fullwin:
-    ld hl, $2000
-.setwin:
-    ld (wavWin), hl
-    ; source page = smpPageTab[wavIdx]: map page 48, read the entry
-    ld a, AUD_PAGE_LO
-    call data_map_page
-    ld a, (wavIdx)
-    ld e, a
-    ld d, 0
-    ld hl, smpPageTab
-    add hl, de
-    ld a, (hl)
-    ; map that source page and read the window into the slot-6 window
-    call data_map_page
-    ld ix, DATA_WINDOW
-    ld bc, (wavWin)
-    call .read
-    jp c, .failpost
-    ; short read = truncated file (data chunk lied): reject
-    ld hl, (wavWin)
-    or a
-    sbc hl, bc                 ; requested - actually read
-    jp nz, .failpost
-    ; DAC signedness: the WAV bytes are staged UNSIGNED, verbatim - no load-time
-    ; transform. The CPU-OUT DAC path is unsigned on both silicon and CSpect, so
-    ; one convention holds everywhere (full evidence at nextdaad.inc DAC_SILENCE).
-    ; The retired -DDAC_CSPECT accommodation used to XOR $80 over every byte read
-    ; into this window here; it is gone now that unsigned is empirically pinned.
-    ; The ISR ring copy stays a plain move.
-    ; advance: remaining -= wavWin (24-bit), step to the next table entry
-    ld hl, (wavRem)
-    ld bc, (wavWin)
-    or a
-    sbc hl, bc
-    ld (wavRem), hl
-    jr nc, .noborrow
-    ld hl, wavRemHi
-    dec (hl)
-.noborrow:
-    ld hl, wavIdx
-    inc (hl)
-    jp .pageloop
-.streamed:
-    call data_restore
+    ld ix, sfxChan0             ; Task 12 makes this the allocated channel
+    ld de, (wavDataOff)         ; first payload byte (consumer anchor)
     ld a, (audHandle)
-    call esx_fclose
-    ; commit: derive the CTC control word + time constant from the sample rate
-    ; and the live video-timing mode, fill the mailbox, mark resident. The ring
+    ld l, a
+    ld a, (wavReqNum)
+    call sfx_open_tramp         ; resident: slot 7 <- SFX_PAGE, call, back
+    push af                     ; data_restore corrupts A, not F - but
+    call data_restore           ; carry the whole result across anyway
+    pop af
+    jp c, .fail                 ; refused: the handle is already closed
+                                ; and the block's stream bits cleared -
+                                ; straight to the caller's AY fallback
+    ; commit: derive the CTC control word + time constant from the sample
+    ; rate and the live video-timing mode, fill the mailbox. The ring
     ; self-paces at the CTC rate, so no per-frame chunk sizing is needed.
+    ; smpLoadedNum is sfx_stream_open's (only a COMPLETE load arms it).
     ld de, (wavFmt+4)           ; rate
     call aud_ctc_params         ; sets audReqSmpCtrl + audReqSmpTc
     ld hl, (wavLen)
     ld (audReqSmpLen), hl
     ld a, (wavLenHi)
     ld (audReqSmpLenHi), a
-    ld a, (wavReqNum)
-    ld (smpLoadedNum), a
     or a                        ; CF clear
     ret
-.claimfail:
-    ; allocation failed before any bank was held (aud_banks_claim unwound
-    ; its own partial claim and left smpPageCnt 0). restore slot 6, fail.
-    call data_restore
-    jp .failclose
-.failpost:
-    ; SD error or short read after a successful claim: release the banks.
-    ; slot 6 currently holds a source page (still inside the .stream
-    ; data_save bracket); map page 48 for the release, then data_restore
-    ; restores the caller's slot 6. Leaves smpPageCnt 0 (no banks held).
-    ld a, AUD_PAGE_LO
-    call data_map_page
-    ld hl, smpPageTab
-    ld a, (smpPageCnt)
-    ld b, a
-    call aud_banks_release
-    call data_restore
 .failclose:
     ld a, (audHandle)
     call esx_fclose
@@ -3568,10 +3501,21 @@ aud_load_wav:
     scf
     ret
 ; BC bytes from the open file into IX. Out CF = SD error; BC = bytes
-; actually read (esx_fread contract). Preserves nothing else.
+; actually read (esx_fread contract). Accumulates every byte consumed
+; into wavDataOff: all reads on this path are sequential from offset 0
+; and there is no seek, so that running total IS the file position, and
+; the value it holds when the data chunk header has just been read is
+; the offset of the first payload byte. Preserves BC (the callers'
+; short-read checks need it); corrupts AF, HL.
 .read:
     ld a, (audHandle)
-    jp esx_fread
+    call esx_fread
+    push af
+    ld hl, (wavDataOff)
+    add hl, bc
+    ld (wavDataOff), hl
+    pop af
+    ret
 
 ; aud_ctc_params: DE = sample rate (validated AUD_RATE_MIN..MAX). Derives the
 ; CTC control word (audReqSmpCtrl) and time constant (audReqSmpTc) for the rate
@@ -3964,15 +3908,23 @@ aud_load_ays:
 ; PRECONDITION for both helpers: bank 24 page 48 (AUD_PAGE_LO) is mapped
 ; into slot 6. The page table and its count byte live there and the
 ; helpers do NOT bracket their own slot-6 mapping (so a caller can batch
-; table access - aud_load_wav maps page 48 once per phase, aud_boot_probe
+; table access - aud_load_ays maps page 48 once per phase, aud_boot_probe
 ; likewise). Both write bankTable directly (resident, visible regardless
 ; of slot 6) and call bank_alloc/bank_free (also resident). Working
 ; storage is mainline-only scratch, so these are not ISR-safe; callers
 ; run them only with the sample engine idle.
 ;
+; SINCE SP18 ITEM 7 TASK 5 the AYS stream is the ONLY client: the sampled
+; effects claim nothing (they stream through fixed floor-page windows),
+; so aysPageTab is the only table base these are ever handed, and the
+; floor pass below always finds banks 25-27 already BT_USED (marked once
+; at boot by aud_smp_chan1_init, which owns them as the effect windows)
+; and falls straight through to the pool. Shape kept intact for the one
+; client that remains.
+;
 ; aud_banks_claim: A:DE = 24-bit byte count (A = bits 23-16). HL = page
-; table base (smpPageTab or aysPageTab). Fills the table with 2 pages per
-; claimed 16K bank - floor banks 25-27 first (BT_RESERVED -> BT_USED by
+; table base (aysPageTab). Fills the table with 2 pages per claimed 16K
+; bank - floor banks 25-27 first (BT_RESERVED -> BT_USED by
 ; direct table write, so bank_alloc can never hand them out twice), then
 ; the pool via bank_alloc. On success: CF clear, B = page count, and the
 ; count byte at (base + AUD_STRTAB_MAX) = B. On failure (pool exhausted,
@@ -4126,10 +4078,9 @@ wavReqNum: db 0
 wavGotFmt: db 0
 wavLen:    dw 0                 ; payload length low word (24-bit)
 wavLenHi:  db 0                 ; payload length high byte
-wavRem:    dw 0                 ; streaming remaining, low word
-wavRemHi:  db 0                 ; streaming remaining, high byte
-wavIdx:    db 0                 ; current smpPageTab index while streaming
-wavWin:    dw 0                 ; current window byte count
+wavDataOff: dw 0                ; running file position while the header
+                                ; walk runs; at the data chunk it is the
+                                ; first payload byte's offset (.read)
 wavSkip:   dw 0
 wavHdr:    ds 16                ; RIFF/chunk header + discard scratch
                                  ; (16, NOT 12: the skip loop reads up
