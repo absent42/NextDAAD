@@ -2952,7 +2952,20 @@ extVec:
  ELSE
     dw ext_stub                   ; vector 12, release: stub
  ENDIF
-    dw ext_stub, ext_stub, ext_stub ; vectors 13-15
+; EXTERN vectors 13/14 (SP18 item 7 Tasks 9/10 ring-2 placement probe,
+; owner-ratified fallback 2026-08-09: the DeZog CALL-injection
+; mechanism is unavailable in the owner's DeZog build). Route
+; tests/sfxlong.dsf's R2FILL/R2CHK verbs straight to ring2_fill/
+; ring2_chk (this page, below) - no trampoline needed: h_extern already
+; dispatches with overlay0 mapped into slot 7, the same page these two
+; routines live on. DEBUG-only, vector 15 stays spare.
+ IFDEF DEBUG
+    dw ring2_fill                 ; vector 13
+    dw ring2_chk                  ; vector 14
+ ELSE
+    dw ext_stub, ext_stub         ; vectors 13-14, release: stubs
+ ENDIF
+    dw ext_stub                    ; vector 15: spare
 
 savedCurX: db 0
 savedCurY: db 0

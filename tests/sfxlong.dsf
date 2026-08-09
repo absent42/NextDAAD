@@ -117,6 +117,12 @@
 ;   SAVE   SAVE 0    save the game (standard DAAD save-file prompt)
 ;   LOAD   LOAD 0    load the game (standard DAAD load-file prompt)
 ;   VID    SFX 1 9   play video 1 once
+;   R2FILL EXTERN 0 13   ring-2 placement probe: fill $4400-$47FF ($A5)
+;   R2CHK  EXTERN 0 14   ring-2 placement probe: check it, report on
+;                        screen row 20 (SP18 item 7 Tasks 9/10 - owner-
+;                        ratified EXTERN fallback, DeZog CALL-injection
+;                        unavailable in this DeZog build; DEBUG builds
+;                        only, silent no-op stub on Release)
 ; Boot autoplay triggers LOOP1 automatically (see /PRO 6) so the
 ; ZEsarUX smoke below needs no typing at all past launching the .nex -
 ; the verbs exist for exercising the other subs, effect 2, effect 3,
@@ -205,6 +211,8 @@ LOAD   67 verb
 PLAY3  68 verb
 LOOP3  69 verb
 VID    70 verb
+R2FILL 71 verb
+R2CHK  72 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -344,6 +352,19 @@ SOUTH 0
 > VID   _ MES "video 1 once - SFX 1 9#n"
           SFX 1 9
           DONE
+; ---- ring-2 placement probe (SP18 item 7 Tasks 9/10, owner-ratified
+; EXTERN fallback 2026-08-09 - DeZog CALL-injection unavailable in this
+; DeZog build): R2FILL fills $4400-$47FF with $A5 (ring2_fill,
+; overlay0.asm, EXTERN vector 13); R2CHK scans it and prints OK or the
+; first mismatching address+byte on screen row 20 (ring2_chk, EXTERN
+; vector 14). Both are DEBUG-only handlers - a Release interpreter
+; runs the EXTERN as a silent no-op stub ----
+> R2FILL _ MES "ring-2 fill - EXTERN 0 13#n"
+          EXTERN 0 13
+          DONE
+> R2CHK  _ MES "ring-2 check - EXTERN 0 14#n"
+          EXTERN 0 14
+          DONE
 ; ---- stop everything ----
 > STOP  _ MES "all channels stopped - SFX 0 5#n"
           SFX 0 5
@@ -365,6 +386,7 @@ SOUTH 0
         MES "PIC                        load + show picture 1#n"
         MES "SAVE / LOAD                save / load the game#n"
         MES "VID                        play video 1 once#n"
+        MES "R2FILL / R2CHK             ring-2 $4400 probe (fill / check)#n"
         MES "STOP                       stop every channel#n#n"
         MES "Boot autoplay starts LOOP1 automatically.#n"
 ; Boot autoplay - the ZEsarUX wire smoke needs no typed input at all:
