@@ -86,9 +86,9 @@
 ; ZESARUX MANUAL WIRE SMOKE (owner procedure - not automated)
 ; ------------------------------------------------------------------
 ; CSpect has no raw SPI, so it cannot exercise the refiller's CMD18
-; path at all (checklist:449-460) - only real SD hardware or ZEsarUX's
-; SD emulation can. ZEsarUX's raw SD SPI streaming (port $EB, CMD18)
-; is hardware-proven to work; its CTC hw-IM2 audio path is frozen
+; path at all - only real SD hardware or ZEsarUX's SD emulation can.
+; ZEsarUX's raw SD SPI streaming (port $EB, CMD18) is hardware-proven
+; to work; its CTC hw-IM2 audio path is frozen
 ; (does not advance), so this smoke proves the WIRE AND BOOKKEEPING -
 ; staged bytes, depth accounting, no hang - not audio quality. Audio
 ; verdicts are Task 14's silicon legs.
