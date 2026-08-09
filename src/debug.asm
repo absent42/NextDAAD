@@ -793,9 +793,9 @@ aud_dmaprobe:
 ; the tilemap/Layer 2 are up. RING2FILL primes the candidate with a
 ; $A5 sentinel; RING2CHK scans it back and reports the first mismatch
 ; (address + byte, via dbg_hex16/dbg_hex8) or "OK". Owner-invoked only,
-; via a debugger CALL to the symbol (see the runsheet's V1 row) - no
-; automatic call site exists anywhere in the boot or engine flow, so
-; Release carries none of this (the whole block is IFDEF DEBUG).
+; via a debugger CALL to the symbol - no automatic call site exists
+; anywhere in the boot or engine flow, so Release carries none of this
+; (the whole block is IFDEF DEBUG).
 ;
 ; TIMING PRECONDITION: only call these once dbgTilemap=1 (i.e. after
 ; dbg_engage_tilemap has run - boot has reached the parser). Before
@@ -806,8 +806,8 @@ aud_dmaprobe:
 ; under test. Neither routine calls dbg_cls for the same reason: it
 ; unconditionally clears the WHOLE ULA screen via ula_cls (hardware.asm).
 ;
-; Byte budget: the resident tail had 59 free at last DEBUG measure: see
-; the report for the actual DISPLAY headroom this task landed at.
+; Byte budget: DEBUG resident tail: 3 bytes free after these verbs
+; (was 59 before them - sjasmplus's own DISPLAY headroom line).
 RING2_BASE equ $4400
 RING2_LEN  equ $0400              ; 1K
 RING2_ROW  equ 20                 ; fixed row: repeat calls overwrite,
