@@ -3101,6 +3101,9 @@ aud_boot_probe:
     ld (sfxChan0+SMPB_FLAGS), a ; clear a stale sample-active bit: a looping
                                 ; sample must not replay a recycled bank
                                 ; table after a warm boot
+    call aud_smp_chan1_init     ; SP18 item 7 Task 2: seed channel 1's constant
+                                ; block members (ring/cursor/CTC/DAC port) -
+                                ; page 48 is already mapped into this slot
     call data_restore
     ld a, $FF
     ld (smpLoadedNum), a        ; keep-last cold on any (warm) boot

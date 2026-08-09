@@ -479,15 +479,32 @@ aud_smp_start:
     add a, a                    ; -> bit 1 (loop)
     or 1                        ; bit 0 (active)
     ld (ix+SMPB_FLAGS), a       ; set BEFORE the copy (it reads the loop bit)
-    ld hl, AUD_STAGE0           ; play starts at the ring base; the CTC is not
-    ld (smpPlayPtr), hl         ; running yet, so this needs no DI bracket
+    ; play starts at the ring base; the CTC is not running yet, so the
+    ; resident cursor write below needs no DI bracket. Ring base and the
+    ; cursor address are both channel-block members (SMPB_RINGH/PLAYPTR).
+    ld h, (ix+SMPB_RINGH)
+    ld l, 0                     ; HL = ring base
+    ld e, (ix+SMPB_PLAYPTR)
+    ld d, (ix+SMPB_PLAYPTR+1)   ; DE = &smpPlayPtr (this channel's resident cursor)
+    ld a, l
+    ld (de), a
+    inc de
+    ld a, h
+    ld (de), a
     ; fill the ring from the source (backpressure caps the copy at ring-1)
     call aud_smp_copy           ; advances SMPB_W
     ld l, (ix+SMPB_W)
     ld h, (ix+SMPB_W+1)
-    ld de, AUD_STAGE0
-    add hl, de
-    ld (smpWritePtr), hl        ; write = ring base + bytes filled
+    ld d, (ix+SMPB_RINGH)
+    ld e, 0                     ; DE = ring base
+    add hl, de                  ; HL = ring base + bytes filled
+    ld e, (ix+SMPB_WRITEPTR)
+    ld d, (ix+SMPB_WRITEPTR+1)  ; DE = &smpWritePtr (this channel's resident cursor)
+    ld a, l
+    ld (de), a
+    inc de
+    ld a, h
+    ld (de), a                  ; write = ring base + bytes filled
     ld l, (ix+SMPB_W)           ; nothing staged (zero-length sample): leave CTC off
     ld h, (ix+SMPB_W+1)
     ld a, h
@@ -495,14 +512,20 @@ aud_smp_start:
     ret z
     ; program CTC channel 0: unknown-state reset, control word, time constant.
     ; The channel int is gated open in NR C5 by im2_init; loading the TC starts
-    ; the timer and ctc_isr begins feeding the DAC at the sample rate.
-    ld bc, AUD_CTC_PORT
+    ; the timer and ctc_isr begins feeding the DAC at the sample rate. Port
+    ; and latched control/TC are all channel-block members now; the mailbox
+    ; cells (audReqSmpCtrl/Tc) are still written by the loader (aud_ctc_params)
+    ; and only copied into the block here.
+    ld c, (ix+SMPB_CTCPORT)
+    ld b, (ix+SMPB_CTCPORT+1)
     ld a, AUD_CTC_RESET
     out (c), a
     out (c), a                  ; double soft-reset (unknown -> clean)
     ld a, (audReqSmpCtrl)
+    ld (ix+SMPB_CTCCTRL), a     ; latch this effect's control word in the block
     out (c), a                  ; int en, timer, /16 or /256, TC follows
     ld a, (audReqSmpTc)
+    ld (ix+SMPB_CTCTC), a       ; latch this effect's time constant in the block
     out (c), a                  ; time constant -> timer starts, interrupts begin
     ret
 
@@ -515,11 +538,17 @@ aud_smp_stop:
     xor a
     ld (ix+SMPB_FLAGS), a
     ld a, AUD_CTC_RESET         ; double soft-reset: timer stops, no more CTC ints
-    ld bc, AUD_CTC_PORT
+    ld c, (ix+SMPB_CTCPORT)
+    ld b, (ix+SMPB_CTCPORT+1)
     out (c), a
     out (c), a
     ld a, DAC_SILENCE           ; park the DAC at silence (after the last feed)
-    ld bc, DAC_PORT
+    ld c, (ix+SMPB_DACPORT)
+    ld b, 0                     ; DAC ports decode on the low byte only, so the
+                                 ; high byte is don't-care on real hardware, but
+                                 ; B=0 matches the project's own out(c) idiom for
+                                 ; this exact port (hardware.asm audio_init:
+                                 ; "ld bc, DAC_PORT" zero-extends the 8-bit equ)
     out (c), a
     ret
 
@@ -535,11 +564,21 @@ aud_smp_tick:
     ld a, (ix+SMPB_FLAGS)
     rrca
     ret nc                      ; bit 0 clear: nothing active
-    ; snapshot the ISR's play cursor -> SMPB_P offset (atomic vs a CTC nest)
+    ; snapshot the ISR's play cursor -> SMPB_P offset (atomic vs a CTC nest).
+    ; The resident cursor's address is a channel-block member (SMPB_PLAYPTR);
+    ; loading it is ordinary IX-relative access to page-48 data and needs no
+    ; DI - only the shared resident word it points at does.
+    ld c, (ix+SMPB_PLAYPTR)
+    ld b, (ix+SMPB_PLAYPTR+1)   ; BC = &smpPlayPtr (this channel's resident cursor)
     di
-    ld hl, (smpPlayPtr)
+    ld a, (bc)
+    ld l, a
+    inc bc
+    ld a, (bc)
+    ld h, a                     ; HL = smpPlayPtr value
     ei
-    ld de, AUD_STAGE0
+    ld d, (ix+SMPB_RINGH)
+    ld e, 0                     ; DE = ring base
     or a
     sbc hl, de                  ; HL = smpPlayPtr - base = play offset (0..ring-1)
     ld (ix+SMPB_P), l
@@ -559,7 +598,8 @@ aud_smp_tick:
     jr nz, .publish             ; source not exhausted yet
     ld l, (ix+SMPB_W)           ; drained: silence guard at the write slot
     ld h, (ix+SMPB_W+1)
-    ld de, AUD_STAGE0
+    ld d, (ix+SMPB_RINGH)
+    ld e, 0                     ; DE = ring base
     add hl, de
     ld (hl), DAC_SILENCE
     ld l, (ix+SMPB_P)           ; has play (snapshot) caught write?
@@ -573,10 +613,17 @@ aud_smp_tick:
 .publish:
     ld l, (ix+SMPB_W)
     ld h, (ix+SMPB_W+1)
-    ld de, AUD_STAGE0
-    add hl, de
+    ld d, (ix+SMPB_RINGH)
+    ld e, 0                     ; DE = ring base
+    add hl, de                  ; HL = ring base + bytes filled (write pointer)
+    ld c, (ix+SMPB_WRITEPTR)
+    ld b, (ix+SMPB_WRITEPTR+1)  ; BC = &smpWritePtr (this channel's resident cursor)
     di
-    ld (smpWritePtr), hl
+    ld a, l
+    ld (bc), a
+    inc bc
+    ld a, h
+    ld (bc), a
     ei
     ret
 
@@ -625,7 +672,11 @@ aud_smp_copy:
     ; below cut it to min(source remain, free-1). The CTC self-paces the DAC, so
     ; there is no per-frame chunk/fractional sizing any more - the tick just
     ; fills all free ring space each frame (smpChunk/Frac/Acc retired with it).
-    ld hl, AUD_STAGE_RING
+    ld a, (ix+SMPB_RINGM)
+    inc a
+    ld h, a
+    ld l, 0                      ; HL = ring size (RINGM+1):00 - ring is
+                                 ; always a 256-aligned power of two)
     ld (smpCpTo), hl            ; toFill = ring (pre-clamp)
     ; play-once: clamp toFill to source remain (24-bit hi-byte shortcut). Loop
     ; skips this - the fill loop rewinds mid-copy instead of stopping at remain.
@@ -652,11 +703,15 @@ aud_smp_copy:
     or a
     sbc hl, de                  ; W - P
     jr nc, .occ
-    ld de, AUD_STAGE_RING
+    ld a, (ix+SMPB_RINGM)
+    inc a
+    ld d, a
+    ld e, 0                      ; DE = ring size
     add hl, de                  ; wrapped: + ring
 .occ:
     ex de, hl                   ; DE = occupied
-    ld hl, AUD_STAGE_RING - 1
+    ld h, (ix+SMPB_RINGM)
+    ld l, $FF                    ; HL = ring-1 (RINGM:$FF - ring is 256-aligned)
     or a
     sbc hl, de                  ; HL = free - 1 (>= 0; occupied <= ring-1)
     ld de, (smpCpTo)
@@ -721,7 +776,10 @@ aud_smp_copy:
     call aud_min16              ; seg = min(srcRoom, toFill)
     ld de, (smpCpDst)
     push hl
-    ld hl, AUD_STAGE_RING
+    ld a, (ix+SMPB_RINGM)
+    inc a
+    ld h, a
+    ld l, 0                      ; HL = ring size
     or a
     sbc hl, de                  ; HL = dstRoom (1..ring)
     pop de                      ; DE = seg so far
@@ -733,7 +791,8 @@ aud_smp_copy:
     call aud_min16              ; seg = min(remain, seg)
 .segok:
     ld (smpCpSeg), hl           ; seg (>= 1)
-    ld hl, AUD_STAGE0           ; dest abs = AUD_STAGE0 + dstOff -> DE
+    ld h, (ix+SMPB_RINGH)       ; dest abs = ring base + dstOff -> DE
+    ld l, 0
     ld de, (smpCpDst)
     add hl, de
     ex de, hl                   ; DE = dest abs
@@ -768,7 +827,10 @@ aud_smp_copy:
     ld bc, (smpCpSeg)
     ld hl, (smpCpDst)
     add hl, bc                  ; dstOff += seg
-    ld de, AUD_STAGE_RING
+    ld a, (ix+SMPB_RINGM)
+    inc a
+    ld d, a
+    ld e, 0                      ; DE = ring size
     or a
     sbc hl, de
     jr nc, .dstwrap             ; dstOff >= ring: wrapped to HL-ring
@@ -805,6 +867,32 @@ aud_smp_copy:
     ld hl, (smpCpDst)
     ld (ix+SMPB_W), l           ; W advanced by the bytes actually copied
     ld (ix+SMPB_W+1), h
+    ret
+
+; Seed channel 1's constant block members (SP18 item 7 Task 2): ring base/
+; mask, the resident cursor addresses, the CTC port and the DAC port. These
+; never change across a start/stop cycle (unlike FLAGS/TABIDX/OFF/P/W/LEN/
+; REMAIN, which aud_smp_start reinitialises every call) and CTCCTRL/CTCTC
+; (which aud_smp_start latches from the mailbox every call), so a one-shot
+; seed here is enough. Called from aud_boot_probe (overlay1.asm) right
+; after it maps AUD_PAGE_LO into this slot - kept as a page-48 routine
+; (not inlined at the call site) because overlay1's own headroom is far
+; tighter than page-48's. Runs with interrupts enabled, mainline context.
+; Corrupts AF, HL, DE, IX.
+aud_smp_chan1_init:
+    ld ix, sfxChan0
+    ld (ix+SMPB_RINGH), AUD_STAGE0 >> 8
+    ld (ix+SMPB_RINGM), (AUD_STAGE_RING-1) >> 8
+    ld hl, smpPlayPtr
+    ld (ix+SMPB_PLAYPTR), l
+    ld (ix+SMPB_PLAYPTR+1), h
+    ld hl, smpWritePtr
+    ld (ix+SMPB_WRITEPTR), l
+    ld (ix+SMPB_WRITEPTR+1), h
+    ld hl, AUD_CTC_PORT
+    ld (ix+SMPB_CTCPORT), l
+    ld (ix+SMPB_CTCPORT+1), h
+    ld (ix+SMPB_DACPORT), DAC_PORT
     ret
 
 ; Copy scratch, in page-48 CODE space (slot 6, mapped throughout aud_tick).

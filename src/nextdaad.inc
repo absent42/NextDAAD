@@ -524,7 +524,15 @@ SMPB_REMAIN   equ 4    ; dw+db: 24-bit payload bytes remaining
 SMPB_LEN      equ 7    ; dw+db: 24-bit payload length (loop rewind)
 SMPB_P        equ 10   ; dw: DAC-ring PLAY offset snapshot
 SMPB_W        equ 12   ; dw: DAC-ring WRITE offset
-SMPB_SIZE     equ 14
+SMPB_RINGH    equ 14   ; DAC ring base high byte ($7C ch1 / $44 ch2 cand.)
+SMPB_RINGM    equ 15   ; wrap mask high byte ((ring-1)>>8 = $03 for 1K)
+SMPB_PLAYPTR  equ 16   ; dw: address of the channel's smpPlayPtr (resident)
+SMPB_WRITEPTR equ 18   ; dw: address of the channel's smpWritePtr
+SMPB_CTCPORT  equ 20   ; dw: CTC channel port ($183B / $193B)
+SMPB_DACPORT  equ 22   ; db: DAC port ($DF / $B3)
+SMPB_CTCCTRL  equ 23   ; db: latched CTC control word for this effect
+SMPB_CTCTC    equ 24   ; db: latched CTC time constant
+SMPB_SIZE     equ 25   ; (was 14 before SP18 item 7 Task 2's parameterisation)
 
 ; --- DMA picture copies (SP11 Task 2) ---
 ; zxnDMA one-shot mem-to-mem chunk copies for Layer 2 picture work
