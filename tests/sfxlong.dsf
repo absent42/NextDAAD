@@ -1,0 +1,283 @@
+; NextDAAD SP18 item 7 Task 7 fixture - the dual-channel SD-streamed
+; sampled-effect wire smoke.
+;
+; Compiled by tests\build-tests.ps1 on every run (a break in the DSF is
+; caught even without the leg switch, same rule the other fixtures
+; follow); staged as the active GAME.DDB in sd\SFXLONG\ by
+; tests\build-tests.ps1 -SfxLong, which also generates and stages the
+; two stimulus WAVs described below as 001.WAV and 002.WAV. sd\SFXLONG\
+; is emptied and refilled on every -SfxLong run and holds nothing but
+; those two files plus a NEXTDAAD.NEX copy of build\nextdaad.nex - copy
+; the folder to the card and launch from inside it.
+;
+; ------------------------------------------------------------------
+; WHY THIS FIXTURE EXISTS
+; ------------------------------------------------------------------
+; Tasks 5-6 landed the SD-streamed sampled-effect machinery
+; (src\audio\streamfx.asm): a WAV whose file size is <= SFX_WIN_BYTES
+; (24576 bytes, src\nextdaad.inc) stages whole and plays COMPLETE - the
+; original free-hybrid, fully resident path; a larger WAV stages its
+; first SFX_WIN_BYTES and the per-tick refiller (aud_sfx_refill) tops
+; the window up with raw CMD18 SD reads while it plays - STREAMING.
+; Nothing in the automated harness had reached the STREAMING arm before
+; this task: every WAV staged by every other leg (-SfxDi's 48044-byte
+; tones included) happens to exceed the same threshold too, but nothing
+; asserted which arm actually ran or watched the refiller's own
+; counters. This fixture puts one WAV of each size on the card, with
+; verbs to trigger every SFX sub the machinery ships, so the staged
+; bytes and the compiled condacts are asserted here even though the
+; refiller itself can only be watched on real SD hardware (see the
+; ZEsarUX section below).
+;
+; ------------------------------------------------------------------
+; THE TWO EFFECTS
+; ------------------------------------------------------------------
+; Effect 1 (001.WAV) - THE STREAMER. ~200000 bytes of payload (200044
+; bytes on disk with the 44-byte RIFF/fmt/data header), 16000 Hz mono
+; 8-bit unsigned - comfortably over SFX_WIN_BYTES, so sfx_stream_open
+; takes the STREAMING arm and the refiller has to keep feeding it for
+; the whole ~12.5 s runtime.
+;
+; Effect 2 (002.WAV) - THE COMPLETE FILE. ~16000 bytes of payload
+; (16044 bytes on disk), same rate/format - comfortably under
+; SFX_WIN_BYTES, so sfx_stream_open takes the free-hybrid COMPLETE arm
+; and nothing streams: the refiller owes this channel no blocks at all.
+; Its only job here is proving that a same-format, same-leg small file
+; keeps working exactly as it always did while the other channel is
+; mid-stream.
+;
+; Both files are generated inline in tests\build-tests.ps1's -SfxLong
+; staging block (a 20-line PowerShell RIFF/fmt/data writer, the same
+; idiom the truncwav/badwav suite fixtures already use elsewhere in
+; that script) - deterministic whole-cycle 8-bit sine payloads centred
+; on 128 (DAC_SILENCE), same construction as tests\audio\mktone.py's
+; tones, so re-running the stager reproduces the exact same bytes.
+; Nothing here is a copy of a Python-generated file: the brief called
+; for an inline generator specifically because these two sizes are not
+; shared with any other fixture's tone.
+;
+; ------------------------------------------------------------------
+; THE VERBS
+; ------------------------------------------------------------------
+; SFX B C: B = effect number, C = sub. Only subs 1 (play once), 2 (play
+; looped) and 5 (stop all channels) are shipped - subs 11-16 do not
+; exist yet and must not be used here.
+;   PLAY1  SFX 1 1   effect 1 (the streamer) once
+;   LOOP1  SFX 1 2   effect 1 (the streamer) looped
+;   PLAY2  SFX 2 1   effect 2 (the complete file) once
+;   LOOP2  SFX 2 2   effect 2 (the complete file) looped
+;   STOP   SFX 0 5   stop every playing channel (both effects)
+; Boot autoplay triggers LOOP1 automatically (see /PRO 6) so the
+; ZEsarUX smoke below needs no typing at all past launching the .nex -
+; the verbs exist for exercising the other subs and effect 2 by hand.
+;
+; ------------------------------------------------------------------
+; THE DDB BYTE-ASSERT (the fixture-stimulus rule)
+; ------------------------------------------------------------------
+; DRC silently rewrites some condacts (BEEP tone range, PAUSE duration
+; scaling - see tests\audlad.dsf and tests\sfxdi.dsf's own headers), so
+; what the interpreter actually receives is verified against the
+; compiled bytes, not assumed from this source. tests\build-tests.ps1
+; dumps tests\out\sfxlong.ddb and asserts SFX 1 1, SFX 1 2, SFX 2 1,
+; SFX 2 2 and SFX 0 5 (opcode 18 = $12) are all present as authored,
+; the same idiom the sfxdi/fontsw blocks already use.
+;
+; ------------------------------------------------------------------
+; ZESARUX MANUAL WIRE SMOKE (owner procedure - not automated)
+; ------------------------------------------------------------------
+; CSpect has no raw SPI, so it cannot exercise the refiller's CMD18
+; path at all (checklist:449-460) - only real SD hardware or ZEsarUX's
+; SD emulation can. ZEsarUX's raw SD SPI streaming (port $EB, CMD18)
+; is hardware-proven to work; its CTC hw-IM2 audio path is frozen
+; (does not advance), so this smoke proves the WIRE AND BOOKKEEPING -
+; staged bytes, depth accounting, no hang - not audio quality. Audio
+; verdicts are Task 14's silicon legs.
+;
+; Procedure:
+;   1. Build a DEBUG interpreter (.\build.ps1, no -Release/-Kit - the
+;      default build already defines DDEBUG=1) and stage this leg
+;      (.\tests\build-tests.ps1 -SfxLong).
+;   2. Mount sd\SFXLONG\ as the SD card in ZEsarUX (or copy it to a
+;      real card and mount that).
+;   3. Run NEXTDAAD.NEX from inside that folder.
+;   4. Boot autoplay triggers LOOP1 (the streamer) with no typing
+;      needed; let it run 60 s.
+;   5. Read the DEBUG SFX= row (row 31, column 56 on screen - printed
+;      by sfx_dbg_row, src\audio\streamfx.asm): it reads
+;      "SFX=<refilled hex16>/<underrun hex16>/<fails hex8>". Pass
+;      criteria: refilled blocks > 0 (the refiller actually ran),
+;      underruns = 0, fails = 0.
+;   6. Quit. Any fail here is a logic bug in the wire/bookkeeping - fix
+;      before silicon, do not wait for Task 14.
+; Scripted ZEsarUX automation of this procedure is out of scope for
+; this task.
+;
+; CSpect expectation (for whoever runs this leg there instead, or by
+; mistake): effect 2 (COMPLETE, no streaming) plays exactly as every
+; other sampled effect in this project always has. Effect 1 stages its
+; first SFX_WIN_BYTES normally (that part is an ordinary sequential
+; file read, not raw SPI) and then the refiller's raw-SPI CMD18 polls
+; find nothing behind CSpect's SD emulation and fail - bounded by
+; SFX_FAIL_LIMIT (src\audio\streamfx.asm, 8 consecutive failed ticks,
+; or immediately if the very first block after the stage never
+; delivered), so the channel stops cleanly rather than hanging or
+; crashing. This is expected CSpect behaviour, not a defect - see the
+; refiller's own CSpect-degradation analysis for the tick-cost
+; arithmetic.
+;
+; EAR EXPECTATION (for the runsheet this leg's header text feeds -
+; Task 14): a >24K LOOPING effect has an audible seam at the loop
+; point on real hardware - a brief DC HOLD (the refiller's last
+; delivered sample held one extra period while the window empties and
+; refills), NOT a silent gap. Do not mistake the hold for a dropout.
+
+; System flags used by name (DAAD BLANK template spellings)
+#define fPlayer             38
+#define fDarkF              28
+
+/CTL
+_
+/VOC
+NORTH  2  noun
+SOUTH  3  noun
+LOOK   4  verb
+PLAY1  60 verb
+LOOP1  61 verb
+PLAY2  62 verb
+LOOP2  63 verb
+STOP   64 verb
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "I didn't understand."
+/7  "I can't go in that direction."
+/8  "I can't do that."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 "Press any key."
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+/MTX
+/0 "NEXTDAAD SD-STREAMED SFX FIXTURE (SP18 ITEM 7 TASK 7)#n"
+/OTX
+/0 "a brass lamp"
+/LTX
+/0 ""
+/1 "The listening room."
+/CON
+/0
+NORTH 1
+/1
+SOUTH 0
+/OBJ
+/0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/PRO 0
+> _ _   AT 0
+        PROCESS 6
+> _ _   WINDOW 1
+        WINAT 0 0
+        WINSIZE 25 127
+        CLEAR fDarkF
+> _ _   WINDOW 1
+        DESC @fPlayer
+> _ _   PROCESS 1
+/PRO 1
+> _ _   PARSE 0
+        REDO
+> _ _   PROCESS 5
+        ISDONE
+        REDO
+> _ _   MOVE fPlayer
+        CLS
+        RESTART
+> _ _   SYSMESS 8
+        REDO
+/PRO 5
+; ---- effect 1, 001.WAV, the streamer (> SFX_WIN_BYTES) ----
+> PLAY1 _ MES "effect 1 (streamer) once - SFX 1 1#n"
+          SFX 1 1
+          DONE
+> LOOP1 _ MES "effect 1 (streamer) looped - SFX 1 2#n"
+          SFX 1 2
+          DONE
+; ---- effect 2, 002.WAV, the complete file (<= SFX_WIN_BYTES) ----
+> PLAY2 _ MES "effect 2 (complete) once - SFX 2 1#n"
+          SFX 2 1
+          DONE
+> LOOP2 _ MES "effect 2 (complete) looped - SFX 2 2#n"
+          SFX 2 2
+          DONE
+; ---- stop everything ----
+> STOP  _ MES "all channels stopped - SFX 0 5#n"
+          SFX 0 5
+          DONE
+/PRO 6
+> _ _   WINDOW 1
+        WINAT 0 0
+        WINSIZE 25 127
+        PAPER 0
+        INK 7
+        CLS
+        MESSAGE 0
+> _ _   MES "001.WAV effect 1, > 24K, STREAMING#n"
+        MES "002.WAV effect 2, <= 24K, COMPLETE#n#n"
+        MES "PLAY1 / LOOP1              effect 1 once / looped#n"
+        MES "PLAY2 / LOOP2              effect 2 once / looped#n"
+        MES "STOP                       stop every channel#n#n"
+        MES "Boot autoplay starts LOOP1 automatically.#n"
+; Boot autoplay - the ZEsarUX wire smoke needs no typed input at all:
+; launch the .nex and read the DEBUG SFX= row after 60 s.
+> _ _   SFX 1 2
+        GOTO 1
+/END
