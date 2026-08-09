@@ -720,11 +720,23 @@ aud_smp_rewind_depth:
     ; clamp cannot stop it - that clamp is computed once, before the
     ; copy, from the PRE-rewind DEPTH. Zeroing toFill drops the caller
     ; straight through its own top-of-loop test into .filldone, which
-    ; commits the rewound position normally. The ring simply gets a
-    ; shorter fill this frame and the drain pad holds silence; the
-    ; refiller re-stages from the anchor on the next tick and the clamp
-    ; takes over from there. Without this the loop seam of a > 24K effect
-    ; plays up to a ring's worth of stale window bytes.
+    ; commits the rewound position normally; the refiller re-stages from
+    ; the anchor on the next tick and the clamp takes over from there.
+    ; Without this the loop seam of a > 24K effect plays up to a ring's
+    ; worth of stale window bytes.
+    ;
+    ; WHAT THE SEAM SOUNDS LIKE - NOT A SILENT GAP. The ring gets a
+    ; shorter fill this frame, so play catches write and ctc_isr's
+    ; natural hold-last takes over: it keeps re-outputting the LAST REAL
+    ; SAMPLE, a DC level, until the refiller has staged enough for the
+    ; clamp to release bytes again. The DAC_SILENCE guard pad is NOT
+    ; involved - aud_smp_tick writes that pad only on the play-once
+    ; drain path, and its loop-mode test returns before reaching it (see
+    ; the bit-1 branch there). So a > 24K looping effect holds a brief
+    ; DC level across the loop seam rather than falling silent. That is
+    ; the established engine discipline (hold-last, not silence, for
+    ; every mid-playback shortfall) and is deliberately unchanged here;
+    ; what this fix buys is a DC hold instead of stale window content.
     ld (smpCpTo), hl
     set 4, (ix+SMPB_FLAGS)       ; the refiller owes a re-stage
     ret
@@ -845,8 +857,16 @@ aud_smp_copy:
     ; STREAMING FRONTIER CLAMP (SP18 item 7 Task 6). A channel the
     ; refiller is still feeding may only be pumped as far as the refiller
     ; has actually STAGED, or a starved stream replays stale window bytes
-    ; instead of falling silent and recovering. The available figure is
-    ; the identity recorded at the debit site below:
+    ; instead of underrunning cleanly and recovering. UNDERRUNNING
+    ; CLEANLY IS NOT SILENCE: a short fill lets play catch write and
+    ; ctc_isr holds the LAST REAL SAMPLE (a DC level) until the refiller
+    ; catches up. The DAC_SILENCE guard pad belongs to the play-once
+    ; drain path only - aud_smp_tick's loop-mode test returns before it -
+    ; so a starved LOOPING stream is audibly a DC hold, not a gap. That
+    ; hold-last behaviour is the engine's established discipline and is
+    ; unchanged; the clamp only decides DC-hold versus stale bytes.
+    ; The available figure is the identity recorded at the debit site
+    ; below:
     ;     available = SMPB_DEPTH*512 - (SMPB_OFF & $1FF)
     ; i.e. whole staged blocks ahead of the consumer, less how far into
     ; the block it currently sits. Applied LAST, after the play-once and

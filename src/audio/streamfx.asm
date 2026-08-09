@@ -1,10 +1,11 @@
 ; streamfx.asm - SP18 item 7: sampled-effect SD streaming machinery.
 ; Lives on SFX_PAGE (71, upper 8K of bank 35 - the same withdrawn bank
 ; VID_PAGE2 uses for its lower 8K, page 70). Mapped into MMU slot 7
-; ($E000) by its callers: mainline open/prefill (overlay1 trampoline,
-; Task 5) and the aud_tick refiller (Task 6). No callers yet - this
-; task lands the transport shapes plus the page itself; Tasks 5-6 wire
-; the calls.
+; ($E000) by its callers, both of which are live: the mainline open and
+; window staging (sfx_stream_open, reached through the resident
+; sfx_open_tramp from overlay1's aud_load_wav) and the per-frame burst
+; refiller (aud_sfx_refill, dispatched from im2_isr right after
+; aud_tick).
 ;
 ; EVERYTHING here follows the video player's silicon-proven wire rules
 ; (video.asm's SD streaming cluster, the vid_*_h routines cloned below):
@@ -1015,12 +1016,13 @@ sfx_anchor_blk:
     ret
 
 ; Advance the run cursor's card address by one 512-byte block.
-; The unit comes from the DISK_FILEMAP flags byte, per the NextZXOS
-; streaming reference (tools NextZXOS stream example, "Filemap buffer
-; setup"): "if bit 1 of A=0, then add 512 to the card address for every
-; block; if bit 1 of A=1, then add 1 to the card address for every
-; block". Bit 0 of the same byte is the card id and is what the command
-; helpers use to pick the chip select.
+; THE UNIT IS NOT FIXED: DISK_FILEMAP's returned flags byte carries it
+; in bit 1 - clear means the card is BYTE addressed and one block is
+; +512, set means it is BLOCK addressed and one block is +1. Bit 0 of
+; the same byte is the card id, which is what the command helpers use to
+; pick the chip select. The video player never needed this because its
+; window stays open for a whole session and it only ever opens at run
+; STARTS; this one closes every tick and must reopen mid-run.
 ; Corrupts AF, DE, HL.
 sfx_addr_next:
     ld a, (sfxCardFlags)
@@ -1088,6 +1090,15 @@ sfx_run_seek:
 ; accumulated strictly OUTSIDE the wire polls, so the instrument cannot
 ; distort a bounded wait. sfxUnderrun0 is page-48 data (the pump writes
 ; it and cannot see this page); slot 6 still holds page 48 here.
+;
+; CURSOR DISCIPLINE. This is the first ISR-context user of the dbg_*
+; console, and dbgX/dbgY are a SHARED cursor pair: a mainline dbg_puts
+; in flight when the frame ISR lands would otherwise resume wherever
+; this row left the cursor (row 31, past column 71) and wrap its text
+; into this row. So the pair is saved on entry and restored on exit,
+; taken/put as one 16-bit access because dbgY immediately follows dbgX.
+; The .show path is the only one that moves the cursor, so the save sits
+; there rather than at the counter gate.
 sfx_dbg_row:
     ld hl, (sfxRefillBlks0)
     ld a, h
@@ -1101,6 +1112,8 @@ sfx_dbg_row:
     or a
     ret z
 .show:
+    ld hl, (dbgX)                ; dbgY follows dbgX: one word is the
+    push hl                      ; whole mainline cursor
     ld b, 31
     ld c, 56
     call dbg_at
@@ -1115,7 +1128,10 @@ sfx_dbg_row:
     ld a, '/'
     call dbg_putc
     ld a, (sfxFails0)
-    jp dbg_hex8
+    call dbg_hex8
+    pop hl
+    ld (dbgX), hl                ; mainline resumes exactly where it was
+    ret
 msgSfxRow: db "SFX=", 0
  ENDIF
 
