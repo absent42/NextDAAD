@@ -17,8 +17,9 @@ numbered picture. See below.
 ## What the art must be
 
 Every source PNG must be an **8-bit paletted (indexed) PNG**. Truecolour
-images are rejected - quantize to an indexed palette in your paint
-program before exporting.
+images are rejected - quantize to an indexed palette before exporting,
+either in your paint program or with [NextDither](#nextdither), which
+does it for this target specifically.
 
 **Quantize to 255 colours, indices 0-254.** Palette slot 255 is
 reserved: pixels drawn with it become transparent holes. Leaving it
@@ -54,6 +55,71 @@ screen and leaves the border free.
 Setting `COMPRESS=1` in `CONFIG.BAT` ZX0-compresses each converted
 picture, which makes for a much smaller SD card image. The interpreter
 decompresses on load, so nothing else changes.
+
+## NextDither
+
+Getting a photograph or a painting down to 255 colours that look right
+on this hardware is the hard part of location art, and a general-purpose
+paint program does it blind - you cannot see the Next's own colours
+while you choose them.
+
+**NextDither** is a free converter built for this target. Download it
+from <https://absent42.itch.io/nextdither>.
+
+It does the two things this page asks of you, and does them together:
+it quantizes to the Next's palette with real dithering and a live
+preview of the result, and it reserves palette slot 255 with the
+transparency colour so your art comes out ready to use.
+
+### One image
+
+Open the source, pick the **NextDAAD Layer 2** preset, and export an
+**indexed PNG** into `IMAGES\` with a numbered name. The build converts
+it from there like any other PNG.
+
+That preset frames to 320x256 and letterboxes rather than crops, so
+nothing is cut off, and it anchors the picture to the top - padding
+collects at the bottom of the screen, which is where a text window
+usually sits and where the transparent fill lets your text show through.
+Dithering is Floyd-Steinberg with serpentine scanning, which is the
+setting that suits most photographic sources.
+
+Choose 256 wide instead if you want [the classic bordered
+screen](#the-classic-bordered-screen).
+
+### A folder at a time
+
+NextDither converts a whole folder against a saved preset, so a set of
+location pictures comes out consistent rather than tuned one by one.
+Point it at your source folder, set the output to `IMAGES\`, and name
+the outputs from the source filename so `cellar.png` keeps its identity
+through the batch.
+
+Remember the kit needs a **number** in each filename - `001.png`,
+`002.png` and so on - so either name your sources that way before the
+batch or use the naming pattern to add the number on the way out. A file
+without one is refused by the build.
+
+### Transparency
+
+NextDither writes the reserved colour into slot 255 for you, so a hole
+you paint in the source is a hole on screen. The rule is the same one
+described under [Transparency](#transparency) below - this is the tool
+doing it rather than you arranging a palette by hand.
+
+If you do not want any transparency, keep that colour out of the source
+art and slot 255 stays unused.
+
+### Other output
+
+NextDither also writes `.NX2` and `.NXI` files directly, along with
+ZX0-compressed variants and standalone palettes. For a **title screen**
+that is the quickest route - a ready-made `DAAD.NX2` or `DAAD.NXI` in
+the kit folder is staged untouched, as [Title screens](#title-screens)
+describes. For numbered location art, export the indexed PNG into
+`IMAGES\` instead and let the build convert it; that is the route the
+kit is built around, and nothing is lost by taking it, because
+NextDither has already chosen colours the Next can show.
 
 ## The classic bordered screen
 

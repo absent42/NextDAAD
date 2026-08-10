@@ -21,8 +21,9 @@ picture is Next-specific.</p>
 numbered picture. See below.</p>
 <h2 id="what-the-art-must-be">What the art must be</h2>
 <p>Every source PNG must be an <strong>8-bit paletted (indexed) PNG</strong>. Truecolour
-images are rejected - quantize to an indexed palette in your paint
-program before exporting.</p>
+images are rejected - quantize to an indexed palette before exporting,
+either in your paint program or with <a href="#nextdither">NextDither</a>, which
+does it for this target specifically.</p>
 <p><strong>Quantize to 255 colours, indices 0-254.</strong> Palette slot 255 is
 reserved: pixels drawn with it become transparent holes. Leaving it
 unused is what keeps a picture fully opaque, and it is the setting you
@@ -68,6 +69,55 @@ screen and leaves the border free.</p>
 <p>Setting <code>COMPRESS=1</code> in <code>CONFIG.BAT</code> ZX0-compresses each converted
 picture, which makes for a much smaller SD card image. The interpreter
 decompresses on load, so nothing else changes.</p>
+<h2 id="nextdither">NextDither</h2>
+<p>Getting a photograph or a painting down to 255 colours that look right
+on this hardware is the hard part of location art, and a general-purpose
+paint program does it blind - you cannot see the Next's own colours
+while you choose them.</p>
+<p><strong>NextDither</strong> is a free converter built for this target. Download it
+from <a href="https://absent42.itch.io/nextdither">https://absent42.itch.io/nextdither</a>.</p>
+<p>It does the two things this page asks of you, and does them together:
+it quantizes to the Next's palette with real dithering and a live
+preview of the result, and it reserves palette slot 255 with the
+transparency colour so your art comes out ready to use.</p>
+<h3 id="one-image">One image</h3>
+<p>Open the source, pick the <strong>NextDAAD Layer 2</strong> preset, and export an
+<strong>indexed PNG</strong> into <code>IMAGES\</code> with a numbered name. The build converts
+it from there like any other PNG.</p>
+<p>That preset frames to 320x256 and letterboxes rather than crops, so
+nothing is cut off, and it anchors the picture to the top - padding
+collects at the bottom of the screen, which is where a text window
+usually sits and where the transparent fill lets your text show through.
+Dithering is Floyd-Steinberg with serpentine scanning, which is the
+setting that suits most photographic sources.</p>
+<p>Choose 256 wide instead if you want <a href="#the-classic-bordered-screen">the classic bordered
+screen</a>.</p>
+<h3 id="a-folder-at-a-time">A folder at a time</h3>
+<p>NextDither converts a whole folder against a saved preset, so a set of
+location pictures comes out consistent rather than tuned one by one.
+Point it at your source folder, set the output to <code>IMAGES\</code>, and name
+the outputs from the source filename so <code>cellar.png</code> keeps its identity
+through the batch.</p>
+<p>Remember the kit needs a <strong>number</strong> in each filename - <code>001.png</code>,
+<code>002.png</code> and so on - so either name your sources that way before the
+batch or use the naming pattern to add the number on the way out. A file
+without one is refused by the build.</p>
+<h3 id="transparency">Transparency</h3>
+<p>NextDither writes the reserved colour into slot 255 for you, so a hole
+you paint in the source is a hole on screen. The rule is the same one
+described under <a href="#transparency">Transparency</a> below - this is the tool
+doing it rather than you arranging a palette by hand.</p>
+<p>If you do not want any transparency, keep that colour out of the source
+art and slot 255 stays unused.</p>
+<h3 id="other-output">Other output</h3>
+<p>NextDither also writes <code>.NX2</code> and <code>.NXI</code> files directly, along with
+ZX0-compressed variants and standalone palettes. For a <strong>title screen</strong>
+that is the quickest route - a ready-made <code>DAAD.NX2</code> or <code>DAAD.NXI</code> in
+the kit folder is staged untouched, as <a href="#title-screens">Title screens</a>
+describes. For numbered location art, export the indexed PNG into
+<code>IMAGES\</code> instead and let the build convert it; that is the route the
+kit is built around, and nothing is lost by taking it, because
+NextDither has already chosen colours the Next can show.</p>
 <h2 id="the-classic-bordered-screen">The classic bordered screen</h2>
 <p>256-wide art gives you the traditional Spectrum look - a picture sitting
 in the paper area with a coloured surround around it. To lay your text
@@ -86,7 +136,7 @@ game laid out the classic way.</p>
 <p>Text is drawn on its own layer with its own fixed palette. A picture's
 palette only ever reaches Layer 2, so no artwork can recolour your
 prose, however extreme its palette.</p>
-<h2 id="transparency">Transparency</h2>
+<h2 id="transparency_1">Transparency</h2>
 <p><strong>Paint <code>#FF00FF</code> into palette slot 255. Those pixels are transparent</strong>,
 and the text layer shows through them.</p>
 <p>That is what makes a full-screen picture with a hole in it possible: put
