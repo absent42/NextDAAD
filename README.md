@@ -30,7 +30,7 @@ for NextDAAD means just editing your source and double-clicking one batch file.
 - **Title screens** - a picture shown at boot over the theme music,
   needing no changes to your game
 - **Video cutscenes** - NXV, NextDAAD's own delta-video format, played
-  full screen at true rate with synchronised digitised audio, streamed
+  up to full screen with synchronised digitised audio, streamed
   from the card when a clip is too big to hold in RAM
 - **AY music** - interrupt-driven Arkos playback over the Turbo Sound
   Next's three PSGs, resident or streamed from the card, with boot
