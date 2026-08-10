@@ -170,5 +170,89 @@ if not defined TITLECONVERTED (
         echo   title !TFOUND! -^> RELEASE\!TFOUND! ^(ready-made, staged as-is^)
     )
 )
+
+REM ---- ready-made numbered pictures: a pre-converted NNN.NX2/NNN.NXI,
+REM      or a ZX0 variant or its 8.3 synonym, dropped into IMAGES\ is
+REM      staged to RELEASE\ as-is - the ready-made counterpart to the
+REM      IMAGES\*.png conversion at the top of this script, for authors
+REM      whose converter writes .NX2/.NXI directly rather than a PNG.
+REM      IMAGES\ and not the kit folder root: the root is the TITLE's
+REM      home because a title is root-only, while numbered art belongs
+REM      beside the numbered source art it stands in for. RELEASE\ is
+REM      not a place to put them either - BUILD.BAT wipes RELEASE\*.NX2
+REM      and every other picture extension at the start of every build.
+REM      Extensions are probed in the interpreter's own gfxExtTab order
+REM      (src\overlay2.asm) - compressed before raw, the Gfx2Next double
+REM      extension before its 8.3 synonym - and exactly ONE file is
+REM      staged per number, so the file this build reports is the file
+REM      the interpreter opens. An IMAGES\NNN.png converted above WINS
+REM      over a ready-made of the same number, the same rule the
+REM      ready-made title follows.
+if not exist "IMAGES" goto :pictures_done
+for %%E in (NX2.ZX0 N2Z NX2 NXI.ZX0 NXZ NXI) do (
+    for %%F in ("IMAGES\*.%%E") do (
+        call :stage_picture "%%~nxF" %%E
+        if errorlevel 1 goto :pictures_fail
+    )
+)
+goto :pictures_done
+REM      The loop above ends its only failure path with "goto
+REM      :pictures_fail" rather than an "exit /b 1" inside the block -
+REM      see BUILD.BAT's note above its classic-charset loop for why an
+REM      "exit /b 1" buried in a nested block returns 0 to the caller.
+REM      The subroutine's own "exit /b 1" is at ITS top level, so it
+REM      reaches this loop as a real errorlevel.
+:pictures_fail
+exit /b 1
+:pictures_done
 endlocal
 exit /b 0
+
+REM ---- :stage_picture <filename> <extension>
+REM      One ready-made picture file from IMAGES\. Returns 1 only for a
+REM      name this staging cannot place; every other outcome (staged,
+REM      already covered, beaten by a PNG) returns 0.
+:stage_picture
+set "RMNAME=%~1"
+set "RMEXT=%~2"
+REM Number = everything before the FIRST dot, so the two double
+REM extensions (NX2.ZX0/NXI.ZX0) split the same way as the single ones.
+set "RMNUM="
+for /f "delims=." %%A in ("%RMNAME%") do set "RMNUM=%%A"
+if not defined RMNUM goto :stage_picture_bad
+if not "%RMNUM:~3%"=="" goto :stage_picture_bad
+REM Digits only - same findstr test lib\video.bat applies to VIDEO\*.vid.
+echo %RMNUM%| findstr /R "^[0-9][0-9]*$" >nul || goto :stage_picture_bad
+REM Pad to the 3 digits the interpreter probes with (gfxName is exactly
+REM "NNN.EXTENSION"), so 1.NX2 loads as picture 1 like 1.png does.
+set "RMNUM=00%RMNUM%"
+set "RMNUM=%RMNUM:~-3%"
+REM Already settled this number - an earlier, higher-priority extension
+REM won it on a previous pass of the probe loop.
+if defined RMDONE_%RMNUM% exit /b 0
+REM An IMAGES\NNN.png converted above wins. Its output is the only
+REM thing in RELEASE\ under this number at this point (BUILD.BAT wiped
+REM every picture extension before the build started, and no ready-made
+REM has been staged for this number or the check above would have
+REM returned), so its presence IS the "a PNG of this number converted
+REM this run" signal - and the two names below are the only two the
+REM conversion loop can have written.
+if exist "RELEASE\%RMNUM%.NX2%ZSUF%" goto :stage_picture_png
+if exist "RELEASE\%RMNUM%.NXI%ZSUF%" goto :stage_picture_png
+copy /Y "IMAGES\%RMNAME%" "RELEASE\%RMNUM%.%RMEXT%" >nul
+REM Advisory palette audit, same as the converted art and the ready-made
+REM title above. Staged as-is means the kit never saw the source art, so
+REM this is the ONLY check these files get. Only the two uncompressed
+REM extensions have a readable palette; the ZX0 variants (.NX2.ZX0/
+REM .N2Z/.NXI.ZX0/.NXZ) cannot be audited at all.
+if /I "%RMEXT%"=="NX2" powershell -NoProfile -ExecutionPolicy Bypass -File "lib\palcheck.ps1" "RELEASE\%RMNUM%.%RMEXT%"
+if /I "%RMEXT%"=="NXI" powershell -NoProfile -ExecutionPolicy Bypass -File "lib\palcheck.ps1" "RELEASE\%RMNUM%.%RMEXT%"
+set "RMDONE_%RMNUM%=1"
+echo   picture %RMNAME% -^> RELEASE\%RMNUM%.%RMEXT% ^(ready-made, staged as-is^)
+exit /b 0
+:stage_picture_png
+set "RMDONE_%RMNUM%=1"
+exit /b 0
+:stage_picture_bad
+echo ERROR: IMAGES\%RMNAME% - not a picture number ^(a ready-made picture is NNN.NX2 or NNN.NXI, or a compressed NNN.NX2.ZX0/NNN.N2Z/NNN.NXI.ZX0/NNN.NXZ; a ready-made title screen belongs in the kit folder root as DAAD.*^)
+exit /b 1
