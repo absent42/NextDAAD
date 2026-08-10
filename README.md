@@ -16,8 +16,9 @@ for NextDAAD means just editing your source and double-clicking one batch file.
 ## Requirements
 
 - A ZX Spectrum Next (or an emulator) with an SD card. Video
-  cutscenes need 2MB of RAM and a real machine - everything else runs
-  under emulation.
+  cutscenes need 2MB of RAM and a real machine, and so does a sampled
+  effect longer than 24K - everything else, including shorter effects,
+  runs under emulation.
 - A DAAD DSF source file or a compiled DAAD database, and its assets on the card. The authoring kit builds one for you, and existing version 2 and version 3 databases both run as they are.
 
 ## Features
@@ -35,7 +36,9 @@ for NextDAAD means just editing your source and double-clicking one batch file.
   Next's three PSGs, resident or streamed from the card, with boot
   autoplay and the classic `BEEP` tone
 - **Sound effects and samples** - Arkos AY effects, plus 8-bit WAV
-  samples fed to the DAC and mixed under the music
+  samples of any length via card streaming, on two concurrent DAC
+  channels that auto-allocate with stealing or pin outright, looping
+  ones resuming after a video
 - **80x32 text** - a tilemap text driver with per-character colour and
   its own 80-column font
 - **Custom fonts and pointers** - drop in a `FONT.CHR` or a
