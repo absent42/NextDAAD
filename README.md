@@ -76,8 +76,13 @@ The kit needs a few third-party tools it cannot redistribute:
 - [CSpect](https://mdf200.itch.io/cspect) - emulator, to play the result
 - [ffmpeg](https://ffmpeg.org/) - only for encoding cutscenes
 
+But included with the kit is VidTune, a UI app for fine-tuning video encodes and 
+experimenting with different settings to get the best results for your videos.
+
 A packaged kit, holding only what an author needs, is on the
 [releases](https://github.com/absent42/NextDAAD/releases) page.
+
+A companion app, [NextDither](https://absent42.itch.io/nextdither), for converting true-colour images to the layer 2 format spec for NextDAAD is available as a seperate download via itch.io
 
 ## Building the interpreter
 
