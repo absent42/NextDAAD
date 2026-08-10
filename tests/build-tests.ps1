@@ -1565,7 +1565,14 @@ if ($fontswPauseHits.Count -ne 3) {
 # 14b added PICTURE (84), DISPLAY (28), SAVE (25) and LOAD (26), all
 # one-parameter condacts (two bytes each), plus the SFX 3 x / SFX 1 9
 # sub-commands - same guard, same idiom the sfxdi/l2holes blocks
-# already use for their own PICTURE 1 / DISPLAY 0 checks.
+# already use for their own PICTURE 1 / DISPLAY 0 checks. The 2026-08-09
+# bench screen-discipline pass put a CLS (opcode 29, no parameter) ahead
+# of every verb's action and added CLR (DISPLAY with a non-zero
+# argument, which clears Layer 2 to transparent - see src\overlay2.asm
+# h_display) - both checked below as adjacent-byte runs anchored on a
+# verb whose action byte sequence is otherwise unique in this DDB, the
+# same anchoring idiom Find-MaskedRuns's own header describes for the
+# sfxdi ANYKEY checks.
 $sfxLongBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxlong.ddb")
 if ($sfxLongBytes[0] -ne 2) {
     throw "sfxlong: DDB header version byte is $($sfxLongBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
@@ -1581,7 +1588,9 @@ foreach ($s in @(@{ n = 'SFX 1 1 (PLAY1, effect 1 once)';    b = [byte[]]@(18, 1
                  @{ n = 'PICTURE 1 (PIC)';                   b = [byte[]]@(84, 1) },
                  @{ n = 'DISPLAY 0 (PIC)';                   b = [byte[]]@(28, 0) },
                  @{ n = 'SAVE 0 (SAVE)';                     b = [byte[]]@(25, 0) },
-                 @{ n = 'LOAD 0 (LOAD)';                     b = [byte[]]@(26, 0) })) {
+                 @{ n = 'LOAD 0 (LOAD)';                     b = [byte[]]@(26, 0) },
+                 @{ n = 'CLS + DISPLAY 1 (CLR, the L2/text clear verb)';      b = [byte[]]@(29, 28, 1) },
+                 @{ n = 'CLS + SFX 0 5 (STOP, CLS precedes the verb action)'; b = [byte[]]@(29, 18, 0, 5) })) {
     if ((Find-ByteRuns $sfxLongBytes $s.b).Count -lt 1) {
         throw "sfxlong: '$($s.n)' not present in tests\out\sfxlong.ddb - DRC did not emit the authored condact"
     }
@@ -1594,7 +1603,7 @@ $loop1Hits = (Find-ByteRuns $sfxLongBytes ([byte[]]@(18, 1, 2))).Count
 if ($loop1Hits -lt 2) {
     throw "sfxlong: expected SFX 1 2 (18 01 02) at least twice (the LOOP1 verb and the boot autoplay trigger); found $loop1Hits"
 }
-"sfxlong.ddb: v$($sfxLongBytes[0]), SFX 1 1 / 1 2 / 2 1 / 2 2 / 3 1 / 3 2 / 1 9 / 0 5 all present, PICTURE 1 / DISPLAY 0 / SAVE 0 / LOAD 0 all present, SFX 1 2 occurs $loop1Hits times (verb + boot autoplay)"
+"sfxlong.ddb: v$($sfxLongBytes[0]), SFX 1 1 / 1 2 / 2 1 / 2 2 / 3 1 / 3 2 / 1 9 / 0 5 all present, PICTURE 1 / DISPLAY 0 / SAVE 0 / LOAD 0 all present, CLS precedes CLR's DISPLAY 1 and STOP's SFX 0 5, SFX 1 2 occurs $loop1Hits times (verb + boot autoplay)"
 
 # --- sfx2: the two-channel sampled-effect API fixture ---
 # THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/sfxlong/fontsw

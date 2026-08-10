@@ -114,6 +114,9 @@
 ;   LOOP3  SFX 3 2   effect 3 (the second streamer) looped
 ;   STOP   SFX 0 5   stop every playing channel (all three effects)
 ;   PIC    PICTURE 1 / DISPLAY 0   load and show the staged test card
+;   CLR    DISPLAY 1 / CLS   the inverse of PIC: clear the picture (to
+;                        transparent) and the text window (bench
+;                        fixture usability, 2026-08-09)
 ;   SAVE   SAVE 0    save the game (standard DAAD save-file prompt)
 ;   LOAD   LOAD 0    load the game (standard DAAD load-file prompt)
 ;   VID    SFX 1 9   play video 1 once
@@ -129,6 +132,24 @@
 ; the picture, save/load and video by hand.
 ;
 ; ------------------------------------------------------------------
+; SCREEN DISCIPLINE (bench fixture usability, 2026-08-09)
+; ------------------------------------------------------------------
+; Every verb response CLSes the text window before doing anything else,
+; then prints exactly ONE short status line (e.g. "LOOP1 PLAYING",
+; "STOPPED", "SAVED", "VID DONE") - no response ever overprints a
+; previous one. CLR is the Layer 2 counterpart of CLS: DISPLAY with a
+; non-zero argument clears the L2 plane to the transparent colour
+; (h_display's non-zero arm, src\overlay2.asm) - the same mechanism
+; tests\l2holes.dsf's A/B toggle uses to reveal its ruler through the
+; card - so CLR (CLS + DISPLAY 1) is the one verb that also undoes
+; PIC's picture. Window 1's height is capped at 20 rows (WINSIZE 20
+; 127, both here and in /PRO 6) so ordinary fixture text can never wrap
+; or scroll into row 20 (R2CHK's own report row) or beyond - rows 20+
+; are instrument territory, written directly by the DEBUG helpers
+; outside the DAAD window/print system, and are never touched by any
+; verb here.
+;
+; ------------------------------------------------------------------
 ; THE DDB BYTE-ASSERT (the fixture-stimulus rule)
 ; ------------------------------------------------------------------
 ; DRC silently rewrites some condacts (BEEP tone range, PAUSE duration
@@ -139,7 +160,12 @@
 ; SFX 2 2, SFX 3 1, SFX 3 2, SFX 1 9 and SFX 0 5 (opcode 18 = $12), plus
 ; PICTURE 1 (opcode 84), DISPLAY 0 (opcode 28), SAVE 0 (opcode 25) and
 ; LOAD 0 (opcode 26), are all present as authored, the same idiom the
-; sfxdi/l2holes/fontsw blocks already use.
+; sfxdi/l2holes/fontsw blocks already use. The 2026-08-09 screen-
+; discipline pass extended the same assert block with two adjacent-byte
+; checks: CLS immediately ahead of CLR's DISPLAY 1 (opcode 29 then 28,
+; 1) and CLS immediately ahead of STOP's SFX 0 5 (29 then 18, 0, 5) -
+; proof that CLS (opcode 29) compiled and precedes a verb's action, not
+; just that it exists somewhere in the DDB.
 ;
 ; ------------------------------------------------------------------
 ; ZESARUX MANUAL WIRE SMOKE (owner procedure - not automated)
@@ -213,6 +239,7 @@ LOOP3  69 verb
 VID    70 verb
 R2FILL 71 verb
 R2CHK  72 verb
+CLR    73 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -281,7 +308,7 @@ R2CHK  72 verb
 /0 "a brass lamp"
 /LTX
 /0 ""
-/1 "The listening room."
+/1 "Verbs: PLAY/LOOP 1/2/3 STOP CLR PIC SAVE LOAD VID R2FILL R2CHK"
 /CON
 /0
 NORTH 1
@@ -294,7 +321,7 @@ SOUTH 0
         PROCESS 6
 > _ _   WINDOW 1
         WINAT 0 0
-        WINSIZE 25 127
+        WINSIZE 20 127
         CLEAR fDarkF
 > _ _   WINDOW 1
         DESC @fPlayer
@@ -311,46 +338,71 @@ SOUTH 0
 > _ _   SYSMESS 8
         REDO
 /PRO 5
+; ---- SCREEN DISCIPLINE: every entry below CLSes first, does its real
+; work, then prints exactly ONE short status line and DONEs - see the
+; header note above. Order is deliberate: CLS never follows the status
+; line, so nothing here can wipe its own report. ----
 ; ---- effect 1, 001.WAV, the streamer (> SFX_WIN_BYTES) ----
-> PLAY1 _ MES "effect 1 (streamer) once - SFX 1 1#n"
+> PLAY1 _ CLS
           SFX 1 1
+          MES "PLAY1 PLAYING#n"
           DONE
-> LOOP1 _ MES "effect 1 (streamer) looped - SFX 1 2#n"
+> LOOP1 _ CLS
           SFX 1 2
+          MES "LOOP1 PLAYING#n"
           DONE
 ; ---- effect 2, 002.WAV, the complete file (<= SFX_WIN_BYTES) ----
-> PLAY2 _ MES "effect 2 (complete) once - SFX 2 1#n"
+> PLAY2 _ CLS
           SFX 2 1
+          MES "PLAY2 PLAYING#n"
           DONE
-> LOOP2 _ MES "effect 2 (complete) looped - SFX 2 2#n"
+> LOOP2 _ CLS
           SFX 2 2
+          MES "LOOP2 PLAYING#n"
           DONE
 ; ---- effect 3, 003.WAV, the second streamer (> SFX_WIN_BYTES, a
 ; DIFFERENT number from effect 1 - Task 14b) ----
-> PLAY3 _ MES "effect 3 (second streamer) once - SFX 3 1#n"
+> PLAY3 _ CLS
           SFX 3 1
+          MES "PLAY3 PLAYING#n"
           DONE
-> LOOP3 _ MES "effect 3 (second streamer) looped - SFX 3 2#n"
+> LOOP3 _ CLS
           SFX 3 2
+          MES "LOOP3 PLAYING#n"
           DONE
 ; ---- picture: real SD art load concurrent with streaming (Task 14b) ----
-> PIC   _ MES "picture 1 - PICTURE 1 / DISPLAY 0#n"
+> PIC   _ CLS
           PICTURE 1
           DISPLAY 0
+          MES "PIC SHOWN#n"
+          DONE
+; ---- clear: the inverse of PIC (bench fixture usability, 2026-08-09).
+; DISPLAY with a non-zero argument clears Layer 2 to the transparent
+; colour (src\overlay2.asm h_display) - the same mechanism
+; tests\l2holes.dsf's A/B toggle uses - so this undoes PIC as well as
+; clearing the text window. ----
+> CLR   _ CLS
+          DISPLAY 1
+          MES "CLEARED#n"
           DONE
 ; ---- save/load: real SD save-file I/O concurrent with streaming
-; (Task 14b) - the standard DAAD condacts, same argument and CLS/
-; RESTART pattern tests\test.dsf's SAVE/LOAD verbs use ----
-> SAVE  _ SAVE 0
-          CLS
+; (Task 14b) - the standard DAAD condacts, same argument tests\test.dsf's
+; SAVE/LOAD verbs use. RESTART (not DONE) is kept from the original so a
+; loaded save still redraws from a clean process stack - only the
+; leading CLS and the status line are new. ----
+> SAVE  _ CLS
+          SAVE 0
+          MES "SAVED#n"
           RESTART
-> LOAD  _ LOAD 0
-          CLS
+> LOAD  _ CLS
+          LOAD 0
+          MES "LOADED#n"
           RESTART
 ; ---- video: a video-playback verb concurrent with streaming
 ; (Task 14b) - SFX 1 9 = PLAYFLI, video 1 once ----
-> VID   _ MES "video 1 once - SFX 1 9#n"
+> VID   _ CLS
           SFX 1 9
+          MES "VID DONE#n"
           DONE
 ; ---- ring-2 placement probe (SP18 item 7 Tasks 9/10, owner-ratified
 ; EXTERN fallback 2026-08-09 - DeZog CALL-injection unavailable in this
@@ -358,37 +410,33 @@ SOUTH 0
 ; overlay0.asm, EXTERN vector 13); R2CHK scans it and prints OK or the
 ; first mismatching address+byte on screen row 20 (ring2_chk, EXTERN
 ; vector 14). Both are DEBUG-only handlers - a Release interpreter
-; runs the EXTERN as a silent no-op stub ----
-> R2FILL _ MES "ring-2 fill - EXTERN 0 13#n"
+; runs the EXTERN as a silent no-op stub. Row 20 is written directly by
+; the DEBUG helper (outside the DAAD window system - see the header
+; note), so it is untouched by this entry's own CLS/MES. ----
+> R2FILL _ CLS
           EXTERN 0 13
+          MES "R2FILL DONE#n"
           DONE
-> R2CHK  _ MES "ring-2 check - EXTERN 0 14#n"
+> R2CHK  _ CLS
           EXTERN 0 14
+          MES "R2CHK DONE#n"
           DONE
 ; ---- stop everything ----
-> STOP  _ MES "all channels stopped - SFX 0 5#n"
+> STOP  _ CLS
           SFX 0 5
+          MES "STOPPED#n"
           DONE
 /PRO 6
 > _ _   WINDOW 1
         WINAT 0 0
-        WINSIZE 25 127
+        WINSIZE 20 127
         PAPER 0
         INK 7
         CLS
         MESSAGE 0
-> _ _   MES "001.WAV effect 1, > 24K, STREAMING#n"
-        MES "002.WAV effect 2, <= 24K, COMPLETE#n"
-        MES "003.WAV effect 3, > 24K, STREAMING#n#n"
-        MES "PLAY1 / LOOP1              effect 1 once / looped#n"
-        MES "PLAY2 / LOOP2              effect 2 once / looped#n"
-        MES "PLAY3 / LOOP3              effect 3 once / looped#n"
-        MES "PIC                        load + show picture 1#n"
-        MES "SAVE / LOAD                save / load the game#n"
-        MES "VID                        play video 1 once#n"
-        MES "R2FILL / R2CHK             ring-2 $4400 probe (fill / check)#n"
-        MES "STOP                       stop every channel#n#n"
-        MES "Boot autoplay starts LOOP1 automatically.#n"
+> _ _   MES "VERBS: PLAY1 LOOP1 PLAY2 LOOP2 PLAY3 LOOP3 STOP CLR#n"
+        MES "       PIC SAVE LOAD VID R2FILL R2CHK#n"
+        MES "Autoplay: LOOP1 running.#n"
 ; Boot autoplay - the ZEsarUX wire smoke needs no typed input at all:
 ; launch the .nex and read the DEBUG SFX= row after 60 s.
 > _ _   SFX 1 2
