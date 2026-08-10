@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.4.0 - unreleased
+## v0.4.0 - 10/08/2026
 
 - Games can change text font while they run. `GFX n 16` installs font
   n: 0 is the base font - the embedded table, then `FONT.CHR` over it

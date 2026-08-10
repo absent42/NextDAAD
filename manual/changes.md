@@ -3,7 +3,7 @@
 Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.4.0 - unreleased
+## 0.4.0 - 10 August 2026
 
 - Your game can change its text font while it runs. `GFX n 16` installs
   font n: 0 is the base font, and 1 to 9 are `FONT1.CHR` to `FONT9.CHR`
