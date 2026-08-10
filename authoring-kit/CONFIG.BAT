@@ -61,7 +61,8 @@ REM which then silently applied to whatever the author dropped in as 001/002
 REM and starved it. The encoder now derives the budget itself for every clip
 REM and prints what it chose - set one by hand only to override that. See
 REM docs\reference\video-delivery.html "Streaming, resident and direct delivery".
-SET VIDOPTS_002=--shape 16:9
+SET VIDOPTS_002=--fps 12.5 --dither 0.0 --tile-slack 0.5 --direct
+SET VIDOPTS_001=--shape 16:9 --dither 0.25
 
 REM DEPRECATED (honored one release): the v1 profile name. n0-n4 map to the
 REM nearest v2 shape when VIDASPECT is blank. Use VIDASPECT instead.
