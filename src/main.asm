@@ -198,25 +198,30 @@ boot_data_init:
 ; resident memory. Slot 7 goes back to OVL1_PAGE before returning, so the
 ; caller resumes on its own page. Slot 6 must already hold AUD_PAGE_LO
 ; where the callee touches channel 1's block or a window descriptor -
-; both callers map it first.
+; aud_sfx_init, sfx_alloc and sfx_stream_rewind all map it first.
+; aud_ctc_params does not touch slot 6 at all, so aud_load_wav's call
+; (the fresh-TC ruling's new fourth user of this trampoline) needs no
+; such mapping.
 ;
 ; Generic (HL) rather than one trampoline per callee because the resident
-; tail is the scarcest pool in the project: aud_sfx_init, sfx_alloc and
-; sfx_stream_rewind all share these 14 bytes. sfx_open_tramp stays
-; separate - sfx_stream_open takes its parameters in A/L/DE/IX, so HL is
-; not free there.
-; Corrupts DE. A and F cross both ways untouched: nextreg (ED 91) writes
-; neither, so a callee's return value and carry survive the unmap. Every
-; other register is whatever the CALLEE leaves - this is a plain call
-; with a page swap around it, not a preserving wrapper.
+; tail is the scarcest pool in the project: aud_sfx_init, sfx_alloc,
+; sfx_stream_rewind and (2026-08-10 fresh-TC ruling) aud_ctc_params all
+; share these 14 bytes. sfx_open_tramp stays separate - sfx_stream_open
+; takes its parameters in A/L/DE/IX, so HL is not free there.
+; DE crosses BOTH WAYS UNTOUCHED: the return address rides the Z80's own
+; CALL/RET stacking through .enter below rather than a register, so
+; nothing here needs DE as scratch. Load-bearing for aud_ctc_params, whose
+; own parameter (the rate) is DE. A and F cross both ways untouched too:
+; nextreg (ED 91) writes neither, so a callee's return value and carry
+; survive the unmap. Every other register is whatever the CALLEE leaves -
+; this is a plain call with a page swap around it, not a preserving wrapper.
 sfx_page_call:
     nextreg NR_MMU7, SFX_PAGE
-    ld de, .back
-    push de
-    jp (hl)
-.back:
+    call .enter
     nextreg NR_MMU7, OVL1_PAGE
     ret
+.enter:
+    jp (hl)
 
 ; Channel 2's sampled-effect pump state block (SMPB_* offsets in
 ; nextdaad.inc), seeded once at boot by aud_sfx_init. RESIDENT, unlike

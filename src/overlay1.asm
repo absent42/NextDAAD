@@ -3668,10 +3668,20 @@ aud_load_wav:
     ; rate and the live video-timing mode, fill the mailbox. The ring
     ; self-paces at the CTC rate, so no per-frame chunk sizing is needed.
     ; SMPB_KEEP is sfx_stream_open's; aud_smp_start latches these same
-    ; parameters into the channel's block, which is where a later free
-    ; rewind of this effect re-commits them from.
+    ; parameters (rate included, as SMPB_RATE) into the channel's block,
+    ; which is where a later rewind of this effect re-commits them from -
+    ; re-deriving Ctrl/Tc from the stored rate against the LIVE video mode
+    ; rather than replaying this load's values (owner ruling 2026-08-10).
     ld de, (wavFmt+4)           ; rate
-    call aud_ctc_params         ; sets audReqSmpCtrl + audReqSmpTc
+    ld (audReqSmpRate), de      ; latched into SMPB_RATE by aud_smp_start
+    ; aud_ctc_params now lives on SFX_PAGE (moved by the same ruling, so a
+    ; rewind re-commit can reach it without mapping overlay1 back in); this
+    ; page and SFX_PAGE share the slot-7 window, so the resident trampoline
+    ; hops it in and back, exactly as sfx_open_tramp does for
+    ; sfx_stream_open above. sfx_page_call preserves DE across the hop
+    ; (its own header), which this call relies on for the rate parameter.
+    ld hl, aud_ctc_params
+    call sfx_page_call          ; sets audReqSmpCtrl + audReqSmpTc
     ld hl, (wavLen)
     ld (audReqSmpLen), hl
     ld a, (wavLenHi)
@@ -3701,99 +3711,11 @@ aud_load_wav:
     pop af
     ret
 
-; aud_ctc_params: DE = sample rate (validated AUD_RATE_MIN..MAX). Derives the
-; CTC control word (audReqSmpCtrl) and time constant (audReqSmpTc) for the rate
-; at the LIVE video-timing mode. The CTC input clock IS the FPGA system clock,
-; 27-33 MHz by video mode (nextreg $11 bits 2:0), so a fixed constant would
-; drift pitch across VGA/HDMI - aud_clk16_tab holds clock/16 per mode (like
-; em00k CTCAudio's table). Prescaler /16 for rate >= clk16>>8 (the PER-MODE
-; crossover where the /16 TC would reach 256); else /256 (TC = (clk16>>4)/rate).
-; TC is floored and clamped to 255 (the boundary rate that divides to 256 lands
-; on 255, a <0.5% nudge); residual error is <= one TC step, largest at low rates
-; on fast clocks (see the hardware checklist). Corrupts AF,BC,HL; preserves DE.
-aud_ctc_params:
-    push de                     ; save the rate; nr_read takes the reg in E
-    ld e, NR_VIDEO_TIMING
-    call nr_read                ; A = nextreg $11 (IFF-preserving)
-    and $07                     ; video timing mode 0-7 (7 = HDMI)
-    ld l, a
-    add a, a
-    add a, l                    ; A = mode * 3 (3 bytes per clk16 entry)
-    ld l, a
-    ld h, 0
-    ld bc, aud_clk16_tab
-    add hl, bc                  ; HL -> clk16[mode] (24-bit little-endian)
-    ld a, (hl)                  ; byte0 (low)
-    inc hl
-    ld b, (hl)                  ; byte1 (mid)
-    inc hl
-    ld c, (hl)                  ; byte2 (high) -> C = dividend high
-    ld h, b
-    ld l, a                     ; HL = clk16 low 16 bits; C:HL = clk16 (24-bit)
-    pop de                      ; DE = rate
-    ; per-mode crossover = clk16 >> 8 (the rate at which the /16 TC reaches 256).
-    ; A fixed constant only holds for VGA0; on faster clocks (up to VGA6 33 MHz)
-    ; a 6836 crossover would leave a band where /16 TC overflows 255 and clamps
-    ; sharply (+18% on VGA6). clk16 is in C:HL, so clk16 >> 8 = C:H.
-    push hl                     ; protect clk16 low word (restored after the test)
-    ld l, h
-    ld h, c                     ; HL = C:H = clk16 >> 8 = crossover
-    or a
-    sbc hl, de                  ; crossover - rate: CF (borrow) when rate > crossover
-    pop hl                      ; restore clk16 low16 (C:HL = clk16 again)
-    jr c, .p16                  ; rate > crossover -> /16
-    jr z, .p16                  ; rate == crossover -> /16 (TC 256 -> clamps to 255)
-    ld a, AUD_CTC_CW256         ; /256: control word + dividend = clk16 >> 4
-    ld (audReqSmpCtrl), a
-    srl c                       ; clk16 >> 4 (24-bit C:HL), four right shifts
-    rr h
-    rr l
-    srl c
-    rr h
-    rr l
-    srl c
-    rr h
-    rr l
-    srl c
-    rr h
-    rr l
-    jr .divide
-.p16:
-    ld a, AUD_CTC_CW16
-    ld (audReqSmpCtrl), a
-.divide:
-    ; TC = C:HL / DE (floor, clamp 255). 24-bit repeated subtraction, B counts.
-    ld b, 0
-.sub:
-    or a
-    sbc hl, de
-    jr nc, .ok
-    dec c
-    bit 7, c                    ; borrowed past zero: dividend exhausted
-    jr nz, .done
-.ok:
-    inc b
-    jr nz, .sub
-    ld b, 255                   ; 256 rounds (rate 6836 only): clamp to 255
-.done:
-    ld a, b
-    ld (audReqSmpTc), a
-    ret
-
-; clock/16 per video-timing mode (nextreg $11 bits 2:0), 24-bit little-endian.
-; System clock from the Next hardware / em00k CTCAudio table; /16 folds the
-; prescaler in so the /16-prescaler divide is a plain clk16/rate (and /256 is
-; clk16>>4 / rate). VGA1/VGA2 clocks are non-integer/16 - floored here, matching
-; em00k's own inexact entries for those two modes.
-aud_clk16_tab:
-    db $F0,$B3,$1A              ; VGA0 28000000/16 = 1750000
-    db $72,$3F,$1B              ; VGA1 28571429/16 = 1785714
-    db $6D,$19,$1C              ; VGA2 29464286/16 = 1841517
-    db $38,$9C,$1C              ; VGA3 30000000/16 = 1875000
-    db $8C,$90,$1D              ; VGA4 31000000/16 = 1937500
-    db $80,$84,$1E              ; VGA5 32000000/16 = 2000000
-    db $A4,$78,$1F              ; VGA6 33000000/16 = 2062500
-    db $CC,$BF,$19              ; HDMI 27000000/16 = 1687500
+; aud_ctc_params and aud_clk16_tab moved to SFX_PAGE (src/audio/streamfx.asm)
+; by the 2026-08-10 fresh-TC ruling: sfx_alloc's rewind re-commit needed to
+; reach them and overlay1 and SFX_PAGE share the slot-7 window, so keeping
+; one copy on SFX_PAGE and reaching it from here through sfx_page_call (see
+; the .stream commit block above) beat a second copy or a nested page hop.
 
 ; --- AYS streamed-song loader (SP10 client 2) -----------------------
 

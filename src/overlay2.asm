@@ -486,7 +486,7 @@ l2_flip_swap:
 ; CTC zero-count; the period is 16 * TC T-states EXACTLY (the CTC input
 ; clock and the CPU clock are the same FPGA system clock, so this is
 ; clock-independent), with TC = floor(clk16/rate) from aud_ctc_params /
-; aud_clk16_tab (overlay1):
+; aud_clk16_tab (SFX_PAGE, src/audio/streamfx.asm):
 ;
 ;     rate       VGA0  VGA1  VGA2  VGA3  VGA4  VGA5  VGA6  HDMI
 ;     16000 Hz   1744  1776  1840  1872  1936  2000  2048  1680

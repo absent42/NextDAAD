@@ -476,6 +476,9 @@ audReqDur:  db 0            ; beep: duration in frames
 audReqSfx:  db 0            ; play-effect: effect number (>= 1)
 audReqLoop: db 0            ; start-music: 1 = loop, 0 = play once
 audReqSmpLoop:  db 0        ; start-sample: 1 = loop, 0 = play once
+audReqSmpRate:  dw 0        ; start-sample: WAV sample rate - aud_smp_start
+                            ; latches it into SMPB_RATE so a later rewind
+                            ; re-commit can re-derive Ctrl/Tc fresh
 audReqSmpCtrl:  db 0        ; start-sample: CTC control word ($85 /16, $A5 /256)
 audReqSmpTc:    db 0        ; start-sample: CTC time constant (rate + video mode)
 audReqSmpLen:   dw 0        ; start-sample: payload bytes, low word (24-bit)

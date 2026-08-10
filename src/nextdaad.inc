@@ -508,9 +508,12 @@ NR_VIDEO_TIMING equ $11     ; bits 2:0 = video timing mode 0-6 (VGA0-6), 7 = HDM
 ; SP10 CTC per-sample DAC feed (replaces the SP8 DMA sample engine). The CTC
 ; channel input clock IS the video-mode-dependent FPGA system clock (27-33 MHz,
 ; nextreg $11), NOT a fixed reference - so the time constant is derived per
-; video mode at load time (aud_clk16_tab in overlay1). Prescaler /16 when the
-; /16 time constant fits 8 bits (rate >= clk16>>8, per-mode), /256 below - see
-; aud_ctc_params. Inherent worst-case pitch error ~6% (1/16) in the narrow
+; video mode at load time AND on every rewind re-commit (aud_ctc_params and
+; aud_clk16_tab, SFX_PAGE - moved from overlay1 by the 2026-08-10 fresh-TC
+; ruling so a re-commit can reach the table without a cross-page hop).
+; Prescaler /16 when the /16 time constant fits 8 bits (rate >= clk16>>8,
+; per-mode), /256 below - see aud_ctc_params. Inherent worst-case pitch
+; error ~6% (1/16) in the narrow
 ; TC=16 band just below each mode's crossover - CTC 8-bit-TC quantisation,
 ; shared by the reference engines. Confirmed against playvid + em00k CTCAudio:
 ; "28,000,000 / 16 / 15625 = 112".
@@ -612,7 +615,20 @@ SMPB_KEEP     equ 33   ; db: effect number this channel's window holds
                        ;     copy. With SMPB_FLAGS bit 3 set it means the
                        ;     WHOLE effect is resident - a re-trigger of
                        ;     that number costs no card traffic at all.
-SMPB_SIZE     equ 34   ; (was 14 before SP18 item 7 Task 2's parameterisation)
+SMPB_RATE     equ 34   ; dw: this effect's WAV sample rate, latched by
+                       ;     aud_smp_start from audReqSmpRate. A rewind
+                       ;     re-commit (sfx_alloc's free/cached verdicts,
+                       ;     also reached by the video auto-resume) reads
+                       ;     this and calls aud_ctc_params again, so
+                       ;     audReqSmpCtrl/Tc are re-derived from the
+                       ;     LIVE video-timing mode instead of replaying
+                       ;     SMPB_CTCCTRL/CTCTC as they stood at the
+                       ;     effect's last start (owner ruling
+                       ;     2026-08-10: a mode change between triggers
+                       ;     must not replay the old pitch).
+SMPB_SIZE     equ 36   ; (was 34 before the 2026-08-10 fresh-TC ruling
+                       ;     added SMPB_RATE; 14 before SP18 item 7
+                       ;     Task 2's parameterisation)
 ; SMPB_FLAGS bit semantics (settled by the SP18 item 7 Task 5 review
 ; ruling: bits 0/1 are PLAYBACK state, bits 2-4 describe the WINDOW and
 ; the channel's CACHE, and a deliberate stop must not throw the cache

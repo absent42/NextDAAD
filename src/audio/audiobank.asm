@@ -577,8 +577,10 @@ aud_smp_start:
     ; The channel int is gated open in NR C5 by im2_init; loading the TC starts
     ; the timer and ctc_isr begins feeding the DAC at the sample rate. Port
     ; and latched control/TC are all channel-block members now; the mailbox
-    ; cells (audReqSmpCtrl/Tc) are still written by the loader (aud_ctc_params)
-    ; and only copied into the block here.
+    ; cells (audReqSmpCtrl/Tc) are written by aud_ctc_params - from the WAV
+    ; loader on a fresh open, or from sfx_alloc's rewind re-commit against
+    ; this channel's own stored rate (SMPB_RATE, latched below) - and only
+    ; copied into the block here.
     ld c, (ix+SMPB_CTCPORT)
     ld b, (ix+SMPB_CTCPORT+1)
     ld a, AUD_CTC_RESET
@@ -590,6 +592,11 @@ aud_smp_start:
     ld a, (audReqSmpTc)
     ld (ix+SMPB_CTCTC), a       ; latch this effect's time constant in the block
     out (c), a                  ; time constant -> timer starts, interrupts begin
+    ld hl, (audReqSmpRate)
+    ld (ix+SMPB_RATE), l        ; latch the rate too (owner ruling 2026-08-10):
+    ld (ix+SMPB_RATE+1), h      ; a later rewind re-commit re-derives Ctrl/Tc
+                                 ; fresh from this against the live video mode
+                                 ; instead of replaying Ctrl/Tc as latched here
     ret
 
 ; Stop: reset the CTC channel (timer + interrupt off), park the DAC at silence,
