@@ -73,7 +73,9 @@ All notable changes to NextDAAD are recorded here.
   supported: the clock varies by video mode and 16000 rarely divides it
   exactly, so it plays a little sharp on most modes, up to about 0.7%
   in the worst case and inaudible in practice; the supported range is
-  unchanged at 3500-20000 Hz.
+  unchanged at 3500-20000 Hz. Re-triggering an effect re-derives its
+  pitch from the video mode active at that moment, so a mode change
+  between triggers no longer leaves it playing at the old mode's pitch.
 
 ## v0.3.2 - 07/08/2026
 

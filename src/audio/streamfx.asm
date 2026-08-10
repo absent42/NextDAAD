@@ -1222,6 +1222,18 @@ sfx_alloc:
     ld e, (ix+SMPB_RATE)
     ld d, (ix+SMPB_RATE+1)
     call aud_ctc_params               ; sets audReqSmpCtrl + audReqSmpTc
+    ld (audReqSmpRate), de            ; close the SAME round trip SMPB_LEN
+                                       ; closes 3 lines below: aud_smp_start
+                                       ; latches the MAILBOX's rate into
+                                       ; SMPB_RATE unconditionally on every
+                                       ; start (its own tail, symmetric with
+                                       ; Ctrl/Tc), so leaving the mailbox
+                                       ; holding a DIFFERENT channel's rate
+                                       ; here would corrupt THIS channel's
+                                       ; SMPB_RATE on the very start this
+                                       ; re-commit is about to cause - DE
+                                       ; still holds this channel's own rate
+                                       ; (aud_ctc_params preserves DE)
     pop de
     pop bc
     ld a, (ix+SMPB_LEN)
@@ -1309,8 +1321,9 @@ msgSfxBusy: db "SFX BUSY?", 0
 ;
 ; ONE CHANNEL PER TICK, DELIBERATELY. The per-channel re-commit does NOT
 ; make the two channels independent within a tick: sfx_alloc reads this
-; channel's SMPB_CTCCTRL/CTCTC/LEN latches but WRITES them into
-; audReqSmpCtrl/Tc/Len/LenHi, which are SHARED (aud_tick's own header
+; channel's SMPB_RATE/LEN, derives Ctrl/Tc fresh through aud_ctc_params
+; against the LIVE video mode, and writes all four into
+; audReqSmpRate/Ctrl/Tc/Len/LenHi, which are SHARED (aud_tick's own header
 ; states the limitation). A second alloc before the first start had been
 ; consumed would therefore hand channel 1's start channel 2's rate and
 ; length. The drain below is h_sfx's own .pend rule and is what puts the
