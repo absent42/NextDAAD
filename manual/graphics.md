@@ -113,13 +113,14 @@ art and slot 255 stays unused.
 ### Other output
 
 NextDither also writes `.NX2` and `.NXI` files directly, along with
-ZX0-compressed variants and standalone palettes. For a **title screen**
-that is the quickest route - a ready-made `DAAD.NX2` or `DAAD.NXI` in
-the kit folder is staged untouched, as [Title screens](#title-screens)
-describes. For numbered location art, export the indexed PNG into
-`IMAGES\` instead and let the build convert it; that is the route the
-kit is built around, and nothing is lost by taking it, because
-NextDither has already chosen colours the Next can show.
+ZX0-compressed variants and standalone palettes, and the kit takes those
+too - see [Already-converted artwork](#already-converted-artwork).
+
+Either route works. The indexed PNG is the one to reach for by default,
+because the build audits the palette of everything it converts and tells
+you what it found. A ready-made file is staged untouched, so it only
+gets that check if it is uncompressed, and a compressed one cannot be
+checked at all.
 
 ## The classic bordered screen
 
@@ -231,10 +232,28 @@ in a [multi-part game](multi-part-games.md).
 
 ## Already-converted artwork
 
-If you have picture files that were converted elsewhere, put a
-ready-made `DAAD.NX2` or `DAAD.NXI` (or a compressed variant) in the kit
-folder itself, rather than in `IMAGES\`, and it is staged untouched. An
+Picture files converted elsewhere are staged untouched - the build does
+not try to reconvert them.
+
+**Location pictures go in `IMAGES\`**, named by number exactly as the
+PNGs are: `001.NX2` for 320-wide art, `001.NXI` for 256-wide, or a
+compressed `001.NX2.ZX0`, `001.N2Z`, `001.NXI.ZX0` or `001.NXZ`. If both
+a `001.png` and a ready-made `001.NX2` are there, the PNG conversion
+wins. If you have several forms of the same number, the one staged is
+the one the interpreter would load first - compressed before
+uncompressed.
+
+A `.NX2` or `.NXI` in `IMAGES\` whose name is not a picture number stops
+the build rather than being ignored, so a file that could never be
+loaded does not pass unnoticed.
+
+**The title screen goes in the kit folder itself**, not in `IMAGES\` -
+a ready-made `DAAD.NX2` or `DAAD.NXI`, or a compressed variant. An
 `IMAGES\DAAD.png` wins if you have both.
+
+Staged-as-is means the kit never saw your source art, so the palette
+audit is the only check these files get, and it can only read the
+uncompressed ones. A compressed file is staged unexamined.
 
 [Picture format](reference/picture-format.md) documents the file layout
 itself - what the palette bytes mean, what the loader refuses, and which

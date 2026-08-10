@@ -111,13 +111,13 @@ doing it rather than you arranging a palette by hand.</p>
 art and slot 255 stays unused.</p>
 <h3 id="other-output">Other output</h3>
 <p>NextDither also writes <code>.NX2</code> and <code>.NXI</code> files directly, along with
-ZX0-compressed variants and standalone palettes. For a <strong>title screen</strong>
-that is the quickest route - a ready-made <code>DAAD.NX2</code> or <code>DAAD.NXI</code> in
-the kit folder is staged untouched, as <a href="#title-screens">Title screens</a>
-describes. For numbered location art, export the indexed PNG into
-<code>IMAGES\</code> instead and let the build convert it; that is the route the
-kit is built around, and nothing is lost by taking it, because
-NextDither has already chosen colours the Next can show.</p>
+ZX0-compressed variants and standalone palettes, and the kit takes those
+too - see <a href="#already-converted-artwork">Already-converted artwork</a>.</p>
+<p>Either route works. The indexed PNG is the one to reach for by default,
+because the build audits the palette of everything it converts and tells
+you what it found. A ready-made file is staged untouched, so it only
+gets that check if it is uncompressed, and a compressed one cannot be
+checked at all.</p>
 <h2 id="the-classic-bordered-screen">The classic bordered screen</h2>
 <p>256-wide art gives you the traditional Spectrum look - a picture sitting
 in the paper area with a coloured surround around it. To lay your text
@@ -203,10 +203,24 @@ its version stamp at boot, so the title is the first thing seen.</p>
 <p>The title is shown once, at cold boot, and is never overridden per part
 in a <a href="multi-part-games.html">multi-part game</a>.</p>
 <h2 id="already-converted-artwork">Already-converted artwork</h2>
-<p>If you have picture files that were converted elsewhere, put a
-ready-made <code>DAAD.NX2</code> or <code>DAAD.NXI</code> (or a compressed variant) in the kit
-folder itself, rather than in <code>IMAGES\</code>, and it is staged untouched. An
+<p>Picture files converted elsewhere are staged untouched - the build does
+not try to reconvert them.</p>
+<p><strong>Location pictures go in <code>IMAGES\</code></strong>, named by number exactly as the
+PNGs are: <code>001.NX2</code> for 320-wide art, <code>001.NXI</code> for 256-wide, or a
+compressed <code>001.NX2.ZX0</code>, <code>001.N2Z</code>, <code>001.NXI.ZX0</code> or <code>001.NXZ</code>. If both
+a <code>001.png</code> and a ready-made <code>001.NX2</code> are there, the PNG conversion
+wins. If you have several forms of the same number, the one staged is
+the one the interpreter would load first - compressed before
+uncompressed.</p>
+<p>A <code>.NX2</code> or <code>.NXI</code> in <code>IMAGES\</code> whose name is not a picture number stops
+the build rather than being ignored, so a file that could never be
+loaded does not pass unnoticed.</p>
+<p><strong>The title screen goes in the kit folder itself</strong>, not in <code>IMAGES\</code> -
+a ready-made <code>DAAD.NX2</code> or <code>DAAD.NXI</code>, or a compressed variant. An
 <code>IMAGES\DAAD.png</code> wins if you have both.</p>
+<p>Staged-as-is means the kit never saw your source art, so the palette
+audit is the only check these files get, and it can only read the
+uncompressed ones. A compressed file is staged unexamined.</p>
 <p><a href="reference/picture-format.html">Picture format</a> documents the file layout
 itself - what the palette bytes mean, what the loader refuses, and which
 ZX0 variant to compress with - for anyone writing a converter or paint
