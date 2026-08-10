@@ -16,9 +16,15 @@
 ; global transparency COLOUR $E3, no dependence on tilemap transparency
 ; attributes), fixes the white background that showed before a game's
 ; first picture, and replaces the kit's stand-alone guides with a
-; generated HTML manual. The "0.x" line runs until public testing
-; earns v1.0 (see RELEASE.md).
-    DEFINE VERSION_STR "NEXTDAAD V0.3.2"
+; generated HTML manual. v0.4.0 is the first release to add features
+; rather than correct them: runtime font and pointer switching (GFX
+; n 16 installs FONT1-9.CHR, MOUSE n 5 selects POINTER1-9.SPR, both
+; falling back to the base shape), a conventional arrow as the
+; built-in pointer, two-channel sampled sound (SFX n 1/2 pick a free
+; channel, subs 11-16 reserve one) and sample length no longer bounded
+; by memory - large files stream from the card. The "0.x" line runs
+; until public testing earns v1.0 (see RELEASE.md).
+    DEFINE VERSION_STR "NEXTDAAD V0.4.0"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00
