@@ -146,6 +146,11 @@ ever applies to a WAV sample.</p>
 either channel - and the AY effect too, and releases both
 reservations. It is the "make it quiet" reset to reach for between
 scenes.</p>
+<p><strong>A cutscene does not cost you a looping bed.</strong> A <a href="video.html">video</a>
+takes the sound hardware for as long as it runs, so both channels go
+quiet while it plays - but any effect that was LOOPING starts again on
+its own channel, with its reservation intact, as soon as the clip ends.
+One-shots are left stopped. There is nothing to re-trigger afterwards.</p>
 <h2 id="length-and-streaming">Length and streaming</h2>
 <p>An effect's length is no longer capped by memory - a WAV of any size
 plays. Files up to 24K per channel stage entirely into a fixed area

@@ -2287,6 +2287,45 @@ vid_run:
     call nr_read
     ld (nxbSvTm3), a
  ENDIF
+    ; --- AUTO-RESUME CAPTURE (owner ruling 2026-08-10): a LOOPING
+    ; sampled effect must come back BY ITSELF when the clip ends; a
+    ; one-shot stays stopped. vid_run_entry_body aborts both channels
+    ; and a stop clears SMPB_FLAGS bits 0/1, so which channels were
+    ; looping has to be recorded before that happens.
+    ;
+    ; Recorded HERE, hot, rather than at the abort itself: VID_PAGE2 has
+    ; 25 bytes free against this page's 114, and the two sites are
+    ; equivalent - they are separated only by the hop into the
+    ; orchestrator, and nothing between them can change a LOOPING
+    ; channel's active bit (mainline is this code; the only self-stop in
+    ; the pump is a play-once drain end, which by definition is not a
+    ; loop). audEnable = 0 means aud_tick never runs, so nothing is
+    ; playing and nothing filed on the way out would ever be consumed -
+    ; the capture is gated on it exactly as the abort is.
+    ld c, 0                      ; C = the pending-resume mask
+    ld a, (audEnable)
+    or a
+    jr z, .sfxresdone
+    ld a, (sfxChan1+SMPB_FLAGS)  ; channel 2's block is resident
+    and %00000011                ; ACTIVE and LOOPING
+    cp %00000011
+    jr nz, .sfxres1
+    set 1, c
+.sfxres1:
+    call data_save               ; channel 1's block is page-48 data
+    ld a, AUD_PAGE_LO
+    call data_map_page
+    ld a, (sfxChan0+SMPB_FLAGS)
+    ld b, a                      ; data_restore corrupts AF
+    call data_restore
+    ld a, b
+    and %00000011
+    cp %00000011
+    jr nz, .sfxresdone
+    set 0, c
+.sfxresdone:
+    ld a, c
+    ld (vidSvSfxRes), a
     ld hl, vid_run_orch_body
     push hl
     ld a, VID_PAGE2
@@ -2295,7 +2334,11 @@ vid_run:
     ; B = 0: ready to arm (entry captured, file loaded/prefilled,
     ; L2/ISRs/session cells all set). B != 0: failed open - the orch
     ; body already unwound (ring freed, stream closed, music tick
-    ; restored, DEBUG verdict printed); nothing armed: plain return.
+    ; restored, DEBUG verdict printed); nothing armed, so the only exit
+    ; work left is the sampled-channel resume: the entry body ALREADY
+    ; aborted both channels before the open was attempted, and a clip
+    ; that never played must not be what permanently kills a looping
+    ; bed. Same tail as a real teardown.
  IFDEF DEBUG
     ld a, b                      ; D1: this bail returns BEFORE the hook
     or a                         ; below, so the selector would survive
@@ -2303,7 +2346,7 @@ vid_run:
  ENDIF
     ld a, b
     or a
-    ret nz
+    jp nz, .sfxresume
  IFDEF DEBUG
     ; SP17 BENCH HOOK (row group 1, direct-serve transport breakdown).
     ; flags+248 selects it; a DIRECT session only (the rows measure the
@@ -2660,7 +2703,29 @@ vid_run:
     nextreg NR_MMU6, a
     ld a, (vidSvMmu7)
     nextreg NR_MMU7, a
-    ret
+    ; --- AUTO-RESUME (owner ruling 2026-08-10). The teardown is over:
+    ; audEnable, the IM2 stub and the CTC/DAC parks are all back, the
+    ; CMD18 window is closed and the video handle is F_CLOSEd, so the
+    ; card is free and this is ordinary mainline. Hand the mask to the
+    ; restart driver on SFX_PAGE, which is where the allocator and the
+    ; cached-stream rewind already live; it rets to the condact
+    ; dispatcher in our place. Slot 7 is left on SFX_PAGE rather than
+    ; VID_PAGE, which is harmless: every condact dispatch maps its own
+    ; handler page, and the frame ISR saves and restores MMU6/7 around
+    ; its own remap. ovl_map_page never touches D, so the mask rides
+    ; there. Shared with the failed-open bail at .orchret, which reaches
+    ; it with nothing armed and nothing else left to unwind.
+.sfxresume:
+    ld a, (vidSvSfxRes)
+    or a
+    ret z
+    ld d, a
+    xor a
+    ld (vidSvSfxRes), a          ; consumed
+    ld hl, sfx_vid_resume
+    push hl
+    ld a, SFX_PAGE
+    jp ovl_map_page
 
 ; Any-key test: A = 0 selects all 8 half-rows via IN A,($FE) (playvid
 ; idiom; raw port read, no cross-page hop). Out: Z = no key down.
@@ -3759,6 +3824,14 @@ vidAudBuf        equ VID_AUD_WIN
 ; translations with them).
 vidSvMmu6:       db 0
 vidSvMmu7:       db 0
+; Sampled channels that were LOOPING when this session started, bit 0 =
+; channel 1, bit 1 = channel 2 (SP18 item 7 auto-resume). Hot for the
+; same reason the pair above is: written pre-hop in vid_run, read in
+; .restore_tail. ZEROED WHEN CONSUMED - the same idempotent sentinel
+; vidSnapCnt uses, and what keeps the DEBUG standalone bench modes
+; (which reach .restore_tail without ever running vid_run's capture -
+; see nxb_reclaim) from resuming a previous session's effect.
+vidSvSfxRes:     db 0
 
  IFDEF DEBUG
 ; DEBUG frame-timeline instrument state. vidTlTicks..vidLoopPass is
@@ -6137,12 +6210,24 @@ vid_run_entry_body:
     ; plays out of AUD_STAGE2, which sits in the $4000-$5FFF window this
     ; session borrows through MMU2. The ring is dead for the whole
     ; session because the channel is aborted here, before the borrow.
+    ;
+    ; A PENDING START IS CLEARED FIRST, not just stopped over. aud_tick
+    ; consumes stop-then-start in ONE pass, so a start filed and not yet
+    ; consumed would fire in the very tick that serves the stop below and
+    ; leave the channel running under the clip - with the wait none the
+    ; wiser, since its bit did clear. sfx_stop_wait (overlay1) guards its
+    ; own stage with exactly this res-then-set pair, for exactly this
+    ; reason. Reachable in one turn (a play condact then a video condact
+    ; inside 20 ms) and, since the teardown now files a resume start of
+    ; its own, back-to-back videos too.
     ld a, b
     or a
     jr z, .noaudsave
     ld hl, audRequest
+    res 6, (hl)
     set 7, (hl)
     ld hl, audRequest2
+    res 3, (hl)
     set 2, (hl)
 .waitstop:
     halt

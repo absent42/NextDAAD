@@ -129,6 +129,12 @@ either channel - and the AY effect too, and releases both
 reservations. It is the "make it quiet" reset to reach for between
 scenes.
 
+**A cutscene does not cost you a looping bed.** A [video](video.md)
+takes the sound hardware for as long as it runs, so both channels go
+quiet while it plays - but any effect that was LOOPING starts again on
+its own channel, with its reservation intact, as soon as the clip ends.
+One-shots are left stopped. There is nothing to re-trigger afterwards.
+
 ## Length and streaming
 
 An effect's length is no longer capped by memory - a WAV of any size

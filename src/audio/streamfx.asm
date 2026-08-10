@@ -1179,6 +1179,139 @@ msgSfxBusy: db "SFX BUSY?", 0
  ENDIF
 
 ; ---------------------------------------------------------------------
+; sfx_vid_resume - THE VIDEO AUTO-RESUME (owner ruling, 2026-08-10).
+;
+; A LOOPING sampled effect comes back BY ITSELF when a cutscene ends; a
+; one-shot stays stopped. vid_run_entry_body aborts both channels before
+; the clip starts (stop bits filed and waited, cache kept) and the
+; teardown used to leave them idle, so the author had to re-trigger by
+; hand. video.asm captures which channels were looping before the abort
+; clears bits 0/1 and hops here with the mask once teardown is over.
+;
+; THE RESTART IS THE ORDINARY RE-TRIGGER LADDER, not a copy of it: the
+; allocator re-commits this channel's own start parameters from its
+; latches, a COMPLETE window rewinds for free and a cached STREAM
+; re-stages through sfx_stream_rewind - exactly what h_sfx does for a
+; repeat trigger of the same number on the same channel.
+;
+; ONE CHANNEL PER TICK, DELIBERATELY. The per-channel re-commit does NOT
+; make the two channels independent within a tick: sfx_alloc reads this
+; channel's SMPB_CTCCTRL/CTCTC/LEN latches but WRITES them into
+; audReqSmpCtrl/Tc/Len/LenHi, which are SHARED (aud_tick's own header
+; states the limitation). A second alloc before the first start had been
+; consumed would therefore hand channel 1's start channel 2's rate and
+; length. The drain below is h_sfx's own .pend rule and is what puts the
+; two restarts in different ticks.
+;
+; THE PIN IS NOT A SIDE EFFECT. Allocator requests 1/2 name a channel and
+; set SMPB_FLAGS bit 5 in doing so; a bed that was not pinned before the
+; video must not come back pinned, so the bit is put back exactly as the
+; video found it. A bed that WAS pinned resumes still pinned.
+;
+; A cached STREAM whose re-stage FAILS is left stopped. h_sfx retries the
+; full open at that point, but aud_load_wav is overlay1 code and overlay1
+; shares the slot-7 window with this page, so the honest answer here is
+; to drop the resume rather than fake a retry. The refusal funnel has
+; already invalidated the cache, so the author's next trigger of that
+; number takes the full open and plays normally.
+;
+; In:  D = mask, bit 0 = channel 1, bit 1 = channel 2 - the channels that
+;      were ACTIVE and LOOPING when vid_run captured them. Mainline,
+;      interrupts on, slot 7 = SFX_PAGE (video.asm's .restore_tail hopped
+;      here), any slot 6, card free.
+; Out: plain ret - to the condact dispatcher, in the video's place.
+;      Corrupts everything.
+; ---------------------------------------------------------------------
+sfx_vid_resume:
+    ld a, (audEnable)
+    or a
+    ret z                            ; the tick is frozen: a start would
+                                     ; never be consumed and the drain
+                                     ; below would never end
+    ld a, d
+    ld (sfxResMask), a               ; sfx_alloc corrupts DE
+    call data_save
+    ld a, AUD_PAGE_LO                ; channel 1's block and both window
+    call data_map_page               ; descriptors are page-48 data
+    ld a, (sfxResMask)
+    rrca                             ; channel 1's bit -> CF
+    ld e, 0                          ; (ld writes no flag)
+    call c, .chan
+    ld a, (sfxResMask)
+    rrca
+    rrca                             ; channel 2's bit -> CF
+    ld e, 1
+    call c, .chan
+    jp data_restore
+
+; One channel. E = channel index (0 = channel 1), preserved.
+.chan:
+    call .block                      ; IX = this channel's block
+    ld b, (ix+SMPB_KEEP)             ; the number its window holds
+    ld a, b
+    or a
+    ret z                            ; nothing cached (a refiller error
+                                     ; eviction clears it): nothing to
+                                     ; resume
+    ld a, (ix+SMPB_FLAGS)
+    and %00100000
+    ld (sfxResPin), a                ; the pin, as the video found it
+    ; drain a start not yet consumed before sfx_alloc re-commits the
+    ; shared parameter cells (the one-channel-per-tick rule above)
+.pend:
+    ld a, (audRequest)
+    and %01000000
+    ld c, a
+    ld a, (audRequest2)
+    and %00001000
+    or c
+    jr z, .go
+    halt
+    jr .pend
+.go:
+    ld a, 1
+    ld (audReqSmpLoop), a            ; a resume is always a loop resume
+    ld a, e
+    inc a                            ; request 1/2: THIS channel, named -
+    push de                          ; auto-allocation could pick the
+    call sfx_alloc                   ; other one, or the same one twice
+    pop de
+    ld c, a                          ; bit 7 free rewind / bit 6 cached
+    call .block
+    ld a, (sfxResPin)
+    or a
+    jr nz, .pinned
+    res 5, (ix+SMPB_FLAGS)
+.pinned:
+    bit 7, c
+    jr nz, .file                     ; COMPLETE: free rewind, no card
+    bit 6, c
+    ret z                            ; neither: the cache is gone and the
+                                     ; full open is out of reach (header)
+    ld a, e                          ; a cached STREAM: re-stage the
+    push de                          ; window from the held handle and
+    call sfx_stream_rewind           ; hot filemap
+    pop de
+    ret c                            ; re-stage failed - left stopped
+.file:
+    bit 0, e
+    jr nz, .file2
+    ld hl, audRequest
+    set 6, (hl)                      ; channel 1's start
+    ret
+.file2:
+    ld hl, audRequest2
+    set 3, (hl)                      ; channel 2's start, the mirror
+    ret
+; IX = the block E names. Corrupts AF, IX.
+.block:
+    ld ix, sfxChan0
+    bit 0, e
+    ret z
+    ld ix, sfxChan1
+    ret
+
+; ---------------------------------------------------------------------
 ; THE REFILLER (SP18 item 7 Task 6) - channel 1 streaming becomes real.
 ;
 ; Called once per frame from aud_tick, AFTER the pump (aud_smp_tick), by
@@ -1842,6 +1975,10 @@ sfxCellPtr:     dw 0             ; the current channel's stream cell group
                                  ; (IY), parked here so it can be reloaded
                                  ; after an esxDOS call - see the reload
                                  ; note at sfx_stream_open
+sfxResMask:     db 0             ; sfx_vid_resume: the channels to restart
+sfxResPin:      db 0             ; and the pin state of the one in hand -
+                                 ; both in cells because sfx_alloc and
+                                 ; sfx_stream_rewind corrupt DE
 
 ; --- streaming cells (SP18 item 7 Task 3) -----------------------------
 ; sfxHotMap through sfxCardFlags are the SHARED RUN-CONTEXT WORKING SET:
