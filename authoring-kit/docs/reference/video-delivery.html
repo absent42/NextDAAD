@@ -65,8 +65,9 @@ almost all content the normal delta encoder is the better tool;
 <h2 id="playback-notes">Playback notes</h2>
 <p><strong>Game audio during playback.</strong> A cutscene owns the sound hardware
 while it plays: a sampled effect is stopped for the duration, and a
-LOOPING one starts again by itself the moment the clip ends - a
-one-shot does not, since it was going to finish anyway; AY music is
+LOOPING one that was already playing when the clip started starts again
+by itself the moment the clip ends - a one-shot does not, since it was
+going to finish anyway; AY music is
 frozen in place (paused, not stopped) and resumes automatically the
 instant playback ends; and a BEEP still sounding when the video starts
 is cut short, staying silent for the rest of its nominal duration
@@ -78,6 +79,11 @@ sound to return, roughly a frame behind the music, and a loop that was
 streaming from the card (over 24K) takes a moment longer while its
 buffer refills. A video that refuses to play at all restores the loop
 the same way.</p>
+<p>The one case that does not resume is an effect triggered in the SAME
+turn as the video. It has not started playing by the time the cutscene
+takes the hardware, so the video discards it rather than let it start
+underneath the clip, and there is nothing left to bring back. Trigger
+the effect an entry earlier than the video and it resumes normally.</p>
 <p><strong>Automatic picture restore.</strong> When a cutscene ends, the player puts
 the screen back by itself: the visible picture surface AND its palette
 are snapshotted before the video starts and restored before the screen

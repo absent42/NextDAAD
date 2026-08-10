@@ -131,9 +131,17 @@ scenes.
 
 **A cutscene does not cost you a looping bed.** A [video](video.md)
 takes the sound hardware for as long as it runs, so both channels go
-quiet while it plays - but any effect that was LOOPING starts again on
-its own channel, with its reservation intact, as soon as the clip ends.
-One-shots are left stopped. There is nothing to re-trigger afterwards.
+quiet while it plays - but a loop that was ALREADY PLAYING when the clip
+started comes back on its own channel, with its reservation intact, as
+soon as the clip ends. One-shots are left stopped. There is nothing to
+re-trigger afterwards.
+
+Start the bed a turn BEFORE the video, though. An effect triggered in
+the same turn as the video has not begun playing by the time the
+cutscene takes the hardware, so there is nothing there to notice and
+bring back: the video discards it, and the channel is silent when the
+clip ends. Put the `SFX` in an earlier entry than the video and it
+resumes as described.
 
 ## Length and streaming
 
