@@ -38,6 +38,9 @@ windows_init:
     ld a, TM_ATTR_DEFAULT
     ld (hl), a                  ; attr - reserved pair 0 until a condact
     inc hl                      ; changes ink or paper
+    ld a, TM_ATTR_CURSOR
+    ld (hl), a                  ; attrInv - reserved pair 2, the cursor's
+    inc hl                      ; boot inverse, until ink or paper change
     xor a
     djnz .win
     ld a, 1
@@ -200,10 +203,3 @@ win_newline:
 
 curWin:   dw winTable
 winTable: ds WINDOW_COUNT * WIN_SIZE
-
-; The block cursor's inverted attribute - the pair with this window's
-; ink and paper swapped. One byte rather than a per-window field: only
-; one input cursor exists at a time. Written by win_attr_resolve
-; (overlay0) alongside WIN_ATTR, read by inp_attr_inv (overlay1), and
-; protected during reclaim so the cursor's pair cannot be stolen.
-inpAttrInv:  db TM_ATTR_DEFAULT

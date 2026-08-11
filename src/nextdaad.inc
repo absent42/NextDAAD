@@ -273,13 +273,18 @@ TM_ROWS         equ 32
 GLYPH_SPACE     equ $20
 TM_ATTR_DEFAULT equ 0       ; reserved pair 0 = paper 0 (black), ink 7
                             ; (white). Pairs are allocated on demand now,
-                            ; so the default and error attributes are the
-                            ; two pairs reserved at boot and never
-                            ; reclaimed - see tm_reserved_pairs.
+                            ; so the default, error and cursor attributes
+                            ; are the three pairs reserved at boot and
+                            ; never reclaimed - see tm_reserved_pairs.
 TM_ATTR_ERROR   equ 2       ; reserved pair 1 = paper 3 (magenta), ink 7
                             ; (white). The fatal error bar must render
                             ; whatever state the tilemap is in, which is
                             ; exactly why it cannot depend on allocation.
+TM_ATTR_CURSOR  equ 4       ; reserved pair 2 = paper 7 (white), ink 0
+                            ; (black) - the block cursor's boot inverse.
+                            ; Reserved for the same reason as the other
+                            ; two: the cursor must be visible before any
+                            ; INK/PAPER condact runs.
 ULA_OFF         equ $80     ; NR_ULA_CTRL bit 7
 NR_TM_TRANSP    equ $4C     ; NORMAL tilemap mode's transparent index -
                             ; an INDEX compare, applied before the
@@ -774,7 +779,14 @@ WIN_ATTR        equ 11      ; resolved tilemap attribute for this window's
                             ; change, so win_attr - which runs for every
                             ; character printed - is a plain fetch and
                             ; never allocates.
-WIN_SIZE        equ 12
+WIN_ATTRINV     equ 12      ; the block cursor's resolved inverse (ink and
+                            ; paper swapped) for this window. Per-window,
+                            ; not global: WINDOW condacts and
+                            ; inp_stream_push (flag 41) can make the input
+                            ; cursor's window differ from whichever window
+                            ; last set colours. Written alongside WIN_ATTR
+                            ; by win_attr_resolve.
+WIN_SIZE        equ 13
 WINDOW_COUNT    equ 8
 
 ; --- Mouse (SP10 Task 5) ---

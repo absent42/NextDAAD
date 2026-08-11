@@ -1,8 +1,12 @@
-; Program the two pairs reserved for system text, in the FIRST palette
-; (the displayed one). Pair 0 = paper 0 / ink 7, pair 1 = paper 3 /
-; ink 7. Their bits are set in pairUsed at boot and never cleared, so
-; neither reclaim nor eviction can take them. Both use classic colours
-; only, so tm_pal_write9 (which indexes dadPalette) serves directly.
+; Program the three pairs reserved for system text and the boot cursor,
+; in the FIRST palette (the displayed one). Pair 0 = paper 0 / ink 7,
+; pair 1 = paper 3 / ink 7, pair 2 = paper 7 / ink 0 (TM_ATTR_CURSOR -
+; the block cursor's boot inverse, so it is visible before any
+; INK/PAPER condact runs). Their bits are set in pairUsed at boot and
+; never cleared, so neither reclaim nor eviction can take them. All
+; three use classic colours only, so tm_pal_write9 (which indexes
+; dadPalette) serves directly. Restores NR $43 to PAL_L2_FIRST before
+; returning, matching the convention pair_get/pair_alloc keep.
 ; Corrupts AF, BC, DE, HL.
 tm_reserved_pairs:
     nextreg NR_PAL_CTRL, PAL_TM_FIRST
@@ -15,6 +19,11 @@ tm_reserved_pairs:
     call tm_pal_write9
     ld a, 7                     ; pair 1 ink
     call tm_pal_write9
+    ld a, 7                     ; pair 2 paper
+    call tm_pal_write9
+    ld a, 0                     ; pair 2 ink
+    call tm_pal_write9
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST   ; restore the standing convention
     ret
 
 ; A = logical colour 0-255. Out: DE = its 9-bit value, D = RRRGGGBB and
@@ -61,36 +70,35 @@ pal_colour:
 ; colour numbers - two numbers resolving to the same RGB share one pair
 ; for free, and 256 bytes of state disappear.
 
-pairUsed:   ds 16               ; bit k set = pair k allocated. Bits 0
-                                ; and 1 are the reserved system pairs and
-                                ; are set at boot, never cleared.
-pairNext:   db 2                ; round-robin eviction cursor, wrapping
-                                ; 2..127 so the reserved pairs are skipped
+pairUsed:   db %00000111        ; bit k set = pair k allocated. Bits 0-2
+            ds 15                ; are the three reserved system pairs
+                                ; (default, error, cursor) and are set
+                                ; here at boot, never cleared.
+pairNext:   db 3                ; round-robin eviction cursor, wrapping
+                                ; 3..127 so the reserved pairs are skipped
 pairWantP:  dw 0                ; the 9-bit paper colour being resolved
 pairWantI:  dw 0                ; the 9-bit ink colour being resolved
 
 ; A = palette entry index. Out: DE = the entry, D = RRRGGGBB and E =
 ; blue LSB in bit 0. Reads the palette currently selected in NR $43 -
 ; callers select PAL_TM_FIRST before looping. The index is set every
-; time because the core increments it only on writes.
+; time because the core increments it only on writes. Both value reads
+; go through nr_read (hardware.asm) rather than a raw select+read: the
+; frame ISR shares the $243B/$253B port pair to save/restore MMU 6/7,
+; and interrupts.asm documents that every OTHER mainline user of that
+; pair is DI-bracketed for exactly this reason - an interrupt landing
+; between a raw select and read here could hand back an MMU page
+; number instead of a palette byte, producing a false pair match.
 ; Preserves BC and HL. Corrupts AF.
 pair_read:
-    push bc
     nextreg NR_PAL_INDEX, a
-    ld bc, $243B
-    ld a, NR_PAL_VALUE8
-    out (c), a
-    inc b
-    in a, (c)
+    ld e, NR_PAL_VALUE8
+    call nr_read
     ld d, a
-    dec b
-    ld a, NR_PAL_VALUE9
-    out (c), a
-    inc b
-    in a, (c)
+    ld e, NR_PAL_VALUE9
+    call nr_read
     and 1                       ; NR $44 reads carry more than the blue
     ld e, a                     ; bit, so mask to bit 0
-    pop bc
     ret
 
 ; A = pair number 0-127. Sets its bit in pairUsed.
@@ -154,9 +162,9 @@ pair_free_find:
 
 ; Rebuild pairUsed from what is genuinely still needed: every pair an
 ; on-screen cell uses, plus the reserved pairs, plus every window's
-; cached attribute and the cursor's inverse - so a colour selected but
-; not yet printed cannot be stolen. Runs only when all 128 pairs are
-; taken, which no realistic adventure reaches.
+; cached attribute and its cached cursor inverse - so a colour selected
+; but not yet printed cannot be stolen. Runs only when all 128 pairs
+; are taken, which no realistic adventure reaches.
 ; Corrupts all registers.
 pair_reclaim:
     ld hl, pairUsed
@@ -164,7 +172,7 @@ pair_reclaim:
     ld bc, 15
     ld (hl), 0
     ldir
-    ld a, %00000011             ; the reserved pairs survive unconditionally
+    ld a, %00000111             ; the reserved pairs survive unconditionally
     ld (pairUsed), a
     ld hl, TM_MAP+1             ; first cell's attribute byte
     ld de, TM_COLS*TM_ROWS
@@ -187,17 +195,21 @@ pair_reclaim:
 .win:
     push bc
     push hl
-    ld a, (hl)
+    ld a, (hl)                  ; WIN_ATTR
     srl a
     call pair_mark
     pop hl
+    push hl                     ; WIN_ATTR pointer, needed again below
+    inc hl                      ; -> WIN_ATTRINV
+    ld a, (hl)
+    srl a
+    call pair_mark
+    pop hl                      ; back to this window's WIN_ATTR
     ld de, WIN_SIZE
-    add hl, de
+    add hl, de                  ; -> next window's WIN_ATTR
     pop bc
     djnz .win
-    ld a, (inpAttrInv)
-    srl a
-    jp pair_mark
+    ret
 
 ; B = paper colour 0-255, C = ink colour 0-255.
 ; Out: A = the tilemap attribute byte for that combination.
@@ -256,7 +268,7 @@ pair_alloc:
     inc a
     cp 128
     jr c, .stored
-    ld a, 2                     ; wrap past the reserved pairs
+    ld a, 3                     ; wrap past the reserved pairs
 .stored:
     ld (pairNext), a
     ld a, c
@@ -303,5 +315,8 @@ win_attr_resolve:
     ld b, c
     ld c, a
     call pair_get
-    ld (inpAttrInv), a
+    ld e, a
+    ld a, WIN_ATTRINV
+    call win_field
+    ld (hl), e
     ret
