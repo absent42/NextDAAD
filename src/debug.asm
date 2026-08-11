@@ -52,12 +52,17 @@ dbg_putc:
     ld (dbgY), a
     ret
 .print:
-    ; DE = glyph address = dbg_font + char*8
+    ; The console draws from fontData, the resident embedded font shared
+    ; with the tilemap, rather than its own copy of the stock DAAD charset.
+    ; The two agree up to glyph 32 and diverge from '!' onward, so console
+    ; text renders in the shipped face - cosmetic, and worth 2048 bytes of
+    ; DEBUG resident space.
+    ; DE = glyph address = fontData + char*8
     ; SP14c batch B DBG1: Z80N MUL D,E replaces the *8 shift chain
     ld e, a
     ld d, 8
     mul d, e
-    ld hl, dbg_font
+    ld hl, fontData             ; the resident embedded font (tilemap.asm)
     add hl, de
     ex de, hl
     ; HL = screen address: H = $40 + (y AND $18), L = ((y AND 7)<<5) + x
@@ -792,9 +797,6 @@ aud_dmaprobe:
 ; tail had only 3 bytes free after Task 9 landed them here, and Task 10
 ; needs ~40-45 for ctc2_isr and its cursors. See overlay0.asm for the
 ; routines and the relocation rationale.
-
-dbg_font:
-    INCBIN "../tools/DAAD-READY/ASSETS/CHARSET/AD8x8.CHR"   ; 2048 bytes, 256 glyphs
 
 msgTitle:   db VERSION_STR, 0
 msgCore:    db "CORE ", 0
