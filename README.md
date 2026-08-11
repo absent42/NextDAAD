@@ -7,7 +7,7 @@ the Next's extended instruction set.
 In addition to the standard DAAD features it adds Layer 2 location pictures 
 up to 320x256 in 8-bit colour, full-screen video cutscenes with sound, AY music and
 sampled sound effects across the Turbo Sound Next's three chips and DACs,
-an 80-column tilemap based text display with switchable fonts, mouse input, 
+an 80-column tilemap based text display with switchable fonts and paper/ink colours from the full ZX Next palette, mouse input, 
 and games that span several databases.
 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
@@ -39,8 +39,7 @@ for NextDAAD means just editing your source and double-clicking one batch file.
   samples of any length via card streaming, on two concurrent DAC
   channels that auto-allocate with stealing or pin outright, looping
   ones resuming after a video
-- **80x32 text** - a tilemap text driver with per-character colour and
-  its own 80-column font
+- **80x32 text** - a tilemap based text driver with per-character colour from the full ZX Next palette and its own 80-column font
 - **Custom fonts and pointers** - drop in a `FONT.CHR` or a
   `POINTER.SPR` and the interpreter picks them up at boot, and a game
   can switch between up to ten of each while it runs
