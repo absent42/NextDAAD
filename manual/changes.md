@@ -3,7 +3,7 @@
 Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## Unreleased
+## 0.5.0 - unreleased
 
 - `INK n`, `PAPER n` and `BORDER n` now take any value from 0 to 255,
   not just 0 to 15. 0 to 15 are the classic Spectrum colours, unchanged;
