@@ -258,6 +258,12 @@ NR_COPPER_ADDR_HI_CTRL equ $62 ; bits 7-6 = control (00 STOP/01 RESET/
                             ; high bits
 TM_CTRL_ON      equ %11001000   ; enable, 80x32, attributes, text mode
 PAL_TM_FIRST    equ $30     ; auto-increment on, tilemap first palette
+NR_PAL_VALUE8   equ $41     ; 8-bit RRRGGGBB palette register. Only READ
+                            ; here - pair matching compares the stored
+                            ; RRRGGGBB byte. Named for what it is because
+                            ; the core's WRITE path on this register sets
+                            ; the 9th bit to (B1 OR B0), which is the rule
+                            ; pal_colour reproduces in software.
 TM_MAP          equ $6000   ; 80x32x2 = 5120 bytes, $6000-$73FF
 TM_MAP_MSB      equ $20     ; ($6000-$4000)>>8
 TM_DEFS         equ $7400   ; 256 glyphs x 8 = 2048 bytes
@@ -265,10 +271,20 @@ TM_DEFS_MSB     equ $34     ; ($7400-$4000)>>8
 TM_COLS         equ 80
 TM_ROWS         equ 32
 GLYPH_SPACE     equ $20
-TM_ATTR_DEFAULT equ 7*2     ; pair 7 = paper 0 (black), ink 7 (white) -
-                            ; what txt_init sets and every print path
-                            ; re-sets, so a blanked cell matches a
-                            ; printed one instead of showing paper
+TM_ATTR_DEFAULT equ 0       ; reserved pair 0 = paper 0 (black), ink 7
+                            ; (white). Pairs are allocated on demand now,
+                            ; so the default, error and cursor attributes
+                            ; are the three pairs reserved at boot and
+                            ; never reclaimed - see tm_reserved_pairs.
+TM_ATTR_ERROR   equ 2       ; reserved pair 1 = paper 3 (magenta), ink 7
+                            ; (white). The fatal error bar must render
+                            ; whatever state the tilemap is in, which is
+                            ; exactly why it cannot depend on allocation.
+TM_ATTR_CURSOR  equ 4       ; reserved pair 2 = paper 7 (white), ink 0
+                            ; (black) - the block cursor's boot inverse.
+                            ; Reserved for the same reason as the other
+                            ; two: the cursor must be visible before any
+                            ; INK/PAPER condact runs.
 ULA_OFF         equ $80     ; NR_ULA_CTRL bit 7
 NR_TM_TRANSP    equ $4C     ; NORMAL tilemap mode's transparent index -
                             ; an INDEX compare, applied before the
@@ -758,7 +774,19 @@ WIN_INK         equ 7
 WIN_PAPER       equ 8
 WIN_LASTPIC     equ 9
 WIN_LINES       equ 10      ; lines printed since last pause
-WIN_SIZE        equ 11
+WIN_ATTR        equ 11      ; resolved tilemap attribute for this window's
+                            ; ink/paper. Written only when the colours
+                            ; change, so win_attr - which runs for every
+                            ; character printed - is a plain fetch and
+                            ; never allocates.
+WIN_ATTRINV     equ 12      ; the block cursor's resolved inverse (ink and
+                            ; paper swapped) for this window. Per-window,
+                            ; not global: WINDOW condacts and
+                            ; inp_stream_push (flag 41) can make the input
+                            ; cursor's window differ from whichever window
+                            ; last set colours. Written alongside WIN_ATTR
+                            ; by win_attr_resolve.
+WIN_SIZE        equ 13
 WINDOW_COUNT    equ 8
 
 ; --- Mouse (SP10 Task 5) ---

@@ -1715,42 +1715,35 @@ h_centre:                       ; 109
     call win_field
     ld (hl), e
     ret
-h_paper:                        ; 65: DAAD paper maps to a hardware
-    ld a, b                     ; palette index; 16+ FOLDS mod 16 (the
-    and 15                      ; and 15, = jdaad's param%16). win_attr
-    ld b, a                     ; masks paper to the 8 tilemap paper
-                                ; slots at render time.
-    ld a, WIN_PAPER
-    call win_field
-    ld (hl), b
-    ret
-h_ink:                          ; 66: DAAD ink maps to a palette index,
-    ld a, b                     ; 16+ folding mod 16 like h_paper (the
-    and 15                      ; tilemap carries the full 16 ink
-    ld b, a                     ; colours)
+h_paper:                        ; 65: the full 0-255 the database carries.
+    ld a, WIN_PAPER             ; DRC declares PAPER as a generic value
+    call win_field              ; checked only against 0-255, so an author
+    ld (hl), b                  ; can select any of the 256 logical colours
+    jp win_attr_resolve         ; pal_colour computes (no colour table).
+h_ink:                          ; 66
     ld a, WIN_INK
     call win_field
     ld (hl), b
-    ret
-; 67 BORDER: B AND 7 selects the classic colour. txt_init disables the
-; ULA layer at text-mode takeover (NR $68 bit 7), so the classic
-; border register is invisible; what actually shows around the screen
-; is the global fallback colour NR $4A - output wherever tilemap and
-; Layer 2 are both transparent, i.e. the whole true border region plus
-; any gaps a 256-wide-art layout leaves uncovered. So BORDER programs
-; NR $4A with the DAAD colour's RRRGGGBB (dadPalette first byte,
-; resident, tilemap.asm; hw_init boots the register black, this
-; overrides at runtime). The out ($FE) write is kept - one
-; instruction, and BORDER keeps its classic meaning if the ULA layer
-; is ever re-enabled. Corrupts AF, HL.
+    jp win_attr_resolve
+; 67 BORDER: B AND 7 still selects the classic ULA colour, and the
+; out ($FE) write is kept so BORDER retains its classic meaning if the
+; ULA layer is ever re-enabled - but txt_init disables that layer at
+; text-mode takeover (NR $68 bit 7), so the write is invisible; what
+; actually shows around the screen is the global fallback colour
+; NR $4A - output wherever tilemap and Layer 2 are both transparent,
+; i.e. the whole true border region plus any gaps a 256-wide-art
+; layout leaves uncovered. So BORDER also resolves B through the full
+; 0-255 logical palette (pal_colour; dadPalette is only the source for
+; logical entries 0-15) and programs NR $4A with the resulting
+; RRRGGGBB (hw_init boots the register black, this overrides at
+; runtime). Corrupts AF, DE, HL.
 h_border:                       ; 67
     ld a, b
     and 7
     out ($FE), a
-    add a, a                    ; dadPalette entries are 2 bytes
-    ld hl, dadPalette
-    add hl, a
-    ld a, (hl)                  ; byte 0 of the pair = RRRGGGBB
+    ld a, b
+    call pal_colour
+    ld a, d
     nextreg NR_FALLBACK, a
     ret
 ; --- key decoder ---

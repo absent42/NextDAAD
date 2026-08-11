@@ -3,38 +3,35 @@
 ; bit 0 = ULA-over-tilemap, kept 0). The glyph pixel selects palette
 ; entry (offset << 1) | pixel, so pair k lives at entries 2k and 2k+1.
 ;
-; 16-colour scheme (SP6): a pair encodes paper in bits 6-4 and ink in
-; bits 3-0, i.e. pair = paper*16 + ink. That is 8 papers (0-7) x 16
-; inks (0-15) = 128 pairs = all 256 tilemap palette entries. Ink gets
-; the full DAAD 0-15 range (body text, coloured prompts); paper is
-; limited to the 8 base colours by the tilemap's 128-pair ceiling, so
-; win_attr masks paper to 0-7 (a paper 8-15 renders as its base hue).
-; dadPalette holds the 16 DAAD colours; entry 2k = dadPalette[paper],
-; entry 2k+1 = dadPalette[ink].
+; A (paper, ink) combination is a PAIR; the FIRST palette holds 128 of
+; them, covering all 256 tilemap palette entries. INK, PAPER and BORDER
+; take the full 0-255 DAAD/Next colour range (pal_colour, tmpairs.asm),
+; so pairs are allocated on demand rather than pre-committed to a fixed
+; cross-product: pair_get (tmpairs.asm) resolves a (paper, ink) request
+; to an attribute by reading the palette back for an existing match,
+; taking a free pair, reclaiming from what is genuinely still on screen,
+; or evicting round-robin. Three pairs are reserved and never allocated
+; or evicted: pair 0 is the default text attribute, pair 1 the fatal
+; error bar, pair 2 the block cursor's boot inverse (TM_ATTR_DEFAULT/
+; TM_ATTR_ERROR/TM_ATTR_CURSOR, nextdaad.inc). Each window caches its
+; resolved attribute and its inverse (WIN_ATTR/WIN_ATTRINV), so win_attr
+; - which runs for every character printed - is a plain two-instruction
+; fetch that masks nothing; only INK/PAPER changing calls
+; win_attr_resolve to allocate.
 ;
-; NO TRANSPARENCY HERE, deliberately. The 128-pair scheme above covers
-; all 256 palette entries with real paper/ink combinations, and none of
-; them is reserved: Layer 2 sits ABOVE the tilemap (NR $15 = %000,
-; "S L U") and punches DOWN to reveal text, so nothing ever needs to
-; show through the tilemap - a transparent cell would only expose the
-; ULA, which this interpreter never draws.
-;
-; Until 2026-08-06 pair 127 was sacrificed as a "transparent" marker and
-; tm_clear_transparent wrote it. It never worked: text-mode transparency
-; is a COLOUR compare against NR $14 (chapter-next-tilemap.tex:357), and
-; pair 127's paper entry holds dadPalette[7] ($DB), which never equalled
-; NR $14. The cells were plain opaque DAAD white, which is why nobody
-; noticed - a working transparency would have exposed the ULA's own
-; white default, so success and failure looked nearly identical. Pair
-; 127 is now an ordinary (paper 7, ink 15) combination again.
+; NO TRANSPARENCY HERE, deliberately. Layer 2 sits ABOVE the tilemap
+; (NR $15 = %000, "S L U") and punches DOWN to reveal text, so nothing
+; ever needs to show through the tilemap - a transparent cell would only
+; expose the ULA, which this interpreter never draws.
 
 ; Switch the display to tilemap text mode. Corrupts all registers.
 txt_init:
     nextreg NR_TM_MAP_BASE, TM_MAP_MSB
     nextreg NR_TM_DEF_BASE, TM_DEFS_MSB
-    call tm_palette_init
+    call tm_reserved_pairs
     call tm_font_init
-    ld a, TM_ATTR_DEFAULT        ; pair 7 = paper 0 ink 7 (white on black)
+    ld a, TM_ATTR_DEFAULT        ; reserved pair 0 = paper 0 ink 7 (white
+                                 ; on black)
     ld (tmAttr), a
     ld bc, 0                    ; SP14c batch B TM3
     ld d, TM_ROWS
@@ -49,28 +46,6 @@ txt_init:
                                  ; up - though $E3 is also the hardware
                                  ; reset value, so this is belt and braces.
     nextreg NR_TM_CTRL, TM_CTRL_ON
-    ret
-
-; Program all 128 pairs from dadPalette: pair k = paper*16 + ink, with
-; paper = k >> 4 (0-7) at entry 2k and ink = k AND 15 (0-15) at entry
-; 2k+1. Each palette entry is a 9-bit value (NR $44, two writes).
-; Corrupts AF, BC, DE, HL.
-tm_palette_init:
-    nextreg NR_PAL_CTRL, PAL_TM_FIRST   ; tilemap first palette, auto-inc
-    nextreg NR_PAL_INDEX, 0
-    ld c, 0                     ; pair number k (0..127)
-.pair:
-    ld a, c
-    swapnib
-    and 15                      ; paper = k >> 4 (0-7)
-    call tm_pal_write9          ; entry 2k = dadPalette[paper]
-    ld a, c
-    and 15                      ; ink = k AND 15 (0-15)
-    call tm_pal_write9          ; entry 2k+1 = dadPalette[ink]
-    inc c
-    ld a, c
-    cp 128
-    jr nz, .pair
     ret
 
 ; A = dadPalette index 0-15 -> write its 9-bit entry (NR $44 twice).
@@ -260,7 +235,7 @@ dadPalette:
     db $FC, $00                 ; 14 bright yellow
     db $FF, $01                 ; 15 bright white
 
-tmAttr:        db 7*2
+tmAttr:        db TM_ATTR_DEFAULT
 tmFillGlyph:   db 0
 tmScrollW:     db 0
 tmScrollH:     db 0

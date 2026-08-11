@@ -7057,12 +7057,12 @@ vid_open_fail_print:
     ld hl, msgVidTooBig
     jr c, vid_fail_puts          ; B = 3
     ld hl, msgVidFrag            ; B = 4
-; HL = ASCIIZ. Prints at row 23 col 0, white on black (pair 7),
+; HL = ASCIIZ. Prints at row 23 col 0, white on black (reserved pair 0),
 ; straight through the resident tm_putc_at (overlay1 calls it the same
 ; way). Corrupts AF, BC, DE, HL.
 vid_fail_puts:
     ld bc, 23*256+0              ; B = row 23, C = col 0
-    ld e, 7*2                    ; pair 7: white ink (7), black paper (0)
+    ld e, TM_ATTR_DEFAULT        ; reserved pair 0: white ink, black paper
 .loop:
     ld a, (hl)
     or a

@@ -11,6 +11,17 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
+<h2 id="050-unreleased">0.5.0 - unreleased</h2>
+<ul>
+<li><code>INK n</code>, <code>PAPER n</code> and <code>BORDER n</code> now take any value from 0 to 255,
+  not just 0 to 15. 0 to 15 are the classic Spectrum colours, unchanged;
+  16 to 255 are the standard Next colour of that number, the same
+  <code>RRRGGGBB</code> convention used for Layer 2 artwork. See
+  <a href="customising.html">Customising</a> for the arithmetic and worked examples.</li>
+<li><code>PAPER 8-15</code> now renders bright rather than folding to the dim hue,
+  matching the Spectrum's own <code>BRIGHT</code> semantics more closely. A game
+  that used those values expecting the old dim fold will look different.</li>
+</ul>
 <h2 id="040-10-august-2026">0.4.0 - 10 August 2026</h2>
 <ul>
 <li>Your game can change its text font while it runs. <code>GFX n 16</code> installs

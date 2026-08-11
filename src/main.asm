@@ -19,13 +19,6 @@ main:
     call hw_init
     call audio_init
     call im2_init
- IFDEF DEBUG
-    ; SP8 prescaler probe: hold D during boot (row $FD bit 2)
-    ld bc, $FDFE
-    in a, (c)
-    bit 2, a
-    call z, aud_dmaprobe        ; never returns when entered
- ENDIF
     call dbg_cls
     call boot_banner
     call ram_detect
@@ -63,21 +56,16 @@ main:
     call txt_init
     call dbg_engage_tilemap
     call windows_init
- IFDEF DEBUG
-    call l2_dbg_hook             ; Layer 2 bring-up test card (Task 2);
-                                  ; no-op unless T is held (debug.asm)
- ENDIF
     ; Game takeover: wipe the FULL tilemap to blank cells at the
     ; default attribute (tm_clear_blank - the tilemap has no
     ; transparency). The boot diagnostics have sat in rows 0-11 since
     ; dbg_engage_tilemap and the game windows never cover those rows,
     ; so they would stay resident behind Layer 2 art and reappear
-    ; through every transparent pixel. After the DEBUG T-hook (which
-    ; repaints the tilemap itself and must keep its own status rows
-    ; while it runs), before the engine's first draw. Safe for
-    ; fatal(): it re-arms the tilemap itself (txt_init) and paints its
-    ; own bar and message; every print path re-sets tmAttr, so leaving
-    ; it on the default attribute here binds nothing downstream.
+    ; through every transparent pixel, before the engine's first draw.
+    ; Safe for fatal(): it re-arms the tilemap itself (txt_init) and
+    ; paints its own bar and message; every print path re-sets tmAttr,
+    ; so leaving it on the default attribute here binds nothing
+    ; downstream.
     ld b, 0
     ld c, 0
     ld d, TM_ROWS
@@ -140,7 +128,7 @@ boot_data_init:
                                 ; table, arena cursor - a warm re-entry
                                 ; must not resurrect stale entries whose
                                 ; banks bank_table_init recycles
-    ld a, 7*2
+    ld a, TM_ATTR_DEFAULT
     ld (tmAttr), a             ; tilemap attribute (white on black)
     xor a
     ld (tmUp), a               ; tilemap-live flag (see file.asm)
@@ -180,13 +168,14 @@ boot_data_init:
     INCLUDE "engine.asm"
     INCLUDE "errors.asm"
     INCLUDE "objname.asm"
+    INCLUDE "tmpairs.asm"
     INCLUDE "debug.asm"
 
 ; --- SP18 item 7 Task 11: resident tail (POST-anchor) -----------------
 ; These two live here rather than beside the other audio cells in
 ; interrupts.asm because that file is entirely PRE-anchor: it is included
 ; above, ahead of engine.asm's ALIGN 256, and every byte added there
-; comes out of the pre-flags pad, which has 3 bytes free in DEBUG. This
+; comes out of the pre-flags pad, which has 34 bytes free in DEBUG. This
 ; point is past the anchor, so these draw on the resident tail the ASSERT
 ; below guards instead. interrupts.asm's audio-cell block carries a
 ; pointer comment to here.

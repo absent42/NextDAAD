@@ -35,6 +35,12 @@ windows_init:
     inc hl
     ld (hl), a                  ; lines
     inc hl
+    ld a, TM_ATTR_DEFAULT
+    ld (hl), a                  ; attr - reserved pair 0 until a condact
+    inc hl                      ; changes ink or paper
+    ld a, TM_ATTR_CURSOR
+    ld (hl), a                  ; attrInv - reserved pair 2, the cursor's
+    inc hl                      ; boot inverse, until ink or paper change
     djnz .win
     ld a, 1
     ld (tmUp), a
@@ -93,22 +99,13 @@ win_home:
     ld (hl), 0
     ret
 
-; Out: E = attribute = (paper*16 + ink) << 1. Ink is full 0-15; paper
-; masks to 0-7 (the tilemap holds 8 paper slots), so a paper 8-15
-; renders as its base hue. Preserves D.
+; Out: E = this window's resolved tilemap attribute. A plain fetch:
+; the pair is allocated and cached by win_attr_resolve (overlay0)
+; whenever ink or paper changes, never here. Preserves D.
 win_attr:
-    ld a, WIN_INK
+    ld a, WIN_ATTR
     call win_field
-    ld a, (hl)                  ; ink 0-15
-    and 15
-    ld e, a
-    inc hl
-    ld a, (hl)                  ; paper
-    and 7                       ; 8 paper slots
-    swapnib                     ; paper * 16
-    add a, e                    ; pair = paper*16 + ink
-    add a, a                    ; pair << 1
-    ld e, a
+    ld e, (hl)
     ret
 
 win_cls:

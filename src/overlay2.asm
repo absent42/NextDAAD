@@ -3466,9 +3466,10 @@ msgFontNoBk:  db "FONT NOBK", 0    ; 9 chars at column 70 - fits the 80-column
 
 ; --- DEBUG bring-up test card ---
 ; Owner-driven hardware verification hook, wired from debug.asm's
-; l2_dbg_hook (holding T at boot, see that file for the key protocol).
-; Not reached from anywhere else; safe to strip along with the rest
-; of the IFDEF DEBUG block for a release build.
+; bare-metal isolation ladder (l2_bareprobe_hook, holding P at boot,
+; see that file for the key protocol and stage breakdown). DEBUG only;
+; safe to strip along with the rest of the IFDEF DEBUG block for a
+; release build.
 ;
 ; Double-buffer split: these diagnostics draw to the CURRENT FRONT
 ; surface directly (l2FrontBank - immediately visible, no flip step);

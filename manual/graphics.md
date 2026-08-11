@@ -130,8 +130,10 @@ out to match, keep your windows inside the paper area of the 80x32 text
 grid, which spans rows 4 to 27 and columns 8 to 71. `WINAT 4 8` with
 `WINSIZE 24 64` is the whole classic screen.
 
-`BORDER 0` to `BORDER 7` sets the surround, exactly as it always did.
-What it colours here is everything outside the artwork and the text.
+`BORDER n` sets the surround, taking the same 0-255 range as `INK` and
+`PAPER` - see [Customising](customising.md#text-and-border-colour) for
+what the numbers mean. What it colours here is everything outside the
+artwork and the text.
 There is no classic border on this target - the text layer covers the
 whole display, edge to edge, and the old ULA screen is switched off
 underneath it - so the interpreter colours the area the picture and the
