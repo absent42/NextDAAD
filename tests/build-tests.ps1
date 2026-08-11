@@ -1603,6 +1603,19 @@ foreach ($c in @(@{ n = 'INK 200';    b = [byte[]]@(66, 200) },
 }
 "palette.ddb: $($palBytes.Length) bytes, v$($palBytes[0]), 8 extended INK/PAPER/BORDER parameters survived compilation unfolded"
 
+# The pressure process walks 200 distinct papers, which is more
+# combinations than the 128-pair tilemap table holds. Assert a
+# representative spread reached the DDB rather than trusting the
+# generator, and assert the count so a truncated generation is caught.
+$paperRuns = 0
+for ($p = 16; $p -lt 216; $p++) {
+    if ((Find-ByteRuns $palBytes ([byte[]]@(65, $p))).Count -ge 1) { $paperRuns++ }
+}
+if ($paperRuns -lt 200) {
+    throw "palette: only $paperRuns of 200 pressure PAPER values present in tests\out\palette.ddb - the pressure process did not compile whole"
+}
+"palette.ddb: 200 distinct pressure PAPER values present - exceeds the 128-pair table"
+
 # --- sfxlong: the SD-streamed sampled-effect wire fixture ---
 # THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/fontsw above: DRC
 # can silently rewrite condacts, so what the interpreter actually
