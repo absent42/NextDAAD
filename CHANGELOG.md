@@ -2,6 +2,30 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.5.0 - unreleased
+
+- `INK`, `PAPER` and `BORDER` take the full 0 to 255 the database
+  already carried. 0 to 15 are the classic ULA colours, unchanged. 16
+  to 255 are the standard Next colour of that number in `RRRGGGBB`
+  form, the same convention Layer 2 artwork uses. DRC declares all three as a generic value parameter
+  checked only against 0-255, and DRB writes the byte through
+  untouched, so the range was always expressible and the interpreter
+  was the only thing discarding it.
+- **Behaviour change:** `PAPER 8-15` renders bright where it previously
+  folded to the dim hue. This is closer to the Spectrum's own BRIGHT
+  semantics than the old silent mask, but an existing game using those
+  values looks different.
+- DEBUG resident space reclaimed to fund the above: the debug console
+  now draws from the resident embedded font instead of carrying its own
+  2048-byte copy of the stock DAAD charset, and the SP8 DMA prescaler
+  probe and the Layer 2 bring-up test-card hook are retired, both
+  having answered their questions long ago. The bare-metal isolation
+  ladder and the status helpers it shares are untouched.
+- `tests/palette.dsf` and a `-Palette` harness leg assert at the byte
+  level that extended `INK`, `PAPER` and `BORDER` parameters reach the
+  compiled database unfolded, and drive 200 distinct combinations
+  against the 128-pair table so the reclaim and eviction paths execute.
+
 ## v0.4.0 - 10/08/2026
 
 - Games can change text font while they run. `GFX n 16` installs font
