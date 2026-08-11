@@ -17,12 +17,6 @@ dbg_at0:
     ld c, 0
     jr dbg_at
 
-; SP14c batch B DBG5: same idea for aud_dmaprobe's "row N, column 10"
-; sites. B = row 0-23. Only touches A.
-dbg_atc10:
-    ld c, 10
-    jr dbg_at
-
 ; B = row 0-23, C = col 0-31. Only touches A.
 dbg_at:
     ld a, b
@@ -392,16 +386,6 @@ ddb_diag:
     djnz .ptr
     ret
 
-; --- Layer 2 bring-up hook (Task 2, temporary) ---
-; Holding T through boot (from power-on until windows_init completes,
-; where main.asm calls l2_dbg_hook) shows overlay2's l2_testcard in
-; 256x192, then - on the next T press - in 320x256, then disables
-; Layer 2 and returns so normal boot continues into eng_init_game/
-; eng_run unaffected. Not held: returns immediately, untouched. This
-; is a raw port read rather than overlay0's key_scan/kb_raw, since
-; those live in an overlay this resident code has no reason to page
-; in just to poll one key.
-
 ; ZF set if T was seen held on any of up to 10 consecutive frame ticks
 ; (row $FB, bit 4 - see kbRows/keyRows in overlay0/overlay1 for the
 ; same matrix layout). A single-shot port read is timing-sensitive -
@@ -450,7 +434,7 @@ l2dbg_wait_press:
 ;
 ; SP14c batch B DBG6: B=row, D=height. Fills a TM_COLS-wide white-ink/
 ; black-paper, space-glyph bar - the exact 8-instruction sequence
-; l2dbg_status/l2dbg_status2/l2_dbg_hook each repeated verbatim.
+; l2dbg_status/l2dbg_status2 each repeated verbatim.
 ; Corrupts AF, BC, DE, HL (tm_fill_rect's own contract).
 dbg_bar_white:
     ld c, 0
@@ -501,9 +485,10 @@ l2dbg_status_regs:
 ; NOT a hardware readback: NR $18 cannot be read back, see l2_clip_set),
 ; the scroll offset (NR $16/$17, expect $00 $00), and one live pixel
 ; read back from the drawn surface (l2_peek_marker - the top-left
-; corner-marker byte). l2_dbg_hook re-asserts the clip window
-; (l2_clip_set) right after this prints, as a guard. Corrupts
-; everything.
+; corner-marker byte). Called by the bare-metal isolation ladder's
+; stage 3 straight after l2_testcard, which has already set the clip
+; window (l2_mode_set -> l2_clip_set) as part of its own flow.
+; Corrupts everything.
 l2dbg_status2:
     ld b, TM_ROWS-2
     ld d, 1
@@ -552,44 +537,6 @@ msgClipW:        db " clipW=", 0
 msgScroll:       db " scroll=", 0
 msgPx:           db " px=", 0
 
-; Corrupts everything (drives overlay2's l2_testcard/l2_disable).
-l2_dbg_hook:
-    call l2dbg_t_held
-    ret nz                       ; T not held: leave boot untouched
-    ld hl, msgTestcardHold        ; proves the hook fired, BEFORE any
-    call l2dbg_status             ; Layer 2 register is touched
-    ld a, OVL2_PAGE
-    call ovl_map_page
-    xor a                        ; 256x192 first
-    call l2_testcard
-    ld hl, msgTestcard256
-    call l2dbg_status_regs
-    call l2dbg_status2
-    xor a                        ; re-assert the clip window after the
-    call l2_clip_set             ; diagnostic, as a guard (l2dbg_status2)
-    call l2dbg_wait_release
-    call l2dbg_wait_press
-    ld a, 1                      ; then 320x256
-    call l2_testcard
-    ld hl, msgTestcard320
-    call l2dbg_status_regs
-    call l2dbg_status2
-    ld a, 1                      ; re-assert the clip window, same guard
-    call l2_clip_set
-    call l2dbg_wait_release
-    call l2dbg_wait_press
-    call l2_disable
-    ld hl, msgTestcardDone
-    call l2dbg_status
-    ; restore the whole tilemap to a normal opaque blank (undoing the
-    ; card-area transparent clear) so anything the game doesn't
-    ; immediately overwrite reads as a plain blank screen, not a
-    ; black hole where Layer 2 used to show through
-    ld b, 0
-    ld d, TM_ROWS
-    call dbg_bar_white
-    ret
-
 ; --- Bare-metal isolation ladder ---
 ; Permanent bring-up diagnostic for Layer 2 regressions. Hold P from
 ; power-on (checked at the very top of main:, BEFORE hw_init/im2_init/
@@ -607,13 +554,12 @@ l2_dbg_hook:
 ;            Still no tilemap, same black surround. 2 marker blocks.
 ;   Stage 2: + txt_init (tilemap on) + tm_clear_blank over the
 ;            card area + one status line. 3 marker blocks.
-;   Stage 3: the full testcard flow (as the T-hook's 256x192 leg,
+;   Stage 3: the full testcard flow (l2_testcard's 256x192 leg,
 ;            including its register/clip-shadow dump).
 ; Each stage waits for P released then pressed before advancing. After
 ; stage 3 it wraps back to stage 0 rather than returning, so the ladder
-; re-runs without a reset - a dead end by design, separate from the
-; T-hook (l2_dbg_hook above). P not held: returns immediately, nothing
-; touched.
+; re-runs without a reset - a dead end by design. P not held: returns
+; immediately, nothing touched.
 
 ; ZF set if P is currently held (row $DF, bit 0 - see keyRows in
 ; overlay0.asm for the same matrix layout). Samples up to 10 times
@@ -699,98 +645,13 @@ l2_bareprobe_hook:
     call l2dbg_p_wait_press
 .stage3:
     xor a
-    call l2_testcard               ; the full existing T-hook flow
+    call l2_testcard               ; the full existing testcard flow
     ld hl, msgTestcard256
     call l2dbg_status_regs
     call l2dbg_status2
     call l2dbg_p_wait_release
     call l2dbg_p_wait_press
     jr .stage0                     ; wrap around for another pass
-
-; --- SP8 DMA prescaler probe (hold D at boot) ------------------------
-; Measures what the zxnDMA prescaler actually counts. Transfers 8192
-; bytes from resident RAM ($8000 - content irrelevant, expect a short
-; noise burst) to the DAC in burst mode at two prescaler values and
-; shows elapsed frames for each. Interpretation (28MHz CPU):
-;   875kHz model: pre 87 -> 8192/(875000/87) = 0.81s = ~40-41 frames,
-;                 pre 174 -> ~81 frames (double = linear confirm)
-;   CPU-cycle model: both complete in 0-2 frames
-; Polls the DMA byte counter via the WR6 $BB read mask; if the counter
-; never advances the probe hangs with "DMA?" on screen - itself a
-; result (CSpect not emulating the counter/prescaler).
-; Never returns. Requires interrupts running (frameCounter).
-aud_dmaprobe:
-    ld b, 0
-    call dbg_atc10
-    ld hl, .msg
-    call dbg_puts
-    ld a, 87
-    call .run                   ; HL = frames at prescaler 87
-    push hl
-    ld b, 1
-    call dbg_atc10
-    pop hl
-    call dbg_hex16
-    ld a, 174
-    call .run
-    push hl
-    ld b, 2
-    call dbg_atc10
-    pop hl
-    call dbg_hex16
-.hang:
-    jr .hang
-.msg:
-    db "DMAPROBE", 0
-; A = prescaler. Out HL = elapsed frames. Corrupts everything.
-.run:
-    ld (.pre), a
-    ld hl, (frameCounter)
-    ld (.t0), hl
-    ld hl, .prog
-    ld b, .proglen
-    ld c, DMA_PORT
-    otir
-.poll:
-    ; read byte counter: WR6 read-mask command, mask = counter lo+hi
-    ld a, $BB
-    ld bc, DMA_PORT
-    out (c), a
-    ld a, %00000110
-    out (c), a
-    in a, (c)                   ; byte counter low
-    ld e, a
-    in a, (c)                   ; byte counter high
-    ld d, a
-    ld hl, 8192-2               ; near-complete threshold (end-of-
-    or a                        ; block exact value is model-dependent)
-    sbc hl, de
-    jr nc, .poll
-    ld hl, (frameCounter)
-    ld de, (.t0)
-    or a
-    sbc hl, de
-    ret
-.t0: dw 0
-.prog:
-    db $83                      ; WR6: disable DMA
-    db %01111101                ; WR0: transfer, A->B, A addr + len follow
-    dw $8000                    ; port A: resident RAM (junk audio)
-    dw 8192                     ; block length
-    db %01010100                ; WR1: A = memory, incrementing, timing follows
-    db %00000010                ; A cycle length 2
-    db %01101000                ; WR2: B = IO, fixed, timing follows
-    db %00100010                ; B cycle length 2 + prescaler follows
-.pre:
-    db 87                       ; prescaler (patched per run)
-    db $CD                      ; WR4: burst mode, B addr follows
-    dw DAC_PORT                 ; port B: DAC
-    db %10000010                ; WR5 $82: /ce only, stop on end of
-                                ; block ($92 would set D4, the doc's
-                                ; unclear /ce+wait mux mode)
-    db $CF                      ; WR6: load
-    db $87                      ; WR6: enable
-.proglen equ $ - .prog
 
 ; Ring-2 placement probe (RING2_BASE/ring2_fill/ring2_chk, SP18 item 7
 ; Task 9) relocated to overlay0.asm by Task 10 - the resident DEBUG
