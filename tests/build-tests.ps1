@@ -42,6 +42,7 @@
 #   -Uto                sd\UTO\       tools\TEST.DSF     (V2)
 #   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
 #   -FontSw             sd\FONTSW\    tests\fontsw.dsf
+#   -Palette            sd\PALETTE\   tests\palette.dsf
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
 #    never touched by this script)
 #
@@ -549,7 +550,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -579,6 +580,7 @@ if ($TileSlack)        { $legName = 'TILESLK' }
 if ($Uto)              { $legName = 'UTO' }
 if ($UtoV3)            { $legName = 'UTOV3' }
 if ($FontSw)           { $legName = 'FONTSW' }
+if ($Palette)          { $legName = 'PALETTE' }
 $leg = Join-Path $sd $legName
 
 function Reset-LegDir {
@@ -597,7 +599,7 @@ function Reset-LegDir {
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
-               'L2HOLES', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW')
+               'L2HOLES', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'PALETTE')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -1125,6 +1127,26 @@ finally {
     Pop-Location
 }
 
+# 256-colour text stimulus fixture. Compiled unconditionally like every
+# block above so a break in the DSF is caught on a plain run, whether or
+# not -Palette is given - the byte assertions below run every time.
+# OUT OF TREE: DRF.exe and DRB.PHP are run by absolute path with the cwd
+# set to tests\out\palette-work, so nothing is written under tools\.
+$paletteWork = Join-Path $root 'tests\out\palette-work'
+New-Item -ItemType Directory -Force $paletteWork | Out-Null
+Copy-Item "$PSScriptRoot\palette.dsf" "$paletteWork\NDPAL.DSF" -Force
+Push-Location $paletteWork
+try {
+    & "$dr\TOOLS\DRC\DRF.exe" zx next NDPAL.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (palette)" }
+    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDPAL.json NDPAL.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (palette)" }
+    Copy-Item NDPAL.DDB "$root\tests\out\palette.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 function Find-ByteRuns {
     # Every start offset of $needle in $hay. Plain scan - the images
     # here are tens of KB, so nothing cleverer is warranted.
@@ -1556,6 +1578,30 @@ if ($fontswPauseHits.Count -ne 3) {
     throw "fontsw: expected exactly 3 'PAUSE 25 -> 15' debounce holds (23 0F); found $($fontswPauseHits.Count) - DRC's duration scaling has changed, or a loop exit lost its debounce"
 }
 "fontsw.ddb: v$($fontswBytes[0]), GFX 2/0/3 16, MOUSE 2/1/0 5, the 8/8 hotspot, the GETMS tracking loop and its x3 debounce PAUSE all present as authored"
+
+# --- palette: the 256-colour text stimulus ---
+# PAPER is opcode 65, INK 66, BORDER 67; each takes one parameter, so
+# each call is two bytes. The point of these assertions is that the
+# parameter reached the database UNFOLDED - DRC declares all three as a
+# generic value checked only against 0-255, and if that ever changes
+# these fail rather than the interpreter silently receiving 200 AND 15.
+$palBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\palette.ddb")
+if ($palBytes[0] -ne 2) {
+    throw "palette: DDB header version byte is $($palBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+}
+foreach ($c in @(@{ n = 'INK 200';    b = [byte[]]@(66, 200) },
+                 @{ n = 'PAPER 37';   b = [byte[]]@(65, 37) },
+                 @{ n = 'BORDER 224'; b = [byte[]]@(67, 224) },
+                 @{ n = 'INK 224';    b = [byte[]]@(66, 224) },
+                 @{ n = 'PAPER 224';  b = [byte[]]@(65, 224) },
+                 @{ n = 'INK 28';     b = [byte[]]@(66, 28) },
+                 @{ n = 'INK 255';    b = [byte[]]@(66, 255) },
+                 @{ n = 'PAPER 64';   b = [byte[]]@(65, 64) })) {
+    if ((Find-ByteRuns $palBytes $c.b).Count -lt 1) {
+        throw "palette: '$($c.n)' not present in tests\out\palette.ddb - DRC folded or rewrote the authored parameter"
+    }
+}
+"palette.ddb: $($palBytes.Length) bytes, v$($palBytes[0]), 8 extended INK/PAPER/BORDER parameters survived compilation unfolded"
 
 # --- sfxlong: the SD-streamed sampled-effect wire fixture ---
 # THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/fontsw above: DRC
@@ -3504,6 +3550,11 @@ if ($FontSw) {
     "staged 2 generated pointer fixtures -> sd\$legName\POINTER1.SPR (red) / POINTER2.SPR (blue), 256 bytes each; no root POINTER.SPR, so MOUSE 0 5 shows the built-in arrow"
 
     $fontSwActive = $true
+}
+
+if ($Palette) {
+    Copy-Item "$root\tests\out\palette.ddb" (Join-Path $leg 'GAME.DDB') -Force
+    "staged palette.ddb -> $leg\GAME.DDB"
 }
 
 # The interpreter itself, so the folder is genuinely self-contained -
