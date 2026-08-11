@@ -94,7 +94,7 @@ adventure comes near that ceiling; this is here to document what
 happens on the way past it, not to warn you off anything achievable in
 practice.
 
-### `INK`, `PAPER` and `BORDER` reach the full Next palette; jDAAD does not
+### `INK`, `PAPER` and `BORDER` reach the full Next palette
 
 Values 16 to 255 select the standard Next colour of that number - see
 [Customising](customising.md#text-and-border-colour) for what the
