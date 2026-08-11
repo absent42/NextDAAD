@@ -416,7 +416,8 @@ l2dbg_t_held:
     or a                         ; guarantee ZF clear: not held on any sample
     ret
 
-; Frame-paced wait for T to be released, then pressed again (T-hook).
+; Frame-paced wait for T to be released, then pressed again, built on
+; l2dbg_t_held above.
 l2dbg_wait_release:
     call l2dbg_t_held
     jr z, l2dbg_wait_release
