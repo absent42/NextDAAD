@@ -77,23 +77,6 @@ general-purpose flags for anything you need to survive.</p>
 <p>The weight of the object a <code>DOALL</code> has just reached is not published
 into flag 55. If you need it inside the loop, ask for it directly with
 <code>WEIGH @50 n</code>.</p>
-<h2 id="text-and-colour">Text and colour</h2>
-<h3 id="ink-paper-and-border-above-15-are-a-nextdaad-extension"><code>INK</code>, <code>PAPER</code> and <code>BORDER</code> above 15 are a NextDAAD extension</h3>
-<p>jDAAD folds all three condacts modulo 16, so <code>INK 224</code> there behaves as
-<code>INK 0</code>. This interpreter does not fold: 16 to 255 select the standard
-Next colour of that number - see <a href="customising.html">Customising</a> for what
-the numbers mean. The extension is deliberate and one-way: a game that
-stays inside 0-15 plays identically everywhere, but a game written to
-use 16-255 will not look right under jDAAD, since jDAAD folds those
-values down to a different colour rather than rejecting them.</p>
-<p>Keep every <code>INK</code>, <code>PAPER</code> and <code>BORDER</code> value below 16 if the game needs
-to look right on jDAAD too.</p>
-<h3 id="paper-8-15-used-to-fold-to-the-dim-hue-it-renders-bright-now"><code>PAPER 8-15</code> used to fold to the dim hue; it renders bright now</h3>
-<p>Before this change, <code>PAPER</code> values 8 to 15 silently folded to their dim
-equivalent, 0 to 7. They render bright now, which is closer to the
-Spectrum's own <code>BRIGHT</code> semantics than the old fold. A game that used
-those values expecting the dim result will look different here than it
-did before.</p>
 <h2 id="spanish-databases">Spanish databases</h2>
 <p>Two pieces of Spanish support are missing. Only Spanish databases are
 affected; an English game sees none of this.</p>

@@ -82,6 +82,22 @@ combination changes colour without you having asked it to. No realistic
 adventure comes near that ceiling; this is here to document what
 happens on the way past it, not to warn you off anything achievable in
 practice.</p>
+<h3 id="ink-paper-and-border-reach-the-full-next-palette-jdaad-does-not"><code>INK</code>, <code>PAPER</code> and <code>BORDER</code> reach the full Next palette; jDAAD does not</h3>
+<p>Values 16 to 255 select the standard Next colour of that number - see
+<a href="customising.html#text-and-border-colour">Customising</a> for what the
+numbers mean. This is a NextDAAD extension: jDAAD folds all three
+condacts modulo 16, so the <code>INK 224</code> that gives full red here gives
+<code>INK 0</code> there. The extension is deliberate and one-way - a game that
+stays inside 0-15 plays identically on both, but a game written against
+the extended palette will not look right under jDAAD, since jDAAD wraps
+those values into its own sixteen rather than rejecting them. Stay
+inside 0-15 if the same source needs to look right on jDAAD too.</p>
+<h3 id="paper-8-15-is-bright-matching-the-spectrums-own-bright"><code>PAPER 8-15</code> is bright, matching the Spectrum's own <code>BRIGHT</code></h3>
+<p>0 to 7 are the eight ULA colours and 8 to 15 are the same eight again,
+bright - the ordinary Spectrum attribute convention, and the settled
+behaviour here. If you are bringing across a game that relied on 8-15
+folding to the dim hue instead, expect the picture to look different:
+write the dim colour's own number, 0-7, if that is what you want.</p>
 <h2 id="condacts">Condacts</h2>
 <h3 id="a-doall-inside-a-doall-stops-with-error-4">A <code>DOALL</code> inside a <code>DOALL</code> stops with error 4</h3>
 <p>There is one <code>DOALL</code> at a time. If a sub-process called from inside a

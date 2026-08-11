@@ -3,6 +3,17 @@
 Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.5.0 - unreleased
+
+- `INK n`, `PAPER n` and `BORDER n` now take any value from 0 to 255,
+  not just 0 to 15. 0 to 15 are the classic Spectrum colours, unchanged;
+  16 to 255 are the standard Next colour of that number, the same
+  `RRRGGGBB` convention used for Layer 2 artwork. See
+  [Customising](customising.md) for the arithmetic and worked examples.
+- `PAPER 8-15` now renders bright rather than folding to the dim hue,
+  matching the Spectrum's own `BRIGHT` semantics more closely. A game
+  that used those values expecting the old dim fold will look different.
+
 ## 0.4.0 - 10 August 2026
 
 - Your game can change its text font while it runs. `GFX n 16` installs

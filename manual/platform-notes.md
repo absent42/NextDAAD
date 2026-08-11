@@ -94,6 +94,26 @@ adventure comes near that ceiling; this is here to document what
 happens on the way past it, not to warn you off anything achievable in
 practice.
 
+### `INK`, `PAPER` and `BORDER` reach the full Next palette; jDAAD does not
+
+Values 16 to 255 select the standard Next colour of that number - see
+[Customising](customising.md#text-and-border-colour) for what the
+numbers mean. This is a NextDAAD extension: jDAAD folds all three
+condacts modulo 16, so the `INK 224` that gives full red here gives
+`INK 0` there. The extension is deliberate and one-way - a game that
+stays inside 0-15 plays identically on both, but a game written against
+the extended palette will not look right under jDAAD, since jDAAD wraps
+those values into its own sixteen rather than rejecting them. Stay
+inside 0-15 if the same source needs to look right on jDAAD too.
+
+### `PAPER 8-15` is bright, matching the Spectrum's own `BRIGHT`
+
+0 to 7 are the eight ULA colours and 8 to 15 are the same eight again,
+bright - the ordinary Spectrum attribute convention, and the settled
+behaviour here. If you are bringing across a game that relied on 8-15
+folding to the dim hue instead, expect the picture to look different:
+write the dim colour's own number, 0-7, if that is what you want.
+
 ## Condacts
 
 ### A `DOALL` inside a `DOALL` stops with error 4
