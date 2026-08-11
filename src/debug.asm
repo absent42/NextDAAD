@@ -115,7 +115,7 @@ dbg_putc_tm:
     ld c, a
     ld a, (dbgY)
     ld b, a
-    ld e, 7*2                   ; pair 7: white ink (7) on black paper, always
+    ld e, TM_ATTR_DEFAULT        ; reserved pair 0: white ink on black paper, always
     pop af
     call tm_putc_at
     ld a, (dbgX)
@@ -440,7 +440,7 @@ l2dbg_wait_press:
 dbg_bar_white:
     ld c, 0
     ld e, TM_COLS
-    ld a, 7*2                    ; pair 7: white ink on black paper
+    ld a, TM_ATTR_DEFAULT        ; reserved pair 0: white ink on black paper
     ld (tmAttr), a
     ld a, GLYPH_SPACE
     jp tm_fill_rect               ; tail call - returns to OUR caller

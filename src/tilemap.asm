@@ -32,9 +32,10 @@
 txt_init:
     nextreg NR_TM_MAP_BASE, TM_MAP_MSB
     nextreg NR_TM_DEF_BASE, TM_DEFS_MSB
-    call tm_palette_init
+    call tm_reserved_pairs
     call tm_font_init
-    ld a, TM_ATTR_DEFAULT        ; pair 7 = paper 0 ink 7 (white on black)
+    ld a, TM_ATTR_DEFAULT        ; reserved pair 0 = paper 0 ink 7 (white
+                                 ; on black)
     ld (tmAttr), a
     ld bc, 0                    ; SP14c batch B TM3
     ld d, TM_ROWS
@@ -49,28 +50,6 @@ txt_init:
                                  ; up - though $E3 is also the hardware
                                  ; reset value, so this is belt and braces.
     nextreg NR_TM_CTRL, TM_CTRL_ON
-    ret
-
-; Program all 128 pairs from dadPalette: pair k = paper*16 + ink, with
-; paper = k >> 4 (0-7) at entry 2k and ink = k AND 15 (0-15) at entry
-; 2k+1. Each palette entry is a 9-bit value (NR $44, two writes).
-; Corrupts AF, BC, DE, HL.
-tm_palette_init:
-    nextreg NR_PAL_CTRL, PAL_TM_FIRST   ; tilemap first palette, auto-inc
-    nextreg NR_PAL_INDEX, 0
-    ld c, 0                     ; pair number k (0..127)
-.pair:
-    ld a, c
-    swapnib
-    and 15                      ; paper = k >> 4 (0-7)
-    call tm_pal_write9          ; entry 2k = dadPalette[paper]
-    ld a, c
-    and 15                      ; ink = k AND 15 (0-15)
-    call tm_pal_write9          ; entry 2k+1 = dadPalette[ink]
-    inc c
-    ld a, c
-    cp 128
-    jr nz, .pair
     ret
 
 ; A = dadPalette index 0-15 -> write its 9-bit entry (NR $44 twice).
@@ -260,7 +239,7 @@ dadPalette:
     db $FC, $00                 ; 14 bright yellow
     db $FF, $01                 ; 15 bright white
 
-tmAttr:        db 7*2
+tmAttr:        db TM_ATTR_DEFAULT
 tmFillGlyph:   db 0
 tmScrollW:     db 0
 tmScrollH:     db 0

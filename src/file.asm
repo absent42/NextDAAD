@@ -289,7 +289,7 @@ fatal:
                                  ; likely caused the failure. fatal() never
                                  ; returns, so clobbering tmUp/tmAttr/the
                                  ; whole tilemap is fine even mid-game.
-    ld a, 110                   ; pair 55: magenta paper (3), white ink (7)
+    ld a, TM_ATTR_ERROR         ; reserved pair 1: magenta paper, white ink
     ld (tmAttr), a
     ld b, 0
     ld c, 0

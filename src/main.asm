@@ -128,7 +128,7 @@ boot_data_init:
                                 ; table, arena cursor - a warm re-entry
                                 ; must not resurrect stale entries whose
                                 ; banks bank_table_init recycles
-    ld a, 7*2
+    ld a, TM_ATTR_DEFAULT
     ld (tmAttr), a             ; tilemap attribute (white on black)
     xor a
     ld (tmUp), a               ; tilemap-live flag (see file.asm)
@@ -168,6 +168,7 @@ boot_data_init:
     INCLUDE "engine.asm"
     INCLUDE "errors.asm"
     INCLUDE "objname.asm"
+    INCLUDE "tmpairs.asm"
     INCLUDE "debug.asm"
 
 ; --- SP18 item 7 Task 11: resident tail (POST-anchor) -----------------

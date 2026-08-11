@@ -47,7 +47,7 @@ err_raise:
     ld a, (curCondact)
     call dbg_hex8
  ENDIF
-    ld a, 110                   ; pair 55: magenta paper (3), white ink (7)
+    ld a, TM_ATTR_ERROR         ; reserved pair 1: magenta paper, white ink
     ld (tmAttr), a
     ld bc, 0                    ; SP14c batch B ERR1
     ld d, 1
