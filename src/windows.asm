@@ -41,7 +41,6 @@ windows_init:
     ld a, TM_ATTR_CURSOR
     ld (hl), a                  ; attrInv - reserved pair 2, the cursor's
     inc hl                      ; boot inverse, until ink or paper change
-    xor a
     djnz .win
     ld a, 1
     ld (tmUp), a

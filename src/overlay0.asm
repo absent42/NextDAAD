@@ -1719,7 +1719,7 @@ h_paper:                        ; 65: the full 0-255 the database carries.
     ld a, WIN_PAPER             ; DRC declares PAPER as a generic value
     call win_field              ; checked only against 0-255, so an author
     ld (hl), b                  ; can select any of the 256 logical colours
-    jp win_attr_resolve         ; the tilemap second palette holds.
+    jp win_attr_resolve         ; pal_colour computes (no colour table).
 h_ink:                          ; 66
     ld a, WIN_INK
     call win_field
@@ -1736,7 +1736,7 @@ h_ink:                          ; 66
 ; 0-255 logical palette (pal_colour; dadPalette is only the source for
 ; logical entries 0-15) and programs NR $4A with the resulting
 ; RRRGGGBB (hw_init boots the register black, this overrides at
-; runtime). Corrupts AF, HL.
+; runtime). Corrupts AF, DE, HL.
 h_border:                       ; 67
     ld a, b
     and 7

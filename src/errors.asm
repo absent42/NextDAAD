@@ -11,9 +11,8 @@
 ; depth), 4 (nested DOALL), 5 (illegal opcode), 6 (bad process),
 ; 7 (bad message/location number). Codes 1 and 8 are defined for
 ; parity and first raised by later sub-projects.
-; Bar: tm_fill_rect row 0, full width, space glyph, pair 55
-; (paper 3 magenta, ink 7 white) = attr 110 via tmAttr - classic ULA
-; puts magenta at index 3 and white at index 7.
+; Bar: tm_fill_rect row 0, full width, space glyph, TM_ATTR_ERROR
+; (reserved pair 1: paper 3 magenta, ink 7 white) = attr 2 via tmAttr.
 err_raise:
     ld (errCode), a
  IFDEF DEBUG

@@ -175,7 +175,7 @@ boot_data_init:
 ; These two live here rather than beside the other audio cells in
 ; interrupts.asm because that file is entirely PRE-anchor: it is included
 ; above, ahead of engine.asm's ALIGN 256, and every byte added there
-; comes out of the pre-flags pad, which has 3 bytes free in DEBUG. This
+; comes out of the pre-flags pad, which has 33 bytes free in DEBUG. This
 ; point is past the anchor, so these draw on the resident tail the ASSERT
 ; below guards instead. interrupts.asm's audio-cell block carries a
 ; pointer comment to here.
