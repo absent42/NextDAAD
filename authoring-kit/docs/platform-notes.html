@@ -62,6 +62,26 @@ explicitly now that its neighbour, sub 16, installs a font - see
 and swaps, the surface clears, video playback on 13 and 14, and font
 installation on 16 - are listed in <a href="reference/symbols.html">Symbols</a>,
 <a href="video.html">Video</a> and <a href="customising.html">Customising</a>.</p>
+<h2 id="text-colour">Text colour</h2>
+<h3 id="only-128-inkpaper-combinations-can-be-on-screen-at-once">Only 128 ink/paper combinations can be on screen at once</h3>
+<p>The tilemap computes each cell's palette index as <code>(attribute AND $FE)
+OR pixel</code>, so a cell's paper and its ink always sit in two adjacent
+palette entries, one even and one odd above it. That splits the
+256-entry palette into 128 pairs, so at most <strong>128 distinct ink/paper
+combinations</strong> can be live on screen at once. That is combinations, not
+colours - a game that uses only a handful of colours but pairs them in
+many different ways can still reach the ceiling, while a game that uses
+every one of the 256 colours but only ever as a single ink/paper pairing
+uses one.</p>
+<p>Combinations are allocated as your game uses them and reclaimed
+automatically once the table fills, so nothing needs managing by hand.
+Exceeding 128 live combinations at once is the only way to see a
+colour change happen under you - some other combination is reclaimed to
+make room for the new one, and text already on screen in that
+combination changes colour without you having asked it to. No realistic
+adventure comes near that ceiling; this is here to document what
+happens on the way past it, not to warn you off anything achievable in
+practice.</p>
 <h2 id="condacts">Condacts</h2>
 <h3 id="a-doall-inside-a-doall-stops-with-error-4">A <code>DOALL</code> inside a <code>DOALL</code> stops with error 4</h3>
 <p>There is one <code>DOALL</code> at a time. If a sub-process called from inside a

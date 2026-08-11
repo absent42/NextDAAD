@@ -124,8 +124,10 @@ in the paper area with a coloured surround around it. To lay your text
 out to match, keep your windows inside the paper area of the 80x32 text
 grid, which spans rows 4 to 27 and columns 8 to 71. <code>WINAT 4 8</code> with
 <code>WINSIZE 24 64</code> is the whole classic screen.</p>
-<p><code>BORDER 0</code> to <code>BORDER 7</code> sets the surround, exactly as it always did.
-What it colours here is everything outside the artwork and the text.
+<p><code>BORDER n</code> sets the surround, taking the same 0-255 range as <code>INK</code> and
+<code>PAPER</code> - see <a href="customising.html#text-and-border-colour">Customising</a> for
+what the numbers mean. What it colours here is everything outside the
+artwork and the text.
 There is no classic border on this target - the text layer covers the
 whole display, edge to edge, and the old ULA screen is switched off
 underneath it - so the interpreter colours the area the picture and the

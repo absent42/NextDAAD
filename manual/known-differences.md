@@ -92,6 +92,29 @@ The weight of the object a `DOALL` has just reached is not published
 into flag 55. If you need it inside the loop, ask for it directly with
 `WEIGH @50 n`.
 
+## Text and colour
+
+### `INK`, `PAPER` and `BORDER` above 15 are a NextDAAD extension
+
+jDAAD folds all three condacts modulo 16, so `INK 224` there behaves as
+`INK 0`. This interpreter does not fold: 16 to 255 select the standard
+Next colour of that number - see [Customising](customising.md) for what
+the numbers mean. The extension is deliberate and one-way: a game that
+stays inside 0-15 plays identically everywhere, but a game written to
+use 16-255 will not look right under jDAAD, since jDAAD folds those
+values down to a different colour rather than rejecting them.
+
+Keep every `INK`, `PAPER` and `BORDER` value below 16 if the game needs
+to look right on jDAAD too.
+
+### `PAPER 8-15` used to fold to the dim hue; it renders bright now
+
+Before this change, `PAPER` values 8 to 15 silently folded to their dim
+equivalent, 0 to 7. They render bright now, which is closer to the
+Spectrum's own `BRIGHT` semantics than the old fold. A game that used
+those values expecting the dim result will look different here than it
+did before.
+
 ## Spanish databases
 
 Two pieces of Spanish support are missing. Only Spanish databases are
