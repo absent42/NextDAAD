@@ -769,7 +769,12 @@ WIN_INK         equ 7
 WIN_PAPER       equ 8
 WIN_LASTPIC     equ 9
 WIN_LINES       equ 10      ; lines printed since last pause
-WIN_SIZE        equ 11
+WIN_ATTR        equ 11      ; resolved tilemap attribute for this window's
+                            ; ink/paper. Written only when the colours
+                            ; change, so win_attr - which runs for every
+                            ; character printed - is a plain fetch and
+                            ; never allocates.
+WIN_SIZE        equ 12
 WINDOW_COUNT    equ 8
 
 ; --- Mouse (SP10 Task 5) ---

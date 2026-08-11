@@ -1013,23 +1013,11 @@ inp_capture_start:
     ld (inpStartY), a
     ret
 
-; Out: E = the window attribute with ink and paper swapped (the block
-; cursor's inverted pair). Mirrors win_attr's paper*16+ink encoding
-; with the roles swapped: ink drives the paper slot (masked to 0-7),
-; paper drives the ink slot (0-15).
+; Out: E = the block cursor's inverted attribute - the pair with this
+; window's ink and paper swapped. Resolved and cached by
+; win_attr_resolve (overlay0) whenever the colours change.
 inp_attr_inv:
-    ld a, WIN_PAPER
-    call win_field
-    ld a, (hl)                  ; paper -> ink slot
-    and 15
-    ld e, a
-    ld a, WIN_INK
-    call win_field
-    ld a, (hl)                  ; ink -> paper slot
-    and 7
-    swapnib                     ; (ink&7) * 16
-    add a, e                    ; pair = (ink&7)*16 + (paper&15)
-    add a, a                    ; pair << 1
+    ld a, (inpAttrInv)
     ld e, a
     ret
 

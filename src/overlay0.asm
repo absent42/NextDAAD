@@ -1715,23 +1715,22 @@ h_centre:                       ; 109
     call win_field
     ld (hl), e
     ret
-h_paper:                        ; 65: DAAD paper maps to a hardware
-    ld a, b                     ; palette index; 16+ FOLDS mod 16 (the
-    and 15                      ; and 15, = jdaad's param%16). win_attr
-    ld b, a                     ; masks paper to the 8 tilemap paper
-                                ; slots at render time.
+h_paper:                        ; 65: still folds to 0-15 here; Task 6
+    ld a, b                     ; opens the range. The resolver allocates
+    and 15                      ; a pair and caches the attribute, so the
+    ld b, a                     ; per-character print path never allocates.
     ld a, WIN_PAPER
     call win_field
     ld (hl), b
-    ret
-h_ink:                          ; 66: DAAD ink maps to a palette index,
-    ld a, b                     ; 16+ folding mod 16 like h_paper (the
-    and 15                      ; tilemap carries the full 16 ink
-    ld b, a                     ; colours)
+    jp win_attr_resolve
+h_ink:                          ; 66
+    ld a, b
+    and 15
+    ld b, a
     ld a, WIN_INK
     call win_field
     ld (hl), b
-    ret
+    jp win_attr_resolve
 ; 67 BORDER: B AND 7 selects the classic colour. txt_init disables the
 ; ULA layer at text-mode takeover (NR $68 bit 7), so the classic
 ; border register is invisible; what actually shows around the screen
