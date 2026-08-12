@@ -114,6 +114,20 @@ def main():
     w(';')
     w('; The prose is pseudo-random because DRC token-compresses text and')
     w('; repeated filler would collapse under compression.')
+    w(';')
+    w('; THE LOOP IS THE TEMPLATE SHAPE, trimmed - PRO 0 draws, PRO 1 parses.')
+    w('; An earlier version of this fixture ended PRO 0 without handing over')
+    w('; to a parser loop, so the interpreter restarted process 0 forever and')
+    w('; the screen flickered as it cleared and redrew. It read as correct')
+    w('; through the test harness, which compares tilemap snapshots: every')
+    w('; iteration redrew IDENTICAL content, so the grid compared equal and')
+    w('; nothing distinguished a settled screen from one being redrawn')
+    w('; hundreds of times a second. Reading the tilemap proves content, not')
+    w('; stability. It also could not accept a command, which the hardware')
+    w('; leg needs.')
+    w('')
+    w('#define fPlayer 38')
+    w('#define fVerb   33')
     w('')
     w('/CTL')
     w('_')
@@ -144,9 +158,11 @@ def main():
     w('/OTX')
     w('/0 "a granite stone"')
 
+    # Location texts end with a line break so the prompt does not run on
+    # from the last word of the description.
     w('/LTX')
     for i in range(N_LOC):
-        w('/%-3d "%s"' % (i, prose(rng, WORDS_LOC)))
+        w('/%-3d "%s#n"' % (i, prose(rng, WORDS_LOC)))
 
     w('/CON')
     for i in range(N_LOC):
@@ -159,18 +175,37 @@ def main():
     w('/OBJ')
     w('/0    0   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   STONE _')
 
-    # PRO 0 prints the past-the-boundary marker FIRST, before the location
-    # description can scroll it away, so the evidence is the top line of a
-    # boot screenshot.
+    # PRO 0 redraws the screen each turn with the past-the-boundary marker
+    # at the TOP, before the location description, so it is the first line
+    # of a boot screenshot and stays on screen while the game waits.
+    # PRO 0 must end by handing over to the parser loop: a process 0 that
+    # simply ends is restarted immediately by the interpreter, which redraws
+    # forever (visible flicker) and never prompts for a command.
     w('/PRO 0')
-    w('> _ _   CLS')
+    w('> _ _   WINDOW 1')
+    w('        WINAT 0 0')
+    w('        WINSIZE 25 127')
+    w('        CLS')
     w('        MESSAGE 254')
     w('        MESSAGE 250')
-    w('        DESC 0')
+    w('> _ _   DESC @fPlayer')
+    w('> _ _   PROCESS 1')
+    # Parser loop, the template shape trimmed to what this fixture needs -
+    # the same trim tests\gmodegate.dsf uses. PARSE is what prints the
+    # prompt and waits, so movement between locations works and the leg can
+    # be played for a few turns rather than only looked at.
     w('/PRO 1')
-    w('> _ _   DESC 0')
-    w('/PRO 2')
-    w('> _ _   MESSAGE 253')
+    w('> _ _   PARSE 0')
+    w('        REDO')
+    w('> _ _   MOVE fPlayer')
+    w('        CLS')
+    w('        RESTART')
+    w('> _ _   NEWTEXT')
+    w('        LT fVerb 14')
+    w('        SYSMESS 7')
+    w('        REDO')
+    w('> _ _   SYSMESS 8')
+    w('        REDO')
     w('/END')
 
     txt = '\n'.join(out) + '\n'
