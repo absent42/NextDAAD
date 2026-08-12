@@ -550,7 +550,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$ClassicDdb)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -562,20 +562,18 @@ $dr = Join-Path $root 'tools\DAAD-READY'
 # -v3 has already taught this codebase what happens when one site is
 # updated and another is not. DRF needs no substitute: it has no target
 # whitelist, so only DRB.PHP comes from the fork.
-# -ClassicDdb builds the whole suite for the legacy 'zx next' target
-# instead, which is how the base-$8400 path stays covered.
+# Every fixture is a NextDAAD-target database: the interpreter no longer
+# reads classic $8400-based ones, so there is no classic route to build.
 $drcRoot = if ($env:NEXTDAAD_DRC) { $env:NEXTDAAD_DRC } else { Join-Path $root 'tools\DRC' }
 $drcDrb  = Join-Path $drcRoot 'src\drb.php'
 $drcPhp  = Join-Path $dr 'PHP\php.exe'
 $drcDrf  = Join-Path $dr 'TOOLS\DRC\DRF.exe'
-[string[]]$drcTarget = if ($ClassicDdb) { 'zx','next' } else { 'nextdaad' }   # typed: a bare single-element array unwraps to a string and splats per-character
-if (-not $ClassicDdb) {
-    if (-not (Test-Path -LiteralPath $drcDrb)) {
-        throw "no DRB.PHP at $drcDrb - clone the NextDAAD DRC fork into tools\DRC, or set NEXTDAAD_DRC to point at it. DAAD Ready's own DRC does not carry the NEXTDAAD target yet. Use -ClassicDdb to build for 'zx next' instead."
-    }
-    if (-not (Select-String -LiteralPath $drcDrb -Pattern 'NEXTDAAD' -Quiet)) {
-        throw "$drcDrb has no NEXTDAAD target - update the fork clone, or set NEXTDAAD_DRC to one that has it."
-    }
+[string[]]$drcTarget = 'nextdaad'   # typed: a bare single-element array unwraps to a string and splats per-character
+if (-not (Test-Path -LiteralPath $drcDrb)) {
+    throw "no DRB.PHP at $drcDrb - clone the NextDAAD DRC fork into tools\DRC, or set NEXTDAAD_DRC to point at it. DAAD Ready's own DRC does not carry the NEXTDAAD target yet."
+}
+if (-not (Select-String -LiteralPath $drcDrb -Pattern 'NEXTDAAD' -Quiet)) {
+    throw "$drcDrb has no NEXTDAAD target - update the fork clone, or set NEXTDAAD_DRC to one that has it."
 }
 $sd = Join-Path $root 'sd'
 

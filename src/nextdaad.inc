@@ -186,38 +186,30 @@ DDB_MAGIC       equ 95      ; header offset 2. HISTORICALLY the /CTL null
                             ; read - see print.asm's prn_decoded. jDAAD
                             ; agrees: it parses byte 2 as "the95" and
                             ; never reads it again (jdaad.js:470).
-DDB_MACHINE_ZX  equ 1       ; header byte 1 HIGH nibble = target machine
-                            ; (drb.php:1820-1824 writes getMachineIDByTarget
-                            ; << 4, then ORs bit 0 for ES/PT). ZX = 1, and
-                            ; every ZX SUBtarget - 48K, 128K, PLUS3, NEXT,
-                            ; UNO, ESXDOS - shares it, so this identifies
-                            ; the ZX family and never the Next specifically.
-                            ; The LOW nibble is language and must be masked
-                            ; off before comparing: print.asm and objname.asm
-                            ; read its bit 0 as "Spanish", so a whole-byte
-                            ; compare would refuse every Spanish database.
-                            ; What makes the test worth its bytes is that a
-                            ; foreign-target DDB is not merely mistuned, it
-                            ; is unreadable: DRC bases pointers at the
-                            ; target's own load address (drb.php:1281-1294 -
-                            ; MSX $0100, CPC $2880, C64 $3880, CP/M $2000,
-                            ; CP4 $7080, PC/ST/Amiga/HTML/MSX2 zero), and
-                            ; ddbtext.asm/engine.asm subtract DDB_ZX_BASE
-                            ; unconditionally. ST and Amiga also byte-swap
-                            ; every word (drb.php:67-79) and PC/ST/Amiga/HTML
-                            ; pad tables to even addresses (drb.php:288-297).
-                            ; Ten of the twelve targets pass the version and
-                            ; DDB_MAGIC tests untouched; only MSX2 is refused
-                            ; without this, and only incidentally (its byte 2
-                            ; is a submachine id, never 95).
+; header byte 1: HIGH nibble = target machine, LOW nibble = language
+; (drb.php writes getMachineIDByTarget << 4, then ORs bit 0 for ES/PT).
+; The low nibble MUST be masked off before comparing - print.asm and
+; objname.asm read its bit 0 as "Spanish", so a whole-byte compare would
+; refuse every Spanish database.
+;
+; NextDAAD accepts its OWN machine and nothing else. The classic ZX
+; nibble (1) was accepted until 2026-08-12 with a per-database pointer
+; base; that is gone, and with it DDB_ZX_BASE, ddb_base_resolve and the
+; rebase arithmetic in rd_seek and eng_ptr_abs. A NextDAAD database's
+; pointers ARE file offsets, so the reader needs no base at all.
+;
+; What a refusal saves is not tuning but legibility: DRC bases pointers
+; at each target's own load address (drb.php - ZX $8400, MSX $0100, CPC
+; $2880, C64 $3880, CP/M $2000, CP4 $7080, PC/ST/Amiga/HTML/MSX2 zero),
+; ST and Amiga byte-swap every word, and PC/ST/Amiga/HTML pad tables to
+; even addresses. None of those is readable here, and a classic ZX
+; database would additionally lay itself out for a 32 or 42 column
+; screen. All of them now raise E4 at load.
 DDB_MACHINE_NXD equ $0C     ; NextDAAD's own machine nibble. PROVISIONAL
                             ; until DRC upstream ratifies it - the fork
                             ; branch `nextdaad` proposes 0x0C, free after
                             ; ZX81 took 0x08. If a different value is
                             ; allocated, THIS LINE IS THE WHOLE CHANGE.
-DDB_ZX_BASE     equ $8400   ; classic ZX load base; pointers are absolute
-DDB_NXD_BASE    equ 0       ; NextDAAD databases are banked, so their
-                            ; pointers are plain file offsets
 
 ; --- ddb_load result codes ---
 DDB_OK          equ 0

@@ -1,15 +1,13 @@
-; DDB text access: pointer rebase, bank-crossing stream reader, token
-; expansion. DDB pointers are absolute for the classic $8400 base:
-; offset = pointer - $8400, 8K page = DDB_PAGE_FIRST + offset/8K.
+; DDB text access: bank-crossing stream reader, token expansion.
+; A NextDAAD database's pointers are plain file offsets (base 0), so
+; there is no rebase: 8K page = DDB_PAGE_FIRST + offset/8K. Classic
+; $8400-based databases are refused at load (file.asm), which is what
+; lets this be pure page arithmetic.
 
 ; HL = absolute DDB pointer. Maps the page, sets rdPtr in slot 6.
 ; Ends with 'or' - CF clear; msg_seek's success contract relies on this.
 rd_seek:
-    ld de, DDB_ZX_BASE
-rd_seek_base equ $-2         ; operand written by ddb_base_resolve
-    or a
-    sbc hl, de                  ; HL = file offset
-    ld a, h
+    ld a, h                     ; HL IS the file offset - NextDAAD
     rlca
     rlca
     rlca

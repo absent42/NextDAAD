@@ -545,11 +545,8 @@ eng_ptr_abs:
     ld a, h
     sub high DATA_WINDOW        ; H -= $C0
     ld h, a
-    add hl, de
-    ld de, DDB_ZX_BASE
-eng_ptr_base equ $-2        ; operand written by ddb_base_resolve
-    add hl, de
-    ret
+    add hl, de                  ; = the file offset, which IS the
+    ret                         ; pointer for a NextDAAD database
 
 ; V3 INDIR's one-shot arg2 override (SP16 A2). Placed HERE, before this
 ; file's ALIGN 256/flags boundary, for the same reason as the histogram

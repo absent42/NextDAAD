@@ -207,21 +207,18 @@ ddb_load:
     sub DDB_VERSION             ; 2 -> 0, 3 -> 1, anything else >= 2
     cp 2                        ; (0/1 wrap high and fail the same way)
     jr nc, .badhdr
-    ld a, h                     ; machine nibble - see DDB_MACHINE_ZX
+    ld a, h                     ; machine nibble - see DDB_MACHINE_NXD
     and $F0                     ; (nextdaad.inc) for why the low nibble
-    cp DDB_MACHINE_ZX << 4      ; MUST be masked off. TWO machines are
-    jr z, .machok               ; accepted and they do not share a pointer
-    cp DDB_MACHINE_NXD << 4     ; base, so ddb_base_resolve below settles
-    ld a, DDB_E_MACHINE         ; which one this database uses. LD r,n
-    ret nz                      ; leaves F alone (doc 02), so the refusal
+    cp DDB_MACHINE_NXD << 4     ; MUST be masked off. NextDAAD databases
+    ld a, DDB_E_MACHINE         ; ONLY: a classic $8400-based ZX database
+    ret nz                      ; is refused here, which is what lets
+                                ; rd_seek skip the rebase entirely. LD r,n
+                                ; leaves F alone (doc 02), so the refusal
                                 ; code stages before the branch and a bare
                                 ; RET NZ suffices - no tail block, which
                                 ; matters here: an extra block between
                                 ; .chunk and .efile is what puts .efile's
                                 ; JR out of reach.
-.machok:
-    call ddb_base_resolve       ; POST-anchor (main.asm): boot-only work
-                                ; has no business in the pre-flags pad
     ld a, (ddbHeader+2)
     cp DDB_MAGIC
     jr nz, .badhdr
