@@ -187,6 +187,50 @@ boot_data_init:
 ; these draw on the resident tail the ASSERT below guards instead.
 ; interrupts.asm's audio-cell block carries a pointer comment to here.
 
+; Build the bank allocator's table: everything reserved, then the pools
+; freed. MOVED HERE from banks.asm (2026-08-12): it runs once at boot,
+; and banks.asm is entirely pre-anchor, so 53 bytes of one-shot boot
+; code were being paid for out of the scarcest region in the project.
+; The rest of the allocator stays there - bank_alloc, bank_free and
+; data_map_page are hot and belong beside each other.
+; What is free is decided HERE and asserted by debug.asm's
+; bank_selftest; the two must be changed together.
+bank_table_init:
+    ld hl, bankTable
+    ld b, BANK_TABLE_SIZE
+    xor a                   ; BT_RESERVED
+.zero:
+    ld (hl), a
+    inc hl
+    djnz .zero
+    ld a, BT_FREE
+    ld (bankTable+BANK_POOL_A), a
+    ld (bankTable+BANK_POOL_A_END), a
+    ld hl, bankTable+BANK_POOL_C     ; 20-23: released from the DDB
+    ld b, BANK_POOL_C_END-BANK_POOL_C+1
+.poolc:
+    ld (hl), a
+    inc hl
+    djnz .poolc                      ; A still holds BT_FREE for the
+                                     ; pool B loop below
+    ld hl, bankTable+BANK_POOL_B
+    ld b, BANK_BASE_LAST-BANK_POOL_B+1
+.pool:
+    ld (hl), a
+    inc hl
+    djnz .pool
+    ld a, (ramExpanded)
+    or a
+    ret z
+    ld hl, bankTable+BANK_EXP_FIRST
+    ld b, BANK_EXP_LAST-BANK_EXP_FIRST+1
+    ld a, BT_FREE
+.exp:
+    ld (hl), a
+    inc hl
+    djnz .exp
+    ret
+
 ; DDB_E_MACHINE arm for the boot dispatch at the top of this file, which
 ; is pre-anchor and could not afford the eight bytes. Reached by its
 ; JP Z, and ends in fatal(), so nothing returns here.

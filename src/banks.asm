@@ -81,41 +81,10 @@ ram_detect:
     ret
  ENDIF
 
-bank_table_init:
-    ld hl, bankTable
-    ld b, BANK_TABLE_SIZE
-    xor a                   ; BT_RESERVED
-.zero:
-    ld (hl), a
-    inc hl
-    djnz .zero
-    ld a, BT_FREE
-    ld (bankTable+BANK_POOL_A), a
-    ld (bankTable+BANK_POOL_A_END), a
-    ld hl, bankTable+BANK_POOL_C     ; 20-23: released from the DDB
-    ld b, BANK_POOL_C_END-BANK_POOL_C+1
-.poolc:
-    ld (hl), a
-    inc hl
-    djnz .poolc                      ; A still holds BT_FREE for the
-                                     ; pool B loop below
-    ld hl, bankTable+BANK_POOL_B
-    ld b, BANK_BASE_LAST-BANK_POOL_B+1
-.pool:
-    ld (hl), a
-    inc hl
-    djnz .pool
-    ld a, (ramExpanded)
-    or a
-    ret z
-    ld hl, bankTable+BANK_EXP_FIRST
-    ld b, BANK_EXP_LAST-BANK_EXP_FIRST+1
-    ld a, BT_FREE
-.exp:
-    ld (hl), a
-    inc hl
-    djnz .exp
-    ret
+; bank_table_init lives in main.asm's POST-anchor resident tail, not
+; here. It runs once at boot and this file is entirely pre-anchor, where
+; every byte comes out of the pre-flags pad; the tail has room to spare.
+; Its only caller is main.asm's boot sequence.
 
 ; Allocate the lowest free bank. Out: A = bank, CF clear.
 ; CF set when nothing is free - A is then undefined. Never touches D.
