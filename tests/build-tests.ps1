@@ -1,4 +1,4 @@
-# ===================================================================
+﻿# ===================================================================
 # LEG FOLDERS - nothing is staged into the sd\ ROOT any more
 # ===================================================================
 # 2026-08-03 (owner: "putting everything in the same sd folder is too
@@ -550,10 +550,33 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$ClassicDdb)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
+
+# ---- which DRC compiles the fixtures -------------------------------
+# The NEXTDAAD target lives in the fork (tools\DRC\) until DAAD Ready
+# ships a DRC carrying it; NEXTDAAD_DRC overrides the location. ONE
+# setting for every DRF/DRB call site in this file - there are 41, and
+# -v3 has already taught this codebase what happens when one site is
+# updated and another is not. DRF needs no substitute: it has no target
+# whitelist, so only DRB.PHP comes from the fork.
+# -ClassicDdb builds the whole suite for the legacy 'zx next' target
+# instead, which is how the base-$8400 path stays covered.
+$drcRoot = if ($env:NEXTDAAD_DRC) { $env:NEXTDAAD_DRC } else { Join-Path $root 'tools\DRC' }
+$drcDrb  = Join-Path $drcRoot 'src\drb.php'
+$drcPhp  = Join-Path $dr 'PHP\php.exe'
+$drcDrf  = Join-Path $dr 'TOOLS\DRC\DRF.exe'
+[string[]]$drcTarget = if ($ClassicDdb) { 'zx','next' } else { 'nextdaad' }   # typed: a bare single-element array unwraps to a string and splats per-character
+if (-not $ClassicDdb) {
+    if (-not (Test-Path -LiteralPath $drcDrb)) {
+        throw "no DRB.PHP at $drcDrb - clone the NextDAAD DRC fork into tools\DRC, or set NEXTDAAD_DRC to point at it. DAAD Ready's own DRC does not carry the NEXTDAAD target yet. Use -ClassicDdb to build for 'zx next' instead."
+    }
+    if (-not (Select-String -LiteralPath $drcDrb -Pattern 'NEXTDAAD' -Quiet)) {
+        throw "$drcDrb has no NEXTDAAD target - update the fork clone, or set NEXTDAAD_DRC to one that has it."
+    }
+}
 $sd = Join-Path $root 'sd'
 
 # ---- leg folder (see the LEG FOLDERS block at the top) -------------
@@ -679,9 +702,9 @@ $templateXmb = $false
 Copy-Item "$PSScriptRoot\test.dsf" "$dr\NDTEST.DSF" -Force
 Push-Location $dr
 try {
-    & .\TOOLS\DRC\DRF.exe zx next NDTEST.DSF
+    & $drcDrf @drcTarget NDTEST.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed" }
-    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDTEST.json NDTEST.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDTEST.json NDTEST.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed" }
     Move-Item NDTEST.DDB "$root\tests\out\template.ddb" -Force
     # tests\test.dsf has no XMESSAGE yet (Task 5 adds the verb), so DRB
@@ -836,9 +859,9 @@ else {
 Copy-Item "$PSScriptRoot\condacts.dsf" "$dr\NDSUITE.DSF" -Force
 Push-Location $dr
 try {
-    & .\TOOLS\DRC\DRF.exe zx next NDSUITE.DSF
+    & $drcDrf @drcTarget NDSUITE.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (suite)" }
-    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDSUITE.json NDSUITE.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDSUITE.json NDSUITE.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (suite)" }
     Move-Item NDSUITE.DDB "$root\tests\out\condacts.ddb" -Force
     # condacts.dsf's check 72 always uses XMESSAGE, so DRB always emits
@@ -854,9 +877,9 @@ finally {
 Copy-Item "$PSScriptRoot\doallnest.dsf" "$dr\NDNEST.DSF" -Force
 Push-Location $dr
 try {
-    & .\TOOLS\DRC\DRF.exe zx next NDNEST.DSF
+    & $drcDrf @drcTarget NDNEST.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (doallnest)" }
-    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDNEST.json NDNEST.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDNEST.json NDNEST.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (doallnest)" }
     Move-Item NDNEST.DDB "$root\tests\out\doallnest.ddb" -Force
 }
@@ -871,9 +894,9 @@ finally {
 Copy-Item "$PSScriptRoot\gmodegate.dsf" "$dr\NDGMODE.DSF" -Force
 Push-Location $dr
 try {
-    & .\TOOLS\DRC\DRF.exe zx next NDGMODE.DSF
+    & $drcDrf @drcTarget NDGMODE.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (gmodegate)" }
-    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDGMODE.json NDGMODE.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDGMODE.json NDGMODE.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (gmodegate)" }
     Move-Item NDGMODE.DDB "$root\tests\out\gmodegate.ddb" -Force
 }
@@ -888,9 +911,9 @@ finally {
 Copy-Item "$PSScriptRoot\audlad.dsf" "$dr\NDAUDLAD.DSF" -Force
 Push-Location $dr
 try {
-    & .\TOOLS\DRC\DRF.exe zx next NDAUDLAD.DSF
+    & $drcDrf @drcTarget NDAUDLAD.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (audlad)" }
-    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDAUDLAD.json NDAUDLAD.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDAUDLAD.json NDAUDLAD.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (audlad)" }
     Move-Item NDAUDLAD.DDB "$root\tests\out\audlad.ddb" -Force
 }
@@ -950,9 +973,9 @@ finally {
 Copy-Item "$PSScriptRoot\sfxdi.dsf" "$dr\NDSFXDI.DSF" -Force
 Push-Location $dr
 try {
-    & .\TOOLS\DRC\DRF.exe zx next NDSFXDI.DSF
+    & $drcDrf @drcTarget NDSFXDI.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (sfxdi)" }
-    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDSFXDI.json NDSFXDI.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDSFXDI.json NDSFXDI.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (sfxdi)" }
     Move-Item NDSFXDI.DDB "$root\tests\out\sfxdi.ddb" -Force
 }
@@ -976,9 +999,9 @@ New-Item -ItemType Directory -Force $sfxLongWork | Out-Null
 Copy-Item "$PSScriptRoot\sfxlong.dsf" "$sfxLongWork\NDSFXLNG.DSF" -Force
 Push-Location $sfxLongWork
 try {
-    & "$dr\TOOLS\DRC\DRF.exe" zx next NDSFXLNG.DSF
+    & $drcDrf @drcTarget NDSFXLNG.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (sfxlong)" }
-    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDSFXLNG.json NDSFXLNG.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDSFXLNG.json NDSFXLNG.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (sfxlong)" }
     Copy-Item NDSFXLNG.DDB "$root\tests\out\sfxlong.ddb" -Force
 }
@@ -997,9 +1020,9 @@ New-Item -ItemType Directory -Force $sfx2Work | Out-Null
 Copy-Item "$PSScriptRoot\sfx2.dsf" "$sfx2Work\NDSFX2.DSF" -Force
 Push-Location $sfx2Work
 try {
-    & "$dr\TOOLS\DRC\DRF.exe" zx next NDSFX2.DSF
+    & $drcDrf @drcTarget NDSFX2.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (sfx2)" }
-    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDSFX2.json NDSFX2.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDSFX2.json NDSFX2.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (sfx2)" }
     Copy-Item NDSFX2.DDB "$root\tests\out\sfx2.ddb" -Force
 }
@@ -1019,12 +1042,12 @@ finally {
 Copy-Item "$PSScriptRoot\debugflag.dsf" "$dr\NDDBGF.DSF" -Force
 Push-Location $dr
 try {
-    & .\TOOLS\DRC\DRF.exe zx next NDDBGF.DSF
+    & $drcDrf @drcTarget NDDBGF.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (debugflag)" }
-    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDDBGF.json NDDBGF.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDDBGF.json NDDBGF.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (debugflag)" }
     Move-Item NDDBGF.DDB "$root\tests\out\debugflag.ddb" -Force
-    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDDBGF.json NDDBGF.DDB -d
+    & $drcPhp $drcDrb @drcTarget EN NDDBGF.json NDDBGF.DDB -d
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (debugflag -d)" }
     Move-Item NDDBGF.DDB "$root\tests\out\debugflag-debug.ddb" -Force
 }
@@ -1061,9 +1084,9 @@ New-Item -ItemType Directory -Force $l2holesWork | Out-Null
 Copy-Item "$PSScriptRoot\l2holes.dsf" "$l2holesWork\NDL2HOLE.DSF" -Force
 Push-Location $l2holesWork
 try {
-    & "$dr\TOOLS\DRC\DRF.exe" zx next NDL2HOLE.DSF
+    & $drcDrf @drcTarget NDL2HOLE.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (l2holes)" }
-    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDL2HOLE.json NDL2HOLE.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDL2HOLE.json NDL2HOLE.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (l2holes)" }
     Copy-Item NDL2HOLE.DDB "$root\tests\out\l2holes.ddb" -Force
 }
@@ -1089,9 +1112,9 @@ New-Item -ItemType Directory -Force $tileSlackWork | Out-Null
 Copy-Item "$PSScriptRoot\tileslack.dsf" "$tileSlackWork\NDTILESL.DSF" -Force
 Push-Location $tileSlackWork
 try {
-    & "$dr\TOOLS\DRC\DRF.exe" zx next NDTILESL.DSF
+    & $drcDrf @drcTarget NDTILESL.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (tileslack)" }
-    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDTILESL.json NDTILESL.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDTILESL.json NDTILESL.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (tileslack)" }
     Copy-Item NDTILESL.DDB "$root\tests\out\tileslack.ddb" -Force
 }
@@ -1117,9 +1140,9 @@ New-Item -ItemType Directory -Force $fontswWork | Out-Null
 Copy-Item "$PSScriptRoot\fontsw.dsf" "$fontswWork\NDFONTSW.DSF" -Force
 Push-Location $fontswWork
 try {
-    & "$dr\TOOLS\DRC\DRF.exe" zx next NDFONTSW.DSF
+    & $drcDrf @drcTarget NDFONTSW.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (fontsw)" }
-    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDFONTSW.json NDFONTSW.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDFONTSW.json NDFONTSW.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (fontsw)" }
     Copy-Item NDFONTSW.DDB "$root\tests\out\fontsw.ddb" -Force
 }
@@ -1137,9 +1160,9 @@ New-Item -ItemType Directory -Force $paletteWork | Out-Null
 Copy-Item "$PSScriptRoot\palette.dsf" "$paletteWork\NDPAL.DSF" -Force
 Push-Location $paletteWork
 try {
-    & "$dr\TOOLS\DRC\DRF.exe" zx next NDPAL.DSF
+    & $drcDrf @drcTarget NDPAL.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (palette)" }
-    & "$dr\PHP\php.exe" "$dr\TOOLS\DRC\DRB.PHP" zx next EN NDPAL.json NDPAL.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDPAL.json NDPAL.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (palette)" }
     Copy-Item NDPAL.DDB "$root\tests\out\palette.ddb" -Force
 }
@@ -1239,11 +1262,14 @@ $dispHits = Find-ByteRuns $sfxdiBytes $dispRun
 if ($dispHits.Count -ne 1) {
     throw "sfxdi: expected exactly one 24x'DISPLAY 0' run (48 bytes of 1C 00) in tests\out\sfxdi.ddb, found $($dispHits.Count)"
 }
-# The four HELD renders: DISPLAY 0 followed by PAUSE 24 (authored 40 x
-# DRC's 0.6). Without the hold a damaged render flashes past in ~75 ms.
-$heldHits = Find-ByteRuns $sfxdiBytes ([byte[]]@(28, 0, 35, 24))
+# The four HELD renders: DISPLAY 0 followed by PAUSE 20 (authored 40 x
+# DRC's 0.5). Without the hold a damaged render flashes past.
+# The 0.5 was 0.6 until 2026-08-12: upstream DRC lowered the ZX NEXT base
+# note length from 120 to 100, and this harness now compiles against a DRC
+# that has that change. Every duration below moved with it.
+$heldHits = Find-ByteRuns $sfxdiBytes ([byte[]]@(28, 0, 35, 20))
 if ($heldHits.Count -ne 4) {
-    throw "sfxdi: expected exactly four 'DISPLAY 0 + PAUSE 24' held renders (1C 00 23 18); found $($heldHits.Count) - DRC's duration scaling has changed"
+    throw "sfxdi: expected exactly four 'DISPLAY 0 + PAUSE 20' held renders (1C 00 23 14); found $($heldHits.Count) - DRC's duration scaling has changed"
 }
 # ...and the four must be back to back, 4 bytes apart. This is the check
 # that a keypress boundary has not been dropped INSIDE phase 3/5: the
@@ -1256,9 +1282,9 @@ for ($i = 1; $i -lt 4; $i++) {
 }
 # PAUSE ($23) 38 - the authored 63 after DRC's 0.6 ZX NEXT scaling.
 # Three sites: the two tone reference phases and the control leg's hold.
-$pauseHits = Find-ByteRuns $sfxdiBytes ([byte[]]@(35, 38))
+$pauseHits = Find-ByteRuns $sfxdiBytes ([byte[]]@(35, 32))
 if ($pauseHits.Count -lt 3) {
-    throw "sfxdi: expected the reference phases and the control hold to compile to PAUSE 38 (23 26); found $($pauseHits.Count) occurrences - DRC's duration scaling has changed"
+    throw "sfxdi: expected the reference phases and the control hold to compile to PAUSE 32 (23 20); found $($pauseHits.Count) occurrences - DRC's duration scaling has changed"
 }
 # PICTURE 1 (opcode 84 = $54): without it Layer 2 never comes up and
 # the whole visual leg is vacuous - the rev 1 failure, asserted against.
@@ -1295,8 +1321,8 @@ if ($akAll.Count -ne 8) {
 #   SFX 0 5, MES, MES, ANYKEY - the final boundary, after the tone has
 #                               been stopped and the card left held.
 foreach ($site in @(
-        @{ n = 'card-up boundary before phase 1/5 (ANYKEY, MES, PAUSE 38)'; p = @(24, 77, $null, 35, 38); c = 1 },
-        @{ n = 'phase 1/5 + control-leg closing boundaries (PAUSE 38, MES, ANYKEY)'; p = @(35, 38, 77, $null, 24); c = 2 },
+        @{ n = 'card-up boundary before phase 1/5 (ANYKEY, MES, PAUSE 32)'; p = @(24, 77, $null, 35, 32); c = 1 },
+        @{ n = 'phase 1/5 + control-leg closing boundaries (PAUSE 32, MES, ANYKEY)'; p = @(35, 32, 77, $null, 24); c = 2 },
         @{ n = 'boundaries handing into the shared burst (MES, ANYKEY, PROCESS 10)'; p = @(77, $null, 24, 75, 10); c = 2 },
         @{ n = 'final boundary after phase 5/5 (SFX 0 5, MES, MES, ANYKEY)'; p = @(18, 0, 5, 77, $null, 77, $null, 24); c = 1 })) {
     $hits = Find-MaskedRuns $sfxdiBytes $site.p
@@ -1329,7 +1355,7 @@ foreach ($chk in @(
                "$('{0:X2}' -f $sfxdiBytes[$chk.o]) - the phase/pause structure has moved")
     }
 }
-"sfxdi.ddb: v$($sfxdiBytes[0]), 24x DISPLAY 0 at $($dispHits[0]), 4x held render contiguous at $($heldHits[0]), 20x GFX 0 1/0 0 at $($gfxHits[0]), PAUSE 38 x$($pauseHits.Count), 8 ANYKEY boundaries at $($akAll -join ','), PICTURE 1 + SFX 1 2 / 2 2 / 0 5 all present"
+"sfxdi.ddb: v$($sfxdiBytes[0]), 24x DISPLAY 0 at $($dispHits[0]), 4x held render contiguous at $($heldHits[0]), 20x GFX 0 1/0 0 at $($gfxHits[0]), PAUSE 32 x$($pauseHits.Count), 8 ANYKEY boundaries at $($akAll -join ','), PICTURE 1 + SFX 1 2 / 2 2 / 0 5 all present"
 
 # ---- l2holes: the ruler, cell by cell, then the compiled bytes ------
 # THE RULER IS THE INSTRUMENT, and its column accounting is fragile in a
@@ -1573,9 +1599,9 @@ if ((Find-ByteRuns $fontswBytes ([byte[]]@(116, 254))).Count -lt 1) {
 # immediately followed by a different next condact (a different shape's
 # MOUSE n 5, or END) - so nothing dedups them and the count is pinned
 # at exactly 3, one per shape.
-$fontswPauseHits = Find-ByteRuns $fontswBytes ([byte[]]@(35, 15))
+$fontswPauseHits = Find-ByteRuns $fontswBytes ([byte[]]@(35, 13))
 if ($fontswPauseHits.Count -ne 3) {
-    throw "fontsw: expected exactly 3 'PAUSE 25 -> 15' debounce holds (23 0F); found $($fontswPauseHits.Count) - DRC's duration scaling has changed, or a loop exit lost its debounce"
+    throw "fontsw: expected exactly 3 'PAUSE 25 -> 13' debounce holds (23 0D); found $($fontswPauseHits.Count) - DRC's duration scaling has changed, or a loop exit lost its debounce"
 }
 "fontsw.ddb: v$($fontswBytes[0]), GFX 2/0/3 16, MOUSE 2/1/0 5, the 8/8 hotspot, the GETMS tracking loop and its x3 debounce PAUSE all present as authored"
 
@@ -1927,9 +1953,9 @@ function Invoke-V3SetatPatch {
 Copy-Item "$PSScriptRoot\v3probe.dsf" "$dr\NDV3.DSF" -Force
 Push-Location $dr
 try {
-    & .\TOOLS\DRC\DRF.exe zx next NDV3.DSF -v3
+    & $drcDrf @drcTarget NDV3.DSF -v3
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (v3probe)" }
-    & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDV3.json NDV3.DDB
+    & $drcPhp $drcDrb @drcTarget EN NDV3.json NDV3.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (v3probe)" }
     $v3hdr = [System.IO.File]::ReadAllBytes("$dr\NDV3.DDB")
     if ($v3hdr[0] -ne 3) {
@@ -2057,9 +2083,9 @@ else {
     Copy-Item $utoDsf "$dr\NDUTO.DSF" -Force
     Push-Location $dr
     try {
-        & .\TOOLS\DRC\DRF.exe zx next NDUTO.DSF
+        & $drcDrf @drcTarget NDUTO.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (utotest V2)" }
-        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDUTO.json NDUTO.DDB
+        & $drcPhp $drcDrb @drcTarget EN NDUTO.json NDUTO.DDB
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (utotest V2)" }
         Move-Item NDUTO.DDB "$root\tests\out\utotest.ddb" -Force
     }
@@ -2077,9 +2103,9 @@ else {
     Copy-Item $utoDsf "$dr\NDUTO3.DSF" -Force
     Push-Location $dr
     try {
-        & .\TOOLS\DRC\DRF.exe zx next NDUTO3.DSF -v3
+        & $drcDrf @drcTarget NDUTO3.DSF -v3
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (utotest V3)" }
-        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDUTO3.json NDUTO3.DDB
+        & $drcPhp $drcDrb @drcTarget EN NDUTO3.json NDUTO3.DDB
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (utotest V3)" }
         Move-Item NDUTO3.DDB "$root\tests\out\utotest_v3.ddb" -Force
     }
@@ -2260,9 +2286,9 @@ if ($Rab) {
     Copy-Item "$rabSrc\rabenstein.dsf" "$dr\NDRAB.DSF" -Force
     Push-Location $dr
     try {
-        & .\TOOLS\DRC\DRF.exe zx next NDRAB.DSF
+        & $drcDrf @drcTarget NDRAB.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (rabenstein)" }
-        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDRAB.json NDRAB.DDB
+        & $drcPhp $drcDrb @drcTarget EN NDRAB.json NDRAB.DDB
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (rabenstein)" }
         Copy-Item NDRAB.DDB "$root\tests\out\rabenstein.ddb" -Force
         try {
@@ -2348,9 +2374,9 @@ if ($UU) {
     Copy-Item $uuDsf "$dr\NDUU.DSF" -Force
     Push-Location $dr
     try {
-        & .\TOOLS\DRC\DRF.exe zx next NDUU.DSF
+        & $drcDrf @drcTarget NDUU.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (urbanupstart)" }
-        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDUU.json NDUU.DDB
+        & $drcPhp $drcDrb @drcTarget EN NDUU.json NDUU.DDB
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (urbanupstart)" }
         Copy-Item NDUU.DDB "$root\tests\out\urbanupstart.ddb" -Force
         try {
@@ -2418,9 +2444,9 @@ if ($Part) {
         # own output (or, worse, silently reused if this DSF's own
         # XMESSAGE/XMES compile step were ever removed).
         Remove-Item '0.XMB' -ErrorAction SilentlyContinue
-        & .\TOOLS\DRC\DRF.exe zx next NDPARTA.DSF
+        & $drcDrf @drcTarget NDPARTA.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (NDPARTA)" }
-        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDPARTA.json NDPARTA.DDB
+        & $drcPhp $drcDrb @drcTarget EN NDPARTA.json NDPARTA.DDB
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (NDPARTA)" }
         Move-Item NDPARTA.DDB "$leg\GAME.DDB" -Force
         # NDPARTA.DSF always uses XMESSAGE (its own header comment) -
@@ -2442,9 +2468,9 @@ if ($Part) {
     Push-Location $dr
     try {
         Remove-Item '0.XMB' -ErrorAction SilentlyContinue
-        & .\TOOLS\DRC\DRF.exe zx next NDPARTB.DSF
+        & $drcDrf @drcTarget NDPARTB.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (NDPARTB)" }
-        & .\PHP\php.exe TOOLS\DRC\DRB.PHP zx next EN NDPARTB.json NDPARTB.DDB
+        & $drcPhp $drcDrb @drcTarget EN NDPARTB.json NDPARTB.DDB
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (NDPARTB)" }
         Move-Item NDPARTB.DDB "$leg\GAME2.DDB" -Force
         if (-not (Test-Path '0.XMB')) { throw "NDPARTB.DSF produced no 0.XMB - XMES missing from the source?" }
