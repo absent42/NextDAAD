@@ -1,8 +1,8 @@
 # Full-colour Layer 2 reference card for the 256-colour text fixture
 # (tests\palette.dsf).
 #
-# Produces tests\out\palcard.nxi, which tests\build-tests.ps1 -Palette
-# stages as sd\PALETTE\001.NXI - the one picture the fixture loads with
+# Produces tests\out\palcard.nx2, which tests\build-tests.ps1 -Palette
+# stages as sd\PALETTE\001.NX2 - the one picture the fixture loads with
 # PICTURE 1 and draws with DISPLAY 0.
 #
 # WHAT THIS CARD IS FOR. The fixture exercises text ink and paper across
@@ -50,13 +50,23 @@
 #     Text INK 227 is unaffected and stays $E3: the tilemap's palette is
 #     not the one l2_palette_load rewrites.
 #
-# SIZE AND PLACEMENT. 256 x 128 as .NXI. 256-wide art is top-aligned and
-# the screen below it stays transparent (manual\graphics.md), so the
-# card occupies tilemap rows 4 to 19 and needs no padding to leave the
-# text room - the fixture puts its text window at row 20. Height is
-# derived by gfx_derive_height from the file length as
-# (bytes - 512) / 256, so the size is the one thing that has to be right
-# for the card to load at all.
+# SIZE AND PLACEMENT. 320 x 128 as .NX2. A 320-wide picture covers
+# exactly the same area of screen as the 80x32 text grid, so one
+# character cell is 4 picture pixels wide and 8 tall with no inset
+# (manual\graphics.md). The card therefore occupies tilemap rows 0 to 15
+# across all 80 columns, and art is top-aligned with the screen below it
+# left transparent, so it needs no padding to leave the text room - the
+# fixture puts its text window at row 16. Height is derived by
+# gfx_derive_height from the file length as (bytes - 512) / 320, so the
+# size is the one thing that has to be right for the card to load at
+# all; 320-wide art may be 1 to 256 rows.
+#
+# .NX2 ALSO CHANGES THE BLIT PATH, which is worth knowing when reading a
+# fault. gfx_blit routes 320-wide art to gfx_row_scatter320, a CPU
+# column scatter, where 256-wide .NXI art goes to gfx_row_copy256 and
+# one DMA call per row. So this card exercises the scatter path, and
+# damage that is specific to it shows up here rather than on the .NXI
+# cards elsewhere in the suite.
 #
 # Generated, not committed - a byte-exact function of the constants
 # below, the same rule tests\art\mkl2card.py follows.
@@ -64,11 +74,11 @@
 import os
 import sys
 
-WIDTH = 256
+WIDTH = 320
 HEIGHT = 128
 
 GRID = 16                       # 16 x 16 swatches covering all 256 indices
-SWATCH_W = WIDTH // GRID        # 16 pixels
+SWATCH_W = WIDTH // GRID        # 20 pixels
 SWATCH_H = HEIGHT // GRID       # 8 pixels
 
 TRANSPARENT = 255               # L2_TRANSP_INDEX
@@ -150,7 +160,7 @@ def build():
 def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else "."
     os.makedirs(outdir, exist_ok=True)
-    path = os.path.join(outdir, "palcard.nxi")
+    path = os.path.join(outdir, "palcard.nx2")
     data = pal_bytes() + build()
     assert (len(data) - 512) % WIDTH == 0
     assert (len(data) - 512) // WIDTH == HEIGHT
