@@ -43,6 +43,7 @@
 #   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
 #   -FontSw             sd\FONTSW\    tests\fontsw.dsf
 #   -Palette            sd\PALETTE\   tests\palette.dsf
+#   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
 #    never touched by this script)
 #
@@ -550,7 +551,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -602,6 +603,7 @@ if ($Uto)              { $legName = 'UTO' }
 if ($UtoV3)            { $legName = 'UTOV3' }
 if ($FontSw)           { $legName = 'FONTSW' }
 if ($Palette)          { $legName = 'PALETTE' }
+if ($BigDdb)           { $legName = 'BIGDDB' }
 $leg = Join-Path $sd $legName
 
 function Reset-LegDir {
@@ -620,7 +622,8 @@ function Reset-LegDir {
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
-               'L2HOLES', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'PALETTE')
+               'L2HOLES', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'PALETTE',
+               'BIGDDB')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -885,6 +888,94 @@ finally {
     Remove-Item "$dr\NDNEST.DSF", "$dr\NDNEST.json" -ErrorAction SilentlyContinue
     Pop-Location
 }
+
+# Oversize fixture: a database PAST THE OLD 31744-BYTE CEILING. Compiled
+# unconditionally like the fixtures around it so a break is caught on a
+# plain run; only -BigDdb makes it the active GAME.DDB (sd\BIGDDB\).
+#
+# WHAT IT IS FOR. A classic ZX database bases its pointers at $8400, so
+# nothing past 31744 bytes is expressible. The NEXTDAAD target bases them
+# at 0, and this fixture is the proof that the whole 64K is reachable: it
+# is ~49 KB, and the structures DRC writes LAST - the process list, the
+# location and connection tables, and the text of the high-numbered
+# messages - all sit past 31744 where the classic scheme could not name
+# them at all.
+#
+# THE COMPILED BYTES ARE ASSERTED, not assumed - the same rule the -SfxDi
+# block states. "It compiled" would pass on a database that never crossed
+# the boundary, which is the one thing this fixture exists to guarantee,
+# and the fixture's size is an emergent property of DRC's text
+# compression rather than something the .dsf states directly. So the
+# boundary crossings are re-read out of the DDB here, every run.
+Copy-Item "$PSScriptRoot\bigddb.dsf" "$dr\NDBIG.DSF" -Force
+Push-Location $dr
+try {
+    & $drcDrf @drcTarget NDBIG.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (bigddb)" }
+    & $drcPhp $drcDrb @drcTarget EN NDBIG.json NDBIG.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (bigddb)" }
+    Move-Item NDBIG.DDB "$root\tests\out\bigddb.ddb" -Force
+}
+finally {
+    Remove-Item "$dr\NDBIG.DSF", "$dr\NDBIG.json" -ErrorAction SilentlyContinue
+    Pop-Location
+}
+$bigBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\bigddb.ddb")
+$bigLen = $bigBytes.Length
+function Get-BigWord { param([int]$At) $bigBytes[$At] + 256 * $bigBytes[$At + 1] }
+# Header identity first: a database that is not this target proves
+# nothing about this target's reach.
+if ($bigBytes[2] -ne 95) { throw "bigddb: magic byte is $($bigBytes[2]), expected 95" }
+if (($bigBytes[1] -band 0xF0) -ne 0xC0) {
+    throw "bigddb: machine nibble is $('0x{0:X2}' -f ($bigBytes[1] -band 0xF0)), expected 0xC0 (NEXTDAAD) - the fixture compiled for the wrong target"
+}
+if (($bigBytes[1] -band 0x0F) -ne 0) {
+    throw "bigddb: language nibble is $($bigBytes[1] -band 0x0F), expected 0 (EN) - the machine nibble must not have eaten the language half"
+}
+# The point of the fixture. 31744 is the classic ceiling; 65535 is the
+# format's own, and the interpreter refuses anything larger with E2, so
+# a fixture that drifted past it would fail as an oversize database
+# rather than proving reach.
+if ($bigLen -le 31744) {
+    throw "bigddb: $bigLen bytes - NOT past the 31744 classic ceiling, so it tests nothing. DRC token-compresses the text, so the .dsf must grow to move this."
+}
+if ($bigLen -gt 65535) {
+    throw "bigddb: $bigLen bytes - past the 65535 format ceiling, which the interpreter refuses with E2. Shrink the .dsf."
+}
+# Pointers are FILE OFFSETS, not $8400-rebased addresses. Under the
+# classic scheme every one of these would carry a +$8400 bias and the
+# tail of a 49 KB database would run off the end of a 16-bit pointer;
+# here every header pointer must land inside the file.
+foreach ($h in 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30) {
+    $v = Get-BigWord $h
+    if ($v -ge $bigLen) {
+        throw "bigddb: header pointer at offset $h is $v, outside the $bigLen-byte file - pointers are not plain file offsets"
+    }
+}
+# The structures DRC writes last must actually be past the boundary.
+# HDR_PROCLST is the one that matters most: condact dispatch reads it on
+# every turn, and under the classic scheme it would be unreachable.
+$bigProc = Get-BigWord 10
+$bigLoc = Get-BigWord 14
+$bigMsg = Get-BigWord 16
+$bigCon = Get-BigWord 20
+foreach ($t in @{n = 'process list'; v = $bigProc }, @{n = 'location table'; v = $bigLoc },
+    @{n = 'message table'; v = $bigMsg }, @{n = 'connection table'; v = $bigCon }) {
+    if ($t.v -le 31744) {
+        throw "bigddb: the $($t.n) is at $($t.v), inside the classic 31744 reach - the fixture is large but its tables are not past the boundary"
+    }
+}
+# MESSAGE 254 is the on-screen evidence the leg is booted for. BOTH its
+# lookup entry and the text that entry points at must live past 31744,
+# or a screenshot of it proves only that short messages work.
+$big254 = Get-BigWord ($bigMsg + 2 * 254)
+$big254e = $bigMsg + 2 * 254
+if ($big254e -le 31744) { throw "bigddb: message 254's lookup entry is at $big254e, inside the classic reach" }
+if ($big254 -le 31744) {
+    throw "bigddb: message 254's TEXT is at $big254, inside the classic reach - the location texts are carrying the size instead of the messages, so the printed evidence proves nothing. Lengthen the messages."
+}
+if ($bigBytes[5] -ne 255) { throw "bigddb: header message count is $($bigBytes[5]), expected 255 (the byte-wide maximum)" }
+"bigddb: $bigLen bytes, target C0 - process list @$bigProc, message table @$bigMsg, MESSAGE 254 entry @$big254e text @$big254 (all past the 31744 classic ceiling)"
 
 # SP16 Task 1 GMODE graphics-gate fixture. Compiled unconditionally,
 # like the suite and doallnest above, so a break in the DSF is caught
@@ -2211,6 +2302,14 @@ if ($Suite) {
 }
 if ($Err4) {
     Copy-Item "$root\tests\out\doallnest.ddb" "$leg\GAME.DDB" -Force
+}
+
+if ($BigDdb) {
+    # Nothing to stage but the DDB - deliberately. The fixture is pure
+    # text and processes, so a picture or a tune in the folder would only
+    # add ways for the leg to fail for reasons that are not about reach.
+    Copy-Item "$root\tests\out\bigddb.ddb" "$leg\GAME.DDB" -Force
+    "staged tests\out\bigddb.ddb -> sd\$legName\GAME.DDB ($bigLen bytes - boot it and read the first line: MESSAGE 254 lives past 31744)"
 }
 
 $gmodeActive = $false
@@ -3688,6 +3787,7 @@ elseif ($tileSlackActive) { "active: tileslack (--tile-slack A/B fixture, two pa
 elseif ($utoV3Active) { "active: utotest V3 (Uto's THIRD-PARTY DAAD compliance test, header version 3 - self-scoring, 68 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
 elseif ($utoActive) { "active: utotest V2 (Uto's THIRD-PARTY DAAD compliance test - self-scoring, 64 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
+elseif ($BigDdb) { "active: bigddb ($bigLen bytes, past the 31744 classic ceiling)" }
 elseif ($Suite) { "active: suite" }
 else { "active: template" }
 
