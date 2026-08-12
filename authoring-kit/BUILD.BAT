@@ -27,7 +27,23 @@ REM ---- derive tool paths ----
 set "DR=%TOOLSDIR%\DAAD-READY"
 set "DRF=%DR%\TOOLS\DRC\DRF.exe"
 set "PHP=%DR%\PHP\php.exe"
-set "DRB=%DR%\TOOLS\DRC\DRB.PHP"
+set "DRB=%DRCDIR%\src\drb.php"
+if not exist "%DRB%" set "DRB=%DRCDIR%\TOOLS\DRC\DRB.PHP"
+set "DRTARGET=nextdaad"
+if not exist "%DRB%" (
+    echo ERROR: no DRB.PHP at %DRB%
+    echo Install the NextDAAD DRC fork into %DRCDIR% - see tools\README.txt.
+    pause
+    exit /b 1
+)
+findstr /C:"NEXTDAAD" "%DRB%" >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: the DRC at %DRCDIR% has no NEXTDAAD target.
+    echo NextDAAD databases cannot be built with it. Update the fork,
+    echo or point DRCDIR in CONFIG.BAT at one that has the target.
+    pause
+    exit /b 1
+)
 set "GFX=%TOOLSDIR%\gfx2next\gfx2next.exe"
 set "S2A=%TOOLSDIR%\ArkosTracker3\tools\SongToAky.exe"
 set "S2E=%TOOLSDIR%\ArkosTracker3\tools\SongToSoundEffects.exe"
@@ -232,7 +248,7 @@ for %%N in (2 3 4 5 6 7 8 9) do (
         REM dialect as part 1, since a part switch reloads a header and
         REM the flags carry across. See docs\daad-v3.html "Moving an
         REM existing version 2 game to V3" for the three migration hazards.
-        "%DRF%" zx next __ndbpart.DSF -v3
+        "%DRF%" %DRTARGET% __ndbpart.DSF -v3
         if errorlevel 1 (
             popd
             del "%DR%\__ndbpart.*" 2>nul
@@ -243,7 +259,7 @@ for %%N in (2 3 4 5 6 7 8 9) do (
         REM pre-clean stale 0.XMB - see the same-shaped comment in
         REM lib\ddb.bat for why (%DR% is shared across every compile).
         del "%DR%\0.XMB" 2>nul
-        "%PHP%" "%DRB%" zx next EN __ndbpart.json __ndbpart.DDB
+        "%PHP%" "%DRB%" %DRTARGET% EN __ndbpart.json __ndbpart.DDB
         if errorlevel 1 (
             popd
             del "%DR%\__ndbpart.*" 2>nul

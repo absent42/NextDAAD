@@ -15,6 +15,14 @@ REM Location of the toolchain (DRC, gfx2next, Arkos tools, CSpect). Install the
 REM tools into this folder - see tools\README.txt.
 SET TOOLSDIR=tools
 
+REM Which DRC compiles your game. NextDAAD databases need the NEXTDAAD
+REM target, which DAAD Ready's own DRC does not have yet - so the build
+REM uses the NextDAAD DRC fork, installed into this folder (see
+REM tools\README.txt). Once a DAAD Ready release ships a DRC carrying the
+REM target, change this to %TOOLSDIR%\DAAD-READY\TOOLS\DRC and delete the
+REM fork - nothing else needs touching.
+SET DRCDIR=%TOOLSDIR%\DRC
+
 REM The pre-built interpreter to ship in RELEASE\ as nextdaad.nex.
 SET NEXFILE=nextdaad.nex
 

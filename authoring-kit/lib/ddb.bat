@@ -25,7 +25,7 @@ REM marking DONE, PAUSE 0 becomes "wait for a key", and flag 53 bit 1
 REM starts switching the HASAT attribute bank. See ..\docs\daad-v3.html,
 REM "Moving an existing version 2 game to V3". The per-part compile in
 REM BUILD.BAT must carry the same flag - both sites or neither.
-"%DRF%" zx next __ndb.DSF -v3
+"%DRF%" %DRTARGET% __ndb.DSF -v3
 if errorlevel 1 (
     popd
     del "%DR%\__ndb.*" 2>nul
@@ -36,7 +36,7 @@ REM ---- pre-clean stale 0.XMB from a previous compile - %DR% is shared
 REM      across builds, so a game without XMESSAGE must not inherit and
 REM      stage a leftover 0.XMB left behind by a different game.
 del "%DR%\0.XMB" 2>nul
-"%PHP%" "%DRB%" zx next EN __ndb.json __ndb.DDB
+"%PHP%" "%DRB%" %DRTARGET% EN __ndb.json __ndb.DDB
 if errorlevel 1 (
     popd
     del "%DR%\__ndb.*" 2>nul
