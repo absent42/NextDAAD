@@ -547,6 +547,7 @@ eng_ptr_abs:
     ld h, a
     add hl, de
     ld de, DDB_ZX_BASE
+eng_ptr_base equ $-2        ; operand written by ddb_base_resolve
     add hl, de
     ret
 

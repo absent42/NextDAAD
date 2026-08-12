@@ -187,6 +187,31 @@ boot_data_init:
 ; these draw on the resident tail the ASSERT below guards instead.
 ; interrupts.asm's audio-cell block carries a pointer comment to here.
 
+; Settle which pointer base the loaded database uses and write it into
+; the two LD DE,nn immediates that consume it: rd_seek (ddbtext.asm)
+; subtracts it to reach a file offset, eng_ptr_abs (engine.asm) adds it
+; back to rebuild an absolute pointer for the process stack. They must
+; always agree or a saved resume point decodes somewhere else.
+;
+; Self-modified rather than read from a variable so the hot path keeps
+; LD DE,nn at 3 bytes and 10T - rd_seek is on every text seek and every
+; condact re-seek, and LD DE,(nn) would cost a byte and 10T at both
+; sites (doc 08). The assembly-time value of both operands is
+; DDB_ZX_BASE, so a classic database is correct even if this never runs.
+; Called from ddb_load once the header has validated; a warm re-entry
+; re-runs ddb_load and so re-resolves. Corrupts AF, DE.
+ddb_base_resolve:
+    ld de, DDB_ZX_BASE
+    ld a, (ddbHeader+1)
+    and $F0
+    cp DDB_MACHINE_ZX << 4
+    jr z, .set
+    ld de, DDB_NXD_BASE
+.set:
+    ld (rd_seek_base), de
+    ld (eng_ptr_base), de
+    ret
+
 ; Build the bank allocator's table: everything reserved, then the pools
 ; freed. MOVED HERE from banks.asm (2026-08-12): it runs once at boot,
 ; and banks.asm is entirely pre-anchor, so 53 bytes of one-shot boot

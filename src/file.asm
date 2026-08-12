@@ -209,16 +209,19 @@ ddb_load:
     jr nc, .badhdr
     ld a, h                     ; machine nibble - see DDB_MACHINE_ZX
     and $F0                     ; (nextdaad.inc) for why the low nibble
-    cp DDB_MACHINE_ZX << 4      ; MUST be masked off and why a foreign
-    ld a, DDB_E_MACHINE         ; target is unreadable rather than odd.
-    ret nz                      ; LD r,n leaves F alone (doc 02), so the
-                                ; code can be staged BEFORE the branch and
-                                ; refuse with a bare RET NZ - no tail block
-                                ; to jump to, which matters here: an extra
-                                ; block between .chunk and .efile is what
-                                ; puts .efile's JR out of reach. A falls
-                                ; through clobbered, reloaded on the next
-                                ; line.
+    cp DDB_MACHINE_ZX << 4      ; MUST be masked off. TWO machines are
+    jr z, .machok               ; accepted and they do not share a pointer
+    cp DDB_MACHINE_NXD << 4     ; base, so ddb_base_resolve below settles
+    ld a, DDB_E_MACHINE         ; which one this database uses. LD r,n
+    ret nz                      ; leaves F alone (doc 02), so the refusal
+                                ; code stages before the branch and a bare
+                                ; RET NZ suffices - no tail block, which
+                                ; matters here: an extra block between
+                                ; .chunk and .efile is what puts .efile's
+                                ; JR out of reach.
+.machok:
+    call ddb_base_resolve       ; POST-anchor (main.asm): boot-only work
+                                ; has no business in the pre-flags pad
     ld a, (ddbHeader+2)
     cp DDB_MAGIC
     jr nz, .badhdr

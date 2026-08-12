@@ -210,7 +210,14 @@ DDB_MACHINE_ZX  equ 1       ; header byte 1 HIGH nibble = target machine
                             ; DDB_MAGIC tests untouched; only MSX2 is refused
                             ; without this, and only incidentally (its byte 2
                             ; is a submachine id, never 95).
+DDB_MACHINE_NXD equ $0C     ; NextDAAD's own machine nibble. PROVISIONAL
+                            ; until DRC upstream ratifies it - the fork
+                            ; branch `nextdaad` proposes 0x0C, free after
+                            ; ZX81 took 0x08. If a different value is
+                            ; allocated, THIS LINE IS THE WHOLE CHANGE.
 DDB_ZX_BASE     equ $8400   ; classic ZX load base; pointers are absolute
+DDB_NXD_BASE    equ 0       ; NextDAAD databases are banked, so their
+                            ; pointers are plain file offsets
 
 ; --- ddb_load result codes ---
 DDB_OK          equ 0

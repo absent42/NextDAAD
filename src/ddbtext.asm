@@ -6,6 +6,7 @@
 ; Ends with 'or' - CF clear; msg_seek's success contract relies on this.
 rd_seek:
     ld de, DDB_ZX_BASE
+rd_seek_base equ $-2         ; operand written by ddb_base_resolve
     or a
     sbc hl, de                  ; HL = file offset
     ld a, h
