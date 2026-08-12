@@ -15,9 +15,13 @@ scheme) uses 16-bit pointers based at $8400, the classic ZX DAAD load
 address. That caps the whole compiled DDB - vocabulary, messages,
 objects, locations, connections, processes, everything DRC writes into
 <code>GAME.DDB</code> - at 31744 bytes ($8400 to $FFFF). This is a DRC/compiler
-format ceiling, not a NextDAAD interpreter limit (the interpreter
-itself accepts a DDB up to 128K), but it is the ceiling a growing game
-actually reaches first.</p>
+format ceiling rather than the interpreter's own, and it is the ceiling
+a growing game actually reaches first.</p>
+<p>The interpreter's own hard limit is 64K. A DDB pointer is 16 bits, so
+64K is every distinct position one can name, whatever address the
+pointers are counted from; NextDAAD refuses a larger <code>GAME.DDB</code> at boot
+with <code>NextDAAD: DDB oversize - E2</code> rather than loading a part of it that
+nothing could reach.</p>
 <p>The relief valve is XMESSAGE, below: moving text out of the DDB and
 into <code>0.XMB</code> frees the same bytes inside the 31744-byte budget, at the
 cost of the separate external-text budget instead. A game approaching

@@ -25,6 +25,20 @@ All notable changes to NextDAAD are recorded here.
   level that extended `INK`, `PAPER` and `BORDER` parameters reach the
   compiled database unfolded, and drive 200 distinct combinations
   against the 128-pair table so the reclaim and eviction paths execute.
+- 64K of banks released to the allocator. The database reservation was
+  8 banks (128K) for a database the interpreter can never address more
+  than 64K of, so it is now 4. On a 1MB machine the pool grows from 14
+  banks to 18, which is 29% more room for the picture cache and sampled
+  audio; on a 2MB machine, from 78 to 82.
+- **Behaviour change:** a `GAME.DDB` over 64K is refused at boot with
+  `NextDAAD: DDB oversize - E2`. It previously loaded, with everything
+  past 64K unreachable by any pointer. No database DRC can currently
+  compile comes close, so this cannot affect an existing game.
+- The DEBUG allocator selftest works again. Its expected free-bank
+  counts still counted a bank that had been withdrawn for video use, so
+  it had been failing its first check, and its verdict was the one boot
+  diagnostic never replayed onto the tilemap - so the failure was
+  printed where nothing could show it.
 - DEBUG video-page space reclaimed: the tick-based frame-timeline
   instrument is gone - the per-phase accumulators, `vid_tl_stamp` and
   its five frame-loop call sites, the CTC ISR's tick counter, the

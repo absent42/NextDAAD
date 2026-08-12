@@ -261,10 +261,10 @@ boot_banner:
 ; both build variants, see nextdaad.inc's bank map). Check 1 had been
 ; failing ever since, on the ULA console where the verdict was never
 ; replayed to the tilemap and so was never seen.
-SELFTEST_FREE_2MB equ 78    ; 14,15 + 36-47 + 48-111 (28,29 withdrawn for the
-                            ; overlays, 30-34 for the Layer 2 back surface,
-                            ; 35 for VID_PAGE2/SFX_PAGE)
-SELFTEST_FREE_1MB equ 14    ; 14,15 + 36-47 (same withdrawals)
+SELFTEST_FREE_2MB equ 82    ; 14,15 + 20-23 + 36-47 + 48-111 (28,29 withdrawn
+                            ; for the overlays, 30-34 for the Layer 2 back
+                            ; surface, 35 for VID_PAGE2/SFX_PAGE)
+SELFTEST_FREE_1MB equ 18    ; 14,15 + 20-23 + 36-47 (same withdrawals)
 
 ram_diag:
     ld b, 2
@@ -305,9 +305,9 @@ bank_selftest:
     cp BANK_POOL_A_END
     ld a, 3
     jr nz, .fail
-    call bank_alloc         ; check 4: then bank 36 (29 withdrawn for
-                            ; overlay 2, 30-34 for the L2 back surface)
-    cp BANK_POOL_B
+    call bank_alloc         ; check 4: then bank 20, the first of the
+                            ; pool released from the DDB reservation
+    cp BANK_POOL_C
     ld a, 4
     jr nz, .fail
     ld a, BANK_POOL_A_END   ; check 5: freed bank is reused first
@@ -338,7 +338,7 @@ bank_selftest:
     call bank_free
     ld a, BANK_POOL_A_END
     call bank_free
-    ld a, BANK_POOL_B
+    ld a, BANK_POOL_C
     call bank_free
     call bank_count_free
     cp d

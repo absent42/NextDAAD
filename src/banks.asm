@@ -92,6 +92,13 @@ bank_table_init:
     ld a, BT_FREE
     ld (bankTable+BANK_POOL_A), a
     ld (bankTable+BANK_POOL_A_END), a
+    ld hl, bankTable+BANK_POOL_C     ; 20-23: released from the DDB
+    ld b, BANK_POOL_C_END-BANK_POOL_C+1
+.poolc:
+    ld (hl), a
+    inc hl
+    djnz .poolc                      ; A still holds BT_FREE for the
+                                     ; pool B loop below
     ld hl, bankTable+BANK_POOL_B
     ld b, BANK_BASE_LAST-BANK_POOL_B+1
 .pool:

@@ -91,13 +91,31 @@ NR_INT_C0_VAL   equ %00000001 ; hardware IM2 mode: vector base (bits 7:5) 0, bit
                             ; non-carved source to $BEBE -> im2_isr unchanged.
 
 ; --- Physical bank map (16K banks) ---
+; SETTLED 2026-08-12. Every range below is either hardware-fixed or
+; derived from a limit stated at its own constant - none is a guess with
+; room to spare, so a range that looks generous is load-bearing. The
+; allocator pool is whatever is left: banks 14-15, 20-23, 36-47 and,
+; when the RAM is there, 48-111. bank_table_init (banks.asm) is the one
+; place that decides what is free, and debug.asm's bank_selftest asserts
+; both the count and the allocation ORDER - update those expectations
+; whenever anything here moves, never loosen them.
 BANK_SYS_LAST   equ 8       ; 0-8 reserved: system, ULA bank 5, code bank 2
 BANK_L2_FIRST   equ 9       ; 9-13 Layer 2 boot FRONT surface (5 banks covers
 BANK_L2_LAST    equ 13      ; 320x256); flips swap roles with 30-34
 BANK_POOL_A     equ 14      ; 14-15 allocator pool
 BANK_POOL_A_END equ 15
-BANK_DDB_FIRST  equ 16      ; 16-23 DDB, 128K maximum
-BANK_DDB_LAST   equ 23
+BANK_DDB_FIRST  equ 16      ; 16-19 DDB, 64K maximum. FOUR banks because
+BANK_DDB_LAST   equ 19      ; 64K is the interpreter's addressable extent,
+                            ; not a capacity choice: rd_seek (ddbtext.asm)
+                            ; masks the page index with AND 7, so a DDB
+                            ; pointer reaches 8 pages of 8K and no more,
+                            ; whatever the file size. This was 16-23/128K
+                            ; until 2026-08-12; the upper four banks could
+                            ; never hold an addressable byte. Do not
+                            ; "restore" them - raising this without also
+                            ; widening rd_seek's mask achieves nothing.
+BANK_POOL_C     equ 20      ; 20-23 allocator pool, released from the old
+BANK_POOL_C_END equ 23      ; DDB over-reservation
 BANK_AUDIO_FIRST equ 24     ; 24-27 reserved for music and SFX
 BANK_AUDIO_LAST equ 27
 BANK_L2BACK_FIRST equ 30    ; 30-34 Layer 2 boot BACK surface (double buffer:
@@ -138,7 +156,12 @@ BT_FREE         equ 1
 BT_USED         equ 2
 
 ; --- DDB ---
-DDB_MAX_BANKS   equ 8
+DDB_MAX_BANKS   equ 4       ; 64K. ddb_load's chunk cap is DDB_MAX_BANKS*2
+                            ; 8K chunks, so a larger file returns
+                            ; DDB_E_SIZE instead of loading a part of
+                            ; itself that no pointer could reach. Tied to
+                            ; BANK_DDB_FIRST/LAST above - see the note
+                            ; there before changing either.
 DDB_HEADER_SIZE equ 34
 DDB_VERSION     equ 2       ; lowest accepted header version; ddb_load
                             ; takes 2 AND 3 (SP16 A1 - DAAD-READY's own
