@@ -3770,6 +3770,31 @@ $good = [System.IO.File]::ReadAllBytes("$leg\GAME.DDB")
 "version=$($good[0]) target=$('{0:X2}' -f $good[1]) magic=$($good[2])"
 $ptrs = for ($i = 8; $i -lt 34; $i += 2) { '{0:X4}' -f ($good[$i] + 256 * $good[$i+1]) }
 "pointers: $($ptrs -join ' ')"
+
+# EVERY database staged into the leg folder must carry the NEXTDAAD
+# machine nibble. This line used to be PRINTED and nothing read it: a
+# fixture compiled for the wrong target staged silently and surfaced
+# only as "NextDAAD: DDB wrong machine - E4" on the glass, at which
+# point it looks like an interpreter fault rather than a harness one.
+#
+# Scoped to the leg folder ON PURPOSE, not to tests\out\*.ddb. That
+# directory legitimately holds classic databases - deliberate negative
+# fixtures and one-off comparison builds - so a blanket sweep there
+# would fail on files that are SUPPOSED to be machine 01. What must be
+# true is narrower and stricter: whatever this run staged is what boots,
+# and all of it must be this target.
+#
+# C1 (Spanish) is accepted as well as C0 (English) because the machine
+# nibble is the target and the low nibble is the language - the two are
+# independent, and refusing C1 here would encode an assumption the
+# interpreter itself does not make.
+foreach ($stagedDdb in Get-ChildItem -LiteralPath $leg -Filter '*.DDB' -File) {
+    $sb = [System.IO.File]::ReadAllBytes($stagedDdb.FullName)
+    if ($sb.Length -lt 3) { throw "$($stagedDdb.Name) is $($sb.Length) bytes - too short to be a database" }
+    if (($sb[1] -band 0xF0) -ne 0xC0) {
+        throw "sd\$legName\$($stagedDdb.Name) carries machine nibble $('0x{0:X2}' -f ($sb[1] -band 0xF0)), not 0xC0 (NEXTDAAD) - it was compiled for another target and will boot to E4. Check that its compile block passes the configured target."
+    }
+}
 if ($fontSwActive) { "active: fontsw (SP18 font/pointer switching fixture)" }
 elseif ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - GAME2.DDB + PART2\0.XMB also staged)" }
 elseif ($uuActive) { "active: urbanupstart" }
