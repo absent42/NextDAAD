@@ -997,6 +997,13 @@ vid_rl_poll:
 ; 50.080 Hz (69888 T per field at 3.5 MHz), so NOM runs 0.16% long.
 ; Corrupts AF, BC, DE, HL.
 vid_play_frame:
+    ld hl, (vidTlFrames)         ; FRM=. Counted HERE since v0.5.0 - it
+    inc hl                       ; used to ride on vid_tl_stamp's PACE
+    ld (vidTlFrames), hl         ; transition, and this routine is called
+                                 ; from that same site, once per frame,
+                                 ; so the count is unchanged. It has to
+                                 ; stay live: PLAY/NOM is a rate ratio
+                                 ; over exactly these FRM frame periods.
     ld hl, (vidNomStep)          ; 8.8 fixed fields/frame, staged at open
     ld de, (vidNomAcc)
     add hl, de
@@ -2437,19 +2444,6 @@ vid_run:
     ld bc, AUD_CTC_PORT
     out (c), a                   ; time constant -> timer starts NOW,
                                  ; phase-locked to the field (T9)
- IFDEF DEBUG
-    ; LNF/LNL probe baseline: seed the prev cells from a fresh raster
-    ; sample AT the arm, so the first stamp interval carries only the
-    ; arm->stamp window - matching the tick clock, whose vidTlTicks
-    ; starts counting at this arm (the preload pump and the phase
-    ; wait above stay out of the wall books, exactly as they are out
-    ; of the tick books)
-    call vid_rl_poll
-    ld hl, (vidRlFields)
-    ld (vidLnPrevF), hl
-    ld hl, (vidRlLast)
-    ld (vidLnPrevL), hl
- ENDIF
 
 ; ---------------------------------------------------------------------
 ; The frame loop (T10 circular-feed phasing). Per frame f: pace on
@@ -2487,9 +2481,8 @@ vid_run:
 ; ---------------------------------------------------------------------
 .frameloop:
  IFDEF DEBUG
-    ld a, VID_TL_PACE
-    call vid_tl_stamp            ; closes OTHER, opens PACE, frames++
-    call vid_play_frame          ; PLAY= bracket arm (first frame) and
+    call vid_play_frame          ; PLAY= bracket arm (first frame),
+                                 ; FRM++ and
                                  ; NOM += one frame's nominal fields -
                                  ; HERE, not at the present, so that
                                  ; held frames count (see its banner)
@@ -2545,17 +2538,7 @@ vid_run:
     ld a, (vidStreaming)
     or a
     call nz, vid_ring_gate       ; streaming: hold until frame served
- IFDEF DEBUG
-    ld a, VID_TL_DECODE
-    call vid_tl_stamp
- ENDIF
     call vid_decode_any          ; A = terminal (errors -> .decfail)
- IFDEF DEBUG
-    push af
-    ld a, VID_TL_FLIP
-    call vid_tl_stamp
-    pop af
- ENDIF
     ; --- present ---
     cp VOP_KFLIP
     jr nz, .delta
@@ -2594,10 +2577,6 @@ vid_run:
     xor a
     ld (vidPalPending), a
 .present_done:
- IFDEF DEBUG
-    ld a, VID_TL_AUDIO
-    call vid_tl_stamp
- ENDIF
     ; --- stage the NEXT frame's audio feed (T10) ---
     ld hl, (vidFramesLeft)
     dec hl
@@ -2618,10 +2597,6 @@ vid_run:
     call vid_aud_pump            ; the pre-T10 shape; bigger frames
                                  ; trickle from the .pace spin)
 .qskip:
- IFDEF DEBUG
-    ld a, VID_TL_OTHER
-    call vid_tl_stamp
- ENDIF
     call vid_key_any             ; any key ends playback (<= 1 frame
     jr nz, .restore              ; latency; the frame just presented)
     ld hl, (vidFramesLeft)
@@ -2807,16 +2782,6 @@ vid_key_any:
 ; ---------------------------------------------------------------------
 video_ctc_isr_stereo:
     push af
- IFDEF DEBUG
-    ld a, (vidTlTicks)
-    inc a
-    ld (vidTlTicks), a
-    jr nz, .tlnc
-    ld a, (vidTlTicks+1)
-    inc a
-    ld (vidTlTicks+1), a
-.tlnc:
- ENDIF
     ld a, (ix+0)
     out (VID_DAC_LEFT), a
     ld a, (ix+1)
@@ -3834,16 +3799,27 @@ vidSvMmu7:       db 0
 vidSvSfxRes:     db 0
 
  IFDEF DEBUG
-; DEBUG frame-timeline instrument state. vidTlTicks..vidLoopPass is
-; zeroed at session start (l2setup body); vidTlFillFrames sits AFTER
-; the zero span (it is written by nxv2_open_body BEFORE the wipe
-; runs) and inside the report's copy span. The accumulators must stay
-; contiguous and in this exact order (the LDIR + indexed access).
-vidTlTicks:      dw 0            ; video-ISR tick count (the clock)
-vidTlLastTick:   dw 0
-vidTlLastPhase:  db 0
-vidTlFrames:     dw 0
-vidTlAcc:        ds VID_TL_PHASES*4
+; DEBUG session-report state. vidTlFrames..vidLoopPass is zeroed at
+; session start (l2setup body); vidTlFillFrames sits AFTER the zero
+; span (it is written by nxv2_open_body BEFORE the wipe runs) and
+; inside the report's copy span. The cells must stay contiguous and in
+; this exact order (the LDIR + indexed access), and any change here
+; must be mirrored EXACTLY in the page-local block at the foot of
+; VID_PAGE2 - the ASSERT there is what enforces it.
+;
+; The tick-based phase timeline that used to head this block (v0.5.0)
+; is gone: vidTlTicks/LastTick/LastPhase/Acc, the vidLn* raster sums,
+; vid_tl_stamp and its five frame-loop call sites. It measured phase
+; occupancy in video-CTC ISR ticks, which the PLAY= banner below
+; explains is structurally blind to a suppressed interrupt - and the
+; 2026-08-08 PACE-loss investigation ended by finding the instrument
+; itself was the artifact (vid_rl_poll merging ~1 edge per 8 polls),
+; so its per-phase figures were inflated in every DEBUG run before
+; that date. PLAY= replaced it on the strength of exactly that, and
+; is what survives here. Do not reintroduce a tick-derived wall
+; measurement without reading vid_rl_poll's divider first.
+vidTlFrames:     dw 0            ; delivered frames (FRM=); counted by
+                                 ; vid_play_frame, once per frame
 vidErrCode:      db 0            ; 0 = clean; VID_ERR_* on abort
 vidErrOp:        db 0            ; the offending opcode byte (ERR=OP)
 vidErrPos:       ds 3            ; breadcrumb: failing source position
@@ -3874,8 +3850,8 @@ vidPlayStart:    dw 0            ; field count at the first frame
 vidPlayEnd:      dw 0            ; field count at teardown
 vidNomStep:      dw 0            ; nominal fields per frame, 8.8 fixed
 vidNomAcc:       ds 3            ; nominal fields accumulator, 8.8
-VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlTicks
-VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlTicks
+VID_TL_ZERO_LEN  equ vidLoopPass + 1 - vidTlFrames
+VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlFrames
 ; Phase 2-POLL causation probe (2026-08-09): SPIN-side poll divider.
 ; vid_pace_poll (the .pace/.ffin/.drainlast/ring-gate wait-loop sites)
 ; and vid_aud_pump's .next chunk loop both called vid_rl_poll on EVERY
@@ -3892,153 +3868,21 @@ VID_TL_BLOCK_LEN equ vidNomAcc + 3 - vidTlTicks
 ; 20 ms) or PLAY undercounts. A spin pass is ~0.4 ms streamed (faster
 ; resident), so 16 passes between polls is a worst case of
 ; 16 x 0.4 ms = ~6.4 ms streamed - inside the 20 ms floor with ~3x
-; margin (20 / 6.4 ~ 3.1x). NOT applied to vid_tl_stamp (5x/frame,
-; needs a fresh sample every call for stamp-accurate walls) or the
-; decode-path divider (vidRlDiv, unchanged).
+; margin (20 / 6.4 ~ 3.1x). Not applied to the decode-path divider
+; either (vidRlDiv, unchanged). The third exemption named here used to
+; be vid_tl_stamp, which polled undivided 5x/frame for stamp-accurate
+; walls; it went with the tick timeline in v0.5.0, and its poll
+; density was the very thing the 2026-08-08 investigation found was
+; costing CTC edges.
 ;
 ; This cell sits AFTER vidNomAcc, outside VID_TL_BLOCK_LEN (the
-; report's mirrored span) and outside VID_LN_LEN - nothing reads it
-; for the report, so it needs no page-local mirror entry; it only
-; drives a poll/no-poll decision. Zeroed (seeded to 1, like vidRlDiv)
-; with the other PLAY= cells at session init.
+; report's mirrored span) - nothing reads it for the report, so it
+; needs no page-local mirror entry; it only drives a poll/no-poll
+; decision. Zeroed (seeded to 1, like vidRlDiv) with the other PLAY=
+; cells at session init.
 vidRlSpinDiv:    db 1            ; SPIN poll divider (counts down);
                                  ; shares the VID_RL_DIV cadence and
                                  ; the vid_rl_poll reset with vidRlDiv
-; LNF/LNL wall-clock probe (clip-039 regression): per-phase WALL time
-; in raster units, accumulated by vid_tl_stamp at the same boundaries
-; and to the same OLD phase as vidTlAcc's tick deltas, so that
-; LOST(phase) = wall_ticks(phase) - ticks(phase) is computable
-; offline. MODE-BLIND on the Z80 side (the HDMI machine-line
-; structure is not pinned by the local docs): vidLnA = per-phase sums
-; of vidRlFields deltas (16-bit), vidLnB = per-phase sums of SIGNED
-; raw 9-bit raster-line differences (32-bit, range -511..+511 per
-; stamp); the report prints both plus NR $11 & 7 and the conversion
-; wall_ticks = R*A + (R/L)*B happens offline (R = ticks per field,
-; L = machine lines per field for the printed mode). These cells sit
-; OUTSIDE the zero span AND outside the report copy span: zeroed by
-; name in the l2setup body, read LIVE by the report under its own
-; map bracket (the mirror block was NOT extended - VID_PAGE2 is the
-; tightest page in the DEBUG image, and post-park the cells are
-; static, so a live read is equivalent). The prev cells re-seed from
-; a fresh vid_rl_poll at the CTC arm, so the first stamp interval
-; carries only the arm->stamp window - the same window the tick
-; clock itself starts with.
-vidLnPrevF:      dw 0            ; vidRlFields at the last stamp
-vidLnPrevL:      dw 0            ; raw 9-bit raster line at last stamp
-vidLnA:          ds VID_TL_PHASES*2   ; per-phase field-delta sums
-vidLnB:          ds VID_TL_PHASES*4   ; per-phase signed line-diff sums
-VID_LN_LEN       equ vidLnB + VID_TL_PHASES*4 - vidLnPrevF
-
-; DEBUG timeline stamp: A = new phase id (VID_TL_*). Accumulates the
-; tick delta since the previous stamp into the phase that was active,
-; then opens the new phase. Phase 0 (PACE) also counts a frame.
-; Never touches IX (the ISR's pointer). Corrupts AF, BC, DE, HL.
-vid_tl_stamp:
-    push af
-    call vid_rl_poll             ; LNF/LNL probe: fresh wall sample at
-                                 ; the boundary itself (the divided
-                                 ; poll sites leave the last sample up
-                                 ; to one poll gap stale). Wall clock:
-                                 ; poll ~340 T + accumulate ~400 T =
-                                 ; ~740 T/stamp, ~3,700 T across the 5
-                                 ; stamps = ~0.34% of a 25fps frame
-                                 ; slot - DEBUG only. Preserves
-                                 ; BC/DE/HL/IX, corrupts AF (saved)
-    ld hl, (vidTlTicks)
-    ld de, (vidTlLastTick)
-    ld (vidTlLastTick), hl
-    or a
-    sbc hl, de
-    ex de, hl                    ; DE = delta ticks
-    ld a, (vidTlLastPhase)
-    add a, a
-    add a, a
-    ld l, a
-    ld h, 0
-    ld bc, vidTlAcc
-    add hl, bc
-    ld a, e
-    add a, (hl)
-    ld (hl), a
-    inc hl
-    ld a, d
-    adc a, (hl)
-    ld (hl), a
-    jr nc, .noc
-    inc hl
-    inc (hl)
-    jr nz, .noc
-    inc hl
-    inc (hl)
-.noc:
-    ; --- LNF/LNL wall accumulation: SAME boundary, SAME old phase as
-    ; the tick delta above (vidTlLastPhase is not overwritten until
-    ; the pop below). Field-count delta first (16-bit, unsigned) ---
-    ld hl, (vidRlFields)
-    ld de, (vidLnPrevF)
-    ld (vidLnPrevF), hl
-    or a
-    sbc hl, de
-    ex de, hl                    ; DE = field-count delta
-    ld a, (vidTlLastPhase)
-    add a, a                     ; dw table
-    ld l, a
-    ld h, 0
-    ld bc, vidLnA
-    add hl, bc
-    ld a, e
-    add a, (hl)
-    ld (hl), a
-    inc hl
-    ld a, d
-    adc a, (hl)
-    ld (hl), a
-    ; --- raw raster-line difference, SIGNED (both operands 9-bit, so
-    ; the 16-bit subtract is exact in -511..+511), sign-extended into
-    ; the phase's 32-bit vidLnB sum ---
-    ld hl, (vidRlLast)
-    ld de, (vidLnPrevL)
-    ld (vidLnPrevL), hl
-    or a
-    sbc hl, de
-    ex de, hl                    ; DE = signed line diff
-    ld a, (vidTlLastPhase)
-    add a, a
-    add a, a                     ; 4-byte table
-    ld l, a
-    ld h, 0
-    ld bc, vidLnB
-    add hl, bc
-    ld a, d
-    add a, a                     ; CF = sign bit of the diff
-    sbc a, a                     ; A = $00/$FF sign-extension byte
-    ld c, a                      ; (BC's base-address role is spent)
-    ld a, e
-    add a, (hl)
-    ld (hl), a
-    inc hl
-    ld a, d
-    adc a, (hl)
-    ld (hl), a
-    inc hl
-    ld a, c
-    adc a, (hl)
-    ld (hl), a
-    inc hl
-    ld a, c
-    adc a, (hl)
-    ld (hl), a
-    pop af
-    ld (vidTlLastPhase), a
-    or a                         ; VID_TL_PACE == 0
-    ret nz
-    ld hl, (vidTlFrames)
-    inc hl
-    ld (vidTlFrames), hl
-    ret
-
-; Post-teardown report trampoline (hot/cold/hot - MMU7 back to
-; VID_PAGE on return; reached only after the CTC is parked).
 vid_tl_report:
     ld hl, vid_tl_report_body
     push hl
@@ -6441,11 +6285,11 @@ vid_run_l2setup_body:
     ; (vidAudWr/RdPrev/PaceRem), and the feed state is zeroed below
     ; with the rest of the session init
  IFDEF DEBUG
-    ; timeline baseline: zero vidTlTicks..vidLoopPass (vidTlFillFrames
+    ; session baseline: zero vidTlFrames..vidLoopPass (vidTlFillFrames
     ; sits outside the span - the open body already staged it)
-    ld hl, vidTlTicks+DATA_WINDOW-OVL_ORG
+    ld hl, vidTlFrames+DATA_WINDOW-OVL_ORG
     ld (hl), 0
-    ld de, vidTlTicks+1+DATA_WINDOW-OVL_ORG
+    ld de, vidTlFrames+1+DATA_WINDOW-OVL_ORG
     ld bc, VID_TL_ZERO_LEN-1
     ldir
     ; PLAY= baseline: its cells live after the zero span (so the open
@@ -6470,15 +6314,6 @@ vid_run_l2setup_body:
     ld (vidNomAcc+2+DATA_WINDOW-OVL_ORG), a
     ld hl, (vidNomStepC)
     ld (vidNomStep+DATA_WINDOW-OVL_ORG), hl
-    ; LNF/LNL probe cells: outside the zero span (like the PLAY cells
-    ; above) so they are cleared here by name; the prev cells re-seed
-    ; from a fresh poll at the CTC arm, so a zero here can never leak
-    ; pre-session wall time into the accumulators
-    ld hl, vidLnPrevF+DATA_WINDOW-OVL_ORG
-    ld (hl), 0
-    ld de, vidLnPrevF+1+DATA_WINDOW-OVL_ORG
-    ld bc, VID_LN_LEN-1
-    ldir
  ENDIF
     ; --- decode session init (3c: moved cold into this bracket -
     ; strictly pre-arm; the hot .orchret side arms right after; the
@@ -7728,32 +7563,17 @@ vidStrmBlkBuf:     ds 512
 
  IFDEF DEBUG
 ; ---------------------------------------------------------------------
-; DEBUG timeline report (carried mechanism: the VID_PAGE block is
+; DEBUG session report (carried mechanism: the VID_PAGE block is
 ; LDIR-copied across the page hop into the page-local mirror BEFORE
-; any print - the copy-across contract, rubric 3). v2 rows: the five
-; frame-loop phases; the OTHER row carries TOT/FRM/ERR/OP/POS/PASS and
-; the RING row carries the ring triple + FILL (the resident ring load's
-; 50Hz-frame count). FRM prints as live/mirror - the Card #5 trap, see
-; vid_tl_frames_live; FILL moved to the RING row in the same change
-; because the pair pushed the OTHER row past 80 columns.
+; any print - the copy-across contract, rubric 3). Three rows since
+; v0.5.0, when the five per-phase tick rows, the TOT total and the
+; LNF/LNL raster probe were removed with the tick timeline itself:
+; STATUS carries FRM/ERR/OP/POS/PASS, RING carries the ring triple +
+; FILL (the resident ring load's 50Hz-frame count), and PLAY carries
+; the wall-clock bracket against NOM. FRM prints as live/mirror - the
+; Card #5 trap, see vid_tl_frames_live.
 ; ---------------------------------------------------------------------
 VID_TL_ROW0 equ 24
-
-vid_tl_print32:
-    push hl
-    inc hl
-    inc hl
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    ex de, hl
-    call dbg_hex16               ; high word
-    pop hl
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    ex de, hl
-    jp dbg_hex16                 ; low word, tail call
 
 vid_tl_report_body:
     ; clear Layer 2 over the report rows (carried v1 fix: stale video
@@ -7766,117 +7586,19 @@ vid_tl_report_body:
     call data_save
     ld a, VID_PAGE
     call data_map_page
-    ld hl, vidTlTicks + DATA_WINDOW - OVL_ORG
-    ld de, vidTlTicksL
+    ld hl, vidTlFrames + DATA_WINDOW - OVL_ORG
+    ld de, vidTlFramesL
     ld bc, VID_TL_BLOCK_LEN
     ldir
-    ; LNF/LNL rows (rows 22/23): per-phase wall clock in raster
-    ; units, PACE/AUDIO/DECODE/FLIP/OTHER order - read LIVE off the
-    ; hot page under the map bracket the LDIR above already holds
-    ; (the mirror was not extended: this page is the tightest in the
-    ; DEBUG image, and the hot cells are static once the CTC parks).
-    ; LNF = 16-bit sums of vidRlFields deltas; MODE = NR $11 & 7, the
-    ; offline divisor pick; LNL = 32-bit SIGNED sums of raw 9-bit
-    ; raster-line differences, printed high word first. Offline:
-    ; wall_ticks = R*A + (R/L)*B per phase (R = ticks per field, L =
-    ; machine lines per field for MODE), LOST = wall_ticks - ticks.
-    ld b, 22
-    call dbg_at0
-    ld hl, msgTlLnf
-    call dbg_puts
-    ld hl, vidLnA + DATA_WINDOW - OVL_ORG
-    ld b, VID_TL_PHASES
-.lnf:
-    push bc
-    push hl
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    ex de, hl
-    call dbg_hex16
-    pop hl
-    inc hl
-    inc hl
-    pop bc
-    dec b
-    jr z, .lnfmode
-    push bc
-    push hl
-    ld hl, msgTlSlash
-    call dbg_puts
-    pop hl
-    pop bc
-    jr .lnf
-.lnfmode:
-    ld hl, msgTlMode
-    call dbg_puts
-    ld e, NR_VIDEO_TIMING
-    call nr_read
-    and 7
-    add a, '0'                   ; 0-7: always a single hex digit
-    call dbg_putc
-    ld b, 23
-    call dbg_at0
-    ld hl, msgTlLnl
-    call dbg_puts
-    ld hl, vidLnB + DATA_WINDOW - OVL_ORG
-    ld b, VID_TL_PHASES
-.lnl:
-    push bc
-    push hl
-    call vid_tl_print32          ; high word first, 8 hex digits
-    pop hl
-    inc hl
-    inc hl
-    inc hl
-    inc hl
-    pop bc
-    dec b
-    jr z, .lnldone
-    push bc
-    push hl
-    ld hl, msgTlSlash
-    call dbg_puts
-    pop hl
-    pop bc
-    jr .lnl
-.lnldone:
     call data_restore
-    ld a, VID_TL_ROW0
-    ld (vidTlRptRow), a
-    xor a
-    ld (vidTlRptIdx), a
-.rowloop:
-    ld a, (vidTlRptRow)
-    ld b, a
+    ; STATUS row. This was the tail of the OTHER phase row until the
+    ; tick timeline went (v0.5.0); the five phase rows, the TOT tick
+    ; total and the LNF/LNL raster probe went with it, these
+    ; breadcrumbs did not - they are what localizes an intermittent
+    ; decode abort, and they cost nothing to keep.
+    ld b, VID_TL_ROW0
     ld c, 0
     call dbg_at
-    ld a, (vidTlRptIdx)
-    add a, a
-    ld l, a
-    ld h, 0
-    ld de, vidTlMsgTab
-    add hl, de
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    ex de, hl
-    call dbg_puts
-    ld a, (vidTlRptIdx)
-    add a, a
-    add a, a
-    ld l, a
-    ld h, 0
-    ld de, vidTlAccL
-    add hl, de
-    call vid_tl_print32
-    ld a, (vidTlRptIdx)
-    cp VID_TL_OTHER
-    jp nz, .nextrow              ; jp: the OTHER-row tail outgrew jr
-    ld hl, msgTlTot
-    call dbg_puts
-    ld hl, (vidTlTicksL)
-    call dbg_hex16
     ld hl, msgTlFrm              ; FRM=live/mirror (SP15 Card #5 TRAP)
     call dbg_puts                ; - see vid_tl_frames_live's own banner
     call vid_tl_frames_live      ; a SECOND, independent read of the hot
@@ -7908,7 +7630,7 @@ vid_tl_report_body:
     ; (streaming; a resident run prints 0000/0000 - staged so). FILL=
     ; moved here from the OTHER row (Card #5): the FRM=live/mirror trap
     ; pair pushed that row to 81 of the 80 tilemap columns.
-    ld b, VID_TL_ROW0+5
+    ld b, VID_TL_ROW0+1
     ld c, 0
     call dbg_at
     ld hl, msgTlRing
@@ -7945,7 +7667,7 @@ vid_tl_report_body:
     ; field clock lost a wrap, see vid_rl_poll's poll-gap table).
     ; Open, load and ring prefill are outside the bracket. Both fields
     ; wrap at 65536 fields (21.8 min).
-    ld b, VID_TL_ROW0+6
+    ld b, VID_TL_ROW0+2
     ld c, 0
     call dbg_at
     ld hl, msgTlPlay
@@ -7966,13 +7688,6 @@ vid_tl_report_body:
     ld hl, (vidChkSumL)
     call dbg_hex16
     jr .done
-.nextrow:
-    ld hl, vidTlRptRow
-    inc (hl)
-    ld hl, vidTlRptIdx
-    inc (hl)
-    jp .rowloop                  ; jr range: the OTHER-row tail grew
-                                 ; past -128 with the POS=/PASS= print
 .done:
     ld hl, vid_tl_report_ret
     push hl
@@ -8008,14 +7723,6 @@ vid_tl_frames_live:
     pop hl
     ret
 
-vidTlMsgTab:
-    dw msgTl0, msgTl1, msgTl2, msgTl3, msgTl4
-msgTl0: db "PACE   =", 0
-msgTl1: db "AUDIO  =", 0
-msgTl2: db "DECODE =", 0
-msgTl3: db "FLIP   =", 0
-msgTl4: db "OTHER  =", 0
-msgTlTot:  db " TOT=", 0
 msgTlFrm:  db " FRM=", 0
 msgTlErr:  db " ERR=", 0
 msgTlOp:   db " OP=", 0
@@ -8028,22 +7735,13 @@ msgTlSnap: db " SNAP=", 0
 msgTlPlay: db "PLAY   =", 0
 msgTlNom:  db " NOM=", 0
 msgTlChk:  db " CHK=", 0
-msgTlLnf:  db "LNF    =", 0
-msgTlLnl:  db "LNL    =", 0
-msgTlMode: db " MODE=", 0
-vidTlRptRow: db 0
-vidTlRptIdx: db 0
 vidSnapCntL: db 0                ; SNAP= mirror - written at open (the
                                  ; live vidSnapCnt is zeroed by the
                                  ; teardown free before the report)
 
 ; Page-local mirror of the hot instrument block (same order/sizes -
 ; one LDIR; the length is computed so it can never drift).
-vidTlTicksL:      dw 0
-vidTlLastTickL:   dw 0
-vidTlLastPhaseL:  db 0
 vidTlFramesL:     dw 0
-vidTlAccL:        ds VID_TL_PHASES*4
 vidErrCodeL:      db 0
 vidErrOpL:        db 0
 vidErrPosL:       ds 3
@@ -8060,7 +7758,7 @@ vidPlayStartL:    dw 0
 vidPlayEndL:      dw 0
 vidNomStepL:      dw 0
 vidNomAccL:       ds 3
-    ASSERT vidNomAccL + 3 - vidTlTicksL == VID_TL_BLOCK_LEN
+    ASSERT vidNomAccL + 3 - vidTlFramesL == VID_TL_BLOCK_LEN
  ENDIF
 
     DISPLAY "video2 ends at ", $, " headroom ", /D, OVL_LIMIT - $

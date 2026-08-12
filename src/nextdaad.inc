@@ -1418,20 +1418,11 @@ NXV_CLIP_X2_MODE0 equ 256-1        ; = 255
 ; copper flip was already UNCALLED after the sparkle/magenta audit; v2
 ; flips are CPU-only by design. git holds the list geometry.
 
-; --- DEBUG-only frame-timeline instrument (video.asm's vid_tl_stamp/
-; vid_tl_report) - phase ids for the v2 frame loop's 5-phase closed
-; loop, stamped once per frame: pace (audio-done spin) -> audio (ring
-; -> vidAudBuf copy-out + launch) -> decode (the whole payload decode/
-; paint) -> flip (present: NR $43/$12 pokes) -> other (key/exit check,
-; loop-back) -> pace ... vid_tl_stamp increments the frame counter when
-; phase 0 (PACE) opens. The report also prints FILL= (the resident ring
-; load's duration in 50Hz frames, measured pre-arm via frameCounter).
-; DEBUG-only: zero cost to Release.
- IFDEF DEBUG
-VID_TL_PACE     equ 0
-VID_TL_AUDIO    equ 1
-VID_TL_DECODE   equ 2
-VID_TL_FLIP     equ 3
-VID_TL_OTHER    equ 4
-VID_TL_PHASES   equ 5
- ENDIF
+; The DEBUG frame-timeline instrument that owned this block - phase ids
+; VID_TL_PACE/AUDIO/DECODE/FLIP/OTHER/PHASES for video.asm's
+; vid_tl_stamp - was removed in v0.5.0. It measured phase occupancy in
+; video-CTC ISR ticks, a clock the PLAY= instrument's banner
+; (video.asm) shows is structurally blind to a suppressed interrupt,
+; and the 2026-08-08 PACE-loss investigation ended by finding the
+; instrument itself was the artifact. What survives of the DEBUG video
+; report is page-local to video.asm and needs nothing here.

@@ -25,6 +25,18 @@ All notable changes to NextDAAD are recorded here.
   level that extended `INK`, `PAPER` and `BORDER` parameters reach the
   compiled database unfolded, and drive 200 distinct combinations
   against the 128-pair table so the reclaim and eviction paths execute.
+- DEBUG video-page space reclaimed: the tick-based frame-timeline
+  instrument is gone - the per-phase accumulators, `vid_tl_stamp` and
+  its five frame-loop call sites, the CTC ISR's tick counter, the
+  LNF/LNL raster probe, and the five phase rows and TOT total from the
+  report. It measured phase occupancy in video-CTC ISR ticks, a clock
+  that is structurally blind to a suppressed interrupt, and the
+  investigation it was built for ended by finding the instrument itself
+  was the artifact. The PLAY= wall-clock bracket, which exists because
+  of exactly that, and the ERR/OP/POS/PASS abort breadcrumbs remain, on
+  a three-row report. 582 bytes back: the two tightest pools in the
+  DEBUG image go from 49 and 21 bytes free to 308 and 344. No Release
+  change - the binary is byte-identical.
 - A `GAME.DDB` compiled for another computer is now refused at boot with
   `NextDAAD: DDB wrong machine - E4` instead of loading and then
   misbehaving. Ten of the twelve targets DRC can compile for - CPC, C64,
