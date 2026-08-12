@@ -27,11 +27,25 @@ REM ---- derive tool paths ----
 set "DR=%TOOLSDIR%\DAAD-READY"
 set "DRF=%DR%\TOOLS\DRC\DRF.exe"
 set "PHP=%DR%\PHP\php.exe"
-set "DRB=%DRCDIR%\src\drb.php"
-if not exist "%DRB%" set "DRB=%DRCDIR%\TOOLS\DRC\DRB.PHP"
+REM Blank DRCDIR means the fork under the toolchain folder. Resolved HERE,
+REM after CONFIG.local.BAT has had its say, so a locally relocated TOOLSDIR
+REM carries DRCDIR with it instead of leaving it behind at the default.
+if not defined DRCDIR set "DRCDIR=%TOOLSDIR%\DRC"
+REM DRB.PHP sits in one of two shapes. The fork is a source checkout and
+REM keeps it in src\; a DRC directory - DAAD Ready's own TOOLS\DRC, which
+REM DRCDIR is meant to point straight at once that carries the NEXTDAAD
+REM target - keeps it at the top level. Both are probed, and BOTH are
+REM named if neither exists: reporting only whichever was probed last
+REM named a path that no supported layout uses.
+set "DRBFORK=%DRCDIR%\src\drb.php"
+set "DRBPLAIN=%DRCDIR%\drb.php"
+set "DRB=%DRBFORK%"
+if not exist "%DRB%" set "DRB=%DRBPLAIN%"
 set "DRTARGET=nextdaad"
 if not exist "%DRB%" (
-    echo ERROR: no DRB.PHP at %DRB%
+    echo ERROR: no DRB.PHP found. Looked for:
+    echo   %DRBFORK%
+    echo   %DRBPLAIN%
     echo Install the NextDAAD DRC fork into %DRCDIR% - see tools\README.txt.
     pause
     exit /b 1

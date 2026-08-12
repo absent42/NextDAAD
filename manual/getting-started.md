@@ -84,7 +84,7 @@ are all optional and the build skips whatever is absent.
 | `COMPRESS` | `1` = ZX0-compress pictures (smaller files); `0` = raw. |
 | `RUN` | `1` = launch CSpect after a successful build; `0` = build only. |
 | `TOOLSDIR` | Folder holding the tools above. Default `tools`. |
-| `DRCDIR` | Which DRC compiles the database. Default `%TOOLSDIR%\DRC`, the fork. Point it at DAAD Ready's own once that carries the `NEXTDAAD` target. |
+| `DRCDIR` | Which DRC compiles the database. Blank means `%TOOLSDIR%\DRC`, the fork - leave it blank and it follows `TOOLSDIR` wherever you put that. Set it to DAAD Ready's own `TOOLS\DRC` once that carries the `NEXTDAAD` target. |
 | `NEXFILE` | The interpreter to ship. Default `nextdaad.nex`. |
 | `VIDASPECT`, `VIDFPS`, `VIDOPTS`, `VIDOPTS_NNN` | Cutscene encoding - see [Video](video.md). |
 

@@ -17,11 +17,17 @@ SET TOOLSDIR=tools
 
 REM Which DRC compiles your game. NextDAAD databases need the NEXTDAAD
 REM target, which DAAD Ready's own DRC does not have yet - so the build
-REM uses the NextDAAD DRC fork, installed into this folder (see
+REM uses the NextDAAD DRC fork, installed into TOOLSDIR (see
 REM tools\README.txt). Once a DAAD Ready release ships a DRC carrying the
-REM target, change this to %TOOLSDIR%\DAAD-READY\TOOLS\DRC and delete the
+REM target, set this to %TOOLSDIR%\DAAD-READY\TOOLS\DRC and delete the
 REM fork - nothing else needs touching.
-SET DRCDIR=%TOOLSDIR%\DRC
+REM
+REM LEAVE BLANK to mean "%TOOLSDIR%\DRC". Blank rather than spelled out
+REM because TOOLSDIR may be changed after this file runs (CONFIG.local.BAT
+REM is loaded afterwards and exists to relocate exactly that): spelling it
+REM out here would freeze the OLD toolchain folder into DRCDIR while every
+REM other tool followed the new one.
+SET DRCDIR=
 
 REM The pre-built interpreter to ship in RELEASE\ as nextdaad.nex.
 SET NEXFILE=nextdaad.nex
