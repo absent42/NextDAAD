@@ -17,7 +17,7 @@ folder at the path shown.
 | Tool | Provides | Extract into | Needed |
 |---|---|---|---|
 | DAAD Ready | `DRF.exe`, the compiler front end, and PHP | `tools\DAAD-READY\` | always |
-| NextDAAD DRC | `DRB.PHP` carrying the `NEXTDAAD` target - [absent42/DRC](https://github.com/absent42/DRC), branch `nextdaad` | `tools\DRC\` | always, for now |
+| NextDAAD DRC | `DRB.PHP` carrying the `NEXTDAAD` target - [absent42/DRC](https://github.com/absent42/DRC/tree/nextdaad), branch `nextdaad` | `tools\DRC\` | always, for now |
 | Gfx2Next | PNG to Layer 2 picture conversion | `tools\gfx2next\` | only with an `IMAGES\` folder |
 | Arkos Tracker 3 | `SongToAky.exe`, `SongToSoundEffects.exe`, `SongToYm.exe` | `tools\ArkosTracker3\tools\` | only with `.aks` audio |
 | CSpect | emulator, to play the result without hardware | `tools\CSpect\` | to run the build |
