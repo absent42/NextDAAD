@@ -26,9 +26,11 @@
 ; and BORDER to the full 0-255 the database always carried (0-15 stay
 ; the ULA colours, 16-255 are Next RRRGGGBB), and refuses a database
 ; compiled for another computer at boot instead of loading it and
-; misbehaving. The "0.x" line runs until public testing earns v1.0
-; (see RELEASE.md).
-    DEFINE VERSION_STR "NEXTDAAD V0.5.0"
+; misbehaving. v0.6.0 reads NextDAAD-target databases only: pointers are
+; file offsets rather than $8400-based addresses, so the ceiling is 64K
+; instead of 31744 bytes, and a classic ZX database is refused at boot.
+; The "0.x" line runs until public testing earns v1.0 (see RELEASE.md).
+    DEFINE VERSION_STR "NEXTDAAD V0.6.0"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00

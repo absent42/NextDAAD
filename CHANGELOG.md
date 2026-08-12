@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.5.0 - 12/08/2026
+## v0.6.0 - unreleased
 
 - Databases are compiled for a new `NEXTDAAD` DRC target: pointers are
   file offsets rather than addresses based at $8400, so the ceiling is
@@ -14,6 +14,16 @@ All notable changes to NextDAAD are recorded here.
 - The kit's own database size check was still the old 128K loader limit
   and would have passed a database the interpreter now refuses. It is
   65535.
+- `tests/bigddb.dsf` and a `-BigDdb` harness leg compile a 49397-byte
+  database and assert out of the compiled bytes that the process,
+  location, connection and message tables, and the text of the highest
+  message, all land past the old 31744 ceiling. `tests/machine_gate.py`
+  boots one patched header per case to pin which machine nibbles are
+  accepted, and the harness now refuses to stage any database that is
+  not this target.
+
+## v0.5.0 - 12/08/2026
+
 - `INK`, `PAPER` and `BORDER` take the full 0 to 255 the database
   already carried. 0 to 15 are the classic ULA colours, unchanged. 16
   to 255 are the standard Next colour of that number in `RRRGGGBB`
