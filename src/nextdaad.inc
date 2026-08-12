@@ -22,9 +22,13 @@
 ; falling back to the base shape), a conventional arrow as the
 ; built-in pointer, two-channel sampled sound (SFX n 1/2 pick a free
 ; channel, subs 11-16 reserve one) and sample length no longer bounded
-; by memory - large files stream from the card. The "0.x" line runs
-; until public testing earns v1.0 (see RELEASE.md).
-    DEFINE VERSION_STR "NEXTDAAD V0.4.0"
+; by memory - large files stream from the card. v0.5.0 opens INK, PAPER
+; and BORDER to the full 0-255 the database always carried (0-15 stay
+; the ULA colours, 16-255 are Next RRRGGGBB), and refuses a database
+; compiled for another computer at boot instead of loading it and
+; misbehaving. The "0.x" line runs until public testing earns v1.0
+; (see RELEASE.md).
+    DEFINE VERSION_STR "NEXTDAAD V0.5.0"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00
@@ -157,6 +161,30 @@ DDB_MAGIC       equ 95      ; header offset 2. HISTORICALLY the /CTL null
                             ; read - see print.asm's prn_decoded. jDAAD
                             ; agrees: it parses byte 2 as "the95" and
                             ; never reads it again (jdaad.js:470).
+DDB_MACHINE_ZX  equ 1       ; header byte 1 HIGH nibble = target machine
+                            ; (drb.php:1820-1824 writes getMachineIDByTarget
+                            ; << 4, then ORs bit 0 for ES/PT). ZX = 1, and
+                            ; every ZX SUBtarget - 48K, 128K, PLUS3, NEXT,
+                            ; UNO, ESXDOS - shares it, so this identifies
+                            ; the ZX family and never the Next specifically.
+                            ; The LOW nibble is language and must be masked
+                            ; off before comparing: print.asm and objname.asm
+                            ; read its bit 0 as "Spanish", so a whole-byte
+                            ; compare would refuse every Spanish database.
+                            ; What makes the test worth its bytes is that a
+                            ; foreign-target DDB is not merely mistuned, it
+                            ; is unreadable: DRC bases pointers at the
+                            ; target's own load address (drb.php:1281-1294 -
+                            ; MSX $0100, CPC $2880, C64 $3880, CP/M $2000,
+                            ; CP4 $7080, PC/ST/Amiga/HTML/MSX2 zero), and
+                            ; ddbtext.asm/engine.asm subtract DDB_ZX_BASE
+                            ; unconditionally. ST and Amiga also byte-swap
+                            ; every word (drb.php:67-79) and PC/ST/Amiga/HTML
+                            ; pad tables to even addresses (drb.php:288-297).
+                            ; Ten of the twelve targets pass the version and
+                            ; DDB_MAGIC tests untouched; only MSX2 is refused
+                            ; without this, and only incidentally (its byte 2
+                            ; is a submachine id, never 95).
 DDB_ZX_BASE     equ $8400   ; classic ZX load base; pointers are absolute
 
 ; --- ddb_load result codes ---
@@ -164,11 +192,13 @@ DDB_OK          equ 0
 DDB_E_FILE      equ 1       ; missing or read error
 DDB_E_SIZE      equ 2       ; over 128K
 DDB_E_HDR       equ 3       ; failed validation
+DDB_E_MACHINE   equ 4       ; built for another target machine
 
 ; --- Error border colours ---
 ERR_BORDER_MISSING  equ 2   ; red
 ERR_BORDER_OVERSIZE equ 3   ; magenta
 ERR_BORDER_BADHDR   equ 6   ; yellow
+ERR_BORDER_MACHINE  equ 5   ; cyan
 
 ; --- esxDOS API ---
 ESX_GETSETDRV   equ $89

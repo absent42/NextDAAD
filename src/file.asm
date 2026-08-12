@@ -115,7 +115,7 @@ esx_fchdir:
  ENDIF
 
 ; Load GAME.DDB into 8K pages DDB_PAGE_FIRST.. via slot 6.
-; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE or DDB_E_HDR.
+; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE, DDB_E_HDR or DDB_E_MACHINE.
 ddb_load:
     call data_save
     ld a, $FF
@@ -143,7 +143,10 @@ ddb_load:
     ld ix, DATA_WINDOW
     ld bc, $2000
     call esx_fread
-    jr c, .efile
+    jp c, .efile            ; JP, not JR: the header checks below sit
+                            ; between here and .efile and had this at
+                            ; +127 with nothing to spare. Line 129
+                            ; already uses JP to the same label.
     ld hl, (ddbSize)
     add hl, bc
     ld (ddbSize), hl
@@ -195,10 +198,27 @@ ddb_load:
     ; words in the same places). The accepted pair is contiguous, so
     ; one SUB/CP range test replaces the equality test at no extra
     ; branch (doc 05 "range test by subtract-then-compare").
-    ld a, (ddbHeader+0)
+    ; Bytes 0 and 1 are adjacent, so ONE word load serves both tests:
+    ; L = version, H = target. LD HL,(nn) is the fast 2A form, 16T/3B
+    ; (doc 01), so the pair costs 24T/5B against 26T/6B for two
+    ; LD A,(nn) - the machine test is 2 bytes cheaper than it looks.
+    ld hl, (ddbHeader)
+    ld a, l
     sub DDB_VERSION             ; 2 -> 0, 3 -> 1, anything else >= 2
     cp 2                        ; (0/1 wrap high and fail the same way)
     jr nc, .badhdr
+    ld a, h                     ; machine nibble - see DDB_MACHINE_ZX
+    and $F0                     ; (nextdaad.inc) for why the low nibble
+    cp DDB_MACHINE_ZX << 4      ; MUST be masked off and why a foreign
+    ld a, DDB_E_MACHINE         ; target is unreadable rather than odd.
+    ret nz                      ; LD r,n leaves F alone (doc 02), so the
+                                ; code can be staged BEFORE the branch and
+                                ; refuse with a bare RET NZ - no tail block
+                                ; to jump to, which matters here: an extra
+                                ; block between .chunk and .efile is what
+                                ; puts .efile's JR out of reach. A falls
+                                ; through clobbered, reloaded on the next
+                                ; line.
     ld a, (ddbHeader+2)
     cp DDB_MAGIC
     jr nz, .badhdr
@@ -232,15 +252,18 @@ ddb_load:
 ; card genuinely has the file. main.asm's boot path calls THIS in place
 ; of plain ddb_load (DEBUG only - see main.asm's own IFDEF). On DDB_E_
 ; FILE only, F_CHDIR into the fallback directory and retry ddb_load
-; exactly once; any OTHER result (DDB_OK/DDB_E_SIZE/DDB_E_HDR) from the
-; first attempt returns immediately, untouched. If the F_CHDIR itself
-; fails, or the retried ddb_load STILL comes back DDB_E_FILE (or any
-; other code), the retry's own return value is passed straight through -
-; the net effect is identical to plain ddb_load, plus this one extra
-; attempt. A normal Browser launch (cwd already holds GAME.DDB) never
-; reaches the F_CHDIR at all: the first ddb_load already returns DDB_OK
-; and this returns immediately, same as it always has. Out: A = DDB_OK,
-; DDB_E_FILE, DDB_E_SIZE or DDB_E_HDR - identical contract to ddb_load.
+; exactly once; any OTHER result (DDB_OK/DDB_E_SIZE/DDB_E_HDR/DDB_E_
+; MACHINE) from the first attempt returns immediately, untouched: a
+; database that IS there but is built for another target is found on
+; the spot, and the fallback directory is never consulted for it. If
+; the F_CHDIR itself fails, or the retried ddb_load STILL comes back
+; DDB_E_FILE (or any other code), the retry's own return value is passed
+; straight through - the net effect is identical to plain ddb_load, plus
+; this one extra attempt. A normal Browser launch (cwd already holds
+; GAME.DDB) never reaches the F_CHDIR at all: the first ddb_load already
+; returns DDB_OK and this returns immediately, same as it always has.
+; Out: A = DDB_OK, DDB_E_FILE, DDB_E_SIZE, DDB_E_HDR or DDB_E_MACHINE -
+; identical contract to ddb_load.
 ddb_load_debug_retry:
     call ddb_load
     cp DDB_E_FILE

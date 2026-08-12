@@ -40,9 +40,16 @@ main:
     jr z, .missing
     dec a
     jr z, .oversize
-    ld a, ERR_BORDER_BADHDR
-    ld hl, msgBadHdr
-    jp fatal
+    dec a
+    dec a
+    jp z, ddb_err_machine   ; 4 = DDB_E_MACHINE, tested EXPLICITLY so the
+    ld a, ERR_BORDER_BADHDR ; chain still falls through to bad-header for
+    ld hl, msgBadHdr        ; 3 and for any code the loader never returns.
+    jp fatal                ; Its arm lives POST-anchor (resident tail,
+                            ; below the INCLUDEs) - everything here is
+                            ; pre-anchor and spends the pre-flags pad,
+                            ; which the DDB machine guard had already
+                            ; taken 10 bytes of.
 .missing:
     ld a, ERR_BORDER_MISSING
     ld hl, msgMissing
@@ -175,10 +182,18 @@ boot_data_init:
 ; These two live here rather than beside the other audio cells in
 ; interrupts.asm because that file is entirely PRE-anchor: it is included
 ; above, ahead of engine.asm's ALIGN 256, and every byte added there
-; comes out of the pre-flags pad, which has 34 bytes free in DEBUG. This
-; point is past the anchor, so these draw on the resident tail the ASSERT
-; below guards instead. interrupts.asm's audio-cell block carries a
-; pointer comment to here.
+; comes out of the pre-flags pad, which has 19 bytes free in DEBUG (34
+; before the DDB machine-nibble guard). This point is past the anchor, so
+; these draw on the resident tail the ASSERT below guards instead.
+; interrupts.asm's audio-cell block carries a pointer comment to here.
+
+; DDB_E_MACHINE arm for the boot dispatch at the top of this file, which
+; is pre-anchor and could not afford the eight bytes. Reached by its
+; JP Z, and ends in fatal(), so nothing returns here.
+ddb_err_machine:
+    ld a, ERR_BORDER_MACHINE
+    ld hl, msgWrongMach
+    jp fatal
 
 ; Call HL (a routine on SFX_PAGE) on overlay1's behalf, exactly as
 ; sfx_open_tramp (banks.asm) does for sfx_stream_open: overlay1 and

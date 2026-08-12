@@ -3,7 +3,7 @@
 Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.5.0 - unreleased
+## 0.5.0 - 12 August 2026
 
 - `INK n`, `PAPER n` and `BORDER n` now take any value from 0 to 255,
   not just 0 to 15. 0 to 15 are the classic Spectrum colours, unchanged;
@@ -13,6 +13,12 @@ game behaves, how it builds, or what the kit gives you, it is here.
 - `PAPER 8-15` now renders bright rather than folding to the dim hue,
   matching the Spectrum's own `BRIGHT` semantics more closely. A game
   that used those values expecting the old dim fold will look different.
+- A `GAME.DDB` compiled for another computer - CPC, C64, MSX, PC and the
+  rest - is now refused at boot with `NextDAAD: DDB wrong machine - E4`
+  rather than loading and then behaving strangely. The kit compiles for
+  the Spectrum already, so this only bites on a database that arrived
+  from elsewhere. See [Getting started](getting-started.md) for the full
+  list of boot messages.
 
 ## 0.4.0 - 10 August 2026
 

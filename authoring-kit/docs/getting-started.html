@@ -280,6 +280,10 @@ power-cycle to try again.</p>
 <td>The file is there but is not a database this build can load - a truncated or corrupted copy, most often. Rebuild and copy it again.</td>
 </tr>
 <tr>
+<td><code>NextDAAD: DDB wrong machine - E4</code></td>
+<td><code>GAME.DDB</code> is a perfectly good database, but it was compiled for a different computer - CPC, C64, MSX, PC or another. Recompile it for the Spectrum: the kit's own <code>ddb.bat</code> already does, so this normally means a <code>.DDB</code> arrived from somewhere else. Spanish and English databases are both fine; it is the machine that is wrong, not the language.</td>
+</tr>
+<tr>
 <td><code>NextDAAD: RUNTIME ERROR - E&lt;n&gt;</code></td>
 <td>The engine hit a fault while running your game. The digit names it: 1 is an invalid location and 4 a nested <code>DOALL</code>, both covered in <a href="known-differences.html">Known differences</a> and <a href="platform-notes.html">Platform notes</a>; 5 is a version 3 opcode in a version 2 database, see <a href="daad-v3.html">DAAD V3</a>.</td>
 </tr>

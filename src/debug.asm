@@ -772,6 +772,12 @@ dbg_engage_tilemap:
 msgMissing:  db "NextDAAD: DDB missing - E1", 0
 msgOversize: db "NextDAAD: DDB oversize - E2", 0
 msgBadHdr:   db "NextDAAD: DDB bad header - E3", 0
+; E4 is a WELL-FORMED database compiled for another target machine, which
+; E3 used to swallow: version and DDB_MAGIC pass, so it reads as valid
+; right up until the first pointer is rebased against the wrong load
+; address. Separated because the two need opposite responses - E3 says
+; recopy the file, E4 says recompile it for ZX.
+msgWrongMach: db "NextDAAD: DDB wrong machine - E4", 0
 
 dbgX: db 0
 dbgY: db 0

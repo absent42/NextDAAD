@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.5.0 - unreleased
+## v0.5.0 - 12/08/2026
 
 - `INK`, `PAPER` and `BORDER` take the full 0 to 255 the database
   already carried. 0 to 15 are the classic ULA colours, unchanged. 16
@@ -25,6 +25,14 @@ All notable changes to NextDAAD are recorded here.
   level that extended `INK`, `PAPER` and `BORDER` parameters reach the
   compiled database unfolded, and drive 200 distinct combinations
   against the 128-pair table so the reclaim and eviction paths execute.
+- A `GAME.DDB` compiled for another computer is now refused at boot with
+  `NextDAAD: DDB wrong machine - E4` instead of loading and then
+  misbehaving. Ten of the twelve targets DRC can compile for - CPC, C64,
+  MSX, PC, Atari ST, Amiga, PCW, CP/M, Plus/4 and jDAAD - passed the old
+  version and magic-number checks unchanged, then read every text and
+  process through pointers based at an address the Spectrum never used.
+  Only the machine is tested; Spanish and English databases both load as
+  before.
 
 ## v0.4.0 - 10/08/2026
 
