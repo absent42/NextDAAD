@@ -48,6 +48,8 @@ QUIT   7  verb
 GET    8  verb
 DROP   9  verb
 STONE  10 noun
+SAVE   26 verb
+LOAD   27 verb
 /STX
 /0   "It's too dark to see anything."
 /1   "I can also see:"
@@ -858,10 +860,16 @@ SOUTH 118
         WINSIZE 25 127
         CLS
         MESSAGE 254
+> _ _   MES "LOC "
+        PRINT fPlayer
+        MES "#n"
 > _ _   DESC @fPlayer
 > _ _   PROCESS 1
 /PRO 1
 > _ _   PARSE 0
+        REDO
+> _ _   PROCESS 5
+        ISDONE
         REDO
 > _ _   MOVE fPlayer
         CLS
@@ -872,6 +880,13 @@ SOUTH 118
         REDO
 > _ _   SYSMESS 8
         REDO
+/PRO 5
+> SAVE  _   SAVE 0
+            CLS
+            RESTART
+> LOAD  _   LOAD 0
+            CLS
+            RESTART
 /PRO 6
 > _ _   GOTO 118
 /END

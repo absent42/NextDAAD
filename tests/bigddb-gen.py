@@ -149,6 +149,10 @@ def main():
     w('GET    8  verb')
     w('DROP   9  verb')
     w('STONE  10 noun')
+    # Verb numbers 26/27 are the template's own for SAVE/LOAD. Anything
+    # below 14 would be taken for a movement word.
+    w('SAVE   26 verb')
+    w('LOAD   27 verb')
 
     w('/STX')
     for i, s in enumerate(SYS):
@@ -202,6 +206,12 @@ def main():
     w('        WINSIZE 25 127')
     w('        CLS')
     w('        MESSAGE 254')
+    # The room number, printed rather than left to be inferred from random
+    # prose. Movement and - the point of it - a SAVE/LOAD round trip are
+    # only checkable by eye if the screen says which room this is.
+    w('> _ _   MES "LOC "')
+    w('        PRINT fPlayer')
+    w('        MES "#n"')
     w('> _ _   DESC @fPlayer')
     w('> _ _   PROCESS 1')
     # Parser loop, the template shape trimmed to what this fixture needs -
@@ -210,6 +220,11 @@ def main():
     # be played for a few turns rather than only looked at.
     w('/PRO 1')
     w('> _ _   PARSE 0')
+    w('        REDO')
+    # The command decoder has to run BEFORE the movement fallback, or SAVE
+    # and LOAD would be treated as failed movement attempts.
+    w('> _ _   PROCESS 5')
+    w('        ISDONE')
     w('        REDO')
     w('> _ _   MOVE fPlayer')
     w('        CLS')
@@ -223,6 +238,20 @@ def main():
     # One-shot startup. START_LOC is near the TOP of the location range so
     # the description on screen is one of the last texts DRC wrote, and one
     # below the highest so both NORTH and SOUTH work from the opening room.
+    # Command decoder. SAVE and LOAD are here because a 49K database is
+    # exactly where the save path is worth exercising: the position data it
+    # writes and re-reads refers to a database whose tail the classic
+    # addressing could not reach. Both follow the template's shape - the
+    # condact, then CLS and RESTART so process 0 redraws from the restored
+    # state. Walk somewhere, note the LOC number, SAVE, walk elsewhere,
+    # LOAD: the LOC number must come back.
+    w('/PRO 5')
+    w('> SAVE  _   SAVE 0')
+    w('            CLS')
+    w('            RESTART')
+    w('> LOAD  _   LOAD 0')
+    w('            CLS')
+    w('            RESTART')
     w('/PRO 6')
     w('> _ _   GOTO %d' % START_LOC)
     w('/END')
