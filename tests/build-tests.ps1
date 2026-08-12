@@ -975,6 +975,19 @@ if ($big254 -le 31744) {
     throw "bigddb: message 254's TEXT is at $big254, inside the classic reach - the location texts are carrying the size instead of the messages, so the printed evidence proves nothing. Lengthen the messages."
 }
 if ($bigBytes[5] -ne 255) { throw "bigddb: header message count is $($bigBytes[5]), expected 255 (the byte-wide maximum)" }
+# EVERY location description must also be past the boundary, which makes the
+# room text under the marker second evidence rather than decoration - and
+# means it does not matter which room the fixture opens in. Asserted as a
+# minimum over all of them so no start-location constant has to be kept in
+# step between the generator and this file.
+$bigLocLo = 65536
+for ($i = 0; $i -lt $bigBytes[4]; $i++) {
+    $v = Get-BigWord ($bigLoc + 2 * $i)
+    if ($v -lt $bigLocLo) { $bigLocLo = $v }
+}
+if ($bigLocLo -le 31744) {
+    throw "bigddb: the earliest location description is at $bigLocLo, inside the classic 31744 reach - the room text on screen is not evidence of anything"
+}
 "bigddb: $bigLen bytes, target C0 - process list @$bigProc, message table @$bigMsg, MESSAGE 254 entry @$big254e text @$big254 (all past the 31744 classic ceiling)"
 
 # SP16 Task 1 GMODE graphics-gate fixture. Compiled unconditionally,

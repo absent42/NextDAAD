@@ -36,6 +36,11 @@ N_LOC = int(sys.argv[1]) if len(sys.argv) > 1 else 120
 WORDS_MSG = int(sys.argv[2]) if len(sys.argv) > 2 else 36
 WORDS_LOC = int(sys.argv[3]) if len(sys.argv) > 3 else 24
 SEED = 20260812
+# Where play starts. Not 0 - that is the template's "game has not begun"
+# sentinel rather than a room. One below the highest location, so the
+# opening description is one of the last texts in the file and both NORTH
+# and SOUTH lead somewhere.
+START_LOC = N_LOC - 2
 
 WORDS = """
 lantern corridor granite whisper hollow beacon thicket marble cistern rafter
@@ -109,8 +114,11 @@ def main():
     w('; MESSAGE 254 is the on-screen evidence: its text and its lookup entry')
     w('; both live past 31744, and PRO 0 prints it before anything else, so a')
     w('; boot screenshot is the proof. Messages 250-253 are short markers put')
-    w('; after the bulk for the same reason. tests\\build-tests.ps1 asserts')
-    w('; every one of those placements out of the compiled bytes.')
+    w('; after the bulk for the same reason; they are content rather than')
+    w('; display, and printing them every turn only cluttered the screen.')
+    w('; Every LOCATION text is past the boundary too, so the description')
+    w('; under the marker is second evidence of the same thing.')
+    w('; tests\\build-tests.ps1 asserts all of it out of the compiled bytes.')
     w(';')
     w('; The prose is pseudo-random because DRC token-compresses text and')
     w('; repeated filler would collapse under compression.')
@@ -181,13 +189,19 @@ def main():
     # PRO 0 must end by handing over to the parser loop: a process 0 that
     # simply ends is restarted immediately by the interpreter, which redraws
     # forever (visible flicker) and never prompts for a command.
+    #
+    # AT 0 / PROCESS 6 is the template's startup convention: location 0 is
+    # the "game has not begun" sentinel, not a room, and a game GOTOs its
+    # real starting location out of it. Displaying location 0 is what a
+    # game looks like when it has skipped its own initialisation.
     w('/PRO 0')
+    w('> _ _   AT 0')
+    w('        PROCESS 6')
     w('> _ _   WINDOW 1')
     w('        WINAT 0 0')
     w('        WINSIZE 25 127')
     w('        CLS')
     w('        MESSAGE 254')
-    w('        MESSAGE 250')
     w('> _ _   DESC @fPlayer')
     w('> _ _   PROCESS 1')
     # Parser loop, the template shape trimmed to what this fixture needs -
@@ -206,6 +220,11 @@ def main():
     w('        REDO')
     w('> _ _   SYSMESS 8')
     w('        REDO')
+    # One-shot startup. START_LOC is near the TOP of the location range so
+    # the description on screen is one of the last texts DRC wrote, and one
+    # below the highest so both NORTH and SOUTH work from the opening room.
+    w('/PRO 6')
+    w('> _ _   GOTO %d' % START_LOC)
     w('/END')
 
     txt = '\n'.join(out) + '\n'

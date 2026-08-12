@@ -13,8 +13,11 @@
 ; MESSAGE 254 is the on-screen evidence: its text and its lookup entry
 ; both live past 31744, and PRO 0 prints it before anything else, so a
 ; boot screenshot is the proof. Messages 250-253 are short markers put
-; after the bulk for the same reason. tests\build-tests.ps1 asserts
-; every one of those placements out of the compiled bytes.
+; after the bulk for the same reason; they are content rather than
+; display, and printing them every turn only cluttered the screen.
+; Every LOCATION text is past the boundary too, so the description
+; under the marker is second evidence of the same thing.
+; tests\build-tests.ps1 asserts all of it out of the compiled bytes.
 ;
 ; The prose is pseudo-random because DRC token-compresses text and
 ; repeated filler would collapse under compression.
@@ -848,12 +851,13 @@ SOUTH 118
 /OBJ
 /0    0   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   STONE _
 /PRO 0
+> _ _   AT 0
+        PROCESS 6
 > _ _   WINDOW 1
         WINAT 0 0
         WINSIZE 25 127
         CLS
         MESSAGE 254
-        MESSAGE 250
 > _ _   DESC @fPlayer
 > _ _   PROCESS 1
 /PRO 1
@@ -868,4 +872,6 @@ SOUTH 118
         REDO
 > _ _   SYSMESS 8
         REDO
+/PRO 6
+> _ _   GOTO 118
 /END
