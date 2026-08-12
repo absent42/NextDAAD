@@ -16,7 +16,8 @@ folder at the path shown.
 
 | Tool | Provides | Extract into | Needed |
 |---|---|---|---|
-| DAAD Ready | the DRC compiler (`DRF.exe`, `DRB.PHP`) and PHP | `tools\DAAD-READY\` | always |
+| DAAD Ready | `DRF.exe`, the compiler front end, and PHP | `tools\DAAD-READY\` | always |
+| NextDAAD DRC | `DRB.PHP` carrying the `NEXTDAAD` target - [absent42/DRC](https://github.com/absent42/DRC), branch `nextdaad` | `tools\DRC\` | always, for now |
 | Gfx2Next | PNG to Layer 2 picture conversion | `tools\gfx2next\` | only with an `IMAGES\` folder |
 | Arkos Tracker 3 | `SongToAky.exe`, `SongToSoundEffects.exe`, `SongToYm.exe` | `tools\ArkosTracker3\tools\` | only with `.aks` audio |
 | CSpect | emulator, to play the result without hardware | `tools\CSpect\` | to run the build |
@@ -45,7 +46,11 @@ language. For that:
   way around DAAD Ready.
 
 [DAAD Ready](https://www.ngpaws.com/daadready/) itself you need
-installed anyway - the kit compiles your source with its DRC compiler.
+installed anyway: it supplies `DRF.exe`, the compiler front end, and the
+PHP that runs the back end. The back end itself comes from the NextDAAD
+DRC fork above, because the `NEXTDAAD` target is not in DAAD Ready's own
+DRC yet. When a release ships one that has it, point `DRCDIR` at
+`%TOOLSDIR%\DAAD-READY\TOOLS\DRC` and delete `tools\DRC`.
 
 ## Where your files go
 
@@ -79,6 +84,7 @@ are all optional and the build skips whatever is absent.
 | `COMPRESS` | `1` = ZX0-compress pictures (smaller files); `0` = raw. |
 | `RUN` | `1` = launch CSpect after a successful build; `0` = build only. |
 | `TOOLSDIR` | Folder holding the tools above. Default `tools`. |
+| `DRCDIR` | Which DRC compiles the database. Default `%TOOLSDIR%\DRC`, the fork. Point it at DAAD Ready's own once that carries the `NEXTDAAD` target. |
 | `NEXFILE` | The interpreter to ship. Default `nextdaad.nex`. |
 | `VIDASPECT`, `VIDFPS`, `VIDOPTS`, `VIDOPTS_NNN` | Cutscene encoding - see [Video](video.md). |
 
@@ -144,7 +150,9 @@ Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.
 | `required tool missing` | The named path does not exist. Install that tool there, or fix `TOOLSDIR` / `NEXFILE`. |
 | `CSpect is running - close it before building` | CSpect holds the `RELEASE\` files open. Close it and build again. |
 | `DRF failed compiling` / `DRB failed building the DDB` | The compiler rejected your source. Its own output above the message names the line. |
-| `GAME.DDB is N bytes, over the 131072 limit` | The database is too large to ship. See [Limits](reference/limits.md). |
+| `GAME.DDB is N bytes, over the 65535 limit` | The database is too large. 64K is the format's own ceiling - see [Limits](reference/limits.md), which suggests where to cut. |
+| `no DRB.PHP at ...` | The NextDAAD DRC fork is not installed. Put it in `tools\DRC\`, or point `DRCDIR` at it. |
+| `the DRC at ... has no NEXTDAAD target` | That copy of DRC is too old, or is DAAD Ready's own. Update the fork, or point `DRCDIR` at one that has the target. |
 | `gfx2next not found` | Install Gfx2Next, or fix `TOOLSDIR`. |
 | `expected a 320 or 256 wide PNG` | Resize the named image to exactly 320 or 256 pixels wide. |
 | `must be a paletted 8-bit PNG` | Export the image again as an indexed-colour PNG. Truecolour is rejected. |

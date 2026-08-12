@@ -5,6 +5,25 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.5.0 - 12 August 2026
 
+- **The kit now builds NextDAAD-specific databases.** Your game is
+  compiled for a new `NEXTDAAD` compiler target, which lifts the database
+  ceiling from 31744 bytes to 64K - roughly twice the room for text,
+  rooms and processes. Two consequences worth knowing:
+  - The build needs one extra download, the NextDAAD DRC fork, into
+    `tools\DRC\`. DAAD Ready is still required and still supplies the
+    compiler front end and PHP. This is temporary: when a DAAD Ready
+    release carries the new target, point `DRCDIR` in `CONFIG.BAT` at it
+    and delete `tools\DRC`. See [Getting started](getting-started.md).
+  - A database built this way runs on NextDAAD only. It will not run on
+    the ZX Spectrum interpreter DAAD Ready builds for the Next, and
+    NextDAAD no longer loads databases built for those targets - it
+    refuses them at boot with `DDB wrong machine - E4`. Rebuilding an
+    existing game from its source is all that is needed.
+- **Timing change:** `PAUSE`, `BEEP` and `XPLAY` durations come out about
+  17% shorter than before. This is a change in DRC itself, not in
+  NextDAAD - the compiler lowered the note-length base for this machine -
+  and it arrives with any newer DRC. A game tuned to the old timings
+  plays slightly quicker; adjust the values if it matters.
 - `INK n`, `PAPER n` and `BORDER n` now take any value from 0 to 255,
   not just 0 to 15. 0 to 15 are the classic Spectrum colours, unchanged;
   16 to 255 are the standard Next colour of that number, the same
@@ -13,12 +32,12 @@ game behaves, how it builds, or what the kit gives you, it is here.
 - `PAPER 8-15` now renders bright rather than folding to the dim hue,
   matching the Spectrum's own `BRIGHT` semantics more closely. A game
   that used those values expecting the old dim fold will look different.
-- A `GAME.DDB` compiled for another computer - CPC, C64, MSX, PC and the
-  rest - is now refused at boot with `NextDAAD: DDB wrong machine - E4`
-  rather than loading and then behaving strangely. The kit compiles for
-  the Spectrum already, so this only bites on a database that arrived
-  from elsewhere. See [Getting started](getting-started.md) for the full
-  list of boot messages.
+- A `GAME.DDB` compiled for any other machine - CPC, C64, MSX, PC and the
+  rest, and now the classic ZX targets too - is refused at boot with
+  `NextDAAD: DDB wrong machine - E4` rather than loading and then
+  behaving strangely. Only a database built by this kit will run. See
+  [Getting started](getting-started.md) for the full list of boot
+  messages.
 
 ## 0.4.0 - 10 August 2026
 

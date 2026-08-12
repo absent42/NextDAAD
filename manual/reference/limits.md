@@ -1,26 +1,29 @@
 # Limits
 
-## DDB size: the 31744-byte ceiling
+## DDB size: the 64K ceiling
 
-The DDB format DRC compiles for this target (the classic ZX addressing
-scheme) uses 16-bit pointers based at $8400, the classic ZX DAAD load
-address. That caps the whole compiled DDB - vocabulary, messages,
-objects, locations, connections, processes, everything DRC writes into
-`GAME.DDB` - at 31744 bytes ($8400 to $FFFF). This is a DRC/compiler
-format ceiling rather than the interpreter's own, and it is the ceiling
-a growing game actually reaches first.
+Your whole compiled database - vocabulary, messages, objects, locations,
+connections, processes, everything DRC writes into `GAME.DDB` - must fit
+in 65535 bytes. NextDAAD refuses a larger one at boot with
+`NextDAAD: DDB oversize - E2`.
 
-The interpreter's own hard limit is 64K. A DDB pointer is 16 bits, so
-64K is every distinct position one can name, whatever address the
-pointers are counted from; NextDAAD refuses a larger `GAME.DDB` at boot
-with `NextDAAD: DDB oversize - E2` rather than loading a part of it that
-nothing could reach.
+The number is a property of the format rather than a budget someone
+chose: a DDB pointer is 16 bits, so 65536 is every distinct position one
+can name. Nothing beyond that could be reached even if it loaded.
 
-The relief valve is XMESSAGE, below: moving text out of the DDB and
-into `0.XMB` frees the same bytes inside the 31744-byte budget, at the
-cost of the separate external-text budget instead. A game approaching
-the ceiling should move its largest or least-frequently-seen text
-(long room descriptions, help text, endgame text) to XMESSAGE first.
+**This used to be 31744 bytes.** Databases for the classic ZX targets
+carry pointers counted from $8400, the address a Spectrum loads them at,
+which leaves only the 31744 bytes between there and the top of a 64K
+address space. NextDAAD compiles for its own target instead, whose
+pointers are plain offsets into the file, so the whole 64K is usable.
+See [Getting started](../getting-started.md) for what that means for
+which tools you install.
+
+The relief valve is XMESSAGE, below: moving text out of the DDB and into
+`0.XMB` frees the same bytes inside the 64K budget, at the cost of the
+separate external-text budget instead. A game approaching the ceiling
+should move its largest or least-frequently-seen text (long room
+descriptions, help text, endgame text) to XMESSAGE first.
 
 ## XMESSAGE / XMES
 

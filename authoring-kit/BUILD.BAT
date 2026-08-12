@@ -269,9 +269,9 @@ for %%N in (2 3 4 5 6 7 8 9) do (
         )
         popd
         for %%A in ("%DR%\__ndbpart.DDB") do set "DDBSZ=%%~zA"
-        if !DDBSZ! GTR 131072 (
+        if !DDBSZ! GTR 65535 (
             del "%DR%\__ndbpart.*" 2>nul
-            echo ERROR: GAME%%N.DDB is !DDBSZ! bytes, over the 131072 limit
+            echo ERROR: GAME%%N.DDB is !DDBSZ! bytes, over the 65535 limit
             pause
             goto :part_fail
         )

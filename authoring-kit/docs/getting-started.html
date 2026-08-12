@@ -31,9 +31,15 @@ folder at the path shown.</p>
 <tbody>
 <tr>
 <td>DAAD Ready</td>
-<td>the DRC compiler (<code>DRF.exe</code>, <code>DRB.PHP</code>) and PHP</td>
+<td><code>DRF.exe</code>, the compiler front end, and PHP</td>
 <td><code>tools\DAAD-READY\</code></td>
 <td>always</td>
+</tr>
+<tr>
+<td>NextDAAD DRC</td>
+<td><code>DRB.PHP</code> carrying the <code>NEXTDAAD</code> target - <a href="https://github.com/absent42/DRC">absent42/DRC</a>, branch <code>nextdaad</code></td>
+<td><code>tools\DRC\</code></td>
+<td>always, for now</td>
 </tr>
 <tr>
 <td>Gfx2Next</td>
@@ -81,7 +87,11 @@ language. For that:</p>
   way around DAAD Ready.</li>
 </ul>
 <p><a href="https://www.ngpaws.com/daadready/">DAAD Ready</a> itself you need
-installed anyway - the kit compiles your source with its DRC compiler.</p>
+installed anyway: it supplies <code>DRF.exe</code>, the compiler front end, and the
+PHP that runs the back end. The back end itself comes from the NextDAAD
+DRC fork above, because the <code>NEXTDAAD</code> target is not in DAAD Ready's own
+DRC yet. When a release ships one that has it, point <code>DRCDIR</code> at
+<code>%TOOLSDIR%\DAAD-READY\TOOLS\DRC</code> and delete <code>tools\DRC</code>.</p>
 <h2 id="where-your-files-go">Where your files go</h2>
 <p>Everything the build reads lives in the kit folder:</p>
 <ul>
@@ -127,6 +137,10 @@ are all optional and the build skips whatever is absent.</p>
 <tr>
 <td><code>TOOLSDIR</code></td>
 <td>Folder holding the tools above. Default <code>tools</code>.</td>
+</tr>
+<tr>
+<td><code>DRCDIR</code></td>
+<td>Which DRC compiles the database. Default <code>%TOOLSDIR%\DRC</code>, the fork. Point it at DAAD Ready's own once that carries the <code>NEXTDAAD</code> target.</td>
 </tr>
 <tr>
 <td><code>NEXFILE</code></td>
@@ -212,8 +226,16 @@ Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.</p>
 <td>The compiler rejected your source. Its own output above the message names the line.</td>
 </tr>
 <tr>
-<td><code>GAME.DDB is N bytes, over the 131072 limit</code></td>
-<td>The database is too large to ship. See <a href="reference/limits.html">Limits</a>.</td>
+<td><code>GAME.DDB is N bytes, over the 65535 limit</code></td>
+<td>The database is too large. 64K is the format's own ceiling - see <a href="reference/limits.html">Limits</a>, which suggests where to cut.</td>
+</tr>
+<tr>
+<td><code>no DRB.PHP at ...</code></td>
+<td>The NextDAAD DRC fork is not installed. Put it in <code>tools\DRC\</code>, or point <code>DRCDIR</code> at it.</td>
+</tr>
+<tr>
+<td><code>the DRC at ... has no NEXTDAAD target</code></td>
+<td>That copy of DRC is too old, or is DAAD Ready's own. Update the fork, or point <code>DRCDIR</code> at one that has the target.</td>
 </tr>
 <tr>
 <td><code>gfx2next not found</code></td>

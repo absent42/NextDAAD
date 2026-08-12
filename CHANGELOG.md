@@ -4,6 +4,16 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.5.0 - 12/08/2026
 
+- Databases are compiled for a new `NEXTDAAD` DRC target: pointers are
+  file offsets rather than addresses based at $8400, so the ceiling is
+  64K instead of 31744 bytes. The interpreter accepts that target only -
+  a classic ZX database is refused at boot with E4 - which is what lets
+  the reader drop the rebase from every text seek and condact re-seek.
+  The target lives in a DRC fork until upstream carries it; the kit and
+  the test harness both take DRB from there and DRF from DAAD Ready.
+- The kit's own database size check was still the old 128K loader limit
+  and would have passed a database the interpreter now refuses. It is
+  65535.
 - `INK`, `PAPER` and `BORDER` take the full 0 to 255 the database
   already carried. 0 to 15 are the classic ULA colours, unchanged. 16
   to 255 are the standard Next colour of that number in `RRRGGGBB`

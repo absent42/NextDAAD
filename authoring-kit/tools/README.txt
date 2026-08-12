@@ -8,7 +8,8 @@ full manual (start with "Getting started").
 
 Tool           Provides                                Download                                                   Extract into
 -------------  --------------------------------------  ---------------------------------------------------------  --------------------------
-DAAD Ready     DRC compiler (DRF.exe, DRB.PHP) + PHP   https://www.ngpaws.com/daadready/                          tools\DAAD-READY\
+DAAD Ready     DRF.exe (compiler frontend) + PHP        https://www.ngpaws.com/daadready/                          tools\DAAD-READY\
+NextDAAD DRC   DRB.PHP with the NEXTDAAD target         https://github.com/absent42/DRC (branch: nextdaad)          tools\DRC\
 Gfx2Next       PNG to Layer 2 conversion               https://www.rustypixels.uk/gfx2next/                       tools\gfx2next\
 Arkos Tracker  SongToAky/SongToSoundEffects/SongToYm   https://www.julien-nevo.com/arkostracker/index.php/download/  tools\ArkosTracker3\tools\
 CSpect         Emulator for testing                    https://mdf200.itch.io/cspect                              tools\CSpect\
@@ -18,7 +19,7 @@ vidtune.exe    Per-clip video tuning GUI               SHIPPED with this kit (fi
 
 After extracting, these paths must exist:
   tools\DAAD-READY\TOOLS\DRC\DRF.exe
-  tools\DAAD-READY\TOOLS\DRC\DRB.PHP
+  tools\DRC\src\drb.php
   tools\DAAD-READY\PHP\php.exe
   tools\gfx2next\gfx2next.exe
   tools\ArkosTracker3\tools\SongToAky.exe
@@ -53,3 +54,20 @@ Older .VID files are NOT playable by this interpreter any more: the
 NXV v2 rewrite (SP15) replaced NXV v1, which had replaced the six
 legacy MakeVid formats (SP14a). Re-encode from the original video
 source instead.
+
+Why two DRCs
+------------
+A NextDAAD game is compiled for the NEXTDAAD target, which produces a
+database this interpreter can read and which may be up to 64K rather than
+31744 bytes. That target is not in DAAD Ready's own DRC yet, so the kit uses
+the fork above for the back end (DRB) only. DAAD Ready still supplies the
+front end (DRF.exe) and PHP, so you need both.
+
+This is temporary. When a DAAD Ready release ships a DRC carrying the
+NEXTDAAD target, set DRCDIR in CONFIG.BAT to
+%TOOLSDIR%\DAAD-READY\TOOLS\DRC and delete tools\DRC. Nothing else changes.
+
+A database built for NEXTDAAD runs on NextDAAD only - not on the ZX Spectrum
+interpreter DAAD Ready builds for the Next, and not on a 48K or 128K
+Spectrum. NextDAAD likewise no longer loads databases built for those
+targets: it refuses them at boot with "DDB wrong machine - E4".
