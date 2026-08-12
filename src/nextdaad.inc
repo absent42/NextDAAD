@@ -129,9 +129,11 @@ BANK_L2BACK_LAST equ 34     ; gfx_blit renders here, then flips NR $12)
 ; open/filemap-setup cluster) evicted off VID_PAGE under the one-rule
 ; invariant (MMU7 = VID_PAGE whenever the video CTC ISR can fire) - see
 ; video.asm's own eviction comments at each moved routine.
+BANK_VID2       equ 35      ; withdrawn from the pool for the two pages
+                            ; below - see the paragraph above
 BANK_POOL_B     equ 36
-VID_PAGE2       equ 70      ; = 35*2, lower 8K of the withdrawn bank
-SFX_PAGE        equ 71      ; = 35*2+1, upper 8K of the SAME withdrawn
+VID_PAGE2       equ BANK_VID2*2      ; lower 8K of the withdrawn bank
+SFX_PAGE        equ BANK_VID2*2+1    ; upper 8K of the SAME withdrawn
                             ; bank (SP18 item 7 T3: SD-streamed sampled-
                             ; effect transport clones). Bank 35 is
                             ; already wholly excluded from bank_alloc
@@ -378,15 +380,15 @@ L2_TRANSP_INDEX  equ 255    ; PIXEL VALUE the interpreter writes to punch
                             ; so index 255 stays free for transparency.
 
 ; --- Banking skeleton (sub-project 3) ---
-DDB_PAGE_FIRST  equ 32      ; DDB bank 16 = 8K pages 32..47
+DDB_PAGE_FIRST  equ BANK_DDB_FIRST*2  ; 8K pages 32..39
 BANK_OVL0       equ 28      ; overlay page 0 lives in bank 28 (lower 8K)
-OVL0_PAGE       equ 56      ; = BANK_OVL0*2
+OVL0_PAGE       equ BANK_OVL0*2
 OVL_ORG         equ $E000
 OVL_LIMIT       equ $F800   ; overlay ASSERT bound (512 bytes spare)
-OVL1_PAGE       equ 57      ; overlay page 1: upper 8K of bank 28
+OVL1_PAGE       equ BANK_OVL0*2+1     ; overlay page 1: upper 8K of the same bank
 BANK_OVL2       equ 29      ; overlay page 2 lives in bank 29 (lower 8K)
-OVL2_PAGE       equ 58      ; = BANK_OVL2*2
-VID_PAGE        equ 59      ; video code page (SP13 T1): the upper 8K of
+OVL2_PAGE       equ BANK_OVL2*2
+VID_PAGE        equ BANK_OVL2*2+1     ; video code page (SP13 T1): the upper 8K of
                             ; bank 29, the ONLY page in the overlay-
                             ; reserved bank range (28/29) with no equate
                             ; yet - bank_table_init (banks.asm) never
@@ -541,8 +543,8 @@ HDR_OBJATTR     equ 28
 HDR_OBJEXTR     equ 30
 
 ; --- Audio (sub-project 7) ---
-AUD_PAGE_LO     equ 48      ; bank 24 lower 8K
-AUD_PAGE_HI     equ 49      ; bank 24 upper 8K
+AUD_PAGE_LO     equ BANK_AUDIO_FIRST*2      ; audio bank, lower 8K
+AUD_PAGE_HI     equ BANK_AUDIO_FIRST*2+1    ; audio bank, upper 8K
 AUD_PLAYER_ORG  equ $C000
 AUD_SFB_ORG     equ $D000   ; effects bank (2K)
 AUD_SONG_ORG    equ $D800   ; current song
@@ -622,7 +624,7 @@ SMP_FLOOR_LAST  equ 27      ; Task 5 these hold the two channels' effect
                             ; BT_USED at boot so aud_banks_claim's floor
                             ; pass (still used by the AYS stream client)
                             ; always skips them and takes pool banks
-SMP_PAGE_FIRST  equ 50      ; bank 25 lower 8K; floor banks' first page
+SMP_PAGE_FIRST  equ (BANK_AUDIO_FIRST+1)*2  ; next bank's lower 8K; floor banks' first page
 AUD_STAGE0      equ $7C00   ; ring base, bank 5 upper region - ALWAYS mapped
                             ; (MMU3), above divMMC's $0000-$3FFF, free after
                             ; TM_DEFS ($7400-$7BFF); ends exactly at $8000
