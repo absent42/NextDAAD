@@ -133,6 +133,7 @@ dbg_engage_tilemap:
     ld (dbgTilemap), a
     call boot_banner
     call ram_diag
+    call bank_selftest_show
     call ddb_diag
     ld a, (chrStatus)
     or a
@@ -152,6 +153,8 @@ dbg_engage_tilemap:
 msgChrOverride: db "CHR OVERRIDE", 0
 msgChrBad:      db "CHR BAD", 0
 dbgTilemap:     db 0
+bankSelfRes:    db 255      ; bank_selftest verdict: 0 = OK,
+                            ; 1-8 = failing check, 255 = not run
 
 ; HL = ASCIIZ string
 dbg_puts:
@@ -250,9 +253,18 @@ boot_banner:
     call nr_read
     jp dbg_hex8
 
-SELFTEST_FREE_2MB equ 79    ; 14,15 + 35-47 + 48-111 (29 withdrawn for overlay
-                            ; 2, 30-34 for the Layer 2 back surface)
-SELFTEST_FREE_1MB equ 15    ; 14,15 + 35-47 (same withdrawals)
+; Expected free-bank counts. These MUST match what bank_table_init
+; actually frees - they are the allocator's tripwire, and a stale value
+; here disables it. Both were one too high until 2026-08-12 because they
+; still counted bank 35, which BANK_POOL_B stopped including when
+; VID_PAGE2/SFX_PAGE took it (the withdrawal was made unconditional in
+; both build variants, see nextdaad.inc's bank map). Check 1 had been
+; failing ever since, on the ULA console where the verdict was never
+; replayed to the tilemap and so was never seen.
+SELFTEST_FREE_2MB equ 78    ; 14,15 + 36-47 + 48-111 (28,29 withdrawn for the
+                            ; overlays, 30-34 for the Layer 2 back surface,
+                            ; 35 for VID_PAGE2/SFX_PAGE)
+SELFTEST_FREE_1MB equ 14    ; 14,15 + 36-47 (same withdrawals)
 
 ram_diag:
     ld b, 2
@@ -273,8 +285,6 @@ ram_diag:
 ; BANKS FAIL nn where nn is the failing check number.
 ; Relies on helpers not touching D (expected free count).
 bank_selftest:
-    ld b, 10
-    call dbg_at0
     ld a, (ramExpanded)
     or a
     jr z, .exp1mb
@@ -334,13 +344,34 @@ bank_selftest:
     cp d
     ld a, 8
     jr nz, .fail
-    ld hl, msgBanksOk
-    jp dbg_puts
+    xor a                   ; 0 = every check passed
+    jr .verdict
 .failrestore:
     push af
     call data_restore
     pop af
 .fail:
+.verdict:
+    ld (bankSelfRes), a
+    ; falls into the printer
+
+; Print the LATCHED verdict at row 10: "BANKS OK", or "BANKS FAIL nn"
+; with the failing check number. Separate from the checks themselves so
+; dbg_engage_tilemap can replay it onto the tilemap without re-running
+; them - re-running is not safe once boot is past. The checks allocate,
+; free and assert an exact free count, and by the time the tilemap comes
+; up the audio banks are claimed and the picture cache may hold pool
+; banks, so a second run would fail on state that is perfectly correct.
+; Corrupts AF, BC, DE, HL.
+bank_selftest_show:
+    ld b, 10
+    call dbg_at0
+    ld a, (bankSelfRes)
+    or a
+    jr nz, .bad
+    ld hl, msgBanksOk
+    jp dbg_puts
+.bad:
     push af
     ld hl, msgBanksFail
     call dbg_puts
