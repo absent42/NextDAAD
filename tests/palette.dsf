@@ -15,6 +15,37 @@
 ; 16-colour block that must still render exactly as it did before the
 ; 256-colour work. EXAMINE walks 32 ink values against one paper, which
 ; is the pair allocator's pressure test.
+;
+; THE LAYER 2 CARD. 001.NXI is the 256x128 full-colour reference card
+; tests\art\mkpalcard.py generates: a 16 x 16 grid of every palette
+; index in order, on the identity palette, so swatch n is the same
+; colour INK n produces. It sits above the text deliberately - reading
+; a text line against the swatch of the same number is what turns "that
+; looks about right" into an actual check, and it puts Layer 2 and the
+; tilemap on screen together so interference between them would show.
+; Swatch 255, bottom right, is a hole rather than a colour: 255 is the
+; reserved transparent index, so the text layer shows through it.
+;
+; THE RED BACKDROP IS WHAT MAKES THE HOLE READABLE. Before the card is
+; drawn, the window is shaped to the card's own footprint - rows 4 to
+; 19, columns 8 to 71, exactly the area 256x128 art covers - and cleared
+; to paper 224, a saturated red. The card then covers every cell of it
+; except swatch 255. So red showing at row 19, columns 68 to 71 is
+; transparency working, and black there is transparency failing. Without
+; a backdrop the hole reveals the tilemap's own default black paper and
+; a working hole is indistinguishable from a broken one, which is
+; exactly the trap tests\art\mkl2card.py's header warns about.
+;
+; WINDOW LAYOUT. 256-wide art is top-aligned and the screen below stays
+; transparent (manual\graphics.md), so the card covers tilemap rows 4 to
+; 19 and the text window opens at row 20 with 12 rows. The More... pager
+; is left ON: the pressure block prints 200 cells into 12 rows, so it
+; pages, and stepping through it a screen at a time is how the eviction
+; behaviour is actually read.
+;
+; PICTURE IS A CONDITION, so a card that fails to load aborts its entry
+; and the colour text still prints from the entry after it. A run with
+; no art is a visibly degraded fixture rather than a blank screen.
 
 /CTL
 _
@@ -102,8 +133,19 @@ EXAMINE 5 verb
 /OBJ
 /0    0   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
 /PRO 0
-> _ _        CLS
-             BORDER 224
+> _ _        WINAT 4 8
+             WINSIZE 16 64
+             PAPER 224
+             INK 0
+             CLS
+             PAPER 0
+             INK 7
+             WINAT 20 0
+             WINSIZE 12 80
+             CLS
+             PICTURE 1
+             DISPLAY 0
+> _ _        BORDER 224
              PAPER 37
              INK 200
              MESSAGE 0

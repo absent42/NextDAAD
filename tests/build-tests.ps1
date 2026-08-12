@@ -1615,6 +1615,31 @@ if ($paperRuns -lt 200) {
     throw "palette: only $paperRuns of 200 pressure PAPER values present in tests\out\palette.ddb - the pressure process did not compile whole"
 }
 "palette.ddb: 200 distinct pressure PAPER values present - exceeds the 128-pair table"
+# The Layer 2 card's own condacts. WINAT is opcode 82 (two parameters),
+# WINSIZE 107 (two), PICTURE 84 (one), DISPLAY 28 (one). Asserted for the
+# same reason as the colour values above: DRC rewrites some condacts'
+# parameters silently, so "the DSF says so" is not evidence the
+# interpreter will receive it. A rewrite here would leave the card
+# drawing over the text, or not drawing at all, and the fixture would
+# look merely odd rather than broken.
+#
+# THE BACKDROP PAIR IS LOAD-BEARING, not layout garnish. WINAT 4 8 with
+# WINSIZE 16 64 is the card's exact footprint, cleared to red so that
+# swatch 255 - the reserved transparent index - reads as a hole rather
+# than as black. If those two ever drift from the card's real geometry
+# the fixture silently stops testing transparency at all, so they are
+# asserted alongside the picture condacts.
+foreach ($c in @(@{ n = 'WINAT 4 8 (card footprint)';    b = [byte[]]@(82, 4, 8) },
+                 @{ n = 'WINSIZE 16 64 (card footprint)'; b = [byte[]]@(107, 16, 64) },
+                 @{ n = 'WINAT 20 0 (text window)';       b = [byte[]]@(82, 20, 0) },
+                 @{ n = 'WINSIZE 12 80 (text window)';    b = [byte[]]@(107, 12, 80) },
+                 @{ n = 'PICTURE 1';                      b = [byte[]]@(84, 1) },
+                 @{ n = 'DISPLAY 0';                      b = [byte[]]@(28, 0) })) {
+    if ((Find-ByteRuns $palBytes $c.b).Count -lt 1) {
+        throw "palette: '$($c.n)' not present in tests\out\palette.ddb - the Layer 2 card's layout did not compile as authored"
+    }
+}
+"palette.ddb: Layer 2 card layout present (backdrop WINAT 4 8 / WINSIZE 16 64, text WINAT 20 0 / WINSIZE 12 80, PICTURE 1, DISPLAY 0)"
 
 # --- sfxlong: the SD-streamed sampled-effect wire fixture ---
 # THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/fontsw above: DRC
@@ -3569,6 +3594,34 @@ if ($FontSw) {
 if ($Palette) {
     Copy-Item "$root\tests\out\palette.ddb" (Join-Path $leg 'GAME.DDB') -Force
     "staged palette.ddb -> $leg\GAME.DDB"
+    # The full-colour reference card. Generated, not committed - a
+    # byte-exact function of the constants in tests\art\mkpalcard.py,
+    # the same rule tests\art\mkl2card.py's card follows.
+    #
+    # MUST BE .NXI, and 001 must be the only art in the folder. The
+    # picture loader probes NNN.NX2 BEFORE NNN.NXI, so a leftover
+    # 001.NX2 from another leg would win the chain and draw 320-wide art
+    # down a different blit path - the vacuous-run failure the per-leg
+    # folders exist to prevent. sd\PALETTE\ is emptied at the top of the
+    # staging section, so nothing else of number 001 is reachable.
+    & python "$PSScriptRoot\art\mkpalcard.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkpalcard.py failed" }
+    $palCardSrc = "$root\tests\out\palcard.nxi"
+    if (-not (Test-Path $palCardSrc)) { throw "mkpalcard.py produced no palcard.nxi" }
+    # gfx_derive_height reads the row count out of the FILE LENGTH -
+    # (bytes - 512) / 256 - and rejects a partial trailing row or more
+    # than 192 rows in 256-wide mode, so the size is the one thing that
+    # has to be right for the card to load at all.
+    $palCardBytes = (Get-Item $palCardSrc).Length
+    if ((($palCardBytes - 512) % 256) -ne 0) {
+        throw "palcard.nxi is $palCardBytes bytes - not 512 + a whole number of 256-byte rows"
+    }
+    $palCardRows = ($palCardBytes - 512) / 256
+    if ($palCardRows -lt 1 -or $palCardRows -gt 192) {
+        throw "palcard.nxi is $palCardRows rows - 256-wide art must be 1 to 192"
+    }
+    Copy-Item $palCardSrc (Join-Path $leg '001.NXI') -Force
+    "staged palcard.nxi -> $leg\001.NXI  $palCardBytes bytes, 256x$palCardRows"
 }
 
 # The interpreter itself, so the folder is genuinely self-contained -
