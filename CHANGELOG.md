@@ -66,8 +66,7 @@ All notable changes to NextDAAD are recorded here.
   audio; on a 2MB machine, from 78 to 82.
 - **Behaviour change:** a `GAME.DDB` over 64K is refused at boot with
   `NextDAAD: DDB oversize - E2`. It previously loaded, with everything
-  past 64K unreachable by any pointer. No database DRC can currently
-  compile comes close, so this cannot affect an existing game.
+  past 64K unreachable by any pointer.
 - The DEBUG allocator selftest works again. Its expected free-bank
   counts still counted a bank that had been withdrawn for video use, so
   it had been failing its first check, and its verdict was the one boot
