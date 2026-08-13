@@ -14,7 +14,21 @@ All notable changes to NextDAAD are recorded here.
 - The kit refuses a source using `#classic`. Caught at build time because it
   cannot be caught at boot: nothing in the compiled header distinguishes
   a classic-mode database from a DRC one.
-- `tests/bigddb.dsf` and a `-BigDdb` harness leg compile a 49397-byte
+- `CONFIG.BAT` takes a directory per tool - `DAADDIR`, `DRCDIR`, `GFXDIR`,
+  `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR`, and `VIDENCDIR`/`VIDTUNEDIR` for
+  the two the kit ships. An author who already has Arkos Tracker, CSpect
+  or ffmpeg installed can point at it instead of keeping a second copy
+  under `TOOLSDIR`. Each is blank by default and falls under `TOOLSDIR`,
+  so the single-folder layout is unchanged and the two mix freely. Arkos
+  and ffmpeg accept either the install root or the subfolder holding the
+  programs (`tools\` and `bin\`), since both are reasonable readings of
+  where the tool is.
+- The tool-path derivation moved into `lib\tools.bat`, resolved after
+  `CONFIG.local.BAT` loads and called by BUILD, RUN, CLEAN and VIDTUNE.
+  Those four carried diverging copies of it: `VIDTUNE.BAT` ignored
+  `TOOLSDIR` entirely, and `DRCDIR` was expanded before the local
+  override could move it.
+- `tests/bigddb.dsf` and a `-BigDdb` harness leg compile a 49645-byte
   database and assert out of the compiled bytes that the process,
   location, connection and message tables, and the text of the highest
   message, all land past the old 31744 ceiling. `tests/machine_gate.py`

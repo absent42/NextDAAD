@@ -30,6 +30,15 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
 <li><strong><code>#classic</code> is refused.</strong> That directive tells the compiler to  pad the token table and
   turning off the sharing of identical condact sequences. The build now stops and
   says so rather than spending your 64K on it.</li>
+<li><strong>Each tool can live in its own folder.</strong> If you already have Arkos
+  Tracker, CSpect or ffmpeg installed, you no longer need a second copy
+  under <code>tools\</code>. <code>CONFIG.BAT</code> has a directory setting per tool -
+  <code>DAADDIR</code>, <code>DRCDIR</code>, <code>GFXDIR</code>, <code>ARKOSDIR</code>, <code>CSPECTDIR</code>, <code>FFMPEGDIR</code> -
+  and each one you set is used instead of the folder under <code>TOOLSDIR</code>.
+  Leave them blank and nothing changes, so you can set only the ones you
+  keep elsewhere. Arkos Tracker and ffmpeg accept either the install root
+  or the subfolder their programs sit in. See
+  <a href="getting-started.html">Getting started</a>.</li>
 <li><strong>Timing change:</strong> <code>PAUSE</code>, <code>BEEP</code> and <code>XPLAY</code> durations come out about
   17% shorter than before. This is a change in DRC itself, not in
   NextDAAD - the compiler lowered the note-length base for this machine -
