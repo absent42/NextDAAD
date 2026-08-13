@@ -27,6 +27,13 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
     NextDAAD no longer loads databases built for those targets - it
     refuses them at boot with <code>DDB wrong machine - E4</code>. Rebuilding an
     existing game from its source is all that is needed.</li>
+<li><strong><code>#classic</code> is refused.</strong> That directive tells the compiler to imitate
+  the original pre-DRC DAAD compiler - padding the token table and
+  turning off the sharing of identical condact sequences - so that the
+  original DAAD interpreters accept the result. Those interpreters cannot
+  read a NextDAAD database whatever you do, so on this target it only
+  makes your database bigger, by roughly a tenth. The build now stops and
+  says so rather than spending your 64K on it.</li>
 <li><strong>Timing change:</strong> <code>PAUSE</code>, <code>BEEP</code> and <code>XPLAY</code> durations come out about
   17% shorter than before. This is a change in DRC itself, not in
   NextDAAD - the compiler lowered the note-length base for this machine -

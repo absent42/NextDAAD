@@ -13,7 +13,17 @@ All notable changes to NextDAAD are recorded here.
   the test harness both take DRB from there and DRF from DAAD Ready.
 - The kit's own database size check was still the old 128K loader limit
   and would have passed a database the interpreter now refuses. It is
-  65535.
+  65535. There were TWO such checks: the multi-part one in BUILD.BAT and
+  the single-part one in lib\ddb.bat, which is the path an ordinary game
+  takes, so only the rarer case had been protected.
+- The kit refuses a source using `#classic`. It makes DRC imitate the
+  original pre-DRC DAAD compiler - token table padded to 128 entries, no
+  sharing of identical condact sequences, an explicit terminator on every
+  entry - so that the original DAAD interpreters accept the output. Those
+  cannot read a NEXTDAAD-target database at all, so it buys nothing here
+  and costs about 10% of the database. Caught at build time because it
+  cannot be caught at boot: nothing in the compiled header distinguishes
+  a classic-mode database from an ordinary one.
 - `tests/bigddb.dsf` and a `-BigDdb` harness leg compile a 49397-byte
   database and assert out of the compiled bytes that the process,
   location, connection and message tables, and the text of the highest

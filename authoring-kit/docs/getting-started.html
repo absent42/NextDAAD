@@ -249,6 +249,10 @@ Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.</p>
 <td>The database is too large. 64K is the format's own ceiling - see <a href="reference/limits.html">Limits</a>, which suggests where to cut.</td>
 </tr>
 <tr>
+<td><code>uses #classic, which NextDAAD does not support</code></td>
+<td>Remove the <code>#classic</code> line from your source. It tells the compiler to imitate the original pre-DRC DAAD compiler, for the benefit of interpreters that cannot read a NextDAAD database in any case; here it only makes the database bigger.</td>
+</tr>
+<tr>
 <td><code>no DRB.PHP at ...</code></td>
 <td>The NextDAAD DRC fork is not installed. Put it in <code>tools\DRC\</code>, or point <code>DRCDIR</code> at it.</td>
 </tr>

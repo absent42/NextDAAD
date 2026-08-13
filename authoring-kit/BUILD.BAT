@@ -268,6 +268,18 @@ for %%N in (2 3 4 5 6 7 8 9) do (
             pause
             goto :part_fail
         )
+        REM Refuse #classic, as lib\ddb.bat does for a single-part game -
+        REM see its comment for why it cannot be caught at boot instead.
+        findstr /C:"\"classic_mode\":1" "%DR%\__ndbpart.json" >nul 2>&1
+        if not errorlevel 1 (
+            popd
+            del "%DR%\__ndbpart.*" 2>nul
+            echo ERROR: PART%%N\!PGAME!.DSF uses #classic, which NextDAAD does not
+            echo        support. It targets the original pre-DRC DAAD compiler and
+            echo        only makes the database bigger here. Remove the #classic line.
+            pause
+            goto :part_fail
+        )
         REM pre-clean stale 0.XMB - see the same-shaped comment in
         REM lib\ddb.bat for why (%DR% is shared across every compile).
         del "%DR%\0.XMB" 2>nul

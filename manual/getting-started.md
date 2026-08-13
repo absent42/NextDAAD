@@ -169,6 +169,7 @@ Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.
 | `CSpect is running - close it before building` | CSpect holds the `RELEASE\` files open. Close it and build again. |
 | `DRF failed compiling` / `DRB failed building the DDB` | The compiler rejected your source. Its own output above the message names the line. |
 | `GAME.DDB is N bytes, over the 65535 limit` | The database is too large. 64K is the format's own ceiling - see [Limits](reference/limits.md), which suggests where to cut. |
+| `uses #classic, which NextDAAD does not support` | Remove the `#classic` line from your source. It tells the compiler to imitate the original pre-DRC DAAD compiler, for the benefit of interpreters that cannot read a NextDAAD database in any case; here it only makes the database bigger. |
 | `no DRB.PHP at ...` | The NextDAAD DRC fork is not installed. Put it in `tools\DRC\`, or point `DRCDIR` at it. |
 | `the DRC at ... has no NEXTDAAD target` | That copy of DRC is too old, or is DAAD Ready's own. Update the fork, or point `DRCDIR` at one that has the target. |
 | `gfx2next not found` | Install Gfx2Next, or fix `TOOLSDIR`. |
