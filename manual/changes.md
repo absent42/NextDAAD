@@ -3,7 +3,7 @@
 Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.6.0 - unreleased
+## 0.6.0 - 13 August 2026
 
 - **The kit now builds NextDAAD-specific databases.** Your game is
   compiled for a new `NEXTDAAD` compiler target, which lifts the database
@@ -19,12 +19,8 @@ game behaves, how it builds, or what the kit gives you, it is here.
     NextDAAD no longer loads databases built for those targets - it
     refuses them at boot with `DDB wrong machine - E4`. Rebuilding an
     existing game from its source is all that is needed.
-- **`#classic` is refused.** That directive tells the compiler to imitate
-  the original pre-DRC DAAD compiler - padding the token table and
-  turning off the sharing of identical condact sequences - so that the
-  original DAAD interpreters accept the result. Those interpreters cannot
-  read a NextDAAD database whatever you do, so on this target it only
-  makes your database bigger, by roughly a tenth. The build now stops and
+- **`#classic` is refused.** That directive tells the compiler to  pad the token table and
+  turning off the sharing of identical condact sequences. The build now stops and
   says so rather than spending your 64K on it.
 - **Timing change:** `PAUSE`, `BEEP` and `XPLAY` durations come out about
   17% shorter than before. This is a change in DRC itself, not in
