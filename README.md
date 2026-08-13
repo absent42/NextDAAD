@@ -44,6 +44,7 @@ for NextDAAD means just editing your source and double-clicking one batch file.
   `POINTER.SPR` and the interpreter picks them up at boot, and a game
   can switch between up to ten of each while it runs
 - **Mouse input** - Kempston mouse with a hardware sprite pointer
+- **64KB databases** - DAAD game databases up to 64KB in size
 - **Multi-part games** - switch between databases at runtime with flags
   and objects intact, with per-part assets and saves that load from any
   part
@@ -73,7 +74,8 @@ The kit needs a few third-party tools it cannot redistribute:
 - [Gfx2Next](https://www.rustypixels.uk/gfx2next/) - PNG to Layer 2 pictures
 - [Arkos Tracker 3](https://www.julien-nevo.com/arkostracker/index.php/download/) - music and sound effects
 - [CSpect](https://mdf200.itch.io/cspect) - emulator, to play the result
-- [ffmpeg](https://ffmpeg.org/) - only for encoding cutscenes
+- [ffmpeg](https://ffmpeg.org/) - only for encoding cutscene
+- [NextDAAD DRC fork](https://github.com/absent42/DRC/tree/nextdaad) - DRC fork allow for large databases on ZX Spectrum Next target
 
 But included with the kit is VidTune, a UI app for fine-tuning video encodes and 
 experimenting with different settings to get the best results for your videos.
@@ -92,7 +94,8 @@ using the pre-built version included in the authoring kit, the toolchain lives i
 [CSpect](https://mdf200.itch.io/cspect),
 [DeZog](https://github.com/maziac/DeZog),
 [Gfx2Next](https://www.rustypixels.uk/gfx2next/),
-DRC via [DAAD Ready](https://www.ngpaws.com/daadready/).
+DRC via [DAAD Ready](https://www.ngpaws.com/daadready/), 
+[NextDAAD DRC fork](https://github.com/absent42/DRC/tree/nextdaad).
 
 ```
 powershell -File build.ps1            # debug build
