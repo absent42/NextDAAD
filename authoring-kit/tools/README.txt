@@ -30,6 +30,27 @@ After extracting, these paths must exist:
   tools\videnc\videnc.exe (only needed for VIDEO\NNN.mp4 cutscenes)
   tools\vidtune\vidtune.exe (only needed for interactive per-clip tuning)
 
+
+Already have one of these installed?
+-------------------------------------
+The paths above are the default: one tools\ folder holding everything.
+You do not have to duplicate an install you already have. CONFIG.BAT has
+a directory setting per tool - DAADDIR, DRCDIR, GFXDIR, ARKOSDIR,
+CSPECTDIR, FFMPEGDIR - and whichever you set is used instead of the
+folder under TOOLSDIR. Leave the rest blank and they still come from
+TOOLSDIR, so you can mix the two freely. For example:
+
+  SET CSPECTDIR=C:\Emulators\CSpect
+  SET ARKOSDIR=C:\Program Files\Arkos Tracker 3
+  SET FFMPEGDIR=C:\ffmpeg
+
+Point each at the folder the tool was installed into. Arkos Tracker and
+ffmpeg keep their programs in a subfolder (tools\ and bin\); either the
+install root or that subfolder is accepted, so both of these work:
+
+  SET FFMPEGDIR=C:\ffmpeg
+  SET FFMPEGDIR=C:\ffmpeg\bin
+
 Video cutscenes (see ..\docs\video.html) ARE built by
 BUILD.BAT: drop a numeric-named source video (VIDEO\NNN.mp4) into
 VIDEO\ and the build encodes it to the interpreter's native NXV v2

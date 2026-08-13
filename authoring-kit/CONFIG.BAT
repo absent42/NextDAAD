@@ -15,19 +15,57 @@ REM Location of the toolchain (DRC, gfx2next, Arkos tools, CSpect). Install the
 REM tools into this folder - see tools\README.txt.
 SET TOOLSDIR=tools
 
+REM ---------------------------------------------------------------------
+REM WHERE EACH TOOL LIVES
+REM
+REM Leave these BLANK and each falls under TOOLSDIR above, which is the
+REM simple layout: one folder, everything in it, nothing to configure.
+REM
+REM Set one to point somewhere else if you ALREADY have that tool
+REM installed - Arkos Tracker, CSpect and ffmpeg are general-purpose and
+REM are commonly already on the machine. That saves keeping a second copy
+REM in sync. Absolute paths are fine:
+REM
+REM   SET CSPECTDIR=C:\Emulators\CSpect
+REM   SET ARKOSDIR=C:\Program Files\Arkos Tracker 3
+REM   SET FFMPEGDIR=C:\ffmpeg
+REM
+REM Point at the folder the tool was installed into. For Arkos Tracker
+REM and ffmpeg, whose programs sit in a subfolder (tools\ and bin\), the
+REM install root and that subfolder are both accepted.
+REM
+REM Blank rather than spelled out on purpose: CONFIG.local.BAT is loaded
+REM AFTER this file and exists to relocate TOOLSDIR, so a default written
+REM out here would freeze the old folder in while everything else moved.
+REM They are resolved in lib\tools.bat once both files have been read.
+REM ---------------------------------------------------------------------
+
+REM DAAD Ready - supplies DRF.exe (compiler front end) and PHP.
+SET DAADDIR=
+
 REM Which DRC compiles your game. NextDAAD databases need the NEXTDAAD
 REM target, which DAAD Ready's own DRC does not have yet - so the build
 REM uses the NextDAAD DRC fork, installed into TOOLSDIR (see
 REM tools\README.txt). Once a DAAD Ready release ships a DRC carrying the
 REM target, set this to %TOOLSDIR%\DAAD-READY\TOOLS\DRC and delete the
-REM fork - nothing else needs touching.
-REM
-REM LEAVE BLANK to mean "%TOOLSDIR%\DRC". Blank rather than spelled out
-REM because TOOLSDIR may be changed after this file runs (CONFIG.local.BAT
-REM is loaded afterwards and exists to relocate exactly that): spelling it
-REM out here would freeze the OLD toolchain folder into DRCDIR while every
-REM other tool followed the new one.
+REM fork - nothing else needs touching. Blank means %TOOLSDIR%\DRC.
 SET DRCDIR=
+
+REM Gfx2Next - PNG to Layer 2 picture conversion.
+SET GFXDIR=
+
+REM Arkos Tracker 3 - SongToAky, SongToSoundEffects, SongToYm.
+SET ARKOSDIR=
+
+REM CSpect - the emulator BUILD.BAT and RUN.BAT launch.
+SET CSPECTDIR=
+
+REM ffmpeg - reads your .mp4 cutscene sources.
+SET FFMPEGDIR=
+
+REM videnc and vidtune - shipped with the kit; you should not need these.
+SET VIDENCDIR=
+SET VIDTUNEDIR=
 
 REM The pre-built interpreter to ship in RELEASE\ as nextdaad.nex.
 SET NEXFILE=nextdaad.nex

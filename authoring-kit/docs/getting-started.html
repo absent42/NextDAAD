@@ -72,6 +72,21 @@ paths the build checks for. The video encoder ships with the kit, so
 ffmpeg is the only extra download cutscenes need.</p>
 <p>If you keep your tools somewhere else, point <code>TOOLSDIR</code> in <code>CONFIG.BAT</code>
 at that folder instead.</p>
+<p><strong>Already have some of these?</strong> Arkos Tracker, CSpect and ffmpeg are
+general-purpose tools you may well have installed already, and there is
+no need for a second copy. <code>CONFIG.BAT</code> has a directory setting per
+tool - <code>ARKOSDIR</code>, <code>CSPECTDIR</code>, <code>FFMPEGDIR</code>, <code>DAADDIR</code>, <code>DRCDIR</code>,
+<code>GFXDIR</code> - and each one you set is used instead of the folder under
+<code>TOOLSDIR</code>. Anything you leave blank still comes from <code>TOOLSDIR</code>, so
+mixing the two is fine: keep the small stuff in <code>tools\</code> and point the
+big installs wherever they already are. Absolute paths, including ones
+with spaces, are fine:</p>
+<pre><code>SET CSPECTDIR=C:\Emulators\CSpect
+SET ARKOSDIR=C:\Program Files\Arkos Tracker 3
+</code></pre>
+<p>Point each at the folder the tool was installed into. Arkos Tracker and
+ffmpeg keep their programs in a subfolder (<code>tools\</code> and <code>bin\</code>); either
+the install root or that subfolder is accepted.</p>
 <h2 id="learning-daad-itself">Learning DAAD itself</h2>
 <p>This manual covers what is specific to the Next: the kit, the build,
 and how each condact behaves on this target. It does not teach the DAAD
@@ -139,8 +154,12 @@ are all optional and the build skips whatever is absent.</p>
 <td>Folder holding the tools above. Default <code>tools</code>.</td>
 </tr>
 <tr>
-<td><code>DRCDIR</code></td>
-<td>Which DRC compiles the database. Blank means <code>%TOOLSDIR%\DRC</code>, the fork - leave it blank and it follows <code>TOOLSDIR</code> wherever you put that. Set it to DAAD Ready's own <code>TOOLS\DRC</code> once that carries the <code>NEXTDAAD</code> target.</td>
+<td><code>DAADDIR</code>, <code>DRCDIR</code>, <code>GFXDIR</code>, <code>ARKOSDIR</code>, <code>CSPECTDIR</code>, <code>FFMPEGDIR</code></td>
+<td>Where each individual tool lives. Blank means "the folder under <code>TOOLSDIR</code>", so leave them alone for the simple layout and set only the ones you keep elsewhere. See <a href="#what-you-need">What you need</a>.</td>
+</tr>
+<tr>
+<td><code>VIDENCDIR</code>, <code>VIDTUNEDIR</code></td>
+<td>Same, for the two tools the kit ships. You should not need to set these.</td>
 </tr>
 <tr>
 <td><code>NEXFILE</code></td>

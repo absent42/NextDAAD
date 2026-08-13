@@ -10,5 +10,6 @@ if exist "RELEASE" (
     echo nothing to clean
 )
 REM stray DDB build intermediates staged into the DAAD-READY folder
-del "%TOOLSDIR%\DAAD-READY\__ndb.*" 2>nul
+call "%~dp0lib\tools.bat"
+del "%DAADDIR%\__ndb.*" 2>nul
 endlocal

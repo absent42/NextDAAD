@@ -8,9 +8,11 @@ if not exist "RELEASE\nextdaad.nex" (
     pause
     exit /b 1
 )
-set "CSPECT=%TOOLSDIR%\CSpect\CSpect.exe"
+call "%~dp0lib\tools.bat"
 if not exist "%CSPECT%" (
     echo ERROR: CSpect not found at %CSPECT%
+    echo        Install CSpect there, or set CSPECTDIR in CONFIG.BAT to an
+    echo        existing install.
     pause
     exit /b 1
 )

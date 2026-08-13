@@ -467,10 +467,15 @@ foreach ($src in $sources) {
 }
 if (-not $plan) { exit 0 }
 
-$ffmpeg = Join-Path $env:TOOLSDIR 'ffmpeg\bin\ffmpeg.exe'
+# lib\tools.bat resolved ffmpeg already, probing both an install root and
+# its bin\ subfolder. Take its answer rather than repeating the probe here
+# and drifting from it; the fallback only matters if this script is run
+# directly rather than from BUILD.BAT.
+$ffmpeg = if ($env:FFMPEG) { $env:FFMPEG } else { Join-Path $env:TOOLSDIR 'ffmpeg\bin\ffmpeg.exe' }
 if (-not (Test-Path $ffmpeg)) {
     Write-Host "ERROR: ffmpeg not found at $ffmpeg (needed to encode VIDEO\*.mp4)"
-    Write-Host "       Download it - see tools\README.txt - or pre-encode to .vid"
+    Write-Host "       Download it - see tools\README.txt - or set FFMPEGDIR in"
+    Write-Host "       CONFIG.BAT to an ffmpeg you already have installed"
     exit 1
 }
 
@@ -489,9 +494,9 @@ if (-not (Test-Path $ffmpeg)) {
 $kitRoot = Split-Path -Parent $PSScriptRoot
 $enc = $null
 $exeCandidates = @(
-    (Join-Path $env:TOOLSDIR 'videnc\videnc.exe'),
+    $(if ($env:VIDENC) { $env:VIDENC } else { Join-Path $env:TOOLSDIR 'videnc\videnc.exe' }),
     (Join-Path $kitRoot 'tools\videnc\videnc.exe')
-)
+) | Where-Object { $_ } | Select-Object -Unique
 foreach ($exe in $exeCandidates) {
     # >1MB check: a clone made without git-lfs leaves a tiny text
     # POINTER file at this path, not the real (26MB) binary - skip it

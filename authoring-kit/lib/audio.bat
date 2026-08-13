@@ -33,7 +33,7 @@ for %%F in ("AUDIO\*.aks") do (
 )
 if not defined HAS_AKY_SRC goto :aky_done
 if not exist "%S2A%" (
-    echo ERROR: SongToAky not found at %S2A% - install Arkos Tracker 3 or fix TOOLSDIR in CONFIG.BAT
+    echo ERROR: SongToAky not found at %S2A% - install Arkos Tracker 3, or set ARKOSDIR in CONFIG.BAT to an existing install
     exit /b 1
 )
 
@@ -76,7 +76,7 @@ REM      SongToYm recipe. Needs SongToYm; skip the whole leg if there are
 REM      no STREAM_*.aks sources. ----
 if not exist "AUDIO\STREAM_*.aks" goto :stream_done
 if not exist "%S2Y%" (
-    echo ERROR: SongToYm not found at %S2Y% - install Arkos Tracker 3 or fix TOOLSDIR in CONFIG.BAT
+    echo ERROR: SongToYm not found at %S2Y% - install Arkos Tracker 3, or set ARKOSDIR in CONFIG.BAT to an existing install
     exit /b 1
 )
 REM NOTE: %~dp0 here is THIS script's own folder (lib\), not the kit root -

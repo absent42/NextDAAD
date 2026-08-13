@@ -24,13 +24,14 @@ if not exist "%GAME%.DSF" (
 )
 
 REM ---- derive tool paths ----
-set "DR=%TOOLSDIR%\DAAD-READY"
-set "DRF=%DR%\TOOLS\DRC\DRF.exe"
-set "PHP=%DR%\PHP\php.exe"
-REM Blank DRCDIR means the fork under the toolchain folder. Resolved HERE,
-REM after CONFIG.local.BAT has had its say, so a locally relocated TOOLSDIR
-REM carries DRCDIR with it instead of leaving it behind at the default.
-if not defined DRCDIR set "DRCDIR=%TOOLSDIR%\DRC"
+REM Every tool path comes from lib\tools.bat, which resolves the per-tool
+REM directory overrides against TOOLSDIR. Called HERE, after both config
+REM files have been read, so a relocated TOOLSDIR carries every tool with
+REM it. RUN.BAT, CLEAN.BAT and VIDTUNE.BAT call the same script - the
+REM derivation used to be copied into each of them and had already
+REM drifted apart.
+call "%~dp0lib\tools.bat"
+set "DR=%DAADDIR%"
 REM DRB.PHP sits in one of two shapes. The fork is a source checkout and
 REM keeps it in src\; a DRC directory - DAAD Ready's own TOOLS\DRC, which
 REM DRCDIR is meant to point straight at once that carries the NEXTDAAD
@@ -58,10 +59,7 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-set "GFX=%TOOLSDIR%\gfx2next\gfx2next.exe"
-set "S2A=%TOOLSDIR%\ArkosTracker3\tools\SongToAky.exe"
-set "S2E=%TOOLSDIR%\ArkosTracker3\tools\SongToSoundEffects.exe"
-set "S2Y=%TOOLSDIR%\ArkosTracker3\tools\SongToYm.exe"
+REM GFX, S2A, S2E and S2Y come from lib\tools.bat above.
 
 REM ---- preflight: always-required tools ----
 for %%T in ("%DRF%" "%PHP%" "%DRB%" "%NEXFILE%") do (

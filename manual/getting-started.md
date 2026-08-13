@@ -30,6 +30,23 @@ ffmpeg is the only extra download cutscenes need.
 If you keep your tools somewhere else, point `TOOLSDIR` in `CONFIG.BAT`
 at that folder instead.
 
+**Already have some of these?** Arkos Tracker, CSpect and ffmpeg are
+general-purpose tools you may well have installed already, and there is
+no need for a second copy. `CONFIG.BAT` has a directory setting per
+tool - `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR`, `DAADDIR`, `DRCDIR`,
+`GFXDIR` - and each one you set is used instead of the folder under
+`TOOLSDIR`. Anything you leave blank still comes from `TOOLSDIR`, so
+mixing the two is fine: keep the small stuff in `tools\` and point the
+big installs wherever they already are. Absolute paths, including ones
+with spaces, are fine:
+
+    SET CSPECTDIR=C:\Emulators\CSpect
+    SET ARKOSDIR=C:\Program Files\Arkos Tracker 3
+
+Point each at the folder the tool was installed into. Arkos Tracker and
+ffmpeg keep their programs in a subfolder (`tools\` and `bin\`); either
+the install root or that subfolder is accepted.
+
 ## Learning DAAD itself
 
 This manual covers what is specific to the Next: the kit, the build,
@@ -84,7 +101,8 @@ are all optional and the build skips whatever is absent.
 | `COMPRESS` | `1` = ZX0-compress pictures (smaller files); `0` = raw. |
 | `RUN` | `1` = launch CSpect after a successful build; `0` = build only. |
 | `TOOLSDIR` | Folder holding the tools above. Default `tools`. |
-| `DRCDIR` | Which DRC compiles the database. Blank means `%TOOLSDIR%\DRC`, the fork - leave it blank and it follows `TOOLSDIR` wherever you put that. Set it to DAAD Ready's own `TOOLS\DRC` once that carries the `NEXTDAAD` target. |
+| `DAADDIR`, `DRCDIR`, `GFXDIR`, `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR` | Where each individual tool lives. Blank means "the folder under `TOOLSDIR`", so leave them alone for the simple layout and set only the ones you keep elsewhere. See [What you need](#what-you-need). |
+| `VIDENCDIR`, `VIDTUNEDIR` | Same, for the two tools the kit ships. You should not need to set these. |
 | `NEXFILE` | The interpreter to ship. Default `nextdaad.nex`. |
 | `VIDASPECT`, `VIDFPS`, `VIDOPTS`, `VIDOPTS_NNN` | Cutscene encoding - see [Video](video.md). |
 

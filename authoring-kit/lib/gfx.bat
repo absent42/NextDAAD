@@ -16,7 +16,7 @@ if not exist "IMAGES" (
     goto :title_readymade
 )
 if not exist "%GFX%" (
-    echo ERROR: gfx2next not found at %GFX% - install Gfx2Next or fix TOOLSDIR in CONFIG.BAT
+    echo ERROR: gfx2next not found at %GFX% - install Gfx2Next, or set GFXDIR in CONFIG.BAT to an existing install
     exit /b 1
 )
 set "COUNT=0"
