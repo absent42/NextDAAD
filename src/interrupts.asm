@@ -199,7 +199,15 @@ im2_init:
 
 ; ISR contract (SP7 Task 3): the fast path (audEnable = 0) touches only
 ; AF, HL and frameCounter, exactly as before - never MMU, esxDOS or the
-; $C000 window. Once audEnable is nonzero the ISR takes the full-context
+; $C000 window. SP-XBN Task 5 EXCEPTION: when xbnIntOn is also set (a
+; game shipped an XBN with a nonzero intEntry), the fast path takes its
+; own full-context save (.xbnhook_fast) before running the hook and
+; MMU6/7 for the hook's own XBN bank via the ISR-private
+; extSavedIsr/xbn_isr_mmu_save/restore pair (main.asm) - never extSaved,
+; which a foreground extern call may be mid-flight on. audEnable = 0 and
+; xbnIntOn = 0 together (no XBN loaded, or its intEntry left 0) is the
+; only shape that still gets the true three-register fast path.
+; Once audEnable is nonzero the ISR takes the full-context
 ; path: EVERY register pair including both shadow sets is saved before
 ; aud_tick runs (which corrupts anything - PLY_AKY_PLAY reuses SP
 ; internally but restores it per its own contract) and restored after,
@@ -224,6 +232,16 @@ im2_isr:
     ld a, (audEnable)
     or a
     jr nz, .audio
+    ; XBN #int frame hook (SP-XBN Task 5): cheapest possible gate before
+    ; the fast-path exit. xbnIntOn is 0 for every game with no XBN loaded
+    ; or whose header left intEntry 0 (engine.asm), so this is one
+    ; load-and-test in the common case. Armed, falls through to
+    ; .xbnhook_fast, which performs the same full-context save the audio
+    ; path does before the hook runs - the author's intEntry gets a
+    ; complete register context either way.
+    ld a, (xbnIntOn)
+    or a
+    jr nz, .xbnhook_fast
     pop hl
     pop af
     ei
@@ -302,9 +320,23 @@ im2_isr:
     ; restore below would cover mainline regardless).
     ; SITED HERE, NOT INSIDE aud_tick, for one reason: page 48 is the
     ; binding budget of this sub-project and the two nextregs plus the
-    ; call cost 11 of its bytes, against 59 free in this resident region.
+    ; call cost 11 of its bytes, against 59 free in this resident region
+    ; at the time (SP18 item 7 Task 6).
     ; Nothing else moves - this is still one call per frame, immediately
     ; after the sample pump, with the same slot 6/7 state either way.
+    ; SP-XBN Task 5 UPDATE: the #int hook below (gate + call site on this
+    ; path, the .xbnhook_fast entry, and the shared .xbnint/.jphl body)
+    ; cost 52 bytes of this same pre-flags pad, which stood at 70 free
+    ; going in (DEBUG, the tightest variant - see engine.asm's "pre-flags
+    ; pad" DISPLAY) and 18 free coming out. That is why .xbnhook_fast
+    ; jumps into .restore_all instead of duplicating the audio path's own
+    ; 18-byte restore tail: a literal duplicate (mirroring the audio
+    ; prologue AND epilogue in full) would have cost 68 of the 70 bytes
+    ; free, a 2-byte margin too thin to trust. Sharing the tail bought 15
+    ; of those bytes back. If a future change needs more of this pad,
+    ; re-run the DEBUG build and read the live DISPLAY figure before
+    ; assuming headroom - do not trust this comment's numbers to stay
+    ; current.
     nextreg NR_MMU7, SFX_PAGE
     call aud_sfx_refill
     nextreg NR_MMU7, AUD_PAGE_HI
@@ -317,11 +349,24 @@ im2_isr:
                              ; post-tick state is legible. Self-gated on
                              ; SMPB_FLAGS (a live sample owns that ring).
  ENDIF
+    ; XBN #int frame hook (SP-XBN Task 5), AFTER aud_tick and the SFX
+    ; refill so music timing never waits on author code, and still inside
+    ; this path's full-context save (before the MMU6/7 restore just
+    ; below). Skipped entirely when no XBN int is armed - one
+    ; load-and-test, same gate as the fast path above.
+    ld a, (xbnIntOn)
+    or a
+    call nz, .xbnint
     pop de
     ld a, d
     nextreg $56, a
     ld a, e
     nextreg $57, a
+.restore_all:                    ; shared full-context restore, also
+                                 ; reached by .xbnhook_fast below (that
+                                 ; path never pushed the MMU6/7 pair just
+                                 ; popped above, so it jumps in HERE, past
+                                 ; it)
     pop hl
     pop de
     pop bc
@@ -336,6 +381,50 @@ im2_isr:
     pop af
     ei
     reti
+
+; XBN #int frame hook, fast-path entry (SP-XBN Task 5): audEnable was 0
+; but xbnIntOn is set, so this performs the SAME full save the audio path
+; does above (push BC/DE/IX/IY and both alternate-set pairs, mirroring
+; im2_isr's .audio prologue exactly) before the hook can run - intEntry
+; must never see a partial context just because audio happens to be off.
+; No MMU6/7 save/map/restore here: that pair belongs to aud_tick's
+; AUD_PAGE mapping, which this path never touches. Exits by jumping into
+; .restore_all above, which unwinds exactly what was pushed here, in the
+; same order, then ei/reti - the fast path's original epilogue, extended
+; to match the larger save.
+.xbnhook_fast:
+    push bc
+    push de
+    push ix
+    push iy
+    ex af, af'
+    push af
+    exx
+    push bc
+    push de
+    push hl
+    call .xbnint
+    jp .restore_all
+
+; XBN #int frame hook body, shared by both entry paths above. Uses its
+; OWN MMU save slot (extSavedIsr/xbn_isr_mmu_save/xbn_isr_mmu_restore,
+; main.asm) - NEVER extSaved/xbn_mmu_save, which ext_dispatch (foreground)
+; may have live mid-extern-call when this interrupt lands; see
+; extSavedIsr's comment in main.asm for the reentrancy hazard. xbn_mmu_map
+; is shared as-is: it only reads xbnBank and writes NR_MMU6/7 directly, so
+; it disturbs no foreground state either. IX = flags matches the classic
+; EXTERN register contract (main.asm's ext_build_contract) so intEntry can
+; use the same flags-relative addressing every other extern call gets.
+.xbnint:
+    call xbn_isr_mmu_save
+    call xbn_mmu_map
+    ld ix, flags
+    ld hl, (xbnInt)
+    call .jphl
+    call xbn_isr_mmu_restore
+    ret
+.jphl:
+    jp (hl)
 
 ; SP10 CTC pivot: the per-sample DAC feeder, fired by CTC channel 0 at the
 ; sample rate through its carved IM2 vector. The depacker-safe memory-pointer

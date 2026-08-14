@@ -251,6 +251,15 @@ ddb_err_machine:
 ; out to map the XBN bank into slots 6+7 for the call, then paged back.
 extTarget:  dw 0
 extSaved:   dw 0                ; saved MMU6 (lo) / MMU7 (hi)
+; ISR-private mirror of extSaved (Task 5's #int frame hook, interrupts.asm).
+; ext_dispatch (foreground, above) can be mid-flight - extTarget loaded,
+; extSaved holding the pre-extern mapping, XBN bank not yet mapped or
+; already mapped and about to be unwound - when the frame ISR fires. If
+; the hook reused extSaved/xbn_mmu_save it would overwrite the foreground's
+; saved mapping, and ext_dispatch's own xbn_mmu_restore would then remap
+; the WRONG pages on return. extSavedIsr and the pair below are the ISR's
+; own slot; interrupts.asm's im2_isr never touches extSaved or extTarget.
+extSavedIsr: dw 0
 
 xbn_mmu_save:                   ; corrupts A, BC; result in extSaved
     ld bc, $243B
@@ -279,6 +288,35 @@ xbn_mmu_restore:                ; corrupts A
     ld a, (extSaved)
     nextreg NR_MMU6, a
     ld a, (extSaved+1)
+    nextreg NR_MMU7, a
+    ret
+
+; ISR-private twins of xbn_mmu_save/xbn_mmu_restore above, bodies
+; identical except the store/load targets extSavedIsr instead of
+; extSaved - see extSavedIsr's own comment for why the ISR cannot share
+; the foreground pair. xbn_mmu_map (below-declared, above in the file)
+; needs no ISR twin: it only reads xbnBank and writes NR_MMU6/7 directly,
+; touching neither extSaved/extTarget nor any other foreground state, so
+; interrupts.asm calls it as-is.
+xbn_isr_mmu_save:               ; corrupts A, BC; result in extSavedIsr
+    ld bc, $243B
+    ld a, NR_MMU6
+    out (c), a
+    inc b
+    in a, (c)
+    ld (extSavedIsr), a
+    dec b
+    ld a, NR_MMU7
+    out (c), a
+    inc b
+    in a, (c)
+    ld (extSavedIsr+1), a
+    ret
+
+xbn_isr_mmu_restore:            ; corrupts A
+    ld a, (extSavedIsr)
+    nextreg NR_MMU6, a
+    ld a, (extSavedIsr+1)
     nextreg NR_MMU7, a
     ret
 
