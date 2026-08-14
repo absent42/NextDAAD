@@ -51,9 +51,31 @@ ext_main:
                                  ; it is 0
     ret
 .arm:
+    xor a
+    ld (armed), a                ; disarm FIRST. Every way this can fail
+                                 ; below (out of range, or an empty
+                                 ; message) must leave the ticker OFF,
+                                 ; not still running whatever the
+                                 ; PREVIOUS successful arm left ticking -
+                                 ; a failed re-arm is a clean stop, not a
+                                 ; silent no-op.
     ld a, b                      ; param1 = user message number
     call SVC_GETMSG               ; out: HL=staging buffer, BC=length
     ret c                        ; out of range (A=$FF): stay disarmed
+                                 ; (already zeroed above)
+    ld a, b                      ; B/C now hold SVC_GETMSG's returned
+    or c                         ; length, not param1 any more
+    ret z                        ; BC==0: an EMPTY message is a LEGAL
+                                 ; result (CF stays clear - the first
+                                 ; decoded byte was just the terminator),
+                                 ; not an error, but it is NOT safe to
+                                 ; fall through to ldir below. Z80's LDIR
+                                 ; decrements BC AFTER each copy, so
+                                 ; BC==0 does not mean "copy nothing" -
+                                 ; it means "copy 65536 bytes", scribbling
+                                 ; far past the 256-byte text buffer.
+                                 ; Catch the zero-length case here, before
+                                 ; ldir ever runs.
     ld de, text
     ld a, b                      ; length high byte: 0 for every length
     or a                         ; up to 255; 1 only for the one edge
