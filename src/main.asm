@@ -321,6 +321,36 @@ ext_build_contract:
     ld a, b
     jp ext_dispatch
 
+; CALL lsb msb (dispatcher ABI, cprops row $82): B = lsb, C = msb of the
+; target address. overlay0's h_call just jumps straight here - its own
+; DEBUG headroom (11 bytes after Task 3) has no room for the range-check
+; body, same reasoning as ext_build_contract above. Range-checks the
+; target against the loaded XBN's window ($C000..xbnEnd, exclusive) and
+; jumps into it via ext_dispatch on success; no XBN staged, or the
+; address outside the window: no-op (falls through to ret), which was
+; the old documented behaviour for every CALL before XBN support.
+; xbnEnd's exclusive-end semantics (including the $FFFF clamp for a
+; max-size XBN, Task 2) mean the classic HL:DE unsigned-compare idiom
+; below (sbc hl,de / add hl,de - restores HL, carry set iff HL<DE) must
+; reject HL == xbnEnd, which it does via ret nc.
+call_dispatch:
+    ld a, (xbnBank)
+    inc a
+    ret z                        ; $FF -> 0, no XBN staged
+    ld l, b
+    ld h, c                      ; HL = target address
+    ld a, h
+    cp $C0
+    ret c                        ; below the window
+    ld de, (xbnEnd)
+    or a
+    sbc hl, de
+    add hl, de
+    ret nc                       ; >= xbnEnd
+    ld (extTarget), hl
+    ld ix, flags                 ; contract: IX valid, A/B/C/HL/DE undefined
+    jp ext_dispatch
+
 ; Call HL (a routine on SFX_PAGE) on overlay1's behalf, exactly as
 ; sfx_open_tramp (banks.asm) does for sfx_stream_open: overlay1 and
 ; SFX_PAGE share the slot-7 window, so the nextreg that pages the callee

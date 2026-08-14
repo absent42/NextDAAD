@@ -3216,16 +3216,20 @@ moveVerb:  db 0
 
 ; --- SP10 Task 5: CALL closure + Kempston mouse ---
 
-h_call:                         ; 101: CALL (invoke machine code at an
-                                 ; address) has no meaning in a bytecode
-                                 ; interpreter. jdaad.js's own _CALL() is
-                                 ; the same shape - "// CALL not
-                                 ; supported by jDAAD", then just marks
-                                 ; done. Clean, documented no-op - no
-                                 ; DEBUG marker: this is a documented-
-                                 ; unsupported condact, not an
-                                 ; unimplemented one.
-    ret
+h_call:                         ; 101: CALL lsb msb: run code at that
+                                 ; address inside the loaded XBN's extent
+                                 ; ($C000..xbnEnd). No XBN staged, or the
+                                 ; address out of range: no-op - the same
+                                 ; documented behaviour CALL always had
+                                 ; before XBN support (jdaad.js's own
+                                 ; _CALL() likewise just marks done, "CALL
+                                 ; not supported by jDAAD"). Range-check
+                                 ; and dispatch body is resident
+                                 ; (call_dispatch, main.asm) - overlay0's
+                                 ; own DEBUG headroom has no room to spare
+                                 ; for it (Task 3's same finding for
+                                 ; ext_build_contract).
+    jp call_dispatch
 
 ; MOUSE (86): B = P1 (flag base, sub 3 only), C = sub. Sub map per
 ; jdaad's _MOUSE() (tools/DAAD-READY/ASSETS/HTML/jdaad.js ~3587-3615):
