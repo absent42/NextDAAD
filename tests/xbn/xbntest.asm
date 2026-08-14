@@ -30,12 +30,27 @@ ext_main:
     jp svc_probe                ; Task 6 extends this; RET-only until then
 
 svc_probe:
-    ret                         ; placeholder body replaced in Task 6
+    call SVC_VERSION
+    ld (XBN_FLAGS+206), a       ; expect 1
+    call SVC_RANDOM
+    ld b, a
+    call SVC_RANDOM
+    cp b                        ; two draws differing is probabilistic
+    ld a, 1                     ;  but a frozen PRNG returning equal
+    jr nz, .ok                  ;  bytes twice is the failure being
+    dec a                       ;  hunted (stuck rng) - accept rare 0
+.ok:
+    ld (XBN_FLAGS+207), a       ; expect 1 (almost always)
+    ld hl, .msg
+    call SVC_PUTS                ; visible banner on screen
+    or a
+    ret
+.msg: db "XBN SVC OK ", 0
 
 call_target:
     ; COUPLED to tests\extern.dsf's XCAL entry (CALL lsb msb) - the
     ; address here must match the literal bytes in that DSF's PRO 5
-    ; XCAL entry. Currently $C02C (lsb 44, msb 192; see
+    ; XCAL entry. Currently $C055 (lsb 85, msb 192; see
     ; tests\out\xbn\xbntest.sym after assembly) - re-encode extern.dsf's
     ; XCAL entry by hand if this label ever moves.
     ld a, $77

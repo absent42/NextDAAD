@@ -158,8 +158,8 @@ XABS   107 verb
            PRINT 204         ; expect 162 ($A2)
            PRINT 205         ; expect 0
            DONE
-> XCAL _   CALL 44 192        ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C02C (lsb 44, msb 192) - read
+> XCAL _   CALL 85 192        ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C055 (lsb 85, msb 192) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves.

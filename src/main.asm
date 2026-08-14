@@ -90,6 +90,9 @@ main:
     call ovl_map_page
     call xms_boot_reset
     call xbn_boot_load
+    call xbn_api_init           ; copy the frozen SVC table to XBN_API;
+                                ; resident (Task 6), so the OVL0_PAGE
+                                ; mapping above is incidental, not required
     ; SP7 boot autoplay: probe GAME.AKY/GAME.SFB (loaders live in
     ; overlay1; the dispatcher-owned slot 7 is free at boot). Fail-
     ; silent when absent - same esxDOS discipline as every loader.
@@ -388,6 +391,159 @@ call_dispatch:
     ld (extTarget), hl
     ld ix, flags                 ; contract: IX valid, A/B/C/HL/DE undefined
     jp ext_dispatch
+
+; --- XBN service table (Task 6) ---------------------------------------
+; Frozen JP table at XBN_API ($BEC8, nextdaad.inc), called directly by
+; extern code with the XBN bank mapped into slots 6+7 (overlay0 NOT
+; mapped) - every row target below must therefore be resident. The
+; template and boot copy were planned for overlay0 (cheap there), but
+; overlay0's DEBUG headroom is 9 bytes at this point in the project and
+; cannot take xbn_api_tpl+xbn_api_init (30+9 bytes); this resident tail
+; had ~1557 bytes free at the last build, so template, init and every
+; service body land here instead. Rows 3-7 (fopen/fread/fwrite/fseek/
+; fclose, Task 7) and row 9 (getmsg, Task 8) stay svc_unimpl until those
+; tasks fill them in; unimplemented rows set CF and A = $FF.
+xbn_api_tpl:
+    jp svc_version               ; 0
+    jp svc_putchar                ; 1
+    jp svc_puts                   ; 2
+    jp svc_unimpl                 ; 3 fopen  (Task 7)
+    jp svc_unimpl                 ; 4 fread  (Task 7)
+    jp svc_unimpl                 ; 5 fwrite (Task 7)
+    jp svc_unimpl                 ; 6 fseek  (Task 7)
+    jp svc_unimpl                 ; 7 fclose (Task 7)
+    jp svc_random                 ; 8
+    jp svc_unimpl                 ; 9 getmsg (Task 8)
+    ASSERT $ - xbn_api_tpl == XBN_API_ROWS*3
+
+xbn_api_init:                    ; boot; table copy is resident-to-resident,
+                                 ; no MMU mapping required
+    ld hl, xbn_api_tpl
+    ld de, XBN_API
+    ld bc, XBN_API_ROWS*3
+    ldir
+    ret
+
+svc_unimpl:
+    ld a, $FF
+    scf
+    ret
+
+svc_version:
+    ld a, 1
+    or a                          ; CF clear
+    ret
+
+; xorshift on rngState (engine.asm), sharing the one stream h_random /
+; rng_next (overlay0.asm:502-592) already advances for CHANCE/RANDOM.
+; rng_next itself is overlay-bound and unreachable here (the extern bank
+; occupies slots 6+7 during a service call, not overlay0), so the state
+; transform is duplicated verbatim from overlay0.asm:549-574 rather than
+; called - both streams still share the one algorithm and the one
+; rngState cell. Unlike rng_next this does NOT scale to 1..100: xbn.inc
+; documents "SVC_RANDOM: out A = random byte", a raw full-range byte for
+; extern use, not the CHANCE-specific 1..100 scaling.
+svc_random:
+    push de
+    push hl
+    ld hl, (rngState)
+    ; --- x ^= x << 7 ---
+    ld d, h
+    ld e, l                      ; DE = x
+    xor a
+    srl h
+    rr l
+    rra                          ; HL = x << 7
+    ld h, l
+    ld l, a
+    ld a, h
+    xor d
+    ld h, a
+    ld a, l
+    xor e
+    ld l, a                      ; HL = x ^ (x << 7)
+    ; --- x ^= x >> 9 --- (high byte of x>>9 is always 0)
+    ld a, h
+    srl a
+    xor l
+    ld l, a
+    ; --- x ^= x << 8 --- (low byte of x<<8 is always 0)
+    ld a, h
+    xor l
+    ld h, a
+    ld (rngState), hl
+    ld a, l                       ; out A = random byte
+    pop hl
+    pop de
+    or a                          ; CF clear
+    ret
+
+; Third MMU save/restore slot (svcSaved), same shape as xbn_mmu_save/
+; restore (extSaved, above) and xbn_isr_mmu_save/restore (extSavedIsr).
+; A service call happens INSIDE an active extern - extSaved already holds
+; the pre-extern mapping and slots 6+7 hold the XBN bank - so svc_putchar
+; needs its own slot: it brackets the call into PRINT_ENTRY, which can
+; repoint NR_MMU6 for its own reasons (DDB message-bank paging behind
+; the '_'/'@' object-name escape, the More... prompt's saved-MMU6 dance
+; in print.asm), so that slots 6+7 are back on the XBN bank afterward -
+; load-bearing for svc_puts, whose HL may point INTO that bank.
+svcSaved: dw 0
+
+xbn_svc_mmu_save:                ; corrupts A, BC; result in svcSaved
+    ld bc, $243B
+    ld a, NR_MMU6
+    out (c), a
+    inc b                        ; $253B
+    in a, (c)
+    ld (svcSaved), a
+    dec b
+    ld a, NR_MMU7
+    out (c), a
+    inc b
+    in a, (c)
+    ld (svcSaved+1), a
+    ret
+
+xbn_svc_mmu_restore:             ; corrupts A
+    ld a, (svcSaved)
+    nextreg NR_MMU6, a
+    ld a, (svcSaved+1)
+    nextreg NR_MMU7, a
+    ret
+
+; A = char, through the DAAD window. PRINT_ENTRY = prn_decoded
+; (print.asm), confirmed resident: print.asm is INCLUDEd ahead of
+; engine.asm's flags/objTable ALIGN 256 anchor, entirely inside the
+; resident image checked by the ASSERT below.
+svc_putchar:
+    push af
+    call xbn_svc_mmu_save
+    pop af
+    call prn_decoded
+    call xbn_svc_mmu_restore
+    or a                          ; CF clear
+    ret
+
+; HL = ASCIIZ, may live in the extern bank. svc_putchar restores the
+; extern's own MMU mapping after every character (see xbn_svc_mmu_save's
+; comment), so (HL) stays readable across the loop despite PRINT_ENTRY's
+; own mapping excursions. prn_flush after the loop mirrors print_msg's
+; own idiom (print.asm) - without it the final buffered word stays in
+; wrapBuf, unprinted, until the next unrelated print call flushes it.
+svc_puts:
+.loop:
+    ld a, (hl)
+    or a
+    jr z, .done
+    push hl
+    call svc_putchar
+    pop hl
+    inc hl
+    jr .loop
+.done:
+    call prn_flush
+    or a                          ; CF clear
+    ret
 
 ; Call HL (a routine on SFX_PAGE) on overlay1's behalf, exactly as
 ; sfx_open_tramp (banks.asm) does for sfx_stream_open: overlay1 and
