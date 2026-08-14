@@ -244,6 +244,83 @@ ddb_err_machine:
     ld hl, msgWrongMach
     jp fatal
 
+; --- XBN dispatch (resident; overlay0 callers would unmap themselves) ---
+; ext_forward (overlay0.asm) builds the classic EXTERN contract then jumps
+; here with A/B/C/DE/IX loaded and extTarget already set. Resident because
+; the call must survive overlay0 (slot 7, holding the caller) being paged
+; out to map the XBN bank into slots 6+7 for the call, then paged back.
+extTarget:  dw 0
+extSaved:   dw 0                ; saved MMU6 (lo) / MMU7 (hi)
+
+xbn_mmu_save:                   ; corrupts A, BC; result in extSaved
+    ld bc, $243B
+    ld a, NR_MMU6
+    out (c), a
+    inc b                       ; $253B
+    in a, (c)
+    ld (extSaved), a
+    dec b
+    ld a, NR_MMU7
+    out (c), a
+    inc b
+    in a, (c)
+    ld (extSaved+1), a
+    ret
+
+xbn_mmu_map:                    ; corrupts A; maps xbnBank into slots 6+7
+    ld a, (xbnBank)
+    add a, a                    ; 8K page = bank*2
+    nextreg NR_MMU6, a          ; nextreg reg,A form
+    inc a
+    nextreg NR_MMU7, a
+    ret
+
+xbn_mmu_restore:                ; corrupts A
+    ld a, (extSaved)
+    nextreg NR_MMU6, a
+    ld a, (extSaved+1)
+    nextreg NR_MMU7, a
+    ret
+
+; Full dispatch: contract registers pre-loaded by the caller.
+ext_dispatch:
+    push af
+    push bc
+    push de
+    push hl
+    call xbn_mmu_save
+    call xbn_mmu_map
+    pop hl
+    pop de
+    pop bc
+    pop af
+    call .invoke
+    call xbn_mmu_restore
+    ret
+.invoke:
+    push hl
+    ld hl, (extTarget)
+    ex (sp), hl
+    ret                         ; jumps to target, HL intact
+
+; Classic EXTERN register contract, moved out of overlay0's ext_forward
+; (whose own guard checks alone filled its remaining DEBUG headroom) into
+; this abundant resident tail. B=param1/C=fn still live from h_extern;
+; extTarget already set by the caller. A/DE/HL/IX per h_extern's ABI
+; comment: DE = objTable + param1*6 (Z80N MUL, same *6-stride idiom as
+; overlay1.asm's obj lookup, SP14c OV1-1), HL = flags+param1, IX = flags,
+; A = B = param1 (C untouched = fn).
+ext_build_contract:
+    ld d, 6
+    ld e, b
+    mul d, e
+    add de, objTable
+    ld h, high flags            ; flags is ALIGN 256
+    ld l, b
+    ld ix, flags
+    ld a, b
+    jp ext_dispatch
+
 ; Call HL (a routine on SFX_PAGE) on overlay1's behalf, exactly as
 ; sfx_open_tramp (banks.asm) does for sfx_stream_open: overlay1 and
 ; SFX_PAGE share the slot-7 window, so the nextreg that pages the callee

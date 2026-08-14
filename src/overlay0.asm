@@ -2224,7 +2224,7 @@ h_newtext:                      ; 92: discard pending input orders so a
 h_extern:                       ; 61: fn C via vector, A = B on entry
     ld a, c
     cp 16
-    jp nc, h_unimpl
+    jp nc, ext_forward
     ld l, c
     ld h, 0
     add hl, hl
@@ -3052,6 +3052,21 @@ xpart_load_entry:
 ext_stub:
     jp h_unimpl
 
+; EXTERN forwarding: fn not claimed natively, XBN loaded with a live
+; extEntry -> classic-contract dispatch. Else exactly the old stub.
+; The register-contract build (DE/HL/IX/A) is resident (ext_build_contract,
+; main.asm) - overlay0's own headroom has no room to spare for it.
+ext_forward:
+    ld a, (xbnBank)
+    inc a                       ; $FF -> 0
+    jp z, h_unimpl
+    ld hl, (xbnExt)
+    ld a, h
+    or l
+    jp z, h_unimpl              ; interrupt-only binary
+    ld (extTarget), hl
+    jp ext_build_contract       ; resident; B/C still hold param1/fn
+
 ; EXTERN vector 6 (silicon keyboard-defect task): DEBUG-only route to
 ; KTEST, the keyboard matrix/decode diagnostic (tests/test.dsf's KTEST
 ; verb; body lives in overlay1.asm/OVL1_PAGE alongside kb_raw/kb_char).
@@ -3155,8 +3170,8 @@ nxb_trampoline:
     jp ovl_map_page
  ENDIF
 extVec:
-    dw ext_stub, ext_stub, ext_stub, ext_xmes
-    dw h_xpart, ext_stub
+    dw ext_forward, ext_forward, ext_forward, ext_xmes
+    dw h_xpart, ext_forward
  IFDEF DEBUG
     dw ktest_trampoline           ; vector 6, DEBUG only
  ELSE
@@ -3193,7 +3208,7 @@ extVec:
  ELSE
     dw ext_stub, ext_stub         ; vectors 13-14, release: stubs
  ENDIF
-    dw ext_stub                    ; vector 15: spare
+    dw ext_forward                 ; vector 15: spare
 
 savedCurX: db 0
 savedCurY: db 0
