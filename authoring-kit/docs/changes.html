@@ -11,6 +11,37 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
+<h2 id="070-14-august-2026">0.7.0 - 14 August 2026</h2>
+<ul>
+<li><strong>Your game can now run your own machine code.</strong> Put a <code>GAME.XBN</code>
+  binary next to <code>GAME.DDB</code> and the interpreter loads it at boot:
+  <code>EXTERN</code> calls reach your code with the classic register contract,
+  <code>CALL</code> jumps to any routine in it, and an optional hook in it runs
+  once per frame at 50Hz - music-style timers, animations, effects.
+  Assemble against the kit's <code>xbn.inc</code>; a bad or missing file simply
+  means the game plays without externs. See <a href="externs.html">Externs</a> for
+  the whole story and <a href="reference/xbn-format.html">XBN format</a> for the
+  binary layout.</li>
+<li><strong>Ten interpreter services your code can call</strong> - print through the
+  game's own text windows, read and write files on the card, random
+  numbers, and fetching any user message's text. They live at a fixed
+  address that will never move between releases, so a compiled XBN
+  keeps working on every future interpreter.</li>
+<li><strong>Two ready-to-run examples ship in the kit, binaries included.</strong>
+  Copy the prebuilt <code>GAME.XBN</code> from <code>examples/ticker</code> (a news-ticker
+  that types a game message across the screen character by character)
+  or <code>examples/fade</code> (fade the Layer 2 picture to any colour and back -
+  fade to black for a scene change, fade up again - with transparent
+  regions correctly staying transparent throughout) next to your
+  database and try them without assembling anything. Each folder's
+  README shows the two or three DSF lines that drive it.</li>
+<li><strong>What externs cannot do</strong>, so you are not surprised: parameters
+  travel in the two EXTERN bytes and in flags (there is no inline data
+  after the condact), the binary's memory is not saved into save games
+  (keep durable state in flags), and <code>SFX</code> remains the interpreter's
+  own audio system. The full list is in
+  <a href="known-differences.html">Known differences</a>.</li>
+</ul>
 <h2 id="060-13-august-2026">0.6.0 - 13 August 2026</h2>
 <ul>
 <li><strong>The kit now builds NextDAAD-specific databases.</strong> Your game is

@@ -2,6 +2,51 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.7.0 - 14/08/2026
+
+- Author machine code support (XBN): a `GAME.XBN` binary beside
+  `GAME.DDB` is loaded at boot into one 16K bank and executes through
+  the $C000-$FFFF window under a resident trampoline. The 10-byte
+  header (magic, version, EXTERN entry, #int entry, size) is validated
+  at load; any reject leaves the game playing without externs, and a
+  Release build never crashes on a bad file.
+- `EXTERN n fn` forwards to the binary's entry for every fn code not
+  claimed natively - 0, 1, 2, 5, 6, 8-15 and everything from 16 up in
+  Release (3/4/7 stay XMESSAGE/XPART/XUNDONE; DEBUG builds keep 6 and
+  8-14 as internal probes). The classic Z80 register contract is
+  honoured on entry: A=B=param1, C=fn, HL=flags+param1,
+  DE=objTable+param1*6, IX=flags base.
+- `CALL lsb msb` dispatches to any address inside the loaded binary's
+  extent - the classic multi-entry idiom, made window-deterministic.
+  Out of range, or with no XBN loaded, it stays the documented no-op.
+- A 50Hz #int hook: the frame ISR calls the binary's int entry once
+  per frame, after the audio tick so music timing never waits on
+  author code. Full context saved around the call; one load-and-test
+  on the frame path when no hook is armed.
+- Ten interpreter services behind a jump table at $BEC8, frozen from
+  this release and append-only: VERSION, PUTCHAR, PUTS (full DAAD
+  window semantics), FOPEN/FREAD/FWRITE/FSEEK/FCLOSE (esxDOS with the
+  interpreter's card discipline), RANDOM, and GETMSG (decode a user
+  message into a resident buffer - the ticker's text source). Flags
+  ($A200) and the object table are read and written directly, no
+  service needed; `xbn.inc` in the kit carries the whole contract.
+- Two worked examples ship in the kit with PREBUILT binaries beside
+  the source, so an extern can be tried with no toolchain: a message
+  ticker (GETMSG + per-frame tilemap writes) and a Layer 2 fade to
+  any RRRGGGBB colour and back (palette readback + snapshot restore,
+  transparency-pinned so punched holes never seal over mid-fade). The
+  test harness byte-compares each shipped binary against a fresh
+  assembly of its source and fails on drift.
+- Manual: a new externs chapter and an XBN format reference; limits
+  and known-differences updated (no inline parameters after
+  EXTERN/CALL - flags carry parameters; 6-byte object entries; SFX
+  not author-overridable; bank state is not part of save games).
+- `tests/extern.dsf` and a `-Xbn` harness leg family (reject variants,
+  no-binary control, both examples) exercise the whole surface; the
+  feature set is verified on real hardware (register contract, CALL
+  both pages, hook cadence 1:1 at 50Hz, services, file round-trip,
+  GETMSG, both examples end to end).
+
 ## v0.6.0 - 13/08/2026
 
 - Databases are compiled for a new `NEXTDAAD` DRC target: pointers are

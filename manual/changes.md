@@ -3,6 +3,37 @@
 Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.7.0 - 14 August 2026
+
+- **Your game can now run your own machine code.** Put a `GAME.XBN`
+  binary next to `GAME.DDB` and the interpreter loads it at boot:
+  `EXTERN` calls reach your code with the classic register contract,
+  `CALL` jumps to any routine in it, and an optional hook in it runs
+  once per frame at 50Hz - music-style timers, animations, effects.
+  Assemble against the kit's `xbn.inc`; a bad or missing file simply
+  means the game plays without externs. See [Externs](externs.md) for
+  the whole story and [XBN format](reference/xbn-format.md) for the
+  binary layout.
+- **Ten interpreter services your code can call** - print through the
+  game's own text windows, read and write files on the card, random
+  numbers, and fetching any user message's text. They live at a fixed
+  address that will never move between releases, so a compiled XBN
+  keeps working on every future interpreter.
+- **Two ready-to-run examples ship in the kit, binaries included.**
+  Copy the prebuilt `GAME.XBN` from `examples/ticker` (a news-ticker
+  that types a game message across the screen character by character)
+  or `examples/fade` (fade the Layer 2 picture to any colour and back -
+  fade to black for a scene change, fade up again - with transparent
+  regions correctly staying transparent throughout) next to your
+  database and try them without assembling anything. Each folder's
+  README shows the two or three DSF lines that drive it.
+- **What externs cannot do**, so you are not surprised: parameters
+  travel in the two EXTERN bytes and in flags (there is no inline data
+  after the condact), the binary's memory is not saved into save games
+  (keep durable state in flags), and `SFX` remains the interpreter's
+  own audio system. The full list is in
+  [Known differences](known-differences.md).
+
 ## 0.6.0 - 13 August 2026
 
 - **The kit now builds NextDAAD-specific databases.** Your game is
