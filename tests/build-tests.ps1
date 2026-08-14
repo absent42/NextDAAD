@@ -110,12 +110,20 @@
 # The DDB switches are mutually exclusive - if more than one is given,
 # whichever copy runs last in this script wins: -Suite copies first,
 # -Err4 copies over it, -GMode copies over that, -V3 over that,
-# -Rab copies over that,
+# -Xbn copies over that, -Rab copies over that,
 # -UU copies over that, then -Part, then -AudLad, then -SfxDi, then
 # -SfxLong, then -Sfx2, then
-# -L2Holes, then -TileSlack, then -Xbn last of
-# all, in the order their blocks appear below. $legName is resolved in
-# exactly that order, so the folder and the active DDB always agree.
+# -L2Holes, then -TileSlack last of
+# all, in the order their blocks appear below. $legName is resolved in a
+# DIFFERENT order (see below), and for -Xbn that order does NOT match
+# this physical one: $legName puts XBN last of every switch, but -Xbn's
+# staging block physically sits right after -V3's, BEFORE -Rab/-UU/
+# -Part/-AudLad/-SfxDi/-SfxLong/-Sfx2/-L2Holes/-TileSlack. Combine -Xbn
+# with any of those and $legName will say XBN while that other switch's
+# GAME.DDB copy is the one that actually wins. Every leg switch here is
+# documented as an alternative to the others, not a companion - this
+# risk is latent, not exercised by any switch combination this script
+# recommends.
 # The template is active if no switch is given.
 # Two-part fixture (SP11 Task 6), independent of the single-DDB switches
 # above except that it also writes GAME.DDB (see the mutually-
@@ -319,8 +327,10 @@
 #                              XABS no-XBN control - EXTERN must stay inert).
 #              -XbnBad <kind> stage a corrupt/truncated variant AS
 #                              GAME.XBN instead of the good one - magic |
-#                              ver | size | trunc (default magic). For
-#                              Task 2's validation-reject checks; the four
+#                              ver | size | trunc; a kind is required, a
+#                              bare -XbnBad errors. Omit -XbnBad entirely
+#                              to stage the good GAME.XBN (the default).
+#                              For Task 2's validation-reject checks; the four
 #                              variants (tests\out\xbn\BADMAGIC.XBN /
 #                              BADVER.XBN / BADSIZE.XBN / TRUNC.XBN) are
 #                              generated unconditionally alongside the good
@@ -624,7 +634,7 @@ if ($UtoV3)            { $legName = 'UTOV3' }
 if ($FontSw)           { $legName = 'FONTSW' }
 if ($Palette)          { $legName = 'PALETTE' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
-if ($Xbn)               { $legName = 'XBN' }
+if ($Xbn)              { $legName = 'XBN' }
 $leg = Join-Path $sd $legName
 
 function Reset-LegDir {
