@@ -591,7 +591,14 @@ sav_read:
 
 savName:    ds 14                ; 8 + ".SAV" + NUL
 savStage:   ds 256               ; sav_read staging: flags commit only
-                                 ; after the whole file verifies
+                                 ; after the whole file verifies. Also
+                                 ; aliased by SVC_GETMSG (main.asm) as
+                                 ; its decode buffer - safe because
+                                 ; save/load and a service call are both
+                                 ; strictly foreground and never overlap.
+                                 ; Contract: the returned pointer is
+                                 ; valid until the next SVC_GETMSG call
+                                 ; OR a save/load.
 savHandle:  db 0
 savLocs:    ds 255
 ramSaveBuf: ds 512               ; RAMSAVE: flags[256] + locs[<=255]

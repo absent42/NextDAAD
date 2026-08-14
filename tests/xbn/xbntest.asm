@@ -28,7 +28,15 @@ ext_main:
     cp 21
     jr z, .fn21
     cp 22
+    jr z, .fn22
+    cp 23
+    jr z, .fn23
+    cp 24
     ret nz
+    jp msg_probe_bad             ; Task 8: out-of-range check
+.fn23:
+    jp msg_probe                 ; Task 8: GETMSG probe
+.fn22:
     jp fio_probe                ; Task 7
 .fn21:
     jp svc_probe                ; Task 6
@@ -123,6 +131,60 @@ fio_probe:
 .hnd:   db 0
 .wbuf:  db $11,$22,$33,$44,$55,$66,$77,$88
 .rbuf:  ds 8
+
+; Task 8 probe: decode user message 0 ("TICKER MESSAGE FOR GETMSG",
+; MTX, Task 1's extern.dsf) into GETMSG's staging buffer, then echo it
+; back through SVC_PUTCHAR - GETMSG returns a length-counted buffer,
+; NOT an ASCIIZ string, so SVC_PUTS (which scans for a NUL) is wrong
+; here; the bounded loop below prints exactly BC bytes.
+msg_probe:
+    xor a                       ; message 0
+    call SVC_GETMSG
+    jr c, .fail
+    ld a, b
+    or a                        ; length < 256 expected here
+    jr nz, .len_ok
+    ld a, c
+    or a
+    jr z, .fail                 ; zero length = decode failed
+.len_ok:
+    ld a, c
+    ld (XBN_FLAGS+209), a       ; observed length
+    ld a, (hl)
+    ld (XBN_FLAGS+210), a       ; first char - 'T' (84) from Task 1's MTX
+.print:
+    ld a, b                     ; bounded print loop over the full BC
+    or c                        ; count (up to 256, so B alone can't be
+    jr z, .print_done           ; trusted - BC=0 is the only stop test)
+    ld a, (hl)
+    push hl                     ; SVC_PUTCHAR -> prn_decoded is free to
+    push bc                     ; corrupt HL/BC (svc_puts brackets its
+    call SVC_PUTCHAR             ; own call the same way) - without this
+    pop bc                      ; the loop pointer/counter get scrambled
+    pop hl                      ; after the first character
+    inc hl
+    dec bc
+    jr .print
+.print_done:
+    ld a, 1
+    ld (XBN_FLAGS+211), a
+    ret
+.fail:
+    xor a
+    ld (XBN_FLAGS+211), a
+    ret
+
+; Task 8 probe: message number 50 is well past extern.dsf's single
+; authored MTX entry (number 0) - GETMSG must report CF set, A=$FF.
+msg_probe_bad:
+    ld a, 50
+    call SVC_GETMSG
+    ld a, 0
+    jr nc, .store
+    ld a, 1
+.store:
+    ld (XBN_FLAGS+212), a       ; expect 1 (CF set = out of range)
+    ret
 
     ; pad proves >8K binaries load into both pages
     ds $2100, $E5

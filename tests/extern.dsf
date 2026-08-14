@@ -32,9 +32,11 @@
 ;   XFIO - the file-service probe (fn 22, xbntest.asm's fio_probe):
 ;          SVC_FOPEN/FWRITE/FCLOSE then SVC_FOPEN/FREAD/FCLOSE round-trip
 ;          8 bytes through XBNFIO.TMP on the card and compares them.
-; XMSG is declared here (vocabulary + empty DONE body) but exercises no
-; service behaviour yet - Task 8 fills its entry in once SVC_GETMSG
-; exists.
+;   XMSG - the GETMSG probe (fn 23, xbntest.asm's msg_probe): decodes
+;          MTX message 0 into savStage, echoes its first byte and
+;          length, then re-prints it through a bounded SVC_PUTCHAR
+;          loop; fn 24 (msg_probe_bad) then checks the out-of-range
+;          error path (message 50, past the DDB's single MTX entry).
 ;
 ; MTX message 0 is reserved verbatim as the Task 8 SVC_GETMSG probe
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
@@ -161,8 +163,8 @@ XABS   107 verb
            PRINT 204         ; expect 162 ($A2)
            PRINT 205         ; expect 0
            DONE
-> XCAL _   CALL 92 192        ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C05C (lsb 92, msb 192) - read
+> XCAL _   CALL 106 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C06A (lsb 106, msb 192) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves.
@@ -183,7 +185,12 @@ XABS   107 verb
 > XFIO _   EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare
            PRINT 208         ; expect 1
            DONE
-> XMSG _   DONE               ; Task 8 fills this in (SVC_GETMSG, message 0 above)
+> XMSG _   EXTERN 0 23        ; msg_probe: SVC_GETMSG on MTX message 0
+           PRINT 210         ; expect 84 ('T')
+           PRINT 211         ; expect 1
+           EXTERN 0 24        ; msg_probe_bad: out-of-range message number
+           PRINT 212         ; expect 1
+           DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert
            PRINT 200         ; expect 0 in the no-XBN leg, 9 with XBN

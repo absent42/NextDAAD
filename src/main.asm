@@ -401,8 +401,8 @@ call_dispatch:
 ; cannot take xbn_api_tpl+xbn_api_init (30+9 bytes); this resident tail
 ; had ~1557 bytes free at the last build, so template, init and every
 ; service body land here instead. Rows 3-7 (fopen/fread/fwrite/fseek/
-; fclose) landed Task 7; row 9 (getmsg, Task 8) stays svc_unimpl until
-; that task fills it in; unimplemented rows set CF and A = $FF.
+; fclose) landed Task 7; row 9 (getmsg) landed Task 8; unimplemented
+; rows set CF and A = $FF.
 xbn_api_tpl:
     jp svc_version               ; 0
     jp svc_putchar                ; 1
@@ -413,7 +413,7 @@ xbn_api_tpl:
     jp svc_fseek                  ; 6
     jp svc_fclose                 ; 7
     jp svc_random                 ; 8
-    jp svc_unimpl                 ; 9 getmsg (Task 8)
+    jp svc_getmsg                 ; 9
     ASSERT $ - xbn_api_tpl == XBN_API_ROWS*3
 
 xbn_api_init:                    ; boot; table copy is resident-to-resident,
@@ -584,6 +584,70 @@ svc_fseek:
     jp esx_fseek
 
 svc_fclose: jp esx_fclose         ; in A=handle
+
+; A = user message number (kind 1 = MTX, h_mes's own kind) -> savStage;
+; out HL = savStage, BC = length (<=256, truncated), CF clear. CF set +
+; A = $FF for a number >= numUsrMsg. Shares print_msg's own machinery
+; (msg_seek then a txt_next_decoded loop, print.asm:7-24) with a
+; store-to-buffer sink standing in for prn_decoded. Bytes are token-
+; expanded (txt_next_decoded's own job) but control escapes ('_'/'@'
+; and friends) are left raw - those are prn_decoded's job, not this
+; routine's, so they are NOT interpreted here. savStage (file.asm:593)
+; aliases sav_read's flags staging; safe because save/load and a
+; service call are both strictly foreground and never overlap - see
+; savStage's own comment. Buffer valid until the next SVC_GETMSG call
+; OR a save/load.
+;
+; Bracketed by BOTH xbn_svc_mmu_save/restore (svcSaved - restores the
+; extern's own slot 6+7 mapping so extern code resumes correctly after
+; return, same idiom as svc_putchar's PRINT_ENTRY bracket above) and
+; data_save/data_restore (the DDB walk's own slot-6-only bracket, the
+; same idiom print_msg and objname_chk use around msg_seek). The two
+; are not a nesting violation: data_save's single global slot
+; (savedMMU6) is never live anywhere else while a service body runs -
+; services are invoked from extern code via ext_dispatch, which uses
+; its own extSaved slot, not data_save; the ISR uses extSavedIsr; so
+; nothing else touches data_save's slot while this routine's data_save
+; is live. xbn_svc_mmu_restore then also restores slot 7 (never
+; touched by the DDB walk, so that half is a no-op here) purely to keep
+; this body's shape identical to every other MMU-touching service.
+svc_getmsg:
+    push af                      ; message number
+    call xbn_svc_mmu_save        ; extern's own slot6+7 mapping -> svcSaved
+    call data_save                ; DDB walk's own slot6 bracket (print_msg idiom)
+    pop af
+    ld e, a
+    ld a, 1                      ; kind 1 = user messages (MTX)
+    call msg_seek
+    jr c, .bad                   ; CF from msg_seek = number out of range
+    xor a
+    ld (tokActive), a            ; fresh stream (print_msg:15-16 idiom)
+    ld hl, savStage
+    ld bc, 0                     ; running count
+.loop:
+    call txt_next_decoded        ; preserves BC
+    jr c, .done                  ; CF = message terminator
+    ld (hl), a
+    inc hl
+    inc bc
+    ld a, b
+    or a
+    jr z, .loop                  ; B stays 0 until the 256th byte lands;
+                                  ; then B=1 and the loop stops - BC=256
+                                  ; on exit either way (cap reached), not
+                                  ; 257 and not short of the true count
+.done:
+    call data_restore
+    call xbn_svc_mmu_restore
+    ld hl, savStage
+    or a                          ; CF clear
+    ret
+.bad:
+    call data_restore
+    call xbn_svc_mmu_restore
+    ld a, $FF
+    scf
+    ret
 
 ; Call HL (a routine on SFX_PAGE) on overlay1's behalf, exactly as
 ; sfx_open_tramp (banks.asm) does for sfx_stream_open: overlay1 and
