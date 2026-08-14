@@ -44,6 +44,7 @@
 #   -FontSw             sd\FONTSW\    tests\fontsw.dsf
 #   -Palette            sd\PALETTE\   tests\palette.dsf
 #   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
+#   -Xbn                sd\XBN\       tests\extern.dsf
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
 #    never touched by this script)
 #
@@ -112,7 +113,7 @@
 # -Rab copies over that,
 # -UU copies over that, then -Part, then -AudLad, then -SfxDi, then
 # -SfxLong, then -Sfx2, then
-# -L2Holes, then -TileSlack last of
+# -L2Holes, then -TileSlack, then -Xbn last of
 # all, in the order their blocks appear below. $legName is resolved in
 # exactly that order, so the folder and the active DDB always agree.
 # The template is active if no switch is given.
@@ -307,6 +308,25 @@
 #            and why the numbers and the picture can disagree):
 #            docs\superpowers\tileslack-ab-run-sheet.md. An alternative
 #            to every other DDB switch, not a companion.
+#   -Xbn     XBN extern support Task 1 fixture, staged into sd\XBN\: make
+#            the tests\extern.dsf DDB active AND assemble/stage
+#            tests\xbn\xbntest.asm's fixture extern as GAME.XBN. Pure
+#            scaffolding - zero interpreter source changes exist yet, so
+#            every XREG/XCAL/XCNR/XTIK/XSVC probe is expected to fail or
+#            no-op until later tasks land the interpreter side. Two
+#            companion switches, both no-ops without -Xbn:
+#              -XbnNoBin      stage GAME.DDB with NO GAME.XBN at all (the
+#                              XABS no-XBN control - EXTERN must stay inert).
+#              -XbnBad <kind> stage a corrupt/truncated variant AS
+#                              GAME.XBN instead of the good one - magic |
+#                              ver | size | trunc (default magic). For
+#                              Task 2's validation-reject checks; the four
+#                              variants (tests\out\xbn\BADMAGIC.XBN /
+#                              BADVER.XBN / BADSIZE.XBN / TRUNC.XBN) are
+#                              generated unconditionally alongside the good
+#                              GAME.XBN so a break in the generator is
+#                              caught on a plain run.
+#            An alternative to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
 # this repository:
@@ -551,7 +571,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -604,6 +624,7 @@ if ($UtoV3)            { $legName = 'UTOV3' }
 if ($FontSw)           { $legName = 'FONTSW' }
 if ($Palette)          { $legName = 'PALETTE' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
+if ($Xbn)               { $legName = 'XBN' }
 $leg = Join-Path $sd $legName
 
 function Reset-LegDir {
@@ -623,7 +644,7 @@ function Reset-LegDir {
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
                'L2HOLES', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'PALETTE',
-               'BIGDDB')
+               'BIGDDB', 'XBN')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -2220,6 +2241,55 @@ else {
     "utotest (tools\TEST.DSF, GPL-3.0, not redistributed): V2 image $utoV2Len bytes (no V3 blocks), V3 image $utoV3Len bytes (SETAT x3 + GETKEY in)"
 }
 
+# XBN extern support Task 1 fixture: tests\extern.dsf drives the
+# XREG/XCAL/XCNR/XTIK/XSVC/XABS probe verbs against tests\xbn\xbntest.asm
+# (the fixture extern binary - see authoring-kit\xbn.inc). Compiled
+# unconditionally, like the fixtures above, so a break in either source
+# is caught on a plain run; only -Xbn makes the extern DDB active and
+# stages GAME.XBN (see its own block in the STAGING section below).
+Copy-Item "$PSScriptRoot\extern.dsf" "$dr\NDXBN.DSF" -Force
+Push-Location $dr
+try {
+    & $drcDrf @drcTarget NDXBN.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (extern)" }
+    & $drcPhp $drcDrb @drcTarget EN NDXBN.json NDXBN.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (extern)" }
+    Move-Item NDXBN.DDB "$root\tests\out\extern.ddb" -Force
+}
+finally {
+    Remove-Item "$dr\NDXBN.DSF", "$dr\NDXBN.json" -ErrorAction SilentlyContinue
+    Pop-Location
+}
+
+# tests\xbn\xbntest.asm itself. Assembled from the repo root (same cwd
+# convention as build.ps1's own sjasmplus call) so its own
+# SAVEBIN "tests/out/xbn/GAME.XBN" resolves the same way every time
+# regardless of where this script was invoked from. --sym exports
+# call_target's address for extern.dsf's XCAL entry - see the coupling
+# comment on both sides (tests\xbn\xbntest.asm's call_target label,
+# tests\extern.dsf's XCAL entry).
+New-Item -ItemType Directory -Force "$root\tests\out\xbn" | Out-Null
+Push-Location $root
+try {
+    & "$root\tools\sjasmplus\sjasmplus.exe" --msg=war --sym="$root\tests\out\xbn\xbntest.sym" "tests\xbn\xbntest.asm"
+    if ($LASTEXITCODE -ne 0) { throw "xbntest.asm assembly failed" }
+}
+finally {
+    Pop-Location
+}
+# Validation-reject variants for Task 2 (staged instead of the good XBN
+# by -XbnBad <kind>). Generated unconditionally alongside the good
+# GAME.XBN so a break in the generator is caught on a plain run, exactly
+# like the corrupt/oversize DDB variants below.
+$xbnGood = [IO.File]::ReadAllBytes("$root\tests\out\xbn\GAME.XBN")
+$xbnBadMagic = $xbnGood.Clone(); $xbnBadMagic[0] = 0x5A                    # magic
+[IO.File]::WriteAllBytes("$root\tests\out\xbn\BADMAGIC.XBN", $xbnBadMagic)
+$xbnBadVer = $xbnGood.Clone(); $xbnBadVer[3] = 2                          # version
+[IO.File]::WriteAllBytes("$root\tests\out\xbn\BADVER.XBN", $xbnBadVer)
+$xbnBadSize = $xbnGood.Clone(); $xbnBadSize[8] = 0x01; $xbnBadSize[9] = 0x40 # size $4001
+[IO.File]::WriteAllBytes("$root\tests\out\xbn\BADSIZE.XBN", $xbnBadSize)
+[IO.File]::WriteAllBytes("$root\tests\out\xbn\TRUNC.XBN", $xbnGood[0..99])
+
 # The corrupt/oversize variants are derived from the TEMPLATE image (as
 # they always were - this read used to sit after the template's own
 # template's own sd\GAME.DDB write and before any leg switch overwrote it).
@@ -2377,6 +2447,32 @@ if ($V3) {
     Copy-Item "$root\tests\out\v3probe.xmb" "$leg\0.XMB" -Force
     "staged tests\out\v3probe.xmb -> sd\$legName\0.XMB (XMES probe text)"
     $v3Active = $true
+}
+
+$xbnActive = $false
+if ($Xbn) {
+    # XBN extern support Task 1 owner leg fixture: tests\extern.dsf's
+    # XREG/XCAL/XCNR/XTIK/XSVC/XABS verbs against tests\xbn\xbntest.asm.
+    # Same CSpect lock hazard as every other staging switch.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
+    }
+    Copy-Item "$root\tests\out\extern.ddb" "$leg\GAME.DDB" -Force
+    if ($XbnNoBin) {
+        # XABS/no-XBN control: stage the DDB with NO GAME.XBN at all, so
+        # the XABS entry's EXTERN must stay inert (flag 200 stays 0).
+        "staged tests\out\extern.ddb -> sd\$legName\GAME.DDB (no GAME.XBN staged - -XbnNoBin)"
+    }
+    elseif ($XbnBad) {
+        $xbnBadFile = @{ magic = 'BADMAGIC.XBN'; ver = 'BADVER.XBN'; size = 'BADSIZE.XBN'; trunc = 'TRUNC.XBN' }[$XbnBad]
+        Copy-Item "$root\tests\out\xbn\$xbnBadFile" "$leg\GAME.XBN" -Force
+        "staged tests\out\xbn\$xbnBadFile -> sd\$legName\GAME.XBN (-XbnBad $XbnBad reject variant)"
+    }
+    else {
+        Copy-Item "$root\tests\out\xbn\GAME.XBN" "$leg\GAME.XBN" -Force
+        "staged tests\out\xbn\GAME.XBN -> sd\$legName\GAME.XBN"
+    }
+    $xbnActive = $true
 }
 
 $rabActive = $false
@@ -3808,7 +3904,8 @@ foreach ($stagedDdb in Get-ChildItem -LiteralPath $leg -Filter '*.DDB' -File) {
         throw "sd\$legName\$($stagedDdb.Name) carries machine nibble $('0x{0:X2}' -f ($sb[1] -band 0xF0)), not 0xC0 (NEXTDAAD) - it was compiled for another target and will boot to E4. Check that its compile block passes the configured target."
     }
 }
-if ($fontSwActive) { "active: fontsw (SP18 font/pointer switching fixture)" }
+if ($xbnActive) { "active: extern (XBN extern support Task 1 fixture$(if ($XbnNoBin) { ', no GAME.XBN staged' } elseif ($XbnBad) { ", GAME.XBN = $XbnBad reject variant" }))" }
+elseif ($fontSwActive) { "active: fontsw (SP18 font/pointer switching fixture)" }
 elseif ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - GAME2.DDB + PART2\0.XMB also staged)" }
 elseif ($uuActive) { "active: urbanupstart" }
 elseif ($UU) { "active: urbanupstart (GAME.DDB copy failed, see warning above - stale DDB still active)" }
