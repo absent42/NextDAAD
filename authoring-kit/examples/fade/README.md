@@ -40,3 +40,11 @@ Copy the resulting GAME.XBN beside your GAME.DDB.
   values; a picture using 9-bit palette blue depth is restored to
   8-bit precision (the blue LSB is approximated) - imperceptible in
   practice, noted for completeness.
+- Transparency is respected: entries holding the Layer 2 transparency
+  colour (the interpreter's punched-hole convention, index 255) are
+  PINNED - holes stay transparent through the whole fade rather than
+  sealing over. Interpolated values that would momentarily equal the
+  transparency colour are nudged one blue step, so opaque regions
+  never flicker see-through mid-fade. Consequence: you cannot fade TO
+  the transparency colour itself - a target of that value fades to
+  its nearest neighbour instead.

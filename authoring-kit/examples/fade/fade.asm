@@ -71,6 +71,16 @@ NR_PAL_CTL      equ $43          ; palette control - bit 7 DISABLES write
 PAL_L2_EDIT     equ $10          ; edit Layer 2 first palette, auto-inc
                                  ; on - the interpreter's own standing
                                  ; convention value for this register
+TRANSP          equ $E3          ; Layer 2 global transparency COLOUR
+                                 ; (hardware reset value; the interpreter
+                                 ; keeps it - src/nextdaad.inc's
+                                 ; L2_TRANSP_COLOUR is the canonical
+                                 ; definition, and index 255 is the
+                                 ; designated hole-punch entry holding
+                                 ; it). Transparency is a COLOUR compare
+                                 ; on the entry's top 8 bits, so a fade
+                                 ; must treat this value specially - see
+                                 ; precalc's pin and dodge rules.
 
 ext_main:
     ; Contract: A=B=param1, C=fn. This example uses C (fn) and, for
@@ -267,8 +277,16 @@ snapshot:
 ; endpoints are exact by construction (k=0 is the snapshot table
 ; itself, k=8 is written as the solid target).
 precalc:
-    ; table 8: every entry = the target colour
+    ; table 8: every entry = the target colour. DODGE rule: a target of
+    ; exactly the transparency colour would make the whole layer vanish
+    ; (and "fade to transparent" is not this example's contract), so it
+    ; is nudged one blue step to $E2 - visually identical, never
+    ; transparent. The same nudge guards every interpolated value below.
     ld a, (target)
+    cp TRANSP
+    jr nz, .tgtok
+    ld a, TRANSP ^ 1             ; $E2: one blue LSB off - imperceptible
+.tgtok:
     ld hl, tables + 8*256
     ld e, 0
 .solid:
@@ -286,6 +304,29 @@ precalc:
     ld l, e
     ld a, (hl)
     ld (scur), a
+    ; PIN rule: an entry that IS the transparency colour is a punched
+    ; hole (the interpreter's index-255 convention, and anything else
+    ; the art left transparent). Holes must stay holes for the whole
+    ; fade - fading one makes every cut-out turn opaque on the way out
+    ; and pop back with a magenta flash on the way in (observed on the
+    ; bench before this rule existed). Pin it to TRANSP in every table,
+    ; including the solid table 8 written above.
+    cp TRANSP
+    jr nz, .lerp
+    ld a, (kcur)
+    ld b, a                      ; pin tables kcur..8 on the first pass
+.pinall:                         ; (kcur=1): one walk covers 1-8; later
+    ld a, b                      ; kcur passes re-pin harmlessly
+    add a, tables>>8
+    ld h, a
+    ld l, e
+    ld (hl), TRANSP
+    inc b
+    ld a, b
+    cp STEPS + 1
+    jr c, .pinall
+    jp .next
+.lerp:
     ; red: bits 7-5
     ld a, (scur)
     rlca
@@ -333,18 +374,30 @@ precalc:
     ld a, (rcur)
     or c
     ld c, a
+    ; DODGE rule: an interpolated value may pass THROUGH the
+    ; transparency colour even though neither endpoint equals it (the
+    ; interpreter's palette loader keeps art off $E3, but lerp
+    ; intermediates answer to nobody). One frame of see-through shimmer
+    ; per crossing entry otherwise - nudge one blue step instead,
+    ; the same dodge the interpreter's own art loader applies.
+    ld a, c
+    cp TRANSP
+    jr nz, .store
+    ld c, TRANSP ^ 1             ; $E2
+.store:
     ; store into table kcur
     ld a, (kcur)
     add a, tables>>8
     ld h, a
     ld l, e
     ld (hl), c
+.next:
     inc e
-    jr nz, .entry
+    jp nz, .entry                ; jp: the loop body outgrew jr range
     ld a, (kcur)
     inc a
     cp STEPS
-    jr c, .ktab
+    jp c, .ktab                  ; jp: spans the whole entry loop
     ret
 
 ; A = target channel value t, D = source channel value s, (kcur) = k.
