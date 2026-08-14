@@ -91,6 +91,7 @@ main:
     ld a, OVL0_PAGE
     call ovl_map_page
     call xms_boot_reset
+    call xbn_boot_load
     ld hl, objname_print
     ld (objname_hook), hl
     ld c, 0

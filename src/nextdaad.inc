@@ -220,6 +220,10 @@ DDB_E_SIZE      equ 2       ; over 128K
 DDB_E_HDR       equ 3       ; failed validation
 DDB_E_MACHINE   equ 4       ; built for another target machine
 
+; --- XBN extern binary (authoring-kit/xbn.inc is the authoring side) ---
+XBN_MAX_SIZE    equ $4000    ; one 16K bank, header included
+XBN_HDR_LEN     equ 10       ; "XBN" + version + extEntry + intEntry + size
+
 ; --- Error border colours ---
 ERR_BORDER_MISSING  equ 2   ; red
 ERR_BORDER_OVERSIZE equ 3   ; magenta

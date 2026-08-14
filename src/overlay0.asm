@@ -2450,6 +2450,218 @@ xms_boot_reset:
     ld (xmsBank), a
     ret
 
+; Boot-only: probe GAME.XBN, load + validate into one allocated 16K
+; bank. Any failure frees the bank (if one was allocated) and leaves
+; xbnBank = $FF - the master "feature off" gate Tasks 3-6 check first,
+; so a half-written xbnExt/xbnInt/xbnEnd on a rejected file is
+; harmless. DEBUG builds report a reason marker at a fixed row;
+; Release stays silent (dbg_at/dbg_puts are RET-only stubs there, see
+; debug.asm). Called once from main.asm's boot sequence, directly
+; after xms_boot_reset, with OVL0_PAGE already mapped into slot 7.
+; Corrupts everything; no return value - the resident state vars
+; (engine.asm, after extArg3) are the result.
+;
+; Shape mirrors ddb_load (file.asm) for the chunked fstat/read and
+; ext_xmes (above) for the open/bracket/DEBUG-marker idiom - see
+; those two for the precedents this follows rather than reinvents.
+xbn_boot_load:
+    call esx_getsetdrv
+    ret c                        ; no card / no default drive: off
+    ld ix, .name
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    ret c                        ; absent file: feature off, no marker
+                                  ; (same "optional file, not an error"
+                                  ; policy as ddb_load/ext_xmes)
+    ld (.handle), a
+    ld ix, .statbuf
+    call esx_fstat
+    jp c, .rejclose
+    ld hl, (.statbuf+9)          ; size high word (offset+7, 4 bytes LE)
+    ld a, h
+    or l
+    jp nz, .rejclose             ; over 64K on disk
+    ld de, (.statbuf+7)          ; de = actual file size (low word)
+    ld hl, XBN_MAX_SIZE
+    or a
+    sbc hl, de
+    jp c, .rejclose              ; > XBN_MAX_SIZE on disk
+    ld (.fsize), de
+
+    call bank_alloc
+    jp c, .rejclose              ; no bank free
+    ld (xbnBank), a
+
+    ; --- load the file into the bank across its (up to two) 8K pages ---
+    call data_save
+    ld a, (xbnBank)
+    add a, a
+    call data_map_page
+    ld a, (.handle)
+    ld ix, DATA_WINDOW
+    ld bc, $2000
+    call esx_fread
+    jp c, .reject
+    ld (.got), bc
+    ld a, b
+    cp $20
+    jr nz, .rdok                 ; short read: whole file in page 1
+    ld a, (xbnBank)
+    add a, a
+    inc a
+    call data_map_page
+    ld a, (.handle)
+    ld ix, DATA_WINDOW
+    ld hl, (.fsize)
+    ld de, $2000
+    or a
+    sbc hl, de                   ; remaining bytes (fsize - $2000)
+    ld b, h
+    ld c, l
+    call esx_fread
+    jp c, .reject
+    ld hl, (.got)
+    add hl, bc
+    ld (.got), hl
+.rdok:
+    ; --- validate the header (page 1, offset 0 = XBN_ORG = DATA_WINDOW) ---
+    ld a, (xbnBank)
+    add a, a
+    call data_map_page
+    ld hl, (.got)
+    ld de, XBN_HDR_LEN
+    or a
+    sbc hl, de
+    jp c, .reject                 ; fewer bytes than a header: truncated
+    ld hl, DATA_WINDOW
+    ld a, (hl)
+    cp 'X'
+    jp nz, .reject
+    inc hl
+    ld a, (hl)
+    cp 'B'
+    jp nz, .reject
+    inc hl
+    ld a, (hl)
+    cp 'N'
+    jp nz, .reject
+    inc hl
+    ld a, (hl)
+    cp 1
+    jp nz, .reject
+    inc hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ld (.hdrExt), de
+    inc hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ld (.hdrInt), de
+    inc hl
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ld (.hdrSize), de
+    call data_restore             ; window done; the rest is arithmetic
+                                  ; on the cached fields - .reject below
+                                  ; calls data_restore again on any later
+                                  ; failure, harmless (idempotent restore)
+
+    ; size word: <= XBN_MAX_SIZE and == bytes actually read
+    ld de, (.hdrSize)
+    ld hl, XBN_MAX_SIZE
+    or a
+    sbc hl, de
+    jp c, .reject
+    ld hl, (.got)
+    or a
+    sbc hl, de
+    jp nz, .reject                ; must equal bytes actually read
+
+    ld hl, (.hdrSize)             ; xbnEnd = $C000 + size
+    ld de, DATA_WINDOW
+    add hl, de
+    ld (.hdrEnd), hl
+
+    ld hl, (.hdrEnd)
+    ld de, (.hdrExt)
+    call .checkEntry
+    jp c, .reject
+    ld hl, (.hdrEnd)
+    ld de, (.hdrInt)
+    call .checkEntry
+    jp c, .reject
+
+    ; --- commit resident state (Tasks 3-6 read these) ---
+    ld hl, (.hdrExt)
+    ld (xbnExt), hl
+    ld hl, (.hdrInt)
+    ld (xbnInt), hl
+    ld a, h
+    or l
+    jr z, .noint
+    ld a, 1
+    jr .setint
+.noint:
+    xor a
+.setint:
+    ld (xbnIntOn), a
+    ld hl, (.hdrEnd)
+    ld (xbnEnd), hl
+    ld a, (.handle)
+    jp esx_fclose
+
+; DE = candidate entry address, HL = xbnEnd. Out: CF set if DE is
+; neither 0 nor within [$C000, xbnEnd). Corrupts AF; preserves HL.
+.checkEntry:
+    ld a, d
+    or e
+    ret z                         ; 0 = unused entry: always OK, CF clear
+    ld a, d
+    cp $C0
+    jr c, .badEntry                ; DE < $C000
+    push hl
+    or a
+    sbc hl, de                    ; xbnEnd - DE
+    pop hl
+    jr z, .badEntry                ; DE == xbnEnd (must be strictly less)
+    ret nc                         ; DE < xbnEnd: OK, CF already clear
+.badEntry:
+    scf
+    ret
+
+.reject:
+    call data_restore              ; undo the load/validate window remap
+    ld a, (xbnBank)
+    call bank_free
+    ld a, $FF
+    ld (xbnBank), a
+.rejclose:
+ IFDEF DEBUG                      ; inline marker, same idiom as ext_xmes's
+    push bc
+    ld b, 28
+    ld c, 60
+    call dbg_at
+    ld hl, .msgFail
+    call dbg_puts
+    pop bc
+ ENDIF
+    ld a, (.handle)
+    jp esx_fclose
+
+.msgFail:   db "XBN?", 0
+.name:      db "GAME.XBN", 0
+.handle:    db 0
+.statbuf:   ds 11
+.fsize:     dw 0
+.got:       dw 0
+.hdrExt:    dw 0
+.hdrInt:    dw 0
+.hdrSize:   dw 0
+.hdrEnd:    dw 0
+
 ; --- SP11 Task 3: part switch primitive (EXTERN n 4 / XPART) ---
 
 ; h_xpart: EXTERN n 4 (XPART). h_extern's contract leaves A = B = the

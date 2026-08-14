@@ -1008,6 +1008,14 @@ curOpcode:  db 0
 curCondact: db 0
 curProps:   db 0
 extArg3:    db 0                ; EXTERN fn-3 third parameter (offset MSB)
+; XBN extern binary boot state (Task 2, overlay0.asm's xbn_boot_load is
+; the only writer; xbnBank is the master gate Tasks 3-6 check first - a
+; rejected/absent file leaves it $FF and the other four fields undefined).
+xbnBank:    db $FF          ; 16K bank holding GAME.XBN, $FF = none
+xbnExt:     dw 0            ; cached header extEntry
+xbnInt:     dw 0            ; cached header intEntry
+xbnEnd:     dw 0            ; $C000 + size (exclusive window limit)
+xbnIntOn:   db 0            ; 1 = intEntry valid, checked by the ISR
 doallObj:   db $FF
 doallLoc:   db 0
 doallLevel: db 0
