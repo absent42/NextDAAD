@@ -401,17 +401,17 @@ call_dispatch:
 ; cannot take xbn_api_tpl+xbn_api_init (30+9 bytes); this resident tail
 ; had ~1557 bytes free at the last build, so template, init and every
 ; service body land here instead. Rows 3-7 (fopen/fread/fwrite/fseek/
-; fclose, Task 7) and row 9 (getmsg, Task 8) stay svc_unimpl until those
-; tasks fill them in; unimplemented rows set CF and A = $FF.
+; fclose) landed Task 7; row 9 (getmsg, Task 8) stays svc_unimpl until
+; that task fills it in; unimplemented rows set CF and A = $FF.
 xbn_api_tpl:
     jp svc_version               ; 0
     jp svc_putchar                ; 1
     jp svc_puts                   ; 2
-    jp svc_unimpl                 ; 3 fopen  (Task 7)
-    jp svc_unimpl                 ; 4 fread  (Task 7)
-    jp svc_unimpl                 ; 5 fwrite (Task 7)
-    jp svc_unimpl                 ; 6 fseek  (Task 7)
-    jp svc_unimpl                 ; 7 fclose (Task 7)
+    jp svc_fopen                  ; 3
+    jp svc_fread                  ; 4
+    jp svc_fwrite                 ; 5
+    jp svc_fseek                  ; 6
+    jp svc_fclose                 ; 7
     jp svc_random                 ; 8
     jp svc_unimpl                 ; 9 getmsg (Task 8)
     ASSERT $ - xbn_api_tpl == XBN_API_ROWS*3
@@ -544,6 +544,46 @@ svc_puts:
     call prn_flush
     or a                          ; CF clear
     ret
+
+; File services (Task 7): thin veneers over file.asm's resident esx_*
+; wrappers (esx_getsetdrv/esx_fopen/esx_fread/esx_fwrite/esx_fseek/
+; esx_fclose), confirmed resident above (file.asm is INCLUDEd ahead of
+; engine.asm's flags/objTable anchor, same as svc_putchar's PRINT_ENTRY).
+; Each esx_* wrapper already brackets its rst $08 with cardBusy
+; (file.asm's header comment) - these veneers add nothing on that front.
+; No MMU work either: esxDOS's rst $08 does not remap MMU6/7, and a
+; caller's buffer at $C000-$FFFF is exactly what it wants read or written
+; while ITS OWN extern-bank mapping is still live in slots 6+7 - unlike
+; svc_putchar/svc_puts, none of these call back into interpreter code
+; that could repage those slots, so there is no svcSaved-style bracket to
+; add. Signatures per authoring-kit/xbn.inc; register conventions per
+; file.asm's esx_* wrappers and their existing overlay0.asm/overlay1.asm
+; callers (sav_write_v2/sav_read_v2, vid_raw_seek0).
+svc_fopen:                       ; in IX=name, B=mode; out A=handle/CF
+    push bc
+    push ix
+    call esx_getsetdrv             ; sets the default drive; its own A/CF
+                                    ; result is not what fopen wants back
+    pop ix
+    pop bc
+    ret c
+    jp esx_fopen
+
+svc_fread:  jp esx_fread          ; in A=handle, IX=buf, BC=len; out BC/CF
+svc_fwrite: jp esx_fwrite         ; in A=handle, IX=buf, BC=len; out CF
+
+; in A=handle, BCDE=offset; out CF. xbn.inc's SVC_FSEEK contract carries
+; no mode parameter - always mode 0 (absolute, from start). "ld ix, 0"
+; sets IXL=0 (the register esxDOS's F_SEEK actually reads for the seek
+; mode) without touching A, the handle already loaded by the caller -
+; the same idiom overlay0.asm's vid_raw_seek0 uses immediately ahead of
+; its own esx_fseek call (overlay0.asm:2347), not a push-af/ld a,0/
+; ld ixl,a/pop-af shape, which would clobber A in between.
+svc_fseek:
+    ld ix, 0
+    jp esx_fseek
+
+svc_fclose: jp esx_fclose         ; in A=handle
 
 ; Call HL (a routine on SFX_PAGE) on overlay1's behalf, exactly as
 ; sfx_open_tramp (banks.asm) does for sfx_stream_open: overlay1 and

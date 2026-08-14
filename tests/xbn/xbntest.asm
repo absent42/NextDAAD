@@ -26,8 +26,12 @@ ext_main:
     ld (XBN_FLAGS+205), a       ; IX low byte - expect $00
     ld a, c
     cp 21
+    jr z, .fn21
+    cp 22
     ret nz
-    jp svc_probe                ; Task 6 extends this; RET-only until then
+    jp fio_probe                ; Task 7
+.fn21:
+    jp svc_probe                ; Task 6
 
 svc_probe:
     call SVC_VERSION
@@ -50,7 +54,7 @@ svc_probe:
 call_target:
     ; COUPLED to tests\extern.dsf's XCAL entry (CALL lsb msb) - the
     ; address here must match the literal bytes in that DSF's PRO 5
-    ; XCAL entry. Currently $C055 (lsb 85, msb 192; see
+    ; XCAL entry. Currently $C05C (lsb 92, msb 192; see
     ; tests\out\xbn\xbntest.sym after assembly) - re-encode extern.dsf's
     ; XCAL entry by hand if this label ever moves.
     ld a, $77
@@ -68,6 +72,57 @@ int_tick:
     inc a
     ld (XBN_FLAGS+221), a
     ret
+
+; Task 7 probe: write 8 bytes to XBNFIO.TMP, close, reopen, read them
+; back and compare. ESX_MODE_W/ESX_MODE_READ are esxDOS's own F_OPEN mode
+; byte values (not re-exported by xbn.inc, which documents only the
+; service calling convention) - defined locally here matching
+; src\nextdaad.inc's ESX_MODE_W ($0E, write/create/truncate) and
+; ESX_MODE_READ ($01).
+ESX_MODE_READ equ $01
+ESX_MODE_W    equ $0E
+fio_probe:
+    ld ix, .fname
+    ld b, ESX_MODE_W
+    call SVC_FOPEN
+    jr c, .fail
+    ld (.hnd), a
+    ld ix, .wbuf
+    ld bc, 8
+    call SVC_FWRITE
+    ld a, (.hnd)
+    call SVC_FCLOSE
+    ld ix, .fname
+    ld b, ESX_MODE_READ
+    call SVC_FOPEN
+    jr c, .fail
+    ld (.hnd), a
+    ld ix, .rbuf
+    ld bc, 8
+    call SVC_FREAD
+    ld a, (.hnd)
+    call SVC_FCLOSE
+    ld b, 8
+    ld hl, .wbuf
+    ld de, .rbuf
+.cmp:
+    ld a, (de)
+    cp (hl)
+    jr nz, .fail
+    inc hl
+    inc de
+    djnz .cmp
+    ld a, 1
+    ld (XBN_FLAGS+208), a
+    ret
+.fail:
+    xor a
+    ld (XBN_FLAGS+208), a
+    ret
+.fname: db "XBNFIO.TMP", 0
+.hnd:   db 0
+.wbuf:  db $11,$22,$33,$44,$55,$66,$77,$88
+.rbuf:  ds 8
 
     ; pad proves >8K binaries load into both pages
     ds $2100, $E5

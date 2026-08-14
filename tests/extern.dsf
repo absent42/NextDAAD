@@ -29,9 +29,12 @@
 ;   XABS - the no-XBN control: with NO GAME.XBN staged (-XbnNoBin),
 ;          EXTERN must stay inert and flag 200 must stay at the CLEARed
 ;          0, never the 9 a staged XBN would echo.
-; XFIO and XMSG are declared here (vocabulary + empty DONE bodies) but
-; exercise no service behaviour yet - Tasks 7 and 8 fill their entries
-; in once SVC_FOPEN/FREAD/FWRITE/FSEEK/FCLOSE and SVC_GETMSG exist.
+;   XFIO - the file-service probe (fn 22, xbntest.asm's fio_probe):
+;          SVC_FOPEN/FWRITE/FCLOSE then SVC_FOPEN/FREAD/FCLOSE round-trip
+;          8 bytes through XBNFIO.TMP on the card and compares them.
+; XMSG is declared here (vocabulary + empty DONE body) but exercises no
+; service behaviour yet - Task 8 fills its entry in once SVC_GETMSG
+; exists.
 ;
 ; MTX message 0 is reserved verbatim as the Task 8 SVC_GETMSG probe
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
@@ -158,8 +161,8 @@ XABS   107 verb
            PRINT 204         ; expect 162 ($A2)
            PRINT 205         ; expect 0
            DONE
-> XCAL _   CALL 85 192        ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C055 (lsb 85, msb 192) - read
+> XCAL _   CALL 92 192        ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C05C (lsb 92, msb 192) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves.
@@ -177,7 +180,9 @@ XABS   107 verb
            PRINT 206
            PRINT 207
            DONE
-> XFIO _   DONE               ; Task 7 fills this in (SVC_FOPEN/FREAD/FWRITE/FSEEK/FCLOSE)
+> XFIO _   EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare
+           PRINT 208         ; expect 1
+           DONE
 > XMSG _   DONE               ; Task 8 fills this in (SVC_GETMSG, message 0 above)
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert
