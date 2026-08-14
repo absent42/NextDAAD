@@ -78,20 +78,39 @@ main:
     ld d, TM_ROWS
     ld e, TM_COLS
     call tm_clear_blank
+    ; XMES pool-bank claim sentinel (overlay0 data): see xms_boot_reset's
+    ; own header comment (overlay0.asm) for why this needs an explicit
+    ; OVL0_PAGE map rather than a plain boot_data_init poke.
+    ; xbn_boot_load runs here too, BEFORE aud_boot_probe below: both
+    ; call bank_alloc against the same shared pool, and a boot-time
+    ; XBN load must win that race - a heavy-audio game's aud_boot_probe
+    ; (AKY/SFB) can otherwise claim enough pool banks to starve XBN's
+    ; single bank_alloc. Order is load-bearing; do not swap these two.
+    ld a, OVL0_PAGE
+    call ovl_map_page
+    call xms_boot_reset
+    call xbn_boot_load
+ IFDEF DEBUG
+    push bc
+    ld b, 1
+    ld c, 0
+    call dbg_at
+    ld hl, msgXbnDiagTmp
+    call dbg_puts
+    ld a, (xbnBank)
+    call dbg_hex8
+    ld hl, (xbnEnd)
+    call dbg_hex16
+    pop bc
+.freezeTmp:
+    jr .freezeTmp                ; TEMP fix-round diagnostic - reverted
+ ENDIF
     ; SP7 boot autoplay: probe GAME.AKY/GAME.SFB (loaders live in
     ; overlay1; the dispatcher-owned slot 7 is free at boot). Fail-
     ; silent when absent - same esxDOS discipline as every loader.
     ld a, OVL1_PAGE
     call ovl_map_page
     call aud_boot_probe
-    ; XMES pool-bank claim sentinel (overlay0 data): same cross-bank
-    ; boot-reset shape as aud_boot_probe above - see xms_boot_reset's
-    ; own header comment (overlay0.asm) for why this needs an explicit
-    ; OVL0_PAGE map rather than a plain boot_data_init poke.
-    ld a, OVL0_PAGE
-    call ovl_map_page
-    call xms_boot_reset
-    call xbn_boot_load
     ld hl, objname_print
     ld (objname_hook), hl
     ld c, 0
@@ -125,6 +144,7 @@ idle:
 ; first run. On real hardware nextreg 2,1 hands control back to NextZXOS, so
 ; this path is exercised only under the CSpect dev loop - but a cold-equivalent
 ; boot is correct robustness regardless.
+msgXbnDiagTmp: db "BANK ", 0    ; TEMP fix-round diagnostic - reverted after use
 boot_data_init:
     ; SP14c M1: chrHandle's boot write removed - the cell (tilemap.asm)
     ; is dead (grep of the whole tree finds only its declaration and

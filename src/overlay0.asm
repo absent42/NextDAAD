@@ -2465,6 +2465,20 @@ xms_boot_reset:
 ; ext_xmes (above) for the open/bracket/DEBUG-marker idiom - see
 ; those two for the precedents this follows rather than reinvents.
 xbn_boot_load:
+    ; Warm re-entry (nextreg 2,1 soft reset) can re-enter this routine
+    ; with the PREVIOUS boot's state still resident - reset the whole
+    ; group unconditionally before anything below can fail, same idiom
+    ; as xms_boot_reset just above. Every exit that is not the success
+    ; path at the bottom (including the two early "ret c" gates right
+    ; below) then leaves the feature cleanly off.
+    ld a, $FF
+    ld (xbnBank), a
+    xor a
+    ld (xbnIntOn), a
+    ld hl, 0
+    ld (xbnExt), hl
+    ld (xbnInt), hl
+    ld (xbnEnd), hl
     call esx_getsetdrv
     ret c                        ; no card / no default drive: off
     ld ix, .name
@@ -2580,9 +2594,18 @@ xbn_boot_load:
     sbc hl, de
     jp nz, .reject                ; must equal bytes actually read
 
-    ld hl, (.hdrSize)             ; xbnEnd = $C000 + size
+    ld hl, (.hdrSize)             ; xbnEnd = $C000 + size, except size ==
+    ld de, XBN_MAX_SIZE           ; XBN_MAX_SIZE ($4000): $C000+$4000 =
+    or a                          ; $10000 wraps to $0000 in 16 bits, which
+    sbc hl, de                    ; would fail every later "< xbnEnd" range
+    jr nz, .endnowrap              ; check. Controller ruling: size $4000
+    ld hl, $FFFF                  ; - window top clamped to $FFFF - the
+    jr .endset                    ; single top byte is not addressable as
+.endnowrap:                       ; an entry/CALL target anyway.
+    ld hl, (.hdrSize)
     ld de, DATA_WINDOW
     add hl, de
+.endset:
     ld (.hdrEnd), hl
 
     ld hl, (.hdrEnd)
