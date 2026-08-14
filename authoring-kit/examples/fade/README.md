@@ -21,9 +21,10 @@ the next fade-out captures whatever picture is on screen by then.
 
 ## Build
 
-    ./build.ps1        (sjasmplus on PATH, or set SJASMPLUS)
+A prebuilt GAME.XBN ships in this directory - copy it beside your
+GAME.DDB and it just works. To rebuild after editing the source:
 
-Copy the resulting GAME.XBN beside your GAME.DDB.
+    ./build.ps1        (sjasmplus on PATH, or set SJASMPLUS)
 
 ## Rules
 

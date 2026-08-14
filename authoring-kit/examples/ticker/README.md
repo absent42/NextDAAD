@@ -18,13 +18,16 @@ It demonstrates the three things every XBN author needs to know:
 
 ## How to build
 
-Requires sjasmplus on PATH (https://github.com/z00m128/sjasmplus).
+A prebuilt `GAME.XBN` ships in this directory - copy it next to your
+own `GAME.DDB` on the SD card (or the folder your interpreter boots
+from) and it just works, no toolchain needed.
+
+To rebuild after editing the source (requires sjasmplus on PATH,
+https://github.com/z00m128/sjasmplus):
 
     .\build.ps1
 
-This assembles `ticker.asm` and writes `GAME.XBN` in this directory.
-Copy that file next to your own `GAME.DDB` on the SD card (or the
-folder your interpreter boots from) to load it.
+This assembles `ticker.asm` and rewrites `GAME.XBN` here.
 
 ## How to wire it into your DSF
 

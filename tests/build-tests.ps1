@@ -2529,8 +2529,18 @@ if ($Xbn) {
             Pop-Location
             Remove-Item $tickerBuildDir -Recurse -Force -ErrorAction SilentlyContinue
         }
+        # The kit SHIPS a prebuilt GAME.XBN beside the source (owner
+        # decision 2026-08-14). This fresh assembly is the drift guard:
+        # if the committed binary does not match the source byte for
+        # byte, someone edited one without the other - fail loudly.
+        $tickerShipped = Join-Path $tickerSrcDir 'GAME.XBN'
+        $freshT = [IO.File]::ReadAllBytes("$root\tests\out\xbn\TICKER.XBN")
+        $shipT = [IO.File]::ReadAllBytes($tickerShipped)
+        if (-not [System.Linq.Enumerable]::SequenceEqual($freshT, $shipT)) {
+            throw "authoring-kit\examples\ticker\GAME.XBN is STALE - rebuild it from ticker.asm (its build.ps1) and commit both together"
+        }
         Copy-Item "$root\tests\out\xbn\TICKER.XBN" "$leg\GAME.XBN" -Force
-        "staged tests\out\xbn\TICKER.XBN -> sd\$legName\GAME.XBN (-XbnTicker: authoring-kit ticker example, not the fixture)"
+        "staged tests\out\xbn\TICKER.XBN -> sd\$legName\GAME.XBN (-XbnTicker: authoring-kit ticker example, not the fixture; shipped prebuilt verified fresh)"
     }
     elseif ($XbnFade) {
         # Layer 2 fade worked example, staged as GAME.XBN INSTEAD of the
@@ -2555,8 +2565,15 @@ if ($Xbn) {
             Pop-Location
             Remove-Item $fadeBuildDir -Recurse -Force -ErrorAction SilentlyContinue
         }
+        # Same shipped-prebuilt drift guard as -XbnTicker above.
+        $fadeShipped = Join-Path $fadeSrcDir 'GAME.XBN'
+        $freshF = [IO.File]::ReadAllBytes("$root\tests\out\xbn\FADE.XBN")
+        $shipF = [IO.File]::ReadAllBytes($fadeShipped)
+        if (-not [System.Linq.Enumerable]::SequenceEqual($freshF, $shipF)) {
+            throw "authoring-kit\examples\fade\GAME.XBN is STALE - rebuild it from fade.asm (its build.ps1) and commit both together"
+        }
         Copy-Item "$root\tests\out\xbn\FADE.XBN" "$leg\GAME.XBN" -Force
-        "staged tests\out\xbn\FADE.XBN -> sd\$legName\GAME.XBN (-XbnFade: authoring-kit fade example, not the fixture)"
+        "staged tests\out\xbn\FADE.XBN -> sd\$legName\GAME.XBN (-XbnFade: authoring-kit fade example, not the fixture; shipped prebuilt verified fresh)"
         $fadeArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
         if (Test-Path $fadeArt) {
             Copy-Item $fadeArt "$leg\001.NX2" -Force

@@ -70,7 +70,9 @@ example, `examples/fade`, fades the Layer 2 picture to any RRRGGGBB
 colour and back for narrative beats - it additionally demonstrates
 reading hardware state back (the palette snapshot), the
 register-select save/restore bracket around shared indexed registers,
-and foreground precompute feeding a cheap interrupt hook. Its own
+and foreground precompute feeding a cheap interrupt hook. Both
+examples ship with a prebuilt `GAME.XBN` beside the source, so you can
+try them on a card without assembling anything. Its own
 `README.md` covers how to build it and wire it into a DSF; the source
 comments walk through every decision, including the one mistake it is
 built to guard you away from - see
