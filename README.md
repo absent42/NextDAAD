@@ -1,7 +1,7 @@
 # NextDAAD - ZX Spectrum Next DAAD interpreter
 
 NextDAAD runs [DAAD](https://github.com/daad-adventure-writer/daad) text
-adventures on the ZX Spectrum Next. It is written in Z80 assembly using
+adventures on the ZX Spectrum Next. Written in Z80 assembly using
 the Next's extended instruction set.
 
 In addition to the standard DAAD features it adds Layer 2 location pictures 
@@ -11,7 +11,7 @@ an 80-column tilemap based text display with switchable fonts and paper/ink colo
 and games that span several databases.
 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
-for NextDAAD means just editing your source and double-clicking one batch file.
+for NextDAAD means just editing your DSF source and double-clicking one batch file.
 
 ## Requirements
 
@@ -48,7 +48,7 @@ for NextDAAD means just editing your source and double-clicking one batch file.
 - **Multi-part games** - switch between databases at runtime with flags
   and objects intact, with per-part assets and saves that load from any
   part
-- **The full engine** - all 128 condacts, the eight-window system, the
+- **DAAD engine** - all 128 condacts, the eight-window system, the
   vocabulary parser with multi-command sentences, the object model,
   `SAVE`/`LOAD` and `RAMSAVE` to the card, and the DDB text reader
 - **The Next's memory** - RAM detection and an 8K bank allocator across
@@ -60,8 +60,7 @@ for NextDAAD means just editing your source and double-clicking one batch file.
 PNG artwork, Arkos music and MP4 cutscenes if you want them, and
 double-click `BUILD.BAT`: it compiles the database, converts every
 asset, and leaves a `RELEASE\` folder to copy straight onto an SD card. A
-starter game ships with it so a first build works before you have written
-anything.
+DSF source file is included with it showing examples of NextDAAD multimedia condact usage.
 
 **The manual is the documentation for all of this.** Open
 [`authoring-kit\docs\index.html`](authoring-kit/docs/index.html) - or
@@ -75,7 +74,7 @@ The kit needs a few third-party tools it cannot redistribute:
 - [Arkos Tracker 3](https://www.julien-nevo.com/arkostracker/index.php/download/) - music and sound effects
 - [CSpect](https://mdf200.itch.io/cspect) - emulator, to play the result
 - [ffmpeg](https://ffmpeg.org/) - only for encoding cutscene
-- [NextDAAD DRC fork](https://github.com/absent42/DRC/tree/nextdaad) - DRC fork allow for large databases on ZX Spectrum Next target
+- [NextDAAD DRC](https://github.com/absent42/DRC/tree/nextdaad) - DRC fork to allow for large databases on ZX Spectrum Next target
 
 But included with the kit is VidTune, a UI app for fine-tuning video encodes and 
 experimenting with different settings to get the best results for your videos.
@@ -100,6 +99,7 @@ DRC via [DAAD Ready](https://www.ngpaws.com/daadready/),
 ```
 powershell -File build.ps1            # debug build
 powershell -File build.ps1 -Release   # release build
+powershell -File build.ps1 -Kit       # authoring kit build
 powershell -File build.ps1 -Run       # build, then launch CSpect
 powershell -File build.ps1 -Clean
 ```
