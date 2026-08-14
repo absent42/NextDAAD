@@ -60,6 +60,15 @@ DDB compile step into the DAAD-READY tool folder
 without it, XMESSAGE/XMES would silently no-op at runtime rather than
 failing loudly. A DSF with no XMESSAGE/XMES calls produces no <code>0.XMB</code>,
 and the build stages none.</p>
+<h2 id="gamexbn">GAME.XBN</h2>
+<p>An <a href="../externs.html">extern</a> binary is capped at <strong>16384 bytes (16K)</strong>,
+header included - a size larger than that on disk is rejected at boot
+and the game plays with externs off. <strong>One <code>GAME.XBN</code> per game</strong>: there
+is no per-part extern file, and the same binary stays loaded across
+every part switch. A single <code>SVC_GETMSG</code> call is capped at <strong>256
+bytes</strong>; a longer database message is truncated, not rejected, and the
+returned length always matches what actually landed in the buffer. See
+<a href="xbn-format.html">XBN format</a> for the full header and validation rules.</p>
 </main>
 </body>
 </html>

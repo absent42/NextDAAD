@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XBN format - NextDAAD</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<main>
+<h1 id="xbn-format">XBN format</h1>
+<p>The binary layout <code>GAME.XBN</code> must follow, the checks the loader applies
+to it, and the frozen addresses author code relies on. See
+<a href="../externs.html">Externs</a> for how to build and use one; this page is the
+format itself.</p>
+<h2 id="header">Header</h2>
+<p>Ten bytes at the start of the file, loaded to <code>$C000</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Offset</th>
+<th>Size</th>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>3</td>
+<td>magic</td>
+<td><code>"XBN"</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td>1</td>
+<td>version</td>
+<td>Format version - <code>1</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td>2</td>
+<td>extEntry</td>
+<td><code>EXTERN</code>/<code>CALL</code> entry address, <code>$C000</code>-<code>$FFFF</code>, or <code>0</code> for none</td>
+</tr>
+<tr>
+<td>6</td>
+<td>2</td>
+<td>intEntry</td>
+<td>50Hz frame-hook entry address, or <code>0</code> for none</td>
+</tr>
+<tr>
+<td>8</td>
+<td>2</td>
+<td>size</td>
+<td>Total byte count, header included, up to <code>$4000</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>xbn.inc</code>'s <code>XBN_HEADER</code> macro emits this for you from two labels (or
+<code>0</code>); you never need to build it by hand.</p>
+<h2 id="validation">Validation</h2>
+<p>The loader checks a <code>GAME.XBN</code> it finds at boot, in this order, and
+rejects the file - freeing anything it had already allocated and
+leaving the game to play with externs off - on the first check that
+fails:</p>
+<ol>
+<li>The file is no larger than 16384 bytes (<code>$4000</code>) on disk.</li>
+<li>The magic bytes read exactly <code>"XBN"</code>.</li>
+<li>The version byte reads <code>1</code>.</li>
+<li>The size field is no larger than <code>$4000</code>.</li>
+<li>The size field matches the number of bytes actually read from the
+   file - a size field that disagrees with the real file length is
+   rejected, whichever way it disagrees.</li>
+<li>Each of <code>extEntry</code> and <code>intEntry</code> is either <code>0</code> (unused - always
+   valid) or a genuine address strictly inside the loaded binary's
+   extent (<code>$C000</code> up to, but not including, <code>$C000 + size</code>).</li>
+</ol>
+<p>Any rejection is silent in a Release build - the game plays exactly as
+it would with no <code>GAME.XBN</code> present at all, with no error shown to the
+player. A DEBUG build reports the reason on the boot screen. No
+partially-valid state is ever committed: a file that fails validation
+never has its entry points wired up, whatever they contained.</p>
+<p>A <code>GAME.XBN</code> with both <code>extEntry</code> and <code>intEntry</code> set to <code>0</code> is legal and
+loads without complaint - it simply never gets called, by anything.</p>
+<p>Absent file (no <code>GAME.XBN</code> next to <code>GAME.DDB</code> at all) is not a rejection
+in the sense above - it is the ordinary "feature off" case, indistinguishable
+from a game that never used externs.</p>
+<h3 id="the-size-4000-edge-case">The size-$4000 edge case</h3>
+<p>A binary whose <code>size</code> field is exactly <code>$4000</code> - the maximum - loads
+with its usable range clamped to end at <code>$FFFF</code> rather than wrapping.
+<code>$C000 + $4000</code> is <code>$10000</code>, one past the top of addressable memory;
+the interpreter treats the window as ending at <code>$FFFF</code> inclusive in
+that case. The one byte this affects is the very last byte of a
+maximum-size binary: it is loaded and present, but it is not a valid
+<code>CALL</code> target or entry-point address in its own right, since nothing
+can address a location past <code>$FFFF</code> to call into.</p>
+<h2 id="service-table">Service table</h2>
+<p>A fixed jump table of ten three-byte <code>JP</code> instructions at <code>XBN_API</code>
+(<code>$BEC8</code>), frozen from the first shipping release. The address never
+moves and existing rows never change signature or meaning - only new
+rows are ever added, at the end, with a version bump reported by
+<code>SVC_VERSION</code>. This is the same frozen-entry-point discipline esxDOS
+and NextZXOS use for their own jump tables, so a game built against an
+old <code>xbn.inc</code> keeps working unmodified on every future NextDAAD release.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Symbol</th>
+<th>In</th>
+<th>Out</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td><code>SVC_VERSION</code></td>
+<td>-</td>
+<td>A = API version</td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>SVC_PUTCHAR</code></td>
+<td>A = character</td>
+<td>-</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>SVC_PUTS</code></td>
+<td>HL = ASCIIZ string</td>
+<td>-</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>SVC_FOPEN</code></td>
+<td>IX = ASCIIZ filename, B = mode</td>
+<td>A = handle, or CF set + A = error</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>SVC_FREAD</code></td>
+<td>A = handle, IX = buffer, BC = length</td>
+<td>BC = bytes read, or CF set + A = error</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>SVC_FWRITE</code></td>
+<td>A = handle, IX = buffer, BC = length</td>
+<td>CF set + A = error, on failure</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>SVC_FSEEK</code></td>
+<td>A = handle, BCDE = offset</td>
+<td>CF set + A = error, on failure</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>SVC_FCLOSE</code></td>
+<td>A = handle</td>
+<td>-</td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>SVC_RANDOM</code></td>
+<td>-</td>
+<td>A = random byte (full range, not the 1-100 <code>CHANCE</code> scale)</td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>SVC_GETMSG</code></td>
+<td>A = user message number</td>
+<td>HL = buffer, BC = length (max 256, truncated), or CF set + A = <code>$FF</code></td>
+</tr>
+</tbody>
+</table>
+<p>Error convention throughout is esxDOS style: carry flag set, error code
+in A. Every row may clobber AF, BC, DE, HL and IX; only the registers a
+row's Out column names carry a meaningful result. Every service
+preserves the caller's own MMU mapping across the call - your extern's
+bank is back under <code>$C000</code> when a service returns, whatever paging it
+did internally.</p>
+<p>All ten rows are foreground-only: none may be called from the <code>#int</code>
+frame hook (see <a href="../externs.html#the-int-hook">Externs</a>).</p>
+<p><code>SVC_GETMSG</code>'s buffer is interpreter-owned resident memory, shared with
+other machinery, and is only guaranteed valid until the next service
+call or the next save/load - see
+<a href="../externs.html#services">Externs</a> for what that means in practice.</p>
+<h2 id="frozen-data-anchors">Frozen data anchors</h2>
+<p>Fixed addresses <code>xbn.inc</code> binds symbols to, none of which move between
+releases:</p>
+<table>
+<thead>
+<tr>
+<th>Symbol</th>
+<th>Address</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>XBN_FLAGS</code></td>
+<td><code>$A200</code></td>
+<td>Base of the 256 DAAD flags - also where <code>IX</code> points on entry to your <code>EXTERN</code>/<code>CALL</code>/<code>#int</code> code</td>
+</tr>
+<tr>
+<td><code>XBN_OBJTABLE</code></td>
+<td><code>$A300</code></td>
+<td>Base of the object table</td>
+</tr>
+<tr>
+<td><code>OBJ_SIZE</code></td>
+<td><code>6</code></td>
+<td>Bytes per object table entry: <code>+0</code> location, <code>+1</code> weight/attribute bits, <code>+2</code>/<code>+3</code> extended attributes, <code>+4</code> noun ID, <code>+5</code> adjective ID</td>
+</tr>
+<tr>
+<td><code>XBN_API</code></td>
+<td><code>$BEC8</code></td>
+<td>Base of the service jump table</td>
+</tr>
+</tbody>
+</table>
+<h2 id="limits">Limits</h2>
+<ul>
+<li><strong>16384 bytes (<code>$4000</code>) maximum</strong>, header included, for the whole
+  <code>GAME.XBN</code> file.</li>
+<li><strong>256 bytes maximum</strong> for a single <code>SVC_GETMSG</code> result; longer
+  messages are truncated, not rejected.</li>
+<li><strong>One <code>GAME.XBN</code> per game.</strong> There is no per-part extern file - the
+  same binary stays loaded across every part switch.</li>
+</ul>
+<p>See <a href="limits.html">Limits</a> for these alongside the interpreter's other
+size ceilings.</p>
+</main>
+</body>
+</html>

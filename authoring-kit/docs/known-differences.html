@@ -77,6 +77,48 @@ general-purpose flags for anything you need to survive.</p>
 <p>The weight of the object a <code>DOALL</code> has just reached is not published
 into flag 55. If you need it inside the loop, ask for it directly with
 <code>WEIGH @50 n</code>.</p>
+<h2 id="externs">Externs</h2>
+<h3 id="extern-and-call-do-not-consume-extra-bytes-from-the-condact-stream">EXTERN and CALL do not consume extra bytes from the condact stream</h3>
+<p>Some classic interpreters let an extern advance past its own condact and
+read further bytes the compiler left sitting in the stream immediately
+after it - an inline-parameter convention. This interpreter does not
+support that: the condact stream position is private to the engine, and
+an extern gets exactly the registers <a href="externs.html">Externs</a> documents,
+nothing more.</p>
+<p>Pass extra data through a flag instead - <code>LET</code> it before the <code>EXTERN</code>
+call - or build a lookup table inside your XBN indexed by the function
+code. Either reads correctly regardless of which interpreter a database
+targets, since neither relies on inline stream bytes existing at all.</p>
+<h3 id="the-object-table-an-extern-sees-is-not-a-flat-locations-array">The object table an extern sees is not a flat locations array</h3>
+<p>An extern reads object state directly at <code>XBN_OBJTABLE</code>, and that table
+is six bytes per object (location, weight/attribute bits, extended
+attributes, noun and adjective vocabulary IDs), not the flat
+one-byte-per-object locations array some classic externs assumed. <code>DE</code>
+already points at the right object's entry base on entry to an <code>EXTERN</code>
+call, so <code>ld a, (de)</code> reads its location without needing to know the
+stride - but code ported from a classic extern that indexed a flat
+array directly will read the wrong bytes if it is not adjusted.</p>
+<h3 id="sfx-cannot-be-overridden-by-author-code">SFX cannot be overridden by author code</h3>
+<p>The <code>SFX</code> condact always drives this interpreter's own native audio
+path - background music, AY effects and sampled sound. An extern cannot
+intercept or replace it, unlike some classic implementations that let
+author code take over sound entirely. There is no workaround; author
+audio work belongs in the <code>#int</code> hook driving hardware directly (see
+<a href="externs.html#the-int-hook">Externs</a>) rather than through <code>SFX</code>.</p>
+<h3 id="call-only-reaches-addresses-inside-your-own-loaded-xbn">CALL only reaches addresses inside your own loaded XBN</h3>
+<p><code>CALL lsb msb</code> only runs code that falls inside the extent of the
+currently loaded <code>GAME.XBN</code> - it cannot jump anywhere else in the
+address space the way a classic <code>CALL</code> into a flat memory map could.
+An out-of-range address, or no XBN loaded at all, is a silent no-op.</p>
+<h3 id="the-int-hook-is-the-50hz-frame-interrupt-and-services-do-not-run-inside-it">The #int hook is the 50Hz frame interrupt, and services do not run inside it</h3>
+<p>An extern's interrupt entry point runs once per frame, timed by the
+interpreter's own vertical-blank interrupt - there is no author-selectable
+interrupt source or rate. None of the ten <a href="externs.html#services">services</a>
+may be called from inside it; every one of them is foreground-only
+(<code>EXTERN</code>/<code>CALL</code> context) and will misbehave if called from <code>#int</code>. Do
+any file IO, printing or random-number work the hook needs from a
+foreground <code>EXTERN</code> call instead, staging the result somewhere the hook
+can read without calling a service itself.</p>
 <h2 id="spanish-databases">Spanish databases</h2>
 <p>Two pieces of Spanish support are missing. Only Spanish databases are
 affected; an English game sees none of this.</p>

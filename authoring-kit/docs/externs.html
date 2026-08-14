@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Externs - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="externs">Externs</h1>
+<p>An extern is a piece of machine code you write yourself and ship
+alongside your database. The interpreter loads it at boot and calls into
+it from three places in your source: <code>EXTERN</code>, <code>CALL</code>, and once per
+frame through an interrupt hook. Nothing here is required - a game with
+no extern builds and plays exactly as it always did.</p>
+<p>Reach for one when a DSF condact genuinely cannot do the job: custom
+per-frame animation, reading or writing your own file on the SD card,
+a calculation too fiddly for <code>LET</code>, or driving hardware the condact set
+does not expose. Anything a condact already does, do with the condact -
+an extern costs you a Z80 assembler and the discipline this chapter
+describes.</p>
+<h2 id="the-gamexbn-file">The GAME.XBN file</h2>
+<p>Your extern ships as <code>GAME.XBN</code>, a single binary file placed beside
+<code>GAME.DDB</code> in the game directory. The interpreter probes for it once at
+boot, right after the database loads. If the file is absent, externs are
+simply off - no error, no cost, the game plays as if the feature did not
+exist.</p>
+<p>One <code>GAME.XBN</code> serves the whole game. It loads once and survives every
+part switch in a <a href="multi-part-games.html">multi-part game</a>; there is no
+per-part extern. It is not part of a save game - see
+<a href="#save-and-load">Save and load</a> below for what that means for you.</p>
+<h2 id="building-an-xbn">Building an XBN</h2>
+<p>Assemble your extern with sjasmplus against <code>xbn.inc</code>, the include the
+authoring kit ships at its root. Three things every XBN source file
+needs:</p>
+<pre><code>    DEVICE ZXSPECTRUMNEXT
+    INCLUDE &quot;xbn.inc&quot;
+    ORG XBN_ORG
+    XBN_HEADER ext_main, int_tick
+</code></pre>
+<p><code>XBN_ORG</code> is <code>$C000</code> - every XBN is assembled to run at that address,
+and the interpreter maps it there for you at call time. <code>XBN_HEADER</code>
+writes the ten-byte header the loader validates (see
+<a href="reference/xbn-format.html">XBN format</a> for the exact layout); pass the
+label of your <code>EXTERN</code>/<code>CALL</code> entry point and your frame-hook entry
+point, or <code>0</code> for either one you do not need. An interrupt-only extern
+(entry <code>0</code>, hook set) is legal, and so is the reverse.</p>
+<p>End your source with a label named <code>xbn_end</code> right after your last byte,
+and a <code>SAVEBIN</code> that writes the whole thing out:</p>
+<pre><code>xbn_end:
+    SAVEBIN &quot;GAME.XBN&quot;, XBN_ORG, xbn_end - XBN_ORG
+</code></pre>
+<p>Copy the resulting <code>GAME.XBN</code> next to <code>GAME.DDB</code> on the card. The whole
+binary, header included, must fit in 16384 bytes - see
+<a href="reference/limits.html">Limits</a>.</p>
+<h3 id="the-ticker-example">The ticker example</h3>
+<p>The authoring kit's <code>examples\ticker\</code> folder is a complete, working
+XBN worth reading start to finish before you write your own: a
+foreground <code>EXTERN</code> call fetches a database message with <code>SVC_GETMSG</code>,
+copies it into the extern's own memory, and a <code>#int</code> hook ticks it out
+one character per frame along the bottom row of the tilemap. Its own
+<code>README.md</code> covers how to build it and wire it into a DSF; the source
+comments walk through every decision, including the one mistake it is
+built to guard you away from - see
+<a href="#services">SVC_GETMSG's staging semantics</a> below. It is the same code
+this chapter's examples are drawn from.</p>
+<h2 id="the-extern-contract">The EXTERN contract</h2>
+<p><code>EXTERN p1 fn</code> (and its three-parameter V3 form) calls your extern's
+entry point with the second parameter as a dispatch selector, the way
+classic DAAD externs always worked. Three function codes are reserved by
+the interpreter itself and never reach your code: 3 is <code>XMESSAGE</code>, 4 is
+<code>XPART</code>, 7 is <code>XUNDONE</code>. Every other code your database can compile -
+0, 1, 2, 5, 15, and everything from 16 upward - forwards straight to
+your extern's entry point when one is loaded, and behaves exactly as it
+did before externs existed (a harmless no-op) when it is not. That is
+what makes it safe to ship a database written against an XBN to a
+player who has none: nothing crashes, nothing errors, the <code>EXTERN</code> calls
+that would have reached your code simply do nothing.</p>
+<p>Registers on entry to your extern's <code>EXTERN</code>/<code>CALL</code> entry point:</p>
+<table>
+<thead>
+<tr>
+<th>Register</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td>first parameter (also in B)</td>
+</tr>
+<tr>
+<td>B</td>
+<td>first parameter</td>
+</tr>
+<tr>
+<td>C</td>
+<td>function code (second parameter - your own dispatch selector)</td>
+</tr>
+<tr>
+<td>HL</td>
+<td>address of the flag named by the first parameter (<code>flags + A</code>)</td>
+</tr>
+<tr>
+<td>DE</td>
+<td>address of the object entry named by the first parameter (<code>objTable + A*6</code>)</td>
+</tr>
+<tr>
+<td>IX</td>
+<td>flags base ($A200, a frozen address - see <a href="#flags-and-objects">Flags and objects</a>)</td>
+</tr>
+<tr>
+<td>IY</td>
+<td>undefined</td>
+</tr>
+</tbody>
+</table>
+<p>A <code>CALL</code> entry (see below) gets the same IX; A, B, C, HL and DE are
+undefined, since a <code>CALL</code> carries no parameters.</p>
+<p>Return with a plain <code>RET</code>. You may clobber A, BC, DE, HL, IX, IY and
+both alternate register sets - the interpreter saves nothing across the
+call beyond what it needs for its own bookkeeping. There is no result
+register and no error code the interpreter reads back: write whatever
+you want the rest of the game to see into a flag, and test that flag
+with an ordinary condact after the <code>EXTERN</code> call. Keep stack usage
+modest - your extern runs on the interpreter's own stack, and a couple
+of hundred bytes of headroom is a safe budget.</p>
+<p>Unlike some classic DAAD interpreters, this one does not let an extern
+consume extra bytes inline from the condact stream - there is no way to
+read "the next byte after this EXTERN" the way some machines' externs
+could. Pass extra data through flags instead: <code>LET</code> a value before the
+<code>EXTERN</code> call, or build a lookup table in your XBN indexed by the
+function code.</p>
+<h2 id="call">CALL</h2>
+<p><code>CALL lsb msb</code> assembles a 16-bit address from its two byte arguments
+and, if that address falls inside your loaded XBN's extent
+(<code>$C000</code> up to but not including the end of your binary), runs the code
+there. An address outside that range, or no XBN loaded at all, is a
+safe no-op - the same behaviour <code>CALL</code> always had before extern support
+existed.</p>
+<p><code>CALL</code> gives you a second, parameter-free way into your own code:
+useful for a fixed jump table of small routines you want to reach
+directly by address rather than by dispatching on a function code. IX
+still points at the flags base on entry; A, B, C, HL and DE carry
+nothing meaningful.</p>
+<h2 id="the-int-hook">The #int hook</h2>
+<p>If your XBN's header names an interrupt entry point, the interpreter
+calls it once every frame, at 50Hz, from inside its own frame interrupt.
+This is real interrupt-context code, and the rules that come with that
+are not optional:</p>
+<ul>
+<li><strong>Keep it short.</strong> Well under one frame's worth of time. An overrun
+  delays the next audio tick.</li>
+<li><strong>Never enable interrupts.</strong> Do not execute <code>EI</code>.</li>
+<li><strong>No DMA.</strong> Do not use the zxnDMA - it contends with video and sample
+  streaming DMA already in flight.</li>
+<li><strong>No file IO and no service calls.</strong> Every v1 service (see below) is
+  foreground-only; none of them may be called from the hook.</li>
+<li><strong>Never install your own interrupt handler.</strong> The IM2 vector table is
+  writable RAM, but your code only exists in the address space while
+  its own bank is mapped - a self-installed vector is a guaranteed
+  crash the moment your bank is unmapped again. The <code>#int</code> hook is the
+  only legal interrupt-context entry point into your code.</li>
+<li><strong>Direct tilemap writes are fine.</strong> Writing to the tilemap at <code>$6000</code>
+  from inside the hook is legitimate and race-free - the interrupt
+  handler never remaps that window.</li>
+<li><strong>Mind video playback.</strong> Video decode is bound by how many CPU cycles
+  it can spend per frame; heavy work in your hook while a clip is
+  playing will visibly degrade it. You own both the hook and the
+  decision to run one during a cutscene - the interpreter does not stop
+  you.</li>
+</ul>
+<p>On entry, IX points at the flags base, exactly as it does for an
+<code>EXTERN</code> call. Every other register is undefined, and the interpreter
+preserves nothing across the call for you - do not rely on any register
+holding a value from a previous frame.</p>
+<p>The hook runs whether or not there is anything for it to do, every
+frame, for as long as the game plays. Test a flag or a variable of your
+own first and return immediately when there is nothing to do - the
+ticker example's <code>int_tick</code> is one load-and-test when idle, and that
+idiom is worth copying directly.</p>
+<h2 id="services">Services</h2>
+<p>The interpreter exposes ten small routines through a fixed jump table at
+a frozen address, <code>XBN_API</code> (<code>$BEC8</code>). <code>xbn.inc</code> binds a symbol to each
+row, so you call them by name:</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Symbol</th>
+<th>In</th>
+<th>Out</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td><code>SVC_VERSION</code></td>
+<td>-</td>
+<td>A = API version</td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>SVC_PUTCHAR</code></td>
+<td>A = character</td>
+<td>-</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>SVC_PUTS</code></td>
+<td>HL = ASCIIZ string (may live in your own bank)</td>
+<td>-</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>SVC_FOPEN</code></td>
+<td>IX = ASCIIZ filename, B = mode</td>
+<td>A = handle, or CF set + error</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>SVC_FREAD</code></td>
+<td>A = handle, IX = buffer, BC = length</td>
+<td>BC = bytes read, or CF set + error</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>SVC_FWRITE</code></td>
+<td>A = handle, IX = buffer, BC = length</td>
+<td>CF set + error on failure</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>SVC_FSEEK</code></td>
+<td>A = handle, BCDE = offset</td>
+<td>CF set + error on failure</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>SVC_FCLOSE</code></td>
+<td>A = handle</td>
+<td>-</td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>SVC_RANDOM</code></td>
+<td>-</td>
+<td>A = random byte</td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>SVC_GETMSG</code></td>
+<td>A = user message number</td>
+<td>HL = buffer, BC = length, or CF set + A = $FF</td>
+</tr>
+</tbody>
+</table>
+<p>Call a service exactly like any other subroutine - <code>call SVC_PUTCHAR</code>
+and so on. Every row preserves your XBN bank's own mapping across the
+call: whatever a service does internally, your code resumes exactly
+where it left off, with its own memory still mapped underneath it.</p>
+<p>A few things worth knowing about specific rows:</p>
+<ul>
+<li><strong><code>SVC_PUTCHAR</code> and <code>SVC_PUTS</code> print through the current DAAD window.</strong>
+  Colours, word wrapping and the <code>More...</code> prompt all behave exactly as
+  they do for ordinary game text, because that is the same print path
+  they use. <code>SVC_PUTS</code> flushes the word wrapper before returning, so a
+  buffered final word is never left stranded on screen.</li>
+<li><strong><code>SVC_RANDOM</code> returns a raw byte</strong>, uniformly distributed 0-255. It
+  is not the 1-100 range <code>CHANCE</code> uses - scale or mask it yourself if
+  you need a narrower range.</li>
+<li><strong>File services are thin wrappers over the same esxDOS machinery the
+  interpreter itself uses</strong> for save games and asset loading. <code>mode</code> for
+  <code>SVC_FOPEN</code> is the raw esxDOS open mode byte; the error convention
+  throughout is esxDOS style - carry flag set, A holds the error code.
+  Like the underlying wrappers, every file service may clobber AF, BC,
+  DE, HL and IX; only the columns the table above lists are meaningful
+  on return.</li>
+<li><strong><code>SVC_GETMSG</code> decodes a database user message into a shared,
+  interpreter-owned buffer and hands you its address and length.</strong> This
+  is the one service with a lifetime rule attached, and it matters: the
+  buffer is only valid until the <em>next</em> service call of any kind, or
+  until the next <code>SAVE</code>, <code>LOAD</code>, <code>RAMSAVE</code> or <code>RAMLOAD</code> - because it is
+  the same resident memory that machinery uses for its own staging. If
+  your extern needs the text to outlive the call that fetched it (the
+  ticker example does, since its <code>#int</code> hook reads the text frame by
+  frame long after the fetch returned), copy it into memory your own
+  bank owns before doing anything else. The buffer is capped at 256
+  bytes; a longer message is truncated, and the returned length in BC
+  always matches what actually landed in the buffer. The bytes are
+  returned exactly as the database stores them - control codes intact,
+  and the <code>_</code>/<code>@</code> object-name substitution <em>not</em> expanded, since there
+  is no object context to substitute at fetch time. A message number
+  outside the database's range returns with the carry flag set and
+  A = <code>$FF</code>.</li>
+</ul>
+<h3 id="versioning">Versioning</h3>
+<p><code>SVC_VERSION</code> reports the API version your interpreter build supports.
+The service table is append-only and its address is frozen from the
+first shipping release: existing rows never move and never change
+signature, so a game built against this version of <code>xbn.inc</code> keeps
+working unmodified on every future NextDAAD release. New services, when
+they arrive, are new rows at the end of the table with a version bump -
+check <code>SVC_VERSION</code> yourself if you ever call a service your <code>xbn.inc</code>
+did not ship with, to fail gracefully on an older interpreter rather
+than jumping into whatever used to live at that address.</p>
+<h2 id="flags-and-objects">Flags and objects</h2>
+<p>Your extern reads and writes DAAD flags and object state directly, with
+no service in between - the interpreter simply exposes the memory.</p>
+<ul>
+<li><strong>Flags 0-127</strong> are reachable with an 8-bit signed displacement off
+  <code>IX</code>, which the interpreter always points at the flags base on entry:
+  <code>ld a, (ix+n)</code> for flag <code>n</code>. This only reaches half the flag space -
+  <code>IX+n</code> cannot express a displacement past 127.</li>
+<li><strong>Flags 128-255</strong> need absolute addressing instead: <code>XBN_FLAGS+n</code>,
+  where <code>XBN_FLAGS</code> (<code>$A200</code>, another frozen anchor <code>xbn.inc</code> defines)
+  is the same base <code>IX</code> points at. <code>ld a, (XBN_FLAGS+200)</code> reads flag
+  200 directly.</li>
+<li><strong>Flags 0-63 are system flags</strong> with meanings the interpreter and the
+  parser already assign - the player's location, the carried-object
+  count, the last object referenced, and so on. Reading one is fine;
+  writing one changes engine behaviour, not just your own bookkeeping,
+  so treat that range as read-mostly unless you specifically mean to
+  affect the parser. Flags 64-255 are yours to use freely.</li>
+<li><strong>The object table</strong> sits at <code>XBN_OBJTABLE</code> (<code>$A300</code>, also frozen),
+  one six-byte entry per object: location at offset 0, weight and
+  container/wearable attribute bits at offset 1, two bytes of extended
+  attributes at offsets 2-3, then the noun and adjective vocabulary IDs
+  at offsets 4 and 5. <code>DE</code> on entry to an <code>EXTERN</code> call already points
+  at the entry for the object named by the first parameter, so
+  <code>ld a, (de)</code> reads that object's location without any arithmetic of
+  your own.</li>
+</ul>
+<h2 id="save-and-load">Save and load</h2>
+<p>The extern bank itself is never part of a save game. <code>SAVE</code>, <code>LOAD</code>,
+<code>RAMSAVE</code> and <code>RAMLOAD</code> persist flags and object state exactly as they
+always did - nothing about your XBN's own code or data changes because
+of them. Practically, that means:</p>
+<ul>
+<li><strong>Anything you need to survive a <code>LOAD</code> belongs in a flag</strong>, not in a
+  variable inside your XBN's own memory. A <code>LOAD</code> restores flags to
+  whatever they held at save time; it does not touch your bank at all,
+  so a value you kept only in your own RAM is left exactly as it was
+  before the load - stale, not restored.</li>
+<li><strong>Bank-resident state does survive within a session</strong>: across
+  <code>EXTERN</code>/<code>CALL</code> invocations, across part switches, and across
+  <code>RESTART</code>. It is only a <code>LOAD</code> (or a <code>RAMLOAD</code>) that leaves it
+  unsynchronised with the flags the player just restored.</li>
+<li><strong>There is no dedicated init entry.</strong> Initialise your extern's own
+  state from an ordinary <code>EXTERN</code> call in your startup process, the way
+  classic DAAD games initialised externs from <code>PRO 6</code>.</li>
+</ul>
+</main>
+</body>
+</html>

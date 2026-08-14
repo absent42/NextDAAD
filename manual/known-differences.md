@@ -92,6 +92,60 @@ The weight of the object a `DOALL` has just reached is not published
 into flag 55. If you need it inside the loop, ask for it directly with
 `WEIGH @50 n`.
 
+## Externs
+
+### EXTERN and CALL do not consume extra bytes from the condact stream
+
+Some classic interpreters let an extern advance past its own condact and
+read further bytes the compiler left sitting in the stream immediately
+after it - an inline-parameter convention. This interpreter does not
+support that: the condact stream position is private to the engine, and
+an extern gets exactly the registers [Externs](externs.md) documents,
+nothing more.
+
+Pass extra data through a flag instead - `LET` it before the `EXTERN`
+call - or build a lookup table inside your XBN indexed by the function
+code. Either reads correctly regardless of which interpreter a database
+targets, since neither relies on inline stream bytes existing at all.
+
+### The object table an extern sees is not a flat locations array
+
+An extern reads object state directly at `XBN_OBJTABLE`, and that table
+is six bytes per object (location, weight/attribute bits, extended
+attributes, noun and adjective vocabulary IDs), not the flat
+one-byte-per-object locations array some classic externs assumed. `DE`
+already points at the right object's entry base on entry to an `EXTERN`
+call, so `ld a, (de)` reads its location without needing to know the
+stride - but code ported from a classic extern that indexed a flat
+array directly will read the wrong bytes if it is not adjusted.
+
+### SFX cannot be overridden by author code
+
+The `SFX` condact always drives this interpreter's own native audio
+path - background music, AY effects and sampled sound. An extern cannot
+intercept or replace it, unlike some classic implementations that let
+author code take over sound entirely. There is no workaround; author
+audio work belongs in the `#int` hook driving hardware directly (see
+[Externs](externs.md#the-int-hook)) rather than through `SFX`.
+
+### CALL only reaches addresses inside your own loaded XBN
+
+`CALL lsb msb` only runs code that falls inside the extent of the
+currently loaded `GAME.XBN` - it cannot jump anywhere else in the
+address space the way a classic `CALL` into a flat memory map could.
+An out-of-range address, or no XBN loaded at all, is a silent no-op.
+
+### The #int hook is the 50Hz frame interrupt, and services do not run inside it
+
+An extern's interrupt entry point runs once per frame, timed by the
+interpreter's own vertical-blank interrupt - there is no author-selectable
+interrupt source or rate. None of the ten [services](externs.md#services)
+may be called from inside it; every one of them is foreground-only
+(`EXTERN`/`CALL` context) and will misbehave if called from `#int`. Do
+any file IO, printing or random-number work the hook needs from a
+foreground `EXTERN` call instead, staging the result somewhere the hook
+can read without calling a service itself.
+
 ## Spanish databases
 
 Two pieces of Spanish support are missing. Only Spanish databases are
