@@ -1,5 +1,6 @@
 RELEASE/
 CONFIG.local.BAT
+examples/*/GAME.XBN
 
 # tools\ skeleton: keep the empty folders (.gitkeep) and README, but ignore any
 # tool binaries a maintainer extracts into it locally. videnc.exe is the one

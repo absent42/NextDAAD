@@ -41,7 +41,16 @@
 ; MTX message 0 is reserved verbatim as the Task 8 SVC_GETMSG probe
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
 ; banner, so a later task can read it back through the service call
-; and compare bytes rather than screen text.
+; and compare bytes rather than screen text. Task 9's shipped ticker
+; worked example (authoring-kit\examples\ticker\ticker.asm) consumes
+; the same message 0 through the same service call.
+;   XTCK - drives the Task 9 ticker example (EXTERN 0 30 arms it on
+;          message 0, EXTERN 0 31 disarms it). This verb does not
+;          reach xbntest.asm at all - -XbnTicker (tests\build-tests.ps1)
+;          stages the ticker's own GAME.XBN in place of the fixture, so
+;          this entry is only meaningful in that combination; against
+;          the plain fixture XBN, fn 30/31 fall through xbntest.asm's
+;          ext_main unrecognised and no-op.
 
 #define fPlayer  38
 
@@ -56,6 +65,7 @@ XSVC   104 verb
 XFIO   105 verb
 XMSG   106 verb
 XABS   107 verb
+XTCK   108 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -169,6 +179,12 @@ XABS   107 verb
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves.
            PRINT 220         ; expect 119 ($77)
+           CALL 43 226        ; Task 4's owed check: tail_marker, address
+                             ; $E22B (lsb 43, msb 226) - the SECOND 8K page
+                             ; of the XBN window, proving CALL dispatch
+                             ; reaches page 2 and not only page 1. Same
+                             ; re-encode caveat as call_target above.
+           PRINT 222         ; expect 153 ($99)
            DONE
 > XCNR _   CLEAR 220
            CALL 0 128        ; $8000 - out of window, must no-op
@@ -194,6 +210,13 @@ XABS   107 verb
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert
            PRINT 200         ; expect 0 in the no-XBN leg, 9 with XBN
+           DONE
+> XTCK _   EXTERN 0 30       ; Task 9 ticker example: arm on message 0
+           PAUSE 100         ; two seconds - message ticks out in ~0.5s,
+                             ; the rest is settle time before the DONE
+           EXTERN 0 31       ; disarm (idempotent - int_tick already
+                             ; disarms itself once the message is fully
+                             ; ticked out)
            DONE
 /PRO 6
 ; ---- one-shot init ----

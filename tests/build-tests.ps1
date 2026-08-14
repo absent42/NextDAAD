@@ -316,13 +316,15 @@
 #            and why the numbers and the picture can disagree):
 #            docs\superpowers\tileslack-ab-run-sheet.md. An alternative
 #            to every other DDB switch, not a companion.
-#   -Xbn     XBN extern support Task 1 fixture, staged into sd\XBN\: make
-#            the tests\extern.dsf DDB active AND assemble/stage
-#            tests\xbn\xbntest.asm's fixture extern as GAME.XBN. Pure
-#            scaffolding - zero interpreter source changes exist yet, so
-#            every XREG/XCAL/XCNR/XTIK/XSVC probe is expected to fail or
-#            no-op until later tasks land the interpreter side. Two
-#            companion switches, both no-ops without -Xbn:
+#   -Xbn     XBN extern support fixture, staged into sd\XBN\: make the
+#            tests\extern.dsf DDB active AND assemble/stage
+#            tests\xbn\xbntest.asm's fixture extern as GAME.XBN (the
+#            XREG/XCAL/XCNR/XTIK/XSVC/XFIO/XMSG/XABS probe verbs, all
+#            live against the interpreter's XBN support as of Task 9).
+#            Three companion switches, all no-ops without -Xbn. Not
+#            designed to be combined with each other; the staging code
+#            checks them in this priority order, so if more than one is
+#            given -XbnNoBin wins over -XbnBad wins over -XbnTicker:
 #              -XbnNoBin      stage GAME.DDB with NO GAME.XBN at all (the
 #                              XABS no-XBN control - EXTERN must stay inert).
 #              -XbnBad <kind> stage a corrupt/truncated variant AS
@@ -336,6 +338,23 @@
 #                              generated unconditionally alongside the good
 #                              GAME.XBN so a break in the generator is
 #                              caught on a plain run.
+#              -XbnTicker     stage the Task 9 shipped worked example
+#                              (authoring-kit\examples\ticker\ticker.asm)
+#                              as GAME.XBN INSTEAD of the xbntest.asm
+#                              fixture, so extern.dsf's XTCK verb has
+#                              something to drive. Assembled fresh here
+#                              into tests\out\xbn\TICKER.XBN (same source
+#                              the example's own build.ps1 uses, not
+#                              forked - just built into a scratch cwd so
+#                              its SAVEBIN "GAME.XBN" cannot collide with
+#                              the fixture's own tests\out\xbn\GAME.XBN,
+#                              and the kit example directory stays
+#                              build-artifact-free). Every OTHER XBN probe
+#                              verb (XREG/XCAL/XCNR/XTIK/XSVC/XFIO/XMSG)
+#                              is meaningless in this combination - the
+#                              ticker's ext_main only recognises fn 30/31
+#                              and no-ops on everything else, same as
+#                              xbntest.asm's own unrecognised-fn path.
 #            An alternative to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
@@ -581,7 +600,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -2478,6 +2497,30 @@ if ($Xbn) {
         Copy-Item "$root\tests\out\xbn\$xbnBadFile" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\$xbnBadFile -> sd\$legName\GAME.XBN (-XbnBad $XbnBad reject variant)"
     }
+    elseif ($XbnTicker) {
+        # Task 9 shipped worked example, staged as GAME.XBN INSTEAD of the
+        # xbntest.asm fixture, so extern.dsf's XTCK verb has something to
+        # drive. Assembled here from the SAME ticker.asm the example's own
+        # build.ps1 uses (not forked) into a scratch cwd, so its
+        # SAVEBIN "GAME.XBN" cannot collide with the fixture's own
+        # tests\out\xbn\GAME.XBN, then moved to tests\out\xbn\TICKER.XBN so
+        # the kit example directory stays build-artifact-free.
+        $tickerSrcDir = Join-Path $root 'authoring-kit\examples\ticker'
+        $tickerBuildDir = Join-Path $root 'tests\out\xbn\_tickerbuild'
+        New-Item -ItemType Directory -Force $tickerBuildDir | Out-Null
+        Push-Location $tickerBuildDir
+        try {
+            & "$root\tools\sjasmplus\sjasmplus.exe" --msg=war -I "$root\authoring-kit" "$tickerSrcDir\ticker.asm"
+            if ($LASTEXITCODE -ne 0) { throw "authoring-kit\examples\ticker\ticker.asm assembly failed" }
+            Move-Item "GAME.XBN" "$root\tests\out\xbn\TICKER.XBN" -Force
+        }
+        finally {
+            Pop-Location
+            Remove-Item $tickerBuildDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Copy-Item "$root\tests\out\xbn\TICKER.XBN" "$leg\GAME.XBN" -Force
+        "staged tests\out\xbn\TICKER.XBN -> sd\$legName\GAME.XBN (-XbnTicker: authoring-kit ticker example, not the fixture)"
+    }
     else {
         Copy-Item "$root\tests\out\xbn\GAME.XBN" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\GAME.XBN -> sd\$legName\GAME.XBN"
@@ -3914,7 +3957,7 @@ foreach ($stagedDdb in Get-ChildItem -LiteralPath $leg -Filter '*.DDB' -File) {
         throw "sd\$legName\$($stagedDdb.Name) carries machine nibble $('0x{0:X2}' -f ($sb[1] -band 0xF0)), not 0xC0 (NEXTDAAD) - it was compiled for another target and will boot to E4. Check that its compile block passes the configured target."
     }
 }
-if ($xbnActive) { "active: extern (XBN extern support Task 1 fixture$(if ($XbnNoBin) { ', no GAME.XBN staged' } elseif ($XbnBad) { ", GAME.XBN = $XbnBad reject variant" }))" }
+if ($xbnActive) { "active: extern (XBN extern support fixture$(if ($XbnNoBin) { ', no GAME.XBN staged' } elseif ($XbnBad) { ", GAME.XBN = $XbnBad reject variant" } elseif ($XbnTicker) { ', GAME.XBN = authoring-kit ticker example' }))" }
 elseif ($fontSwActive) { "active: fontsw (SP18 font/pointer switching fixture)" }
 elseif ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - GAME2.DDB + PART2\0.XMB also staged)" }
 elseif ($uuActive) { "active: urbanupstart" }
