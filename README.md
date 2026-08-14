@@ -51,6 +51,8 @@ for NextDAAD means just editing your DSF source and double-clicking one batch fi
 - **DAAD engine** - all 128 condacts, the eight-window system, the
   vocabulary parser with multi-command sentences, the object model,
   `SAVE`/`LOAD` and `RAMSAVE` to the card, and the DDB text reader
+- **EXTERN support** - load and run external machine code binaries up 
+  to 16KB in size, passing flags, message text etc
 - **The Next's memory** - RAM detection and an 8K bank allocator across
   the extended memory map
 
