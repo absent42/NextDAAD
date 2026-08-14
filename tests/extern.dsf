@@ -199,7 +199,15 @@ XTCK   108 verb
            PRINT 220         ; expect 0
            DONE
 > XTIK _   CLEAR 221
-           PAUSE 50          ; one second
+           PAUSE 100         ; one second. DRC HALVES every PAUSE
+                             ; operand for the NEXTDAAD target at
+                             ; compile time (drb.php getDurationAdjustment:
+                             ; baseLength 100 / DEFAULT_NOTE_DURATION 200),
+                             ; so this ships as operand 50 = 50 frames.
+                             ; An authored PAUSE 50 shipped as 25 and made
+                             ; the original "expect ~50" unmeetable - 25
+                             ; was the CORRECT reading (silicon-confirmed
+                             ; 2026-08-14, 25 ticks in 25 frames = 1:1).
            PRINT 221         ; expect 48-52 (50 +- ISR jitter)
            DONE
 > XSVC _   EXTERN 0 21       ; service probe fn - Task 6 fills flags 206+
