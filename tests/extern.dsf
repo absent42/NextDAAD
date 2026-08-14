@@ -228,8 +228,10 @@ XTCK   108 verb
            PRINT 200         ; expect 0 in the no-XBN leg, 9 with XBN
            DONE
 > XTCK _   EXTERN 0 30       ; Task 9 ticker example: arm on message 0
-           PAUSE 100         ; two seconds - message ticks out in ~0.5s,
-                             ; the rest is settle time before the DONE
+           PAUSE 100         ; ships as operand 50 = ONE second (DRC
+                             ; halves PAUSE for this target, see XTIK
+                             ; above) - message ticks out in ~0.5s, the
+                             ; rest is settle time before the DONE
            EXTERN 0 31       ; disarm (idempotent - int_tick already
                              ; disarms itself once the message is fully
                              ; ticked out)
