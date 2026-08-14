@@ -151,9 +151,16 @@ are not optional:
   its own bank is mapped - a self-installed vector is a guaranteed
   crash the moment your bank is unmapped again. The `#int` hook is the
   only legal interrupt-context entry point into your code.
-- **Direct tilemap writes are fine.** Writing to the tilemap at `$6000`
-  from inside the hook is legitimate and race-free - the interrupt
-  handler never remaps that window.
+- **Direct tilemap writes are fine, except during video playback with an
+  audio track.** Writing to the tilemap at `$6000` from inside the hook
+  is legitimate and race-free for as long as no such clip is playing -
+  the interrupt handler never remaps that window on its own account.
+  But while a video clip with an audio track is playing, the
+  interpreter itself borrows that same window as the clip's audio feed
+  for the clip's whole duration, and the hook keeps firing throughout.
+  A tilemap write from the hook during that span lands in the audio
+  buffer instead and corrupts the clip's sound. Pause or disarm your
+  ticker around `PLAY` if it writes the tilemap.
 - **Mind video playback.** Video decode is bound by how many CPU cycles
   it can spend per frame; heavy work in your hook while a clip is
   playing will visibly degrade it. You own both the hook and the
