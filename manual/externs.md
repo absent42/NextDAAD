@@ -65,7 +65,12 @@ The authoring kit's `examples\ticker\` folder is a complete, working
 XBN worth reading start to finish before you write your own: a
 foreground `EXTERN` call fetches a database message with `SVC_GETMSG`,
 copies it into the extern's own memory, and a `#int` hook ticks it out
-one character per frame along the bottom row of the tilemap. Its own
+one character per frame along the bottom row of the tilemap. A second
+example, `examples/fade`, fades the Layer 2 picture to any RRRGGGBB
+colour and back for narrative beats - it additionally demonstrates
+reading hardware state back (the palette snapshot), the
+register-select save/restore bracket around shared indexed registers,
+and foreground precompute feeding a cheap interrupt hook. Its own
 `README.md` covers how to build it and wire it into a DSF; the source
 comments walk through every decision, including the one mistake it is
 built to guard you away from - see

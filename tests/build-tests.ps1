@@ -355,6 +355,17 @@
 #                              ticker's ext_main only recognises fn 30/31
 #                              and no-ops on everything else, same as
 #                              xbntest.asm's own unrecognised-fn path.
+#              -XbnFade       stage the Layer 2 fade worked example
+#                              (authoring-kit\examples\fade\fade.asm) as
+#                              GAME.XBN INSTEAD of the fixture, plus the
+#                              single Layer 2 picture (001.NX2, the same
+#                              Rabenstein source -GMode reuses) that
+#                              extern.dsf's XFAD verb draws and fades.
+#                              Same scratch-cwd assembly pattern as
+#                              -XbnTicker (-> tests\out\xbn\FADE.XBN).
+#                              Selection priority when combined:
+#                              -XbnNoBin wins over -XbnBad over
+#                              -XbnTicker over -XbnFade.
 #            An alternative to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
@@ -600,7 +611,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -2520,6 +2531,40 @@ if ($Xbn) {
         }
         Copy-Item "$root\tests\out\xbn\TICKER.XBN" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\TICKER.XBN -> sd\$legName\GAME.XBN (-XbnTicker: authoring-kit ticker example, not the fixture)"
+    }
+    elseif ($XbnFade) {
+        # Layer 2 fade worked example, staged as GAME.XBN INSTEAD of the
+        # fixture, so extern.dsf's XFAD/XFDI verbs have something to
+        # drive. Same scratch-cwd pattern as -XbnTicker above; also
+        # stages the one Layer 2 picture XFAD draws, from the same
+        # Rabenstein source the -GMode block reuses (and with the same
+        # CSpect-lock refusal - a running emulator holds sd\ files open).
+        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+            throw "CSpect is running - close it before staging (locked sd\ files cause a partial fade fixture)"
+        }
+        $fadeSrcDir = Join-Path $root 'authoring-kit\examples\fade'
+        $fadeBuildDir = Join-Path $root 'tests\out\xbn\_fadebuild'
+        New-Item -ItemType Directory -Force $fadeBuildDir | Out-Null
+        Push-Location $fadeBuildDir
+        try {
+            & "$root\tools\sjasmplus\sjasmplus.exe" --msg=war -I "$root\authoring-kit" "$fadeSrcDir\fade.asm"
+            if ($LASTEXITCODE -ne 0) { throw "authoring-kit\examples\fade\fade.asm assembly failed" }
+            Move-Item "GAME.XBN" "$root\tests\out\xbn\FADE.XBN" -Force
+        }
+        finally {
+            Pop-Location
+            Remove-Item $fadeBuildDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Copy-Item "$root\tests\out\xbn\FADE.XBN" "$leg\GAME.XBN" -Force
+        "staged tests\out\xbn\FADE.XBN -> sd\$legName\GAME.XBN (-XbnFade: authoring-kit fade example, not the fixture)"
+        $fadeArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
+        if (Test-Path $fadeArt) {
+            Copy-Item $fadeArt "$leg\001.NX2" -Force
+            "staged tools\Rabenstein-master\nextdaad\1.NX2 -> sd\$legName\001.NX2 (XFAD picture)"
+        }
+        else {
+            "WARNING: tools\Rabenstein-master\nextdaad\1.NX2 missing - XFAD will have no picture to fade"
+        }
     }
     else {
         Copy-Item "$root\tests\out\xbn\GAME.XBN" "$leg\GAME.XBN" -Force

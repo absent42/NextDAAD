@@ -59,7 +59,12 @@ binary, header included, must fit in 16384 bytes - see
 XBN worth reading start to finish before you write your own: a
 foreground <code>EXTERN</code> call fetches a database message with <code>SVC_GETMSG</code>,
 copies it into the extern's own memory, and a <code>#int</code> hook ticks it out
-one character per frame along the bottom row of the tilemap. Its own
+one character per frame along the bottom row of the tilemap. A second
+example, <code>examples/fade</code>, fades the Layer 2 picture to any RRRGGGBB
+colour and back for narrative beats - it additionally demonstrates
+reading hardware state back (the palette snapshot), the
+register-select save/restore bracket around shared indexed registers,
+and foreground precompute feeding a cheap interrupt hook. Its own
 <code>README.md</code> covers how to build it and wire it into a DSF; the source
 comments walk through every decision, including the one mistake it is
 built to guard you away from - see

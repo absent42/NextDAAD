@@ -66,6 +66,8 @@ XFIO   105 verb
 XMSG   106 verb
 XABS   107 verb
 XTCK   108 verb
+XFAD   109 verb
+XFDI   110 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -235,6 +237,24 @@ XTCK   108 verb
            EXTERN 0 31       ; disarm (idempotent - int_tick already
                              ; disarms itself once the message is fully
                              ; ticked out)
+           DONE
+> XFAD _   PICTURE 1         ; only meaningful with -XbnFade staged
+           DISPLAY 0         ; (fade example as GAME.XBN + 001.NX2 art);
+                             ; without art PICTURE skips DISPLAY, and
+                             ; without the fade XBN fn 40 no-ops
+           LET 241 0         ; fade speed: default (about one second)
+           CLEAR 240         ; completion flag
+           EXTERN 224 40     ; fade out to red (%11100000) - a colour,
+                             ; not black, so a successful fade cannot be
+                             ; mistaken for a blanked screen
+           PAUSE 150         ; ships as 75 frames (DRC halves PAUSE) -
+                             ; fade is 8 steps x 6 frames + snapshot
+           PRINT 240         ; expect 1 (hook set it at completion)
+           DONE
+> XFDI _   CLEAR 240
+           EXTERN 0 41       ; fade back in to the snapshot
+           PAUSE 150
+           PRINT 240         ; expect 1
            DONE
 /PRO 6
 ; ---- one-shot init ----
