@@ -152,7 +152,15 @@ XTCK   108 verb
 > _ _   PROCESS 1
 /PRO 1
 ; ---- parser loop (template shape, trimmed) ----
+; The PROCESS 5 dispatch below is LOAD-BEARING: this fixture was first
+; shipped without it (copied from gmodegate.dsf's skeleton, which has no
+; command decoder at all - its checks run at boot from PRO 6), so every
+; typed verb fell through MOVE to SYSMESS 8 "I can't do that". The X*
+; verbs only reach PRO 5 through this entry (test.dsf's template shape).
 > _ _   PARSE 0
+        REDO
+> _ _   PROCESS 5
+        ISDONE
         REDO
 > _ _   MOVE fPlayer
         CLS
