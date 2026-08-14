@@ -169,6 +169,15 @@ are not optional:
   A tilemap write from the hook during that span lands in the audio
   buffer instead and corrupts the clip's sound. Pause or disarm your
   ticker around `PLAY` if it writes the tilemap.
+- **Stay inside rows 4-27 for anything that must be visible on every
+  display.** The 80x32 tilemap's origin sits 32 pixels above and left
+  of the ULA origin, so rows 0-3 and 28-31 land in the border area.
+  Real display chains (HDMI scalers, monitor overscan) often crop
+  border pixels: content parked there can be invisible on hardware
+  while an emulator window shows it. Rows 4-27 overlay the area every
+  display shows; the ticker example writes row 27 for exactly this
+  reason. If you want a border row, verify it on your own target
+  display first.
 - **Mind video playback.** Video decode is bound by how many CPU cycles
   it can spend per frame; heavy work in your hook while a clip is
   playing will visibly degrade it. You own both the hook and the

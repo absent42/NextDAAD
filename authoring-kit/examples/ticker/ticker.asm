@@ -25,7 +25,16 @@
 ; src/nextdaad.inc's TM_MAP ($6000) and TM_COLS (80) - not INCLUDEd
 ; here, since the example builds against xbn.inc alone, so the derived
 ; literal is spelled out instead.
-TM_ROW          equ $7360
+; Row 27 - the BOTTOM-MOST ULA-COVERED tilemap row ($6000 + 27*160 =
+; $70E0). The tilemap's origin sits 32 pixels above and left of the
+; ULA origin (dev guide, NR $1B notes), so of the 32 rows, 0-3 and
+; 28-31 land in the BORDER area - real display chains (HDMI scalers,
+; monitor overscan) often crop border pixels, and a ticker parked
+; there can be invisible on hardware while an emulator window shows
+; it. Rows 4-27 overlay the ULA area every display shows. If your
+; game wants the very bottom border row instead, that is a display
+; question to test on your own target hardware, not a code change.
+TM_ROW          equ $70E0
 
 ; The interpreter's own reserved attribute for ordinary text: pair 0 =
 ; paper 0 (black), ink 7 (white) - src/nextdaad.inc's TM_ATTR_DEFAULT,
