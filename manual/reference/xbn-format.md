@@ -40,7 +40,7 @@ fails:
 
 Any rejection is silent in a Release build - the game plays exactly as
 it would with no `GAME.XBN` present at all, with no error shown to the
-player. A DEBUG build reports the reason on the boot screen. No
+player. A DEBUG build prints a rejection marker on the boot screen. No
 partially-valid state is ever committed: a file that fails validation
 never has its entry points wired up, whatever they contained.
 
@@ -86,11 +86,11 @@ old `xbn.inc` keeps working unmodified on every future NextDAAD release.
 | 9 | `SVC_GETMSG` | A = user message number | HL = buffer, BC = length (max 256, truncated), or CF set + A = `$FF` |
 
 Error convention throughout is esxDOS style: carry flag set, error code
-in A. Every row may clobber AF, BC, DE, HL and IX; only the registers a
-row's Out column names carry a meaningful result. Every service
-preserves the caller's own MMU mapping across the call - your extern's
-bank is back under `$C000` when a service returns, whatever paging it
-did internally.
+in A. Every row may clobber AF, BC, DE, HL, IX and IY; only the
+registers a row's Out column names carry a meaningful result. Every
+service preserves the caller's own MMU mapping across the call - your
+extern's bank is back under `$C000` when a service returns, whatever
+paging it did internally.
 
 All ten rows are foreground-only: none may be called from the `#int`
 frame hook (see [Externs](../externs.md#the-int-hook)).

@@ -76,15 +76,23 @@ this chapter's examples are drawn from.
 
 `EXTERN p1 fn` (and its three-parameter V3 form) calls your extern's
 entry point with the second parameter as a dispatch selector, the way
-classic DAAD externs always worked. Three function codes are reserved by
-the interpreter itself and never reach your code: 3 is `XMESSAGE`, 4 is
-`XPART`, 7 is `XUNDONE`. Every other code your database can compile -
-0, 1, 2, 5, 15, and everything from 16 upward - forwards straight to
-your extern's entry point when one is loaded, and behaves exactly as it
-did before externs existed (a harmless no-op) when it is not. That is
-what makes it safe to ship a database written against an XBN to a
-player who has none: nothing crashes, nothing errors, the `EXTERN` calls
-that would have reached your code simply do nothing.
+classic DAAD externs always worked. In a Release build - the one your
+players run - three function codes are reserved by the interpreter
+itself and never reach your code: 3 is `XMESSAGE`, 4 is `XPART`, 7 is
+`XUNDONE`. Every other code your database can compile - 0, 1, 2, 5, 6,
+8-15, and everything from 16 upward - forwards straight to your
+extern's entry point when one is loaded, and behaves exactly as it did
+before externs existed (a harmless no-op) when it is not. That is what
+makes it safe to ship a database written against an XBN to a player who
+has none: nothing crashes, nothing errors, the `EXTERN` calls that
+would have reached your code simply do nothing.
+
+A DEBUG build additionally reserves function codes 6 and 8-14 for the
+interpreter's own internal probes, so those codes do not reach your
+extern there. Write your database against function codes outside
+3-15 and it behaves identically in both builds; if you use 6 or 8-14,
+expect that behaviour only in a Release build - test against Release
+when you rely on it.
 
 Registers on entry to your extern's `EXTERN`/`CALL` entry point:
 
@@ -217,8 +225,8 @@ A few things worth knowing about specific rows:
   `SVC_FOPEN` is the raw esxDOS open mode byte; the error convention
   throughout is esxDOS style - carry flag set, A holds the error code.
   Like the underlying wrappers, every file service may clobber AF, BC,
-  DE, HL and IX; only the columns the table above lists are meaningful
-  on return.
+  DE, HL, IX and IY; only the columns the table above lists are
+  meaningful on return.
 - **`SVC_GETMSG` decodes a database user message into a shared,
   interpreter-owned buffer and hands you its address and length.** This
   is the one service with a lifetime rule attached, and it matters: the

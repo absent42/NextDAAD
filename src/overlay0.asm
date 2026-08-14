@@ -3071,11 +3071,14 @@ ext_forward:
 ; KTEST, the keyboard matrix/decode diagnostic (tests/test.dsf's KTEST
 ; verb; body lives in overlay1.asm/OVL1_PAGE alongside kb_raw/kb_char).
 ; Reuses vector 6 - free since VIDBENCH's retirement (see that commit's
-; own note); avoids 3/4/7 (live: XMESSAGE/XPART/XUNDONE) and 5 (suite
-; check 44 depends on it staying ext_stub forever). extVec is DATA, not
-; code - the IFDEF on the table row costs nothing in Release (byte-
-; identical to before this task); the trampoline body is itself IFDEF
-; DEBUG so no dead code reaches overlay0 in Release either.
+; own note); avoids 3/4/7 (live: XMESSAGE/XPART/XUNDONE) and 5 (already
+; forwards to a loaded XBN). extVec is DATA, not code - the IFDEF on the
+; table row costs nothing in Release (byte-identical to before this
+; task); the trampoline body is itself IFDEF DEBUG so no dead code
+; reaches overlay0 in Release either. Per-variant contract: Release
+; forwards vectors 6 and 8-14 to the XBN (same as 5), DEBUG reserves
+; them for the probes below instead - so authors test forwarding
+; against a Release build, not DEBUG.
  IFDEF DEBUG
 ktest_trampoline:
     ld hl, ktest_poll             ; established push-target/ovl_map_page
@@ -3092,7 +3095,8 @@ ktest_trampoline:
 ; plus the streaming cluster's move off the hot page. git holds the
 ; bench (commits 5cc2c70/a63ccfd lineage) and the DMAT/DMACC
 ; precedent before it. Vector 8 is reused below (Card #6 fixture
-; wave); 5 must stay ext_stub forever (suite check 44), 6 is KTEST's.
+; wave); 5 forwards to a loaded XBN (suite check 44 holds because the
+; suite stages no XBN - the no-XBN fallback is inert), 6 is KTEST's.
 ;
 ; EXTERN vectors 8/9/10 (Card #6 SNAP=03/00 sitting follow-up,
 ; .superpowers/sdd/sp14a-task-4-report.md section 41): DEBUG-only
@@ -3137,7 +3141,8 @@ l2show_trampoline:
 ; before T5 designs a pan around them. ONE vector for all ten: the
 ; EXTERN's first parameter selects a config row in overlay2's l2sCfg,
 ; so a new probe costs a table row, not a vector (11-15 are the last
-; free ones - 5 must stay ext_stub forever, suite check 44). Same
+; free ones - 5 forwards to a loaded XBN; suite check 44 holds because
+; the suite stages no XBN, so the no-XBN fallback stays inert). Same
 ; push-target/ovl_map_page idiom as the trampolines above; the config
 ; index rides in B because ovl_map_page clobbers A (h_extern leaves
 ; the parameter in both).
@@ -3153,8 +3158,9 @@ l2scr_trampoline:
 ; .superpowers/sdd/sp14a-task-4-report.md section 42): DEBUG-only
 ; route for tests/test.dsf's NXBO/NXBC/NXBK verbs. NXBEN's vector 8
 ; went to the Card #6 fixture wave while the bench was retired, so the
-; revival takes 12 (12-15 are the last free ones; 5 must stay
-; ext_stub forever, suite check 44). ONE vector for all three modes:
+; revival takes 12 (12-15 are the last free ones; 5 forwards to a
+; loaded XBN - suite check 44 holds because the suite stages no XBN,
+; so the no-XBN fallback stays inert). ONE vector for all three modes:
 ; the mode rides flags+250 (the stage-ladder convention the retired
 ; bench used), set by the verb's LET before the shared EXTERN, so a
 ; new mode costs a table row rather than a vector. The bench's fourth
@@ -3175,7 +3181,7 @@ extVec:
  IFDEF DEBUG
     dw ktest_trampoline           ; vector 6, DEBUG only
  ELSE
-    dw ext_stub                   ; vector 6, release: unimplemented stub
+    dw ext_forward                 ; vector 6, release: forwards to the XBN
  ENDIF
     dw ext_undone
  IFDEF DEBUG
@@ -3183,17 +3189,17 @@ extVec:
     dw l2hide_trampoline          ; vector 9, DEBUG only (Card #6)
     dw l2show_trampoline          ; vector 10, DEBUG only (Card #6)
  ELSE
-    dw ext_stub, ext_stub, ext_stub ; vectors 8-10, release: stubs
+    dw ext_forward, ext_forward, ext_forward ; vectors 8-10, release: forward to the XBN
  ENDIF
  IFDEF DEBUG
     dw l2scr_trampoline           ; vector 11, DEBUG only (SP17 T5)
  ELSE
-    dw ext_stub                   ; vector 11, release: stub
+    dw ext_forward                 ; vector 11, release: forwards to the XBN
  ENDIF
  IFDEF DEBUG
     dw nxb_trampoline             ; vector 12, DEBUG only (SP17 bench)
  ELSE
-    dw ext_stub                   ; vector 12, release: stub
+    dw ext_forward                 ; vector 12, release: forwards to the XBN
  ENDIF
 ; EXTERN vectors 13/14 (SP18 item 7 Tasks 9/10 ring-2 placement probe,
 ; owner-ratified fallback 2026-08-09: the DeZog CALL-injection
@@ -3206,7 +3212,7 @@ extVec:
     dw ring2_fill                 ; vector 13
     dw ring2_chk                  ; vector 14
  ELSE
-    dw ext_stub, ext_stub         ; vectors 13-14, release: stubs
+    dw ext_forward, ext_forward   ; vectors 13-14, release: forward to the XBN
  ENDIF
     dw ext_forward                 ; vector 15: spare
 

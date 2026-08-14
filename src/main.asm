@@ -164,6 +164,10 @@ boot_data_init:
                                 ; resets the bank state block)
     ld (audRequest), a         ; no stale edge-triggered audio requests
     ld (audRequest2), a        ; across a warm re-entry (both mailboxes)
+    ld (xbnIntOn), a           ; XBN frame-ISR gate off until an XBN loads
+                                ; its own intEntry; a warm re-entry must not
+                                ; leave the ISR calling a stale intEntry
+                                ; against banks bank_table_init recycles
  IFDEF DEBUG
     ld (dbgTilemap), a         ; force the ULA route until dbg_engage_tilemap
                                 ; runs, matching cold boot
@@ -424,11 +428,6 @@ xbn_api_init:                    ; boot; table copy is resident-to-resident,
     ldir
     ret
 
-svc_unimpl:
-    ld a, $FF
-    scf
-    ret
-
 svc_version:
     ld a, 1
     or a                          ; CF clear
@@ -576,9 +575,10 @@ svc_fwrite: jp esx_fwrite         ; in A=handle, IX=buf, BC=len; out CF
 ; no mode parameter - always mode 0 (absolute, from start). "ld ix, 0"
 ; sets IXL=0 (the register esxDOS's F_SEEK actually reads for the seek
 ; mode) without touching A, the handle already loaded by the caller -
-; the same idiom overlay0.asm's vid_raw_seek0 uses immediately ahead of
-; its own esx_fseek call (overlay0.asm:2347), not a push-af/ld a,0/
-; ld ixl,a/pop-af shape, which would clobber A in between.
+; the same idiom vid_raw_seek0 (video.asm:7023-7029) uses immediately
+; ahead of its own esx_fseek call, and the same idiom overlay0.asm:2350
+; uses inside ext_xmes, not a push-af/ld a,0/ld ixl,a/pop-af shape,
+; which would clobber A in between.
 svc_fseek:
     ld ix, 0
     jp esx_fseek
