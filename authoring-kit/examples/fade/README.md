@@ -37,10 +37,11 @@ GAME.DDB and it just works. To rebuild after editing the source:
   and flags do not collide, and each example's ext_main dispatch chain
   ignores the other's codes already.
 - The fade manipulates the Layer 2 first palette, the interpreter's
-  standing convention. It snapshots and restores 8-bit RRRGGGBB
-  values; a picture using 9-bit palette blue depth is restored to
-  8-bit precision (the blue LSB is approximated) - imperceptible in
-  practice, noted for completeness.
+  standing convention. The snapshot captures full 9-bit colour - both
+  the `RRRGGGBB` byte and the second byte holding the blue LSB and the
+  Layer 2 per-pixel priority bit - and a completed fade-in restores it
+  exactly, bit for bit. The interpolated steps in between are computed
+  in 8 bits, which is invisible at six frames a step.
 - Transparency is respected: entries holding the Layer 2 transparency
   colour (the interpreter's punched-hole convention, index 255) are
   PINNED - holes stay transparent through the whole fade rather than

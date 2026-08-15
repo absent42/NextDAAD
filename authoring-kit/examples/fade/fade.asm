@@ -62,6 +62,16 @@ TB_SELECT       equ $243B        ; TBBlue register select - documented RW,
 TB_ACCESS       equ $253B        ; TBBlue register access (select+1 in B)
 NR_PAL_IDX      equ $40          ; colour index for read/write
 NR_PAL_VAL      equ $41          ; 8-bit RRRGGGBB, reads AND writes
+NR_PAL_VAL9     equ $44          ; 9-bit colour, TWO writes: RRRGGGBB then
+                                 ; a second byte holding bit 7 = Layer 2
+                                 ; per-pixel priority and bit 0 = the blue
+                                 ; LSB. Reading it returns that second byte
+                                 ; and does NOT auto-increment the index
+                                 ; (dev guide, NR $44). The interpreter
+                                 ; loads Layer 2 art through this register,
+                                 ; so a snapshot taken through $41 alone
+                                 ; cannot round-trip a picture - it drops
+                                 ; the blue LSB and the priority bit.
 NR_PAL_CTL      equ $43          ; palette control - bit 7 DISABLES write
                                  ; auto-inc, bits 6-4 select the palette
                                  ; for editing, low bits select palettes
@@ -165,9 +175,20 @@ int_fade:
 .chkin:
     or a
     ret nz                       ; still on the way in
-    ; reached step 0: the exact snapshot is back on screen. Forget it,
-    ; so the next fn 40 re-snapshots whatever is displayed by then.
-    ld (valid), a                ; a = 0
+    ; Reached step 0. apply has just streamed table 0, but only its
+    ; 8-bit half: an $41 write re-derives the blue LSB as (B1 OR B0)
+    ; and drops the priority bit, so the picture comes back a shade
+    ; off. Measured on a red-heavy 256-colour photograph: red and
+    ; green exact, blue 3.3% low - visible as a colour cast, not the
+    ; "imperceptible" this example once claimed. Restream the
+    ; endpoint as true 9-bit pairs, the only write that reproduces
+    ; what the interpreter's own loader put there. One extra burst,
+    ; on one frame, at the end of a fade-in.
+    call apply9
+    ; the snapshot is exactly back on screen. Forget it, so the next
+    ; fn 40 re-snapshots whatever is displayed by then.
+    xor a
+    ld (valid), a
 .done:
     xor a
     ld (active), a
@@ -225,9 +246,75 @@ apply:
     ret
 
 ; ---------------------------------------------------------------
-; Foreground only: read the live 256 Layer 2 colours into table 0.
-; Reads do not auto-increment (the dev guide scopes auto-inc to
-; writes), so the index register is set per colour.
+; Stream the snapshot back as TRUE 9-bit colours: table 0 supplies the
+; RRRGGGBB byte, snap9 the second byte (priority + blue LSB). Same
+; save/restore bracket as apply, and interrupt-context safe for the
+; same reasons.
+;
+; The two-write $44 protocol is usable here despite being two writes:
+; the dev guide's NR $43 entry states that writing $43 "will also reset
+; the index of $44 so next write there will be considered as first byte
+; of first colour". This burst writes $43 before its first $44 write,
+; so the byte toggle is deterministically aligned whatever the
+; foreground was doing.
+;
+; This does not weaken the standing rule below - do not fade while a
+; PICTURE or DISPLAY is drawing. A foreground $44 pair interrupted by
+; this burst is broken regardless, because the toggle is hardware state
+; shared by both.
+apply9:
+    ld bc, TB_SELECT
+    in a, (c)
+    ld (savesel), a
+    ld a, NR_PAL_CTL
+    out (c), a
+    inc b
+    in a, (c)
+    ld (savectl), a
+    ld a, PAL_L2_EDIT
+    out (c), a                   ; edit L2 first palette, auto-inc on -
+                                 ; and resets the $44 byte toggle
+    dec b
+    ld a, NR_PAL_IDX
+    out (c), a
+    inc b
+    xor a
+    out (c), a                   ; start at colour 0
+    dec b
+    ld a, NR_PAL_VAL9
+    out (c), a
+    inc b                        ; BC stays $253B for the burst
+    ld hl, tables                ; byte 0 source (ALIGN 256)
+    ld d, snap9>>8               ; byte 1 source page
+    ld e, 0                      ; colour index / 256 iterations
+.wr:
+    ld a, (hl)
+    out (c), a                   ; first write: RRRGGGBB
+    push hl
+    ld h, d
+    ld l, e
+    ld a, (hl)
+    pop hl
+    out (c), a                   ; second write: priority + blue LSB.
+    inc l                        ; auto-inc advances the index AFTER the
+    inc e                        ; second write (dev guide, NR $44)
+    jr nz, .wr
+    dec b
+    ld a, NR_PAL_CTL
+    out (c), a
+    inc b
+    ld a, (savectl)
+    out (c), a                   ; NR $43 back to what the foreground had
+    dec b
+    ld a, (savesel)
+    out (c), a                   ; select latch back too
+    ret
+
+; ---------------------------------------------------------------
+; Foreground only: read the live 256 Layer 2 colours into table 0, and
+; their second bytes into snap9. Reads do not auto-increment (the dev
+; guide scopes auto-inc to writes), so the index register is set per
+; colour and both reads see the same one.
 snapshot:
     ld bc, TB_SELECT
     in a, (c)
@@ -254,7 +341,19 @@ snapshot:
     inc b
     in a, (c)
     dec b
+    ld (hl), a                   ; byte 0: RRRGGGBB -> tables[0]
+    ; Second byte (priority + blue LSB). The index has not moved -
+    ; reads never auto-increment - so this is the same colour.
+    ld a, NR_PAL_VAL9
+    out (c), a
+    inc b
+    in a, (c)
+    dec b
+    push hl
+    ld h, snap9>>8               ; snap9 is ALIGN 256, so the colour
+    ld l, e                      ; index IS the low byte
     ld (hl), a
+    pop hl
     inc l
     inc e
     jr nz, .rd
@@ -437,6 +536,15 @@ rcur:    db 0
 
     ALIGN 256
 tables:  ds 9*256                ; 0 = snapshot, 1-7 = lerp, 8 = solid
+    ALIGN 256                    ; already aligned (9*256), stated so the
+                                 ; snap9>>8 / ld l,e indexing above cannot
+                                 ; be broken by an edit above it
+snap9:   ds 256                  ; second byte of each snapshotted colour:
+                                 ; bit 7 = Layer 2 per-pixel priority,
+                                 ; bit 0 = blue LSB. Only the fade-in
+                                 ; endpoint uses it - the interpolated
+                                 ; steps stay 8-bit, since nobody can see
+                                 ; a blue LSB going past at 6 frames a step
 xbn_end:
 
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG

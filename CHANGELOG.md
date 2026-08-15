@@ -18,6 +18,25 @@ All notable changes to NextDAAD are recorded here.
   explicitly, and the XBN fixture gains a six-message token-compressed
   multi-fetch regression (XMS6) with a post-fetch system-message
   print to expose any future token-table damage on screen.
+- Fixed: the `examples/fade` XBN did not restore a picture's palette
+  exactly. It snapshotted and restored 8-bit `RRRGGGBB` through NR
+  $41, but Layer 2 art is loaded as 9-bit pairs through NR $44
+  (`l2_palette_load`, overlay2.asm), so a restore re-derived the blue
+  LSB as `(B1 OR B0)` - blue 1 collapsing to 0, blue 2/4/6 rounding up
+  - and discarded the second byte's bit 7, the Layer 2 per-pixel
+  priority flag. Measured over a 256-colour photographic picture: red
+  and green restored bit-exact, blue 3.3% low, visible as a colour
+  cast after one fade out and back. The snapshot now also reads NR $44
+  per colour and the fade-in endpoint restreams 9-bit pairs; the
+  interpolated steps stay 8-bit. Verified bit-exact (R/G/B ratios
+  1.000) by driving FADEO/FADEI in a real game under CSpect.
+  The example's prebuilt `GAME.XBN` is rebuilt (3328 bytes).
+- The two-write NR $44 protocol is safe to use from the #int hook: the
+  dev guide's NR $43 entry states a write to $43 resets the $44 byte
+  toggle, and every palette burst in the example already writes $43
+  first. The example's former "cannot be made atomic" note is
+  withdrawn; the standing rule against fading while a PICTURE or
+  DISPLAY draws is unchanged and still carries that hazard.
 
 ## v0.7.0 - 14/08/2026
 

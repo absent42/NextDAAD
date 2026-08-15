@@ -11,8 +11,17 @@ game behaves, how it builds, or what the kit gives you, it is here.
   wrong text, ordinary game messages garbled, and the interpreter
   eventually stopped with `RD STACK - E9`. If your extern fetched one
   message per session you were safe - the shipped ticker example was -
-  but anything more ambitious hit it. Update the interpreter; your
-  XBN binaries do not need rebuilding.
+  but anything more ambitious hit it.
+- **Fixed: the fade example did not put a picture's colours back
+  exactly.** Fading out and back left a slight colour cast - on a
+  red-heavy photograph red and green returned exactly, but blue came
+  back short, and any colour marked to sit in front of the other
+  layers quietly lost that marking. Pictures are stored with more blue
+  precision than the example was capturing. It now snapshots and
+  restores the full colour, so a completed fade-in is bit for bit what
+  you started with. If you use `examples/fade`, copy its rebuilt
+  `GAME.XBN` over your old one - unlike the fix above, this one does
+  need the new binary.
 
 ## 0.7.0 - 14 August 2026
 
