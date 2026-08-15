@@ -7,8 +7,8 @@ the Next's extended instruction set.
 In addition to the standard DAAD features it adds Layer 2 location pictures 
 up to 320x256 in 8-bit colour, full-screen video cutscenes with sound, AY music and
 sampled sound effects across the Turbo Sound Next's three chips and DACs,
-an 80-column tilemap based text display with switchable fonts and paper/ink colours from the full ZX Next palette, mouse input, 
-and games that span several databases.
+an 80-column tilemap based text display with switchable fonts and paper/ink 
+colours from the full ZX Next palette, mouse input, and games that span several databases.
 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
 for NextDAAD means just editing your DSF source and double-clicking one batch file.
@@ -20,6 +20,7 @@ for NextDAAD means just editing your DSF source and double-clicking one batch fi
   effect longer than 24K - everything else, including shorter effects,
   runs under emulation.
 - A DAAD DSF source file or a compiled DAAD database, and its assets on the card. The authoring kit builds one for you, and existing version 2 and version 3 databases both run as they are.
+- Windows Powershell if you want to use the automated batch builders of the authroing kit.
 
 ## Features
 
@@ -52,7 +53,7 @@ for NextDAAD means just editing your DSF source and double-clicking one batch fi
   vocabulary parser with multi-command sentences, the object model,
   `SAVE`/`LOAD` and `RAMSAVE` to the card, and the DDB text reader
 - **EXTERN support** - load and run external machine code binaries up 
-  to 16KB in size, either once or on an interupt, passing flags, message text etc.
+  to 16KB in size, either once or on an interrupt, passing flags, object table, message text etc
 - **The Next's memory** - RAM detection and an 8K bank allocator across
   the extended memory map
 
@@ -64,10 +65,9 @@ double-click `BUILD.BAT`: it compiles the database, converts every
 asset, and leaves a `RELEASE\` folder to copy straight onto an SD card. A
 DSF source file is included with it showing examples of NextDAAD multimedia condact usage.
 
-**The manual is the documentation for all of this.** Open
+A **manual** covering the specifics of creating a game for NextDAAD is included with the authoring kit
 [`authoring-kit\docs\index.html`](authoring-kit/docs/index.html) - or
-read the same pages on GitHub from [`manual/index.md`](manual/index.md),
-which is where they are written and where corrections go.
+you can read the same pages on GitHub from [`manual/index.md`](manual/index.md)
 
 The kit needs a few third-party tools it cannot redistribute:
 
@@ -81,8 +81,8 @@ The kit needs a few third-party tools it cannot redistribute:
 But included with the kit is VidTune, a UI app for fine-tuning video encodes and 
 experimenting with different settings to get the best results for your videos.
 
-A packaged kit, holding only what an author needs, is on the
-[releases](https://github.com/absent42/NextDAAD/releases) page.
+**A packaged kit, holding only what an author needs, is on the
+[releases](https://github.com/absent42/NextDAAD/releases) page.**
 
 A companion app, [NextDither](https://absent42.itch.io/nextdither), for converting true-colour images to the layer 2 format spec for NextDAAD is available as a seperate download via itch.io
 
