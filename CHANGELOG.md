@@ -2,6 +2,23 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.7.1 - 15/08/2026
+
+- Fixed: `SVC_GETMSG` corrupted the in-RAM database when decoding a
+  token-compressed message. The service held its store pointer in HL
+  across the text decoder, whose token paths clobber HL - every
+  decoded byte after the first token reference was written into the
+  DDB's own token table instead of the staging buffer. Symptoms:
+  short/stale returned text from the second fetch, the interpreter's
+  own messages garbling, then `RD STACK - E9` after a handful of
+  fetches. One fetch of an uncompressed message (all the v0.7.0
+  fixture and the ticker example ever did) never triggered it.
+  Reported from the field with a six-build isolation matrix.
+- The text decoder's register contract now states the HL corruption
+  explicitly, and the XBN fixture gains a six-message token-compressed
+  multi-fetch regression (XMS6) with a post-fetch system-message
+  print to expose any future token-table damage on screen.
+
 ## v0.7.0 - 14/08/2026
 
 - Author machine code support (XBN): a `GAME.XBN` binary beside

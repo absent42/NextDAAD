@@ -3,6 +3,17 @@
 Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.7.1 - 15 August 2026
+
+- **Fixed: fetching more than one message from an extern corrupted the
+  game.** `SVC_GETMSG` damaged the database's text compression tables
+  whenever it decoded a compressed message, so a second fetch returned
+  wrong text, ordinary game messages garbled, and the interpreter
+  eventually stopped with `RD STACK - E9`. If your extern fetched one
+  message per session you were safe - the shipped ticker example was -
+  but anything more ambitious hit it. Update the interpreter; your
+  XBN binaries do not need rebuilding.
+
 ## 0.7.0 - 14 August 2026
 
 - **Your game can now run your own machine code.** Put a `GAME.XBN`
