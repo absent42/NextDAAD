@@ -32,14 +32,19 @@ ext_main:
     cp 23
     jr z, .fn23
     cp 24
+    jr z, .fn24
+    cp 25
     ret nz
+    jp msg_multi                 ; GETMSG multi-fetch regression (the
+                                 ; HL-clobber corruption, 2026-08-15)
+.fn24:
     jp msg_probe_bad             ; Task 8: out-of-range check
 .fn23:
     jp msg_probe                 ; Task 8: GETMSG probe
 .fn22:
     jp fio_probe                ; Task 7
 .fn21:
-    jp svc_probe                ; Task 6
+    jp svc_probe                 ; Task 6
 
 svc_probe:
     call SVC_VERSION
@@ -185,6 +190,78 @@ msg_probe_bad:
 .store:
     ld (XBN_FLAGS+212), a       ; expect 1 (CF set = out of range)
     ret
+
+; fn 25: the SVC_GETMSG multi-fetch regression (svc-getmsg HL-clobber
+; corruption, found in the field 2026-08-15). Fetches the six
+; TOKEN-COMPRESSED messages 1-6 in one call and checks, per message,
+; the returned length and first two characters against MSGTAB (which
+; mirrors the texts authored in tests/extern.dsf - change either,
+; change both). Flag 213 = number of messages that verified (expect
+; 6). The original defect wrote decoded characters into the DDB's own
+; token table from the second token reference onward, so with it
+; present this probe reports 1 (message 1's first fetch decodes before
+; the damage compounds - or fewer) and the interpreter's own text
+; garbles afterwards; the DSF entry prints a system message after this
+; probe precisely to make that visible.
+msg_multi:
+    xor a
+    ld (XBN_FLAGS+213), a
+    ld a, 1
+    ld (mmCur), a
+.next:
+    ld a, (mmCur)
+    call SVC_GETMSG              ; out HL = buffer, BC = length
+    jr c, .done                  ; out of range = past the corpus
+    ; expected row: MSGTAB + (msg-1)*3 = len, char1, char2
+    ld a, (mmCur)
+    dec a
+    ld e, a
+    add a, a
+    add a, e                     ; *3
+    ld e, a
+    ld d, 0
+    push hl
+    ld hl, MSGTAB
+    add hl, de
+    ld a, (hl)                   ; expected length (all < 256, so B
+    inc hl                       ; must be 0 and C must equal this)
+    ld d, (hl)                   ; expected char 1
+    inc hl
+    ld e, (hl)                   ; expected char 2
+    pop hl
+    cp c
+    jr nz, .mismatch
+    ld a, b
+    or a
+    jr nz, .mismatch
+    ld a, (hl)
+    cp d
+    jr nz, .mismatch
+    inc hl
+    ld a, (hl)
+    cp e
+    jr nz, .mismatch
+    ld a, (XBN_FLAGS+213)
+    inc a
+    ld (XBN_FLAGS+213), a
+.mismatch:
+    ld a, (mmCur)
+    inc a
+    ld (mmCur), a
+    cp 7
+    jr c, .next
+.done:
+    ret
+
+mmCur:  db 0
+; len, first char, second char - per tests/extern.dsf MTX 1-6
+MSGTAB:
+    db 51, 'N', 'o'
+    db 51, 'S', 'o'
+    db 53, 'E', 'a'
+    db 53, 'W', 'e'
+    db 54, 'M', 'i'
+    db 52, 'M', 'o'
 
     ; pad proves >8K binaries load into both pages
     ds $2100, $E5

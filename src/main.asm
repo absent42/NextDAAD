@@ -625,7 +625,23 @@ svc_getmsg:
     ld hl, savStage
     ld bc, 0                     ; running count
 .loop:
-    call txt_next_decoded        ; preserves BC
+    push hl                      ; the store pointer MUST be preserved
+                                 ; by us, not by the callee:
+                                 ; txt_next_decoded guarantees only BC.
+                                 ; Its token paths load HL with the
+                                 ; token-table seek address and rd_pop
+                                 ; corrupts HL outright - without this
+                                 ; bracket every decoded byte after the
+                                 ; first token reference was stored
+                                 ; THROUGH the stale HL into the mapped
+                                 ; DDB page, physically overwriting the
+                                 ; token table (the svc-getmsg
+                                 ; corruption defect, found in the
+                                 ; field 2026-08-15; print_msg never
+                                 ; hit it because it holds no pointer
+                                 ; across the call)
+    call txt_next_decoded        ; preserves BC (and only BC)
+    pop hl
     jr c, .done                  ; CF = message terminator
     ld (hl), a
     inc hl

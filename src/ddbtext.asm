@@ -172,7 +172,14 @@ msg_seek:
 ; token references inline. CF set = end of message (decoded $0A).
 ; Message bytes are 255-complemented; token bytes are raw 7-bit with
 ; bit 7 terminating the token. Callers must zero tokActive before the
-; first call on a freshly-seeked stream. Preserves BC.
+; first call on a freshly-seeked stream. Preserves BC - AND NOTHING
+; ELSE: the token paths CORRUPT HL (.tokref loads the token-table
+; address and rd_seeks it; rd_pop corrupts HL by its own contract).
+; A caller holding a pointer across this call must bracket it in
+; push/pop itself - svc_getmsg (main.asm) shipped without that
+; bracket and every post-token store landed in the mapped DDB page,
+; overwriting the token table (the svc-getmsg corruption defect,
+; 2026-08-15).
 txt_next_decoded:
     ld a, (tokActive)
     or a

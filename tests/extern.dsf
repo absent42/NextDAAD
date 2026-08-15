@@ -68,6 +68,7 @@ XABS   107 verb
 XTCK   108 verb
 XFAD   109 verb
 XFDI   110 verb
+XMS6   111 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -132,6 +133,21 @@ XFDI   110 verb
 /60 "Type in name of file."
 /MTX
 /0 "TICKER MESSAGE FOR GETMSG"
+; Messages 1-6: the SVC_GETMSG multi-fetch regression corpus (the
+; svc-getmsg HL-clobber defect, found 2026-08-15 in the field). Heavy
+; shared phrasing FORCES DRC to token-compress them - the defect only
+; fires on token references, which is exactly why the original
+; single-message fixture never caught it. xbntest.asm's msg_multi
+; (fn 25) fetches all six in one EXTERN and checks each length and
+; first two characters against MSGTAB - if these texts change, that
+; table changes with them, and the tokenisation byte-check in the
+; harness must still hold (raw bytes < decoded length).
+/1 "Northern lights over the northern mountains tonight"
+/2 "Southern lights over the southern mountains tonight"
+/3 "Eastern winds over the eastern mountains this evening"
+/4 "Western winds over the western mountains this evening"
+/5 "Midnight bells over the midnight mountains ring softly"
+/6 "Morning bells over the morning mountains ring softly"
 /OTX
 /0 "a spare widget"
 /LTX
@@ -183,14 +199,14 @@ XFDI   110 verb
            PRINT 204         ; expect 162 ($A2)
            PRINT 205         ; expect 0
            DONE
-> XCAL _   CALL 106 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C06A (lsb 106, msb 192) - read
+> XCAL _   CALL 113 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C071 (lsb 113, msb 192) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves.
            PRINT 220         ; expect 119 ($77)
-           CALL 43 226        ; Task 4's owed check: tail_marker, address
-                             ; $E22B (lsb 43, msb 226) - the SECOND 8K page
+           CALL 142 226       ; Task 4's owed check: tail_marker, address
+                             ; $E28E (lsb 142, msb 226) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above.
@@ -255,6 +271,17 @@ XFDI   110 verb
            EXTERN 0 41       ; fade back in to the snapshot
            PAUSE 150
            PRINT 240         ; expect 1
+           DONE
+> XMS6 _   EXTERN 0 25       ; msg_multi: six token-compressed fetches
+                             ; in ONE call (the svc-getmsg HL-clobber
+                             ; regression - the defect corrupted the
+                             ; DDB token table from the first token
+                             ; reference of the second fetch)
+           PRINT 213         ; expect 6 (messages verified)
+           SYSMESS 16        ; "Press any key." - printed AFTER the
+                             ; fetches so DDB/token-table health is
+                             ; visible on screen: the defect garbled
+                             ; exactly this kind of later print
            DONE
 /PRO 6
 ; ---- one-shot init ----
