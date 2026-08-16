@@ -51,6 +51,45 @@
 ;   - one XBN per game: to use fade AND ticker, merge the example
 ;     sources into one binary (their fn codes, 40/41 and 30/31, and
 ;     their flags do not overlap)
+;
+; INTERPRETER DEPENDENCIES
+; ------------------------
+; Things this extern relies on that are NOT part of the frozen XBN
+; contract. The XBN API and the flag/object anchors never move; these
+; are ordinary interpreter internals that may change in any release.
+; When a future interpreter breaks this extern, start here - and note
+; that the fix belongs in THIS file, not in the interpreter.
+;
+;   1. gfx_blit leaves the picture's palette in BOTH Layer 2 palette
+;      banks (NextDAAD 0.7.2+). It builds the incoming palette in the
+;      bank that is not displayed, swaps, then refills the other one
+;      and hands the display back - so a spare copy exists afterwards.
+;      USED BY: fn 42, which blanks the visible bank first and only
+;      then reads the picture's colours out of the spare (see there).
+;      IF IT CHANGES: fn 42 must read the palette BEFORE it blanks,
+;      which is correct but leaves the new picture on screen about
+;      four times longer - a wider band on real hardware.
+;
+;   2. DISPLAY 0 programs the new picture's palette as it swaps
+;      surfaces. fn 42 exists only because of this.
+;      IF IT CHANGES so that DISPLAY leaves the palette alone until
+;      asked, fn 42 becomes unnecessary and fn 41 can fade straight up
+;      to the new picture.
+;
+;   3. The transparency convention: Layer 2 colour $E3 (TRANSP below)
+;      and palette index 255 are reserved for punched holes, and the
+;      interpreter's art loader keeps real art off that value.
+;      USED BY: precalc's pin and dodge rules.
+;      IF IT CHANGES: TRANSP here must change with
+;      src/nextdaad.inc's L2_TRANSP_COLOUR or holes will seal over
+;      mid-fade.
+;
+;   4. Layer 2 art is displayed through the Layer 2 palette, with edit
+;      and display parked on the SAME bank between operations.
+;      USED BY: pal_edit_ctl, which reads NR $43 and follows whichever
+;      bank is live, so an interpreter that parks on the other bank is
+;      already handled. Only a steady state of "display one bank while
+;      editing another" would need work here.
 
     DEVICE ZXSPECTRUMNEXT        ; required for SAVEBIN, matching the
                                  ; interpreter's own DEVICE line
@@ -207,14 +246,17 @@ ext_main:
     ; the palette back is four times that, and precalc is several
     ; frames. Do either of them first and the band grows to match.
     ;
-    ; Blanking first is only possible because the interpreter leaves an
-    ; identical copy of the new picture's palette in the Layer 2 bank
-    ; that is NOT displayed (it builds there and hands the display back
-    ; - see gfx_blit). So the visible bank can be blanked immediately
-    ; and the picture's colours read from the hidden copy afterwards,
-    ; at no visual cost. That copy is a documented guarantee of the
-    ; interpreter this ships with; on an older one the hidden bank
-    ; holds something else and the fade in would restore it.
+    ; Blanking first is only possible because of INTERPRETER DEPENDENCY
+    ; 1 in the header: gfx_blit leaves an identical copy of the new
+    ; picture's palette in the Layer 2 bank that is NOT displayed. So
+    ; the visible bank can be blanked immediately and the picture's
+    ; colours read out of the spare afterwards, at no visual cost.
+    ;
+    ; The interpreter does not promise that copy - it refills the bank
+    ; for its own reasons - so if a future release stops leaving one,
+    ; swap these two steps back round and accept the wider band. On an
+    ; interpreter older than 0.7.2 the spare bank holds something else
+    ; entirely and the fade in restores that instead.
     ld a, STEPS
     ld (step), a                 ; park at the solid end
     call apply                   ; BLANK NOW - one burst, nothing before

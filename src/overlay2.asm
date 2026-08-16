@@ -2725,12 +2725,11 @@ gfx_blit:
     ; palette write drags the display back onto it.
     ;
     ; A side effect is that both banks hold the same palette when this
-    ; returns, and the fade extern currently exploits that - it blanks
-    ; the visible bank immediately after a DISPLAY and recovers the
-    ; picture's colours from the spare. That is the extern leaning on
-    ; interpreter behaviour, NOT the interpreter promising anything.
-    ; This code stays free to change; if it does, that extern is the
-    ; thing that gets updated.
+    ; returns. The kit's fade extern leans on that, and records the
+    ; dependency at its own end (externs/fade/fade.asm, INTERPRETER
+    ; DEPENDENCIES 1) so it can be found from there when this changes.
+    ; Nothing here is promised to it: this code stays free to change,
+    ; and the extern is the thing that gets updated.
     call data_save
     call gfx_pal_rewind
     ld b, 1
