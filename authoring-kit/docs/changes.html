@@ -30,6 +30,18 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   you started with. If you use <code>examples/fade</code>, copy its rebuilt
   <code>GAME.XBN</code> over your old one - unlike the fix above, this one does
   need the new binary.</li>
+<li><strong>The fade extern can now change the picture mid-fade, and wait for
+  itself.</strong> Two additions to <code>externs/fade</code>. <code>EXTERN 0 43</code> blocks until
+  the running fade finishes - one line in place of a flag-polling
+  process loop, which is what you want for a plain scene transition.
+  Flag 240 is still there for when the fade should overlap other work,
+  and its README now spells the loop out rather than leaving it as
+  "poll it". <code>EXTERN 0 42</code> fixes changing the picture between a fade
+  out and a fade in: the snapshot is taken when you fade out, so
+  without it the fade in walked back to the colours of a picture that
+  was no longer on screen, and the new picture appeared at once at full
+  brightness instead of fading up. Call it right after <code>DISPLAY 0</code> and
+  the new scene fades up properly. The README has the full sequence.</li>
 </ul>
 <h2 id="070-14-august-2026">0.7.0 - 14 August 2026</h2>
 <ul>
@@ -50,9 +62,10 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
 <li><strong>Two ready-to-run examples ship in the kit, binaries included.</strong>
   Copy the prebuilt <code>GAME.XBN</code> from <code>examples/ticker</code> (a news-ticker
   that types a game message across the screen character by character)
-  or <code>examples/fade</code> (fade the Layer 2 picture to any colour and back -
-  fade to black for a scene change, fade up again - with transparent
-  regions correctly staying transparent throughout) next to your
+  or <code>examples/fade</code> (fade the Layer 2 picture to any colour and back,
+  with transparent regions correctly staying transparent throughout -
+  changing the picture between the two halves needs 0.7.1, see above)
+  next to your
   database and try them without assembling anything. Each folder's
   README shows the two or three DSF lines that drive it.</li>
 <li><strong>What externs cannot do</strong>, so you are not surprised: parameters

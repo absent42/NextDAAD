@@ -37,6 +37,24 @@ All notable changes to NextDAAD are recorded here.
   first. The example's former "cannot be made atomic" note is
   withdrawn; the standing rule against fading while a PICTURE or
   DISPLAY draws is unchanged and still carries that hazard.
+- `externs/fade` gains fn 42 and fn 43. The snapshot is taken once, at
+  fade-out, so changing the picture between a fade out and a fade in
+  restored the OLD picture's palette onto the new pixels - and since
+  `DISPLAY 0` loads the new palette as it flips (gfx_blit), the new
+  scene also appeared instantly at full brightness with no fade at
+  all. `EXTERN 0 42` re-snapshots what DISPLAY just programmed,
+  rebuilds the tables towards the same target colour and restreams the
+  solid end, so a following fn 41 fades up to the NEW picture; call it
+  in the same entry as the DISPLAY and the flip is never displayed.
+  `EXTERN 0 43` blocks until the running fade finishes, bounded at
+  8*speed+32 frames, replacing a DSF flag-poll loop for the common
+  case. The `active` guard moved from the top of ext_main into each
+  branch - a top-level guard would have swallowed fn 43, whose job is
+  to be called mid-fade. Verified under CSpect: fade out, PICTURE 5,
+  DISPLAY 0, fn 42, fn 41 restores picture 5 bit-exactly against a
+  plain PICTURE 5 / DISPLAY 0 baseline (R/G/B all 1.000).
+- The 0.7.0 notes advertised the fade example for scene changes. That
+  only becomes true with fn 42; the author-facing changelog says so.
 
 ## v0.7.0 - 14/08/2026
 

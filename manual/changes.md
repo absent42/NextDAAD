@@ -22,6 +22,18 @@ game behaves, how it builds, or what the kit gives you, it is here.
   you started with. If you use `examples/fade`, copy its rebuilt
   `GAME.XBN` over your old one - unlike the fix above, this one does
   need the new binary.
+- **The fade extern can now change the picture mid-fade, and wait for
+  itself.** Two additions to `externs/fade`. `EXTERN 0 43` blocks until
+  the running fade finishes - one line in place of a flag-polling
+  process loop, which is what you want for a plain scene transition.
+  Flag 240 is still there for when the fade should overlap other work,
+  and its README now spells the loop out rather than leaving it as
+  "poll it". `EXTERN 0 42` fixes changing the picture between a fade
+  out and a fade in: the snapshot is taken when you fade out, so
+  without it the fade in walked back to the colours of a picture that
+  was no longer on screen, and the new picture appeared at once at full
+  brightness instead of fading up. Call it right after `DISPLAY 0` and
+  the new scene fades up properly. The README has the full sequence.
 
 ## 0.7.0 - 14 August 2026
 
@@ -42,9 +54,10 @@ game behaves, how it builds, or what the kit gives you, it is here.
 - **Two ready-to-run examples ship in the kit, binaries included.**
   Copy the prebuilt `GAME.XBN` from `examples/ticker` (a news-ticker
   that types a game message across the screen character by character)
-  or `examples/fade` (fade the Layer 2 picture to any colour and back -
-  fade to black for a scene change, fade up again - with transparent
-  regions correctly staying transparent throughout) next to your
+  or `examples/fade` (fade the Layer 2 picture to any colour and back,
+  with transparent regions correctly staying transparent throughout -
+  changing the picture between the two halves needs 0.7.1, see above)
+  next to your
   database and try them without assembling anything. Each folder's
   README shows the two or three DSF lines that drive it.
 - **What externs cannot do**, so you are not surprised: parameters

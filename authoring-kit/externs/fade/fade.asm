@@ -7,20 +7,29 @@
 ;   EXTERN colour 40   start a fade OUT to `colour` (RRRGGGBB byte:
 ;                      0 = black, 255 = white, %11100000 = red, ...)
 ;   EXTERN 0 41        start a fade IN back to the original picture
+;   EXTERN 0 42        re-snapshot: the PICTURE changed while faded out
+;   EXTERN 0 43        block until the running fade finishes
 ;   flag 241           frames per fade step, 0 = default (6, so a fade
 ;                      is 8 steps x 6 frames, roughly one second) -
 ;                      the pass-parameters-via-flags idiom
 ;   flag 240           completion flag: cleared when a fade starts,
-;                      set to 1 by the interrupt hook when it finishes;
-;                      wait on it with a PAUSE or poll it
+;                      set to 1 by the interrupt hook when it finishes.
+;                      fn 43 waits on it for you; poll it yourself only
+;                      when the fade should overlap other work
 ;
 ; Lifecycle (kept deliberately strict so the example stays honest):
 ;   fn 40 acts only from the fully-faded-IN state: it snapshots the
 ;   live palette, builds the interpolation tables, and runs to the
 ;   target. fn 41 acts only from the fully-faded-OUT state: it runs
 ;   back to the snapshot and then FORGETS it, so the next fn 40
-;   re-snapshots whatever picture is on screen by then. Calls in any
-;   other state are ignored - wait on flag 240 between fades.
+;   re-snapshots whatever picture is on screen by then. fn 42 also
+;   acts only from the fully-faded-OUT state, and replaces the
+;   snapshot without disturbing the target colour. Calls in any other
+;   state are ignored - wait for the fade, with fn 43 or flag 240.
+;
+;   The snapshot is taken ONCE, when the fade out starts. That is why
+;   changing the picture in between needs fn 42: without it the fade
+;   in walks back to the palette of a picture that is no longer there.
 ;
 ; What this teaches beyond the ticker example:
 ;   - reading Next hardware state back (the palette is readable, dev
@@ -95,16 +104,26 @@ TRANSP          equ $E3          ; Layer 2 global transparency COLOUR
 ext_main:
     ; Contract: A=B=param1, C=fn. This example uses C (fn) and, for
     ; fn 40, B (the target colour).
-    ld a, (active)
-    or a
-    ret nz                       ; mid-fade: every call ignored; the
-                                 ; author waits on FLAG_DONE
+    ;
+    ; Dispatch on the function code FIRST, with each function's own
+    ; state guard inside its branch. An "ignore everything while a fade
+    ; is active" test at the top would also swallow fn 43, whose entire
+    ; job is to be called while a fade is active.
     ld a, c
     cp 40
     jr z, .fadeout
     cp 41
-    ret nz                       ; not ours
+    jr z, .fadein
+    cp 42
+    jr z, .resnap
+    cp 43
+    jp z, wait_fade
+    ret                          ; not ours
+.fadein:
     ; ---- fn 41: fade back in ----
+    ld a, (active)
+    or a
+    ret nz                       ; mid-fade: ignored; wait on FLAG_DONE
     ld a, (valid)
     or a
     ret z                        ; nothing snapshotted: nothing to
@@ -115,6 +134,9 @@ ext_main:
     jr .go
 .fadeout:
     ; ---- fn 40: snapshot, build tables, fade towards the target ----
+    ld a, (active)
+    or a
+    ret nz                       ; mid-fade: ignored; wait on FLAG_DONE
     ld a, (valid)
     or a
     ret nz                       ; already faded out: re-fading out is
@@ -139,6 +161,75 @@ ext_main:
     inc a
     ld (active), a               ; arm LAST - int_fade reads this first
     ret
+
+; ---------------------------------------------------------------
+; fn 42: the PICTURE changed while we were faded out.
+;
+; The snapshot fn 40 took belongs to the picture that was on screen
+; then, so a plain fn 41 would fade up to the OLD picture's colours on
+; the NEW picture's pixels. Worse, DISPLAY 0 loads the new picture's
+; palette as it flips (the interpreter's gfx_blit does both together),
+; so the new scene appears at once, at full brightness, with no fade at
+; all.
+;
+; This re-takes the snapshot from what DISPLAY just programmed, rebuilds
+; the tables towards the SAME target colour, and puts that solid colour
+; straight back on screen. The author then calls fn 41 to fade up to the
+; new picture.
+;
+; Call it in the same process entry as the DISPLAY, so the two run
+; inside one frame and the full-brightness flip is never displayed.
+.resnap:
+    ld a, (active)
+    or a
+    ret nz                       ; mid-fade: ignored
+    ld a, (valid)
+    or a
+    ret z                        ; not faded out: nothing to re-take,
+                                 ; and no target colour to hold
+    call snapshot                ; the NEW picture's live palette
+    call precalc                 ; rebuild 1-7 and 8 towards (target)
+    ld a, STEPS
+    ld (step), a                 ; stay at the solid end
+    jp apply                     ; and put it back on screen now
+
+; ---------------------------------------------------------------
+; fn 43: block until the running fade finishes.
+;
+; The fade advances in the #int hook, which keeps running while
+; foreground code sits in a HALT loop - so this simply waits, and the
+; author gets a one-line alternative to polling FLAG_DONE through a
+; DSF process loop. Returns immediately when no fade is running.
+;
+; Use the flag instead when the fade is meant to overlap something
+; else: blocking here means nothing can print while the scene fades,
+; which is the whole point of some fades.
+;
+; The wait is BOUNDED. A fade is 8 steps of (speed) frames, so the
+; bound is that plus margin; if the hook were ever stopped mid-fade
+; this returns rather than hanging the game forever.
+wait_fade:
+    ld a, (active)
+    or a
+    ret z                        ; nothing running
+    ld a, (speed)
+    ld l, a
+    ld h, 0
+    add hl, hl
+    add hl, hl
+    add hl, hl                   ; HL = 8 * speed
+    ld de, 32                    ; + margin for the pickup frame
+    add hl, de
+.wl:
+    ld a, (active)
+    or a
+    ret z                        ; finished: int_fade cleared it
+    ld a, h
+    or l
+    ret z                        ; bound expired - give up, never hang
+    dec hl
+    halt                         ; one frame; the hook runs underneath
+    jr .wl
 
 ; ---------------------------------------------------------------
 ; 50Hz hook: one cheap test when idle; when a fade is running, count
