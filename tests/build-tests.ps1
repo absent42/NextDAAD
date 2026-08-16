@@ -2582,6 +2582,14 @@ if ($Xbn) {
         else {
             "WARNING: tools\Rabenstein-master\nextdaad\1.NX2 missing - XFAD will have no picture to fade"
         }
+        $fadeArt2 = "$root\tools\Rabenstein-master\nextdaad\2.NX2"
+        if (Test-Path $fadeArt2) {
+            Copy-Item $fadeArt2 "$leg\002.NX2" -Force
+            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC/XFSO second scene)"
+        }
+        else {
+            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
+        }
     }
     else {
         Copy-Item "$root\tests\out\xbn\GAME.XBN" "$leg\GAME.XBN" -Force

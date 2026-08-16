@@ -69,6 +69,14 @@ XTCK   108 verb
 XFAD   109 verb
 XFDI   110 verb
 XMS6   111 verb
+XGFB   112 verb
+XFSC   113 verb
+XFSO   114 verb
+XDRK   115 verb
+XRST   116 verb
+XRLD   117 verb
+XDCL   118 verb
+XARM   119 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -283,6 +291,73 @@ XMS6   111 verb
                              ; visible on screen: the defect garbled
                              ; exactly this kind of later print
            DONE
+> XGFB _   PICTURE 1         ; plain buffered reveal - no fade anywhere
+           GFX 0 4           ; graphics to buffer (AFTER the PICTURE
+                             ; condition - the ratified ordering)
+           DISPLAY 0         ; must NOT appear yet
+           PAUSE 100         ; ships as 50 frames - a visible hold in
+                             ; which the screen must stay unchanged
+           GFX 0 2           ; picture appears NOW, correct colours
+           GFX 0 3
+           DONE
+> XFSC _   PICTURE 1         ; scene change through a fade, NEW sequence
+           DISPLAY 0         ; picture 1 up at full brightness
+           LET 241 0         ; default fade speed
+           CLEAR 240
+           EXTERN 224 40     ; fade out to red (%11100000)
+           EXTERN 0 43
+           PICTURE 2         ; condition - aborts on missing art (screen
+                             ; then stays solid red: recover with XFDI)
+           GFX 0 4
+           DISPLAY 0
+           EXTERN 0 42
+           GFX 0 2
+           GFX 0 3
+           EXTERN 0 41
+           EXTERN 0 43
+           PRINT 240         ; expect 1
+           DONE
+> XFSO _   PICTURE 1         ; OLD sequence - regression leg, band and all
+           DISPLAY 0
+           LET 241 0
+           CLEAR 240
+           EXTERN 224 40
+           EXTERN 0 43
+           PICTURE 2
+           DISPLAY 0
+           EXTERN 0 42
+           EXTERN 0 41
+           EXTERN 0 43
+           PRINT 240
+           DONE
+> XDRK _   EXTERN 224 40     ; darkness abort: fade out first
+           EXTERN 0 43
+           PICTURE 99        ; no 099 art staged: condition FAILS, the
+           GFX 0 4           ; entry aborts HERE - GFX 0 4 never runs
+           DISPLAY 0
+> XDRK _   EXTERN 0 41       ; second entry: recover - fade back in
+           EXTERN 0 43
+           DONE              ; then type XFAD: picture must appear
+                             ; (draw target was never set)
+> XRST _   GFX 0 4           ; arm buffer mode, then RESTART must clear
+           RESTART           ; it - then type XFAD: picture must appear
+> XRLD _   RAMSAVE           ; snapshot, arm buffer mode, restore -
+           GFX 0 4           ; RAMLOAD must clear the mode - then type
+           RAMLOAD 255       ; XFAD: picture must appear
+           DONE
+> XDCL _   PICTURE 1         ; DISPLAY 1 in both modes (spec 9.7)
+           GFX 0 4
+           DISPLAY 0         ; deferred
+           DISPLAY 1         ; buffer mode: clears the BACK surface (the
+                             ; staged pixels) - screen must NOT change
+           PAUSE 100
+           GFX 0 3           ; mode off; the deferral is still pending
+           DISPLAY 1         ; screen mode: clear-flip - transparent
+                             ; picture area, NO garbage rows, pending
+                             ; reveal discarded
+           DONE              ; then XFAD: picture appears normally
+> XARM _   GFX 0 4           ; arm buffer mode and stop - the manual
+           DONE              ; SAVE/LOAD reset check drives this
 /PRO 6
 ; ---- one-shot init ----
 > _ _   WINDOW 1
