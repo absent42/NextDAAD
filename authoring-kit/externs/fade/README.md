@@ -76,10 +76,18 @@ just programmed and puts the fade colour straight back on screen.
     EXTERN 0 43        ; wait for it
 
 Put `EXTERN 0 42` immediately after `DISPLAY 0`, with nothing between
-them. `DISPLAY 0` loads the new picture's palette just before it flips
-the surface, so from that instant the new scene is on screen at full
-brightness; fn 42 is what puts the fade colour back. Anything you slip
-in between is time the player spends looking at the un-faded picture.
+them. `DISPLAY 0` swaps in the new picture and its colours together, so
+from that instant the new scene is on screen at full brightness; fn 42
+is what puts the fade colour back. Anything you slip in between is time
+the player spends looking at the un-faded picture.
+
+fn 42 needs the 0.7.2 interpreter or later. It blanks the screen first
+and only then recovers the new picture's colours, from a spare palette
+bank that older interpreters do not leave behind - which is what keeps
+the gap between `DISPLAY 0` and the blank down to a single palette
+write. Even so the gap is not zero: the picture is genuinely on screen
+for a fraction of a frame, and on real hardware you may catch a thin
+band of it. Nothing an extern can do removes that entirely.
 
 ## Build
 

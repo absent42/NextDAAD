@@ -198,26 +198,34 @@ ext_main:
     or a
     ret z                        ; not faded out: nothing to re-take,
                                  ; and no target colour to hold
-    ; ORDER MATTERS HERE. DISPLAY 0 leaves the new picture on screen at
-    ; full brightness - the interpreter loads its palette immediately
-    ; before the surface flip - so everything below is happening in
-    ; plain view until the blank lands. precalc is seven interpolated
-    ; tables of 256 entries with a multiply loop per channel: several
-    ; frames of arithmetic. Running it before the blank showed the new
-    ; scene for about 100ms, which reads as a bright flash between the
-    ; fade out and the fade in.
+    ; ORDER MATTERS HERE, and the order is: blank FIRST, read second.
     ;
-    ; So: read the palette, blank, THEN do the slow part. The snapshot
-    ; has to come first because it reads the very palette the blank
-    ; overwrites, but it is only a few hundred port operations - well
-    ; under a frame, where precalc is several.
-    call snapshot                ; the NEW picture's live palette
+    ; DISPLAY 0 leaves the new picture on screen at full brightness, so
+    ; every T-state spent before the blank is a slice of that picture
+    ; scanned out - a bright band across however many scanlines the
+    ; beam covers meanwhile. Blanking is one 256-entry burst. Reading
+    ; the palette back is four times that, and precalc is several
+    ; frames. Do either of them first and the band grows to match.
+    ;
+    ; Blanking first is only possible because the interpreter leaves an
+    ; identical copy of the new picture's palette in the Layer 2 bank
+    ; that is NOT displayed (it builds there and hands the display back
+    ; - see gfx_blit). So the visible bank can be blanked immediately
+    ; and the picture's colours read from the hidden copy afterwards,
+    ; at no visual cost. That copy is a documented guarantee of the
+    ; interpreter this ships with; on an older one the hidden bank
+    ; holds something else and the fade in would restore it.
     ld a, STEPS
     ld (step), a                 ; park at the solid end
-    call apply                   ; blank NOW, with the solid table the
-                                 ; previous fade out already built
-    call precalc                 ; rebuild 1-7 and 8 from the new
-                                 ; snapshot - slow, and now unseen
+    call apply                   ; BLANK NOW - one burst, nothing before
+                                 ; it, using the solid table the previous
+                                 ; fade out already built
+    ld a, 1
+    ld (snapOther), a            ; read the hidden bank, not the screen
+    call snapshot                ; the NEW picture's palette, unhurried
+    xor a
+    ld (snapOther), a
+    call precalc                 ; rebuild 1-7 and 8 - slow, and unseen
     ld a, STEPS
     jp apply                     ; restream the solid end so its
                                  ; transparency pins match the new art
@@ -322,6 +330,32 @@ int_fade:
 ; with every display-select bit left exactly as found and write
 ; auto-increment forced ON (bit 7 clear), which the bursts rely on.
 ; Corrupts AF only - BC is live in every caller.
+; pal_edit_ctl's sibling: edit the bank that is NOT being displayed,
+; display bit again untouched. fn 42 reads the incoming picture's
+; palette from there after blanking what is on screen.
+; Corrupts AF only.
+pal_other_ctl:
+    ld a, (savectl)
+    and %00001111
+    push af
+    and PAL_CTL_DISP2
+    jr z, .disp1
+    pop af
+    or PAL_L2_EDIT               ; bank 2 displayed -> edit bank 1
+    ret
+.disp1:
+    pop af
+    or PAL_L2_EDIT2              ; bank 1 displayed -> edit bank 2
+    ret
+
+; snapshot reads the displayed bank normally, the hidden one when
+; snapOther is set. Corrupts AF only.
+pal_snap_ctl:
+    ld a, (snapOther)
+    or a
+    jp nz, pal_other_ctl
+    jp pal_edit_ctl
+
 pal_edit_ctl:
     ld a, (savectl)
     and %00001111                ; auto-inc on, edit field cleared, every
@@ -465,8 +499,8 @@ snapshot:
     inc b
     in a, (c)
     ld (savectl), a
-    call pal_edit_ctl
-    out (c), a                   ; edit the bank being displayed
+    call pal_snap_ctl
+    out (c), a                   ; displayed bank, or the hidden one
     dec b
     ld hl, tables                ; table 0 = the snapshot
     ld e, 0
@@ -669,6 +703,7 @@ step:    db 0                    ; current step 0-8
 speed:   db 0                    ; frames per step (resolved)
 count:   db 0                    ; frames until the next step
 target:  db 0                    ; RRRGGGBB fade target
+snapOther: db 0                  ; 1 = snapshot reads the hidden bank
 savesel: db 0                    ; saved $243B select latch
 savectl: db 0                    ; saved NR $43
 kcur:    db 0                    ; precalc scratch

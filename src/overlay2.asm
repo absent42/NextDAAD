@@ -2718,7 +2718,19 @@ gfx_blit:
     nextreg NR_PAL_CTRL, PAL_L2_SECOND
     ; bank 2 is live and correct; refill bank 1 behind it, then hand the
     ; display back so the standing "bank 1 is the live one" convention
-    ; holds for everything else that touches NR $43
+    ; holds for everything else that touches NR $43.
+    ;
+    ; The refill is not optional and not a favour to anyone: without it
+    ; bank 1 holds the PREVIOUS picture's colours, and the next tilemap
+    ; palette write drags the display back onto it.
+    ;
+    ; A side effect is that both banks hold the same palette when this
+    ; returns, and the fade extern currently exploits that - it blanks
+    ; the visible bank immediately after a DISPLAY and recovers the
+    ; picture's colours from the spare. That is the extern leaning on
+    ; interpreter behaviour, NOT the interpreter promising anything.
+    ; This code stays free to change; if it does, that extern is the
+    ; thing that gets updated.
     call data_save
     call gfx_pal_rewind
     ld b, 1

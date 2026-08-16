@@ -84,6 +84,21 @@ All notable changes to NextDAAD are recorded here.
   palette rewind is factored out as gfx_pal_rewind and l2_palette_load
   gains an l2_palette_load_ctl entry taking the NR $43 value in C; the
   plain entry is byte-identical, so title_blit is untouched.
+- fn 42 blanks the visible bank BEFORE reading anything. What is left
+  on screen after DISPLAY 0 is scanned out for as long as the extern
+  takes to blank it, so the blank must be the first thing it does: one
+  256-entry burst rather than a 256-colour readback plus precalc.
+  Reading the picture's colours afterwards is possible because
+  gfx_blit's bank-1 refill happens to leave an identical copy in the
+  non-displayed bank (snapOther / pal_other_ctl / pal_snap_ctl select
+  it). That refill exists for the interpreter's own correctness, not
+  for externs: the extern leans on it, the interpreter promises
+  nothing, and if gfx_blit changes the extern is what gets updated. Estimated exposure drops from ~60k to ~25k
+  T-states, about 19 scanlines to 8; the residual is inherent to the
+  picture being displayed at all, and only a palette hold in gfx_blit
+  would take it to zero. NOT verifiable on CSpect, which applies
+  palette writes at frame granularity and never shows a mid-raster
+  band - reported from silicon, reasoned from T-state counts.
 - `externs/fade` derives its NR $43 bursts from the bank currently
   DISPLAYED (pal_edit_ctl) instead of writing a constant $10. Writing
   the constant forced the display to bank 1 for the length of every
