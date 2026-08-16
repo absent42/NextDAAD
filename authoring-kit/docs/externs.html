@@ -55,12 +55,12 @@ and a <code>SAVEBIN</code> that writes the whole thing out:</p>
 binary, header included, must fit in 16384 bytes - see
 <a href="reference/limits.html">Limits</a>.</p>
 <h3 id="the-ticker-example">The ticker example</h3>
-<p>The authoring kit's <code>examples\ticker\</code> folder is a complete, working
+<p>The authoring kit's <code>externs\ticker\</code> folder is a complete, working
 XBN worth reading start to finish before you write your own: a
 foreground <code>EXTERN</code> call fetches a database message with <code>SVC_GETMSG</code>,
 copies it into the extern's own memory, and a <code>#int</code> hook ticks it out
 one character per frame along the bottom row of the tilemap. A second
-example, <code>examples/fade</code>, fades the Layer 2 picture to any RRRGGGBB
+example, <code>externs/fade</code>, fades the Layer 2 picture to any RRRGGGBB
 colour and back for narrative beats - it additionally demonstrates
 reading hardware state back (the palette snapshot), the
 register-select save/restore bracket around shared indexed registers,
@@ -381,6 +381,14 @@ of them. Practically, that means:</p>
   state from an ordinary <code>EXTERN</code> call in your startup process, the way
   classic DAAD games initialised externs from <code>PRO 6</code>.</li>
 </ul>
+<h2 id="contributing-your-extern">Contributing your extern</h2>
+<p>Written an extern other games could use? The kit's collection under
+<code>externs\</code> takes community submissions - each ships as source plus a
+prebuilt binary, so authors who cannot assemble can still use yours.
+The submission requirements, the rules your code must obey and the
+automated audit that checks them are described in <code>CONTRIBUTING.md</code> at
+the root of the NextDAAD repository:
+https://github.com/absent42/NextDAAD</p>
 </main>
 </body>
 </html>

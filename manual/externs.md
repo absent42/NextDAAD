@@ -61,12 +61,12 @@ binary, header included, must fit in 16384 bytes - see
 
 ### The ticker example
 
-The authoring kit's `examples\ticker\` folder is a complete, working
+The authoring kit's `externs\ticker\` folder is a complete, working
 XBN worth reading start to finish before you write your own: a
 foreground `EXTERN` call fetches a database message with `SVC_GETMSG`,
 copies it into the extern's own memory, and a `#int` hook ticks it out
 one character per frame along the bottom row of the tilemap. A second
-example, `examples/fade`, fades the Layer 2 picture to any RRRGGGBB
+example, `externs/fade`, fades the Layer 2 picture to any RRRGGGBB
 colour and back for narrative beats - it additionally demonstrates
 reading hardware state back (the palette snapshot), the
 register-select save/restore bracket around shared indexed registers,
@@ -320,3 +320,13 @@ of them. Practically, that means:
 - **There is no dedicated init entry.** Initialise your extern's own
   state from an ordinary `EXTERN` call in your startup process, the way
   classic DAAD games initialised externs from `PRO 6`.
+
+## Contributing your extern
+
+Written an extern other games could use? The kit's collection under
+`externs\` takes community submissions - each ships as source plus a
+prebuilt binary, so authors who cannot assemble can still use yours.
+The submission requirements, the rules your code must obey and the
+automated audit that checks them are described in `CONTRIBUTING.md` at
+the root of the NextDAAD repository:
+https://github.com/absent42/NextDAAD

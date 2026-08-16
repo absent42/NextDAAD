@@ -339,7 +339,7 @@
 #                              GAME.XBN so a break in the generator is
 #                              caught on a plain run.
 #              -XbnTicker     stage the Task 9 shipped worked example
-#                              (authoring-kit\examples\ticker\ticker.asm)
+#                              (authoring-kit\externs\ticker\ticker.asm)
 #                              as GAME.XBN INSTEAD of the xbntest.asm
 #                              fixture, so extern.dsf's XTCK verb has
 #                              something to drive. Assembled fresh here
@@ -356,7 +356,7 @@
 #                              and no-ops on everything else, same as
 #                              xbntest.asm's own unrecognised-fn path.
 #              -XbnFade       stage the Layer 2 fade worked example
-#                              (authoring-kit\examples\fade\fade.asm) as
+#                              (authoring-kit\externs\fade\fade.asm) as
 #                              GAME.XBN INSTEAD of the fixture, plus the
 #                              single Layer 2 picture (001.NX2, the same
 #                              Rabenstein source -GMode reuses) that
@@ -2516,13 +2516,13 @@ if ($Xbn) {
         # SAVEBIN "GAME.XBN" cannot collide with the fixture's own
         # tests\out\xbn\GAME.XBN, then moved to tests\out\xbn\TICKER.XBN so
         # the kit example directory stays build-artifact-free.
-        $tickerSrcDir = Join-Path $root 'authoring-kit\examples\ticker'
+        $tickerSrcDir = Join-Path $root 'authoring-kit\externs\ticker'
         $tickerBuildDir = Join-Path $root 'tests\out\xbn\_tickerbuild'
         New-Item -ItemType Directory -Force $tickerBuildDir | Out-Null
         Push-Location $tickerBuildDir
         try {
             & "$root\tools\sjasmplus\sjasmplus.exe" --msg=war -I "$root\authoring-kit" "$tickerSrcDir\ticker.asm"
-            if ($LASTEXITCODE -ne 0) { throw "authoring-kit\examples\ticker\ticker.asm assembly failed" }
+            if ($LASTEXITCODE -ne 0) { throw "authoring-kit\externs\ticker\ticker.asm assembly failed" }
             Move-Item "GAME.XBN" "$root\tests\out\xbn\TICKER.XBN" -Force
         }
         finally {
@@ -2537,7 +2537,7 @@ if ($Xbn) {
         $freshT = [IO.File]::ReadAllBytes("$root\tests\out\xbn\TICKER.XBN")
         $shipT = [IO.File]::ReadAllBytes($tickerShipped)
         if (-not [System.Linq.Enumerable]::SequenceEqual($freshT, $shipT)) {
-            throw "authoring-kit\examples\ticker\GAME.XBN is STALE - rebuild it from ticker.asm (its build.ps1) and commit both together"
+            throw "authoring-kit\externs\ticker\GAME.XBN is STALE - rebuild it from ticker.asm (its build.ps1) and commit both together"
         }
         Copy-Item "$root\tests\out\xbn\TICKER.XBN" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\TICKER.XBN -> sd\$legName\GAME.XBN (-XbnTicker: authoring-kit ticker example, not the fixture; shipped prebuilt verified fresh)"
@@ -2552,13 +2552,13 @@ if ($Xbn) {
         if (Get-Process CSpect -ErrorAction SilentlyContinue) {
             throw "CSpect is running - close it before staging (locked sd\ files cause a partial fade fixture)"
         }
-        $fadeSrcDir = Join-Path $root 'authoring-kit\examples\fade'
+        $fadeSrcDir = Join-Path $root 'authoring-kit\externs\fade'
         $fadeBuildDir = Join-Path $root 'tests\out\xbn\_fadebuild'
         New-Item -ItemType Directory -Force $fadeBuildDir | Out-Null
         Push-Location $fadeBuildDir
         try {
             & "$root\tools\sjasmplus\sjasmplus.exe" --msg=war -I "$root\authoring-kit" "$fadeSrcDir\fade.asm"
-            if ($LASTEXITCODE -ne 0) { throw "authoring-kit\examples\fade\fade.asm assembly failed" }
+            if ($LASTEXITCODE -ne 0) { throw "authoring-kit\externs\fade\fade.asm assembly failed" }
             Move-Item "GAME.XBN" "$root\tests\out\xbn\FADE.XBN" -Force
         }
         finally {
@@ -2570,7 +2570,7 @@ if ($Xbn) {
         $freshF = [IO.File]::ReadAllBytes("$root\tests\out\xbn\FADE.XBN")
         $shipF = [IO.File]::ReadAllBytes($fadeShipped)
         if (-not [System.Linq.Enumerable]::SequenceEqual($freshF, $shipF)) {
-            throw "authoring-kit\examples\fade\GAME.XBN is STALE - rebuild it from fade.asm (its build.ps1) and commit both together"
+            throw "authoring-kit\externs\fade\GAME.XBN is STALE - rebuild it from fade.asm (its build.ps1) and commit both together"
         }
         Copy-Item "$root\tests\out\xbn\FADE.XBN" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\FADE.XBN -> sd\$legName\GAME.XBN (-XbnFade: authoring-kit fade example, not the fixture; shipped prebuilt verified fresh)"

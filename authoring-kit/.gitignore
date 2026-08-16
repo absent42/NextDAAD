@@ -1,6 +1,6 @@
 RELEASE/
 CONFIG.local.BAT
-# examples/*/GAME.XBN was ignored while the kit stayed artifact-free;
+# externs/*/GAME.XBN (examples/ before the 2026-08-16 rename) was ignored while the kit stayed artifact-free;
 # owner decision 2026-08-14: prebuilt example binaries SHIP (same
 # rationale as videnc.exe below - the kit works without the toolchain).
 # tests/build-tests.ps1's -XbnTicker/-XbnFade staging asserts the

@@ -42,7 +42,7 @@
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
 ; banner, so a later task can read it back through the service call
 ; and compare bytes rather than screen text. Task 9's shipped ticker
-; worked example (authoring-kit\examples\ticker\ticker.asm) consumes
+; worked example (authoring-kit\externs\ticker\ticker.asm) consumes
 ; the same message 0 through the same service call.
 ;   XTCK - drives the Task 9 ticker example (EXTERN 0 30 arms it on
 ;          message 0, EXTERN 0 31 disarms it). This verb does not
