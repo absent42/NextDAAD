@@ -247,6 +247,42 @@ l2_clear_at:
 ;   The DEBUG test card DOES paint pixel 255 (TC_MARK_COLOUR), but it
 ;   never calls l2_palette_load - it runs on the reset identity
 ;   palette, where 255 is white - so the invariant is untouched by it.
+; Copy all 256 Layer 2 palette entries from the SECOND bank into the
+; FIRST, full 9 bits (both bytes, so the blue LSB and the per-pixel
+; priority flag come across). The caller must already be displaying the
+; second bank, which is what makes the writes invisible.
+;
+; This exists for gfx_direct_stream, whose palette source is a file it
+; has just closed - it cannot simply re-run the load into the other
+; bank the way gfx_blit does. Reading the entries back out of hardware
+; is cheaper than reopening the card.
+;
+; Each iteration reprograms NR $43 twice, which also keeps the $44
+; two-write pairing aligned: the dev guide states a write to $43 resets
+; that byte toggle. Corrupts AF, BC, DE, HL.
+l2_pal_mirror21:
+    ld d, 0                      ; colour index
+.m:
+    nextreg NR_PAL_CTRL, PAL_L2_SECOND      ; read side: edit bank 2
+    ld a, d
+    nextreg NR_PAL_INDEX, a
+    ld e, NR_PAL_VALUE
+    call nr_read
+    ld l, a                      ; RRRGGGBB
+    ld e, NR_PAL_VALUE9
+    call nr_read                 ; priority + blue LSB (reads do not
+    ld h, a                      ; auto-increment, so same entry)
+    nextreg NR_PAL_CTRL, PAL_L2_EDIT_FIRST  ; write side: edit bank 1,
+    ld a, d                                 ; display stays on bank 2
+    nextreg NR_PAL_INDEX, a
+    ld a, l
+    nextreg NR_PAL_VALUE9, a
+    ld a, h
+    nextreg NR_PAL_VALUE9, a
+    inc d
+    jr nz, .m
+    ret
+
 ; Point the source stream at the staged entry's 512-byte palette, which
 ; sits at offset 0 of the run's first page. Out: HL = DATA_WINDOW, source
 ; mapped. gfx_blit calls this twice - once per palette bank - so the
@@ -1971,7 +2007,15 @@ gfx_direct_stream:
     ld (gfxHandle), a
     call gfx_open_chain
     jr c, .faildone
-    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    ; Build into the bank that is NOT displayed, exactly as gfx_blit
+    ; does, and for the same reason - except worse here: this pass is
+    ; interleaved with SD reads, so programming the live bank left the
+    ; incoming picture's colours creeping onto the screen across
+    ; several card transactions. That is the flash seen on a picture
+    ; that had to be LOADED, where a cached one (which reaches the
+    ; screen through gfx_blit) had none.
+    nextreg NR_PAL_CTRL, PAL_L2_EDIT_SECOND   ; build in bank 2, bank 1
+                                              ; stays on screen
     nextreg NR_PAL_INDEX, 0
     ld b, 2
 .pal:
@@ -1990,10 +2034,20 @@ gfx_direct_stream:
     ld (gfxHandle), a
     call data_restore
     ; flip exactly as gfx_blit ends: swap the surface roles, then the
-    ; resolution and new front bank back-to-back (l2_flip_swap header)
+    ; resolution and new front bank back-to-back (l2_flip_swap header),
+    ; then the palette bank immediately after so pixels and colours
+    ; arrive together
     call l2_flip_swap
     ld a, (gfxMode)
     call l2_mode_set
+    nextreg NR_PAL_CTRL, PAL_L2_SECOND
+    ; bank 2 is live and correct; bank 1 still holds the previous
+    ; picture, and a tilemap palette write would drag the display onto
+    ; it (NR $43 bit 2 clear). gfx_blit refills from the cached source;
+    ; here the source was a file that has just been closed, so mirror
+    ; the live bank across instead - invisible, bank 1 being off screen.
+    call l2_pal_mirror21
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST         ; identical: invisible
     call l2_enable
     or a
     ret
