@@ -45,7 +45,16 @@ All notable changes to NextDAAD are recorded here.
   all. `EXTERN 0 42` re-snapshots what DISPLAY just programmed,
   rebuilds the tables towards the same target colour and restreams the
   solid end, so a following fn 41 fades up to the NEW picture; call it
-  in the same entry as the DISPLAY and the flip is never displayed.
+  in the same entry as the DISPLAY, immediately after it.
+- fn 42 blanks BEFORE it recomputes. DISPLAY 0 leaves the new picture
+  on screen at full brightness (l2_palette_load runs immediately
+  before the flip), and precalc is seven 256-entry tables with a
+  multiply loop per channel - several frames. Snapshotting and
+  precalculating before the blank showed the new scene for ~110ms,
+  measured as a 6-frame brightness spike in the field. Order is now
+  snapshot, apply the solid end, precalc, apply again so the solid
+  end's transparency pins match the new art. Re-measured: no spike,
+  and the restore is still bit-exact.
   `EXTERN 0 43` blocks until the running fade finishes, bounded at
   8*speed+32 frames, replacing a DSF flag-poll loop for the common
   case. The `active` guard moved from the top of ext_main into each

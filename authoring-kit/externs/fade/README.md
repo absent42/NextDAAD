@@ -75,9 +75,11 @@ just programmed and puts the fade colour straight back on screen.
     EXTERN 0 41        ; fade up to the NEW picture
     EXTERN 0 43        ; wait for it
 
-Keep `DISPLAY 0` and `EXTERN 0 42` in the same process entry. Both are
-condacts, so they complete inside one frame and the full-brightness
-flip is never displayed.
+Put `EXTERN 0 42` immediately after `DISPLAY 0`, with nothing between
+them. `DISPLAY 0` loads the new picture's palette just before it flips
+the surface, so from that instant the new scene is on screen at full
+brightness; fn 42 is what puts the fade colour back. Anything you slip
+in between is time the player spends looking at the un-faded picture.
 
 ## Build
 

@@ -187,11 +187,29 @@ ext_main:
     or a
     ret z                        ; not faded out: nothing to re-take,
                                  ; and no target colour to hold
+    ; ORDER MATTERS HERE. DISPLAY 0 leaves the new picture on screen at
+    ; full brightness - the interpreter loads its palette immediately
+    ; before the surface flip - so everything below is happening in
+    ; plain view until the blank lands. precalc is seven interpolated
+    ; tables of 256 entries with a multiply loop per channel: several
+    ; frames of arithmetic. Running it before the blank showed the new
+    ; scene for about 100ms, which reads as a bright flash between the
+    ; fade out and the fade in.
+    ;
+    ; So: read the palette, blank, THEN do the slow part. The snapshot
+    ; has to come first because it reads the very palette the blank
+    ; overwrites, but it is only a few hundred port operations - well
+    ; under a frame, where precalc is several.
     call snapshot                ; the NEW picture's live palette
-    call precalc                 ; rebuild 1-7 and 8 towards (target)
     ld a, STEPS
-    ld (step), a                 ; stay at the solid end
-    jp apply                     ; and put it back on screen now
+    ld (step), a                 ; park at the solid end
+    call apply                   ; blank NOW, with the solid table the
+                                 ; previous fade out already built
+    call precalc                 ; rebuild 1-7 and 8 from the new
+                                 ; snapshot - slow, and now unseen
+    ld a, STEPS
+    jp apply                     ; restream the solid end so its
+                                 ; transparency pins match the new art
 
 ; ---------------------------------------------------------------
 ; fn 43: block until the running fade finishes.
