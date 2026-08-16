@@ -18,6 +18,9 @@ All notable changes to NextDAAD are recorded here.
   explicitly, and the XBN fixture gains a six-message token-compressed
   multi-fetch regression (XMS6) with a post-fetch system-message
   print to expose any future token-table damage on screen.
+
+## v0.7.2 - unreleased
+
 - Fixed: the `examples/fade` XBN did not restore a picture's palette
   exactly. It snapshotted and restored 8-bit `RRRGGGBB` through NR
   $41, but Layer 2 art is loaded as 9-bit pairs through NR $44
@@ -46,6 +49,13 @@ All notable changes to NextDAAD are recorded here.
   rebuilds the tables towards the same target colour and restreams the
   solid end, so a following fn 41 fades up to the NEW picture; call it
   in the same entry as the DISPLAY, immediately after it.
+  `EXTERN 0 43` blocks until the running fade finishes, bounded at
+  8*speed+32 frames, replacing a DSF flag-poll loop for the common
+  case. The `active` guard moved from the top of ext_main into each
+  branch - a top-level guard would have swallowed fn 43, whose job is
+  to be called mid-fade. Verified under CSpect: fade out, PICTURE 5,
+  DISPLAY 0, fn 42, fn 41 restores picture 5 bit-exactly against a
+  plain PICTURE 5 / DISPLAY 0 baseline (R/G/B all 1.000).
 - fn 42 blanks BEFORE it recomputes. DISPLAY 0 leaves the new picture
   on screen at full brightness (l2_palette_load runs immediately
   before the flip), and precalc is seven 256-entry tables with a
@@ -55,15 +65,32 @@ All notable changes to NextDAAD are recorded here.
   snapshot, apply the solid end, precalc, apply again so the solid
   end's transparency pins match the new art. Re-measured: no spike,
   and the restore is still bit-exact.
-  `EXTERN 0 43` blocks until the running fade finishes, bounded at
-  8*speed+32 frames, replacing a DSF flag-poll loop for the common
-  case. The `active` guard moved from the top of ext_main into each
-  branch - a top-level guard would have swallowed fn 43, whose job is
-  to be called mid-fade. Verified under CSpect: fade out, PICTURE 5,
-  DISPLAY 0, fn 42, fn 41 restores picture 5 bit-exactly against a
-  plain PICTURE 5 / DISPLAY 0 baseline (R/G/B all 1.000).
 - The 0.7.0 notes advertised the fade example for scene changes. That
   only becomes true with fn 42; the author-facing changelog says so.
+- Fixed: a picture change tore its colours across the screen. gfx_blit
+  loaded the incoming palette into the Layer 2 bank that was on screen,
+  byte by byte and unsynchronised to the raster, so the beam scanned
+  part of a frame with the old colours and the rest with the new. It
+  now builds the palette in the bank that is NOT displayed
+  (PAL_L2_EDIT_SECOND) and swaps surface and palette together, the NR
+  $43 write trailing NR $12 by well under a scanline. Reported in the
+  field as an image flash through a fade-to-black scene change; it was
+  never fade-specific - every PICTURE/DISPLAY had it.
+- The display does not stay on the second bank: every tilemap palette
+  write programs NR $43 with bit 2 clear (PAL_TM_FIRST and friends),
+  which would drag Layer 2 back to a stale bank 1. gfx_blit refills
+  bank 1 behind the live bank 2 and hands the display back once the
+  two are identical - both steps invisible by construction. The
+  palette rewind is factored out as gfx_pal_rewind and l2_palette_load
+  gains an l2_palette_load_ctl entry taking the NR $43 value in C; the
+  plain entry is byte-identical, so title_blit is untouched.
+- `externs/fade` derives its NR $43 bursts from the bank currently
+  DISPLAYED (pal_edit_ctl) instead of writing a constant $10. Writing
+  the constant forced the display to bank 1 for the length of every
+  burst, which was harmless only while everything parked there - not
+  true once a picture load or a video clip leaves bank 2 live. It also
+  clobbered the sprite and ULA display-select bits, which are now
+  preserved.
 
 ## v0.7.0 - 14/08/2026
 

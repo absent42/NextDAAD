@@ -12,6 +12,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
   eventually stopped with `RD STACK - E9`. If your extern fetched one
   message per session you were safe - the shipped ticker example was -
   but anything more ambitious hit it.
+
+## 0.7.2 - unreleased
+
 - **Fixed: the fade example did not put a picture's colours back
   exactly.** Fading out and back left a slight colour cast - on a
   red-heavy photograph red and green returned exactly, but blue came
@@ -34,6 +37,16 @@ game behaves, how it builds, or what the kit gives you, it is here.
   was no longer on screen, and the new picture appeared at once at full
   brightness instead of fading up. Call it right after `DISPLAY 0` and
   the new scene fades up properly. The README has the full sequence.
+- **Fixed: changing the picture flashed the incoming image.** Any
+  `PICTURE` / `DISPLAY 0` loaded the new picture's colours into the
+  palette that was on screen at the time, so for a fraction of a frame
+  the display showed part of the old picture's colours and part of the
+  new - a band of wrong colour across the image. It was most obvious
+  when changing scene behind a fade to black, where the incoming
+  picture flashed through, but it was never fade-specific: every
+  picture change had it. The interpreter now builds the new palette
+  where it cannot be seen and swaps it in with the picture. Nothing to
+  change in your game; you need the new interpreter.
 
 ## 0.7.0 - 14 August 2026
 
@@ -56,9 +69,8 @@ game behaves, how it builds, or what the kit gives you, it is here.
   that types a game message across the screen character by character)
   or `examples/fade` (fade the Layer 2 picture to any colour and back,
   with transparent regions correctly staying transparent throughout -
-  changing the picture between the two halves needs 0.7.1, see above)
-  next to your
-  database and try them without assembling anything. Each folder's
+  changing the picture between the two halves needs 0.7.2, see above)
+  next to your database and try them without assembling anything. Each folder's
   README shows the two or three DSF lines that drive it.
 - **What externs cannot do**, so you are not surprised: parameters
   travel in the two EXTERN bytes and in flags (there is no inline data

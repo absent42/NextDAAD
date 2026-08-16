@@ -87,9 +87,20 @@ NR_PAL_CTL      equ $43          ; palette control - bit 7 DISABLES write
                                  ; for DISPLAY - hence the read-modify
                                  ; save/restore below, per the dev
                                  ; guide's own warning on this register
-PAL_L2_EDIT     equ $10          ; edit Layer 2 first palette, auto-inc
-                                 ; on - the interpreter's own standing
-                                 ; convention value for this register
+; NR $43 has two INDEPENDENT fields: bits 6-4 pick the bank that reads
+; and writes land in, bit 2 picks the bank that is scanned out. The
+; interpreter's standing convention is that both point at Layer 2's
+; first bank, but it is only a convention - a picture load or a video
+; clip can legitimately leave the second bank on screen.
+;
+; So never write a fixed value here. pal_edit_ctl derives the right one
+; from whatever is already programmed: edit the bank that is being
+; DISPLAYED, and leave the display bit exactly as found. Writing a
+; constant $10 would drag the display back to bank 1 for the length of
+; every burst, showing whatever stale palette bank 1 happened to hold.
+PAL_L2_EDIT     equ $10          ; edit + display Layer 2 first bank
+PAL_L2_EDIT2    equ $50          ; edit second bank, display bit untouched
+PAL_CTL_DISP2   equ %00000100    ; NR $43 bit 2 = display the second bank
 TRANSP          equ $E3          ; Layer 2 global transparency COLOUR
                                  ; (hardware reset value; the interpreter
                                  ; keeps it - src/nextdaad.inc's
@@ -306,12 +317,33 @@ int_fade:
     ret
 
 ; ---------------------------------------------------------------
-; Stream table A (0-8) to the Layer 2 first palette. Interrupt-context
-; safe: the select latch ($243B, documented readable) and NR $43 are
-; saved first and restored after, so a foreground register sequence
-; this hook lands in the middle of resumes unharmed. Single-byte $41
-; writes only - never the two-write $44 protocol, which could not be
-; made atomic against the foreground.
+; savectl holds the NR $43 the foreground had when a burst started.
+; Return the value that edits whichever bank is currently DISPLAYED,
+; with every display-select bit left exactly as found and write
+; auto-increment forced ON (bit 7 clear), which the bursts rely on.
+; Corrupts AF only - BC is live in every caller.
+pal_edit_ctl:
+    ld a, (savectl)
+    and %00001111                ; auto-inc on, edit field cleared, every
+                                 ; display select preserved
+    push af
+    and PAL_CTL_DISP2
+    jr z, .first
+    pop af
+    or PAL_L2_EDIT2              ; edit target = Layer 2 second bank
+    ret
+.first:
+    pop af
+    or PAL_L2_EDIT               ; edit target = Layer 2 first bank
+    ret
+
+; ---------------------------------------------------------------
+; Stream table A (0-8) to the Layer 2 palette bank that is on screen.
+; Interrupt-context safe: the select latch ($243B, documented readable)
+; and NR $43 are saved first and restored after, so a foreground
+; register sequence this hook lands in the middle of resumes unharmed.
+; Single-byte $41 writes only - the 9-bit endpoint restore is apply9's
+; job, and it has its own reason to be safe.
 apply:
     add a, tables>>8             ; tables are ALIGN 256: high byte + step
     ld h, a
@@ -324,8 +356,8 @@ apply:
     inc b
     in a, (c)
     ld (savectl), a              ; foreground's palette control
-    ld a, PAL_L2_EDIT
-    out (c), a                   ; edit L2 first palette, auto-inc on
+    call pal_edit_ctl
+    out (c), a                   ; edit the bank being displayed
     dec b
     ld a, NR_PAL_IDX
     out (c), a
@@ -380,9 +412,9 @@ apply9:
     inc b
     in a, (c)
     ld (savectl), a
-    ld a, PAL_L2_EDIT
-    out (c), a                   ; edit L2 first palette, auto-inc on -
-                                 ; and resets the $44 byte toggle
+    call pal_edit_ctl
+    out (c), a                   ; edit the bank being displayed - and
+                                 ; resets the $44 byte toggle
     dec b
     ld a, NR_PAL_IDX
     out (c), a
@@ -433,8 +465,8 @@ snapshot:
     inc b
     in a, (c)
     ld (savectl), a
-    ld a, PAL_L2_EDIT
-    out (c), a
+    call pal_edit_ctl
+    out (c), a                   ; edit the bank being displayed
     dec b
     ld hl, tables                ; table 0 = the snapshot
     ld e, 0

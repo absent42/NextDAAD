@@ -247,12 +247,45 @@ l2_clear_at:
 ;   The DEBUG test card DOES paint pixel 255 (TC_MARK_COLOUR), but it
 ;   never calls l2_palette_load - it runs on the reset identity
 ;   palette, where 255 is white - so the invariant is untouched by it.
+; Point the source stream at the staged entry's 512-byte palette, which
+; sits at offset 0 of the run's first page. Out: HL = DATA_WINDOW, source
+; mapped. gfx_blit calls this twice - once per palette bank - so the
+; rewind lives here rather than being written out at both sites.
+; Corrupts AF, HL. Caller owns the data_save bracket.
+gfx_pal_rewind:
+    ld a, (stagedEntry)
+    call gce_ptr
+    inc hl
+    ld a, (hl)                  ; GCE_FIRST
+    ld (gfxSrcIdx), a
+    xor a
+    ld (gfxSrcHalf), a
+    call gfx_src_remap
+    ld hl, DATA_WINDOW
+    ret
+
+; C = the NR $43 value to program before loading, i.e. WHICH BANK the
+; entries land in and which bank stays on screen while they do. The
+; plain entry below keeps the standing convention (edit and display
+; both bank 1); gfx_blit passes an "edit the other bank" value so a
+; picture's palette can be built where nobody can see it and swapped
+; in atomically. See PAL_L2_* in nextdaad.inc.
+l2_palette_load_ctl:
+    ld a, b
+    push af
+    ld a, c
+    nextreg NR_PAL_CTRL, a
+    nextreg NR_PAL_INDEX, 0
+    pop af
+    jr l2_palette_load.fmt
+
 l2_palette_load:
     ld a, b
     push af
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
     nextreg NR_PAL_INDEX, 0
     pop af
+.fmt:
     or a
     jr nz, .fmt9
     ld b, 0                      ; B=0 -> djnz runs 256 times
@@ -2651,26 +2684,48 @@ gfx_blit:
     ld hl, gfxRowsLeft
     dec (hl)
     jr nz, .row
-    ; rows done: rewind the source stream to the file's 512-byte
-    ; palette (offset 0, wholly inside the run's first page) and load
-    ; it now, as late as possible before the flip (header comment)
-    ld a, (stagedEntry)
-    call gce_ptr
-    inc hl
-    ld a, (hl)                  ; GCE_FIRST again
-    ld (gfxSrcIdx), a
-    xor a
-    ld (gfxSrcHalf), a
-    call gfx_src_remap
-    ld hl, DATA_WINDOW
+    ; Rows done. The palette goes into the Layer 2 bank that is NOT on
+    ; screen, so none of it is visible while it loads, and the flip
+    ; below swaps surface and palette together.
+    ;
+    ; Loading into the live bank (what this did before) is visible byte
+    ; by byte, and it is not raster-synchronised: the beam scans out
+    ; part of the frame with the old colours and the rest with the new,
+    ; which shows as a band of wrong colour across the picture. Fading
+    ; to black and changing scene made it obvious - the incoming
+    ; picture flashed through the black.
+    ;
+    ; The display goes back to bank 1 at the end. It cannot simply stay
+    ; on bank 2: every tilemap palette write programs NR $43 with bit 2
+    ; clear (PAL_TM_FIRST and friends), which would silently drag the
+    ; Layer 2 display back to bank 1 and show whatever stale palette
+    ; was left there. So bank 1 is refilled behind the live bank 2 and
+    ; the display handed back once the two are identical - both of
+    ; those steps are invisible by construction.
+    call gfx_pal_rewind
     ld b, 1                     ; format 1 = 256 x 2-byte 9-bit entries
-    call l2_palette_load
+    ld c, PAL_L2_EDIT_SECOND    ; build in bank 2, bank 1 stays on screen
+    call l2_palette_load_ctl
     call data_restore
     ; flip: swap surface roles, then program resolution + new front
-    ; bank back-to-back via l2_mode_set (see l2_flip_swap header)
+    ; bank back-to-back via l2_mode_set (see l2_flip_swap header), then
+    ; the palette bank immediately after. That last write trails NR $12
+    ; by well under a scanline (~1800 T at 28MHz), so pixels and colours
+    ; arrive together as far as the beam is concerned.
     call l2_flip_swap
     ld a, (stagedMode)
     call l2_mode_set
+    nextreg NR_PAL_CTRL, PAL_L2_SECOND
+    ; bank 2 is live and correct; refill bank 1 behind it, then hand the
+    ; display back so the standing "bank 1 is the live one" convention
+    ; holds for everything else that touches NR $43
+    call data_save
+    call gfx_pal_rewind
+    ld b, 1
+    ld c, PAL_L2_EDIT_FIRST     ; edit bank 1, bank 2 stays on screen
+    call l2_palette_load_ctl
+    call data_restore
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST   ; identical contents: invisible
  IFDEF DMA_MEASURE
     ld a, (stagedMode)
     or a
