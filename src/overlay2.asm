@@ -2055,6 +2055,18 @@ gfx_direct_stream:
     ld a, $FF
     ld (gfxHandle), a
     call data_restore
+    ld a, (gfxDrawTarget)
+    or a
+    jr z, .revealnow
+    ld a, (gfxMode)
+    ld (gfxRevealMode), a
+    ld a, 1
+    ld (gfxRevealPend), a
+    or a                        ; CF clear = drawn (deferred), handle
+    ret                         ; already closed above
+.revealnow:
+    xor a                       ; same stale-pend clear as gfx_blit
+    ld (gfxRevealPend), a
     ; flip exactly as gfx_blit ends: swap the surface roles, then the
     ; resolution and new front bank back-to-back (l2_flip_swap header),
     ; then the palette bank immediately after so pixels and colours
@@ -2783,6 +2795,21 @@ gfx_blit:
     ld c, PAL_L2_EDIT_SECOND    ; build in bank 2, bank 1 stays on screen
     call l2_palette_load_ctl
     call data_restore
+    ld a, (gfxDrawTarget)
+    or a
+    jr z, .reveal
+    ; GFX 87/4 buffer mode: the picture is fully staged - pixels in the
+    ; back surface, palette in the hidden bank - and NOTHING on screen
+    ; changes. GFX n 0/2 performs the flip/mode/palette tail instead.
+    ld a, (stagedMode)
+    ld (gfxRevealMode), a
+    ld a, 1
+    ld (gfxRevealPend), a
+    ret
+.reveal:
+    xor a                       ; an immediate blit supersedes any still-
+    ld (gfxRevealPend), a       ; armed deferral: a later GFX n 2 must
+                                 ; not flip to a superseded surface
     ; flip: swap surface roles, then program resolution + new front
     ; bank back-to-back via l2_mode_set (see l2_flip_swap header), then
     ; the palette bank immediately after. That last write trails NR $12
