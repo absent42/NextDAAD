@@ -263,13 +263,17 @@ unsupported - issue <code>GFX n 3</code> first.</p>
 <p>Known limitation: buffer-mode scene changes are not guaranteed when
 the picture cache is exhausted by an oversized, uncompressed picture
 (only reachable after a full eviction pass finds nothing left to
-evict - effectively unreachable on 2MB-standard hardware). In that
-case the fallback loader draws the picture directly rather than
-staging it, so the screen flips immediately and the stage is cleared
-regardless of the draw target; a <code>DISPLAY 0</code> that follows then
-no-ops, and the reveal after it can land on a mismatched surface or
-palette. The effect is a transient flash and possibly one wrong fade;
-it self-heals at the next picture change.</p>
+evict - effectively unreachable on 2MB-standard hardware). The
+fallback loader runs at <code>PICTURE</code> time, and in the recommended fade
+sequence <code>GFX n 4</code> opens buffer mode only after the <code>PICTURE</code> condact
+(the ordering that protects against dark-room strands) - so when an
+exhaustion fallback fires during that <code>PICTURE</code>, buffer mode is not
+yet open: the fallback draws and flips immediately, a mid-fade flash,
+and clears the staged-picture state. The sequence's following
+<code>DISPLAY 0</code> is then a no-op, no reveal is pending, and <code>GFX n 2</code>
+performs a plain surface swap rather than the clean reveal - the
+fade-in can land on a mismatched surface or palette until the next
+picture change.</p>
 <p>jdaad no-ops subs 3 and 4 - there is no such buffer-mode concept in its
 <code>DBBuffertoScreen</code>/<code>DBSwapBuffers</code> family. The DAAD condact reference
 table is the authority for this target, not jdaad parity.</p>

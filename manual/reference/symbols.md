@@ -120,13 +120,17 @@ unsupported - issue `GFX n 3` first.
 Known limitation: buffer-mode scene changes are not guaranteed when
 the picture cache is exhausted by an oversized, uncompressed picture
 (only reachable after a full eviction pass finds nothing left to
-evict - effectively unreachable on 2MB-standard hardware). In that
-case the fallback loader draws the picture directly rather than
-staging it, so the screen flips immediately and the stage is cleared
-regardless of the draw target; a `DISPLAY 0` that follows then
-no-ops, and the reveal after it can land on a mismatched surface or
-palette. The effect is a transient flash and possibly one wrong fade;
-it self-heals at the next picture change.
+evict - effectively unreachable on 2MB-standard hardware). The
+fallback loader runs at `PICTURE` time, and in the recommended fade
+sequence `GFX n 4` opens buffer mode only after the `PICTURE` condact
+(the ordering that protects against dark-room strands) - so when an
+exhaustion fallback fires during that `PICTURE`, buffer mode is not
+yet open: the fallback draws and flips immediately, a mid-fade flash,
+and clears the staged-picture state. The sequence's following
+`DISPLAY 0` is then a no-op, no reveal is pending, and `GFX n 2`
+performs a plain surface swap rather than the clean reveal - the
+fade-in can land on a mismatched surface or palette until the next
+picture change.
 
 jdaad no-ops subs 3 and 4 - there is no such buffer-mode concept in its
 `DBBuffertoScreen`/`DBSwapBuffers` family. The DAAD condact reference
