@@ -5,23 +5,25 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.7.2 - unreleased
 
-- **Scene changes behind a fade no longer flash the new picture.** On
-  real hardware, changing the picture while faded out could show a
-  brief strip of the new image at full brightness between the fade out
-  and the fade in. Two GFX sub-commands from the original DAAD set are
-  now implemented to close it: `GFX 0 4` sends drawing to the back
-  buffer, so `PICTURE` / `DISPLAY 0` stages the new picture without
-  showing anything, and `GFX 0 2` reveals it - surface, resolution and
-  colours together. With the fade extern's `EXTERN 0 42` in between,
-  the screen holds the fade colour through the whole change and the
-  new picture only ever appears through the fade. Order matters:
-  `PICTURE` comes before `GFX 0 4`, so a dark room or missing picture
-  cannot leave drawing stuck in the buffer. The exact sequence is in
-  the fade example's README and the
-  [GFX reference](reference/symbols.md); the old sequence without the
-  GFX lines still works as before. The example's prebuilt `GAME.XBN`
-  is rebuilt again - copy it over yours to get the new `EXTERN 0 42`
-  behaviour.
+- **Scene changes behind a fade: change the picture mid-fade, with no
+  flash of the new image.** Two additions to `externs/fade` and two
+  GFX sub-commands from the original DAAD set, working together. The
+  fade snapshot is taken when you fade out, so changing the picture
+  used to fade back up to the colours of a scene that was no longer
+  there - `EXTERN 0 42` re-takes the snapshot for the new picture. And
+  on real hardware the new image could still show a brief strip at
+  full brightness between the fade out and the fade in - closed by
+  `GFX 0 4`, which sends drawing to the back buffer so `PICTURE` /
+  `DISPLAY 0` stages the new picture without showing anything, and
+  `GFX 0 2`, which reveals it: surface, resolution and colours
+  together. The screen holds the fade colour through the whole change
+  and the new picture only ever appears through the fade. Order
+  matters: `PICTURE` comes before `GFX 0 4`, so a dark room or missing
+  picture cannot leave drawing stuck in the buffer. `EXTERN 0 43`
+  blocks until the running fade finishes, replacing a flag-poll loop.
+  The exact sequence is in the fade example's README and the
+  [GFX reference](reference/symbols.md). The example's prebuilt
+  `GAME.XBN` is rebuilt again - copy it over yours.
 - **Fixed: the fade example did not put a picture's colours back
   exactly.** Fading out and back left a slight colour cast - on a
   red-heavy photograph red and green returned exactly, but blue came
@@ -32,15 +34,6 @@ game behaves, how it builds, or what the kit gives you, it is here.
   you started with. If you use `examples/fade`, copy its rebuilt
   `GAME.XBN` over your old one - unlike the fix above, this one does
   need the new binary.
-- **The fade extern can now change the picture mid-fade, and wait for
-  itself.** Two additions to `externs/fade`. `EXTERN 0 43` blocks until
-  the running fade finishes -`EXTERN 0 42` fixes changing the picture between a fade
-  out and a fade in: the snapshot is taken when you fade out, so
-  without it the fade in walked back to the colours of a picture that
-  was no longer on screen, and the new picture appeared at once at full
-  brightness instead of fading up. Call it right after `DISPLAY 0` and
-  the new scene fades up properly. The README has the full sequence.
-
 ## 0.7.1 - 15 August 2026
 
 - **Fixed: fetching more than one message from an extern corrupted the

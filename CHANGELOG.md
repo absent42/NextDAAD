@@ -27,15 +27,31 @@ All notable changes to NextDAAD are recorded here.
   recommended sequence opens buffer mode, so an oversized-raw-art
   cache-exhaustion load mid-fade still flashes (transient,
   self-healing at the next picture change).
-- `externs/fade` fn 42 additionally streams the solid fade colour
-  into the hidden palette bank (new applyOther/pal_apply_ctl path in
-  apply), so at the `GFX n 2` reveal every palette the beam can see
-  holds the fade colour. The recommended scene-change sequence -
-  fade out, `PICTURE` (the condition comes first so a dark-room abort
-  cannot strand buffer mode), `GFX 0 4`, `DISPLAY 0`, `EXTERN 0 42`,
-  `GFX 0 2`, `GFX 0 3`, fade in - is documented in the extern header,
-  its README and the kit manual. The old unbuffered sequence keeps
-  working, band included. Prebuilt `GAME.XBN` rebuilt (3328 bytes).
+- `externs/fade` gains fn 42 and fn 43. The snapshot is taken once, at
+  fade-out, so changing the picture between a fade out and a fade in
+  restored the OLD picture's palette onto the new pixels - and with an
+  immediate `DISPLAY 0`, which loads the new palette as it flips
+  (gfx_blit), the new scene also appeared instantly at full brightness
+  with no fade at all. `EXTERN 0 42` re-takes the snapshot for the
+  incoming picture (reading its palette out of the hidden Layer 2
+  bank), rebuilds the tables towards the same target colour, restreams
+  the solid end so its transparency pins match the new art, and
+  streams the solid colour into the hidden bank as well (new
+  applyOther/pal_apply_ctl path in apply) - so at the `GFX 0 2` reveal
+  every palette the beam can see holds the fade colour, and a
+  following fn 41 fades up to the NEW picture. In the recommended
+  sequence - fade out, `PICTURE` (the condition comes first so a
+  dark-room abort cannot strand buffer mode), `GFX 0 4`, `DISPLAY 0`,
+  `EXTERN 0 42`, `GFX 0 2`, `GFX 0 3`, fade in - the change is
+  invisible end to end; the unbuffered form, fn 42 straight after an
+  immediate DISPLAY, still works but can show the band the buffered
+  sequence closes. Documented in the extern header, its README and
+  the kit manual. `EXTERN 0 43` blocks until the running fade
+  finishes, bounded at 8*speed+32 frames, replacing a DSF flag-poll
+  loop for the common case. The `active` guard moved from the top of
+  ext_main into each branch - a top-level guard would have swallowed
+  fn 43, whose job is to be called mid-fade. Prebuilt `GAME.XBN`
+  rebuilt (3328 bytes).
 - Fixed: the `examples/fade` XBN did not restore a picture's palette
   exactly. It snapshotted and restored 8-bit `RRRGGGBB` through NR
   $41, but Layer 2 art is loaded as 9-bit pairs through NR $44
@@ -48,20 +64,6 @@ All notable changes to NextDAAD are recorded here.
   per colour and the fade-in endpoint restreams 9-bit pairs; the
   interpolated steps stay 8-bit.
   The example's prebuilt `GAME.XBN` is rebuilt (3328 bytes).
-- `externs/fade` gains fn 42 and fn 43. The snapshot is taken once, at
-  fade-out, so changing the picture between a fade out and a fade in
-  restored the OLD picture's palette onto the new pixels - and since
-  `DISPLAY 0` loads the new palette as it flips (gfx_blit), the new
-  scene also appeared instantly at full brightness with no fade at
-  all. `EXTERN 0 42` re-snapshots what DISPLAY just programmed,
-  rebuilds the tables towards the same target colour and restreams the
-  solid end, so a following fn 41 fades up to the NEW picture; call it
-  in the same entry as the DISPLAY, immediately after it.
-  `EXTERN 0 43` blocks until the running fade finishes, bounded at
-  8*speed+32 frames, replacing a DSF flag-poll loop for the common
-  case. The `active` guard moved from the top of ext_main into each
-  branch - a top-level guard would have swallowed fn 43, whose job is
-  to be called mid-fade.
 - The display does not stay on the second bank: every tilemap palette
   write programs NR $43 with bit 2 clear (PAL_TM_FIRST and friends),
   which would drag Layer 2 back to a stale bank 1. gfx_blit refills
