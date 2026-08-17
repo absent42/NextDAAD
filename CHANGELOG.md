@@ -2,6 +2,50 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.7.2 - unreleased
+
+- Fixed: the `examples/fade` XBN did not restore a picture's palette
+  exactly. It snapshotted and restored 8-bit `RRRGGGBB` through NR
+  $41, but Layer 2 art is loaded as 9-bit pairs through NR $44
+  (`l2_palette_load`, overlay2.asm), so a restore re-derived the blue
+  LSB as `(B1 OR B0)` - blue 1 collapsing to 0, blue 2/4/6 rounding up
+  - and discarded the second byte's bit 7, the Layer 2 per-pixel
+  priority flag. Measured over a 256-colour photographic picture: red
+  and green restored bit-exact, blue 3.3% low, visible as a colour
+  cast after one fade out and back. The snapshot now also reads NR $44
+  per colour and the fade-in endpoint restreams 9-bit pairs; the
+  interpolated steps stay 8-bit.
+  The example's prebuilt `GAME.XBN` is rebuilt (3328 bytes).
+- `externs/fade` gains fn 42 and fn 43. The snapshot is taken once, at
+  fade-out, so changing the picture between a fade out and a fade in
+  restored the OLD picture's palette onto the new pixels - and since
+  `DISPLAY 0` loads the new palette as it flips (gfx_blit), the new
+  scene also appeared instantly at full brightness with no fade at
+  all. `EXTERN 0 42` re-snapshots what DISPLAY just programmed,
+  rebuilds the tables towards the same target colour and restreams the
+  solid end, so a following fn 41 fades up to the NEW picture; call it
+  in the same entry as the DISPLAY, immediately after it.
+  `EXTERN 0 43` blocks until the running fade finishes, bounded at
+  8*speed+32 frames, replacing a DSF flag-poll loop for the common
+  case. The `active` guard moved from the top of ext_main into each
+  branch - a top-level guard would have swallowed fn 43, whose job is
+  to be called mid-fade.
+- The display does not stay on the second bank: every tilemap palette
+  write programs NR $43 with bit 2 clear (PAL_TM_FIRST and friends),
+  which would drag Layer 2 back to a stale bank 1. gfx_blit refills
+  bank 1 behind the live bank 2 and hands the display back once the
+  two are identical - both steps invisible by construction. The
+  palette rewind is factored out as gfx_pal_rewind and l2_palette_load
+  gains an l2_palette_load_ctl entry taking the NR $43 value in C; the
+  plain entry is byte-identical, so title_blit is untouched.
+- `externs/fade` derives its NR $43 bursts from the bank currently
+  DISPLAYED (pal_edit_ctl) instead of writing a constant $10. Writing
+  the constant forced the display to bank 1 for the length of every
+  burst, which was harmless only while everything parked there - not
+  true once a picture load or a video clip leaves bank 2 live. It also
+  clobbered the sprite and ULA display-select bits, which are now
+  preserved.
+
 ## v0.7.1 - 15/08/2026
 
 - Fixed: `SVC_GETMSG` corrupted the in-RAM database when decoding a
@@ -18,94 +62,6 @@ All notable changes to NextDAAD are recorded here.
   explicitly, and the XBN fixture gains a six-message token-compressed
   multi-fetch regression (XMS6) with a post-fetch system-message
   print to expose any future token-table damage on screen.
-
-## v0.7.2 - unreleased
-
-- Fixed: the `examples/fade` XBN did not restore a picture's palette
-  exactly. It snapshotted and restored 8-bit `RRRGGGBB` through NR
-  $41, but Layer 2 art is loaded as 9-bit pairs through NR $44
-  (`l2_palette_load`, overlay2.asm), so a restore re-derived the blue
-  LSB as `(B1 OR B0)` - blue 1 collapsing to 0, blue 2/4/6 rounding up
-  - and discarded the second byte's bit 7, the Layer 2 per-pixel
-  priority flag. Measured over a 256-colour photographic picture: red
-  and green restored bit-exact, blue 3.3% low, visible as a colour
-  cast after one fade out and back. The snapshot now also reads NR $44
-  per colour and the fade-in endpoint restreams 9-bit pairs; the
-  interpolated steps stay 8-bit. Verified bit-exact (R/G/B ratios
-  1.000) by driving FADEO/FADEI in a real game under CSpect.
-  The example's prebuilt `GAME.XBN` is rebuilt (3328 bytes).
-- The two-write NR $44 protocol is safe to use from the #int hook: the
-  dev guide's NR $43 entry states a write to $43 resets the $44 byte
-  toggle, and every palette burst in the example already writes $43
-  first. The example's former "cannot be made atomic" note is
-  withdrawn; the standing rule against fading while a PICTURE or
-  DISPLAY draws is unchanged and still carries that hazard.
-- `externs/fade` gains fn 42 and fn 43. The snapshot is taken once, at
-  fade-out, so changing the picture between a fade out and a fade in
-  restored the OLD picture's palette onto the new pixels - and since
-  `DISPLAY 0` loads the new palette as it flips (gfx_blit), the new
-  scene also appeared instantly at full brightness with no fade at
-  all. `EXTERN 0 42` re-snapshots what DISPLAY just programmed,
-  rebuilds the tables towards the same target colour and restreams the
-  solid end, so a following fn 41 fades up to the NEW picture; call it
-  in the same entry as the DISPLAY, immediately after it.
-  `EXTERN 0 43` blocks until the running fade finishes, bounded at
-  8*speed+32 frames, replacing a DSF flag-poll loop for the common
-  case. The `active` guard moved from the top of ext_main into each
-  branch - a top-level guard would have swallowed fn 43, whose job is
-  to be called mid-fade. Verified under CSpect: fade out, PICTURE 5,
-  DISPLAY 0, fn 42, fn 41 restores picture 5 bit-exactly against a
-  plain PICTURE 5 / DISPLAY 0 baseline (R/G/B all 1.000).
-- fn 42 blanks BEFORE it recomputes. DISPLAY 0 leaves the new picture
-  on screen at full brightness (l2_palette_load runs immediately
-  before the flip), and precalc is seven 256-entry tables with a
-  multiply loop per channel - several frames. Snapshotting and
-  precalculating before the blank showed the new scene for ~110ms,
-  measured as a 6-frame brightness spike in the field. Order is now
-  snapshot, apply the solid end, precalc, apply again so the solid
-  end's transparency pins match the new art. Re-measured: no spike,
-  and the restore is still bit-exact.
-- The 0.7.0 notes advertised the fade example for scene changes. That
-  only becomes true with fn 42; the author-facing changelog says so.
-- Fixed: a picture change tore its colours across the screen. gfx_blit
-  loaded the incoming palette into the Layer 2 bank that was on screen,
-  byte by byte and unsynchronised to the raster, so the beam scanned
-  part of a frame with the old colours and the rest with the new. It
-  now builds the palette in the bank that is NOT displayed
-  (PAL_L2_EDIT_SECOND) and swaps surface and palette together, the NR
-  $43 write trailing NR $12 by well under a scanline. Reported in the
-  field as an image flash through a fade-to-black scene change; it was
-  never fade-specific - every PICTURE/DISPLAY had it.
-- The display does not stay on the second bank: every tilemap palette
-  write programs NR $43 with bit 2 clear (PAL_TM_FIRST and friends),
-  which would drag Layer 2 back to a stale bank 1. gfx_blit refills
-  bank 1 behind the live bank 2 and hands the display back once the
-  two are identical - both steps invisible by construction. The
-  palette rewind is factored out as gfx_pal_rewind and l2_palette_load
-  gains an l2_palette_load_ctl entry taking the NR $43 value in C; the
-  plain entry is byte-identical, so title_blit is untouched.
-- fn 42 blanks the visible bank BEFORE reading anything. What is left
-  on screen after DISPLAY 0 is scanned out for as long as the extern
-  takes to blank it, so the blank must be the first thing it does: one
-  256-entry burst rather than a 256-colour readback plus precalc.
-  Reading the picture's colours afterwards is possible because
-  gfx_blit's bank-1 refill happens to leave an identical copy in the
-  non-displayed bank (snapOther / pal_other_ctl / pal_snap_ctl select
-  it). That refill exists for the interpreter's own correctness, not
-  for externs: the extern leans on it, the interpreter promises
-  nothing, and if gfx_blit changes the extern is what gets updated. Estimated exposure drops from ~60k to ~25k
-  T-states, about 19 scanlines to 8; the residual is inherent to the
-  picture being displayed at all, and only a palette hold in gfx_blit
-  would take it to zero. NOT verifiable on CSpect, which applies
-  palette writes at frame granularity and never shows a mid-raster
-  band - reported from silicon, reasoned from T-state counts.
-- `externs/fade` derives its NR $43 bursts from the bank currently
-  DISPLAYED (pal_edit_ctl) instead of writing a constant $10. Writing
-  the constant forced the display to bank 1 for the length of every
-  burst, which was harmless only while everything parked there - not
-  true once a picture load or a video clip leaves bank 2 live. It also
-  clobbered the sprite and ULA display-select bits, which are now
-  preserved.
 
 ## v0.7.0 - 14/08/2026
 

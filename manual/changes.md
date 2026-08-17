@@ -3,16 +3,6 @@
 Changes an author can see, newest first. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.7.1 - 15 August 2026
-
-- **Fixed: fetching more than one message from an extern corrupted the
-  game.** `SVC_GETMSG` damaged the database's text compression tables
-  whenever it decoded a compressed message, so a second fetch returned
-  wrong text, ordinary game messages garbled, and the interpreter
-  eventually stopped with `RD STACK - E9`. If your extern fetched one
-  message per session you were safe - the shipped ticker example was -
-  but anything more ambitious hit it.
-
 ## 0.7.2 - unreleased
 
 - **Fixed: the fade example did not put a picture's colours back
@@ -27,26 +17,22 @@ game behaves, how it builds, or what the kit gives you, it is here.
   need the new binary.
 - **The fade extern can now change the picture mid-fade, and wait for
   itself.** Two additions to `externs/fade`. `EXTERN 0 43` blocks until
-  the running fade finishes - one line in place of a flag-polling
-  process loop, which is what you want for a plain scene transition.
-  Flag 240 is still there for when the fade should overlap other work,
-  and its README now spells the loop out rather than leaving it as
-  "poll it". `EXTERN 0 42` fixes changing the picture between a fade
+  the running fade finishes -`EXTERN 0 42` fixes changing the picture between a fade
   out and a fade in: the snapshot is taken when you fade out, so
   without it the fade in walked back to the colours of a picture that
   was no longer on screen, and the new picture appeared at once at full
   brightness instead of fading up. Call it right after `DISPLAY 0` and
   the new scene fades up properly. The README has the full sequence.
-- **Fixed: changing the picture flashed the incoming image.** Any
-  `PICTURE` / `DISPLAY 0` loaded the new picture's colours into the
-  palette that was on screen at the time, so for a fraction of a frame
-  the display showed part of the old picture's colours and part of the
-  new - a band of wrong colour across the image. It was most obvious
-  when changing scene behind a fade to black, where the incoming
-  picture flashed through, but it was never fade-specific: every
-  picture change had it. The interpreter now builds the new palette
-  where it cannot be seen and swaps it in with the picture. Nothing to
-  change in your game; you need the new interpreter.
+
+## 0.7.1 - 15 August 2026
+
+- **Fixed: fetching more than one message from an extern corrupted the
+  game.** `SVC_GETMSG` damaged the database's text compression tables
+  whenever it decoded a compressed message, so a second fetch returned
+  wrong text, ordinary game messages garbled, and the interpreter
+  eventually stopped with `RD STACK - E9`. If your extern fetched one
+  message per session you were safe - the shipped ticker example was -
+  but anything more ambitious hit it.
 
 ## 0.7.0 - 14 August 2026
 
