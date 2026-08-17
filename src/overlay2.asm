@@ -1029,9 +1029,19 @@ h_display:
 ;   9/10 = jdaad's numbered-palette store/recall (flag-offset RGB
 ;       triples into a software colour table) - no NextDAAD analogue,
 ;       Layer 2 palette load is picture-driven only; documented no-op
-;   3/4/7/8/11-15 (and jdaad's 13/14 MP4-via-SFX redirect) = no
-;       NextDAAD analogue either (graphics/text-buffer split, video
-;       playback); documented no-op
+;   3 = graphics write to physical screen (the default); 4 = graphics
+;       write to back buffer (DAAD condact reference, GFX Routines) -
+;       both just set gfxDrawTarget (0/1) for gfx_blit to read; jdaad
+;       no-ops 3/4 (no such mode in DBBuffertoScreen et al.), but the
+;       reference table is the authority here, not jdaad parity.
+;       gfxDrawTarget is transient: GFX n 3, RESTART, a same-part LOAD
+;       or a restart all clear it back to 0 (screen). Neither sub
+;       touches gfxRevealPend - GFX n 3 does not cancel a deferred
+;       DISPLAY reveal. Subs 0 and 2 (.backfront/.swap above) gain
+;       reveal semantics of their own in a later task.
+;   7/8/11-15 (and jdaad's 13/14 MP4-via-SFX redirect) = no NextDAAD
+;       analogue either (text-buffer split, video playback);
+;       documented no-op
 ;   16 = install font B (0 = base - the embedded table, then FONT.CHR
 ;       over it if one exists; 1-9 = FONT<n>.CHR) - NextDAAD-only, no
 ;       jdaad/DAAD-reference analogue; GFX_SUB_FONT (nextdaad.inc) -
@@ -1052,6 +1062,10 @@ h_gfx:
     jp z, l2_clear
     cp 6
     jp z, l2_clear_back
+    cp 3
+    jr z, .toscreen
+    cp 4
+    jr z, .tobuffer
     cp GFX_SUB_VID_ONCE
     jr z, .vidonce
     cp GFX_SUB_VID_LOOP
@@ -1071,6 +1085,14 @@ h_gfx:
     call dbg_hex8
     pop bc
  ENDIF
+    ret
+.tobuffer:                       ; sub 4: graphics write to back buffer.
+    ld a, 1                      ; DISPLAY stages without revealing.
+    ld (gfxDrawTarget), a        ; Transient: GFX n 3, RESTART, LOAD or
+    ret                          ; restart clears it.
+.toscreen:                       ; sub 3: graphics write to screen (the
+    xor a                        ; default). Does NOT reveal or cancel a
+    ld (gfxDrawTarget), a        ; pending deferred DISPLAY.
     ret
 .backfront:
     ld a, (l2FrontBank)
