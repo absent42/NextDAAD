@@ -998,7 +998,7 @@ h_display:
     ld a, (gfxDrawTarget)
     or a
     ret nz                      ; buffer mode: the clear is a buffer
-                                 ; write - no flip (spec 4.6)
+                                 ; write - no flip
     xor a
     ld (gfxRevealPend), a       ; an explicit clear-flip discards any
                                  ; pending deferred picture
