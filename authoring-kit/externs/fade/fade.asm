@@ -957,7 +957,13 @@ lerp_ch:
 .mul:
     add a, l                     ; a += delta, k times
     djnz .mul
-    ; divide by 8, rounding towards minus infinity
+    ; divide by 8, rounding to nearest: the +4 is half a divisor, and
+    ; the arithmetic shifts floor, so the pair rounds. Plain flooring
+    ; biased every channel towards the source, which cost a fade-out its
+    ; last step - a fade to black reached black at step 7 and spent step
+    ; 8 already there. Endpoints are untouched either way: k is 1-7 here,
+    ; k=0 is the snapshot table and k=8 is written as the solid target.
+    add a, 4
     sra a
     sra a
     sra a
