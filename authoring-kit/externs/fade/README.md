@@ -66,7 +66,7 @@ new scene would otherwise appear at once, at full brightness, with no
 fade at all. `EXTERN 0 42` handles both: it re-snapshots what `DISPLAY`
 just programmed and puts the fade colour straight back on screen.
 
-### Recommended: buffered scene change (zero-window reveal)
+### Buffered scene change fade
 
 Pair the fade with the interpreter's `GFX` draw-target subs (condact
 87, subs 3/4) to stage the new picture off-screen and reveal it only
@@ -103,37 +103,6 @@ it, it stays open until `GFX 0 3`, `RESTART`, a same-part
 Revealing the picture (`GFX 0 2`) does not close it on its own - that
 is why the sequence above always ends with an explicit `GFX 0 3`, even
 though the picture is already on screen by then.
-
-### Old sequence (no buffer mode)
-
-Still supported, unchanged, and simpler if the thin band it leaves
-behind is acceptable for your game:
-
-    LET 241 6
-    EXTERN 0 40        ; fade out to black
-    EXTERN 0 43        ; wait for it
-    PICTURE 5
-    DISPLAY 0          ; new bitmap and its palette
-    EXTERN 0 42        ; re-snapshot it, hold the black
-    EXTERN 0 41        ; fade up to the NEW picture
-    EXTERN 0 43        ; wait for it
-
-Put `EXTERN 0 42` immediately after `DISPLAY 0`, with nothing between
-them. `DISPLAY 0` swaps in the new picture and its colours together, so
-from that instant the new scene is on screen at full brightness; fn 42
-is what puts the fade colour back. Anything you slip in between is time
-the player spends looking at the un-faded picture.
-
-fn 42 needs the 0.7.2 interpreter or later. It blanks the screen first
-and only then recovers the new picture's colours, from a spare palette
-bank that older interpreters do not leave behind - which is what keeps
-the gap between `DISPLAY 0` and the blank down to a single palette
-write. Even so the gap is not zero: the picture is genuinely on screen
-for a fraction of a frame, and on real hardware you may catch a thin
-band of it. The buffered sequence above removes this gap entirely by
-never putting the picture on screen until its palette is already
-solid - reach for it when the band matters and the two extra `GFX`
-lines are an acceptable cost.
 
 ## Build
 
