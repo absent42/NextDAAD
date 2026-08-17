@@ -108,6 +108,26 @@ canonical sequence for one scene change is `GFX n 4`, `DISPLAY 0`,
 `GFX n 2`, `GFX n 3` - always close with an explicit `GFX n 3`, even
 though nothing in the reveal itself does it for you.
 
+While a deferred picture's resolution differs from the one currently
+on screen, the only supported buffer operations are `DISPLAY 0`
+(re-stage) and `GFX n 2` (the reveal, above); `GFX n 0`, `1` and `5`
+all operate on front-surface sizing that is stale for the length of
+that deferral.
+
+Video playback (`GFX n 13`/`14`) while buffer mode is active is
+unsupported - issue `GFX n 3` first.
+
+Known limitation: buffer-mode scene changes are not guaranteed when
+the picture cache is exhausted by an oversized, uncompressed picture
+(only reachable after a full eviction pass finds nothing left to
+evict - effectively unreachable on 2MB-standard hardware). In that
+case the fallback loader draws the picture directly rather than
+staging it, so the screen flips immediately and the stage is cleared
+regardless of the draw target; a `DISPLAY 0` that follows then
+no-ops, and the reveal after it can land on a mismatched surface or
+palette. The effect is a transient flash and possibly one wrong fade;
+it self-heals at the next picture change.
+
 jdaad no-ops subs 3 and 4 - there is no such buffer-mode concept in its
 `DBBuffertoScreen`/`DBSwapBuffers` family. The DAAD condact reference
 table is the authority for this target, not jdaad parity.

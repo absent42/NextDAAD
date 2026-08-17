@@ -139,6 +139,11 @@ l2BackBank:   db BANK_L2BACK_FIRST
 ; comes first. NOTE the reveal subs (GFX n 0/2) clear only the PENDING
 ; flag, never the mode - that is why the canonical sequence ends with
 ; an explicit GFX n 3.
+; These three bytes must stay contiguous and in this order:
+; gfx_drawtarget_clear (main.asm) walks them with inc hl. No other
+; caller walks the block - overlay0.asm's h_restart and overlay1.asm's
+; same-part LOAD/RAMLOAD paths each set all three with individual
+; ld (nn),a instructions instead.
 gfxDrawTarget: db 0   ; 0 = screen (DISPLAY reveals immediately),
                       ; 1 = buffer (DISPLAY stages, no reveal)
 gfxRevealPend: db 0   ; 1 = a deferred DISPLAY awaits its reveal

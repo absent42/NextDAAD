@@ -448,8 +448,9 @@ h_picture:
 ; case is the raster catching a sub-scanline sliver of the old
 ; surface in the new mode (one scanline is 64us), versus a full frame
 ; of wrong-mode flash if either register changed alone with the other
-; waiting a frame; h_display's clear path writes NR $12
-; directly (no mode change, no window at all). Corrupts AF, B.
+; waiting a frame; h_display's clear path also flips via l2_mode_set
+; with l2Mode - the same NR $70+$12 pairing, not a bare NR $12 write.
+; Corrupts AF, B.
 l2_flip_swap:
     ld a, (l2FrontBank)
     ld b, a
@@ -988,8 +989,9 @@ l2CopyChunkCnt: db 0
 ; the front in place: one NR $12 write makes it instantaneous, where
 ; a front clear would wipe 48-80K through the visible surface -
 ; exactly the progressive-paint artifact double buffering exists to
-; kill. Mode, clip and palette are left as they stand. Corrupts
-; everything.
+; kill. Palette is left as it stands; the flip goes through
+; l2_mode_set with l2Mode, idempotent when the mode is unchanged.
+; Corrupts everything.
 h_display:
     ld a, b
     or a
