@@ -65,19 +65,60 @@ The authoring kit's `externs\ticker\` folder is a complete, working
 XBN worth reading start to finish before you write your own: a
 foreground `EXTERN` call fetches a database message with `SVC_GETMSG`,
 copies it into the extern's own memory, and a `#int` hook ticks it out
-one character per frame along the bottom row of the tilemap. A second
-example, `externs/fade`, fades the Layer 2 picture to any RRRGGGBB
-colour and back for narrative beats - it additionally demonstrates
-reading hardware state back (the palette snapshot), the
-register-select save/restore bracket around shared indexed registers,
-and foreground precompute feeding a cheap interrupt hook. Both
-examples ship with a prebuilt `GAME.XBN` beside the source, so you can
-try them on a card without assembling anything. Its own
-`README.md` covers how to build it and wire it into a DSF; the source
-comments walk through every decision, including the one mistake it is
-built to guard you away from - see
-[SVC_GETMSG's staging semantics](#services) below. It is the same code
-this chapter's examples are drawn from.
+one character per frame along the bottom row of the tilemap. It ships
+with a prebuilt `GAME.XBN` beside the source, so you can try it on a
+card without assembling anything. Its own `README.md` covers how to
+build it and wire it into a DSF; the source comments walk through
+every decision, including the one mistake it is built to guard you
+away from - see [SVC_GETMSG's staging semantics](#services) below. It
+is the same code this chapter's examples are drawn from.
+
+### The fade example
+
+The kit's second worked example, `externs/fade`, fades the Layer 2
+picture to any RRRGGGBB colour and back for narrative beats. Beyond the
+ticker example's XBN mechanics, it demonstrates reading hardware state
+back (the palette snapshot), the register-select save/restore bracket
+around shared indexed registers, and foreground precompute feeding a
+cheap interrupt hook. It ships with a prebuilt `GAME.XBN` beside the
+source, so you can try it on a card without assembling anything, and
+its own `README.md` covers building it and wiring it into a DSF.
+
+The recommended sequence for a scene change behind a fade, buffered so
+the new picture never flashes onto screen mid-fade:
+
+```
+EXTERN 0 40   ; fade out to the target colour
+EXTERN 0 43   ; wait
+PICTURE @room ; CONDITION - aborts the entry on dark/no art, leaving
+              ; the draw target untouched
+GFX 0 4       ; open buffer mode - AFTER the PICTURE condition, so a
+              ; failing PICTURE never strands buffer mode with
+              ; GFX 0 3 unreached
+DISPLAY 0     ; pixels + palette staged; screen untouched
+EXTERN 0 42   ; snapshot the hidden palette, rebuild the fade tables,
+              ; solid it into both palette banks
+GFX 0 2       ; reveal: flip the surface; every palette is solid
+GFX 0 3       ; close buffer mode; drawing targets the screen again
+EXTERN 0 41   ; fade up to the new picture
+EXTERN 0 43
+```
+
+Two rules keep this sequence honest:
+
+- **`PICTURE` before `GFX 0 4`.** `PICTURE` is a condition - it aborts
+  the entry on a dark room or missing art. Opening buffer mode before
+  that condition runs would strand it open on an abort, since the
+  aborted entry never reaches the `GFX 0 3` that would have closed it.
+- **No reveal while a fade is still stepping.** Do not run `GFX 0 2` or
+  `GFX 0 3` between starting a fade (`EXTERN 0 40`/`41`) and its
+  completion - wait on `EXTERN 0 43` or flag 240 first. The palette
+  interface is shared hardware: a still-stepping fade overlapping the
+  reveal can land the interrupt hook's write mid-mirror and corrupt one
+  palette entry.
+
+This is the same sequence documented in `externs/fade/fade.asm`'s own
+header, kept in step with it here.
 
 ## The EXTERN contract
 

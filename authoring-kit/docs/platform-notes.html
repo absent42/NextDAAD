@@ -59,9 +59,11 @@ mode, so 15 is accepted and does nothing here too. Worth stating
 explicitly now that its neighbour, sub 16, installs a font - see
 <a href="customising.html">Customising</a>.</p>
 <p>The <code>GFX</code> sub-commands that <em>are</em> implemented here - the buffer copies
-and swaps, the surface clears, video playback on 13 and 14, and font
-installation on 16 - are listed in <a href="reference/symbols.html">Symbols</a>,
-<a href="video.html">Video</a> and <a href="customising.html">Customising</a>.</p>
+and swaps, the draw-target subs 3 and 4 (screen vs. back-buffer
+drawing) and their reveal semantics on 0 and 2, the surface clears,
+video playback on 13 and 14, and font installation on 16 - are listed
+in <a href="reference/symbols.html">Symbols</a>, <a href="video.html">Video</a> and
+<a href="customising.html">Customising</a>.</p>
 <h2 id="text-colour">Text colour</h2>
 <h3 id="only-128-inkpaper-combinations-can-be-on-screen-at-once">Only 128 ink/paper combinations can be on screen at once</h3>
 <p>The tilemap computes each cell's palette index as <code>(attribute AND $FE)

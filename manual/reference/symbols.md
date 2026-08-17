@@ -80,18 +80,34 @@ number.
 "Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
-prints a marker). That covers 3, 4, 7, 8, 11, 12 and 15, and everything
+prints a marker). That covers 7, 8, 11, 12 and 15, and everything
 from 17 up, as well as 9 and 10 - see
 [Platform notes](../platform-notes.md) for why 9, 10 and 15 have nothing
 to act on here.
 
 | s | Behaviour on this target |
 |---|---------------------------|
-| 0 | Copy the back surface onto the front one, in place. What you drew off-screen becomes visible; the two surfaces keep their identities. |
+| 0 | Copy the back surface onto the front one, in place. What you drew off-screen becomes visible; the two surfaces keep their identities. If a picture is staged behind a pending reveal (drawn while sub 4's buffer mode was open, below), the copy also applies its palette - but the copy is progressive, not atomic, and does not change surface resolution, so it does not support revealing a staged picture whose resolution differs from the one currently on screen. Use 2 for that case. |
 | 1 | Copy the front surface onto the back one, in place - the reverse of 0. |
-| 2 | Swap the front and back surfaces, and show the new front immediately. Nothing is copied, so this is the cheap way to present an off-screen frame. |
+| 2 | Swap the front and back surfaces, and show the new front immediately. Nothing is copied, so this is the cheap way to present an off-screen frame. If a picture is staged behind a pending reveal, the swap lands the surface, its resolution and its palette together, atomically - this is the clean reveal, and the only supported way (besides re-issuing `DISPLAY`) to reveal a staged picture whose resolution differs from the one currently on screen. |
+| 3 | Graphics write to the physical screen - the default. `PICTURE`/`DISPLAY` draw and reveal on the visible surface directly; nothing is staged. Also closes buffer mode opened by sub 4. |
+| 4 | Graphics write to the back buffer. `DISPLAY 0` stages the incoming picture's pixels and palette into the hidden surface only - the screen stays exactly as it was until a reveal (sub 0 or 2, above). |
 | 5 | Clear the front surface - the visible one - in place. |
 | 6 | Clear the back surface. |
 | 13 | Play video `n` (`NNN.VID`) once. Identical to `SFX n 9` (`PLAYFLI`). See [Video](../video.md). |
 | 14 | As 13, looped until a key is pressed. Identical to `SFX n 10` (`PLAYFLIL`). |
 | 16 | Install font `n`. `n` 0 is the base font - the embedded table, then `FONT.CHR` over it if one exists; 1-9 select `FONT1.CHR` to `FONT9.CHR`. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See [Customising](../customising.md). |
+
+Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
+`RESTART`, a same-part `LOAD`/`RAMLOAD`, or any game (re)start -
+whichever comes first. Revealing a staged picture (sub 0 or 2) clears
+only the pending reveal, never the mode itself - a game that opens
+buffer mode and reveals a picture is still in buffer mode afterwards,
+and the next `DISPLAY` stages again rather than drawing to screen. The
+canonical sequence for one scene change is `GFX n 4`, `DISPLAY 0`,
+`GFX n 2`, `GFX n 3` - always close with an explicit `GFX n 3`, even
+though nothing in the reveal itself does it for you.
+
+jdaad no-ops subs 3 and 4 - there is no such buffer-mode concept in its
+`DBBuffertoScreen`/`DBSwapBuffers` family. The DAAD condact reference
+table is the authority for this target, not jdaad parity.

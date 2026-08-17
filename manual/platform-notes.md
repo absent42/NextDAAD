@@ -66,9 +66,11 @@ explicitly now that its neighbour, sub 16, installs a font - see
 [Customising](customising.md).
 
 The `GFX` sub-commands that *are* implemented here - the buffer copies
-and swaps, the surface clears, video playback on 13 and 14, and font
-installation on 16 - are listed in [Symbols](reference/symbols.md),
-[Video](video.md) and [Customising](customising.md).
+and swaps, the draw-target subs 3 and 4 (screen vs. back-buffer
+drawing) and their reveal semantics on 0 and 2, the surface clears,
+video playback on 13 and 14, and font installation on 16 - are listed
+in [Symbols](reference/symbols.md), [Video](video.md) and
+[Customising](customising.md).
 
 ## Text colour
 

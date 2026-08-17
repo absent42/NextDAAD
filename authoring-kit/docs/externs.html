@@ -59,19 +59,54 @@ binary, header included, must fit in 16384 bytes - see
 XBN worth reading start to finish before you write your own: a
 foreground <code>EXTERN</code> call fetches a database message with <code>SVC_GETMSG</code>,
 copies it into the extern's own memory, and a <code>#int</code> hook ticks it out
-one character per frame along the bottom row of the tilemap. A second
-example, <code>externs/fade</code>, fades the Layer 2 picture to any RRRGGGBB
-colour and back for narrative beats - it additionally demonstrates
-reading hardware state back (the palette snapshot), the
-register-select save/restore bracket around shared indexed registers,
-and foreground precompute feeding a cheap interrupt hook. Both
-examples ship with a prebuilt <code>GAME.XBN</code> beside the source, so you can
-try them on a card without assembling anything. Its own
-<code>README.md</code> covers how to build it and wire it into a DSF; the source
-comments walk through every decision, including the one mistake it is
-built to guard you away from - see
-<a href="#services">SVC_GETMSG's staging semantics</a> below. It is the same code
-this chapter's examples are drawn from.</p>
+one character per frame along the bottom row of the tilemap. It ships
+with a prebuilt <code>GAME.XBN</code> beside the source, so you can try it on a
+card without assembling anything. Its own <code>README.md</code> covers how to
+build it and wire it into a DSF; the source comments walk through
+every decision, including the one mistake it is built to guard you
+away from - see <a href="#services">SVC_GETMSG's staging semantics</a> below. It
+is the same code this chapter's examples are drawn from.</p>
+<h3 id="the-fade-example">The fade example</h3>
+<p>The kit's second worked example, <code>externs/fade</code>, fades the Layer 2
+picture to any RRRGGGBB colour and back for narrative beats. Beyond the
+ticker example's XBN mechanics, it demonstrates reading hardware state
+back (the palette snapshot), the register-select save/restore bracket
+around shared indexed registers, and foreground precompute feeding a
+cheap interrupt hook. It ships with a prebuilt <code>GAME.XBN</code> beside the
+source, so you can try it on a card without assembling anything, and
+its own <code>README.md</code> covers building it and wiring it into a DSF.</p>
+<p>The recommended sequence for a scene change behind a fade, buffered so
+the new picture never flashes onto screen mid-fade:</p>
+<pre><code>EXTERN 0 40   ; fade out to the target colour
+EXTERN 0 43   ; wait
+PICTURE @room ; CONDITION - aborts the entry on dark/no art, leaving
+              ; the draw target untouched
+GFX 0 4       ; open buffer mode - AFTER the PICTURE condition, so a
+              ; failing PICTURE never strands buffer mode with
+              ; GFX 0 3 unreached
+DISPLAY 0     ; pixels + palette staged; screen untouched
+EXTERN 0 42   ; snapshot the hidden palette, rebuild the fade tables,
+              ; solid it into both palette banks
+GFX 0 2       ; reveal: flip the surface; every palette is solid
+GFX 0 3       ; close buffer mode; drawing targets the screen again
+EXTERN 0 41   ; fade up to the new picture
+EXTERN 0 43
+</code></pre>
+<p>Two rules keep this sequence honest:</p>
+<ul>
+<li><strong><code>PICTURE</code> before <code>GFX 0 4</code>.</strong> <code>PICTURE</code> is a condition - it aborts
+  the entry on a dark room or missing art. Opening buffer mode before
+  that condition runs would strand it open on an abort, since the
+  aborted entry never reaches the <code>GFX 0 3</code> that would have closed it.</li>
+<li><strong>No reveal while a fade is still stepping.</strong> Do not run <code>GFX 0 2</code> or
+  <code>GFX 0 3</code> between starting a fade (<code>EXTERN 0 40</code>/<code>41</code>) and its
+  completion - wait on <code>EXTERN 0 43</code> or flag 240 first. The palette
+  interface is shared hardware: a still-stepping fade overlapping the
+  reveal can land the interrupt hook's write mid-mirror and corrupt one
+  palette entry.</li>
+</ul>
+<p>This is the same sequence documented in <code>externs/fade/fade.asm</code>'s own
+header, kept in step with it here.</p>
 <h2 id="the-extern-contract">The EXTERN contract</h2>
 <p><code>EXTERN p1 fn</code> (and its three-parameter V3 form) calls your extern's
 entry point with the second parameter as a dispatch selector, the way
