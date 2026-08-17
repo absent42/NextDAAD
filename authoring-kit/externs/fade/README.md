@@ -66,6 +66,49 @@ new scene would otherwise appear at once, at full brightness, with no
 fade at all. `EXTERN 0 42` handles both: it re-snapshots what `DISPLAY`
 just programmed and puts the fade colour straight back on screen.
 
+### Recommended: buffered scene change (zero-window reveal)
+
+Pair the fade with the interpreter's `GFX` draw-target subs (condact
+87, subs 3/4) to stage the new picture off-screen and reveal it only
+once its palette is already solid, so the new picture never appears at
+full brightness even for a fraction of a frame:
+
+    LET 241 6
+    EXTERN 0 40        ; fade out to black
+    EXTERN 0 43        ; wait for it
+    PICTURE 5          ; CONDITION - aborts here on a dark room or
+                       ; missing art, before anything touches the
+                       ; draw target
+    GFX 0 4            ; open buffer mode - graphics draw to the
+                       ; hidden surface only, screen untouched
+    DISPLAY 0          ; new bitmap + palette staged, NOT revealed
+    EXTERN 0 42        ; re-snapshot the staged palette, hold the
+                       ; black, solid it into both palette banks
+    GFX 0 2            ; reveal: surface flip + resolution + palette
+                       ; land together, atomically
+    GFX 0 3            ; close buffer mode - drawing targets the
+                       ; screen again
+    EXTERN 0 41        ; fade up to the NEW picture
+    EXTERN 0 43        ; wait for it
+
+`PICTURE` comes BEFORE `GFX 0 4`, not after. `PICTURE` is a condition -
+it fails and aborts the entry on a dark room or missing art. Opening
+buffer mode first and letting `PICTURE` abort afterwards would strand
+buffer mode open, since the aborted entry never reaches the `GFX 0 3`
+that would have closed it again.
+
+Buffer mode is transient, but only up to a point: once `GFX 0 4` opens
+it, it stays open until `GFX 0 3`, `RESTART`, a same-part
+`LOAD`/`RAMLOAD`, or any game (re)start - whichever comes first.
+Revealing the picture (`GFX 0 2`) does not close it on its own - that
+is why the sequence above always ends with an explicit `GFX 0 3`, even
+though the picture is already on screen by then.
+
+### Old sequence (no buffer mode)
+
+Still supported, unchanged, and simpler if the thin band it leaves
+behind is acceptable for your game:
+
     LET 241 6
     EXTERN 0 40        ; fade out to black
     EXTERN 0 43        ; wait for it
@@ -87,7 +130,10 @@ bank that older interpreters do not leave behind - which is what keeps
 the gap between `DISPLAY 0` and the blank down to a single palette
 write. Even so the gap is not zero: the picture is genuinely on screen
 for a fraction of a frame, and on real hardware you may catch a thin
-band of it. Nothing an extern can do removes that entirely.
+band of it. The buffered sequence above removes this gap entirely by
+never putting the picture on screen until its palette is already
+solid - reach for it when the band matters and the two extra `GFX`
+lines are an acceptable cost.
 
 ## Build
 
@@ -98,13 +144,16 @@ GAME.DDB and it just works. To rebuild after editing the source:
 
 ## Rules
 
-- Do not fade while a PICTURE or DISPLAY is drawing, or while a video
-  clip is playing: the palette hardware is an indexed register
-  interface shared with the interpreter's own graphics machinery.
-  Trigger fades from quiet moments and wait for the fade to finish.
-  The one deliberate exception is the `DISPLAY 0` / `EXTERN 0 42` pair
-  above, where the fade is parked at its solid end and nothing is
-  stepping.
+- Do not fade while a PICTURE or DISPLAY is drawing, while a video
+  clip is playing, or while `GFX 0 2`/`GFX 0 3` (the reveal subs) are
+  running: the palette hardware is an indexed register interface
+  shared with the interpreter's own graphics machinery. A
+  still-stepping fade overlapping a reveal can land the interrupt
+  hook's write mid-mirror and corrupt one palette entry. Trigger fades
+  from quiet moments and wait for the fade to finish (`EXTERN 0 43` or
+  flag 240) before running a reveal. The one deliberate exception is
+  the `DISPLAY 0` / `EXTERN 0 42` pair above (buffered or not), where
+  the fade is parked at its solid end and nothing is stepping.
 - One XBN per game: to combine this with the ticker extern, merge the
   two sources into one binary - the fn codes (40 to 43 here, 30/31
   there) and flags do not collide, and each source's ext_main dispatch
