@@ -132,6 +132,18 @@ gfxName:      db "000.NX2.ZX0", 0  ; picture filename scratch - RESIDENT so
 l2FrontBank:  db BANK_L2_FIRST
 l2BackBank:   db BANK_L2BACK_FIRST
 
+; GFX condact 87 subs 3/4 draw-target state (resident: h_gfx and the
+; blit paths live in overlay2, the reset sites in engine/overlay0/1).
+; Buffer mode is TRANSIENT by contract: it lasts until GFX n 3,
+; RESTART, same-part LOAD/RAMLOAD, or any game (re)start - whichever
+; comes first. NOTE the reveal subs (GFX n 0/2) clear only the PENDING
+; flag, never the mode - that is why the canonical sequence ends with
+; an explicit GFX n 3.
+gfxDrawTarget: db 0   ; 0 = screen (DISPLAY reveals immediately),
+                      ; 1 = buffer (DISPLAY stages, no reveal)
+gfxRevealPend: db 0   ; 1 = a deferred DISPLAY awaits its reveal
+gfxRevealMode: db 0   ; pending picture's mode (0=256x192, 1=320x256)
+
 gfxBankList: ds GFX_BANKLIST_MAX
 
 ; Reset the whole picture cache to cold state: every slot empty, the
@@ -150,6 +162,10 @@ gfx_cache_reset:
     ld (stagedMode), a
     ld (stagedHeight), a
     ld (gfxBankNext), a
+    call gfx_drawtarget_clear    ; A still 0 here; the 3-byte CALL beats
+                                  ; 9 bytes of inline stores out of the
+                                  ; scarce pre-flags pad (main.asm's
+                                  ; resident tail holds the routine)
     ld a, BANK_L2_FIRST          ; double-buffer roles back to boot state
     ld (l2FrontBank), a
     ld a, BANK_L2BACK_FIRST

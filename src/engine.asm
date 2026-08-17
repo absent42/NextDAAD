@@ -60,6 +60,10 @@ eng_init_game:
     call win_select
     xor a
     ld (procSP), a
+    call gfx_drawtarget_clear    ; A still 0 here; GFX 87/4 buffer mode
+                                  ; is transient - never survives a game
+                                  ; (re)start (3-byte CALL vs 9 bytes of
+                                  ; inline stores - see the routine)
     ld a, $FF
     ld (doallObj), a
     ld a, r

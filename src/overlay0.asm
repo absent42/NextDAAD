@@ -191,6 +191,9 @@ h_restart:                      ; 117: wipe the process stack and the
     xor a                       ; DOALL state; eng_step re-pushes PRO 0
     ld (procSP), a              ; from an empty stack
     ld (doallLevel), a
+    ld (gfxDrawTarget), a       ; RESTART is the render-loop entry in
+    ld (gfxRevealPend), a       ; real games - GFX 87/4 buffer mode is
+    ld (gfxRevealMode), a       ; transient and self-heals here
     ld a, $FF
     ld (doallObj), a
     ret

@@ -707,6 +707,22 @@ sfx_page_call:
 ; reader of channel 2's state, mainline or ISR.
 sfxChan1: ds SMPB_SIZE
 
+; GFX 87 subs 3/4 draw-target state clear (Task 2). gfx_cache_reset
+; (gfxcache.asm) and eng_init_game (engine.asm) both need to zero the
+; three contiguous gfxDrawTarget/gfxRevealPend/gfxRevealMode bytes, and
+; both are pre-anchor callers that cannot each afford three ld (nn),a
+; (9 bytes) out of the scarce pre-flags pad. One shared routine here on
+; the resident tail costs each call site a 3-byte CALL instead.
+; Entry: A=0. Corrupts HL.
+gfx_drawtarget_clear:
+    ld hl, gfxDrawTarget
+    ld (hl), a
+    inc hl
+    ld (hl), a
+    inc hl
+    ld (hl), a
+    ret
+
     ASSERT $ <= RESIDENT_LIMIT
     DISPLAY "resident ends at ", $, " headroom ", /D, RESIDENT_LIMIT - $
 
