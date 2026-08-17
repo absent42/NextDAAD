@@ -995,10 +995,17 @@ h_display:
     or a
     jp z, gfx_blit
     call l2_clear_back
+    ld a, (gfxDrawTarget)
+    or a
+    ret nz                      ; buffer mode: the clear is a buffer
+                                 ; write - no flip (spec 4.6)
+    xor a
+    ld (gfxRevealPend), a       ; an explicit clear-flip discards any
+                                 ; pending deferred picture
     call l2_flip_swap
-    ld a, (l2FrontBank)
-    nextreg NR_L2_BANK, a
-    ret
+    ld a, (l2Mode)              ; flip via the mode the back clear was
+    call l2_mode_set            ; just sized for - NR $70 + $12 paired,
+    ret                         ; idempotent when the mode is unchanged
 
 ; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused by every
 ; sub except 13, 14 and 16 - the video number for 13/14 (see .vidgo
@@ -1014,7 +1021,12 @@ h_display:
 ;       - l2_copy_back_front; jdaad's DBBuffertoScreen draws the back
 ;       canvas onto the visible one the same way, so this needs no NR
 ;       $12 write - the front bank's identity does not change, only
-;       its contents, and it is already the one being displayed
+;       its contents, and it is already the one being displayed. If a
+;       DISPLAY reveal is pending (gfxRevealPend), the copy just put the
+;       staged picture on the visible surface with the WRONG palette
+;       (bank 1's), so .backfront also mirrors bank 2's palette into
+;       bank 1 (l2_pal_mirror21, invisible - bank 1 is off screen) and
+;       re-enables Layer 2, clearing the pending flag
 ;   1 = copy FRONT onto BACK, in place - same routine, source/dest
 ;       bank bases swapped (jdaad's DBScreentoBuffer)
 ;   2 = swap the front/back roles AND push the new front bank to NR
@@ -1022,7 +1034,11 @@ h_display:
 ;       header), so this dispatcher pairs it with the hardware write
 ;       itself, exactly as h_display's clear path above does, so the
 ;       swap is actually visible: jdaad's DBSwapBuffers exchanges the
-;       visible canvas's pixels immediately, not on a later flip
+;       visible canvas's pixels immediately, not on a later flip. If a
+;       DISPLAY reveal is pending, .swap instead runs gfx_blit's atomic
+;       reveal tail in place - flip, mode (NR $70 + $12), palette mirror
+;       into bank 1, enable - so the deferred picture surfaces with its
+;       own resolution and colours rather than the plain identity swap
 ;   5 = clear the FRONT surface in place - l2_clear (jdaad's
 ;       DBClearScreen fills the visible canvas directly)
 ;   6 = clear the BACK surface - l2_clear_back (jdaad's DBClearBuffer)
@@ -1034,11 +1050,12 @@ h_display:
 ;       both just set gfxDrawTarget (0/1) for gfx_blit to read; jdaad
 ;       no-ops 3/4 (no such mode in DBBuffertoScreen et al.), but the
 ;       reference table is the authority here, not jdaad parity.
-;       gfxDrawTarget is transient: GFX n 3, RESTART, a same-part LOAD
-;       or a restart all clear it back to 0 (screen). Neither sub
-;       touches gfxRevealPend - GFX n 3 does not cancel a deferred
-;       DISPLAY reveal. Subs 0 and 2 (.backfront/.swap above) gain
-;       reveal semantics of their own in a later task.
+;       gfxDrawTarget is transient: it lasts until GFX n 3, RESTART,
+;       same-part LOAD/RAMLOAD, or any game (re)start - whichever comes
+;       first. Neither sub touches gfxRevealPend - GFX n 3 does not
+;       cancel a deferred DISPLAY reveal. Subs 0 and 2 (.backfront/
+;       .swap above) carry the reveal semantics for a pending DISPLAY,
+;       documented at each sub above.
 ;   7/8/11-15 (and jdaad's 13/14 MP4-via-SFX redirect) = no NextDAAD
 ;       analogue either (text-buffer split, video playback);
 ;       documented no-op
@@ -1067,11 +1084,11 @@ h_gfx:
     cp 4
     jr z, .tobuffer
     cp GFX_SUB_VID_ONCE
-    jr z, .vidonce
+    jp z, .vidonce
     cp GFX_SUB_VID_LOOP
-    jr z, .vidloop
+    jp z, .vidloop
     cp GFX_SUB_FONT
-    jr z, .font
+    jp z, .font
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
     push bc                     ; across dbg_puts (corrupts BC) for
@@ -1098,14 +1115,40 @@ h_gfx:
     ld a, (l2FrontBank)
     ld d, a
     ld a, (l2BackBank)
-    jp l2_copy_back_front
+    call l2_copy_back_front
+    ld a, (gfxRevealPend)
+    or a
+    ret z                       ; no pending palette: done, as today
+    nextreg NR_PAL_CTRL, PAL_L2_SECOND
+    call l2_pal_mirror21
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    xor a
+    ld (gfxRevealPend), a
+    jp l2_enable
 .frontback:
     ld a, (l2BackBank)
     ld d, a
     ld a, (l2FrontBank)
     jp l2_copy_back_front
 .swap:
+    ld a, (gfxRevealPend)
+    or a
+    jr z, .swapplain
+    ; reveal a deferred DISPLAY: the same atomic tail gfx_blit runs on
+    ; an immediate blit, except bank 1's refill mirrors the live bank
+    ; (the staged source may be gone - direct-stream files are closed)
     call l2_flip_swap
+    ld a, (gfxRevealMode)
+    call l2_mode_set            ; NR $70 + NR $12 back-to-back
+    nextreg NR_PAL_CTRL, PAL_L2_SECOND
+    call l2_pal_mirror21        ; refill bank 1 from bank 2, full 9-bit,
+                                 ; invisible (bank 1 is off screen)
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    xor a
+    ld (gfxRevealPend), a
+    jp l2_enable
+.swapplain:
+    call l2_flip_swap           ; existing behaviour, unchanged
     ld a, (l2FrontBank)
     nextreg NR_L2_BANK, a
     ret
