@@ -9,10 +9,27 @@
 <body>
 <main>
 <h1 id="what-changed">What changed</h1>
-<p>Changes an author can see, newest first. If a release changed how your
+<p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
 <h2 id="072-unreleased">0.7.2 - unreleased</h2>
 <ul>
+<li><strong>Scene changes behind a fade no longer flash the new picture.</strong> On
+  real hardware, changing the picture while faded out could show a
+  brief strip of the new image at full brightness between the fade out
+  and the fade in. Two GFX sub-commands from the original DAAD set are
+  now implemented to close it: <code>GFX 0 4</code> sends drawing to the back
+  buffer, so <code>PICTURE</code> / <code>DISPLAY 0</code> stages the new picture without
+  showing anything, and <code>GFX 0 2</code> reveals it - surface, resolution and
+  colours together. With the fade extern's <code>EXTERN 0 42</code> in between,
+  the screen holds the fade colour through the whole change and the
+  new picture only ever appears through the fade. Order matters:
+  <code>PICTURE</code> comes before <code>GFX 0 4</code>, so a dark room or missing picture
+  cannot leave drawing stuck in the buffer. The exact sequence is in
+  the fade example's README and the
+  <a href="reference/symbols.html">GFX reference</a>; the old sequence without the
+  GFX lines still works as before. The example's prebuilt <code>GAME.XBN</code>
+  is rebuilt again - copy it over yours to get the new <code>EXTERN 0 42</code>
+  behaviour.</li>
 <li><strong>Fixed: the fade example did not put a picture's colours back
   exactly.</strong> Fading out and back left a slight colour cast - on a
   red-heavy photograph red and green returned exactly, but blue came

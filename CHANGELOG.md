@@ -4,6 +4,38 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.7.2 - unreleased
 
+- GFX condact 87 subs 3 and 4 are implemented (previously documented
+  no-ops, per the DAAD reference table): `GFX n 4` sets graphics
+  drawing to the back buffer - `DISPLAY 0` then renders the picture to
+  the back surface and loads its palette into the hidden Layer 2
+  palette bank without flipping, so nothing on screen changes; `GFX n
+  3` returns drawing to the screen (the default). Buffer mode is
+  transient: cleared by `GFX n 3`, RESTART, same-part LOAD/RAMLOAD, or
+  any game (re)start. `GFX n 2` becomes the reveal when a deferred
+  picture is pending: surface, resolution and palette land together
+  (flip + l2_mode_set + display-bank switch, then bank 1 refilled from
+  the live bank via l2_pal_mirror21 and handed back); `GFX n 0` also
+  applies a pending palette after its copy. `DISPLAY n!=0`'s clear
+  path now flips through l2_mode_set and discards a pending reveal;
+  immediate blits clear stale deferral state. Motivation: a scene
+  change behind a fade could scan out a strip of the new picture at
+  full brightness between fade out and fade in (raster-phase window
+  between gfx_blit's flip and the extern's blank) - with the buffered
+  sequence the window is zero by construction. Confirmed fixed on
+  real hardware. Known limitation, documented in the manual: the
+  pool-exhaustion fallback loader draws at PICTURE time, before the
+  recommended sequence opens buffer mode, so an oversized-raw-art
+  cache-exhaustion load mid-fade still flashes (transient,
+  self-healing at the next picture change).
+- `externs/fade` fn 42 additionally streams the solid fade colour
+  into the hidden palette bank (new applyOther/pal_apply_ctl path in
+  apply), so at the `GFX n 2` reveal every palette the beam can see
+  holds the fade colour. The recommended scene-change sequence -
+  fade out, `PICTURE` (the condition comes first so a dark-room abort
+  cannot strand buffer mode), `GFX 0 4`, `DISPLAY 0`, `EXTERN 0 42`,
+  `GFX 0 2`, `GFX 0 3`, fade in - is documented in the extern header,
+  its README and the kit manual. The old unbuffered sequence keeps
+  working, band included. Prebuilt `GAME.XBN` rebuilt (3328 bytes).
 - Fixed: the `examples/fade` XBN did not restore a picture's palette
   exactly. It snapshotted and restored 8-bit `RRRGGGBB` through NR
   $41, but Layer 2 art is loaded as 9-bit pairs through NR $44
