@@ -58,8 +58,17 @@
 ;     code uses the same indexed interface and the #int hook can fire
 ;     in the middle of anything
 ;   - precompute in the foreground, keep the interrupt hook cheap: the
-;     EXTERN call builds all nine 256-byte palette tables up front;
-;     the 50Hz hook only ever streams one prebuilt table to the ports
+;     EXTERN call builds all eighteen 256-byte palette tables up front;
+;     the 50Hz hook only ever streams one prebuilt pair to the ports
+;   - interpolating at the depth the hardware actually has, not the
+;     depth its convenience register offers. Blue is 3 bits like red
+;     and green, but the packed RRRGGGBB byte carries only its top
+;     two and $41 derives the third as B2 OR B1 - four levels. Lerping
+;     the packed byte therefore moved blue in steps twice the size of
+;     red's, and floor division put the error on both sides of the
+;     true ramp: fading in, blue stayed black two steps longer, then
+;     overshot red at step 5. Every step is streamed as a $44 pair
+;     instead, so all three channels walk the same eight levels
 ;
 ; RULES this example obeys (see the externs chapter of the manual):
 ;   - do not fade while a PICTURE/DISPLAY is drawing or a video clip
@@ -69,6 +78,10 @@
 ;     GFX n 2 can land the interrupt hook's apply mid-mirror, and its
 ;     NR $43 write resets the NR $44 byte toggle mid-pair, corrupting
 ;     one mirrored palette entry. Wait on fn 43 or flag 240 first.
+;     Moving the steps from $41 to $44 pairs does NOT widen this
+;     exposure, tempting as it is to assume it does. The damage to a
+;     foreground sequence is done by the NR $43 write that opens and
+;     closes every burst, and both kinds of burst have always made it.
 ;   - one XBN per game: to use fade AND ticker, merge the example
 ;     sources into one binary (their fn codes, 40/41 and 30/31, and
 ;     their flags do not overlap)
@@ -164,7 +177,25 @@ TB_SELECT       equ $243B        ; TBBlue register select - documented RW,
                                  ; so the latch can be saved and restored
 TB_ACCESS       equ $253B        ; TBBlue register access (select+1 in B)
 NR_PAL_IDX      equ $40          ; colour index for read/write
-NR_PAL_VAL      equ $41          ; 8-bit RRRGGGBB, reads AND writes
+NR_PAL_VAL      equ $41          ; 8-bit RRRGGGBB, reads AND writes. The
+                                 ; byte's two blue bits are the TOP two of
+                                 ; the hardware's 3-bit blue (the dev guide
+                                 ; names them B2 and B1), and it fills in
+                                 ; the third itself: "Least significant bit
+                                 ; of blue is set to OR between B2 and B1".
+                                 ; So this register can only express blue
+                                 ; 0, 3, 5 and 7 of 8 - four levels against
+                                 ; red and green's eight, which is why the
+                                 ; fade interpolates through $44 instead
+                                 ; (see precalc and int_fade).
+                                 ; A write here also ZEROES the entry's
+                                 ; priority bits: the core issues the same
+                                 ; palette write as a $44 pair does but
+                                 ; drives the priority field to 0, and its
+                                 ; own register list says "any other bits
+                                 ; associated with the index will be
+                                 ; zeroed". That is settled, not assumed -
+                                 ; int_fade leans on it at the solid end.
 NR_PAL_VAL9     equ $44          ; 9-bit colour, TWO writes: RRRGGGBB then
                                  ; a second byte holding bit 7 = Layer 2
                                  ; per-pixel priority and bit 0 = the blue
@@ -407,7 +438,27 @@ int_fade:
     dec a                        ; towards the snapshot
 .adv:
     ld (step), a
-    call apply                   ; stream table (step) to the palette
+    cp STEPS
+    jr nz, .step9
+    ; The solid end is streamed 8-bit, deliberately. fn 42 puts this
+    ; same table into BOTH palette banks through the same 8-bit path so
+    ; the GFX n 2 reveal's mirror copy is write-of-identical; routing it
+    ; through apply9 here would make the two banks disagree in the blue
+    ; LSB. It costs nothing: step 8 is one flat colour, exactly the byte
+    ; the author asked for, and there is no ramp left to quantise.
+    ;
+    ; It also settles where the priority bit goes, and in the direction
+    ; you want. Steps 0-7 carry the picture's own priority bits, so a
+    ; priority colour keeps its standing over the text window for as
+    ; long as the picture is still visible; this 8-bit write zeroes them,
+    ; so the fully-faded solid colour sits UNDER the live text window,
+    ; which is the whole point of fading with the window still up.
+    call apply
+    jr .chkdir
+.step9:
+    call apply9                  ; steps 0-7: true 9-bit pairs, so blue
+                                 ; interpolates on all three of its bits
+.chkdir:
     ld a, (dir)
     or a
     ld a, (step)
@@ -418,18 +469,14 @@ int_fade:
 .chkin:
     or a
     ret nz                       ; still on the way in
-    ; Reached step 0. apply has just streamed table 0, but only its
-    ; 8-bit half: an $41 write re-derives the blue LSB as (B1 OR B0)
-    ; and drops the priority bit, so the picture comes back a shade
-    ; off. Measured on a red-heavy 256-colour photograph: red and
-    ; green exact, blue 3.3% low - visible as a colour cast, not the
-    ; "imperceptible" this example once claimed. Restream the
-    ; endpoint as true 9-bit pairs, the only write that reproduces
-    ; what the interpreter's own loader put there. One extra burst,
-    ; on one frame, at the end of a fade-in.
-    call apply9
-    ; the snapshot is exactly back on screen. Forget it, so the next
-    ; fn 40 re-snapshots whatever is displayed by then.
+    ; Reached step 0, and apply9 has just streamed the snapshot as true
+    ; 9-bit pairs - blue LSB and priority bit included, the only write
+    ; that reproduces what the interpreter's own loader put there. The
+    ; endpoint is exact by construction now that every step takes that
+    ; path; it used to need a second closing burst here because the
+    ; steps were 8-bit and landed the picture a measured 3.3% low in
+    ; blue. The snapshot is exactly back on screen, so forget it and let
+    ; the next fn 40 re-snapshot whatever is displayed by then.
     xor a
     ld (valid), a
 .done:
@@ -547,10 +594,16 @@ apply:
     ret
 
 ; ---------------------------------------------------------------
-; Stream the snapshot back as TRUE 9-bit colours: table 0 supplies the
-; RRRGGGBB byte, snap9 the second byte (priority + blue LSB). Same
-; save/restore bracket as apply, and interrupt-context safe for the
-; same reasons.
+; Stream table A (0-7) as TRUE 9-bit colours: page A of tables supplies
+; the RRRGGGBB byte, page A of tables9 the second byte (priority + blue
+; LSB). Same save/restore bracket as apply, and interrupt-context safe
+; for the same reasons.
+;
+; This is the fade's normal path - every step but the solid one goes
+; through here, because blue cannot be interpolated at 3-bit depth
+; through $41 (see NR_PAL_VAL above). Step 0 is the untouched snapshot
+; in both tables, so a completed fade-in lands on the original picture
+; bit for bit without any special case.
 ;
 ; The two-write $44 protocol is usable here despite being two writes:
 ; the dev guide's NR $43 entry states that writing $43 "will also reset
@@ -564,6 +617,14 @@ apply:
 ; this burst is broken regardless, because the toggle is hardware state
 ; shared by both.
 apply9:
+    ld d, a                      ; both pages are ALIGN 256: page = high
+    add a, tables>>8             ; byte + step, low byte 0
+    ld h, a
+    ld l, 0                      ; HL = byte 0 source
+    ld a, d
+    add a, tables9>>8
+    ld d, a
+    ld e, 0                      ; DE = byte 1 source, E also the count
     ld bc, TB_SELECT
     in a, (c)
     ld (savesel), a
@@ -572,7 +633,7 @@ apply9:
     inc b
     in a, (c)
     ld (savectl), a
-    call pal_edit_ctl
+    call pal_apply_ctl           ; corrupts AF only - HL/DE stay live
     out (c), a                   ; edit the bank being displayed - and
                                  ; resets the $44 byte toggle
     dec b
@@ -585,21 +646,15 @@ apply9:
     ld a, NR_PAL_VAL9
     out (c), a
     inc b                        ; BC stays $253B for the burst
-    ld hl, tables                ; byte 0 source (ALIGN 256)
-    ld d, snap9>>8               ; byte 1 source page
-    ld e, 0                      ; colour index / 256 iterations
 .wr:
     ld a, (hl)
     out (c), a                   ; first write: RRRGGGBB
-    push hl
-    ld h, d
-    ld l, e
-    ld a, (hl)
-    pop hl
-    out (c), a                   ; second write: priority + blue LSB.
+    ld a, (de)
+    out (c), a                   ; second write: priority + blue LSB
     inc l                        ; auto-inc advances the index AFTER the
-    inc e                        ; second write (dev guide, NR $44)
-    jr nz, .wr
+    inc e                        ; second write (dev guide, NR $44). Both
+                                 ; pages are aligned, so one index serves
+    jr nz, .wr                   ; as both offsets and the loop count
     dec b
     ld a, NR_PAL_CTL
     out (c), a
@@ -613,9 +668,9 @@ apply9:
 
 ; ---------------------------------------------------------------
 ; Foreground only: read the live 256 Layer 2 colours into table 0, and
-; their second bytes into snap9. Reads do not auto-increment (the dev
-; guide scopes auto-inc to writes), so the index register is set per
-; colour and both reads see the same one.
+; their second bytes into tables9 page 0. Reads do not auto-increment
+; (the dev guide scopes auto-inc to writes), so the index register is
+; set per colour and both reads see the same one.
 snapshot:
     ld bc, TB_SELECT
     in a, (c)
@@ -651,8 +706,8 @@ snapshot:
     in a, (c)
     dec b
     push hl
-    ld h, snap9>>8               ; snap9 is ALIGN 256, so the colour
-    ld l, e                      ; index IS the low byte
+    ld h, tables9>>8             ; tables9 is ALIGN 256, so the colour
+    ld l, e                      ; index IS the low byte of page 0
     ld (hl), a
     pop hl
     inc l
@@ -671,35 +726,64 @@ snapshot:
 ; ---------------------------------------------------------------
 ; Foreground only: build tables 1-7 (linear interpolation between the
 ; snapshot and the target, per 3-bit channel) and table 8 (solid
-; target). Done once per fade-out, so the interrupt hook never has to
-; do arithmetic. RRRGGGBB channel k-lerp: out = s + (t-s)*k/8 with
-; the division rounding towards minus infinity (arithmetic shifts) -
-; endpoints are exact by construction (k=0 is the snapshot table
-; itself, k=8 is written as the solid target).
+; target), in both halves - the RRRGGGBB byte in tables, the priority
+; and blue-LSB byte in tables9. Done once per fade-out, so the
+; interrupt hook never has to do arithmetic. Channel k-lerp:
+; out = s + (t-s)*k/8 with the division rounding towards minus infinity
+; (arithmetic shifts) - endpoints are exact by construction (k=0 is the
+; snapshot table itself, k=8 is written as the solid target).
+;
+; ALL THREE channels are lerped at 3 bits. Blue's third bit lives in
+; the second byte, so it is read out of tables9 page 0 on the way in
+; and written back to page kcur on the way out. Doing blue at the 2
+; bits the packed byte offers is what made it fade at twice the rate
+; of red and green - see the header note.
 precalc:
     ; table 8: every entry = the target colour. DODGE rule: a target of
     ; exactly the transparency colour would make the whole layer vanish
     ; (and "fade to transparent" is not this example's contract), so it
-    ; is nudged one blue step to $E2 - visually identical, never
+    ; is nudged down in blue to $E2 - visually near-identical, never
     ; transparent. The same nudge guards every interpolated value below.
     ld a, (target)
     cp TRANSP
     jr nz, .tgtok
-    ld a, TRANSP ^ 1             ; $E2: one blue LSB off - imperceptible
+    ld a, TRANSP ^ 1             ; $E2: the nearest non-transparent blue
 .tgtok:
+    ld c, a                      ; C = the solid byte
+    ; tables9 page 8 gets the blue LSB the hardware would derive from an
+    ; $41 write of that byte (B0 = B2 OR B1), priority clear. int_fade
+    ; streams the solid end 8-bit and never reads this page, and neither
+    ; does fn 42 - it exists so that a future edit routing step 8
+    ; through apply9 stays write-of-identical with the 8-bit path
+    ; instead of silently disagreeing with the other palette bank.
+    rrca
+    or c
+    and 1
+    ld b, a                      ; B = derived blue LSB
     ld hl, tables + 8*256
     ld e, 0
 .solid:
-    ld (hl), a
+    ld (hl), c
     inc l
     dec e
     jr nz, .solid
+    ld hl, tables9 + 8*256
+    ld e, 0
+.solid9:
+    ld (hl), b
+    inc l
+    dec e
+    jr nz, .solid9
     ; tables 1-7
     ld a, 1
 .ktab:
     ld (kcur), a
     ld e, 0                      ; colour index
 .entry:
+    ld h, tables9>>8             ; the snapshot's second byte first: bit
+    ld l, e                      ; 7 priority, bit 0 the blue LSB, so A
+    ld a, (hl)                   ; still holds the packed byte at the
+    ld (s9cur), a                ; transparency test below
     ld h, tables>>8              ; snapshot entry
     ld l, e
     ld a, (hl)
@@ -721,6 +805,15 @@ precalc:
     ld h, a
     ld l, e
     ld (hl), TRANSP
+    ld a, b                      ; the second byte follows it: the
+    cp STEPS                     ; snapshot's own, so a pinned entry is
+    jr nc, .pinnext              ; the snapshot at every step. Page 8 is
+    add a, tables9>>8            ; the flat fill above - leave that one
+    ld h, a
+    ld l, e
+    ld a, (s9cur)
+    ld (hl), a
+.pinnext:
     inc b
     ld a, b
     cp STEPS + 1
@@ -762,14 +855,52 @@ precalc:
     ld a, (rcur)
     or c
     ld (rcur), a
-    ; blue: bits 1-0
+    ; blue: 3 bits, not the 2 the packed byte shows. Bits 1-0 are B2 and
+    ; B1; B0 lives in the snapshot's second byte. Lerping only the pair
+    ; moved blue a whole 2-bit quantum where red moved a 3-bit one, so
+    ; it fell off twice as fast at step 1 and, with floor division,
+    ; overshot red at step 5. Interpolating all three bits puts every
+    ; channel on the same eight-level ramp.
     ld a, (scur)
     and 3
+    add a, a                     ; B2 B1 -> bits 2-1
     ld d, a
+    ld a, (s9cur)
+    and 1                        ; B0 -> bit 0
+    or d
+    ld d, a                      ; D = source blue, 0-7
     ld a, (target)
     and 3
-    call lerp_ch
-    and 3                        ; channel is 2-bit here
+    ld c, a
+    add a, a
+    ld b, a                      ; the target is a plain RRRGGGBB byte,
+    ld a, c                      ; so its own B0 is whatever $41 would
+    rrca                         ; derive from it - B2 OR B1. Using that
+    or c                         ; keeps the far end of the ramp equal
+    and 1                        ; to the solid table the fade parks on
+    or b
+    call lerp_ch                 ; A = lerped blue 0-7
+    ; split the result: B2 B1 back into the packed byte, B0 into the
+    ; second byte next to the priority bit. Priority is carried from the
+    ; snapshot at every step, so a priority colour keeps its standing
+    ; through the fade instead of dropping out and popping back on at
+    ; the end.
+    ld b, a
+    and 1
+    ld c, a
+    ld a, (s9cur)
+    and $C0                      ; the priority FIELD is bits 7-6, not
+                                 ; just bit 7: the core latches
+                                 ; nr_wr_dat(7 downto 6) on a $44 write
+                                 ; and stores both. Layer 2's display
+                                 ; path reads only bit 7 today, so carry
+                                 ; the pair rather than assume which one
+                                 ; a later core will look at
+    or c
+    ld (r9cur), a
+    ld a, b
+    rrca                         ; blue 0-7 -> B2 B1 in bits 1-0
+    and 3
     ld c, a
     ld a, (rcur)
     or c
@@ -778,19 +909,31 @@ precalc:
     ; transparency colour even though neither endpoint equals it (the
     ; interpreter's palette loader keeps art off $E3, but lerp
     ; intermediates answer to nobody). One frame of see-through shimmer
-    ; per crossing entry otherwise - nudge one blue step instead,
-    ; the same dodge the interpreter's own art loader applies.
+    ; per crossing entry otherwise - nudge the blue down instead,
+    ; the same dodge the interpreter's own art loader applies. It has to
+    ; be a whole B1 step: $E3 with B0 clear is blue 6 of 7, one step
+    ; away, but it is still $E3 in the top eight bits and the
+    ; transparency compare only looks there.
     ld a, c
     cp TRANSP
     jr nz, .store
-    ld c, TRANSP ^ 1             ; $E2
+    ld c, TRANSP ^ 1             ; $E2, with B0 set so the entry lands on
+    ld a, (r9cur)                ; blue 5 of 7 - the nearest value the
+    or 1                         ; layer will not read as a punched hole
+    ld (r9cur), a
 .store:
-    ; store into table kcur
+    ; store into table kcur, both halves
     ld a, (kcur)
     add a, tables>>8
     ld h, a
     ld l, e
     ld (hl), c
+    ld a, (kcur)
+    add a, tables9>>8
+    ld h, a
+    ld l, e
+    ld a, (r9cur)
+    ld (hl), a
 .next:
     inc e
     jp nz, .entry                ; jp: the loop body outgrew jr range
@@ -801,9 +944,10 @@ precalc:
     ret
 
 ; A = target channel value t, D = source channel value s, (kcur) = k.
-; Out: A = s + (t-s)*k/8. Values are 0-7 (or 0-3 for blue - the same
-; maths holds), k is 1-7, so the product fits comfortably in a signed
-; byte and the result never leaves the s..t range.
+; Out: A = s + (t-s)*k/8. Values are 0-7 on all three channels - blue
+; included, which is the point of the second byte - and k is 1-7, so
+; the product fits comfortably in a signed byte and the result never
+; leaves the s..t range.
 lerp_ch:
     sub d                        ; t - s, signed
     ld l, a
@@ -834,20 +978,29 @@ applyOther: db 0                 ; 1 = apply streams to the hidden bank
 savesel: db 0                    ; saved $243B select latch
 savectl: db 0                    ; saved NR $43
 kcur:    db 0                    ; precalc scratch
-scur:    db 0
-rcur:    db 0
+scur:    db 0                    ; snapshot entry, packed byte
+s9cur:   db 0                    ; snapshot entry, second byte
+rcur:    db 0                    ; result, packed byte
+r9cur:   db 0                    ; result, second byte
 
     ALIGN 256
-tables:  ds 9*256                ; 0 = snapshot, 1-7 = lerp, 8 = solid
+tables:  ds 9*256                ; packed RRRGGGBB byte of each colour:
+                                 ; 0 = snapshot, 1-7 = lerp, 8 = solid
     ALIGN 256                    ; already aligned (9*256), stated so the
-                                 ; snap9>>8 / ld l,e indexing above cannot
-                                 ; be broken by an edit above it
-snap9:   ds 256                  ; second byte of each snapshotted colour:
-                                 ; bit 7 = Layer 2 per-pixel priority,
-                                 ; bit 0 = blue LSB. Only the fade-in
-                                 ; endpoint uses it - the interpolated
-                                 ; steps stay 8-bit, since nobody can see
-                                 ; a blue LSB going past at 6 frames a step
+                                 ; tables9>>8 / ld l,e indexing above
+                                 ; cannot be broken by an edit above it
+tables9: ds 9*256                ; second byte of each colour, same page
+                                 ; per step: bit 7 = Layer 2 per-pixel
+                                 ; priority, bit 0 = blue LSB. Page 0 is
+                                 ; the snapshot, 1-7 are interpolated
+                                 ; alongside their packed bytes, and page
+                                 ; 8 is unused - the solid end is streamed
+                                 ; 8-bit so that fn 42 can put the same
+                                 ; bytes in both palette banks (see
+                                 ; int_fade), and the page is filled with
+                                 ; hardware-consistent values anyway so a
+                                 ; future edit cannot make the banks
+                                 ; disagree by accident
 xbn_end:
 
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG

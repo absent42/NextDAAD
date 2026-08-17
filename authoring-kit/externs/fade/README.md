@@ -131,13 +131,18 @@ GAME.DDB and it just works. To rebuild after editing the source:
   standing convention. The snapshot captures full 9-bit colour - both
   the `RRRGGGBB` byte and the second byte holding the blue LSB and the
   Layer 2 per-pixel priority bit - and a completed fade-in restores it
-  exactly, bit for bit. The interpolated steps in between are computed
-  in 8 bits, which is invisible at six frames a step.
+  exactly, bit for bit. Every interpolated step is streamed at 9 bits
+  too. That is not a refinement: blue is a 3-bit channel like red and
+  green, but the packed byte carries only its top two bits and the
+  8-bit palette register fills the third in itself, so a fade computed
+  on the packed byte alone moves blue in steps twice the size of red's
+  and the two channels drift apart mid-fade. Interpolating and writing
+  all nine bits keeps every channel on the same eight-level ramp.
 - Transparency is respected: entries holding the Layer 2 transparency
   colour (the interpreter's punched-hole convention, index 255) are
   PINNED - holes stay transparent through the whole fade rather than
   sealing over. Interpolated values that would momentarily equal the
-  transparency colour are nudged one blue step, so opaque regions
+  transparency colour are nudged down in blue, so opaque regions
   never flicker see-through mid-fade. Consequence: you cannot fade TO
   the transparency colour itself - a target of that value fades to
   its nearest neighbour instead.
