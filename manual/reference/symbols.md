@@ -131,7 +131,3 @@ and clears the staged-picture state. The sequence's following
 performs a plain surface swap rather than the clean reveal - the
 fade-in can land on a mismatched surface or palette until the next
 picture change.
-
-jdaad no-ops subs 3 and 4 - there is no such buffer-mode concept in its
-`DBBuffertoScreen`/`DBSwapBuffers` family. The DAAD condact reference
-table is the authority for this target, not jdaad parity.
