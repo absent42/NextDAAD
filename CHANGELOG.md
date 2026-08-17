@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.7.2 - unreleased
+## v0.7.2 - 17/08/2026
 
 - GFX condact 87 subs 3 and 4 are implemented (previously documented
   no-ops, per the DAAD reference table): `GFX n 4` sets graphics

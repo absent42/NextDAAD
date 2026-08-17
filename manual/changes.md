@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.7.2 - unreleased
+## 0.7.2 - 17 August 2026
 
 - **Scene changes behind a fade: change the picture mid-fade, with no
   flash of the new image.** Two additions to `externs/fade` and two
@@ -34,6 +34,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
   you started with. If you use `examples/fade`, copy its rebuilt
   `GAME.XBN` over your old one - unlike the fix above, this one does
   need the new binary.
+  
 ## 0.7.1 - 15 August 2026
 
 - **Fixed: fetching more than one message from an extern corrupted the
