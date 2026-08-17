@@ -391,6 +391,31 @@ ext_main:
 ; The wait is BOUNDED. A fade is 8 steps of (speed) frames, so the
 ; bound is that plus margin; if the hook were ever stopped mid-fade
 ; this returns rather than hanging the game forever.
+;
+; HALT IS NOT A FRAME, AND THE BOUND IS COUNTED IN FRAMES. HALT resumes
+; on ANY maskable interrupt, and the frame tick is not the only one the
+; interpreter runs: sampled sound effects (SFX n 1/2) are fed by a
+; per-sample DAC interrupt on the Z80 CTC's own vector, firing at the
+; WAV's sample rate. With a 15625 Hz effect playing, a HALT returns
+; after ~64us instead of 20ms, so counting HALTs spent this bound in
+; about 7ms and fn 43 fell straight through while the fade had barely
+; started. The interpreter's own PAUSE does not use HALT either - it
+; watches its frame counter for an edge, for exactly this reason.
+;
+; So the bound is stepped on a real frame edge instead, using the one
+; 50Hz clock an extern is guaranteed to have: this binary's own #int
+; hook, which ticks frameTick below on every frame whether a fade is
+; running or not. The inner loop still HALTs (there is no reason to
+; spin the CPU hot), it just does not treat waking as a frame.
+;
+; TICK_CEILING is the never-hang guard for the inner loop: if the hook
+; is not running, frameTick can never move and the edge would never
+; arrive. 2048 wakeups is far more than one frame's worth at any
+; sample rate the CTC can be programmed to (15625 Hz gives ~312), so it
+; cannot misfire while the hook is alive; if it does fire, the hook is
+; stopped, the fade can never finish, and returning is the only useful
+; answer.
+TICK_CEILING    equ 2048
 wait_fade:
     ld a, (active)
     or a
@@ -411,8 +436,25 @@ wait_fade:
     or l
     ret z                        ; bound expired - give up, never hang
     dec hl
-    halt                         ; one frame; the hook runs underneath
-    jr .wl
+    ld bc, TICK_CEILING
+    ld a, (frameTick)
+    ld e, a                      ; E = the tick we are waiting to leave
+.edge:
+    halt                         ; a wakeup - not necessarily a frame
+    ld a, (active)
+    or a
+    ret z                        ; finished under us: done waiting
+    ld a, (frameTick)
+    cp e
+    jr nz, .wl                   ; the hook ran: one real frame, step the
+                                 ; bound and go round again
+    dec bc
+    ld a, b
+    or c
+    jr nz, .edge
+    ret                          ; no frame in TICK_CEILING wakeups: the
+                                 ; hook is stopped, so the fade can never
+                                 ; finish - return rather than hang
 
 ; ---------------------------------------------------------------
 ; 50Hz hook: one cheap test when idle; when a fade is running, count
@@ -420,6 +462,14 @@ wait_fade:
 ; expires. All the arithmetic happened in the foreground - the hook
 ; only moves bytes to ports.
 int_fade:
+    ; The frame tick comes FIRST, ahead of the idle exit, so it keeps
+    ; running whether a fade is stepping or not. It is the only true
+    ; 50Hz clock available to extern foreground code - see wait_fade for
+    ; why HALT cannot be used as one. Two instructions, every frame, for
+    ; the whole life of the game: that is the price of the hook being
+    ; the clock, and it is the cheapest correct one available.
+    ld hl, frameTick
+    inc (hl)
     ld a, (active)
     or a
     ret z
@@ -978,6 +1028,9 @@ dir:     db 0                    ; 1 = fading out (up), 0 = in (down)
 step:    db 0                    ; current step 0-8
 speed:   db 0                    ; frames per step (resolved)
 count:   db 0                    ; frames until the next step
+frameTick: db 0                  ; +1 per frame by int_fade, free-running
+                                 ; and allowed to wrap - wait_fade only
+                                 ; ever compares it against a snapshot
 target:  db 0                    ; RRRGGGBB fade target
 snapOther: db 0                  ; 1 = snapshot reads the hidden bank
 applyOther: db 0                 ; 1 = apply streams to the hidden bank
