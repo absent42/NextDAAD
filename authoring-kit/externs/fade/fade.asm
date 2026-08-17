@@ -7,7 +7,9 @@
 ;   EXTERN colour 40   start a fade OUT to `colour` (RRRGGGBB byte:
 ;                      0 = black, 255 = white, %11100000 = red, ...)
 ;   EXTERN 0 41        start a fade IN back to the original picture
-;   EXTERN 0 42        re-snapshot: the PICTURE changed while faded out
+;   EXTERN 0 42        re-snapshot: the PICTURE changed while faded out.
+;                      Also solids BOTH Layer 2 palette banks, so a
+;                      following GFX 0 2 reveal (below) is invisible.
 ;   EXTERN 0 43        block until the running fade finishes
 ;   flag 241           frames per fade step, 0 = default (6, so a fade
 ;                      is 8 steps x 6 frames, roughly one second) -
@@ -16,6 +18,21 @@
 ;                      set to 1 by the interrupt hook when it finishes.
 ;                      fn 43 waits on it for you; poll it yourself only
 ;                      when the fade should overlap other work
+;
+;   The three lines below are interpreter condacts (GFX, condact 87),
+;   not part of this extern, but fn 42 exists to pair with them:
+;   GFX 0 4            open Layer 2 buffer mode: drawing and DISPLAY
+;                      target the hidden surface only, screen
+;                      untouched. Transient only - a bracket for one
+;                      scene change, always closed with GFX 0 3 after
+;                      the reveal, never left set across a room/turn
+;                      boundary.
+;   GFX 0 2            reveal: flips the buffered surface onto screen.
+;                      Pair with fn 42 first (above) so both palette
+;                      banks are already solid and the flip is
+;                      invisible.
+;   GFX 0 3            close buffer mode: drawing and DISPLAY target
+;                      the screen again
 ;
 ; Lifecycle (kept deliberately strict so the example stays honest):
 ;   fn 40 acts only from the fully-faded-IN state: it snapshots the
@@ -46,8 +63,12 @@
 ;
 ; RULES this example obeys (see the externs chapter of the manual):
 ;   - do not fade while a PICTURE/DISPLAY is drawing or a video clip
-;     is playing - the palette interface is shared with the
-;     interpreter's foreground graphics machinery
+;     is playing, or while GFX 0 2/0 3 (the reveal subs) are running -
+;     the palette interface is shared with the interpreter's
+;     foreground graphics machinery. A still-stepping fade overlapping
+;     GFX n 2 can land the interrupt hook's apply mid-mirror, and its
+;     NR $43 write resets the NR $44 byte toggle mid-pair, corrupting
+;     one mirrored palette entry. Wait on fn 43 or flag 240 first.
 ;   - one XBN per game: to use fade AND ticker, merge the example
 ;     sources into one binary (their fn codes, 40/41 and 30/31, and
 ;     their flags do not overlap)
@@ -71,7 +92,41 @@
 ;      four times longer - a wider band on real hardware.
 ;
 ;   2. DISPLAY 0 programs the new picture's palette as it swaps
-;      surfaces. fn 42 exists only because of this.
+;      surfaces - unless GFX 87 sub 4 (buffer mode, "GFX 0 4" in DSF)
+;      is open, in which case DISPLAY 0 stages pixels and palette into
+;      the hidden surface only and does not swap; the swap and reveal
+;      wait for GFX 87 sub 2 ("GFX 0 2"). fn 42 exists because of this
+;      dependency either way: it re-takes the snapshot from whatever
+;      DISPLAY just programmed, and in the buffered case also solids
+;      the hidden bank so the GFX 0 2 reveal is invisible.
+;
+;      Recommended sequence (buffered, zero-window reveal):
+;        EXTERN 0 40        ; fade out to the target colour
+;        EXTERN 0 43        ; wait
+;        PICTURE @room      ; CONDITION - aborts the entry on dark/no
+;                           ; art, leaving the draw target untouched
+;        GFX 0 4            ; open buffer mode - AFTER the PICTURE
+;                           ; condition, so a failing PICTURE never
+;                           ; strands buffer mode with GFX 0 3 unreached
+;        DISPLAY 0          ; pixels + palette staged; screen untouched
+;        EXTERN 0 42        ; snapshot hidden palette, rebuild tables,
+;                           ; solid into both banks
+;        GFX 0 2            ; reveal: flip surface; all palettes solid
+;        GFX 0 3            ; close buffer mode; drawing targets the
+;                           ; screen again
+;        EXTERN 0 41        ; fade up to the new picture
+;        EXTERN 0 43
+;
+;      Old sequence (no buffer mode - still supported, unchanged
+;      behaviour, band included):
+;        EXTERN 0 40
+;        EXTERN 0 43
+;        PICTURE @room
+;        DISPLAY 0
+;        EXTERN 0 42
+;        EXTERN 0 41
+;        EXTERN 0 43
+;
 ;      IF IT CHANGES so that DISPLAY leaves the palette alone until
 ;      asked, fn 42 becomes unnecessary and fn 41 can fade straight up
 ;      to the new picture.
@@ -269,8 +324,26 @@ ext_main:
     ld (snapOther), a
     call precalc                 ; rebuild 1-7 and 8 - slow, and unseen
     ld a, STEPS
-    jp apply                     ; restream the solid end so its
-                                 ; transparency pins match the new art
+    call apply                   ; restream the solid end so its
+                                ; transparency pins match the new art
+    ; applyOther is only ever set here, briefly, and fn 42 itself only
+    ; runs while active=0 (checked above) - so the interrupt hook's own
+    ; apply calls (which run only while active=1) can never observe
+    ; applyOther=1.
+    ld a, 1
+    ld (applyOther), a
+    ld a, STEPS
+    call apply                   ; solid into the HIDDEN bank too: at the
+                                ; GFX n 2 reveal every palette the beam
+                                ; can see then holds the fade colour.
+                                ; 8-bit-only is deliberate - both banks
+                                ; get the identical table, so the
+                                ; derived 9-bit values match and the
+                                ; reveal's mirror copy is write-of-
+                                ; identical. Do not "fix" to apply9.
+    xor a
+    ld (applyOther), a
+    ret
 
 ; ---------------------------------------------------------------
 ; fn 43: block until the running fade finishes.
@@ -398,6 +471,14 @@ pal_snap_ctl:
     jp nz, pal_other_ctl
     jp pal_edit_ctl
 
+; apply targets the displayed bank normally, the hidden one when
+; applyOther is set (fn 42's both-banks-solid step). Corrupts AF only.
+pal_apply_ctl:
+    ld a, (applyOther)
+    or a
+    jp nz, pal_other_ctl
+    jp pal_edit_ctl
+
 pal_edit_ctl:
     ld a, (savectl)
     and %00001111                ; auto-inc on, edit field cleared, every
@@ -414,10 +495,12 @@ pal_edit_ctl:
     ret
 
 ; ---------------------------------------------------------------
-; Stream table A (0-8) to the Layer 2 palette bank that is on screen.
-; Interrupt-context safe: the select latch ($243B, documented readable)
-; and NR $43 are saved first and restored after, so a foreground
-; register sequence this hook lands in the middle of resumes unharmed.
+; Stream table A (0-8) to the Layer 2 palette bank that is on screen,
+; or the hidden one when applyOther is set (fn 42's both-banks-solid
+; step - see pal_apply_ctl). Interrupt-context safe: the select latch
+; ($243B, documented readable) and NR $43 are saved first and restored
+; after, so a foreground register sequence this hook lands in the
+; middle of resumes unharmed.
 ; Single-byte $41 writes only - the 9-bit endpoint restore is apply9's
 ; job, and it has its own reason to be safe.
 apply:
@@ -432,8 +515,9 @@ apply:
     inc b
     in a, (c)
     ld (savectl), a              ; foreground's palette control
-    call pal_edit_ctl
-    out (c), a                   ; edit the bank being displayed
+    call pal_apply_ctl
+    out (c), a                   ; edit the displayed bank, or the
+                                 ; hidden one when applyOther is set
     dec b
     ld a, NR_PAL_IDX
     out (c), a
@@ -746,6 +830,7 @@ speed:   db 0                    ; frames per step (resolved)
 count:   db 0                    ; frames until the next step
 target:  db 0                    ; RRRGGGBB fade target
 snapOther: db 0                  ; 1 = snapshot reads the hidden bank
+applyOther: db 0                 ; 1 = apply streams to the hidden bank
 savesel: db 0                    ; saved $243B select latch
 savectl: db 0                    ; saved NR $43
 kcur:    db 0                    ; precalc scratch
