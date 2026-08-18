@@ -1468,6 +1468,11 @@ GFX_SUB_FONT     equ 16          ; NextDAAD: install font n (0 = base).
                                  ; and C64 (DRC rejects it on every other
                                  ; target) - so this starts past the
                                  ; classic block. MSX also uses 128/129.
+GFX_SUB_LAYER    equ 17          ; NextDAAD: layer order. P1 0 = picture
+                                 ; on top (Layer 2 above the tilemap,
+                                 ; the default and what every existing
+                                 ; game gets), 1 = text on top. Follows
+                                 ; FONT past the classic 0-15 block.
 
 ; DAC ports (ports.txt, tools/ZXNextOS/docs/extra-hw/io-port-system/
 ; ports.txt lines 266-274: "four 8-bit dac channels... A,B are directed to

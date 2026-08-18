@@ -1019,8 +1019,9 @@ h_display:
     ret                         ; idempotent when the mode is unchanged
 
 ; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused by every
-; sub except 13, 14 and 16 - the video number for 13/14 (see .vidgo
-; below) and the font number for 16 (see .font/GFX_SUB_FONT below);
+; sub except 13, 14, 16 and 17 - the video number for 13/14 (see .vidgo
+; below), the font number for 16 (see .font/GFX_SUB_FONT below) and the
+; layer-order selector for 17 (see .layer/GFX_SUB_LAYER below);
 ; every OTHER implemented sub's buffer operation takes no meaningful P1
 ; (jdaad parity: jdaad.js's _GFX() switches on Parameter2 alone -
 ; Parameter1 only matters to its palette-store subs 9/10, which have no
@@ -1074,6 +1075,23 @@ h_display:
 ;       over it if one exists; 1-9 = FONT<n>.CHR) - NextDAAD-only, no
 ;       jdaad/DAAD-reference analogue; GFX_SUB_FONT (nextdaad.inc) -
 ;       see .font below
+;   17 = layer order (NextDAAD-only, no jdaad/DAAD-reference analogue;
+;       GFX_SUB_LAYER, nextdaad.inc). B = 0 puts the picture on top,
+;       which is the default and the classic arrangement: Layer 2 above
+;       the tilemap, artwork punching down through its own transparent
+;       pixels to reveal text. B = 1 puts the text on top, so tilemap
+;       paper decides where the picture shows and a full-frame picture
+;       needs no hole cut in it. Transparent paper is requested
+;       separately, per window, with PAPER 227. B >= 2 is a no-op, the
+;       same tolerance sub 16 gives its own P1.
+;       State is transient like the draw target: it resets on game
+;       start, RESTART and same-part LOAD/RAMLOAD, and the register
+;       follows immediately at each of those, because the reset sites
+;       call the resident composer directly.
+;       This sub does NOT enable or disable Layer 2 - it composes the
+;       priority field only, so calling it while Layer 2 is hidden
+;       (l2_disable, "hand the screen back to the text layer") leaves it
+;       hidden.
 ; Every no-op sub falls to the shared DEBUG marker below rather than
 ; overlay0's h_unimpl - overlay2 must not call overlay0 (header
 ; discipline) - inline, resident dbg_* helpers only, mirrors h_sfx's
@@ -1100,6 +1118,8 @@ h_gfx:
     jp z, .vidloop
     cp GFX_SUB_FONT
     jp z, .font
+    cp GFX_SUB_LAYER
+    jr z, .layer
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
     push bc                     ; across dbg_puts (corrupts BC) for
@@ -1122,6 +1142,18 @@ h_gfx:
     xor a                        ; default). Does NOT reveal or cancel a
     ld (gfxDrawTarget), a        ; pending deferred DISPLAY.
     ret
+.layer:                          ; sub 17: B (P1) selects the layer
+    ld a, b                      ; order. Out of range is a no-op, the
+    cp 2                         ; same tolerance sub 16 (.font) gives
+    ret nc                       ; its own P1 - the shared DEBUG marker
+                                 ; below is for an unknown SUB-command
+                                 ; and prints "GFX? ", which would name
+                                 ; the wrong fault here.
+    ld (gfxLayerOrder), a
+    jp gfx_layer_apply           ; resident composer, NOT l2_enable:
+                                 ; going through l2_enable would also
+                                 ; set NR $69 bit 7 and re-show a
+                                 ; deliberately hidden Layer 2
 .backfront:
     ld a, (l2FrontBank)
     ld d, a

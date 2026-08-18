@@ -949,6 +949,13 @@ function Assert-LayerOrderReset {
     if ($en -notmatch 'gfx_layer_apply') {
         throw "src\overlay2.asm : l2_enable must delegate to gfx_layer_apply - one composer, so the byte and NR `$15 cannot disagree"
     }
+    if ($ovl2 -notmatch 'cp\s+GFX_SUB_LAYER') {
+        throw "src\overlay2.asm : h_gfx does not dispatch GFX_SUB_LAYER"
+    }
+    $inc = Get-Content -LiteralPath (Join-Path $root 'src\nextdaad.inc') -Raw
+    if ($inc -notmatch 'GFX_SUB_LAYER\s+equ\s+17') {
+        throw "src\nextdaad.inc : GFX_SUB_LAYER must be 17 - 0-15 are allocated by DAAD across its targets and 16 is FONT"
+    }
     "gfxLayerOrder: contiguous, walked, cleared and applied at every reset site"
 }
 
