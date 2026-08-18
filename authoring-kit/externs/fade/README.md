@@ -142,7 +142,7 @@ GAME.DDB and it just works. To rebuild after editing the source:
   colour (the interpreter's punched-hole convention, index 255) are
   PINNED - holes stay transparent through the whole fade rather than
   sealing over. Interpolated values that would momentarily equal the
-  transparency colour are nudged down in blue, so opaque regions
-  never flicker see-through mid-fade. Consequence: you cannot fade TO
-  the transparency colour itself - a target of that value fades to
-  its nearest neighbour instead.
+  transparency colour are nudged one step up in green, so opaque
+  regions never flicker see-through mid-fade. Consequence: you cannot
+  fade TO the transparency colour itself - a target of that value
+  fades to its nearest neighbour instead.

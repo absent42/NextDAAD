@@ -236,6 +236,13 @@ TRANSP          equ $E3          ; Layer 2 global transparency COLOUR
                                  ; on the entry's top 8 bits, so a fade
                                  ; must treat this value specially - see
                                  ; precalc's pin and dodge rules.
+TRANSP_DODGE    equ TRANSP+4     ; substitute for a collision: one step
+                                 ; up the green field ($E7), matching
+                                 ; the interpreter's l2_palette_load
+                                 ; dodge (L2_TRANSP_DODGE). +4 is a
+                                 ; green step only while TRANSP's green
+                                 ; field is 000 - asserted:
+    ASSERT (TRANSP & %00011100) == 0
 
 ext_main:
     ; Contract: A=B=param1, C=fn. This example uses C (fn) and, for
@@ -792,12 +799,14 @@ precalc:
     ; table 8: every entry = the target colour. DODGE rule: a target of
     ; exactly the transparency colour would make the whole layer vanish
     ; (and "fade to transparent" is not this example's contract), so it
-    ; is nudged down in blue to $E2 - visually near-identical, never
-    ; transparent. The same nudge guards every interpolated value below.
+    ; is nudged one green step up to $E7 - visually near-identical,
+    ; never transparent, and the value the interpreter's own loader
+    ; parks colliding art on. The same nudge guards every interpolated
+    ; value below.
     ld a, (target)
     cp TRANSP
     jr nz, .tgtok
-    ld a, TRANSP ^ 1             ; $E2: the nearest non-transparent blue
+    ld a, TRANSP_DODGE           ; $E7: same magenta, one green step up
 .tgtok:
     ld c, a                      ; C = the solid byte
     ; tables9 page 8 gets the blue LSB the hardware would derive from an
@@ -959,18 +968,15 @@ precalc:
     ; transparency colour even though neither endpoint equals it (the
     ; interpreter's palette loader keeps art off $E3, but lerp
     ; intermediates answer to nobody). One frame of see-through shimmer
-    ; per crossing entry otherwise - nudge the blue down instead,
-    ; the same dodge the interpreter's own art loader applies. It has to
-    ; be a whole B1 step: $E3 with B0 clear is blue 6 of 7, one step
-    ; away, but it is still $E3 in the top eight bits and the
-    ; transparency compare only looks there.
+    ; per crossing entry otherwise - nudge green up one step instead,
+    ; the same dodge the interpreter's own art loader applies. $E7
+    ; differs from $E3 in the top eight bits the transparency compare
+    ; reads whatever the blue LSB holds, so the lerped B0 in r9cur
+    ; passes through unchanged.
     ld a, c
     cp TRANSP
     jr nz, .store
-    ld c, TRANSP ^ 1             ; $E2, with B0 set so the entry lands on
-    ld a, (r9cur)                ; blue 5 of 7 - the nearest value the
-    or 1                         ; layer will not read as a punched hole
-    ld (r9cur), a
+    ld c, TRANSP_DODGE           ; $E7: green 0 -> 1, blue untouched
 .store:
     ; store into table kcur, both halves
     ld a, (kcur)
