@@ -257,7 +257,7 @@ KTEST 101     verb
 ; vid_snap_geom's mode-0 (3-bank) or hidden-L2 (0-bank) branches - the
 ; test template always runs 320x256 mode-1, so SNAP=05 on every row.
 ; DEBUG build only owner instruments, EXTERN vectors 8/9/10
-; (overlay0.asm's l2mod_trampoline/l2hide_trampoline/l2show_trampoline
+; (debug.asm's l2mod_trampoline/l2hide_trampoline/l2show_trampoline
 ; -> overlay2.asm's l2mod_run/l2_disable/l2_enable), Release's stubs
 ; are silent no-ops:
 ;   L2MOD - draws the mode-0 (256x192) DEBUG test card over the front
@@ -274,7 +274,7 @@ LSHOW 100     verb
 
 ; SP17 T5 Layer 2 SCROLL bring-up (run sheet .superpowers/sdd/
 ; sp14a-task-4-report.md section 41.4). Ten DEBUG-only owner verbs on
-; ONE EXTERN vector (11 - overlay0.asm's l2scr_trampoline ->
+; ONE EXTERN vector (11 - debug.asm's l2scr_trampoline ->
 ; overlay2.asm's l2scr_run), the parameter selecting a config row.
 ; Every one of them: paints the existing DEBUG test card + its marker
 ; blocks, then pans the Layer 2 hardware offset one step per frame
@@ -315,7 +315,7 @@ LS256 111     verb
 ; SHIPPING routines instead of prototypes, so the rows answer decode
 ; questions the player actually has. Four verbs on the last of the old
 ; 102-116 block; the three standalone modes share EXTERN vector 12
-; (overlay0.asm's nxb_trampoline -> video.asm's nxb_entry) with the
+; (debug.asm's nxb_trampoline -> video.asm's nxb_entry) with the
 ; mode in flag 250, and the fourth rides the PLAYER because its rows
 ; need a live armed direct-serve session.
 ;   NXBO - mode 2, op dispatch envelope (8 rows)
@@ -1285,7 +1285,7 @@ $initLoop
 ;
 ; Entry 1 (poll + draw + exit-check): EXTERN 0 6 (action, argc 2)
 ; dispatches to ktest_poll (overlay1.asm) via extVec vector 6
-; (overlay0.asm's ktest_trampoline) - DEBUG-only; Release's vector 6 is
+; (debug.asm's ktest_trampoline) - DEBUG-only; Release's vector 6 is
 ; ext_stub, a silent no-op, so this verb just leaves a blank diagnostic
 ; area in a Release build rather than crashing. ktest_poll draws the
 ; whole diagnostic screen itself (native dbg_* console calls - DAAD's

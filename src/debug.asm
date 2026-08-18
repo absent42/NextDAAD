@@ -685,11 +685,181 @@ l2_bareprobe_hook:
     call l2dbg_p_wait_press
     jr .stage0                     ; wrap around for another pass
 
-; Ring-2 placement probe (RING2_BASE/ring2_fill/ring2_chk, SP18 item 7
-; Task 9) relocated to overlay0.asm by Task 10 - the resident DEBUG
-; tail had only 3 bytes free after Task 9 landed them here, and Task 10
-; needs ~40-45 for ctc2_isr and its cursors. See overlay0.asm for the
-; routines and the relocation rationale.
+; --- DEBUG EXTERN probe routes (overlay0.asm's extVec vectors 6 and
+; 8-14 point here) - relocated from overlay0.asm: its DEBUG headroom
+; hit exactly 0 while this resident tail had ~1.2KB free, and h_extern
+; dispatches with resident always mapped, so the extVec rows reach
+; these bodies directly at zero overlay cost. Each trampoline is the
+; established push-target/ovl_map_page idiom (font_load_switch,
+; xpart_load_fail's own hop, the old vid_bench_trampoline, etc.);
+; ovl_map_page is resident (banks.asm), and running the remap from
+; resident rather than from within the $E000 window being remapped is
+; if anything safer. --------------------------------------------------
+
+; EXTERN vector 6 (silicon keyboard-defect task): DEBUG-only route to
+; KTEST, the keyboard matrix/decode diagnostic (tests/test.dsf's KTEST
+; verb; body lives in overlay1.asm/OVL1_PAGE alongside kb_raw/kb_char).
+; Reuses vector 6 - free since VIDBENCH's retirement (see that commit's
+; own note); avoids 3/4/7 (live: XMESSAGE/XPART/XUNDONE) and 5 (already
+; forwards to a loaded XBN).
+ktest_trampoline:
+    ld hl, ktest_poll
+    push hl
+    ld a, OVL1_PAGE
+    jp ovl_map_page
+
+; EXTERN vector 8: NXBEN (the SP15 T2 decode-kernel bench) is RETIRED
+; with the v2 format freeze (SP15 3a page-layout redesign): its job -
+; the silicon coefficients behind the freeze - is done, its kernels
+; graduated into the production decoder (video.asm hot page), and its
+; ~2.4KB of VID_PAGE2 DEBUG space now funds the v2 open/load cluster
+; plus the streaming cluster's move off the hot page. git holds the
+; bench (commits 5cc2c70/a63ccfd lineage) and the DMAT/DMACC
+; precedent before it. Vector 8 is reused below (Card #6 fixture
+; wave); 5 forwards to a loaded XBN (suite check 44 holds because the
+; suite stages no XBN - the no-XBN fallback is inert), 6 is KTEST's.
+;
+; EXTERN vectors 8/9/10 (Card #6 SNAP=03/00 sitting follow-up,
+; .superpowers/sdd/sp14a-task-4-report.md section 41): DEBUG-only
+; routes for tests/test.dsf's L2MOD/LHIDE/LSHOW verbs, so the owner
+; can drive the two snapshot branches the seven-leg sitting could not
+; reach (the test template runs 320x256 mode-1 always, so
+; vid_snap_geom's mode-0/hidden-L2 branches never ran on silicon).
+; L2MOD (vector 8) drops the template into the mode-0 test-card state
+; (l2_testcard, overlay2.asm) - a following VPLY1 should then read
+; SNAP=03. LHIDE/LSHOW (vectors 9/10) trampoline straight to
+; l2_disable/l2_enable (overlay2.asm) - the same NR $69 bit
+; vid_snap_geom reads - so a following VPLY1 after LHIDE should read
+; SNAP=00. Same push-target/ovl_map_page idiom as ktest_trampoline.
+; l2mod_run's overlay2.asm wrapper exists only because l2_testcard
+; needs A = mode on entry, which this trampoline cannot set before
+; the page switch (ovl_map_page's own A-clobber, loading OVL2_PAGE);
+; LHIDE/LSHOW need no such wrapper since l2_disable/l2_enable take no
+; argument, so they push those routines directly.
+l2mod_trampoline:
+    ld hl, l2mod_run
+    push hl
+    ld a, OVL2_PAGE
+    jp ovl_map_page
+l2hide_trampoline:
+    ld hl, l2_disable
+    push hl
+    ld a, OVL2_PAGE
+    jp ovl_map_page
+l2show_trampoline:
+    ld hl, l2_enable
+    push hl
+    ld a, OVL2_PAGE
+    jp ovl_map_page
+
+; EXTERN vector 11 (SP17 T5 Layer 2 scroll bring-up, run sheet
+; .superpowers/sdd/sp14a-task-4-report.md section 41.4): DEBUG-only
+; route for tests/test.dsf's ten LSxxx owner verbs, which prove the
+; Layer 2 offset registers on silicon (the 9th X bit NR $71, X/Y wrap
+; at both modes, clip-window interaction, mid-raster write tearing)
+; before T5 designs a pan around them. ONE vector for all ten: the
+; EXTERN's first parameter selects a config row in overlay2's l2sCfg,
+; so a new probe costs a table row, not a vector (11-15 are the last
+; free ones - 5 forwards to a loaded XBN; suite check 44 holds because
+; the suite stages no XBN, so the no-XBN fallback stays inert). Same
+; push-target/ovl_map_page idiom as the trampolines above; the config
+; index rides in B because ovl_map_page clobbers A (h_extern leaves
+; the parameter in both).
+l2scr_trampoline:
+    ld hl, l2scr_run
+    push hl
+    ld a, OVL2_PAGE
+    jp ovl_map_page
+
+; EXTERN vector 12 (SP17 player bench - the NXBEN revival, card
+; .superpowers/sdd/sp14a-task-4-report.md section 42): DEBUG-only
+; route for tests/test.dsf's NXBO/NXBC/NXBK verbs. NXBEN's vector 8
+; went to the Card #6 fixture wave while the bench was retired, so the
+; revival takes 12 (12-15 are the last free ones; 5 forwards to a
+; loaded XBN - suite check 44 holds because the suite stages no XBN,
+; so the no-XBN fallback stays inert). ONE vector for all three modes:
+; the mode rides flags+250 (the stage-ladder convention the retired
+; bench used), set by the verb's LET before the shared EXTERN, so a
+; new mode costs a table row rather than a vector. The bench's fourth
+; row group (direct-serve transport) needs a LIVE armed session and
+; cannot come through here at all - it rides the player instead
+; (flags+248 + a GFX n 13 verb; see video.asm's vid_run bench hook).
+; Same push-target/ovl_map_page idiom as the trampolines above.
+nxb_trampoline:
+    ld hl, nxb_entry
+    push hl
+    ld a, VID_PAGE
+    jp ovl_map_page
+
+; --- Ring-2 placement probe (SP18 item 7 Task 9, spec OP1) - back in
+; its original home: Task 9 landed these here, Task 10 pushed them to
+; overlay0.asm when this tail had only 3 bytes free, and the same
+; squeeze in reverse (overlay0 at exactly 0 headroom, this tail ~1.2KB
+; free) brings them back. extVec vectors 13/14 (overlay0.asm) point
+; here directly - resident is always mapped, so dispatch needs no
+; trampoline and a debugger CALL to either symbol works regardless of
+; what slot 7 holds. ---------------------------------------------------
+; V1 silicon instruments for the AUD_STAGE2 candidate: $4400-$47FF (1K)
+; inside the classic ULA pixel screen ($4000-$57FF), believed dead once
+; the tilemap/Layer 2 are up. RING2FILL primes the candidate with a
+; $A5 sentinel; RING2CHK scans it back and reports the first mismatch
+; (address + byte, via dbg_hex16/dbg_hex8) or "OK". Owner-invoked only,
+; via a debugger CALL to the symbol or tests/sfxlong.dsf's R2FILL/
+; R2CHK verbs - no automatic call site exists anywhere in the boot or
+; engine flow, so Release carries none of this.
+;
+; TIMING PRECONDITION: only call these once dbgTilemap=1 (i.e. after
+; dbg_engage_tilemap has run - boot has reached the parser). Before
+; that point dbg_puts/dbg_putc route through the ULA-pixel fallback
+; above, which plots at H = $40 + (y AND $18) .. +7 - rows 0-7 land
+; on H=$40-$47, overlapping this exact candidate ($44-$47). An early
+; call would have its OWN status print corrupt the region under test.
+; Neither routine calls dbg_cls for the same reason: it unconditionally
+; clears the WHOLE ULA screen via ula_cls (hardware.asm).
+RING2_BASE equ $4400
+RING2_LEN  equ $0400              ; 1K
+RING2_ROW  equ 20                 ; fixed row: repeat calls overwrite,
+                                  ; not scroll
+
+; Fill RING2_BASE..+RING2_LEN-1 with $A5. No screen output (RING2CHK,
+; called right after, both confirms the fill and reports it). Corrupts
+; AF, BC, DE, HL.
+ring2_fill:
+    ld hl, RING2_BASE
+    ld de, RING2_BASE+1
+    ld bc, RING2_LEN-1
+    ld (hl), $A5
+    ldir
+    ret
+
+; Scan RING2_BASE..+RING2_LEN-1 for the first byte != $A5. Prints "OK"
+; on row RING2_ROW if the whole range is intact, else the mismatching
+; address (4 hex digits) then a space then its byte (2 hex digits) on
+; that same row. Corrupts everything (dbg_* helpers' own contract).
+ring2_chk:
+    ld b, RING2_ROW
+    call dbg_at0
+    ld hl, RING2_BASE
+    ld bc, RING2_LEN
+.loop:
+    ld a, (hl)
+    cp $A5
+    jr nz, .bad
+    inc hl
+    dec bc
+    ld a, b
+    or c
+    jr nz, .loop
+    ld hl, .msgok
+    jp dbg_puts
+.bad:
+    push af                     ; mismatching byte value (dbg_hex16
+                                 ; below would corrupt it otherwise)
+    call dbg_hex16              ; HL is still the mismatch address
+    call dbg_space
+    pop af
+    jp dbg_hex8
+.msgok: db "OK", 0
 
 msgTitle:   db VERSION_STR, 0
 msgCore:    db "CORE ", 0

@@ -3085,114 +3085,21 @@ ext_forward:
     ld (extTarget), hl
     jp ext_build_contract       ; resident; B/C still hold param1/fn
 
-; EXTERN vector 6 (silicon keyboard-defect task): DEBUG-only route to
-; KTEST, the keyboard matrix/decode diagnostic (tests/test.dsf's KTEST
-; verb; body lives in overlay1.asm/OVL1_PAGE alongside kb_raw/kb_char).
-; Reuses vector 6 - free since VIDBENCH's retirement (see that commit's
-; own note); avoids 3/4/7 (live: XMESSAGE/XPART/XUNDONE) and 5 (already
-; forwards to a loaded XBN). extVec is DATA, not code - the IFDEF on the
-; table row costs nothing in Release (byte-identical to before this
-; task); the trampoline body is itself IFDEF DEBUG so no dead code
-; reaches overlay0 in Release either. Per-variant contract: Release
-; forwards vectors 6 and 8-14 to the XBN (same as 5), DEBUG reserves
-; them for the probes below instead - so authors test forwarding
-; against a Release build, not DEBUG.
- IFDEF DEBUG
-ktest_trampoline:
-    ld hl, ktest_poll             ; established push-target/ovl_map_page
-    push hl                       ; trampoline idiom (font_load_switch,
-    ld a, OVL1_PAGE               ; xpart_load_fail's own hop, the old
-    jp ovl_map_page                ; vid_bench_trampoline, etc.)
- ENDIF
-
-; EXTERN vector 8: NXBEN (the SP15 T2 decode-kernel bench) is RETIRED
-; with the v2 format freeze (SP15 3a page-layout redesign): its job -
-; the silicon coefficients behind the freeze - is done, its kernels
-; graduated into the production decoder (video.asm hot page), and its
-; ~2.4KB of VID_PAGE2 DEBUG space now funds the v2 open/load cluster
-; plus the streaming cluster's move off the hot page. git holds the
-; bench (commits 5cc2c70/a63ccfd lineage) and the DMAT/DMACC
-; precedent before it. Vector 8 is reused below (Card #6 fixture
-; wave); 5 forwards to a loaded XBN (suite check 44 holds because the
-; suite stages no XBN - the no-XBN fallback is inert), 6 is KTEST's.
-;
-; EXTERN vectors 8/9/10 (Card #6 SNAP=03/00 sitting follow-up,
-; .superpowers/sdd/sp14a-task-4-report.md section 41): DEBUG-only
-; routes for tests/test.dsf's L2MOD/LHIDE/LSHOW verbs, so the owner
-; can drive the two snapshot branches the seven-leg sitting could not
-; reach (the test template runs 320x256 mode-1 always, so
-; vid_snap_geom's mode-0/hidden-L2 branches never ran on silicon).
-; L2MOD (vector 8) drops the template into the mode-0 test-card state
-; (l2_testcard, overlay2.asm) - a following VPLY1 should then read
-; SNAP=03. LHIDE/LSHOW (vectors 9/10) trampoline straight to the
-; resident l2_disable/l2_enable (overlay2.asm) - the same NR $69 bit
-; vid_snap_geom reads - so a following VPLY1 after LHIDE should read
-; SNAP=00. Same push-target/ovl_map_page idiom as ktest_trampoline.
-; l2mod_run's overlay2.asm wrapper exists only because l2_testcard
-; needs A = mode on entry, which this trampoline cannot set before
-; the page switch (ovl_map_page's own A-clobber, loading OVL2_PAGE);
-; LHIDE/LSHOW need no such wrapper since l2_disable/l2_enable take no
-; argument, so they push the resident routines directly.
- IFDEF DEBUG
-l2mod_trampoline:
-    ld hl, l2mod_run
-    push hl
-    ld a, OVL2_PAGE
-    jp ovl_map_page
-l2hide_trampoline:
-    ld hl, l2_disable
-    push hl
-    ld a, OVL2_PAGE
-    jp ovl_map_page
-l2show_trampoline:
-    ld hl, l2_enable
-    push hl
-    ld a, OVL2_PAGE
-    jp ovl_map_page
- ENDIF
-
-; EXTERN vector 11 (SP17 T5 Layer 2 scroll bring-up, run sheet
-; .superpowers/sdd/sp14a-task-4-report.md section 41.4): DEBUG-only
-; route for tests/test.dsf's ten LSxxx owner verbs, which prove the
-; Layer 2 offset registers on silicon (the 9th X bit NR $71, X/Y wrap
-; at both modes, clip-window interaction, mid-raster write tearing)
-; before T5 designs a pan around them. ONE vector for all ten: the
-; EXTERN's first parameter selects a config row in overlay2's l2sCfg,
-; so a new probe costs a table row, not a vector (11-15 are the last
-; free ones - 5 forwards to a loaded XBN; suite check 44 holds because
-; the suite stages no XBN, so the no-XBN fallback stays inert). Same
-; push-target/ovl_map_page idiom as the trampolines above; the config
-; index rides in B because ovl_map_page clobbers A (h_extern leaves
-; the parameter in both).
- IFDEF DEBUG
-l2scr_trampoline:
-    ld hl, l2scr_run
-    push hl
-    ld a, OVL2_PAGE
-    jp ovl_map_page
- ENDIF
-
-; EXTERN vector 12 (SP17 player bench - the NXBEN revival, card
-; .superpowers/sdd/sp14a-task-4-report.md section 42): DEBUG-only
-; route for tests/test.dsf's NXBO/NXBC/NXBK verbs. NXBEN's vector 8
-; went to the Card #6 fixture wave while the bench was retired, so the
-; revival takes 12 (12-15 are the last free ones; 5 forwards to a
-; loaded XBN - suite check 44 holds because the suite stages no XBN,
-; so the no-XBN fallback stays inert). ONE vector for all three modes:
-; the mode rides flags+250 (the stage-ladder convention the retired
-; bench used), set by the verb's LET before the shared EXTERN, so a
-; new mode costs a table row rather than a vector. The bench's fourth
-; row group (direct-serve transport) needs a LIVE armed session and
-; cannot come through here at all - it rides the player instead
-; (flags+248 + a GFX n 13 verb; see video.asm's vid_run bench hook).
-; Same push-target/ovl_map_page idiom as the trampolines above.
- IFDEF DEBUG
-nxb_trampoline:
-    ld hl, nxb_entry
-    push hl
-    ld a, VID_PAGE
-    jp ovl_map_page
- ENDIF
+; DEBUG EXTERN probe routes (vectors 6, 8-14): the trampoline bodies
+; (KTEST, L2MOD/LHIDE/LSHOW, LSxxx, NXB) and the ring-2 probe verbs
+; live in debug.asm's resident DEBUG tail, not on this page - this
+; overlay's DEBUG headroom hit exactly 0 while the resident tail had
+; ~1.2KB free, and h_extern dispatches with resident always mapped, so
+; the extVec rows below point straight at resident addresses.
+; ovl_map_page is itself resident (banks.asm) - each trampoline just
+; pushes an overlay target and remaps slot 7, which is if anything
+; safer executed from OUTSIDE the very window it remaps. Per-vector
+; history and contracts live with the bodies in debug.asm. extVec is
+; DATA, not code - the IFDEFs on the rows cost nothing in Release
+; (byte-identical). Per-variant contract: Release forwards vectors 6
+; and 8-14 to the XBN (same as 5), DEBUG reserves them for the probes
+; instead - so authors test forwarding against a Release build, not
+; DEBUG.
 extVec:
     dw ext_forward, ext_forward, ext_forward, ext_xmes
     dw h_xpart, ext_forward
@@ -3223,9 +3130,8 @@ extVec:
 ; owner-ratified fallback 2026-08-09: the DeZog CALL-injection
 ; mechanism is unavailable in the owner's DeZog build). Route
 ; tests/sfxlong.dsf's R2FILL/R2CHK verbs straight to ring2_fill/
-; ring2_chk (this page, below) - no trampoline needed: h_extern already
-; dispatches with overlay0 mapped into slot 7, the same page these two
-; routines live on. DEBUG-only, vector 15 stays spare.
+; ring2_chk (debug.asm's resident DEBUG tail) - no trampoline needed:
+; resident is always mapped. DEBUG-only, vector 15 stays spare.
  IFDEF DEBUG
     dw ring2_fill                 ; vector 13
     dw ring2_chk                  ; vector 14
@@ -4128,87 +4034,6 @@ msgPtrBad:    db "PTR BAD", 0
 msgRuntimeErr: db "NextDAAD: RUNTIME ERROR - E", 0
 ; Reader stack depth overflow (ddbtext.asm's rd_push/rd_pop).
 msgRdStack:    db "NextDAAD: RD STACK - E9", 0
-
-; --- Ring-2 placement probe (SP18 item 7 Task 9, spec OP1; relocated
-; from src/debug.asm by Task 10 - resident's DEBUG tail had only 3
-; bytes free after Task 9 landed these here, and Task 10's ctc2_isr +
-; cursors need ~40-45 more, so these two verbs (~56 bytes) moved to
-; make room). ------------------------------------------------------
-; V1 silicon instruments for the AUD_STAGE2 candidate: $4400-$47FF (1K)
-; inside the classic ULA pixel screen ($4000-$57FF), believed dead once
-; the tilemap/Layer 2 are up. RING2FILL primes the candidate with a
-; $A5 sentinel; RING2CHK scans it back and reports the first mismatch
-; (address + byte, via dbg_hex16/dbg_hex8) or "OK". Owner-invoked only,
-; via a debugger CALL to the symbol - no automatic call site exists
-; anywhere in the boot or engine flow, so Release carries none of this
-; (both routines are IFDEF DEBUG).
-;
-; RELOCATION IS SAFE: the routines' documented invocation precondition
-; (below) is "CALL only once the interpreter is idle at the parser
-; prompt", and the parser prompt is reached only with overlay0 mapped
-; into slot 7 - it is the dispatcher's own condact-handler page, and
-; nothing else can be mapped there while mainline waits on input. So
-; moving these verbs onto overlay0 adds no new constraint beyond the
-; one they already had: a debugger CALL to their address at the idle
-; prompt lands on the correct bytes either way. They still call
-; resident dbg_* helpers (fine to reach from an overlay page - the
-; call itself does not depend on which page is mapped) and touch only
-; $4400-$47FF, which is always mapped regardless of slot 7's content.
-;
-; TIMING PRECONDITION: only call these once dbgTilemap=1 (i.e. after
-; dbg_engage_tilemap has run - boot has reached the parser). Before
-; that point dbg_puts/dbg_putc route through debug.asm's ULA-pixel
-; fallback, which plots at H = $40 + (y AND $18) .. +7 - rows 0-7 land
-; on H=$40-$47, overlapping this exact candidate ($44-$47). An early
-; call would have its OWN status print corrupt the region under test.
-; Neither routine calls dbg_cls for the same reason: it unconditionally
-; clears the WHOLE ULA screen via ula_cls (hardware.asm).
- IFDEF DEBUG
-RING2_BASE equ $4400
-RING2_LEN  equ $0400              ; 1K
-RING2_ROW  equ 20                 ; fixed row: repeat calls overwrite,
-                                  ; not scroll
-
-; Fill RING2_BASE..+RING2_LEN-1 with $A5. No screen output (RING2CHK,
-; called right after, both confirms the fill and reports it). Corrupts
-; AF, BC, DE, HL.
-ring2_fill:
-    ld hl, RING2_BASE
-    ld de, RING2_BASE+1
-    ld bc, RING2_LEN-1
-    ld (hl), $A5
-    ldir
-    ret
-
-; Scan RING2_BASE..+RING2_LEN-1 for the first byte != $A5. Prints "OK"
-; on row RING2_ROW if the whole range is intact, else the mismatching
-; address (4 hex digits) then a space then its byte (2 hex digits) on
-; that same row. Corrupts everything (dbg_* helpers' own contract).
-ring2_chk:
-    ld b, RING2_ROW
-    call dbg_at0
-    ld hl, RING2_BASE
-    ld bc, RING2_LEN
-.loop:
-    ld a, (hl)
-    cp $A5
-    jr nz, .bad
-    inc hl
-    dec bc
-    ld a, b
-    or c
-    jr nz, .loop
-    ld hl, .msgok
-    jp dbg_puts
-.bad:
-    push af                     ; mismatching byte value (dbg_hex16
-                                 ; below would corrupt it otherwise)
-    call dbg_hex16              ; HL is still the mismatch address
-    call dbg_space
-    pop af
-    jp dbg_hex8
-.msgok: db "OK", 0
- ENDIF
 
     DISPLAY "overlay0 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT

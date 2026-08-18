@@ -4032,7 +4032,7 @@ tc_mark_320:
     ret
 
 ; Card #6 SNAP=03/00 sitting follow-up (.superpowers/sdd/sp14a-task-4-
-; report.md section 41): EXTERN vector 8 (overlay0.asm's
+; report.md section 41): EXTERN vector 8 (debug.asm's
 ; l2mod_trampoline, tests/test.dsf's L2MOD verb) lands here once
 ; OVL2_PAGE is mapped. Only reason this wrapper exists at all: A must
 ; be set to the mode AFTER the page switch, since ovl_map_page's own

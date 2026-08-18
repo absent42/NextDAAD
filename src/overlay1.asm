@@ -295,7 +295,8 @@ kb_char:
 
  IFDEF DEBUG
 ; KTEST diagnostic (EXTERN 0 6, tests/test.dsf's KTEST verb - see
-; overlay0.asm's extVec vector 6 / ktest_trampoline; DEBUG-only, no
+; overlay0.asm's extVec vector 6 / debug.asm's ktest_trampoline;
+; DEBUG-only, no
 ; footprint in Release). Called once per engine step by the DSF's own
 ; PROCESS/REDO loop (PRO 9); draws:
 ;   - the 8 raw keyboard half-row bytes as binary (pressed=1, the TRUE

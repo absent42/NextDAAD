@@ -3945,7 +3945,7 @@ NXB_LINE_MSB     equ $1E     ; active video line, bit 8
 NXB_LINE_LSB     equ $1F     ; active video line, bits 7:0
 
 ; ---------------------------------------------------------------------
-; Entry from nxb_trampoline (overlay0.asm, EXTERN vector 12). Mode in
+; Entry from nxb_trampoline (debug.asm, EXTERN vector 12). Mode in
 ; flags+250 (self-clearing, the established stage-ladder convention).
 ; Modes 2/3/4 run standalone; mode 1 is NOT reachable here - the
 ; direct-serve rows need a live armed session and ride the player
