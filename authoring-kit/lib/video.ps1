@@ -341,7 +341,15 @@ if (-not $sources) { exit 0 }
 # each. That harness asserts the pair agrees before it stages any video
 # fixture (Assert-VidEraInSync); they drifted for a day on 2026-08-03,
 # which is what the assertion exists to prevent.
-$encoderGeneration = 'pal9t'
+# BUMP pal9t -> pal9u (Layer 2 dodge target move $E2 -> $E7,
+# 2026-08-18): build_palette_block's collision nudge moved from
+# byte0-1 (blue two steps down) to byte0+4 (green one step up), in
+# lockstep with the interpreter's l2_palette_load dodge, so a
+# net-caught colour renders identically in video and stills.
+# Default-path: clips whose palette lands on $E3 emit different
+# palette bytes; ordinary clips are unaffected. Supersedes the pal9t
+# note's description of the dodge output.
+$encoderGeneration = 'pal9u'
 
 function Get-ArgHash([string[]]$argList) {
     $joined = ((@($encoderGeneration) + $argList) -join ' ')

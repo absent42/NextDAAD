@@ -3057,7 +3057,12 @@ if ($Font) {
 # ((255,0,219)/(255,0,255)) - default-path, so this switch's rule
 # fires. See $encoderGeneration 'pal9t' in authoring-kit/lib/video.ps1
 # for the full account.
-$vidLegSettlementTag = 'pal9t'
+# BUMP pal9t -> pal9u (Layer 2 dodge target move $E2 -> $E7,
+# 2026-08-18): build_palette_block's collision nudge moved from
+# byte0-1 to byte0+4 in lockstep with the interpreter dodge -
+# default-path, so this switch's rule fires. See $encoderGeneration
+# 'pal9u' in authoring-kit/lib/video.ps1 for the full account.
+$vidLegSettlementTag = 'pal9u'
 
 # INVARIANT: $vidLegSettlementTag MUST equal $encoderGeneration in
 # authoring-kit/lib/video.ps1. They are one stamp with two homes - the

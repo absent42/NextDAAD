@@ -353,14 +353,26 @@ TERMINAL_OPS = frozenset({OP_FEND, OP_KFLIP})
 PAL_BLOCK_SIZE = 512
 
 # Layer 2 global transparency colour (NR $14 = $E3, the hardware reset
-# value; L2_TRANSP_COLOUR in src/nextdaad.inc). THREE FILES carry these
-# values and must agree - src/nextdaad.inc is canonical:
-#   src/nextdaad.inc          L2_TRANSP_COLOUR / L2_TRANSP_INDEX
-#   authoring-kit/lib/nxv2enc.py    L2_TRANSPARENT_BYTE0 (here)
-#   authoring-kit/lib/palcheck.ps1  $TRANSP / $RESERVED
-# If either value moves, all three move. tests/build-tests.ps1 parses all
-# three and fails if they disagree.
+# value; L2_TRANSP_COLOUR in src/nextdaad.inc). SYNC-CHECKED VALUES -
+# src/nextdaad.inc is canonical; if any value moves, all its copies
+# move. tests/build-tests.ps1 (Assert-TranspConstantsInSync) parses
+# every site and fails on drift:
+#   colour: nextdaad.inc L2_TRANSP_COLOUR / L2_TRANSPARENT_BYTE0
+#     (here) / palcheck.ps1 $TRANSP / externs/fade/fade.asm TRANSP
+#   index:  nextdaad.inc L2_TRANSP_INDEX / palcheck.ps1 $RESERVED
+#   dodge:  nextdaad.inc L2_TRANSP_DODGE / fade.asm TRANSP_DODGE /
+#     L2_DODGE_BYTE0 (here) / palcheck.ps1 $DODGE /
+#     tests/art/mkpalcard.py TRANSP_DODGE
 L2_TRANSPARENT_BYTE0 = 0xE3
+
+# Substitute byte0 for a colliding entry: +4 = one step up byte0's
+# 3-bit green field (bits 4-2; green 000 -> 001, displayed 0 -> 36),
+# hue and blue kept. Matches the interpreter's l2_palette_load dodge
+# (L2_TRANSP_DODGE, src/nextdaad.inc) so a net-caught colour renders
+# identically in video and stills. Only a green step while
+# L2_TRANSPARENT_BYTE0's green field is 000 - asserted.
+L2_DODGE_BYTE0 = L2_TRANSPARENT_BYTE0 + 4
+assert L2_TRANSPARENT_BYTE0 & 0x1C == 0
 
 # ---------------------------------------------------------------------
 # TMODEL_COEFFS - Z80N decode+fetch T-state costs. SILICON-SETTLED on the
@@ -3129,28 +3141,28 @@ LATTICE_NEAREST = _nearest_lattice_lut()
 # an easy trade.
 #
 # The resident location-graphics path dodges this player-side
-# (src/overlay2.asm writes L2_TRANSP_COLOUR-1 = $E2); the video player
-# has no such dodge of its own, so build_palette_block (below) applies
-# the matching -1 byte0 nudge as a final safety net on emission. THIS
-# exclusion is the earlier, upstream defence: it makes the two points
-# simply not representable at the lattice level, so the nearest-level
-# snap, palette derivation and every quantization target land on the
-# nearest remaining lattice colour, and the wire-true quality metrics
-# automatically measure what is actually displayed - build_palette_block's
-# safety net alone would let the encoder pick, and score, a colour it
-# never actually emits.
+# (src/overlay2.asm writes L2_TRANSP_DODGE = $E7, one green step up);
+# the video player has no such dodge of its own, so build_palette_block
+# (below) applies the matching +4 byte0 nudge as a final safety net on
+# emission. THIS exclusion is the earlier, upstream defence: it makes
+# the two points simply not representable at the lattice level, so the
+# nearest-level snap, palette derivation and every quantization target
+# land on the nearest remaining lattice colour, and the wire-true
+# quality metrics automatically measure what is actually displayed -
+# build_palette_block's safety net alone would let the encoder pick,
+# and score, a colour it never actually emits.
 #
-# THE TWO MECHANISMS DELIBERATELY DISAGREE ON WHERE $E3 GOES - the
-# lattice remaps (255,0,219) -> (255,0,182) and (255,0,255) ->
-# (255,36,255), while build_palette_block just subtracts 1 from byte0;
-# the dodge's destination is unreachable for any lattice-derived palette,
-# so the two never produce the same output and neither is a check on the
-# other. The consequence for TESTS: because the dodge scrubs $E3 from the
-# wire UNCONDITIONALLY, no assertion on emitted wire bytes can ever prove
-# this exclusion works - it passes even with TRANSP_REMAP emptied. Assert
-# at the PRE-DODGE RGB layer (what the encoder chose) instead. Four
-# assertions in this branch were hollow for exactly this reason before
-# anyone noticed; do not write a fifth.
+# THE NET'S OUTPUT NOW OVERLAPS THE REMAP - the lattice remaps
+# (255,0,219) -> (255,0,182) and (255,0,255) -> (255,36,255), while
+# build_palette_block adds 4 to byte0; for an entry whose true blue
+# bit is set the net's output IS the remap's (255,36,255), so emitted
+# wire bytes cannot tell which mechanism handled a colour. The
+# consequence for TESTS is unchanged and load-bearing: the net scrubs
+# $E3 from the wire UNCONDITIONALLY, so no assertion on emitted wire
+# bytes can ever prove this exclusion works - it passes even with
+# TRANSP_REMAP emptied. Assert at the PRE-DODGE RGB layer (what the
+# encoder chose) instead. Four assertions in this branch were hollow
+# for exactly this reason before anyone noticed; do not write a fifth.
 TRANSP_COLLISION = ((255, 0, 219), (255, 0, 255))
 TRANSP_REMAP = {(255, 0, 219): (255, 0, 182),
                 (255, 0, 255): (255, 36, 255)}
@@ -4183,12 +4195,15 @@ def build_palette_block(pal_256x3):
             # sharing it punch through mid-clip. The video player has
             # no dodge of its own - unlike pictures, whose
             # l2_palette_load catches this - so it must be fixed here.
-            # byte0's low 2 bits are the TOP 2 bits of the 3-bit blue
-            # field (weight 2 each), so -1 here moves blue TWO steps
-            # on the 0-7 scale (e.g. 6 -> 4), not one - still magenta,
-            # no longer transparent, a subtle shift no viewer would
-            # register in motion.
-            byte0 -= 1
+            # +4 is one step of byte0's 3-bit green field (displayed
+            # green 0 -> 36), hue and blue kept - the same substitute
+            # the interpreter writes, so the colour renders
+            # identically in video and stills. With the true blue bit
+            # the outputs are (255,36,219) or (255,36,255); the latter
+            # coincides with TRANSP_REMAP's target for pure magenta
+            # (see the TRANSP_COLLISION header on what that means for
+            # tests).
+            byte0 = L2_DODGE_BYTE0
         out[i * 2] = byte0
         out[i * 2 + 1] = byte1
     return bytes(out)
