@@ -1084,10 +1084,14 @@ h_display:
 ;       needs no hole cut in it. Transparent paper is requested
 ;       separately, per window, with PAPER 227. B >= 2 is a no-op, the
 ;       same tolerance sub 16 gives its own P1.
-;       State is transient like the draw target: it resets on game
-;       start, RESTART and same-part LOAD/RAMLOAD, and the register
-;       follows immediately at each of those, because the reset sites
-;       call the resident composer directly.
+;       State PERSISTS through the RESTART condact, unlike the draw
+;       target above (owner ruling 2026-08-18): RESTART is the per-move
+;       render-loop re-entry in a template DAAD game, so resetting the
+;       order there would force an author to re-issue the flip every
+;       turn. It resets on game start, on a part switch and on a
+;       same-part LOAD/RAMLOAD, and the register follows immediately at
+;       each of those, because those reset sites call the resident
+;       composer directly.
 ;       This sub does NOT enable or disable Layer 2 - it composes the
 ;       priority field only, so calling it while Layer 2 is hidden
 ;       (l2_disable, "hand the screen back to the text layer") leaves it
