@@ -183,15 +183,15 @@ idiom <code>SFX</code> uses for a sub-command it does not recognise.</p>
 <p><code>GFX n s</code> takes the sub-command in its <strong>second</strong> parameter, <code>s</code>. There
 are no symbolic names for these - Appendix D covers <code>SFX</code> and <code>MOUSE</code>
 only - so write the number.</p>
-<p>For every sub-command except 13, 14 and 16 the first parameter <code>n</code> is
-ignored: the buffer operations act on the whole surface and take no
+<p>For every sub-command except 13, 14, 16 and 17 the first parameter <code>n</code>
+is ignored: the buffer operations act on the whole surface and take no
 argument. For 13 and 14, <code>n</code> is the video number; for 16, it is the font
-number.</p>
+number; for 17, it is the layer-order selector.</p>
 <p>"Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
 prints a marker). That covers 7, 8, 11, 12 and 15, and everything
-from 17 up, as well as 9 and 10 - see
+from 18 up, as well as 9 and 10 - see
 <a href="../platform-notes.html">Platform notes</a> for why 9, 10 and 15 have nothing
 to act on here.</p>
 <table>
@@ -242,8 +242,16 @@ to act on here.</p>
 <td>16</td>
 <td>Install font <code>n</code>. <code>n</code> 0 is the base font - the embedded table, then <code>FONT.CHR</code> over it if one exists; 1-9 select <code>FONT1.CHR</code> to <code>FONT9.CHR</code>. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See <a href="../customising.html">Customising</a>.</td>
 </tr>
+<tr>
+<td>17</td>
+<td>Text layer order. <code>n</code> 0 puts the picture on top (Layer 2 above the tilemap - the default, and what every existing game gets); <code>n</code> 1 puts the text layer on top. <code>n</code> 2 and above is a no-op - the previously-set order stays. See <a href="../graphics.html#text-over-a-picture">Graphics</a> for the transparent-paper technique this enables.</td>
+</tr>
 </tbody>
 </table>
+<p>Sub 17's layer order is transient, the same way buffer mode (below) is:
+it resets to picture-on-top on game start, <code>RESTART</code>, and a same-part
+<code>LOAD</code>/<code>RAMLOAD</code>, with the hardware register following the reset
+immediately.</p>
 <p>Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
 <code>RESTART</code>, a same-part <code>LOAD</code>/<code>RAMLOAD</code>, or any game (re)start -
 whichever comes first. Revealing a staged picture (sub 0 or 2) clears

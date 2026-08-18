@@ -289,6 +289,13 @@ sprite tool that lets you pick from the Next's standard RGB332 palette
 pointer</a> above - previews colour <code>n</code> at index
 <code>n</code> directly, since it is the identical 256-colour palette <code>INK</code>,
 <code>PAPER</code> and <code>BORDER</code> draw from.</p>
+<p>One value is reserved: <code>PAPER 227</code> makes the paper transparent rather
+than magenta, because 227 is <code>#FF00FF</code>, the transparent colour
+throughout NextDAAD; <code>INK 227</code> likewise makes the glyph shapes
+transparent; <code>BORDER 227</code> is unaffected and renders magenta; and any
+other colour that would land on the transparent value is shifted one
+step up the green scale, which is why colour 11 renders as a very
+slightly different magenta.</p>
 </main>
 </body>
 </html>

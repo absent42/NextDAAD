@@ -72,16 +72,16 @@ idiom `SFX` uses for a sub-command it does not recognise.
 are no symbolic names for these - Appendix D covers `SFX` and `MOUSE`
 only - so write the number.
 
-For every sub-command except 13, 14 and 16 the first parameter `n` is
-ignored: the buffer operations act on the whole surface and take no
+For every sub-command except 13, 14, 16 and 17 the first parameter `n`
+is ignored: the buffer operations act on the whole surface and take no
 argument. For 13 and 14, `n` is the video number; for 16, it is the font
-number.
+number; for 17, it is the layer-order selector.
 
 "Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
 prints a marker). That covers 7, 8, 11, 12 and 15, and everything
-from 17 up, as well as 9 and 10 - see
+from 18 up, as well as 9 and 10 - see
 [Platform notes](../platform-notes.md) for why 9, 10 and 15 have nothing
 to act on here.
 
@@ -97,6 +97,12 @@ to act on here.
 | 13 | Play video `n` (`NNN.VID`) once. Identical to `SFX n 9` (`PLAYFLI`). See [Video](../video.md). |
 | 14 | As 13, looped until a key is pressed. Identical to `SFX n 10` (`PLAYFLIL`). |
 | 16 | Install font `n`. `n` 0 is the base font - the embedded table, then `FONT.CHR` over it if one exists; 1-9 select `FONT1.CHR` to `FONT9.CHR`. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See [Customising](../customising.md). |
+| 17 | Text layer order. `n` 0 puts the picture on top (Layer 2 above the tilemap - the default, and what every existing game gets); `n` 1 puts the text layer on top. `n` 2 and above is a no-op - the previously-set order stays. See [Graphics](../graphics.md#text-over-a-picture) for the transparent-paper technique this enables. |
+
+Sub 17's layer order is transient, the same way buffer mode (below) is:
+it resets to picture-on-top on game start, `RESTART`, and a same-part
+`LOAD`/`RAMLOAD`, with the hardware register following the reset
+immediately.
 
 Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
 `RESTART`, a same-part `LOAD`/`RAMLOAD`, or any game (re)start -

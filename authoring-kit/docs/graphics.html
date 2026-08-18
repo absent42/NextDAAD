@@ -194,6 +194,37 @@ paler magenta than you painted. This exists so that a stray highlight
 cannot punch a hole you did not ask for. If you want a hot magenta
 somewhere in the artwork, moving any one channel out of that range is
 enough.</p>
+<h2 id="text-over-a-picture">Text over a picture</h2>
+<p><code>GFX 1 17</code> puts the text layer on top of the picture; <code>GFX 0 17</code>
+restores the default, picture on top. With the text layer on top,
+<code>PAPER 227</code> lets the picture show through wherever it is used, so a
+full-frame picture needs no hole cut into it and the same artwork works
+under any text layout - no per-window arithmetic against the picture,
+unlike the hole-punching route above. Both routes remain valid: holes
+in the artwork are still the right answer when the picture should stay
+on top of a window instead of behind it (a status bar or graphic border
+you don't want text drawn over, for instance).</p>
+<p>Two consequences follow from <code>PAPER</code> and <code>INK</code> doing different jobs on
+a transparent character:</p>
+<ul>
+<li><strong><code>PAPER</code> has no meaning for a transparent character - only <code>INK</code>
+  does.</strong> A character cell is transparent wherever its ink pixels are
+  painted with colour 227, regardless of what <code>PAPER</code> value the same
+  cell carries; a <code>PAPER 227</code> that is not paired with <code>INK 227</code> still
+  leaves the cell's background colour showing, not the picture.</li>
+<li><strong>A window using <code>PAPER 227</code> gets a block cursor with transparent
+  glyph pixels.</strong> The block cursor is drawn in the window's colours
+  inverted (paper and ink swapped), so a window whose paper is 227
+  draws its cursor with ink 227 - a see-through cursor block over
+  whatever glyph shape it lands on.</li>
+</ul>
+<p><code>GFX 1 17</code> is transient, the same way the buffer-mode state under sub 4
+is: it resets to picture-on-top on game start, <code>RESTART</code>, and a
+same-part <code>LOAD</code>/<code>RAMLOAD</code>. In a template game whose movement and
+response flow ends in <code>RESTART</code> every turn, that means <code>GFX 1 17</code>
+issued once at startup does not stick - issue it in the same process
+that draws the location picture, right after its <code>DISPLAY</code>, so it is
+re-applied every time the picture is.</p>
 <h2 id="title-screens">Title screens</h2>
 <p>Ship <code>IMAGES\DAAD.png</code> and the game shows it at cold boot, over the
 boot music if you have any, until a key is pressed. Then play begins as

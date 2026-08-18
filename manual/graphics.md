@@ -218,6 +218,40 @@ cannot punch a hole you did not ask for. If you want a hot magenta
 somewhere in the artwork, moving any one channel out of that range is
 enough.
 
+## Text over a picture
+
+`GFX 1 17` puts the text layer on top of the picture; `GFX 0 17`
+restores the default, picture on top. With the text layer on top,
+`PAPER 227` lets the picture show through wherever it is used, so a
+full-frame picture needs no hole cut into it and the same artwork works
+under any text layout - no per-window arithmetic against the picture,
+unlike the hole-punching route above. Both routes remain valid: holes
+in the artwork are still the right answer when the picture should stay
+on top of a window instead of behind it (a status bar or graphic border
+you don't want text drawn over, for instance).
+
+Two consequences follow from `PAPER` and `INK` doing different jobs on
+a transparent character:
+
+- **`PAPER` has no meaning for a transparent character - only `INK`
+  does.** A character cell is transparent wherever its ink pixels are
+  painted with colour 227, regardless of what `PAPER` value the same
+  cell carries; a `PAPER 227` that is not paired with `INK 227` still
+  leaves the cell's background colour showing, not the picture.
+- **A window using `PAPER 227` gets a block cursor with transparent
+  glyph pixels.** The block cursor is drawn in the window's colours
+  inverted (paper and ink swapped), so a window whose paper is 227
+  draws its cursor with ink 227 - a see-through cursor block over
+  whatever glyph shape it lands on.
+
+`GFX 1 17` is transient, the same way the buffer-mode state under sub 4
+is: it resets to picture-on-top on game start, `RESTART`, and a
+same-part `LOAD`/`RAMLOAD`. In a template game whose movement and
+response flow ends in `RESTART` every turn, that means `GFX 1 17`
+issued once at startup does not stick - issue it in the same process
+that draws the location picture, right after its `DISPLAY`, so it is
+re-applied every time the picture is.
+
 ## Title screens
 
 Ship `IMAGES\DAAD.png` and the game shows it at cold boot, over the
