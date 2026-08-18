@@ -220,23 +220,21 @@ l2_clear_at:
 ; over the text rows). So a loaded palette must reserve one colour for
 ; punch-through:
 ; - copy loops dodge collisions: any entry whose FIRST byte equals
-;   L2_TRANSP_COLOUR ($E3) is written as L2_TRANSP_COLOUR-1 ($E2)
+;   L2_TRANSP_COLOUR ($E3) is written as L2_TRANSP_DODGE ($E7)
 ;   instead. Only the RRRGGGBB byte is compared, so dodging it
 ;   suffices (the 9-bit second byte passes through as supplied) - and
 ;   it is also NECESSARY, because the compare is against the top 8
 ;   bits of the 9-bit entry, which means TWO of the 512 RGB333 colours
 ;   match any given transparency value and the 9th bit cannot rescue
-;   an entry. The nudge, on the 9-bit path both real callers use
-;   (l2_palette_load B=1 and gfx_direct_stream, via l2_pal9_run):
-;   byte0's low two bits are the TOP TWO of the 3-bit blue field and
-;   the second byte carries its LSB, so $E3 -> $E2 moves blue TWO
-;   steps on the 0-7 scale (7 -> 5, or 6 -> 4 - the untouched LSB
-;   decides which), still saturated magenta, no longer transparent.
-;   On the 8-bit path (B=0, no live caller) the same -1 is ONE step
-;   on that format's 0-3 blue scale, 3/3 -> 2/3. Same byte, different
-;   arithmetic - the scale depends on the format, so always say which.
-;   nxv2enc.py's build_palette_block states the 9-bit form too. Any
-;   art whose palette lands on $E3 would otherwise punch holes;
+;   an entry. The nudge is one step up the 3-bit green field (0 -> 1,
+;   displayed 0 -> 36), blue untouched, and is the SAME single step on
+;   both palette formats - green is a whole byte0 field in each. By
+;   the supplied blue LSB the outputs are (255,36,219) or (255,36,255);
+;   the latter is exactly the escape nxv2enc.py's TRANSP_REMAP picks
+;   for pure magenta, and build_palette_block applies the same +4 on
+;   emission. +4 is only a green step while L2_TRANSP_COLOUR's green
+;   field is 000 (asserted in nextdaad.inc). Any art whose palette
+;   lands on $E3 would otherwise punch holes;
 ; - entry 255 (L2_TRANSP_INDEX) is then stamped $E3 via the 9-bit pair
 ;   (NR $44 = L2_TRANSP_COLOUR, then 0: blue LSB 0, priority 0 -
 ;   chosen over an NR $41 write so the priority bit is explicitly
@@ -329,9 +327,9 @@ l2_palette_load:
     ld a, (hl)
     inc hl
     cp L2_TRANSP_COLOUR          ; colour collision with the reserved
-    jr nz, .w8                   ; transparent colour: dodge one step of
-    ld a, L2_TRANSP_COLOUR-1     ; this format's 0-3 B field, still
-                                 ; magenta, no longer transparent
+    jr nz, .w8                   ; transparent colour: dodge one step up
+    ld a, L2_TRANSP_DODGE        ; the 3-bit green field, same magenta,
+                                 ; no longer transparent
 .w8:
     nextreg NR_PAL_VALUE, a
     djnz .l8
@@ -365,8 +363,8 @@ l2_pal9_run:
     inc hl
     cp L2_TRANSP_COLOUR          ; dodge the RRRGGGBB byte only - the
     jr nz, .w9                   ; compare ignores the second byte
-    ld a, L2_TRANSP_COLOUR-1     ; = TWO steps of the 9-bit 0-7 blue
-                                 ; scale (header), the LSB is untouched
+    ld a, L2_TRANSP_DODGE        ; = ONE step up the 3-bit green field
+                                 ; (header), blue and its LSB untouched
 .w9:
     nextreg NR_PAL_VALUE9, a
     ld a, (hl)

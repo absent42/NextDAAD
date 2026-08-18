@@ -373,12 +373,15 @@ NR_TM_TRANSP    equ $4C     ; NORMAL tilemap mode's transparent index -
 ; which is what tied Layer 2's transparent colour to a tilemap attribute
 ; encoding. Never merge them again.
 ;
-; THREE FILES CARRY THESE VALUES - this one is canonical, and if either
-; moves, all three move:
-;   src/nextdaad.inc          L2_TRANSP_COLOUR / L2_TRANSP_INDEX (here)
-;   authoring-kit/lib/nxv2enc.py    L2_TRANSPARENT_BYTE0
-;   authoring-kit/lib/palcheck.ps1  $TRANSP / $RESERVED
-; tests/build-tests.ps1 parses all three and fails if they disagree.
+; THESE VALUES ARE SYNC-CHECKED - this file is canonical, and if any
+; value moves, all its copies move together. tests/build-tests.ps1
+; (Assert-TranspConstantsInSync) parses every site and fails on drift:
+;   colour: here / authoring-kit/lib/nxv2enc.py L2_TRANSPARENT_BYTE0 /
+;     authoring-kit/lib/palcheck.ps1 $TRANSP /
+;     authoring-kit/externs/fade/fade.asm TRANSP
+;   index:  here / palcheck.ps1 $RESERVED
+;   dodge:  here / fade.asm TRANSP_DODGE / nxv2enc.py L2_DODGE_BYTE0 /
+;     palcheck.ps1 $DODGE / tests/art/mkpalcard.py TRANSP_DODGE
 L2_TRANSP_COLOUR equ $E3    ; RGB332 COLOUR written to NR_L2_TRANSP, and
                             ; stamped into L2_TRANSP_INDEX. $E3 is the
                             ; hardware reset value (chapter-next-layer2
@@ -396,6 +399,19 @@ L2_TRANSP_INDEX  equ 255    ; PIXEL VALUE the interpreter writes to punch
                             ; and NOT related to any tilemap attribute.
                             ; Authors supply art quantized to 255 colours,
                             ; so index 255 stays free for transparency.
+L2_TRANSP_DODGE  equ L2_TRANSP_COLOUR+4
+                            ; substitute COLOUR written wherever art
+                            ; would collide with L2_TRANSP_COLOUR: one
+                            ; step up the 3-bit green field (0 -> 1,
+                            ; displayed 0 -> 36), hue and blue kept.
+                            ; Perceptually closer than the blue axis
+                            ; can get (any blue-high change is two
+                            ; steps of 0-7 blue), and the same escape
+                            ; nxv2enc.py's lattice remap picks for
+                            ; pure magenta. +4 is a green step ONLY
+                            ; while the green field of
+                            ; L2_TRANSP_COLOUR is 000 - asserted:
+    ASSERT (L2_TRANSP_COLOUR & %00011100) == 0
 
 ; --- Banking skeleton (sub-project 3) ---
 DDB_PAGE_FIRST  equ BANK_DDB_FIRST*2  ; 8K pages 32..39
