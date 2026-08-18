@@ -191,9 +191,13 @@ h_restart:                      ; 117: wipe the process stack and the
     xor a                       ; DOALL state; eng_step re-pushes PRO 0
     ld (procSP), a              ; from an empty stack
     ld (doallLevel), a
-    ld (gfxDrawTarget), a       ; RESTART is the render-loop entry in
-    ld (gfxRevealPend), a       ; real games - GFX 87/4 buffer mode is
-    ld (gfxRevealMode), a       ; transient and self-heals here
+    call gfx_drawtarget_clear   ; A=0 on entry: clears all four bytes -
+                                ; RESTART is the render-loop entry in
+                                ; real games, GFX 87/4 buffer mode and
+                                ; layer order are both transient
+    call gfx_layer_apply        ; pushes the layer order to the
+                                ; register, which this overlay cannot
+                                ; do via l2_enable
     ld a, $FF
     ld (doallObj), a
     ret

@@ -2046,9 +2046,10 @@ h_load:                         ; 26: condition-typed (cprops row 26).
     jp ovl1_false               ; abort the entry, session survives
 .ok:
     xor a                       ; same-part LOAD clears the transient
-    ld (gfxDrawTarget), a       ; GFX 87/4 draw-target state (cross-
-    ld (gfxRevealPend), a       ; part goes through eng_init_game via
-    ld (gfxRevealMode), a       ; switch_to_part instead)
+    call gfx_drawtarget_clear   ; GFX 87/4 draw-target state (cross-
+                                ; part goes through eng_init_game via
+                                ; switch_to_part instead)
+    call gfx_layer_apply        ; and reaches the register here too
     call eng_set_done
     jp ovl1_true
 
@@ -2407,9 +2408,10 @@ h_ramload:                      ; 63: restore locs + flags 0..B inclusive
     inc bc                      ; BC = arg1 + 1
     ldir
     xor a                       ; same-part RAMLOAD clears the transient
-    ld (gfxDrawTarget), a       ; GFX 87/4 draw-target state (cross-
-    ld (gfxRevealPend), a       ; part goes through eng_init_game via
-    ld (gfxRevealMode), a       ; switch_to_part instead)
+    call gfx_drawtarget_clear   ; GFX 87/4 draw-target state (cross-
+                                ; part goes through eng_init_game via
+                                ; switch_to_part instead)
+    call gfx_layer_apply        ; and reaches the register here too
     ret
 .xpart:
     ; SP11 T4: cross-part RAMLOAD. swapStage lives in the OVL0 page -

@@ -139,15 +139,24 @@ l2BackBank:   db BANK_L2BACK_FIRST
 ; comes first. NOTE the reveal subs (GFX n 0/2) clear only the PENDING
 ; flag, never the mode - that is why the canonical sequence ends with
 ; an explicit GFX n 3.
-; These three bytes must stay contiguous and in this order:
-; gfx_drawtarget_clear (main.asm) walks them with inc hl. No other
-; caller walks the block - overlay0.asm's h_restart and overlay1.asm's
-; same-part LOAD/RAMLOAD paths each set all three with individual
-; ld (nn),a instructions instead.
+; These four bytes must stay contiguous and in this order:
+; gfx_drawtarget_clear (main.asm) walks them with inc hl. It has five
+; resident callers - gfx_cache_reset and eng_init_game call it direct,
+; and overlay0.asm's h_restart and overlay1.asm's same-part LOAD/
+; RAMLOAD paths each call it too, followed immediately by
+; gfx_layer_apply so every reset of the block also reaches NR $15.
 gfxDrawTarget: db 0   ; 0 = screen (DISPLAY reveals immediately),
                       ; 1 = buffer (DISPLAY stages, no reveal)
 gfxRevealPend: db 0   ; 1 = a deferred DISPLAY awaits its reveal
 gfxRevealMode: db 0   ; pending picture's mode (0=256x192, 1=320x256)
+gfxLayerOrder: db 0   ; 0 = picture on top (Layer 2 above the tilemap,
+                      ; NR $15 bits 4-2 = %000) - the default and what
+                      ; every existing game gets; 1 = text on top
+                      ; (%010). Read by l2_enable, which re-composes the
+                      ; register on every picture operation, and set by
+                      ; GFX n 17. Resets with the rest of this block so
+                      ; a restart cannot inherit a previous game's
+                      ; order.
 
 gfxBankList: ds GFX_BANKLIST_MAX
 

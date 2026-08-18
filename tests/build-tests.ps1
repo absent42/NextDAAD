@@ -909,8 +909,44 @@ function Assert-PalColourDodge {
     "pal_colour: 227 exempt, everything else shifts to L2_TRANSP_DODGE"
 }
 
+# gfxLayerOrder must sit inside the contiguous block that
+# gfx_drawtarget_clear walks, and every site that clears that block by
+# hand must clear it too. A byte that resets on some paths and not
+# others is worse than one that never resets.
+function Assert-LayerOrderReset {
+    $cache = Get-Content -LiteralPath (Join-Path $root 'src\gfxcache.asm') -Raw
+    if ($cache -notmatch '(?m)^gfxRevealMode:[^\r\n]*\r?\n^gfxLayerOrder:') {
+        throw "src\gfxcache.asm : gfxLayerOrder must be declared on the line immediately after gfxRevealMode - gfx_drawtarget_clear walks the block with inc hl, so anything between them breaks the walk"
+    }
+    $main = Get-Content -LiteralPath (Join-Path $root 'src\main.asm') -Raw
+    $body = [regex]::Match($main, '(?ms)^gfx_drawtarget_clear:.*?\r?\n    ret').Value
+    $writes = ([regex]::Matches($body, 'ld\s+\(hl\),\s*a')).Count
+    if ($writes -ne 4) {
+        throw "src\main.asm : gfx_drawtarget_clear writes $writes bytes, expected 4 (gfxDrawTarget, gfxRevealPend, gfxRevealMode, gfxLayerOrder)"
+    }
+    $siteCounts = @{ 'src\overlay0.asm' = 1; 'src\overlay1.asm' = 2 }
+    foreach ($rel in $siteCounts.Keys) {
+        $t = Get-Content -LiteralPath (Join-Path $root $rel) -Raw
+        $want = $siteCounts[$rel]
+        $clears = ([regex]::Matches($t, 'call\s+gfx_drawtarget_clear')).Count
+        if ($clears -lt $want) {
+            throw "$rel : only $clears call(s) to gfx_drawtarget_clear, expected at least $want - every hand-written reset site must clear the whole block through the resident walker, not individual ld (nn),a writes"
+        }
+        $applies = ([regex]::Matches($t, 'call\s+gfx_layer_apply')).Count
+        if ($applies -lt $want) {
+            throw "$rel : only $applies call(s) to gfx_layer_apply, expected at least $want - every reset site must push the layer order to NR `$15 through the resident composer, not leave the register disagreeing with the byte"
+        }
+    }
+    $mainSrc = Get-Content -LiteralPath (Join-Path $root 'src\main.asm') -Raw
+    if ($mainSrc -notmatch '(?m)^gfx_layer_apply:') {
+        throw "src\main.asm : gfx_layer_apply must be resident - overlay0 and overlay1 cannot reach l2_enable in overlay2"
+    }
+    "gfxLayerOrder: contiguous, walked, cleared and applied at every reset site"
+}
+
 Assert-TranspConstantsInSync
 Assert-PalColourDodge
+Assert-LayerOrderReset
 
 # Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py
 # has the full why): a paletted PNG with the transparent colour in the

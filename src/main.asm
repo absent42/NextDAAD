@@ -709,10 +709,11 @@ sfxChan1: ds SMPB_SIZE
 
 ; GFX 87 subs 3/4 draw-target state clear (Task 2). gfx_cache_reset
 ; (gfxcache.asm) and eng_init_game (engine.asm) both need to zero the
-; three contiguous gfxDrawTarget/gfxRevealPend/gfxRevealMode bytes, and
-; both are pre-anchor callers that cannot each afford three ld (nn),a
-; (9 bytes) out of the scarce pre-flags pad. One shared routine here on
-; the resident tail costs each call site a 3-byte CALL instead.
+; four contiguous gfxDrawTarget/gfxRevealPend/gfxRevealMode/
+; gfxLayerOrder bytes, and both are pre-anchor callers that cannot each
+; afford four ld (nn),a (12 bytes) out of the scarce pre-flags pad. One
+; shared routine here on the resident tail costs each call site a
+; 3-byte CALL instead.
 ; Entry: A=0. Corrupts HL.
 gfx_drawtarget_clear:
     ld hl, gfxDrawTarget
@@ -721,6 +722,30 @@ gfx_drawtarget_clear:
     ld (hl), a
     inc hl
     ld (hl), a
+    inc hl
+    ld (hl), a
+    ret
+
+; Push gfxLayerOrder to NR $15 bits 4-2, leaving every other bit of that
+; register alone (lores enable, sprite priority, sprite border clip,
+; sprite over border, sprite enable). RESIDENT on purpose: the reset
+; sites that need it are h_restart in overlay0 and the same-part LOAD
+; paths in overlay1, and neither can reach l2_enable in overlay2.
+; l2_enable and GFX sub 17 call it too, so exactly ONE routine composes
+; this field and the byte can never disagree with the register.
+; Corrupts AF, E; preserves BC (nr_read pushes it) and HL.
+gfx_layer_apply:
+    ld e, NR_LAYERS
+    call nr_read
+    and %11100011               ; clear bits 4-2, keep everything else
+    ld e, a
+    ld a, (gfxLayerOrder)
+    or a
+    ld a, e
+    jr z, .write                ; 0 = picture on top: bits 4-2 = %000
+    or %00001000                ; 1 = text on top:    bits 4-2 = %010
+.write:
+    nextreg NR_LAYERS, a
     ret
 
     ASSERT $ <= RESIDENT_LIMIT
