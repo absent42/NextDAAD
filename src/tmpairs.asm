@@ -29,13 +29,27 @@ tm_reserved_pairs:
 ; A = logical colour 0-255. Out: DE = its 9-bit value, D = RRRGGGBB and
 ; E = blue LSB in bit 0. There is no colour table anywhere: colours 0-15
 ; are the classic ULA entries already resident in dadPalette, and 16-255
-; ARE their own RRRGGGBB value, so the answer is computed. The ninth bit
-; for a computed colour is (B1 OR B0), which is exactly what the core
-; derives on an NR $41 write (zxnext.vhd line 5425) - reproduced here so
-; every palette write in this module can go through NR $44 uniformly.
+; ARE their own RRRGGGBB value (with two stated exceptions, below), so the
+; answer is computed. The ninth bit for a computed colour is (B1 OR B0),
+; which is exactly what the core derives on an NR $41 write
+; (zxnext.vhd line 5425) - reproduced here so every palette write in this
+; module can go through NR $44 uniformly.
 ; Touches no palette register at all, so NR $43 is left alone.
 ; Preserves BC. Corrupts AF, HL.
+;
+; EXCEPTION 1: TXT_TRANSP_COLOUR (the single request for transparent paper)
+; returns the transparent colour deliberately, tested on entry because both
+; resolve paths converge.
+; EXCEPTION 2: Any OTHER route landing on the transparent colour is shifted
+; to L2_TRANSP_DODGE on a shared exit, so classic colour 11 (bright magenta,
+; which happens to render as the transparent value) does not punch a hole.
 pal_colour:
+    cp TXT_TRANSP_COLOUR        ; the one exempt value, tested on the
+    jr nz, .resolve             ; INPUT: both routes below converge on
+    ld d, L2_TRANSP_COLOUR      ; D = the transparent colour, so an
+    ld e, 1                     ; output-only test could not tell this
+    ret                         ; apart from classic colour 11
+.resolve:
     cp 16
     jr nc, .computed
     add a, a                    ; classic: two bytes per entry
@@ -46,7 +60,7 @@ pal_colour:
     ld d, (hl)                  ; byte 0 = RRRGGGBB
     inc hl
     ld e, (hl)                  ; byte 1 = blue LSB
-    ret
+    jr .dodge
 .computed:
     ld d, a                     ; RRRGGGBB is the number itself
     and 3                       ; the two blue bits
@@ -54,7 +68,12 @@ pal_colour:
     ld a, 1                      ; either set: ninth bit set (B1 OR B0)
 .noblue:
     ld e, a
-    ret
+.dodge:
+    ld a, d                     ; shared exit. Anything that landed on
+    cp L2_TRANSP_COLOUR         ; the transparent colour becomes the
+    ret nz                      ; interpreter-wide dodge instead, so no
+    ld d, L2_TRANSP_DODGE       ; text colour punches an accidental hole
+    ret                         ; (classic 11 is the one that did)
 
 ; --- tilemap pair allocator ---------------------------------------
 ; Tilemap text mode builds its palette index as

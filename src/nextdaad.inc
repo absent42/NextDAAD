@@ -413,6 +413,24 @@ L2_TRANSP_DODGE  equ L2_TRANSP_COLOUR+4
                             ; L2_TRANSP_COLOUR is 000 - asserted:
     ASSERT (L2_TRANSP_COLOUR & %00011100) == 0
 
+TXT_TRANSP_COLOUR equ L2_TRANSP_COLOUR
+                            ; The ONE logical INK/PAPER value that is
+                            ; allowed to reach the transparent colour,
+                            ; so text can ask for transparent paper.
+                            ; Derived, not a magic 227: logical colours
+                            ; 16-255 encode to their own RRRGGGBB, so
+                            ; the number that produces the transparent
+                            ; colour IS that colour's byte. If
+                            ; L2_TRANSP_COLOUR ever moves this follows
+                            ; it. Every OTHER route to the transparent
+                            ; value is shifted to L2_TRANSP_DODGE by
+                            ; pal_colour, which is what stops classic
+                            ; colour 11 (bright magenta) rendering as a
+                            ; hole. BORDER is unaffected in practice:
+                            ; NR $4A is final output and is never
+                            ; compared against NR $14, so BORDER 227
+                            ; renders magenta rather than transparent.
+
 ; --- Banking skeleton (sub-project 3) ---
 DDB_PAGE_FIRST  equ BANK_DDB_FIRST*2  ; 8K pages 32..39
 BANK_OVL0       equ 28      ; overlay page 0 lives in bank 28 (lower 8K)

@@ -887,7 +887,30 @@ function Assert-TranspConstantsInSync {
     }
     "L2 transparency constants agree: colour `$$($colours['src\nextdaad.inc'].ToString('X2')) (4 sites), index $($indices['src\nextdaad.inc']), dodge `$$($dodges['src\nextdaad.inc'].ToString('X2')) (5 sites)"
 }
+
+# pal_colour must reserve exactly one logical colour as the transparent
+# request and shift every other route off the transparent value. Both
+# facts are structural and cheap to read from source; the runtime proof
+# is the -TmOver fixture.
+function Assert-PalColourDodge {
+    $rel = 'src\tmpairs.asm'
+    $txt = Get-Content -LiteralPath (Join-Path $root $rel) -Raw
+    $body = [regex]::Match($txt, '(?ms)^pal_colour:.*?(?=^[A-Za-z_;])').Value
+    if (-not $body) { throw "$rel : pal_colour not found" }
+    if ($body -notmatch 'cp\s+TXT_TRANSP_COLOUR') {
+        throw "$rel : pal_colour does not test TXT_TRANSP_COLOUR on entry - the transparency request must be exempt from the shift, and an output test cannot tell it from colour 11"
+    }
+    if ($body -notmatch 'ld\s+d,\s*L2_TRANSP_DODGE') {
+        throw "$rel : pal_colour does not shift to L2_TRANSP_DODGE - a literal would escape Assert-TranspConstantsInSync"
+    }
+    if ($body -match 'ld\s+d,\s*\$E7') {
+        throw "$rel : pal_colour writes a literal `$E7 - use L2_TRANSP_DODGE so the sync check governs it"
+    }
+    "pal_colour: 227 exempt, everything else shifts to L2_TRANSP_DODGE"
+}
+
 Assert-TranspConstantsInSync
+Assert-PalColourDodge
 
 # Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py
 # has the full why): a paletted PNG with the transparent colour in the
