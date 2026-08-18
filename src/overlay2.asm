@@ -1084,14 +1084,16 @@ h_display:
 ;       needs no hole cut in it. Transparent paper is requested
 ;       separately, per window, with PAPER 227. B >= 2 is a no-op, the
 ;       same tolerance sub 16 gives its own P1.
-;       State PERSISTS through the RESTART condact, unlike the draw
-;       target above (owner ruling 2026-08-18): RESTART is the per-move
-;       render-loop re-entry in a template DAAD game, so resetting the
-;       order there would force an author to re-issue the flip every
-;       turn. It resets on game start, on a part switch and on a
-;       same-part LOAD/RAMLOAD, and the register follows immediately at
-;       each of those, because those reset sites call the resident
-;       composer directly.
+;       The order is GAME-OWNED state, unlike the draw target above,
+;       and the interpreter NEVER resets it after boot (owner ruling
+;       2026-08-18). Not on RESTART, not on LOAD or RAMLOAD, not at
+;       game start or a part switch: a player loading a save in a
+;       text-on-top game must not be handed picture-on-top unreadable
+;       text, and an author must not have to re-assert the order every
+;       turn. Boot establishes picture on top and this sub is the only
+;       thing that changes it afterwards. The register follows the byte
+;       immediately here and is re-asserted by the resident composer
+;       wherever else NR $15 is written.
 ;       This sub does NOT enable or disable Layer 2 - it composes the
 ;       priority field only, so calling it while Layer 2 is hidden
 ;       (l2_disable, "hand the screen back to the text layer") leaves it
@@ -1153,7 +1155,10 @@ h_gfx:
                                  ; below is for an unknown SUB-command
                                  ; and prints "GFX? ", which would name
                                  ; the wrong fault here.
-    ld (gfxLayerOrder), a
+    ld (gfxLayerOrder), a        ; THE ONLY WRITE to this byte anywhere
+                                 ; in the interpreter: it is game-owned
+                                 ; state that nothing resets after boot
+                                 ; (gfxcache.asm). The harness pins that.
     jp gfx_layer_apply           ; resident composer, NOT l2_enable:
                                  ; going through l2_enable would also
                                  ; set NR $69 bit 7 and re-show a

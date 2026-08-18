@@ -412,6 +412,12 @@ L2_TRANSP_DODGE  equ L2_TRANSP_COLOUR+4
                             ; while the green field of
                             ; L2_TRANSP_COLOUR is 000 - asserted:
     ASSERT (L2_TRANSP_COLOUR & %00011100) == 0
+                            ; And the low two bits (blue 2-1) must
+                            ; be non-zero: pal_colour's exempt path
+                            ; hardcodes E=1 for the ninth blue bit,
+                            ; which is (B1 OR B0) and so is only
+                            ; correct while those bits are set.
+    ASSERT (L2_TRANSP_COLOUR & 3) != 0
 
 TXT_TRANSP_COLOUR equ L2_TRANSP_COLOUR
                             ; The ONE logical INK/PAPER value that is

@@ -250,12 +250,12 @@ to act on here.</p>
 </table>
 <p>Sub 17 composes the layer priority only - it never enables or disables
 Layer 2, so it cannot bring back a picture surface the game has hidden.</p>
-<p>Sub 17's layer order is NOT transient the way buffer mode (below) is: it
-survives every picture operation and it survives <code>RESTART</code>, which is
-what a template game's movement flow ends in on every turn, so an author
-sets it once. It resets to picture-on-top on game start, on a
-<code>RESTART</code>-of-game through <code>LOAD</code>/<code>RAMLOAD</code>, and on a part switch, with
-the hardware register following the reset immediately.</p>
+<p>Sub 17's layer order is NOT transient the way buffer mode (below) is. It
+is game-owned state, like <code>INK</code>, <code>PAPER</code> and the window table: the game
+boots with the picture on top and the interpreter never changes the order
+afterwards. It survives every picture operation, <code>RESTART</code>, <code>LOAD</code>,
+<code>RAMLOAD</code> and a move to another part, so a game sets it once and a
+restored save comes back in the order the game chose.</p>
 <p>Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
 <code>RESTART</code>, a same-part <code>LOAD</code>/<code>RAMLOAD</code>, or any game (re)start -
 whichever comes first. Revealing a staged picture (sub 0 or 2) clears

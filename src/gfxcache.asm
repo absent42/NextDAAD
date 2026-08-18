@@ -139,39 +139,39 @@ l2BackBank:   db BANK_L2BACK_FIRST
 ; comes first. NOTE the reveal subs (GFX n 0/2) clear only the PENDING
 ; flag, never the mode - that is why the canonical sequence ends with
 ; an explicit GFX n 3.
-; These four bytes must stay contiguous and in this order:
-; gfx_drawtarget_clear (main.asm) walks them with inc hl, THEN FALLS
-; THROUGH into gfx_layer_apply - clearing the block and pushing the
-; cleared layer order to NR $15 are one operation, by construction, so
-; every one of its four resident callers (gfx_cache_reset here,
-; eng_init_game in engine.asm, and overlay1.asm's two same-part
-; LOAD/RAMLOAD paths) reaches NR $15 with a single call - there is no
-; second call to forget, and no way for one of those sites to clear the
-; byte without pushing the register.
+; THE FIRST THREE bytes are the transient block and must stay
+; contiguous and in this order: gfx_drawtarget_clear (main.asm) walks
+; exactly those three with inc hl, THEN FALLS THROUGH into
+; gfx_layer_apply, so every one of its four resident callers
+; (gfx_cache_reset here, eng_init_game in engine.asm, and overlay1.asm's
+; two same-part LOAD/RAMLOAD paths) also re-asserts the layer order to
+; NR $15 with the same single call - the byte and the register can never
+; drift apart at a reset, whatever else the path did to that register.
 ;
-; h_restart (overlay0.asm) IS NOT ONE OF THEM, deliberately (owner
-; ruling 2026-08-18). It is a reset site for the three buffer-mode
-; bytes, which it clears with its own inline stores, and it is NOT a
-; reset site for gfxLayerOrder: RESTART is the per-move render-loop
-; re-entry in a template DAAD game, so the layer order has to survive
-; it or an author would have to re-issue the flip every turn. Do not
-; "tidy" those three stores back into a call to this walker - the
-; harness pins their shape for exactly that reason.
+; h_restart (overlay0.asm) does the same job with its own three inline
+; stores rather than the walker, because it must not touch the fourth
+; byte below. Do not "tidy" those stores into a call to this walker -
+; the harness pins their shape for exactly that reason.
 gfxDrawTarget: db 0   ; 0 = screen (DISPLAY reveals immediately),
                       ; 1 = buffer (DISPLAY stages, no reveal)
 gfxRevealPend: db 0   ; 1 = a deferred DISPLAY awaits its reveal
 gfxRevealMode: db 0   ; pending picture's mode (0=256x192, 1=320x256)
+; GAME-OWNED PRESENTATION STATE, and the only byte here that is not
+; transient (owner ruling 2026-08-18). It is declared next to the block
+; above for locality only - the walker stops before it, and NOTHING in
+; the interpreter ever writes it except GFX n 17 (h_gfx's .layer,
+; overlay2.asm). It is deliberately NOT reset by RESTART, by LOAD or
+; RAMLOAD, by game start or by a part switch: a player loading a save in
+; a text-on-top game must not be handed picture-on-top unreadable text,
+; and an author must not have to re-assert the order every turn. A
+; loaded save or a new part keeps the order the game last set. The boot
+; default is this assembled 0 plus hw_init's register state.
 gfxLayerOrder: db 0   ; 0 = picture on top (Layer 2 above the tilemap,
                       ; NR $15 bits 4-2 = %000) - the default and what
                       ; every existing game gets; 1 = text on top
                       ; (%010). Read by l2_enable, which re-composes the
-                      ; register on every picture operation, and set by
-                      ; GFX n 17. Resets with the rest of this block at
-                      ; game start, at a part switch and at a same-part
-                      ; LOAD/RAMLOAD, so a new game cannot inherit a
-                      ; previous one's order - but NOT at RESTART, which
-                      ; clears only the three bytes above it (see the
-                      ; block comment).
+                      ; register on every picture operation, and by
+                      ; gfx_layer_apply wherever the register is pushed.
 
 gfxBankList: ds GFX_BANKLIST_MAX
 
@@ -181,7 +181,8 @@ gfxBankList: ds GFX_BANKLIST_MAX
 ; where bank_table_init rebuilds the whole allocator anyway, and a warm
 ; re-entry (see boot_data_init's header) would otherwise leave stale
 ; cache entries pointing at banks the allocator just recycled.
-; Corrupts AF, BC, HL.
+; Corrupts AF, BC, E, HL (E via gfx_drawtarget_clear's fall-through into
+; the composer).
 gfx_cache_reset:
     ld a, GFX_EMPTY
     ld (stagedPic), a
@@ -193,12 +194,16 @@ gfx_cache_reset:
     ld (gfxBankNext), a
     call gfx_drawtarget_clear    ; A still 0 here; the 3-byte CALL beats
                                   ; 9 bytes of inline stores out of the
-                                  ; scarce pre-flags pad, and now also
-                                  ; pushes the cleared layer order to NR
-                                  ; $15 (falls through into gfx_layer_apply,
-                                  ; main.asm) - harmless at boot, before any
-                                  ; game, since the register already holds
-                                  ; %000 there
+                                  ; scarce pre-flags pad, and also
+                                  ; re-asserts the layer order to NR $15
+                                  ; (falls through into gfx_layer_apply,
+                                  ; main.asm). Harmless on the boot path
+                                  ; even though boot_data_init runs
+                                  ; BEFORE hw_init: the composer is a
+                                  ; read-modify-write that forces bits
+                                  ; 4-2 to 0 from the assembled db 0, and
+                                  ; hw_init zeroes the whole register
+                                  ; immediately afterwards anyway
     ld a, BANK_L2_FIRST          ; double-buffer roles back to boot state
     ld (l2FrontBank), a
     ld a, BANK_L2BACK_FIRST

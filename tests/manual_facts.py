@@ -47,6 +47,18 @@ FORBIDDEN = [
      "the tilemap has no transparency; that attribute was deleted"),
     (r"TM_TRANSP_ATTR|TM_TRANSP_PAIR",
      "both constants were deleted on 2026-08-06"),
+    # The GFX n 17 layer order used to be documented as transient, with a
+    # reset list. Owner rulings 2026-08-18 made it game-owned: boot leaves
+    # it at picture on top and NOTHING in the interpreter changes it after
+    # that, so a restored save keeps the order the game chose. (?s) is
+    # local DOTALL - the claim always straddles a wrapped line.
+    (r"(?s)resets?\s+to\s+picture[-\s]?on[-\s]?top(?=.{0,140}"
+     r"(?:RESTART|RAMLOAD|LOAD))|"
+     r"(?:RESTART|RAMLOAD|LOAD).{0,140}"
+     r"resets?\s+to\s+picture[-\s]?on[-\s]?top",
+     "the layer order is game-owned and the interpreter never resets it "
+     "after boot - not on RESTART, LOAD, RAMLOAD, game start or a part "
+     "switch (owner rulings 2026-08-18)"),
 ]
 
 def parse(path, pattern, label):

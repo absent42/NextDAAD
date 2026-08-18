@@ -4,6 +4,40 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.7.3 - unreleased
 
+- `GFX n 17` sets the layer order: `GFX 1 17` puts the text layer above
+  the picture, `GFX 0 17` restores the default of picture on top. With
+  the text layer on top, transparent paper decides where the picture
+  shows, so text can be laid over an unmodified full-frame picture and
+  the same artwork serves any layout - no hole cut into the art, and the
+  layout can change at runtime. The order is game-owned state: boot
+  leaves it at picture on top and nothing in the interpreter changes it
+  afterwards, so it survives every picture operation, RESTART, LOAD,
+  RAMLOAD and a part switch, and a restored save comes back in the order
+  the game chose. The sub composes layer priority only and never enables
+  or disables Layer 2.
+
+- `PAPER 227` and `INK 227` are reserved for transparency: 227 is the
+  one logical colour that reaches the hardware transparent value, so
+  `PAPER 227` makes a cell's background transparent and `INK 227` makes
+  the glyph shapes themselves transparent (a stencil). Requested per
+  window, alongside the layer order above. `BORDER 227` is unaffected
+  and still renders magenta - the border colour is final output and is
+  never compared against the transparency register.
+
+- `PAPER 11` and `INK 11` render as bright magenta instead of punching
+  holes. Classic colour 11's RRRGGGBB happens to be the transparency
+  value, so until now `PAPER 11` produced a hole and `INK 11` erased the
+  glyphs; both are now shifted to the same $E7 escape the picture loader
+  uses. A visible change for any existing game that uses colour 11, and
+  the condact now produces a colour rather than a hole, which is what
+  the interpreter's colour model always promised.
+
+- Enabling Layer 2 no longer clears the sprite bits of NR $15. The
+  enable path used to write that register whole, so a pointer shown with
+  `MOUSE n 1` vanished at the next picture operation until something
+  re-armed it; it is a read-modify-write now and the pointer survives
+  picture draws, flips and reveals.
+
 - The Layer 2 transparency collision dodge now substitutes $E7 (one
   green step up, hue and blue kept) instead of $E2 (two blue steps
   down) wherever a palette entry lands on the reserved transparency

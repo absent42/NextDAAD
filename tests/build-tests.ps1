@@ -938,18 +938,25 @@ function Assert-PalColourDodge {
 # hand must clear it too. A byte that resets on some paths and not
 # others is worse than one that never resets.
 function Assert-LayerOrderReset {
+    # gfxLayerOrder is declared next to the transient trio for locality,
+    # NOT because anything walks into it - the walker stops after three
+    # bytes (owner ruling 2026-08-18: the order is game-owned state and
+    # the interpreter never resets it after boot). The adjacency is still
+    # pinned so the four bytes are read and edited as one story.
     $cache = Get-Content -LiteralPath (Join-Path $root 'src\gfxcache.asm') -Raw
-    if ($cache -notmatch '(?m)^gfxRevealMode:[^\r\n]*\r?\n^gfxLayerOrder:') {
-        throw "src\gfxcache.asm : gfxLayerOrder must be declared on the line immediately after gfxRevealMode - gfx_drawtarget_clear walks the block with inc hl, so anything between them breaks the walk"
+    if ($cache -notmatch '(?m)^gfxRevealMode:[^\r\n]*\r?\n(?:;[^\r\n]*\r?\n)*^gfxLayerOrder:') {
+        throw "src\gfxcache.asm : gfxLayerOrder must stay declared immediately after gfxRevealMode (a comment block between them is fine) - the four bytes are one story and the walker's stopping point is only readable if they sit together"
     }
+    # THREE writes, not four. A fourth would clear the game's layer order
+    # at every reset site, which is exactly what the ruling forbids.
     $main = Get-Content -LiteralPath (Join-Path $root 'src\main.asm') -Raw
     $body = [regex]::Match($main, '(?ms)^gfx_drawtarget_clear:.*?\r?\n    ret').Value
     $writes = ([regex]::Matches($body, 'ld\s+\(hl\),\s*a')).Count
-    if ($writes -ne 4) {
-        throw "src\main.asm : gfx_drawtarget_clear writes $writes bytes, expected 4 (gfxDrawTarget, gfxRevealPend, gfxRevealMode, gfxLayerOrder)"
+    if ($writes -ne 3) {
+        throw "src\main.asm : gfx_drawtarget_clear writes $writes bytes, expected 3 (gfxDrawTarget, gfxRevealPend, gfxRevealMode). A fourth would walk into gfxLayerOrder, which is game-owned state the interpreter must never reset (owner ruling 2026-08-18)"
     }
     if ($body -notmatch '(?ms)ld \(hl\), a\s*(?:;[^\r\n]*\r?\n|\s)*gfx_layer_apply:') {
-        throw "src\main.asm : gfx_drawtarget_clear must fall through into gfx_layer_apply with no ret between the fourth ld (hl),a and the gfx_layer_apply label - clearing the block and composing NR `$15 must be one operation, not two calls a reset site could forget to pair"
+        throw "src\main.asm : gfx_drawtarget_clear must fall through into gfx_layer_apply with no ret between the third ld (hl),a and the gfx_layer_apply label - clearing the transient bytes and RE-ASSERTING the game's layer order to NR `$15 must be one operation, not two calls a reset site could forget to pair"
     }
     $siteCounts = @{ 'src\overlay1.asm' = 2; 'src\engine.asm' = 1; 'src\gfxcache.asm' = 1 }
     foreach ($rel in $siteCounts.Keys) {
@@ -974,6 +981,21 @@ function Assert-LayerOrderReset {
     # add a gfxLayerOrder write beside them; the buffer-mode transience
     # contract and the layer-order persistence ruling are separate
     # promises made by the same six lines of code.
+    # AND NOTHING ANYWHERE MAY WRITE THE ORDER BYTE EXCEPT SUB 17. This
+    # is the whole ruling in one assertion: GFX n 17 (overlay2's h_gfx
+    # .layer) is the only writer, so no reset path, no part switch and no
+    # save/load route can quietly reintroduce a reset. Scanned across all
+    # of src\ rather than at the known sites, because the failure this
+    # guards against is a write appearing somewhere nobody thought to look.
+    $orderWriters = @()
+    foreach ($f in Get-ChildItem -LiteralPath (Join-Path $root 'src') -Recurse -Include '*.asm', '*.inc' -File) {
+        $t = Get-Content -LiteralPath $f.FullName -Raw
+        if ($t -match 'ld\s+\(gfxLayerOrder\)') { $orderWriters += $f.Name }
+    }
+    $orderWriters = @($orderWriters | Sort-Object -Unique)
+    if ($orderWriters.Count -ne 1 -or $orderWriters[0] -ne 'overlay2.asm') {
+        throw "gfxLayerOrder is written in ($($orderWriters -join ', ')) - GFX n 17 in src\overlay2.asm must be the ONLY writer. The layer order is game-owned state and the interpreter never resets it after boot (owner ruling 2026-08-18)"
+    }
     $ovl0 = Get-Content -LiteralPath (Join-Path $root 'src\overlay0.asm') -Raw
     if ($ovl0 -match 'call\s+gfx_drawtarget_clear') {
         throw "src\overlay0.asm : h_restart must NOT call gfx_drawtarget_clear - that walker clears gfxLayerOrder too, and RESTART is the per-move render-loop re-entry in a template game, so the layer order deliberately survives it (owner ruling 2026-08-18). Clear the three buffer-mode bytes inline instead."
@@ -1008,7 +1030,7 @@ function Assert-LayerOrderReset {
     if ($inc -notmatch 'GFX_SUB_LAYER\s+equ\s+17') {
         throw "src\nextdaad.inc : GFX_SUB_LAYER must be 17 - 0-15 are allocated by DAAD across its targets and 16 is FONT"
     }
-    "gfxLayerOrder: contiguous, walked, cleared and applied at every reset site; h_restart pinned to buffer-state only, so the order survives RESTART"
+    "gfxLayerOrder: game-owned; only GFX n 17 writes it, the walker clears three transient bytes and re-asserts the order, h_restart pinned to buffer-state only"
 }
 
 Assert-TranspConstantsInSync
@@ -2091,15 +2113,6 @@ foreach ($c in @(@{ n = 'PICTURE 1'; b = [byte[]]@(84, 1) },
         throw "tmover: '$($c.n)' not present in tests\out\tmover.ddb - the card would never be drawn and no band could be judged"
     }
 }
-# The timed holds. PAUSE is 35 and 0 means 256 frames in a V2 database
-# (h_pause, src\overlay0.asm); DRC's duration scaling multiplies by 0.6
-# and so leaves 0 alone. Twelve are authored - two in the reset
-# observation window and two in each of the five held choreography
-# states - and without them the states flash past faster than a capture
-# can land in one. Pinned at exactly 12 rather than bounded, so a lost
-# hold is caught; a coincidental 35,0 pair elsewhere in the database
-# would also move this count, in which case check WHICH holds are still
-# authored before changing the number.
 # The RESTART leg. GOTO is opcode 37 and RESTART 117, both one byte of
 # operand apart, so 'GOTO 0 + RESTART' is the three-byte run 37,0,117.
 # It is authored twice - state 4 of the choreography and the RESET verb
@@ -2111,11 +2124,30 @@ $tmoRestart = Find-ByteRuns $tmoBytes ([byte[]]@(37, 0, 117))
 if ($tmoRestart.Count -lt 2) {
     throw "tmover: found $($tmoRestart.Count) 'GOTO 0 + RESTART' runs (25 00 75) in tests\out\tmover.ddb, expected 2 - the choreography's RESTART leg and the RESET verb both need one, and the layer-order-survives-RESTART check has nothing to stand on without them"
 }
+# The RAMLOAD leg, the other half of the same claim. RAMLOAD is opcode
+# 63 and takes one parameter, so 'RAMLOAD 255' is the two-byte run
+# 63,255. Authored twice - state 6 of the choreography and the RECAL
+# verb - and it is the only route this fixture has to the same-part
+# reload path, which the owner ruled must ALSO leave the layer order
+# alone (2026-08-18).
+$tmoRamload = Find-ByteRuns $tmoBytes ([byte[]]@(63, 255))
+if ($tmoRamload.Count -lt 2) {
+    throw "tmover: found $($tmoRamload.Count) 'RAMLOAD 255' runs (3F FF) in tests\out\tmover.ddb, expected 2 - state 6 and the RECAL verb both need one, and the layer-order-survives-RAMLOAD check has nothing to stand on without them"
+}
+# The timed holds. PAUSE is 35 and 0 means 256 frames in a V2 database
+# (h_pause, src\overlay0.asm); DRC's duration scaling multiplies by 0.6
+# and so leaves 0 alone. Twelve are authored - two in the reset
+# observation window and two in each of the five held choreography
+# states - and without them the states flash past faster than a capture
+# can land in one. Pinned at exactly 12 rather than bounded, so a lost
+# hold is caught; a coincidental 35,0 pair elsewhere in the database
+# would also move this count, in which case check WHICH holds are still
+# authored before changing the number.
 $tmoPause = Find-ByteRuns $tmoBytes ([byte[]]@(35, 0))
 if ($tmoPause.Count -ne 12) {
     throw "tmover: expected exactly 12 'PAUSE 0' holds (23 00); found $($tmoPause.Count) - the timed choreography cannot be read by a timed capture without them"
 }
-"tmover.ddb: $($tmoBytes.Length) bytes, v$($tmoBytes[0]), GFX 0/1 17, the four PAPER/INK band pairs (227 transparent, 1 opaque, 227 ink, 11 magenta), PICTURE/DISPLAY, 12 PAUSE holds and 2 GOTO 0 + RESTART runs all present as authored"
+"tmover.ddb: $($tmoBytes.Length) bytes, v$($tmoBytes[0]), GFX 0/1 17, the four PAPER/INK band pairs (227 transparent, 1 opaque, 227 ink, 11 magenta), PICTURE/DISPLAY, 12 PAUSE holds, 2 GOTO 0 + RESTART and 2 RAMLOAD 255 runs all present as authored"
 
 # --- sfxlong: the SD-streamed sampled-effect wire fixture ---
 # THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/fontsw above: DRC

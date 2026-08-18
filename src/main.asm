@@ -709,22 +709,32 @@ sfxChan1: ds SMPB_SIZE
 
 ; GFX 87 subs 3/4 draw-target state clear (Task 2). gfx_cache_reset
 ; (gfxcache.asm), eng_init_game (engine.asm) and overlay1.asm's two
-; same-part LOAD/RAMLOAD paths all need to zero the four contiguous
-; gfxDrawTarget/gfxRevealPend/gfxRevealMode/gfxLayerOrder bytes AND push
-; the cleared layer order to NR $15 - clearing the block and composing
-; the register are one operation at those reset sites, so this routine
-; FALLS THROUGH into gfx_layer_apply instead of returning: one 3-byte
-; CALL buys both instead of two.
-; h_restart (overlay0.asm) is NOT among them, deliberately (owner ruling
-; 2026-08-18): RESTART is the per-move render-loop re-entry in a
-; template DAAD game, so the layer order must survive it. It clears the
-; three buffer-mode bytes with its own inline stores instead.
+; same-part LOAD/RAMLOAD paths all need to zero the THREE contiguous
+; gfxDrawTarget/gfxRevealPend/gfxRevealMode bytes. Buffer mode is the
+; only transient state here.
+;
+; gfxLayerOrder IS NOT WALKED and is never cleared by anything (owner
+; ruling 2026-08-18). The layer order is game-owned presentation state,
+; like INK, PAPER and the window table: boot establishes picture on top
+; (the assembled db 0 plus hw_init) and only GFX n 17 changes it after
+; that. A player loading a save in a text-on-top game must not be handed
+; picture-on-top unreadable text, and an author must not have to
+; re-assert the order after every RESTART, LOAD, RAMLOAD or part switch.
+;
+; The FALL-THROUGH into gfx_layer_apply stays, and its job has changed
+; from pushing a cleared order to RE-ASSERTING the current one. That is
+; harmless - the value written is the value already in force - and it is
+; what keeps the byte and NR $15 in agreement at every reset, whatever
+; else those paths did to the register on the way through. One 3-byte
+; CALL still buys both.
 ; Entry: A=0. Corrupts HL, and (via the fall-through) AF and E too -
 ; every caller is tolerant: eng_init_game reloads A with $FF next and
 ; never reads E; gfx_cache_reset's next instruction reloads A too and
-; its loop below uses B, which nr_read preserves; both overlay1 sites
-; continue into eng_set_done (ld a,1 / ld (isDone),a / ret), which does
-; not depend on A or E.
+; its loop below uses B, which nr_read preserves; overlay1's same-part
+; LOAD site continues into eng_set_done (ld a,1 / ld (isDone),a / ret)
+; and h_ramload simply rets to the dispatcher, which stamped the done
+; flag before dispatch and consults neither A, E nor CF for an action
+; condact - so no caller reads what this corrupts.
 gfx_drawtarget_clear:
     ld hl, gfxDrawTarget
     ld (hl), a
@@ -732,21 +742,20 @@ gfx_drawtarget_clear:
     ld (hl), a
     inc hl
     ld (hl), a
-    inc hl
-    ld (hl), a
-                                ; falls through: clearing the block and
-                                ; pushing the cleared order to NR $15
-                                ; are one operation at every reset site
+                                ; falls through: clearing the three
+                                ; transient bytes and RE-ASSERTING the
+                                ; game's layer order are one operation
+                                ; at every reset site
 ; Push gfxLayerOrder to NR $15 bits 4-2, leaving every other bit of that
 ; register alone (lores enable, sprite priority, sprite border clip,
-; sprite over border, sprite enable). RESIDENT on purpose: the reset
-; sites that need it are the same-part LOAD paths in overlay1, which
-; cannot reach l2_enable in overlay2.
+; sprite over border, sprite enable). RESIDENT on purpose: the sites
+; that need it are the same-part LOAD paths in overlay1, which cannot
+; reach l2_enable in overlay2.
 ; l2_enable and GFX sub 17 call THIS ENTRY POINT ALONE (compose only -
 ; they must not wipe draw-target/reveal state mid-game); the reset
-; sites above call gfx_drawtarget_clear and fall into this body. So
-; exactly one routine composes this field and the byte can never
-; disagree with the register.
+; sites above call gfx_drawtarget_clear and fall into this body, where
+; it re-asserts rather than resets. So exactly one routine composes this
+; field and the byte can never disagree with the register.
 ; Corrupts AF, E; preserves BC (nr_read pushes it) and HL.
 gfx_layer_apply:
     ld e, NR_LAYERS

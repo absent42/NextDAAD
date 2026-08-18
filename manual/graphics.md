@@ -250,16 +250,33 @@ you don't want text drawn over, for instance).
   draws its cursor with ink 227 - a see-through cursor block over
   whatever glyph shape it lands on.
 
-**Set the order once.** `GFX 1 17` sticks: it survives every picture
-operation, and it survives `RESTART`, which is what a template game's
-movement and response flow ends in on every turn. It resets to
-picture-on-top on game start, on a `RESTART`-of-game through
-`LOAD`/`RAMLOAD`, and on a part switch - so issue it once during
-start-up and again after a same-part `LOAD` if you offer one.
+**Set the order once.** It is yours, not the interpreter's. `GFX 1 17`
+survives every picture operation, every `RESTART` (which is what a
+template game's movement and response flow ends in on every turn), a
+`LOAD` or `RAMLOAD`, and a move to another part. The interpreter never
+changes it by itself: the game boots with the picture on top, and after
+that only another `GFX n 17` moves it. A player who saves a game with
+the text layer on top gets it back that way, rather than reloading into
+unreadable text.
 
 `GFX 1 17` changes the layer order and nothing else. It never enables or
 disables Layer 2, so a game that has hidden the picture surface can set
 the order without bringing it back.
+
+**Where there is nothing to show through, you get the border colour.**
+Transparent paper over a transparent part of the picture, or outside the
+picture area altogether, falls through to whatever `BORDER` last set. A
+256-wide picture covers character columns 8 to 71 and rows 4 to 27, so
+transparent paper outside that rectangle shows the border colour rather
+than artwork; a 320-wide picture covers the whole screen and the question
+does not arise.
+
+**Legibility over artwork is yours to solve.** Ink now sits over whatever
+the picture happens to be doing at that spot, and that varies per
+picture. Three approaches work and none needs anything from the
+interpreter: keep a strip of solid paper where text must always be
+readable, keep the artwork dark where text lands, or choose an ink that
+survives everything the art can put behind it.
 
 ## Title screens
 

@@ -102,13 +102,15 @@
 ;            picture operation. It now composes the field from
 ;            gfxLayerOrder, so state 3 must look exactly like state 2.
 ;   STATE 4  RESTART while flipped, and the order MUST SURVIVE IT.
-;            Owner ruling 2026-08-18: RESTART is the per-move
-;            render-loop re-entry in a template DAAD game - the
-;            movement path ends with it on every successful move - so
-;            resetting the layer order there would force an author to
-;            re-issue the flip every turn. h_restart therefore clears
-;            the three buffer-mode bytes and leaves gfxLayerOrder
-;            alone. This state flips the order, goes to location 0 and
+;            THE LAYER ORDER IS GAME-OWNED STATE and the interpreter
+;            never resets it after boot (owner rulings 2026-08-18) -
+;            not on RESTART, not on LOAD or RAMLOAD, not at game start
+;            or a part switch. A player loading a save in a text-on-top
+;            game must not be handed picture-on-top unreadable text,
+;            and an author must not have to re-assert the order every
+;            turn; RESTART in particular is the per-move render-loop
+;            re-entry in a template game. This state flips the order,
+;            goes to location 0 and
 ;            RESTARTs; the AT 0 entry of process 0 then prints its
 ;            caption and holds for two PAUSEs BEFORE process 6 rebuilds
 ;            the screen and process 7 blits the card. During that hold
@@ -125,19 +127,18 @@
 ;            is not a result.
 ;   STATE 5  Text on top again, held, so a capture proves the screen
 ;            was genuinely flipped immediately before state 6.
-;   STATE 6  RAMLOAD, the same-part reload path - THE RESET SITE THAT
-;            REMAINS ONE. Game start, a part switch and a same-part
-;            LOAD/RAMLOAD all still return the order to picture-on-top,
-;            and the register follows IMMEDIATELY because those sites
-;            call the resident composer instead of waiting for the next
-;            picture operation. "Immediately" is only observable if
-;            nothing redraws in between: RAMSAVE is taken at the end of
-;            process 7, AFTER the move to location 1, so the reload
-;            leaves the player where they are and the main loop redraws
-;            NOTHING. The order must be picture-on-top and the bands
-;            must be gone. If they only sink at the next picture
-;            operation, that reset site is not calling gfx_layer_apply.
-;            After the hold the prompt opens and the verbs take over.
+;   STATE 6  RAMLOAD, the same-part reload path, and the order MUST
+;            SURVIVE THAT TOO. This is the case the ruling was made
+;            for: a save restored in a text-on-top game has to come
+;            back readable. RAMSAVE is taken at the end of process 7,
+;            AFTER the move to location 1, so the reload leaves the
+;            player where they are and the main loop redraws NOTHING -
+;            no picture operation can be credited with the result
+;            either way. The bands must still be on top and the picture
+;            must still be behind them. If the card comes back over
+;            them, the reload path is resetting state that belongs to
+;            the game. After the hold the prompt opens and the verbs
+;            take over.
 ;
 ; The verbs below drive the same states by hand, and RECAL is the
 ; RAMLOAD leg on demand.
@@ -272,9 +273,9 @@ LSHOW   67  verb
 /9  "ALL SIX STATES DONE - READY - TYPE A VERB "
 /10 "PICTURE 1 FAILED - NO 001 NXI STAGED - NOTHING HERE IS A RESULT "
 /11 "STATE 4 OF 6 OR BOOT - RESTARTED WHILE FLIPPED - NOTHING HAS TOUCHED LAYER 2 - THE TEXT MUST STILL BE ON TOP "
-/12 "RAMLOAD - ORDER MUST BE PICTURE ON TOP WITH NO PICTURE OPERATION "
+/12 "RAMLOAD - THE ORDER MUST COME BACK EXACTLY AS THE GAME LEFT IT "
 /13 "STATE 5 OF 6 - TEXT ON TOP - RAMLOAD COMES NEXT AND NOTHING WILL REDRAW "
-/14 "STATE 6 OF 6 - AFTER RAMLOAD - PICTURE MUST BE BACK ON TOP WITH NO PICTURE OPERATION "
+/14 "STATE 6 OF 6 - AFTER RAMLOAD - TEXT MUST STILL BE ON TOP - A SAVE KEEPS THE ORDER "
 /OTX
 /0 "a brass lamp"
 /LTX
@@ -507,13 +508,13 @@ LSHOW   67  verb
         PROCESS 2
         PAUSE 0
         PAUSE 0
-; State 6. The reset site that IS still one. The player is back at
-; location 1, so the main loop redraws nothing at all - no picture
+; State 6. The layer order must survive the reload. The player is back
+; at location 1, so the main loop redraws nothing at all - no picture
 ; operation stands between the reload and what is on the glass, and the
 ; two holds are the observation window.
-; RAMLOAD sets the done stamp (it continues into eng_set_done) but is
-; NOT a terminator, so the holds after it do run - checked on the glass,
-; not assumed.
+; RAMLOAD is NOT a terminator: the engine stamps the done flag before it
+; dispatches an action condact, and h_ramload simply returns, so the
+; holds after it do run - checked on the glass, not assumed.
 > _ _   WINDOW 5
         CLS
         MESSAGE 0
