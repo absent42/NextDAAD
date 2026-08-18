@@ -41,12 +41,15 @@
 #     broken one look identical - which is why the backdrop is part of
 #     the instrument, not decoration.
 #
-#   INDEX 227 IS $E2, NOT $E3. l2_palette_load rewrites any entry whose
-#     first byte is $E3 to $E2, because $E3 is the transparency colour
-#     and a second entry carrying it would punch unintended holes. 227
-#     encodes to $E3 under the identity rule, so it is written as $E2
-#     here - the file then matches what the hardware displays instead of
-#     describing a value the loader would silently change underneath it.
+#   INDEX 227 IS $E7, NOT $E3. l2_palette_load rewrites any entry whose
+#     first byte is $E3 to $E7 (one green step up), because $E3 is the
+#     transparency colour and a second entry carrying it would punch
+#     unintended holes. 227 encodes to $E3 under the identity rule, so
+#     it is written as $E7 here - the file then matches what the
+#     hardware displays instead of describing a value the loader would
+#     silently change underneath it. Swatches 227 and 231 therefore
+#     show the SAME colour (231 is $E7 by identity) - the dodge landing
+#     on its escape, not a defect.
 #     Text INK 227 is unaffected and stays $E3: the tilemap's palette is
 #     not the one l2_palette_load rewrites.
 #
@@ -83,7 +86,7 @@ SWATCH_H = HEIGHT // GRID       # 8 pixels
 
 TRANSPARENT = 255               # L2_TRANSP_INDEX
 TRANSP_COLOUR = 0xE3            # L2_TRANSP_COLOUR
-TRANSP_DODGE = 0xE2             # what l2_palette_load rewrites $E3 to
+TRANSP_DODGE = 0xE7             # L2_TRANSP_DODGE - what l2_palette_load rewrites $E3 to
 
 
 def entry(i):

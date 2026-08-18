@@ -129,10 +129,10 @@
 ; Tilemap rows 9..11 carry two adjacent magenta blocks, labelled E3 and
 ; E7 in black. The left one uses a palette entry whose RRRGGGBB byte
 ; packs to $E3 = L2_TRANSP_COLOUR; the right one uses the safe escape
-; (7,1,7), which packs to $E7. l2_pal9_run (src\overlay2.asm:293)
-; rewrites any $E3 entry to $E2 before programming it, so BOTH blocks
-; must render as magenta - E3 very slightly duller and less blue than E7 -
-; and NEITHER may show text.
+; (7,1,7), which packs to $E7. l2_pal9_run (src\overlay2.asm)
+; rewrites any $E3 entry to $E7 before programming it, so BOTH blocks
+; must render as magenta and INDISTINGUISHABLE - the dodged E3 entry
+; lands exactly on the E7 control colour - and NEITHER may show text.
 ;
 ; If the E3 block shows text, the dodge failed, and any artist whose
 ; palette happens to contain saturated magenta gets holes punched through

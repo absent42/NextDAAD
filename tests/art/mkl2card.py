@@ -82,14 +82,15 @@ HEIGHT = 128
 # --- palette ------------------------------------------------------
 # 16 used entries, 3 bits per channel. None of these encode to $E3
 # (L2_TRANSP_COLOUR - which is r=7 g=0 b=6or7, i.e. pure magenta):
-# l2_palette_load rewrites any entry whose first byte is $E3 to $E2 to
-# stop it punching an unintended hole, and an entry silently rewritten
-# under us would be one more thing the card could not vouch for. That
-# is why entry 6 is (7,1,7) and not the obvious (7,0,7): one step of
-# green off pure magenta packs to $E7 instead of $E3, is left alone by
-# the loader, and is still magenta to the eye. It is the same escape
-# the video encoder picks for the same colour (nxv2enc.py TRANSP_REMAP
-# maps (255,0,255) -> (255,36,255), which is exactly this entry).
+# l2_palette_load rewrites any entry whose first byte is $E3 to $E7 (one
+# green step up) to stop it punching an unintended hole, and an entry
+# silently rewritten under us would be one more thing the card could not
+# vouch for. That is why entry 6 is (7,1,7) and not the obvious (7,0,7):
+# one step of green off pure magenta packs to $E7 instead of $E3, is left
+# alone by the loader, and is still magenta to the eye. It is the same
+# escape the video encoder picks for the same colour (nxv2enc.py
+# TRANSP_REMAP maps (255,0,255) -> (255,36,255), which is exactly this
+# entry). The loader's own dodge now lands on this same escape colour.
 COLOURS = [
     (0, 0, 0),      # 0  black      - borders and rules
     (7, 7, 7),      # 1  white

@@ -3734,7 +3734,7 @@ if ($L2Holes) {
     if ($holeRows -ne 192) { throw "l2holes.nxi derives $holeRows rows - this card must be the full-screen 192 (gfx_derive_height's mode 0 ceiling)" }
     # Exactly one non-255 palette entry may pack to $E3, and that entry IS
     # the collision-dodge test (l2_palette_load nudges any entry whose
-    # byte0 equals L2_TRANSP_COLOUR to $E2): two would make a hole
+    # byte0 equals L2_TRANSP_COLOUR to $E7): two would make a hole
     # ambiguous, none would make the E3 block a plain magenta rectangle
     # testing nothing.
     $e3 = @()

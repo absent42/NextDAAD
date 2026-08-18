@@ -25,7 +25,7 @@
 #     compared against the TOP 8 BITS of each Layer 2 pixel's 9-bit
 #     palette output. Not an index compare.
 #   THE DODGE. l2_pal9_run (src\overlay2.asm:293) rewrites the RRRGGGBB
-#     byte of ANY palette entry that equals $E3 to $E2 before programming
+#     byte of ANY palette entry that equals $E3 to $E7 before programming
 #     it, so art that happens to contain saturated magenta does not punch
 #     unintended holes. l2_palette_load's B=0 loop (:259) does the same
 #     with the same -1. Both loops run over all 256 entries; the stamp
@@ -153,20 +153,25 @@
 #   BLOCK "E3", index 14 = RGB333 (7,0,7). Its RRRGGGBB byte packs to
 #     $E3 - EQUAL to L2_TRANSP_COLOUR. This is the entry the interpreter
 #     must dodge. Correct behaviour: l2_pal9_run rewrites the byte to
-#     $E2, the second byte's blue LSB (1) is left alone, so the entry
-#     renders as RGB333 (7,0,5) - saturated magenta, two steps of blue
-#     down, NOT transparent.
+#     $E7 (one green step up), the second byte's blue LSB (1) is left
+#     alone, so the entry renders as RGB333 (7,1,7) - IDENTICAL to the
+#     E7 control block below.
 #   BLOCK "E7", index 15 = RGB333 (7,1,7). One step of green off pure
 #     magenta packs to $E7, is left alone by both copy loops, and renders
 #     exactly as authored. It is the same escape nxv2enc.py's
-#     TRANSP_REMAP picks for the same colour.
+#     TRANSP_REMAP picks for the same colour - and exactly where the
+#     dodge parks index 14.
 #
-# PASS: both blocks are magenta, E3 very slightly duller/less blue than
-# E7, and NEITHER shows text. FAIL: the E3 block shows text - the dodge
-# did not happen and any artist whose palette lands on saturated magenta
-# gets holes punched through their own picture. That is a real, shipped-
-# art failure mode, not a theoretical one: Task 7 of the 2026-08-06
-# Layer 2 plan found this collision already present in corpus art.
+# PASS: both blocks are magenta, E3 and E7 INDISTINGUISHABLE - the
+# dodged entry must exactly match the control; identical blocks are the
+# pass, not a suspicion - and NEITHER shows text. FAIL: the E3 block
+# shows text - the dodge did not happen and any artist whose palette
+# lands on saturated magenta gets holes punched through their own
+# picture. That is a real, shipped-art failure mode, not a theoretical
+# one: Task 7 of the 2026-08-06 Layer 2 plan found this collision
+# already present in corpus art. A visible difference between the two
+# blocks is ALSO a fail - it means the dodge went somewhere other than
+# the control colour.
 #
 # The blocks are labelled "E3" and "E7" in black, 15x21 glyphs, so the
 # verdict does not depend on remembering which block is which. The
@@ -191,7 +196,7 @@
 # the file's own entry 255 reached the hardware. That failure has a
 # self-naming signature instead of looking like "the holes are the wrong
 # colour". (Writing $E3 into entry 255 here would have hidden it: the
-# dodge would rewrite it to $E2 and a missing stamp would show opaque
+# dodge would rewrite it to $E7 and a missing stamp would show opaque
 # magenta, indistinguishable from the E3 block failing.)
 #
 # ------------------------------------------------------------------
@@ -510,13 +515,13 @@ def decode_back(path):
     pal, pix = data[:512], data[512:]
     e3 = [i for i in range(256) if pal[2 * i] == 0xE3]
     print("  palette entries packing to $E3: %r  (l2_pal9_run rewrites "
-          "these to $E2)" % e3)
+          "these to $E7)" % e3)
     assert e3 == [DODGE_INDEX], "the dodge test is not armed as intended"
     r, g, b = COLOURS[DODGE_INDEX]
     print("    index %d authored RGB333 %s, byte0 $%02X byte1 $%02X -> after "
-          "the dodge renders (%d,%d,%d)"
+          "the dodge renders (%d,%d,%d) - identical to the E7 control"
           % (DODGE_INDEX, (r, g, b), pal[2 * DODGE_INDEX],
-             pal[2 * DODGE_INDEX + 1], 7, 0, ((0xE2 & 3) << 1) | (b & 1)))
+             pal[2 * DODGE_INDEX + 1], 7, 1, ((0xE7 & 3) << 1) | (b & 1)))
     print("    index %d authored RGB333 %s, byte0 $%02X - untouched"
           % (MAGSAFE, COLOURS[MAGSAFE], pal[2 * MAGSAFE]))
     print("    index 255 authored RGB333 %s, byte0 $%02X - overwritten with "
