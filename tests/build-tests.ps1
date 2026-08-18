@@ -785,16 +785,19 @@ finally {
 
 & "$PSScriptRoot\check-cprops.ps1"
 
-# ---- Layer 2 transparency constants: three files, one pair of values ----
-# The transparent COLOUR ($E3) and the reserved INDEX (255) are written
-# out longhand in three places in two languages - src/nextdaad.inc is
-# canonical, and the other two are the kit's encoder and its audit
-# script. There is no shared header they can include, so the only thing
-# that keeps them together is this check. A silent divergence is the
-# nastiest shape of failure available here: the interpreter would dodge
-# one colour while a converter reserved another, and nothing would say
-# so until art punched holes on hardware. Runs on EVERY invocation - it
-# is source-only, needs no build, and costs three file reads.
+# ---- Layer 2 transparency constants: five files, three value classes ----
+# The transparent COLOUR ($E3), the reserved INDEX (255), and the dodge
+# COLOUR ($E7) are written out longhand across five files in three
+# languages - src/nextdaad.inc is canonical, and the other four are the
+# kit's encoder, its audit script, a DAAD extern, and a test card
+# generator. Not every file carries every value: colour is checked at
+# four sites, index at two, dodge at five. There is no shared header
+# they can include, so the only thing that keeps them together is this
+# check. A silent divergence is the nastiest shape of failure available
+# here: the interpreter would dodge one colour while a converter
+# reserved another, and nothing would say so until art punched holes on
+# hardware. Runs on EVERY invocation - it is source-only, needs no
+# build, and costs five file reads.
 function Assert-TranspConstantsInSync {
     # file -> @{ colour = <regex>; index = <regex> }; each regex must
     # capture the literal in group 1. Index is optional, colour is not.

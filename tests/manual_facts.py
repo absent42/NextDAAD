@@ -32,7 +32,11 @@ FORBIDDEN = [
      r"(?!.{0,80}\b255\b)",
      "255 slots are usable for art - index 255 is reserved"),
     (r"one\s+blue\s+LSB",
-     "the collision nudge moves blue TWO steps of the 0-7 scale, not one"),
+     "the collision nudge does not touch blue at all now; it moves green "
+     "ONE step up the 0-7 scale, $E3 -> $E7"),
+    (r"two\s+steps\s+down\s+the\s+blue\s+scale",
+     "superseded manual wording for the collision nudge; it moves green "
+     "one step UP the 0-7 scale now, $E3 -> $E7, and never touches blue"),
     # Sprites have a transparent COLOUR, never a transparent attribute -
     # the only thing that ever had a "transparent attribute" was the
     # deleted tilemap mechanism. A hit here is either describing that

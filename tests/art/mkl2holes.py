@@ -28,7 +28,7 @@
 #     byte of ANY palette entry that equals $E3 to $E7 before programming
 #     it, so art that happens to contain saturated magenta does not punch
 #     unintended holes. l2_palette_load's B=0 loop (:259) does the same
-#     with the same -1. Both loops run over all 256 entries; the stamp
+#     with the same +4. Both loops run over all 256 entries; the stamp
 #     then re-forces entry 255 back to $E3 AFTERWARDS, so the dodge can
 #     never disarm the reserved index.
 #
