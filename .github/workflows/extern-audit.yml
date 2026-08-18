@@ -1,10 +1,7 @@
 name: Extern audit
 
 # Runs tests\audit-externs.ps1 - the same script contributors run
-# locally - on every PR touching the externs tree. The repository does
-# not carry the toolchain (tools\ is local-only), so a pinned sjasmplus
-# release is downloaded per run; keep the version aligned with the
-# tools\sjasmplus\ the project uses locally.
+# locally - on every PR touching the externs tree.
 
 on:
   pull_request:
