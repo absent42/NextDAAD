@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.7.3 - 18/08/2026
+## v0.7.3 - unreleased
 
 - The Layer 2 transparency collision dodge now substitutes $E7 (one
   green step up, hue and blue kept) instead of $E2 (two blue steps
