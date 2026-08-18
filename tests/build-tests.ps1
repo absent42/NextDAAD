@@ -38,6 +38,7 @@
 #   -SfxLong            sd\SFXLONG\   tests\sfxlong.dsf
 #   -Sfx2               sd\SFX2\      tests\sfx2.dsf
 #   -L2Holes            sd\L2HOLES\   tests\l2holes.dsf
+#   -TmOver             sd\TMOVER\    tests\tmover.dsf
 #   -TileSlack          sd\TILESLK\   tests\tileslack.dsf
 #   -Uto                sd\UTO\       tools\TEST.DSF     (V2)
 #   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
@@ -279,6 +280,28 @@
 #            table, what a failure of each hole means):
 #            docs\superpowers\l2-holes-run-sheet.md. An alternative to
 #            every other DDB switch, not a companion.
+#   -TmOver  TRANSPARENT TILEMAP PAPER / LAYER ORDER fixture, staged
+#            into sd\TMOVER\: make the tests\tmover.dsf DDB active AND
+#            stage the full-frame card tests\art\mktmover.py generates
+#            as 001.NXI (256x192). The inverse premise of -L2Holes:
+#            that card is made of transparent pixels, this one has NONE
+#            (asserted here from the staging side), because the feature
+#            under test puts the TEXT LAYER on top instead of cutting a
+#            hole in the artwork. The DSF prints four 2x32 bands over
+#            the card - PAPER 227 (transparent), an ordinary opaque
+#            paper, INK 227 (transparent glyphs) and PAPER 11 (which
+#            must be bright magenta and NOT a hole) - and runs a timed
+#            six-state choreography by itself: picture on top, text on
+#            top, a redraw while flipped, a RESTART while flipped, then
+#            a RAMLOAD while flipped, each held long enough for a timed
+#            screen capture to land in it. Verbs FLIP / FLOP / DRAW /
+#            STORE / RECAL / RESET / LHIDE / LSHOW drive the same states
+#            by hand. .NXI and not .NX2 deliberately,
+#            same reason as -L2Holes: NX2 probes first and a 320-wide
+#            surface would cover the margin rows the status line and
+#            the prompt live in. The fixture's own header block names
+#            every band and says what a failure of each one means. An
+#            alternative to every other DDB switch, not a companion.
 #   -TileSlack
 #            --tile-slack A/B fixture, staged into sd\TILESLK\: make the
 #            tests\tileslack.dsf DDB active AND stage FOUR encodes of the
@@ -611,7 +634,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -658,6 +681,7 @@ if ($SfxDi)            { $legName = 'SFXDI' }
 if ($SfxLong)          { $legName = 'SFXLONG' }
 if ($Sfx2)             { $legName = 'SFX2' }
 if ($L2Holes)          { $legName = 'L2HOLES' }
+if ($TmOver)           { $legName = 'TMOVER' }
 if ($TileSlack)        { $legName = 'TILESLK' }
 if ($Uto)              { $legName = 'UTO' }
 if ($UtoV3)            { $legName = 'UTOV3' }
@@ -683,7 +707,7 @@ function Reset-LegDir {
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
-               'L2HOLES', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'PALETTE',
+               'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'PALETTE',
                'BIGDDB', 'XBN')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
@@ -1370,6 +1394,35 @@ finally {
     Pop-Location
 }
 
+# Transparent tilemap paper / layer order fixture (2026-08-18). Compiled
+# unconditionally like every block above so a break in the DSF is caught
+# on a plain run, whether or not -TmOver is given - the byte assertions
+# below run every time; only -TmOver makes it the active GAME.DDB
+# (sd\TMOVER\).
+#
+# OUT OF TREE, for the same reason as l2holes above and by the same
+# means: DRF.exe and DRB.PHP are run by absolute path with the cwd set to
+# tests\out\tmover-work, so nothing is written under tools\ - read-only
+# working material git cannot restore.
+#
+# No -v3, deliberately. Nothing here depends on a V3 condact and the
+# header version must stay 2 (asserted below), under a fixture whose
+# whole value is that exactly one thing moves.
+$tmoverWork = Join-Path $root 'tests\out\tmover-work'
+New-Item -ItemType Directory -Force $tmoverWork | Out-Null
+Copy-Item "$PSScriptRoot\tmover.dsf" "$tmoverWork\NDTMOVR.DSF" -Force
+Push-Location $tmoverWork
+try {
+    & $drcDrf @drcTarget NDTMOVR.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (tmover)" }
+    & $drcPhp $drcDrb @drcTarget EN NDTMOVR.json NDTMOVR.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (tmover)" }
+    Copy-Item NDTMOVR.DDB "$root\tests\out\tmover.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 # --tile-slack A/B fixture (2026-08-07). Compiled unconditionally like
 # every block above so a break in the DSF is caught on a plain run; only
 # -TileSlack makes it the active GAME.DDB (sd\TILESLK\).
@@ -1941,6 +1994,89 @@ foreach ($c in @(@{ n = 'WINAT 0 0 (card footprint)';    b = [byte[]]@(82, 0, 0)
     }
 }
 "palette.ddb: Layer 2 card layout present (backdrop WINAT 0 0, text WINAT 16 0, both WINSIZE 16 80, PICTURE 1, DISPLAY 0)"
+
+# --- tmover: transparent tilemap paper + layer order ---------------
+# THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/fontsw/palette
+# above and for the same reason: DRC silently rewrites some condacts,
+# and this project has shipped a fixture that tested nothing twice
+# because the DSF was read instead of the database. Every claim the
+# tmover run sheet makes rests on one of the runs below reaching the
+# interpreter with the operand that was authored.
+#
+# GFX is opcode 87 ($57) and takes two parameters, so each call is three
+# bytes: P1 then the sub-command. PAPER is 65 and INK 66, one parameter
+# each, so each is two bytes.
+$tmoBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\tmover.ddb")
+if ($tmoBytes[0] -ne 2) {
+    throw "tmover: DDB header version byte is $($tmoBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+}
+# The two layer-order calls. Each is authored EXACTLY ONCE in the DSF
+# (processes 2 and 3; every other site calls that process), which is
+# what makes these assertions falsifiable: break one in the source and
+# the run below disappears from the database entirely, with no second
+# copy left to mask it.
+foreach ($c in @(@{ n = 'GFX 0 17 (picture on top)'; b = [byte[]]@(87, 0, 17) },
+                 @{ n = 'GFX 1 17 (text on top)';    b = [byte[]]@(87, 1, 17) })) {
+    if ((Find-ByteRuns $tmoBytes $c.b).Count -lt 1) {
+        throw "tmover: '$($c.n)' not present in tests\out\tmover.ddb - DRC did not emit the authored GFX sub-command, and the fixture cannot flip the layer order"
+    }
+}
+# The four bands' colours, asserted as the CONTIGUOUS paper+ink pairs
+# they are authored as rather than as loose operands. A bare 'PAPER 227'
+# two-byte run could be met by any 65 followed by any 227 anywhere in
+# the database; the four-byte run is the band, and a band that lost its
+# ink or gained a folded value fails here rather than on the glass.
+#   227 = TXT_TRANSP_COLOUR, the one logical colour allowed to reach the
+#         hardware transparent colour - as PAPER it is transparent
+#         paper, as INK it is transparent glyphs.
+#   11  = classic bright magenta, whose RRRGGGBB IS the transparent
+#         value and which pal_colour now shifts to the dodge. It must
+#         reach the database as 11, unfolded, or the band that proves it
+#         is no longer a hole is testing some other colour.
+foreach ($c in @(@{ n = 'band A: PAPER 227 + INK 15 (transparent paper)'; b = [byte[]]@(65, 227, 66, 15) },
+                 @{ n = 'band B: PAPER 1 + INK 15 (opaque paper)';        b = [byte[]]@(65, 1, 66, 15) },
+                 @{ n = 'band C: PAPER 1 + INK 227 (transparent glyphs)'; b = [byte[]]@(65, 1, 66, 227) },
+                 @{ n = 'band D: PAPER 11 + INK 0 (must be magenta)';     b = [byte[]]@(65, 11, 66, 0) })) {
+    if ((Find-ByteRuns $tmoBytes $c.b).Count -lt 1) {
+        throw "tmover: '$($c.n)' not present in tests\out\tmover.ddb - DRC folded or rewrote the authored colour pair"
+    }
+}
+# The bare operands too, so a failure above can be read: if the pair is
+# missing but the operand is present, the ink moved; if the operand is
+# missing as well, DRC folded the value itself - which is exactly what
+# tests\palette.dsf's own assertions exist to catch.
+foreach ($c in @(@{ n = 'PAPER 227'; b = [byte[]]@(65, 227) },
+                 @{ n = 'INK 227';   b = [byte[]]@(66, 227) },
+                 @{ n = 'PAPER 11';  b = [byte[]]@(65, 11) })) {
+    if ((Find-ByteRuns $tmoBytes $c.b).Count -lt 1) {
+        throw "tmover: '$($c.n)' not present in tests\out\tmover.ddb - DRC folded or rewrote the authored parameter"
+    }
+}
+# The card, and the redraw the whole fixture exists to test. PICTURE is
+# 84 and DISPLAY 28; the DSF issues the pair three times (the first
+# draw, state 3's redraw WHILE FLIPPED, and the DRAW verb), and state
+# 3 is the Task 3 regression: a picture operation must not revert a
+# flipped layer order.
+foreach ($c in @(@{ n = 'PICTURE 1'; b = [byte[]]@(84, 1) },
+                 @{ n = 'DISPLAY 0'; b = [byte[]]@(28, 0) })) {
+    if ((Find-ByteRuns $tmoBytes $c.b).Count -lt 1) {
+        throw "tmover: '$($c.n)' not present in tests\out\tmover.ddb - the card would never be drawn and no band could be judged"
+    }
+}
+# The timed holds. PAUSE is 35 and 0 means 256 frames in a V2 database
+# (h_pause, src\overlay0.asm); DRC's duration scaling multiplies by 0.6
+# and so leaves 0 alone. Twelve are authored - two in the reset
+# observation window and two in each of the five held choreography
+# states - and without them the states flash past faster than a capture
+# can land in one. Pinned at exactly 12 rather than bounded, so a lost
+# hold is caught; a coincidental 35,0 pair elsewhere in the database
+# would also move this count, in which case check WHICH holds are still
+# authored before changing the number.
+$tmoPause = Find-ByteRuns $tmoBytes ([byte[]]@(35, 0))
+if ($tmoPause.Count -ne 12) {
+    throw "tmover: expected exactly 12 'PAUSE 0' holds (23 00); found $($tmoPause.Count) - the timed choreography cannot be read by a timed capture without them"
+}
+"tmover.ddb: $($tmoBytes.Length) bytes, v$($tmoBytes[0]), GFX 0/1 17, the four PAPER/INK band pairs (227 transparent, 1 opaque, 227 ink, 11 magenta), PICTURE/DISPLAY and 12 PAUSE holds all present as authored"
 
 # --- sfxlong: the SD-streamed sampled-effect wire fixture ---
 # THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/fontsw above: DRC
@@ -3876,6 +4012,79 @@ if ($L2Holes) {
     $l2holesActive = $true
 }
 
+$tmoverActive = $false
+if ($TmOver) {
+    # Transparent tilemap paper / layer order leg. Two jobs, both owned
+    # entirely by this switch: make tests\tmover.dsf the active DDB, and
+    # stage the full-frame card tests\art\mktmover.py generates as
+    # 001.NXI.
+    #
+    # THE CARD IS NOT OPTIONAL AND MUST BE .NXI, for the same reason
+    # -L2Holes' is: gfxExtTab routes NXI rows to mode 0 / width 256 and
+    # NX2 rows to mode 1 / width 320, and the NX2 variants probe FIRST. A
+    # 320-wide surface covers the whole 80x32 grid, including tilemap
+    # rows 0..2 and 28..31 - which is exactly where this fixture puts its
+    # status line and its prompt, the two things that must stay readable
+    # in BOTH layer orders. A leftover 001.NX2 winning the chain would
+    # take the readout away, not merely change the blit path.
+    #
+    # Same CSpect lock hazard as -Aud/-AudLad/-SfxDi/-L2Holes, and the
+    # same refusal: a running emulator holds sd\ files open, the copies
+    # fail one at a time, and a missing 001.NXI makes PICTURE fail - the
+    # fixture would then be reporting on staging rather than on the layer
+    # order.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files leave a partial leg folder)"
+    }
+    Copy-Item "$root\tests\out\tmover.ddb" "$leg\GAME.DDB" -Force
+    # Generated, not committed - a byte-exact function of the constants in
+    # tests\art\mktmover.py, the same rule the -L2Holes and -Palette cards
+    # follow. That script asserts its own invariants and decodes the file
+    # back; the checks here are the independent half, from the staging
+    # side, in the terms the interpreter will read it.
+    & python "$PSScriptRoot\art\mktmover.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mktmover.py failed" }
+    $tmoSrc = "$root\tests\out\tmover.nxi"
+    if (-not (Test-Path $tmoSrc)) { throw "mktmover.py produced no tmover.nxi" }
+    $tmo = [System.IO.File]::ReadAllBytes($tmoSrc)
+    # gfx_derive_height (src\overlay2.asm) takes the row count from the
+    # FILE LENGTH alone - (bytes - 512) / 256 - and rejects anything
+    # outside 1..192 in 256-wide mode. Pinned to 192 here, not merely
+    # bounded: the whole premise is a FULL-FRAME picture with text over
+    # it, and a short card would leave rows of tilemap showing that no
+    # layer order put there.
+    if ((($tmo.Length - 512) % 256) -ne 0) { throw "tmover.nxi is $($tmo.Length) bytes - not 512 + a whole number of 256-byte rows" }
+    $tmoRows = ($tmo.Length - 512) / 256
+    if ($tmoRows -ne 192) { throw "tmover.nxi derives $tmoRows rows - this card must be the full-screen 192 (gfx_derive_height's mode 0 ceiling)" }
+    # NO TRANSPARENT PIXEL. This is the assertion the whole leg rests on
+    # and the exact inverse of the -L2Holes card's: a single index-255
+    # pixel would let tilemap text show while the PICTURE is on top,
+    # which is precisely the reading used to FAIL the layer order. The
+    # fixture would then pass its headline check with the feature broken.
+    $tmoHoles = 0
+    $tmoMax = 0
+    for ($i = 512; $i -lt $tmo.Length; $i++) {
+        $v = $tmo[$i]
+        if ($v -eq 255) { $tmoHoles++ }
+        elseif ($v -gt $tmoMax) { $tmoMax = $v }
+    }
+    if ($tmoHoles -ne 0) { throw "tmover.nxi has $tmoHoles index-255 pixel(s) - this card must be opaque everywhere or text showing through it would be read as a layer-order pass" }
+    if ($tmoMax -gt 15) { throw "tmover.nxi uses palette index $tmoMax, which has no colour" }
+    # No palette entry may pack to $E3 either. l2_palette_load nudges any
+    # such entry to $E7 before programming it, so an entry that collided
+    # would render as a colour the file does not describe - and this card
+    # is read as a colour key (which quadrant is which) as well as a
+    # picture. The dodge itself is -L2Holes' test, not this one's.
+    $tmoE3 = @()
+    for ($i = 0; $i -lt 256; $i++) { if ($tmo[2 * $i] -eq 0xE3) { $tmoE3 += $i } }
+    if ($tmoE3.Count -ne 0) {
+        throw "tmover.nxi: palette entries packing to `$E3 are ($($tmoE3 -join ',')) - expected none, or the loader's dodge would change a colour this card is read by"
+    }
+    Copy-Item $tmoSrc "$leg\001.NXI" -Force
+    "staged tests\out\tmover.nxi -> sd\$legName\001.NXI  $($tmo.Length) bytes, 256x$tmoRows, 0 transparent pixels (the card is opaque everywhere, by design)"
+    $tmoverActive = $true
+}
+
 $tileSlackActive = $false
 if ($TileSlack) {
     # --tile-slack A/B leg. Two jobs, both owned entirely by this switch:
@@ -4159,6 +4368,7 @@ elseif ($sfxDiActive) { "active: sfxdi (sampled-SFX DI-exposure ear fixture - se
 elseif ($sfxLongActive) { "active: sfxlong (SD-streamed sampled-effect wire fixture - SP18 item 7 Task 7)" }
 elseif ($sfx2Active) { "active: sfx2 (two-channel sampled-effect API fixture - SP18 item 7 Task 12)" }
 elseif ($l2holesActive) { "active: l2holes (Layer 2 transparency / punch-out fixture - see docs\superpowers\l2-holes-run-sheet.md)" }
+elseif ($tmoverActive) { "active: tmover (transparent tilemap paper / layer order fixture - four PAPER/INK bands over a full-frame card, four timed layer-order states)" }
 elseif ($tileSlackActive) { "active: tileslack (--tile-slack A/B fixture, two pairs - see docs\superpowers\tileslack-ab-run-sheet.md)" }
 elseif ($utoV3Active) { "active: utotest V3 (Uto's THIRD-PARTY DAAD compliance test, header version 3 - self-scoring, 68 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
 elseif ($utoActive) { "active: utotest V2 (Uto's THIRD-PARTY DAAD compliance test - self-scoring, 64 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
