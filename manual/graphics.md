@@ -211,11 +211,12 @@ magenta halo instead of a clean edge.
 
 **Near-saturated magenta elsewhere is altered slightly.** Any colour
 that converts to the reserved value - red 238 or above, green 18 or
-below, and blue 201 or above - is moved two steps down the blue scale as
-the picture loads, so it stays opaque but comes out a slightly different
-magenta than you painted. This exists so that a stray highlight cannot
-punch a hole you did not ask for. If you want a hot magenta somewhere in
-the artwork, moving any one channel out of that range is enough.
+below, and blue 201 or above - is moved one step up the green scale as
+the picture loads, so it stays opaque but comes out a very slightly
+paler magenta than you painted. This exists so that a stray highlight
+cannot punch a hole you did not ask for. If you want a hot magenta
+somewhere in the artwork, moving any one channel out of that range is
+enough.
 
 ## Title screens
 

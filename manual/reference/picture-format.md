@@ -127,7 +127,7 @@ matches byte 0 of a palette entry and nothing else. Two consequences:
    expansion of `$E3`, not a colour on the display lattice.
 
 NextDAAD defends against this - an art entry whose byte 0 is `$E3` is
-shifted two steps down the blue scale (still magenta, imperceptible in a
+shifted one step up the green scale (still magenta, imperceptible in a
 picture) so a deliberate magenta renders rather than punching a hole.
 **But do not rely on that**: it alters the author's colour silently.
 

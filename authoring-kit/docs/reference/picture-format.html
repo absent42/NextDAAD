@@ -122,7 +122,7 @@ matches byte 0 of a palette entry and nothing else. Two consequences:</p>
    expansion of <code>$E3</code>, not a colour on the display lattice.</li>
 </ol>
 <p>NextDAAD defends against this - an art entry whose byte 0 is <code>$E3</code> is
-shifted two steps down the blue scale (still magenta, imperceptible in a
+shifted one step up the green scale (still magenta, imperceptible in a
 picture) so a deliberate magenta renders rather than punching a hole.
 <strong>But do not rely on that</strong>: it alters the author's colour silently.</p>
 <h2 id="6-what-the-loader-refuses">6. What the loader REFUSES</h2>

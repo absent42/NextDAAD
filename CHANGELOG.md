@@ -2,6 +2,22 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.7.3 - 18/08/2026
+
+- The Layer 2 transparency collision dodge now substitutes $E7 (one
+  green step up, hue and blue kept) instead of $E2 (two blue steps
+  down) wherever a palette entry lands on the reserved transparency
+  colour $E3: the interpreter's picture loader, the fade extern (both
+  its target and mid-fade lerp guards - rebuilt GAME.XBN), the video
+  encoder's emission safety net, and the palette audit's warning. The
+  substitute is perceptually much closer to the authored magenta and
+  matches the escape the video encoder's lattice remap already used
+  for pure magenta, so a dodged colour now renders identically in
+  stills and video. Encoder generation bumped to pal9u: re-encoding a
+  clip whose palette lands on $E3 emits different palette bytes;
+  ordinary clips are unaffected. Existing converted art needs no
+  reconversion - the dodge is applied at load.
+
 ## v0.7.2 - 17/08/2026
 
 - GFX condact 87 subs 3 and 4 are implemented (previously documented
