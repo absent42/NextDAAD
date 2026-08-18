@@ -924,17 +924,16 @@ function Assert-LayerOrderReset {
     if ($writes -ne 4) {
         throw "src\main.asm : gfx_drawtarget_clear writes $writes bytes, expected 4 (gfxDrawTarget, gfxRevealPend, gfxRevealMode, gfxLayerOrder)"
     }
-    $siteCounts = @{ 'src\overlay0.asm' = 1; 'src\overlay1.asm' = 2 }
+    if ($body -notmatch '(?ms)ld \(hl\), a\s*(?:;[^\r\n]*\r?\n|\s)*gfx_layer_apply:') {
+        throw "src\main.asm : gfx_drawtarget_clear must fall through into gfx_layer_apply with no ret between the fourth ld (hl),a and the gfx_layer_apply label - clearing the block and composing NR `$15 must be one operation, not two calls a reset site could forget to pair"
+    }
+    $siteCounts = @{ 'src\overlay0.asm' = 1; 'src\overlay1.asm' = 2; 'src\engine.asm' = 1; 'src\gfxcache.asm' = 1 }
     foreach ($rel in $siteCounts.Keys) {
         $t = Get-Content -LiteralPath (Join-Path $root $rel) -Raw
         $want = $siteCounts[$rel]
         $clears = ([regex]::Matches($t, 'call\s+gfx_drawtarget_clear')).Count
         if ($clears -lt $want) {
-            throw "$rel : only $clears call(s) to gfx_drawtarget_clear, expected at least $want - every hand-written reset site must clear the whole block through the resident walker, not individual ld (nn),a writes"
-        }
-        $applies = ([regex]::Matches($t, 'call\s+gfx_layer_apply')).Count
-        if ($applies -lt $want) {
-            throw "$rel : only $applies call(s) to gfx_layer_apply, expected at least $want - every reset site must push the layer order to NR `$15 through the resident composer, not leave the register disagreeing with the byte"
+            throw "$rel : only $clears call(s) to gfx_drawtarget_clear, expected at least $want - every hand-written reset site must clear the whole block through the resident walker, which now also composes NR `$15 by falling through into gfx_layer_apply"
         }
     }
     $mainSrc = Get-Content -LiteralPath (Join-Path $root 'src\main.asm') -Raw

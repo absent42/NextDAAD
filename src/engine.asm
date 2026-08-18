@@ -63,7 +63,10 @@ eng_init_game:
     call gfx_drawtarget_clear    ; A still 0 here; GFX 87/4 buffer mode
                                   ; is transient - never survives a game
                                   ; (re)start (3-byte CALL vs 9 bytes of
-                                  ; inline stores - see the routine)
+                                  ; inline stores), and layer order is
+                                  ; transient too - the register follows
+                                  ; the cleared byte via the fall-through
+                                  ; into gfx_layer_apply (main.asm)
     ld a, $FF
     ld (doallObj), a
     ld a, r

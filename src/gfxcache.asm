@@ -140,11 +140,14 @@ l2BackBank:   db BANK_L2BACK_FIRST
 ; flag, never the mode - that is why the canonical sequence ends with
 ; an explicit GFX n 3.
 ; These four bytes must stay contiguous and in this order:
-; gfx_drawtarget_clear (main.asm) walks them with inc hl. It has five
-; resident callers - gfx_cache_reset and eng_init_game call it direct,
-; and overlay0.asm's h_restart and overlay1.asm's same-part LOAD/
-; RAMLOAD paths each call it too, followed immediately by
-; gfx_layer_apply so every reset of the block also reaches NR $15.
+; gfx_drawtarget_clear (main.asm) walks them with inc hl, THEN FALLS
+; THROUGH into gfx_layer_apply - clearing the block and pushing the
+; cleared layer order to NR $15 are one operation, by construction, so
+; every one of its five resident callers (gfx_cache_reset here,
+; eng_init_game in engine.asm, overlay0.asm's h_restart, and
+; overlay1.asm's same-part LOAD/RAMLOAD paths) reaches NR $15 with a
+; single call - there is no second call to forget, and no way for a
+; reset site to clear the byte without pushing the register.
 gfxDrawTarget: db 0   ; 0 = screen (DISPLAY reveals immediately),
                       ; 1 = buffer (DISPLAY stages, no reveal)
 gfxRevealPend: db 0   ; 1 = a deferred DISPLAY awaits its reveal
@@ -178,8 +181,12 @@ gfx_cache_reset:
     ld (gfxBankNext), a
     call gfx_drawtarget_clear    ; A still 0 here; the 3-byte CALL beats
                                   ; 9 bytes of inline stores out of the
-                                  ; scarce pre-flags pad (main.asm's
-                                  ; resident tail holds the routine)
+                                  ; scarce pre-flags pad, and now also
+                                  ; pushes the cleared layer order to NR
+                                  ; $15 (falls through into gfx_layer_apply,
+                                  ; main.asm) - harmless at boot, before any
+                                  ; game, since the register already holds
+                                  ; %000 there
     ld a, BANK_L2_FIRST          ; double-buffer roles back to boot state
     ld (l2FrontBank), a
     ld a, BANK_L2BACK_FIRST

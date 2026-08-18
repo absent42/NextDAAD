@@ -708,13 +708,19 @@ sfx_page_call:
 sfxChan1: ds SMPB_SIZE
 
 ; GFX 87 subs 3/4 draw-target state clear (Task 2). gfx_cache_reset
-; (gfxcache.asm) and eng_init_game (engine.asm) both need to zero the
+; (gfxcache.asm), eng_init_game (engine.asm), h_restart (overlay0.asm)
+; and overlay1.asm's same-part LOAD/RAMLOAD paths all need to zero the
 ; four contiguous gfxDrawTarget/gfxRevealPend/gfxRevealMode/
-; gfxLayerOrder bytes, and both are pre-anchor callers that cannot each
-; afford four ld (nn),a (12 bytes) out of the scarce pre-flags pad. One
-; shared routine here on the resident tail costs each call site a
-; 3-byte CALL instead.
-; Entry: A=0. Corrupts HL.
+; gfxLayerOrder bytes AND push the cleared layer order to NR $15 -
+; clearing the block and composing the register are one operation at
+; every reset site, so this routine FALLS THROUGH into gfx_layer_apply
+; instead of returning: one 3-byte CALL buys both instead of two.
+; Entry: A=0. Corrupts HL, and (via the fall-through) AF and E too -
+; every caller is tolerant: eng_init_game and h_restart both reload A
+; with $FF next and never read E; gfx_cache_reset's next instruction
+; reloads A too and its loop below uses B, which nr_read preserves;
+; both overlay1 sites continue into eng_set_done
+; (ld a,1 / ld (isDone),a / ret), which does not depend on A or E.
 gfx_drawtarget_clear:
     ld hl, gfxDrawTarget
     ld (hl), a
@@ -724,15 +730,19 @@ gfx_drawtarget_clear:
     ld (hl), a
     inc hl
     ld (hl), a
-    ret
-
+                                ; falls through: clearing the block and
+                                ; pushing the cleared order to NR $15
+                                ; are one operation at every reset site
 ; Push gfxLayerOrder to NR $15 bits 4-2, leaving every other bit of that
 ; register alone (lores enable, sprite priority, sprite border clip,
 ; sprite over border, sprite enable). RESIDENT on purpose: the reset
 ; sites that need it are h_restart in overlay0 and the same-part LOAD
 ; paths in overlay1, and neither can reach l2_enable in overlay2.
-; l2_enable and GFX sub 17 call it too, so exactly ONE routine composes
-; this field and the byte can never disagree with the register.
+; l2_enable and GFX sub 17 call THIS ENTRY POINT ALONE (compose only -
+; they must not wipe draw-target/reveal state mid-game); the reset
+; sites above call gfx_drawtarget_clear and fall into this body. So
+; exactly one routine composes this field and the byte can never
+; disagree with the register.
 ; Corrupts AF, E; preserves BC (nr_read pushes it) and HL.
 gfx_layer_apply:
     ld e, NR_LAYERS
