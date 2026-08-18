@@ -797,8 +797,7 @@ finally {
 # is source-only, needs no build, and costs three file reads.
 function Assert-TranspConstantsInSync {
     # file -> @{ colour = <regex>; index = <regex> }; each regex must
-    # capture the literal in group 1. Index is optional (nxv2enc.py only
-    # deals with the colour), colour is not.
+    # capture the literal in group 1. Index is optional, colour is not.
     $sites = [ordered]@{
         'src\nextdaad.inc' = @{
             colour = '(?m)^\s*L2_TRANSP_COLOUR\s+equ\s+\$([0-9A-Fa-f]+)'
@@ -812,18 +811,36 @@ function Assert-TranspConstantsInSync {
             colour = '(?m)^\s*\$TRANSP\s*=\s*0x([0-9A-Fa-f]+)'
             index  = '(?m)^\s*\$RESERVED\s*=\s*(\d+)'
         }
+        'authoring-kit\externs\fade\fade.asm' = @{
+            colour = '(?m)^\s*TRANSP\s+equ\s+\$([0-9A-Fa-f]+)'
+            index  = $null
+        }
+    }
+    # Dodge sites: the substitute colour written on an $E3 collision.
+    # Asm and python derive it as colour+N (group 1 = the offset, the
+    # site's OWN parsed colour resolves it); the other two carry the
+    # absolute value (group 1 = hex). All five resolved values must
+    # agree with the canonical nextdaad.inc one.
+    $dodgeSites = [ordered]@{
+        'src\nextdaad.inc'                    = @{ rx = '(?m)^\s*L2_TRANSP_DODGE\s+equ\s+L2_TRANSP_COLOUR\+(\d+)'; offset = $true }
+        'authoring-kit\externs\fade\fade.asm' = @{ rx = '(?m)^\s*TRANSP_DODGE\s+equ\s+TRANSP\+(\d+)'; offset = $true }
+        'authoring-kit\lib\nxv2enc.py'        = @{ rx = '(?m)^\s*L2_DODGE_BYTE0\s*=\s*L2_TRANSPARENT_BYTE0\s*\+\s*(\d+)'; offset = $true }
+        'authoring-kit\lib\palcheck.ps1'      = @{ rx = '(?m)^\s*\$DODGE\s*=\s*0x([0-9A-Fa-f]+)'; offset = $false }
+        'tests\art\mkpalcard.py'              = @{ rx = '(?m)^\s*TRANSP_DODGE\s*=\s*0x([0-9A-Fa-f]+)'; offset = $false }
     }
     $colours = [ordered]@{}
     $indices = [ordered]@{}
+    $texts = @{}
     foreach ($rel in $sites.Keys) {
         $path = Join-Path $root $rel
         if (-not (Test-Path -LiteralPath $path)) {
-            throw "L2 transparency constant sync: $rel is missing - the three-file agreement check needs it (if the file moved, update Assert-TranspConstantsInSync)"
+            throw "L2 transparency constant sync: $rel is missing - the agreement check needs it (if the file moved, update Assert-TranspConstantsInSync)"
         }
         $text = Get-Content -LiteralPath $path -Raw
+        $texts[$rel] = $text
         $m = [regex]::Match($text, $sites[$rel].colour)
         if (-not $m.Success) {
-            throw "L2 transparency constant sync: no transparent-colour definition found in $rel (pattern '$($sites[$rel].colour)') - it was renamed or deleted, so nothing is holding the three files together any more"
+            throw "L2 transparency constant sync: no transparent-colour definition found in $rel (pattern '$($sites[$rel].colour)') - it was renamed or deleted, so nothing is holding the sync sites together any more"
         }
         $colours[$rel] = [Convert]::ToInt32($m.Groups[1].Value, 16)
         if ($sites[$rel].index) {
@@ -834,8 +851,27 @@ function Assert-TranspConstantsInSync {
             $indices[$rel] = [int]$mi.Groups[1].Value
         }
     }
+    $dodges = [ordered]@{}
+    foreach ($rel in $dodgeSites.Keys) {
+        $path = Join-Path $root $rel
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "L2 transparency constant sync: $rel is missing - the dodge agreement check needs it (if the file moved, update Assert-TranspConstantsInSync)"
+        }
+        $text = if ($texts.ContainsKey($rel)) { $texts[$rel] } else { Get-Content -LiteralPath $path -Raw }
+        $m = [regex]::Match($text, $dodgeSites[$rel].rx)
+        if (-not $m.Success) {
+            throw "L2 transparency constant sync: no dodge definition found in $rel (pattern '$($dodgeSites[$rel].rx)')"
+        }
+        if ($dodgeSites[$rel].offset) {
+            $base = if ($colours.Contains($rel)) { $colours[$rel] } else { $colours['src\nextdaad.inc'] }
+            $dodges[$rel] = $base + [int]$m.Groups[1].Value
+        } else {
+            $dodges[$rel] = [Convert]::ToInt32($m.Groups[1].Value, 16)
+        }
+    }
     foreach ($pair in @(@{ n = 'transparent COLOUR'; v = $colours; f = 'X2' },
-                        @{ n = 'reserved INDEX';    v = $indices; f = 'D' })) {
+                        @{ n = 'reserved INDEX';    v = $indices; f = 'D' },
+                        @{ n = 'dodge COLOUR';      v = $dodges;  f = 'X2' })) {
         $canon = 'src\nextdaad.inc'
         $want = $pair.v[$canon]
         $bad = @($pair.v.Keys | Where-Object { $pair.v[$_] -ne $want })
@@ -843,10 +879,10 @@ function Assert-TranspConstantsInSync {
             $detail = ($pair.v.Keys | ForEach-Object { "$_ = $($pair.v[$_].ToString($pair.f))" }) -join '; '
             throw ("L2 transparency $($pair.n) DESYNC: src\nextdaad.inc says $($want.ToString($pair.f)) but " +
                    (($bad | ForEach-Object { "$_ says $($pair.v[$_].ToString($pair.f))" }) -join ' and ') +
-                   ". All three copies must move together - $detail")
+                   ". All copies must move together - $detail")
         }
     }
-    "L2 transparency constants agree across 3 files: colour `$$($colours['src\nextdaad.inc'].ToString('X2')), index $($indices['src\nextdaad.inc'])"
+    "L2 transparency constants agree: colour `$$($colours['src\nextdaad.inc'].ToString('X2')) (4 sites), index $($indices['src\nextdaad.inc']), dodge `$$($dodges['src\nextdaad.inc'].ToString('X2')) (5 sites)"
 }
 Assert-TranspConstantsInSync
 
