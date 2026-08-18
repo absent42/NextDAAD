@@ -99,10 +99,15 @@ to act on here.
 | 16 | Install font `n`. `n` 0 is the base font - the embedded table, then `FONT.CHR` over it if one exists; 1-9 select `FONT1.CHR` to `FONT9.CHR`. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See [Customising](../customising.md). |
 | 17 | Text layer order. `n` 0 puts the picture on top (Layer 2 above the tilemap - the default, and what every existing game gets); `n` 1 puts the text layer on top. `n` 2 and above is a no-op - the previously-set order stays. See [Graphics](../graphics.md#text-over-a-picture) for the transparent-paper technique this enables. |
 
-Sub 17's layer order is transient, the same way buffer mode (below) is:
-it resets to picture-on-top on game start, `RESTART`, and a same-part
-`LOAD`/`RAMLOAD`, with the hardware register following the reset
-immediately.
+Sub 17 composes the layer priority only - it never enables or disables
+Layer 2, so it cannot bring back a picture surface the game has hidden.
+
+Sub 17's layer order is NOT transient the way buffer mode (below) is: it
+survives every picture operation and it survives `RESTART`, which is
+what a template game's movement flow ends in on every turn, so an author
+sets it once. It resets to picture-on-top on game start, on a
+`RESTART`-of-game through `LOAD`/`RAMLOAD`, and on a part switch, with
+the hardware register following the reset immediately.
 
 Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
 `RESTART`, a same-part `LOAD`/`RAMLOAD`, or any game (re)start -

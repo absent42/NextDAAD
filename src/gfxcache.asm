@@ -143,11 +143,20 @@ l2BackBank:   db BANK_L2BACK_FIRST
 ; gfx_drawtarget_clear (main.asm) walks them with inc hl, THEN FALLS
 ; THROUGH into gfx_layer_apply - clearing the block and pushing the
 ; cleared layer order to NR $15 are one operation, by construction, so
-; every one of its five resident callers (gfx_cache_reset here,
-; eng_init_game in engine.asm, overlay0.asm's h_restart, and
-; overlay1.asm's same-part LOAD/RAMLOAD paths) reaches NR $15 with a
-; single call - there is no second call to forget, and no way for a
-; reset site to clear the byte without pushing the register.
+; every one of its four resident callers (gfx_cache_reset here,
+; eng_init_game in engine.asm, and overlay1.asm's two same-part
+; LOAD/RAMLOAD paths) reaches NR $15 with a single call - there is no
+; second call to forget, and no way for one of those sites to clear the
+; byte without pushing the register.
+;
+; h_restart (overlay0.asm) IS NOT ONE OF THEM, deliberately (owner
+; ruling 2026-08-18). It is a reset site for the three buffer-mode
+; bytes, which it clears with its own inline stores, and it is NOT a
+; reset site for gfxLayerOrder: RESTART is the per-move render-loop
+; re-entry in a template DAAD game, so the layer order has to survive
+; it or an author would have to re-issue the flip every turn. Do not
+; "tidy" those three stores back into a call to this walker - the
+; harness pins their shape for exactly that reason.
 gfxDrawTarget: db 0   ; 0 = screen (DISPLAY reveals immediately),
                       ; 1 = buffer (DISPLAY stages, no reveal)
 gfxRevealPend: db 0   ; 1 = a deferred DISPLAY awaits its reveal
@@ -157,9 +166,12 @@ gfxLayerOrder: db 0   ; 0 = picture on top (Layer 2 above the tilemap,
                       ; every existing game gets; 1 = text on top
                       ; (%010). Read by l2_enable, which re-composes the
                       ; register on every picture operation, and set by
-                      ; GFX n 17. Resets with the rest of this block so
-                      ; a restart cannot inherit a previous game's
-                      ; order.
+                      ; GFX n 17. Resets with the rest of this block at
+                      ; game start, at a part switch and at a same-part
+                      ; LOAD/RAMLOAD, so a new game cannot inherit a
+                      ; previous one's order - but NOT at RESTART, which
+                      ; clears only the three bytes above it (see the
+                      ; block comment).
 
 gfxBankList: ds GFX_BANKLIST_MAX
 

@@ -951,13 +951,41 @@ function Assert-LayerOrderReset {
     if ($body -notmatch '(?ms)ld \(hl\), a\s*(?:;[^\r\n]*\r?\n|\s)*gfx_layer_apply:') {
         throw "src\main.asm : gfx_drawtarget_clear must fall through into gfx_layer_apply with no ret between the fourth ld (hl),a and the gfx_layer_apply label - clearing the block and composing NR `$15 must be one operation, not two calls a reset site could forget to pair"
     }
-    $siteCounts = @{ 'src\overlay0.asm' = 1; 'src\overlay1.asm' = 2; 'src\engine.asm' = 1; 'src\gfxcache.asm' = 1 }
+    $siteCounts = @{ 'src\overlay1.asm' = 2; 'src\engine.asm' = 1; 'src\gfxcache.asm' = 1 }
     foreach ($rel in $siteCounts.Keys) {
         $t = Get-Content -LiteralPath (Join-Path $root $rel) -Raw
         $want = $siteCounts[$rel]
         $clears = ([regex]::Matches($t, 'call\s+gfx_drawtarget_clear')).Count
         if ($clears -lt $want) {
             throw "$rel : only $clears call(s) to gfx_drawtarget_clear, expected at least $want - every hand-written reset site must clear the whole block through the resident walker, which now also composes NR `$15 by falling through into gfx_layer_apply"
+        }
+    }
+    # OVERLAY0 IS THE INVERSE PIN, and the only one (owner ruling
+    # 2026-08-18). h_restart must NOT reset the layer order: RESTART is
+    # the per-move render-loop re-entry in a template DAAD game - the
+    # movement path ends with it on every successful move - so the order
+    # has to survive it or the flip would have to be re-issued every
+    # turn. It IS still a reset site for the three buffer-mode bytes,
+    # which it clears with its own inline stores.
+    #
+    # The shape is pinned in BOTH directions on purpose. Asserting only
+    # "no call" would let a later tidy-up drop the buffer-state clear
+    # altogether, and asserting only the three stores would let someone
+    # add a gfxLayerOrder write beside them; the buffer-mode transience
+    # contract and the layer-order persistence ruling are separate
+    # promises made by the same six lines of code.
+    $ovl0 = Get-Content -LiteralPath (Join-Path $root 'src\overlay0.asm') -Raw
+    if ($ovl0 -match 'call\s+gfx_drawtarget_clear') {
+        throw "src\overlay0.asm : h_restart must NOT call gfx_drawtarget_clear - that walker clears gfxLayerOrder too, and RESTART is the per-move render-loop re-entry in a template game, so the layer order deliberately survives it (owner ruling 2026-08-18). Clear the three buffer-mode bytes inline instead."
+    }
+    if ($ovl0 -match 'ld\s+\(gfxLayerOrder\)') {
+        throw "src\overlay0.asm : nothing in overlay0 may write gfxLayerOrder - GFX sub 17 owns it (overlay2) and RESTART must leave it alone"
+    }
+    $restart = [regex]::Match($ovl0, '(?ms)^h_restart:.*?^\s+ret\b').Value
+    if (-not $restart) { throw "src\overlay0.asm : h_restart not found" }
+    foreach ($b in @('gfxDrawTarget', 'gfxRevealPend', 'gfxRevealMode')) {
+        if ($restart -notmatch "ld\s+\($b\),\s*a") {
+            throw "src\overlay0.asm : h_restart does not store to $b - GFX 87/4 buffer mode is transient by contract and RESTART is one of the points it ends at, so all three buffer-state bytes must be cleared inline there"
         }
     }
     $mainSrc = Get-Content -LiteralPath (Join-Path $root 'src\main.asm') -Raw
@@ -980,7 +1008,7 @@ function Assert-LayerOrderReset {
     if ($inc -notmatch 'GFX_SUB_LAYER\s+equ\s+17') {
         throw "src\nextdaad.inc : GFX_SUB_LAYER must be 17 - 0-15 are allocated by DAAD across its targets and 16 is FONT"
     }
-    "gfxLayerOrder: contiguous, walked, cleared and applied at every reset site"
+    "gfxLayerOrder: contiguous, walked, cleared and applied at every reset site; h_restart pinned to buffer-state only, so the order survives RESTART"
 }
 
 Assert-TranspConstantsInSync
@@ -2072,11 +2100,22 @@ foreach ($c in @(@{ n = 'PICTURE 1'; b = [byte[]]@(84, 1) },
 # hold is caught; a coincidental 35,0 pair elsewhere in the database
 # would also move this count, in which case check WHICH holds are still
 # authored before changing the number.
+# The RESTART leg. GOTO is opcode 37 and RESTART 117, both one byte of
+# operand apart, so 'GOTO 0 + RESTART' is the three-byte run 37,0,117.
+# It is authored twice - state 4 of the choreography and the RESET verb
+# - and it is the ONLY way this fixture reaches h_restart, which is the
+# site the owner ruled must LEAVE the layer order alone (2026-08-18).
+# Without this run in the database state 4 proves nothing at all, and a
+# bare 117 opcode byte would match almost anywhere.
+$tmoRestart = Find-ByteRuns $tmoBytes ([byte[]]@(37, 0, 117))
+if ($tmoRestart.Count -lt 2) {
+    throw "tmover: found $($tmoRestart.Count) 'GOTO 0 + RESTART' runs (25 00 75) in tests\out\tmover.ddb, expected 2 - the choreography's RESTART leg and the RESET verb both need one, and the layer-order-survives-RESTART check has nothing to stand on without them"
+}
 $tmoPause = Find-ByteRuns $tmoBytes ([byte[]]@(35, 0))
 if ($tmoPause.Count -ne 12) {
     throw "tmover: expected exactly 12 'PAUSE 0' holds (23 00); found $($tmoPause.Count) - the timed choreography cannot be read by a timed capture without them"
 }
-"tmover.ddb: $($tmoBytes.Length) bytes, v$($tmoBytes[0]), GFX 0/1 17, the four PAPER/INK band pairs (227 transparent, 1 opaque, 227 ink, 11 magenta), PICTURE/DISPLAY and 12 PAUSE holds all present as authored"
+"tmover.ddb: $($tmoBytes.Length) bytes, v$($tmoBytes[0]), GFX 0/1 17, the four PAPER/INK band pairs (227 transparent, 1 opaque, 227 ink, 11 magenta), PICTURE/DISPLAY, 12 PAUSE holds and 2 GOTO 0 + RESTART runs all present as authored"
 
 # --- sfxlong: the SD-streamed sampled-effect wire fixture ---
 # THE COMPILED BYTES ARE ASSERTED, same rule as sfxdi/fontsw above: DRC

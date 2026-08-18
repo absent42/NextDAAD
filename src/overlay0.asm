@@ -191,13 +191,24 @@ h_restart:                      ; 117: wipe the process stack and the
     xor a                       ; DOALL state; eng_step re-pushes PRO 0
     ld (procSP), a              ; from an empty stack
     ld (doallLevel), a
-    call gfx_drawtarget_clear   ; A=0 on entry: clears all four bytes and
-                                ; pushes the cleared layer order to NR
-                                ; $15 (falls through into gfx_layer_apply)
-                                ; - RESTART is the render-loop entry in
-                                ; real games, GFX 87/4 buffer mode and
-                                ; layer order are both transient, and this
-                                ; overlay cannot reach l2_enable to do it
+    ld (gfxDrawTarget), a       ; A=0: GFX 87/4 buffer mode is transient
+    ld (gfxRevealPend), a       ; and RESTART is one of the points it
+    ld (gfxRevealMode), a       ; ends at, so the three buffer-state
+                                ; bytes are cleared here, INLINE.
+                                ; DELIBERATELY NOT through
+                                ; gfx_drawtarget_clear and DELIBERATELY
+                                ; NOT touching gfxLayerOrder (owner
+                                ; ruling 2026-08-18): RESTART is the
+                                ; per-move render-loop re-entry in a
+                                ; template DAAD game - the movement path
+                                ; ends with it on every successful move -
+                                ; so the GFX 87/17 layer order must
+                                ; SURVIVE it. Resetting here would force
+                                ; an author to re-issue the flip every
+                                ; turn. The order still resets at game
+                                ; start, at a part switch and at a
+                                ; same-part LOAD/RAMLOAD, which are the
+                                ; sites that DO call the walker.
     ld a, $FF
     ld (doallObj), a
     ret

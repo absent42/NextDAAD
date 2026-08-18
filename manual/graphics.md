@@ -230,27 +230,36 @@ in the artwork are still the right answer when the picture should stay
 on top of a window instead of behind it (a status bar or graphic border
 you don't want text drawn over, for instance).
 
-Two consequences follow from `PAPER` and `INK` doing different jobs on
-a transparent character:
+`PAPER` and `INK` are independent here, and each does its own job:
 
-- **`PAPER` has no meaning for a transparent character - only `INK`
-  does.** A character cell is transparent wherever its ink pixels are
-  painted with colour 227, regardless of what `PAPER` value the same
-  cell carries; a `PAPER 227` that is not paired with `INK 227` still
-  leaves the cell's background colour showing, not the picture.
+- **`PAPER 227` makes the cell's background transparent, and its
+  colour then has no visible effect.** Transparency replaces the paper
+  colour rather than tinting it, so there is nothing left of the paper
+  to see - the picture shows through instead. `INK` alone decides how
+  the glyphs on that cell render, and any ink value works: `PAPER 227`
+  with `INK 15` gives solid white text over the picture, which is the
+  ordinary way to use this.
+- **`INK 227` additionally makes the glyphs themselves transparent.**
+  The ink pixels become see-through, so the picture shows through the
+  letter shapes - a stencil. Combine it with an opaque paper for
+  picture-filled lettering on a solid band, or with `PAPER 227` for a
+  cell that is transparent throughout.
 - **A window using `PAPER 227` gets a block cursor with transparent
   glyph pixels.** The block cursor is drawn in the window's colours
   inverted (paper and ink swapped), so a window whose paper is 227
   draws its cursor with ink 227 - a see-through cursor block over
   whatever glyph shape it lands on.
 
-`GFX 1 17` is transient, the same way the buffer-mode state under sub 4
-is: it resets to picture-on-top on game start, `RESTART`, and a
-same-part `LOAD`/`RAMLOAD`. In a template game whose movement and
-response flow ends in `RESTART` every turn, that means `GFX 1 17`
-issued once at startup does not stick - issue it in the same process
-that draws the location picture, right after its `DISPLAY`, so it is
-re-applied every time the picture is.
+**Set the order once.** `GFX 1 17` sticks: it survives every picture
+operation, and it survives `RESTART`, which is what a template game's
+movement and response flow ends in on every turn. It resets to
+picture-on-top on game start, on a `RESTART`-of-game through
+`LOAD`/`RAMLOAD`, and on a part switch - so issue it once during
+start-up and again after a same-part `LOAD` if you offer one.
+
+`GFX 1 17` changes the layer order and nothing else. It never enables or
+disables Layer 2, so a game that has hidden the picture surface can set
+the order without bringing it back.
 
 ## Title screens
 

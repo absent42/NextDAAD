@@ -708,19 +708,23 @@ sfx_page_call:
 sfxChan1: ds SMPB_SIZE
 
 ; GFX 87 subs 3/4 draw-target state clear (Task 2). gfx_cache_reset
-; (gfxcache.asm), eng_init_game (engine.asm), h_restart (overlay0.asm)
-; and overlay1.asm's same-part LOAD/RAMLOAD paths all need to zero the
-; four contiguous gfxDrawTarget/gfxRevealPend/gfxRevealMode/
-; gfxLayerOrder bytes AND push the cleared layer order to NR $15 -
-; clearing the block and composing the register are one operation at
-; every reset site, so this routine FALLS THROUGH into gfx_layer_apply
-; instead of returning: one 3-byte CALL buys both instead of two.
+; (gfxcache.asm), eng_init_game (engine.asm) and overlay1.asm's two
+; same-part LOAD/RAMLOAD paths all need to zero the four contiguous
+; gfxDrawTarget/gfxRevealPend/gfxRevealMode/gfxLayerOrder bytes AND push
+; the cleared layer order to NR $15 - clearing the block and composing
+; the register are one operation at those reset sites, so this routine
+; FALLS THROUGH into gfx_layer_apply instead of returning: one 3-byte
+; CALL buys both instead of two.
+; h_restart (overlay0.asm) is NOT among them, deliberately (owner ruling
+; 2026-08-18): RESTART is the per-move render-loop re-entry in a
+; template DAAD game, so the layer order must survive it. It clears the
+; three buffer-mode bytes with its own inline stores instead.
 ; Entry: A=0. Corrupts HL, and (via the fall-through) AF and E too -
-; every caller is tolerant: eng_init_game and h_restart both reload A
-; with $FF next and never read E; gfx_cache_reset's next instruction
-; reloads A too and its loop below uses B, which nr_read preserves;
-; both overlay1 sites continue into eng_set_done
-; (ld a,1 / ld (isDone),a / ret), which does not depend on A or E.
+; every caller is tolerant: eng_init_game reloads A with $FF next and
+; never reads E; gfx_cache_reset's next instruction reloads A too and
+; its loop below uses B, which nr_read preserves; both overlay1 sites
+; continue into eng_set_done (ld a,1 / ld (isDone),a / ret), which does
+; not depend on A or E.
 gfx_drawtarget_clear:
     ld hl, gfxDrawTarget
     ld (hl), a
@@ -736,8 +740,8 @@ gfx_drawtarget_clear:
 ; Push gfxLayerOrder to NR $15 bits 4-2, leaving every other bit of that
 ; register alone (lores enable, sprite priority, sprite border clip,
 ; sprite over border, sprite enable). RESIDENT on purpose: the reset
-; sites that need it are h_restart in overlay0 and the same-part LOAD
-; paths in overlay1, and neither can reach l2_enable in overlay2.
+; sites that need it are the same-part LOAD paths in overlay1, which
+; cannot reach l2_enable in overlay2.
 ; l2_enable and GFX sub 17 call THIS ENTRY POINT ALONE (compose only -
 ; they must not wipe draw-target/reveal state mid-game); the reset
 ; sites above call gfx_drawtarget_clear and fall into this body. So

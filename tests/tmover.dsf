@@ -101,36 +101,43 @@
 ;            whole, which would revert a flipped order on the next
 ;            picture operation. It now composes the field from
 ;            gfxLayerOrder, so state 3 must look exactly like state 2.
-;   STATE 4  RESTART while flipped. THE RESET SITES ARE THE OTHER HALF
-;            of this feature: the layer order is transient and returns
-;            to picture-on-top at game start, at RESTART and at a
-;            same-part LOAD/RAMLOAD, and the register follows
-;            IMMEDIATELY at each of those because the reset sites call
-;            the resident composer instead of waiting for the next
-;            picture operation. "Immediately" is only observable if
-;            nothing redraws in between, so this state flips the order,
-;            goes to location 0 and RESTARTs; the AT 0 entry of process
-;            0 then prints its caption and holds for two PAUSEs BEFORE
-;            process 6 rebuilds the screen and process 7 blits the
-;            card. During that hold nothing whatever has touched Layer
-;            2 and the four bands are still in the tilemap, so they
-;            must ALREADY be behind the picture. If they are still on
-;            top and only sink when the card is redrawn, the reset site
-;            is not calling gfx_layer_apply. It runs ONCE - fOnce
+;   STATE 4  RESTART while flipped, and the order MUST SURVIVE IT.
+;            Owner ruling 2026-08-18: RESTART is the per-move
+;            render-loop re-entry in a template DAAD game - the
+;            movement path ends with it on every successful move - so
+;            resetting the layer order there would force an author to
+;            re-issue the flip every turn. h_restart therefore clears
+;            the three buffer-mode bytes and leaves gfxLayerOrder
+;            alone. This state flips the order, goes to location 0 and
+;            RESTARTs; the AT 0 entry of process 0 then prints its
+;            caption and holds for two PAUSEs BEFORE process 6 rebuilds
+;            the screen and process 7 blits the card. During that hold
+;            nothing whatever has touched Layer 2 and the four bands
+;            are still in the tilemap, so they must STILL BE ON TOP. If
+;            the card has come back over them, RESTART is resetting the
+;            order it is supposed to preserve. It runs ONCE - fOnce
 ;            latches it, and RESTART does not touch flags - and the
-;            choreography then replays states 1 to 3 before going on.
+;            choreography then replays states 1 to 3 before going on,
+;            which also re-proves that state 1's GFX 0 17 can still put
+;            the picture back after a surviving flip.
 ;            On the very FIRST boot the same hold shows a blank screen,
 ;            because nothing has been drawn yet; that is expected and
 ;            is not a result.
 ;   STATE 5  Text on top again, held, so a capture proves the screen
 ;            was genuinely flipped immediately before state 6.
-;   STATE 6  RAMLOAD, the same-part reload path. RAMSAVE is taken at
-;            the end of process 7, AFTER the move to location 1, so the
-;            reload leaves the player where they are and the main loop
-;            redraws NOTHING - no picture operation stands between the
-;            reload and what is on the glass. The order must be
-;            picture-on-top and the bands must be gone. After the hold
-;            the prompt opens and the verbs below take over.
+;   STATE 6  RAMLOAD, the same-part reload path - THE RESET SITE THAT
+;            REMAINS ONE. Game start, a part switch and a same-part
+;            LOAD/RAMLOAD all still return the order to picture-on-top,
+;            and the register follows IMMEDIATELY because those sites
+;            call the resident composer instead of waiting for the next
+;            picture operation. "Immediately" is only observable if
+;            nothing redraws in between: RAMSAVE is taken at the end of
+;            process 7, AFTER the move to location 1, so the reload
+;            leaves the player where they are and the main loop redraws
+;            NOTHING. The order must be picture-on-top and the bands
+;            must be gone. If they only sink at the next picture
+;            operation, that reset site is not calling gfx_layer_apply.
+;            After the hold the prompt opens and the verbs take over.
 ;
 ; The verbs below drive the same states by hand, and RECAL is the
 ; RAMLOAD leg on demand.
@@ -264,10 +271,10 @@ LSHOW   67  verb
 /8  "STATE 3 OF 6 - REDRAWN WHILE FLIPPED - MUST LOOK LIKE STATE 2 "
 /9  "ALL SIX STATES DONE - READY - TYPE A VERB "
 /10 "PICTURE 1 FAILED - NO 001 NXI STAGED - NOTHING HERE IS A RESULT "
-/11 "STATE 4 OF 6 OR BOOT - RESTARTED WHILE FLIPPED - NOTHING HAS TOUCHED LAYER 2 - THE PICTURE MUST ALREADY BE ON TOP "
+/11 "STATE 4 OF 6 OR BOOT - RESTARTED WHILE FLIPPED - NOTHING HAS TOUCHED LAYER 2 - THE TEXT MUST STILL BE ON TOP "
 /12 "RAMLOAD - ORDER MUST BE PICTURE ON TOP WITH NO PICTURE OPERATION "
 /13 "STATE 5 OF 6 - TEXT ON TOP - RAMLOAD COMES NEXT AND NOTHING WILL REDRAW "
-/14 "STATE 6 OF 6 - AFTER RAMLOAD - PICTURE ON TOP WITH NO PICTURE OPERATION "
+/14 "STATE 6 OF 6 - AFTER RAMLOAD - PICTURE MUST BE BACK ON TOP WITH NO PICTURE OPERATION "
 /OTX
 /0 "a brass lamp"
 /LTX
@@ -282,7 +289,8 @@ LSHOW   67  verb
 ; The main loop. Location 0 is the "not painted yet" state and is
 ; reached again only by a RESTART leg - state 4 of the choreography, or
 ; the RESET verb - so the AT 0 entry is both the boot path and the
-; reset observation window. The caption and
+; RESTART observation window, where the layer order must be seen to
+; have SURVIVED (owner ruling 2026-08-18, see the header). The caption and
 ; the two PAUSE holds run BEFORE process 6 rebuilds the screen and
 ; before process 7 touches Layer 2 at all, which is what makes "the
 ; order was restored immediately" an observable claim rather than an
@@ -306,10 +314,13 @@ LSHOW   67  verb
         PROCESS 1
 /PRO 1
 ; The parser loop, template-shaped and trimmed. Every verb entry ends
-; in DONE and NOT in RESTART: the template's movement path ends with
-; RESTART ("absolute jump to start process 0"), and RESTART is one of
-; the sites that resets the layer order, so a verb that ended that way
-; would undo the flip it had just made.
+; in DONE and NOT in RESTART, which the template's movement path uses
+; ("absolute jump to start process 0"): a verb ending that way would
+; re-enter process 0 and, at location 1, fall straight back to the
+; prompt - harmless but confusing to read on the glass, and it would
+; hide whichever state the verb had just set behind a fresh prompt.
+; RESTART no longer resets the layer order, so that is a readability
+; choice here and not a correctness one.
 > _ _     WINDOW 6
           PARSE 0
           REDO
@@ -475,12 +486,12 @@ LSHOW   67  verb
         DISPLAY 0
         PAUSE 0
         PAUSE 0
-; State 4. RESTART while flipped, and it drives itself because nothing
-; can type into an emulator: fOnce latches so the leg runs ONCE, and
-; RESTART does not touch flags, so the latch survives the very thing it
-; is guarding. The caption for this state is printed by the AT 0 entry
-; of process 0, on the other side of the RESTART, because that is where
-; the observation actually happens.
+; State 4. RESTART while flipped - the order must SURVIVE it. Drives
+; itself because nothing can type into an emulator: fOnce latches so
+; the leg runs ONCE, and RESTART touches no flag, so the latch survives
+; the very thing it is guarding. The caption for this state is printed
+; by the AT 0 entry of process 0, on the other side of the RESTART,
+; because that is where the observation actually happens.
 > _ _   ZERO fOnce
         SET fOnce
         PROCESS 2
@@ -496,9 +507,10 @@ LSHOW   67  verb
         PROCESS 2
         PAUSE 0
         PAUSE 0
-; State 6. The player is back at location 1, so the main loop redraws
-; nothing at all - no picture operation stands between the reload and
-; what is on the glass, and the two holds are the observation window.
+; State 6. The reset site that IS still one. The player is back at
+; location 1, so the main loop redraws nothing at all - no picture
+; operation stands between the reload and what is on the glass, and the
+; two holds are the observation window.
 ; RAMLOAD sets the done stamp (it continues into eng_set_done) but is
 ; NOT a terminator, so the holds after it do run - checked on the glass,
 ; not assumed.

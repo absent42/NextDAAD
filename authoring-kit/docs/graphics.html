@@ -204,27 +204,35 @@ unlike the hole-punching route above. Both routes remain valid: holes
 in the artwork are still the right answer when the picture should stay
 on top of a window instead of behind it (a status bar or graphic border
 you don't want text drawn over, for instance).</p>
-<p>Two consequences follow from <code>PAPER</code> and <code>INK</code> doing different jobs on
-a transparent character:</p>
+<p><code>PAPER</code> and <code>INK</code> are independent here, and each does its own job:</p>
 <ul>
-<li><strong><code>PAPER</code> has no meaning for a transparent character - only <code>INK</code>
-  does.</strong> A character cell is transparent wherever its ink pixels are
-  painted with colour 227, regardless of what <code>PAPER</code> value the same
-  cell carries; a <code>PAPER 227</code> that is not paired with <code>INK 227</code> still
-  leaves the cell's background colour showing, not the picture.</li>
+<li><strong><code>PAPER 227</code> makes the cell's background transparent, and its
+  colour then has no visible effect.</strong> Transparency replaces the paper
+  colour rather than tinting it, so there is nothing left of the paper
+  to see - the picture shows through instead. <code>INK</code> alone decides how
+  the glyphs on that cell render, and any ink value works: <code>PAPER 227</code>
+  with <code>INK 15</code> gives solid white text over the picture, which is the
+  ordinary way to use this.</li>
+<li><strong><code>INK 227</code> additionally makes the glyphs themselves transparent.</strong>
+  The ink pixels become see-through, so the picture shows through the
+  letter shapes - a stencil. Combine it with an opaque paper for
+  picture-filled lettering on a solid band, or with <code>PAPER 227</code> for a
+  cell that is transparent throughout.</li>
 <li><strong>A window using <code>PAPER 227</code> gets a block cursor with transparent
   glyph pixels.</strong> The block cursor is drawn in the window's colours
   inverted (paper and ink swapped), so a window whose paper is 227
   draws its cursor with ink 227 - a see-through cursor block over
   whatever glyph shape it lands on.</li>
 </ul>
-<p><code>GFX 1 17</code> is transient, the same way the buffer-mode state under sub 4
-is: it resets to picture-on-top on game start, <code>RESTART</code>, and a
-same-part <code>LOAD</code>/<code>RAMLOAD</code>. In a template game whose movement and
-response flow ends in <code>RESTART</code> every turn, that means <code>GFX 1 17</code>
-issued once at startup does not stick - issue it in the same process
-that draws the location picture, right after its <code>DISPLAY</code>, so it is
-re-applied every time the picture is.</p>
+<p><strong>Set the order once.</strong> <code>GFX 1 17</code> sticks: it survives every picture
+operation, and it survives <code>RESTART</code>, which is what a template game's
+movement and response flow ends in on every turn. It resets to
+picture-on-top on game start, on a <code>RESTART</code>-of-game through
+<code>LOAD</code>/<code>RAMLOAD</code>, and on a part switch - so issue it once during
+start-up and again after a same-part <code>LOAD</code> if you offer one.</p>
+<p><code>GFX 1 17</code> changes the layer order and nothing else. It never enables or
+disables Layer 2, so a game that has hidden the picture surface can set
+the order without bringing it back.</p>
 <h2 id="title-screens">Title screens</h2>
 <p>Ship <code>IMAGES\DAAD.png</code> and the game shows it at cold boot, over the
 boot music if you have any, until a key is pressed. Then play begins as
