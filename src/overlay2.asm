@@ -107,22 +107,33 @@ l2ClipY2: db 0
 ; other live bits (video-RAM bank select, shadow select, CPU paging)
 ; every write, which leaves Layer 2 invisible.
 ;
-; Sets the S/L/U layer priority (NR $15 bits 4-2) to %000 - per wiki.
-; specnext.dev/NextReg:$15 (matches the local guide verbatim), %000 is
-; "S L U": Sprites top, Layer 2 under sprites, Enhanced ULA at bottom -
-; i.e. Layer 2 ABOVE the tilemap/ULA slot. (%110/%111 are blend modes,
-; unused.) Only correct together with l2_mode_set's NR $14 transparent
-; fill: without it, Layer 2 on top would hide the tilemap text instead
-; of letting it show through. Corrupts AF, E (nr_read preserves BC;
-; only the ld e register-select setup touches DE).
+; The S/L/U layer priority (NR $15 bits 4-2) is delegated to the
+; resident gfx_layer_apply, which composes it from gfxLayerOrder rather
+; than this routine setting it directly. l2_enable runs from six sites,
+; most of them mid-game picture operations, not just at boot: a bare
+; write here would silently revert a flipped layer order on the next
+; call, and gfx_layer_apply is the one place that field is ever pushed
+; to hardware, so the byte and the register can never disagree. Only
+; correct together with l2_mode_set's NR $14 transparent fill: without
+; it, Layer 2 on top would hide the tilemap text instead of letting it
+; show through. Corrupts AF, E (nr_read preserves BC; only the ld e
+; register-select setup touches DE, and gfx_layer_apply corrupts the
+; same pair).
 l2_enable:
     ld e, NR_DISPLAY_CTRL
     call nr_read
     or %10000000                 ; bit7: enable Layer 2
     nextreg NR_DISPLAY_CTRL, a
-    nextreg NR_LAYERS, %00000000 ; bits4-2=000 "S L U": Layer 2 above
-                                  ; the tilemap/ULA slot
-    ret
+    jp gfx_layer_apply           ; compose NR $15 bits 4-2 from
+                                 ; gfxLayerOrder. This used to write the
+                                 ; register WHOLE, which cleared the
+                                 ; sprite enable bits (overlay0 then had
+                                 ; to re-arm them) and, once a layer
+                                 ; order existed, would have reverted it
+                                 ; on every picture operation - this
+                                 ; routine runs from six sites, most of
+                                 ; them mid-game picture paths, not just
+                                 ; at boot.
 
 ; Disable Layer 2 display (NR $69 bit 7 = 0, other bits preserved).
 ; Layer priority (NR $15) is left as l2_enable set it - harmless,

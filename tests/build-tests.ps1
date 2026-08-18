@@ -940,6 +940,15 @@ function Assert-LayerOrderReset {
     if ($mainSrc -notmatch '(?m)^gfx_layer_apply:') {
         throw "src\main.asm : gfx_layer_apply must be resident - overlay0 and overlay1 cannot reach l2_enable in overlay2"
     }
+    $ovl2 = Get-Content -LiteralPath (Join-Path $root 'src\overlay2.asm') -Raw
+    $en = [regex]::Match($ovl2, '(?ms)^l2_enable:.*?^\s+(?:ret|jp\s+gfx_layer_apply)\b').Value
+    if (-not $en) { throw "src\overlay2.asm : l2_enable not found" }
+    if ($en -match 'nextreg\s+NR_LAYERS,\s*%00000000') {
+        throw "src\overlay2.asm : l2_enable still writes NR `$15 whole - it runs on six picture paths, so this reverts a flipped layer order and clears the sprite enable bits"
+    }
+    if ($en -notmatch 'gfx_layer_apply') {
+        throw "src\overlay2.asm : l2_enable must delegate to gfx_layer_apply - one composer, so the byte and NR `$15 cannot disagree"
+    }
     "gfxLayerOrder: contiguous, walked, cleared and applied at every reset site"
 }
 
