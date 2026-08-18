@@ -6,13 +6,15 @@
 # checks read the file the interpreter will actually load.
 # Advisory only: always exits 0, never fails a build.
 #
-# THREE FILES carry these values and must agree - src/nextdaad.inc is
-# canonical:
-#   src/nextdaad.inc          L2_TRANSP_COLOUR / L2_TRANSP_INDEX
-#   authoring-kit/lib/nxv2enc.py    L2_TRANSPARENT_BYTE0
-#   authoring-kit/lib/palcheck.ps1  $TRANSP / $RESERVED (here)
-# If either value moves, all three move. tests/build-tests.ps1 parses all
-# three and fails if they disagree.
+# SYNC-CHECKED VALUES - src/nextdaad.inc is canonical; if any value
+# moves, all its copies move. tests/build-tests.ps1
+# (Assert-TranspConstantsInSync) parses every site and fails on drift:
+#   colour: nextdaad.inc L2_TRANSP_COLOUR / nxv2enc.py
+#     L2_TRANSPARENT_BYTE0 / $TRANSP (here) / externs/fade/fade.asm TRANSP
+#   index:  nextdaad.inc L2_TRANSP_INDEX / $RESERVED (here)
+#   dodge:  nextdaad.inc L2_TRANSP_DODGE / fade.asm TRANSP_DODGE /
+#     nxv2enc.py L2_DODGE_BYTE0 / $DODGE (here) /
+#     tests/art/mkpalcard.py TRANSP_DODGE
 param([Parameter(Mandatory=$true)][string]$Path)
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path $Path)) { exit 0 }
@@ -20,19 +22,21 @@ $b = [System.IO.File]::ReadAllBytes($Path)
 if ($b.Length -lt 512) { exit 0 }        # compressed or not a raw picture
 
 $TRANSP = 0xE3      # L2_TRANSP_COLOUR
+$DODGE = 0xE7       # L2_TRANSP_DODGE - what the loader rewrites $E3 to
 $RESERVED = 255     # L2_TRANSP_INDEX
 $name = Split-Path $Path -Leaf
 
 # 1. Any palette entry whose RRRGGGBB byte matches is shifted on load
-#    (l2_palette_load writes $E2 instead), so it renders a different
-#    magenta than the author painted rather than punching a hole. The
-#    compare ignores the 9th bit, so only the even bytes matter.
+#    (l2_palette_load writes $E7 instead - one green step up), so it
+#    renders a slightly paler magenta than the author painted rather
+#    than punching a hole. The compare ignores the 9th bit, so only
+#    the even bytes matter.
 $hits = @()
 for ($i = 0; $i -lt 512; $i += 2) {
     if ($b[$i] -eq $TRANSP -and ($i / 2) -ne $RESERVED) { $hits += ($i / 2) }
 }
 if ($hits.Count -gt 0) {
-    Write-Output "WARN: $name has a colour that converts to the reserved transparency value (byte 0 = `$E3) at palette index $($hits -join ', '). If you meant those pixels to be transparent, move that colour to palette slot $RESERVED - only that slot is transparent. If you did not, the interpreter shifts the entry two steps down the blue scale on load, so it renders as a slightly different magenta than you painted; move the colour out of near-saturated magenta (red 238 or above, green 18 or below, blue 201 or above) in your source art."
+    Write-Output "WARN: $name has a colour that converts to the reserved transparency value (byte 0 = `$E3) at palette index $($hits -join ', '). If you meant those pixels to be transparent, move that colour to palette slot $RESERVED - only that slot is transparent. If you did not, the interpreter shifts the entry one step up the green scale on load (`$E3 -> `$E7), so it renders as a very slightly paler magenta than you painted; move the colour out of near-saturated magenta (red 238 or above, green 18 or below, blue 201 or above) in your source art."
 }
 
 # 2. Pixels using the reserved index are transparency - the interpreter
