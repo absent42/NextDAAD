@@ -309,6 +309,102 @@ try {
     Assert-Bytes $rp6[520..527]   $mk 'P6b 512-glyph PSF1 glyph 65'
     Assert-Bytes $rp6[1544..1551] $mk 'P6b 512-glyph PSF1 glyph 193 mirrored'
 
+    # --- B1 BDF placement puts the descender below the baseline ---
+    # An 8x8 cell with FONT_ASCENT 7. 'A' is a 7-row box sitting on the
+    # baseline (BBX yoff 0) and must land at cell rows 0-6. 'g' is a
+    # 7-row box dropped one row below the baseline (BBX yoff -1) and
+    # must land at cell rows 1-7.
+    $bdf = @'
+STARTFONT 2.1
+FONT -test-fixed-medium-r-normal--8-80-75-75-c-80-iso10646-1
+SIZE 8 75 75
+FONTBOUNDINGBOX 8 8 0 -1
+STARTPROPERTIES 2
+FONT_ASCENT 7
+FONT_DESCENT 1
+ENDPROPERTIES
+CHARS 2
+STARTCHAR A
+ENCODING 65
+SWIDTH 500 0
+DWIDTH 8 0
+BBX 8 7 0 0
+BITMAP
+FF
+81
+81
+81
+81
+81
+FF
+ENDCHAR
+STARTCHAR g
+ENCODING 103
+SWIDTH 500 0
+DWIDTH 8 0
+BBX 8 7 0 -1
+BITMAP
+3C
+42
+42
+3C
+02
+02
+3C
+ENDCHAR
+ENDFONT
+'@
+    $inB = "$tmp\b1.bdf"
+    Set-Content -LiteralPath $inB -Value $bdf -Encoding ascii
+    & $conv -In $inB -Out "$tmp\b1.CHR" | Out-Null
+    $rb = [System.IO.File]::ReadAllBytes("$tmp\b1.CHR")
+    Assert-Bytes $rb[520..527] ([byte[]](0xFF,0x81,0x81,0x81,0x81,0x81,0xFF,0x00)) 'B1 A on the baseline, rows 0-6'
+    Assert-Bytes $rb[824..831] ([byte[]](0x00,0x3C,0x42,0x42,0x3C,0x02,0x02,0x3C)) 'B1 g dropped one row, rows 1-7'
+    Assert-Bytes $rb[1544..1551] ([byte[]](0xFF,0x81,0x81,0x81,0x81,0x81,0xFF,0x00)) 'B1 glyph 193 mirrors A'
+
+    # --- B2/B3 a BBX wider than the cell is refused inside the text
+    # range and merely dropped outside it ---
+    # The pair is what proves the OverWide route was used rather than a
+    # blanket refusal: same font, same 12-wide glyph, different code.
+    function New-WideBdf([int]$code) {
+@"
+STARTFONT 2.1
+FONT -test-wide
+SIZE 8 75 75
+FONTBOUNDINGBOX 12 8 0 0
+STARTPROPERTIES 2
+FONT_ASCENT 7
+FONT_DESCENT 1
+ENDPROPERTIES
+CHARS 1
+STARTCHAR wide
+ENCODING $code
+SWIDTH 500 0
+DWIDTH 12 0
+BBX 12 7 0 0
+BITMAP
+FFF0
+8010
+8010
+8010
+8010
+8010
+FFF0
+ENDCHAR
+ENDFONT
+"@
+    }
+    $inB2 = "$tmp\b2.bdf"
+    Set-Content -LiteralPath $inB2 -Value (New-WideBdf 65) -Encoding ascii
+    Assert-Throws { & $conv -In $inB2 -Out "$tmp\b2.CHR" } '65' `
+        'B2 a 12-wide glyph at code 65 is refused, naming the code'
+    $inB3 = "$tmp\b3.bdf"
+    Set-Content -LiteralPath $inB3 -Value (New-WideBdf 200) -Encoding ascii
+    $b3out = & $conv -In $inB3 -Out "$tmp\b3.CHR" | Out-String
+    Assert-Eq ((Get-Item "$tmp\b3.CHR").Length) 2048 'B3 a 12-wide glyph at code 200 still converts'
+    $script:checks++
+    if ($b3out -notmatch 'dropped') { throw "B3 : expected the dropped-glyph note, got: $b3out" }
+
     "fontconv-selftest: $checks checks passed"
 }
 finally {

@@ -22,8 +22,8 @@
 #   OverWide character codes the source declared wider than 8px, whose
 #            glyph data was therefore not read at all. Defaults to an
 #            empty array; only containers with a per-glyph declared
-#            width (currently FON) populate it. The caller decides
-#            whether an over-wide code is fatal - the range 32-127 is
+#            width (FON, BDF) populate it. The caller decides whether
+#            an over-wide code is fatal - the range 32-127 is
 #            fontconv.ps1's business, not this file's.
 #
 # Rows come back at the SOURCE's height, not padded to 8. Padding and
@@ -259,6 +259,65 @@ function Read-FontPsf2([byte[]]$b, [string]$path) {
     New-FontResult 'PSF2' $name $width $height 'UNKNOWN' $glyphs @(@{ Index = 0; Width = $width; Height = $height; Name = $name })
 }
 
+# BDF: an X11 bitmap font, and the only text format here. Unlike the
+# others a glyph is POSITIONED rather than stacked - each carries its
+# own bounding box measured from the baseline, so a parser that simply
+# stacks bitmaps puts every descender in the wrong place. The ascent is
+# FONT_ASCENT when the font declares it, otherwise the top of
+# FONTBOUNDINGBOX; a glyph's first bitmap row then goes at cell row
+# ascent - (bbxHeight + bbxYoff). A glyph whose placement would start
+# above the cell is dropped rather than shifted down, because shifting
+# one glyph moves its baseline away from every other character's.
+function Read-FontBdf([byte[]]$b, [string]$path) {
+    $text  = [System.Text.Encoding]::ASCII.GetString($b)
+    $lines = $text -split "`r?`n"
+
+    $fbbW = 8; $fbbH = 8; $fbbYoff = 0; $ascent = $null
+    $glyphs = @{}; $overWide = @()
+    $code = -1; $bbxH = 0; $bbxYoff = 0; $bbxW = 0
+    $inBitmap = $false; $rows = @()
+
+    foreach ($raw in $lines) {
+        $line = $raw.Trim()
+        if ($line -eq '') { continue }
+        if ($inBitmap) {
+            if ($line -eq 'ENDCHAR') {
+                $inBitmap = $false
+                if ($code -ge 0 -and $bbxW -gt 8) { $overWide += $code; $code = -1; $rows = @(); continue }
+                if ($code -ge 0 -and $rows.Count -gt 0) {
+                    $top = $(if ($null -ne $ascent) { $ascent } else { $fbbH + $fbbYoff }) - ($bbxH + $bbxYoff)
+                    if ($top -ge 0) {
+                        $cell = New-Object byte[] ([Math]::Max(8, $top + $rows.Count))
+                        for ($i = 0; $i -lt $rows.Count; $i++) { $cell[$top + $i] = $rows[$i] }
+                        $glyphs[$code] = $cell
+                    }
+                }
+                $code = -1; $rows = @()
+                continue
+            }
+            # Each row is ceil(bbxW/8) bytes of hex, glyph left-aligned;
+            # only the first byte can hold pixels in an 8-wide cell.
+            $hex = ($line -replace '[^0-9A-Fa-f]', '')
+            if ($hex.Length -ge 2) { $rows += [Convert]::ToByte($hex.Substring(0, 2), 16) }
+            else { $rows += [byte]0 }
+            continue
+        }
+        if ($line -match '^FONTBOUNDINGBOX\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)') {
+            $fbbW = [int]$Matches[1]; $fbbH = [int]$Matches[2]; $fbbYoff = [int]$Matches[4]
+        }
+        elseif ($line -match '^FONT_ASCENT\s+(-?\d+)')  { $ascent = [int]$Matches[1] }
+        elseif ($line -match '^ENCODING\s+(-?\d+)')     { $code = [int]$Matches[1] }
+        elseif ($line -match '^BBX\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)') {
+            $bbxW = [int]$Matches[1]; $bbxH = [int]$Matches[2]; $bbxYoff = [int]$Matches[4]
+        }
+        elseif ($line -eq 'BITMAP') { $inBitmap = $true; $rows = @() }
+    }
+
+    if ($glyphs.Count -eq 0 -and $overWide.Count -eq 0) { throw "fontconv: $path parsed as BDF but yielded no glyphs" }
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($path)
+    New-FontResult 'BDF' $name $fbbW $fbbH 'UNKNOWN' $glyphs @(@{ Index = 0; Width = $fbbW; Height = $fbbH; Name = $name }) $overWide
+}
+
 function Read-FontFile([byte[]]$bytes, [string]$path, [int]$first, [string]$face) {
     switch (Get-FontFormat $bytes) {
         'SINTAC' {
@@ -268,6 +327,7 @@ function Read-FontFile([byte[]]$bytes, [string]$path, [int]$first, [string]$face
         'FON'  { return Read-FontFon $bytes $path $face }
         'PSF1' { return Read-FontPsf1 $bytes $path }
         'PSF2' { return Read-FontPsf2 $bytes $path }
+        'BDF'  { return Read-FontBdf $bytes $path }
         default {
             throw "fontconv: $path was detected as $(Get-FontFormat $bytes), which this build cannot read yet"
         }
