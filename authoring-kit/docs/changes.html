@@ -27,8 +27,17 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   not worth reading. New options <code>-First</code>, <code>-Face</code> (which face of a
   <code>.fon</code> that holds several) and <code>-Slots</code> are all in
   <a href="customising.html">Customising</a>.</li>
+<li><strong>You can draw your own font and convert it with gfx2next.</strong> Lay the
+  glyphs out as 8 by 8 cells in an image editor and run
+  <code>gfx2next -font MyFont.png FONT.spr</code>; a 96-glyph sheet covering
+  characters 32 to 127 comes out at 768 bytes and needs nothing else.
+  Use <code>-font</code> and not <code>-font-y</code>: both write a file of the same length,
+  neither records which you used, and a <code>-font-y</code> file has its rows
+  interleaved by a number that is not stored anywhere, so it cannot be
+  put back in order. A <code>.spr</code> sheet keeps its own characters 96 and 127
+  the same way a <code>.ch8</code> does.</li>
 <li>The build picks all of them up. A <code>FONT.ch8</code>, <code>.fon</code>, <code>.psf</code>,
-  <code>.psfu</code>, <code>.bdf</code> or <code>.fnt</code> in the kit folder - or <code>FONT1.*</code> to
+  <code>.psfu</code>, <code>.bdf</code>, <code>.spr</code> or <code>.fnt</code> in the kit folder - or <code>FONT1.*</code> to
   <code>FONT9.*</code> - is converted for you, the way <code>FONT.ch8</code> already was. Two
   convertible sources for the same number is an error rather than a
   guess, and a ready-made <code>.CHR</code> still wins over both.</li>

@@ -127,7 +127,8 @@ if errorlevel 1 ( pause & exit /b 1 )
 REM ---- convertible fonts: a kit-root FONT.<ext> / FONT<n>.<ext> in any
 REM      format lib\fontconv.ps1 reads - .ch8 (768-byte classic ZX
 REM      charset), .fon (Windows bitmap), .psf/.psfu (console), .bdf
-REM      (X11), .fnt (raw dump) - is converted here so the author does
+REM      (X11), .spr (gfx2next -font), .fnt (raw dump) - is converted
+REM      here so the author does
 REM      not have to remember the command, the same way IMAGES\*.png is
 REM      converted rather than staged. Two convertible sources for one
 REM      slot is an error, not a guess. A ready-made FONT<n>.CHR staged
@@ -154,7 +155,7 @@ REM      documents, different trigger.
 for %%N in ("" 1 2 3 4 5 6 7 8 9) do (
     set "_fsrc="
     set "_fdup="
-    for %%X in (ch8 fon psf psfu bdf fnt) do (
+    for %%X in (ch8 fon psf psfu bdf spr fnt) do (
         if exist "FONT%%~N.%%X" (
             if defined _fsrc (
                 set "_fdup=FONT%%~N.%%X"

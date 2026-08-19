@@ -19,8 +19,17 @@ game behaves, how it builds, or what the kit gives you, it is here.
   not worth reading. New options `-First`, `-Face` (which face of a
   `.fon` that holds several) and `-Slots` are all in
   [Customising](customising.md).
+- **You can draw your own font and convert it with gfx2next.** Lay the
+  glyphs out as 8 by 8 cells in an image editor and run
+  `gfx2next -font MyFont.png FONT.spr`; a 96-glyph sheet covering
+  characters 32 to 127 comes out at 768 bytes and needs nothing else.
+  Use `-font` and not `-font-y`: both write a file of the same length,
+  neither records which you used, and a `-font-y` file has its rows
+  interleaved by a number that is not stored anywhere, so it cannot be
+  put back in order. A `.spr` sheet keeps its own characters 96 and 127
+  the same way a `.ch8` does.
 - The build picks all of them up. A `FONT.ch8`, `.fon`, `.psf`,
-  `.psfu`, `.bdf` or `.fnt` in the kit folder - or `FONT1.*` to
+  `.psfu`, `.bdf`, `.spr` or `.fnt` in the kit folder - or `FONT1.*` to
   `FONT9.*` - is converted for you, the way `FONT.ch8` already was. Two
   convertible sources for the same number is an error rather than a
   guess, and a ready-made `.CHR` still wins over both.

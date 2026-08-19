@@ -829,6 +829,55 @@ ENDFONT
     Assert-Throws { & $conv -In $inB6 -Out "$tmp\b6.CHR" } 'fontconv:.*malformed BITMAP row' `
         'B6 a malformed BITMAP row is refused, not read as a blank row'
 
+    # --- S1 a gfx2next -font .spr needs no parser of its own ---
+    # gfx2next's -font output is 8 bytes per glyph, row major, most
+    # significant bit leftmost, with no header - byte for byte what a raw
+    # glyph table already is. Verified against gfx2next itself: a 96-glyph
+    # sheet round-tripped through it and back out of this converter with
+    # zero differing bytes. This check pins that, so a future change to
+    # raw handling cannot quietly break .spr fonts.
+    $sprMark  = [byte[]](0x7E,0x81,0xA5,0x81,0xBD,0x99,0x81,0x7E)
+    $poundMark = [byte[]](0x1C,0x22,0x78,0x20,0x72,0x24,0x5B,0x00)
+    $spr = New-Object byte[] 768
+    [System.Array]::Copy($baseBytes, 32*8, $spr, 0, 768)
+    [System.Array]::Copy($sprMark,   0, $spr, (65-32)*8, 8)
+    [System.Array]::Copy($poundMark, 0, $spr, (96-32)*8, 8)
+    $inSpr = "$tmp\s1.spr"
+    [System.IO.File]::WriteAllBytes($inSpr, $spr)
+    & $conv -In $inSpr -Out "$tmp\s1.CHR" | Out-Null
+    $s1 = [System.IO.File]::ReadAllBytes("$tmp\s1.CHR")
+    Assert-Eq $s1.Length 2048 'S1 a 768-byte gfx2next .spr converts'
+    Assert-Bytes $s1[520..527]   $sprMark   'S1 glyph 65 from the .spr'
+    Assert-Bytes $s1[1544..1551] $sprMark   'S1 glyph 193 mirrored'
+    Assert-Bytes $s1[768..775]   $poundMark 'S1 glyph 96 kept from the source, not substituted - a .spr sheet is the author''s own charset'
+
+    # --- S2 the glyph 32 warning names Y-ordered .spr output ---
+    # gfx2next -font-y interleaves by row WITHIN each tile row: glyph g's
+    # row r sits at blk[r*columns + g]. The file is the same length as
+    # -font output and the column count is not recorded anywhere in it,
+    # so nothing can de-interleave it and nothing else can tell the two
+    # apart. What a Y-ordered file does do is put row 0 of the first
+    # several glyphs where glyph 32 belongs, which usually trips the
+    # blank-space warning - so that warning is the only signal an author
+    # gets, and it has to name the likely cause.
+    $yorder = New-Object byte[] 768
+    for ($blk = 0; $blk -lt 6; $blk++) {
+        for ($g = 0; $g -lt 16; $g++) {
+            for ($r = 0; $r -lt 8; $r++) {
+                $yorder[$blk*128 + $r*16 + $g] = $baseBytes[(32 + $blk*16 + $g)*8 + $r]
+            }
+        }
+    }
+    $inY = "$tmp\s2.spr"
+    [System.IO.File]::WriteAllBytes($inY, $yorder)
+    $yWarn = & $conv -In $inY -Out "$tmp\s2.CHR" 3>&1 2>&1 | Out-String
+    $script:checks++
+    if ($yWarn -notmatch 'glyph 32') { throw "S2 : expected the glyph 32 warning on a Y-ordered .spr, got: $yWarn" }
+    $script:checks++
+    if ($yWarn -notmatch 'font-y') {
+        throw "S2 : the glyph 32 warning must name -font-y as a likely cause, since it is the only signal a Y-ordered .spr ever produces. Got: $yWarn"
+    }
+
     "fontconv-selftest: $checks checks passed"
 }
 finally {

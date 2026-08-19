@@ -55,6 +55,11 @@ thing that decides how a file is read.</p>
 <td>768 bytes, characters 32 to 127 only - the shape ZX font packs and editors export.</td>
 </tr>
 <tr>
+<td>ZX Next font sheet</td>
+<td><code>.spr</code></td>
+<td>What <code>gfx2next -font</code> writes: 8 rows per glyph, no header. The same shape as a raw glyph table, so a 96-glyph sheet is 768 bytes and reads as characters 32 to 127 with nothing to pass.</td>
+</tr>
+<tr>
 <td>Raw dump, other lengths</td>
 <td><code>.fnt</code></td>
 <td>Any multiple of 8 bytes. Needs <code>-First</code> to say which character the first glyph is.</td>
@@ -80,16 +85,28 @@ thing that decides how a file is read.</p>
 treated that way: copied out unchanged, with no substitutions and no
 mirroring. Everything else is assembled into a full table, and the rest
 of this section is about how.</p>
-<p>Two files will not be recognised for what they are, and both are worth
-knowing about because neither announces the problem. A gzipped console
-font (<code>.psf.gz</code>, which is how nearly every Linux distribution ships
-them) has no signature the converter knows, and neither does a bare
-<code>.FNT</code> face unwrapped from a <code>.fon</code>, which still carries a 118-byte
-header of its own. Both fall through to the raw-dump reading, where the
-converter asks you for <code>-First</code> - and supplying it converts the
-compressed bytes, or the header, into one glyph per 8 bytes of nonsense
-without complaining. Gunzip the first; convert the whole <code>.fon</code> rather
-than a face pulled out of it for the second.</p>
+<p>Three files will not be recognised for what they are, and all three are
+worth knowing about because none of them announces the problem. A
+gzipped console font (<code>.psf.gz</code>, which is how nearly every Linux
+distribution ships them) has no signature the converter knows, and
+neither does a bare <code>.FNT</code> face unwrapped from a <code>.fon</code>, which still
+carries a 118-byte header of its own. Both fall through to the raw-dump
+reading, where the converter asks you for <code>-First</code> - and supplying it
+converts the compressed bytes, or the header, into one glyph per 8 bytes
+of nonsense without complaining. Gunzip the first; convert the whole
+<code>.fon</code> rather than a face pulled out of it for the second.</p>
+<p>The third is the one to watch if you draw your own fonts. <strong>Convert them
+with <code>gfx2next -font</code>, not <code>gfx2next -font-y</code>.</strong> Both write a <code>.spr</code>,
+both write a file of exactly the same length, and nothing in either file
+records which one you used. <code>-font</code> writes each glyph's eight rows in
+order, which is what this converter reads. <code>-font-y</code> interleaves the
+rows within each row of the sheet instead, and the number it interleaved
+by - how many glyphs wide your sheet is - is not stored anywhere, so a
+<code>-font-y</code> file cannot be put back in order even in principle. What it
+usually does do is leave ink where the space character belongs, so the
+blank-space warning below fires and says to check this. Usually, not
+always: a font whose first few glyphs have a blank top row slips through
+in silence. Use <code>-font</code> and the question never arises.</p>
 <p>Two things are recognised and then refused rather than misread. A
 PE-wrapped <code>.fon</code> - a modern Windows font file that only looks like the
 old one - is not supported. Neither is a JSJ SINTAC font, the format
@@ -98,7 +115,7 @@ per-character width table rather than a fixed cell, so there is nothing
 to copy across. Use <code>ASSETS\CHARSET\AD8x8.CHR</code>, which is already a
 2048-byte table.</p>
 <p>The kit build does the conversion for you. Drop a <code>FONT.ch8</code>, <code>.fon</code>,
-<code>.psf</code>, <code>.psfu</code>, <code>.bdf</code> or <code>.fnt</code> in the kit folder - or <code>FONT1.*</code> to
+<code>.psf</code>, <code>.psfu</code>, <code>.bdf</code>, <code>.spr</code> or <code>.fnt</code> in the kit folder - or <code>FONT1.*</code> to
 <code>FONT9.*</code>, for the numbered fonts below - and <code>BUILD.BAT</code> converts it as
 part of the build, the same way <code>IMAGES\*.png</code> is converted rather than
 staged. Two convertible sources for the same number is an error rather
@@ -166,6 +183,18 @@ survive the transfer intact. Three places to find them:</p>
 <li><strong>X11 bitmap fonts.</strong> <code>.bdf</code>, from the classic X11 collections and
   from most modern bitmap-font projects, which nearly all publish BDF.</li>
 </ul>
+<p>There is a fourth route, and it is the one to take if none of the above
+is the face you want: <strong>draw it yourself</strong>. Lay the glyphs out as 8 by 8
+cells in any image editor, one glyph per cell, left to right and top to
+bottom in character order, and convert the sheet with gfx2next:</p>
+<pre><code>gfx2next -font MyFont.png FONT.spr
+</code></pre>
+<p>A 96-glyph sheet covering characters 32 to 127 comes out at 768 bytes
+and needs nothing else - drop it in the kit folder as <code>FONT.spr</code> and the
+build converts it. Everything in this section about stems and counters
+applies to a font you draw as much as to one you find, so draw it at the
+size it will be read at rather than shrinking something larger. Use
+<code>-font</code> and not <code>-font-y</code>, for the reason given above.</p>
 <h3 id="running-the-converter">Running the converter</h3>
 <p>Working outside the kit, or converting a font kept somewhere else, run
 <code>lib\fontconv.ps1</code> yourself:</p>
@@ -215,7 +244,10 @@ for every source, and which one you brought decides:</p>
 <li><strong>A 768-byte classic ZX charset keeps its own.</strong> That shape is the ZX
   charset by definition, so its 96 and 127 are already a pound and a
   copyright, drawn in the face you picked. Nothing is substituted, and
-  they reach the game exactly as the font's author drew them.</li>
+  they reach the game exactly as the font's author drew them. A 768-byte
+  <code>.spr</code> sheet you drew yourself is the same shape and is treated the
+  same way, which is what you want - whatever you put in those two cells
+  is what you meant to put there.</li>
 <li><strong>Everything else is substituted</strong>: <code>.fon</code>, <code>.psf</code>, <code>.psfu</code>, <code>.bdf</code>,
   and any other raw dump - a length other than 768, or a 768-byte file
   you place somewhere other than character 32 with <code>-First</code> - none of

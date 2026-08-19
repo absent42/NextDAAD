@@ -39,6 +39,7 @@ thing that decides how a file is read.
 | --- | --- | --- |
 | Full glyph table | `.chr` | 2048 bytes, 256 glyphs of 8 rows. Passed through byte for byte. |
 | Classic ZX charset | `.ch8` | 768 bytes, characters 32 to 127 only - the shape ZX font packs and editors export. |
+| ZX Next font sheet | `.spr` | What `gfx2next -font` writes: 8 rows per glyph, no header. The same shape as a raw glyph table, so a 96-glyph sheet is 768 bytes and reads as characters 32 to 127 with nothing to pass. |
 | Raw dump, other lengths | `.fnt` | Any multiple of 8 bytes. Needs `-First` to say which character the first glyph is. |
 | Windows bitmap font | `.fon` | A 16-bit `NE` file wrapping one or more FNT faces. `-Face` picks one. An FNT face is only ever read from inside a `.fon`. |
 | Linux console font | `.psf`, `.psfu` | PSF1 or PSF2. Any Unicode table in the file is ignored. Gunzip a `.psf.gz` first. |
@@ -49,16 +50,29 @@ treated that way: copied out unchanged, with no substitutions and no
 mirroring. Everything else is assembled into a full table, and the rest
 of this section is about how.
 
-Two files will not be recognised for what they are, and both are worth
-knowing about because neither announces the problem. A gzipped console
-font (`.psf.gz`, which is how nearly every Linux distribution ships
-them) has no signature the converter knows, and neither does a bare
-`.FNT` face unwrapped from a `.fon`, which still carries a 118-byte
-header of its own. Both fall through to the raw-dump reading, where the
-converter asks you for `-First` - and supplying it converts the
-compressed bytes, or the header, into one glyph per 8 bytes of nonsense
-without complaining. Gunzip the first; convert the whole `.fon` rather
-than a face pulled out of it for the second.
+Three files will not be recognised for what they are, and all three are
+worth knowing about because none of them announces the problem. A
+gzipped console font (`.psf.gz`, which is how nearly every Linux
+distribution ships them) has no signature the converter knows, and
+neither does a bare `.FNT` face unwrapped from a `.fon`, which still
+carries a 118-byte header of its own. Both fall through to the raw-dump
+reading, where the converter asks you for `-First` - and supplying it
+converts the compressed bytes, or the header, into one glyph per 8 bytes
+of nonsense without complaining. Gunzip the first; convert the whole
+`.fon` rather than a face pulled out of it for the second.
+
+The third is the one to watch if you draw your own fonts. **Convert them
+with `gfx2next -font`, not `gfx2next -font-y`.** Both write a `.spr`,
+both write a file of exactly the same length, and nothing in either file
+records which one you used. `-font` writes each glyph's eight rows in
+order, which is what this converter reads. `-font-y` interleaves the
+rows within each row of the sheet instead, and the number it interleaved
+by - how many glyphs wide your sheet is - is not stored anywhere, so a
+`-font-y` file cannot be put back in order even in principle. What it
+usually does do is leave ink where the space character belongs, so the
+blank-space warning below fires and says to check this. Usually, not
+always: a font whose first few glyphs have a blank top row slips through
+in silence. Use `-font` and the question never arises.
 
 Two things are recognised and then refused rather than misread. A
 PE-wrapped `.fon` - a modern Windows font file that only looks like the
@@ -69,7 +83,7 @@ to copy across. Use `ASSETS\CHARSET\AD8x8.CHR`, which is already a
 2048-byte table.
 
 The kit build does the conversion for you. Drop a `FONT.ch8`, `.fon`,
-`.psf`, `.psfu`, `.bdf` or `.fnt` in the kit folder - or `FONT1.*` to
+`.psf`, `.psfu`, `.bdf`, `.spr` or `.fnt` in the kit folder - or `FONT1.*` to
 `FONT9.*`, for the numbered fonts below - and `BUILD.BAT` converts it as
 part of the build, the same way `IMAGES\*.png` is converted rather than
 staged. Two convertible sources for the same number is an error rather
@@ -146,6 +160,22 @@ survive the transfer intact. Three places to find them:
 - **X11 bitmap fonts.** `.bdf`, from the classic X11 collections and
   from most modern bitmap-font projects, which nearly all publish BDF.
 
+There is a fourth route, and it is the one to take if none of the above
+is the face you want: **draw it yourself**. Lay the glyphs out as 8 by 8
+cells in any image editor, one glyph per cell, left to right and top to
+bottom in character order, and convert the sheet with gfx2next:
+
+```
+gfx2next -font MyFont.png FONT.spr
+```
+
+A 96-glyph sheet covering characters 32 to 127 comes out at 768 bytes
+and needs nothing else - drop it in the kit folder as `FONT.spr` and the
+build converts it. Everything in this section about stems and counters
+applies to a font you draw as much as to one you find, so draw it at the
+size it will be read at rather than shrinking something larger. Use
+`-font` and not `-font-y`, for the reason given above.
+
 ### Running the converter
 
 Working outside the kit, or converting a font kept somewhere else, run
@@ -208,7 +238,10 @@ for every source, and which one you brought decides:
 - **A 768-byte classic ZX charset keeps its own.** That shape is the ZX
   charset by definition, so its 96 and 127 are already a pound and a
   copyright, drawn in the face you picked. Nothing is substituted, and
-  they reach the game exactly as the font's author drew them.
+  they reach the game exactly as the font's author drew them. A 768-byte
+  `.spr` sheet you drew yourself is the same shape and is treated the
+  same way, which is what you want - whatever you put in those two cells
+  is what you meant to put there.
 - **Everything else is substituted**: `.fon`, `.psf`, `.psfu`, `.bdf`,
   and any other raw dump - a length other than 768, or a 768-byte file
   you place somewhere other than character 32 with `-First` - none of

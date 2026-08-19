@@ -163,8 +163,23 @@ function Test-GlyphBlank([byte[]]$table, [int]$offset) {
     return $true
 }
 
-function Write-GlyphSpaceWarning([string]$src) {
-    Write-Warning "$src : glyph 32 (space) is not all-zero - the tilemap driver relies on it staying blank, or blanked cells show ink-coloured specks instead of clean black paper (see src/tilemap.asm's tm_clear_blank comment); the font will still install as given"
+# The blank-glyph-32 warning, plus the one diagnosis it is in a position
+# to offer. A raw 768-byte charset is also the shape gfx2next writes with
+# -font, and gfx2next's -font-y writes a file of exactly the same length
+# with the rows interleaved within each tile row instead. Nothing can
+# tell those two apart - the column count -font-y interleaved by is not
+# recorded in the file, so the data cannot even be put back in order -
+# and what a Y-ordered file does do is put row 0 of the first several
+# glyphs where glyph 32 belongs. So this warning is usually the only
+# signal such an author ever gets, and it has to say so. Only usually:
+# a font whose first few glyphs all have a blank top row slips through
+# silently, which is why the manual tells authors to use -font.
+function Write-GlyphSpaceWarning([string]$src, [bool]$classicShape) {
+    $msg = "$src : glyph 32 (space) is not all-zero - the tilemap driver relies on it staying blank, or blanked cells show ink-coloured specks instead of clean black paper (see src/tilemap.asm's tm_clear_blank comment); the font will still install as given"
+    if ($classicShape) {
+        $msg += ". If this came from gfx2next, check you used -font and not -font-y: a -font-y file is the same size but has its rows interleaved, and it cannot be converted"
+    }
+    Write-Warning $msg
 }
 
 # Actual ink extent over a set of character codes. Returns the topmost
@@ -355,7 +370,7 @@ $inBytes = [System.IO.File]::ReadAllBytes($In)
 # is deliberate and is NOT covered by the mirroring rule below, whose
 # subject is tables this script assembles itself.
 if ($inBytes.Length -eq 2048 -and (Get-FontFormat $inBytes) -eq 'RAW') {
-    if (-not (Test-GlyphBlank $inBytes (32 * 8))) { Write-GlyphSpaceWarning $In }
+    if (-not (Test-GlyphBlank $inBytes (32 * 8))) { Write-GlyphSpaceWarning $In $false }
     [System.IO.File]::WriteAllBytes($Out, $inBytes)
     "$Out : source=$In shape=2048 (full table, passthrough) bytes=2048"
     exit 0
@@ -404,7 +419,7 @@ $classicZx = ($inBytes.Length -eq 768 -and $isRaw -and $firstChar -eq 32)
 $font  = Read-FontFile $inBytes $In $firstChar $Face
 $table = Build-GlyphTable $font $baseBytes $Slots $In $classicZx
 
-if (-not (Test-GlyphBlank $table (32 * 8))) { Write-GlyphSpaceWarning $In }
+if (-not (Test-GlyphBlank $table (32 * 8))) { Write-GlyphSpaceWarning $In $isRaw }
 [System.IO.File]::WriteAllBytes($Out, $table)
 "$Out : source=$In format=$($font.Format) face='$($font.FaceName)' cell=$($font.Width)x$($font.Height) bytes=2048$script:AssemblyNote"
 exit 0
