@@ -3,6 +3,40 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.7.3 - unreleased
+
+- **Fonts can be converted from PC, Linux and X11 formats now, not just
+  ZX charsets.** `lib\fontconv.ps1` reads Windows `.fon` bitmap fonts,
+  Linux console `.psf` and `.psfu`, X11 `.bdf`, and a raw glyph dump of
+  any length with `-First` naming the character code its first glyph
+  belongs to - alongside the 768-byte `.ch8` and the full 2048-byte
+  table it already took. This is worth having because NextDAAD prints
+  80 columns, where each pixel is half the physical width it has at 32
+  and the two-pixel stems that read as bold on a Spectrum fill in;
+  fonts drawn for 80-column displays have one-pixel stems and open
+  counters and survive the transfer. A source whose ink needs more than
+  an 8x8 cell is refused rather than squeezed - a squeezed descender is
+  not worth reading. New options `-First`, `-Face` (which face of a
+  `.fon` that holds several) and `-Slots` are all in
+  [Customising](customising.md).
+- The build picks all of them up. A `FONT.ch8`, `.fon`, `.psf`,
+  `.psfu`, `.bdf` or `.fnt` in the kit folder - or `FONT1.*` to
+  `FONT9.*` - is converted for you, the way `FONT.ch8` already was. Two
+  convertible sources for the same number is an error rather than a
+  guess, and a ready-made `.CHR` still wins over both.
+- **A converted font now fills glyphs 160 to 255 with a copy of its own
+  32 to 127.** Those are the glyphs `GFX ON` and an upper-charset
+  window print through, so a game using either used to print half a
+  sentence in your font and half in the built-in one. A ready-made
+  2048-byte `FONT.CHR` is still passed through untouched and keeps
+  whatever you put at 160 to 255.
+- Characters 96 and 127 are a pound sterling and a copyright sign here
+  but a grave accent and a house on a PC, so a converted font takes
+  those two from the built-in font unless its source says which charset
+  it is ordered by. A 768-byte classic ZX charset is exempt - it is the
+  ZX charset by definition, so its own pound and copyright are kept in
+  its own face. `-Slots Source` keeps the PC glyphs instead.
+
 ## 0.7.2 - 17 August 2026
 
 - **Scene changes behind a fade: change the picture mid-fade, with no

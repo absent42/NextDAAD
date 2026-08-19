@@ -40,14 +40,25 @@ thing that decides how a file is read.
 | Full glyph table | `.chr` | 2048 bytes, 256 glyphs of 8 rows. Passed through byte for byte. |
 | Classic ZX charset | `.ch8` | 768 bytes, characters 32 to 127 only - the shape ZX font packs and editors export. |
 | Raw dump, other lengths | `.fnt` | Any multiple of 8 bytes. Needs `-First` to say which character the first glyph is. |
-| Windows bitmap font | `.fon` | A 16-bit `NE` file wrapping one or more FNT faces. `-Face` picks one. |
-| Linux console font | `.psf`, `.psfu` | PSF1 or PSF2. Any Unicode table in the file is ignored. |
+| Windows bitmap font | `.fon` | A 16-bit `NE` file wrapping one or more FNT faces. `-Face` picks one. An FNT face is only ever read from inside a `.fon`. |
+| Linux console font | `.psf`, `.psfu` | PSF1 or PSF2. Any Unicode table in the file is ignored. Gunzip a `.psf.gz` first. |
 | X11 bitmap font | `.bdf` | Text format. Glyphs are placed from the baseline, so descenders land where the font meant them to. |
 
 A full 2048-byte table is your finished word on all 256 glyphs and is
 treated that way: copied out unchanged, with no substitutions and no
 mirroring. Everything else is assembled into a full table, and the rest
 of this section is about how.
+
+Two files will not be recognised for what they are, and both are worth
+knowing about because neither announces the problem. A gzipped console
+font (`.psf.gz`, which is how nearly every Linux distribution ships
+them) has no signature the converter knows, and neither does a bare
+`.FNT` face unwrapped from a `.fon`, which still carries a 118-byte
+header of its own. Both fall through to the raw-dump reading, where the
+converter asks you for `-First` - and supplying it converts the
+compressed bytes, or the header, into 96 glyphs of nonsense without
+complaining. Gunzip the first; convert the whole `.fon` rather than a
+face pulled out of it for the second.
 
 Two things are recognised and then refused rather than misread. A
 PE-wrapped `.fon` - a modern Windows font file that only looks like the
@@ -84,10 +95,15 @@ What gets measured is the ink, not the header. Declared cell sizes are
 routinely pessimistic, so a console font that declares a 16-row cell but
 whose ink stops at row 7 converts perfectly and is accepted, while one
 whose ink reaches row 12 is refused. Judging by the declaration alone
-would turn away fonts that transfer without losing a pixel. Width is the
-one place a declaration is taken at its word: a source that declares a
-cell, or a single glyph, wider than 8 pixels is refused there and then,
-because only the leftmost 8 columns are ever read.
+would turn away fonts that transfer without losing a pixel.
+
+Width is the one place a declaration is taken at its word, because an
+over-wide glyph's pixels are never read at all - the converter holds one
+byte per row and has nowhere to put them. A source declaring a cell
+wider than 8 pixels is refused outright, and so is a single glyph
+declared wider than 8 pixels anywhere in 32 to 127; a wide glyph outside
+that range is dropped and counted, like anything else that does not fit
+(below).
 
 Outside the printable range the rule softens. A decorative glyph below
 32 or above 127 that does not fit the cell is dropped, keeping the base
@@ -116,10 +132,11 @@ survive the transfer intact. Three places to find them:
   4.0 with attribution to VileR, and adaptations must be licensed
   compatibly - a converted `FONT.CHR` is an adaptation, so those terms
   travel with a game that ships one. Take the 8x8 files: the
-  pixel-doubled variants and the 8x14 and 8x16 faces are taller than the
-  cell and are refused.
+  pixel-doubled variants are wider as well as taller and are refused on
+  width, and the 8x14 and 8x16 faces are taller than the cell.
 - **Linux console fonts.** `.psf` and `.psfu`, from a distribution's
-  console font collection. The 8x8 ones convert directly.
+  console font collection. The 8x8 ones convert directly, but gunzip
+  them first - they are almost always shipped as `.psf.gz`.
 - **X11 bitmap fonts.** `.bdf`, from the classic X11 collections and
   from most modern bitmap-font projects, which nearly all publish BDF.
 
@@ -154,7 +171,8 @@ has to be told. An 896-byte dump of 112 glyphs covering characters 16 to
 ```
 
 **`-Face <index|WxH>`** picks a face out of a `.fon` that holds more
-than one, either by its position in the file or by cell size. Left off,
+than one, either by its position in the file (counting from 0, so the
+first face is `-Face 0`) or by cell size. Left off,
 an exact 8x8 face wins, and otherwise the tallest face that still fits
 the cell; if nothing fits, the refusal lists every face in the file so
 you can see what was on offer.
@@ -165,14 +183,28 @@ you can see what was on offer.
 
 **`-Slots ZX|Source`** decides two character codes where the PC and ZX
 charsets disagree. Code 96 is a grave accent on a PC and a pound
-sterling here; code 127 is a house on a PC and a copyright sign here. By
-default (`-Slots ZX`) the converter substitutes both, so a game printing
-a price prints a pound rather than a backtick. When the source declares
-itself as OEM/CP437 - which in practice means a `.fon` - the pound is
-lifted from that font's own slot 156, so it stays in the converted face
-rather than arriving from somewhere else; the copyright sign always
-comes from the base font, because CP437 has none to lift. `-Slots
-Source` turns both substitutions off and keeps the PC glyphs.
+sterling here; code 127 is a house on a PC and a copyright sign here. A
+PC font converted as-is prints a backtick where your game meant a price,
+so under the default `-Slots ZX` the converter puts both right - but not
+for every source, and which one you brought decides:
+
+- **A 768-byte classic ZX charset keeps its own.** That shape is the ZX
+  charset by definition, so its 96 and 127 are already a pound and a
+  copyright, drawn in the face you picked. Nothing is substituted, and
+  they reach the game exactly as the font's author drew them.
+- **Everything else is substituted**: `.fon`, `.psf`, `.psfu`, `.bdf`,
+  and any other raw dump - a length other than 768, or a 768-byte file
+  you place somewhere other than character 32 with `-First` - none of
+  which says which charset it is ordered by. Code 127 comes from the base
+  font, because CP437 has no copyright sign to lift. Code 96 comes from
+  the base font too, unless the source declares itself OEM/CP437 - in
+  practice a `.fon` - and its own slot 156 is not blank, in which case
+  the pound is lifted from there and stays in the converted face.
+
+`-Slots Source` turns both substitutions off wherever they would have
+applied and keeps whatever the source has at those two codes. Either
+way the converter's output line names which path ran, so you can see
+what happened without opening the result.
 
 ```
 ... -In PCFONT.FON -Slots Source -Out FONT.CHR

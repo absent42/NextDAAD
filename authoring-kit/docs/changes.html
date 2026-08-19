@@ -11,6 +11,40 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
+<h2 id="073-unreleased">0.7.3 - unreleased</h2>
+<ul>
+<li><strong>Fonts can be converted from PC, Linux and X11 formats now, not just
+  ZX charsets.</strong> <code>lib\fontconv.ps1</code> reads Windows <code>.fon</code> bitmap fonts,
+  Linux console <code>.psf</code> and <code>.psfu</code>, X11 <code>.bdf</code>, and a raw glyph dump of
+  any length with <code>-First</code> naming the character code its first glyph
+  belongs to - alongside the 768-byte <code>.ch8</code> and the full 2048-byte
+  table it already took. This is worth having because NextDAAD prints
+  80 columns, where each pixel is half the physical width it has at 32
+  and the two-pixel stems that read as bold on a Spectrum fill in;
+  fonts drawn for 80-column displays have one-pixel stems and open
+  counters and survive the transfer. A source whose ink needs more than
+  an 8x8 cell is refused rather than squeezed - a squeezed descender is
+  not worth reading. New options <code>-First</code>, <code>-Face</code> (which face of a
+  <code>.fon</code> that holds several) and <code>-Slots</code> are all in
+  <a href="customising.html">Customising</a>.</li>
+<li>The build picks all of them up. A <code>FONT.ch8</code>, <code>.fon</code>, <code>.psf</code>,
+  <code>.psfu</code>, <code>.bdf</code> or <code>.fnt</code> in the kit folder - or <code>FONT1.*</code> to
+  <code>FONT9.*</code> - is converted for you, the way <code>FONT.ch8</code> already was. Two
+  convertible sources for the same number is an error rather than a
+  guess, and a ready-made <code>.CHR</code> still wins over both.</li>
+<li><strong>A converted font now fills glyphs 160 to 255 with a copy of its own
+  32 to 127.</strong> Those are the glyphs <code>GFX ON</code> and an upper-charset
+  window print through, so a game using either used to print half a
+  sentence in your font and half in the built-in one. A ready-made
+  2048-byte <code>FONT.CHR</code> is still passed through untouched and keeps
+  whatever you put at 160 to 255.</li>
+<li>Characters 96 and 127 are a pound sterling and a copyright sign here
+  but a grave accent and a house on a PC, so a converted font takes
+  those two from the built-in font unless its source says which charset
+  it is ordered by. A 768-byte classic ZX charset is exempt - it is the
+  ZX charset by definition, so its own pound and copyright are kept in
+  its own face. <code>-Slots Source</code> keeps the PC glyphs instead.</li>
+</ul>
 <h2 id="072-17-august-2026">0.7.2 - 17 August 2026</h2>
 <ul>
 <li><strong>Scene changes behind a fade: change the picture mid-fade, with no

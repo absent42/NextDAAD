@@ -72,8 +72,16 @@
 # no copyright sign to lift. Code 96 comes from the base font too,
 # EXCEPT when the source declares itself OEM (in practice a FON with
 # dfCharSet 0xFF) and its own slot 156 is non-blank, in which case the
-# pound is lifted from there so it stays in the converted face. -Slots
-# Source makes neither substitution and keeps the PC glyphs.
+# pound is lifted from there so it stays in the converted face.
+#
+# A 768-byte RAW input read at its historic first character is EXEMPT
+# from both substitutions: that shape IS a classic ZX charset, so its
+# 96 and 127 are already a pound and a copyright in the source's own
+# face and replacing them would be a downgrade. No other shape is
+# exempt - a raw dump of another length placed with -First declares no
+# ordering and could be either charset. -Slots Source turns both
+# substitutions off everywhere and keeps whatever the source has. The
+# output line always says which path ran.
 #
 # -Base <file> (SP18): where every glyph the input does not supply comes
 # from - 0-15 always, plus 16-31 and 128-159 wherever the input has
@@ -188,7 +196,7 @@ function Measure-FontInk($glyphs, [int[]]$codes) {
 # 128). Leaving them as the base font makes such a game print half a
 # sentence in the author's face and half in the built-in one, so the
 # mirror is a fix, not a preference.
-function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$src) {
+function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$src, [bool]$classicZx) {
     $text = 32..127
 
     $ink = Measure-FontInk $font.Glyphs $text
@@ -251,7 +259,20 @@ function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$sr
     # two printable codes: 96 is a grave accent on a PC and a pound
     # sterling here, 127 is a house on a PC and a copyright sign here.
     # Left alone a game printing a price prints a backtick.
-    if ($slots -eq 'ZX') {
+    #
+    # A 768-byte RAW source is EXEMPT. That shape self-identifies as
+    # chars 32-127 of the ZX charset - it already carries a pound at 96
+    # and usually a copyright at 127, drawn in its own face - so
+    # substituting there would swap two correct glyphs for the base
+    # font's, in a visibly different face, on the commonest input the
+    # kit has. The exemption is that shape alone: a raw dump of any
+    # other length placed with -First has no declared ordering and could
+    # be either charset, so it keeps the substitution, with -Slots
+    # Source as the escape hatch.
+    if ($slots -eq 'ZX' -and $classicZx) {
+        $notes += 'classic 768-byte ZX charset: glyphs 96 and 127 kept from the source'
+    }
+    elseif ($slots -eq 'ZX') {
         $poundFrom = 'base'
         if ($font.Charset -eq 'OEM' -and $font.Glyphs.ContainsKey(156)) {
             $src156 = $font.Glyphs[156]
@@ -312,8 +333,14 @@ if ($firstChar -lt 0) {
     else { $firstChar = 0 }
 }
 
+# The classic ZX charset shape, for the slot-substitution exemption in
+# Build-GlyphTable: a RAW file of exactly 768 bytes read at its historic
+# first character. A 768-byte dump handed a different -First is a raw
+# dump of unknown ordering, not a ZX charset, and is not exempt.
+$classicZx = ($inBytes.Length -eq 768 -and (Get-FontFormat $inBytes) -eq 'RAW' -and $firstChar -eq 32)
+
 $font  = Read-FontFile $inBytes $In $firstChar $Face
-$table = Build-GlyphTable $font $baseBytes $Slots $In
+$table = Build-GlyphTable $font $baseBytes $Slots $In $classicZx
 
 if (-not (Test-GlyphBlank $table (32 * 8))) { Write-GlyphSpaceWarning $In }
 [System.IO.File]::WriteAllBytes($Out, $table)

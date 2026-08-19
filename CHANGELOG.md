@@ -4,6 +4,29 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.7.3 - unreleased
 
+- `authoring-kit\lib\fontconv.ps1` reads five more source formats:
+  Windows `.fon` (a 16-bit NE wrapping one or more FNT faces, `-Face
+  <index|WxH>` picking one), PSF1 and PSF2 console fonts, X11 `.bdf`
+  (glyphs positioned from the baseline, so descenders land where the
+  font meant them to), and a raw glyph dump at any length with `-First
+  <code>` naming its first glyph's character. Detection is by the
+  file's own signature, never its extension. Acceptance measures the
+  real ink extent over codes 32-127 instead of the declared cell, so a
+  16-row source whose ink stops at row 7 converts and one whose ink
+  reaches row 12 is refused; nothing is ever cropped, scaled or
+  squeezed, and a declared width over 8px is fatal inside 32-127 and
+  dropped-and-counted outside it. `BUILD.BAT` converts a kit-root
+  `FONT<n>.<ext>` for ch8, fon, psf, psfu, bdf and fnt, erroring rather
+  than guessing when two sources could fill one slot. An assembled
+  table mirrors glyphs 32-127 into 160-255, so `GFX ON` and
+  upper-charset windows stay in the converted face; a ready-made
+  2048-byte table is still a byte-for-byte passthrough and keeps
+  whatever it has there. Codes 96 and 127 are taken from the base font
+  for sources of unknown charset ordering - the pound lifted in-face
+  from slot 156 instead when a source declares CP437 and that slot is
+  non-blank - with a 768-byte classic ZX charset exempt from both
+  substitutions and `-Slots Source` disabling them everywhere.
+
 - `GFX n 17` sets the layer order: `GFX 1 17` puts the text layer above
   the picture, `GFX 0 17` restores the default of picture on top. With
   the text layer on top, transparent paper decides where the picture

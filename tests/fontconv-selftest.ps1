@@ -108,6 +108,54 @@ try {
     $script:checks++
     if ($warn -notmatch 'glyph 32') { throw "G5 : expected a glyph 32 warning, got: $warn" }
 
+    # --- G6 a 768-byte classic ZX charset keeps its OWN glyphs 96 and
+    #     127 ---
+    # That shape self-identifies as chars 32-127 of the ZX charset, so
+    # its 96 is already a pound sterling and its 127 a copyright, drawn
+    # in the source's own face. Substituting the base font's there would
+    # swap two correct glyphs for a visibly different face on the
+    # commonest input the kit has. Patterns are deliberately unlike the
+    # base font's bytes at those codes, so an accidental substitution
+    # cannot pass this check.
+    $ch96  = [byte[]](0x3C,0x66,0x60,0xF8,0x60,0x66,0xFC,0x00)
+    $ch127 = [byte[]](0x3C,0x42,0x99,0xA1,0xA1,0x99,0x42,0x3C)
+    $zx = New-Object byte[] 768
+    [System.Array]::Copy($ch96,  0, $zx, (96-32)*8,  8)
+    [System.Array]::Copy($ch127, 0, $zx, (127-32)*8, 8)
+    $inZx = "$tmp\g6.ch8"
+    [System.IO.File]::WriteAllBytes($inZx, $zx)
+    $g6msg = & $conv -In $inZx -Out "$tmp\g6.CHR" | Out-String
+    $g6 = [System.IO.File]::ReadAllBytes("$tmp\g6.CHR")
+    Assert-Bytes $g6[768..775]   $ch96  'G6 glyph 96 kept from the source, not the base font'
+    Assert-Bytes $g6[1016..1023] $ch127 'G6 glyph 127 kept from the source, not the base font'
+    Assert-Bytes $g6[1792..1799] $ch96  'G6 glyph 224 mirrors the source pound'
+    $script:checks++
+    if ($g6msg -notmatch 'kept from the source') { throw "G6 : expected the classic-charset note, got: $g6msg" }
+
+    # --- G7 the exemption is that ONE shape, not RAW in general ---
+    # G3's 896-byte dump again, placed with -First 16, so glyph 96 comes
+    # from the source. It has no declared charset ordering, so the
+    # substitution must still fire and glyph 96 must be the BASE font's
+    # pound - not the marker the fixture puts there. Without this check
+    # G6's exemption could silently widen to every raw input.
+    $raw7 = New-Object byte[] 896
+    [System.Array]::Copy($ch96, 0, $raw7, (96-16)*8, 8)
+    $inRaw7 = "$tmp\g7.fnt"
+    [System.IO.File]::WriteAllBytes($inRaw7, $raw7)
+    $g7msg = & $conv -In $inRaw7 -Out "$tmp\g7.CHR" -First 16 | Out-String
+    $g7 = [System.IO.File]::ReadAllBytes("$tmp\g7.CHR")
+    Assert-Bytes $g7[768..775]   $baseBytes[768..775]   'G7 a raw dump at another length still takes glyph 96 from the base font'
+    Assert-Bytes $g7[1016..1023] $baseBytes[1016..1023] 'G7 the same for glyph 127'
+    $script:checks++
+    if ($g7msg -notmatch 'pound sterling') { throw "G7 : expected the substitution note, got: $g7msg" }
+
+    # --- G8 -Slots Source keeps the PC glyphs at 96 and 127 ---
+    # The escape hatch, on the shape that is NOT exempt: same fixture as
+    # G7, so the only difference from it is the switch.
+    $g8msg = & $conv -In $inRaw7 -Out "$tmp\g8.CHR" -First 16 -Slots Source | Out-String
+    $g8 = [System.IO.File]::ReadAllBytes("$tmp\g8.CHR")
+    Assert-Bytes $g8[768..775] $ch96 'G8 -Slots Source keeps the source glyph 96'
+
     # --- F1 a real FON converts, with the bytes CGA actually has ---
     # cga80woa.fon is the CGA 80-column 8x8 CP437 font and ships with
     # Windows, so this needs nothing installed. The expected bytes were
