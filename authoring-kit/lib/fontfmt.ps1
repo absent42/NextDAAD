@@ -19,6 +19,12 @@
 #   Faces    one entry per face the container held, each with Index,
 #            Width, Height and Name - used to build a useful error when
 #            no face fits
+#   OverWide character codes the source declared wider than 8px, whose
+#            glyph data was therefore not read at all. Defaults to an
+#            empty array; only containers with a per-glyph declared
+#            width (currently FON) populate it. The caller decides
+#            whether an over-wide code is fatal - the range 32-127 is
+#            fontconv.ps1's business, not this file's.
 #
 # Rows come back at the SOURCE's height, not padded to 8. Padding and
 # the fit decision belong to the caller, which does them once.
@@ -39,7 +45,7 @@ function Get-FontFormat([byte[]]$bytes) {
     return 'RAW'
 }
 
-function New-FontResult($format, $faceName, $width, $height, $charset, $glyphs, $faces) {
+function New-FontResult($format, $faceName, $width, $height, $charset, $glyphs, $faces, $overWide = @()) {
     [PSCustomObject]@{
         Format   = $format
         FaceName = $faceName
@@ -48,6 +54,7 @@ function New-FontResult($format, $faceName, $width, $height, $charset, $glyphs, 
         Charset  = $charset
         Glyphs   = $glyphs
         Faces    = $faces
+        OverWide = $overWide
     }
 }
 
@@ -71,12 +78,13 @@ function Read-FontRaw([byte[]]$bytes, [string]$path, [int]$first) {
 }
 
 # Windows FON: a 16-bit NE executable wrapping one or more FNT
-# resources. See the plan's Task 2 for the field offsets, every one of
-# which was confirmed against C:\Windows\Fonts\cga80woa.fon rather than
-# recalled - in particular RT_FONT is type 8 (0x8008 with the high bit
-# set), NOT 7. Type 7 is RT_FONTDIR, a small decoy resource that parses
-# into a nonsense cell size.
+# resources. Every field offset below was confirmed against
+# C:\Windows\Fonts\cga80woa.fon rather than recalled - in particular
+# RT_FONT is type 8 (0x8008 with the high bit set), NOT 7. Type 7 is
+# RT_FONTDIR, a small decoy resource that parses into a nonsense cell
+# size.
 function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
+    $trunc = "fontconv: $path is truncated or malformed (resource table runs past the end of the file)"
     if ($b.Length -lt 0x40) { throw "fontconv: $path is too short to be a FON" }
     $ne = [BitConverter]::ToInt32($b, 0x3C)
     if ($ne -le 0 -or $ne + 0x26 -ge $b.Length) { throw "fontconv: $path has no usable NE header" }
@@ -86,6 +94,7 @@ function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
     $rsrcRel = [BitConverter]::ToUInt16($b, $ne + 0x24)
     if ($rsrcRel -eq 0) { throw "fontconv: $path has no resource table" }
     $rsrc  = $ne + $rsrcRel
+    if ($rsrc + 2 -gt $b.Length) { throw $trunc }
     $shift = [BitConverter]::ToUInt16($b, $rsrc)
 
     $entries = @()
@@ -96,7 +105,9 @@ function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
         if ($tid -eq 0) { break }
         $cnt = [BitConverter]::ToUInt16($b, $o + 2)
         $e = $o + 8
+        $ranOff = $false
         for ($i = 0; $i -lt $cnt; $i++) {
+            if ($e + 12 -gt $b.Length) { $ranOff = $true; break }
             if ($tid -eq 0x8008) {
                 $entries += [PSCustomObject]@{
                     Offset = ([int][BitConverter]::ToUInt16($b, $e))     -shl $shift
@@ -105,6 +116,7 @@ function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
             }
             $e += 12
         }
+        if ($ranOff) { break }   # a corrupt rtResourceCount walked off the end
         $o = $e
     }
     if ($entries.Count -eq 0) { throw "fontconv: $path contains no RT_FONT resources" }
@@ -113,6 +125,7 @@ function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
     $faces = @()
     for ($i = 0; $i -lt $entries.Count; $i++) {
         $f = $entries[$i].Offset
+        if ($f -lt 0 -or $f + 97 -gt $b.Length) { throw $trunc }
         $faces += @{
             Index  = $i
             Width  = [int][BitConverter]::ToUInt16($b, $f + 86)
@@ -149,6 +162,7 @@ function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
     }
 
     $f      = $entries[$pick].Offset
+    if ($f -lt 0 -or $f + 97 -gt $b.Length) { throw $trunc }
     $ver    = [BitConverter]::ToUInt16($b, $f)
     $cset   = $b[$f + 85]
     $height = [int][BitConverter]::ToUInt16($b, $f + 88)
@@ -161,13 +175,15 @@ function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
     $ctab = $f + $(if ($ver -eq 0x0200) { 118 } else { 148 })
     $esz  = if ($ver -eq 0x0200) { 4 } else { 6 }
 
-    $glyphs = @{}
+    $glyphs   = @{}
+    $overWide = @()
     for ($c = $fc; $c -le $lc; $c++) {
         $e  = $ctab + ($c - $fc) * $esz
         if ($e + $esz -gt $b.Length) { break }
         $gw = [int][BitConverter]::ToUInt16($b, $e)
         $go = if ($esz -eq 4) { [int][BitConverter]::ToUInt16($b, $e + 2) } else { [int][BitConverter]::ToInt32($b, $e + 2) }
-        if ($gw -le 0 -or $gw -gt 8) { continue }   # wider than the cell; the gate reports it
+        if ($gw -le 0) { continue }
+        if ($gw -gt 8) { $overWide += $c; continue }   # wider than the cell; the caller decides whether that is fatal
         $start = $f + $go
         if ($start -lt 0 -or $start + $height -gt $b.Length) { continue }
         $rows = New-Object byte[] $height
@@ -177,7 +193,7 @@ function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
 
     $charset = switch ($cset) { 0xFF { 'OEM' } 0x00 { 'ANSI' } default { 'UNKNOWN' } }
     $name    = [System.IO.Path]::GetFileNameWithoutExtension($path)
-    New-FontResult 'FON' $name $width $height $charset $glyphs $faces
+    New-FontResult 'FON' $name $width $height $charset $glyphs $faces $overWide
 }
 
 function Read-FontFile([byte[]]$bytes, [string]$path, [int]$first, [string]$face) {

@@ -146,6 +146,23 @@ function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$sr
         throw "fontconv: $src does not fit an 8x8 cell - ink reaches column $($ink.Right) (columns are numbered from 0). NextDAAD tiles are 8 pixels wide."
     }
 
+    # A source that DECLARES a glyph wider than 8px (rather than merely
+    # having ink that reaches column 8) never had that glyph's data read
+    # at all - see fontfmt.ps1's OverWide. Inside the text range that is
+    # the same refusal as ink overrunning the cell: keeping the base
+    # font's glyph there would be a silent degrade, not a refuse.
+    # Outside the text range it is decorative and folds into the same
+    # drop-and-count path as any other glyph that does not fit.
+    $overWide = @()
+    if ($font.PSObject.Properties['OverWide'] -and $font.OverWide) { $overWide = @($font.OverWide) }
+    $overWideText = $overWide | Where-Object { $_ -ge 32 -and $_ -le 127 }
+    if ($overWideText.Count -gt 0) {
+        $names = ($overWideText | Select-Object -First 8) -join ', '
+        $faces = ($font.Faces | ForEach-Object { "$($_.Width)x$($_.Height) '$($_.Name)'" }) -join '; '
+        throw "fontconv: $src does not fit an 8x8 cell - character code(s) $names are wider than 8 pixels per the source's own declaration. NextDAAD tiles are 8 pixels wide and this converter will not crop or scale a glyph to fit. Faces in this file: $faces"
+    }
+    $overWideDecorative = @($overWide | Where-Object { $_ -lt 32 -or $_ -gt 127 })
+
     $table = [byte[]]$baseBytes.Clone()
     $notes = @()
 
@@ -154,7 +171,7 @@ function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$sr
     # cell is DROPPED, keeping the base font's glyph, rather than
     # clipped - half a box-drawing character appearing in a game with no
     # explanation is worse than not getting it at all.
-    $dropped = 0
+    $dropped = $overWideDecorative.Count
     foreach ($c in @(16..31) + @(32..127) + @(128..159)) {
         if (-not $font.Glyphs.ContainsKey($c)) { continue }
         $rows = $font.Glyphs[$c]

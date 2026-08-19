@@ -144,6 +144,65 @@ try {
             'F2 a 14-row face is refused'
     }
 
+    # --- F3 a truncated FON is refused with a fontconv: message, not a
+    #     raw .NET exception ---
+    # Minimal hand-built MZ/NE stub whose resource table offset (0xFFFF)
+    # points past the end of the buffer. Exercises the bounds guard on
+    # $rsrc in Read-FontFon.
+    function New-TruncatedFonBytes {
+        $bb = New-Object byte[] 128
+        $bb[0] = 0x4D; $bb[1] = 0x5A                    # 'MZ'
+        $bb[60] = 64                                     # e_lfanew -> NE header at 64
+        $bb[64] = 0x4E; $bb[65] = 0x45                  # 'NE'
+        $bb[100] = 0xFF; $bb[101] = 0xFF                # rsrcRel: resource table way past EOF
+        return $bb
+    }
+    $inTrunc = "$tmp\f3.fon"
+    [System.IO.File]::WriteAllBytes($inTrunc, (New-TruncatedFonBytes))
+    Assert-Throws { & $conv -In $inTrunc -Out "$tmp\f3.CHR" } 'fontconv:' `
+        'F3 a truncated FON is refused, not an unhandled exception'
+
+    # --- F4/F5 a glyph the source declares wider than 8px: refused
+    #     inside the text range, dropped-and-counted outside it ---
+    # Minimal hand-built FON/FNT: one 8x8 face (so it is auto-picked,
+    # no -Face needed), one character code whose FNT character-table
+    # entry declares width 9. Every other header byte is zero; the
+    # parser never dereferences bytes it does not need for this shape.
+    function New-OverWideFonBytes([int]$code) {
+        $bb = New-Object byte[] 300
+        $bb[0] = 0x4D; $bb[1] = 0x5A                    # 'MZ'
+        $bb[60] = 64                                     # e_lfanew -> NE header at 64
+        $bb[64] = 0x4E; $bb[65] = 0x45                  # 'NE'
+        $bb[100] = 64                                    # rsrcRel -> resource table at 128
+        $bb[128] = 0                                      # rscAlignShift 0: rnOffset/rnLength are byte-exact
+        $bb[130] = 0x08; $bb[131] = 0x80                # rtTypeID 0x8008 (RT_FONT; 0x8007 would be the FONTDIR decoy)
+        $bb[132] = 1                                      # rtResourceCount
+        $bb[138] = 160                                    # rnOffset -> FNT resource at file offset 160
+        $bb[140] = 128                                    # rnLength
+        # FNT header at 160: dfVersion 0x0200, dfCharSet ANSI, 8x8 cell
+        $bb[160] = 0x00; $bb[161] = 0x02                # dfVersion
+        $bb[160 + 85] = 0x00                              # dfCharSet
+        $bb[160 + 86] = 8                                 # dfPixWidth
+        $bb[160 + 88] = 8                                 # dfPixHeight
+        $bb[160 + 95] = $code                             # dfFirstChar
+        $bb[160 + 96] = $code                             # dfLastChar
+        # character table at 160+118=278: one v2 entry, width 9 (over the cell)
+        $bb[278] = 9
+        return $bb
+    }
+
+    $inWide = "$tmp\f4.fon"
+    [System.IO.File]::WriteAllBytes($inWide, (New-OverWideFonBytes 65))
+    Assert-Throws { & $conv -In $inWide -Out "$tmp\f4.CHR" } '65' `
+        'F4 an over-width glyph inside 32-127 is refused, naming the code'
+
+    $inWideDeco = "$tmp\f5.fon"
+    [System.IO.File]::WriteAllBytes($inWideDeco, (New-OverWideFonBytes 200))
+    $f5msg = & $conv -In $inWideDeco -Out "$tmp\f5.CHR" | Out-String
+    Assert-Eq ((Get-Item "$tmp\f5.CHR").Length) 2048 'F5 an over-width glyph outside 32-127 still converts'
+    $script:checks++
+    if ($f5msg -notmatch 'decorative glyph') { throw "F5 : expected a dropped-glyph note, got: $f5msg" }
+
     "fontconv-selftest: $checks checks passed"
 }
 finally {
