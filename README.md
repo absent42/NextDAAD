@@ -13,6 +13,8 @@ colours from the full ZX Next palette, mouse input, and games that span several 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
 for NextDAAD means just editing your DSF source and double-clicking one batch file.
 
+A demo game ready to run on your ZX Spectrum Next can be downloaded [here](demo).
+
 ## Requirements
 
 - A ZX Spectrum Next (or an emulator) with an SD card. Video
