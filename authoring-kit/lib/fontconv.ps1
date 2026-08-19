@@ -6,38 +6,91 @@
 # 256 glyphs x 8 rows, 1bpp, exactly 2048 bytes, no expansion or other
 # conversion. That means this converter's output IS the installed bytes.
 #
-# Two accepted input shapes:
-#   2048 bytes - already a full glyph table (this is what the whole DAAD/
-#     ZX tool ecosystem emits for a full custom charset - CH82CHR,
-#     jDAADFontMaker, GCS, and similar font editors all produce a raw
-#     256-glyph 2048-byte table). Copied straight through, byte for byte.
-#   768 bytes - a classic ZX Spectrum charset: characters 32-127 only
-#     (96 glyphs x 8 rows), the shape every ZX font editor and font pack
-#     exports as a raw charset (e.g. the ZX-Origins ".ch8" files under
-#     tools\demo-files\fonts). This range covers ordinary printable text
-#     only, so it is padded into a full 2048-byte table by starting from
-#     a base font - default.chr (below) unless -Base names a different
-#     one - and overwriting bytes 32*8..127*8+7 (256..1023) with the
-#     input - every other glyph (0-31, 128-255: the engine's "upper/
-#     graphics charset" mirror at char+128 and the low extended-glyph
-#     block, see src/print.asm prn_char_raw) keeps the base font's
-#     originals.
-# Any other size is an error naming both accepted shapes and what each
-# range covers.
+# INPUT FORMATS, detected from the file's own signature and never from
+# its extension (lib\fontfmt.ps1, Get-FontFormat):
+#   FON    'MZ' - a 16-bit NE executable wrapping one or more FNT faces.
+#          -Face picks one; without it an exact 8x8 face wins, otherwise
+#          the tallest face that fits the cell.
+#   PSF1   0x36 0x04 - Linux console font, 8 pixels wide by definition
+#          of the format, mode bit 0 selecting a 512-glyph table.
+#   PSF2   0x72 0xB5 0x4A 0x86 - console font with a declared cell. Any
+#          Unicode table is ignored: only 32-127 is read for text and
+#          every encoding this format carries agrees with ASCII there.
+#   BDF    'STARTFONT' - X11 bitmap font, the only text format here.
+#          Glyphs are POSITIONED from the baseline rather than stacked.
+#   SINTAC 'JSJ SINTAC' - DAAD Ready's PC.FNT and PCDAAD's DAAD.FNT.
+#          Recognised only so it can be refused by name: it stores
+#          per-character width tables, not a fixed cell.
+#   RAW    anything else - a headerless dump of 8 rows per glyph. 2048
+#          bytes is a full table and 768 bytes is chars 32-127; any
+#          other length needs -First naming the first glyph's code.
 #
-# -Base <file> (SP18): overrides the padding source for 768-byte input.
-# A game that switches between several fonts (GFX n 16) can define UDGs,
-# accented characters or a graphics set in glyphs 0-31/128-255 of its
-# FIRST font and then lose them when converting a SECOND 768-byte classic
-# charset, because the padding would otherwise always come from
-# default.chr regardless of what the first font defined. Pass -Base
-# <the first font's own 2048-byte FONT.CHR> so the second conversion
-# pads from the author's own table instead of the interpreter's embedded
-# one - same ranges (0-31, 128-255), different source. -Base must itself
-# be a full 2048-byte table - validated the same way as any full-table
-# input (existence and exact length; content is not inspected, see the
-# glyph 32 note below for why) - and defaults to default.chr when
-# omitted, so callers that never pass -Base are unaffected.
+# PASSTHROUGH. A 2048-byte RAW input is the author's finished word on
+# all 256 glyphs and is written out untouched - no gate, no slot
+# substitution, no mirror. Everything below is about tables this script
+# ASSEMBLES.
+#
+# THE ACCEPTANCE GATE measures the real ink extent over codes 32-127
+# instead of reading the source's declared cell, because declarations
+# are routinely pessimistic: a 16-row PSF2 whose ink stops at row 7
+# loses nothing at 8 rows, and refusing it on its header alone would
+# turn away a font that converts perfectly. Ink reaching row 8 or beyond
+# inside 32-127 is fatal and names the codes. Outside 32-127 a glyph
+# that does not fit is DROPPED - the base font's glyph stays - and
+# counted in the output line, because half a box-drawing character
+# appearing in a game with no explanation is worse than not getting it.
+#
+# Width is the one thing taken from the declaration, because the
+# intermediate holds one byte per row and an over-wide glyph's data is
+# therefore never read at all: PSF2 refuses a declared cell wider than
+# 8px in its own parser, while FON and BDF report per-glyph over-width
+# codes through OverWide - fatal inside 32-127, dropped and counted
+# outside it.
+#
+# Nothing is ever cropped, scaled or squeezed to fit. A squeeze to 8
+# rows was tried in three variants against a 9-row source and all three
+# were unusable on real hardware, chiefly because descenders lose the
+# row that makes them legible.
+#
+# SLOT MAP of an assembled table:
+#   0-15     base font (no print path reaches these)
+#   16-31    source where supplied, else base
+#   32-127   source, with the ZX slot substitutions below
+#   128-159  source where supplied, else base
+#   160-255  mirror of the assembled 32-127
+# The mirror is a fix, not a preference. Glyphs 160-255 are what the
+# engine prints ordinary characters through under an upper-charset
+# window or the GFX ON escape (glyph = char + 128), so leaving them as
+# the base font makes such a game print half a sentence in the author's
+# face and half in the built-in one.
+#
+# ZX SLOT SUBSTITUTIONS (-Slots ZX, the default). CP437 and the ZX
+# charset disagree at exactly two printable codes: 96 is a grave accent
+# on a PC and a pound sterling here, 127 is a house on a PC and a
+# copyright sign here. Left alone a game printing a price prints a
+# backtick. Code 127 always comes from the base font, because CP437 has
+# no copyright sign to lift. Code 96 comes from the base font too,
+# EXCEPT when the source declares itself OEM (in practice a FON with
+# dfCharSet 0xFF) and its own slot 156 is non-blank, in which case the
+# pound is lifted from there so it stays in the converted face. -Slots
+# Source makes neither substitution and keeps the PC glyphs.
+#
+# -Base <file> (SP18): where every glyph the input does not supply comes
+# from - 0-15 always, plus 16-31 and 128-159 wherever the input has
+# nothing for them - defaulting to default.chr (below). A game that
+# switches between several fonts (GFX n 16) can define UDGs, accented
+# characters or a graphics set in glyphs 16-31/128-159 of its FIRST font
+# and then lose them when converting a SECOND font that does not carry
+# them, because the fill would otherwise always come from default.chr
+# regardless of what the first font defined. Pass -Base <the first
+# font's own 2048-byte FONT.CHR> so the second conversion fills from the
+# author's own table instead of the interpreter's embedded one. -Base
+# must itself be a full 2048-byte table - validated the same way as any
+# full-table input (existence and exact length; content is not
+# inspected, see the glyph 32 note below for why) - and is resolved and
+# validated unconditionally, so a bad -Base is caught even on a
+# passthrough input that never reads it. It no longer reaches 160-255:
+# those are mirrored from the assembled 32-127.
 #
 # default.chr (committed alongside this script) is a byte-for-byte copy
 # of src/font.chr, the interpreter's embedded font - verified identical
@@ -60,16 +113,18 @@
 # of clean black paper. This is a WARNING, not a build failure - authors
 # overriding glyph 32 deliberately are not blocked, just told.
 #
-# This check runs against the INPUT, never against a -Base file. Glyph 32
-# sits inside the 32-127 range a 768-byte charset supplies directly (input
-# offset 0 becomes output offset 32*8), so the shipped glyph 32 is always
-# the classic-charset input's own byte - the base's glyph 32 slot is
-# unconditionally overwritten and never reaches the interpreter either
-# way, so there is nothing to warn about there.
+# The check runs on the bytes about to be written: the input itself on
+# the passthrough path, the assembled table otherwise. It is never run
+# against a -Base file on its own. A -Base glyph 32 only reaches the
+# output when the input supplies nothing at code 32, and what stands
+# there then is either the interpreter's own blank space or an earlier
+# converted table this same check has already seen.
 #
-# Usage: fontconv.ps1 -In <path to 2048 or 768 byte font file>
-#          [-Out FONT.CHR] [-Base <2048-byte font to pad 768-byte input
-#          against, default default.chr>]
+# Usage: fontconv.ps1 -In <font file in any format listed above>
+#          [-Out FONT.CHR] [-Base <2048-byte font supplying the glyphs
+#          the input does not, default default.chr>]
+#          [-First <character code of a raw dump's first glyph>]
+#          [-Face <index|WxH>, FON only] [-Slots ZX|Source]
 param(
     [Parameter(Mandatory=$true)][string]$In,
     [string]$Out = 'FONT.CHR',

@@ -27,20 +27,106 @@ A file of any other size is rejected at boot and the built-in font plays
 instead. Nothing about your game changes; the text simply looks as it
 always did.
 
-### Classic 768-byte charsets
+### What you can convert from
 
-Most ZX font packs and editors export the older shape instead:
-characters 32 to 127 only, 96 glyphs of 8 rows, **768 bytes** (the
-`.ch8` files font collections ship).
+`FONT.CHR` is the file that ships, not the file you have to start from.
+`lib\fontconv.ps1` builds one out of any of the shapes below, and it
+works out which is which by reading the file's own signature - the
+extension is a convenience for you and for the kit build, never the
+thing that decides how a file is read.
 
-Drop a `FONT.ch8` (or `FONT1.ch8` to `FONT9.ch8`, for the numbered fonts
-below) in the kit folder and the kit build converts it for you -
-nothing to run by hand. A ready-made `.CHR` of the same number still
-wins over a converted `.ch8`, so a hand-built full table always takes
-priority.
+| Source | Usual extension | What it is |
+| --- | --- | --- |
+| Full glyph table | `.chr` | 2048 bytes, 256 glyphs of 8 rows. Passed through byte for byte. |
+| Classic ZX charset | `.ch8` | 768 bytes, characters 32 to 127 only - the shape ZX font packs and editors export. |
+| Raw dump, other lengths | `.fnt` | Any multiple of 8 bytes. Needs `-First` to say which character the first glyph is. |
+| Windows bitmap font | `.fon` | A 16-bit `NE` file wrapping one or more FNT faces. `-Face` picks one. |
+| Linux console font | `.psf`, `.psfu` | PSF1 or PSF2. Any Unicode table in the file is ignored. |
+| X11 bitmap font | `.bdf` | Text format. Glyphs are placed from the baseline, so descenders land where the font meant them to. |
 
-Working outside the kit, or converting a `.ch8` kept somewhere else,
-`lib\fontconv.ps1` turns one into a `FONT.CHR` directly:
+A full 2048-byte table is your finished word on all 256 glyphs and is
+treated that way: copied out unchanged, with no substitutions and no
+mirroring. Everything else is assembled into a full table, and the rest
+of this section is about how.
+
+Two things are recognised and then refused rather than misread. A
+PE-wrapped `.fon` - a modern Windows font file that only looks like the
+old one - is not supported. Neither is a JSJ SINTAC font, the format
+DAAD Ready's `PC.FNT` and PCDAAD's `DAAD.FNT` use: it stores a
+per-character width table rather than a fixed cell, so there is nothing
+to copy across. Use `ASSETS\CHARSET\AD8x8.CHR`, which is already a
+2048-byte table.
+
+The kit build does the conversion for you. Drop a `FONT.ch8`, `.fon`,
+`.psf`, `.psfu`, `.bdf` or `.fnt` in the kit folder - or `FONT1.*` to
+`FONT9.*`, for the numbered fonts below - and `BUILD.BAT` converts it as
+part of the build, the same way `IMAGES\*.png` is converted rather than
+staged. Two convertible sources for the same number is an error rather
+than a guess, and a ready-made `FONT<n>.CHR` always wins over a
+converted source. The build passes no options, so a font that needs
+`-First`, `-Face` or `-Slots` has to be converted by hand and dropped in
+as a `.CHR`.
+
+### 8 by 8, or not at all
+
+NextDAAD tiles are 8 rows of 8 pixels. A source whose ink needs more
+than that is refused, naming the character codes that overrun. Nothing
+is cropped, scaled or squeezed to make it fit.
+
+That is a deliberate refusal to do the obvious thing. Squeezing a 9-row
+source down to 8 was tried in three variants and all three were unusable
+on real hardware, chiefly because a descender loses the one row that
+tells `g` from `q` and `p` from `o`, and lowercase text stops being
+readable at a glance. A font that does not fit is better replaced than
+mangled.
+
+What gets measured is the ink, not the header. Declared cell sizes are
+routinely pessimistic, so a console font that declares a 16-row cell but
+whose ink stops at row 7 converts perfectly and is accepted, while one
+whose ink reaches row 12 is refused. Judging by the declaration alone
+would turn away fonts that transfer without losing a pixel. Width is the
+one place a declaration is taken at its word: a source that declares a
+cell, or a single glyph, wider than 8 pixels is refused there and then,
+because only the leftmost 8 columns are ever read.
+
+Outside the printable range the rule softens. A decorative glyph below
+32 or above 127 that does not fit the cell is dropped, keeping the base
+font's glyph in that slot, and the converter reports how many it
+dropped. Half a box-drawing character turning up in a game with no
+explanation is worse than not getting it at all.
+
+### Where 80-column fonts come from
+
+NextDAAD prints 80 columns, and that decides which fonts look good far
+more than taste does. At 80 columns each pixel is half the physical
+width it has at 32 columns. The heavy two-pixel stems that read as bold
+on a Spectrum stop reading as bold and start filling in: counters close
+up, `e` and `a` turn into blobs, and a face that is handsome in a
+32-column game turns to mush. That is why a ZX font pack usually
+disappoints here, and why the converter reads formats from outside the
+ZX world at all.
+
+Fonts drawn for 80-column displays were designed against the same
+constraint, so they have one-pixel stems and open counters and they
+survive the transfer intact. Three places to find them:
+
+- **PC text-mode fonts.** The Ultimate Oldschool PC Font Pack collects
+  the text-mode faces from a wide range of PC hardware and ships them in
+  several formats, Windows `.fon` among them. It is licensed CC BY-SA
+  4.0 with attribution to VileR, and adaptations must be licensed
+  compatibly - a converted `FONT.CHR` is an adaptation, so those terms
+  travel with a game that ships one. Take the 8x8 files: the
+  pixel-doubled variants and the 8x14 and 8x16 faces are taller than the
+  cell and are refused.
+- **Linux console fonts.** `.psf` and `.psfu`, from a distribution's
+  console font collection. The 8x8 ones convert directly.
+- **X11 bitmap fonts.** `.bdf`, from the classic X11 collections and
+  from most modern bitmap-font projects, which nearly all publish BDF.
+
+### Running the converter
+
+Working outside the kit, or converting a font kept somewhere else, run
+`lib\fontconv.ps1` yourself:
 
 ```
 powershell -ExecutionPolicy Bypass -File lib\fontconv.ps1 -In MyFont.ch8 -Out FONT.CHR
@@ -49,21 +135,63 @@ powershell -ExecutionPolicy Bypass -File lib\fontconv.ps1 -In MyFont.ch8 -Out FO
 (The `-ExecutionPolicy Bypass -File` part is needed because PowerShell
 refuses to run a bare script file by default.)
 
-It accepts either shape. A 2048-byte input is copied straight through. A
-768-byte input is padded into a full table: your glyphs fill 32 to 127,
-and every other glyph keeps `lib\default.chr` - a copy of the built-in
-font - unless `-Base <file>` names a 2048-byte font of your own to pad
-against instead. That is how a second font keeps the first one's UDGs or
-accented characters: convert the first `.ch8` normally, then convert the
-second with `-Base` pointing at the `FONT.CHR` the first conversion
-produced, and glyphs 0-31 and 128-255 carry over instead of reverting to
-the built-in font. The kit build's own automatic `.ch8` conversion above
-never passes `-Base` - it always pads against the built-in font - so
-this only applies when you run `fontconv.ps1` yourself. Any other input
-size is an error naming both shapes it accepts.
+It prints one line saying what it read, which face it took, and anything
+it substituted or dropped. Put the resulting `FONT.CHR` (or `FONT1.CHR`
+to `FONT9.CHR`) in the kit folder to ship it.
 
-Put the resulting `FONT.CHR` (or `FONT1.CHR` to `FONT9.CHR`) in the kit
-folder to ship it.
+`-In <file>` is the source and `-Out <file>` is where the 2048-byte
+table is written, defaulting to `FONT.CHR` in the current folder. Four
+options shape the rest:
+
+**`-First <code>`** names the character code the first glyph of a raw
+dump belongs to. Only 2048 bytes (a full table) and 768 bytes
+(characters 32 to 127) are recognised on their own; any other raw length
+has to be told. An 896-byte dump of 112 glyphs covering characters 16 to
+127:
+
+```
+... -In SYSTEM.FNT -First 16 -Out FONT.CHR
+```
+
+**`-Face <index|WxH>`** picks a face out of a `.fon` that holds more
+than one, either by its position in the file or by cell size. Left off,
+an exact 8x8 face wins, and otherwise the tallest face that still fits
+the cell; if nothing fits, the refusal lists every face in the file so
+you can see what was on offer.
+
+```
+... -In PCFONT.FON -Face 8x8 -Out FONT.CHR
+```
+
+**`-Slots ZX|Source`** decides two character codes where the PC and ZX
+charsets disagree. Code 96 is a grave accent on a PC and a pound
+sterling here; code 127 is a house on a PC and a copyright sign here. By
+default (`-Slots ZX`) the converter substitutes both, so a game printing
+a price prints a pound rather than a backtick. When the source declares
+itself as OEM/CP437 - which in practice means a `.fon` - the pound is
+lifted from that font's own slot 156, so it stays in the converted face
+rather than arriving from somewhere else; the copyright sign always
+comes from the base font, because CP437 has none to lift. `-Slots
+Source` turns both substitutions off and keeps the PC glyphs.
+
+```
+... -In PCFONT.FON -Slots Source -Out FONT.CHR
+```
+
+**`-Base <2048-byte font>`** changes where the glyphs your source does
+not supply come from. By default they come from `lib\default.chr`, a
+copy of the built-in font. That is how a second font keeps the first
+one's UDGs or accented characters: convert the first source normally,
+then convert the second with `-Base` pointing at the `FONT.CHR` the
+first conversion produced. The base fills glyphs 0 to 15 always, and 16
+to 31 and 128 to 159 wherever your source has nothing to put there. It
+no longer reaches 160 to 255, which are now mirrored (see below). The
+kit build never passes `-Base`, so this only applies when you run
+`fontconv.ps1` yourself.
+
+```
+... -In Second.ch8 -Base FONT.CHR -Out FONT2.CHR
+```
 
 ### Which glyphs actually get drawn
 
@@ -74,18 +202,25 @@ ever reaches part of it:
   glyphs 32 to 127.
 - **The same characters select glyphs 160 to 255 instead** (glyph =
   character + 128) when a window is set to the upper charset, or while
-  the `GFX ON` / `GFX OFF` print escape is active. That is a mirrored
-  bold or alternate face you can reach without duplicating any
-  vocabulary.
+  the `GFX ON` / `GFX OFF` print escape is active.
 - **Characters 16 to 31 and 128 to 255** select their matching glyph
   directly, with no mirroring - the extended and graphics glyphs.
+- **Glyphs 0 to 15 no print path reaches at all** - a `FONT.CHR` may
+  define them, but nothing will ever draw them.
 
-In practice a 768-byte classic charset covers everything a typical DAAD
-game prints. Glyphs 16 to 31, 128 to 159 and 160 to 255 are reachable
-only through the routes above, and keep the built-in font's originals
-unless your `FONT.CHR` supplies the full 2048 bytes. **Glyphs 0 to 15 no
-print path reaches at all** - a `FONT.CHR` may define them, but nothing
-will ever draw them.
+Any table the converter assembles - which is everything except a
+ready-made 2048-byte file - copies its finished glyphs 32 to 127 into
+160 to 255. `GFX ON` and an upper-charset window therefore stay in the
+face you converted, instead of printing half a sentence in your font and
+half in the built-in one. If you want a genuinely different face up
+there - a bold, or a graphics set - build the full 2048 bytes yourself:
+a ready-made 2048-byte table is passed through untouched and keeps
+whatever you put at 160 to 255.
+
+Glyphs 16 to 31 and 128 to 159 are the remaining gap. A source that
+supplies them - a PC or console font usually does, a 768-byte ZX charset
+never does - has them taken from it; otherwise they keep the base font's
+originals, which is what `-Base` redirects.
 
 ### Glyph 32 must stay blank
 
@@ -99,16 +234,18 @@ colour**. The result is white specks scattered across every blank part
 of the screen instead of clean black paper. Leave glyph 32 empty unless
 you genuinely want that.
 
-`fontconv.ps1` warns - it does not refuse - when the font you hand it
-has a non-blank glyph 32, for either input shape. A `FONT.CHR` you place
-in the kit folder without running it through `fontconv.ps1` is never
-checked, so check that one yourself if you have edited glyph 32.
+`fontconv.ps1` warns - it does not refuse - when the table it is about
+to write has a non-blank glyph 32, whatever format you fed it. A
+`FONT.CHR` you place in the kit folder without running it through
+`fontconv.ps1` is never checked, so check that one yourself if you have
+edited glyph 32.
 
 ### Numbered fonts and switching at runtime
 
 `FONT.CHR` is font 0, the base. Nine more can sit beside it in the kit
-folder: `FONT1.CHR` to `FONT9.CHR` (ready-made, or converted from
-`FONT1.ch8` to `FONT9.ch8` as above). Nothing on disk selects one - `GFX
+folder: `FONT1.CHR` to `FONT9.CHR` (ready-made, or converted from a
+`FONT1.*` to `FONT9.*` source in any of the formats above). Nothing on
+disk selects one - `GFX
 n 16` in your source installs font `n` while the game runs. `GFX 3 16`
 switches to `FONT3.CHR`; `GFX 0 16` returns to the base. A missing or
 wrong-size file is a silent no-op: whatever font is currently installed
