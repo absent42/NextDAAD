@@ -56,9 +56,9 @@ them) has no signature the converter knows, and neither does a bare
 `.FNT` face unwrapped from a `.fon`, which still carries a 118-byte
 header of its own. Both fall through to the raw-dump reading, where the
 converter asks you for `-First` - and supplying it converts the
-compressed bytes, or the header, into 96 glyphs of nonsense without
-complaining. Gunzip the first; convert the whole `.fon` rather than a
-face pulled out of it for the second.
+compressed bytes, or the header, into one glyph per 8 bytes of nonsense
+without complaining. Gunzip the first; convert the whole `.fon` rather
+than a face pulled out of it for the second.
 
 Two things are recognised and then refused rather than misread. A
 PE-wrapped `.fon` - a modern Windows font file that only looks like the
@@ -95,7 +95,9 @@ What gets measured is the ink, not the header. Declared cell sizes are
 routinely pessimistic, so a console font that declares a 16-row cell but
 whose ink stops at row 7 converts perfectly and is accepted, while one
 whose ink reaches row 12 is refused. Judging by the declaration alone
-would turn away fonts that transfer without losing a pixel.
+would turn away fonts that transfer without losing a pixel. The same
+measurement decides which face of a `.fon` holding several is used, so
+selection and acceptance never disagree about the same file.
 
 Width is the one place a declaration is taken at its word, because an
 over-wide glyph's pixels are never read at all - the converter holds one
@@ -131,9 +133,10 @@ survive the transfer intact. Three places to find them:
   several formats, Windows `.fon` among them. It is licensed CC BY-SA
   4.0 with attribution to VileR, and adaptations must be licensed
   compatibly - a converted `FONT.CHR` is an adaptation, so those terms
-  travel with a game that ships one. Take the 8x8 files: the
-  pixel-doubled variants are wider as well as taller and are refused on
-  width, and the 8x14 and 8x16 faces are taller than the cell.
+  travel with a game that ships one. Take the 8x8 files: the `-2y`
+  pixel-doubled variants are 8x16 - taller, not wider - and their ink
+  overruns the cell, as it does in the 8x14 and 8x16 faces, while the
+  `-2x` variants and the 9-pixel faces are refused on width.
 - **Linux console fonts.** `.psf` and `.psfu`, from a distribution's
   console font collection. The 8x8 ones convert directly, but gunzip
   them first - they are almost always shipped as `.psf.gz`.
@@ -163,8 +166,11 @@ options shape the rest:
 **`-First <code>`** names the character code the first glyph of a raw
 dump belongs to. Only 2048 bytes (a full table) and 768 bytes
 (characters 32 to 127) are recognised on their own; any other raw length
-has to be told. An 896-byte dump of 112 glyphs covering characters 16 to
-127:
+has to be told. The length has to divide by 8 - a file that does not is
+refused for that on its own, before `-First` is ever asked for - and the
+code you give has to put at least one glyph in the printable range 32 to
+127, or the converted table would be the built-in font unchanged. An
+896-byte dump of 112 glyphs covering characters 16 to 127:
 
 ```
 ... -In SYSTEM.FNT -First 16 -Out FONT.CHR
@@ -172,10 +178,13 @@ has to be told. An 896-byte dump of 112 glyphs covering characters 16 to
 
 **`-Face <index|WxH>`** picks a face out of a `.fon` that holds more
 than one, either by its position in the file (counting from 0, so the
-first face is `-Face 0`) or by cell size. Left off,
-an exact 8x8 face wins, and otherwise the tallest face that still fits
-the cell; if nothing fits, the refusal lists every face in the file so
-you can see what was on offer.
+first face is `-Face 0`) or by cell size. Left off, an exact 8x8 face
+wins, and otherwise the tallest face whose ink fits the cell - measured,
+not read off the header, so a face declaring 9 or 16 rows but inking
+only 8 of them is used rather than turned away. If no face's ink fits,
+the refusal lists every face's declared cell so you can see what was on
+offer, and says the judgement was made on ink rather than on those
+declarations.
 
 ```
 ... -In PCFONT.FON -Face 8x8 -Out FONT.CHR
@@ -198,8 +207,9 @@ for every source, and which one you brought decides:
   which says which charset it is ordered by. Code 127 comes from the base
   font, because CP437 has no copyright sign to lift. Code 96 comes from
   the base font too, unless the source declares itself OEM/CP437 - in
-  practice a `.fon` - and its own slot 156 is not blank, in which case
-  the pound is lifted from there and stays in the converted face.
+  practice a `.fon` - and its own slot 156 is not blank and fits the
+  cell, in which case the pound is lifted from there and stays in the
+  converted face.
 
 `-Slots Source` turns both substitutions off wherever they would have
 applied and keeps whatever the source has at those two codes. Either

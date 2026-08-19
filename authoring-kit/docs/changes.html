@@ -40,10 +40,14 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   whatever you put at 160 to 255.</li>
 <li>Characters 96 and 127 are a pound sterling and a copyright sign here
   but a grave accent and a house on a PC, so a converted font takes
-  those two from the built-in font unless its source says which charset
-  it is ordered by. A 768-byte classic ZX charset is exempt - it is the
-  ZX charset by definition, so its own pound and copyright are kept in
-  its own face. <code>-Slots Source</code> keeps the PC glyphs instead.</li>
+  those two from the built-in font. Only 96 can stay in the converted
+  face, and only when the source declares itself OEM/CP437 and has a
+  pound of its own at slot 156; 127 always comes from the built-in font,
+  because CP437 has no copyright sign to lift from. A 768-byte classic
+  ZX charset is exempt from both - it is the ZX charset by definition,
+  so its own pound and copyright are kept in its own face. <code>-Slots
+  Source</code> keeps the PC glyphs instead. Either way the output line names
+  which of the three ran.</li>
 </ul>
 <h2 id="072-17-august-2026">0.7.2 - 17 August 2026</h2>
 <ul>
