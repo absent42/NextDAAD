@@ -9,8 +9,11 @@
 # INPUT FORMATS, detected from the file's own signature and never from
 # its extension (lib\fontfmt.ps1, Get-FontFormat):
 #   FON    'MZ' - a 16-bit NE executable wrapping one or more FNT faces.
-#          -Face picks one; without it an exact 8x8 face wins, otherwise
-#          the tallest face that fits the cell.
+#          -Face picks one; without it an exact declared 8x8 face wins,
+#          otherwise the tallest face whose MEASURED ink fits the cell -
+#          the same rule the acceptance gate below applies, so a face
+#          declaring more rows than it inks is not turned away on its
+#          header alone.
 #   PSF1   0x36 0x04 - Linux console font, 8 pixels wide by definition
 #          of the format, mode bit 0 selecting a 512-glyph table.
 #   PSF2   0x72 0xB5 0x4A 0x86 - console font with a declared cell. Any
@@ -39,6 +42,9 @@
 # that does not fit is DROPPED - the base font's glyph stays - and
 # counted in the output line, because half a box-drawing character
 # appearing in a game with no explanation is worse than not getting it.
+#
+# The same measurement decides which face of a multi-face FON is used,
+# so selection and acceptance cannot disagree about the same file.
 #
 # Width is the one thing taken from the declaration, because the
 # intermediate holds one byte per row and an over-wide glyph's data is
@@ -234,6 +240,22 @@ function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$sr
     }
     $overWideDecorative = @($overWide | Where-Object { $_ -lt 32 -or $_ -gt 127 })
 
+    # A glyph whose bitmap ran past the end of the file was never read
+    # either - see fontfmt.ps1's Truncated. Inside the text range that is
+    # the same refusal again, and for the same reason: a missing glyph is
+    # indistinguishable from a code the source never covered, so the base
+    # font's glyph would stand there and the converter would print a
+    # clean success line over half an alphabet in the built-in face.
+    # Outside the text range it folds into the drop-and-count path.
+    $truncated = @()
+    if ($font.PSObject.Properties['Truncated'] -and $font.Truncated) { $truncated = @($font.Truncated) }
+    $truncText = @($truncated | Where-Object { $_ -ge 32 -and $_ -le 127 })
+    if ($truncText.Count -gt 0) {
+        $names = ($truncText | Select-Object -First 8) -join ', '
+        throw "fontconv: $src is truncated - the glyph data for character code(s) $names runs past the end of the file, so $($truncText.Count) glyph(s) inside 32-127 could not be read at all. Converting anyway would leave the base font's glyphs in those slots and say nothing about it."
+    }
+    $truncDecorative = @($truncated | Where-Object { $_ -lt 32 -or $_ -gt 127 })
+
     $table = [byte[]]$baseBytes.Clone()
     $notes = @()
 
@@ -242,7 +264,7 @@ function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$sr
     # cell is DROPPED, keeping the base font's glyph, rather than
     # clipped - half a box-drawing character appearing in a game with no
     # explanation is worse than not getting it at all.
-    $dropped = $overWideDecorative.Count
+    $dropped = $overWideDecorative.Count + $truncDecorative.Count
     foreach ($c in @(16..31) + @(32..127) + @(128..159)) {
         if (-not $font.Glyphs.ContainsKey($c)) { continue }
         $rows = $font.Glyphs[$c]
@@ -253,7 +275,7 @@ function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$sr
             $table[$c * 8 + $r] = if ($r -lt $rows.Length) { $rows[$r] } else { [byte]0 }
         }
     }
-    if ($dropped -gt 0) { $notes += "$dropped decorative glyph(s) outside 32-127 dropped for not fitting the cell" }
+    if ($dropped -gt 0) { $notes += "$dropped decorative glyph(s) outside 32-127 dropped (not fitting the cell, or unreadable data)" }
 
     # ZX slot substitutions. CP437 and the ZX charset disagree at exactly
     # two printable codes: 96 is a grave accent on a PC and a pound
@@ -278,7 +300,13 @@ function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$sr
             $src156 = $font.Glyphs[156]
             $blank = $true
             foreach ($r in $src156) { if ($r -ne 0) { $blank = $false } }
-            if (-not $blank) {
+            # Slot 156 gets the same fits check every other lifted glyph
+            # gets. Without it an oversized face ships a clipped pound in
+            # the same breath as the line saying a glyph was dropped for
+            # not fitting the cell.
+            $fits156 = $true
+            for ($r = 8; $r -lt $src156.Length; $r++) { if ($src156[$r] -ne 0) { $fits156 = $false } }
+            if (-not $blank -and $fits156) {
                 for ($r = 0; $r -lt 8; $r++) {
                     $table[96 * 8 + $r] = if ($r -lt $src156.Length) { $src156[$r] } else { [byte]0 }
                 }
@@ -290,6 +318,12 @@ function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$sr
         }
         [System.Array]::Copy($baseBytes, 127 * 8, $table, 127 * 8, 8)
         $notes += "pound sterling (96) from $poundFrom; copyright (127) from the base font"
+    }
+    else {
+        # -Slots Source. Nothing is substituted, and the output line says
+        # so - the header above, and the manual, both promise that the
+        # line names which path ran, and silence is not a name.
+        $notes += 'no substitution (-Slots Source): glyphs 96 and 127 kept from the source'
     }
 
     # 160-255 mirror the assembled 32-127.
@@ -323,21 +357,41 @@ if ($inBytes.Length -eq 2048 -and (Get-FontFormat $inBytes) -eq 'RAW') {
     exit 0
 }
 
+$isRaw = (Get-FontFormat $inBytes) -eq 'RAW'
+
+# A length that is not a multiple of 8 can never be a glyph table, with
+# or without -First. Diagnose that FIRST, so a file that cannot work is
+# refused once instead of being sent away for an option that will not
+# save it.
+if ($isRaw -and $inBytes.Length % 8 -ne 0) {
+    throw "fontconv: $In is $($inBytes.Length) bytes, which is not a multiple of 8 - a raw glyph table is 8 rows per glyph, so its length must divide by 8. No value of -First can make this file readable."
+}
+
 # A 768-byte raw file keeps its historic meaning: chars 32-127.
 $firstChar = $First
 if ($firstChar -lt 0) {
-    if ($inBytes.Length -eq 768 -and (Get-FontFormat $inBytes) -eq 'RAW') { $firstChar = 32 }
-    elseif ((Get-FontFormat $inBytes) -eq 'RAW') {
-        throw "fontconv: $In is a raw glyph table of $($inBytes.Length) bytes ($($inBytes.Length / 8) glyphs). Only 2048 (a full table) and 768 (chars 32-127) are recognised on their own - pass -First <code> naming the character code of the first glyph, for example -First 16 for a 112-glyph table covering characters 16-127."
+    if ($inBytes.Length -eq 768 -and $isRaw) { $firstChar = 32 }
+    elseif ($isRaw) {
+        throw "fontconv: $In is a raw glyph table of $($inBytes.Length) bytes ($([int]($inBytes.Length / 8)) glyphs). Only 2048 (a full table) and 768 (chars 32-127) are recognised on their own - pass -First <code> naming the character code of the first glyph, for example -First 16 for a 112-glyph table covering characters 16-127."
     }
     else { $firstChar = 0 }
+}
+
+# -First placing every glyph outside the printable range is a silent
+# no-op otherwise: the assembled table comes out as the base font plus
+# the mirror, and the output line reports a clean success.
+if ($isRaw) {
+    $lastChar = $firstChar + [int]($inBytes.Length / 8) - 1
+    if ($firstChar -gt 127 -or $lastChar -lt 32) {
+        throw "fontconv: -First $firstChar puts this $($inBytes.Length)-byte dump's $([int]($inBytes.Length / 8)) glyphs at character codes $firstChar-$lastChar, none of which is in the printable range 32-127. The converted table would be the base font unchanged."
+    }
 }
 
 # The classic ZX charset shape, for the slot-substitution exemption in
 # Build-GlyphTable: a RAW file of exactly 768 bytes read at its historic
 # first character. A 768-byte dump handed a different -First is a raw
 # dump of unknown ordering, not a ZX charset, and is not exempt.
-$classicZx = ($inBytes.Length -eq 768 -and (Get-FontFormat $inBytes) -eq 'RAW' -and $firstChar -eq 32)
+$classicZx = ($inBytes.Length -eq 768 -and $isRaw -and $firstChar -eq 32)
 
 $font  = Read-FontFile $inBytes $In $firstChar $Face
 $table = Build-GlyphTable $font $baseBytes $Slots $In $classicZx

@@ -25,6 +25,17 @@
 #            width (FON, BDF) populate it. The caller decides whether
 #            an over-wide code is fatal - the range 32-127 is
 #            fontconv.ps1's business, not this file's.
+#   Truncated character codes whose glyph data ran past the end of the
+#            file, or whose character-table entry did, and which were
+#            therefore not read at all. Defaults to an empty array;
+#            only containers that can be cut short mid-table (FON)
+#            populate it. Same division as OverWide - a missing glyph
+#            is a fact about the file, whether it matters depends on
+#            which code it is, and that is the caller's rule. A format
+#            that declares its glyph count up front (PSF1, PSF2)
+#            refuses a short file in its own parser instead, because
+#            there the shortfall is detectable before a single glyph
+#            is read.
 #
 # Rows come back at the SOURCE's height, not padded to 8. Padding and
 # the fit decision belong to the caller, which does them once.
@@ -45,17 +56,30 @@ function Get-FontFormat([byte[]]$bytes) {
     return 'RAW'
 }
 
-function New-FontResult($format, $faceName, $width, $height, $charset, $glyphs, $faces, $overWide = @()) {
+function New-FontResult($format, $faceName, $width, $height, $charset, $glyphs, $faces, $overWide = @(), $truncated = @()) {
     [PSCustomObject]@{
-        Format   = $format
-        FaceName = $faceName
-        Width    = $width
-        Height   = $height
-        Charset  = $charset
-        Glyphs   = $glyphs
-        Faces    = $faces
-        OverWide = $overWide
+        Format    = $format
+        FaceName  = $faceName
+        Width     = $width
+        Height    = $height
+        Charset   = $charset
+        Glyphs    = $glyphs
+        Faces     = $faces
+        OverWide  = $overWide
+        Truncated = $truncated
     }
+}
+
+# Any run of digits a regex accepts can be longer than Int32 holds, and
+# a plain [int] cast on that throws a raw conversion exception rather
+# than a fontconv: message. Everything here that turns matched text or
+# an option's value into a number goes through this.
+function ConvertTo-FontInt([string]$subject, [string]$s) {
+    $v = 0
+    if (-not [int]::TryParse($s, [ref]$v)) {
+        throw "fontconv: $subject is not a usable number"
+    }
+    return $v
 }
 
 # Raw glyph table: no header at all, just Height rows per glyph in
@@ -75,6 +99,82 @@ function Read-FontRaw([byte[]]$bytes, [string]$path, [int]$first) {
     }
     $name = [System.IO.Path]::GetFileName($path)
     New-FontResult 'RAW' $name 8 8 'UNKNOWN' $glyphs @(@{ Index = 0; Width = 8; Height = 8; Name = $name })
+}
+
+# One FNT face out of a FON: its header fields and every glyph bitmap
+# it holds. Split out of Read-FontFon because face SELECTION has to be
+# able to measure a candidate's real ink, and that means reading its
+# glyphs rather than trusting its declared cell.
+function Read-FonFace([byte[]]$b, [int]$f, [string]$path, [int]$index) {
+    if ($f -lt 0 -or $f + 97 -gt $b.Length) {
+        throw "fontconv: $path is truncated or malformed (resource table runs past the end of the file)"
+    }
+    $ver    = [BitConverter]::ToUInt16($b, $f)
+    $cset   = $b[$f + 85]
+    $width  = [int][BitConverter]::ToUInt16($b, $f + 86)
+    $height = [int][BitConverter]::ToUInt16($b, $f + 88)
+    $fc     = [int]$b[$f + 95]
+    $lc     = [int]$b[$f + 96]
+    if ($ver -ne 0x0200 -and $ver -ne 0x0300) {
+        throw "fontconv: $path face $index is FNT version 0x$('{0:X4}' -f $ver), expected 0x0200 or 0x0300"
+    }
+    $ctab = $f + $(if ($ver -eq 0x0200) { 118 } else { 148 })
+    $esz  = if ($ver -eq 0x0200) { 4 } else { 6 }
+
+    $glyphs    = @{}
+    $overWide  = @()
+    $truncated = @()
+    for ($c = $fc; $c -le $lc; $c++) {
+        $e  = $ctab + ($c - $fc) * $esz
+        if ($e + $esz -gt $b.Length) {
+            # The character table itself is cut short, so every code
+            # from here to dfLastChar has no readable entry at all.
+            for ($t = $c; $t -le $lc; $t++) { $truncated += $t }
+            break
+        }
+        $gw = [int][BitConverter]::ToUInt16($b, $e)
+        $go = if ($esz -eq 4) { [int][BitConverter]::ToUInt16($b, $e + 2) } else { [int][BitConverter]::ToInt32($b, $e + 2) }
+        if ($gw -le 0) { continue }
+        if ($gw -gt 8) { $overWide += $c; continue }   # wider than the cell; the caller decides whether that is fatal
+        $start = $f + $go
+        if ($start -lt 0 -or $start + $height -gt $b.Length) {
+            # The bitmap runs past the end of the file. Reported, never
+            # silently skipped: a skipped glyph is indistinguishable
+            # from a code the source never covered, and the caller would
+            # leave the base font's glyph there and print a clean
+            # success line over half an alphabet in the wrong face.
+            $truncated += $c
+            continue
+        }
+        $rows = New-Object byte[] $height
+        [System.Array]::Copy($b, $start, $rows, 0, $height)
+        $glyphs[$c] = $rows
+    }
+
+    [PSCustomObject]@{
+        Width     = $width
+        Height    = $height
+        Charset   = switch ($cset) { 0xFF { 'OEM' } 0x00 { 'ANSI' } default { 'UNKNOWN' } }
+        Glyphs    = $glyphs
+        OverWide  = $overWide
+        Truncated = $truncated
+    }
+}
+
+# Does a face's REAL ink fit an 8x8 cell? Only codes 32-127 are looked
+# at, because that is the range a converted table is judged on. A code
+# the source declared wider than the cell has no bitmap to measure, so
+# it counts as not fitting. Deliberately small and local: this decides
+# between faces of one file and nothing more - the acceptance gate
+# proper, and every rule about which slots matter, lives in the caller.
+function Test-FonFaceFits($face) {
+    foreach ($c in $face.OverWide) { if ($c -ge 32 -and $c -le 127) { return $false } }
+    foreach ($c in 32..127) {
+        $rows = $face.Glyphs[$c]
+        if ($null -eq $rows) { continue }
+        for ($r = 8; $r -lt $rows.Length; $r++) { if ($rows[$r] -ne 0) { return $false } }
+    }
+    return $true
 }
 
 # Windows FON: a 16-bit NE executable wrapping one or more FNT
@@ -134,14 +234,24 @@ function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
         }
     }
 
-    # Pick one: an exact 8x8 wins; otherwise the tallest that fits,
-    # tie-broken on width and then on file order.
+    # Pick one. An exact declared 8x8 wins outright - it is the common
+    # case and costs nothing to spot. Otherwise the choice is made on
+    # MEASURED ink, not on the declared cell, because every other
+    # acceptance decision in this converter is: a face declaring 9 or 16
+    # rows whose ink stops at row 7 converts without losing a pixel, and
+    # gating it on its header would turn away exactly the fonts this
+    # reader exists to reach. Candidates are tried tallest first,
+    # tie-broken on width and then on file order, so the answer for a
+    # file where several faces fit is the same as it always was.
     $pick = -1
+    $face = $null
     if ($want) {
-        if ($want -match '^\d+$') { $pick = [int]$want }
+        if ($want -match '^\d+$') { $pick = ConvertTo-FontInt "the face index in -Face '$want'" $want }
         elseif ($want -match '^(\d+)x(\d+)$') {
+            $wantW = ConvertTo-FontInt "the width in -Face '$want'"  $Matches[1]
+            $wantH = ConvertTo-FontInt "the height in -Face '$want'" $Matches[2]
             for ($i = 0; $i -lt $faces.Count; $i++) {
-                if ($faces[$i].Width -eq [int]$Matches[1] -and $faces[$i].Height -eq [int]$Matches[2]) { $pick = $i; break }
+                if ($faces[$i].Width -eq $wantW -and $faces[$i].Height -eq $wantH) { $pick = $i; break }
             }
         }
         if ($pick -lt 0 -or $pick -ge $faces.Count) {
@@ -150,50 +260,30 @@ function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
         }
     }
     else {
-        $fit = $faces | Where-Object { $_.Width -le 8 -and $_.Height -le 8 } |
-               Sort-Object @{E={$_.Height};D=$true}, @{E={$_.Width};D=$true}, @{E={$_.Index}}
         $exact = $faces | Where-Object { $_.Width -eq 8 -and $_.Height -eq 8 } | Select-Object -First 1
-        if ($exact)        { $pick = $exact.Index }
-        elseif ($fit)      { $pick = @($fit)[0].Index }
+        if ($exact) { $pick = $exact.Index }
         else {
-            $list = ($faces | ForEach-Object { "$($_.Width)x$($_.Height)" }) -join '; '
-            throw "fontconv: no face in $path fits an 8x8 cell. Faces present: $list. NextDAAD tiles are 8x8 and this converter will not scale or crop a face to fit."
+            $ordered = @($faces | Sort-Object @{E={$_.Height};D=$true}, @{E={$_.Width};D=$true}, @{E={$_.Index}})
+            $firstErr = $null
+            foreach ($cand in $ordered) {
+                # A face this reader cannot parse at all is not a
+                # candidate, but its message is kept: if nothing fits it
+                # is a better answer than a report about ink.
+                try { $try = Read-FonFace $b $entries[$cand.Index].Offset $path $cand.Index }
+                catch { if ($null -eq $firstErr) { $firstErr = $_ }; continue }
+                if (Test-FonFaceFits $try) { $pick = $cand.Index; $face = $try; break }
+            }
+            if ($pick -lt 0) {
+                if ($null -ne $firstErr) { throw $firstErr }
+                $list = ($faces | ForEach-Object { "$($_.Width)x$($_.Height)" }) -join '; '
+                throw "fontconv: no face in $path has ink that fits an 8x8 cell. Faces present, as each DECLARES its cell: $list. The declaration is not what was judged - every face's real ink over character codes 32-127 was measured, and each one puts ink below row 7 or declares a glyph wider than 8 pixels. NextDAAD tiles are 8x8 and this converter will not scale or crop a face to fit."
+            }
         }
     }
+    if ($null -eq $face) { $face = Read-FonFace $b $entries[$pick].Offset $path $pick }
 
-    $f      = $entries[$pick].Offset
-    if ($f -lt 0 -or $f + 97 -gt $b.Length) { throw $trunc }
-    $ver    = [BitConverter]::ToUInt16($b, $f)
-    $cset   = $b[$f + 85]
-    $height = [int][BitConverter]::ToUInt16($b, $f + 88)
-    $width  = [int][BitConverter]::ToUInt16($b, $f + 86)
-    $fc     = [int]$b[$f + 95]
-    $lc     = [int]$b[$f + 96]
-    if ($ver -ne 0x0200 -and $ver -ne 0x0300) {
-        throw "fontconv: $path face $pick is FNT version 0x$('{0:X4}' -f $ver), expected 0x0200 or 0x0300"
-    }
-    $ctab = $f + $(if ($ver -eq 0x0200) { 118 } else { 148 })
-    $esz  = if ($ver -eq 0x0200) { 4 } else { 6 }
-
-    $glyphs   = @{}
-    $overWide = @()
-    for ($c = $fc; $c -le $lc; $c++) {
-        $e  = $ctab + ($c - $fc) * $esz
-        if ($e + $esz -gt $b.Length) { break }
-        $gw = [int][BitConverter]::ToUInt16($b, $e)
-        $go = if ($esz -eq 4) { [int][BitConverter]::ToUInt16($b, $e + 2) } else { [int][BitConverter]::ToInt32($b, $e + 2) }
-        if ($gw -le 0) { continue }
-        if ($gw -gt 8) { $overWide += $c; continue }   # wider than the cell; the caller decides whether that is fatal
-        $start = $f + $go
-        if ($start -lt 0 -or $start + $height -gt $b.Length) { continue }
-        $rows = New-Object byte[] $height
-        [System.Array]::Copy($b, $start, $rows, 0, $height)
-        $glyphs[$c] = $rows
-    }
-
-    $charset = switch ($cset) { 0xFF { 'OEM' } 0x00 { 'ANSI' } default { 'UNKNOWN' } }
-    $name    = [System.IO.Path]::GetFileNameWithoutExtension($path)
-    New-FontResult 'FON' $name $width $height $charset $glyphs $faces $overWide
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($path)
+    New-FontResult 'FON' $name $face.Width $face.Height $face.Charset $face.Glyphs $faces $face.OverWide $face.Truncated
 }
 
 # PSF1: a 4-byte header and then glyph data. Width is 8 by definition of
@@ -278,11 +368,7 @@ function Read-FontBdf([byte[]]$b, [string]$path) {
     # instead of casting directly, anywhere a header or glyph value feeds
     # the placement arithmetic below.
     function ConvertTo-BdfInt([string]$field, [string]$s) {
-        $v = 0
-        if (-not [int]::TryParse($s, [ref]$v)) {
-            throw "fontconv: $path declares $field as '$s', which is not a usable number"
-        }
-        return $v
+        return (ConvertTo-FontInt "$path declares $field as '$s', which" $s)
     }
 
     # A cell taller than this is never a real font for an 8-row target;
