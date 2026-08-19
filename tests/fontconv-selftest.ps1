@@ -464,12 +464,34 @@ try {
     Assert-Throws { & $conv -In $inSintac -Out "$tmp\f11.CHR" } 'AD8x8' `
         'F11 the SINTAC refusal names the ready-made table to use instead'
 
-    # --- R1 a raw dump placed entirely outside 32-127 is refused ---
+    # --- R1 a raw dump placed where the table draws nothing from it ---
     # -First 300 on G3's 896-byte dump puts all 112 glyphs at 300-411, so
-    # the assembled table would be the base font plus the mirror and the
-    # converter would report a clean success over it.
-    Assert-Throws { & $conv -In $inRaw -Out "$tmp\r1.CHR" -First 300 } '32-127' `
-        'R1 a -First that lands no glyph in 32-127 is refused, not a silent no-op'
+    # no source glyph reaches any of the three ranges the slot map takes
+    # from a source and the converter would report a clean success over a
+    # table with nothing of the source in it.
+    Assert-Throws { & $conv -In $inRaw -Out "$tmp\r1.CHR" -First 300 } '16-31, 32-127 and 128-159' `
+        'R1 a -First that lands no glyph in 16-159 is refused, not a silent no-op'
+
+    # R1's other half: 32-127 is NOT the whole of what an assembled table
+    # takes from a source. The slot map draws 16-31 and 128-159 from it
+    # as well, and a raw dump is the only way to bring an author's UDGs
+    # or decorative glyphs in from a headerless file, so a dump landing
+    # wholly in either range must convert - guarding on 32-127 alone
+    # would refuse two first-class cases.
+    $r16 = New-Object byte[] 128                          # 16 glyphs
+    $rmk = [byte[]](0x7E,0x81,0xA5,0x81,0xBD,0x99,0x81,0x7E)
+    [System.Array]::Copy($rmk, 0, $r16, 0, 8)             # the first glyph
+    [System.Array]::Copy($rmk, 0, $r16, 15 * 8, 8)        # and the last
+    $inR16 = "$tmp\r1b.fnt"
+    [System.IO.File]::WriteAllBytes($inR16, $r16)
+    & $conv -In $inR16 -Out "$tmp\r1b.CHR" -First 16 | Out-Null
+    $rb16 = [System.IO.File]::ReadAllBytes("$tmp\r1b.CHR")
+    Assert-Bytes $rb16[128..135] $rmk 'R1 -First 16 places the first glyph at code 16'
+    Assert-Bytes $rb16[248..255] $rmk 'R1 -First 16 places the last glyph at code 31'
+    & $conv -In $inR16 -Out "$tmp\r1c.CHR" -First 128 | Out-Null
+    $rb128 = [System.IO.File]::ReadAllBytes("$tmp\r1c.CHR")
+    Assert-Bytes $rb128[1024..1031] $rmk 'R1 -First 128 places the first glyph at code 128'
+    Assert-Bytes $rb128[1144..1151] $rmk 'R1 -First 128 places the last glyph at code 143'
 
     # --- R2 a length that is not a multiple of 8 is diagnosed first ---
     # 901 bytes can never be a glyph table. Being told to supply -First

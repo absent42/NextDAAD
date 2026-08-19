@@ -241,8 +241,12 @@ function Read-FontFon([byte[]]$b, [string]$path, [string]$want) {
     # rows whose ink stops at row 7 converts without losing a pixel, and
     # gating it on its header would turn away exactly the fonts this
     # reader exists to reach. Candidates are tried tallest first,
-    # tie-broken on width and then on file order, so the answer for a
-    # file where several faces fit is the same as it always was.
+    # tie-broken on width and then on file order, so the tallest face
+    # whose INK fits wins. On a file where several faces fit that can
+    # give a different answer from the old declared-cell rule, and is
+    # meant to: an 8x16 face that inks only 8 rows now beats a 7x8 one
+    # in the same file, where the old rule never considered the 8x16 at
+    # all and took the 7x8.
     $pick = -1
     $face = $null
     if ($want) {

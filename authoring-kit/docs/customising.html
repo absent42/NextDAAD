@@ -121,8 +121,11 @@ routinely pessimistic, so a console font that declares a 16-row cell but
 whose ink stops at row 7 converts perfectly and is accepted, while one
 whose ink reaches row 12 is refused. Judging by the declaration alone
 would turn away fonts that transfer without losing a pixel. The same
-measurement decides which face of a <code>.fon</code> holding several is used, so
-selection and acceptance never disagree about the same file.</p>
+measurement chooses which face of a <code>.fon</code> holding several is used, so
+no face is passed over for a declaration the gate itself would have
+accepted. It is not a promise the two always agree - selection weighs
+ink alone, so a face whose glyph data is damaged can be picked and then
+refused when another face in the file would have converted.</p>
 <p>Width is the one place a declaration is taken at its word, because an
 over-wide glyph's pixels are never read at all - the converter holds one
 byte per row and has nowhere to put them. A source declaring a cell
@@ -181,9 +184,14 @@ dump belongs to. Only 2048 bytes (a full table) and 768 bytes
 (characters 32 to 127) are recognised on their own; any other raw length
 has to be told. The length has to divide by 8 - a file that does not is
 refused for that on its own, before <code>-First</code> is ever asked for - and the
-code you give has to put at least one glyph in the printable range 32 to
-127, or the converted table would be the built-in font unchanged. An
-896-byte dump of 112 glyphs covering characters 16 to 127:</p>
+code you give has to put at least one glyph somewhere in 16 to 159,
+which is everything an assembled table takes from a source (16 to 31, 32
+to 127 and 128 to 159). A dump placed entirely outside that reaches the
+output nowhere at all, and is refused rather than converted into a copy
+of the built-in font. A dump of 16 glyphs at <code>-First 16</code> fills the UDG
+range and one at <code>-First 128</code> the decorative range, both of which the
+slot map keeps. An 896-byte dump of 112 glyphs covering characters 16 to
+127:</p>
 <pre><code>... -In SYSTEM.FNT -First 16 -Out FONT.CHR
 </code></pre>
 <p><strong><code>-Face &lt;index|WxH&gt;</code></strong> picks a face out of a <code>.fon</code> that holds more

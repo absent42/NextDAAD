@@ -44,7 +44,11 @@
 # appearing in a game with no explanation is worse than not getting it.
 #
 # The same measurement decides which face of a multi-face FON is used,
-# so selection and acceptance cannot disagree about the same file.
+# so no face is passed over at selection for a declaration this gate
+# would have forgiven. That is not a guarantee the two always agree:
+# selection weighs ink alone, so a face whose glyph data is truncated
+# can be selected and then refused here even though another face in the
+# same file would have converted.
 #
 # Width is the one thing taken from the declaration, because the
 # intermediate holds one byte per row and an over-wide glyph's data is
@@ -377,13 +381,17 @@ if ($firstChar -lt 0) {
     else { $firstChar = 0 }
 }
 
-# -First placing every glyph outside the printable range is a silent
-# no-op otherwise: the assembled table comes out as the base font plus
-# the mirror, and the output line reports a clean success.
+# -First placing every glyph outside the range an assembled table draws
+# from is a silent no-op otherwise: nothing of the source reaches the
+# output, and the line still reports a clean success. The range is
+# 16-159, not 32-127 - the slot map takes 16-31 and 128-159 from the
+# source as well, and a raw dump placed at either of those is a
+# first-class case, the only way to bring an author's UDGs or decorative
+# glyphs in from a headerless file.
 if ($isRaw) {
     $lastChar = $firstChar + [int]($inBytes.Length / 8) - 1
-    if ($firstChar -gt 127 -or $lastChar -lt 32) {
-        throw "fontconv: -First $firstChar puts this $($inBytes.Length)-byte dump's $([int]($inBytes.Length / 8)) glyphs at character codes $firstChar-$lastChar, none of which is in the printable range 32-127. The converted table would be the base font unchanged."
+    if ($firstChar -gt 159 -or $lastChar -lt 16) {
+        throw "fontconv: -First $firstChar puts this $($inBytes.Length)-byte dump's $([int]($inBytes.Length / 8)) glyphs at character codes $firstChar-$lastChar. An assembled table takes the source's glyphs at 16-31, 32-127 and 128-159 only, and none of these lands in any of them, so no source glyph would reach the output at all."
     }
 }
 
