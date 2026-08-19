@@ -203,6 +203,68 @@ try {
     $script:checks++
     if ($f5msg -notmatch 'decorative glyph') { throw "F5 : expected a dropped-glyph note, got: $f5msg" }
 
+    # --- P1 PSF1, generated here from known bytes ---
+    # 256 glyphs of 8 rows. Character 65 carries a marker; the converter
+    # must place it at glyph 65 and mirror it to 193.
+    $mk = [byte[]](0x18,0x3C,0x66,0x66,0x7E,0x66,0x66,0x00)
+    $p1 = New-Object byte[] (4 + 256*8)
+    $p1[0] = 0x36; $p1[1] = 0x04; $p1[2] = 0x00; $p1[3] = 0x08
+    [System.Array]::Copy($mk, 0, $p1, 4 + 65*8, 8)
+    $inP1 = "$tmp\p1.psf"
+    [System.IO.File]::WriteAllBytes($inP1, $p1)
+    & $conv -In $inP1 -Out "$tmp\p1.CHR" | Out-Null
+    $rp1 = [System.IO.File]::ReadAllBytes("$tmp\p1.CHR")
+    Assert-Bytes $rp1[520..527]   $mk 'P1 PSF1 glyph 65'
+    Assert-Bytes $rp1[1544..1551] $mk 'P1 PSF1 glyph 193 mirrored'
+
+    # --- P2 PSF2, generated here, 8 wide by 8 high ---
+    $p2 = New-Object byte[] (32 + 256*8)
+    $p2[0]=0x72; $p2[1]=0xB5; $p2[2]=0x4A; $p2[3]=0x86
+    [System.Array]::Copy([BitConverter]::GetBytes([int]0),   0, $p2,  4, 4)  # version
+    [System.Array]::Copy([BitConverter]::GetBytes([int]32),  0, $p2,  8, 4)  # headersize
+    [System.Array]::Copy([BitConverter]::GetBytes([int]0),   0, $p2, 12, 4)  # flags
+    [System.Array]::Copy([BitConverter]::GetBytes([int]256), 0, $p2, 16, 4)  # length
+    [System.Array]::Copy([BitConverter]::GetBytes([int]8),   0, $p2, 20, 4)  # charsize
+    [System.Array]::Copy([BitConverter]::GetBytes([int]8),   0, $p2, 24, 4)  # height
+    [System.Array]::Copy([BitConverter]::GetBytes([int]8),   0, $p2, 28, 4)  # width
+    [System.Array]::Copy($mk, 0, $p2, 32 + 65*8, 8)
+    $inP2 = "$tmp\p2.psfu"
+    [System.IO.File]::WriteAllBytes($inP2, $p2)
+    & $conv -In $inP2 -Out "$tmp\p2.CHR" | Out-Null
+    $rp2 = [System.IO.File]::ReadAllBytes("$tmp\p2.CHR")
+    Assert-Bytes $rp2[520..527]   $mk 'P2 PSF2 glyph 65'
+    Assert-Bytes $rp2[1544..1551] $mk 'P2 PSF2 glyph 193 mirrored'
+
+    # --- P3 a 16-row PSF2 is refused ---
+    $p3 = New-Object byte[] (32 + 256*16)
+    [System.Array]::Copy($p2, 0, $p3, 0, 32)
+    [System.Array]::Copy([BitConverter]::GetBytes([int]16), 0, $p3, 20, 4)
+    [System.Array]::Copy([BitConverter]::GetBytes([int]16), 0, $p3, 24, 4)
+    for ($c = 32; $c -lt 128; $c++) { $p3[32 + $c*16 + 12] = 0xFF }   # ink on row 12
+    $inP3 = "$tmp\p3.psfu"
+    [System.IO.File]::WriteAllBytes($inP3, $p3)
+    Assert-Throws { & $conv -In $inP3 -Out "$tmp\p3.CHR" } 'does not fit' 'P3 a 16-row PSF2 is refused'
+
+    # --- P4 the gate measures ink, it does not read the header ---
+    # P3's twin, and the half that proves the rule: the SAME 16-row
+    # declaration, but with the ink stopping at row 7. A gate reading the
+    # header would refuse this; a gate measuring ink must accept it.
+    # These two checks together are the spec's "measured, not declared"
+    # requirement - neither one proves it alone.
+    $p4 = New-Object byte[] (32 + 256*16)
+    [System.Array]::Copy($p3, 0, $p4, 0, 32)
+    for ($c = 32; $c -lt 128; $c++) {
+        if ($c -eq 32) { continue }                       # glyph 32 stays blank
+        [System.Array]::Copy($mk, 0, $p4, 32 + $c*16, 8)  # ink in rows 0-7 only
+    }
+    $inP4 = "$tmp\p4.psfu"
+    [System.IO.File]::WriteAllBytes($inP4, $p4)
+    & $conv -In $inP4 -Out "$tmp\p4.CHR" | Out-Null
+    $rp4 = [System.IO.File]::ReadAllBytes("$tmp\p4.CHR")
+    Assert-Eq $rp4.Length 2048 'P4 a 16-row declaration whose ink fits 8 rows is accepted'
+    Assert-Bytes $rp4[520..527]   $mk 'P4 glyph 65 taken from the top 8 rows'
+    Assert-Bytes $rp4[1544..1551] $mk 'P4 glyph 193 mirrored'
+
     "fontconv-selftest: $checks checks passed"
 }
 finally {
