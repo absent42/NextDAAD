@@ -124,14 +124,17 @@ if errorlevel 1 ( pause & exit /b 1 )
 call "%~dp0lib\assemble.bat"
 if errorlevel 1 ( pause & exit /b 1 )
 
-REM ---- classic charsets (SP18): a kit-root FONT.ch8 / FONT<n>.ch8 is a
-REM      768-byte classic ZX charset (chars 32-127). Convert it here so
-REM      the author does not have to remember the command, the same way
-REM      IMAGES\*.png is converted rather than staged. A ready-made
-REM      FONT<n>.CHR staged below overwrites the converted result, so a
-REM      hand-built full table always wins. RELEASE\FONT<n>.CHR was
+REM ---- convertible fonts: a kit-root FONT.<ext> / FONT<n>.<ext> in any
+REM      format lib\fontconv.ps1 reads - .ch8 (768-byte classic ZX
+REM      charset), .fon (Windows bitmap), .psf/.psfu (console), .bdf
+REM      (X11), .fnt (raw dump) - is converted here so the author does
+REM      not have to remember the command, the same way IMAGES\*.png is
+REM      converted rather than staged. Two convertible sources for one
+REM      slot is an error, not a guess. A ready-made FONT<n>.CHR staged
+REM      below overwrites the converted result, so a hand-built full
+REM      table always wins. RELEASE\FONT<n>.CHR was
 REM      already wiped by the stale-clean near the top of this script, so
-REM      a .ch8 removed since the last build cannot leave a stray
+REM      a source removed since the last build cannot leave a stray
 REM      converted .CHR behind either - this loop only ever recreates
 REM      what it finds a source for.
 REM      NOTE: the "else" here is load-bearing. Verified empirically:
@@ -148,16 +151,34 @@ REM      block with "goto :label" and putting "exit /b 1" at top level, as
 REM      the multi-part loop below does for its seven failure sites. Same
 REM      class of hazard lib\audio.bat's STREAM_*.aks loop comment already
 REM      documents, different trigger.
-for %%F in ("FONT.ch8" "FONT1.ch8" "FONT2.ch8" "FONT3.ch8" "FONT4.ch8" ^
-            "FONT5.ch8" "FONT6.ch8" "FONT7.ch8" "FONT8.ch8" "FONT9.ch8") do (
-    if exist %%F (
-        powershell -NoProfile -ExecutionPolicy Bypass -File "lib\fontconv.ps1" -In %%F -Out "RELEASE\%%~nF.CHR"
-        if errorlevel 1 (
-            echo ERROR: fontconv failed converting %%F
-            pause
-            exit /b 1
-        ) else (
-            echo   font %%~nxF -^> RELEASE\%%~nF.CHR ^(converted, 768 -^> 2048^)
+for %%N in ("" 1 2 3 4 5 6 7 8 9) do (
+    set "_fsrc="
+    set "_fdup="
+    for %%X in (ch8 fon psf psfu bdf fnt) do (
+        if exist "FONT%%~N.%%X" (
+            if defined _fsrc (
+                set "_fdup=FONT%%~N.%%X"
+            ) else (
+                set "_fsrc=FONT%%~N.%%X"
+            )
+        )
+    )
+    if defined _fdup (
+        echo ERROR: both !_fsrc! and !_fdup! could be converted to FONT%%~N.CHR.
+        echo        Remove one, or convert it yourself and drop in a ready-made
+        echo        FONT%%~N.CHR, which always wins over a converted source.
+        pause
+        exit /b 1
+    ) else (
+        if defined _fsrc (
+            powershell -NoProfile -ExecutionPolicy Bypass -File "lib\fontconv.ps1" -In "!_fsrc!" -Out "RELEASE\FONT%%~N.CHR"
+            if errorlevel 1 (
+                echo ERROR: fontconv failed converting !_fsrc!
+                pause
+                exit /b 1
+            ) else (
+                echo   font !_fsrc! -^> RELEASE\FONT%%~N.CHR ^(converted^)
+            )
         )
     )
 )
