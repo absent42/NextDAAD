@@ -108,6 +108,42 @@ try {
     $script:checks++
     if ($warn -notmatch 'glyph 32') { throw "G5 : expected a glyph 32 warning, got: $warn" }
 
+    # --- F1 a real FON converts, with the bytes CGA actually has ---
+    # cga80woa.fon is the CGA 80-column 8x8 CP437 font and ships with
+    # Windows, so this needs nothing installed. The expected bytes were
+    # read out of the file itself, not recalled.
+    $cga = "$env:WINDIR\Fonts\cga80woa.fon"
+    if (Test-Path $cga) {
+        $outF = "$tmp\f1.CHR"
+        & $conv -In $cga -Out $outF | Out-Null
+        $f1 = [System.IO.File]::ReadAllBytes($outF)
+        Assert-Eq $f1.Length 2048 'F1 output size'
+        Assert-Bytes $f1[520..527]   ([byte[]](0x30,0x78,0xCC,0xCC,0xFC,0xCC,0xCC,0x00)) 'F1 glyph 65 A'
+        Assert-Bytes $f1[824..831]   ([byte[]](0x00,0x00,0x76,0xCC,0xCC,0x7C,0x0C,0xF8)) 'F1 glyph 103 g, descender intact'
+        Assert-Bytes $f1[384..391]   ([byte[]](0x78,0xCC,0xDC,0xFC,0xEC,0xCC,0x78,0x00)) 'F1 glyph 48 zero'
+        Assert-Bytes $f1[256..263]   ([byte[]](0,0,0,0,0,0,0,0))                          'F1 glyph 32 blank'
+        # The in-face pound rule: dfCharSet is 0xFF (OEM), so glyph 96
+        # must be CP437 slot 156, NOT the base font's pound.
+        Assert-Bytes $f1[768..775]   ([byte[]](0x38,0x6C,0x64,0xF0,0x60,0xE6,0xFC,0x00)) 'F1 glyph 96 pound lifted in face from CP437 156'
+        # Copyright has no CP437 source, so 127 must come from the base.
+        Assert-Bytes $f1[1016..1023] $baseBytes[1016..1023] 'F1 glyph 127 copyright from the base font'
+        # And the mirror.
+        Assert-Bytes $f1[1544..1551] ([byte[]](0x30,0x78,0xCC,0xCC,0xFC,0xCC,0xCC,0x00)) 'F1 glyph 193 mirrors A'
+    }
+    else {
+        Write-Warning "F1 skipped: $cga not present"
+    }
+
+    # --- F2 a pixel-doubled face is refused, not silently cropped ---
+    # The Oldschool PC Font Pack's -2y files are 8x16. If that folder is
+    # not here the check is skipped rather than failed.
+    $pack = "D:\Urban Upstart\fonts\oldschool_pc_font_pack_v2.2_FULL\fon - Bm (windows bitmap)"
+    $tall = Join-Path $pack 'Bm437_IBM_EGA_8x14.FON'
+    if (Test-Path $tall) {
+        Assert-Throws { & $conv -In $tall -Out "$tmp\f2.CHR" } 'does not fit|8x8' `
+            'F2 a 14-row face is refused'
+    }
+
     "fontconv-selftest: $checks checks passed"
 }
 finally {
