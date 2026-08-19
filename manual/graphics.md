@@ -131,7 +131,7 @@ grid, which spans rows 4 to 27 and columns 8 to 71. `WINAT 4 8` with
 `WINSIZE 24 64` is the whole classic screen.
 
 `BORDER n` sets the surround, taking the same 0-255 range as `INK` and
-`PAPER` - see [Customising](customising.md#text-and-border-colour) for
+`PAPER` - see [Colours](colours.md) for
 what the numbers mean. What it colours here is everything outside the
 artwork and the text.
 There is no classic border on this target - the text layer covers the
@@ -264,6 +264,83 @@ picture. Three approaches work and none needs anything from the
 interpreter: keep a strip of solid paper where text must always be
 readable, keep the artwork dark where text lands, or choose an ink that
 survives everything the art can put behind it.
+
+## GFX sub-commands
+
+`GFX n s` takes the sub-command in its **second** parameter, `s`. There
+are no symbolic names for these - DAAD Ready's Appendix D covers `SFX`
+and `MOUSE` only - so write the number.
+
+For every sub-command except 13, 14, 16 and 17 the first parameter `n`
+is ignored: the buffer operations act on the whole surface and take no
+argument. For 13 and 14, `n` is the video number; for 16, it is the font
+number; for 17, it is the layer-order selector.
+
+"Front" is the surface you can see; "back" is the off-screen one you
+draw into. A sub-command that is not in the table below is accepted and
+does nothing at all, so a game that uses one still runs (a DEBUG build
+prints a marker). That covers 7, 8, 11, 12 and 15, and everything
+from 18 up, as well as 9 and 10 - see
+[Platform notes](platform-notes.md) for why 9, 10 and 15 have nothing
+to act on here.
+
+| s | Behaviour on this target |
+|---|---------------------------|
+| 0 | Copy the back surface onto the front one, in place. What you drew off-screen becomes visible; the two surfaces keep their identities. If a picture is staged behind a pending reveal (drawn while sub 4's buffer mode was open, below), the copy also applies its palette - but the copy is progressive, not atomic, and does not change surface resolution, so it does not support revealing a staged picture whose resolution differs from the one currently on screen. Use 2 for that case. |
+| 1 | Copy the front surface onto the back one, in place - the reverse of 0. |
+| 2 | Swap the front and back surfaces, and show the new front immediately. Nothing is copied, so this is the cheap way to present an off-screen frame. If a picture is staged behind a pending reveal, the swap lands the surface, its resolution and its palette together, atomically - this is the clean reveal, and the only supported way (besides re-issuing `DISPLAY`) to reveal a staged picture whose resolution differs from the one currently on screen. |
+| 3 | Graphics write to the physical screen - the default. `PICTURE`/`DISPLAY` draw and reveal on the visible surface directly; nothing is staged. Also closes buffer mode opened by sub 4. |
+| 4 | Graphics write to the back buffer. `DISPLAY 0` stages the incoming picture's pixels and palette into the hidden surface only - the screen stays exactly as it was until a reveal (sub 0 or 2, above). |
+| 5 | Clear the front surface - the visible one - in place. |
+| 6 | Clear the back surface. |
+| 13 | Play video `n` (`NNN.VID`) once. Identical to `SFX n 9` (`PLAYFLI`). See [Video](video.md). |
+| 14 | As 13, looped until a key is pressed. Identical to `SFX n 10` (`PLAYFLIL`). |
+| 16 | Install font `n`. `n` 0 is the base font - the embedded table, then `FONT.CHR` over it if one exists; 1-9 select `FONT1.CHR` to `FONT9.CHR`. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See [Fonts](fonts.md). |
+| 17 | Text layer order. `n` 0 puts the picture on top (Layer 2 above the tilemap - the default, and what every existing game gets); `n` 1 puts the text layer on top. `n` 2 and above is a no-op - the previously-set order stays. See [Text over a picture](#text-over-a-picture) above for the transparent-paper technique this enables. |
+
+Sub 17 composes the layer priority only - it never enables or disables
+Layer 2, so it cannot bring back a picture surface the game has hidden.
+
+Sub 17's layer order is NOT transient the way buffer mode (below) is. It
+is game-owned state, like `INK`, `PAPER` and the window table: the game
+boots with the picture on top and the interpreter never changes the order
+afterwards. It survives every picture operation, `RESTART`, `LOAD`,
+`RAMLOAD` and a move to another part, so a game sets it once and a
+restored save comes back in the order the game chose.
+
+Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
+`RESTART`, a same-part `LOAD`/`RAMLOAD`, or any game (re)start -
+whichever comes first. Revealing a staged picture (sub 0 or 2) clears
+only the pending reveal, never the mode itself - a game that opens
+buffer mode and reveals a picture is still in buffer mode afterwards,
+and the next `DISPLAY` stages again rather than drawing to screen. The
+canonical sequence for one scene change is `GFX n 4`, `DISPLAY 0`,
+`GFX n 2`, `GFX n 3` - always close with an explicit `GFX n 3`, even
+though nothing in the reveal itself does it for you.
+
+While a deferred picture's resolution differs from the one currently
+on screen, the only supported buffer operations are `DISPLAY 0`
+(re-stage) and `GFX n 2` (the reveal, above); `GFX n 0`, `1` and `5`
+all operate on front-surface sizing that is stale for the length of
+that deferral.
+
+Video playback (`GFX n 13`/`14`) while buffer mode is active is
+unsupported - issue `GFX n 3` first.
+
+Known limitation: buffer-mode scene changes are not guaranteed when
+the picture cache is exhausted by an oversized, uncompressed picture
+(only reachable after a full eviction pass finds nothing left to
+evict - effectively unreachable on 2MB-standard hardware). The
+fallback loader runs at `PICTURE` time, and in the recommended fade
+sequence `GFX n 4` opens buffer mode only after the `PICTURE` condact
+(the ordering that protects against dark-room strands) - so when an
+exhaustion fallback fires during that `PICTURE`, buffer mode is not
+yet open: the fallback draws and flips immediately, a mid-fade flash,
+and clears the staged-picture state. The sequence's following
+`DISPLAY 0` is then a no-op, no reveal is pending, and `GFX n 2`
+performs a plain surface swap rather than the clean reveal - the
+fade-in can land on a mismatched surface or palette until the next
+picture change.
 
 ## Title screens
 

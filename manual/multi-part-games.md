@@ -63,14 +63,14 @@ not there:
   `GAME.SFB` - see [Audio](audio.md)
 - `NNN.VID` videos - see [Video](video.md)
 - `0.XMB` external message text
-- `FONT.CHR`, and numbered `FONT1.CHR` to `FONT9.CHR`, and
-  `POINTER.SPR`, and numbered `POINTER1.SPR` to `POINTER9.SPR` - see
-  [Customising](customising.md)
+- `FONT.CHR`, and numbered `FONT1.CHR` to `FONT9.CHR` - see [Fonts](fonts.md)
+- `POINTER.SPR`, and numbered `POINTER1.SPR` to `POINTER9.SPR` - see
+  [Mouse](mouse.md)
 
 **Root-only, never shadowed:** the title screen (`DAAD.*`, shown once at
 cold boot), and the boot-autoplay default song (`GAME.AYS` /
 `GAME.AKY`). The music sub-commands' `n=255` sentinel - the "play
-`GAME.AYS`/`GAME.AKY`" case, see [Symbols](reference/symbols.md) - is
+`GAME.AYS`/`GAME.AKY`" case, see [Audio](audio.md#sfx-sub-commands) - is
 also always root-only and behaves identically from every part. `SFX 255
 6` or `SFX 255 7` plays the game's theme from anywhere. That is by
 design, not an override that failed.

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fonts - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="fonts">Fonts</h1>
+<p>A custom font is a <code>FONT.CHR</code> file dropped into the kit folder - not in
+<code>IMAGES\</code> - staged to the release untouched and installed in place of
+the built-in font at boot. Up to nine further numbered variants can sit
+beside it and be switched from your source while the game runs.</p>
+<p>Custom fonts are optional. With no <code>FONT.CHR</code> the built-in font plays.</p>
+<h2 id="the-format">The format</h2>
+<p><code>FONT.CHR</code> is <strong>256 glyphs, 8 rows each, 1 bit per pixel - exactly 2048
+bytes</strong>. That is the plain raw charset format the DAAD and ZX tool
+ecosystem emits, so output from CH82CHR, jDAADFontMaker, GCS and similar
+font editors works directly, unmodified.</p>
+<p>A file of any other size is rejected at boot and the built-in font plays
+instead. Nothing about your game changes; the text simply looks as it
+always did.</p>
+<h2 id="classic-768-byte-charsets">Classic 768-byte charsets</h2>
+<p>Most ZX font packs and editors export the older shape instead:
+characters 32 to 127 only, 96 glyphs of 8 rows, <strong>768 bytes</strong> (the
+<code>.ch8</code> files font collections ship).</p>
+<p>Drop a <code>FONT.ch8</code> (or <code>FONT1.ch8</code> to <code>FONT9.ch8</code>, for the numbered fonts
+below) in the kit folder and the kit build converts it for you -
+nothing to run by hand. A ready-made <code>.CHR</code> of the same number still
+wins over a converted <code>.ch8</code>, so a hand-built full table always takes
+priority.</p>
+<p>Working outside the kit, or converting a <code>.ch8</code> kept somewhere else,
+<code>lib\fontconv.ps1</code> turns one into a <code>FONT.CHR</code> directly:</p>
+<pre><code>powershell -ExecutionPolicy Bypass -File lib\fontconv.ps1 -In MyFont.ch8 -Out FONT.CHR
+</code></pre>
+<p>(The <code>-ExecutionPolicy Bypass -File</code> part is needed because PowerShell
+refuses to run a bare script file by default.)</p>
+<p>It accepts either shape. A 2048-byte input is copied straight through. A
+768-byte input is padded into a full table: your glyphs fill 32 to 127,
+and every other glyph keeps <code>lib\default.chr</code> - a copy of the built-in
+font - unless <code>-Base &lt;file&gt;</code> names a 2048-byte font of your own to pad
+against instead. That is how a second font keeps the first one's UDGs or
+accented characters: convert the first <code>.ch8</code> normally, then convert the
+second with <code>-Base</code> pointing at the <code>FONT.CHR</code> the first conversion
+produced, and glyphs 0-31 and 128-255 carry over instead of reverting to
+the built-in font. The kit build's own automatic <code>.ch8</code> conversion above
+never passes <code>-Base</code> - it always pads against the built-in font - so
+this only applies when you run <code>fontconv.ps1</code> yourself. Any other input
+size is an error naming both shapes it accepts.</p>
+<p>Put the resulting <code>FONT.CHR</code> (or <code>FONT1.CHR</code> to <code>FONT9.CHR</code>) in the kit
+folder to ship it.</p>
+<h2 id="which-glyphs-actually-get-drawn">Which glyphs actually get drawn</h2>
+<p>The whole 256-glyph table is addressable, but ordinary game text only
+ever reaches part of it:</p>
+<ul>
+<li><strong>Printed characters 32 to 127</strong> - ordinary printable text - select
+  glyphs 32 to 127.</li>
+<li><strong>The same characters select glyphs 160 to 255 instead</strong> (glyph =
+  character + 128) when a window is set to the upper charset, or while
+  the <code>GFX ON</code> / <code>GFX OFF</code> print escape is active. That is a mirrored
+  bold or alternate face you can reach without duplicating any
+  vocabulary.</li>
+<li><strong>Characters 16 to 31 and 128 to 255</strong> select their matching glyph
+  directly, with no mirroring - the extended and graphics glyphs.</li>
+</ul>
+<p>In practice a 768-byte classic charset covers everything a typical DAAD
+game prints. Glyphs 16 to 31, 128 to 159 and 160 to 255 are reachable
+only through the routes above, and keep the built-in font's originals
+unless your <code>FONT.CHR</code> supplies the full 2048 bytes. <strong>Glyphs 0 to 15 no
+print path reaches at all</strong> - a <code>FONT.CHR</code> may define them, but nothing
+will ever draw them.</p>
+<h2 id="glyph-32-must-stay-blank">Glyph 32 must stay blank</h2>
+<p>Every cell the engine blanks - an untouched area, a row scrolled in,
+anything not yet printed - is filled with glyph 32 at the ordinary
+default attribute: black paper, white ink, the same attribute a printed
+cell uses.</p>
+<p>So a glyph 32 with any non-zero pixels <strong>draws those pixels in the ink
+colour</strong>. The result is white specks scattered across every blank part
+of the screen instead of clean black paper. Leave glyph 32 empty unless
+you genuinely want that.</p>
+<p><code>fontconv.ps1</code> warns - it does not refuse - when the font you hand it
+has a non-blank glyph 32, for either input shape. A <code>FONT.CHR</code> you place
+in the kit folder without running it through <code>fontconv.ps1</code> is never
+checked, so check that one yourself if you have edited glyph 32.</p>
+<h2 id="numbered-fonts-and-switching-at-runtime">Numbered fonts and switching at runtime</h2>
+<p><code>FONT.CHR</code> is font 0, the base. Nine more can sit beside it in the kit
+folder: <code>FONT1.CHR</code> to <code>FONT9.CHR</code> (ready-made, or converted from
+<code>FONT1.ch8</code> to <code>FONT9.ch8</code> as above). Nothing on disk selects one - <code>GFX n 16</code> in your
+source installs font <code>n</code> while the game runs. <code>GFX 3 16</code> switches to
+<code>FONT3.CHR</code>; <code>GFX 0 16</code> returns to the base. A missing or wrong-size
+file is a silent no-op: whatever font is currently installed stays, and
+the game plays on.</p>
+<p>A font switch <strong>restyles every character already on screen</strong>, instantly
+and with no redraw, because the hardware reads the glyph table live.
+That is a feature, not a caveat - but if you expect only text printed
+<em>after</em> the switch to change, the whole screen changing at once will
+surprise you.</p>
+<h2 id="per-part-and-multi-font">Per-part and multi-font</h2>
+<p>In a <a href="multi-part-games.html">multi-part game</a>, a <code>PART&lt;n&gt;\FONT.CHR</code> (and
+likewise <code>PART&lt;n&gt;\FONT1.CHR</code> to <code>PART&lt;n&gt;\FONT9.CHR</code>) gives that part its
+own font, falling back to the root file of the same number if the part
+ships none. It is staged with the rest of that part's assets - there is
+nothing to configure.</p>
+<p>A part switch reinstalls the base font: it re-probes for <code>FONT.CHR</code>
+(per-part, then root) the moment the new part loads. A game that wants a
+numbered font after a part switch re-selects it with <code>GFX n 16</code>.</p>
+<p>That re-probe is not quite the same guarantee <code>GFX 0 16</code> gives, and the
+difference is worth knowing plainly. <code>GFX 0 16</code> lays the interpreter's
+embedded glyph table down FIRST and only then looks for <code>FONT.CHR</code>, so
+it always ends up somewhere known - <code>FONT.CHR</code> if one exists, the
+embedded table if not. A part switch skips that first step and only
+looks for <code>FONT.CHR</code>. If neither the new part nor the root ships one,
+nothing reverts: the glyph table stays exactly what it was before the
+switch, which may be a numbered font selected earlier in the previous
+part. "0 is the base" reads the same in both places; only <code>GFX 0 16</code> is
+guaranteed to reach a known font.</p>
+</main>
+</body>
+</html>

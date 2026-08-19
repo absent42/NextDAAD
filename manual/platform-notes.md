@@ -63,14 +63,14 @@ Sub 15 is a no-op for a different reason. On CPC and C64 it is
 `XSPLITSCR`, a split-screen toggle; this target has no split-screen
 mode, so 15 is accepted and does nothing here too. Worth stating
 explicitly now that its neighbour, sub 16, installs a font - see
-[Customising](customising.md).
+[Fonts](fonts.md).
 
 The `GFX` sub-commands that *are* implemented here - the buffer copies
 and swaps, the draw-target subs 3 and 4 (screen vs. back-buffer
 drawing) and their reveal semantics on 0 and 2, the surface clears,
 video playback on 13 and 14, and font installation on 16 - are listed
-in [Symbols](reference/symbols.md), [Video](video.md) and
-[Customising](customising.md).
+in [Graphics](graphics.md#gfx-sub-commands), [Video](video.md) and
+[Fonts](fonts.md).
 
 ## Text colour
 
@@ -99,7 +99,7 @@ practice.
 ### `INK`, `PAPER` and `BORDER` reach the full Next palette
 
 Values 16 to 255 select the standard Next colour of that number - see
-[Customising](customising.md#text-and-border-colour) for what the
+[Colours](colours.md) for what the
 numbers mean. This is a NextDAAD extension: jDAAD folds all three
 condacts modulo 16, so the `INK 224` that gives full red here gives
 `INK 0` there. The extension is deliberate and one-way - a game that
@@ -139,9 +139,8 @@ coordinate. If your pointer is a cross, you probably want its hotspot at
 
 All eight sub-commands, 0 to 7, are implemented. A pointer shape switch
 (`MOUSE n 5`) does not move or reset the hotspot these two set - it
-stays wherever you last put it. The full table is in
-[Symbols](reference/symbols.md), and [Customising](customising.md)
-covers supplying your own pointer artwork, base and numbered alike.
+stays wherever you last put it. The full table, and how to supply your
+own pointer artwork, base and numbered alike, is in [Mouse](mouse.md).
 
 ### `EXTERN` implements three vectors
 

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Colours - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="colours">Colours</h1>
+<p><code>INK n</code>, <code>PAPER n</code> and <code>BORDER n</code> take any value from 0 to 255. The
+compiler already checks all three against that full range - they are
+declared as a generic value parameter, not a colour-specific one - so
+nothing needed to change there; only what the interpreter does with the
+upper part of the range is new.</p>
+<h2 id="colour-chart">Colour chart</h2>
+<p><img alt="The 256-colour ZX Spectrum Next palette, indices 0-255" src="reference/palette.png" /></p>
+<p>Row 0 is the classic block, 0-15. Every row after it is the extended
+range, 16-255, left to right in numeric order - read a cell's number
+straight into <code>INK</code>, <code>PAPER</code> or <code>BORDER</code>.</p>
+<p><strong>0 to 15 are the classic Spectrum colours</strong>, unchanged: 0 to 7 are the
+eight ULA colours in the usual <code>INK</code>/<code>PAPER</code> order, and 8 to 15 are the
+same eight again, bright.</p>
+<p><strong>16 to 255 are the standard Next colour of that same number</strong> - the
+<code>RRRGGGBB</code> byte convention already used for <a href="graphics.html">location
+art</a> and Gfx2Next: bits 7-5 are red, bits 4-2 are green,
+and bits 1-0 are blue. It is one mental model for pictures and text
+alike - whatever a number means to Gfx2Next, it means the same thing
+here.</p>
+<p>There is no palette file to supply, and none is needed. Every one of
+the 256 standard Next colours is already addressable by its own number,
+so <code>INK</code>, <code>PAPER</code> and <code>BORDER</code> simply reach further into the same fixed
+palette <a href="graphics.html">location art</a> draws from - there is nothing to
+load, generate or ship alongside your database.</p>
+<h2 id="working-out-a-colour-from-its-number">Working out a colour from its number</h2>
+<p>For any <code>n</code> from 16 to 255:</p>
+<pre><code>red   = (n &gt;&gt; 5) &amp; 7      -- 0-7
+green = (n &gt;&gt; 2) &amp; 7      -- 0-7
+blue  =  n       &amp; 3      -- 0-3
+</code></pre>
+<p>or build a number from the three components the other way round:</p>
+<pre><code>n = red*32 + green*4 + blue
+</code></pre>
+<p>A few worked examples: 224 is full red (<code>7,0,0</code>), 28 is full green
+(<code>0,7,0</code>), and 255 is white (<code>7,7,3</code>, the maximum of everything). 3
+works out to pure blue by the same arithmetic, but 3 is inside 0 to 15,
+so it reads as the classic colour it already was rather than as blue -
+every value below 16 keeps its classic meaning regardless of what the
+<code>RRRGGGBB</code> arithmetic would say about that same byte; only 16 and above
+are decoded this way.</p>
+<p>Because blue only has two bits, the same thing is true of every pure
+blue: with red and green both 0, the value never climbs past 3, so a
+saturated blue with no red or green in it is always a classic colour
+(1, or 9 for bright), never one from the extended range. Add a touch of
+red or green and the value moves above 15, with a matching shift in the
+resulting hue.</p>
+<p>If you would rather see the numbers than compute them, the
+<a href="#colour-chart">colour chart</a> above is exactly this palette, indexed.
+Any paint or sprite tool that lets you pick from the Next's standard
+RGB332 palette - the same one described under <a href="mouse.html#custom-mouse-pointer">Custom mouse
+pointer</a> - previews colour <code>n</code> at index
+<code>n</code> too, since it is the identical 256-colour palette <code>INK</code>,
+<code>PAPER</code> and <code>BORDER</code> draw from.</p>
+<p>One value is reserved: <code>PAPER 227</code> makes the paper transparent rather
+than magenta, because 227 is <code>#FF00FF</code>, the transparent colour
+throughout NextDAAD; <code>INK 227</code> likewise makes the glyph shapes
+transparent; <code>BORDER 227</code> is unaffected and renders magenta; and any
+other colour that would land on the transparent value is shifted one
+step up the green scale, which is why colour 11 renders as a very
+slightly different magenta.</p>
+</main>
+</body>
+</html>

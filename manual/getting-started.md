@@ -84,8 +84,8 @@ Everything the build reads lives in the kit folder:
 - **`VIDEO\`** - cutscene sources as `001.mp4` (or a pre-encoded
   `001.vid`). See [Video](video.md).
 - **Ready-made files in the kit folder itself** - a `FONT.CHR` custom
-  font or a `POINTER.SPR` mouse pointer (see
-  [Customising](customising.md)), or already-converted title art. These
+  font (see [Fonts](fonts.md)) or a `POINTER.SPR` mouse pointer (see
+  [Mouse](mouse.md)), or already-converted title art. These
   are copied through untouched.
 
 A pure-text game needs none of these folders. Graphics, audio and video

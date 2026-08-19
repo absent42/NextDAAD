@@ -125,7 +125,7 @@ out to match, keep your windows inside the paper area of the 80x32 text
 grid, which spans rows 4 to 27 and columns 8 to 71. <code>WINAT 4 8</code> with
 <code>WINSIZE 24 64</code> is the whole classic screen.</p>
 <p><code>BORDER n</code> sets the surround, taking the same 0-255 range as <code>INK</code> and
-<code>PAPER</code> - see <a href="customising.html#text-and-border-colour">Customising</a> for
+<code>PAPER</code> - see <a href="colours.html">Colours</a> for
 what the numbers mean. What it colours here is everything outside the
 artwork and the text.
 There is no classic border on this target - the text layer covers the
@@ -237,6 +237,113 @@ picture. Three approaches work and none needs anything from the
 interpreter: keep a strip of solid paper where text must always be
 readable, keep the artwork dark where text lands, or choose an ink that
 survives everything the art can put behind it.</p>
+<h2 id="gfx-sub-commands">GFX sub-commands</h2>
+<p><code>GFX n s</code> takes the sub-command in its <strong>second</strong> parameter, <code>s</code>. There
+are no symbolic names for these - DAAD Ready's Appendix D covers <code>SFX</code>
+and <code>MOUSE</code> only - so write the number.</p>
+<p>For every sub-command except 13, 14, 16 and 17 the first parameter <code>n</code>
+is ignored: the buffer operations act on the whole surface and take no
+argument. For 13 and 14, <code>n</code> is the video number; for 16, it is the font
+number; for 17, it is the layer-order selector.</p>
+<p>"Front" is the surface you can see; "back" is the off-screen one you
+draw into. A sub-command that is not in the table below is accepted and
+does nothing at all, so a game that uses one still runs (a DEBUG build
+prints a marker). That covers 7, 8, 11, 12 and 15, and everything
+from 18 up, as well as 9 and 10 - see
+<a href="platform-notes.html">Platform notes</a> for why 9, 10 and 15 have nothing
+to act on here.</p>
+<table>
+<thead>
+<tr>
+<th>s</th>
+<th>Behaviour on this target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Copy the back surface onto the front one, in place. What you drew off-screen becomes visible; the two surfaces keep their identities. If a picture is staged behind a pending reveal (drawn while sub 4's buffer mode was open, below), the copy also applies its palette - but the copy is progressive, not atomic, and does not change surface resolution, so it does not support revealing a staged picture whose resolution differs from the one currently on screen. Use 2 for that case.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Copy the front surface onto the back one, in place - the reverse of 0.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Swap the front and back surfaces, and show the new front immediately. Nothing is copied, so this is the cheap way to present an off-screen frame. If a picture is staged behind a pending reveal, the swap lands the surface, its resolution and its palette together, atomically - this is the clean reveal, and the only supported way (besides re-issuing <code>DISPLAY</code>) to reveal a staged picture whose resolution differs from the one currently on screen.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Graphics write to the physical screen - the default. <code>PICTURE</code>/<code>DISPLAY</code> draw and reveal on the visible surface directly; nothing is staged. Also closes buffer mode opened by sub 4.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Graphics write to the back buffer. <code>DISPLAY 0</code> stages the incoming picture's pixels and palette into the hidden surface only - the screen stays exactly as it was until a reveal (sub 0 or 2, above).</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Clear the front surface - the visible one - in place.</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Clear the back surface.</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Play video <code>n</code> (<code>NNN.VID</code>) once. Identical to <code>SFX n 9</code> (<code>PLAYFLI</code>). See <a href="video.html">Video</a>.</td>
+</tr>
+<tr>
+<td>14</td>
+<td>As 13, looped until a key is pressed. Identical to <code>SFX n 10</code> (<code>PLAYFLIL</code>).</td>
+</tr>
+<tr>
+<td>16</td>
+<td>Install font <code>n</code>. <code>n</code> 0 is the base font - the embedded table, then <code>FONT.CHR</code> over it if one exists; 1-9 select <code>FONT1.CHR</code> to <code>FONT9.CHR</code>. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See <a href="fonts.html">Fonts</a>.</td>
+</tr>
+<tr>
+<td>17</td>
+<td>Text layer order. <code>n</code> 0 puts the picture on top (Layer 2 above the tilemap - the default, and what every existing game gets); <code>n</code> 1 puts the text layer on top. <code>n</code> 2 and above is a no-op - the previously-set order stays. See <a href="#text-over-a-picture">Text over a picture</a> above for the transparent-paper technique this enables.</td>
+</tr>
+</tbody>
+</table>
+<p>Sub 17 composes the layer priority only - it never enables or disables
+Layer 2, so it cannot bring back a picture surface the game has hidden.</p>
+<p>Sub 17's layer order is NOT transient the way buffer mode (below) is. It
+is game-owned state, like <code>INK</code>, <code>PAPER</code> and the window table: the game
+boots with the picture on top and the interpreter never changes the order
+afterwards. It survives every picture operation, <code>RESTART</code>, <code>LOAD</code>,
+<code>RAMLOAD</code> and a move to another part, so a game sets it once and a
+restored save comes back in the order the game chose.</p>
+<p>Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
+<code>RESTART</code>, a same-part <code>LOAD</code>/<code>RAMLOAD</code>, or any game (re)start -
+whichever comes first. Revealing a staged picture (sub 0 or 2) clears
+only the pending reveal, never the mode itself - a game that opens
+buffer mode and reveals a picture is still in buffer mode afterwards,
+and the next <code>DISPLAY</code> stages again rather than drawing to screen. The
+canonical sequence for one scene change is <code>GFX n 4</code>, <code>DISPLAY 0</code>,
+<code>GFX n 2</code>, <code>GFX n 3</code> - always close with an explicit <code>GFX n 3</code>, even
+though nothing in the reveal itself does it for you.</p>
+<p>While a deferred picture's resolution differs from the one currently
+on screen, the only supported buffer operations are <code>DISPLAY 0</code>
+(re-stage) and <code>GFX n 2</code> (the reveal, above); <code>GFX n 0</code>, <code>1</code> and <code>5</code>
+all operate on front-surface sizing that is stale for the length of
+that deferral.</p>
+<p>Video playback (<code>GFX n 13</code>/<code>14</code>) while buffer mode is active is
+unsupported - issue <code>GFX n 3</code> first.</p>
+<p>Known limitation: buffer-mode scene changes are not guaranteed when
+the picture cache is exhausted by an oversized, uncompressed picture
+(only reachable after a full eviction pass finds nothing left to
+evict - effectively unreachable on 2MB-standard hardware). The
+fallback loader runs at <code>PICTURE</code> time, and in the recommended fade
+sequence <code>GFX n 4</code> opens buffer mode only after the <code>PICTURE</code> condact
+(the ordering that protects against dark-room strands) - so when an
+exhaustion fallback fires during that <code>PICTURE</code>, buffer mode is not
+yet open: the fallback draws and flips immediately, a mid-fade flash,
+and clears the staged-picture state. The sequence's following
+<code>DISPLAY 0</code> is then a no-op, no reveal is pending, and <code>GFX n 2</code>
+performs a plain surface swap rather than the clean reveal - the
+fade-in can land on a mismatched surface or palette until the next
+picture change.</p>
 <h2 id="title-screens">Title screens</h2>
 <p>Ship <code>IMAGES\DAAD.png</code> and the game shows it at cold boot, over the
 boot music if you have any, until a key is pressed. Then play begins as

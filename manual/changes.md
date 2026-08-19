@@ -18,7 +18,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
   an 8x8 cell is refused rather than squeezed - a squeezed descender is
   not worth reading. New options `-First`, `-Face` (which face of a
   `.fon` that holds several) and `-Slots` are all in
-  [Customising](customising.md).
+  [Fonts](fonts.md).
 - **You can draw your own font and convert it with gfx2next.** Lay the
   glyphs out as 8 by 8 cells in an image editor and run
   `gfx2next -font MyFont.png FONT.spr`; a 96-glyph sheet covering
@@ -69,7 +69,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
   picture cannot leave drawing stuck in the buffer. `EXTERN 0 43`
   blocks until the running fade finishes, replacing a flag-poll loop.
   The exact sequence is in the fade example's README and the
-  [GFX reference](reference/symbols.md). The example's prebuilt
+  [GFX reference](graphics.md#gfx-sub-commands). The example's prebuilt
   `GAME.XBN` is rebuilt again - copy it over yours.
 - **Fixed: the fade example did not put a picture's colours back
   exactly.** Fading out and back left a slight colour cast - on a
@@ -163,7 +163,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
   not just 0 to 15. 0 to 15 are the classic Spectrum colours, unchanged;
   16 to 255 are the standard Next colour of that number, the same
   `RRRGGGBB` convention used for Layer 2 artwork. See
-  [Customising](customising.md) for the arithmetic and worked examples.
+  [Colours](colours.md) for the arithmetic and worked examples.
 - `PAPER 8-15` now renders bright rather than folding to the dim hue,
   matching the Spectrum's own `BRIGHT` semantics more closely. A game
   that used those values expecting the old dim fold will look different.
@@ -181,7 +181,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
   in the kit folder. The whole screen restyles at once, including text
   already printed, because the hardware reads the glyph table live. A
   part switch reinstalls the base font, so re-select a numbered one
-  after switching part. See [Customising](customising.md).
+  after switching part. See [Fonts](fonts.md).
 - `MOUSE n 5` (`POINTERMS`) now selects a pointer shape, where before
   the number did nothing. Shape 0 is the base pointer, and 1 to 9 are
   `POINTER1.SPR` to `POINTER9.SPR`. The hotspot you set with `MOUSE 6`
@@ -204,7 +204,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
   exactly 256 bytes, rather than staging a file the interpreter would
   silently refuse. A 32x32 source is the usual cause; pointers are
   16x16.
-- [Customising](customising.md) gains a section on exporting a pointer
+- [Mouse](mouse.md) gains a section on exporting a pointer
   from a sprite editor, and why an export can be exactly the right size
   and still come out as a solid block of the wrong colour.
 - Sound effects and samples can now play two at once. `SFX n 1` and
@@ -236,9 +236,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
   contents are spread across the pages that own each subject:
   `SETUP.md` across [Getting started](getting-started.md),
   [Graphics](graphics.md), [Audio](audio.md), [Video](video.md),
-  [Customising](customising.md), [Multi-part games](multi-part-games.md),
-  [DAAD V3](daad-v3.md), [Limits](reference/limits.md),
-  [Symbols](reference/symbols.md) and
+  [Fonts](fonts.md), [Mouse](mouse.md), [Colours](colours.md),
+  [Multi-part games](multi-part-games.md),
+  [DAAD V3](daad-v3.md), [Limits](reference/limits.md) and
   [Video delivery](reference/video-delivery.md); `DIVERGENCES.md` across
   [Platform notes](platform-notes.md),
   [Known differences](known-differences.md) and

@@ -26,7 +26,7 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   an 8x8 cell is refused rather than squeezed - a squeezed descender is
   not worth reading. New options <code>-First</code>, <code>-Face</code> (which face of a
   <code>.fon</code> that holds several) and <code>-Slots</code> are all in
-  <a href="customising.html">Customising</a>.</li>
+  <a href="fonts.html">Fonts</a>.</li>
 <li><strong>You can draw your own font and convert it with gfx2next.</strong> Lay the
   glyphs out as 8 by 8 cells in an image editor and run
   <code>gfx2next -font MyFont.png FONT.spr</code>; a 96-glyph sheet covering
@@ -77,7 +77,7 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   picture cannot leave drawing stuck in the buffer. <code>EXTERN 0 43</code>
   blocks until the running fade finishes, replacing a flag-poll loop.
   The exact sequence is in the fade example's README and the
-  <a href="reference/symbols.html">GFX reference</a>. The example's prebuilt
+  <a href="graphics.html#gfx-sub-commands">GFX reference</a>. The example's prebuilt
   <code>GAME.XBN</code> is rebuilt again - copy it over yours.</li>
 <li><strong>Fixed: the fade example did not put a picture's colours back
   exactly.</strong> Fading out and back left a slight colour cast - on a
@@ -171,7 +171,7 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   not just 0 to 15. 0 to 15 are the classic Spectrum colours, unchanged;
   16 to 255 are the standard Next colour of that number, the same
   <code>RRRGGGBB</code> convention used for Layer 2 artwork. See
-  <a href="customising.html">Customising</a> for the arithmetic and worked examples.</li>
+  <a href="colours.html">Colours</a> for the arithmetic and worked examples.</li>
 <li><code>PAPER 8-15</code> now renders bright rather than folding to the dim hue,
   matching the Spectrum's own <code>BRIGHT</code> semantics more closely. A game
   that used those values expecting the old dim fold will look different.</li>
@@ -189,7 +189,7 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   in the kit folder. The whole screen restyles at once, including text
   already printed, because the hardware reads the glyph table live. A
   part switch reinstalls the base font, so re-select a numbered one
-  after switching part. See <a href="customising.html">Customising</a>.</li>
+  after switching part. See <a href="fonts.html">Fonts</a>.</li>
 <li><code>MOUSE n 5</code> (<code>POINTERMS</code>) now selects a pointer shape, where before
   the number did nothing. Shape 0 is the base pointer, and 1 to 9 are
   <code>POINTER1.SPR</code> to <code>POINTER9.SPR</code>. The hotspot you set with <code>MOUSE 6</code>
@@ -212,7 +212,7 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   exactly 256 bytes, rather than staging a file the interpreter would
   silently refuse. A 32x32 source is the usual cause; pointers are
   16x16.</li>
-<li><a href="customising.html">Customising</a> gains a section on exporting a pointer
+<li><a href="mouse.html">Mouse</a> gains a section on exporting a pointer
   from a sprite editor, and why an export can be exactly the right size
   and still come out as a solid block of the wrong colour.</li>
 <li>Sound effects and samples can now play two at once. <code>SFX n 1</code> and
@@ -244,9 +244,9 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   contents are spread across the pages that own each subject:
   <code>SETUP.md</code> across <a href="getting-started.html">Getting started</a>,
   <a href="graphics.html">Graphics</a>, <a href="audio.html">Audio</a>, <a href="video.html">Video</a>,
-  <a href="customising.html">Customising</a>, <a href="multi-part-games.html">Multi-part games</a>,
-  <a href="daad-v3.html">DAAD V3</a>, <a href="reference/limits.html">Limits</a>,
-  <a href="reference/symbols.html">Symbols</a> and
+  <a href="fonts.html">Fonts</a>, <a href="mouse.html">Mouse</a>, <a href="colours.html">Colours</a>,
+  <a href="multi-part-games.html">Multi-part games</a>,
+  <a href="daad-v3.html">DAAD V3</a>, <a href="reference/limits.html">Limits</a> and
   <a href="reference/video-delivery.html">Video delivery</a>; <code>DIVERGENCES.md</code> across
   <a href="platform-notes.html">Platform notes</a>,
   <a href="known-differences.html">Known differences</a> and

@@ -4,9 +4,56 @@ Background music, sound effects and digital samples, all from the
 `AUDIO\` folder. Everything here is optional - a game with no `AUDIO\`
 folder builds and plays fine.
 
-Music and effects are selected in your game with the `SFX` condact.
-[Symbols](reference/symbols.md) lists every sub-command and what it does
-on this target.
+Music and effects are selected in your game with the `SFX` condact -
+the tables below list every sub-command and what it does on this
+target.
+
+## SFX sub-commands
+
+[DAAD Ready's manual](https://www.ngpaws.com/daadready/doc_en.html)
+lists, in its Appendix D, symbolic names for the sub-command
+argument of `SFX` (`PLAYSFX`, `PLAYDRO`, and so on). The bundled DRF
+compiler predefines every one of them, and a DSF written with the
+symbolic form compiles byte-identical to the same DSF written with
+the raw number - use whichever reads better.
+
+**Typo warning:** the DAAD Ready manual's own Appendix D table names
+value 10 `FPLAYFLIL`. That is a documentation typo - `FPLAYFLIL` does
+not compile. The compiler defines `PLAYFLI` (9) and `PLAYFLIL` (10).
+
+| n | Symbol | Behaviour on this target |
+|---|--------|---------------------------|
+| 1 | `PLAYSFX` | Play `NNN.WAV` once. If no matching WAV exists, the same number plays as an AY sound effect from the effects bank instead. |
+| 2 | `PLAYSFXL` | As 1, looped. |
+| 3 | `PLAYSFXF` | Same as `PLAYSFX` (1) - the DOS-specific file-rate byte does not exist in this toolchain's DDB output, so the WAV's own header rate plays. |
+| 4 | `PLAYSFXFL` | Same as `PLAYSFXL` (2), for the same reason. |
+| 5 | `STOPSFX` | Stop whichever effect kind is currently active (sample and AY). |
+| 6 | `PLAYDRO` | Play music once - a GAME-numbered AYS stream is tried first, an AKY song plays if none exists. On DOS these condacts played OPL music; on this target they are the music surface. |
+| 7 | `PLAYDROL` | As 6, looped. |
+| 8 | `STOPDRO` | Stop music of both kinds (AYS stream and AKY song). |
+| 9 | `PLAYFLI` | Play video `NNN.VID` once - the classic DOS video symbol, now real: identical to `GFX n 13`. See [Video](video.md) for cutscene playback. |
+| 10 | `PLAYFLIL` | As 9, looped until a key is pressed - identical to `GFX n 14`. |
+
+Sample numbers 1-254 may resolve to a WAV or fall back to an AY
+effect; 255 is reserved and always plays from the AY effects bank.
+
+## SFX sub-commands 11-16 (channel reservation)
+
+These six are a NextDAAD extension - they are not in DAAD Ready's
+Appendix D and the compiler predefines no symbolic names for them, so
+write the raw number. They let a game reserve one of the two sample
+channels for an effect rather than letting sub 1/2 pick automatically.
+See [Two sample channels](#two-sample-channels) below for the full
+explanation, including what a reservation does and does not survive.
+
+| n | Behaviour on this target |
+|---|---------------------------|
+| 11 | Play `NNN.WAV` once, reserved to sample channel 1. |
+| 12 | As 11, looped. |
+| 13 | Play `NNN.WAV` once, reserved to sample channel 2. |
+| 14 | As 13, looped. |
+| 15 | Stop sample channel 1 and release its reservation. |
+| 16 | Stop sample channel 2 and release its reservation. |
 
 ## Music
 

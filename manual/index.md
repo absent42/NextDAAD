@@ -8,10 +8,12 @@ Everything you need to build a DAAD game for the ZX Spectrum Next.
 
 ## Adding things to your game
 
-- [Graphics](graphics.md) - location pictures, title screens, palettes
-- [Audio](audio.md) - music, sound effects, sampled sound
+- [Graphics](graphics.md) - location pictures, title screens, palettes, GFX sub-commands
+- [Audio](audio.md) - music, sound effects, sampled sound, SFX sub-commands
 - [Video](video.md) - cutscenes
-- [Customising](customising.md) - fonts and mouse pointers
+- [Fonts](fonts.md) - custom fonts, numbered fonts, GFX 16
+- [Mouse](mouse.md) - the MOUSE condact, custom pointer artwork
+- [Colours](colours.md) - INK, PAPER and BORDER 0-255
 - [Multi-part games](multi-part-games.md) - splitting a game across several databases
 - [DAAD V3](daad-v3.md) - using a version 3 database
 - [Externs](externs.md) - author machine code via EXTERN, CALL and the frame interrupt
@@ -29,4 +31,3 @@ Everything you need to build a DAAD game for the ZX Spectrum Next.
 - [Video delivery](reference/video-delivery.md) - how clips are loaded and played
 - [XBN format](reference/xbn-format.md) - the extern binary header, validation and service table
 - [Limits](reference/limits.md) - sizes and ceilings
-- [Symbols](reference/symbols.md) - SFX, MOUSE and GFX sub-commands, DAAD symbol names

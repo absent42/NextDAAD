@@ -67,14 +67,14 @@ not there:</p>
   <code>GAME.SFB</code> - see <a href="audio.html">Audio</a></li>
 <li><code>NNN.VID</code> videos - see <a href="video.html">Video</a></li>
 <li><code>0.XMB</code> external message text</li>
-<li><code>FONT.CHR</code>, and numbered <code>FONT1.CHR</code> to <code>FONT9.CHR</code>, and
-  <code>POINTER.SPR</code>, and numbered <code>POINTER1.SPR</code> to <code>POINTER9.SPR</code> - see
-  <a href="customising.html">Customising</a></li>
+<li><code>FONT.CHR</code>, and numbered <code>FONT1.CHR</code> to <code>FONT9.CHR</code> - see <a href="fonts.html">Fonts</a></li>
+<li><code>POINTER.SPR</code>, and numbered <code>POINTER1.SPR</code> to <code>POINTER9.SPR</code> - see
+  <a href="mouse.html">Mouse</a></li>
 </ul>
 <p><strong>Root-only, never shadowed:</strong> the title screen (<code>DAAD.*</code>, shown once at
 cold boot), and the boot-autoplay default song (<code>GAME.AYS</code> /
 <code>GAME.AKY</code>). The music sub-commands' <code>n=255</code> sentinel - the "play
-<code>GAME.AYS</code>/<code>GAME.AKY</code>" case, see <a href="reference/symbols.html">Symbols</a> - is
+<code>GAME.AYS</code>/<code>GAME.AKY</code>" case, see <a href="audio.html#sfx-sub-commands">Audio</a> - is
 also always root-only and behaves identically from every part. <code>SFX 255
 6</code> or <code>SFX 255 7</code> plays the game's theme from anywhere. That is by
 design, not an override that failed.</p>

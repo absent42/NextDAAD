@@ -11,8 +11,8 @@ it is staged as it is.
 Your game plays one with `GFX n 13` (play once) or `GFX n 14` (loop
 until any key), where `n` is the video number - `GFX 3 13` plays
 `003.VID`. The classic DOS DAAD symbols `SFX n 9` (`PLAYFLI`) and
-`SFX n 10` (`PLAYFLIL`) do the same thing - see
-[Symbols](reference/symbols.md).
+`SFX n 10` (`PLAYFLIL`) do the same thing - see the
+[SFX sub-commands](audio.md#sfx-sub-commands) table in Audio.
 
 In a [multi-part game](multi-part-games.md), `PART<n>\NNN.VID` shadows
 the root copy for that part only.
