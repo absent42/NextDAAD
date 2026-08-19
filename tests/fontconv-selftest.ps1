@@ -405,6 +405,128 @@ ENDFONT
     $script:checks++
     if ($b3out -notmatch 'dropped') { throw "B3 : expected the dropped-glyph note, got: $b3out" }
 
+    # --- B4 a glyph whose STARTCHAR block omits BBX must not inherit
+    #     the previous glyph's box ---
+    # Two glyphs: 'A' has a normal BBX, 'B' has none at all. A parser
+    # that lets bbxW/bbxH/bbxYoff carry over between glyphs would parse
+    # 'B' silently, using 'A's box; the correct behaviour is to refuse
+    # the file, naming the glyph that is missing its declaration.
+    $bdfNoBbx = @'
+STARTFONT 2.1
+FONT -test-nobbx
+SIZE 8 75 75
+FONTBOUNDINGBOX 8 8 0 -1
+STARTPROPERTIES 2
+FONT_ASCENT 7
+FONT_DESCENT 1
+ENDPROPERTIES
+CHARS 2
+STARTCHAR A
+ENCODING 65
+SWIDTH 500 0
+DWIDTH 8 0
+BBX 8 7 0 0
+BITMAP
+FF
+81
+81
+81
+81
+81
+FF
+ENDCHAR
+STARTCHAR B
+ENCODING 66
+SWIDTH 500 0
+DWIDTH 8 0
+BITMAP
+FF
+81
+81
+81
+81
+81
+FF
+ENDCHAR
+ENDFONT
+'@
+    $inB4 = "$tmp\b4.bdf"
+    Set-Content -LiteralPath $inB4 -Value $bdfNoBbx -Encoding ascii
+    Assert-Throws { & $conv -In $inB4 -Out "$tmp\b4.CHR" } '66' `
+        'B4 a glyph missing its own BBX is refused, naming the code, not inherited from the previous glyph'
+
+    # --- B5 an implausible FONT_ASCENT is refused with a fontconv:
+    #     message, not left to a raw .NET conversion/allocation
+    #     exception ---
+    # 14 nines overflows Int32 outright - a plain [int] cast throws
+    # "Value was either too large or too small for an Int32" with no
+    # fontconv: prefix. This is the deterministic failure mode: it does
+    # not depend on how much memory a huge-but-valid Int32 allocation
+    # happens to succeed with on a given machine.
+    $bdfBigAscent = @'
+STARTFONT 2.1
+FONT -test-bigascent
+SIZE 8 75 75
+FONTBOUNDINGBOX 8 8 0 -1
+STARTPROPERTIES 2
+FONT_ASCENT 99999999999999
+FONT_DESCENT 1
+ENDPROPERTIES
+CHARS 1
+STARTCHAR A
+ENCODING 65
+SWIDTH 500 0
+DWIDTH 8 0
+BBX 8 7 0 0
+BITMAP
+FF
+81
+81
+81
+81
+81
+FF
+ENDCHAR
+ENDFONT
+'@
+    $inB5 = "$tmp\b5.bdf"
+    Set-Content -LiteralPath $inB5 -Value $bdfBigAscent -Encoding ascii
+    Assert-Throws { & $conv -In $inB5 -Out "$tmp\b5.CHR" } 'fontconv:' `
+        'B5 an implausible FONT_ASCENT is refused with a fontconv: message'
+
+    # --- B6 a malformed BITMAP row is refused rather than silently
+    #     read as a blank row ---
+    $bdfBadRow = @'
+STARTFONT 2.1
+FONT -test-badrow
+SIZE 8 75 75
+FONTBOUNDINGBOX 8 8 0 -1
+STARTPROPERTIES 2
+FONT_ASCENT 7
+FONT_DESCENT 1
+ENDPROPERTIES
+CHARS 1
+STARTCHAR A
+ENCODING 65
+SWIDTH 500 0
+DWIDTH 8 0
+BBX 8 7 0 0
+BITMAP
+FF
+ZZ
+81
+81
+81
+81
+FF
+ENDCHAR
+ENDFONT
+'@
+    $inB6 = "$tmp\b6.bdf"
+    Set-Content -LiteralPath $inB6 -Value $bdfBadRow -Encoding ascii
+    Assert-Throws { & $conv -In $inB6 -Out "$tmp\b6.CHR" } 'fontconv:.*malformed BITMAP row' `
+        'B6 a malformed BITMAP row is refused, not read as a blank row'
+
     "fontconv-selftest: $checks checks passed"
 }
 finally {

@@ -272,9 +272,29 @@ function Read-FontBdf([byte[]]$b, [string]$path) {
     $text  = [System.Text.Encoding]::ASCII.GetString($b)
     $lines = $text -split "`r?`n"
 
+    # A regex of (-?\d+) accepts any run of digits, including one longer
+    # than Int32 can hold - a plain [int] cast on that throws a raw
+    # conversion exception, not a fontconv: message. Parse through this
+    # instead of casting directly, anywhere a header or glyph value feeds
+    # the placement arithmetic below.
+    function ConvertTo-BdfInt([string]$field, [string]$s) {
+        $v = 0
+        if (-not [int]::TryParse($s, [ref]$v)) {
+            throw "fontconv: $path declares $field as '$s', which is not a usable number"
+        }
+        return $v
+    }
+
+    # A cell taller than this is never a real font for an 8-row target;
+    # it exists only to stop a corrupt FONT_ASCENT/FONTBOUNDINGBOX from
+    # driving the New-Object allocation below into a size that throws a
+    # raw .NET OutOfMemoryException/ArgumentException instead of a
+    # fontconv: message.
+    $maxCellRows = 4096
+
     $fbbW = 8; $fbbH = 8; $fbbYoff = 0; $ascent = $null
     $glyphs = @{}; $overWide = @()
-    $code = -1; $bbxH = 0; $bbxYoff = 0; $bbxW = 0
+    $code = -1; $bbxH = 0; $bbxYoff = 0; $bbxW = 0; $bbxSeen = $false
     $inBitmap = $false; $rows = @()
 
     foreach ($raw in $lines) {
@@ -283,32 +303,53 @@ function Read-FontBdf([byte[]]$b, [string]$path) {
         if ($inBitmap) {
             if ($line -eq 'ENDCHAR') {
                 $inBitmap = $false
-                if ($code -ge 0 -and $bbxW -gt 8) { $overWide += $code; $code = -1; $rows = @(); continue }
+                # BBX is per-glyph in the format itself - a STARTCHAR
+                # block that reaches ENDCHAR without one is malformed,
+                # not a glyph that shares the previous glyph's box.
+                if ($code -ge 0 -and -not $bbxSeen) {
+                    throw "fontconv: $path glyph $code reaches ENDCHAR with no BBX line - every BDF glyph must declare its own bounding box"
+                }
+                if ($code -ge 0 -and $bbxW -gt 8) {
+                    $overWide += $code
+                    $code = -1; $rows = @(); $bbxW = 0; $bbxH = 0; $bbxYoff = 0; $bbxSeen = $false
+                    continue
+                }
                 if ($code -ge 0 -and $rows.Count -gt 0) {
                     $top = $(if ($null -ne $ascent) { $ascent } else { $fbbH + $fbbYoff }) - ($bbxH + $bbxYoff)
+                    if ($top -gt $maxCellRows) {
+                        throw "fontconv: $path glyph $code places its first bitmap row at cell row $top - FONT_ASCENT or FONTBOUNDINGBOX declares an implausible cell size"
+                    }
                     if ($top -ge 0) {
                         $cell = New-Object byte[] ([Math]::Max(8, $top + $rows.Count))
                         for ($i = 0; $i -lt $rows.Count; $i++) { $cell[$top + $i] = $rows[$i] }
                         $glyphs[$code] = $cell
                     }
                 }
-                $code = -1; $rows = @()
+                $code = -1; $rows = @(); $bbxW = 0; $bbxH = 0; $bbxYoff = 0; $bbxSeen = $false
                 continue
             }
             # Each row is ceil(bbxW/8) bytes of hex, glyph left-aligned;
-            # only the first byte can hold pixels in an 8-wide cell.
+            # only the first byte can hold pixels in an 8-wide cell. A
+            # row with fewer than two hex characters after stripping
+            # non-hex characters is corrupt input, not blank pixel data -
+            # refuse rather than substitute a guess.
             $hex = ($line -replace '[^0-9A-Fa-f]', '')
             if ($hex.Length -ge 2) { $rows += [Convert]::ToByte($hex.Substring(0, 2), 16) }
-            else { $rows += [byte]0 }
+            else { throw "fontconv: $path glyph $code has a malformed BITMAP row: '$line'" }
             continue
         }
         if ($line -match '^FONTBOUNDINGBOX\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)') {
-            $fbbW = [int]$Matches[1]; $fbbH = [int]$Matches[2]; $fbbYoff = [int]$Matches[4]
+            $fbbW = ConvertTo-BdfInt 'FONTBOUNDINGBOX width' $Matches[1]
+            $fbbH = ConvertTo-BdfInt 'FONTBOUNDINGBOX height' $Matches[2]
+            $fbbYoff = ConvertTo-BdfInt 'FONTBOUNDINGBOX yoff' $Matches[4]
         }
-        elseif ($line -match '^FONT_ASCENT\s+(-?\d+)')  { $ascent = [int]$Matches[1] }
-        elseif ($line -match '^ENCODING\s+(-?\d+)')     { $code = [int]$Matches[1] }
+        elseif ($line -match '^FONT_ASCENT\s+(-?\d+)')  { $ascent = ConvertTo-BdfInt 'FONT_ASCENT' $Matches[1] }
+        elseif ($line -match '^ENCODING\s+(-?\d+)')     { $code = ConvertTo-BdfInt 'ENCODING' $Matches[1] }
         elseif ($line -match '^BBX\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)') {
-            $bbxW = [int]$Matches[1]; $bbxH = [int]$Matches[2]; $bbxYoff = [int]$Matches[4]
+            $bbxW = ConvertTo-BdfInt 'BBX width' $Matches[1]
+            $bbxH = ConvertTo-BdfInt 'BBX height' $Matches[2]
+            $bbxYoff = ConvertTo-BdfInt 'BBX yoff' $Matches[4]
+            $bbxSeen = $true
         }
         elseif ($line -eq 'BITMAP') { $inBitmap = $true; $rows = @() }
     }
