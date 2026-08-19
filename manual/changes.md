@@ -5,6 +5,45 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.7.3 - unreleased
 
+- **Text over an unmodified full-frame picture: put the text layer on
+  top and let transparent paper decide where the art shows.** Until now
+  the only way to mix text and a picture was to cut a hole in the
+  artwork where the text would land, which welded each picture to one
+  layout. `GFX 1 17` puts the text layer above the picture and `GFX 0
+  17` restores the default; with the text on top, `PAPER 227` makes a
+  cell's background transparent so the picture shows through it, and
+  `INK 227` goes the other way and makes the glyph shapes themselves
+  transparent - stencil letters with the artwork inside them. The same
+  full-frame picture now serves any layout, and the layout can change
+  at runtime. The order belongs to your game: boot starts at picture on
+  top, and nothing in the interpreter changes it afterwards - it
+  survives every picture operation, `RESTART`, `LOAD`, `RAMLOAD` and a
+  part switch, so set it once and a player restoring a save comes back
+  in the order you chose. `BORDER 227` stays an ordinary magenta - the
+  border is final output and has no transparency to trigger. The whole
+  recipe, including keeping text readable over busy art, is in
+  [Text over a picture](graphics.md#text-over-a-picture); the
+  sub-command is in the [GFX reference](graphics.md#gfx-sub-commands).
+- **`PAPER 11` and `INK 11` render bright magenta now, instead of
+  punching holes.** Classic colour 11's hardware value happens to be
+  the reserved transparency colour, so until now `PAPER 11` opened a
+  hole in the text and `INK 11` printed invisible glyphs - with nothing
+  on screen to explain why. Both are now nudged one green step, the
+  same escape converted artwork already gets, so they render as a
+  near-identical bright magenta. If an existing game of yours uses
+  colour 11, it looks very slightly different and works, where before
+  it was broken.
+- **The mouse pointer survives picture draws.** Showing a picture used
+  to switch the pointer's sprite off as a side effect, so a pointer
+  shown with `MOUSE n 1` vanished at the next picture operation until
+  something re-armed it. It stays on screen now, in either layer order.
+- The near-magenta substitute for artwork that collides with the
+  transparency colour moved from two blue steps down to one green step
+  up, which is much closer to the authored colour on screen - and the
+  same substitute everywhere, so a dodged colour now renders
+  identically in stills and video. If a picture of yours leaned on the
+  old substitute, it renders fractionally differently; nothing needs
+  re-converting.
 - **Fonts can be converted from PC, Linux and X11 formats now, not just
   ZX charsets.** `lib\fontconv.ps1` reads Windows `.fon` bitmap fonts,
   Linux console `.psf` and `.psfu`, X11 `.bdf`, and a raw glyph dump of

@@ -106,12 +106,12 @@ def main():
                 f"manual describes a reserved index but L2_TRANSP_INDEX "
                 f"is {index}")
 
-    # --- text-over-picture reservation (customising.md) ------------
+    # --- text-over-picture reservation (colours.md) ----------------
     # TXT_TRANSP_COLOUR does not carry its own hex literal - it resolves
     # through L2_TRANSP_COLOUR - so follow the chain rather than
     # hardcoding 227. The point of this guard is that the manual
     # follows the source, not a number typed into the checker.
-    custom_doc = MANUAL / "customising.md"
+    custom_doc = MANUAL / "colours.md"
     custom_text = custom_doc.read_text(encoding="utf-8")
     txt_transp_ref = parse("src/nextdaad.inc",
                            r"(?m)^\s*TXT_TRANSP_COLOUR\s+equ\s+(\w+)",
@@ -128,14 +128,14 @@ def main():
                 rf"\b{transp_decimal}\b.{{0,60}}transparent",
                 custom_text, re.IGNORECASE | re.DOTALL):
             failures.append(
-                f"customising.md never states {transp_decimal} "
+                f"colours.md never states {transp_decimal} "
                 f"(TXT_TRANSP_COLOUR, via L2_TRANSP_COLOUR = ${colour}) "
                 f"next to the word 'transparent'")
 
     if not re.search(r"previews\s+colour\s+`?n`?\s+at\s+index\s+`?n`?",
                      custom_text, re.IGNORECASE):
         failures.append(
-            "customising.md: the 'previews colour n at index n' "
+            "colours.md: the 'previews colour n at index n' "
             "sentence is gone - if it was reworded, update this checker "
             "to match")
     elif not re.search(
@@ -143,7 +143,7 @@ def main():
             r"BORDER\s+227",
             custom_text, re.IGNORECASE | re.DOTALL):
         failures.append(
-            "customising.md: the previews-colour-n-at-index-n promise "
+            "colours.md: the previews-colour-n-at-index-n promise "
             "has lost its 227 carve-out (PAPER 227 transparent paper, "
             "INK 227 transparent glyphs, BORDER 227 stays magenta, "
             "colour 11 shift) - a paint tool does not preview 227 "
