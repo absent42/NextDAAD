@@ -234,6 +234,13 @@ function Read-FontPsf2([byte[]]$b, [string]$path) {
     if ($headerSize -lt 32 -or $headerSize -gt $b.Length) {
         throw "fontconv: $path declares a header of $headerSize bytes, which does not fit the file"
     }
+    # The intermediate stores one byte per row, so a width above 8 cannot
+    # be represented, let alone measured by the gate later - refuse here,
+    # at the one place that knows the source declared it, rather than
+    # silently keeping only the first 8 columns.
+    if ($width -gt 8) {
+        throw "fontconv: $path declares a cell $width pixels wide - NextDAAD tiles are 8 pixels wide and this converter will not crop a font to fit"
+    }
     $rowBytes = [Math]::Ceiling($width / 8)
     if ($charSize -lt $rowBytes * $height) {
         throw "fontconv: $path declares glyphs of $charSize bytes, too small for its own $($width)x$($height) cell ($($rowBytes * $height) bytes needed)"

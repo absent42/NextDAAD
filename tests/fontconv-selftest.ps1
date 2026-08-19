@@ -265,6 +265,50 @@ try {
     Assert-Bytes $rp4[520..527]   $mk 'P4 glyph 65 taken from the top 8 rows'
     Assert-Bytes $rp4[1544..1551] $mk 'P4 glyph 193 mirrored'
 
+    # --- P5 a PSF2 declaring a cell wider than 8px is refused, not
+    #     cropped ---
+    # width 16 with charsize sized consistently (2 bytes/row * 8 rows),
+    # so the file is otherwise perfectly valid and the only thing that
+    # can make it fail is the width check itself.
+    $p5 = New-Object byte[] (32 + 256*16)
+    $p5[0]=0x72; $p5[1]=0xB5; $p5[2]=0x4A; $p5[3]=0x86
+    [System.Array]::Copy([BitConverter]::GetBytes([int]0),   0, $p5,  4, 4)  # version
+    [System.Array]::Copy([BitConverter]::GetBytes([int]32),  0, $p5,  8, 4)  # headersize
+    [System.Array]::Copy([BitConverter]::GetBytes([int]0),   0, $p5, 12, 4)  # flags
+    [System.Array]::Copy([BitConverter]::GetBytes([int]256), 0, $p5, 16, 4)  # length
+    [System.Array]::Copy([BitConverter]::GetBytes([int]16),  0, $p5, 20, 4)  # charsize
+    [System.Array]::Copy([BitConverter]::GetBytes([int]8),   0, $p5, 24, 4)  # height
+    [System.Array]::Copy([BitConverter]::GetBytes([int]16),  0, $p5, 28, 4)  # width
+    $inP5 = "$tmp\p5.psfu"
+    [System.IO.File]::WriteAllBytes($inP5, $p5)
+    Assert-Throws { & $conv -In $inP5 -Out "$tmp\p5.CHR" } 'declares a cell 16 pixels wide' `
+        'P5 a PSF2 wider than 8px is refused, not cropped'
+    # P2 above already proves width 8 still converts - not duplicated here.
+
+    # --- P6 PSF1 mode bit 0 selects the 512-glyph table ---
+    # P6a: a file sized for the 256-glyph table, with bit 0 set. If bit 0
+    # were ignored this would pass as an ordinary 256-glyph PSF1; honoured,
+    # it demands 512 glyphs and the file is short, so it must be refused,
+    # naming 512.
+    $p6short = New-Object byte[] (4 + 256*8)
+    $p6short[0] = 0x36; $p6short[1] = 0x04; $p6short[2] = 0x01; $p6short[3] = 0x08
+    $inP6s = "$tmp\p6short.psf"
+    [System.IO.File]::WriteAllBytes($inP6s, $p6short)
+    Assert-Throws { & $conv -In $inP6s -Out "$tmp\p6short.CHR" } '512' `
+        'P6a mode bit 0 requires 512 glyphs; a 256-glyph file is refused'
+
+    # P6b: the full-size twin, 512 glyphs, mode bit 0 set, same marker at
+    # glyph 65 used throughout this suite - must convert exactly as P1 did.
+    $p6 = New-Object byte[] (4 + 512*8)
+    $p6[0] = 0x36; $p6[1] = 0x04; $p6[2] = 0x01; $p6[3] = 0x08
+    [System.Array]::Copy($mk, 0, $p6, 4 + 65*8, 8)
+    $inP6 = "$tmp\p6.psf"
+    [System.IO.File]::WriteAllBytes($inP6, $p6)
+    & $conv -In $inP6 -Out "$tmp\p6.CHR" | Out-Null
+    $rp6 = [System.IO.File]::ReadAllBytes("$tmp\p6.CHR")
+    Assert-Bytes $rp6[520..527]   $mk 'P6b 512-glyph PSF1 glyph 65'
+    Assert-Bytes $rp6[1544..1551] $mk 'P6b 512-glyph PSF1 glyph 193 mirrored'
+
     "fontconv-selftest: $checks checks passed"
 }
 finally {

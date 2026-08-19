@@ -142,6 +142,14 @@ function Build-GlyphTable($font, [byte[]]$baseBytes, [string]$slots, [string]$sr
         $faces = ($font.Faces | ForEach-Object { "$($_.Width)x$($_.Height) '$($_.Name)'" }) -join '; '
         throw "fontconv: $src does not fit an 8x8 cell - ink reaches row $($ink.Bottom) (rows are numbered from 0, so that is $($ink.Bottom + 1) rows) on character code(s) $names. NextDAAD tiles are 8 rows and this converter will not drop or merge a row to make a source fit. Faces in this file: $faces"
     }
+    # This cannot currently fire: every Read-Font* parser stores exactly
+    # one byte per row in the intermediate, so $ink.Right can never exceed
+    # 7 no matter what a source declares. It is left in place as the
+    # documented intent - width enforcement itself lives elsewhere: a
+    # uniform-cell format such as PSF refuses a declared width above 8 in
+    # its own parser, before the font ever reaches this function, while a
+    # per-glyph format such as FON reports the offending codes through
+    # OverWide instead, handled a few lines below.
     if ($ink.Right -gt 7) {
         throw "fontconv: $src does not fit an 8x8 cell - ink reaches column $($ink.Right) (columns are numbered from 0). NextDAAD tiles are 8 pixels wide."
     }
