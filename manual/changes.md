@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.7.3 - unreleased
+## 0.7.3 - 19 August 2026
 
 - **Text over an unmodified full-frame picture: put the text layer on
   top and let transparent paper decide where the art shows.** Until now

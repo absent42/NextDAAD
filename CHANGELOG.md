@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.7.3 - unreleased
+## v0.7.3 - 19/08/2026
 
 - `authoring-kit\lib\fontconv.ps1` reads five more source formats:
   Windows `.fon` (a 16-bit NE wrapping one or more FNT faces, `-Face
@@ -26,7 +26,6 @@ All notable changes to NextDAAD are recorded here.
   from slot 156 instead when a source declares CP437 and that slot is
   non-blank - with a 768-byte classic ZX charset exempt from both
   substitutions and `-Slots Source` disabling them everywhere.
-
 - `GFX n 17` sets the layer order: `GFX 1 17` puts the text layer above
   the picture, `GFX 0 17` restores the default of picture on top. With
   the text layer on top, transparent paper decides where the picture
@@ -38,7 +37,6 @@ All notable changes to NextDAAD are recorded here.
   RAMLOAD and a part switch, and a restored save comes back in the order
   the game chose. The sub composes layer priority only and never enables
   or disables Layer 2.
-
 - `PAPER 227` and `INK 227` are reserved for transparency: 227 is the
   one logical colour that reaches the hardware transparent value, so
   `PAPER 227` makes a cell's background transparent and `INK 227` makes
@@ -46,7 +44,6 @@ All notable changes to NextDAAD are recorded here.
   window, alongside the layer order above. `BORDER 227` is unaffected
   and still renders magenta - the border colour is final output and is
   never compared against the transparency register.
-
 - `PAPER 11` and `INK 11` render as bright magenta instead of punching
   holes. Classic colour 11's RRRGGGBB happens to be the transparency
   value, so until now `PAPER 11` produced a hole and `INK 11` erased the
@@ -54,13 +51,11 @@ All notable changes to NextDAAD are recorded here.
   uses. A visible change for any existing game that uses colour 11, and
   the condact now produces a colour rather than a hole, which is what
   the interpreter's colour model always promised.
-
 - Enabling Layer 2 no longer clears the sprite bits of NR $15. The
   enable path used to write that register whole, so a pointer shown with
   `MOUSE n 1` vanished at the next picture operation until something
   re-armed it; it is a read-modify-write now and the pointer survives
   picture draws, flips and reveals.
-
 - The Layer 2 transparency collision dodge now substitutes $E7 (one
   green step up, hue and blue kept) instead of $E2 (two blue steps
   down) wherever a palette entry lands on the reserved transparency
