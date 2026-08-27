@@ -30,7 +30,7 @@
 ; file offsets rather than $8400-based addresses, so the ceiling is 64K
 ; instead of 31744 bytes, and a classic ZX database is refused at boot.
 ; The "0.x" line runs until public testing earns v1.0 (see RELEASE.md).
-    DEFINE VERSION_STR "NEXTDAAD V0.7.3"
+    DEFINE VERSION_STR "NEXTDAAD V0.7.4"
 
 ; --- Next registers ---
 NR_MACHINE_ID   equ $00

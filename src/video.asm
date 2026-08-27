@@ -5989,10 +5989,13 @@ vid_run_orch_body:
     ld a, VID_PAGE
     jp ovl_map_page
 .fail:
+ IFDEF DEBUG
     push bc
     call vid_open_fail_print     ; per-verdict message (plain call;
-    pop bc                       ; Release-visible, owner ruling
-                                 ; 2026-08-02 - see the print block)
+    pop bc                       ; DEBUG only - Release fails silently,
+                                 ; owner ruling 2026-08-27, see the
+                                 ; print block)
+ ENDIF
     ; nothing armed, nothing displayed, ring freed: only the music
     ; freeze needs reversing (the PSG park recovers on the next tick)
     ld a, (vidSvAudEnable)
@@ -6841,10 +6844,13 @@ vid_open_video_body:
     ld b, 0
     jr nc, .haveresult
     ld b, 1
+ IFDEF DEBUG
     push bc
-    call vid_play_missing_print  ; "VID FILE?" (plain call, 3c;
-    pop bc                       ; Release-visible, owner ruling
-                                 ; 2026-08-02 - see the print block)
+    call vid_play_missing_print  ; "VID FILE?" (plain call, 3c; DEBUG
+    pop bc                       ; only - Release fails silently, owner
+                                 ; ruling 2026-08-27, see the print
+                                 ; block)
+ ENDIF
 .haveresult:
     ld hl, vid_play.openret
     push hl
@@ -6853,14 +6859,12 @@ vid_open_video_body:
 
 vidExtVid: db ".VID", 0
 
-; Open-failure diagnostic prints - BOTH BUILDS (owner ruling
-; 2026-08-02): the kit ships only the Release interpreter, and a video
-; refused in silence (missing file, bad format, no banks, too big, too
-; fragmented) gave the author no clue - the game just carried on with
-; no cutscene. Only THIS failure class becomes Release-visible; every
-; other dbg_* print stays stubbed out of Release (debug.asm), so these
-; two routines print via the resident tm_putc_at instead of the dbg
-; console (one route in both builds - no double print in DEBUG).
+; Open-failure diagnostic prints - DEBUG ONLY (owner ruling 2026-08-27,
+; reversing 2026-08-02's Release-visible ruling: a player must never see
+; error codes mid-game - an SFX/GFX-triggered stream refused on a
+; platform without SD streaming fails silently in Release; authors
+; diagnose with the DEBUG build). Printed via the resident tm_putc_at
+; instead of the dbg console (one route, no double print in DEBUG).
 ; Safe from here because both call sites fire strictly pre-arm: the
 ; video never started, no L2/mode switch happened (vid_run_l2setup_body
 ; runs only on success), the game's tilemap at TM_MAP ($6000, MMU3) is
@@ -6872,6 +6876,7 @@ vidExtVid: db ".VID", 0
 ; and errors.asm's Release fatal path already rely on. The game
 ; continues after the print (non-fatal, unchanged) and its own window
 ; scrolling may later overwrite the text - a diagnostic, not a HUD.
+ IFDEF DEBUG
 vid_play_missing_print:
     ld hl, msgVidMissing
     jr vid_fail_puts
@@ -6914,6 +6919,7 @@ msgVidNoBank2:  db "VID NOBANK2", 0
 msgVidBadFmt:   db "VID FMT?", 0
 msgVidTooBig:   db "VID SIZE?", 0
 msgVidFrag:     db "VID FRAG?", 0
+ ENDIF
 
 ; ---------------------------------------------------------------------
 ; vid_stream_open_body - the real open (carried; IX = filename in,
