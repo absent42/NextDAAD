@@ -2,6 +2,12 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.7.4 - unreleased
+
+- video.asm: gate vid_open_fail_print/vid_play_missing_print call sites 
+  and print block behind IFDEF DEBUG - Release streams fail silently, no 
+  error codes shown to the player mid-game
+
 ## v0.7.3 - 19/08/2026
 
 - `authoring-kit\lib\fontconv.ps1` reads five more source formats:
