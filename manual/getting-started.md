@@ -14,10 +14,12 @@ The tools below do not - they are third-party, and some may not be
 redistributed. Download each and extract it into the kit's `tools\`
 folder at the path shown.
 
+The DAAD compiler, `ndrc`, needs no download: it ships built in as
+`lib\ndrc.exe`. DAAD Ready and PHP are not required to build a game
+with this kit.
+
 | Tool | Provides | Extract into | Needed |
 |---|---|---|---|
-| DAAD Ready | `DRF.exe`, the compiler front end, and PHP | `tools\DAAD-READY\` | always |
-| NextDAAD DRC | `DRB.PHP` carrying the `NEXTDAAD` target - [absent42/DRC](https://github.com/absent42/DRC/tree/nextdaad), branch `nextdaad` | `tools\DRC\` | always, for now |
 | Gfx2Next | PNG to Layer 2 picture conversion | `tools\gfx2next\` | only with an `IMAGES\` folder |
 | Arkos Tracker 3 | `SongToAky.exe`, `SongToSoundEffects.exe`, `SongToYm.exe` | `tools\ArkosTracker3\tools\` | only with `.aks` audio |
 | CSpect | emulator, to play the result without hardware | `tools\CSpect\` | to run the build |
@@ -33,10 +35,10 @@ at that folder instead.
 **Already have some of these?** Arkos Tracker, CSpect and ffmpeg are
 general-purpose tools you may well have installed already, and there is
 no need for a second copy. `CONFIG.BAT` has a directory setting per
-tool - `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR`, `DAADDIR`, `DRCDIR`,
-`GFXDIR` - and each one you set is used instead of the folder under
-`TOOLSDIR`. Anything you leave blank still comes from `TOOLSDIR`, so
-mixing the two is fine: keep the small stuff in `tools\` and point the
+tool - `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR`, `GFXDIR` - and each one you
+set is used instead of the folder under `TOOLSDIR`. Anything you leave
+blank still comes from `TOOLSDIR`, so mixing the two is fine: keep the
+small stuff in `tools\` and point the
 big installs wherever they already are. Absolute paths, including ones
 with spaces, are fine:
 
@@ -62,12 +64,14 @@ language. For that:
   the fuller treatment of the language, worth reading once you know your
   way around DAAD Ready.
 
-[DAAD Ready](https://www.ngpaws.com/daadready/) itself you need
-installed anyway: it supplies `DRF.exe`, the compiler front end, and the
-PHP that runs the back end. The back end itself comes from the NextDAAD
-DRC fork above, because the `NEXTDAAD` target is not in DAAD Ready's own
-DRC yet. When a release ships one that has it, point `DRCDIR` at
-`%TOOLSDIR%\DAAD-READY\TOOLS\DRC` and delete `tools\DRC`.
+You do not need [DAAD Ready](https://www.ngpaws.com/daadready/) itself
+installed to build - the kit compiles your DSF with its own bundled
+`ndrc`, byte-identical to the [DRC](https://github.com/Utodev/DRC)
+reference pipeline DAAD Ready uses. Its manual stays the language
+reference above only because DAAD Ready does not ship one on its own.
+If a `CONFIG.local.BAT` from an older kit still sets `DAADDIR` or
+`DRCDIR`, it is safe to delete those lines - neither setting is read
+any more.
 
 ## Where your files go
 
@@ -101,8 +105,9 @@ are all optional and the build skips whatever is absent.
 | `COMPRESS` | `1` = ZX0-compress pictures (smaller files); `0` = raw. |
 | `RUN` | `1` = launch CSpect after a successful build; `0` = build only. |
 | `TOOLSDIR` | Folder holding the tools above. Default `tools`. |
-| `DAADDIR`, `DRCDIR`, `GFXDIR`, `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR` | Where each individual tool lives. Blank means "the folder under `TOOLSDIR`", so leave them alone for the simple layout and set only the ones you keep elsewhere. See [What you need](#what-you-need). |
+| `GFXDIR`, `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR` | Where each individual tool lives. Blank means "the folder under `TOOLSDIR`", so leave them alone for the simple layout and set only the ones you keep elsewhere. See [What you need](#what-you-need). |
 | `VIDENCDIR`, `VIDTUNEDIR` | Same, for the two tools the kit ships. You should not need to set these. |
+| `NDRCVER` | The `lib\ndrc.exe` version this kit was tested against. `BUILD.BAT` refuses to build with any other - see [When the build fails](#when-the-build-fails). |
 | `NEXFILE` | The interpreter to ship. Default `nextdaad.nex`. |
 | `VIDASPECT`, `VIDFPS`, `VIDOPTS`, `VIDOPTS_NNN` | Cutscene encoding - see [Video](video.md). |
 
@@ -166,12 +171,11 @@ Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.
 |---|---|
 | `set GAME in CONFIG.BAT` | The kit folder holds no `.DSF`, or more than one. Set `GAME` to the base name of the one you want. |
 | `required tool missing` | The named path does not exist. Install that tool there, or fix `TOOLSDIR` / `NEXFILE`. |
+| `wrong DAAD compiler version` | The banner `lib\ndrc.exe` prints does not match `NDRCVER` in `CONFIG.BAT`. This should not happen with the kit as shipped; if you have replaced `ndrc.exe` yourself, update `NDRCVER` to match. |
 | `CSpect is running - close it before building` | CSpect holds the `RELEASE\` files open. Close it and build again. |
-| `DRF failed compiling` / `DRB failed building the DDB` | The compiler rejected your source. Its own output above the message names the line. |
+| `ndrc failed compiling` | The compiler rejected your source. Its own output above the message names the line. |
 | `GAME.DDB is N bytes, over the 65535 limit` | The database is too large. 64K is the format's own ceiling - see [Limits](reference/limits.md), which suggests where to cut. |
 | `uses #classic, which NextDAAD does not support` | Remove the `#classic` line from your source. It tells the compiler to imitate the original pre-DRC DAAD compiler, for the benefit of interpreters that cannot read a NextDAAD database in any case; here it only makes the database bigger. |
-| `no DRB.PHP at ...` | The NextDAAD DRC fork is not installed. Put it in `tools\DRC\`, or point `DRCDIR` at it. |
-| `the DRC at ... has no NEXTDAAD target` | That copy of DRC is too old, or is DAAD Ready's own. Update the fork, or point `DRCDIR` at one that has the target. |
 | `gfx2next not found` | Install Gfx2Next, or fix `TOOLSDIR`. |
 | `expected a 320 or 256 wide PNG` | Resize the named image to exactly 320 or 256 pixels wide. |
 | `must be a paletted 8-bit PNG` | Export the image again as an indexed-colour PNG. Truecolour is rejected. |

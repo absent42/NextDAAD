@@ -68,12 +68,13 @@ runtime error 5. The compiler will not emit them into a version 2
 database in the first place, so ordinary authoring never reaches that
 error - it matters only if you are producing DDBs by some other route.</p>
 <h2 id="compiling-version-2-instead">Compiling version 2 instead</h2>
-<p>Remove <code>-v3</code> from the DRF line in <code>lib\ddb.bat</code>. If your game has
-<code>PART&lt;n&gt;\</code> folders, remove it from the matching line in <code>BUILD.BAT</code> as
-well.</p>
-<p><strong>Both sites or neither.</strong> Every part of a
-<a href="multi-part-games.html">multi-part game</a> must be the same dialect, because
-a part switch reloads a header while the flags carry across.</p>
+<p>Remove <code>-v3</code> from the ndrc line in <code>lib\ddb.bat</code>. Both the main game and
+every <code>PART&lt;n&gt;\</code> compile through that one line, so this covers every
+part too.</p>
+<p><strong>Every part the same dialect.</strong> A
+<a href="multi-part-games.html">multi-part game</a> must compile all its parts to the
+same version, because a part switch reloads a header while the flags
+carry across.</p>
 </main>
 </body>
 </html>

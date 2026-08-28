@@ -71,14 +71,15 @@ A **manual** covering the specifics of creating a game for NextDAAD is included 
 [`authoring-kit\docs\index.html`](authoring-kit/docs/index.html) - or
 you can read the same pages on GitHub from [`manual/index.md`](manual/index.md)
 
-The kit needs a few third-party tools it cannot redistribute:
+The DAAD compiler, ndrc, ships built in - byte-identical to the
+[DRC](https://github.com/Utodev/DRC) reference pipeline (GPL-3.0, credit
+to Uto), it needs no DAAD Ready or PHP install. The kit still needs a
+few third-party tools it cannot redistribute:
 
-- [DAAD Ready](https://www.ngpaws.com/daadready/) - the DRC compiler and PHP
 - [Gfx2Next](https://www.rustypixels.uk/gfx2next/) - PNG to Layer 2 pictures
 - [Arkos Tracker 3](https://www.julien-nevo.com/arkostracker/index.php/download/) - music and sound effects
 - [CSpect](https://mdf200.itch.io/cspect) - emulator, to play the result
 - [ffmpeg](https://ffmpeg.org/) - only for encoding cutscene
-- [NextDAAD DRC](https://github.com/absent42/DRC/tree/nextdaad) - DRC fork to allow for large databases on ZX Spectrum Next target
 
 But included with the kit is VidTune, a UI app for fine-tuning video encodes and 
 experimenting with different settings to get the best results for your videos.

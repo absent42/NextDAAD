@@ -3,6 +3,26 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.7.4 - unreleased
+
+- **The kit now builds your database with its own compiler.** `ndrc`
+  v0.1 ships in `lib\ndrc.exe` and compiles the `NEXTDAAD` target
+  byte-identical to the DRC reference pipeline it replaces - a single
+  exe, no PHP, no separate front and back end. DAAD Ready, PHP and the
+  NextDAAD DRC fork are no longer required to build a game with this
+  kit. `ndrc` is [DRC](https://github.com/Utodev/DRC) under GPL-3.0,
+  credit to Uto. See [Getting started](getting-started.md).
+- **`NEXTDAAD` compiles at its real 80x32 geometry.** A game that reads
+  `COLS`/`ROWS` (or otherwise sizes a window off them) now gets the
+  correct 80x32 figures; the compiler previously handed every target,
+  NEXTDAAD included, the classic 42x25 defaults.
+- **`#ifdef "bit8"` blocks now compile on `NEXTDAAD`.** They were
+  silently skipped before. A game imported from an 8-bit target with
+  `#ifdef "bit8"` sections now pulls that code in - check what is
+  inside before rebuilding.
+- **`#ifdef "next"` still never matches `NEXTDAAD`.** This is
+  unchanged: `next` names a different, unrelated target, not this one.
+
 ## 0.7.3 - 19 August 2026
 
 - **Text over an unmodified full-frame picture: put the text layer on
@@ -173,6 +193,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
     compiler front end and PHP. This is temporary: when a DAAD Ready
     release carries the new target, point `DRCDIR` in `CONFIG.BAT` at it
     and delete `tools\DRC`. See [Getting started](getting-started.md).
+    Superseded in 0.7.4: the kit bundles its own compiler, `ndrc`, and
+    neither DAAD Ready, PHP nor the DRC fork are needed to build any
+    more.
   - A database built this way runs on NextDAAD only. It will not run on
     the ZX Spectrum interpreter DAAD Ready builds for the Next, and
     NextDAAD no longer loads databases built for those targets - it
@@ -189,7 +212,9 @@ game behaves, how it builds, or what the kit gives you, it is here.
   Leave them blank and nothing changes, so you can set only the ones you
   keep elsewhere. Arkos Tracker and ffmpeg accept either the install root
   or the subfolder their programs sit in. See
-  [Getting started](getting-started.md).
+  [Getting started](getting-started.md). `DAADDIR` and `DRCDIR` are gone
+  as of 0.7.4, along with the tools they pointed at; delete them from a
+  `CONFIG.local.BAT` that still sets either.
 - **Timing change:** `PAUSE`, `BEEP` and `XPLAY` durations come out about
   17% shorter than before. This is a change in DRC itself, not in
   NextDAAD - the compiler lowered the note-length base for this machine -

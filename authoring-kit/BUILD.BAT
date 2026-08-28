@@ -31,43 +31,35 @@ REM it. RUN.BAT, CLEAN.BAT and VIDTUNE.BAT call the same script - the
 REM derivation used to be copied into each of them and had already
 REM drifted apart.
 call "%~dp0lib\tools.bat"
-set "DR=%DAADDIR%"
-REM DRB.PHP sits in one of two shapes. The fork is a source checkout and
-REM keeps it in src\; a DRC directory - DAAD Ready's own TOOLS\DRC, which
-REM DRCDIR is meant to point straight at once that carries the NEXTDAAD
-REM target - keeps it at the top level. Both are probed, and BOTH are
-REM named if neither exists: reporting only whichever was probed last
-REM named a path that no supported layout uses.
-set "DRBFORK=%DRCDIR%\src\drb.php"
-set "DRBPLAIN=%DRCDIR%\drb.php"
-set "DRB=%DRBFORK%"
-if not exist "%DRB%" set "DRB=%DRBPLAIN%"
 set "DRTARGET=nextdaad"
-if not exist "%DRB%" (
-    echo ERROR: no DRB.PHP found. Looked for:
-    echo   %DRBFORK%
-    echo   %DRBPLAIN%
-    echo Install the NextDAAD DRC fork into %DRCDIR% - see tools\README.txt.
-    pause
-    exit /b 1
-)
-findstr /C:"NEXTDAAD" "%DRB%" >nul 2>&1
-if errorlevel 1 (
-    echo ERROR: the DRC at %DRCDIR% has no NEXTDAAD target.
-    echo NextDAAD databases cannot be built with it. Update the fork,
-    echo or point DRCDIR in CONFIG.BAT at one that has the target.
-    pause
-    exit /b 1
-)
-REM GFX, S2A, S2E and S2Y come from lib\tools.bat above.
+REM NDRC, GFX, S2A, S2E and S2Y come from lib\tools.bat above.
 
 REM ---- preflight: always-required tools ----
-for %%T in ("%DRF%" "%PHP%" "%DRB%" "%NEXFILE%") do (
+for %%T in ("%NDRC%" "%NEXFILE%") do (
     if not exist "%%~T" (
         echo ERROR: required tool missing: %%~T
         pause
         exit /b 1
     )
+)
+
+REM ---- refuse a compiler this kit was not tested against ----
+REM Run ndrc with no arguments and read the FIRST line, which is its
+REM banner. That is the usage path, so it also prints an error and exits
+REM NON-ZERO - the errorlevel here means "no arguments", never "wrong
+REM version", so it is deliberately ignored and only the banner text is
+REM judged. NDRCVER comes from CONFIG.BAT; a CONFIG.local.BAT that
+REM overrides NDRC with a compiler of its own should set NDRCVER to match.
+set "NDRCBANNER="
+for /f "usebackq delims=" %%L in (`"%NDRC%"`) do if not defined NDRCBANNER set "NDRCBANNER=%%L"
+echo(!NDRCBANNER! | findstr /C:"NDRC %NDRCVER% " >nul
+if errorlevel 1 (
+    echo ERROR: wrong DAAD compiler version.
+    echo   expected: NDRC %NDRCVER%
+    echo   found:    !NDRCBANNER!
+    echo   at:       %NDRC%
+    pause
+    exit /b 1
 )
 
 REM ---- refuse if CSpect holds RELEASE files open ----
@@ -249,15 +241,13 @@ REM      way as GAME above) plus any ALREADY-CONVERTED art/audio for
 REM      that part - this loop stages those files as-is, it does not
 REM      run gfx.bat/audio.bat again. A missing PART<n>\ is normal (a
 REM      single-part game) and is skipped silently, not an error.
-REM      lib\ddb.bat cannot be reused unchanged here - it always writes
-REM      the fixed names RELEASE\GAME.DDB / RELEASE\0.XMB, so this loop
-REM      mirrors its DRF/DRB/pre-clean/size-check shape inline (SP10's
-REM      XMB staging commit 4a68620 is the shape it follows) and writes
-REM      RELEASE\GAME<n>.DDB / RELEASE\PART<n>\0.XMB instead.
-for %%I in ("%DR%") do set "DR=%%~fI"
-for %%I in ("%DRF%") do set "DRF=%%~fI"
-for %%I in ("%PHP%") do set "PHP=%%~fI"
-for %%I in ("%DRB%") do set "DRB=%%~fI"
+REM      lib\ddb.bat compiles each part exactly as it compiles the main
+REM      game: it takes the DDB destination and the 0.XMB folder as its
+REM      two parameters and reads the source stem from GAME, so this loop
+REM      only has to point it at RELEASE\GAME<n>.DDB / RELEASE\PART<n>\.
+REM      It creates RELEASE\PART<n>\ itself, which the asset staging at
+REM      the end of each iteration relies on.
+set "MAINGAME=%GAME%"
 for %%N in (2 3 4 5 6 7 8 9) do (
     if exist "PART%%N\*.DSF" (
         set "PGAME="
@@ -272,67 +262,14 @@ for %%N in (2 3 4 5 6 7 8 9) do (
             goto :part_fail
         )
         echo Building part %%N ^(!PGAME!^) ...
-        copy /Y "PART%%N\!PGAME!.DSF" "%DR%\__ndbpart.DSF" >nul || (
-            echo ERROR: could not stage PART%%N\!PGAME!.DSF into %DR%
-            pause
-            goto :part_fail
-        )
-        pushd "%DR%"
-        REM -v3 as in lib\ddb.bat - every part must compile to the same
-        REM dialect as part 1, since a part switch reloads a header and
-        REM the flags carry across. See docs\daad-v3.html "Moving an
-        REM existing version 2 game to V3" for the three migration hazards.
-        "%DRF%" %DRTARGET% __ndbpart.DSF -v3
-        if errorlevel 1 (
-            popd
-            del "%DR%\__ndbpart.*" 2>nul
-            echo ERROR: DRF failed compiling PART%%N\!PGAME!.DSF - check the source
-            pause
-            goto :part_fail
-        )
-        REM Refuse #classic, as lib\ddb.bat does for a single-part game -
-        REM see its comment for why it cannot be caught at boot instead.
-        findstr /C:"\"classic_mode\":1" "%DR%\__ndbpart.json" >nul 2>&1
-        if not errorlevel 1 (
-            popd
-            del "%DR%\__ndbpart.*" 2>nul
-            echo ERROR: PART%%N\!PGAME!.DSF uses #classic, which NextDAAD does not
-            echo        support. It targets the original pre-DRC DAAD compiler and
-            echo        only makes the database bigger here. Remove the #classic line.
-            pause
-            goto :part_fail
-        )
-        REM pre-clean stale 0.XMB - see the same-shaped comment in
-        REM lib\ddb.bat for why (%DR% is shared across every compile).
-        del "%DR%\0.XMB" 2>nul
-        "%PHP%" "%DRB%" %DRTARGET% EN __ndbpart.json __ndbpart.DDB
-        if errorlevel 1 (
-            popd
-            del "%DR%\__ndbpart.*" 2>nul
-            echo ERROR: DRB failed building part %%N's DDB
-            pause
-            goto :part_fail
-        )
-        popd
-        for %%A in ("%DR%\__ndbpart.DDB") do set "DDBSZ=%%~zA"
-        if !DDBSZ! GTR 65535 (
-            del "%DR%\__ndbpart.*" 2>nul
-            echo ERROR: GAME%%N.DDB is !DDBSZ! bytes, over the 65535 limit
-            pause
-            goto :part_fail
-        )
-        move /Y "%DR%\__ndbpart.DDB" "RELEASE\GAME%%N.DDB" >nul
-        del "%DR%\__ndbpart.DSF" "%DR%\__ndbpart.json" "%DR%\__ndbpart.___" 2>nul
-        echo   DDB !DDBSZ! bytes -^> RELEASE\GAME%%N.DDB
-        if not exist "RELEASE\PART%%N" md "RELEASE\PART%%N"
-        if exist "%DR%\0.XMB" (
-            copy /Y "%DR%\0.XMB" "RELEASE\PART%%N\0.XMB" >nul || (
-                echo ERROR: could not stage 0.XMB into RELEASE\PART%%N
-                pause
-                goto :part_fail
-            )
-            echo   XMB -^> RELEASE\PART%%N\0.XMB
-        )
+        REM -v3 rides along inside lib\ddb.bat - every part must compile
+        REM to the same dialect as part 1, since a part switch reloads a
+        REM header and the flags carry across. See docs\daad-v3.html
+        REM "Moving an existing version 2 game to V3" for the three
+        REM migration hazards.
+        set "GAME=PART%%N\!PGAME!"
+        call "%~dp0lib\ddb.bat" "RELEASE\GAME%%N.DDB" "RELEASE\PART%%N"
+        if errorlevel 1 ( pause & goto :part_fail )
         set "PCOUNT=0"
         for %%F in ("PART%%N\*") do (
             if /I not "%%~xF"==".DSF" (
@@ -351,13 +288,14 @@ for %%N in (2 3 4 5 6 7 8 9) do (
 REM      Every failure inside the loop above ends its block with
 REM      "goto :part_fail" rather than "exit /b 1" - see the exit-code
 REM      note above the classic-charset loop for why an "exit /b 1"
-REM      buried in a nested block returns 0 to the caller. Each site
-REM      still does its own popd/del cleanup before the goto, so
-REM      pushd/popd stays balanced and %DR% is left clean on every path.
+REM      buried in a nested block returns 0 to the caller. lib\ddb.bat
+REM      cleans up after itself on every path it fails on, so there is
+REM      nothing left for these sites to undo.
 goto :parts_done
 :part_fail
 exit /b 1
 :parts_done
+set "GAME=%MAINGAME%"
 
 echo BUILD OK: RELEASE\ is ready to copy to an SD card
 if "%RUN%"=="1" call "%~dp0RUN.BAT"

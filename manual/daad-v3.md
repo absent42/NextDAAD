@@ -77,10 +77,11 @@ error - it matters only if you are producing DDBs by some other route.
 
 ## Compiling version 2 instead
 
-Remove `-v3` from the DRF line in `lib\ddb.bat`. If your game has
-`PART<n>\` folders, remove it from the matching line in `BUILD.BAT` as
-well.
+Remove `-v3` from the ndrc line in `lib\ddb.bat`. Both the main game and
+every `PART<n>\` compile through that one line, so this covers every
+part too.
 
-**Both sites or neither.** Every part of a
-[multi-part game](multi-part-games.md) must be the same dialect, because
-a part switch reloads a header while the flags carry across.
+**Every part the same dialect.** A
+[multi-part game](multi-part-games.md) must compile all its parts to the
+same version, because a part switch reloads a header while the flags
+carry across.

@@ -11,7 +11,7 @@ SET COMPRESS=0
 REM 1 = launch CSpect on the result after a successful build; 0 = build only.
 SET RUN=1
 
-REM Location of the toolchain (DRC, gfx2next, Arkos tools, CSpect). Install the
+REM Location of the toolchain (gfx2next, Arkos tools, CSpect). Install the
 REM tools into this folder - see tools\README.txt.
 SET TOOLSDIR=tools
 
@@ -40,17 +40,6 @@ REM out here would freeze the old folder in while everything else moved.
 REM They are resolved in lib\tools.bat once both files have been read.
 REM ---------------------------------------------------------------------
 
-REM DAAD Ready - supplies DRF.exe (compiler front end) and PHP.
-SET DAADDIR=
-
-REM Which DRC compiles your game. NextDAAD databases need the NEXTDAAD
-REM target, which DAAD Ready's own DRC does not have yet - so the build
-REM uses the NextDAAD DRC fork, installed into TOOLSDIR (see
-REM tools\README.txt). Once a DAAD Ready release ships a DRC carrying the
-REM target, set this to %TOOLSDIR%\DAAD-READY\TOOLS\DRC and delete the
-REM fork - nothing else needs touching. Blank means %TOOLSDIR%\DRC.
-SET DRCDIR=
-
 REM Gfx2Next - PNG to Layer 2 picture conversion.
 SET GFXDIR=
 
@@ -66,6 +55,13 @@ SET FFMPEGDIR=
 REM videnc and vidtune - shipped with the kit; you should not need these.
 SET VIDENCDIR=
 SET VIDTUNEDIR=
+
+REM The lib\ndrc.exe version this kit was tested against - BUILD.BAT refuses
+REM to build with any other.
+SET NDRCVER=0.1
+
+REM Blank means lib\ndrc.exe - set to use a different ndrc build, and update NDRCVER above to match.
+REM SET NDRC=
 
 REM The pre-built interpreter to ship in RELEASE\ as nextdaad.nex.
 SET NEXFILE=nextdaad.nex
