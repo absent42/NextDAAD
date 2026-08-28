@@ -15,6 +15,8 @@ for NextDAAD means just editing your DSF source and double-clicking one batch fi
 
 A demo game ready to run on your ZX Spectrum Next can be downloaded [here](demo).
 
+<img src="demo/nextdaad.png" alt="NextDAAD" width="934">
+
 ## Requirements
 
 - A ZX Spectrum Next (or an emulator) with an SD card. Video
