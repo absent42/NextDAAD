@@ -5,9 +5,9 @@ REM
 REM Called by BUILD.BAT, RUN.BAT, CLEAN.BAT and VIDTUNE.BAT immediately
 REM after CONFIG.BAT and CONFIG.local.BAT have BOTH been loaded - the
 REM defaults below are derived from TOOLSDIR, so resolving any earlier
-REM would freeze the pre-override value in (which is exactly the bug
-REM DRCDIR had: it was expanded in CONFIG.BAT, so a CONFIG.local.BAT that
-REM relocated TOOLSDIR moved every tool except that one).
+REM would freeze the pre-override value in (which is exactly the bug a
+REM tool directory expanded in CONFIG.BAT once had: a CONFIG.local.BAT
+REM that relocated TOOLSDIR moved every tool except that one).
 REM
 REM NO setlocal HERE, deliberately: this script exists to set variables in
 REM its caller's scope. Adding one would discard everything it does.
@@ -27,8 +27,6 @@ REM ---------------------------------------------------------------------
 if not defined TOOLSDIR set "TOOLSDIR=tools"
 
 REM ---- per-tool directories: blank means "under TOOLSDIR" ----
-if not defined DAADDIR    set "DAADDIR=%TOOLSDIR%\DAAD-READY"
-if not defined DRCDIR     set "DRCDIR=%TOOLSDIR%\DRC"
 if not defined GFXDIR     set "GFXDIR=%TOOLSDIR%\gfx2next"
 if not defined ARKOSDIR   set "ARKOSDIR=%TOOLSDIR%\ArkosTracker3"
 if not defined CSPECTDIR  set "CSPECTDIR=%TOOLSDIR%\CSpect"
@@ -37,8 +35,11 @@ if not defined VIDENCDIR  set "VIDENCDIR=%TOOLSDIR%\videnc"
 if not defined VIDTUNEDIR set "VIDTUNEDIR=%TOOLSDIR%\vidtune"
 
 REM ---- executables ----
-set "DRF=%DAADDIR%\TOOLS\DRC\DRF.exe"
-set "PHP=%DAADDIR%\PHP\php.exe"
+REM ndrc is the DAAD compiler, shipped inside the kit's own lib\ rather
+REM than installed under TOOLSDIR: nothing to fetch, and the version the
+REM kit was tested against is the version that runs. Overridable from
+REM CONFIG.local.BAT for compiler work - hence "if not defined".
+if not defined NDRC set "NDRC=%~dp0ndrc.exe"
 set "GFX=%GFXDIR%\gfx2next.exe"
 set "CSPECT=%CSPECTDIR%\CSpect.exe"
 set "VIDENC=%VIDENCDIR%\videnc.exe"
