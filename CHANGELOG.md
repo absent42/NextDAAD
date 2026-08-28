@@ -2,16 +2,19 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.7.4 - unreleased
+## v0.7.4 - 28/08/2026
 
-- authoring-kit: bundles ndrc v0.1 (`lib\ndrc.exe`) as the DAAD compiler,
+- authoring-kit: Streamlined toolchain, bundles [NDRC](https://github.com/absent42/DAAD-DSF) v0.1 (`lib\ndrc.exe`) as the DAAD compiler,
   replacing the DRF + PHP + DRC-fork build chain with one native exe,
   byte-identical to the DRC reference pipeline (github.com/Utodev/DRC,
   GPL-3.0). DAAD Ready and PHP are no longer required to build
 - NEXTDAAD target: compiles at its real 80x32 geometry - COLS/ROWS
-  previously defaulted to 42x25 for this target; `#ifdef "bit8"` blocks
+  previously defaulted to 42x25 for this target;
+- `#ifdef "bit8"` blocks
   now compile (previously silently skipped, so an imported 8-bit source
-  can change behaviour); `#ifdef "next"` still never matches NEXTDAAD
+  can change behaviour);
+- `#ifdef "NEXTDAAD"` can be used in DSF source to compile code that conditionally targets NextDAAD 
+  game builds.
 - video.asm: gate vid_open_fail_print/vid_play_missing_print call sites 
   and print block behind IFDEF DEBUG - Release streams fail silently, no 
   error codes shown to the player mid-game

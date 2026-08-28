@@ -1,4 +1,4 @@
-NextDAAD game demo v0.7.3
+NextDAAD game demo v0.7.4
 
 This zip contains a game demo of the NextDAAD interperter.
 

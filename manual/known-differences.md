@@ -1,7 +1,5 @@
 # Known differences
 
-**This page is meant to disappear.**
-
 Everything on it is a place where NextDAAD does not yet do what a DAAD
 author has the right to expect, and every entry is written to be
 deleted: when the difference goes, so does its entry. Nothing here is a

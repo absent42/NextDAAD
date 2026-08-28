@@ -14,7 +14,7 @@ The tools below do not - they are third-party, and some may not be
 redistributed. Download each and extract it into the kit's `tools\`
 folder at the path shown.
 
-The DAAD compiler, `ndrc`, needs no download: it ships built in as
+The DAAD compiler, [`NDRC`](https://github.com/absent42/DAAD-DSF), needs no download: it ships built in as
 `lib\ndrc.exe`. DAAD Ready and PHP are not required to build a game
 with this kit.
 
@@ -64,12 +64,10 @@ language. For that:
   the fuller treatment of the language, worth reading once you know your
   way around DAAD Ready.
 
-You do not need [DAAD Ready](https://www.ngpaws.com/daadready/) itself
+You do not need DAAD Ready itself
 installed to build - the kit compiles your DSF with its own bundled
-`ndrc`, byte-identical to the [DRC](https://github.com/Utodev/DRC)
-reference pipeline DAAD Ready uses. Its manual stays the language
-reference above only because DAAD Ready does not ship one on its own.
-If a `CONFIG.local.BAT` from an older kit still sets `DAADDIR` or
+`NDRC` (Next DAAD Reborn Compiler), byte-identical to the [DRC](https://github.com/Utodev/DRC)
+reference pipeline DAAD Ready uses. If a `CONFIG.local.BAT` from an older kit still sets `DAADDIR` or
 `DRCDIR`, it is safe to delete those lines - neither setting is read
 any more.
 

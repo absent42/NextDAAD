@@ -71,7 +71,7 @@ A **manual** covering the specifics of creating a game for NextDAAD is included 
 [`authoring-kit\docs\index.html`](authoring-kit/docs/index.html) - or
 you can read the same pages on GitHub from [`manual/index.md`](manual/index.md)
 
-The DAAD compiler, ndrc, ships built in - byte-identical to the
+The DAAD compiler, [NDRC](https://github.com/absent42/NDRC) (Next DAAD Reborn Compiler), ships built in - byte-identical output to the
 [DRC](https://github.com/Utodev/DRC) reference pipeline (GPL-3.0, credit
 to Uto), it needs no DAAD Ready or PHP install. The kit still needs a
 few third-party tools it cannot redistribute:
@@ -81,7 +81,7 @@ few third-party tools it cannot redistribute:
 - [CSpect](https://mdf200.itch.io/cspect) - emulator, to play the result
 - [ffmpeg](https://ffmpeg.org/) - only for encoding cutscene
 
-But included with the kit is VidTune, a UI app for fine-tuning video encodes and 
+Also included with the kit is VidTune, a UI app for fine-tuning video encodes and 
 experimenting with different settings to get the best results for your videos.
 
 **A packaged kit, holding only what an author needs, is on the
@@ -97,9 +97,7 @@ using the pre-built version included in the authoring kit, the toolchain lives i
 [sjasmplus](https://github.com/z00m128/sjasmplus),
 [CSpect](https://mdf200.itch.io/cspect),
 [DeZog](https://github.com/maziac/DeZog),
-[Gfx2Next](https://www.rustypixels.uk/gfx2next/),
-DRC via [DAAD Ready](https://www.ngpaws.com/daadready/), 
-[NextDAAD DRC fork](https://github.com/absent42/DRC/tree/nextdaad).
+[Gfx2Next](https://www.rustypixels.uk/gfx2next/).
 
 ```
 powershell -File build.ps1            # debug build

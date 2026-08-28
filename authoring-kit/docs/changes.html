@@ -11,14 +11,15 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
-<h2 id="074-unreleased">0.7.4 - unreleased</h2>
+<h2 id="074-28-august-2026">0.7.4 - 28 August 2026</h2>
 <ul>
-<li><strong>The kit now builds your database with its own compiler.</strong> <code>ndrc</code>
-  v0.1 ships in <code>lib\ndrc.exe</code> and compiles the <code>NEXTDAAD</code> target
+<li><strong>Streamlined toolkit with less dependencies.</strong>
+  The kit now builds your database with its own compiler <a href="https://github.com/absent42/NDRC"><code>NDRC</code></a> (Next DAAD Reborn Compiler). 
+  NDRC v0.1 ships in <code>lib\ndrc.exe</code> and compiles the <code>NEXTDAAD</code> target
   byte-identical to the DRC reference pipeline it replaces - a single
   exe, no PHP, no separate front and back end. DAAD Ready, PHP and the
   NextDAAD DRC fork are no longer required to build a game with this
-  kit. <code>ndrc</code> is <a href="https://github.com/Utodev/DRC">DRC</a> under GPL-3.0,
+  kit. <code>NDRC</code> is a port of <a href="https://github.com/Utodev/DRC">DRC</a> under GPL-3.0,
   credit to Uto. See <a href="getting-started.html">Getting started</a>.</li>
 <li><strong><code>NEXTDAAD</code> compiles at its real 80x32 geometry.</strong> A game that reads
   <code>COLS</code>/<code>ROWS</code> (or otherwise sizes a window off them) now gets the
@@ -28,8 +29,8 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   silently skipped before. A game imported from an 8-bit target with
   <code>#ifdef "bit8"</code> sections now pulls that code in - check what is
   inside before rebuilding.</li>
-<li><strong><code>#ifdef "next"</code> still never matches <code>NEXTDAAD</code>.</strong> This is
-  unchanged: <code>next</code> names a different, unrelated target, not this one.</li>
+<li><strong><code>#ifdef "NEXTDAAD"</code> can be used in DSF source to compile code that conditionally targets NextDAAD 
+  game builds.</strong></li>
 </ul>
 <h2 id="073-19-august-2026">0.7.3 - 19 August 2026</h2>
 <ul>

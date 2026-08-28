@@ -3,14 +3,15 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.7.4 - unreleased
+## 0.7.4 - 28 August 2026
 
-- **The kit now builds your database with its own compiler.** `ndrc`
-  v0.1 ships in `lib\ndrc.exe` and compiles the `NEXTDAAD` target
+- **Streamlined toolkit with less dependencies.**
+  The kit now builds your database with its own compiler [`NDRC`](https://github.com/absent42/NDRC) (Next DAAD Reborn Compiler). 
+  NDRC v0.1 ships in `lib\ndrc.exe` and compiles the `NEXTDAAD` target
   byte-identical to the DRC reference pipeline it replaces - a single
   exe, no PHP, no separate front and back end. DAAD Ready, PHP and the
   NextDAAD DRC fork are no longer required to build a game with this
-  kit. `ndrc` is [DRC](https://github.com/Utodev/DRC) under GPL-3.0,
+  kit. `NDRC` is a port of [DRC](https://github.com/Utodev/DRC) under GPL-3.0,
   credit to Uto. See [Getting started](getting-started.md).
 - **`NEXTDAAD` compiles at its real 80x32 geometry.** A game that reads
   `COLS`/`ROWS` (or otherwise sizes a window off them) now gets the
@@ -20,8 +21,8 @@ game behaves, how it builds, or what the kit gives you, it is here.
   silently skipped before. A game imported from an 8-bit target with
   `#ifdef "bit8"` sections now pulls that code in - check what is
   inside before rebuilding.
-- **`#ifdef "next"` still never matches `NEXTDAAD`.** This is
-  unchanged: `next` names a different, unrelated target, not this one.
+- **`#ifdef "NEXTDAAD"` can be used in DSF source to compile code that conditionally targets NextDAAD 
+  game builds.**
 
 ## 0.7.3 - 19 August 2026
 
