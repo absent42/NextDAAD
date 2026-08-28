@@ -13,7 +13,7 @@ This is optional - with no `POINTER.SPR` the default arrow plays.
 
 [DAAD Ready's manual](https://www.ngpaws.com/daadready/doc_en.html)
 lists, in its Appendix D, symbolic names for the sub-command
-argument of `MOUSE` (`SHOWMS`, `HIDEMS`, and so on). The bundled DRF
+argument of `MOUSE` (`SHOWMS`, `HIDEMS`, and so on). The bundled ndrc
 compiler predefines every one of them, and a DSF written with the
 symbolic form compiles byte-identical to the same DSF written with
 the raw number - use whichever reads better.

@@ -31,7 +31,7 @@ should move its largest or least-frequently-seen text (long room
 descriptions, help text, endgame text) to XMESSAGE first.</p>
 <h2 id="xmessage-xmes">XMESSAGE / XMES</h2>
 <p>XMESSAGE (adds a trailing newline) and XMES (does not) print text
-stored externally in <code>0.XMB</code>, a file DRC writes during compilation
+stored externally in <code>0.XMB</code>, a file ndrc writes during compilation
 whenever your DSF uses either condact (staged into <code>RELEASE\</code>
 automatically - see below). Two limits to know:</p>
 <ul>
@@ -53,13 +53,13 @@ automatically - see below). Two limits to know:</p>
   volume, not just individual message length.</li>
 </ul>
 <p><code>0.XMB</code> is staged into <code>RELEASE\</code> automatically, right after <code>GAME.DDB</code>,
-whenever your DSF uses XMESSAGE or XMES. DRC writes the file during the
-DDB compile step into the DAAD-READY tool folder
-(<code>%TOOLSDIR%\DAAD-READY\0.XMB</code>); the kit copies it from there to
-<code>RELEASE\0.XMB</code>, where it must sit alongside <code>GAME.DDB</code> on the SD card -
-without it, XMESSAGE/XMES would silently no-op at runtime rather than
-failing loudly. A DSF with no XMESSAGE/XMES calls produces no <code>0.XMB</code>,
-and the build stages none.</p>
+whenever your DSF uses XMESSAGE or XMES. ndrc writes <code>0.XMB</code> into the
+current working directory during the DDB compile step; <code>lib\ddb.bat</code>
+then moves it to <code>RELEASE\0.XMB</code> (or <code>RELEASE\PART&lt;n&gt;\0.XMB</code> for a
+part - see <a href="../multi-part-games.html">Multi-part games</a>), where it must
+sit alongside <code>GAME.DDB</code> on the SD card - without it, XMESSAGE/XMES
+would silently no-op at runtime rather than failing loudly. A DSF with
+no XMESSAGE/XMES calls produces no <code>0.XMB</code>, and the build stages none.</p>
 <h2 id="gamexbn">GAME.XBN</h2>
 <p>An <a href="../externs.html">extern</a> binary is capped at <strong>16384 bytes (16K)</strong>,
 header included - a size larger than that on disk is rejected at boot

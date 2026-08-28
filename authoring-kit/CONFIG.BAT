@@ -60,6 +60,9 @@ REM The lib\ndrc.exe version this kit was tested against - BUILD.BAT refuses
 REM to build with any other.
 SET NDRCVER=0.1
 
+REM Blank means lib\ndrc.exe - set to use a different ndrc build, and update NDRCVER above to match.
+REM SET NDRC=
+
 REM The pre-built interpreter to ship in RELEASE\ as nextdaad.nex.
 SET NEXFILE=nextdaad.nex
 

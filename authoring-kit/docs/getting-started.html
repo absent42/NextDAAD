@@ -19,6 +19,9 @@ the result. There is nothing to assemble by hand.</p>
 The tools below do not - they are third-party, and some may not be
 redistributed. Download each and extract it into the kit's <code>tools\</code>
 folder at the path shown.</p>
+<p>The DAAD compiler, <code>ndrc</code>, needs no download: it ships built in as
+<code>lib\ndrc.exe</code>. DAAD Ready and PHP are not required to build a game
+with this kit.</p>
 <table>
 <thead>
 <tr>
@@ -29,18 +32,6 @@ folder at the path shown.</p>
 </tr>
 </thead>
 <tbody>
-<tr>
-<td>DAAD Ready</td>
-<td><code>DRF.exe</code>, the compiler front end, and PHP</td>
-<td><code>tools\DAAD-READY\</code></td>
-<td>always</td>
-</tr>
-<tr>
-<td>NextDAAD DRC</td>
-<td><code>DRB.PHP</code> carrying the <code>NEXTDAAD</code> target - <a href="https://github.com/absent42/DRC/tree/nextdaad">absent42/DRC</a>, branch <code>nextdaad</code></td>
-<td><code>tools\DRC\</code></td>
-<td>always, for now</td>
-</tr>
 <tr>
 <td>Gfx2Next</td>
 <td>PNG to Layer 2 picture conversion</td>
@@ -75,10 +66,10 @@ at that folder instead.</p>
 <p><strong>Already have some of these?</strong> Arkos Tracker, CSpect and ffmpeg are
 general-purpose tools you may well have installed already, and there is
 no need for a second copy. <code>CONFIG.BAT</code> has a directory setting per
-tool - <code>ARKOSDIR</code>, <code>CSPECTDIR</code>, <code>FFMPEGDIR</code>, <code>DAADDIR</code>, <code>DRCDIR</code>,
-<code>GFXDIR</code> - and each one you set is used instead of the folder under
-<code>TOOLSDIR</code>. Anything you leave blank still comes from <code>TOOLSDIR</code>, so
-mixing the two is fine: keep the small stuff in <code>tools\</code> and point the
+tool - <code>ARKOSDIR</code>, <code>CSPECTDIR</code>, <code>FFMPEGDIR</code>, <code>GFXDIR</code> - and each one you
+set is used instead of the folder under <code>TOOLSDIR</code>. Anything you leave
+blank still comes from <code>TOOLSDIR</code>, so mixing the two is fine: keep the
+small stuff in <code>tools\</code> and point the
 big installs wherever they already are. Absolute paths, including ones
 with spaces, are fine:</p>
 <pre><code>SET CSPECTDIR=C:\Emulators\CSpect
@@ -101,12 +92,14 @@ language. For that:</p>
   the fuller treatment of the language, worth reading once you know your
   way around DAAD Ready.</li>
 </ul>
-<p><a href="https://www.ngpaws.com/daadready/">DAAD Ready</a> itself you need
-installed anyway: it supplies <code>DRF.exe</code>, the compiler front end, and the
-PHP that runs the back end. The back end itself comes from the NextDAAD
-DRC fork above, because the <code>NEXTDAAD</code> target is not in DAAD Ready's own
-DRC yet. When a release ships one that has it, point <code>DRCDIR</code> at
-<code>%TOOLSDIR%\DAAD-READY\TOOLS\DRC</code> and delete <code>tools\DRC</code>.</p>
+<p>You do not need <a href="https://www.ngpaws.com/daadready/">DAAD Ready</a> itself
+installed to build - the kit compiles your DSF with its own bundled
+<code>ndrc</code>, byte-identical to the <a href="https://github.com/Utodev/DRC">DRC</a>
+reference pipeline DAAD Ready uses. Its manual stays the language
+reference above only because DAAD Ready does not ship one on its own.
+If a <code>CONFIG.local.BAT</code> from an older kit still sets <code>DAADDIR</code> or
+<code>DRCDIR</code>, it is safe to delete those lines - neither setting is read
+any more.</p>
 <h2 id="where-your-files-go">Where your files go</h2>
 <p>Everything the build reads lives in the kit folder:</p>
 <ul>
@@ -154,12 +147,16 @@ are all optional and the build skips whatever is absent.</p>
 <td>Folder holding the tools above. Default <code>tools</code>.</td>
 </tr>
 <tr>
-<td><code>DAADDIR</code>, <code>DRCDIR</code>, <code>GFXDIR</code>, <code>ARKOSDIR</code>, <code>CSPECTDIR</code>, <code>FFMPEGDIR</code></td>
+<td><code>GFXDIR</code>, <code>ARKOSDIR</code>, <code>CSPECTDIR</code>, <code>FFMPEGDIR</code></td>
 <td>Where each individual tool lives. Blank means "the folder under <code>TOOLSDIR</code>", so leave them alone for the simple layout and set only the ones you keep elsewhere. See <a href="#what-you-need">What you need</a>.</td>
 </tr>
 <tr>
 <td><code>VIDENCDIR</code>, <code>VIDTUNEDIR</code></td>
 <td>Same, for the two tools the kit ships. You should not need to set these.</td>
+</tr>
+<tr>
+<td><code>NDRCVER</code></td>
+<td>The <code>lib\ndrc.exe</code> version this kit was tested against. <code>BUILD.BAT</code> refuses to build with any other - see <a href="#when-the-build-fails">When the build fails</a>.</td>
 </tr>
 <tr>
 <td><code>NEXFILE</code></td>
@@ -237,11 +234,15 @@ Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.</p>
 <td>The named path does not exist. Install that tool there, or fix <code>TOOLSDIR</code> / <code>NEXFILE</code>.</td>
 </tr>
 <tr>
+<td><code>wrong DAAD compiler version</code></td>
+<td>The banner <code>lib\ndrc.exe</code> prints does not match <code>NDRCVER</code> in <code>CONFIG.BAT</code>. This should not happen with the kit as shipped; if you have replaced <code>ndrc.exe</code> yourself, update <code>NDRCVER</code> to match.</td>
+</tr>
+<tr>
 <td><code>CSpect is running - close it before building</code></td>
 <td>CSpect holds the <code>RELEASE\</code> files open. Close it and build again.</td>
 </tr>
 <tr>
-<td><code>DRF failed compiling</code> / <code>DRB failed building the DDB</code></td>
+<td><code>ndrc failed compiling</code></td>
 <td>The compiler rejected your source. Its own output above the message names the line.</td>
 </tr>
 <tr>
@@ -251,14 +252,6 @@ Try the verbs MUSIC, MUTE, TUNE, BLEEP, ZAP, SAMPLE, MOVIE and REEL.</p>
 <tr>
 <td><code>uses #classic, which NextDAAD does not support</code></td>
 <td>Remove the <code>#classic</code> line from your source. It tells the compiler to imitate the original pre-DRC DAAD compiler, for the benefit of interpreters that cannot read a NextDAAD database in any case; here it only makes the database bigger.</td>
-</tr>
-<tr>
-<td><code>no DRB.PHP at ...</code></td>
-<td>The NextDAAD DRC fork is not installed. Put it in <code>tools\DRC\</code>, or point <code>DRCDIR</code> at it.</td>
-</tr>
-<tr>
-<td><code>the DRC at ... has no NEXTDAAD target</code></td>
-<td>That copy of DRC is too old, or is DAAD Ready's own. Update the fork, or point <code>DRCDIR</code> at one that has the target.</td>
 </tr>
 <tr>
 <td><code>gfx2next not found</code></td>

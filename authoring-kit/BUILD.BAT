@@ -52,7 +52,7 @@ REM judged. NDRCVER comes from CONFIG.BAT; a CONFIG.local.BAT that
 REM overrides NDRC with a compiler of its own should set NDRCVER to match.
 set "NDRCBANNER="
 for /f "usebackq delims=" %%L in (`"%NDRC%"`) do if not defined NDRCBANNER set "NDRCBANNER=%%L"
-echo(!NDRCBANNER! | findstr /C:"NDRC %NDRCVER%" >nul
+echo(!NDRCBANNER! | findstr /C:"NDRC %NDRCVER% " >nul
 if errorlevel 1 (
     echo ERROR: wrong DAAD compiler version.
     echo   expected: NDRC %NDRCVER%

@@ -28,7 +28,7 @@ descriptions, help text, endgame text) to XMESSAGE first.
 ## XMESSAGE / XMES
 
 XMESSAGE (adds a trailing newline) and XMES (does not) print text
-stored externally in `0.XMB`, a file DRC writes during compilation
+stored externally in `0.XMB`, a file ndrc writes during compilation
 whenever your DSF uses either condact (staged into `RELEASE\`
 automatically - see below). Two limits to know:
 
@@ -50,13 +50,13 @@ automatically - see below). Two limits to know:
   volume, not just individual message length.
 
 `0.XMB` is staged into `RELEASE\` automatically, right after `GAME.DDB`,
-whenever your DSF uses XMESSAGE or XMES. DRC writes the file during the
-DDB compile step into the DAAD-READY tool folder
-(`%TOOLSDIR%\DAAD-READY\0.XMB`); the kit copies it from there to
-`RELEASE\0.XMB`, where it must sit alongside `GAME.DDB` on the SD card -
-without it, XMESSAGE/XMES would silently no-op at runtime rather than
-failing loudly. A DSF with no XMESSAGE/XMES calls produces no `0.XMB`,
-and the build stages none.
+whenever your DSF uses XMESSAGE or XMES. ndrc writes `0.XMB` into the
+current working directory during the DDB compile step; `lib\ddb.bat`
+then moves it to `RELEASE\0.XMB` (or `RELEASE\PART<n>\0.XMB` for a
+part - see [Multi-part games](../multi-part-games.md)), where it must
+sit alongside `GAME.DDB` on the SD card - without it, XMESSAGE/XMES
+would silently no-op at runtime rather than failing loudly. A DSF with
+no XMESSAGE/XMES calls produces no `0.XMB`, and the build stages none.
 
 ## GAME.XBN
 

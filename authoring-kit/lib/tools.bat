@@ -2,7 +2,7 @@
 REM ---------------------------------------------------------------------
 REM Resolve every third-party tool to a concrete path.
 REM
-REM Called by BUILD.BAT, RUN.BAT, CLEAN.BAT and VIDTUNE.BAT immediately
+REM Called by BUILD.BAT, RUN.BAT and VIDTUNE.BAT immediately
 REM after CONFIG.BAT and CONFIG.local.BAT have BOTH been loaded - the
 REM defaults below are derived from TOOLSDIR, so resolving any earlier
 REM would freeze the pre-override value in (which is exactly the bug a

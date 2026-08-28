@@ -11,6 +11,26 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
+<h2 id="074-unreleased">0.7.4 - unreleased</h2>
+<ul>
+<li><strong>The kit now builds your database with its own compiler.</strong> <code>ndrc</code>
+  v0.1 ships in <code>lib\ndrc.exe</code> and compiles the <code>NEXTDAAD</code> target
+  byte-identical to the DRC reference pipeline it replaces - a single
+  exe, no PHP, no separate front and back end. DAAD Ready, PHP and the
+  NextDAAD DRC fork are no longer required to build a game with this
+  kit. <code>ndrc</code> is <a href="https://github.com/Utodev/DRC">DRC</a> under GPL-3.0,
+  credit to Uto. See <a href="getting-started.html">Getting started</a>.</li>
+<li><strong><code>NEXTDAAD</code> compiles at its real 80x32 geometry.</strong> A game that reads
+  <code>COLS</code>/<code>ROWS</code> (or otherwise sizes a window off them) now gets the
+  correct 80x32 figures; the compiler previously handed every target,
+  NEXTDAAD included, the classic 42x25 defaults.</li>
+<li><strong><code>#ifdef "bit8"</code> blocks now compile on <code>NEXTDAAD</code>.</strong> They were
+  silently skipped before. A game imported from an 8-bit target with
+  <code>#ifdef "bit8"</code> sections now pulls that code in - check what is
+  inside before rebuilding.</li>
+<li><strong><code>#ifdef "next"</code> still never matches <code>NEXTDAAD</code>.</strong> This is
+  unchanged: <code>next</code> names a different, unrelated target, not this one.</li>
+</ul>
 <h2 id="073-19-august-2026">0.7.3 - 19 August 2026</h2>
 <ul>
 <li><strong>Text over an unmodified full-frame picture: put the text layer on
@@ -180,7 +200,10 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
     <code>tools\DRC\</code>. DAAD Ready is still required and still supplies the
     compiler front end and PHP. This is temporary: when a DAAD Ready
     release carries the new target, point <code>DRCDIR</code> in <code>CONFIG.BAT</code> at it
-    and delete <code>tools\DRC</code>. See <a href="getting-started.html">Getting started</a>.</li>
+    and delete <code>tools\DRC</code>. See <a href="getting-started.html">Getting started</a>.
+    Superseded in 0.7.4: the kit bundles its own compiler, <code>ndrc</code>, and
+    neither DAAD Ready, PHP nor the DRC fork are needed to build any
+    more.</li>
 <li>A database built this way runs on NextDAAD only. It will not run on
     the ZX Spectrum interpreter DAAD Ready builds for the Next, and
     NextDAAD no longer loads databases built for those targets - it
@@ -197,7 +220,9 @@ game behaves, how it builds, or what the kit gives you, it is here.</p>
   Leave them blank and nothing changes, so you can set only the ones you
   keep elsewhere. Arkos Tracker and ffmpeg accept either the install root
   or the subfolder their programs sit in. See
-  <a href="getting-started.html">Getting started</a>.</li>
+  <a href="getting-started.html">Getting started</a>. <code>DAADDIR</code> and <code>DRCDIR</code> are gone
+  as of 0.7.4, along with the tools they pointed at; delete them from a
+  <code>CONFIG.local.BAT</code> that still sets either.</li>
 <li><strong>Timing change:</strong> <code>PAUSE</code>, <code>BEEP</code> and <code>XPLAY</code> durations come out about
   17% shorter than before. This is a change in DRC itself, not in
   NextDAAD - the compiler lowered the note-length base for this machine -

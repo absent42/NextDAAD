@@ -12,7 +12,7 @@ target.
 
 [DAAD Ready's manual](https://www.ngpaws.com/daadready/doc_en.html)
 lists, in its Appendix D, symbolic names for the sub-command
-argument of `SFX` (`PLAYSFX`, `PLAYDRO`, and so on). The bundled DRF
+argument of `SFX` (`PLAYSFX`, `PLAYDRO`, and so on). The bundled ndrc
 compiler predefines every one of them, and a DSF written with the
 symbolic form compiles byte-identical to the same DSF written with
 the raw number - use whichever reads better.
