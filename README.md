@@ -118,6 +118,11 @@ or a full corpus game. Its switches are documented in the script itself.
 `authoring-kit\docs\` from `manual\` with `scripts\build_manual.py`. Edit
 the Markdown, never the generated HTML.
 
+## Other DAAD projects
+
+- [NDRC](https://github.com/absent42/NDRC) - Next DAAD Reborn Compiler
+- [DAAD DSF](https://github.com/absent42/DAAD-DSF) - VS Code extension with DAAD map preview, compiler-parity diagnostics and syntax highlighting
+
 ## Acknowledgments
 
 - [Tim Gilberts](http://www.gilsoft.co.uk/) for writing the original [DAAD](https://github.com/daad-adventure-writer/daad)
