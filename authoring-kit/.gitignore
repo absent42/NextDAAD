@@ -1,19 +1,12 @@
 RELEASE/
 CONFIG.local.BAT
-# externs/*/GAME.XBN (examples/ before the 2026-08-16 rename) was ignored while the kit stayed artifact-free;
-# owner decision 2026-08-14: prebuilt example binaries SHIP (same
-# rationale as videnc.exe below - the kit works without the toolchain).
-# tests/build-tests.ps1's -XbnTicker/-XbnFade staging asserts the
-# committed binaries match a fresh assembly of their source, so they
-# cannot silently go stale.
 
 # tools\ skeleton: keep the empty folders (.gitkeep) and README, but ignore any
-# tool binaries a maintainer extracts into it locally. videnc.exe is the one
-# SHIPPED tool binary (first-party, built from lib\videnc.py - owner decision
-# 2026-07-23): tracked so the kit works without Python out of the box.
+# tool binaries a maintainer extracts into it locally.
 tools/**/*
 !tools/**/
 !tools/**/.gitkeep
 !tools/README.txt
 !tools/videnc/videnc.exe
 !tools/vidtune/vidtune.exe
+!tools/gfx2next/*

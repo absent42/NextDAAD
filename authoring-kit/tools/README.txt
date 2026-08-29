@@ -8,14 +8,19 @@ full manual (start with "Getting started").
 
 Tool           Provides                                Download                                                   Extract into
 -------------  --------------------------------------  ---------------------------------------------------------  --------------------------
-Gfx2Next       PNG to Layer 2 conversion               https://www.rustypixels.uk/gfx2next/                       tools\gfx2next\
 Arkos Tracker  SongToAky/SongToSoundEffects/SongToYm   https://www.julien-nevo.com/arkostracker/index.php/download/  tools\ArkosTracker3\tools\
 CSpect         Emulator for testing                    https://mdf200.itch.io/cspect                              tools\CSpect\
 ffmpeg         Video decode for cutscene encoding      https://www.gyan.dev/ffmpeg/builds/ (release essentials)   tools\ffmpeg\
-videnc.exe     Standalone NXV cutscene encoder         SHIPPED with this kit (first-party, built from ..\lib\videnc.py)  tools\videnc\
-vidtune.exe    Per-clip video tuning GUI               SHIPPED with this kit (first-party, built from ..\lib\vidtune\)  tools\vidtune\
 
-The DAAD compiler, ndrc, needs no download: it ships built-in as
+These tools are included with the kit and do not need to be downloaded
+
+Tool           Provides                              
+-------------  --------------------------------------
+Gfx2Next       PNG to Layer 2 conversion
+videnc.exe     Standalone NXV video cutscene encoder
+vidtune.exe    Per-clip video tuning GUI
+
+The DAAD compiler, NDRC, needs no download: it ships built-in as
 ..\lib\ndrc.exe. DAAD Ready and PHP are not required to build a game
 for this kit.
 
@@ -69,11 +74,6 @@ it with -h, and see ..\docs\reference\video-format.html). Or run VIDTUNE.BAT (ki
 root) for the same per-clip control from a GUI: prefers vidtune.exe
 (shipped, no Python required), falls back to ..\lib\vidtune (needs
 Python 3 + PySide6, numpy, Pillow) if the exe is missing.
-
-Older .VID files are NOT playable by this interpreter any more: the
-NXV v2 rewrite (SP15) replaced NXV v1, which had replaced the six
-legacy MakeVid formats (SP14a). Re-encode from the original video
-source instead.
 
 The NEXTDAAD target
 -------------------
