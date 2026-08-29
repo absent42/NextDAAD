@@ -3,6 +3,14 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.7.5 - unreleased
+
+-  **NDRC v0.2** `-auto-tokens` option enabled: per-game text compression. Instead of
+  DRC's fixed per-language token table, the compiler selects up to 128
+  tokens from the compiling game's own text and encodes the text with
+  an optimal parse. Compressed text measures 8-14% smaller than the
+  builtin table across a corpus of real games.
+
 ## 0.7.4 - 28 August 2026
 
 - **Streamlined toolkit with less dependencies.**

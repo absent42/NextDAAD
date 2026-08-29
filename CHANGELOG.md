@@ -2,6 +2,16 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.7.5 - unreleased
+
+- NDRC v0.2: `-auto-tokens` text compression enabled: per-game text compression. Instead of
+  DRC's fixed per-language token table, the compiler selects up to 128
+  tokens from the compiling game's own text and encodes the text with
+  an optimal parse. Compressed text measures 8-14% smaller than the
+  builtin table across a corpus of real games. Output DDBs remain
+  format-identical and decode on every DAAD interpreter, on every
+  target; without the flag, output stays byte-identical to DRC.
+
 ## v0.7.4 - 28/08/2026
 
 - authoring-kit: Streamlined toolchain, bundles [NDRC](https://github.com/absent42/DAAD-DSF) v0.1 (`lib\ndrc.exe`) as the DAAD compiler,
