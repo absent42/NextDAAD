@@ -58,7 +58,7 @@ SET VIDTUNEDIR=
 
 REM The lib\ndrc.exe version this kit was tested against - BUILD.BAT refuses
 REM to build with any other.
-SET NDRCVER=0.1
+SET NDRCVER=0.2
 
 REM Blank means lib\ndrc.exe - set to use a different ndrc build, and update NDRCVER above to match.
 REM SET NDRC=

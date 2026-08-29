@@ -40,7 +40,12 @@ REM than swallowed - that includes its refusal of #classic, which the
 REM NEXTDAAD target rejects outright (a classic-mode database targets the
 REM original pre-DRC DAAD interpreters, and those cannot read a NextDAAD
 REM database at all - it only makes the file bigger here).
-"%NDRC%" %DRTARGET% EN "%GAME%.DSF" "%DDBOUT%" -v3
+REM -auto-tokens selects compression tokens from the game's own text
+REM instead of the builtin English table and encodes with an optimal
+REM parse - smaller DDBs, especially for prose-heavy games. The DDB
+REM stays format-identical. A hand-written .tok beside the source is
+REM ignored while this flag is set (ndrc prints a notice naming it).
+"%NDRC%" %DRTARGET% EN "%GAME%.DSF" "%DDBOUT%" -v3 -auto-tokens
 if errorlevel 1 (
     del "%DDBOUT%" 2>nul
     del "0.XMB" 2>nul
