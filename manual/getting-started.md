@@ -71,6 +71,28 @@ reference pipeline DAAD Ready uses. If a `CONFIG.local.BAT` from an older kit st
 `DRCDIR`, it is safe to delete those lines - neither setting is read
 any more.
 
+## Setting up an editor
+
+Any text editor can write a `.DSF` file, but a few tools make the job
+easier:
+
+- **[VS Code](https://code.visualstudio.com/)** is a good general-purpose
+  editor for DAAD source - free, cross-platform, and with an extension
+  marketplace covering the two tools below.
+- **[DAAD-DSF](https://github.com/absent42/DAAD-DSF)** is a VS Code
+  extension for the DSF source format: syntax highlighting for the
+  condact set, messages and object definitions, plus checking that flags
+  potential compiler and structural problems before you run a
+  build. Install it from Github releases page in the repository
+  above.
+- **[git](https://git-scm.com/)** tracks changes to your source as you
+  write it, giving you a history to fall back on and, if you keep it on
+  GitHub or similar, a backup off your own machine. In VS Code's terminal 
+  type `git init` initialise the tracking.
+
+None of this is required - the build only reads the files described
+below, however they were written.
+
 ## Where your files go
 
 Everything the build reads lives in the kit folder:

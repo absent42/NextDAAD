@@ -98,6 +98,26 @@ installed to build - the kit compiles your DSF with its own bundled
 reference pipeline DAAD Ready uses. If a <code>CONFIG.local.BAT</code> from an older kit still sets <code>DAADDIR</code> or
 <code>DRCDIR</code>, it is safe to delete those lines - neither setting is read
 any more.</p>
+<h2 id="setting-up-an-editor">Setting up an editor</h2>
+<p>Any text editor can write a <code>.DSF</code> file, but a few tools make the job
+easier:</p>
+<ul>
+<li><strong><a href="https://code.visualstudio.com/">VS Code</a></strong> is a good general-purpose
+  editor for DAAD source - free, cross-platform, and with an extension
+  marketplace covering the two tools below.</li>
+<li><strong><a href="https://github.com/absent42/DAAD-DSF">DAAD-DSF</a></strong> is a VS Code
+  extension for the DSF source format: syntax highlighting for the
+  condact set, messages and object definitions, plus checking that flags
+  potential compiler and structural problems before you run a
+  build. Install it from Github releases page in the repository
+  above.</li>
+<li><strong><a href="https://git-scm.com/">git</a></strong> tracks changes to your source as you
+  write it, giving you a history to fall back on and, if you keep it on
+  GitHub or similar, a backup off your own machine. In VS Code's terminal 
+  type <code>git init</code> initialise the tracking.</li>
+</ul>
+<p>None of this is required - the build only reads the files described
+below, however they were written.</p>
 <h2 id="where-your-files-go">Where your files go</h2>
 <p>Everything the build reads lives in the kit folder:</p>
 <ul>
