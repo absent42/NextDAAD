@@ -1,4 +1,4 @@
-# NextDAAD - ZX Spectrum Next DAAD interpreter
+# NextDAAD - ZX Spectrum Next DAAD text adventure interpreter
 
 NextDAAD runs [DAAD](https://github.com/daad-adventure-writer/daad) text
 adventures on the ZX Spectrum Next. Written in Z80 assembly using
@@ -8,10 +8,10 @@ In addition to the standard DAAD features it adds Layer 2 location pictures
 up to 320x256 in 8-bit colour, full-screen video cutscenes with sound, AY music and
 sampled sound effects across the Turbo Sound Next's three chips and DACs,
 an 80-column tilemap based text display with switchable fonts and paper/ink 
-colours from the full ZX Next palette, mouse input, and games that span several databases.
+colours from the full ZX Next palette, mouse input, and games that can span several databases with runtime switching.
 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
-for NextDAAD means just editing your DSF source and double-clicking one batch file.
+for NextDAAD means just editing your DSF source and double-clicking one batch file to compile it and assemble the assets.
 
 A demo game ready to run on your ZX Spectrum Next can be downloaded [here](demo).
 
@@ -83,7 +83,7 @@ few third-party tools it cannot redistribute:
 - [CSpect](https://mdf200.itch.io/cspect) - emulator, to play the result
 - [ffmpeg](https://ffmpeg.org/) - only for encoding cutscene
 
-Also included with the kit is VidTune, a UI app for fine-tuning video encodes and 
+Also included with the kit is VidEnc & VidTune, a encoder and UI app for fine-tuning video encodes and 
 experimenting with different settings to get the best results for your videos.
 
 **A packaged kit, holding only what an author needs, is on the
