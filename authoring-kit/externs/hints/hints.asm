@@ -140,10 +140,9 @@ seek_hl:
     call SVC_FSEEK
     ret
 
-; Primes the keystream for file offset HL. Stores the running S value and
-; the high byte; ks_next then yields one key byte per call. MUL D,E is the
-; Z80N 8x8 hardware multiply (ED 30, T=8, 2 bytes; also used at
-; src/gfxcache.asm:29), replacing a shift-add loop for the one-off S(lo).
+; Primes the keystream for file offset HL: stores the running S value and
+; high byte for ks_next. MUL D,E (Z80N, ED 30, T=8, B=2; also used at
+; src/gfxcache.asm:29) computes S's low-byte product in one op.
 ks_start:
     ld a, l
     ld d, 167
@@ -159,6 +158,7 @@ ks_start:
     ret
 
 ; Out: A = the key byte for the current offset, then advances one byte.
+; Clobbers B.
 ks_next:
     ld a, (ks_acc)
     ld b, a
@@ -250,10 +250,8 @@ deob3:
     ret
 
 ; fn 51 - level count for topic B into flag 243. Zero means absent, which
-; is also how an author tests "no more hints for this puzzle".
-; fn 51 reports a COUNT, so it must not report a status code in the same
-; flag: ST_NOFILE would be indistinguishable from a one-level topic. No
-; file means no hints, which is 0.
+; also doubles as "no more hints for this puzzle" for the author.
+; Reports a COUNT only: a status code here would collide with a real count.
 query:
     call open_hnt
     jr c, .none
@@ -288,6 +286,7 @@ show:
     call read_entry
     jr c, .notopic
     call print_text
+    jr c, .nofile                ; stopped partway or failed to start: no ST_OK
     xor a
     jr fail                      ; the epilogue closes both handles
 .notopic:
@@ -375,7 +374,8 @@ print_text:
     ld hl, (tlen)
     ld a, h
     or l
-    ret z
+    jr z, .flush                 ; done: flush exactly once, even on an
+                                 ; exact multiple of CHUNK
     ld de, CHUNK
     or a
     sbc hl, de
@@ -395,7 +395,12 @@ print_text:
     ld a, (handle)
     call SVC_FREAD
     ret c
+    ld a, b
+    or a
+    jr nz, .short                ; short read: rdbuf would be stale RAM
     ld a, (thisrun)
+    cp c
+    jr nz, .short
     ld b, a
     ld hl, rdbuf
 .emit:
@@ -415,10 +420,14 @@ print_text:
     jr nz, .flush                ; partial chunk was the last
     jp .chunk
 
-; A hint ends mid-word, so its last word is still sitting in the print
-; path's wrap buffer. SVC_PUTCHAR does not flush; SVC_PUTS does. Emitting
-; a newline flushes through prn_newline and gives the author the trailing
-; line break they expect anyway.
+; A short read means a truncated GAME.HNT; print nothing further.
+.short:
+    scf
+    ret
+
+; A hint ends mid-word, so its last word sits unflushed in the print
+; path's wrap buffer; SVC_PUTCHAR does not flush it. The $0D flushes via
+; prn_newline and gives the trailing line break authors expect anyway.
 .flush:
     ld a, $0D
     call SVC_PUTCHAR
