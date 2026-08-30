@@ -17,6 +17,7 @@ its flags, so its flag block stays yours.
 |---|---|---|
 | ticker | 30, 31 | `../ticker/README.md` |
 | fade | 40-43 | `../fade/README.md` |
+| hints | 50-53 | `../hints/README.md` |
 
 If you would rather ship a smaller binary with only the modules you use, run
 `EXTERNS.BAT` from the kit root - see the collection README.

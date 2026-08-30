@@ -11,6 +11,7 @@
     DEFINE XBN_MODULE
     DEFINE XBN_HAS_TICKER
     DEFINE XBN_HAS_FADE
+    DEFINE XBN_HAS_HINTS
     INCLUDE "xbn.inc"
     INCLUDE "xbnmod.inc"
     ORG XBN_ORG
@@ -25,6 +26,8 @@ all_ext:
     call ticker.ext
     call xbn_setup
     call fade.ext
+    call xbn_setup
+    call hints.ext
     ret
 
 ; #int chain. IX = flags base is the only documented register; every
@@ -34,12 +37,15 @@ all_int:
     call ticker.int
     ld ix, XBN_FLAGS
     call fade.int
+    ld ix, XBN_FLAGS
+    call hints.int
     ret
 
     XBN_CHAIN_SETUP
 
     INCLUDE "externs/ticker/ticker.asm"
     INCLUDE "externs/fade/fade.asm"
+    INCLUDE "externs/hints/hints.asm"
 
 xbn_end:
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG

@@ -17,7 +17,7 @@ if "%~1"=="" (
     echo externs: every module ships a prebuilt GAME.XBN, and
     echo externs\all\GAME.XBN holds all of them.
     echo.
-    echo Modules: ticker fade
+    echo Modules: ticker fade hints
     exit /b 1
 )
 REM Pass -SjasmPlus ONLY when the resolved path exists. SJASMPLUS always
