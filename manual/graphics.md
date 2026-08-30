@@ -295,7 +295,9 @@ Author against your chosen width from the start, not as an afterthought:
   40-column cell is double that: 8 picture pixels wide in the same
   320-wide picture modes, so a hole for a 40-column window uses `column
   x 8, width x 8` instead - halve the 80-column multiplier's assumption
-  and the hole comes out half the intended width.
+  and the hole comes out half the intended width. At 40-column width the
+  Transparency section's 256-wide example spans text columns 4 to 35, at
+  8 Layer 2 pixels per text column.
 
 **Flag 29 and flag 62 are unaffected by the width.** The 1991 DAAD
 manual's classic inference - flag 29 under 128 means an 80-column

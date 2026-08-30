@@ -16,7 +16,8 @@
 ;         at whichever width is live when it runs
 ;   VID   GFX 1 13 - plays video 1 synchronously; from 40-col this
 ;         exercises the wholesale $6B save/restore carrying the width
-;         bit through playback (interrupts.asm's 18-byte restore tail)
+;         bit through playback (video.asm's vid_run: entry capture,
+;         restored on every exit)
 ;   LEAK  a message ending mid-word, then GFX 1 18 - the pending wrap
 ;         word must be discarded on switch (main.asm tm_width_apply
 ;         zeroes wrapLen before windows_init), not leaked onto the

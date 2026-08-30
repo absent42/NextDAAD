@@ -474,7 +474,7 @@ l2dbg_wait_press:
 ; a fixed clear-then-print avoids stale trailing characters when a new
 ; status line is shorter than the one it replaces. Corrupts everything.
 ;
-; SP14c batch B DBG6: B=row, D=height. Fills a TM_COLS-wide white-ink/
+; SP14c batch B DBG6: B=row, D=height. Fills a tmCols-wide white-ink/
 ; black-paper, space-glyph bar - the exact 8-instruction sequence
 ; l2dbg_status/l2dbg_status2 each repeated verbatim.
 ; Corrupts AF, BC, DE, HL (tm_fill_rect's own contract).
