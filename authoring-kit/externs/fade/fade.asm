@@ -164,8 +164,9 @@
     IFNDEF XBN_MODULE
     DEVICE ZXSPECTRUMNEXT
     INCLUDE "xbn.inc"
+    INCLUDE "xbnmod.inc"
     ORG XBN_ORG
-    XBN_HEADER fade.ext, fade.int
+    XBN_BEGIN fade.ext, fade.int
     ENDIF
 
     MODULE fade

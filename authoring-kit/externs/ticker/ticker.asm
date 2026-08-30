@@ -21,8 +21,9 @@
     IFNDEF XBN_MODULE
     DEVICE ZXSPECTRUMNEXT
     INCLUDE "xbn.inc"
+    INCLUDE "xbnmod.inc"
     ORG XBN_ORG
-    XBN_HEADER ticker.ext, ticker.int
+    XBN_BEGIN ticker.ext, ticker.int
     ENDIF
 
     MODULE ticker
