@@ -65,7 +65,9 @@ The authoring kit's `externs\ticker\` folder is a complete, working
 XBN worth reading start to finish before you write your own: a
 foreground `EXTERN` call fetches a database message with `SVC_GETMSG`,
 copies it into the extern's own memory, and a `#int` hook ticks it out
-one character per frame along the bottom row of the tilemap. It ships
+one character per frame along the bottom row of the tilemap - in either
+text width, probing NR $6B bit 6 each character so a `GFX n 18` switch
+mid-message just carries on at the new width. It ships
 with a prebuilt `GAME.XBN` beside the source, so you can try it on a
 card without assembling anything. Its own `README.md` covers how to
 build it and wire it into a DSF; the source comments walk through
@@ -217,9 +219,16 @@ are not optional:
   A tilemap write from the hook during that span lands in the audio
   buffer instead and corrupts the clip's sound. Pause or disarm your
   ticker around `PLAY` if it writes the tilemap.
+- **Respect the runtime text width.** A game can switch between 80x32
+  and 40x32 text with `GFX n 18`, which changes the tilemap row stride
+  (160 bytes per row at 80 columns, 80 at 40). The interpreter's width
+  byte is not part of the frozen XBN ABI, so an extern that writes the
+  tilemap directly must read NR $6B bit 6 (1 = 80x32, 0 = 40x32) - the
+  ticker example shows the probe and the per-width row addresses.
 - **Stay inside rows 4-27 for anything that must be visible on every
-  display.** The 80x32 tilemap's origin sits 32 pixels above and left
-  of the ULA origin, so rows 0-3 and 28-31 land in the border area.
+  display.** The tilemap's origin (in either width) sits 32 pixels
+  above and left of the ULA origin, so rows 0-3 and 28-31 land in the
+  border area.
   Real display chains (HDMI scalers, monitor overscan) often crop
   border pixels: content parked there can be invisible on hardware
   while an emulator window shows it. Rows 4-27 overlay the area every

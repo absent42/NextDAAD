@@ -4,7 +4,9 @@
 ;             the ticker.
 ;             EXTERN 0 31 disarms it.
 ; Interrupt:  int_tick emits one character per frame to the tilemap's
-;             bottom row, wrapping, until the message is consumed.
+;             bottom row, wrapping, until the message is consumed. It
+;             probes the live text width (NR $6B bit 6, see TM_ROW80
+;             below) so it stays correct after a GFX n 18 mode switch.
 ;
 ; What this teaches: SVC_GETMSG's staging buffer is resident and shared
 ; with the rest of the interpreter - it is only valid until the NEXT
@@ -20,21 +22,31 @@
     ORG XBN_ORG
     XBN_HEADER ext_main, int_tick
 
-; Bottom row of the 80x32 tilemap, 2 bytes per cell (glyph, attribute).
-; TM_ROW = TM_MAP + 31*80*2 = $6000 + 4960 = $7360. Verified against
-; src/nextdaad.inc's TM_MAP ($6000) and TM_COLS (80) - not INCLUDEd
-; here, since the example builds against xbn.inc alone, so the derived
-; literal is spelled out instead.
-; Row 27 - the BOTTOM-MOST ULA-COVERED tilemap row ($6000 + 27*160 =
-; $70E0). The tilemap's origin sits 32 pixels above and left of the
-; ULA origin (dev guide, NR $1B notes), so of the 32 rows, 0-3 and
-; 28-31 land in the BORDER area - real display chains (HDMI scalers,
-; monitor overscan) often crop border pixels, and a ticker parked
-; there can be invisible on hardware while an emulator window shows
-; it. Rows 4-27 overlay the ULA area every display shows. If your
-; game wants the very bottom border row instead, that is a display
-; question to test on your own target hardware, not a code change.
-TM_ROW          equ $70E0
+; Row 27 - the BOTTOM-MOST ULA-COVERED tilemap row in BOTH text widths.
+; The tilemap's origin sits 32 pixels above and left of the ULA origin
+; (dev guide, NR $1B notes), so of the 32 rows, 0-3 and 28-31 land in
+; the BORDER area - real display chains (HDMI scalers, monitor
+; overscan) often crop border pixels, and a ticker parked there can be
+; invisible on hardware while an emulator window shows it. Rows 4-27
+; overlay the ULA area every display shows. If your game wants the
+; very bottom border row instead, that is a display question to test
+; on your own target hardware, not a code change.
+; The row's ADDRESS depends on the text width the game selected with
+; GFX n 18: 2 bytes per cell, so the stride is 160 bytes/row at 80x32
+; and 80 bytes/row at 40x32. Derived from src/nextdaad.inc's TM_MAP
+; ($6000) - not INCLUDEd here, since the example builds against
+; xbn.inc alone, so the literals are spelled out instead.
+TM_ROW80        equ $70E0        ; $6000 + 27*160
+TM_ROW40        equ $6870        ; $6000 + 27*80
+
+; The width probe. The interpreter's own width byte (tmCols) is NOT
+; part of the frozen XBN ABI, but NR $6B bit 6 (1 = 80x32, 0 = 40x32)
+; is hardware truth an extern can always read. A select+read here is
+; race-free: the ISR calls the #int hook only between its own COMPLETE
+; select+read / select+write sequences, every later user re-selects
+; first, and the nested CTC sample ISR never touches BC or this port
+; pair (src/interrupts.asm's port audit).
+TBB_SEL         equ $243B        ; register select; +$0100 = access
 
 ; The interpreter's own reserved attribute for ordinary text: pair 0 =
 ; paper 0 (black), ink 7 (white) - src/nextdaad.inc's TM_ATTR_DEFAULT,
@@ -120,31 +132,54 @@ int_tick:
     ld hl, textlen
     cp (hl)
     jr nc, .done                 ; consumed the whole message
-    ; emit text[cursor] at the current column
+    ; emit text[cursor] at the current column, at the LIVE text width
     ld e, a
     ld d, 0
     ld hl, text
     add hl, de
-    ld b, (hl)                   ; character - GETMSG already decoded it
+    ld a, (hl)                   ; character - GETMSG already decoded it
                                  ; to a plain printable byte (msg_probe,
                                  ; tests/xbn/xbntest.asm, established
                                  ; this - no translation needed here)
+    ld (chr), a                  ; parked: the port read below needs BC,
+                                 ; and the interpreter restores full
+                                 ; context around this hook anyway
+    ld bc, TBB_SEL
+    ld a, $6B                    ; NR_TM_CTRL
+    out (c), a
+    inc b                        ; select -> access ($243B -> $253B)
+    in a, (c)
+    ld hl, TM_ROW80
+    ld e, 80
+    bit 6, a                     ; 1 = 80x32, 0 = 40x32
+    jr nz, .width
+    ld hl, TM_ROW40
+    ld e, 40
+.width:                          ; HL = row base, E = width in columns
     ld a, (column)
+    cp e
+    jr c, .colok
+    xor a                        ; width shrank mid-message (GFX 1 18):
+    ld (column), a               ; restart the row rather than write
+                                 ; past its end
+.colok:
     add a, a                     ; *2 bytes per tilemap cell
-    ld e, a
     ld d, 0
-    ld hl, TM_ROW
+    push de                      ; E = width, still needed for the wrap
+    ld e, a                      ; test after the emit
     add hl, de
-    ld (hl), b
+    ld a, (chr)
+    ld (hl), a
     inc hl
     ld a, TICK_ATTR
     ld (hl), a
+    pop de
     ld hl, cursor
     inc (hl)
     ld hl, column
     inc (hl)
     ld a, (column)
-    cp 80
+    cp e                         ; wrap at the live width
     ret c
     xor a
     ld (column), a               ; wrap to the start of the row
@@ -162,6 +197,8 @@ armed:   db 0
 cursor:  db 0
 column:  db 0
 textlen: db 0
+chr:     db 0                    ; this frame's character, parked across
+                                 ; the width probe (which needs BC)
 text:    ds 256
 xbn_end:
 

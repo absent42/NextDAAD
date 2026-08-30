@@ -3,10 +3,12 @@
 ## What it shows
 
 A tiny XBN extern that fetches a DAAD user message with SVC_GETMSG and
-ticks it, one character per frame, along the bottom row of the 80x32
-tilemap.
+ticks it, one character per frame, along the bottom row of the tilemap.
+It works in both text widths: each emitted character probes NR $6B
+bit 6 for the live 80x32/40x32 mode, so a `GFX 1 18` switch mid-message
+just carries on at the new width.
 
-It demonstrates the three things every XBN author needs to know:
+It demonstrates the things every XBN author needs to know:
 
 - fetching a message with SVC_GETMSG from a foreground EXTERN call
 - copying the result out of the shared staging buffer before it is
@@ -15,6 +17,9 @@ It demonstrates the three things every XBN author needs to know:
   per-frame #int hook here, needs its own copy)
 - driving per-frame work from the XBN's #int hook, and disarming it
   cleanly both on completion and on request
+- respecting the runtime text width: the interpreter's width byte is
+  not part of the frozen XBN ABI, so the extern reads NR $6B bit 6
+  directly - the pattern any extern that writes the tilemap needs
 
 ## How to build
 
