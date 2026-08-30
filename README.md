@@ -7,11 +7,13 @@ the Next's extended instruction set.
 In addition to the standard DAAD features it adds Layer 2 location pictures 
 up to 320x256 in 8-bit colour, full-screen video cutscenes with sound, AY music and
 sampled sound effects across the Turbo Sound Next's three chips and DACs,
-an 80-column tilemap based text display with switchable fonts and paper/ink 
-colours from the full ZX Next palette, mouse input, and games that can span several databases with runtime switching.
+40 and 80-column runtime switchable tilemap based text display with switchable fonts and paper/ink 
+colours from the full ZX Next palette, mouse input, and games that can span 
+several databases with runtime switching.
 
 An [authoring kit](#for-authors) ships alongside it, so writing a game
-for NextDAAD means just editing your DSF source and double-clicking one batch file to compile it and assemble the assets.
+for NextDAAD means just editing your DSF source and double-clicking one batch 
+file to compile it and assemble the assets.
 
 A demo game ready to run on your ZX Spectrum Next can be downloaded [here](demo).
 
@@ -23,7 +25,9 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](demo)
   cutscenes need 2MB of RAM and a real machine, and so does a sampled
   effect longer than 24K - everything else, including shorter effects,
   runs under emulation.
-- A DAAD DSF source file or a compiled DAAD database, and its assets on the card. The authoring kit builds one for you, and existing version 2 and version 3 databases both run as they are.
+- A DAAD DSF source file or a compiled DAAD database, and its assets on the card. 
+  The authoring kit builds one for you, and existing version 2 and version 3 databases 
+  both run as they are.
 - Windows Powershell if you want to use the automated batch builders of the authroing kit.
 
 ## Features
@@ -31,7 +35,10 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](demo)
 - **Location graphics** - 256x192 and 320x256 pictures in Layer 2's
   8-bit colour modes, each with its own palette, optionally
   ZX0-compressed, drawn through a bank-allocated cache and a
-  double-buffered surface
+  double-buffered surface. Layer 2 graphics can be drawn in front of 
+  or behind the text display
+- **80x32 or 40x32 text** - a tilemap based text driver with per-character 
+  colour from the full ZX Next palette, with optional paper/ink transparency
 - **Title screens** - a picture shown at boot over the theme music,
   needing no changes to your game
 - **Video cutscenes** - NXV, NextDAAD's own delta-video format, played
@@ -44,7 +51,6 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](demo)
   samples of any length via card streaming, on two concurrent DAC
   channels that auto-allocate with stealing or pin outright, looping
   ones resuming after a video
-- **80x32 text** - a tilemap based text driver with per-character colour from the full ZX Next palette and its own 80-column font
 - **Custom fonts and pointers** - drop in a `FONT.CHR` or a
   `POINTER.SPR` and the interpreter picks them up at boot, and a game
   can switch between up to ten of each while it runs
@@ -73,12 +79,10 @@ A **manual** covering the specifics of creating a game for NextDAAD is included 
 [`authoring-kit\docs\index.html`](authoring-kit/docs/index.html) - or
 you can read the same pages on GitHub from [`manual/index.md`](manual/index.md)
 
-The DAAD compiler, [NDRC](https://github.com/absent42/NDRC) (Next DAAD Reborn Compiler), ships built in - byte-identical output to the
-[DRC](https://github.com/Utodev/DRC) reference pipeline (GPL-3.0, credit
-to Uto), it needs no DAAD Ready or PHP install. The kit still needs a
-few third-party tools it cannot redistribute:
+The DAAD compiler, [NDRC](https://github.com/absent42/NDRC) (Next DAAD Reborn Compiler), ships built in, 
+along with [Gfx2Next](https://www.rustypixels.uk/gfx2next/) for for graphics conversion. The kit still needs a
+few third-party tools it does not redistribute:
 
-- [Gfx2Next](https://www.rustypixels.uk/gfx2next/) - PNG to Layer 2 pictures
 - [Arkos Tracker 3](https://www.julien-nevo.com/arkostracker/index.php/download/) - music and sound effects
 - [CSpect](https://mdf200.itch.io/cspect) - emulator, to play the result
 - [ffmpeg](https://ffmpeg.org/) - only for encoding cutscene
