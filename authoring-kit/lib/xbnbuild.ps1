@@ -1,7 +1,8 @@
 # xbnbuild.ps1 - build a GAME.XBN containing only the modules you name.
 # Usage: .\xbnbuild.ps1 ticker fade [-Out path\GAME.XBN]
 # The prebuilt externs\all\GAME.XBN already contains everything; use this
-# when you want a smaller binary. Requires sjasmplus on PATH.
+# when you want a smaller binary. Resolves sjasmplus via -SjasmPlus, then
+# tools\sjasmplus\, then PATH.
 param(
     [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
     [string[]]$Modules,
@@ -94,16 +95,20 @@ foreach ($m in $Modules) {
 $src = Join-Path $work 'subset.asm'
 Set-Content -Path $src -Value $sb.ToString() -Encoding ASCII
 
-Push-Location $work
+# Outer try/finally cleans up $work on both the success and failure path.
 try {
-    & $SjasmPlus --msg=war -I "$kitRoot" $src
-    if ($LASTEXITCODE -ne 0) { throw "subset assembly failed" }
+    Push-Location $work
+    try {
+        & $SjasmPlus --msg=war -I "$kitRoot" $src
+        if ($LASTEXITCODE -ne 0) { throw "subset assembly failed" }
+    }
+    finally {
+        Pop-Location
+    }
+    Copy-Item (Join-Path $work 'GAME.XBN') $Out -Force
 }
 finally {
-    Pop-Location
+    Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
-
-Copy-Item (Join-Path $work 'GAME.XBN') $Out -Force
-Remove-Item $work -Recurse -Force
 $len = (Get-Item $Out).Length
 Write-Output "$Out written: $len bytes, $(16384 - $len) free of 16384"
