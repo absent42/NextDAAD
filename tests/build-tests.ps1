@@ -845,6 +845,7 @@ if (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShippe
 }
 
 & "$PSScriptRoot\hintpack-selftest.ps1"
+& "$PSScriptRoot\hintpack-accent-oracle.ps1"
 
 # ---- Layer 2 transparency constants: five files, three value classes ----
 # The transparent COLOUR ($E3), the reserved INDEX (255), and the dodge

@@ -45,7 +45,9 @@ $aAcute = [char]0xE1
 $eAcute = [char]0xE9
 $iAcute = [char]0xED
 $nTilde = [char]0xF1
-$accented = "El beb$eAcute est$aAcute aqu$iAcute, junto al mu$($nTilde)eco peque$($nTilde)o."
+$aGrave = [char]0xE0
+$yDieresis = [char]0xFF   # not in the compiler's accent table - passes raw
+$accented = "El beb$eAcute est$aAcute aqu$iAcute, junto al mu$($nTilde)eco peque$($nTilde)o. Voil$($aGrave)."
 $srcText = @"
 This line is a comment, before any topic marker.
 
@@ -63,18 +65,40 @@ Only one level here.
 [9] Foreign accents
 
 $accented
+
+[11] Unsupported character
+
+Stray y-diaeresis: $yDieresis here.
 "@
 $src = "$tmp\HINTS.TXT"
 [IO.File]::WriteAllBytes($src, $srcEnc.GetBytes($srcText))
 
 $out = "$tmp\GAME.HNT"
-& $pack -In $src -Out $out
+$packWarnings = $null
+& $pack -In $src -Out $out -WarningVariable packWarnings -WarningAction SilentlyContinue
 if ($LASTEXITCODE -ne 0) { throw "hintpack exited $LASTEXITCODE" }
+
+# Convert-Accents legitimately emits $0E/$0F triples for topic 9's accents -
+# the control-byte-below-$20 check must inspect the AUTHOR'S SOURCE, not
+# that packed output, so topic 9 (clean source, no bytes below $20) must
+# raise NO control-byte warning of its own.
+if ($packWarnings | Where-Object { $_ -match 'topic 9.*control byte' }) {
+    throw "control-byte warning fired for topic 9 - it must inspect source bytes, not the packer's own $0E/$0F output"
+}
+$checks++
+
+# A character the compiler's table does not convert (y-diaeresis, 0xFF) must
+# warn, naming the character, topic and level, rather than inventing a
+# mapping - it passes through raw and a real compile would reject it.
+if (-not ($packWarnings | Where-Object { $_ -match 'topic 11 level 1.*0xFF' })) {
+    throw "no warning for the unsupported character (0xFF) in topic 11 level 1"
+}
+$checks++
 
 $b = [IO.File]::ReadAllBytes($out)
 Assert-Eq ([Text.Encoding]::ASCII.GetString($b[0..2])) 'HNT' 'magic'
 Assert-Eq $b[3] 1 'version'
-Assert-Eq $b[5] 9 'maxTopic is the highest topic NUMBER'
+Assert-Eq $b[5] 11 'maxTopic is the highest topic NUMBER'
 $seed = $b[4]
 
 # Deobfuscate everything from offset 6 on.
@@ -108,15 +132,34 @@ foreach ($t in (@(1..6) + 8)) { Assert-Eq (DirEntry $t).Count 0 "absent topic $t
 Assert-Eq (LevelText 0 0) 'Nudge one.' 'topic 0 level 0 text'
 Assert-Eq (LevelText 0 1) 'Nudge two is longer, and spans an authored line break.' 'a single newline becomes a space'
 Assert-Eq (LevelText 7 0) 'Only one level here.' 'topic 7 level 0 text'
-Assert-Eq (LevelText 9 0) $accented 'accented Latin-1 text survives the round trip'
 
-# The specific high byte, not just the round-tripped string, so an
-# ASCII regression (which would have written 0x3F for n-tilde) is caught
-# even if some other bug in the comparison above let a wrong string equal
-# a wrong expectation.
+# Accented text is no longer stored as raw Latin-1 - hintpack.ps1 now
+# converts it the way the DDB compiler does (tests\hintpack-accent-oracle.ps1
+# proves that conversion matches ndrc.exe byte for byte), so it does not
+# round-trip through LevelText's plain Latin-1 decode. Assert the specific
+# converted bytes instead: this REPOINTS the old assertion, which wrongly
+# expected the raw Latin-1 byte 0xF1 (n-tilde) to survive packing - the
+# compiler never emits that byte, it emits CC_DIRECT $1A.
 $accentedBytes = LevelBytes 9 0
-if ($accentedBytes -notcontains 0xF1) {
-    throw 'expected Latin-1 byte 0xF1 (n-tilde) missing from deobfuscated accented text'
+if ($accentedBytes -contains 0xF1) {
+    throw 'raw Latin-1 byte 0xF1 (n-tilde) found in packed hint text - accent conversion did not run'
+}
+function ContainsRun([byte[]]$hay, [byte[]]$needle) {
+    for ($i = 0; $i -le $hay.Length - $needle.Length; $i++) {
+        $ok = $true
+        for ($j = 0; $j -lt $needle.Length; $j++) { if ($hay[$i + $j] -ne $needle[$j]) { $ok = $false; break } }
+        if ($ok) { return $true }
+    }
+    return $false
+}
+# Encoding 1 (direct, single byte): n-tilde -> $1A, inside "mu" + n-tilde + "eco".
+if (-not (ContainsRun $accentedBytes ([byte[]]@(0x6D, 0x75, 0x1A, 0x65, 0x63, 0x6F)))) {
+    throw 'packed hint bytes missing the compiler direct encoding ($1A) for n-tilde'
+}
+$checks++
+# Encoding 2 (triple): a-grave -> $0E $10 $0F, inside "Voil" + a-grave + ".".
+if (-not (ContainsRun $accentedBytes ([byte[]]@(0x56, 0x6F, 0x69, 0x6C, 0x0E, 0x10, 0x0F, 0x2E)))) {
+    throw 'packed hint bytes missing the compiler triple encoding ($0E $10 $0F) for a-grave'
 }
 $checks++
 

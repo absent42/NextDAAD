@@ -56,11 +56,25 @@ and gives you the paragraph break you would otherwise have to add yourself.
 - Do not use `_` in hint text. `EXTERN` fn 50 prints through the
   interpreter's decoded-print path, where `_` is the object-name
   substitution used by every DAAD database, not a literal underscore.
-- Do not use control bytes below `$20` in hint text - the same print
+- Do not type control bytes below `$20` in hint text - the same print
   path reads `$0B`/`$0C`/`$0E`/`$0F` as CLS, wait-key and graphics
-  toggles, not printable characters.
-- `hintpack.ps1` warns (does not fail the build) if a level breaks
-  either rule, naming the topic and level, so you can find and fix it
+  toggles, not printable characters. This is about bytes you type: the
+  accent conversion below legitimately emits `$0E`/`$0F` triples in
+  the packed output.
+- Accented Latin-1 characters are converted the same way the DAAD
+  compiler converts them in game text, so a hint prints identically to
+  a compiled message with the same accent. Lowercase acute/grave
+  vowels, n-tilde, c-cedilla, u-diaeresis and a few punctuation marks
+  convert to one byte; uppercase accented vowels, uppercase acutes and
+  the remaining lowercase accents convert to a three-byte sequence;
+  sharp-s (the German eszett, Latin-1 `$DF`) converts to one byte. A
+  Latin-1 character outside this set is not converted - some accented
+  letters have no entry in the compiler's own table - and packs as its
+  raw Latin-1 byte, which prints as an unrelated glyph, not the
+  intended accent.
+- `hintpack.ps1` warns (does not fail the build) if a level breaks any
+  of the rules above, naming the topic and level - and, for an
+  unsupported character, its byte value - so you can find and fix it
   before shipping.
 
 ## Limits
