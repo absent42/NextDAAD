@@ -159,11 +159,16 @@
 ;      already handled. Only a steady state of "display one bank while
 ;      editing another" would need work here.
 
-    DEVICE ZXSPECTRUMNEXT        ; required for SAVEBIN, matching the
-                                 ; interpreter's own DEVICE line
-    INCLUDE "xbn.inc"            ; build.ps1 passes the kit root as -I
+; Standalone build emits its own header and binary; a combined build
+; defines XBN_MODULE and supplies both.
+    IFNDEF XBN_MODULE
+    DEVICE ZXSPECTRUMNEXT
+    INCLUDE "xbn.inc"
     ORG XBN_ORG
-    XBN_HEADER ext_main, int_fade
+    XBN_HEADER fade.ext, fade.int
+    ENDIF
+
+    MODULE fade
 
 ; ---- author-editable contract ----
 FLAG_DONE       equ 240          ; 1 = fade complete, 0 = running
@@ -187,7 +192,7 @@ NR_PAL_VAL      equ $41          ; 8-bit RRRGGGBB, reads AND writes. The
                                  ; 0, 3, 5 and 7 of 8 - four levels against
                                  ; red and green's eight, which is why the
                                  ; fade interpolates through $44 instead
-                                 ; (see precalc and int_fade).
+                                 ; (see precalc and int).
                                  ; A write here also ZEROES the entry's
                                  ; priority bits: the core issues the same
                                  ; palette write as a $44 pair does but
@@ -195,7 +200,7 @@ NR_PAL_VAL      equ $41          ; 8-bit RRRGGGBB, reads AND writes. The
                                  ; own register list says "any other bits
                                  ; associated with the index will be
                                  ; zeroed". That is settled, not assumed -
-                                 ; int_fade leans on it at the solid end.
+                                 ; int leans on it at the solid end.
 NR_PAL_VAL9     equ $44          ; 9-bit colour, TWO writes: RRRGGGBB then
                                  ; a second byte holding bit 7 = Layer 2
                                  ; per-pixel priority and bit 0 = the blue
@@ -244,7 +249,7 @@ TRANSP_DODGE    equ TRANSP+4     ; substitute for a collision: one step
                                  ; field is 000 - asserted:
     ASSERT (TRANSP & %00011100) == 0
 
-ext_main:
+ext:
     ; Contract: A=B=param1, C=fn. This example uses C (fn) and, for
     ; fn 40, B (the target colour).
     ;
@@ -302,7 +307,7 @@ ext_main:
     xor a
     ld (XBN_FLAGS+FLAG_DONE), a
     inc a
-    ld (active), a               ; arm LAST - int_fade reads this first
+    ld (active), a               ; arm LAST - int reads this first
     ret
 
 ; ---------------------------------------------------------------
@@ -438,7 +443,7 @@ wait_fade:
 .wl:
     ld a, (active)
     or a
-    ret z                        ; finished: int_fade cleared it
+    ret z                        ; finished: int cleared it
     ld a, h
     or l
     ret z                        ; bound expired - give up, never hang
@@ -468,7 +473,7 @@ wait_fade:
 ; down frames and stream the next prebuilt table when the interval
 ; expires. All the arithmetic happened in the foreground - the hook
 ; only moves bytes to ports.
-int_fade:
+int:
     ; The frame tick comes FIRST, ahead of the idle exit, so it keeps
     ; running whether a fade is stepping or not. It is the only true
     ; 50Hz clock available to extern foreground code - see wait_fade for
@@ -810,7 +815,7 @@ precalc:
 .tgtok:
     ld c, a                      ; C = the solid byte
     ; tables9 page 8 gets the blue LSB the hardware would derive from an
-    ; $41 write of that byte (B0 = B2 OR B1), priority clear. int_fade
+    ; $41 write of that byte (B0 = B2 OR B1), priority clear. int
     ; streams the solid end 8-bit and never reads this page, and neither
     ; does fn 42 - it exists so that a future edit routing step 8
     ; through apply9 stays write-of-identical with the 8-bit path
@@ -1034,7 +1039,7 @@ dir:     db 0                    ; 1 = fading out (up), 0 = in (down)
 step:    db 0                    ; current step 0-8
 speed:   db 0                    ; frames per step (resolved)
 count:   db 0                    ; frames until the next step
-frameTick: db 0                  ; +1 per frame by int_fade, free-running
+frameTick: db 0                  ; +1 per frame by int, free-running
                                  ; and allowed to wrap - wait_fade only
                                  ; ever compares it against a snapshot
 target:  db 0                    ; RRRGGGBB fade target
@@ -1062,10 +1067,14 @@ tables9: ds 9*256                ; second byte of each colour, same page
                                  ; 8 is unused - the solid end is streamed
                                  ; 8-bit so that fn 42 can put the same
                                  ; bytes in both palette banks (see
-                                 ; int_fade), and the page is filled with
+                                 ; int), and the page is filled with
                                  ; hardware-consistent values anyway so a
                                  ; future edit cannot make the banks
                                  ; disagree by accident
-xbn_end:
 
+    ENDMODULE
+
+    IFNDEF XBN_MODULE
+xbn_end:
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG
+    ENDIF

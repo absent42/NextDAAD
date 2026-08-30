@@ -3,7 +3,7 @@
 ; Foreground: EXTERN n 30 fetches user message n (SVC_GETMSG) and arms
 ;             the ticker.
 ;             EXTERN 0 31 disarms it.
-; Interrupt:  int_tick emits one character per frame to the tilemap's
+; Interrupt:  int emits one character per frame to the tilemap's
 ;             bottom row, wrapping, until the message is consumed. It
 ;             probes the live text width (NR $6B bit 6, see TM_ROW80
 ;             below) so it stays correct after a GFX n 18 mode switch.
@@ -12,15 +12,20 @@
 ; with the rest of the interpreter - it is only valid until the NEXT
 ; service call, or across a save/load. An extern that needs the text to
 ; outlive the EXTERN call that fetched it (as this one does, since the
-; #int hook reads it frame by frame long after ext_main has returned)
+; #int hook reads it frame by frame long after ext has returned)
 ; MUST copy it into memory this XBN bank owns. That copy is the whole
 ; point of this example; everything else is bookkeeping around it.
 
-    DEVICE ZXSPECTRUMNEXT        ; required for SAVEBIN below, matching
-                                 ; src/main.asm's own DEVICE line
-    INCLUDE "xbn.inc"           ; build.ps1 passes the kit root as -I
+; Standalone build emits its own header and binary; a combined build
+; defines XBN_MODULE and supplies both.
+    IFNDEF XBN_MODULE
+    DEVICE ZXSPECTRUMNEXT
+    INCLUDE "xbn.inc"
     ORG XBN_ORG
-    XBN_HEADER ext_main, int_tick
+    XBN_HEADER ticker.ext, ticker.int
+    ENDIF
+
+    MODULE ticker
 
 ; Row 27 - the BOTTOM-MOST ULA-COVERED tilemap row in BOTH text widths.
 ; The tilemap's origin sits 32 pixels above and left of the ULA origin
@@ -57,7 +62,7 @@ TBB_SEL         equ $243B        ; register select; +$0100 = access
 ; against the interpreter source rather than assumed.
 TICK_ATTR       equ 0
 
-ext_main:
+ext:
     ; Contract on entry: A=B=param1, C=fn, HL=flags+param1, DE=objTable
     ; +param1*6, IX=flags base. This example only needs C (fn) and,
     ; once fn=30 is confirmed, B (param1, the message number).
@@ -67,7 +72,7 @@ ext_main:
     cp 31
     ret nz                       ; any other fn: ignore
     xor a
-    ld (armed), a                ; disarm - int_tick checks this first,
+    ld (armed), a                ; disarm - int checks this first,
                                  ; every frame, and does nothing else if
                                  ; it is 0
     ret
@@ -119,7 +124,7 @@ ext_main:
     ld (armed), a                ; arm last, once text/textlen are valid
     ret
 
-int_tick:
+int:
     ; Runs once per frame (50Hz) for every game with an XBN loaded and
     ; an intEntry set, whether or not the ticker is armed - so this must
     ; stay CHEAP and return fast when idle. IX = flags base (unused
@@ -200,6 +205,10 @@ textlen: db 0
 chr:     db 0                    ; this frame's character, parked across
                                  ; the width probe (which needs BC)
 text:    ds 256
-xbn_end:
 
+    ENDMODULE
+
+    IFNDEF XBN_MODULE
+xbn_end:
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG
+    ENDIF
