@@ -61,6 +61,9 @@ if (-not $SjasmPlus -or -not (Test-Path $SjasmPlus)) {
     Write-Error "sjasmplus.exe not found. Download it from https://github.com/z00m128/sjasmplus and extract it into tools\sjasmplus\, or set SJASMPLUSDIR in CONFIG.BAT, or put it on PATH."
     exit 1
 }
+# Absolute path: relative here breaks once Push-Location changes the
+# working directory below.
+$SjasmPlus = (Resolve-Path $SjasmPlus).Path
 $work = Join-Path ([IO.Path]::GetTempPath()) ("xbnbuild-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Force $work | Out-Null
 

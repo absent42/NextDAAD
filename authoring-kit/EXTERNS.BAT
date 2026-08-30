@@ -4,6 +4,11 @@ cd /d "%~dp0"
 call "%~dp0CONFIG.BAT"
 if exist "%~dp0CONFIG.local.BAT" call "%~dp0CONFIG.local.BAT"
 call "%~dp0lib\tools.bat"
+REM Resolve SJASMPLUS to a full path now, while the working directory is
+REM still the kit root (cd /d above). TOOLSDIR defaults to a RELATIVE
+REM path, so SJASMPLUS is relative too; passed relative into PowerShell
+REM it breaks once xbnbuild.ps1 changes directory.
+for %%I in ("%SJASMPLUS%") do set "SJASMPLUS=%%~fI"
 if "%~1"=="" (
     echo Usage: EXTERNS.BAT module [module ...]
     echo.
