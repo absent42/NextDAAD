@@ -116,12 +116,15 @@ LEAK   15  verb
 /OBJ
 /0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
 /PRO 0
+; The banner is one-shot (AT 0 closes the gate via GOTO 1), so PROCESS 1
+; must be its own UNCONDITIONAL entry - eng_run re-enters PRO 0 after
+; every DONE, and a gated PROCESS 1 would never parse again.
 > _ _   AT 0
         CLS
         MESSAGE 5
         MESSAGE 7
         GOTO 1
-        PROCESS 1
+> _ _   PROCESS 1
 /PRO 1
 > _ _     PARSE 0
           REDO
