@@ -20,10 +20,16 @@ A game uses ONE `GAME.XBN`. You do not have to merge anything by hand: the
 disjoint across the collection, and a module is dormant until you arm it, so an
 unused module costs you neither.
 
-If you want a smaller binary with only the modules you use, and you have
-sjasmplus, build a subset:
+If you want a smaller binary with only the modules you use, run `EXTERNS.BAT`
+from the kit root:
 
-    ..\lib\xbnbuild.ps1 ticker fade
+    EXTERNS.BAT ticker fade
+
+That needs a Z80 assembler. Download sjasmplus from
+https://github.com/z00m128/sjasmplus and extract it into `tools\sjasmplus\`, or
+point `SJASMPLUSDIR` in `CONFIG.BAT` at an install you already have. You do not
+need it otherwise: every extern here ships a prebuilt `GAME.XBN`, and `all/`
+ships one containing the lot.
 
 `CALL` targets are slots in a fixed jump table at `$C00A` - slot n is at
 `$C00A + 3n` - never routine addresses, which differ between the standalone,

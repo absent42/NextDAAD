@@ -28,9 +28,9 @@ REM Leave these BLANK and each falls under TOOLSDIR above, which is the
 REM simple layout: one folder, everything in it, nothing to configure.
 REM
 REM Set one to point somewhere else if you ALREADY have that tool
-REM installed - Arkos Tracker, CSpect and ffmpeg are general-purpose and
-REM are commonly already on the machine. That saves keeping a second copy
-REM in sync. Absolute paths are fine:
+REM installed - Arkos Tracker, CSpect, ffmpeg and sjasmplus are
+REM general-purpose and are commonly already on the machine. That saves
+REM keeping a second copy in sync. Absolute paths are fine:
 REM
 REM   SET CSPECTDIR=C:\Emulators\CSpect
 REM   SET ARKOSDIR=C:\Program Files\Arkos Tracker 3
@@ -55,6 +55,10 @@ SET CSPECTDIR=
 
 REM ffmpeg - reads your .mp4 cutscene sources.
 SET FFMPEGDIR=
+
+REM sjasmplus - Z80 assembler. Needed ONLY to rebuild an extern or build a
+REM subset binary with EXTERNS.BAT; not needed to build a game.
+SET SJASMPLUSDIR=
 
 REM videnc and vidtune - shipped with the kit; you should not need these.
 SET VIDENCDIR=

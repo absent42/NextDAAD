@@ -1,15 +1,30 @@
 # build.ps1 - assembles all.asm into GAME.XBN in this directory.
-# Requires sjasmplus on PATH: https://github.com/z00m128/sjasmplus
+# Assembler resolution: -SjasmPlus, then the kit's tools\sjasmplus\, then PATH.
+param([string]$SjasmPlus = '')
 $ErrorActionPreference = 'Stop'
-$sjasmplus = Get-Command sjasmplus.exe -ErrorAction SilentlyContinue
-if (-not $sjasmplus) {
-    Write-Error "sjasmplus.exe not found on PATH. Install sjasmplus (https://github.com/z00m128/sjasmplus) and add it to PATH before running this script."
+$kitRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
+if (-not $SjasmPlus) {
+    $dir = Join-Path $kitRoot 'tools\sjasmplus'
+    $bundled = Join-Path $dir 'sjasmplus.exe'
+    if (Test-Path $bundled) { $SjasmPlus = $bundled }
+    else {
+        $nested = Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue |
+                  ForEach-Object { Join-Path $_.FullName 'sjasmplus.exe' } |
+                  Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($nested) { $SjasmPlus = $nested }
+    }
+}
+if (-not $SjasmPlus) {
+    $onPath = Get-Command sjasmplus.exe -ErrorAction SilentlyContinue
+    if ($onPath) { $SjasmPlus = $onPath.Source }
+}
+if (-not $SjasmPlus -or -not (Test-Path $SjasmPlus)) {
+    Write-Error "sjasmplus.exe not found. Download it from https://github.com/z00m128/sjasmplus and extract it into tools\sjasmplus\, or set SJASMPLUSDIR in CONFIG.BAT, or put it on PATH."
     exit 1
 }
-$kitRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 Push-Location $PSScriptRoot
 try {
-    & $sjasmplus.Source --msg=war -I "$kitRoot" all.asm
+    & $SjasmPlus --msg=war -I "$kitRoot" all.asm
     if ($LASTEXITCODE -ne 0) { throw "all.asm assembly failed" }
 }
 finally {

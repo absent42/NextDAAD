@@ -11,6 +11,13 @@ Tool           Provides                                Download                 
 Arkos Tracker  SongToAky/SongToSoundEffects/SongToYm   https://www.julien-nevo.com/arkostracker/index.php/download/  tools\ArkosTracker3\tools\
 CSpect         Emulator for testing                    https://mdf200.itch.io/cspect                              tools\CSpect\
 ffmpeg         Video decode for cutscene encoding      https://www.gyan.dev/ffmpeg/builds/ (release essentials)   tools\ffmpeg\
+sjasmplus      Z80 assembler (externs only, optional)  https://github.com/z00m128/sjasmplus                       tools\sjasmplus\
+
+sjasmplus is optional: every extern in authoring-kit\externs\ ships a
+prebuilt GAME.XBN. Download it only if you want to modify an extern's
+source or build a subset binary with EXTERNS.BAT. Extract so that
+sjasmplus.exe ends up in tools\sjasmplus\ - a zip that nests a
+versioned folder inside that directory also works.
 
 These tools are included with the kit and do not need to be downloaded
 
@@ -39,8 +46,9 @@ Already have one of these installed?
 -------------------------------------
 The paths above are the default: one tools\ folder holding everything.
 You do not have to duplicate an install you already have. CONFIG.BAT has
-a directory setting per tool - GFXDIR, ARKOSDIR, CSPECTDIR, FFMPEGDIR -
-and whichever you set is used instead of the folder under TOOLSDIR.
+a directory setting per tool - GFXDIR, ARKOSDIR, CSPECTDIR, FFMPEGDIR,
+SJASMPLUSDIR - and whichever you set is used instead of the folder
+under TOOLSDIR.
 Leave the rest blank and they still come from TOOLSDIR, so you can mix
 the two freely. For example:
 

@@ -31,6 +31,7 @@ if not defined GFXDIR     set "GFXDIR=%TOOLSDIR%\gfx2next"
 if not defined ARKOSDIR   set "ARKOSDIR=%TOOLSDIR%\ArkosTracker3"
 if not defined CSPECTDIR  set "CSPECTDIR=%TOOLSDIR%\CSpect"
 if not defined FFMPEGDIR  set "FFMPEGDIR=%TOOLSDIR%\ffmpeg"
+if not defined SJASMPLUSDIR set "SJASMPLUSDIR=%TOOLSDIR%\sjasmplus"
 if not defined VIDENCDIR  set "VIDENCDIR=%TOOLSDIR%\videnc"
 if not defined VIDTUNEDIR set "VIDTUNEDIR=%TOOLSDIR%\vidtune"
 
@@ -58,6 +59,12 @@ REM ffmpeg release builds put the binaries in bin\. Same two shapes.
 set "FFMPEGBIN=%FFMPEGDIR%"
 if not exist "%FFMPEGBIN%\ffmpeg.exe" if exist "%FFMPEGDIR%\bin\ffmpeg.exe" set "FFMPEGBIN=%FFMPEGDIR%\bin"
 set "FFMPEG=%FFMPEGBIN%\ffmpeg.exe"
+
+REM sjasmplus zips extract either flat or into a versioned folder. Same two
+REM shapes as Arkos and ffmpeg above, but the nested name is not fixed.
+set "SJASMPLUSBIN=%SJASMPLUSDIR%"
+if not exist "%SJASMPLUSBIN%\sjasmplus.exe" for /d %%D in ("%SJASMPLUSDIR%\*") do if exist "%%D\sjasmplus.exe" set "SJASMPLUSBIN=%%D"
+set "SJASMPLUS=%SJASMPLUSBIN%\sjasmplus.exe"
 
 REM lib\video.ps1 and the vidtune GUI read these from the environment.
 REM Exported as resolved FILE paths so the PowerShell side never has to
