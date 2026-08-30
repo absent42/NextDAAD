@@ -54,6 +54,25 @@
 ;   XSLT - CALLs pinned jump table slot 0 ($C00A). Meaningful only on
 ;          legs staging a table-carrying binary (-XbnAll/-XbnTicker/
 ;          -XbnFade) - the fixture binary carries no such table.
+;
+; -XbnHints stages the hints worked example (authoring-kit\externs\hints)
+; as part of the combined GAME.XBN, plus a packed GAME.HNT. XHNP/XHNQ/
+; XHNA/XHNR/XHNT drive it, all on TOPIC 0 - the shipped HINTS.TXT gives
+; topic 0 exactly two levels and topic 1 exactly three, and MODE_R (the
+; file-open read mode) is also 1, so a build that lost the topic operand
+; would still answer correctly for topic 1 and hide the bug. XHNT alone
+; drives topic 1, to prove the operand actually reaches the index: if it
+; ever reports the same count as XHNQ, the topic parameter is not
+; getting through.
+;   XHNP - preflight (fn 52): flag 243 must read 0, hint file present.
+;   XHNQ - level count (fn 51) for topic 0: flag 243 must read 2.
+;   XHNA - automatic mode (fn 50) driven three times on topic 0: the
+;          first two calls must print two DIFFERENT hint texts in
+;          order, each ending with a line break; the third finds no
+;          level left and reports status 3 (no more levels) in flag 243.
+;   XHNR - clear progress (fn 53), then one automatic call must print
+;          topic 0's FIRST hint again, proving the reset took.
+;   XHNT - level count (fn 51) for topic 1: flag 243 must read 3.
 
 #define fPlayer  38
 
@@ -81,6 +100,11 @@ XRLD   117 verb
 XDCL   118 verb
 XARM   119 verb
 XSLT   120 verb
+XHNP   121 verb
+XHNQ   122 verb
+XHNA   123 verb
+XHNR   124 verb
+XHNT   125 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -368,6 +392,41 @@ XSLT   120 verb
            DONE              ; then XFAD: picture appears normally
 > XARM _   GFX 0 4           ; arm buffer mode and stop - the manual
            DONE              ; SAVE/LOAD reset check drives this
+; XHNP - preflight. Flag 243 must come back 0 with a hint file staged.
+> XHNP _   EXTERN 0 52
+           MES "preflight "
+           PRINT 243
+           DONE
+; XHNQ - level count for TOPIC 0, which the sample gives 2 levels. Topic 0
+;        deliberately, not 1: MODE_R is 1, so a build that lost the topic
+;        parameter would still answer correctly for topic 1 and hide the
+;        bug. Every verb below drives topic 0 for the same reason.
+> XHNQ _   EXTERN 0 51
+           MES "levels "
+           PRINT 243
+           DONE
+; XHNA - automatic mode on topic 0: two calls print two DIFFERENT levels,
+;        the third reports 3 (no more levels). Expecting 2 from XHNQ and 3
+;        here keeps the two assertions distinguishable at a glance.
+> XHNA _   LET 242 0
+           EXTERN 0 50
+           EXTERN 0 50
+           EXTERN 0 50
+           MES "status "
+           PRINT 243
+           DONE
+; XHNR - clear progress, then one automatic call must print topic 0's FIRST
+;        hint again.
+> XHNR _   EXTERN 0 53
+           LET 242 0
+           EXTERN 0 50
+           DONE
+; XHNT - topic 1 exists too, with 3 levels. Proves the operand reaches the
+;        index rather than only ever selecting one topic.
+> XHNT _   EXTERN 1 51
+           MES "levels "
+           PRINT 243
+           DONE
 /PRO 6
 ; ---- one-shot init ----
 > _ _   WINDOW 1

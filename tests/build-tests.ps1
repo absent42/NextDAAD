@@ -345,11 +345,11 @@
 #            tests\xbn\xbntest.asm's fixture extern as GAME.XBN (the
 #            XREG/XCAL/XCNR/XTIK/XSVC/XFIO/XMSG/XABS probe verbs, all
 #            live against the interpreter's XBN support as of Task 9).
-#            Four companion switches, all no-ops without -Xbn. Not
+#            Five companion switches, all no-ops without -Xbn. Not
 #            designed to be combined with each other; the staging code
 #            checks them in this priority order, so if more than one is
 #            given -XbnNoBin wins over -XbnBad over -XbnTicker over
-#            -XbnFade over -XbnAll:
+#            -XbnFade over -XbnAll over -XbnHints:
 #              -XbnNoBin      stage GAME.DDB with NO GAME.XBN at all (the
 #                              XABS no-XBN control - EXTERN must stay inert).
 #              -XbnBad <kind> stage a corrupt/truncated variant AS
@@ -398,6 +398,14 @@
 #                              Selection priority when combined:
 #                              -XbnNoBin wins over -XbnBad over
 #                              -XbnTicker over -XbnFade over -XbnAll.
+#              -XbnHints      Task 7: same combined binary as -XbnAll
+#                              (hints is one of its modules) PLUS a
+#                              packed GAME.HNT (authoring-kit\lib\
+#                              hintpack.ps1 over the kit's sample
+#                              authoring-kit\HINTS.TXT), so extern.dsf's
+#                              XHNP/XHNQ/XHNA/XHNR/XHNT verbs have a hint
+#                              file to read. Same drift guard and picture
+#                              staging as -XbnAll.
 #            An alternative to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
@@ -643,7 +651,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -3007,6 +3015,57 @@ if ($Xbn) {
         else {
             "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
         }
+    }
+    elseif ($XbnHints) {
+        # Task 7: same combined-collection binary as -XbnAll (hints is
+        # one of its modules), so extern.dsf's XHNP/XHNQ/XHNA/XHNR/XHNT
+        # verbs have something to drive, PLUS a packed GAME.HNT so the
+        # module's file-service calls find a hint file. Same scratch-cwd
+        # pattern, drift guard and picture staging as -XbnAll above (same
+        # CSpect-lock refusal).
+        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+            throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
+        }
+        $allSrcDir = Join-Path $root 'authoring-kit\externs\all'
+        $allBuildDir = Join-Path $root 'tests\out\xbn\_allbuild'
+        New-Item -ItemType Directory -Force $allBuildDir | Out-Null
+        Push-Location $allBuildDir
+        try {
+            & "$root\tools\sjasmplus\sjasmplus.exe" --msg=war -I "$root\authoring-kit" "$allSrcDir\all.asm"
+            if ($LASTEXITCODE -ne 0) { throw "authoring-kit\externs\all\all.asm assembly failed" }
+            Move-Item "GAME.XBN" "$root\tests\out\xbn\ALL.XBN" -Force
+        }
+        finally {
+            Pop-Location
+            Remove-Item $allBuildDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Same shipped-prebuilt drift guard as -XbnTicker/-XbnFade/-XbnAll above.
+        $allShipped = Join-Path $allSrcDir 'GAME.XBN'
+        $freshA = [IO.File]::ReadAllBytes("$root\tests\out\xbn\ALL.XBN")
+        $shipA = [IO.File]::ReadAllBytes($allShipped)
+        if (-not [System.Linq.Enumerable]::SequenceEqual($freshA, $shipA)) {
+            throw "authoring-kit\externs\all\GAME.XBN is STALE - rebuild it from all.asm (its build.ps1) and commit both together"
+        }
+        Copy-Item "$root\tests\out\xbn\ALL.XBN" "$leg\GAME.XBN" -Force
+        "staged tests\out\xbn\ALL.XBN -> sd\$legName\GAME.XBN (-XbnHints: combined collection binary, not the fixture; shipped prebuilt verified fresh)"
+        $allArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
+        if (Test-Path $allArt) {
+            Copy-Item $allArt "$leg\001.NX2" -Force
+            "staged tools\Rabenstein-master\nextdaad\1.NX2 -> sd\$legName\001.NX2 (XFAD picture)"
+        }
+        else {
+            "WARNING: tools\Rabenstein-master\nextdaad\1.NX2 missing - XFAD will have no picture to fade"
+        }
+        $allArt2 = "$root\tools\Rabenstein-master\nextdaad\2.NX2"
+        if (Test-Path $allArt2) {
+            Copy-Item $allArt2 "$leg\002.NX2" -Force
+            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC/XFSO second scene)"
+        }
+        else {
+            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
+        }
+        & "$root\authoring-kit\lib\hintpack.ps1" -In "$root\authoring-kit\HINTS.TXT" -Out "$leg\GAME.HNT"
+        "staged authoring-kit\HINTS.TXT -> sd\$legName\GAME.HNT (packed)"
     }
     else {
         Copy-Item "$root\tests\out\xbn\GAME.XBN" "$leg\GAME.XBN" -Force
