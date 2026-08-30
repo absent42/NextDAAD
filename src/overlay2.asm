@@ -1098,6 +1098,12 @@ h_display:
 ;       priority field only, so calling it while Layer 2 is hidden
 ;       (l2_disable, "hand the screen back to the text layer") leaves it
 ;       hidden.
+;   18 = text width select (NextDAAD-only, no jdaad/DAAD-reference
+;       analogue; GFX_SUB_TXTMODE, nextdaad.inc). B = 0 selects 80-column
+;       mode (80x32, boot default), 1 = 40-column mode (40x32). B >= 2 is
+;       a no-op. Triggers clean slate: tilemap cleared, windows reset.
+;       Width is GAME-OWNED state, surviving all RESTART/LOAD/RAMLOAD and
+;       part switches.
 ; Every no-op sub falls to the shared DEBUG marker below rather than
 ; overlay0's h_unimpl - overlay2 must not call overlay0 (header
 ; discipline) - inline, resident dbg_* helpers only, mirrors h_sfx's
@@ -1109,7 +1115,7 @@ h_gfx:
     cp 1
     jr z, .frontback
     cp 2
-    jr z, .swap
+    jp z, .swap
     cp 5
     jp z, l2_clear
     cp 6
@@ -1126,6 +1132,8 @@ h_gfx:
     jp z, .font
     cp GFX_SUB_LAYER
     jr z, .layer
+    cp GFX_SUB_TXTMODE
+    jp z, .txtmode
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
     push bc                     ; across dbg_puts (corrupts BC) for
@@ -1265,6 +1273,21 @@ h_gfx:
 .fontfile:
     ld a, b
     jp font_load
+.txtmode:                        ; sub 18: B (P1) 0 = 80-col, 1 = 40-col.
+    ld a, b                      ; Out of range is a no-op, same
+    cp 2                         ; tolerance as .font/.layer - the DEBUG
+    ret nc                       ; "GFX? " marker means unknown SUB only.
+    or a
+    ld a, 80
+    jr z, .tmw
+    ld a, 40
+.tmw:
+    ld hl, tmCols
+    cp (hl)
+    ret z                        ; already active: no clear, no reset -
+                                 ; safe to issue unconditionally at init
+    jp tm_width_apply            ; resident, like tm_font_init above;
+                                 ; game-owned tmCols survives every reset
 
 msgGfxUnk: db "GFX? ", 0
 

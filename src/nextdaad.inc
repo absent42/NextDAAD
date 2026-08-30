@@ -1481,6 +1481,10 @@ GFX_SUB_LAYER    equ 17          ; NextDAAD: layer order. P1 0 = picture
                                  ; the default and what every existing
                                  ; game gets), 1 = text on top. Follows
                                  ; FONT past the classic 0-15 block.
+GFX_SUB_TXTMODE  equ 18          ; NextDAAD: text width. P1 0 = 80x32
+                                 ; (boot default), 1 = 40x32. Clean
+                                 ; slate: map cleared, windows reset.
+                                 ; Next free number past FONT/LAYER.
 
 ; DAC ports (ports.txt, tools/ZXNextOS/docs/extra-hw/io-port-system/
 ; ports.txt lines 266-274: "four 8-bit dac channels... A,B are directed to
