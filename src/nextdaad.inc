@@ -341,7 +341,9 @@ TM_MAP          equ $6000   ; 80x32x2 = 5120 bytes, $6000-$73FF
 TM_MAP_MSB      equ $20     ; ($6000-$4000)>>8
 TM_DEFS         equ $7400   ; 256 glyphs x 8 = 2048 bytes
 TM_DEFS_MSB     equ $34     ; ($7400-$4000)>>8
-TM_COLS         equ 80
+TM_COLS         equ 80         ; 80-column/maximum width at assemble time
+                                ; (buffer sizing, full-map extents); runtime
+                                ; width lives in tmCols (gfxcache.asm)
 TM_ROWS         equ 32
 GLYPH_SPACE     equ $20
 TM_ATTR_DEFAULT equ 0       ; reserved pair 0 = paper 0 (black), ink 7

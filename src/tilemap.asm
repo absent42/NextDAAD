@@ -30,14 +30,6 @@ txt_init:
     nextreg NR_TM_DEF_BASE, TM_DEFS_MSB
     call tm_reserved_pairs
     call tm_font_init
-    ld a, TM_ATTR_DEFAULT        ; reserved pair 0 = paper 0 ink 7 (white
-                                 ; on black)
-    ld (tmAttr), a
-    ld bc, 0                    ; SP14c batch B TM3
-    ld d, TM_ROWS
-    ld e, TM_COLS
-    ld a, GLYPH_SPACE
-    call tm_fill_rect
     nextreg NR_ULA_CTRL, ULA_OFF
     nextreg NR_L2_TRANSP, L2_TRANSP_COLOUR  ; shared register; Layer 2 is
                                  ; its real owner (overlay2's l2_mode_set
@@ -45,8 +37,9 @@ txt_init:
                                  ; so it is correct before Layer 2 comes
                                  ; up - though $E3 is also the hardware
                                  ; reset value, so this is belt and braces.
-    nextreg NR_TM_CTRL, TM_CTRL_ON
-    ret
+    ld a, (tmCols)
+    jp tm_width_apply            ; ctrl written there, after the map fill,
+                                 ; preserving the enable-last ordering
 
 ; A = dadPalette index 0-15 -> write its 9-bit entry (NR $44 twice).
 ; Corrupts AF; preserves BC, DE, HL.
@@ -91,6 +84,10 @@ tm_font_init:
     ldir
     ret
 
+; tm_width_apply lives in main.asm's resident block, right after
+; gfx_layer_apply (single composer of NR $6B, same residency reason:
+; callable from overlay2). txt_init below tail-calls it cross-file.
+
 ; B=row, C=col -> HL = TM_MAP + row*160 + col*2.
 ; Corrupts AF; preserves BC, DE.
 ; SP14c batch B TM1: row*160 via Z80N MUL D,E (row max TM_ROWS-1=31,
@@ -99,8 +96,10 @@ tm_font_init:
 tm_cell_addr:
     push de
     ld e, b                     ; row (0..31)
-    ld d, 160
-    mul d, e                    ; DE = row*160
+tmStride equ $+1
+    ld d, 160                   ; bytes/row: 160 (80-col) or 80 (40-col);
+                                ; operand patched by tm_width_apply only
+    mul d, e                    ; DE = row*stride
     ex de, hl                    ; HL = row*160
     ld e, c
     ld d, 0

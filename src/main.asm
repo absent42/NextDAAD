@@ -76,7 +76,8 @@ main:
     ld b, 0
     ld c, 0
     ld d, TM_ROWS
-    ld e, TM_COLS
+    ld a, (tmCols)
+    ld e, a
     call tm_clear_blank
     ; XMES pool-bank claim sentinel (overlay0 data): see xms_boot_reset's
     ; own header comment (overlay0.asm) for why this needs an explicit
@@ -770,6 +771,48 @@ gfx_layer_apply:
 .write:
     nextreg NR_LAYERS, a
     ret
+
+; A = width in columns (80 or 40). The one composer of NR $6B outside
+; video playback (vid_play saves/restores the register wholesale) and
+; the only writer of tmCols and tmStride. Clean slate per the GFX 18
+; contract: full map blanked, all 8 windows reset at the new width.
+; RESIDENT alongside gfx_layer_apply above (same reason: callable from
+; overlay2). Corrupts everything.
+tm_width_apply:
+    ld (tmCols), a
+    cp 40
+    ld d, 80                     ; 40-col: 40*2 bytes/row
+    ld e, TM_CTRL_ON & %10111111 ; bit 6 clear = 40x32
+    jr z, .got
+    ld d, 160                    ; 80-col: 80*2 bytes/row
+    ld e, TM_CTRL_ON
+.got:
+    ld a, d
+    ld (tmStride), a
+    ; Blank the FULL 80x32 region in both modes: cells past the 40x32
+    ; map would otherwise return stale on a later widen (display and
+    ; pair_reclaim both walk them). Raw fill, not tm_cell_addr - the
+    ; stride was just patched.
+    ld a, TM_ATTR_DEFAULT
+    ld (tmAttr), a
+    ld hl, TM_MAP
+    ld (hl), GLYPH_SPACE
+    inc hl
+    ld (hl), a
+    dec hl
+    push de
+    ld de, TM_MAP+2
+    ld bc, TM_COLS*TM_ROWS*2-2
+    ldir
+    pop de
+    ld a, e
+    nextreg NR_TM_CTRL, a        ; width bit flips only after the map is clean
+    xor a
+    ld (wrapLen), a              ; discard the pending wrap word: windows_init
+                                 ; falls into win_select, whose prn_flush would
+                                 ; print it onto the cleared screen
+    jp windows_init              ; all 8 windows full-screen at (tmCols),
+                                 ; cursors homed, window 0 reselected
 
     ASSERT $ <= RESIDENT_LIMIT
     DISPLAY "resident ends at ", $, " headroom ", /D, RESIDENT_LIMIT - $
