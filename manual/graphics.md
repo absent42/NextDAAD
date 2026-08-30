@@ -269,7 +269,7 @@ survives everything the art can put behind it.
 
 `GFX 1 18` switches the tilemap from 80x32 single-width text to 40x32
 double-width text - fewer, wider columns, for a game that wants larger
-glyphs over pixel-perfect line-wrapping. `GFX 0 18` returns to 80x32.
+glyphs at the cost of characters per line. `GFX 0 18` returns to 80x32.
 See the sub-command table below for the full switch behaviour (clean
 slate, game-owned, same-width no-op).
 

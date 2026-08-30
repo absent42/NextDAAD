@@ -6,7 +6,7 @@ game behaves, how it builds, or what the kit gives you, it is here.
 ## 0.8.0 - unreleased
 
 - **A new 40-column text mode: fewer, wider columns, for a game that
-  wants bigger glyphs over pixel-tight wrapping.** `GFX 1 18` switches
+  wants bigger glyphs at the cost of characters per line.** `GFX 1 18` switches
   the tilemap to 40x32 double-width text; `GFX 0 18` returns to the
   80x32 default. Switching is a clean slate - the screen clears, all 8
   windows reset to full screen at the new width, and a pending
