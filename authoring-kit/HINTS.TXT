@@ -1,0 +1,23 @@
+Hints for your game. Everything above the first topic marker is a comment.
+
+A topic starts with its number in square brackets. Anything after the
+number on that line is a label for you and is not shipped. Each blank-line
+separated paragraph below it is the next hint level, so a topic reads as a
+nudge, then a stronger nudge, then the answer.
+
+Your game asks for a topic with EXTERN n 50. See externs\hints\README.md.
+
+[0] Getting started
+
+Try looking at things, and taking anything that is not nailed down.
+
+The lamp is the one object you cannot finish without. Take it before you
+go anywhere dark.
+
+[1] The locked gate
+
+You have been past that gate more than once. Who else uses it?
+
+The gatekeeper's lodge is not as empty as it looks.
+
+The brass key is under the lodge's doormat. Unlock the gate with it.

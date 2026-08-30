@@ -85,7 +85,7 @@ REM      RELEASE\ copy behind for GFX n 16 / MOUSE n 5 to keep silently
 REM      installing. Cleaned in the numbered loop just below, same
 REM      idiom as the multi-part GAME<n>.DDB cleanup that follows it.
 if not exist "RELEASE" md "RELEASE"
-del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\*.VID" "RELEASE\*.WAV" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" "RELEASE\FONT.CHR" "RELEASE\POINTER.SPR" 2>nul
+del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\*.N2Z" "RELEASE\*.NXZ" "RELEASE\*.AKY" "RELEASE\*.AYS" "RELEASE\*.VID" "RELEASE\*.WAV" "RELEASE\GAME.SFB" "RELEASE\GAME.DDB" "RELEASE\FONT.CHR" "RELEASE\POINTER.SPR" "RELEASE\GAME.HNT" "RELEASE\GAME.XBN" 2>nul
 for %%N in (1 2 3 4 5 6 7 8 9) do (
     del /Q "RELEASE\FONT%%N.CHR" "RELEASE\POINTER%%N.SPR" 2>nul
 )
@@ -231,6 +231,22 @@ for %%N in (1 2 3 4 5 6 7 8 9) do (
         copy /Y "POINTER%%N.SPR" "RELEASE\POINTER%%N.SPR" >nul
         echo   pointer POINTER%%N.SPR -^> RELEASE\POINTER%%N.SPR ^(ready-made, staged as-is^)
     )
+)
+
+REM ---- hints: pack HINTS.TXT, stage a hand-built GAME.XBN ----
+REM Both are optional. GAME.HPR is player progress created on the card at
+REM runtime, so it is never staged or deleted here.
+if exist "HINTS.TXT" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lib\hintpack.ps1" -In "HINTS.TXT" -Out "RELEASE\GAME.HNT"
+    if errorlevel 1 (
+        echo ERROR: hintpack failed - see the message above
+        exit /b 1
+    )
+    echo   hints HINTS.TXT -^> RELEASE\GAME.HNT
+)
+if exist "GAME.XBN" (
+    copy /Y "GAME.XBN" "RELEASE\GAME.XBN" >nul
+    echo   extern GAME.XBN -^> RELEASE\GAME.XBN ^(staged as-is^)
 )
 
 REM ---- multi-part games (SP11 Task 6): PART2\..PART9\ source folders,
