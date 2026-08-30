@@ -1,9 +1,8 @@
-NextDAAD game demo v0.7.4
+NextDAAD game demo v0.8.0
 
 This zip contains a game demo of the NextDAAD interperter.
 
-For video and sampled sound playback actual Spectrum Next hardware is required, 
-other features still work in emulators.
+For video and sampled sound playback actual Spectrum Next hardware is required, other features still work in emulators.
 
 Features demonstrated include:
 
@@ -12,6 +11,8 @@ Features demonstrated include:
 - Sampled sound effect playback, 2 concurrent sounds, looping and one shot
 - Video cutscene playback
 - External machine code execution for text ticker and layer 2 image fades
+- Runtime font switching
+- Runtime 40/80 column text display switching
 
 Installation:
 
