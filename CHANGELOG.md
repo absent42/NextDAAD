@@ -2,6 +2,28 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.8.1 - Unreleased
+
+- Accented text: the graphics-charset toggle (`$0E`/`$0F`) now shifts
+  every character, not just `$20-$7F`, so DRC's second accent encoding
+  (`#g` chr(16..31) `#t`) renders the French/German/Portuguese
+  lowercase accents at glyphs 144-159 instead of colliding with the
+  sixteen direct codes. Shifted characters enter the word-wrap buffer
+  pre-resolved, so a closing `#t` no longer strips accents from a
+  buffered word. Uppercase accent triples (160-175), uppercase acutes 
+  (251-255) and sharp-s (direct `$7F`, glyph 127) all render.
+- More.../ANYKEY/`#k` key waits are edge-triggered: the ENTER that
+  submitted a command can no longer dismiss a More... prompt that arms
+  while the key is still held (page one of a long response flashed and
+  vanished; intermittent, hardware-only). A fresh press after all keys
+  release is now required, and the input timeout keeps counting while
+  a stale key is held.
+- font: U-grave and U-circumflex added at glyphs 174/175 in the
+  embedded and kit default faces, completing the uppercase accent set.
+- tests: `-Accent` staging leg with a byte-asserted fixture covering
+  both accent encodings, the uppercase sets, sharp-s and a
+  collision probe.
+
 ## v0.8.0 - 30/08/2026
 
 - 40x32 tilemap text mode: runtime `GFX n 18` switch between 80x32
