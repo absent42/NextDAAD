@@ -12,8 +12,9 @@ level its offset; the extern only reads what the packer wrote.
 
 - `EXTERN n 50` - print topic n's hint. With flag 242 = 0 (automatic),
   prints the topic's next unread level from `GAME.HPR` and advances it
-  by one. With flag 242 nonzero, prints that level (1-based) instead
-  and does not touch `GAME.HPR`.
+  by one; if the advance fails to save, flag 243 reports 5 rather than
+  0, even though the hint printed. With flag 242 nonzero, prints that
+  level (1-based) instead and does not touch `GAME.HPR`.
 - `EXTERN n 51` - level count for topic n, written into flag 243.
 - `EXTERN 0 52` - preflight: opens `GAME.HNT`, validates its header, and
   reports whether the hint file is present and readable. Call this once
@@ -21,7 +22,8 @@ level its offset; the extern only reads what the packer wrote.
   quietly instead of failing later, mid-hint.
 - `EXTERN 0 53` - rewrites `GAME.HPR` blank, resetting every topic's
   automatic-mode progress to level 0. Independent of `LOAD`/`RESTART`,
-  which do not touch it.
+  which do not touch it. Flag 243 reports 5, not 0, if the blank write
+  fails - the file is then left in whatever state that write reached.
 
 ## Flags
 
@@ -38,6 +40,7 @@ level its offset; the extern only reads what the packer wrote.
 | 2 | no such topic, or (automatic mode only) `GAME.HPR` could not be opened or read |
 | 3 | no such level - the player has had every hint for this topic |
 | 4 | this interpreter is older than the extern needs |
+| 5 | `GAME.HPR` could not be written - fn 50 printed the hint but the new level was not saved, or fn 53's blank write failed and progress was not cleared |
 
 After `EXTERN n 51`, flag 243 holds the topic's level COUNT instead. Zero
 means "no hints available" - whether the topic does not exist or the hint file
@@ -69,4 +72,7 @@ start fresh. `GAME.HNT` itself is never written, so a power cut
 mid-update can only ever damage the disposable `GAME.HPR` - never the
 author's hint text. If `GAME.HPR` is missing, the next automatic-mode
 call creates a fresh zeroed one; if it is present but unreadable at a
-given topic, that call reports flag 243 = 2 rather than guessing.
+given topic, that call reports flag 243 = 2 rather than guessing. A
+short read or a failed write is always reported rather than acted on
+with whatever happened to be in RAM - flag 243 = 2 for a read that
+came back wrong, flag 243 = 5 for a write that did not go through.

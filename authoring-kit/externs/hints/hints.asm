@@ -27,6 +27,7 @@ ST_NOFILE       equ 1            ; missing, unreadable or truncated GAME.HNT
 ST_NOTOPIC      equ 2            ; topic absent or above maxTopic
 ST_NOLEVEL      equ 3            ; level past this topic's ceiling
 ST_OLDAPI       equ 4            ; interpreter older than this extern needs
+ST_NOSAVE       equ 5            ; GAME.HPR write failed: level printed/reset attempted, not stored
 
 MIN_API         equ 1            ; lowest SVC_VERSION that serves this module
 
@@ -342,11 +343,20 @@ hpr_read:
     call SVC_FREAD
     pop hl
     ret c
+    ld a, b
+    or a
+    jr nz, .short                ; truncated GAME.HPR: do not decode stale RAM
+    ld a, c
+    cp 1
+    jr nz, .short
     call ks_start
     call ks_next
     ld hl, buf3
     xor (hl)                     ; NOT (ix+0): the file services are
     or a                         ; documented to clobber IX
+    ret
+.short:
+    scf
     ret
 
 ; Writes A as topic B's progress byte. CF set on failure.
@@ -421,13 +431,19 @@ show:
     ld b, a
     pop af
     call hpr_write
+    push af                      ; hold hpr_write's CF - SVC_FCLOSE clobbers AF
     ld a, (hprh)
     call SVC_FCLOSE
     ld a, $FF
     ld (hprh), a
+    pop af
+    jr c, .nosave                ; hint printed but the new level did not save
 .done:
     xor a
     jr fail                      ; the epilogue closes both handles
+.nosave:
+    ld a, ST_NOSAVE
+    jr fail
 .notopic:
     ld a, ST_NOTOPIC
     jr fail
@@ -584,11 +600,17 @@ clearprog:
     jr c, .nofile
     ld (hprh), a
     call write_blank
+    push af                       ; hold write_blank's CF - SVC_FCLOSE clobbers AF
     ld a, (hprh)
     call SVC_FCLOSE
     ld a, $FF
     ld (hprh), a
+    pop af
+    jr c, .nosave
     xor a
+    jp status
+.nosave:
+    ld a, ST_NOSAVE
     jp status
 .nofile:
     ld a, ST_NOFILE
