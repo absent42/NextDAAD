@@ -2,8 +2,18 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.7.5 - unreleased
+## v0.8.0 - unreleased
 
+- 40x32 tilemap text mode: runtime `GFX n 18` switch between 80x32
+  single-width and 40x32 double-width text. Clean slate on switch
+  (screen cleared, all 8 windows reset full-screen, pending word-wrap
+  fragment discarded, cursors homed); same-width call is a no-op;
+  game-owned setting, survives RESTART/LOAD/RAMLOAD/part switch.
+  Flags 29 and 62 keep their static values (129/144) in both widths.
+- NDRC v0.2.1: `-cols=40|80` sets the exported `COLS` symbol to match
+  the compiled game's text width.
+- authoring-kit: `SET COLS=` knob in `CONFIG.BAT`, `NDRCVER` bumped to
+  0.2.1.
 - NDRC v0.2: `-auto-tokens` text compression enabled: per-game text compression. Instead of
   DRC's fixed per-language token table, the compiler selects up to 128
   tokens from the compiling game's own text and encodes the text with

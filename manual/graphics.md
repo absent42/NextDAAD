@@ -265,22 +265,63 @@ interpreter: keep a strip of solid paper where text must always be
 readable, keep the artwork dark where text lands, or choose an ink that
 survives everything the art can put behind it.
 
+## 40-column games
+
+`GFX 1 18` switches the tilemap from 80x32 single-width text to 40x32
+double-width text - fewer, wider columns, for a game that wants larger
+glyphs over pixel-perfect line-wrapping. `GFX 0 18` returns to 80x32.
+See the sub-command table below for the full switch behaviour (clean
+slate, game-owned, same-width no-op).
+
+Author against your chosen width from the start, not as an afterthought:
+
+- **Every coordinate is in the current width's columns.** `WINAT`,
+  `WINSIZE`, `TAB` and `CENTRE` all take column numbers against
+  whichever width is active, so a window sized for 80 columns covers
+  only the left half of a 40-column screen and a `CENTRE` computed for
+  80 lands off-centre at 40. Write your layout against the width you
+  intend to ship, not the boot default.
+- **Compile with NDRC `-cols=40`.** This sets the exported `COLS`
+  symbol to match, so any source arithmetic against `COLS` (window
+  widths, centring, wrap columns) comes out right for the width the
+  game actually runs at. `-cols=80` is the default and matches the
+  interpreter's boot width.
+- **Issue `GFX 1 18` in the init process, before drawing anything.**
+  The switch clears the screen and resets every window, so doing it
+  first avoids drawing at the wrong width and immediately wiping it.
+- **Layer 2 hole-cutting moves with the width.** [Transparency](#transparency)
+  above gives `left = column x 4, width = width x 4` against a 320-wide
+  picture, because one 80-column text cell is 4 picture pixels wide. A
+  40-column cell is double that: 8 picture pixels wide in the same
+  320-wide picture modes, so a hole for a 40-column window uses `column
+  x 8, width x 8` instead - halve the 80-column multiplier's assumption
+  and the hole comes out half the intended width.
+
+**Flag 29 and flag 62 are unaffected by the width.** The 1991 DAAD
+manual's classic inference - flag 29 under 128 means an 80-column
+text-only machine - is a period-hardware correlation this interpreter
+does not honour: flag 29 stays 129 and flag 62 stays 144 in both
+widths, because graphics remain available whichever width the game is
+running at. A game knows its own width because it chose it with `GFX n
+18`, not by reading these flags.
+
 ## GFX sub-commands
 
 `GFX n s` takes the sub-command in its **second** parameter, `s`. There
 are no symbolic names for these - DAAD Ready's Appendix D covers `SFX`
 and `MOUSE` only - so write the number.
 
-For every sub-command except 13, 14, 16 and 17 the first parameter `n`
-is ignored: the buffer operations act on the whole surface and take no
-argument. For 13 and 14, `n` is the video number; for 16, it is the font
-number; for 17, it is the layer-order selector.
+For every sub-command except 13, 14, 16, 17 and 18 the first parameter
+`n` is ignored: the buffer operations act on the whole surface and take
+no argument. For 13 and 14, `n` is the video number; for 16, it is the
+font number; for 17, it is the layer-order selector; for 18, it is the
+text width selector.
 
 "Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
 prints a marker). That covers 7, 8, 11, 12 and 15, and everything
-from 18 up, as well as 9 and 10 - see
+from 19 up, as well as 9 and 10 - see
 [Platform notes](platform-notes.md) for why 9, 10 and 15 have nothing
 to act on here.
 
@@ -297,6 +338,7 @@ to act on here.
 | 14 | As 13, looped until a key is pressed. Identical to `SFX n 10` (`PLAYFLIL`). |
 | 16 | Install font `n`. `n` 0 is the base font - the embedded table, then `FONT.CHR` over it if one exists; 1-9 select `FONT1.CHR` to `FONT9.CHR`. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See [Fonts](fonts.md). |
 | 17 | Text layer order. `n` 0 puts the picture on top (Layer 2 above the tilemap - the default, and what every existing game gets); `n` 1 puts the text layer on top. `n` 2 and above is a no-op - the previously-set order stays. See [Text over a picture](#text-over-a-picture) above for the transparent-paper technique this enables. |
+| 18 | Text mode width. `n` 0 selects 80x32 single-width text (the default); `n` 1 selects 40x32 double-width text. A same-width call does nothing. Switching is a clean slate: the screen clears, all 8 windows reset to full screen at the new width, a pending word-wrap fragment is discarded, and every window's cursor homes - re-issue `WINAT`/`WINSIZE` after switching if your game uses custom windows. `n` 2 and above is a no-op. See [40-column games](#40-column-games) below. |
 
 Sub 17 composes the layer priority only - it never enables or disables
 Layer 2, so it cannot bring back a picture surface the game has hidden.
@@ -307,6 +349,17 @@ boots with the picture on top and the interpreter never changes the order
 afterwards. It survives every picture operation, `RESTART`, `LOAD`,
 `RAMLOAD` and a move to another part, so a game sets it once and a
 restored save comes back in the order the game chose.
+
+Sub 18's text width is game-owned state too, the same way as sub 17's
+layer order: the game boots at 80x32 and the interpreter never changes
+it on its own. It survives `RESTART`, `LOAD`, `RAMLOAD` and a move to
+another part, so a 40-column game stays 40-column across all of those.
+Because a same-width call is a no-op, issuing `GFX 1 18` unconditionally
+in the init process is safe - it only does anything the first time.
+Order a width switch before video playback in the same response if both
+happen there: video playback is synchronous and preserves whichever
+width is current, but a clip started before the switch renders over the
+old width instead of the one the response is moving to.
 
 Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
 `RESTART`, a same-part `LOAD`/`RAMLOAD`, or any game (re)start -

@@ -3,8 +3,31 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.7.5 - unreleased
+## 0.8.0 - unreleased
 
+- **A new 40-column text mode: fewer, wider columns, for a game that
+  wants bigger glyphs over pixel-tight wrapping.** `GFX 1 18` switches
+  the tilemap to 40x32 double-width text; `GFX 0 18` returns to the
+  80x32 default. Switching is a clean slate - the screen clears, all 8
+  windows reset to full screen at the new width, and a pending
+  word-wrap fragment is discarded - so re-issue `WINAT`/`WINSIZE`
+  afterwards if you use custom windows. The width is game-owned, the
+  same way as the `GFX n 17` layer order: it survives `RESTART`,
+  `LOAD`, `RAMLOAD` and a part switch, and a same-width call does
+  nothing, so `GFX 1 18` in your init process is safe to issue
+  unconditionally. Flags 29 and 62 are unaffected - they read 129 and
+  144 in both widths, because graphics remain available at either
+  width. The whole authoring pattern, including the Layer 2
+  hole-cutting arithmetic at the new width, is in
+  [40-column games](graphics.md#40-column-games); the sub-command is
+  in the [GFX reference](graphics.md#gfx-sub-commands). `MOUSE 3`
+  (`GETMS`)'s reported column clamps to 0-39 in 40-column mode instead
+  of 0-79 - see [Mouse](mouse.md#mouse-sub-commands).
+- **NDRC `-cols=40` or `-cols=80`** sets the compiler's exported
+  `COLS` symbol to match the width your game runs at, so window and
+  centring arithmetic written against `COLS` comes out right whichever
+  width you chose. `-cols=80` is the default and matches the
+  interpreter's boot width.
 -  **NDRC v0.2** `-auto-tokens` option enabled: per-game text compression. Instead of
   DRC's fixed per-language token table, the compiler selects up to 128
   tokens from the compiling game's own text and encodes the text with
