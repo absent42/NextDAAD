@@ -1,22 +1,11 @@
 ; xbnmod.inc - shared machinery for XBN modules and combined binaries.
-; Include AFTER xbn.inc and BEFORE ORG. This file defines macros and
-; equates ONLY: everything it owns is emitted by XBN_BEGIN, which runs
-; after ORG. Emitting a byte at include time would land it before the
-; ORG and corrupt the binary.
-;
-; Every shipped binary includes this, standalone single-module binaries
-; included: the pinned CALL table must exist at $C00A in every build
-; shape or an absent slot is not a safe no-op.
+; Include AFTER xbn.inc and BEFORE ORG - macros and equates only, emits
+; nothing until XBN_BEGIN runs after ORG.
 
 XBN_CALL_SLOTS  equ 8            ; FROZEN at first release. Append only.
 
-; Emits the 10-byte header, then the pinned CALL table, then the shared
-; data the table needs. CALL lsb msb targets an absolute address, and
-; routine addresses differ between the standalone, combined and subset
-; builds, so authors CALL a slot, never a routine: slot n is at
-; $C00A + 3n. Slots 0-3 belong to the toolkit; 4-7 are reserved. A slot
-; whose module is absent jumps to xbn_null_ret, so a stale CALL is a
-; no-op rather than a jump into unrelated code.
+; Emits header then 8 three-byte slots at $C00A (slot n = $C00A + 3n);
+; absent slots jump to xbn_null_ret. Invoke once per binary.
     MACRO XBN_BEGIN ext_entry, int_entry
         XBN_HEADER ext_entry, int_entry
 xbn_call_table:
@@ -44,11 +33,9 @@ xbn_pal_owner:
         db 0
     ENDM
 
-; --- dispatch chain, shared by all.asm and xbnbuild's generated source ---
-; Modules may clobber every register, so the documented entry contract
-; (A=B=param1, C=fn, HL=flags+param1, DE=objTable+param1*6, IX=flags base)
-; is rebuilt before each module call. Defined here, not in either caller,
-; so there is one copy to change.
+; Dispatch chain shared by all.asm and xbnbuild's generated source - one
+; definition. Rebuilds the entry contract (A=B=param1, C=fn,
+; HL=flags+param1, DE=objTable+param1*6, IX=flags base) per module call.
 
 ; At the top of a chain's EXTERN entry: park param1 and fn.
     MACRO XBN_CHAIN_ENTER
