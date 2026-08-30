@@ -27,6 +27,10 @@ if (-not $SjasmPlus) { $SjasmPlus = Join-Path $root 'tools\sjasmplus\sjasmplus.e
 if (-not (Test-Path $SjasmPlus)) {
     throw "sjasmplus not found at '$SjasmPlus' - pass -SjasmPlus or populate tools\sjasmplus\ (CI downloads a pinned release; see .github\workflows\extern-audit.yml)"
 }
+# Absolute, because the freshness check below runs each assembly from a
+# scratch cwd: a relative -SjasmPlus would stop resolving there and every
+# extern would fail as if its SOURCE were broken.
+$SjasmPlus = (Resolve-Path $SjasmPlus).Path
 
 $failures = 0
 $dirs = Get-ChildItem $externsDir -Directory | Sort-Object Name
