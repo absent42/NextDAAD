@@ -1,0 +1,155 @@
+; NextDAAD 40-column tilemap mode fixture (2026-08-30).
+;
+; Compiled and byte-asserted by tests\build-tests.ps1 on every run;
+; -Txt40 additionally stages it into sd\TXT40\. Drives GFX 0/1 18 (the
+; width-select sub-command, src\nextdaad.inc GFX_SUB_TXTMODE, src\
+; main.asm tm_width_apply), WINAT/WINSIZE clamping at the live width,
+; CENTRE's tmCols-relative window placement, and the $6B save/restore
+; across a synchronous video play from 40-col mode.
+;
+; Verbs:
+;   T40   GFX 1 18 - switch to 40-col, clean slate, print at 40
+;   T80   GFX 0 18 - switch to 80-col, clean slate, print at 80
+;   WINS  WINDOW 1, WINAT 2 2, WINSIZE 10 36, a message that wraps at
+;         36 - proves WINAT/WINSIZE clamp and wrap use the live width
+;   CENT  WINDOW 2, WINSIZE 3 20, CENTRE - proves CENTRE's tmCols math
+;         at whichever width is live when it runs
+;   VID   GFX 1 13 - plays video 1 synchronously; from 40-col this
+;         exercises the wholesale $6B save/restore carrying the width
+;         bit through playback (interrupts.asm's 18-byte restore tail)
+;   LEAK  a message ending mid-word, then GFX 1 18 - the pending wrap
+;         word must be discarded on switch (main.asm tm_width_apply
+;         zeroes wrapLen before windows_init), not leaked onto the
+;         cleared screen
+;
+; V2 header (plain "DRF.exe nextdaad", no -v3) to match every other
+; byte-asserted stimulus fixture in this suite.
+
+/CTL
+_
+/VOC
+T40    10  verb
+T80    11  verb
+WINS   12  verb
+CENT   13  verb
+VID    14  verb
+LEAK   15  verb
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "I didn't understand."
+/7  "I can't go in that direction."
+/8  "I don't know that verb - try T40 T80 WINS CENT VID LEAK."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 " "
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+/MTX
+/0 "40-col mode#n"
+/1 "80-col mode#n"
+/2 "This forty column wrap test prints a message long enough that it must break across several lines inside a thirty six column window without losing any words or truncating the text unexpectedly#n"
+/3 "CENTRED#n"
+/4 "The pending word buffer should not leak this fragment after switching wid"
+/5 "NEXTDAAD TXT40 - 40 COLUMN MODE FIXTURE#n"
+/6 "back from video, still readable#n"
+/7 "VERBS  T40  T80  WINS  CENT  VID  LEAK#n"
+/OTX
+/0 "a brass lamp"
+/LTX
+/0 ""
+/1 "The text mode lab."
+/CON
+/0
+/1
+/OBJ
+/0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/PRO 0
+> _ _   AT 0
+        CLS
+        MESSAGE 5
+        MESSAGE 7
+        GOTO 1
+        PROCESS 1
+/PRO 1
+> _ _     PARSE 0
+          REDO
+> T40   _ GFX 1 18
+          MESSAGE 0
+          DONE
+> T80   _ GFX 0 18
+          MESSAGE 1
+          DONE
+> WINS  _ WINDOW 1
+          WINAT 2 2
+          WINSIZE 10 36
+          MESSAGE 2
+          WINDOW 0
+          DONE
+> CENT  _ WINDOW 2
+          WINSIZE 3 20
+          CENTRE
+          MESSAGE 3
+          WINDOW 0
+          DONE
+> VID   _ GFX 1 13
+          MESSAGE 6
+          DONE
+> LEAK  _ MESSAGE 4
+          GFX 1 18
+          DONE
+> _ _     NEWTEXT
+          SYSMESS 8
+          REDO
+/END

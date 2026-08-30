@@ -43,6 +43,7 @@
 #   -Uto                sd\UTO\       tools\TEST.DSF     (V2)
 #   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
 #   -FontSw             sd\FONTSW\    tests\fontsw.dsf
+#   -Txt40              sd\TXT40\     tests\txt40.dsf
 #   -Palette            sd\PALETTE\   tests\palette.dsf
 #   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -Xbn                sd\XBN\       tests\extern.dsf
@@ -634,7 +635,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -686,6 +687,7 @@ if ($TileSlack)        { $legName = 'TILESLK' }
 if ($Uto)              { $legName = 'UTO' }
 if ($UtoV3)            { $legName = 'UTOV3' }
 if ($FontSw)           { $legName = 'FONTSW' }
+if ($Txt40)            { $legName = 'TXT40' }
 if ($Palette)          { $legName = 'PALETTE' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
 if ($Xbn)              { $legName = 'XBN' }
@@ -707,7 +709,7 @@ function Reset-LegDir {
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
-               'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'PALETTE',
+               'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'PALETTE',
                'BIGDDB', 'XBN')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
@@ -1531,6 +1533,25 @@ finally {
     Pop-Location
 }
 
+# 40-column tilemap mode fixture (2026-08-30). Compiled unconditionally
+# like every block above so a break in the DSF is caught on a plain
+# run; -Txt40 is the leg switch that stages this DDB into sd\TXT40\
+# (see that switch's own block in the STAGING section below).
+$txt40Work = Join-Path $root 'tests\out\txt40-work'
+New-Item -ItemType Directory -Force $txt40Work | Out-Null
+Copy-Item "$PSScriptRoot\txt40.dsf" "$txt40Work\NDTXT40.DSF" -Force
+Push-Location $txt40Work
+try {
+    & $drcDrf @drcTarget NDTXT40.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (txt40)" }
+    & $drcPhp $drcDrb @drcTarget EN NDTXT40.json NDTXT40.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (txt40)" }
+    Copy-Item NDTXT40.DDB "$root\tests\out\txt40.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 # 256-colour text stimulus fixture. Compiled unconditionally like every
 # block above so a break in the DSF is caught on a plain run, whether or
 # not -Palette is given - the byte assertions below run every time.
@@ -1985,6 +2006,23 @@ if ($fontswPauseHits.Count -ne 3) {
     throw "fontsw: expected exactly 3 'PAUSE 25 -> 13' debounce holds (23 0D); found $($fontswPauseHits.Count) - DRC's duration scaling has changed, or a loop exit lost its debounce"
 }
 "fontsw.ddb: v$($fontswBytes[0]), GFX 2/0/3 16, MOUSE 2/1/0 5, the 8/8 hotspot, the GETMS tracking loop and its x3 debounce PAUSE all present as authored"
+
+# --- txt40: the 40-column text mode stimulus ---
+# GFX=87, WINAT=82, WINSIZE=107 confirmed against DRF-emitted
+# NDTXT40.json (tools\DRC\src\UCondacts.pas carries the same numbers).
+$txt40Bytes = [System.IO.File]::ReadAllBytes("$root\tests\out\txt40.ddb")
+foreach ($c in @(
+    @{ n = 'GFX 1 18'; b = [byte[]]@(87, 1, 18) },
+    @{ n = 'GFX 0 18'; b = [byte[]]@(87, 0, 18) },
+    @{ n = 'WINAT 2 2'; b = [byte[]]@(82, 2, 2) },
+    @{ n = 'WINSIZE 10 36'; b = [byte[]]@(107, 10, 36) },
+    @{ n = 'GFX 1 13 (video)'; b = [byte[]]@(87, 1, 13) }
+)) {
+    if ((Find-ByteRuns $txt40Bytes $c.b).Count -lt 1) {
+        throw "txt40: '$($c.n)' not present in tests\out\txt40.ddb - DRC did not emit the authored condact"
+    }
+}
+"txt40.ddb: GFX 18 both directions, WINAT/WINSIZE, and the from-40-col video play all present as authored"
 
 # --- palette: the 256-colour text stimulus ---
 # PAPER is opcode 65, INK 66, BORDER 67; each takes one parameter, so
@@ -4345,6 +4383,35 @@ if ($FontSw) {
     $fontSwActive = $true
 }
 
+$txt40Active = $false
+if ($Txt40) {
+    # 40-column tilemap mode fixture leg (2026-08-30): tests\txt40.dsf
+    # drives GFX 0/1 18, WINAT/WINSIZE and CENTRE at both widths, and a
+    # synchronous video play from 40-col. Same CSpect lock hazard as
+    # every other staging switch: refuse to stage rather than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
+    }
+    Copy-Item "$root\tests\out\txt40.ddb" "$leg\GAME.DDB" -Force
+
+    # 001.VID: the VID verb's clip. Same reuse as -SfxLong's own 001.VID
+    # staging above - no encoder run here, just whichever short leg-cache
+    # encode a prior -Vid run already left in tests\out\, picking the
+    # smallest (the player reads geometry from the file's own NXV v2
+    # header, not the SD file number). Excludes -VidLong's long-clip
+    # cache family - the wrong order of magnitude for this verb.
+    $txt40VidSrc = Get-ChildItem "$root\tests\out\*_leg_cache.vid" -ErrorAction SilentlyContinue | Sort-Object Length, Name | Select-Object -First 1
+    if ($txt40VidSrc) {
+        Copy-Item $txt40VidSrc.FullName "$leg\001.VID" -Force
+        "staged tests\out\$($txt40VidSrc.Name) -> sd\$legName\001.VID  $($txt40VidSrc.Length) bytes (smallest cached -Vid leg encode; VID verb)"
+    }
+    else {
+        "WARNING: no tests\out\*_leg_cache.vid found - sd\$legName\001.VID NOT staged. Run 'tests\build-tests.ps1 -Vid' once to populate the cache, then re-run -Txt40 to pick it up. The VID verb reports a clean miss with nothing staged, rather than failing."
+    }
+
+    $txt40Active = $true
+}
+
 if ($Palette) {
     Copy-Item "$root\tests\out\palette.ddb" (Join-Path $leg 'GAME.DDB') -Force
     "staged palette.ddb -> $leg\GAME.DDB"
@@ -4429,6 +4496,7 @@ foreach ($stagedDdb in Get-ChildItem -LiteralPath $leg -Filter '*.DDB' -File) {
 }
 if ($xbnActive) { "active: extern (XBN extern support fixture$(if ($XbnNoBin) { ', no GAME.XBN staged' } elseif ($XbnBad) { ", GAME.XBN = $XbnBad reject variant" } elseif ($XbnTicker) { ', GAME.XBN = authoring-kit ticker example' }))" }
 elseif ($fontSwActive) { "active: fontsw (SP18 font/pointer switching fixture)" }
+elseif ($txt40Active) { "active: txt40 (40-column tilemap mode fixture)" }
 elseif ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - GAME2.DDB + PART2\0.XMB also staged)" }
 elseif ($uuActive) { "active: urbanupstart" }
 elseif ($UU) { "active: urbanupstart (GAME.DDB copy failed, see warning above - stale DDB still active)" }
