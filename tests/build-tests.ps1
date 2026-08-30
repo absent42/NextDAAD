@@ -345,10 +345,11 @@
 #            tests\xbn\xbntest.asm's fixture extern as GAME.XBN (the
 #            XREG/XCAL/XCNR/XTIK/XSVC/XFIO/XMSG/XABS probe verbs, all
 #            live against the interpreter's XBN support as of Task 9).
-#            Three companion switches, all no-ops without -Xbn. Not
+#            Four companion switches, all no-ops without -Xbn. Not
 #            designed to be combined with each other; the staging code
 #            checks them in this priority order, so if more than one is
-#            given -XbnNoBin wins over -XbnBad wins over -XbnTicker:
+#            given -XbnNoBin wins over -XbnBad over -XbnTicker over
+#            -XbnFade over -XbnAll:
 #              -XbnNoBin      stage GAME.DDB with NO GAME.XBN at all (the
 #                              XABS no-XBN control - EXTERN must stay inert).
 #              -XbnBad <kind> stage a corrupt/truncated variant AS
@@ -387,9 +388,16 @@
 #                              extern.dsf's XFAD verb draws and fades.
 #                              Same scratch-cwd assembly pattern as
 #                              -XbnTicker (-> tests\out\xbn\FADE.XBN).
+#              -XbnAll        stage Task 4's combined-collection binary
+#                              (authoring-kit\externs\all\all.asm) as
+#                              GAME.XBN INSTEAD of the fixture, so
+#                              extern.dsf's XTCK/XFAD/XFDI/XFSC verbs
+#                              chain-dispatch through both modules. Same
+#                              scratch-cwd pattern and picture staging as
+#                              -XbnFade (-> tests\out\xbn\ALL.XBN).
 #                              Selection priority when combined:
 #                              -XbnNoBin wins over -XbnBad over
-#                              -XbnTicker over -XbnFade.
+#                              -XbnTicker over -XbnFade over -XbnAll.
 #            An alternative to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
@@ -635,7 +643,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -2945,6 +2953,53 @@ if ($Xbn) {
         $fadeArt2 = "$root\tools\Rabenstein-master\nextdaad\2.NX2"
         if (Test-Path $fadeArt2) {
             Copy-Item $fadeArt2 "$leg\002.NX2" -Force
+            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC/XFSO second scene)"
+        }
+        else {
+            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
+        }
+    }
+    elseif ($XbnAll) {
+        # Task 4's combined-collection binary, staged as GAME.XBN INSTEAD
+        # of the fixture, so extern.dsf's XTCK/XFAD/XFDI/XFSC verbs chain-
+        # dispatch through both modules. Same scratch-cwd pattern and
+        # picture staging as -XbnFade above (same CSpect-lock refusal).
+        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+            throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
+        }
+        $allSrcDir = Join-Path $root 'authoring-kit\externs\all'
+        $allBuildDir = Join-Path $root 'tests\out\xbn\_allbuild'
+        New-Item -ItemType Directory -Force $allBuildDir | Out-Null
+        Push-Location $allBuildDir
+        try {
+            & "$root\tools\sjasmplus\sjasmplus.exe" --msg=war -I "$root\authoring-kit" "$allSrcDir\all.asm"
+            if ($LASTEXITCODE -ne 0) { throw "authoring-kit\externs\all\all.asm assembly failed" }
+            Move-Item "GAME.XBN" "$root\tests\out\xbn\ALL.XBN" -Force
+        }
+        finally {
+            Pop-Location
+            Remove-Item $allBuildDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Same shipped-prebuilt drift guard as -XbnTicker/-XbnFade above.
+        $allShipped = Join-Path $allSrcDir 'GAME.XBN'
+        $freshA = [IO.File]::ReadAllBytes("$root\tests\out\xbn\ALL.XBN")
+        $shipA = [IO.File]::ReadAllBytes($allShipped)
+        if (-not [System.Linq.Enumerable]::SequenceEqual($freshA, $shipA)) {
+            throw "authoring-kit\externs\all\GAME.XBN is STALE - rebuild it from all.asm (its build.ps1) and commit both together"
+        }
+        Copy-Item "$root\tests\out\xbn\ALL.XBN" "$leg\GAME.XBN" -Force
+        "staged tests\out\xbn\ALL.XBN -> sd\$legName\GAME.XBN (-XbnAll: combined collection binary, not the fixture; shipped prebuilt verified fresh)"
+        $allArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
+        if (Test-Path $allArt) {
+            Copy-Item $allArt "$leg\001.NX2" -Force
+            "staged tools\Rabenstein-master\nextdaad\1.NX2 -> sd\$legName\001.NX2 (XFAD picture)"
+        }
+        else {
+            "WARNING: tools\Rabenstein-master\nextdaad\1.NX2 missing - XFAD will have no picture to fade"
+        }
+        $allArt2 = "$root\tools\Rabenstein-master\nextdaad\2.NX2"
+        if (Test-Path $allArt2) {
+            Copy-Item $allArt2 "$leg\002.NX2" -Force
             "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC/XFSO second scene)"
         }
         else {

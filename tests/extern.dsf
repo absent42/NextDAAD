@@ -51,6 +51,9 @@
 ;          this entry is only meaningful in that combination; against
 ;          the plain fixture XBN, fn 30/31 fall through xbntest.asm's
 ;          ext_main unrecognised and no-op.
+;   XSLT - CALLs pinned jump table slot 0 ($C00A). Meaningful only on
+;          legs staging a table-carrying binary (-XbnAll/-XbnTicker/
+;          -XbnFade) - the fixture binary carries no such table.
 
 #define fPlayer  38
 
@@ -77,6 +80,7 @@ XRST   116 verb
 XRLD   117 verb
 XDCL   118 verb
 XARM   119 verb
+XSLT   120 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -219,6 +223,12 @@ XARM   119 verb
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above.
            PRINT 222         ; expect 153 ($99)
+           DONE
+; XSLT - CALLs pinned slot 0 ($C00A), safe no-op only on legs staging a
+;        pinned-table binary (-XbnAll/-XbnTicker/-XbnFade). DO NOT TYPE
+;        on the plain -Xbn leg: no table there, so $C00A is fixture code.
+> XSLT _   CALL 10 192
+           MES "slot ok"
            DONE
 > XCNR _   CLEAR 220
            CALL 0 128        ; $8000 - out of window, must no-op
