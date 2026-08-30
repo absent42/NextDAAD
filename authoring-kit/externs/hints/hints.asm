@@ -47,8 +47,10 @@ ext:
     cp 51
     jp z, query
     cp 52
-    jp z, preflight              ; jp, not jr: several hundred bytes sit
-    ret                          ; between here and the handlers
+    jp z, preflight               ; jp, not jr: several hundred bytes sit
+    cp 53                         ; between here and the handlers
+    jp z, clearprog
+    ret
 
 ; fn 52 - open GAME.HNT, validate its header, leave the result in flag 243.
 ; Also the graceful-degrade example: an interpreter whose API predates the
@@ -124,6 +126,61 @@ close_hpr:
     call SVC_FCLOSE
     ld a, $FF
     ld (hprh), a
+    ret
+
+; Opens GAME.HPR read/write, creating a zeroed one if absent. Mode $03 is
+; open-existing read/write with no truncate (esxDOS: read $01 + write $02 +
+; open-existing $00). Out: CF set on failure.
+open_hpr:
+    ld ix, name_hpr
+    ld b, MODE_RW
+    call SVC_FOPEN
+    jr c, .create
+    ld (hprh), a
+    or a
+    ret
+.create:
+    ld ix, name_hpr
+    ld b, MODE_WNEW
+    call SVC_FOPEN
+    ret c
+    ld (hprh), a
+    call write_blank
+    jr nc, .made
+    call close_hpr                ; do not strand the handle on a write failure
+    scf
+    ret
+.made:
+    ld a, (hprh)
+    call SVC_FCLOSE
+    ld a, $FF
+    ld (hprh), a                  ; mark closed before the reopen can fail too
+    ld ix, name_hpr
+    ld b, MODE_RW
+    call SVC_FOPEN
+    ret c
+    ld (hprh), a
+    or a
+    ret
+
+; Writes 256 obfuscated zero bytes - the keystream itself, since plaintext
+; zero XOR key is key.
+write_blank:
+    ld hl, 0
+    call ks_start
+    ld hl, rdbuf
+    ld b, 0                       ; 256 iterations
+.fill:
+    push bc
+    call ks_next
+    ld (hl), a
+    pop bc
+    inc hl
+    djnz .fill
+    ld ix, rdbuf
+    ld bc, 256
+    ld a, (hprh)
+    call SVC_FWRITE
     ret
 
 ; Writes A to flag 243 and returns.
@@ -267,18 +324,85 @@ query:
     xor a
     jp status
 
-; fn 50 - print one hint. B = topic. Flag 242 selects the level, 1-based.
-; Automatic mode (flag 242 = 0) is added in the next task.
+; Reads topic B's progress byte into A. CF set on failure.
+hpr_read:
+    ld h, 0
+    ld l, b
+    push hl
+    ex de, hl
+    ld bc, 0
+    ld a, (hprh)
+    call SVC_FSEEK
+    pop hl
+    ret c
+    push hl
+    ld ix, buf3
+    ld bc, 1
+    ld a, (hprh)
+    call SVC_FREAD
+    pop hl
+    ret c
+    call ks_start
+    call ks_next
+    ld hl, buf3
+    xor (hl)                     ; NOT (ix+0): the file services are
+    or a                         ; documented to clobber IX
+    ret
+
+; Writes A as topic B's progress byte. CF set on failure.
+hpr_write:
+    push af
+    ld h, 0
+    ld l, b
+    push hl
+    call ks_start
+    call ks_next
+    ld c, a
+    pop hl
+    pop af
+    xor c
+    ld (buf3), a
+    ex de, hl
+    ld bc, 0
+    ld a, (hprh)
+    call SVC_FSEEK
+    ret c
+    ld ix, buf3
+    ld bc, 1
+    ld a, (hprh)
+    call SVC_FWRITE
+    ret
+
+; fn 50 - print one hint. B = topic. Flag 242 selects the level, 1-based;
+; zero means automatic: read GAME.HPR for this topic, print, store level+1.
 show:
     ld a, (XBN_FLAGS + FLAG_LEVEL)
     or a
-    ret z                        ; automatic mode not yet implemented
+    jr nz, .explicit
+    ld a, 1
+    ld (autom), a
+    jr .go
+.explicit:
     dec a                        ; to 0-based
     ld (want), a
+    xor a
+    ld (autom), a
+.go:
     call open_hnt
     jr c, .nofile
     call read_dir
     jr c, .notopic
+    ld a, (autom)
+    or a
+    jr z, .haveLevel
+    call open_hpr
+    jr c, .notopic
+    ld a, (topic)                ; topic lives in (topic), not B - B was
+    ld b, a                      ; clobbered by every SVC call since ext:
+    call hpr_read
+    jr c, .notopic
+    ld (want), a
+.haveLevel:
     ld a, (want)
     ld hl, levels
     cp (hl)
@@ -287,6 +411,21 @@ show:
     jr c, .notopic
     call print_text
     jr c, .nofile                ; stopped partway or failed to start: no ST_OK
+    ld a, (autom)
+    or a
+    jr z, .done
+    ld a, (want)
+    inc a
+    push af                      ; new level; B must hold topic for hpr_write
+    ld a, (topic)
+    ld b, a
+    pop af
+    call hpr_write
+    ld a, (hprh)
+    call SVC_FCLOSE
+    ld a, $FF
+    ld (hprh), a
+.done:
     xor a
     jr fail                      ; the epilogue closes both handles
 .notopic:
@@ -433,8 +572,31 @@ print_text:
     call SVC_PUTCHAR
     ret
 
+; fn 53 - reset every topic's progress. Rewrites GAME.HPR blank rather than
+; deleting it, so the next hint call finds a valid file.
+clearprog:
+    call open_hnt                 ; the seed lives in the HNT header
+    jr c, .nofile
+    call close_hnt
+    ld ix, name_hpr
+    ld b, MODE_WNEW
+    call SVC_FOPEN
+    jr c, .nofile
+    ld (hprh), a
+    call write_blank
+    ld a, (hprh)
+    call SVC_FCLOSE
+    ld a, $FF
+    ld (hprh), a
+    xor a
+    jp status
+.nofile:
+    ld a, ST_NOFILE
+    jp status
+
 thisrun: db 0
 want:    db 0
+autom:   db 0
 levels:  db 0
 tbl:     dw 0
 toff:    dw 0
