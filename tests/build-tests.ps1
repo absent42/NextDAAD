@@ -821,6 +821,8 @@ finally {
 
 & "$PSScriptRoot\fontconv-selftest.ps1"
 
+& "$PSScriptRoot\hintpack-selftest.ps1"
+
 # ---- Layer 2 transparency constants: five files, three value classes ----
 # The transparent COLOUR ($E3), the reserved INDEX (255), and the dodge
 # COLOUR ($E7) are written out longhand across five files in three
