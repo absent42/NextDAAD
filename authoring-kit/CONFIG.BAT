@@ -109,5 +109,5 @@ REM set --stream-budget only to override that - see
 REM docs\reference\video-delivery.html "Streaming, resident and direct delivery".
 REM The two lines below are worked examples for the demo clips - delete
 REM them when you replace 001.mp4 and 002.mp4 with your own footage.
-REM VIDOPTS_002=--fps 12.5 --dither 0.0 --tile-slack 0.5 --direct
-REM VIDOPTS_001=--shape 16:9 --dither 0.25
+SET VIDOPTS_002=--fps 12.5 --dither 0.0 --tile-slack 0.5 --direct
+SET VIDOPTS_001=--shape 16:9 --dither 0.25
