@@ -21,7 +21,7 @@ Everything you need to build a DAAD game for the ZX Spectrum Next.
 ## Good to know
 
 - [Platform notes](platform-notes.md) - how this target differs from other DAAD interpreters
-- [Known differences](known-differences.md) - behaviour we intend to change
+- [Known differences](known-differences.md) - differences compared to other interpreters
 - [What changed](changes.md) - author-visible changes by version
 
 ## Reference

@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.8.0 - unreleased
+## 0.8.0 - 30 August 2026
 
 - **A new 40-column text mode: fewer, wider columns, for a game that
   wants bigger glyphs at the cost of characters per line.** `GFX 1 18` switches
@@ -23,12 +23,12 @@ game behaves, how it builds, or what the kit gives you, it is here.
   in the [GFX reference](graphics.md#gfx-sub-commands). `MOUSE 3`
   (`GETMS`)'s reported column clamps to 0-39 in 40-column mode instead
   of 0-79 - see [Mouse](mouse.md#mouse-sub-commands).
-- **NDRC `-cols=40` or `-cols=80`** sets the compiler's exported
+- **NDRC v0.2.1`-cols=40` or `-cols=80`** sets the compiler's exported
   `COLS` symbol to match the width your game runs at, so window and
   centring arithmetic written against `COLS` comes out right whichever
   width you chose. `-cols=80` is the default and matches the
   interpreter's boot width.
--  **NDRC v0.2** `-auto-tokens` option enabled: per-game text compression. Instead of
+-  **NDRC v0.2.1** `-auto-tokens` option enabled: per-game text compression. Instead of
   DRC's fixed per-language token table, the compiler selects up to 128
   tokens from the compiling game's own text and encodes the text with
   an optimal parse. Compressed text measures 8-14% smaller than the

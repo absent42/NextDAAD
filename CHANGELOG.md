@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.8.0 - unreleased
+## v0.8.0 - 30/08/2026
 
 - 40x32 tilemap text mode: runtime `GFX n 18` switch between 80x32
   single-width and 40x32 double-width text. Clean slate on switch
