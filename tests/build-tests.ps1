@@ -44,6 +44,7 @@
 #   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
 #   -FontSw             sd\FONTSW\    tests\fontsw.dsf
 #   -Txt40              sd\TXT40\     tests\txt40.dsf
+#   -Accent             sd\ACCENT\    tests\accents.dsf
 #   -Palette            sd\PALETTE\   tests\palette.dsf
 #   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -Xbn                sd\XBN\       tests\extern.dsf
@@ -651,7 +652,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -704,6 +705,7 @@ if ($Uto)              { $legName = 'UTO' }
 if ($UtoV3)            { $legName = 'UTOV3' }
 if ($FontSw)           { $legName = 'FONTSW' }
 if ($Txt40)            { $legName = 'TXT40' }
+if ($Accent)           { $legName = 'ACCENT' }
 if ($Palette)          { $legName = 'PALETTE' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
 if ($Xbn)              { $legName = 'XBN' }
@@ -725,8 +727,8 @@ function Reset-LegDir {
     param([string]$Name)
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
-               'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'PALETTE',
-               'BIGDDB', 'XBN')
+               'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
+               'PALETTE', 'BIGDDB', 'XBN')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -1583,6 +1585,27 @@ finally {
     Pop-Location
 }
 
+# Accented-glyph fixture (2026-08-30). Compiled unconditionally like
+# every block above so a break in the DSF is caught on a plain run;
+# -Accent is the leg switch that stages this DDB into sd\ACCENT\.
+# tests\accents.dsf is Latin-1 ON PURPOSE - DRF reads DSF text as
+# Latin-1 and does the accent conversion itself (a UTF-8 source
+# double-converts and the byte asserts below catch it).
+$accentWork = Join-Path $root 'tests\out\accent-work'
+New-Item -ItemType Directory -Force $accentWork | Out-Null
+Copy-Item "$PSScriptRoot\accents.dsf" "$accentWork\NDACCENT.DSF" -Force
+Push-Location $accentWork
+try {
+    & $drcDrf @drcTarget NDACCENT.DSF
+    if ($LASTEXITCODE -ne 0) { throw "DRF failed (accent)" }
+    & $drcPhp $drcDrb @drcTarget EN NDACCENT.json NDACCENT.DDB
+    if ($LASTEXITCODE -ne 0) { throw "DRB failed (accent)" }
+    Copy-Item NDACCENT.DDB "$root\tests\out\accents.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 # 256-colour text stimulus fixture. Compiled unconditionally like every
 # block above so a break in the DSF is caught on a plain run, whether or
 # not -Palette is given - the byte assertions below run every time.
@@ -2054,6 +2077,37 @@ foreach ($c in @(
     }
 }
 "txt40.ddb: GFX 18 both directions, WINAT/WINSIZE, and the from-40-col video play all present as authored"
+
+# --- accents: DRC's two accent encodings ---
+# Message text is stored complemented (byte = 255 - char; the
+# interpreter's reader undoes it), so every text assertion below is the
+# 255-complement of the authored sequence. DRF does the conversion
+# (drc-analysis section 16.2 in the NDRC repo is the authoritative
+# table): encoding 1 = bare bytes 16-31, encoding 2 and the uppercase
+# sets = $0E code $0F triples, sharp-s = a DIRECT $7F (never the DRB
+# key-35 triple in this pipeline). Guards the whole stimulus surface
+# the prn_shift charset redirect (src\print.asm) consumes.
+$accBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\accents.ddb")
+function Complement([int[]]$seq) { [byte[]]($seq | ForEach-Object { 255 - $_ }) }
+foreach ($c in @(
+    @{ n = 'E1: the 16 direct codes 21-31,16-20'; b = (Complement (21..31 + 16..20)) },
+    @{ n = 'E2: triples for keys 16+17'; b = (Complement @(14, 16, 15, 14, 17, 15)) },
+    @{ n = 'E2: triple for key 31'; b = (Complement @(14, 31, 15)) },
+    @{ n = 'sharp-s: direct $7F after "SS "'; b = (Complement @(83, 83, 32, 127)) },
+    @{ n = 'MX: bare 16 / triple 16 alternation'; b = (Complement @(16, 14, 16, 15, 16, 14, 16, 15)) },
+    @{ n = 'UC: triples for codes $20+$21'; b = (Complement @(14, 32, 15, 14, 33, 15)) },
+    @{ n = 'UC: triple for code $2F'; b = (Complement @(14, 47, 15)) },
+    @{ n = 'UA: triple for code $7B'; b = (Complement @(14, 123, 15)) },
+    @{ n = 'UA: triple for code $7F'; b = (Complement @(14, 127, 15)) },
+    @{ n = 'MODE 1 (force-upper window)'; b = [byte[]]@(81, 1) },
+    @{ n = 'MODE 0 (restore)'; b = [byte[]]@(81, 0) },
+    @{ n = 'WINSIZE 5 32 (More paging window)'; b = [byte[]]@(107, 5, 32) }
+)) {
+    if ((Find-ByteRuns $accBytes $c.b).Count -lt 1) {
+        throw "accents: '$($c.n)' not present in tests\out\accents.ddb - DRF/DRB conversion changed, or the DSF lost its Latin-1 encoding"
+    }
+}
+"accents.ddb: bare 16-31, lowercase/uppercase/acute triple sets, direct sharp-s, MX collision probe, MODE and the paging window all present as authored"
 
 # --- palette: the 256-colour text stimulus ---
 # PAPER is opcode 65, INK 66, BORDER 67; each takes one parameter, so
@@ -4539,6 +4593,22 @@ if ($Txt40) {
     $txt40Active = $true
 }
 
+$accentActive = $false
+if ($Accent) {
+    # Accented-glyph fixture leg (2026-08-30): tests\accents.dsf drives
+    # both DRC accent encodings, the uppercase triple sets, direct
+    # sharp-s, MODE 1 force-upper and More... paging across shifted
+    # words. Expected glyph indices per check are in
+    # docs\accent-glyphs-run-sheet.md. Same CSpect lock hazard as every
+    # other staging switch: refuse to stage rather than warn.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
+    }
+    Copy-Item "$root\tests\out\accents.ddb" "$leg\GAME.DDB" -Force
+    "staged accents.ddb -> sd\$legName\GAME.DDB"
+    $accentActive = $true
+}
+
 if ($Palette) {
     Copy-Item "$root\tests\out\palette.ddb" (Join-Path $leg 'GAME.DDB') -Force
     "staged palette.ddb -> $leg\GAME.DDB"
@@ -4624,6 +4694,7 @@ foreach ($stagedDdb in Get-ChildItem -LiteralPath $leg -Filter '*.DDB' -File) {
 if ($xbnActive) { "active: extern (XBN extern support fixture$(if ($XbnNoBin) { ', no GAME.XBN staged' } elseif ($XbnBad) { ", GAME.XBN = $XbnBad reject variant" } elseif ($XbnTicker) { ', GAME.XBN = authoring-kit ticker example' }))" }
 elseif ($fontSwActive) { "active: fontsw (SP18 font/pointer switching fixture)" }
 elseif ($txt40Active) { "active: txt40 (40-column tilemap mode fixture)" }
+elseif ($accentActive) { "active: accents (accented-glyph / charset-redirect fixture - verbs ACC PAGE FORCE R)" }
 elseif ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - GAME2.DDB + PART2\0.XMB also staged)" }
 elseif ($uuActive) { "active: urbanupstart" }
 elseif ($UU) { "active: urbanupstart (GAME.DDB copy failed, see warning above - stale DDB still active)" }

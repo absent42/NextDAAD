@@ -88,10 +88,29 @@ prn_decoded:
     ld hl, (objname_hook)
     jp (hl)
 
-; C = printable decoded char. Word-buffering layer over prn_char_raw:
-; printable non-space chars accumulate in wrapBuf so whole words wrap at
-; the window edge; a space flushes the pending word. wrapLock (held by
-; the input editor) bypasses buffering so echo stays immediate.
+; C = decoded char in, C = final glyph out. Adds 128 (mod 256, like
+; jDAAD's font[(c+shift)%256], jdaad.js:1967) when the window forces
+; upper charset or #g is latched - EVERY char, no low-range carve-out,
+; so $0E chr(16..31) $0F reaches DRC's accent glyphs at 144-159.
+prn_shift:
+    ld a, WIN_FLAGS
+    call win_field
+    bit 0, (hl)                 ; window forces upper charset?
+    jr nz, .upper
+    ld a, (chsGfx)
+    or a
+    ret z
+.upper:
+    ld a, c
+    add a, 128
+    ld c, a
+    ret
+
+; C = printable decoded char. Word-buffering layer: printable non-space
+; chars accumulate in wrapBuf (pre-shifted to final glyphs) so whole
+; words wrap at the window edge; a space flushes the pending word.
+; wrapLock (held by the input editor) bypasses buffering so echo stays
+; immediate.
 prn_char:
     ld a, (wrapLock)
     or a
@@ -99,7 +118,9 @@ prn_char:
     ld a, c
     cp ' '
     jr z, .space
-    ; printable non-space: append C to wrapBuf[wrapLen]
+    ; printable non-space: shift NOW (a #t may close before the flush),
+    ; then append the final glyph to wrapBuf[wrapLen]
+    call prn_shift
     ld a, (wrapLen)
     ld e, a
     ld d, 0
@@ -128,33 +149,18 @@ prn_char:
     ld c, ' '
     ; fall through to prn_char_raw
 
-; C = printable decoded char. Applies the charset offset ($20-$7F only),
-; prints, and runs the More... check when the print wrapped the line.
+; C = printable decoded char (unshifted paths: editor echo, spaces).
 prn_char_raw:
+    call prn_shift
+; C = final glyph index. Prints, runs the More... check on wrap.
+prn_glyph:
     ld a, c
-    cp $20
-    jr c, .have                 ; $10-$1F extended glyphs print direct
-    cp $80
-    jr nc, .have
-    ld a, WIN_FLAGS
-    call win_field
-    bit 0, (hl)                 ; window forces upper charset?
-    jr nz, .upper
-    ld a, (chsGfx)
-    or a
-    jr nz, .upper
-    ld a, c
-    jr .have
-.upper:
-    ld a, c
-    add a, 128
-.have:
     call win_putc
     ret nc                      ; no wrap
     call win_newline_only       ; complete the wrap's line advance
     jr prn_more_check
 
-; Emit the buffered word through prn_char_raw. If the word overflows the
+; Emit the buffered word through prn_glyph. If the word overflows the
 ; line remainder but still fits the window, newline (+ More check) first
 ; so the whole word moves down together. No-op while wrapLock is held
 ; (the buffer belongs to a suspended outer context, e.g. the SM32 More
@@ -200,7 +206,7 @@ prn_flush:
     ld a, (wrapIdx)
     inc a
     ld (wrapIdx), a
-    call prn_char_raw
+    call prn_glyph              ; wrapBuf holds final glyphs, no re-shift
     jr .eloop
 .edone:
     xor a
@@ -334,19 +340,28 @@ prn_encoded:
     pop hl
     jr prn_encoded
 
-; Block until any key is pressed then released. Corrupts AF.
-wait_key:
-.press:
+; Z = no key down, NZ = some key down. Corrupts AF.
+key_down:
     xor a
     in a, ($FE)
     and $1F
     cp $1F
+    ret
+
+; Block until a FRESH key press, then its release. Edge-gated: all keys
+; up first, so the ENTER that submitted a command cannot dismiss a
+; More/ANYKEY arming while still held (ZXDAAD128 WaitForKey waits on a
+; new LASTK event; silicon accent run check 8 caught the race).
+; Corrupts AF.
+wait_key:
+.settle:
+    call key_down
+    jr nz, .settle              ; stale key still down from before
+.press:
+    call key_down
     jr z, .press
 .release:
-    xor a
-    in a, ($FE)
-    and $1F
-    cp $1F
+    call key_down
     jr nz, .release
     ret
 
@@ -373,12 +388,23 @@ wait_key_timeout:
     ld (inpTOFrames), hl
     ld a, (frameCounter)
     ld d, a                     ; D = last seen frame low byte
+    ld c, 0                     ; C = all-keys-up seen since entry
 .poll:
-    xor a
-    in a, ($FE)
-    and $1F
-    cp $1F
-    jr nz, .press               ; a key is down
+    call key_down
+    jr z, .up
+    ; key down: only a press AFTER an all-up scan counts (edge, like
+    ; ZXDAAD128's LASTK wait); a stale held key neither dismisses nor
+    ; stops the timeout clock
+    ld a, c
+    or a
+    jr z, .tick
+.press:
+    call key_down
+    jr nz, .press               ; wait for release
+    ret
+.up:
+    ld c, 1
+.tick:
     ld a, (frameCounter)
     cp d
     jr z, .poll                 ; same frame
@@ -393,13 +419,6 @@ wait_key_timeout:
     ld a, (flags+FLAG_TIMECTL)
     or $80
     ld (flags+FLAG_TIMECTL), a
-    ret
-.press:
-    xor a
-    in a, ($FE)
-    and $1F
-    cp $1F
-    jr nz, .press               ; wait for release
     ret
 
 ; $0C escape: wait for a key, then the pause restarts the page count.

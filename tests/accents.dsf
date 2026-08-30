@@ -1,0 +1,151 @@
+; NextDAAD accented-glyph fixture (2026-08-30). Compiled and
+; byte-asserted by testsuild-tests.ps1 on every run; -Accent stages
+; it into sd\ACCENT\. Drives DRC's two accent encodings against the
+; charset redirect in src\print.asm (prn_shift): encoding 1 = bare
+; bytes 16-31, encoding 2 = $0E chr(16..31) $0F triples reaching
+; glyphs 144-159, sharp-s = a DIRECT byte $7F reaching glyph 127 (DRF
+; ConvertChars - DRB's UTF-8 key-35 table never fires in this
+; pipeline), uppercase accents = triples $20-$2F reaching glyphs
+; 160-175, uppercase acutes = triples $7B-$7F reaching glyphs 251-255.
+; Latin-1 source ON PURPOSE: DRF reads the DSF as Latin-1 and emits
+; the triples itself (a UTF-8 source double-converts and fails the
+; byte asserts).
+;
+; Verbs:
+;   ACC    reprint the six render lines (E1/E2/SS/MX/UC/UA)
+;   PAGE   5-row window + a long accented message - More... paging
+;          across pre-shifted buffered words
+;   FORCE  MODE 1 window (WIN_FLAGS bit 0), plain text - force-upper
+;          shifts EVERY char; MODE 0 restores
+;   R      CLS + RESTART - the #g latch and window modes must reset
+/CTL
+_
+/VOC
+ACC    10  verb
+PAGE   11  verb
+FORCE  12  verb
+R      24  verb
+REDES  24  verb
+/STX
+/0  "It's too dark to see anything."
+/1  "I can also see:"
+/2  "What now?"
+/3  "What next?"
+/4  "What should I do now?"
+/5  "What should I do next?"
+/6  "I didn't understand."
+/7  "I can't go in that direction."
+/8  "I don't know that verb - try ACC PAGE FORCE R."
+/9  "I have with me:"
+/10 "I am wearing:"
+/11 " "
+/12 "Are you sure?"
+/13 "Another go?"
+/14 " "
+/15 "OK."
+/16 " "
+/17 " "
+/18 " "
+/19 " "
+/20 " "
+/21 " "
+/22 " "
+/23 "I'm not wearing one of those."
+/24 "I can't. My hands are full."
+/25 "I already have the _."
+/26 "There isn't one of those here."
+/27 "I can't carry any more things."
+/28 "I don't have one of those."
+/29 "I'm already wearing the _."
+/30 "Y"
+/31 "N"
+/32 "More..."
+/33 ">"
+/34 " "
+/35 " "
+/36 "I now have the _."
+/37 "I'm now wearing the _."
+/38 "I've removed the _."
+/39 "I've dropped the _."
+/40 "I can't wear the _."
+/41 "I can't remove the _."
+/42 "I can't remove the _. My hands are full."
+/43 "The _ weighs too much for me."
+/44 "The _ is in the"
+/45 "The _ isn't in the"
+/46 ", "
+/47 " and "
+/48 ".#n"
+/49 "I don't have the _."
+/50 "I'm not wearing the _."
+/51 "."
+/52 "There isn't one of those in the"
+/53 "Nothing."
+/54 " "
+/55 " "
+/56 " "
+/57 "I/O Error"
+/58 " "
+/59 "File name error."
+/60 "Type in name of file."
+/MTX
+/0 "E1 áéíóúñÑçÇüÜª¡¿«»#n"
+/1 "E2 àãäâèëêìïîòõöôùû#n"
+/2 "SS ß#n"
+/3 "MX ªàªà#n"
+/4 "NEXTDAAD ACCENT FIXTURE#nVERBS  ACC  PAGE  FORCE  R#n"
+/5 "ligne une: théâtre français#nligne deux: à bientôt naïve#nligne trois: gruß wörter über#nligne quatre: irmão corações#nligne cinq: noël aïeul où#nligne six: été île pâte#nligne sept: süß hören lärm#nligne huit: fimarduìno tù#nligne neuf: ça irá ñandú#nligne dix: fin des lignes#n"
+/6 "FORCED UPPER LINE#n"
+/7 "UC ÀÃÄÂÈËÊÌÏÎÒÕÖÔÙÛ#n"
+/8 "UA ÁÉÍÓÚ#n"
+/OTX
+/0 "a brass lamp"
+/LTX
+/0 ""
+/1 "The accent lab."
+/CON
+/0
+/1
+/OBJ
+/0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/PRO 0
+; Banner is one-shot (AT 0 exits via GOTO 1); PROCESS 1 must stay an
+; unconditional separate entry (the txt40 fixture precedent).
+> _ _   AT 0
+        CLS
+        MESSAGE 4
+        MESSAGE 0
+        MESSAGE 1
+        MESSAGE 2
+        MESSAGE 3
+        MESSAGE 7
+        MESSAGE 8
+        GOTO 1
+> _ _   PROCESS 1
+/PRO 1
+> _ _     PARSE 0
+          REDO
+> ACC   _ MESSAGE 0
+          MESSAGE 1
+          MESSAGE 2
+          MESSAGE 3
+          MESSAGE 7
+          MESSAGE 8
+          DONE
+> PAGE  _ WINDOW 2
+          WINAT 2 0
+          WINSIZE 5 32
+          CLS
+          MESSAGE 5
+          WINDOW 1
+          DONE
+> FORCE _ MODE 1
+          MESSAGE 6
+          MODE 0
+          DONE
+> R     _ CLS
+          RESTART
+> _ _     NEWTEXT
+          SYSMESS 8
+          REDO
+/END
