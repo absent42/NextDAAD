@@ -4394,20 +4394,18 @@ if ($Txt40) {
     }
     Copy-Item "$root\tests\out\txt40.ddb" "$leg\GAME.DDB" -Force
 
-    # 001.VID: the VID verb's clip. Same reuse as -SfxLong's own 001.VID
-    # staging above - no encoder run here, just whichever short leg-cache
-    # encode a prior -Vid run already left in tests\out\, picking the
-    # smallest (the player reads geometry from the file's own NXV v2
-    # header, not the SD file number). Excludes -VidLong's long-clip
-    # cache family - the wrong order of magnitude for this verb.
-    $txt40VidSrc = Get-ChildItem "$root\tests\out\*_leg_cache.vid" -ErrorAction SilentlyContinue | Sort-Object Length, Name | Select-Object -First 1
-    if ($txt40VidSrc) {
-        Copy-Item $txt40VidSrc.FullName "$leg\001.VID" -Force
-        "staged tests\out\$($txt40VidSrc.Name) -> sd\$legName\001.VID  $($txt40VidSrc.Length) bytes (smallest cached -Vid leg encode; VID verb)"
+    # 001.VID: the VID verb's clip. No encoder run here - reuses the exact
+    # cache file the -Vid leg itself stages as 001.VID (shape 'full',
+    # current $vidLegSettlementTag). A "smallest cached *_leg_cache.vid"
+    # heuristic used to sit here instead; it could pick up any stale-era
+    # or wrong-shape leg cache left in tests\out\ by older -Vid runs,
+    # which is not what the -Vid leg would ever stage as 001.VID.
+    $txt40VidSrc = Join-Path $root "tests\out\001_full_${vidLegSettlementTag}_leg_cache.vid"
+    if (-not (Test-Path -LiteralPath $txt40VidSrc)) {
+        throw "no $txt40VidSrc - run 'tests\build-tests.ps1 -Vid' once to populate the cache (encodes and caches 001-006.VID), then re-run -Txt40 to pick it up"
     }
-    else {
-        "WARNING: no tests\out\*_leg_cache.vid found - sd\$legName\001.VID NOT staged. Run 'tests\build-tests.ps1 -Vid' once to populate the cache, then re-run -Txt40 to pick it up. The VID verb reports a clean miss with nothing staged, rather than failing."
-    }
+    Copy-Item -LiteralPath $txt40VidSrc "$leg\001.VID" -Force
+    "staged tests\out\$(Split-Path -Leaf $txt40VidSrc) -> sd\$legName\001.VID  $((Get-Item -LiteralPath $txt40VidSrc).Length) bytes (-Vid leg source, shape full; VID verb)"
 
     $txt40Active = $true
 }
