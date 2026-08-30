@@ -11,6 +11,12 @@ SET COMPRESS=0
 REM 1 = launch CSpect on the result after a successful build; 0 = build only.
 SET RUN=1
 
+REM Text columns your game is authored for: blank = 80 (the default), or 40
+REM for the double-width 40-column mode. Sets the compiler's COLS symbol
+REM (ndrc -cols). The interpreter still boots at 80: a 40-column game must
+REM issue GFX 1 18 in its init process - see docs\graphics.html.
+SET COLS=
+
 REM Location of the toolchain (gfx2next, Arkos tools, CSpect). Install the
 REM tools into this folder - see tools\README.txt.
 SET TOOLSDIR=tools
@@ -34,10 +40,8 @@ REM Point at the folder the tool was installed into. For Arkos Tracker
 REM and ffmpeg, whose programs sit in a subfolder (tools\ and bin\), the
 REM install root and that subfolder are both accepted.
 REM
-REM Blank rather than spelled out on purpose: CONFIG.local.BAT is loaded
-REM AFTER this file and exists to relocate TOOLSDIR, so a default written
-REM out here would freeze the old folder in while everything else moved.
-REM They are resolved in lib\tools.bat once both files have been read.
+REM Leave them blank here even if you move TOOLSDIR: CONFIG.local.BAT is
+REM read after this file, so a path set there wins.
 REM ---------------------------------------------------------------------
 
 REM Gfx2Next - PNG to Layer 2 picture conversion.
@@ -58,7 +62,7 @@ SET VIDTUNEDIR=
 
 REM The lib\ndrc.exe version this kit was tested against - BUILD.BAT refuses
 REM to build with any other.
-SET NDRCVER=0.2
+SET NDRCVER=0.2.1
 
 REM Blank means lib\ndrc.exe - set to use a different ndrc build, and update NDRCVER above to match.
 REM SET NDRC=
@@ -81,37 +85,29 @@ SET VIDFPS=
 REM Extra videnc options applied to every encode (e.g.
 REM --dither 0.3 to soften the blue-noise dither below its 0.5 default,
 REM or --dither-mode mixture for the opt-in Yliluoma mixture dither).
-REM --tile-slack (opt-in, default off) belongs in VIDOPTS_NNN rather
-REM than here: on a title with sustained motion --tile-slack 0.5 lets
-REM the budget-bound schedule work a row/column at a time instead of
-REM four, which measurably helps pans and zooms and does nothing for
-REM quiet material. See docs\reference\video-format.html "Tile slack".
-REM --prefilter (opt-in, default off) is the one to try on a grainy or
-REM noisy source: it denoises lightly before scaling, trading a little
-REM texture for supply headroom.
+REM --tile-slack (off by default) belongs in VIDOPTS_NNN rather than
+REM here: --tile-slack 0.5 helps a clip with sustained motion - pans and
+REM zooms - and does nothing for quiet material. See
+REM docs\reference\video-format.html "Tile slack".
+REM --prefilter (off by default) is the one to try on a grainy or noisy
+REM source: it denoises lightly before scaling, trading a little texture
+REM for picture quality elsewhere.
 REM Recommended settings per kind of clip: docs\video.html "The presets".
 REM Full list: docs\reference\video-format.html, or run the encoder with --help.
 SET VIDOPTS=
 
 REM Per-video overrides: VIDOPTS_NNN (3-digit video number) appends options
-REM for that video only, after VIDOPTS. For most repeated options videnc
-REM takes the last occurrence, so VIDOPTS_NNN wins over VIDOPTS - except
-REM --aspect, which videnc always takes over --shape regardless of order;
-REM a VIDOPTS_NNN that sets its own --shape/--width/--aspect still wins
-REM for shape, but via the encode pass suppressing VIDASPECT for that
-REM video rather than argument order. See lib\video.ps1's header comment.
-REM The encode pass echoes each applied VIDOPTS_NNN. The one line below is
-REM the worked example: video 002 is letterboxed 16:9 instead of the full
-REM shape. Delete it when you replace 002.mp4 with your own footage.
-REM NO --stream-budget IS SHIPPED HERE, AND NONE SHOULD BE. The kit used to
-REM carry per-clip --stream-budget values hand-tuned to the demo cartoons,
-REM which then silently applied to whatever the author dropped in as 001/002
-REM and starved it. The encoder now derives the budget itself for every clip
-REM and prints what it chose - set one by hand only to override that. See
+REM for that video only, after VIDOPTS, and wins over it - including for
+REM the shape, whichever of --shape/--width/--aspect you set. The encode
+REM pass echoes each VIDOPTS_NNN it applies.
+REM The encoder derives each clip's data budget and prints what it chose;
+REM set --stream-budget only to override that - see
 REM docs\reference\video-delivery.html "Streaming, resident and direct delivery".
+REM The two lines below are worked examples for the demo clips - delete
+REM them when you replace 001.mp4 and 002.mp4 with your own footage.
 SET VIDOPTS_002=--fps 12.5 --dither 0.0 --tile-slack 0.5 --direct
 SET VIDOPTS_001=--shape 16:9 --dither 0.25
 
-REM DEPRECATED (honored one release): the v1 profile name. n0-n4 map to the
-REM nearest v2 shape when VIDASPECT is blank. Use VIDASPECT instead.
+REM Deprecated - use VIDASPECT instead. An old v1 profile name (n0-n4) maps
+REM to the nearest shape, and only while VIDASPECT is blank.
 SET VIDPROFILE=

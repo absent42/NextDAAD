@@ -161,6 +161,10 @@ are all optional and the build skips whatever is absent.</p>
 <td><code>1</code> = launch CSpect after a successful build; <code>0</code> = build only.</td>
 </tr>
 <tr>
+<td><code>COLS</code></td>
+<td>Text columns your game is authored for. Blank = 80 (the default), or <code>40</code> for the double-width 40-column mode. Sets the compiler's <code>-cols</code> option - the interpreter still boots at 80, so a 40-column game must issue <code>GFX 1 18</code> in its init process. See <a href="graphics.html">Graphics</a>.</td>
+</tr>
+<tr>
 <td><code>TOOLSDIR</code></td>
 <td>Folder holding the tools above. Default <code>tools</code>.</td>
 </tr>

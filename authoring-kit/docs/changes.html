@@ -11,8 +11,31 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
-<h2 id="075-unreleased">0.7.5 - unreleased</h2>
+<h2 id="080-unreleased">0.8.0 - unreleased</h2>
 <ul>
+<li><strong>A new 40-column text mode: fewer, wider columns, for a game that
+  wants bigger glyphs at the cost of characters per line.</strong> <code>GFX 1 18</code> switches
+  the tilemap to 40x32 double-width text; <code>GFX 0 18</code> returns to the
+  80x32 default. Switching is a clean slate - the screen clears, all 8
+  windows reset to full screen at the new width, and a pending
+  word-wrap fragment is discarded - so re-issue <code>WINAT</code>/<code>WINSIZE</code>
+  afterwards if you use custom windows. The width is game-owned, the
+  same way as the <code>GFX n 17</code> layer order: it survives <code>RESTART</code>,
+  <code>LOAD</code>, <code>RAMLOAD</code> and a part switch, and a same-width call does
+  nothing, so <code>GFX 1 18</code> in your init process is safe to issue
+  unconditionally. Flags 29 and 62 are unaffected - they read 129 and
+  144 in both widths, because graphics remain available at either
+  width. The whole authoring pattern, including the Layer 2
+  hole-cutting arithmetic at the new width, is in
+  <a href="graphics.html#40-column-games">40-column games</a>; the sub-command is
+  in the <a href="graphics.html#gfx-sub-commands">GFX reference</a>. <code>MOUSE 3</code>
+  (<code>GETMS</code>)'s reported column clamps to 0-39 in 40-column mode instead
+  of 0-79 - see <a href="mouse.html#mouse-sub-commands">Mouse</a>.</li>
+<li><strong>NDRC <code>-cols=40</code> or <code>-cols=80</code></strong> sets the compiler's exported
+  <code>COLS</code> symbol to match the width your game runs at, so window and
+  centring arithmetic written against <code>COLS</code> comes out right whichever
+  width you chose. <code>-cols=80</code> is the default and matches the
+  interpreter's boot width.</li>
 <li><strong>NDRC v0.2</strong> <code>-auto-tokens</code> option enabled: per-game text compression. Instead of
   DRC's fixed per-language token table, the compiler selects up to 128
   tokens from the compiling game's own text and encodes the text with

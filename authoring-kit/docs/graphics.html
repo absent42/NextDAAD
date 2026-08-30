@@ -237,19 +237,57 @@ picture. Three approaches work and none needs anything from the
 interpreter: keep a strip of solid paper where text must always be
 readable, keep the artwork dark where text lands, or choose an ink that
 survives everything the art can put behind it.</p>
+<h2 id="40-column-games">40-column games</h2>
+<p><code>GFX 1 18</code> switches the tilemap from 80x32 single-width text to 40x32
+double-width text - fewer, wider columns, for a game that wants larger
+glyphs at the cost of characters per line. <code>GFX 0 18</code> returns to 80x32.
+See the sub-command table below for the full switch behaviour (clean
+slate, game-owned, same-width no-op).</p>
+<p>Author against your chosen width from the start, not as an afterthought:</p>
+<ul>
+<li><strong>Every coordinate is in the current width's columns.</strong> <code>WINAT</code>,
+  <code>WINSIZE</code>, <code>TAB</code> and <code>CENTRE</code> all take column numbers against
+  whichever width is active, so a window sized for 80 columns covers
+  only the left half of a 40-column screen and a <code>CENTRE</code> computed for
+  80 lands off-centre at 40. Write your layout against the width you
+  intend to ship, not the boot default.</li>
+<li><strong>Compile with NDRC <code>-cols=40</code>.</strong> This sets the exported <code>COLS</code>
+  symbol to match, so any source arithmetic against <code>COLS</code> (window
+  widths, centring, wrap columns) comes out right for the width the
+  game actually runs at. <code>-cols=80</code> is the default and matches the
+  interpreter's boot width.</li>
+<li><strong>Issue <code>GFX 1 18</code> in the init process, before drawing anything.</strong>
+  The switch clears the screen and resets every window, so doing it
+  first avoids drawing at the wrong width and immediately wiping it.</li>
+<li><strong>Layer 2 hole-cutting moves with the width.</strong> <a href="#transparency">Transparency</a>
+  above gives <code>left = column x 4, width = width x 4</code> against a 320-wide
+  picture, because one 80-column text cell is 4 picture pixels wide. A
+  40-column cell is double that: 8 picture pixels wide in the same
+  320-wide picture modes, so a hole for a 40-column window uses <code>column
+  x 8, width x 8</code> instead - halve the 80-column multiplier's assumption
+  and the hole comes out half the intended width.</li>
+</ul>
+<p><strong>Flag 29 and flag 62 are unaffected by the width.</strong> The 1991 DAAD
+manual's classic inference - flag 29 under 128 means an 80-column
+text-only machine - is a period-hardware correlation this interpreter
+does not honour: flag 29 stays 129 and flag 62 stays 144 in both
+widths, because graphics remain available whichever width the game is
+running at. A game knows its own width because it chose it with <code>GFX n
+18</code>, not by reading these flags.</p>
 <h2 id="gfx-sub-commands">GFX sub-commands</h2>
 <p><code>GFX n s</code> takes the sub-command in its <strong>second</strong> parameter, <code>s</code>. There
 are no symbolic names for these - DAAD Ready's Appendix D covers <code>SFX</code>
 and <code>MOUSE</code> only - so write the number.</p>
-<p>For every sub-command except 13, 14, 16 and 17 the first parameter <code>n</code>
-is ignored: the buffer operations act on the whole surface and take no
-argument. For 13 and 14, <code>n</code> is the video number; for 16, it is the font
-number; for 17, it is the layer-order selector.</p>
+<p>For every sub-command except 13, 14, 16, 17 and 18 the first parameter
+<code>n</code> is ignored: the buffer operations act on the whole surface and take
+no argument. For 13 and 14, <code>n</code> is the video number; for 16, it is the
+font number; for 17, it is the layer-order selector; for 18, it is the
+text width selector.</p>
 <p>"Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
 prints a marker). That covers 7, 8, 11, 12 and 15, and everything
-from 18 up, as well as 9 and 10 - see
+from 19 up, as well as 9 and 10 - see
 <a href="platform-notes.html">Platform notes</a> for why 9, 10 and 15 have nothing
 to act on here.</p>
 <table>
@@ -304,6 +342,10 @@ to act on here.</p>
 <td>17</td>
 <td>Text layer order. <code>n</code> 0 puts the picture on top (Layer 2 above the tilemap - the default, and what every existing game gets); <code>n</code> 1 puts the text layer on top. <code>n</code> 2 and above is a no-op - the previously-set order stays. See <a href="#text-over-a-picture">Text over a picture</a> above for the transparent-paper technique this enables.</td>
 </tr>
+<tr>
+<td>18</td>
+<td>Text mode width. <code>n</code> 0 selects 80x32 single-width text (the default); <code>n</code> 1 selects 40x32 double-width text. A same-width call does nothing. Switching is a clean slate: the screen clears, all 8 windows reset to full screen at the new width, a pending word-wrap fragment is discarded, and every window's cursor homes - re-issue <code>WINAT</code>/<code>WINSIZE</code> after switching if your game uses custom windows. <code>n</code> 2 and above is a no-op. See <a href="#40-column-games">40-column games</a> below.</td>
+</tr>
 </tbody>
 </table>
 <p>Sub 17 composes the layer priority only - it never enables or disables
@@ -314,6 +356,16 @@ boots with the picture on top and the interpreter never changes the order
 afterwards. It survives every picture operation, <code>RESTART</code>, <code>LOAD</code>,
 <code>RAMLOAD</code> and a move to another part, so a game sets it once and a
 restored save comes back in the order the game chose.</p>
+<p>Sub 18's text width is game-owned state too, the same way as sub 17's
+layer order: the game boots at 80x32 and the interpreter never changes
+it on its own. It survives <code>RESTART</code>, <code>LOAD</code>, <code>RAMLOAD</code> and a move to
+another part, so a 40-column game stays 40-column across all of those.
+Because a same-width call is a no-op, issuing <code>GFX 1 18</code> unconditionally
+in the init process is safe - it only does anything the first time.
+Order a width switch before video playback in the same response if both
+happen there: video playback is synchronous and preserves whichever
+width is current, but a clip started before the switch renders over the
+old width instead of the one the response is moving to.</p>
 <p>Buffer mode (sub 4) is transient: once opened it lasts until sub 3,
 <code>RESTART</code>, a same-part <code>LOAD</code>/<code>RAMLOAD</code>, or any game (re)start -
 whichever comes first. Revealing a staged picture (sub 0 or 2) clears

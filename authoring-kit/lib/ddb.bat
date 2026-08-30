@@ -45,7 +45,9 @@ REM instead of the builtin English table and encodes with an optimal
 REM parse - smaller DDBs, especially for prose-heavy games. The DDB
 REM stays format-identical. A hand-written .tok beside the source is
 REM ignored while this flag is set (ndrc prints a notice naming it).
-"%NDRC%" %DRTARGET% EN "%GAME%.DSF" "%DDBOUT%" -v3 -auto-tokens
+set "COLSOPT="
+if defined COLS if not "%COLS%"=="" set "COLSOPT=-cols=%COLS%"
+"%NDRC%" %DRTARGET% EN "%GAME%.DSF" "%DDBOUT%" -v3 -auto-tokens %COLSOPT%
 if errorlevel 1 (
     del "%DDBOUT%" 2>nul
     del "0.XMB" 2>nul

@@ -124,6 +124,7 @@ are all optional and the build skips whatever is absent.
 | `GAME` | Base name of your `.DSF`. Blank = auto-detect the single `.DSF`. |
 | `COMPRESS` | `1` = ZX0-compress pictures (smaller files); `0` = raw. |
 | `RUN` | `1` = launch CSpect after a successful build; `0` = build only. |
+| `COLS` | Text columns your game is authored for. Blank = 80 (the default), or `40` for the double-width 40-column mode. Sets the compiler's `-cols` option - the interpreter still boots at 80, so a 40-column game must issue `GFX 1 18` in its init process. See [Graphics](graphics.md). |
 | `TOOLSDIR` | Folder holding the tools above. Default `tools`. |
 | `GFXDIR`, `ARKOSDIR`, `CSPECTDIR`, `FFMPEGDIR` | Where each individual tool lives. Blank means "the folder under `TOOLSDIR`", so leave them alone for the simple layout and set only the ones you keep elsewhere. See [What you need](#what-you-need). |
 | `VIDENCDIR`, `VIDTUNEDIR` | Same, for the two tools the kit ships. You should not need to set these. |

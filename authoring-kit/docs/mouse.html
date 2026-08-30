@@ -53,7 +53,7 @@ idiom <code>SFX</code> uses for a sub-command it does not recognise.</p>
 <tr>
 <td>3</td>
 <td><code>GETMS</code></td>
-<td>Read mouse state into four flags starting at the first argument: <code>flags[n]</code> = buttons (idle 0, left 1, right 2, middle 4, chords additive - jdaad parity, not the raw Kempston byte), <code>flags[n+1]</code> = column 0-79 (X/8), <code>flags[n+2]</code> = row 0-31 (Y/8), <code>flags[n+3]</code> = column 0-53 (X/6).</td>
+<td>Read mouse state into four flags starting at the first argument: <code>flags[n]</code> = buttons (idle 0, left 1, right 2, middle 4, chords additive - jdaad parity, not the raw Kempston byte), <code>flags[n+1]</code> = column 0-79 (X/8), <code>flags[n+2]</code> = row 0-31 (Y/8), <code>flags[n+3]</code> = column 0-53 (X/6). In 40-column text mode (<code>GFX 1 18</code>, see <a href="graphics.html#gfx-sub-commands">Graphics</a>) <code>flags[n+1]</code> clamps to 0-39 instead, so it always spans the full text grid at whichever width is current.</td>
 </tr>
 <tr>
 <td>4</td>
