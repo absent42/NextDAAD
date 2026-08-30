@@ -240,9 +240,11 @@ if exist "HINTS.TXT" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lib\hintpack.ps1" -In "HINTS.TXT" -Out "RELEASE\GAME.HNT"
     if errorlevel 1 (
         echo ERROR: hintpack failed - see the message above
+        pause
         exit /b 1
+    ) else (
+        echo   hints HINTS.TXT -^> RELEASE\GAME.HNT
     )
-    echo   hints HINTS.TXT -^> RELEASE\GAME.HNT
 )
 if exist "GAME.XBN" (
     copy /Y "GAME.XBN" "RELEASE\GAME.XBN" >nul
