@@ -829,6 +829,19 @@ finally {
 
 & "$PSScriptRoot\fontconv-selftest.ps1"
 
+# xbnbuild.ps1 drift guard: its generated subset source must stay
+# equivalent to the hand-written externs\all\all.asm. Builds every
+# shipping module through the generator and requires a byte-identical
+# GAME.XBN to the committed all\GAME.XBN - catches both a broken
+# generator and any future divergence between the two paths.
+$xbnDriftOut = "$root\tests\out\xbn-subset-drift.XBN"
+& "$root\authoring-kit\lib\xbnbuild.ps1" ticker fade hints -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $xbnDriftOut
+$xbnDriftFresh = [IO.File]::ReadAllBytes($xbnDriftOut)
+$xbnDriftShipped = [IO.File]::ReadAllBytes("$root\authoring-kit\externs\all\GAME.XBN")
+if (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShipped)) {
+    throw "xbnbuild.ps1 ticker fade hints DRIFTED from authoring-kit\externs\all\GAME.XBN - generator and all.asm disagree; compare $xbnDriftOut"
+}
+
 & "$PSScriptRoot\hintpack-selftest.ps1"
 
 # ---- Layer 2 transparency constants: five files, three value classes ----

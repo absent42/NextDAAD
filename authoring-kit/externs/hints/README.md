@@ -36,7 +36,7 @@ level its offset; the extern only reads what the packer wrote.
 | Flag 243 after | Means |
 |---|---|
 | 0 | the hint printed, or the file is readable (fn 52), or fn 53 cleared progress |
-| 1 | `GAME.HNT` missing, unreadable, or truncated - opening it (fn 50/51/52/53) failed, or fn 50's level-table entry could not be read |
+| 1 | `GAME.HNT` missing, unreadable, or truncated - opening it (fn 50/52/53) failed, or fn 50's level-table entry could not be read |
 | 2 | no such topic, or (automatic mode only) `GAME.HPR` could not be opened or read |
 | 3 | no such level - the player has had every hint for this topic |
 | 4 | this interpreter is older than the extern needs |

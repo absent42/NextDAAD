@@ -72,6 +72,7 @@ foreach ($m in $Modules) {
 }
 [void]$sb.AppendLine('xbn_end:')
 [void]$sb.AppendLine('    SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG')
+[void]$sb.AppendLine('    XBN_SCRATCH_END')
 
 $src = Join-Path $work 'subset.asm'
 Set-Content -Path $src -Value $sb.ToString() -Encoding ASCII
