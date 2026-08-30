@@ -1138,7 +1138,7 @@ h_gfx:
     push bc                     ; Second push keeps C (the sub) safe
     push bc                     ; across dbg_puts (corrupts BC) for
     ld b, 29                    ; the dbg_hex8 below.
-    ld c, 70
+    call dbg_markcol
     call dbg_at
     ld hl, msgGfxUnk
     call dbg_puts
@@ -3658,7 +3658,7 @@ font_load:
     jr nc, .haveBank
  IFDEF DEBUG                        ; pool exhausted: no-op with a marker, same
     ld b, 29                        ; idiom as .bad below. bank_alloc has no
-    ld c, 70                        ; eviction fallback and gfx_bank_get holds
+    call dbg_markcol                ; eviction fallback and gfx_bank_get holds
     call dbg_at                     ; picture-cache banks indefinitely, so a
     ld hl, msgFontNoBk              ; warm cache CAN starve a mid-game GFX n 16
     call dbg_puts                   ; - the one caller that runs against one.
@@ -3703,7 +3703,7 @@ font_load:
 .bad:
  IFDEF DEBUG                        ; wrong size: no-op with a marker,
     ld b, 29                        ; same idiom as h_sfx/h_mouse's
-    ld c, 70                        ; unknown-sub-command markers (and
+    call dbg_markcol                ; unknown-sub-command markers (and
     call dbg_at                     ; the retired GAME.CHR probe's old
     ld hl, msgFontBad                ; wrong-size rejection idiom)
     call dbg_puts
@@ -3790,7 +3790,8 @@ l2_testcard:
     ld b, 0
     ld c, 0
     ld d, TM_ROWS-2               ; card area only; bottom TWO rows are
-    ld e, TM_COLS                 ; debug.asm's status lines, left as they are
+    ld a, (tmCols)                ; debug.asm's status lines, left as they are
+    ld e, a
     call tm_clear_blank
     pop af
     jp l2_bareprobe_draw

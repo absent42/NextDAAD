@@ -194,7 +194,10 @@ pair_reclaim:
     ld a, %00000111             ; the reserved pairs survive unconditionally
     ld (pairUsed), a
     ld hl, TM_MAP+1             ; first cell's attribute byte
-    ld de, TM_COLS*TM_ROWS
+    ld a, (tmCols)
+    ld d, a
+    ld e, TM_ROWS
+    mul d, e                    ; DE = live cell count (2560 or 1280)
 .cell:
     push hl
     push de

@@ -317,7 +317,8 @@ fatal:
     ld b, 0
     ld c, 0
     ld d, 1
-    ld e, TM_COLS
+    ld a, (tmCols)
+    ld e, a
     ld a, GLYPH_SPACE
     call tm_fill_rect
     pop hl                       ; message ptr back, now that both

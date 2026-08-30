@@ -25,6 +25,14 @@ dbg_at:
     ld (dbgX), a
     ret
 
+; DEBUG marker column into C: tmCols-10 (was literal 70 at 80 cols).
+; Corrupts A; preserves B, DE, HL.
+dbg_markcol:
+    ld a, (tmCols)
+    sub 10
+    ld c, a
+    ret
+
 ; A = character. 13 = newline. Corrupts AF, BC, DE, HL.
 dbg_putc:
     ld l, a                     ; keep the char across the flag test
@@ -118,9 +126,11 @@ dbg_putc_tm:
     ld e, TM_ATTR_DEFAULT        ; reserved pair 0: white ink on black paper, always
     pop af
     call tm_putc_at
+    ld a, (tmCols)
+    ld e, a                     ; E free: attr already consumed by tm_putc_at
     ld a, (dbgX)
     inc a
-    cp TM_COLS
+    cp e
     jr c, .setx
     jr .rowadv
 .setx:
@@ -470,7 +480,8 @@ l2dbg_wait_press:
 ; Corrupts AF, BC, DE, HL (tm_fill_rect's own contract).
 dbg_bar_white:
     ld c, 0
-    ld e, TM_COLS
+    ld a, (tmCols)
+    ld e, a
     ld a, TM_ATTR_DEFAULT        ; reserved pair 0: white ink on black paper
     ld (tmAttr), a
     ld a, GLYPH_SPACE
@@ -667,7 +678,8 @@ l2_bareprobe_hook:
     call l2_bareprobe_draw
     ld bc, 0
     ld d, TM_ROWS-1
-    ld e, TM_COLS
+    ld a, (tmCols)
+    ld e, a
     call tm_clear_blank
     ld a, 2
     call l2_bareprobe_marker      ; 3 blocks

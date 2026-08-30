@@ -12,7 +12,7 @@ windows_init:
     inc hl
     ld (hl), a                  ; y
     inc hl
-    ld a, TM_COLS
+    ld a, (tmCols)
     ld (hl), a                  ; w
     inc hl
     ld a, TM_ROWS

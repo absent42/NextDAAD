@@ -1591,10 +1591,11 @@ h_winat:                        ; 82: line B, col C, clamped; size
     ld a, TM_ROWS-1
 .rok:
     ld b, a
-    ld a, c
-    cp TM_COLS
-    jr c, .cok
-    ld a, TM_COLS-1
+    ld a, (tmCols)
+    dec a                       ; highest valid column
+    cp c
+    jr c, .cok                  ; col out of range: A already = max
+    ld a, c                     ; in range: keep it
 .cok:
     ld c, a
     ld a, WIN_X
@@ -1602,7 +1603,7 @@ h_winat:                        ; 82: line B, col C, clamped; size
     ld (hl), c
     inc hl
     ld (hl), b
-    ld a, TM_COLS
+    ld a, (tmCols)
     sub c
     ld e, a
     ld a, WIN_W
@@ -1648,7 +1649,7 @@ h_winsize:                      ; 107: height B, width C, min 1, clamped
     ld a, WIN_X
     call win_field
     ld e, (hl)
-    ld a, TM_COLS
+    ld a, (tmCols)
     sub e
     cp c
     jr nc, .wok
@@ -1725,7 +1726,7 @@ h_tab:                          ; 118: column B, row kept
 h_centre:                       ; 109
     ld a, WIN_W
     call win_field
-    ld a, TM_COLS
+    ld a, (tmCols)
     sub (hl)
     srl a
     ld e, a
@@ -2763,7 +2764,7 @@ h_xpart:
     push af                     ; sub-command markers - preserve n
     push af                     ; (here in A, not C) across dbg_at/
     ld b, 29                    ; dbg_puts (both corrupt AF) for the
-    ld c, 70                    ; dbg_hex8 below.
+    call dbg_markcol             ; dbg_hex8 below.
     call dbg_at
     ld hl, msgXpartRange
     call dbg_puts
@@ -3182,13 +3183,13 @@ h_call:                         ; 101: CALL lsb msb: run code at that
 ; bogus jump against whatever the host mouse already reads at that
 ; point), mouseBaseSet gates a latch-only first call.
 ; jdaad's own X/8 clamp is 0-39 (its 320-wide/40-column screen); ours
-; is widened to 0-79 for our 80-column tilemap grid - the mouseX
-; domain itself is still the standard 0-319 sprite/mouse plane (per
-; the sprites chapter, matching jdaad and the hardware sprite
-; coordinate space), so in practice X/8 never exceeds 39 either; the
-; wider ceiling is future-safe spec compliance, not a reachable case
-; today. X/6 (0-53) is unchanged jdaad parity (319/6 floors to 53
-; exactly, so it never clamps either).
+; is clamped to tmCols-1 (39 in 40-col mode, where 0-319>>3 spans the
+; full grid) - the mouseX domain itself is still the standard 0-319
+; sprite/mouse plane (per the sprites chapter, matching jdaad and the
+; hardware sprite coordinate space). In 80-col mode the ceiling widens
+; to 79 - future-safe spec compliance, not a reachable case since X/8
+; never exceeds 39. X/6 (0-53) is unchanged jdaad parity (319/6 floors
+; to 53 exactly, so it never clamps either).
 ; Pointer: hardware sprite 0, a 16x16 pattern - the built-in solid
 ; arrow (mouseArrow, below) until a POINTER.SPR/POINTERn.SPR replaces
 ; it in the live upload buffer (mousePattern, also below - a plain
@@ -3264,7 +3265,7 @@ h_mouse:
     push bc                     ; marker, same idiom as h_sfx/h_gfx.
     push bc                     ; second push keeps C (the sub) safe
     ld b, 28                    ; across dbg_puts (corrupts BC) for the
-    ld c, 70                    ; dbg_hex8 below.
+    call dbg_markcol             ; dbg_hex8 below.
     call dbg_at
     ld hl, msgMouseUnk
     call dbg_puts
@@ -3333,10 +3334,11 @@ h_mouse:
     rr l
     srl h
     rr l
+    ld a, (tmCols)
+    dec a                       ; highest valid column
+    cp l                        ; L = mouseX>>3 low byte
+    jr c, .c80ok                ; over: A already = max
     ld a, l
-    cp 80
-    jr c, .c80ok
-    ld a, 79
 .c80ok:
     ld (mouseCol80), a
     ; row32 = mouseY/8, clamped 0-31 (byte, zero-extended >> 3)
@@ -3982,7 +3984,7 @@ pointer_load:
 .bad:
  IFDEF DEBUG                        ; wrong size: no-op with a marker,
     ld b, 29                        ; same idiom as h_sfx/h_mouse/
-    ld c, 70                        ; font_load's own markers
+    call dbg_markcol                ; font_load's own markers
     call dbg_at
     ld hl, msgPtrBad
     call dbg_puts

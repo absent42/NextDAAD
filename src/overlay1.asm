@@ -2547,7 +2547,7 @@ h_sfx:                          ; 18: B = n, C = sub-command
  IFDEF DEBUG                    ; unknown sub-command: no-op with a
     push bc                     ; marker. Inline - overlay1 must NOT
     ld b, 30                    ; call overlay0's h_unimpl; the dbg_*
-    ld c, 70                    ; helpers are resident and safe.
+    call dbg_markcol             ; helpers are resident and safe.
     call dbg_at
     ld hl, msgSfxUnk
     call dbg_puts

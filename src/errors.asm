@@ -50,7 +50,8 @@ err_raise:
     ld (tmAttr), a
     ld bc, 0                    ; SP14c batch B ERR1
     ld d, 1
-    ld e, TM_COLS               ; magenta bar across row 0
+    ld a, (tmCols)               ; magenta bar across row 0
+    ld e, a
     ld a, GLYPH_SPACE
     call tm_fill_rect
     ld hl, msgRuntimeErr
