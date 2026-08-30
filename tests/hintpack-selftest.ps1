@@ -37,8 +37,16 @@ for ($i = 0; $i -lt 256; $i++) {
 $checks++
 
 # Round trip: author a file, pack it, unpack it by hand, compare.
-$src = "$tmp\HINTS.TXT"
-@'
+# Written as raw Latin-1 bytes, not a here-string, so the .ps1 file's own
+# encoding can never be the reason the accented text on disk is right or
+# wrong - the test controls the bytes, not the editor.
+$srcEnc = [Text.Encoding]::GetEncoding(28591)
+$aAcute = [char]0xE1
+$eAcute = [char]0xE9
+$iAcute = [char]0xED
+$nTilde = [char]0xF1
+$accented = "El beb$eAcute est$aAcute aqu$iAcute, junto al mu$($nTilde)eco peque$($nTilde)o."
+$srcText = @"
 This line is a comment, before any topic marker.
 
 [0] The first puzzle
@@ -51,7 +59,13 @@ spans an authored line break.
 [7] The locked gate
 
 Only one level here.
-'@ | Set-Content -Path $src -Encoding ASCII
+
+[9] Foreign accents
+
+$accented
+"@
+$src = "$tmp\HINTS.TXT"
+[IO.File]::WriteAllBytes($src, $srcEnc.GetBytes($srcText))
 
 $out = "$tmp\GAME.HNT"
 & $pack -In $src -Out $out
@@ -60,7 +74,7 @@ if ($LASTEXITCODE -ne 0) { throw "hintpack exited $LASTEXITCODE" }
 $b = [IO.File]::ReadAllBytes($out)
 Assert-Eq ([Text.Encoding]::ASCII.GetString($b[0..2])) 'HNT' 'magic'
 Assert-Eq $b[3] 1 'version'
-Assert-Eq $b[5] 7 'maxTopic is the highest topic NUMBER'
+Assert-Eq $b[5] 9 'maxTopic is the highest topic NUMBER'
 $seed = $b[4]
 
 # Deobfuscate everything from offset 6 on.
@@ -71,21 +85,40 @@ function DirEntry([int]$topic) {
     $o = 6 + 3 * $topic
     return @{ Off = $p[$o] + 256 * $p[$o + 1]; Count = $p[$o + 2] }
 }
-function LevelText([int]$topic, [int]$level) {
+function LevelBytes([int]$topic, [int]$level) {
     $d = DirEntry $topic
     if ($d.Count -eq 0) { return $null }
     $e = $d.Off + 4 * $level
     $to = $p[$e] + 256 * $p[$e + 1]
     $tl = $p[$e + 2] + 256 * $p[$e + 3]
-    return [Text.Encoding]::ASCII.GetString($p[$to..($to + $tl - 1)])
+    return $p[$to..($to + $tl - 1)]
+}
+# Same 28591 encoding the packer reads and writes with - ASCII here would
+# hide a regression to ASCII in hintpack.ps1 itself.
+function LevelText([int]$topic, [int]$level) {
+    $bytes = LevelBytes $topic $level
+    if ($null -eq $bytes) { return $null }
+    return $srcEnc.GetString($bytes)
 }
 
 Assert-Eq (DirEntry 0).Count 2 'topic 0 has two levels'
 Assert-Eq (DirEntry 7).Count 1 'topic 7 has one level'
-foreach ($t in 1..6) { Assert-Eq (DirEntry $t).Count 0 "absent topic $t reports zero levels" }
+Assert-Eq (DirEntry 9).Count 1 'topic 9 has one level'
+foreach ($t in (@(1..6) + 8)) { Assert-Eq (DirEntry $t).Count 0 "absent topic $t reports zero levels" }
 Assert-Eq (LevelText 0 0) 'Nudge one.' 'topic 0 level 0 text'
 Assert-Eq (LevelText 0 1) 'Nudge two is longer, and spans an authored line break.' 'a single newline becomes a space'
 Assert-Eq (LevelText 7 0) 'Only one level here.' 'topic 7 level 0 text'
+Assert-Eq (LevelText 9 0) $accented 'accented Latin-1 text survives the round trip'
+
+# The specific high byte, not just the round-tripped string, so an
+# ASCII regression (which would have written 0x3F for n-tilde) is caught
+# even if some other bug in the comparison above let a wrong string equal
+# a wrong expectation.
+$accentedBytes = LevelBytes 9 0
+if ($accentedBytes -notcontains 0xF1) {
+    throw 'expected Latin-1 byte 0xF1 (n-tilde) missing from deobfuscated accented text'
+}
+$checks++
 
 # The obfuscation must actually obscure: the plaintext must not appear.
 $raw = [Text.Encoding]::ASCII.GetString($b)
