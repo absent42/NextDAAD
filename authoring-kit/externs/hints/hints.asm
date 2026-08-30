@@ -418,7 +418,8 @@ show:
     cp (hl)
     jr nc, .nolevel              ; want >= levels
     call read_entry
-    jr c, .notopic
+    jr c, .nofile                 ; topic exists; its level table read failed -
+                                  ; a truncated GAME.HNT, same as open_hnt's ST_NOFILE
     call print_text
     jr c, .nofile                ; stopped partway or failed to start: no ST_OK
     ld a, (autom)
@@ -575,8 +576,11 @@ print_text:
     jr nz, .flush                ; partial chunk was the last
     jp .chunk
 
-; A short read means a truncated GAME.HNT; print nothing further.
+; A short read means a truncated GAME.HNT; print nothing further, but
+; still flush - a prior chunk in this call may have left a part-word.
 .short:
+    ld a, $0D
+    call SVC_PUTCHAR
     scf
     ret
 
@@ -597,7 +601,8 @@ clearprog:
     ld ix, name_hpr
     ld b, MODE_WNEW
     call SVC_FOPEN
-    jr c, .nofile
+    jr c, .nosave                 ; GAME.HPR could not be created - a write
+                                  ; failure, not a missing GAME.HNT
     ld (hprh), a
     call write_blank
     push af                       ; hold write_blank's CF - SVC_FCLOSE clobbers AF
@@ -642,11 +647,11 @@ hdr:        ds 6                 ; magic, version, seed, maxTopic
     IFNDEF XBN_MODULE
 xbn_end:
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG
+    XBN_SCRATCH_END
     ENDIF
 
-; Read buffer, 256 bytes, deliberately past xbn_end: the loader maps a full
-; 16K bank, so this costs nothing against the size cap. Recycled RAM, so it
-; is always written before it is read. Task 5's write_blank needs all 256.
+; Read buffer, 256 bytes, claimed from XBN_SCRATCH (see xbnmod.inc). Always
+; written before it is read; write_blank needs all 256.
     MODULE hints
-rdbuf:   equ xbn_end
+rdbuf:   equ XBN_SCRATCH + 0
     ENDMODULE

@@ -36,11 +36,11 @@ level its offset; the extern only reads what the packer wrote.
 | Flag 243 after | Means |
 |---|---|
 | 0 | the hint printed, or the file is readable (fn 52), or fn 53 cleared progress |
-| 1 | `GAME.HNT` missing or unreadable |
+| 1 | `GAME.HNT` missing, unreadable, or truncated - opening it (fn 50/51/52/53) failed, or fn 50's level-table entry could not be read |
 | 2 | no such topic, or (automatic mode only) `GAME.HPR` could not be opened or read |
 | 3 | no such level - the player has had every hint for this topic |
 | 4 | this interpreter is older than the extern needs |
-| 5 | `GAME.HPR` could not be written - fn 50 printed the hint but the new level was not saved, or fn 53's blank write failed and progress was not cleared |
+| 5 | `GAME.HPR` could not be written - fn 50 printed the hint but the new level was not saved, or fn 53 could not create/write a blank `GAME.HPR` and progress was not cleared |
 
 After `EXTERN n 51`, flag 243 holds the topic's level COUNT instead. Zero
 means "no hints available" - whether the topic does not exist or the hint file
@@ -50,6 +50,18 @@ indistinguishable from a count.
 Each hint ends with a line break, emitted by the extern. That both flushes the
 print path's word buffer, without which the hint's final word would not appear,
 and gives you the paragraph break you would otherwise have to add yourself.
+
+## Authoring rules
+
+- Do not use `_` in hint text. `EXTERN` fn 50 prints through the
+  interpreter's decoded-print path, where `_` is the object-name
+  substitution used by every DAAD database, not a literal underscore.
+- Do not use control bytes below `$20` in hint text - the same print
+  path reads `$0B`/`$0C`/`$0E`/`$0F` as CLS, wait-key and graphics
+  toggles, not printable characters.
+- `hintpack.ps1` warns (does not fail the build) if a level breaks
+  either rule, naming the topic and level, so you can find and fix it
+  before shipping.
 
 ## Limits
 
@@ -62,6 +74,21 @@ The hint text in `GAME.HNT` is obfuscated, not encrypted. It defeats a
 text editor, `type`, and `strings` - the casual "just read the
 answers" path. It does not defeat a hex editor and a determined
 player, and it is not meant to. That is the right bar for a hint file.
+
+The obfuscation keystream is fixed and identical for every game built
+with this kit - one small tool could decode any of them. That does
+not weaken it: the bar above is stopping an accidental spoiler, not a
+determined player, and a fixed scheme defeats an accidental open
+exactly as well as a random one would.
+
+Being fixed also means an author can ship a game update - new levels,
+fixed typos, reworded hints - without invalidating players' existing
+`GAME.HPR`: the seed never changes, so old progress still decodes
+correctly against the new `GAME.HNT`. The one case that does not carry
+over: if an update REMOVES levels so a topic ends up with fewer than a
+player has already read, that topic reports flag 243 = 3 (no more
+hints) for them from then on. `EXTERN 0 53` clears a player's progress
+if that needs resetting.
 
 Automatic-mode progress lives in `GAME.HPR` beside your game, not in
 flags, so hint level costs the author no game flags at all. It does

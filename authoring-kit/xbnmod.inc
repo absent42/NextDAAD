@@ -35,6 +35,21 @@ xbn_pal_owner:
         db 0
     ENDM
 
+; Scratch RAM above xbn_end: bytes inside the mapped 16K bank ($FFFF) but
+; outside the saved image. Offset claims from XBN_SCRATCH, chained off
+; XBN_SCRATCH_FREE below, so modules do not collide.
+;
+; Claims: hints.asm rdbuf, offset 0, 256 bytes
+XBN_SCRATCH_FREE equ 256         ; next unclaimed offset - bump when you add a claim
+
+; Sets XBN_SCRATCH and asserts every claim above still fits inside the
+; mapped bank. Invoke once, right after the top-level file's own
+; xbn_end: is defined (hints.asm standalone, or all.asm).
+    MACRO XBN_SCRATCH_END
+XBN_SCRATCH equ xbn_end
+        ASSERT XBN_SCRATCH + XBN_SCRATCH_FREE <= $10000, scratch RAM claims run past the mapped 16K bank ($FFFF)
+    ENDM
+
 ; Dispatch chain shared by all.asm and xbnbuild's generated source - one
 ; definition. Rebuilds the entry contract (A=B=param1, C=fn,
 ; HL=flags+param1, DE=objTable+param1*6, IX=flags base) per module call.

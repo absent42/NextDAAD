@@ -66,10 +66,9 @@
 ; getting through.
 ;   XHNP - preflight (fn 52): flag 243 must read 0, hint file present.
 ;   XHNQ - level count (fn 51) for topic 0: flag 243 must read 2.
-;   XHNA - automatic mode (fn 50) driven three times on topic 0: the
-;          first two calls must print two DIFFERENT hint texts in
-;          order, each ending with a line break; the third finds no
-;          level left and reports status 3 (no more levels) in flag 243.
+;   XHNA - automatic mode (fn 50), three calls. "Two DIFFERENT texts
+;          then status 3" holds only against a VIRGIN GAME.HPR (topic 0
+;          at level 0) - run right after XHNR, or on a fresh card.
 ;   XHNR - clear progress (fn 53), then one automatic call must print
 ;          topic 0's FIRST hint again, proving the reset took.
 ;   XHNT - level count (fn 51) for topic 1: flag 243 must read 3.
@@ -405,9 +404,9 @@ XHNT   125 verb
            MES "levels "
            PRINT 243
            DONE
-; XHNA - automatic mode on topic 0: two calls print two DIFFERENT levels,
-;        the third reports 3 (no more levels). Expecting 2 from XHNQ and 3
-;        here keeps the two assertions distinguishable at a glance.
+; XHNA - automatic mode, three calls. Two DIFFERENT levels then status
+;        3 holds only if GAME.HPR's topic 0 is still at level 0 here -
+;        run right after XHNR, or on a fresh card.
 > XHNA _   LET 242 0
            EXTERN 0 50
            EXTERN 0 50

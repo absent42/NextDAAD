@@ -9,7 +9,10 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path $In)) { Write-Error "hint source not found: $In"; exit 1 }
-if ($Seed -lt 0) { $Seed = Get-Random -Minimum 1 -Maximum 256 }
+# Fixed, not random: the seed is PLAINTEXT at GAME.HNT offset 4, so it adds
+# no protection; random would churn GAME.HNT and, since GAME.HPR shares the
+# key, break players' progress on every update. -Seed stays for the self-test.
+if ($Seed -lt 0) { $Seed = 137 }
 
 # Parse: [n] opens a topic, blank-line-separated paragraphs are its levels,
 # single newlines inside a paragraph become spaces.
@@ -77,8 +80,21 @@ for ($t = 0; $t -le $maxTopic; $t++) {
 
 foreach ($t in ($topics.Keys | Sort-Object)) {
     $e = $tableAt[$t]
+    $lvlNum = 0
     foreach ($level in $topics[$t]) {
+        $lvlNum++
         $bytes = $enc.GetBytes($level)
+        # prn_decoded reads '_' as object-name substitution and bytes below
+        # $20 as CLS/wait-key/graphics toggles. Warn, don't fail.
+        if ($level.Contains('_')) {
+            Write-Warning "$In topic $t level $lvlNum : contains '_' - prints as an object-name substitution, not a literal underscore"
+        }
+        foreach ($by in $bytes) {
+            if ($by -lt 0x20) {
+                Write-Warning "$In topic $t level $lvlNum : contains control byte 0x$($by.ToString('X2')) - SVC_PUTCHAR reads bytes below `$20 as CLS/wait-key/graphics toggles"
+                break
+            }
+        }
         $at = $textStart + $text.Count
         $buf[$e]     = $at -band 255
         $buf[$e + 1] = ($at -shr 8) -band 255
