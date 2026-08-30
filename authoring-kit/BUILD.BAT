@@ -131,11 +131,13 @@ REM      a source removed since the last build cannot leave a stray
 REM      converted .CHR behind either - this loop only ever recreates
 REM      what it finds a source for.
 REM      NOTE: the "else" here is load-bearing. Verified empirically:
-REM      inside a for loop, an "exit /b 1" in a nested block returns 0 to
-REM      the caller whenever any command follows that block's closing ")"
-REM      within the same enclosing parens. cmd.exe still stops (no further
-REM      iterations, no further script) but the PROCESS exit code silently
-REM      resets to 0, so a caller checking errorlevel never sees the
+REM      an "exit /b 1" in a nested block returns 0 to the caller whenever
+REM      any command follows that block's closing ")" within the same
+REM      enclosing parens - ANY enclosing parenthesised block, a plain "if
+REM      exist (...)" included, not just a for loop - re-verified 2026-08-30
+REM      with a standalone repro outside a for loop. cmd.exe still stops (no
+REM      further iterations, no further script) but the PROCESS exit code
+REM      silently resets to 0, so a caller checking errorlevel never sees the
 REM      failure. The trigger is the trailing command, NOT the "||" form -
 REM      plain "if errorlevel 1 ( ... exit /b 1 )" is affected exactly the
 REM      same way. Two shapes are safe: "if errorlevel 1 (...) else (...)",
