@@ -18,8 +18,8 @@ its flags, so its flag block stays yours.
 | ticker | 30, 31 | `../ticker/README.md` |
 | fade | 40-43 | `../fade/README.md` |
 
-If you would rather ship a smaller binary with only the modules you use, build
-a subset with `..\..\lib\xbnbuild.ps1` - see the collection README.
+If you would rather ship a smaller binary with only the modules you use, run
+`EXTERNS.BAT` from the kit root - see the collection README.
 
 `CALL` targets are slots in a fixed jump table at `$C00A`, not routine
 addresses: slot n is at `$C00A + 3n`. Slots whose module is not in the build

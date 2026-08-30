@@ -26,6 +26,8 @@ xbn_call_table:
         jp xbn_null_ret          ; slot 7 reserved
 xbn_null_ret:
         ret
+        ASSERT xbn_call_table == XBN_ORG + 10, xbn_call_table moved off $C00A
+        ASSERT (xbn_null_ret - xbn_call_table) == 3 * XBN_CALL_SLOTS, call table length does not match XBN_CALL_SLOTS
 ; Palette ownership: fade and atmosphere both drive the Layer 2 palette
 ; from the #int hook, and overlapping writes corrupt an entry.
 ; 0 nobody, 1 fade, 2 atmosphere.

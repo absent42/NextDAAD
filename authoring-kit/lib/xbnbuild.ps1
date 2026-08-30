@@ -40,30 +40,8 @@ foreach ($m in $Modules) {
 # Assembler resolution, in order: -SjasmPlus, the kit's own tools folder,
 # then PATH. EXTERNS.BAT passes -SjasmPlus from CONFIG.BAT's SJASMPLUSDIR.
 $kitRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
-if (-not $SjasmPlus) {
-    # Two shapes, as tools.bat already accepts for Arkos and ffmpeg: the exe
-    # at the folder root, or one level down if the zip nested a folder.
-    $dir = Join-Path $kitRoot 'tools\sjasmplus'
-    $bundled = Join-Path $dir 'sjasmplus.exe'
-    if (Test-Path $bundled) { $SjasmPlus = $bundled }
-    else {
-        $nested = Get-ChildItem $dir -Directory -ErrorAction SilentlyContinue |
-                  ForEach-Object { Join-Path $_.FullName 'sjasmplus.exe' } |
-                  Where-Object { Test-Path $_ } | Select-Object -First 1
-        if ($nested) { $SjasmPlus = $nested }
-    }
-}
-if (-not $SjasmPlus) {
-    $onPath = Get-Command sjasmplus.exe -ErrorAction SilentlyContinue
-    if ($onPath) { $SjasmPlus = $onPath.Source }
-}
-if (-not $SjasmPlus -or -not (Test-Path $SjasmPlus)) {
-    Write-Error "sjasmplus.exe not found. Download it from https://github.com/z00m128/sjasmplus and extract it into tools\sjasmplus\, or set SJASMPLUSDIR in CONFIG.BAT, or put it on PATH."
-    exit 1
-}
-# Absolute path: relative here breaks once Push-Location changes the
-# working directory below.
-$SjasmPlus = (Resolve-Path $SjasmPlus).Path
+. (Join-Path $PSScriptRoot 'resolve-sjasmplus.ps1')
+$SjasmPlus = Resolve-SjasmPlus -SjasmPlus $SjasmPlus -KitRoot $kitRoot
 $work = Join-Path ([IO.Path]::GetTempPath()) ("xbnbuild-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Force $work | Out-Null
 

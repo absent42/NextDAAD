@@ -8,6 +8,7 @@ on:
     paths:
       - 'authoring-kit/externs/**'
       - 'authoring-kit/xbn.inc'
+      - 'authoring-kit/xbnmod.inc'
       - 'tests/audit-externs.ps1'
   workflow_dispatch:
 

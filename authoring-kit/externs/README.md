@@ -25,7 +25,9 @@ from the kit root:
 
     EXTERNS.BAT ticker fade
 
-That needs a Z80 assembler. Download sjasmplus from
+This writes `GAME.XBN` to the kit root, beside `BUILD.BAT`. Copy it next to
+your `GAME.DDB` the same as any other extern binary. That needs a Z80
+assembler. Download sjasmplus from
 https://github.com/z00m128/sjasmplus and extract it into `tools\sjasmplus\`, or
 point `SJASMPLUSDIR` in `CONFIG.BAT` at an install you already have. You do not
 need it otherwise: every extern here ships a prebuilt `GAME.XBN`, and `all/`
