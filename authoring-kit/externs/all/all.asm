@@ -12,6 +12,8 @@
     DEFINE XBN_HAS_TICKER
     DEFINE XBN_HAS_FADE
     DEFINE XBN_HAS_HINTS
+    DEFINE XBN_HAS_CLOCK
+    DEFINE XBN_HAS_TIMER
     INCLUDE "xbn.inc"
     INCLUDE "xbnmod.inc"
     ORG XBN_ORG
@@ -28,10 +30,18 @@ all_ext:
     call fade.ext
     call xbn_setup
     call hints.ext
+    call xbn_setup
+    call clock.ext
+    call xbn_setup
+    call timer.ext
     ret
 
 ; #int chain. IX = flags base is the only documented register; every
 ; module's int is a load-and-test when idle.
+; clock.int runs before timer.int deliberately: the timer compares the
+; clock's flags against what it saw last frame, so it cannot miss a
+; change either order, but calling clock first lets a state-2 timer
+; react in the same frame instead of the next. Do not reorder.
 all_int:
     ld ix, XBN_FLAGS
     call ticker.int
@@ -39,6 +49,10 @@ all_int:
     call fade.int
     ld ix, XBN_FLAGS
     call hints.int
+    ld ix, XBN_FLAGS
+    call clock.int
+    ld ix, XBN_FLAGS
+    call timer.int
     ret
 
     XBN_CHAIN_SETUP
@@ -46,6 +60,8 @@ all_int:
     INCLUDE "externs/ticker/ticker.asm"
     INCLUDE "externs/fade/fade.asm"
     INCLUDE "externs/hints/hints.asm"
+    INCLUDE "externs/clock/clock.asm"
+    INCLUDE "externs/timer/timer.asm"
 
 xbn_end:
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG
