@@ -350,7 +350,8 @@
 #            designed to be combined with each other; the staging code
 #            checks them in this priority order, so if more than one is
 #            given -XbnNoBin wins over -XbnBad over -XbnTicker over
-#            -XbnFade over -XbnAll over -XbnHints over -XbnClock:
+#            -XbnFade over -XbnAll over -XbnHints over -XbnClock over
+#            -XbnTool:
 #              -XbnNoBin      stage GAME.DDB with NO GAME.XBN at all (the
 #                              XABS no-XBN control - EXTERN must stay inert).
 #              -XbnBad <kind> stage a corrupt/truncated variant AS
@@ -414,6 +415,13 @@
 #                              XCLS/XTMR/XTMI verbs have both modules to
 #                              drive. Same drift guard and picture staging
 #                              as -XbnAll.
+#              -XbnTool       toolkit Task 6: same combined binary as
+#                              -XbnAll (toolkit is one of its modules), no
+#                              hint packing - this leg needs only the
+#                              binary - so extern.dsf's XTKP/XTKA/XTKO/
+#                              XTKT/XSLT verbs have the toolkit fns and CALL
+#                              slots to drive. Same drift guard and picture
+#                              staging as -XbnAll.
 #            An alternative to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in
@@ -659,7 +667,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -844,11 +852,11 @@ finally {
 # GAME.XBN to the committed all\GAME.XBN - catches both a broken
 # generator and any future divergence between the two paths.
 $xbnDriftOut = "$root\tests\out\xbn-subset-drift.XBN"
-& "$root\authoring-kit\lib\xbnbuild.ps1" ticker fade hints clock timer -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $xbnDriftOut
+& "$root\authoring-kit\lib\xbnbuild.ps1" ticker fade hints clock timer toolkit -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $xbnDriftOut
 $xbnDriftFresh = [IO.File]::ReadAllBytes($xbnDriftOut)
 $xbnDriftShipped = [IO.File]::ReadAllBytes("$root\authoring-kit\externs\all\GAME.XBN")
 if (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShipped)) {
-    throw "xbnbuild.ps1 ticker fade hints clock timer DRIFTED from authoring-kit\externs\all\GAME.XBN - generator and all.asm disagree; compare $xbnDriftOut"
+    throw "xbnbuild.ps1 ticker fade hints clock timer toolkit DRIFTED from authoring-kit\externs\all\GAME.XBN - generator and all.asm disagree; compare $xbnDriftOut"
 }
 
 & "$PSScriptRoot\hintpack-selftest.ps1"
@@ -3174,6 +3182,55 @@ if ($Xbn) {
         }
         Copy-Item "$root\tests\out\xbn\ALL.XBN" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\ALL.XBN -> sd\$legName\GAME.XBN (-XbnClock: combined collection binary, not the fixture; shipped prebuilt verified fresh)"
+        $allArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
+        if (Test-Path $allArt) {
+            Copy-Item $allArt "$leg\001.NX2" -Force
+            "staged tools\Rabenstein-master\nextdaad\1.NX2 -> sd\$legName\001.NX2 (XFAD picture)"
+        }
+        else {
+            "WARNING: tools\Rabenstein-master\nextdaad\1.NX2 missing - XFAD will have no picture to fade"
+        }
+        $allArt2 = "$root\tools\Rabenstein-master\nextdaad\2.NX2"
+        if (Test-Path $allArt2) {
+            Copy-Item $allArt2 "$leg\002.NX2" -Force
+            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC/XFSO second scene)"
+        }
+        else {
+            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
+        }
+    }
+    elseif ($XbnTool) {
+        # Task 6: same combined-collection binary as -XbnAll (toolkit is
+        # one of its modules), so extern.dsf's XTKP/XTKA/XTKO/XTKT/XSLT
+        # verbs have the toolkit fns and CALL slots to drive. No hint
+        # packing - this leg needs only the binary. Same scratch-cwd
+        # pattern, drift guard and picture staging as -XbnAll above (same
+        # CSpect-lock refusal).
+        if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+            throw "CSpect is running - close it before staging (locked sd\ files cause a partial XBN fixture)"
+        }
+        $allSrcDir = Join-Path $root 'authoring-kit\externs\all'
+        $allBuildDir = Join-Path $root 'tests\out\xbn\_allbuild'
+        New-Item -ItemType Directory -Force $allBuildDir | Out-Null
+        Push-Location $allBuildDir
+        try {
+            & "$root\tools\sjasmplus\sjasmplus.exe" --msg=war -I "$root\authoring-kit" "$allSrcDir\all.asm"
+            if ($LASTEXITCODE -ne 0) { throw "authoring-kit\externs\all\all.asm assembly failed" }
+            Move-Item "GAME.XBN" "$root\tests\out\xbn\ALL.XBN" -Force
+        }
+        finally {
+            Pop-Location
+            Remove-Item $allBuildDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # Same shipped-prebuilt drift guard as -XbnTicker/-XbnFade/-XbnAll/-XbnHints/-XbnClock above.
+        $allShipped = Join-Path $allSrcDir 'GAME.XBN'
+        $freshA = [IO.File]::ReadAllBytes("$root\tests\out\xbn\ALL.XBN")
+        $shipA = [IO.File]::ReadAllBytes($allShipped)
+        if (-not [System.Linq.Enumerable]::SequenceEqual($freshA, $shipA)) {
+            throw "authoring-kit\externs\all\GAME.XBN is STALE - rebuild it from all.asm (its build.ps1) and commit both together"
+        }
+        Copy-Item "$root\tests\out\xbn\ALL.XBN" "$leg\GAME.XBN" -Force
+        "staged tests\out\xbn\ALL.XBN -> sd\$legName\GAME.XBN (-XbnTool: combined collection binary, not the fixture; shipped prebuilt verified fresh)"
         $allArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
         if (Test-Path $allArt) {
             Copy-Item $allArt "$leg\001.NX2" -Force

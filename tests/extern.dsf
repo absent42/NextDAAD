@@ -51,9 +51,50 @@
 ;          this entry is only meaningful in that combination; against
 ;          the plain fixture XBN, fn 30/31 fall through xbntest.asm's
 ;          ext_main unrecognised and no-op.
-;   XSLT - CALLs pinned jump table slot 0 ($C00A). Meaningful only on
+;   XSLT - CALLs pinned jump table slots 0, 1, 2 and 3 (toolkit fns,
+;          via flag 249), then slot 4 - unowned, must print nothing.
+;          Flag 249 is MOVED mid-verb before slot 2's call, so a
+;          dispatch hardcoded to one flag number rather than actually
+;          reading 249 cannot fake the result - this is the only way a
+;          CALL, which carries no parameter, proves the indirection at
+;          all. Also proves the reserved-slot no-op guarantee still
+;          holds now that slots 0-3 are occupied. Meaningful only on
 ;          legs staging a table-carrying binary (-XbnAll/-XbnTicker/
-;          -XbnFade) - the fixture binary carries no such table.
+;          -XbnFade/-XbnClock/-XbnTool) - the fixture binary carries no
+;          such table.
+;
+; XTKP/XTKA/XTKO/XTKT drive the Task 6 toolkit module (fns 70-75, 82, 83),
+; part of the same -XbnTool combined binary as -XbnClock/-XbnHints. Each
+; flag number in these verbs is a FLAG NUMBER, not a value - the toolkit
+; fns read/write flags at $A200+n, LOW BYTE FIRST for a pair.
+;   XTKP - decimal printing (fn 70/71) and the width flag (248): 42
+;          unpadded, padded to five columns with spaces, then zeros,
+;          then a 16-bit pair. The high byte is left non-zero (flag
+;          101 = 7) through the three fn 70 (byte print) calls, so a
+;          byte/pair confusion in fn 70 would show.
+;   XTKA - 16-bit arithmetic (fn 75/73/74): pair += the pair at flag
+;          249, pair -= immediate byte, then a compare against all
+;          three outcomes - greater (2), equal (1), less (0) into flag
+;          251, so a hardcoded "return greater" cannot pass.
+;   XTKO - overflow (fn 72): 65530 + 10 wraps to 4 and sets flag 251,
+;          THEN a second, non-overflowing add proves flag 251 also
+;          goes back to 0 - otherwise a module that always sets the
+;          overflow flag would pass unnoticed.
+;   XTKT - time formats (fn 82/83): two byte flags as HH:MM, then two
+;          16-bit second counts as MM:SS, the second chosen to exercise
+;          zero-padding on the SECONDS digit (01:05), then a re-print
+;          of the HH:MM with flag 248 set to a zero-pad width, which
+;          the time formats must IGNORE.
+;
+; XTKI/XTKS exercise the status-line pattern a real game uses: the toolkit
+; cannot select a window itself, so the author brackets the call with
+; WINDOW and the print path handles width, colour and wrapping - no other
+; verb here does that. Hardware-only, typed by hand, not asserted against
+; any expected output.
+;   XTKI - arms live values: score 800, clock running from 12:00 at 1
+;          in-game minute/real second, a 5-minute real-seconds timer.
+;   XTKS - paints WINDOW 2 from those values (score width 5, HH:MM,
+;          MM:SS) and restores WINDOW 1. Repaintable on demand.
 ;
 ; -XbnHints stages the hints worked example (authoring-kit\externs\hints)
 ; as part of the combined GAME.XBN, plus a packed GAME.HNT. XHNP/XHNQ/
@@ -192,6 +233,12 @@ XADV   138 verb
 XAD1   139 verb
 XRUN   140 verb
 XSVE   141 verb
+XTKP   142 verb
+XTKA   143 verb
+XTKO   144 verb
+XTKT   145 verb
+XTKI   146 verb
+XTKS   147 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -335,11 +382,35 @@ XSVE   141 verb
                              ; re-encode caveat as call_target above.
            PRINT 222         ; expect 153 ($99)
            DONE
-; XSLT - CALLs pinned slot 0 ($C00A), safe no-op only on legs staging a
-;        pinned-table binary (-XbnAll/-XbnTicker/-XbnFade). DO NOT TYPE
+; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
+;        unowned and must remain a safe no-op, which is what this verb
+;        pinned before the toolkit existed. Flag 249 MOVES mid-verb (110
+;        for slots 0/1, 112 for slot 2, 114 for slot 3) - a dispatch
+;        hardcoded to one flag rather than reading 249 cannot follow the
+;        move. Safe no-op only on legs staging a pinned-table binary
+;        (-XbnAll/-XbnTicker/-XbnFade/-XbnClock/-XbnTool). DO NOT TYPE
 ;        on the plain -Xbn leg: no table there, so $C00A is fixture code.
-> XSLT _   CALL 10 192
-           MES "slot ok"
+> XSLT _   LET     110 42
+           LET     111 9           ; non-zero: a byte/pair confusion would show
+           LET     248 0
+           LET     249 110
+           MES     "slot0 "
+           CALL    10 192          ; slot 0 = fn 70: flag 110
+           MES     " slot1 "
+           CALL    13 192          ; slot 1 = fn 71: pair 110/111
+           LET     112 9
+           LET     113 5
+           LET     249 112         ; move the pointer: a hardcoded dispatch
+           MES     " slot2 "       ; cannot follow this
+           CALL    16 192          ; slot 2 = fn 82: flags 112/113
+           MES     " slot3 "
+           LET     114 90          ; 90 seconds
+           LET     115 0
+           LET     249 114
+           CALL    19 192          ; slot 3 = fn 83: MM:SS
+           MES     " n["
+           CALL    22 192          ; slot 4: unowned, must print nothing
+           MES     "]"
            DONE
 > XCNR _   CLEAR 220
            CALL 0 128        ; $8000 - out of window, must no-op
@@ -879,6 +950,136 @@ XSVE   141 verb
            PRINT   232
            MES     "/"
            PRINT   231
+           DONE
+; XTKP - decimal printing and the width flag. 42 unpadded, then padded to
+;        five columns with spaces, then with zeros, then a 16-bit pair.
+> XTKP _   LET     100 42
+           LET     101 7           ; non-zero: a byte/pair confusion would show
+           LET     248 0
+           MES     "a["
+           EXTERN  100 70
+           MES     "] b["
+           LET     248 5
+           EXTERN  100 70
+           MES     "] c["
+           LET     248 133
+           EXTERN  100 70
+           MES     "] d["
+           LET     248 0
+           LET     100 32
+           LET     101 3
+           EXTERN  100 71
+           MES     "]"
+           DONE
+; XTKA - 16-bit arithmetic. 1000 + 2000 by pair, then -10 by immediate,
+;        then a compare exercising all three outcomes: greater, equal,
+;        less.
+> XTKA _   LET     100 232         ; 1000 = 3*256 + 232
+           LET     101 3
+           LET     102 208         ; 2000 = 7*256 + 208
+           LET     103 7
+           LET     248 0
+           LET     249 102
+           EXTERN  100 75
+           MES     "sum "
+           EXTERN  100 71
+           LET     249 10
+           EXTERN  100 73
+           MES     " less "
+           EXTERN  100 71
+           LET     249 102
+           EXTERN  100 74
+           MES     " cmp "
+           PRINT   251
+           MES     " eq "
+           LET     100 208         ; 2000, equal to the pair at 102
+           LET     101 7
+           EXTERN  100 74
+           PRINT   251
+           MES     " lt "
+           LET     100 100         ; 100, less than 2000
+           LET     101 0
+           EXTERN  100 74
+           PRINT   251
+           DONE
+; XTKO - overflow reporting. 65530 + 10 wraps to 4 and sets flag 251,
+;        then a second, non-overflowing add proves flag 251 goes back
+;        to 0.
+> XTKO _   LET     100 250         ; 65530 = 255*256 + 250
+           LET     101 255
+           LET     248 0
+           LET     249 10
+           EXTERN  100 72
+           MES     "wrap "
+           EXTERN  100 71
+           MES     " ovf "
+           PRINT   251
+           LET     100 10          ; a second add that must NOT overflow
+           LET     101 0
+           EXTERN  100 72
+           MES     " sum "
+           EXTERN  100 71
+           MES     " ovf "
+           PRINT   251
+           DONE
+; XTKT - both time formats. 09:05 from two byte flags, then two 16-bit
+;        second counts as MM:SS - 90 (01:30), then 65 to exercise
+;        zero-padding on the seconds digit (01:05), then flag 100/101's
+;        HH:MM again under a zero-pad width flag, which the time
+;        formats must IGNORE.
+> XTKT _   LET     100 9
+           LET     101 5
+           MES     "t "
+           EXTERN  100 82
+           LET     102 90
+           LET     103 0
+           MES     " s "
+           EXTERN  102 83
+           MES     " s2 "
+           LET     104 65
+           LET     105 0
+           EXTERN  104 83
+           LET     248 133         ; zero-pad width 5: the time formats must IGNORE it
+           MES     " w "
+           EXTERN  100 82
+           LET     248 0           ; leave the width flag as we found it
+           DONE
+; XTKI - arms live values for the status-line pair below: score, clock
+;        running 1 in-game minute/real second from 12:00, a 5-minute
+;        real-seconds timer.
+> XTKI _   LET     100 32          ; score 800 = 3*256 + 32
+           LET     101 3
+           LET     224 12          ; clock 12:00, day 0
+           LET     225 0
+           LET     244 0
+           LET     227 50          ; 50 frames per in-game minute
+           LET     228 0
+           EXTERN  0 60            ; arm and start the clock
+           EXTERN  0 63            ; arm the timer module
+           LET     229 44          ; 300 real seconds = 1*256 + 44
+           LET     230 1
+           LET     235 1           ; state 1: counting real seconds
+           MES     "armed"
+           DONE
+; XTKS - paints the status line into WINDOW 2 from XTKI's live values,
+;        then restores WINDOW 1. Typed by hand, repeated on demand, so it
+;        cannot disturb any other verb. WINSIZE 1 40 (not 80) so the bar
+;        fits both text modes - the hardware sheet tests both.
+> XTKS _   WINDOW  2
+           WINAT   16 0
+           WINSIZE 1 40
+           PAPER   1
+           INK     7
+           CLS
+           MES     "Score "
+           LET     248 5
+           EXTERN  100 71
+           LET     248 0
+           MES     "  Time "
+           EXTERN  224 82
+           MES     "  Fuse "
+           EXTERN  229 83
+           WINDOW  1
            DONE
 /PRO 6
 ; ---- one-shot init ----

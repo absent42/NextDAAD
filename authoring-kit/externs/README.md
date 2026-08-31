@@ -15,13 +15,16 @@ lines from its README. No assembler needed unless you change the source.
 | `hints/` | Prints hint text served from an SD card file (`GAME.HNT`), so a game can ship a large hint book without spending DAAD message slots or interpreter RAM | 50 print hint, 51 level count, 52 preflight, 53 clear progress | 242 level override, 243 status/count |
 | `clock/` | An in-game clock advanced from the frame hook, with hour carry and an author-driven advance for sleeping or travelling | 60 arm and start, 61 stop, 62 advance p minutes | 224 hours, 225 minutes, 226 running, 227/228 rate, 244 days |
 | `timer/` | Three independent countdown timers, counting real seconds or in-game minutes, that expire into a flag your process table can test | 63 arm, 64 stop all three, 65 arm slot p as an in-game-minute deadline | 229-234 remaining (3 pairs), 235-237 state; an armed in-game-minute slot also READS the clock's 224, 225 and 244 |
+| `toolkit/` | Decimal printing, 16-bit flag-pair arithmetic and time formatting. No hook and no arming call - every function runs to completion inside the EXTERN that calls it | 70 print flag as decimal, 71 print pair as decimal, 72-75 16-bit arithmetic, 82 HH:MM, 83 MM:SS | 248 width, 249 operand, 250 reserved, 251 result |
 | `all/` | every extern in this collection in one binary | all of the above | all of the above |
 
 A game uses ONE `GAME.XBN`. You do not have to merge anything by hand: the
 `all/` folder ships every extern here built into one binary, so copy that
 `GAME.XBN` and use whatever functions you want. Function codes and flags are
-disjoint across the collection, and a module is dormant until you arm it, so an
-unused module costs you neither.
+disjoint across the collection, and a module stays inert until the game
+invokes it - an arming call for the modules that use one, or simply never
+being EXTERNed for the ones that don't - so an unused module costs you
+neither.
 
 If you want a smaller binary with only the modules you use, run `EXTERNS.BAT`
 from the kit root:
