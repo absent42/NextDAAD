@@ -51,9 +51,26 @@
 ;          this entry is only meaningful in that combination; against
 ;          the plain fixture XBN, fn 30/31 fall through xbntest.asm's
 ;          ext_main unrecognised and no-op.
-;   XSLT - CALLs pinned jump table slot 0 ($C00A). Meaningful only on
-;          legs staging a table-carrying binary (-XbnAll/-XbnTicker/
-;          -XbnFade) - the fixture binary carries no such table.
+;   XSLT - CALLs pinned jump table slots 0 and 2 (toolkit fns, via
+;          flag 249), then slot 4 - unowned, must print nothing. Proves
+;          the reserved-slot no-op guarantee still holds now that
+;          slots 0-3 are occupied. Meaningful only on legs staging a
+;          table-carrying binary (-XbnAll/-XbnTicker/-XbnFade/-XbnClock/
+;          -XbnTool) - the fixture binary carries no such table.
+;
+; XTKP/XTKA/XTKO/XTKT drive the Task 6 toolkit module (fns 70-75, 82, 83),
+; part of the same -XbnTool combined binary as -XbnClock/-XbnHints. Each
+; flag number in these verbs is a FLAG NUMBER, not a value - the toolkit
+; fns read/write flags at $A200+n, LOW BYTE FIRST for a pair.
+;   XTKP - decimal printing (fn 70/71) and the width flag (248): 42
+;          unpadded, padded to five columns with spaces, then zeros,
+;          then a 16-bit pair.
+;   XTKA - 16-bit arithmetic (fn 75/73/74): pair += immediate byte via
+;          the pair at flag 249, pair -= immediate byte, then a compare
+;          reporting greater (2) into flag 251.
+;   XTKO - overflow (fn 72): 65530 + 10 wraps to 4 and sets flag 251.
+;   XTKT - time formats (fn 82/83): two byte flags as HH:MM, then a
+;          16-bit second count as MM:SS.
 ;
 ; -XbnHints stages the hints worked example (authoring-kit\externs\hints)
 ; as part of the combined GAME.XBN, plus a packed GAME.HNT. XHNP/XHNQ/
@@ -192,6 +209,10 @@ XADV   138 verb
 XAD1   139 verb
 XRUN   140 verb
 XSVE   141 verb
+XTKP   142 verb
+XTKA   143 verb
+XTKO   144 verb
+XTKT   145 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -335,11 +356,24 @@ XSVE   141 verb
                              ; re-encode caveat as call_target above.
            PRINT 222         ; expect 153 ($99)
            DONE
-; XSLT - CALLs pinned slot 0 ($C00A), safe no-op only on legs staging a
-;        pinned-table binary (-XbnAll/-XbnTicker/-XbnFade). DO NOT TYPE
-;        on the plain -Xbn leg: no table there, so $C00A is fixture code.
-> XSLT _   CALL 10 192
-           MES "slot ok"
+; XSLT - CALL slots. 0 and 2 now reach the toolkit; 4 is still unowned and
+;        must remain a safe no-op, which is what this verb pinned before
+;        the toolkit existed. Safe no-op only on legs staging a
+;        pinned-table binary (-XbnAll/-XbnTicker/-XbnFade/-XbnClock/
+;        -XbnTool). DO NOT TYPE on the plain -Xbn leg: no table there, so
+;        $C00A is fixture code.
+> XSLT _   LET     100 42
+           LET     248 0
+           LET     249 100
+           MES     "slot0 "
+           CALL    10 192
+           MES     " slot2 "
+           LET     100 9
+           LET     101 5
+           CALL    16 192
+           MES     " n["
+           CALL    22 192          ; slot 4: unowned, must print nothing
+           MES     "]"
            DONE
 > XCNR _   CLEAR 220
            CALL 0 128        ; $8000 - out of window, must no-op
@@ -879,6 +913,68 @@ XSVE   141 verb
            PRINT   232
            MES     "/"
            PRINT   231
+           DONE
+; XTKP - decimal printing and the width flag. 42 unpadded, then padded to
+;        five columns with spaces, then with zeros, then a 16-bit pair.
+> XTKP _   LET     100 42
+           LET     101 0
+           LET     248 0
+           MES     "a["
+           EXTERN  100 70
+           MES     "] b["
+           LET     248 5
+           EXTERN  100 70
+           MES     "] c["
+           LET     248 133
+           EXTERN  100 70
+           MES     "] d["
+           LET     248 0
+           LET     100 32
+           LET     101 3
+           EXTERN  100 71
+           MES     "]"
+           DONE
+; XTKA - 16-bit arithmetic. 1000 + 2000 by pair, then -10 by immediate,
+;        then a compare that must report greater.
+> XTKA _   LET     100 232         ; 1000 = 3*256 + 232
+           LET     101 3
+           LET     102 208         ; 2000 = 7*256 + 208
+           LET     103 7
+           LET     248 0
+           LET     249 102
+           EXTERN  100 75
+           MES     "sum "
+           EXTERN  100 71
+           LET     249 10
+           EXTERN  100 73
+           MES     " less "
+           EXTERN  100 71
+           LET     249 102
+           EXTERN  100 74
+           MES     " cmp "
+           PRINT   251
+           DONE
+; XTKO - overflow reporting. 65530 + 10 wraps to 4 and sets flag 251.
+> XTKO _   LET     100 250         ; 65530 = 255*256 + 250
+           LET     101 255
+           LET     248 0
+           LET     249 10
+           EXTERN  100 72
+           MES     "wrap "
+           EXTERN  100 71
+           MES     " ovf "
+           PRINT   251
+           DONE
+; XTKT - both time formats. 09:05 from two byte flags, then 01:30 from a
+;        16-bit second count of 90.
+> XTKT _   LET     100 9
+           LET     101 5
+           MES     "t "
+           EXTERN  100 82
+           LET     102 90
+           LET     103 0
+           MES     " s "
+           EXTERN  102 83
            DONE
 /PRO 6
 ; ---- one-shot init ----
