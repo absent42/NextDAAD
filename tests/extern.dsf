@@ -122,6 +122,9 @@
 ;          topic 0's FIRST hint again, proving the reset took; prints
 ;          flag 243 after the reset (expect reset 0).
 ;   XHNT - level count (fn 51) for topic 1: flag 243 must read 3.
+;   XHNL - explicit-level mode (flag 242): pinned level prints with
+;          status 0, one past the last level reports 3; GAME.HPR is
+;          never touched, so this is safe to type at any point.
 ;
 ; XCLK/XCLA/XCLS drive the Task 4 clock module (fn 60/61/62) and XTMR/XTMI/
 ; XTLR drive the timer module (fn 63-65) - both part of the same -XbnClock
@@ -146,6 +149,7 @@
 ;   XTLR - a RAMLOAD under a running minute timer. Clobbers the deadline
 ;          pair itself (not just the clock) between the RAMSAVE and the
 ;          RAMLOAD, so the restore has real work to do.
+;   XTMS - fn 64 stops all three timer slots: states clear, pairs stay.
 ;   XCDY - the day counter must advance by exactly one across a midnight
 ;          crossing.
 ;
@@ -248,6 +252,8 @@ XTKO   144 verb
 XTKT   145 verb
 XTKI   146 verb
 XTKS   147 verb
+XTMS   148 verb
+XHNL   149 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -998,6 +1004,60 @@ XTKS   147 verb
            PRINT   232
            MES     "/"
            PRINT   231
+           DONE
+; XTMS - fn 64 stops ALL THREE slots: every state clears, every pair is
+;        left alone. Arms one real-seconds slot AND one minute-deadline
+;        slot first, so the check covers both slot kinds - a stopall
+;        that cleared the pairs too, or cleared only one state, or only
+;        state-1 slots, prints differently. The pairs are the
+;        falsification: slot 0 must still read 300 (1/44) and slot 1
+;        must still hold the 810 deadline (3/42) AFTER the stop.
+> XTMS _   EXTERN  0 60            ; arm clock (no-op if already armed)
+           EXTERN  0 61            ; and stop it - deadline computed exactly
+           LET     224 12          ; 12:00, day 0, rate 50
+           LET     225 0
+           LET     244 0
+           LET     227 50
+           LET     228 0
+           EXTERN  0 63            ; arm the timer module
+           LET     229 44          ; slot 0: 300 real seconds = 1*256+44
+           LET     230 1
+           LET     235 1           ; state 1: counting real seconds
+           LET     231 90          ; slot 1: 90-minute duration
+           LET     232 0
+           EXTERN  1 65            ; slot 1 deadline: 720+90=810 = 3*256+42
+           EXTERN  0 64            ; STOP ALL - the condact under test
+           PAUSE   4               ; settle: the frame hook must not revive them
+           MES     "s0 "
+           PRINT   235             ; expect 0
+           MES     " s1 "
+           PRINT   236             ; expect 0
+           MES     " p0 "
+           PRINT   230             ; expect 1
+           MES     "/"
+           PRINT   229             ; expect 44 - pair untouched
+           MES     " p1 "
+           PRINT   232             ; expect 3
+           MES     "/"
+           PRINT   231             ; expect 42 - deadline untouched
+           DONE
+; XHNL - explicit-level mode: flag 242 nonzero pins the level and never
+;        touches GAME.HPR. Level 2 is topic 0's LAST level (it has
+;        exactly two), so the pair of calls exercises both the in-range
+;        print (status 0) and ST_NOLEVEL (3) one past the end. A module
+;        that ignored flag 242 and ran automatic mode instead would
+;        advance GAME.HPR and could print status 3 on the FIRST call
+;        against a used card - the 0/3 pair in this order is the
+;        discriminator. Leaves flag 242 back at 0 (automatic).
+> XHNL _   LET     242 2
+           EXTERN  0 50            ; topic 0 level 2: prints the hint
+           MES     "status "
+           PRINT   243             ; expect 0
+           LET     242 3
+           EXTERN  0 50            ; topic 0 has no level 3
+           MES     " past "
+           PRINT   243             ; expect 3 - no such level
+           LET     242 0           ; restore automatic mode
            DONE
 ; XTKP - decimal printing and the width flag. 42 unpadded, then padded to
 ;        five columns with spaces, then with zeros, then a 16-bit pair.
