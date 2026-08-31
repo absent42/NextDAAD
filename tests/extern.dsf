@@ -17,7 +17,11 @@
 ;   XREG - the register contract EXTERN hands the extern on entry:
 ;          A=B=param1, C=fn, HL=flags+param1, DE=objTable+param1*6,
 ;          IX=flags base ($A200). xbntest.asm's ext_main echoes each of
-;          those into flags 200-205 for this entry to PRINT back.
+;          those into flags 200-205; this entry asserts five legs plus
+;          the DE BASE - the HL leg against a seeded flag 42 (restored
+;          after: it is FLAG_PROMPT), the DE base against object 0's
+;          not-created start (252) via a second echo at param1=0. The
+;          *6 stride itself is unproven (index 0 hides it).
 ;   XCAL - a direct CALL into a staged XBN reaches the intended
 ;          address (xbntest.asm's call_target, which sets flag 220).
 ;   XCNR - negative control: CALL to an address outside the mapped XBN
@@ -331,7 +335,7 @@ XTKS   147 verb
 /0
 /OBJ
 ;obj  starts  weight    c w  5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0    noun   adjective
-/0    0   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/0    252 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
 /PRO 0
 ; ---- main location loop (template shape, no graphics - see
 ; tests\gmodegate.dsf for the gated version this is trimmed from) ----
@@ -366,13 +370,30 @@ XTKS   147 verb
         REDO
 /PRO 5
 ; ---- command decoder: one entry per XBN probe verb ----
-> XREG _   LET 150 42        ; park a known value where the echo can see it
-           LET 33 0          ; not required; keeps entry shape uniform
-           EXTERN 42 20      ; forwarded fn 20 -> echo (param1=42)
-           PRINT 200         ; expect 42
-           PRINT 201         ; expect 20
-           PRINT 204         ; expect 162 ($A2)
-           PRINT 205         ; expect 0
+; The seed goes in FLAG 42 because param1 is 42: HL = flags + param1,
+; so the flag the echo reads through HL is the flag numbered by the
+; parameter. (The old form seeded flag 150 - a dead write.) The DE leg
+; is probed with a second echo at param1 = 0, against object 0, which
+; the /OBJ block starts at location 252 (not created) precisely so the
+; echo has a value no reset state produces.
+> XREG _   LET     42 77     ; seed the flag the HL echo must read back
+           EXTERN  42 20     ; echo: A/B=42 C=20 HL=flags+42 DE=objTable+252
+           MES     "p "
+           PRINT   200       ; expect 42 (param1)
+           MES     " fn "
+           PRINT   201       ; expect 20 (fn code)
+           MES     " hl "
+           PRINT   202       ; expect 77 - the seeded flag 42 (HL leg)
+           MES     " ix "
+           PRINT   204       ; expect 162 ($A2 - IX high)
+           MES     "/"
+           PRINT   205       ; expect 0 (IX low)
+           EXTERN  0 20      ; second echo: DE = objTable + 0*6
+           MES     " de "
+           PRINT   203       ; expect 252 - object 0's start (DE base)
+           LET     42 0      ; RESTORE: flag 42 is FLAG_PROMPT - left
+                             ; nonzero it sticks the session prompt in
+                             ; fixed mode for every later capture
            DONE
 > XCAL _   CALL 113 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
                              ; label, address $C071 (lsb 113, msb 192) - read
