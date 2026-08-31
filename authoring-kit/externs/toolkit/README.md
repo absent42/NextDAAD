@@ -4,10 +4,13 @@ A collection of small pure-logic helpers: decimal printing, 16-bit
 arithmetic and time formatting. Unlike `clock` or `timer`, toolkit has no
 frame hook and no arming call - every function runs to completion inside
 the single foreground `EXTERN` that calls it, and there is nothing for a
-LOAD to restore. The module currently ships eight of its nine planned
-functions: fn 70 and fn 71 for decimal printing, fn 72 to fn 75 for
-16-bit arithmetic on flag pairs, fn 82 and fn 83 for time formatting.
-Only the CALL-slot wiring that exposes these to a game remains.
+LOAD to restore. The module implements all eight of its functions: fn 70
+and fn 71 for decimal printing, fn 72 to fn 75 for 16-bit arithmetic on
+flag pairs, fn 82 and fn 83 for time formatting. What remains is giving
+four of them - fn 70, 71, 82 and 83 - a second entry point through
+DAAD's CALL condact, alongside the existing EXTERN dispatch. Fn codes 76
+to 81 also belong to this module's range - object queries and a
+random-without-repeat picker - but are separate work not covered here.
 
 ## Calling convention
 
