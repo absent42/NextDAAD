@@ -72,6 +72,25 @@
 ;   XHNR - clear progress (fn 53), then one automatic call must print
 ;          topic 0's FIRST hint again, proving the reset took.
 ;   XHNT - level count (fn 51) for topic 1: flag 243 must read 3.
+;
+; XCLK/XCLA/XCLS drive the Task 4 clock module (fn 60/61/62) and XTMR/XTMI
+; drive the timer module (fn 63) - both part of the same -XbnClock combined
+; binary as -XbnHints. RUN THEM IN ORDER: XCLS is order-dependent - it stops
+; the clock and compares two readings of flag 225 for equality, which holds
+; vacuously if the clock was never armed and running, so it only proves
+; anything typed AFTER XCLK. XTMI is the load-bearing check: the only verb
+; that proves the timer actually observes the clock (a state-2 timer counting
+; down in in-game minutes) - if its remaining count is unchanged after the
+; pause, the cross-module link is broken even though both modules pass every
+; check of their own.
+;   XCLK - arm and run the clock at 1 in-game minute per real second, from
+;          12:00. PAUSE then PRINT: minutes must have advanced.
+;   XCLA - advance 90 in-game minutes from 12:00: must read 13:30, the hour
+;          carry.
+;   XCLS - stop must freeze the clock (type AFTER XCLK - see above).
+;   XTMR - a 2-second timer must expire. State 3 = expired.
+;   XTMI - an in-game-minute timer with the clock RUNNING must count down;
+;          the cross-module check.
 
 #define fPlayer  38
 
@@ -104,6 +123,11 @@ XHNQ   122 verb
 XHNA   123 verb
 XHNR   124 verb
 XHNT   125 verb
+XCLK   126 verb
+XCLA   127 verb
+XCLS   128 verb
+XTMR   129 verb
+XTMI   130 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -425,6 +449,73 @@ XHNT   125 verb
 > XHNT _   EXTERN 1 51
            MES "levels "
            PRINT 243
+           DONE
+; XCLK - arm and run the clock at 1 in-game minute per real second, from
+;        12:00. PAUSE then PRINT: minutes must have advanced. PAUSE 150
+;        ships as 75 frames (DRC halves PAUSE for this target) - well past
+;        the frame-50 tick boundary, not on it, so the PRINT cannot race it.
+> XCLK _   LET     224 12
+           LET     225 0
+           LET     227 50
+           LET     228 0
+           EXTERN  0 60
+           PAUSE   150
+           MES "hh "
+           PRINT   224
+           MES " mm "
+           PRINT   225
+           DONE
+; XCLA - advance 90 in-game minutes from 12:00: must read 13:30, proving the
+;        hour carry.
+> XCLA _   LET     224 12
+           LET     225 0
+           EXTERN  90 62
+           MES "hh "
+           PRINT   224
+           MES " mm "
+           PRINT   225
+           DONE
+; XCLS - stop must freeze the clock. Read minutes, pause, read again: the two
+;        must be EQUAL. ORDER-DEPENDENT: type this AFTER XCLK - if the clock
+;        was never armed and running, both readings match anyway and this
+;        verb passes while proving nothing.
+> XCLS _   EXTERN  0 61
+           MES "before "
+           PRINT   225
+           PAUSE   100
+           MES " after "
+           PRINT   225
+           DONE
+; XTMR - a 2-second timer must expire. State 3 = expired. PAUSE 250 ships as
+;        125 frames (DRC halves PAUSE) - past the 2-second/100-frame
+;        expiry, not on it.
+> XTMR _   EXTERN  0 63
+           LET     229 2
+           LET     230 0
+           LET     235 1
+           PAUSE   250
+           MES "state "
+           PRINT   235
+           MES " rem "
+           PRINT   229
+           DONE
+; XTMI - an in-game-minute timer with the clock RUNNING must count down;
+;        this is the cross-module check. If rem is unchanged, the timer
+;        never saw the clock's minute flag move.
+> XTMI _   LET     224 12
+           LET     225 0
+           LET     227 50
+           LET     228 0
+           EXTERN  0 60
+           EXTERN  0 63
+           LET     231 3
+           LET     232 0
+           LET     236 2
+           PAUSE   200
+           MES "state "
+           PRINT   236
+           MES " rem "
+           PRINT   231
            DONE
 /PRO 6
 ; ---- one-shot init ----
