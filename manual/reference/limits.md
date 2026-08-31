@@ -68,3 +68,13 @@ every part switch. A single `SVC_GETMSG` call is capped at **256
 bytes**; a longer database message is truncated, not rejected, and the
 returned length always matches what actually landed in the buffer. See
 [XBN format](xbn-format.md) for the full header and validation rules.
+
+## Hint files (GAME.HNT)
+
+The [hints extern](../externs.md)'s packed hint file holds up to **256
+topics** (numbered 0-255), up to **255 levels per topic**, and up to
+**64KB of hint text** in total across the whole file - `hintpack.ps1`
+enforces all three at build time. The progress file `GAME.HPR` is a
+fixed 256 bytes, one per topic. These are the hints module's own caps,
+separate from the DDB and XMESSAGE budgets above; hint text costs the
+database nothing.
