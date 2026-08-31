@@ -33,3 +33,17 @@ and no width probe of its own.
   function uses it yet.
 - 251 - result and status. Where a function returns a value, it goes
   here, alongside any status the function needs to report.
+
+## Number printing
+
+    EXTERN n 70    ; print flag n as decimal 0-255
+    EXTERN n 71    ; print flags n/n+1 as decimal 0-65535, low byte first
+
+Flag 248 sets the field width, so a status readout lines up:
+
+    LET 248 5      ; five columns, space-padded
+    LET 248 133    ; five columns, zero-padded (128 + 5)
+    LET 248 0      ; no padding at all
+
+A number wider than the field prints in full rather than being truncated.
+Fn 71 does nothing if n is 255, which has no n+1.
