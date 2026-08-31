@@ -76,9 +76,9 @@ full brightness even for a fraction of a frame:
     LET 241 6
     EXTERN 0 40        ; fade out to black
     EXTERN 0 43        ; wait for it
-    PICTURE 5          ; CONDITION - aborts here on a dark room or
-                       ; missing art, before anything touches the
-                       ; draw target
+    PICTURE 5          ; CONDITION - aborts here on missing or
+                       ; unloadable art, before anything touches
+                       ; the draw target
     GFX 0 4            ; open buffer mode - graphics draw to the
                        ; hidden surface only, screen untouched
     DISPLAY 0          ; new bitmap + palette staged, NOT revealed
@@ -92,7 +92,8 @@ full brightness even for a fraction of a frame:
     EXTERN 0 43        ; wait for it
 
 `PICTURE` comes BEFORE `GFX 0 4`, not after. `PICTURE` is a condition -
-it fails and aborts the entry on a dark room or missing art. Opening
+it fails and aborts the entry on missing or unloadable art (this
+interpreter's PICTURE has no darkness handling of its own). Opening
 buffer mode first and letting `PICTURE` abort afterwards would strand
 buffer mode open, since the aborted entry never reaches the `GFX 0 3`
 that would have closed it again.
@@ -109,7 +110,8 @@ though the picture is already on screen by then.
 A prebuilt GAME.XBN ships in this directory - copy it beside your
 GAME.DDB and it just works. To rebuild after editing the source:
 
-    ./build.ps1        (sjasmplus on PATH, or set SJASMPLUS)
+    ./build.ps1        (finds sjasmplus via its -SjasmPlus parameter,
+                        then the kit's tools\sjasmplus\, then PATH)
 
 ## Rules
 
@@ -123,10 +125,10 @@ GAME.DDB and it just works. To rebuild after editing the source:
   flag 240) before running a reveal. The one deliberate exception is
   the `DISPLAY 0` / `EXTERN 0 42` pair above (buffered or not), where
   the fade is parked at its solid end and nothing is stepping.
-- One XBN per game: to combine this with the ticker extern, merge the
-  two sources into one binary - the fn codes (40 to 43 here, 30/31
-  there) and flags do not collide, and each source's ext_main dispatch
-  chain ignores the other's codes already.
+- One XBN per game: to combine this with other collection externs, use
+  the prebuilt `all/GAME.XBN`, or build a subset with `EXTERNS.BAT`
+  from the kit root - see `externs/README.md`. Nothing is merged by
+  hand; fn codes and flags are disjoint across the collection.
 - The fade manipulates the Layer 2 first palette, the interpreter's
   standing convention. The snapshot captures full 9-bit colour - both
   the `RRRGGGBB` byte and the second byte holding the blue LSB and the

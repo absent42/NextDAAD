@@ -90,6 +90,24 @@ The weight of the object a `DOALL` has just reached is not published
 into flag 55. If you need it inside the loop, ask for it directly with
 `WEIGH @50 n`.
 
+### Flags 25-27 and 39-40 are not free
+
+The DAAD manual lists these flags as unused, and classic games have
+treated them as scratch. NextDAAD uses all five for V3 second-object
+state: flag 25 the second object's number, 26 its container, 27 its
+location, and 39-40 its attribute pair (`FLAG_O2NUM`/`FLAG_O2CON`/
+`FLAG_O2LOC`/`FLAG_O2ATT` in the interpreter source). A game that
+writes them is writing parser state, and a game that stores its own
+data there will see it overwritten whenever a sentence references a
+second object.
+
+Keep your own data in flags 64-255 (minus any an extern you ship
+claims). If you are bit-packing booleans with `SETAT` under the
+default attribute bank, flag 28 is the only byte in that bank the
+interpreter leaves free - and both DAAD Ready's TEST.DSF convention
+and the kit's own STARTER.DSF already claim it, so check before
+building on it.
+
 ## Externs
 
 ### EXTERN and CALL do not consume extra bytes from the condact stream

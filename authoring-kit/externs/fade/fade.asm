@@ -82,9 +82,9 @@
 ;     exposure, tempting as it is to assume it does. The damage to a
 ;     foreground sequence is done by the NR $43 write that opens and
 ;     closes every burst, and both kinds of burst have always made it.
-;   - one XBN per game: to use fade AND ticker, merge the example
-;     sources into one binary (their fn codes, 40/41 and 30/31, and
-;     their flags do not overlap)
+;   - one XBN per game: to use fade with other collection externs use
+;     the prebuilt all/GAME.XBN or an EXTERNS.BAT subset build; fn
+;     codes and flags are disjoint across the collection
 ;
 ; INTERPRETER DEPENDENCIES
 ; ------------------------
@@ -116,7 +116,7 @@
 ;      Recommended sequence (buffered, zero-window reveal):
 ;        EXTERN 0 40        ; fade out to the target colour
 ;        EXTERN 0 43        ; wait
-;        PICTURE @room      ; CONDITION - aborts the entry on dark/no
+;        PICTURE @room      ; CONDITION - aborts the entry on missing
 ;                           ; art, leaving the draw target untouched
 ;        GFX 0 4            ; open buffer mode - AFTER the PICTURE
 ;                           ; condition, so a failing PICTURE never

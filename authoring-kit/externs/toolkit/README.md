@@ -53,6 +53,14 @@ Flag 248 sets the field width, so a status readout lines up:
 A number wider than the field prints in full rather than being truncated.
 Fn 71 does nothing if n is 255, which has no n+1.
 
+Digits print through the DAAD word wrapper, which buffers until a space,
+a newline, a full window width or a window switch. A number printed as
+the LAST thing in an entry, with no following text and no WINDOW switch,
+stays buffered and invisible until something else flushes it. Follow a
+final number with a MES containing at least a space or a newline, or a
+WINDOW switch - the status-line example below works because its closing
+`WINDOW 1` flushes.
+
 ## 16-bit arithmetic on flag pairs
 
 Every pair is low byte first.
