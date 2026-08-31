@@ -67,9 +67,10 @@ svc_probe:
 call_target:
     ; COUPLED to tests\extern.dsf's XCAL entry (CALL lsb msb) - the
     ; address here must match the literal bytes in that DSF's PRO 5
-    ; XCAL entry. Currently $C06A (lsb 106, msb 192; see
-    ; tests\out\xbn\xbntest.sym after assembly) - re-encode extern.dsf's
-    ; XCAL entry by hand if this label ever moves.
+    ; XCAL entry. Do not copy an address from a comment: read
+    ; tests\out\xbn\xbntest.sym after assembly. build-tests.ps1 now
+    ; enforces the coupling and fails the build if this label (or
+    ; tail_marker) moves without the DSF being re-encoded.
     ld a, $77
     ld (XBN_FLAGS+220), a
     ret
@@ -179,10 +180,14 @@ msg_probe:
     ld (XBN_FLAGS+211), a
     ret
 
-; Task 8 probe: message number 50 is well past extern.dsf's single
-; authored MTX entry (number 0) - GETMSG must report CF set, A=$FF.
+; Task 8 probe: GETMSG must report CF set, A=$FF.
+; 255: the highest message number, out of range while the MTX holds
+; fewer than 256 messages. NOT a small number: DRC compiles every
+; inline MES "literal" into the MTX, so the count grows with the
+; fixture (66 as shipped; the ceiling is 255) and a small probe rots
+; into range - message 50 did exactly that.
 msg_probe_bad:
-    ld a, 50
+    ld a, 255
     call SVC_GETMSG
     ld a, 0
     jr nc, .store

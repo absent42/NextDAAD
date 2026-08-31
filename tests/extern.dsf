@@ -17,7 +17,11 @@
 ;   XREG - the register contract EXTERN hands the extern on entry:
 ;          A=B=param1, C=fn, HL=flags+param1, DE=objTable+param1*6,
 ;          IX=flags base ($A200). xbntest.asm's ext_main echoes each of
-;          those into flags 200-205 for this entry to PRINT back.
+;          those into flags 200-205; this entry asserts five legs plus
+;          the DE BASE - the HL leg against a seeded flag 42 (restored
+;          after: it is FLAG_PROMPT), the DE base against object 0's
+;          not-created start (252) via a second echo at param1=0. The
+;          *6 stride itself is unproven (index 0 hides it).
 ;   XCAL - a direct CALL into a staged XBN reaches the intended
 ;          address (xbntest.asm's call_target, which sets flag 220).
 ;   XCNR - negative control: CALL to an address outside the mapped XBN
@@ -31,12 +35,16 @@
 ;          0, never the 9 a staged XBN would echo.
 ;   XFIO - the file-service probe (fn 22, xbntest.asm's fio_probe):
 ;          SVC_FOPEN/FWRITE/FCLOSE then SVC_FOPEN/FREAD/FCLOSE round-trip
-;          8 bytes through XBNFIO.TMP on the card and compares them.
+;          8 bytes through XBNFIO.TMP on the card and compares them;
+;          CLEARs flag 208 first.
 ;   XMSG - the GETMSG probe (fn 23, xbntest.asm's msg_probe): decodes
 ;          MTX message 0 into savStage, echoes its first byte and
 ;          length, then re-prints it through a bounded SVC_PUTCHAR
-;          loop; fn 24 (msg_probe_bad) then checks the out-of-range
-;          error path (message 50, past the DDB's single MTX entry).
+;          loop; asserts the decoded length (flag 209 = 25); fn 24
+;          (msg_probe_bad) then checks the out-of-range error path
+;          (message 255 - out of range while the MTX holds fewer than
+;          256 messages; MES literals compile into the MTX, so a small
+;          probe number rots into range).
 ;
 ; MTX message 0 is reserved verbatim as the Task 8 SVC_GETMSG probe
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
@@ -96,23 +104,27 @@
 ;   XTKS - paints WINDOW 2 from those values (score width 5, HH:MM,
 ;          MM:SS) and restores WINDOW 1. Repaintable on demand.
 ;
-; -XbnHints stages the hints worked example (authoring-kit\externs\hints)
-; as part of the combined GAME.XBN, plus a packed GAME.HNT. XHNP/XHNQ/
-; XHNA/XHNR/XHNT drive it, all on TOPIC 0 - the shipped HINTS.TXT gives
+; -XbnHints and -XbnAll stage a packed GAME.HNT alongside the combined
+; binary, for the hints worked example (authoring-kit\externs\hints).
+; XHNP/XHNQ/XHNA/XHNR/XHNT drive it, all on TOPIC 0 - the shipped HINTS.TXT gives
 ; topic 0 exactly two levels and topic 1 exactly three, and MODE_R (the
 ; file-open read mode) is also 1, so a build that lost the topic operand
 ; would still answer correctly for topic 1 and hide the bug. XHNT alone
 ; drives topic 1, to prove the operand actually reaches the index: if it
 ; ever reports the same count as XHNQ, the topic parameter is not
 ; getting through.
-;   XHNP - preflight (fn 52): flag 243 must read 0, hint file present.
+;   XHNP - preflight (fn 52): flag 243 poisoned to 9 first, must come back 0
 ;   XHNQ - level count (fn 51) for topic 0: flag 243 must read 2.
 ;   XHNA - automatic mode (fn 50), three calls. "Two DIFFERENT texts
 ;          then status 3" holds only against a VIRGIN GAME.HPR (topic 0
 ;          at level 0) - run right after XHNR, or on a fresh card.
 ;   XHNR - clear progress (fn 53), then one automatic call must print
-;          topic 0's FIRST hint again, proving the reset took.
+;          topic 0's FIRST hint again, proving the reset took; prints
+;          flag 243 after the reset (expect reset 0).
 ;   XHNT - level count (fn 51) for topic 1: flag 243 must read 3.
+;   XHNL - explicit-level mode (flag 242): pinned level prints with
+;          status 0, one past the last level reports 3; GAME.HPR is
+;          never touched, so this is safe to type at any point.
 ;
 ; XCLK/XCLA/XCLS drive the Task 4 clock module (fn 60/61/62) and XTMR/XTMI/
 ; XTLR drive the timer module (fn 63-65) - both part of the same -XbnClock
@@ -137,15 +149,20 @@
 ;   XTLR - a RAMLOAD under a running minute timer. Clobbers the deadline
 ;          pair itself (not just the clock) between the RAMSAVE and the
 ;          RAMLOAD, so the restore has real work to do.
+;   XTMS - fn 64 stops all three timer slots: states clear, pairs stay.
 ;   XCDY - the day counter must advance by exactly one across a midnight
 ;          crossing.
 ;
 ; SAVE/LOAD/XCHK/XSVT/XSVD/XADV/XAD1/XRUN/XSVE extend clock/timer coverage
 ; to a REAL SAVE and LOAD - the file-backed condacts, which XTLR's
 ; RAMSAVE/RAMLOAD never touch the SD card and cannot exercise. XSVT/XSVD/
-; XSVE arm a known state and print it with XCHK's line; the tester types
-; XCHK, SAVE, XCHK, LOAD, XCHK by hand around each save/load pair and
-; diffs the three lines.
+; XSVE arm a known state and print it with XCHK's line. The hand protocol
+; MUST mutate between the SAVE and the LOAD or it proves nothing:
+; RESTART does not clear flags, so with no mutation all three readings
+; match whether or not LOAD restored anything. Type:
+;   XCHK, SAVE, XADV (or XAD1), XCHK, LOAD, XCHK
+; and require reading 2 to DIFFER from reading 1 (the mutation took) and
+; reading 3 to MATCH reading 1 (the load undid it).
 ;
 ; The clock is left STOPPED by every setup verb (XSVT/XSVD/XSVE) - running
 ; it left every reading dependent on how long the tester took to type the
@@ -185,6 +202,36 @@
 ;   XSVE - the sharp expiry-boundary setup: XSVT's shape with a 2-minute
 ;          deadline, so two XAD1 steps walk it across expiry. Clock
 ;          STOPPED at 12:00, rate 250. PAUSE 4, XCHK's line.
+;
+;
+; LEG SCOPE - which staging leg each verb is meaningful on. A verb typed
+; on the wrong leg prints plausible zeros and proves nothing - the H2
+; lesson: a run-sheet check once drove fn 22 against a binary with no
+; fn 22 handler and its "pass" was void.
+;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
+;     where fns 20-25 exist: XREG XCAL XTIK XSVC XFIO XMSG XMS6
+;     (on any other leg these print unwritten flags - zeros)
+;   no-XBN leg (-XbnNoBin): XABS expects 0; on the fixture leg it
+;     expects 9. Any other leg: meaningless.
+;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
+;     all stage ALL.XBN, so EVERY collection verb is meaningful there:
+;     XTCK XFAD XFDI XFSC XFSO XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
+;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
+;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XSLT
+;     EXCEPT the hints verbs (XHNP XHNQ XHNA XHNR XHNT XHNL), which also
+;     need a packed GAME.HNT - staged only by -XbnAll and -XbnHints. On
+;     -XbnClock/-XbnTool they report file-missing (243 = 1; fn 51 gives
+;     0): a leg artefact, not a module fault.
+;   -XbnTicker stages the STANDALONE ticker example: only XTCK is
+;     meaningful there (plus XSLT with all slots printing nothing).
+;   -XbnFade stages the STANDALONE fade example: only XFAD XFDI XFSC
+;     XFSO XDRK are meaningful there (plus the no-op XSLT form).
+;   XSLT prints toolkit output only on toolkit-carrying legs; on other
+;     pinned-table legs every slot must print nothing. NEVER type it on
+;     the fixture leg - no call table there, $C00A is fixture code.
+;   any leg with art staged: XGFB XRST XRLD XDCL XARM (interpreter-side
+;     GFX/PICTURE machinery; no extern involvement)
+;   any leg: XCNR SAVE LOAD
 
 #define fPlayer  38
 
@@ -239,6 +286,8 @@ XTKO   144 verb
 XTKT   145 verb
 XTKI   146 verb
 XTKS   147 verb
+XTMS   148 verb
+XHNL   149 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -326,7 +375,7 @@ XTKS   147 verb
 /0
 /OBJ
 ;obj  starts  weight    c w  5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0    noun   adjective
-/0    0   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/0    252 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
 /PRO 0
 ; ---- main location loop (template shape, no graphics - see
 ; tests\gmodegate.dsf for the gated version this is trimmed from) ----
@@ -361,13 +410,30 @@ XTKS   147 verb
         REDO
 /PRO 5
 ; ---- command decoder: one entry per XBN probe verb ----
-> XREG _   LET 150 42        ; park a known value where the echo can see it
-           LET 33 0          ; not required; keeps entry shape uniform
-           EXTERN 42 20      ; forwarded fn 20 -> echo (param1=42)
-           PRINT 200         ; expect 42
-           PRINT 201         ; expect 20
-           PRINT 204         ; expect 162 ($A2)
-           PRINT 205         ; expect 0
+; The seed goes in FLAG 42 because param1 is 42: HL = flags + param1,
+; so the flag the echo reads through HL is the flag numbered by the
+; parameter. (The old form seeded flag 150 - a dead write.) The DE leg
+; is probed with a second echo at param1 = 0, against object 0, which
+; the /OBJ block starts at location 252 (not created) precisely so the
+; echo has a value no reset state produces.
+> XREG _   LET     42 77     ; seed the flag the HL echo must read back
+           EXTERN  42 20     ; echo: A/B=42 C=20 HL=flags+42 DE=objTable+252
+           MES     "p "
+           PRINT   200       ; expect 42 (param1)
+           MES     " fn "
+           PRINT   201       ; expect 20 (fn code)
+           MES     " hl "
+           PRINT   202       ; expect 77 - the seeded flag 42 (HL leg)
+           MES     " ix "
+           PRINT   204       ; expect 162 ($A2 - IX high)
+           MES     "/"
+           PRINT   205       ; expect 0 (IX low)
+           EXTERN  0 20      ; second echo: DE = objTable + 0*6
+           MES     " de "
+           PRINT   203       ; expect 252 - object 0's start (DE base)
+           LET     42 0      ; RESTORE: flag 42 is FLAG_PROMPT - left
+                             ; nonzero it sticks the session prompt in
+                             ; fixed mode for every later capture
            DONE
 > XCAL _   CALL 113 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
                              ; label, address $C071 (lsb 113, msb 192) - read
@@ -432,14 +498,21 @@ XTKS   147 verb
            PRINT 206
            PRINT 207
            DONE
-> XFIO _   EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare
-           PRINT 208         ; expect 1
+> XFIO _   CLEAR 208         ; so a repeat run cannot inherit a stale 1
+           EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare
+           PRINT 208         ; expect 1 (0 = failed, or no fn 22 handler
+                             ; on this leg - see LEG SCOPE above)
            DONE
 > XMSG _   EXTERN 0 23        ; msg_probe: SVC_GETMSG on MTX message 0
            PRINT 210         ; expect 84 ('T')
            PRINT 211         ; expect 1
-           EXTERN 0 24        ; msg_probe_bad: out-of-range message number
-           PRINT 212         ; expect 1
+           MES " len "
+           PRINT 209         ; expect 25 - the decoded length of
+                             ; "TICKER MESSAGE FOR GETMSG"; a truncated
+                             ; or over-read decode shows here
+           EXTERN 0 24        ; msg_probe_bad: out-of-range message 255
+           PRINT 212         ; expect 1 - msg_probe_bad probes message 255,
+                             ; out of range (see tests\xbn\xbntest.asm)
            DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert
@@ -505,9 +578,12 @@ XTKS   147 verb
            EXTERN 0 42
            GFX 0 2
            GFX 0 3
+           CLEAR 240         ; re-arm: 240 is still 1 from the completed
+                             ; fade-out, so without this a refused
+                             ; fade-in (screen stuck red) false-passes
            EXTERN 0 41
            EXTERN 0 43
-           PRINT 240         ; expect 1
+           PRINT 240         ; expect 1 - now written by the fade-in
            DONE
 > XFSO _   PICTURE 1         ; OLD sequence - regression leg, band and all
            DISPLAY 0
@@ -518,6 +594,7 @@ XTKS   147 verb
            PICTURE 2
            DISPLAY 0
            EXTERN 0 42
+           CLEAR 240         ; same re-arm as XFSC, same false pass
            EXTERN 0 41
            EXTERN 0 43
            PRINT 240
@@ -551,7 +628,12 @@ XTKS   147 verb
 > XARM _   GFX 0 4           ; arm buffer mode and stop - the manual
            DONE              ; SAVE/LOAD reset check drives this
 ; XHNP - preflight. Flag 243 must come back 0 with a hint file staged.
-> XHNP _   EXTERN 0 52
+;        Flag 243 is POISONED to 9 first: 0 is also the boot value of
+;        every flag, so without the seed a dead fn 52 (absent module,
+;        wrong leg, broken dispatch) prints the passing output. With it,
+;        0 can only come from the module actually writing the flag.
+> XHNP _   LET 243 9
+           EXTERN 0 52
            MES "preflight "
            PRINT 243
            DONE
@@ -574,8 +656,14 @@ XTKS   147 verb
            PRINT 243
            DONE
 ; XHNR - clear progress, then one automatic call must print topic 0's FIRST
-;        hint again.
-> XHNR _   EXTERN 0 53
+;        hint again. "reset" prints flag 243 straight after fn 53 - BEFORE
+;        fn 50 overwrites it - so a reset that failed to rewrite GAME.HPR
+;        (status 5) is visible instead of silently leaving stale progress
+;        that the following reprint might mask.
+> XHNR _   LET 243 9
+           EXTERN 0 53
+           MES "reset "
+           PRINT 243
            LET 242 0
            EXTERN 0 50
            DONE
@@ -950,6 +1038,62 @@ XTKS   147 verb
            PRINT   232
            MES     "/"
            PRINT   231
+           DONE
+; XTMS - fn 64 stops ALL THREE slots: every state clears, every pair is
+;        left alone. Arms one real-seconds slot AND one minute-deadline
+;        slot first, so the check covers both slot kinds - a stopall
+;        that cleared the pairs too, or cleared only one state, or only
+;        state-1 slots, prints differently. The pairs are the
+;        falsification: slot 0 must still read 300 (1/44) and slot 1
+;        must still hold the 810 deadline (3/42) AFTER the stop.
+> XTMS _   EXTERN  0 60            ; arm clock (no-op if already armed)
+           EXTERN  0 61            ; and stop it - deadline computed exactly
+           LET     224 12          ; 12:00, day 0, rate 50
+           LET     225 0
+           LET     244 0
+           LET     227 50
+           LET     228 0
+           EXTERN  0 63            ; arm the timer module
+           LET     229 44          ; slot 0: 300 real seconds = 1*256+44
+           LET     230 1
+           LET     235 1           ; state 1: counting real seconds
+           LET     231 90          ; slot 1: 90-minute duration
+           LET     232 0
+           EXTERN  1 65            ; slot 1 deadline: 720+90=810 = 3*256+42
+           EXTERN  0 64            ; STOP ALL - the condact under test
+           PAUSE   4               ; settle: the frame hook must not revive them
+           MES     "s0 "
+           PRINT   235             ; expect 0
+           MES     " s1 "
+           PRINT   236             ; expect 0
+           MES     " p0 "
+           PRINT   230             ; expect 1
+           MES     "/"
+           PRINT   229             ; expect 44 - pair untouched
+           MES     " p1 "
+           PRINT   232             ; expect 3
+           MES     "/"
+           PRINT   231             ; expect 42 - deadline untouched
+           DONE
+; XHNL - explicit-level mode: flag 242 nonzero pins the level and never
+;        touches GAME.HPR. Level 2 is topic 0's LAST level (it has
+;        exactly two), so the pair of calls exercises both the in-range
+;        print (status 0) and ST_NOLEVEL (3) one past the end. A module
+;        that ignored flag 242 and ran automatic mode instead would
+;        advance GAME.HPR and could print status 3 on the FIRST call
+;        against a used card - the 0/3 pair in this order is the
+;        discriminator. Leaves flag 242 back at 0 (automatic).
+;        At the bench, type XHNL twice - explicit mode is idempotent,
+;        automatic mode is not.
+> XHNL _   LET     242 2
+           EXTERN  0 50            ; topic 0 level 2: prints the hint
+           MES     "status "
+           PRINT   243             ; expect 0
+           LET     242 3
+           EXTERN  0 50            ; topic 0 has no level 3
+           MES     " past "
+           PRINT   243             ; expect 3 - no such level
+           LET     242 0           ; restore automatic mode
            DONE
 ; XTKP - decimal printing and the width flag. 42 unpadded, then padded to
 ;        five columns with spaces, then with zeros, then a 16-bit pair.
