@@ -46,15 +46,15 @@ ext:
 ; fn 63 - arm the module. Until this runs the hook ignores flags 229-237
 ; entirely, so an unused timer module costs the author nothing.
 arm:
-    ld a, 1
-    ld (armed), a
     xor a
     ld (frames), a
     ld a, (XBN_FLAGS + FLAG_CLOCK_HH)
     ld (lasthh), a
     ld a, (XBN_FLAGS + FLAG_CLOCK_MM)
     ld (lastmm), a
-    ret
+    ld a, 1
+    ld (armed), a                ; armed set last: an interrupt before this
+    ret                          ; point sees armed=0 and returns at once
 
 ; fn 64 - stop all three. Leaves each remaining count alone so the author can
 ; inspect it; only the states clear.

@@ -39,9 +39,10 @@ in-game minutes, and such a timer simply never advances.
 
 A state-2 timer is charged for the whole of a clock jump, so `EXTERN 90 62`
 costs it ninety minutes and `EXTERN 60 62` costs it sixty. It cannot tell a
-jump from an author SETTING the clock with a plain `LET 224 18`, so that is
-charged too - stop in-game-minute timers across a time set, or set the time
-before starting them.
+jump from an author SETTING the clock with a plain `LET 224 18` - that is
+charged too, as elapsed time, up to a maximum of 255 minutes in one frame -
+so stop in-game-minute timers across a time set, or set the time before
+starting them.
 
 ## Notes
 
