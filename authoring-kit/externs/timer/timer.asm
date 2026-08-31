@@ -61,8 +61,9 @@ arm:
     ld (armed), a                ; armed set last: an interrupt before this
     ret                          ; point sees armed=0 and returns at once
 
-; fn 64 - stop all three. Leaves each remaining count alone so the author can
-; inspect it; only the states clear.
+; fn 64 - stop all three. Each pair is left alone: a real-seconds count the
+; author can inspect, or a minute deadline that stops being watched. Only the
+; three states clear.
 stopall:
     xor a
     ld (XBN_FLAGS + FLAG_STATE), a
@@ -126,7 +127,7 @@ arm_minutes:
     ld h, 0
     ld de, XBN_FLAGS + FLAG_STATE
     add hl, de
-    ld (hl), ST_IDLE              ; quiesce first: closes the write-tear window
+    ld (hl), ST_IDLE             ; quiesce first: closes the write-tear window
     call clock_total_safe        ; foreground: must be the retrying reader
     ld (armtotal), hl
     ld a, (armslot)
@@ -151,7 +152,7 @@ arm_minutes:
     ld h, 0
     ld de, XBN_FLAGS + FLAG_STATE
     add hl, de
-    ld (hl), ST_MINUTES           ; window closed above: safe to go live now
+    ld (hl), ST_MINUTES          ; window closed above: safe to go live now
     ret
 
 armslot:  db 0
@@ -215,7 +216,7 @@ int:
     ld l, c                      ; HL = deadline
     or a
     sbc hl, de                   ; HL = deadline - now
-    jr z, .mexpire                ; reached exactly
+    jr z, .mexpire               ; reached exactly
     ld a, h
     and $80
     jr z, .mnext                 ; still in the future

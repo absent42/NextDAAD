@@ -73,7 +73,10 @@ jumping the clock forward past that deadline expires it on the next frame,
 and jumping backwards gives it more time - provided the jump is under 32768
 minutes (about 22 days 18 hours); a larger backwards jump wraps around and
 reads as already passed instead. That is the sensible reading of both, and it
-needs no special handling around a save or a load.
+needs no special handling around a save or a load. Consecutive LETs are
+separate writes and the 50Hz hook can read the flags between them, so `LET 244
+3` followed by `LET 224 0` briefly presents a total up to 1439 minutes high -
+order the writes so the intermediate reads low if a deadline sits that close.
 
 ## Notes
 

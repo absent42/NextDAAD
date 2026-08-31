@@ -6,9 +6,9 @@
 ;   EXTERN p 62    advance p in-game minutes, hour carry handled
 ;
 ; Flags 224 hours, 225 minutes, 226 running, 227/228 frames per in-game
-; minute (16-bit). The hook keeps ONLY the sub-minute frame residue in its
-; own memory: the time itself lives in flags, so a LOAD restores it and the
-; hook carries on with nothing to re-sync.
+; minute (16-bit), 244 days elapsed. The hook keeps ONLY the sub-minute
+; frame residue in its own memory: the time itself lives in flags, so a LOAD
+; restores it and the hook carries on with nothing to re-sync.
 
     IFNDEF XBN_MODULE
     DEVICE ZXSPECTRUMNEXT
@@ -103,13 +103,15 @@ tick_minute:
     ld a, (XBN_FLAGS + FLAG_HH)
     inc a
     cp 24
-    jr c, .storehh
-    ld a, (XBN_FLAGS + FLAG_DAY)     ; hour wrapped past 23, so a day passed
-    inc a
-    ld (XBN_FLAGS + FLAG_DAY), a
-    xor a
-.storehh:
+    jr nc, .wrapday
     ld (XBN_FLAGS + FLAG_HH), a
+    ret
+.wrapday:
+    xor a
+    ld (XBN_FLAGS + FLAG_HH), a  ; hour zeroed BEFORE the day increments: an
+    ld a, (XBN_FLAGS + FLAG_DAY) ; interrupt reading the flags between the two
+    inc a                        ; stores UNDER-states the total, never over
+    ld (XBN_FLAGS + FLAG_DAY), a
     ret
 .storemm:
     ld (XBN_FLAGS + FLAG_MM), a

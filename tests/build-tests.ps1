@@ -407,13 +407,13 @@
 #                              XHNP/XHNQ/XHNA/XHNR/XHNT verbs have a hint
 #                              file to read. Same drift guard and picture
 #                              staging as -XbnAll.
-#              -XbnClock      Task 4: same combined binary as -XbnAll
-#                              (clock and timer are two of its modules),
-#                              no hint packing - this leg needs only the
-#                              binary - so extern.dsf's XCLK/XCLA/XCLS/
-#                              XTMR/XTMI verbs have both modules to drive.
-#                              Same drift guard and picture staging as
-#                              -XbnAll.
+#              -XbnClock      clock/timer Task 4: same combined binary as
+#                              -XbnAll (clock and timer are two of its
+#                              modules), no hint packing - this leg needs
+#                              only the binary - so extern.dsf's XCLK/XCLA/
+#                              XCLS/XTMR/XTMI verbs have both modules to
+#                              drive. Same drift guard and picture staging
+#                              as -XbnAll.
 #            An alternative to every other DDB switch, not a companion.
 # THIRD-PARTY compliance test (tools\TEST.DSF), the only fixture here
 # this project did not write - and the only one whose SOURCE is not in

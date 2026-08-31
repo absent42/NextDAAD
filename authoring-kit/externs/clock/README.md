@@ -38,7 +38,9 @@ the same way:
     > _  _    EQ  244 3
               ; the siege reaches its third day
 
-It wraps at 255 days, which no adventure will reach.
+It wraps from 255 back to 0. That wrap is a discontinuity in in-game time
+rather than a step, so do not leave an in-game-minute timer armed across
+it; at the default rate it is 255 days of continuous play away.
 
 The rate is 16-bit. 50 gives one in-game minute per real second; 3000
 gives true 1:1 real time (50 frames/second x 60 seconds). Writing a rate of
@@ -75,18 +77,21 @@ This module never writes the screen. Print the time from your own window,
 per turn, the way any other status line works. Until the toolkit module
 ships its HH:MM format, print flags 224 and 225 as plain numbers.
 
-## Advancing time and countdown timers
+## Advancing time and armed timers
 
-`EXTERN p 62` moves the clock forward in one go, which is what you want for
-sleeping or travelling. A countdown timer running in in-game minutes is
-charged the whole jump, provided it is under 256 minutes: an advance of 90
-minutes costs it 90, and one of 60 costs it 60.
+`EXTERN p 62` moves the clock forward in one go - 1 to 255 minutes per call,
+with hour and day carry - which is what you want for sleeping or travelling.
+Setting the flags directly with `LET 224 18`, `LET 225 0` or `LET 244 3`
+moves in-game time just the same, forwards or backwards.
 
-SETTING the time forward with a plain `LET 224 18` is charged the same way,
-up to that same 256-minute limit; any larger forward jump, or a backwards
-move of more than about 19 hours 45 minutes, is a discontinuity that
-charges nothing. A smaller backwards move - roughly 19h45m up to just
-under a full day - is indistinguishable from an ordinary forward jump
-across midnight, so it IS charged as elapsed time, and a state-2 timer
-landing in that narrow band can still be expired by a LOAD. Stop
-in-game-minute timers across a save or load if that matters to your game.
+An in-game-minute timer holds an absolute deadline rather than a countdown,
+so however you move the clock it simply keeps watching: move past a deadline
+and that timer expires on the next frame, move backwards and it gains that
+much more time. Both hold for jumps under 32768 in-game minutes (about 22
+days 18 hours); beyond that the comparison wraps and reads as already passed.
+
+Arming one belongs to the separate timer module (`EXTERN d 65`) and is
+documented there. It is the only way to arm one: writing a duration into the
+flag pair and setting the state by hand leaves a deadline that many minutes
+past day 0 00:00, which the clock has almost always passed already, so the
+timer expires on the next frame with no diagnostic.
