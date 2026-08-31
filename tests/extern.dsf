@@ -31,12 +31,16 @@
 ;          0, never the 9 a staged XBN would echo.
 ;   XFIO - the file-service probe (fn 22, xbntest.asm's fio_probe):
 ;          SVC_FOPEN/FWRITE/FCLOSE then SVC_FOPEN/FREAD/FCLOSE round-trip
-;          8 bytes through XBNFIO.TMP on the card and compares them.
+;          8 bytes through XBNFIO.TMP on the card and compares them;
+;          CLEARs flag 208 first.
 ;   XMSG - the GETMSG probe (fn 23, xbntest.asm's msg_probe): decodes
 ;          MTX message 0 into savStage, echoes its first byte and
 ;          length, then re-prints it through a bounded SVC_PUTCHAR
-;          loop; fn 24 (msg_probe_bad) then checks the out-of-range
-;          error path (message 50, past the DDB's single MTX entry).
+;          loop; asserts the decoded length (flag 209 = 25); fn 24
+;          (msg_probe_bad) then checks the out-of-range error path
+;          (message 255 - out of range while the MTX holds fewer than
+;          256 messages; MES literals compile into the MTX, so a small
+;          probe number rots into range).
 ;
 ; MTX message 0 is reserved verbatim as the Task 8 SVC_GETMSG probe
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
@@ -105,13 +109,14 @@
 ; drives topic 1, to prove the operand actually reaches the index: if it
 ; ever reports the same count as XHNQ, the topic parameter is not
 ; getting through.
-;   XHNP - preflight (fn 52): flag 243 must read 0, hint file present.
+;   XHNP - preflight (fn 52): flag 243 poisoned to 9 first, must come back 0
 ;   XHNQ - level count (fn 51) for topic 0: flag 243 must read 2.
 ;   XHNA - automatic mode (fn 50), three calls. "Two DIFFERENT texts
 ;          then status 3" holds only against a VIRGIN GAME.HPR (topic 0
 ;          at level 0) - run right after XHNR, or on a fresh card.
 ;   XHNR - clear progress (fn 53), then one automatic call must print
-;          topic 0's FIRST hint again, proving the reset took.
+;          topic 0's FIRST hint again, proving the reset took; prints
+;          flag 243 after the reset (expect reset 0).
 ;   XHNT - level count (fn 51) for topic 1: flag 243 must read 3.
 ;
 ; XCLK/XCLA/XCLS drive the Task 4 clock module (fn 60/61/62) and XTMR/XTMI/
@@ -432,14 +437,21 @@ XTKS   147 verb
            PRINT 206
            PRINT 207
            DONE
-> XFIO _   EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare
-           PRINT 208         ; expect 1
+> XFIO _   CLEAR 208         ; so a repeat run cannot inherit a stale 1
+           EXTERN 0 22        ; fio_probe: write/close/reopen/read/compare
+           PRINT 208         ; expect 1 (0 = failed, or no fn 22 handler
+                             ; on this leg - see LEG SCOPE above)
            DONE
 > XMSG _   EXTERN 0 23        ; msg_probe: SVC_GETMSG on MTX message 0
            PRINT 210         ; expect 84 ('T')
            PRINT 211         ; expect 1
-           EXTERN 0 24        ; msg_probe_bad: out-of-range message number
-           PRINT 212         ; expect 1
+           MES " len "
+           PRINT 209         ; expect 25 - the decoded length of
+                             ; "TICKER MESSAGE FOR GETMSG"; a truncated
+                             ; or over-read decode shows here
+           EXTERN 0 24        ; msg_probe_bad: out-of-range message 255
+           PRINT 212         ; expect 1 - valid again only after the
+                             ; xbntest.asm probe fix in the next step
            DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert
@@ -505,9 +517,12 @@ XTKS   147 verb
            EXTERN 0 42
            GFX 0 2
            GFX 0 3
+           CLEAR 240         ; re-arm: 240 is still 1 from the completed
+                             ; fade-out, so without this a refused
+                             ; fade-in (screen stuck red) false-passes
            EXTERN 0 41
            EXTERN 0 43
-           PRINT 240         ; expect 1
+           PRINT 240         ; expect 1 - now written by the fade-in
            DONE
 > XFSO _   PICTURE 1         ; OLD sequence - regression leg, band and all
            DISPLAY 0
@@ -518,6 +533,7 @@ XTKS   147 verb
            PICTURE 2
            DISPLAY 0
            EXTERN 0 42
+           CLEAR 240         ; same re-arm as XFSC, same false pass
            EXTERN 0 41
            EXTERN 0 43
            PRINT 240
@@ -551,7 +567,12 @@ XTKS   147 verb
 > XARM _   GFX 0 4           ; arm buffer mode and stop - the manual
            DONE              ; SAVE/LOAD reset check drives this
 ; XHNP - preflight. Flag 243 must come back 0 with a hint file staged.
-> XHNP _   EXTERN 0 52
+;        Flag 243 is POISONED to 9 first: 0 is also the boot value of
+;        every flag, so without the seed a dead fn 52 (absent module,
+;        wrong leg, broken dispatch) prints the passing output. With it,
+;        0 can only come from the module actually writing the flag.
+> XHNP _   LET 243 9
+           EXTERN 0 52
            MES "preflight "
            PRINT 243
            DONE
@@ -574,8 +595,14 @@ XTKS   147 verb
            PRINT 243
            DONE
 ; XHNR - clear progress, then one automatic call must print topic 0's FIRST
-;        hint again.
-> XHNR _   EXTERN 0 53
+;        hint again. "reset" prints flag 243 straight after fn 53 - BEFORE
+;        fn 50 overwrites it - so a reset that failed to rewrite GAME.HPR
+;        (status 5) is visible instead of silently leaving stale progress
+;        that the following reprint might mask.
+> XHNR _   LET 243 9
+           EXTERN 0 53
+           MES "reset "
+           PRINT 243
            LET 242 0
            EXTERN 0 50
            DONE
