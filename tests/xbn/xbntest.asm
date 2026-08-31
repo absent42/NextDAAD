@@ -67,9 +67,10 @@ svc_probe:
 call_target:
     ; COUPLED to tests\extern.dsf's XCAL entry (CALL lsb msb) - the
     ; address here must match the literal bytes in that DSF's PRO 5
-    ; XCAL entry. Currently $C06A (lsb 106, msb 192; see
-    ; tests\out\xbn\xbntest.sym after assembly) - re-encode extern.dsf's
-    ; XCAL entry by hand if this label ever moves.
+    ; XCAL entry. Do not copy an address from a comment: read
+    ; tests\out\xbn\xbntest.sym after assembly. build-tests.ps1 now
+    ; enforces the coupling and fails the build if this label (or
+    ; tail_marker) moves without the DSF being re-encoded.
     ld a, $77
     ld (XBN_FLAGS+220), a
     ret

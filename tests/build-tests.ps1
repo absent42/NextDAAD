@@ -2778,6 +2778,27 @@ try {
 finally {
     Pop-Location
 }
+# XCAL coupling guard: extern.dsf's XCAL entry hard-codes CALL operands
+# that must match the assembled fixture's call_target and tail_marker
+# addresses. Two documents have already drifted from the real values;
+# this makes the drift a build failure instead of a wild CALL on
+# hardware. Checks source-to-sym: DRC compiling the DSF literal into
+# the DDB is deterministic and covered by the byte-check discipline.
+$xcalSym = Get-Content "$root\tests\out\xbn\xbntest.sym" -Raw
+$xcalDsf = Get-Content "$PSScriptRoot\extern.dsf" -Raw
+foreach ($xcalName in 'call_target', 'tail_marker') {
+    if ($xcalSym -notmatch "(?m)^$xcalName\s*:?\s*(?:EQU\s+)?0x([0-9A-Fa-f]+)") {
+        throw "xbntest.sym has no $xcalName symbol - XCAL coupling guard cannot run"
+    }
+    $xcalAddr = [Convert]::ToInt32($Matches[1], 16)
+    $xcalLsb = $xcalAddr -band 0xFF
+    $xcalMsb = ($xcalAddr -shr 8) -band 0xFF
+    if ($xcalDsf -notmatch "CALL\s+$xcalLsb\s+$xcalMsb\b") {
+        throw ("extern.dsf XCAL coupling: $xcalName assembles to " +
+            ('${0:X4}' -f $xcalAddr) +
+            " but extern.dsf has no 'CALL $xcalLsb $xcalMsb' - re-encode the XCAL entry")
+    }
+}
 # Validation-reject variants for Task 2 (staged instead of the good XBN
 # by -XbnBad <kind>). Generated unconditionally alongside the good
 # GAME.XBN so a break in the generator is caught on a plain run, exactly
