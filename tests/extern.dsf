@@ -72,6 +72,78 @@
 ;   XHNR - clear progress (fn 53), then one automatic call must print
 ;          topic 0's FIRST hint again, proving the reset took.
 ;   XHNT - level count (fn 51) for topic 1: flag 243 must read 3.
+;
+; XCLK/XCLA/XCLS drive the Task 4 clock module (fn 60/61/62) and XTMR/XTMI/
+; XTLR drive the timer module (fn 63-65) - both part of the same -XbnClock
+; combined binary as -XbnHints. RUN THEM IN ORDER: XCLS is order-dependent -
+; it stops the clock and compares two readings of flag 225 for equality,
+; which holds vacuously if the clock was never armed and running, so it only
+; proves anything typed AFTER XCLK. By the time XTMI runs, XCLS has already
+; stopped the clock AND fn 60 (EXTERN 0 60) is a documented no-op once armed
+; (clock.asm's run: tests its own armed byte, not flag 226), so the clock is
+; FROZEN for XTMI - it does not rely on the clock running, it drives it
+; explicitly with fn 62 (advance), which works whether or not flag 226 is
+; set. XCDY drives the day counter (fn 62) across a midnight crossing.
+;   XCLK - arm and run the clock at 1 in-game minute per real second, from
+;          12:00. PAUSE then PRINT: minutes must have advanced.
+;   XCLA - advance 90 in-game minutes from 12:00: must read 13:30, the hour
+;          carry.
+;   XCLS - stop must freeze the clock (type AFTER XCLK - see above).
+;   XTMR - a 2-second timer must expire. State 3 = expired.
+;   XTMI - the cross-module check: arms a deadline against a clock frozen
+;          at 720 (12:00), prints state 2, then advances the clock PAST the
+;          deadline with fn 62 and prints state again - must read 3.
+;   XTLR - a RAMLOAD under a running minute timer. Clobbers the deadline
+;          pair itself (not just the clock) between the RAMSAVE and the
+;          RAMLOAD, so the restore has real work to do.
+;   XCDY - the day counter must advance by exactly one across a midnight
+;          crossing.
+;
+; SAVE/LOAD/XCHK/XSVT/XSVD/XADV/XAD1/XRUN/XSVE extend clock/timer coverage
+; to a REAL SAVE and LOAD - the file-backed condacts, which XTLR's
+; RAMSAVE/RAMLOAD never touch the SD card and cannot exercise. XSVT/XSVD/
+; XSVE arm a known state and print it with XCHK's line; the tester types
+; XCHK, SAVE, XCHK, LOAD, XCHK by hand around each save/load pair and
+; diffs the three lines.
+;
+; The clock is left STOPPED by every setup verb (XSVT/XSVD/XSVE) - running
+; it left every reading dependent on how long the tester took to type the
+; next command, so nothing but slot 1's real-time pair could be compared
+; across a save/load. XRUN starts it, for one check only: proving the
+; clock still ticks after a load. Time otherwise moves only on purpose,
+; via XADV/XAD1 (fn 62), which works whether or not the clock is running.
+;
+; Every verb here that changes clock/timer state and then prints inserts
+; PAUSE 4 (2 frames, DRC halves PAUSE) before the print block: state
+; changes are immediate, but a timer's expiry is decided by the 50Hz
+; frame hook, which can lag up to 20ms behind the verb that armed it, so
+; a print straight after the change can catch the timer still counting
+; down when it is about to expire. XCHK changes nothing and stays a pure
+; probe with no PAUSE.
+;
+;   SAVE - SAVE 0 then RESTART (condition-typed - RESTART only runs on
+;          success).
+;   LOAD - LOAD 0 then RESTART, same shape.
+;   XCHK - readback probe: clock and timer state on one line, nothing
+;          else, for before/after comparison. No PAUSE.
+;   XSVT - arms the standard save-test state: clock STOPPED at 12:00,
+;          rate 250 (5 real seconds/in-game minute), slot 0 a 90-minute
+;          deadline, slot 1 a 300-second control. PAUSE 4, XCHK's line.
+;   XSVD - two minutes short of midnight (23:58) with a 2-minute
+;          duration, so one XAD1 step lands exactly on the boundary.
+;          Clock STOPPED, rate 250. PAUSE 4, XCHK's line.
+;   XADV - EXTERN 250 62: advances the clock 250 in-game minutes, PAUSE
+;          4, XCHK's line - moves the clock a long way between a SAVE
+;          and a LOAD without a real-time wait.
+;   XAD1 - EXTERN 1 62: advances the clock exactly one in-game minute,
+;          PAUSE 4, XCHK's line - steps a deadline boundary one minute
+;          at a time.
+;   XRUN - LET 226 1, PAUSE 4, XCHK's line - starts the clock at
+;          whatever rate is set. Proves the clock still ticks after a
+;          load; nothing else here starts it.
+;   XSVE - the sharp expiry-boundary setup: XSVT's shape with a 2-minute
+;          deadline, so two XAD1 steps walk it across expiry. Clock
+;          STOPPED at 12:00, rate 250. PAUSE 4, XCHK's line.
 
 #define fPlayer  38
 
@@ -104,6 +176,22 @@ XHNQ   122 verb
 XHNA   123 verb
 XHNR   124 verb
 XHNT   125 verb
+XCLK   126 verb
+XCLA   127 verb
+XCLS   128 verb
+XTMR   129 verb
+XTMI   130 verb
+XTLR   131 verb
+XCDY   132 verb
+SAVE   133 verb
+LOAD   134 verb
+XSVT   135 verb
+XCHK   136 verb
+XSVD   137 verb
+XADV   138 verb
+XAD1   139 verb
+XRUN   140 verb
+XSVE   141 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -425,6 +513,372 @@ XHNT   125 verb
 > XHNT _   EXTERN 1 51
            MES "levels "
            PRINT 243
+           DONE
+; XCLK - arm and run the clock at 1 in-game minute per real second, from
+;        12:00. PAUSE then PRINT: minutes must have advanced. PAUSE 150
+;        ships as 75 frames (DRC halves PAUSE for this target) - well past
+;        the frame-50 tick boundary, not on it, so the PRINT cannot race it.
+> XCLK _   LET     224 12
+           LET     225 0
+           LET     227 50
+           LET     228 0
+           EXTERN  0 60
+           PAUSE   150
+           MES "hh "
+           PRINT   224
+           MES " mm "
+           PRINT   225
+           DONE
+; XCLA - advance 90 in-game minutes from 12:00: must read 13:30, proving the
+;        hour carry.
+> XCLA _   LET     224 12
+           LET     225 0
+           EXTERN  90 62
+           MES "hh "
+           PRINT   224
+           MES " mm "
+           PRINT   225
+           DONE
+; XCLS - stop must freeze the clock. Read minutes, pause, read again: the two
+;        must be EQUAL. ORDER-DEPENDENT: type this AFTER XCLK - if the clock
+;        was never armed and running, both readings match anyway and this
+;        verb passes while proving nothing.
+> XCLS _   EXTERN  0 61
+           MES "before "
+           PRINT   225
+           PAUSE   100
+           MES " after "
+           PRINT   225
+           DONE
+; XTMR - a 2-second timer must expire. State 3 = expired. PAUSE 250 ships as
+;        125 frames (DRC halves PAUSE) - past the 2-second/100-frame
+;        expiry, not on it.
+> XTMR _   EXTERN  0 63
+           LET     229 2
+           LET     230 0
+           LET     235 1
+           PAUSE   250
+           MES "state "
+           PRINT   235
+           MES " rem "
+           PRINT   229
+           DONE
+; XTMI - the cross-module check. The clock is FROZEN here: XCLS stopped it
+;        and EXTERN 0 60 below is a documented no-op once armed (it tests
+;        its own armed byte, not flag 226), so this verb does not depend
+;        on the clock running - it drives the clock itself with fn 62.
+;        Slot 1 arms a 2-minute deadline against the clock reset to 12:00
+;        (720 + 2 = 722): first state must read 2. Then fn 62 advances the
+;        clock 5 minutes (720 + 5 = 725, past the deadline): second state
+;        must read 3. A module that only sets state on arming and never
+;        reads the clock would print 2 both times.
+> XTMI _   LET     224 12
+           LET     225 0
+           LET     227 50
+           LET     228 0
+           EXTERN  0 60            ; no-op: already armed (see above)
+           EXTERN  0 63
+           LET     231 2           ; duration in in-game minutes
+           LET     232 0
+           EXTERN  1 65            ; slot 1: convert to a deadline (722)
+           MES "state "
+           PRINT   236
+           EXTERN  5 62            ; drive the frozen clock past the deadline (725)
+           PAUSE   20
+           MES " then "
+           PRINT   236
+           DONE
+; XTLR - a RAMLOAD under a running minute timer, made to prove a REAL
+;        restore rather than a vacuous one. Nothing between RAMSAVE and
+;        RAMLOAD writes flags 229/230 in the ordinary arm-then-drift path
+;        (arm_minutes runs once, before RAMSAVE, and the hook's expiry
+;        path writes only the state flag, never the pair) - so on its own
+;        the before/after equality would hold whether or not RAMLOAD
+;        restores that flag range at all. Clobbering the pair to 0 after
+;        the RAMSAVE closes that gap: with the drifted clock at 725 and
+;        the pair reading 0, the hook's minutecheck computes deadline-now
+;        as a large negative difference (high bit set), falls through to
+;        .mexpire and sets state 3 - DURING the pause, before RAMLOAD ever
+;        runs. RAMLOAD must then restore BOTH the pair (back to
+;        720+90=810 = 3*256+42) and the state (back to 2) for "after" to
+;        match "before". Expected output is unchanged from the vacuous
+;        version - before 3 42 after 3 42 state 2 - but every one of those
+;        five numbers is now genuinely at risk: a restore that left the
+;        pair alone would print "after 0 0 state 3" instead.
+> XTLR _   LET     224 12
+           LET     225 0
+           LET     244 0
+           LET     227 50
+           LET     228 0
+           EXTERN  0 60
+           EXTERN  0 63
+           LET     229 90          ; duration in in-game minutes
+           LET     230 0
+           EXTERN  0 65            ; convert to a deadline and start counting
+           MES "before "
+           PRINT   230
+           MES " "
+           PRINT   229
+           RAMSAVE
+           LET     225 5           ; drift the live clock under the timer
+           LET     229 0           ; clobber the deadline too, so the RAMLOAD below
+           LET     230 0           ; has something real to restore
+           PAUSE   20
+           RAMLOAD 255
+           PAUSE   20
+           MES " after "
+           PRINT   230
+           MES " "
+           PRINT   229
+           MES " state "
+           PRINT   235
+           DONE
+; XCDY - the day counter. Advance 250 in-game minutes from 23:00, which
+;        crosses midnight exactly once: day must read 1 and the time 03:10.
+> XCDY _   LET     224 23
+           LET     225 0
+           LET     244 0
+           EXTERN  250 62
+           MES     "day "
+           PRINT   244
+           MES     " hh "
+           PRINT   224
+           MES     " mm "
+           PRINT   225
+           DONE
+; SAVE - SAVE 0 then RESTART; condition-typed, so RESTART only runs on
+;        success.
+> SAVE _   SAVE    0
+           RESTART
+; LOAD - LOAD 0 then RESTART, same shape.
+> LOAD _   LOAD    0
+           RESTART
+; XCHK - readback probe: one line, clock + timer state, nothing else.
+;        Pairs print high byte first (230/229, 232/231), the order a
+;        human reads a 16-bit value in.
+> XCHK _   MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
+           DONE
+; XSVT - arms the save-test state; clock left STOPPED so every field but
+;        slot 1's real-time pair is exact regardless of tester speed.
+;        Rate 250 (5 real sec/in-game minute) so anything that does start
+;        it crawls rather than races. PAUSE 4 settles the frame hook
+;        before the print. Expect: d 0 t 12:0 r 0 s0 2 p0 3/42 s1 1 p1
+;        1/44
+> XSVT _   EXTERN  0 60          ; arm the module (no-op if already armed)
+           EXTERN  0 61          ; stop it - deadline computed exactly
+           LET     227 250       ; rate: 5 real seconds per in-game minute
+           LET     228 0
+           LET     224 12
+           LET     225 0
+           LET     244 0
+           EXTERN  0 63          ; arm the timer module
+           LET     229 90        ; slot 0: 90 in-game minutes
+           LET     230 0
+           EXTERN  0 65          ; deadline: 720+90=810 = 3*256+42
+           LET     231 44        ; slot 1: 300 real seconds, a control
+           LET     232 1
+           LET     236 1
+           PAUSE   4             ; settle: let the frame hook run before print
+           MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
+           DONE
+; XSVD - two minutes short of midnight, with a 2-minute duration, so a
+;        single XAD1 step lands exactly on the boundary. Clock STOPPED,
+;        rate 250. Arithmetic: 23*60+58 = 1438 total, plus 2 = 1440,
+;        which is day 1 at 00:00 exactly - deadline high byte 5, low
+;        byte 160 (1440 = 5*256+160). Expect:
+;        d 0 t 23:58 r 0 s0 2 p0 5/160 s1 1 p1 1/44
+> XSVD _   EXTERN  0 60
+           EXTERN  0 61
+           LET     227 250
+           LET     228 0
+           LET     224 23
+           LET     225 58
+           LET     244 0
+           EXTERN  0 63
+           LET     229 2
+           LET     230 0
+           EXTERN  0 65          ; deadline: 1438+2=1440 = 5*256+160
+           LET     231 44
+           LET     232 1
+           LET     236 1
+           PAUSE   4             ; settle: let the frame hook run before print
+           MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
+           DONE
+; XADV - EXTERN 250 62 advances the clock 250 in-game minutes, PAUSE 4,
+;        then prints XCHK's line - no real-time wait needed.
+> XADV _   EXTERN  250 62
+           PAUSE   4             ; settle: let the frame hook run before print
+           MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
+           DONE
+; XAD1 - EXTERN 1 62 advances the clock exactly one in-game minute, PAUSE
+;        4, then prints XCHK's line - the boundary-stepping verb, for
+;        walking onto a deadline one minute at a time.
+> XAD1 _   EXTERN  1 62
+           PAUSE   4             ; settle: let the frame hook run before print
+           MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
+           DONE
+; XRUN - starts the clock running at whatever rate is set (250 after the
+;        setup verbs, so 5 real seconds per in-game minute). PAUSE 4,
+;        then prints XCHK's line. Exists for one check only: proving the
+;        clock still ticks after a load.
+> XRUN _   LET     226 1
+           PAUSE   4             ; settle: let the frame hook run before print
+           MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
+           DONE
+; XSVE - the sharp expiry-boundary setup: XSVT's shape but a 2-minute
+;        deadline, so two XAD1 steps walk it across expiry. Clock
+;        STOPPED at 12:00, rate 250. Arithmetic: 12*60 = 720, plus 2 =
+;        722 - deadline high byte 2, low byte 210 (722 = 2*256+210).
+;        Expect: d 0 t 12:0 r 0 s0 2 p0 2/210 s1 1 p1 1/44
+> XSVE _   EXTERN  0 60
+           EXTERN  0 61
+           LET     227 250
+           LET     228 0
+           LET     224 12
+           LET     225 0
+           LET     244 0
+           EXTERN  0 63
+           LET     229 2
+           LET     230 0
+           EXTERN  0 65          ; deadline: 720+2=722 = 2*256+210
+           LET     231 44
+           LET     232 1
+           LET     236 1
+           PAUSE   4             ; settle: let the frame hook run before print
+           MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
            DONE
 /PRO 6
 ; ---- one-shot init ----
