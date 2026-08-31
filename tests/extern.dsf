@@ -98,6 +98,25 @@
 ;          RAMLOAD, so the restore has real work to do.
 ;   XCDY - the day counter must advance by exactly one across a midnight
 ;          crossing.
+;
+; SAVE/LOAD/XCHK/XSVT/XSVD/XADV extend clock/timer coverage to a REAL SAVE
+; and LOAD - the file-backed condacts, which XTLR's RAMSAVE/RAMLOAD never
+; touch the SD card and cannot exercise. XSVT/XSVD arm a known clock/timer
+; state and print it with XCHK's line; the tester types XCHK, SAVE, XCHK,
+; LOAD, XCHK by hand around each save/load pair and diffs the three lines.
+;   SAVE - SAVE 0 then RESTART (condition-typed - RESTART only runs on
+;          success).
+;   LOAD - LOAD 0 then RESTART, same shape.
+;   XCHK - readback probe: prints clock and timer state on one line,
+;          nothing else, for before/after comparison.
+;   XSVT - arms the standard save-test state (clock 12:00 running at 1
+;          in-game minute/sec, slot 0 a 90-minute deadline, slot 1 a
+;          300-second control), then prints XCHK's line.
+;   XSVD - XSVT's state with the clock at 23:00, so the deadline
+;          arithmetic straddles a day boundary.
+;   XADV - EXTERN 250 62: advances the live clock 250 in-game minutes,
+;          then prints XCHK's line - moves the clock a long way between a
+;          SAVE and a LOAD without a real-time wait.
 
 #define fPlayer  38
 
@@ -137,6 +156,12 @@ XTMR   129 verb
 XTMI   130 verb
 XTLR   131 verb
 XCDY   132 verb
+SAVE   133 verb
+LOAD   134 verb
+XSVT   135 verb
+XCHK   136 verb
+XSVD   137 verb
+XADV   138 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -590,6 +615,139 @@ XCDY   132 verb
            PRINT   224
            MES     " mm "
            PRINT   225
+           DONE
+; SAVE - SAVE 0 then RESTART; condition-typed, so RESTART only runs on
+;        success.
+> SAVE _   SAVE    0
+           RESTART
+; LOAD - LOAD 0 then RESTART, same shape.
+> LOAD _   LOAD    0
+           RESTART
+; XCHK - readback probe: one line, clock + timer state, nothing else.
+;        Pairs print high byte first (230/229, 232/231), the order a
+;        human reads a 16-bit value in.
+> XCHK _   MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
+           DONE
+; XSVT - arms the save-test state; clock stopped while the deadline is
+;        computed then restarted (a live tick could land it one high).
+;        Expect: d 0 t 12:0 r 1 s0 2 p0 3/42 s1 1 p1 1/44
+> XSVT _   EXTERN  0 60          ; arm the module (no-op if already armed)
+           EXTERN  0 61          ; stop it - deadline computed exactly
+           LET     227 50        ; rate: 1 in-game minute per real second
+           LET     228 0
+           LET     224 12
+           LET     225 0
+           LET     244 0
+           EXTERN  0 63          ; arm the timer module
+           LET     229 90        ; slot 0: 90 in-game minutes
+           LET     230 0
+           EXTERN  0 65          ; deadline: 720+90=810 = 3*256+42
+           LET     231 44        ; slot 1: 300 real seconds, a control
+           LET     232 1
+           LET     236 1
+           LET     226 1         ; start the clock running
+           MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
+           DONE
+; XSVD - XSVT with the clock at 23:00, so the deadline straddles
+;        midnight: 1380+90=1470 = 5*256+190. Expect:
+;        d 0 t 23:0 r 1 s0 2 p0 5/190 s1 1 p1 1/44
+> XSVD _   EXTERN  0 60
+           EXTERN  0 61
+           LET     227 50
+           LET     228 0
+           LET     224 23
+           LET     225 0
+           LET     244 0
+           EXTERN  0 63
+           LET     229 90
+           LET     230 0
+           EXTERN  0 65          ; deadline: 1380+90=1470 = 5*256+190
+           LET     231 44
+           LET     232 1
+           LET     236 1
+           LET     226 1
+           MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
+           DONE
+; XADV - EXTERN 250 62 advances the live clock 250 in-game minutes,
+;        then prints XCHK's line - no real-time wait needed.
+> XADV _   EXTERN  250 62
+           MES     "d "
+           PRINT   244
+           MES     " t "
+           PRINT   224
+           MES     ":"
+           PRINT   225
+           MES     " r "
+           PRINT   226
+           MES     " s0 "
+           PRINT   235
+           MES     " p0 "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " s1 "
+           PRINT   236
+           MES     " p1 "
+           PRINT   232
+           MES     "/"
+           PRINT   231
            DONE
 /PRO 6
 ; ---- one-shot init ----
