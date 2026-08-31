@@ -70,8 +70,11 @@ stopall:
     ld (XBN_FLAGS + FLAG_STATE + 2), a
     ret
 
-; HL = day*1440 + hh*60 + mm, taken mod 65536. Monotonic, so a LOAD moves it
-; consistently with any deadline stored in flags. MUL D,E is Z80N, ED 30, 8T.
+; HL = day*1440 + hh*60 + mm, taken mod 65536. Monotonic so long as the day
+; byte itself does not wrap (255 -> 0, at the default rate 255 days of play);
+; that wrap is a discontinuity, not an odometer step, so do not leave a
+; minute timer armed across it. A LOAD moves the total consistently with any
+; deadline stored in flags. MUL D,E is Z80N, ED 30, 8T.
 clock_total:
     ld a, (XBN_FLAGS + FLAG_CLOCK_DAY)
     ld d, a
@@ -111,11 +114,19 @@ cttemp:  dw 0
 ; deadline, and set it counting. The pair holds a deadline from here on.
 ; Slot and total are parked in memory, not registers: this is foreground code
 ; and the register juggling is where an earlier draft of this plan went wrong.
+; Re-arming a live slot sets it idle before touching the pair: the hook writes
+; both bytes of a deadline in one interrupt-off breath, but this routine does
+; not, so a tick between the high and low byte writes must not see state 2.
 arm_minutes:
     ld a, (param)
     cp 3
     ret nc                       ; only slots 0-2 exist
     ld (armslot), a
+    ld l, a
+    ld h, 0
+    ld de, XBN_FLAGS + FLAG_STATE
+    add hl, de
+    ld (hl), ST_IDLE              ; quiesce first: closes the write-tear window
     call clock_total_safe        ; foreground: must be the retrying reader
     ld (armtotal), hl
     ld a, (armslot)
@@ -140,7 +151,7 @@ arm_minutes:
     ld h, 0
     ld de, XBN_FLAGS + FLAG_STATE
     add hl, de
-    ld (hl), ST_MINUTES
+    ld (hl), ST_MINUTES           ; window closed above: safe to go live now
     ret
 
 armslot:  db 0
