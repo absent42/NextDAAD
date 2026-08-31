@@ -11,6 +11,9 @@
 
     IFNDEF XBN_MODULE
     DEVICE ZXSPECTRUMNEXT
+    DEFINE XBN_HAS_TOOLKIT       ; fills the pinned CALL slots in the
+                                 ; standalone binary too; a combined or
+                                 ; subset build defines it for itself
     INCLUDE "xbn.inc"
     INCLUDE "xbnmod.inc"
     ORG XBN_ORG
@@ -44,6 +47,26 @@ ext:
     cp 83
     jp z, mmss
     ret
+
+; Pinned CALL slots 0-3, at $C00A + 3n. xbnmod.inc jumps here by name, so
+; these labels are part of the module's contract with the kit.
+; CALL carries no parameter: the flag number comes from flag 249.
+tk_call0:
+    ld a, (XBN_FLAGS + FLAG_OP2)
+    ld (param), a
+    jp p8
+tk_call1:
+    ld a, (XBN_FLAGS + FLAG_OP2)
+    ld (param), a
+    jp p16
+tk_call2:
+    ld a, (XBN_FLAGS + FLAG_OP2)
+    ld (param), a
+    jp hhmm
+tk_call3:
+    ld a, (XBN_FLAGS + FLAG_OP2)
+    ld (param), a
+    jp mmss
 
 pow10:   dw 10000, 1000, 100, 10, 1
 digbuf:  ds 5

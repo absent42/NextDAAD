@@ -14,6 +14,7 @@
     DEFINE XBN_HAS_HINTS
     DEFINE XBN_HAS_CLOCK
     DEFINE XBN_HAS_TIMER
+    DEFINE XBN_HAS_TOOLKIT
     INCLUDE "xbn.inc"
     INCLUDE "xbnmod.inc"
     ORG XBN_ORG
@@ -34,6 +35,8 @@ all_ext:
     call clock.ext
     call xbn_setup
     call timer.ext
+    call xbn_setup
+    call toolkit.ext
     ret
 
 ; #int chain. IX = flags base is the only documented register; every
@@ -51,6 +54,8 @@ all_int:
     call clock.int
     ld ix, XBN_FLAGS
     call timer.int
+    ld ix, XBN_FLAGS
+    call toolkit.int
     ret
 
     XBN_CHAIN_SETUP
@@ -60,6 +65,7 @@ all_int:
     INCLUDE "externs/hints/hints.asm"
     INCLUDE "externs/clock/clock.asm"
     INCLUDE "externs/timer/timer.asm"
+    INCLUDE "externs/toolkit/toolkit.asm"
 
 xbn_end:
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG

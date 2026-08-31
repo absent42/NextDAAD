@@ -87,3 +87,46 @@ minute, so `EXTERN 224 82` prints the in-game clock. Fn 83 reads a 16-bit
 count low byte first, so `EXTERN 229 83` prints a real-seconds timer from the
 timer module. A minutes field above 99 prints in full rather than being
 truncated.
+
+## CALL slots
+
+The four printing routines are also reachable by DAAD's CALL condact, which
+skips the EXTERN dispatch. CALL carries no parameter, so the flag number comes
+from flag 249:
+
+    LET 249 100
+    CALL 13 192     ; slot 1: print flags 100/101 as decimal
+
+| Slot | Address | Does the same as |
+|---|---|---|
+| 0 | `CALL 10 192` | `EXTERN n 70` |
+| 1 | `CALL 13 192` | `EXTERN n 71` |
+| 2 | `CALL 16 192` | `EXTERN n 82` |
+| 3 | `CALL 19 192` | `EXTERN n 83` |
+
+The addresses are fixed in every build shape - standalone, combined and any
+subset - so they are safe to hard-code. Never CALL a routine address instead;
+those move whenever any other module is edited.
+
+## A status line
+
+The module cannot select a window itself - there is no service for it - so the
+author brackets the call, which is exactly what a DAAD status-line process
+already does. `tools/urban-upstart/URBAN-UPSTART-DEMO.DSF` is the worked
+example in the wild: its PRO 24 sets WINDOW 2 to `WINAT 16 0` / `WINSIZE 1 80`
+with its own PAPER and INK, and PRO 20 repaints it each turn.
+
+    /PRO 20
+    > _  _   WINDOW 2
+             CLS
+             MES "Score "
+             LET 248 5
+             EXTERN 100 71     ; 16-bit score at flags 100/101
+             MES "  Time "
+             EXTERN 224 82     ; the clock module's HH:MM
+             WINDOW 1
+             DONE
+
+Because the window is the reservation and the print path already handles
+width, colour and wrapping, this module needs no tilemap geometry and no rules
+about which rows are safe.
