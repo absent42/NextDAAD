@@ -4,9 +4,9 @@ A collection of small pure-logic helpers: decimal printing, 16-bit
 arithmetic and time formatting. Unlike `clock` or `timer`, toolkit has no
 frame hook and no arming call - every function runs to completion inside
 the single foreground `EXTERN` that calls it, and there is nothing for a
-LOAD to restore. This task ships only the module skeleton; no functions
-are wired up yet. Later tasks add the fn code dispatch and fill in the
-arithmetic, printing and formatting routines described here.
+LOAD to restore. The module currently ships two functions, fn 70 and fn
+71 for decimal printing; the arithmetic and time-formatting routines
+described here are still to come.
 
 ## Calling convention
 
