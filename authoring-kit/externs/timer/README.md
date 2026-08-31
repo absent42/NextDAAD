@@ -93,5 +93,6 @@ wrapping past zero, whatever the size of the step that finished it off.
 The day flag (244) wraps from 255 back to 0 rather than growing without
 bound, and that wrap is a discontinuity in the clock's total, not a smooth
 step - it can make an armed minute timer's deadline comparison wrong for that
-frame. Do not leave a minute timer armed across day 255 rolling to day 0; at
-the default tick rate that is 255 days of continuous in-game time.
+frame. Do not leave a minute timer armed across day 255 rolling to day 0 -
+that is 255 in-game days away, about 4 days 6 hours of continuous play at
+the default rate (255 real days only at rate 3000).

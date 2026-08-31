@@ -40,7 +40,9 @@ the same way:
 
 It wraps from 255 back to 0. That wrap is a discontinuity in in-game time
 rather than a step, so do not leave an in-game-minute timer armed across
-it; at the default rate it is 255 days of continuous play away.
+it. It is 255 in-game days away - at the default rate (one in-game minute
+per real second) that is about 4 days 6 hours of continuous play; only at
+rate 3000 (true 1:1) is it 255 real days.
 
 The rate is 16-bit. 50 gives one in-game minute per real second; 3000
 gives true 1:1 real time (50 frames/second x 60 seconds). Writing a rate of
@@ -74,8 +76,10 @@ timer and the event fires while the player is still thinking. Without it,
 ## Showing the time
 
 This module never writes the screen. Print the time from your own window,
-per turn, the way any other status line works. Until the toolkit module
-ships its HH:MM format, print flags 224 and 225 as plain numbers.
+per turn, the way any other status line works. The toolkit module's fn 82
+prints the pair as HH:MM - `EXTERN 224 82` - and ships in this same
+collection and in the same `all/GAME.XBN`; without the toolkit module,
+print flags 224 and 225 as plain numbers.
 
 ## Advancing time and armed timers
 

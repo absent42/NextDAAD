@@ -72,7 +72,8 @@ stopall:
     ret
 
 ; HL = day*1440 + hh*60 + mm, taken mod 65536. Monotonic so long as the day
-; byte itself does not wrap (255 -> 0, at the default rate 255 days of play);
+; byte itself does not wrap (255 -> 0, 255 in-game days away - about 4 days
+; 6 hours of play at the default rate);
 ; that wrap is a discontinuity, not an odometer step, so do not leave a
 ; minute timer armed across it. A LOAD moves the total consistently with any
 ; deadline stored in flags. MUL D,E is Z80N, ED 30, 8T.

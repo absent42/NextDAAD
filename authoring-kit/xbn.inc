@@ -1,6 +1,7 @@
 ; xbn.inc - NextDAAD extern binary (XBN) authoring include.
 ; Assemble your extern with sjasmplus:  ORG XBN_ORG, XBN_HEADER first,
-; SAVEBIN the range XBN_ORG..xbn_end. See manual/externs.md.
+; SAVEBIN the range XBN_ORG..xbn_end. See the kit manual's externs
+; chapter (docs\externs.html here; manual/externs.md in the repository).
 
 XBN_ORG         equ $C000
 
