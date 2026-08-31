@@ -73,24 +73,29 @@
 ;          topic 0's FIRST hint again, proving the reset took.
 ;   XHNT - level count (fn 51) for topic 1: flag 243 must read 3.
 ;
-; XCLK/XCLA/XCLS drive the Task 4 clock module (fn 60/61/62) and XTMR/XTMI
-; drive the timer module (fn 63) - both part of the same -XbnClock combined
-; binary as -XbnHints. RUN THEM IN ORDER: XCLS is order-dependent - it stops
-; the clock and compares two readings of flag 225 for equality, which holds
-; vacuously if the clock was never armed and running, so it only proves
-; anything typed AFTER XCLK. XTMI is the load-bearing check: the only verb
-; that proves the timer actually observes the clock (a state-2 timer counting
-; down in in-game minutes) - if its remaining count is unchanged after the
-; pause, the cross-module link is broken even though both modules pass every
-; check of their own.
+; XCLK/XCLA/XCLS drive the Task 4 clock module (fn 60/61/62) and XTMR/XTMI/
+; XTLR drive the timer module (fn 63-65) - both part of the same -XbnClock
+; combined binary as -XbnHints. RUN THEM IN ORDER: XCLS is order-dependent -
+; it stops the clock and compares two readings of flag 225 for equality,
+; which holds vacuously if the clock was never armed and running, so it only
+; proves anything typed AFTER XCLK. XTMI is the load-bearing check: the only
+; verb that proves the timer actually observes the clock (a deadline expiring
+; in in-game minutes) - a duration of 2 against a ~2-minute pause straddles
+; the deadline, so state 2 or 3 both pass; state never reaching 2 in the
+; first place means the cross-module link is broken. XCDY drives the day
+; counter (fn 62) across a midnight crossing.
 ;   XCLK - arm and run the clock at 1 in-game minute per real second, from
 ;          12:00. PAUSE then PRINT: minutes must have advanced.
 ;   XCLA - advance 90 in-game minutes from 12:00: must read 13:30, the hour
 ;          carry.
 ;   XCLS - stop must freeze the clock (type AFTER XCLK - see above).
 ;   XTMR - a 2-second timer must expire. State 3 = expired.
-;   XTMI - an in-game-minute timer with the clock RUNNING must count down;
-;          the cross-module check.
+;   XTMI - an in-game-minute timer with the clock RUNNING must reach a
+;          deadline; the cross-module check.
+;   XTLR - a RAMLOAD under a running minute timer must not disturb its
+;          deadline, since the deadline is absolute in-game time.
+;   XCDY - the day counter must advance by exactly one across a midnight
+;          crossing.
 
 #define fPlayer  38
 
@@ -129,6 +134,7 @@ XCLS   128 verb
 XTMR   129 verb
 XTMI   130 verb
 XTLR   131 verb
+XCDY   132 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -500,48 +506,66 @@ XTLR   131 verb
            MES " rem "
            PRINT   229
            DONE
-; XTMI - an in-game-minute timer with the clock RUNNING must count down;
-;        this is the cross-module check. If rem is unchanged, the timer
-;        never saw the clock's minute flag move.
+; XTMI - an in-game-minute timer with the clock RUNNING; this is the
+;        cross-module check. State 2 (deadline not yet reached) or 3
+;        (expired) both pass; state 0 or 1 means fn 65 never armed it.
 > XTMI _   LET     224 12
            LET     225 0
            LET     227 50
            LET     228 0
            EXTERN  0 60
            EXTERN  0 63
-           LET     231 3
+           LET     231 2           ; duration in in-game minutes
            LET     232 0
-           LET     236 2
+           EXTERN  1 65            ; slot 1: convert to a deadline and start
            PAUSE   200
            MES "state "
            PRINT   236
-           MES " rem "
+           MES " deadline "
            PRINT   231
            DONE
-; XTLR - a RAMLOAD moving the clock backwards from what the timer last
-;        saw must not expire a running state-2 timer. Snapshot rem=90 at
-;        12:00, drift to 12:05, restore to 12:00: state must stay 2, rem 90.
+; XTLR - a RAMLOAD under a running minute timer. The deadline is an absolute
+;        in-game time, so a restore cannot disturb it: state stays 2 and the
+;        pair reads the same before and after. Armed at 12:00 day 0 for 90
+;        minutes, so the deadline is 720+90 = 810 = 3*256 + 42.
 > XTLR _   LET     224 12
            LET     225 0
+           LET     244 0
            LET     227 50
            LET     228 0
            EXTERN  0 60
            EXTERN  0 63
-           LET     229 90
+           LET     229 90          ; duration in in-game minutes
            LET     230 0
-           LET     235 2
-           RAMSAVE
-           LET     225 5           ; drift the live clock: charges the live
-                                   ; timer, which RAMLOAD below then undoes
-           PAUSE   20
-           RAMLOAD 255             ; clock and timer flags back to the
-                                   ; snapshot; the module's lasthh/lastmm
-                                   ; is NOT restored - the bug this pins
-           PAUSE   20
-           MES "state "
-           PRINT   235
-           MES " rem "
+           EXTERN  0 65            ; convert to a deadline and start counting
+           MES "before "
+           PRINT   230
+           MES " "
            PRINT   229
+           RAMSAVE
+           LET     225 5           ; drift the live clock under the timer
+           PAUSE   20
+           RAMLOAD 255
+           PAUSE   20
+           MES " after "
+           PRINT   230
+           MES " "
+           PRINT   229
+           MES " state "
+           PRINT   235
+           DONE
+; XCDY - the day counter. Advance 250 in-game minutes from 23:00, which
+;        crosses midnight exactly once: day must read 1 and the time 03:10.
+> XCDY _   LET     224 23
+           LET     225 0
+           LET     244 0
+           EXTERN  250 62
+           MES     "day "
+           PRINT   244
+           MES     " hh "
+           PRINT   224
+           MES     " mm "
+           PRINT   225
            DONE
 /PRO 6
 ; ---- one-shot init ----
