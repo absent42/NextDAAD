@@ -51,12 +51,17 @@
 ;          this entry is only meaningful in that combination; against
 ;          the plain fixture XBN, fn 30/31 fall through xbntest.asm's
 ;          ext_main unrecognised and no-op.
-;   XSLT - CALLs pinned jump table slots 0 and 2 (toolkit fns, via
-;          flag 249), then slot 4 - unowned, must print nothing. Proves
-;          the reserved-slot no-op guarantee still holds now that
-;          slots 0-3 are occupied. Meaningful only on legs staging a
-;          table-carrying binary (-XbnAll/-XbnTicker/-XbnFade/-XbnClock/
-;          -XbnTool) - the fixture binary carries no such table.
+;   XSLT - CALLs pinned jump table slots 0, 1 and 2 (toolkit fns, via
+;          flag 249), then slot 4 - unowned, must print nothing. Flag
+;          249 is MOVED mid-verb before slot 2's call, so a dispatch
+;          hardcoded to one flag number rather than actually reading
+;          249 cannot fake the result - this is the only way a CALL,
+;          which carries no parameter, proves the indirection at all.
+;          Also proves the reserved-slot no-op guarantee still holds
+;          now that slots 0-3 are occupied. Meaningful only on legs
+;          staging a table-carrying binary (-XbnAll/-XbnTicker/-XbnFade/
+;          -XbnClock/-XbnTool) - the fixture binary carries no such
+;          table.
 ;
 ; XTKP/XTKA/XTKO/XTKT drive the Task 6 toolkit module (fns 70-75, 82, 83),
 ; part of the same -XbnTool combined binary as -XbnClock/-XbnHints. Each
@@ -64,13 +69,21 @@
 ; fns read/write flags at $A200+n, LOW BYTE FIRST for a pair.
 ;   XTKP - decimal printing (fn 70/71) and the width flag (248): 42
 ;          unpadded, padded to five columns with spaces, then zeros,
-;          then a 16-bit pair.
+;          then a 16-bit pair. The high byte is left non-zero (flag
+;          101 = 7) through the three fn 70 (byte print) calls, so a
+;          byte/pair confusion in fn 70 would show.
 ;   XTKA - 16-bit arithmetic (fn 75/73/74): pair += immediate byte via
 ;          the pair at flag 249, pair -= immediate byte, then a compare
-;          reporting greater (2) into flag 251.
-;   XTKO - overflow (fn 72): 65530 + 10 wraps to 4 and sets flag 251.
-;   XTKT - time formats (fn 82/83): two byte flags as HH:MM, then a
-;          16-bit second count as MM:SS.
+;          against all three outcomes - greater (2), equal (1), less
+;          (0) into flag 251, so a hardcoded "return greater" cannot
+;          pass.
+;   XTKO - overflow (fn 72): 65530 + 10 wraps to 4 and sets flag 251,
+;          THEN a second, non-overflowing add proves flag 251 also
+;          goes back to 0 - otherwise a module that always sets the
+;          overflow flag would pass unnoticed.
+;   XTKT - time formats (fn 82/83): two byte flags as HH:MM, then two
+;          16-bit second counts as MM:SS, the second chosen to exercise
+;          zero-padding on the SECONDS digit (01:05).
 ;
 ; -XbnHints stages the hints worked example (authoring-kit\externs\hints)
 ; as part of the combined GAME.XBN, plus a packed GAME.HNT. XHNP/XHNQ/
@@ -356,21 +369,27 @@ XTKT   145 verb
                              ; re-encode caveat as call_target above.
            PRINT 222         ; expect 153 ($99)
            DONE
-; XSLT - CALL slots. 0 and 2 now reach the toolkit; 4 is still unowned and
-;        must remain a safe no-op, which is what this verb pinned before
-;        the toolkit existed. Safe no-op only on legs staging a
-;        pinned-table binary (-XbnAll/-XbnTicker/-XbnFade/-XbnClock/
-;        -XbnTool). DO NOT TYPE on the plain -Xbn leg: no table there, so
-;        $C00A is fixture code.
-> XSLT _   LET     100 42
+; XSLT - CALL slots. 0, 1 and 2 now reach the toolkit; 4 is still unowned
+;        and must remain a safe no-op, which is what this verb pinned
+;        before the toolkit existed. Flag 249 MOVES mid-verb (110 for
+;        slots 0/1, then 112 for slot 2) - a dispatch hardcoded to one
+;        flag rather than reading 249 cannot follow the move. Safe no-op
+;        only on legs staging a pinned-table binary (-XbnAll/-XbnTicker/
+;        -XbnFade/-XbnClock/-XbnTool). DO NOT TYPE on the plain -Xbn leg:
+;        no table there, so $C00A is fixture code.
+> XSLT _   LET     110 42
+           LET     111 9           ; non-zero: a byte/pair confusion would show
            LET     248 0
-           LET     249 100
+           LET     249 110
            MES     "slot0 "
-           CALL    10 192
-           MES     " slot2 "
-           LET     100 9
-           LET     101 5
-           CALL    16 192
+           CALL    10 192          ; slot 0 = fn 70: flag 110
+           MES     " slot1 "
+           CALL    13 192          ; slot 1 = fn 71: pair 110/111
+           LET     112 9
+           LET     113 5
+           LET     249 112         ; move the pointer: a hardcoded dispatch
+           MES     " slot2 "       ; cannot follow this
+           CALL    16 192          ; slot 2 = fn 82: flags 112/113
            MES     " n["
            CALL    22 192          ; slot 4: unowned, must print nothing
            MES     "]"
@@ -917,7 +936,7 @@ XTKT   145 verb
 ; XTKP - decimal printing and the width flag. 42 unpadded, then padded to
 ;        five columns with spaces, then with zeros, then a 16-bit pair.
 > XTKP _   LET     100 42
-           LET     101 0
+           LET     101 7           ; non-zero: a byte/pair confusion would show
            LET     248 0
            MES     "a["
            EXTERN  100 70
@@ -935,7 +954,8 @@ XTKT   145 verb
            MES     "]"
            DONE
 ; XTKA - 16-bit arithmetic. 1000 + 2000 by pair, then -10 by immediate,
-;        then a compare that must report greater.
+;        then a compare exercising all three outcomes: greater, equal,
+;        less.
 > XTKA _   LET     100 232         ; 1000 = 3*256 + 232
            LET     101 3
            LET     102 208         ; 2000 = 7*256 + 208
@@ -953,8 +973,20 @@ XTKT   145 verb
            EXTERN  100 74
            MES     " cmp "
            PRINT   251
+           MES     " eq "
+           LET     100 208         ; 2000, equal to the pair at 102
+           LET     101 7
+           EXTERN  100 74
+           PRINT   251
+           MES     " lt "
+           LET     100 100         ; 100, less than 2000
+           LET     101 0
+           EXTERN  100 74
+           PRINT   251
            DONE
-; XTKO - overflow reporting. 65530 + 10 wraps to 4 and sets flag 251.
+; XTKO - overflow reporting. 65530 + 10 wraps to 4 and sets flag 251,
+;        then a second, non-overflowing add proves flag 251 goes back
+;        to 0.
 > XTKO _   LET     100 250         ; 65530 = 255*256 + 250
            LET     101 255
            LET     248 0
@@ -964,9 +996,17 @@ XTKT   145 verb
            EXTERN  100 71
            MES     " ovf "
            PRINT   251
+           LET     100 10          ; a second add that must NOT overflow
+           LET     101 0
+           EXTERN  100 72
+           MES     " sum "
+           EXTERN  100 71
+           MES     " ovf "
+           PRINT   251
            DONE
-; XTKT - both time formats. 09:05 from two byte flags, then 01:30 from a
-;        16-bit second count of 90.
+; XTKT - both time formats. 09:05 from two byte flags, then two 16-bit
+;        second counts as MM:SS - 90 (01:30), then 65 to exercise
+;        zero-padding on the seconds digit (01:05).
 > XTKT _   LET     100 9
            LET     101 5
            MES     "t "
@@ -975,6 +1015,10 @@ XTKT   145 verb
            LET     103 0
            MES     " s "
            EXTERN  102 83
+           MES     " s2 "
+           LET     104 65
+           LET     105 0
+           EXTERN  104 83
            DONE
 /PRO 6
 ; ---- one-shot init ----
