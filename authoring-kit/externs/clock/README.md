@@ -88,7 +88,10 @@ An in-game-minute timer holds an absolute deadline rather than a countdown,
 so however you move the clock it simply keeps watching: move past a deadline
 and that timer expires on the next frame, move backwards and it gains that
 much more time. Both hold for jumps under 32768 in-game minutes (about 22
-days 18 hours); beyond that the comparison wraps and reads as already passed.
+days 18 hours): a larger backwards jump wraps and reads as already passed,
+expiring the timer, while a forward jump that overshoots the deadline by more
+than that wraps the other way and reads as still in the future, so the timer
+never fires.
 
 Arming one belongs to the separate timer module (`EXTERN d 65`) and is
 documented there. It is the only way to arm one: writing a duration into the
