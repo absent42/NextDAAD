@@ -350,7 +350,8 @@
 #            designed to be combined with each other; the staging code
 #            checks them in this priority order, so if more than one is
 #            given -XbnNoBin wins over -XbnBad over -XbnTicker over
-#            -XbnFade over -XbnAll over -XbnHints over -XbnClock:
+#            -XbnFade over -XbnAll over -XbnHints over -XbnClock over
+#            -XbnTool:
 #              -XbnNoBin      stage GAME.DDB with NO GAME.XBN at all (the
 #                              XABS no-XBN control - EXTERN must stay inert).
 #              -XbnBad <kind> stage a corrupt/truncated variant AS

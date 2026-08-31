@@ -10,8 +10,10 @@ own `EXTERN` condact fn codes, for example `EXTERN n 30` to arm ticker.
 Function codes and flags are disjoint across the collection, so modules never
 collide.
 
-Modules are dormant until armed. A module you never arm never reads or writes
-its flags, so its flag block stays yours.
+Modules stay inert until the game invokes them - an arming call for the
+modules that use one, or simply never being EXTERNed for the ones that
+don't. A module the game never invokes never reads or writes its flags, so
+its flag block stays yours.
 
 | Module | fn codes | README |
 |---|---|---|

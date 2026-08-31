@@ -6,11 +6,12 @@ frame hook and no arming call - every function runs to completion inside
 the single foreground `EXTERN` that calls it, and there is nothing for a
 LOAD to restore. The module implements all eight of its functions: fn 70
 and fn 71 for decimal printing, fn 72 to fn 75 for 16-bit arithmetic on
-flag pairs, fn 82 and fn 83 for time formatting. What remains is giving
-four of them - fn 70, 71, 82 and 83 - a second entry point through
-DAAD's CALL condact, alongside the existing EXTERN dispatch. Fn codes 76
-to 81 also belong to this module's range - object queries and a
-random-without-repeat picker - but are separate work not covered here.
+flag pairs, fn 82 and fn 83 for time formatting. Four of them - fn 70,
+71, 82 and 83 - are also reachable through DAAD's CALL condact, a
+second entry point alongside the existing EXTERN dispatch (see CALL
+slots below). Fn codes 76 to 81 also belong to this module's range -
+object queries and a random-without-repeat picker - but are separate
+work not covered here.
 
 ## Calling convention
 
@@ -68,10 +69,10 @@ clamping, so test flag 251 if it matters.
 Fn 74 writes 0, 1 or 2 to flag 251 for less, equal and greater, and changes
 neither pair:
 
-    LET 249 100
+    LET 249 102
     EXTERN 100 74
     > _  _    EQ  251 2
-              ; the score at flags 100/101 is above the pair at 100/101
+              ; true when the pair at 100/101 is greater than the pair at 102/103
 
 This is what makes scores, money and move counts above 255 tractable, and it
 pairs with the clock module's 16-bit rate.
@@ -105,16 +106,18 @@ from flag 249:
 | 3 | `CALL 19 192` | `EXTERN n 83` |
 
 The addresses are fixed in every build shape - standalone, combined and any
-subset - so they are safe to hard-code. Never CALL a routine address instead;
-those move whenever any other module is edited.
+subset - so they are safe to hard-code, provided toolkit is in the build. If
+it is not, the slots still exist at those addresses but jump to a bare RET
+and print nothing. Never CALL a routine address instead; those move whenever
+any other module is edited.
 
 ## A status line
 
 The module cannot select a window itself - there is no service for it - so the
 author brackets the call, which is exactly what a DAAD status-line process
-already does. `tools/urban-upstart/URBAN-UPSTART-DEMO.DSF` is the worked
-example in the wild: its PRO 24 sets WINDOW 2 to `WINAT 16 0` / `WINSIZE 1 80`
-with its own PAPER and INK, and PRO 20 repaints it each turn.
+already does: a dedicated window set up once - its own `WINAT`/`WINSIZE`,
+PAPER and INK - then repainted every turn, with the toolkit call bracketed
+by `WINDOW` in and `WINDOW` back out.
 
     /PRO 20
     > _  _   WINDOW 2
