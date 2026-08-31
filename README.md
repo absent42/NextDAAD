@@ -79,6 +79,14 @@ A **manual** covering the specifics of creating a game for NextDAAD is included 
 [`authoring-kit\docs\index.html`](authoring-kit/docs/index.html) - or
 you can read the same pages on GitHub from [`manual/index.md`](manual/index.md)
 
+The kit ships a **library of ready-made externs** in
+`authoring-kit\externs\` - a news ticker, Layer 2 palette fades, an
+SD-card hint book, an in-game clock, countdown timers and a
+printing/arithmetic toolkit - each as source plus a prebuilt binary,
+combinable into a single `GAME.XBN` with no assembler needed. See
+[`authoring-kit\externs\README.md`](authoring-kit/externs/README.md)
+for the catalogue.
+
 The DAAD compiler, [NDRC](https://github.com/absent42/NDRC) (Next DAAD Reborn Compiler), ships built in, 
 along with [Gfx2Next](https://www.rustypixels.uk/gfx2next/) for for graphics conversion. The kit still needs a
 few third-party tools it does not redistribute:

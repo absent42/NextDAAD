@@ -12,8 +12,10 @@ The rest of this document is about submitting an extern for the authoring kit.
 
 Externs live in `authoring-kit\externs\`, one folder per extern. Yours
 should do one thing well, be driveable from a handful of DSF lines, and
-be useful beyond a single game. The two shipped externs (`ticker`,
-`fade`) are the reference for tone, size and documentation.
+be useful beyond a single game. The shipped collection (`ticker`,
+`fade`, `hints`, `clock`, `timer`, `toolkit`) is the reference for
+tone, size and documentation, and every folder in it follows the
+combinable module convention below.
 
 ### What your folder must contain
 
@@ -21,10 +23,65 @@ Exactly these four files:
 
 | File | Requirement |
 |------|-------------|
-| `<name>.asm` | One source file, assembling with sjasmplus against the kit's `xbn.inc` alone (`-I` the kit root; no other includes, no interpreter internals). `DEVICE ZXSPECTRUMNEXT`, `ORG XBN_ORG`, `XBN_HEADER`, `xbn_end`, `SAVEBIN "GAME.XBN"` - the shape the manual's externs chapter documents |
+| `<name>.asm` | One source file in the combinable module shape below, assembling with sjasmplus against the kit's `xbn.inc` and `xbnmod.inc` alone (`-I` the kit root; no other includes, no interpreter internals) |
 | `GAME.XBN` | The prebuilt binary, byte-identical to a fresh assembly of the source. The audit rebuilds and compares, so commit both together every time |
 | `README.md` | What it does, the exact DSF lines that drive it, every fn code and flag it uses, anything it deliberately does not do |
 | `build.ps1` | Rebuild script - copy one from a shipped extern and change the file name |
+
+### The combinable module convention
+
+Every collection extern builds two ways from one source: standalone
+(its own `GAME.XBN`) and as one module among several in a combined
+binary (`externs\all\`, or an `EXTERNS.BAT` subset). The shape that
+makes that work:
+
+```
+; Standalone build emits its own header and call table; a combined
+; build defines XBN_MODULE and supplies both.
+    IFNDEF XBN_MODULE
+    DEVICE ZXSPECTRUMNEXT
+    INCLUDE "xbn.inc"
+    INCLUDE "xbnmod.inc"
+    ORG XBN_ORG
+    XBN_BEGIN myext.ext, myext.int
+    ENDIF
+
+    MODULE myext
+ext:
+    ; EXTERN/CALL entry. Test C (the fn code) against your own range
+    ; FIRST and return immediately on anything else - in a combined
+    ; binary every module's ext sees every EXTERN call.
+    ret
+int:
+    ; frame hook, or omit and pass 0 to XBN_BEGIN. In a combined
+    ; binary this runs every frame regardless, so when idle it must
+    ; be a load-and-test and nothing more.
+    ret
+    ENDMODULE
+
+    IFNDEF XBN_MODULE
+xbn_end:
+    SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG
+    XBN_SCRATCH_END
+    ENDIF
+```
+
+Rules that come with it:
+
+- `XBN_BEGIN`, not `XBN_HEADER`: it emits the header plus the pinned
+  `CALL` slot table at `$C00A`. Slots are frozen and append-only;
+  document any slot you claim, and never publish a routine address as
+  a `CALL` target - addresses move whenever any module is edited.
+- Your fn codes and flags must be disjoint from every other collection
+  module - check the table in `authoring-kit\externs\README.md` and
+  add your row to it.
+- Scratch RAM above the saved image is claimed through the
+  `XBN_SCRATCH_FREE` chain in `xbnmod.inc` (see the comment there), so
+  modules never collide.
+- Wiring into the combined binary is three lines in
+  `authoring-kit\externs\all\all.asm`: a `DEFINE XBN_HAS_<NAME>`, an
+  `INCLUDE`, and your `.ext`/`.int` added to its chains. Maintainers
+  do this at acceptance, but your module must be shaped so they can.
 
 ### Code rules
 
