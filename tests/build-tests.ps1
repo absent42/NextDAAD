@@ -3119,6 +3119,9 @@ if ($Xbn) {
         else {
             "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
         }
+        # ALL.XBN's hints module needs a hint file too - same pack as -XbnHints below.
+        & "$root\authoring-kit\lib\hintpack.ps1" -In "$root\authoring-kit\HINTS.TXT" -Out "$leg\GAME.HNT"
+        "staged authoring-kit\HINTS.TXT -> sd\$legName\GAME.HNT (packed)"
     }
     elseif ($XbnHints) {
         # Task 7: same combined-collection binary as -XbnAll (hints is
