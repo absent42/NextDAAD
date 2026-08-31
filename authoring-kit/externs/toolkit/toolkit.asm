@@ -31,6 +31,14 @@ ext:
     jp z, p8
     cp 71
     jp z, p16
+    cp 72
+    jp z, add8
+    cp 73
+    jp z, sub8
+    cp 74
+    jp z, cmpp
+    cp 75
+    jp z, addp
     cp 82
     jp z, hhmm
     cp 83
@@ -202,6 +210,88 @@ pair_store:
     ret
 
 pairp:   dw 0
+
+; fn 72 - [n,n+1] += flag 249 as an immediate. Flag 251 = 1 on overflow.
+add8:
+    ld a, (param)
+    inc a
+    ret z
+    dec a
+    call pair_read
+    ld a, (XBN_FLAGS + FLAG_OP2)
+    ld c, a
+    ld b, 0
+    add hl, bc
+    ld a, 0                      ; does not disturb CF
+    adc a, 0
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    jp pair_store
+
+; fn 73 - [n,n+1] -= flag 249 as an immediate. Flag 251 = 1 on underflow.
+sub8:
+    ld a, (param)
+    inc a
+    ret z
+    dec a
+    call pair_read
+    ld a, (XBN_FLAGS + FLAG_OP2)
+    ld c, a
+    ld b, 0
+    or a                         ; clear CF; A holds op2, which is in C now
+    sbc hl, bc
+    ld a, 0
+    adc a, 0
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    jp pair_store
+
+; fn 74 - compare [n,n+1] against the pair at flag 249.
+; Flag 251 = 0 less, 1 equal, 2 greater. Neither pair is written.
+cmpp:
+    ld a, (XBN_FLAGS + FLAG_OP2)
+    inc a
+    ret z
+    dec a
+    call pair_read
+    ld (tmp16), hl
+    ld a, (param)
+    inc a
+    ret z
+    dec a
+    call pair_read
+    ld de, (tmp16)
+    or a
+    sbc hl, de
+    ld a, 1
+    jr z, .store
+    ld a, 0
+    jr c, .store
+    ld a, 2
+.store:
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    ret
+
+; fn 75 - [n,n+1] += the pair at flag 249. Flag 251 = 1 on overflow.
+; Operand first, target second: pair_read parks the pointer pair_store uses.
+addp:
+    ld a, (XBN_FLAGS + FLAG_OP2)
+    inc a
+    ret z
+    dec a
+    call pair_read
+    ld (tmp16), hl
+    ld a, (param)
+    inc a
+    ret z
+    dec a
+    call pair_read
+    ld de, (tmp16)
+    add hl, de
+    ld a, 0
+    adc a, 0
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    jp pair_store
+
+tmp16:   dw 0
 
 ; HL / C -> HL quotient, A remainder. C must be 128 or less: the rla
 ; shifts the remainder's bit 7 out into CF, and a larger divisor allows a

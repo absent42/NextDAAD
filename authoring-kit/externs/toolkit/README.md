@@ -4,9 +4,10 @@ A collection of small pure-logic helpers: decimal printing, 16-bit
 arithmetic and time formatting. Unlike `clock` or `timer`, toolkit has no
 frame hook and no arming call - every function runs to completion inside
 the single foreground `EXTERN` that calls it, and there is nothing for a
-LOAD to restore. The module currently ships four functions: fn 70 and fn
-71 for decimal printing, fn 82 and fn 83 for time formatting; the
-arithmetic routines described here are still to come.
+LOAD to restore. The module currently ships eight of its nine planned
+functions: fn 70 and fn 71 for decimal printing, fn 72 to fn 75 for
+16-bit arithmetic on flag pairs, fn 82 and fn 83 for time formatting.
+Only the CALL-slot wiring that exposes these to a game remains.
 
 ## Calling convention
 
@@ -47,6 +48,30 @@ Flag 248 sets the field width, so a status readout lines up:
 
 A number wider than the field prints in full rather than being truncated.
 Fn 71 does nothing if n is 255, which has no n+1.
+
+## 16-bit arithmetic on flag pairs
+
+Every pair is low byte first.
+
+    EXTERN n 72    ; [n,n+1] += flag 249 as an immediate value
+    EXTERN n 73    ; [n,n+1] -= flag 249 as an immediate value
+    EXTERN n 74    ; compare [n,n+1] against the pair at flag 249
+    EXTERN n 75    ; [n,n+1] += the pair at flag 249
+
+Fns 72, 73 and 75 leave 1 in flag 251 if the result overflowed or went below
+zero, and 0 if it did not. The stored value WRAPS in that case rather than
+clamping, so test flag 251 if it matters.
+
+Fn 74 writes 0, 1 or 2 to flag 251 for less, equal and greater, and changes
+neither pair:
+
+    LET 249 100
+    EXTERN 100 74
+    > _  _    EQ  251 2
+              ; the score at flags 100/101 is above the pair at 100/101
+
+This is what makes scores, money and move counts above 255 tractable, and it
+pairs with the clock module's 16-bit rate.
 
 ## Time formats
 
