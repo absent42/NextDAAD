@@ -79,11 +79,11 @@ A **manual** covering the specifics of creating a game for NextDAAD is included 
 [`authoring-kit\docs\index.html`](authoring-kit/docs/index.html) - or
 you can read the same pages on GitHub from [`manual/index.md`](manual/index.md)
 
-The kit ships a **library of ready-made externs** in
+The kit ships a **collection of ready-made externs** in
 `authoring-kit\externs\` - a news ticker, Layer 2 palette fades, an
 SD-card hint book, an in-game clock, countdown timers and a
 printing/arithmetic toolkit - each as source plus a prebuilt binary,
-combinable into a single `GAME.XBN` with no assembler needed. See
+shipped prebuilt as one combined `GAME.XBN`, no assembler needed. See
 [`authoring-kit\externs\README.md`](authoring-kit/externs/README.md)
 for the catalogue.
 

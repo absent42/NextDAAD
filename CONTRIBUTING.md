@@ -90,7 +90,7 @@ These come from the manual's externs chapter and are checked in review:
 - fn codes 16 and up only, documented in your README. Codes 0-15
   belong to the interpreter, DEBUG probes and history. Stay clear of
   codes and flags other kit externs use (the table in
-  `authoring-kit\externs\README.md`) so merged binaries coexist.
+  `authoring-kit\externs\README.md`) so combined binaries coexist.
 - Interrupt-hook discipline, if you use the `#int` hook: keep it well
   under a frame, no `EI`, no zxnDMA, no file IO, no service calls, and
   never install your own interrupt vector - your bank is only mapped

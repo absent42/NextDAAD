@@ -487,7 +487,7 @@ needed.</p>
 <tr>
 <td><code>toolkit</code></td>
 <td>Decimal printing, 16-bit flag-pair arithmetic, time formats</td>
-<td>70/71 print, 72-75 arithmetic, 82 HH:MM, 83 MM:SS</td>
+<td>70/71 print, 72-75 arithmetic, 82 HH:MM, 83 MM:SS, 76-81 reserved</td>
 <td>248 width, 249 operand, 250 reserved, 251 result</td>
 </tr>
 </tbody>
@@ -519,6 +519,9 @@ process, the way classic DAAD games initialised externs from <code>PRO 6</code>.
 at <code>$C00A</code> - slot n at <code>$C00A + 3n</code>, so slot 0 is <code>CALL 10 192</code> -
 never routine addresses, which move whenever any module is edited. An
 unowned slot jumps to a bare <code>RET</code> and does nothing.</p>
+<p>Collection modules get that table from <code>xbnmod.inc</code>'s <code>XBN_BEGIN</code>, used
+in place of <code>XBN_HEADER</code>; <code>CONTRIBUTING.md</code> at the repository root
+documents the module shape.</p>
 <h3 id="hints-a-hint-book-on-the-card">hints - a hint book on the card</h3>
 <p>Author <code>HINTS.TXT</code> beside your game source; <code>BUILD.BAT</code> packs it into
 <code>RELEASE\GAME.HNT</code> (up to 256 topics, 255 levels per topic, 64KB of
@@ -578,6 +581,9 @@ fn 74 compares (0 less, 1 equal, 2 greater); fns 82/83 format HH:MM and
 MM:SS. Four printing functions are also reachable through <code>CALL</code> slots
 0-3 with the flag number in flag 249. The module's README has the full
 worked status line.</p>
+<p>A number printed as the last thing in an entry stays in the word
+wrapper's buffer until a space, a newline or a <code>WINDOW</code> switch flushes
+it.</p>
 <h2 id="contributing-your-extern">Contributing your extern</h2>
 <p>Written an extern other games could use? The collection above takes
 community submissions - each ships as source plus a

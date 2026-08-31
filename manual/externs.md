@@ -399,7 +399,7 @@ needed.
 | `hints` | Prints hint text served from an SD card file | 50 print, 51 count, 52 preflight, 53 reset | 242 level override, 243 status/count |
 | `clock` | An in-game clock advanced from the frame hook | 60 arm and start, 61 stop, 62 advance | 224 hours, 225 minutes, 226 running, 227/228 rate, 244 days |
 | `timer` | Three countdown timers that expire into flags | 63 arm, 64 stop all, 65 minute deadline | 229-234 pairs, 235-237 states |
-| `toolkit` | Decimal printing, 16-bit flag-pair arithmetic, time formats | 70/71 print, 72-75 arithmetic, 82 HH:MM, 83 MM:SS | 248 width, 249 operand, 250 reserved, 251 result |
+| `toolkit` | Decimal printing, 16-bit flag-pair arithmetic, time formats | 70/71 print, 72-75 arithmetic, 82 HH:MM, 83 MM:SS, 76-81 reserved | 248 width, 249 operand, 250 reserved, 251 result |
 
 Function codes and flags are disjoint across the whole collection, so
 any subset coexists in one binary. Flags 224-251 are the collection's
@@ -431,6 +431,10 @@ process, the way classic DAAD games initialised externs from `PRO 6`.
 at `$C00A` - slot n at `$C00A + 3n`, so slot 0 is `CALL 10 192` -
 never routine addresses, which move whenever any module is edited. An
 unowned slot jumps to a bare `RET` and does nothing.
+
+Collection modules get that table from `xbnmod.inc`'s `XBN_BEGIN`, used
+in place of `XBN_HEADER`; `CONTRIBUTING.md` at the repository root
+documents the module shape.
 
 ### hints - a hint book on the card
 
@@ -507,6 +511,10 @@ fn 74 compares (0 less, 1 equal, 2 greater); fns 82/83 format HH:MM and
 MM:SS. Four printing functions are also reachable through `CALL` slots
 0-3 with the flag number in flag 249. The module's README has the full
 worked status line.
+
+A number printed as the last thing in an entry stays in the word
+wrapper's buffer until a space, a newline or a `WINDOW` switch flushes
+it.
 
 ## Contributing your extern
 

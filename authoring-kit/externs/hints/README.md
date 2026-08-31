@@ -63,10 +63,10 @@ and gives you the paragraph break you would otherwise have to add yourself.
   the packed output.
 - Accented Latin-1 characters are converted the same way the DAAD
   compiler converts them in game text, so a hint prints identically to
-  a compiled message with the same accent. Lowercase ACUTE vowels,
-  n-tilde, c-cedilla, u-diaeresis and a few punctuation marks convert
-  to one byte; grave vowels, uppercase accented vowels and the
-  remaining lowercase accents convert to a three-byte sequence;
+  a compiled message with the same accent. Lowercase acute vowels, plus
+  n-tilde, c-cedilla and u-diaeresis in EITHER case, and a few
+  punctuation marks convert to one byte; every other accented character
+  in the compiler's table converts to a three-byte sequence;
   sharp-s (the German eszett, Latin-1 `$DF`) converts to one byte. A
   Latin-1 character outside this set is not converted - some accented
   letters have no entry in the compiler's own table - and packs as its
