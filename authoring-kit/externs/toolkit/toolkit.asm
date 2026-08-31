@@ -31,6 +31,10 @@ ext:
     jp z, p8
     cp 71
     jp z, p16
+    cp 82
+    jp z, hhmm
+    cp 83
+    jp z, mmss
     ret
 
 pow10:   dw 10000, 1000, 100, 10, 1
@@ -198,6 +202,68 @@ pair_store:
     ret
 
 pairp:   dw 0
+
+; HL / C -> HL quotient, A remainder. C must be 128 or less: the rla
+; shifts the remainder's bit 7 out into CF, and a larger divisor allows a
+; remainder that needs it. Only ever called with 60. Corrupts AF, B, HL.
+div16_8:
+    xor a
+    ld b, 16
+.loop:
+    add hl, hl
+    rla
+    cp c
+    jr c, .skip
+    sub c
+    inc l
+.skip:
+    djnz .loop
+    ret
+
+; fn 82 - print flags param1/param1+1 as HH:MM. Two separate byte flags,
+; not a 16-bit pair: the clock module keeps its hour and minute that way.
+hhmm:
+    ld a, (param)
+    inc a
+    ret z
+    dec a
+    ld l, a
+    ld h, 0
+    ld de, XBN_FLAGS
+    add hl, de
+    ld a, (hl)
+    inc hl
+    ld (tmpptr), hl
+    ld l, a
+    ld h, 0
+    call emit_min2
+    ld a, ':'
+    call SVC_PUTCHAR
+    ld hl, (tmpptr)
+    ld l, (hl)
+    ld h, 0
+    jp emit_min2
+
+; fn 83 - print flags param1/param1+1, a 16-bit second count, as MM:SS.
+mmss:
+    ld a, (param)
+    inc a
+    ret z
+    dec a
+    call pair_read               ; HL = total seconds
+    ld c, 60
+    call div16_8                 ; HL = minutes, A = seconds
+    ld (tmpsec), a
+    call emit_min2
+    ld a, ':'
+    call SVC_PUTCHAR
+    ld a, (tmpsec)
+    ld l, a
+    ld h, 0
+    jp emit_min2
+
+tmpptr:  dw 0
+tmpsec:  db 0
 
 ; No hook. The interpreter still calls this every frame in a combined
 ; build, so it must exist and must return at once.

@@ -4,9 +4,9 @@ A collection of small pure-logic helpers: decimal printing, 16-bit
 arithmetic and time formatting. Unlike `clock` or `timer`, toolkit has no
 frame hook and no arming call - every function runs to completion inside
 the single foreground `EXTERN` that calls it, and there is nothing for a
-LOAD to restore. The module currently ships two functions, fn 70 and fn
-71 for decimal printing; the arithmetic and time-formatting routines
-described here are still to come.
+LOAD to restore. The module currently ships four functions: fn 70 and fn
+71 for decimal printing, fn 82 and fn 83 for time formatting; the
+arithmetic routines described here are still to come.
 
 ## Calling convention
 
@@ -47,3 +47,15 @@ Flag 248 sets the field width, so a status readout lines up:
 
 A number wider than the field prints in full rather than being truncated.
 Fn 71 does nothing if n is 255, which has no n+1.
+
+## Time formats
+
+    EXTERN n 82    ; print flags n/n+1 as HH:MM
+    EXTERN n 83    ; print flags n/n+1, a 16-bit second count, as MM:SS
+
+Both print a fixed two-digit field per part and ignore flag 248. Fn 82 reads
+two separate byte flags, which is how the clock module keeps its hour and
+minute, so `EXTERN 224 82` prints the in-game clock. Fn 83 reads a 16-bit
+count low byte first, so `EXTERN 229 83` prints a real-seconds timer from the
+timer module. A minutes field above 99 prints in full rather than being
+truncated.
