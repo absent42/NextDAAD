@@ -156,9 +156,13 @@
 ; SAVE/LOAD/XCHK/XSVT/XSVD/XADV/XAD1/XRUN/XSVE extend clock/timer coverage
 ; to a REAL SAVE and LOAD - the file-backed condacts, which XTLR's
 ; RAMSAVE/RAMLOAD never touch the SD card and cannot exercise. XSVT/XSVD/
-; XSVE arm a known state and print it with XCHK's line; the tester types
-; XCHK, SAVE, XCHK, LOAD, XCHK by hand around each save/load pair and
-; diffs the three lines.
+; XSVE arm a known state and print it with XCHK's line. The hand protocol
+; MUST mutate between the SAVE and the LOAD or it proves nothing:
+; RESTART does not clear flags, so with no mutation all three readings
+; match whether or not LOAD restored anything. Type:
+;   XCHK, SAVE, XADV (or XAD1), XCHK, LOAD, XCHK
+; and require reading 2 to DIFFER from reading 1 (the mutation took) and
+; reading 3 to MATCH reading 1 (the load undid it).
 ;
 ; The clock is left STOPPED by every setup verb (XSVT/XSVD/XSVE) - running
 ; it left every reading dependent on how long the tester took to type the
@@ -198,6 +202,32 @@
 ;   XSVE - the sharp expiry-boundary setup: XSVT's shape with a 2-minute
 ;          deadline, so two XAD1 steps walk it across expiry. Clock
 ;          STOPPED at 12:00, rate 250. PAUSE 4, XCHK's line.
+
+;
+; LEG SCOPE - which staging leg each verb is meaningful on. A verb typed
+; on the wrong leg prints plausible zeros and proves nothing - the H2
+; lesson: a run-sheet check once drove fn 22 against a binary with no
+; fn 22 handler and its "pass" was void.
+;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
+;     where fns 20-25 exist: XREG XCAL XTIK XSVC XFIO XMSG XMS6
+;     (on any other leg these print unwritten flags - zeros)
+;   no-XBN leg (-XbnNoBin): XABS expects 0; on the fixture leg it
+;     expects 9. Any other leg: meaningless.
+;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
+;     all stage ALL.XBN, so EVERY collection verb is meaningful there:
+;     XTCK XFAD XFDI XFSC XFSO XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
+;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
+;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XSLT
+;   -XbnTicker stages the STANDALONE ticker example: only XTCK is
+;     meaningful there (plus XSLT with all slots printing nothing).
+;   -XbnFade stages the STANDALONE fade example: only XFAD XFDI XFSC
+;     XFSO XDRK are meaningful there (plus the no-op XSLT form).
+;   XSLT prints toolkit output only on toolkit-carrying legs; on other
+;     pinned-table legs every slot must print nothing. NEVER type it on
+;     the fixture leg - no call table there, $C00A is fixture code.
+;   any leg with art staged: XGFB XRST XRLD XDCL XARM (interpreter-side
+;     GFX/PICTURE machinery; no extern involvement)
+;   any leg: XCNR SAVE LOAD
 
 #define fPlayer  38
 
