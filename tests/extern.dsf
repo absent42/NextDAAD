@@ -86,6 +86,16 @@
 ;          of the HH:MM with flag 248 set to a zero-pad width, which
 ;          the time formats must IGNORE.
 ;
+; XTKI/XTKS exercise the status-line pattern a real game uses: the toolkit
+; cannot select a window itself, so the author brackets the call with
+; WINDOW and the print path handles width, colour and wrapping - no other
+; verb here does that. Hardware-only, typed by hand, not asserted against
+; any expected output.
+;   XTKI - arms live values: score 800, clock running from 12:00 at 1
+;          in-game minute/real second, a 5-minute real-seconds timer.
+;   XTKS - paints WINDOW 2 from those values (score width 5, HH:MM,
+;          MM:SS) and restores WINDOW 1. Repaintable on demand.
+;
 ; -XbnHints stages the hints worked example (authoring-kit\externs\hints)
 ; as part of the combined GAME.XBN, plus a packed GAME.HNT. XHNP/XHNQ/
 ; XHNA/XHNR/XHNT drive it, all on TOPIC 0 - the shipped HINTS.TXT gives
@@ -227,6 +237,8 @@ XTKP   142 verb
 XTKA   143 verb
 XTKO   144 verb
 XTKT   145 verb
+XTKI   146 verb
+XTKS   147 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -1031,6 +1043,43 @@ XTKT   145 verb
            MES     " w "
            EXTERN  100 82
            LET     248 0           ; leave the width flag as we found it
+           DONE
+; XTKI - arms live values for the status-line pair below: score, clock
+;        running 1 in-game minute/real second from 12:00, a 5-minute
+;        real-seconds timer.
+> XTKI _   LET     100 32          ; score 800 = 3*256 + 32
+           LET     101 3
+           LET     224 12          ; clock 12:00, day 0
+           LET     225 0
+           LET     244 0
+           LET     227 50          ; 50 frames per in-game minute
+           LET     228 0
+           EXTERN  0 60            ; arm and start the clock
+           EXTERN  0 63            ; arm the timer module
+           LET     229 44          ; 300 real seconds = 1*256 + 44
+           LET     230 1
+           LET     235 1           ; state 1: counting real seconds
+           MES     "armed"
+           DONE
+; XTKS - paints the status line into WINDOW 2 from XTKI's live values,
+;        then restores WINDOW 1. Typed by hand, repeated on demand, so it
+;        cannot disturb any other verb. WINSIZE 1 40 (not 80) so the bar
+;        fits both text modes - the hardware sheet tests both.
+> XTKS _   WINDOW  2
+           WINAT   16 0
+           WINSIZE 1 40
+           PAPER   1
+           INK     7
+           CLS
+           MES     "Score "
+           LET     248 5
+           EXTERN  100 71
+           LET     248 0
+           MES     "  Time "
+           EXTERN  224 82
+           MES     "  Fuse "
+           EXTERN  229 83
+           WINDOW  1
            DONE
 /PRO 6
 ; ---- one-shot init ----
