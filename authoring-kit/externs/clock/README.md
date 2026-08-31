@@ -6,9 +6,12 @@ the hook simply carries on from whatever the flags now say.
 
 ## EXTERN codes
 
-- `EXTERN 0 60` - arm the module and start the clock. Arming is bank state
-  and survives RESTART, a part switch and a LOAD. A rate of 0 at arm time
-  defaults to 50 (one in-game minute per real second).
+- `EXTERN 0 60` - arm the module and start the clock, on the first call
+  only. Arming is bank state and survives RESTART, a part switch and a
+  LOAD, so a repeat call while already armed is a no-op - even if the
+  clock has since been stopped with `EXTERN 0 61`; restart it with
+  `LET 226 1` instead. A rate of 0 at first arm defaults to 50 (one
+  in-game minute per real second).
 - `EXTERN 0 61` - stop the clock. The module stays armed; only the running
   flag clears.
 - `EXTERN p 62` - advance the clock p in-game minutes in one foreground
@@ -69,9 +72,10 @@ charged the whole jump, provided it is under 256 minutes: an advance of 90
 minutes costs it 90, and one of 60 costs it 60.
 
 SETTING the time forward with a plain `LET 224 18` is charged the same way,
-up to that same 256-minute limit. A jump of 256 minutes or more, or any
-backwards move - including one caused by a LOAD restoring an earlier time
-than a running timer last saw - is a discontinuity: the timer silently
-re-syncs to the new time and is charged nothing that frame. A running
-in-game-minute timer therefore survives a LOAD correctly, with nothing for
-the author to re-sync.
+up to that same 256-minute limit; any larger forward jump, or a backwards
+move of more than about 19 hours 45 minutes, is a discontinuity that
+charges nothing. A smaller backwards move - roughly 19h45m up to just
+under a full day - is indistinguishable from an ordinary forward jump
+across midnight, so it IS charged as elapsed time, and a state-2 timer
+landing in that narrow band can still be expired by a LOAD. Stop
+in-game-minute timers across a save or load if that matters to your game.

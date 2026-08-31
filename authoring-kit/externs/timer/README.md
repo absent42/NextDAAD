@@ -41,11 +41,14 @@ A state-2 timer is charged for the whole of a clock jump, so `EXTERN 90 62`
 costs it ninety minutes and `EXTERN 60 62` costs it sixty, provided the jump
 is under 256 minutes. It cannot tell that from an author SETTING the clock
 with a plain `LET 224 18` - a forward set under 256 minutes is charged the
-same way. A jump of 256 minutes or more, or any backwards move - including
-one caused by a LOAD restoring an earlier time than the module last saw -
-is a discontinuity instead: the timer re-syncs to the new time silently and
-is charged nothing that frame, so a running state-2 timer survives a LOAD
-correctly with nothing to re-sync.
+same way. A jump of 256 minutes or more, or a backwards move of more than
+about 19 hours 45 minutes, is a discontinuity instead: the timer re-syncs
+to the new time silently and charges nothing that frame. A smaller
+backwards move - roughly 19h45m up to just under a full day, including one
+caused by a LOAD - is indistinguishable from an ordinary forward jump
+across midnight, so it IS charged as elapsed time and can still expire a
+running state-2 timer; stop in-game-minute timers across a save or load if
+that matters to your game.
 
 ## Notes
 

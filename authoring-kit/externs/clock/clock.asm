@@ -1,6 +1,7 @@
 ; clock.asm - NextDAAD XBN worked example: an in-game clock in the frame hook.
 ;
-;   EXTERN 0 60    arm the module and start the clock
+;   EXTERN 0 60    arm and start the clock, first call only - a repeat
+;                  call while armed is a no-op, even if since stopped
 ;   EXTERN 0 61    stop it
 ;   EXTERN p 62    advance p in-game minutes, hour carry handled
 ;
@@ -119,16 +120,16 @@ int:
     ld a, (XBN_FLAGS + FLAG_RUN)
     or a
     ret z
-    ld hl, (residue)
-    inc hl
-    ld (residue), hl
     ld a, (XBN_FLAGS + FLAG_RATE)
     ld e, a
     ld a, (XBN_FLAGS + FLAG_RATE + 1)
     ld d, a
-    ld a, d                      ; a rate of 0 written mid-run would make the
-    or e                         ; compare below always true - a tick every
-    ret z                        ; frame, forever. Two instructions, running path only
+    ld a, d                      ; rate 0 halts the clock outright - test it
+    or e                         ; BEFORE touching residue, so a halted clock
+    ret z                        ; accumulates nothing to burst on restart
+    ld hl, (residue)
+    inc hl
+    ld (residue), hl
     ld a, h                      ; residue < rate: nothing to do yet
     cp d
     ret c
