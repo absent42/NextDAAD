@@ -184,8 +184,8 @@ msg_probe:
 ; 255: the highest message number, out of range while the MTX holds
 ; fewer than 256 messages. NOT a small number: DRC compiles every
 ; inline MES "literal" into the MTX, so the count grows with the
-; fixture (57 at the time of this fix) and a small probe rots into
-; range - message 50 did exactly that.
+; fixture (66 as shipped; the ceiling is 255) and a small probe rots
+; into range - message 50 did exactly that.
 msg_probe_bad:
     ld a, 255
     call SVC_GETMSG

@@ -104,9 +104,9 @@
 ;   XTKS - paints WINDOW 2 from those values (score width 5, HH:MM,
 ;          MM:SS) and restores WINDOW 1. Repaintable on demand.
 ;
-; -XbnHints stages the hints worked example (authoring-kit\externs\hints)
-; as part of the combined GAME.XBN, plus a packed GAME.HNT. XHNP/XHNQ/
-; XHNA/XHNR/XHNT drive it, all on TOPIC 0 - the shipped HINTS.TXT gives
+; -XbnHints and -XbnAll stage a packed GAME.HNT alongside the combined
+; binary, for the hints worked example (authoring-kit\externs\hints).
+; XHNP/XHNQ/XHNA/XHNR/XHNT drive it, all on TOPIC 0 - the shipped HINTS.TXT gives
 ; topic 0 exactly two levels and topic 1 exactly three, and MODE_R (the
 ; file-open read mode) is also 1, so a build that lost the topic operand
 ; would still answer correctly for topic 1 and hide the bug. XHNT alone
@@ -202,7 +202,7 @@
 ;   XSVE - the sharp expiry-boundary setup: XSVT's shape with a 2-minute
 ;          deadline, so two XAD1 steps walk it across expiry. Clock
 ;          STOPPED at 12:00, rate 250. PAUSE 4, XCHK's line.
-
+;
 ;
 ; LEG SCOPE - which staging leg each verb is meaningful on. A verb typed
 ; on the wrong leg prints plausible zeros and proves nothing - the H2
@@ -218,6 +218,10 @@
 ;     XTCK XFAD XFDI XFSC XFSO XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XSLT
+;     EXCEPT the hints verbs (XHNP XHNQ XHNA XHNR XHNT XHNL), which also
+;     need a packed GAME.HNT - staged only by -XbnAll and -XbnHints. On
+;     -XbnClock/-XbnTool they report file-missing (243 = 1; fn 51 gives
+;     0): a leg artefact, not a module fault.
 ;   -XbnTicker stages the STANDALONE ticker example: only XTCK is
 ;     meaningful there (plus XSLT with all slots printing nothing).
 ;   -XbnFade stages the STANDALONE fade example: only XFAD XFDI XFSC
@@ -507,8 +511,8 @@ XHNL   149 verb
                              ; "TICKER MESSAGE FOR GETMSG"; a truncated
                              ; or over-read decode shows here
            EXTERN 0 24        ; msg_probe_bad: out-of-range message 255
-           PRINT 212         ; expect 1 - valid again only after the
-                             ; xbntest.asm probe fix in the next step
+           PRINT 212         ; expect 1 - msg_probe_bad probes message 255,
+                             ; out of range (see tests\xbn\xbntest.asm)
            DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert
@@ -1079,6 +1083,8 @@ XHNL   149 verb
 ;        advance GAME.HPR and could print status 3 on the FIRST call
 ;        against a used card - the 0/3 pair in this order is the
 ;        discriminator. Leaves flag 242 back at 0 (automatic).
+;        At the bench, type XHNL twice - explicit mode is idempotent,
+;        automatic mode is not.
 > XHNL _   LET     242 2
            EXTERN  0 50            ; topic 0 level 2: prints the hint
            MES     "status "

@@ -396,7 +396,9 @@
 #                              extern.dsf's XTCK/XFAD/XFDI/XFSC verbs
 #                              chain-dispatch through both modules. Same
 #                              scratch-cwd pattern and picture staging as
-#                              -XbnFade (-> tests\out\xbn\ALL.XBN).
+#                              -XbnFade (-> tests\out\xbn\ALL.XBN), plus a
+#                              packed GAME.HNT: ALL.XBN's hints module
+#                              needs one.
 #                              Selection priority when combined:
 #                              -XbnNoBin wins over -XbnBad over
 #                              -XbnTicker over -XbnFade over -XbnAll.
