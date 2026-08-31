@@ -24,10 +24,21 @@ the hook simply carries on from whatever the flags now say.
 - 226 - running (0 stopped, 1 running)
 - 227/228 - rate: frames per in-game minute, 16-bit (low byte 227, high
   byte 228)
+- 244 - days elapsed (0-255)
 
 Setting the time is a plain `LET 224 h` / `LET 225 m` - no EXTERN call
 needed, and nothing to restore after a LOAD since the flags are the only
 copy of the time that exists.
+
+Flag 244 counts days elapsed. It starts at 0, and rolls forward by one every
+time the hour passes 23, whether the minute came from the clock running or from
+`EXTERN p 62`. Set it with a plain `LET 244 3` like any other flag, and test it
+the same way:
+
+    > _  _    EQ  244 3
+              ; the siege reaches its third day
+
+It wraps at 255 days, which no adventure will reach.
 
 The rate is 16-bit. 50 gives one in-game minute per real second; 3000
 gives true 1:1 real time (50 frames/second x 60 seconds). Writing a rate of

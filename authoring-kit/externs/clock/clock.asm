@@ -24,6 +24,7 @@ FLAG_HH         equ 224
 FLAG_MM         equ 225
 FLAG_RUN        equ 226          ; 0 stopped, 1 running
 FLAG_RATE       equ 227          ; frames per in-game minute, 16-bit at 227/228
+FLAG_DAY        equ 244          ; days elapsed; rolls when the hour wraps
 
 ext:
     ld a, b
@@ -103,6 +104,9 @@ tick_minute:
     inc a
     cp 24
     jr c, .storehh
+    ld a, (XBN_FLAGS + FLAG_DAY)     ; hour wrapped past 23, so a day passed
+    inc a
+    ld (XBN_FLAGS + FLAG_DAY), a
     xor a
 .storehh:
     ld (XBN_FLAGS + FLAG_HH), a
