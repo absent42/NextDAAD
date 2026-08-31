@@ -38,15 +38,20 @@ State 2 needs the clock module present and running: with no clock there are no
 in-game minutes, and such a timer simply never advances.
 
 A state-2 timer is charged for the whole of a clock jump, so `EXTERN 90 62`
-costs it ninety minutes and `EXTERN 60 62` costs it sixty. It cannot tell a
-jump from an author SETTING the clock with a plain `LET 224 18` - that is
-charged too, as elapsed time, up to a maximum of 255 minutes in one frame -
-so stop in-game-minute timers across a time set, or set the time before
-starting them.
+costs it ninety minutes and `EXTERN 60 62` costs it sixty, provided the jump
+is under 256 minutes. It cannot tell that from an author SETTING the clock
+with a plain `LET 224 18` - a forward set under 256 minutes is charged the
+same way. A jump of 256 minutes or more, or any backwards move - including
+one caused by a LOAD restoring an earlier time than the module last saw -
+is a discontinuity instead: the timer re-syncs to the new time silently and
+is charged nothing that frame, so a running state-2 timer survives a LOAD
+correctly with nothing to re-sync.
 
 ## Notes
 
 The clock's hour and minute flags (224, 225) are read-only from this module's
 side; it never writes them, and the two modules can be built and shipped
-independently. A timer that reaches zero clamps there and expires rather than
-wrapping past zero, whatever the size of the step that finished it off.
+independently. An armed timer reads flags 224/225 unconditionally, though,
+so in a timer-only build those two flags are not the author's to reuse. A
+timer that reaches zero clamps there and expires rather than wrapping past
+zero, whatever the size of the step that finished it off.

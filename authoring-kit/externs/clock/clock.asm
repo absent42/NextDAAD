@@ -37,9 +37,12 @@ ext:
     ret
 
 ; fn 60 - arm and start. Arming is bank state: it survives RESTART, a part
-; switch and a LOAD, so call it once from the start process. A zero rate
-; defaults to 50, one in-game minute per real second.
+; switch and a LOAD, so call it once from the start process - a repeat call
+; while already armed is a no-op. A zero rate at first arm defaults to 50.
 run:
+    ld a, (armed)
+    or a
+    ret nz                       ; already armed: leave residue and RUN alone
     ld a, 1
     ld (armed), a
     ld hl, 0

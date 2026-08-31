@@ -38,10 +38,8 @@ all_ext:
 
 ; #int chain. IX = flags base is the only documented register; every
 ; module's int is a load-and-test when idle.
-; clock.int runs before timer.int deliberately: the timer compares the
-; clock's flags against what it saw last frame, so it cannot miss a
-; change either order, but calling clock first lets a state-2 timer
-; react in the same frame instead of the next. Do not reorder.
+; clock.int before timer.int: either order sees the change, but clock
+; first lets a state-2 timer react the same frame. Do not reorder.
 all_int:
     ld ix, XBN_FLAGS
     call ticker.int

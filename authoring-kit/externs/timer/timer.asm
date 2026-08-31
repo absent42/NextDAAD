@@ -121,11 +121,9 @@ int:
     ld (lasthh), a
     ld a, (XBN_FLAGS + FLAG_CLOCK_MM)
     ld (lastmm), a
-    ld a, h                      ; step_all takes a byte; one fn 62 call moves
-    or a                         ; at most 255 minutes, so clamp rather than
-    jr z, .fits                  ; truncate if anything ever exceeds it
-    ld l, 255
-.fits:
+    ld a, h                      ; nonzero H = 256+ minutes or a backwards
+    or a                         ; jump - never legitimate (fn 62 caps at
+    ret nz                       ; 255); re-baselined above, charge nothing
     ld a, l
     ld (delta), a
     ld c, ST_MINUTES

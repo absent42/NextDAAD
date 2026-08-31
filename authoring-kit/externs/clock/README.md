@@ -27,12 +27,9 @@ needed, and nothing to restore after a LOAD since the flags are the only
 copy of the time that exists.
 
 The rate is 16-bit. 50 gives one in-game minute per real second; 3000
-gives true 1:1 real time (50 frames/second x 60 seconds).
-
-Arming is a one-line call from the start process: put `EXTERN 0 60` there
-the way classic DAAD games initialised externs from PRO 6. After
-`EXTERN 0 61`, `LET 226 1` restarts the clock without a further EXTERN
-call.
+gives true 1:1 real time (50 frames/second x 60 seconds). Writing a rate of
+0 while the clock is running silently halts it - the zero-rate default only
+applies at arm time.
 
 Arming with `EXTERN 0 60` is remembered for the whole session - it survives
 `RESTART`, a part switch and a `LOAD` - so after `EXTERN 0 61` you can restart
@@ -68,10 +65,13 @@ ships its HH:MM format, print flags 224 and 225 as plain numbers.
 
 `EXTERN p 62` moves the clock forward in one go, which is what you want for
 sleeping or travelling. A countdown timer running in in-game minutes is
-charged the whole jump: an advance of 90 minutes costs it 90, and one of 60
-costs it 60.
+charged the whole jump, provided it is under 256 minutes: an advance of 90
+minutes costs it 90, and one of 60 costs it 60.
 
-SETTING the time is charged too, and that one surprises people. A timer
-cannot tell `LET 224 18` at a chapter break from time genuinely passing, so
-it will be charged the whole difference. Stop any in-game-minute timers
-across a time set, or set the time before you start them.
+SETTING the time forward with a plain `LET 224 18` is charged the same way,
+up to that same 256-minute limit. A jump of 256 minutes or more, or any
+backwards move - including one caused by a LOAD restoring an earlier time
+than a running timer last saw - is a discontinuity: the timer silently
+re-syncs to the new time and is charged nothing that frame. A running
+in-game-minute timer therefore survives a LOAD correctly, with nothing for
+the author to re-sync.

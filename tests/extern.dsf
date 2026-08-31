@@ -128,6 +128,7 @@ XCLA   127 verb
 XCLS   128 verb
 XTMR   129 verb
 XTMI   130 verb
+XTLR   131 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -516,6 +517,31 @@ XTMI   130 verb
            PRINT   236
            MES " rem "
            PRINT   231
+           DONE
+; XTLR - a RAMLOAD moving the clock backwards from what the timer last
+;        saw must not expire a running state-2 timer. Snapshot rem=90 at
+;        12:00, drift to 12:05, restore to 12:00: state must stay 2, rem 90.
+> XTLR _   LET     224 12
+           LET     225 0
+           LET     227 50
+           LET     228 0
+           EXTERN  0 60
+           EXTERN  0 63
+           LET     229 90
+           LET     230 0
+           LET     235 2
+           RAMSAVE
+           LET     225 5           ; drift the live clock: charges the live
+                                   ; timer, which RAMLOAD below then undoes
+           PAUSE   20
+           RAMLOAD 255             ; clock and timer flags back to the
+                                   ; snapshot; the module's lasthh/lastmm
+                                   ; is NOT restored - the bug this pins
+           PAUSE   20
+           MES "state "
+           PRINT   235
+           MES " rem "
+           PRINT   229
            DONE
 /PRO 6
 ; ---- one-shot init ----
