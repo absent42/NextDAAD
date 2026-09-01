@@ -222,7 +222,7 @@ DDB_E_MACHINE   equ 4       ; built for another target machine
 
 ; --- XBN extern binary (authoring-kit/xbn.inc is the authoring side) ---
 XBN_MAX_SIZE    equ $4000    ; one 16K bank, header included
-XBN_HDR_LEN     equ 10       ; "XBN" + version + extEntry + intEntry + size
+XBN_HDR_LEN     equ 14       ; "XBN" + version + extEntry + intEntry + size + 4 reserved (zero)
 
 ; Service jump table: FROZEN address, from the first release with XBN
 ; support - authoring-kit/xbn.inc mirrors this exact value for SVC_*;

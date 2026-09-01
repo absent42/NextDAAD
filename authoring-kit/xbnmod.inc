@@ -4,7 +4,7 @@
 
 XBN_CALL_SLOTS  equ 8            ; FROZEN at first release. Append only.
 
-; Emits header then 8 three-byte slots at $C00A (slot n = $C00A + 3n);
+; Emits header then 8 three-byte slots at $C00E (slot n = $C00E + 3n);
 ; absent slots jump to xbn_null_ret. Invoke once per binary.
     MACRO XBN_BEGIN ext_entry, int_entry
         XBN_HEADER ext_entry, int_entry
@@ -26,7 +26,7 @@ xbn_call_table:
         jp xbn_null_ret          ; slot 7 reserved
 xbn_null_ret:
         ret
-        ASSERT xbn_call_table == XBN_ORG + 10, xbn_call_table moved off $C00A
+        ASSERT xbn_call_table == XBN_ORG + 14, xbn_call_table moved off $C00E
         ASSERT (xbn_null_ret - xbn_call_table) == 3 * XBN_CALL_SLOTS, call table length does not match XBN_CALL_SLOTS
 ; Palette ownership: fade and atmosphere both drive the Layer 2 palette
 ; from the #int hook, and overlapping writes corrupt an entry.

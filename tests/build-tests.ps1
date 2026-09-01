@@ -356,12 +356,13 @@
 #                              XABS no-XBN control - EXTERN must stay inert).
 #              -XbnBad <kind> stage a corrupt/truncated variant AS
 #                              GAME.XBN instead of the good one - magic |
-#                              ver | size | trunc; a kind is required, a
-#                              bare -XbnBad errors. Omit -XbnBad entirely
-#                              to stage the good GAME.XBN (the default).
-#                              For Task 2's validation-reject checks; the four
-#                              variants (tests\out\xbn\BADMAGIC.XBN /
-#                              BADVER.XBN / BADSIZE.XBN / TRUNC.XBN) are
+#                              ver | rsv | shorthdr | size | trunc; a kind
+#                              is required, a bare -XbnBad errors. Omit
+#                              -XbnBad entirely to stage the good GAME.XBN
+#                              (the default). For Task 2's validation-reject
+#                              checks; the six variants (tests\out\xbn\
+#                              BADMAGIC.XBN / BADVER.XBN / BADRSV.XBN /
+#                              SHORTHDR.XBN / BADSIZE.XBN / TRUNC.XBN) are
 #                              generated unconditionally alongside the good
 #                              GAME.XBN so a break in the generator is
 #                              caught on a plain run.
@@ -669,7 +670,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -2808,8 +2809,11 @@ foreach ($xcalName in 'call_target', 'tail_marker') {
 $xbnGood = [IO.File]::ReadAllBytes("$root\tests\out\xbn\GAME.XBN")
 $xbnBadMagic = $xbnGood.Clone(); $xbnBadMagic[0] = 0x5A                    # magic
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADMAGIC.XBN", $xbnBadMagic)
-$xbnBadVer = $xbnGood.Clone(); $xbnBadVer[3] = 2                          # version
+$xbnBadVer = $xbnGood.Clone(); $xbnBadVer[3] = 1                          # version 1: the pre-v2 header, now rejected
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADVER.XBN", $xbnBadVer)
+$xbnBadRsv = $xbnGood.Clone(); $xbnBadRsv[10] = 1                          # reserved byte nonzero
+[IO.File]::WriteAllBytes("$root\tests\out\xbn\BADRSV.XBN", $xbnBadRsv)
+[IO.File]::WriteAllBytes("$root\tests\out\xbn\SHORTHDR.XBN", $xbnGood[0..11])  # shorter than the 14-byte header
 $xbnBadSize = $xbnGood.Clone(); $xbnBadSize[8] = 0x01; $xbnBadSize[9] = 0x40 # size $4001
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\BADSIZE.XBN", $xbnBadSize)
 [IO.File]::WriteAllBytes("$root\tests\out\xbn\TRUNC.XBN", $xbnGood[0..99])
@@ -2988,7 +2992,7 @@ if ($Xbn) {
         "staged tests\out\extern.ddb -> sd\$legName\GAME.DDB (no GAME.XBN staged - -XbnNoBin)"
     }
     elseif ($XbnBad) {
-        $xbnBadFile = @{ magic = 'BADMAGIC.XBN'; ver = 'BADVER.XBN'; size = 'BADSIZE.XBN'; trunc = 'TRUNC.XBN' }[$XbnBad]
+        $xbnBadFile = @{ magic = 'BADMAGIC.XBN'; ver = 'BADVER.XBN'; rsv = 'BADRSV.XBN'; shorthdr = 'SHORTHDR.XBN'; size = 'BADSIZE.XBN'; trunc = 'TRUNC.XBN' }[$XbnBad]
         Copy-Item "$root\tests\out\xbn\$xbnBadFile" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\$xbnBadFile -> sd\$legName\GAME.XBN (-XbnBad $XbnBad reject variant)"
     }

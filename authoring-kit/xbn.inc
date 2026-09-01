@@ -5,14 +5,15 @@
 
 XBN_ORG         equ $C000
 
-; Emits the 10-byte XBN header. ext_entry/int_entry: label or 0.
+; Emits the 14-byte XBN header. ext_entry/int_entry: label or 0.
 ; The author MUST define a label named xbn_end after their last byte.
     MACRO XBN_HEADER ext_entry, int_entry
         db "XBN"
-        db 1                    ; format version
+        db 2                    ; format version
         dw ext_entry
         dw int_entry
         dw xbn_end - XBN_ORG    ; total size, header included
+        ds 4, 0                 ; v2 reserved, must be zero
     ENDM
 
 ; Frozen interpreter data anchors (never move between releases)

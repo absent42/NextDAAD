@@ -228,7 +228,7 @@
 ;     XFSO XDRK are meaningful there (plus the no-op XSLT form).
 ;   XSLT prints toolkit output only on toolkit-carrying legs; on other
 ;     pinned-table legs every slot must print nothing. NEVER type it on
-;     the fixture leg - no call table there, $C00A is fixture code.
+;     the fixture leg - no call table there, $C00E is fixture code.
 ;   any leg with art staged: XGFB XRST XRLD XDCL XARM (interpreter-side
 ;     GFX/PICTURE machinery; no extern involvement)
 ;   any leg: XCNR SAVE LOAD
@@ -435,14 +435,14 @@ XHNL   149 verb
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 113 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C071 (lsb 113, msb 192) - read
+> XCAL _   CALL 117 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C075 (lsb 117, msb 192) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves.
            PRINT 220         ; expect 119 ($77)
-           CALL 142 226       ; Task 4's owed check: tail_marker, address
-                             ; $E28E (lsb 142, msb 226) - the SECOND 8K page
+           CALL 146 226       ; Task 4's owed check: tail_marker, address
+                             ; $E292 (lsb 146, msb 226) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above.
@@ -455,27 +455,27 @@ XHNL   149 verb
 ;        hardcoded to one flag rather than reading 249 cannot follow the
 ;        move. Safe no-op only on legs staging a pinned-table binary
 ;        (-XbnAll/-XbnTicker/-XbnFade/-XbnClock/-XbnTool). DO NOT TYPE
-;        on the plain -Xbn leg: no table there, so $C00A is fixture code.
+;        on the plain -Xbn leg: no table there, so $C00E is fixture code.
 > XSLT _   LET     110 42
            LET     111 9           ; non-zero: a byte/pair confusion would show
            LET     248 0
            LET     249 110
            MES     "slot0 "
-           CALL    10 192          ; slot 0 = fn 70: flag 110
+           CALL    14 192          ; slot 0 = fn 70: flag 110
            MES     " slot1 "
-           CALL    13 192          ; slot 1 = fn 71: pair 110/111
+           CALL    17 192          ; slot 1 = fn 71: pair 110/111
            LET     112 9
            LET     113 5
            LET     249 112         ; move the pointer: a hardcoded dispatch
            MES     " slot2 "       ; cannot follow this
-           CALL    16 192          ; slot 2 = fn 82: flags 112/113
+           CALL    20 192          ; slot 2 = fn 82: flags 112/113
            MES     " slot3 "
            LET     114 90          ; 90 seconds
            LET     115 0
            LET     249 114
-           CALL    19 192          ; slot 3 = fn 83: MM:SS
+           CALL    23 192          ; slot 3 = fn 83: MM:SS
            MES     " n["
-           CALL    22 192          ; slot 4: unowned, must print nothing
+           CALL    26 192          ; slot 4: unowned, must print nothing
            MES     "]"
            DONE
 > XCNR _   CLEAR 220

@@ -2580,7 +2580,7 @@ xbn_boot_load:
     jp nz, .reject
     inc hl
     ld a, (hl)
-    cp 1
+    cp 2
     jp nz, .reject
     inc hl
     ld e, (hl)
@@ -2597,6 +2597,20 @@ xbn_boot_load:
     inc hl
     ld d, (hl)
     ld (.hdrSize), de
+
+    ; v2: four reserved bytes, must be zero - the future door. A later
+    ; release may make one load-bearing; this reject is what makes that
+    ; safe without another version cliff.
+    inc hl
+    ld a, (hl)
+    inc hl
+    or (hl)
+    inc hl
+    or (hl)
+    inc hl
+    or (hl)
+    jp nz, .reject
+
     call data_restore             ; window done; the rest is arithmetic
                                   ; on the cached fields - .reject below
                                   ; calls data_restore again on any later
