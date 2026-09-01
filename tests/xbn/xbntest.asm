@@ -127,16 +127,18 @@ int_tick:
     ; once per tick and compare to the previous draw - any two differing
     ; sets the sticky "alive" bit (219); 125 hook draws (XRSK's PAUSE 250)
     ; all equal has probability ~0 for a live PRNG, so 219 staying 0
-    ; flags a wedged or torn shared stream. This is the hook calling
-    ; SVC_RANDOM WITH INTERRUPTS DISABLED (inside the ISR) - the case the
-    ; svc_random DI/EI bracket exists for. AF/HL clobber here is already
-    ; established practice in this hook - .xbnhook_fast (interrupts.asm)
-    ; saves full context before the call.
+    ; flags a wedged or torn shared stream. svc_random's DI/EI bracket
+    ; samples/restores the caller's own interrupt state - hook context
+    ; is not unconditionally interrupts-off (the frame ISR's audio path
+    ; EIs before reaching the hook, interrupts.asm:282); this fixture
+    ; leg happens to arrive disabled (no audio armed). AF/HL clobber
+    ; here is already established practice in this hook - .xbnhook_fast
+    ; (interrupts.asm) saves full context before the call.
     ld a, (XBN_FLAGS+217)
     or a
     ret z
-    call SVC_RANDOM              ; A = new draw; interrupts stay disabled
-                                 ; throughout (svc_random's own DI bracket)
+    call SVC_RANDOM              ; A = new draw; svc_random's bracket
+                                 ; restores this call's own entry state
     ld hl, XBN_FLAGS+218
     cp (hl)
     ld (hl), a                   ; store new draw either way; cp did not
