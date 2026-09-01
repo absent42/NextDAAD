@@ -29,9 +29,10 @@ xbn_null_ret:
         ASSERT xbn_call_table == XBN_ORG + 14, xbn_call_table moved off $C00E
         ASSERT (xbn_null_ret - xbn_call_table) == 3 * XBN_CALL_SLOTS, call table length does not match XBN_CALL_SLOTS
 ; Palette ownership: fade and atmosphere both drive the Layer 2 palette
-; from the #int hook, and overlapping writes corrupt an entry.
+; from the #int hook, but only check ownership there (never acquire) -
+; overlapping unchecked writes corrupt an entry.
 xbn_pal_owner: db 0              ; 0 free, 1 fade, 2 atmosphere
-xbn_pal_acquire:                 ; A = my id. CF clear = mine now
+xbn_pal_acquire:                 ; A = 1 or 2. FOREGROUND-ONLY (EXTERN context) - never from a hook. CF clear = mine now
         push hl
         ld hl, xbn_pal_owner
         cp (hl)
@@ -50,7 +51,7 @@ xbn_pal_acquire:                 ; A = my id. CF clear = mine now
         pop hl
         scf
         ret
-xbn_pal_release:                 ; A = my id; frees only if mine
+xbn_pal_release:                 ; A = my id; frees only if mine. Foreground or the owner's own hook
         push hl
         ld hl, xbn_pal_owner
         cp (hl)
