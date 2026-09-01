@@ -238,6 +238,10 @@
 ;     where fns 20-29, 35 and 36 exist: XREG XCAL XTIK XSVC XFIO XMSG
 ;     XMS6 XCND XCNC XFRM XRSK XDAT (fns 26-29, 35 and 36 exist only in
 ;     xbntest.asm) (on any other leg these print unwritten flags - zeros)
+;   XDAT lives in the fixture leg's fn table (fn 36) but is
+;     SILICON-ONLY: DO NOT TYPE it in an emulator replay - ZEsarUX's
+;     esxdos handler lacks M_GETDATE and the call derails the machine.
+;     Runs only in a real-hardware RC silicon session.
 ;   no-XBN leg (-XbnNoBin): XABS expects 0; on the fixture leg it
 ;     expects 9. Any other leg: meaningless.
 ;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
@@ -599,11 +603,14 @@ XDAT   154 verb
            MES     "alive "
            PRINT   219
            DONE
-; XDAT - GETDATE presence probe. Emulator: either outcome is valid and
-;        RECORDED, not asserted (rtc presence varies; the RTC-absent
-;        path is a silicon/RC check per the spec and the checklist's
-;        M_GETDATE entry). What IS asserted: the call returns (no hang)
-;        and the presence byte is 0 or 1, never the 9 poison.
+; XDAT - GETDATE presence probe. SILICON-ONLY: on real NextZXOS the
+;        rst $08 M_GETDATE call returns normally, CF reporting RTC
+;        presence - expected `rtc 0` or `rtc 1`, never the 9 poison.
+;        DO NOT TYPE on ZEsarUX: its esxdos handler does not implement
+;        M_GETDATE and the call derails the machine instead of
+;        returning (breakpoint-proven on both interpreter variants -
+;        PC ends up in ROM error-report territory with a near-zero
+;        SP). This verb belongs to the RC silicon run sheet only.
 > XDAT _   LET     223 9
            EXTERN  0 36
            MES     "rtc "
