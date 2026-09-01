@@ -12,18 +12,24 @@ level its offset; the extern only reads what the packer wrote.
 
 - `EXTERN n 50` - print topic n's hint. With flag 242 = 0 (automatic),
   prints the topic's next unread level from `GAME.HPR` and advances it
-  by one; if the advance fails to save, flag 243 reports 5 rather than
-  0, even though the hint printed. With flag 242 nonzero, prints that
-  level (1-based) instead and does not touch `GAME.HPR`.
-- `EXTERN n 51` - level count for topic n, written into flag 243.
-- `EXTERN 0 52` - preflight: opens `GAME.HNT`, validates its header, and
-  reports whether the hint file is present and readable. Call this once
-  near the start of the game so a broken or missing hint file degrades
-  quietly instead of failing later, mid-hint.
+  by one: printed; if the progress save fails the hint may reprint next
+  time. With flag 242 nonzero, prints that level (1-based) instead and
+  does not touch `GAME.HPR`. CF set means no further hint to give: no
+  such topic, no such level, or `GAME.HNT` is unavailable.
+- `EXTERN n 51` - level count for topic n, written into flag 243. An
+  action: always CF clear, including when the topic has no levels
+  (writes 0).
+- `EXTERN 0 52` - preflight: opens `GAME.HNT` and validates its header.
+  Call this once near the start of the game so a broken or missing hint
+  file degrades quietly instead of failing later, mid-hint. CF set means
+  the hint book is unavailable - missing, unreadable, truncated, or this
+  interpreter predates the module's minimum API (`MIN_API`, checked via
+  `SVC_VERSION` - the manual's own worked example of interpreter
+  versioning).
 - `EXTERN 0 53` - rewrites `GAME.HPR` blank, resetting every topic's
   automatic-mode progress to level 0. Independent of `LOAD`/`RESTART`,
-  which do not touch it. Flag 243 reports 5, not 0, if the blank write
-  fails - the file is then left in whatever state that write reached.
+  which do not touch it. CF set means the reset did not take - the file
+  is left in whatever state that write reached.
 
 ## Flags
 
@@ -31,21 +37,13 @@ level its offset; the extern only reads what the packer wrote.
   topic's next level from `GAME.HPR`, prints it, and stores level+1
   back. A nonzero value pins every topic to that level instead (1 =
   the first hint) and never touches `GAME.HPR`.
-- Flag 243 - status after fn 50/52/53, or the level count after fn 51.
+- Flag 243 - the level count after fn 51. Fn 50/52/53 report through CF
+  only and never touch this flag.
 
-| Flag 243 after | Means |
-|---|---|
-| 0 | the hint printed, or the file is readable (fn 52), or fn 53 cleared progress |
-| 1 | `GAME.HNT` missing, unreadable, or truncated - opening it (fn 50/52/53) failed, or fn 50's level-table entry could not be read |
-| 2 | no such topic, or (automatic mode only) `GAME.HPR` could not be opened or read |
-| 3 | no such level - the player has had every hint for this topic |
-| 4 | this interpreter is older than the extern needs |
-| 5 | `GAME.HPR` could not be written - fn 50 printed the hint but the new level was not saved, or fn 53 could not create/write a blank `GAME.HPR` and progress was not cleared |
-
-After `EXTERN n 51`, flag 243 holds the topic's level COUNT instead. Zero
-means "no hints available" - whether the topic does not exist or the hint file
-is missing entirely. Fn 51 never reports a status code, because a code would be
-indistinguishable from a count.
+After `EXTERN n 51`, flag 243 holds the topic's level COUNT. Zero means
+"no hints available" - whether the topic does not exist or the hint file
+is missing entirely. Fn 51 never reports a status code, because a code
+would be indistinguishable from a count.
 
 Each hint ends with a line break, emitted by the extern. That both flushes the
 print path's word buffer, without which the hint's final word would not appear,
@@ -100,9 +98,9 @@ fixed typos, reworded hints - without invalidating players' existing
 `GAME.HPR`: the seed never changes, so old progress still decodes
 correctly against the new `GAME.HNT`. The one case that does not carry
 over: if an update REMOVES levels so a topic ends up with fewer than a
-player has already read, that topic reports flag 243 = 3 (no more
-hints) for them from then on. `EXTERN 0 53` clears a player's progress
-if that needs resetting.
+player has already read, `EXTERN n 50` fails (CF set: no further hint)
+for them from then on. `EXTERN 0 53` clears a player's progress if that
+needs resetting.
 
 Automatic-mode progress lives in `GAME.HPR` beside your game, not in
 flags, so hint level costs the author no game flags at all. It does
@@ -113,7 +111,9 @@ start fresh. `GAME.HNT` itself is never written, so a power cut
 mid-update can only ever damage the disposable `GAME.HPR` - never the
 author's hint text. If `GAME.HPR` is missing, the next automatic-mode
 call creates a fresh zeroed one; if it is present but unreadable at a
-given topic, that call reports flag 243 = 2 rather than guessing. A
-short read or a failed write is always reported rather than acted on
-with whatever happened to be in RAM - flag 243 = 2 for a read that
-came back wrong, flag 243 = 5 for a write that did not go through.
+given topic, `EXTERN n 50` fails (CF set) rather than guessing - a
+failed read is always reported that way rather than acted on with
+whatever happened to be in RAM. A failed WRITE is different: the hint
+has already printed by the time the level save is attempted, so a
+write failure does not fail the entry - it is a success, and the same
+level may print again on the next call.

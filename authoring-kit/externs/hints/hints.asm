@@ -5,9 +5,10 @@
 ;   EXTERN 0 52    preflight: is the hint file present and readable
 ;   EXTERN 0 53    clear all progress
 ;
-; Flag 242 = level override (0 = automatic), flag 243 = status or count.
-; Nothing prints on failure: per the Release policy a player never sees an
-; advisory error code, so every fault reports in flag 243 only.
+; Flag 242 = level override (0 = automatic), flag 243 = fn 51's count only.
+; Every other outcome is CF: set is the fn's one documented failure, clear
+; is success - see each handler below. No status code, no player-visible
+; print.
 
     IFNDEF XBN_MODULE
     DEVICE ZXSPECTRUMNEXT
@@ -20,16 +21,10 @@
     MODULE hints
 
 FLAG_LEVEL      equ 242          ; author's override: 0 = use GAME.HPR
-FLAG_STATUS     equ 243          ; status for fn 50/52/53, count for fn 51
+FLAG_STATUS     equ 243          ; fn 51's level count only - fn 50/52/53
+                                 ; report via CF, see each handler
 
-ST_OK           equ 0
-ST_NOFILE       equ 1            ; missing, unreadable or truncated GAME.HNT
-ST_NOTOPIC      equ 2            ; topic absent or above maxTopic
-ST_NOLEVEL      equ 3            ; level past this topic's ceiling
-ST_OLDAPI       equ 4            ; interpreter older than this extern needs
-ST_NOSAVE       equ 5            ; GAME.HPR write failed: level printed/reset attempted, not stored
-
-MIN_API         equ 1            ; lowest SVC_VERSION that serves this module
+MIN_API         equ 2            ; lowest SVC_VERSION that serves this module
 
 ; esxDOS open modes (NextZXOS esxapi.def): read $01, write $02,
 ; open-existing $00, open-or-create $08, create+truncate $0C.
@@ -51,26 +46,25 @@ ext:
     jp z, preflight               ; jp, not jr: several hundred bytes sit
     cp 53                         ; between here and the handlers
     jp z, clearprog
+.notmine:
+    or a                         ; CF clear: unrecognised fn, no failure
     ret
 
-; fn 52 - open GAME.HNT, validate its header, leave the result in flag 243.
+; fn 52 - open GAME.HNT, validate its header; CF set means unavailable.
 ; Also the graceful-degrade example: an interpreter whose API predates the
 ; file services cannot serve us, so say so rather than calling into it.
 preflight:
     call SVC_VERSION
     cp MIN_API
     jr nc, .versionok
-    ld a, ST_OLDAPI
-    jp status
+    jp verdict_fail               ; interpreter predates this module's API
 .versionok:
     call open_hnt
     jr c, .nofile
     call close_hnt
-    xor a
-    jp status
+    jp verdict_ok
 .nofile:
-    ld a, ST_NOFILE
-    jp status
+    jp verdict_fail
 
 ; Opens GAME.HNT read-only and validates magic and version. Out: CF set on
 ; any failure, handle in (handle) on success.
@@ -184,9 +178,13 @@ write_blank:
     call SVC_FWRITE
     ret
 
-; Writes A to flag 243 and returns.
-status:
-    ld (XBN_FLAGS + FLAG_STATUS), a
+; fn 52/53 share these tails. fn 50 has its own (fail: below, which must
+; close two handles first); fn 51 is an action and never fails.
+verdict_ok:
+    xor a                        ; CF clear: success
+    ret
+verdict_fail:
+    scf                          ; CF set: this fn's one documented failure
     ret
 
 ; Seeks the open handle to the 16-bit offset in HL. BC is always zero: every
@@ -319,11 +317,15 @@ query:
     push af
     call close_hnt
     pop af
-    jp status
+    ld (XBN_FLAGS + FLAG_STATUS), a
+    or a                         ; CF clear: fn 51 is an action
+    ret
 .none:
     call close_hnt
     xor a
-    jp status
+    ld (XBN_FLAGS + FLAG_STATUS), a
+    or a                         ; CF clear: topic has no levels, count is 0
+    ret
 
 ; Reads topic B's progress byte into A. CF set on failure.
 hpr_read:
@@ -419,9 +421,9 @@ show:
     jr nc, .nolevel              ; want >= levels
     call read_entry
     jr c, .nofile                 ; topic exists; its level table read failed -
-                                  ; a truncated GAME.HNT, same as open_hnt's ST_NOFILE
+                                  ; a truncated GAME.HNT, same failure as open_hnt's
     call print_text
-    jr c, .nofile                ; stopped partway or failed to start: no ST_OK
+    jr c, .nofile                ; stopped partway or failed to start: not success
     ld a, (autom)
     or a
     jr z, .done
@@ -431,39 +433,26 @@ show:
     ld a, (topic)
     ld b, a
     pop af
-    call hpr_write
-    push af                      ; hold hpr_write's CF - SVC_FCLOSE clobbers AF
-    ld a, (hprh)
-    call SVC_FCLOSE
-    ld a, $FF
-    ld (hprh), a
-    pop af
-    jr c, .nosave                ; hint printed but the new level did not save
+    call hpr_write                ; printed already; a failed save is still
+                                  ; success (the hint may reprint next time)
 .done:
     xor a
     jr fail                      ; the epilogue closes both handles
-.nosave:
-    ld a, ST_NOSAVE
-    jr fail
 .notopic:
-    ld a, ST_NOTOPIC
-    jr fail
 .nolevel:
-    ld a, ST_NOLEVEL
-    jr fail
 .nofile:
-    ld a, ST_NOFILE
+    scf
     jr fail
 
-; Every fn 50 exit lands here. Closing BOTH handles on every path is the
-; point: the exhausted-topic case is reached on ordinary play, and leaking a
-; handle per call runs esxDOS out of them.
+; Every fn 50 exit lands here. Closing BOTH handles on every path matters -
+; leaking one per call runs esxDOS out of them. Callers set CF before
+; jumping in; the push/pop af bracket carries it across both closes.
 fail:
     push af
     call close_hnt
     call close_hpr
     pop af
-    jp status
+    ret
 
 ; Reads the level table entry for level (want) of the current topic.
 ; Out: (toff) = text offset, (tlen) = text length, CF set on read failure.
@@ -612,14 +601,10 @@ clearprog:
     ld (hprh), a
     pop af
     jr c, .nosave
-    xor a
-    jp status
+    jp verdict_ok
 .nosave:
-    ld a, ST_NOSAVE
-    jp status
 .nofile:
-    ld a, ST_NOFILE
-    jp status
+    jp verdict_fail
 
 thisrun: db 0
 want:    db 0
