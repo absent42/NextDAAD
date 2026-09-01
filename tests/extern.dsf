@@ -45,6 +45,14 @@
 ;          (message 255 - out of range while the MTX holds fewer than
 ;          256 messages; MES literals compile into the MTX, so a small
 ;          probe number rots into range).
+;   XCND - EXTERN condition semantics (fn 26, xbntest.asm's condition
+;          probe: scf/ret, ALWAYS fails). Pins the split return path:
+;          a forwarded extern's CF-set verdict fails the entry AND
+;          clears the done state. First entry is the ruled edge - a
+;          MES runs (stamping done) before the failing EXTERN, and the
+;          clear must win anyway.
+;   XCNC - EXTERN condition semantics, control (fn 27, xbntest.asm's
+;          or a/ret: ALWAYS succeeds). The entry must complete.
 ;
 ; MTX message 0 is reserved verbatim as the Task 8 SVC_GETMSG probe
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
@@ -209,7 +217,8 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-25 exist: XREG XCAL XTIK XSVC XFIO XMSG XMS6
+;     where fns 20-27 exist: XREG XCAL XTIK XSVC XFIO XMSG XMS6
+;     XCND XCNC (fns 26/27 exist only in xbntest.asm)
 ;     (on any other leg these print unwritten flags - zeros)
 ;   no-XBN leg (-XbnNoBin): XABS expects 0; on the fixture leg it
 ;     expects 9. Any other leg: meaningless.
@@ -288,6 +297,8 @@ XTKI   146 verb
 XTKS   147 verb
 XTMS   148 verb
 XHNL   149 verb
+XCND   150 verb
+XCNC   151 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -435,14 +446,16 @@ XHNL   149 verb
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 117 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C075 (lsb 117, msb 192) - read
+> XCAL _   CALL 132 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C084 (lsb 132, msb 192) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
-                             ; changes and call_target's address moves.
+                             ; changes and call_target's address moves. Moved
+                             ; from $C075 by Task 2's fn 26/27 dispatch code
+                             ; landing ahead of call_target in ext_main.
            PRINT 220         ; expect 119 ($77)
-           CALL 146 226       ; Task 4's owed check: tail_marker, address
-                             ; $E292 (lsb 146, msb 226) - the SECOND 8K page
+           CALL 166 226       ; Task 4's owed check: tail_marker, address
+                             ; $E2A6 (lsb 166, msb 226) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above.
@@ -514,6 +527,36 @@ XHNL   149 verb
            PRINT 212         ; expect 1 - msg_probe_bad probes message 255,
                              ; out of range (see tests\xbn\xbntest.asm)
            DONE
+; XCND - condition semantics: fn 26 returns CF set, which must FAIL the
+;        entry (MES "LEAK" unreachable) AND clear the done state, so
+;        the following ISNDONE entry holds. THE FIRST ENTRY PINS THE
+;        RULED EDGE: a MES runs (stamping done) BEFORE the failing
+;        extern, and the clear must win anyway - the documented
+;        semantics are "clears the done state", deliberately BLUNTER
+;        than a failed built-in condition (which never touches a prior
+;        action's stamp). A build without the split path prints LEAK;
+;        one that fails the entry but skips the clear falls to the
+;        ISDONE entry instead. The second entry's own DONE is LOAD-
+;        BEARING, not decoration: without an explicit exit, a
+;        CORRECTLY-clearing build falls through to the third entry
+;        anyway (MES is an action - it re-stamps done on its own way
+;        out), so the ISDONE trap would fire even on a build that got
+;        the split path right. DONE stops the table there, so the
+;        trap is reached ONLY when ISNDONE itself failed to see the
+;        clear (empirically confirmed: without this DONE, "STAMP
+;        LEAKED" prints after "notdone ok" even against the correct
+;        interpreter).
+> XCND _   MES     "pre "
+           EXTERN  0 26
+           MES     "LEAK"
+> XCND _   ISNDONE
+           MES     "notdone ok"
+           DONE
+> XCND _   ISDONE
+           MES     "STAMP LEAKED"
+; XCNC - control: fn 27 returns CF clear; the entry must complete.
+> XCNC _   EXTERN  0 27
+           MES     "clear ok"
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert
            PRINT 200         ; expect 0 in the no-XBN leg, 9 with XBN

@@ -2270,8 +2270,10 @@ ext_undone:                     ; EXTERN 0 7 (XUNDONE): clear the done
 ; the text itself, so no prn_newline call is needed here). All
 ; failures are silent no-ops; the DEBUG marker shows on the missing-
 ; file/read-fail paths. EXTERN is action-typed (cprops), so the
-; engine never consults the CF this leaves - unlike a condition
-; handler there is no success/failure contract to honour on return.
+; engine never consults the CF this leaves (true for the extVec
+; routes; the FORWARDED route now consults CF - see
+; ext_build_contract) - unlike a condition handler there is no
+; success/failure contract to honour on return.
 ; XMES lsb msb (condact 120) - the V3-native spelling of the same
 ; thing, and a thin wrapper over the primitive below (SP16 A2; the
 ; sav-machinery convention: overlays extend by adding routines on top
@@ -2727,8 +2729,10 @@ xbn_boot_load:
 ; handing off to switch_to_part. Both failure exits (n out of range,
 ; or n == curPart) return with CF set: EXTERN is action-typed (cprops
 ; $82 - engine.asm's cprops table), so eng_exec never consults the CF
-; this leaves (ext_xmes's header comment notes the same); the ret
-; simply returns to h_extern's caller (eng_exec's post-dispatch code)
+; this leaves (ext_xmes's header comment notes the same; true for the
+; extVec routes - the FORWARDED route now consults CF, see
+; ext_build_contract); the ret simply returns to h_extern's caller
+; (eng_exec's post-dispatch code)
 ; via the same return address h_extern's own jp-tail-chain left on the
 ; stack, exactly as if EXTERN had dispatched to ext_stub. curPart is
 ; not written until switch_to_part has a confirmed-successful probe,
@@ -3089,6 +3093,9 @@ ext_stub:
 ; extEntry -> classic-contract dispatch. Else exactly the old stub.
 ; The register-contract build (DE/HL/IX/A) is resident (ext_build_contract,
 ; main.asm) - overlay0's own headroom has no room to spare for it.
+; The h_unimpl fallbacks below stay CF-blind by construction: they
+; return through the ordinary action path, never through
+; ext_build_contract's split return.
 ext_forward:
     ld a, (xbnBank)
     inc a                       ; $FF -> 0

@@ -293,6 +293,8 @@ xbn_mmu_map:                    ; corrupts A; maps xbnBank into slots 6+7
     ret
 
 xbn_mmu_restore:                ; corrupts A
+; CONTRACT: preserves F - the forwarded extern's CF verdict crosses here
+; (ld/nextreg/ret set no flags).
     ld a, (extSaved)
     nextreg NR_MMU6, a
     ld a, (extSaved+1)
@@ -355,7 +357,8 @@ ext_dispatch:
 ; extTarget already set by the caller. A/DE/HL/IX per h_extern's ABI
 ; comment: DE = objTable + param1*6 (Z80N MUL, same *6-stride idiom as
 ; overlay1.asm's obj lookup, SP14c OV1-1), HL = flags+param1, IX = flags,
-; A = B = param1 (C untouched = fn).
+; A = B = param1 (C untouched = fn). May NOT return to its caller on the
+; CF-set path below - it fails the entry itself instead.
 ext_build_contract:
     ld d, 6
     ld e, b
@@ -365,7 +368,16 @@ ext_build_contract:
     ld l, b
     ld ix, flags
     ld a, b
-    jp ext_dispatch
+    call ext_dispatch
+    ret nc                      ; action return: CF clear, entry continues
+    ; CF set from a FORWARDED extern: fail the entry exactly as a failed
+    ; condition, including reverting the done stamp eng_exec wrote
+    ; before dispatch (ext_undone's mechanism, generalised).
+    xor a
+    ld (isDone), a
+    pop hl                      ; discard eng_exec's call .jphl return
+    call eng_top_ix
+    jp eng_next_entry
 
 ; CALL lsb msb (dispatcher ABI, cprops row $82): B = lsb, C = msb of the
 ; target address. overlay0's h_call just jumps straight here - its own

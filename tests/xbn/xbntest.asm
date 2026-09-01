@@ -34,7 +34,22 @@ ext_main:
     cp 24
     jr z, .fn24
     cp 25
-    ret nz
+    jr z, .fn25
+    cp 26
+    jr z, .fn26
+    cp 27
+    jr z, .fn27
+    ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
+    ; deliberate clear, not whatever cp 27 left behind.
+    or a
+    ret
+.fn27:                          ; control: explicit success
+    or a
+    ret
+.fn26:                          ; condition probe: ALWAYS fails the entry
+    scf
+    ret
+.fn25:
     jp msg_multi                 ; GETMSG multi-fetch regression (the
                                  ; HL-clobber corruption, 2026-08-15)
 .fn24:
@@ -128,6 +143,8 @@ fio_probe:
     djnz .cmp
     ld a, 1
     ld (XBN_FLAGS+208), a
+    or a                         ; CF discipline: deliberate clear, not
+                                 ; whatever the last cp (hl) left behind
     ret
 .fail:
     xor a
@@ -174,6 +191,9 @@ msg_probe:
 .print_done:
     ld a, 1
     ld (XBN_FLAGS+211), a
+    or a                         ; CF discipline: deliberate clear (the
+                                 ; loop-exit OR already cleared it, but
+                                 ; state that explicitly, not by accident)
     ret
 .fail:
     xor a
@@ -188,12 +208,18 @@ msg_probe:
 ; into range - message 50 did exactly that.
 msg_probe_bad:
     ld a, 255
-    call SVC_GETMSG
+    call SVC_GETMSG              ; sets CF on out-of-range (esxDOS-style
+                                 ; convention) - that CF is DATA here, not
+                                 ; this fn's own verdict; must not leak
+                                 ; through to the split-return check
     ld a, 0
     jr nc, .store
     ld a, 1
 .store:
     ld (XBN_FLAGS+212), a       ; expect 1 (CF set = out of range)
+    or a                         ; CF discipline: explicit clear, so the
+                                 ; probe's own out-of-range CF does not
+                                 ; also fail the calling entry
     ret
 
 ; fn 25: the SVC_GETMSG multi-fetch regression (svc-getmsg HL-clobber
@@ -255,8 +281,16 @@ msg_multi:
     ld (mmCur), a
     cp 7
     jr c, .next
-.done:
+    or a                         ; CF discipline: deliberate clear - the
+                                 ; corpus (messages 1-6) was exhausted
+                                 ; normally, all six verified
     ret
+.done:
+    ret                          ; CF discipline: deliberate, inherited -
+                                 ; SVC_GETMSG's out-of-range CF (corpus
+                                 ; overrun) passed straight through;
+                                 ; unreachable at the fixture's current
+                                 ; MTX size, kept as documented failure
 
 mmCur:  db 0
 ; len, first char, second char - per tests/extern.dsf MTX 1-6
