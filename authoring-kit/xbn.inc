@@ -21,6 +21,7 @@ XBN_FLAGS       equ $A200       ; 256 DAAD flags; IX also points here
 XBN_OBJTABLE    equ $A300       ; object table, OBJ_SIZE bytes per object
 OBJ_SIZE        equ 6           ; +0 location, +1 weight/attrs, +2/+3
                                 ; extended attrs, +4 noun, +5 adjective
+XBN_NUMOBJ      equ $A900       ; object count byte (frozen)
 
 ; Service jump table (frozen address, append-only; call directly)
 XBN_API         equ $BEC8
@@ -34,3 +35,8 @@ SVC_FSEEK       equ XBN_API+18  ; in A = handle, BCDE = offset; out CF
 SVC_FCLOSE      equ XBN_API+21  ; in A = handle
 SVC_RANDOM      equ XBN_API+24  ; out A = random byte
 SVC_GETMSG      equ XBN_API+27  ; in A = user msg no; out HL = buf, BC = len
+SVC_FRAMES      equ XBN_API+30
+SVC_GETDATE     equ XBN_API+33
+SVC_BUSY        equ XBN_API+36
+SVC_PALREAD     equ XBN_API+39
+SVC_WINDOW      equ XBN_API+42

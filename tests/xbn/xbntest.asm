@@ -63,7 +63,7 @@ ext_main:
 
 svc_probe:
     call SVC_VERSION
-    ld (XBN_FLAGS+206), a       ; expect 1
+    ld (XBN_FLAGS+206), a       ; expect 2
     call SVC_RANDOM
     ld b, a
     call SVC_RANDOM

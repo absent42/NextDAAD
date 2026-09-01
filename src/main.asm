@@ -431,6 +431,11 @@ xbn_api_tpl:
     jp svc_fclose                 ; 7
     jp svc_random                 ; 8
     jp svc_getmsg                 ; 9
+    jp svc_frames                 ; 10
+    jp svc_getdate                ; 11
+    jp svc_busy                   ; 12
+    jp svc_palread                ; 13
+    jp svc_window                 ; 14
     ASSERT $ - xbn_api_tpl == XBN_API_ROWS*3
 
 xbn_api_init:                    ; boot; table copy is resident-to-resident,
@@ -442,7 +447,7 @@ xbn_api_init:                    ; boot; table copy is resident-to-resident,
     ret
 
 svc_version:
-    ld a, 1
+    ld a, 2
     or a                          ; CF clear
     ret
 
@@ -675,6 +680,31 @@ svc_getmsg:
     call data_restore
     call xbn_svc_mmu_restore
     ld a, $FF
+    scf
+    ret
+
+svc_frames:
+    ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF
+    scf
+    ret
+
+svc_getdate:
+    ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF
+    scf
+    ret
+
+svc_busy:
+    ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF
+    scf
+    ret
+
+svc_palread:
+    ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF
+    scf
+    ret
+
+svc_window:
+    ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF
     scf
     ret
 

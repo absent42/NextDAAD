@@ -508,7 +508,7 @@ XCNC   151 verb
            PRINT 221         ; expect 48-52 (50 +- ISR jitter)
            DONE
 > XSVC _   EXTERN 0 21       ; service probe fn - Task 6 fills flags 206+
-           PRINT 206
+           PRINT 206         ; expect 2
            PRINT 207
            DONE
 > XFIO _   CLEAR 208         ; so a repeat run cannot inherit a stale 1

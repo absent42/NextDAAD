@@ -1006,6 +1006,7 @@ flags:      ds 256
     ASSERT flags == $A200
 objTable:   ds 256*OBJ_SIZE
 numObj:     db 0
+    ASSERT numObj == $A900   ; frozen XBN ABI anchor, same class as flags
 procStack:  ds PROC_DEPTH*PREC_SIZE
 procSP:     db 0
 isDone:     db 0                ; ISDONE/ISNDONE. ONE cell for the whole

@@ -230,12 +230,12 @@ XBN_HDR_LEN     equ 14       ; "XBN" + version + extEntry + intEntry + size + 4 
 ; poked territory like IM2_STUB/IM2_CTC_STUB above, not part of the
 ; assembled resident image - main.asm's xbn_api_init ldirs the table
 ; template here at boot. Sanity: below IM2_CTC2_STUB ($BEC5-$BEC7) ends
-; clear at $BEC7, so the 10-row table ($BEC8-$BEE5) does not collide;
+; clear at $BEC7, so the 15-row table ($BEC8-$BEF4) does not collide;
 ; re-grep src/ for $BEC8-$BFFF literals before every commit that touches
 ; this block (only $BFFD, the AY data I/O port, is expected below $C000).
 XBN_API         equ $BEC8       ; FROZEN from first release with XBN
                                 ; support - see xbn.inc; append-only
-XBN_API_ROWS    equ 10
+XBN_API_ROWS    equ 15
 
 ; --- Error border colours ---
 ERR_BORDER_MISSING  equ 2   ; red
