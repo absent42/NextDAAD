@@ -56,6 +56,17 @@
 ;   XFRM - SVC_FRAMES (fn 28 snapshot, fn 29 delta, xbntest.asm's
 ;          frames_snap/frames_delta): asserts the counter advances at
 ;          the frame rate across a 50-frame PAUSE.
+;   XRSK - SVC_RANDOM hardened (Task 5): arms the int_tick soak (fn 35,
+;          xbntest.asm's rng_soak_arm) so the #int hook draws
+;          SVC_RANDOM once per tick, WITH INTERRUPTS DISABLED (the case
+;          the svc_random DI/EI bracket exists for), while the mainline
+;          sits in a PAUSE. The sticky bit (flag 219) must read 1: a
+;          wedged or torn shared stream would leave it 0 forever. Also
+;          proves no deadlock from the DI bracket - a second arm/disarm
+;          cycle after this one must still complete. Foreground-
+;          concurrent CHANCE stress against the same interleave is
+;          covered by ordinary suite play; this verb isolates the
+;          hook-draw/atomicity claim on its own.
 ;
 ; MTX message 0 is reserved verbatim as the Task 8 SVC_GETMSG probe
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
@@ -220,8 +231,8 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29 exist: XREG XCAL XTIK XSVC XFIO XMSG XMS6
-;     XCND XCNC XFRM (fns 26-29 exist only in xbntest.asm)
+;     where fns 20-29 and 35 exist: XREG XCAL XTIK XSVC XFIO XMSG XMS6
+;     XCND XCNC XFRM XRSK (fns 26-29 and 35 exist only in xbntest.asm)
 ;     (on any other leg these print unwritten flags - zeros)
 ;   no-XBN leg (-XbnNoBin): XABS expects 0; on the fixture leg it
 ;     expects 9. Any other leg: meaningless.
@@ -303,6 +314,7 @@ XHNL   149 verb
 XCND   150 verb
 XCNC   151 verb
 XFRM   152 verb
+XRSK   153 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -450,16 +462,16 @@ XFRM   152 verb
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 146 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C092 (lsb 146, msb 192) - read
+> XCAL _   CALL 161 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C0A1 (lsb 161, msb 192) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C084 by Task 4's fn 28/29 dispatch code
+                             ; from $C092 by Task 5's fn 35 dispatch code
                              ; landing ahead of call_target in ext_main.
            PRINT 220         ; expect 119 ($77)
-           CALL 214 226       ; Task 4's owed check: tail_marker, address
-                             ; $E2D6 (lsb 214, msb 226) - the SECOND 8K page
+           CALL 248 226       ; Task 4's owed check: tail_marker, address
+                             ; $E2F8 (lsb 248, msb 226) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above.
@@ -569,6 +581,17 @@ XFRM   152 verb
            EXTERN  0 29
            MES     "frames "
            PRINT   216
+           DONE
+; XRSK - SVC_RANDOM from the hook while the foreground sits in PAUSE: the
+;        sticky changed bit must be 1, and a second arm/disarm cycle
+;        must work (no deadlock from the DI bracket). PAUSE 250 ships
+;        as 125 frames (DRC halves PAUSE) - 125 hook draws.
+> XRSK _   CLEAR   219
+           EXTERN  1 35
+           PAUSE   250
+           EXTERN  0 35
+           MES     "alive "
+           PRINT   219
            DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert

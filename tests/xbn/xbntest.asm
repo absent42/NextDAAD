@@ -43,10 +43,14 @@ ext_main:
     jr z, .fn28
     cp 29
     jr z, .fn29
+    cp 35
+    jr z, .fn35
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
     ret
+.fn35:
+    jp rng_soak_arm               ; Task 5: arm/disarm the SVC_RANDOM soak
 .fn29:
     jp frames_delta               ; Task 4
 .fn28:
@@ -87,6 +91,17 @@ svc_probe:
     ret
 .msg: db "XBN SVC OK ", 0
 
+; Task 5: arm/disarm the int_tick SVC_RANDOM soak. p1 nonzero arms (int_tick
+; then draws once per tick and tracks the sticky-changed bit, flag 219);
+; zero disarms. Echoed p1 already sits at XBN_FLAGS+200 (ext_main's entry
+; preamble) - read it from there, not from A/C, which the fn dispatch chain
+; above has since overwritten.
+rng_soak_arm:
+    ld a, (XBN_FLAGS+200)
+    ld (XBN_FLAGS+217), a
+    or a
+    ret
+
 call_target:
     ; COUPLED to tests\extern.dsf's XCAL entry (CALL lsb msb) - the
     ; address here must match the literal bytes in that DSF's PRO 5
@@ -108,6 +123,27 @@ int_tick:
     ld a, (XBN_FLAGS+221)
     inc a
     ld (XBN_FLAGS+221), a
+    ; Task 5 soak: while armed (fn 35, flag 217 nonzero), draw SVC_RANDOM
+    ; once per tick and compare to the previous draw - any two differing
+    ; sets the sticky "alive" bit (219); 125 hook draws (XRSK's PAUSE 250)
+    ; all equal has probability ~0 for a live PRNG, so 219 staying 0
+    ; flags a wedged or torn shared stream. This is the hook calling
+    ; SVC_RANDOM WITH INTERRUPTS DISABLED (inside the ISR) - the case the
+    ; svc_random DI/EI bracket exists for. AF/HL clobber here is already
+    ; established practice in this hook - .xbnhook_fast (interrupts.asm)
+    ; saves full context before the call.
+    ld a, (XBN_FLAGS+217)
+    or a
+    ret z
+    call SVC_RANDOM              ; A = new draw; interrupts stay disabled
+                                 ; throughout (svc_random's own DI bracket)
+    ld hl, XBN_FLAGS+218
+    cp (hl)
+    ld (hl), a                   ; store new draw either way; cp did not
+                                 ; clobber A
+    ret z                        ; unchanged: leave the sticky bit as-is
+    ld a, 1
+    ld (XBN_FLAGS+219), a
     ret
 
 ; Task 7 probe: write 8 bytes to XBNFIO.TMP, close, reopen, read them

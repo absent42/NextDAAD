@@ -460,9 +460,25 @@ svc_version:
 ; rngState cell. Unlike rng_next this does NOT scale to 1..100: xbn.inc
 ; documents "SVC_RANDOM: out A = random byte", a raw full-range byte for
 ; extern use, not the CHANCE-specific 1..100 scaling.
+; ISR-safe: the #int hook can call this mid-frame (xbntest.asm fn 35's
+; soak) while the foreground is also inside this routine, so the
+; rngState RMW is bracketed atomic vs interrupts using nr_read's idiom
+; (hardware.asm:145-165) - RTL-verified SAFE, no erratum on the Z80N
+; core (P/V latches at T3, interrupt acceptance clears IFF2 at T5, all
+; four core variants; docs/hardware-test-checklist.md closed 2026-09-01).
+; Double-sample kept anyway for emulator NMOS-erratum modelling parity.
+; Consequence: with a hook armed, the shared rngState stream now
+; interleaves hook and foreground draws, so its exact sequence is
+; timing-dependent - reproducible per boot, not bit-for-bit across runs.
 svc_random:
     push de
     push hl
+    ld a, i
+    jp pe, .sampled
+    ld a, i                       ; erratum re-sample (nr_read idiom)
+.sampled:
+    push af                       ; IFF2 in P/V, on the stack
+    di
     ld hl, (rngState)
     ; --- x ^= x << 7 ---
     ld d, h
@@ -488,7 +504,11 @@ svc_random:
     ld a, h
     xor l
     ld h, a
-    ld (rngState), hl
+    ld (rngState), hl             ; L = out random byte, safe across pop af
+    pop af                        ; P/V = saved IFF2
+    jp po, .noei                  ; interrupts were off: leave them off
+    ei
+.noei:
     ld a, l                       ; out A = random byte
     pop hl
     pop de
