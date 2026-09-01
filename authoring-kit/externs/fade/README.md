@@ -18,14 +18,24 @@ land, fade back up. A classic storytelling device; this extern adds it to any Ne
 |----|------|
 | `EXTERN c 40` | fade OUT to RRRGGGBB colour `c` |
 | `EXTERN 0 41` | fade IN to the snapshot taken by fn 40 |
-| `EXTERN 0 42` | re-snapshot: the PICTURE changed while faded out |
+| `EXTERN 0 42` | re-snapshot the staged palette (buffer mode only) |
 | `EXTERN 0 43` | block until the running fade finishes |
+
+All four are ACTIONS: they always succeed and never abort the entry
+they are in. That matters for the buffered sequence below, where a
+condact that could FAIL between `GFX 0 4` and `GFX 0 3` would leave
+buffer mode open with nothing left to close it.
 
 Fade-out only acts when the picture is fully in; fade-in only when
 fully out. Calls at any other moment are ignored, so wait for one fade
 before starting the next. After a completed fade-in the snapshot is
 forgotten, so the next fade-out captures whatever picture is on screen
 by then.
+
+`EXTERN c 40` is also refused if another extern in the same binary
+already holds the Layer 2 palette. Nothing fades, and flag 240 is set
+to 1 so `EXTERN 0 43` returns at once instead of waiting for a
+completion that will never come; `EXTERN 0 41` is then a no-op.
 
 ## Waiting for a fade
 
@@ -34,7 +44,10 @@ steps. There are two ways to wait, and they are for different jobs.
 
 **`EXTERN 0 43` - just wait.** One line, and the right answer for a
 plain scene transition. It blocks the condact stream until the fade
-finishes, so nothing else runs meanwhile.
+finishes, so nothing else runs meanwhile. The wait is bounded in real
+frames, read from the interpreter's own frame counter, so it can
+neither hang nor be hurried along by the interrupts a sampled sound
+effect generates while it waits.
 
 **Flag 240 - wait while doing something else.** The hook clears it when
 a fade starts and sets it to 1 when the fade completes. Poll it when
@@ -55,16 +68,35 @@ while testing, but it is fragile to ship: a fade is `8 x flag241`
 frames, while `PAUSE` durations are scaled by the compiler, so a value
 tuned by eye can drift when either changes.
 
+## Sharing the palette
+
+Only one extern in a binary may drive the Layer 2 palette at a time -
+two of them writing the same entries would corrupt it - so the
+collection keeps a single owner byte and the fade claims it.
+
+The HOLD SPAN is the whole faded-out span: the fade takes the palette
+at `EXTERN c 40` and hands it back only when a fade IN completes. A
+`RESTART` while faded out does not hand it back, because the palette
+banks themselves survive a restart: the owner byte stays claimed until
+the next completed fade-in. That is harmless while the fade is the
+only palette module in your binary, and it is the reason the fade,
+not the restart, decides when the colours are someone else's again.
+
 ## Changing the picture while faded out
 
 The snapshot is taken once, when the fade OUT starts. A fade IN walks
 back to that snapshot - so if you change the picture in between, fn 41
 would restore the old picture's colours onto the new picture's pixels.
 
-`DISPLAY 0` also loads the new picture's palette as it flips, so the
-new scene would otherwise appear at once, at full brightness, with no
-fade at all. `EXTERN 0 42` handles both: it re-snapshots what `DISPLAY`
-just programmed and puts the fade colour straight back on screen.
+`EXTERN 0 42` fixes that: it re-takes the snapshot from the NEW
+picture's palette and puts the fade colour straight back on screen, so
+`EXTERN 0 41` then fades up to the new picture instead of the old one.
+
+fn 42 reads the palette `DISPLAY 0` staged in the Layer 2 bank the
+screen is not showing, and only buffer mode puts it there. So a scene
+change through a fade MUST use the sequence below - `GFX 0 4` before
+the `DISPLAY 0`, `GFX 0 3` after the reveal. Without buffer mode there
+is no staged palette for fn 42 to read.
 
 ### Buffered scene change fade
 
@@ -123,8 +155,8 @@ GAME.DDB and it just works. To rebuild after editing the source:
   hook's write mid-mirror and corrupt one palette entry. Trigger fades
   from quiet moments and wait for the fade to finish (`EXTERN 0 43` or
   flag 240) before running a reveal. The one deliberate exception is
-  the `DISPLAY 0` / `EXTERN 0 42` pair above (buffered or not), where
-  the fade is parked at its solid end and nothing is stepping.
+  the buffered `DISPLAY 0` / `EXTERN 0 42` pair above, where the fade
+  is parked at its solid end and nothing is stepping.
 - One XBN per game: to combine this with other collection externs, use
   the prebuilt `all/GAME.XBN`, or build a subset with `EXTERNS.BAT`
   from the kit root - see `externs/README.md`. Nothing is merged by

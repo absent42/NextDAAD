@@ -5,11 +5,14 @@
 ;
 ; Author interface (from DSF):
 ;   EXTERN colour 40   start a fade OUT to `colour` (RRRGGGBB byte:
-;                      0 = black, 255 = white, %11100000 = red, ...)
+;                      0 = black, 255 = white, %11100000 = red, ...).
+;                      Refused while another module holds the palette:
+;                      no fade runs and flag 240 is set to 1.
 ;   EXTERN 0 41        start a fade IN back to the original picture
-;   EXTERN 0 42        re-snapshot: the PICTURE changed while faded out.
-;                      Also solids BOTH Layer 2 palette banks, so a
-;                      following GFX 0 2 reveal (below) is invisible.
+;   EXTERN 0 42        re-snapshot the STAGED palette (buffer mode
+;                      only): the PICTURE changed while faded out. Also
+;                      solids BOTH Layer 2 palette banks, so a following
+;                      GFX 0 2 reveal (below) is invisible.
 ;   EXTERN 0 43        block until the running fade finishes
 ;   flag 241           frames per fade step, 0 = default (6, so a fade
 ;                      is 8 steps x 6 frames, roughly one second) -
@@ -49,8 +52,8 @@
 ;   in walks back to the palette of a picture that is no longer there.
 ;
 ; What this teaches beyond the ticker example:
-;   - reading Next hardware state back (the palette is readable, dev
-;     guide NR $41: "reads or writes 8-bit colour data")
+;   - reading the live palette back through the interpreter's own
+;     service (SVC_PALREAD), which reads either Layer 2 bank on request
 ;   - the register-select bracket: ALL hardware access here goes
 ;     through the $243B/$253B port pair, saving and restoring both the
 ;     select latch (port $243B is documented read/write) and NR $43
@@ -94,26 +97,15 @@
 ; When a future interpreter breaks this extern, start here - and note
 ; that the fix belongs in THIS file, not in the interpreter.
 ;
-;   1. gfx_blit leaves the picture's palette in BOTH Layer 2 palette
-;      banks (NextDAAD 0.7.2+). It builds the incoming palette in the
-;      bank that is not displayed, swaps, then refills the other one
-;      and hands the display back - so a spare copy exists afterwards.
-;      USED BY: fn 42, which blanks the visible bank first and only
-;      then reads the picture's colours out of the spare (see there).
-;      IF IT CHANGES: fn 42 must read the palette BEFORE it blanks,
-;      which is correct but leaves the new picture on screen about
-;      four times longer - a wider band on real hardware.
-;
-;   2. DISPLAY 0 programs the new picture's palette as it swaps
+;   1. DISPLAY 0 programs the new picture's palette as it swaps
 ;      surfaces - unless GFX 87 sub 4 (buffer mode, "GFX 0 4" in DSF)
 ;      is open, in which case DISPLAY 0 stages pixels and palette into
 ;      the hidden surface only and does not swap; the swap and reveal
-;      wait for GFX 87 sub 2 ("GFX 0 2"). fn 42 exists because of this
-;      dependency either way: it re-takes the snapshot from whatever
-;      DISPLAY just programmed, and in the buffered case also solids
-;      the hidden bank so the GFX 0 2 reveal is invisible.
+;      wait for GFX 87 sub 2 ("GFX 0 2"). fn 42 exists because of this:
+;      it re-takes the snapshot from the STAGED palette and solids the
+;      hidden bank so the GFX 0 2 reveal is invisible.
 ;
-;      Recommended sequence (buffered, zero-window reveal):
+;      THE scene-change sequence (buffered, zero-window reveal):
 ;        EXTERN 0 40        ; fade out to the target colour
 ;        EXTERN 0 43        ; wait
 ;        PICTURE @room      ; CONDITION - aborts the entry on missing
@@ -122,7 +114,7 @@
 ;                           ; condition, so a failing PICTURE never
 ;                           ; strands buffer mode with GFX 0 3 unreached
 ;        DISPLAY 0          ; pixels + palette staged; screen untouched
-;        EXTERN 0 42        ; snapshot hidden palette, rebuild tables,
+;        EXTERN 0 42        ; read the staged palette, rebuild tables,
 ;                           ; solid into both banks
 ;        GFX 0 2            ; reveal: flip surface; all palettes solid
 ;        GFX 0 3            ; close buffer mode; drawing targets the
@@ -130,21 +122,15 @@
 ;        EXTERN 0 41        ; fade up to the new picture
 ;        EXTERN 0 43
 ;
-;      Old sequence (no buffer mode - still supported, unchanged
-;      behaviour, band included):
-;        EXTERN 0 40
-;        EXTERN 0 43
-;        PICTURE @room
-;        DISPLAY 0
-;        EXTERN 0 42
-;        EXTERN 0 41
-;        EXTERN 0 43
+;      Buffer mode is REQUIRED, not an optimisation: fn 42 reads the
+;      bank the display is not showing, and only buffer mode stages the
+;      new picture's palette there.
 ;
 ;      IF IT CHANGES so that DISPLAY leaves the palette alone until
 ;      asked, fn 42 becomes unnecessary and fn 41 can fade straight up
 ;      to the new picture.
 ;
-;   3. The transparency convention: Layer 2 colour $E3 (TRANSP below)
+;   2. The transparency convention: Layer 2 colour $E3 (TRANSP below)
 ;      and palette index 255 are reserved for punched holes, and the
 ;      interpreter's art loader keeps real art off that value.
 ;      USED BY: precalc's pin and dodge rules.
@@ -152,12 +138,12 @@
 ;      src/nextdaad.inc's L2_TRANSP_COLOUR or holes will seal over
 ;      mid-fade.
 ;
-;   4. Layer 2 art is displayed through the Layer 2 palette, with edit
+;   3. Layer 2 art is displayed through the Layer 2 palette, with edit
 ;      and display parked on the SAME bank between operations.
-;      USED BY: pal_edit_ctl, which reads NR $43 and follows whichever
-;      bank is live, so an interpreter that parks on the other bank is
-;      already handled. Only a steady state of "display one bank while
-;      editing another" would need work here.
+;      USED BY: the WRITE paths, pal_edit_ctl and its sibling
+;      pal_other_ctl, which read NR $43 and follow whichever bank is
+;      live. The READ path is SVC_PALREAD's and derives the same thing
+;      inside the interpreter.
 
 ; Standalone build emits its own header and binary; a combined build
 ; defines XBN_MODULE and supplies both.
@@ -258,6 +244,10 @@ ext:
     ; state guard inside its branch. An "ignore everything while a fade
     ; is active" test at the top would also swallow fn 43, whose entire
     ; job is to be called while a fade is active.
+    ;
+    ; fns 40-43 are ACTIONS: every exit returns CF CLEAR. CF set fails
+    ; the DAAD entry, which inside a GFX 0 4 .. GFX 0 3 bracket would
+    ; strand buffer mode.
     ld a, c
     cp 40
     jr z, .fadeout
@@ -267,7 +257,9 @@ ext:
     jr z, .resnap
     cp 43
     jp z, wait_fade
-    ret                          ; not ours
+.notmine:
+    or a                         ; CF clear: unrecognised fn, no failure
+    ret
 .fadein:
     ; ---- fn 41: fade back in ----
     ld a, (active)
@@ -283,6 +275,9 @@ ext:
     jr .go
 .fadeout:
     ; ---- fn 40: snapshot, build tables, fade towards the target ----
+    ld a, 1
+    call xbn_pal_acquire         ; held from here until a fade IN ends
+    jr c, .refused
     ld a, (active)
     or a
     ret nz                       ; mid-fade: ignored; wait on FLAG_DONE
@@ -292,7 +287,8 @@ ext:
                                  ; a no-op; fade in first (fn 41)
     ld a, b
     ld (target), a
-    call snapshot                ; live palette -> table 0
+    xor a
+    call snap_via_service        ; displayed bank -> table 0
     call precalc                 ; tables 1-7 interpolated, 8 = solid
     ld a, 1
     ld (valid), a
@@ -310,24 +306,27 @@ ext:
     inc a
     ld (active), a               ; arm LAST - int reads this first
     ret
+.refused:
+    ; Palette held by another module. Still an ACTION, and flag 240 must
+    ; not promise a completion that never comes - fn 43 and a polling
+    ; author would both wait forever on a 0.
+    ld a, 1
+    ld (XBN_FLAGS+FLAG_DONE), a  ; "nothing to wait for"
+    or a
+    ret
 
 ; ---------------------------------------------------------------
 ; fn 42: the PICTURE changed while we were faded out.
 ;
-; The snapshot fn 40 took belongs to the picture that was on screen
-; then, so a plain fn 41 would fade up to the OLD picture's colours on
-; the NEW picture's pixels. Worse, DISPLAY 0 loads the new picture's
-; palette as it flips (the interpreter's gfx_blit does both together),
-; so the new scene appears at once, at full brightness, with no fade at
-; all.
+; The snapshot fn 40 took belongs to the old picture, so a plain fn 41
+; would fade up to the OLD colours on the NEW pixels. This re-takes the
+; snapshot from the palette DISPLAY 0 staged in the bank the display is
+; not showing (SVC_PALREAD A=1), rebuilds the tables towards the SAME
+; target colour, and solids that colour into both banks so the GFX 0 2
+; reveal shows nothing. The author then calls fn 41 to fade up.
 ;
-; This re-takes the snapshot from what DISPLAY just programmed, rebuilds
-; the tables towards the SAME target colour, and puts that solid colour
-; straight back on screen. The author then calls fn 41 to fade up to the
-; new picture.
-;
-; Call it in the same process entry as the DISPLAY, so the two run
-; inside one frame and the full-brightness flip is never displayed.
+; Buffer mode (GFX 0 4) is required: nothing else stages the new
+; picture's palette in the other bank.
 .resnap:
     ld a, (active)
     or a
@@ -336,36 +335,15 @@ ext:
     or a
     ret z                        ; not faded out: nothing to re-take,
                                  ; and no target colour to hold
-    ; ORDER MATTERS HERE, and the order is: blank FIRST, read second.
-    ;
-    ; DISPLAY 0 leaves the new picture on screen at full brightness, so
-    ; every T-state spent before the blank is a slice of that picture
-    ; scanned out - a bright band across however many scanlines the
-    ; beam covers meanwhile. Blanking is one 256-entry burst. Reading
-    ; the palette back is four times that, and precalc is several
-    ; frames. Do either of them first and the band grows to match.
-    ;
-    ; Blanking first is only possible because of INTERPRETER DEPENDENCY
-    ; 1 in the header: gfx_blit leaves an identical copy of the new
-    ; picture's palette in the Layer 2 bank that is NOT displayed. So
-    ; the visible bank can be blanked immediately and the picture's
-    ; colours read out of the spare afterwards, at no visual cost.
-    ;
-    ; The interpreter does not promise that copy - it refills the bank
-    ; for its own reasons - so if a future release stops leaving one,
-    ; swap these two steps back round and accept the wider band. On an
-    ; interpreter older than 0.7.2 the spare bank holds something else
-    ; entirely and the fade in restores that instead.
+    ; Blank FIRST, read second. The read takes the STAGED bank
+    ; (SVC_PALREAD A=1), so nothing it does can widen a visible band.
     ld a, STEPS
     ld (step), a                 ; park at the solid end
     call apply                   ; BLANK NOW - one burst, nothing before
                                  ; it, using the solid table the previous
                                  ; fade out already built
     ld a, 1
-    ld (snapOther), a            ; read the hidden bank, not the screen
-    call snapshot                ; the NEW picture's palette, unhurried
-    xor a
-    ld (snapOther), a
+    call snap_via_service        ; the NEW picture's palette, staged bank
     call precalc                 ; rebuild 1-7 and 8 - slow, and unseen
     ld a, STEPS
     call apply                   ; restream the solid end so its
@@ -405,34 +383,13 @@ ext:
 ; bound is that plus margin; if the hook were ever stopped mid-fade
 ; this returns rather than hanging the game forever.
 ;
-; HALT IS NOT A FRAME, AND THE BOUND IS COUNTED IN FRAMES. HALT resumes
-; on ANY maskable interrupt, and the frame tick is not the only one the
-; interpreter runs: sampled sound effects (SFX n 1/2) are fed by a
-; per-sample DAC interrupt on the Z80 CTC's own vector, firing at the
-; WAV's sample rate. With a 15625 Hz effect playing, a HALT returns
-; after ~64us instead of 20ms, so counting HALTs spent this bound in
-; about 7ms and fn 43 fell straight through while the fade had barely
-; started. The interpreter's own PAUSE does not use HALT either - it
-; watches its frame counter for an edge, for exactly this reason.
-;
-; So the bound is stepped on a real frame edge instead, using the one
-; 50Hz clock an extern is guaranteed to have: this binary's own #int
-; hook, which ticks frameTick below on every frame whether a fade is
-; running or not. The inner loop still HALTs (there is no reason to
-; spin the CPU hot), it just does not treat waking as a frame.
-;
-; TICK_CEILING is the never-hang guard for the inner loop: if the hook
-; is not running, frameTick can never move and the edge would never
-; arrive. 2048 wakeups is far more than one frame's worth at any
-; sample rate the CTC can be programmed to (15625 Hz gives ~312), so it
-; cannot misfire while the hook is alive; if it does fire, the hook is
-; stopped, the fade can never finish, and returning is the only useful
-; answer.
-TICK_CEILING    equ 2048
+; The wait gates on SVC_FRAMES. HALT is only a wakeup - a sampled sound
+; effect's per-sample CTC interrupt wakes it at the WAV rate - so the
+; frame-counter compare, not the wakeup, steps the bound.
 wait_fade:
     ld a, (active)
     or a
-    ret z                        ; nothing running
+    jr z, .done                  ; nothing running
     ld a, (speed)
     ld l, a
     ld h, 0
@@ -441,33 +398,32 @@ wait_fade:
     add hl, hl                   ; HL = 8 * speed
     ld de, 32                    ; + margin for the pickup frame
     add hl, de
+    ld b, h
+    ld c, l                      ; bound in BC: SVC_FRAMES returns HL
+    call SVC_FRAMES
+    ld e, l                      ; E = frame counter low byte
 .wl:
     ld a, (active)
     or a
-    ret z                        ; finished: int cleared it
-    ld a, h
-    or l
-    ret z                        ; bound expired - give up, never hang
-    dec hl
-    ld bc, TICK_CEILING
-    ld a, (frameTick)
-    ld e, a                      ; E = the tick we are waiting to leave
-.edge:
-    halt                         ; a wakeup - not necessarily a frame
-    ld a, (active)
-    or a
-    ret z                        ; finished under us: done waiting
-    ld a, (frameTick)
-    cp e
-    jr nz, .wl                   ; the hook ran: one real frame, step the
-                                 ; bound and go round again
+    jr z, .done                  ; finished: int cleared it
     dec bc
     ld a, b
     or c
-    jr nz, .edge
-    ret                          ; no frame in TICK_CEILING wakeups: the
-                                 ; hook is stopped, so the fade can never
-                                 ; finish - return rather than hang
+    jr z, .done                  ; bound spent: never hang
+.edge:
+    halt                         ; a wakeup only - the compare gates
+    ld a, (active)
+    or a
+    jr z, .done                  ; finished under us: done waiting
+    call SVC_FRAMES
+    ld a, l
+    cp e
+    jr z, .edge                  ; same frame: keep waiting
+    ld e, l                      ; a real frame passed
+    jr .wl
+.done:
+    or a                         ; CF clear: fn 43 is an action
+    ret
 
 ; ---------------------------------------------------------------
 ; 50Hz hook: one cheap test when idle; when a fade is running, count
@@ -475,17 +431,14 @@ wait_fade:
 ; expires. All the arithmetic happened in the foreground - the hook
 ; only moves bytes to ports.
 int:
-    ; The frame tick comes FIRST, ahead of the idle exit, so it keeps
-    ; running whether a fade is stepping or not. It is the only true
-    ; 50Hz clock available to extern foreground code - see wait_fade for
-    ; why HALT cannot be used as one. Two instructions, every frame, for
-    ; the whole life of the game: that is the price of the hook being
-    ; the clock, and it is the cheapest correct one available.
-    ld hl, frameTick
-    inc (hl)
     ld a, (active)
     or a
     ret z
+    ; Before the step advances, not after: another module holding the
+    ; palette means skip the whole frame, count and step untouched.
+    ld a, 1
+    call xbn_pal_check
+    ret c
     ld hl, count
     dec (hl)
     ret nz
@@ -542,6 +495,10 @@ int:
     ; the next fn 40 re-snapshot whatever is displayed by then.
     xor a
     ld (valid), a
+    ld a, 1
+    call xbn_pal_release         ; the ONLY release: fade-in complete, so
+                                 ; nothing is held any more (owner's own
+                                 ; hook, which the interlock allows)
 .done:
     xor a
     ld (active), a
@@ -556,9 +513,8 @@ int:
 ; auto-increment forced ON (bit 7 clear), which the bursts rely on.
 ; Corrupts AF only - BC is live in every caller.
 ; pal_edit_ctl's sibling: edit the bank that is NOT being displayed,
-; display bit again untouched. fn 42 reads the incoming picture's
-; palette from there after blanking what is on screen.
-; Corrupts AF only.
+; display bit again untouched. Reached from pal_apply_ctl for fn 42's
+; both-banks-solid step. Corrupts AF only.
 pal_other_ctl:
     ld a, (savectl)
     and %00001111
@@ -572,14 +528,6 @@ pal_other_ctl:
     pop af
     or PAL_L2_EDIT2              ; bank 1 displayed -> edit bank 2
     ret
-
-; snapshot reads the displayed bank normally, the hidden one when
-; snapOther is set. Corrupts AF only.
-pal_snap_ctl:
-    ld a, (snapOther)
-    or a
-    jp nz, pal_other_ctl
-    jp pal_edit_ctl
 
 ; apply targets the displayed bank normally, the hidden one when
 ; applyOther is set (fn 42's both-banks-solid step). Corrupts AF only.
@@ -730,60 +678,26 @@ apply9:
     ret
 
 ; ---------------------------------------------------------------
-; Foreground only: read the live 256 Layer 2 colours into table 0, and
-; their second bytes into tables9 page 0. Reads do not auto-increment
-; (the dev guide scopes auto-inc to writes), so the index register is
-; set per colour and both reads see the same one.
-snapshot:
-    ld bc, TB_SELECT
-    in a, (c)
-    ld (savesel), a
-    ld a, NR_PAL_CTL
-    out (c), a
-    inc b
-    in a, (c)
-    ld (savectl), a
-    call pal_snap_ctl
-    out (c), a                   ; displayed bank, or the hidden one
-    dec b
-    ld hl, tables                ; table 0 = the snapshot
-    ld e, 0
-.rd:
-    ld a, NR_PAL_IDX
-    out (c), a
-    inc b
-    ld a, e
-    out (c), a
-    dec b
-    ld a, NR_PAL_VAL
-    out (c), a
-    inc b
-    in a, (c)
-    dec b
-    ld (hl), a                   ; byte 0: RRRGGGBB -> tables[0]
-    ; Second byte (priority + blue LSB). The index has not moved -
-    ; reads never auto-increment - so this is the same colour.
-    ld a, NR_PAL_VAL9
-    out (c), a
-    inc b
-    in a, (c)
-    dec b
-    push hl
-    ld h, tables9>>8             ; tables9 is ALIGN 256, so the colour
-    ld l, e                      ; index IS the low byte of page 0
-    ld (hl), a
-    pop hl
-    inc l
+; Foreground only. A = bank (0 displayed, 1 the staged bank buffer mode
+; fills). SVC_PALREAD writes 256 interleaved pairs into palStage;
+; de-interleave them into tables page 0 (RRRGGGBB) and tables9 page 0
+; (priority + blue LSB) - the snapshot both precalc and apply9 read.
+snap_via_service:
+    ld ix, palStage
+    call SVC_PALREAD             ; corrupts AF, BC, E, IX; leaves HL/D
+    ld hl, palStage
+    ld de, tables                ; both pages are ALIGN 256, so the low
+    ld bc, tables9               ; byte is the colour index and the count
+.di:
+    ld a, (hl)
+    ld (de), a
+    inc hl
+    ld a, (hl)
+    ld (bc), a
+    inc hl
     inc e
-    jr nz, .rd
-    ld a, NR_PAL_CTL
-    out (c), a
-    inc b
-    ld a, (savectl)
-    out (c), a
-    dec b
-    ld a, (savesel)
-    out (c), a
+    inc c
+    jr nz, .di
     ret
 
 ; ---------------------------------------------------------------
@@ -1040,11 +954,7 @@ dir:     db 0                    ; 1 = fading out (up), 0 = in (down)
 step:    db 0                    ; current step 0-8
 speed:   db 0                    ; frames per step (resolved)
 count:   db 0                    ; frames until the next step
-frameTick: db 0                  ; +1 per frame by int, free-running
-                                 ; and allowed to wrap - wait_fade only
-                                 ; ever compares it against a snapshot
 target:  db 0                    ; RRRGGGBB fade target
-snapOther: db 0                  ; 1 = snapshot reads the hidden bank
 applyOther: db 0                 ; 1 = apply streams to the hidden bank
 savesel: db 0                    ; saved $243B select latch
 savectl: db 0                    ; saved NR $43
@@ -1078,4 +988,11 @@ tables9: ds 9*256                ; second byte of each colour, same page
     IFNDEF XBN_MODULE
 xbn_end:
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG
+    XBN_SCRATCH_END
     ENDIF
+
+; SVC_PALREAD landing buffer, 512 bytes, claimed from XBN_SCRATCH (see
+; xbnmod.inc). Written by the service before it is read.
+    MODULE fade
+palStage: equ XBN_SCRATCH + 256
+    ENDMODULE
