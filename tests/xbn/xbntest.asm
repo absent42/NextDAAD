@@ -39,10 +39,18 @@ ext_main:
     jr z, .fn26
     cp 27
     jr z, .fn27
+    cp 28
+    jr z, .fn28
+    cp 29
+    jr z, .fn29
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
     ret
+.fn29:
+    jp frames_delta               ; Task 4
+.fn28:
+    jp frames_snap                ; Task 4
 .fn27:                          ; control: explicit success
     or a
     ret
@@ -291,6 +299,33 @@ msg_multi:
                                  ; overrun) passed straight through;
                                  ; unreachable at the fixture's current
                                  ; MTX size, kept as documented failure
+
+; Task 4 probe: snapshot SVC_FRAMES to flags 214 (L) / 215 (H), stash the
+; word for frames_delta below.
+frames_snap:
+    call SVC_FRAMES
+    ld (frmSnap), hl
+    ld a, l
+    ld (XBN_FLAGS+214), a
+    ld a, h
+    ld (XBN_FLAGS+215), a
+    or a                         ; CF discipline: deliberate clear
+    ret
+
+; Task 4 probe: delta since frames_snap, low byte to flag 216 - the
+; delta is what XFRM's PAUSE window asserts; a stub row (CF/$FF) or a
+; dead counter yields a wild or zero delta.
+frames_delta:
+    call SVC_FRAMES
+    ld de, (frmSnap)
+    or a
+    sbc hl, de
+    ld a, l
+    ld (XBN_FLAGS+216), a
+    or a                         ; CF discipline: deliberate clear
+    ret
+
+frmSnap: dw 0
 
 mmCur:  db 0
 ; len, first char, second char - per tests/extern.dsf MTX 1-6

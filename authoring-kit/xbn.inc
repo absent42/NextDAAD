@@ -35,7 +35,7 @@ SVC_FSEEK       equ XBN_API+18  ; in A = handle, BCDE = offset; out CF
 SVC_FCLOSE      equ XBN_API+21  ; in A = handle
 SVC_RANDOM      equ XBN_API+24  ; out A = random byte
 SVC_GETMSG      equ XBN_API+27  ; in A = user msg no; out HL = buf, BC = len
-SVC_FRAMES      equ XBN_API+30
+SVC_FRAMES      equ XBN_API+30  ; out HL = frame counter (50Hz); CF clear
 SVC_GETDATE     equ XBN_API+33
 SVC_BUSY        equ XBN_API+36
 SVC_PALREAD     equ XBN_API+39

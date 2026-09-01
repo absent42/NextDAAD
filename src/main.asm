@@ -683,9 +683,12 @@ svc_getmsg:
     scf
     ret
 
+; Row 10. ld hl,(nn) is ONE instruction and interrupts are accepted only
+; at instruction boundaries, so the 16-bit read cannot tear - no DI
+; bracket needed. ISR-safe: resident, no MMU bracket, no shared buffer.
 svc_frames:
-    ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF
-    scf
+    ld hl, (frameCounter)
+    or a                          ; CF clear
     ret
 
 svc_getdate:

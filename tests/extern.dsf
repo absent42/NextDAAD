@@ -53,6 +53,9 @@
 ;          clear must win anyway.
 ;   XCNC - EXTERN condition semantics, control (fn 27, xbntest.asm's
 ;          or a/ret: ALWAYS succeeds). The entry must complete.
+;   XFRM - SVC_FRAMES (fn 28 snapshot, fn 29 delta, xbntest.asm's
+;          frames_snap/frames_delta): asserts the counter advances at
+;          the frame rate across a 50-frame PAUSE.
 ;
 ; MTX message 0 is reserved verbatim as the Task 8 SVC_GETMSG probe
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
@@ -217,8 +220,8 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-27 exist: XREG XCAL XTIK XSVC XFIO XMSG XMS6
-;     XCND XCNC (fns 26/27 exist only in xbntest.asm)
+;     where fns 20-29 exist: XREG XCAL XTIK XSVC XFIO XMSG XMS6
+;     XCND XCNC XFRM (fns 26-29 exist only in xbntest.asm)
 ;     (on any other leg these print unwritten flags - zeros)
 ;   no-XBN leg (-XbnNoBin): XABS expects 0; on the fixture leg it
 ;     expects 9. Any other leg: meaningless.
@@ -299,6 +302,7 @@ XTMS   148 verb
 XHNL   149 verb
 XCND   150 verb
 XCNC   151 verb
+XFRM   152 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -446,16 +450,16 @@ XCNC   151 verb
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 132 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C084 (lsb 132, msb 192) - read
+> XCAL _   CALL 146 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C092 (lsb 146, msb 192) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C075 by Task 2's fn 26/27 dispatch code
+                             ; from $C084 by Task 4's fn 28/29 dispatch code
                              ; landing ahead of call_target in ext_main.
            PRINT 220         ; expect 119 ($77)
-           CALL 166 226       ; Task 4's owed check: tail_marker, address
-                             ; $E2A6 (lsb 166, msb 226) - the SECOND 8K page
+           CALL 214 226       ; Task 4's owed check: tail_marker, address
+                             ; $E2D6 (lsb 214, msb 226) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above.
@@ -557,6 +561,15 @@ XCNC   151 verb
 ; XCNC - control: fn 27 returns CF clear; the entry must complete.
 > XCNC _   EXTERN  0 27
            MES     "clear ok"
+; XFRM - SVC_FRAMES advances at the frame rate: snapshot, a 50-frame
+;        PAUSE, delta must read 48-52 (ISR jitter window, same as XTIK).
+;        A stub row or stopped counter cannot land in the window.
+> XFRM _   EXTERN  0 28
+           PAUSE   100
+           EXTERN  0 29
+           MES     "frames "
+           PRINT   216
+           DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert
            PRINT 200         ; expect 0 in the no-XBN leg, 9 with XBN
