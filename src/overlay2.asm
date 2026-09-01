@@ -1113,7 +1113,7 @@ h_gfx:
     cp 0
     jr z, .backfront
     cp 1
-    jr z, .frontback
+    jp z, .frontback
     cp 2
     jp z, .swap
     cp 5
@@ -1179,11 +1179,18 @@ h_gfx:
     ld a, (gfxRevealPend)
     or a
     ret z                       ; no pending palette: done, as today
+    ; palBusy: narrow palette/reveal section only (spec ruling) - a
+    ; missed clear wedges every busy-aware hook effect. Single exit
+    ; below (tail jump into l2_enable) - clear BEFORE the jp. SET sits
+    ; inside the pend-check, so the not-pending ret z above never sees it.
+    ld a, 1
+    ld (palBusy), a
     nextreg NR_PAL_CTRL, PAL_L2_SECOND
     call l2_pal_mirror21
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
     xor a
     ld (gfxRevealPend), a
+    ld (palBusy), a              ; A already 0 - palBusy: narrow palette/reveal section only (spec ruling), clear BEFORE the tail jump
     jp l2_enable
 .frontback:
     ld a, (l2BackBank)
