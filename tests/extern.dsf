@@ -56,6 +56,10 @@
 ;   XFRM - SVC_FRAMES (fn 28 snapshot, fn 29 delta, xbntest.asm's
 ;          frames_snap/frames_delta): asserts the counter advances at
 ;          the frame rate across a 50-frame PAUSE.
+;   XDAT - SVC_GETDATE presence probe (fn 36, xbntest.asm's
+;          getdate_probe): flag 223 poisoned to 9 by LET, must land 0
+;          or 1 (never 9) - RTC presence varies by fitting/emulator, so
+;          either outcome passes; only the poison surviving is a fail.
 ;   XRSK - SVC_RANDOM hardened (Task 5): arms the int_tick soak (fn 35,
 ;          xbntest.asm's rng_soak_arm) so the #int hook draws
 ;          SVC_RANDOM once per tick, WITH INTERRUPTS DISABLED (the case
@@ -231,9 +235,9 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29 and 35 exist: XREG XCAL XTIK XSVC XFIO XMSG XMS6
-;     XCND XCNC XFRM XRSK (fns 26-29 and 35 exist only in xbntest.asm)
-;     (on any other leg these print unwritten flags - zeros)
+;     where fns 20-29, 35 and 36 exist: XREG XCAL XTIK XSVC XFIO XMSG
+;     XMS6 XCND XCNC XFRM XRSK XDAT (fns 26-29, 35 and 36 exist only in
+;     xbntest.asm) (on any other leg these print unwritten flags - zeros)
 ;   no-XBN leg (-XbnNoBin): XABS expects 0; on the fixture leg it
 ;     expects 9. Any other leg: meaningless.
 ;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
@@ -315,6 +319,7 @@ XCND   150 verb
 XCNC   151 verb
 XFRM   152 verb
 XRSK   153 verb
+XDAT   154 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -462,19 +467,20 @@ XRSK   153 verb
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 161 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C0A1 (lsb 161, msb 192) - read
+> XCAL _   CALL 201 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C0C9 (lsb 201, msb 192) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C092 by Task 5's fn 35 dispatch code
-                             ; landing ahead of call_target in ext_main.
+                             ; from $C0A1 by Task 6's fn 36 dispatch code and
+                             ; getdate_probe landing ahead of call_target.
            PRINT 220         ; expect 119 ($77)
-           CALL 248 226       ; Task 4's owed check: tail_marker, address
-                             ; $E2F8 (lsb 248, msb 226) - the SECOND 8K page
+           CALL 32 227        ; Task 4's owed check: tail_marker, address
+                             ; $E320 (lsb 32, msb 227) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
-                             ; re-encode caveat as call_target above.
+                             ; re-encode caveat as call_target above. Moved
+                             ; from $E2F8 by the same Task 6 code growth.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -592,6 +598,16 @@ XRSK   153 verb
            EXTERN  0 35
            MES     "alive "
            PRINT   219
+           DONE
+; XDAT - GETDATE presence probe. Emulator: either outcome is valid and
+;        RECORDED, not asserted (rtc presence varies; the RTC-absent
+;        path is a silicon/RC check per the spec and the checklist's
+;        M_GETDATE entry). What IS asserted: the call returns (no hang)
+;        and the presence byte is 0 or 1, never the 9 poison.
+> XDAT _   LET     223 9
+           EXTERN  0 36
+           MES     "rtc "
+           PRINT   223
            DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert

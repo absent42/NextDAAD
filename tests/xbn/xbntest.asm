@@ -45,10 +45,14 @@ ext_main:
     jr z, .fn29
     cp 35
     jr z, .fn35
+    cp 36
+    jr z, .fn36
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
     ret
+.fn36:
+    jp getdate_probe              ; Task 6: SVC_GETDATE presence probe
 .fn35:
     jp rng_soak_arm               ; Task 5: arm/disarm the SVC_RANDOM soak
 .fn29:
@@ -100,6 +104,32 @@ rng_soak_arm:
     ld a, (XBN_FLAGS+200)
     ld (XBN_FLAGS+217), a
     or a
+    ret
+
+; Task 6 probe: SVC_GETDATE presence. Flag 223 arrives poisoned to 9
+; (XDAT's LET 223 9) and must never keep that value - 1 = RTC present
+; (date/time also stored to 224-227, low byte first per SVC_GETDATE's
+; BC/DE/H/L order), 0 = no RTC. Either outcome is a valid pass; only a
+; surviving 9 (a hang or an unset flag) is a failure. CF cleared on
+; this fn's own ret regardless of the call's own CF.
+getdate_probe:
+    call SVC_GETDATE
+    jr c, .none
+    ld a, 1
+    ld (XBN_FLAGS+223), a
+    ld a, b
+    ld (XBN_FLAGS+224), a
+    ld a, c
+    ld (XBN_FLAGS+225), a
+    ld a, d
+    ld (XBN_FLAGS+226), a
+    ld a, e
+    ld (XBN_FLAGS+227), a
+    or a
+    ret
+.none:
+    xor a
+    ld (XBN_FLAGS+223), a
     ret
 
 call_target:

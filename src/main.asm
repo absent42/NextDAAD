@@ -711,10 +711,28 @@ svc_frames:
     or a                          ; CF clear
     ret
 
-svc_getdate:
-    ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF
-    scf
+; M_GETDATE: BC=date DE=time H=secs L=hundredths, CF set = no RTC.
+; esx_filemap shape (file.asm:96-104): results cross cardBusy_clear via
+; push/pop, since cardBusy_clear runs between the rst $08 and the
+; caller seeing its result. cardBusy_set/clear work through HL only and
+; touch no flags (file.asm:12-16) - push af here protects the CF
+; verdict, push hl the H=secs/L=hundredths result; BC/DE cross
+; cardBusy_clear untouched (never pushed, never touched by it). Lives
+; here rather than file.asm: file.asm is pre-anchor (main.asm INCLUDE
+; order, recon) and any new byte there shifts the flags anchor - this
+; wrapper is resident tail only, same as the svc bodies beside it.
+esx_getdate:
+    call cardBusy_set
+    rst $08
+    db ESX_M_GETDATE
+    push af
+    push hl
+    call cardBusy_clear
+    pop hl
+    pop af
     ret
+
+svc_getdate: jp esx_getdate
 
 svc_busy:
     ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF

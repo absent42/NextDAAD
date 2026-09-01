@@ -265,6 +265,9 @@ ESX_MODE_READ   equ $01
 ESX_MODE_W      equ $0E     ; F_OPEN: write, create or truncate
 ESX_ENOENT      equ 5       ; F_OPEN: file not found
 ESX_DISK_FILEMAP  equ $85   ; card-address map of a file's fragment runs
+ESX_M_GETDATE   equ $8E     ; out BC=date DE=time H=secs L=hundredths;
+                            ; CF set = no RTC fitted (esxDOS API odt,
+                            ; "M_GETDATE ($8e)")
 
 ; DEBUG-only boot fallback (DeZog quality-of-life): a dezogif/serial
 ; DeZog launch inherits cwd at the SD ROOT, not wherever the debug
