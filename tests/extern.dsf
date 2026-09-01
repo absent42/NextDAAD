@@ -78,6 +78,16 @@
 ;          poisoned to 9 (LET), must never keep that value. Hook-side
 ;          visibility of bits 0/2 is silicon/RC territory (video
 ;          emulator ban); bit 1 hook-capture likewise rides the RC sheet.
+;   XPAL - SVC_PALREAD (Task 8, fn 38, xbntest.asm's palread_probe):
+;          draws picture 1, reads all 256 palette entries back and sums
+;          them; the 16-bit checksum (flags 229/230) is pinned against
+;          the picture's own embedded palette plus the interpreter's
+;          documented transforms - see the XPAL entry below for the
+;          derivation.
+;   XWIN - SVC_WINDOW (Task 9, fn 39, xbntest.asm's window_probe):
+;          selects window 2, prints a marker through it, restores the
+;          previous window (flag 231) - proves the switch actually
+;          happened rather than a stub returning a plausible number.
 ;
 ; MTX message 0 is reserved verbatim as the Task 8 SVC_GETMSG probe
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
@@ -242,9 +252,9 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29, 35, 36 and 37 exist: XREG XCAL XTIK XSVC XFIO
-;     XMSG XMS6 XCND XCNC XFRM XRSK XDAT XBSY (fns 26-29, 35, 36 and 37
-;     exist only in xbntest.asm) (on any other leg these print
+;     where fns 20-29 and 35-39 exist: XREG XCAL XTIK XSVC XFIO
+;     XMSG XMS6 XCND XCNC XFRM XRSK XDAT XBSY XPAL XWIN (fns 26-29 and
+;     35-39 exist only in xbntest.asm) (on any other leg these print
 ;     unwritten flags - zeros)
 ;   XDAT lives in the fixture leg's fn table (fn 36) but is
 ;     SILICON-ONLY: DO NOT TYPE it in an emulator replay - ZEsarUX's
