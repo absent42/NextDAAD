@@ -24,27 +24,47 @@ OBJ_SIZE        equ 6           ; +0 location, +1 weight/attrs, +2/+3
 XBN_NUMOBJ      equ $A900       ; object count byte (frozen)
 
 ; Service jump table (frozen address, append-only; call directly)
+; ISR-safe rows may be called from the #int hook; every other row is
+; foreground-only.
 XBN_API         equ $BEC8
-SVC_VERSION     equ XBN_API+0   ; out A = API version
-SVC_PUTCHAR     equ XBN_API+3   ; in A = char
-SVC_PUTS        equ XBN_API+6   ; in HL = ASCIIZ (may be in your bank)
-SVC_FOPEN       equ XBN_API+9   ; in IX = ASCIIZ name, B = mode; out A/CF
-SVC_FREAD       equ XBN_API+12  ; in A = handle, IX = buf, BC = len; out BC/CF
-SVC_FWRITE      equ XBN_API+15  ; in A = handle, IX = buf, BC = len; out CF
-SVC_FSEEK       equ XBN_API+18  ; in A = handle, BCDE = offset; out CF
-SVC_FCLOSE      equ XBN_API+21  ; in A = handle
-SVC_RANDOM      equ XBN_API+24  ; out A = random byte
-SVC_GETMSG      equ XBN_API+27  ; in A = user msg no; out HL = buf, BC = len
-SVC_FRAMES      equ XBN_API+30  ; out HL = frame counter (50Hz); CF clear
-SVC_GETDATE     equ XBN_API+33
+SVC_VERSION     equ XBN_API+0   ; out A = API version. ISR-safe.
+SVC_PUTCHAR     equ XBN_API+3   ; in A = char. Foreground-only.
+SVC_PUTS        equ XBN_API+6   ; in HL = ASCIIZ (may be in your bank).
+                                 ; Foreground-only.
+SVC_FOPEN       equ XBN_API+9   ; in IX = ASCIIZ name, B = mode; out A/CF.
+                                 ; Foreground-only.
+SVC_FREAD       equ XBN_API+12  ; in A = handle, IX = buf, BC = len; out
+                                 ; BC/CF. Foreground-only.
+SVC_FWRITE      equ XBN_API+15  ; in A = handle, IX = buf, BC = len; out
+                                 ; CF. Foreground-only.
+SVC_FSEEK       equ XBN_API+18  ; in A = handle, BCDE = offset; out CF.
+                                 ; Foreground-only.
+SVC_FCLOSE      equ XBN_API+21  ; in A = handle. Foreground-only.
+SVC_RANDOM      equ XBN_API+24  ; out A = random byte. ISR-safe.
+SVC_GETMSG      equ XBN_API+27  ; in A = user msg no; out HL = buf, BC =
+                                 ; len. Foreground-only.
+SVC_FRAMES      equ XBN_API+30  ; out HL = frame counter (50Hz); CF
+                                 ; clear. ISR-safe.
+SVC_GETDATE     equ XBN_API+33  ; esx M_GETDATE wrapper: CF clear with
+                                 ; BC = MS-DOS date, DE = MS-DOS time,
+                                 ; H = seconds, L = hundredths ($FF if
+                                 ; unsupported). CF set = no RTC/invalid:
+                                 ; BC = DE = 0 and HL UNDEFINED - do not
+                                 ; read seconds on the failure path.
+                                 ; Foreground-only.
 SVC_BUSY        equ XBN_API+36  ; out A = mask (bit0 vidPlaying, bit1
                                  ; cardBusy, bit2 palBusy); CF clear;
                                  ; corrupts L. Bits 0/2 read 0 from the
                                  ; foreground (playback/draws are
-                                 ; foreground-synchronous) - hook-only
+                                 ; foreground-synchronous) - hook-only.
+                                 ; ISR-safe.
 SVC_PALREAD     equ XBN_API+39  ; in IX = 512-byte buffer; out 256
                                  ; entries as (RRRGGGBB, priority|blueLSB)
                                  ; pairs read straight from hardware; CF
-                                 ; clear; corrupts AF/BC/DE/HL.
-                                 ; Foreground-only.
-SVC_WINDOW      equ XBN_API+42
+                                 ; clear; corrupts AF, BC, E, IX (IX left
+                                 ; at buffer+512). Foreground-only.
+SVC_WINDOW      equ XBN_API+42  ; in A = 0-7 selects; out A = previous
+                                 ; window number, CF clear. A > 7: CF
+                                 ; set, no change. May flush and may
+                                 ; raise the More prompt in the OLD
+                                 ; window. Foreground-only.

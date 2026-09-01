@@ -465,7 +465,7 @@ svc_version:
 ; rngState RMW is bracketed atomic vs interrupts using nr_read's idiom
 ; (hardware.asm:145-165) - RTL-verified SAFE, no erratum on the Z80N
 ; core (P/V latches at T3, interrupt acceptance clears IFF2 at T5, all
-; four core variants; docs/hardware-test-checklist.md closed 2026-09-01).
+; four core variants).
 ; Double-sample kept anyway for emulator NMOS-erratum modelling parity.
 ; Consequence: with a hook armed, the shared rngState stream now
 ; interleaves hook and foreground draws, so its exact sequence is
@@ -785,7 +785,8 @@ svc_busy:
 ; In IX = 512-byte buffer, out 256 (RRRGGGBB, priority|blueLSB) pairs -
 ; fade's snapshot layout; the $44 byte is masked to bit7 (priority) and
 ; bit0 (blue LSB), the only bits that register documents. CF clear.
-; Corrupts AF/BC/DE/HL. Foreground-only.
+; Corrupts AF, BC, E, IX (IX left at buffer+512, never restored).
+; Foreground-only.
 svc_palread:
     ld e, NR_PAL_CTRL
     call nr_read
@@ -824,8 +825,8 @@ svc_palread:
 ; prn_flush - MMU6 dance, possible More prompt in the OLD window,
 ; documented) via svc_putchar's own bracket (xbn_svc_mmu_save/restore,
 ; svcSaved). Previous number is DERIVED from the curWin pointer, not a
-; maintained byte: overlay1.asm:1852 writes curWin directly (input-
-; stream path) and flag 63 already rotted stale against that same write
+; maintained byte: overlay1.asm:1874 (inp_stream_pop) writes curWin
+; directly and flag 63 already rotted stale against that same write
 ; - a mirrored byte here would take the identical hit. Max 7
 ; subtractions of WIN_SIZE from the byte offset.
 ; xbn_svc_mmu_save corrupts A, BC (its own header comment) and

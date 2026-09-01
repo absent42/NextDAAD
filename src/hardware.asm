@@ -139,9 +139,9 @@ audio_init:
 ; interrupts being enabled, and the bracket would then never EI again
 ; (the next halt hangs). Double-sample: our ISR always exits via EI,
 ; so a spurious 0 can only mean an interrupt just fired - the second
-; sample is conclusive. Whether the Z80N core reproduces the erratum
-; is unverified (see docs/hardware-test-checklist.md); the re-sample
-; makes it moot either way.
+; sample is conclusive. RTL (t80n.vhd) shows P/V latches IFF2 at T3 and
+; acceptance clears it at T5 - the erratum is absent on this core; the
+; re-sample is kept as cheap insurance for emulators.
 nr_read:
     push bc
     ld a, i
