@@ -42,5 +42,9 @@ SVC_BUSY        equ XBN_API+36  ; out A = mask (bit0 vidPlaying, bit1
                                  ; corrupts L. Bits 0/2 read 0 from the
                                  ; foreground (playback/draws are
                                  ; foreground-synchronous) - hook-only
-SVC_PALREAD     equ XBN_API+39
+SVC_PALREAD     equ XBN_API+39  ; in IX = 512-byte buffer; out 256
+                                 ; entries as (RRRGGGBB, priority|blueLSB)
+                                 ; pairs read straight from hardware; CF
+                                 ; clear; corrupts AF/BC/DE/HL.
+                                 ; Foreground-only.
 SVC_WINDOW      equ XBN_API+42

@@ -3287,6 +3287,16 @@ if ($Xbn) {
     else {
         Copy-Item "$root\tests\out\xbn\GAME.XBN" "$leg\GAME.XBN" -Force
         "staged tests\out\xbn\GAME.XBN -> sd\$legName\GAME.XBN"
+        # Task 8: XPAL needs a picture on screen to read back. Same art
+        # and same CSpect-lock hazard as the -XbnFade leg's staging.
+        $palArt = "$root\tools\Rabenstein-master\nextdaad\1.NX2"
+        if (Test-Path $palArt) {
+            Copy-Item $palArt "$leg\001.NX2" -Force
+            "staged tools\Rabenstein-master\nextdaad\1.NX2 -> sd\$legName\001.NX2 (XPAL picture)"
+        }
+        else {
+            "WARNING: tools\Rabenstein-master\nextdaad\1.NX2 missing - XPAL will have no picture to read"
+        }
     }
     $xbnActive = $true
 }

@@ -333,6 +333,7 @@ XFRM   152 verb
 XRSK   153 verb
 XDAT   154 verb
 XBSY   155 verb
+XPAL   156 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -480,20 +481,20 @@ XBSY   155 verb
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 216 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C0D8 (lsb 216, msb 192) - read
+> XCAL _   CALL 6 195         ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C306 (lsb 6, msb 195) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C0C9 by Task 7's fn 37 dispatch code and
-                             ; busy_probe landing ahead of call_target.
+                             ; from $C0D8 by Task 8's fn 38 dispatch code and
+                             ; palread_probe landing ahead of call_target.
            PRINT 220         ; expect 119 ($77)
-           CALL 47 227        ; Task 4's owed check: tail_marker, address
-                             ; $E32F (lsb 47, msb 227) - the SECOND 8K page
+           CALL 93 229        ; Task 4's owed check: tail_marker, address
+                             ; $E55D (lsb 93, msb 229) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E320 by Task 7's code growth.
+                             ; from $E32F by Task 8's code growth.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -634,6 +635,21 @@ XBSY   155 verb
            EXTERN  0 37
            MES     "busy "
            PRINT   228
+           DONE
+; XPAL - palette readback: draw picture 1, read all 256 entries back,
+;        print the 16-bit checksum. Expected value derived host-side
+;        from tools\Rabenstein-master\nextdaad\1.NX2's embedded 512-byte
+;        palette plus the interpreter's documented transforms (the $E3
+;        collision dodge and the entry-255 stamp, overlay2.asm) - sum
+;        1916 ($077C): H=7, L=124. A stub row, a wrong bank or a
+;        one-byte-per-entry read cannot reproduce it.
+> XPAL _   PICTURE 1
+           DISPLAY 0
+           EXTERN  0 38
+           MES     "pal "
+           PRINT   230
+           MES     "/"
+           PRINT   229
            DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert

@@ -773,9 +773,51 @@ svc_busy:
     or a                          ; CF clear (A may be nonzero - or a still clears CF)
     ret
 
+; Row 13. Reads NR $41/$44 straight from hardware - no interpreter-held
+; palette table exists (gfx_blit reloads from the picture file itself
+; every DISPLAY). Reads do NOT auto-increment (core nextreg.txt) - NR
+; $40 is written explicitly for every entry. Edit-select is derived
+; from whichever bank NR $43's display bit shows RIGHT NOW (never an
+; unconditional first-bank select, never a constant $43 write - the
+; fade rule, pal_edit_ctl's own reasoning); NR $43 is restored before
+; return. This is the sanctioned foreground read path fade fn 42's
+; hidden-bank blanking workaround no longer needs.
+; In IX = 512-byte buffer, out 256 (RRRGGGBB, priority|blueLSB) pairs -
+; fade's snapshot layout; the $44 byte is masked to bit7 (priority) and
+; bit0 (blue LSB), the only bits that register documents. CF clear.
+; Corrupts AF/BC/DE/HL. Foreground-only.
 svc_palread:
-    ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF
-    scf
+    ld e, NR_PAL_CTRL
+    call nr_read
+    ld c, a                      ; foreground's NR $43, restored on exit
+    and %00001111                ; auto-inc on, edit field cleared,
+                                 ; display-select + layer bits kept
+    bit 2, a                     ; which bank the display currently shows
+    jr z, .first
+    or PAL_L2_EDIT_SECOND         ; edit follows: display shows the second
+    jr .apply
+.first:
+    or PAL_L2_FIRST               ; edit follows: display shows the first
+.apply:
+    nextreg NR_PAL_CTRL, a
+    ld b, 0                      ; colour index, wraps 0..255..0 (256 reads)
+.loop:
+    ld a, b
+    nextreg NR_PAL_INDEX, a
+    ld e, NR_PAL_VALUE
+    call nr_read
+    ld (ix+0), a
+    ld e, NR_PAL_VALUE9
+    call nr_read
+    and %10000001                ; bit7 priority, bit0 blue LSB only
+    ld (ix+1), a
+    inc ix
+    inc ix
+    inc b
+    jr nz, .loop
+    ld a, c
+    nextreg NR_PAL_CTRL, a        ; restore the foreground's NR $43
+    or a                          ; CF clear
     ret
 
 svc_window:

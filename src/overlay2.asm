@@ -2971,7 +2971,9 @@ gfx_blit:
     ; dependency at its own end (externs/fade/fade.asm, INTERPRETER
     ; DEPENDENCIES 1) so it can be found from there when this changes.
     ; Nothing here is promised to it: this code stays free to change,
-    ; and the extern is the thing that gets updated.
+    ; and the extern is the thing that gets updated. SVC_PALREAD
+    ; (main.asm) is now the sanctioned way for an extern to read this
+    ; palette back directly, instead of leaning on that side effect.
     call data_save
     call gfx_pal_rewind
     ld b, 1

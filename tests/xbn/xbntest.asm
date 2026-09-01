@@ -49,10 +49,14 @@ ext_main:
     jr z, .fn36
     cp 37
     jr z, .fn37
+    cp 38
+    jr z, .fn38
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
     ret
+.fn38:
+    jp palread_probe              ; Task 8: SVC_PALREAD probe
 .fn37:
     jp busy_probe                 ; Task 7: SVC_BUSY probe
 .fn36:
@@ -145,6 +149,37 @@ busy_probe:
     ld (XBN_FLAGS+228), a
     or a
     ret
+
+; Task 8 probe: SVC_PALREAD readback. Sums all 512 read-back bytes into
+; HL (two nested 256-count passes - a plain djnz cannot loop 512), low
+; byte to flag 229, high byte to flag 230. A stub row, a wrong bank or a
+; one-byte-per-entry read cannot reproduce the pinned sum.
+palread_probe:
+    ld ix, palBuf
+    call SVC_PALREAD
+    ld hl, 0
+    ld de, palBuf
+    ld c, 2                      ; two 256-byte halves = 512 bytes
+.outer:
+    ld b, 0                      ; 256 (wraps 0)
+.inner:
+    ld a, (de)
+    inc de
+    add a, l
+    ld l, a
+    jr nc, .noc
+    inc h
+.noc:
+    djnz .inner
+    dec c
+    jr nz, .outer
+    ld a, l
+    ld (XBN_FLAGS+229), a
+    ld a, h
+    ld (XBN_FLAGS+230), a
+    or a                         ; CF discipline: deliberate clear
+    ret
+palBuf: ds 512
 
 call_target:
     ; COUPLED to tests\extern.dsf's XCAL entry (CALL lsb msb) - the
