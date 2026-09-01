@@ -252,9 +252,9 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29 and 35-39 exist: XREG XCAL XTIK XSVC XFIO
-;     XMSG XMS6 XCND XCNC XFRM XRSK XDAT XBSY XPAL XWIN (fns 26-29 and
-;     35-39 exist only in xbntest.asm) (on any other leg these print
+;     where fns 20-29 and 34-39 exist: XREG XCAL XTIK XSVC XFIO
+;     XMSG XMS6 XCND XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH (fns 26-29
+;     and 35-39 exist only in xbntest.asm) (on any other leg these print
 ;     unwritten flags - zeros)
 ;   XDAT lives in the fixture leg's fn table (fn 36) but is
 ;     SILICON-ONLY: DO NOT TYPE it in an emulator replay - ZEsarUX's
@@ -345,6 +345,7 @@ XDAT   154 verb
 XBSY   155 verb
 XPAL   156 verb
 XWIN   157 verb
+XPLH   158 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -492,20 +493,21 @@ XWIN   157 verb
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 37 195         ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C325 (lsb 37, msb 195) - read
+> XCAL _   CALL 181 195        ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C3B5 (lsb 181, msb 195) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C306 by Task 9's fn 39 dispatch code and
-                             ; window_probe landing ahead of call_target.
+                             ; from $C325 by phase 2 Task 1's fn 34 dispatch
+                             ; code and palhide_probe landing ahead of
+                             ; call_target.
            PRINT 220         ; expect 119 ($77)
-           CALL 124 229        ; Task 4's owed check: tail_marker, address
-                             ; $E57C (lsb 124, msb 229) - the SECOND 8K page
+           CALL 12 230         ; Task 4's owed check: tail_marker, address
+                             ; $E60C (lsb 12, msb 230) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E55D by Task 9's code growth.
+                             ; from $E57C by phase 2 Task 1's code growth.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -675,6 +677,30 @@ XWIN   157 verb
            EXTERN  2 39
            MES     "back ok prev "
            PRINT   231
+           DONE
+; XPLH - PALREAD bank select: buffer mode stages picture 1's palette in
+;        the HIDDEN bank while the fixture solids the DISPLAYED bank red.
+;        A=1 must read the staged palette (pal 7/124 - Task 8 phase 1's
+;        pinned checksum, same art, same transforms); A=0 must read the
+;        solid (256 x (224, 0) = $E000 -> 224/0). A service that ignores
+;        A prints the same pair twice; one that reads the wrong bank
+;        swaps them.
+> XPLH _   PICTURE 1
+           DISPLAY 0
+           GFX     0 4
+           PICTURE 1
+           DISPLAY 0
+           EXTERN  0 34
+           GFX     0 2
+           GFX     0 3
+           MES     "hid "
+           PRINT   230
+           MES     "/"
+           PRINT   229
+           MES     " shown "
+           PRINT   233
+           MES     "/"
+           PRINT   232
            DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert

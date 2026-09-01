@@ -43,6 +43,8 @@ ext_main:
     jr z, .fn28
     cp 29
     jr z, .fn29
+    cp 34
+    jr z, .fn34
     cp 35
     jr z, .fn35
     cp 36
@@ -67,6 +69,8 @@ ext_main:
     jp getdate_probe              ; Task 6: SVC_GETDATE presence probe
 .fn35:
     jp rng_soak_arm               ; Task 5: arm/disarm the SVC_RANDOM soak
+.fn34:
+    jp palhide_probe              ; Task 1 (phase 2): SVC_PALREAD bank select
 .fn29:
     jp frames_delta               ; Task 4
 .fn28:
@@ -159,6 +163,7 @@ busy_probe:
 ; byte to flag 229, high byte to flag 230. A stub row, a wrong bank or a
 ; one-byte-per-entry read cannot reproduce the pinned sum.
 palread_probe:
+    xor a                        ; A = 0: displayed bank (explicit)
     ld ix, palBuf
     call SVC_PALREAD
     ld hl, 0
@@ -184,6 +189,104 @@ palread_probe:
     or a                         ; CF discipline: deliberate clear
     ret
 palBuf: ds 512
+
+; Task 1 (phase 2) probe: SVC_PALREAD bank select (XPLH). Solids the
+; DISPLAYED bank red via raw NR writes - fade.asm's apply discipline
+; (select latch + NR $43 saved/restored around the burst, edit field
+; derived the way svc_palread derives it) - then reads the staged bank
+; (A=1) and the displayed bank (A=0), checksumming each into a flag
+; pair the same way palread_probe does.
+NR_PAL_IDX      equ $40
+NR_PAL_VAL      equ $41
+NR_PAL_CTL      equ $43
+TB_SELECT       equ $243B
+TB_ACCESS       equ $253B
+PAL_L2_EDIT     equ $10          ; edit+display Layer 2 first bank
+PAL_L2_EDIT2    equ $50          ; edit second bank, display untouched
+palhide_probe:
+    ld bc, TB_SELECT
+    in a, (c)
+    ld (.savesel), a             ; foreground's selected register
+    ld a, NR_PAL_CTL
+    out (c), a
+    inc b
+    in a, (c)
+    ld (.savectl), a             ; live NR $43
+    and %00001111                ; edit field cleared, display/layer kept
+    bit 2, a                     ; display shows bank 2?
+    jr z, .disp1
+    or PAL_L2_EDIT2               ; bank 2 shown -> edit bank 2
+    jr .sel
+.disp1:
+    or PAL_L2_EDIT                ; bank 1 shown -> edit bank 1
+.sel:
+    out (c), a                   ; edit the displayed bank (BC = ACCESS)
+    dec b
+    ld a, NR_PAL_IDX
+    out (c), a
+    inc b
+    xor a
+    out (c), a                   ; start at colour 0
+    dec b
+    ld a, NR_PAL_VAL
+    out (c), a
+    inc b                        ; BC stays TB_ACCESS for the burst
+    ld a, 224                    ; solid red RRRGGGBB ($E0)
+    ld e, 0                      ; 256 iterations
+.wr:
+    out (c), a                   ; auto-inc advances the colour index
+    dec e
+    jr nz, .wr
+    dec b
+    ld a, NR_PAL_CTL
+    out (c), a
+    inc b
+    ld a, (.savectl)
+    out (c), a                   ; NR $43 back to what was live
+    dec b
+    ld a, (.savesel)
+    out (c), a                   ; select latch back too
+    ld a, 1
+    ld ix, palBuf
+    call SVC_PALREAD              ; A=1: staged bank (buffer-mode picture)
+    ld de, XBN_FLAGS+229
+    call .checksum
+    xor a
+    ld ix, palBuf
+    call SVC_PALREAD              ; A=0: displayed bank (the fixture's solid)
+    ld de, XBN_FLAGS+232
+    call .checksum
+    or a                          ; CF discipline: deliberate clear
+    ret
+; DE = flag pair base; sums palBuf's 512 bytes into HL, low byte to
+; (DE), high byte to (DE+1) - same idiom as palread_probe.
+.checksum:
+    push de
+    ld hl, 0
+    ld de, palBuf
+    ld c, 2
+.outer:
+    ld b, 0
+.inner:
+    ld a, (de)
+    inc de
+    add a, l
+    ld l, a
+    jr nc, .noc
+    inc h
+.noc:
+    djnz .inner
+    dec c
+    jr nz, .outer
+    pop de
+    ld a, l
+    ld (de), a
+    inc de
+    ld a, h
+    ld (de), a
+    ret
+.savesel: db 0
+.savectl: db 0
 
 ; Task 9 probe: SVC_WINDOW select/restore. p1 (echoed in B per the entry
 ; contract) is the target window; the returned previous is parked at

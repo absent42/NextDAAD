@@ -779,29 +779,39 @@ svc_busy:
 ; $40 is written explicitly for every entry. Edit-select is derived
 ; from whichever bank NR $43's display bit shows RIGHT NOW (never an
 ; unconditional first-bank select, never a constant $43 write - the
-; fade rule, pal_edit_ctl's own reasoning); NR $43 is restored before
-; return. This is the sanctioned foreground read path fade fn 42's
-; hidden-bank blanking workaround no longer needs.
-; In IX = 512-byte buffer, out 256 (RRRGGGBB, priority|blueLSB) pairs -
-; fade's snapshot layout; the $44 byte is masked to bit7 (priority) and
-; bit0 (blue LSB), the only bits that register documents. CF clear.
-; Corrupts AF, BC, E, IX (IX left at buffer+512, never restored).
-; Foreground-only.
+; fade rule, pal_edit_ctl's own reasoning), crossed with the A input;
+; NR $43 is restored before return. This is the sanctioned foreground
+; read path fade fn 42's hidden-bank blanking workaround no longer needs.
+; A=1 reads the bank the display does not show - the staged palette
+; while GFX 87/4 buffer mode is open.
+; In IX = 512-byte buffer, A = bank select (0 displayed, 1 other/staged);
+; 256 x (RRRGGGBB, %11000001-masked second byte); corrupts AF, BC, E, IX;
+; CF clear; foreground-only.
 svc_palread:
+    ld c, a                       ; C = bank select (0 displayed, 1 other)
     ld e, NR_PAL_CTRL
-    call nr_read
-    ld c, a                      ; foreground's NR $43, restored on exit
-    and %00001111                ; auto-inc on, edit field cleared,
-                                 ; display-select + layer bits kept
-    bit 2, a                     ; which bank the display currently shows
-    jr z, .first
-    or PAL_L2_EDIT_SECOND         ; edit follows: display shows the second
+    call nr_read                  ; A = live $43
+    ld b, a                       ; B = saved $43 (restored at exit)
+    and %00001111                 ; keep display/layer bits, clear edit field
+    bit 2, a                      ; display shows bank 2?
+    jr z, .shows1
+    ; display shows bank 2: edit bank 2 unless inverted
+    bit 0, c
+    jr nz, .edit1
+    or PAL_L2_EDIT_SECOND
     jr .apply
-.first:
-    or PAL_L2_FIRST               ; edit follows: display shows the first
+.shows1:
+    bit 0, c
+    jr nz, .edit2
+.edit1:
+    or PAL_L2_FIRST
+    jr .apply
+.edit2:
+    or PAL_L2_EDIT_SECOND
 .apply:
     nextreg NR_PAL_CTRL, a
-    ld b, 0                      ; colour index, wraps 0..255..0 (256 reads)
+    ld c, b                       ; C = saved $43 for the exit restore
+    ld b, 0                       ; loop counter as before
 .loop:
     ld a, b
     nextreg NR_PAL_INDEX, a
@@ -810,7 +820,8 @@ svc_palread:
     ld (ix+0), a
     ld e, NR_PAL_VALUE9
     call nr_read
-    and %10000001                ; bit7 priority, bit0 blue LSB only
+    and %11000001                ; bits 7-6 priority field (core latches
+                                 ; two bits on a $44 write), bit 0 blue LSB
     ld (ix+1), a
     inc ix
     inc ix

@@ -58,11 +58,12 @@ SVC_BUSY        equ XBN_API+36  ; out A = mask (bit0 vidPlaying, bit1
                                  ; foreground (playback/draws are
                                  ; foreground-synchronous) - hook-only.
                                  ; ISR-safe.
-SVC_PALREAD     equ XBN_API+39  ; in IX = 512-byte buffer; out 256
-                                 ; entries as (RRRGGGBB, priority|blueLSB)
-                                 ; pairs read straight from hardware; CF
-                                 ; clear; corrupts AF, BC, E, IX (IX left
-                                 ; at buffer+512). Foreground-only.
+SVC_PALREAD     equ XBN_API+39  ; in IX = 512-byte buffer, A = bank
+                                 ; select (0 displayed, 1 other/staged);
+                                 ; out 256 x (RRRGGGBB, %11000001-masked
+                                 ; second byte); corrupts AF, BC, E, IX
+                                 ; (IX left at buffer+512); CF clear;
+                                 ; foreground-only.
 SVC_WINDOW      equ XBN_API+42  ; in A = 0-7 selects; out A = previous
                                  ; window number, CF clear. A > 7: CF
                                  ; set, no change. May flush and may
