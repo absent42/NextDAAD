@@ -9,8 +9,8 @@
 #   2. freshness: the source assembles (sjasmplus, -I = kit root) to a
 #      binary byte-identical to the committed GAME.XBN
 #   3. the XBN header validates by the interpreter's own rules: magic
-#      "XBN", version 1, size field == file length <= 16384, nonzero
-#      entries inside [$C000, $C000+size)
+#      "XBN", version 2, 14-byte header, size field == file length <=
+#      16384, nonzero entries inside [$C000, $C000+size)
 #   4. the README documents the interface: mentions EXTERN and at
 #      least one fn code line, and is not a stub
 #   5. house text rules: no em-dash, no emoji in .asm/.md/.ps1
@@ -84,11 +84,12 @@ foreach ($dir in $dirs) {
     $xbnPath = Join-Path $dir.FullName 'GAME.XBN'
     if (Test-Path $xbnPath) {
         $b = [IO.File]::ReadAllBytes($xbnPath)
-        if ($b.Length -lt 10) { $findings += "GAME.XBN shorter than the 10-byte header" }
+        if ($b.Length -lt 14) { $findings += "GAME.XBN shorter than the 14-byte header" }
         elseif ($b.Length -gt 16384) { $findings += "GAME.XBN exceeds 16384 bytes ($($b.Length))" }
         else {
             if ([Text.Encoding]::ASCII.GetString($b[0..2]) -ne 'XBN') { $findings += "header magic is not 'XBN'" }
-            if ($b[3] -ne 1) { $findings += "header version is $($b[3]), expected 1" }
+            if ($b[3] -ne 2) { $findings += "header version is $($b[3]), expected 2" }
+            if (($b[10] -bor $b[11] -bor $b[12] -bor $b[13]) -ne 0) { $findings += "reserved header bytes 10-13 must be zero" }
             $size = $b[8] + 256 * $b[9]
             if ($size -ne $b.Length) { $findings += "header size field ($size) does not match file length ($($b.Length))" }
             $limit = 0xC000 + $b.Length

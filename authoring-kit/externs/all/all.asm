@@ -27,17 +27,23 @@ all_ext:
     XBN_CHAIN_ENTER
     call xbn_setup
     call ticker.ext
+    XBN_CHAIN_CAPTURE
     call xbn_setup
     call fade.ext
+    XBN_CHAIN_CAPTURE
     call xbn_setup
     call hints.ext
+    XBN_CHAIN_CAPTURE
     call xbn_setup
     call clock.ext
+    XBN_CHAIN_CAPTURE
     call xbn_setup
     call timer.ext
+    XBN_CHAIN_CAPTURE
     call xbn_setup
     call toolkit.ext
-    ret
+    XBN_CHAIN_CAPTURE
+    XBN_CHAIN_VERDICT
 
 ; #int chain. IX = flags base is the only documented register; every
 ; module's int is a load-and-test when idle.

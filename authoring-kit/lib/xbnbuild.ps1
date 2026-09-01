@@ -58,8 +58,9 @@ foreach ($m in $Modules) { [void]$sb.AppendLine("    DEFINE $($known[$m])") }
 foreach ($m in $Modules) {
     [void]$sb.AppendLine('    call xbn_setup')
     [void]$sb.AppendLine("    call $m.ext")
+    [void]$sb.AppendLine('    XBN_CHAIN_CAPTURE')
 }
-[void]$sb.AppendLine('    ret')
+[void]$sb.AppendLine('    XBN_CHAIN_VERDICT')
 [void]$sb.AppendLine('sub_int:')
 foreach ($m in $Modules) {
     [void]$sb.AppendLine('    ld ix, XBN_FLAGS')
