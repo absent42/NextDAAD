@@ -49,12 +49,21 @@ gives true 1:1 real time (50 frames/second x 60 seconds). Writing a rate of
 0 while the clock is running silently halts it - the zero-rate default only
 applies at arm time.
 
+The hook measures elapsed frames as a delta from the interpreter's own frame
+counter each pass, not by counting hook invocations: whatever the game was
+doing between two passes, the true number of frames elapsed is what
+accumulates towards the rate, so frames the hook itself was not invoked for
+(a video clip, a long blit) are still counted once it resumes rather than
+lost.
+
 Arming with `EXTERN 0 60` is remembered for the whole session - it survives
 `RESTART`, a part switch and a `LOAD` - so after `EXTERN 0 61` you can restart
 the clock with a plain `LET 226 1`. A fresh boot is a different matter: the
 module starts disarmed every time the game is loaded, so `EXTERN 0 60`
 belongs in your start process, the way classic DAAD games initialised
-externs from PRO 6.
+externs from PRO 6. The frame counter is re-primed on every hook pass even
+while stopped, so that restart never bursts the minutes that passed while
+the clock was frozen.
 
 ## Making an event happen at a given time
 
