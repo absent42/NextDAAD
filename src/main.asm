@@ -820,9 +820,53 @@ svc_palread:
     or a                          ; CF clear
     ret
 
+; Row 14. Selection flushes through the print path (win_select ->
+; prn_flush - MMU6 dance, possible More prompt in the OLD window,
+; documented) via svc_putchar's own bracket (xbn_svc_mmu_save/restore,
+; svcSaved). Previous number is DERIVED from the curWin pointer, not a
+; maintained byte: overlay1.asm:1852 writes curWin directly (input-
+; stream path) and flag 63 already rotted stale against that same write
+; - a mirrored byte here would take the identical hit. Max 7
+; subtractions of WIN_SIZE from the byte offset.
+; xbn_svc_mmu_save corrupts A, BC (its own header comment) and
+; win_select corrupts all registers (it calls prn_flush, documented
+; "Corrupts all registers") - B (the derived previous number) needs a
+; stack slot across BOTH calls, not one; xbn_svc_mmu_restore corrupts
+; only A, so BC rides through that call unprotected. A resident scratch
+; byte would work too, but costs a byte for no benefit over the stack
+; here - the file's own svc_putchar/svc_puts bracket already parks AF
+; on the stack across the identical MMU calls, so this stays consistent
+; with that idiom rather than introducing a new storage class.
+; In A = 0-7 (target). Out A = previous number, CF clear. A > 7: CF
+; set, A/state unchanged. Foreground-only.
 svc_window:
-    ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF
+    cp 8
+    jr c, .ok
     scf
+    ret
+.ok:
+    push af                       ; target window number, for win_select
+    ld hl, (curWin)
+    ld de, winTable
+    or a
+    sbc hl, de                    ; HL = byte offset into winTable
+    ld b, -1
+.div:
+    inc b
+    ld de, WIN_SIZE
+    or a
+    sbc hl, de
+    jr nc, .div                   ; B = offset / WIN_SIZE = previous number
+    push bc                       ; B survives xbn_svc_mmu_save's BC clobber
+    call xbn_svc_mmu_save
+    pop bc
+    pop af                        ; target window number back in A
+    push bc                       ; B survives win_select's full clobber
+    call win_select
+    call xbn_svc_mmu_restore      ; A only - BC untouched
+    pop bc
+    ld a, b                       ; A = previous window number
+    or a                          ; CF clear
     ret
 
 ; Call HL (a routine on SFX_PAGE) on overlay1's behalf, exactly as

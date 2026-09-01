@@ -334,6 +334,7 @@ XRSK   153 verb
 XDAT   154 verb
 XBSY   155 verb
 XPAL   156 verb
+XWIN   157 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -481,20 +482,20 @@ XPAL   156 verb
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 6 195         ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C306 (lsb 6, msb 195) - read
+> XCAL _   CALL 37 195         ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C325 (lsb 37, msb 195) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C0D8 by Task 8's fn 38 dispatch code and
-                             ; palread_probe landing ahead of call_target.
+                             ; from $C306 by Task 9's fn 39 dispatch code and
+                             ; window_probe landing ahead of call_target.
            PRINT 220         ; expect 119 ($77)
-           CALL 93 229        ; Task 4's owed check: tail_marker, address
-                             ; $E55D (lsb 93, msb 229) - the SECOND 8K page
+           CALL 124 229        ; Task 4's owed check: tail_marker, address
+                             ; $E57C (lsb 124, msb 229) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E32F by Task 8's code growth.
+                             ; from $E55D by Task 9's code growth.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -650,6 +651,20 @@ XPAL   156 verb
            PRINT   230
            MES     "/"
            PRINT   229
+           DONE
+; XWIN - window select/restore: DSF sets up window 2, fn 39 selects it,
+;        prints W2 there, restores. Expected: "W2" lands in the window-2
+;        region (visually distinct row), "back ok" lands in window 1,
+;        and the returned-previous flag reads 1 (the main window). A row
+;        that ignores A or returns garbage restores to the wrong window
+;        and "back ok" lands visibly wrong.
+> XWIN _   WINDOW  2
+           WINAT   20 0
+           WINSIZE 1 40
+           WINDOW  1
+           EXTERN  2 39
+           MES     "back ok prev "
+           PRINT   231
            DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert

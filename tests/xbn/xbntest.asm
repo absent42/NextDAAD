@@ -51,10 +51,14 @@ ext_main:
     jr z, .fn37
     cp 38
     jr z, .fn38
+    cp 39
+    jr z, .fn39
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
     ret
+.fn39:
+    jp window_probe                ; Task 9: SVC_WINDOW select/restore probe
 .fn38:
     jp palread_probe              ; Task 8: SVC_PALREAD probe
 .fn37:
@@ -180,6 +184,26 @@ palread_probe:
     or a                         ; CF discipline: deliberate clear
     ret
 palBuf: ds 512
+
+; Task 9 probe: SVC_WINDOW select/restore. p1 (echoed in B per the entry
+; contract) is the target window; the returned previous is parked at
+; flag 231, a marker printed through the newly-selected window (proves
+; the switch actually happened - a stub row or a wrong-window select
+; would print the marker in the wrong place), then restored using that
+; same parked flag. The restore's own returned-previous (the just-left
+; target window) is not captured, so flag 231 keeps the ORIGINAL
+; previous for the DSF's PRINT - the "back ok prev 1" contract.
+window_probe:
+    ld a, b                      ; p1 = target window number
+    call SVC_WINDOW
+    ld (XBN_FLAGS+231), a        ; previous window number, parked
+    ld hl, .msg
+    call SVC_PUTS                ; marker, printed through the new window
+    ld a, (XBN_FLAGS+231)
+    call SVC_WINDOW               ; restore
+    or a                         ; CF discipline: deliberate clear
+    ret
+.msg: db "W2", 0
 
 call_target:
     ; COUPLED to tests\extern.dsf's XCAL entry (CALL lsb msb) - the
