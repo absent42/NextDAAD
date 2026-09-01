@@ -526,6 +526,20 @@ svc_random:
 ; load-bearing for svc_puts, whose HL may point INTO that bank.
 svcSaved: dw 0
 
+; SVC_BUSY flags (Task 7). Resident tail, beside svcSaved, NOT
+; gfxcache.asm (pre-anchor - a new byte there shifts the flags anchor).
+; video.asm/overlay2.asm write these by absolute address, the same
+; overlay-writes-resident pattern as h_picture's eng_set_done call
+; (overlay2.asm) - both writers are always-mapped resident code from
+; the banked overlays' point of view.
+vidPlaying: db 0             ; 1 while vid_run owns the machine (set at
+                              ; its single entry, cleared at its single
+                              ; restore tail)
+palBusy:    db 0             ; 1 only across gfx_blit's live palette
+                              ; reveal and h_gfx .swap's reveal tail -
+                              ; NARROW by owner ruling, not the whole
+                              ; draw path
+
 xbn_svc_mmu_save:                ; corrupts A, BC; result in svcSaved
     ld bc, $243B
     ld a, NR_MMU6
@@ -734,9 +748,29 @@ esx_getdate:
 
 svc_getdate: jp esx_getdate
 
+; Row 12. Pure resident reads - ISR-safe. Bits append-only (bit 0
+; vidPlaying, bit 1 cardBusy, bit 2 palBusy). Bits 0/2 are foreground-
+; invisible (video playback and draws are foreground-synchronous) -
+; observable only from the hook. Corrupts AF, L (documented in
+; authoring-kit/xbn.inc's SVC_BUSY equate comment) - the smaller
+; contract: HL is not a result register anywhere else in this table,
+; so preserving it with push/pop would cost 4 bytes and 20T to protect
+; a register no caller needs back.
 svc_busy:
-    ld a, $FF                    ; stub until its task lands - unimplemented rows set CF and A = $FF
-    scf
+    ld a, (vidPlaying)
+    and 1
+    ld l, a
+    ld a, (cardBusy)
+    and 1
+    add a, a
+    or l
+    ld l, a
+    ld a, (palBusy)
+    and 1
+    add a, a
+    add a, a
+    or l                          ; A = bit2|bit1|bit0
+    or a                          ; CF clear (A may be nonzero - or a still clears CF)
     ret
 
 svc_palread:

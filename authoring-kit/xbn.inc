@@ -37,6 +37,10 @@ SVC_RANDOM      equ XBN_API+24  ; out A = random byte
 SVC_GETMSG      equ XBN_API+27  ; in A = user msg no; out HL = buf, BC = len
 SVC_FRAMES      equ XBN_API+30  ; out HL = frame counter (50Hz); CF clear
 SVC_GETDATE     equ XBN_API+33
-SVC_BUSY        equ XBN_API+36
+SVC_BUSY        equ XBN_API+36  ; out A = mask (bit0 vidPlaying, bit1
+                                 ; cardBusy, bit2 palBusy); CF clear;
+                                 ; corrupts L. Bits 0/2 read 0 from the
+                                 ; foreground (playback/draws are
+                                 ; foreground-synchronous) - hook-only
 SVC_PALREAD     equ XBN_API+39
 SVC_WINDOW      equ XBN_API+42

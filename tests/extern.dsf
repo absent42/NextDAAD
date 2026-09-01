@@ -71,6 +71,13 @@
 ;          concurrent CHANCE stress against the same interleave is
 ;          covered by ordinary suite play; this verb isolates the
 ;          hook-draw/atomicity claim on its own.
+;   XBSY - SVC_BUSY (Task 7, fn 37, xbntest.asm's busy_probe): the
+;          foreground-invisibility contract itself - every busy source
+;          (vidPlaying, cardBusy, palBusy) is synchronous with the
+;          mainline, so a foreground read is ALWAYS 0. Flag 228 arrives
+;          poisoned to 9 (LET), must never keep that value. Hook-side
+;          visibility of bits 0/2 is silicon/RC territory (video
+;          emulator ban); bit 1 hook-capture likewise rides the RC sheet.
 ;
 ; MTX message 0 is reserved verbatim as the Task 8 SVC_GETMSG probe
 ; payload ("TICKER MESSAGE FOR GETMSG") - never printed as a boot
@@ -235,9 +242,10 @@
 ; lesson: a run-sheet check once drove fn 22 against a binary with no
 ; fn 22 handler and its "pass" was void.
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
-;     where fns 20-29, 35 and 36 exist: XREG XCAL XTIK XSVC XFIO XMSG
-;     XMS6 XCND XCNC XFRM XRSK XDAT (fns 26-29, 35 and 36 exist only in
-;     xbntest.asm) (on any other leg these print unwritten flags - zeros)
+;     where fns 20-29, 35, 36 and 37 exist: XREG XCAL XTIK XSVC XFIO
+;     XMSG XMS6 XCND XCNC XFRM XRSK XDAT XBSY (fns 26-29, 35, 36 and 37
+;     exist only in xbntest.asm) (on any other leg these print
+;     unwritten flags - zeros)
 ;   XDAT lives in the fixture leg's fn table (fn 36) but is
 ;     SILICON-ONLY: DO NOT TYPE it in an emulator replay - ZEsarUX's
 ;     esxdos handler lacks M_GETDATE and the call derails the machine.
@@ -324,6 +332,7 @@ XCNC   151 verb
 XFRM   152 verb
 XRSK   153 verb
 XDAT   154 verb
+XBSY   155 verb
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -471,20 +480,20 @@ XDAT   154 verb
                              ; nonzero it sticks the session prompt in
                              ; fixed mode for every later capture
            DONE
-> XCAL _   CALL 201 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
-                             ; label, address $C0C9 (lsb 201, msb 192) - read
+> XCAL _   CALL 216 192       ; COUPLED to tests\xbn\xbntest.asm's call_target
+                             ; label, address $C0D8 (lsb 216, msb 192) - read
                              ; from tests\out\xbn\xbntest.sym after assembly
                              ; (sjasmplus --sym); re-encode here if xbntest.asm
                              ; changes and call_target's address moves. Moved
-                             ; from $C0A1 by Task 6's fn 36 dispatch code and
-                             ; getdate_probe landing ahead of call_target.
+                             ; from $C0C9 by Task 7's fn 37 dispatch code and
+                             ; busy_probe landing ahead of call_target.
            PRINT 220         ; expect 119 ($77)
-           CALL 32 227        ; Task 4's owed check: tail_marker, address
-                             ; $E320 (lsb 32, msb 227) - the SECOND 8K page
+           CALL 47 227        ; Task 4's owed check: tail_marker, address
+                             ; $E32F (lsb 47, msb 227) - the SECOND 8K page
                              ; of the XBN window, proving CALL dispatch
                              ; reaches page 2 and not only page 1. Same
                              ; re-encode caveat as call_target above. Moved
-                             ; from $E2F8 by the same Task 6 code growth.
+                             ; from $E320 by Task 7's code growth.
            PRINT 222         ; expect 153 ($99)
            DONE
 ; XSLT - CALL slots. 0, 1, 2 and 3 now reach the toolkit; 4 is still
@@ -615,6 +624,16 @@ XDAT   154 verb
            EXTERN  0 36
            MES     "rtc "
            PRINT   223
+           DONE
+; XBSY - the foreground-invisibility contract itself: every busy source
+;        is synchronous with the mainline, so a foreground read is
+;        ALWAYS 0. Poisoned first so a dead fn cannot pass. Hook-side
+;        visibility of bits 0/2 is silicon/RC territory (video emulator
+;        ban); bit 1 hook-capture likewise rides the RC sheet.
+> XBSY _   LET     228 9
+           EXTERN  0 37
+           MES     "busy "
+           PRINT   228
            DONE
 > XABS _   CLEAR 200
            EXTERN 9 20       ; with NO XBN staged this must stay inert

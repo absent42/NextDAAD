@@ -2273,6 +2273,12 @@ vid_play:
 ; loop -> reverse-order restore on any exit.
 ; ---------------------------------------------------------------------
 vid_run:
+    ; vidPlaying: set at the single entry (video.asm is the only caller
+    ; of vid_run - vid_play's tail jump), before any page hop; cleared
+    ; at the single restore tail (.restore_tail below) - a missed clear
+    ; wedges every busy-aware hook effect.
+    ld a, 1
+    ld (vidPlaying), a
     ; MMU6/MMU7 MUST be captured HERE, hot, before ANY hop (a cold
     ; hop's own bracket would capture its own temporary value).
     ld e, NR_MMU6
@@ -2671,6 +2677,12 @@ vid_run:
     ld a, VID_PAGE2
     jp ovl_map_page
 .restore_tail:
+    ; vidPlaying: cleared here, the single restore tail (reached only
+    ; via vid_run_restore_body's jp back to this label) - dominates
+    ; both exits below (.sfxresume's ret z and its tail-jump into
+    ; sfx_vid_resume) so neither can leave the flag stuck set.
+    xor a
+    ld (vidPlaying), a
  IFDEF DEBUG
     call vid_tl_report           ; fully-torn-down print (hot/cold/hot)
  ENDIF

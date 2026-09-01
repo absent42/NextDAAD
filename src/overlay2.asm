@@ -1197,6 +1197,11 @@ h_gfx:
     ; reveal a deferred DISPLAY: the same atomic tail gfx_blit runs on
     ; an immediate blit, except bank 1's refill mirrors the live bank
     ; (the staged source may be gone - direct-stream files are closed)
+    ; palBusy: narrow palette/reveal section only (spec ruling) - a
+    ; missed clear wedges every busy-aware hook effect. Single exit
+    ; below (tail jump into l2_enable) - clear BEFORE the jp.
+    ld a, 1
+    ld (palBusy), a
     call l2_flip_swap
     ld a, (gfxRevealMode)
     call l2_mode_set            ; NR $70 + NR $12 back-to-back
@@ -1206,6 +1211,7 @@ h_gfx:
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
     xor a
     ld (gfxRevealPend), a
+    ld (palBusy), a              ; A already 0 - palBusy: narrow palette/reveal section only (spec ruling), clear BEFORE the tail jump
     jp l2_enable
 .swapplain:
     call l2_flip_swap           ; existing behaviour, unchanged
@@ -2908,6 +2914,12 @@ gfx_blit:
     ; was left there. So bank 1 is refilled behind the live bank 2 and
     ; the display handed back once the two are identical - both of
     ; those steps are invisible by construction.
+    ; palBusy: narrow palette/reveal section only (spec ruling) - a
+    ; missed clear wedges every busy-aware hook effect. Set here (before
+    ; the first NR $43-targeting upload) and cleared on BOTH exits below:
+    ; the buffer-mode ret and the reveal path's tail jump into l2_enable.
+    ld a, 1
+    ld (palBusy), a
     call gfx_pal_rewind
     ld b, 1                     ; format 1 = 256 x 2-byte 9-bit entries
     ld c, PAL_L2_EDIT_SECOND    ; build in bank 2, bank 1 stays on screen
@@ -2923,6 +2935,8 @@ gfx_blit:
     ld (gfxRevealMode), a
     ld a, 1
     ld (gfxRevealPend), a
+    xor a
+    ld (palBusy), a              ; palBusy: narrow palette/reveal section only (spec ruling)
     ret
 .reveal:
     xor a                       ; an immediate blit supersedes any still-
@@ -2970,6 +2984,8 @@ gfx_blit:
     call dma_meas_report
 .measskip:
  ENDIF
+    xor a
+    ld (palBusy), a               ; palBusy: narrow palette/reveal section only (spec ruling) - clear BEFORE the tail jump
     jp l2_enable
 
 ; Map the current source page (gfxBankList[gfxSrcIdx]*2 + gfxSrcHalf)

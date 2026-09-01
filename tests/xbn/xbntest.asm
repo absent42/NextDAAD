@@ -47,10 +47,14 @@ ext_main:
     jr z, .fn35
     cp 36
     jr z, .fn36
+    cp 37
+    jr z, .fn37
     ; unrecognised fn (incl. 30/31 mis-typed off-leg): CF discipline -
     ; deliberate clear, not whatever cp 27 left behind.
     or a
     ret
+.fn37:
+    jp busy_probe                 ; Task 7: SVC_BUSY probe
 .fn36:
     jp getdate_probe              ; Task 6: SVC_GETDATE presence probe
 .fn35:
@@ -130,6 +134,16 @@ getdate_probe:
 .none:
     xor a
     ld (XBN_FLAGS+223), a
+    ret
+
+; Task 7 probe: SVC_BUSY, the foreground-invisibility contract. Every
+; busy source (vidPlaying, cardBusy, palBusy) is synchronous with the
+; mainline - a foreground read is ALWAYS 0. Flag 228 arrives poisoned
+; to 9 (XBSY's LET 228 9) and must never keep that value.
+busy_probe:
+    call SVC_BUSY
+    ld (XBN_FLAGS+228), a
+    or a
     ret
 
 call_target:
