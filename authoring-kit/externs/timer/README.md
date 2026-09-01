@@ -6,6 +6,13 @@ armed with two flags. An in-game-minute timer needs one more step: an EXTERN
 call to convert an authored duration into an absolute deadline, since a DSF
 process cannot add a 16-bit duration to a 16-bit clock total itself.
 
+The real-seconds countdown is driven by a frame delta taken from the
+interpreter's own frame counter each hook pass, not by counting hook
+invocations: the delta accumulates across however many frames actually
+elapsed since the previous pass, so frames the hook was not invoked for (a
+video clip, a long blit) are still counted once it resumes, and a multi-second
+delta steps every second it owes rather than losing the difference.
+
 ## EXTERN codes
 
 - `EXTERN 0 63` - arm the module. Until this runs the hook ignores flags
@@ -17,8 +24,9 @@ process cannot add a 16-bit duration to a 16-bit clock total itself.
   minute slot it is a deadline that simply stops being watched. Only the
   three states clear.
 - `EXTERN d 65` - slot d: convert its pair from a DURATION in minutes to an
-  absolute deadline, and start it counting in-game minutes. Maximum duration
-  32767 minutes (about 22 days 18 hours) - see Arming below.
+  absolute deadline, and start it counting in-game minutes. CF clear on
+  success; CF set (and nothing armed) if the duration is 32768 or more -
+  see Arming below.
 
 ## Flags
 
@@ -51,13 +59,14 @@ never advances:
     LET 230 0
     EXTERN 0 65    ; slot 0: convert to a deadline and start counting
 
-The duration must be under 32768 minutes. `EXTERN 65` arms a deadline by
-adding the duration to the clock's current total mod 65536; the sweep in the
-frame hook reads a difference of 32768 or more as already passed, so a larger
-duration expires the timer on the very next frame with no diagnostic. Stay a
-day clear of that ceiling: the clock's midnight carry briefly under-reads the
-total by 1440, so a duration in the top 1440 minutes of the range can expire
-one frame early.
+fn 65 refuses (CF set) a duration of 32768 or more - the failing EXTERN
+entry arms nothing, and the slot's pair is left holding the raw duration it
+was called with, not a deadline. Under that ceiling, `EXTERN 65` arms a
+deadline by adding the duration to the clock's current total mod 65536; the
+sweep in the frame hook reads a difference of 32768 or more as already
+passed, so stay a day clear of the ceiling even so: the clock's midnight
+carry briefly under-reads the total by 1440, so an accepted duration in the
+top 1440 minutes of the range can still expire one frame early.
 
 After that call the pair no longer holds a countdown - it holds the in-game
 time at which the timer expires. Read state 235 for the answer you want:

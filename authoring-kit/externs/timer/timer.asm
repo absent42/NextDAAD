@@ -50,13 +50,18 @@ ext:
     jp z, stopall
     cp 65
     jp z, arm_minutes
+.notmine:
+    or a                         ; CF clear: unrecognised fn, no failure
     ret
 
 ; fn 63 - arm the module. Until this runs the hook ignores flags 229-237
 ; entirely, so an unused timer module costs the author nothing.
 arm:
-    xor a
-    ld (frames), a
+    ld hl, 0
+    ld (frameAcc), hl
+    call SVC_FRAMES
+    ld (lastFrames), hl          ; prime: the hook's first delta must count
+                                 ; only frames since this arm, not since boot
     ld a, 1
     ld (armed), a                ; armed set last: an interrupt before this
     ret                          ; point sees armed=0 and returns at once
@@ -140,6 +145,12 @@ arm_minutes:
     ld e, (hl)
     inc hl
     ld d, (hl)                   ; DE = the author's duration, HL -> high byte
+    ld a, d
+    and $80
+    jr nz, .refuse                ; duration >= 32768: refuse - the slot was
+                                 ; already idled above, and the pair is left
+                                 ; untouched (still the raw duration, not a
+                                 ; deadline)
     push hl
     ld hl, (armtotal)
     add hl, de                   ; HL = deadline, wrapping mod 65536
@@ -154,7 +165,11 @@ arm_minutes:
     ld de, XBN_FLAGS + FLAG_STATE
     add hl, de
     ld (hl), ST_MINUTES          ; window closed above: safe to go live now
-    ret
+    ret                          ; CF clear: this add (flag base + slot 0-2)
+                                 ; never overflows - verified, not an or a fix
+.refuse:
+    scf                          ; CF set: duration out of range, nothing
+    ret                          ; armed - documented meaning of the failure
 
 armslot:  db 0
 armtotal: dw 0
@@ -165,19 +180,30 @@ int:
     ld a, (armed)
     or a
     ret z
+    ; Re-prime BEFORE anything else can return early: the accumulator must
+    ; track "now" every frame, whether or not a second is due this pass.
+    call SVC_FRAMES
+    ld de, (lastFrames)
+    ld (lastFrames), hl
+    or a
+    sbc hl, de                   ; HL = frames elapsed since the last pass
+    ld de, (frameAcc)
+    add hl, de
+    ld (frameAcc), hl
 
-    ; One real second every 50 frames.
-    ld a, (frames)
-    inc a
-    cp FRAMES_PER_SEC
-    jr c, .nosecond
-    xor a
-    ld (frames), a
-    ld c, ST_SECONDS             ; C = which state this pass advances
+    ; One real second per 50 accumulated frames - a loop, not a single
+    ; test, so a multi-second delta (a paused hook resuming) steps every
+    ; second it owes rather than just one.
+.secloop:
+    ld hl, (frameAcc)
+    ld de, FRAMES_PER_SEC
+    or a
+    sbc hl, de
+    jr c, .minutecheck
+    ld (frameAcc), hl
+    ld c, ST_SECONDS              ; C = which state this pass advances
     call step_all
-    jr .minutecheck
-.nosecond:
-    ld (frames), a
+    jr .secloop
 
 ; A minute timer expires when the clock's total reaches or passes its
 ; deadline. Wrap-safe: the difference is read as passed once it exceeds
@@ -291,9 +317,10 @@ step_all:
     jr c, .slot
     ret
 
-armed:   db 0
-frames:  db 0
-param:   db 0
+armed:      db 0
+frameAcc:   dw 0
+lastFrames: dw 0
+param:      db 0
 
     ENDMODULE
 
