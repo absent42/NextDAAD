@@ -39,20 +39,11 @@
 ; on your own target hardware, not a code change.
 ; The row's ADDRESS depends on the text width the game selected with
 ; GFX n 18: 2 bytes per cell, so the stride is 160 bytes/row at 80x32
-; and 80 bytes/row at 40x32. Derived from src/nextdaad.inc's TM_MAP
-; ($6000) - not INCLUDEd here, since the example builds against
-; xbn.inc alone, so the literals are spelled out instead.
+; and 80 bytes/row at 40x32.
 TM_ROW80        equ $70E0        ; $6000 + 27*160
 TM_ROW40        equ $6870        ; $6000 + 27*80
 
-; The width probe. The interpreter's own width byte (tmCols) is NOT
-; part of the frozen XBN ABI, but NR $6B bit 6 (1 = 80x32, 0 = 40x32)
-; is hardware truth an extern can always read. A select+read here is
-; race-free: the ISR calls the #int hook only between its own COMPLETE
-; select+read / select+write sequences, every later user re-selects
-; first, and the nested CTC sample ISR never touches BC or this port
-; pair (src/interrupts.asm's port audit).
-TBB_SEL         equ $243B        ; register select; +$0100 = access
+; Live width/row base probe: xbn_width (xbnmod.inc), called from int below.
 
 ; The interpreter's own reserved attribute for ordinary text: pair 0 =
 ; paper 0 (black), ink 7 (white) - src/nextdaad.inc's TM_ATTR_DEFAULT,
@@ -71,12 +62,12 @@ ext:
     cp 30
     jr z, .arm
     cp 31
-    ret nz                       ; any other fn: ignore
+    jr nz, .notmine              ; any other fn: not ours
     xor a
     ld (armed), a                ; disarm - int checks this first,
                                  ; every frame, and does nothing else if
                                  ; it is 0
-    ret
+    ret                          ; CF clear (xor a above)
 .arm:
     xor a
     ld (armed), a                ; disarm FIRST. Every way this can fail
@@ -89,7 +80,8 @@ ext:
     ld a, b                      ; param1 = user message number
     call SVC_GETMSG               ; out: HL=staging buffer, BC=length
     ret c                        ; out of range (A=$FF): stay disarmed
-                                 ; (already zeroed above)
+                                 ; (already zeroed above); CF stays SET:
+                                 ; message unavailable - this EXTERN fails
     ld a, b                      ; B/C now hold SVC_GETMSG's returned
     or c                         ; length, not param1 any more
     ret z                        ; BC==0: an EMPTY message is a LEGAL
@@ -123,6 +115,9 @@ ext:
     ld (column), a
     inc a
     ld (armed), a                ; arm last, once text/textlen are valid
+    ret                          ; CF clear (xor a; inc/ld leave CF)
+.notmine:
+    or a                         ; CF clear: unrecognised fn, no failure
     ret
 
 int:
@@ -134,6 +129,10 @@ int:
     ld a, (armed)
     or a
     ret z                        ; idle: one load-and-test, nothing else
+    call SVC_BUSY
+    bit 0, a
+    ret nz                       ; clip playing: slot 3 is the audio
+                                 ; ring - emit nothing, advance nothing
     ld a, (cursor)
     ld hl, textlen
     cp (hl)
@@ -150,17 +149,7 @@ int:
     ld (chr), a                  ; parked: the port read below needs BC,
                                  ; and the interpreter restores full
                                  ; context around this hook anyway
-    ld bc, TBB_SEL
-    ld a, $6B                    ; NR_TM_CTRL
-    out (c), a
-    inc b                        ; select -> access ($243B -> $253B)
-    in a, (c)
-    ld hl, TM_ROW80
-    ld e, 80
-    bit 6, a                     ; 1 = 80x32, 0 = 40x32
-    jr nz, .width
-    ld hl, TM_ROW40
-    ld e, 40
+    call xbn_width               ; E = width, HL = row base (D unused)
 .width:                          ; HL = row base, E = width in columns
     ld a, (column)
     cp e

@@ -4,8 +4,8 @@
 
 A tiny XBN extern that fetches a DAAD user message with SVC_GETMSG and
 ticks it, one character per frame, along the bottom row of the tilemap.
-It works in both text widths: each emitted character probes NR $6B
-bit 6 for the live 80x32/40x32 mode, so a `GFX 1 18` switch mid-message
+It works in both text widths: each frame it calls xbn_width for the
+live row address and column count, so a `GFX 1 18` switch mid-message
 just carries on at the new width.
 
 It demonstrates the things every XBN author needs to know:
@@ -18,8 +18,13 @@ It demonstrates the things every XBN author needs to know:
 - driving per-frame work from the XBN's #int hook, and disarming it
   cleanly both on completion and on request
 - respecting the runtime text width: the interpreter's width byte is
-  not part of the frozen XBN ABI, so the extern reads NR $6B bit 6
-  directly - the pattern any extern that writes the tilemap needs
+  not part of the frozen XBN ABI, so the extern calls xbn_width for
+  the live row address and column count - the pattern any extern that
+  writes the tilemap needs
+- checking SVC_BUSY before writing the tilemap from the hook: while a
+  video clip is playing, the interpreter borrows the tilemap as the
+  clip's audio ring buffer, so the ticker skips emission that frame
+  instead of corrupting the clip's sound
 
 ## How to build
 
@@ -40,7 +45,9 @@ This assembles `ticker.asm` and rewrites `GAME.XBN` here.
 The extern exposes two functions:
 
     EXTERN n 30   ; fetch user message n and arm the ticker
-    EXTERN 0 31   ; disarm the ticker
+                  ; CF clear: armed. CF set: message n does not exist -
+                  ; this EXTERN entry fails (v2)
+    EXTERN 0 31   ; disarm the ticker (always succeeds, CF clear)
 
 `n` is the message number as it appears in your DSF's `/MTX` block.
 A typical process entry:
@@ -52,3 +59,9 @@ A typical process entry:
 
 Only one message can be armed at a time - a second `EXTERN n 30` while
 one is already ticking replaces it from the start.
+
+v2 behaviour change: if message `n` does not exist, fn 30 now FAILS the
+EXTERN entry (CF set) instead of the v1 behaviour of silently leaving
+the ticker disarmed. Games that call fn 30 with a number that might not
+exist should account for the entry failing, the same as any other DAAD
+condition.
