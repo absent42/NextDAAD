@@ -15,9 +15,11 @@ The parameter is not one thing: fns 70 to 75, 82 and 83 take a flag
 NUMBER, and fns 78 to 81 take a value - a location, a noun word id or an
 attribute bit. Fn 84 takes a window number.
 
-Two of them arm module state, and it is not flag state, so `LOAD` and
-`RESTART` do not restore it: fn 76's picker pool (see Random without
-repeat below) and fn 84's print target. Re-arm both wherever your game
+Two of them arm module state, and it is not flag state: fn 76's picker
+pool (see Random without repeat below) and fn 84's print target. The
+module has no hook and no `LOAD` logic, so neither a `LOAD` nor a
+`RESTART` resets them - both survive as bank state, stale against
+whatever the flags now say. Re-arm both wherever your game
 re-establishes its own state.
 
 ## Calling convention
@@ -186,10 +188,10 @@ both on purpose:
   the pool ran out, and a game that wants the old behaviour writes the
   `EXTERN n 76` above, which is one line and visible.
 - The used-mask lives in the module, not in flags the author names, so
-  it is NOT part of a SAVE. A LOAD restores the flags but not the
-  picker: the pool comes back unarmed, and fn 77 fails until an
-  `EXTERN n 76` re-arms it. Put that re-arm wherever your game already
-  re-establishes state after a LOAD.
+  it is NOT part of a SAVE. A LOAD restores the flags and leaves the
+  picker untouched: the same pool size and the same used-mask as before,
+  now stale against the restored game. Re-arm with `EXTERN n 76`
+  wherever your game already re-establishes state after a LOAD.
 
 ## Time formats
 
