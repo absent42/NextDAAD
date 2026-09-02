@@ -71,25 +71,30 @@ XBN worth reading start to finish before you write your own: a
 foreground `EXTERN` call fetches a database message with `SVC_GETMSG`,
 copies it into the extern's own memory, and a `#int` hook ticks it out
 one character per frame along the bottom row of the tilemap - in either
-text width, probing NR $6B bit 6 each character so a `GFX n 18` switch
-mid-message just carries on at the new width. It ships
-with a prebuilt `GAME.XBN` beside the source, so you can try it on a
-card without assembling anything. Its own `README.md` covers how to
-build it and wire it into a DSF; the source comments walk through
-every decision, including the one mistake it is built to guard you
-away from - see [SVC_GETMSG's staging semantics](#services) below. It
-is the same code this chapter's examples are drawn from.
+text width, asking `xbn_width` per character so a `GFX n 18` switch
+mid-message just carries on at the new width, and checking `SVC_BUSY`
+first so it stays silent while a video clip owns the tilemap window.
+Its arm call (fn 30) is a condition: an unavailable message number
+fails the entry instead of arming nothing. It ships with a prebuilt
+`GAME.XBN` beside the source, so you can try it on a card without
+assembling anything. Its own `README.md` covers how to build it and
+wire it into a DSF; the source comments walk through every decision,
+including the one mistake it is built to guard you away from - see
+[SVC_GETMSG's staging semantics](#services) below. It is the same code
+this chapter's examples are drawn from.
 
 ### The fade example
 
 The kit's second worked example, `externs/fade`, fades the Layer 2
 picture to any RRRGGGBB colour and back for narrative beats. Beyond the
-ticker example's XBN mechanics, it demonstrates reading hardware state
-back (the palette snapshot), the register-select save/restore bracket
-around shared indexed registers, and foreground precompute feeding a
-cheap interrupt hook. It ships with a prebuilt `GAME.XBN` beside the
-source, so you can try it on a card without assembling anything, and
-its own `README.md` covers building it and wiring it into a DSF.
+ticker example's XBN mechanics, it demonstrates reading the palette
+back through `SVC_PALREAD`, the palette interlock a hook must hold
+before it writes, a frame-gated wait on `SVC_FRAMES`, the
+register-select save/restore bracket around shared indexed registers,
+and foreground precompute feeding a cheap interrupt hook. It ships with
+a prebuilt `GAME.XBN` beside the source, so you can try it on a card
+without assembling anything, and its own `README.md` covers building it
+and wiring it into a DSF.
 
 The recommended sequence for a scene change behind a fade, buffered so
 the new picture never flashes onto screen mid-fade:
@@ -103,15 +108,15 @@ GFX 0 4       ; open buffer mode - AFTER the PICTURE condition, so a
               ; failing PICTURE never strands buffer mode with
               ; GFX 0 3 unreached
 DISPLAY 0     ; pixels + palette staged; screen untouched
-EXTERN 0 42   ; snapshot the hidden palette, rebuild the fade tables,
-              ; solid it into both palette banks
+EXTERN 0 42   ; read the staged palette (SVC_PALREAD, other bank),
+              ; rebuild the fade tables, solid both banks
 GFX 0 2       ; reveal: flip the surface; every palette is solid
 GFX 0 3       ; close buffer mode; drawing targets the screen again
 EXTERN 0 41   ; fade up to the new picture
 EXTERN 0 43
 ```
 
-Two rules keep this sequence honest:
+Three rules keep this sequence honest:
 
 - **`PICTURE` before `GFX 0 4`.** `PICTURE` is a condition - it aborts
   the entry on missing or unloadable art (this interpreter's PICTURE
@@ -124,9 +129,16 @@ Two rules keep this sequence honest:
   interface is shared hardware: a still-stepping fade overlapping the
   reveal can land the interrupt hook's write mid-mirror and corrupt one
   palette entry.
+- **Fade functions are actions, never conditions.** They return carry
+  clear whatever happens and report completion in flag 240, so no fade
+  call can fail the entry that holds the `GFX 0 4` ... `GFX 0 3`
+  bracket and strand buffer mode open. If another module holds the
+  palette when fn 40 is called, the fade is refused and flag 240 reads
+  1 at once - nothing to wait for.
 
-This is the same sequence documented in `externs/fade/fade.asm`'s own
-header, kept in step with it here.
+This is the sequence `externs/fade/README.md` documents; fn 42 needs
+buffer mode open: without `GFX 0 4` there is no staged palette for it
+to read, so the sequence above is the one to use.
 
 ## The EXTERN contract
 
@@ -566,22 +578,25 @@ The kit ships a collection of ready-made externs under `externs\`, one
 folder each: the assembly source, a prebuilt `GAME.XBN` you can copy
 straight to the card, a `README.md` with the DSF lines that drive it,
 and a rebuild script. The ticker and fade worked examples above are two
-of them; the other four are libraries to use as they come, no assembler
+of them; the other five are libraries to use as they come, no assembler
 needed.
 
-| Module | Does | fn codes | Flags |
-|--------|------|----------|-------|
-| `ticker` | Types a database message along the bottom row, one character per frame | 30 arm, 31 disarm | - |
-| `fade` | Fades the Layer 2 picture to any RRRGGGBB colour and back | 40 out, 41 in, 42 re-snapshot, 43 wait | 240 done, 241 speed |
-| `hints` | Prints hint text served from an SD card file | 50 print, 51 count, 52 preflight, 53 reset | 242 level override, 243 status/count |
-| `clock` | An in-game clock advanced from the frame hook | 60 arm and start, 61 stop, 62 advance | 224 hours, 225 minutes, 226 running, 227/228 rate, 244 days |
-| `timer` | Three countdown timers that expire into flags | 63 arm, 64 stop all, 65 minute deadline | 229-234 pairs, 235-237 states |
-| `toolkit` | Decimal printing, 16-bit flag-pair arithmetic, time formats | 70/71 print, 72-75 arithmetic, 82 HH:MM, 83 MM:SS, 76-81 reserved | 248 width, 249 operand, 250 reserved, 251 result |
+| Extern | What it does | fn codes | Flags used |
+|--------|--------------|----------|------------|
+| `ticker/` | Types a database message across the screen one character per frame, news-ticker style | 30 arm, 31 disarm | - |
+| `fade/` | Fades the Layer 2 picture to any RRRGGGBB colour and back - fade to black for a scene change, change the picture, fade up again. Transparent regions stay transparent; a completed fade-in restores the palette bit for bit | 40 fade out, 41 fade in, 42 re-snapshot after a picture change, 43 wait for the fade | 240 done, 241 speed |
+| `hints/` | Prints hint text served from an SD card file (`GAME.HNT`), so a game can ship a large hint book without spending DAAD message slots or interpreter RAM | 50 print hint, 51 level count, 52 preflight, 53 clear progress | 242 level override, 243 level count |
+| `clock/` | An in-game clock advanced from the frame hook, with hour carry and an author-driven advance for sleeping or travelling | 60 arm and start, 61 stop, 62 advance p minutes | 224 hours, 225 minutes, 226 running, 227/228 rate, 244 days |
+| `timer/` | Three independent countdown timers, counting real seconds or in-game minutes, that expire into a flag your process table can test | 63 arm, 64 stop all three, 65 arm slot p as an in-game-minute deadline | 229-234 remaining (3 pairs), 235-237 state; an armed in-game-minute slot also READS the clock's 224, 225 and 244 |
+| `realtime/` | Reads the Next's real-time clock: date and time fields for the game to print or test, and day stamps kept in `GAME.HST` beside the database so a game can tell how long it has been since the last visit | 66 refresh, 67 field, 68 stamp, 69 days since | 238 result, 239 available |
+| `toolkit/` | Decimal printing, 16-bit flag-pair arithmetic, object queries, a random-without-repeat picker and time formatting. No hook - every function runs to completion inside the EXTERN that calls it; fns 76 and 84 arm module state that LOAD and RESTART do not reset | 70-84: 70 print flag as decimal, 71 print pair as decimal, 72-75 16-bit arithmetic, 76/77 picker, 78-81 object queries, 82 HH:MM, 83 MM:SS, 84 print target window | 248 width, 249 operand, 250 fn 79's high byte, 251 result |
 
 Function codes and flags are disjoint across the whole collection, so
 any subset coexists in one binary. Flags 224-251 are the collection's
 reserved band: a game using any collection module should treat that
-range as spoken for.
+range as spoken for. Function codes 66-69 (realtime), 76-81 and 84
+(toolkit's object queries, picker and print target) joined that
+allocation in this release.
 
 ### One binary, any subset
 
@@ -604,8 +619,12 @@ fade. Arming is bank state: it survives `RESTART`, a part switch and a
 `LOAD`, but not a fresh boot, so arming calls belong in your start
 process, the way classic DAAD games initialised externs from `PRO 6`.
 
+Two toolkit functions arm state that a `LOAD` or `RESTART` does not
+reset - the picker (fn 76) and the print target (fn 84) - so re-arm
+them from your start process like everything else.
+
 `CALL` targets in collection binaries are SLOTS in a fixed jump table
-at `$C00A` - slot n at `$C00A + 3n`, so slot 0 is `CALL 10 192` -
+at `$C00E` - slot n at `$C00E + 3n`, so slot 0 is `CALL 14 192` -
 never routine addresses, which move whenever any module is edited. An
 unowned slot jumps to a bare `RET` and does nothing.
 
@@ -622,23 +641,29 @@ next unread hint and remembers per-topic progress in `GAME.HPR` on the
 card, costing you no flags and surviving `LOAD` and `RESTART`:
 
 ```
-EXTERN 0 52    ; preflight once at startup: flag 243 = 0 means the
-               ; hint file is present and readable
-EXTERN 3 50    ; print topic 3's next unread hint and advance it
-EXTERN 3 51    ; level count for topic 3 into flag 243
-EXTERN 0 53    ; reset every topic's progress
+EXTERN 0 52    ; CONDITION: fails the entry when the hint book is
+               ; missing or unreadable - check it once at startup
+EXTERN 3 50    ; CONDITION: prints topic 3's next unread hint and
+               ; advances; fails when there is no further hint to give
+EXTERN 3 51    ; ACTION: level count for topic 3 into flag 243
+EXTERN 0 53    ; CONDITION: resets every topic's progress; fails if
+               ; the reset did not take
 ```
 
 Flag 242 nonzero pins every topic to that level (1 = the first hint)
-instead of advancing; flag 243 carries a status code after fns 50/52/53
-and the count after fn 51. The module's README documents the status
-codes and the authoring rules for hint text.
+instead of advancing. There are no status codes: each function's carry
+is its one verdict, and flag 243 is only fn 51's count. A hint that
+printed but whose progress could not be saved still counts as success -
+the player got the hint; it may print again next time. The module's
+README has the authoring rules for hint text.
 
 ### clock and timer - in-game time and deadlines
 
 The clock keeps hours, minutes and days in flags 224/225/244, advanced
 by the frame hook at flag 227/228's rate (frames per in-game minute:
-50 = one in-game minute per real second, 3000 = true 1:1). Setting the
+50 = one in-game minute per real second, 3000 = true 1:1). Both
+modules keep time from `SVC_FRAMES` deltas, so frames the hook missed
+during a long draw or a video clip are still counted. Setting the
 time is a plain `LET`; an event at 14:37 is an ordinary process entry:
 
 ```
@@ -655,10 +680,44 @@ state flags (235-237: 0 idle, 1 real seconds, 2 in-game minutes,
 3 expired), each with a 16-bit pair (229/230, 231/232, 233/234, low
 byte first). A real-seconds timer is armed with plain `LET`s; an
 in-game-minute deadline needs `EXTERN d 65` to convert a duration into
-a deadline against the clock. Each module's README covers the
-arithmetic, the 32767-minute ceiling and the save/load behaviour.
+a deadline against the clock. `EXTERN d 65` refuses a duration of 32768
+or more - it fails the entry (carry set) and, because it quiesces the
+slot before checking, also stops any countdown that slot was running.
+Each module's README covers the arithmetic and the save/load
+behaviour.
 
-### Real-time events and flag 48
+### realtime - the wall clock and day stamps
+
+The realtime module reads the Next's own clock, when the machine has
+one. It takes the date and time as a single snapshot and then serves
+that snapshot a field at a time into flag 238, so an ordinary DSF
+condition can test the hour, the weekday or the month - and the hour
+and the minute you test in the same turn cannot come from either side
+of a tick. There is no frame hook and no arming call:
+
+```
+EXTERN 0 66    ; CONDITION: refresh the snapshot from the clock; fails
+               ; the entry when there is no RTC. Flag 239 = 1 when one
+               ; answered, 0 when none did
+EXTERN 2 67    ; ACTION: field 2, the hour, into flag 238. The fields
+               ; are 0 second, 1 minute, 2 hour, 3 day of the month,
+               ; 4 month, 5 year as a 2000-2099 offset (2026 reads 26),
+               ; 6 weekday with 0 = Sunday
+EXTERN 0 68    ; CONDITION: stamp today into GAME.HST beside the
+               ; database; fails with no clock, or if the write failed
+EXTERN 0 69    ; CONDITION: days since that stamp into flag 238; fails
+               ; when there is no stamp yet, reads 0 if the clock has
+               ; gone backwards, and caps at 255
+```
+
+fns 68 and 69 read the clock for themselves, so neither needs an
+`EXTERN 0 66` first; the snapshot serves fn 67 only.
+
+A machine with no working clock is the normal case to write for, not an
+error: `EXTERN 0 66` fails its entry and sets flag 239 = 0, and
+`EXTERN f 67` then writes flag 238 = 0 for every field. fns 68 and 69
+fail the same way. Hang the date-dependent path off a successful fn 66,
+or off a test of flag 239, and the game plays normally without one.
 
 A flag changing while the player sits at the prompt is invisible until
 a turn runs, so a clock event on its own only fires when the player
@@ -670,10 +729,12 @@ thinking. Without it, "real time" quietly is not.
 
 ### toolkit - printing and 16-bit arithmetic
 
-Every toolkit function takes its `EXTERN` parameter as a FLAG NUMBER
-and reads or writes through that flag. Printing goes through the
-current DAAD window, so a status line is the author's own `WINDOW`
-bracket around toolkit calls:
+Fifteen functions with no frame hook of their own: each one runs to
+completion inside the `EXTERN` that calls it. Most take the `EXTERN`
+parameter as a FLAG NUMBER and read or write through that flag. The
+exceptions take it as a plain value: the object queries (fns 78-81),
+the picker's pool size (fn 76) and the print target's window number
+(fn 84).
 
 ```
 LET 248 5          ; field width 5, space-padded (133 = zero-padded)
@@ -683,15 +744,57 @@ LET 249 102
 EXTERN 100 74      ; compare pair [100] with pair [102] into flag 251
 ```
 
-Fns 72/73/75 add and subtract 16-bit pairs (flag 251 reports overflow);
-fn 74 compares (0 less, 1 equal, 2 greater); fns 82/83 format HH:MM and
-MM:SS. Four printing functions are also reachable through `CALL` slots
-0-3 with the flag number in flag 249. The module's README has the full
-worked status line.
+Fns 70/71 print a byte and a 16-bit pair as decimal, padded to flag
+248's field width; fns 72/73/75 add and subtract 16-bit pairs, leaving
+1 in flag 251 when the result wrapped and 0 when it did not; fn 74
+compares two pairs and writes 0 less, 1 equal, 2 greater into flag 251,
+changing neither pair; fns 82/83 format HH:MM and MM:SS. All of these
+are ACTIONS - an overflow reports in a flag rather than failing the
+entry, because wrapping and carrying on is often what a game wants.
+Four of the printing functions are also reachable through `CALL` slots
+0-3 with the flag number in flag 249.
+
+Printing goes through the current DAAD window by default. `EXTERN 2 84`
+sets a print target once, and from then on a bare print lands in window
+2 and is flushed there at once: the function brackets its own output -
+select the target, print, restore what was current - so you write no
+`WINDOW` bracket and never hit the pending-word trap. It positions and
+clears nothing, so those prints APPEND after whatever was painted there
+last, until the status process repaints with its own `WINDOW 2` and
+`CLS`. `EXTERN 0 84` clears the target again.
+
+The other six read the interpreter's live object table, or the module's
+own picker, and all but one are CONDITIONS - they fail the entry when
+there is nothing to report, exactly like a failed `AT`:
+
+```
+EXTERN loc 78    ; CONDITION: count the objects at location loc into
+                 ; flag 251; fails when there are none
+EXTERN noun 80   ; CONDITION: lowest-numbered object with that noun
+                 ; into flag 251; fails when nothing matches
+EXTERN bit 81    ; CONDITION: count objects with extended attribute
+                 ; bit set, into flag 251; fails at none, and a bit
+                 ; above 15 is refused the same way
+EXTERN 0 79      ; ACTION: total carried and worn weight as a 16-bit
+                 ; pair - LOW byte in flag 251, HIGH byte in flag 250
+EXTERN 6 76      ; CONDITION: arm the picker with a pool of 6; refuses
+                 ; a pool of 0, or above 64, and leaves the old one
+EXTERN 0 77      ; CONDITION: pick an index not yet used into flag
+                 ; 251; fails once the pool is exhausted
+```
+
+Fn 80's failure is the discriminator, not its flag: object 0 is a
+legitimate answer, so a bare `EQ 251 0` cannot tell "found object 0"
+from "found nothing". Fn 79's pair is HIGH-then-low across 250/251,
+which is not fn 71's low-first order, so copy it into a pair of your
+own before printing it. An exhausted picker does not re-arm itself: a
+second `EXTERN 6 76` starts the cycle again, one visible line rather
+than a silent reset. The module's README has the full worked status
+line and the container rules fn 79 follows.
 
 A number printed as the last thing in an entry stays in the word
-wrapper's buffer until a space, a newline or a `WINDOW` switch flushes
-it.
+wrapper's buffer until a space, a newline or a window switch flushes
+it - which is what the print target's own bracket does for you.
 
 ## Contributing your extern
 
@@ -702,3 +805,7 @@ The submission requirements, the rules your code must obey and the
 automated audit that checks them are described in `CONTRIBUTING.md` at
 the root of the NextDAAD repository:
 https://github.com/absent42/NextDAAD
+
+The kit also ships an agent skill for writing externs -
+`.agent\skills\xbn-extern-authoring\` at the kit root - that any AI
+coding assistant can load.
