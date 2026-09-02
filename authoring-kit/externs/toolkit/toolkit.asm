@@ -24,7 +24,11 @@
 
 FLAG_WIDTH      equ 248          ; 0 = no padding; bit 7 = zero-pad
 FLAG_OP2        equ 249          ; immediate or flag number, per fn
+FLAG_HIGH       equ 250          ; high byte of fn 79's 16-bit result
 FLAG_RESULT     equ 251          ; result and status
+
+OBJ_WORN        equ 253          ; location pseudo-values (nextdaad.inc)
+OBJ_CARRIED     equ 254
 
 ext:
     ld a, b
@@ -42,6 +46,18 @@ ext:
     jp z, cmpp
     cp 75
     jp z, addp
+    cp 76
+    jp z, pckarm
+    cp 77
+    jp z, pckget
+    cp 78
+    jp z, atloc
+    cp 79
+    jp z, wtot
+    cp 80
+    jp z, bynoun
+    cp 81
+    jp z, attrcnt
     cp 82
     jp z, hhmm
     cp 83
@@ -456,6 +472,355 @@ print_leave:
     ret z
     ld a, (prevWin)
     call SVC_WINDOW
+    ret
+
+; --- Object queries (fns 76-81) ---------------------------------------
+; Every walk runs 0..(XBN_NUMOBJ)-1: entries past the live count are
+; stale, so a fixed 256 would count rubbish.
+
+; A = object -> HL = XBN_OBJTABLE + A*6, the same Z80N MUL index as
+; src/engine.asm's obj_ptr. Corrupts DE, F; A and BC survive.
+obj_ptr_of:
+    ld d, OBJ_SIZE
+    ld e, a
+    mul d, e
+    ld hl, XBN_OBJTABLE
+    add hl, de
+    ret
+
+; A = bit 0-7 -> A = 1 << bit. Corrupts B, F.
+mask_of:
+    ld b, a
+    ld a, 1
+    inc b
+.shl:
+    dec b
+    ret z
+    add a, a
+    jr .shl
+
+; A = count -> flag 251, CF set when zero. The shared condition tail of
+; fns 78 and 81: under v2 a set CF fails the DAAD entry.
+cnt_result:
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    or a
+    ret nz
+    scf
+    ret
+
+qwant:   db 0                    ; wanted location / noun / attribute mask
+qofs:    db 0                    ; attribute byte offset, 2 or 3
+
+; fn 78 - EXTERN loc 78. CONDITION: objects whose location byte is loc
+; counted into flag 251 (252/253/254 pseudo-locations included); CF set
+; when the count is zero.
+atloc:
+    ld a, (param)
+    ld (qwant), a
+    ld bc, 0                     ; B = object index, C = count
+.scan:
+    ld a, (XBN_NUMOBJ)
+    cp b
+    jr z, .done
+    ld a, b
+    call obj_ptr_of
+    ld a, (hl)                   ; +0 location
+    ld hl, qwant
+    cp (hl)
+    jr nz, .next
+    inc c
+.next:
+    inc b
+    jr .scan
+.done:
+    ld a, c
+    jp cnt_result
+
+; fn 80 - EXTERN noun 80. CONDITION: the LOWEST-numbered object whose
+; noun byte is noun, into flag 251; CF set with 251 = 0 when none
+; matches. Object 0 is a valid answer, so CF is the discriminator.
+bynoun:
+    ld a, (param)
+    ld (qwant), a
+    ld b, 0
+.scan:
+    ld a, (XBN_NUMOBJ)
+    cp b
+    jr z, .none
+    ld a, b
+    call obj_ptr_of
+    ld de, 4
+    add hl, de                   ; +4 noun
+    ld a, (hl)
+    ld hl, qwant
+    cp (hl)
+    jr z, .found
+    inc b
+    jr .scan
+.found:
+    ld a, b
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    or a                         ; CF clear: found
+    ret
+.none:
+    xor a
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    scf
+    ret
+
+; fn 81 - EXTERN bit 81. CONDITION: objects with extended-attribute bit
+; (0-15) set counted into flag 251; CF set when zero. The two bytes are
+; held in FLAG order (src/engine.asm, "Do not fix the swap"): entry +3 =
+; attributes 0-7, +2 = attributes 8-15. bit > 15 refuses: 251 = 0, CF set.
+attrcnt:
+    ld a, (param)
+    cp 16
+    jr nc, .none
+    ld c, 3                      ; +3 holds attributes 0-7
+    cp 8
+    jr c, .mask
+    sub 8
+    dec c                        ; +2 holds attributes 8-15
+.mask:
+    ld hl, qofs
+    ld (hl), c
+    call mask_of
+    ld (qwant), a
+    ld bc, 0                     ; B = object index, C = count
+.scan:
+    ld a, (XBN_NUMOBJ)
+    cp b
+    jr z, .done
+    ld a, b
+    call obj_ptr_of
+    ld a, (qofs)
+    ld e, a
+    ld d, 0
+    add hl, de
+    ld a, (qwant)
+    and (hl)
+    jr z, .next
+    inc c
+.next:
+    inc b
+    jr .scan
+.done:
+    ld a, c
+    jp cnt_result
+.none:
+    xor a
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    scf
+    ret
+
+; fn 79 - EXTERN 0 79. ACTION (CF always clear): the total weight of
+; everything carried or worn, 16-BIT - flag 251 = low byte, 250 = high.
+wtot:
+    ld hl, 0
+    ld (wtacc), hl
+    ld b, 0
+.scan:
+    ld a, (XBN_NUMOBJ)
+    cp b
+    jr z, .done
+    ld a, b
+    call obj_ptr_of
+    ld a, (hl)                   ; +0 location
+    cp OBJ_CARRIED
+    jr z, .add
+    cp OBJ_WORN
+    jr nz, .next
+.add:
+    push bc
+    ld a, b
+    call obj_wt16
+    ld de, (wtacc)
+    add hl, de                   ; 16-bit, no saturation (see obj_wt16)
+    ld (wtacc), hl
+    pop bc
+.next:
+    inc b
+    jr .scan
+.done:
+    ld hl, (wtacc)
+    ld a, l
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    ld a, h
+    ld (XBN_FLAGS + FLAG_HIGH), a
+    or a                         ; CF clear: fn 79 is an action
+    ret
+
+wtacc:   dw 0                    ; the running carried+worn total
+
+; A = object -> HL = its true weight, own plus contents. Deliberate
+; divergence from src/overlay0.asm obj_weight_of / weight_total: both
+; accumulators are 16-BIT with NO 255 saturation at either level. The
+; rest is that routine's semantics - own weight = (+1) & $3F, bit 6 marks
+; a container, a ZERO own weight ends the descent (the manual's "magic
+; bag"), a child is any object whose location byte is this object's
+; number, and the depth budget is 10.
+obj_wt16:
+    ld e, 10
+owf16:
+    push bc
+    push de
+    ld c, a                      ; C = this object's number
+    call obj_ptr_of
+    inc hl
+    ld a, (hl)                   ; +1 weight/attribute byte
+    ld b, a
+    and $3F
+    ld l, a
+    ld h, 0                      ; HL = the running 16-bit total
+    or a
+    jr z, .fin                   ; zero own weight: no descent
+    bit 6, b
+    jr z, .fin                   ; not a container
+    pop de
+    push de                      ; recover the incoming depth in E
+    ld a, e
+    dec a
+    jr z, .fin                   ; depth budget spent
+    ld e, a
+    ld d, 0                      ; D = child index
+.scan:
+    ld a, (XBN_NUMOBJ)
+    cp d
+    jr z, .fin
+    push bc
+    push de
+    push hl
+    ld a, d
+    call obj_ptr_of
+    ld a, (hl)                   ; child's +0 location
+    pop hl
+    pop de
+    pop bc
+    cp c                         ; located at this container's number?
+    jr nz, .next
+    push bc
+    push de
+    push hl                      ; the running total
+    ld a, d
+    call owf16                   ; E already holds the child's depth
+    pop bc
+    add hl, bc                   ; total += child weight
+    pop de
+    pop bc
+.next:
+    inc d
+    jr .scan
+.fin:
+    pop de
+    pop bc
+    ret
+
+; --- Random without repeat (fns 76-77) --------------------------------
+pickPool: db 0                   ; pool size 1-64; 0 = not armed
+pickUsed: ds 8                   ; 64-bit used bitmap
+
+; A = index 0-63 -> HL = its pickUsed byte, A = its mask within that
+; byte. Corrupts E, F; preserves BC.
+bit_addr:
+    push bc
+    ld c, a
+    and 7
+    call mask_of
+    ld e, a
+    ld a, c
+    srl a
+    srl a
+    srl a                        ; A = index / 8, 0-7
+    ld c, a
+    ld b, 0
+    ld hl, pickUsed
+    add hl, bc
+    ld a, e
+    pop bc
+    ret
+
+; A = index -> Z set when it is still unused. Corrupts AF, E, HL.
+bit_test:
+    call bit_addr
+    and (hl)
+    ret
+
+; A = index -> marked used; A = the updated byte, always nonzero.
+bit_set:
+    call bit_addr
+    or (hl)
+    ld (hl), a
+    ret
+
+; fn 76 - EXTERN n 76. Arms the picker with pool size n and clears the
+; used bitmap. n = 0 or n > 64 refuses: CF set, nothing changed.
+pckarm:
+    ld a, (param)
+    or a
+    jr z, .bad
+    cp 65
+    jr nc, .bad
+    ld (pickPool), a
+    ld hl, pickUsed
+    ld b, 8
+    xor a
+.clr:
+    ld (hl), a
+    inc hl
+    djnz .clr
+    or a                         ; CF clear: armed
+    ret
+.bad:
+    scf
+    ret
+
+; fn 77 - EXTERN 0 77. CONDITION: one still-unused index 0..n-1 into flag
+; 251; CF set when the pool is unarmed or exhausted (no auto-reset - fn
+; 76 re-arms). One draw, then a cyclic advance to the next unused index:
+; bounded by n, and unlike a retry loop it never degrades to "first
+; unused" (with pool 3, 64 retries miss with probability 0.47).
+pckget:
+    ld a, (pickPool)
+    or a
+    jr z, .empty
+    ld c, a                      ; C = pool size n
+    ld b, 0
+.any:
+    ld a, b
+    cp c
+    jr z, .empty                 ; every index used
+    ld a, b
+    call bit_test
+    jr z, .draw
+    inc b
+    jr .any
+.draw:
+    call SVC_RANDOM              ; A = raw byte; BC survives (src/main.asm)
+.mod:
+    cp c                         ; reduce mod n by subtraction, n <= 64
+    jr c, .from
+    sub c
+    jr .mod
+.from:
+    ld b, a                      ; B = the drawn index
+.step:
+    ld a, b
+    call bit_test
+    jr z, .take
+    inc b
+    ld a, b
+    cp c
+    jr c, .step
+    ld b, 0                      ; wrap; .any proved one index is free
+    jr .step
+.take:
+    ld a, b
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    call bit_set
+    or a                         ; CF clear: bit_set leaves A nonzero
+    ret
+.empty:
+    scf
     ret
 
 ; No hook. The interpreter still calls this every frame in a combined

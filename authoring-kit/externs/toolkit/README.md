@@ -4,14 +4,16 @@ A collection of small pure-logic helpers: decimal printing, 16-bit
 arithmetic and time formatting. Unlike `clock` or `timer`, toolkit has no
 frame hook and no arming call - every function runs to completion inside
 the single foreground `EXTERN` that calls it, and there is nothing for a
-LOAD to restore. The module implements nine of its functions: fn 70 and
+LOAD to restore. The module implements fifteen functions: fn 70 and
 fn 71 for decimal printing, fn 72 to fn 75 for 16-bit arithmetic on flag
-pairs, fn 82 and fn 83 for time formatting, and fn 84 to set a print
+pairs, fn 76 to fn 81 for object queries and a random-without-repeat
+picker, fn 82 and fn 83 for time formatting, and fn 84 to set a print
 target window. Four of them - fn 70, 71, 82 and 83 - are also reachable
 through DAAD's CALL condact, a second entry point alongside the existing
-EXTERN dispatch (see CALL slots below). Fn codes 76 to 81 also belong to
-this module's range - object queries and a random-without-repeat picker;
-see the Object queries section below.
+EXTERN dispatch (see CALL slots below).
+
+One exception to "nothing for a LOAD to restore": the picker's used-mask
+is module state, not flag state. See Random without repeat below.
 
 ## Calling convention
 
@@ -21,7 +23,9 @@ directly, every toolkit function takes `p` as a FLAG NUMBER and reads or
 writes through that flag. A game wanting to add two values still has to
 put them in flags first, but the module itself never grows past four
 flags no matter how many values a game manipulates - the flag number is
-the indirection, not a hardware limit.
+the indirection, not a hardware limit. The exceptions take `p` as a
+plain value instead, and each says so where it is documented: fns 76
+and 78 to 81, and fn 84's window number.
 
 Printing functions write through `SVC_PUTCHAR` into whatever DAAD window
 the author has currently selected with `WINDOW`, the same convention a
@@ -34,8 +38,8 @@ and no width probe of its own.
   of space-pad for functions that print with a fixed field width.
 - 249 - second operand. Depending on the function, this is read either
   as an immediate value or as a flag number holding one.
-- 250 - count or pool size, for functions that need one. Reserved; no
-  function uses it yet.
+- 250 - the HIGH byte of a 16-bit result. Only fn 79 writes it. The
+  picker's pool size is module state, not this flag.
 - 251 - result and status. Where a function returns a value, it goes
   here, alongside any status the function needs to report.
 
@@ -84,6 +88,103 @@ neither pair:
 
 This is what makes scores, money and move counts above 255 tractable, and it
 pairs with the clock module's 16-bit rate.
+
+## Object queries
+
+These four read the interpreter's own object table, so they see the live
+game: every walk runs over the objects the database actually declares,
+and CREATE, DESTROY, GET and WEAR are all reflected at once.
+
+    EXTERN loc 78    ; count objects at location loc into 251
+    EXTERN noun 80   ; first object with that noun into 251
+    EXTERN bit 81    ; count objects with extended attribute bit set, into 251
+    EXTERN 0 79      ; total carried + worn weight into 250/251
+
+Unlike the rest of the module, these take `p` as a VALUE, not a flag
+number: a location, a noun word id, an attribute bit.
+
+Fns 78, 80 and 81 are CONDITIONS. They fail the entry - the rest of it
+does not run, exactly like a failed `AT` or `ZERO` - when there is
+nothing to report, so the natural shape is a pair of entries:
+
+    > LOOK _   EXTERN 0 78          ; anything at location 0?
+               MES "Things here: "
+               EXTERN 251 70        ; fn 70 takes a FLAG number: print 251
+               MES " "
+               DONE
+    > LOOK _   MES "Nothing here."
+               DONE
+
+Precisely:
+
+- Fn 78 counts objects whose location byte is `loc`. The DAAD
+  pseudo-locations work as written: 254 carried, 253 worn, 252 not
+  created. Count into 251; CF set (entry fails) when it is zero.
+- Fn 80 finds the LOWEST-numbered object whose noun word id is `noun`,
+  into 251; CF set when none matches, and 251 is 0 in that case. Object
+  0 is a legitimate answer, so a bare `EQ 251 0` cannot tell "found
+  object 0" from "found nothing" - the pass/fail of the entry is the
+  discriminator, not the flag.
+- Fn 81 counts objects carrying extended attribute `bit`, 0 to 15, into
+  251; CF set when it is zero. A bit above 15 is refused the same way:
+  251 = 0 and CF set.
+- Fn 79 is an ACTION - it always passes - and is the one that writes
+  two flags: the total weight of everything carried or worn, 251 = LOW
+  byte and 250 = HIGH byte. Flag 251 alone is the answer for any game
+  whose total stays under 256. Note the order is HIGH-then-low across
+  250/251, which is not fn 71's low-first pair, so `EXTERN 250 71` will
+  NOT print it - copy the two bytes into a pair of your own first, or
+  test 250 for zero and print 251.
+
+Fn 79 counts container contents too, on the interpreter's own rules: an
+object with the container attribute adds the weight of every object
+whose location is that object's NUMBER, recursively, to a depth of 10.
+A container of ZERO own weight is the manual's "magic bag" and adds
+nothing for its contents at all.
+
+One deliberate difference from the engine's own WEIGH and WEIGHT
+condacts: those saturate at 255, both per container and in the total.
+Fn 79 does not saturate anywhere - that is what the 16-bit 250/251 pair
+is for. A game whose carried weight can exceed 255 gets a true figure
+here and a clipped one from WEIGHT.
+
+Attribute numbering matches `HASAT`: bit 0 is the attribute `HASAT 0`
+tests. (Inside the object table the two bytes are held in flag order,
+attributes 0-7 in one and 8-15 in the other; the module resolves that,
+so nothing about it reaches the author.)
+
+## Random without repeat
+
+    EXTERN n 76      ; arm the picker with a pool of n items, 1 to 64
+    EXTERN 0 77      ; pick an unused index 0..n-1 into 251
+
+Fn 76 sets the pool size and clears the used-mask. n = 0 or n above 64
+is refused: CF set and the previous pool left untouched.
+
+Fn 77 is a CONDITION. It picks an index that has not come up since the
+last fn 76, writes it to 251 and passes. When every index in the pool
+has been used it FAILS - which is what makes the exhaustion case
+writable without a counter of your own:
+
+    > _  _   EXTERN 0 77
+             MES "The wind carries a voice: "
+             ; user message 40 + the index, via V3 indirection
+             DONE
+    > _  _   EXTERN 6 76          ; all six used - start the cycle again
+             DONE
+
+Two things differ from the collection design note this module grew from,
+both on purpose:
+
+- Exhaustion does NOT auto-reset the mask. The older sketch restarted
+  the cycle silently; a condition that never fails cannot tell a game
+  the pool ran out, and a game that wants the old behaviour writes the
+  `EXTERN n 76` above, which is one line and visible.
+- The used-mask lives in the module, not in flags the author names, so
+  it is NOT part of a SAVE. A LOAD restores the flags but not the
+  picker: the pool comes back unarmed, and fn 77 fails until an
+  `EXTERN n 76` re-arms it. Put that re-arm wherever your game already
+  re-establishes state after a LOAD.
 
 ## Time formats
 
