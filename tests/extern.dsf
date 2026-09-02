@@ -147,6 +147,33 @@
 ;   XTKS - paints WINDOW 2 from those values (score width 5, HH:MM,
 ;          MM:SS) and restores WINDOW 1. Repaintable on demand.
 ;
+; XOBJ/XPCK/XTKW drive the toolkit's v2 additions (fns 76-81 and 84).
+; XOBJ needs the three objects the /OBJ block below adds - the fixture
+; carried only object 0 (not created) before them, so every count would
+; have been zero and every query vacuous.
+;   XOBJ - object queries: count at location 0 (fn 78), count with
+;          extended-attribute bit 3 (fn 81), find by noun (fn 80) and
+;          the carried+worn weight total (fn 79, 16-bit). A last fn 80
+;          on a noun no object carries must FAIL - the second entry is
+;          what proves the condition can fail at all.
+;   XPCK - the random picker (fns 76/77): pool 3, three draws that form
+;          a permutation of 0,1,2, then a fourth that must FAIL.
+;   XTKW - fn 84's print target: a printing fn brackets its own output
+;          into window 2 with no WINDOW around the call, then the target
+;          is cleared and the following MES lands in window 1.
+;
+; XRTC/XRTD drive the realtime module (fns 66-69, flags 238/239). Both
+; reach SVC_GETDATE, which ZEsarUX lacks - typing either DERAILS the
+; emulator, exactly as XDAT does. SILICON-ONLY.
+;   XRTC - fn 66 as a condition, then the hour and minute fields (fn
+;          67); flag 238 poisoned to 9 first so an inert fn 67 shows.
+;   XRTD - fn 68 stamps today into GAME.HST, fn 69 counts the days
+;          since: "days 0" on the same day, 238 poisoned to 9 first.
+;
+; XT40 - the width switch (spec section 7) against the ticker's
+;        per-frame hook, in two phases, one screenshot each. Emulator-
+;        runnable; see the verb for what each phase must show.
+;
 ; -XbnHints and -XbnAll stage a packed GAME.HNT alongside the combined
 ; binary, for the hints worked example (authoring-kit\externs\hints).
 ; XHNP/XHNQ/XHNA/XHNR/XHNT drive it, all on TOPIC 0 - the shipped HINTS.TXT gives
@@ -155,19 +182,27 @@
 ; would still answer correctly for topic 1 and hide the bug. XHNT alone
 ; drives topic 1, to prove the operand actually reaches the index: if it
 ; ever reports the same count as XHNQ, the topic parameter is not
-; getting through.
-;   XHNP - preflight (fn 52): flag 243 poisoned to 9 first, must come back 0
+; getting through. Under v2 fns 50/52/53 report through CF alone, so
+; those verbs are CONDITION-shaped: a second entry pins the fail branch
+; and the pass path ends in DONE.
+;   XHNP - preflight (fn 52) as a condition, then topic 0's level count
+;          (fn 51 into flag 243, poisoned to 9): "book ok 2". Fail
+;          branch: "no book".
 ;   XHNQ - level count (fn 51) for topic 0: flag 243 must read 2.
-;   XHNA - automatic mode (fn 50), three calls. "Two DIFFERENT texts
-;          then status 3" holds only against a VIRGIN GAME.HPR (topic 0
-;          at level 0) - run right after XHNR, or on a fresh card.
-;   XHNR - clear progress (fn 53), then one automatic call must print
-;          topic 0's FIRST hint again, proving the reset took; prints
-;          flag 243 after the reset (expect reset 0).
+;   XHNA - automatic mode (fn 50), three calls against a VIRGIN
+;          GAME.HPR: two print a hint, the third FAILS -> "exhausted
+;          ok". Order-dependent - run right after XHNR or on a fresh
+;          card.
+;   XHNR - clear progress (fn 53) as a condition, then one automatic
+;          call must reprint topic 0's FIRST hint: "reset ok". Fail
+;          branch: "RESET FAILED".
 ;   XHNT - level count (fn 51) for topic 1: flag 243 must read 3.
-;   XHNL - explicit-level mode (flag 242): pinned level prints with
-;          status 0, one past the last level reports 3; GAME.HPR is
-;          never touched, so this is safe to type at any point.
+;   XHNL - explicit-level mode (flag 242): level 2 prints and passes,
+;          level 3 FAILS -> "past ok"; GAME.HPR is never touched, so
+;          this is safe to type at any point.
+;   XHNA and XHNR are SILICON-CONFIRMED ONLY - ZEsarUX cannot create
+;          or write GAME.HPR, so the automatic ladder never advances
+;          there. See their verb comments for what the emulator shows.
 ;
 ; XCLK/XCLA/XCLS drive the Task 4 clock module (fn 60/61/62) and XTMR/XTMI/
 ; XTLR drive the timer module (fn 63-65) - both part of the same -XbnClock
@@ -264,17 +299,26 @@
 ;     expects 9. Any other leg: meaningless.
 ;   COMBINED-binary legs - -XbnAll, -XbnHints, -XbnClock and -XbnTool
 ;     all stage ALL.XBN, so EVERY collection verb is meaningful there:
-;     XTCK XFAD XFDI XFSC XFSO XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
+;     XTCK XT40 XFAD XFDI XFSC XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
-;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XSLT
+;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
 ;     EXCEPT the hints verbs (XHNP XHNQ XHNA XHNR XHNT XHNL), which also
 ;     need a packed GAME.HNT - staged only by -XbnAll and -XbnHints. On
-;     -XbnClock/-XbnTool they report file-missing (243 = 1; fn 51 gives
-;     0): a leg artefact, not a module fault.
-;   -XbnTicker stages the STANDALONE ticker example: only XTCK is
-;     meaningful there (plus XSLT with all slots printing nothing).
+;     -XbnClock/-XbnTool the preflight fails ("no book") and fn 51 gives
+;     0: a leg artefact, not a module fault.
+;   XOBJ XPCK XTKW need the TOOLKIT module in the staged binary
+;     (-XbnTool, -XbnAll and the other combined legs); elsewhere fns
+;     76-81/84 are foreign, every EXTERN no-ops with CF clear, and the
+;     entries print unwritten flags.
+;   XRTC XRTD need the REALTIME module (-XbnAll, once the combined
+;     binary carries it) AND are SILICON-ONLY for the same reason as
+;     XDAT: SVC_GETDATE derails ZEsarUX. DO NOT TYPE them in an
+;     emulator replay.
+;   -XbnTicker stages the STANDALONE ticker example: only XTCK and
+;     XT40 are meaningful there (plus XSLT with all slots printing
+;     nothing).
 ;   -XbnFade stages the STANDALONE fade example: only XFAD XFDI XFSC
-;     XFSO XDRK are meaningful there (plus the no-op XSLT form).
+;     XDRK are meaningful there (plus the no-op XSLT form).
 ;   XSLT prints toolkit output only on toolkit-carrying legs; on other
 ;     pinned-table legs every slot must print nothing. NEVER type it on
 ;     the fixture leg - no call table there, $C00E is fixture code.
@@ -301,7 +345,6 @@ XFDI   110 verb
 XMS6   111 verb
 XGFB   112 verb
 XFSC   113 verb
-XFSO   114 verb
 XDRK   115 verb
 XRST   116 verb
 XRLD   117 verb
@@ -346,6 +389,15 @@ XBSY   155 verb
 XPAL   156 verb
 XWIN   157 verb
 XPLH   158 verb
+XOBJ   159 verb
+XPCK   160 verb
+XTKW   161 verb
+XRTC   162 verb
+XRTD   163 verb
+XT40   164 verb
+WIDGET  20 noun
+GIZMO   21 noun
+CLOAK   22 noun
 /STX
 /0  "It's too dark to see anything."
 /1  "I can also see:"
@@ -427,13 +479,27 @@ XPLH   158 verb
 /6 "Morning bells over the morning mountains ring softly"
 /OTX
 /0 "a spare widget"
+/1 "a widget on the floor"
+/2 "a gizmo"
+/3 "a cloak"
 /LTX
 /0 "The XBN test arena."
 /CON
 /0
 /OBJ
+; Objects 1-3 feed the toolkit's query fns (78/79/80/81); 252 = not
+; created, 254 = carried, 253 = worn. Object 3 is a container (the c
+; column) holding nothing, with a nonzero own weight, so fn 79's
+; recursion runs and adds 0. Attribute columns run 15 down to 0 left to
+; right, so object 2's Y is bit 3 - the thirteenth column, fourth from
+; the right. DRB warns that location 3 does not exist for container
+; object 3 - this fixture has one location and object 3 holds nothing
+; by design, which is exactly what fn 79's recursion must add 0 for.
 ;obj  starts  weight    c w  5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0    noun   adjective
 /0    252 1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
+/1    0   2   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   WIDGET _
+/2    254 3   _ _  _ _ _ _ _ _ _ _ _ _ _ _ Y _ _ _   GIZMO  _
+/3    253 1   Y _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   CLOAK  _
 /PRO 0
 ; ---- main location loop (template shape, no graphics - see
 ; tests\gmodegate.dsf for the gated version this is trimmed from) ----
@@ -715,6 +781,29 @@ XPLH   158 verb
                              ; disarms itself once the message is fully
                              ; ticked out)
            DONE
+; XT40 - the spec's width-switch check (section 7: "GFX 1 18 then a
+;        ticker line"), EMULATOR-RUNNABLE, two phases. GFX n 18 resets
+;        the tilemap (tm_width_apply) and the ticker never clears row 27
+;        when a message completes, so each phase leaves PERSISTENT
+;        evidence - a screenshot can be taken anywhere in the PAUSE that
+;        follows it.
+;        Phase A (the spec's shape): switch to 40 columns, arm message 0
+;        - the hook's per-frame xbn_width must return the 40-col base:
+;        the whole message sits on row 27 within 40 cells, nothing
+;        elsewhere.
+;        Phase B: re-arm at 40, then switch back to 80 MID-TICK - the
+;        hook must follow on the next frame: the message's remainder
+;        lands on the 80-cell row 27 from the column where the switch
+;        fell, no text on any other row (an unfollowed 40-col base
+;        written into 80-col tilemap memory lands mid-screen).
+> XT40 _   GFX     1 18       ; 40 columns first (P1 1 = 40, 0 = 80)
+           EXTERN  0 30       ; arm message 0 in 40-col mode (XTCK's line)
+           PAUSE   100        ; 1 s: ticks out at 40 cells - screenshot 1
+           EXTERN  0 30       ; re-arm, still 40-col
+           GFX     0 18       ; back to 80 columns while ticking
+           PAUSE   100        ; 1 s: remainder lands at 80 - screenshot 2
+           EXTERN  0 31       ; disarm (idempotent)
+           DONE
 > XFAD _   PICTURE 1         ; only meaningful with -XbnFade staged
            DISPLAY 0         ; (fade example as GAME.XBN + 001.NX2 art);
                              ; without art PICTURE skips DISPLAY, and
@@ -773,20 +862,6 @@ XPLH   158 verb
            EXTERN 0 43
            PRINT 240         ; expect 1 - now written by the fade-in
            DONE
-> XFSO _   PICTURE 1         ; OLD sequence - regression leg, band and all
-           DISPLAY 0
-           LET 241 0
-           CLEAR 240
-           EXTERN 224 40
-           EXTERN 0 43
-           PICTURE 2
-           DISPLAY 0
-           EXTERN 0 42
-           CLEAR 240         ; same re-arm as XFSC, same false pass
-           EXTERN 0 41
-           EXTERN 0 43
-           PRINT 240
-           DONE
 > XDRK _   EXTERN 224 40     ; darkness abort: fade out first
            EXTERN 0 43
            PICTURE 99        ; no 099 art staged: condition FAILS, the
@@ -815,15 +890,19 @@ XPLH   158 verb
            DONE              ; then XFAD: picture appears normally
 > XARM _   GFX 0 4           ; arm buffer mode and stop - the manual
            DONE              ; SAVE/LOAD reset check drives this
-; XHNP - preflight. Flag 243 must come back 0 with a hint file staged.
-;        Flag 243 is POISONED to 9 first: 0 is also the boot value of
-;        every flag, so without the seed a dead fn 52 (absent module,
-;        wrong leg, broken dispatch) prints the passing output. With it,
-;        0 can only come from the module actually writing the flag.
-> XHNP _   LET 243 9
-           EXTERN 0 52
-           MES "preflight "
-           PRINT 243
+; XHNP - preflight (fn 52) as a CONDITION: pass prints "book ok" plus
+;        topic 0's level count (fn 51 into 243, poisoned to 9 first),
+;        fail falls through to the second entry's "no book". The count
+;        is what makes the pass line falsifiable: with NO module present
+;        fn 52 is a foreign fn (CF clear) and "book ok" would print
+;        anyway - the surviving 9 exposes that. Expected "book ok 2".
+> XHNP _   LET     243 9
+           EXTERN  0 52
+           EXTERN  0 51
+           MES     "book ok "
+           PRINT   243
+           DONE
+> XHNP _   MES     "no book"
            DONE
 ; XHNQ - level count for TOPIC 0, which the sample gives 2 levels. Topic 0
 ;        deliberately, not 1: MODE_R is 1, so a build that lost the topic
@@ -833,27 +912,40 @@ XPLH   158 verb
            MES "levels "
            PRINT 243
            DONE
-; XHNA - automatic mode, three calls. Two DIFFERENT levels then status
-;        3 holds only if GAME.HPR's topic 0 is still at level 0 here -
-;        run right after XHNR, or on a fresh card.
-> XHNA _   LET 242 0
-           EXTERN 0 50
-           EXTERN 0 50
-           EXTERN 0 50
-           MES "status "
-           PRINT 243
+; XHNA - three automatic reads on a virgin GAME.HPR: two succeed (a
+;        hint text prints each time), the third FAILS (no further hint)
+;        so "third" never prints and the fallthrough entry prints
+;        "exhausted ok". Order-dependent: run right after XHNR, or on a
+;        fresh card.
+;        ZEsarUX DIVERGENCE - SILICON-CONFIRMED ONLY: the emulator
+;        cannot create or write GAME.HPR, so automatic mode never
+;        advances - and on a card with no GAME.HPR it never even
+;        starts: all three reads FAIL and "exhausted ok" prints with
+;        NO hint text above it. Where the file exists but never
+;        advances, the FIRST hint prints three times and "third"
+;        leaks instead. Either shape is the documented divergence,
+;        not a module fault - do not chase it.
+> XHNA _   LET     242 0
+           EXTERN  0 50
+           EXTERN  0 50
+           EXTERN  0 50
+           MES     "third"
            DONE
-; XHNR - clear progress, then one automatic call must print topic 0's FIRST
-;        hint again. "reset" prints flag 243 straight after fn 53 - BEFORE
-;        fn 50 overwrites it - so a reset that failed to rewrite GAME.HPR
-;        (status 5) is visible instead of silently leaving stale progress
-;        that the following reprint might mask.
-> XHNR _   LET 243 9
-           EXTERN 0 53
-           MES "reset "
-           PRINT 243
-           LET 242 0
-           EXTERN 0 50
+> XHNA _   MES     "exhausted ok"
+           DONE
+; XHNR - fn 53 as a condition (the reset took), then one automatic read
+;        must print topic 0's FIRST hint again and pass. A reset that
+;        failed to rewrite GAME.HPR fails the entry and the fallthrough
+;        says so, instead of leaving stale progress the reprint masks.
+;        ZEsarUX DIVERGENCE - SILICON-CONFIRMED ONLY: the emulator
+;        cannot write GAME.HPR, so fn 53 fails there and this prints
+;        "RESET FAILED". Not a module fault - do not chase it.
+> XHNR _   EXTERN  0 53
+           LET     242 0
+           EXTERN  0 50
+           MES     "reset ok"
+           DONE
+> XHNR _   MES     "RESET FAILED"
            DONE
 ; XHNT - topic 1 exists too, with 3 levels. Proves the operand reaches the
 ;        index rather than only ever selecting one topic.
@@ -1264,24 +1356,22 @@ XPLH   158 verb
            PRINT   231             ; expect 42 - deadline untouched
            DONE
 ; XHNL - explicit-level mode: flag 242 nonzero pins the level and never
-;        touches GAME.HPR. Level 2 is topic 0's LAST level (it has
-;        exactly two), so the pair of calls exercises both the in-range
-;        print (status 0) and ST_NOLEVEL (3) one past the end. A module
-;        that ignored flag 242 and ran automatic mode instead would
-;        advance GAME.HPR and could print status 3 on the FIRST call
-;        against a used card - the 0/3 pair in this order is the
-;        discriminator. Leaves flag 242 back at 0 (automatic).
-;        At the bench, type XHNL twice - explicit mode is idempotent,
-;        automatic mode is not.
+;        touches GAME.HPR, so this is safe to type at any point. Level 2
+;        is topic 0's LAST level (it has exactly two), so it prints and
+;        PASSES; level 3 does not exist, so fn 50 FAILS and the entry
+;        falls through to "past ok". A module that ignored flag 242 and
+;        ran automatic mode instead could fail on the FIRST call against
+;        a used card, printing "past ok" with no hint text above it.
+;        The fallthrough restores flag 242 to 0 (automatic). At the
+;        bench, type XHNL twice - explicit mode is idempotent.
 > XHNL _   LET     242 2
            EXTERN  0 50            ; topic 0 level 2: prints the hint
-           MES     "status "
-           PRINT   243             ; expect 0
            LET     242 3
-           EXTERN  0 50            ; topic 0 has no level 3
-           MES     " past "
-           PRINT   243             ; expect 3 - no such level
-           LET     242 0           ; restore automatic mode
+           EXTERN  0 50            ; topic 0 has no level 3: must FAIL
+           MES     "PAST LEVEL LEAKED"
+           DONE
+> XHNL _   LET     242 0           ; restore automatic mode
+           MES     "past ok"
            DONE
 ; XTKP - decimal printing and the width flag. 42 unpadded, then padded to
 ;        five columns with spaces, then with zeros, then a 16-bit pair.
@@ -1412,6 +1502,89 @@ XPLH   158 verb
            MES     "  Fuse "
            EXTERN  229 83
            WINDOW  1
+           DONE
+; XOBJ - fn 78 count at location 0 (expect 1: object 1 only - object 0
+;        is not-created at 252), fn 81 count with ext-attr bit 3
+;        (expect 1: object 2), fn 80 find noun 21 (expect 2), fn 79
+;        total carried+worn weight = object 2 (carried, weight 3, not a
+;        container) + object 3 (worn, own weight 1, a container holding
+;        nothing - nonzero own weight so the recursion runs and adds 0)
+;        = 4 -> 251 low = 4, 250 high = 0, printed low/high as "4/0".
+;        Each condition's fail branch is reachable: fn 80 with noun 99
+;        must FAIL (fallthrough).
+> XOBJ _   EXTERN  0 78
+           MES     "at0 "
+           PRINT   251
+           EXTERN  3 81
+           MES     " bit3 "
+           PRINT   251
+           EXTERN  21 80
+           MES     " noun21 "
+           PRINT   251
+           EXTERN  0 79
+           MES     " wt "
+           PRINT   251
+           MES     "/"
+           PRINT   250
+           EXTERN  99 80
+           MES     " NOUN99 LEAKED"
+           DONE
+> XOBJ _   MES     " none ok"
+           DONE
+; XPCK - picker: pool 3, three picks succeed and print three digits that
+;        form a permutation of 0,1,2 (PRINT has no separator), the
+;        fourth FAILS -> fallthrough " empty ok".
+> XPCK _   EXTERN  3 76
+           EXTERN  0 77
+           PRINT   251
+           EXTERN  0 77
+           PRINT   251
+           EXTERN  0 77
+           PRINT   251
+           EXTERN  0 77
+           MES     " FOURTH LEAKED"
+           DONE
+> XPCK _   MES     " empty ok"
+           DONE
+; XTKW - fn 84 print target: set window 2 (geometry set here), print the
+;        pair without any WINDOW bracket; the number must land on row 20
+;        and the following MES in the main window. Then clear the target.
+> XTKW _   WINDOW  2
+           WINAT   20 0
+           WINSIZE 1 40
+           WINDOW  1
+           LET     100 32
+           LET     101 3
+           EXTERN  2 84
+           EXTERN  100 71
+           EXTERN  0 84
+           MES     "main ok"
+           DONE
+; XRTC - realtime: SILICON-ONLY (SVC_GETDATE derails ZEsarUX - DO NOT
+;        TYPE in an emulator). fn 66 as a condition, then hour/minute
+;        fields; 238 poisoned to 9 first so an inert fn 67 shows "9:9".
+> XRTC _   LET     238 9
+           EXTERN  0 66
+           MES     "rtc ok "
+           EXTERN  2 67
+           PRINT   238
+           MES     ":"
+           EXTERN  1 67
+           PRINT   238
+           DONE
+> XRTC _   MES     "no rtc"
+           DONE
+; XRTD - realtime stamp then days-since, SILICON-ONLY like XRTC: expect
+;        "days 0" on the same day, 238 poisoned to 9 first so an inert
+;        fn 69 shows "days 9" - 0 is also the flag's boot value and
+;        would otherwise pass vacuously.
+> XRTD _   LET     238 9
+           EXTERN  0 68
+           EXTERN  0 69
+           MES     "days "
+           PRINT   238
+           DONE
+> XRTD _   MES     "stamp failed"
            DONE
 /PRO 6
 ; ---- one-shot init ----
