@@ -832,7 +832,7 @@ New-Item -ItemType Directory -Force $templateWork | Out-Null
 Copy-Item "$PSScriptRoot\test.dsf" "$templateWork\NDTEST.DSF" -Force
 Push-Location $templateWork
 try {
-    & $ndrc @drcTarget EN NDTEST.DSF NDTEST.DDB
+    & $ndrc @drcTarget EN NDTEST.DSF NDTEST.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (template)" }
     Move-Item NDTEST.DDB "$root\tests\out\template.ddb" -Force
     # tests\test.dsf has no XMESSAGE yet (Task 5 adds the verb), so ndrc
@@ -1174,7 +1174,7 @@ New-Item -ItemType Directory -Force $condactsWork | Out-Null
 Copy-Item "$PSScriptRoot\condacts.dsf" "$condactsWork\NDSUITE.DSF" -Force
 Push-Location $condactsWork
 try {
-    & $ndrc @drcTarget EN NDSUITE.DSF NDSUITE.DDB
+    & $ndrc @drcTarget EN NDSUITE.DSF NDSUITE.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (suite)" }
     Move-Item NDSUITE.DDB "$root\tests\out\condacts.ddb" -Force
     # condacts.dsf's check 72 always uses XMESSAGE, so ndrc always emits
@@ -1190,7 +1190,7 @@ New-Item -ItemType Directory -Force $doallnestWork | Out-Null
 Copy-Item "$PSScriptRoot\doallnest.dsf" "$doallnestWork\NDNEST.DSF" -Force
 Push-Location $doallnestWork
 try {
-    & $ndrc @drcTarget EN NDNEST.DSF NDNEST.DDB
+    & $ndrc @drcTarget EN NDNEST.DSF NDNEST.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (doallnest)" }
     Move-Item NDNEST.DDB "$root\tests\out\doallnest.ddb" -Force
 }
@@ -1220,7 +1220,9 @@ New-Item -ItemType Directory -Force $bigddbWork | Out-Null
 Copy-Item "$PSScriptRoot\bigddb.dsf" "$bigddbWork\NDBIG.DSF" -Force
 Push-Location $bigddbWork
 try {
-    & $ndrc @drcTarget EN NDBIG.DSF NDBIG.DDB
+    # No -auto-tokens: this is the builtin-table variant, and the one -DrcDiff
+    # compares. bigddb-autotok is the per-game-table fixture.
+    & $ndrc @drcTarget EN NDBIG.DSF NDBIG.DDB -v3
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (bigddb)" }
     Move-Item NDBIG.DDB "$root\tests\out\bigddb.ddb" -Force
 }
@@ -1293,7 +1295,7 @@ New-Item -ItemType Directory -Force $bigTokWork | Out-Null
 Copy-Item "$PSScriptRoot\bigddb-autotok.dsf" "$bigTokWork\NDBIGT.DSF" -Force
 Push-Location $bigTokWork
 try {
-    & $ndrc @drcTarget EN NDBIGT.DSF NDBIGT.DDB -auto-tokens
+    & $ndrc @drcTarget EN NDBIGT.DSF NDBIGT.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (bigddb-autotok)" }
     Move-Item NDBIGT.DDB "$root\tests\out\bigddb-autotok.ddb" -Force
 }
@@ -1311,7 +1313,7 @@ New-Item -ItemType Directory -Force $gmodegateWork | Out-Null
 Copy-Item "$PSScriptRoot\gmodegate.dsf" "$gmodegateWork\NDGMODE.DSF" -Force
 Push-Location $gmodegateWork
 try {
-    & $ndrc @drcTarget EN NDGMODE.DSF NDGMODE.DDB
+    & $ndrc @drcTarget EN NDGMODE.DSF NDGMODE.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (gmodegate)" }
     Move-Item NDGMODE.DDB "$root\tests\out\gmodegate.ddb" -Force
 }
@@ -1326,7 +1328,7 @@ New-Item -ItemType Directory -Force $audladWork | Out-Null
 Copy-Item "$PSScriptRoot\audlad.dsf" "$audladWork\NDAUDLAD.DSF" -Force
 Push-Location $audladWork
 try {
-    & $ndrc @drcTarget EN NDAUDLAD.DSF NDAUDLAD.DDB
+    & $ndrc @drcTarget EN NDAUDLAD.DSF NDAUDLAD.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (audlad)" }
     Move-Item NDAUDLAD.DDB "$root\tests\out\audlad.ddb" -Force
 }
@@ -1386,7 +1388,7 @@ New-Item -ItemType Directory -Force $sfxdiWork | Out-Null
 Copy-Item "$PSScriptRoot\sfxdi.dsf" "$sfxdiWork\NDSFXDI.DSF" -Force
 Push-Location $sfxdiWork
 try {
-    & $ndrc @drcTarget EN NDSFXDI.DSF NDSFXDI.DDB
+    & $ndrc @drcTarget EN NDSFXDI.DSF NDSFXDI.DDB -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfxdi)" }
     Move-Item NDSFXDI.DDB "$root\tests\out\sfxdi.ddb" -Force
 }
@@ -1409,7 +1411,7 @@ New-Item -ItemType Directory -Force $sfxLongWork | Out-Null
 Copy-Item "$PSScriptRoot\sfxlong.dsf" "$sfxLongWork\NDSFXLNG.DSF" -Force
 Push-Location $sfxLongWork
 try {
-    & $ndrc @drcTarget EN NDSFXLNG.DSF NDSFXLNG.DDB -v3
+    & $ndrc @drcTarget EN NDSFXLNG.DSF NDSFXLNG.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfxlong)" }
     Copy-Item NDSFXLNG.DDB "$root\tests\out\sfxlong.ddb" -Force
 }
@@ -1430,7 +1432,7 @@ New-Item -ItemType Directory -Force $sfx2Work | Out-Null
 Copy-Item "$PSScriptRoot\sfx2.dsf" "$sfx2Work\NDSFX2.DSF" -Force
 Push-Location $sfx2Work
 try {
-    & $ndrc @drcTarget EN NDSFX2.DSF NDSFX2.DDB -v3
+    & $ndrc @drcTarget EN NDSFX2.DSF NDSFX2.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfx2)" }
     Copy-Item NDSFX2.DDB "$root\tests\out\sfx2.ddb" -Force
 }
@@ -1454,12 +1456,12 @@ New-Item -ItemType Directory -Force $debugflagWork | Out-Null
 Copy-Item "$PSScriptRoot\debugflag.dsf" "$debugflagWork\NDDBGF.DSF" -Force
 Push-Location $debugflagWork
 try {
-    & $ndrc --to-json @drcTarget NDDBGF.DSF NDDBGF.json
+    & $ndrc --to-json @drcTarget NDDBGF.DSF NDDBGF.json -v3
     if ($LASTEXITCODE -ne 0) { throw "ndrc --to-json failed (debugflag)" }
-    & $ndrc --from-json @drcTarget EN NDDBGF.json NDDBGF.DDB
+    & $ndrc --from-json @drcTarget EN NDDBGF.json NDDBGF.DDB -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc --from-json failed (debugflag)" }
     Move-Item NDDBGF.DDB "$root\tests\out\debugflag.ddb" -Force
-    & $ndrc --from-json @drcTarget EN NDDBGF.json NDDBGF.DDB -d
+    & $ndrc --from-json @drcTarget EN NDDBGF.json NDDBGF.DDB -d -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc --from-json -d failed (debugflag)" }
     Move-Item NDDBGF.DDB "$root\tests\out\debugflag-debug.ddb" -Force
 }
@@ -1491,7 +1493,7 @@ New-Item -ItemType Directory -Force $l2holesWork | Out-Null
 Copy-Item "$PSScriptRoot\l2holes.dsf" "$l2holesWork\NDL2HOLE.DSF" -Force
 Push-Location $l2holesWork
 try {
-    & $ndrc @drcTarget EN NDL2HOLE.DSF NDL2HOLE.DDB --json
+    & $ndrc @drcTarget EN NDL2HOLE.DSF NDL2HOLE.DDB --json -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (l2holes)" }
     Copy-Item NDL2HOLE.DDB "$root\tests\out\l2holes.ddb" -Force
 }
@@ -1518,7 +1520,7 @@ New-Item -ItemType Directory -Force $tmoverWork | Out-Null
 Copy-Item "$PSScriptRoot\tmover.dsf" "$tmoverWork\NDTMOVR.DSF" -Force
 Push-Location $tmoverWork
 try {
-    & $ndrc @drcTarget EN NDTMOVR.DSF NDTMOVR.DDB
+    & $ndrc @drcTarget EN NDTMOVR.DSF NDTMOVR.DDB -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (tmover)" }
     Copy-Item NDTMOVR.DDB "$root\tests\out\tmover.ddb" -Force
 }
@@ -1544,7 +1546,7 @@ New-Item -ItemType Directory -Force $tileSlackWork | Out-Null
 Copy-Item "$PSScriptRoot\tileslack.dsf" "$tileSlackWork\NDTILESL.DSF" -Force
 Push-Location $tileSlackWork
 try {
-    & $ndrc @drcTarget EN NDTILESL.DSF NDTILESL.DDB --json -v3
+    & $ndrc @drcTarget EN NDTILESL.DSF NDTILESL.DDB --json -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (tileslack)" }
     Copy-Item NDTILESL.DDB "$root\tests\out\tileslack.ddb" -Force
 }
@@ -1570,7 +1572,7 @@ New-Item -ItemType Directory -Force $fontswWork | Out-Null
 Copy-Item "$PSScriptRoot\fontsw.dsf" "$fontswWork\NDFONTSW.DSF" -Force
 Push-Location $fontswWork
 try {
-    & $ndrc @drcTarget EN NDFONTSW.DSF NDFONTSW.DDB -v3
+    & $ndrc @drcTarget EN NDFONTSW.DSF NDFONTSW.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (fontsw)" }
     Copy-Item NDFONTSW.DDB "$root\tests\out\fontsw.ddb" -Force
 }
@@ -1587,7 +1589,7 @@ New-Item -ItemType Directory -Force $txt40Work | Out-Null
 Copy-Item "$PSScriptRoot\txt40.dsf" "$txt40Work\NDTXT40.DSF" -Force
 Push-Location $txt40Work
 try {
-    & $ndrc @drcTarget EN NDTXT40.DSF NDTXT40.DDB
+    & $ndrc @drcTarget EN NDTXT40.DSF NDTXT40.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (txt40)" }
     Copy-Item NDTXT40.DDB "$root\tests\out\txt40.ddb" -Force
 }
@@ -1606,7 +1608,10 @@ New-Item -ItemType Directory -Force $accentWork | Out-Null
 Copy-Item "$PSScriptRoot\accents.dsf" "$accentWork\NDACCENT.DSF" -Force
 Push-Location $accentWork
 try {
-    & $ndrc @drcTarget EN NDACCENT.DSF NDACCENT.DDB
+    # No -auto-tokens (provisional owner ruling): the byte assertions below
+    # read the compiled accent triples, which a per-game token table splits
+    # across tokens. Header stays V3.
+    & $ndrc @drcTarget EN NDACCENT.DSF NDACCENT.DDB -v3
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (accent)" }
     Copy-Item NDACCENT.DDB "$root\tests\out\accents.ddb" -Force
 }
@@ -1624,7 +1629,7 @@ New-Item -ItemType Directory -Force $paletteWork | Out-Null
 Copy-Item "$PSScriptRoot\palette.dsf" "$paletteWork\NDPAL.DSF" -Force
 Push-Location $paletteWork
 try {
-    & $ndrc @drcTarget EN NDPAL.DSF NDPAL.DDB -v3
+    & $ndrc @drcTarget EN NDPAL.DSF NDPAL.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (palette)" }
     Copy-Item NDPAL.DDB "$root\tests\out\palette.ddb" -Force
 }
@@ -2572,7 +2577,7 @@ New-Item -ItemType Directory -Force $v3probeWork | Out-Null
 Copy-Item "$PSScriptRoot\v3probe.dsf" "$v3probeWork\NDV3.DSF" -Force
 Push-Location $v3probeWork
 try {
-    & $ndrc @drcTarget EN NDV3.DSF NDV3.DDB -v3
+    & $ndrc @drcTarget EN NDV3.DSF NDV3.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (v3probe)" }
     $v3hdr = [System.IO.File]::ReadAllBytes("$v3probeWork\NDV3.DDB")
     if ($v3hdr[0] -ne 3) {
@@ -2700,6 +2705,8 @@ else {
     Copy-Item $utoDsf "$utotestWork\NDUTO.DSF" -Force
     Push-Location $utotestWork
     try {
+        # No -auto-tokens: third-party compliance source compiled as its
+        # author expects.
         & $ndrc @drcTarget EN NDUTO.DSF NDUTO.DDB
         if ($LASTEXITCODE -ne 0) { throw "ndrc failed (utotest V2)" }
         Move-Item NDUTO.DDB "$root\tests\out\utotest.ddb" -Force
@@ -2713,6 +2720,8 @@ else {
     Copy-Item $utoDsf "$utotestV3Work\NDUTO3.DSF" -Force
     Push-Location $utotestV3Work
     try {
+        # No -auto-tokens: third-party compliance source compiled as its
+        # author expects.
         & $ndrc @drcTarget EN NDUTO3.DSF NDUTO3.DDB -v3
         if ($LASTEXITCODE -ne 0) { throw "ndrc failed (utotest V3)" }
         Move-Item NDUTO3.DDB "$root\tests\out\utotest_v3.ddb" -Force
@@ -2735,7 +2744,7 @@ New-Item -ItemType Directory -Force $externWork | Out-Null
 Copy-Item "$PSScriptRoot\extern.dsf" "$externWork\NDXBN.DSF" -Force
 Push-Location $externWork
 try {
-    & $ndrc @drcTarget EN NDXBN.DSF NDXBN.DDB
+    & $ndrc @drcTarget EN NDXBN.DSF NDXBN.DDB -v3 -auto-tokens
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (extern)" }
     Move-Item NDXBN.DDB "$root\tests\out\extern.ddb" -Force
 }
@@ -2763,28 +2772,28 @@ if ($DrcDiff) {
     # bigddb-autotok is deliberately absent: -auto-tokens has no DRC
     # counterpart, and its builtin-table compile exceeds 65535.
     $diffFixtures = @(
-        @{ Name = 'template'; Dsf = "$PSScriptRoot\test.dsf" }
-        @{ Name = 'condacts'; Dsf = "$PSScriptRoot\condacts.dsf" }
-        @{ Name = 'doallnest'; Dsf = "$PSScriptRoot\doallnest.dsf" }
-        @{ Name = 'bigddb'; Dsf = "$PSScriptRoot\bigddb.dsf" }
-        @{ Name = 'gmodegate'; Dsf = "$PSScriptRoot\gmodegate.dsf" }
-        @{ Name = 'audlad'; Dsf = "$PSScriptRoot\audlad.dsf" }
+        @{ Name = 'template'; Dsf = "$PSScriptRoot\test.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'condacts'; Dsf = "$PSScriptRoot\condacts.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'doallnest'; Dsf = "$PSScriptRoot\doallnest.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'bigddb'; Dsf = "$PSScriptRoot\bigddb.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'gmodegate'; Dsf = "$PSScriptRoot\gmodegate.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'audlad'; Dsf = "$PSScriptRoot\audlad.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'sfxdi'; Dsf = "$PSScriptRoot\sfxdi.dsf" }
         @{ Name = 'sfxlong'; Dsf = "$PSScriptRoot\sfxlong.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'sfx2'; Dsf = "$PSScriptRoot\sfx2.dsf"; SrcOpts = @('-v3') }
-        @{ Name = 'debugflag'; Dsf = "$PSScriptRoot\debugflag.dsf" }
-        @{ Name = 'debugflag-debug'; Dsf = "$PSScriptRoot\debugflag.dsf"; DbOpts = @('-d') }
+        @{ Name = 'debugflag'; Dsf = "$PSScriptRoot\debugflag.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'debugflag-debug'; Dsf = "$PSScriptRoot\debugflag.dsf"; SrcOpts = @('-v3'); DbOpts = @('-d') }
         @{ Name = 'l2holes'; Dsf = "$PSScriptRoot\l2holes.dsf" }
         @{ Name = 'tmover'; Dsf = "$PSScriptRoot\tmover.dsf" }
         @{ Name = 'tileslack'; Dsf = "$PSScriptRoot\tileslack.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'fontsw'; Dsf = "$PSScriptRoot\fontsw.dsf"; SrcOpts = @('-v3') }
-        @{ Name = 'txt40'; Dsf = "$PSScriptRoot\txt40.dsf" }
-        @{ Name = 'accents'; Dsf = "$PSScriptRoot\accents.dsf" }
+        @{ Name = 'txt40'; Dsf = "$PSScriptRoot\txt40.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'accents'; Dsf = "$PSScriptRoot\accents.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'palette'; Dsf = "$PSScriptRoot\palette.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'v3probe'; Dsf = "$PSScriptRoot\v3probe.dsf"; SrcOpts = @('-v3') }
-        @{ Name = 'extern'; Dsf = "$PSScriptRoot\extern.dsf" }
-        @{ Name = 'parta'; Dsf = "$PSScriptRoot\NDPARTA.DSF" }
-        @{ Name = 'partb'; Dsf = "$PSScriptRoot\NDPARTB.DSF" }
+        @{ Name = 'extern'; Dsf = "$PSScriptRoot\extern.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'parta'; Dsf = "$PSScriptRoot\NDPARTA.DSF"; SrcOpts = @('-v3') }
+        @{ Name = 'partb'; Dsf = "$PSScriptRoot\NDPARTB.DSF"; SrcOpts = @('-v3') }
         @{ Name = 'utotest'; Dsf = $utoDsfPath }
         @{ Name = 'utotest-v3'; Dsf = $utoDsfPath; SrcOpts = @('-v3') }
     )
@@ -3397,7 +3406,7 @@ if ($Rab) {
     Copy-Item "$rabSrc\rabenstein.dsf" "$rabensteinWork\NDRAB.DSF" -Force
     Push-Location $rabensteinWork
     try {
-        & $ndrc @drcTarget EN NDRAB.DSF NDRAB.DDB
+        & $ndrc @drcTarget EN NDRAB.DSF NDRAB.DDB -v3 -auto-tokens
         if ($LASTEXITCODE -ne 0) { throw "ndrc failed (rabenstein)" }
         Copy-Item NDRAB.DDB "$root\tests\out\rabenstein.ddb" -Force
         try {
@@ -3482,7 +3491,7 @@ if ($UU) {
     Copy-Item $uuDsf "$urbanupstartWork\NDUU.DSF" -Force
     Push-Location $urbanupstartWork
     try {
-        & $ndrc @drcTarget EN NDUU.DSF NDUU.DDB
+        & $ndrc @drcTarget EN NDUU.DSF NDUU.DDB -v3 -auto-tokens
         if ($LASTEXITCODE -ne 0) { throw "ndrc failed (urbanupstart)" }
         Copy-Item NDUU.DDB "$root\tests\out\urbanupstart.ddb" -Force
         try {
@@ -3546,7 +3555,7 @@ if ($Part) {
         # Work dir is wiped at block start: a 0.XMB left by a run that
         # threw before the Move-Item must not be reused if this DSF ever
         # loses its XMESSAGE/XMES step (SP10 lesson, ddb.bat/4a68620).
-        & $ndrc @drcTarget EN NDPARTA.DSF NDPARTA.DDB
+        & $ndrc @drcTarget EN NDPARTA.DSF NDPARTA.DDB -v3 -auto-tokens
         if ($LASTEXITCODE -ne 0) { throw "ndrc failed (NDPARTA)" }
         Move-Item NDPARTA.DDB "$leg\GAME.DDB" -Force
         Copy-Item "$leg\GAME.DDB" "$root\tests\out\parta.ddb" -Force
@@ -3571,7 +3580,7 @@ if ($Part) {
         # Work dir is wiped at block start: a 0.XMB left by a run that
         # threw before the Move-Item must not be reused if this DSF ever
         # loses its XMESSAGE/XMES step (SP10 lesson, ddb.bat/4a68620).
-        & $ndrc @drcTarget EN NDPARTB.DSF NDPARTB.DDB
+        & $ndrc @drcTarget EN NDPARTB.DSF NDPARTB.DDB -v3 -auto-tokens
         if ($LASTEXITCODE -ne 0) { throw "ndrc failed (NDPARTB)" }
         Move-Item NDPARTB.DDB "$leg\GAME2.DDB" -Force
         Copy-Item "$leg\GAME2.DDB" "$root\tests\out\partb.ddb" -Force
