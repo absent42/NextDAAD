@@ -51,7 +51,7 @@ xbn_pal_acquire:                 ; A = 1 or 2. FOREGROUND-ONLY (EXTERN context) 
         pop hl
         scf
         ret
-xbn_pal_release:                 ; A = my id; frees only if mine. Foreground or the owner's own hook
+xbn_pal_release:                 ; A = 1 or 2 (my id); frees only if mine. Foreground or the owner's own hook
         push hl
         ld hl, xbn_pal_owner
         cp (hl)
@@ -60,7 +60,7 @@ xbn_pal_release:                 ; A = my id; frees only if mine. Foreground or 
 .keep:
         pop hl
         ret
-xbn_pal_check:                   ; A = my id. CF clear iff I hold it
+xbn_pal_check:                   ; A = 1 or 2 (my id). CF clear iff I hold it. ISR-safe (memory only)
         push hl
         ld hl, xbn_pal_owner
         cp (hl)
@@ -71,7 +71,7 @@ xbn_pal_check:                   ; A = my id. CF clear iff I hold it
 ; Text width from hardware truth (NR $6B bit 6) - one reviewed probe.
 ; Out: E = 80|40, D = row stride 160|80, HL = bottom-row (27) base.
 ; Corrupts AF, BC, DE, HL. ISR-safe: the ISR calls the hook only between
-; complete select+access pairs (interrupts.asm port audit).
+; complete select+access pairs (src/interrupts.asm's port audit).
 xbn_width:
         ld bc, $243B
         ld a, $6B
@@ -107,6 +107,7 @@ XBN_SCRATCH equ xbn_end
 ; definition. Rebuilds the entry contract (A=B=param1, C=fn,
 ; HL=flags+param1, DE=objTable+param1*6, IX=flags base) per module call.
 
+; Parks param1/fn and clears the verdict accumulator.
 ; Carry accumulation across the chain: xbn_setup clobbers F, so each
 ; module's verdict is folded into xbn_cfacc immediately after its call.
     MACRO XBN_CHAIN_ENTER

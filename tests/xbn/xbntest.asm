@@ -200,7 +200,6 @@ NR_PAL_IDX      equ $40
 NR_PAL_VAL      equ $41
 NR_PAL_CTL      equ $43
 TB_SELECT       equ $243B
-TB_ACCESS       equ $253B
 PAL_L2_EDIT     equ $10          ; edit+display Layer 2 first bank
 PAL_L2_EDIT2    equ $50          ; edit second bank, display untouched
 palhide_probe:
@@ -230,7 +229,7 @@ palhide_probe:
     dec b
     ld a, NR_PAL_VAL
     out (c), a
-    inc b                        ; BC stays TB_ACCESS for the burst
+    inc b                        ; BC stays $253B for the burst
     ld a, 224                    ; solid red RRRGGGBB ($E0)
     ld e, 0                      ; 256 iterations
 .wr:

@@ -811,7 +811,8 @@ svc_palread:
 .apply:
     nextreg NR_PAL_CTRL, a
     ld c, b                       ; C = saved $43 for the exit restore
-    ld b, 0                       ; loop counter as before
+    ld b, 0                       ; loop counter AND colour index, wraps
+                                  ; 0..255 (256 reads)
 .loop:
     ld a, b
     nextreg NR_PAL_INDEX, a
