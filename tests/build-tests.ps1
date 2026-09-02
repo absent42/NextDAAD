@@ -675,26 +675,15 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
 
-# ---- which DRC compiles the fixtures -------------------------------
-# The NEXTDAAD target lives in the fork (tools\DRC\) until DAAD Ready
-# ships a DRC carrying it; NEXTDAAD_DRC overrides the location. ONE
-# setting for every DRF/DRB call site in this file - there are 41, and
-# -v3 has already taught this codebase what happens when one site is
-# updated and another is not. DRF needs no substitute: it has no target
-# whitelist, so only DRB.PHP comes from the fork.
-# Every fixture is a NextDAAD-target database: the interpreter no longer
-# reads classic $8400-based ones, so there is no classic route to build.
+# ---- which compiler builds the fixtures ----------------------------
+# ndrc.exe is what the authoring kit ships (authoring-kit\lib\ddb.bat),
+# so the harness compiles what users compile. DRC is resolved too but
+# is needed only by -DrcDiff.
 $drcRoot = if ($env:NEXTDAAD_DRC) { $env:NEXTDAAD_DRC } else { Join-Path $root 'tools\DRC' }
 $drcDrb  = Join-Path $drcRoot 'src\drb.php'
 $drcPhp  = Join-Path $dr 'PHP\php.exe'
 $drcDrf  = Join-Path $dr 'TOOLS\DRC\DRF.exe'
 [string[]]$drcTarget = 'nextdaad'   # typed: a bare single-element array unwraps to a string and splats per-character
-if (-not (Test-Path -LiteralPath $drcDrb)) {
-    throw "no DRB.PHP at $drcDrb - clone the NextDAAD DRC fork into tools\DRC, or set NEXTDAAD_DRC to point at it. DAAD Ready's own DRC does not carry the NEXTDAAD target yet."
-}
-if (-not (Select-String -LiteralPath $drcDrb -Pattern 'NEXTDAAD' -Quiet)) {
-    throw "$drcDrb has no NEXTDAAD target - update the fork clone, or set NEXTDAAD_DRC to one that has it."
-}
 
 # ndrc is the compiler the authoring kit ships, so the harness compiles
 # what users compile. NEXTDAAD_NDRC overrides for compiler work.
@@ -702,6 +691,11 @@ $ndrc = if ($env:NEXTDAAD_NDRC) { $env:NEXTDAAD_NDRC } else { Join-Path $root 'a
 if (-not (Test-Path -LiteralPath $ndrc)) {
     throw "no ndrc.exe at $ndrc - build it into authoring-kit\lib, or set NEXTDAAD_NDRC to point at one."
 }
+$ndrcVer = (& $ndrc -h 2>&1 | Select-Object -First 1)
+if ($ndrcVer -notmatch '^NDRC \S+') {
+    throw "$ndrc did not report a version - expected a leading 'NDRC <version>' banner, got: $ndrcVer"
+}
+"compiler: $ndrcVer ($ndrc)"
 $sd = Join-Path $root 'sd'
 
 # ---- leg folder (see the LEG FOLDERS block at the top) -------------
@@ -836,10 +830,8 @@ New-Item -ItemType Directory -Force $templateWork | Out-Null
 Copy-Item "$PSScriptRoot\test.dsf" "$templateWork\NDTEST.DSF" -Force
 Push-Location $templateWork
 try {
-    & $drcDrf @drcTarget NDTEST.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed" }
-    & $drcPhp $drcDrb @drcTarget EN NDTEST.json NDTEST.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed" }
+    & $ndrc @drcTarget EN NDTEST.DSF NDTEST.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (template)" }
     Move-Item NDTEST.DDB "$root\tests\out\template.ddb" -Force
     # tests\test.dsf has no XMESSAGE yet (Task 5 adds the verb), so DRB
     # emits no 0.XMB for the template - tolerate absence. Wired now so
@@ -1180,10 +1172,8 @@ New-Item -ItemType Directory -Force $condactsWork | Out-Null
 Copy-Item "$PSScriptRoot\condacts.dsf" "$condactsWork\NDSUITE.DSF" -Force
 Push-Location $condactsWork
 try {
-    & $drcDrf @drcTarget NDSUITE.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (suite)" }
-    & $drcPhp $drcDrb @drcTarget EN NDSUITE.json NDSUITE.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (suite)" }
+    & $ndrc @drcTarget EN NDSUITE.DSF NDSUITE.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (suite)" }
     Move-Item NDSUITE.DDB "$root\tests\out\condacts.ddb" -Force
     # condacts.dsf's check 72 always uses XMESSAGE, so DRB always emits
     # 0.XMB here - no Test-Path guard (an absence would be a real
@@ -1198,10 +1188,8 @@ New-Item -ItemType Directory -Force $doallnestWork | Out-Null
 Copy-Item "$PSScriptRoot\doallnest.dsf" "$doallnestWork\NDNEST.DSF" -Force
 Push-Location $doallnestWork
 try {
-    & $drcDrf @drcTarget NDNEST.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (doallnest)" }
-    & $drcPhp $drcDrb @drcTarget EN NDNEST.json NDNEST.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (doallnest)" }
+    & $ndrc @drcTarget EN NDNEST.DSF NDNEST.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (doallnest)" }
     Move-Item NDNEST.DDB "$root\tests\out\doallnest.ddb" -Force
 }
 finally { Pop-Location }
@@ -1230,10 +1218,8 @@ New-Item -ItemType Directory -Force $bigddbWork | Out-Null
 Copy-Item "$PSScriptRoot\bigddb.dsf" "$bigddbWork\NDBIG.DSF" -Force
 Push-Location $bigddbWork
 try {
-    & $drcDrf @drcTarget NDBIG.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (bigddb)" }
-    & $drcPhp $drcDrb @drcTarget EN NDBIG.json NDBIG.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (bigddb)" }
+    & $ndrc @drcTarget EN NDBIG.DSF NDBIG.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (bigddb)" }
     Move-Item NDBIG.DDB "$root\tests\out\bigddb.ddb" -Force
 }
 finally { Pop-Location }
@@ -1316,10 +1302,8 @@ New-Item -ItemType Directory -Force $gmodegateWork | Out-Null
 Copy-Item "$PSScriptRoot\gmodegate.dsf" "$gmodegateWork\NDGMODE.DSF" -Force
 Push-Location $gmodegateWork
 try {
-    & $drcDrf @drcTarget NDGMODE.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (gmodegate)" }
-    & $drcPhp $drcDrb @drcTarget EN NDGMODE.json NDGMODE.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (gmodegate)" }
+    & $ndrc @drcTarget EN NDGMODE.DSF NDGMODE.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (gmodegate)" }
     Move-Item NDGMODE.DDB "$root\tests\out\gmodegate.ddb" -Force
 }
 finally { Pop-Location }
@@ -1333,10 +1317,8 @@ New-Item -ItemType Directory -Force $audladWork | Out-Null
 Copy-Item "$PSScriptRoot\audlad.dsf" "$audladWork\NDAUDLAD.DSF" -Force
 Push-Location $audladWork
 try {
-    & $drcDrf @drcTarget NDAUDLAD.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (audlad)" }
-    & $drcPhp $drcDrb @drcTarget EN NDAUDLAD.json NDAUDLAD.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (audlad)" }
+    & $ndrc @drcTarget EN NDAUDLAD.DSF NDAUDLAD.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (audlad)" }
     Move-Item NDAUDLAD.DDB "$root\tests\out\audlad.ddb" -Force
 }
 finally { Pop-Location }
@@ -1395,10 +1377,8 @@ New-Item -ItemType Directory -Force $sfxdiWork | Out-Null
 Copy-Item "$PSScriptRoot\sfxdi.dsf" "$sfxdiWork\NDSFXDI.DSF" -Force
 Push-Location $sfxdiWork
 try {
-    & $drcDrf @drcTarget NDSFXDI.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (sfxdi)" }
-    & $drcPhp $drcDrb @drcTarget EN NDSFXDI.json NDSFXDI.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (sfxdi)" }
+    & $ndrc @drcTarget EN NDSFXDI.DSF NDSFXDI.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfxdi)" }
     Move-Item NDSFXDI.DDB "$root\tests\out\sfxdi.ddb" -Force
 }
 finally { Pop-Location }
@@ -1418,10 +1398,8 @@ New-Item -ItemType Directory -Force $sfxLongWork | Out-Null
 Copy-Item "$PSScriptRoot\sfxlong.dsf" "$sfxLongWork\NDSFXLNG.DSF" -Force
 Push-Location $sfxLongWork
 try {
-    & $drcDrf @drcTarget NDSFXLNG.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (sfxlong)" }
-    & $drcPhp $drcDrb @drcTarget EN NDSFXLNG.json NDSFXLNG.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (sfxlong)" }
+    & $ndrc @drcTarget EN NDSFXLNG.DSF NDSFXLNG.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfxlong)" }
     Copy-Item NDSFXLNG.DDB "$root\tests\out\sfxlong.ddb" -Force
 }
 finally {
@@ -1439,10 +1417,8 @@ New-Item -ItemType Directory -Force $sfx2Work | Out-Null
 Copy-Item "$PSScriptRoot\sfx2.dsf" "$sfx2Work\NDSFX2.DSF" -Force
 Push-Location $sfx2Work
 try {
-    & $drcDrf @drcTarget NDSFX2.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (sfx2)" }
-    & $drcPhp $drcDrb @drcTarget EN NDSFX2.json NDSFX2.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (sfx2)" }
+    & $ndrc @drcTarget EN NDSFX2.DSF NDSFX2.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfx2)" }
     Copy-Item NDSFX2.DDB "$root\tests\out\sfx2.ddb" -Force
 }
 finally {
@@ -1464,13 +1440,13 @@ New-Item -ItemType Directory -Force $debugflagWork | Out-Null
 Copy-Item "$PSScriptRoot\debugflag.dsf" "$debugflagWork\NDDBGF.DSF" -Force
 Push-Location $debugflagWork
 try {
-    & $drcDrf @drcTarget NDDBGF.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (debugflag)" }
-    & $drcPhp $drcDrb @drcTarget EN NDDBGF.json NDDBGF.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (debugflag)" }
+    & $ndrc --to-json @drcTarget NDDBGF.DSF NDDBGF.json
+    if ($LASTEXITCODE -ne 0) { throw "ndrc --to-json failed (debugflag)" }
+    & $ndrc --from-json @drcTarget EN NDDBGF.json NDDBGF.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc --from-json failed (debugflag)" }
     Move-Item NDDBGF.DDB "$root\tests\out\debugflag.ddb" -Force
-    & $drcPhp $drcDrb @drcTarget EN NDDBGF.json NDDBGF.DDB -d
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (debugflag -d)" }
+    & $ndrc --from-json @drcTarget EN NDDBGF.json NDDBGF.DDB -d
+    if ($LASTEXITCODE -ne 0) { throw "ndrc --from-json -d failed (debugflag)" }
     Move-Item NDDBGF.DDB "$root\tests\out\debugflag-debug.ddb" -Force
 }
 finally { Pop-Location }
@@ -1503,10 +1479,8 @@ New-Item -ItemType Directory -Force $l2holesWork | Out-Null
 Copy-Item "$PSScriptRoot\l2holes.dsf" "$l2holesWork\NDL2HOLE.DSF" -Force
 Push-Location $l2holesWork
 try {
-    & $drcDrf @drcTarget NDL2HOLE.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (l2holes)" }
-    & $drcPhp $drcDrb @drcTarget EN NDL2HOLE.json NDL2HOLE.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (l2holes)" }
+    & $ndrc @drcTarget EN NDL2HOLE.DSF NDL2HOLE.DDB --json
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (l2holes)" }
     Copy-Item NDL2HOLE.DDB "$root\tests\out\l2holes.ddb" -Force
 }
 finally {
@@ -1532,10 +1506,8 @@ New-Item -ItemType Directory -Force $tmoverWork | Out-Null
 Copy-Item "$PSScriptRoot\tmover.dsf" "$tmoverWork\NDTMOVR.DSF" -Force
 Push-Location $tmoverWork
 try {
-    & $drcDrf @drcTarget NDTMOVR.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (tmover)" }
-    & $drcPhp $drcDrb @drcTarget EN NDTMOVR.json NDTMOVR.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (tmover)" }
+    & $ndrc @drcTarget EN NDTMOVR.DSF NDTMOVR.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (tmover)" }
     Copy-Item NDTMOVR.DDB "$root\tests\out\tmover.ddb" -Force
 }
 finally {
@@ -1560,10 +1532,8 @@ New-Item -ItemType Directory -Force $tileSlackWork | Out-Null
 Copy-Item "$PSScriptRoot\tileslack.dsf" "$tileSlackWork\NDTILESL.DSF" -Force
 Push-Location $tileSlackWork
 try {
-    & $drcDrf @drcTarget NDTILESL.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (tileslack)" }
-    & $drcPhp $drcDrb @drcTarget EN NDTILESL.json NDTILESL.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (tileslack)" }
+    & $ndrc @drcTarget EN NDTILESL.DSF NDTILESL.DDB --json
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (tileslack)" }
     Copy-Item NDTILESL.DDB "$root\tests\out\tileslack.ddb" -Force
 }
 finally {
@@ -1588,10 +1558,8 @@ New-Item -ItemType Directory -Force $fontswWork | Out-Null
 Copy-Item "$PSScriptRoot\fontsw.dsf" "$fontswWork\NDFONTSW.DSF" -Force
 Push-Location $fontswWork
 try {
-    & $drcDrf @drcTarget NDFONTSW.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (fontsw)" }
-    & $drcPhp $drcDrb @drcTarget EN NDFONTSW.json NDFONTSW.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (fontsw)" }
+    & $ndrc @drcTarget EN NDFONTSW.DSF NDFONTSW.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (fontsw)" }
     Copy-Item NDFONTSW.DDB "$root\tests\out\fontsw.ddb" -Force
 }
 finally {
@@ -1607,10 +1575,8 @@ New-Item -ItemType Directory -Force $txt40Work | Out-Null
 Copy-Item "$PSScriptRoot\txt40.dsf" "$txt40Work\NDTXT40.DSF" -Force
 Push-Location $txt40Work
 try {
-    & $drcDrf @drcTarget NDTXT40.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (txt40)" }
-    & $drcPhp $drcDrb @drcTarget EN NDTXT40.json NDTXT40.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (txt40)" }
+    & $ndrc @drcTarget EN NDTXT40.DSF NDTXT40.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (txt40)" }
     Copy-Item NDTXT40.DDB "$root\tests\out\txt40.ddb" -Force
 }
 finally {
@@ -1628,10 +1594,8 @@ New-Item -ItemType Directory -Force $accentWork | Out-Null
 Copy-Item "$PSScriptRoot\accents.dsf" "$accentWork\NDACCENT.DSF" -Force
 Push-Location $accentWork
 try {
-    & $drcDrf @drcTarget NDACCENT.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (accent)" }
-    & $drcPhp $drcDrb @drcTarget EN NDACCENT.json NDACCENT.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (accent)" }
+    & $ndrc @drcTarget EN NDACCENT.DSF NDACCENT.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (accent)" }
     Copy-Item NDACCENT.DDB "$root\tests\out\accents.ddb" -Force
 }
 finally {
@@ -1648,10 +1612,8 @@ New-Item -ItemType Directory -Force $paletteWork | Out-Null
 Copy-Item "$PSScriptRoot\palette.dsf" "$paletteWork\NDPAL.DSF" -Force
 Push-Location $paletteWork
 try {
-    & $drcDrf @drcTarget NDPAL.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (palette)" }
-    & $drcPhp $drcDrb @drcTarget EN NDPAL.json NDPAL.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (palette)" }
+    & $ndrc @drcTarget EN NDPAL.DSF NDPAL.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (palette)" }
     Copy-Item NDPAL.DDB "$root\tests\out\palette.ddb" -Force
 }
 finally {
@@ -2596,10 +2558,8 @@ New-Item -ItemType Directory -Force $v3probeWork | Out-Null
 Copy-Item "$PSScriptRoot\v3probe.dsf" "$v3probeWork\NDV3.DSF" -Force
 Push-Location $v3probeWork
 try {
-    & $drcDrf @drcTarget NDV3.DSF -v3
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (v3probe)" }
-    & $drcPhp $drcDrb @drcTarget EN NDV3.json NDV3.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (v3probe)" }
+    & $ndrc @drcTarget EN NDV3.DSF NDV3.DDB -v3
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (v3probe)" }
     $v3hdr = [System.IO.File]::ReadAllBytes("$v3probeWork\NDV3.DDB")
     if ($v3hdr[0] -ne 3) {
         throw "v3probe DDB header byte 0 is $($v3hdr[0]), expected 3 - did -v3 reach DRF?"
@@ -2726,10 +2686,8 @@ else {
     Copy-Item $utoDsf "$utotestWork\NDUTO.DSF" -Force
     Push-Location $utotestWork
     try {
-        & $drcDrf @drcTarget NDUTO.DSF
-        if ($LASTEXITCODE -ne 0) { throw "DRF failed (utotest V2)" }
-        & $drcPhp $drcDrb @drcTarget EN NDUTO.json NDUTO.DDB
-        if ($LASTEXITCODE -ne 0) { throw "DRB failed (utotest V2)" }
+        & $ndrc @drcTarget EN NDUTO.DSF NDUTO.DDB
+        if ($LASTEXITCODE -ne 0) { throw "ndrc failed (utotest V2)" }
         Move-Item NDUTO.DDB "$root\tests\out\utotest.ddb" -Force
     }
     finally { Pop-Location }
@@ -2741,10 +2699,8 @@ else {
     Copy-Item $utoDsf "$utotestV3Work\NDUTO3.DSF" -Force
     Push-Location $utotestV3Work
     try {
-        & $drcDrf @drcTarget NDUTO3.DSF -v3
-        if ($LASTEXITCODE -ne 0) { throw "DRF failed (utotest V3)" }
-        & $drcPhp $drcDrb @drcTarget EN NDUTO3.json NDUTO3.DDB
-        if ($LASTEXITCODE -ne 0) { throw "DRB failed (utotest V3)" }
+        & $ndrc @drcTarget EN NDUTO3.DSF NDUTO3.DDB -v3
+        if ($LASTEXITCODE -ne 0) { throw "ndrc failed (utotest V3)" }
         Move-Item NDUTO3.DDB "$root\tests\out\utotest_v3.ddb" -Force
     }
     finally { Pop-Location }
@@ -2765,10 +2721,8 @@ New-Item -ItemType Directory -Force $externWork | Out-Null
 Copy-Item "$PSScriptRoot\extern.dsf" "$externWork\NDXBN.DSF" -Force
 Push-Location $externWork
 try {
-    & $drcDrf @drcTarget NDXBN.DSF
-    if ($LASTEXITCODE -ne 0) { throw "DRF failed (extern)" }
-    & $drcPhp $drcDrb @drcTarget EN NDXBN.json NDXBN.DDB
-    if ($LASTEXITCODE -ne 0) { throw "DRB failed (extern)" }
+    & $ndrc @drcTarget EN NDXBN.DSF NDXBN.DDB
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (extern)" }
     Move-Item NDXBN.DDB "$root\tests\out\extern.ddb" -Force
 }
 finally { Pop-Location }
@@ -3421,10 +3375,8 @@ if ($Rab) {
     Copy-Item "$rabSrc\rabenstein.dsf" "$rabensteinWork\NDRAB.DSF" -Force
     Push-Location $rabensteinWork
     try {
-        & $drcDrf @drcTarget NDRAB.DSF
-        if ($LASTEXITCODE -ne 0) { throw "DRF failed (rabenstein)" }
-        & $drcPhp $drcDrb @drcTarget EN NDRAB.json NDRAB.DDB
-        if ($LASTEXITCODE -ne 0) { throw "DRB failed (rabenstein)" }
+        & $ndrc @drcTarget EN NDRAB.DSF NDRAB.DDB
+        if ($LASTEXITCODE -ne 0) { throw "ndrc failed (rabenstein)" }
         Copy-Item NDRAB.DDB "$root\tests\out\rabenstein.ddb" -Force
         try {
             Copy-Item NDRAB.DDB "$leg\GAME.DDB" -Force
@@ -3508,10 +3460,8 @@ if ($UU) {
     Copy-Item $uuDsf "$urbanupstartWork\NDUU.DSF" -Force
     Push-Location $urbanupstartWork
     try {
-        & $drcDrf @drcTarget NDUU.DSF
-        if ($LASTEXITCODE -ne 0) { throw "DRF failed (urbanupstart)" }
-        & $drcPhp $drcDrb @drcTarget EN NDUU.json NDUU.DDB
-        if ($LASTEXITCODE -ne 0) { throw "DRB failed (urbanupstart)" }
+        & $ndrc @drcTarget EN NDUU.DSF NDUU.DDB
+        if ($LASTEXITCODE -ne 0) { throw "ndrc failed (urbanupstart)" }
         Copy-Item NDUU.DDB "$root\tests\out\urbanupstart.ddb" -Force
         try {
             Copy-Item NDUU.DDB "$leg\GAME.DDB" -Force
@@ -3574,10 +3524,8 @@ if ($Part) {
         # Work dir is wiped at block start: a 0.XMB left by a run that
         # threw before the Move-Item must not be reused if this DSF ever
         # loses its XMESSAGE/XMES step (SP10 lesson, ddb.bat/4a68620).
-        & $drcDrf @drcTarget NDPARTA.DSF
-        if ($LASTEXITCODE -ne 0) { throw "DRF failed (NDPARTA)" }
-        & $drcPhp $drcDrb @drcTarget EN NDPARTA.json NDPARTA.DDB
-        if ($LASTEXITCODE -ne 0) { throw "DRB failed (NDPARTA)" }
+        & $ndrc @drcTarget EN NDPARTA.DSF NDPARTA.DDB
+        if ($LASTEXITCODE -ne 0) { throw "ndrc failed (NDPARTA)" }
         Move-Item NDPARTA.DDB "$leg\GAME.DDB" -Force
         Copy-Item "$leg\GAME.DDB" "$root\tests\out\parta.ddb" -Force
         # NDPARTA.DSF always uses XMESSAGE (its own header comment) -
@@ -3601,10 +3549,8 @@ if ($Part) {
         # Work dir is wiped at block start: a 0.XMB left by a run that
         # threw before the Move-Item must not be reused if this DSF ever
         # loses its XMESSAGE/XMES step (SP10 lesson, ddb.bat/4a68620).
-        & $drcDrf @drcTarget NDPARTB.DSF
-        if ($LASTEXITCODE -ne 0) { throw "DRF failed (NDPARTB)" }
-        & $drcPhp $drcDrb @drcTarget EN NDPARTB.json NDPARTB.DDB
-        if ($LASTEXITCODE -ne 0) { throw "DRB failed (NDPARTB)" }
+        & $ndrc @drcTarget EN NDPARTB.DSF NDPARTB.DDB
+        if ($LASTEXITCODE -ne 0) { throw "ndrc failed (NDPARTB)" }
         Move-Item NDPARTB.DDB "$leg\GAME2.DDB" -Force
         Copy-Item "$leg\GAME2.DDB" "$root\tests\out\partb.ddb" -Force
         if (-not (Test-Path '0.XMB')) { throw "NDPARTB.DSF produced no 0.XMB - XMES missing from the source?" }
