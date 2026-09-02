@@ -833,7 +833,7 @@ try {
     & $ndrc @drcTarget EN NDTEST.DSF NDTEST.DDB
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (template)" }
     Move-Item NDTEST.DDB "$root\tests\out\template.ddb" -Force
-    # tests\test.dsf has no XMESSAGE yet (Task 5 adds the verb), so DRB
+    # tests\test.dsf has no XMESSAGE yet (Task 5 adds the verb), so ndrc
     # emits no 0.XMB for the template - tolerate absence. Wired now so
     # Task 5 needs no script change: $templateXmb makes the staging
     # section copy it next to the template DDB when it does appear.
@@ -1175,7 +1175,7 @@ try {
     & $ndrc @drcTarget EN NDSUITE.DSF NDSUITE.DDB
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (suite)" }
     Move-Item NDSUITE.DDB "$root\tests\out\condacts.ddb" -Force
-    # condacts.dsf's check 72 always uses XMESSAGE, so DRB always emits
+    # condacts.dsf's check 72 always uses XMESSAGE, so ndrc always emits
     # 0.XMB here - no Test-Path guard (an absence would be a real
     # regression worth throwing on).
     Move-Item '0.XMB' "$root\tests\out\condacts.xmb" -Force
@@ -1350,7 +1350,7 @@ finally { Pop-Location }
 # REV 2a ADDS THE EIGHT KEYPRESS BOUNDARIES (owner request: the phases
 # ran too fast to attribute a symptom to one). The wait is ANYKEY
 # (opcode 24 = $18, ZERO parameters) - NOT "PAUSE 0": this fixture is
-# compiled by the plain "DRF.exe zx next" call above with no -v3, its
+# compiled by the plain ndrc call above with no -v3, its
 # header version byte is 2 (asserted below), and PAUSE 0 only means
 # GETKEY under V3. Having no operand, ANYKEY is also immune to the
 # duration rescaling that the PAUSE checks exist to catch.
@@ -1426,9 +1426,10 @@ finally {
 }
 
 # DRC debug-marker fixture. Compiled unconditionally like the five above,
-# and the ONLY fixture here compiled TWICE from one DRF pass: plain, and
-# again through DRB's -d ("forced debug mode"), which is what makes DRB
-# keep the fake DEBUG condact instead of dropping it (drb.php:1114).
+# and the ONLY fixture here compiled from one ndrc --to-json pass, then
+# two --from-json passes: plain, and again with -d ("forced debug mode"),
+# which is what keeps the fake DEBUG condact instead of dropping it
+# (drb.php:1114 is the historical source of that behaviour).
 # There is no leg switch and no staging - the whole experiment is the
 # emitted bytes, asserted below. tests\debugflag.dsf's own header
 # explains what each of its three shapes is for, including the optional
@@ -2073,7 +2074,7 @@ foreach ($c in @(
 # --- accents: DRC's two accent encodings ---
 # Message text is stored complemented (byte = 255 - char; the
 # interpreter's reader undoes it), so every text assertion below is the
-# 255-complement of the authored sequence. DRF does the conversion
+# 255-complement of the authored sequence. ndrc does the conversion
 # (drc-analysis section 16.2 in the NDRC repo is the authoritative
 # table): encoding 1 = bare bytes 16-31, encoding 2 and the uppercase
 # sets = $0E code $0F triples, sharp-s = a DIRECT $7F (never the DRB
@@ -2372,10 +2373,11 @@ if ($duoHits -ne 2) {
 # every opcode is pinned.
 $dbgPlain = [System.IO.File]::ReadAllBytes("$root\tests\out\debugflag.ddb")
 $dbgDebug = [System.IO.File]::ReadAllBytes("$root\tests\out\debugflag-debug.ddb")
-# ZERO PARAMETERS, proved rather than assumed: one DRF pass, two DRB
-# runs, three DEBUG lines, three bytes. Anything with an operand would
-# make this 6 or 9 - and an interpreter that skipped only the opcode of
-# an operand-carrying marker would desynchronise the whole entry stream.
+# ZERO PARAMETERS, proved rather than assumed: one --to-json pass, two
+# --from-json runs, three DEBUG lines, three bytes. Anything with an
+# operand would make this 6 or 9 - and an interpreter that skipped only
+# the opcode of an operand-carrying marker would desynchronise the whole
+# entry stream.
 if (($dbgDebug.Length - $dbgPlain.Length) -ne 3) {
     throw ("debugflag: -d grew the DDB by $($dbgDebug.Length - $dbgPlain.Length) bytes " +
            "(plain $($dbgPlain.Length), -d $($dbgDebug.Length)), expected exactly 3 for three DEBUG lines - " +
@@ -2392,7 +2394,7 @@ if ((Find-MaskedRuns $dbgDebug @(0xDC, 0x73, 0x26, $null, 0x16)).Count -ne 1) {
 }
 if ((Find-MaskedRuns $dbgPlain @(0x73, 0x26, $null, 0x16)).Count -ne 1 -or
     (Find-ByteRuns $dbgPlain ([byte[]]@(0xDC, 0x73))).Count -ne 0) {
-    throw "debugflag: without -d the same entry must be plain 'ISNDONE + MESSAGE n + DONE' (73 26 ?? 16) with no marker - DRB is no longer dropping the fake DEBUG condact"
+    throw "debugflag: without -d the same entry must be plain 'ISNDONE + MESSAGE n + DONE' (73 26 ?? 16) with no marker - the compiler is no longer dropping the fake DEBUG condact"
 }
 # PRO 2 (never executed - only PRO 0 runs by itself and nothing does
 # PROCESS 2) is THE AMBIGUITY CHECK, in bytes: a real NEWTEXT sits
@@ -2560,7 +2562,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (v3probe)" }
     $v3hdr = [System.IO.File]::ReadAllBytes("$v3probeWork\NDV3.DDB")
     if ($v3hdr[0] -ne 3) {
-        throw "v3probe DDB header byte 0 is $($v3hdr[0]), expected 3 - did -v3 reach DRF?"
+        throw "v3probe DDB header byte 0 is $($v3hdr[0]), expected 3 - did -v3 reach ndrc?"
     }
     Invoke-V3SetatPatch "$v3probeWork\NDV3.DDB"
     Move-Item NDV3.DDB "$root\tests\out\v3probe.ddb" -Force
@@ -2606,7 +2608,7 @@ finally { Pop-Location }
 #     pair is what proves #ifdef "V3" resolved the way each build
 #     intends; without the negative half a V2 build that silently
 #     compiled the V3 blocks would look identical from the outside;
-#   GETKEY - DRB compiles the V3 GETKEY keyword down to PAUSE 0
+#   GETKEY - the compiler compiles the V3 GETKEY keyword down to PAUSE 0
 #     ($23 $00), which is exactly the byte pair the interpreter reads as
 #     GETKEY under V3 and as a zero-length pause under V2. Asserted
 #     present (followed by its PRINT of flag 60) in the V3 image and
@@ -3435,9 +3437,9 @@ if ($UU) {
         throw "CSpect is running - close it before staging (locked sd\ files cause partial/mixed art sets)"
     }
     # tools\urban-upstart\URBAN-UPSTART.DSF is OWNER-AUTHORED and the vendor
-    # dir is untracked working material - never edit it here. Compiled
-    # exactly like rabenstein.dsf above: copy into DAAD-READY, run DRF/DRB
-    # with no preprocessing, and let a DRC failure abort the script (its
+    # dir is untracked working material - never edit it here. Same shape as
+    # the rabenstein block above: copy into a work dir, run ndrc with no
+    # preprocessing, and let a DRC failure abort the script (its
     # error surfacing is the point - do not swallow it).
     # NOTE the HYPHEN. This read URBAN_UPSTART.DSF (underscore) from the
     # day it was written, which matches nothing in the vendor dir, so -UU
