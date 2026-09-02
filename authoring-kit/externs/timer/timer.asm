@@ -64,7 +64,9 @@ arm:
                                  ; only frames since this arm, not since boot
     ld a, 1
     ld (armed), a                ; armed set last: an interrupt before this
-    ret                          ; point sees armed=0 and returns at once
+                                 ; point sees armed=0 and returns at once
+    or a                         ; CF clear established here, not inherited
+    ret                          ; from SVC_FRAMES' trailing or a
 
 ; fn 64 - stop all three. Each pair is left alone: a real-seconds count the
 ; author can inspect, or a minute deadline that stops being watched. Only the
@@ -149,8 +151,7 @@ arm_minutes:
     and $80
     jr nz, .refuse                ; duration >= 32768: refuse - the slot was
                                  ; already idled above, and the pair is left
-                                 ; untouched (still the raw duration, not a
-                                 ; deadline)
+                                 ; untouched (the raw duration, not a deadline)
     push hl
     ld hl, (armtotal)
     add hl, de                   ; HL = deadline, wrapping mod 65536

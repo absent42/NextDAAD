@@ -5,8 +5,8 @@
 ;             EXTERN 0 31 disarms it.
 ; Interrupt:  int emits one character per frame to the tilemap's
 ;             bottom row, wrapping, until the message is consumed. It
-;             probes the live text width (NR $6B bit 6, see TM_ROW80
-;             below) so it stays correct after a GFX n 18 mode switch.
+;             calls xbn_width (xbnmod.inc) for the live text width, so it
+;             stays correct after a GFX n 18 mode switch.
 ;
 ; What this teaches: SVC_GETMSG's staging buffer is resident and shared
 ; with the rest of the interpreter - it is only valid until the NEXT
@@ -40,9 +40,6 @@
 ; The row's ADDRESS depends on the text width the game selected with
 ; GFX n 18: 2 bytes per cell, so the stride is 160 bytes/row at 80x32
 ; and 80 bytes/row at 40x32.
-TM_ROW80        equ $70E0        ; $6000 + 27*160
-TM_ROW40        equ $6870        ; $6000 + 27*80
-
 ; Live width/row base probe: xbn_width (xbnmod.inc), called from int below.
 
 ; The interpreter's own reserved attribute for ordinary text: pair 0 =
@@ -146,11 +143,11 @@ int:
                                  ; to a plain printable byte (msg_probe,
                                  ; tests/xbn/xbntest.asm, established
                                  ; this - no translation needed here)
-    ld (chr), a                  ; parked: the port read below needs BC,
-                                 ; and the interpreter restores full
-                                 ; context around this hook anyway
-    call xbn_width               ; E = width, HL = row base (D unused)
-.width:                          ; HL = row base, E = width in columns
+    ld (chr), a                  ; parked: xbn_width corrupts BC, and the
+                                 ; interpreter restores full context around
+                                 ; this hook anyway
+    call xbn_width               ; E = width in columns, HL = row base
+                                 ; (D, the row stride, unused here)
     ld a, (column)
     cp e
     jr c, .colok
@@ -201,4 +198,5 @@ text:    ds 256
     IFNDEF XBN_MODULE
 xbn_end:
     SAVEBIN "GAME.XBN", XBN_ORG, xbn_end - XBN_ORG
+    XBN_SCRATCH_END
     ENDIF

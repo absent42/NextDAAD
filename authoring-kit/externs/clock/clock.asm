@@ -131,16 +131,15 @@ int:
     ld a, (armed)
     or a
     ret z
-    ; Re-prime BEFORE the RUN test (and before anything else can return
-    ; early): a stopped clock must still track "now" every frame, so a
-    ; later restart (fn 60's no-op path, or a plain LET 226 1) resumes
-    ; from a fresh snapshot instead of bursting the whole stopped span.
+    ; Re-prime BEFORE the RUN test: a stopped clock must still track
+    ; "now" every frame, so a later restart resumes from a fresh snapshot
+    ; instead of bursting the whole stopped span.
     call SVC_FRAMES
     ld de, (lastFrames)
     ld (lastFrames), hl
     or a
     sbc hl, de                   ; HL = frames elapsed since the last pass
-    ld (delta), hl               ; parked: RUN/rate tests below need A/D/E
+    ld (delta), hl               ; parked across the RUN/rate flag reads
     ld a, (XBN_FLAGS + FLAG_RUN)
     or a
     ret z
@@ -155,13 +154,13 @@ int:
     ld bc, (delta)
     add hl, bc
     ld (residue), hl
-.loop:                           ; while residue >= rate: residue -= rate;
-    ld hl, (residue)             ; tick_minute - a multi-minute delta (a
-    or a                         ; long blit, a paused hook) must tick the
-    sbc hl, de                   ; right number of times, not just once.
-    jr c, .done                  ; DE still holds rate: tick_minute (called
-    ld (residue), hl             ; below) touches only A and flag memory,
-    call tick_minute             ; so it never disturbs the cached rate.
+.loop:                           ; while residue >= rate: residue -= rate.
+    ld hl, (residue)             ; A multi-minute delta must tick that many
+    or a                         ; times. DE stays the cached rate across
+    sbc hl, de                   ; tick_minute: it touches only A and flags.
+    jr c, .done
+    ld (residue), hl
+    call tick_minute
     jr .loop
 .done:
     ret

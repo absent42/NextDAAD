@@ -386,6 +386,8 @@ ext:
 ; The wait gates on SVC_FRAMES. HALT is only a wakeup - a sampled sound
 ; effect's per-sample CTC interrupt wakes it at the WAV rate - so the
 ; frame-counter compare, not the wakeup, steps the bound.
+; Never-hang guard = the BC bound; a frozen frame counter means the
+; interpreter ISR is dead (Ruling: TICK_CEILING dropped).
 wait_fade:
     ld a, (active)
     or a

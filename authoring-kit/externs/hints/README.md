@@ -12,10 +12,11 @@ level its offset; the extern only reads what the packer wrote.
 
 - `EXTERN n 50` - print topic n's hint. With flag 242 = 0 (automatic),
   prints the topic's next unread level from `GAME.HPR` and advances it
-  by one: printed; if the progress save fails the hint may reprint next
-  time. With flag 242 nonzero, prints that level (1-based) instead and
-  does not touch `GAME.HPR`. CF set means no further hint to give: no
-  such topic, no such level, or `GAME.HNT` is unavailable.
+  by one: the hint prints either way; if the progress save fails the
+  hint may reprint next time. With flag 242 nonzero, prints that level
+  (1-based) instead and does not touch `GAME.HPR`. CF set means no
+  further hint to give: no such topic, no such level, `GAME.HNT` is
+  unavailable, or `GAME.HPR` cannot be read (automatic mode).
 - `EXTERN n 51` - level count for topic n, written into flag 243. An
   action: always CF clear, including when the topic has no levels
   (writes 0).

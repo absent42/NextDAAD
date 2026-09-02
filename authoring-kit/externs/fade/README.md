@@ -50,7 +50,10 @@ neither hang nor be hurried along by the interrupts a sampled sound
 effect generates while it waits.
 
 **Flag 240 - wait while doing something else.** The hook clears it when
-a fade starts and sets it to 1 when the fade completes. Poll it when
+a fade starts and sets it to 1 when the fade completes. It is only
+meaningful after a fade that actually started: the no-op exits (a call
+made mid-fade, or a fade-out when the picture is already out) leave the
+flag exactly as it was. Poll it when
 the fade is *supposed* to overlap other work, which is the point of
 fading with the text window live: `EXTERN 0 43` would stop you printing
 during the fade. Polling a flag in DAAD needs a two-entry loop:

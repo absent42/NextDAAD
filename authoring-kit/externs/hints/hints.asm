@@ -178,7 +178,7 @@ write_blank:
     call SVC_FWRITE
     ret
 
-; fn 52/53 share these tails. fn 50 has its own (fail: below, which must
+; fn 52/53 share these tails. fn 50 has its own (finish: below, which must
 ; close two handles first); fn 51 is an action and never fails.
 verdict_ok:
     xor a                        ; CF clear: success
@@ -361,7 +361,8 @@ hpr_read:
     scf
     ret
 
-; Writes A as topic B's progress byte. CF set on failure.
+; Writes A as topic B's progress byte. CF set on failure - the caller
+; ignores it (printed-but-unsaved is success).
 hpr_write:
     push af
     ld h, 0
@@ -437,17 +438,17 @@ show:
                                   ; success (the hint may reprint next time)
 .done:
     xor a
-    jr fail                      ; the epilogue closes both handles
+    jr finish                    ; the epilogue closes both handles
 .notopic:
 .nolevel:
 .nofile:
     scf
-    jr fail
+    jr finish
 
 ; Every fn 50 exit lands here. Closing BOTH handles on every path matters -
 ; leaking one per call runs esxDOS out of them. Callers set CF before
 ; jumping in; the push/pop af bracket carries it across both closes.
-fail:
+finish:
     push af
     call close_hnt
     call close_hpr

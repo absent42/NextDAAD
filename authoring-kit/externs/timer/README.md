@@ -61,12 +61,15 @@ never advances:
 
 fn 65 refuses (CF set) a duration of 32768 or more - the failing EXTERN
 entry arms nothing, and the slot's pair is left holding the raw duration it
-was called with, not a deadline. Under that ceiling, `EXTERN 65` arms a
-deadline by adding the duration to the clock's current total mod 65536; the
-sweep in the frame hook reads a difference of 32768 or more as already
-passed, so stay a day clear of the ceiling even so: the clock's midnight
-carry briefly under-reads the total by 1440, so an accepted duration in the
-top 1440 minutes of the range can still expire one frame early.
+was called with, not a deadline. The slot is still set idle first: the
+quiesce that closes the write-tear window runs before the range check, so a
+refused re-arm stops a countdown that was already running in that slot.
+Under that ceiling, `EXTERN 65` arms a deadline by adding the duration to
+the clock's current total mod 65536; the sweep in the frame hook reads a
+difference of 32768 or more as already passed, so stay a day clear of the
+ceiling even so: the clock's midnight carry briefly under-reads the total
+by 1440, so an accepted duration in the top 1440 minutes of the range can
+still expire one frame early.
 
 After that call the pair no longer holds a countdown - it holds the in-game
 time at which the timer expires. Read state 235 for the answer you want:

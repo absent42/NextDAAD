@@ -45,8 +45,9 @@ This assembles `ticker.asm` and rewrites `GAME.XBN` here.
 The extern exposes two functions:
 
     EXTERN n 30   ; fetch user message n and arm the ticker
-                  ; CF clear: armed. CF set: message n does not exist -
-                  ; this EXTERN entry fails (v2)
+                  ; CF clear: armed, or the message is empty - nothing
+                  ; to tick. CF set: message n does not exist - this
+                  ; EXTERN entry fails (v2)
     EXTERN 0 31   ; disarm the ticker (always succeeds, CF clear)
 
 `n` is the message number as it appears in your DSF's `/MTX` block.
