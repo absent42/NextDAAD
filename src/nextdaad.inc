@@ -133,14 +133,19 @@ BANK_L2BACK_LAST equ 34     ; gfx_blit renders here, then flips NR $12)
 ; video.asm's own eviction comments at each moved routine.
 BANK_VID2       equ 35      ; withdrawn from the pool for the two pages
                             ; below - see the paragraph above
-BANK_POOL_B     equ 36
+BANK_SPR        equ 36      ; withdrawn: sprite animation pages, the
+                            ; BANK_VID2 pattern - excluded from bank_alloc
+                            ; because bank_table_init's pool B starts at 37
+BANK_POOL_B     equ 37
+SPR_PAGE        equ BANK_SPR*2      ; lower 8K, slot 7: code, records, maps, cache
+SPR_TAB_PAGE    equ BANK_SPR*2+1    ; upper 8K, slot 6: 8 frame tables of 1K
 VID_PAGE2       equ BANK_VID2*2      ; lower 8K of the withdrawn bank
 SFX_PAGE        equ BANK_VID2*2+1    ; upper 8K of the SAME withdrawn
                             ; bank (SP18 item 7 T3: SD-streamed sampled-
                             ; effect transport clones). Bank 35 is
                             ; already wholly excluded from bank_alloc
                             ; (the comment above; bank_table_init's free-
-                            ; pool loop starts at BANK_POOL_B=36), so
+                            ; pool loop starts at BANK_POOL_B), so
                             ; this sibling page needs no further banks
                             ; .asm change - it is unreachable to the
                             ; allocator from assembly time, exactly like
@@ -456,7 +461,7 @@ VID_PAGE        equ BANK_OVL2*2+1     ; video code page (SP13 T1): the upper 8K 
                             ; reserved bank range (28/29) with no equate
                             ; yet - bank_table_init (banks.asm) never
                             ; marks banks 28/29 BT_FREE (the pool starts
-                            ; at BANK_POOL_B=36), so this page is outside
+                            ; at BANK_POOL_B), so this page is outside
                             ; the allocator entirely, exactly like 56-58.
                             ; Costs zero resident bytes: SAVENEX AUTO
                             ; (main.asm) picks up any page with assembled
@@ -1488,6 +1493,9 @@ GFX_SUB_TXTMODE  equ 18          ; NextDAAD: text width. P1 0 = 80x32
                                  ; (boot default), 1 = 40x32. Clean
                                  ; slate: map cleared, windows reset.
                                  ; Next free number past FONT/LAYER.
+GFX_SUB_SPR_START equ 19    ; GFX n 19: start set n at its baked X,Y
+GFX_SUB_SPR_FLAGS equ 20    ; GFX f 20: set = flag f, X = f+1 (lo) f+2 (hi), Y = f+3
+GFX_SUB_SPR_STOP  equ 21    ; GFX n 21: stop set n; 255 = all
 
 ; DAC ports (ports.txt, tools/ZXNextOS/docs/extra-hw/io-port-system/
 ; ports.txt lines 266-274: "four 8-bit dac channels... A,B are directed to
@@ -1523,3 +1531,66 @@ NXV_CLIP_X2_MODE0 equ 256-1        ; = 255
 ; and the 2026-08-08 PACE-loss investigation ended by finding the
 ; instrument itself was the artifact. What survives of the DEBUG video
 ; report is page-local to video.asm and needs nothing here.
+
+; ---- Sprite animation (SP20) ----
+SPR_CHANS       equ 8
+SPR_CACHE_MAX   equ 16
+SPR_TAB_BASE    equ $C000   ; SPR_TAB_PAGE in slot 6
+SPR_TAB_SIZE    equ 1024
+SPR_SET_NONE    equ 255     ; free record, free cache entry, stop-all argument
+HOOK_XBN        equ 1       ; xbnIntOn bit 0: XBN intEntry armed
+HOOK_SPR        equ 2       ; xbnIntOn bit 1: sprite tick armed
+PAL_SPR_EDIT    equ %00100000 ; NR $43 bits 6-4 = 010: sprite palette 0 for edit
+SPR_NR15_ON     equ %01000011 ; NR $15: bit 6 sprite 0 on top, bit 1 over border, bit 0 enable
+SPR_DBG_SNAP    equ $5000   ; DEBUG snapshot: dead ULA pixel window, always mapped,
+                            ; clear of the AUD_STAGE2 ring ($4400-$47FF)
+; .ANI header (16 bytes, little-endian)
+ANI_MAGIC       equ 0       ; 'N','A'
+ANI_VER         equ 2       ; 1
+ANI_FLAGS       equ 3       ; bit 0 loop, bit 1 4-bit
+ANI_W           equ 4
+ANI_H           equ 5
+ANI_X           equ 6       ; word, 0-319
+ANI_Y           equ 8
+ANI_FRAMES      equ 9
+ANI_PATS        equ 10
+ANI_NBLK        equ 11
+ANI_MASK        equ 12      ; word
+ANI_TLEN        equ 14      ; word
+ANI_HDR         equ 16
+ANI_FLAG_LOOP   equ 1
+ANI_FLAG_4BIT   equ 2
+; set record (SR_SIZE bytes on SPR_PAGE; SR_SET written last on start, first on stop)
+SR_SET          equ 0       ; set number, SPR_SET_NONE = free
+SR_KIND         equ 1       ; 0 = 8-bit, 1 = 4-bit
+SR_W            equ 2
+SR_H            equ 3
+SR_CELLS        equ 4       ; W*H
+SR_ATTR         equ 5       ; anchor attribute slot; relatives follow
+SR_PAT          equ 6       ; first pattern half-slot (even for 8-bit), 255 = none
+SR_NBLK         equ 7       ; blocks taken so far
+SR_FRAMES       equ 8
+SR_FRAME        equ 9
+SR_COUNT        equ 10      ; ticks left on this frame; 0 = holding
+SR_LOOP         equ 11
+SR_CACHE        equ 12      ; cache entry index
+SR_ROW          equ 13      ; 1 + cells
+SR_TAB          equ 14      ; word: frame table address in slot 6
+SR_MASK         equ 16      ; word: 8-bit block mask
+SR_BLKTAB       equ 18      ; word: per-pattern block numbers on SPR_PAGE
+SR_BLOCKS       equ 20      ; 15 bytes: assigned blocks (4-bit)
+SR_X8           equ 35      ; anchor X bit 8 (sprite plane)
+SR_Y8           equ 36      ; anchor Y bit 8
+SR_PATS         equ 37      ; pattern count from the header
+SR_NBLKREQ      equ 38      ; blocks the header asks for
+SR_CHAN         equ 39      ; channel index 0-7, written once at init
+SR_XLO          equ 40      ; sprite-plane X low byte
+SR_XHI          equ 41
+SR_Y            equ 42      ; sprite-plane Y low byte
+SR_SIZE         equ 48
+; cache entry
+CE_SET          equ 0
+CE_BANK0        equ 1
+CE_BANK1        equ 2       ; 255 = single bank
+CE_TICK         equ 3
+CE_SIZE         equ 4

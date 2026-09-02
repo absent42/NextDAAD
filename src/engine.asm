@@ -1024,7 +1024,8 @@ xbnBank:    db $FF          ; 16K bank holding GAME.XBN, $FF = none
 xbnExt:     dw 0            ; cached header extEntry
 xbnInt:     dw 0            ; cached header intEntry
 xbnEnd:     dw 0            ; $C000 + size (exclusive window limit)
-xbnIntOn:   db 0            ; 1 = intEntry valid, checked by the ISR
+xbnIntOn:   db 0            ; bit 0 = XBN intEntry armed, bit 1 = sprite
+                            ; tick armed; the ISR tests nonzero
 doallObj:   db $FF
 doallLoc:   db 0
 doallLevel: db 0

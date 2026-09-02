@@ -2494,7 +2494,8 @@ xbn_boot_load:
     ; below) then leaves the feature cleanly off.
     ld a, $FF
     ld (xbnBank), a
-    xor a
+    ld a, (xbnIntOn)
+    and $FF-HOOK_XBN             ; bit 1 (sprite tick) is not ours to clear
     ld (xbnIntOn), a
     ld hl, 0
     ld (xbnExt), hl
@@ -2660,10 +2661,12 @@ xbn_boot_load:
     ld a, h
     or l
     jr z, .noint
-    ld a, 1
+    ld a, (xbnIntOn)
+    or HOOK_XBN
     jr .setint
 .noint:
-    xor a
+    ld a, (xbnIntOn)
+    and $FF-HOOK_XBN
 .setint:
     ld (xbnIntOn), a
     ld hl, (.hdrEnd)

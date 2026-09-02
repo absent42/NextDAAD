@@ -271,10 +271,11 @@ boot_banner:
 ; both build variants, see nextdaad.inc's bank map). Check 1 had been
 ; failing ever since, on the ULA console where the verdict was never
 ; replayed to the tilemap and so was never seen.
-SELFTEST_FREE_2MB equ 82    ; 14,15 + 20-23 + 36-47 + 48-111 (28,29 withdrawn
+SELFTEST_FREE_2MB equ 81    ; 14,15 + 20-23 + 37-47 + 48-111 (28,29 withdrawn
                             ; for the overlays, 30-34 for the Layer 2 back
-                            ; surface, 35 for VID_PAGE2/SFX_PAGE)
-SELFTEST_FREE_1MB equ 18    ; 14,15 + 20-23 + 36-47 (same withdrawals)
+                            ; surface, 35 for VID_PAGE2/SFX_PAGE, 36 for the
+                            ; sprite pages)
+SELFTEST_FREE_1MB equ 17    ; 14,15 + 20-23 + 37-47 (same withdrawals)
 
 ram_diag:
     ld b, 2

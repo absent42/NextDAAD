@@ -234,7 +234,7 @@ bank_table_init:
     djnz .pool
     ld a, (ramExpanded)
     or a
-    ret z
+    jr z, .boot                 ; base model: no expansion pool to free
     ld hl, bankTable+BANK_EXP_FIRST
     ld b, BANK_EXP_LAST-BANK_EXP_FIRST+1
     ld a, BT_FREE
@@ -242,7 +242,93 @@ bank_table_init:
     ld (hl), a
     inc hl
     djnz .exp
+.boot:
+    jp spr_boot_init            ; both exits reach the sprite state init
+
+; ---- Sprite animation (SP20): the resident part. State lives on SPR_PAGE;
+; only what must be reachable with that page unmapped is here.
+sprName:      db "PART1", 92, "000.ANI", 0   ; 92 = backslash: a "\0" escape
+                                             ; would embed a NUL
+sprSavedMmu:  db 0, 0
+
+; Boot, from bank_table_init's tail: empty state, reserved slots.
+spr_boot_init:
+    ld hl, spr_state_init
+    jp spr_call
+
+; Call HL (a SPR_PAGE routine) with SPR_TAB_PAGE in slot 6 and SPR_PAGE in
+; slot 7. Callable from any overlay: the remaps happen in resident code and
+; the caller's slot-7 return address is only used after MMU7 is restored.
+; Callee sees A, BC, DE, IX as passed. Corrupts F, HL. Mainline only: the ISR
+; path saves through isr_hook_body.
+spr_call:
+    push hl
+    push af
+    push de
+    ld e, NR_MMU6
+    call nr_read
+    ld (sprSavedMmu), a
+    ld e, NR_MMU7
+    call nr_read
+    ld (sprSavedMmu+1), a
+    pop de
+    pop af
+    nextreg NR_MMU6, SPR_TAB_PAGE
+    nextreg NR_MMU7, SPR_PAGE
+    pop hl
+    call .jphl
+    push af
+    ld a, (sprSavedMmu)
+    nextreg NR_MMU6, a
+    ld a, (sprSavedMmu+1)
+    nextreg NR_MMU7, a
+    pop af
     ret
+.jphl:
+    jp (hl)
+
+; Stop every live set. Free when none is armed. Preserves AF, BC, DE, HL, IX.
+spr_stop_all:
+    push af
+    ld a, (xbnIntOn)
+    and HOOK_SPR
+    jr z, .none
+    push hl
+    push de
+    push bc
+    push ix
+    ld hl, spr_stop_all_body
+    call spr_call
+    pop ix
+    pop bc
+    pop de
+    pop hl
+.none:
+    pop af
+    ret
+
+; Frame hook body for both ISR paths (full context already saved). Sprite
+; tick first so author code can never delay it, then the XBN #int entry.
+isr_hook_body:
+    call xbn_isr_mmu_save
+    ld a, (xbnIntOn)
+    and HOOK_SPR
+    jr z, .nospr
+    nextreg NR_MMU6, SPR_TAB_PAGE
+    nextreg NR_MMU7, SPR_PAGE
+    call spr_tick
+.nospr:
+    ld a, (xbnIntOn)
+    and HOOK_XBN
+    jr z, .done
+    call xbn_mmu_map
+    ld ix, flags
+    ld hl, (xbnInt)
+    call .jphl
+.done:
+    jp xbn_isr_mmu_restore
+.jphl:
+    jp (hl)
 
 ; DDB_E_MACHINE arm for the boot dispatch at the top of this file, which
 ; is pre-anchor and could not afford the eight bytes. Reached by its
@@ -1039,6 +1125,7 @@ tm_width_apply:
     INCLUDE "video.asm"
     INCLUDE "audio/audiobank.asm"
     INCLUDE "audio/streamfx.asm"
+    INCLUDE "sprites.asm"
 
     CSPECTMAP "build/nextdaad.map"
     SAVENEX OPEN "build/nextdaad.nex", main, STACK_TOP

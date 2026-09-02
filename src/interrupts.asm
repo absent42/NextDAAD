@@ -337,6 +337,8 @@ im2_isr:
     ; re-run the DEBUG build and read the live DISPLAY figure before
     ; assuming headroom - do not trust this comment's numbers to stay
     ; current.
+    ; SP20: the shared hook body moved to main.asm (isr_hook_body); 21
+    ; bytes came back to this pad.
     nextreg NR_MMU7, SFX_PAGE
     call aud_sfx_refill
     nextreg NR_MMU7, AUD_PAGE_HI
@@ -356,7 +358,7 @@ im2_isr:
     ; load-and-test, same gate as the fast path above.
     ld a, (xbnIntOn)
     or a
-    call nz, .xbnint
+    call nz, isr_hook_body
     pop de
     ld a, d
     nextreg $56, a
@@ -403,28 +405,8 @@ im2_isr:
     push bc
     push de
     push hl
-    call .xbnint
+    call isr_hook_body
     jp .restore_all
-
-; XBN #int frame hook body, shared by both entry paths above. Uses its
-; OWN MMU save slot (extSavedIsr/xbn_isr_mmu_save/xbn_isr_mmu_restore,
-; main.asm) - NEVER extSaved/xbn_mmu_save, which ext_dispatch (foreground)
-; may have live mid-extern-call when this interrupt lands; see
-; extSavedIsr's comment in main.asm for the reentrancy hazard. xbn_mmu_map
-; is shared as-is: it only reads xbnBank and writes NR_MMU6/7 directly, so
-; it disturbs no foreground state either. IX = flags matches the classic
-; EXTERN register contract (main.asm's ext_build_contract) so intEntry can
-; use the same flags-relative addressing every other extern call gets.
-.xbnint:
-    call xbn_isr_mmu_save
-    call xbn_mmu_map
-    ld ix, flags
-    ld hl, (xbnInt)
-    call .jphl
-    call xbn_isr_mmu_restore
-    ret
-.jphl:
-    jp (hl)
 
 ; SP10 CTC pivot: the per-sample DAC feeder, fired by CTC channel 0 at the
 ; sample rate through its carved IM2 vector. The depacker-safe memory-pointer
