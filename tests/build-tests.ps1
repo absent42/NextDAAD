@@ -47,6 +47,7 @@
 #   -Accent             sd\ACCENT\    tests\accents.dsf
 #   -Palette            sd\PALETTE\   tests\palette.dsf
 #   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
+#   -BigDdbTok          sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
 #   -Xbn                sd\XBN\       tests\extern.dsf
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
 #    never touched by this script)
@@ -670,7 +671,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -727,6 +728,7 @@ if ($Txt40)            { $legName = 'TXT40' }
 if ($Accent)           { $legName = 'ACCENT' }
 if ($Palette)          { $legName = 'PALETTE' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
+if ($BigDdbTok)        { $legName = 'BIGDDBT' }
 if ($Xbn)              { $legName = 'XBN' }
 $leg = Join-Path $sd $legName
 
@@ -747,7 +749,7 @@ function Reset-LegDir {
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
                'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
-               'PALETTE', 'BIGDDB', 'XBN')
+               'PALETTE', 'BIGDDB', 'BIGDDBT', 'XBN')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -1223,75 +1225,85 @@ try {
     Move-Item NDBIG.DDB "$root\tests\out\bigddb.ddb" -Force
 }
 finally { Pop-Location }
-$bigBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\bigddb.ddb")
-$bigLen = $bigBytes.Length
-function Get-BigWord { param([int]$At) $bigBytes[$At] + 256 * $bigBytes[$At + 1] }
-# Header identity first: a database that is not this target proves
-# nothing about this target's reach.
-if ($bigBytes[2] -ne 95) { throw "bigddb: magic byte is $($bigBytes[2]), expected 95" }
-if (($bigBytes[1] -band 0xF0) -ne 0xC0) {
-    throw "bigddb: machine nibble is $('0x{0:X2}' -f ($bigBytes[1] -band 0xF0)), expected 0xC0 (NEXTDAAD) - the fixture compiled for the wrong target"
-}
-if (($bigBytes[1] -band 0x0F) -ne 0) {
-    throw "bigddb: language nibble is $($bigBytes[1] -band 0x0F), expected 0 (EN) - the machine nibble must not have eaten the language half"
-}
-# The point of the fixture. 31744 is the classic ceiling; 65535 is the
-# format's own, and the interpreter refuses anything larger with E2, so
-# a fixture that drifted past it would fail as an oversize database
-# rather than proving reach.
-if ($bigLen -le 31744) {
-    throw "bigddb: $bigLen bytes - NOT past the 31744 classic ceiling, so it tests nothing. DRC token-compresses the text, so the .dsf must grow to move this."
-}
-if ($bigLen -gt 65535) {
-    throw "bigddb: $bigLen bytes - past the 65535 format ceiling, which the interpreter refuses with E2. Shrink the .dsf."
-}
-# Pointers are FILE OFFSETS, not $8400-rebased addresses. Under the
-# classic scheme every one of these would carry a +$8400 bias and the
-# tail of a 49 KB database would run off the end of a 16-bit pointer;
-# here every header pointer must land inside the file.
-foreach ($h in 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30) {
-    $v = Get-BigWord $h
-    if ($v -ge $bigLen) {
-        throw "bigddb: header pointer at offset $h is $v, outside the $bigLen-byte file - pointers are not plain file offsets"
+function Assert-BigDdb {
+    # Both bigddb variants run this. Do not duplicate it: an assertion
+    # added to one copy and not the other is how the variants drift.
+    param([string]$Path, [string]$Label)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $len = $bytes.Length
+    $word = { param([int]$At) $bytes[$At] + 256 * $bytes[$At + 1] }
+    if ($bytes[2] -ne 95) { throw "${Label}: magic byte is $($bytes[2]), expected 95" }
+    if (($bytes[1] -band 0xF0) -ne 0xC0) {
+        throw "${Label}: machine nibble is $('0x{0:X2}' -f ($bytes[1] -band 0xF0)), expected 0xC0 (NEXTDAAD) - compiled for the wrong target"
+    }
+    if (($bytes[1] -band 0x0F) -ne 0) {
+        throw "${Label}: language nibble is $($bytes[1] -band 0x0F), expected 0 (EN) - the machine nibble must not have eaten the language half"
+    }
+    if ($len -le 31744) {
+        throw "${Label}: $len bytes - NOT past the 31744 classic ceiling, so it tests nothing. The text is token-compressed, so the .dsf must grow (or its --vocab widen) to move this."
+    }
+    if ($len -gt 65535) {
+        throw "${Label}: $len bytes - past the 65535 format ceiling, which the interpreter refuses with E2. Shrink the .dsf."
+    }
+    foreach ($h in 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30) {
+        $v = & $word $h
+        if ($v -ge $len) {
+            throw "${Label}: header pointer at offset $h is $v, outside the $len-byte file - pointers are not plain file offsets"
+        }
+    }
+    $proc = & $word 10; $loc = & $word 14; $msg = & $word 16; $con = & $word 20
+    foreach ($t in @{n = 'process list'; v = $proc }, @{n = 'location table'; v = $loc },
+        @{n = 'message table'; v = $msg }, @{n = 'connection table'; v = $con }) {
+        if ($t.v -le 31744) {
+            throw "${Label}: the $($t.n) is at $($t.v), inside the classic 31744 reach - the fixture is large but its tables are not past the boundary"
+        }
+    }
+    $m254 = & $word ($msg + 2 * 254)
+    $m254e = $msg + 2 * 254
+    if ($m254e -le 31744) { throw "${Label}: message 254's lookup entry is at $m254e, inside the classic reach" }
+    if ($m254 -le 31744) {
+        throw "${Label}: message 254's TEXT is at $m254, inside the classic reach - the location texts are carrying the size instead of the messages. Lengthen the messages."
+    }
+    if ($bytes[5] -ne 255) { throw "${Label}: header message count is $($bytes[5]), expected 255 (the byte-wide maximum)" }
+    $locLo = 65536
+    for ($i = 0; $i -lt $bytes[4]; $i++) {
+        $v = & $word ($loc + 2 * $i)
+        if ($v -lt $locLo) { $locLo = $v }
+    }
+    if ($locLo -le 31744) {
+        throw "${Label}: the earliest location description is at $locLo, inside the classic 31744 reach - the room text on screen is not evidence of anything"
+    }
+    # Returns an object, not a bare length: a summary string emitted
+    # here would join the return value into an array at the call site.
+    return [pscustomobject]@{
+        Len     = $len
+        Summary = "${Label}: $len bytes, target C0 - process list @$proc, message table @$msg, MESSAGE 254 entry @$m254e text @$m254 (all past the 31744 classic ceiling)"
     }
 }
-# The structures DRC writes last must actually be past the boundary.
-# HDR_PROCLST is the one that matters most: condact dispatch reads it on
-# every turn, and under the classic scheme it would be unreachable.
-$bigProc = Get-BigWord 10
-$bigLoc = Get-BigWord 14
-$bigMsg = Get-BigWord 16
-$bigCon = Get-BigWord 20
-foreach ($t in @{n = 'process list'; v = $bigProc }, @{n = 'location table'; v = $bigLoc },
-    @{n = 'message table'; v = $bigMsg }, @{n = 'connection table'; v = $bigCon }) {
-    if ($t.v -le 31744) {
-        throw "bigddb: the $($t.n) is at $($t.v), inside the classic 31744 reach - the fixture is large but its tables are not past the boundary"
-    }
+$big = Assert-BigDdb "$root\tests\out\bigddb.ddb" 'bigddb'
+$big.Summary
+$bigLen = $big.Len
+
+# Auto-tokens variant. Same generator, wider vocabulary: a per-game
+# token table crushes the 103-word pool to 20745 bytes, well inside the
+# classic reach the fixture exists to cross. EXEMPT FROM -DrcDiff - its
+# whole point is a configuration DRC cannot express, and its builtin
+# compile would exceed the 65535 format ceiling.
+# Generated with: python tests\bigddb-gen.py --dest tests\bigddb-autotok.dsf --vocab 1200
+$bigTokWork = Join-Path $root 'tests\out\bigddb-autotok-work'
+Remove-Item $bigTokWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $bigTokWork | Out-Null
+Copy-Item "$PSScriptRoot\bigddb-autotok.dsf" "$bigTokWork\NDBIGT.DSF" -Force
+Push-Location $bigTokWork
+try {
+    & $ndrc @drcTarget EN NDBIGT.DSF NDBIGT.DDB -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (bigddb-autotok)" }
+    Move-Item NDBIGT.DDB "$root\tests\out\bigddb-autotok.ddb" -Force
 }
-# MESSAGE 254 is the on-screen evidence the leg is booted for. BOTH its
-# lookup entry and the text that entry points at must live past 31744,
-# or a screenshot of it proves only that short messages work.
-$big254 = Get-BigWord ($bigMsg + 2 * 254)
-$big254e = $bigMsg + 2 * 254
-if ($big254e -le 31744) { throw "bigddb: message 254's lookup entry is at $big254e, inside the classic reach" }
-if ($big254 -le 31744) {
-    throw "bigddb: message 254's TEXT is at $big254, inside the classic reach - the location texts are carrying the size instead of the messages, so the printed evidence proves nothing. Lengthen the messages."
-}
-if ($bigBytes[5] -ne 255) { throw "bigddb: header message count is $($bigBytes[5]), expected 255 (the byte-wide maximum)" }
-# EVERY location description must also be past the boundary, which makes the
-# room text under the marker second evidence rather than decoration - and
-# means it does not matter which room the fixture opens in. Asserted as a
-# minimum over all of them so no start-location constant has to be kept in
-# step between the generator and this file.
-$bigLocLo = 65536
-for ($i = 0; $i -lt $bigBytes[4]; $i++) {
-    $v = Get-BigWord ($bigLoc + 2 * $i)
-    if ($v -lt $bigLocLo) { $bigLocLo = $v }
-}
-if ($bigLocLo -le 31744) {
-    throw "bigddb: the earliest location description is at $bigLocLo, inside the classic 31744 reach - the room text on screen is not evidence of anything"
-}
-"bigddb: $bigLen bytes, target C0 - process list @$bigProc, message table @$bigMsg, MESSAGE 254 entry @$big254e text @$big254 (all past the 31744 classic ceiling)"
+finally { Pop-Location }
+$bigTok = Assert-BigDdb "$root\tests\out\bigddb-autotok.ddb" 'bigddb-autotok'
+$bigTok.Summary
+$bigTokLen = $bigTok.Len
 
 # SP16 Task 1 GMODE graphics-gate fixture. Compiled unconditionally,
 # like the suite and doallnest above, so a break in the DSF is caught
@@ -2746,6 +2758,8 @@ if ($DrcDiff) {
     # getColsByTarget/GetRowsByTarget) resolves to 42/25 where NDRC's
     # NEXTDAAD target gives 80/32. NDRC is right for the Next. Restore
     # the two entries once a DRF that knows the target is in use.
+    # bigddb-autotok is deliberately absent: -auto-tokens has no DRC
+    # counterpart, and its builtin-table compile exceeds 65535.
     $diffFixtures = @(
         @{ Name = 'template'; Dsf = "$PSScriptRoot\test.dsf" }
         @{ Name = 'condacts'; Dsf = "$PSScriptRoot\condacts.dsf" }
@@ -2981,6 +2995,12 @@ if ($BigDdb) {
     # add ways for the leg to fail for reasons that are not about reach.
     Copy-Item "$root\tests\out\bigddb.ddb" "$leg\GAME.DDB" -Force
     "staged tests\out\bigddb.ddb -> sd\$legName\GAME.DDB ($bigLen bytes - boot it and read the first line: MESSAGE 254 lives past 31744)"
+}
+
+if ($BigDdbTok) {
+    # Same reasoning as -BigDdb: DDB only, nothing else to fail on.
+    Copy-Item "$root\tests\out\bigddb-autotok.ddb" "$leg\GAME.DDB" -Force
+    "staged tests\out\bigddb-autotok.ddb -> sd\$legName\GAME.DDB ($bigTokLen bytes, per-game token table - boot it and read the first line: MESSAGE 254 lives past 31744)"
 }
 
 $gmodeActive = $false
@@ -4918,6 +4938,7 @@ elseif ($utoV3Active) { "active: utotest V3 (Uto's THIRD-PARTY DAAD compliance t
 elseif ($utoActive) { "active: utotest V2 (Uto's THIRD-PARTY DAAD compliance test - self-scoring, 64 'OK' lines = full pass; see .superpowers\sdd\uto-compliance-runsheet.md)" }
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($BigDdb) { "active: bigddb ($bigLen bytes, past the 31744 classic ceiling)" }
+elseif ($BigDdbTok) { "active: bigddb-autotok ($bigTokLen bytes, past the 31744 classic ceiling, per-game token table)" }
 elseif ($Suite) { "active: suite" }
 else { "active: template" }
 
