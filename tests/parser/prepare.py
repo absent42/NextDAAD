@@ -126,6 +126,23 @@ def prepare_from_dsf(dsf_path, workdir, lang="EN"):
     }
 
 
+def compile_for_decompile(dsf_path, workdir, lang="EN"):
+    """ZX-target, V2, builtin table: the only shape unDRC parses.
+    unDRC has no NEXTDAAD target (its base-address table stops at the
+    classic machines), so the decompile round-trip is fed a classic DDB,
+    byte-identical to what DRB produced for the same source."""
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    src = workdir / Path(dsf_path).name
+    if Path(dsf_path).resolve() != src.resolve():
+        shutil.copyfile(dsf_path, src)
+    _run([NDRC, "zx", "next", lang, src.name, "classic.ddb"], workdir)
+    out = workdir / "classic.ddb"
+    if not out.exists():
+        raise RuntimeError("ndrc did not produce %s" % out)
+    return out
+
+
 UNDRC = ROOT / "tools" / "unDRC" / "undrc.php"
 
 

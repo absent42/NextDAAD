@@ -2565,10 +2565,11 @@ def t12_decompile_produces_dsf():
     import prepare
     work = ROOT / "tests" / "parser" / "work" / "selftest-corpus"
     work.mkdir(parents=True, exist_ok=True)
-    built = prepare.prepare_from_dsf(
-        ROOT / "tests" / "test.dsf",
-        ROOT / "tests" / "parser" / "work" / "selftest-testdsf")
-    dsf = prepare.decompile(built["ddb"], work)
+    src = ROOT / "tests" / "test.dsf"
+    prepare.prepare_from_dsf(
+        src, ROOT / "tests" / "parser" / "work" / "selftest-testdsf")
+    classic_ddb = prepare.compile_for_decompile(src, work)
+    dsf = prepare.decompile(classic_ddb, work)
     assert dsf.exists() and dsf.stat().st_size > 0, dsf
 
 
@@ -2581,11 +2582,12 @@ def t12_mouse_defect_fails_loudly():
     import prepare
     work = ROOT / "tests" / "parser" / "work" / "selftest-mouse"
     work.mkdir(parents=True, exist_ok=True)
-    built = prepare.prepare_from_dsf(
-        ROOT / "tests" / "condacts.dsf",
-        ROOT / "tests" / "parser" / "work" / "selftest-condacts")
+    src = ROOT / "tests" / "condacts.dsf"
+    prepare.prepare_from_dsf(
+        src, ROOT / "tests" / "parser" / "work" / "selftest-condacts")
+    classic_ddb = prepare.compile_for_decompile(src, work)
     try:
-        prepare.prepare_from_binary(built["ddb"], work)
+        prepare.prepare_from_binary(classic_ddb, work)
     except RuntimeError as exc:
         assert "MOUSE" in str(exc), str(exc)[:400]
         return
