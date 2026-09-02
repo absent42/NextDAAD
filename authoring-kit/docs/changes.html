@@ -11,6 +11,52 @@
 <h1 id="what-changed">What changed</h1>
 <p>Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.</p>
+<h2 id="090-unreleased">0.9.0 - unreleased</h2>
+<ul>
+<li><strong>Externs speak XBN format 2.</strong> The header is fourteen bytes now,
+  with a version byte of 2 and four reserved bytes that must be
+  zero; a version 1 <code>GAME.XBN</code> is rejected and the game plays with
+  externs off - rebuild your extern against the current <code>xbn.inc</code>.
+  See <a href="reference/xbn-format.html#header">XBN format</a>.</li>
+<li><strong><code>EXTERN</code> is now a condition, not just an action.</strong> A carry flag
+  set on return fails the entry and clears its done state, the same
+  as a failed <code>AT</code> or <code>PRESENT</code>; carry clear continues past it
+  exactly as before. An <code>EXTERN</code> with no <code>GAME.XBN</code> loaded, the
+  interpreter's reserved function codes, and <code>CALL</code> itself can never
+  fail an entry this way. See
+  <a href="externs.html#condition-semantics">Condition semantics</a>.</li>
+<li><strong>Five new services, and <code>SVC_VERSION</code> now reads 2.</strong>
+  <code>SVC_FRAMES</code>, <code>SVC_GETDATE</code>, <code>SVC_BUSY</code>, <code>SVC_PALREAD</code> and
+  <code>SVC_WINDOW</code> join the table at <code>$BEC8</code>, which now marks the rows
+  safe to call from the <code>#int</code> hook - <code>SVC_VERSION</code>, <code>SVC_RANDOM</code>,
+  <code>SVC_FRAMES</code> and <code>SVC_BUSY</code>. The object count byte, <code>XBN_NUMOBJ</code>,
+  is a frozen address at <code>$A900</code>. See
+  <a href="externs.html#services">Services</a>.</li>
+<li><strong>The extern collection reworked for v2.</strong> Every module returns a
+  deliberate carry verdict; hints reports through carry alone now,
+  so flag 243 is only fn 51's level count, never a status code.
+  Clock and timer keep time from <code>SVC_FRAMES</code> deltas instead of
+  counting their own invocations. Fade reads the staged palette back
+  through <code>SVC_PALREAD</code> and holds the palette interlock before it
+  writes. The ticker stays silent while a video clip owns the
+  tilemap window and follows a <code>GFX n 18</code> width switch mid-message.
+  <code>CALL</code> slots in a collection binary moved to <code>$C00E</code>. See
+  <a href="externs.html#the-extern-collection">The extern collection</a>.</li>
+<li><strong>New: the <code>realtime</code> module.</strong> Fns 66-69 and flags 238-239 read
+  the Next's own clock for date and time fields, and keep a day
+  stamp in <code>GAME.HST</code> beside the database so a game can tell how
+  long it has been since the last visit. See
+  <a href="externs.html#realtime-the-wall-clock-and-day-stamps">realtime - the wall clock and day stamps</a>.</li>
+<li><strong>Toolkit grew fns 76-81 and 84.</strong> A random-without-repeat picker,
+  object queries by location, noun and extended attribute, total
+  carried and worn weight as a 16-bit pair, and a print-target
+  window that brackets its own output, so a status line no longer
+  needs a <code>WINDOW</code> switch wrapped around it. See
+  <a href="externs.html#toolkit-printing-and-16-bit-arithmetic">toolkit - printing and 16-bit arithmetic</a>.</li>
+<li><strong>An agent skill for writing externs.</strong> The kit ships one at
+  <code>.agent\skills\xbn-extern-authoring\</code> for any AI coding assistant
+  to load before writing an extern.</li>
+</ul>
 <h2 id="080-30-august-2026">0.8.0 - 30 August 2026</h2>
 <ul>
 <li><strong>A new 40-column text mode: fewer, wider columns, for a game that

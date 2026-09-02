@@ -23,6 +23,47 @@ All notable changes to NextDAAD are recorded here.
 - tests: `-Accent` staging leg with a byte-asserted fixture covering
   both accent encodings, the uppercase sets, sharp-s and a
   collision probe.
+- `GAME.XBN` format 2: the header grows to fourteen bytes (four
+  reserved bytes, must be zero) and the version byte reads 2; a
+  version 1 binary is rejected and the game plays with externs off.
+  `xbn.inc`'s `XBN_HEADER` macro emits the new layout; collection
+  binaries get it from `xbnmod.inc`'s `XBN_BEGIN`.
+- `EXTERN` is a condition now: a carry flag set on return from a
+  forwarded fn fails the entry and clears the done stamp the
+  dispatcher had already written, the same as a failed built-in
+  condition; carry clear continues. The engine's forwarded-EXTERN
+  return path is split from the CF-blind action path the reserved
+  vectors and `CALL` still use, so neither of those can fail an
+  entry by construction.
+- Five new service rows, 10-14: `SVC_FRAMES` (16-bit free-running
+  frame counter), `SVC_GETDATE` (RTC date/time/seconds), `SVC_BUSY`
+  (video/card/palette-critical-section bits), `SVC_PALREAD`
+  (256-entry Layer 2 palette readback by bank) and `SVC_WINDOW`
+  (select a DAAD window, return the previous one). `SVC_VERSION`
+  reads 2; it, `SVC_RANDOM`, `SVC_FRAMES` and `SVC_BUSY` are marked
+  hook-safe in the table.
+- `SVC_RANDOM` hardened: the `rngState` read-modify-write gets an
+  interrupt-state-preserving (IFF2) di/ei bracket around the update,
+  borrowed from `nr_read`'s idiom, so a hook draw racing a
+  foreground draw can no longer corrupt the shared stream.
+- `numObj` gets a frozen-anchor `ASSERT numObj == $A900` in
+  engine.asm, pinning `XBN_NUMOBJ` the same way the flags base and
+  the service table are already pinned.
+- Extern collection reworked for the v2 contract: ticker (`SVC_BUSY`
+  skip, width-switch aware), fade (`SVC_PALREAD` staged read,
+  palette interlock), clock and timer (`SVC_FRAMES` time base),
+  hints (CF-only verdicts, no status enumeration), toolkit (CF
+  discipline, fns 76-81 object queries/picker, fn 84 print-target
+  window). `CALL` slots in collection binaries relocated to `$C00E`.
+  New `realtime` module: fns 66-69, flags 238-239, `SVC_GETDATE`
+  wrapper, `GAME.HST` day stamps.
+- `tests/audit-externs.ps1` now validates the v2 header (magic,
+  version 2, reserved bytes zero, size field) on every collection
+  binary.
+- `tests/extern.dsf` fixture verbs extended for the new services,
+  condition semantics and every reworked or new collection module;
+  the `-Xbn*` staging leg family covers good/bad v2 headers and each
+  module subset.
 
 ## v0.8.0 - 30/08/2026
 

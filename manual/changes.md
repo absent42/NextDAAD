@@ -3,6 +3,52 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.9.0 - unreleased
+
+- **Externs speak XBN format 2.** The header is fourteen bytes now,
+  with a version byte of 2 and four reserved bytes that must be
+  zero; a version 1 `GAME.XBN` is rejected and the game plays with
+  externs off - rebuild your extern against the current `xbn.inc`.
+  See [XBN format](reference/xbn-format.md#header).
+- **`EXTERN` is now a condition, not just an action.** A carry flag
+  set on return fails the entry and clears its done state, the same
+  as a failed `AT` or `PRESENT`; carry clear continues past it
+  exactly as before. An `EXTERN` with no `GAME.XBN` loaded, the
+  interpreter's reserved function codes, and `CALL` itself can never
+  fail an entry this way. See
+  [Condition semantics](externs.md#condition-semantics).
+- **Five new services, and `SVC_VERSION` now reads 2.**
+  `SVC_FRAMES`, `SVC_GETDATE`, `SVC_BUSY`, `SVC_PALREAD` and
+  `SVC_WINDOW` join the table at `$BEC8`, which now marks the rows
+  safe to call from the `#int` hook - `SVC_VERSION`, `SVC_RANDOM`,
+  `SVC_FRAMES` and `SVC_BUSY`. The object count byte, `XBN_NUMOBJ`,
+  is a frozen address at `$A900`. See
+  [Services](externs.md#services).
+- **The extern collection reworked for v2.** Every module returns a
+  deliberate carry verdict; hints reports through carry alone now,
+  so flag 243 is only fn 51's level count, never a status code.
+  Clock and timer keep time from `SVC_FRAMES` deltas instead of
+  counting their own invocations. Fade reads the staged palette back
+  through `SVC_PALREAD` and holds the palette interlock before it
+  writes. The ticker stays silent while a video clip owns the
+  tilemap window and follows a `GFX n 18` width switch mid-message.
+  `CALL` slots in a collection binary moved to `$C00E`. See
+  [The extern collection](externs.md#the-extern-collection).
+- **New: the `realtime` module.** Fns 66-69 and flags 238-239 read
+  the Next's own clock for date and time fields, and keep a day
+  stamp in `GAME.HST` beside the database so a game can tell how
+  long it has been since the last visit. See
+  [realtime - the wall clock and day stamps](externs.md#realtime-the-wall-clock-and-day-stamps).
+- **Toolkit grew fns 76-81 and 84.** A random-without-repeat picker,
+  object queries by location, noun and extended attribute, total
+  carried and worn weight as a 16-bit pair, and a print-target
+  window that brackets its own output, so a status line no longer
+  needs a `WINDOW` switch wrapped around it. See
+  [toolkit - printing and 16-bit arithmetic](externs.md#toolkit-printing-and-16-bit-arithmetic).
+- **An agent skill for writing externs.** The kit ships one at
+  `.agent\skills\xbn-extern-authoring\` for any AI coding assistant
+  to load before writing an extern.
+
 ## 0.8.0 - 30 August 2026
 
 - **A new 40-column text mode: fewer, wider columns, for a game that
