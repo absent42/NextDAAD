@@ -4,6 +4,12 @@ Source lives at manual/ and NEVER ships. Output goes to
 authoring-kit/docs/ which IS the shipped artefact - the same shape as
 src/ -> build/nextdaad.nex -> authoring-kit/nextdaad.nex.
 
+Every .md becomes a .html; every .png under manual/ is copied beside its
+page (the manual embeds images by relative path); style.css is copied.
+Generated .html and .png files whose source no longer exists are pruned,
+so a deleted or renamed page cannot linger in the kit. Nothing else under
+authoring-kit/docs/ is touched.
+
 Run via build.ps1 -Kit, or directly for a quick regenerate.
 """
 import re
@@ -59,6 +65,7 @@ def main():
         sys.exit(f"ERROR: no .md files under {SRC}")
 
     OUT.mkdir(parents=True, exist_ok=True)
+    produced = set()
     written = 0
     for md_path in sources:
         rel = md_path.relative_to(SRC)
@@ -80,14 +87,41 @@ def main():
             PAGE.format(title=title_of(text, rel.stem), body=body, css=css),
             encoding="utf-8",
         )
+        produced.add(html_path)
         written += 1
+
+    # Images the pages embed by relative path ship beside them.
+    copied = 0
+    for png_path in sorted(SRC.rglob("*.png")):
+        dest = OUT / png_path.relative_to(SRC)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(png_path, dest)
+        produced.add(dest)
+        copied += 1
 
     css_src = SRC / "style.css"
     if not css_src.is_file():
         sys.exit(f"ERROR: missing {css_src}")
     shutil.copyfile(css_src, OUT / "style.css")
 
-    print(f"manual: {written} page(s) -> {OUT}")
+    pruned = prune_stale(produced)
+    print(f"manual: {written} page(s), {copied} image(s), {pruned} pruned -> {OUT}")
+
+
+def prune_stale(produced):
+    """Delete generated .html/.png files this run did not produce - their
+    source was deleted or renamed. Other files under OUT are left alone."""
+    pruned = 0
+    for path in sorted(OUT.rglob("*")):
+        if path.is_file() and path.suffix.lower() in (".html", ".png") \
+                and path not in produced:
+            path.unlink()
+            print(f"manual: pruned {path.relative_to(OUT)} (no source)")
+            pruned += 1
+    for folder in sorted((p for p in OUT.rglob("*") if p.is_dir()), reverse=True):
+        if not any(folder.iterdir()):
+            folder.rmdir()
+    return pruned
 
 
 if __name__ == "__main__":
