@@ -788,8 +788,8 @@ def t7_build_condacts_fixture_end_to_end():
     res = prepare.prepare_from_dsf(ROOT / "tests" / "condacts.dsf", work)
     assert res["jddb"].exists(), res["jddb"]
     assert res["ddb"].exists(), res["ddb"]
-    assert res["header"]["html"]["version"] == 2
-    assert res["header"]["next"]["version"] == 2
+    assert res["header"]["html"]["version"] == 3
+    assert res["header"]["next"]["version"] == 3
 
 
 # ---- Task 8: jleg ----------------------------------------------------------

@@ -1,24 +1,24 @@
 """Compile one DSF to both interpreter targets so the two legs run
 identical game logic.
 
-Both targets are built WITHOUT -v3. DAAD Ready's ZXNEXT.BAT passes -v3 and
-NextDAAD rejects the resulting V3 database at boot with
-"NextDAAD: DDB bad header - E3"; HTML.BAT also passes -v3 but the html
-target builds happily without it. Omitting it from both keeps the pair at
-DAAD version 2.
+Both targets are built the way the authoring kit ships a game: ndrc.exe
+with -v3 -auto-tokens. jDAAD runs V3 databases (confirmed against Uto's
+compliance test) and every DAAD interpreter reads the per-game token
+table embedded in the DDB, so the differential runs on shipping-shaped
+text. PHP remains only for unDRC.
 
 Nothing is ever written into tools/. Every tool is invoked by absolute
-path with cwd set to the work directory - note DRB drops 0.XMB into cwd.
+path with cwd set to the work directory - ndrc drops 0.XMB into cwd.
 """
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DR = ROOT / "tools" / "DAAD-READY"
-DRF = DR / "TOOLS" / "DRC" / "drf.exe"
-DRB = DR / "TOOLS" / "DRC" / "drb.php"
-PHP = DR / "PHP" / "PHP.exe"
+NDRC = Path(os.environ.get("NEXTDAAD_NDRC", ROOT / "authoring-kit" / "lib" / "ndrc.exe"))
+PHP = DR / "PHP" / "PHP.exe"          # unDRC only
 
 # Fields that must match for the pair to be a valid differential test.
 # "target" and "length" legitimately differ between the two builds.
@@ -83,31 +83,29 @@ def prepare_from_dsf(dsf_path, workdir, lang="EN"):
     if Path(dsf_path).resolve() != src.resolve():
         shutil.copyfile(dsf_path, src)
 
-    # html leg -> .jddb for jDAAD
-    _run([DRF, "html", src.name, "html.json"], workdir)
-    _run([PHP, DRB, "html", lang, "html.json", "html.DDB"], workdir)
+    # html leg -> .DDB plus the .jddb jDAAD loads
+    _run([NDRC, "html", lang, src.name, "html.DDB", "-v3", "-auto-tokens"], workdir)
     jddb = workdir / "html.jddb"
     if not jddb.exists():
-        raise RuntimeError("DRB did not produce %s" % jddb)
+        raise RuntimeError("ndrc did not produce %s" % jddb)
     html_ddb = workdir / "html.DDB"
     if not html_ddb.exists():
-        raise RuntimeError("DRB did not produce %s" % html_ddb)
+        raise RuntimeError("ndrc did not produce %s" % html_ddb)
 
-    # zx next leg -> DDB for NextDAAD
-    _run([DRF, "zx", "next", src.name, "next.json"], workdir)
-    _run([PHP, DRB, "zx", "next", lang, "next.json", "next.ddb"], workdir)
+    # nextdaad leg
+    _run([NDRC, "nextdaad", lang, src.name, "next.ddb", "-v3", "-auto-tokens"], workdir)
     next_ddb = workdir / "next.ddb"
     if not next_ddb.exists():
-        raise RuntimeError("DRB did not produce %s" % next_ddb)
+        raise RuntimeError("ndrc did not produce %s" % next_ddb)
 
     h_html = ddb_header(html_ddb)
     h_next = ddb_header(next_ddb)
 
     for name, h in (("html", h_html), ("next", h_next)):
-        if h["version"] != 2:
+        if h["version"] != 3:
             raise ValueError(
-                "%s leg is DAAD version %d, expected 2 - check whether "
-                "-v3 has crept into the DRF invocation for this target"
+                "%s leg is DAAD version %d, expected 3 - -v3 missing from "
+                "the ndrc invocation for this target"
                 % (name, h["version"]))
 
     assert_matched(h_html, h_next)
