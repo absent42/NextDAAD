@@ -8,19 +8,18 @@ but with the three things a V3 database needs that the general front end
 cannot give it. It is a SCRIPT-side driver: nothing under
 tests/parser/*.py or jleg.js is modified, they are imported and called.
 
-  1. Both targets are compiled WITH -v3. prepare.prepare_from_dsf
-     deliberately compiles without it and rejects anything whose header
-     version is not 2 (see its module docstring - written when NextDAAD
-     could not load a V3 database at all), so this driver runs DRF/DRB
-     itself, through prepare's own _run helper and absolute tool paths.
-     Nothing is ever written into tools/.
+  1. Both targets are compiled via prepare.prepare_from_dsf, which
+     builds both legs with ndrc.exe -v3 -auto-tokens, the same way the
+     authoring kit ships a game. Nothing is ever written into tools/.
 
   2. The SETAT stand-ins are patched. DRF 0.40 has no SETAT keyword, so
      tests/v3probe.dsf authors each SETAT as a tagged LET and the opcode
      is rewritten to 124 afterwards - in the Next DDB and in the jDAAD
      .jddb's DDBDATA array alike, so both legs run the same condacts.
      tests/build-tests.ps1's Invoke-V3SetatPatch carries the same table
-     for the -V3 staging path; keep the two in step.
+     for the -V3 staging path; keep the two in step. ndrc has a real
+     SETAT keyword, so this stand-in is retirable; that is a separate,
+     owner-proposed change.
 
   3. sd/0.XMB is staged for the Next leg. nleg.stage_sd builds a minimal
      card holding only the interpreter and GAME.DDB, and does not clean
@@ -122,55 +121,35 @@ def _patch_jddb(path):
 
 
 def build_v3(workdir, lang="EN"):
-    """Compile tests/v3probe.dsf to both targets with -v3, patch both."""
+    """Compile tests/v3probe.dsf to both targets via prepare.prepare_from_dsf,
+    then apply the SETAT stand-in patch (see module docstring point 2)."""
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
-    src = workdir / DSF.name
-    shutil.copyfile(DSF, src)
 
-    prepare._run([prepare.DRF, "html", src.name, "html.json", "-v3"], workdir)
-    prepare._run([prepare.PHP, prepare.DRB, "html", lang,
-                  "html.json", "html.DDB"], workdir)
-    prepare._run([prepare.DRF, "zx", "next", src.name, "next.json", "-v3"],
-                 workdir)
-    prepare._run([prepare.PHP, prepare.DRB, "zx", "next", lang,
-                  "next.json", "next.ddb"], workdir)
-
-    jddb = workdir / "html.jddb"
-    next_ddb = workdir / "next.ddb"
-    xmb = workdir / "0.XMB"
-    for p in (jddb, workdir / "html.DDB", next_ddb, xmb):
-        if not p.exists():
-            raise RuntimeError("DRB did not produce %s" % p)
-
-    h_html = prepare.ddb_header(workdir / "html.DDB")
-    h_next = prepare.ddb_header(next_ddb)
-    for name, h in (("html", h_html), ("next", h_next)):
-        if h["version"] != 3:
-            raise ValueError(
-                "%s leg is DAAD version %d, expected 3 - did -v3 reach DRF?"
-                % (name, h["version"]))
-    prepare.assert_matched(h_html, h_next)
+    built = prepare.prepare_from_dsf(DSF, workdir, lang)
+    next_ddb = built["ddb"]
+    jddb = built["jddb"]
 
     next_ddb.write_bytes(_patch_bytes(next_ddb.read_bytes(), str(next_ddb)))
 
-    html_assets = prepare.DR / "ASSETS" / "HTML"
-    for name in ("jdaad.js", "images.js", "extern.js"):
-        srcf = html_assets / name
-        if srcf.exists():
-            shutil.copyfile(srcf, workdir / name)
+    # prepare_from_dsf already staged an unpatched daad.jddb for jDAAD;
+    # patch jddb in place then re-copy it over daad.jddb so jDAAD loads
+    # the patched database.
+    _patch_jddb(jddb)
     shutil.copyfile(jddb, workdir / "daad.jddb")
-    _patch_jddb(workdir / "daad.jddb")
 
-    # The Next leg reads 0.XMB off its SD card. nleg.stage_sd creates
-    # workdir/sd and copies GAME.DDB + the .nex into it without cleaning,
-    # so placing the XMB there now is enough.
+    # The Next leg reads 0.XMB off its SD card. ndrc drops 0.XMB into cwd
+    # (workdir) as a side effect of the nextdaad build; nleg.stage_sd
+    # creates workdir/sd and copies GAME.DDB + the .nex into it without
+    # cleaning, so placing the XMB there now is enough.
+    xmb = workdir / "0.XMB"
+    if not xmb.exists():
+        raise RuntimeError("ndrc did not produce %s" % xmb)
     sd = workdir / "sd"
     sd.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(xmb, sd / "0.XMB")
 
-    return {"dsf": src, "ddb": next_ddb,
-            "header": {"html": h_html, "next": h_next}}
+    return {"dsf": built["dsf"], "ddb": next_ddb, "header": built["header"]}
 
 
 def main(argv=None):
