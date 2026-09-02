@@ -1,8 +1,10 @@
 ; toolkit.asm - NextDAAD XBN worked example.
 ;
-; The pure-logic shape: no #int hook, no arming call. Every function takes
-; a FLAG NUMBER as the EXTERN parameter rather than a value, so the module
-; costs four flags however many values a game manipulates.
+; The pure-logic shape: no #int hook. Fns 70-75, 82 and 83 take a FLAG
+; NUMBER as the EXTERN parameter rather than a value, so the module costs
+; four flags however many values a game manipulates; 78-81 take a location,
+; noun or bit. Fns 76 and 84 arm module state that LOAD and RESTART do not
+; reset - re-arm both wherever your game re-establishes state.
 ;
 ; Printing goes through SVC_PUTCHAR into whatever DAAD window the author
 ; has selected. The author brackets the call with WINDOW, or sets fn 84's
@@ -429,10 +431,9 @@ tmpptr:  dw 0
 tmpsec:  db 0
 
 ; --- Print target window (fn 84) --------------------------------------
-; tgtWin 0 = none (the author brackets prints with WINDOW themselves, as
-; before). tgtWin 1-7 = the four printing fns bracket their own output:
-; print_enter selects it and parks the window it replaced, print_leave
-; restores that window - the restore is what flushes the printed word.
+; tgtWin 0 = none (the author brackets prints with WINDOW). tgtWin 1-7 =
+; the four printing fns bracket their own output: print_enter selects it
+; and parks the replaced window, print_leave restores it - and so flushes.
 tgtWin:  db 0
 prevWin: db 0
 
@@ -569,9 +570,8 @@ bynoun:
     ret
 
 ; fn 81 - EXTERN bit 81. CONDITION: objects with extended-attribute bit
-; (0-15) set counted into flag 251; CF set when zero. The two bytes are
-; held in FLAG order (src/engine.asm, "Do not fix the swap"): entry +3 =
-; attributes 0-7, +2 = attributes 8-15. bit > 15 refuses: 251 = 0, CF set.
+; (0-15) set counted into flag 251; CF set with 251 = 0 when zero, and for
+; bit > 15. FLAG order (src/engine.asm): +3 = attrs 0-7, +2 = attrs 8-15.
 attrcnt:
     ld a, (param)
     cp 16
@@ -654,11 +654,7 @@ wtacc:   dw 0                    ; the running carried+worn total
 
 ; A = object -> HL = its true weight, own plus contents. Deliberate
 ; divergence from src/overlay0.asm obj_weight_of / weight_total: both
-; accumulators are 16-BIT with NO 255 saturation at either level. The
-; rest is that routine's semantics - own weight = (+1) & $3F, bit 6 marks
-; a container, a ZERO own weight ends the descent (the manual's "magic
-; bag"), a child is any object whose location byte is this object's
-; number, and the depth budget is 10.
+; accumulators are 16-BIT with NO 255 saturation; the rest is its semantics.
 obj_wt16:
     ld e, 10
 owf16:
@@ -775,10 +771,8 @@ pckarm:
     ret
 
 ; fn 77 - EXTERN 0 77. CONDITION: one still-unused index 0..n-1 into flag
-; 251; CF set when the pool is unarmed or exhausted (no auto-reset - fn
-; 76 re-arms). One draw, then a cyclic advance to the next unused index:
-; bounded by n, and unlike a retry loop it never degrades to "first
-; unused" (with pool 3, 64 retries miss with probability 0.47).
+; 251; CF set with 251 = 0 when the pool is unarmed or exhausted (no
+; auto-reset - fn 76 re-arms). Cyclic advance from one draw, bounded by n.
 pckget:
     ld a, (pickPool)
     or a
@@ -817,10 +811,12 @@ pckget:
     ld a, b
     ld (XBN_FLAGS + FLAG_RESULT), a
     call bit_set
-    or a                         ; CF clear: bit_set leaves A nonzero
+    or a                         ; CF clear: fn 77 passes
     ret
 .empty:
-    scf
+    xor a
+    ld (XBN_FLAGS + FLAG_RESULT), a
+    scf                          ; 251 = 0 with CF set, the fns 80/81 shape
     ret
 
 ; No hook. The interpreter still calls this every frame in a combined

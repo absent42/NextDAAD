@@ -2,18 +2,23 @@
 
 A collection of small pure-logic helpers: decimal printing, 16-bit
 arithmetic and time formatting. Unlike `clock` or `timer`, toolkit has no
-frame hook and no arming call - every function runs to completion inside
-the single foreground `EXTERN` that calls it, and there is nothing for a
-LOAD to restore. The module implements fifteen functions: fn 70 and
-fn 71 for decimal printing, fn 72 to fn 75 for 16-bit arithmetic on flag
-pairs, fn 76 to fn 81 for object queries and a random-without-repeat
-picker, fn 82 and fn 83 for time formatting, and fn 84 to set a print
-target window. Four of them - fn 70, 71, 82 and 83 - are also reachable
-through DAAD's CALL condact, a second entry point alongside the existing
-EXTERN dispatch (see CALL slots below).
+frame hook - every function runs to completion inside the single
+foreground `EXTERN` that calls it. The module implements fifteen
+functions: fn 70 and fn 71 for decimal printing, fn 72 to fn 75 for
+16-bit arithmetic on flag pairs, fn 76 to fn 81 for object queries and a
+random-without-repeat picker, fn 82 and fn 83 for time formatting, and
+fn 84 to set a print target window. Four of them - fn 70, 71, 82 and 83
+- are also reachable through DAAD's CALL condact, a second entry point
+alongside the existing EXTERN dispatch (see CALL slots below).
 
-One exception to "nothing for a LOAD to restore": the picker's used-mask
-is module state, not flag state. See Random without repeat below.
+The parameter is not one thing: fns 70 to 75, 82 and 83 take a flag
+NUMBER, and fns 78 to 81 take a value - a location, a noun word id or an
+attribute bit. Fn 84 takes a window number.
+
+Two of them arm module state, and it is not flag state, so `LOAD` and
+`RESTART` do not restore it: fn 76's picker pool (see Random without
+repeat below) and fn 84's print target. Re-arm both wherever your game
+re-establishes its own state.
 
 ## Calling convention
 
@@ -163,8 +168,8 @@ is refused: CF set and the previous pool left untouched.
 
 Fn 77 is a CONDITION. It picks an index that has not come up since the
 last fn 76, writes it to 251 and passes. When every index in the pool
-has been used it FAILS - which is what makes the exhaustion case
-writable without a counter of your own:
+has been used - or the pool is unarmed - it FAILS with 251 = 0, which is
+what makes the exhaustion case writable without a counter of your own:
 
     > _  _   EXTERN 0 77
              MES "The wind carries a voice: "
@@ -255,7 +260,7 @@ explicit `WINDOW n` and `CLS`, the same as it always did.
 
 Add the geometry, and the one-time `EXTERN 2 84` that arms the target, to
 wherever your game already sets up its own start-of-game state - the same
-`AT 0` turn check a location's own process table typically uses:
+`AT 0` turn check PRO 0, the main location loop, typically uses:
 
     > _  _   AT 0                    ; starting the game?
              WINDOW  2
