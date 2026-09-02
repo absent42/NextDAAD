@@ -452,7 +452,9 @@ DDB_PAGE_FIRST  equ BANK_DDB_FIRST*2  ; 8K pages 32..39
 BANK_OVL0       equ 28      ; overlay page 0 lives in bank 28 (lower 8K)
 OVL0_PAGE       equ BANK_OVL0*2
 OVL_ORG         equ $E000
-OVL_LIMIT       equ $F800   ; overlay ASSERT bound (512 bytes spare)
+OVL_LIMIT       equ $FE00   ; overlay ASSERT bound. $F800 was a first-day margin
+                            ; (b2a93ca), never a reservation: nothing is placed above
+                            ; it in any page. 512 bytes to $FFFF kept back on purpose.
 OVL1_PAGE       equ BANK_OVL0*2+1     ; overlay page 1: upper 8K of the same bank
 BANK_OVL2       equ 29      ; overlay page 2 lives in bank 29 (lower 8K)
 OVL2_PAGE       equ BANK_OVL2*2

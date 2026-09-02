@@ -33,6 +33,40 @@ dbg_markcol:
     ld c, a
     ret
 
+; One-call DEBUG marker: B = row, C = column, HL = ASCIIZ message.
+; Preserves BC, DE, HL; corrupts AF. dbg_mark_hex also prints A as hex.
+dbg_mark:
+    push bc
+    push de
+    push hl
+    call dbg_at
+    call dbg_puts
+    pop hl
+    pop de
+    pop bc
+    ret
+dbg_mark_hex:
+    push af
+    call dbg_mark
+    pop af
+    push bc
+    push de
+    push hl
+    call dbg_hex8
+    pop hl
+    pop de
+    pop bc
+    ret
+
+; overlay0.asm's six DEBUG marker sites and the XBN load failure marker.
+msgStub:       db "STUB ", 0
+msgXmesFail:   db "XMES?", 0
+msgXbnFail:    db "XBN?", 0
+msgXpartRange: db "XPART N? ", 0
+msgXpartFail:  db "XPART?", 0
+msgMouseUnk:   db "MOUSE? ", 0
+msgPtrBad:     db "PTR BAD", 0
+
 ; A = character. 13 = newline. Corrupts AF, BC, DE, HL.
 dbg_putc:
     ld l, a                     ; keep the char across the flag test

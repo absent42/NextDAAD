@@ -18,18 +18,15 @@ c_false:
 h_unimpl:
  IFDEF DEBUG
     push bc
+    ld a, (curCondact)
     ld b, 31
     ld c, 0
-    call dbg_at
     ld hl, msgStub
-    call dbg_puts
-    ld a, (curCondact)
-    call dbg_hex8
+    call dbg_mark_hex
     pop bc
  ENDIF
     scf
     ret
-msgStub: db "STUB ", 0
 
 ; B = flag number helper: HL -> flags[B]
 fptr:
@@ -2439,14 +2436,12 @@ ext_xmes:
     push bc
     ld b, 30
     ld c, 60
-    call dbg_at
     ld hl, msgXmesFail
-    call dbg_puts
+    call dbg_mark
     pop bc
  ENDIF
     ret
 
-msgXmesFail: db "XMES?", 0
 xmsName:    db "0.XMB", 0
 xmsHandle:  db 0
 xmsOff:     dw 0
@@ -2704,15 +2699,13 @@ xbn_boot_load:
     push bc
     ld b, 28
     ld c, 60
-    call dbg_at
-    ld hl, .msgFail
-    call dbg_puts
+    ld hl, msgXbnFail
+    call dbg_mark
     pop bc
  ENDIF
     ld a, (.handle)
     jp esx_fclose
 
-.msgFail:   db "XBN?", 0
 .name:      db "GAME.XBN", 0
 .handle:    db 0
 .statbuf:   ds 11
@@ -2783,15 +2776,11 @@ h_xpart:
 .range:                         ; n < 1 or n > 9: no-op with a marker,
  IFDEF DEBUG                    ; same idiom as h_sfx/h_mouse's unknown-
     push af                     ; sub-command markers - preserve n
-    push af                     ; (here in A, not C) across dbg_at/
-    ld b, 29                    ; dbg_puts (both corrupt AF) for the
-    call dbg_markcol             ; dbg_hex8 below.
-    call dbg_at
+    call dbg_markcol             ; (here in A, not C) across dbg_markcol
+    ld b, 29                    ; (corrupts A) before dbg_mark_hex takes
+    pop af                      ; over preserving it across the print.
     ld hl, msgXpartRange
-    call dbg_puts
-    pop af
-    call dbg_hex8
-    pop af
+    call dbg_mark_hex
  ENDIF
 .noop:
     scf
@@ -2958,9 +2947,8 @@ switch_to_part:
     push bc
     ld b, 29
     ld c, 60
-    call dbg_at
     ld hl, msgXpartFail
-    call dbg_puts
+    call dbg_mark
     pop bc
  ENDIF
     scf
@@ -3007,11 +2995,6 @@ xpart_build_name:
 .gameddb: db "GAME.DDB", 0, 0     ; byte-identical to ddbName's own
                                   ; compiled default (errors.asm) -
                                   ; 8 chars + NUL + 1 spare = 10
-
- IFDEF DEBUG
-msgXpartFail:  db "XPART?", 0
-msgXpartRange: db "XPART N? ", 0
- ENDIF
 
 ; swapStage: staging buffer for a part switch. [0..255] = the full
 ; flags array, copied verbatim. [256..511] = one byte per object =
@@ -3287,15 +3270,13 @@ h_mouse:
 .unknown:
  IFDEF DEBUG                    ; unknown sub-command: no-op with a
     push bc                     ; marker, same idiom as h_sfx/h_gfx.
-    push bc                     ; second push keeps C (the sub) safe
-    ld b, 28                    ; across dbg_puts (corrupts BC) for the
-    call dbg_markcol             ; dbg_hex8 below.
-    call dbg_at
+    ld a, c                     ; sub, needed after dbg_markcol
+    push af                     ; overwrites C - save it across that call.
+    call dbg_markcol
+    ld b, 28
     ld hl, msgMouseUnk
-    call dbg_puts
-    pop bc
-    ld a, c
-    call dbg_hex8
+    pop af
+    call dbg_mark_hex
     pop bc
  ENDIF
     ret
@@ -3565,8 +3546,6 @@ mouse_btn_jd:
                                  ; middle 4, combinations additive -
                                  ; exact jdaad parity.
     ret
-
-msgMouseUnk: db "MOUSE? ", 0
 
 ; Sub-command vector table, dense 0-7 (doc 07 (a)). Placed after
 ; h_mouse's body so its dot-locals still belong to h_mouse.
@@ -4042,11 +4021,10 @@ pointer_load:
     jr .close
 .bad:
  IFDEF DEBUG                        ; wrong size: no-op with a marker,
-    ld b, 29                        ; same idiom as h_sfx/h_mouse/
-    call dbg_markcol                ; font_load's own markers
-    call dbg_at
+    call dbg_markcol                ; same idiom as h_sfx/h_mouse/
+    ld b, 29                        ; font_load's own markers
     ld hl, msgPtrBad
-    call dbg_puts
+    call dbg_mark
  ENDIF
 .close:
     ld a, (ptrHandle)
@@ -4085,7 +4063,6 @@ ptrNameBuf:   ds 13               ; "POINTERn.SPR",0 worst case
 ptrNamePart:  ds 19
 ptrNameStem:  db "POINTER"
 ptrNameExt:   db ".SPR", 0
-msgPtrBad:    db "PTR BAD", 0
 
 ; Relocated from errors.asm (post-flags resident there had no room to
 ; grow - see fatal_puts's MMU7 map, errors.asm). fatal_puts is the only
