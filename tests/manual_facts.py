@@ -63,12 +63,17 @@ FORBIDDEN = [
     # and the service table; a page still describing format 1 is stale.
     (r"\$C00A",
      "the CALL slot table moved to $C00E in XBN format 2"),
-    (r"ten (small routines|three-byte|services)",
+    (r"\bten (small routines|three-byte|services)\b",
      "the service table has fifteen rows since format 2"),
-    (r"version byte reads .1.",
+    (r"version byte reads .\b1\b.",
      "the format 2 header is fourteen bytes, version 2"),
     (r"Ten bytes at the start",
      "the format 2 header is fourteen bytes, version 2"),
+    # Spec 3.1 edge: the CF-fail clears a stamp a failed built-in
+    # condition never touches. \s+ - the claim wraps across lines.
+    (r"done\s+stat(e|us)[^.]{0,40}same\s+as\s+a\s+failed",
+     "a CF-failed EXTERN clears the done state, which a failed built-in "
+     "condition never does - do not equate them"),
 ]
 
 def parse(path, pattern, label):
