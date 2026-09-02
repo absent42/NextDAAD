@@ -106,4 +106,37 @@ $a = Pack '009' @()
 Assert-Eq $a[9] 4 '009 frames'; Assert-Eq $a[10] 4 '009 patterns'
 Assert-Eq $a[16 + 8 + 256 * 2] 0x03 '009 pattern 2 is (0,0,255) -> $03 (frame 2 is row 1, col 0)'
 
+# ---- 006 4-bit auto: two frames of 10 colours each -> two blocks.
+Convert-Sheet "$work\006.png" @() | Out-Null
+$a = Pack '006' @()
+Assert-Eq $a[3] 3 '006 flags: loop, 4-bit'
+Assert-Eq $a[10] 2 '006 patterns'; Assert-Eq $a[11] 2 '006 blockCount'
+Assert-Eq (U16 $a 12) 0 '006 blockMask is 0 for 4-bit'
+Assert-Eq (U16 $a 14) 4 '006 tableLen'
+# body: table(4) + block table(2) + palettes(64) + patterns(2*128)
+Assert-Eq $a.Length (16 + 4 + 2 + 64 + 256) '006 length'
+Assert-Eq $a[20] 0 '006 pattern 0 block'; Assert-Eq $a[21] 1 '006 pattern 1 block'
+$pal0 = $a[22..53]
+Assert-Eq $pal0[6] 0xE3 '006 block 0 entry 3 byte0 is $E3 (transparent slot)'
+Assert-Eq $pal0[7] 1 '006 block 0 entry 3 byte1'
+# frame 0 pixel (0,0) is PLTE 1 = (32,0,64): r=1,g=0,b=2 -> RGB333 0x42 -> byte0 $21, byte1 0
+$found = $false
+for ($e = 0; $e -lt 16; $e++) { if ($e -ne 3 -and $pal0[$e*2] -eq 0x21 -and $pal0[$e*2+1] -eq 0) { $found = $true } }
+Assert-Eq $found $true '006 block 0 holds (32,0,64) as byte0 $21, byte1 0'
+$pat0 = $a[86..213]
+# every nibble of pattern 0 must be an entry other than 3 (cell has no transparent pixel)
+$bad = 0
+foreach ($v in $pat0) { if ((($v -shr 4) -eq 3) -or (($v -band 15) -eq 3)) { $bad++ } }
+Assert-Eq $bad 0 '006 pattern 0 never uses the transparent nibble'
+
+# ---- 007 auto falls back to 8-bit when a cell needs 16 opaque colours.
+Convert-Sheet "$work\007.png" @() | Out-Null
+$a = Pack '007' @()
+Assert-Eq $a[3] 1 '007 flags: fell back to 8-bit'
+Assert-Eq $a.Length (16 + 2 + 256) '007 length'
+
+# ---- 008 bits=4 explicit with the same art must fail naming the cell.
+Convert-Sheet "$work\008.png" @() | Out-Null
+Assert-Throws { Pack '008' @() } 'frame 0 cell 0 .* 16 opaque colours' '008 bits=4 refuses a 16-colour cell'
+
 "anipack-selftest: $checks checks passed"

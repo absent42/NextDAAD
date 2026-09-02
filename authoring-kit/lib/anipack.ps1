@@ -116,10 +116,71 @@ for ($f = 0; $f -lt $frameCount; $f++) {
     $frames += , $cellsOfFrame
 }
 
-# ---- 4-bit path stubs; Task 3 replaces their bodies.
-function Get-Partition4($frames, $col9) { return @{ ok = $false; why = '4-bit packing not implemented' } }
-function Convert-Cell4($raw, $col9, $partition) { throw 'unreachable' }
-function Get-BlockPalette($blk) { throw 'unreachable' }
+# ---- 4-bit path
+function Get-Partition4($frames, $col9) {
+    # Greedy, deterministic: cells sorted by opaque colour count descending,
+    # each joins the first block whose colour union stays at or under 15.
+    $cellSets = @()
+    for ($f = 0; $f -lt $frames.Count; $f++) {
+        for ($c = 0; $c -lt $frames[$f].Count; $c++) {
+            $set = @{}
+            foreach ($idx in $frames[$f][$c]) { if ($col9[$idx] -ge 0) { $set[$col9[$idx]] = $true } }
+            if ($set.Count -gt 15) { return @{ ok = $false; why = "frame $f cell $c needs $($set.Count) opaque colours, a 4-bit cell holds 15" } }
+            $cellSets += , @{ f = $f; c = $c; colours = @($set.Keys) }
+        }
+    }
+    $blocks = New-Object System.Collections.ArrayList
+    $cellBlock = @{}
+    foreach ($cs in ($cellSets | Sort-Object { -$_.colours.Count }, { $_.f }, { $_.c })) {
+        $placed = -1
+        for ($b = 0; $b -lt $blocks.Count; $b++) {
+            $union = @{}
+            foreach ($k in $blocks[$b]) { $union[$k] = $true }
+            foreach ($k in $cs.colours) { $union[$k] = $true }
+            if ($union.Count -le 15) { $blocks[$b] = @($union.Keys | Sort-Object); $placed = $b; break }
+        }
+        if ($placed -lt 0) {
+            if ($blocks.Count -ge 15) { return @{ ok = $false; why = 'the art needs more than 15 palette blocks' } }
+            [void]$blocks.Add(@($cs.colours | Sort-Object)); $placed = $blocks.Count - 1
+        }
+        $cellBlock["$($cs.f)/$($cs.c)"] = $placed
+    }
+    return @{ ok = $true; why = ''; blocks = $blocks; cellBlock = $cellBlock }
+}
+
+function Get-BlockEntry($blk, $partition) {
+    # entry n of a block: 0,1,2,4..15 hold colours in sorted order, 3 is transparent
+    $map = @{}
+    $slot = 0
+    foreach ($k in $partition.blocks[$blk]) { if ($slot -eq 3) { $slot++ }; $map[$k] = $slot; $slot++ }
+    return $map
+}
+
+function Convert-Cell4($raw, $col9, $partition) {
+    $f = $script:curF; $c = $script:curC
+    $blk = $partition.cellBlock["$f/$c"]
+    $map = Get-BlockEntry $blk $partition
+    $bytes = New-Object byte[] 128
+    $transparent = $true
+    for ($i = 0; $i -lt 256; $i++) {
+        $k = $col9[$raw[$i]]
+        $n = if ($k -lt 0) { 3 } else { $transparent = $false; $map[$k] }
+        if ($i % 2 -eq 0) { $bytes[$i / 2] = $n -shl 4 } else { $bytes[($i - 1) / 2] = $bytes[($i - 1) / 2] -bor $n }
+    }
+    return @{ bytes = $bytes; block = $blk; transparent = $transparent }
+}
+
+function Get-BlockPalette($blk) {
+    $out = New-Object byte[] 32
+    for ($e = 0; $e -lt 16; $e++) { $out[$e*2] = $TRANSP; $out[$e*2+1] = 1 }
+    $map = Get-BlockEntry $blk $partition
+    foreach ($k in $map.Keys) {
+        $e = $map[$k]
+        $out[$e*2] = $k -shr 1
+        $out[$e*2+1] = $k -band 1
+    }
+    return $out
+}
 
 # ---- kind decision. 4-bit partition lives in Get-Partition4 (Task 3); 8-bit here.
 $is4 = $false
@@ -139,6 +200,7 @@ for ($f = 0; $f -lt $frameCount; $f++) {
     [void]$table.Add([byte]$delays[$f])
     for ($c = 0; $c -lt $cells; $c++) {
         $raw = $frames[$f][$c]
+        $script:curF = $f; $script:curC = $c
         if ($is4) { $img = Convert-Cell4 $raw $col9 $partition; $blk = $img.block; $bytes = $img.bytes; $transparent = $img.transparent }
         else {
             $bytes = New-Object byte[] 256
@@ -177,7 +239,7 @@ $o = New-Object System.Collections.ArrayList
 [void]$o.AddRange([byte[]]$table)
 if ($is4) {
     [void]$o.AddRange([byte[]]$blockOf)
-    foreach ($blk in $partition.blocks) { [void]$o.AddRange([byte[]](Get-BlockPalette $blk)) }
+    for ($b = 0; $b -lt $partition.blocks.Count; $b++) { [void]$o.AddRange([byte[]](Get-BlockPalette $b)) }
 }
 foreach ($pat in $patterns) { [void]$o.AddRange([byte[]]$pat) }
 [IO.File]::WriteAllBytes($Out, [byte[]]$o)

@@ -45,7 +45,7 @@ def main(out):
     paste(px, 16, 0, fill(16, 16, 2))
     px[0][0] = 0
     write_png(os.path.join(out, "002.png"), 32, 16, pal, px)
-    write_txt(os.path.join(out, "002.txt"), w=16, h=16, x=24, y=180, delay="6,12", loop=1)
+    write_txt(os.path.join(out, "002.txt"), w=16, h=16, x=24, y=180, delay="6,12", loop=1, bits=8)
     # 003: dedupe + hidden cell. 64x32 sheet, w=h=32, two frames.
     # Frame 0 cells: 0=index1, 1=index2, 2=magenta (hidden), 3=index1 (dupe of cell 0).
     # Frame 1: same but cell 3 = index 3. Cells: 0->p0, 1->p1, 2->255, 3->p0 / p2.
@@ -55,16 +55,17 @@ def main(out):
         paste(px, fx, 0, fill(16, 16, 1)); paste(px, fx + 16, 0, fill(16, 16, 2))
         paste(px, fx + 16, 16, fill(16, 16, c3))
     write_png(os.path.join(out, "003.png"), 64, 32, pal, px)
-    write_txt(os.path.join(out, "003.txt"), w=32, h=32, delay=5, loop=0)
+    write_txt(os.path.join(out, "003.txt"), w=32, h=32, delay=5, loop=0, bits=8)
     # 004: blank-anchor substitution. 16x16 single frame, all magenta.
     write_png(os.path.join(out, "004.png"), 16, 16, [MAGENTA] + [(0, 0, 0)] * 255, fill(16, 16, 0))
-    write_txt(os.path.join(out, "004.txt"), w=16, h=16)
+    write_txt(os.path.join(out, "004.txt"), w=16, h=16, bits=8)
     # 005: dodge. 16x16, opaque (224,0,192) truncates to RGB332 $E3 and must dodge to $E7.
     write_png(os.path.join(out, "005.png"), 16, 16, [MAGENTA, (224, 0, 192)] + [(0, 0, 0)] * 254, fill(16, 16, 1))
     write_txt(os.path.join(out, "005.txt"), w=16, h=16, bits=8)
     # 006: 4-bit multi-block. 32x16, w=h=16, two frames. Frame 0 uses colours 1-10,
     # frame 1 uses colours 11-20: two blocks of 10, no cell over 15.
-    pal = [MAGENTA] + [(i * 12, 255 - i * 12, 64) for i in range(1, 21)] + [(0, 0, 0)] * 235
+    # Channel steps of 32 keep each index RGB333-distinct after truncation.
+    pal = [MAGENTA] + [(32 * (k % 8), 32 * (k // 8), 64) for k in range(1, 21)] + [(0, 0, 0)] * 235
     px = fill(32, 16, 0)
     for f in range(2):
         for y in range(16):
@@ -73,7 +74,8 @@ def main(out):
     write_png(os.path.join(out, "006.png"), 32, 16, pal, px)
     write_txt(os.path.join(out, "006.txt"), w=16, h=16)
     # 007: one cell with 16 opaque colours: auto falls back to 8-bit, bits=4 must fail.
-    pal = [MAGENTA] + [(i * 15, i * 15, i * 15) for i in range(1, 17)] + [(0, 0, 0)] * 239
+    # Channel steps of 32 keep each index RGB333-distinct after truncation.
+    pal = [MAGENTA] + [(32 * (k % 8), 32 * (k // 8), 0) for k in range(1, 17)] + [(0, 0, 0)] * 239
     px = [[1 + (x + y) % 16 for x in range(16)] for y in range(16)]
     write_png(os.path.join(out, "007.png"), 16, 16, pal, px)
     write_txt(os.path.join(out, "007.txt"), w=16, h=16)
@@ -85,7 +87,7 @@ def main(out):
     for k in range(4):
         paste(px, (k % 2) * 16, (k // 2) * 16, fill(16, 16, k + 1))
     write_png(os.path.join(out, "009.png"), 32, 32, pal, px)
-    write_txt(os.path.join(out, "009.txt"), w=16, h=16, sheetw=32)
+    write_txt(os.path.join(out, "009.txt"), w=16, h=16, sheetw=32, bits=8)
     return 0
 
 if __name__ == "__main__":
