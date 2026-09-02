@@ -907,6 +907,10 @@ function Assert-TranspConstantsInSync {
             colour = '(?m)^\s*TRANSP\s+equ\s+\$([0-9A-Fa-f]+)'
             index  = $null
         }
+        'authoring-kit\lib\anipack.ps1' = @{
+            colour = '(?m)^\s*\$TRANSP\s*=\s*0x([0-9A-Fa-f]+)'
+            index  = $null
+        }
     }
     # Dodge sites: the substitute colour written on an $E3 collision.
     # Asm and python derive it as colour+N (group 1 = the offset, the
@@ -919,6 +923,7 @@ function Assert-TranspConstantsInSync {
         'authoring-kit\lib\nxv2enc.py'        = @{ rx = '(?m)^\s*L2_DODGE_BYTE0\s*=\s*L2_TRANSPARENT_BYTE0\s*\+\s*(\d+)'; offset = $true }
         'authoring-kit\lib\palcheck.ps1'      = @{ rx = '(?m)^\s*\$DODGE\s*=\s*0x([0-9A-Fa-f]+)'; offset = $false }
         'tests\art\mkpalcard.py'              = @{ rx = '(?m)^\s*TRANSP_DODGE\s*=\s*0x([0-9A-Fa-f]+)'; offset = $false }
+        'authoring-kit\lib\anipack.ps1'       = @{ rx = '(?m)^\s*\$DODGE\s*=\s*0x([0-9A-Fa-f]+)'; offset = $false }
     }
     $colours = [ordered]@{}
     $indices = [ordered]@{}

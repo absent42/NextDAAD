@@ -50,4 +50,60 @@ Assert-Eq (Test-Path "$work\001.spr") $false 'probe: -zx0 leaves no plain .spr'
 Assert-Eq (Convert-Sheet "$work\odd.png" @()) 0 'probe: 24-wide sheet exit code'
 Assert-Eq ([IO.File]::ReadAllBytes("$work\odd.spr")).Length 256 'probe: 24-wide sheet yields one cell, the partial column is dropped'
 
+function Pack([string]$n, [string[]]$extra) {
+    & $pack -Spr "$work\$n.spr" -Txt "$work\$n.txt" -Out "$work\$n.ANI" -Png "$work\$n.png" @extra | Out-Null
+    return [IO.File]::ReadAllBytes("$work\$n.ANI")
+}
+function U16([byte[]]$b, [int]$o) { return [int]$b[$o] -bor ([int]$b[$o + 1] -shl 8) }
+
+# ---- 002 torch: two 8-bit patterns, baked position, per-frame delays, loop.
+Convert-Sheet "$work\002.png" @() | Out-Null
+$a = Pack '002' @()
+Assert-Eq ([Text.Encoding]::ASCII.GetString($a, 0, 2)) 'NA' '002 magic'
+Assert-Eq $a[2] 1 '002 version'
+Assert-Eq $a[3] 1 '002 flags: loop, 8-bit'
+Assert-Eq $a[4] 1 '002 W'; Assert-Eq $a[5] 1 '002 H'
+Assert-Eq (U16 $a 6) 24 '002 X'; Assert-Eq $a[8] 180 '002 Y'
+Assert-Eq $a[9] 2 '002 frames'; Assert-Eq $a[10] 2 '002 patterns'
+Assert-Eq $a[11] 0 '002 blockCount'
+# (255,128,0) -> $F0 top nibble F; (255,255,0) -> $FC top nibble F: mask bit 15 only.
+Assert-Eq (U16 $a 12) 0x8000 '002 blockMask'
+Assert-Eq (U16 $a 14) 4 '002 tableLen'
+Assert-Eq $a[16] 6 '002 frame 0 delay'; Assert-Eq $a[17] 0 '002 frame 0 cell'
+Assert-Eq $a[18] 12 '002 frame 1 delay'; Assert-Eq $a[19] 1 '002 frame 1 cell'
+Assert-Eq $a.Length (20 + 512) '002 length'
+Assert-Eq $a[20] 0xE3 '002 pattern 0 pixel 0 is transparent'
+Assert-Eq $a[21] 0xF0 '002 pattern 0 pixel 1 is (255,128,0) as RGB332'
+Assert-Eq $a[20 + 256] 0xFC '002 pattern 1 pixel 0'
+
+# ---- 003 dedupe, hidden cell, one-shot. Cells: p0=green, p1=blue, p2=white.
+Convert-Sheet "$work\003.png" @() | Out-Null
+$a = Pack '003' @()
+Assert-Eq $a[3] 0 '003 flags: one-shot, 8-bit'
+Assert-Eq $a[4] 2 '003 W'; Assert-Eq $a[5] 2 '003 H'
+Assert-Eq $a[9] 2 '003 frames'; Assert-Eq $a[10] 3 '003 patterns (dupe folded)'
+Assert-Eq (U16 $a 14) 10 '003 tableLen'
+$t = $a[16..25]
+Assert-Eq ($t -join ',') '5,0,1,255,0,5,0,1,255,2' '003 frame table'
+Assert-Eq $a.Length (26 + 768) '003 length'
+
+# ---- 004 blank anchor: an all-transparent cell 0 becomes a blank pattern, never 255.
+Convert-Sheet "$work\004.png" @() | Out-Null
+$a = Pack '004' @()
+Assert-Eq $a[10] 1 '004 one blank pattern'
+Assert-Eq $a[17] 0 '004 cell 0 is pattern 0, not hidden'
+Assert-Eq $a[16 + 2] 0xE3 '004 blank pattern is all transparent'
+
+# ---- 005 dodge: opaque (224,0,192) lands on $E3 and is written as $E7.
+Convert-Sheet "$work\005.png" @() | Out-Null
+$a = Pack '005' @()
+Assert-Eq $a[18] 0xE7 '005 dodge to $E7'
+Assert-Eq (U16 $a 12) 0x4000 '005 blockMask is block 14 ($E7 top nibble E)'
+
+# ---- 009 sheetw: four frames two per row, cell k = index k+1 -> RGB332 of the palette.
+Convert-Sheet "$work\009.png" @() | Out-Null
+$a = Pack '009' @()
+Assert-Eq $a[9] 4 '009 frames'; Assert-Eq $a[10] 4 '009 patterns'
+Assert-Eq $a[16 + 8 + 256 * 2] 0x03 '009 pattern 2 is (0,0,255) -> $03 (frame 2 is row 1, col 0)'
+
 "anipack-selftest: $checks checks passed"
