@@ -791,16 +791,20 @@ CLOAK   22 noun
 ;        - the hook's per-frame xbn_width must return the 40-col base:
 ;        the whole message sits on row 27 within 40 cells, nothing
 ;        elsewhere.
-;        Phase B: re-arm at 40, then switch back to 80 MID-TICK - the
-;        hook must follow on the next frame: the message's remainder
-;        lands on the 80-cell row 27 from the column where the switch
-;        fell, no text on any other row (an unfollowed 40-col base
-;        written into 80-col tilemap memory lands mid-screen).
+;        Phase B: re-arm at 40, tick for ten frames, then switch back
+;        to 80 columns MID-MESSAGE - the hook must follow on the next
+;        frame: the remainder (about fifteen characters) lands on the
+;        80-cell row 27 starting from column ~10, no text on any other
+;        row (an unfollowed 40-col base written into 80-col tilemap
+;        memory lands mid-screen).
 > XT40 _   GFX     1 18       ; 40 columns first (P1 1 = 40, 0 = 80)
            EXTERN  0 30       ; arm message 0 in 40-col mode (XTCK's line)
            PAUSE   100        ; 1 s: ticks out at 40 cells - screenshot 1
            EXTERN  0 30       ; re-arm, still 40-col
-           GFX     0 18       ; back to 80 columns while ticking
+           PAUSE   20         ; ships as operand 10 = ten frames: the
+                              ; ticker emits one char per frame, so ~10
+                              ; characters are on the 40-cell row here
+           GFX     0 18       ; back to 80 columns MID-MESSAGE
            PAUSE   100        ; 1 s: remainder lands at 80 - screenshot 2
            EXTERN  0 31       ; disarm (idempotent)
            DONE
