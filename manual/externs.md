@@ -303,8 +303,12 @@ are not optional:
 - **Keep it short.** Well under one frame's worth of time. An overrun
   delays the next audio tick.
 - **Never enable interrupts.** Do not execute `EI`.
-- **Never `halt`.** Interrupts are disabled while the hook runs, so a
-  `halt` inside it never wakes and the game hangs.
+- **Never `halt` inside the hook.** The frame interrupt's own source is
+  masked while its handler runs, so a `halt` there waits for an edge
+  that cannot come - and with a sampled effect playing, the sample
+  interrupt would wake it after about 64 microseconds instead. Either
+  way it is never a frame wait; gate on `SVC_FRAMES` from the
+  foreground.
 - **No DMA.** Do not use the zxnDMA - it contends with video and sample
   streaming DMA already in flight.
 - **No file IO, and only the hook-safe services.** Four rows may be

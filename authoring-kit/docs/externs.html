@@ -297,8 +297,12 @@ are not optional:</p>
 <li><strong>Keep it short.</strong> Well under one frame's worth of time. An overrun
   delays the next audio tick.</li>
 <li><strong>Never enable interrupts.</strong> Do not execute <code>EI</code>.</li>
-<li><strong>Never <code>halt</code>.</strong> Interrupts are disabled while the hook runs, so a
-  <code>halt</code> inside it never wakes and the game hangs.</li>
+<li><strong>Never <code>halt</code> inside the hook.</strong> The frame interrupt's own source is
+  masked while its handler runs, so a <code>halt</code> there waits for an edge
+  that cannot come - and with a sampled effect playing, the sample
+  interrupt would wake it after about 64 microseconds instead. Either
+  way it is never a frame wait; gate on <code>SVC_FRAMES</code> from the
+  foreground.</li>
 <li><strong>No DMA.</strong> Do not use the zxnDMA - it contends with video and sample
   streaming DMA already in flight.</li>
 <li><strong>No file IO, and only the hook-safe services.</strong> Four rows may be

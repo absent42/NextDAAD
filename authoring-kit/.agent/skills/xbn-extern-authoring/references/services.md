@@ -39,8 +39,11 @@ Four rows may be called from the `#int` hook - `SVC_VERSION`, `SVC_RANDOM`,
 other row runs the print path, the file system, a window switch or the shared
 palette registers, none of which may be entered from interrupt context.
 
-Never `halt` inside the hook: interrupts are disabled while it runs, so a
-`halt` there never wakes and the game hangs.
+Never `halt` inside the hook. The frame interrupt's own source is masked while
+its handler runs, so a `halt` there waits for an edge that cannot come - and
+with a sampled effect playing, the sample interrupt would wake it after about
+64 microseconds instead. Either way it is never a frame wait; gate on
+`SVC_FRAMES` from the foreground.
 
 The rest of the hook rules - keep it well under a frame, no `EI`, no zxnDMA,
 no file IO, never install your own interrupt vector - are in the manual's
