@@ -619,9 +619,12 @@ fade. Arming is bank state: it survives `RESTART`, a part switch and a
 `LOAD`, but not a fresh boot, so arming calls belong in your start
 process, the way classic DAAD games initialised externs from `PRO 6`.
 
-Two toolkit functions arm state that a `LOAD` or `RESTART` does not
-reset - the picker (fn 76) and the print target (fn 84) - so re-arm
-them from your start process like everything else.
+Two toolkit functions hold state that is neither an arming call nor a
+flag: the picker (fn 76) and the print target (fn 84). A `LOAD`
+restores your flags and leaves both untouched - the same pool and
+used-mask, the same target window, now stale against the game you just
+restored. The start process covers a fresh boot; re-arm them wherever
+your game already re-establishes its own state after a `LOAD`.
 
 `CALL` targets in collection binaries are SLOTS in a fixed jump table
 at `$C00E` - slot n at `$C00E + 3n`, so slot 0 is `CALL 14 192` -
@@ -755,13 +758,20 @@ Four of the printing functions are also reachable through `CALL` slots
 0-3 with the flag number in flag 249.
 
 Printing goes through the current DAAD window by default. `EXTERN 2 84`
-sets a print target once, and from then on a bare print lands in window
-2 and is flushed there at once: the function brackets its own output -
-select the target, print, restore what was current - so you write no
-`WINDOW` bracket and never hit the pending-word trap. It positions and
-clears nothing, so those prints APPEND after whatever was painted there
-last, until the status process repaints with its own `WINDOW 2` and
-`CLS`. `EXTERN 0 84` clears the target again.
+sets a print target once, and from then on fns 70, 71, 82, 83 and the
+four `CALL` slots bracket their own output - select the target, print,
+restore what was current - so you write no `WINDOW` bracket around them
+and never leave a bare number buffered. A DAAD `MES` is unaffected: it
+still prints wherever the game's own `WINDOW` points.
+
+Entering the target flushes the CURRENT window's pending word first,
+the same as any window switch (see [`SVC_WINDOW`](#services)), so a
+`MES "Score "` issued just before an `EXTERN 100 71` puts "Score" in
+the game window and the number in the status window rather than side by
+side. Clear the target with `EXTERN 0 84` before a print that mixes
+`MES` text and a number inline. The target positions and clears
+nothing, so its prints APPEND after whatever was painted there last, until the status process repaints with its own `WINDOW 2` and
+`CLS`.
 
 The other six read the interpreter's live object table, or the module's
 own picker, and all but one are CONDITIONS - they fail the entry when

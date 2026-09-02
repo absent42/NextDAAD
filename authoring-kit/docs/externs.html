@@ -743,9 +743,12 @@ game shipping <code>all/GAME.XBN</code> and using only the fade pays for only th
 fade. Arming is bank state: it survives <code>RESTART</code>, a part switch and a
 <code>LOAD</code>, but not a fresh boot, so arming calls belong in your start
 process, the way classic DAAD games initialised externs from <code>PRO 6</code>.</p>
-<p>Two toolkit functions arm state that a <code>LOAD</code> or <code>RESTART</code> does not
-reset - the picker (fn 76) and the print target (fn 84) - so re-arm
-them from your start process like everything else.</p>
+<p>Two toolkit functions hold state that is neither an arming call nor a
+flag: the picker (fn 76) and the print target (fn 84). A <code>LOAD</code>
+restores your flags and leaves both untouched - the same pool and
+used-mask, the same target window, now stale against the game you just
+restored. The start process covers a fresh boot; re-arm them wherever
+your game already re-establishes its own state after a <code>LOAD</code>.</p>
 <p><code>CALL</code> targets in collection binaries are SLOTS in a fixed jump table
 at <code>$C00E</code> - slot n at <code>$C00E + 3n</code>, so slot 0 is <code>CALL 14 192</code> -
 never routine addresses, which move whenever any module is edited. An
@@ -854,13 +857,19 @@ entry, because wrapping and carrying on is often what a game wants.
 Four of the printing functions are also reachable through <code>CALL</code> slots
 0-3 with the flag number in flag 249.</p>
 <p>Printing goes through the current DAAD window by default. <code>EXTERN 2 84</code>
-sets a print target once, and from then on a bare print lands in window
-2 and is flushed there at once: the function brackets its own output -
-select the target, print, restore what was current - so you write no
-<code>WINDOW</code> bracket and never hit the pending-word trap. It positions and
-clears nothing, so those prints APPEND after whatever was painted there
-last, until the status process repaints with its own <code>WINDOW 2</code> and
-<code>CLS</code>. <code>EXTERN 0 84</code> clears the target again.</p>
+sets a print target once, and from then on fns 70, 71, 82, 83 and the
+four <code>CALL</code> slots bracket their own output - select the target, print,
+restore what was current - so you write no <code>WINDOW</code> bracket around them
+and never leave a bare number buffered. A DAAD <code>MES</code> is unaffected: it
+still prints wherever the game's own <code>WINDOW</code> points.</p>
+<p>Entering the target flushes the CURRENT window's pending word first,
+the same as any window switch (see <a href="#services"><code>SVC_WINDOW</code></a>), so a
+<code>MES "Score "</code> issued just before an <code>EXTERN 100 71</code> puts "Score" in
+the game window and the number in the status window rather than side by
+side. Clear the target with <code>EXTERN 0 84</code> before a print that mixes
+<code>MES</code> text and a number inline. The target positions and clears
+nothing, so its prints APPEND after whatever was painted there last, until the status process repaints with its own <code>WINDOW 2</code> and
+<code>CLS</code>.</p>
 <p>The other six read the interpreter's live object table, or the module's
 own picker, and all but one are CONDITIONS - they fail the entry when
 there is nothing to report, exactly like a failed <code>AT</code>:</p>
