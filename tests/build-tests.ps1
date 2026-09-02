@@ -2792,6 +2792,11 @@ if ($DrcDiff) {
         throw "$drcDrb has no NEXTDAAD target - update the fork clone, or set NEXTDAAD_DRC to one that has it."
     }
     $utoDsfPath = Join-Path $root 'tools\TEST.DSF'
+    # rabenstein and urbanupstart are deliberately absent. Both use the
+    # exported COLS/ROWS symbols, which DRF.exe (no NEXTDAAD case in
+    # getColsByTarget/GetRowsByTarget) resolves to 42/25 where NDRC's
+    # NEXTDAAD target gives 80/32. NDRC is right for the Next. Restore
+    # the two entries once a DRF that knows the target is in use.
     $diffFixtures = @(
         @{ Name = 'template'; Dsf = "$PSScriptRoot\test.dsf" }
         @{ Name = 'condacts'; Dsf = "$PSScriptRoot\condacts.dsf" }
@@ -2815,8 +2820,6 @@ if ($DrcDiff) {
         @{ Name = 'extern'; Dsf = "$PSScriptRoot\extern.dsf" }
         @{ Name = 'parta'; Dsf = "$PSScriptRoot\NDPARTA.DSF" }
         @{ Name = 'partb'; Dsf = "$PSScriptRoot\NDPARTB.DSF" }
-        @{ Name = 'rabenstein'; Dsf = "$root\tools\Rabenstein-master\nextdaad\rabenstein.dsf" }
-        @{ Name = 'urbanupstart'; Dsf = "$root\tools\urban-upstart\URBAN-UPSTART.DSF" }
         @{ Name = 'utotest'; Dsf = $utoDsfPath }
         @{ Name = 'utotest-v3'; Dsf = $utoDsfPath; SrcOpts = @('-v3') }
     )
