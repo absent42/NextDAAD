@@ -136,7 +136,7 @@ releases:
 | `XBN_FLAGS` | `$A200` | Base of the 256 DAAD flags - also where `IX` points on entry to your `EXTERN`/`CALL`/`#int` code |
 | `XBN_OBJTABLE` | `$A300` | Base of the object table |
 | `OBJ_SIZE` | `6` | Bytes per object table entry: `+0` location, `+1` weight/attribute bits, `+2`/`+3` extended attributes in flag order - `+3` holds attribute bits 0-7, `+2` holds bits 8-15, `+4` noun ID, `+5` adjective ID |
-| `XBN_NUMOBJ` | `$A900` | The object count: one byte, the number of entries in the object table. Walk `0` to `XBN_NUMOBJ - 1`; entries past the count are stale |
+| `XBN_NUMOBJ` | `$A900` | The object count: one byte, the number of entries in the object table. Read it with `ld a, (XBN_NUMOBJ)`; walk `0` to `(XBN_NUMOBJ) - 1`, the byte's value; entries past the count are stale |
 | `XBN_API` | `$BEC8` | Base of the service jump table |
 
 `XBN_API` grew to fifteen rows in format 2; rows 0-9 kept their

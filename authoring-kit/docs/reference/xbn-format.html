@@ -303,7 +303,7 @@ releases:</p>
 <tr>
 <td><code>XBN_NUMOBJ</code></td>
 <td><code>$A900</code></td>
-<td>The object count: one byte, the number of entries in the object table. Walk <code>0</code> to <code>XBN_NUMOBJ - 1</code>; entries past the count are stale</td>
+<td>The object count: one byte, the number of entries in the object table. Read it with <code>ld a, (XBN_NUMOBJ)</code>; walk <code>0</code> to <code>(XBN_NUMOBJ) - 1</code>, the byte's value; entries past the count are stale</td>
 </tr>
 <tr>
 <td><code>XBN_API</code></td>

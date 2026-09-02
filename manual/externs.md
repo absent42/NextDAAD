@@ -232,7 +232,7 @@ with this noun?"), or a chance test that behaves like `CHANCE`:
     > LOOK _   MES     4        ; the fallthrough entry
                DONE
 
-where fn 21 is three instructions - `call SVC_RANDOM` / `cp b` / `ccf` /
+where fn 21 is four instructions - `call SVC_RANDOM` / `cp b` / `ccf` /
 `ret` (B still holds the parameter because `SVC_RANDOM` preserves BC;
 `cp` sets carry when the byte is below it, and `ccf` turns that into
 the verdict: carry clear = pass): 77 of the 256 possible bytes pass,
@@ -532,10 +532,11 @@ no service in between - the interpreter simply exposes the memory.
   at the entry for the object named by the first parameter, so
   `ld a, (de)` reads that object's location without any arithmetic of
   your own. The object count is at `XBN_NUMOBJ` (`$A900`, one byte,
-  frozen): walk `0` to `XBN_NUMOBJ - 1` and never a fixed 256, because
-  entries past the count are stale. The two extended-attribute bytes
-  are stored in flag order - offset 3 holds attribute bits 0-7 and
-  offset 2 holds bits 8-15 - so attribute `n` below 8 is bit `n` of
+  frozen): read the count with `ld a, (XBN_NUMOBJ)` and walk objects
+  `0` to `(XBN_NUMOBJ) - 1` - the byte's value, never a fixed 256,
+  because entries past the count are stale. The two extended-attribute
+  bytes are stored in flag order - offset 3 holds attribute bits 0-7
+  and offset 2 holds bits 8-15 - so attribute `n` below 8 is bit `n` of
   `(+3)`. The toolkit's object queries (fns 78-81) are the worked
   readers.
 

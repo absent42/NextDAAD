@@ -235,7 +235,7 @@ with this noun?"), or a chance test that behaves like <code>CHANCE</code>:</p>
 &gt; LOOK _   MES     4        ; the fallthrough entry
            DONE
 </code></pre>
-<p>where fn 21 is three instructions - <code>call SVC_RANDOM</code> / <code>cp b</code> / <code>ccf</code> /
+<p>where fn 21 is four instructions - <code>call SVC_RANDOM</code> / <code>cp b</code> / <code>ccf</code> /
 <code>ret</code> (B still holds the parameter because <code>SVC_RANDOM</code> preserves BC;
 <code>cp</code> sets carry when the byte is below it, and <code>ccf</code> turns that into
 the verdict: carry clear = pass): 77 of the 256 possible bytes pass,
@@ -618,10 +618,11 @@ no service in between - the interpreter simply exposes the memory.</p>
   at the entry for the object named by the first parameter, so
   <code>ld a, (de)</code> reads that object's location without any arithmetic of
   your own. The object count is at <code>XBN_NUMOBJ</code> (<code>$A900</code>, one byte,
-  frozen): walk <code>0</code> to <code>XBN_NUMOBJ - 1</code> and never a fixed 256, because
-  entries past the count are stale. The two extended-attribute bytes
-  are stored in flag order - offset 3 holds attribute bits 0-7 and
-  offset 2 holds bits 8-15 - so attribute <code>n</code> below 8 is bit <code>n</code> of
+  frozen): read the count with <code>ld a, (XBN_NUMOBJ)</code> and walk objects
+  <code>0</code> to <code>(XBN_NUMOBJ) - 1</code> - the byte's value, never a fixed 256,
+  because entries past the count are stale. The two extended-attribute
+  bytes are stored in flag order - offset 3 holds attribute bits 0-7
+  and offset 2 holds bits 8-15 - so attribute <code>n</code> below 8 is bit <code>n</code> of
   <code>(+3)</code>. The toolkit's object queries (fns 78-81) are the worked
   readers.</li>
 </ul>
