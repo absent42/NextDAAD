@@ -59,6 +59,16 @@ FORBIDDEN = [
      "the layer order is game-owned and the interpreter never resets it "
      "after boot - not on RESTART, LOAD, RAMLOAD, game start or a part "
      "switch (owner rulings 2026-08-18)"),
+    # XBN v1 retired facts. XBN format 2 (SP19) moved and grew the header
+    # and the service table; a page still describing format 1 is stale.
+    (r"\$C00A",
+     "the CALL slot table moved to $C00E in XBN format 2"),
+    (r"ten (small routines|three-byte|services)",
+     "the service table has fifteen rows since format 2"),
+    (r"version byte reads .1.",
+     "the format 2 header is fourteen bytes, version 2"),
+    (r"Ten bytes at the start",
+     "the format 2 header is fourteen bytes, version 2"),
 ]
 
 def parse(path, pattern, label):
