@@ -2161,6 +2161,8 @@ foreach ($c in @(@{ n = 'GFX 2 19';   b = [byte[]]@(87, 2, 19) },
                  @{ n = 'GFX 253 20'; b = [byte[]]@(87, 253, 20) },
                  @{ n = 'GFX 17 19';  b = [byte[]]@(87, 17, 19) },
                  @{ n = 'GFX 28 19';  b = [byte[]]@(87, 28, 19) },
+                 @{ n = 'GFX 29 19';  b = [byte[]]@(87, 29, 19) },
+                 @{ n = 'GFX 32 19';  b = [byte[]]@(87, 32, 19) },
                  @{ n = 'MOUSE 0 1';  b = [byte[]]@(86, 0, 1) })) {
     if ((Find-ByteRuns $spritesBytes $c.b).Count -lt 1) {
         throw "sprites: '$($c.n)' not present in tests\out\sprites.ddb - DRC did not emit the authored condact"
@@ -5022,12 +5024,13 @@ if ($Sprites) {
         if (-not (Test-Path $src)) { throw "no $src - the anipack selftest did not produce it" }
         Copy-Item $src (Join-Path $leg "$n.ANI") -Force
     }
-    # 020-028 are byte copies of 002: nine distinct SET NUMBERS with one
-    # record each, which is what the eight-channel ceiling step needs.
-    foreach ($n in 20..28) {
+    # 020-032 are byte copies of 002: thirteen distinct SET NUMBERS with one
+    # record each. 020-028 is the eight-channel ceiling step; 029-032 push
+    # the cache past its sixteen entries so a load has to evict.
+    foreach ($n in 20..32) {
         Copy-Item "$aniWork\002.ANI" (Join-Path $leg ('{0:D3}.ANI' -f $n)) -Force
     }
-    "staged 002/003/006/015.ANI (017.ANI $len017 bytes, two banks) and 020-028.ANI -> $leg"
+    "staged 002/003/006/015.ANI (017.ANI $len017 bytes, two banks) and 020-032.ANI -> $leg"
     # A picture for the final PICTURE 1 step. Same generated 320-wide card
     # the -Palette leg uses, and the same size check on it.
     & python "$PSScriptRoot\art\mkpalcard.py" "$root\tests\out"

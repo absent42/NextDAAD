@@ -213,8 +213,20 @@ def run(z, verbose):
     expect(pool_pages_hold(z, ani, (ent[2] - ent[1]) * 2),
            "S11 the 426-byte tail landed in bank1 page 0 - the second-bank read "
            "kept its image-page index (banks %d and %d)" % (ent[1], ent[2]))
-    s = step(z); show("S12", s)
-    print("sprites_dump: S1-S11 pass (S12 is Task 9)")
+    s = step(z); show("S12", s); r = s.live()
+    # Thirteen entries were already cached, so the fourth of these four loads
+    # is the seventeenth and has to evict. The scan that picks the victim runs
+    # a nested liveness check over the records, and its own counter has to
+    # survive that - a full cache is the only shape where losing it shows.
+    expect(len(s.cached()) == 16, "S12 cache full at 16 entries, got %r" % (s.cached(),))
+    expect(sorted(r) == [29, 30, 31, 32], "S12 sets 29-32 live, got %r" % sorted(r))
+    for n in (29, 30, 31, 32):
+        ent = s.cache[r[n][SR["CACHE"]]]
+        expect(ent[0] == n, "S12 set %d still owns cache entry %d (it holds %d)"
+               % (n, r[n][SR["CACHE"]], ent[0]))
+    expect(s.loads == 17, "S12 four more SD loads (loads=%d)" % s.loads)
+    s = step(z); show("S13", s)
+    print("sprites_dump: S1-S12 pass (S13 is Task 9)")
     return 0
 
 

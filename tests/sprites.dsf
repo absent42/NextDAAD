@@ -2,9 +2,10 @@
 ; asserts the compiled bytes; tests\sprites_dump.py drives it over ZRCP and
 ; reads the DEBUG snapshot after every ANYKEY. Sets: 002 torch 8-bit,
 ; 003 32x32 one-shot, 006 4-bit two blocks, 015 8-bit in block 2, 017 4-bit
-; 126 patterns (16810 bytes, two pool banks), 020-028 copies of 002 for the
-; record ceiling. S11 stops all first: 017 needs every one of the 126
-; pattern half-slots the pointer does not hold.
+; 126 patterns (16810 bytes, two pool banks), 020-032 copies of 002 for the
+; record ceiling and the cache ceiling. S11 stops all first: 017 needs every
+; one of the 126 pattern half-slots the pointer does not hold. S12's four
+; starts take the cache past its sixteen entries, so the last one evicts.
 ;
 ; MOUSE 0 1 shows the pointer so the pointer mask and the pointer-over-4-bit
 ; check are live. PICTURE 1 needs a picture file: the -Sprites leg stages the
@@ -96,7 +97,8 @@ LOOK   4  verb
 /9 "S10 restart of a live set#n"
 /10 " "                             ; retired slot: S11 moved to /11
 /11 "S11 two-bank set#n"
-/12 "S12 PICTURE stops all#n"
+/12 "S12 cache full, one eviction#n"
+/13 "S13 PICTURE stops all#n"
 /OTX
 /0 "a brass lamp"
 /LTX
@@ -160,9 +162,16 @@ SOUTH 0
         GFX 17 19
         MESSAGE 11
         ANYKEY
+        GFX 255 21
+        GFX 29 19
+        GFX 30 19
+        GFX 31 19
+        GFX 32 19
+        MESSAGE 12
+        ANYKEY
         PICTURE 1
         DISPLAY 0
-        MESSAGE 12
+        MESSAGE 13
         ANYKEY
         END
 /END

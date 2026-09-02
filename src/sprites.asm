@@ -592,7 +592,7 @@ spr_cache_tick:
     ret
 
 ; A = cache entry index. ZF set when a live record's SR_CACHE names it.
-; Preserves DE, HL. Corrupts AF, BC, IX.
+; Preserves DE, HL. Corrupts AF, BC (its own djnz), IX.
 spr_cache_inuse:
     push de
     ld c, a
@@ -627,7 +627,9 @@ spr_cache_victim:
     cp SPR_SET_NONE
     jr z, .free
     ld a, c                      ; an entry a live record's SR_CACHE names is
-    call spr_cache_inuse         ; not evictable: its banks are still in use
+    push bc                      ; not evictable: its banks are still in use.
+    call spr_cache_inuse         ; spr_cache_inuse runs its own djnz, so this
+    pop bc                       ; scan's counter and index go on the stack
     jr z, .next
     push hl
     inc hl
