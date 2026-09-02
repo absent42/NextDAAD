@@ -44,7 +44,7 @@
 #   -UtoV3              sd\UTOV3\     tools\TEST.DSF     (V3)
 #   -FontSw             sd\FONTSW\    tests\fontsw.dsf
 #   -Txt40              sd\TXT40\     tests\txt40.dsf
-#   -Accent             sd\ACCENT\    tests\accents.dsf
+#   -Accent             sd\ACCENT\    tests\accents.dsf  (-Accent boots the -auto-tokens compile)
 #   -Palette            sd\PALETTE\   tests\palette.dsf
 #   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -BigDdbTok          sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
@@ -1617,9 +1617,9 @@ New-Item -ItemType Directory -Force $accentWork | Out-Null
 Copy-Item "$PSScriptRoot\accents.dsf" "$accentWork\NDACCENT.DSF" -Force
 Push-Location $accentWork
 try {
-    # No -auto-tokens (provisional owner ruling): the byte assertions below
-    # read the compiled accent triples, which a per-game token table splits
-    # across tokens. Header stays V3.
+    # Builtin table on purpose: the byte assertions below read the compiled
+    # accent triples, which a per-game token table splits across tokens.
+    # The -Accent leg stages the auto-tokens compile made just below.
     & $ndrc @drcTarget EN NDACCENT.DSF NDACCENT.DDB -v3
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (accent)" }
     Copy-Item NDACCENT.DDB "$root\tests\out\accents.ddb" -Force
@@ -1627,6 +1627,27 @@ try {
 finally {
     Pop-Location
 }
+$accentBytesLength = (Get-Item "$root\tests\out\accents.ddb").Length
+
+# Auto-tokens compile of the same source: what the kit ships and what
+# the -Accent hardware leg boots. Not asserted byte by byte here.
+$accentTokWork = Join-Path $root 'tests\out\accents-autotok-work'
+Remove-Item $accentTokWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $accentTokWork | Out-Null
+Copy-Item "$PSScriptRoot\accents.dsf" "$accentTokWork\NDACCENT.DSF" -Force
+Push-Location $accentTokWork
+try {
+    & $ndrc @drcTarget EN NDACCENT.DSF NDACCENT.DDB -v3 -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (accents auto-tokens)" }
+    Move-Item NDACCENT.DDB "$root\tests\out\accents-autotok.ddb" -Force
+}
+finally { Pop-Location }
+$accentTokBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\accents-autotok.ddb")
+if ($accentTokBytes[0] -ne 3) { throw "accents-autotok: DDB header version byte is $($accentTokBytes[0]), expected 3" }
+if ($accentTokBytes.Length -ge $accentBytesLength) {
+    throw "accents-autotok: $($accentTokBytes.Length) bytes is not smaller than the builtin compile ($accentBytesLength) - was -auto-tokens applied?"
+}
+"accents-autotok: $($accentTokBytes.Length) bytes, V3, per-game token table (builtin compile is $accentBytesLength bytes)"
 
 # 256-colour text stimulus fixture. Compiled unconditionally like every
 # block above so a break in the DSF is caught on a plain run, whether or
@@ -4854,8 +4875,8 @@ if ($Accent) {
     if (Get-Process CSpect -ErrorAction SilentlyContinue) {
         throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
     }
-    Copy-Item "$root\tests\out\accents.ddb" "$leg\GAME.DDB" -Force
-    "staged accents.ddb -> sd\$legName\GAME.DDB"
+    Copy-Item "$root\tests\out\accents-autotok.ddb" "$leg\GAME.DDB" -Force
+    "staged accents-autotok.ddb -> sd\$legName\GAME.DDB (per-game token table, the shipping configuration)"
     $accentActive = $true
 }
 
@@ -4944,7 +4965,7 @@ foreach ($stagedDdb in Get-ChildItem -LiteralPath $leg -Filter '*.DDB' -File) {
 if ($xbnActive) { "active: extern (XBN extern support fixture$(if ($XbnNoBin) { ', no GAME.XBN staged' } elseif ($XbnBad) { ", GAME.XBN = $XbnBad reject variant" } elseif ($XbnTicker) { ', GAME.XBN = authoring-kit ticker example' }))" }
 elseif ($fontSwActive) { "active: fontsw (SP18 font/pointer switching fixture)" }
 elseif ($txt40Active) { "active: txt40 (40-column tilemap mode fixture)" }
-elseif ($accentActive) { "active: accents (accented-glyph / charset-redirect fixture - verbs ACC PAGE FORCE R)" }
+elseif ($accentActive) { "active: accents (accented-glyph / charset-redirect fixture - verbs ACC PAGE FORCE R, accents-autotok.ddb $($accentTokBytes.Length) bytes, per-game token table)" }
 elseif ($partActive) { "active: part 1 of 2 (NDPARTA/NDPARTB fixture pair - GAME2.DDB + PART2\0.XMB also staged)" }
 elseif ($uuActive) { "active: urbanupstart" }
 elseif ($UU) { "active: urbanupstart (GAME.DDB copy failed, see warning above - stale DDB still active)" }
