@@ -254,7 +254,12 @@ sprSavedMmu:  db 0, 0
 ; Boot, from bank_table_init's tail: empty state, reserved slots.
 spr_boot_init:
     ld hl, spr_state_init
-    jp spr_call
+    call spr_call
+ IFDEF DEBUG
+    ld hl, spr_selftest
+    call spr_call
+ ENDIF
+    ret
 
 ; Call HL (a SPR_PAGE routine) with SPR_TAB_PAGE in slot 6 and SPR_PAGE in
 ; slot 7. Callable from any overlay: the remaps happen in resident code and

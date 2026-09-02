@@ -3843,9 +3843,43 @@ ptr_arrow_install:
     ld de, mousePattern
     ld bc, 256
     ldir
+    call ptr_mask_scan
     xor a
     ld (mouseReady), a           ; force the next MOUSE 1 to re-OTIR
     ret
+
+; Mark every palette block an opaque mousePattern byte falls in, so 4-bit
+; sets never claim them. Both mousePattern writers call this, so the
+; built-in arrow is covered when no pointer file ships. Corrupts AF, BC, DE, HL.
+ptr_mask_scan:
+    ld de, mousePattern
+    ld hl, 0                     ; HL = mask
+    ld b, 0                      ; 256 pixels via djnz
+.px:
+    ld a, (de)
+    cp L2_TRANSP_COLOUR
+    jr z, .skip
+    swapnib
+    and 15                       ; block = top nibble
+    push bc
+    push de
+    ld b, a
+    ld de, 1
+    bsla de, b                   ; DE = 1 << block
+    ld a, e
+    or l
+    ld l, a
+    ld a, d
+    or h
+    ld h, a
+    pop de
+    pop bc
+.skip:
+    inc de
+    djnz .px
+    ex de, hl                    ; DE = mask; spr_call passes DE through
+    ld hl, spr_pointer_mask_set
+    jp spr_call
 
 ; A = shape number 0-9 -> ptrNameBuf = "POINTER.SPR",0 for 0, or
 ; "POINTERn.SPR",0 for 1-9, with ptrNameLen set to the byte count
@@ -3999,6 +4033,7 @@ pointer_load:
     ld de, mousePattern               ; live buffer (this ldir and
     ld bc, 256                        ; ptr_arrow_install's, above, are
     ldir                               ; mousePattern's only two writers)
+    call ptr_mask_scan
     xor a
     ld (mouseReady), a               ; force the next MOUSE 1 to re-OTIR
                                      ; the new pattern to hardware
