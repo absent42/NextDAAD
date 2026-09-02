@@ -10,6 +10,7 @@ param(
     [switch]$All
 )
 $ErrorActionPreference = 'Stop'
+trap { "ERROR: $_"; exit 1 }
 if (-not $Root) { $Root = Join-Path (Split-Path $PSScriptRoot) 'tests\out' }
 
 # The 26 DDBs the 25 fixture compiles produce (debugflag makes two).
