@@ -5,9 +5,9 @@
 ; costs four flags however many values a game manipulates.
 ;
 ; Printing goes through SVC_PUTCHAR into whatever DAAD window the author
-; has selected. The author brackets the call with WINDOW, exactly as a
-; status-line process already does, so this module needs no tilemap
-; geometry and no width probe.
+; has selected. The author brackets the call with WINDOW, or sets fn 84's
+; print target once and lets the module bracket itself via SVC_WINDOW -
+; either way the module needs no tilemap geometry and no width probe.
 
     IFNDEF XBN_MODULE
     DEVICE ZXSPECTRUMNEXT
@@ -46,9 +46,13 @@ ext:
     jp z, hhmm
     cp 83
     jp z, mmss
+    cp 84
+    jp z, settgt
+.notmine:
+    or a                          ; CF clear: unrecognised fn, no failure
     ret
 
-; Pinned CALL slots 0-3, at $C00A + 3n. xbnmod.inc jumps here by name, so
+; Pinned CALL slots 0-3, at $C00E + 3n. xbnmod.inc jumps here by name, so
 ; these labels are part of the module's contract with the kit.
 ; CALL carries no parameter: the flag number comes from flag 249.
 tk_call0:
@@ -191,6 +195,7 @@ emit_min2:
 
 ; fn 70 - print flag param1 as decimal 0-255.
 p8:
+    call print_enter
     ld a, (param)
     ld l, a
     ld h, 0
@@ -198,16 +203,22 @@ p8:
     add hl, de
     ld l, (hl)
     ld h, 0
-    jp emit_u16
+    call emit_u16
+    jp print_leave
 
 ; fn 71 - print flags param1/param1+1 as decimal 0-65535, low byte first.
 p16:
     ld a, (param)
     inc a
-    ret z                        ; flag 255 has no flag 256
-    dec a
+    jr z, .noop                  ; flag 255 has no flag 256
+    call print_enter
+    ld a, (param)                ; re-fetch: print_enter clobbers A
     call pair_read
-    jp emit_u16
+    call emit_u16
+    jp print_leave
+.noop:
+    or a
+    ret
 
 ; A = flag number -> HL = the pair at [A],[A+1], low byte first. Parks the
 ; pointer for pair_store. Caller has already rejected A = 255.
@@ -238,7 +249,7 @@ pairp:   dw 0
 add8:
     ld a, (param)
     inc a
-    ret z
+    jr z, .noop
     dec a
     call pair_read
     ld a, (XBN_FLAGS + FLAG_OP2)
@@ -249,12 +260,15 @@ add8:
     adc a, 0
     ld (XBN_FLAGS + FLAG_RESULT), a
     jp pair_store
+.noop:
+    or a
+    ret
 
 ; fn 73 - [n,n+1] -= flag 249 as an immediate. Flag 251 = 1 on underflow.
 sub8:
     ld a, (param)
     inc a
-    ret z
+    jr z, .noop
     dec a
     call pair_read
     ld a, (XBN_FLAGS + FLAG_OP2)
@@ -266,19 +280,22 @@ sub8:
     adc a, 0
     ld (XBN_FLAGS + FLAG_RESULT), a
     jp pair_store
+.noop:
+    or a
+    ret
 
 ; fn 74 - compare [n,n+1] against the pair at flag 249.
 ; Flag 251 = 0 less, 1 equal, 2 greater. Neither pair is written.
 cmpp:
     ld a, (XBN_FLAGS + FLAG_OP2)
     inc a
-    ret z
+    jr z, .noop
     dec a
     call pair_read
     ld (tmp16), hl
     ld a, (param)
     inc a
-    ret z
+    jr z, .noop
     dec a
     call pair_read
     ld de, (tmp16)
@@ -291,6 +308,10 @@ cmpp:
     ld a, 2
 .store:
     ld (XBN_FLAGS + FLAG_RESULT), a
+    or a                         ; CF clear: sbc above leaves the borrow live
+    ret
+.noop:
+    or a
     ret
 
 ; fn 75 - [n,n+1] += the pair at flag 249. Flag 251 = 1 on overflow.
@@ -298,13 +319,13 @@ cmpp:
 addp:
     ld a, (XBN_FLAGS + FLAG_OP2)
     inc a
-    ret z
+    jr z, .noop
     dec a
     call pair_read
     ld (tmp16), hl
     ld a, (param)
     inc a
-    ret z
+    jr z, .noop
     dec a
     call pair_read
     ld de, (tmp16)
@@ -313,6 +334,9 @@ addp:
     adc a, 0
     ld (XBN_FLAGS + FLAG_RESULT), a
     jp pair_store
+.noop:
+    or a
+    ret
 
 tmp16:   dw 0
 
@@ -338,8 +362,9 @@ div16_8:
 hhmm:
     ld a, (param)
     inc a
-    ret z
-    dec a
+    jr z, .noop
+    call print_enter
+    ld a, (param)                ; re-fetch: print_enter clobbers A
     ld l, a
     ld h, 0
     ld de, XBN_FLAGS
@@ -355,14 +380,19 @@ hhmm:
     ld hl, (tmpptr)
     ld l, (hl)
     ld h, 0
-    jp emit_min2
+    call emit_min2
+    jp print_leave
+.noop:
+    or a
+    ret
 
 ; fn 83 - print flags param1/param1+1, a 16-bit second count, as MM:SS.
 mmss:
     ld a, (param)
     inc a
-    ret z
-    dec a
+    jr z, .noop
+    call print_enter
+    ld a, (param)                ; re-fetch: print_enter clobbers A
     call pair_read               ; HL = total seconds
     ld c, 60
     call div16_8                 ; HL = minutes, A = seconds
@@ -373,10 +403,60 @@ mmss:
     ld a, (tmpsec)
     ld l, a
     ld h, 0
-    jp emit_min2
+    call emit_min2
+    jp print_leave
+.noop:
+    or a
+    ret
 
 tmpptr:  dw 0
 tmpsec:  db 0
+
+; --- Print target window (fn 84) --------------------------------------
+; tgtWin 0 = none (the author brackets prints with WINDOW themselves, as
+; before). tgtWin 1-7 = the four printing fns bracket their own output:
+; print_enter selects it and parks the window it replaced, print_leave
+; restores that window - the restore is what flushes the printed word.
+tgtWin:  db 0
+prevWin: db 0
+
+; fn 84 - EXTERN w 84. p1 1-7 sets the target; p1 = 0 or p1 > 7 clears it
+; (never masks 8-255 onto a real window number). p1 is the window number
+; itself, not a flag number - unlike every other fn in this module.
+settgt:
+    ld a, (param)
+    cp 8
+    jr nc, .none
+    or a
+    jr z, .none
+    ld (tgtWin), a
+    jr .done
+.none:
+    xor a
+    ld (tgtWin), a
+.done:
+    or a
+    ret
+
+; Entered after a printing fn's own flag-255 guard; a no-op while
+; tgtWin is 0. SVC_WINDOW's out A is the window it replaced.
+print_enter:
+    ld a, (tgtWin)
+    or a
+    ret z
+    call SVC_WINDOW
+    ld (prevWin), a
+    ret
+
+; Tail-called as a printing fn's final, CF-clear ret. SVC_WINDOW leaves
+; CF clear for any A in 0-7 (xbn.inc), which prevWin always is here.
+print_leave:
+    ld a, (tgtWin)
+    or a
+    ret z
+    ld a, (prevWin)
+    call SVC_WINDOW
+    ret
 
 ; No hook. The interpreter still calls this every frame in a combined
 ; build, so it must exist and must return at once.

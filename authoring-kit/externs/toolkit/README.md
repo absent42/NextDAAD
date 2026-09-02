@@ -4,14 +4,14 @@ A collection of small pure-logic helpers: decimal printing, 16-bit
 arithmetic and time formatting. Unlike `clock` or `timer`, toolkit has no
 frame hook and no arming call - every function runs to completion inside
 the single foreground `EXTERN` that calls it, and there is nothing for a
-LOAD to restore. The module implements all eight of its functions: fn 70
-and fn 71 for decimal printing, fn 72 to fn 75 for 16-bit arithmetic on
-flag pairs, fn 82 and fn 83 for time formatting. Four of them - fn 70,
-71, 82 and 83 - are also reachable through DAAD's CALL condact, a
-second entry point alongside the existing EXTERN dispatch (see CALL
-slots below). Fn codes 76 to 81 also belong to this module's range -
-object queries and a random-without-repeat picker - but are separate
-work not covered here.
+LOAD to restore. The module implements nine of its functions: fn 70 and
+fn 71 for decimal printing, fn 72 to fn 75 for 16-bit arithmetic on flag
+pairs, fn 82 and fn 83 for time formatting, and fn 84 to set a print
+target window. Four of them - fn 70, 71, 82 and 83 - are also reachable
+through DAAD's CALL condact, a second entry point alongside the existing
+EXTERN dispatch (see CALL slots below). Fn codes 76 to 81 also belong to
+this module's range - object queries and a random-without-repeat picker -
+but are separate work not covered here.
 
 ## Calling convention
 
@@ -58,8 +58,8 @@ a newline, a full window width or a window switch. A number printed as
 the LAST thing in an entry, with no following text and no WINDOW switch,
 stays buffered and invisible until something else flushes it. Follow a
 final number with a MES containing at least a space or a newline, or a
-WINDOW switch - the status-line example below works because its closing
-`WINDOW 1` flushes.
+WINDOW switch - or set a print target window (fn 84, below), whose own
+restore switch flushes it for you.
 
 ## 16-bit arithmetic on flag pairs
 
@@ -104,40 +104,67 @@ skips the EXTERN dispatch. CALL carries no parameter, so the flag number comes
 from flag 249:
 
     LET 249 100
-    CALL 13 192     ; slot 1: print flags 100/101 as decimal
+    CALL 17 192     ; slot 1: print flags 100/101 as decimal
 
 | Slot | Address | Does the same as |
 |---|---|---|
-| 0 | `CALL 10 192` | `EXTERN n 70` |
-| 1 | `CALL 13 192` | `EXTERN n 71` |
-| 2 | `CALL 16 192` | `EXTERN n 82` |
-| 3 | `CALL 19 192` | `EXTERN n 83` |
+| 0 | `CALL 14 192` | `EXTERN n 70` |
+| 1 | `CALL 17 192` | `EXTERN n 71` |
+| 2 | `CALL 20 192` | `EXTERN n 82` |
+| 3 | `CALL 23 192` | `EXTERN n 83` |
 
-The addresses are fixed in every build shape - standalone, combined and any
-subset - so they are safe to hard-code, provided toolkit is in the build. If
-it is not, the slots still exist at those addresses but jump to a bare RET
-and print nothing. Never CALL a routine address instead; those move whenever
-any other module is edited.
+Slot n sits at $C00E + 3n. The addresses are fixed in every build shape -
+standalone, combined and any subset - so they are safe to hard-code, provided
+toolkit is in the build. If it is not, the slots still exist at those
+addresses but jump to a bare RET and print nothing. Never CALL a routine
+address instead; those move whenever any other module is edited.
+
+## Print target window
+
+    EXTERN w 84    ; set the toolkit print target: 1-7 selects a window, 0 clears it
+
+Unlike every other function in this module, fn 84's parameter is the window
+number itself, not a flag number. While the target is nonzero, fn 70, 71, 82,
+83 and the four CALL slots bracket their own output - select the target
+(parking whatever window was current), print, restore what was current - so
+the author never brackets with `WINDOW` and never hits the flush trap a bare
+number left buffered would otherwise fall into. p1 = 0 or p1 > 7 clears the
+target; 8-255 is never masked onto a real window.
+
+Two behaviours matter before relying on it:
+
+- Selecting the target flushes the CURRENT window's pending word first, the
+  same as any `WINDOW` switch. `MES "Score " / EXTERN 100 71` with a target
+  set puts "Score" in the game window and the number in the status window,
+  not side by side - set the target back to 0 (`EXTERN 0 84`) before a print
+  that mixes MES text and a number inline.
+- The More prompt is reachable in the TARGET window: an exact line fill
+  wraps there exactly as it would in any other window (the print path's
+  glyph wrap), which a one-row status window has no room to satisfy. Size
+  the status window for what it will actually hold.
 
 ## A status line
 
-The module cannot select a window itself - there is no service for it - so the
-author brackets the call, which is exactly what a DAAD status-line process
-already does: a dedicated window set up once - its own `WINAT`/`WINSIZE`,
-PAPER and INK - then repainted every turn, with the toolkit call bracketed
-by `WINDOW` in and `WINDOW` back out.
+Geometry is still the author's job, set up once - its own `WINAT`/`WINSIZE`,
+PAPER and INK - the same as any other window. Fn 84 replaces the second half
+of the old pattern: instead of bracketing every print with `WINDOW`, arm the
+target once and print bare from wherever the value changes.
 
-    /PRO 20
-    > _  _   WINDOW 2
+    /PRO 1
+    > _  _   WINDOW  2
              CLS
-             MES "Score "
-             LET 248 5
-             EXTERN 100 71     ; 16-bit score at flags 100/101
-             MES "  Time "
-             EXTERN 224 82     ; the clock module's HH:MM
-             WINDOW 1
+             MES     "Score       Time "
+             WINDOW  1
+             EXTERN  2 84      ; target window 2 from here on
              DONE
 
-Because the window is the reservation and the print path already handles
-width, colour and wrapping, this module needs no tilemap geometry and no rules
-about which rows are safe.
+    > _  _   LET    248 5
+             EXTERN 100 71     ; 16-bit score at flags 100/101
+             DONE
+
+    > _  _   EXTERN 224 82     ; the clock module's HH:MM
+             DONE
+
+Each of the last two entries is a plain action dropped wherever the score or
+the clock actually changes - no `WINDOW`, no restore, no risk of leaving a
+number unflushed.
