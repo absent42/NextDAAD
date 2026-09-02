@@ -81,9 +81,10 @@ you can read the same pages on GitHub from [`manual/index.md`](manual/index.md)
 
 The kit ships a **collection of ready-made externs** in
 `authoring-kit\externs\` - a news ticker, Layer 2 palette fades, an
-SD-card hint book, an in-game clock, countdown timers and a
-printing/arithmetic toolkit - each as source plus a prebuilt binary,
-shipped prebuilt as one combined `GAME.XBN`, no assembler needed. See
+SD-card hint book, an in-game clock, countdown timers, a real-time
+clock reader and a toolkit of printing, arithmetic and object
+queries - each as source plus a prebuilt binary, shipped prebuilt as
+one combined `GAME.XBN`, no assembler needed. See
 [`authoring-kit\externs\README.md`](authoring-kit/externs/README.md)
 for the catalogue.
 
