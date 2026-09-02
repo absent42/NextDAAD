@@ -151,16 +151,18 @@ currently loaded `GAME.XBN` - it cannot jump anywhere else in the
 address space the way a classic `CALL` into a flat memory map could.
 An out-of-range address, or no XBN loaded at all, is a silent no-op.
 
-### The #int hook is the 50Hz frame interrupt, and services do not run inside it
+### The #int hook is the 50Hz frame interrupt, and only four services run inside it
 
 An extern's interrupt entry point runs once per frame, timed by the
 interpreter's own vertical-blank interrupt - there is no author-selectable
-interrupt source or rate. None of the ten [services](externs.md#services)
-may be called from inside it; every one of them is foreground-only
-(`EXTERN`/`CALL` context) and will misbehave if called from `#int`. Do
-any file IO, printing or random-number work the hook needs from a
-foreground `EXTERN` call instead, staging the result somewhere the hook
-can read without calling a service itself.
+interrupt source or rate. Four of the [services](externs.md#services) may
+be called from inside it - `SVC_VERSION`, `SVC_RANDOM`, `SVC_FRAMES` and
+`SVC_BUSY` - because they read resident memory and never page. Every other
+row (printing, file IO, `SVC_GETMSG`, `SVC_GETDATE`, `SVC_PALREAD`,
+`SVC_WINDOW`) is foreground-only (`EXTERN`/`CALL` context) and will
+misbehave if called from `#int`. Do any file IO, printing or window work
+the hook needs from a foreground `EXTERN` call instead, staging the result
+somewhere the hook can read without calling a service itself.
 
 ## Spanish databases
 

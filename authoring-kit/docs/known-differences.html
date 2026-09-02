@@ -124,15 +124,17 @@ audio work belongs in the <code>#int</code> hook driving hardware directly (see
 currently loaded <code>GAME.XBN</code> - it cannot jump anywhere else in the
 address space the way a classic <code>CALL</code> into a flat memory map could.
 An out-of-range address, or no XBN loaded at all, is a silent no-op.</p>
-<h3 id="the-int-hook-is-the-50hz-frame-interrupt-and-services-do-not-run-inside-it">The #int hook is the 50Hz frame interrupt, and services do not run inside it</h3>
+<h3 id="the-int-hook-is-the-50hz-frame-interrupt-and-only-four-services-run-inside-it">The #int hook is the 50Hz frame interrupt, and only four services run inside it</h3>
 <p>An extern's interrupt entry point runs once per frame, timed by the
 interpreter's own vertical-blank interrupt - there is no author-selectable
-interrupt source or rate. None of the ten <a href="externs.html#services">services</a>
-may be called from inside it; every one of them is foreground-only
-(<code>EXTERN</code>/<code>CALL</code> context) and will misbehave if called from <code>#int</code>. Do
-any file IO, printing or random-number work the hook needs from a
-foreground <code>EXTERN</code> call instead, staging the result somewhere the hook
-can read without calling a service itself.</p>
+interrupt source or rate. Four of the <a href="externs.html#services">services</a> may
+be called from inside it - <code>SVC_VERSION</code>, <code>SVC_RANDOM</code>, <code>SVC_FRAMES</code> and
+<code>SVC_BUSY</code> - because they read resident memory and never page. Every other
+row (printing, file IO, <code>SVC_GETMSG</code>, <code>SVC_GETDATE</code>, <code>SVC_PALREAD</code>,
+<code>SVC_WINDOW</code>) is foreground-only (<code>EXTERN</code>/<code>CALL</code> context) and will
+misbehave if called from <code>#int</code>. Do any file IO, printing or window work
+the hook needs from a foreground <code>EXTERN</code> call instead, staging the result
+somewhere the hook can read without calling a service itself.</p>
 <h2 id="spanish-databases">Spanish databases</h2>
 <p>Two pieces of Spanish support are missing. Only Spanish databases are
 affected; an English game sees none of this.</p>

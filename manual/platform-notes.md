@@ -160,12 +160,14 @@ here:
 - **Vector 7, `XUNDONE`** - clear the current action's done stamp, for a
   `SYNONYM`-style entry that should not count as a completed turn.
 
-**Every other vector is a safe no-op.** The condact is consumed and play
-continues. The rest of classic MALUVA - `XPICTURE`, `XSAVE`, `XLOAD`,
-`XBEEP`, `XSPEED`, `XNEXTCLS`, `XNEXTRST` - is deprecated in the compiler
-in favour of engine features this target covers natively:
-`PICTURE`/`DISPLAY` for pictures, `SAVE`/`LOAD` for game state, `EXIT`
-for a reset, and `SFX` for sound.
+**Every other vector is a safe no-op unless a `GAME.XBN` is loaded**, in
+which case it forwards to the extern (see
+[Externs](externs.md#the-extern-contract)); with no extern the condact is
+consumed and play continues. The rest of classic MALUVA - `XPICTURE`,
+`XSAVE`, `XLOAD`, `XBEEP`, `XSPEED`, `XNEXTCLS`, `XNEXTRST` - is deprecated
+in the compiler in favour of engine features this target covers natively:
+`PICTURE`/`DISPLAY` for pictures, `SAVE`/`LOAD` for game state, `EXIT` for
+a reset, and `SFX` for sound.
 
 Two things are deliberately unavailable. The compiler's `-X`
 (`dumpToXMB`) switch, which would route all of a game's text through
@@ -174,6 +176,20 @@ implemented. And **do not hand-write `EXTERN n 3`** for anything else:
 vector 3 has a three-byte encoding of its own, and the engine always
 consumes the matching third byte whenever it sees that shape, so any
 other use of a literal 3 there misaligns every condact after it.
+
+### `EXTERN` can fail an entry
+
+A NextDAAD extension, settled behaviour. When a loaded extern returns with
+the carry flag set, the `EXTERN` behaves as a failed condition: the entry
+stops and processing falls to the next matching entry. The entry's done
+state is cleared as well, so a following `ISDONE` reads not-done even if an
+earlier action in the same entry ran - put the `EXTERN` guard first and the
+difference never shows. With no `GAME.XBN` present, and for the three
+reserved vectors, `EXTERN` remains a pure action that never fails; `CALL`
+never carries a verdict. Classic DAAD interpreters treat `EXTERN` as an
+action only; a database that relies on this extension is portable only to
+NextDAAD. The full contract is in
+[Externs](externs.md#condition-semantics).
 
 ### `AUTOG` searches here, then carried, then worn
 

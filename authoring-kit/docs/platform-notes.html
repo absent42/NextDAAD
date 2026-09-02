@@ -136,12 +136,14 @@ here:</p>
 <li><strong>Vector 7, <code>XUNDONE</code></strong> - clear the current action's done stamp, for a
   <code>SYNONYM</code>-style entry that should not count as a completed turn.</li>
 </ul>
-<p><strong>Every other vector is a safe no-op.</strong> The condact is consumed and play
-continues. The rest of classic MALUVA - <code>XPICTURE</code>, <code>XSAVE</code>, <code>XLOAD</code>,
-<code>XBEEP</code>, <code>XSPEED</code>, <code>XNEXTCLS</code>, <code>XNEXTRST</code> - is deprecated in the compiler
-in favour of engine features this target covers natively:
-<code>PICTURE</code>/<code>DISPLAY</code> for pictures, <code>SAVE</code>/<code>LOAD</code> for game state, <code>EXIT</code>
-for a reset, and <code>SFX</code> for sound.</p>
+<p><strong>Every other vector is a safe no-op unless a <code>GAME.XBN</code> is loaded</strong>, in
+which case it forwards to the extern (see
+<a href="externs.html#the-extern-contract">Externs</a>); with no extern the condact is
+consumed and play continues. The rest of classic MALUVA - <code>XPICTURE</code>,
+<code>XSAVE</code>, <code>XLOAD</code>, <code>XBEEP</code>, <code>XSPEED</code>, <code>XNEXTCLS</code>, <code>XNEXTRST</code> - is deprecated
+in the compiler in favour of engine features this target covers natively:
+<code>PICTURE</code>/<code>DISPLAY</code> for pictures, <code>SAVE</code>/<code>LOAD</code> for game state, <code>EXIT</code> for
+a reset, and <code>SFX</code> for sound.</p>
 <p>Two things are deliberately unavailable. The compiler's <code>-X</code>
 (<code>dumpToXMB</code>) switch, which would route all of a game's text through
 <code>0.XMB</code> rather than only the text you asked for by name, is not
@@ -149,6 +151,18 @@ implemented. And <strong>do not hand-write <code>EXTERN n 3</code></strong> for 
 vector 3 has a three-byte encoding of its own, and the engine always
 consumes the matching third byte whenever it sees that shape, so any
 other use of a literal 3 there misaligns every condact after it.</p>
+<h3 id="extern-can-fail-an-entry"><code>EXTERN</code> can fail an entry</h3>
+<p>A NextDAAD extension, settled behaviour. When a loaded extern returns with
+the carry flag set, the <code>EXTERN</code> behaves as a failed condition: the entry
+stops and processing falls to the next matching entry. The entry's done
+state is cleared as well, so a following <code>ISDONE</code> reads not-done even if an
+earlier action in the same entry ran - put the <code>EXTERN</code> guard first and the
+difference never shows. With no <code>GAME.XBN</code> present, and for the three
+reserved vectors, <code>EXTERN</code> remains a pure action that never fails; <code>CALL</code>
+never carries a verdict. Classic DAAD interpreters treat <code>EXTERN</code> as an
+action only; a database that relies on this extension is portable only to
+NextDAAD. The full contract is in
+<a href="externs.html#condition-semantics">Externs</a>.</p>
 <h3 id="autog-searches-here-then-carried-then-worn"><code>AUTOG</code> searches here, then carried, then worn</h3>
 <p><code>AUTOG</code> - the condact behind a <code>GET</code> entry that takes its object from
 what the player typed rather than from a number in your source - looks
