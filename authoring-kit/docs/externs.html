@@ -41,9 +41,11 @@ needs:</p>
 </code></pre>
 <p><code>XBN_ORG</code> is <code>$C000</code> - every XBN is assembled to run at that address,
 and the interpreter maps it there for you at call time. <code>XBN_HEADER</code>
-writes the ten-byte header the loader validates (see
-<a href="reference/xbn-format.html">XBN format</a> for the exact layout); pass the
-label of your <code>EXTERN</code>/<code>CALL</code> entry point and your frame-hook entry
+writes the fourteen-byte version 2 header - magic, version, the two
+entry points, the size and four reserved bytes that must stay zero - and
+the loader checks every one of them (see
+<a href="reference/xbn-format.html#header">XBN format</a> for the exact layout); pass
+the label of your <code>EXTERN</code>/<code>CALL</code> entry point and your frame-hook entry
 point, or <code>0</code> for either one you do not need. An interrupt-only extern
 (entry <code>0</code>, hook set) is legal, and so is the reverse.</p>
 <p>End your source with a label named <code>xbn_end</code> right after your last byte,
@@ -51,6 +53,8 @@ and a <code>SAVEBIN</code> that writes the whole thing out:</p>
 <pre><code>xbn_end:
     SAVEBIN &quot;GAME.XBN&quot;, XBN_ORG, xbn_end - XBN_ORG
 </code></pre>
+<p>A collection module uses <code>xbnmod.inc</code>'s <code>XBN_BEGIN</code> instead of
+<code>XBN_HEADER</code>; see <a href="#one-binary-any-subset">the collection</a>.</p>
 <p>Copy the resulting <code>GAME.XBN</code> next to <code>GAME.DDB</code> on the card. The whole
 binary, header included, must fit in 16384 bytes - see
 <a href="reference/limits.html">Limits</a>.</p>
@@ -111,18 +115,17 @@ EXTERN 0 43
 <p>This is the same sequence documented in <code>externs/fade/fade.asm</code>'s own
 header, kept in step with it here.</p>
 <h2 id="the-extern-contract">The EXTERN contract</h2>
-<p><code>EXTERN p1 fn</code> (and its three-parameter V3 form) calls your extern's
-entry point with the second parameter as a dispatch selector, the way
-classic DAAD externs always worked. In a Release build - the one your
-players run - three function codes are reserved by the interpreter
-itself and never reach your code: 3 is <code>XMESSAGE</code>, 4 is <code>XPART</code>, 7 is
-<code>XUNDONE</code>. Every other code your database can compile - 0, 1, 2, 5, 6,
-8-15, and everything from 16 upward - forwards straight to your
-extern's entry point when one is loaded, and behaves exactly as it did
-before externs existed (a harmless no-op) when it is not. That is what
-makes it safe to ship a database written against an XBN to a player who
-has none: nothing crashes, nothing errors, the <code>EXTERN</code> calls that
-would have reached your code simply do nothing.</p>
+<p><code>EXTERN p1 fn</code> calls your extern's entry point with the second parameter
+as a dispatch selector, the way classic DAAD externs always worked. In a
+Release build - the one your players run - three function codes are
+reserved by the interpreter itself and never reach your code: 3 is
+<code>XMESSAGE</code>, 4 is <code>XPART</code>, 7 is <code>XUNDONE</code>. Every other code your database
+can compile - 0, 1, 2, 5, 6, 8-15, and everything from 16 upward -
+forwards straight to your extern's entry point when one is loaded, and
+behaves exactly as it did before externs existed (a harmless no-op) when
+it is not. That is what makes it safe to ship a database written against
+an XBN to a player who has none: nothing crashes, nothing errors, the
+<code>EXTERN</code> calls that would have reached your code simply do nothing.</p>
 <p>A DEBUG build additionally reserves function codes 6 and 8-14 for the
 interpreter's own internal probes, so those codes do not reach your
 extern there. Write your database against function codes outside
@@ -172,18 +175,91 @@ when you rely on it.</p>
 undefined, since a <code>CALL</code> carries no parameters.</p>
 <p>Return with a plain <code>RET</code>. You may clobber A, BC, DE, HL, IX, IY and
 both alternate register sets - the interpreter saves nothing across the
-call beyond what it needs for its own bookkeeping. There is no result
-register and no error code the interpreter reads back: write whatever
-you want the rest of the game to see into a flag, and test that flag
-with an ordinary condact after the <code>EXTERN</code> call. Keep stack usage
-modest - your extern runs on the interpreter's own stack, and a couple
-of hundred bytes of headroom is a safe budget.</p>
+call beyond what it needs for its own bookkeeping - with ONE exception:
+the carry flag on return is your extern's verdict on the entry that
+called it (next section). Keep stack usage modest - your extern runs on
+the interpreter's own stack, and a couple of hundred bytes of headroom
+is a safe budget.</p>
 <p>Unlike some classic DAAD interpreters, this one does not let an extern
 consume extra bytes inline from the condact stream - there is no way to
 read "the next byte after this EXTERN" the way some machines' externs
 could. Pass extra data through flags instead: <code>LET</code> a value before the
 <code>EXTERN</code> call, or build a lookup table in your XBN indexed by the
 function code.</p>
+<h3 id="condition-semantics">Condition semantics</h3>
+<p><code>EXTERN</code> is a condition as well as an action. When your entry point
+returns with the carry flag CLEAR, the entry continues past the
+<code>EXTERN</code> exactly as it always did. When it returns with the carry flag
+SET, the calling entry FAILS: processing falls to the next matching
+entry, the way a failed <code>AT</code> or <code>PRESENT</code> behaves - and the entry's done
+state is cleared, so <code>ISDONE</code> afterwards reads not-done even if an
+action earlier in the same entry had already run. Put the <code>EXTERN</code>
+guard FIRST in an entry, before the actions that depend on it, and that
+edge never shows.</p>
+<p>Every path out of your extern must therefore return a DELIBERATE carry
+state: <code>or a</code> before a <code>ret</code> clears it, <code>scf</code> sets it. A dispatcher that
+does not recognise the function code returns with carry clear, so an
+<code>EXTERN</code> meant for another module (or for nothing) never fails an entry
+by accident:</p>
+<pre><code>ext:
+    ld a, c
+    cp 20
+    jp z, my_action
+    cp 21
+    jp z, my_condition
+.notmine:
+    or a                ; not my fn: carry clear, the entry continues
+    ret
+
+my_action:              ; an ACTION: always carry clear on the way out
+    ...
+    or a
+    ret
+
+my_condition:           ; a CONDITION: carry set = "no", the entry fails
+    ld a, (XBN_FLAGS + 100)
+    cp 5
+    jr c, .no
+    or a
+    ret
+.no:
+    scf
+    ret
+</code></pre>
+<p>Use it for anything a built-in condition would be used for: a guard
+("is the hint book present?"), a predicate query ("is there an object
+with this noun?"), or a chance test that behaves like <code>CHANCE</code>:</p>
+<pre><code>&gt; LOOK _   EXTERN  77 21    ; passes about 30% of the time, like CHANCE 30
+           MES     3        ; "You notice something."
+           DONE
+&gt; LOOK _   MES     4        ; the fallthrough entry
+           DONE
+</code></pre>
+<p>where fn 21 is three instructions - <code>call SVC_RANDOM</code> / <code>cp b</code> / <code>ccf</code> /
+<code>ret</code> (B still holds the parameter because <code>SVC_RANDOM</code> preserves BC;
+<code>cp</code> sets carry when the byte is below it, and <code>ccf</code> turns that into
+the verdict: carry clear = pass): 77 of the 256 possible bytes pass,
+about 30%, which is what <code>CHANCE 30</code> does with the same stream. Note
+the inversion - <code>cp</code>'s carry sense is the opposite of the verdict's,
+the commonest way an incidental carry leaks into a <code>ret</code>. Document, for
+every function you publish, whether it is an action (always carry clear)
+or a condition (what "no" means).</p>
+<p>Three things never fail an entry, whatever your code does (nor do the
+DEBUG build's probe codes 6 and 8-14, which never reach you there): an
+<code>EXTERN</code> with no <code>GAME.XBN</code> loaded (still a pure no-op, so a database
+written against an XBN stays shippable to a player who has none), the
+reserved codes 3, 4 and 7 (the interpreter's own vectors), and <code>CALL</code>
+(a pure action with no return contract).</p>
+<h3 id="the-result-convention">The result convention</h3>
+<p>Carry is the ONE failure channel, with one documented meaning per
+function. Flags carry only values (a count, a result, a found object
+number), inputs (parameters the game sets before the call) and async
+state (a completion or expiry the game polls across turns - carry
+speaks only at the moment of <code>RET</code>, so a fade's "done" lives in a flag).
+Do not invent status enumerations: a failure reason the game needs to
+distinguish belongs to a separate guard function that answers it as a
+condition, checked once up front. The collection modules below follow
+this convention to the letter and are the worked examples.</p>
 <h2 id="call">CALL</h2>
 <p><code>CALL lsb msb</code> assembles a 16-bit address from its two byte arguments
 and, if that address falls inside your loaded XBN's extent
@@ -195,7 +271,8 @@ existed.</p>
 useful for a fixed jump table of small routines you want to reach
 directly by address rather than by dispatching on a function code. IX
 still points at the flags base on entry; A, B, C, HL and DE carry
-nothing meaningful.</p>
+nothing meaningful. <code>CALL</code> ignores your carry flag - only <code>EXTERN</code>
+carries a verdict.</p>
 <h2 id="the-int-hook">The #int hook</h2>
 <p>If your XBN's header names an interrupt entry point, the interpreter
 calls it once every frame, at 50Hz, from inside its own frame interrupt.
@@ -207,8 +284,11 @@ are not optional:</p>
 <li><strong>Never enable interrupts.</strong> Do not execute <code>EI</code>.</li>
 <li><strong>No DMA.</strong> Do not use the zxnDMA - it contends with video and sample
   streaming DMA already in flight.</li>
-<li><strong>No file IO and no service calls.</strong> Every v1 service (see below) is
-  foreground-only; none of them may be called from the hook.</li>
+<li><strong>No file IO, and only the hook-safe services.</strong> Four rows may be
+  called from the hook: <code>SVC_VERSION</code>, <code>SVC_RANDOM</code>, <code>SVC_FRAMES</code> and
+  <code>SVC_BUSY</code> - they read resident memory and never page. Every other
+  row (printing, files, <code>SVC_GETMSG</code>, <code>SVC_GETDATE</code>, <code>SVC_PALREAD</code>,
+  <code>SVC_WINDOW</code>) is foreground-only; see <a href="#services">Services</a>.</li>
 <li><strong>Never install your own interrupt handler.</strong> The IM2 vector table is
   writable RAM, but your code only exists in the address space while
   its own bank is mapped - a self-installed vector is a guaranteed
@@ -222,14 +302,19 @@ are not optional:</p>
   interpreter itself borrows that same window as the clip's audio feed
   for the clip's whole duration, and the hook keeps firing throughout.
   A tilemap write from the hook during that span lands in the audio
-  buffer instead and corrupts the clip's sound. Pause or disarm your
-  ticker around <code>PLAY</code> if it writes the tilemap.</li>
+  buffer instead and corrupts the clip's sound. Call <code>SVC_BUSY</code> at the
+  top of the hook and skip the frame while bit 0 (a clip is playing) is
+  set - emit nothing and advance nothing, so the message resumes where
+  it stopped. The ticker example does exactly this.</li>
 <li><strong>Respect the runtime text width.</strong> A game can switch between 80x32
   and 40x32 text with <code>GFX n 18</code>, which changes the tilemap row stride
-  (160 bytes per row at 80 columns, 80 at 40). The interpreter's width
-  byte is not part of the frozen XBN ABI, so an extern that writes the
-  tilemap directly must read NR $6B bit 6 (1 = 80x32, 0 = 40x32) - the
-  ticker example shows the probe and the per-width row addresses.</li>
+  (160 bytes per row at 80 columns, 80 at 40). The width is not part of
+  the frozen ABI, so an extern that writes the tilemap directly asks the
+  hardware each time: <code>xbnmod.inc</code>'s <code>xbn_width</code> returns the current
+  width in E (80 or 40), the row stride in D (160 or 80) and the
+  bottom-row base in HL, from one read of NR $6B bit 6; it is hook-safe.
+  The ticker example calls it per character, so a <code>GFX n 18</code> switch
+  mid-message just carries on at the new width.</li>
 <li><strong>Stay inside rows 4-27 for anything that must be visible on every
   display.</strong> The tilemap's origin (in either width) sits 32 pixels
   above and left of the ULA origin, so rows 0-3 and 28-31 land in the
@@ -252,10 +337,22 @@ are not optional:</p>
   so with an effect playing, a <code>halt</code> returns after roughly 64
   microseconds, not 20 milliseconds, and a looped effect makes that
   permanent. A foreground wait that counts halts runs up to 312 times
-  fast. There is no frame clock in the frozen ABI, so a wait that
-  needs frames must gate on a counter your own <code>#int</code> hook increments
-  once per call and compare against a snapshot - the fade example's
-  fn 43 is the worked pattern.</li>
+  fast. A wait that needs frames gates on <code>SVC_FRAMES</code>: take a snapshot,
+  <code>halt</code> as a wakeup only, and measure elapsed frames as the counter
+  minus the snapshot (<code>or a</code> / <code>sbc hl, de</code>) - never as the number of
+  times <code>halt</code> returned. The fade example's fn 43 and the clock and
+  timer modules are the worked patterns. Any wait also needs a bound (a
+  maximum number of frames) so a stalled counter cannot hang the game.</li>
+<li><strong>Palette writes from the hook go through the interlock.</strong> If your
+  hook programs the Layer 2 palette, acquire <code>xbnmod.inc</code>'s palette
+  owner from the foreground call that starts the effect
+  (<code>xbn_pal_acquire</code>, with the id its owner-byte comment assigns your
+  module in A - claim the next free number there), test it in the hook
+  before every burst (<code>xbn_pal_check</code> - skip the frame if another module
+  holds it) and release it from the call or hook that finishes
+  (<code>xbn_pal_release</code>). Two hooks writing the palette in the same frame
+  corrupt entries; the interlock makes that impossible. The fade example
+  is the worked pattern; a second palette module inherits it.</li>
 </ul>
 <p>On entry, IX points at the flags base, exactly as it does for an
 <code>EXTERN</code> call. Every other register is undefined, and the interpreter
@@ -267,9 +364,9 @@ own first and return immediately when there is nothing to do - the
 ticker example's <code>int</code> hook is one load-and-test when idle, and that
 idiom is worth copying directly.</p>
 <h2 id="services">Services</h2>
-<p>The interpreter exposes ten small routines through a fixed jump table at
-a frozen address, <code>XBN_API</code> (<code>$BEC8</code>). <code>xbn.inc</code> binds a symbol to each
-row, so you call them by name:</p>
+<p>The interpreter exposes fifteen small routines through a fixed jump
+table at a frozen address, <code>XBN_API</code> (<code>$BEC8</code>). <code>xbn.inc</code> binds a symbol
+to each row, so you call them by name:</p>
 <table>
 <thead>
 <tr>
@@ -277,6 +374,7 @@ row, so you call them by name:</p>
 <th>Symbol</th>
 <th>In</th>
 <th>Out</th>
+<th>From the hook</th>
 </tr>
 </thead>
 <tbody>
@@ -284,68 +382,116 @@ row, so you call them by name:</p>
 <td>0</td>
 <td><code>SVC_VERSION</code></td>
 <td>-</td>
-<td>A = API version</td>
+<td>A = API version (<code>2</code> on this release)</td>
+<td>yes</td>
 </tr>
 <tr>
 <td>1</td>
 <td><code>SVC_PUTCHAR</code></td>
 <td>A = character</td>
 <td>-</td>
+<td>no</td>
 </tr>
 <tr>
 <td>2</td>
 <td><code>SVC_PUTS</code></td>
 <td>HL = ASCIIZ string (may live in your own bank)</td>
 <td>-</td>
+<td>no</td>
 </tr>
 <tr>
 <td>3</td>
 <td><code>SVC_FOPEN</code></td>
 <td>IX = ASCIIZ filename, B = mode</td>
-<td>A = handle, or CF set + error</td>
+<td>A = handle, or CF set + A = error</td>
+<td>no</td>
 </tr>
 <tr>
 <td>4</td>
 <td><code>SVC_FREAD</code></td>
 <td>A = handle, IX = buffer, BC = length</td>
-<td>BC = bytes read, or CF set + error</td>
+<td>BC = bytes read, or CF set + A = error</td>
+<td>no</td>
 </tr>
 <tr>
 <td>5</td>
 <td><code>SVC_FWRITE</code></td>
 <td>A = handle, IX = buffer, BC = length</td>
-<td>CF set + error on failure</td>
+<td>CF set + A = error, on failure</td>
+<td>no</td>
 </tr>
 <tr>
 <td>6</td>
 <td><code>SVC_FSEEK</code></td>
 <td>A = handle, BCDE = offset</td>
-<td>CF set + error on failure</td>
+<td>CF set + A = error, on failure</td>
+<td>no</td>
 </tr>
 <tr>
 <td>7</td>
 <td><code>SVC_FCLOSE</code></td>
 <td>A = handle</td>
 <td>-</td>
+<td>no</td>
 </tr>
 <tr>
 <td>8</td>
 <td><code>SVC_RANDOM</code></td>
 <td>-</td>
-<td>A = random byte</td>
+<td>A = random byte (full range, not the 1-100 <code>CHANCE</code> scale)</td>
+<td>yes</td>
 </tr>
 <tr>
 <td>9</td>
 <td><code>SVC_GETMSG</code></td>
 <td>A = user message number</td>
-<td>HL = buffer, BC = length, or CF set + A = $FF</td>
+<td>HL = buffer, BC = length (max 256, truncated); CF set + A = <code>$FF</code> when the number is out of range (the buffer is not written)</td>
+<td>no</td>
+</tr>
+<tr>
+<td>10</td>
+<td><code>SVC_FRAMES</code></td>
+<td>-</td>
+<td>HL = the interpreter's free-running 50Hz frame counter, 16 bits, wrapping. Compare against a snapshot; never read it as absolute time</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>11</td>
+<td><code>SVC_GETDATE</code></td>
+<td>-</td>
+<td>CF clear: BC = MS-DOS packed date, DE = MS-DOS packed time, H = seconds, L = hundredths (<code>$FF</code> if the RTC has none). CF set = no RTC or invalid: BC = DE = 0 and HL is undefined - never read the seconds on that path</td>
+<td>no</td>
+</tr>
+<tr>
+<td>12</td>
+<td><code>SVC_BUSY</code></td>
+<td>-</td>
+<td>A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section. Unassigned bits read 0. Bits 0 and 2 are only ever observable from the hook</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>13</td>
+<td><code>SVC_PALREAD</code></td>
+<td>IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while <code>GFX 0 4</code> buffer mode is open)</td>
+<td>256 entries of two bytes: RRRGGGBB, then a second byte masked to <code>%11000001</code> (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512</td>
+<td>no</td>
+</tr>
+<tr>
+<td>14</td>
+<td><code>SVC_WINDOW</code></td>
+<td>A = window number 0-7</td>
+<td>selects that window through the interpreter's own machinery and returns A = the previously selected window; CF set and no change for A &gt; 7. Selecting flushes the pending word of the window being left and may raise the More prompt there</td>
+<td>no</td>
 </tr>
 </tbody>
 </table>
 <p>Call a service exactly like any other subroutine - <code>call SVC_PUTCHAR</code>
 and so on. Every row preserves your XBN bank's own mapping across the
 call: whatever a service does internally, your code resumes exactly
-where it left off, with its own memory still mapped underneath it.</p>
+where it left off, with its own memory still mapped underneath it.
+Clobbers are listed in the
+<a href="reference/xbn-format.html#service-table">format reference</a>; only the
+registers a row's Out column names carry a result.</p>
 <p>A few things worth knowing about specific rows:</p>
 <ul>
 <li><strong><code>SVC_PUTCHAR</code> and <code>SVC_PUTS</code> print through the current DAAD window.</strong>
@@ -353,9 +499,11 @@ where it left off, with its own memory still mapped underneath it.</p>
   they do for ordinary game text, because that is the same print path
   they use. <code>SVC_PUTS</code> flushes the word wrapper before returning, so a
   buffered final word is never left stranded on screen.</li>
-<li><strong><code>SVC_RANDOM</code> returns a raw byte</strong>, uniformly distributed 0-255. It
-  is not the 1-100 range <code>CHANCE</code> uses - scale or mask it yourself if
-  you need a narrower range.</li>
+<li><strong><code>SVC_RANDOM</code> returns a raw byte</strong>, uniformly distributed 0-255,
+  from the same stream <code>CHANCE</code> and <code>RANDOM</code> use - scale or mask it
+  yourself. It is safe from the hook, but a hook draw consumes the
+  shared stream at an unpredictable moment, so a game that must replay
+  identically cannot draw from the hook. It preserves BC, DE and HL.</li>
 <li><strong>File services are thin wrappers over the same esxDOS machinery the
   interpreter itself uses</strong> for save games and asset loading. <code>mode</code> for
   <code>SVC_FOPEN</code> is the raw esxDOS open mode byte; the error convention
@@ -379,18 +527,71 @@ where it left off, with its own memory still mapped underneath it.</p>
   and the <code>_</code>/<code>@</code> object-name substitution <em>not</em> expanded, since there
   is no object context to substitute at fetch time. A message number
   outside the database's range returns with the carry flag set and
-  A = <code>$FF</code>.</li>
+  A = <code>$FF</code>, and the buffer is not written.</li>
+<li><strong><code>SVC_FRAMES</code> is the frame clock.</strong> HL is a 16-bit counter the
+  frame interrupt increments; it wraps, so subtract a snapshot
+  (<code>or a</code> / <code>sbc hl, de</code>) rather than reading it as a time. Safe from
+  the hook. Frames the hook missed (a long draw, a video clip) are
+  still counted, which is why the clock and timer modules keep time
+  from its deltas instead of counting their own invocations.</li>
+<li><strong><code>SVC_GETDATE</code> reads the real-time clock</strong>, when the Next has one:
+  carry clear with the MS-DOS packed date in BC (year-1980 in bits
+  15-9, month in 8-5, day in 4-0), the packed time in DE (hour 15-11,
+  minute 10-5, two-second units 4-0), seconds in H. Carry set means no
+  RTC or an invalid reading: BC and DE are zero and HL is undefined,
+  so never read the seconds on that path. Foreground only. The
+  realtime module wraps it.</li>
+<li><strong><code>SVC_BUSY</code> tells the hook what the interpreter is in the middle
+  of.</strong> Bit 0 a video clip is playing (the tilemap window is the clip's
+  audio feed - do not write it), bit 1 the SD card is busy, bit 2 the
+  interpreter is programming a palette or revealing a buffered picture.
+  Bits 0 and 2 are only ever set while a hook could observe them; from
+  the foreground they read 0.</li>
+<li><strong><code>SVC_PALREAD</code> copies a Layer 2 palette bank into your buffer</strong>, 256
+  two-byte entries, exactly as the hardware holds them. A = 0 reads the
+  bank the display is showing; A = 1 reads the other bank, which is
+  where <code>DISPLAY</code> stages a picture's palette while buffer mode
+  (<code>GFX 0 4</code>) is open - the fade module reads the incoming picture's
+  colours this way before revealing it. IX ends at buffer+512.
+  Foreground only.</li>
+<li><strong><code>SVC_WINDOW</code> switches the current DAAD window and returns the one
+  that was current</strong>, so a printing routine can bracket its own output:
+  select the target, print, re-select the returned window. Two effects
+  an author must know: selecting a window flushes the pending word of
+  the window you are leaving (a <code>MES "Score "</code> issued just before lands
+  in the game window, not the target) and can raise the More prompt
+  THERE; and once you print into the target, an exact line fill wraps
+  and can raise More in the target, so size a status window for what it
+  holds. Window geometry (<code>WINAT</code>, <code>WINSIZE</code>, colours) stays
+  yours, set in DSF. Foreground only. The toolkit's fn 84 is the worked
+  use.</li>
 </ul>
 <h3 id="versioning">Versioning</h3>
-<p><code>SVC_VERSION</code> reports the API version your interpreter build supports.
-The service table is append-only and its address is frozen from the
-first shipping release: existing rows never move and never change
-signature, so a game built against this version of <code>xbn.inc</code> keeps
-working unmodified on every future NextDAAD release. New services, when
-they arrive, are new rows at the end of the table with a version bump -
-check <code>SVC_VERSION</code> yourself if you ever call a service your <code>xbn.inc</code>
-did not ship with, to fail gracefully on an older interpreter rather
-than jumping into whatever used to live at that address.</p>
+<p><code>SVC_VERSION</code> returns <code>2</code> on this release. The service table is
+append-only and its address is frozen: existing rows never move and
+never change signature, so code written against an older <code>xbn.inc</code>
+keeps calling the same rows on every later NextDAAD release. What CAN
+change between format versions is the file header, and it did at
+format 2: a binary assembled against an older <code>xbn.inc</code> is reassembled
+against the current one to pick up the new
+<a href="reference/xbn-format.html#header">header</a>. New services arrive as new
+rows at the end with a version bump. An extern that needs a row its
+<code>xbn.inc</code> did not ship with checks the version first and fails
+gracefully instead of jumping into whatever used to live there - the
+hints module's preflight is the idiom:</p>
+<pre><code>MIN_API equ 2
+preflight:
+    call SVC_VERSION
+    cp MIN_API
+    jr nc, .ok
+    scf                 ; older interpreter: the condition fails
+    ret
+.ok:
+    ...
+</code></pre>
+<p>The format version (the header's byte 3, <code>2</code>) and the API version are
+the same number on this release but are separate contracts: the loader
+enforces the first, your code checks the second.</p>
 <h2 id="flags-and-objects">Flags and objects</h2>
 <p>Your extern reads and writes DAAD flags and object state directly, with
 no service in between - the interpreter simply exposes the memory.</p>
@@ -416,7 +617,13 @@ no service in between - the interpreter simply exposes the memory.</p>
   at offsets 4 and 5. <code>DE</code> on entry to an <code>EXTERN</code> call already points
   at the entry for the object named by the first parameter, so
   <code>ld a, (de)</code> reads that object's location without any arithmetic of
-  your own.</li>
+  your own. The object count is at <code>XBN_NUMOBJ</code> (<code>$A900</code>, one byte,
+  frozen): walk <code>0</code> to <code>XBN_NUMOBJ - 1</code> and never a fixed 256, because
+  entries past the count are stale. The two extended-attribute bytes
+  are stored in flag order - offset 3 holds attribute bits 0-7 and
+  offset 2 holds bits 8-15 - so attribute <code>n</code> below 8 is bit <code>n</code> of
+  <code>(+3)</code>. The toolkit's object queries (fns 78-81) are the worked
+  readers.</li>
 </ul>
 <h2 id="save-and-load">Save and load</h2>
 <p>The extern bank itself is never part of a save game. <code>SAVE</code>, <code>LOAD</code>,
