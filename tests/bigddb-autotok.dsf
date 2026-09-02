@@ -19,8 +19,11 @@
 ; under the marker is second evidence of the same thing.
 ; tests\build-tests.ps1 asserts all of it out of the compiled bytes.
 ;
-; The prose is pseudo-random because DRC token-compresses text and
-; repeated filler would collapse under compression.
+; Vocabulary: 1200 words. Generated with:
+;   python tests\bigddb-gen.py --dest tests\bigddb-autotok.dsf --vocab 1200
+;
+; The prose is pseudo-random because this wider pool keeps the
+; fixture oversize under a per-game token table.
 ;
 ; THE LOOP IS THE TEMPLATE SHAPE, trimmed - PRO 0 draws, PRO 1 parses.
 ; An earlier version of this fixture ended PRO 0 without handing over

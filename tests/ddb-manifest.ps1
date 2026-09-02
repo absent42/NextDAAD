@@ -13,13 +13,14 @@ $ErrorActionPreference = 'Stop'
 trap { "ERROR: $_"; exit 1 }
 if (-not $Root) { $Root = Join-Path (Split-Path $PSScriptRoot) 'tests\out' }
 
-# The 26 DDBs the 25 fixture compiles produce (debugflag makes two).
+# The 27 DDBs the 26 fixture compiles produce (debugflag makes two).
 # An explicit list, NOT a *.ddb glob: tests\out also holds DDBs from
 # other tooling (corrupt, max64k, max128k, oversize, baseline-036,
 # condacts-036) which no build-tests run touches, and hashing those
 # would report reassuring "identical" lines that mean nothing.
 $FIXTURE_DDBS = @(
     'template.ddb', 'condacts.ddb', 'doallnest.ddb', 'bigddb.ddb',
+    'bigddb-autotok.ddb',
     'gmodegate.ddb', 'audlad.ddb', 'sfxdi.ddb', 'sfxlong.ddb', 'sfx2.ddb',
     'debugflag.ddb', 'debugflag-debug.ddb', 'l2holes.ddb', 'tmover.ddb',
     'tileslack.ddb', 'fontsw.ddb', 'txt40.ddb', 'accents.ddb', 'palette.ddb',

@@ -1,6 +1,7 @@
 """Generate tests\\bigddb.dsf - the oversize fixture, past the 31744 ceiling.
 
     python tests\\bigddb-gen.py [locations] [words/message] [words/location]
+        [--dest PATH] [--vocab N]
 
 Run only when the fixture needs regrowing. The .dsf it writes is checked in,
 so a normal harness run never calls this - tests\\build-tests.ps1 compiles the
@@ -263,8 +264,18 @@ def main():
     w('; under the marker is second evidence of the same thing.')
     w('; tests\\build-tests.ps1 asserts all of it out of the compiled bytes.')
     w(';')
-    w('; The prose is pseudo-random because DRC token-compresses text and')
-    w('; repeated filler would collapse under compression.')
+    w('; Vocabulary: %d words. Generated with:' % args.vocab)
+    if args.dest:
+        w(';   python tests\\bigddb-gen.py --dest %s --vocab %d' % (args.dest, args.vocab))
+    else:
+        w(';   python tests\\bigddb-gen.py')
+    w(';')
+    if args.vocab <= 103:
+        w("; The prose is pseudo-random because this small pool resists DRC's")
+        w('; fixed token table under compression.')
+    else:
+        w('; The prose is pseudo-random because this wider pool keeps the')
+        w('; fixture oversize under a per-game token table.')
     w(';')
     w('; THE LOOP IS THE TEMPLATE SHAPE, trimmed - PRO 0 draws, PRO 1 parses.')
     w('; An earlier version of this fixture ended PRO 0 without handing over')
@@ -405,8 +416,9 @@ def main():
     dest.write_text(txt, encoding='latin-1')
     print('wrote %s  %d bytes  (%d messages, %d locations)'
           % (dest, len(txt), N_MSG, N_LOC))
-    print('now run tests\\build-tests.ps1 -BigDdb - it asserts the size and '
-          'every boundary crossing out of the compiled bytes')
+    leg = '-BigDdbTok' if dest.name == 'bigddb-autotok.dsf' else '-BigDdb'
+    print('now run tests\\build-tests.ps1 %s - it asserts the size and '
+          'every boundary crossing out of the compiled bytes' % leg)
 
 
 if __name__ == '__main__':

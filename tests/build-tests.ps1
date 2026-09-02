@@ -83,18 +83,18 @@
 #
 # Compiles tests\test.dsf (template), tests\condacts.dsf (suite),
 # tests\doallnest.dsf (DOALL depth/error demo), tests\gmodegate.dsf
-# (SP16 GMODE graphics-gate fixture) and tests\debugflag.dsf (DRC's
+# (SP16 GMODE graphics-gate fixture) and tests\debugflag.dsf (ndrc's
 # -D debug marker - the one fixture compiled twice, with and without
-# DRB's -d, and asserted in bytes rather than staged) with DRC
-# (version 2 DDB),
+# ndrc's -d, and asserted in bytes rather than staged) with ndrc,
 # generates corrupt/oversize variants from the template, prints
 # a header report. -Suite makes the suite DDB the active GAME.DDB;
 # -Err4 makes the doallnest DDB active instead (deliberate error 4:
 # nested DOALL on the same process); -GMode makes the gmodegate DDB
 # active and stages the single Layer 2 picture it needs (see its own
-# block below); -V3 makes the v3probe DDB active - the ONLY fixture
-# here compiled with DRF's -v3, so its header byte 0 is 3 - together
-# with the 0.XMB its XMES probe reads (see its own block below);
+# block below); -V3 makes the v3probe DDB active - v3probe is the
+# fixture whose value is the V3 condacts it exercises, most fixtures
+# compile -v3 now - together with the 0.XMB its XMES probe reads
+# (see its own block below);
 # -Rab compiles the modernised next-only
 # tools\Rabenstein-master\nextdaad\rabenstein.dsf (the real
 # commercial-quality DAAD game), makes that DDB active, and stages the
@@ -466,14 +466,14 @@
 #            throws, with the download URL in the message.
 #            Run sheet: .superpowers\sdd\uto-compliance-runsheet.md
 #   -UtoV3   the same source compiled WITH -v3, into sd\UTOV3\. The DSF
-#            carries two #ifdef "V3" blocks that DRF only compiles in
+#            carries two #ifdef "V3" blocks that ndrc only compiles in
 #            when -v3 is given (-v3 defines the symbol V3): SETAT x3
 #            (set/clear/toggle on flag 57 via attribute 16) and second-
 #            parameter indirection (LET 200 @100), plus a GETKEY leg in
 #            the visual half. 68 OK lines = a full V3 pass. This is the
 #            only INDEPENDENT test of the SP16 V3 work - v3probe.dsf is
 #            ours. Worth noting for whoever next touches v3probe: this
-#            DRF build has real SETAT and GETKEY keywords (SETAT emits
+#            ndrc build has real SETAT and GETKEY keywords (SETAT emits
 #            opcode 124 directly, GETKEY compiles to PAUSE 0), so the
 #            Invoke-V3SetatPatch stand-in below may no longer be needed
 #            there - not changed here, out of this fixture's scope.
@@ -1241,18 +1241,24 @@ function Assert-BigDdb {
     if (($bytes[1] -band 0x0F) -ne 0) {
         throw "${Label}: language nibble is $($bytes[1] -band 0x0F), expected 0 (EN) - the machine nibble must not have eaten the language half"
     }
+    # 31744 is the classic ceiling; 65535 is the format's own, refused
+    # by the interpreter with E2.
     if ($len -le 31744) {
         throw "${Label}: $len bytes - NOT past the 31744 classic ceiling, so it tests nothing. The text is token-compressed, so the .dsf must grow (or its --vocab widen) to move this."
     }
     if ($len -gt 65535) {
         throw "${Label}: $len bytes - past the 65535 format ceiling, which the interpreter refuses with E2. Shrink the .dsf."
     }
+    # Header pointers are plain file offsets under the NEXTDAAD base-0
+    # rebase, so each one must land inside the file.
     foreach ($h in 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30) {
         $v = & $word $h
         if ($v -ge $len) {
             throw "${Label}: header pointer at offset $h is $v, outside the $len-byte file - pointers are not plain file offsets"
         }
     }
+    # The process list matters most of these: condact dispatch reads it
+    # every turn.
     $proc = & $word 10; $loc = & $word 14; $msg = & $word 16; $con = & $word 20
     foreach ($t in @{n = 'process list'; v = $proc }, @{n = 'location table'; v = $loc },
         @{n = 'message table'; v = $msg }, @{n = 'connection table'; v = $con }) {
@@ -1260,6 +1266,8 @@ function Assert-BigDdb {
             throw "${Label}: the $($t.n) is at $($t.v), inside the classic 31744 reach - the fixture is large but its tables are not past the boundary"
         }
     }
+    # Both the lookup entry AND the text for message 254 must be past
+    # 31744, or a screenshot only proves short messages work.
     $m254 = & $word ($msg + 2 * 254)
     $m254e = $msg + 2 * 254
     if ($m254e -le 31744) { throw "${Label}: message 254's lookup entry is at $m254e, inside the classic reach" }
@@ -1267,6 +1275,8 @@ function Assert-BigDdb {
         throw "${Label}: message 254's TEXT is at $m254, inside the classic reach - the location texts are carrying the size instead of the messages. Lengthen the messages."
     }
     if ($bytes[5] -ne 255) { throw "${Label}: header message count is $($bytes[5]), expected 255 (the byte-wide maximum)" }
+    # Asserted over all rooms, not just one, so no start-location
+    # constant ends up shared with the generator.
     $locLo = 65536
     for ($i = 0; $i -lt $bytes[4]; $i++) {
         $v = & $word ($loc + 2 * $i)
@@ -1407,6 +1417,7 @@ finally { Pop-Location }
 # to tests\out\sfxlong-work, so nothing is written under tools\ -
 # read-only working material git cannot restore.
 $sfxLongWork = Join-Path $root 'tests\out\sfxlong-work'
+Remove-Item $sfxLongWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $sfxLongWork | Out-Null
 Copy-Item "$PSScriptRoot\sfxlong.dsf" "$sfxLongWork\NDSFXLNG.DSF" -Force
 Push-Location $sfxLongWork
@@ -1428,6 +1439,7 @@ finally {
 # -v3 like most fixtures here. This fixture measures sampled-SFX
 # behaviour, which the header version does not affect.
 $sfx2Work = Join-Path $root 'tests\out\sfx2-work'
+Remove-Item $sfx2Work -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $sfx2Work | Out-Null
 Copy-Item "$PSScriptRoot\sfx2.dsf" "$sfx2Work\NDSFX2.DSF" -Force
 Push-Location $sfx2Work
@@ -1471,24 +1483,16 @@ finally { Pop-Location }
 # unconditionally like the six above so a break in the DSF is caught on a
 # plain run; only -L2Holes makes it the active GAME.DDB (sd\L2HOLES\).
 #
-# THE TOOLCHAIN IS RUN OUT OF TREE HERE, and this is the ONE fixture that
-# does. Every block above copies its DSF INTO tools\DAAD-READY and
-# compiles with the cwd set there, which WRITES INTO tools\ - read-only
-# working material that git cannot restore. Rather than convert the older
-# blocks (a separate change, with its own risk), this one runs ndrc.exe
-# by absolute path with the cwd set to tests\out\l2holes-work and writes
-# nothing under tools\ at all. The result is byte-identical: ndrc takes
-# the DSF path as an argument and reads a .tok only when one sits beside
-# the input, which is true in neither location.
-#
-# The .json is KEPT, not deleted like the others: the ruler verification
-# below reads the compiled messages back out of it.
+# Out of tree like every block here. The .json is kept, not deleted,
+# because the ruler verification below reads the compiled messages
+# back out of it.
 #
 # No -v3, deliberately. The fixture's header version must stay 2 (asserted
 # below); nothing here depends on a V3 condact, and a V3 header would
 # change SYNONYM/attribute semantics under a fixture whose whole value is
 # that exactly one thing moves.
 $l2holesWork = Join-Path $root 'tests\out\l2holes-work'
+Remove-Item $l2holesWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $l2holesWork | Out-Null
 Copy-Item "$PSScriptRoot\l2holes.dsf" "$l2holesWork\NDL2HOLE.DSF" -Force
 Push-Location $l2holesWork
@@ -1516,6 +1520,7 @@ finally {
 # pauses under V2 and would become GETKEY key-waits under V3, which
 # the timed capture cannot drive. Same ruling as sfxdi.
 $tmoverWork = Join-Path $root 'tests\out\tmover-work'
+Remove-Item $tmoverWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $tmoverWork | Out-Null
 Copy-Item "$PSScriptRoot\tmover.dsf" "$tmoverWork\NDTMOVR.DSF" -Force
 Push-Location $tmoverWork
@@ -1542,6 +1547,7 @@ finally {
 # video number it plays is caught in the COMPILED bytes rather than by
 # reading the DSF twice.
 $tileSlackWork = Join-Path $root 'tests\out\tileslack-work'
+Remove-Item $tileSlackWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $tileSlackWork | Out-Null
 Copy-Item "$PSScriptRoot\tileslack.dsf" "$tileSlackWork\NDTILESL.DSF" -Force
 Push-Location $tileSlackWork
@@ -1568,6 +1574,7 @@ finally {
 # tests\out\fontsw-work, so nothing is written under tools\ -
 # read-only working material git cannot restore.
 $fontswWork = Join-Path $root 'tests\out\fontsw-work'
+Remove-Item $fontswWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $fontswWork | Out-Null
 Copy-Item "$PSScriptRoot\fontsw.dsf" "$fontswWork\NDFONTSW.DSF" -Force
 Push-Location $fontswWork
@@ -1585,6 +1592,7 @@ finally {
 # run; -Txt40 is the leg switch that stages this DDB into sd\TXT40\
 # (see that switch's own block in the STAGING section below).
 $txt40Work = Join-Path $root 'tests\out\txt40-work'
+Remove-Item $txt40Work -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $txt40Work | Out-Null
 Copy-Item "$PSScriptRoot\txt40.dsf" "$txt40Work\NDTXT40.DSF" -Force
 Push-Location $txt40Work
@@ -1604,6 +1612,7 @@ finally {
 # Latin-1 and does the accent conversion itself (a UTF-8 source
 # double-converts and the byte asserts below catch it).
 $accentWork = Join-Path $root 'tests\out\accent-work'
+Remove-Item $accentWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $accentWork | Out-Null
 Copy-Item "$PSScriptRoot\accents.dsf" "$accentWork\NDACCENT.DSF" -Force
 Push-Location $accentWork
@@ -1625,6 +1634,7 @@ finally {
 # OUT OF TREE: ndrc.exe is run by absolute path with the cwd set to
 # tests\out\palette-work, so nothing is written under tools\.
 $paletteWork = Join-Path $root 'tests\out\palette-work'
+Remove-Item $paletteWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $paletteWork | Out-Null
 Copy-Item "$PSScriptRoot\palette.dsf" "$paletteWork\NDPAL.DSF" -Force
 Push-Location $paletteWork
@@ -2074,8 +2084,8 @@ if ($fontswPauseHits.Count -ne 3) {
 "fontsw.ddb: v$($fontswBytes[0]), GFX 2/0/3 16, MOUSE 2/1/0 5, the 8/8 hotspot, the GETMS tracking loop and its x3 debounce PAUSE all present as authored"
 
 # --- txt40: the 40-column text mode stimulus ---
-# GFX=87, WINAT=82, WINSIZE=107 confirmed against DRF-emitted
-# NDTXT40.json (tools\DRC\src\UCondacts.pas carries the same numbers).
+# GFX=87, WINAT=82, WINSIZE=107 confirmed against the compiled condact
+# bytes below (tools\DRC\src\UCondacts.pas carries the same numbers).
 $txt40Bytes = [System.IO.File]::ReadAllBytes("$root\tests\out\txt40.ddb")
 foreach ($c in @(
     @{ n = 'GFX 1 18'; b = [byte[]]@(87, 1, 18) },
@@ -2523,14 +2533,15 @@ else {
     "debugflag: -d adds exactly 3 bytes (DC x3, no operands); NEWTEXT stays 5C"
 }
 
-# SP16 Task 6 DAAD V3 fixture. The ONLY DDB this script builds with
-# DRF's -v3, so the only one whose header byte 0 is 3. It exercises the
-# three V3 opcodes (XMES 120, INDIR 122, SETAT 124), both attribute
-# banks, PAUSE 0 as GETKEY, flag 53's bits 0/4/5 and SYNONYM's V3
-# done-semantics; the DSF's own header lists which flag carries which
-# answer. Compiled unconditionally like the suite and gmodegate above -
-# a break in the DSF (or in DRF's -v3 handling) is then caught on a
-# plain run - but only -V3 makes it the active GAME.DDB (sd\V3\).
+# SP16 Task 6 DAAD V3 fixture. Compiled with -v3 like most fixtures
+# here; its value is the V3 condacts it exercises, not the header byte.
+# It exercises the three V3 opcodes (XMES 120, INDIR 122, SETAT 124),
+# both attribute banks, PAUSE 0 as GETKEY, flag 53's bits 0/4/5 and
+# SYNONYM's V3 done-semantics; the DSF's own header lists which flag
+# carries which answer. Compiled unconditionally like the suite and
+# gmodegate above - a break in the DSF (or in DRF's -v3 handling) is
+# then caught on a plain run - but only -V3 makes it the active
+# GAME.DDB (sd\V3\).
 #
 # tests\v3probe.dsf will NOT compile without -v3: DRF rejects '@' on a
 # second parameter and rejects GETKEY outside V3. Do not "simplify"
@@ -2816,9 +2827,9 @@ if ($DrcDiff) {
         Copy-Item -LiteralPath $f.Dsf "$w\D.DSF" -Force
         Push-Location $w
         try {
-            & $drcDrf @drcTarget D.DSF @srcOpts
+            & $drcDrf @drcTarget D.DSF @srcOpts | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "DRF failed (drcdiff $($f.Name))" }
-            & $drcPhp $drcDrb @drcTarget EN D.json drc.ddb @dbOpts
+            & $drcPhp $drcDrb @drcTarget EN D.json drc.ddb @dbOpts | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "DRB failed (drcdiff $($f.Name))" }
             # Join form, matching what the fixture blocks run. The leg
             # must exercise the invocation shape the harness ships, not a
@@ -2827,6 +2838,9 @@ if ($DrcDiff) {
             if ($LASTEXITCODE -ne 0) { throw "ndrc failed (drcdiff $($f.Name))" }
             $a = [System.IO.File]::ReadAllBytes("$w\drc.ddb")
             $b = [System.IO.File]::ReadAllBytes("$w\ndrc.ddb")
+            if ($a.Length -eq 0 -or $b.Length -eq 0) {
+                throw "-DrcDiff: $($f.Name) produced a zero-length DDB (DRC $($a.Length) bytes, NDRC $($b.Length) bytes) - two empty files must not compare identical"
+            }
             if ($a.Length -ne $b.Length) {
                 $differ += "$($f.Name): DRC $($a.Length) bytes, NDRC $($b.Length) bytes"
             }
