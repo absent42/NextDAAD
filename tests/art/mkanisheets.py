@@ -88,6 +88,10 @@ def main(out):
         paste(px, (k % 2) * 16, (k // 2) * 16, fill(16, 16, k + 1))
     write_png(os.path.join(out, "009.png"), 32, 32, pal, px)
     write_txt(os.path.join(out, "009.txt"), w=16, h=16, sheetw=32, bits=8)
+    # 015: 8-bit set whose bytes fall in palette block 2 ((32,0,0) -> $20): conflicts
+    # with a 4-bit set that has claimed block 2.
+    write_png(os.path.join(out, "015.png"), 16, 16, [MAGENTA, (32, 0, 0)] + [(0, 0, 0)] * 254, fill(16, 16, 1))
+    write_txt(os.path.join(out, "015.txt"), w=16, h=16, bits=8)
     return 0
 
 if __name__ == "__main__":

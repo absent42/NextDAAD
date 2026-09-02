@@ -29,6 +29,9 @@ sprPalSave:   db 0
 sprIff:       db 0                ; spr_di's IFF2 sample
 ; per-channel block tables: pattern -> palette block, rewritten at load
 sprBlkTab:    ds SPR_CHANS*128
+sprUpLeft:    dw 0              ; upload bytes remaining
+SPR_DBG_BLOCK equ sprLoads+1-sprRec
+    ASSERT SPR_DBG_BLOCK == 488  ; tests\sprites_dump.py mirrors this size
 
 ; Boot: no sets, no cache, half-slots 0/1 (pointer pattern slot 0) and
 ; attribute slot 0 reserved, channel numbers stamped. Ends in the identity
@@ -391,8 +394,855 @@ spr_blocks_release:
 spr_tick:
     ret
 
-; Mainline: stop every live set. Filled in Task 7.
+; E = reason. DEBUG: "SPR? nn" at the marker column of row 29, the h_gfx idiom,
+; then the snapshot. Release: silent. Always returns CF set.
+spr_refuse:
+ IFDEF DEBUG
+    push de
+    ld b, 29
+    call dbg_markcol
+    call dbg_at
+    ld hl, msgSprRefuse
+    call dbg_puts
+    pop de
+    ld a, e
+    call dbg_hex8
+    call spr_dbg_snap
+ ENDIF
+    scf
+    ret
+
+ IFDEF DEBUG
+msgSprRefuse: db "SPR? ", 0
+sprDbgSeq:    db 0
+; Mirror the state block into the dead ULA pixel window for the ZRCP reader:
+; signature, sequence, sprRec..sprLoads, xbnIntOn, sequence again.
+; Corrupts AF, BC, DE, HL.
+spr_dbg_snap:
+    ld hl, sprDbgSeq
+    inc (hl)
+    ld a, (hl)
+    ld hl, msgSprSig
+    ld de, SPR_DBG_SNAP
+    ld bc, 4
+    ldir
+    ld (de), a
+    inc de
+    ld hl, sprRec
+    ld bc, SPR_DBG_BLOCK
+    ldir
+    push af
+    ld a, (xbnIntOn)
+    ld (de), a
+    inc de
+    pop af
+    ld (de), a
+    ret
+msgSprSig:    db "SPR1"
+ ENDIF
+
+; A = set number (or SPR_SET_NONE to find a free record). Out: IX = record,
+; CF clear when found; CF set otherwise. Corrupts F, B, DE.
+spr_find_record:
+    ld ix, sprRec
+    ld b, SPR_CHANS
+    ld de, SR_SIZE
+.n:
+    cp (ix+SR_SET)
+    ret z
+    add ix, de
+    djnz .n
+    scf
+    ret
+
+; B = set (255 = all). Stopping an inactive set is a no-op.
+spr_stop_body:
+    ld a, b
+    cp SPR_SET_NONE
+    jr z, spr_stop_all_body
+    call spr_find_record
+    ret c
+    jr spr_stop_record
+
 spr_stop_all_body:
+    ld ix, sprRec
+    ld b, SPR_CHANS
+.n:
+    push bc
+    ld a, (ix+SR_SET)
+    cp SPR_SET_NONE
+    call nz, spr_stop_record
+    ld de, SR_SIZE
+    add ix, de
+    pop bc
+    djnz .n
+    ret
+
+; IX = live record. Retire first (the tick skips SR_SET = 255 from here),
+; then hide, release, recompute identity, disarm when nothing is left.
+spr_stop_record:
+    ld (ix+SR_SET), SPR_SET_NONE
+    call spr_hw_stop
+    call spr_release_resources
+    call spr_ident_recalc
+    ld hl, sprRec
+    ld b, SPR_CHANS
+    ld de, SR_SIZE
+.live:
+    ld a, (hl)
+    cp SPR_SET_NONE
+    jr nz, .snap
+    add hl, de
+    djnz .live
+    ld a, (xbnIntOn)
+    and $FF-HOOK_SPR
+    ld (xbnIntOn), a
+.snap:
+ IFDEF DEBUG
+    call spr_dbg_snap
+ ENDIF
+    ret
+
+; Free whatever the record in IX holds. Safe on a partially allocated record:
+; SR_PAT 255 = no half-slots, SR_ATTR 0 = no attribute run, SR_NBLK 0 = no blocks.
+spr_release_resources:
+    ld a, (ix+SR_PAT)
+    cp 255
+    jr z, .nopat
+    ld d, a
+    ld c, (ix+SR_PATS)
+    ld a, (ix+SR_KIND)
+    or a
+    jr nz, .cnt
+    sla c
+.cnt:
+    ld e, 0
+    ld hl, sprHalfMap
+    call spr_map_fill
+    ld (ix+SR_PAT), 255
+.nopat:
+    ld a, (ix+SR_ATTR)
+    or a
+    jr z, .noattr
+    ld d, a
+    ld c, (ix+SR_CELLS)
+    ld e, 0
+    ld hl, sprAttrMap
+    call spr_map_fill
+    ld (ix+SR_ATTR), 0
+.noattr:
+    jp spr_blocks_release
+
+; Task 8 fills these.
+spr_restart:
+    or a
+    ret
+spr_hw_load:
+    ret
+spr_hw_show:
+    ret
+spr_hw_stop:
+    ret
+
+; A = set. Out: CF clear and A = entry index on a hit (tick touched); CF set on a miss.
+; Corrupts AF, BC, DE, HL.
+spr_cache_lookup:
+    ld hl, sprCache
+    ld de, CE_SIZE
+    ld b, SPR_CACHE_MAX
+    ld c, 0
+.n:
+    cp (hl)
+    jr z, .hit
+    add hl, de
+    inc c
+    djnz .n
+    scf
+    ret
+.hit:
+    inc hl
+    inc hl
+    inc hl
+    call spr_cache_tick
+    ld (hl), a
+    ld a, c
+    or a
+    ret
+
+; Next LRU tick. When the clock wraps every tick is halved so order survives.
+; Out: A = tick. Preserves HL, BC. Corrupts AF, DE.
+spr_cache_tick:
+    ld a, (sprClock)
+    inc a
+    jr nz, .ok
+    push hl
+    push bc
+    ld hl, sprCache+CE_TICK
+    ld b, SPR_CACHE_MAX
+    ld de, CE_SIZE
+.h:
+    srl (hl)
+    add hl, de
+    djnz .h
+    pop bc
+    pop hl
+    ld a, 128
+.ok:
+    ld (sprClock), a
+    ret
+
+; Free entry, or the LRU victim with its banks released. Out: A = entry, HL -> entry.
+; Corrupts AF, BC, DE, HL.
+spr_cache_victim:
+    ld hl, sprCache
+    ld b, SPR_CACHE_MAX
+    ld c, 0
+    ld d, 255                    ; best tick so far
+    ld e, 0                      ; best index
+.n:
+    ld a, (hl)
+    cp SPR_SET_NONE
+    jr z, .free
+    push hl
+    inc hl
+    inc hl
+    inc hl
+    ld a, (hl)
+    pop hl
+    cp d
+    jr nc, .next
+    ld d, a
+    ld e, c
+.next:
+    ld a, CE_SIZE
+    add hl, a
+    inc c
+    djnz .n
+    ld a, e                      ; evict E
+    call spr_cache_entry
+    push hl
+    push de
+    call spr_cache_free_banks
+    pop de
+    pop hl
+    ld a, e
+    ret
+.free:
+    ld a, c
+    ret
+
+; A = entry. Out: HL -> entry. Preserves BC, DE. Corrupts AF, HL.
+spr_cache_entry:
+    ld hl, sprCache
+    add a, a
+    add a, a
+    add hl, a
+    ret
+
+; HL -> entry: release its banks and mark it free. Corrupts AF, HL.
+spr_cache_free_banks:
+    ld (hl), SPR_SET_NONE
+    inc hl
+    ld a, (hl)
+    cp 255
+    call nz, bank_free
+    ld (hl), 255
+    inc hl
+    ld a, (hl)
+    cp 255
+    call nz, bank_free
+    ld (hl), 255
+    ret
+
+; A = entry, C = image page 0-3. Out: A = 8K page number for data_map_page.
+; Corrupts AF, E, HL.
+spr_cache_page:
+    call spr_cache_entry
+    inc hl
+    ld a, c
+    cp 2
+    jr c, .b0
+    inc hl
+    sub 2
+.b0:
+    ld e, a
+    ld a, (hl)
+    add a, a
+    add a, e
+    ret
+
+; Build "PARTn\NNN.ANI" in sprName from sprLdSet and curPart. Out: IX = path
+; to open first (prefixed when curPart != 1, else the bare name at +6).
+spr_name_build:
+    ld a, (curPart)
+    add a, '0'
+    ld (sprName+4), a
+    ld a, (sprLdSet)
+    ld hl, sprName+6
+    ld b, '0'-1
+.h:
+    inc b
+    sub 100
+    jr nc, .h
+    add a, 100
+    ld (hl), b
+    inc hl
+    ld b, '0'-1
+.t:
+    inc b
+    sub 10
+    jr nc, .t
+    add a, 10
+    ld (hl), b
+    inc hl
+    add a, '0'
+    ld (hl), a
+    ld ix, sprName
+    ld a, (curPart)
+    cp 1
+    ret nz
+    ld ix, sprName+6
+    ret
+
+; IX = path. Open read-only. Out: CF set on failure, else A = handle.
+; IX is saved across the drive call: every esxDOS wrapper corrupts it
+; (file.asm), and every other call site loads IX after esx_getsetdrv.
+spr_open:
+    push ix
+    call esx_getsetdrv
+    pop ix
+    ret c
+    ld b, ESX_MODE_READ
+    jp esx_fopen
+
+; A = set. Reads NNN.ANI into a fresh cache entry (one or two pool banks)
+; through slot 6, validates, inserts. Out: CF clear, A = entry; CF set with
+; the marker printed. Leaves slot 6 = SPR_TAB_PAGE. Corrupts everything.
+spr_cache_load:
+    ld (sprLdSet), a
+    ld hl, sprLoads
+    inc (hl)
+    call spr_cache_victim
+    ld (sprLdEntry), a
+    push hl
+    call bank_alloc
+    pop hl
+    ld e, 6
+    jp c, spr_refuse             ; entry stays free, nothing taken
+    inc hl
+    ld (hl), a                   ; CE_BANK0
+    inc hl
+    ld (hl), 255                 ; CE_BANK1
+    call spr_name_build
+    call spr_open
+    jr nc, .open
+    ld a, (curPart)
+    cp 1
+    jr z, .nofile
+    ld ix, sprName+6
+    call spr_open
+    jr nc, .open
+.nofile:
+    ld e, 4
+    jr .failbanks
+.open:
+    ld (sprHandle), a
+    ld hl, 0
+    ld (sprLdLen), hl
+    ld c, 0                      ; image page 0-3
+.page:
+    ld a, c
+    cp 2
+    jr nz, .havebank
+    call bank_alloc              ; second bank on demand
+    ld e, 6
+    jr c, .failclose
+    push af
+    ld a, (sprLdEntry)
+    call spr_cache_entry
+    inc hl
+    inc hl
+    pop af
+    ld (hl), a
+.havebank:
+    ld a, (sprLdEntry)
+    call spr_cache_page
+    call data_map_page
+    ld a, (sprHandle)
+    ld ix, DATA_WINDOW
+    push bc
+    ld bc, $2000
+    call esx_fread
+    ld e, 11
+    jr c, .failclosebc
+    ld hl, (sprLdLen)
+    add hl, bc
+    ld (sprLdLen), hl
+    ld a, b
+    cp $20
+    pop bc
+    jr nz, .done                 ; short read: EOF
+    inc c
+    ld a, c
+    cp 4
+    jr c, .page
+    ld e, 11                     ; over 32K: not an .ANI
+    jr .failclose
+.failclosebc:
+    pop bc
+.failclose:
+    push de                      ; the esxDOS wrappers corrupt DE: keep the reason
+    ld a, (sprHandle)
+    call esx_fclose
+    pop de
+.failbanks:
+    push de
+    ld a, (sprLdEntry)
+    call spr_cache_entry
+    call spr_cache_free_banks
+    nextreg NR_MMU6, SPR_TAB_PAGE
+    pop de
+    jp spr_refuse
+.done:
+    ld a, (sprHandle)
+    call esx_fclose
+    ld a, (sprLdEntry)
+    ld c, 0
+    call spr_cache_page
+    call data_map_page           ; image page 0 back in slot 6 for the validator
+    call spr_validate            ; CF + E on failure
+    jr c, .failbanks
+    nextreg NR_MMU6, SPR_TAB_PAGE
+    ld a, (sprLdEntry)
+    call spr_cache_entry
+    ld a, (sprLdSet)
+    ld (hl), a
+    inc hl
+    inc hl
+    inc hl
+    call spr_cache_tick
+    ld (hl), a
+    ld a, (sprLdEntry)
+    or a
+    ret
+
+; Image page 0 in slot 6. Out: CF clear when every format rule holds and the
+; file length matches; else CF set, E = 5 (header) or 11 (length).
+; Corrupts AF, BC, DE, HL, IY.
+spr_validate:
+    ld iy, DATA_WINDOW
+    ld e, 5
+    ld a, (iy+ANI_MAGIC)
+    cp 'N'
+    jr nz, .bade
+    ld a, (iy+ANI_MAGIC+1)
+    cp 'A'
+    jr nz, .bade
+    ld a, (iy+ANI_VER)
+    cp 1
+    jr nz, .bade
+    ld a, (iy+ANI_FLAGS)
+    and $FC
+    jr nz, .bade
+    ld a, (iy+ANI_W)
+    dec a
+    cp 8
+    jr nc, .bade
+    ld a, (iy+ANI_H)
+    dec a
+    cp 8
+    jr nc, .bade
+    ld a, (iy+ANI_X+1)           ; X 0-319: high byte 0, or 1 with low < 64
+    cp 2
+    jr nc, .bade
+    or a
+    jr z, .xok
+    ld a, (iy+ANI_X)
+    cp 64
+    jr nc, .bade
+.xok:
+    ld a, (iy+ANI_FRAMES)
+    or a
+    jr z, .bade
+    ld a, (iy+ANI_PATS)
+    or a
+    jr z, .bade
+    ld c, 63
+    bit 1, (iy+ANI_FLAGS)
+    jr z, .p8
+    ld c, 127
+.p8:
+    inc c
+    cp c
+    jr nc, .bade
+    ld a, (iy+ANI_NBLK)
+    bit 1, (iy+ANI_FLAGS)
+    jr z, .nb8
+    or a
+    jr z, .bade
+    cp 16
+    jr nc, .bade
+    jr .tlen
+.nb8:
+    or a
+    jr z, .tlen
+.bade:                           ; near exit for the header checks above
+    scf
+    ret
+.tlen:
+    ld a, (iy+ANI_W)             ; cells = W*H, row = cells+1
+    ld d, a
+    ld e, (iy+ANI_H)
+    mul d, e
+    ld a, e
+    inc a
+    ld d, a
+    ld e, (iy+ANI_FRAMES)
+    mul d, e                     ; DE = frames*(cells+1)
+    ld l, (iy+ANI_TLEN)
+    ld h, (iy+ANI_TLEN+1)
+    or a
+    sbc hl, de
+    ld e, 5
+    jr nz, .bade
+    ld a, (iy+ANI_TLEN+1)        ; tlen <= 1024: high byte < 4, or == 4 with low 0
+    cp 4
+    jr c, .cells
+    jr nz, .bade
+    ld a, (iy+ANI_TLEN)
+    or a
+    jr nz, .bade
+.cells:
+    ld hl, DATA_WINDOW+ANI_HDR   ; cell bytes < pats or 255; cell 0 never 255
+    ld b, (iy+ANI_FRAMES)
+.frame:
+    inc hl                       ; delay
+    ld a, (iy+ANI_W)
+    ld d, a
+    ld e, (iy+ANI_H)
+    mul d, e
+    ld c, e                      ; cells
+    ld a, (hl)
+    cp 255
+    jr z, .bad5                  ; anchor hidden; E is scratch below, so reload it
+.cell:
+    ld a, (hl)
+    cp 255
+    jr z, .next
+    cp (iy+ANI_PATS)
+    jr nc, .bad5
+.next:
+    inc hl
+    dec c
+    jr nz, .cell
+    djnz .frame
+    ld de, 0                     ; DE = extra body bytes (4-bit palettes)
+    bit 1, (iy+ANI_FLAGS)
+    jr z, .len
+    ld b, (iy+ANI_PATS)
+.blk:
+    ld a, (hl)
+    cp (iy+ANI_NBLK)
+    jr nc, .bad5
+    inc hl
+    djnz .blk
+    ld a, (iy+ANI_NBLK)          ; HL already covers the pats-byte block table
+    ld d, a
+    ld e, 32
+    mul d, e                     ; blocks*32
+.len:
+    ld bc, DATA_WINDOW           ; expected = HL - base + DE + pats * (256 or 128)
+    or a
+    sbc hl, bc
+    add hl, de
+    ld a, (iy+ANI_PATS)
+    ld d, a
+    bit 1, (iy+ANI_FLAGS)
+    jr nz, .m
+    sla d                        ; 8-bit: pats*256 = (2*pats)*128; 2*63 fits
+.m:
+    ld e, 128
+    mul d, e
+    add hl, de
+    ld de, (sprLdLen)
+    or a
+    sbc hl, de
+    ld e, 11
+    jr nz, .bad
+    or a
+    ret
+.bad5:
+    ld e, 5
+.bad:
+    scf
+    ret
+
+; B = set (0-254), C = flags (bit 0 override, bit 1 l2Mode), DE = override X,
+; A = override Y. Via spr_call. Out: CF clear on success.
+spr_start_body:
+    ld (sprOvY), a
+    ld (sprOvX), de
+    ld a, c
+    and 1
+    ld (sprReqOv), a
+    ld a, c
+    and 2
+    ld (sprL2Mode), a            ; 0 = 256x192, nonzero = 320x256
+    ld a, b
+    cp SPR_SET_NONE
+    ld e, 3
+    jp z, spr_refuse
+    ld (sprReqSet), a
+    call spr_find_record
+    jp nc, spr_restart           ; live: cheap restart, cannot fail
+    ld a, SPR_SET_NONE
+    call spr_find_record
+    ld e, 2
+    jp c, spr_refuse
+    push ix
+    ld a, (sprReqSet)
+    call spr_cache_lookup
+    jr nc, .have
+    ld a, (sprReqSet)
+    call spr_cache_load
+    jr nc, .have
+    pop ix
+    ret                          ; CF set, marker and snapshot done
+.have:
+    pop ix
+    ld (ix+SR_CACHE), a
+    ld c, 0
+    call spr_cache_page
+    call data_map_page           ; slot 6 = image page 0
+    call spr_hdr_to_record
+    call spr_alloc
+    jr c, .fail
+    call spr_tables_stage        ; frame table -> SPR_STAGE, blocks -> SR_BLKTAB
+    call spr_hw_load             ; palettes and patterns from slot 6 (pages 0-3)
+    nextreg NR_MMU6, SPR_TAB_PAGE
+    call spr_tables_commit       ; SPR_STAGE -> SR_TAB
+    call spr_hw_show             ; position, frame 0, enable
+    ld a, (sprReqSet)
+    ld (ix+SR_SET), a            ; publish last
+    call spr_ident_recalc
+    ld a, (xbnIntOn)
+    or HOOK_SPR
+    ld (xbnIntOn), a
+ IFDEF DEBUG
+    call spr_dbg_snap
+ ENDIF
+    or a
+    ret
+.fail:
+    nextreg NR_MMU6, SPR_TAB_PAGE
+    jp spr_refuse
+
+; Header in slot 6 -> record fields, including the sprite-plane position.
+; Table addresses come from SR_CHAN. Corrupts AF, BC, DE, HL, IY.
+spr_hdr_to_record:
+    ld iy, DATA_WINDOW
+    ld a, (iy+ANI_FLAGS)
+    and ANI_FLAG_LOOP
+    ld (ix+SR_LOOP), a
+    ld a, (iy+ANI_FLAGS)
+    and ANI_FLAG_4BIT
+    rrca
+    ld (ix+SR_KIND), a
+    ld a, (iy+ANI_W)
+    ld (ix+SR_W), a
+    ld d, a
+    ld a, (iy+ANI_H)
+    ld (ix+SR_H), a
+    ld e, a
+    mul d, e
+    ld a, e
+    ld (ix+SR_CELLS), a
+    inc a
+    ld (ix+SR_ROW), a
+    ld a, (iy+ANI_FRAMES)
+    ld (ix+SR_FRAMES), a
+    ld a, (iy+ANI_PATS)
+    ld (ix+SR_PATS), a
+    ld a, (iy+ANI_NBLK)
+    ld (ix+SR_NBLKREQ), a
+    ld a, (iy+ANI_MASK)
+    ld (ix+SR_MASK), a
+    ld a, (iy+ANI_MASK+1)
+    ld (ix+SR_MASK+1), a
+    ld (ix+SR_FRAME), 0
+    ld (ix+SR_COUNT), 0
+    ld a, (sprReqOv)             ; position: baked or override
+    or a
+    jr nz, .ov
+    ld l, (iy+ANI_X)
+    ld h, (iy+ANI_X+1)
+    ld a, (iy+ANI_Y)
+    jr .pos
+.ov:
+    ld hl, (sprOvX)
+    ld a, (sprOvY)
+.pos:
+    ld e, a
+    ld d, 0
+    ld a, (sprL2Mode)
+    or a
+    jr nz, .plane                ; 320x256: picture (0,0) is plane (0,0)
+    ld a, 32                     ; 256x192: picture (0,0) is plane (32,32)
+    add hl, a
+    add de, a
+.plane:
+    ld (ix+SR_XLO), l
+    ld a, h
+    and 1
+    ld (ix+SR_X8), a
+    ld (ix+SR_Y), e
+    ld a, d
+    and 1
+    ld (ix+SR_Y8), a
+    ld a, (ix+SR_CHAN)           ; SR_TAB = SPR_TAB_BASE + chan*1024
+    add a, a
+    add a, a
+    add a, high SPR_TAB_BASE
+    ld (ix+SR_TAB), 0
+    ld (ix+SR_TAB+1), a
+    ld a, (ix+SR_CHAN)           ; SR_BLKTAB = sprBlkTab + chan*128
+    ld d, a
+    ld e, 128
+    mul d, e
+    ld hl, sprBlkTab
+    add hl, de
+    ld (ix+SR_BLKTAB), l
+    ld (ix+SR_BLKTAB+1), h
+    ret
+
+; IX = header-filled record. Takes half-slots, an attribute run, and blocks
+; (4-bit). CF + E on failure with everything taken released. Corrupts all.
+spr_alloc:
+    ld (ix+SR_PAT), 255
+    ld (ix+SR_ATTR), 0
+    ld (ix+SR_NBLK), 0
+    ld a, (ix+SR_KIND)
+    or a
+    jr nz, .pat
+    ld hl, (sprClaimMask)        ; 8-bit: none of its blocks may be claimed
+    ld a, (ix+SR_MASK)
+    and l
+    ld l, a
+    ld a, (ix+SR_MASK+1)
+    and h
+    or l
+    ld e, 10
+    jr nz, .fail
+.pat:
+    ld c, (ix+SR_PATS)
+    ld b, 1
+    ld a, (ix+SR_KIND)
+    or a
+    jr nz, .find
+    sla c
+    ld b, 2
+.find:
+    ld hl, sprHalfMap
+    call spr_map_find_low
+    ld e, 7
+    jr c, .fail
+    ld (ix+SR_PAT), a
+    ld d, a
+    ld e, $FF
+    call spr_map_fill
+    ld c, (ix+SR_CELLS)
+    ld hl, sprAttrMap
+    call spr_map_find_high
+    ld e, 8
+    jr c, .fail
+    ld (ix+SR_ATTR), a
+    ld d, a
+    ld e, $FF
+    call spr_map_fill
+    ld a, (ix+SR_KIND)
+    or a
+    ret z
+    ld c, (ix+SR_NBLKREQ)
+    call spr_blocks_claim
+    ld e, 9
+    ret nc
+.fail:
+    push de
+    call spr_release_resources
+    pop de
+    scf
+    ret
+
+; Image page 0 in slot 6, IX = allocated record. Frame table -> SPR_STAGE with
+; cell bytes rewritten to global half-slot indices; block table -> SR_BLKTAB
+; (on SPR_PAGE, so it needs no staging) with file block numbers replaced by
+; the assigned ones. Corrupts all.
+spr_tables_stage:
+    ld hl, DATA_WINDOW+ANI_HDR
+    ld de, SPR_STAGE
+    ld b, (ix+SR_FRAMES)
+.frame:
+    ld a, (hl)                   ; delay byte
+    ld (de), a
+    inc hl
+    inc de
+    ld c, (ix+SR_CELLS)
+.cell:
+    ld a, (hl)
+    cp 255
+    jr z, .put
+    push bc
+    ld b, a
+    ld a, (ix+SR_KIND)
+    or a
+    ld a, b
+    jr nz, .add
+    add a, a                     ; 8-bit: two half-slots per pattern
+.add:
+    add a, (ix+SR_PAT)
+    pop bc
+.put:
+    ld (de), a
+    inc hl
+    inc de
+    dec c
+    jr nz, .cell
+    djnz .frame
+    ld a, (ix+SR_KIND)
+    or a
+    ret z
+    ld e, (ix+SR_BLKTAB)
+    ld d, (ix+SR_BLKTAB+1)
+    ld b, (ix+SR_PATS)
+.blk:
+    push bc
+    ld a, (hl)
+    push hl
+    push ix
+    pop hl
+    add a, SR_BLOCKS
+    add hl, a
+    ld a, (hl)
+    pop hl
+    ld (de), a
+    inc hl
+    inc de
+    pop bc
+    djnz .blk
+    ret
+
+; Slot 6 = SPR_TAB_PAGE. SPR_STAGE -> SR_TAB, frames*row bytes.
+; Corrupts AF, BC, DE, HL.
+spr_tables_commit:
+    ld d, (ix+SR_FRAMES)
+    ld e, (ix+SR_ROW)
+    mul d, e
+    ld b, d
+    ld c, e
+    ld hl, SPR_STAGE
+    ld e, (ix+SR_TAB)
+    ld d, (ix+SR_TAB+1)
+    ldir
     ret
 
  IFDEF DEBUG
@@ -464,8 +1314,8 @@ spr_selftest:
     jp spr_state_init
 .fail:
     push de
-    ld b, 30
-    call dbg_markcol
+    ld b, 23                     ; fixed bottom-left: the marker column is off
+    ld c, 0                      ; the 32-column boot console this runs on
     call dbg_at
     ld hl, msgSprFail
     call dbg_puts

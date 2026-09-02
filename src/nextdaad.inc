@@ -1542,8 +1542,14 @@ HOOK_XBN        equ 1       ; xbnIntOn bit 0: XBN intEntry armed
 HOOK_SPR        equ 2       ; xbnIntOn bit 1: sprite tick armed
 PAL_SPR_EDIT    equ %00100000 ; NR $43 bits 6-4 = 010: sprite palette 0 for edit
 SPR_NR15_ON     equ %01000011 ; NR $15: bit 6 sprite 0 on top, bit 1 over border, bit 0 enable
-SPR_DBG_SNAP    equ $5000   ; DEBUG snapshot: dead ULA pixel window, always mapped,
-                            ; clear of the AUD_STAGE2 ring ($4400-$47FF)
+SPR_DBG_SNAP    equ $5000   ; DEBUG snapshot: dead ULA pixel window, always mapped
+                            ; outside video playback, clear of the
+                            ; AUD_STAGE2 ring ($4400-$47FF)
+SPR_DBG_LEN     equ 495     ; snapshot bytes: sig 4, seq 1, block 488, hook 1, seq 1
+SPR_STAGE       equ $5200   ; 1K frame-table staging while slot 6 holds the image;
+                            ; dead ULA pixel window like SPR_DBG_SNAP and AUD_STAGE2
+    ASSERT SPR_DBG_SNAP + SPR_DBG_LEN <= SPR_STAGE
+    ASSERT SPR_STAGE + SPR_TAB_SIZE <= $5800
 ; .ANI header (16 bytes, little-endian)
 ANI_MAGIC       equ 0       ; 'N','A'
 ANI_VER         equ 2       ; 1

@@ -1134,6 +1134,12 @@ h_gfx:
     jr z, .layer
     cp GFX_SUB_TXTMODE
     jp z, .txtmode
+    cp GFX_SUB_SPR_START
+    jp z, .sprstart
+    cp GFX_SUB_SPR_FLAGS
+    jp z, .sprflags
+    cp GFX_SUB_SPR_STOP
+    jp z, .sprstop
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
     push bc                     ; across dbg_puts (corrupts BC) for
@@ -1301,6 +1307,46 @@ h_gfx:
                                  ; safe to issue unconditionally at init
     jp tm_width_apply            ; resident, like tm_font_init above;
                                  ; game-owned tmCols survives every reset
+.sprstart:                       ; sub 19: B = set number, baked position
+    ld a, (l2Mode)
+    add a, a
+    ld c, a                      ; C bit 1 = l2Mode, bit 0 = 0
+    ld hl, spr_start_body
+    jp spr_call
+.sprflags:                       ; sub 20: B = flag index; f > 252 would wrap the table
+    ld a, b
+    cp 253
+    jr nc, .sprbad
+    ld h, high flags
+    ld l, b
+    ld b, (hl)                   ; set number
+    inc l
+    ld e, (hl)
+    inc l
+    ld d, (hl)                   ; DE = X
+    inc l
+    ld a, (l2Mode)
+    add a, a
+    or 1
+    ld c, a                      ; override + l2Mode
+    ld a, (hl)                   ; A = Y
+    ld hl, spr_start_body
+    jp spr_call
+.sprstop:                        ; sub 21: B = set or 255
+    ld hl, spr_stop_body
+    jp spr_call
+.sprbad:
+ IFDEF DEBUG
+    ld b, 29
+    call dbg_markcol
+    call dbg_at
+    ld hl, msgSprRange
+    call dbg_puts
+ ENDIF
+    ret
+ IFDEF DEBUG
+msgSprRange: db "SPR? 03", 0
+ ENDIF
 
 msgGfxUnk: db "GFX? ", 0
 

@@ -46,6 +46,7 @@
 #   -Txt40              sd\TXT40\     tests\txt40.dsf
 #   -Accent             sd\ACCENT\    tests\accents.dsf  (-Accent boots the -auto-tokens compile)
 #   -Palette            sd\PALETTE\   tests\palette.dsf
+#   -Sprites            sd\SPRITES\   tests\sprites.dsf
 #   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -BigDdbTok          sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
 #   -Xbn                sd\XBN\       tests\extern.dsf
@@ -671,7 +672,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -727,6 +728,7 @@ if ($FontSw)           { $legName = 'FONTSW' }
 if ($Txt40)            { $legName = 'TXT40' }
 if ($Accent)           { $legName = 'ACCENT' }
 if ($Palette)          { $legName = 'PALETTE' }
+if ($Sprites)          { $legName = 'SPRITES' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
 if ($BigDdbTok)        { $legName = 'BIGDDBT' }
 if ($Xbn)              { $legName = 'XBN' }
@@ -749,7 +751,7 @@ function Reset-LegDir {
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
                'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
-               'PALETTE', 'BIGDDB', 'BIGDDBT', 'XBN')
+               'PALETTE', 'SPRITES', 'BIGDDB', 'BIGDDBT', 'XBN')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -1594,6 +1596,29 @@ finally {
     Pop-Location
 }
 
+# Sprite animation stimulus fixture (SP20 Task 7). Compiled unconditionally
+# like every block above so a break in the DSF is caught on a plain run,
+# whether or not -Sprites is given - the byte assertions below run every
+# time. -Sprites is the leg switch that stages this DDB plus the .ANI sets
+# and a picture into sd\SPRITES\ (see that switch's own block in the
+# STAGING section below).
+#
+# OUT OF TREE, same reason and means as the blocks above: ndrc.exe is run
+# by absolute path with the cwd set to tests\out\sprites-work.
+$spritesWork = Join-Path $root 'tests\out\sprites-work'
+Remove-Item $spritesWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $spritesWork | Out-Null
+Copy-Item "$PSScriptRoot\sprites.dsf" "$spritesWork\NDSPRITE.DSF" -Force
+Push-Location $spritesWork
+try {
+    & $ndrc @drcTarget EN NDSPRITE.DSF NDSPRITE.DDB -v3 -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sprites)" }
+    Copy-Item NDSPRITE.DDB "$root\tests\out\sprites.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 # 40-column tilemap mode fixture (2026-08-30). Compiled unconditionally
 # like every block above so a break in the DSF is caught on a plain
 # run; -Txt40 is the leg switch that stages this DDB into sd\TXT40\
@@ -2121,6 +2146,26 @@ if ($fontswPauseHits.Count -ne 3) {
     throw "fontsw: expected exactly 3 'PAUSE 25 -> 13' debounce holds (23 0D); found $($fontswPauseHits.Count) - DRC's duration scaling has changed, or a loop exit lost its debounce"
 }
 "fontsw.ddb: v$($fontswBytes[0]), GFX 2/0/3 16, MOUSE 2/1/0 5, the 8/8 hotspot, the GETMS tracking loop and its x3 debounce PAUSE all present as authored"
+
+# --- sprites: the GFX 19/20/21 stimulus ---
+# GFX is opcode 87 ($57), MOUSE is 86 ($56); both take two parameters, so
+# each call is three bytes. Assert DRC emitted the sub-commands authored
+# rather than something it rewrote.
+$spritesBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sprites.ddb")
+foreach ($c in @(@{ n = 'GFX 2 19';   b = [byte[]]@(87, 2, 19) },
+                 @{ n = 'GFX 6 19';   b = [byte[]]@(87, 6, 19) },
+                 @{ n = 'GFX 15 19';  b = [byte[]]@(87, 15, 19) },
+                 @{ n = 'GFX 6 21';   b = [byte[]]@(87, 6, 21) },
+                 @{ n = 'GFX 255 21'; b = [byte[]]@(87, 255, 21) },
+                 @{ n = 'GFX 100 20'; b = [byte[]]@(87, 100, 20) },
+                 @{ n = 'GFX 253 20'; b = [byte[]]@(87, 253, 20) },
+                 @{ n = 'GFX 28 19';  b = [byte[]]@(87, 28, 19) },
+                 @{ n = 'MOUSE 0 1';  b = [byte[]]@(86, 0, 1) })) {
+    if ((Find-ByteRuns $spritesBytes $c.b).Count -lt 1) {
+        throw "sprites: '$($c.n)' not present in tests\out\sprites.ddb - DRC did not emit the authored condact"
+    }
+}
+"sprites.ddb: GFX 19/20/21 and MOUSE 0 1 stimuli all present as authored"
 
 # --- txt40: the 40-column text mode stimulus ---
 # GFX=87, WINAT=82, WINSIZE=107 confirmed against the compiled condact
@@ -4936,6 +4981,58 @@ if ($Palette) {
     "staged palcard.nx2 -> $leg\001.NX2  $palCardBytes bytes, 320x$palCardRows"
 }
 
+if ($Sprites) {
+    Copy-Item "$root\tests\out\sprites.ddb" (Join-Path $leg 'GAME.DDB') -Force
+    "staged sprites.ddb -> $leg\GAME.DDB"
+    # The .ANI sets. tests\anipack-selftest.ps1 ran earlier in this same
+    # invocation, so tests\out\anipack holds the packed 002/003/006 sets
+    # and every sheet mkanisheets.py writes. 015 is packed HERE - the
+    # selftest has no assertion of its own for it; it exists only as the
+    # block-2 conflict stimulus this leg needs.
+    $aniWork = "$root\tests\out\anipack"
+    $gfx2next = "$root\tools\gfx2next\gfx2next.exe"
+    $anipack = "$root\authoring-kit\lib\anipack.ps1"
+    if (-not (Test-Path "$aniWork\015.png")) { throw "no $aniWork\015.png - the anipack selftest did not run" }
+    Push-Location $aniWork
+    try {
+        & $gfx2next -sprites -pal-none "$aniWork\015.png" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "gfx2next failed on 015.png" }
+    }
+    finally { Pop-Location }
+    & $anipack -Spr "$aniWork\015.spr" -Txt "$aniWork\015.txt" -Out "$aniWork\015.ANI" -Png "$aniWork\015.png" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "anipack failed on 015" }
+    # 015 must land in palette block 2 - (32,0,0) truncates to RGB332 $20 -
+    # or S3's kind-conflict step is testing nothing.
+    $a015 = [System.IO.File]::ReadAllBytes("$aniWork\015.ANI")
+    $mask015 = [int]$a015[12] -bor ([int]$a015[13] -shl 8)
+    if ($mask015 -ne 4) {
+        throw "015.ANI blockMask is 0x$('{0:X4}' -f $mask015), expected 0x0004 (block 2 only) - the block-2 conflict stimulus is not armed"
+    }
+    foreach ($n in @('002', '003', '006', '015')) {
+        $src = "$aniWork\$n.ANI"
+        if (-not (Test-Path $src)) { throw "no $src - the anipack selftest did not produce it" }
+        Copy-Item $src (Join-Path $leg "$n.ANI") -Force
+    }
+    # 020-028 are byte copies of 002: nine distinct SET NUMBERS with one
+    # record each, which is what the eight-channel ceiling step needs.
+    foreach ($n in 20..28) {
+        Copy-Item "$aniWork\002.ANI" (Join-Path $leg ('{0:D3}.ANI' -f $n)) -Force
+    }
+    "staged 002/003/006/015.ANI and 020-028.ANI -> $leg"
+    # A picture for the final PICTURE 1 step. Same generated 320-wide card
+    # the -Palette leg uses, and the same size check on it.
+    & python "$PSScriptRoot\art\mkpalcard.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkpalcard.py failed" }
+    $palCardSrc = "$root\tests\out\palcard.nx2"
+    if (-not (Test-Path $palCardSrc)) { throw "mkpalcard.py produced no palcard.nx2" }
+    $palCardBytes = (Get-Item $palCardSrc).Length
+    if ((($palCardBytes - 512) % 320) -ne 0) {
+        throw "palcard.nx2 is $palCardBytes bytes - not 512 + a whole number of 320-byte rows"
+    }
+    Copy-Item $palCardSrc (Join-Path $leg '001.NX2') -Force
+    "staged palcard.nx2 -> $leg\001.NX2  $palCardBytes bytes"
+}
+
 # The interpreter itself, so the folder is genuinely self-contained -
 # one folder to copy, one file to launch. Not a rebuild: whatever
 # build\nextdaad.nex currently holds is what gets staged (build.ps1 is
@@ -4981,6 +5078,7 @@ foreach ($stagedDdb in Get-ChildItem -LiteralPath $leg -Filter '*.DDB' -File) {
     }
 }
 if ($xbnActive) { "active: extern (XBN extern support fixture$(if ($XbnNoBin) { ', no GAME.XBN staged' } elseif ($XbnBad) { ", GAME.XBN = $XbnBad reject variant" } elseif ($XbnTicker) { ', GAME.XBN = authoring-kit ticker example' }))" }
+elseif ($Sprites) { "active: sprites (SP20 GFX 19/20/21 sprite-set fixture)" }
 elseif ($fontSwActive) { "active: fontsw (SP18 font/pointer switching fixture)" }
 elseif ($txt40Active) { "active: txt40 (40-column tilemap mode fixture)" }
 elseif ($accentActive) { "active: accents (accented-glyph / charset-redirect fixture - verbs ACC PAGE FORCE R, accents-autotok.ddb $($accentTokBytes.Length) bytes, per-game token table)" }

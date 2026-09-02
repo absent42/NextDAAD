@@ -199,14 +199,17 @@ im2_init:
 
 ; ISR contract (SP7 Task 3): the fast path (audEnable = 0) touches only
 ; AF, HL and frameCounter, exactly as before - never MMU, esxDOS or the
-; $C000 window. SP-XBN Task 5 EXCEPTION: when xbnIntOn is also set (a
-; game shipped an XBN with a nonzero intEntry), the fast path takes its
-; own full-context save (.xbnhook_fast) before running the hook and
-; MMU6/7 for the hook's own XBN bank via the ISR-private
+; $C000 window. SP-XBN Task 5 EXCEPTION: xbnIntOn is a BIT MASK, not a
+; flag - bit 0 = an XBN with a nonzero intEntry, bit 1 = the sprite tick
+; (SP20) - and any bit set makes the fast path take its own full-context
+; save (.xbnhook_fast) before running isr_hook_body, so a sprite-only
+; game with no XBN pays exactly the same save. MMU6/7 for the XBN bank
+; go through the ISR-private
 ; extSavedIsr/xbn_isr_mmu_save/restore pair (main.asm) - never extSaved,
 ; which a foreground extern call may be mid-flight on. audEnable = 0 and
-; xbnIntOn = 0 together (no XBN loaded, or its intEntry left 0) is the
-; only shape that still gets the true three-register fast path.
+; xbnIntOn = 0 together (no XBN loaded or its intEntry left 0, and no
+; live sprite set) is the only shape that still gets the true
+; three-register fast path.
 ; Once audEnable is nonzero the ISR takes the full-context
 ; path: EVERY register pair including both shadow sets is saved before
 ; aud_tick runs (which corrupts anything - PLY_AKY_PLAY reuses SP
@@ -232,13 +235,15 @@ im2_isr:
     ld a, (audEnable)
     or a
     jr nz, .audio
-    ; XBN #int frame hook (SP-XBN Task 5): cheapest possible gate before
-    ; the fast-path exit. xbnIntOn is 0 for every game with no XBN loaded
-    ; or whose header left intEntry 0 (engine.asm), so this is one
-    ; load-and-test in the common case. Armed, falls through to
-    ; .xbnhook_fast, which performs the same full-context save the audio
-    ; path does before the hook runs - the author's intEntry gets a
-    ; complete register context either way.
+    ; Frame hook gate (SP-XBN Task 5, SP20): cheapest possible gate
+    ; before the fast-path exit. xbnIntOn is a bit mask - bit 0 the XBN
+    ; #int entry, bit 1 the sprite tick - and is 0 for every game with no
+    ; XBN loaded (or whose header left intEntry 0, engine.asm) and no
+    ; live sprite set, so this is one load-and-test in the common case.
+    ; Any bit set falls through to .xbnhook_fast, which performs the same
+    ; full-context save the audio path does before the hook runs - the
+    ; author's intEntry gets a complete register context either way, and
+    ; so does a sprite-only game.
     ld a, (xbnIntOn)
     or a
     jr nz, .xbnhook_fast
@@ -384,8 +389,9 @@ im2_isr:
     ei
     reti
 
-; XBN #int frame hook, fast-path entry (SP-XBN Task 5): audEnable was 0
-; but xbnIntOn is set, so this performs the SAME full save the audio path
+; Frame hook, fast-path entry (SP-XBN Task 5, SP20): audEnable was 0 but
+; some xbnIntOn bit is set - the XBN #int entry (bit 0), the sprite tick
+; (bit 1) or both - so this performs the SAME full save the audio path
 ; does above (push BC/DE/IX/IY and both alternate-set pairs, mirroring
 ; im2_isr's .audio prologue exactly) before the hook can run - intEntry
 ; must never see a partial context just because audio happens to be off.
