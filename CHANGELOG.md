@@ -30,11 +30,10 @@ All notable changes to NextDAAD are recorded here.
   binaries get it from `xbnmod.inc`'s `XBN_BEGIN`.
 - `EXTERN` is a condition now: a carry flag set on return from a
   forwarded fn fails the entry and clears the done stamp the
-  dispatcher had already written, the same as a failed built-in
-  condition; carry clear continues. The engine's forwarded-EXTERN
-  return path is split from the CF-blind action path the reserved
-  vectors and `CALL` still use, so neither of those can fail an
-  entry by construction.
+  dispatcher had already written; carry clear continues. The engine's
+  forwarded-EXTERN return path is split from the CF-blind action path
+  the reserved vectors and `CALL` still use, so neither of those can
+  fail an entry by construction.
 - Five new service rows, 10-14: `SVC_FRAMES` (16-bit free-running
   frame counter), `SVC_GETDATE` (RTC date/time/seconds), `SVC_BUSY`
   (video/card/palette-critical-section bits), `SVC_PALREAD`

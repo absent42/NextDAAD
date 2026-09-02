@@ -51,6 +51,7 @@ ext:
     ; EXTERN/CALL entry. Test C (the fn code) against your own range
     ; FIRST and return immediately on anything else - in a combined
     ; binary every module's ext sees every EXTERN call.
+.notmine:
     or a                          ; not my fn: carry clear
     ret
 int:
@@ -143,7 +144,8 @@ These come from the manual's externs chapter and are checked in review:
 - Durable state goes in flags: your bank is not part of save games.
 - Parameters arrive in the two EXTERN bytes and in flags; there is no
   inline data after the condact on this interpreter.
-- Object walks run `0` to `XBN_NUMOBJ - 1`; attribute bits 0-7 live at
+- Object walks read the count with `ld a, (XBN_NUMOBJ)` and run `0` to
+  `(XBN_NUMOBJ) - 1`, the byte's value; attribute bits 0-7 live at
   entry offset `+3`, 8-15 at `+2`.
 
 ### Before you open the PR
