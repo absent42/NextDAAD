@@ -16,7 +16,8 @@ same turn cannot come from either side of a tick.
   the entry continues on success; CF set and the entry FAILS when there is no
   RTC or the reading is invalid. Flag 239 carries the same verdict for testing
   later in the turn: 1 = snapshot taken, 0 = no reading. A failed refresh
-  leaves the previous snapshot as it was.
+  clears the availability flag AND the snapshot: `EXTERN f 67` reads 0 for
+  every field until the next successful refresh.
 - `EXTERN f 67` - copy field f of the snapshot into flag 238. An ACTION: it
   cannot fail, so CF is always clear and the entry always continues. The
   fields are 0 second, 1 minute, 2 hour, 3 day of the month, 4 month, 5 year,
@@ -103,8 +104,8 @@ turn runs, so a wall-clock event only fires when the player happens to type.
 DAAD's input timeout is the other half of real time: flag 48 arms it, in
 seconds, and flag 49 bit 7 reports that it fired. With flag 48 armed a turn
 happens on a timer, your process table runs, and the events you hang off this
-module fire while the player is still thinking. The manual's externs chapter
-(`manual/externs.md`) covers the pairing.
+module fire while the player is still thinking. The kit manual's externs
+chapter covers the pairing.
 
 ## Notes
 

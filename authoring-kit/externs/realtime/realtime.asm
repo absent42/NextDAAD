@@ -46,8 +46,8 @@ ext:
 
 ; fn 66 - refresh the snapshot. CF set = no RTC or an invalid reading;
 ; HL is undefined on that path, so the seconds byte is read on success
-; only. A failed refresh leaves the previous snapshot alone - flag 239 is
-; the availability verdict.
+; only. A failed refresh INVALIDATES the snapshot as well as clearing
+; flag 239, so fn 67 reads 0 until the next successful refresh.
 refresh:
     call SVC_GETDATE
     jr c, .nortc
@@ -63,6 +63,7 @@ refresh:
 .nortc:
     xor a
     ld (XBN_FLAGS + FLAG_AVAIL), a
+    ld (valid), a                ; stale fields must not outlive the reading
     scf
     ret
 
