@@ -147,6 +147,57 @@ for %%P in ("IMAGES\POINTER.png" "IMAGES\POINTER1.png" "IMAGES\POINTER2.png" ^
     )
 )
 
+REM ---- animated sprite sets (GFX n 19/20/21): IMAGES\SPRITES\NNN.png or a
+REM      ready-made 8-bit NNN.spr, plus NNN.txt. PNG sheets go through
+REM      gfx2next in raw index mode (-pal-none, no -pal-std) so the bytes are
+REM      PLTE indices and lib\anipack.ps1 does the colour work; a .spr is
+REM      passed to anipack as-is. Both for one number is an error.
+if exist "IMAGES\SPRITES" (
+    set "ANICOUNT=0"
+    for %%F in ("IMAGES\SPRITES\*.png" "IMAGES\SPRITES\*.spr") do (
+        set "ANUM="
+        for /f %%A in ('powershell -NoProfile -Command "$m=[regex]::Match('%%~nF','\d+'); if($m.Success -and [int]$m.Value -le 254){'{0:D3}' -f [int]$m.Value}else{'ERR'}"') do set "ANUM=%%A"
+        if "!ANUM!"=="ERR" (
+            echo ERROR: %%~nxF - sprite files are named by set number, 000-254
+            goto :sprites_fail
+        )
+        if not exist "IMAGES\SPRITES\%%~nF.txt" (
+            echo ERROR: %%~nxF has no sidecar IMAGES\SPRITES\%%~nF.txt
+            goto :sprites_fail
+        )
+        if /I "%%~xF"==".png" (
+            if exist "IMAGES\SPRITES\%%~nF.spr" (
+                echo ERROR: both %%~nF.png and %%~nF.spr exist in IMAGES\SPRITES - keep one
+                goto :sprites_fail
+            )
+            del "%%~nF.spr" 2>nul
+            "%GFX%" -sprites -pal-none "%%~fF" >nul 2>&1
+            if errorlevel 1 (
+                echo ERROR: gfx2next failed on %%~nxF - must be a paletted 8-bit PNG
+                del "%%~nF.spr" 2>nul
+                goto :sprites_fail
+            )
+            if not exist "%%~nF.spr" (
+                echo ERROR: gfx2next produced no output for %%~nxF - is the sheet at least 16x16?
+                goto :sprites_fail
+            )
+            powershell -NoProfile -ExecutionPolicy Bypass -File "lib\anipack.ps1" -Spr "%%~nF.spr" -Txt "IMAGES\SPRITES\%%~nF.txt" -Out "RELEASE\!ANUM!.ANI" -Png "%%~fF"
+            set "ANIRC=!errorlevel!"
+            del "%%~nF.spr" 2>nul
+            if not "!ANIRC!"=="0" goto :sprites_fail
+        ) else (
+            powershell -NoProfile -ExecutionPolicy Bypass -File "lib\anipack.ps1" -Spr "%%~fF" -Txt "IMAGES\SPRITES\%%~nF.txt" -Out "RELEASE\!ANUM!.ANI"
+            if errorlevel 1 goto :sprites_fail
+        )
+        set /a ANICOUNT+=1
+    )
+    echo   !ANICOUNT! sprite set^(s^) packed
+)
+goto :sprites_done
+:sprites_fail
+exit /b 1
+:sprites_done
+
 :title_readymade
 REM ---- ready-made title: no IMAGES\DAAD.png (or no IMAGES\ at all) - a
 REM      pre-converted DAAD.NX2/DAAD.NXI, or a ZX0 variant/8.3 synonym, in

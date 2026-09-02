@@ -880,7 +880,7 @@ elseif (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftSh
 # languages - src/nextdaad.inc is canonical, and the other four are the
 # kit's encoder, its audit script, a DAAD extern, and a test card
 # generator. Not every file carries every value: colour is checked at
-# four sites, index at two, dodge at five. There is no shared header
+# five sites, index at two, dodge at six. There is no shared header
 # they can include, so the only thing that keeps them together is this
 # check. A silent divergence is the nastiest shape of failure available
 # here: the interpreter would dodge one colour while a converter
@@ -979,7 +979,7 @@ function Assert-TranspConstantsInSync {
                    ". All copies must move together - $detail")
         }
     }
-    "L2 transparency constants agree: colour `$$($colours['src\nextdaad.inc'].ToString('X2')) (4 sites), index $($indices['src\nextdaad.inc']), dodge `$$($dodges['src\nextdaad.inc'].ToString('X2')) (5 sites)"
+    "L2 transparency constants agree: colour `$$($colours['src\nextdaad.inc'].ToString('X2')) ($($colours.Count) sites), index $($indices['src\nextdaad.inc']), dodge `$$($dodges['src\nextdaad.inc'].ToString('X2')) ($($dodges.Count) sites)"
 }
 
 # pal_colour must reserve exactly one logical colour as the transparent

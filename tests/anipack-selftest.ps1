@@ -139,4 +139,26 @@ Assert-Eq $a.Length (16 + 2 + 256) '007 length'
 Convert-Sheet "$work\008.png" @() | Out-Null
 Assert-Throws { Pack '008' @() } 'frame 0 cell 0 .* 16 opaque colours' '008 bits=4 refuses a 16-colour cell'
 
+# ---- ready-made 8-bit .spr: gfx2next -pal-std bytes are final, kept verbatim, no dodge.
+Push-Location $work
+try { & $gfx -sprites -pal-std -pal-none "$work\005.png" | Out-Null } finally { Pop-Location }
+Copy-Item "$work\005.spr" "$work\010.spr" -Force
+Copy-Item "$work\005.txt" "$work\010.txt" -Force
+& $pack -Spr "$work\010.spr" -Txt "$work\010.txt" -Out "$work\010.ANI" | Out-Null
+$a = [IO.File]::ReadAllBytes("$work\010.ANI")
+# -pal-std snaps (224,0,192) to the Next standard palette's $C2 (observed; not the
+# raw RGB332 truncation $E3) - a ready-made file keeps that byte as-is, no dodge pass.
+Assert-Eq $a[18] 0xC2 '010 ready-made bytes are not dodged'
+Assert-Eq $a[3] 1 '010 flags: 8-bit, loop default'
+# ---- rejections
+[IO.File]::WriteAllBytes("$work\011.spr", (New-Object byte[] 300))
+Copy-Item "$work\002.txt" "$work\011.txt" -Force
+Assert-Throws { & $pack -Spr "$work\011.spr" -Txt "$work\011.txt" -Out "$work\011.ANI" } 'not a multiple of 256' '011 wrong length'
+Assert-Throws { & $pack -Spr "$work\001.spr.zx0" -Txt "$work\001.txt" -Out "$work\012.ANI" } 'compressed' '012 .spr.zx0 rejected'
+Set-Content "$work\013.txt" "w=16`nh=16`nbits=4"
+Copy-Item "$work\010.spr" "$work\013.spr" -Force
+Assert-Throws { & $pack -Spr "$work\013.spr" -Txt "$work\013.txt" -Out "$work\013.ANI" } '8-bit only' '013 ready-made with bits=4'
+Set-Content "$work\014.txt" "h=16"
+Assert-Throws { & $pack -Spr "$work\010.spr" -Txt "$work\014.txt" -Out "$work\014.ANI" } "'w' is required" '014 missing w'
+
 "anipack-selftest: $checks checks passed"
