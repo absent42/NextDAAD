@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.8.1 - Unreleased
+## v0.9.0 - Unreleased
 
 - Accented text: the graphics-charset toggle (`$0E`/`$0F`) now shifts
   every character, not just `$20-$7F`, so DRC's second accent encoding
