@@ -18,3 +18,8 @@ Installation:
 
 - Copy the folder to your ZX Spectrum Next SD card
 - Run nextdaad.nex to start the demo
+
+Acknowledgments:
+
+- The demo is based on the opening section of Urban Upstart for the ZX Spectrum,
+  by Pete Cooke and released by Richard Shepherd Software Ltd (1983).
