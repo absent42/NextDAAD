@@ -139,16 +139,18 @@ Assert-Eq $a.Length (16 + 2 + 256) '007 length'
 Convert-Sheet "$work\008.png" @() | Out-Null
 Assert-Throws { Pack '008' @() } 'frame 0 cell 0 .* 16 opaque colours' '008 bits=4 refuses a 16-colour cell'
 
-# ---- ready-made 8-bit .spr: gfx2next -pal-std bytes are final, kept verbatim, no dodge.
+# ---- ready-made 8-bit .spr from a real gfx2next -pal-std file: proves the bytes
+# gfx2next wrote pass through unmodified (the -pal-std snap for (224,0,192) is
+# $C2, not the raw RGB332 truncation $E3 - observed; either way anipack must not
+# touch it). The dodge-avoidance property itself is pinned by case 016 below,
+# with a synthetic $E3 cell that bypasses gfx2next's palette snapping entirely.
 Push-Location $work
 try { & $gfx -sprites -pal-std -pal-none "$work\005.png" | Out-Null } finally { Pop-Location }
 Copy-Item "$work\005.spr" "$work\010.spr" -Force
 Copy-Item "$work\005.txt" "$work\010.txt" -Force
 & $pack -Spr "$work\010.spr" -Txt "$work\010.txt" -Out "$work\010.ANI" | Out-Null
 $a = [IO.File]::ReadAllBytes("$work\010.ANI")
-# -pal-std snaps (224,0,192) to the Next standard palette's $C2 (observed; not the
-# raw RGB332 truncation $E3) - a ready-made file keeps that byte as-is, no dodge pass.
-Assert-Eq $a[18] 0xC2 '010 ready-made bytes are not dodged'
+Assert-Eq $a[18] 0xC2 '010 ready-made -pal-std bytes pass through unchanged ($C2 stays $C2)'
 Assert-Eq $a[3] 1 '010 flags: 8-bit, loop default'
 # ---- rejections
 [IO.File]::WriteAllBytes("$work\011.spr", (New-Object byte[] 300))
@@ -160,5 +162,21 @@ Copy-Item "$work\010.spr" "$work\013.spr" -Force
 Assert-Throws { & $pack -Spr "$work\013.spr" -Txt "$work\013.txt" -Out "$work\013.ANI" } '8-bit only' '013 ready-made with bits=4'
 Set-Content "$work\014.txt" "h=16"
 Assert-Throws { & $pack -Spr "$work\010.spr" -Txt "$work\014.txt" -Out "$work\014.ANI" } "'w' is required" '014 missing w'
+
+# ---- 016 synthetic $E3 cell: a hand-built .spr, not gfx2next output, so the
+# byte values are exact and known - proves a byte that WOULD be dodged on the
+# PNG path ($E3) survives untouched on the no-Png ready-made path.
+$spr016 = New-Object byte[] 256
+for ($i = 0; $i -lt 256; $i++) { $spr016[$i] = 0xE3 }
+$spr016[1] = 0x00
+$spr016[2] = 0xE7
+[IO.File]::WriteAllBytes("$work\016.spr", $spr016)
+Set-Content "$work\016.txt" "w=16`nh=16`nbits=8"
+& $pack -Spr "$work\016.spr" -Txt "$work\016.txt" -Out "$work\016.ANI" | Out-Null
+$a = [IO.File]::ReadAllBytes("$work\016.ANI")
+Assert-Eq $a[18] 0xE3 '016 pattern pixel 0 stays $E3, not dodged to $E7'
+Assert-Eq $a[19] 0x00 '016 pattern pixel 1'
+Assert-Eq $a[20] 0xE7 '016 pattern pixel 2'
+Assert-Eq (U16 $a 12) 0x4001 '016 blockMask blocks 0 and 14 ($E3 bytes never counted)'
 
 "anipack-selftest: $checks checks passed"
