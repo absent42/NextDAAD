@@ -92,6 +92,19 @@ def main(out):
     # with a 4-bit set that has claimed block 2.
     write_png(os.path.join(out, "015.png"), 16, 16, [MAGENTA, (32, 0, 0)] + [(0, 0, 0)] * 254, fill(16, 16, 1))
     write_txt(os.path.join(out, "015.txt"), w=16, h=16, bits=8)
+    # 017: the two-bank set. 4-bit, 126 frames of one 16x16 cell laid left to
+    # right (2016x16 sheet), each a distinct colour after RGB333 truncation, so
+    # the packer emits 126 patterns in nine palette blocks and the file passes
+    # 16384 bytes - the point at which the loader needs a second pool bank.
+    # 126 and not 127: 4-bit patterns take one half-slot each and only 126 are
+    # available (0 and 1 are the pointer's), so 127 could never be allocated.
+    pal = [MAGENTA] + [(32 * (k % 8), 32 * ((k // 8) % 8), 32 * ((k // 64) % 8))
+                       for k in range(1, 127)] + [(0, 0, 0)] * 129
+    px = fill(2016, 16, 0)
+    for k in range(126):
+        paste(px, k * 16, 0, fill(16, 16, k + 1))
+    write_png(os.path.join(out, "017.png"), 2016, 16, pal, px)
+    write_txt(os.path.join(out, "017.txt"), w=16, h=16, bits=4)
     return 0
 
 if __name__ == "__main__":

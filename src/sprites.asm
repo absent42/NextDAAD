@@ -591,6 +591,29 @@ spr_cache_tick:
     ld (sprClock), a
     ret
 
+; A = cache entry index. ZF set when a live record's SR_CACHE names it.
+; Preserves DE, HL. Corrupts AF, BC, IX.
+spr_cache_inuse:
+    push de
+    ld c, a
+    ld ix, sprRec
+    ld b, SPR_CHANS
+    ld de, SR_SIZE
+.n:
+    ld a, (ix+SR_SET)
+    cp SPR_SET_NONE
+    jr z, .skip
+    ld a, (ix+SR_CACHE)
+    cp c
+    jr z, .done                  ; ZF: in use
+.skip:
+    add ix, de
+    djnz .n
+    or 1                         ; NZ: free to evict
+.done:
+    pop de
+    ret
+
 ; Free entry, or the LRU victim with its banks released. Out: A = entry, HL -> entry.
 ; Corrupts AF, BC, DE, HL.
 spr_cache_victim:
@@ -603,6 +626,9 @@ spr_cache_victim:
     ld a, (hl)
     cp SPR_SET_NONE
     jr z, .free
+    ld a, c                      ; an entry a live record's SR_CACHE names is
+    call spr_cache_inuse         ; not evictable: its banks are still in use
+    jr z, .next
     push hl
     inc hl
     inc hl
@@ -754,7 +780,9 @@ spr_cache_load:
     ld a, c
     cp 2
     jr nz, .havebank
+    push bc                      ; bank_alloc corrupts BC and C is the image page
     call bank_alloc              ; second bank on demand
+    pop bc
     ld e, 6
     jr c, .failclose
     push af

@@ -80,6 +80,36 @@ class State:
         return "\n".join(parts)
 
 
+def pool_pages_hold(z, ani, page_gap):
+    """True when three consecutive-by-bank pool pages hold 017.ANI's three
+    8K reads: the file head, the bytes at 8192, and the tail at 16384.
+
+    ZEsarUX zone 0 is the machine's whole 2MB of RAM, so it sees a pool bank
+    the CPU has not mapped - but it is NOT indexed by Next MMU page number
+    (13.0 put page N at flat page N+32), so the head's page is DISCOVERED and
+    the other two are addressed relative to it. That keeps the check free of
+    any emulator-layout constant. `page_gap` is (CE_BANK1 - CE_BANK0) * 2, the
+    distance in 8K pages from the first bank's page 0 to the second's.
+    Zone -1 (mapped memory) is restored before returning - every other read in
+    this file is CPU-visible.
+    """
+    z.cmd("set-memory-zone 0")
+    try:
+        head, mid, tail = ani[:16], ani[8192:8208], ani[16384:16400]
+        for pg in range(256):
+            if z.read_memory(pg * 8192, 16) != head:
+                continue
+            if pg + 1 > 255 or z.read_memory((pg + 1) * 8192, 16) != mid:
+                continue
+            if pg + page_gap > 255:
+                continue
+            if z.read_memory((pg + page_gap) * 8192, 16) == tail:
+                return True
+        return False
+    finally:
+        z.cmd("set-memory-zone -1")
+
+
 def expect(cond, what):
     if not cond:
         sys.exit("sprites_dump: FAIL " + what)
@@ -169,8 +199,22 @@ def run(z, verbose):
     expect(sorted(r) == list(range(20, 28)) and s.loads == 12, "S9 eight live, 28 refused before any read: %r loads=%d" % (sorted(r), s.loads))
     s = step(z); show("S10", s); r = s.live()
     expect(list(r) == [2] and s.loads == 12, "S10 restart of a live set is not a load (loads=%d)" % s.loads)
-    s = step(z); show("S11", s)
-    print("sprites_dump: S1-S10 pass (S11 is Task 9)")
+    s = step(z); show("S11", s); r = s.live()
+    expect(list(r) == [17], "S11 set 17 live, got %r" % list(r))
+    expect(r[17][SR["KIND"]] == 1 and r[17][SR["PATS"]] == 126, "S11 4-bit with 126 patterns")
+    ent = s.cache[r[17][SR["CACHE"]]]
+    expect(ent[0] == 17 and ent[2] != 255, "S11 017.ANI is over 16K: its entry holds two banks (CE_BANK1=%d)" % ent[2])
+    expect(s.loads == 13, "S11 one more SD load (loads=%d)" % s.loads)
+    # The file is 16810 bytes: 8K into bank0 page 0, 8K into bank0 page 1, the
+    # 426-byte tail into bank1 page 0. Read the pool banks straight out of the
+    # machine's RAM - nothing maps them at this point, and a lost page index on
+    # the second-bank read would put that tail somewhere else entirely.
+    ani = (LEG / "017.ANI").read_bytes()
+    expect(pool_pages_hold(z, ani, (ent[2] - ent[1]) * 2),
+           "S11 the 426-byte tail landed in bank1 page 0 - the second-bank read "
+           "kept its image-page index (banks %d and %d)" % (ent[1], ent[2]))
+    s = step(z); show("S12", s)
+    print("sprites_dump: S1-S11 pass (S12 is Task 9)")
     return 0
 
 

@@ -2159,6 +2159,7 @@ foreach ($c in @(@{ n = 'GFX 2 19';   b = [byte[]]@(87, 2, 19) },
                  @{ n = 'GFX 255 21'; b = [byte[]]@(87, 255, 21) },
                  @{ n = 'GFX 100 20'; b = [byte[]]@(87, 100, 20) },
                  @{ n = 'GFX 253 20'; b = [byte[]]@(87, 253, 20) },
+                 @{ n = 'GFX 17 19';  b = [byte[]]@(87, 17, 19) },
                  @{ n = 'GFX 28 19';  b = [byte[]]@(87, 28, 19) },
                  @{ n = 'MOUSE 0 1';  b = [byte[]]@(86, 0, 1) })) {
     if ((Find-ByteRuns $spritesBytes $c.b).Count -lt 1) {
@@ -4986,21 +4987,23 @@ if ($Sprites) {
     "staged sprites.ddb -> $leg\GAME.DDB"
     # The .ANI sets. tests\anipack-selftest.ps1 ran earlier in this same
     # invocation, so tests\out\anipack holds the packed 002/003/006 sets
-    # and every sheet mkanisheets.py writes. 015 is packed HERE - the
-    # selftest has no assertion of its own for it; it exists only as the
-    # block-2 conflict stimulus this leg needs.
+    # and every sheet mkanisheets.py writes. 015 and 017 are packed HERE -
+    # the selftest has no assertion of its own for either; they exist only
+    # as this leg's block-2 conflict and two-bank stimuli.
     $aniWork = "$root\tests\out\anipack"
     $gfx2next = "$root\tools\gfx2next\gfx2next.exe"
     $anipack = "$root\authoring-kit\lib\anipack.ps1"
-    if (-not (Test-Path "$aniWork\015.png")) { throw "no $aniWork\015.png - the anipack selftest did not run" }
-    Push-Location $aniWork
-    try {
-        & $gfx2next -sprites -pal-none "$aniWork\015.png" | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "gfx2next failed on 015.png" }
+    foreach ($n in @('015', '017')) {
+        if (-not (Test-Path "$aniWork\$n.png")) { throw "no $aniWork\$n.png - the anipack selftest did not run" }
+        Push-Location $aniWork
+        try {
+            & $gfx2next -sprites -pal-none "$aniWork\$n.png" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "gfx2next failed on $n.png" }
+        }
+        finally { Pop-Location }
+        & $anipack -Spr "$aniWork\$n.spr" -Txt "$aniWork\$n.txt" -Out "$aniWork\$n.ANI" -Png "$aniWork\$n.png" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "anipack failed on $n" }
     }
-    finally { Pop-Location }
-    & $anipack -Spr "$aniWork\015.spr" -Txt "$aniWork\015.txt" -Out "$aniWork\015.ANI" -Png "$aniWork\015.png" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "anipack failed on 015" }
     # 015 must land in palette block 2 - (32,0,0) truncates to RGB332 $20 -
     # or S3's kind-conflict step is testing nothing.
     $a015 = [System.IO.File]::ReadAllBytes("$aniWork\015.ANI")
@@ -5008,7 +5011,13 @@ if ($Sprites) {
     if ($mask015 -ne 4) {
         throw "015.ANI blockMask is 0x$('{0:X4}' -f $mask015), expected 0x0004 (block 2 only) - the block-2 conflict stimulus is not armed"
     }
-    foreach ($n in @('002', '003', '006', '015')) {
+    # 017 must cross 16384 bytes or the loader's second-bank path - one
+    # bank is 16K, read as two 8K pages - is never entered.
+    $len017 = (Get-Item "$aniWork\017.ANI").Length
+    if ($len017 -le 16384) {
+        throw "017.ANI is $len017 bytes, not over 16384 - the two-bank load path is not armed"
+    }
+    foreach ($n in @('002', '003', '006', '015', '017')) {
         $src = "$aniWork\$n.ANI"
         if (-not (Test-Path $src)) { throw "no $src - the anipack selftest did not produce it" }
         Copy-Item $src (Join-Path $leg "$n.ANI") -Force
@@ -5018,7 +5027,7 @@ if ($Sprites) {
     foreach ($n in 20..28) {
         Copy-Item "$aniWork\002.ANI" (Join-Path $leg ('{0:D3}.ANI' -f $n)) -Force
     }
-    "staged 002/003/006/015.ANI and 020-028.ANI -> $leg"
+    "staged 002/003/006/015.ANI (017.ANI $len017 bytes, two banks) and 020-028.ANI -> $leg"
     # A picture for the final PICTURE 1 step. Same generated 320-wide card
     # the -Palette leg uses, and the same size check on it.
     & python "$PSScriptRoot\art\mkpalcard.py" "$root\tests\out"
