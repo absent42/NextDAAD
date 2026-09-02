@@ -850,6 +850,8 @@ finally { Pop-Location }
 
 & "$PSScriptRoot\fontconv-selftest.ps1"
 
+& "$PSScriptRoot\anipack-selftest.ps1"
+
 # xbnbuild.ps1 drift guard: its generated subset source must stay
 # equivalent to the hand-written externs\all\all.asm. Builds every
 # shipping module through the generator and requires a byte-identical
