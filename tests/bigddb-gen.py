@@ -6,12 +6,17 @@ Run only when the fixture needs regrowing. The .dsf it writes is checked in,
 so a normal harness run never calls this - tests\\build-tests.ps1 compiles the
 committed .dsf and asserts the boundary crossings out of the compiled bytes.
 
-WHY GENERATED. The fixture has to exceed 31744 bytes AFTER DRC's text
-compression, which needs on the order of 85 KB of source prose. That is not
-something to hand-maintain, and hand-written filler would defeat the purpose:
-DRC builds a token table from repeated substrings, so repetitive filler
-collapses and the database never reaches the size the fixture is about. The
-text here is pseudo-random word sequences, which compresses like real prose.
+WHY GENERATED. The fixture has to exceed 31744 bytes AFTER text compression,
+which needs on the order of 85 KB of source prose. That is not something to
+hand-maintain.
+
+TWO COMPRESSORS, TWO FIXTURES. DRC compresses against a fixed English token
+table, so pseudo-random prose over a small vocabulary resists it. NDRC's
+-auto-tokens builds the table from the game's own text, which that same small
+vocabulary feeds perfectly - the default 103-word pool compresses 58% smaller
+under -auto-tokens and lands the database back inside the classic reach. The
+auto-tokens variant therefore uses a wider --vocab to stay oversize. See
+tests\\build-tests.ps1 for both invocations.
 
 DETERMINISTIC. A plain LCG rather than random.Random, so the same .dsf comes
 out of any Python on any machine and a regenerated fixture does not show up as
@@ -26,15 +31,23 @@ bytes (the interpreter refuses larger with E2), and MESSAGE 254's text must
 itself land past 31744 - the messages have to carry the size, because if the
 location texts carry it instead the printed evidence proves nothing.
 """
+import argparse
 import pathlib
-import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
+ap = argparse.ArgumentParser(description='Generate the NextDAAD oversize fixture.')
+ap.add_argument('n_loc', nargs='?', type=int, default=120)
+ap.add_argument('words_msg', nargs='?', type=int, default=36)
+ap.add_argument('words_loc', nargs='?', type=int, default=24)
+ap.add_argument('--dest', default=None, help='output .dsf path (default tests/bigddb.dsf)')
+ap.add_argument('--vocab', type=int, default=103, help='distinct words drawn from the pool')
+args = ap.parse_args()
+
 N_MSG = 255          # byte-wide header count: 0..254 is the whole range
-N_LOC = int(sys.argv[1]) if len(sys.argv) > 1 else 120
-WORDS_MSG = int(sys.argv[2]) if len(sys.argv) > 2 else 36
-WORDS_LOC = int(sys.argv[3]) if len(sys.argv) > 3 else 24
+N_LOC = args.n_loc
+WORDS_MSG = args.words_msg
+WORDS_LOC = args.words_loc
 SEED = 20260812
 # Where play starts. Not 0 - that is the template's "game has not begun"
 # sentinel rather than a room. One below the highest location, so the
@@ -42,7 +55,7 @@ SEED = 20260812
 # and SOUTH lead somewhere.
 START_LOC = N_LOC - 2
 
-WORDS = """
+WORDS_POOL = """
 lantern corridor granite whisper hollow beacon thicket marble cistern rafter
 ember lattice furrow banner cavern trellis pewter shingle bramble quarry
 cobble mantle spindle harbour drifting rusted narrow shallow crooked hollowed
@@ -53,7 +66,137 @@ turns bends drops climbs widens narrows forks ends opens closes
 beyond beneath against beside toward within across around behind before
 a the this that some every no each one another
 you can see there is here are it was they were nothing something
+cinder lintel tarnish verdigris sallow rampart bastion turret cupola
+spire belfry cloister nave transept chancel apse vestry portico
+colonnade pediment cornice frieze capital pilaster baluster mullion tracery
+gable eave dormer hearth chimney flue mantel threshold doorway
+archway gateway causeway viaduct aqueduct reservoir sluice weir foundry
+kiln furnace bellows anvil chisel mallet wedge lever pulley
+winch hoist crane scaffold ladder landing terrace courtyard cellar
+crypt catacomb tomb sepulchre mausoleum obelisk monument statue effigy
+gargoyle finial gutter drainpipe millstone grindstone cobblestone flagstone paving
+pavement meadow pasture orchard vineyard hedgerow copse woodland glade
+dell dale valley ravine gorge canyon cliff bluff crag
+boulder pebble gravel silt clay loam peat bog marsh
+swamp fen mire quagmire wetland floodplain delta estuary lagoon
+inlet cove bay strait channel current tide wave surf
+spray foam brine kelp seaweed coral reef shoal sandbar
+dune beach shore coast headland promontory peninsula isthmus archipelago
+atoll glacier iceberg tundra steppe prairie savanna desert oasis
+mirage foothill summit ridge plateau escarpment butte mesa knoll
+hillock mound barrow cairn dolmen menhir stonewall smithy stile
+gate fence paddock byre stable barn granary silo hayloft
+threshing winnow harvest plough furrowed sow reap glean thresh
+churn butter curd whey cheese wheat barley oats rye
+millet clover thistle nettle dandelion fern bracken heather gorse
+broom drizzling downpour hailstorm thunderclap lightning gale squall breeze
+gust zephyr frost rime hoarfrost sleet blizzard flurry snowdrift
+icicle thaw meltwater dew mist haze fog vapour cloudbank
+overcast twilight dusk dawn sunrise sunset midday midnight starlight
+moonlight shadow silhouette glare glimmer glow flicker flare spark
+blaze smoulder ash hearthstone woodpile kindling tinder bonfire torch
+candle wick tallow wax lamp lampstand oil paraffin flame
+taper snuff extinguish kindle ignite singe scorch char blacken
+rust corrode crumble erode weather crack fissure fracture splinter
+shatter chip flake peel warp bend buckle sag droop
+wilt shrivel wither decay rot mould mildew fungus algae
+spore seed sapling seedling sprout shoot bud blossom bloom
+petal stem stalk leaf branch bough trunk root bark
+timber plank beam joist truss lath plaster mortar cement
+concrete brick tile thatch reed rush wicker basket hamper
+crate barrel cask keg jar urn vase pitcher jug
+flask flagon goblet chalice tankard mug cup bowl platter
+dish plate tray ladle spoon fork knife blade dagger
+sword sabre rapier scabbard sheath hilt pommel shield buckler
+helmet visor gauntlet armour breastplate greave chainmail hauberk pennant
+standard heraldry crest emblem insignia badge medallion amulet talisman
+charm relic artefact heirloom trinket bauble jewel gem gemstone
+crystal quartz garnet opal jade jasper onyx obsidian pyrite
+mica copper bronze tin lead zinc nickel steel iron
+gold silver platinum brass alloy ore vein seam lode
+mineshaft tunnel gallery chamber cave grotto burrow warren den
+lair nest roost perch eyrie aerie coop pen sty
+kennel fox badger otter beaver weasel stoat ferret hare
+rabbit hedgehog squirrel mole vole shrew bat owl raven
+crow rook jackdaw magpie sparrow wren finch thrush blackbird
+starling swallow swift lark heron stork bittern kingfisher cormorant
+gull tern gannet puffin falcon hawk kestrel buzzard eagle
+osprey vulture kite harrier merlin wolf boar deer stag
+doe fawn elk moose bison antler hoof paw claw
+talon feather plume quill beak muzzle snout tail mane
+hide pelt fleece wool hair whisker fang tusk skull
+bone marrow sinew tendon rib spine skeleton carcass corpse
+wraith spectre phantom ghost shade spirit apparition wisp haunt
+eerie uncanny sinister ominous dreadful grim bleak desolate forlorn
+forsaken abandoned derelict ruined dilapidated crumbling decayed rotten mouldering
+festering putrid rancid fetid dank musty stale stagnant sour
+bitter acrid pungent noxious sulphurous smoky hazy murky gloomy
+dim dusky shadowy dark sombre drab dreary dismal cheerless
+cold chill frigid icy freezing raw harsh biting piercing
+numbing clammy humid sultry sweltering stifling parched arid dusty
+dry crisp empty vacant barren fallow tilled fertile lush
+verdant overgrown tangled thorny knotted gnarled warped bent leaning
+sagging slumped collapsed toppled fallen cracked broken chipped worn
+frayed tattered ragged threadbare patched mended stitched sewn woven
+knitted spun thread yarn cotton linen silk velvet satin
+canvas sackcloth burlap tarpaulin oilcloth leather suede fur cloak
+cape hood shawl scarf glove mitten boot shoe sandal
+sole heel strap belt sash girdle apron pouch satchel
+knapsack pack bundle parcel package chest coffer strongbox padlock
+latch bolt hinge hasp clasp catch lock key keyhole
+handle knob crank shaft axle wheel cog gear ratchet
+spring coil chain link fetter shackle manacle collar rope
+cord twine string cable wire hook nail rivet screw
+peg stake post pillar column pedestal base foundation footing
+bedrock stratum outcrop precipice chasm abyss pit passage niche
+recess nook cranny crevice cleft gap breach rift chink
+slit gash wound scar bruise blister callus scab welt
+laceration puncture sickness fever ague plague pestilence blight famine
+drought flood deluge torrent cascade waterfall cataract rapids whirlpool
+eddy ripple wake wash froth bubble surge swell trough
+billow undertow riptide backwash salt brackish briny marshland fenland
+moorland heathland wasteland backwater highland lowland upland grassland farmland
+parkland shrubland scrubland grazing tillage hoe rake spade shovel
+pickaxe crowbar mattock scythe sickle flail pitchfork trowel adze
+creak groan moan sigh whimper wail shriek screech howl
+growl snarl hiss rustle patter clatter clang clank rattle
+jingle chime toll knell echo murmur mutter hum buzz
+drone rumble crackle sizzle splash drip trickle gurgle seep
+ooze leak drain flow swirl stir lap wade ford
+paddle row sail drift float sink plunge dive dip
+soak drench douse sprinkle spatter smear daub smudge stain
+blot mark scratch scrape scour scrub polish buff shine
+gleam glisten sparkle glitter twinkle shimmer dull fade wane
+grow shrink expand contract stretch tighten loosen slacken tug
+pull push shove nudge prod poke jab thrust lunge
+dodge duck swerve veer lurch stumble trip stagger totter
+wobble sway rock tilt lean slant slope incline descend
+ascend scale clamber scramble crawl creep slink skulk lurk
+prowl pursue chase flee dash sprint dart scamper scurry
+scuttle hop leap bound pounce grapple wrestle grip clutch
+seize snatch grab wrench yank haul drag heave lift
+raise lower fling hurl toss throw cast launch propel
+carpenter mason smith cooper wright tanner weaver dyer fletcher
+cobbler tinker miller baker brewer vintner butcher fisherman hunter
+trapper shepherd herder drover ploughman gardener forester woodcutter miner
+quarryman sailor pilot navigator captain skipper mariner steersman lookout
+stowaway castaway wanderer traveller pilgrim vagrant beggar peddler merchant
+trader smuggler poacher outlaw fugitive guard sentry watchman warden
+keeper steward bailiff constable sheriff magistrate scribe clerk chronicler
+herald messenger courier envoy emissary ambassador diplomat scholar sage
+hermit recluse ascetic monk friar priest chaplain deacon bishop
+abbot prior novice acolyte penitent zealot heretic apostate knight
+squire page baron duke earl viscount marquis count countess
+duchess baroness lady lord monarch sovereign regent chancellor vizier
+morning noon afternoon evening nightfall daybreak sundown gloaming eventide
+fortnight sennight season autumn winter summer solstice equinox century
+decade epoch era interval interlude moment instant hour minute
+second heartbeat breath pause lull respite delay
 """.split()
+
+WORDS = WORDS_POOL[:args.vocab]
+if len(WORDS_POOL) < args.vocab:
+    raise SystemExit('vocab %d exceeds the %d-word pool' % (args.vocab, len(WORDS_POOL)))
 
 # The 61 system messages, verbatim from the DAAD BLANK template.
 SYS = [
@@ -257,7 +400,8 @@ def main():
     w('/END')
 
     txt = '\n'.join(out) + '\n'
-    dest = ROOT / 'tests' / 'bigddb.dsf'
+    dest = pathlib.Path(args.dest) if args.dest else (ROOT / 'tests' / 'bigddb.dsf')
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(txt, encoding='latin-1')
     print('wrote %s  %d bytes  (%d messages, %d locations)'
           % (dest, len(txt), N_MSG, N_LOC))
