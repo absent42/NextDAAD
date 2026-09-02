@@ -91,11 +91,11 @@ TAP is accepted instead (--tap), so a shipped game with no source can
 still be played.
 
 CAVEAT worth stating once: the ZX leg compiles the 48K SUBTARGET while
-the Next leg compiles `zx next`. DRF defines COLS from the subtarget, so
-a game whose DSF branches on COLS (or on the target symbol) genuinely
-runs different code on the two legs. That is a property of the game, not
-a divergence - but read any COLS-conditional game's text differences with
-it in mind.
+the Next leg builds `nextdaad`. DRF defines COLS from the subtarget: 42
+on the ZX leg against 80 on the Next leg. A game whose DSF branches on
+COLS (or on the target symbol) genuinely runs different code on the two
+legs. That is a property of the game, not a divergence - but read any
+COLS-conditional game's text differences with it in mind.
 """
 import argparse
 import hashlib

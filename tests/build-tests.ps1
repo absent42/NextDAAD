@@ -1607,7 +1607,7 @@ finally {
 
 # Accented-glyph fixture (2026-08-30). Compiled unconditionally like
 # every block above so a break in the DSF is caught on a plain run;
-# -Accent is the leg switch that stages this DDB into sd\ACCENT\.
+# -Accent stages the auto-tokens compile made below, not this one.
 # tests\accents.dsf is Latin-1 ON PURPOSE - ndrc reads DSF text as
 # Latin-1 and does the accent conversion itself (a UTF-8 source
 # double-converts and the byte asserts below catch it).
@@ -1646,6 +1646,17 @@ $accentTokBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\accents-autoto
 if ($accentTokBytes[0] -ne 3) { throw "accents-autotok: DDB header version byte is $($accentTokBytes[0]), expected 3" }
 if ($accentTokBytes.Length -ge $accentBytesLength) {
     throw "accents-autotok: $($accentTokBytes.Length) bytes is not smaller than the builtin compile ($accentBytesLength) - was -auto-tokens applied?"
+}
+if (($accentTokBytes[1] -band 0xF0) -ne 0xC0) { throw "accents-autotok: machine nibble is $('0x{0:X2}' -f ($accentTokBytes[1] -band 0xF0)), expected 0xC0 (NEXTDAAD)" }
+# Header counts (objects, locations, user messages, system messages,
+# processes) must match the builtin compile: a scoped-down second
+# compile could otherwise pass for merely "smaller".
+$accentBuiltinBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\accents.ddb")
+$accentHdrFields = @('objects', 'locations', 'user messages', 'system messages', 'processes')
+for ($i = 3; $i -le 7; $i++) {
+    if ($accentTokBytes[$i] -ne $accentBuiltinBytes[$i]) {
+        throw "accents-autotok: header field '$($accentHdrFields[$i - 3])' (byte $i) is $($accentTokBytes[$i]), builtin compile has $($accentBuiltinBytes[$i])"
+    }
 }
 "accents-autotok: $($accentTokBytes.Length) bytes, V3, per-game token table (builtin compile is $accentBytesLength bytes)"
 
@@ -2116,12 +2127,12 @@ foreach ($c in @(
     @{ n = 'GFX 1 13 (video)'; b = [byte[]]@(87, 1, 13) }
 )) {
     if ((Find-ByteRuns $txt40Bytes $c.b).Count -lt 1) {
-        throw "txt40: '$($c.n)' not present in tests\out\txt40.ddb - DRC did not emit the authored condact"
+        throw "txt40: '$($c.n)' not present in tests\out\txt40.ddb - ndrc did not emit the authored condact"
     }
 }
 "txt40.ddb: GFX 18 both directions, WINAT/WINSIZE, and the from-40-col video play all present as authored"
 
-# --- accents: DRC's two accent encodings ---
+# --- accents: ndrc's two accent encodings ---
 # Message text is stored complemented (byte = 255 - char; the
 # interpreter's reader undoes it), so every text assertion below is the
 # 255-complement of the authored sequence. ndrc does the conversion

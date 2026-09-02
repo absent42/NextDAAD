@@ -1992,27 +1992,31 @@ KNOWN_DIVERGENT_OBJECTS = set()
 @case
 def t11_clean_run_matches_known_divergence_baseline():
     import json
+    import shutil
     import subprocess
     here = Path(__file__).resolve().parent
     out = ROOT / "tests" / "parser" / "work" / "e2e-clean"
+    shutil.rmtree(out, ignore_errors=True)
     res = subprocess.run(
         ["python", str(here / "parsertest.py"),
          str(ROOT / "tests" / "condacts.dsf"),
          str(here / "scripts" / "condacts" / "smoke.json"),
          "--out", str(out)],
         capture_output=True, text=True)
-    findings = json.loads(
-        (out / "findings.json").read_text(encoding="utf-8"))["findings"]
 
     # The harness itself has no concept of a "baseline" - it exits 1
     # whenever ANY findings exist, full stop. A clean run against THIS
     # fixture is expected to keep reporting the known set, so exit 0 here
     # would itself be surprising (the harness silently stopped seeing
-    # something real), not a pass condition.
+    # something real), not a pass condition. Checked before findings.json
+    # is read, and the directory wiped before the run, so a crashed
+    # subprocess (also exit 1) cannot pass on a stale findings.json.
     assert res.returncode == 1, (
         "expected the known-divergence set to still be reported (see "
-        "docs/parser-bugs.md entry 5):\n%s\n%s"
-        % (res.stdout, json.dumps(findings[:3], indent=2)))
+        "docs/parser-bugs.md entry 5):\n%s\n%s" % (res.stdout, res.stderr))
+
+    findings = json.loads(
+        (out / "findings.json").read_text(encoding="utf-8"))["findings"]
 
     seen_flags, seen_objects = set(), set()
     for f in findings:
@@ -2206,10 +2210,12 @@ def t11_negative_control_is_detected():
     what got detected.
     """
     import json
+    import shutil
     import subprocess
     here = Path(__file__).resolve().parent
     work = ROOT / "tests" / "parser" / "work" / "e2e-mutant"
     work.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(work / "out", ignore_errors=True)
 
     src = (ROOT / "tests" / "condacts.dsf").read_text(encoding="utf-8",
                                                       errors="replace")
@@ -2241,9 +2247,9 @@ def t11_negative_control_is_detected():
          str(here / "scripts" / "condacts" / "smoke.json"),
          "--out", str(work / "out"), "--mutate-next-only"],
         capture_output=True, text=True)
+    assert res.returncode == 1, "harness must report failure"
     findings = json.loads(
         (work / "out" / "findings.json").read_text(encoding="utf-8"))
-    assert res.returncode == 1, "harness must report failure"
     assert findings["findings"], "negative control produced no findings"
 
     # The teeth: a SET DIFFERENCE against the SAME baseline the clean-run
@@ -2566,6 +2572,8 @@ def t12_decompile_produces_dsf():
     work = ROOT / "tests" / "parser" / "work" / "selftest-corpus"
     work.mkdir(parents=True, exist_ok=True)
     src = ROOT / "tests" / "test.dsf"
+    # shipping compile first: proves prepare_from_dsf still builds this
+    # source before the classic decompile input is made
     prepare.prepare_from_dsf(
         src, ROOT / "tests" / "parser" / "work" / "selftest-testdsf")
     classic_ddb = prepare.compile_for_decompile(src, work)
@@ -2583,8 +2591,10 @@ def t12_mouse_defect_fails_loudly():
     work = ROOT / "tests" / "parser" / "work" / "selftest-mouse"
     work.mkdir(parents=True, exist_ok=True)
     src = ROOT / "tests" / "condacts.dsf"
-    prepare.prepare_from_dsf(
-        src, ROOT / "tests" / "parser" / "work" / "selftest-condacts")
+    # No shipping-compile call here: t7_build_condacts_fixture_end_to_end
+    # already builds this exact source into this exact work dir and
+    # asserts on the result, so repeating the discarded call here proves
+    # nothing this case does not already get for free.
     classic_ddb = prepare.compile_for_decompile(src, work)
     try:
         prepare.prepare_from_binary(classic_ddb, work)

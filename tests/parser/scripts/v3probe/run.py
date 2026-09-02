@@ -24,7 +24,8 @@ tests/parser/*.py or jleg.js is modified, they are imported and called.
   3. sd/0.XMB is staged for the Next leg. nleg.stage_sd builds a minimal
      card holding only the interpreter and GAME.DDB, and does not clean
      the directory, so the XMB is placed there first and survives.
-     jDAAD needs no equivalent: DRB appends XMBDATA to the .jddb.
+     jDAAD needs no equivalent: ndrc appends XMBDATA to the .jddb,
+     reproducing DRB's writer.
 
 EXPECTED DIVERGENCE - flag 116, and flag 116 alone. jDAAD's
 _HASAT (jdaad.js:3273) hardcodes the base-59 attribute bank and ignores
@@ -91,11 +92,11 @@ def _patch_jddb(path):
     array after it. Only the first array is the database, so the split
     is on the XMBDATA declaration and only the head is rewritten.
 
-    DRB punctuates every tenth byte with a '// 0x0009' running-offset
-    comment (drb.php:1392) whose text looks exactly like a data token,
-    so the comments come out BEFORE the tokens are read - leaving them
-    in injects a phantom byte every ten and the signatures stop
-    matching (which is how this was found).
+    ndrc punctuates every tenth byte with a '// 0x0009' running-offset
+    comment, reproducing DRB's writer (drb.php:1392), whose text looks
+    exactly like a data token, so the comments come out BEFORE the
+    tokens are read - leaving them in injects a phantom byte every ten
+    and the signatures stop matching (which is how this was found).
     """
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     split = text.find("var XMBDATA")
@@ -105,10 +106,11 @@ def _patch_jddb(path):
     if not tokens:
         raise RuntimeError("%s: no DDBDATA bytes found" % path)
     data = bytes(int(t, 16) & 0xFF for t in tokens)
-    # Sanity check against the binary DRB produced alongside. DRB's
-    # writer loops on !feof() with fgetc(), so it always emits ONE
-    # trailing 0x0 past the end of the file (drb.php:1386-1396, visible
-    # as the "...,0x0\n];" every .jddb ends with) - hence the +1.
+    # Sanity check against the binary ndrc produced alongside. ndrc
+    # reproduces DRB's writer, which loops on !feof() with fgetc(), so it
+    # always emits ONE trailing 0x0 past the end of the file
+    # (drb.php:1386-1396, visible as the "...,0x0\n];" every .jddb ends
+    # with) - hence the +1.
     ddb = Path(path).with_name("html.DDB")
     if ddb.exists() and len(data) not in (ddb.stat().st_size,
                                           ddb.stat().st_size + 1):

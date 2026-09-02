@@ -81,8 +81,9 @@ plus `tests/parser/scripts/` - was adopted onto `main` on 2026-08-01
 after the SP16 Task 0 repairs; run it straight out of the checkout. Only
 `tests/parser/work/` (every run's output) and `__pycache__/` are
 gitignored. It is deliberately NOT wired into `build.ps1` and never runs
-automatically - it needs ZEsarUX, node, PHP and DAAD-READY, all of which
-live in the untracked `tools/`.
+automatically - it needs ZEsarUX and node as before, and PHP for unDRC,
+all of which live in the untracked `tools/`. The compiler itself is the
+tracked `authoring-kit\lib\ndrc.exe`, not `tools/`.
 
     python tests/parser/parsertest.py <game.dsf> <script.json> [--out DIR] [--port PORT] [--nex PATH] [--stop-on-first]
 
@@ -217,9 +218,10 @@ measured (15 transcript lines, pinned):
 - **The prompt is random** (SM2..SM5, unpinnable without flag 42), so the
   pending prompt message and input row are dropped from BOTH sides of a
   ZX comparison. That is the only normalisation applied.
-- **The ZX leg builds the 48K subtarget**, the Next leg builds `zx next`.
-  A game that branches on `COLS` or the target symbol genuinely runs
-  different code on the two legs.
+- **The ZX leg builds the 48K subtarget**, the Next leg builds `nextdaad`,
+  compiled `-v3 -auto-tokens` like the kit. A game that branches on
+  `COLS` or the target symbol genuinely runs different code on the two
+  legs.
 - Only the 48K tape variant is implemented. 128K/PLUS3/ESXDOS/UNO/NEXT
   need a different packager and machine and would answer no question
   differently.
