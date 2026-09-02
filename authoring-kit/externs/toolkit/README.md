@@ -47,8 +47,9 @@ and no width probe of its own.
   as an immediate value or as a flag number holding one.
 - 250 - the HIGH byte of a 16-bit result. Only fn 79 writes it. The
   picker's pool size is module state, not this flag.
-- 251 - result and status. Where a function returns a value, it goes
-  here, alongside any status the function needs to report.
+- 251 - the result. Where a function returns a value (a count, an
+  object number, a comparison, an overflow flag), it goes here. Failure
+  is reported through the carry flag, never through this flag.
 
 ## Number printing
 

@@ -56,7 +56,7 @@ SVC_GETDATE     equ XBN_API+33  ; esx M_GETDATE wrapper: CF clear with
                                  ; Foreground-only.
 SVC_BUSY        equ XBN_API+36  ; out A = mask (bit0 vidPlaying, bit1
                                  ; cardBusy, bit2 palBusy); CF clear;
-                                 ; corrupts L. Bits 0/2 read 0 from the
+                                 ; corrupts AF, L. Bits 0/2 read 0 from the
                                  ; foreground (playback/draws are
                                  ; foreground-synchronous) - hook-only.
                                  ; ISR-safe.

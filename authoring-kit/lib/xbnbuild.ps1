@@ -19,7 +19,6 @@ $known = @{
     timer    = 'XBN_HAS_TIMER'
     realtime = 'XBN_HAS_REALTIME'
     toolkit  = 'XBN_HAS_TOOLKIT'
-    atmos    = 'XBN_HAS_ATMOS'
 }
 
 if (-not $Modules) {

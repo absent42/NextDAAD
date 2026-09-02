@@ -140,9 +140,8 @@ int:
     ld hl, text
     add hl, de
     ld a, (hl)                   ; character - GETMSG already decoded it
-                                 ; to a plain printable byte (msg_probe,
-                                 ; tests/xbn/xbntest.asm, established
-                                 ; this - no translation needed here)
+                                 ; to a plain printable byte, so no
+                                 ; translation is needed here
     ld (chr), a                  ; parked: xbn_width corrupts BC, and the
                                  ; interpreter restores full context around
                                  ; this hook anyway
