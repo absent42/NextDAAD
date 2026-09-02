@@ -10,8 +10,8 @@ pairs, fn 82 and fn 83 for time formatting, and fn 84 to set a print
 target window. Four of them - fn 70, 71, 82 and 83 - are also reachable
 through DAAD's CALL condact, a second entry point alongside the existing
 EXTERN dispatch (see CALL slots below). Fn codes 76 to 81 also belong to
-this module's range - object queries and a random-without-repeat picker -
-but are separate work not covered here.
+this module's range - object queries and a random-without-repeat picker;
+see the Object queries section below.
 
 ## Calling convention
 
@@ -146,25 +146,52 @@ Two behaviours matter before relying on it:
 ## A status line
 
 Geometry is still the author's job, set up once - its own `WINAT`/`WINSIZE`,
-PAPER and INK - the same as any other window. Fn 84 replaces the second half
-of the old pattern: instead of bracketing every print with `WINDOW`, arm the
-target once and print bare from wherever the value changes.
+PAPER and INK - the same as any other window. Fn 84 does not position or
+clear anything: it only means a print issued from anywhere lands in the
+target window and is flushed at once by the restore, with no `WINDOW`
+bracket and no pending-word trap to worry about. A repaint still needs an
+explicit `WINDOW n` and `CLS`, the same as it always did.
 
-    /PRO 1
-    > _  _   WINDOW  2
-             CLS
-             MES     "Score       Time "
+Add the geometry, and the one-time `EXTERN 2 84` that arms the target, to
+wherever your game already sets up its own start-of-game state - the same
+`AT 0` turn check a location's own process table typically uses:
+
+    > _  _   AT 0                    ; starting the game?
+             WINDOW  2
+             WINAT   16 0
+             WINSIZE 1 40
              WINDOW  1
-             EXTERN  2 84      ; target window 2 from here on
-             DONE
+             EXTERN  2 84             ; target window 2 from here on
 
-    > _  _   LET    248 5
+A dedicated process repaints the whole line on demand, exactly as it would
+without fn 84 at all:
+
+    /PRO 20
+    > _  _   WINDOW 2
+             CLS
+             MES "Score "
+             LET 248 5
              EXTERN 100 71     ; 16-bit score at flags 100/101
+             MES "  Time "
+             EXTERN 224 82     ; the clock module's HH:MM
+             WINDOW 1
              DONE
 
-    > _  _   EXTERN 224 82     ; the clock module's HH:MM
+With the target armed, the two `EXTERN` calls above still self-bracket -
+they select window 2, which is already current, so the bracket is a no-op.
+That is not what makes this entry work; it would print exactly the same way
+with no target set at all. What fn 84 actually buys is everywhere ELSE in
+the game: a separate entry, in whatever OTHER process already reacts to the
+score changing, can update the value with no `WINDOW` at all, and it shows
+up in the status window immediately - this is not part of `/PRO 20` above:
+
+    > _  _   LET    249 1
+             EXTERN 100 72     ; score += 1, wherever that happens in play
+             EXTERN 100 71     ; ...and the status window updates at once
              DONE
 
-Each of the last two entries is a plain action dropped wherever the score or
-the clock actually changes - no `WINDOW`, no restore, no risk of leaving a
-number unflushed.
+That bare `EXTERN 100 71` prints straight into window 2 and restores
+whatever window was current - but it does not reposition or clear anything
+first, so it APPENDS after whatever `/PRO 20` last painted there. It is a
+stopgap between repaints, not a replacement for one; the next `/PRO 20` pass
+cleans it up.
