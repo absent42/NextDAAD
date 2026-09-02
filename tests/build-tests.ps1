@@ -830,8 +830,11 @@ New-Item -ItemType Directory -Force $sd | Out-Null
 # Keeping the two halves apart is what makes cross-contamination
 # impossible by construction rather than by careful cleaning.
 $templateXmb = $false
-Copy-Item "$PSScriptRoot\test.dsf" "$dr\NDTEST.DSF" -Force
-Push-Location $dr
+$templateWork = Join-Path $root 'tests\out\template-work'
+Remove-Item $templateWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $templateWork | Out-Null
+Copy-Item "$PSScriptRoot\test.dsf" "$templateWork\NDTEST.DSF" -Force
+Push-Location $templateWork
 try {
     & $drcDrf @drcTarget NDTEST.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed" }
@@ -847,10 +850,7 @@ try {
         $templateXmb = $true
     }
 }
-finally {
-    Remove-Item "$dr\NDTEST.DSF", "$dr\NDTEST.json", "$dr\0.XMB" -ErrorAction SilentlyContinue
-    Pop-Location
-}
+finally { Pop-Location }
 
 & "$PSScriptRoot\check-cprops.ps1"
 
@@ -1174,8 +1174,11 @@ else {
     "WARNING: no build\nextdaad.nex + .sld - dma_copy contract check SKIPPED (run .\build.ps1 first)"
 }
 
-Copy-Item "$PSScriptRoot\condacts.dsf" "$dr\NDSUITE.DSF" -Force
-Push-Location $dr
+$condactsWork = Join-Path $root 'tests\out\condacts-work'
+Remove-Item $condactsWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $condactsWork | Out-Null
+Copy-Item "$PSScriptRoot\condacts.dsf" "$condactsWork\NDSUITE.DSF" -Force
+Push-Location $condactsWork
 try {
     & $drcDrf @drcTarget NDSUITE.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (suite)" }
@@ -1187,13 +1190,13 @@ try {
     # regression worth throwing on).
     Move-Item '0.XMB' "$root\tests\out\condacts.xmb" -Force
 }
-finally {
-    Remove-Item "$dr\NDSUITE.DSF", "$dr\NDSUITE.json", "$dr\0.XMB" -ErrorAction SilentlyContinue
-    Pop-Location
-}
+finally { Pop-Location }
 
-Copy-Item "$PSScriptRoot\doallnest.dsf" "$dr\NDNEST.DSF" -Force
-Push-Location $dr
+$doallnestWork = Join-Path $root 'tests\out\doallnest-work'
+Remove-Item $doallnestWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $doallnestWork | Out-Null
+Copy-Item "$PSScriptRoot\doallnest.dsf" "$doallnestWork\NDNEST.DSF" -Force
+Push-Location $doallnestWork
 try {
     & $drcDrf @drcTarget NDNEST.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (doallnest)" }
@@ -1201,10 +1204,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (doallnest)" }
     Move-Item NDNEST.DDB "$root\tests\out\doallnest.ddb" -Force
 }
-finally {
-    Remove-Item "$dr\NDNEST.DSF", "$dr\NDNEST.json" -ErrorAction SilentlyContinue
-    Pop-Location
-}
+finally { Pop-Location }
 
 # Oversize fixture: a database PAST THE OLD 31744-BYTE CEILING. Compiled
 # unconditionally like the fixtures around it so a break is caught on a
@@ -1224,8 +1224,11 @@ finally {
 # and the fixture's size is an emergent property of DRC's text
 # compression rather than something the .dsf states directly. So the
 # boundary crossings are re-read out of the DDB here, every run.
-Copy-Item "$PSScriptRoot\bigddb.dsf" "$dr\NDBIG.DSF" -Force
-Push-Location $dr
+$bigddbWork = Join-Path $root 'tests\out\bigddb-work'
+Remove-Item $bigddbWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $bigddbWork | Out-Null
+Copy-Item "$PSScriptRoot\bigddb.dsf" "$bigddbWork\NDBIG.DSF" -Force
+Push-Location $bigddbWork
 try {
     & $drcDrf @drcTarget NDBIG.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (bigddb)" }
@@ -1233,10 +1236,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (bigddb)" }
     Move-Item NDBIG.DDB "$root\tests\out\bigddb.ddb" -Force
 }
-finally {
-    Remove-Item "$dr\NDBIG.DSF", "$dr\NDBIG.json" -ErrorAction SilentlyContinue
-    Pop-Location
-}
+finally { Pop-Location }
 $bigBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\bigddb.ddb")
 $bigLen = $bigBytes.Length
 function Get-BigWord { param([int]$At) $bigBytes[$At] + 256 * $bigBytes[$At + 1] }
@@ -1310,8 +1310,11 @@ if ($bigLocLo -le 31744) {
 # SP16 Task 1 GMODE graphics-gate fixture. Compiled unconditionally,
 # like the suite and doallnest above, so a break in the DSF is caught
 # on a plain run; only -GMode makes it the active GAME.DDB (sd\GMODE\).
-Copy-Item "$PSScriptRoot\gmodegate.dsf" "$dr\NDGMODE.DSF" -Force
-Push-Location $dr
+$gmodegateWork = Join-Path $root 'tests\out\gmodegate-work'
+Remove-Item $gmodegateWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $gmodegateWork | Out-Null
+Copy-Item "$PSScriptRoot\gmodegate.dsf" "$gmodegateWork\NDGMODE.DSF" -Force
+Push-Location $gmodegateWork
 try {
     & $drcDrf @drcTarget NDGMODE.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (gmodegate)" }
@@ -1319,16 +1322,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (gmodegate)" }
     Move-Item NDGMODE.DDB "$root\tests\out\gmodegate.ddb" -Force
 }
-finally {
-    Remove-Item "$dr\NDGMODE.DSF", "$dr\NDGMODE.json" -ErrorAction SilentlyContinue
-    Pop-Location
-}
+finally { Pop-Location }
 
 # SP16 Task 7 AY ladder fixture. Compiled unconditionally, like the
 # suite, doallnest and gmodegate above, so a break in the DSF is caught
 # on a plain run; only -AudLad makes it the active GAME.DDB (sd\AUDLAD\).
-Copy-Item "$PSScriptRoot\audlad.dsf" "$dr\NDAUDLAD.DSF" -Force
-Push-Location $dr
+$audladWork = Join-Path $root 'tests\out\audlad-work'
+Remove-Item $audladWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $audladWork | Out-Null
+Copy-Item "$PSScriptRoot\audlad.dsf" "$audladWork\NDAUDLAD.DSF" -Force
+Push-Location $audladWork
 try {
     & $drcDrf @drcTarget NDAUDLAD.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (audlad)" }
@@ -1336,10 +1339,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (audlad)" }
     Move-Item NDAUDLAD.DDB "$root\tests\out\audlad.ddb" -Force
 }
-finally {
-    Remove-Item "$dr\NDAUDLAD.DSF", "$dr\NDAUDLAD.json" -ErrorAction SilentlyContinue
-    Pop-Location
-}
+finally { Pop-Location }
 
 # Sampled-SFX DMA pre-emption fixture, rev 2 (2026-08-03). Compiled
 # unconditionally like the four above so a break in the DSF is caught on
@@ -1389,8 +1389,11 @@ finally {
 # contiguous, and the four held renders are checked to be 4 bytes apart,
 # so no pause can have fallen between them - each burst still runs at
 # full speed, which is the load under test.
-Copy-Item "$PSScriptRoot\sfxdi.dsf" "$dr\NDSFXDI.DSF" -Force
-Push-Location $dr
+$sfxdiWork = Join-Path $root 'tests\out\sfxdi-work'
+Remove-Item $sfxdiWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $sfxdiWork | Out-Null
+Copy-Item "$PSScriptRoot\sfxdi.dsf" "$sfxdiWork\NDSFXDI.DSF" -Force
+Push-Location $sfxdiWork
 try {
     & $drcDrf @drcTarget NDSFXDI.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (sfxdi)" }
@@ -1398,10 +1401,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (sfxdi)" }
     Move-Item NDSFXDI.DDB "$root\tests\out\sfxdi.ddb" -Force
 }
-finally {
-    Remove-Item "$dr\NDSFXDI.DSF", "$dr\NDSFXDI.json" -ErrorAction SilentlyContinue
-    Pop-Location
-}
+finally { Pop-Location }
 
 # SD-streamed sampled-effect wire fixture (SP18 item 7 Task 7). Compiled
 # unconditionally like every fixture above so a break in the DSF is
@@ -1458,8 +1458,11 @@ finally {
 # explains what each of its three shapes is for, including the optional
 # owner leg (copy tests\out\debugflag-debug.ddb into a leg folder as
 # GAME.DDB and boot it).
-Copy-Item "$PSScriptRoot\debugflag.dsf" "$dr\NDDBGF.DSF" -Force
-Push-Location $dr
+$debugflagWork = Join-Path $root 'tests\out\debugflag-work'
+Remove-Item $debugflagWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $debugflagWork | Out-Null
+Copy-Item "$PSScriptRoot\debugflag.dsf" "$debugflagWork\NDDBGF.DSF" -Force
+Push-Location $debugflagWork
 try {
     & $drcDrf @drcTarget NDDBGF.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (debugflag)" }
@@ -1470,10 +1473,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (debugflag -d)" }
     Move-Item NDDBGF.DDB "$root\tests\out\debugflag-debug.ddb" -Force
 }
-finally {
-    Remove-Item "$dr\NDDBGF.DSF", "$dr\NDDBGF.json" -ErrorAction SilentlyContinue
-    Pop-Location
-}
+finally { Pop-Location }
 
 # Layer 2 TRANSPARENCY / punch-out fixture (2026-08-07). Compiled
 # unconditionally like the six above so a break in the DSF is caught on a
@@ -2590,28 +2590,28 @@ function Invoke-V3SetatPatch {
     [System.IO.File]::WriteAllBytes($Path, $b)
 }
 
-Copy-Item "$PSScriptRoot\v3probe.dsf" "$dr\NDV3.DSF" -Force
-Push-Location $dr
+$v3probeWork = Join-Path $root 'tests\out\v3probe-work'
+Remove-Item $v3probeWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $v3probeWork | Out-Null
+Copy-Item "$PSScriptRoot\v3probe.dsf" "$v3probeWork\NDV3.DSF" -Force
+Push-Location $v3probeWork
 try {
     & $drcDrf @drcTarget NDV3.DSF -v3
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (v3probe)" }
     & $drcPhp $drcDrb @drcTarget EN NDV3.json NDV3.DDB
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (v3probe)" }
-    $v3hdr = [System.IO.File]::ReadAllBytes("$dr\NDV3.DDB")
+    $v3hdr = [System.IO.File]::ReadAllBytes("$v3probeWork\NDV3.DDB")
     if ($v3hdr[0] -ne 3) {
         throw "v3probe DDB header byte 0 is $($v3hdr[0]), expected 3 - did -v3 reach DRF?"
     }
-    Invoke-V3SetatPatch "$dr\NDV3.DDB"
+    Invoke-V3SetatPatch "$v3probeWork\NDV3.DDB"
     Move-Item NDV3.DDB "$root\tests\out\v3probe.ddb" -Force
     # The XMES probe always compiles an xmessage, so 0.XMB is always
     # emitted here - no Test-Path guard, an absence would be a real
     # regression worth throwing on.
     Move-Item '0.XMB' "$root\tests\out\v3probe.xmb" -Force
 }
-finally {
-    Remove-Item "$dr\NDV3.DSF", "$dr\NDV3.json", "$dr\NDV3.DDB", "$dr\0.XMB" -ErrorAction SilentlyContinue
-    Pop-Location
-}
+finally { Pop-Location }
 
 # ===================================================================
 # UTO'S OWN DAAD COMPLIANCE TEST - the one third-party fixture here
@@ -2720,8 +2720,11 @@ if (-not (Test-Path -LiteralPath $utoDsf)) {
     "WARNING: tools\TEST.DSF absent - Uto's third-party compliance test not built (download from $utoUrl into tools\ to enable -Uto/-UtoV3)"
 }
 else {
-    Copy-Item $utoDsf "$dr\NDUTO.DSF" -Force
-    Push-Location $dr
+    $utotestWork = Join-Path $root 'tests\out\utotest-work'
+    Remove-Item $utotestWork -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $utotestWork | Out-Null
+    Copy-Item $utoDsf "$utotestWork\NDUTO.DSF" -Force
+    Push-Location $utotestWork
     try {
         & $drcDrf @drcTarget NDUTO.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (utotest V2)" }
@@ -2729,19 +2732,14 @@ else {
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (utotest V2)" }
         Move-Item NDUTO.DDB "$root\tests\out\utotest.ddb" -Force
     }
-    finally {
-        # The DSF copy is a build temporary inside the toolchain dir, the
-        # same way every other fixture here is compiled, and is removed
-        # again on the way out - tools\ ends the run exactly as it began.
-        # No 0.XMB either: the fixture uses no XMESSAGE. Swept anyway so a
-        # stray one from an earlier compile cannot ride along.
-        Remove-Item "$dr\NDUTO.DSF", "$dr\NDUTO.json", "$dr\NDUTO.DDB", "$dr\0.XMB" -ErrorAction SilentlyContinue
-        Pop-Location
-    }
+    finally { Pop-Location }
     $utoV2Len = Assert-UtoImage "$root\tests\out\utotest.ddb" 2 $false
 
-    Copy-Item $utoDsf "$dr\NDUTO3.DSF" -Force
-    Push-Location $dr
+    $utotestV3Work = Join-Path $root 'tests\out\utotest-v3-work'
+    Remove-Item $utotestV3Work -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $utotestV3Work | Out-Null
+    Copy-Item $utoDsf "$utotestV3Work\NDUTO3.DSF" -Force
+    Push-Location $utotestV3Work
     try {
         & $drcDrf @drcTarget NDUTO3.DSF -v3
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (utotest V3)" }
@@ -2749,10 +2747,7 @@ else {
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (utotest V3)" }
         Move-Item NDUTO3.DDB "$root\tests\out\utotest_v3.ddb" -Force
     }
-    finally {
-        Remove-Item "$dr\NDUTO3.DSF", "$dr\NDUTO3.json", "$dr\NDUTO3.DDB", "$dr\0.XMB" -ErrorAction SilentlyContinue
-        Pop-Location
-    }
+    finally { Pop-Location }
     $utoV3Len = Assert-UtoImage "$root\tests\out\utotest_v3.ddb" 3 $true
     $utoBuilt = $true
     "utotest (tools\TEST.DSF, GPL-3.0, not redistributed): V2 image $utoV2Len bytes (no V3 blocks), V3 image $utoV3Len bytes (SETAT x3 + GETKEY in)"
@@ -2764,8 +2759,11 @@ else {
 # unconditionally, like the fixtures above, so a break in either source
 # is caught on a plain run; only -Xbn makes the extern DDB active and
 # stages GAME.XBN (see its own block in the STAGING section below).
-Copy-Item "$PSScriptRoot\extern.dsf" "$dr\NDXBN.DSF" -Force
-Push-Location $dr
+$externWork = Join-Path $root 'tests\out\extern-work'
+Remove-Item $externWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $externWork | Out-Null
+Copy-Item "$PSScriptRoot\extern.dsf" "$externWork\NDXBN.DSF" -Force
+Push-Location $externWork
 try {
     & $drcDrf @drcTarget NDXBN.DSF
     if ($LASTEXITCODE -ne 0) { throw "DRF failed (extern)" }
@@ -2773,10 +2771,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "DRB failed (extern)" }
     Move-Item NDXBN.DDB "$root\tests\out\extern.ddb" -Force
 }
-finally {
-    Remove-Item "$dr\NDXBN.DSF", "$dr\NDXBN.json" -ErrorAction SilentlyContinue
-    Pop-Location
-}
+finally { Pop-Location }
 
 # ---- -DrcDiff: NDRC against its reference implementation ------------
 # Compiles each fixture through both pipelines and asserts identical
@@ -3420,8 +3415,11 @@ if ($Rab) {
     # been removed at source (PICTURE/DISPLAY, SAVE/LOAD, EXIT for the Next
     # reset), so the old remap/grep-gate/MLV_NEXT.BIN shim is gone.
     $rabSrc = "$root\tools\Rabenstein-master\nextdaad"
-    Copy-Item "$rabSrc\rabenstein.dsf" "$dr\NDRAB.DSF" -Force
-    Push-Location $dr
+    $rabensteinWork = Join-Path $root 'tests\out\rabenstein-work'
+    Remove-Item $rabensteinWork -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $rabensteinWork | Out-Null
+    Copy-Item "$rabSrc\rabenstein.dsf" "$rabensteinWork\NDRAB.DSF" -Force
+    Push-Location $rabensteinWork
     try {
         & $drcDrf @drcTarget NDRAB.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (rabenstein)" }
@@ -3430,17 +3428,13 @@ if ($Rab) {
         Copy-Item NDRAB.DDB "$root\tests\out\rabenstein.ddb" -Force
         try {
             Copy-Item NDRAB.DDB "$leg\GAME.DDB" -Force
-            Remove-Item NDRAB.DDB -ErrorAction SilentlyContinue
             $rabActive = $true
         }
         catch {
-            "WARNING: could not copy to sd\$legName\GAME.DDB (likely locked by a running CSpect - close it and copy $dr\NDRAB.DDB across manually): $_"
+            "WARNING: could not copy to sd\$legName\GAME.DDB (likely locked by a running CSpect - close it and copy $rabensteinWork\NDRAB.DDB across manually): $_"
         }
     }
-    finally {
-        Remove-Item "$dr\NDRAB.DSF", "$dr\NDRAB.json", "$dr\NDRAB.___" -ErrorAction SilentlyContinue
-        Pop-Location
-    }
+    finally { Pop-Location }
 
     # Stage the Layer 2 location art (names zero-padded to 3 digits, the
     # shape the interpreter's picture loader probes for). Source set:
@@ -3508,8 +3502,11 @@ if ($UU) {
                   ForEach-Object { $_.Name }) -join ', '
         throw "-UU source missing: $uuDsf`n  .DSF files present in ${uuSrc}: $(if ($found) { $found } else { '(none)' })"
     }
-    Copy-Item $uuDsf "$dr\NDUU.DSF" -Force
-    Push-Location $dr
+    $urbanupstartWork = Join-Path $root 'tests\out\urbanupstart-work'
+    Remove-Item $urbanupstartWork -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $urbanupstartWork | Out-Null
+    Copy-Item $uuDsf "$urbanupstartWork\NDUU.DSF" -Force
+    Push-Location $urbanupstartWork
     try {
         & $drcDrf @drcTarget NDUU.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (urbanupstart)" }
@@ -3518,17 +3515,13 @@ if ($UU) {
         Copy-Item NDUU.DDB "$root\tests\out\urbanupstart.ddb" -Force
         try {
             Copy-Item NDUU.DDB "$leg\GAME.DDB" -Force
-            Remove-Item NDUU.DDB -ErrorAction SilentlyContinue
             $uuActive = $true
         }
         catch {
-            "WARNING: could not copy to sd\$legName\GAME.DDB (likely locked by a running CSpect - close it and copy $dr\NDUU.DDB across manually): $_"
+            "WARNING: could not copy to sd\$legName\GAME.DDB (likely locked by a running CSpect - close it and copy $urbanupstartWork\NDUU.DDB across manually): $_"
         }
     }
-    finally {
-        Remove-Item "$dr\NDUU.DSF", "$dr\NDUU.json", "$dr\NDUU.___" -ErrorAction SilentlyContinue
-        Pop-Location
-    }
+    finally { Pop-Location }
 
     # Stage whatever location art exists in the vendor dir root (flat
     # N.NXI/N.NX2, no nextdaad-style subfolder). Prefer NX2 (320-wide) if
@@ -3572,20 +3565,21 @@ if ($Part) {
     # directory the game was launched from - the leg folder - so this is
     # byte-identical to staging any other single-part DDB as the active
     # game.
-    Copy-Item "$PSScriptRoot\NDPARTA.DSF" "$dr\NDPARTA.DSF" -Force
-    Push-Location $dr
+    $partaWork = Join-Path $root 'tests\out\parta-work'
+    Remove-Item $partaWork -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $partaWork | Out-Null
+    Copy-Item "$PSScriptRoot\NDPARTA.DSF" "$partaWork\NDPARTA.DSF" -Force
+    Push-Location $partaWork
     try {
-        # SP10 pre-clean lesson (ddb.bat/4a68620): $dr is shared across
-        # every fixture this script compiles - delete a stale 0.XMB
-        # before each DRB run so it cannot be mistaken for this run's
-        # own output (or, worse, silently reused if this DSF's own
-        # XMESSAGE/XMES compile step were ever removed).
-        Remove-Item '0.XMB' -ErrorAction SilentlyContinue
+        # Work dir is wiped at block start: a 0.XMB left by a run that
+        # threw before the Move-Item must not be reused if this DSF ever
+        # loses its XMESSAGE/XMES step (SP10 lesson, ddb.bat/4a68620).
         & $drcDrf @drcTarget NDPARTA.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (NDPARTA)" }
         & $drcPhp $drcDrb @drcTarget EN NDPARTA.json NDPARTA.DDB
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (NDPARTA)" }
         Move-Item NDPARTA.DDB "$leg\GAME.DDB" -Force
+        Copy-Item "$leg\GAME.DDB" "$root\tests\out\parta.ddb" -Force
         # NDPARTA.DSF always uses XMESSAGE (its own header comment) -
         # no Test-Path guard, matching -Suite's own condacts.xmb
         # handling: an absence here is a real regression worth throwing
@@ -3594,30 +3588,30 @@ if ($Part) {
         Move-Item '0.XMB' "$root\tests\out\parta.xmb" -Force
         Copy-Item "$root\tests\out\parta.xmb" "$leg\0.XMB" -Force
     }
-    finally {
-        Remove-Item "$dr\NDPARTA.DSF", "$dr\NDPARTA.json" -ErrorAction SilentlyContinue
-        Pop-Location
-    }
+    finally { Pop-Location }
 
     # Part 2 -> GAME2.DDB + PART2\0.XMB (the PARTn\ shadow the
     # interpreter's asset probe expects - SP11 Task 5).
-    Copy-Item "$PSScriptRoot\NDPARTB.DSF" "$dr\NDPARTB.DSF" -Force
-    Push-Location $dr
+    $partbWork = Join-Path $root 'tests\out\partb-work'
+    Remove-Item $partbWork -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $partbWork | Out-Null
+    Copy-Item "$PSScriptRoot\NDPARTB.DSF" "$partbWork\NDPARTB.DSF" -Force
+    Push-Location $partbWork
     try {
-        Remove-Item '0.XMB' -ErrorAction SilentlyContinue
+        # Work dir is wiped at block start: a 0.XMB left by a run that
+        # threw before the Move-Item must not be reused if this DSF ever
+        # loses its XMESSAGE/XMES step (SP10 lesson, ddb.bat/4a68620).
         & $drcDrf @drcTarget NDPARTB.DSF
         if ($LASTEXITCODE -ne 0) { throw "DRF failed (NDPARTB)" }
         & $drcPhp $drcDrb @drcTarget EN NDPARTB.json NDPARTB.DDB
         if ($LASTEXITCODE -ne 0) { throw "DRB failed (NDPARTB)" }
         Move-Item NDPARTB.DDB "$leg\GAME2.DDB" -Force
+        Copy-Item "$leg\GAME2.DDB" "$root\tests\out\partb.ddb" -Force
         if (-not (Test-Path '0.XMB')) { throw "NDPARTB.DSF produced no 0.XMB - XMES missing from the source?" }
         Move-Item '0.XMB' "$root\tests\out\partb.xmb" -Force
         Copy-Item "$root\tests\out\partb.xmb" "$leg\PART2\0.XMB" -Force
     }
-    finally {
-        Remove-Item "$dr\NDPARTB.DSF", "$dr\NDPARTB.json" -ErrorAction SilentlyContinue
-        Pop-Location
-    }
+    finally { Pop-Location }
 
     $partActive = $true
     $partaSize = (Get-Item "$leg\GAME.DDB").Length
