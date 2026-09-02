@@ -670,7 +670,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -694,6 +694,13 @@ if (-not (Test-Path -LiteralPath $drcDrb)) {
 }
 if (-not (Select-String -LiteralPath $drcDrb -Pattern 'NEXTDAAD' -Quiet)) {
     throw "$drcDrb has no NEXTDAAD target - update the fork clone, or set NEXTDAAD_DRC to one that has it."
+}
+
+# ndrc is the compiler the authoring kit ships, so the harness compiles
+# what users compile. NEXTDAAD_NDRC overrides for compiler work.
+$ndrc = if ($env:NEXTDAAD_NDRC) { $env:NEXTDAAD_NDRC } else { Join-Path $root 'authoring-kit\lib\ndrc.exe' }
+if (-not (Test-Path -LiteralPath $ndrc)) {
+    throw "no ndrc.exe at $ndrc - build it into authoring-kit\lib, or set NEXTDAAD_NDRC to point at one."
 }
 $sd = Join-Path $root 'sd'
 
@@ -2769,6 +2776,101 @@ try {
 finally {
     Remove-Item "$dr\NDXBN.DSF", "$dr\NDXBN.json" -ErrorAction SilentlyContinue
     Pop-Location
+}
+
+# ---- -DrcDiff: NDRC against its reference implementation ------------
+# Compiles each fixture through both pipelines and asserts identical
+# bytes. Tests the COMPILER on the feature set both implementations
+# share, NOT each fixture's shipping configuration: both sides always
+# use the builtin token table, because -auto-tokens is an NDRC
+# extension DRC cannot express.
+if ($DrcDiff) {
+    if (-not (Test-Path -LiteralPath $drcDrb)) {
+        throw "-DrcDiff needs DRB.PHP at $drcDrb - clone the NextDAAD DRC fork into tools\DRC, or set NEXTDAAD_DRC to point at it."
+    }
+    if (-not (Select-String -LiteralPath $drcDrb -Pattern 'NEXTDAAD' -Quiet)) {
+        throw "$drcDrb has no NEXTDAAD target - update the fork clone, or set NEXTDAAD_DRC to one that has it."
+    }
+    $utoDsfPath = Join-Path $root 'tools\TEST.DSF'
+    $diffFixtures = @(
+        @{ Name = 'template'; Dsf = "$PSScriptRoot\test.dsf" }
+        @{ Name = 'condacts'; Dsf = "$PSScriptRoot\condacts.dsf" }
+        @{ Name = 'doallnest'; Dsf = "$PSScriptRoot\doallnest.dsf" }
+        @{ Name = 'bigddb'; Dsf = "$PSScriptRoot\bigddb.dsf" }
+        @{ Name = 'gmodegate'; Dsf = "$PSScriptRoot\gmodegate.dsf" }
+        @{ Name = 'audlad'; Dsf = "$PSScriptRoot\audlad.dsf" }
+        @{ Name = 'sfxdi'; Dsf = "$PSScriptRoot\sfxdi.dsf" }
+        @{ Name = 'sfxlong'; Dsf = "$PSScriptRoot\sfxlong.dsf" }
+        @{ Name = 'sfx2'; Dsf = "$PSScriptRoot\sfx2.dsf" }
+        @{ Name = 'debugflag'; Dsf = "$PSScriptRoot\debugflag.dsf" }
+        @{ Name = 'debugflag-debug'; Dsf = "$PSScriptRoot\debugflag.dsf"; DbOpts = @('-d') }
+        @{ Name = 'l2holes'; Dsf = "$PSScriptRoot\l2holes.dsf" }
+        @{ Name = 'tmover'; Dsf = "$PSScriptRoot\tmover.dsf" }
+        @{ Name = 'tileslack'; Dsf = "$PSScriptRoot\tileslack.dsf" }
+        @{ Name = 'fontsw'; Dsf = "$PSScriptRoot\fontsw.dsf" }
+        @{ Name = 'txt40'; Dsf = "$PSScriptRoot\txt40.dsf" }
+        @{ Name = 'accents'; Dsf = "$PSScriptRoot\accents.dsf" }
+        @{ Name = 'palette'; Dsf = "$PSScriptRoot\palette.dsf" }
+        @{ Name = 'v3probe'; Dsf = "$PSScriptRoot\v3probe.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'extern'; Dsf = "$PSScriptRoot\extern.dsf" }
+        @{ Name = 'parta'; Dsf = "$PSScriptRoot\NDPARTA.DSF" }
+        @{ Name = 'partb'; Dsf = "$PSScriptRoot\NDPARTB.DSF" }
+        @{ Name = 'rabenstein'; Dsf = "$root\tools\Rabenstein-master\nextdaad\rabenstein.dsf" }
+        @{ Name = 'urbanupstart'; Dsf = "$root\tools\urban-upstart\URBAN-UPSTART.DSF" }
+        @{ Name = 'utotest'; Dsf = $utoDsfPath }
+        @{ Name = 'utotest-v3'; Dsf = $utoDsfPath; SrcOpts = @('-v3') }
+    )
+    $diffRoot = Join-Path $root 'tests\out\drcdiff'
+    Remove-Item $diffRoot -Recurse -Force -ErrorAction SilentlyContinue
+    $same = 0; $skipped = 0; $differ = @()
+    foreach ($f in $diffFixtures) {
+        if (-not (Test-Path -LiteralPath $f.Dsf)) {
+            "  skip  $($f.Name) - source absent ($($f.Dsf))"
+            $skipped++
+            continue
+        }
+        # Typed [string[]]: an if/else value assignment unwraps a
+        # single-element array to a bare string, which then splats
+        # per-character (same footgun as $drcTarget above).
+        [string[]]$srcOpts = if ($f.SrcOpts) { $f.SrcOpts } else { @() }
+        [string[]]$dbOpts = if ($f.DbOpts) { $f.DbOpts } else { @() }
+        $w = Join-Path $diffRoot $f.Name
+        New-Item -ItemType Directory -Force $w | Out-Null
+        Copy-Item -LiteralPath $f.Dsf "$w\D.DSF" -Force
+        Push-Location $w
+        try {
+            & $drcDrf @drcTarget D.DSF @srcOpts
+            if ($LASTEXITCODE -ne 0) { throw "DRF failed (drcdiff $($f.Name))" }
+            & $drcPhp $drcDrb @drcTarget EN D.json drc.ddb @dbOpts
+            if ($LASTEXITCODE -ne 0) { throw "DRB failed (drcdiff $($f.Name))" }
+            # Join form, matching what the fixture blocks run. The leg
+            # must exercise the invocation shape the harness ships, not a
+            # split form nothing else uses.
+            & $ndrc @drcTarget EN D.DSF ndrc.ddb @srcOpts @dbOpts | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "ndrc failed (drcdiff $($f.Name))" }
+            $a = [System.IO.File]::ReadAllBytes("$w\drc.ddb")
+            $b = [System.IO.File]::ReadAllBytes("$w\ndrc.ddb")
+            if ($a.Length -ne $b.Length) {
+                $differ += "$($f.Name): DRC $($a.Length) bytes, NDRC $($b.Length) bytes"
+            }
+            else {
+                $at = -1
+                for ($i = 0; $i -lt $a.Length; $i++) {
+                    if ($a[$i] -ne $b[$i]) { $at = $i; break }
+                }
+                if ($at -ge 0) {
+                    $differ += ("$($f.Name): first difference at offset $at - DRC 0x{0:X2}, NDRC 0x{1:X2}" -f $a[$at], $b[$at])
+                }
+                else { $same++ }
+            }
+        }
+        finally { Pop-Location }
+    }
+    foreach ($d in $differ) { "  DIFF  $d" }
+    if ($differ.Count) {
+        throw "-DrcDiff: $($differ.Count) fixture(s) differ between NDRC and DRC - see the DIFF lines above"
+    }
+    "drcdiff: $same fixtures byte-identical between NDRC and DRC$(if ($skipped) { ", $skipped skipped (source absent)" })"
 }
 
 # tests\xbn\xbntest.asm itself. Assembled from the repo root (same cwd
