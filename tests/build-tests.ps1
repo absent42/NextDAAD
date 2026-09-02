@@ -1395,8 +1395,10 @@ finally { Pop-Location }
 # SD-streamed sampled-effect wire fixture (SP18 item 7 Task 7). Compiled
 # unconditionally like every fixture above so a break in the DSF is
 # caught on a plain run; only -SfxLong makes it the active GAME.DDB
-# (sd\SFXLONG\). No -v3, deliberately - the fixture uses nothing V3-only
-# and its header version must stay 2 like every other fixture here.
+# (sd\SFXLONG\).
+#
+# -v3 like most fixtures here. This fixture measures sampled-SFX
+# behaviour, which the header version does not affect.
 #
 # OUT OF TREE, for the same reason as l2holes/tileslack/fontsw above and
 # by the same means: ndrc.exe is run by absolute path with the cwd set
@@ -1407,7 +1409,7 @@ New-Item -ItemType Directory -Force $sfxLongWork | Out-Null
 Copy-Item "$PSScriptRoot\sfxlong.dsf" "$sfxLongWork\NDSFXLNG.DSF" -Force
 Push-Location $sfxLongWork
 try {
-    & $ndrc @drcTarget EN NDSFXLNG.DSF NDSFXLNG.DDB
+    & $ndrc @drcTarget EN NDSFXLNG.DSF NDSFXLNG.DDB -v3
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfxlong)" }
     Copy-Item NDSFXLNG.DDB "$root\tests\out\sfxlong.ddb" -Force
 }
@@ -1418,15 +1420,17 @@ finally {
 # Two-channel sampled-effect API fixture (SP18 item 7 Task 12). Compiled
 # unconditionally like every fixture above so a break in the DSF is
 # caught on a plain run; only -Sfx2 makes it the active GAME.DDB
-# (sd\SFX2\). No -v3, deliberately - the fixture uses nothing V3-only and
-# its header version must stay 2 like every other fixture here. Built out
-# of tree for the same reason and by the same means as sfxlong above.
+# (sd\SFX2\). Built out of tree for the same reason and by the same
+# means as sfxlong above.
+#
+# -v3 like most fixtures here. This fixture measures sampled-SFX
+# behaviour, which the header version does not affect.
 $sfx2Work = Join-Path $root 'tests\out\sfx2-work'
 New-Item -ItemType Directory -Force $sfx2Work | Out-Null
 Copy-Item "$PSScriptRoot\sfx2.dsf" "$sfx2Work\NDSFX2.DSF" -Force
 Push-Location $sfx2Work
 try {
-    & $ndrc @drcTarget EN NDSFX2.DSF NDSFX2.DDB
+    & $ndrc @drcTarget EN NDSFX2.DSF NDSFX2.DDB -v3
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (sfx2)" }
     Copy-Item NDSFX2.DDB "$root\tests\out\sfx2.ddb" -Force
 }
@@ -1506,15 +1510,14 @@ finally {
 # tests\out\tmover-work, so nothing is written under tools\ - read-only
 # working material git cannot restore.
 #
-# No -v3, deliberately. Nothing here depends on a V3 condact and the
-# header version must stay 2 (asserted below), under a fixture whose
-# whole value is that exactly one thing moves.
+# -v3 like most fixtures here. This fixture measures tilemap layer-order
+# behaviour, which the header version does not affect.
 $tmoverWork = Join-Path $root 'tests\out\tmover-work'
 New-Item -ItemType Directory -Force $tmoverWork | Out-Null
 Copy-Item "$PSScriptRoot\tmover.dsf" "$tmoverWork\NDTMOVR.DSF" -Force
 Push-Location $tmoverWork
 try {
-    & $ndrc @drcTarget EN NDTMOVR.DSF NDTMOVR.DDB
+    & $ndrc @drcTarget EN NDTMOVR.DSF NDTMOVR.DDB -v3
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (tmover)" }
     Copy-Item NDTMOVR.DDB "$root\tests\out\tmover.ddb" -Force
 }
@@ -1540,7 +1543,7 @@ New-Item -ItemType Directory -Force $tileSlackWork | Out-Null
 Copy-Item "$PSScriptRoot\tileslack.dsf" "$tileSlackWork\NDTILESL.DSF" -Force
 Push-Location $tileSlackWork
 try {
-    & $ndrc @drcTarget EN NDTILESL.DSF NDTILESL.DDB --json
+    & $ndrc @drcTarget EN NDTILESL.DSF NDTILESL.DDB --json -v3
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (tileslack)" }
     Copy-Item NDTILESL.DDB "$root\tests\out\tileslack.ddb" -Force
 }
@@ -1566,7 +1569,7 @@ New-Item -ItemType Directory -Force $fontswWork | Out-Null
 Copy-Item "$PSScriptRoot\fontsw.dsf" "$fontswWork\NDFONTSW.DSF" -Force
 Push-Location $fontswWork
 try {
-    & $ndrc @drcTarget EN NDFONTSW.DSF NDFONTSW.DDB
+    & $ndrc @drcTarget EN NDFONTSW.DSF NDFONTSW.DDB -v3
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (fontsw)" }
     Copy-Item NDFONTSW.DDB "$root\tests\out\fontsw.ddb" -Force
 }
@@ -1620,7 +1623,7 @@ New-Item -ItemType Directory -Force $paletteWork | Out-Null
 Copy-Item "$PSScriptRoot\palette.dsf" "$paletteWork\NDPAL.DSF" -Force
 Push-Location $paletteWork
 try {
-    & $ndrc @drcTarget EN NDPAL.DSF NDPAL.DDB
+    & $ndrc @drcTarget EN NDPAL.DSF NDPAL.DDB -v3
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (palette)" }
     Copy-Item NDPAL.DDB "$root\tests\out\palette.ddb" -Force
 }
@@ -1698,7 +1701,8 @@ function Assert-SfxDualChannel {
 $sfxdiBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxdi.ddb")
 # ANYKEY is the V2 wait-for-key condact and this fixture must stay V2 -
 # under V3 the interpreter reads PAUSE 0 as GETKEY and SYNONYM changes
-# its done-semantics, neither of which this experiment wants to vary.
+# its done-semantics, neither of which this DMA experiment wants to
+# vary. Not a byte assertion: the fixture measures wait behaviour.
 if ($sfxdiBytes[0] -ne 2) {
     throw "sfxdi: DDB header version byte is $($sfxdiBytes[0]), expected 2 - the fixture is compiled WITHOUT -v3 and its ANYKEY waits assume V2"
 }
@@ -1987,7 +1991,7 @@ $tsVids = @($tsProcs[5] | ForEach-Object { $_.condacts } | Where-Object { $_.Con
 if (($tsVids -join ',') -ne '1,2,3,4') { throw "tileslack: the verb table plays videos ($($tsVids -join ',')), expected exactly 1,2,3,4" }
 
 $tsBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\tileslack.ddb")
-if ($tsBytes[0] -ne 2) { throw "tileslack: DDB header version byte is $($tsBytes[0]), expected 2" }
+if ($tsBytes[0] -ne 3) { throw "tileslack: DDB header version byte is $($tsBytes[0]), expected 3 - the fixture is compiled WITH -v3" }
 foreach ($s in @(
         @{ n = 'MODE 2 (the More... pager off - without it the menu pages)'; b = [byte[]]@(81, 2) },
         @{ n = 'WINSIZE 32 80 (the full-screen text window)'; b = [byte[]]@(107, 32, 80) },
@@ -2006,8 +2010,8 @@ foreach ($a in $tsArms) {
 
 # --- fontsw: the font/pointer switching stimulus ---
 $fontswBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\fontsw.ddb")
-if ($fontswBytes[0] -ne 2) {
-    throw "fontsw: DDB header version byte is $($fontswBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+if ($fontswBytes[0] -ne 3) {
+    throw "fontsw: DDB header version byte is $($fontswBytes[0]), expected 3 - the fixture is compiled WITH -v3"
 }
 # GFX is opcode 87 ($57), MOUSE is 86 ($56); both take two parameters,
 # so each call is three bytes. Assert DRC emitted the sub-commands we
@@ -2118,8 +2122,8 @@ foreach ($c in @(
 # generic value checked only against 0-255, and if that ever changes
 # these fail rather than the interpreter silently receiving 200 AND 15.
 $palBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\palette.ddb")
-if ($palBytes[0] -ne 2) {
-    throw "palette: DDB header version byte is $($palBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+if ($palBytes[0] -ne 3) {
+    throw "palette: DDB header version byte is $($palBytes[0]), expected 3 - the fixture is compiled WITH -v3"
 }
 foreach ($c in @(@{ n = 'INK 200';    b = [byte[]]@(66, 200) },
                  @{ n = 'PAPER 37';   b = [byte[]]@(65, 37) },
@@ -2184,8 +2188,8 @@ foreach ($c in @(@{ n = 'WINAT 0 0 (card footprint)';    b = [byte[]]@(82, 0, 0)
 # bytes: P1 then the sub-command. PAPER is 65 and INK 66, one parameter
 # each, so each is two bytes.
 $tmoBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\tmover.ddb")
-if ($tmoBytes[0] -ne 2) {
-    throw "tmover: DDB header version byte is $($tmoBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+if ($tmoBytes[0] -ne 3) {
+    throw "tmover: DDB header version byte is $($tmoBytes[0]), expected 3 - the fixture is compiled WITH -v3"
 }
 # The two layer-order calls. Each is authored EXACTLY ONCE in the DSF
 # (processes 2 and 3; every other site calls that process), which is
@@ -2293,8 +2297,8 @@ if ($tmoPause.Count -ne 12) {
 # same anchoring idiom Find-MaskedRuns's own header describes for the
 # sfxdi ANYKEY checks.
 $sfxLongBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfxlong.ddb")
-if ($sfxLongBytes[0] -ne 2) {
-    throw "sfxlong: DDB header version byte is $($sfxLongBytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+if ($sfxLongBytes[0] -ne 3) {
+    throw "sfxlong: DDB header version byte is $($sfxLongBytes[0]), expected 3 - the fixture is compiled WITH -v3"
 }
 foreach ($s in @(@{ n = 'SFX 1 1 (PLAY1, effect 1 once)';    b = [byte[]]@(18, 1, 1) },
                  @{ n = 'SFX 1 2 (LOOP1, effect 1 looped)';   b = [byte[]]@(18, 1, 2) },
@@ -2332,8 +2336,8 @@ if ($loop1Hits -lt 2) {
 # single-channel behaviour instead. SFX is opcode 18 = $12, two
 # parameters, so each call is three bytes.
 $sfx2Bytes = [System.IO.File]::ReadAllBytes("$root\tests\out\sfx2.ddb")
-if ($sfx2Bytes[0] -ne 2) {
-    throw "sfx2: DDB header version byte is $($sfx2Bytes[0]), expected 2 - this fixture is compiled WITHOUT -v3"
+if ($sfx2Bytes[0] -ne 3) {
+    throw "sfx2: DDB header version byte is $($sfx2Bytes[0]), expected 3 - the fixture is compiled WITH -v3"
 }
 foreach ($s in @(@{ n = 'SFX 1 1 (PLAY1, auto, once)';        b = [byte[]]@(18, 1, 1) },
                  @{ n = 'SFX 1 2 (LOOP1, auto, looped)';      b = [byte[]]@(18, 1, 2) },
@@ -2765,17 +2769,17 @@ if ($DrcDiff) {
         @{ Name = 'gmodegate'; Dsf = "$PSScriptRoot\gmodegate.dsf" }
         @{ Name = 'audlad'; Dsf = "$PSScriptRoot\audlad.dsf" }
         @{ Name = 'sfxdi'; Dsf = "$PSScriptRoot\sfxdi.dsf" }
-        @{ Name = 'sfxlong'; Dsf = "$PSScriptRoot\sfxlong.dsf" }
-        @{ Name = 'sfx2'; Dsf = "$PSScriptRoot\sfx2.dsf" }
+        @{ Name = 'sfxlong'; Dsf = "$PSScriptRoot\sfxlong.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'sfx2'; Dsf = "$PSScriptRoot\sfx2.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'debugflag'; Dsf = "$PSScriptRoot\debugflag.dsf" }
         @{ Name = 'debugflag-debug'; Dsf = "$PSScriptRoot\debugflag.dsf"; DbOpts = @('-d') }
         @{ Name = 'l2holes'; Dsf = "$PSScriptRoot\l2holes.dsf" }
-        @{ Name = 'tmover'; Dsf = "$PSScriptRoot\tmover.dsf" }
-        @{ Name = 'tileslack'; Dsf = "$PSScriptRoot\tileslack.dsf" }
-        @{ Name = 'fontsw'; Dsf = "$PSScriptRoot\fontsw.dsf" }
+        @{ Name = 'tmover'; Dsf = "$PSScriptRoot\tmover.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'tileslack'; Dsf = "$PSScriptRoot\tileslack.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'fontsw'; Dsf = "$PSScriptRoot\fontsw.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'txt40'; Dsf = "$PSScriptRoot\txt40.dsf" }
         @{ Name = 'accents'; Dsf = "$PSScriptRoot\accents.dsf" }
-        @{ Name = 'palette'; Dsf = "$PSScriptRoot\palette.dsf" }
+        @{ Name = 'palette'; Dsf = "$PSScriptRoot\palette.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'v3probe'; Dsf = "$PSScriptRoot\v3probe.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'extern'; Dsf = "$PSScriptRoot\extern.dsf" }
         @{ Name = 'parta'; Dsf = "$PSScriptRoot\NDPARTA.DSF" }
