@@ -14,7 +14,7 @@ to it, and the frozen addresses author code relies on. See
 <a href="../externs.html">Externs</a> for how to build and use one; this page is the
 format itself.</p>
 <h2 id="header">Header</h2>
-<p>Ten bytes at the start of the file, loaded to <code>$C000</code>:</p>
+<p>Fourteen bytes at the start of the file, loaded to <code>$C000</code>:</p>
 <table>
 <thead>
 <tr>
@@ -35,7 +35,7 @@ format itself.</p>
 <td>3</td>
 <td>1</td>
 <td>version</td>
-<td>Format version - <code>1</code></td>
+<td>Format version - <code>2</code></td>
 </tr>
 <tr>
 <td>4</td>
@@ -55,10 +55,23 @@ format itself.</p>
 <td>size</td>
 <td>Total byte count, header included, up to <code>$4000</code></td>
 </tr>
+<tr>
+<td>10</td>
+<td>4</td>
+<td>reserved</td>
+<td>Must be zero. A later format may make one of these bytes load-bearing; a version 2 loader rejects any nonzero value so that change can land without another version cliff</td>
+</tr>
 </tbody>
 </table>
 <p><code>xbn.inc</code>'s <code>XBN_HEADER</code> macro emits this for you from two labels (or
-<code>0</code>); you never need to build it by hand.</p>
+<code>0</code>), reserved bytes included; you never build it by hand. Collection
+modules use <code>xbnmod.inc</code>'s <code>XBN_BEGIN</code> instead, which emits the same
+header followed by the <code>CALL</code> slot table at <code>$C00E</code> (see
+<a href="../externs.html#one-binary-any-subset">Externs</a>).</p>
+<p>A version 1 binary (ten-byte header, version byte <code>1</code>) is rejected by
+this interpreter and the game plays with externs off: rebuild it against
+the current <code>xbn.inc</code>. The other direction is equally closed - an
+interpreter that predates format 2 rejects a version 2 file.</p>
 <h2 id="validation">Validation</h2>
 <p>The loader checks a <code>GAME.XBN</code> it finds at boot, in this order, and
 rejects the file - freeing anything it had already allocated and
@@ -66,8 +79,11 @@ leaving the game to play with externs off - on the first check that
 fails:</p>
 <ol>
 <li>The file is no larger than 16384 bytes (<code>$4000</code>) on disk.</li>
+<li>The file holds at least the fourteen header bytes (a shorter file is
+   truncated).</li>
 <li>The magic bytes read exactly <code>"XBN"</code>.</li>
-<li>The version byte reads <code>1</code>.</li>
+<li>The version byte reads <code>2</code>.</li>
+<li>The four reserved bytes at offsets 10-13 are all zero.</li>
 <li>The size field is no larger than <code>$4000</code>.</li>
 <li>The size field matches the number of bytes actually read from the
    file - a size field that disagrees with the real file length is
@@ -96,7 +112,7 @@ maximum-size binary: it is loaded and present, but it is not a valid
 <code>CALL</code> target or entry-point address in its own right, since nothing
 can address a location past <code>$FFFF</code> to call into.</p>
 <h2 id="service-table">Service table</h2>
-<p>A fixed jump table of ten three-byte <code>JP</code> instructions at <code>XBN_API</code>
+<p>A fixed jump table of fifteen three-byte <code>JP</code> instructions at <code>XBN_API</code>
 (<code>$BEC8</code>), frozen from the first shipping release. The address never
 moves and existing rows never change signature or meaning - only new
 rows are ever added, at the end, with a version bump reported by
@@ -110,6 +126,8 @@ old <code>xbn.inc</code> keeps working unmodified on every future NextDAAD relea
 <th>Symbol</th>
 <th>In</th>
 <th>Out</th>
+<th>Corrupts</th>
+<th>From the <code>#int</code> hook</th>
 </tr>
 </thead>
 <tbody>
@@ -117,76 +135,140 @@ old <code>xbn.inc</code> keeps working unmodified on every future NextDAAD relea
 <td>0</td>
 <td><code>SVC_VERSION</code></td>
 <td>-</td>
-<td>A = API version</td>
+<td>A = API version (<code>2</code> on this release)</td>
+<td>AF</td>
+<td>yes</td>
 </tr>
 <tr>
 <td>1</td>
 <td><code>SVC_PUTCHAR</code></td>
 <td>A = character</td>
 <td>-</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
 </tr>
 <tr>
 <td>2</td>
 <td><code>SVC_PUTS</code></td>
-<td>HL = ASCIIZ string</td>
+<td>HL = ASCIIZ string (may live in your own bank)</td>
 <td>-</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
 </tr>
 <tr>
 <td>3</td>
 <td><code>SVC_FOPEN</code></td>
 <td>IX = ASCIIZ filename, B = mode</td>
 <td>A = handle, or CF set + A = error</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
 </tr>
 <tr>
 <td>4</td>
 <td><code>SVC_FREAD</code></td>
 <td>A = handle, IX = buffer, BC = length</td>
 <td>BC = bytes read, or CF set + A = error</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
 </tr>
 <tr>
 <td>5</td>
 <td><code>SVC_FWRITE</code></td>
 <td>A = handle, IX = buffer, BC = length</td>
 <td>CF set + A = error, on failure</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
 </tr>
 <tr>
 <td>6</td>
 <td><code>SVC_FSEEK</code></td>
 <td>A = handle, BCDE = offset</td>
 <td>CF set + A = error, on failure</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
 </tr>
 <tr>
 <td>7</td>
 <td><code>SVC_FCLOSE</code></td>
 <td>A = handle</td>
 <td>-</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
 </tr>
 <tr>
 <td>8</td>
 <td><code>SVC_RANDOM</code></td>
 <td>-</td>
 <td>A = random byte (full range, not the 1-100 <code>CHANCE</code> scale)</td>
+<td>AF only; BC, DE, HL preserved</td>
+<td>yes</td>
 </tr>
 <tr>
 <td>9</td>
 <td><code>SVC_GETMSG</code></td>
 <td>A = user message number</td>
-<td>HL = buffer, BC = length (max 256, truncated), or CF set + A = <code>$FF</code></td>
+<td>HL = buffer, BC = length (max 256, truncated); CF set + A = <code>$FF</code> when the number is out of range (the buffer is not written)</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
+</tr>
+<tr>
+<td>10</td>
+<td><code>SVC_FRAMES</code></td>
+<td>-</td>
+<td>HL = the interpreter's free-running 50Hz frame counter, 16 bits, wrapping. Compare against a snapshot; never read it as absolute time</td>
+<td>AF, HL</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>11</td>
+<td><code>SVC_GETDATE</code></td>
+<td>-</td>
+<td>CF clear: BC = MS-DOS packed date, DE = MS-DOS packed time, H = seconds, L = hundredths (<code>$FF</code> if the RTC has none). CF set = no RTC or invalid: BC = DE = 0 and HL is undefined - never read the seconds on that path</td>
+<td>AF, BC, DE, HL, IX, IY (esxDOS row)</td>
+<td>no</td>
+</tr>
+<tr>
+<td>12</td>
+<td><code>SVC_BUSY</code></td>
+<td>-</td>
+<td>A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section. Unassigned bits read 0. Bits 0 and 2 are only ever observable from the hook</td>
+<td>AF, L</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>13</td>
+<td><code>SVC_PALREAD</code></td>
+<td>IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while <code>GFX 0 4</code> buffer mode is open)</td>
+<td>256 entries of two bytes: RRRGGGBB, then a second byte masked to <code>%11000001</code> (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512</td>
+<td>AF, BC, E, IX</td>
+<td>no</td>
+</tr>
+<tr>
+<td>14</td>
+<td><code>SVC_WINDOW</code></td>
+<td>A = window number 0-7</td>
+<td>selects that window through the interpreter's own machinery and returns A = the previously selected window; CF set and no change for A &gt; 7. Selecting flushes the pending word of the window being left and may raise the More prompt there</td>
+<td>AF, BC, DE, HL, IX, IY</td>
+<td>no</td>
 </tr>
 </tbody>
 </table>
 <p>Error convention throughout is esxDOS style: carry flag set, error code
-in A. Every row may clobber AF, BC, DE, HL, IX and IY; only the
-registers a row's Out column names carry a meaningful result. Every
-service preserves the caller's own MMU mapping across the call - your
-extern's bank is back under <code>$C000</code> when a service returns, whatever
-paging it did internally.</p>
-<p>All ten rows are foreground-only: none may be called from the <code>#int</code>
-frame hook (see <a href="../externs.html#the-int-hook">Externs</a>).</p>
+in A. A row's Corrupts column is its contract; only the registers its
+Out column names carry a result. Every service preserves the caller's
+own MMU mapping across the call - your extern's bank is back under
+<code>$C000</code> when a service returns, whatever paging it did internally.</p>
+<p>The last column is the hook rule. Rows marked yes are the only services
+the <code>#int</code> hook may call (they touch resident memory only and never page);
+every other row is foreground-only, because it runs the print path, the
+file system, a window switch or the shared palette registers, none of
+which may be entered from interrupt context. See <a href="../externs.html#the-int-hook">Externs</a>.</p>
 <p><code>SVC_GETMSG</code>'s buffer is interpreter-owned resident memory, shared with
 other machinery, and is only guaranteed valid until the next service
-call or the next save/load - see
-<a href="../externs.html#services">Externs</a> for what that means in practice.</p>
+call or the next save/load - see <a href="../externs.html#services">Externs</a>.</p>
+<p><code>SVC_RANDOM</code> draws from the same stream as <code>CHANCE</code> and <code>RANDOM</code>. A draw
+from the hook consumes that stream at a time the game cannot predict, so
+a game that needs reproducible runs must not draw from the hook.</p>
 <h2 id="frozen-data-anchors">Frozen data anchors</h2>
 <p>Fixed addresses <code>xbn.inc</code> binds symbols to, none of which move between
 releases:</p>
@@ -212,7 +294,12 @@ releases:</p>
 <tr>
 <td><code>OBJ_SIZE</code></td>
 <td><code>6</code></td>
-<td>Bytes per object table entry: <code>+0</code> location, <code>+1</code> weight/attribute bits, <code>+2</code>/<code>+3</code> extended attributes, <code>+4</code> noun ID, <code>+5</code> adjective ID</td>
+<td>Bytes per object table entry: <code>+0</code> location, <code>+1</code> weight/attribute bits, <code>+2</code>/<code>+3</code> extended attributes in flag order - <code>+3</code> holds attribute bits 0-7, <code>+2</code> holds bits 8-15, <code>+4</code> noun ID, <code>+5</code> adjective ID</td>
+</tr>
+<tr>
+<td><code>XBN_NUMOBJ</code></td>
+<td><code>$A900</code></td>
+<td>The object count: one byte, the number of entries in the object table. Walk <code>0</code> to <code>XBN_NUMOBJ - 1</code>; entries past the count are stale</td>
 </tr>
 <tr>
 <td><code>XBN_API</code></td>
@@ -221,6 +308,8 @@ releases:</p>
 </tr>
 </tbody>
 </table>
+<p><code>XBN_API</code> grew to fifteen rows in format 2; rows 0-9 kept their
+addresses and signatures.</p>
 <h2 id="limits">Limits</h2>
 <ul>
 <li><strong>16384 bytes (<code>$4000</code>) maximum</strong>, header included, for the whole
