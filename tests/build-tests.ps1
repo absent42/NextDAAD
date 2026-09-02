@@ -1284,11 +1284,8 @@ $big = Assert-BigDdb "$root\tests\out\bigddb.ddb" 'bigddb'
 $big.Summary
 $bigLen = $big.Len
 
-# Auto-tokens variant. Same generator, wider vocabulary: a per-game
-# token table crushes the 103-word pool to 20745 bytes, well inside the
-# classic reach the fixture exists to cross. EXEMPT FROM -DrcDiff - its
-# whole point is a configuration DRC cannot express, and its builtin
-# compile would exceed the 65535 format ceiling.
+# Auto-tokens variant: a per-game table crushes the 103-word pool to 20745
+# bytes, inside the classic reach, so this one uses a wider vocabulary.
 # Generated with: python tests\bigddb-gen.py --dest tests\bigddb-autotok.dsf --vocab 1200
 $bigTokWork = Join-Path $root 'tests\out\bigddb-autotok-work'
 Remove-Item $bigTokWork -Recurse -Force -ErrorAction SilentlyContinue
