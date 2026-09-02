@@ -1390,9 +1390,9 @@ finally { Pop-Location }
 # and its header version must stay 2 like every other fixture here.
 #
 # OUT OF TREE, for the same reason as l2holes/tileslack/fontsw above and
-# by the same means: DRF.exe and DRB.PHP are run by absolute path with
-# the cwd set to tests\out\sfxlong-work, so nothing is written under
-# tools\ - read-only working material git cannot restore.
+# by the same means: ndrc.exe is run by absolute path with the cwd set
+# to tests\out\sfxlong-work, so nothing is written under tools\ -
+# read-only working material git cannot restore.
 $sfxLongWork = Join-Path $root 'tests\out\sfxlong-work'
 New-Item -ItemType Directory -Force $sfxLongWork | Out-Null
 Copy-Item "$PSScriptRoot\sfxlong.dsf" "$sfxLongWork\NDSFXLNG.DSF" -Force
@@ -1459,13 +1459,11 @@ finally { Pop-Location }
 # does. Every block above copies its DSF INTO tools\DAAD-READY and
 # compiles with the cwd set there, which WRITES INTO tools\ - read-only
 # working material that git cannot restore. Rather than convert the older
-# blocks (a separate change, with its own risk), this one runs DRF.exe and
-# DRB.PHP by absolute path with the cwd set to tests\out\l2holes-work and
-# writes nothing under tools\ at all. The result is byte-identical: DRF
-# takes the DSF path as an argument, and DRB's default compression tokens
-# are embedded in the PHP (drb.php's $compressionJSON_EN), read from an
-# external file only when a <name>.tok sits next to the input - which is
-# true in neither location.
+# blocks (a separate change, with its own risk), this one runs ndrc.exe
+# by absolute path with the cwd set to tests\out\l2holes-work and writes
+# nothing under tools\ at all. The result is byte-identical: ndrc takes
+# the DSF path as an argument and reads a .tok only when one sits beside
+# the input, which is true in neither location.
 #
 # The .json is KEPT, not deleted like the others: the ruler verification
 # below reads the compiled messages back out of it.
@@ -1494,7 +1492,7 @@ finally {
 # (sd\TMOVER\).
 #
 # OUT OF TREE, for the same reason as l2holes above and by the same
-# means: DRF.exe and DRB.PHP are run by absolute path with the cwd set to
+# means: ndrc.exe is run by absolute path with the cwd set to
 # tests\out\tmover-work, so nothing is written under tools\ - read-only
 # working material git cannot restore.
 #
@@ -1519,7 +1517,7 @@ finally {
 # -TileSlack makes it the active GAME.DDB (sd\TILESLK\).
 #
 # OUT OF TREE, for the same reason as l2holes above and by the same means:
-# DRF.exe and DRB.PHP are run by absolute path with the cwd set to
+# ndrc.exe is run by absolute path with the cwd set to
 # tests\out\tileslack-work, so nothing is written under tools\ - read-only
 # working material git cannot restore.
 #
@@ -1550,8 +1548,8 @@ finally {
 # just does not stage it anywhere.
 #
 # OUT OF TREE, for the same reason as l2holes/tileslack above and by the
-# same means: DRF.exe and DRB.PHP are run by absolute path with the cwd
-# set to tests\out\fontsw-work, so nothing is written under tools\ -
+# same means: ndrc.exe is run by absolute path with the cwd set to
+# tests\out\fontsw-work, so nothing is written under tools\ -
 # read-only working material git cannot restore.
 $fontswWork = Join-Path $root 'tests\out\fontsw-work'
 New-Item -ItemType Directory -Force $fontswWork | Out-Null
@@ -1586,7 +1584,7 @@ finally {
 # Accented-glyph fixture (2026-08-30). Compiled unconditionally like
 # every block above so a break in the DSF is caught on a plain run;
 # -Accent is the leg switch that stages this DDB into sd\ACCENT\.
-# tests\accents.dsf is Latin-1 ON PURPOSE - DRF reads DSF text as
+# tests\accents.dsf is Latin-1 ON PURPOSE - ndrc reads DSF text as
 # Latin-1 and does the accent conversion itself (a UTF-8 source
 # double-converts and the byte asserts below catch it).
 $accentWork = Join-Path $root 'tests\out\accent-work'
@@ -1605,8 +1603,8 @@ finally {
 # 256-colour text stimulus fixture. Compiled unconditionally like every
 # block above so a break in the DSF is caught on a plain run, whether or
 # not -Palette is given - the byte assertions below run every time.
-# OUT OF TREE: DRF.exe and DRB.PHP are run by absolute path with the cwd
-# set to tests\out\palette-work, so nothing is written under tools\.
+# OUT OF TREE: ndrc.exe is run by absolute path with the cwd set to
+# tests\out\palette-work, so nothing is written under tools\.
 $paletteWork = Join-Path $root 'tests\out\palette-work'
 New-Item -ItemType Directory -Force $paletteWork | Out-Null
 Copy-Item "$PSScriptRoot\palette.dsf" "$paletteWork\NDPAL.DSF" -Force
@@ -2098,7 +2096,7 @@ foreach ($c in @(
     @{ n = 'WINSIZE 5 32 (More paging window)'; b = [byte[]]@(107, 5, 32) }
 )) {
     if ((Find-ByteRuns $accBytes $c.b).Count -lt 1) {
-        throw "accents: '$($c.n)' not present in tests\out\accents.ddb - DRF/DRB conversion changed, or the DSF lost its Latin-1 encoding"
+        throw "accents: '$($c.n)' not present in tests\out\accents.ddb - ndrc conversion changed, or the DSF lost its Latin-1 encoding"
     }
 }
 "accents.ddb: bare 16-31, lowercase/uppercase/acute triple sets, direct sharp-s, MX collision probe, MODE and the paging window all present as authored"
@@ -2642,7 +2640,7 @@ function Assert-UtoImage {
     param([string]$Path, [int]$Ver, [bool]$WantV3)
     $b = [System.IO.File]::ReadAllBytes($Path)
     if ($b[0] -ne $Ver) {
-        throw "utotest: DDB header byte 0 is $($b[0]), expected $Ver - did the -v3 flag reach DRF (or reach it when it should not have)?"
+        throw "utotest: DDB header byte 0 is $($b[0]), expected $Ver - did the -v3 flag reach ndrc (or reach it when it should not have)?"
     }
     foreach ($s in $utoSetat) {
         $n = (Find-ByteRuns $b $s.b).Count
