@@ -54,12 +54,11 @@ def _rebuild_next_only(mutated_dsf, workdir, lang="EN"):
     if mutated_dsf.resolve() != dest.resolve():
         dest.write_bytes(mutated_dsf.read_bytes())
 
-    prepare._run([prepare.DRF, "zx", "next", dest.name, "next.json"], workdir)
-    prepare._run([prepare.PHP, prepare.DRB, "zx", "next", lang, "next.json",
-                 "next.ddb"], workdir)
+    prepare._run([prepare.NDRC, "nextdaad", lang, dest.name, "next.ddb",
+                 "-v3", "-auto-tokens"], workdir)
     next_ddb = workdir / "next.ddb"
     if not next_ddb.exists():
-        raise RuntimeError("DRB did not produce %s" % next_ddb)
+        raise RuntimeError("ndrc did not produce %s" % next_ddb)
     return next_ddb
 
 
