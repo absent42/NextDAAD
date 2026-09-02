@@ -198,8 +198,8 @@
 ;          branch: "RESET FAILED".
 ;   XHNT - level count (fn 51) for topic 1: flag 243 must read 3.
 ;   XHNL - explicit-level mode (flag 242): level 2 prints and passes,
-;          level 3 FAILS -> "past ok"; GAME.HPR is never touched, so
-;          this is safe to type at any point.
+;          level 3 FAILS -> "<hint text> L2 past ok"; GAME.HPR is never
+;          touched, so this is safe to type at any point.
 ;   XHNA and XHNR are SILICON-CONFIRMED ONLY - ZEsarUX cannot create
 ;          or write GAME.HPR, so the automatic ladder never advances
 ;          there. See their verb comments for what the emulator shows.
@@ -289,7 +289,7 @@
 ;   fixture leg (plain -Xbn, stages xbntest.asm) ONLY - the one leg
 ;     where fns 20-29 and 34-39 exist: XREG XCAL XTIK XSVC XFIO
 ;     XMSG XMS6 XCND XCNC XFRM XRSK XDAT XBSY XPAL XWIN XPLH (fns 26-29
-;     and 35-39 exist only in xbntest.asm) (on any other leg these print
+;     and 34-39 exist only in xbntest.asm) (on any other leg these print
 ;     unwritten flags - zeros)
 ;   XDAT lives in the fixture leg's fn table (fn 36) but is
 ;     SILICON-ONLY: DO NOT TYPE it in an emulator replay - ZEsarUX's
@@ -302,16 +302,19 @@
 ;     XTCK XT40 XFAD XFDI XFSC XDRK XHNP XHNQ XHNA XHNR XHNT XHNL
 ;     XCLK XCLA XCLS XTMR XTMI XTLR XTMS XCDY XSVT XSVD XADV XAD1 XRUN
 ;     XSVE XCHK XTKP XTKA XTKO XTKT XTKI XTKS XOBJ XPCK XTKW XSLT
+;     XRTC XRTD (realtime is in the combined binary; both are still
+;     SILICON-ONLY, see below)
 ;     EXCEPT the hints verbs (XHNP XHNQ XHNA XHNR XHNT XHNL), which also
 ;     need a packed GAME.HNT - staged only by -XbnAll and -XbnHints. On
-;     -XbnClock/-XbnTool the preflight fails ("no book") and fn 51 gives
-;     0: a leg artefact, not a module fault.
+;     -XbnClock/-XbnTool XHNP aborts at fn 52 and prints "no book", and
+;     XHNQ/XHNT print "levels 0" from fn 51: a leg artefact, not a
+;     module fault.
 ;   XOBJ XPCK XTKW need the TOOLKIT module in the staged binary
 ;     (-XbnTool, -XbnAll and the other combined legs); elsewhere fns
 ;     76-81/84 are foreign, every EXTERN no-ops with CF clear, and the
 ;     entries print unwritten flags.
-;   XRTC XRTD need the REALTIME module (-XbnAll, once the combined
-;     binary carries it) AND are SILICON-ONLY for the same reason as
+;   XRTC XRTD need the REALTIME module (-XbnAll and the other
+;     combined legs) AND are SILICON-ONLY for the same reason as
 ;     XDAT: SVC_GETDATE derails ZEsarUX. DO NOT TYPE them in an
 ;     emulator replay.
 ;   -XbnTicker stages the STANDALONE ticker example: only XTCK and
@@ -1363,13 +1366,15 @@ CLOAK   22 noun
 ;        touches GAME.HPR, so this is safe to type at any point. Level 2
 ;        is topic 0's LAST level (it has exactly two), so it prints and
 ;        PASSES; level 3 does not exist, so fn 50 FAILS and the entry
-;        falls through to "past ok". A module that ignored flag 242 and
-;        ran automatic mode instead could fail on the FIRST call against
-;        a used card, printing "past ok" with no hint text above it.
+;        falls through to "past ok". The "L2 " marker after the first
+;        read is what separates the two failure shapes: a true pass reads
+;        "<hint text> L2 past ok", while a module that ignored flag 242
+;        and failed the FIRST read prints a bare "past ok" with no marker.
 ;        The fallthrough restores flag 242 to 0 (automatic). At the
 ;        bench, type XHNL twice - explicit mode is idempotent.
 > XHNL _   LET     242 2
            EXTERN  0 50            ; topic 0 level 2: prints the hint
+           MES     "L2 "           ; marker: reached only if that read passed
            LET     242 3
            EXTERN  0 50            ; topic 0 has no level 3: must FAIL
            MES     "PAST LEVEL LEAKED"

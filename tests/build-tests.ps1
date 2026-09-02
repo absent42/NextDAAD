@@ -3079,10 +3079,10 @@ if ($Xbn) {
         $fadeArt2 = "$root\tools\Rabenstein-master\nextdaad\2.NX2"
         if (Test-Path $fadeArt2) {
             Copy-Item $fadeArt2 "$leg\002.NX2" -Force
-            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC/XFSO second scene)"
+            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC second scene)"
         }
         else {
-            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
+            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC will have no second scene"
         }
     }
     elseif ($XbnAll) {
@@ -3126,10 +3126,10 @@ if ($Xbn) {
         $allArt2 = "$root\tools\Rabenstein-master\nextdaad\2.NX2"
         if (Test-Path $allArt2) {
             Copy-Item $allArt2 "$leg\002.NX2" -Force
-            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC/XFSO second scene)"
+            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC second scene)"
         }
         else {
-            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
+            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC will have no second scene"
         }
         # ALL.XBN's hints module needs a hint file too - same pack as -XbnHints below.
         & "$root\authoring-kit\lib\hintpack.ps1" -In "$root\authoring-kit\HINTS.TXT" -Out "$leg\GAME.HNT"
@@ -3178,10 +3178,10 @@ if ($Xbn) {
         $allArt2 = "$root\tools\Rabenstein-master\nextdaad\2.NX2"
         if (Test-Path $allArt2) {
             Copy-Item $allArt2 "$leg\002.NX2" -Force
-            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC/XFSO second scene)"
+            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC second scene)"
         }
         else {
-            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
+            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC will have no second scene"
         }
         & "$root\authoring-kit\lib\hintpack.ps1" -In "$root\authoring-kit\HINTS.TXT" -Out "$leg\GAME.HNT"
         "staged authoring-kit\HINTS.TXT -> sd\$legName\GAME.HNT (packed)"
@@ -3229,10 +3229,10 @@ if ($Xbn) {
         $allArt2 = "$root\tools\Rabenstein-master\nextdaad\2.NX2"
         if (Test-Path $allArt2) {
             Copy-Item $allArt2 "$leg\002.NX2" -Force
-            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC/XFSO second scene)"
+            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC second scene)"
         }
         else {
-            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
+            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC will have no second scene"
         }
     }
     elseif ($XbnTool) {
@@ -3278,10 +3278,10 @@ if ($Xbn) {
         $allArt2 = "$root\tools\Rabenstein-master\nextdaad\2.NX2"
         if (Test-Path $allArt2) {
             Copy-Item $allArt2 "$leg\002.NX2" -Force
-            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC/XFSO second scene)"
+            "staged tools\Rabenstein-master\nextdaad\2.NX2 -> sd\$legName\002.NX2 (XFSC second scene)"
         }
         else {
-            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC/XFSO will have no second scene"
+            "WARNING: tools\Rabenstein-master\nextdaad\2.NX2 missing - XFSC will have no second scene"
         }
     }
     else {
