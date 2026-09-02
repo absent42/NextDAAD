@@ -11,8 +11,8 @@ game behaves, how it builds, or what the kit gives you, it is here.
   externs off - rebuild your extern against the current `xbn.inc`.
   See [XBN format](reference/xbn-format.md#header).
 - **`EXTERN` is now a condition, not just an action.** A carry flag
-  set on return fails the entry and clears its done state, the same
-  as a failed `AT` or `PRESENT`; carry clear continues past it
+  set on return fails the entry the way a failed `AT` or `PRESENT`
+  does, and clears its done state; carry clear continues past it
   exactly as before. An `EXTERN` with no `GAME.XBN` loaded, the
   interpreter's reserved function codes, and `CALL` itself can never
   fail an entry this way. See

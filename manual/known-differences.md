@@ -157,7 +157,7 @@ An extern's interrupt entry point runs once per frame, timed by the
 interpreter's own vertical-blank interrupt - there is no author-selectable
 interrupt source or rate. Four of the [services](externs.md#services) may
 be called from inside it - `SVC_VERSION`, `SVC_RANDOM`, `SVC_FRAMES` and
-`SVC_BUSY` - because they read resident memory and never page. Every other
+`SVC_BUSY` - because they touch resident memory and never page. Every other
 row (printing, file IO, `SVC_GETMSG`, `SVC_GETDATE`, `SVC_PALREAD`,
 `SVC_WINDOW`) is foreground-only (`EXTERN`/`CALL` context) and will
 misbehave if called from `#int`. Do any file IO, printing or window work

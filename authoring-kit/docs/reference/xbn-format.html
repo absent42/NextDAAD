@@ -251,7 +251,7 @@ tables.</p>
 <td>14</td>
 <td><code>SVC_WINDOW</code></td>
 <td>A = window number 0-7</td>
-<td>selects that window through the interpreter's own machinery and returns A = the previously selected window; CF set and no change for A &gt; 7. Selecting flushes the pending word of the window being left and may raise the More prompt there</td>
+<td>A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A &gt; 7. Selecting flushes the pending word of the window being left and may raise the More prompt there</td>
 <td>AF, BC, DE, HL, IX, IY</td>
 <td>no</td>
 </tr>

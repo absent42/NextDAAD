@@ -123,6 +123,9 @@ EXTERN 0 43
   palette when fn 40 is called, the fade is refused and flag 240 reads
   1 at once - nothing to wait for.</li>
 </ul>
+<p>Two more palette rules live elsewhere: the hook's interlock (see
+<a href="#the-int-hook">The #int hook</a>) and <code>SVC_BUSY</code> bit 2 (see
+<a href="#services">Services</a>).</p>
 <p>This is the sequence <code>externs/fade/README.md</code> documents; fn 42 needs
 buffer mode open: without <code>GFX 0 4</code> there is no staged palette for it
 to read, so the sequence above is the one to use.</p>
@@ -294,11 +297,13 @@ are not optional:</p>
 <li><strong>Keep it short.</strong> Well under one frame's worth of time. An overrun
   delays the next audio tick.</li>
 <li><strong>Never enable interrupts.</strong> Do not execute <code>EI</code>.</li>
+<li><strong>Never <code>halt</code>.</strong> Interrupts are disabled while the hook runs, so a
+  <code>halt</code> inside it never wakes and the game hangs.</li>
 <li><strong>No DMA.</strong> Do not use the zxnDMA - it contends with video and sample
   streaming DMA already in flight.</li>
 <li><strong>No file IO, and only the hook-safe services.</strong> Four rows may be
   called from the hook: <code>SVC_VERSION</code>, <code>SVC_RANDOM</code>, <code>SVC_FRAMES</code> and
-  <code>SVC_BUSY</code> - they read resident memory and never page. Every other
+  <code>SVC_BUSY</code> - they touch resident memory and never page. Every other
   row (printing, files, <code>SVC_GETMSG</code>, <code>SVC_GETDATE</code>, <code>SVC_PALREAD</code>,
   <code>SVC_WINDOW</code>) is foreground-only; see <a href="#services">Services</a>.</li>
 <li><strong>Never install your own interrupt handler.</strong> The IM2 vector table is
@@ -325,8 +330,9 @@ are not optional:</p>
   hardware each time: <code>xbnmod.inc</code>'s <code>xbn_width</code> returns the current
   width in E (80 or 40), the row stride in D (160 or 80) and the
   bottom-row base in HL, from one read of NR $6B bit 6; it is hook-safe.
-  The ticker example calls it per character, so a <code>GFX n 18</code> switch
-  mid-message just carries on at the new width.</li>
+  It corrupts AF, BC, DE, HL - park a counter you keep in BC before the
+  call, as the ticker does. The ticker example calls it per character,
+  so a <code>GFX n 18</code> switch mid-message just carries on at the new width.</li>
 <li><strong>Stay inside rows 4-27 for anything that must be visible on every
   display.</strong> The tilemap's origin (in either width) sits 32 pixels
   above and left of the ULA origin, so rows 0-3 and 28-31 land in the
@@ -492,7 +498,7 @@ to each row, so you call them by name:</p>
 <td>14</td>
 <td><code>SVC_WINDOW</code></td>
 <td>A = window number 0-7</td>
-<td>selects that window through the interpreter's own machinery and returns A = the previously selected window; CF set and no change for A &gt; 7. Selecting flushes the pending word of the window being left and may raise the More prompt there</td>
+<td>A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A &gt; 7. Selecting flushes the pending word of the window being left and may raise the More prompt there</td>
 <td>no</td>
 </tr>
 </tbody>
@@ -834,6 +840,8 @@ flag 48 arms it, in seconds, and flag 49 bit 7 reports that it fired.
 With flag 48 armed, a turn happens on a timer and your process table
 runs - and your clock events fire - while the player is still
 thinking. Without it, "real time" quietly is not.</p>
+<p>The module's README has the full field table, the invalid-reading case
+and what fn 67 writes for a field above 6.</p>
 <h3 id="toolkit-printing-and-16-bit-arithmetic">toolkit - printing and 16-bit arithmetic</h3>
 <p>Fifteen functions with no frame hook of their own: each one runs to
 completion inside the <code>EXTERN</code> that calls it. Most take the <code>EXTERN</code>
@@ -868,8 +876,8 @@ the same as any window switch (see <a href="#services"><code>SVC_WINDOW</code></
 the game window and the number in the status window rather than side by
 side. Clear the target with <code>EXTERN 0 84</code> before a print that mixes
 <code>MES</code> text and a number inline. The target positions and clears
-nothing, so its prints APPEND after whatever was painted there last, until the status process repaints with its own <code>WINDOW 2</code> and
-<code>CLS</code>.</p>
+nothing, so its prints APPEND after whatever was painted there last,
+until the status process repaints with its own <code>WINDOW 2</code> and <code>CLS</code>.</p>
 <p>The other six read the interpreter's live object table, or the module's
 own picker, and all but one are CONDITIONS - they fail the entry when
 there is nothing to report, exactly like a failed <code>AT</code>:</p>
@@ -896,8 +904,9 @@ second <code>EXTERN 6 76</code> starts the cycle again, one visible line rather
 than a silent reset. The module's README has the full worked status
 line and the container rules fn 79 follows.</p>
 <p>A number printed as the last thing in an entry stays in the word
-wrapper's buffer until a space, a newline or a window switch flushes
-it - which is what the print target's own bracket does for you.</p>
+wrapper's buffer until a space, a newline, a window switch or a full
+window width flushes it - which is what the print target's own bracket
+does for you.</p>
 <h2 id="contributing-your-extern">Contributing your extern</h2>
 <p>Written an extern other games could use? The collection above takes
 community submissions - each ships as source plus a

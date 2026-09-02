@@ -136,6 +136,10 @@ Three rules keep this sequence honest:
   palette when fn 40 is called, the fade is refused and flag 240 reads
   1 at once - nothing to wait for.
 
+Two more palette rules live elsewhere: the hook's interlock (see
+[The #int hook](#the-int-hook)) and `SVC_BUSY` bit 2 (see
+[Services](#services)).
+
 This is the sequence `externs/fade/README.md` documents; fn 42 needs
 buffer mode open: without `GFX 0 4` there is no staged palette for it
 to read, so the sequence above is the one to use.
@@ -299,11 +303,13 @@ are not optional:
 - **Keep it short.** Well under one frame's worth of time. An overrun
   delays the next audio tick.
 - **Never enable interrupts.** Do not execute `EI`.
+- **Never `halt`.** Interrupts are disabled while the hook runs, so a
+  `halt` inside it never wakes and the game hangs.
 - **No DMA.** Do not use the zxnDMA - it contends with video and sample
   streaming DMA already in flight.
 - **No file IO, and only the hook-safe services.** Four rows may be
   called from the hook: `SVC_VERSION`, `SVC_RANDOM`, `SVC_FRAMES` and
-  `SVC_BUSY` - they read resident memory and never page. Every other
+  `SVC_BUSY` - they touch resident memory and never page. Every other
   row (printing, files, `SVC_GETMSG`, `SVC_GETDATE`, `SVC_PALREAD`,
   `SVC_WINDOW`) is foreground-only; see [Services](#services).
 - **Never install your own interrupt handler.** The IM2 vector table is
@@ -330,8 +336,9 @@ are not optional:
   hardware each time: `xbnmod.inc`'s `xbn_width` returns the current
   width in E (80 or 40), the row stride in D (160 or 80) and the
   bottom-row base in HL, from one read of NR $6B bit 6; it is hook-safe.
-  The ticker example calls it per character, so a `GFX n 18` switch
-  mid-message just carries on at the new width.
+  It corrupts AF, BC, DE, HL - park a counter you keep in BC before the
+  call, as the ticker does. The ticker example calls it per character,
+  so a `GFX n 18` switch mid-message just carries on at the new width.
 - **Stay inside rows 4-27 for anything that must be visible on every
   display.** The tilemap's origin (in either width) sits 32 pixels
   above and left of the ULA origin, so rows 0-3 and 28-31 land in the
@@ -404,7 +411,7 @@ to each row, so you call them by name:
 | 11 | `SVC_GETDATE` | - | CF clear: BC = MS-DOS packed date, DE = MS-DOS packed time, H = seconds, L = hundredths (`$FF` if the RTC has none). CF set = no RTC or invalid: BC = DE = 0 and HL is undefined - never read the seconds on that path | no |
 | 12 | `SVC_BUSY` | - | A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section. Unassigned bits read 0. Bits 0 and 2 are only ever observable from the hook | yes |
 | 13 | `SVC_PALREAD` | IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while `GFX 0 4` buffer mode is open) | 256 entries of two bytes: RRRGGGBB, then a second byte masked to `%11000001` (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512 | no |
-| 14 | `SVC_WINDOW` | A = window number 0-7 | selects that window through the interpreter's own machinery and returns A = the previously selected window; CF set and no change for A > 7. Selecting flushes the pending word of the window being left and may raise the More prompt there | no |
+| 14 | `SVC_WINDOW` | A = window number 0-7 | A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A > 7. Selecting flushes the pending word of the window being left and may raise the More prompt there | no |
 
 Call a service exactly like any other subroutine - `call SVC_PUTCHAR`
 and so on. Every row preserves your XBN bank's own mapping across the
@@ -730,6 +737,9 @@ With flag 48 armed, a turn happens on a timer and your process table
 runs - and your clock events fire - while the player is still
 thinking. Without it, "real time" quietly is not.
 
+The module's README has the full field table, the invalid-reading case
+and what fn 67 writes for a field above 6.
+
 ### toolkit - printing and 16-bit arithmetic
 
 Fifteen functions with no frame hook of their own: each one runs to
@@ -770,8 +780,8 @@ the same as any window switch (see [`SVC_WINDOW`](#services)), so a
 the game window and the number in the status window rather than side by
 side. Clear the target with `EXTERN 0 84` before a print that mixes
 `MES` text and a number inline. The target positions and clears
-nothing, so its prints APPEND after whatever was painted there last, until the status process repaints with its own `WINDOW 2` and
-`CLS`.
+nothing, so its prints APPEND after whatever was painted there last,
+until the status process repaints with its own `WINDOW 2` and `CLS`.
 
 The other six read the interpreter's live object table, or the module's
 own picker, and all but one are CONDITIONS - they fail the entry when
@@ -803,8 +813,9 @@ than a silent reset. The module's README has the full worked status
 line and the container rules fn 79 follows.
 
 A number printed as the last thing in an entry stays in the word
-wrapper's buffer until a space, a newline or a window switch flushes
-it - which is what the print target's own bracket does for you.
+wrapper's buffer until a space, a newline, a window switch or a full
+window width flushes it - which is what the print target's own bracket
+does for you.
 
 ## Contributing your extern
 

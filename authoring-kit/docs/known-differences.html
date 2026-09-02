@@ -129,7 +129,7 @@ An out-of-range address, or no XBN loaded at all, is a silent no-op.</p>
 interpreter's own vertical-blank interrupt - there is no author-selectable
 interrupt source or rate. Four of the <a href="externs.html#services">services</a> may
 be called from inside it - <code>SVC_VERSION</code>, <code>SVC_RANDOM</code>, <code>SVC_FRAMES</code> and
-<code>SVC_BUSY</code> - because they read resident memory and never page. Every other
+<code>SVC_BUSY</code> - because they touch resident memory and never page. Every other
 row (printing, file IO, <code>SVC_GETMSG</code>, <code>SVC_GETDATE</code>, <code>SVC_PALREAD</code>,
 <code>SVC_WINDOW</code>) is foreground-only (<code>EXTERN</code>/<code>CALL</code> context) and will
 misbehave if called from <code>#int</code>. Do any file IO, printing or window work
