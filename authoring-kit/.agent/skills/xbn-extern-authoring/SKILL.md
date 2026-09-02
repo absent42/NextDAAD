@@ -46,7 +46,10 @@ writing code.
 1. **Copy a module folder.** `externs\ticker\` is the minimal working example:
    one `.asm`, `GAME.XBN`, `README.md`, `build.ps1`. Rename the source and the
    `MODULE` name. Pick fn codes and flags that clash with nothing in the
-   collection table in `externs\README.md`.
+   collection table in `externs\README.md`. See
+   `references/module-shape.md` for the folder checklist - the copied
+   `build.ps1` assembles a hard-coded file name and the copied `README.md`
+   describes the module you copied; rename both.
 2. **Write `ext`.** Dispatch on `C` (the fn code), return immediately on
    anything you do not own, and give every exit a deliberate carry: an action
    ends `or a` / `ret`, a condition ends `scf` / `ret` on its one documented
@@ -83,7 +86,7 @@ freely, write them only when you mean to change engine behaviour. Flags 64-255
 are yours, minus the collection's reserved band 224-251 if you ship alongside
 a collection module.
 
-## Reference files
+## Reference Files
 
 Load the one the work needs.
 

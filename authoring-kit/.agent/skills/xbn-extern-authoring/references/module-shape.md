@@ -133,6 +133,8 @@ comments walk through every decision. The skeleton, abridged:
         call SVC_GETMSG          ; out: HL=staging buffer, BC=length
         ret c                    ; out of range: CF stays SET, so this
                                  ; EXTERN fails the entry
+        ; BC = 0 is a legal empty message - never LDIR it
+        ; (see services.md, SVC_GETMSG)
         ; copy the staged text into OUR bank, then arm last
         ret                      ; CF clear
     .notmine:
@@ -180,9 +182,9 @@ anything else runs; and the hook is one load-and-test when idle.
 | IX | flags base (`$A200`) |
 | IY | undefined |
 
-A `CALL` entry gets the same `IX`; A, B, C, HL and DE carry nothing, since a
-`CALL` has no parameters. The `#int` hook gets `IX` and nothing else, and no
-register survives from a previous frame.
+A `CALL` entry gets the same `IX`; A, B, C, HL and DE carry nothing
+meaningful, since a `CALL` has no parameters. The `#int` hook gets `IX` and
+nothing else, and no register survives from a previous frame.
 
 Return with a plain `RET`. You may clobber A, BC, DE, HL, IX, IY and both
 alternate register sets. The one exception is the carry flag, which is your

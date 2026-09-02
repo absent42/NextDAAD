@@ -34,8 +34,8 @@ prompt there.
 **Rule.** Do not mix `MES` text and extern output on one line across a window
 switch. Either print both through the same window, or clear the print target
 first (the toolkit's `EXTERN 0 84`). And a number printed as the last thing in
-an entry stays in the word wrapper until a space, a newline or a window switch
-flushes it, so end the line deliberately.
+an entry stays in the word wrapper until a space, a newline, a window switch
+or a full window width flushes it, so end the line deliberately.
 
 ## CF discipline
 
@@ -99,8 +99,9 @@ after the switch.
 
 **Rule.** The width is not part of the frozen ABI. Ask the hardware each time
 through `xbnmod.inc`'s `xbn_width` (hook-safe: width in E, stride in D,
-bottom-row base in HL), and handle a width that SHRANK mid-output rather than
-assuming your column is still in range.
+bottom-row base in HL). It corrupts AF, BC, DE, HL - park a counter you keep
+in BC before the call, as the ticker does. Handle a width that SHRANK
+mid-output rather than assuming your column is still in range.
 
 ## The register-select bracket
 

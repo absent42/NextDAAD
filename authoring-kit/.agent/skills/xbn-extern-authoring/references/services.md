@@ -35,9 +35,12 @@ Errors follow the esxDOS convention throughout: carry set, error code in A.
 ## The hook rule
 
 Four rows may be called from the `#int` hook - `SVC_VERSION`, `SVC_RANDOM`,
-`SVC_FRAMES` and `SVC_BUSY`. They read resident memory and never page. Every
+`SVC_FRAMES` and `SVC_BUSY`. They touch resident memory and never page. Every
 other row runs the print path, the file system, a window switch or the shared
 palette registers, none of which may be entered from interrupt context.
+
+Never `halt` inside the hook: interrupts are disabled while it runs, so a
+`halt` there never wakes and the game hangs.
 
 The rest of the hook rules - keep it well under a frame, no `EI`, no zxnDMA,
 no file IO, never install your own interrupt vector - are in the manual's
@@ -50,7 +53,7 @@ before writing a hook; it is short and every rule in it is load-bearing.
 [#int hook section](../../../../docs/externs.html#the-int-hook) explains the
 mechanism; the consequence is that a foreground wait which counts `halt`
 returns can run up to 312 times fast. Gate on the counter instead, and bound
-the wait:
+the wait. This sample is FOREGROUND code - the hook itself must never `halt`:
 
     ; bound in BC, so a stalled counter can never hang the game
         ld bc, 400              ; maximum frames to wait
@@ -102,8 +105,9 @@ the tilemap row stride (160 bytes per row at 80 columns, 80 at 40). The width
 is not part of the frozen ABI, so ask the hardware each time rather than
 caching it. `xbnmod.inc`'s `xbn_width` is hook-safe and returns the width in
 columns in E (80 or 40), the row stride in D (160 or 80) and the bottom-row
-base in HL. The ticker module calls it per character, so a switch mid-message
-just carries on at the new width.
+base in HL. It corrupts AF, BC, DE, HL - park a counter you keep in BC before
+the call, as the ticker does. The ticker module calls it per character, so a
+switch mid-message just carries on at the new width.
 
 ### The palette interlock
 
