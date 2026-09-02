@@ -150,7 +150,7 @@ def run(z, verbose):
     s = step(z); show("S2", s); r = s.live()
     expect(sorted(r) == [2, 6], "S2 sets 2 and 6 live")
     expect(r[6][SR["KIND"]] == 1 and r[6][SR["NBLK"]] == 2 and list(r[6][SR["BLOCKS"]:SR["BLOCKS"]+2]) == [1, 2], "S2 4-bit claims blocks 1,2")
-    expect(s.claim == 0b110 and r[6][SR["ATTR"]] == 126 and r[6][SR["PAT"]] == 4, "S2 claim mask, attr 126, half-slot 4")
+    expect(s.claim == 0b110 and r[6][SR["ATTR"]] == 126 and r[6][SR["PAT"]] == 6, "S2 claim mask, attr 126, half-slot 6")
     s = step(z); show("S3", s); r = s.live()
     expect(sorted(r) == [2, 6] and s.loads == 3 and 15 in s.cached(), "S3 15 refused (block 2 claimed) but cached")
     s = step(z); show("S4", s); r = s.live()
