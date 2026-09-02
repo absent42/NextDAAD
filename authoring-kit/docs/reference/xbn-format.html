@@ -116,9 +116,13 @@ can address a location past <code>$FFFF</code> to call into.</p>
 (<code>$BEC8</code>), frozen from the first shipping release. The address never
 moves and existing rows never change signature or meaning - only new
 rows are ever added, at the end, with a version bump reported by
-<code>SVC_VERSION</code>. This is the same frozen-entry-point discipline esxDOS
-and NextZXOS use for their own jump tables, so a game built against an
-old <code>xbn.inc</code> keeps working unmodified on every future NextDAAD release.</p>
+<code>SVC_VERSION</code>. So code written against an older <code>xbn.inc</code> keeps calling
+the same rows on every later NextDAAD release; what CAN change between
+format versions is the file header, and it did at format 2 - a binary
+assembled against an older <code>xbn.inc</code> is reassembled against the current
+one to pick up the new header (see <a href="#header">Header</a>). This is the same
+frozen-entry-point discipline esxDOS and NextZXOS use for their own jump
+tables.</p>
 <table>
 <thead>
 <tr>

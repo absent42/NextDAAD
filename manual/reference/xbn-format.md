@@ -80,9 +80,13 @@ A fixed jump table of fifteen three-byte `JP` instructions at `XBN_API`
 (`$BEC8`), frozen from the first shipping release. The address never
 moves and existing rows never change signature or meaning - only new
 rows are ever added, at the end, with a version bump reported by
-`SVC_VERSION`. This is the same frozen-entry-point discipline esxDOS
-and NextZXOS use for their own jump tables, so a game built against an
-old `xbn.inc` keeps working unmodified on every future NextDAAD release.
+`SVC_VERSION`. So code written against an older `xbn.inc` keeps calling
+the same rows on every later NextDAAD release; what CAN change between
+format versions is the file header, and it did at format 2 - a binary
+assembled against an older `xbn.inc` is reassembled against the current
+one to pick up the new header (see [Header](#header)). This is the same
+frozen-entry-point discipline esxDOS and NextZXOS use for their own jump
+tables.
 
 | # | Symbol | In | Out | Corrupts | From the `#int` hook |
 |---|--------|----|-----|----------|----------------------|
