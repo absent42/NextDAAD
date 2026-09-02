@@ -1510,14 +1510,15 @@ finally {
 # tests\out\tmover-work, so nothing is written under tools\ - read-only
 # working material git cannot restore.
 #
-# -v3 like most fixtures here. This fixture measures tilemap layer-order
-# behaviour, which the header version does not affect.
+# No -v3, deliberately: the twelve PAUSE 0 holds are 256-frame timed
+# pauses under V2 and would become GETKEY key-waits under V3, which
+# the timed capture cannot drive. Same ruling as sfxdi.
 $tmoverWork = Join-Path $root 'tests\out\tmover-work'
 New-Item -ItemType Directory -Force $tmoverWork | Out-Null
 Copy-Item "$PSScriptRoot\tmover.dsf" "$tmoverWork\NDTMOVR.DSF" -Force
 Push-Location $tmoverWork
 try {
-    & $ndrc @drcTarget EN NDTMOVR.DSF NDTMOVR.DDB -v3
+    & $ndrc @drcTarget EN NDTMOVR.DSF NDTMOVR.DDB
     if ($LASTEXITCODE -ne 0) { throw "ndrc failed (tmover)" }
     Copy-Item NDTMOVR.DDB "$root\tests\out\tmover.ddb" -Force
 }
@@ -2188,8 +2189,8 @@ foreach ($c in @(@{ n = 'WINAT 0 0 (card footprint)';    b = [byte[]]@(82, 0, 0)
 # bytes: P1 then the sub-command. PAPER is 65 and INK 66, one parameter
 # each, so each is two bytes.
 $tmoBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\tmover.ddb")
-if ($tmoBytes[0] -ne 3) {
-    throw "tmover: DDB header version byte is $($tmoBytes[0]), expected 3 - the fixture is compiled WITH -v3"
+if ($tmoBytes[0] -ne 2) {
+    throw "tmover: DDB header version byte is $($tmoBytes[0]), expected 2 - this fixture stays V2: its PAUSE 0 timed holds would read as GETKEY under V3"
 }
 # The two layer-order calls. Each is authored EXACTLY ONCE in the DSF
 # (processes 2 and 3; every other site calls that process), which is
@@ -2774,7 +2775,7 @@ if ($DrcDiff) {
         @{ Name = 'debugflag'; Dsf = "$PSScriptRoot\debugflag.dsf" }
         @{ Name = 'debugflag-debug'; Dsf = "$PSScriptRoot\debugflag.dsf"; DbOpts = @('-d') }
         @{ Name = 'l2holes'; Dsf = "$PSScriptRoot\l2holes.dsf" }
-        @{ Name = 'tmover'; Dsf = "$PSScriptRoot\tmover.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'tmover'; Dsf = "$PSScriptRoot\tmover.dsf" }
         @{ Name = 'tileslack'; Dsf = "$PSScriptRoot\tileslack.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'fontsw'; Dsf = "$PSScriptRoot\fontsw.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'txt40'; Dsf = "$PSScriptRoot\txt40.dsf" }

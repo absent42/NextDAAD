@@ -61,12 +61,12 @@
 ; below calls it out so the owner can confirm the offset holds across
 ; every MOUSE n 5 call in the sequence, not just the first.
 ;
-; ANYKEY, NOT "PAUSE 0". This fixture is compiled with a plain
-; "DRF.exe zx next" and no -v3, so its header version is 2 and PAUSE 0
-; would mean 256 frames, not a key (this is also why the tracking loop
-; above uses INKEY/SKIP rather than a V3 GETKEY). ANYKEY (opcode 24,
-; ZERO parameters) is the V2 wait-for-key condact this interpreter has
-; always implemented, and it is still used for the three font waits.
+; ANYKEY, NOT "PAUSE 0". ANYKEY (opcode 24, ZERO parameters) is the V2
+; wait-for-key condact this interpreter has always implemented, and it
+; behaves the same whether or not -v3 is given, so this fixture's
+; behaviour does not depend on the header version. PAUSE 0 is NOT used
+; here: it means 256 frames under V2 and GETKEY under V3 (this is also
+; why the tracking loop above uses INKEY/SKIP rather than a V3 GETKEY).
 ;
 ; DEBOUNCE. A tap is still down for several frames, and the tracking
 ; loop is unthrottled (INKEY is non-blocking, so it polls as fast as
