@@ -22,11 +22,12 @@ its flag block stays yours.
 | hints | 50-53 | `../hints/README.md` |
 | clock | 60-62 | `../clock/README.md` |
 | timer | 63-65 | `../timer/README.md` |
+| realtime | 66-69 | `../realtime/README.md` |
 | toolkit | 70-75, 82-83 | `../toolkit/README.md` |
 
 If you would rather ship a smaller binary with only the modules you use, run
 `EXTERNS.BAT` from the kit root - see the collection README.
 
-`CALL` targets are slots in a fixed jump table at `$C00A`, not routine
-addresses: slot n is at `$C00A + 3n`. Slots whose module is not in the build
+`CALL` targets are slots in a fixed jump table at `$C00E`, not routine
+addresses: slot n is at `$C00E + 3n`. Slots whose module is not in the build
 return harmlessly.

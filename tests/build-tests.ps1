@@ -855,7 +855,7 @@ finally {
 # GAME.XBN to the committed all\GAME.XBN - catches both a broken
 # generator and any future divergence between the two paths.
 $xbnDriftOut = "$root\tests\out\xbn-subset-drift.XBN"
-& "$root\authoring-kit\lib\xbnbuild.ps1" ticker fade hints clock timer toolkit -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $xbnDriftOut
+& "$root\authoring-kit\lib\xbnbuild.ps1" ticker fade hints clock timer realtime toolkit -SjasmPlus "$root\tools\sjasmplus\sjasmplus.exe" -Out $xbnDriftOut
 $xbnDriftFresh = [IO.File]::ReadAllBytes($xbnDriftOut)
 $xbnDriftShipped = [IO.File]::ReadAllBytes("$root\authoring-kit\externs\all\GAME.XBN")
 # Phase window: xbn.inc's includes emit v2 while the committed collection
@@ -865,7 +865,7 @@ if ($xbnDriftFresh[3] -ne $xbnDriftShipped[3]) {
     Write-Host "xbn-subset-drift: SKIPPED - committed all/GAME.XBN is format v$($xbnDriftShipped[3]), includes emit v$($xbnDriftFresh[3]) (phase 2 rebuild pending)"
 }
 elseif (-not [System.Linq.Enumerable]::SequenceEqual($xbnDriftFresh, $xbnDriftShipped)) {
-    throw "xbnbuild.ps1 ticker fade hints clock timer toolkit DRIFTED from authoring-kit\externs\all\GAME.XBN - generator and all.asm disagree; compare $xbnDriftOut"
+    throw "xbnbuild.ps1 ticker fade hints clock timer realtime toolkit DRIFTED from authoring-kit\externs\all\GAME.XBN - generator and all.asm disagree; compare $xbnDriftOut"
 }
 
 & "$PSScriptRoot\hintpack-selftest.ps1"

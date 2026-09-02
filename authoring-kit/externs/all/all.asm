@@ -14,6 +14,7 @@
     DEFINE XBN_HAS_HINTS
     DEFINE XBN_HAS_CLOCK
     DEFINE XBN_HAS_TIMER
+    DEFINE XBN_HAS_REALTIME
     DEFINE XBN_HAS_TOOLKIT
     INCLUDE "xbn.inc"
     INCLUDE "xbnmod.inc"
@@ -41,6 +42,9 @@ all_ext:
     call timer.ext
     XBN_CHAIN_CAPTURE
     call xbn_setup
+    call realtime.ext
+    XBN_CHAIN_CAPTURE
+    call xbn_setup
     call toolkit.ext
     XBN_CHAIN_CAPTURE
     XBN_CHAIN_VERDICT
@@ -61,6 +65,8 @@ all_int:
     ld ix, XBN_FLAGS
     call timer.int
     ld ix, XBN_FLAGS
+    call realtime.int
+    ld ix, XBN_FLAGS
     call toolkit.int
     ret
 
@@ -71,6 +77,7 @@ all_int:
     INCLUDE "externs/hints/hints.asm"
     INCLUDE "externs/clock/clock.asm"
     INCLUDE "externs/timer/timer.asm"
+    INCLUDE "externs/realtime/realtime.asm"
     INCLUDE "externs/toolkit/toolkit.asm"
 
 xbn_end:
