@@ -125,6 +125,9 @@ SOUTH 0
 /0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
 /PRO 0
 > _ _   MOUSE 0 0
+        WINAT 4 40
+        WINSIZE 24 40
+        CLS
         MOUSE 0 1
         GFX 2 19
         MESSAGE 0
