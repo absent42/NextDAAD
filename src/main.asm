@@ -1059,8 +1059,9 @@ sfxChan1: ds SMPB_SIZE
 ; from pushing a cleared order to RE-ASSERTING the current one. That is
 ; harmless - the value written is the value already in force - and it is
 ; what keeps the byte and NR $15 in agreement at every reset, whatever
-; else those paths did to the register on the way through. One 3-byte
-; CALL still buys both.
+; else those paths did to the register on the way through. The walker
+; also stops every live sprite set (sets are transient like pictures;
+; the cache stays), so one 3-byte CALL still buys all three.
 ; Entry: A=0. Corrupts HL, and (via the fall-through) AF and E too -
 ; every caller is tolerant: eng_init_game reloads A with $FF next and
 ; never reads E; gfx_cache_reset's next instruction reloads A too and

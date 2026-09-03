@@ -2284,7 +2284,9 @@ vid_run:
                                  ; survives, so the restore brings back only
                                  ; the pointer's own state
     ; MMU6/MMU7 MUST be captured HERE, hot, before ANY hop (a cold
-    ; hop's own bracket would capture its own temporary value).
+    ; hop's own bracket would capture its own temporary value). The
+    ; stop-all above is not a hop: spr_call brackets MMU6/7 and restores
+    ; them, so this still reads the caller's own mapping.
     ld e, NR_MMU6
     call nr_read
     ld (vidSvMmu6), a

@@ -109,8 +109,9 @@ def main(out):
     # four 16x16 cells. Two 12-colour groups: a cell uses one group only, so
     # the greedy partition needs two blocks (24 colours over a 15-entry block)
     # and horizontally neighbouring cells sit in different blocks. Frame 1
-    # swaps the groups, so every relative changes block AND half-slot between
-    # frames. Per-cell shift keeps all eight cells distinct through dedupe.
+    # swaps the groups, so every relative changes block between frames; the
+    # relatives at odd and even pattern indices cover both N6 halves within a
+    # frame. Per-cell shift keeps all eight cells distinct through dedupe.
     # Channel steps of 32 keep each colour RGB333-distinct after truncation.
     grpA = [(32 * k, 0, 64) for k in range(1, 8)] + [
         (32, 32, 64), (64, 64, 64), (96, 96, 64), (128, 160, 64), (160, 192, 64)]
