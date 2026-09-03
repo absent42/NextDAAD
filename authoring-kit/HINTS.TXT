@@ -14,10 +14,14 @@ Try looking at things, and taking anything that is not nailed down.
 The lamp is the one object you cannot finish without. Take it before you
 go anywhere dark.
 
-[1] The locked gate
+[1] Verbs to try
 
-You have been past that gate more than once. Who else uses it?
+Stop the music with MUTE, play it again with MUSIC
 
-The gatekeeper's lodge is not as empty as it looks.
+Play a sound with SAMPLE or ZAP
 
-The brass key is under the lodge's doormat. Unlock the gate with it.
+Play a video with MOVIE or REEL
+
+Look at the clock with TIME
+
+Blink with BLINK

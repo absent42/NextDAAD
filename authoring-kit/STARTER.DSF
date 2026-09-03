@@ -161,6 +161,9 @@ SAY     31      verb
 ASK     31      verb
 TALK    31      verb
 SPEAK   31      verb
+HINT    32      verb
+TIME    33      verb
+BLINK   34      verb
 
 ;                               Adjectives
 SMALL   2       adjective
@@ -282,7 +285,7 @@ THEN    2       conjugation
 
 ;------------------------------------------------------------------------------
 /LTX    ;Location Texts
-/0 "EMPTY DATABASE - DAAD V2."
+/0 "NextDAAD Starter DATABASE - DAAD V3#n#n"
 /1 "I'm at location number one. A road leads north."
 /2 "I'm at location number two. A road leads south."
 
@@ -385,6 +388,10 @@ $pictureOK
 
 > _       _     PROCESS 5                   ; Do any commands
                 ISDONE                      ; Done something
+                REDO
+
+> _       _     PROCESS 7                   ; Check for hints
+                ISDONE
                 REDO
 
 > _       _     MOVE    fPlayer             ; No so try to move player
@@ -506,6 +513,26 @@ $pictureOK
                 CLS                         ; scene change choice: full
                 RESTART                     ; redescribe (not required)
 
+> TIME    _     EXTERN  0 66                ; snapshot - entry FAILS with no RTC
+                EXTERN  2 67                ; hour   -> flag 238
+                COPYFF  238 100
+                EXTERN  1 67                ; minute -> flag 238
+                COPYFF  238 101
+                MES     "It is "
+                EXTERN  100 82              ; prints "09:05"
+                MES     "."
+                NEWLINE
+                DONE
+
+> TIME    _     MES     "You have no idea what time it is."
+                NEWLINE
+                DONE                        ; reached only when the RTC failed
+
+
+> BLINK   _     EXTERN  0 40                ; Fade out
+                EXTERN  0 43                ; Wait for the fade
+                EXTERN  0 41                ; Fade in
+
 > LOOK    _     CLS
                 RESTART
 ;------------------------------------------------------------------------------
@@ -550,6 +577,15 @@ $initLoop
                 SET     fCPronounNoun
                 SET     fCPronounAdject
                 LET     fObjectsCarried   NUM_CARRIED
+                EXTERN  0   52            ; Initialise the hint book
                 GOTO    1                 ; Go to first location
+
+/PRO 7          ; Hint Book
+
+> HINT    _     EXTERN 1 50               ; Look up and print hint 1
+                DONE
+
+> HINT    _     MES "No more hints."
+                DONE
 
 /END

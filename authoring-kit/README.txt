@@ -11,4 +11,6 @@ Quick start:
   3. Run BUILD.BAT
   4. Run RUN.BAT to play the result
 
+STARTER.DSF contains some examples of NextDAAD features and externs. Type HINT to get some pointers.
+
 Everything else is in the manual.
