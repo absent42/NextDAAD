@@ -24,7 +24,10 @@
 ; A2, A6 and A8 wait in the GETMS tracking loop (MOUSE 104 3 + INKEY + SKIP,
 ; PAUSE 25 debounce) so the tester can move the pointer under the audio;
 ; every other step keeps ANYKEY. Flags 100-103 feed GFX 100 20; 104-107 are
-; GETMS.
+; GETMS. The restarts (A3, A7) put 020 and 021 back at their flag positions,
+; not their file position: three identical torches on one spot read as one,
+; so a refused restart would be invisible. 006 restarts before 002 so the
+; channel order flips and the reader can see the restart happened.
 
 /CTL
 _
@@ -147,10 +150,16 @@ $poll1
 $next1
 > _ _   PAUSE 25
         GFX 255 21
-        GFX 2 19
         GFX 6 19
-        GFX 20 19
-        GFX 21 19
+        GFX 2 19
+        LET 100 20
+        LET 101 100
+        LET 103 40
+        GFX 100 20
+        LET 100 21
+        LET 101 60
+        LET 103 110
+        GFX 100 20
         MESSAGE 2
         ANYKEY
         SFX 0 8
@@ -172,10 +181,16 @@ $poll2
 $next2
 > _ _   PAUSE 25
         GFX 255 21
-        GFX 2 19
         GFX 6 19
-        GFX 20 19
-        GFX 21 19
+        GFX 2 19
+        LET 100 20
+        LET 101 100
+        LET 103 40
+        GFX 100 20
+        LET 100 21
+        LET 101 60
+        LET 103 110
+        GFX 100 20
         MESSAGE 6
         ANYKEY
         SFX 0 5

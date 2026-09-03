@@ -62,11 +62,14 @@ def run(z, verbose):
     expect(sorted(s.live()) == FOUR and s.loads == loads, "A2 music start leaves the four sets alone")
     expect(advancing(z, 2), "A2 torch keeps ticking under the music")
     # A2 is a GETMS tracking loop: step() sends a space and polls. The restart
-    # re-uploads every pattern by DMA while the music ISR runs.
-    s = step(z, until=lambda st: sorted(st.live()) == FOUR and st.live()[20][SR["XLO"]] == 56)
+    # re-uploads every pattern by DMA while the music ISR runs. 006 restarts
+    # first, so its channel flips from 1 to 0: the proof the restart ran.
+    s = step(z, until=lambda st: sorted(st.live()) == FOUR and st.live()[6][SR["CHAN"]] == 0)
     show("A3", s); r = s.live()
     expect(sorted(r) == FOUR, "A3 all four restarted under music, got %r" % sorted(r))
-    expect(r[20][SR["XLO"]] == 56 and r[20][SR["Y"]] == 212, "A3 set 20 back at its sidecar spot (24,180) = plane (56,212)")
+    expect(r[6][SR["CHAN"]] == 0 and r[2][SR["CHAN"]] == 1, "A3 restart order 6 then 2 flipped the channels")
+    expect(r[20][SR["XLO"]] == 132 and r[20][SR["Y"]] == 72 and r[21][SR["XLO"]] == 92 and r[21][SR["Y"]] == 142,
+           "A3 sets 20 and 21 back at their flag spots (132,72) and (92,142)")
     expect(s.loads == loads, "A3 restarts were cache hits (loads %d, was %d)" % (s.loads, loads))
     expect(advancing(z, 2), "A3 torch ticking after the restart")
     s = step(z); show("A4", s)
