@@ -47,6 +47,7 @@
 #   -Accent             sd\ACCENT\    tests\accents.dsf  (-Accent boots the -auto-tokens compile)
 #   -Palette            sd\PALETTE\   tests\palette.dsf
 #   -Sprites            sd\SPRITES\   tests\sprites.dsf
+#   -SprAud             sd\SPRAUD\    tests\spraud.dsf   (four sets under music + samples)
 #   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -BigDdbTok          sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
 #   -Xbn                sd\XBN\       tests\extern.dsf
@@ -672,7 +673,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -729,6 +730,7 @@ if ($Txt40)            { $legName = 'TXT40' }
 if ($Accent)           { $legName = 'ACCENT' }
 if ($Palette)          { $legName = 'PALETTE' }
 if ($Sprites)          { $legName = 'SPRITES' }
+if ($SprAud)           { $legName = 'SPRAUD' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
 if ($BigDdbTok)        { $legName = 'BIGDDBT' }
 if ($Xbn)              { $legName = 'XBN' }
@@ -751,7 +753,7 @@ function Reset-LegDir {
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
                'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
-               'PALETTE', 'SPRITES', 'BIGDDB', 'BIGDDBT', 'XBN')
+               'PALETTE', 'SPRITES', 'SPRAUD', 'BIGDDB', 'BIGDDBT', 'XBN')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -1649,6 +1651,23 @@ finally {
     Pop-Location
 }
 
+# Sprites-under-audio fixture (2026-09-03). Compiled unconditionally like
+# every block above; -SprAud stages this DDB, four .ANI sets, a song and two
+# WAVs into sd\SPRAUD\ (see that switch's block in the STAGING section).
+$spraudWork = Join-Path $root 'tests\out\spraud-work'
+Remove-Item $spraudWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $spraudWork | Out-Null
+Copy-Item "$PSScriptRoot\spraud.dsf" "$spraudWork\NDSPRAUD.DSF" -Force
+Push-Location $spraudWork
+try {
+    & $ndrc @drcTarget EN NDSPRAUD.DSF NDSPRAUD.DDB -v3 -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (spraud)" }
+    Copy-Item NDSPRAUD.DDB "$root\tests\out\spraud.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 # 40-column tilemap mode fixture (2026-08-30). Compiled unconditionally
 # like every block above so a break in the DSF is caught on a plain
 # run; -Txt40 is the leg switch that stages this DDB into sd\TXT40\
@@ -2204,6 +2223,31 @@ foreach ($c in @(@{ n = 'GFX 2 19';   b = [byte[]]@(87, 2, 19) },
     }
 }
 "sprites.ddb: GFX 19/20/21, MOUSE 0/1/104 3 and INKEY stimuli all present as authored"
+
+# --- spraud: four sets under music and samples ---
+# SFX is opcode 18 ($12), two parameters. The music loop (6 7), the COMPLETE
+# one-shot (1 1), the STREAMING loop (3 2) and both stops must reach the DDB
+# with their authored sub-command bytes or the leg tests silence.
+$spraudBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\spraud.ddb")
+foreach ($c in @(@{ n = 'SFX 6 7';     b = [byte[]]@(18, 6, 7) },
+                 @{ n = 'SFX 1 1';     b = [byte[]]@(18, 1, 1) },
+                 @{ n = 'SFX 2 2';     b = [byte[]]@(18, 2, 2) },
+                 @{ n = 'SFX 3 2';     b = [byte[]]@(18, 3, 2) },
+                 @{ n = 'SFX 0 5';     b = [byte[]]@(18, 0, 5) },
+                 @{ n = 'SFX 0 8';     b = [byte[]]@(18, 0, 8) },
+                 @{ n = 'GFX 2 19';    b = [byte[]]@(87, 2, 19) },
+                 @{ n = 'GFX 6 19';    b = [byte[]]@(87, 6, 19) },
+                 @{ n = 'GFX 20 19';   b = [byte[]]@(87, 20, 19) },
+                 @{ n = 'GFX 21 19';   b = [byte[]]@(87, 21, 19) },
+                 @{ n = 'GFX 100 20';  b = [byte[]]@(87, 100, 20) },
+                 @{ n = 'GFX 255 21';  b = [byte[]]@(87, 255, 21) },
+                 @{ n = 'MOUSE 104 3'; b = [byte[]]@(86, 104, 3) },
+                 @{ n = 'INKEY';       b = [byte[]]@(111) })) {
+    if ((Find-ByteRuns $spraudBytes $c.b).Count -lt 1) {
+        throw "spraud: '$($c.n)' not present in tests\out\spraud.ddb - DRC did not emit the authored condact"
+    }
+}
+"spraud.ddb: SFX 6 7 / 1 1 / 2 2 / 3 2 / 0 5 / 0 8, GFX 19/20/21 and the GETMS loops all present as authored"
 
 # --- txt40: the 40-column text mode stimulus ---
 # GFX=87, WINAT=82, WINSIZE=107 confirmed against the compiled condact
@@ -4991,6 +5035,71 @@ if ($Palette) {
     }
     Copy-Item $palCardSrc (Join-Path $leg '001.NX2') -Force
     "staged palcard.nx2 -> $leg\001.NX2  $palCardBytes bytes, 320x$palCardRows"
+}
+
+if ($SprAud) {
+    # Sprites under audio (2026-09-03): four sets, the kit's 9-channel tune
+    # and two sampled effects, one COMPLETE and one STREAMING. Same CSpect
+    # lock hazard as every staging switch.
+    if (Get-Process CSpect -ErrorAction SilentlyContinue) {
+        throw "CSpect is running - close it before staging (locked sd\ files cause a partial fixture)"
+    }
+    Copy-Item "$root\tests\out\spraud.ddb" (Join-Path $leg 'GAME.DDB') -Force
+    "staged spraud.ddb -> $leg\GAME.DDB"
+    # Sets: 002 torch (8-bit, block 15) and 006 (4-bit, blocks 1 and 2) from
+    # the anipack selftest; 020 and 021 are byte copies of 002 so the scene
+    # holds four records without a palette-block clash.
+    $aniWork = "$root\tests\out\anipack"
+    foreach ($n in @('002', '006')) {
+        if (-not (Test-Path "$aniWork\$n.ANI")) { throw "no $aniWork\$n.ANI - the anipack selftest did not produce it" }
+        Copy-Item "$aniWork\$n.ANI" (Join-Path $leg "$n.ANI") -Force
+    }
+    foreach ($n in @('020', '021')) { Copy-Item "$aniWork\002.ANI" (Join-Path $leg "$n.ANI") -Force }
+    $a006 = [System.IO.File]::ReadAllBytes("$aniWork\006.ANI")
+    if (($a006[3] -band 2) -eq 0) { throw '006.ANI is not 4-bit - the mixed-kind scene is not armed' }
+    "staged 002/006.ANI and 020/021.ANI (copies of 002) -> $leg"
+    # Effects: 001.WAV and 002.WAV under SFX_WIN_BYTES (COMPLETE arm), 003.WAV
+    # over it (STREAMING arm - raw SD reads under the sprite tick and the
+    # pattern DMA). Every sampled step is silicon-only (the fixture header
+    # says why); the sizes are the -Sfx2 leg's three effects.
+    $spraudWavs = @(
+        @{ dest = '001.WAV'; hz = 440.0; len = 16000; path = "$root\tests\out\spraud_e1.wav"; arm = 'COMPLETE' },
+        @{ dest = '002.WAV'; hz = 880.0; len = 12000; path = "$root\tests\out\spraud_e2.wav"; arm = 'COMPLETE' },
+        @{ dest = '003.WAV'; hz = 220.0; len = 40000; path = "$root\tests\out\spraud_e3.wav"; arm = 'STREAMING' }
+    )
+    foreach ($spec in $spraudWavs) {
+        $w = New-SfxLongWav -Rate 16000 -ToneHz $spec.hz -PayloadBytes $spec.len
+        [System.IO.File]::WriteAllBytes($spec.path, $w)
+        $wb = [System.IO.File]::ReadAllBytes($spec.path)
+        if ([System.BitConverter]::ToUInt16($wb, 22) -ne 1 -or [System.BitConverter]::ToUInt16($wb, 34) -ne 8) {
+            throw "$($spec.path) is not mono 8-bit - aud_load_wav would reject it"
+        }
+        $arm = if ($wb.Length -gt 24576) { 'STREAMING' } else { 'COMPLETE' }
+        if ($arm -ne $spec.arm) { throw "$($spec.dest) is $($wb.Length) bytes and takes the $arm arm, expected $($spec.arm)" }
+        Copy-Item $spec.path (Join-Path $leg $spec.dest) -Force
+        "staged $($spec.dest)  $($wb.Length) bytes, $($spec.hz) Hz, $arm arm"
+    }
+    # Music: 006.AKY, the kit's 9-channel tune, converted from the tracked
+    # source exactly as the -AudLad rung R is (SongToAky, encoding address
+    # 0xD800), with the kit's own RELEASE\GAME.AKY as the fallback.
+    $spraudSong = "$root\tests\out\real9.aky"
+    $s2a = "$root\tools\ArkosTracker3\tools\SongToAky.exe"
+    $songOk = $false
+    if ((Test-Path "$root\authoring-kit\AUDIO\1.aks") -and (Test-Path $s2a)) {
+        & $s2a -bin --encodingAddress 0xD800 "$root\authoring-kit\AUDIO\1.aks" $spraudSong | Out-Null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $spraudSong)) { $songOk = $true }
+    }
+    if (-not $songOk -and (Test-Path "$root\authoring-kit\RELEASE\GAME.AKY")) {
+        Copy-Item "$root\authoring-kit\RELEASE\GAME.AKY" $spraudSong -Force
+        $songOk = $true
+    }
+    if ($songOk) {
+        Copy-Item $spraudSong (Join-Path $leg '006.AKY') -Force
+        "staged 006.AKY $((Get-Item $spraudSong).Length) bytes (song slot 10208)"
+    }
+    else {
+        "WARNING: no song material (need authoring-kit\AUDIO\1.aks + SongToAky, or a kit build) - A2's music is a silent no-op"
+    }
 }
 
 if ($Sprites) {

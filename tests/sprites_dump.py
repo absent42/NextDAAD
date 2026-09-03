@@ -158,13 +158,14 @@ def port_free(port):
     return False
 
 
-def launch(work, port):
-    """Stage sd\\SPRITES into an absolute scratch card, boot it headless and
-    return (process, connected client)."""
+def launch(work, port, leg=LEG):
+    """Stage a leg folder (sd\\SPRITES by default; tests\\spraud_dump.py passes
+    its own) into an absolute scratch card, boot it headless and return
+    (process, connected client)."""
     sd = pathlib.Path(work).resolve() / "sd"
     if sd.exists():
         shutil.rmtree(sd)
-    shutil.copytree(LEG, sd)
+    shutil.copytree(leg, sd)
     shutil.copyfile(NEX, sd / "nextdaad.nex")
     proc = subprocess.Popen([
         str(ZESARUX), "--machine", "tbblue", "--realvideo",
