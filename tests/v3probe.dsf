@@ -36,15 +36,9 @@
 ; HASNAT, where both interpreters use base 59 and agree. Recorded, not
 ; a bug.
 ;
-; SETAT STAND-INS - read before editing PRO 2. DRF 0.40 has no SETAT
-; keyword: its condact table calls slot 124 "dumb", 0 parameters
-; (SETAT only ever reaches a DDB by hand). Each SETAT below is
-; therefore authored as a LET of the same arity, preceded by a unique
-; "LET 250 n" tag, and the byte after that tag is patched from opcode
-; 51 to opcode 124 once DRB has run. The tag is what makes each
-; six-byte signature unique in the image, so the patcher can insist on
-; exactly one match. NEVER run this DDB unpatched - the stand-ins would
-; write flags 0 and 3 instead.
+; SETAT is authored directly (opcode 124). Until 2026-09-02 each site was
+; a tagged LET rewritten to 124 after compiling, because DRF 0.40 had no
+; SETAT keyword; ndrc has one, so the stand-in and its patch are gone.
 /CTL
 _
 /VOC
@@ -241,22 +235,18 @@ IN      50  preposition
           LET 118 1
 > SYN _   DONE
 /PRO 2
-; SETAT. See the stand-in note in this file's header before editing:
-; each "LET 250 n" tags the LET on the NEXT line, which the -V3 staging
-; step rewrites into opcode 124.
+; SETAT authored directly. ndrc has the keyword; the DRF 0.40 stand-in
+; patch was retired 2026-09-02.
 > _ _   LET 53 0
         LET 59 0
-        LET 250 7
-        LET 0 1
+        SETAT 0 1
         COPYFF 59 110
-        LET 250 8
-        LET 0 2
+        SETAT 0 2
         COPYFF 59 111
 > _ _   LET 53 2
         LET 91 0
         LET 59 0
-        LET 250 9
-        LET 0 1
+        SETAT 0 1
         COPYFF 91 112
         COPYFF 59 113
         LET 53 0

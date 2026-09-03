@@ -475,9 +475,9 @@
 #            only INDEPENDENT test of the SP16 V3 work - v3probe.dsf is
 #            ours. Worth noting for whoever next touches v3probe: this
 #            ndrc build has real SETAT and GETKEY keywords (SETAT emits
-#            opcode 124 directly, GETKEY compiles to PAUSE 0), so the
-#            Invoke-V3SetatPatch stand-in below may no longer be needed
-#            there - not changed here, out of this fixture's scope.
+#            opcode 124 directly, GETKEY compiles to PAUSE 0); the
+#            stand-in was retired 2026-09-02; v3probe authors SETAT
+#            directly.
 # Boot title screen (SP11 Task 1), independent of the DDB switches:
 #   -Title   stage the owner 320x256 title into the run's leg folder -
 #            copies tools\demo-files\DAAD.NX2, a gfx2next-converted
@@ -2669,41 +2669,6 @@ else {
 # second parameter and rejects GETKEY outside V3. Do not "simplify"
 # this to reuse the plain invocation above.
 #
-# SETAT stand-in patch. DRF 0.40 has no SETAT keyword at all - its
-# condact table calls slot 124 "dumb", 0 parameters - so each SETAT in
-# the fixture is authored as a LET of the same arity, tagged by a
-# preceding "LET 250 <n>", and the tagged LET's opcode is rewritten
-# from 51 to 124 here. The six-byte signature includes the tag
-# precisely so each one is unique in the image; anything other than
-# exactly one match means the fixture no longer says what its comments
-# say and the build stops. tests\parser\scripts\v3probe\run.py carries
-# the same table for the differential legs - keep the two in step.
-function Invoke-V3SetatPatch {
-    param([string]$Path)
-    $sites = @(
-        @{ tag = 7; p1 = 0; p2 = 1 },   # SETAT 0 1 - standard bank, set
-        @{ tag = 8; p1 = 0; p2 = 2 },   # SETAT 0 2 - standard bank, toggle
-        @{ tag = 9; p1 = 0; p2 = 1 }    # SETAT 0 1 - alternative bank
-    )
-    $b = [System.IO.File]::ReadAllBytes($Path)
-    foreach ($s in $sites) {
-        $sig = [byte[]](51, 250, $s.tag, 51, $s.p1, $s.p2)
-        $hits = @()
-        for ($i = 0; $i -le $b.Length - $sig.Length; $i++) {
-            $ok = $true
-            for ($j = 0; $j -lt $sig.Length; $j++) {
-                if ($b[$i + $j] -ne $sig[$j]) { $ok = $false; break }
-            }
-            if ($ok) { $hits += $i }
-        }
-        if ($hits.Count -ne 1) {
-            throw "v3probe SETAT stand-in tag $($s.tag): $($hits.Count) signature matches in $Path, expected exactly 1"
-        }
-        $b[$hits[0] + 3] = 124
-    }
-    [System.IO.File]::WriteAllBytes($Path, $b)
-}
-
 $v3probeWork = Join-Path $root 'tests\out\v3probe-work'
 Remove-Item $v3probeWork -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $v3probeWork | Out-Null
@@ -2716,7 +2681,16 @@ try {
     if ($v3hdr[0] -ne 3) {
         throw "v3probe DDB header byte 0 is $($v3hdr[0]), expected 3 - did -v3 reach ndrc?"
     }
-    Invoke-V3SetatPatch "$v3probeWork\NDV3.DDB"
+    # The three SETAT sites, emitted by ndrc directly: 0 1 twice, 0 2 once.
+    # No tagged-LET stand-in may remain (51 250 was the old tag).
+    $setat01 = (Find-ByteRuns $v3hdr ([byte[]]@(124, 0, 1))).Count
+    $setat02 = (Find-ByteRuns $v3hdr ([byte[]]@(124, 0, 2))).Count
+    if ($setat01 -ne 2 -or $setat02 -ne 1) {
+        throw "v3probe: expected SETAT 0 1 twice and SETAT 0 2 once (opcode 124), found $setat01 and $setat02 - the fixture no longer says what its header says"
+    }
+    if ((Find-ByteRuns $v3hdr ([byte[]]@(51, 250))).Count -ne 0) {
+        throw "v3probe: a LET 250 n stand-in tag survives in the image - the SETAT stand-in was retired, author SETAT directly"
+    }
     Move-Item NDV3.DDB "$root\tests\out\v3probe.ddb" -Force
     # The XMES probe always compiles an xmessage, so 0.XMB is always
     # emitted here - no Test-Path guard, an absence would be a real
