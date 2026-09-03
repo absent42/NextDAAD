@@ -51,6 +51,8 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](demo)
   samples of any length via card streaming, on two concurrent DAC
   channels that auto-allocate with stealing or pin outright, looping
   ones resuming after a video
+- **Animation** - The Spectrum Next's sprite layer can be used to add 
+  animated aspects to location graphics
 - **Custom fonts and pointers** - drop in a `FONT.CHR` or a
   `POINTER.SPR` and the interpreter picks them up at boot, and a game
   can switch between up to ten of each while it runs
