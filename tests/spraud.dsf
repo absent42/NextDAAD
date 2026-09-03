@@ -7,7 +7,7 @@
 ; SFX_WIN_BYTES so they take the COMPLETE arm, and 003.WAV (220 Hz, 40000
 ; bytes, STREAMING arm).
 ;
-; A5-A9 (every sampled effect) are SILICON-ONLY. sfx_stream_open counts the
+; A5-A11 (every sampled effect) are SILICON-ONLY. sfx_stream_open counts the
 ; DISK_FILEMAP runs by subtracting 6 from the returned byte count until zero;
 ; ZEsarUX's esxDOS handler returns an ODD count (HL sampled dc53, 4fc1, 7e83
 ; with DE 6), so the loop never ends there and the fixture parks in
@@ -21,13 +21,16 @@
 ; 018 claims blocks 1 and 2, both refused while 006 runs. Every sprite sits
 ; in the left half of the display, clear of the right-hand text window.
 ;
-; A2, A6 and A8 wait in the GETMS tracking loop (MOUSE 104 3 + INKEY + SKIP,
+; A2, A6, A7, A8 and A10 wait in the GETMS tracking loop (MOUSE 104 3 + INKEY + SKIP,
 ; PAUSE 25 debounce) so the tester can move the pointer under the audio;
 ; every other step keeps ANYKEY. Flags 100-103 feed GFX 100 20; 104-107 are
 ; GETMS. The restarts (A3, A7) put 020 and 021 back at their flag positions,
 ; not their file position: three identical torches on one spot read as one,
 ; so a refused restart would be invisible. 006 restarts before 002 so the
 ; channel order flips and the reader can see the restart happened.
+; A6-A8 are the coexistence controls added after the rev 2 bench heard the
+; 880 Hz loop distorted over music with four sets: loop alone with sets,
+; loop + music with no sets, then all three together.
 
 /CTL
 _
@@ -103,10 +106,12 @@ LOOK   4  verb
 /2 "A3 stop-all and restart of all four under music#n"
 /3 "A4 SFX 0 8 music stops, sets keep running#n"
 /4 "A5 SFX 6 7 + SFX 1 1 one-shot sample over music#n"
-/5 "A6 SFX 2 2 looped sample over music - hold, move the mouse#n"
-/6 "A7 stop-all and restart of all four under music + loop#n"
-/7 "A8 SFX 3 2 streamed loop over music - hold a minute, move the mouse#n"
-/8 "A9 SFX 0 5 and SFX 0 8: silence, sets keep running#n"
+/5 "A6 music off, SFX 2 2 loop alone, four sets - move the mouse#n"
+/6 "A7 no sets, loop + SFX 6 7 music - move the mouse#n"
+/7 "A8 four sets back, loop + music - hold, move the mouse#n"
+/8 "A9 stop-all and restart of all four under music + loop#n"
+/9 "A10 SFX 3 2 streamed loop over music - hold a minute, move the mouse#n"
+/10 "A11 SFX 0 5 and SFX 0 8: silence, sets keep running#n"
 /OTX
 /0 "a brass lamp"
 /LTX
@@ -169,6 +174,7 @@ $next1
         SFX 1 1
         MESSAGE 4
         ANYKEY
+        SFX 0 8
         SFX 2 2
         MESSAGE 5
 
@@ -181,6 +187,17 @@ $poll2
 $next2
 > _ _   PAUSE 25
         GFX 255 21
+        SFX 6 7
+        MESSAGE 6
+
+$poll3
+> _ _   MOUSE 104 3
+        INKEY
+        SKIP $next3
+> _ _   SKIP $poll3
+
+$next3
+> _ _   PAUSE 25
         GFX 6 19
         GFX 2 19
         LET 100 20
@@ -191,23 +208,44 @@ $next2
         LET 101 60
         LET 103 110
         GFX 100 20
-        MESSAGE 6
+        MESSAGE 7
+
+$poll4
+> _ _   MOUSE 104 3
+        INKEY
+        SKIP $next4
+> _ _   SKIP $poll4
+
+$next4
+> _ _   PAUSE 25
+        GFX 255 21
+        GFX 6 19
+        GFX 2 19
+        LET 100 20
+        LET 101 100
+        LET 103 40
+        GFX 100 20
+        LET 100 21
+        LET 101 60
+        LET 103 110
+        GFX 100 20
+        MESSAGE 8
         ANYKEY
         SFX 0 5
         SFX 3 2
-        MESSAGE 7
+        MESSAGE 9
 
-$poll3
+$poll5
 > _ _   MOUSE 104 3
         INKEY
-        SKIP $next3
-> _ _   SKIP $poll3
+        SKIP $next5
+> _ _   SKIP $poll5
 
-$next3
+$next5
 > _ _   PAUSE 25
         SFX 0 5
         SFX 0 8
-        MESSAGE 8
+        MESSAGE 10
         ANYKEY
         END
 /END

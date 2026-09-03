@@ -3,7 +3,7 @@
 # audio, so the silicon sheet carries the listening check and this reader
 # proves A1-A4 - four sets live, the tick advancing under the AKY music, the
 # stop-all and restart under music (pattern DMA under the music ISR), and the
-# music stop leaving the scene alone. A5-A9 (every sampled effect) are
+# music stop leaving the scene alone. A5-A11 (every sampled effect) are
 # silicon-only: sfx_stream_open's run-count loop never terminates on the odd
 # DISK_FILEMAP byte count ZEsarUX's esxDOS handler returns (see the fixture).
 #
@@ -75,7 +75,7 @@ def run(z, verbose):
     s = step(z); show("A4", s)
     expect(sorted(s.live()) == FOUR, "A4 music stop leaves the four sets running")
     expect(advancing(z, 2), "A4 torch ticking in silence")
-    print("spraud_dump: A1-A4 pass (A5-A9 sampled effects: silicon only)")
+    print("spraud_dump: A1-A4 pass (A5-A11 sampled effects: silicon only)")
     return 0
 
 
