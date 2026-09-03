@@ -3,7 +3,7 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
-## 0.9.0 - unreleased
+## 0.9.0 - 3 September 2026
 
 - **Animated sprites.** `GFX 19`, `20` and `21` start and stop sprite
   sets packed by the kit from `IMAGES\SPRITES`; 8-bit and 4-bit sets,
@@ -52,6 +52,8 @@ game behaves, how it builds, or what the kit gives you, it is here.
 - **An agent skill for writing externs.** The kit ships one at
   `.agent\skills\xbn-extern-authoring\` for any AI coding assistant
   to load before writing an extern.
+- **Fix: Sampled/AY mixing** - Sample audio played at the 
+  same time as AY music no longer distorts
 
 ## 0.8.0 - 30 August 2026
 

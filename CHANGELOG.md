@@ -4,18 +4,48 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.9.0 - Unreleased
 
-- Sampled sound under AY music no longer distorts. The music player
-  ran with interrupts off for its whole per-frame call, and hardware
-  IM2 holds only one pending request per source, so the 15625 Hz
-  sample feed lost every CTC edge after the first inside that window:
-  three to eight samples a frame held on the DAC, a 50 Hz buzz that a
-  pure tone under a three-PSG tune made plain, and the sample running
-  slightly slow. The player is now safe to interrupt (song data is no
-  longer read through the stack; its return chain runs on a guarded
-  resident copy), only the per-pattern linker read still masks, well
-  under one sample period, and the bracket around the call is gone.
-  Confirmed on hardware with the sprite/audio test build and the kit
-  build with real-world samples.
+- Animated sprites on the Next sprite layer. `GFX n 19` starts set n,
+  `GFX f 20` starts the set named in flag f at the position in flags
+  f+1 to f+3, `GFX n 21` stops a set and `GFX 255 21` stops them all.
+  A set is a `NNN.ANI` file packed by the kit from a sprite sheet in
+  `IMAGES\SPRITES` (a PNG converted through gfx2next, or a gfx2next
+  `.spr` directly) plus a `NNN.txt` sidecar for cell size, position,
+  frame delays, loop and colour depth; identical cells dedupe. Sets
+  are up to 32x32 (anchor plus relatives), 8-bit or 4-bit, and both
+  kinds run together: an 8-bit set holds the sprite palette blocks
+  its colours use at identity, a 4-bit set loads its own 16-colour
+  block palettes, and a start that would need a block the other kind
+  holds is refused. Eight sets at once; the hardware pointer stays
+  sprite 0 on top. Frames advance from the frame interrupt, so
+  animation runs through key waits and parser input. Loads come from
+  the card into a pool bank (two for sets over 16K) through esxDOS,
+  patterns go to sprite RAM by zxnDMA memory-to-port, and the last
+  sixteen sets stay cached in banks with cold-first eviction that
+  never takes a running set; a start of a cached set is instant. Bank
+  36 is withdrawn from the bank pool for the sprite state. Every
+  picture operation, video playback and part switch stops all sets
+  (`PICTURE` and `DISPLAY` included); `RESTART` leaves them running.
+  A refused or failed start does nothing in Release; DEBUG builds
+  print `SPR? xx` with a reason code.
+- The mouse pointer is placed on the sprite plane with no 32-pixel
+  inset, so it reaches every part of the 320x256 display in both
+  picture modes, `MOUSE n 0` centres it on the display, and its tip
+  now sits in the text cell `MOUSE n 3` reports; it used to sit four
+  rows below. Over a 320-wide picture the old inset kept the arrow
+  out of the top-left band entirely.
+- Overlay ceiling raised from `$F800` to `$FE00`. The old bound was a
+  first-day margin, never a reservation; 512 bytes at `$FE00-$FFFF`
+  stay held back for a stated need.
+- kit: `lib\anipack.ps1` packs sprite sheets; `BUILD.BAT` runs it over
+  `IMAGES\SPRITES` and rejects a sheet whose colours cannot be placed
+  or that needs more than 126 4-bit patterns.
+- manual: Animated sprites page, `.ANI` format reference, `GFX` rows
+  19-21, mouse page updated for the pointer's range.
+- tests: `-Sprites` leg (sixteen-step sprite fixture, ZEsarUX reader
+  over the DEBUG snapshot, byte-asserted stimulus) and `-SprAud` leg
+  (four sets under AY music, one-shot, in-memory and streamed samples,
+  with the coexistence controls that isolated the player hold above);
+  `anipack-selftest.ps1` (81 checks).
 - Accented text: the graphics-charset toggle (`$0E`/`$0F`) now shifts
   every character, not just `$20-$7F`, so DRC's second accent encoding
   (`#g` chr(16..31) `#t`) renders the French/German/Portuguese
@@ -75,6 +105,18 @@ All notable changes to NextDAAD are recorded here.
   condition semantics and every reworked or new collection module;
   the `-Xbn*` staging leg family covers good/bad v2 headers and each
   module subset.
+- Sampled sound under AY music no longer distorts. The music player
+  ran with interrupts off for its whole per-frame call, and hardware
+  IM2 holds only one pending request per source, so the 15625 Hz
+  sample feed lost every CTC edge after the first inside that window:
+  three to eight samples a frame held on the DAC, a 50 Hz buzz that a
+  pure tone under a three-PSG tune made plain, and the sample running
+  slightly slow. The player is now safe to interrupt (song data is no
+  longer read through the stack; its return chain runs on a guarded
+  resident copy), only the per-pattern linker read still masks, well
+  under one sample period, and the bracket around the call is gone.
+  Confirmed on hardware with the sprite/audio test build and the kit
+  build with real-world samples.
 
 ## v0.8.0 - 30/08/2026
 
