@@ -4,6 +4,18 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.9.0 - Unreleased
 
+- Sampled sound under AY music no longer distorts. The music player
+  ran with interrupts off for its whole per-frame call, and hardware
+  IM2 holds only one pending request per source, so the 15625 Hz
+  sample feed lost every CTC edge after the first inside that window:
+  three to eight samples a frame held on the DAC, a 50 Hz buzz that a
+  pure tone under a three-PSG tune made plain, and the sample running
+  slightly slow. The player is now safe to interrupt (song data is no
+  longer read through the stack; its return chain runs on a guarded
+  resident copy), only the per-pattern linker read still masks, well
+  under one sample period, and the bracket around the call is gone.
+  Confirmed on hardware with the sprite/audio test build and the kit
+  build with real-world samples.
 - Accented text: the graphics-charset toggle (`$0E`/`$0F`) now shifts
   every character, not just `$20-$7F`, so DRC's second accent encoding
   (`#g` chr(16..31) `#t`) renders the French/German/Portuguese
