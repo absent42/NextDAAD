@@ -956,9 +956,6 @@ SPRITE_IDX_PORT equ $303B  ; pattern/attribute upload slot select (full
 SPRITE_PAT_PORT equ $005B  ; pattern upload stream (256 B/sprite, auto-
                             ; inc slot; low byte $5B only is decoded, so
                             ; B=0 here doubles as OTIR's 256-byte count)
-SPRITE_BORDER   equ 32     ; sprite-space border offset: (32,32) is the
-                            ; top-left coordinate at which a sprite is
-                            ; fully on-screen (sprites chapter, Patterns)
 MOUSE_X_MAX     equ 319    ; accumulated mouse position ceiling (320-
                             ; wide sprite/mouse plane)
 MOUSE_Y_MAX     equ 255    ; accumulated mouse position ceiling (256-

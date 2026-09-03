@@ -3211,9 +3211,9 @@ h_call:                         ; 101: CALL lsb msb: run code at that
 ; registers.txt (0x15) and the sprites chapter ("sprites can be made
 ; visible or invisible when over the border... specified by port 15"),
 ; a sprite positioned in the 32px border margin is invisible unless
-; bit 1 is set, and mouse_sprite_pos's +32 offset legitimately parks
-; the pointer there across its own range (mouseX/Y near their maxima
-; put the sprite well past the classic 256x192 visible area). Bit 5
+; bit 1 is set, and the pointer's domain is the whole 320x256 plane,
+; border included (mouse_sprite_body places it at mouseX/mouseY with
+; no inset, so the arrow reaches every part of the display). Bit 5
 ; ("enable sprite clipping in over border mode", also soft-reset 0,
 ; separate from bit 1) is left untouched, so port $19's clip window
 ; (default 0,255,0,191) never engages - the pointer is not further
@@ -3698,9 +3698,12 @@ mouse_sprite_pos:
 mouse_sprite_body:              ; unbracketed: h_mouse.show wraps its own
     xor a
     nextreg NR_SPRITE_SEL, a
-    ld hl, (mouseX)
-    ld de, SPRITE_BORDER
-    add hl, de                  ; HL = mouseX+32 (9-bit, max 351)
+    ld hl, (mouseX)             ; plane coordinate as-is (0-319): the mouse
+                                ; domain IS the 320x256 sprite plane, and the
+                                ; tilemap GETMS reports against covers the same
+                                ; plane, so no border inset (one put the arrow
+                                ; four text rows below the row GETMS returned
+                                ; and kept it out of the top-left 32px band)
     ld a, (mouseHotX)           ; SP16 B23 sub 6: shift the bitmap back
     call mouse_hotsub           ; so the hotspot pixel sits on mouseX
     ld a, l
@@ -3709,10 +3712,9 @@ mouse_sprite_body:              ; unbracketed: h_mouse.show wraps its own
     ld b, a                     ; stash X's bit 8 (0 or 1 only)
     ld a, (mouseY)
     ld l, a
-    ld h, 0
-    add hl, de                  ; HL = mouseY+32 (9-bit, max 287)
-    ld a, (mouseHotY)           ; SP16 B23 sub 7 (DE survives the call,
-    call mouse_hotsub           ; and so does B)
+    ld h, 0                     ; HL = mouseY (0-255)
+    ld a, (mouseHotY)           ; SP16 B23 sub 7 (B survives the call)
+    call mouse_hotsub
     ld a, l
     nextreg NR_SPRITE_Y, a
     ld a, b

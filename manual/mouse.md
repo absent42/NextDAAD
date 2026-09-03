@@ -9,6 +9,10 @@ staged to the release untouched. Up to nine further numbered variants
 can sit beside it and be switched from your source while the game runs.
 This is optional - with no `POINTER.SPR` the default arrow plays.
 
+The pointer moves over the whole 320x256 display, border included, in
+both picture modes; `RESETMS` parks it at the display's centre. Its tip
+sits in the text cell `GETMS` reports.
+
 ## MOUSE sub-commands
 
 [DAAD Ready's manual](https://www.ngpaws.com/daadready/doc_en.html)
