@@ -948,6 +948,7 @@ NR_SPRITE_ATTR  equ $37    ; b7-4 palette offset, b3 Xmirror, b2 Ymirror,
 NR_SPRITE_PAT   equ $38    ; b7 visible, b6 byte4-enable, b5-0 pattern idx
 NR_SPRITE_ATTR2 equ $39    ; byte 4: b7-6 00=8-bit anchor, b5 unified,
                             ; b4-1 scale (0=1x), b0 = Y coordinate bit 8
+NR_SPRITE_ATTR2_INC equ $79 ; byte 4 with NR $34 auto-increment
 SPRITE_IDX_PORT equ $303B  ; pattern/attribute upload slot select (full
                             ; 16-bit port, any value works for $57/$5B
                             ; below - low byte of THIS port is decoded

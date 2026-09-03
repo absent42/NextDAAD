@@ -3312,21 +3312,25 @@ h_mouse:
 .patternok:                     ; this needs to be unconditional.
     ld e, NR_SPRITES
     call nr_read                ; RMW: preserve every other bit (layer
-    or %00000011                ; priority etc) - only touch bit 0
-    nextreg NR_SPRITES, a       ; (sprites enable) and bit 1 (sprites
-                                 ; over border - our pointer's range
-                                 ; legitimately reaches into the border,
-                                 ; see h_mouse's header comment)
-    call mouse_sprite_pos       ; leaves sprite 0 selected (NR $34)
-    ld a, %11000000              ; visible(7) + byte4-enable(6) + pattern 0
-    nextreg NR_SPRITE_PAT, a
-    ret
+    or SPR_NR15_ON              ; priority etc) - only touch bit 0
+    nextreg NR_SPRITES, a       ; (sprites enable), bit 1 (sprites over
+                                 ; border - our pointer's range legitimately
+                                 ; reaches into the border, see h_mouse's
+                                 ; header comment) and bit 6: sprite 0 (the
+                                 ; pointer) on top of every set; reset
+                                 ; default is highest slot on top
+    call spr_di                 ; DI: the sprite tick (isr_hook_body) shares
+    call mouse_sprite_body      ; the NR $34 select-then-write sequence, so
+    ld a, %11000000              ; the select and the writes under it are one
+    nextreg NR_SPRITE_PAT, a    ; group (visible(7) + byte4(6) + pattern 0)
+    jp spr_ei
 .hide:                          ; sub 2: invisible attribute only -
-    xor a                       ; sprites master (NR $15) stays enabled
+    call spr_di                 ; sprites master (NR $15) stays enabled
+    xor a
     nextreg NR_SPRITE_SEL, a
     ld a, %01000000              ; invisible + byte4-enable kept
     nextreg NR_SPRITE_PAT, a
-    ret
+    jp spr_ei
 .read:                          ; sub 3: poll, write flags[P1..P1+3],
     ld a, b                     ; reposition the sprite (harmless if
     ld (mouseP1), a             ; it's currently hidden)
@@ -3685,6 +3689,10 @@ mouse_pattern_load:
 ; 1/2 last left it, cold-default 0/invisible until sub 1 first runs).
 ; Corrupts AF, BC, DE, HL.
 mouse_sprite_pos:
+    call spr_di                 ; DI: the sprite tick (isr_hook_body) shares
+    call mouse_sprite_body      ; the NR $34 select-then-write sequence
+    jp spr_ei
+mouse_sprite_body:              ; unbracketed: h_mouse.show wraps its own
     xor a
     nextreg NR_SPRITE_SEL, a
     ld hl, (mouseX)

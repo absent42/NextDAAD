@@ -177,6 +177,11 @@ def run(z, verbose):
     expect(r[2][SR["XLO"]] == 56 and r[2][SR["Y"]] == 212, "S1 (24,180) in 256x192 mode is plane (56,212)")
     expect(s.loads == 1 and s.cached() == [2], "S1 one SD load, set 2 cached")
     expect(s.hook & 2, "S1 HOOK_SPR armed")
+    # The tick refreshes SR_FRAME/SR_COUNT in the snapshot for every channel
+    # it visits, so a live set's pair has to move on its own between reads.
+    f0 = r[2][SR["FRAME"]]; c0 = r[2][SR["COUNT"]]
+    time.sleep(0.5); s = State(z); r = s.live()
+    expect((r[2][SR["FRAME"]], r[2][SR["COUNT"]]) != (f0, c0), "S1 torch advances (delays 6 and 12 ticks)")
     s = step(z); show("S2", s); r = s.live()
     expect(sorted(r) == [2, 6], "S2 sets 2 and 6 live")
     expect(r[6][SR["KIND"]] == 1 and r[6][SR["NBLK"]] == 2 and list(r[6][SR["BLOCKS"]:SR["BLOCKS"]+2]) == [1, 2], "S2 4-bit claims blocks 1,2")
@@ -193,6 +198,10 @@ def run(z, verbose):
     s = step(z); show("S7", s); r = s.live()
     expect(list(r) == [3] and r[3][SR["CELLS"]] == 4 and r[3][SR["ATTR"]] == 124 and r[3][SR["PATS"]] == 3, "S7 set 3 via flags")
     expect(r[3][SR["XLO"]] == 72 and r[3][SR["Y"]] == 132, "S7 override (40,100) is plane (72,132)")
+    # 003.ANI is two frames, no loop: frame 1's delay runs out and the tick
+    # parks there with SR_COUNT 0 rather than wrapping.
+    time.sleep(0.5); s = State(z); r = s.live()
+    expect(r[3][SR["FRAME"]] == 1 and r[3][SR["COUNT"]] == 0, "S7 one-shot holds its last frame")
     s = step(z); show("S8", s); r = s.live()
     expect(list(r) == [3], "S8 GFX 253 20 refused, state unchanged")
     s = step(z); show("S9", s); r = s.live()

@@ -26,10 +26,44 @@ sprLdEntry:   db 0
 sprLdLen:     dw 0
 sprHandle:    db 0
 sprPalSave:   db 0
-sprIff:       db 0                ; spr_di's IFF2 sample
 ; per-channel block tables: pattern -> palette block, rewritten at load
 sprBlkTab:    ds SPR_CHANS*128
 sprUpLeft:    dw 0              ; upload bytes remaining
+sprUpPage:    db 0              ; image page currently in slot 6 during upload
+sprApPat:     db 0              ; hoisted record fields for the apply loops
+sprApX8:      db 0
+sprApY8:      db 0
+sprApA4:      db 0              ; %10000000 | Y8: the 4-bit anchor's byte 4 base
+sprApBlk:     dw 0
+SPR_AP_LEN equ $-sprApPat
+sprApSave:    ds SPR_AP_LEN     ; the tick's shadow of the six cells above
+; zxnDMA memory-to-port program: port A memory increment, port B I/O fixed at
+; $5B, both cycle length 2, prescaler WRITTEN as zero, CONTINUOUS one-shot.
+; Matches the dev guide's memory-to-port-$5B example (chapter-next-dma) byte
+; for byte except the explicit timing and prescaler bytes: the prescaler
+; register is shared and only reset or a WR2 write with D5 set changes it
+; (dma.vhd R2_BYTE_0/R2_BYTE_1); a stale nonzero value would stop this
+; transfer yielding to the sample ISR mid-block (doc 11 F3). Patched
+; fields: .src, .len (exact count, RTL-settled).
+sprDma:
+    db $83                       ; WR6: disable
+    db %01111101                 ; WR0: A->B; Alo, Ahi, len-lo, len-hi follow
+.src:
+    dw 0
+.len:
+    dw 0                         ; exact count 1..256
+    db %01010100                 ; WR1: A = memory, increment; timing follows
+    db %00000010                 ; WR1 timing: cycle length 2
+    db %01101000                 ; WR2: B = I/O, fixed; timing follows
+    db %00100010                 ; WR2 timing: cycle length 2, D5 = 1: prescaler follows
+    db 0                         ; WR2 prescaler: zero, written every time
+    db %10101101                 ; WR4: CONTINUOUS; B lo, hi follow
+    dw SPRITE_PAT_PORT
+    db $82                       ; WR5: stop on end of block
+    db $CF                       ; WR6: load
+    db $87                       ; WR6: enable - the bus stalls here until done
+SPR_DMA_LEN equ $-sprDma
+    ASSERT SPR_DMA_LEN == 17
 SPR_DBG_BLOCK equ sprLoads+1-sprRec
     ASSERT SPR_DBG_BLOCK == 488  ; tests\sprites_dump.py mirrors this size
 
@@ -390,8 +424,69 @@ spr_blocks_release:
     ld (ix+SR_NBLK), 0
     jp spr_pal_leave
 
-; ISR: advance every live set by one tick. Filled in Task 8.
+; ISR, both sprite pages mapped by isr_hook_body. Records are scanned through
+; HL; IX is materialised only for a channel that advances. Records with
+; SR_SET = 255 are skipped, which is what makes publish-last and retire-first
+; safe.
+;
+; NR $34 and port $303B keep independent counters unless NR $09 bit 4
+; (lockstep) is set. No nextreg in src writes NR $09, and this design
+; forbids it: that independence is what lets the tick's NR $34 writes
+; interleave with a mainline upload to $5B without corrupting it.
 spr_tick:
+    ld hl, sprRec
+    ld b, SPR_CHANS
+    ld de, SR_SIZE
+.chan:
+    ld a, (hl)
+    cp SPR_SET_NONE
+    jr z, .next
+    push hl
+    ld a, SR_COUNT
+    add hl, a
+    ld a, (hl)
+    or a
+    jr z, .skip                  ; one-shot holding its last frame
+    dec a
+    ld (hl), a
+    jr nz, .skip
+    pop hl
+    push hl
+    push bc
+    push de
+    push hl
+    pop ix
+    ld a, (ix+SR_FRAME)
+    inc a
+    cp (ix+SR_FRAMES)
+    jr c, .set
+    ld a, (ix+SR_LOOP)
+    or a
+    jr z, .hold                  ; SR_COUNT stays 0: hold
+    xor a
+.set:
+    ld (ix+SR_FRAME), a
+    call spr_apply_frame_isr
+.hold:
+ IFDEF DEBUG
+    ld d, (ix+SR_CHAN)             ; refresh the two moving bytes in the snapshot
+    ld e, SR_SIZE                  ; ($5000 is bank 5, always mapped; slot 2 is
+    mul d, e                       ; never remapped by this code). The hold path
+    ld hl, SPR_DBG_SNAP+5+SR_FRAME ; passes through here too, so a one-shot's
+    add hl, de                     ; settled SR_COUNT = 0 reaches the reader
+    ld a, (ix+SR_FRAME)
+    ld (hl), a
+    inc hl
+    ld a, (ix+SR_COUNT)
+    ld (hl), a
+ ENDIF
+    pop de
+    pop bc
+.skip:
+    pop hl
+.next:
+    add hl, de
+    djnz .chan
     ret
 
 ; E = reason. DEBUG: "SPR? nn" at the marker column of row 29, the h_gfx idiom,
@@ -533,15 +628,416 @@ spr_release_resources:
 .noattr:
     jp spr_blocks_release
 
-; Task 8 fills these.
+; IX = record. Loads SR_COUNT from the frame's delay byte and hoists the
+; loop invariants. Out: HL -> first cell byte, B = cells, C = 0, D = anchor
+; attribute slot, A = kind. Corrupts AF, BC, DE, HL.
+spr_apply_setup:
+    ld d, (ix+SR_FRAME)
+    ld e, (ix+SR_ROW)
+    mul d, e
+    ld l, (ix+SR_TAB)
+    ld h, (ix+SR_TAB+1)
+    add hl, de
+    ld a, (hl)
+    ld (ix+SR_COUNT), a
+    inc hl
+    ld a, (ix+SR_PAT)
+    ld (sprApPat), a
+    ld a, (ix+SR_X8)
+    ld (sprApX8), a
+    ld a, (ix+SR_Y8)
+    ld (sprApY8), a
+    or %10000000
+    ld (sprApA4), a
+    ld e, (ix+SR_BLKTAB)
+    ld d, (ix+SR_BLKTAB+1)
+    ld (sprApBlk), de
+    ld b, (ix+SR_CELLS)
+    ld c, 0
+    ld d, (ix+SR_ATTR)
+    ld a, (ix+SR_KIND)
+    ret
+
+; One 8-bit cell. In: D = slot, HL -> cell byte, C = cell index. Advances
+; HL, D, C. Byte 4 first, byte 3 last. NR $79 auto-increment is NOT usable
+; here: it forces byte 4 last and the write order is what keeps a scanline
+; from showing a new pattern under an old half-select or palette block.
+    MACRO SPR_CELL8 bracket
+    IF bracket
+    call spr_di
+    ENDIF
+    ld a, d
+    nextreg NR_SPRITE_SEL, a
+    ld a, (hl)
+    cp 255
+    jr nz, 1F
+    nextreg NR_SPRITE_PAT, %01000000   ; hidden: invisible, byte 4 kept
+    jr 3F
+1:  ld e, a
+    ld a, c
+    or a
+    jr nz, 2F
+    ld a, (sprApY8)                    ; anchor: H 0, composite, 1x, Y bit 8
+    nextreg NR_SPRITE_ATTR2, a
+    jr 4F
+2:  nextreg NR_SPRITE_ATTR2, %01000000 ; relative marker
+4:  ld a, e
+    srl a
+    or %11000000                       ; byte 3 last: visible, byte 4, slot = index/2
+    nextreg NR_SPRITE_PAT, a
+3:  IF bracket
+    call spr_ei
+    ENDIF
+    inc hl
+    inc d
+    inc c
+    ENDM
+
+; One 4-bit cell, same contract. Silicon pin: the dev guide's N6 polarity
+; for relatives (chapter-next-sprites.tex "1 to use bytes 0-127") is
+; inverted against the RTL. N6 set selects the upper half for anchors and
+; relatives alike. The tick is written to the RTL and the run sheet
+; confirms it.
+    MACRO SPR_CELL4 bracket
+    IF bracket
+    call spr_di
+    ENDIF
+    ld a, d
+    nextreg NR_SPRITE_SEL, a
+    ld a, (hl)
+    cp 255
+    jr nz, 1F
+    nextreg NR_SPRITE_PAT, %01000000
+    jr 3F
+1:  ld e, a                            ; E = global half-slot index
+    ld a, c
+    or a
+    jr nz, 2F
+    ld a, e
+    and 1                              ; N6 = index & 1: upper half when set
+    rrca
+    rrca                               ; bit 0 -> bit 6
+    push hl
+    ld hl, sprApA4
+    or (hl)                            ; H, N6, Y bit 8
+    nextreg NR_SPRITE_ATTR2, a
+    ld a, e
+    ld hl, sprApPat
+    sub (hl)                           ; set-relative pattern index
+    ld hl, (sprApBlk)
+    add hl, a
+    ld a, (hl)                         ; assigned block = palette offset
+    swapnib
+    ld hl, sprApX8
+    or (hl)
+    pop hl
+    nextreg NR_SPRITE_ATTR, a
+    jr 4F
+2:  ld a, e
+    and 1
+    rrca
+    rrca
+    rrca                               ; bit 0 -> bit 5
+    or %01000000                       ; relative marker
+    nextreg NR_SPRITE_ATTR2, a
+    ld a, e
+    push hl
+    ld hl, sprApPat
+    sub (hl)
+    ld hl, (sprApBlk)
+    add hl, a
+    ld a, (hl)
+    pop hl
+    swapnib                            ; bit 0 clear: independent palette offset
+    nextreg NR_SPRITE_ATTR, a
+4:  ld a, e
+    srl a
+    or %11000000
+    nextreg NR_SPRITE_PAT, a
+3:  IF bracket
+    call spr_ei
+    ENDIF
+    inc hl
+    inc d
+    inc c
+    ENDM
+
+; IX = record, mainline, record unpublished. One bracket per cell.
+spr_apply_frame:
+    call spr_apply_setup
+    or a
+    jr nz, .l4
+.l8:
+    SPR_CELL8 1
+    djnz .l8
+    ret
+.l4:
+    SPR_CELL4 1
+    djnz .l4
+    ret
+
+; IX = record, from the tick. No brackets: the ISR's IFF state is not ours.
+; A mainline apply can be parked between its bracketed cells, so its hoisted
+; invariants are shadowed across this one.
+spr_apply_frame_isr:
+    ld hl, sprApPat
+    ld de, sprApSave
+    ld bc, SPR_AP_LEN
+    ldir
+    call .body
+    ld hl, sprApSave
+    ld de, sprApPat
+    ld bc, SPR_AP_LEN
+    ldir
+    ret
+.body:
+    call spr_apply_setup
+    or a
+    jr nz, .l4
+.l8:
+    SPR_CELL8 0
+    djnz .l8
+    ret
+.l4:
+    SPR_CELL4 0
+    djnz .l4
+    ret
+
+; IX = live record, mainline. Retire so the tick cannot interleave, frame 0,
+; republish. No allocation, no upload, cannot fail. Out: CF clear.
 spr_restart:
+    ld (ix+SR_SET), SPR_SET_NONE
+    ld (ix+SR_FRAME), 0
+    call spr_apply_frame
+    ld a, (sprReqSet)
+    ld (ix+SR_SET), a
+ IFDEF DEBUG
+    call spr_dbg_snap
+ ENDIF
     or a
     ret
-spr_hw_load:
-    ret
-spr_hw_show:
-    ret
+
+; IX = record being retired (SR_SET already 255). Every attribute slot of the
+; set: byte 3 = 0 (invisible, byte 4 disabled) then byte 4 = 0, so no relative
+; marker survives into the next owner. Groups of four slots per bracket, one
+; select per group, NR $79 auto-increments. No-op when the record was never
+; positioned (SR_ATTR 0 would otherwise clear the pointer's slot).
 spr_hw_stop:
+    ld a, (ix+SR_ATTR)
+    or a
+    ret z
+    ld c, a
+    ld b, (ix+SR_CELLS)
+.group:
+    call spr_di
+    ld a, c
+    nextreg NR_SPRITE_SEL, a
+    ld e, 4
+.slot:
+    nextreg NR_SPRITE_PAT, 0
+    nextreg NR_SPRITE_ATTR2_INC, 0
+    inc c
+    dec b
+    jr z, .done
+    dec e
+    jr nz, .slot
+    call spr_ei
+    jr .group
+.done:
+    call spr_ei
+    ret
+
+; IX = allocated, unpublished record; slot 6 = image page 0. Palettes under one
+; NR $43 bracket, then the pattern upload. Leaves slot 6 on the last image
+; page read; the caller remaps SPR_TAB_PAGE. Cannot fail.
+spr_hw_load:
+    ld a, (ix+SR_KIND)
+    or a
+    jr z, .upload
+    ld iy, DATA_WINDOW           ; block palettes: after header, table, block bytes
+    ld hl, DATA_WINDOW+ANI_HDR
+    ld e, (iy+ANI_TLEN)
+    ld d, (iy+ANI_TLEN+1)
+    add hl, de
+    ld a, (ix+SR_PATS)
+    add hl, a
+    ld b, (ix+SR_NBLK)
+    call spr_pal_enter           ; before DE is built: it corrupts E
+    push ix
+    pop de
+    ld a, SR_BLOCKS
+    add de, a
+.pal:
+    ld a, (de)
+    push bc
+    push de
+    call spr_pal_write_block     ; A = block; HL exits advanced by 32
+    pop de
+    pop bc
+    inc de
+    djnz .pal
+    call spr_pal_leave
+.upload:
+    ld iy, DATA_WINDOW           ; pattern offset = 16 + tlen + (4-bit: pats + nblk*32), under 8K
+    ld hl, ANI_HDR
+    ld e, (iy+ANI_TLEN)
+    ld d, (iy+ANI_TLEN+1)
+    add hl, de
+    ld a, (ix+SR_KIND)
+    or a
+    jr z, .src
+    ld a, (ix+SR_PATS)
+    add hl, a
+    ld d, (ix+SR_NBLK)
+    ld e, 32
+    mul d, e
+    add hl, de
+.src:
+    ld de, DATA_WINDOW
+    add hl, de                   ; HL = source in page 0
+    xor a
+    ld (sprUpPage), a
+    ld d, (ix+SR_PATS)           ; bytes = pats * 256 (8-bit) or * 128 (4-bit)
+    ld e, 128
+    ld a, (ix+SR_KIND)
+    or a
+    jr nz, .cnt
+    sla d
+.cnt:
+    mul d, e
+    ld (sprUpLeft), de
+    ld a, (ix+SR_PAT)            ; port $303B = (PAT >> 1) | (PAT & 1) << 7
+    rrca
+    ld bc, SPRITE_IDX_PORT
+    out (c), a
+    jp spr_upload
+
+; HL = source in slot 6, (sprUpLeft) = bytes, (sprUpPage) = image page of HL,
+; IX = record. DMA chunks of at most 256 bytes that never cross the $E000
+; page end; slot 6 is remapped only when bytes remain. Runs unbracketed
+; under the $CC = 0 contract (doc 11): the admitted CTC ISRs are MMU-free,
+; RETI-exiting and never touch $5B or $303B, so a mid-block park cannot
+; interleave into the pattern stream. Corrupts all.
+spr_upload:
+.chunk:
+    ld de, (sprUpLeft)
+    ld a, d
+    or e
+    ret z
+    ld bc, 256                   ; n = min(left, 256)
+    ld a, d
+    or a
+    jr nz, .room
+    ld b, d
+    ld c, e
+.room:
+    push hl                      ; src
+    ex de, hl
+    ld hl, $E000
+    or a
+    sbc hl, de                   ; HL = room to the page end
+    push hl
+    or a
+    sbc hl, bc                   ; room - n
+    pop hl
+    jr nc, .go
+    ld b, h
+    ld c, l                      ; n = room
+.go:
+    pop hl                       ; src
+    ld (sprDma.src), hl
+    ld (sprDma.len), bc
+    push hl
+    push bc
+    ld hl, sprDma
+    ld b, SPR_DMA_LEN
+    ld c, DMA_PORT
+    otir                         ; the last byte enables; the bus stalls until done
+    pop bc
+    pop hl
+    add hl, bc                   ; src += n
+    push hl
+    ld hl, (sprUpLeft)
+    or a
+    sbc hl, bc
+    ld (sprUpLeft), hl           ; left -= n
+    ld a, h
+    or l
+    pop hl
+    ret z                        ; done: no remap past the final byte
+    ld a, h
+    cp $E0
+    jr c, .chunk
+    ld hl, sprUpPage
+    inc (hl)
+    ld c, (hl)
+    ld a, (ix+SR_CACHE)
+    call spr_cache_page
+    call data_map_page
+    ld hl, DATA_WINDOW
+    jr .chunk
+
+; IX = record, slot 6 = SPR_TAB_PAGE. Anchor at the plane position from the
+; record, relatives at (cx*16, cy*16), everything invisible, then frame 0 and
+; the sprite enable. Groups of four slots per bracket with one select; each
+; slot writes $35-$38 then $79, which auto-increments the index.
+spr_hw_show:
+    call spr_di
+    ld a, (ix+SR_ATTR)
+    nextreg NR_SPRITE_SEL, a
+    ld a, (ix+SR_XLO)
+    nextreg NR_SPRITE_X, a
+    ld a, (ix+SR_Y)
+    nextreg NR_SPRITE_Y, a
+    ld a, (ix+SR_X8)
+    nextreg NR_SPRITE_ATTR, a
+    nextreg NR_SPRITE_PAT, %01000000       ; invisible, byte 4 enabled
+    ld a, (ix+SR_Y8)
+    nextreg NR_SPRITE_ATTR2_INC, a         ; anchor byte 4; index -> cell 1
+    ld b, (ix+SR_CELLS)
+    dec b
+    jr z, .anchor_only
+    ld c, 1                      ; cell index
+    ld e, 3                      ; slots left in this bracket (anchor used one)
+.rel:
+    ld a, c                      ; cx = c mod W, cy = c / W
+    ld d, 0
+.div:
+    cp (ix+SR_W)
+    jr c, .xy
+    sub (ix+SR_W)
+    inc d
+    jr .div
+.xy:
+    swapnib                      ; cx*16 (cx <= 7, so no mask needed)
+    nextreg NR_SPRITE_X, a
+    ld a, d
+    swapnib
+    nextreg NR_SPRITE_Y, a
+    nextreg NR_SPRITE_ATTR, 0              ; independent palette offset
+    nextreg NR_SPRITE_PAT, %01000000       ; invisible, byte 4 enabled
+    nextreg NR_SPRITE_ATTR2_INC, %01000000 ; relative marker; N6 set per frame
+    inc c
+    dec b
+    jr z, .placed
+    dec e
+    jr nz, .rel
+    call spr_ei
+    call spr_di
+    ld a, (ix+SR_ATTR)
+    add a, c
+    nextreg NR_SPRITE_SEL, a     ; re-select: the tick may have moved NR $34
+    ld e, 4
+    jr .rel
+.placed:
+.anchor_only:
+    call spr_ei
+    ld (ix+SR_FRAME), 0
+    call spr_apply_frame         ; record unpublished: the tick cannot touch it
+    ld e, NR_SPRITES
+    call nr_read
+    or SPR_NR15_ON               ; enable, over border, sprite 0 on top
+    nextreg NR_SPRITES, a
     ret
 
 ; A = set. Out: CF clear and A = entry index on a hit (tick touched); CF set on a miss.

@@ -250,6 +250,7 @@ bank_table_init:
 sprName:      db "PART1", 92, "000.ANI", 0   ; 92 = backslash: a "\0" escape
                                              ; would embed a NUL
 sprSavedMmu:  db 0, 0
+sprIff:       db 0              ; spr_di's IFF2 sample
 
 ; Boot, from bank_table_init's tail: empty state, reserved slots.
 spr_boot_init:
@@ -310,6 +311,31 @@ spr_stop_all:
     pop hl
 .none:
     pop af
+    ret
+
+; Mainline DI bracket for one select-then-write group: the sprite tick shares
+; the NR $34 select-then-write sequence. Resident so overlay0's pointer
+; sequences can use it with SPR_PAGE unmapped. IFF2 sampled twice through
+; ld a,i (P/V), the nr_read idiom: the erratum can zero P/V once but not on
+; two successive instructions. A caller that entered with interrupts off
+; leaves with them off. Corrupts AF.
+spr_di:
+    ld a, i
+    jp pe, .on
+    ld a, i
+.on:
+    ld a, 0
+    jp po, .off
+    inc a
+.off:
+    ld (sprIff), a
+    di
+    ret
+spr_ei:
+    ld a, (sprIff)
+    or a
+    ret z
+    ei
     ret
 
 ; Frame hook body for both ISR paths (full context already saved). Sprite
