@@ -179,9 +179,23 @@ def run(z, verbose):
     expect(s.hook & 2, "S1 HOOK_SPR armed")
     # The tick refreshes SR_FRAME/SR_COUNT in the snapshot for every channel
     # it visits, so a live set's pair has to move on its own between reads.
-    f0 = r[2][SR["FRAME"]]; c0 = r[2][SR["COUNT"]]
-    time.sleep(0.5); s = State(z); r = s.live()
-    expect((r[2][SR["FRAME"]], r[2][SR["COUNT"]]) != (f0, c0), "S1 torch advances (delays 6 and 12 ticks)")
+    # The refresh runs only on an advance, so the pair is 2-valued: (0,6) for
+    # six ticks then (1,12) for twelve. Any FIXED gap aliases against that
+    # 18-tick period - three samples 0.3s apart read the same pair for a third
+    # of all starting phases (measured). At least three samples, then keep
+    # going until the pair moves or the budget runs out.
+    pairs = [(r[2][SR["FRAME"]], r[2][SR["COUNT"]])]
+    deadline = time.time() + 1.5
+    while True:
+        time.sleep(0.08); s = State(z); r = s.live()
+        pairs.append((r[2][SR["FRAME"]], r[2][SR["COUNT"]]))
+        if len(pairs) >= 3 and (any(p != pairs[0] for p in pairs[1:])
+                                or time.time() > deadline):
+            break
+    expect(any(p != pairs[0] for p in pairs[1:]),
+           "S1 torch advances (delays 6 and 12 ticks): %r" % (pairs,))
+    expect(all(p[0] in (0, 1) for p in pairs),
+           "S1 torch stays inside its two frames: %r" % (pairs,))
     s = step(z); show("S2", s); r = s.live()
     expect(sorted(r) == [2, 6], "S2 sets 2 and 6 live")
     expect(r[6][SR["KIND"]] == 1 and r[6][SR["NBLK"]] == 2 and list(r[6][SR["BLOCKS"]:SR["BLOCKS"]+2]) == [1, 2], "S2 4-bit claims blocks 1,2")

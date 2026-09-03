@@ -696,8 +696,8 @@ spr_apply_setup:
 ; One 4-bit cell, same contract. Silicon pin: the dev guide's N6 polarity
 ; for relatives (chapter-next-sprites.tex "1 to use bytes 0-127") is
 ; inverted against the RTL. N6 set selects the upper half for anchors and
-; relatives alike. The tick is written to the RTL and the run sheet
-; confirms it.
+; relatives alike (RTL, sprites.vhd); the guide says the opposite for
+; relatives. The silicon run sheet must confirm this before release.
     MACRO SPR_CELL4 bracket
     IF bracket
     call spr_di
