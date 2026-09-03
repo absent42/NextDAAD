@@ -74,6 +74,17 @@ FORBIDDEN = [
     (r"done\s+stat(e|us)[^.]{0,40}same\s+as\s+a\s+failed",
      "a CF-failed EXTERN clears the done state, which a failed built-in "
      "condition never does - do not equate them"),
+    # Sprite sets (SP20). A 4-bit sprite's transparent pixel is nibble 3,
+    # not 0: the hardware compares the pixel nibble against the low nibble
+    # of NR $4B, which holds 3 at launch and is never written.
+    (r"nibble\s+0\s+is\s+transparent",
+     "4-bit transparency is nibble 3 (NR $4B low nibble at launch)"),
+    # RESTART is the per-move render-loop re-entry in template games, so
+    # it deliberately leaves running sets alone. This also catches the
+    # correct claim worded the wrong way round, which is the point: say
+    # RESTART is absent from the stop list, do not say what it does not do.
+    (r"RESTART.{0,60}stops?\s+(the\s+)?(sprite|set)",
+     "RESTART does not stop sprite sets (owner ruling 2026-09-02)"),
 ]
 
 def parse(path, pattern, label):
@@ -163,6 +174,55 @@ def main():
             "INK 227 transparent glyphs, BORDER 227 stays magenta, "
             "colour 11 shift) - a paint tool does not preview 227 "
             "correctly and readers need to be told")
+
+    # --- animated sprites (SP20) ----------------------------------
+    # The three GFX subs, the channel count and the frame-table size all
+    # come from nextdaad.inc, not from a number typed in here: renumber a
+    # sub and the manual has to move with it.
+    sprites_text = (MANUAL / "sprites.md").read_text(encoding="utf-8")
+    graphics_text = (MANUAL / "graphics.md").read_text(encoding="utf-8")
+    ani_text = (MANUAL / "reference" / "ani-format.md").read_text(
+        encoding="utf-8")
+
+    for sym, what in (("GFX_SUB_SPR_START", "start a set at its baked position"),
+                      ("GFX_SUB_SPR_FLAGS", "start a set from four flags"),
+                      ("GFX_SUB_SPR_STOP", "stop a set")):
+        sub = parse("src/nextdaad.inc",
+                    rf"(?m)^\s*{sym}\s+equ\s+(\d+)", sym)
+        if not re.search(rf"`GFX [nf] {sub}`", sprites_text):
+            failures.append(
+                f"sprites.md never writes `GFX n {sub}` - {sym} is {sub} "
+                f"({what})")
+        if not re.search(rf"(?m)^\|\s*{sub}\s*\|", graphics_text):
+            failures.append(
+                f"graphics.md's GFX table has no row for sub {sub} - "
+                f"{sym} is {sub} ({what})")
+
+    # SPR_CHANS is how many sets run at once, and the manual says it in
+    # words. Only the spelling this checker knows is accepted: a changed
+    # channel count must come back here as well as into the prose.
+    chans = parse("src/nextdaad.inc", r"(?m)^\s*SPR_CHANS\s+equ\s+(\d+)",
+                  "SPR_CHANS")
+    chan_word = {"4": "four", "8": "eight", "16": "sixteen"}.get(chans)
+    if chan_word is None:
+        failures.append(
+            f"SPR_CHANS is {chans} and this checker cannot spell it - add "
+            f"the word and check what sprites.md says")
+    elif not re.search(rf"\b{chan_word}\b.{{0,30}}\bsets?\b",
+                       sprites_text, re.IGNORECASE):
+        failures.append(
+            f"sprites.md never states '{chan_word} ... sets' "
+            f"(SPR_CHANS = {chans})")
+
+    # SPR_TAB_SIZE is the per-set frame-table budget both pages quote.
+    tab = parse("src/nextdaad.inc", r"(?m)^\s*SPR_TAB_SIZE\s+equ\s+(\d+)",
+                "SPR_TAB_SIZE")
+    for name, text in (("sprites.md", sprites_text),
+                       ("reference/ani-format.md", ani_text)):
+        if not re.search(rf"\b{tab}\b", text):
+            failures.append(
+                f"{name} never states the frame-table budget "
+                f"{tab} (SPR_TAB_SIZE)")
 
     # --- videnc flags vs argparse ---------------------------------
     # vidtune-maintenance.md records this drifting silently for FOUR

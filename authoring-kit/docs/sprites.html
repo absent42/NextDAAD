@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animated sprites - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="animated-sprites">Animated sprites</h1>
+<p>A sprite set is a small picture that cycles frames in place: a guttering
+torch, running water, a blinking eye, a machine with a moving part. Sets
+are drawn by the Next's own sprite hardware, so they sit <strong>above the
+location picture and above the text</strong>, and they keep animating while the
+game prints, scrolls and waits for input.</p>
+<p>Sets do not move. A set is started at a position and cycles there until
+something stops it. There is no move, scale, mirror or rotate.</p>
+<p>Sprites are optional and cost a game that never uses them nothing: no
+reserved flags, no reserved objects, no change to any existing condact.</p>
+<h2 id="the-three-sub-commands">The three sub-commands</h2>
+<table>
+<thead>
+<tr>
+<th>Condact</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GFX n 19</code></td>
+<td>Start sprite set <code>n</code> at the position baked into <code>NNN.ANI</code> by the kit.</td>
+</tr>
+<tr>
+<td><code>GFX f 20</code></td>
+<td>The same, but the set number comes from flag <code>f</code>, the X position from flags <code>f+1</code> (low byte) and <code>f+2</code> (high byte), and the Y position from flag <code>f+3</code>.</td>
+</tr>
+<tr>
+<td><code>GFX n 21</code></td>
+<td>Stop set <code>n</code> and free the space it held. <code>n</code> 255 stops every running set.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Set numbers are 0 to 254.</strong> 255 is reserved as the stop-all argument.
+Set numbers are their own namespace, nothing to do with picture numbers:
+set 3 and picture 3 are unrelated files. The file is looked for in
+<code>PARTn\</code> first and then in the game's root folder, the same probe order
+pictures and <code>POINTER.SPR</code> use.</p>
+<p><strong>Positions are picture pixels</strong>, the coordinates you already think in:
+0 to 319 across by 0 to 255 down in a 320-wide picture mode, 0 to 255 by
+0 to 191 in a 256-wide one. The interpreter places the set on the sprite
+plane for you, so the 32-pixel sprite border never appears in your source.</p>
+<p><strong><code>GFX f 20</code> reads its four flags once, at the call, and reserves
+nothing.</strong> They are ordinary flags you may use for anything else before
+and after; writing to them later does not move a running set. <code>f</code> above
+252 is ignored, because the four reads would run off the end of the flag
+table.</p>
+<p><strong>Starting a set that is already running restarts it from frame 0.</strong> It
+is not reloaded and nothing is reallocated, so a restart cannot fail and
+costs nothing. <strong>Stopping a set that is not running does nothing.</strong></p>
+<p><strong>Up to eight sets run at once.</strong> A ninth start is ignored until one
+of the eight is stopped.</p>
+<p><strong>A set started later draws over sets started earlier</strong>, and the mouse
+pointer stays above all of them whether or not your game ever calls
+<code>MOUSE</code>.</p>
+<p><strong>Playback.</strong> Every frame carries its own delay, 1 to 255 frame
+interrupts. A looping set cycles forever; a one-shot plays to its last
+frame and holds that frame on screen until something stops it.</p>
+<p><strong>A start that cannot be satisfied is silently ignored</strong> and the game
+carries on: a missing file, a file the loader refuses, no free set, no
+room left in one of the budgets below. A release build says nothing at
+all; a DEBUG build prints a short marker naming the reason. The reasons
+are listed in <a href="reference/ani-format.html#4-what-the-loader-refuses">ANI format</a>.</p>
+<h2 id="drawing-a-set">Drawing a set</h2>
+<p>Put the artwork in <code>IMAGES\SPRITES\</code>, named by set number, with a
+sidecar text file of the same name beside it:</p>
+<pre><code>IMAGES\SPRITES\002.png
+IMAGES\SPRITES\002.txt
+</code></pre>
+<p>The build packs each one into <code>RELEASE\NNN.ANI</code> and prints a line
+naming what it made.</p>
+<p><strong>A sheet, <code>NNN.png</code>.</strong> A <strong>paletted 8-bit PNG</strong> (colour type 3 - an
+indexed image, not truecolour; anything else is rejected). Frames are
+laid out <strong>left to right, wrapping to the next row</strong> when the sheet is
+wider than one frame. Sheet width and height are multiples of 16.
+Exactly <code>#FF00FF</code> in the palette is transparent, and every palette entry
+of that colour counts.</p>
+<p><strong>Or a ready-made sprite file, <code>NNN.spr</code>.</strong> Output from
+<code>gfx2next -sprites -pal-std</code>: 256-byte cells, bytes already final. These
+are <strong>8-bit only</strong> and are taken exactly as they are, including any byte
+that is already the transparent value. A <code>.spr</code> whose length is not a
+multiple of 256 is not one of these files and is rejected; a compressed
+<code>NNN.spr.zx0</code> is rejected by name; having both <code>NNN.png</code> and <code>NNN.spr</code>
+for one number is a build error.</p>
+<p>There is no ready-made 4-bit input. Four-bit sets come from the PNG path,
+where the kit does the colour work itself.</p>
+<p><strong>The sidecar, <code>NNN.txt</code></strong>, is <code>key=value</code> lines with <code>;</code> for comments:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Meaning</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>w</code>, <code>h</code></td>
+<td>frame size in pixels, multiples of 16, 16 to 128</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>x</code>, <code>y</code></td>
+<td>baked position in picture pixels</td>
+<td>0, 0</td>
+</tr>
+<tr>
+<td><code>sheetw</code></td>
+<td>sheet width in pixels, for unpacking frames</td>
+<td>PNG: the image width. <code>.spr</code>: <code>w</code></td>
+</tr>
+<tr>
+<td><code>delay</code></td>
+<td>ticks per frame: one number, or a comma list with one number per frame</td>
+<td>5</td>
+</tr>
+<tr>
+<td><code>loop</code></td>
+<td>1 cycles forever, 0 plays once and holds the last frame</td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>frames</code></td>
+<td>how many frames to take from the sheet</td>
+<td>as many as the sheet holds</td>
+</tr>
+<tr>
+<td><code>bits</code></td>
+<td>8 or 4</td>
+<td>PNG: 4 when the colours partition into blocks of 15 or fewer, otherwise 8. <code>.spr</code>: must be 8 or absent</td>
+</tr>
+</tbody>
+</table>
+<p>The build prints one line per set, so you can see what you got without
+opening the file:</p>
+<pre><code>  sprite 002.ANI: 16x16, 2 frame(s), 4 cell(s), 8-bit, blocks 0140, 1040 bytes
+</code></pre>
+<p><code>blocks 0140</code> is the palette-block mask of an 8-bit set, one bit per
+block, and it is what you need for the coexistence rule below. A 4-bit
+set prints its block count instead.</p>
+<h2 id="budgets">Budgets</h2>
+<p>Everything below is shared by every set that is running at the same time,
+after what the mouse pointer holds. Stopping a set gives its share back
+at once.</p>
+<table>
+<thead>
+<tr>
+<th>Budget</th>
+<th>Ceiling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Unique cells, all running sets together</td>
+<td><strong>63</strong> 8-bit cells, or <strong>126</strong> 4-bit cells, or a mix (an 8-bit cell costs two of the 126 slots, a 4-bit cell one)</td>
+</tr>
+<tr>
+<td>Hardware sprites, all running sets together</td>
+<td><strong>127</strong> (a set uses one per cell of its frame, so <code>w/16 x h/16</code> of them)</td>
+</tr>
+<tr>
+<td>Palette blocks</td>
+<td><strong>16</strong> blocks of 16 colours, less the ones the pointer needs</td>
+</tr>
+<tr>
+<td>Frame table, per set</td>
+<td><strong>1024</strong> bytes, which is <code>frames x (1 + cells per frame)</code></td>
+</tr>
+<tr>
+<td>Frame size</td>
+<td>16 to 128 pixels each way, in steps of 16 (at most 8 by 8 cells)</td>
+</tr>
+<tr>
+<td>Frames per set</td>
+<td>1 to 255</td>
+</tr>
+</tbody>
+</table>
+<p>A cell is one 16x16 tile of a frame. Identical cells are shared: the kit
+packs each distinct cell image once, so a 64x64 frame of sixteen cells
+whose corners repeat costs fewer than sixteen.</p>
+<p><strong>The frame table is usually the first ceiling a large set meets.</strong> 1024
+bytes is 15 frames at 128x128, 60 frames at 64x64, 204 frames at 32x32
+and 255 frames (the frame limit itself) at 16x16.</p>
+<p><strong>Not a limit, but worth knowing:</strong> the sprite unit guarantees at least
+100 sprites on any one scanline. Eight sets of the widest possible
+frames, plus the pointer, is 65 sprites on a line, so no arrangement of
+sets can reach that guarantee. There is no per-line rule to design
+around.</p>
+<h2 id="8-bit-and-4-bit-sets-together">8-bit and 4-bit sets together</h2>
+<p>Every sprite on screen shares one 256-colour sprite palette, the pointer
+included. Think of it as <strong>16 blocks of 16 colours</strong>.</p>
+<ul>
+<li><strong>An 8-bit set's bytes are palette indices.</strong> Its colours must sit at
+  exactly the entries they name, so every block the set's bytes fall in
+  has to keep the palette's default contents. The mouse pointer is 8-bit
+  too, and needs the blocks its own artwork uses.</li>
+<li><strong>A 4-bit set claims whole blocks</strong> and writes its own 16 colours into
+  each. That is what lets it pack two pixels per byte and use half the
+  pattern space.</li>
+</ul>
+<p>So the rule is a simple one: <strong>a 4-bit set may not claim a block that an
+8-bit set or the pointer is using, and an 8-bit set may not use a block a
+4-bit set has claimed.</strong> A start that would collide is ignored, and
+nothing on screen changes. Stopping a 4-bit set restores the default
+colours in its blocks, so the space becomes usable again immediately.</p>
+<p>A game whose sets are all one kind never meets this rule at all. If you
+do mix them, the build's <code>blocks</code> mask for each 8-bit set tells you which
+blocks are spoken for, and a 4-bit set takes the lowest free blocks it
+can find.</p>
+<p><strong>Transparency is <code>#FF00FF</code> magenta</strong>, as it is everywhere else in the
+kit. In an 8-bit set magenta becomes the hardware's transparent colour,
+and an opaque colour that happens to land on that same value is nudged
+one step up the green scale so it draws instead of punching a hole - the
+same defence picture palettes get. In a 4-bit set, entry 3 of each block
+is the transparent one and the kit puts your magenta there.</p>
+<h2 id="what-stops-a-set">What stops a set</h2>
+<p>Sets are transient, like a picture. These stop every running set and free
+everything they held:</p>
+<ul>
+<li><code>PICTURE</code> and <code>DISPLAY</code>, including of the picture already on screen</li>
+<li><code>END</code></li>
+<li>a completed <code>LOAD</code> or <code>RAMLOAD</code></li>
+<li>starting a video with <code>GFX 13</code> or <code>GFX 14</code></li>
+<li>a change of part</li>
+</ul>
+<p>These do <strong>not</strong> touch a running set: <code>RESTART</code>, <code>CLS</code>, the window
+condacts, <code>GFX 17</code> (layer order), <code>GFX 18</code> (text width), <code>MOUSE</code>,
+installing a font, and <code>SAVE</code>. A set keeps playing through all your text
+output and while the game waits for a key.</p>
+<p><code>RESTART</code> is deliberately absent from the first list. In a template game
+it is the per-move re-entry into the response loop, so a set that died
+there would be unusable in practice.</p>
+<p><strong>Animation state is never saved.</strong> A save file records no sets, and a
+restored game starts with none running. Re-issue the starts you want
+where you re-issue <code>PICTURE</code>, in the location process, and the room comes
+back complete.</p>
+<p><strong>A restarted set costs no card read after the first one.</strong> The file
+image stays in memory once loaded, so stopping and starting a set as the
+player walks in and out of a location touches the SD card only the first
+time. A change of part clears that, since set numbers belong to the part.</p>
+<p><strong>Sprites are off for the whole of a video</strong> and come back when it ends,
+with no sets running. Start the ones you want again after the video.</p>
+<h2 id="timing">Timing</h2>
+<p>Frame delays are counted in frame interrupts, so a set plays at the
+machine's frame rate: 50 ticks a second in a 50 Hz display mode, 60 in a
+60 Hz one, and a set authored to look right at 50 Hz runs about a fifth
+faster at 60.</p>
+<p>At 60 Hz a frame change on a large multi-cell set can also show a single
+torn frame, where part of the set has changed and part has not. It lasts
+one frame and does not accumulate. Small sets are unaffected.</p>
+</main>
+</body>
+</html>

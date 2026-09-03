@@ -5,6 +5,10 @@ game behaves, how it builds, or what the kit gives you, it is here.
 
 ## 0.9.0 - unreleased
 
+- **Animated sprites.** `GFX 19`, `20` and `21` start and stop sprite
+  sets packed by the kit from `IMAGES\SPRITES`; 8-bit and 4-bit sets,
+  up to eight at once, cached after the first load. See
+  [Animated sprites](sprites.md).
 - **Externs speak XBN format 2.** The header is fourteen bytes now,
   with a version byte of 2 and four reserved bytes that must be
   zero; a version 1 `GAME.XBN` is rejected and the game plays with

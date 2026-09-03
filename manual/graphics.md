@@ -313,17 +313,18 @@ running at. A game knows its own width because it chose it with `GFX n
 are no symbolic names for these - DAAD Ready's Appendix D covers `SFX`
 and `MOUSE` only - so write the number.
 
-For every sub-command except 13, 14, 16, 17 and 18 the first parameter
-`n` is ignored: the buffer operations act on the whole surface and take
-no argument. For 13 and 14, `n` is the video number; for 16, it is the
-font number; for 17, it is the layer-order selector; for 18, it is the
-text width selector.
+For every sub-command except 13, 14, 16, 17, 18, 19, 20 and 21 the first
+parameter `n` is ignored: the buffer operations act on the whole surface
+and take no argument. For 13 and 14, `n` is the video number; for 16, it
+is the font number; for 17, it is the layer-order selector; for 18, it is
+the text width selector; for 19 and 21, it is the sprite set number; for
+20, it is the first of four flags carrying the set number and position.
 
 "Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
 prints a marker). That covers 7, 8, 11, 12 and 15, and everything
-from 19 up, as well as 9 and 10 - see
+from 22 up, as well as 9 and 10 - see
 [Platform notes](platform-notes.md) for why 9, 10 and 15 have nothing
 to act on here.
 
@@ -341,6 +342,9 @@ to act on here.
 | 16 | Install font `n`. `n` 0 is the base font - the embedded table, then `FONT.CHR` over it if one exists; 1-9 select `FONT1.CHR` to `FONT9.CHR`. A missing or wrong-size file is a silent no-op - the previously-installed font stays. See [Fonts](fonts.md). |
 | 17 | Text layer order. `n` 0 puts the picture on top (Layer 2 above the tilemap - the default, and what every existing game gets); `n` 1 puts the text layer on top. `n` 2 and above is a no-op - the previously-set order stays. See [Text over a picture](#text-over-a-picture) above for the transparent-paper technique this enables. |
 | 18 | Text mode width. `n` 0 selects 80x32 single-width text (the default); `n` 1 selects 40x32 double-width text. A same-width call does nothing. Switching is a clean slate: the screen clears, all 8 windows reset to full screen at the new width, a pending word-wrap fragment is discarded, and every window's cursor homes - re-issue `WINAT`/`WINSIZE` after switching if your game uses custom windows. `n` 2 and above is a no-op. See [40-column games](#40-column-games) below. |
+| 19 | Start animated sprite set `n` (0-254) at the position baked into `NNN.ANI`. A set already running restarts from its first frame. Silently ignored when the file is missing or the set does not fit beside what is already running. See [Animated sprites](sprites.md). |
+| 20 | As 19, taking the set number from flag `n`, X from flags `n+1` (low) and `n+2` (high), Y from flag `n+3`. The flags are read once and never reserved. `n` above 252 is ignored. See [Animated sprites](sprites.md). |
+| 21 | Stop sprite set `n` and free its space; `n` 255 stops every set. Stopping a set that is not running does nothing. See [Animated sprites](sprites.md). |
 
 Sub 17 composes the layer priority only - it never enables or disables
 Layer 2, so it cannot bring back a picture surface the game has hidden.

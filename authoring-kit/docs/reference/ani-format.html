@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ANI format - animated sprite sets - NextDAAD</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<main>
+<h1 id="ani-format-animated-sprite-sets">ANI format - animated sprite sets</h1>
+<p>What NextDAAD's sprite loader accepts, for anyone writing a packer,
+exporter or editor plugin that emits these files instead of using the
+kit's own. Authors working from <code>IMAGES\SPRITES\</code> never need any of this;
+<a href="../sprites.html">Animated sprites</a> is the page for that.</p>
+<p>A file that breaks any rule here is refused rather than misrendered - a
+rejected set simply does not appear, and the game carries on. Section 4
+lists every refusal.</p>
+<p>Files are named <code>NNN.ANI</code>, where <code>NNN</code> is the set number 0 to 254,
+zero-padded to three digits. All multi-byte fields are little-endian.</p>
+<hr />
+<h2 id="1-header">1. Header</h2>
+<p>Sixteen bytes, at offset 0.</p>
+<table>
+<thead>
+<tr>
+<th>Offset</th>
+<th>Size</th>
+<th>Field</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>2</td>
+<td>magic, <code>N</code> <code>A</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>1</td>
+<td>version, must be 1</td>
+</tr>
+<tr>
+<td>3</td>
+<td>1</td>
+<td>flags: bit 0 loop, bit 1 4-bit, all other bits 0</td>
+</tr>
+<tr>
+<td>4</td>
+<td>1</td>
+<td>W, cells wide, 1-8</td>
+</tr>
+<tr>
+<td>5</td>
+<td>1</td>
+<td>H, cells high, 1-8</td>
+</tr>
+<tr>
+<td>6</td>
+<td>2</td>
+<td>default X, 0-319</td>
+</tr>
+<tr>
+<td>8</td>
+<td>1</td>
+<td>default Y, 0-255</td>
+</tr>
+<tr>
+<td>9</td>
+<td>1</td>
+<td>frameCount, 1-255</td>
+</tr>
+<tr>
+<td>10</td>
+<td>1</td>
+<td>patternCount, 1-63 (8-bit) or 1-127 (4-bit)</td>
+</tr>
+<tr>
+<td>11</td>
+<td>1</td>
+<td>blockCount, 1-15 for a 4-bit set, 0 for an 8-bit one</td>
+</tr>
+<tr>
+<td>12</td>
+<td>2</td>
+<td>blockMask: 8-bit sets, bit <code>b</code> set if any opaque byte has top nibble <code>b</code>. 4-bit sets write 0</td>
+</tr>
+<tr>
+<td>14</td>
+<td>2</td>
+<td>tableLen, <code>frameCount x (1 + W x H)</code>, at most 1024</td>
+</tr>
+</tbody>
+</table>
+<p>A cell is 16x16 pixels, so W and H give a frame of 16 to 128 pixels each
+way. The default X and Y are picture pixels, converted to the sprite
+plane by the interpreter; <code>GFX f 20</code> overrides both at the call.</p>
+<p><code>blockMask</code> is how the interpreter enforces the coexistence rule between
+8-bit and 4-bit sets, so an 8-bit file must declare it honestly: a bit
+for the top nibble of every opaque byte in the pattern data.</p>
+<h2 id="2-body">2. Body</h2>
+<p>Four parts, in this order, immediately after the header. Two of them are
+present only in a 4-bit set.</p>
+<p><strong>1. Frame table</strong>, <code>tableLen</code> bytes. Per frame, one delay byte 1-255,
+then <code>W x H</code> cell bytes in row-major order, cell 0 top-left. A cell byte
+is a <strong>set-relative pattern index</strong>, 0 to <code>patternCount - 1</code>, or 255 for
+a hidden cell that draws nothing.</p>
+<p><strong>Cell 0 may never be 255.</strong> It is the hardware anchor that every other
+cell of the frame is positioned against, and an invisible anchor hides
+the whole frame. A packer whose art needs an empty top-left cell must
+emit a blank pattern and point cell 0 at it.</p>
+<p><strong>2. Per-pattern block table</strong>, 4-bit sets only, <code>patternCount</code> bytes.
+Byte <code>p</code> is the set-relative palette block, 0 to <code>blockCount - 1</code>, that
+pattern <code>p</code> draws with. The interpreter rewrites these into the actual
+blocks it assigns at load, so the tick does no arithmetic.</p>
+<p><strong>3. Block palettes</strong>, 4-bit sets only, <code>blockCount x 32</code> bytes: for each
+block, 16 entries of two bytes in the sprite palette's own order.</p>
+<pre><code>byte 0 : RRRGGGBB   the top 8 bits of a 9-bit colour
+byte 1 : bit 0      the 9th (least significant) blue bit
+</code></pre>
+<p><strong>Entry 3 of every block is the transparent one.</strong> The hardware compares
+the pixel nibble against 3 and draws nothing when they match, so the
+colour stored at entry 3 is never displayed. The kit writes <code>$E3</code>, 1
+there for legibility.</p>
+<p><strong>4. Pattern data</strong>, <code>patternCount x 256</code> bytes for an 8-bit set or
+<code>patternCount x 128</code> for a 4-bit one, in set-relative index order, pixels
+row-major within each 16x16 cell.</p>
+<ul>
+<li><strong>8-bit</strong>: one byte per pixel, RGB332, <code>$E3</code> transparent. Identical in
+  shape and convention to <code>POINTER.SPR</code>.</li>
+<li><strong>4-bit</strong>: two pixels per byte, <strong>the left pixel in the high nibble</strong>.
+  That is the order <code>gfx2next</code> packs, and the order the sprite hardware
+  reads.</li>
+</ul>
+<h2 id="3-limits">3. Limits</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>W, H</td>
+<td>1 to 8 cells, so 16 to 128 pixels</td>
+</tr>
+<tr>
+<td>frameCount</td>
+<td>1 to 255</td>
+</tr>
+<tr>
+<td>patternCount</td>
+<td>1 to 63 (8-bit), 1 to 127 (4-bit)</td>
+</tr>
+<tr>
+<td>blockCount</td>
+<td>1 to 15 (4-bit), exactly 0 (8-bit)</td>
+</tr>
+<tr>
+<td>X</td>
+<td>0 to 319</td>
+</tr>
+<tr>
+<td>Y</td>
+<td>0 to 255</td>
+</tr>
+<tr>
+<td>tableLen</td>
+<td>exactly <code>frameCount x (1 + W x H)</code>, at most 1024</td>
+</tr>
+<tr>
+<td>File size</td>
+<td>under 18K, so a set never spans more than two 16K banks</td>
+</tr>
+</tbody>
+</table>
+<p>Two of those are worth a sentence each.</p>
+<p><strong>The 1024-byte frame table is the ceiling most large sets meet first.</strong>
+It allows 15 frames at 128x128, 60 at 64x64, 204 at 32x32 and 255 - the
+frame limit itself - at 16x16.</p>
+<p><strong><code>patternCount</code> is a file limit, not a run-time one.</strong> Pattern storage
+is 126 half-slots shared by every running set, after the pointer's. An
+8-bit pattern takes an aligned pair of them and a 4-bit pattern takes
+one, so 63 is the most any combination of 8-bit patterns can have live
+and 126 the most 4-bit ones. A valid 127-pattern 4-bit file is therefore
+one the loader will always refuse for want of space.</p>
+<h2 id="4-what-the-loader-refuses">4. What the loader refuses</h2>
+<p>Every refusal leaves the game running and the screen unchanged: no set
+starts, and any resource already taken for the attempt is given back. A
+release build is silent. A DEBUG build prints <code>SPR? nn</code> in its marker
+column, where <code>nn</code> is the hex reason code below.</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Refusal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>02</td>
+<td>No free set record - eight sets are already running</td>
+</tr>
+<tr>
+<td>03</td>
+<td>Bad argument: set 255 given to <code>GFX n 19</code> or <code>GFX f 20</code>, or <code>GFX f 20</code> with <code>f</code> above 252</td>
+</tr>
+<tr>
+<td>04</td>
+<td>No <code>NNN.ANI</code> in <code>PARTn\</code> and none in the root folder</td>
+</tr>
+<tr>
+<td>05</td>
+<td>Header rejected (the list below)</td>
+</tr>
+<tr>
+<td>06</td>
+<td>No free bank to hold the file image, even after evicting cached sets</td>
+</tr>
+<tr>
+<td>07</td>
+<td>Pattern half-slots exhausted</td>
+</tr>
+<tr>
+<td>08</td>
+<td>No contiguous run of <code>W x H</code> sprite slots left</td>
+</tr>
+<tr>
+<td>09</td>
+<td>Palette blocks exhausted - a 4-bit set could not claim <code>blockCount</code> free ones</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Block conflict - an 8-bit set's <code>blockMask</code> overlaps blocks a 4-bit set has claimed</td>
+</tr>
+<tr>
+<td>11</td>
+<td>File length does not match the header, or the read failed</td>
+</tr>
+</tbody>
+</table>
+<p>Code 05 covers every header and table check:</p>
+<ul>
+<li>magic not <code>N</code> <code>A</code>, or version not 1</li>
+<li>any flags bit above bit 1 set</li>
+<li>W or H outside 1-8</li>
+<li>X above 319</li>
+<li>frameCount 0</li>
+<li>patternCount 0, above 63 for an 8-bit set, or above 127 for a 4-bit one</li>
+<li>blockCount not 1-15 for a 4-bit set, or not 0 for an 8-bit one</li>
+<li>tableLen not equal to <code>frameCount x (1 + W x H)</code>, or above 1024</li>
+<li>a cell byte that is neither 255 nor less than patternCount</li>
+<li>cell 0 equal to 255 in any frame</li>
+<li>a block-table byte not less than blockCount</li>
+</ul>
+<p>Code 11 is the whole-file check: the header's own fields imply an exact
+total size, and the file must be exactly that many bytes.</p>
+</main>
+</body>
+</html>

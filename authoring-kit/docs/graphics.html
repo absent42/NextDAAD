@@ -280,16 +280,17 @@ running at. A game knows its own width because it chose it with <code>GFX n
 <p><code>GFX n s</code> takes the sub-command in its <strong>second</strong> parameter, <code>s</code>. There
 are no symbolic names for these - DAAD Ready's Appendix D covers <code>SFX</code>
 and <code>MOUSE</code> only - so write the number.</p>
-<p>For every sub-command except 13, 14, 16, 17 and 18 the first parameter
-<code>n</code> is ignored: the buffer operations act on the whole surface and take
-no argument. For 13 and 14, <code>n</code> is the video number; for 16, it is the
-font number; for 17, it is the layer-order selector; for 18, it is the
-text width selector.</p>
+<p>For every sub-command except 13, 14, 16, 17, 18, 19, 20 and 21 the first
+parameter <code>n</code> is ignored: the buffer operations act on the whole surface
+and take no argument. For 13 and 14, <code>n</code> is the video number; for 16, it
+is the font number; for 17, it is the layer-order selector; for 18, it is
+the text width selector; for 19 and 21, it is the sprite set number; for
+20, it is the first of four flags carrying the set number and position.</p>
 <p>"Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
 prints a marker). That covers 7, 8, 11, 12 and 15, and everything
-from 19 up, as well as 9 and 10 - see
+from 22 up, as well as 9 and 10 - see
 <a href="platform-notes.html">Platform notes</a> for why 9, 10 and 15 have nothing
 to act on here.</p>
 <table>
@@ -347,6 +348,18 @@ to act on here.</p>
 <tr>
 <td>18</td>
 <td>Text mode width. <code>n</code> 0 selects 80x32 single-width text (the default); <code>n</code> 1 selects 40x32 double-width text. A same-width call does nothing. Switching is a clean slate: the screen clears, all 8 windows reset to full screen at the new width, a pending word-wrap fragment is discarded, and every window's cursor homes - re-issue <code>WINAT</code>/<code>WINSIZE</code> after switching if your game uses custom windows. <code>n</code> 2 and above is a no-op. See <a href="#40-column-games">40-column games</a> below.</td>
+</tr>
+<tr>
+<td>19</td>
+<td>Start animated sprite set <code>n</code> (0-254) at the position baked into <code>NNN.ANI</code>. A set already running restarts from its first frame. Silently ignored when the file is missing or the set does not fit beside what is already running. See <a href="sprites.html">Animated sprites</a>.</td>
+</tr>
+<tr>
+<td>20</td>
+<td>As 19, taking the set number from flag <code>n</code>, X from flags <code>n+1</code> (low) and <code>n+2</code> (high), Y from flag <code>n+3</code>. The flags are read once and never reserved. <code>n</code> above 252 is ignored. See <a href="sprites.html">Animated sprites</a>.</td>
+</tr>
+<tr>
+<td>21</td>
+<td>Stop sprite set <code>n</code> and free its space; <code>n</code> 255 stops every set. Stopping a set that is not running does nothing. See <a href="sprites.html">Animated sprites</a>.</td>
 </tr>
 </tbody>
 </table>
