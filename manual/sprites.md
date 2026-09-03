@@ -34,12 +34,15 @@ plane for you, so the 32-pixel sprite border never appears in your source.
 **`GFX f 20` reads its four flags once, at the call, and reserves
 nothing.** They are ordinary flags you may use for anything else before
 and after; writing to them later does not move a running set. `f` above
-252 is ignored, because the four reads would run off the end of the flag
-table.
+252 is refused, because the four reads would run off the end of the flag
+table, and so is an X high byte above 1.
 
 **Starting a set that is already running restarts it from frame 0.** It
 is not reloaded and nothing is reallocated, so a restart cannot fail and
-costs nothing. **Stopping a set that is not running does nothing.**
+costs nothing. That holds for `GFX f 20` too: the X and Y in the flags
+are ignored on a restart, so a set has to be stopped before it can be
+started somewhere else. **Stopping a set that is not running does
+nothing.**
 
 **Up to eight sets run at once.** A ninth start is ignored until one
 of the eight is stopped.
@@ -105,10 +108,10 @@ The build prints one line per set, so you can see what you got without
 opening the file:
 
 ```
-  sprite 002.ANI: 16x16, 2 frame(s), 4 cell(s), 8-bit, blocks 0140, 1040 bytes
+  sprite 002.ANI: 16x16, 2 frame(s), 2 cell(s), 8-bit, blocks 8000, 532 bytes
 ```
 
-`blocks 0140` is the palette-block mask of an 8-bit set, one bit per
+`blocks 8000` is the palette-block mask of an 8-bit set, one bit per
 block, and it is what you need for the coexistence rule below. A 4-bit
 set prints its block count instead.
 
@@ -164,6 +167,11 @@ A game whose sets are all one kind never meets this rule at all. If you
 do mix them, the build's `blocks` mask for each 8-bit set tells you which
 blocks are spoken for, and a 4-bit set takes the lowest free blocks it
 can find.
+
+**Installing a different pointer with `MOUSE n 5` while a 4-bit set is
+running does not re-check the rule**, so the new pointer's colours can
+land in blocks the set has already claimed. Change pointers before you
+start 4-bit sets, not after.
 
 **Transparency is `#FF00FF` magenta**, as it is everywhere else in the
 kit. In an 8-bit set magenta becomes the hardware's transparent colour,

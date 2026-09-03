@@ -184,12 +184,14 @@ is 126 half-slots shared by every running set, after the pointer's. An
 8-bit pattern takes an aligned pair of them and a 4-bit pattern takes
 one, so 63 is the most any combination of 8-bit patterns can have live
 and 126 the most 4-bit ones. A valid 127-pattern 4-bit file is therefore
-one the loader will always refuse for want of space.</p>
+one the loader will always refuse for want of space, and the kit's own
+packer refuses to write one.</p>
 <h2 id="4-what-the-loader-refuses">4. What the loader refuses</h2>
 <p>Every refusal leaves the game running and the screen unchanged: no set
 starts, and any resource already taken for the attempt is given back. A
 release build is silent. A DEBUG build prints <code>SPR? nn</code> in its marker
 column, where <code>nn</code> is the hex reason code below.</p>
+<p>Codes are printed in hexadecimal, so they read 02 to 0C.</p>
 <table>
 <thead>
 <tr>
@@ -204,7 +206,7 @@ column, where <code>nn</code> is the hex reason code below.</p>
 </tr>
 <tr>
 <td>03</td>
-<td>Bad argument: set 255 given to <code>GFX n 19</code> or <code>GFX f 20</code>, or <code>GFX f 20</code> with <code>f</code> above 252</td>
+<td>Set 255 given to <code>GFX n 19</code> or <code>GFX f 20</code> - 255 is the stop-all argument</td>
 </tr>
 <tr>
 <td>04</td>
@@ -231,12 +233,16 @@ column, where <code>nn</code> is the hex reason code below.</p>
 <td>Palette blocks exhausted - a 4-bit set could not claim <code>blockCount</code> free ones</td>
 </tr>
 <tr>
-<td>10</td>
+<td>0A</td>
 <td>Block conflict - an 8-bit set's <code>blockMask</code> overlaps blocks a 4-bit set has claimed</td>
 </tr>
 <tr>
-<td>11</td>
+<td>0B</td>
 <td>File length does not match the header, or the read failed</td>
+</tr>
+<tr>
+<td>0C</td>
+<td><code>GFX f 20</code> with <code>f</code> above 252, or with an X high byte above 1</td>
 </tr>
 </tbody>
 </table>
@@ -254,7 +260,7 @@ column, where <code>nn</code> is the hex reason code below.</p>
 <li>cell 0 equal to 255 in any frame</li>
 <li>a block-table byte not less than blockCount</li>
 </ul>
-<p>Code 11 is the whole-file check: the header's own fields imply an exact
+<p>Code 0B is the whole-file check: the header's own fields imply an exact
 total size, and the file must be exactly that many bytes.</p>
 </main>
 </body>

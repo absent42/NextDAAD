@@ -130,6 +130,17 @@ def main(out):
                     px[row * 16 + y][f * 32 + col * 16 + x] = base + (x + y + shift) % 12
     write_png(os.path.join(out, "018.png"), 64, 32, pal, px)
     write_txt(os.path.join(out, "018.txt"), w=32, h=32, bits=4, delay=10, loop=1)
+    # 019: 017 with one frame more. 127 unique 4-bit patterns is a legal FILE
+    # (the header field allows it) but one half-slot over what the runtime can
+    # ever allocate, so the packer must refuse it rather than ship a set that
+    # can never load.
+    pal = [MAGENTA] + [(32 * (k % 8), 32 * ((k // 8) % 8), 32 * ((k // 64) % 8))
+                       for k in range(1, 128)] + [(0, 0, 0)] * 128
+    px = fill(2032, 16, 0)
+    for k in range(127):
+        paste(px, k * 16, 0, fill(16, 16, k + 1))
+    write_png(os.path.join(out, "019.png"), 2032, 16, pal, px)
+    write_txt(os.path.join(out, "019.txt"), w=16, h=16, bits=4)
     return 0
 
 if __name__ == "__main__":

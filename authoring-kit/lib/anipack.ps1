@@ -222,8 +222,14 @@ for ($f = 0; $f -lt $frameCount; $f++) {
         [void]$table.Add([byte]$patIndex[$key])
     }
 }
-$maxPat = if ($is4) { 127 } else { 63 }
-if ($patterns.Count -gt $maxPat) { throw "anipack: $($patterns.Count) unique cells, the limit is $maxPat for $(if ($is4) {'4-bit'} else {'8-bit'}) sets" }
+# 4-bit: the FILE format allows 127 patterns but the runtime can only ever
+# allocate 126 half-slots (0 and 1 belong to the mouse pointer), so a
+# 127-pattern set would be refused at load. Reject it here instead.
+$maxPat = if ($is4) { 126 } else { 63 }
+if ($patterns.Count -gt $maxPat) {
+    $why = if ($is4) { '126 - pattern half-slots 0 and 1 are the mouse pointer''s, so a 127-pattern 4-bit set could never be loaded' } else { '63' }
+    throw "anipack: $($patterns.Count) unique cells, the limit is $why for $(if ($is4) {'4-bit'} else {'8-bit'}) sets"
+}
 if ($table.Count -gt $TABLE_MAX) { throw "anipack: frame table is $($table.Count) bytes, the limit is $TABLE_MAX ($frameCount frames of $cells cells)" }
 
 # ---- 8-bit block mask

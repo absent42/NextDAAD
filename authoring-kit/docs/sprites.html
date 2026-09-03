@@ -53,11 +53,14 @@ plane for you, so the 32-pixel sprite border never appears in your source.</p>
 <p><strong><code>GFX f 20</code> reads its four flags once, at the call, and reserves
 nothing.</strong> They are ordinary flags you may use for anything else before
 and after; writing to them later does not move a running set. <code>f</code> above
-252 is ignored, because the four reads would run off the end of the flag
-table.</p>
+252 is refused, because the four reads would run off the end of the flag
+table, and so is an X high byte above 1.</p>
 <p><strong>Starting a set that is already running restarts it from frame 0.</strong> It
 is not reloaded and nothing is reallocated, so a restart cannot fail and
-costs nothing. <strong>Stopping a set that is not running does nothing.</strong></p>
+costs nothing. That holds for <code>GFX f 20</code> too: the X and Y in the flags
+are ignored on a restart, so a set has to be stopped before it can be
+started somewhere else. <strong>Stopping a set that is not running does
+nothing.</strong></p>
 <p><strong>Up to eight sets run at once.</strong> A ninth start is ignored until one
 of the eight is stopped.</p>
 <p><strong>A set started later draws over sets started earlier</strong>, and the mouse
@@ -143,9 +146,9 @@ where the kit does the colour work itself.</p>
 </table>
 <p>The build prints one line per set, so you can see what you got without
 opening the file:</p>
-<pre><code>  sprite 002.ANI: 16x16, 2 frame(s), 4 cell(s), 8-bit, blocks 0140, 1040 bytes
+<pre><code>  sprite 002.ANI: 16x16, 2 frame(s), 2 cell(s), 8-bit, blocks 8000, 532 bytes
 </code></pre>
-<p><code>blocks 0140</code> is the palette-block mask of an 8-bit set, one bit per
+<p><code>blocks 8000</code> is the palette-block mask of an 8-bit set, one bit per
 block, and it is what you need for the coexistence rule below. A 4-bit
 set prints its block count instead.</p>
 <h2 id="budgets">Budgets</h2>
@@ -218,6 +221,10 @@ colours in its blocks, so the space becomes usable again immediately.</p>
 do mix them, the build's <code>blocks</code> mask for each 8-bit set tells you which
 blocks are spoken for, and a 4-bit set takes the lowest free blocks it
 can find.</p>
+<p><strong>Installing a different pointer with <code>MOUSE n 5</code> while a 4-bit set is
+running does not re-check the rule</strong>, so the new pointer's colours can
+land in blocks the set has already claimed. Change pointers before you
+start 4-bit sets, not after.</p>
 <p><strong>Transparency is <code>#FF00FF</code> magenta</strong>, as it is everywhere else in the
 kit. In an 8-bit set magenta becomes the hardware's transparent colour,
 and an opaque colour that happens to land on that same value is nudged

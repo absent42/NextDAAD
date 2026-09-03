@@ -163,6 +163,13 @@ Assert-Throws { & $pack -Spr "$work\013.spr" -Txt "$work\013.txt" -Out "$work\01
 Set-Content "$work\014.txt" "h=16"
 Assert-Throws { & $pack -Spr "$work\010.spr" -Txt "$work\014.txt" -Out "$work\014.ANI" } "'w' is required" '014 missing w'
 
+# ---- 019 a 4-bit set with 127 unique patterns: a legal file the runtime can
+# never load (half-slots 0 and 1 are the pointer's, leaving 126), so the packer
+# refuses it. 017 with its 126 patterns is the accepted case, packed by the
+# -Sprites leg of tests\build-tests.ps1.
+Convert-Sheet "$work\019.png" @() | Out-Null
+Assert-Throws { Pack '019' @() } 'the limit is 126' '019 127 unique 4-bit cells refused'
+
 # ---- 016 synthetic $E3 cell: a hand-built .spr, not gfx2next output, so the
 # byte values are exact and known - proves a byte that WOULD be dodged on the
 # PNG path ($E3) survives untouched on the no-Png ready-made path.

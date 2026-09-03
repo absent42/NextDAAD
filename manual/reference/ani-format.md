@@ -108,7 +108,8 @@ is 126 half-slots shared by every running set, after the pointer's. An
 8-bit pattern takes an aligned pair of them and a 4-bit pattern takes
 one, so 63 is the most any combination of 8-bit patterns can have live
 and 126 the most 4-bit ones. A valid 127-pattern 4-bit file is therefore
-one the loader will always refuse for want of space.
+one the loader will always refuse for want of space, and the kit's own
+packer refuses to write one.
 
 ## 4. What the loader refuses
 
@@ -117,18 +118,21 @@ starts, and any resource already taken for the attempt is given back. A
 release build is silent. A DEBUG build prints `SPR? nn` in its marker
 column, where `nn` is the hex reason code below.
 
+Codes are printed in hexadecimal, so they read 02 to 0C.
+
 | Code | Refusal |
 |---|---|
 | 02 | No free set record - eight sets are already running |
-| 03 | Bad argument: set 255 given to `GFX n 19` or `GFX f 20`, or `GFX f 20` with `f` above 252 |
+| 03 | Set 255 given to `GFX n 19` or `GFX f 20` - 255 is the stop-all argument |
 | 04 | No `NNN.ANI` in `PARTn\` and none in the root folder |
 | 05 | Header rejected (the list below) |
 | 06 | No free bank to hold the file image, even after evicting cached sets |
 | 07 | Pattern half-slots exhausted |
 | 08 | No contiguous run of `W x H` sprite slots left |
 | 09 | Palette blocks exhausted - a 4-bit set could not claim `blockCount` free ones |
-| 10 | Block conflict - an 8-bit set's `blockMask` overlaps blocks a 4-bit set has claimed |
-| 11 | File length does not match the header, or the read failed |
+| 0A | Block conflict - an 8-bit set's `blockMask` overlaps blocks a 4-bit set has claimed |
+| 0B | File length does not match the header, or the read failed |
+| 0C | `GFX f 20` with `f` above 252, or with an X high byte above 1 |
 
 Code 05 covers every header and table check:
 
@@ -144,5 +148,5 @@ Code 05 covers every header and table check:
 - cell 0 equal to 255 in any frame
 - a block-table byte not less than blockCount
 
-Code 11 is the whole-file check: the header's own fields imply an exact
+Code 0B is the whole-file check: the header's own fields imply an exact
 total size, and the file must be exactly that many bytes.
