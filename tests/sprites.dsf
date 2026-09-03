@@ -111,6 +111,7 @@ LOOK   4  verb
 /13 "S13 set 33 evicts the coldest cached set#n"
 /14 "S14 4-bit composite with relatives#n"
 /15 "S15 PICTURE stops all#n"
+/16 "S16 320-wide: composite (0,0), torch (200,100), pointer#n"
 /OTX
 /0 "a brass lamp"
 /LTX
@@ -220,5 +221,22 @@ $next3
         DISPLAY 0
         MESSAGE 15
         ANYKEY
+        MOUSE 0 1
+        GFX 18 19
+        LET 100 2
+        LET 101 200
+        LET 102 0
+        LET 103 100
+        GFX 100 20
+        MESSAGE 16
+
+$poll4
+> _ _   MOUSE 104 3
+        INKEY
+        SKIP $next4
+> _ _   SKIP $poll4
+
+$next4
+> _ _   PAUSE 25
         END
 /END

@@ -121,12 +121,16 @@ def expect(cond, what):
         sys.exit("sprites_dump: FAIL " + what)
 
 
-def step(z, until=None, timeout=3.0):
+def step(z, until=None, timeout=3.0, pre=0.0):
     """Tap the dismiss key, then read the snapshot. With `until`, poll the
     snapshot until the predicate holds or the timeout passes: the steps
     that wait in a GETMS tracking loop (S1, S2, S14) leave through a
     PAUSE 25 debounce, so their successor state lands later than a
-    fixed sleep allows."""
+    fixed sleep allows. `pre` sleeps before the key: a predecessor whose
+    predicate fires early (S15's stop-all lands before its picture has
+    finished drawing) is not yet at its key wait when the reader returns."""
+    if pre:
+        time.sleep(pre)
     if until is None:
         z.tap_dismiss_key()
         time.sleep(0.6)
@@ -300,7 +304,14 @@ def run(z, verbose):
     expect(v[SR["ATTR"]] == 124, "S14 anchor attribute 124 for four cells (got %d)" % v[SR["ATTR"]])
     s = step(z, until=lambda st: st.live() == {}); show("S15", s); r = s.live()
     expect(r == {} and not (s.hook & 2) and 2 in s.cached(), "S15 PICTURE stops all, cache kept")
-    print("sprites_dump: S1-S15 pass")
+    # Torch (blocks 15 only), not set 3: set 3's green is index $1C in block 1,
+    # which the 4-bit composite claims, so GFX 3 20 here is a correct refusal.
+    s = step(z, until=lambda st: 18 in st.live() and 2 in st.live(), pre=1.5); show("S16", s); r = s.live()
+    expect(sorted(r) == [2, 18], "S16 composite and torch live over the 320-wide picture, got %r" % sorted(r))
+    expect(r[2][SR["XLO"]] == 200 and r[2][SR["X8"]] == 0 and r[2][SR["Y"]] == 100,
+           "S16 320 mode: picture (200,100) is plane (200,100), no offset (got %d,%d)" % (r[2][SR["XLO"]], r[2][SR["Y"]]))
+    expect(r[18][SR["XLO"]] == 0 and r[18][SR["Y"]] == 0, "S16 320 mode: picture (0,0) is plane (0,0)")
+    print("sprites_dump: S1-S16 pass")
     return 0
 
 
