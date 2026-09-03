@@ -508,9 +508,15 @@ CLOAK   22 noun
 ; tests\gmodegate.dsf for the gated version this is trimmed from) ----
 > _ _   AT 0                    ; starting the game?
         PROCESS 6
+; Text sits BELOW the picture, never under it: the staged art (1.NX2,
+; 2.NX2) is 320 x 96 pixels, and a 320-wide picture maps one text cell to
+; 4 x 8 pixels from row 0, so it covers text rows 0-11. A fullscreen window
+; here hid the prompt and readouts behind the picture at the RC bench and
+; cost extra ENTERs (owner ruling 2026-09-03). Rows 12-27 stay inside the
+; band every display shows. PRO 6's one-shot init uses the same geometry.
 > _ _   WINDOW 1
-        WINAT 0 0
-        WINSIZE 25 127
+        WINAT 12 0
+        WINSIZE 16 80
         CLS
         DESC @fPlayer
 > _ _   PROCESS 1
@@ -810,6 +816,9 @@ CLOAK   22 noun
            GFX     0 18       ; back to 80 columns MID-MESSAGE
            PAUSE   100        ; 1 s: remainder lands at 80 - screenshot 2
            EXTERN  0 31       ; disarm (idempotent)
+           WINDOW  1          ; GFX n 18 reset every window to fullscreen:
+           WINAT   12 0       ; put the text back below the picture rows
+           WINSIZE 16 80      ; (see the start process) before more verbs
            DONE
 > XFAD _   PICTURE 1         ; only meaningful with -XbnFade staged
            DISPLAY 0         ; (fade example as GAME.XBN + 001.NX2 art);
@@ -1598,8 +1607,8 @@ CLOAK   22 noun
 /PRO 6
 ; ---- one-shot init ----
 > _ _   WINDOW 1
-        WINAT 0 0
-        WINSIZE 25 127
+        WINAT 12 0
+        WINSIZE 16 80
         PAPER 0
         INK 7
         CLS
