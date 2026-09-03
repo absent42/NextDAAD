@@ -33,20 +33,26 @@ SNAP = 0x5000
 SR_SIZE = 48; CHANS = 8; CE_SIZE = 4; CACHE = 16
 SR = dict(SET=0, KIND=1, W=2, H=3, CELLS=4, ATTR=5, PAT=6, NBLK=7, FRAMES=8, FRAME=9,
           COUNT=10, LOOP=11, CACHE=12, ROW=13, MASK=16, BLOCKS=20, X8=35, Y8=36, PATS=37,
-          CHAN=39, XLO=40, XHI=41, Y=42)
+          CHAN=39, XLO=40, Y=42)
 BLOCK = 488                        # sprRec..sprLoads, ASSERT SPR_DBG_BLOCK == 488
 SNAP_LEN = 4 + 1 + BLOCK + 1 + 1
 
 
 class State:
     def __init__(self, z):
-        for _ in range(5):
+        for i in range(5):
             b = z.read_memory(SNAP, SNAP_LEN)
             if b[:4] == b"SPR1" and b[4] == b[-1]:
                 break
+            # No signature on the FIRST read is a Release .nex, not a race:
+            # nothing ever writes $5000 there, so retrying cannot help.
+            if i == 0 and b[:4] != b"SPR1":
+                sys.exit("sprites_dump: no DEBUG snapshot at $%04X: build DEBUG "
+                         "last (pwsh build.ps1) before staging" % SNAP)
             time.sleep(0.05)
         else:
-            sys.exit("sprites_dump: snapshot torn or missing at $%04X" % SNAP)
+            sys.exit("sprites_dump: snapshot torn at $%04X" % SNAP)
+        self.seq = b[4]
         blob = b[5:5 + BLOCK]
         self.recs = [blob[i*SR_SIZE:(i+1)*SR_SIZE] for i in range(CHANS)]
         o = CHANS * SR_SIZE
@@ -216,8 +222,12 @@ def run(z, verbose):
     # parks there with SR_COUNT 0 rather than wrapping.
     time.sleep(0.5); s = State(z); r = s.live()
     expect(r[3][SR["FRAME"]] == 1 and r[3][SR["COUNT"]] == 0, "S7 one-shot holds its last frame")
+    seq7 = s.seq
     s = step(z); show("S8", s); r = s.live()
     expect(list(r) == [3], "S8 GFX 253 20 refused, state unchanged")
+    # f > 252 now goes through spr_refuse (reason 0C), and every refusal
+    # writes the snapshot - so the sequence byte has to have moved.
+    expect(s.seq != seq7, "S8 the refusal took a snapshot (seq stuck at %d)" % seq7)
     s = step(z); show("S9", s); r = s.live()
     expect(sorted(r) == list(range(20, 28)) and s.loads == 12, "S9 eight live, 28 refused before any read: %r loads=%d" % (sorted(r), s.loads))
     s = step(z); show("S10", s); r = s.live()
@@ -248,17 +258,33 @@ def run(z, verbose):
         expect(ent[0] == n, "S12 set %d still owns cache entry %d (it holds %d)"
                % (n, r[n][SR["CACHE"]], ent[0]))
     expect(s.loads == 17, "S12 four more SD loads (loads=%d)" % s.loads)
+    # S13 starts one more distinct set with 29-32 still live and the table
+    # still full, so the load MUST evict - and the victim is nameable. LRU
+    # order: set 6 went at S12 (tick 2, the coldest non-live entry then), so
+    # set 15 (tick 4, last touched at S5) is next. 29-32 are live and can
+    # never be taken however cold they are.
+    prev = s.cached()
     s = step(z); show("S13", s); r = s.live()
-    expect(list(r) == [18], "S13 set 18 live, got %r" % list(r))
+    expect(sorted(r) == [29, 30, 31, 32, 33], "S13 sets 29-33 live, got %r" % sorted(r))
+    expect(s.loads == 18, "S13 one more SD load (loads=%d)" % s.loads)
+    expect(len(s.cached()) == 16, "S13 cache still full at 16 entries, got %r" % (s.cached(),))
+    expect(33 in s.cached(), "S13 set 33 is cached, got %r" % (s.cached(),))
+    expect(15 not in s.cached(),
+           "S13 the coldest non-live entry (set 15) was evicted to make room; "
+           "cache was %r, now %r" % (prev, s.cached()))
+    for n in (29, 30, 31, 32):
+        expect(n in s.cached(), "S13 live set %d was NOT evicted (cache %r)" % (n, s.cached()))
+    s = step(z); show("S14", s); r = s.live()
+    expect(list(r) == [18], "S14 set 18 live, got %r" % list(r))
     v = r[18]
     expect(v[SR["KIND"]] == 1 and v[SR["CELLS"]] == 4 and v[SR["PATS"]] == 8,
-           "S13 4-bit, four cells, eight patterns (kind=%d cells=%d pats=%d)"
+           "S14 4-bit, four cells, eight patterns (kind=%d cells=%d pats=%d)"
            % (v[SR["KIND"]], v[SR["CELLS"]], v[SR["PATS"]]))
-    expect(v[SR["NBLK"]] >= 2, "S13 at least two palette blocks (NBLK=%d)" % v[SR["NBLK"]])
-    expect(v[SR["ATTR"]] == 124, "S13 anchor attribute 124 for four cells (got %d)" % v[SR["ATTR"]])
-    s = step(z); show("S14", s); r = s.live()
-    expect(r == {} and not (s.hook & 2) and 2 in s.cached(), "S14 PICTURE stops all, cache kept")
-    print("sprites_dump: S1-S14 pass")
+    expect(v[SR["NBLK"]] >= 2, "S14 at least two palette blocks (NBLK=%d)" % v[SR["NBLK"]])
+    expect(v[SR["ATTR"]] == 124, "S14 anchor attribute 124 for four cells (got %d)" % v[SR["ATTR"]])
+    s = step(z); show("S15", s); r = s.live()
+    expect(r == {} and not (s.hook & 2) and 2 in s.cached(), "S15 PICTURE stops all, cache kept")
+    print("sprites_dump: S1-S15 pass")
     return 0
 
 

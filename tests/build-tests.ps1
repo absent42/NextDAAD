@@ -1105,9 +1105,39 @@ function Assert-LayerOrderReset {
     "gfxLayerOrder: game-owned; only GFX n 17 writes it, the walker clears three transient bytes and re-asserts the order, h_restart pinned to buffer-state only"
 }
 
+# RESTART must leave running sprite sets alone (owner ruling 2026-09-02):
+# it is the per-move render-loop re-entry in a template DAAD game, the same
+# reason the layer order survives it. The single stop-all site is the reset
+# walker gfx_drawtarget_clear, which h_restart deliberately does not call.
+# Both halves are pinned: a refactor that routes h_restart through the
+# walker, or one that drops the stop-all out of it, breaks a promise the
+# manual makes and nothing else would notice.
+function Assert-RestartLeavesSprites {
+    # Comments are stripped first - h_restart's own comment block names
+    # gfx_drawtarget_clear to explain why it does NOT call it.
+    function Strip-AsmComments([string]$t) { return (($t -split "`n" | ForEach-Object { $_ -replace ';.*$', '' }) -join "`n") }
+    $ovl0 = Get-Content -LiteralPath (Join-Path $root 'src\overlay0.asm') -Raw
+    $body = [regex]::Match($ovl0, '(?ms)^h_restart:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $body) { throw "src\overlay0.asm : h_restart not found (or nothing follows it) - Assert-RestartLeavesSprites cannot check a body it cannot isolate" }
+    $code = Strip-AsmComments $body
+    foreach ($bad in @('gfx_drawtarget_clear', 'spr_stop_all')) {
+        if ($code -match ("\b" + $bad + "\b")) {
+            throw "src\overlay0.asm : h_restart reaches $bad - RESTART is the per-move render-loop re-entry in a template DAAD game, so running sprite sets deliberately SURVIVE it (owner ruling 2026-09-02), exactly as the layer order does. Sets stop on PICTURE/DISPLAY, END, a completed LOAD/RAMLOAD, video start and a part change - nowhere else."
+        }
+    }
+    $main = Get-Content -LiteralPath (Join-Path $root 'src\main.asm') -Raw
+    $clear = [regex]::Match($main, '(?ms)^gfx_drawtarget_clear:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $clear) { throw "src\main.asm : gfx_drawtarget_clear not found (or nothing follows it)" }
+    if ((Strip-AsmComments $clear) -notmatch 'call\s+spr_stop_all') {
+        throw "src\main.asm : gfx_drawtarget_clear does not call spr_stop_all - the reset walker is THE stop-all site for sprite sets, which are transient like pictures. Every reset path reaches sets through this one call; h_restart is the deliberate exception because it does not go through the walker at all (owner ruling 2026-09-02)."
+    }
+    "sprite sets vs RESTART: h_restart reaches no stop-all, gfx_drawtarget_clear always does (owner ruling 2026-09-02)"
+}
+
 Assert-TranspConstantsInSync
 Assert-PalColourDodge
 Assert-LayerOrderReset
+Assert-RestartLeavesSprites
 
 # Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py
 # has the full why): a paletted PNG with the transparent colour in the
@@ -2164,6 +2194,7 @@ foreach ($c in @(@{ n = 'GFX 2 19';   b = [byte[]]@(87, 2, 19) },
                  @{ n = 'GFX 28 19';  b = [byte[]]@(87, 28, 19) },
                  @{ n = 'GFX 29 19';  b = [byte[]]@(87, 29, 19) },
                  @{ n = 'GFX 32 19';  b = [byte[]]@(87, 32, 19) },
+                 @{ n = 'GFX 33 19';  b = [byte[]]@(87, 33, 19) },
                  @{ n = 'MOUSE 0 1';  b = [byte[]]@(86, 0, 1) })) {
     if ((Find-ByteRuns $spritesBytes $c.b).Count -lt 1) {
         throw "sprites: '$($c.n)' not present in tests\out\sprites.ddb - DRC did not emit the authored condact"
@@ -5032,13 +5063,14 @@ if ($Sprites) {
         if (-not (Test-Path $src)) { throw "no $src - the anipack selftest did not produce it" }
         Copy-Item $src (Join-Path $leg "$n.ANI") -Force
     }
-    # 020-032 are byte copies of 002: thirteen distinct SET NUMBERS with one
+    # 020-033 are byte copies of 002: fourteen distinct SET NUMBERS with one
     # record each. 020-028 is the eight-channel ceiling step; 029-032 push
-    # the cache past its sixteen entries so a load has to evict.
-    foreach ($n in 20..32) {
+    # the cache past its sixteen entries so a load has to evict, and 033
+    # starts with four of them still live so the reader can NAME the victim.
+    foreach ($n in 20..33) {
         Copy-Item "$aniWork\002.ANI" (Join-Path $leg ('{0:D3}.ANI' -f $n)) -Force
     }
-    "staged 002/003/006/015/018.ANI (017.ANI $len017 bytes, two banks) and 020-032.ANI -> $leg"
+    "staged 002/003/006/015/018.ANI (017.ANI $len017 bytes, two banks) and 020-033.ANI -> $leg"
     # A picture for the final PICTURE 1 step. Same generated 320-wide card
     # the -Palette leg uses, and the same size check on it.
     & python "$PSScriptRoot\art\mkpalcard.py" "$root\tests\out"

@@ -1594,7 +1594,7 @@ SR_PATS         equ 37      ; pattern count from the header
 SR_NBLKREQ      equ 38      ; blocks the header asks for
 SR_CHAN         equ 39      ; channel index 0-7, written once at init
 SR_XLO          equ 40      ; sprite-plane X low byte
-SR_XHI          equ 41
+SR_RESERVED41   equ 41      ; unused; X is SR_XLO + SR_X8
 SR_Y            equ 42      ; sprite-plane Y low byte
 SR_SIZE         equ 48
 ; cache entry

@@ -43,8 +43,11 @@ sprApSave:    ds SPR_AP_LEN     ; the tick's shadow of the six cells above
 ; for byte except the explicit timing and prescaler bytes: the prescaler
 ; register is shared and only reset or a WR2 write with D5 set changes it
 ; (dma.vhd R2_BYTE_0/R2_BYTE_1); a stale nonzero value would stop this
-; transfer yielding to the sample ISR mid-block (doc 11 F3). Patched
-; fields: .src, .len (exact count, RTL-settled).
+; transfer yielding to the sample ISR mid-block (doc 11 F3). WR2 is
+; programmed I/O-fixed here, where every other non-video descriptor leaves
+; it memory-increment; dma_copy resends WR1 and WR2 on every call, so
+; nothing inherits the mode this leaves behind. Patched fields: .src,
+; .len (exact count, RTL-settled).
 sprDma:
     db $83                       ; WR6: disable
     db %01111101                 ; WR0: A->B; Alo, Ahi, len-lo, len-hi follow
@@ -506,6 +509,12 @@ spr_refuse:
  ENDIF
     scf
     ret
+
+; Reason 12 for h_gfx's flag path (f > 252). Reached through spr_call:
+; spr_refuse lives on SPR_PAGE.
+spr_refuse_flags:
+    ld e, 12
+    jp spr_refuse
 
  IFDEF DEBUG
 msgSprRefuse: db "SPR? ", 0
@@ -1155,6 +1164,64 @@ spr_cache_victim:
     ld a, c
     ret
 
+; Free the banks of the coldest cached entry no live record names, never
+; the entry being loaded (its CE_SET is still 255, so the free test skips
+; it too). Out: CF clear when one was freed, CF set when none is evictable.
+; Corrupts AF, BC, DE, HL, IX.
+spr_cache_evict:
+    ld hl, sprCache
+    ld b, SPR_CACHE_MAX
+    ld c, 0
+    ld d, 255                    ; best tick so far
+    ld e, 255                    ; best index, 255 = nothing evictable
+.n:
+    ld a, (hl)
+    cp SPR_SET_NONE
+    jr z, .next
+    ld a, (sprLdEntry)
+    cp c
+    jr z, .next
+    ld a, c
+    push bc                      ; spr_cache_inuse runs its own djnz
+    call spr_cache_inuse
+    pop bc
+    jr z, .next
+    push hl
+    inc hl
+    inc hl
+    inc hl
+    ld a, (hl)
+    pop hl
+    cp d
+    jr nc, .next
+    ld d, a
+    ld e, c
+.next:
+    ld a, CE_SIZE
+    add hl, a
+    inc c
+    djnz .n
+    ld a, e
+    cp 255
+    scf
+    ret z
+    call spr_cache_entry
+    call spr_cache_free_banks
+    or a                         ; CF clear: one entry evicted
+    ret
+
+; One pool bank, evicting cold cached sets until the pool yields - the
+; gfx_bank_get shape. Out: CF clear + A = bank; CF set when nothing is
+; evictable and the pool is still dry. Corrupts AF, BC, DE, HL, IX.
+spr_bank_get:
+.try:
+    call bank_alloc
+    ret nc
+    call spr_cache_evict
+    jr nc, .try
+    scf
+    ret
+
 ; A = entry. Out: HL -> entry. Preserves BC, DE. Corrupts AF, HL.
 spr_cache_entry:
     ld hl, sprCache
@@ -1267,7 +1334,7 @@ spr_cache_load:
     call spr_cache_victim
     ld (sprLdEntry), a
     push hl
-    call bank_alloc
+    call spr_bank_get            ; evicts cold cached sets when the pool is dry
     pop hl
     ld e, 6
     jp c, spr_refuse             ; entry stays free, nothing taken
@@ -1296,8 +1363,8 @@ spr_cache_load:
     ld a, c
     cp 2
     jr nz, .havebank
-    push bc                      ; bank_alloc corrupts BC and C is the image page
-    call bank_alloc              ; second bank on demand
+    push bc                      ; spr_bank_get corrupts BC and C is the image page
+    call spr_bank_get            ; second bank on demand, evicting as needed
     pop bc
     ld e, 6
     jr c, .failclose
@@ -1529,6 +1596,13 @@ spr_start_body:
     ld a, c
     and 1
     ld (sprReqOv), a
+    jr z, .l2
+    ld a, d                      ; override X high byte: only 0 or 1 fits
+    cp 2                         ; the 0-319 picture range
+    jr c, .l2
+    ld e, 12
+    jp spr_refuse
+.l2:
     ld a, c
     and 2
     ld (sprL2Mode), a            ; 0 = 256x192, nonzero = 320x256

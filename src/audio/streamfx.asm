@@ -29,7 +29,7 @@
 ; cell. Bank 35 is already wholly excluded from the pool that way
 ; (nextdaad.inc's own comment: bank 35 is "ALSO withdrawn" for
 ; VID_PAGE2's page 70 - the free-pool loop in bank_table_init starts at
-; BANK_POOL_B=36), so this page's sibling upper 8K, page 71, is already
+; BANK_POOL_B=37), so this page's sibling upper 8K, page 71, is already
 ; unreachable to bank_alloc with ZERO further changes to banks.asm.
 ; SFX_PAGE is therefore a plain equ (nextdaad.inc), this file is
 ; included from main.asm exactly like video.asm, and there is no boot

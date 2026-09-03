@@ -1337,18 +1337,9 @@ h_gfx:
 .sprstop:                        ; sub 21: B = set or 255
     ld hl, spr_stop_body
     jp spr_call
-.sprbad:
- IFDEF DEBUG
-    ld b, 29
-    call dbg_markcol
-    call dbg_at
-    ld hl, msgSprRange
-    call dbg_puts
- ENDIF
-    ret
- IFDEF DEBUG
-msgSprRange: db "SPR? 03", 0
- ENDIF
+.sprbad:                         ; f > 252: reason 12 through the refusal
+    ld hl, spr_refuse_flags      ; machinery, so it snapshots like the rest
+    jp spr_call
 
 msgGfxUnk: db "GFX? ", 0
 

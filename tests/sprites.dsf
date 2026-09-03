@@ -3,16 +3,18 @@
 ; reads the DEBUG snapshot after every ANYKEY. Sets: 002 torch 8-bit,
 ; 003 32x32 one-shot, 006 4-bit two blocks, 015 8-bit in block 2, 017 4-bit
 ; 126 patterns (16810 bytes, two pool banks), 018 4-bit 2x2 composite with
-; two blocks, 020-032 copies of 002 for the record ceiling and the cache
+; two blocks, 020-033 copies of 002 for the record ceiling and the cache
 ; ceiling. S11 stops all first: 017 needs every one of the 126 pattern
 ; half-slots the pointer does not hold. S12's four starts take the cache
-; past its sixteen entries, so the last one evicts. S13 exercises the 4-bit
-; relative path: neighbouring cells sit in different palette blocks and the
-; two frames swap them.
+; past its sixteen entries, so the last one evicts. S13 starts one more set
+; with four still live, so the eviction is READABLE: the victim is the
+; coldest entry no record names. S14 exercises the 4-bit relative path:
+; neighbouring cells sit in different palette blocks and the two frames
+; swap them.
 ;
 ; MOUSE 0 1 shows the pointer so the pointer mask and the pointer-over-4-bit
 ; check are live. PICTURE 1 needs a picture file: the -Sprites leg stages the
-; palette card as 001.NX2, and S14 is the stop-all that PICTURE performs.
+; palette card as 001.NX2, and S15 is the stop-all that PICTURE performs.
 ;
 ; ANYKEY, not PAUSE 0: it is the V2 wait-for-key condact and behaves the same
 ; whether or not -v3 is given, so the fixture does not depend on the header
@@ -101,8 +103,9 @@ LOOK   4  verb
 /10 " "                             ; retired slot: S11 moved to /11
 /11 "S11 two-bank set#n"
 /12 "S12 cache full, one eviction#n"
-/13 "S13 4-bit composite with relatives#n"
-/14 "S14 PICTURE stops all#n"
+/13 "S13 set 33 evicts the coldest cached set#n"
+/14 "S14 4-bit composite with relatives#n"
+/15 "S15 PICTURE stops all#n"
 /OTX
 /0 "a brass lamp"
 /LTX
@@ -173,13 +176,16 @@ SOUTH 0
         GFX 32 19
         MESSAGE 12
         ANYKEY
+        GFX 33 19
+        MESSAGE 13
+        ANYKEY
         GFX 255 21
         GFX 18 19
-        MESSAGE 13
+        MESSAGE 14
         ANYKEY
         PICTURE 1
         DISPLAY 0
-        MESSAGE 14
+        MESSAGE 15
         ANYKEY
         END
 /END

@@ -254,6 +254,9 @@ sprIff:       db 0              ; spr_di's IFF2 sample
 
 ; Boot, from bank_table_init's tail: empty state, reserved slots.
 spr_boot_init:
+    ld a, (xbnIntOn)            ; a warm re-entry must never leave the tick
+    and $FF-HOOK_SPR            ; armed over the empty state below
+    ld (xbnIntOn), a
     ld hl, spr_state_init
     call spr_call
  IFDEF DEBUG
