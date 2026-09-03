@@ -706,7 +706,7 @@ spr_apply_setup:
 ; for relatives (chapter-next-sprites.tex "1 to use bytes 0-127") is
 ; inverted against the RTL. N6 set selects the upper half for anchors and
 ; relatives alike (RTL, sprites.vhd); the guide says the opposite for
-; relatives. The silicon run sheet must confirm this before release.
+; relatives. Confirmed on silicon 2026-09-03 (set 018, run sheet S14/S16).
     MACRO SPR_CELL4 bracket
     IF bracket
     call spr_di
