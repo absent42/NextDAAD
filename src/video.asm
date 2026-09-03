@@ -2279,6 +2279,10 @@ vid_run:
     ; wedges every busy-aware hook effect.
     ld a, 1
     ld (vidPlaying), a
+    call spr_stop_all            ; sprites are off during video (NR $15 saved
+                                 ; and zeroed below, restored on exit); no set
+                                 ; survives, so the restore brings back only
+                                 ; the pointer's own state
     ; MMU6/MMU7 MUST be captured HERE, hot, before ANY hop (a cold
     ; hop's own bracket would capture its own temporary value).
     ld e, NR_MMU6

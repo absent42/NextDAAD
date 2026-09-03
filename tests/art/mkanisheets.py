@@ -105,6 +105,30 @@ def main(out):
         paste(px, k * 16, 0, fill(16, 16, k + 1))
     write_png(os.path.join(out, "017.png"), 2016, 16, pal, px)
     write_txt(os.path.join(out, "017.txt"), w=16, h=16, bits=4)
+    # 018: 4-bit composite with relatives. 64x32 sheet, w=h=32, two frames of
+    # four 16x16 cells. Two 12-colour groups: a cell uses one group only, so
+    # the greedy partition needs two blocks (24 colours over a 15-entry block)
+    # and horizontally neighbouring cells sit in different blocks. Frame 1
+    # swaps the groups, so every relative changes block AND half-slot between
+    # frames. Per-cell shift keeps all eight cells distinct through dedupe.
+    # Channel steps of 32 keep each colour RGB333-distinct after truncation.
+    grpA = [(32 * k, 0, 64) for k in range(1, 8)] + [
+        (32, 32, 64), (64, 64, 64), (96, 96, 64), (128, 160, 64), (160, 192, 64)]
+    grpB = [(0, 32 * k, 128) for k in range(1, 8)] + [
+        (32, 32, 128), (64, 96, 128), (96, 128, 128), (128, 192, 128), (160, 224, 128)]
+    pal = [MAGENTA] + grpA + grpB + [(0, 0, 0)] * (255 - len(grpA) - len(grpB))
+    px = fill(64, 32, 0)
+    for f in range(2):
+        for c in range(4):
+            col, row = c % 2, c // 2
+            grp = (col + f) % 2                    # 0 = A, 1 = B
+            shift = f * 4 + c
+            base = 1 + grp * 12
+            for y in range(16):
+                for x in range(16):
+                    px[row * 16 + y][f * 32 + col * 16 + x] = base + (x + y + shift) % 12
+    write_png(os.path.join(out, "018.png"), 64, 32, pal, px)
+    write_txt(os.path.join(out, "018.txt"), w=32, h=32, bits=4, delay=10, loop=1)
     return 0
 
 if __name__ == "__main__":

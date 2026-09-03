@@ -2906,6 +2906,9 @@ switch_to_part:
     ; still valid here (before the "point of no return" SP reset just
     ; below), so this call/ret is fully balanced and leaves nothing
     ; behind.
+    call spr_stop_all            ; before pointer_load rescans pointerMask
+    ld hl, spr_cache_flush       ; set numbers are per part
+    call spr_call
     ld a, $FF
     ld (ptrCur), a               ; part switch re-probes the base shape
     xor a

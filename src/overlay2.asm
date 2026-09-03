@@ -444,6 +444,7 @@ GFX_SRC_END equ DATA_WINDOW+$2000   ; first address past the slot 6 window
 ; corrupts A only, so B - the picture number - survives it.
 h_picture:
     call eng_set_done
+    call spr_stop_all
     ld a, b
     call gfx_load
     jp c, ovl2_false
@@ -1002,6 +1003,7 @@ l2CopyChunkCnt: db 0
 ; l2_mode_set with l2Mode, idempotent when the mode is unchanged.
 ; Corrupts everything.
 h_display:
+    call spr_stop_all           ; both paths: the blit and the clear
     ld a, b
     or a
     jp z, gfx_blit

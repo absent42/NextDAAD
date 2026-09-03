@@ -1178,6 +1178,24 @@ spr_cache_free_banks:
     ld (hl), 255
     ret
 
+; Drop every cache entry and its banks. Only valid with no set live (the
+; caller stops all first). Corrupts AF, BC, HL.
+spr_cache_flush:
+    ld hl, sprCache
+    ld b, SPR_CACHE_MAX
+.e:
+    push bc
+    push hl
+    ld a, (hl)
+    cp SPR_SET_NONE
+    call nz, spr_cache_free_banks
+    pop hl
+    ld a, CE_SIZE
+    add hl, a
+    pop bc
+    djnz .e
+    ret
+
 ; A = entry, C = image page 0-3. Out: A = 8K page number for data_map_page.
 ; Corrupts AF, E, HL.
 spr_cache_page:

@@ -248,8 +248,17 @@ def run(z, verbose):
         expect(ent[0] == n, "S12 set %d still owns cache entry %d (it holds %d)"
                % (n, r[n][SR["CACHE"]], ent[0]))
     expect(s.loads == 17, "S12 four more SD loads (loads=%d)" % s.loads)
-    s = step(z); show("S13", s)
-    print("sprites_dump: S1-S12 pass (S13 is Task 9)")
+    s = step(z); show("S13", s); r = s.live()
+    expect(list(r) == [18], "S13 set 18 live, got %r" % list(r))
+    v = r[18]
+    expect(v[SR["KIND"]] == 1 and v[SR["CELLS"]] == 4 and v[SR["PATS"]] == 8,
+           "S13 4-bit, four cells, eight patterns (kind=%d cells=%d pats=%d)"
+           % (v[SR["KIND"]], v[SR["CELLS"]], v[SR["PATS"]]))
+    expect(v[SR["NBLK"]] >= 2, "S13 at least two palette blocks (NBLK=%d)" % v[SR["NBLK"]])
+    expect(v[SR["ATTR"]] == 124, "S13 anchor attribute 124 for four cells (got %d)" % v[SR["ATTR"]])
+    s = step(z); show("S14", s); r = s.live()
+    expect(r == {} and not (s.hook & 2) and 2 in s.cached(), "S14 PICTURE stops all, cache kept")
+    print("sprites_dump: S1-S14 pass")
     return 0
 
 

@@ -1070,6 +1070,8 @@ sfxChan1: ds SMPB_SIZE
 ; flag before dispatch and consults neither A, E nor CF for an action
 ; condact - so no caller reads what this corrupts.
 gfx_drawtarget_clear:
+    call spr_stop_all           ; sets are transient like pictures; the cache
+                                ; stays. Preserves every register.
     ld hl, gfxDrawTarget
     ld (hl), a
     inc hl

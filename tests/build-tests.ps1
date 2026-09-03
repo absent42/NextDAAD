@@ -2160,6 +2160,7 @@ foreach ($c in @(@{ n = 'GFX 2 19';   b = [byte[]]@(87, 2, 19) },
                  @{ n = 'GFX 100 20'; b = [byte[]]@(87, 100, 20) },
                  @{ n = 'GFX 253 20'; b = [byte[]]@(87, 253, 20) },
                  @{ n = 'GFX 17 19';  b = [byte[]]@(87, 17, 19) },
+                 @{ n = 'GFX 18 19';  b = [byte[]]@(87, 18, 19) },
                  @{ n = 'GFX 28 19';  b = [byte[]]@(87, 28, 19) },
                  @{ n = 'GFX 29 19';  b = [byte[]]@(87, 29, 19) },
                  @{ n = 'GFX 32 19';  b = [byte[]]@(87, 32, 19) },
@@ -4991,11 +4992,11 @@ if ($Sprites) {
     # invocation, so tests\out\anipack holds the packed 002/003/006 sets
     # and every sheet mkanisheets.py writes. 015 and 017 are packed HERE -
     # the selftest has no assertion of its own for either; they exist only
-    # as this leg's block-2 conflict and two-bank stimuli.
+    # as this leg's block-2 conflict, two-bank and 4-bit composite stimuli.
     $aniWork = "$root\tests\out\anipack"
     $gfx2next = "$root\tools\gfx2next\gfx2next.exe"
     $anipack = "$root\authoring-kit\lib\anipack.ps1"
-    foreach ($n in @('015', '017')) {
+    foreach ($n in @('015', '017', '018')) {
         if (-not (Test-Path "$aniWork\$n.png")) { throw "no $aniWork\$n.png - the anipack selftest did not run" }
         Push-Location $aniWork
         try {
@@ -5019,7 +5020,14 @@ if ($Sprites) {
     if ($len017 -le 16384) {
         throw "017.ANI is $len017 bytes, not over 16384 - the two-bank load path is not armed"
     }
-    foreach ($n in @('002', '003', '006', '015', '017')) {
+    # 018 must be a 4-bit 2x2 composite of eight distinct cells over at least
+    # two palette blocks, or the relative half-slot path is never exercised.
+    $a018 = [System.IO.File]::ReadAllBytes("$aniWork\018.ANI")
+    if (($a018[3] -band 2) -eq 0) { throw '018.ANI is not 4-bit - the 4-bit relative stimulus is not armed' }
+    if ($a018[4] -ne 2 -or $a018[5] -ne 2) { throw "018.ANI is $($a018[4])x$($a018[5]) cells, expected 2x2" }
+    if ($a018[10] -ne 8) { throw "018.ANI has $($a018[10]) patterns, expected 8 (no cell may dedupe)" }
+    if ($a018[11] -lt 2) { throw "018.ANI takes $($a018[11]) palette block(s), expected at least 2" }
+    foreach ($n in @('002', '003', '006', '015', '017', '018')) {
         $src = "$aniWork\$n.ANI"
         if (-not (Test-Path $src)) { throw "no $src - the anipack selftest did not produce it" }
         Copy-Item $src (Join-Path $leg "$n.ANI") -Force
@@ -5030,7 +5038,7 @@ if ($Sprites) {
     foreach ($n in 20..32) {
         Copy-Item "$aniWork\002.ANI" (Join-Path $leg ('{0:D3}.ANI' -f $n)) -Force
     }
-    "staged 002/003/006/015.ANI (017.ANI $len017 bytes, two banks) and 020-032.ANI -> $leg"
+    "staged 002/003/006/015/018.ANI (017.ANI $len017 bytes, two banks) and 020-032.ANI -> $leg"
     # A picture for the final PICTURE 1 step. Same generated 320-wide card
     # the -Palette leg uses, and the same size check on it.
     & python "$PSScriptRoot\art\mkpalcard.py" "$root\tests\out"
