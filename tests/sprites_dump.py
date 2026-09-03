@@ -121,10 +121,26 @@ def expect(cond, what):
         sys.exit("sprites_dump: FAIL " + what)
 
 
-def step(z):
-    z.tap_dismiss_key()
-    time.sleep(0.6)
-    return State(z)
+def step(z, until=None, timeout=3.0):
+    """Tap the dismiss key, then read the snapshot. With `until`, poll the
+    snapshot until the predicate holds or the timeout passes: the steps
+    that wait in a GETMS tracking loop (S1, S2, S14) leave through a
+    PAUSE 25 debounce, so their successor state lands later than a
+    fixed sleep allows."""
+    if until is None:
+        z.tap_dismiss_key()
+        time.sleep(0.6)
+        return State(z)
+    # A GETMS tracking loop exits through INKEY, which reads key_scan's
+    # character tables: the dismiss key (SYMBOL SHIFT) maps to no key there,
+    # so send a real space instead.
+    z.send_keys(' ')
+    deadline = time.time() + timeout
+    while True:
+        time.sleep(0.2)
+        st = State(z)
+        if until(st) or time.time() > deadline:
+            return st
 
 
 def port_free(port):
@@ -202,11 +218,11 @@ def run(z, verbose):
            "S1 torch advances (delays 6 and 12 ticks): %r" % (pairs,))
     expect(all(p[0] in (0, 1) for p in pairs),
            "S1 torch stays inside its two frames: %r" % (pairs,))
-    s = step(z); show("S2", s); r = s.live()
+    s = step(z, until=lambda st: 6 in st.live()); show("S2", s); r = s.live()
     expect(sorted(r) == [2, 6], "S2 sets 2 and 6 live")
     expect(r[6][SR["KIND"]] == 1 and r[6][SR["NBLK"]] == 2 and list(r[6][SR["BLOCKS"]:SR["BLOCKS"]+2]) == [1, 2], "S2 4-bit claims blocks 1,2")
     expect(s.claim == 0b110 and r[6][SR["ATTR"]] == 126 and r[6][SR["PAT"]] == 6, "S2 claim mask, attr 126, half-slot 6")
-    s = step(z); show("S3", s); r = s.live()
+    s = step(z, until=lambda st: st.loads >= 3); show("S3", s); r = s.live()
     expect(sorted(r) == [2, 6] and s.loads == 3 and 15 in s.cached(), "S3 15 refused (block 2 claimed) but cached")
     s = step(z); show("S4", s); r = s.live()
     expect(sorted(r) == [2] and s.claim == 0, "S4 set 6 stopped, claim cleared")
@@ -282,7 +298,7 @@ def run(z, verbose):
            % (v[SR["KIND"]], v[SR["CELLS"]], v[SR["PATS"]]))
     expect(v[SR["NBLK"]] >= 2, "S14 at least two palette blocks (NBLK=%d)" % v[SR["NBLK"]])
     expect(v[SR["ATTR"]] == 124, "S14 anchor attribute 124 for four cells (got %d)" % v[SR["ATTR"]])
-    s = step(z); show("S15", s); r = s.live()
+    s = step(z, until=lambda st: st.live() == {}); show("S15", s); r = s.live()
     expect(r == {} and not (s.hook & 2) and 2 in s.cached(), "S15 PICTURE stops all, cache kept")
     print("sprites_dump: S1-S15 pass")
     return 0

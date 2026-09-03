@@ -12,8 +12,13 @@
 ; neighbouring cells sit in different palette blocks and the two frames
 ; swap them.
 ;
-; MOUSE 0 1 shows the pointer so the pointer mask and the pointer-over-4-bit
-; check are live. PICTURE 1 needs a picture file: the -Sprites leg stages the
+; MOUSE 0 0 then MOUSE 0 1 centres and shows the pointer so the pointer mask
+; and the pointer-over-4-bit check are live. SHOWMS alone never moves the
+; sprite: only GETMS (MOUSE n 3) polls the Kempston mouse and repositions
+; it, so the three silicon observation steps (S1, S2, S14) wait in the
+; fontsw.dsf tracking-loop idiom (MOUSE 104 3 + INKEY + SKIP, then a PAUSE
+; 25 debounce) instead of ANYKEY; flags 104-107 are free (100-103 feed
+; GFX 100 20 at S7). Every other step keeps ANYKEY. PICTURE 1 needs a picture file: the -Sprites leg stages the
 ; palette card as 001.NX2, and S15 is the stop-all that PICTURE performs.
 ;
 ; ANYKEY, not PAUSE 0: it is the V2 wait-for-key condact and behaves the same
@@ -119,13 +124,30 @@ SOUTH 0
 /OBJ
 /0    1   1   _ _  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _   _ _
 /PRO 0
-> _ _   MOUSE 0 1
+> _ _   MOUSE 0 0
+        MOUSE 0 1
         GFX 2 19
         MESSAGE 0
-        ANYKEY
+
+$poll1
+> _ _   MOUSE 104 3
+        INKEY
+        SKIP $next1
+> _ _   SKIP $poll1
+
+$next1
+> _ _   PAUSE 25
         GFX 6 19
         MESSAGE 1
-        ANYKEY
+
+$poll2
+> _ _   MOUSE 104 3
+        INKEY
+        SKIP $next2
+> _ _   SKIP $poll2
+
+$next2
+> _ _   PAUSE 25
         GFX 15 19
         MESSAGE 2
         ANYKEY
@@ -182,7 +204,15 @@ SOUTH 0
         GFX 255 21
         GFX 18 19
         MESSAGE 14
-        ANYKEY
+
+$poll3
+> _ _   MOUSE 104 3
+        INKEY
+        SKIP $next3
+> _ _   SKIP $poll3
+
+$next3
+> _ _   PAUSE 25
         PICTURE 1
         DISPLAY 0
         MESSAGE 15

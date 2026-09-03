@@ -2195,12 +2195,15 @@ foreach ($c in @(@{ n = 'GFX 2 19';   b = [byte[]]@(87, 2, 19) },
                  @{ n = 'GFX 29 19';  b = [byte[]]@(87, 29, 19) },
                  @{ n = 'GFX 32 19';  b = [byte[]]@(87, 32, 19) },
                  @{ n = 'GFX 33 19';  b = [byte[]]@(87, 33, 19) },
-                 @{ n = 'MOUSE 0 1';  b = [byte[]]@(86, 0, 1) })) {
+                 @{ n = 'MOUSE 0 1';  b = [byte[]]@(86, 0, 1) },
+                 @{ n = 'MOUSE 0 0';  b = [byte[]]@(86, 0, 0) },
+                 @{ n = 'MOUSE 104 3'; b = [byte[]]@(86, 104, 3) },
+                 @{ n = 'INKEY';      b = [byte[]]@(111) })) {
     if ((Find-ByteRuns $spritesBytes $c.b).Count -lt 1) {
         throw "sprites: '$($c.n)' not present in tests\out\sprites.ddb - DRC did not emit the authored condact"
     }
 }
-"sprites.ddb: GFX 19/20/21 and MOUSE 0 1 stimuli all present as authored"
+"sprites.ddb: GFX 19/20/21, MOUSE 0/1/104 3 and INKEY stimuli all present as authored"
 
 # --- txt40: the 40-column text mode stimulus ---
 # GFX=87, WINAT=82, WINSIZE=107 confirmed against the compiled condact
