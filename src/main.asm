@@ -1153,6 +1153,16 @@ tm_width_apply:
     jp windows_init              ; all 8 windows full-screen at (tmCols),
                                  ; cursors homed, window 0 reselected
 
+; AKY ret-chain shadow (player_aky.asm PLY_AKY_PLAY). The player copies its
+; static ret table here every call and runs the chain with SP on it, so an
+; interrupt accepted mid-chain pushes onto entries already consumed or onto
+; the guard below the first entry - never onto code or song data. Resident
+; because page 48 has no room; AKY_RET_GUARD is the nested-ISR push budget
+; (ctc_isr, ctc2_isr and video_ctc_isr_stereo each push 6 incl. PC).
+AKY_RET_GUARD   equ 8
+akyRetGuard:    ds AKY_RET_GUARD
+akyRetShadow:   ds PLY_AKY_RETTABLE_SIZE
+
     ASSERT $ <= RESIDENT_LIMIT
     DISPLAY "resident ends at ", $, " headroom ", /D, RESIDENT_LIMIT - $
 

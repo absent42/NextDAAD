@@ -284,21 +284,14 @@ aud_tick:
 .gate:
     ld a, (audFlags)
     and %00000101                   ; music playing OR effect active
-    ; PLY_AKY_PLAY repoints the real SP into the song linker/track pointers and
-    ; the static RETTABLE for essentially its whole body (its documented contract:
-    ; "call with interrupts disabled"). Under the frame ISR's early-EI a nested
-    ; ctc_isr would push PC/AF/HL at the repointed SP and corrupt song data /
-    ; RETTABLE -> ret-to-garbage crash. So mask CTC for the player's duration.
-    ; This is the ONLY per-frame bracket (the others are one-shot request
-    ; handlers); during sample+music COEXISTENCE it holds the DAC for an
-    ; ESTIMATED ~5.5k T (~200us; ~1.0% duty at 50Hz / 28 MHz) once per frame -
-    ; ~1.85k T of that is instruction-counted (the PSG register send), the
-    ; rest is unpinned until a hardware/scope measurement - a documented v0.1.0
-    ; compromise pending the owner's ear verdict. Sample-only and music-only are
-    ; unaffected (this call only runs when audFlags has music or effect set).
-    di
+    ; No DI bracket: the player is nest-safe (player_aky.asm header). Its
+    ; only DI is the linker read, ~350 T once per pattern, under one CTC
+    ; period, so the sample feed is delayed there, never dropped. The old
+    ; whole-call bracket masked the CTC for the player's 5.5k-15k T every
+    ; frame; hw IM2 keeps ONE pending request per source (im2_peripheral
+    ; im2_int_req), so every further edge in that window was lost - the
+    ; 50 Hz notch heard on the 880 Hz sine under a three-PSG tune.
     call nz, PLY_AKY_PLAY           ; music + effects on PSG 3
-    ei
     ; effect-end watch (see header)
     ld a, (audFlags)
     bit 2, a

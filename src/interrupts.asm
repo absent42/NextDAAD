@@ -278,12 +278,11 @@ im2_isr:
     ;      stack. ctc_isr is non-reentrant against itself (its ei precedes reti).
     ; DI sections: nr_read's bracket ~76T (~2.7us) and the tick's pointer brackets
     ; ~20T stay well under one CTC period (~50us at 20kHz); every indefinite-DI
-    ; teardown calls audio_init (resets the CTC) first. The AKY player calls in
-    ; aud_tick are the DELIBERATE exception - DI-bracketed at an estimated
-    ; ~5.5k T (partly instruction-counted, partly unpinned - see aud_tick) (~200us,
-    ; longer than a CTC period) because the player repoints SP; during sample+
-    ; music coexistence that holds the DAC ~1% duty at 50Hz (accepted v0.1.0
-    ; compromise; nesting there would corrupt the song - see aud_tick .gate).
+    ; teardown calls audio_init (resets the CTC) first. PLY_AKY_PLAY nests
+    ; too: its ret chain runs on akyRetShadow (main.asm) whose guard absorbs
+    ; this ISR's pushes, and its one DI (the linker read) is ~350 T once per
+    ; pattern. The old whole-call bracket lost every CTC edge past the first
+    ; in a 5.5k-15k T window every frame (player_aky.asm header).
     ei
     ; Save MMU 6/7 via the register-select port pair. Mainline users of
     ; $243B/$253B are DI-bracketed (hardware.asm nr_read) or run before
@@ -420,10 +419,11 @@ im2_isr:
 ; NO banked memory - just the resident ring pointers, the ALWAYS-mapped ring
 ; ($7C00, MMU3), and one raw OUT to the DAC. That is what makes it nestable
 ; anywhere the frame ISR EIs (mid-tick with bank 24 mapped, mid-copy with a
-; source page in slot 7, mid-ZX0 depack whose AF' parking is untouched here) -
-; EXCEPT the AKY player calls, which are DI-bracketed in aud_tick: the player
-; repoints SP into song data / RETTABLE, and a nested interrupt-acceptance push
-; would corrupt it (see aud_tick .gate and the SP-repoint contract).
+; source page in slot 7, mid-ZX0 depack whose AF' parking is untouched here,
+; and mid-PLY_AKY_PLAY, whose ret chain runs on akyRetShadow so this ISR's
+; 6 bytes of pushes land on its guard or on consumed entries).
+; PUSH BUDGET: an ISR that can nest inside the frame tick pushes at most
+; AKY_RET_GUARD bytes including the accepted PC - this one is PC+AF+HL = 6.
 ; SINCE 2026-08-03 THAT CONTRACT IS ALSO WHAT LETS THIS ISR PRE-EMPT A
 ; RUNNING zxnDMA (nextreg $CD bit 0, set in im2_init): a transfer that
 ; resumes after this body must find the MMU map exactly as it was armed,
