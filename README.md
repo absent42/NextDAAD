@@ -25,9 +25,7 @@ A demo game ready to run on your ZX Spectrum Next can be downloaded [here](demo)
   cutscenes need 2MB of RAM and a real machine, and so does a sampled
   effect longer than 24K - everything else, including shorter effects,
   runs under emulation.
-- A DAAD DSF source file or a compiled DAAD database, and its assets on the card. 
-  The authoring kit builds one for you, and existing version 2 and version 3 databases 
-  both run as they are.
+- A DAAD DSF source file and game assets. The authoring kit builds the DAAD database from source and converts your game assets for you.
 - Windows Powershell if you want to use the automated batch builders of the authroing kit.
 
 ## Features
