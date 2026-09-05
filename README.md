@@ -17,6 +17,8 @@ file to compile it and assemble the assets.
 
 A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https://condact.xyz/nextdaad-demo).
 
+**Downloads, documentation, and tutorials for NextDAAD can now be found on the [condact.xyz website](https://condact.xyz).**
+
 <img src="demo/nextdaad.png" alt="NextDAAD" width="934">
 
 ## Requirements
