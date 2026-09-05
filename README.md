@@ -15,7 +15,7 @@ An [authoring kit](#for-authors) ships alongside it, so writing a game
 for NextDAAD means just editing your DSF source and double-clicking one batch 
 file to compile it and assemble the assets.
 
-A demo game ready to run on your ZX Spectrum Next can be downloaded [here](demo).
+A demo game ready to run on your ZX Spectrum Next can be downloaded [here](https://condact.xyz/nextdaad-demo).
 
 <img src="demo/nextdaad.png" alt="NextDAAD" width="934">
 
