@@ -88,7 +88,7 @@ one combined `GAME.XBN`, no assembler needed. See
 [`authoring-kit\externs\README.md`](authoring-kit/externs/README.md)
 for the catalogue.
 
-The DAAD compiler, [NDRC](https://github.com/absent42/NDRC) (Next DAAD Reborn Compiler), ships built in, 
+The DAAD compiler, [NDRC](https://condact.xyz/ndrc) (Next DAAD Reborn Compiler), ships built in, 
 along with [Gfx2Next](https://www.rustypixels.uk/gfx2next/) for for graphics conversion. The kit still needs a
 few third-party tools it does not redistribute:
 
@@ -99,10 +99,10 @@ few third-party tools it does not redistribute:
 Also included with the kit is VidEnc & VidTune, a encoder and UI app for fine-tuning video encodes and 
 experimenting with different settings to get the best results for your videos.
 
-**A packaged kit, holding only what an author needs, is on the
-[releases](https://github.com/absent42/NextDAAD/releases) page.**
+**A packaged kit, holding only what an author needs, can be downloaded from the
+[releases](https://github.com/absent42/NextDAAD/releases) page or the [condact.xyz website](https://condact.xyz/nextdaad).**
 
-A companion app, [NextDither](https://absent42.itch.io/nextdither), for converting true-colour images to the layer 2 format spec for NextDAAD is available as a seperate download via itch.io
+A companion app, [NextDither](https://condact.xyz/nextdither), for converting true-colour images to the layer 2 format spec for NextDAAD is available as a seperate download via itch.io
 
 ## Building the interpreter
 
