@@ -20,13 +20,19 @@ function Assert-Throws([scriptblock]$sb, [string]$pattern, $what) {
     if (-not $threw) { throw "intro-selftest: $what - did not fail" }
 }
 function U16([byte[]]$b, [int]$o) { return [int]$b[$o] -bor ([int]$b[$o + 1] -shl 8) }
-function Compile([string]$name, [string[]]$extra) {
-    $out = "$work\out-$name"
+function Compile([string]$name, [string[]]$extra, [string]$suffix = '') {
+    $out = "$work\out-$name$suffix"
     Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
-    # array splatting binds positionally, not by name, so a '-NoAssets' element
-    # would land in -Cols instead of the switch: pass it through explicitly.
-    $noAssets = $extra -contains '-NoAssets'
-    & $comp -Script "$work\$name.txt" -Root $work -Out $out -NoAssets:$noAssets | Out-Null
+    # array splatting binds positionally, not by name: turn -Name [value]
+    # pairs into a hashtable, which splats by parameter name.
+    $named = @{}
+    $i = 0
+    while ($i -lt $extra.Count) {
+        $key = $extra[$i].TrimStart('-')
+        if ($i + 1 -lt $extra.Count -and -not $extra[$i + 1].StartsWith('-')) { $named[$key] = $extra[$i + 1]; $i += 2 }
+        else { $named[$key] = $true; $i += 1 }
+    }
+    & $comp -Script "$work\$name.txt" -Root $work -Out $out @named | Out-Null
     return [IO.File]::ReadAllBytes("$out\INTRO.DAT")
 }
 function Write-Script([string]$name, [string]$text) { [IO.File]::WriteAllText("$work\$name.txt", $text, [Text.Encoding]::GetEncoding(28591)) }
@@ -129,6 +135,11 @@ Assert-Eq $d[1570] 255 '004 lines are centred'
 Assert-Eq $d[1571] 2 '004 line carries the scroll attribute'
 Assert-Eq $d[1580 + 7] 6 '004 second line string offset after TITLE and NUL'
 Assert-Eq $d[4628 + 6] 0 '004 the spacer is an empty string'
+
+# ---- forwarding: extra args reach introc.ps1 by name (Compile hashtable-splats),
+# ---- not by position, so -Cols 40 here must set the COLS 40 flag bit.
+$d = Compile '001-min' @('-NoAssets', '-Cols', '40') '-fwd'
+Assert-Eq $d[5] 8 'forwarding: -Cols 40 reaches introc as COLS 40 (flags bit 3)'
 
 # ---- errors, each naming its line.
 Write-Script 'e-unknown' "SLIDE p320a.png IN CUT HOLD 1.0`nFOO`nEND CUT"
