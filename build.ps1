@@ -31,11 +31,16 @@ try {
     & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\nextdaad.sld" @defs "src/main.asm"
     if ($LASTEXITCODE -ne 0) { throw "assembly failed" }
     Write-Host "built build\nextdaad.nex"
+    & "$root\tools\sjasmplus\sjasmplus.exe" --zxnext=cspect --msg=war --fullpath --sld="$root\build\intro.sld" @defs "src/intro/main.asm"
+    if ($LASTEXITCODE -ne 0) { throw "intro assembly failed" }
+    Write-Host "built build\intro.nex"
     # Only -Kit publishes the interpreter into the shippable authoring kit, so
     # routine -Release dev builds never overwrite the kit's committed nextdaad.nex.
     if ($Kit) {
         Copy-Item "$root\build\nextdaad.nex" "$root\authoring-kit\nextdaad.nex" -Force
         Write-Host "placed authoring-kit\nextdaad.nex (kit interpreter refreshed)"
+        Copy-Item "$root\build\intro.nex" "$root\authoring-kit\intro.nex" -Force
+        Write-Host "placed authoring-kit\intro.nex (kit launcher refreshed)"
         & python "$root\scripts\build_manual.py"
         if ($LASTEXITCODE -ne 0) { throw "manual generation failed - the kit would ship stale or missing docs" }
     }
