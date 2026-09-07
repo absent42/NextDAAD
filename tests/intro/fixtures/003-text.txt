@@ -1,0 +1,5 @@
+SLIDE p320a.png IN CUT HOLD 4.0
+  TEXT 2 CENTRE "Hello, ""world""" AT 1.0 TYPE
+  TEXT 30 5 "Press any key" INK 224 PAPER 0
+  TEXT 31 0 "Same pair" INK 224 PAPER 0
+END CUT

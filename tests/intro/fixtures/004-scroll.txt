@@ -1,0 +1,6 @@
+SLIDE p320a.png IN CUT
+  SCROLL SPEED 2 INK 252
+  LINE "TITLE"
+  LINE ""
+  LINE "Written by"
+END CUT

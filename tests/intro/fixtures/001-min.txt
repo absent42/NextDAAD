@@ -1,0 +1,3 @@
+; one slide, no music, no text
+SLIDE p320a.png IN CUT HOLD 2.0
+END CUT
