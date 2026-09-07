@@ -1,7 +1,6 @@
-; Spike 1: NextDAW runtime player under the launcher's slot policy.
-; Player at $E000 (page 40), song in pages 41-43, data slots 2, 3, 6.
-; Key 1 = restore the three slots before every update (launcher policy).
-; Key 2 = leave junk pages mapped (informational). Border: green = 1, red = 2.
+; Spike 1: NextDAW player at page 40, song in pages 41-43, slots 2, 3, 6.
+; Key 1 = restore the three slots before every update (border green).
+; Key 2 = leave junk pages mapped, informational only (border red).
     DEVICE ZXSPECTRUMNEXT
     ORG $8000
 main:

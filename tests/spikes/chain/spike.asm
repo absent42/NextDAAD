@@ -1,8 +1,6 @@
-; Spike 2: chain-load nextdaad.nex with an embedded loader, after timing
-; 48 x 2K esxDOS reads of that same file under a 15625 Hz CTC stereo ISR
-; that outputs a 488 Hz square wave (audible continuity = no starvation).
-; Frame count of the read loop is shown as 8 binary blocks on the ULA
-; screen (MSB left, filled = 1) for 3 seconds, then the chain runs.
+; Spike 2: chain-load nextdaad.nex via an embedded loader, after timing
+; 48 x 2K esxDOS reads of that file under a 15625 Hz CTC stereo tone.
+; Frame count shown as 8 binary blocks (MSB left), then the chain runs.
     DEVICE ZXSPECTRUMNEXT
     ORG $8000
 main:
