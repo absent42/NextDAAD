@@ -2,7 +2,7 @@
 
 All notable changes to NextDAAD are recorded here.
 
-## v0.9.0 - Unreleased
+## v0.9.0 - 03/09/2026
 
 - Animated sprites on the Next sprite layer. `GFX n 19` starts set n,
   `GFX f 20` starts the set named in flag f at the position in flags
