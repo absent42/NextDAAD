@@ -455,8 +455,98 @@ for ($k = 0; $k -lt $pool.Count; $k++) { $dat[4628 + $k] = $pool[$k] }
 $datLen = 4628 + $pool.Count
 
 # ---- assets and output ----
-function Invoke-Assets { throw 'asset conversion arrives with the next task; run with -NoAssets' }
-function Convert-Music { throw 'music conversion arrives with a later task; run with -NoAssets' }
+function Invoke-Gfx2Next([string[]]$cmdArgs, [string]$expect) {
+    # gfx2next writes <base>.<ext> into the CWD; run it inside $Out and check
+    # the file it should have produced exists, since its exit code is unreliable.
+    # ($cmdArgs, not $args: $args is PowerShell's automatic variable.)
+    Push-Location $Out
+    try { & $Gfx @cmdArgs 2>&1 | Out-Null } finally { Pop-Location }
+    if (-not (Test-Path -LiteralPath (Join-Path $Out $expect))) { throw "gfx2next produced no $expect - is the source an 8-bit paletted PNG?" }
+}
+function Convert-Picture([string]$file, [int]$num, $shape) {
+    $src = Join-Path $Root $file
+    $base = [IO.Path]::GetFileNameWithoutExtension($file)
+    $dst = Join-Path $Out ('{0:D3}.{1}' -f $num, $(if ($shape.mode -eq 1) { 'NXC' } else { 'NXI' }))
+    switch ($shape.kind) {
+        'png' {
+            Remove-Item (Join-Path $Out "$base.nxi") -ErrorAction SilentlyContinue
+            $mode = if ($shape.mode -eq 1) { '-bitmap-y' } else { '-bitmap' }
+            Invoke-Gfx2Next @($mode, '-pal-embed', $src) "$base.nxi"
+            Move-Item -LiteralPath (Join-Path $Out "$base.nxi") -Destination $dst -Force
+        }
+        'nxi' { Copy-Item -LiteralPath $src -Destination $dst -Force }
+        'nx2' {
+            # row-major NX2 -> column-major NXC: palette copied, pixel (x,y) to 512 + x*256 + y
+            $in = [IO.File]::ReadAllBytes($src)
+            $o = New-Object byte[] 82432
+            [Array]::Copy($in, 0, $o, 0, 512)
+            for ($y = 0; $y -lt 256; $y++) {
+                $rowBase = 512 + $y * 320
+                for ($x = 0; $x -lt 320; $x++) { $o[512 + $x * 256 + $y] = $in[$rowBase + $x] }
+            }
+            [IO.File]::WriteAllBytes($dst, $o)
+        }
+    }
+    $len = (Get-Item -LiteralPath $dst).Length
+    $want = if ($shape.mode -eq 1) { 82432 } else { 49664 }
+    if ($len -ne $want) { throw "$file converted to $len bytes, expected $want" }
+    if ($Palcheck -and (Test-Path -LiteralPath $Palcheck)) { & $Palcheck $dst }    # in-process: the kit has no pwsh
+    Write-Host "  picture $file -> $([IO.Path]::GetFileName($dst))"
+}
+function Get-PicturePalette([int]$num, [int]$mode) {
+    $p = Join-Path $Out ('{0:D3}.{1}' -f $num, $(if ($mode -eq 1) { 'NXC' } else { 'NXI' }))
+    $b = [IO.File]::ReadAllBytes($p)
+    return $b[0..511]
+}
+function Convert-Font {
+    $src = Join-Path $Root $show.fontFile
+    $base = [IO.Path]::GetFileNameWithoutExtension($show.fontFile)
+    Remove-Item (Join-Path $Out "$base.nxt"), (Join-Path $Out "$base.nxm") -ErrorAction SilentlyContinue
+    Invoke-Gfx2Next @('-colors-4bit', '-tile-size=8x8', '-pal-none', $src) "$base.nxt"
+    Remove-Item (Join-Path $Out "$base.nxm") -ErrorAction SilentlyContinue
+    $t = [IO.File]::ReadAllBytes((Join-Path $Out "$base.nxt"))
+    Remove-Item (Join-Path $Out "$base.nxt") -Force
+    if ($t.Length -ne 8192) { throw "font sheet $($show.fontFile) converted to $($t.Length) bytes, expected 8192 (256 tiles of 32)" }
+    $m = $show.fontMagenta
+    if ($m -ne 0) {
+        # swap nibble values 0 and m so the transparent colour is index 0
+        for ($k = 0; $k -lt 8192; $k++) {
+            $hi = $t[$k] -shr 4; $lo = $t[$k] -band 15
+            if ($hi -eq 0) { $hi = $m } elseif ($hi -eq $m) { $hi = 0 }
+            if ($lo -eq 0) { $lo = $m } elseif ($lo -eq $m) { $lo = 0 }
+            $t[$k] = [byte](($hi -shl 4) -bor $lo)
+        }
+    }
+    [IO.File]::WriteAllBytes((Join-Path $Out 'FONT.TIL'), $t)
+    Write-Host "  font $($show.fontFile) -> FONT.TIL"
+}
+function Invoke-Assets {
+    if (-not $Gfx -or -not (Test-Path -LiteralPath $Gfx)) { throw "gfx2next not found at '$Gfx'" }
+    foreach ($file in $picNums.Keys) {
+        $shape = ($show.slides | Where-Object { $_.pic -eq $file } | Select-Object -First 1).shape
+        Convert-Picture $file $picNums[$file] $shape
+    }
+    if ($show.fontKind -eq 1) { Convert-Font }
+    # palette-difference warning for copy transitions
+    $prev = $null
+    $seq = $show.slides.ToArray()
+    if ($show.loop -and $seq.Count -gt 1) { $seq += $seq[0] }
+    for ($i = 0; $i -lt $seq.Count; $i++) {
+        $s = $seq[$i]
+        if ($i -gt 0 -and $s.tr -ge 2 -and $prev.shape.mode -eq $s.shape.mode) {
+            $pa = Get-PicturePalette $picNums[$prev.pic] $prev.shape.mode
+            $pb = Get-PicturePalette $picNums[$s.pic] $s.shape.mode
+            $diff = 0
+            for ($e = 0; $e -lt 256; $e++) { if ($pa[$e * 2] -ne $pb[$e * 2] -or $pa[$e * 2 + 1] -ne $pb[$e * 2 + 1]) { $diff++ } }
+            if ($diff -gt 8) { Warn "slides at lines $($prev.line) and $($s.line) differ in $diff palette entries; a wipe, dissolve or blinds shows both pictures under the incoming palette - give the sequence one shared palette" }
+        }
+        $prev = $s
+    }
+}
+function Convert-Music {
+    if ($show.music.kind -eq 0) { return }
+    throw 'music conversion arrives with the next task; run with -NoAssets'
+}
 New-Item -ItemType Directory -Force $Out | Out-Null
 if (-not $NoAssets) {
     Invoke-Assets

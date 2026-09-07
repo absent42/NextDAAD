@@ -168,8 +168,47 @@ Write-Script 'e-pool' $big
 Assert-Throws { Compile 'e-pool' @('-NoAssets') } 'string pool is' 'string pool overflow'
 Write-Script 'e-first' "SLIDE p320a.png IN WIPE LEFT 1.0 HOLD 1.0`nEND CUT"
 Assert-Throws { Compile 'e-first' @('-NoAssets') } 'the first slide arrives from nothing' 'first slide needs CUT or FADE'
-Write-Script 'e-assets' "SLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
-Assert-Throws { Compile 'e-assets' @() } 'run with -NoAssets' 'assets not yet available in this task'
+Write-Script 'e-assets' "MUSIC AKY theme.aks`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
+Assert-Throws { Compile 'e-assets' @('-Gfx', $gfx) } 'music conversion arrives' 'music not yet available in this task'
+
+# ---- 005 assets: pictures numbered by first use, NXC column-major, NX2 transposed, FONT.TIL remapped, blocks.
+$gfxArgs = @('-Gfx', $gfx)
+$gfxNamed = @{ Gfx = $gfx }    # array splatting binds @gfxArgs positionally: direct calls need a hashtable to pass -Gfx by name
+$d = Compile '005-assets' $gfxArgs
+$o = "$work\out-005-assets"
+Assert-Eq (Test-Path "$o\001.NXC") $true '005 picture 001 is NXC'
+Assert-Eq (Test-Path "$o\004.NXC") $true '005 ready-made NX2 became 004.NXC'
+Assert-Eq (Test-Path "$o\005.NXI") $true '005 the 256-wide picture is 005.NXI'
+Assert-Eq ([IO.File]::ReadAllBytes("$o\001.NXC")).Length 82432 '005 NXC length'
+$c1 = [IO.File]::ReadAllBytes("$o\001.NXC"); $c4 = [IO.File]::ReadAllBytes("$o\004.NXC")
+Assert-Eq $c4[512 + 10 * 256 + 20] ((10 + 20) -band 255) '005 transposed NX2 pixel (10,20)'
+Assert-Eq $c1[512 + 10 * 256 + 20] $c4[512 + 10 * 256 + 20] '005 PNG and NX2 of the same art agree after conversion'
+$til = [IO.File]::ReadAllBytes("$o\FONT.TIL")
+Assert-Eq $til.Length 8192 '005 FONT.TIL length'
+Assert-Eq $til[0] 0x00 '005 glyph 0 (magenta) remapped to nibble 0'
+Assert-Eq $til[65 * 32] 0x66 '005 glyph 65 untouched by the remap'
+Assert-Eq $d[5] 16 '005 flags: colour font'
+Assert-Eq $d[32] 0xE3 '005 block 0 entry 0 is the magenta colour (RGB332 E3)'
+Assert-Eq $d[33] 1 '005 block 0 entry 0 blue LSB'
+Assert-Eq $d[32 + 5 * 2] 0x00 '005 block 0 entry 5 now holds the old entry 0, black'
+Assert-Eq $d[32 + 16 * 2] 255 '005 block 1 entry 0 is 255 from PALETTE'
+Assert-Eq $d[32 + 17 * 2] 224 '005 block 1 entry 1 is 224'
+Assert-Eq $d[32 + 32 * 2] 0xE3 '005 block 2 unset copies block 0'
+Assert-Eq $d[1571] 16 '005 TEXT BLOCK 1 -> attribute $10'
+# ---- 006 palette warning fires for p320a -> p320b (WIPE) and p320b -> p320c (DISSOLVE): different palettes each time.
+$outText = & $comp -Script "$work\005-assets.txt" -Root $work -Out "$work\out-006" @gfxNamed *>&1 | Out-String
+$script:checks++
+if ($outText -notmatch 'WARNING: slides at lines 3 and 5 differ') { throw "intro-selftest: 006 expected a palette warning for the WIPE between p320a and p320b, got: $outText" }
+if ($outText -notmatch 'WARNING: slides at lines 5 and 6 differ') { throw 'intro-selftest: 006 expected a warning for the DISSOLVE between p320b and p320c' }
+# ---- 007 no warning when palettes are shared: p320a -> p320c under WIPE.
+Write-Script '007-shared' "SLIDE p320a.png IN CUT HOLD 1.0`nSLIDE p320c.png IN WIPE RIGHT 0.5 HOLD 1.0`nEND CUT"
+$outText = & $comp -Script "$work\007-shared.txt" -Root $work -Out "$work\out-007" @gfxNamed *>&1 | Out-String
+$script:checks++
+if ($outText -match 'WARNING') { throw "intro-selftest: 007 shared palette must not warn: $outText" }
+# ---- 008 font sheet without magenta is refused.
+& python -c "import sys; sys.path.insert(0, r'$root\tests\art'); import mkanisheets as m; m.write_png(r'$work\nomag.png', 128, 128, [(i,i,i) for i in range(16)], [[1]*128 for _ in range(128)])"
+Write-Script '008-nomag' "FONT nomag.png`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
+Assert-Throws { Compile '008-nomag' $gfxArgs } 'has no magenta' '008 font sheet needs magenta'
 
 # ---- Windows PowerShell 5.1 is what BUILD.BAT runs: the same script must
 # ---- produce the same bytes there.
