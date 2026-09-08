@@ -3405,6 +3405,27 @@ title_present:
     pop ix
     ret
 
+; Probe INTRO\INTRO.DAT (the launcher's compiled show) so the banner
+; stays quiet when an intro ships, the same courtesy a title gets.
+; CF clear = present. Corrupts AF, BC, DE, HL; IX saved around the esxDOS calls.
+intro_present:
+    push ix
+    call esx_getsetdrv
+    jr c, .none
+    ld ix, introDatName
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    jr c, .none
+    call esx_fclose
+    or a
+    jr .ret
+.none:
+    scf
+.ret:
+    pop ix
+    ret
+introDatName: db "INTRO", 92, "INTRO.DAT", 0
+
 ; Full boot title sequence, chained from aud_boot_probe's tail
 ; (overlay1.asm) via the ovl_map_page trampoline, entered with
 ; OVL2_PAGE freshly mapped at MMU7. Probes the 6 DAAD.* names

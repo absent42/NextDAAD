@@ -966,6 +966,8 @@ boot_banner:
     nextreg NR_MMU7, OVL2_PAGE   ; probe DAAD.* presence - a game
     call title_present           ; shipping a title gets a clean boot
     ret nc                       ; (title becomes the first thing seen)
+    call intro_present           ; likewise a game shipping a loader intro
+    ret nc
     ld a, (tmAttr)
     ld e, a
     ld bc, 0
