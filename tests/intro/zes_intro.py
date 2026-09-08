@@ -107,8 +107,10 @@ def skip_surface_check(z, pc, picfile):
         z.enable_breakpoints()
         z.set_breakpoint(SKIP_BREAKPOINT, zrcp.pc_breakpoint_condition(pc))
         z.hold_matrix(SPACE_DOWN)
-        z.run(deadline=30.0)
-        z.release_matrix()
+        try:
+            z.run(deadline=30.0)
+        finally:
+            z.release_matrix()          # never leave SPACE held on a run() deadline
         m = z.read_memory(MIRROR, 32)
         front, mode = m[16], m[17]
         got = read_surface(z, front, mode)

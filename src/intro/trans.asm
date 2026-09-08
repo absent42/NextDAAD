@@ -198,10 +198,9 @@ fade_write_in:
     ld de, PAL_NEW
     jp pal_lerp
 
-; A skip mid-transition: finish it now so the surface/palette match what a
-; completed transition leaves. FADE jumps to its end state (phase 0 still
-; needs the midpoint swap); a copy kind draws every remaining unit in one
-; oversized step (span 1, acc = remaining) through the shared run routine.
+; A skip mid-transition: finish it now. FADE jumps to its end state (phase
+; 0 still needs the midpoint swap); a copy kind draws every remaining unit
+; in one oversized step (span 1, acc = remaining) via the shared run routine.
 trans_finish_now:
     ld a, (transType)
     or a
@@ -261,9 +260,8 @@ fade_out_step:
 ; ---- copy primitives: back surface -> front through slot 6 and bounce ----
     ASSERT (bounce & $FF) == 0       ; main.asm ALIGN 256 before bounce (rubric 8)
 ; Slot 6 remapped per copy (doc 00); slot 7 stays the audio page, so both
-; directions share slot 6, not the spec's two-slot copy.
-; HL = contiguous line 0-319, page parked in memory (LDIR consumes BC).
-; Corrupts everything.
+; directions share slot 6, not the spec's two-slot copy. HL = contiguous
+; line 0-319, page parked in memory (LDIR consumes BC). Corrupts everything.
 copy_line:
     ld a, l
     and 31
@@ -431,10 +429,9 @@ blockHi:   db 0
 blockCnt:  db 0
 
 ; ---- copy transitions ----
-; Bresenham pacing (fix round 1): every kind's per-frame step adds its
-; whole-transition unit count to an accumulator (transPer, repurposed) and
-; draws one unit per transFrames it covers, so the transition finishes on
-; its scripted last frame regardless of unit count vs frame count.
+; Bresenham pacing: every kind's per-frame step adds its whole-transition
+; unit count to an accumulator (transPer, repurposed) and draws one unit
+; per transFrames it covers, so the transition finishes on its last frame.
 trans_copy_begin:
     ld a, PG_STAGE
     call map6
@@ -627,9 +624,8 @@ diss_step:
     jp copy_done
 
 ; One DISSOLVE unit: find the next LFSR value below the whole-picture block
-; count, draw it, advance transDone. Bounded search (rubric 6): the worst
-; measured run of consecutive out-of-range values is 33 (256x192, 3072
-; blocks) / 12 (320x256, 5120 blocks); 34 covers both with margin.
+; count, draw it, advance transDone. Bounded search (rubric 6): worst
+; measured reject run is 33 at 3072 blocks (exact bound 34), 12 at 5120.
 diss_draw_one:
     ld b, 34
 .search:
