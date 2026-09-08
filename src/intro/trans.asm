@@ -27,8 +27,8 @@ trans_cut_begin:
     call map6
     ld hl, PAL_NEW
     call pal_program
-    call pal_copy_new_to_cur
-    jp l2_show
+    call l2_show                     ; hidden only across the mode/palette change
+    jp pal_copy_new_to_cur
 
 trans_step:
     ld a, (transType)

@@ -67,8 +67,8 @@ pal_program:
     nextreg NR_PAL_VALUE9, a
     ld a, (hl)
     inc hl
-    and 1
-    nextreg NR_PAL_VALUE9, a
+    and 1                             ; also clears bit 7 (L2 priority colour);
+    nextreg NR_PAL_VALUE9, a          ; gfx2next output never sets it
     djnz .e
     ret
 

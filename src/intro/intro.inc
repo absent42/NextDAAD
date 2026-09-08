@@ -127,6 +127,7 @@ ESX_F_SEEK      equ $9F
 ESX_MODE_READ   equ $01
 
 LOAD_CHUNK      equ 2048        ; bytes per esxDOS read (spike 2 may halve it)
+    ASSERT (8192 % LOAD_CHUNK) == 0  ; load.asm's page-full test (cp $20) assumes this
 
 DAT_MAGIC       equ 0
 DAT_VER         equ 4

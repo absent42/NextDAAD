@@ -201,14 +201,14 @@ show_end_begin:
     ld a, (showState)
     cp SS_TRANS
     call z, trans_finish_now         ; a skip mid-fade lands on the incoming picture first
-    pop hl
     ld a, (loadHandle)
     cp $FF
     jr z, .noload
-    call esx_close_a
+    call esx_close_a                 ; HL (frame cap) stays on the stack across this call
     ld a, $FF
     ld (loadHandle), a
 .noload:
+    pop hl
     xor a
     ld (loadState), a
     ld a, (endTrans)

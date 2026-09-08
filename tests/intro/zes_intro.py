@@ -1,6 +1,10 @@
 """Headless ZEsarUX driver for the launcher: <card dir> --launch NAME.NEX.
 Samples the DEBUG mirror at $5400 every --interval; optional --space-at
-taps, --assert checks, --expect-handoff/--expect-text at $6000."""
+(seconds) / --space-at-frame (mirror frame count) taps, --assert
+(seconds) / --assert-frame (first sample whose frame >= F) checks,
+--expect-handoff/--expect-text at $6000. ZEsarUX's frame rate varies by
+host, so wall-clock anchors drift - prefer the frame-anchored flags;
+--interval tightens to 0.1s automatically when either is given."""
 import argparse, pathlib, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
@@ -31,11 +35,15 @@ def main():
     ap.add_argument("--seconds", type=float, default=30.0)
     ap.add_argument("--interval", type=float, default=0.5)
     ap.add_argument("--space-at", type=float, action="append", default=[])
+    ap.add_argument("--space-at-frame", type=int, action="append", default=[])
     ap.add_argument("--assert", dest="asserts", action="append", default=[])
+    ap.add_argument("--assert-frame", dest="frame_asserts", action="append", default=[])
     ap.add_argument("--expect-handoff", action="store_true")
     ap.add_argument("--expect-text")
     ap.add_argument("--port", type=int, default=10011)
     a = ap.parse_args()
+    if (a.frame_asserts or a.space_at_frame) and a.interval > 0.1:
+        a.interval = 0.1              # frame anchors need frequent sampling to land close to F
     card = pathlib.Path(a.card).resolve()
     if nleg.port_already_listening(a.port):
         raise SystemExit("port %d already in use - a stale emulator is running" % a.port)
@@ -60,6 +68,7 @@ def main():
         t0 = time.time()
         samples = []
         pending_space = sorted(a.space_at)
+        pending_space_frame = sorted(a.space_at_frame)
         while time.time() - t0 < a.seconds:
             t = time.time() - t0
             if pending_space and t >= pending_space[0]:
@@ -71,8 +80,13 @@ def main():
             samples.append((t, d))
             print("t=%.1f sig=%s state=%d slide=%d load=%d trans=%d code=%02X frame=%d hold=%d tf=%d scroll=%d front=%d mode=%d music=%d keys=%d hz60=%d fadek=%d pcmwr=%04X loadpage=%d fading=%d"
                   % (t, d["sig"], d["state"], d["slide"], d["load"], d["trans"], d["code"], d["frame"], d["hold"], d["tf"], d["scroll"], d["front"], d["mode"], d["music"], d["keys"], d["hz60"], d["fadek"], d["pcmwr"], d["loadpage"], d["fading"]))
+            if pending_space_frame and d["frame"] >= pending_space_frame[0]:
+                pending_space_frame.pop(0)
+                z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
+                print("t=%.1f space (frame=%d)" % (t, d["frame"]))
             time.sleep(a.interval)
-        if a.asserts and not any(d["sig"] == "IN" for _, d in samples):
+        have_mirror = any(d["sig"] == "IN" for _, d in samples)
+        if (a.asserts or a.frame_asserts) and not have_mirror:
             print("ASSERT FAILED: no sample ever showed sig=IN - dbg_init never ran "
                   "(expected for a Release build, which has no mirror) or the mirror "
                   "was never reached before the hand-off window closed")
@@ -91,6 +105,22 @@ def main():
                     print("ASSERT FAILED at t=%.1f: %s=%d, expected %s" % (t, field, got, value)); ok = False
                 else:
                     print("assert ok t=%.1f %s=%s" % (t, field, value))
+        for spec in a.frame_asserts:
+            when, cond = spec.split(":", 1)
+            field, value = cond.split("=")
+            when = int(when)
+            match = next((s for s in samples if s[1]["frame"] >= when), None)
+            if match is None:
+                last = samples[-1][1]["frame"] if samples else -1
+                print("ASSERT FAILED: frame %d never reached (last frame seen=%d)" % (when, last))
+                ok = False
+                continue
+            t, d = match
+            got = d[field]
+            if got != int(value, 0):
+                print("ASSERT FAILED at frame>=%d (t=%.1f, actual frame=%d): %s=%d, expected %s" % (when, t, d["frame"], field, got, value)); ok = False
+            else:
+                print("assert ok frame>=%d (t=%.1f, actual frame=%d) %s=%s" % (when, t, d["frame"], field, value))
         if a.expect_handoff or a.expect_text:
             head = z.read_memory(0x6000, 4)
             if head == STUB_PROLOGUE:

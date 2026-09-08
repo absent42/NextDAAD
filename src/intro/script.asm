@@ -22,6 +22,12 @@ script_load:
     push bc
     call esx_close_a
     pop bc
+    ld h, b
+    ld l, c
+    ld de, DAT_STRINGS
+    or a
+    sbc hl, de
+    jp c, .bad                       ; short read: fewer than the fixed tables
     ld a, PG_SCRIPT
     call map6
     ld hl, WIN6

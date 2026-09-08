@@ -161,3 +161,4 @@ name_picture:
     ld hl, picName
     jp name_intro
 picName: db "000.NX?", 0
+    ASSERT $ - picName == 8          ; picName+6 (the '?') must land inside this buffer (rubric 8)
