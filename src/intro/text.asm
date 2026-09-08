@@ -69,6 +69,7 @@ text_init:
     ld hl, WIN6
     call map_bank5
     ld de, TM_DEFS
+    ASSERT TM_DEFS + 8192 <= $8000   ; colour font defs stay below resident code (rubric 8)
     ld bc, 8192
     ldir
     ld a, %11000000                  ; 4-bit tiles, 80x32
@@ -144,6 +145,7 @@ tm_palette_load:
 ; Blank the whole map (glyph 32, attribute 0), reset the reveal table,
 ; scroll registers and clip window. Seed-then-LDIR fill (doc 04): the two
 ; seed bytes propagate through the block. Corrupts AF, BC, DE, HL.
+    ASSERT TM_MAP + 80*32*2 <= DBG_MIRROR ; the fill below must not reach the mirror (rubric 8)
 text_clear:
     call map_bank5
     ld hl, TM_MAP
@@ -152,11 +154,11 @@ text_clear:
     ld (hl), 0
     ld hl, TM_MAP
     ld de, TM_MAP+2
-    ld bc, 5118
+    ld bc, 80*32*2 - 2
     ldir
     ld hl, itemShown
     ld de, itemShown+1
-    ld bc, 255
+    ld bc, itemShownEnd - itemShown - 1
     ld (hl), 0
     ldir
     nextreg NR_TM_YOFS, 0
@@ -333,6 +335,15 @@ caption_one:
     ld a, (capLen)
 .count:
     ld (capTarget), a
+    ld a, (capLen)
+    or a
+    jr nz, .have                     ; empty string: latch complete, nothing to draw
+    ld hl, itemShown
+    ld a, (capIdx)
+    add hl, a
+    ld (hl), 255
+    ret
+.have:
     ld hl, itemShown
     ld a, (capIdx)
     add hl, a

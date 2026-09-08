@@ -96,6 +96,17 @@ def surface_check(z, front, mode, picfile):
 # run is a fresh emulator instance, so no other index is ever armed here.
 SKIP_BREAKPOINT = 1
 
+def read_text(z):
+    """Freeze the CPU (fix round 1: a live read can tear a row mid-typewriter),
+    decode the tilemap at $4000, always resuming (exit-cpu-step) before
+    returning, even on a read error."""
+    z.enter_cpu_step()
+    try:
+        rows, _ = tilemap.decode(z.read_memory(0x4000, tilemap.GRID_BYTES))
+    finally:
+        z.exit_cpu_step()
+    return rows
+
 def skip_surface_check(z, pc, picfile):
     """Press skip, free-run under a breakpoint at pc (e.g. chain_run's
     address) so the CPU stops before any hand-off code can overwrite the
@@ -226,7 +237,7 @@ def main():
                     ok = False
             if pending_text_frame and d["frame"] >= pending_text_frame[0]:
                 when = pending_text_frame.pop(0)
-                rows, _ = tilemap.decode(z.read_memory(0x4000, tilemap.GRID_BYTES))
+                rows = read_text(z)
                 text = [r.rstrip() for r in rows if r.strip()]
                 for r in text:
                     print("text: " + r)
@@ -234,7 +245,7 @@ def main():
                 print("text read frame>=%d (t=%.1f, actual frame=%d)" % (when, t, d["frame"]))
             time.sleep(a.interval)
         have_mirror = any(d["sig"] == "IN" for _, d in samples)
-        if (a.asserts or a.frame_asserts or a.surface_asserts or a.skip_surface) and not have_mirror:
+        if (a.asserts or a.frame_asserts or a.surface_asserts or a.skip_surface or a.text_at_frame) and not have_mirror:
             print("ASSERT FAILED: no sample ever showed sig=IN - dbg_init never ran "
                   "(expected for a Release build, which has no mirror) or the mirror "
                   "was never reached before the hand-off window closed")

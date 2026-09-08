@@ -146,6 +146,8 @@ ndrPages:       ds 9
 nameBuf:        ds 24
 varEnd:
 itemShown:      ds 256
+itemShownEnd:
+    ASSERT itemShownEnd - itemShown == 256 ; text_clear's fill loop bounds (rubric 8)
     ALIGN 256                        ; bounce on a page boundary: LDWS and INC E step it
 bounce:         ds 1024
 akyRetGuard:    ds 8

@@ -13,10 +13,12 @@ dbg_init:
     inc hl
     ld (hl), 'N'
     ret
-dbg_code:                            ; A = code
+dbg_code:                            ; A = code, preserved
     ld (lastCode), a
+    push af
     ld a, 50
     ld (dbgCodeTimer), a
+    pop af
     ret
 dbg_mirror:
     call map_bank5
@@ -97,8 +99,17 @@ dbg_show:
     ld d, 6
     jp text_put_resident
 .clear:
+    call map_bank5
     ld b, 31
-    jp text_row_clear
+    call tm_row_addr
+    ld b, 6                          ; dbgMsg's own width, not the whole row
+.cc:
+    ld (hl), 32
+    inc hl
+    ld (hl), 0
+    inc hl
+    djnz .cc
+    ret
 .hex:
     and 15
     add a, '0'
