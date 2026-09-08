@@ -97,6 +97,7 @@ frame_isr:
 
 ; Needs interrupts enabled (frame_isr sets frameFlag). Bounded to 65536
 ; polls (rubric 6); on expiry, returns as if the frame had ticked.
+; Corrupts AF, BC.
 wait_frame:
     ld bc, 0
 .w:

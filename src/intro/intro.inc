@@ -20,6 +20,9 @@ PG_STAGE        equ 39
 PG_MUSIC        equ 40
 PG_MUSIC_LAST   equ 87
 
+LERP_K          equ 17           ; lerp_init k range 0..16
+LERP_D          equ 15           ; lerp_init d range -7..7
+
 TM_MAP          equ $4000
 TM_MAP_MSB      equ $00
 DBG_MIRROR      equ $5400
@@ -37,6 +40,8 @@ PAL_CUR         equ $C000       ; page 39 in slot 6
 PAL_NEW         equ $C200
 PAL_SOLID       equ $C400
 
+NR_VERSION      equ $01
+NR_CORE_VERSION equ $0E
 NR_PERIPH1      equ $05
 NR_PERIPH2      equ $06
 NR_CPU_SPEED    equ $07

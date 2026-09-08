@@ -128,8 +128,8 @@ akyRetGuard:    ds 8
 akyRetShadow:   ds 30
     ALIGN 256
 pcmXlat:        ds 256
-lerpTab:        ds 255
-    ASSERT $ - lerpTab == 17*15       ; k 0..16 x d -7..7, hw.asm lerp_init (rubric 8)
+lerpTab:        ds LERP_K*LERP_D
+    ASSERT $ - lerpTab == LERP_K*LERP_D ; hw.asm lerp_init loop bounds (rubric 8)
 
     ASSERT $ <= RESIDENT_LIMIT
     DISPLAY "intro resident ends at ", $, " headroom ", /D, RESIDENT_LIMIT - $

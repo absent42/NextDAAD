@@ -182,10 +182,10 @@ lerp_init:
     pop bc
     inc b
     ld a, b
-    cp 8
+    cp LERP_D-7
     jr nz, .d
     inc c
     ld a, c
-    cp 17
+    cp LERP_K
     jr nz, .k
     ret

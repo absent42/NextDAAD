@@ -4,8 +4,8 @@ esx_init:
     rst $08
     db ESX_GETSETDRV
     jr nc, .got
-    ld a, '*'                    ; esxDOS default drive (file.asm's own idiom)
-.got:
+    ld a, '*'                    ; '*' is esxDOS F_OPEN's default-drive byte
+.got:                             ; a failed open then shows ERR_NEX_OPEN, not a bad drive
     ld (esxDrive), a
     ret
 

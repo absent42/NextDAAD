@@ -168,8 +168,24 @@ stub:
     res 0, a
     nextreg NR_PERIPH3, a
     ld a, (STUB_HDR+142)             ; expansion bus byte: zero clears the
-    or a                             ; top 4 bits of NR $80 (nexload)
+    or a                             ; top 4 bits of NR $80, core >= 3.00.05
     jr nz, .noexp
+    ld bc, TBBLUE_REG_SEL
+    ld a, NR_VERSION
+    out (c), a
+    inc b
+    in a, (c)
+    ld h, a
+    ld a, NR_CORE_VERSION
+    dec b
+    out (c), a
+    inc b
+    in a, (c)
+    ld l, a
+    ld de, $3005                     ; core 3.00.05 (nexload gate)
+    or a
+    sbc hl, de
+    jr c, .noexp
     ld bc, TBBLUE_REG_SEL
     ld a, NR_EXPBUS
     out (c), a
