@@ -20,6 +20,7 @@ pcm_open:
     push bc
     call pcm_read_chunk
     pop bc
+    jr c, .primefail
     djnz .fill
     ld hl, 8192
     ld (pcmAvail), hl
@@ -41,17 +42,21 @@ pcm_open:
     ld a, (pcmTc)
     out (c), a                       ; timer starts
     ret
+.primefail:                          ; a prime read failed: close, stay silent
+    ld a, (pcmHandle)
+    call esx_close_a
+    ld a, $FF
+    ld (pcmHandle), a
+    ld a, ERR_MUS_PCM
+    jp dbg_code
 pcmName:  db "MUSIC.PCM", 0
 pcmTc:    db 0
 pcmTcTab: db 112, 114, 117, 120, 124, 128, 132, 108
     ASSERT $ - pcmTcTab == 8         ; indexed by NR $11 and 7 (rubric 8)
 
-; Read LOAD_CHUNK bytes at pcmWr (page 40 through slot 6); on end of file
-; rewind and read the remainder (MUSIC.PCM is at least 8192 bytes with an
-; even length - introc.ps1 - so the second read always completes and the
-; L/R phase survives the wrap); advance pcmWr with wrap.
-; Out: CF set on any read failure (pcmWr untouched; caller must not credit
-; pcmAvail); CF clear and pcmWr advanced on success.
+; Reads LOAD_CHUNK bytes at pcmWr, rewinding at EOF (MUSIC.PCM is >= 8192
+; bytes, even length - introc.ps1 - so the rewind read always completes).
+; Out: CF set and pcmWr untouched on any read failure; else pcmWr advances.
 pcm_read_chunk:
     ld a, PG_MUSIC
     call map6
