@@ -15,6 +15,8 @@ dbg_init:
     ret
 dbg_code:                            ; A = code
     ld (lastCode), a
+    ld a, 50
+    ld (dbgCodeTimer), a
     ret
 dbg_mirror:
     call map_bank5
@@ -68,7 +70,46 @@ dbg_mirror:
     ld (ix+26), a
     ld a, (skipMode)
     ld (ix+27), a
+    jp dbg_show
+; "IN? xx" on row 31 for 50 frames after a code. Harmless before text_init
+; has run (the map is blank and the tilemap is off).
+dbg_show:
+    ld a, (dbgCodeTimer)
+    or a
+    ret z
+    dec a
+    ld (dbgCodeTimer), a
+    jr z, .clear
+    ld a, (lastCode)
+    ld hl, dbgMsg+4
+    push af
+    rra
+    rra
+    rra
+    rra
+    call .hex
+    pop af
+    call .hex
+    ld b, 31
+    ld c, 0
+    ld hl, dbgMsg
+    ld e, 0
+    ld d, 6
+    jp text_put_resident
+.clear:
+    ld b, 31
+    jp text_row_clear
+.hex:
+    and 15
+    add a, '0'
+    cp '9'+1
+    jr c, .w
+    add a, 7
+.w:
+    ld (hl), a
+    inc hl
     ret
+dbgMsg: db "IN? 00", 0
  ELSE
 dbg_code:
     ld (lastCode), a

@@ -72,6 +72,7 @@ var_init:
     INCLUDE "load.asm"
     INCLUDE "trans.asm"
     INCLUDE "show.asm"
+    INCLUDE "text.asm"
     INCLUDE "chain.asm"
 
 ; ---- variables ----
@@ -130,6 +131,8 @@ borderCol:      db 0
 fontKind:       db 0
 cols:           db 0
 tmStride:       db 0
+fontFallback:   db 0
+dbgCodeTimer:   db 0
 endTrans:       db 0
 endColour:      db 0
 endFrames:      dw 0
@@ -142,6 +145,7 @@ ndawSlots:      ds 3
 ndrPages:       ds 9
 nameBuf:        ds 24
 varEnd:
+itemShown:      ds 256
     ALIGN 256                        ; bounce on a page boundary: LDWS and INC E step it
 bounce:         ds 1024
 akyRetGuard:    ds 8

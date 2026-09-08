@@ -291,4 +291,9 @@ if (Test-Path $ps5) {
     Assert-Eq ([Convert]::ToBase64String($d5)) ([Convert]::ToBase64String($d7)) 'ps5: identical INTRO.DAT under Windows PowerShell 5.1'
 } else { Write-Host "intro-selftest: Windows PowerShell 5.1 absent, ps5 probe skipped" }
 
+# ---- 012 font sheet with an opaque space cell is refused.
+& python -c "import sys; sys.path.insert(0, r'$root\tests\art'); import mkanisheets as m; m.write_png(r'$work\nospace.png', 128, 128, [(255,0,255)] + [(i*16,i*16,i*16) for i in range(1,16)], [[1]*128 for _ in range(128)])"
+Write-Script '012-nospace' "FONT nospace.png`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
+Assert-Throws { Compile '012-nospace' $gfxArgs } 'cell 32' '012 space cell must be transparent'
+
 Write-Host "intro-selftest: $checks checks passed"

@@ -1,0 +1,7 @@
+FONT font.png
+PALETTE 1 255 224 28 3 0 0 0 0 0 0 0 0 0 0 0 0
+SKIP ANY 0.5
+SLIDE p320a.png IN CUT HOLD 3.0
+  TEXT 4 4 "ABC block 0"
+  TEXT 6 4 "ABC block 1" BLOCK 1
+END CUT

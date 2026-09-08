@@ -11,6 +11,7 @@ show_boot:
     call l2_setup
     ld a, (borderCol)
     call border_set
+    call text_init
     call aud_open
     xor a
     jp load_begin
@@ -239,11 +240,7 @@ show_end_step:
     ret nz
     jp chain_run
 
-; Replaced by later tasks (Task 12/13 text, Task 16 stream).
-text_clear:
-    ret
-caption_service:
-    ret
+; Replaced by later tasks (Task 13 crawl, Task 16 stream).
 scroll_begin:
     ret
 scroll_step:

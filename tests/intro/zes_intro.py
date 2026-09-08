@@ -7,9 +7,13 @@ front Layer 2 surface against a compiled NXC/NXI), --skip-surface-at-frame
 F:PC:<picture file> (presses skip at frame>=F, breakpoints at PC - e.g.
 chain_run's address from the launcher's own .map - so the surface check
 runs before any hand-off code can overwrite it, then resumes),
---expect-handoff/--expect-text at $6000. ZEsarUX's frame rate varies by
-host, so wall-clock anchors drift - prefer the frame-anchored flags;
---interval tightens to 0.1s automatically when any of them are given."""
+--expect-handoff/--expect-text at $6000 (the hand-off gate). --text-at-frame
+F (repeatable, at the first sample whose mirror frame >= F) decodes the
+launcher's own tilemap at $4000 and prints/collects its non-blank rows;
+--expect-caption "s" (repeatable) requires each substring in some
+collected row. ZEsarUX's frame rate varies by host, so wall-clock anchors
+drift - prefer the frame-anchored flags; --interval tightens to 0.1s
+automatically when any of them are given."""
 import argparse, pathlib, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
@@ -133,11 +137,13 @@ def main():
     ap.add_argument("--assert-frame", dest="frame_asserts", action="append", default=[])
     ap.add_argument("--surface-at-frame", dest="surface_asserts", action="append", default=[])
     ap.add_argument("--skip-surface-at-frame", dest="skip_surface", default=None)
+    ap.add_argument("--text-at-frame", dest="text_at_frame", type=int, action="append", default=[])
+    ap.add_argument("--expect-caption", dest="expect_captions", action="append", default=[])
     ap.add_argument("--expect-handoff", action="store_true")
     ap.add_argument("--expect-text")
     ap.add_argument("--port", type=int, default=10011)
     a = ap.parse_args()
-    if (a.frame_asserts or a.space_at_frame or a.surface_asserts or a.skip_surface) and a.interval > 0.1:
+    if (a.frame_asserts or a.space_at_frame or a.surface_asserts or a.skip_surface or a.text_at_frame) and a.interval > 0.1:
         a.interval = 0.1              # frame anchors need frequent sampling to land close to F
     card = pathlib.Path(a.card).resolve()
     if nleg.port_already_listening(a.port):
@@ -170,6 +176,8 @@ def main():
         if a.skip_surface:
             when_s, pc_s, pic_s = a.skip_surface.split(":", 2)
             pending_skip_surface = (int(when_s), int(pc_s), pic_s)
+        pending_text_frame = sorted(a.text_at_frame)
+        collected_text = []
         while time.time() - t0 < a.seconds:
             t = time.time() - t0
             if pending_space and t >= pending_space[0]:
@@ -216,6 +224,14 @@ def main():
                     print("ASSERT FAILED: skip-surface mismatch frame>=%d (t=%.1f, actual frame=%d) pc=%d vs %s: "
                           "%d bytes differ, first at offset %d" % (when, t, d["frame"], pc, picfile, mism, first))
                     ok = False
+            if pending_text_frame and d["frame"] >= pending_text_frame[0]:
+                when = pending_text_frame.pop(0)
+                rows, _ = tilemap.decode(z.read_memory(0x4000, tilemap.GRID_BYTES))
+                text = [r.rstrip() for r in rows if r.strip()]
+                for r in text:
+                    print("text: " + r)
+                collected_text.extend(text)
+                print("text read frame>=%d (t=%.1f, actual frame=%d)" % (when, t, d["frame"]))
             time.sleep(a.interval)
         have_mirror = any(d["sig"] == "IN" for _, d in samples)
         if (a.asserts or a.frame_asserts or a.surface_asserts or a.skip_surface) and not have_mirror:
@@ -261,6 +277,14 @@ def main():
             when, pc, picfile = pending_skip_surface
             print("ASSERT FAILED: frame %d never reached for skip-surface check vs %s" % (when, picfile))
             ok = False
+        if pending_text_frame:
+            for when in pending_text_frame:
+                print("ASSERT FAILED: frame %d never reached for text check" % when)
+                ok = False
+        for expect in a.expect_captions:
+            if not any(expect in r for r in collected_text):
+                print("ASSERT FAILED: text %r not seen" % expect)
+                ok = False
         if a.expect_handoff or a.expect_text:
             head = z.read_memory(0x6000, 4)
             if head == STUB_PROLOGUE:

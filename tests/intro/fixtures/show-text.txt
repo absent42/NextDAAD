@@ -1,0 +1,8 @@
+SKIP ANY 0.5
+SLIDE p320a.png IN CUT HOLD 4.0
+  TEXT 2 CENTRE "The year is 1348" TYPE
+  TEXT 30 5 "Press any key" INK 224 PAPER 0 AT 1.0
+SLIDE p256a.png IN CUT HOLD 2.0
+  TEXT 0 CENTRE "Above the picture" INK 255
+  TEXT 27 CENTRE "Below the picture" INK 255
+END CUT

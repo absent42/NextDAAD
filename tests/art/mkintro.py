@@ -50,13 +50,13 @@ def main(out):
     write_png(os.path.join(out, "bad300.png"), 300, 256, a, pic(300, 256, lambda x, y: x))
     # font sheet: 16 colours, magenta at PLTE index 5; glyph n uses colour (n % 15) + 1
     # except colour 5 (magenta) which is skipped, so every glyph is opaque except
-    # glyph 0, which is all magenta (transparent)
+    # glyph 0 and glyph 32 (space), which are all magenta (transparent)
     fpal = [(0, 0, 0), (255, 255, 255), (255, 0, 0), (0, 255, 0), (0, 0, 255), MAGENTA,
             (255, 255, 0), (0, 255, 255), (128, 128, 128), (64, 64, 64), (192, 192, 192),
             (128, 0, 0), (0, 128, 0), (0, 0, 128), (128, 128, 0), (0, 128, 128)]
     def fpix(x, y):
         n = (y // 8) * 16 + (x // 8)
-        if n == 0:
+        if n == 0 or n == 32:
             return 5
         c = n % 15
         return c + 1 if c + 1 != 5 else 6

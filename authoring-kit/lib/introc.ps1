@@ -533,6 +533,7 @@ function Convert-Font {
             $t[$k] = [byte](($hi -shl 4) -bor $lo)
         }
     }
+    for ($k = 32 * 32; $k -lt 33 * 32; $k++) { if ($t[$k] -ne 0) { throw "font sheet $($show.fontFile): cell 32 (space) must be entirely magenta - it is what clears a text cell" } }
     [IO.File]::WriteAllBytes((Join-Path $Out 'FONT.TIL'), $t)
     Write-Host "  font $($show.fontFile) -> FONT.TIL"
 }
