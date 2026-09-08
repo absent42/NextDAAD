@@ -3,6 +3,9 @@ esx_init:
     xor a
     rst $08
     db ESX_GETSETDRV
+    jr nc, .got
+    ld a, '*'                    ; esxDOS default drive (file.asm's own idiom)
+.got:
     ld (esxDrive), a
     ret
 

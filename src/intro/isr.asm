@@ -95,10 +95,19 @@ frame_isr:
     ei
     reti
 
+; Needs interrupts enabled (frame_isr sets frameFlag). Bounded to 65536
+; polls (rubric 6); on expiry, returns as if the frame had ticked.
 wait_frame:
+    ld bc, 0
+.w:
     ld a, (frameFlag)
     or a
-    jr z, wait_frame
+    jr nz, .got
+    dec bc
+    ld a, b
+    or c
+    jr nz, .w
+.got:
     xor a
     ld (frameFlag), a
     ret

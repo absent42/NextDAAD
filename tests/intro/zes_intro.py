@@ -1,6 +1,6 @@
 """Headless ZEsarUX driver for the launcher: <card dir> --launch NAME.NEX.
 Samples the DEBUG mirror at $5400 every --interval; optional --space-at
-taps and --assert checks; --expect-handoff needs text at $6000."""
+taps, --assert checks, --expect-handoff/--expect-text at $6000."""
 import argparse, pathlib, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
@@ -13,6 +13,9 @@ FIELDS = {"seq": 2, "state": 3, "slide": 4, "load": 5, "trans": 6, "code": 7,
           "loadpage": 24, "fading": 25, "slides": 26, "skip": 27}
 WORDS = {"frame": 8, "hold": 10, "tf": 12, "scroll": 14, "pcmwr": 22}
 SPACE_DOWN = "FFFFFFFFFFFFFFFE00"
+# stub: di / ld sp,$7FE0 (chain.asm) - if $6000 still starts with this, the
+# stub never handed off and any decoded "text" there is its own opcodes.
+STUB_PROLOGUE = bytes.fromhex("f331e07f")
 
 def decode(m):
     d = {k: m[o] for k, o in FIELDS.items()}
@@ -30,6 +33,7 @@ def main():
     ap.add_argument("--space-at", type=float, action="append", default=[])
     ap.add_argument("--assert", dest="asserts", action="append", default=[])
     ap.add_argument("--expect-handoff", action="store_true")
+    ap.add_argument("--expect-text")
     ap.add_argument("--port", type=int, default=10011)
     a = ap.parse_args()
     card = pathlib.Path(a.card).resolve()
@@ -68,26 +72,52 @@ def main():
             print("t=%.1f sig=%s state=%d slide=%d load=%d trans=%d code=%02X frame=%d hold=%d tf=%d scroll=%d front=%d mode=%d music=%d keys=%d hz60=%d fadek=%d pcmwr=%04X loadpage=%d fading=%d"
                   % (t, d["sig"], d["state"], d["slide"], d["load"], d["trans"], d["code"], d["frame"], d["hold"], d["tf"], d["scroll"], d["front"], d["mode"], d["music"], d["keys"], d["hz60"], d["fadek"], d["pcmwr"], d["loadpage"], d["fading"]))
             time.sleep(a.interval)
-        for spec in a.asserts:
-            when, cond = spec.split(":", 1)
-            field, value = cond.split("=")
-            when = float(when)
-            t, d = min(samples, key=lambda s: abs(s[0] - when))
-            got = d[field]
-            if got != int(value, 0):
-                print("ASSERT FAILED at t=%.1f: %s=%d, expected %s" % (t, field, got, value)); ok = False
+        if (a.asserts or a.expect_handoff) and not any(d["sig"] == "IN" for _, d in samples):
+            print("ASSERT FAILED: no sample ever showed sig=IN - dbg_init never ran "
+                  "(expected for a Release build, which has no mirror) or the mirror "
+                  "was never reached before the hand-off window closed")
+            ok = False
+        if a.asserts and not samples:
+            print("ASSERT FAILED: no samples were taken (--seconds too small) - cannot evaluate --assert conditions")
+            ok = False
+        else:
+            for spec in a.asserts:
+                when, cond = spec.split(":", 1)
+                field, value = cond.split("=")
+                when = float(when)
+                t, d = min(samples, key=lambda s: abs(s[0] - when))
+                got = d[field]
+                if got != int(value, 0):
+                    print("ASSERT FAILED at t=%.1f: %s=%d, expected %s" % (t, field, got, value)); ok = False
+                else:
+                    print("assert ok t=%.1f %s=%s" % (t, field, value))
+        if a.expect_handoff or a.expect_text:
+            head = z.read_memory(0x6000, 4)
+            if head == STUB_PROLOGUE:
+                print("ASSERT FAILED: $6000 still holds the stub's own prologue - the hand-off never happened")
+                ok = False
             else:
-                print("assert ok t=%.1f %s=%s" % (t, field, value))
-        if a.expect_handoff:
-            rows, _ = tilemap.decode(z.read_memory(0x6000, tilemap.GRID_BYTES))
-            text = [r.rstrip() for r in rows if r.strip()]
-            for r in text:
-                print("game: " + r)
-            if not text:
-                print("ASSERT FAILED: no interpreter text at $6000 - the hand-off did not reach the game"); ok = False
+                rows, _ = tilemap.decode(z.read_memory(0x6000, tilemap.GRID_BYTES))
+                text = [r.rstrip() for r in rows if r.strip()]
+                for r in text:
+                    print("game: " + r)
+                if a.expect_handoff and not text:
+                    print("ASSERT FAILED: no interpreter text at $6000 - the hand-off did not reach the game")
+                    ok = False
+                if a.expect_text and not any(a.expect_text in r for r in text):
+                    print("ASSERT FAILED: expected text %r not found at $6000" % a.expect_text)
+                    ok = False
         z.close()
     finally:
-        proc.kill(); proc.wait(timeout=10)
+        proc.kill()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":

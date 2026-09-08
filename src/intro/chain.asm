@@ -68,6 +68,11 @@ stub:
     db ESX_F_READ
     ld a, ERR_NEX_OPEN
     jp c, fatal_nex
+    ld hl, 512
+    or a
+    sbc hl, bc
+    ld a, ERR_NEX_SHORT
+    jp nz, fatal_nex             ; fewer than 512 bytes came back
     ; header check: "Next" (0-3), "V1." (4-6), an ASCII digit at 7.
     ld a, (STUB_HDR+0)
     cp 'N'
@@ -162,6 +167,17 @@ stub:
     set 1, a                         ; Turbo Sound
     res 0, a
     nextreg NR_PERIPH3, a
+    ld a, (STUB_HDR+142)             ; expansion bus byte: zero clears the
+    or a                             ; top 4 bits of NR $80 (nexload)
+    jr nz, .noexp
+    ld bc, TBBLUE_REG_SEL
+    ld a, NR_EXPBUS
+    out (c), a
+    inc b
+    in a, (c)
+    and $0F
+    nextreg NR_EXPBUS, a
+.noexp:
     nextreg NR_CPU_SPEED, 3
     nextreg NR_L2_BANK, 9
     nextreg NR_L2_SHADOW, 12
@@ -322,3 +338,5 @@ s_hnd:    db 0
 s_p2:     db 0
     ENT
 stub_len equ $ - stub_img
+    ASSERT STUB_ORG + stub_len <= FATAL_DEFS   ; stub must not reach its own
+                                                ; header/font scratch (rubric 8)

@@ -148,3 +148,4 @@ fatal_nex:
 fatalMsg: db "E9 nextdaad.nex ", 0
 fontData:
     INCBIN "../font.chr"
+    ASSERT $ - fontData == 2048       ; ld bc, 2048 font copy above (rubric 8)

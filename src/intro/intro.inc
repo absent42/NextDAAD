@@ -84,6 +84,7 @@ NR_TM_MAP_BASE  equ $6E
 NR_TM_DEF_BASE  equ $6F
 NR_L2_CTRL      equ $70
 NR_L2_XOFS_MSB  equ $71
+NR_EXPBUS       equ $80
 NR_INT_CTRL     equ $C0
 NR_INT_EN_1     equ $C4
 NR_INT_EN_2     equ $C5
