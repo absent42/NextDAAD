@@ -51,6 +51,7 @@
 #   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -BigDdbTok          sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
 #   -Xbn                sd\XBN\       tests\extern.dsf
+#   -Intro   sd\INTRO\   tests\condacts.dsf + a scripted show (SHOW.NEX launches it)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
 #    never touched by this script)
 #
@@ -673,7 +674,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool)
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -734,6 +735,7 @@ if ($SprAud)           { $legName = 'SPRAUD' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
 if ($BigDdbTok)        { $legName = 'BIGDDBT' }
 if ($Xbn)              { $legName = 'XBN' }
+if ($Intro)            { $legName = 'INTRO' }
 $leg = Join-Path $sd $legName
 
 function Reset-LegDir {
@@ -753,7 +755,7 @@ function Reset-LegDir {
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
                'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
-               'PALETTE', 'SPRITES', 'SPRAUD', 'BIGDDB', 'BIGDDBT', 'XBN')
+               'PALETTE', 'SPRITES', 'SPRAUD', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -855,6 +857,8 @@ finally { Pop-Location }
 & "$PSScriptRoot\fontconv-selftest.ps1"
 
 & "$PSScriptRoot\anipack-selftest.ps1"
+
+& "$PSScriptRoot\intro-selftest.ps1"
 
 # xbnbuild.ps1 drift guard: its generated subset source must stay
 # equivalent to the hand-written externs\all\all.asm. Builds every
@@ -5167,6 +5171,54 @@ if ($Sprites) {
     }
     Copy-Item $palCardSrc (Join-Path $leg '001.NX2') -Force
     "staged palcard.nx2 -> $leg\001.NX2  $palCardBytes bytes"
+}
+
+if ($Intro) {
+    Copy-Item "$root\tests\out\condacts.ddb" (Join-Path $leg 'GAME.DDB') -Force
+    "staged condacts.ddb -> $leg\GAME.DDB"
+    # The art comes from tests\intro-selftest.ps1, which ran earlier in this
+    # invocation and left tests\out\intro populated by tests\art\mkintro.py.
+    $introWork = "$root\tests\out\intro"
+    if (-not (Test-Path "$introWork\p320a.png")) { throw "no $introWork\p320a.png - the intro selftest did not run" }
+    $nex = "$root\build\intro.nex"
+    if (-not (Test-Path $nex)) { throw "no build\intro.nex - run build.ps1 first" }
+    $body = [IO.File]::ReadAllText("$PSScriptRoot\intro\fixtures\harness.txt", [Text.Encoding]::GetEncoding(28591))
+    $music = ''
+    # A hashtable, not an array: array splatting binds POSITIONALLY (see
+    # tests\intro-selftest.ps1's Compile helper for the same finding), so
+    # a plain @('-S2A', path) array here would land in the wrong -params.
+    $extra = @{ Gfx = "$root\tools\gfx2next\gfx2next.exe"; Palcheck = "$root\authoring-kit\lib\palcheck.ps1" }
+    switch ($IntroMusic) {
+        'aky' {
+            Copy-Item "$root\authoring-kit\AUDIO\STARTER.aks" "$introWork\theme.aks" -Force
+            $music = "MUSIC AKY theme.aks`n"
+            $extra['S2A'] = "$root\tools\ArkosTracker3\tools\SongToAky.exe"
+        }
+        'ays' {
+            Copy-Item "$root\authoring-kit\AUDIO\STARTER.aks" "$introWork\theme.aks" -Force
+            $music = "MUSIC STREAM theme.aks`n"
+            $extra['S2Y'] = "$root\tools\ArkosTracker3\tools\SongToYm.exe"
+            $extra['Aysconv'] = "$root\authoring-kit\lib\aysconv.ps1"
+        }
+        'pcm' {
+            $music = "MUSIC PCM tone.wav`n"
+            $extra['Ffmpeg'] = "$root\tools\ffmpeg\bin\ffmpeg.exe"
+        }
+        'ndr' {
+            $ndr = "$root\tools\NextDAW\DemoCode\z88dk_asm\Silver-Surfer.NDR"
+            $bin = "$root\tools\NextDAW\RuntimePlayer\NextDAW_RuntimePlayer_E000.bin"
+            if (-not ((Test-Path $ndr) -and (Test-Path $bin))) { throw "tools\NextDAW absent: -IntroMusic ndr needs the author's own NextDAW copy" }
+            Copy-Item $ndr "$introWork\song.ndr" -Force
+            $music = "MUSIC NDR song.ndr`n"
+            $extra['NdawBin'] = $bin
+        }
+    }
+    $scriptPath = "$introWork\harness-$IntroMusic.txt"
+    [IO.File]::WriteAllText($scriptPath, $music + $body, [Text.Encoding]::GetEncoding(28591))
+    & "$root\authoring-kit\lib\introc.ps1" -Script $scriptPath -Root $introWork -Out (Join-Path $leg 'INTRO') -Launcher $nex -LauncherOut (Join-Path $leg 'SHOW.NEX') @extra
+    "staged intro ($IntroMusic) -> $leg\INTRO\ and $leg\SHOW.NEX"
+    "LAUNCH SHOW.NEX to see the intro; NEXTDAAD.NEX skips it"
+    if ($IntroMusic -eq 'ndr') { Remove-Item "$introWork\song.ndr" -Force }
 }
 
 # The interpreter itself, so the folder is genuinely self-contained -

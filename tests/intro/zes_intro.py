@@ -7,7 +7,14 @@ front Layer 2 surface against a compiled NXC/NXI), --skip-surface-at-frame
 F:PC:<picture file> (presses skip at frame>=F, breakpoints at PC - e.g.
 chain_run's address from the launcher's own .map - so the surface check
 runs before any hand-off code can overwrite it, then resumes),
---expect-handoff/--expect-text at $6000 (the hand-off gate). --text-at-frame
+--expect-handoff/--expect-text at $6000 (the hand-off gate). When both are
+given, the loop also polls for --expect-text's exact string at $6000 every
+sample and stops as soon as it appears (--seconds is then only an upper
+bound; any frame-anchored check still pending at that point fails as
+unreached) - a bare "stub gone" or "any text" test is unsafe here, since
+$6000 is live launcher memory for the whole run and decodes as plausible
+garbage long before any real hand-off.
+--text-at-frame
 F (repeatable, at the first sample whose mirror frame >= F) decodes the
 launcher's own tilemap at $4000 and prints/collects its non-blank rows;
 --expect-caption "s" (repeatable) requires each substring in some
@@ -113,6 +120,22 @@ def surface_check(z, front, mode, picfile):
 # run is a fresh emulator instance, so no other index is ever armed here.
 SKIP_BREAKPOINT = 1
 
+def read_handoff_text(z):
+    """Freeze the CPU, decode the tilemap at $6000 (the post-hand-off
+    interpreter window - NOT $4000, that is the launcher's own caption
+    tilemap read by read_text below), always resuming before returning.
+    Returns [] while $6000 still holds the stub's own prologue, whose
+    opcodes would otherwise decode as meaningless rows."""
+    z.enter_cpu_step()
+    try:
+        head = z.read_memory(0x6000, 4)
+        if bytes(head) == STUB_PROLOGUE:
+            return []
+        rows, _ = tilemap.decode(z.read_memory(0x6000, tilemap.GRID_BYTES))
+    finally:
+        z.exit_cpu_step()
+    return rows
+
 def read_text(z):
     """Freeze the CPU (fix round 1: a live read can tear a row mid-typewriter),
     decode the tilemap at $4000, always resuming (exit-cpu-step) before
@@ -154,6 +177,15 @@ def skip_surface_check(z, pc, picfile):
     return compare_picture(got, picfile, npages)
 
 def main():
+    # A torn mirror sample can carry arbitrary garbage in "sig" (documented:
+    # the NDR leg remaps NR $52/$53 mid-frame) and gets printed via %r.
+    # Windows redirects stdout through the console codepage (cp1252 here)
+    # even to a file, which raises UnicodeEncodeError on such bytes and
+    # kills the run before it reaches any assertion - replace instead.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except AttributeError:
+        pass          # older Python without TextIOWrapper.reconfigure
     ap = argparse.ArgumentParser()
     ap.add_argument("card")
     ap.add_argument("--launch", required=True)
@@ -217,6 +249,17 @@ def main():
                 pending_space.pop(0)
                 z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
                 print("t=%.1f space" % t)
+            # Checked every poll, independent of the mirror sample below: once
+            # hand-off truly completes, chain_run's final MMU remap retires
+            # the launcher's own bank 5 (mirror included), so every later
+            # mirror read is permanently torn and would never reach the
+            # accepted-sample branch this check used to live in - the loop
+            # would then run the full --seconds with no early exit at all.
+            if a.expect_handoff and a.expect_text:
+                rows = read_handoff_text(z)
+                if any(a.expect_text in r for r in rows):
+                    print("t=%.1f hand-off text %r observed - stopping early" % (t, a.expect_text))
+                    break
             # enter/exit-cpu-step brackets the read; a frozen CPU does not by
             # itself make the 32 bytes atomic (fix round 2: a freeze can still
             # land mid-dbg_mirror, catching some fields already written for
