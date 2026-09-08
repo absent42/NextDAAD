@@ -168,6 +168,8 @@ Write-Script 'e-pool' $big
 Assert-Throws { Compile 'e-pool' @('-NoAssets') } 'string pool is' 'string pool overflow'
 Write-Script 'e-first' "SLIDE p320a.png IN WIPE LEFT 1.0 HOLD 1.0`nEND CUT"
 Assert-Throws { Compile 'e-first' @('-NoAssets') } 'the first slide arrives from nothing' 'first slide needs CUT or FADE'
+Write-Script 'e-music2' "MUSIC AKY theme.aks`nMUSIC AKY theme.aks`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
+Assert-Throws { Compile 'e-music2' @('-NoAssets') } 'only one MUSIC statement' 'a second MUSIC statement is rejected'
 # ---- 005 assets: pictures numbered by first use, NXC column-major, NX2 transposed, FONT.TIL remapped, blocks.
 $gfxArgs = @('-Gfx', $gfx)
 $gfxNamed = @{ Gfx = $gfx }    # array splatting binds @gfxArgs positionally: direct calls need a hashtable to pass -Gfx by name
@@ -239,6 +241,31 @@ if ((Test-Path $ndaw) -and (Test-Path $ndr)) {
     Assert-Eq $d[6] 4 '011 music kind NDR'
     Remove-Item "$work\out-011-ndr\NDAW.BIN", "$work\song.ndr" -Force
 } else { Write-Host "intro-selftest: tools\NextDAW absent, 011 skipped" }
+# ---- a relative -Gfx path resolves through introc.ps1's own absolute-path
+# fix, the same as an absolute one: identical INTRO.DAT bytes either way.
+$dAbs = Compile '005-assets' $gfxArgs '-abs2'
+Push-Location $root
+try { $dRel = Compile '005-assets' @('-Gfx', 'tools\gfx2next\gfx2next.exe') '-relgfx' }
+finally { Pop-Location }
+Assert-Eq ([Convert]::ToBase64String($dRel)) ([Convert]::ToBase64String($dAbs)) 'relative -Gfx matches absolute -Gfx'
+# ---- 011b MUSIC STREAM through SongToYm and aysconv when present; skipped
+# (not failed) without it. Task 12 uses case number 012.
+$s2y = "$root\tools\ArkosTracker3\tools\SongToYm.exe"
+if (Test-Path $s2y) {
+    Copy-Item "$root\authoring-kit\AUDIO\STARTER.aks" "$work\stream.aks" -Force
+    Write-Script '011b-stream' "MUSIC STREAM stream.aks`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
+    $aysconv = "$root\authoring-kit\lib\aysconv.ps1"
+    $d = Compile '011b-stream' ($gfxArgs + @('-S2Y', $s2y, '-Aysconv', $aysconv))
+    $ays = [IO.File]::ReadAllBytes("$work\out-011b-stream\MUSIC.AYS")
+    Assert-Eq ($ays.Length -gt 0) $true '011b AYS stream non-empty'
+    Assert-Eq ($ays.Length -le 393216) $true '011b AYS within the 393216 (48 page) ceiling'
+    Assert-Eq ([Text.Encoding]::ASCII.GetString($ays, 0, 4)) 'AYS1' '011b AYS magic'
+    Assert-Eq ($ays[4] -ge 1 -and $ays[4] -le 3) $true '011b AYS psgCount is 1-3'
+    Assert-Eq $ays[5] 0 '011b AYS flags byte reserved 0'
+    Assert-Eq $ays[14] 0 '011b AYS header pad byte 14'
+    Assert-Eq $ays[15] 0 '011b AYS header pad byte 15'
+    Assert-Eq $d[6] 2 '011b music kind STREAM'
+} else { Write-Host "intro-selftest: SongToYm absent, 011b skipped" }
 
 # ---- Windows PowerShell 5.1 is what BUILD.BAT runs: the same script must
 # ---- produce the same bytes there.

@@ -18,6 +18,14 @@ param(
     [switch]$NoAssets
 )
 $ErrorActionPreference = 'Stop'
+# Tool paths arrive relative from the kit's own TOOLSDIR default; resolve
+# each to absolute here so Invoke-Gfx2Next's Push-Location cannot break it.
+# A value that names no existing file is left as-is so the caller's own
+# text still shows in the "not found at '...'" errors below.
+foreach ($p in 'Gfx', 'S2A', 'S2Y', 'Ffmpeg', 'NdawBin', 'Aysconv', 'Palcheck') {
+    $v = Get-Variable -Name $p -ValueOnly
+    if ($v -and (Test-Path -LiteralPath $v -PathType Leaf)) { Set-Variable -Name $p -Value (Resolve-Path -LiteralPath $v).Path }
+}
 $enc = [Text.Encoding]::GetEncoding(28591)
 
 function Fail([int]$line, [string]$msg) {
@@ -166,6 +174,7 @@ for ($ln = 0; $ln -lt $lines.Count; $ln++) {
     switch ($kw) {
         'MUSIC' {
             if (-not $inHeader) { Fail $line 'MUSIC must come before the first SLIDE' }
+            if ($show.music.kind -ne 0) { Fail $line 'only one MUSIC statement is allowed' }
             if ($t.Count -ne 3) { Fail $line 'MUSIC <AKY|STREAM|PCM|NDR> <file>' }
             $kinds = @{ AKY = 1; STREAM = 2; PCM = 3; NDR = 4 }
             $k = Word $t[1]

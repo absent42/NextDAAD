@@ -1,9 +1,10 @@
 ; Sample loader intro. Rename this file to INTRO.TXT and BUILD.BAT stages
 ; RELEASE\<GAME>.NEX, the file to launch. Paths are relative to this folder.
+; Point SLIDE at your own 320x256 PNG or NX2 files instead of DAAD.NX2.
 MUSIC AKY AUDIO\STARTER.aks
 SKIP ANY 1.0
-SLIDE IMAGES\001.NX2 IN FADE 1.0 HOLD 4.0
+SLIDE DAAD.NX2 IN FADE 1.0 HOLD 4.0
   TEXT 30 CENTRE "A NextDAAD adventure" INK 255
-SLIDE IMAGES\002.NX2 IN WIPE RIGHT 0.6 HOLD KEY
+SLIDE DAAD.NX2 IN CUT HOLD KEY
   TEXT 30 CENTRE "Press any key" INK 254 TYPE
 END FADE 1.0
