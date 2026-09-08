@@ -1,0 +1,12 @@
+SKIP ANY 0.5
+SLIDE p320a.png IN CUT
+  SCROLL SPEED 2 INK 252
+  LINE "A NEXTDAAD ADVENTURE"
+  LINE ""
+  LINE "Written by"
+  LINE "Someone"
+  LINE ""
+  LINE "Music"
+  LINE "Someone else"
+SLIDE p320c.png IN CUT HOLD 1.0
+END CUT

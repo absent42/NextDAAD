@@ -382,3 +382,103 @@ caption_one:
 capIdx:    db 0
 capLen:    db 0
 capTarget: db 0
+
+; Ring-scroll setup (spec 6.6): P and the per-line state reset, clip hides
+; the wrap row (display rows 0-7) so it is only ever seen entering the
+; bottom.
+scroll_begin:
+    call text_clear
+    ld a, (curSlide+SL_SPEED)
+    ld (scrollSpeed), a
+    ld a, (curSlide+SL_SATTR)
+    ld (scrollAttr), a
+    ld a, (curSlide+SL_ITEM0)
+    ld (scrollFirst), a
+    ld a, (curSlide+SL_NITEM)
+    ld (scrollLines), a
+    xor a
+    ld (scrollLine), a
+    ld hl, 0
+    ld (scrollP), hl
+    nextreg NR_CLIP_IDX, 8
+    nextreg NR_TM_CLIP, 0
+    nextreg NR_TM_CLIP, 159
+    nextreg NR_TM_CLIP, 8            ; hide display rows 0-7
+    nextreg NR_TM_CLIP, 255
+    ret
+
+; One frame: advance P, feed every line whose entry point P has reached,
+; write the scroll register. Z when the last line has left.
+scroll_step:
+    ld hl, (scrollP)
+    ld a, (scrollSpeed)
+    add hl, a
+    ld (scrollP), hl
+.feed:
+    ld a, (scrollLine)
+    ld l, a
+    ld h, 0
+    add hl, hl
+    add hl, hl
+    add hl, hl                       ; 8k
+    ld de, (scrollP)
+    ex de, hl
+    or a
+    sbc hl, de                       ; P - 8k
+    jr c, .written
+    ld a, (scrollLine)
+    and 31
+    ld b, a
+    call text_row_clear
+    ld a, (scrollLine)
+    ld hl, scrollLines
+    cp (hl)
+    jr nc, .advance                  ; past the last line: blank row only
+    ld hl, scrollFirst
+    add a, (hl)
+    call item_fetch
+    ld de, (curItem+IT_STR)
+    call str_map
+    call str_len
+    ld c, a
+    ld a, (cols)
+    sub c
+    srl a
+    ld c, a                          ; centred column
+    ld a, (scrollLine)
+    and 31
+    ld b, a
+    push bc
+    ld de, (curItem+IT_STR)
+    call str_map
+    pop bc
+    ld a, (scrollAttr)
+    ld e, a
+    ld d, 0
+    call text_put
+.advance:
+    ld hl, scrollLine
+    inc (hl)
+    jr .feed
+.written:
+    ld a, (scrollP)
+    nextreg NR_TM_YOFS, a
+    ld a, (scrollLines)
+    ld l, a
+    ld h, 0
+    ld de, 31
+    add hl, de
+    add hl, hl
+    add hl, hl
+    add hl, hl                       ; 8 (L + 31) in 16 bits: 255 lines = 2288
+    ld de, (scrollP)
+    ex de, hl
+    or a
+    sbc hl, de                       ; P - end
+    jr nc, .done
+    or 1
+    ret
+.done:
+    nextreg NR_TM_YOFS, 0
+    xor a
+    ret

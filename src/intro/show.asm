@@ -240,12 +240,7 @@ show_end_step:
     ret nz
     jp chain_run
 
-; Replaced by later tasks (Task 13 crawl, Task 16 stream).
-scroll_begin:
-    ret
-scroll_step:
-    xor a
-    ret
+; Replaced by a later task (Task 16 stream).
 pcm_refill:
     xor a
     ret
