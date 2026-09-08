@@ -79,6 +79,11 @@ ays_open:
     push af
     ld a, (aysPages)
     ld c, a
+    srl a
+    srl a
+    srl a
+    ld b, a                          ; B = pages>>3 = capacity high byte
+    ld a, c
     and 7
     add a, a
     add a, a
@@ -88,12 +93,9 @@ ays_open:
     ld h, a
     ld l, 0                          ; HL = capacity low16 (pages*8192 mod 65536)
     or a
-    sbc hl, de                       ; capacity low16 - needed low16
-    ld a, c
-    srl a
-    srl a
-    srl a                            ; A = pages>>3 = capacity high byte
-    pop de                           ; D = needed high byte
+    sbc hl, de                       ; capacity low16 - needed low16 (borrow in CF)
+    ld a, b                          ; flag-neutral: CF still holds the borrow
+    pop de                           ; flag-neutral: D = needed high byte
     sbc a, d                         ; capacity - needed (24-bit)
     jp c, .hdr                       ; needed > capacity: reject
     ; stream length -> remain
