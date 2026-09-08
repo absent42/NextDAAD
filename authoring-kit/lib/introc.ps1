@@ -26,6 +26,13 @@ foreach ($p in 'Gfx', 'S2A', 'S2Y', 'Ffmpeg', 'NdawBin', 'Aysconv', 'Palcheck') 
     $v = Get-Variable -Name $p -ValueOnly
     if ($v -and (Test-Path -LiteralPath $v -PathType Leaf)) { Set-Variable -Name $p -Value (Resolve-Path -LiteralPath $v).Path }
 }
+# Script/Root must exist to resolve (left as-is otherwise, so the caller's own
+# text still shows in the "not found" errors below); Out may not exist yet, so
+# it is resolved against $PWD instead. All three are absolute before any
+# Push-Location (Invoke-Gfx2Next) can make a relative one resolve wrong.
+if (Test-Path -LiteralPath $Script) { $Script = (Resolve-Path -LiteralPath $Script).Path }
+if (Test-Path -LiteralPath $Root) { $Root = (Resolve-Path -LiteralPath $Root).Path }
+$Out = [IO.Path]::GetFullPath([IO.Path]::Combine($PWD.Path, $Out))
 $enc = [Text.Encoding]::GetEncoding(28591)
 
 function Fail([int]$line, [string]$msg) {

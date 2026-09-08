@@ -248,6 +248,18 @@ Push-Location $root
 try { $dRel = Compile '005-assets' @('-Gfx', 'tools\gfx2next\gfx2next.exe') '-relgfx' }
 finally { Pop-Location }
 Assert-Eq ([Convert]::ToBase64String($dRel)) ([Convert]::ToBase64String($dAbs)) 'relative -Gfx matches absolute -Gfx'
+# ---- a relative -Root and -Out resolve the same way (the Push-Location
+# ---- bug this closes: a relative source path broke once Invoke-Gfx2Next
+# ---- changed directory for gfx2next).
+$dAbsRoot = Compile '001-min' @('-NoAssets')
+Push-Location $root
+try {
+    $relOut = 'tests\out\intro\out-001-min-relroot'
+    & $comp -Script 'tests\out\intro\001-min.txt' -Root 'tests\out\intro' -Out $relOut -NoAssets | Out-Null
+    $dRelRoot = [IO.File]::ReadAllBytes("$root\$relOut\INTRO.DAT")
+}
+finally { Pop-Location }
+Assert-Eq ([Convert]::ToBase64String($dRelRoot)) ([Convert]::ToBase64String($dAbsRoot)) 'relative -Root/-Out matches absolute -Root/-Out'
 # ---- 011b MUSIC STREAM through SongToYm and aysconv when present; skipped
 # (not failed) without it. Task 12 uses case number 012.
 $s2y = "$root\tools\ArkosTracker3\tools\SongToYm.exe"
