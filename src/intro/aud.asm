@@ -4,6 +4,8 @@ aud_open:
     ld a, (musicKind)
     cp MUS_AKY
     jp z, aky_open
+    cp MUS_AYS
+    jp z, ays_open
     ret
 aud_frame:
     ret
@@ -12,6 +14,8 @@ aud_isr:
     ld a, (musicKind)
     cp MUS_AKY
     jp z, aky_tick
+    cp MUS_AYS
+    jp z, ays_tick
     ret
 ; HL = frames. Volume 16 -> 0 over the frames; fadeVol is read by the legs.
 aud_fade_begin:

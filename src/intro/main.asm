@@ -69,6 +69,7 @@ var_init:
     INCLUDE "input.asm"
     INCLUDE "aud.asm"
     INCLUDE "aud_aky.asm"
+    INCLUDE "aud_ays.asm"
  DEFINE PLY_AKY_NO_ORG
     INCLUDE "../audio/player_aky.asm"
     INCLUDE "dbg.asm"
@@ -121,7 +122,7 @@ fadeFrame:      dw 0
 fading:         db 0
 fadeVol:        db 0
  IFDEF DEBUG
-akyTicks:       db 0                 ; DEBUG probe: aky_tick call count (dbg_mirror)
+akyTicks:       db 0                 ; DEBUG probe: aky_tick/ays_tick call count (dbg_mirror)
  ENDIF
 skipMode:       db 0
 skipWindow:     dw 0
