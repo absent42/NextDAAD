@@ -1,6 +1,6 @@
-; AYS resident applier (aysconv.ps1 format). Whole file in pages 40..87.
-; Format: "AYS1", psgCount at 4, loopOffset d24 at 8, streamLength d24 at
-; 11, stream from file offset 16, matching src\overlay1.asm's own reader.
+; AYS resident applier (aysconv.ps1 format). Whole file in pages 40..87,
+; read through slot 6 only - a page crossing remaps NR_MMU6 and resumes
+; at WIN6. Header layout: intro.inc AYS_HDR_* equates.
     ASSERT PG_MUSIC_LAST - PG_MUSIC + 1 == 48    ; the .page loop's literal cap
 ays_open:
     ld hl, aysName
@@ -46,7 +46,7 @@ ays_open:
     call esx_close_a
     ld a, PG_MUSIC
     call map6
-    ld hl, WIN6
+    ld hl, WIN6+AYS_HDR_MAGIC
     ld a, (hl)
     cp 'A'
     jp nz, .hdr
@@ -62,33 +62,59 @@ ays_open:
     ld a, (hl)
     cp '1'
     jp nz, .hdr
-    ld a, (WIN6+4)
+    ld a, (WIN6+AYS_HDR_PSGS)
     or a
     jp z, .hdr
     cp 4
     jp nc, .hdr
     ld (aysPsgs), a
-    ; stream length -> remain and total
-    ld hl, (WIN6+11)
+    ; 16 + streamLength must fit inside the loaded pages: reject a
+    ; header/file-size disagreement, matching overlay1.asm's own check.
+    ld hl, (WIN6+AYS_HDR_STREAMLEN)
+    ld de, 16
+    add hl, de
+    ld a, (WIN6+AYS_HDR_STREAMLEN+2)
+    adc a, 0                         ; A:HL = needed (16 + streamLength)
+    ex de, hl                        ; DE = needed low16
+    push af
+    ld a, (aysPages)
+    ld c, a
+    and 7
+    add a, a
+    add a, a
+    add a, a
+    add a, a
+    add a, a                         ; A = (pages&7)<<5 = capacity low16 hi byte
+    ld h, a
+    ld l, 0                          ; HL = capacity low16 (pages*8192 mod 65536)
+    or a
+    sbc hl, de                       ; capacity low16 - needed low16
+    ld a, c
+    srl a
+    srl a
+    srl a                            ; A = pages>>3 = capacity high byte
+    pop de                           ; D = needed high byte
+    sbc a, d                         ; capacity - needed (24-bit)
+    jp c, .hdr                       ; needed > capacity: reject
+    ; stream length -> remain
+    ld hl, (WIN6+AYS_HDR_STREAMLEN)
     ld (aysRemain), hl
-    ld (aysLen), hl
-    ld a, (WIN6+13)
+    ld a, (WIN6+AYS_HDR_STREAMLEN+2)
     ld (aysRemainHi), a
-    ld (aysLenHi), a
     ; loopOffset must be < streamLength (matches overlay1.asm's own header
     ; check; loopOffset >= streamLength would compute a negative loop
     ; remainder below)
-    ld hl, (WIN6+8)
-    ld de, (WIN6+11)
+    ld hl, (WIN6+AYS_HDR_LOOPOFF)
+    ld de, (WIN6+AYS_HDR_STREAMLEN)
     or a
     sbc hl, de
-    ld a, (WIN6+10)
-    ld hl, WIN6+13
+    ld a, (WIN6+AYS_HDR_LOOPOFF+2)
+    ld hl, WIN6+AYS_HDR_STREAMLEN+2
     sbc a, (hl)
     jp nc, .hdr
     ; loop position: absolute offset 16 + loopOffset -> page and pointer
-    ld hl, (WIN6+8)
-    ld a, (WIN6+10)
+    ld hl, (WIN6+AYS_HDR_LOOPOFF)
+    ld a, (WIN6+AYS_HDR_LOOPOFF+2)
     ld de, 16
     add hl, de
     adc a, 0                         ; A:HL = absolute offset
@@ -116,13 +142,13 @@ ays_open:
     or b
     ld (aysLoopPage), a
     ; loop remain = streamLength - loopOffset
-    ld hl, (WIN6+11)
-    ld de, (WIN6+8)
+    ld hl, (WIN6+AYS_HDR_STREAMLEN)
+    ld de, (WIN6+AYS_HDR_LOOPOFF)
     or a
     sbc hl, de
     ld (aysLoopRemain), hl
-    ld a, (WIN6+13)
-    ld hl, WIN6+10
+    ld a, (WIN6+AYS_HDR_STREAMLEN+2)
+    ld hl, WIN6+AYS_HDR_LOOPOFF+2
     sbc a, (hl)
     ld (aysLoopRemainHi), a
     xor a
@@ -153,8 +179,6 @@ aysPage:   db 0
 aysPtr:    dw 0
 aysRemain: dw 0
 aysRemainHi: db 0
-aysLen:    dw 0
-aysLenHi:  db 0
 aysLoopPage: db 0
 aysLoopPtr:  dw 0
 aysLoopRemain: dw 0
@@ -165,10 +189,9 @@ aysShadow: ds 9                      ; last written R8-R10 per PSG
 aysStart:  dw 0                      ; stream pointer at the frame's start
 aysCross:  db 0                      ; page crossings this frame (0 or 1)
 
-; AY register write from the frame ISR: A = value, B = register. The
-; alternate set carries the port pair (frame_isr saved it), so the main
-; set's HL (stream pointer), DE (mask) and BC (register, value) survive.
-; Corrupts AF and AF'.
+; AY register write from the frame ISR: A = value, B = register.
+; Preserves main AF, BC, DE, HL (both ex af,af'/exx pairs balance);
+; corrupts AF' and BC' only (the alternate port-select scratch).
     MACRO AYS_WRITE
     ex af, af'                       ; A' = value
     ld a, b                          ; register number
@@ -181,16 +204,9 @@ aysCross:  db 0                      ; page crossings this frame (0 or 1)
     exx
     ENDM
 
-; ISR tick: map the page pair, apply one frame, loop at the end, fade
-; pass. Register-resident inner loop (doc 00 golden rules: no IX in an
-; ISR loop, no memory counters): HL = stream pointer, DE = mask, B =
-; register number, C = value. Consumption is the pointer delta plus 8K
-; per page crossing, subtracted from the 24-bit remain once per frame.
-; Bounded per frame: at most 3 PSGs x (2 mask bytes + 14 register
-; values) = 48 ays_rdb calls, regardless of stream content - a corrupt
-; mask can select all 14 registers but the register loop is hard capped
-; at 14 by "cp 14", so no frame can spin past that fixed count.
-; Corrupts everything (frame_isr saves and restores all of it).
+; ISR tick: HL=pointer, DE=mask, B=register, C=value; walk one frame,
+; remap slot 6 on a page crossing, loop at end-of-stream, fade pass.
+; Bounded to 48 ays_rdb calls/frame; corrupts everything (ISR saves all).
 ays_tick:
  IFDEF DEBUG
     ld hl, akyTicks                  ; shared tick probe (Task 14), DEBUG-only
@@ -199,8 +215,6 @@ ays_tick:
     ld a, (aysPage)
     add a, PG_MUSIC
     nextreg NR_MMU6, a
-    inc a
-    nextreg NR_MMU7, a
     xor a
     ld (aysCross), a
     ld hl, (aysPtr)
@@ -281,11 +295,13 @@ ays_tick:
     ld a, (aysRemainHi)
     sbc a, 0
     ld (aysRemainHi), a
+    jr c, .rewind                    ; borrow: consumed more than remained
     ld a, h
     or l
     ld hl, aysRemainHi
     or (hl)
     jr nz, .fade
+.rewind:
     ; end of stream: back to the loop position
     ld a, (aysLoopPage)
     ld (aysPage), a
@@ -330,10 +346,9 @@ ays_tick:
     jr nz, .fp
     ret
 
-; Read one stream byte at HL, advancing across the page pair. Out A.
-; When HL reaches $E000 the pair advances one page and HL returns to
-; $C000, which holds the same byte in the new mapping. Corrupts AF only
-; (and HL advances).
+; Read one stream byte at HL, out A. HL reaching $E000 means slot 6's
+; page is exhausted: remap to the next page and continue at $C000.
+; Corrupts AF only; HL advances.
 ays_rdb:
     ld a, h
     cp high WIN7
@@ -349,8 +364,6 @@ ays_rdb:
     ld (aysPage), a
     add a, PG_MUSIC
     nextreg NR_MMU6, a
-    inc a
-    nextreg NR_MMU7, a
     ld a, (aysCross)
     inc a
     ld (aysCross), a

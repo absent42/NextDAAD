@@ -22,6 +22,12 @@ PG_MUSIC_LAST   equ 87
 AKY_RET_GUARD   equ 8           ; akyRetShadow's guard: nested-ISR push budget
                                  ; (6 bytes incl. PC); live because PLY_AKY_PLAY's
                                  ; linker path executes ei (Task 16's CTC ISR)
+; AYS header offsets (authoring-kit\lib\aysconv.ps1's writer; matches
+; src\overlay1.asm's own reader).
+AYS_HDR_MAGIC     equ 0
+AYS_HDR_PSGS      equ 4
+AYS_HDR_LOOPOFF   equ 8
+AYS_HDR_STREAMLEN equ 11
 
 LERP_K          equ 17           ; lerp_init k range 0..16
 LERP_D          equ 15           ; lerp_init d range -7..7
