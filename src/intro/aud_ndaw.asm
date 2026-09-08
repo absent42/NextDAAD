@@ -53,7 +53,7 @@ ndaw_open:
 .pg:
     ld a, (ndrCount)
     cp 8
-    jr nc, .toobig
+    jr z, .peek                      ; 8 pages already: check for a spurious 9th
     add a, PG_MUSIC+1
     call map6
     ld hl, ndrPages
@@ -75,6 +75,18 @@ ndaw_open:
     ld a, b
     cp $20
     jr z, .pg                        ; a full page: there may be more
+    jr .eof
+.peek:                                ; a scratch page past the 8-page cap; discard
+    ld a, PG_MUSIC+9                  ; the bytes, only the count matters
+    call map6
+    ld a, (ndawHandle)
+    ld de, 0
+    ld bc, 8192
+    call esx_read6
+    jr c, .bad
+    ld a, b
+    or c
+    jr nz, .toobig                   ; a real 9th page exists: over the cap
 .eof:
     ld a, (ndawHandle)
     call esx_close_a

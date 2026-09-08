@@ -248,6 +248,17 @@ if ((Test-Path $ndaw) -and (Test-Path $ndr)) {
     Assert-Eq $d[6] 4 '011 music kind NDR'
     Remove-Item "$work\out-011-ndr\NDAW.BIN", "$work\song.ndr" -Force
 } else { Write-Host "intro-selftest: tools\NextDAW absent, 011 skipped" }
+# ---- 011c a player build with the wrong load address (JP table not into
+# ---- $E000+) is rejected with a named error. Synthetic bytes - no real
+# ---- NextDAW file needed, so this runs unconditionally.
+$badPlayer = "$work\bad-player.bin"
+$badBytes = [byte[]]::new(39)
+for ($bi = 0; $bi -lt 13; $bi++) { $badBytes[$bi * 3] = 0xC3; $badBytes[$bi * 3 + 2] = 0xC0 }
+[IO.File]::WriteAllBytes($badPlayer, $badBytes)
+[IO.File]::WriteAllBytes("$work\stub.ndr", [byte[]](1..4))     # existence only; never read
+Write-Script '011c-badplayer' "MUSIC NDR stub.ndr`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
+Assert-Throws { Compile '011c-badplayer' ($gfxArgs + @('-NdawBin', $badPlayer)) } 'NextDAW_RuntimePlayer_E000\.bin' '011c wrong-address player rejected'
+Remove-Item $badPlayer, "$work\stub.ndr" -Force
 # ---- a relative -Gfx path resolves through introc.ps1's own absolute-path
 # fix, the same as an absolute one: identical INTRO.DAT bytes either way.
 $dAbs = Compile '005-assets' $gfxArgs '-abs2'

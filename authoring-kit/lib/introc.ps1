@@ -600,6 +600,17 @@ function Convert-Music {
             if (-not $NdawBin -or -not (Test-Path -LiteralPath $NdawBin)) { throw "NextDAW runtime player not found at '$NdawBin' - set NEXTDAWDIR in CONFIG.BAT to your NextDAW install (RuntimePlayer\NextDAW_RuntimePlayer_E000.bin)" }
             $blen = (Get-Item -LiteralPath $NdawBin).Length
             if ($blen -lt 39 -or $blen -gt 8192) { throw "$NdawBin is $blen bytes; the E000 runtime player is expected between 39 and 8192" }
+            # 39 bytes is exactly 13 JP-table entries (3 bytes each); every
+            # entry must be a JP into $E000-$FFFF, or a wrong build (a
+            # different load address, or a non-player file) passes size
+            # alone but crashes at runtime.
+            $bbytes = [IO.File]::ReadAllBytes($NdawBin)
+            for ($bi = 0; $bi -lt 13; $bi++) {
+                $bo = $bi * 3
+                if ($bbytes[$bo] -ne 0xC3 -or $bbytes[$bo + 2] -lt 0xE0) {
+                    throw "$NdawBin does not look like the E000 runtime player (JP table entry $bi at offset $bo) - use NextDAW_RuntimePlayer_E000.bin"
+                }
+            }
             $len = (Get-Item -LiteralPath $src).Length
             if ($len -gt 65536) { throw "$($m.file) is $len bytes, over the 65536 (eight page) limit" }
             Copy-Item -LiteralPath $NdawBin -Destination (Join-Path $Out 'NDAW.BIN') -Force

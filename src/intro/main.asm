@@ -158,6 +158,8 @@ isrAudio:       db 0
 esxDrive:       db 0
 ndawSlots:      ds 3
 ndrPages:       ds 9
+    ASSERT ndawSlots+3 <= ndrPages   ; no overlap (rubric 8)
+    ASSERT ndrPages+8 <= nameBuf     ; no overlap (rubric 8)
 nameBuf:        ds 24
 varEnd:
 itemShown:      ds 256

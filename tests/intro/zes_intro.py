@@ -47,6 +47,19 @@ def decode(m):
     d["sig"] = bytes(m[0:2]).decode("ascii", "replace")
     return d
 
+# Fix round 1: a leg that remaps NR $52/$53 mid-frame (the NDR leg) can make
+# a live mirror read land on the wrong page - sig can even read "IN" by luck
+# while later fields are torn (a real incident: frame jumped to 60138 while
+# state/slide/trans stayed correct). Requiring a plausible frame on top of
+# sig=="IN" catches that; real frame steps are at most a handful per poll.
+def sample_plausible(d, last):
+    if d["sig"] != "IN":
+        return False
+    if last is None:
+        return True
+    delta = d["frame"] - last["frame"]
+    return 0 <= delta <= 64
+
 def read_surface(z, front, mode):
     """Assumes the CPU is already frozen (enter-cpu-step). Reads every 8K
     page of the front Layer 2 surface (10 pages at 320x256, 6 at 256x192)
@@ -190,14 +203,28 @@ def main():
             pending_skip_surface = (int(when_s), int(pc_s), pic_s)
         pending_text_frame = sorted(a.text_at_frame)
         collected_text = []
+        last_accepted = None
         while time.time() - t0 < a.seconds:
             t = time.time() - t0
             if pending_space and t >= pending_space[0]:
                 pending_space.pop(0)
                 z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
                 print("t=%.1f space" % t)
-            m = z.read_memory(MIRROR, 32)
+            # enter/exit-cpu-step brackets the read so it is never torn by a
+            # concurrent MMU remap (fix round 1: a live, unfrozen read could
+            # straddle the NDR leg's own NR $52/$53 remap mid-transfer).
+            z.enter_cpu_step()
+            try:
+                m = z.read_memory(MIRROR, 32)
+            finally:
+                z.exit_cpu_step()
             d = decode(m)
+            if not sample_plausible(d, last_accepted):
+                print("t=%.1f TORN sample discarded sig=%r frame=%d (last accepted frame=%s)"
+                      % (t, d["sig"], d["frame"], last_accepted["frame"] if last_accepted else "-"))
+                time.sleep(a.interval)
+                continue
+            last_accepted = d
             samples.append((t, d))
             print("t=%.1f sig=%s state=%d slide=%d load=%d trans=%d code=%02X frame=%d hold=%d tf=%d scroll=%d front=%d mode=%d music=%d keys=%d hz60=%d fadek=%d pcmwr=%04X pcmrd=%04X loadpage=%d fading=%d akytick=%d ayspage=%d"
                   % (t, d["sig"], d["state"], d["slide"], d["load"], d["trans"], d["code"], d["frame"], d["hold"], d["tf"], d["scroll"], d["front"], d["mode"], d["music"], d["keys"], d["hz60"], d["fadek"], d["pcmwr"], d["pcmrd"], d["loadpage"], d["fading"], d["akytick"], d["ayspage"]))
@@ -205,7 +232,7 @@ def main():
                 pending_space_frame.pop(0)
                 z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
                 print("t=%.1f space (frame=%d)" % (t, d["frame"]))
-            if pending_surface and d["sig"] == "IN" and d["frame"] >= pending_surface[0][0]:
+            if pending_surface and d["frame"] >= pending_surface[0][0]:
                 when, picfile = pending_surface.pop(0)
                 try:
                     s_ok, mism, first, detail = surface_check(z, d["front"], d["mode"], picfile)
