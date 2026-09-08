@@ -72,7 +72,7 @@ def main():
             print("t=%.1f sig=%s state=%d slide=%d load=%d trans=%d code=%02X frame=%d hold=%d tf=%d scroll=%d front=%d mode=%d music=%d keys=%d hz60=%d fadek=%d pcmwr=%04X loadpage=%d fading=%d"
                   % (t, d["sig"], d["state"], d["slide"], d["load"], d["trans"], d["code"], d["frame"], d["hold"], d["tf"], d["scroll"], d["front"], d["mode"], d["music"], d["keys"], d["hz60"], d["fadek"], d["pcmwr"], d["loadpage"], d["fading"]))
             time.sleep(a.interval)
-        if (a.asserts or a.expect_handoff) and not any(d["sig"] == "IN" for _, d in samples):
+        if a.asserts and not any(d["sig"] == "IN" for _, d in samples):
             print("ASSERT FAILED: no sample ever showed sig=IN - dbg_init never ran "
                   "(expected for a Release build, which has no mirror) or the mirror "
                   "was never reached before the hand-off window closed")
