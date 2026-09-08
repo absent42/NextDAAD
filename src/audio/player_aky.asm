@@ -13,10 +13,14 @@
 ;    PLY_AKY_RETTABLE_READREGISTERBLOCK with a guard below it, so an
 ;    interrupt's pushes land on consumed entries or the guard, never on
 ;    code or song data; the SFX-stream re-entry point is a constant
+;  - org $c000 is skipped under PLY_AKY_NO_ORG (the launcher includes the
+;    player in its own bank)
 ; Cell layout is unchanged: every *_PTTRACK+1, *_PTREGISTERBLOCK+1 and
 ; PATTERNFRAMECOUNTER_OVER+1 operand that audiobank.asm reads stays put.
 
+ IFNDEF PLY_AKY_NO_ORG              ; NEXTDAAD: the launcher includes this player resident
     org $c000
+ ENDIF
 PLY_AKY_START
 PLY_AKY_INITSOUNDEFFECTS ld (PLY_AKY_PTSOUNDEFFECTTABLE+1),hl
     ret 

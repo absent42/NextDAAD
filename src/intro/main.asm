@@ -47,6 +47,8 @@ var_init:
     ld (frontBank), a
     ld a, BANK_SURF_B
     ld (backBank), a
+    ld a, 16
+    ld (fadeVol), a
     ld a, 80
     ld (cols), a
     ld a, 160
@@ -66,6 +68,9 @@ var_init:
     INCLUDE "esx.asm"
     INCLUDE "input.asm"
     INCLUDE "aud.asm"
+    INCLUDE "aud_aky.asm"
+ DEFINE PLY_AKY_NO_ORG
+    INCLUDE "../audio/player_aky.asm"
     INCLUDE "dbg.asm"
     INCLUDE "script.asm"
     INCLUDE "l2.asm"
@@ -114,6 +119,8 @@ musicKind:      db 0
 fadeFrames:     dw 0
 fadeFrame:      dw 0
 fading:         db 0
+fadeVol:        db 0
+akyTicks:       db 0                 ; DEBUG probe: aky_tick call count (dbg_mirror)
 skipMode:       db 0
 skipWindow:     dw 0
 loopFlag:       db 0
@@ -151,7 +158,7 @@ itemShownEnd:
     ALIGN 256                        ; bounce on a page boundary: LDWS and INC E step it
 bounce:         ds 1024
 akyRetGuard:    ds 8
-akyRetShadow:   ds 30
+akyRetShadow:   ds PLY_AKY_RETTABLE_SIZE
     ALIGN 256
 pcmXlat:        ds 256
 lerpTab:        ds LERP_K*LERP_D
