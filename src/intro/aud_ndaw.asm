@@ -8,7 +8,7 @@ NDAW_STOP        equ WIN7+9
 NDAW_STOP_HARD   equ WIN7+12
 NDAW_INIT_SYSTEM equ WIN7+21
 
-    ASSERT PG_MUSIC+8 <= PG_MUSIC_LAST   ; the 8-page song cap (rubric 8)
+    ASSERT PG_MUSIC+9 <= PG_MUSIC_LAST   ; the 8-page song cap plus .peek's scratch page (rubric 8)
 ndaw_open:
     ld hl, ndawName
     call name_intro
@@ -53,7 +53,7 @@ ndaw_open:
 .pg:
     ld a, (ndrCount)
     cp 8
-    jr z, .peek                      ; 8 pages already: check for a spurious 9th
+    jr nc, .peek                     ; 8 pages already: check for a spurious 9th
     add a, PG_MUSIC+1
     call map6
     ld hl, ndrPages

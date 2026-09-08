@@ -52,6 +52,9 @@ def decode(m):
 # while later fields are torn (a real incident: frame jumped to 60138 while
 # state/slide/trans stayed correct). Requiring a plausible frame on top of
 # sig=="IN" catches that; real frame steps are at most a handful per poll.
+def frames_agree(d, other):
+    return abs(d["frame"] - other["frame"]) <= 64
+
 def sample_plausible(d, last):
     if d["sig"] != "IN":
         return False
@@ -204,27 +207,60 @@ def main():
         pending_text_frame = sorted(a.text_at_frame)
         collected_text = []
         last_accepted = None
+        pending_candidate = None          # most recent sig=="IN" sample not (yet) accepted
+        accepted_count = 0
+        discarded_count = 0
+        double_read_mismatch_count = 0
         while time.time() - t0 < a.seconds:
             t = time.time() - t0
             if pending_space and t >= pending_space[0]:
                 pending_space.pop(0)
                 z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
                 print("t=%.1f space" % t)
-            # enter/exit-cpu-step brackets the read so it is never torn by a
-            # concurrent MMU remap (fix round 1: a live, unfrozen read could
-            # straddle the NDR leg's own NR $52/$53 remap mid-transfer).
+            # enter/exit-cpu-step brackets the read; a frozen CPU does not by
+            # itself make the 32 bytes atomic (fix round 2: a freeze can still
+            # land mid-dbg_mirror, catching some fields already written for
+            # this frame and others not yet) - read twice and require the
+            # bytes identical, else discard as torn.
             z.enter_cpu_step()
             try:
-                m = z.read_memory(MIRROR, 32)
+                m1 = z.read_memory(MIRROR, 32)
+                m2 = z.read_memory(MIRROR, 32)
             finally:
                 z.exit_cpu_step()
-            d = decode(m)
-            if not sample_plausible(d, last_accepted):
+            if bytes(m1) != bytes(m2):
+                double_read_mismatch_count += 1
+                discarded_count += 1
+                print("t=%.1f TORN sample discarded (double-read mismatch)" % t)
+                pending_candidate = None
+                time.sleep(a.interval)
+                continue
+            d = decode(m1)
+            if d["sig"] != "IN":
+                discarded_count += 1
+                print("t=%.1f TORN sample discarded sig=%r" % (t, d["sig"]))
+                pending_candidate = None
+                time.sleep(a.interval)
+                continue
+            if sample_plausible(d, last_accepted):
+                pass                       # accepted below
+            elif pending_candidate is not None and frames_agree(d, pending_candidate):
+                # two consecutive sig=="IN" samples agree with each other but
+                # not with last_accepted: a real gap (host stall, or a free
+                # run under skip_surface_check's breakpoint) - re-anchor
+                # rather than rejecting every later sample forever.
+                print("t=%.1f re-anchored frame=%d (gap from last accepted frame=%s)"
+                      % (t, d["frame"], last_accepted["frame"] if last_accepted else "-"))
+            else:
+                discarded_count += 1
                 print("t=%.1f TORN sample discarded sig=%r frame=%d (last accepted frame=%s)"
                       % (t, d["sig"], d["frame"], last_accepted["frame"] if last_accepted else "-"))
+                pending_candidate = d
                 time.sleep(a.interval)
                 continue
             last_accepted = d
+            pending_candidate = None
+            accepted_count += 1
             samples.append((t, d))
             print("t=%.1f sig=%s state=%d slide=%d load=%d trans=%d code=%02X frame=%d hold=%d tf=%d scroll=%d front=%d mode=%d music=%d keys=%d hz60=%d fadek=%d pcmwr=%04X pcmrd=%04X loadpage=%d fading=%d akytick=%d ayspage=%d"
                   % (t, d["sig"], d["state"], d["slide"], d["load"], d["trans"], d["code"], d["frame"], d["hold"], d["tf"], d["scroll"], d["front"], d["mode"], d["music"], d["keys"], d["hz60"], d["fadek"], d["pcmwr"], d["pcmrd"], d["loadpage"], d["fading"], d["akytick"], d["ayspage"]))
@@ -272,6 +308,8 @@ def main():
                 collected_text.extend(text)
                 print("text read frame>=%d (t=%.1f, actual frame=%d)" % (when, t, d["frame"]))
             time.sleep(a.interval)
+        print("sample summary: %d accepted, %d discarded (%d double-read mismatches)"
+              % (accepted_count, discarded_count, double_read_mismatch_count))
         have_mirror = any(d["sig"] == "IN" for _, d in samples)
         if (a.asserts or a.frame_asserts or a.surface_asserts or a.skip_surface or a.text_at_frame) and not have_mirror:
             print("ASSERT FAILED: no sample ever showed sig=IN - dbg_init never ran "
