@@ -1,0 +1,6 @@
+MUSIC NDR song.ndr
+SKIP ANY 0.5
+SLIDE p320a.png IN CUT HOLD 3.0
+  TEXT 30 CENTRE "Music created using Gari Biasillo's NextDAW"
+SLIDE p320c.png IN DISSOLVE 1.0 HOLD 3.0
+END FADE 2.0

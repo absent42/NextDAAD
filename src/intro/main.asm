@@ -71,6 +71,7 @@ var_init:
     INCLUDE "aud_aky.asm"
     INCLUDE "aud_ays.asm"
     INCLUDE "aud_pcm.asm"
+    INCLUDE "aud_ndaw.asm"
  DEFINE PLY_AKY_NO_ORG
     INCLUDE "../audio/player_aky.asm"
     INCLUDE "dbg.asm"

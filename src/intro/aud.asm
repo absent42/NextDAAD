@@ -8,8 +8,14 @@ aud_open:
     jp z, ays_open
     cp MUS_PCM
     jp z, pcm_open
+    cp MUS_NDR
+    jp z, ndaw_open
     ret
+; Main-loop per-frame update (the NDR leg updates outside the frame ISR).
 aud_frame:
+    ld a, (musicKind)
+    cp MUS_NDR
+    jp z, ndaw_frame
     ret
 ; Frame ISR path (all registers and MMU6/7 saved by frame_isr).
 aud_isr:
@@ -28,6 +34,9 @@ aud_fade_begin:
     ld (fading), a
     ld a, 16
     ld (fadeVol), a
+    ld a, (musicKind)
+    cp MUS_NDR
+    jp z, ndaw_fade_begin
     ret
 aud_fade_step:
     ld a, (fading)
@@ -55,6 +64,8 @@ aud_stop:
     ld a, (musicKind)
     cp MUS_PCM
     jp z, pcm_stop
+    cp MUS_NDR
+    jp z, ndaw_stop
     ret
 
 ; Rescale registers 8-10 of all three PSGs by fadeVol/16. ISR context.
