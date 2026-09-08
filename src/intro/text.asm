@@ -414,6 +414,7 @@ scroll_step:
     ld a, (scrollSpeed)
     add hl, a
     ld (scrollP), hl
+; scrollLine is a byte; introc.ps1 caps a SCROLL at 224 LINEs so L+30 stays under 255.
 .feed:
     ld a, (scrollLine)
     ld l, a

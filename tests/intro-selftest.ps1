@@ -170,6 +170,13 @@ Write-Script 'e-first' "SLIDE p320a.png IN WIPE LEFT 1.0 HOLD 1.0`nEND CUT"
 Assert-Throws { Compile 'e-first' @('-NoAssets') } 'the first slide arrives from nothing' 'first slide needs CUT or FADE'
 Write-Script 'e-music2' "MUSIC AKY theme.aks`nMUSIC AKY theme.aks`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
 Assert-Throws { Compile 'e-music2' @('-NoAssets') } 'only one MUSIC statement' 'a second MUSIC statement is rejected'
+$scroll225 = "SLIDE p320a.png IN CUT`n SCROLL SPEED 1`n" + ((1..225 | ForEach-Object { ' LINE "x"' }) -join "`n") + "`nEND CUT"
+Write-Script 'e-scroll225' $scroll225
+Assert-Throws { Compile 'e-scroll225' @('-NoAssets') } 'a SCROLL may have at most 224 LINE statements' 'SCROLL with 225 LINEs is rejected'
+$scroll224 = "SLIDE p320a.png IN CUT`n SCROLL SPEED 1`n" + ((1..224 | ForEach-Object { ' LINE "x"' }) -join "`n") + "`nEND CUT"
+Write-Script 'e-scroll224' $scroll224
+$d = Compile 'e-scroll224' @('-NoAssets')
+Assert-Eq $d[553] 224 'a SCROLL with exactly 224 LINEs compiles (NITEM byte)'
 # ---- 005 assets: pictures numbered by first use, NXC column-major, NX2 transposed, FONT.TIL remapped, blocks.
 $gfxArgs = @('-Gfx', $gfx)
 $gfxNamed = @{ Gfx = $gfx }    # array splatting binds @gfxArgs positionally: direct calls need a hashtable to pass -Gfx by name

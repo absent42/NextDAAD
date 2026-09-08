@@ -327,6 +327,7 @@ foreach ($s in $show.slides) {
     if ($null -ne $s.scroll) {
         if ($s.holdKind -ne 'NONE') { Fail $s.line 'a slide with SCROLL has no HOLD' }
         if ($s.items.Count -eq 0) { Fail $s.scroll.line 'SCROLL needs at least one LINE' }
+        if ($s.items.Count -gt 224) { Fail $s.items[224].line 'a SCROLL may have at most 224 LINE statements' }
         foreach ($it in $s.items) { if ($it.type -eq 0) { Fail $it.line 'TEXT and SCROLL cannot share a slide' } }
         $s.hold = 0xFFFE
     }
