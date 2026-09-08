@@ -62,9 +62,7 @@ psg_fade_pass:
     in a, (c)
     call fade_scale_vol
     pop de
-    push de
-    call psg_write
-    pop de
+    call psg_write                   ; preserves DE (hw.asm)
     inc d
     ld a, d
     cp 11

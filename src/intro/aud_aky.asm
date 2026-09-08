@@ -16,15 +16,20 @@ aky_open:
     ld a, (akyHandle)
     ld de, 0
     ld bc, 8192
-    call esx_read6                   ; the song is <=16K, often under one page;
-    jr c, .bad                       ; a short/EOF read here is normal, not an
-    ld a, PG_MUSIC+1                 ; error (CF alone flags real I/O failure -
-    call map6                        ; file.asm's F_READ lesson, the other way:
-    ld a, (akyHandle)                ; there is no fixed count to check against)
+    call esx_read6                   ; song is variable length up to 16K;
+    jr c, .bad                       ; CF alone flags a real I/O failure
+    ld hl, 8192
+    or a
+    sbc hl, bc
+    jr nz, .onepage                  ; short read: song fit in page 40, skip page 41
+    ld a, PG_MUSIC+1
+    call map6
+    ld a, (akyHandle)
     ld de, 0
     ld bc, 8192
     call esx_read6
     jr c, .bad
+.onepage:
     ld a, (akyHandle)
     call esx_close_a
     ld a, PG_MUSIC

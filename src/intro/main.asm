@@ -120,7 +120,9 @@ fadeFrames:     dw 0
 fadeFrame:      dw 0
 fading:         db 0
 fadeVol:        db 0
+ IFDEF DEBUG
 akyTicks:       db 0                 ; DEBUG probe: aky_tick call count (dbg_mirror)
+ ENDIF
 skipMode:       db 0
 skipWindow:     dw 0
 loopFlag:       db 0
@@ -157,7 +159,7 @@ itemShownEnd:
     ASSERT itemShownEnd - itemShown == 256 ; text_clear's fill loop bounds (rubric 8)
     ALIGN 256                        ; bounce on a page boundary: LDWS and INC E step it
 bounce:         ds 1024
-akyRetGuard:    ds 8
+akyRetGuard:    ds AKY_RET_GUARD
 akyRetShadow:   ds PLY_AKY_RETTABLE_SIZE
     ALIGN 256
 pcmXlat:        ds 256
