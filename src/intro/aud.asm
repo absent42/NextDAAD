@@ -6,6 +6,8 @@ aud_open:
     jp z, aky_open
     cp MUS_AYS
     jp z, ays_open
+    cp MUS_PCM
+    jp z, pcm_open
     ret
 aud_frame:
     ret
@@ -43,10 +45,16 @@ aud_fade_step:
     cp (hl)
     ret z
     ld (hl), a
+    ld a, (musicKind)
+    cp MUS_PCM
+    jp z, pcm_xlat_build
     ret
 aud_stop:
     xor a
     ld (isrAudio), a
+    ld a, (musicKind)
+    cp MUS_PCM
+    jp z, pcm_stop
     ret
 
 ; Rescale registers 8-10 of all three PSGs by fadeVol/16. ISR context.

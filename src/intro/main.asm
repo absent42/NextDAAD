@@ -70,6 +70,7 @@ var_init:
     INCLUDE "aud.asm"
     INCLUDE "aud_aky.asm"
     INCLUDE "aud_ays.asm"
+    INCLUDE "aud_pcm.asm"
  DEFINE PLY_AKY_NO_ORG
     INCLUDE "../audio/player_aky.asm"
     INCLUDE "dbg.asm"
@@ -148,6 +149,9 @@ endColour:      db 0
 endFrames:      dw 0
 dbgSeq:         db 0
 pcmWr:          dw 0
+pcmRd:          dw 0
+pcmRdPrev:      dw 0
+pcmAvail:       dw 0
 pcmHandle:      db 0
 isrAudio:       db 0
 esxDrive:       db 0

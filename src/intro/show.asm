@@ -239,8 +239,3 @@ show_end_step:
     call fade_out_step
     ret nz
     jp chain_run
-
-; Replaced by a later task (Task 16 stream).
-pcm_refill:
-    xor a
-    ret
