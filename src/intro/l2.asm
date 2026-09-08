@@ -113,3 +113,142 @@ pal_copy_new_to_cur:
     ld bc, 512
     ldir
     ret
+
+; HL = palette A, DE = palette B (both in the slot 6 window with page 39
+; mapped), A = k 0-16: program every Layer 2 entry as A + (B-A)*k/16 per
+; RGB333 channel, then the border (NR $4A, the fallback colour that shows
+; while the ULA output is off) from lerpBorderA to lerpBorderB at the
+; same k. Corrupts everything.
+pal_lerp:
+    ld (lerpK), a
+    nextreg NR_PAL_CTRL, PAL_L2_FIRST
+    nextreg NR_PAL_INDEX, 0
+    ld b, 0
+.e:
+    push bc
+    call lerp_entry
+    pop bc
+    djnz .e
+    ld hl, lerpBorderA
+    ld de, lerpBorderB
+    call lerp_calc
+    ld a, (lerpOut)
+    nextreg NR_FALLBACK, a
+    ret
+
+; A = colour 0-255 -> (HL) = its 9-bit pair.
+colour9_store:
+    ld (hl), a
+    inc hl
+    and 3
+    ld (hl), 0
+    ret z
+    ld (hl), 1
+    ret
+
+; One entry: (HL) pair A, (DE) pair B -> two NR $44 writes; HL, DE += 2.
+lerp_entry:
+    call lerp_calc
+    ld a, (lerpOut)
+    nextreg NR_PAL_VALUE9, a
+    ld a, (lerpOut1)
+    nextreg NR_PAL_VALUE9, a
+    ret
+; The arithmetic: (HL) pair A, (DE) pair B -> lerpOut (RRRGGGBB) and
+; lerpOut1 (blue LSB); HL, DE += 2.
+lerp_calc:
+    ld a, (hl)
+    ld (lerpA0), a
+    inc hl
+    ld a, (hl)
+    ld (lerpA1), a
+    inc hl
+    ld a, (de)
+    ld (lerpB0), a
+    inc de
+    ld a, (de)
+    ld (lerpB1), a
+    inc de
+    push hl
+    push de
+    ; red: bits 7-5 (rotate by 5 = swapnib + rrca, doc 00 peepholes)
+    ld a, (lerpA0)
+    swapnib
+    rrca
+    and 7
+    ld c, a
+    ld a, (lerpB0)
+    swapnib
+    rrca
+    and 7
+    call lerp_chan
+    rrca
+    rrca
+    rrca                             ; bits 2-0 -> 7-5 (left 5 = right 3)
+    ld (lerpOut), a
+    ; green: bits 4-2
+    ld a, (lerpA0)
+    rrca
+    rrca
+    and 7
+    ld c, a
+    ld a, (lerpB0)
+    rrca
+    rrca
+    and 7
+    call lerp_chan
+    rlca
+    rlca
+    ld hl, lerpOut
+    or (hl)
+    ld (hl), a
+    ; blue: (byte0 & 3) << 1 | byte1
+    ld a, (lerpA0)
+    and 3
+    add a, a
+    ld hl, lerpA1
+    or (hl)
+    ld c, a
+    ld a, (lerpB0)
+    and 3
+    add a, a
+    ld hl, lerpB1
+    or (hl)
+    call lerp_chan
+    ld b, a
+    srl a
+    ld hl, lerpOut
+    or (hl)
+    ld (hl), a
+    ld a, b
+    and 1
+    ld (lerpOut1), a
+    pop de
+    pop hl
+    ret
+
+; C = channel of A (0-7), A = channel of B (0-7) -> A = C + lerpTab[k*15 + B-C+7].
+lerp_chan:
+    sub c
+    add a, 7
+    ld l, a
+    ld a, (lerpK)
+    ld e, a
+    ld d, 15
+    mul d, e
+    ld a, l
+    add a, e
+    ld l, a
+    ld h, high lerpTab
+    ld a, (hl)
+    add a, c
+    ret
+lerpK:       db 0
+lerpA0:      db 0
+lerpA1:      db 0
+lerpB0:      db 0
+lerpB1:      db 0
+lerpOut:     db 0
+lerpOut1:    db 0
+lerpBorderA: dw 0
+lerpBorderB: dw 0

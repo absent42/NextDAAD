@@ -239,7 +239,7 @@ show_end_step:
     ret nz
     jp chain_run
 
-; Replaced by later tasks (Task 12/13 text, Task 9 fade, Task 16 stream).
+; Replaced by later tasks (Task 12/13 text, Task 16 stream).
 text_clear:
     ret
 caption_service:
@@ -248,13 +248,6 @@ scroll_begin:
     ret
 scroll_step:
     xor a
-    ret
-fade_out_begin:
-    ret
-fade_out_step:
-    xor a
-    ret
-trans_finish_now:
     ret
 pcm_refill:
     xor a
