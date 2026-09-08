@@ -16,7 +16,22 @@ main:
  IFDEF DEBUG
     call dbg_init
  ENDIF
-    jp chain_run
+    call script_load
+    jp c, chain_run
+    call show_boot
+    call input_scan                  ; a key held from the Browser is not an edge
+    ld (keyPrev), a
+    ei
+main_loop:
+    call wait_frame
+    call input_poll
+    call frame_reads
+    call aud_frame
+    call show_step
+ IFDEF DEBUG
+    call dbg_mirror
+ ENDIF
+    jr main_loop
 
 ; Zero the variable block, then the few non-zero defaults.
 var_init:
@@ -52,6 +67,11 @@ var_init:
     INCLUDE "input.asm"
     INCLUDE "aud.asm"
     INCLUDE "dbg.asm"
+    INCLUDE "script.asm"
+    INCLUDE "l2.asm"
+    INCLUDE "load.asm"
+    INCLUDE "trans.asm"
+    INCLUDE "show.asm"
     INCLUDE "chain.asm"
 
 ; ---- variables ----
