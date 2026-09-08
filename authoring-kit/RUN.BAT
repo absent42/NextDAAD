@@ -16,5 +16,8 @@ if not exist "%CSPECT%" (
     pause
     exit /b 1
 )
-"%CSPECT%" -w3 -zxnext -esc -mmc=RELEASE\ "RELEASE\nextdaad.nex"
+set "LAUNCH=RELEASE\nextdaad.nex"
+if "%GAME%"=="" for %%F in (*.DSF) do set "GAME=%%~nF"
+if exist "RELEASE\%GAME%.NEX" set "LAUNCH=RELEASE\%GAME%.NEX"
+"%CSPECT%" -w3 -zxnext -esc -mmc=RELEASE\ "%LAUNCH%"
 endlocal

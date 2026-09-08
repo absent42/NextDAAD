@@ -12,12 +12,20 @@ Arkos Tracker  SongToAky/SongToSoundEffects/SongToYm   https://www.julien-nevo.c
 CSpect         Emulator for testing                    https://mdf200.itch.io/cspect                              tools\CSpect\
 ffmpeg         Video decode for cutscene encoding      https://www.gyan.dev/ffmpeg/builds/ (release essentials)   tools\ffmpeg\
 sjasmplus      Z80 assembler (externs only, optional)  https://github.com/z00m128/sjasmplus                       tools\sjasmplus\
+NextDAW        Runtime player for MUSIC NDR intros    not downloadable - your own licensed copy               tools\NextDAW\
 
 sjasmplus is optional: every extern in authoring-kit\externs\ ships a
 prebuilt GAME.XBN. Download it only if you want to modify an extern's
 source or build a subset binary with EXTERNS.BAT. Extract so that
 sjasmplus.exe ends up in tools\sjasmplus\ - a zip that nests a
 versioned folder inside that directory also works.
+
+NextDAW is optional too and only matters if your intro script uses
+MUSIC NDR: the kit copies the runtime player from your own NextDAW
+install into RELEASE\INTRO\ at build time (the licence lets you ship it
+inside your game; the kit itself never contains it). Extract or copy
+your NextDAW folder so that tools\NextDAW\RuntimePlayer\ exists, or set
+NEXTDAWDIR in CONFIG.BAT.
 
 These tools are included with the kit and do not need to be downloaded
 

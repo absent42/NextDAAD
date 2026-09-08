@@ -544,8 +544,51 @@ function Invoke-Assets {
     }
 }
 function Convert-Music {
-    if ($show.music.kind -eq 0) { return }
-    throw 'music conversion arrives with the next task; run with -NoAssets'
+    $m = $show.music
+    if ($m.kind -eq 0) { return }
+    $src = Join-Path $Root $m.file
+    switch ($m.kind) {
+        1 {
+            if (-not $S2A -or -not (Test-Path -LiteralPath $S2A)) { throw "SongToAky not found at '$S2A' (MUSIC AKY needs Arkos Tracker 3)" }
+            $dst = Join-Path $Out 'MUSIC.AKY'
+            & $S2A -bin --encodingAddress 0xC000 $src $dst | Out-Null
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $dst)) { throw "SongToAky failed on $($m.file)" }
+            $len = (Get-Item -LiteralPath $dst).Length
+            if ($len -gt 16384) { throw "MUSIC.AKY is $len bytes, over the intro's 16384 limit - shorten the tune or use MUSIC STREAM" }
+            $b = [IO.File]::ReadAllBytes($dst)
+            if ($b.Length -lt 2 -or $b[1] -ne 9) { throw "$($m.file) exports $($b[1]) channels; the player needs a three-PSG (nine channel) song" }
+            Write-Host "  music $($m.file) -> MUSIC.AKY ($len bytes)"
+        }
+        2 {
+            if (-not $S2Y -or -not (Test-Path -LiteralPath $S2Y)) { throw "SongToYm not found at '$S2Y' (MUSIC STREAM needs Arkos Tracker 3)" }
+            if (-not $Aysconv -or -not (Test-Path -LiteralPath $Aysconv)) { throw "aysconv.ps1 not found at '$Aysconv'" }
+            $dst = Join-Path $Out 'MUSIC.AYS'
+            & $Aysconv -Song $src -Out $dst -SongToYm $S2Y | Out-Null    # in-process: the kit has no pwsh
+            if (-not (Test-Path -LiteralPath $dst)) { throw "aysconv failed on $($m.file)" }
+            $len = (Get-Item -LiteralPath $dst).Length
+            if ($len -gt 393216) { throw "MUSIC.AYS is $len bytes, over the 393216 (48 page) limit" }
+            Write-Host "  music $($m.file) -> MUSIC.AYS ($len bytes)"
+        }
+        3 {
+            if (-not $Ffmpeg -or -not (Test-Path -LiteralPath $Ffmpeg)) { throw "ffmpeg not found at '$Ffmpeg' (MUSIC PCM needs ffmpeg)" }
+            $dst = Join-Path $Out 'MUSIC.PCM'
+            & $Ffmpeg -y -loglevel error -i $src -ac 2 -ar 15625 -f u8 -acodec pcm_u8 $dst
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $dst)) { throw "ffmpeg failed on $($m.file)" }
+            $len = (Get-Item -LiteralPath $dst).Length
+            if ($len -lt 8192 -or ($len -band 1) -ne 0) { throw "MUSIC.PCM is $len bytes; the stream needs at least 8192 bytes (about a quarter second) and an even length" }
+            Write-Host "  music $($m.file) -> MUSIC.PCM ($len bytes, $([math]::Round($len / 31250, 1)) s)"
+        }
+        4 {
+            if (-not $NdawBin -or -not (Test-Path -LiteralPath $NdawBin)) { throw "NextDAW runtime player not found at '$NdawBin' - set NEXTDAWDIR in CONFIG.BAT to your NextDAW install (RuntimePlayer\NextDAW_RuntimePlayer_E000.bin)" }
+            $blen = (Get-Item -LiteralPath $NdawBin).Length
+            if ($blen -lt 39 -or $blen -gt 8192) { throw "$NdawBin is $blen bytes; the E000 runtime player is expected between 39 and 8192" }
+            $len = (Get-Item -LiteralPath $src).Length
+            if ($len -gt 65536) { throw "$($m.file) is $len bytes, over the 65536 (eight page) limit" }
+            Copy-Item -LiteralPath $NdawBin -Destination (Join-Path $Out 'NDAW.BIN') -Force
+            Copy-Item -LiteralPath $src -Destination (Join-Path $Out 'MUSIC.NDR') -Force
+            Write-Host "  music $($m.file) -> MUSIC.NDR ($len bytes) with NDAW.BIN from your NextDAW install"
+        }
+    }
 }
 New-Item -ItemType Directory -Force $Out | Out-Null
 if (-not $NoAssets) {

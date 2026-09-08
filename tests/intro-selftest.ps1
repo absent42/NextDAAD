@@ -168,9 +168,6 @@ Write-Script 'e-pool' $big
 Assert-Throws { Compile 'e-pool' @('-NoAssets') } 'string pool is' 'string pool overflow'
 Write-Script 'e-first' "SLIDE p320a.png IN WIPE LEFT 1.0 HOLD 1.0`nEND CUT"
 Assert-Throws { Compile 'e-first' @('-NoAssets') } 'the first slide arrives from nothing' 'first slide needs CUT or FADE'
-Write-Script 'e-assets' "MUSIC AKY theme.aks`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
-Assert-Throws { Compile 'e-assets' @('-Gfx', $gfx) } 'music conversion arrives' 'music not yet available in this task'
-
 # ---- 005 assets: pictures numbered by first use, NXC column-major, NX2 transposed, FONT.TIL remapped, blocks.
 $gfxArgs = @('-Gfx', $gfx)
 $gfxNamed = @{ Gfx = $gfx }    # array splatting binds @gfxArgs positionally: direct calls need a hashtable to pass -Gfx by name
@@ -209,6 +206,39 @@ if ($outText -match 'WARNING') { throw "intro-selftest: 007 shared palette must 
 & python -c "import sys; sys.path.insert(0, r'$root\tests\art'); import mkanisheets as m; m.write_png(r'$work\nomag.png', 128, 128, [(i,i,i) for i in range(16)], [[1]*128 for _ in range(128)])"
 Write-Script '008-nomag' "FONT nomag.png`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
 Assert-Throws { Compile '008-nomag' $gfxArgs } 'has no magenta' '008 font sheet needs magenta'
+
+# ---- 009 PCM through ffmpeg when present; skipped (not failed) without it.
+$ff = "$root\tools\ffmpeg\bin\ffmpeg.exe"
+if (Test-Path $ff) {
+    Write-Script '009-pcm' "MUSIC PCM tone.wav`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
+    $d = Compile '009-pcm' ($gfxArgs + @('-Ffmpeg', $ff))
+    $pcm = [IO.File]::ReadAllBytes("$work\out-009-pcm\MUSIC.PCM")
+    Assert-Eq $pcm.Length 62500 '009 two seconds of stereo 15625 Hz = 62500 bytes'
+    Assert-Eq $d[6] 3 '009 music kind PCM'
+    Assert-Eq ($pcm[0] -ge 96 -and $pcm[0] -le 160) $true '009 unsigned samples centre near 128'
+} else { Write-Host "intro-selftest: ffmpeg absent, 009 skipped" }
+# ---- 010 AKY through SongToAky when present.
+$s2a = "$root\tools\ArkosTracker3\tools\SongToAky.exe"
+if (Test-Path $s2a) {
+    Copy-Item "$root\authoring-kit\AUDIO\STARTER.aks" "$work\theme.aks" -Force
+    Write-Script '010-aky' "MUSIC AKY theme.aks`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
+    $d = Compile '010-aky' ($gfxArgs + @('-S2A', $s2a))
+    $aky = [IO.File]::ReadAllBytes("$work\out-010-aky\MUSIC.AKY")
+    Assert-Eq $aky[1] 9 '010 nine-channel export'
+    Assert-Eq ($aky.Length -le 16384) $true '010 within the 16K slot'
+} else { Write-Host "intro-selftest: SongToAky absent, 010 skipped" }
+# ---- 011 NDR stages the player and the song when tools\NextDAW is present.
+$ndaw = "$root\tools\NextDAW\RuntimePlayer\NextDAW_RuntimePlayer_E000.bin"
+$ndr = "$root\tools\NextDAW\DemoCode\z88dk_asm\Silver-Surfer.NDR"
+if ((Test-Path $ndaw) -and (Test-Path $ndr)) {
+    Copy-Item $ndr "$work\song.ndr" -Force
+    Write-Script '011-ndr' "MUSIC NDR song.ndr`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
+    $d = Compile '011-ndr' ($gfxArgs + @('-NdawBin', $ndaw))
+    Assert-Eq ([IO.File]::ReadAllBytes("$work\out-011-ndr\NDAW.BIN")).Length 7519 '011 player copied'
+    Assert-Eq (Test-Path "$work\out-011-ndr\MUSIC.NDR") $true '011 song copied'
+    Assert-Eq $d[6] 4 '011 music kind NDR'
+    Remove-Item "$work\out-011-ndr\NDAW.BIN", "$work\song.ndr" -Force
+} else { Write-Host "intro-selftest: tools\NextDAW absent, 011 skipped" }
 
 # ---- Windows PowerShell 5.1 is what BUILD.BAT runs: the same script must
 # ---- produce the same bytes there.

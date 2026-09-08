@@ -60,6 +60,11 @@ REM sjasmplus - Z80 assembler. Needed ONLY to rebuild an extern or build a
 REM subset binary with EXTERNS.BAT; not needed to build a game.
 SET SJASMPLUSDIR=
 
+REM NextDAW - only for MUSIC NDR in an intro script. Your own licensed copy
+REM (the runtime player cannot be downloaded or redistributed); point at the
+REM folder holding RuntimePlayer\.
+SET NEXTDAWDIR=
+
 REM videnc and vidtune - shipped with the kit; you should not need these.
 SET VIDENCDIR=
 SET VIDTUNEDIR=
@@ -73,6 +78,10 @@ REM SET NDRC=
 
 REM The pre-built interpreter to ship in RELEASE\ as nextdaad.nex.
 SET NEXFILE=nextdaad.nex
+
+REM The pre-built loader intro launcher, staged as RELEASE\<GAME>.NEX when
+REM INTRO.TXT exists - see docs\intro.html.
+SET INTRONEX=intro.nex
 
 REM NXV v2 video shape for VIDEO\NNN.mp4 encoding (lib\videnc). Blank = full
 REM (320x256 full-screen). Set a preset - full, 16:9, scope, classic,

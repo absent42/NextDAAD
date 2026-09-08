@@ -32,6 +32,7 @@ if not defined ARKOSDIR   set "ARKOSDIR=%TOOLSDIR%\ArkosTracker3"
 if not defined CSPECTDIR  set "CSPECTDIR=%TOOLSDIR%\CSpect"
 if not defined FFMPEGDIR  set "FFMPEGDIR=%TOOLSDIR%\ffmpeg"
 if not defined SJASMPLUSDIR set "SJASMPLUSDIR=%TOOLSDIR%\sjasmplus"
+if not defined NEXTDAWDIR set "NEXTDAWDIR=%TOOLSDIR%\NextDAW"
 if not defined VIDENCDIR  set "VIDENCDIR=%TOOLSDIR%\videnc"
 if not defined VIDTUNEDIR set "VIDTUNEDIR=%TOOLSDIR%\vidtune"
 
@@ -59,6 +60,10 @@ REM ffmpeg release builds put the binaries in bin\. Same two shapes.
 set "FFMPEGBIN=%FFMPEGDIR%"
 if not exist "%FFMPEGBIN%\ffmpeg.exe" if exist "%FFMPEGDIR%\bin\ffmpeg.exe" set "FFMPEGBIN=%FFMPEGDIR%\bin"
 set "FFMPEG=%FFMPEGBIN%\ffmpeg.exe"
+REM NextDAW runtime player (the author's own licensed copy, never shipped
+REM with the kit): only MUSIC NDR in INTRO.TXT needs it.
+set "NDAWBIN=%NEXTDAWDIR%\RuntimePlayer\NextDAW_RuntimePlayer_E000.bin"
+if not defined INTRONEX set "INTRONEX=intro.nex"
 
 REM sjasmplus zips extract either flat or into a versioned folder. Same two
 REM shapes as Arkos and ffmpeg above, but the nested name is not fixed.

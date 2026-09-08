@@ -89,6 +89,10 @@ del /Q "RELEASE\*.NX2" "RELEASE\*.NXI" "RELEASE\*.ZX0" "RELEASE\*.zx0" "RELEASE\
 for %%N in (1 2 3 4 5 6 7 8 9) do (
     del /Q "RELEASE\FONT%%N.CHR" "RELEASE\POINTER%%N.SPR" 2>nul
 )
+REM ---- loader intro: the launcher and its folder are rebuilt from INTRO.TXT
+REM      every time, so a script removed since the last build leaves nothing.
+del /Q "RELEASE\%GAME%.NEX" 2>nul
+if exist "RELEASE\INTRO" rd /S /Q "RELEASE\INTRO"
 REM ---- remove stale multi-part output too, so a part removed since the
 REM      last build (its PART<n> folder deleted) cannot leave a stray
 REM      GAME<n>.DDB or PART<n>\ behind on the SD card - see
@@ -114,6 +118,9 @@ call "%~dp0lib\video.bat"
 if errorlevel 1 ( pause & exit /b 1 )
 
 call "%~dp0lib\assemble.bat"
+if errorlevel 1 ( pause & exit /b 1 )
+
+call "%~dp0lib\intro.bat"
 if errorlevel 1 ( pause & exit /b 1 )
 
 REM ---- convertible fonts: a kit-root FONT.<ext> / FONT<n>.<ext> in any
