@@ -198,13 +198,25 @@ fade_write_in:
     ld de, PAL_NEW
     jp pal_lerp
 
-; A skip during a FADE: jump to the transition's end state so the END fade
-; starts from the incoming picture (phase 0 still needs the midpoint swap).
-; Copy transitions need nothing: their palette is already the new one.
+; A skip mid-transition: finish it now so the surface/palette match what a
+; completed transition leaves. FADE jumps to its end state (phase 0 still
+; needs the midpoint swap); a copy kind draws every remaining unit in one
+; oversized step (span 1, acc = remaining) through the shared run routine.
 trans_finish_now:
     ld a, (transType)
+    or a
+    ret z                             ; CUT: trans_begin already did everything
     cp TR_FADE
-    ret nz
+    jr z, .fade
+    ld hl, (transLines)
+    ld de, (transDone)
+    or a
+    sbc hl, de
+    ld (transPer), hl                 ; acc = every remaining unit
+    ld de, 1
+    ld (transSpan), de                ; span 1: the loop never waits a frame
+    jp trans_copy_run
+.fade:
     ld a, (transPhase)
     or a
     call z, fade_midpoint
@@ -247,11 +259,10 @@ fade_out_step:
     ret
 
 ; ---- copy primitives: back surface -> front through slot 6 and bounce ----
-; Slot 6 is remapped inline (nextreg NR_MMU6, a) on these hot paths,
-; doc 00's call-plus-return rule.
-; HL = contiguous line 0-319. Page = line/32 = H*8 + (L>>5) with H 0 or 1,
-; offset in page = (L and 31)*256: no 16-bit shift (doc 06a). The page
-; index is parked in memory because LDIR consumes BC (rubric 2).
+    ASSERT (bounce & $FF) == 0       ; main.asm ALIGN 256 before bounce (rubric 8)
+; Slot 6 remapped per copy (doc 00); slot 7 stays the audio page, so both
+; directions share slot 6, not the spec's two-slot copy.
+; HL = contiguous line 0-319, page parked in memory (LDIR consumes BC).
 ; Corrupts everything.
 copy_line:
     ld a, l
@@ -293,11 +304,9 @@ copy_line:
     ret
 linePage: db 0
 
-; L = strided line 0-255: for each page gather the 32 bytes at i*256 + L
-; into bounce (256-aligned, so INC E steps it), then scatter them into the
-; front page with LDWS: (DE) = (HL), INC L, INC D, 14 T (docs 04 and 10).
-; The outer counter lives on the stack across both inner loops. Corrupts
-; everything.
+; L = strided line 0-255: gather 32 bytes (one per page) into bounce, then
+; scatter with LDWS (docs 04, 10). Outer counter lives on the stack across
+; both inner loops. Corrupts everything.
 copy_stride:
     ld a, l
     ld (strideLine), a
@@ -375,7 +384,9 @@ copy_block:
     nextreg NR_MMU6, a
     jp block_scatter
 
-; window -> (DE): four runs of four bytes
+; window -> (DE): four runs of four bytes. Row step is a 16-bit add, not an
+; 8-bit rebuild, so a wrap of L at row 63 still carries into H exactly once
+; (fix round 1: the old sub-4 form silently double-carried).
 block_gather:
     ld a, (blockHi)
     add a, high WIN6
@@ -389,15 +400,12 @@ block_gather:
     ldi
     ldi
     ldi
-    ld a, l
-    sub 4
-    ld l, a
-    inc h
+    add hl, 252                      ; HL += 256 net (Z80N, doc 10)
     ld a, (blockCnt)
     dec a
     jr nz, .r
     ret
-; bounce -> window: four runs of four bytes
+; bounce -> window: four runs of four bytes, same 16-bit row step as above.
 block_scatter:
     ld a, (blockHi)
     add a, high WIN6
@@ -412,10 +420,7 @@ block_scatter:
     ldi
     ldi
     ldi
-    ld a, e
-    sub 4
-    ld e, a
-    inc d
+    add de, 252                      ; DE += 256 net (Z80N, doc 10)
     ld a, (blockCnt)
     dec a
     jr nz, .r
@@ -426,6 +431,10 @@ blockHi:   db 0
 blockCnt:  db 0
 
 ; ---- copy transitions ----
+; Bresenham pacing (fix round 1): every kind's per-frame step adds its
+; whole-transition unit count to an accumulator (transPer, repurposed) and
+; draws one unit per transFrames it covers, so the transition finishes on
+; its scripted last frame regardless of unit count vs frame count.
 trans_copy_begin:
     ld a, PG_STAGE
     call map6
@@ -449,7 +458,7 @@ trans_copy_begin:
     ld (copyContig), a
     or a
     jr z, .strided
-    ld hl, 320
+    ld hl, 320                       ; unit = one line
     ld a, (l2Mode)
     or a
     jr nz, .lines
@@ -459,35 +468,28 @@ trans_copy_begin:
     ld hl, 256
 .lines:
     ld (transLines), hl
-    jr .per
+    jr .go
 .diss:
-    ld hl, 512
+    ld hl, 3072                      ; unit = one block, whole picture (spec 6.5)
+    ld a, (l2Mode)
+    or a
+    jr z, .dgo
+    ld hl, 5120
+.dgo:
     ld (transLines), hl
-    jr .per
+    jr .go
 .blinds:
-    ld hl, 32
+    ld hl, 32                        ; unit = one row across all 8 bands
     ld a, (l2Mode)
     or a
     jr nz, .bl
     ld hl, 24
 .bl:
     ld (transLines), hl
-.per:
-    ld hl, (transLines)
-    dec hl
-    ld b, h
-    ld c, l
-    ld de, (transFrames)
-    ld a, d
-    or e
-    jr nz, .div
-    ld de, 1
-.div:
-    call div16                       ; BC = (lines-1)/frames (doc 05 Div16)
-    inc bc                           ; ceil(lines / frames)
-    ld (transPer), bc
+.go:
     ld hl, 0
     ld (transDone), hl
+    ld (transPer), hl                ; transPer repurposed: Bresenham accumulator
     ld hl, $01A5
     ld (lfsr), hl
     ret
@@ -508,18 +510,40 @@ wipe_is_contig:
     xor 1                            ; 256: UP/DOWN contiguous
     ret
 
+; Per-frame tick: advance transFrame, guard a zero span, add this
+; transition's units into the accumulator, then run the shared stepper.
 trans_copy_step:
     ld hl, (transFrame)
     inc hl
     ld (transFrame), hl
+    ld de, (transFrames)
+    ld a, d
+    or e
+    jr nz, .span
+    ld de, 1
+.span:
+    ld (transSpan), de
+    ld hl, (transLines)
+    ld de, (transPer)
+    add hl, de
+    ld (transPer), hl                ; acc += units
+    jp trans_copy_run
+
+; Shared by trans_copy_step (paced) and trans_finish_now (oversized, skip).
+; Assumes transPer (acc) and transSpan (span) are already set.
+trans_copy_run:
     ld a, (transType)
     cp TR_DISS
     jp z, diss_step
     cp TR_BLINDS
     jp z, blinds_step
-    ld hl, (transPer)
-    ld (stepLeft), hl
 .w:
+    ld hl, (transPer)
+    ld de, (transSpan)
+    or a
+    sbc hl, de
+    jr c, .wcheck
+    ld (transPer), hl                ; acc -= span
     ld hl, (transDone)
     ld de, (transLines)
     or a
@@ -548,103 +572,119 @@ trans_copy_step:
     ld hl, (transDone)
     inc hl
     ld (transDone), hl
-    ld hl, (stepLeft)
-    dec hl
-    ld (stepLeft), hl
-    ld a, h
-    or l
-    jr nz, .w
+    jr .w
+.wcheck:
+    ld hl, (transDone)
+    ld de, (transLines)
+    or a
+    sbc hl, de
+    jr nc, copy_done
     or 1
     ret
 copy_done:
     xor a
     ret
 
-; DISSOLVE: every page draws the same LFSR order; transPer blocks per page
-; per frame; done after 512 blocks.
+; DISSOLVE: one 13-bit LFSR sequence over every block of the whole picture
+; (spec 6.5); unit = one block. Draws block 0 once at completion (the LFSR
+; never yields 0).
 diss_step:
-    ld hl, (lfsr)
-    ld (lfsrFrame), hl
-    ld a, (transPages)
-    ld b, a
-    ld c, 0
-.page:
-    push bc
-    ld hl, (lfsrFrame)
-    ld (lfsr), hl
-    ld hl, (transPer)
-    ld (stepLeft), hl
 .blk:
-    call lfsr_next
-    ld a, h
-    and %11111110
-    jr nz, .blk                      ; 512-1023: skip
-    pop bc
-    push bc
-    ld a, c
-    call copy_block
-    ld hl, (stepLeft)
-    dec hl
-    ld (stepLeft), hl
-    ld a, h
-    or l
-    jr nz, .blk
-    pop bc
-    inc c
-    djnz .page
-    ld hl, (transDone)
-    ld de, (transPer)
-    add hl, de
-    ld (transDone), hl
-    ld de, 512
+    ld hl, (transPer)
+    ld de, (transSpan)
     or a
     sbc hl, de
-    jr c, .more
-    ; the LFSR never yields 0: draw block 0 of every page, then done
-    ld a, (transPages)
-    ld b, a
-    ld c, 0
-.b0:
-    push bc
-    ld a, c
-    ld hl, 0
-    call copy_block
-    pop bc
-    inc c
-    djnz .b0
-    jp copy_done
-.more:
+    jr c, .dcheck
+    ld (transPer), hl
+    ld hl, (transDone)
+    ld de, (transLines)
+    dec de                            ; LFSR covers indices 1..transLines-1
+    or a
+    sbc hl, de
+    jp nc, .dfinish
+    call diss_draw_one
+    jr .blk
+.dcheck:
+    ld hl, (transDone)
+    ld de, (transLines)
+    or a
+    sbc hl, de
+    jr nc, copy_done                  ; fully complete (block 0 already drawn)
     or 1
     ret
+.dfinish:
+    ld hl, (transDone)
+    ld de, (transLines)
+    or a
+    sbc hl, de
+    jp nc, copy_done                  ; block 0 already drawn
+    xor a
+    ld hl, 0
+    call copy_block
+    ld hl, (transDone)
+    inc hl
+    ld (transDone), hl
+    jp copy_done
 
-; 10-bit LFSR, x^10 + x^7 + 1: HL = next state, never 0. The bit shifted
-; out is the carry RR L leaves (doc 00). Corrupts AF, HL.
+; One DISSOLVE unit: find the next LFSR value below the whole-picture block
+; count, draw it, advance transDone. Bounded search (rubric 6): the worst
+; measured run of consecutive out-of-range values is 33 (256x192, 3072
+; blocks) / 12 (320x256, 5120 blocks); 34 covers both with margin.
+diss_draw_one:
+    ld b, 34
+.search:
+    call lfsr_next
+    ld de, (transLines)
+    or a
+    sbc hl, de
+    jr c, .found
+    djnz .search
+    ret                               ; bound exhausted: proven unreachable
+.found:
+    ld hl, (lfsr)                    ; re-fetch idx (the sbc above corrupted HL)
+    ld a, h
+    and 1
+    ld c, a                          ; C = block-in-page high bit (idx bit 8)
+    ld a, h
+    srl a                            ; A = idx >> 9 = page
+    ld h, c
+    call copy_block                  ; A = page, HL = idx & 511 (block 0-511)
+    ld hl, (transDone)
+    inc hl
+    ld (transDone), hl
+    ret
+
+; 13-bit LFSR, x^13+x^4+x^3+x+1 (taps 0,2,3,12): HL = next state, never 0.
+; Output bit is the carry RR L leaves (doc 00). Corrupts AF, HL.
 lfsr_next:
     ld hl, (lfsr)
     srl h
     rr l
     jr nc, .no
     ld a, h
-    xor %00000010
+    xor %00010000                    ; bit 12
     ld h, a
     ld a, l
-    xor %01000000
+    xor %00001101                    ; bits 3, 2, 0
     ld l, a
 .no:
     ld (lfsr), hl
     ret
 lfsr:       dw $01A5
-lfsrFrame:  dw 0
-stepLeft:   dw 0
+transSpan:  dw 0
 copyContig: db 0
 
-; BLINDS: 8 bands along the row axis; each frame reveals transPer rows in
-; every band, top to bottom. Rows are strided lines in 320 mode and
-; contiguous lines in 256 mode.
+; BLINDS: 8 bands along the row axis; unit = one row revealed in every
+; band, top to bottom. Rows are strided lines in 320 mode, contiguous in
+; 256 mode.
 blinds_step:
-    ld hl, (transPer)
-    ld (stepLeft), hl
 .row:
+    ld hl, (transPer)
+    ld de, (transSpan)
+    or a
+    sbc hl, de
+    jr c, .bcheck
+    ld (transPer), hl
     ld hl, (transDone)
     ld de, (transLines)
     or a
@@ -674,11 +714,12 @@ blinds_step:
     ld hl, (transDone)
     inc hl
     ld (transDone), hl
-    ld hl, (stepLeft)
-    dec hl
-    ld (stepLeft), hl
-    ld a, h
-    or l
-    jr nz, .row
+    jr .row
+.bcheck:
+    ld hl, (transDone)
+    ld de, (transLines)
+    or a
+    sbc hl, de
+    jp nc, copy_done
     or 1
     ret

@@ -2,9 +2,14 @@
 Samples the DEBUG mirror at $5400 every --interval; optional --space-at
 (seconds) / --space-at-frame (mirror frame count) taps, --assert
 (seconds) / --assert-frame (first sample whose frame >= F) checks,
+--surface-at-frame F:<picture file> (freezes the CPU and byte-compares the
+front Layer 2 surface against a compiled NXC/NXI), --skip-surface-at-frame
+F:PC:<picture file> (presses skip at frame>=F, breakpoints at PC - e.g.
+chain_run's address from the launcher's own .map - so the surface check
+runs before any hand-off code can overwrite it, then resumes),
 --expect-handoff/--expect-text at $6000. ZEsarUX's frame rate varies by
 host, so wall-clock anchors drift - prefer the frame-anchored flags;
---interval tightens to 0.1s automatically when either is given."""
+--interval tightens to 0.1s automatically when any of them are given."""
 import argparse, pathlib, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
@@ -21,12 +26,98 @@ SPACE_DOWN = "FFFFFFFFFFFFFFFE00"
 # stub never handed off and any decoded "text" there is its own opcodes.
 STUB_PROLOGUE = bytes.fromhex("f331e07f")
 
+# Surface readback (fix round 1): with the CPU frozen (enter-cpu-step),
+# ZEsarUX memory zone 0 exposes the flat 2MB Next RAM regardless of the
+# live MMU map; 8K page P sits at zone-0 byte offset (P+32)*8192. Verified
+# live: page 28 (frontBank 14 * 2 + 0, a 320-wide picture's first page)
+# read back the exact bytes staged in that slide's compiled NXC.
+ZONE_RAM = 0
+PAGE_ZONE_OFFSET = 32
+PAGE_SIZE = 8192
+
 def decode(m):
     d = {k: m[o] for k, o in FIELDS.items()}
     for k, o in WORDS.items():
         d[k] = m[o] | (m[o + 1] << 8)
     d["sig"] = bytes(m[0:2]).decode("ascii", "replace")
     return d
+
+def read_surface(z, front, mode):
+    """Assumes the CPU is already frozen (enter-cpu-step). Reads every 8K
+    page of the front Layer 2 surface (10 pages at 320x256, 6 at 256x192)
+    through zone 0 and returns the bytes. Leaves the memory zone at 0;
+    callers restore it (set-memory-zone -1) once done."""
+    npages = 10 if mode else 6
+    got = bytearray()
+    z.cmd("set-memory-zone %d" % ZONE_RAM)
+    for i in range(npages):
+        page = front * 2 + i
+        offset = (page + PAGE_ZONE_OFFSET) * PAGE_SIZE
+        got += z.read_memory(offset, PAGE_SIZE)
+    return got
+
+def compare_picture(got, picfile, npages):
+    """got vs picfile's bytes after its 512-byte palette. Returns (ok,
+    mismatches, first_offset, detail) - detail is a size-mismatch message,
+    or None."""
+    want = pathlib.Path(picfile).read_bytes()
+    expect = want[512:512 + npages * PAGE_SIZE]
+    if len(expect) != npages * PAGE_SIZE or len(got) != len(expect):
+        return False, -1, -1, ("%s is %d bytes / read %d bytes, expected a %d-byte picture "
+                                "(512 palette + %d pages)"
+                                % (picfile, len(want), len(got), 512 + npages * PAGE_SIZE, npages))
+    mismatches = 0
+    first = -1
+    for i in range(len(expect)):
+        if got[i] != expect[i]:
+            mismatches += 1
+            if first < 0:
+                first = i
+    return mismatches == 0, mismatches, first, None
+
+def surface_check(z, front, mode, picfile):
+    """Freeze the CPU, compare the front surface against picfile, always
+    restoring the CPU (exit-cpu-step) and the live memory zone (-1) before
+    returning, even on a read error."""
+    z.enter_cpu_step()
+    try:
+        got = read_surface(z, front, mode)
+    finally:
+        z.cmd("set-memory-zone -1")
+        z.exit_cpu_step()
+    npages = 10 if mode else 6
+    return compare_picture(got, picfile, npages)
+
+# Breakpoint index reserved for skip_surface_check below; each zes_intro.py
+# run is a fresh emulator instance, so no other index is ever armed here.
+SKIP_BREAKPOINT = 1
+
+def skip_surface_check(z, pc, picfile):
+    """Press skip, free-run under a breakpoint at pc (e.g. chain_run's
+    address) so the CPU stops before any hand-off code can overwrite the
+    launcher's Layer 2 surface banks, read the mirror for the current
+    front/mode, compare against picfile, then resume. A plain frame+sig
+    gated surface_check races chain_run here - pressing skip mid-transition
+    can reach hand-off within the same frame as trans_finish_now, and the
+    interpreter's own boot can already be overwriting memory a poll
+    interval later (measured live: a race read 13056/81920 bytes wrong
+    where the breakpointed read showed zero)."""
+    z.enter_cpu_step()
+    try:
+        z.enable_breakpoints()
+        z.set_breakpoint(SKIP_BREAKPOINT, zrcp.pc_breakpoint_condition(pc))
+        z.hold_matrix(SPACE_DOWN)
+        z.run(deadline=30.0)
+        z.release_matrix()
+        m = z.read_memory(MIRROR, 32)
+        front, mode = m[16], m[17]
+        got = read_surface(z, front, mode)
+    finally:
+        z.cmd("set-memory-zone -1")
+        z.disable_breakpoints()
+        z.exit_cpu_step()
+    npages = 10 if mode else 6
+    return compare_picture(got, picfile, npages)
 
 def main():
     ap = argparse.ArgumentParser()
@@ -38,11 +129,13 @@ def main():
     ap.add_argument("--space-at-frame", type=int, action="append", default=[])
     ap.add_argument("--assert", dest="asserts", action="append", default=[])
     ap.add_argument("--assert-frame", dest="frame_asserts", action="append", default=[])
+    ap.add_argument("--surface-at-frame", dest="surface_asserts", action="append", default=[])
+    ap.add_argument("--skip-surface-at-frame", dest="skip_surface", default=None)
     ap.add_argument("--expect-handoff", action="store_true")
     ap.add_argument("--expect-text")
     ap.add_argument("--port", type=int, default=10011)
     a = ap.parse_args()
-    if (a.frame_asserts or a.space_at_frame) and a.interval > 0.1:
+    if (a.frame_asserts or a.space_at_frame or a.surface_asserts or a.skip_surface) and a.interval > 0.1:
         a.interval = 0.1              # frame anchors need frequent sampling to land close to F
     card = pathlib.Path(a.card).resolve()
     if nleg.port_already_listening(a.port):
@@ -69,6 +162,12 @@ def main():
         samples = []
         pending_space = sorted(a.space_at)
         pending_space_frame = sorted(a.space_at_frame)
+        pending_surface = sorted(
+            (int(spec.split(":", 1)[0]), spec.split(":", 1)[1]) for spec in a.surface_asserts)
+        pending_skip_surface = None
+        if a.skip_surface:
+            when_s, pc_s, pic_s = a.skip_surface.split(":", 2)
+            pending_skip_surface = (int(when_s), int(pc_s), pic_s)
         while time.time() - t0 < a.seconds:
             t = time.time() - t0
             if pending_space and t >= pending_space[0]:
@@ -84,9 +183,40 @@ def main():
                 pending_space_frame.pop(0)
                 z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
                 print("t=%.1f space (frame=%d)" % (t, d["frame"]))
+            if pending_surface and d["sig"] == "IN" and d["frame"] >= pending_surface[0][0]:
+                when, picfile = pending_surface.pop(0)
+                try:
+                    s_ok, mism, first, detail = surface_check(z, d["front"], d["mode"], picfile)
+                except Exception as e:
+                    s_ok, mism, first, detail = False, -1, -1, "exception: %r" % (e,)
+                if detail:
+                    print("ASSERT FAILED: surface check frame>=%d vs %s: %s" % (when, picfile, detail))
+                    ok = False
+                elif s_ok:
+                    print("surface ok frame>=%d (t=%.1f, actual frame=%d) vs %s" % (when, t, d["frame"], picfile))
+                else:
+                    print("ASSERT FAILED: surface mismatch frame>=%d (t=%.1f, actual frame=%d) vs %s: "
+                          "%d bytes differ, first at offset %d" % (when, t, d["frame"], picfile, mism, first))
+                    ok = False
+            if pending_skip_surface and d["frame"] >= pending_skip_surface[0]:
+                when, pc, picfile = pending_skip_surface
+                pending_skip_surface = None
+                try:
+                    s_ok, mism, first, detail = skip_surface_check(z, pc, picfile)
+                except Exception as e:
+                    s_ok, mism, first, detail = False, -1, -1, "exception: %r" % (e,)
+                if detail:
+                    print("ASSERT FAILED: skip-surface check frame>=%d pc=%d vs %s: %s" % (when, pc, picfile, detail))
+                    ok = False
+                elif s_ok:
+                    print("skip-surface ok frame>=%d (t=%.1f, actual frame=%d) pc=%d vs %s" % (when, t, d["frame"], pc, picfile))
+                else:
+                    print("ASSERT FAILED: skip-surface mismatch frame>=%d (t=%.1f, actual frame=%d) pc=%d vs %s: "
+                          "%d bytes differ, first at offset %d" % (when, t, d["frame"], pc, picfile, mism, first))
+                    ok = False
             time.sleep(a.interval)
         have_mirror = any(d["sig"] == "IN" for _, d in samples)
-        if (a.asserts or a.frame_asserts) and not have_mirror:
+        if (a.asserts or a.frame_asserts or a.surface_asserts or a.skip_surface) and not have_mirror:
             print("ASSERT FAILED: no sample ever showed sig=IN - dbg_init never ran "
                   "(expected for a Release build, which has no mirror) or the mirror "
                   "was never reached before the hand-off window closed")
@@ -121,6 +251,14 @@ def main():
                 print("ASSERT FAILED at frame>=%d (t=%.1f, actual frame=%d): %s=%d, expected %s" % (when, t, d["frame"], field, got, value)); ok = False
             else:
                 print("assert ok frame>=%d (t=%.1f, actual frame=%d) %s=%s" % (when, t, d["frame"], field, value))
+        if pending_surface:
+            for when, picfile in pending_surface:
+                print("ASSERT FAILED: frame %d never reached for surface check vs %s" % (when, picfile))
+                ok = False
+        if pending_skip_surface:
+            when, pc, picfile = pending_skip_surface
+            print("ASSERT FAILED: frame %d never reached for skip-surface check vs %s" % (when, picfile))
+            ok = False
         if a.expect_handoff or a.expect_text:
             head = z.read_memory(0x6000, 4)
             if head == STUB_PROLOGUE:
