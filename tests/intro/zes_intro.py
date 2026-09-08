@@ -25,7 +25,7 @@ FIELDS = {"seq": 2, "state": 3, "slide": 4, "load": 5, "trans": 6, "code": 7,
           "front": 16, "mode": 17, "music": 18, "keys": 19, "hz60": 20, "fadek": 21,
           "loadpage": 24, "fading": 25, "slides": 26, "skip": 27, "akytick": 28,
           "ayspage": 29}
-WORDS = {"frame": 8, "hold": 10, "tf": 12, "scroll": 14, "pcmwr": 22}
+WORDS = {"frame": 8, "hold": 10, "tf": 12, "scroll": 14, "pcmwr": 22, "pcmrd": 30}
 SPACE_DOWN = "FFFFFFFFFFFFFFFE00"
 # stub: di / ld sp,$7FE0 (chain.asm) - if $6000 still starts with this, the
 # stub never handed off and any decoded "text" there is its own opcodes.
@@ -199,8 +199,8 @@ def main():
             m = z.read_memory(MIRROR, 32)
             d = decode(m)
             samples.append((t, d))
-            print("t=%.1f sig=%s state=%d slide=%d load=%d trans=%d code=%02X frame=%d hold=%d tf=%d scroll=%d front=%d mode=%d music=%d keys=%d hz60=%d fadek=%d pcmwr=%04X loadpage=%d fading=%d akytick=%d ayspage=%d"
-                  % (t, d["sig"], d["state"], d["slide"], d["load"], d["trans"], d["code"], d["frame"], d["hold"], d["tf"], d["scroll"], d["front"], d["mode"], d["music"], d["keys"], d["hz60"], d["fadek"], d["pcmwr"], d["loadpage"], d["fading"], d["akytick"], d["ayspage"]))
+            print("t=%.1f sig=%s state=%d slide=%d load=%d trans=%d code=%02X frame=%d hold=%d tf=%d scroll=%d front=%d mode=%d music=%d keys=%d hz60=%d fadek=%d pcmwr=%04X pcmrd=%04X loadpage=%d fading=%d akytick=%d ayspage=%d"
+                  % (t, d["sig"], d["state"], d["slide"], d["load"], d["trans"], d["code"], d["frame"], d["hold"], d["tf"], d["scroll"], d["front"], d["mode"], d["music"], d["keys"], d["hz60"], d["fadek"], d["pcmwr"], d["pcmrd"], d["loadpage"], d["fading"], d["akytick"], d["ayspage"]))
             if pending_space_frame and d["frame"] >= pending_space_frame[0]:
                 pending_space_frame.pop(0)
                 z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()

@@ -15,8 +15,6 @@ pcm_open:
     ld (pcmWr), hl
     ld (pcmRd), hl
     ld (pcmRdPrev), hl
-    ld hl, 0
-    ld (pcmAvail), hl
     ld b, 4
 .fill:
     push bc
@@ -48,8 +46,12 @@ pcmTc:    db 0
 pcmTcTab: db 112, 114, 117, 120, 124, 128, 132, 108
     ASSERT $ - pcmTcTab == 8         ; indexed by NR $11 and 7 (rubric 8)
 
-; Read 2048 bytes at pcmWr (page 40 through slot 6); on end of file rewind
-; and read the rest; advance pcmWr with wrap.
+; Read LOAD_CHUNK bytes at pcmWr (page 40 through slot 6); on end of file
+; rewind and read the remainder (MUSIC.PCM is at least 8192 bytes with an
+; even length - introc.ps1 - so the second read always completes and the
+; L/R phase survives the wrap); advance pcmWr with wrap.
+; Out: CF set on any read failure (pcmWr untouched; caller must not credit
+; pcmAvail); CF clear and pcmWr advanced on success.
 pcm_read_chunk:
     ld a, PG_MUSIC
     call map6
@@ -60,15 +62,15 @@ pcm_read_chunk:
     ld (pcmOff), hl                  ; window offset
     ex de, hl
     ld a, (pcmHandle)
-    ld bc, 2048
+    ld bc, LOAD_CHUNK
     call esx_read6
     jr c, .fail
-    ld hl, 2048
+    ld hl, LOAD_CHUNK
     or a
     sbc hl, bc
     jr z, .adv
     ; short: rewind, read the remainder after the bytes we got
-    push hl                          ; wanted = 2048 - got
+    push hl                          ; wanted = LOAD_CHUNK - got
     push bc                          ; got
     ld a, (pcmHandle)
     call esx_seek0
@@ -79,9 +81,10 @@ pcm_read_chunk:
     pop bc                           ; BC = wanted
     ld a, (pcmHandle)
     call esx_read6
+    jr c, .fail
 .adv:
     ld hl, (pcmWr)
-    ld de, 2048
+    ld de, LOAD_CHUNK
     add hl, de
     ld a, h
     or a
@@ -89,13 +92,20 @@ pcm_read_chunk:
     ld hl, PCM_RING
 .w:
     ld (pcmWr), hl
+    or a                              ; CF clear: success
     ret
 .fail:
+    scf
     ret
 pcmOff: dw 0
+    ASSERT (PCM_RING & $1FFF) == 0   ; ring is page-aligned (doc 03 wrap idiom)
+    ASSERT PCM_RING + 8192 == $10000 ; ring ends exactly at the 64K wrap
+    ASSERT (pcmXlat & $FF) == 0      ; xlat is page-aligned (pcm_isr indexing)
+    ASSERT (8192 % LOAD_CHUNK) == 0  ; the ring's mod-8192 accounting assumes this
 
 ; Main-loop refill: account the interrupt's consumption, read one chunk
-; when there is room. Out NZ when a read happened.
+; when there is room. Out NZ when a read happened; a failed read reports
+; ERR_MUS_PCM (DEBUG) and returns Z, so the loader keeps its own frame.
 pcm_refill:
     ld a, (pcmHandle)
     cp $FF
@@ -112,18 +122,25 @@ pcm_refill:
     ld hl, (pcmAvail)
     or a
     sbc hl, de
+    jr nc, .avail_ok                 ; clamp: a missed frame must not wrap avail
+    ld hl, 0
+.avail_ok:
     ld (pcmAvail), hl
-    ld de, 8192-2048-64
+    ld de, 8192-LOAD_CHUNK-64
     or a
-    sbc hl, de                       ; avail - (8192-2112)
+    sbc hl, de                       ; avail - (8192-LOAD_CHUNK-64)
     jr nc, .no                       ; not enough room yet
     call pcm_read_chunk
+    jr c, .readfail
     ld hl, (pcmAvail)
-    ld de, 2048
+    ld de, LOAD_CHUNK
     add hl, de
     ld (pcmAvail), hl
     or 1
     ret
+.readfail:
+    ld a, ERR_MUS_PCM
+    call dbg_code
 .no:
     xor a
     ret

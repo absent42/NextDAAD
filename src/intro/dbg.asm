@@ -76,6 +76,9 @@ dbg_mirror:
     ld (ix+28), a
     ld a, (aysPage)
     ld (ix+29), a
+    ld hl, (pcmRd)
+    ld (ix+30), l
+    ld (ix+31), h
     jp dbg_show
 ; "IN? xx" on row 31 for 50 frames after a code. Harmless before text_init
 ; has run (the map is blank and the tilemap is off).

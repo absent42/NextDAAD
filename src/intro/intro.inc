@@ -224,6 +224,7 @@ ERR_FONT_TIL    equ $32
 ERR_MUS_OPEN    equ $41
 ERR_MUS_HDR     equ $42
 ERR_MUS_NDAW    equ $43
+ERR_MUS_PCM     equ $44         ; a stream read failed after MUSIC.PCM opened
 ERR_NEX_OPEN    equ $51
 ERR_NEX_HDR     equ $52
 ERR_NEX_BANK5   equ $53
