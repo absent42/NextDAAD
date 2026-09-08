@@ -68,7 +68,7 @@ fade_k_for:
     ret
 
 ; Border endpoints for a phase: phase 0 fades border -> colour, phase 1
-; colour -> border. HL, DE are left pointing at the 512-byte sources.
+; colour -> border. Corrupts AF, HL.
 fade_border_set:
     ld a, (transPhase)
     or a
@@ -87,10 +87,9 @@ fade_border_set:
     ld hl, lerpBorderB
     jp colour9_store
 
-; FADE: phase 0 = current palette to the solid colour over half the frames,
-; then swap surfaces and mode under the solid colour, phase 1 = solid to the
-; new palette over the other half. The first slide has no picture to fade
-; out and fades in over the whole time.
+; FADE: phase 0 fades to the solid colour, then swap surfaces and mode,
+; phase 1 fades in the new palette. The first slide has no picture to
+; fade out, so it fades in over the whole time.
 trans_fade_begin:
     ld a, (transColour)
     call pal_solid
@@ -214,6 +213,8 @@ trans_finish_now:
     call map6
     ld hl, PAL_NEW
     call pal_program
+    ld a, (borderCol)
+    call border_set
     jp pal_copy_new_to_cur
 
 ; END fade: PAL_CUR -> endColour over transFrames, no swap.

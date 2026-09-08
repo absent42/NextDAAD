@@ -114,11 +114,9 @@ pal_copy_new_to_cur:
     ldir
     ret
 
-; HL = palette A, DE = palette B (both in the slot 6 window with page 39
-; mapped), A = k 0-16: program every Layer 2 entry as A + (B-A)*k/16 per
-; RGB333 channel, then the border (NR $4A, the fallback colour that shows
-; while the ULA output is off) from lerpBorderA to lerpBorderB at the
-; same k. Corrupts everything.
+; HL = palette A, DE = palette B (page 39 in slot 6), A = k 0-16: program
+; every Layer 2 entry as A + (B-A)*k/16 per RGB333 channel, then the
+; border (NR $4A) from lerpBorderA to lerpBorderB at the same k. Corrupts everything.
 pal_lerp:
     ld (lerpK), a
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
@@ -227,14 +225,14 @@ lerp_calc:
     pop hl
     ret
 
-; C = channel of A (0-7), A = channel of B (0-7) -> A = C + lerpTab[k*15 + B-C+7].
+; C = channel of A (0-7), A = channel of B (0-7) -> A = C + lerpTab[k*LERP_D + B-C+LERP_D/2].
 lerp_chan:
     sub c
-    add a, 7
+    add a, LERP_D/2
     ld l, a
     ld a, (lerpK)
     ld e, a
-    ld d, 15
+    ld d, LERP_D
     mul d, e
     ld a, l
     add a, e
@@ -243,6 +241,7 @@ lerp_chan:
     ld a, (hl)
     add a, c
     ret
+    ASSERT (lerpTab & $FF) == 0      ; high lerpTab above needs 256-byte alignment (rubric 8)
 lerpK:       db 0
 lerpA0:      db 0
 lerpA1:      db 0
