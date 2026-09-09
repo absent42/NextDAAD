@@ -6,6 +6,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from mkanisheets import write_png
 
 MAGENTA = (255, 0, 255)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FONT_CHR = os.path.join(ROOT, "src", "font.chr")
 
 def pal_a():
     return [((i * 7) & 255, (i * 3) & 255, (i * 11) & 255) for i in range(256)]
@@ -48,18 +50,17 @@ def main(out):
     write_png(os.path.join(out, "p320c.png"), 320, 256, a, pic(320, 256, lambda x, y: x * 3 + y))
     write_png(os.path.join(out, "p256a.png"), 256, 192, a, pic(256, 192, lambda x, y: x + 2 * y))
     write_png(os.path.join(out, "bad300.png"), 300, 256, a, pic(300, 256, lambda x, y: x))
-    # font sheet: 16 colours, magenta at PLTE index 5; glyph n uses colour (n % 15) + 1
-    # except colour 5 (magenta) which is skipped, so every glyph is opaque except
-    # glyph 0 and glyph 32 (space), which are all magenta (transparent)
-    fpal = [(0, 0, 0), (255, 255, 255), (255, 0, 0), (0, 255, 0), (0, 0, 255), MAGENTA,
-            (255, 255, 0), (0, 255, 255), (128, 128, 128), (64, 64, 64), (192, 192, 192),
-            (128, 0, 0), (0, 128, 0), (0, 0, 128), (128, 128, 0), (0, 128, 128)]
+    # font sheet: 16 colours, magenta at index 0 (transparent). Cell n draws
+    # character n from src\font.chr: set pixels get ink 1 + (n % 4) so PALETTE 1's
+    # white/red/green/blue are all exercised; cell 32 (space) stays all magenta.
+    fpal = [MAGENTA, (255, 255, 255), (255, 0, 0), (0, 255, 0), (0, 0, 255)] + [(0, 0, 0)] * 11
+    with open(FONT_CHR, "rb") as f:
+        font_chr = f.read()
     def fpix(x, y):
-        n = (y // 8) * 16 + (x // 8)
-        if n == 0 or n == 32:
-            return 5
-        c = n % 15
-        return c + 1 if c + 1 != 5 else 6
+        code = (y // 8) * 16 + (x // 8)
+        row, col = y % 8, x % 8
+        bit = font_chr[code * 8 + row] & (0x80 >> col)
+        return (1 + code % 4) if bit else 0
     write_png(os.path.join(out, "font.png"), 128, 128, fpal, pic(128, 128, fpix))
     write_nx2(os.path.join(out, "ready320.NX2"), a, pic(320, 256, lambda x, y: x + y))
     write_wav(os.path.join(out, "tone.wav"))

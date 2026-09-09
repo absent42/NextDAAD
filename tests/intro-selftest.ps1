@@ -20,6 +20,22 @@ function Assert-Throws([scriptblock]$sb, [string]$pattern, $what) {
     if (-not $threw) { throw "intro-selftest: $what - did not fail" }
 }
 function U16([byte[]]$b, [int]$o) { return [int]$b[$o] -bor ([int]$b[$o + 1] -shl 8) }
+function Hex([byte[]]$b) { return ($b | ForEach-Object { $_.ToString('x2') }) -join '' }
+# 4-bit tile layout: 32 bytes/tile, 4 bytes/row, high nibble = left pixel.
+# font.chr: 2048 bytes, 256 glyphs x 8 rows, 1 bit/pixel, MSB = left pixel.
+function Expected-Tile([byte[]]$chr, [int]$code, [int]$ink) {
+    $t = New-Object byte[] 32
+    for ($row = 0; $row -lt 8; $row++) {
+        $b = $chr[$code * 8 + $row]
+        for ($pair = 0; $pair -lt 4; $pair++) {
+            $hi = if ($b -band (0x80 -shr ($pair * 2))) { $ink } else { 0 }
+            $lo = if ($b -band (0x80 -shr ($pair * 2 + 1))) { $ink } else { 0 }
+            $t[$row * 4 + $pair] = [byte](($hi -shl 4) -bor $lo)
+        }
+    }
+    return $t
+}
+$fontChr = [IO.File]::ReadAllBytes("$root\src\font.chr")
 function Compile([string]$name, [string[]]$extra, [string]$suffix = '') {
     $out = "$work\out-$name$suffix"
     Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
@@ -56,8 +72,8 @@ Push-Location $work
 try { & $gfx -colors-4bit -tile-size=8x8 -pal-none font.png | Out-Null } finally { Pop-Location }
 $tl = [IO.File]::ReadAllBytes("$work\font.nxt")
 Assert-Eq $tl.Length 8192 'probe: 256 tiles of 32 bytes'
-Assert-Eq $tl[0] 0x55 'probe: glyph 0 is all magenta index 5 (55 per byte)'
-Assert-Eq $tl[65 * 32] 0x66 'probe: glyph 65 is colour 6 in both nibbles (65 mod 15 = 5, plus 1, not the magenta index)'
+Assert-Eq (Hex $tl[(0)..(31)]) (Hex (Expected-Tile $fontChr 0 1)) 'probe: glyph 0 (NUL, blank in font.chr) is all zero'
+Assert-Eq (Hex $tl[(65 * 32)..(65 * 32 + 31)]) (Hex (Expected-Tile $fontChr 65 (1 + (65 % 4)))) 'probe: glyph 65 (A) matches font.chr under the 4-bit layout'
 Assert-Eq (Test-Path "$work\font.nxm") $true 'probe: a .nxm map is written beside the tiles (discarded by the compiler)'
 
 # ---- 001 minimal: one CUT slide, no music, no items.
@@ -196,12 +212,15 @@ Assert-Eq $c4[512 + 10 * 256 + 20] ((10 + 20) -band 255) '005 transposed NX2 pix
 Assert-Eq $c1[512 + 10 * 256 + 20] $c4[512 + 10 * 256 + 20] '005 PNG and NX2 of the same art agree after conversion'
 $til = [IO.File]::ReadAllBytes("$o\FONT.TIL")
 Assert-Eq $til.Length 8192 '005 FONT.TIL length'
-Assert-Eq $til[0] 0x00 '005 glyph 0 (magenta) remapped to nibble 0'
-Assert-Eq $til[65 * 32] 0x66 '005 glyph 65 untouched by the remap'
+Assert-Eq (Hex $til[(0)..(31)]) (Hex (Expected-Tile $fontChr 0 1)) '005 tile 0 (glyph NUL, blank in font.chr) is all zero'
+Assert-Eq (Hex $til[(65 * 32)..(65 * 32 + 31)]) (Hex (Expected-Tile $fontChr 65 (1 + (65 % 4)))) "005 tile 65 ('A') matches font.chr under the 4-bit layout"
+$expT72 = Expected-Tile $fontChr 72 (1 + (72 % 4))
+Assert-Eq (Hex $til[(72 * 32)..(72 * 32 + 31)]) (Hex $expT72) "005 tile 72 ('H') matches font.chr under the 4-bit layout"
+Assert-Eq (Hex $til[(32 * 32)..(32 * 32 + 31)]) ('00' * 32) '005 tile 32 (space) is entirely zero'
 Assert-Eq $d[5] 16 '005 flags: colour font'
 Assert-Eq $d[32] 0xE3 '005 block 0 entry 0 is the magenta colour (RGB332 E3)'
 Assert-Eq $d[33] 1 '005 block 0 entry 0 blue LSB'
-Assert-Eq $d[32 + 5 * 2] 0x00 '005 block 0 entry 5 now holds the old entry 0, black'
+Assert-Eq $d[32 + 5 * 2] 0x00 '005 block 0 entry 5 is the sheet filler colour, black'
 Assert-Eq $d[32 + 16 * 2] 255 '005 block 1 entry 0 is 255 from PALETTE'
 Assert-Eq $d[32 + 17 * 2] 224 '005 block 1 entry 1 is 224'
 Assert-Eq $d[32 + 32 * 2] 0xE3 '005 block 2 unset copies block 0'
