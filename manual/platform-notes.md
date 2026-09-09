@@ -290,6 +290,12 @@ If the player types a noun on its own and gives no verb, DAAD moves the
 noun into the verb slot when its vocabulary id is below 40. Ids 39 and
 below convert; 40 and above do not.
 
+The 1991 DAAD manual says the limit is 20 ("a Noun with a word value
+<20"). That figure does not match the shipped interpreters: the original
+ZX Spectrum interpreter converts ids up to 39, and the DRC compiler
+accepts nouns up to 39 in the verb position of a process entry or a
+SYNONYM. NextDAAD follows the interpreter and compiler, not the manual.
+
 **What to do with that:** any noun you number in the 20-39 band will act
 as a command when it is typed bare. If you have a noun that must never
 be a verb, number it 40 or above. Direction words and other words meant
