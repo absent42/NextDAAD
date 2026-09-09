@@ -316,6 +316,16 @@ spr_stop_all:
     pop af
     ret
 
+; Disarm the colour cycle. Preserves every register: gfx_drawtarget_clear
+; carries A = 0 across it. h_restart must never reach this (build guard).
+cyc_stop:
+    push af
+    ld a, (xbnIntOn)
+    and $FF-HOOK_CYC
+    ld (xbnIntOn), a
+    pop af
+    ret
+
 ; Mainline DI bracket for one select-then-write group: the sprite tick shares
 ; the NR $34 select-then-write sequence. Resident so overlay0's pointer
 ; sequences can use it with SPR_PAGE unmapped. IFF2 sampled twice through
@@ -342,16 +352,21 @@ spr_ei:
     ret
 
 ; Frame hook body for both ISR paths (full context already saved). Sprite
-; tick first so author code can never delay it, then the XBN #int entry.
+; tick, then the cycle tick, then the XBN entry: author code can never delay
+; either tick. Both ticks live on SPR_PAGE, mapped once here for either bit.
 isr_hook_body:
     call xbn_isr_mmu_save
     ld a, (xbnIntOn)
-    and HOOK_SPR
-    jr z, .nospr
+    and HOOK_SPR+HOOK_CYC
+    jr z, .noticks
     nextreg NR_MMU6, SPR_TAB_PAGE
     nextreg NR_MMU7, SPR_PAGE
-    call spr_tick
-.nospr:
+    and HOOK_SPR
+    call nz, spr_tick
+    ld a, (xbnIntOn)
+    and HOOK_CYC
+    call nz, cyc_tick
+.noticks:
     ld a, (xbnIntOn)
     and HOOK_XBN
     jr z, .done
@@ -659,6 +674,14 @@ palBusy:    db 0             ; 1 only across gfx_blit's live palette
                               ; reveal and h_gfx .swap's reveal tail -
                               ; NARROW by owner ruling, not the whole
                               ; draw path
+; Colour cycle (GFX 11/12): written by h_gfx under a cleared HOOK_CYC,
+; read by cyc_tick (sprites.asm). cyc_dbg_snap copies the four as one run.
+cycFirst:   db 0
+cycLast:    db 0
+cycFrames:  db 0
+cycCount:   db 0
+palLock:    db 1             ; foreground NR $44 burst open; the tick skips
+                              ; its step while set. Internal, never exported.
 
 xbn_svc_mmu_save:                ; corrupts A, BC; result in svcSaved
     ld bc, $243B
@@ -869,13 +892,13 @@ esx_getdate:
 svc_getdate: jp esx_getdate
 
 ; Row 12. Pure resident reads - ISR-safe. Bits append-only (bit 0
-; vidPlaying, bit 1 cardBusy, bit 2 palBusy). Bits 0/2 are foreground-
-; invisible (video playback and draws are foreground-synchronous) -
-; observable only from the hook. Corrupts AF, L (documented in
-; authoring-kit/xbn.inc's SVC_BUSY equate comment) - the smaller
-; contract: HL is not a result register anywhere else in this table,
-; so preserving it with push/pop would cost 4 bytes and 20T to protect
-; a register no caller needs back.
+; vidPlaying, bit 1 cardBusy, bit 2 palBusy, bit 3 colour cycle
+; armed). Bits 0/2 are foreground-invisible (video playback and draws
+; are foreground-synchronous) - observable only from the hook.
+; Corrupts AF, L (documented in authoring-kit/xbn.inc's SVC_BUSY
+; equate comment) - the smaller contract: HL is not a result register
+; anywhere else in this table, so preserving it with push/pop would
+; cost 4 bytes and 20T to protect a register no caller needs back.
 svc_busy:
     ld a, (vidPlaying)
     and 1
@@ -889,8 +912,13 @@ svc_busy:
     and 1
     add a, a
     add a, a
-    or l                          ; A = bit2|bit1|bit0
-    or a                          ; CF clear (A may be nonzero - or a still clears CF)
+    or l
+    ld l, a
+    ld a, (xbnIntOn)
+    and HOOK_CYC                  ; mask bit 2 -> result bit 3
+    add a, a
+    or l                          ; A = bit3|bit2|bit1|bit0
+    or a                          ; CF clear
     ret
 
 ; Row 13. Reads NR $41/$44 straight from hardware - no interpreter-held
@@ -1076,6 +1104,7 @@ sfxChan1: ds SMPB_SIZE
 gfx_drawtarget_clear:
     call spr_stop_all           ; sets are transient like pictures; the cache
                                 ; stays. Preserves every register.
+    call cyc_stop               ; the colour cycle is transient the same way
     ld hl, gfxDrawTarget
     ld (hl), a
     inc hl

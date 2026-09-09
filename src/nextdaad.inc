@@ -1540,6 +1540,7 @@ SPR_TAB_SIZE    equ 1024
 SPR_SET_NONE    equ 255     ; free record, free cache entry, stop-all argument
 HOOK_XBN        equ 1       ; xbnIntOn bit 0: XBN intEntry armed
 HOOK_SPR        equ 2       ; xbnIntOn bit 1: sprite tick armed
+HOOK_CYC        equ 4       ; xbnIntOn bit 2: colour cycle tick armed
 PAL_SPR_EDIT    equ %00100000 ; NR $43 bits 6-4 = 010: sprite palette 0 for edit
 SPR_NR15_ON     equ %01000011 ; NR $15: bit 6 sprite 0 on top, bit 1 over border, bit 0 enable
 SPR_DBG_SNAP    equ $5000   ; DEBUG snapshot: dead ULA pixel window, always mapped
@@ -1550,6 +1551,12 @@ SPR_STAGE       equ $5200   ; 1K frame-table staging while slot 6 holds the imag
                             ; dead ULA pixel window like SPR_DBG_SNAP and AUD_STAGE2
     ASSERT SPR_DBG_SNAP + SPR_DBG_LEN <= SPR_STAGE
     ASSERT SPR_STAGE + SPR_TAB_SIZE <= $5800
+CYC_DBG_SNAP    equ $5600   ; DEBUG colour-cycle snapshot header, after SPR_STAGE's
+                            ; 1K, same dead ULA pixel window and the same $5800
+                            ; bound: the attribute area above is ula_cls's
+CYC_DBG_LEN     equ 16      ; sig 4, seq 1, armed 1, state 4, steps 2, reason 1, pad 2, seq 1
+    ASSERT SPR_STAGE + SPR_TAB_SIZE <= CYC_DBG_SNAP
+    ASSERT CYC_DBG_SNAP + CYC_DBG_LEN <= $5800
 ; .ANI header (16 bytes, little-endian)
 ANI_MAGIC       equ 0       ; 'N','A'
 ANI_VER         equ 2       ; 1

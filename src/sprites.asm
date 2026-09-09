@@ -1944,5 +1944,6 @@ spr_selftest:
 msgSprFail: db "SPR FAIL ", 0
  ENDIF
 
+cyc_tick: ret                    ; Task 3 replaces this stub
     DISPLAY "sprites ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
