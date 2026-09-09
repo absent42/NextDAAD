@@ -26,8 +26,13 @@ sprLdEntry:   db 0
 sprLdLen:     dw 0
 sprHandle:    db 0
 sprPalSave:   db 0
+cycSave43:    db 0                ; the tick's saved NR $43 / $40, restored in
+cycSave40:    db 0                ; that order (a $43 write resets the $44 pair)
 ; per-channel block tables: pattern -> palette block, rewritten at load
 sprBlkTab:    ds SPR_CHANS*128
+cycScratch:   ds 512              ; one 9-bit pair per cycled entry, read back
+                                  ; before the rotated write; the harness reads
+                                  ; it by physical address
 sprUpLeft:    dw 0              ; upload bytes remaining
 sprUpPage:    db 0              ; image page currently in slot 6 during upload
 sprApPat:     db 0              ; hoisted record fields for the apply loops
@@ -558,6 +563,140 @@ spr_find_record:
     djnz .n
     scf
     ret
+
+; ISR, sprites page mapped by isr_hook_body. One step per cycFrames frames:
+; read the displayed Layer 2 bank's range into cycScratch, write it back one
+; index down. Skips (never queues) while a foreground NR $44 burst is open:
+; a $40/$41/$43 write resets the $44 pair (core nextreg.txt 0x44). Corrupts everything.
+cyc_tick:
+    ld hl, cycCount
+    dec (hl)
+    ret nz
+    ld a, (cycFrames)
+    ld (hl), a                   ; reload first: a skipped step is lost
+    ld a, (palLock)
+    ld hl, palBusy
+    or (hl)
+    ld hl, vidPlaying            ; a clip's pre-arm palette writers run
+    or (hl)                      ; before the hook suspend, under this flag
+    ret nz
+    ld e, NR_PAL_CTRL
+    call nr_read
+    ld (cycSave43), a
+    and %00001111                ; keep display selects, drop the edit field
+    ld c, a
+    bit 2, a                     ; Layer 2 display bit: which bank is shown
+    ld a, PAL_L2_EDIT_SECOND
+    jr nz, .ctl
+    ld a, PAL_L2_FIRST
+.ctl:
+    or c
+    ld c, a                      ; C = edit the SHOWN bank, display untouched
+    ld e, NR_PAL_INDEX
+    call nr_read
+    ld (cycSave40), a
+    ld a, c
+    nextreg NR_PAL_CTRL, a
+    ld a, (cycFirst)
+    ld d, a                      ; D = index
+    ld a, (cycLast)
+    sub d
+    inc a
+    ld b, a                      ; B = count, 2..255 (h_gfx pins last > first)
+    ld hl, cycScratch
+.rd:
+    ld a, d
+    nextreg NR_PAL_INDEX, a
+    ld e, NR_PAL_VALUE
+    call nr_read                 ; reads never auto-increment
+    ld (hl), a
+    inc hl
+    ld e, NR_PAL_VALUE9
+    call nr_read
+    and %10000001                ; priority + blue LSB; bits 6-1 must write 0
+    ld (hl), a
+    inc hl
+    inc d
+    djnz .rd
+    ld a, (cycFirst)
+    nextreg NR_PAL_INDEX, a
+    ld d, a
+    ld a, (cycLast)
+    sub d
+    ld b, a                      ; B = count-1: entries first..last-1
+    ld hl, cycScratch+2
+.wr:
+    ld a, (hl)
+    inc hl
+    nextreg NR_PAL_VALUE9, a
+    ld a, (hl)
+    inc hl
+    nextreg NR_PAL_VALUE9, a     ; pair lands, index auto-increments
+    djnz .wr
+    ld hl, cycScratch            ; entry last takes the old entry first
+    ld a, (hl)
+    inc hl
+    nextreg NR_PAL_VALUE9, a
+    ld a, (hl)
+    nextreg NR_PAL_VALUE9, a
+    ld a, (cycSave43)
+    nextreg NR_PAL_CTRL, a
+    ld a, (cycSave40)
+    nextreg NR_PAL_INDEX, a
+ IFDEF DEBUG
+    ld hl, cycDbgSteps
+    inc (hl)
+    jr nz, .snap
+    inc hl
+    inc (hl)
+.snap:
+    jp cyc_dbg_snap
+ ENDIF
+    ret
+
+ IFDEF DEBUG
+cycDbgSeq:    db 0
+cycDbgSteps:  dw 0                ; completed steps; cycDbgReason must follow
+cycDbgReason: db 0                ; last refusal reason, 0 after a start/stop
+msgCycSig:    db "CYC1"
+; Mirror the cycle state into the dead ULA pixel window for the ZRCP reader:
+; sig, seq, armed, cycFirst..cycCount, steps, reason, pad, seq. Corrupts AF, BC, DE, HL.
+cyc_dbg_snap:
+    ld hl, cycDbgSeq
+    inc (hl)
+    ld a, (hl)
+    ld hl, msgCycSig
+    ld de, CYC_DBG_SNAP
+    ld bc, 4
+    ldir
+    ld (de), a                   ; seq
+    inc de
+    push af
+    ld a, (xbnIntOn)
+    and HOOK_CYC
+    ld (de), a                   ; armed
+    inc de
+    ld hl, cycFirst
+    ld bc, 4
+    ldir                         ; first, last, frames, count
+    ld hl, cycDbgSteps
+    ld bc, 3
+    ldir                         ; steps lo, hi, reason
+    xor a
+    ld (de), a
+    inc de
+    ld (de), a                   ; pad
+    inc de
+    pop af
+    ld (de), a                   ; seq again
+    ret
+; E = reason (0 = a start or stop). Reached through spr_call from h_gfx,
+; which cannot see this page's cells itself.
+cyc_snap_body:
+    ld a, e
+    ld (cycDbgReason), a
+    jp cyc_dbg_snap
+ ENDIF
 
 ; B = set (255 = all). Stopping an inactive set is a no-op.
 spr_stop_body:
@@ -1944,6 +2083,5 @@ spr_selftest:
 msgSprFail: db "SPR FAIL ", 0
  ENDIF
 
-cyc_tick: ret                    ; Task 3 replaces this stub
     DISPLAY "sprites ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
