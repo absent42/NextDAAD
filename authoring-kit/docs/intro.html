@@ -196,6 +196,15 @@ statements.</p>
 <h3 id="the-end">The end</h3>
 <p><code>END FADE t [c]</code> fades the last picture to the colour and the music with
 it. <code>END CUT</code> goes straight to the game. <code>END</code> is the last statement.</p>
+<h3 id="limits">Limits</h3>
+<ul>
+<li>At most 64 slides.</li>
+<li>A <code>SCROLL</code> takes at most 224 <code>LINE</code> statements (see above).</li>
+<li>At most 255 <code>TEXT</code> and <code>LINE</code> items across the whole script.</li>
+<li>At most 128 distinct <code>INK</code> and <code>PAPER</code> combinations with the game's
+  font.</li>
+<li>All caption and line text together: at most 3500 bytes.</li>
+</ul>
 <h2 id="colour-fonts">Colour fonts</h2>
 <p>A font sheet is a 128 by 128 PNG: sixteen columns by sixteen rows of 8x8
 cells, cell <code>n</code> holding character <code>n</code>, so it reads like an ASCII table.
@@ -213,7 +222,9 @@ only by memory (384K). Compose for three PSGs for the AKY form.</p>
 <p><strong>PCM</strong> converts through ffmpeg to unsigned 8-bit stereo at 15625 Hz, the
 same format cutscene audio uses. Any source ffmpeg reads works; a mono
 source plays centred. The file on the card is about 31K per second, so a
-three-minute track is about 5.6 MB.</p>
+three-minute track is about 5.6 MB. The converted stream must come out
+at least 8192 bytes (about a quarter of a second) with an even length;
+the build fails if ffmpeg produces anything shorter or odd-length.</p>
 <p><strong>NDR</strong> plays a NextDAW export with NextDAW's runtime player. The kit
 copies that player from your own NextDAW install into <code>RELEASE\INTRO\</code>
 at build time, because NextDAW's licence lets you ship it inside your
@@ -254,10 +265,12 @@ slide whose picture fails to load is skipped (if every slide fails, the
 show ends there too, so a <code>LOOP</code> cannot spin forever on missing art). A
 missing or unusable font falls back to the built-in one, and a music
 file that will not open plays silence. Only a missing, unreadable or
-refused <code>nextdaad.nex</code> is fatal, with the message <code>E9 nextdaad.nex</code> on a
-magenta border, since there is then no game to start. If a show
-misbehaves, check the build output first: every compile error names its
-line in <code>INTRO.TXT</code>.</p>
+refused <code>nextdaad.nex</code> is fatal, since there is then no game to start: a
+failure opening the file or reading its header shows <code>E9 nextdaad.nex</code>
+on a magenta border; a card failure once the file's banks have started
+loading instead stops on a plain magenta border with no message. If a
+show misbehaves, check the build output first: every compile error names
+its line in <code>INTRO.TXT</code>.</p>
 </main>
 </body>
 </html>

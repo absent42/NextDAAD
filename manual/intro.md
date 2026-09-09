@@ -146,6 +146,15 @@ statements.
 `END FADE t [c]` fades the last picture to the colour and the music with
 it. `END CUT` goes straight to the game. `END` is the last statement.
 
+### Limits
+
+- At most 64 slides.
+- A `SCROLL` takes at most 224 `LINE` statements (see above).
+- At most 255 `TEXT` and `LINE` items across the whole script.
+- At most 128 distinct `INK` and `PAPER` combinations with the game's
+  font.
+- All caption and line text together: at most 3500 bytes.
+
 ## Colour fonts
 
 A font sheet is a 128 by 128 PNG: sixteen columns by sixteen rows of 8x8
@@ -167,7 +176,9 @@ only by memory (384K). Compose for three PSGs for the AKY form.
 **PCM** converts through ffmpeg to unsigned 8-bit stereo at 15625 Hz, the
 same format cutscene audio uses. Any source ffmpeg reads works; a mono
 source plays centred. The file on the card is about 31K per second, so a
-three-minute track is about 5.6 MB.
+three-minute track is about 5.6 MB. The converted stream must come out
+at least 8192 bytes (about a quarter of a second) with an even length;
+the build fails if ffmpeg produces anything shorter or odd-length.
 
 **NDR** plays a NextDAW export with NextDAW's runtime player. The kit
 copies that player from your own NextDAW install into `RELEASE\INTRO\`
@@ -216,7 +227,9 @@ slide whose picture fails to load is skipped (if every slide fails, the
 show ends there too, so a `LOOP` cannot spin forever on missing art). A
 missing or unusable font falls back to the built-in one, and a music
 file that will not open plays silence. Only a missing, unreadable or
-refused `nextdaad.nex` is fatal, with the message `E9 nextdaad.nex` on a
-magenta border, since there is then no game to start. If a show
-misbehaves, check the build output first: every compile error names its
-line in `INTRO.TXT`.
+refused `nextdaad.nex` is fatal, since there is then no game to start: a
+failure opening the file or reading its header shows `E9 nextdaad.nex`
+on a magenta border; a card failure once the file's banks have started
+loading instead stops on a plain magenta border with no message. If a
+show misbehaves, check the build output first: every compile error names
+its line in `INTRO.TXT`.
