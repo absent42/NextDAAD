@@ -1126,6 +1126,10 @@ h_gfx:
     jr z, .toscreen
     cp 4
     jr z, .tobuffer
+    cp 11
+    jp z, .cycstart
+    cp 12
+    jp z, .cycstop
     cp GFX_SUB_VID_ONCE
     jp z, .vidonce
     cp GFX_SUB_VID_LOOP
@@ -1341,7 +1345,85 @@ h_gfx:
     ld hl, spr_refuse_flags      ; machinery, so it snapshots like the rest
     jp spr_call
 
+.cycstart:                       ; sub 11: B = flag f; f, f+1, f+2 = first, last, frames
+    ld a, b
+    cp 254
+    jr nc, .cycbad1              ; f+2 must exist
+    ld h, high flags
+    ld l, b
+    ld d, (hl)                   ; first
+    inc l
+    ld e, (hl)                   ; last
+    inc l
+    ld c, (hl)                   ; frames
+    inc c
+    dec c
+    jr z, .cycbad2
+    ld a, e
+    cp L2_TRANSP_INDEX
+    jr nz, .cycclamp
+    dec a                        ; 255 -> 254: the transparent entry never moves
+.cycclamp:
+    ld e, a
+    cp d
+    jr z, .cycbad3
+    jr c, .cycbad3               ; last must be above first
+    ld a, (xbnIntOn)             ; clear, write, set: a tick never sees a torn range
+    and $FF-HOOK_CYC
+    ld (xbnIntOn), a
+    ld a, d
+    ld (cycFirst), a
+    ld a, e
+    ld (cycLast), a
+    ld a, c
+    ld (cycFrames), a
+    ld (cycCount), a
+    xor a
+    ld (palLock), a              ; no burst can be open in a condact: repair a lock a failed path left
+    ld a, (xbnIntOn)
+    or HOOK_CYC
+    ld (xbnIntOn), a
+ IFDEF DEBUG
+    ld e, 0
+    jr .cycsnap
+ ENDIF
+    ret
+.cycstop:                        ; sub 12: n ignored; the palette stays where it is
+    call cyc_stop
+ IFDEF DEBUG
+    ld e, 0
+    jr .cycsnap
+ ENDIF
+    ret
+.cycbad1:
+    ld e, 1
+    jr .cycrefuse
+.cycbad2:
+    ld e, 2
+    jr .cycrefuse
+.cycbad3:
+    ld e, 3
+.cycrefuse:                      ; E = reason; Release: silent no-op
+ IFDEF DEBUG
+    push de
+    ld b, 29
+    call dbg_markcol
+    call dbg_at
+    ld hl, msgCycUnk
+    call dbg_puts
+    pop de
+    push de
+    ld a, e
+    call dbg_hex8
+    pop de
+.cycsnap:
+    ld hl, cyc_snap_body
+    jp spr_call
+ ENDIF
+    ret
+
 msgGfxUnk: db "GFX? ", 0
+msgCycUnk: db "CYC? ", 0
 
 ; A = picture number. Ensure its palette+pixels are in cache banks
 ; and stage it for DISPLAY 0. Cache hit: cache_touch + stage, no SD
