@@ -1,7 +1,9 @@
 """Headless ZEsarUX driver for the launcher: <card dir> --launch NAME.NEX.
 Samples the DEBUG mirror at $5400 every --interval; optional --space-at
-(seconds) / --space-at-frame (mirror frame count) taps, --assert
-(seconds) / --assert-frame (first sample whose frame >= F) checks,
+(seconds) / --space-at-frame (mirror frame count) taps - a tap holds SPACE
+until the launcher's own frame counter has advanced, never for a wall-clock
+time, since the emulated machine runs at about 10 fps under this loop -
+--assert (seconds) / --assert-frame (first sample whose frame >= F) checks,
 --surface-at-frame F:<picture file> (stops the launcher at its hold-state
 step with a PC breakpoint and byte-compares the front Layer 2 surface
 against a compiled NXC/NXI), --skip-surface-at-frame
@@ -64,13 +66,14 @@ PAGE_SIZE = 8192
 # step instead of inside a bare enter-cpu-step, which does not hold the
 # machine across a ten-page read (see read_surface_at_hold).
 INTRO_MAP = ROOT / "build" / "intro.map"
+INTRO_NEX = ROOT / "build" / "intro.nex"
 HOLD_PC_SYMBOL = {2: "SHOW_STEP@HOLD", 3: "SHOW_STEP@KEY"}
 SURFACE_BREAKPOINT = 2
 SURFACE_RUN_DEADLINE = 10.0
 
-# Fix round 3, measured: ZEsarUX applies a cpu-step mode change on its own
-# CPU thread, so an enter-cpu-step right after an exit-cpu-step is REJECTED
-# (0.05s apart fails, 0.2s takes) and leaves the machine RUNNING.
+# Fix round 3/4, measured: ZEsarUX refuses enter-cpu-step sporadically
+# ("Can not enter cpu step mode", roughly 7% of attempts at any gap), and
+# an unchecked refusal leaves the machine RUNNING under the reads after it.
 CPU_STEP_RETRY_S = 0.1
 CPU_STEP_ATTEMPTS = 20
 
@@ -157,10 +160,85 @@ def _mirror_frame(z):
     m = z.read_memory(MIRROR + 8, 2)
     return m[0] | (m[1] << 8)
 
+# Fix round 4: a wall-clock hold is not a keypress. The emulated machine
+# runs at roughly 10 fps inside this loop, so the old 0.15s hold spanned
+# about 1.5 emulated frames and input_poll could miss the edge entirely.
+PRESS_FRAMES = 4
+PRESS_DEADLINE_S = 8.0
+# A frame further ahead than a press can possibly last is a torn read;
+# a mirror that reads settled non-IN this many polls has handed off.
+PRESS_FRAME_WINDOW = 1000
+PRESS_DEAD_POLLS = 3
+
+def _mirror_stopped(z):
+    """(sample, torn) read twice with the CPU stopped. torn means the two
+    reads differed - the NDR leg can page the mirror out mid-frame, so
+    even a stopped read lands wrong sometimes (frame 60138, seen live)."""
+    freeze(z)
+    try:
+        m1 = z.read_memory(MIRROR, 32)
+        m2 = z.read_memory(MIRROR, 32)
+    finally:
+        z.exit_cpu_step()
+    if bytes(m1) != bytes(m2):
+        return None, True
+    return decode(m1), False
+
+def press_base(z, last):
+    """Frame to measure a press from: a fresh stopped read, cross-checked
+    against the last accepted sample so a torn one cannot become the
+    baseline."""
+    for _ in range(10):
+        d, torn = _mirror_stopped(z)
+        if not torn and d["sig"] == "IN" and (last is None or frames_agree(d, last)):
+            return d["frame"]
+        time.sleep(0.05)
+    raise RuntimeError("no trustworthy mirror sample to measure a key press from")
+
+def press_space(z, base):
+    """Hold SPACE until the launcher's own frame counter has advanced
+    PRESS_FRAMES frames past base, then release. A press that ends the
+    show hands off, and the mirror dies with it, so a settled non-IN
+    mirror also ends the hold; torn reads are ignored, never counted.
+    Raises if neither happens inside PRESS_DEADLINE_S - a press the
+    machine never saw must fail loudly."""
+    z.hold_matrix(SPACE_DOWN)
+    try:
+        dead = 0
+        t0 = time.time()
+        while time.time() - t0 < PRESS_DEADLINE_S:
+            d, torn = _mirror_stopped(z)
+            if not torn and d["sig"] != "IN":
+                dead += 1
+                if dead >= PRESS_DEAD_POLLS:
+                    return
+            elif not torn and 0 <= d["frame"] - base <= PRESS_FRAME_WINDOW:
+                dead = 0
+                if d["frame"] - base >= PRESS_FRAMES:
+                    return
+            time.sleep(0.05)
+    finally:
+        z.release_matrix()
+    raise RuntimeError("SPACE held %.1fs from frame %d but the mirror never advanced "
+                        "%d frames" % (PRESS_DEADLINE_S, base, PRESS_FRAMES))
+
+def check_staged_launcher(staged):
+    """The breakpoint addresses come from build/intro.map, so the staged
+    launcher must be that same build - a stale .NEX would be breakpointed
+    at addresses that are something else now, or never executed."""
+    if not INTRO_NEX.exists():
+        raise SystemExit("%s is missing - build the launcher before a breakpoint capture"
+                          % INTRO_NEX)
+    if not staged.exists():
+        raise SystemExit("%s is missing - stage the card before a breakpoint capture" % staged)
+    if staged.read_bytes() != INTRO_NEX.read_bytes():
+        raise SystemExit("staged launcher %s differs from build\\intro.nex - restage "
+                          "before using breakpoint captures" % staged)
+
 def load_hold_pcs():
     """Resolve the launcher's hold-step addresses from its build map.
-    Assumes the running SHOW.NEX is the staged build/intro.nex, which the
-    harness stages from the same build as build/intro.map."""
+    The staged launcher is checked against build/intro.nex separately, so
+    these addresses match the machine that runs."""
     if not INTRO_MAP.exists():
         raise SystemExit("%s is missing - build the launcher before a surface check"
                           % INTRO_MAP)
@@ -272,6 +350,9 @@ def skip_surface_check(z, pc, picfile):
     try:
         z.enable_breakpoints()
         z.set_breakpoint(SKIP_BREAKPOINT, zrcp.pc_breakpoint_condition(pc))
+        # Exempt from press_space's emulated-frame hold: run() executes at
+        # full speed until the breakpoint, so the key is down for however
+        # many emulated frames it takes to get there, not for wall time.
         z.hold_matrix(SPACE_DOWN)
         try:
             reply = z.run(deadline=30.0)
@@ -288,6 +369,7 @@ def skip_surface_check(z, pc, picfile):
         got = read_surface(z, front, mode)
     finally:
         z.cmd("set-memory-zone -1")
+        z.disable_breakpoint(SKIP_BREAKPOINT)
         z.disable_breakpoints()
         z.exit_cpu_step()
     npages = 10 if mode else 6
@@ -321,8 +403,10 @@ def main():
     if (a.frame_asserts or a.space_at_frame or a.surface_asserts or a.skip_surface or a.text_at_frame) and a.interval > 0.1:
         a.interval = 0.1              # frame anchors need frequent sampling to land close to F
     card = pathlib.Path(a.card).resolve()
-    # Resolved before the emulator starts: a missing map or symbol must
-    # fail the run outright, not halfway through a check.
+    # Resolved before the emulator starts: a stale card, a missing map or a
+    # missing symbol must fail the run outright, not halfway through a check.
+    if a.surface_asserts or a.skip_surface:
+        check_staged_launcher(card / a.launch)
     hold_pcs = load_hold_pcs() if a.surface_asserts else {}
     if nleg.port_already_listening(a.port):
         raise SystemExit("port %d already in use - a stale emulator is running" % a.port)
@@ -366,8 +450,13 @@ def main():
             t = time.time() - t0
             if pending_space and t >= pending_space[0]:
                 pending_space.pop(0)
-                z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
-                print("t=%.1f space" % t)
+                try:
+                    press_space(z, press_base(z, last_accepted))
+                except RuntimeError as e:
+                    print("ASSERT FAILED: space at t=%.1f: %s" % (t, e))
+                    ok = False
+                else:
+                    print("t=%.1f space" % t)
             # Runs every poll (the mirror goes permanently torn once
             # hand-off completes, so gating on it would never fire). Two
             # consecutive hits guard against $6000 (font/song data) garbage.
@@ -434,8 +523,13 @@ def main():
                           % (when, d["frame"], FRAME_OVERSHOOT_MARGIN))
                     ok = False
                 else:
-                    z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
-                    print("t=%.1f space (frame=%d)" % (t, d["frame"]))
+                    try:
+                        press_space(z, d["frame"])
+                    except RuntimeError as e:
+                        print("ASSERT FAILED: space at frame>=%d: %s" % (when, e))
+                        ok = False
+                    else:
+                        print("t=%.1f space (frame=%d)" % (t, d["frame"]))
             if pending_surface and d["frame"] >= pending_surface[0][0]:
                 when, picfile = pending_surface.pop(0)
                 if frame_overshot(when, d["frame"]):
@@ -584,6 +678,17 @@ def main():
                 print("ASSERT FAILED: text %r not seen" % expect)
                 ok = False
         if a.expect_handoff or a.expect_text:
+            # A live mirror at the end means the launcher never handed off,
+            # which is a plainer fact than whatever $6000 decodes as.
+            freeze(z)
+            try:
+                end = decode(z.read_memory(MIRROR, 32))
+            finally:
+                z.exit_cpu_step()
+            if end["sig"] == "IN":
+                print("ASSERT FAILED: launcher still showing (state %d, frame %d): "
+                      "the hand-off never happened" % (end["state"], end["frame"]))
+                ok = False
             head = z.read_memory(0x6000, 4)
             if head == STUB_PROLOGUE:
                 print("ASSERT FAILED: $6000 still holds the stub's own prologue - the hand-off never happened")
