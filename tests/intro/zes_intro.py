@@ -8,19 +8,28 @@ F:PC:<picture file> (presses skip at frame>=F, breakpoints at PC - e.g.
 chain_run's address from the launcher's own .map - so the surface check
 runs before any hand-off code can overwrite it, then resumes),
 --expect-handoff/--expect-text at $6000 (the hand-off gate). When both are
-given, the loop also polls for --expect-text's exact string at $6000 every
-sample and stops as soon as it appears (--seconds is then only an upper
+given, the loop also stops early once two consecutive polls both find
+--expect-text's exact string at $6000 (--seconds is then only an upper
 bound; any frame-anchored check still pending at that point fails as
-unreached) - a bare "stub gone" or "any text" test is unsafe here, since
-$6000 is live launcher memory for the whole run and decodes as plausible
-garbage long before any real hand-off.
---text-at-frame
-F (repeatable, at the first sample whose mirror frame >= F) decodes the
-launcher's own tilemap at $4000 and prints/collects its non-blank rows;
---expect-caption "s" (repeatable) requires each substring in some
-collected row. ZEsarUX's frame rate varies by host, so wall-clock anchors
-drift - prefer the frame-anchored flags; --interval tightens to 0.1s
-automatically when any of them are given."""
+unreached) - a single hit is not enough: $6000 is live launcher memory for
+the whole run (font data, and on the ndr leg sometimes song data) and can
+decode as plausible garbage on any one poll.
+--text-at-frame F (repeatable, at the first sample whose mirror frame >= F)
+decodes the launcher's own tilemap at $4000 and prints/collects its
+non-blank rows; --expect-caption "s" (repeatable) requires each substring
+in some collected row. Every frame-anchored check (assert-frame,
+text-at-frame, surface-at-frame, skip-surface-at-frame, space-at-frame)
+evaluates at the first accepted sample with frame >= F, but only if that
+sample's frame is within 32 of F: a heavy check (surface/skip-surface)
+freezes the CPU for real time ZEsarUX does not replay, so the very next
+sample can land dozens of frames past F; an anchor that overshoots FAILS
+loudly instead of silently evaluating the wrong frame, so place anchors
+with at least 32 frames of margin after a preceding heavy check.
+--surface-at-frame also requires that sample's state to be a hold (2, or
+3 for KEY), else it fails as landing outside a hold. ZEsarUX's frame rate
+varies by host, so wall-clock anchors drift - prefer the frame-anchored
+flags; --interval tightens to 0.1s automatically when any of them are
+given."""
 import argparse, pathlib, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
@@ -61,6 +70,14 @@ def decode(m):
 # sig=="IN" catches that; real frame steps are at most a handful per poll.
 def frames_agree(d, other):
     return abs(d["frame"] - other["frame"]) <= 64
+
+# Fix round 1: not a torn read - a heavy check's freeze is dead time,
+# so the next sample can overshoot an anchor by dozens of frames.
+# Overshoot must fail loudly, not silently grade a wrong frame.
+FRAME_OVERSHOOT_MARGIN = 32
+
+def frame_overshot(anchor, actual):
+    return actual > anchor + FRAME_OVERSHOOT_MARGIN
 
 def sample_plausible(d, last):
     if d["sig"] != "IN":
@@ -177,11 +194,9 @@ def skip_surface_check(z, pc, picfile):
     return compare_picture(got, picfile, npages)
 
 def main():
-    # A torn mirror sample can carry arbitrary garbage in "sig" (documented:
-    # the NDR leg remaps NR $52/$53 mid-frame) and gets printed via %r.
-    # Windows redirects stdout through the console codepage (cp1252 here)
-    # even to a file, which raises UnicodeEncodeError on such bytes and
-    # kills the run before it reaches any assertion - replace instead.
+    # A torn sample's "sig" can hold non-ASCII garbage (NDR remaps NR
+    # $52/$53 mid-frame); printing it via %r under Windows' cp1252 file
+    # encoding crashes the run - reconfigure stdout instead.
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     except AttributeError:
@@ -243,23 +258,25 @@ def main():
         accepted_count = 0
         discarded_count = 0
         double_read_mismatch_count = 0
+        handoff_hits = 0
         while time.time() - t0 < a.seconds:
             t = time.time() - t0
             if pending_space and t >= pending_space[0]:
                 pending_space.pop(0)
                 z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
                 print("t=%.1f space" % t)
-            # Checked every poll, independent of the mirror sample below: once
-            # hand-off truly completes, chain_run's final MMU remap retires
-            # the launcher's own bank 5 (mirror included), so every later
-            # mirror read is permanently torn and would never reach the
-            # accepted-sample branch this check used to live in - the loop
-            # would then run the full --seconds with no early exit at all.
+            # Runs every poll (the mirror goes permanently torn once
+            # hand-off completes, so gating on it would never fire). Two
+            # consecutive hits guard against $6000 (font/song data) garbage.
             if a.expect_handoff and a.expect_text:
                 rows = read_handoff_text(z)
                 if any(a.expect_text in r for r in rows):
-                    print("t=%.1f hand-off text %r observed - stopping early" % (t, a.expect_text))
-                    break
+                    handoff_hits += 1
+                    if handoff_hits >= 2:
+                        print("t=%.1f hand-off text %r observed twice - stopping early" % (t, a.expect_text))
+                        break
+                else:
+                    handoff_hits = 0
             # enter/exit-cpu-step brackets the read; a frozen CPU does not by
             # itself make the 32 bytes atomic (fix round 2: a freeze can still
             # land mid-dbg_mirror, catching some fields already written for
@@ -308,48 +325,72 @@ def main():
             print("t=%.1f sig=%s state=%d slide=%d load=%d trans=%d code=%02X frame=%d hold=%d tf=%d scroll=%d front=%d mode=%d music=%d keys=%d hz60=%d fadek=%d pcmwr=%04X pcmrd=%04X loadpage=%d fading=%d akytick=%d ayspage=%d"
                   % (t, d["sig"], d["state"], d["slide"], d["load"], d["trans"], d["code"], d["frame"], d["hold"], d["tf"], d["scroll"], d["front"], d["mode"], d["music"], d["keys"], d["hz60"], d["fadek"], d["pcmwr"], d["pcmrd"], d["loadpage"], d["fading"], d["akytick"], d["ayspage"]))
             if pending_space_frame and d["frame"] >= pending_space_frame[0]:
-                pending_space_frame.pop(0)
-                z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
-                print("t=%.1f space (frame=%d)" % (t, d["frame"]))
+                when = pending_space_frame.pop(0)
+                if frame_overshot(when, d["frame"]):
+                    print("ASSERT FAILED: space anchor frame %d overshot to frame %d (>%d past anchor)"
+                          % (when, d["frame"], FRAME_OVERSHOOT_MARGIN))
+                    ok = False
+                else:
+                    z.hold_matrix(SPACE_DOWN); time.sleep(0.15); z.release_matrix()
+                    print("t=%.1f space (frame=%d)" % (t, d["frame"]))
             if pending_surface and d["frame"] >= pending_surface[0][0]:
                 when, picfile = pending_surface.pop(0)
-                try:
-                    s_ok, mism, first, detail = surface_check(z, d["front"], d["mode"], picfile)
-                except Exception as e:
-                    s_ok, mism, first, detail = False, -1, -1, "exception: %r" % (e,)
-                if detail:
-                    print("ASSERT FAILED: surface check frame>=%d vs %s: %s" % (when, picfile, detail))
+                if frame_overshot(when, d["frame"]):
+                    print("ASSERT FAILED: surface anchor frame %d overshot to frame %d (>%d past anchor) vs %s"
+                          % (when, d["frame"], FRAME_OVERSHOOT_MARGIN, picfile))
                     ok = False
-                elif s_ok:
-                    print("surface ok frame>=%d (t=%.1f, actual frame=%d) vs %s" % (when, t, d["frame"], picfile))
+                elif d["state"] not in (2, 3):
+                    print("ASSERT FAILED: surface anchor frame>=%d landed outside a hold (state=%d) vs %s"
+                          % (when, d["state"], picfile))
+                    ok = False
                 else:
-                    print("ASSERT FAILED: surface mismatch frame>=%d (t=%.1f, actual frame=%d) vs %s: "
-                          "%d bytes differ, first at offset %d" % (when, t, d["frame"], picfile, mism, first))
-                    ok = False
+                    try:
+                        s_ok, mism, first, detail = surface_check(z, d["front"], d["mode"], picfile)
+                    except Exception as e:
+                        s_ok, mism, first, detail = False, -1, -1, "exception: %r" % (e,)
+                    if detail:
+                        print("ASSERT FAILED: surface check frame>=%d vs %s: %s" % (when, picfile, detail))
+                        ok = False
+                    elif s_ok:
+                        print("surface ok frame>=%d (t=%.1f, actual frame=%d) vs %s" % (when, t, d["frame"], picfile))
+                    else:
+                        print("ASSERT FAILED: surface mismatch frame>=%d (t=%.1f, actual frame=%d) vs %s: "
+                              "%d bytes differ, first at offset %d" % (when, t, d["frame"], picfile, mism, first))
+                        ok = False
             if pending_skip_surface and d["frame"] >= pending_skip_surface[0]:
                 when, pc, picfile = pending_skip_surface
                 pending_skip_surface = None
-                try:
-                    s_ok, mism, first, detail = skip_surface_check(z, pc, picfile)
-                except Exception as e:
-                    s_ok, mism, first, detail = False, -1, -1, "exception: %r" % (e,)
-                if detail:
-                    print("ASSERT FAILED: skip-surface check frame>=%d pc=%d vs %s: %s" % (when, pc, picfile, detail))
+                if frame_overshot(when, d["frame"]):
+                    print("ASSERT FAILED: skip-surface anchor frame %d overshot to frame %d (>%d past anchor) vs %s"
+                          % (when, d["frame"], FRAME_OVERSHOOT_MARGIN, picfile))
                     ok = False
-                elif s_ok:
-                    print("skip-surface ok frame>=%d (t=%.1f, actual frame=%d) pc=%d vs %s" % (when, t, d["frame"], pc, picfile))
                 else:
-                    print("ASSERT FAILED: skip-surface mismatch frame>=%d (t=%.1f, actual frame=%d) pc=%d vs %s: "
-                          "%d bytes differ, first at offset %d" % (when, t, d["frame"], pc, picfile, mism, first))
-                    ok = False
+                    try:
+                        s_ok, mism, first, detail = skip_surface_check(z, pc, picfile)
+                    except Exception as e:
+                        s_ok, mism, first, detail = False, -1, -1, "exception: %r" % (e,)
+                    if detail:
+                        print("ASSERT FAILED: skip-surface check frame>=%d pc=%d vs %s: %s" % (when, pc, picfile, detail))
+                        ok = False
+                    elif s_ok:
+                        print("skip-surface ok frame>=%d (t=%.1f, actual frame=%d) pc=%d vs %s" % (when, t, d["frame"], pc, picfile))
+                    else:
+                        print("ASSERT FAILED: skip-surface mismatch frame>=%d (t=%.1f, actual frame=%d) pc=%d vs %s: "
+                              "%d bytes differ, first at offset %d" % (when, t, d["frame"], pc, picfile, mism, first))
+                        ok = False
             if pending_text_frame and d["frame"] >= pending_text_frame[0]:
                 when = pending_text_frame.pop(0)
-                rows = read_text(z)
-                text = [r.rstrip() for r in rows if r.strip()]
-                for r in text:
-                    print("text: " + r)
-                collected_text.extend(text)
-                print("text read frame>=%d (t=%.1f, actual frame=%d)" % (when, t, d["frame"]))
+                if frame_overshot(when, d["frame"]):
+                    print("ASSERT FAILED: text anchor frame %d overshot to frame %d (>%d past anchor)"
+                          % (when, d["frame"], FRAME_OVERSHOOT_MARGIN))
+                    ok = False
+                else:
+                    rows = read_text(z)
+                    text = [r.rstrip() for r in rows if r.strip()]
+                    for r in text:
+                        print("text: " + r)
+                    collected_text.extend(text)
+                    print("text read frame>=%d (t=%.1f, actual frame=%d)" % (when, t, d["frame"]))
             time.sleep(a.interval)
         print("sample summary: %d accepted, %d discarded (%d double-read mismatches)"
               % (accepted_count, discarded_count, double_read_mismatch_count))
@@ -368,6 +409,14 @@ def main():
                 field, value = cond.split("=")
                 when = float(when)
                 t, d = min(samples, key=lambda s: abs(s[0] - when))
+                if abs(t - when) > a.interval:
+                    # An early exit truncates the sample list; fail rather
+                    # than grade a wall-clock anchor against a sample from
+                    # the wrong moment.
+                    print("ASSERT FAILED: nearest sample to t=%.1f is at t=%.1f (more than one "
+                          "interval, %.1fs, away - truncated sample list?)" % (when, t, a.interval))
+                    ok = False
+                    continue
                 got = d[field]
                 if got != int(value, 0):
                     print("ASSERT FAILED at t=%.1f: %s=%d, expected %s" % (t, field, got, value)); ok = False
@@ -384,11 +433,24 @@ def main():
                 ok = False
                 continue
             t, d = match
+            if frame_overshot(when, d["frame"]):
+                print("ASSERT FAILED: frame %d anchor overshot to frame %d (>%d past anchor) for %s"
+                      % (when, d["frame"], FRAME_OVERSHOOT_MARGIN, cond))
+                ok = False
+                continue
             got = d[field]
             if got != int(value, 0):
                 print("ASSERT FAILED at frame>=%d (t=%.1f, actual frame=%d): %s=%d, expected %s" % (when, t, d["frame"], field, got, value)); ok = False
             else:
                 print("assert ok frame>=%d (t=%.1f, actual frame=%d) %s=%s" % (when, t, d["frame"], field, value))
+        if pending_space:
+            for when in pending_space:
+                print("ASSERT FAILED: space at t=%.1f never fired" % when)
+                ok = False
+        if pending_space_frame:
+            for when in pending_space_frame:
+                print("ASSERT FAILED: frame %d never reached for space press" % when)
+                ok = False
         if pending_surface:
             for when, picfile in pending_surface:
                 print("ASSERT FAILED: frame %d never reached for surface check vs %s" % (when, picfile))

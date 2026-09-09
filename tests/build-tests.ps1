@@ -51,7 +51,7 @@
 #   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -BigDdbTok          sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
 #   -Xbn                sd\XBN\       tests\extern.dsf
-#   -Intro   sd\INTRO\   tests\condacts.dsf + a scripted show (SHOW.NEX launches it)
+#   -Intro              sd\INTRO\     tests\condacts.dsf + a scripted show (SHOW.NEX launches it)
 #   (sd\L2DMA\ is an owner-hand-built folder in the same shape and is
 #    never touched by this script)
 #
@@ -5289,6 +5289,7 @@ elseif ($utoActive) { "active: utotest V2 (Uto's THIRD-PARTY DAAD compliance tes
 elseif ($Err4) { "active: doallnest (E04 demo)" }
 elseif ($BigDdb) { "active: bigddb ($bigLen bytes, past the 31744 classic ceiling)" }
 elseif ($BigDdbTok) { "active: bigddb-autotok ($bigTokLen bytes, past the 31744 classic ceiling, per-game token table)" }
+elseif ($Intro) { "active: intro (scripted show - LAUNCH SHOW.NEX)" }
 elseif ($Suite) { "active: suite" }
 else { "active: template" }
 
@@ -5302,4 +5303,9 @@ foreach ($f in $legFiles) {
     "  {0,-18} {1,12}" -f $rel, $f.Length
 }
 "COPY   sd\$legName\  (the whole folder, to the card)"
-"LAUNCH NEXTDAAD.NEX  (from inside that folder - the game reads GAME.DDB and every asset from its own directory)"
+if ($Intro) {
+    "LAUNCH SHOW.NEX  (from inside that folder - runs the scripted show, then hands off to the game; NEXTDAAD.NEX skips it)"
+}
+else {
+    "LAUNCH NEXTDAAD.NEX  (from inside that folder - the game reads GAME.DDB and every asset from its own directory)"
+}
