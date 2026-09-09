@@ -702,6 +702,22 @@ if ($ndrcVer -notmatch '^NDRC \S+') {
 "compiler: $ndrcVer ($ndrc)"
 $sd = Join-Path $root 'sd'
 
+# -IntroMusic without -Intro used to silently stage the default TEMPLATE
+# leg. Imply -Intro when no other leg switch came with it; refuse the
+# combination if one did, rather than guess which leg was wanted.
+if ($PSBoundParameters.ContainsKey('IntroMusic') -and -not $Intro) {
+    $otherLegSwitches = @(
+        'Vid', 'VidLong', 'NxBench', 'Suite', 'Err4', 'GMode', 'V3', 'Rab', 'UU',
+        'Part', 'AudLad', 'SfxDi', 'SfxLong', 'Sfx2', 'L2Holes', 'TmOver',
+        'TileSlack', 'Uto', 'UtoV3', 'FontSw', 'Txt40', 'Accent', 'Palette',
+        'Sprites', 'SprAud', 'BigDdb', 'BigDdbTok', 'Xbn'
+    ) | Where-Object { $PSBoundParameters.ContainsKey($_) }
+    if ($otherLegSwitches.Count -gt 0) {
+        throw "-IntroMusic was given with -$($otherLegSwitches -join ' -') but not -Intro - that leg switch picks a different leg, so the combination is ambiguous. Pass -Intro explicitly, or drop the other switch."
+    }
+    $Intro = $true
+}
+
 # ---- leg folder (see the LEG FOLDERS block at the top) -------------
 # Resolved in the SAME order the DDB copies used to run in, so the last
 # switch given wins and the folder can never disagree with the active
