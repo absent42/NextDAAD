@@ -73,6 +73,7 @@ var_init:
     INCLUDE "aud_pcm.asm"
     INCLUDE "aud_ndaw.asm"
  DEFINE PLY_AKY_NO_ORG
+ DEFINE PLY_AKY_FADE_HOOK          ; aud.asm scales R8-R10 before the send
     INCLUDE "../audio/player_aky.asm"
     INCLUDE "dbg.asm"
     INCLUDE "script.asm"

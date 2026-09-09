@@ -15,6 +15,9 @@
 ;    code or song data; the SFX-stream re-entry point is a constant
 ;  - org $c000 is skipped under PLY_AKY_NO_ORG (the launcher includes the
 ;    player in its own bank)
+;  - under PLY_AKY_FADE_HOOK (launcher only) aky_fade_pre/aky_fade_post
+;    scale R8-R10 in the array being sent, so a fade never reaches the
+;    chip unfaded; the interpreter never defines it
 ; Cell layout is unchanged: every *_PTTRACK+1, *_PTREGISTERBLOCK+1 and
 ; PATTERNFRAMECOUNTER_OVER+1 operand that audiobank.asm reads stays put.
 
@@ -675,7 +678,11 @@ PLY_AKY_RRB_NIS_S_NOR_NORETRIG rra
     ret nc
     ld (iy+4),a
     ret 
-PLY_AKY_SENDPSGREGISTERS_SPECTRUMRELATED ld a,b
+PLY_AKY_SENDPSGREGISTERS_SPECTRUMRELATED
+ IFDEF PLY_AKY_FADE_HOOK            ; NEXTDAAD: HL = the array about to be sent
+    call aky_fade_pre
+ ENDIF
+    ld a,b
     ex af,af'
     ld bc,$fffd
     out (c),d
@@ -762,7 +769,10 @@ PLY_AKY_PSGSPECTRUMRELATEDREGISTER13_END inc hl
     out (c),a
     ld b,d
     outi
-    ret 
+ IFDEF PLY_AKY_FADE_HOOK            ; NEXTDAAD: the song's own volumes back
+    call aky_fade_post
+ ENDIF
+    ret
 PLY_AKY_RETTABLE_READREGISTERBLOCK dw PLY_AKY_CHANNEL1_REGISTERBLOCK_RETURN
     dw PLY_AKY_CHANNEL2_REGISTERBLOCK_RETURN
     dw PLY_AKY_CHANNEL3_REGISTERBLOCK_RETURN

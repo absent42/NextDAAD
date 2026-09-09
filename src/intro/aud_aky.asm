@@ -55,13 +55,12 @@ aky_open:
 akyName:   db "MUSIC.AKY", 0
 akyHandle: db 0
 
-; ISR tick: song pages in, play, fade pass.
+; ISR tick: song pages in, play (the fade scales inside the player's send).
 aky_tick:
     nextreg NR_MMU6, PG_MUSIC
     nextreg NR_MMU7, PG_MUSIC+1
-    call PLY_AKY_PLAY
  IFDEF DEBUG
     ld hl, akyTicks
     inc (hl)
  ENDIF
-    jp psg_fade_pass
+    jp PLY_AKY_PLAY
