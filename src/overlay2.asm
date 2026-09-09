@@ -1113,7 +1113,7 @@ h_display:
 h_gfx:
     ld a, c                     ; sub-command
     cp 0
-    jr z, .backfront
+    jp z, .backfront             ; out of jr range since the GFX 9/10 dispatch grew this chain
     cp 1
     jp z, .frontback
     cp 2
@@ -1130,6 +1130,10 @@ h_gfx:
     jp z, .cycstart
     cp 12
     jp z, .cycstop
+    cp 9
+    jp z, .palset
+    cp 10
+    jp z, .palget
     cp GFX_SUB_VID_ONCE
     jp z, .vidonce
     cp GFX_SUB_VID_LOOP
@@ -1420,6 +1424,146 @@ h_gfx:
     ld hl, cyc_snap_body
     jp spr_call
  ENDIF
+    ret
+
+.palset:                         ; sub 9: B = flag f; f = index, f+1..f+3 = R, G, B (0-255)
+    ld a, b
+    cp 253
+    jp nc, .palbad5              ; f+3 must exist: out of jr range, see below
+    ld h, high flags
+    ld l, b
+    ld a, (hl)
+    cp L2_TRANSP_INDEX
+    jp z, .palbad4               ; the reserved entry never changes; out of jr range
+    ld c, a                      ; C = index
+    inc l
+    ld a, (hl)
+    and %11100000                ; R7:5
+    ld d, a
+    inc l
+    ld a, (hl)
+    and %11100000
+    rrca
+    rrca
+    rrca                         ; G7:5 -> bits 4:2
+    or d
+    ld d, a
+    inc l
+    ld a, (hl)
+    ld e, a
+    rlca
+    rlca
+    and %00000011                ; B7:6 -> bits 1:0
+    or d
+    ld d, a                      ; D = RRRGGGBB
+    ld a, e
+    rlca
+    rlca
+    rlca
+    and 1                        ; B5 -> blue LSB; priority bit 7 = 0
+    ld e, a
+    ld a, d
+    cp L2_TRANSP_COLOUR
+    jr nz, .palwr
+    ld d, L2_TRANSP_DODGE        ; the loader's dodge: never a hole through GFX 9
+.palwr:
+    push de
+    call gfx_pal_ctl
+    ld e, a
+    pop hl                       ; H = RRRGGGBB, L = second byte
+    ld a, 1
+    ld (palLock), a
+    ld a, e
+    nextreg NR_PAL_CTRL, a
+    ld a, c
+    nextreg NR_PAL_INDEX, a
+    ld a, h
+    nextreg NR_PAL_VALUE9, a
+    ld a, l
+    nextreg NR_PAL_VALUE9, a
+    ld a, d
+    nextreg NR_PAL_CTRL, a       ; the live $43 back
+    xor a
+    ld (palLock), a
+    ret
+.palget:                         ; sub 10: B = flag f; f = index; f+1..f+3 <- R, G, B as 0, 32, .. 224
+    ld a, b
+    cp 253
+    jp nc, .palbad5              ; out of jr range, see below
+    ld h, high flags
+    ld l, b
+    ld c, (hl)                   ; 255 allowed: reads the transparent colour
+    push hl
+    call gfx_pal_ctl
+    nextreg NR_PAL_CTRL, a
+    ld a, c
+    nextreg NR_PAL_INDEX, a
+    ld e, NR_PAL_VALUE
+    call nr_read                 ; no lock: the tick restores $40/$43
+    ld c, a                      ; C = RRRGGGBB
+    ld e, NR_PAL_VALUE9
+    call nr_read
+    ld e, a                      ; E = second byte, bit 0 = blue LSB
+    ld a, d
+    nextreg NR_PAL_CTRL, a
+    pop hl
+    inc l
+    ld a, c
+    and %11100000
+    ld (hl), a                   ; R
+    inc l
+    ld a, c
+    and %00011100
+    rlca
+    rlca
+    rlca
+    ld (hl), a                   ; G
+    inc l
+    ld a, c
+    and %00000011
+    rrca
+    rrca                         ; B7:6
+    ld d, a
+    ld a, e
+    and 1
+    rrca
+    rrca
+    rrca                         ; blue LSB -> bit 5
+    or d
+    ld (hl), a                   ; B
+    ret
+.palbad4:
+    ld e, 4
+    jp .cycrefuse                ; out of jr range
+.palbad5:
+    ld e, 5
+    jp .cycrefuse                ; out of jr range
+
+; NR $43 edit value for GFX 9/10: the bank the display shows, or the OTHER
+; bank while a DISPLAY reveal is pending (the staged palette, carried by the
+; reveal's mirror). Live display bits kept, svc_palread's derivation.
+; Out: A = value to program, D = the live NR $43 to restore. Corrupts AF, E.
+; Placed after the two handlers, not before: a bare label here would end
+; h_gfx's dot-local scope and strand .palset/.palget outside it.
+gfx_pal_ctl:
+    ld e, NR_PAL_CTRL
+    call nr_read
+    ld d, a
+    and %00001111
+    ld e, a
+    ld a, (gfxRevealPend)
+    or a
+    ld a, e
+    jr z, .shown
+    xor %00000100                ; pending reveal: the bank NOT shown
+.shown:
+    bit 2, a
+    ld a, e
+    jr z, .first
+    or PAL_L2_EDIT_SECOND
+    ret
+.first:
+    or PAL_L2_FIRST
     ret
 
 msgGfxUnk: db "GFX? ", 0
