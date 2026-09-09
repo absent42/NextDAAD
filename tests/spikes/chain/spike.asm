@@ -106,23 +106,35 @@ main:
     rst 8
     db $9B                          ; F_CLOSE
     ; show result as 8 blocks of 8x8 at row 0 (block n at column n*2)
+    ld a, 1
+    out ($FE), a                    ; blue border marks count display start
     ld a, (result)
     ld b, 8
     ld hl, $4000
 .blk:
     rlca
     push af
-    jr nc, .skip
     push hl
     push bc
+    jr c, .solid
+    ld (hl), $FF                    ; clear bit: hollow box, edges only
+    inc h
+    ld b, 6
+.mid:
+    ld (hl), $81
+    inc h
+    djnz .mid
+    ld (hl), $FF
+    jr .done
+.solid:
     ld b, 8
-.rows:
+.srows:
     ld (hl), $FF
     inc h
-    djnz .rows
+    djnz .srows
+.done:
     pop bc
     pop hl
-.skip:
     inc hl
     inc hl
     pop af
