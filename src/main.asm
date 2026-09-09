@@ -1175,6 +1175,9 @@ akyRetShadow:   ds PLY_AKY_RETTABLE_SIZE
     INCLUDE "sprites.asm"
 
     CSPECTMAP "build/nextdaad.map"
+    ; The loader intro's embedded NEX loader (src\intro\chain.asm) refuses this
+    ; .nex if header byte 10 (loading screen), byte 139 (entry bank) or word 140
+    ; (file handle) is nonzero, or bank 5 is flagged: keep CFG 0, no SCREEN/handle.
     SAVENEX OPEN "build/nextdaad.nex", main, STACK_TOP
     SAVENEX CORE 3, 0, 0
     SAVENEX CFG 0

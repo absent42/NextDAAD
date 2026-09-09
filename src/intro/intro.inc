@@ -9,6 +9,8 @@ IM2_VECTOR_BYTE equ $BE
 IM2_STUB        equ $BEBE       ; JP frame_isr
 IM2_CTC_STUB    equ $BEC2       ; JP pcm isr
 IM2_CTC_VEC     equ 6
+    ASSERT STACK_TOP - RESIDENT_LIMIT >= 768  ; frame/CTC ISR stack budget (rubric 8)
+    ASSERT IM2_TABLE >= STACK_TOP             ; table must not overlap the stack (rubric 8)
 
 PG_CODE_LO      equ 4
 PG_MAP          equ 10
@@ -19,9 +21,9 @@ PG_SCRIPT       equ 38
 PG_STAGE        equ 39
 PG_MUSIC        equ 40
 PG_MUSIC_LAST   equ 87
-AKY_RET_GUARD   equ 8           ; akyRetShadow's guard: nested-ISR push budget
-                                 ; (6 bytes incl. PC); live because PLY_AKY_PLAY's
-                                 ; linker path executes ei (Task 16's CTC ISR)
+AKY_RET_GUARD   equ 8           ; akyRetShadow's guard (6 bytes incl. PC):
+                                 ; defensive, a nested ISR's pushes land on the
+                                 ; guard; the CTC never nests inside AKY - one MUSIC per script means AKY and PCM never coexist
 ; AYS header offsets (authoring-kit\lib\aysconv.ps1's writer; matches
 ; src\overlay1.asm's own reader).
 AYS_HDR_MAGIC     equ 0

@@ -27,7 +27,7 @@ script_load:
     ld de, DAT_STRINGS
     or a
     sbc hl, de
-    jp c, .bad                       ; short read: fewer than the fixed tables
+    jp c, .bad                       ; short read: fewer than the fixed tables; shares ERR_DAT_MAGIC, no separate code
     ld a, PG_SCRIPT
     call map6
     ld hl, WIN6

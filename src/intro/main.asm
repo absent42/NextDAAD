@@ -160,8 +160,10 @@ ndawSlots:      ds 3
 ndrPages:       ds 9
     ASSERT ndawSlots+3 <= ndrPages   ; no overlap (rubric 8)
     ASSERT ndrPages+8 <= nameBuf     ; no overlap (rubric 8)
+LONGEST_NAME    equ 16            ; "INTRO\MUSIC.PCM" + NUL is the longest suffix
 nameBuf:        ds 24
 varEnd:
+    ASSERT varEnd - nameBuf >= LONGEST_NAME ; bounds name_intro's copy (rubric 8)
 itemShown:      ds 256
 itemShownEnd:
     ASSERT itemShownEnd - itemShown == 256 ; text_clear's fill loop bounds (rubric 8)

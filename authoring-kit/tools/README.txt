@@ -12,7 +12,7 @@ Arkos Tracker  SongToAky/SongToSoundEffects/SongToYm   https://www.julien-nevo.c
 CSpect         Emulator for testing                    https://mdf200.itch.io/cspect                              tools\CSpect\
 ffmpeg         Video decode for cutscene encoding      https://www.gyan.dev/ffmpeg/builds/ (release essentials)   tools\ffmpeg\
 sjasmplus      Z80 assembler (externs only, optional)  https://github.com/z00m128/sjasmplus                       tools\sjasmplus\
-NextDAW        Runtime player for MUSIC NDR intros    not downloadable - your own licensed copy               tools\NextDAW\
+NextDAW        Runtime player for MUSIC NDR intros     not downloadable - your own licensed copy                  tools\NextDAW\
 
 sjasmplus is optional: every extern in authoring-kit\externs\ ships a
 prebuilt GAME.XBN. Download it only if you want to modify an extern's

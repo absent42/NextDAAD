@@ -158,6 +158,11 @@ Write-Script 'e-colour' "FONT font.png`nSLIDE p320a.png IN CUT HOLD 1.0`n TEXT 1
 Assert-Throws { Compile 'e-colour' @('-NoAssets') } 'INK and PAPER are for the 1-bit font' 'colour word mismatch'
 Write-Script 'e-fit' "COLS 40`nSLIDE p320a.png IN CUT HOLD 1.0`n TEXT 1 30 `"twelve chars`"`nEND CUT"
 Assert-Throws { Compile 'e-fit' @('-NoAssets') } 'does not fit the 40-column grid' 'text off the grid'
+Write-Script 'e-col40' "COLS 40`nSLIDE p320a.png IN CUT HOLD 1.0`n TEXT 0 40 `"`"`nEND CUT"
+Assert-Throws { Compile 'e-col40' @('-NoAssets') } 'TEXT column must be 0 to 39' '40-column TEXT column 40 is rejected'
+Write-Script '013-col40' "COLS 40`nSLIDE p320a.png IN CUT HOLD 1.0`n TEXT 0 39 `"x`"`nEND CUT"
+$d = Compile '013-col40' @('-NoAssets')
+Assert-Eq $d[1568 + 2] 39 '013 40-column TEXT column 39 compiles'
 Write-Script 'e-bad' "SLIDE bad300.png IN CUT HOLD 1.0`nEND CUT"
 Assert-Throws { Compile 'e-bad' @('-NoAssets') } 'is 300x256' 'wrong picture size'
 $many = (1..65 | ForEach-Object { "SLIDE p320a.png IN CUT HOLD 1.0" }) -join "`n"

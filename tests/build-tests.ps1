@@ -5218,7 +5218,10 @@ if ($Intro) {
     & "$root\authoring-kit\lib\introc.ps1" -Script $scriptPath -Root $introWork -Out (Join-Path $leg 'INTRO') -Launcher $nex -LauncherOut (Join-Path $leg 'SHOW.NEX') @extra
     "staged intro ($IntroMusic) -> $leg\INTRO\ and $leg\SHOW.NEX"
     "LAUNCH SHOW.NEX to see the intro; NEXTDAAD.NEX skips it"
-    if ($IntroMusic -eq 'ndr') { Remove-Item "$introWork\song.ndr" -Force }
+    if ($IntroMusic -eq 'ndr') {
+        "NextDAW copies (NDAW.BIN, MUSIC.NDR) remain in $leg\INTRO\ until the next -Intro stage or Reset-LegDir; do not redistribute them"
+        Remove-Item "$introWork\song.ndr" -Force
+    }
 }
 
 # The interpreter itself, so the folder is genuinely self-contained -

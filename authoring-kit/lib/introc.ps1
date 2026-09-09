@@ -279,7 +279,7 @@ for ($ln = 0; $ln -lt $lines.Count; $ln++) {
             if (-not $t[3].str) { Fail $line 'TEXT needs a quoted string as its third argument' }
             $it = New-Item2 $line 0 $t[3].v
             $it.row = Parse-Int $t[1] $line 0 31 'TEXT row'
-            if ((Word $t[2]) -eq 'CENTRE') { $it.centre = $true } else { $it.col = Parse-Int $t[2] $line 0 79 'TEXT column' }
+            if ((Word $t[2]) -eq 'CENTRE') { $it.centre = $true } else { $it.col = Parse-Int $t[2] $line 0 ($show.cols - 1) 'TEXT column' }
             Parse-ColourWords $t 4 $line $it $true
             $cur.items.Add($it)
         }
