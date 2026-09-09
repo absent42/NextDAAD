@@ -20,7 +20,9 @@ decode as plausible garbage on any one poll.
 --text-at-frame F (repeatable, at the first sample whose mirror frame >= F)
 decodes the launcher's own tilemap at $4000 and prints/collects its
 non-blank rows; --expect-caption "s" (repeatable) requires each substring
-in some collected row. Every frame-anchored check (assert-frame,
+in some collected row. --cols 40|80 (default 80) selects the launcher's own
+COLS setting for that $4000 decode; $6000 (--expect-text) is always the
+interpreter's fixed 80-column window and is unaffected. Every frame-anchored check (assert-frame,
 text-at-frame, surface-at-frame, skip-surface-at-frame, space-at-frame)
 evaluates at the first accepted sample with frame >= F, but only if that
 sample's frame is within 32 of F: a heavy check (surface/skip-surface)
@@ -315,18 +317,22 @@ def read_handoff_text(z):
         z.exit_cpu_step()
     return rows
 
-def read_text(z):
+def read_text(z, cols=80):
     """Freeze the CPU, decode the tilemap at $4000, retried (fix round 2)
     if the mirror frame moves during the capture - a live read can
     otherwise tear a row mid-typewriter. Kept on enter-cpu-step rather
     than the breakpoint capture below: 5120 bytes is one short read, and a
-    text anchor is not gated to a hold, so there is no one PC to stop at."""
+    text anchor is not gated to a hold, so there is no one PC to stop at.
+    cols selects the launcher's own COLS setting (40 or 80, --cols); the
+    40-column map packs its live cells into the first cols*32*2 bytes of
+    the same $4000 buffer (tmStride is halved, not the base address)."""
+    grid_bytes = cols * tilemap.ROWS * 2
     tried = []
     for _ in range(CAPTURE_ATTEMPTS):
         freeze(z)
         try:
             before = _mirror_frame(z)
-            rows, _ = tilemap.decode(z.read_memory(0x4000, tilemap.GRID_BYTES))
+            rows, _ = tilemap.decode(z.read_memory(0x4000, grid_bytes), cols=cols)
             after = _mirror_frame(z)
         finally:
             z.exit_cpu_step()
@@ -398,6 +404,8 @@ def main():
     ap.add_argument("--expect-caption", dest="expect_captions", action="append", default=[])
     ap.add_argument("--expect-handoff", action="store_true")
     ap.add_argument("--expect-text")
+    ap.add_argument("--cols", type=int, default=80, choices=(40, 80),
+                     help="launcher's own COLS setting, for --text-at-frame's $4000 decode")
     ap.add_argument("--port", type=int, default=10011)
     a = ap.parse_args()
     if (a.frame_asserts or a.space_at_frame or a.surface_asserts or a.skip_surface or a.text_at_frame) and a.interval > 0.1:
@@ -586,7 +594,7 @@ def main():
                     ok = False
                 else:
                     try:
-                        rows = read_text(z)
+                        rows = read_text(z, cols=a.cols)
                     except RuntimeError as e:
                         print("ASSERT FAILED: text check frame>=%d: %s" % (when, e))
                         ok = False

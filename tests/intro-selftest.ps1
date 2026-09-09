@@ -338,4 +338,18 @@ if (Test-Path $ps5) {
 Write-Script '012-nospace' "FONT nospace.png`nSLIDE p320a.png IN CUT HOLD 1.0`nEND CUT"
 Assert-Throws { Compile '012-nospace' $gfxArgs } 'cell 32' '012 space cell must be transparent'
 
+# ---- 014 40-column colour-font show shape: header flags bit, CENTRE resolves to column 13.
+Write-Script '014-col40show' "COLS 40`nFONT font.png`nPALETTE 1 255 224 28 3 0 0 0 0 0 0 0 0 0 0 0 0`nSLIDE p320a.png IN FADE 1.0 HOLD 4.0`n TEXT 2 CENTRE `"FORTY COLUMNS`" BLOCK 1`nEND CUT"
+$d = Compile '014-col40show' @('-NoAssets')
+Assert-Eq ($d[5] -band 8) 8 '014 FL_COLS40 set in header flags'
+Assert-Eq ($d[5] -band 16) 16 '014 FL_COLFONT set alongside it'
+Assert-Eq $d[1568 + 2] 255 '014 item 0 CENTRE marker byte'
+$strOff = U16 $d 1575
+$e = $strOff
+while ($d[4628 + $e] -ne 0) { $e++ }
+$len = $e - $strOff
+Assert-Eq $len 13 '014 FORTY COLUMNS is 13 characters, read from the pool via the item record string offset'
+$cols40 = if ($d[5] -band 8) { 40 } else { 80 }
+Assert-Eq ([math]::Floor(($cols40 - $len) / 2)) 13 '014 CENTRE resolves to column 13 at 40 columns (text.asm caption_one formula)'
+
 Write-Host "intro-selftest: $checks checks passed"

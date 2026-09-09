@@ -13,15 +13,17 @@ ROWS = 32
 GRID_BYTES = COLS * ROWS * 2
 
 
-def decode(grid):
-    """grid: GRID_BYTES raw bytes. Returns (rows, attrs)."""
-    if len(grid) != GRID_BYTES:
-        raise ValueError("expected %d bytes, got %d" % (GRID_BYTES, len(grid)))
+def decode(grid, cols=COLS):
+    """grid: cols * ROWS * 2 raw bytes (default 80 columns, unchanged
+    behaviour for every existing caller). Returns (rows, attrs)."""
+    expected = cols * ROWS * 2
+    if len(grid) != expected:
+        raise ValueError("expected %d bytes, got %d" % (expected, len(grid)))
     rows, attrs = [], []
     for r in range(ROWS):
-        base = r * COLS * 2
+        base = r * cols * 2
         chars, a = [], []
-        for c in range(COLS):
+        for c in range(cols):
             g = grid[base + c * 2]
             a.append(grid[base + c * 2 + 1])
             chars.append(chr(g) if 32 <= g < 127 else " ")
