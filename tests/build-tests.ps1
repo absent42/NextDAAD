@@ -48,6 +48,7 @@
 #   -Palette            sd\PALETTE\   tests\palette.dsf
 #   -Sprites            sd\SPRITES\   tests\sprites.dsf
 #   -SprAud             sd\SPRAUD\    tests\spraud.dsf   (four sets under music + samples)
+#   -Cycle              sd\CYCLE\     tests\cycle.dsf    (GFX 9-12; palette card as 001.NX2)
 #   -BigDdb             sd\BIGDDB\    tests\bigddb.dsf   (past 31744)
 #   -BigDdbTok          sd\BIGDDBT\   tests\bigddb-autotok.dsf  (past 31744, -auto-tokens)
 #   -Xbn                sd\XBN\       tests\extern.dsf
@@ -674,7 +675,7 @@
 #              toolchain. Slow (steps 4-7 run real ffmpeg encodes
 #              against tools\demo-files\) - not part of the default
 #              (no-switch) run.
-param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
+param([switch]$Suite, [switch]$Err4, [switch]$GMode, [switch]$FontSw, [switch]$Txt40, [switch]$Accent, [switch]$Palette, [switch]$Sprites, [switch]$SprAud, [switch]$Cycle, [switch]$V3, [switch]$Rab, [switch]$UU, [switch]$Gfx256, [switch]$GfxZx0, [switch]$Aud, [switch]$AudLad, [switch]$SfxDi, [switch]$SfxLong, [switch]$Sfx2, [switch]$L2Holes, [switch]$TmOver, [switch]$TileSlack, [switch]$Title, [switch]$Part, [switch]$Font, [switch]$Vid, [switch]$VidLong, [switch]$NxBench, [switch]$Nxv2Test, [switch]$Uto, [switch]$UtoV3, [switch]$BigDdb, [switch]$BigDdbTok, [switch]$DrcDiff, [switch]$Xbn, [ValidateSet('', 'magic', 'ver', 'rsv', 'shorthdr', 'size', 'trunc')][string]$XbnBad = '', [switch]$XbnNoBin, [switch]$XbnTicker, [switch]$XbnFade, [switch]$XbnAll, [switch]$XbnHints, [switch]$XbnClock, [switch]$XbnTool, [switch]$Intro, [ValidateSet('aky', 'ays', 'pcm', 'ndr', 'none')][string]$IntroMusic = 'aky')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dr = Join-Path $root 'tools\DAAD-READY'
@@ -748,6 +749,7 @@ if ($Accent)           { $legName = 'ACCENT' }
 if ($Palette)          { $legName = 'PALETTE' }
 if ($Sprites)          { $legName = 'SPRITES' }
 if ($SprAud)           { $legName = 'SPRAUD' }
+if ($Cycle)            { $legName = 'CYCLE' }
 if ($BigDdb)           { $legName = 'BIGDDB' }
 if ($BigDdbTok)        { $legName = 'BIGDDBT' }
 if ($Xbn)              { $legName = 'XBN' }
@@ -771,7 +773,7 @@ function Reset-LegDir {
     $known = @('TEMPLATE', 'VID', 'NXBENCH', 'SUITE', 'ERR4', 'GMODE',
                'V3', 'RAB', 'UU', 'PART', 'AUDLAD', 'SFXDI', 'SFXLONG', 'SFX2',
                'L2HOLES', 'TMOVER', 'TILESLK', 'UTO', 'UTOV3', 'FONTSW', 'TXT40', 'ACCENT',
-               'PALETTE', 'SPRITES', 'SPRAUD', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO')
+               'PALETTE', 'SPRITES', 'SPRAUD', 'CYCLE', 'BIGDDB', 'BIGDDBT', 'XBN', 'INTRO')
     if ($known -notcontains $Name) { throw "Reset-LegDir: '$Name' is not a known leg folder" }
     $p = Join-Path $sd $Name
     if ((Split-Path -Parent $p) -ne $sd) { throw "Reset-LegDir: '$p' is not directly under $sd" }
@@ -1671,6 +1673,24 @@ finally {
     Pop-Location
 }
 
+# tests\cycle.dsf: the GFX 9-12 stimulus fixture (colour cycling and the
+# single-entry palette subs). Compiled on every run; its bytes are
+# asserted below whether or not -Cycle is given. OUT OF TREE like the
+# blocks above: ndrc.exe by absolute path, cwd tests\out\cycle-work.
+$cycleWork = Join-Path $root 'tests\out\cycle-work'
+Remove-Item $cycleWork -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $cycleWork | Out-Null
+Copy-Item "$PSScriptRoot\cycle.dsf" "$cycleWork\NDCYCLE.DSF" -Force
+Push-Location $cycleWork
+try {
+    & $ndrc @drcTarget EN NDCYCLE.DSF NDCYCLE.DDB -v3 -auto-tokens
+    if ($LASTEXITCODE -ne 0) { throw "ndrc failed (cycle)" }
+    Copy-Item NDCYCLE.DDB "$root\tests\out\cycle.ddb" -Force
+}
+finally {
+    Pop-Location
+}
+
 # Sprites-under-audio fixture (2026-09-03). Compiled unconditionally like
 # every block above; -SprAud stages this DDB, four .ANI sets, a song and two
 # WAVs into sd\SPRAUD\ (see that switch's block in the STAGING section).
@@ -2243,6 +2263,31 @@ foreach ($c in @(@{ n = 'GFX 2 19';   b = [byte[]]@(87, 2, 19) },
     }
 }
 "sprites.ddb: GFX 19/20/21, MOUSE 0/1/104 3 and INKEY stimuli all present as authored"
+
+# GFX is opcode 87, PRINT 53, RAMSAVE 62, RAMLOAD 63, RESTART 117,
+# PICTURE 84, DISPLAY 28. The cycle fixture's stimuli must reach the DDB
+# exactly as authored - DRC has silently rewritten condacts before.
+$cycleBytes = [System.IO.File]::ReadAllBytes("$root\tests\out\cycle.ddb")
+foreach ($c in @(@{ n = 'GFX 100 11';  b = [byte[]]@(87, 100, 11) },
+                 @{ n = 'GFX 254 11';  b = [byte[]]@(87, 254, 11) },
+                 @{ n = 'GFX 0 12';    b = [byte[]]@(87, 0, 12) },
+                 @{ n = 'GFX 110 9';   b = [byte[]]@(87, 110, 9) },
+                 @{ n = 'GFX 120 10';  b = [byte[]]@(87, 120, 10) },
+                 @{ n = 'GFX 0 4';     b = [byte[]]@(87, 0, 4) },
+                 @{ n = 'GFX 0 2';     b = [byte[]]@(87, 0, 2) },
+                 @{ n = 'GFX 0 3';     b = [byte[]]@(87, 0, 3) },
+                 @{ n = 'GFX 1 13';    b = [byte[]]@(87, 1, 13) },
+                 @{ n = 'PRINT 121';   b = [byte[]]@(53, 121) },
+                 @{ n = 'RAMSAVE';     b = [byte[]]@(62) },
+                 @{ n = 'RAMLOAD 255'; b = [byte[]]@(63, 255) },
+                 @{ n = 'RESTART';     b = [byte[]]@(117) },
+                 @{ n = 'PICTURE 1';   b = [byte[]]@(84, 1) },
+                 @{ n = 'DISPLAY 0';   b = [byte[]]@(28, 0) })) {
+    if ((Find-ByteRuns $cycleBytes $c.b).Count -lt 1) {
+        throw "cycle: '$($c.n)' not present in tests\out\cycle.ddb - DRC did not emit the authored condact"
+    }
+}
+"cycle.ddb: GFX 9/10/11/12, PRINT, RAMSAVE/RAMLOAD, RESTART, PICTURE/DISPLAY stimuli all present as authored"
 
 # --- spraud: four sets under music and samples ---
 # SFX is opcode 18 ($12), two parameters. The music loop (6 7), the COMPLETE
@@ -2959,6 +3004,7 @@ if ($DrcDiff) {
         @{ Name = 'txt40'; Dsf = "$PSScriptRoot\txt40.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'accents'; Dsf = "$PSScriptRoot\accents.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'palette'; Dsf = "$PSScriptRoot\palette.dsf"; SrcOpts = @('-v3') }
+        @{ Name = 'cycle'; Dsf = "$PSScriptRoot\cycle.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'v3probe'; Dsf = "$PSScriptRoot\v3probe.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'extern'; Dsf = "$PSScriptRoot\extern.dsf"; SrcOpts = @('-v3') }
         @{ Name = 'parta'; Dsf = "$PSScriptRoot\NDPARTA.DSF"; SrcOpts = @('-v3') }
@@ -5053,6 +5099,30 @@ if ($Palette) {
     }
     Copy-Item $palCardSrc (Join-Path $leg '001.NX2') -Force
     "staged palcard.nx2 -> $leg\001.NX2  $palCardBytes bytes, 320x$palCardRows"
+}
+
+if ($Cycle) {
+    Copy-Item "$root\tests\out\cycle.ddb" (Join-Path $leg 'GAME.DDB') -Force
+    "staged cycle.ddb -> $leg\GAME.DDB"
+    # The same 16 x 16 palette card the PALETTE leg draws: swatch n is
+    # index n on the identity palette, so a cycling row is visible as
+    # swatches marching. Generated, not committed.
+    & python "$PSScriptRoot\art\mkpalcard.py" "$root\tests\out"
+    if ($LASTEXITCODE -ne 0) { throw "tests\art\mkpalcard.py failed" }
+    $cycCardSrc = "$root\tests\out\palcard.nx2"
+    if (-not (Test-Path $cycCardSrc)) { throw "mkpalcard.py produced no palcard.nx2" }
+    Copy-Item $cycCardSrc (Join-Path $leg '001.NX2') -Force
+    "staged palcard.nx2 -> $leg\001.NX2"
+    # S15 (silicon only) plays 001.VID: reuse the smallest cached -Vid
+    # leg encode, as the SFXLONG leg does. No encoder runs here.
+    $cycVid = Get-ChildItem "$root\tests\out\*_leg_cache.vid" -ErrorAction SilentlyContinue | Sort-Object Length, Name | Select-Object -First 1
+    if ($cycVid) {
+        Copy-Item $cycVid.FullName (Join-Path $leg '001.VID') -Force
+        "staged tests\out\$($cycVid.Name) -> $leg\001.VID (S15, silicon only)"
+    }
+    else {
+        "WARNING: no tests\out\*_leg_cache.vid - sd\CYCLE\001.VID NOT staged; S15 reports a clean miss. Run tests\build-tests.ps1 -Vid once to populate the cache."
+    }
 }
 
 if ($SprAud) {
