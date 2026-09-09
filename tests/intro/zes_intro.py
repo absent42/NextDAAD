@@ -2,8 +2,9 @@
 Samples the DEBUG mirror at $5400 every --interval; optional --space-at
 (seconds) / --space-at-frame (mirror frame count) taps, --assert
 (seconds) / --assert-frame (first sample whose frame >= F) checks,
---surface-at-frame F:<picture file> (freezes the CPU and byte-compares the
-front Layer 2 surface against a compiled NXC/NXI), --skip-surface-at-frame
+--surface-at-frame F:<picture file> (stops the launcher at its hold-state
+step with a PC breakpoint and byte-compares the front Layer 2 surface
+against a compiled NXC/NXI), --skip-surface-at-frame
 F:PC:<picture file> (presses skip at frame>=F, breakpoints at PC - e.g.
 chain_run's address from the launcher's own .map - so the surface check
 runs before any hand-off code can overwrite it, then resumes),
@@ -26,14 +27,17 @@ sample can land dozens of frames past F; an anchor that overshoots FAILS
 loudly instead of silently evaluating the wrong frame, so place anchors
 with at least 32 frames of margin after a preceding heavy check.
 --surface-at-frame also requires that sample's state to be a hold (2, or
-3 for KEY), else it fails as landing outside a hold. ZEsarUX's frame rate
+3 for KEY), else it fails as landing outside a hold - the capture stops
+the CPU at that hold's own step (SHOW_STEP@HOLD / SHOW_STEP@KEY, resolved
+from build/intro.map, which the harness stages as build/intro.nex so the
+map matches the running launcher). ZEsarUX's frame rate
 varies by host, so wall-clock anchors drift - prefer the frame-anchored
 flags; --interval tightens to 0.1s automatically when any of them are
 given."""
-import argparse, pathlib, subprocess, sys, time
+import argparse, pathlib, re, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "parser"))
-import zrcp, tilemap, nleg
+import zrcp, tilemap, nleg, symbols
 
 ZESARUX = pathlib.Path(r"D:\ZXNextDev\ZEsarUX\zesarux.exe")
 MIRROR = 0x5400
@@ -55,6 +59,32 @@ STUB_PROLOGUE = bytes.fromhex("f331e07f")
 ZONE_RAM = 0
 PAGE_ZONE_OFFSET = 32
 PAGE_SIZE = 8192
+
+# Fix round 3: a surface capture stops the CPU at the launcher's own hold
+# step instead of inside a bare enter-cpu-step, which does not hold the
+# machine across a ten-page read (see read_surface_at_hold).
+INTRO_MAP = ROOT / "build" / "intro.map"
+HOLD_PC_SYMBOL = {2: "SHOW_STEP@HOLD", 3: "SHOW_STEP@KEY"}
+SURFACE_BREAKPOINT = 2
+SURFACE_RUN_DEADLINE = 10.0
+
+# Fix round 3, measured: ZEsarUX applies a cpu-step mode change on its own
+# CPU thread, so an enter-cpu-step right after an exit-cpu-step is REJECTED
+# (0.05s apart fails, 0.2s takes) and leaves the machine RUNNING.
+CPU_STEP_RETRY_S = 0.1
+CPU_STEP_ATTEMPTS = 20
+
+def freeze(z):
+    """enter-cpu-step, retried until the emulator accepts it. Raises
+    rather than read a machine that was never stopped."""
+    reply = ""
+    for _ in range(CPU_STEP_ATTEMPTS):
+        reply = z.enter_cpu_step()
+        if not reply.lstrip().lower().startswith("error"):
+            return
+        time.sleep(CPU_STEP_RETRY_S)
+    raise RuntimeError("enter-cpu-step refused %d times in a row: %r"
+                        % (CPU_STEP_ATTEMPTS, reply))
 
 def decode(m):
     d = {k: m[o] for k, o in FIELDS.items()}
@@ -88,7 +118,8 @@ def sample_plausible(d, last):
     return 0 <= delta <= 64
 
 def read_surface(z, front, mode):
-    """Assumes the CPU is already frozen (enter-cpu-step). Reads the front
+    """Assumes the CPU is already stopped (at a breakpoint, or in
+    enter-cpu-step for skip_surface_check's own stop). Reads the front
     Layer 2 surface (10 pages at 320x256, 6 at 256x192) through zone 0 in
     ONE read (fix round 2: the pages are contiguous in zone-0 address
     space, and ten separate ZRCP round trips - each with its own
@@ -126,39 +157,68 @@ def _mirror_frame(z):
     m = z.read_memory(MIRROR + 8, 2)
     return m[0] | (m[1] << 8)
 
-def read_surface_stable(z, front, mode):
-    """read_surface, retried (fix round 2): one enter_cpu_step bracket does
-    NOT reliably hold the emulated CPU idle for a whole ten-page read - the
-    mirror's frame moved mid-bracket in live measurement and back-to-back
-    captures differed by up to 81600 bytes. Reads the mirror frame before
-    and after each attempt (inside the freeze); a capture is trusted only
-    if it did not move, else re-freezes and retries."""
-    tried = []
-    for _ in range(CAPTURE_ATTEMPTS):
-        z.enter_cpu_step()
-        try:
-            before = _mirror_frame(z)
-            got = read_surface(z, front, mode)
-            z.cmd("set-memory-zone -1")
-            after = _mirror_frame(z)
-        finally:
-            z.cmd("set-memory-zone -1")
-            z.exit_cpu_step()
-        if before == after:
-            return got
-        tried.append((before, after))
-    raise RuntimeError("surface capture unstable across %d attempts (frame %s)"
-                        % (CAPTURE_ATTEMPTS, ", ".join("%d->%d" % t for t in tried)))
+def load_hold_pcs():
+    """Resolve the launcher's hold-step addresses from its build map.
+    Assumes the running SHOW.NEX is the staged build/intro.nex, which the
+    harness stages from the same build as build/intro.map."""
+    if not INTRO_MAP.exists():
+        raise SystemExit("%s is missing - build the launcher before a surface check"
+                          % INTRO_MAP)
+    syms = symbols.load_symbols(INTRO_MAP)
+    pcs = {}
+    for state, name in HOLD_PC_SYMBOL.items():
+        if name not in syms:
+            raise SystemExit("symbol %s not found in %s - a surface check cannot "
+                              "stop the launcher at a known point" % (name, INTRO_MAP))
+        pcs[state] = syms[name]
+    return pcs
 
-def surface_check(z, front, mode, picfile):
-    """Compare the front surface against picfile using a frame-stable
-    capture (read_surface_stable)."""
-    got = read_surface_stable(z, front, mode)
+def _stopped_pc(z):
+    """PC from get-registers, or None if the reply does not carry one."""
+    reply = z.get_registers()
+    m = re.search(r"\bPC=([0-9A-Fa-f]{1,4})", reply)
+    return (int(m.group(1), 16), reply) if m else (None, reply)
+
+def read_surface_at_hold(z, pc, picfile):
+    """Stop the launcher at its hold step (pc) and capture the front
+    surface there. A bare enter-cpu-step does not hold the emulated CPU
+    across a ten-page read - measured: the mirror frame advanced inside
+    one bracket and back-to-back captures differed by up to 81600 bytes -
+    while a capture taken stopped at a breakpoint read back byte-exact.
+    Returns (ok, mismatches, first_offset, detail, before, after); before
+    and after are the mirror frame inside the stop, which cannot move
+    while the CPU is stopped, so a move means the stop was not real."""
+    freeze(z)
+    try:
+        z.enable_breakpoints()
+        z.set_breakpoint(SURFACE_BREAKPOINT, zrcp.pc_breakpoint_condition(pc))
+        reply = z.run(deadline=SURFACE_RUN_DEADLINE)
+        got_pc, regs = _stopped_pc(z)
+        if "Breakpoint fired" not in reply or got_pc != pc:
+            return (False, -1, -1,
+                    "breakpoint PC=%d did not stop the machine (run returned %r, "
+                    "registers %r)" % (pc, reply[:120], regs[:120]), -1, -1)
+        m = z.read_memory(MIRROR, 32)
+        front, mode = m[16], m[17]
+        before = m[8] | (m[9] << 8)
+        got = read_surface(z, front, mode)
+        z.cmd("set-memory-zone -1")
+        after = _mirror_frame(z)
+    finally:
+        z.cmd("set-memory-zone -1")
+        z.disable_breakpoint(SURFACE_BREAKPOINT)
+        z.disable_breakpoints()
+        z.exit_cpu_step()
+    if before != after:
+        return (False, -1, -1, "mirror frame moved %d->%d while stopped at PC=%d - "
+                "the capture is not trustworthy" % (before, after, pc), before, after)
     npages = 10 if mode else 6
-    return compare_picture(got, picfile, npages)
+    ok, mism, first, detail = compare_picture(got, picfile, npages)
+    return ok, mism, first, detail, before, after
 
-# Breakpoint index reserved for skip_surface_check below; each zes_intro.py
-# run is a fresh emulator instance, so no other index is ever armed here.
+# Breakpoint index reserved for skip_surface_check below; the surface
+# capture above owns SURFACE_BREAKPOINT and retires it after each check,
+# so an enable-breakpoints here never re-arms it.
 SKIP_BREAKPOINT = 1
 
 def read_handoff_text(z):
@@ -167,7 +227,7 @@ def read_handoff_text(z):
     tilemap read by read_text below), always resuming before returning.
     Returns [] while $6000 still holds the stub's own prologue, whose
     opcodes would otherwise decode as meaningless rows."""
-    z.enter_cpu_step()
+    freeze(z)
     try:
         head = z.read_memory(0x6000, 4)
         if bytes(head) == STUB_PROLOGUE:
@@ -178,12 +238,14 @@ def read_handoff_text(z):
     return rows
 
 def read_text(z):
-    """Freeze the CPU, decode the tilemap at $4000, retried (fix round 2,
-    same guard as read_surface_stable) if the mirror frame moves during
-    the capture - a live read can otherwise tear a row mid-typewriter."""
+    """Freeze the CPU, decode the tilemap at $4000, retried (fix round 2)
+    if the mirror frame moves during the capture - a live read can
+    otherwise tear a row mid-typewriter. Kept on enter-cpu-step rather
+    than the breakpoint capture below: 5120 bytes is one short read, and a
+    text anchor is not gated to a hold, so there is no one PC to stop at."""
     tried = []
     for _ in range(CAPTURE_ATTEMPTS):
-        z.enter_cpu_step()
+        freeze(z)
         try:
             before = _mirror_frame(z)
             rows, _ = tilemap.decode(z.read_memory(0x4000, tilemap.GRID_BYTES))
@@ -201,20 +263,26 @@ def skip_surface_check(z, pc, picfile):
     address) so the CPU stops before any hand-off code can overwrite the
     launcher's Layer 2 surface banks, read the mirror for the current
     front/mode, compare against picfile, then resume. A plain frame+sig
-    gated surface_check races chain_run here - pressing skip mid-transition
+    gated surface read races chain_run here - pressing skip mid-transition
     can reach hand-off within the same frame as trans_finish_now, and the
     interpreter's own boot can already be overwriting memory a poll
     interval later (measured live: a race read 13056/81920 bytes wrong
     where the breakpointed read showed zero)."""
-    z.enter_cpu_step()
+    freeze(z)
     try:
         z.enable_breakpoints()
         z.set_breakpoint(SKIP_BREAKPOINT, zrcp.pc_breakpoint_condition(pc))
         z.hold_matrix(SPACE_DOWN)
         try:
-            z.run(deadline=30.0)
+            reply = z.run(deadline=30.0)
         finally:
             z.release_matrix()          # never leave SPACE held on a run() deadline
+        # A PC from an older build never fires: report it, do not read a
+        # machine that was never stopped.
+        if "Breakpoint fired" not in reply:
+            raise RuntimeError("breakpoint PC=%d never fired (run returned %r) - "
+                               "check the address against the current build map"
+                               % (pc, reply[:160]))
         m = z.read_memory(MIRROR, 32)
         front, mode = m[16], m[17]
         got = read_surface(z, front, mode)
@@ -253,6 +321,9 @@ def main():
     if (a.frame_asserts or a.space_at_frame or a.surface_asserts or a.skip_surface or a.text_at_frame) and a.interval > 0.1:
         a.interval = 0.1              # frame anchors need frequent sampling to land close to F
     card = pathlib.Path(a.card).resolve()
+    # Resolved before the emulator starts: a missing map or symbol must
+    # fail the run outright, not halfway through a check.
+    hold_pcs = load_hold_pcs() if a.surface_asserts else {}
     if nleg.port_already_listening(a.port):
         raise SystemExit("port %d already in use - a stale emulator is running" % a.port)
     proc = subprocess.Popen([str(ZESARUX), "--machine", "tbblue", "--realvideo",
@@ -314,7 +385,7 @@ def main():
             # land mid-dbg_mirror, catching some fields already written for
             # this frame and others not yet) - read twice and require the
             # bytes identical, else discard as torn.
-            z.enter_cpu_step()
+            freeze(z)
             try:
                 m1 = z.read_memory(MIRROR, 32)
                 m2 = z.read_memory(MIRROR, 32)
@@ -376,18 +447,21 @@ def main():
                           % (when, d["state"], picfile))
                     ok = False
                 else:
+                    pc = hold_pcs[d["state"]]
                     try:
-                        s_ok, mism, first, detail = surface_check(z, d["front"], d["mode"], picfile)
+                        s_ok, mism, first, detail, bf, af = read_surface_at_hold(z, pc, picfile)
                     except Exception as e:
-                        s_ok, mism, first, detail = False, -1, -1, "exception: %r" % (e,)
+                        s_ok, mism, first, detail, bf, af = False, -1, -1, "exception: %r" % (e,), -1, -1
                     if detail:
                         print("ASSERT FAILED: surface check frame>=%d vs %s: %s" % (when, picfile, detail))
                         ok = False
                     elif s_ok:
-                        print("surface ok frame>=%d (t=%.1f, actual frame=%d) vs %s" % (when, t, d["frame"], picfile))
+                        print("surface ok frame>=%d (t=%.1f, actual frame=%d, stopped at PC=%d, "
+                              "mirror frame %d->%d) vs %s" % (when, t, d["frame"], pc, bf, af, picfile))
                     else:
-                        print("ASSERT FAILED: surface mismatch frame>=%d (t=%.1f, actual frame=%d) vs %s: "
-                              "%d bytes differ, first at offset %d" % (when, t, d["frame"], picfile, mism, first))
+                        print("ASSERT FAILED: surface mismatch frame>=%d (t=%.1f, actual frame=%d, "
+                              "stopped at PC=%d, mirror frame %d->%d) vs %s: %d bytes differ, first at "
+                              "offset %d" % (when, t, d["frame"], pc, bf, af, picfile, mism, first))
                         ok = False
             if pending_skip_surface and d["frame"] >= pending_skip_surface[0]:
                 when, pc, picfile = pending_skip_surface
