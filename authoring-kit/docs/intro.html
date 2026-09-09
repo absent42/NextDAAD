@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loader intro - NextDAAD</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1 id="loader-intro">Loader intro</h1>
+<p>A slideshow with music that plays before your game starts, in its own
+program. It is an alternative to the <a href="graphics.html#title-screens">title screen</a>,
+not a replacement: a game can ship either, both or neither.</p>
+<h2 id="what-you-get">What you get</h2>
+<ul>
+<li>Full-screen 320x256 or bordered 256x192 pictures, the same art rules as
+  location pictures, with a hold time and an entry transition per slide:
+  cut, fade through any colour, wipes in four directions, dissolve, blinds.</li>
+<li>Music from one of three sources: an Arkos Tracker song (AKY, with a 16K
+  slot instead of the game's 10K, or the streamed AYS form loaded into
+  memory), a stereo sampled stream converted by ffmpeg from any audio
+  file, or a NextDAW song through NextDAW's own runtime player.</li>
+<li>Captions in the game's font or a 16-colour font of your own, with
+  typewriter reveal and timing, and a scrolling credits page.</li>
+<li>Skip by any key, fire or mouse button, press-any-key slides, an
+  attract loop, and timing that stays right on a 60 Hz display.</li>
+</ul>
+<h2 id="quick-start">Quick start</h2>
+<p>Create <code>INTRO.TXT</code> in the kit folder:</p>
+<pre><code>MUSIC AKY AUDIO\STARTER.aks
+SKIP ANY 1.0
+SLIDE DAAD.NX2 IN FADE 1.0 HOLD 4.0
+  TEXT 30 CENTRE &quot;A NextDAAD adventure&quot; INK 255
+SLIDE DAAD.NX2 IN CUT HOLD KEY
+  TEXT 30 CENTRE &quot;Press any key&quot; INK 254 TYPE
+END FADE 1.0
+</code></pre>
+<p>Run <code>BUILD.BAT</code>. <code>RELEASE\</code> now holds <code>&lt;GAME&gt;.NEX</code> beside <code>nextdaad.nex</code>:
+<strong>launch <code>&lt;GAME&gt;.NEX</code></strong>. It plays the show and starts the game. This
+example reuses the starter's own title picture (<code>DAAD.NX2</code>) and its boot
+music (<code>AUDIO\STARTER.aks</code>), which is why it works unmodified.
+<code>INTRO.TXT.sample</code> in the kit folder is this example; rename it to try
+it, then point <code>SLIDE</code> at your own 320x256 or 256x192 art - the numbered
+pictures in <code>IMAGES\</code> are a different shape and cannot be used as
+slides. Remove <code>INTRO.TXT</code> and the next build removes the launcher
+again.</p>
+<h2 id="writing-the-script">Writing the script</h2>
+<p>One statement per line. Keywords in any case; <code>;</code> starts a comment. Times
+are seconds with one decimal place. Colours are the same 0 to 255 numbers
+as <a href="colours.html">INK and PAPER</a>. File names are relative to the kit folder,
+so <code>IMAGES\</code> art and <code>AUDIO\</code> songs can be reused; an <code>INTRO\</code> folder is a
+good home for anything that belongs only to the show.</p>
+<h3 id="before-the-first-slide">Before the first slide</h3>
+<table>
+<thead>
+<tr>
+<th>Statement</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MUSIC AKY file.aks</code></td>
+<td>Arkos song, three PSGs, up to 16K after conversion. Needs Arkos Tracker 3.</td>
+</tr>
+<tr>
+<td><code>MUSIC STREAM file.aks</code></td>
+<td>Arkos song in the streamed form, one to three PSGs, up to 384K, loaded into memory. Needs Arkos Tracker 3.</td>
+</tr>
+<tr>
+<td><code>MUSIC PCM file</code></td>
+<td>Any audio file ffmpeg reads (wav, mp3, ogg, flac), converted to a stereo stream. Needs ffmpeg. About 31K per second on the card.</td>
+</tr>
+<tr>
+<td><code>MUSIC NDR file.ndr</code></td>
+<td>A NextDAW export, up to 64K. Needs your own NextDAW install, see below.</td>
+</tr>
+<tr>
+<td><code>FONT GAME</code></td>
+<td>Captions in the game's font (the default).</td>
+</tr>
+<tr>
+<td><code>FONT sheet.png</code></td>
+<td>Captions in a 16-colour font, see <a href="#colour-fonts">Colour fonts</a>.</td>
+</tr>
+<tr>
+<td><code>PALETTE n c0 ... c15</code></td>
+<td>Colour block <code>n</code> (1 to 15) for a colour font: sixteen colours.</td>
+</tr>
+<tr>
+<td><code>COLS 40</code> or <code>COLS 80</code></td>
+<td>The caption grid. Defaults to the kit's <code>COLS</code> setting, so it matches the game.</td>
+</tr>
+<tr>
+<td><code>BORDER c</code></td>
+<td>Border colour, seen around 256-wide pictures and wherever no picture covers the screen.</td>
+</tr>
+<tr>
+<td><code>SKIP ANY 1.0</code></td>
+<td>Any key, fire or mouse button ends the show; presses in the first second are ignored. This is the default.</td>
+</tr>
+<tr>
+<td><code>SKIP SLIDE</code></td>
+<td>A press advances to the next slide instead.</td>
+</tr>
+<tr>
+<td><code>SKIP NONE</code></td>
+<td>Presses do nothing except on a <code>HOLD KEY</code> slide.</td>
+</tr>
+<tr>
+<td><code>LOOP</code></td>
+<td>The show repeats until a key. Needs <code>SKIP ANY</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>At most one <code>MUSIC</code> statement is allowed; music loops for as long as the
+show runs. Leave <code>MUSIC</code> out for a silent show.</p>
+<h3 id="slides">Slides</h3>
+<pre><code>SLIDE picture IN transition [time] [colour] HOLD seconds
+SLIDE picture IN transition [time] HOLD KEY
+</code></pre>
+<p><code>picture</code> is a PNG of exactly 320x256 or 256x192 with the
+<a href="graphics.html#what-the-art-must-be">location art rules</a>, or an already
+converted NX2 or NXI. <code>IN</code> says how the slide arrives:</p>
+<table>
+<thead>
+<tr>
+<th>Transition</th>
+<th>What happens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CUT</code></td>
+<td>Instant.</td>
+</tr>
+<tr>
+<td><code>FADE t [c]</code></td>
+<td>Fade the previous picture to colour <code>c</code> (black unless given; 255 is white) and the new one up from it, over <code>t</code> seconds. The border fades too.</td>
+</tr>
+<tr>
+<td><code>WIPE LEFT|RIGHT|UP|DOWN t</code></td>
+<td>The new picture reveals from one edge; the name is the direction the edge travels.</td>
+</tr>
+<tr>
+<td><code>DISSOLVE t</code></td>
+<td>Random-order 4x4 blocks over the whole picture.</td>
+</tr>
+<tr>
+<td><code>BLINDS t</code></td>
+<td>Eight bands, each revealing top to bottom.</td>
+</tr>
+</tbody>
+</table>
+<p><code>HOLD</code> is how long the slide stays once it is fully in; <code>HOLD KEY</code> waits
+for a press. A slide carrying a <code>SCROLL</code> has no <code>HOLD</code>.</p>
+<p><strong>Palettes and copy transitions.</strong> A wipe, dissolve or blinds shows two
+pictures at once, and Layer 2 has one palette: the incoming picture's
+palette is applied as the transition starts, so the outgoing picture is
+recoloured while it leaves. The build warns when two such pictures differ
+by more than a few palette entries. For a sequence you want to wipe
+between, give the pictures one shared palette. A fade has no such
+constraint.</p>
+<p><strong>Width changes.</strong> Between a 320-wide and a 256-wide slide only <code>CUT</code> and
+<code>FADE</code> are allowed, since the other transitions copy between two surfaces
+of the same shape. The first slide arrives from nothing, so it too takes
+<code>CUT</code> or <code>FADE</code>.</p>
+<h3 id="captions">Captions</h3>
+<pre><code>TEXT row col &quot;text&quot; [AT t] [TYPE] [INK c] [PAPER c] [BLOCK n]
+TEXT row CENTRE &quot;text&quot; ...
+</code></pre>
+<p>Rows are 0 to 31, columns 0 to 79 (or 39 in a 40-column show). <code>AT</code>
+delays the caption by <code>t</code> seconds after the slide is fully in; <code>TYPE</code>
+reveals it a character at a time, one every two frames - 25 a second at
+50 Hz, 30 at 60 Hz. With the game's font, <code>INK</code> and <code>PAPER</code> set the
+colours (paper is transparent when left out). With a colour font,
+<code>BLOCK</code> selects one of the sixteen colour blocks. Write a quote inside a
+string as two quotes. Captions vanish when the slide leaves. Around a
+256-wide picture the rows above and below it are in the border, which is
+where a caption under such a picture goes.</p>
+<h3 id="a-credits-page">A credits page</h3>
+<pre><code>SLIDE picture IN CUT
+  SCROLL SPEED 2 INK 252
+  LINE &quot;WRITTEN BY&quot;
+  LINE &quot;Someone&quot;
+  LINE &quot;&quot;
+  LINE &quot;MUSIC&quot;
+  LINE &quot;Someone else&quot;
+</code></pre>
+<p>The lines rise from the bottom, centred, at <code>SPEED</code> pixels per frame (1
+to 4); an empty <code>LINE</code> is a spacer. The slide ends when the last line has
+left the top. <code>INK</code>, <code>PAPER</code> or <code>BLOCK</code> apply to every line. A slide with
+<code>SCROLL</code> takes no <code>TEXT</code> and no <code>HOLD</code>, and allows at most 224 <code>LINE</code>
+statements.</p>
+<h3 id="the-end">The end</h3>
+<p><code>END FADE t [c]</code> fades the last picture to the colour and the music with
+it. <code>END CUT</code> goes straight to the game. <code>END</code> is the last statement.</p>
+<h2 id="colour-fonts">Colour fonts</h2>
+<p>A font sheet is a 128 by 128 PNG: sixteen columns by sixteen rows of 8x8
+cells, cell <code>n</code> holding character <code>n</code>, so it reads like an ASCII table.
+At most sixteen colours, saved with a sixteen-entry palette, one of them
+magenta (#FF00FF) for transparent. Cell 32, the space, must be entirely
+magenta - it is what clears a text cell. The sheet's own colours are
+block 0; <code>PALETTE</code> lines define blocks 1 to 15 with the same shapes in
+other colours, and <code>BLOCK n</code> on a caption or a scroll picks one. Index 0
+of every block is transparent.</p>
+<h2 id="music">Music</h2>
+<p><strong>AKY and STREAM</strong> take the same <code>.aks</code> source as the game's own music
+(<a href="audio.html#music">Audio</a>). The intro's AKY slot is 16K, larger than the
+game's 10K; a song still too big goes through <code>STREAM</code>, which is limited
+only by memory (384K). Compose for three PSGs for the AKY form.</p>
+<p><strong>PCM</strong> converts through ffmpeg to unsigned 8-bit stereo at 15625 Hz, the
+same format cutscene audio uses. Any source ffmpeg reads works; a mono
+source plays centred. The file on the card is about 31K per second, so a
+three-minute track is about 5.6 MB.</p>
+<p><strong>NDR</strong> plays a NextDAW export with NextDAW's runtime player. The kit
+copies that player from your own NextDAW install into <code>RELEASE\INTRO\</code>
+at build time, because NextDAW's licence lets you ship it inside your
+game but not redistribute it, and the kit never contains it. Set
+<code>NEXTDAWDIR</code> in <code>CONFIG.BAT</code> to the folder holding <code>RuntimePlayer\</code>, or
+put your copy under <code>tools\NextDAW\</code>. Only the E000 build of the runtime
+player is accepted - <code>RuntimePlayer\NextDAW_RuntimePlayer_E000.bin</code> - and
+the exported song is capped at 64K. The licence asks for a credit line
+where your game credits its authors:</p>
+<pre><code>Music created using Gari Biasillo's NextDAW
+</code></pre>
+<p>NextDAW has no volume control, so at <code>END FADE</code> the notes release
+naturally while the picture fades.</p>
+<h2 id="timing-and-skipping">Timing and skipping</h2>
+<p>Holds, transitions and caption delays keep their length on a 60 Hz
+display. With <code>SKIP ANY</code>, a press ends the show through the END fade (at
+most half a second) and hands over; <code>HOLD KEY</code> slides always advance on a
+press whatever the skip mode. The key that ended the show is waited out
+before the game starts, so it never reaches the game's first prompt. If a
+hold is shorter than the next picture takes to load from the card (about
+a second for a 320-wide picture, longer while music streams), the hold
+simply lasts until the picture is ready.</p>
+<h2 id="what-is-on-the-card">What is on the card</h2>
+<p><code>BUILD.BAT</code> writes <code>RELEASE\&lt;GAME&gt;.NEX</code> and a <code>RELEASE\INTRO\</code> folder:
+<code>INTRO.DAT</code> (the compiled script), the pictures as <code>001.NXC</code>, <code>002.NXI</code>
+and so on (<code>NXC</code> is a 320-wide picture stored in the hardware's own order
+and is not interchangeable with a location picture), <code>FONT.TIL</code> for a
+colour font, and one of <code>MUSIC.AKY</code>, <code>MUSIC.AYS</code>, <code>MUSIC.PCM</code> or
+<code>MUSIC.NDR</code> with <code>NDAW.BIN</code>. Copy <code>RELEASE\</code> to the card as usual and
+launch <code>&lt;GAME&gt;.NEX</code>. Launching <code>nextdaad.nex</code> directly still works and
+skips the intro. A game shipping an intro boots without the version
+stamp, the same as one shipping a title screen; a game shipping both an
+intro and a title shows the intro, then the title.</p>
+<h2 id="when-something-is-missing">When something is missing</h2>
+<p>The launcher never stops a game from starting on a broken or missing
+show: a broken or missing <code>INTRO.DAT</code> goes straight to the game, and a
+slide whose picture fails to load is skipped (if every slide fails, the
+show ends there too, so a <code>LOOP</code> cannot spin forever on missing art). A
+missing or unusable font falls back to the built-in one, and a music
+file that will not open plays silence. Only a missing, unreadable or
+refused <code>nextdaad.nex</code> is fatal, with the message <code>E9 nextdaad.nex</code> on a
+magenta border, since there is then no game to start. If a show
+misbehaves, check the build output first: every compile error names its
+line in <code>INTRO.TXT</code>.</p>
+</main>
+</body>
+</html>

@@ -416,6 +416,9 @@ its version stamp at boot, so the title is the first thing seen.
 The title is shown once, at cold boot, and is never overridden per part
 in a [multi-part game](multi-part-games.md).
 
+For a slideshow with music instead of a single picture, see [Loader
+intro](intro.md); a game may ship both.
+
 ## Already-converted artwork
 
 Picture files converted elsewhere are staged untouched - the build does

@@ -130,6 +130,8 @@ are all optional and the build skips whatever is absent.
 | `VIDENCDIR`, `VIDTUNEDIR` | Same, for the two tools the kit ships. You should not need to set these. |
 | `NDRCVER` | The `lib\ndrc.exe` version this kit was tested against. `BUILD.BAT` refuses to build with any other - see [When the build fails](#when-the-build-fails). |
 | `NEXFILE` | The interpreter to ship. Default `nextdaad.nex`. |
+| `NEXTDAWDIR` | Your NextDAW install, only for `MUSIC NDR` in a [loader intro](intro.md). |
+| `INTRONEX` | The loader intro launcher to ship. Default `intro.nex`. |
 | `VIDASPECT`, `VIDFPS`, `VIDOPTS`, `VIDOPTS_NNN` | Cutscene encoding - see [Video](video.md). |
 
 **Local overrides.** If a file named `CONFIG.local.BAT` sits beside
@@ -165,6 +167,8 @@ game written for version 2, three behaviours change silently - see
 folder) to the root of the card. It holds:
 
 - `nextdaad.nex` - the interpreter, the file you launch.
+- `<GAME>.NEX` and `INTRO\` - the loader intro, when you ship one; launch
+  `<GAME>.NEX` instead. See [Loader intro](intro.md).
 - `GAME.DDB` - your compiled adventure.
 - `0.XMB` - external message text, if your game uses XMESSAGE or XMES.
   It must stay beside `GAME.DDB`; without it those messages silently

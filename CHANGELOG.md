@@ -2,6 +2,22 @@
 
 All notable changes to NextDAAD are recorded here.
 
+## v0.10.0 - Unreleased
+
+- Loader intro: `intro.nex`, a standalone launcher the kit stages as
+  `<GAME>.NEX` when `INTRO.TXT` exists. It plays a scripted slideshow of
+  320x256 or 256x192 pictures (cut, fade to any colour, wipes, dissolve,
+  blinds), captions and a credits crawl in the game's font or a
+  16-colour font, one music source (AKY at a 16K slot, AYS loaded
+  resident, a stereo PCM stream at 15625 Hz, or a NextDAW song through
+  its runtime player staged from the author's install), skip and loop
+  rules, 60 Hz timing, then chain-loads `nextdaad.nex` through an
+  embedded NEX loader. The interpreter's boot banner stays quiet when
+  `INTRO\INTRO.DAT` ships.
+- kit: `lib\introc.ps1` compiles `INTRO.TXT`; `lib\intro.bat` runs it;
+  `NEXTDAWDIR` and `INTRONEX` knobs; `RUN.BAT` launches `<GAME>.NEX`
+  when present; `INTRO.TXT.sample`.
+
 ## v0.9.0 - 03/09/2026
 
 - Animated sprites on the Next sprite layer. `GFX n 19` starts set n,

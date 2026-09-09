@@ -9,6 +9,7 @@ Everything you need to build a DAAD game for the ZX Spectrum Next.
 ## Adding things to your game
 
 - [Graphics](graphics.md) - location pictures, title screens, palettes, GFX sub-commands
+- [Loader intro](intro.md) - a slideshow with music before the game starts
 - [Audio](audio.md) - music, sound effects, sampled sound, SFX sub-commands
 - [Video](video.md) - cutscenes
 - [Fonts](fonts.md) - custom fonts, numbered fonts, GFX 16

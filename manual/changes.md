@@ -3,6 +3,13 @@
 Changes an author can see. If a release changed how your
 game behaves, how it builds, or what the kit gives you, it is here.
 
+## 0.10.0 - Unreleased
+
+- **Loader intro.** A separate launcher, staged as `<GAME>.NEX`, plays a
+  scripted slideshow with captions, a credits crawl and AKY, streamed
+  AY, stereo sampled or NextDAW music before the game. See [Loader
+  intro](intro.md).
+
 ## 0.9.0 - 3 September 2026
 
 - **Animated sprites.** `GFX 19`, `20` and `21` start and stop sprite

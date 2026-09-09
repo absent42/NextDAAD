@@ -185,6 +185,14 @@ are all optional and the build skips whatever is absent.</p>
 <td>The interpreter to ship. Default <code>nextdaad.nex</code>.</td>
 </tr>
 <tr>
+<td><code>NEXTDAWDIR</code></td>
+<td>Your NextDAW install, only for <code>MUSIC NDR</code> in a <a href="intro.html">loader intro</a>.</td>
+</tr>
+<tr>
+<td><code>INTRONEX</code></td>
+<td>The loader intro launcher to ship. Default <code>intro.nex</code>.</td>
+</tr>
+<tr>
 <td><code>VIDASPECT</code>, <code>VIDFPS</code>, <code>VIDOPTS</code>, <code>VIDOPTS_NNN</code></td>
 <td>Cutscene encoding - see <a href="video.html">Video</a>.</td>
 </tr>
@@ -219,6 +227,8 @@ game written for version 2, three behaviours change silently - see
 folder) to the root of the card. It holds:</p>
 <ul>
 <li><code>nextdaad.nex</code> - the interpreter, the file you launch.</li>
+<li><code>&lt;GAME&gt;.NEX</code> and <code>INTRO\</code> - the loader intro, when you ship one; launch
+  <code>&lt;GAME&gt;.NEX</code> instead. See <a href="intro.html">Loader intro</a>.</li>
 <li><code>GAME.DDB</code> - your compiled adventure.</li>
 <li><code>0.XMB</code> - external message text, if your game uses XMESSAGE or XMES.
   It must stay beside <code>GAME.DDB</code>; without it those messages silently
