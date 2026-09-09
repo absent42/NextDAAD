@@ -88,18 +88,18 @@ def sample_plausible(d, last):
     return 0 <= delta <= 64
 
 def read_surface(z, front, mode):
-    """Assumes the CPU is already frozen (enter-cpu-step). Reads every 8K
-    page of the front Layer 2 surface (10 pages at 320x256, 6 at 256x192)
-    through zone 0 and returns the bytes. Leaves the memory zone at 0;
-    callers restore it (set-memory-zone -1) once done."""
+    """Assumes the CPU is already frozen (enter-cpu-step). Reads the front
+    Layer 2 surface (10 pages at 320x256, 6 at 256x192) through zone 0 in
+    ONE read (fix round 2: the pages are contiguous in zone-0 address
+    space, and ten separate ZRCP round trips - each with its own
+    prompt-wait latency - was most of the capture's real-time window,
+    the very thing letting the emulator resume mid-read). Leaves the
+    memory zone at 0; callers restore it (set-memory-zone -1) once done."""
     npages = 10 if mode else 6
-    got = bytearray()
+    page0 = front * 2
+    offset = (page0 + PAGE_ZONE_OFFSET) * PAGE_SIZE
     z.cmd("set-memory-zone %d" % ZONE_RAM)
-    for i in range(npages):
-        page = front * 2 + i
-        offset = (page + PAGE_ZONE_OFFSET) * PAGE_SIZE
-        got += z.read_memory(offset, PAGE_SIZE)
-    return got
+    return bytearray(z.read_memory(offset, npages * PAGE_SIZE))
 
 def compare_picture(got, picfile, npages):
     """got vs picfile's bytes after its 512-byte palette. Returns (ok,
@@ -120,16 +120,40 @@ def compare_picture(got, picfile, npages):
                 first = i
     return mismatches == 0, mismatches, first, None
 
+CAPTURE_ATTEMPTS = 3
+
+def _mirror_frame(z):
+    m = z.read_memory(MIRROR + 8, 2)
+    return m[0] | (m[1] << 8)
+
+def read_surface_stable(z, front, mode):
+    """read_surface, retried (fix round 2): one enter_cpu_step bracket does
+    NOT reliably hold the emulated CPU idle for a whole ten-page read - the
+    mirror's frame moved mid-bracket in live measurement and back-to-back
+    captures differed by up to 81600 bytes. Reads the mirror frame before
+    and after each attempt (inside the freeze); a capture is trusted only
+    if it did not move, else re-freezes and retries."""
+    tried = []
+    for _ in range(CAPTURE_ATTEMPTS):
+        z.enter_cpu_step()
+        try:
+            before = _mirror_frame(z)
+            got = read_surface(z, front, mode)
+            z.cmd("set-memory-zone -1")
+            after = _mirror_frame(z)
+        finally:
+            z.cmd("set-memory-zone -1")
+            z.exit_cpu_step()
+        if before == after:
+            return got
+        tried.append((before, after))
+    raise RuntimeError("surface capture unstable across %d attempts (frame %s)"
+                        % (CAPTURE_ATTEMPTS, ", ".join("%d->%d" % t for t in tried)))
+
 def surface_check(z, front, mode, picfile):
-    """Freeze the CPU, compare the front surface against picfile, always
-    restoring the CPU (exit-cpu-step) and the live memory zone (-1) before
-    returning, even on a read error."""
-    z.enter_cpu_step()
-    try:
-        got = read_surface(z, front, mode)
-    finally:
-        z.cmd("set-memory-zone -1")
-        z.exit_cpu_step()
+    """Compare the front surface against picfile using a frame-stable
+    capture (read_surface_stable)."""
+    got = read_surface_stable(z, front, mode)
     npages = 10 if mode else 6
     return compare_picture(got, picfile, npages)
 
@@ -154,15 +178,23 @@ def read_handoff_text(z):
     return rows
 
 def read_text(z):
-    """Freeze the CPU (fix round 1: a live read can tear a row mid-typewriter),
-    decode the tilemap at $4000, always resuming (exit-cpu-step) before
-    returning, even on a read error."""
-    z.enter_cpu_step()
-    try:
-        rows, _ = tilemap.decode(z.read_memory(0x4000, tilemap.GRID_BYTES))
-    finally:
-        z.exit_cpu_step()
-    return rows
+    """Freeze the CPU, decode the tilemap at $4000, retried (fix round 2,
+    same guard as read_surface_stable) if the mirror frame moves during
+    the capture - a live read can otherwise tear a row mid-typewriter."""
+    tried = []
+    for _ in range(CAPTURE_ATTEMPTS):
+        z.enter_cpu_step()
+        try:
+            before = _mirror_frame(z)
+            rows, _ = tilemap.decode(z.read_memory(0x4000, tilemap.GRID_BYTES))
+            after = _mirror_frame(z)
+        finally:
+            z.exit_cpu_step()
+        if before == after:
+            return rows
+        tried.append((before, after))
+    raise RuntimeError("text capture unstable across %d attempts (frame %s)"
+                        % (CAPTURE_ATTEMPTS, ", ".join("%d->%d" % t for t in tried)))
 
 def skip_surface_check(z, pc, picfile):
     """Press skip, free-run under a breakpoint at pc (e.g. chain_run's
@@ -385,12 +417,17 @@ def main():
                           % (when, d["frame"], FRAME_OVERSHOOT_MARGIN))
                     ok = False
                 else:
-                    rows = read_text(z)
-                    text = [r.rstrip() for r in rows if r.strip()]
-                    for r in text:
-                        print("text: " + r)
-                    collected_text.extend(text)
-                    print("text read frame>=%d (t=%.1f, actual frame=%d)" % (when, t, d["frame"]))
+                    try:
+                        rows = read_text(z)
+                    except RuntimeError as e:
+                        print("ASSERT FAILED: text check frame>=%d: %s" % (when, e))
+                        ok = False
+                    else:
+                        text = [r.rstrip() for r in rows if r.strip()]
+                        for r in text:
+                            print("text: " + r)
+                        collected_text.extend(text)
+                        print("text read frame>=%d (t=%.1f, actual frame=%d)" % (when, t, d["frame"]))
             time.sleep(a.interval)
         print("sample summary: %d accepted, %d discarded (%d double-read mismatches)"
               % (accepted_count, discarded_count, double_read_mismatch_count))
@@ -404,17 +441,22 @@ def main():
             print("ASSERT FAILED: no samples were taken (--seconds too small) - cannot evaluate --assert conditions")
             ok = False
         else:
+            # Fix round 2: a.interval (0.1s, the loop's sleep) understates
+            # the real sample period under frozen reads (~0.4-0.5s) - use
+            # twice the observed median spacing between samples instead.
+            gaps = sorted(samples[i][0] - samples[i - 1][0] for i in range(1, len(samples)))
+            assert_tol = 2 * gaps[len(gaps) // 2] if gaps else a.interval
             for spec in a.asserts:
                 when, cond = spec.split(":", 1)
                 field, value = cond.split("=")
                 when = float(when)
                 t, d = min(samples, key=lambda s: abs(s[0] - when))
-                if abs(t - when) > a.interval:
+                if abs(t - when) > assert_tol:
                     # An early exit truncates the sample list; fail rather
                     # than grade a wall-clock anchor against a sample from
                     # the wrong moment.
-                    print("ASSERT FAILED: nearest sample to t=%.1f is at t=%.1f (more than one "
-                          "interval, %.1fs, away - truncated sample list?)" % (when, t, a.interval))
+                    print("ASSERT FAILED: nearest sample to t=%.1f is at t=%.1f (more than %.1fs "
+                          "away - truncated sample list?)" % (when, t, assert_tol))
                     ok = False
                     continue
                 got = d[field]
