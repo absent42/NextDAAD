@@ -1207,9 +1207,10 @@ vid_dst_next:
 ; nextdaad.inc's PAL_L2_* note; the DISPLAY flips at present time via
 ; vidPalPending). Fast path (whole block inside the source window) is
 ; an 8-way outinb unroll (bench shape); the straddle chunks via the
-; src room. Safe without DI: audEnable is frozen for the session so
-; the 50Hz ISR runs its AF/HL-only fast path, and the video CTC ISR
-; is AF/IX/DAC only - nothing else touches the $243B pair or NR $44.
+; src room. Safe without DI: the frame hook is suspended for the session
+; (vid_run's arm point) so the 50Hz ISR runs its AF/HL-only fast path, and
+; the video CTC ISR is AF/IX/DAC only - nothing else touches the $243B pair
+; or NR $44.
 ; ---------------------------------------------------------------------
 vid_op_pal:
     ld a, (vidPalCtrl)
@@ -2365,7 +2366,19 @@ vid_run:
  ENDIF
     ld a, b
     or a
-    jp nz, .sfxresume
+    jr z, .hooksusp
+    xor a
+    ld (vidPlaying), a           ; this bail skips .restore_tail: clear it here
+    jp .sfxresume
+.hooksusp:
+    ; Suspend the frame hook for the clip: the hook body's $243B/$253B save
+    ; would split vid_op_pal's undefended $44 burst. HOOK_SPR is already off.
+    ld a, (xbnIntOn)
+    and HOOK_XBN+HOOK_CYC
+    ld (vidSvHook), a
+    ld a, (xbnIntOn)
+    and $FF-(HOOK_XBN+HOOK_CYC)
+    ld (xbnIntOn), a
  IFDEF DEBUG
     ; SP17 BENCH HOOK (row group 1, direct-serve transport breakdown).
     ; flags+248 selects it; a DIRECT session only (the rows measure the
@@ -2685,7 +2698,8 @@ vid_run:
 .restore_tail:
     ; vidPlaying: cleared here, the single restore tail (reached only
     ; via vid_run_restore_body's jp back to this label) - dominates
-    ; both exits below (.sfxresume's ret z and its tail-jump into
+    ; both exits below; the failed-open bail clears it itself before its
+    ; jump into .sfxresume (.sfxresume's ret z and its tail-jump into
     ; sfx_vid_resume) so neither can leave the flag stuck set.
     xor a
     ld (vidPlaying), a
@@ -2696,6 +2710,10 @@ vid_run:
     nextreg NR_MMU6, a
     ld a, (vidSvMmu7)
     nextreg NR_MMU7, a
+    ld a, (vidSvHook)            ; resume the hook AFTER vidPlaying is clear:
+    ld hl, xbnIntOn              ; a hook never observes bit 0 set
+    or (hl)
+    ld (xbnIntOn), a
     ; --- AUTO-RESUME (owner ruling 2026-08-10). The teardown is over:
     ; audEnable, the IM2 stub and the CTC/DAC parks are all back, the
     ; CMD18 window is closed and the video handle is F_CLOSEd, so the
@@ -3815,6 +3833,7 @@ vidSvMmu7:       db 0
 ; (which reach .restore_tail without ever running vid_run's capture -
 ; see nxb_reclaim) from resuming a previous session's effect.
 vidSvSfxRes:     db 0
+vidSvHook:       db 0            ; HOOK_XBN|HOOK_CYC bits suspended for the clip
 
  IFDEF DEBUG
 ; DEBUG session-report state. vidTlFrames..vidLoopPass is zeroed at
