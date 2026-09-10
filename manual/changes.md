@@ -9,6 +9,15 @@ game behaves, how it builds, or what the kit gives you, it is here.
   scripted slideshow with captions, a credits crawl and AKY, streamed
   AY, stereo sampled or NextDAW music before the game. See [Loader
   intro](intro.md).
+- **Colour cycling and palette entries.** `GFX n 11` and `12` cycle a
+  run of Layer 2 palette entries on the frame interrupt, PC/DOS style,
+  and `GFX n 9` and `10` set and read one entry through flags. A cycle
+  survives `RESTART` and video playback, stops on `LOAD`/`RAMLOAD`. See
+  [Colour cycling and palette
+  entries](graphics.md#colour-cycling-and-palette-entries).
+- **The `#int` hook is suspended during video clips.** Hook code no
+  longer needs to poll `SVC_BUSY` bit 0; a clip's own palette streaming
+  is now safe against any hook. `SVC_BUSY` bit 3 reports an armed cycle.
 
 ## 0.9.0 - 3 September 2026
 

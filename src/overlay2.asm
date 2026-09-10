@@ -1066,9 +1066,8 @@ h_display:
 ;   5 = clear the FRONT surface in place - l2_clear (jdaad's
 ;       DBClearScreen fills the visible canvas directly)
 ;   6 = clear the BACK surface - l2_clear_back (jdaad's DBClearBuffer)
-;   9/10 = jdaad's numbered-palette store/recall (flag-offset RGB
-;       triples into a software colour table) - no NextDAAD analogue,
-;       Layer 2 palette load is picture-driven only; documented no-op
+;   9/10 = set/read one Layer 2 palette entry through flags f..f+3
+;       (.palset/.palget below); PC parity at three bits per channel
 ;   3 = graphics write to physical screen (the default); 4 = graphics
 ;       write to back buffer (DAAD condact reference, GFX Routines) -
 ;       both just set gfxDrawTarget (0/1) for gfx_blit to read; jdaad
@@ -1080,8 +1079,9 @@ h_display:
 ;       cancel a deferred DISPLAY reveal. Subs 0 and 2 (.backfront/
 ;       .swap above) carry the reveal semantics for a pending DISPLAY,
 ;       documented at each sub above.
-;   7/8/11-15 (and jdaad's 13/14 MP4-via-SFX redirect) = no NextDAAD
-;       analogue either (text-buffer split, video playback);
+;   11/12 = colour cycling start/stop (.cycstart/.cycstop below, tick
+;       in sprites.asm)
+;   7/8/15 = no NextDAAD analogue (text-buffer split, split screen);
 ;       documented no-op
 ;   16 = install font B (0 = base - the embedded table, then FONT.CHR
 ;       over it if one exists; 1-9 = FONT<n>.CHR) - NextDAAD-only, no

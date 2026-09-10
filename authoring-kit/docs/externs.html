@@ -315,18 +315,21 @@ are not optional:</p>
   its own bank is mapped - a self-installed vector is a guaranteed
   crash the moment your bank is unmapped again. The <code>#int</code> hook is the
   only legal interrupt-context entry point into your code.</li>
-<li><strong>Direct tilemap writes are fine, except during video playback with an
-  audio track.</strong> Writing to the tilemap at <code>$6000</code> from inside the hook
-  is legitimate and race-free for as long as no such clip is playing -
-  the interrupt handler never remaps that window on its own account.
-  But while a video clip with an audio track is playing, the
-  interpreter itself borrows that same window as the clip's audio feed
-  for the clip's whole duration, and the hook keeps firing throughout.
-  A tilemap write from the hook during that span lands in the audio
-  buffer instead and corrupts the clip's sound. Call <code>SVC_BUSY</code> at the
-  top of the hook and skip the frame while bit 0 (a clip is playing) is
-  set - emit nothing and advance nothing, so the message resumes where
-  it stopped. The ticker example does exactly this.</li>
+<li><strong>Direct tilemap writes are fine.</strong> Writing to the tilemap at <code>$6000</code>
+  from inside the hook is legitimate and race-free: the interrupt
+  handler never remaps that window on its own account, and while a
+  video clip borrows that window as its audio feed the hook is not run
+  at all - the interpreter suspends the <code>#int</code> hook from the moment a
+  clip is armed until its teardown has restored the screen. Frames the
+  hook was not invoked for are still visible through <code>SVC_FRAMES</code>, so
+  a hook that measures elapsed time as a delta from that counter (the
+  clock and timer examples) loses nothing; a hook that emits something
+  per invocation (the ticker) simply pauses for the clip. Checking
+  <code>SVC_BUSY</code> bit 0 in the hook is harmless but no longer necessary.</li>
+<li><strong>Do not cycle and fade at once.</strong> <code>SVC_BUSY</code> bit 3 says a colour
+  cycle is armed. The fade example does not check it; the game stops
+  the cycle (<code>GFX 0 12</code>) before <code>EXTERN 0 40</code> and restarts it after
+  <code>EXTERN 0 43</code>.</li>
 <li><strong>Respect the runtime text width.</strong> A game can switch between 80x32
   and 40x32 text with <code>GFX n 18</code>, which changes the tilemap row stride
   (160 bytes per row at 80 columns, 80 at 40). The width is not part of
@@ -488,7 +491,7 @@ to each row, so you call them by name:</p>
 <td>12</td>
 <td><code>SVC_BUSY</code></td>
 <td>-</td>
-<td>A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section. Unassigned bits read 0. Bits 0 and 2 are only ever observable from the hook</td>
+<td>A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section, bit 3 a colour cycle (<code>GFX n 11</code>) is armed. Unassigned bits read 0. Bit 0 is kept for compatibility: the hook is suspended for a clip's whole duration, so no hook ever sees it set; bits 2 and 3 are only ever observable from the hook</td>
 <td>yes</td>
 </tr>
 <tr>

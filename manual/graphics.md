@@ -313,20 +313,21 @@ running at. A game knows its own width because it chose it with `GFX n
 are no symbolic names for these - DAAD Ready's Appendix D covers `SFX`
 and `MOUSE` only - so write the number.
 
-For every sub-command except 13, 14, 16, 17, 18, 19, 20 and 21 the first
-parameter `n` is ignored: the buffer operations act on the whole surface
-and take no argument. For 13 and 14, `n` is the video number; for 16, it
-is the font number; for 17, it is the layer-order selector; for 18, it is
-the text width selector; for 19 and 21, it is the sprite set number; for
-20, it is the first of four flags carrying the set number and position.
+For every sub-command except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20 and 21
+the first parameter `n` is ignored: the buffer operations act on the
+whole surface and take no argument. For 9, 10 and 11, `n` is a flag
+number, the first of a group of flags carrying the parameters; for 13
+and 14, `n` is the video number; for 16, it is the font number; for 17,
+it is the layer-order selector; for 18, it is the text width selector;
+for 19 and 21, it is the sprite set number; for 20, it is the first of
+four flags carrying the set number and position.
 
 "Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
-prints a marker). That covers 7, 8, 11, 12 and 15, and everything
-from 22 up, as well as 9 and 10 - see
-[Platform notes](platform-notes.md) for why 9, 10 and 15 have nothing
-to act on here.
+prints a marker). That covers 7, 8 and 15, and everything from 22 up - see
+[Platform notes](platform-notes.md) for why 15 has nothing to act on
+here.
 
 | s | Behaviour on this target |
 |---|---------------------------|
@@ -345,6 +346,10 @@ to act on here.
 | 19 | Start animated sprite set `n` (0-254) at the position baked into `NNN.ANI`. A set already running restarts from its first frame. Silently ignored when the file is missing or the set does not fit beside what is already running. See [Animated sprites](sprites.md). |
 | 20 | As 19, taking the set number from flag `n`, X from flags `n+1` (low) and `n+2` (high), Y from flag `n+3`. The flags are read once and never reserved. `n` above 252 is ignored. See [Animated sprites](sprites.md). |
 | 21 | Stop sprite set `n` and free its space; `n` 255 stops every set. Stopping a set that is not running does nothing. See [Animated sprites](sprites.md). |
+| 9 | Set one Layer 2 palette entry from flags. Flag `n` holds the palette index, flags `n+1`, `n+2` and `n+3` hold red, green and blue as 0-255; the Next keeps the top three bits of each channel. Index 255 is the reserved transparent entry and is ignored, and a colour that would make the entry transparent is nudged one green step, exactly as the picture loader does. The entry lands in the palette the display shows, or in the staged palette while a `DISPLAY 0` reveal is pending under sub 4. `n` above 252 is ignored. See [Colour cycling and palette entries](#colour-cycling-and-palette-entries). |
+| 10 | Read one Layer 2 palette entry into flags: flag `n` holds the index, flags `n+1`, `n+2` and `n+3` receive red, green and blue as 0, 32, 64 ... 224 - three bits per channel, shifted up. Same palette rule as 9. `n` above 252 is ignored. |
+| 11 | Start colour cycling. Flag `n` holds the first palette index, `n+1` the last, `n+2` the frames per step. Every `frames` frames the entries from first to last shift one index down: entry first takes entry first+1's colour, and entry last takes what entry first had. Nothing starts when frames is 0, when last is not above first, or when `n` is above 253; a last index of 255 is treated as 254. Starting while a cycle runs replaces it. See [Colour cycling and palette entries](#colour-cycling-and-palette-entries). |
+| 12 | Stop colour cycling. `n` is ignored. The palette stays exactly where the last step left it. |
 
 Sub 17 composes the layer priority only - it never enables or disables
 Layer 2, so it cannot bring back a picture surface the game has hidden.
@@ -400,6 +405,72 @@ and clears the staged-picture state. The sequence's following
 performs a plain surface swap rather than the clean reveal - the
 fade-in can land on a mismatched surface or palette until the next
 picture change.
+
+## Colour cycling and palette entries
+
+`GFX n 11` rotates a run of Layer 2 palette entries on the frame
+interrupt, the classic water and fire effect, and `GFX n 12` stops it.
+The three parameters travel in flags, PC/DOS style:
+
+```
+LET 100 16      ; first entry
+LET 101 31      ; last entry
+LET 102 10      ; frames per step
+GFX 100 11      ; entries 16-31 shift one index down every 10 frames
+...
+GFX 0 12        ; stop; the colours stay where they are
+```
+
+Each step, entry 16 takes entry 17's colour and so on up the run, and
+entry 31 takes what entry 16 had, so a gradient painted across those
+indices flows towards lower indices. Only the entries in the run
+change; text colours, sprites and everything else are untouched. The
+run is read from the picture's own palette as it stands, so a `DISPLAY`
+of a new picture is simply cycled on from wherever its palette puts
+those indices - stop the cycle first, or start a fresh one, if the new
+room does not want it.
+
+**Units.** A frame is one frame interrupt: 1/50 s in 50 Hz timing modes,
+1/60 s in 60 Hz ones, the same clock `PAUSE` runs on. PC/DOS's own
+interpreter counts milliseconds despite what its documentation says, so
+a value ported from a PC game runs twenty times slower here: divide it
+by 20.
+
+**What stops it.** `GFX n 12`; a game start, `END` answered with play
+again, `EXIT` with a non-zero value, a move to another part; `LOAD` and
+`RAMLOAD`, so a restored game never inherits a cycle from the room the
+player left - restart it from the room's own logic, which the usual
+re-describe after a load runs anyway. `RESTART` does NOT stop it: like
+the layer order and running sprite sets, a cycle survives the per-move
+re-entry. Video playback suspends it and resumes it on the restored
+picture when the clip ends.
+
+**Rules.** Index 255 is the reserved transparent entry and never moves:
+a last index of 255 is treated as 254. Do not overlap a cycle with the
+fade extern - stop the cycle before `EXTERN 0 40`, restart it after
+`EXTERN 0 43` - the two would fight over the same palette registers.
+A cycle skips a step, rather than corrupting anything, while the
+interpreter is itself programming a palette (a picture load, a text
+colour allocation, a sprite start), so a brief hesitation at a
+`DISPLAY` is normal.
+
+`GFX n 9` and `GFX n 10` set and read one entry through flags, which is
+how a game builds the run it wants to cycle, or reads a colour back:
+
+```
+LET 110 40      ; index
+LET 111 255     ; red
+LET 112 0       ; green
+LET 113 0       ; blue
+GFX 110 9       ; entry 40 is now red
+GFX 110 10      ; flags 111-113 read back 224, 0, 0
+```
+
+The Next keeps three bits per channel, so a read never returns the exact
+value written: the eight levels are 0, 32, 64 ... 224. Both subs act on
+the palette the display shows, except between a `DISPLAY 0` under
+buffer mode (`GFX n 4`) and its `GFX n 2` reveal, when they act on the
+staged palette so a tweak reaches the screen with the picture.
 
 ## Title screens
 

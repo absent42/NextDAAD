@@ -22,9 +22,10 @@ It demonstrates the things every XBN author needs to know:
   the live row address and column count - the pattern any extern that
   writes the tilemap needs
 - checking SVC_BUSY before writing the tilemap from the hook: while a
-  video clip is playing, the interpreter borrows the tilemap as the
-  clip's audio ring buffer, so the ticker skips emission that frame
-  instead of corrupting the clip's sound
+  video clip is playing the interpreter borrows the tilemap as the
+  clip's audio ring buffer. The interpreter now suspends the hook for
+  the clip's whole duration, so the check never fires; it stays as the
+  defensive shape any tilemap-writing hook can copy
 
 ## How to build
 

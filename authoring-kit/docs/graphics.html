@@ -280,19 +280,20 @@ running at. A game knows its own width because it chose it with <code>GFX n
 <p><code>GFX n s</code> takes the sub-command in its <strong>second</strong> parameter, <code>s</code>. There
 are no symbolic names for these - DAAD Ready's Appendix D covers <code>SFX</code>
 and <code>MOUSE</code> only - so write the number.</p>
-<p>For every sub-command except 13, 14, 16, 17, 18, 19, 20 and 21 the first
-parameter <code>n</code> is ignored: the buffer operations act on the whole surface
-and take no argument. For 13 and 14, <code>n</code> is the video number; for 16, it
-is the font number; for 17, it is the layer-order selector; for 18, it is
-the text width selector; for 19 and 21, it is the sprite set number; for
-20, it is the first of four flags carrying the set number and position.</p>
+<p>For every sub-command except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20 and 21
+the first parameter <code>n</code> is ignored: the buffer operations act on the
+whole surface and take no argument. For 9, 10 and 11, <code>n</code> is a flag
+number, the first of a group of flags carrying the parameters; for 13
+and 14, <code>n</code> is the video number; for 16, it is the font number; for 17,
+it is the layer-order selector; for 18, it is the text width selector;
+for 19 and 21, it is the sprite set number; for 20, it is the first of
+four flags carrying the set number and position.</p>
 <p>"Front" is the surface you can see; "back" is the off-screen one you
 draw into. A sub-command that is not in the table below is accepted and
 does nothing at all, so a game that uses one still runs (a DEBUG build
-prints a marker). That covers 7, 8, 11, 12 and 15, and everything
-from 22 up, as well as 9 and 10 - see
-<a href="platform-notes.html">Platform notes</a> for why 9, 10 and 15 have nothing
-to act on here.</p>
+prints a marker). That covers 7, 8 and 15, and everything from 22 up - see
+<a href="platform-notes.html">Platform notes</a> for why 15 has nothing to act on
+here.</p>
 <table>
 <thead>
 <tr>
@@ -361,6 +362,22 @@ to act on here.</p>
 <td>21</td>
 <td>Stop sprite set <code>n</code> and free its space; <code>n</code> 255 stops every set. Stopping a set that is not running does nothing. See <a href="sprites.html">Animated sprites</a>.</td>
 </tr>
+<tr>
+<td>9</td>
+<td>Set one Layer 2 palette entry from flags. Flag <code>n</code> holds the palette index, flags <code>n+1</code>, <code>n+2</code> and <code>n+3</code> hold red, green and blue as 0-255; the Next keeps the top three bits of each channel. Index 255 is the reserved transparent entry and is ignored, and a colour that would make the entry transparent is nudged one green step, exactly as the picture loader does. The entry lands in the palette the display shows, or in the staged palette while a <code>DISPLAY 0</code> reveal is pending under sub 4. <code>n</code> above 252 is ignored. See <a href="#colour-cycling-and-palette-entries">Colour cycling and palette entries</a>.</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Read one Layer 2 palette entry into flags: flag <code>n</code> holds the index, flags <code>n+1</code>, <code>n+2</code> and <code>n+3</code> receive red, green and blue as 0, 32, 64 ... 224 - three bits per channel, shifted up. Same palette rule as 9. <code>n</code> above 252 is ignored.</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Start colour cycling. Flag <code>n</code> holds the first palette index, <code>n+1</code> the last, <code>n+2</code> the frames per step. Every <code>frames</code> frames the entries from first to last shift one index down: entry first takes entry first+1's colour, and entry last takes what entry first had. Nothing starts when frames is 0, when last is not above first, or when <code>n</code> is above 253; a last index of 255 is treated as 254. Starting while a cycle runs replaces it. See <a href="#colour-cycling-and-palette-entries">Colour cycling and palette entries</a>.</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Stop colour cycling. <code>n</code> is ignored. The palette stays exactly where the last step left it.</td>
+</tr>
 </tbody>
 </table>
 <p>Sub 17 composes the layer priority only - it never enables or disables
@@ -411,6 +428,60 @@ and clears the staged-picture state. The sequence's following
 performs a plain surface swap rather than the clean reveal - the
 fade-in can land on a mismatched surface or palette until the next
 picture change.</p>
+<h2 id="colour-cycling-and-palette-entries">Colour cycling and palette entries</h2>
+<p><code>GFX n 11</code> rotates a run of Layer 2 palette entries on the frame
+interrupt, the classic water and fire effect, and <code>GFX n 12</code> stops it.
+The three parameters travel in flags, PC/DOS style:</p>
+<pre><code>LET 100 16      ; first entry
+LET 101 31      ; last entry
+LET 102 10      ; frames per step
+GFX 100 11      ; entries 16-31 shift one index down every 10 frames
+...
+GFX 0 12        ; stop; the colours stay where they are
+</code></pre>
+<p>Each step, entry 16 takes entry 17's colour and so on up the run, and
+entry 31 takes what entry 16 had, so a gradient painted across those
+indices flows towards lower indices. Only the entries in the run
+change; text colours, sprites and everything else are untouched. The
+run is read from the picture's own palette as it stands, so a <code>DISPLAY</code>
+of a new picture is simply cycled on from wherever its palette puts
+those indices - stop the cycle first, or start a fresh one, if the new
+room does not want it.</p>
+<p><strong>Units.</strong> A frame is one frame interrupt: 1/50 s in 50 Hz timing modes,
+1/60 s in 60 Hz ones, the same clock <code>PAUSE</code> runs on. PC/DOS's own
+interpreter counts milliseconds despite what its documentation says, so
+a value ported from a PC game runs twenty times slower here: divide it
+by 20.</p>
+<p><strong>What stops it.</strong> <code>GFX n 12</code>; a game start, <code>END</code> answered with play
+again, <code>EXIT</code> with a non-zero value, a move to another part; <code>LOAD</code> and
+<code>RAMLOAD</code>, so a restored game never inherits a cycle from the room the
+player left - restart it from the room's own logic, which the usual
+re-describe after a load runs anyway. <code>RESTART</code> does NOT stop it: like
+the layer order and running sprite sets, a cycle survives the per-move
+re-entry. Video playback suspends it and resumes it on the restored
+picture when the clip ends.</p>
+<p><strong>Rules.</strong> Index 255 is the reserved transparent entry and never moves:
+a last index of 255 is treated as 254. Do not overlap a cycle with the
+fade extern - stop the cycle before <code>EXTERN 0 40</code>, restart it after
+<code>EXTERN 0 43</code> - the two would fight over the same palette registers.
+A cycle skips a step, rather than corrupting anything, while the
+interpreter is itself programming a palette (a picture load, a text
+colour allocation, a sprite start), so a brief hesitation at a
+<code>DISPLAY</code> is normal.</p>
+<p><code>GFX n 9</code> and <code>GFX n 10</code> set and read one entry through flags, which is
+how a game builds the run it wants to cycle, or reads a colour back:</p>
+<pre><code>LET 110 40      ; index
+LET 111 255     ; red
+LET 112 0       ; green
+LET 113 0       ; blue
+GFX 110 9       ; entry 40 is now red
+GFX 110 10      ; flags 111-113 read back 224, 0, 0
+</code></pre>
+<p>The Next keeps three bits per channel, so a read never returns the exact
+value written: the eight levels are 0, 32, 64 ... 224. Both subs act on
+the palette the display shows, except between a <code>DISPLAY 0</code> under
+buffer mode (<code>GFX n 4</code>) and its <code>GFX n 2</code> reveal, when they act on the
+staged palette so a tweak reaches the screen with the picture.</p>
 <h2 id="title-screens">Title screens</h2>
 <p>Ship <code>IMAGES\DAAD.png</code> and the game shows it at cold boot, over the
 boot music if you have any, until a key is pressed. Then play begins as

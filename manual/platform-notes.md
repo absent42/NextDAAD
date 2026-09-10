@@ -51,13 +51,24 @@ different surfaces and each condact reaches one of them.
 if the same picture is already on screen, so it is not free - do not put
 one inside a tight loop and expect it to cost nothing.
 
-### `GFX` sub-commands 9 and 10 do nothing
+### `GFX` 9 and 10 keep three bits per channel
 
-These are the numbered palette store and recall. On this target a
-picture carries its own palette and loads it as the picture loads, so
-there is no numbered palette slot for them to write to or read from.
-Both sub-commands are accepted and do nothing at all, so a game that
-uses them still runs; it simply gets no palette change.
+On PC/DOS these set and read one palette entry with six bits per
+channel; the Next's palette holds three, so red, green and blue given as
+0-255 keep their top three bits and read back as 0, 32, 64 ... 224. Index
+255 is the reserved transparent entry: `GFX n 9` ignores it, and a colour
+that would make an entry transparent is nudged one green step, exactly
+as the picture loader does. See [Colour cycling and palette
+entries](graphics.md#colour-cycling-and-palette-entries).
+
+### Colour cycling counts frames, not milliseconds
+
+`GFX n 11`'s third flag is documented everywhere as frames, and that is
+what it counts here: one frame interrupt, 1/50 s or 1/60 s by the
+machine's timing mode. PC/DOS's interpreter actually counts milliseconds,
+so a value ported from a PC game is twenty times too slow: divide it by
+20. `LOAD` and `RAMLOAD` stop a running cycle here (PC leaves it
+running), and a last index of 255 is treated as 254.
 
 Sub 15 is a no-op for a different reason. On CPC and C64 it is
 `XSPLITSCR`, a split-screen toggle; this target has no split-screen
@@ -68,8 +79,9 @@ explicitly now that its neighbour, sub 16, installs a font - see
 The `GFX` sub-commands that *are* implemented here - the buffer copies
 and swaps, the draw-target subs 3 and 4 (screen vs. back-buffer
 drawing) and their reveal semantics on 0 and 2, the surface clears,
-video playback on 13 and 14, and font installation on 16 - are listed
-in [Graphics](graphics.md#gfx-sub-commands), [Video](video.md) and
+the palette subs 9 and 10 and colour cycling on 11 and 12, video
+playback on 13 and 14, and font installation on 16 - are listed in
+[Graphics](graphics.md#gfx-sub-commands), [Video](video.md) and
 [Fonts](fonts.md).
 
 ## Text colour
