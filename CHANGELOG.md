@@ -17,6 +17,65 @@ All notable changes to NextDAAD are recorded here.
 - kit: `lib\introc.ps1` compiles `INTRO.TXT`; `lib\intro.bat` runs it;
   `NEXTDAWDIR` and `INTRONEX` knobs; `RUN.BAT` launches `<GAME>.NEX`
   when present; `INTRO.TXT.sample`.
+- Colour cycling, the PC/DOS `GFX` subs 11 and 12. `GFX f 11` reads
+  the first palette index from flag f, the last from f+1 and the frames
+  per step from f+2, then rotates that run of the Layer 2 palette one
+  index down every step: entry first takes entry first+1's colour and
+  entry last takes what entry first had. `GFX n 12` stops it and the
+  palette stays where the last step left it. Semantics follow the PC
+  interpreter's source: nothing starts when frames is 0 or last is not
+  above first, a start while a cycle runs replaces it, and the run is
+  rotated in place from the live palette, so a new `DISPLAY` is simply
+  cycled on from wherever its palette puts those indices. A last index
+  of 255 is treated as 254 so the transparent hole never moves. The
+  steps come from the frame interrupt through the sprites-page tick,
+  so a cycle runs through key waits and parser input; a step is
+  skipped, never split, while the interpreter itself programs a palette
+  (a picture load, a text colour allocation, a sprite start), guarded by
+  a resident lock every foreground palette burst holds. A cycle
+  survives `RESTART`, `PICTURE`, `DISPLAY`, the `GFX` buffer subs and
+  the font, layer-order and text-width switches, and video playback
+  suspends it and resumes it on the restored picture; `END`, `EXIT n`,
+  a part switch, `LOAD` and `RAMLOAD` stop it. Nothing is saved. A frame
+  is one frame interrupt (50 or 60 Hz by timing mode); PC/DOS actually
+  counts milliseconds despite its manual, so a ported value divides
+  by 20.
+- `GFX f 9` and `GFX f 10` set and read one Layer 2 palette entry
+  through flags: f holds the index, f+1 to f+3 red, green and blue as
+  0-255. The Next keeps three bits per channel, so a read returns 0,
+  32, ... 224. Index 255 is ignored by 9 (10 reads the transparent
+  colour), a colour that would make an entry transparent is nudged one
+  green step as the picture loader does, and both act on the palette
+  the display shows, or on the staged palette between a `DISPLAY 0`
+  under buffer mode and its `GFX n 2` reveal. DEBUG builds print
+  `CYC? nn` for a refused 9, 10 or 11; Release is silent.
+- Video: the `#int` hook and the cycle tick are suspended from a clip's
+  arm point until its teardown has restored the screen. An XBN with a
+  live hook used to run through a clip's palette streaming and could
+  split a two-byte palette write; the hook still runs during the clip's
+  open and prefill, where `SVC_BUSY` bit 0 reads 1. A clip that opened
+  but failed inside the player (bad header or read, no bank, no ring,
+  too fragmented) used to leave `SVC_BUSY` bit 0 set for the rest of
+  the session; the bail now clears it.
+- Externs: `SVC_BUSY` bit 3 reports an armed colour cycle, from the hook
+  or the foreground alike. Frame-counting externs that measure deltas
+  from `SVC_FRAMES` (the clock and timer examples) lose nothing across
+  a clip; the ticker's emission pauses.
+- manual: `GFX` rows 9-12 and a Colour cycling and palette entries
+  section, platform notes (three bits per channel; frames, not
+  milliseconds; `LOAD` stops a cycle), the externs chapter and the XBN
+  format reference for bit 3 and the hook during clips; kit `xbn.inc`,
+  the ticker README and the xbn-extern-authoring references updated.
+- tests: `-Cycle` leg (`tests\cycle.dsf`, a fifteen-step fixture on the
+  palette card; `tests\cycle_dump.py` reads the DEBUG snapshot, the
+  live hook mask, the flags and the tick's scratch buffer over ZRCP and
+  asserts rotation against the identity palette, the refusal reasons,
+  `RESTART` survival, the `RAMLOAD` stop and a 48-pair print storm);
+  condact byte assertions; `Assert-CycleStopSites` (`RESTART` never
+  reaches the stop, the hook-mask writers per file, the video suspend
+  and bail shapes) and `Assert-PaletteWriterCensus` (every palette
+  write site per file, so a new writer fails the build until its lock
+  is answered for); the manual guard forbids the superseded wording.
 
 ## v0.9.0 - 03/09/2026
 
