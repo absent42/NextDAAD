@@ -85,6 +85,16 @@ FORBIDDEN = [
     # RESTART is absent from the stop list, do not say what it does not do.
     (r"RESTART.{0,60}stops?\s+(the\s+)?(sprite|set)",
      "RESTART does not stop sprite sets (owner ruling 2026-09-02)"),
+    # GFX 9-12 are implemented since the colour-cycling work (2026-09-09).
+    (r"sub-?commands?\s+9\s+and\s+10\s+do\s+nothing",
+     "GFX 9 and 10 set and read a Layer 2 palette entry now"),
+    (r"as\s+well\s+as\s+9\s+and\s+10",
+     "GFX 9 and 10 are implemented; the accepted no-ops are 7, 8 and 15"),
+    # The frame hook is suspended for a whole clip since the same work, so
+    # advice to poll SVC_BUSY bit 0 from the hook describes a race that no
+    # longer exists.
+    (r"hook\s+keeps\s+firing\s+throughout",
+     "the frame hook is suspended for the whole of a video clip"),
 ]
 
 def parse(path, pattern, label):
@@ -131,6 +141,13 @@ def main():
             failures.append(
                 f"manual describes a reserved index but L2_TRANSP_INDEX "
                 f"is {index}")
+
+    # --- GFX 9-12 rows (graphics.md) ----------------------------------
+    graphics = (MANUAL / "graphics.md").read_text(encoding="utf-8")
+    for sub in ("9", "10", "11", "12"):
+        if not re.search(rf"(?m)^\|\s*{sub}\s*\|", graphics):
+            failures.append(
+                f"graphics.md: the GFX sub-command table has no row for sub {sub}")
 
     # --- text-over-picture reservation (colours.md) ----------------
     # TXT_TRANSP_COLOUR does not carry its own hex literal - it resolves

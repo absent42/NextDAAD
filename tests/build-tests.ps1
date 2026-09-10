@@ -1158,10 +1158,78 @@ function Assert-RestartLeavesSprites {
     "sprite sets vs RESTART: h_restart reaches no stop-all, gfx_drawtarget_clear always does (owner ruling 2026-09-02)"
 }
 
+function Assert-CycleStopSites {
+    # The colour cycle (GFX 11/12) survives RESTART like sprite sets and the
+    # layer order (owner ruling 2026-09-09); its writers of xbnIntOn are
+    # pinned by file so a new stop site cannot appear unnoticed.
+    function Strip-AsmComments([string]$t) { return (($t -split "`n" | ForEach-Object { $_ -replace ';.*$', '' }) -join "`n") }
+    $ovl0 = Get-Content -LiteralPath (Join-Path $root 'src\overlay0.asm') -Raw
+    $body = [regex]::Match($ovl0, '(?ms)^h_restart:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if (-not $body) { throw "src\overlay0.asm : h_restart not found (or nothing follows it)" }
+    foreach ($bad in @('cyc_stop', 'HOOK_CYC', 'xbnIntOn')) {
+        if ((Strip-AsmComments $body) -match ("\b" + $bad + "\b")) {
+            throw "src\overlay0.asm : h_restart reaches $bad - RESTART is the per-move render-loop re-entry in a template DAAD game, so a running colour cycle deliberately SURVIVES it (owner ruling 2026-09-09), as sprite sets and the layer order do. The cycle stops on GFX n 12, END, EXIT n, a part switch, a same-part LOAD/RAMLOAD and game start - nowhere else."
+        }
+    }
+    $main = Get-Content -LiteralPath (Join-Path $root 'src\main.asm') -Raw
+    $clear = [regex]::Match($main, '(?ms)^gfx_drawtarget_clear:.*?(?=^[A-Za-z_][A-Za-z0-9_]*:)').Value
+    if ((Strip-AsmComments $clear) -notmatch 'call\s+cyc_stop') {
+        throw "src\main.asm : gfx_drawtarget_clear does not call cyc_stop - the reset walker is THE stop site for the colour cycle"
+    }
+    # xbnIntOn writer census. main: boot clear, spr_boot_init, cyc_stop.
+    # overlay0: XBN unload, XBN arm/disarm. sprites: stop-all, arm.
+    # overlay2: GFX 11's clear then set. video: the suspend, the OR-back.
+    $want = @{ 'src\main.asm' = 3; 'src\overlay0.asm' = 2; 'src\sprites.asm' = 2; 'src\overlay2.asm' = 2; 'src\video.asm' = 2 }
+    foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
+        $rel = 'src\' + $f.Name
+        $n = ([regex]::Matches((Strip-AsmComments (Get-Content -LiteralPath $f.FullName -Raw)), 'ld\s+\(xbnIntOn\),\s*a')).Count
+        $w = if ($want.ContainsKey($rel)) { $want[$rel] } else { 0 }
+        if ($n -ne $w) {
+            throw "$rel : $n write(s) to xbnIntOn, expected $w - a new hook-mask writer must be a sanctioned stop, arm or suspend site; update Assert-CycleStopSites's table only after deciding which"
+        }
+    }
+    $vid = Strip-AsmComments (Get-Content -LiteralPath (Join-Path $root 'src\video.asm') -Raw)
+    if ($vid -notmatch '(?ms)\.hooksusp:.*?ld\s+\(vidSvHook\),\s*a') {
+        throw "src\video.asm : the arm-point suspend (vidSvHook) is missing - the hook body's port-pair save would split vid_op_pal's burst"
+    }
+    if ($vid -notmatch '(?ms)\.restore_tail:.*?ld\s+\(vidPlaying\),\s*a.*?ld\s+a,\s*\(vidSvHook\).*?ld\s+\(xbnIntOn\),\s*a') {
+        throw "src\video.asm : .restore_tail must clear vidPlaying BEFORE it ORs vidSvHook back into xbnIntOn"
+    }
+    if ($vid -notmatch '(?ms)jr\s+z,\s*\.hooksusp\s+xor\s+a\s+ld\s+\(vidPlaying\),\s*a\s+jp\s+\.sfxresume') {
+        throw "src\video.asm : the failed-open bail must clear vidPlaying before jumping to .sfxresume"
+    }
+    "colour cycle vs RESTART: h_restart reaches no stop; gfx_drawtarget_clear stops; xbnIntOn writers pinned; video suspend/OR-back/bail clear present"
+}
+
+function Assert-PaletteWriterCensus {
+    # Every NR $41/$44 write site that can run while a cycle is armed must sit
+    # inside a palLock bracket, or be the tick itself. Counts, comments
+    # stripped: overlay2 9 = the loaders, stamp, mirror and GFX 9's pair;
+    # sprites 8 = the two sprite block writers (4) + cyc_tick's own four (its
+    # .wr loop and the last-entry pair); tilemap 2 = tm_pal_write9, boot-only;
+    # tmpairs 4 = pair_alloc; video 4 = pre-arm writers (vid_pal_black, the
+    # snapshot save cluster) that run under the tick's vidPlaying test, and
+    # in-clip ops that run under the hook suspend. A new writer changes a
+    # count and fails the build until the lock question is answered.
+    $want = @{ 'src\overlay2.asm' = 9; 'src\sprites.asm' = 8; 'src\tilemap.asm' = 2; 'src\tmpairs.asm' = 4; 'src\video.asm' = 4 }
+    foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
+        $rel = 'src\' + $f.Name
+        $t = (($f | Get-Content -Raw) -split "`n" | ForEach-Object { $_ -replace ';.*$', '' }) -join "`n"
+        $n = ([regex]::Matches($t, 'nextreg\s+NR_PAL_VALUE9?\b')).Count
+        $w = if ($want.ContainsKey($rel)) { $want[$rel] } else { 0 }
+        if ($n -ne $w) {
+            throw "$rel : $n NR `$41/`$44 write site(s), expected $w - a palette writer that can run while a colour cycle is armed must set palLock before its first NR `$43/`$40 write and clear it after its last NR `$44 write. Exempt: tilemap.asm's tm_pal_write9 (boot-only), video.asm's pre-arm writers (under the tick's vidPlaying test) and in-clip ops (under the hook suspend), and cyc_tick itself. Update Assert-PaletteWriterCensus's table only after deciding which"
+        }
+    }
+    "palette writer census: overlay2 9, sprites 8, tilemap 2, tmpairs 4, video 4 - every armed-time site bracketed, gated or the tick"
+}
+
 Assert-TranspConstantsInSync
 Assert-PalColourDodge
 Assert-LayerOrderReset
 Assert-RestartLeavesSprites
+Assert-CycleStopSites
+Assert-PaletteWriterCensus
 
 # Proves the PNG-to-transparency chain end to end (tests\art\pngchain.py
 # has the full why): a paletted PNG with the transparent colour in the
