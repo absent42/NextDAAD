@@ -162,10 +162,14 @@ spr_pal_enter:
     and %00000111
     or PAL_SPR_EDIT
     nextreg NR_PAL_CTRL, a
+    ld a, 1
+    ld (palLock), a
     ret
 spr_pal_leave:
     ld a, (sprPalSave)
     nextreg NR_PAL_CTRL, a
+    ld a, 0                      ; not xor: F preserved through the tail jumps below
+    ld (palLock), a
     ret
 
 ; Write block A (0-15) from the 32-byte 9-bit table at HL; bracket open.

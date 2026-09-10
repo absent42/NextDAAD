@@ -270,6 +270,8 @@ l2_clear_at:
 ; two-write pairing aligned: the dev guide states a write to $43 resets
 ; that byte toggle. Corrupts AF, BC, DE, HL.
 l2_pal_mirror21:
+    ld a, 1
+    ld (palLock), a
     ld d, 0                      ; colour index
 .m:
     nextreg NR_PAL_CTRL, PAL_L2_SECOND      ; read side: edit bank 2
@@ -290,6 +292,8 @@ l2_pal_mirror21:
     nextreg NR_PAL_VALUE9, a
     inc d
     jr nz, .m
+    xor a
+    ld (palLock), a
     ret
 
 ; Point the source stream at the staged entry's 512-byte palette, which
@@ -316,6 +320,8 @@ gfx_pal_rewind:
 ; picture's palette can be built where nobody can see it and swapped
 ; in atomically. See PAL_L2_* in nextdaad.inc.
 l2_palette_load_ctl:
+    ld a, 1
+    ld (palLock), a
     ld a, b
     push af
     ld a, c
@@ -325,6 +331,8 @@ l2_palette_load_ctl:
     jr l2_palette_load.fmt
 
 l2_palette_load:
+    ld a, 1
+    ld (palLock), a
     ld a, b
     push af
     nextreg NR_PAL_CTRL, PAL_L2_FIRST
@@ -361,6 +369,8 @@ l2_pal9_stamp:
                                  ; PRIORITY (chapter-next-palette.tex:279)
                                  ; and a priority bit on the transparent
                                  ; entry would be actively harmful.
+    ld a, 0                      ; not xor: F preserved, the contract is unchanged
+    ld (palLock), a              ; every palette-programming path ends here
     ret
 
 ; Program B 9-bit palette entries (0 = 256) from HL via NR $44, with
@@ -2432,6 +2442,8 @@ gfx_direct_stream:
     ; several card transactions. That is the flash seen on a picture
     ; that had to be LOADED, where a cached one (which reaches the
     ; screen through gfx_blit) had none.
+    ld a, 1
+    ld (palLock), a              ; held across the SD-interleaved load; the stamp clears
     nextreg NR_PAL_CTRL, PAL_L2_EDIT_SECOND   ; build in bank 2, bank 1
                                               ; stays on screen
     nextreg NR_PAL_INDEX, 0
@@ -2483,6 +2495,8 @@ gfx_direct_stream:
     ret
 .palfail:
     pop bc
+    xor a
+    ld (palLock), a              ; the stamp is never reached on this exit
 .fail:
     ld a, (gfxHandle)
     call esx_fclose

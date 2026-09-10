@@ -297,6 +297,8 @@ pair_alloc:
 .have:
     push af
     call pair_mark
+    ld a, 1
+    ld (palLock), a
     pop af
     push af
     add a, a                    ; entry 2k
@@ -313,6 +315,8 @@ pair_alloc:
     ld a, e
     nextreg NR_PAL_VALUE9, a
     nextreg NR_PAL_CTRL, PAL_L2_FIRST   ; restore the standing convention
+    xor a
+    ld (palLock), a
     pop af
     add a, a
     ret
