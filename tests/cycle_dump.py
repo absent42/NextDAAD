@@ -16,7 +16,6 @@
 # before and after and the read repeats until the step counter is unchanged.
 import argparse
 import pathlib
-import re
 import shutil
 import socket
 import subprocess

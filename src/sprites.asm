@@ -161,9 +161,11 @@ spr_pal_enter:
     ld (sprPalSave), a
     and %00000111
     or PAL_SPR_EDIT
-    nextreg NR_PAL_CTRL, a
+    ld e, a
     ld a, 1
     ld (palLock), a
+    ld a, e
+    nextreg NR_PAL_CTRL, a
     ret
 spr_pal_leave:
     ld a, (sprPalSave)
@@ -568,10 +570,9 @@ spr_find_record:
     scf
     ret
 
-; ISR, sprites page mapped by isr_hook_body. One step per cycFrames frames:
-; read the displayed Layer 2 bank's range into cycScratch, write it back one
-; index down. Skips (never queues) while a foreground NR $44 burst is open:
-; a $40/$41/$43 write resets the $44 pair (core nextreg.txt 0x44). Corrupts everything.
+; ISR, sprites page mapped by isr_hook_body. One step per cycFrames
+; frames: rotates the displayed Layer 2 range through cycScratch. Skips
+; (never queues) while a foreground NR $44 burst is open. Corrupts everything.
 cyc_tick:
     ld hl, cycCount
     dec (hl)

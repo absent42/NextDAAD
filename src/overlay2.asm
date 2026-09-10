@@ -1503,7 +1503,7 @@ h_gfx:
 .palget:                         ; sub 10: B = flag f; f = index; f+1..f+3 <- R, G, B as 0, 32, .. 224
     ld a, b
     cp 253
-    jp nc, .palbad5              ; out of jr range, see below
+    jp nc, .palbad5              ; jp for uniformity with .palset's exits
     ld h, high flags
     ld l, b
     ld c, (hl)                   ; 255 allowed: reads the transparent colour
@@ -1553,12 +1553,9 @@ h_gfx:
     ld e, 5
     jp .cycrefuse                ; out of jr range
 
-; NR $43 edit value for GFX 9/10: the bank the display shows, or the OTHER
-; bank while a DISPLAY reveal is pending (the staged palette, carried by the
-; reveal's mirror). Live display bits kept, svc_palread's derivation.
-; Out: A = value to program, D = the live NR $43 to restore. Corrupts AF, E.
-; Placed after the two handlers, not before: a bare label here would end
-; h_gfx's dot-local scope and strand .palset/.palget outside it.
+; NR $43 edit value for GFX 9/10: the bank the display shows, or the other
+; bank while a DISPLAY reveal is pending. Placed after the two handlers -
+; a bare label here would end h_gfx's dot-local scope. Out: A = value to program, D = the live NR $43 to restore. Corrupts AF, E.
 gfx_pal_ctl:
     ld e, NR_PAL_CTRL
     call nr_read

@@ -7,6 +7,8 @@
 ; from the top, and the second entry picks the script up from S11.
 ; The text window sits BELOW the card (rows 16-31): the card covers
 ; tilemap rows 0-15, and a hidden prompt would cost extra keys.
+; The storm (S13, /PRO 3-6) prints its X cells with MES, not MESSAGE:
+; MES has no trailing newline, so all 48 cells land on one row.
 
 /CTL
 _
@@ -202,7 +204,7 @@ LOOK   4  verb
              PROCESS 4
              PROCESS 5
              PROCESS 6
-             CLS
+             NEWLINE
              MESSAGE 12
              ANYKEY
              GFX 0 12
@@ -236,159 +238,155 @@ LOOK   4  verb
              MESSAGE 17
              DONE
 /PRO 3
-> _ _        CLS
-             PAPER 64
+> _ _        PAPER 64
              INK 128
-             MESSAGE 18
+             MES 18
              PAPER 65
              INK 129
-             MESSAGE 18
+             MES 18
              PAPER 66
              INK 130
-             MESSAGE 18
+             MES 18
              PAPER 67
              INK 131
-             MESSAGE 18
+             MES 18
              PAPER 68
              INK 132
-             MESSAGE 18
+             MES 18
              PAPER 69
              INK 133
-             MESSAGE 18
+             MES 18
              PAPER 70
              INK 134
-             MESSAGE 18
+             MES 18
              PAPER 71
              INK 135
-             MESSAGE 18
+             MES 18
              PAPER 72
              INK 136
-             MESSAGE 18
+             MES 18
              PAPER 73
              INK 137
-             MESSAGE 18
+             MES 18
              PAPER 74
              INK 138
-             MESSAGE 18
+             MES 18
              PAPER 75
              INK 139
-             MESSAGE 18
+             MES 18
              DONE
 /PRO 4
-> _ _        CLS
-             PAPER 76
+> _ _        PAPER 76
              INK 140
-             MESSAGE 18
+             MES 18
              PAPER 77
              INK 141
-             MESSAGE 18
+             MES 18
              PAPER 78
              INK 142
-             MESSAGE 18
+             MES 18
              PAPER 79
              INK 143
-             MESSAGE 18
+             MES 18
              PAPER 80
              INK 144
-             MESSAGE 18
+             MES 18
              PAPER 81
              INK 145
-             MESSAGE 18
+             MES 18
              PAPER 82
              INK 146
-             MESSAGE 18
+             MES 18
              PAPER 83
              INK 147
-             MESSAGE 18
+             MES 18
              PAPER 84
              INK 148
-             MESSAGE 18
+             MES 18
              PAPER 85
              INK 149
-             MESSAGE 18
+             MES 18
              PAPER 86
              INK 150
-             MESSAGE 18
+             MES 18
              PAPER 87
              INK 151
-             MESSAGE 18
+             MES 18
              DONE
 /PRO 5
-> _ _        CLS
-             PAPER 88
+> _ _        PAPER 88
              INK 152
-             MESSAGE 18
+             MES 18
              PAPER 89
              INK 153
-             MESSAGE 18
+             MES 18
              PAPER 90
              INK 154
-             MESSAGE 18
+             MES 18
              PAPER 91
              INK 155
-             MESSAGE 18
+             MES 18
              PAPER 92
              INK 156
-             MESSAGE 18
+             MES 18
              PAPER 93
              INK 157
-             MESSAGE 18
+             MES 18
              PAPER 94
              INK 158
-             MESSAGE 18
+             MES 18
              PAPER 95
              INK 159
-             MESSAGE 18
+             MES 18
              PAPER 96
              INK 160
-             MESSAGE 18
+             MES 18
              PAPER 97
              INK 161
-             MESSAGE 18
+             MES 18
              PAPER 98
              INK 162
-             MESSAGE 18
+             MES 18
              PAPER 99
              INK 163
-             MESSAGE 18
+             MES 18
              DONE
 /PRO 6
-> _ _        CLS
-             PAPER 100
+> _ _        PAPER 100
              INK 164
-             MESSAGE 18
+             MES 18
              PAPER 101
              INK 165
-             MESSAGE 18
+             MES 18
              PAPER 102
              INK 166
-             MESSAGE 18
+             MES 18
              PAPER 103
              INK 167
-             MESSAGE 18
+             MES 18
              PAPER 104
              INK 168
-             MESSAGE 18
+             MES 18
              PAPER 105
              INK 169
-             MESSAGE 18
+             MES 18
              PAPER 106
              INK 170
-             MESSAGE 18
+             MES 18
              PAPER 107
              INK 171
-             MESSAGE 18
+             MES 18
              PAPER 108
              INK 172
-             MESSAGE 18
+             MES 18
              PAPER 109
              INK 173
-             MESSAGE 18
+             MES 18
              PAPER 110
              INK 174
-             MESSAGE 18
+             MES 18
              PAPER 111
              INK 175
-             MESSAGE 18
+             MES 18
              DONE
 /END

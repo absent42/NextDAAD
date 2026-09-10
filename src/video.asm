@@ -2698,9 +2698,8 @@ vid_run:
 .restore_tail:
     ; vidPlaying: cleared here, the single restore tail (reached only
     ; via vid_run_restore_body's jp back to this label) - dominates
-    ; both exits below; the failed-open bail clears it itself before its
-    ; jump into .sfxresume (.sfxresume's ret z and its tail-jump into
-    ; sfx_vid_resume) so neither can leave the flag stuck set.
+    ; both exits below; the failed-open bail clears it itself before
+    ; its jump into .sfxresume.
     xor a
     ld (vidPlaying), a
  IFDEF DEBUG

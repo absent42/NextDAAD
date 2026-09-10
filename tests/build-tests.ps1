@@ -1208,9 +1208,11 @@ function Assert-PaletteWriterCensus {
     # sprites 8 = the two sprite block writers (4) + cyc_tick's own four (its
     # .wr loop and the last-entry pair); tilemap 2 = tm_pal_write9, boot-only;
     # tmpairs 4 = pair_alloc; video 4 = pre-arm writers (vid_pal_black, the
-    # snapshot save cluster) that run under the tick's vidPlaying test, and
+    # vid_snap_restore_body) that run under the tick's vidPlaying test, and
     # in-clip ops that run under the hook suspend. A new writer changes a
     # count and fails the build until the lock question is answered.
+    # DEBUG only: the console's txt_init reruns tm_pal_write9 unbracketed; a
+    # wrong reserved pair at worst.
     $want = @{ 'src\overlay2.asm' = 9; 'src\sprites.asm' = 8; 'src\tilemap.asm' = 2; 'src\tmpairs.asm' = 4; 'src\video.asm' = 4 }
     foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
         $rel = 'src\' + $f.Name
