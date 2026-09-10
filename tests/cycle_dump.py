@@ -135,7 +135,7 @@ def read_scratch(z, count):
             z.cmd("set-memory-zone -1")
         after = State(z).steps
         if before == after:
-            return data
+            return data, after
         time.sleep(0.05)
     sys.exit("cycle_dump: cycScratch never held still across a read")
 
@@ -211,10 +211,10 @@ def check_rotation(z, s, tag, base=0):
     per step. `base` is the step count when the range last held the
     identity (the cumulative counter also counts S6's full-range steps)."""
     count = s.last - s.first + 1
-    data = read_scratch(z, count)
-    shift = (s.steps - base - 1) % count
+    data, steps = read_scratch(z, count)
+    shift = (steps - base - 1) % count
     want = b"".join(identity_entry(s.first + ((p + shift) % count)) for p in range(count))
-    expect(data == want, "%s scratch is not the identity range rotated %d (steps %d, base %d)" % (tag, shift, s.steps, base))
+    expect(data == want, "%s scratch is not the identity range rotated %d (steps %d, base %d)" % (tag, shift, steps, base))
 
 
 def run(z, verbose, upto):

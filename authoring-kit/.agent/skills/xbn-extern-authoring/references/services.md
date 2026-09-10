@@ -90,16 +90,18 @@ fade module's fn 43 and the clock and timer modules are the worked patterns.
 
 Writing the tilemap at `$6000` from the hook is legitimate and race-free - the
 interrupt handler never remaps that window on its own account - EXCEPT while a
-video clip with an audio track is playing. For the clip's whole duration the
-interpreter borrows that same window as the clip's audio feed, and the hook
-keeps firing. A write from the hook during that span lands in the audio buffer
-and corrupts the clip's sound.
+video clip with an audio track is playing. From a clip's arm point to its
+teardown the interpreter borrows that same window as the clip's audio feed
+and suspends the hook for that same span, so a write from the hook can no
+longer land there. During a clip's open and prefill, before the arm point,
+the hook still runs and the tilemap is still the game's.
 
 Call `SVC_BUSY` at the top of the hook and skip the frame while bit 0 is set:
 emit nothing, advance nothing, so your output resumes where it stopped. Bit 1
-is the SD card, bit 2 the interpreter's palette or reveal critical section.
-Bits 0 and 2 read 0 from the foreground - they are only ever observable from
-the hook.
+is the SD card, bit 2 the interpreter's palette or reveal critical section,
+and bit 3 whether a colour cycle is armed. Bits 0 and 2 read 0 from the
+foreground - they are only ever observable from the hook - but bit 3 reads
+the same from either context.
 
 ### The live text width
 

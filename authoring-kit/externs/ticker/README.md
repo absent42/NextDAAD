@@ -23,11 +23,10 @@ It demonstrates the things every XBN author needs to know:
   writes the tilemap needs
 - checking SVC_BUSY before writing the tilemap from the hook: while a
   video clip is playing the interpreter borrows the tilemap as the
-  clip's audio ring buffer. The interpreter now suspends the hook for
-  the clip's whole duration, so the check fires only during a clip's
-  open and prefill, before the interpreter suspends the hook for the
-  clip itself; it stays as the defensive shape any tilemap-writing hook
-  can copy
+  clip's audio ring buffer. The interpreter now suspends the hook from
+  a clip's arm point to its teardown, so the check fires only during
+  the clip's open and prefill; it stays as the defensive shape any
+  tilemap-writing hook can copy
 
 ## How to build
 

@@ -72,10 +72,11 @@ reserved band and 0-63 as the interpreter's.
 
 ## The tilemap during video clips
 
-**Lesson.** A hook writing the tilemap during a video clip with an audio track
-corrupted the clip's sound, because the interpreter borrows that same window
-as the clip's audio feed for the clip's whole duration - and the hook keeps
-firing throughout.
+**Lesson.** A hook writing the tilemap while a video clip's audio feed was
+using it corrupted the clip's sound. The interpreter now suspends the hook
+from a clip's arm point to its teardown, closing that window; during a
+clip's open and prefill, before the arm point, the hook still runs and the
+tilemap is still the game's.
 
 **Rule.** Call `SVC_BUSY` at the top of any hook that writes the tilemap and
 skip the frame while bit 0 is set. Emit nothing and advance nothing, so your
