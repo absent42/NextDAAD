@@ -1031,13 +1031,17 @@ h_display:
     ret                         ; idempotent when the mode is unchanged
 
 ; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused by every
-; sub except 13, 14, 16 and 17 - the video number for 13/14 (see .vidgo
-; below), the font number for 16 (see .font/GFX_SUB_FONT below) and the
-; layer-order selector for 17 (see .layer/GFX_SUB_LAYER below);
-; every OTHER implemented sub's buffer operation takes no meaningful P1
-; (jdaad parity: jdaad.js's _GFX() switches on Parameter2 alone -
-; P1 is a flag number here for 9, 10 and 11 too, unlike jdaad's own
-; sub 9/10 store/recall). Sub map pinned against the DAAD
+; sub except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20 and 21 - a flag
+; number for 9, 10 and 11 (see .palset/.palget/.cycstart below), the
+; video number for 13/14 (see .vidgo below), the font number for 16
+; (see .font/GFX_SUB_FONT below), the layer-order selector for 17
+; (see .layer/GFX_SUB_LAYER below), the text-width selector for 18
+; (see .txtmode below), and the sprite set number for 19 and 21 or a
+; flag index for 20 (see .sprstart/.sprflags/.sprstop below); every
+; OTHER implemented sub's buffer operation takes no meaningful P1
+; (jdaad parity: jdaad.js's _GFX() switches on Parameter2 alone, and
+; its own sub 9/10 is a numbered store/recall rather than live data).
+; Sub map pinned against the DAAD
 ; condact reference (GFX Routines, condact 87) and jdaad.js _GFX()/
 ; DB*() (ASSETS/HTML/jdaad.js ~3676/~4360), plus sub 16 (NextDAAD-only,
 ; not in that reference):
