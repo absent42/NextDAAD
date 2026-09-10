@@ -2714,6 +2714,8 @@ vid_run:
     ld hl, xbnIntOn              ; a hook never observes bit 0 set
     or (hl)
     ld (xbnIntOn), a
+    xor a
+    ld (vidSvHook), a            ; consumed, like vidSvSfxRes: a bench abort must not OR a stale mask back
     ; --- AUTO-RESUME (owner ruling 2026-08-10). The teardown is over:
     ; audEnable, the IM2 stub and the CTC/DAC parks are all back, the
     ; CMD18 window is closed and the video handle is F_CLOSEd, so the
@@ -3833,7 +3835,7 @@ vidSvMmu7:       db 0
 ; (which reach .restore_tail without ever running vid_run's capture -
 ; see nxb_reclaim) from resuming a previous session's effect.
 vidSvSfxRes:     db 0
-vidSvHook:       db 0            ; HOOK_XBN|HOOK_CYC bits suspended for the clip
+vidSvHook:       db 0            ; HOOK_XBN|HOOK_CYC bits suspended for the clip, zeroed when consumed
 
  IFDEF DEBUG
 ; DEBUG session-report state. vidTlFrames..vidLoopPass is zeroed at
