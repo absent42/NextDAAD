@@ -478,11 +478,12 @@ A few things worth knowing about specific rows:
   so never read the seconds on that path. Foreground only. The
   realtime module wraps it.
 - **`SVC_BUSY` tells the hook what the interpreter is in the middle
-  of.** Bit 0 a video clip is playing (the tilemap window is the clip's
-  audio feed - do not write it), bit 1 the SD card is busy, bit 2 the
-  interpreter is programming a palette or revealing a buffered picture.
-  Bits 0 and 2 are only ever set while a hook could observe them; from
-  the foreground they read 0.
+  of.** Bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2
+  the interpreter is programming a palette or revealing a buffered
+  picture, bit 3 a colour cycle (`GFX n 11`) is armed. Bit 0 is kept
+  for compatibility: the hook is suspended for a clip's whole duration,
+  so no hook ever sees it set. Bits 2 and 3 are only ever set while a
+  hook could observe them; from the foreground they read 0.
 - **`SVC_PALREAD` copies a Layer 2 palette bank into your buffer**, 256
   two-byte entries, exactly as the hardware holds them. A = 0 reads the
   bank the display is showing; A = 1 reads the other bank, which is

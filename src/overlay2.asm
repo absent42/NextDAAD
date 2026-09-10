@@ -1036,8 +1036,8 @@ h_display:
 ; layer-order selector for 17 (see .layer/GFX_SUB_LAYER below);
 ; every OTHER implemented sub's buffer operation takes no meaningful P1
 ; (jdaad parity: jdaad.js's _GFX() switches on Parameter2 alone -
-; Parameter1 only matters to its palette-store subs 9/10, which have no
-; NextDAAD analogue, see below). Sub map pinned against the DAAD
+; P1 is a flag number here for 9, 10 and 11 too, unlike jdaad's own
+; sub 9/10 store/recall). Sub map pinned against the DAAD
 ; condact reference (GFX Routines, condact 87) and jdaad.js _GFX()/
 ; DB*() (ASSETS/HTML/jdaad.js ~3676/~4360), plus sub 16 (NextDAAD-only,
 ; not in that reference):
