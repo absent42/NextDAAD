@@ -331,6 +331,22 @@ here.</p>
 <td>Clear the back surface.</td>
 </tr>
 <tr>
+<td>9</td>
+<td>Set one Layer 2 palette entry from flags. Flag <code>n</code> holds the palette index, flags <code>n+1</code>, <code>n+2</code> and <code>n+3</code> hold red, green and blue as 0-255; the Next keeps the top three bits of each channel. Index 255 is the reserved transparent entry and is ignored, and a colour that would make the entry transparent is nudged one green step, exactly as the picture loader does. The entry lands in the palette the display shows, or in the staged palette while a <code>DISPLAY 0</code> reveal is pending under sub 4. <code>n</code> above 252 is ignored. See <a href="#colour-cycling-and-palette-entries">Colour cycling and palette entries</a>.</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Read one Layer 2 palette entry into flags: flag <code>n</code> holds the index, flags <code>n+1</code>, <code>n+2</code> and <code>n+3</code> receive red, green and blue as 0, 32, 64 ... 224 - three bits per channel, shifted up. Same bank rule as 9; index 255 is allowed and reads the transparent colour. <code>n</code> above 252 is ignored.</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Start colour cycling. Flag <code>n</code> holds the first palette index, <code>n+1</code> the last, <code>n+2</code> the frames per step. Every <code>frames</code> frames the entries from first to last shift one index down: entry first takes entry first+1's colour, and entry last takes what entry first had. Nothing starts when frames is 0, when last is not above first, or when <code>n</code> is above 253; a last index of 255 is treated as 254. Starting while a cycle runs replaces it. See <a href="#colour-cycling-and-palette-entries">Colour cycling and palette entries</a>.</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Stop colour cycling. <code>n</code> is ignored. The palette stays exactly where the last step left it.</td>
+</tr>
+<tr>
 <td>13</td>
 <td>Play video <code>n</code> (<code>NNN.VID</code>) once. Identical to <code>SFX n 9</code> (<code>PLAYFLI</code>). See <a href="video.html">Video</a>.</td>
 </tr>
@@ -361,22 +377,6 @@ here.</p>
 <tr>
 <td>21</td>
 <td>Stop sprite set <code>n</code> and free its space; <code>n</code> 255 stops every set. Stopping a set that is not running does nothing. See <a href="sprites.html">Animated sprites</a>.</td>
-</tr>
-<tr>
-<td>9</td>
-<td>Set one Layer 2 palette entry from flags. Flag <code>n</code> holds the palette index, flags <code>n+1</code>, <code>n+2</code> and <code>n+3</code> hold red, green and blue as 0-255; the Next keeps the top three bits of each channel. Index 255 is the reserved transparent entry and is ignored, and a colour that would make the entry transparent is nudged one green step, exactly as the picture loader does. The entry lands in the palette the display shows, or in the staged palette while a <code>DISPLAY 0</code> reveal is pending under sub 4. <code>n</code> above 252 is ignored. See <a href="#colour-cycling-and-palette-entries">Colour cycling and palette entries</a>.</td>
-</tr>
-<tr>
-<td>10</td>
-<td>Read one Layer 2 palette entry into flags: flag <code>n</code> holds the index, flags <code>n+1</code>, <code>n+2</code> and <code>n+3</code> receive red, green and blue as 0, 32, 64 ... 224 - three bits per channel, shifted up. Same palette rule as 9. <code>n</code> above 252 is ignored.</td>
-</tr>
-<tr>
-<td>11</td>
-<td>Start colour cycling. Flag <code>n</code> holds the first palette index, <code>n+1</code> the last, <code>n+2</code> the frames per step. Every <code>frames</code> frames the entries from first to last shift one index down: entry first takes entry first+1's colour, and entry last takes what entry first had. Nothing starts when frames is 0, when last is not above first, or when <code>n</code> is above 253; a last index of 255 is treated as 254. Starting while a cycle runs replaces it. See <a href="#colour-cycling-and-palette-entries">Colour cycling and palette entries</a>.</td>
-</tr>
-<tr>
-<td>12</td>
-<td>Stop colour cycling. <code>n</code> is ignored. The palette stays exactly where the last step left it.</td>
 </tr>
 </tbody>
 </table>

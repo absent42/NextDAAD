@@ -57,9 +57,12 @@ SVC_GETDATE     equ XBN_API+33  ; esx M_GETDATE wrapper: CF clear with
 SVC_BUSY        equ XBN_API+36  ; out A = mask (bit0 vidPlaying, bit1
                                  ; cardBusy, bit2 palBusy, bit3 colour
                                  ; cycle armed); CF clear; corrupts AF, L.
-                                 ; The hook is suspended for a whole clip,
-                                 ; so bit0 is never seen set from it; bits
-                                 ; 2/3 read 0 from the foreground. ISR-safe.
+                                 ; bit0 reads 1 from the hook only during
+                                 ; a clip's open and prefill; the hook is
+                                 ; suspended from the arm point to the
+                                 ; teardown. bit2 reads 0 from the
+                                 ; foreground; bit3 reads the same from
+                                 ; either context. ISR-safe.
 SVC_PALREAD     equ XBN_API+39  ; in IX = 512-byte buffer, A = bank
                                  ; select (0 displayed, 1 other/staged);
                                  ; out 256 x (RRRGGGBB, %11000001-masked

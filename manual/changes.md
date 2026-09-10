@@ -15,9 +15,10 @@ game behaves, how it builds, or what the kit gives you, it is here.
   survives `RESTART` and video playback, stops on `LOAD`/`RAMLOAD`. See
   [Colour cycling and palette
   entries](graphics.md#colour-cycling-and-palette-entries).
-- **The `#int` hook is suspended during video clips.** Hook code no
-  longer needs to poll `SVC_BUSY` bit 0; a clip's own palette streaming
-  is now safe against any hook. `SVC_BUSY` bit 3 reports an armed cycle.
+- **The `#int` hook is suspended from a clip's arm point to its
+  teardown.** Hook code no longer needs to poll `SVC_BUSY` bit 0 to
+  keep a clip safe; a clip's own palette streaming is now protected by
+  the suspend. `SVC_BUSY` bit 3 reports an armed cycle.
 
 ## 0.9.0 - 3 September 2026
 

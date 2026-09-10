@@ -119,8 +119,10 @@ ext:
 
 int:
     ; Runs once per frame (50Hz) for every game with an XBN loaded and
-    ; an intEntry set, whether or not the ticker is armed - so this must
-    ; stay CHEAP and return fast when idle. IX = flags base (unused
+    ; an intEntry set (not while a clip is armed - the interpreter
+    ; suspends the hook from its arm point to its teardown), whether or
+    ; not the ticker is armed - so this must stay CHEAP and return fast
+    ; when idle. IX = flags base (unused
     ; here); the interpreter saves and restores full context around
     ; this call, so nothing needs preserving.
     ld a, (armed)

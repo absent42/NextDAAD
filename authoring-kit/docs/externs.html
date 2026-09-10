@@ -317,15 +317,16 @@ are not optional:</p>
   only legal interrupt-context entry point into your code.</li>
 <li><strong>Direct tilemap writes are fine.</strong> Writing to the tilemap at <code>$6000</code>
   from inside the hook is legitimate and race-free: the interrupt
-  handler never remaps that window on its own account, and while a
-  video clip borrows that window as its audio feed the hook is not run
-  at all - the interpreter suspends the <code>#int</code> hook from the moment a
-  clip is armed until its teardown has restored the screen. Frames the
-  hook was not invoked for are still visible through <code>SVC_FRAMES</code>, so
-  a hook that measures elapsed time as a delta from that counter (the
-  clock and timer examples) loses nothing; a hook that emits something
-  per invocation (the ticker) simply pauses for the clip. Checking
-  <code>SVC_BUSY</code> bit 0 in the hook is harmless but no longer necessary.</li>
+  handler never remaps that window on its own account. During a clip's
+  open and prefill the hook still runs and bit 0 reads 1 (the tilemap
+  is untouched then); from the moment the clip is armed until its
+  teardown has restored the screen the hook does not run at all. Frames
+  the hook was not invoked for are still visible through <code>SVC_FRAMES</code>,
+  so a hook that measures elapsed time as a delta from that counter
+  (the clock and timer examples) loses nothing; a hook that emits
+  something per invocation (the ticker) simply pauses for the clip. A
+  hook that must not write during a clip can still test bit 0; the
+  interpreter no longer relies on it doing so.</li>
 <li><strong>Do not cycle and fade at once.</strong> <code>SVC_BUSY</code> bit 3 says a colour
   cycle is armed. The fade example does not check it; the game stops
   the cycle (<code>GFX 0 12</code>) before <code>EXTERN 0 40</code> and restarts it after
@@ -491,7 +492,7 @@ to each row, so you call them by name:</p>
 <td>12</td>
 <td><code>SVC_BUSY</code></td>
 <td>-</td>
-<td>A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section, bit 3 a colour cycle (<code>GFX n 11</code>) is armed. Unassigned bits read 0. Bit 0 is kept for compatibility: the hook is suspended for a clip's whole duration, so no hook ever sees it set; bits 2 and 3 are only ever observable from the hook</td>
+<td>A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section, bit 3 a colour cycle (<code>GFX n 11</code>) is armed. Unassigned bits read 0. During a clip's open and prefill the hook still runs and bit 0 reads 1 (the tilemap is untouched then); from the moment the clip is armed until its teardown has restored the screen the hook does not run at all. A hook that must not write during a clip can still test bit 0; the interpreter no longer relies on it doing so. Bit 2 is only ever observable from the hook; bit 3 reads the same from either context. Bit 0 is kept for compatibility (see the hook rules for when it reads 1)</td>
 <td>yes</td>
 </tr>
 <tr>
@@ -570,9 +571,10 @@ registers a row's Out column names carry a result.</p>
   of.</strong> Bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2
   the interpreter is programming a palette or revealing a buffered
   picture, bit 3 a colour cycle (<code>GFX n 11</code>) is armed. Bit 0 is kept
-  for compatibility: the hook is suspended for a clip's whole duration,
-  so no hook ever sees it set. Bits 2 and 3 are only ever set while a
-  hook could observe them; from the foreground they read 0.</li>
+  for compatibility: the hook runs (and can see it set) during a clip's
+  open and prefill, then is suspended from the clip's arm point to its
+  teardown. Bit 2 is only ever observable from the hook; bit 3 reads
+  the same from either context.</li>
 <li><strong><code>SVC_PALREAD</code> copies a Layer 2 palette bank into your buffer</strong>, 256
   two-byte entries, exactly as the hardware holds them. A = 0 reads the
   bank the display is showing; A = 1 reads the other bank, which is

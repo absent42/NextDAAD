@@ -323,15 +323,16 @@ are not optional:
   only legal interrupt-context entry point into your code.
 - **Direct tilemap writes are fine.** Writing to the tilemap at `$6000`
   from inside the hook is legitimate and race-free: the interrupt
-  handler never remaps that window on its own account, and while a
-  video clip borrows that window as its audio feed the hook is not run
-  at all - the interpreter suspends the `#int` hook from the moment a
-  clip is armed until its teardown has restored the screen. Frames the
-  hook was not invoked for are still visible through `SVC_FRAMES`, so
-  a hook that measures elapsed time as a delta from that counter (the
-  clock and timer examples) loses nothing; a hook that emits something
-  per invocation (the ticker) simply pauses for the clip. Checking
-  `SVC_BUSY` bit 0 in the hook is harmless but no longer necessary.
+  handler never remaps that window on its own account. During a clip's
+  open and prefill the hook still runs and bit 0 reads 1 (the tilemap
+  is untouched then); from the moment the clip is armed until its
+  teardown has restored the screen the hook does not run at all. Frames
+  the hook was not invoked for are still visible through `SVC_FRAMES`,
+  so a hook that measures elapsed time as a delta from that counter
+  (the clock and timer examples) loses nothing; a hook that emits
+  something per invocation (the ticker) simply pauses for the clip. A
+  hook that must not write during a clip can still test bit 0; the
+  interpreter no longer relies on it doing so.
 - **Do not cycle and fade at once.** `SVC_BUSY` bit 3 says a colour
   cycle is armed. The fade example does not check it; the game stops
   the cycle (`GFX 0 12`) before `EXTERN 0 40` and restarts it after
@@ -416,7 +417,7 @@ to each row, so you call them by name:
 | 9 | `SVC_GETMSG` | A = user message number | HL = buffer, BC = length (max 256, truncated); CF set + A = `$FF` when the number is out of range (the buffer is not written) | no |
 | 10 | `SVC_FRAMES` | - | HL = the interpreter's free-running 50Hz frame counter, 16 bits, wrapping. Compare against a snapshot; never read it as absolute time | yes |
 | 11 | `SVC_GETDATE` | - | CF clear: BC = MS-DOS packed date, DE = MS-DOS packed time, H = seconds, L = hundredths (`$FF` if the RTC has none). CF set = no RTC or invalid: BC = DE = 0 and HL is undefined - never read the seconds on that path | no |
-| 12 | `SVC_BUSY` | - | A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section, bit 3 a colour cycle (`GFX n 11`) is armed. Unassigned bits read 0. Bit 0 is kept for compatibility: the hook is suspended for a clip's whole duration, so no hook ever sees it set; bits 2 and 3 are only ever observable from the hook | yes |
+| 12 | `SVC_BUSY` | - | A = busy bits: bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2 the interpreter is inside its palette or reveal critical section, bit 3 a colour cycle (`GFX n 11`) is armed. Unassigned bits read 0. During a clip's open and prefill the hook still runs and bit 0 reads 1 (the tilemap is untouched then); from the moment the clip is armed until its teardown has restored the screen the hook does not run at all. A hook that must not write during a clip can still test bit 0; the interpreter no longer relies on it doing so. Bit 2 is only ever observable from the hook; bit 3 reads the same from either context. Bit 0 is kept for compatibility (see the hook rules for when it reads 1) | yes |
 | 13 | `SVC_PALREAD` | IX = 512-byte buffer, A = bank select: 0 the bank the display shows, 1 the other bank (the staged palette while `GFX 0 4` buffer mode is open) | 256 entries of two bytes: RRRGGGBB, then a second byte masked to `%11000001` (bits 7-6 the priority field, bit 0 the blue LSB); IX ends at buffer+512 | no |
 | 14 | `SVC_WINDOW` | A = window number 0-7 | A = the previously selected window, after selecting window A through the interpreter's own machinery; CF set and no change for A > 7. Selecting flushes the pending word of the window being left and may raise the More prompt there | no |
 
@@ -481,9 +482,10 @@ A few things worth knowing about specific rows:
   of.** Bit 0 a video clip is playing, bit 1 the SD card is busy, bit 2
   the interpreter is programming a palette or revealing a buffered
   picture, bit 3 a colour cycle (`GFX n 11`) is armed. Bit 0 is kept
-  for compatibility: the hook is suspended for a clip's whole duration,
-  so no hook ever sees it set. Bits 2 and 3 are only ever set while a
-  hook could observe them; from the foreground they read 0.
+  for compatibility: the hook runs (and can see it set) during a clip's
+  open and prefill, then is suspended from the clip's arm point to its
+  teardown. Bit 2 is only ever observable from the hook; bit 3 reads
+  the same from either context.
 - **`SVC_PALREAD` copies a Layer 2 palette bank into your buffer**, 256
   two-byte entries, exactly as the hardware holds them. A = 0 reads the
   bank the display is showing; A = 1 reads the other bank, which is
