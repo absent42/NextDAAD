@@ -325,7 +325,7 @@ aud_music_stop:
     push hl
     ld hl, audSilenceSong
     call aud_init_song              ; audPlayerUp = 1 before the restore
-    pop hl                          ; below: different cells, ISR-only
+    pop hl                          ; below: one aud_tick pass, no reader between
     ld (PLY_AKY_CHANNEL1_SOUNDEFFECTDATA), hl
     ld hl, audFlags
     res 0, (hl)
@@ -367,9 +367,9 @@ aud_init_song:
 ; Poison the AKY player's four R13 (envelope shape) shadow cells with
 ; $FF so the first hardware-envelope note of a newly started song is
 ; guaranteed to WRITE R13 and therefore RETRIGGER the envelope
-; generator. Called after every PLY_AKY_INIT - all three sites, which
-; are the only ones in the tree (aud_tick's start-music, aud_music_stop
-; and aud_ensure_player above).
+; generator. Called only from aud_init_song, after its PLY_AKY_INIT;
+; the three song-start routes (aud_tick's start-music, aud_music_stop
+; and aud_ensure_player) all reach it through that shared tail.
 ;
 ; THE DEFECT. PLY_AKY_SENDPSGREGISTERS_SPECTRUMRELATED pushes R0-R12
 ; out unconditionally through an outi chain, but writes R13 only when
