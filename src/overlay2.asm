@@ -58,7 +58,8 @@ l2_mode_set:
 ; reset + 4x NR $18: X1,X2,Y1,Y2, guide 650-669) and zeroes the scroll
 ; offset (NR $16/$17, guide 623-639). Split from l2_mode_set so the
 ; DEBUG flow can re-assert the window after its diagnostic runs.
-; Mirrors what it writes into l2ClipX1/X2/Y1/Y2 as a software shadow:
+; Mirrors X2/Y2 into l2ClipX2/l2ClipY2 (the X1/Y1 shadow below is
+; DEBUG-only; the hardware always gets literal zeroes for X1/Y1):
 ; NR $18 cannot be read back for a diagnostic - per wiki.specnext.dev/
 ; NextReg:$18 a WRITE auto-increments the index (guide 658) but a READ
 ; does not - so the shadow is the only reliable source of the window
@@ -79,9 +80,11 @@ l2_clip_set:
     ld a, 255                     ; Y2 = 255
     ld (l2ClipY2), a
 .prog:
-    xor a
+ IFDEF DEBUG                      ; the X1/Y1 shadow exists only for l2dbg_status2;
+    xor a                         ; only l2scr_clip_inset (DEBUG) ever sets it non-zero
     ld (l2ClipX1), a
     ld (l2ClipY1), a
+ ENDIF
     nextreg NR_CLIP_IDX, 1        ; bit0: reset the Layer 2 clip index
     nextreg NR_L2_CLIP, 0         ; X1
     ld a, (l2ClipX2)
@@ -95,9 +98,13 @@ l2_clip_set:
     nextreg NR_L2_YOFS, 0
     ret
 
-l2ClipX1: db 0
+ IFDEF DEBUG
+l2ClipX1: db 0                    ; DEBUG shadow cells (see .prog above)
+ ENDIF
 l2ClipX2: db 0
+ IFDEF DEBUG
 l2ClipY1: db 0
+ ENDIF
 l2ClipY2: db 0
 
 ; Enable Layer 2 display (NR $69 bit 7, guide 713-723) via read-modify-
