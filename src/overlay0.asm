@@ -869,7 +869,9 @@ obj_find_pass:
     ld a, (numObj)
     cp b
     jr z, .miss
+ IFDEF DEBUG
     call objscan_tick           ; SP14c gate follow-up: OV0-3 measurement
+ ENDIF
     ld a, b
     push bc
     push de
@@ -1266,7 +1268,9 @@ h_dropall:                      ; 30
     ld a, (numObj)
     cp b
     ret z
+ IFDEF DEBUG
     call objscan_tick           ; SP14c gate follow-up: OV0-3 measurement
+ ENDIF
     ld a, b
     push bc
     call obj_ptr
@@ -1439,7 +1443,9 @@ owf_core:
     ld a, (numObj)
     cp d
     jr z, .fin
+ IFDEF DEBUG
     call objscan_tick           ; SP14c gate follow-up: OV0-3 measurement
+ ENDIF
     ld a, d
     push bc
     push de
@@ -1476,7 +1482,9 @@ weight_total:
     ld a, (numObj)
     cp b
     jr z, .done
+ IFDEF DEBUG
     call objscan_tick           ; SP14c gate follow-up: OV0-3 measurement
+ ENDIF
     ld a, b
     push bc
     call obj_ptr

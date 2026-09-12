@@ -346,7 +346,9 @@ list_at:
     ld a, (numObj)
     cp b
     jr z, .counted
+ IFDEF DEBUG
     call objscan_tick           ; SP14c gate follow-up: OBJ1 measurement
+ ENDIF
     ld a, b
     push bc
     push de
@@ -391,7 +393,9 @@ list_at:
     ld a, (numObj)
     cp b
     jr z, .done
+ IFDEF DEBUG
     call objscan_tick           ; SP14c gate follow-up: OBJ1 measurement
+ ENDIF
     ld a, b
     push bc
     push de
