@@ -2874,6 +2874,19 @@ aud_music_stop_wait:
     jr nz, .wait
     ret
 
+; Read one byte past the expected end of the open audHandle file.
+; Out: CF = read error; Z = at EOF; NZ = a byte followed (oversize).
+; Corrupts AF, BC, HL, IX.
+aud_probe_eof:
+    ld a, (audHandle)
+    ld ix, audProbe
+    ld bc, 1
+    call esx_fread
+    ret c
+    ld a, b
+    or c
+    ret
+
 ; aud_load_song: A = song number ($FF = GAME.AKY). Loads NNN.AKY into
 ; AUD_SONG_ORG through slot-6 windows: the song area spans the tail of
 ; page 48 (bank offset $1800-$1FFF = file bytes 0-$7FF) and the first
@@ -2937,13 +2950,8 @@ aud_load_song:
     sbc hl, bc
     jr nz, .loaded
     ; capacity reached: any further byte means oversize
-    ld a, (audHandle)
-    ld ix, audProbe
-    ld bc, 1
-    call esx_fread
+    call aud_probe_eof
     jr c, .failclose
-    ld a, b
-    or c
     jr nz, .failclose           ; oversize: no state committed (music
                                 ; already stopped, area inert)
 .loaded:
@@ -3011,13 +3019,8 @@ aud_load_sfb:
     sub 8
     or c                        ; BC == $0800?
     jr nz, .ok                  ; short read: fits
-    ld a, (audHandle)           ; full 2K: an extra byte = oversize
-    ld ix, audProbe
-    ld bc, 1
-    call esx_fread
+    call aud_probe_eof          ; full 2K: an extra byte = oversize
     jr c, .failclose
-    ld a, b
-    or c
     jr nz, .failclose
 .ok:
     ; effect count from the header: the SFB is a bare table of dw
@@ -3789,13 +3792,8 @@ aud_load_ays:
     ; == filesize-16). A trailing byte means the header lied - reject.
     ld a, AUD_PAGE_LO           ; a source page is in slot 6: map page 48 for
     call data_map_page          ; the probe target (and the commit below)
-    ld a, (audHandle)
-    ld ix, aysProbe
-    ld bc, 1
-    call esx_fread
+    call aud_probe_eof
     jp c, .failpost
-    ld a, b
-    or c
     jp nz, .failpost            ; trailing byte: oversize
     ; precompute the loop position + remainder into page-48 ays state
     ; (page 48 is in slot 6 now, so the ays* labels are addressable).
@@ -4061,7 +4059,6 @@ aysStrRem:     dw 0            ; streaming remaining, low word
 aysStrRemHi:   db 0            ; streaming remaining, high byte
 aysStrIdx:     db 0            ; current aysPageTab index while streaming
 aysStrWin:     dw 0            ; current window byte count
-aysProbe:      db 0            ; oversize one-byte probe target
 
     DISPLAY "overlay1 ends at ", $, " headroom ", /D, OVL_LIMIT - $
     ASSERT $ <= OVL_LIMIT
