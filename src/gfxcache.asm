@@ -38,26 +38,18 @@ gce_ptr:
 cache_find:
     ld e, a                     ; E = picture# to match
     ld hl, gfxCache
-    ld b, 0                     ; B = entry index
+    ld b, GFX_CACHE_MAX         ; B counts down; index = MAX - B
 .scan:
-    ld a, b
-    cp GFX_CACHE_MAX
-    jr z, .miss
     ld a, (hl)
     cp e
     jr z, .hit
-    ; SP14c batch B GFX1: Z80N ADD HL,nn needs no register, so the
-    ; push/pop bc bracket (it existed only to protect the loop
-    ; counter/comparand while a register held the constant) is gone.
-    add hl, GFX_ENTRY_SIZE
-    inc b
-    jr .scan
-.hit:
-    ld a, b
-    or a                        ; CF clear
+    add hl, GFX_ENTRY_SIZE      ; Z80N ADD HL,nn, no register needed
+    djnz .scan
+    scf                         ; not cached
     ret
-.miss:
-    scf
+.hit:
+    ld a, GFX_CACHE_MAX
+    sub b                       ; A = index, CF clear (B <= MAX)
     ret
 
 ; A = entry index. Bump the global tick and stamp it into the entry's
