@@ -1799,22 +1799,11 @@ gfx_open_chain:
 ; root pass) - but writing/probing gfxNamePart instead of gfxName.
 ; Runs the WHOLE chain before giving up. Corrupts everything.
 gfx_open_chain_part:
-    ld hl, gfxNamePart
-    ld (hl), 'P'
-    inc hl
-    ld (hl), 'A'
-    inc hl
-    ld (hl), 'R'
-    inc hl
-    ld (hl), 'T'
-    inc hl
     ld a, (curPart)
     add a, '0'
-    ld (hl), a
-    inc hl
-    ld (hl), '\'
-    inc hl                       ; hl = gfxNamePart+6
+    ld (gfxNamePart+4), a        ; "PART", digit, 92 and "." are baked; only the digit moves
     ld a, (gfxPicNum)
+    ld hl, gfxNamePart+6         ; -> NNN
     ld b, '0'-1
 .hund:
     inc b
@@ -1832,9 +1821,7 @@ gfx_open_chain_part:
     ld (hl), b
     inc hl
     add a, '0'
-    ld (hl), a
-    inc hl
-    ld (hl), '.'                 ; hl = gfxNamePart+9
+    ld (hl), a                   ; the '.' at +9 is baked
     ld hl, gfxExtTab
 .row:
     ld (gfxExtPtr), hl
@@ -3410,12 +3397,12 @@ GFX_EXT_ROW  equ GFX_EXT_NAME+2
 ; prefix, hence a separate buffer here rather than growing it. Layout
 ; mirrors gfxName exactly, shifted 6: +0-3 "PART", +4 part digit, +5
 ; '\', +6-8 NNN, +9 '.', +10-16 the 7-byte extension field, +17 the
-; final NUL - baked in at assembly (never rewritten at runtime, same
-; guarantee gfxName's own trailing NUL provides for the two 7-char
-; rows "NX2.ZX0"/"NXI.ZX0" that fill the extension field with no
-; internal NUL of their own). 6 (PARTn\) + 12 (gfxName's own size) = 18.
-gfxNamePart: ds 17
-             db 0
+; final NUL - the prefix, the '.' and the final NUL are baked at
+; assembly; only the digit, NNN and the extension field are written
+; per open. 6 (PARTn\) + 12 (gfxName's own size) = 18.
+gfxNamePart: db "PART0", 92, "000."   ; +4 digit and +6-8 NNN patched per open
+             ds 7                     ; +10-16 extension field (ldir per row)
+             db 0                     ; +17 final NUL, never rewritten
 
 gfxPicNum:     db 0              ; picture being loaded/staged
 gfxEntryIdx:   db 0              ; cache slot in use
@@ -3891,22 +3878,10 @@ font_load:
     dec a
     jr z, .rootonly              ; curPart == 1: skip straight to the
                                   ; root name (T5 idiom, gfx_open_chain)
-    ld hl, fontNamePart
-    ld (hl), 'P'
-    inc hl
-    ld (hl), 'A'
-    inc hl
-    ld (hl), 'R'
-    inc hl
-    ld (hl), 'T'
-    inc hl
     ld a, (curPart)
     add a, '0'
-    ld (hl), a
-    inc hl
-    ld (hl), '\'
-    inc hl                        ; hl = fontNamePart+6
-    ex de, hl
+    ld (fontNamePart+4), a       ; "PART", digit, 92 baked; only the digit moves
+    ld de, fontNamePart+6
     ld hl, fontNameBuf           ; copy the built name (9 or 10 bytes)
     ld a, (fontNameLen)
     ld c, a
@@ -4018,8 +3993,9 @@ fontNameLen:  db 9                ; bytes in fontNameBuf including the NUL
 fontCur:      db $FF              ; installed font, $FF = unknown. $FF at
                                   ; boot so the first install always runs.
 fontNameBuf:  ds 10               ; "FONTn.CHR",0 worst case
-; "PARTm\" (6) + the longest built name (10)
-fontNamePart: ds 16
+; "PARTm\" (6, prefix baked, digit patched) + the longest built name (10)
+fontNamePart: db "PART0", 92
+              ds 10
 fontNameStem: db "FONT"
 fontNameExt:  db ".CHR", 0
  IFDEF DEBUG
