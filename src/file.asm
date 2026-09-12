@@ -445,8 +445,11 @@ sav_write:
 
 ; Copy objTable[i].loc -> savLocs[i]. Out: BC = numObj. Corrupts A,HL,DE.
 sav_gather_locs:
-    ld hl, objTable
     ld de, savLocs
+; DE = destination: objTable[i].loc -> DE[i]. Out: BC = numObj.
+; Corrupts A, HL, DE. (h_ramsave's entry.)
+sav_gather_to:
+    ld hl, objTable
     ld a, (numObj)
     or a
     jr z, .none
@@ -466,10 +469,13 @@ sav_gather_locs:
 ; Copy savLocs[i] -> objTable[i].loc (inverse of sav_gather_locs).
 ; In: numObj resident. Corrupts A, HL, DE, B.
 sav_scatter_locs:
+    ld hl, savLocs
+; HL = source: HL[i] -> objTable[i].loc. Corrupts A, HL, DE, B.
+; (h_ramload's entry.)
+sav_scatter_from:
     ld a, (numObj)
     or a
     ret z
-    ld hl, savLocs
     ld de, objTable
     ld b, a
 .s:

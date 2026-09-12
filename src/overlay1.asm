@@ -2309,20 +2309,11 @@ h_ramsave:                      ; 62: flags + object locations -> buffer
     ld de, ramSaveBuf
     ld bc, 256
     ldir                         ; DE left at ramSaveBuf+256
-    ld hl, objTable
     ld a, (numObj)
     ld (ramSaveNObj), a          ; SP11 T4: snapshot's object count, for
                                   ; cross-part RAMLOAD's swapObjCount
                                   ; (xpart_load_entry, overlay0.asm)
-    or a
-    jr z, .mark
-    ld b, a
-.g:
-    ld a, (hl)
-    ld (de), a
-    inc de
-    add hl, OBJ_SIZE
-    djnz .g
+    call sav_gather_to           ; DE = ramSaveBuf+256 from the ldir above
 .mark:
     ld a, (curPart)
     ld (ramSavePart), a          ; SP11 T4: which part this snapshot
@@ -2341,20 +2332,9 @@ h_ramload:                      ; 63: restore locs + flags 0..B inclusive
     jp nz, .xpart                ; stored part != current part
     ; object locations first (buffer offset 256)
     ld hl, ramSaveBuf+256
-    ld de, objTable
-    ld a, (numObj)
-    or a
-    jr z, .flags
-    push bc                     ; preserve arg1 (B): .s below uses B as
-                                 ; its own djnz counter
-    ld b, a
-.s:
-    ld a, (hl)
-    ld (de), a
-    inc hl
-    add de, OBJ_SIZE
-    djnz .s
-    pop bc                      ; restore the original arg1
+    push bc                     ; arg1 (B) survives the scatter's djnz
+    call sav_scatter_from
+    pop bc
 .flags:
     ; flags 0..B inclusive = B+1 bytes (B=255 -> 256, no overflow)
     ld hl, ramSaveBuf
