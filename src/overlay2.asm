@@ -1224,17 +1224,14 @@ h_gfx:
     nextreg NR_L2_BANK, a
     ret
 .vidonce:
-    ld a, 0
+    ld c, 0
     jr .vidgo
 .vidloop:
-    ld a, 1
+    ld c, 1
 .vidgo:
-    ; B (video number) is untouched; C becomes vid_play's 0/1 loop
-    ; contract. ovl_map_page corrupts AF only (banks.asm) - B/C survive
-    ; the cross-page hop into video.asm, a different MMU7 page from this
-    ; one (the established push-target/ovl_map_page trampoline idiom -
-    ; xpart_load_fail's own hop, overlay0.asm).
-    ld c, a
+    ; B = video number, C = vid_play's 0/1 loop contract. ovl_map_page
+    ; corrupts AF only, so B and C survive the cross-page hop into
+    ; video.asm (the push-target/ovl_map_page trampoline idiom).
     ld hl, vid_play
     push hl
     ld a, VID_PAGE
@@ -1623,8 +1620,10 @@ gfx_load:
 .stage:
     ld a, (gfxEntryIdx)
     call gce_ptr
-    ld bc, GCE_MODE
-    add hl, bc
+    inc hl                       ; -> GCE_MODE
+    inc hl
+    inc hl
+    ASSERT GCE_MODE == 3
     ld a, (hl)
     ld (stagedMode), a
     inc hl
@@ -2091,7 +2090,6 @@ cache_drop:
     inc hl                       ; -> bankCount
     ld a, (hl)
     ld b, a                      ; B = bankCount
-    ld a, b
     or a
     jr z, .clear
 .free:
