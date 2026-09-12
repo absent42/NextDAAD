@@ -2501,16 +2501,15 @@ h_sfx:                          ; 18: B = n, C = sub-command
     jp z, .playloop
     cp 8
     jp z, .stopmusic
-    cp SFX_SUB_VID_ONCE
-    jp z, .vidonce
-    cp SFX_SUB_VID_LOOP
-    jp z, .vidloop
-    cp 11                       ; 11-16: the per-channel API (spec D6).
-    jr c, .unk                  ; 11/12 = play n once/looped PINNED to
-    cp 15                       ; channel 1, 13/14 the same for channel
-    jr c, .pinplay              ; 2, 15/16 = stop that channel and
-    cp 17                       ; release its pin. Decoded arithmetically
-    jp c, .pinstop              ; rather than with six more cp/jr pairs
+    sub SFX_SUB_VID_ONCE        ; 9/10 -> 0/1 = vid_play's C (once/loop)
+    cp 2
+    jp c, .vid
+    sub 2                       ; 11-16: the per-channel API (spec D6).
+    cp 4                        ; 11-14 -> 0-3: bit 0 looped, bit 1
+    jr c, .pinplay              ; channel 2 (pinned play)
+    sub 4                       ; 15/16 -> 0/1: stop channel 1/2
+    cp 2
+    jp c, .pinstop
 .unk:
  IFDEF DEBUG                    ; unknown sub-command: no-op with a
     push bc                     ; marker. Inline - overlay1 must NOT
@@ -2533,9 +2532,8 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ld (audReqSmpLoop), a
     xor a                       ; request 0 = auto-allocate a channel
     jr .smpgo
-.pinplay:                       ; 11-14 -> a NAMED channel + the loop bit
-    sub 11                      ; 0-3: bit 0 = looped, bit 1 = channel 2
-    ld e, a
+.pinplay:                       ; 11-14 arrive as 0-3: bit 0 = looped,
+    ld e, a                     ; bit 1 = channel 2
     and 1
     ld (audReqSmpLoop), a
     srl e
@@ -2638,8 +2636,8 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ld hl, audRequest
     set 1, (hl)
     jp .enable
-.pinstop:                       ; 15/16: stop that channel, release pin
-    sub 14                      ; 1 = channel 1, 2 = channel 2
+.pinstop:                       ; 15/16 arrive as 0/1: stop that channel,
+    inc a                       ; release pin. 1 = channel 1, 2 = channel 2
     jr .stopgo
 .stopfx:                        ; 5: the documented SUPERSET - both
     ld hl, audRequest           ; sampled channels AND the AY effect,
@@ -2689,15 +2687,10 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ld a, 1
     ld (audEnable), a
     ret
-.vidonce:
-    ld a, 0
-    jr .vidgo
-.vidloop:
-    ld a, 1
-.vidgo:
-    ; PLAYFLI/PLAYFLIL alias (design doc): B (video number) untouched, C
-    ; becomes vid_play's 0/1 loop contract - identical trampoline shape
-    ; to h_gfx's own GFX_SUB_VID_ONCE/LOOP handling (overlay2.asm).
+.vid:
+    ; PLAYFLI/PLAYFLIL alias (design doc): B (video number) untouched, A
+    ; arrives as 0/1 and becomes vid_play's C loop contract - identical
+    ; trampoline shape to h_gfx's GFX_SUB_VID_ONCE/LOOP (overlay2.asm).
     ld c, a
     ld hl, vid_play
     push hl
