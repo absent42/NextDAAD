@@ -862,21 +862,17 @@ inp_cell_of:
     ld b, a                     ; row
     ret
 
-; Set the window cursor to inpCur's cell.
+; Set the window cursor to inpCur's cell. win_field preserves BC.
 inp_place_cursor:
     ld a, (inpCur)
     call inp_cell_of
-    push bc
     ld a, WIN_CURX
     call win_field
-    pop bc
     ld (hl), c
-    push bc
-    ld a, WIN_CURY
-    call win_field
-    pop bc
+    inc hl                      ; WIN_CURY = WIN_CURX+1 (asserted)
     ld (hl), b
     ret
+    ASSERT WIN_CURY == WIN_CURX+1
 
 ; Cursor left/right just re-place after inpCur changed - aliases.
 inp_col_back:
