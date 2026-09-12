@@ -1950,12 +1950,9 @@ confirm_read:
     jr z, .done
     cp ' '
     jr c, .key                  ; other controls: ignored, not echoed
-    cp 'a'                      ; fold to upper before BOTH the echo and
-    jr c, .fold                 ; the latch: key_scan's map is lowercase
-    cp 'z'+1                    ; only (no caps/symbol layer down here -
-    jr nc, .fold                ; that lives in overlay1's kb_char), and
-    sub 32                      ; classic DAAD input reads all-caps
-.fold:
+    call fold_upper             ; fold to upper before BOTH the echo and
+                                ; the latch: key_scan's map is lowercase
+                                ; only; classic DAAD input reads all-caps
     ld c, a                     ; C = the char, for prn_char
     ld a, (cfmFirst)
     or a
@@ -1996,13 +1993,17 @@ confirm:
     push af
     call sm_first_char          ; D = compare SM's first char
     pop af
-    cp 'a'
-    jr c, .cmp
-    cp 'z'+1
-    jr nc, .cmp
-    sub 32
-.cmp:
+    call fold_upper
     cp d
+    ret
+
+; A = char. a-z folded to A-Z, anything else unchanged. Corrupts AF.
+fold_upper:
+    cp 'a'
+    ret c
+    cp 'z'+1
+    ret nc
+    sub 32
     ret
 
 h_quit:                         ; 20: condition - Y (SM30) confirms quit
