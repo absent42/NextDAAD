@@ -143,10 +143,8 @@ aud_tick:
     jr z, .no4
     res 4, (hl)
     ld hl, AUD_SONG_ORG
-    call PLY_AKY_INIT               ; also zeroes the effect channels
-    call aud_env_arm                ; and force the first envelope retrigger
-    ld a, 1
-    ld (audPlayerUp), a
+    call aud_init_song              ; INIT (zeroes the effect channels),
+                                    ; envelope arm, audPlayerUp = 1
     ld a, (audFlags)
     and %00001000                   ; keep beep; effect died with INIT
     or %00000001                    ; music playing
@@ -326,12 +324,9 @@ aud_music_stop:
     ld hl, (PLY_AKY_CHANNEL1_SOUNDEFFECTDATA)
     push hl
     ld hl, audSilenceSong
-    call PLY_AKY_INIT
-    call aud_env_arm
-    pop hl
+    call aud_init_song              ; audPlayerUp = 1 before the restore
+    pop hl                          ; below: different cells, ISR-only
     ld (PLY_AKY_CHANNEL1_SOUNDEFFECTDATA), hl
-    ld a, 1
-    ld (audPlayerUp), a
     ld hl, audFlags
     res 0, (hl)
     res 1, (hl)
@@ -359,6 +354,8 @@ aud_ensure_player:
     or a
     ret nz
     ld hl, audSilenceSong
+; HL = song: PLY_AKY_INIT, aud_env_arm, audPlayerUp = 1. Corrupts AF, DE, HL.
+aud_init_song:
     call PLY_AKY_INIT
     call aud_env_arm
     ld a, 1
