@@ -65,14 +65,10 @@ win_select:
     ld (curWin), hl
     ret
 
-; HL = curWin + offset A. Corrupts AF; preserves BC, DE.
+; HL = curWin + offset A. Corrupts AF (CF clear); preserves BC, DE.
 win_field:
-    push de
-    ld e, a
-    ld d, 0
     ld hl, (curWin)
-    add hl, de
-    pop de
+    add hl, a                   ; Z80N, clears CF (RTL-settled)
     ret
 
 ; B=y, C=x, D=h, E=w. Homes the cursor.
