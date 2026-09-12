@@ -3377,12 +3377,8 @@ aud_load_wav:
     ; RIFF header: "RIFF" dd size "WAVE"
     ld ix, wavHdr
     ld bc, 12
-    call .read
+    call .read                  ; CF: SD error or short read
     jp c, .failclose
-    ld hl, 12                   ; short read (EOF): BC untouched by
-    or a                        ; esxDOS, stale wavHdr would re-validate
-    sbc hl, bc                  ; forever - reject explicitly
-    jp nz, .failclose
     ld hl, (wavHdr)             ; "RI"
     ld de, "IR"                  ; little-endian word: 'R','I'
     or a
@@ -3401,10 +3397,6 @@ aud_load_wav:
     ld bc, 8
     call .read
     jp c, .failclose
-    ld hl, 8                    ; short read (EOF): BC untouched by
-    or a                        ; esxDOS, stale wavHdr would re-validate
-    sbc hl, bc                  ; forever - reject explicitly
-    jp nz, .failclose
     ld hl, (wavHdr)
     ld de, "mf"                  ; 'f','m' of "fmt "
     or a
@@ -3431,10 +3423,6 @@ aud_load_wav:
     ld bc, 16
     call .read
     jp c, .failclose
-    ld hl, 16                   ; short read (EOF): BC untouched by
-    or a                        ; esxDOS, stale wavFmt would re-validate
-    sbc hl, bc                  ; forever - reject explicitly
-    jp nz, .failclose
     ld hl, (wavFmt)             ; wFormatTag
     dec hl                      ; == 1 (PCM)?
     ld a, h
@@ -3604,21 +3592,24 @@ aud_load_wav:
 .fail:
     scf
     ret
-; BC bytes from the open file into IX. Out CF = SD error; BC = bytes
-; actually read (esx_fread contract). Accumulates every byte consumed
-; into wavDataOff: all reads on this path are sequential from offset 0
-; and there is no seek, so that running total IS the file position, and
-; the value it holds when the data chunk header has just been read is
-; the offset of the first payload byte. Preserves BC (the callers'
-; short-read checks need it); corrupts AF, HL.
+; Read BC bytes into IX; wavDataOff += bytes read (reads are sequential from
+; offset 0, so it is the file position, and the first payload byte's offset
+; once the data chunk header is in). CF = SD error or short read. Corrupts AF, HL.
 .read:
+    push bc
     ld a, (audHandle)
     call esx_fread
+    pop hl                      ; HL = requested count (pop sets no flags)
+    ret c                       ; SD error
+    or a
+    sbc hl, bc                  ; Z = full read; CF stays 0 (never reads more)
     push af
     ld hl, (wavDataOff)
     add hl, bc
     ld (wavDataOff), hl
     pop af
+    ret z                       ; NC: full read
+    scf                         ; short read
     ret
 
 ; aud_ctc_params and aud_clk16_tab moved to SFX_PAGE (src/audio/streamfx.asm)
