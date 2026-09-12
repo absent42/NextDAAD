@@ -671,6 +671,15 @@ obj_set_refs:
     ld (flags+FLAG_COATT+1), a
     ret
 
+; B = object: set the reference flags, then HL -> its objTable entry.
+; Corrupts AF, DE, HL; preserves BC. Shared opener of GET/DROP/WEAR/
+; REMOVE/PUTIN/TAKEOUT.
+setrefs_ptr:
+    ld a, b
+    call obj_set_refs
+    ld a, b
+    jp obj_ptr
+
 h_present:                      ; 4
     ld a, b
     call obj_ptr
@@ -1065,10 +1074,7 @@ h_ok:                           ; 23: SM15 then DONE, and NOTHING else.
                                 ; jdaad.js _OK), as does the manual.
 
 h_get:                          ; 40
-    ld a, b
-    call obj_set_refs
-    ld a, b
-    call obj_ptr
+    call setrefs_ptr
     ld a, (hl)
     cp OBJ_CARRIED
     jr z, .have
@@ -1103,10 +1109,7 @@ h_get:                          ; 40
     jp refuse
 
 h_drop:                         ; 41
-    ld a, b
-    call obj_set_refs
-    ld a, b
-    call obj_ptr
+    call setrefs_ptr
     ld a, (hl)                  ; HL stays on the location byte for the
     cp OBJ_WORN                 ; at-location test below (doc 01: cp (hl)
     jr z, .worn                 ; is 1 byte against a 3-byte reload)
@@ -1131,10 +1134,7 @@ h_drop:                         ; 41
     jp refuse
 
 h_wear:                         ; 42
-    ld a, b
-    call obj_set_refs
-    ld a, b
-    call obj_ptr
+    call setrefs_ptr
     ld d, (hl)                  ; SP16 B5: reference order is at-location,
     ld a, (flags+FLAG_PLAYER)   ; worn, not-carried, not-wearable - the
     cp d                        ; wearable test came FIRST here, which
@@ -1166,10 +1166,7 @@ h_wear:                         ; 42
     jp refuse
 
 h_remove:                       ; 39
-    ld a, b
-    call obj_set_refs
-    ld a, b
-    call obj_ptr
+    call setrefs_ptr
     ld d, (hl)                  ; SP16 B6: reference order is carried-or-
     ld a, d                     ; at-location (SM50), not-worn (SM23),
     cp OBJ_CARRIED              ; not-wearable, hands-full. SM23 was
@@ -1293,10 +1290,7 @@ h_dropall:                      ; 30
     jr .scan
 
 h_putin:                        ; 90: carried obj B -> container loc C
-    ld a, b
-    call obj_set_refs
-    ld a, b
-    call obj_ptr
+    call setrefs_ptr
     ld a, (hl)                  ; SP16 B7: worn -> SM24, at the player's
     cp OBJ_WORN                 ; location -> SM49, anywhere else ->
     jr z, .worn                 ; SM28 (only SM28 existed before)
@@ -1320,10 +1314,7 @@ h_putin:                        ; 90: carried obj B -> container loc C
     ld e, 44                    ; SP16 B1: "The _ is in the <name>."
     jp msg_in_obj
 h_takeout:                      ; 91: obj B out of container loc C
-    ld a, b
-    call obj_set_refs
-    ld a, b
-    call obj_ptr
+    call setrefs_ptr
     ld a, (hl)                  ; SP16 B8: full reference ladder
     cp OBJ_WORN
     jr z, .have
