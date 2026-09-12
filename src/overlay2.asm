@@ -164,37 +164,27 @@ l2_clear_back:
     ld a, (l2BackBank)
     add a, a
 l2_clear_at:
-    ld (l2PageCur), a
-    call data_save
-    ld a, L2_TRANSP_INDEX        ; the reserved PIXEL value. This used to
-    ld (l2FillByte), a           ; read NR $14 back and use the COLOUR as
-                                 ; a pixel index - it only worked because
-                                 ; the two numbers happened to coincide.
+    ld d, a                      ; D = 8K page cursor
+    call data_save               ; preserves DE (banks.asm)
     ld a, (l2Mode)
     or a
-    jr nz, .m320
-    ld a, 6
-    jr .cnt
-.m320:
-    ld a, 10
-.cnt:
-    ld (l2PageCnt), a
+    ld e, 6                      ; 256x192: 6 pages (ld e,n sets no flag)
+    jr z, .loop
+    ld e, 10                     ; 320x256: 10 pages
 .loop:
-    ld a, (l2PageCur)
-    call data_map_page
+    ld a, d
+    call data_map_page           ; corrupts AF only
     ld hl, DATA_WINDOW
-    ld a, (l2FillByte)
-    ld (hl), a
+    ld (hl), L2_TRANSP_INDEX     ; the reserved PIXEL value, not the NR $14 colour
+    push de
     ld de, DATA_WINDOW+1
     ld bc, 8191
     ldir
-    ld hl, l2PageCur
-    inc (hl)
-    ld hl, l2PageCnt
-    dec (hl)
+    pop de
+    inc d
+    dec e
     jr nz, .loop
-    call data_restore
-    ret
+    jp data_restore
 
 ; Copy all 256 Layer 2 palette entries from the SECOND bank into the
 ; FIRST, full 9 bits (both bytes, so the blue LSB and the per-pixel
@@ -388,9 +378,9 @@ l2_pal9_run:
     ret
 
 l2Mode:     db 0                 ; last mode set by l2_mode_set
-l2FillByte: db 0
-l2PageCur:  db 0
-l2PageCnt:  db 0
+ IFDEF DEBUG
+l2PageCur:  db 0                 ; tc_gradient_256/320 page cursor
+ ENDIF
 
 ; --- picture loader / blitter / PICTURE / DISPLAY (Tasks 4+5) ---
 ; File format (Gfx2Next -pal-embed): 512-byte palette (256 x 2-byte
