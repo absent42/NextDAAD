@@ -14,7 +14,7 @@ sprClaimMask: dw 0                ; palette blocks owned by 4-bit sets
 pointerMask:  dw 0                ; blocks the pointer pattern touches
 sprCache:     ds SPR_CACHE_MAX*CE_SIZE
 sprClock:     db 0                ; LRU clock, renormalised by the cache
-sprLoads:     db 0                ; SD reads since boot (cache misses), wraps
+sprLoads:     db 0                ; DEBUG: SD reads since boot (cache misses), wraps; 0 in Release
 ; scratch for the loader and the hardware path
 sprReqSet:    db 0
 sprReqOv:     db 0                ; 1 = position override in sprOvX/sprOvY
@@ -1473,8 +1473,10 @@ spr_open:
 ; the marker printed. Leaves slot 6 = SPR_TAB_PAGE. Corrupts everything.
 spr_cache_load:
     ld (sprLdSet), a
-    ld hl, sprLoads
+ IFDEF DEBUG                     ; sprLoads feeds only spr_dbg_snap; the cell stays
+    ld hl, sprLoads              ; in every build (SPR_DBG_BLOCK pins the layout)
     inc (hl)
+ ENDIF
     call spr_cache_victim
     ld (sprLdEntry), a
     push hl
