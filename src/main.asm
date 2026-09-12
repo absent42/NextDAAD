@@ -147,7 +147,6 @@ boot_data_init:
     ld a, TM_ATTR_DEFAULT
     ld (tmAttr), a             ; tilemap attribute (white on black)
     xor a
-    ld (tmUp), a               ; tilemap-live flag (see file.asm)
     ld (ramSaveOk), a          ; RAMSAVE-present guard for RAMLOAD
     ld (wrapLock), a           ; print-pipeline sentinels (print.asm)
     ld (wrapLen), a

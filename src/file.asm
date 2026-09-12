@@ -340,11 +340,6 @@ ddbChunk:    db 0
 ddbSize:     dw 0
 ddbSizeHi:   db 0           ; third byte of the 24-bit size
 scratchByte: db 0
-tmUp:        db 0           ; 1 once windows_init has run (tilemap live).
-                            ; No longer read by fatal() (which now forces
-                            ; the tilemap live itself via txt_init) - kept
-                            ; as a general tilemap-state flag in case
-                            ; anything else needs it.
 ; ddbVer IS header byte 0 - the resident header copy is already the
 ; cached version cell, so the V3 gate costs no extra storage and cannot
 ; drift out of step with the loaded database (SP16 T6).

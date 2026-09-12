@@ -42,8 +42,6 @@ windows_init:
     ld (hl), a                  ; attrInv - reserved pair 2, the cursor's
     inc hl                      ; boot inverse, until ink or paper change
     djnz .win
-    ld a, 1
-    ld (tmUp), a
     xor a
     ; fall through to win_select
 
@@ -66,18 +64,6 @@ win_field:
     ld hl, (curWin)
     add hl, a                   ; Z80N, clears CF (RTL-settled)
     ret
-
-; B=y, C=x, D=h, E=w. Homes the cursor.
-win_set_geom:
-    ld hl, (curWin)
-    ld (hl), c                  ; WIN_X
-    inc hl
-    ld (hl), b                  ; WIN_Y
-    inc hl
-    ld (hl), e                  ; WIN_W
-    inc hl
-    ld (hl), d                  ; WIN_H
-    ; fall through to win_home
 
 win_home:
     ld a, WIN_CURX
