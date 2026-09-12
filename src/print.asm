@@ -19,10 +19,7 @@ print_msg:
     jr c, .done
     call prn_decoded
     jr .loop
-.done:
-    call prn_flush              ; emit any pending word (no newline added)
-    jp data_restore
-.badnum:
+.badnum:                        ; falls into .done after the marker
  IFDEF DEBUG
     ld c, '?'
     call prn_char
@@ -33,7 +30,8 @@ print_msg:
     ld c, 'G'
     call prn_char
  ENDIF
-    call prn_flush              ; flush the ?MSG marker / any pending word
+.done:
+    call prn_flush              ; emit any pending word / the ?MSG marker
     jp data_restore
 
 ; A = decoded 7-bit character. Dispatches escapes, prints the rest.
