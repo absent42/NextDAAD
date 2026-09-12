@@ -1184,13 +1184,7 @@ h_gfx:
     ; inside the pend-check, so the not-pending ret z above never sees it.
     ld a, 1
     ld (palBusy), a
-    nextreg NR_PAL_CTRL, PAL_L2_SECOND
-    call l2_pal_mirror21
-    nextreg NR_PAL_CTRL, PAL_L2_FIRST
-    xor a
-    ld (gfxRevealPend), a
-    ld (palBusy), a              ; A already 0 - palBusy: narrow palette/reveal section only (spec ruling), clear BEFORE the tail jump
-    jp l2_enable
+    jr .revealtail               ; the same mirror + enable tail .swap runs
 .frontback:
     ld a, (l2BackBank)
     ld d, a
@@ -1211,6 +1205,7 @@ h_gfx:
     call l2_flip_swap
     ld a, (gfxRevealMode)
     call l2_mode_set            ; NR $70 + NR $12 back-to-back
+.revealtail:                     ; shared with .backfront: palBusy = 1 on entry, nothing live
     nextreg NR_PAL_CTRL, PAL_L2_SECOND
     call l2_pal_mirror21        ; refill bank 1 from bank 2, full 9-bit,
                                  ; invisible (bank 1 is off screen)
