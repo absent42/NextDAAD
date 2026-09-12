@@ -246,10 +246,20 @@ def dump_text(title, d):
 
 
 def diff(a, b):
-    """Byte offsets where two same-phase dumps differ, minus the two
-    fields that are expected to differ (the free-running sequence byte
-    and the transient request mailbox)."""
-    skip = {OFF_SEQ, OFF_SEQ2, 0x0A, 0x0B}
+    """Byte offsets where two same-phase dumps differ, minus the fields
+    expected to differ BY CONSTRUCTION: the free-running sequence byte,
+    the transient request mailbox, and the song number (header+06,
+    audSongNum). audSongNum records which entry point loaded the song,
+    not player state - "$FF = none/GAME.AKY" (src\\audio\\audiobank.asm:
+    1838). Boot autoplay's aud_boot_probe (src\\overlay1.asm) forces it
+    to $FF and, absent a GAME.AYS (this fixture has none), hands
+    aud_load_song the $FF sentinel; the repro's restart verb runs
+    through h_sfx's SFX-7 case (.playloop), which hands aud_load_song
+    the verb's own number - LADR is "SFX 6 7", so audSongNum reads 06.
+    Both load the same bytes (006.AKY == GAME.AKY) through two different
+    entry points, so this field differs at every phase by design, not
+    by fault."""
+    skip = {OFF_SEQ, OFF_SEQ2, 0x0A, 0x0B, 0x06}
     out = []
     for i in range(SNAP_LEN):
         if i in skip:
