@@ -92,7 +92,7 @@ h_sysmess:                      ; 54: system message B, checked
     jp err_raise
 .ok:
     ld e, b
-    ld a, 0
+    xor a                       ; kind 0 = system message
     jp print_msg
 
 h_message:                      ; 38: user message B + newline
@@ -941,7 +941,7 @@ obj_find_n1:
 ; E = system message: print it. No newline is added - the references
 ; add none either, and a message that wants one carries its own #n.
 sysmsg:
-    ld a, 0
+    xor a                       ; kind 0 = system message
     jp print_msg
 
 ; E = system message: print + newline, exit the table as DONE.
@@ -1830,7 +1830,7 @@ h_inkey:                        ; 111: condition; key -> flag 60
     jp c_false
 h_anykey:                       ; 24
     ld e, 16
-    ld a, 0
+    xor a
     call print_msg
     ld e, $04                   ; ANYKEY timeout arm bit
     call wait_key_timeout
@@ -1871,7 +1871,7 @@ h_pause:                        ; 35: B frames, 0 = 256
 sm_first_char:
     call rd_push
     call data_save
-    ld a, 0
+    xor a                       ; kind 0
     call msg_seek
     jr c, .none
     call rd_next
@@ -1984,7 +1984,7 @@ cfmFirst: db 0
 ; Corrupts all.
 confirm:
     push bc                     ; C = compare SM survives print/read/reset
-    ld a, 0
+    xor a
     call print_msg
     call prn_newline
     call confirm_read
@@ -3938,8 +3938,7 @@ pointer_load:
  ENDIF
 .close:
     ld a, (ptrHandle)
-    call esx_fclose
-    ret
+    jp esx_fclose               ; tail call: same registers, flags and stack for the caller
 
 ; Boot-only glue for title_boot's one-way OVL2->OVL0 hop (overlay2.asm,
 ; .toPointer): neither this call nor switch_to_part is guaranteed to
