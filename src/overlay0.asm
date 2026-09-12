@@ -130,13 +130,11 @@ h_process:                      ; 75 (pilot: the driver nests PRO 1)
 
 h_skip:                         ; 116: jump B (signed) + 1 entries on.
     call eng_top_ix             ; SKIP 0 = next entry, SKIP 1 skips one,
-    ld a, b                     ; SKIP 254 (-2) re-runs the previous.
-    ld e, a
-    ld d, 0
-    bit 7, a
-    jr z, .pos
-    ld d, $FF                   ; sign extend the distance
-.pos:
+    ld e, b                     ; SKIP 254 (-2) re-runs the previous.
+    ld a, b
+    add a, a                    ; CF = sign bit
+    sbc a, a                    ; D = $FF / $00, the sign of the distance
+    ld d, a
     inc de                      ; entries to advance = distance + 1
     ld l, (ix+1)
     ld h, (ix+2)                ; entryPtr
@@ -164,12 +162,10 @@ h_isndone:                      ; 115: the complement of ISDONE
 
 h_redo:                         ; 108: restart the top table from its
     call eng_top_ix             ; first entry (own process number)
-    ld a, (ix+0)
-    add a, a
-    ld e, a
-    ld d, 0
     ld hl, (ddbHeader+HDR_PROCLST)
-    add hl, de
+    ld a, (ix+0)
+    add a, a                    ; process*2 (same 8-bit truncation as before)
+    add hl, a                   ; Z80N; carry is always cleared, unread here
     call data_save
     call rd_seek
     call rd_next
@@ -2133,10 +2129,8 @@ h_move:                         ; 106: condition-like action. B = flag
     ld a, (hl)                  ; A = flags[B] (location to search)
     push hl                     ; save flags+B pointer for the write-back
     ld hl, (ddbHeader+HDR_CONLST)
-    ld e, a
-    ld d, 0
-    add hl, de
-    add hl, de                  ; HL = HDR_CONLST + location*2
+    add hl, a
+    add hl, a                   ; HL = HDR_CONLST + location*2 (Z80N)
     call data_save
     call rd_seek
     call rd_next
@@ -2209,11 +2203,9 @@ h_extern:                       ; 61: fn C via vector, A = B on entry
     ld a, c
     cp 16
     jp nc, ext_forward
-    ld l, c
-    ld h, 0
-    add hl, hl
-    ld de, extVec
-    add hl, de
+    add a, a                    ; C < 16: no carry
+    ld hl, extVec
+    add hl, a                   ; Z80N word-table index
     ld e, (hl)
     inc hl
     ld d, (hl)
