@@ -345,17 +345,15 @@ wait_key:
 ; Corrupts AF, BC, DE, HL.
 wait_key_timeout:
     ld a, (flags+FLAG_TIMEOUT)
+    ld d, a                     ; keep flag 48 for the MUL below
     or a
     jp z, wait_key              ; no duration -> plain wait
     ld a, (flags+FLAG_TIMECTL)
     and e
     jp z, wait_key              ; this context not armed -> plain wait
-    ; frames = flag48 * 50
-    ; SP14c batch B PRN1: Z80N MUL D,E replaces the shift/push/add
-    ; chain (flag48 is a byte, product always fits 16 bits).
-    ld a, (flags+FLAG_TIMEOUT)
-    ld e, a
-    ld d, 50
+    ; frames = flag48 * 50 (Z80N MUL D,E; flag48 is a byte, the product
+    ; always fits 16 bits)
+    ld e, 50
     mul d, e
     ex de, hl
     ld (inpTOFrames), hl

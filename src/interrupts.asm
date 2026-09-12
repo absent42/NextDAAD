@@ -327,7 +327,7 @@ im2_isr:
     ; Nothing else moves - this is still one call per frame, immediately
     ; after the sample pump, with the same slot 6/7 state either way.
     ; SP-XBN Task 5 UPDATE: the #int hook below (gate + call site on this
-    ; path, the .xbnhook_fast entry, and the shared .xbnint/.jphl body)
+    ; path, the .xbnhook_fast entry, and the shared .xbnint body and jphl)
     ; cost 52 bytes of this same pre-flags pad, which stood at 70 free
     ; going in (DEBUG, the tightest variant - see engine.asm's "pre-flags
     ; pad" DISPLAY) and 18 free coming out. That is why .xbnhook_fast

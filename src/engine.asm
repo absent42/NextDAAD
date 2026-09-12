@@ -497,7 +497,7 @@ eng_exec:
     ld d, (hl)
     call ovl_map_page
     ex de, hl
-    call .jphl                  ; call handler: B=arg1, C=arg2
+    call jphl                   ; call handler: B=arg1, C=arg2
     ; post: only conditions consult CF
     ld a, (curProps)
     bit 7, a
@@ -505,11 +505,15 @@ eng_exec:
     ret nc                      ; condition passed: continue entry
     call eng_top_ix             ; condition failed: next entry
     jp eng_next_entry
-.jphl:
-    jp (hl)
 .endentry:
     call data_restore           ; entry fell through its terminator:
     jp eng_next_entry           ; carry on with the next entry
+
+; Resident CALL-able jp (hl): eng_exec, the sprite and SFX page calls
+; and the ISR hook (main.asm) share this one copy. It sits after the
+; routine because a global label ends the local scope above it.
+jphl:
+    jp (hl)
 
 ; Rebuild an absolute DDB pointer from rdPage/rdPtr.
 ; offset = (page-DDB_PAGE_FIRST)*$2000 + (rdPtr - DATA_WINDOW)

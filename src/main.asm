@@ -282,7 +282,7 @@ spr_call:
     nextreg NR_MMU6, SPR_TAB_PAGE
     nextreg NR_MMU7, SPR_PAGE
     pop hl
-    call .jphl
+    call jphl                   ; engine.asm's shared jp (hl)
     push af
     ld a, (sprSavedMmu)
     nextreg NR_MMU6, a
@@ -290,8 +290,6 @@ spr_call:
     nextreg NR_MMU7, a
     pop af
     ret
-.jphl:
-    jp (hl)
 
 ; Stop every live set. Free when none is armed. Preserves AF, BC, DE, HL, IX.
 spr_stop_all:
@@ -370,11 +368,9 @@ isr_hook_body:
     call xbn_mmu_map
     ld ix, flags
     ld hl, (xbnInt)
-    call .jphl
+    call jphl                   ; engine.asm's shared jp (hl)
 .done:
     jp xbn_isr_mmu_restore
-.jphl:
-    jp (hl)
 
 ; DDB_E_MACHINE arm for the boot dispatch at the top of this file, which
 ; is pre-anchor and could not afford the eight bytes. Reached by its
@@ -506,7 +502,7 @@ ext_build_contract:
     ; before dispatch (ext_undone's mechanism, generalised).
     xor a
     ld (isDone), a
-    pop hl                      ; discard eng_exec's call .jphl return
+    pop hl                      ; discard eng_exec's call jphl return
     call eng_top_ix
     jp eng_next_entry
 
@@ -530,10 +526,9 @@ call_dispatch:
     ld h, c                      ; HL = target address
     ld a, h
     cp $C0
-    ret c                        ; below the window
+    ret c                        ; below the window: CF is 0 past here
     ld de, (xbnEnd)
-    or a
-    sbc hl, de
+    sbc hl, de                  ; ld de,(nn) writes no flag
     add hl, de
     ret nc                       ; >= xbnEnd
     ld (extTarget), hl
@@ -1006,12 +1001,11 @@ svc_window:
     ld hl, (curWin)
     ld de, winTable
     or a
-    sbc hl, de                    ; HL = byte offset into winTable
-    ld b, -1
+    sbc hl, de                    ; HL = byte offset into winTable, no
+    ld b, -1                      ; borrow (curWin >= winTable): CF = 0
 .div:
-    inc b
-    ld de, WIN_SIZE
-    or a
+    inc b                         ; INC leaves CF; the loop re-enters
+    ld de, WIN_SIZE               ; only on NC, so CF is 0 every pass
     sbc hl, de
     jr nc, .div                   ; B = offset / WIN_SIZE = previous number
     push bc                       ; B survives xbn_svc_mmu_save's BC clobber
@@ -1044,7 +1038,7 @@ svc_window:
 ; share these 14 bytes. sfx_open_tramp stays separate - sfx_stream_open
 ; takes its parameters in A/L/DE/IX, so HL is not free there.
 ; DE crosses BOTH WAYS UNTOUCHED: the return address rides the Z80's own
-; CALL/RET stacking through .enter below rather than a register, so
+; CALL/RET stacking through jphl rather than a register, so
 ; nothing here needs DE as scratch. Load-bearing for aud_ctc_params, whose
 ; own parameter (the rate) is DE. A and F cross both ways untouched too:
 ; nextreg (ED 91) writes neither, so a callee's return value and carry
@@ -1052,11 +1046,9 @@ svc_window:
 ; this is a plain call with a page swap around it, not a preserving wrapper.
 sfx_page_call:
     nextreg NR_MMU7, SFX_PAGE
-    call .enter
+    call jphl                   ; engine.asm's shared jp (hl)
     nextreg NR_MMU7, OVL1_PAGE
     ret
-.enter:
-    jp (hl)
 
 ; Channel 2's sampled-effect pump state block (SMPB_* offsets in
 ; nextdaad.inc), seeded once at boot by aud_sfx_init. RESIDENT, unlike
