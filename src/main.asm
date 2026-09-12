@@ -385,7 +385,6 @@ ddb_err_machine:
 ; here with A/B/C/DE/IX loaded and extTarget already set. Resident because
 ; the call must survive overlay0 (slot 7, holding the caller) being paged
 ; out to map the XBN bank into slots 6+7 for the call, then paged back.
-extTarget:  dw 0
 extSaved:   dw 0                ; saved MMU6 (lo) / MMU7 (hi)
 ; ISR-private mirror of extSaved (Task 5's #int frame hook, interrupts.asm).
 ; ext_dispatch (foreground, above) can be mid-flight - extTarget loaded,
@@ -467,10 +466,8 @@ ext_dispatch:
     call .invoke
     jp xbn_mmu_restore          ; flag-free, the extern's CF crosses
 .invoke:
-    push hl
-    ld hl, (extTarget)
-    ex (sp), hl
-    ret                         ; jumps to target, HL intact
+extTarget equ $+1               ; jp operand: written by call_dispatch and
+    jp 0                        ; overlay0's ext_forward (resident RAM)
 
 ; Classic EXTERN register contract, moved out of overlay0's ext_forward
 ; (whose own guard checks alone filled its remaining DEBUG headroom) into
