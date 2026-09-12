@@ -396,16 +396,17 @@ extSaved:   dw 0                ; saved MMU6 (lo) / MMU7 (hi)
 ; own slot; interrupts.asm's im2_isr never touches extSaved or extTarget.
 extSavedIsr: dw 0
 
-xbn_mmu_save:                   ; corrupts A, BC, HL; result in extSaved
+xbn_mmu_save:                   ; corrupts A, BC, HL, F; result in extSaved
     ld hl, extSaved
     jr mmu_save_hl
-xbn_isr_mmu_save:               ; corrupts A, BC, HL; result in extSavedIsr
+xbn_isr_mmu_save:               ; corrupts A, BC, HL, F; result in extSavedIsr
     ld hl, extSavedIsr
     jr mmu_save_hl
-xbn_svc_mmu_save:               ; corrupts A, BC, HL; result in svcSaved
+xbn_svc_mmu_save:               ; corrupts A, BC, HL, F; result in svcSaved - falls through
     ld hl, svcSaved
-; HL -> 2-byte cell: (HL) = NR_MMU6, (HL+1) = NR_MMU7. No static scratch,
-; so the ISR entry may run while the foreground is inside this body.
+; HL -> 2-byte cell: (HL) = NR_MMU6, (HL+1) = NR_MMU7. No static scratch:
+; the cell address rides in HL, so the three entries need no lock between
+; them. The $243B select is NOT interrupt-safe here - see the header.
 mmu_save_hl:
     ld bc, $243B
     ld a, NR_MMU6
@@ -438,7 +439,7 @@ xbn_mmu_restore:                ; corrupts A, HL
 xbn_isr_mmu_restore:            ; corrupts A, HL
     ld hl, extSavedIsr
     jr mmu_restore_hl
-xbn_svc_mmu_restore:            ; corrupts A, HL
+xbn_svc_mmu_restore:            ; corrupts A, HL - falls through
     ld hl, svcSaved
 ; HL -> the cell mmu_save_hl wrote. The three entries share the bodies and
 ; keep separate cells (extSavedIsr's comment above). xbn_mmu_map needs no
@@ -679,7 +680,7 @@ svc_putchar:
     ret
 
 ; HL = ASCIIZ, may live in the extern bank. svc_putchar restores the
-; extern's own MMU mapping after every character (see xbn_svc_mmu_save's
+; extern's own MMU mapping after every character (see svcSaved's
 ; comment), so (HL) stays readable across the loop despite PRINT_ENTRY's
 ; own mapping excursions. prn_flush after the loop mirrors print_msg's
 ; own idiom (print.asm) - without it the final buffered word stays in
