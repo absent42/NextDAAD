@@ -1665,15 +1665,20 @@ gfx_load:
     or a
     ret
 .failcloseh:
-    ld a, (gfxHandle)
-    call esx_fclose
-    ld a, $FF
-    ld (gfxHandle), a
+    call gfx_close_handle
 .failclean:
     ld a, GFX_EMPTY
     ld (stagedPic), a
     ld (stagedEntry), a
     scf
+    ret
+
+; Close gfxHandle and mark it free. Corrupts everything esx_fclose does.
+gfx_close_handle:
+    ld a, (gfxHandle)
+    call esx_fclose
+    ld a, $FF
+    ld (gfxHandle), a
     ret
 
 ; Find the first empty cache slot. Out: CF clear + A = entry index;
@@ -1924,10 +1929,7 @@ gfx_read_banks:
     jr nz, .eof
     jr .bank
 .eof:
-    ld a, (gfxHandle)
-    call esx_fclose
-    ld a, $FF
-    ld (gfxHandle), a
+    call gfx_close_handle
     call data_restore
     or a
     ret
@@ -1935,9 +1937,7 @@ gfx_read_banks:
     ld a, (gfxHandle)
     cp $FF
     jr z, .noclose
-    call esx_fclose
-    ld a, $FF
-    ld (gfxHandle), a
+    call gfx_close_handle
 .noclose:
     call data_restore
     scf
@@ -2397,10 +2397,7 @@ gfx_direct_stream:
     or (hl)
     jr z, .fail                 ; no pixel rows at all
     ; palette pass: reopen at offset 0 (header comment)
-    ld a, (gfxHandle)
-    call esx_fclose
-    ld a, $FF
-    ld (gfxHandle), a
+    call gfx_close_handle
     call gfx_open_chain
     jr c, .faildone
     ; Build into the bank that is NOT displayed, exactly as gfx_blit
@@ -2426,10 +2423,7 @@ gfx_direct_stream:
     pop bc
     djnz .pal
     call l2_pal9_stamp          ; entry 255 = the reserved transparent
-    ld a, (gfxHandle)
-    call esx_fclose
-    ld a, $FF
-    ld (gfxHandle), a
+    call gfx_close_handle
     call data_restore
     ld a, (gfxDrawTarget)
     or a
@@ -2464,10 +2458,7 @@ gfx_direct_stream:
     xor a
     ld (palLock), a              ; the stamp is never reached on this exit
 .fail:
-    ld a, (gfxHandle)
-    call esx_fclose
-    ld a, $FF
-    ld (gfxHandle), a
+    call gfx_close_handle
 .faildone:
     call data_restore
     ld a, (gfxModeSave)         ; no flip happened: re-sync l2Mode with
@@ -3597,10 +3588,7 @@ title_present:
     push ix
     call title_probe
     jr c, .none
-    ld a, (gfxHandle)
-    call esx_fclose
-    ld a, $FF
-    ld (gfxHandle), a
+    call gfx_close_handle
     or a
     jr .ret
 .none:
