@@ -76,6 +76,32 @@ All notable changes to NextDAAD are recorded here.
   and bail shapes) and `Assert-PaletteWriterCensus` (every palette
   write site per file, so a new writer fails the build until its lock
   is answered for); the manual guard forbids the superseded wording.
+- The parser selftest suite passes again. Its known-address check
+  still pinned `RNGSTATE` at `$A94A`; the map has since moved it to
+  `$A948`, and the stale pin was failing that check on this tree.
+- Fixed: the audio tick's five interrupt-disable brackets could drop
+  a sample. Their comments claimed the AY player entries they guarded
+  moved the stack pointer, but only the player's `PLAY` routine does,
+  and it was already called unbracketed and nest-safe - so the
+  brackets guarded nothing and are now removed. The longest of them
+  outlasted one interrupt period at the sampled rates, long enough to
+  drop a sample when music stopped during a sampled effect. Confirmed
+  on hardware: no click, dropout or pitch flick at any stop, at
+  16 kHz and 20 kHz.
+- Fixed: the streamed-effects opener's run-count loop only exited on
+  an exact zero count, so a filemap byte count that was not a whole
+  number of entries made it spin instead of being refused. It now
+  exits on borrow as well.
+- Debug-only work fenced out of the release build: six measurement
+  probe calls, five marker strings, a clip-window shadow and its two
+  cells, and a counter increment. The DEBUG image is byte-identical;
+  Release gets 68 bytes back.
+- Thirteen stale comments corrected across seven files; both images
+  stay byte-identical.
+- Together these fixes give Release 76 bytes back across the regions
+  touched (resident 6, overlay0 12, overlay1 6, overlay2 40, sprites
+  4, audio page 10, less 2 spent on the streamed-effects loop guard)
+  and DEBUG 8.
 
 ## v0.9.0 - 03/09/2026
 
