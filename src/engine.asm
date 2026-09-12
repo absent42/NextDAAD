@@ -461,7 +461,6 @@ eng_exec:
     pop bc
 .no3rd:
     ; store advanced pointer back into the record
-    ld hl, (rdPtr)              ; NOTE: window-relative; rebuild absolute
     call eng_ptr_abs            ; HL = absolute from rdPage/rdPtr
     ld (ix+3), l
     ld (ix+4), h
