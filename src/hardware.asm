@@ -153,10 +153,9 @@ nr_read:
     di
     ld bc, TBBLUE_REG_SEL
     out (c), e
-    ld bc, TBBLUE_REG_ACC
-    in a, (c)
-    ld b, a                 ; result safe from the AF pop below
-    pop af                  ; P/V = saved IFF2
+    inc b                   ; SEL -> ACC ($24 -> $25), as im2_isr does
+    in b, (c)               ; result straight into B; F is restored by
+    pop af                  ; the pop that follows (P/V = saved IFF2)
     ld a, b
     jp po, .noei
     ei
