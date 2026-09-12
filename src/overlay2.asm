@@ -32,13 +32,7 @@
 l2_mode_set:
     ld (l2Mode), a
     push af
-    or a
-    jr z, .m256
-    ld a, %00010000              ; NR $70: bits5-4=01 (320x256, 8bpp)
-    jr .set
-.m256:
-    xor a                        ; NR $70: bits5-4=00 (256x192, 8bpp)
-.set:
+    swapnib                      ; A is 0/1 by contract: NR $70 bits 5-4 = 00 / 01
     nextreg NR_L2_CTRL, a
     ld a, (l2FrontBank)
     nextreg NR_L2_BANK, a
