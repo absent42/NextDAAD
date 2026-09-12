@@ -3315,9 +3315,8 @@ gfx_row_copy256:
     ld a, d
     cp high GFX_SRC_END
     jr c, .store
-    ld a, (gfxDstPage)
-    inc a
-    ld (gfxDstPage), a
+    ld hl, gfxDstPage            ; HL is dead: every caller reloads it
+    inc (hl)
     ld de, DATA_WINDOW
 .store:
     ld (gfxDstPtr), de
