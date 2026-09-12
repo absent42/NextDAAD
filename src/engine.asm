@@ -225,10 +225,8 @@ eng_push_proc:
     push hl
     ld hl, (ddbHeader+HDR_PROCLST)
     ld a, c
-    add a, a
-    ld e, a
-    ld d, 0
-    add hl, de                  ; entry in the process list
+    add a, a                    ; c*2, 8-bit exactly as before
+    add hl, a                   ; entry in the process list
     call data_save
     call rd_seek
     call rd_next
@@ -400,10 +398,8 @@ eng_exec:
     ; away with it. A V2 database never contains these opcodes anyway
     ; (DRF rejects the syntax that produces them outside -v3).
     ; properties
-    ld e, a
-    ld d, 0
     ld hl, cprops
-    add hl, de
+    add hl, a                   ; Z80N, A = condact 0-127
     ld a, (hl)
     ld (curProps), a
     and 3                       ; argc
