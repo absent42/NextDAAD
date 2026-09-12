@@ -397,19 +397,30 @@ extSaved:   dw 0                ; saved MMU6 (lo) / MMU7 (hi)
 ; own slot; interrupts.asm's im2_isr never touches extSaved or extTarget.
 extSavedIsr: dw 0
 
-xbn_mmu_save:                   ; corrupts A, BC; result in extSaved
+xbn_mmu_save:                   ; corrupts A, BC, HL; result in extSaved
+    ld hl, extSaved
+    jr mmu_save_hl
+xbn_isr_mmu_save:               ; corrupts A, BC, HL; result in extSavedIsr
+    ld hl, extSavedIsr
+    jr mmu_save_hl
+xbn_svc_mmu_save:               ; corrupts A, BC, HL; result in svcSaved
+    ld hl, svcSaved
+; HL -> 2-byte cell: (HL) = NR_MMU6, (HL+1) = NR_MMU7. No static scratch,
+; so the ISR entry may run while the foreground is inside this body.
+mmu_save_hl:
     ld bc, $243B
     ld a, NR_MMU6
     out (c), a
     inc b                       ; $253B
     in a, (c)
-    ld (extSaved), a
+    ld (hl), a
+    inc hl
     dec b
     ld a, NR_MMU7
     out (c), a
     inc b
     in a, (c)
-    ld (extSaved+1), a
+    ld (hl), a
     ret
 
 xbn_mmu_map:                    ; corrupts A; maps xbnBank into slots 6+7
@@ -420,41 +431,24 @@ xbn_mmu_map:                    ; corrupts A; maps xbnBank into slots 6+7
     nextreg NR_MMU7, a
     ret
 
-xbn_mmu_restore:                ; corrupts A
+xbn_mmu_restore:                ; corrupts A, HL
 ; CONTRACT: preserves F - the forwarded extern's CF verdict crosses here
-; (ld/nextreg/ret set no flags).
-    ld a, (extSaved)
+; (ld/jr/inc hl/nextreg/ret set no flags).
+    ld hl, extSaved
+    jr mmu_restore_hl
+xbn_isr_mmu_restore:            ; corrupts A, HL
+    ld hl, extSavedIsr
+    jr mmu_restore_hl
+xbn_svc_mmu_restore:            ; corrupts A, HL
+    ld hl, svcSaved
+; HL -> the cell mmu_save_hl wrote. The three entries share the bodies and
+; keep separate cells (extSavedIsr's comment above). xbn_mmu_map needs no
+; ISR twin: it reads xbnBank and writes NR_MMU6/7 only.
+mmu_restore_hl:
+    ld a, (hl)
     nextreg NR_MMU6, a
-    ld a, (extSaved+1)
-    nextreg NR_MMU7, a
-    ret
-
-; ISR-private twins of xbn_mmu_save/xbn_mmu_restore above, bodies
-; identical except the store/load targets extSavedIsr instead of
-; extSaved - see extSavedIsr's own comment for why the ISR cannot share
-; the foreground pair. xbn_mmu_map (below-declared, above in the file)
-; needs no ISR twin: it only reads xbnBank and writes NR_MMU6/7 directly,
-; touching neither extSaved/extTarget nor any other foreground state, so
-; interrupts.asm calls it as-is.
-xbn_isr_mmu_save:               ; corrupts A, BC; result in extSavedIsr
-    ld bc, $243B
-    ld a, NR_MMU6
-    out (c), a
-    inc b
-    in a, (c)
-    ld (extSavedIsr), a
-    dec b
-    ld a, NR_MMU7
-    out (c), a
-    inc b
-    in a, (c)
-    ld (extSavedIsr+1), a
-    ret
-
-xbn_isr_mmu_restore:            ; corrupts A
-    ld a, (extSavedIsr)
-    nextreg NR_MMU6, a
-    ld a, (extSavedIsr+1)
+    inc hl
+    ld a, (hl)
     nextreg NR_MMU7, a
     ret
 
@@ -641,8 +635,8 @@ svc_random:
     or a                          ; CF clear
     ret
 
-; Third MMU save/restore slot (svcSaved), same shape as xbn_mmu_save/
-; restore (extSaved, above) and xbn_isr_mmu_save/restore (extSavedIsr).
+; Third MMU save/restore cell (svcSaved) for the shared mmu_save_hl/
+; mmu_restore_hl pair (its stubs sit beside the bodies, above).
 ; A service call happens INSIDE an active extern - extSaved already holds
 ; the pre-extern mapping and slots 6+7 hold the XBN bank - so svc_putchar
 ; needs its own slot: it brackets the call into PRINT_ENTRY, which can
@@ -673,28 +667,6 @@ cycFrames:  db 0
 cycCount:   db 0
 palLock:    db 1             ; foreground NR $44 burst open; the tick skips
                               ; its step while set. Internal, never exported.
-
-xbn_svc_mmu_save:                ; corrupts A, BC; result in svcSaved
-    ld bc, $243B
-    ld a, NR_MMU6
-    out (c), a
-    inc b                        ; $253B
-    in a, (c)
-    ld (svcSaved), a
-    dec b
-    ld a, NR_MMU7
-    out (c), a
-    inc b
-    in a, (c)
-    ld (svcSaved+1), a
-    ret
-
-xbn_svc_mmu_restore:             ; corrupts A
-    ld a, (svcSaved)
-    nextreg NR_MMU6, a
-    ld a, (svcSaved+1)
-    nextreg NR_MMU7, a
-    ret
 
 ; A = char, through the DAAD window. PRINT_ENTRY = prn_decoded
 ; (print.asm), confirmed resident: print.asm is INCLUDEd ahead of
@@ -980,11 +952,11 @@ svc_palread:
 ; directly and flag 63 already rotted stale against that same write
 ; - a mirrored byte here would take the identical hit. Max 7
 ; subtractions of WIN_SIZE from the byte offset.
-; xbn_svc_mmu_save corrupts A, BC (its own header comment) and
+; xbn_svc_mmu_save corrupts A, BC, HL (its own header comment) and
 ; win_select corrupts all registers (it calls prn_flush, documented
 ; "Corrupts all registers") - B (the derived previous number) needs a
 ; stack slot across BOTH calls, not one; xbn_svc_mmu_restore corrupts
-; only A, so BC rides through that call unprotected. A resident scratch
+; A and HL, so BC rides through that call unprotected. A resident scratch
 ; byte would work too, but costs a byte for no benefit over the stack
 ; here - the file's own svc_putchar/svc_puts bracket already parks AF
 ; on the stack across the identical MMU calls, so this stays consistent
@@ -1014,7 +986,7 @@ svc_window:
     pop af                        ; target window number back in A
     push bc                       ; B survives win_select's full clobber
     call win_select
-    call xbn_svc_mmu_restore      ; A only - BC untouched
+    call xbn_svc_mmu_restore      ; A and HL only - BC untouched
     pop bc
     ld a, b                       ; A = previous window number
     or a                          ; CF clear
