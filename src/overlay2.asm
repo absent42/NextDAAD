@@ -242,6 +242,8 @@ gfx_pal_rewind:
     call gce_ptr
     inc hl
     ld a, (hl)                  ; GCE_FIRST
+; A = the run's first bank index (title_blit: gfxArenaStart). Corrupts AF, HL.
+gfx_pal_rewind_at:
     ld (gfxSrcIdx), a
     xor a
     ld (gfxSrcHalf), a
@@ -3024,6 +3026,49 @@ zx0_ref_read:
     ld (zx0RefPtr), hl
     ret
 
+; In: l2Mode = mode, gfxSrcIdx = the run's first bank index, gfxRowsLeft =
+; height (0 = 256). Clears the BACK surface, opens data_save (the caller
+; closes it after its palette load), streams every row. Corrupts everything.
+gfx_rows_blit:
+    ld a, (l2BackBank)
+    add a, a
+    ld (gfxSurfPage), a         ; render target = the back surface
+    call l2_clear_back          ; own data_save/restore - run BEFORE ours
+    call data_save
+    xor a
+    ld (gfxSrcHalf), a
+    ld hl, DATA_WINDOW+512      ; skip the palette (loaded after the rows)
+    ld (gfxSrcPtr), hl
+    ld a, (l2Mode)
+    or a
+    ld de, 256
+    jr z, .width
+    ld de, 320
+.width:
+    ld (gfxWidth), de
+    ld a, (gfxSurfPage)         ; 256-wide linear dest stream init
+    ld (gfxDstPage), a          ; (320-wide scatter reinitialises
+    ld hl, DATA_WINDOW          ; gfxDstPage itself every row)
+    ld (gfxDstPtr), hl
+    xor a
+    ld (gfxRowY), a
+.row:
+    call gfx_row_fetch
+    ld a, (l2Mode)
+    or a
+    jr z, .linear
+    call gfx_row_scatter320
+    jr .next
+.linear:
+    call gfx_row_copy256
+.next:
+    ld hl, gfxRowY
+    inc (hl)
+    ld hl, gfxRowsLeft
+    dec (hl)
+    jr nz, .row
+    ret
+
 ; Draw the staged cache entry, double-buffered: everything renders to
 ; the BACK surface (invisible - the old picture stays intact on the
 ; front throughout), then the surfaces flip. Sequence: stage the mode
@@ -3071,51 +3116,14 @@ gfx_blit:
     ld a, (stagedMode)
     ld (l2Mode), a              ; variable only - sizes l2_clear_back's
                                 ; page count; NR $70/$12 wait for the flip
-    ld a, (l2BackBank)
-    add a, a
-    ld (gfxSurfPage), a         ; render target = the back surface
-    call l2_clear_back          ; own data_save/restore - run BEFORE ours
-    call data_save
-    ; source stream = the entry's bank-list run, from its first page
-    ld a, (stagedEntry)
+    ld a, (stagedEntry)         ; source stream = the entry's bank-list run
     call gce_ptr
     inc hl
     ld a, (hl)                  ; GCE_FIRST
     ld (gfxSrcIdx), a
-    xor a
-    ld (gfxSrcHalf), a          ; (no remap needed here - gfx_row_fetch
-    ld hl, DATA_WINDOW+512      ; re-asserts the source mapping itself)
-    ld (gfxSrcPtr), hl          ; skip the palette (loaded after the rows)
-    ld a, (stagedMode)
-    or a
-    ld de, 256
-    jr z, .width
-    ld de, 320
-.width:
-    ld (gfxWidth), de
-    ld a, (gfxSurfPage)         ; 256-wide linear dest stream init
-    ld (gfxDstPage), a          ; (320-wide scatter reinitialises
-    ld hl, DATA_WINDOW          ; gfxDstPage itself every row)
-    ld (gfxDstPtr), hl
-    xor a
-    ld (gfxRowY), a
     ld a, (stagedHeight)
     ld (gfxRowsLeft), a         ; 0 = 256 rows (djnz-style wrap)
-.row:
-    call gfx_row_fetch
-    ld a, (stagedMode)
-    or a
-    jr z, .linear
-    call gfx_row_scatter320
-    jr .next
-.linear:
-    call gfx_row_copy256
-.next:
-    ld hl, gfxRowY
-    inc (hl)
-    ld hl, gfxRowsLeft
-    dec (hl)
-    jr nz, .row
+    call gfx_rows_blit          ; clears BACK, opens data_save, all rows
     ; Rows done. The palette goes into the Layer 2 bank that is NOT on
     ; screen, so none of it is visible while it loads, and the flip
     ; below swaps surface and palette together.
@@ -3724,62 +3732,19 @@ title_blit:
     ld a, (gfxMode)
     ld (l2Mode), a                ; variable only - sizes l2_clear_back's
                                    ; page count; NR $70/$12 wait for the flip
-    ld a, (l2BackBank)
-    add a, a
-    ld (gfxSurfPage), a
-    call l2_clear_back             ; own data_save/restore - run BEFORE ours
-    call data_save
     ld a, (gfxArenaStart)
     ld (gfxSrcIdx), a
-    xor a
-    ld (gfxSrcHalf), a
-    ld hl, DATA_WINDOW+512         ; skip the palette (loaded after the rows)
-    ld (gfxSrcPtr), hl
-    ld a, (gfxMode)
-    or a
-    ld de, 256
-    jr z, .width
-    ld de, 320
-.width:
-    ld (gfxWidth), de
-    ld a, (gfxSurfPage)            ; 256-wide linear dest stream init
-    ld (gfxDstPage), a             ; (320-wide scatter reinitialises
-    ld hl, DATA_WINDOW              ; gfxDstPage itself every row)
-    ld (gfxDstPtr), hl
-    xor a
-    ld (gfxRowY), a
     ld a, (gfxHeight)
     ld (gfxRowsLeft), a            ; 0 = 256 rows (djnz-style wrap)
-.row:
-    call gfx_row_fetch
-    ld a, (gfxMode)
-    or a
-    jr z, .linear
-    call gfx_row_scatter320
-    jr .next
-.linear:
-    call gfx_row_copy256
-.next:
-    ld hl, gfxRowY
-    inc (hl)
-    ld hl, gfxRowsLeft
-    dec (hl)
-    jr nz, .row
-    ; rows done: rewind the source stream to the run's 512-byte palette
-    ; (offset 0, wholly inside the run's first page) and load it now,
-    ; as late as possible before the flip (mirrors gfx_blit)
+    call gfx_rows_blit
+    ; rows done: rewind to the run's 512-byte palette (offset 0 of its
+    ; first page) and load it as late as possible before the flip
     ld a, (gfxArenaStart)
-    ld (gfxSrcIdx), a
-    xor a
-    ld (gfxSrcHalf), a
-    call gfx_src_remap
-    ld hl, DATA_WINDOW
+    call gfx_pal_rewind_at
     ld b, 1                       ; format 1 = 256 x 2-byte 9-bit entries
     call l2_palette_load
     call data_restore
-    ; flip: swap surface roles, then program resolution + new front
-    ; bank back-to-back via l2_mode_set (see l2_flip_swap header)
-    call l2_flip_mode           ; l2Mode = gfxMode since the entry commit
+    call l2_flip_mode             ; swap roles, program resolution + front bank
     jp l2_enable
 
 ; --- SP12 Task 1: custom font load (boot + part switch) ---
