@@ -2901,47 +2901,24 @@ switch_to_part:
     scf
     ret
 
-; Build the DDB filename for part A (1-9) into ddbName (errors.asm's
-; resident 10-byte buffer - see switch_to_part's header comment for
-; the relocation history). n=1 writes the exact, literal "GAME.DDB"
-; (byte-identical to ddbName's assembled default, all 10 bytes incl.
-; the spare). n=2-9 write the exact, literal "GAMEn.DDB" (9 characters
-; + NUL, fills all 10 bytes with zero spare). No wildcard either way.
-; Corrupts AF, HL.
+; Part A (1-9) -> ddbName (errors.asm's resident 10-byte buffer): n=1
+; copies "GAME.DDB",0,0, n=2-9 copy "GAME?.DDB",0 and poke the digit.
+; Corrupts AF, BC, DE, HL.
 xpart_build_name:
-    cp 1
-    jr nz, .multi
     ld hl, .gameddb
+    cp 1
+    jr z, .cp
+    ld hl, .tpl
+.cp:
     ld de, ddbName
     ld bc, 10
-    ldir
-    ret
-.multi:
+    ldir                        ; LDIR writes only P/V: the cp 1 Z survives
+    ret z                       ; part 1: done
     add a, '0'
-    ld hl, ddbName
-    ld (hl), 'G'
-    inc hl
-    ld (hl), 'A'
-    inc hl
-    ld (hl), 'M'
-    inc hl
-    ld (hl), 'E'
-    inc hl
-    ld (hl), a
-    inc hl
-    ld (hl), '.'
-    inc hl
-    ld (hl), 'D'
-    inc hl
-    ld (hl), 'D'
-    inc hl
-    ld (hl), 'B'
-    inc hl
-    ld (hl), 0
+    ld (ddbName+4), a
     ret
-.gameddb: db "GAME.DDB", 0, 0     ; byte-identical to ddbName's own
-                                  ; compiled default (errors.asm) -
-                                  ; 8 chars + NUL + 1 spare = 10
+.gameddb: db "GAME.DDB", 0, 0     ; 8 chars + NUL + 1 spare = 10
+.tpl:     db "GAME?.DDB", 0       ; digit poked at +4
 
 ; swapStage: staging buffer for a part switch. [0..255] = the full
 ; flags array, copied verbatim. [256..511] = one byte per object =
