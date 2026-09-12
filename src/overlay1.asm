@@ -1269,57 +1269,42 @@ parse_order:
     jr z, .pron
     jr .word                    ; conjunctions were neutralised; other
                                  ; types ignored
+; HL -> flag cell. Empty (255): store D, return Z. Occupied: NZ, untouched.
+.slot:
+    ld a, (hl)
+    inc a
+    ret nz
+    ld (hl), d
+    ret
 .verb:
-    ld a, (flags+FLAG_VERB)
-    inc a                       ; 255 -> 0?
-    jr nz, .word
-    ld a, d
-    ld (flags+FLAG_VERB), a
+    ld hl, flags+FLAG_VERB
+    call .slot
     jr .word
 .noun:
-    ld a, (flags+FLAG_NOUN1)
-    inc a
-    jr nz, .noun2
-    ld a, d
-    ld (flags+FLAG_NOUN1), a
-    jr .word
-.noun2:
-    ld a, (flags+FLAG_NOUN2)
-    inc a
-    jr nz, .word
-    ld a, d
-    ld (flags+FLAG_NOUN2), a
+    ld hl, flags+FLAG_NOUN1
+    call .slot
+    jr z, .word
+    ld hl, flags+FLAG_NOUN2
+    call .slot
     jr .word
 .adj:
-    ld a, (flags+FLAG_ADJ1)
-    inc a
-    jr nz, .adj2
-    ld a, d
-    ld (flags+FLAG_ADJ1), a
-    jr .word
-.adj2:
-    ld a, (flags+FLAG_ADJ2)
-    inc a
-    jr nz, .word
-    ld a, d
-    ld (flags+FLAG_ADJ2), a
+    ld hl, flags+FLAG_ADJ1
+    call .slot
+    jr z, .word
+    ld hl, flags+FLAG_ADJ2
+    call .slot
     jr .word
 .prep:
-    ld a, (flags+FLAG_PREP)
-    inc a
+    ld hl, flags+FLAG_PREP
+    call .slot
     jr nz, .word
-    ld a, d
-    ld (flags+FLAG_PREP), a
     call eng_v3prep             ; V3 bit 4: preposition before noun1
     jr .word
 .adv:
-    ld a, (flags+FLAG_ADVERB)
-    inc a
-    jr nz, .word
-    ld a, d
-    ld (flags+FLAG_ADVERB), a
-    jp .word                    ; out of jr range (SP16 T6 pushed .word
-.pron:                          ; back past the bit-5 arm)
+    ld hl, flags+FLAG_ADVERB
+    call .slot
+    jr .word
+.pron:
     ld a, (prnSeen)
     or a
     jp nz, .word                ; only the first pronoun acts
