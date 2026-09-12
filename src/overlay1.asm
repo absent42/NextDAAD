@@ -795,16 +795,8 @@ inp_insert:
     inc a
     ld (inpLen), a
     ld hl, inpLine
-    add hl, bc
-    ld a, (inpLen)
-    ; terminator
-    push hl
-    ld hl, inpLine
-    ld e, a
-    ld d, 0
-    add hl, de
+    add hl, a                   ; Z80N: terminator at inpLine + new length
     ld (hl), 0
-    pop hl
     ; echo from cursor position to end of line
     call inp_redraw_from_cur
     ld a, (inpCur)
