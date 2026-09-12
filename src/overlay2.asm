@@ -12,14 +12,6 @@
 
     MMU 7, OVL2_PAGE, OVL_ORG
 
-; condition result helpers (CF contract, local to this overlay)
-ovl2_true:
-    or a
-    ret
-ovl2_false:
-    scf
-    ret
-
 ; --- mode / enable / disable ---
 
 ; A = 0 (256x192 256-colour) or 1 (320x256 256-colour) on entry.
@@ -436,7 +428,7 @@ GFX_SRC_END equ DATA_WINDOW+$2000   ; first address past the slot 6 window
 ; stages only - "imageBufferID = Parameter1" on success, nothing is
 ; drawn; a missing image clears the stage ("imageBufferID = false")
 ; and fails the condition (condactResult = false). CF mirrors
-; condactResult through ovl2_false. jdaad's fallback probe of
+; condactResult straight from gfx_load. jdaad's fallback probe of
 ; jDAADSounds is not carried over - sampled SFX are a separate
 ; subsystem here. Corrupts everything.
 ;
@@ -445,7 +437,7 @@ GFX_SRC_END equ DATA_WINDOW+$2000   ; first address past the slot 6 window
 ; { do_PICTURE, 1 } and the dispatcher runs "isDone |= ce->flag" after
 ; EVERY handler (daad_condacts.c:44,204); jdaad's _PICTURE (jdaad.js
 ; :3505) ends with a trailing "done = true" at :3528, reached on all
-; three of its branches. NextDAAD marked it NOWHERE - ovl2_true/ovl2_false
+; three of its branches. NextDAAD marked it NOWHERE - gfx_load's exits
 ; touch carry only, and cprops row 84 is condition-typed so the
 ; dispatcher stamps nothing either.
 ;
@@ -463,9 +455,7 @@ h_picture:
     call eng_set_done
     call spr_stop_all
     ld a, b
-    call gfx_load
-    jp c, ovl2_false
-    jp ovl2_true
+    jp gfx_load                  ; every gfx_load exit leaves CF = condition result
 
 ; Swap the front/back Layer 2 surface roles - VARIABLES ONLY, no
 ; hardware write. The caller owns the NR $12 update: gfx_blit swaps
