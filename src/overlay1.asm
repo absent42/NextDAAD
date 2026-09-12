@@ -2736,7 +2736,9 @@ h_sfx:                          ; 18: B = n, C = sub-command
     ld a, VID_PAGE
     jp ovl_map_page
 
+ IFDEF DEBUG
 msgSfxUnk: db "SFX? ", 0
+ ENDIF
 
 ; Stop the sample playing on the channel sfxSel bit 0 names, and wait
 ; until aud_tick has consumed the stop. Called by aud_load_wav before it

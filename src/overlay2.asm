@@ -1577,8 +1577,10 @@ gfx_pal_ctl:
     or PAL_L2_FIRST
     ret
 
+ IFDEF DEBUG
 msgGfxUnk: db "GFX? ", 0
 msgCycUnk: db "CYC? ", 0
+ ENDIF
 
 ; A = picture number. Ensure its palette+pixels are in cache banks
 ; and stage it for DISPLAY 0. Cache hit: cache_touch + stage, no SD
@@ -4073,9 +4075,11 @@ fontNameBuf:  ds 10               ; "FONTn.CHR",0 worst case
 fontNamePart: ds 16
 fontNameStem: db "FONT"
 fontNameExt:  db ".CHR", 0
+ IFDEF DEBUG
 msgFontBad:   db "FONT BAD", 0
 msgFontNoBk:  db "FONT NOBK", 0    ; 9 chars at column 70 - fits the 80-column
                                    ; row, same as msgFontBad above
+ ENDIF
 
 ; --- DEBUG bring-up test card ---
 ; Owner-driven hardware verification hook, wired from debug.asm's
