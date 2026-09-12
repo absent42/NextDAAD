@@ -478,8 +478,7 @@ ext_dispatch:
     pop bc
     pop af
     call .invoke
-    call xbn_mmu_restore
-    ret
+    jp xbn_mmu_restore          ; flag-free, the extern's CF crosses
 .invoke:
     push hl
     ld hl, (extTarget)

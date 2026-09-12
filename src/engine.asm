@@ -315,8 +315,7 @@ eng_step:
     ld (ix+4), d
     ret
 .skip:
-    call eng_next_entry
-    ret
+    jp eng_next_entry
 .tblend:
     call data_restore
     jp eng_pop_proc

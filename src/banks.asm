@@ -77,8 +77,7 @@ ram_detect:
 .store:
     ld (ramExpanded), a
     ld (hl), c              ; restore probed byte
-    call data_restore
-    ret
+    jp data_restore
  ENDIF
 
 ; bank_table_init lives in main.asm's POST-anchor resident tail, not
