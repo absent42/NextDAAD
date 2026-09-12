@@ -13,11 +13,9 @@
 ; touches any flag) and never touch A or F: esxDOS is not documented to
 ; read F on entry to any of these calls, and cardBusy_clear's "jr" tail
 ; preserves the CF/A result esxDOS just set completely untouched back to
-; the wrapper's own caller. HL itself is already documented as corrupted
-; by every one of these wrappers (see aud_part_open's tail-call comment,
-; overlay1.asm:2651-2652: "a plain tail-call into esx_fopen, so this
-; routine's own corruption set is exactly esx_fopen's: Corrupts AF, BC,
-; DE, HL, IX") so reusing it here adds no new corruption. esx_fseek's
+; the wrapper's own caller. HL itself is already corrupted by every one of
+; these wrappers (esx_fopen's own set is AF, BC, DE, HL, IX), so reusing it
+; here adds no new corruption. esx_fseek's
 ; caller (vid_raw_seek0) also sets L before the call, but the seek mode
 ; esxDOS actually reads is IXL, not L - L is set only belt-and-braces
 ; and is unread on this raw rst $08 caller path (settled finding,

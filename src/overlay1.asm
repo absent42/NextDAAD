@@ -2772,25 +2772,17 @@ sfx_page_bracket:
 
 ; --- song / effects-bank loaders ------------------------------------
 
-; SP14c batch C (OV1-5): shared PARTn\ prefix-build-and-probe helper.
-; aud_load_song/aud_load_wav/aud_load_ays/aud_load_sfb each inlined this
-; identical ~55-byte block (verified byte-for-byte identical modulo the
-; source pointer before folding); this is the single body all four now
-; call. In: DE = source name pointer (9 bytes, NUL-padded - audName for
-; song/wav/ays, audGameSfb for sfb). curPart==1 is checked first (skips
-; straight to CF-set, matching every caller's own un-prefixed root-name
-; fallback exactly as before). Out: NC + A = handle on a successful
-; PARTn-prefixed open (caller proceeds to its own unchanged
-; .partopened body); CF set on curPart==1, no default drive, or an
-; open failure (caller falls through to its own unchanged root-name
-; open path - none of that fallback code moved). The tail is a plain
-; tail-call into esx_fopen, so this routine's own corruption set is
-; exactly esx_fopen's: Corrupts AF, BC, DE, HL, IX.
-aud_part_open:
+; DE -> 9-byte name. curPart >= 2: probe PARTn\name, then the root;
+; aud_open_root enters at the root pass (GAME.AKY and GAME.AYS are never
+; prefixed). Out: NC + audHandle set, or CF. Corrupts AF, BC, DE, HL, IX.
+aud_open_root:
+    push de
+    jr aud_open.root            ; a local resolves against its own global
+aud_open:
+    push de
     ld a, (curPart)
     dec a
-    jr z, .skip
-    push de                      ; source ptr survives the buffer build
+    jr z, .root
     ld hl, audNamePart
     ld (hl), 'P'
     inc hl
@@ -2806,18 +2798,30 @@ aud_part_open:
     inc hl
     ld (hl), '\'
     inc hl
-    ex de, hl                    ; de = audNamePart+6
-    pop hl                       ; hl = source ptr
+    ex de, hl                    ; DE = audNamePart+6
+    pop hl                       ; HL = source name
+    push hl
     ld bc, 9
     ldir
     call esx_getsetdrv
-    ret c                        ; no drive: CF set, caller's root path
+    jr c, .root
     ld ix, audNamePart
     ld b, ESX_MODE_READ
-    jp esx_fopen                 ; tail call: NC+A=handle or CF, as-is
-.skip:
-    scf
-    ret
+    call esx_fopen
+    jr nc, .got
+.root:
+    call esx_getsetdrv
+    pop ix                       ; the name pointer, as IX
+    ret c
+    ld b, ESX_MODE_READ
+    call esx_fopen
+    ret c
+    jr .store
+.got:
+    pop hl                       ; discard the saved name pointer
+.store:
+    ld (audHandle), a
+    ret                          ; NC from esx_fopen
 
 ; A = number 0-255, DE -> ".EXT",0 (5 bytes). Builds "NNN.EXT",0 in
 ; audName (repeated-subtraction decade idiom). Corrupts AF, BC, DE, HL.
@@ -2867,28 +2871,16 @@ aud_load_song:
     ld de, audName
     ld bc, 9
     ldir
-    jr .open
+    ld de, audName
+    call aud_open_root          ; never prefixed
+    jr .opened
 .num:
     ld de, audExtAky            ; ".AKY", 0
     call aud_name_num
-    ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open,
-    ; above) - was an inlined ~55-byte block, identical in shape at all
-    ; four song/sample/effects-bank loader sites. curPart == 1: skip
-    ; straight to .open - zero new opens, byte-identical to pre-fold
-    ; behavior. GAME.AKY (the $FF sentinel above) is never prefixed -
-    ; it reaches .open directly via its own jr, before this block.
     ld de, audName
-    call aud_part_open
-    jr nc, .partopened
-.open:
-    call esx_getsetdrv
-    jp c, .fail
-    ld ix, audName
-    ld b, ESX_MODE_READ
-    call esx_fopen
+    call aud_open               ; PARTn\ then root; sets audHandle
+.opened:
     jp c, .fail                 ; missing: playing music untouched
-.partopened:
-    ld (audHandle), a
     ; stop the music before overwriting the song area - BOTH kinds:
     ; an AYS stream must not survive an AKY load (mutual exclusion is
     ; two-way; aud_load_ays mirrors this in the other direction).
@@ -3006,24 +2998,9 @@ aud_load_song:
 ; sits at page 48 bank offset $1000-$17FF, a single slot-6 window
 ; read. CF set on missing/oversize/read error. Corrupts everything.
 aud_load_sfb:
-    ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open,
-    ; above this section). curPart == 1: skip straight to .rootonly -
-    ; zero new opens, byte-identical to pre-fold behavior. Task 3's
-    ; switch_to_part already re-probes this routine at every part
-    ; switch with curPart committed first (overlay0.asm), so this
-    ; prefix pass activates automatically on the very next switch.
     ld de, audGameSfb
-    call aud_part_open
-    jr nc, .partopened
-.rootonly:
-    call esx_getsetdrv
+    call aud_open               ; PARTn\GAME.SFB then GAME.SFB; sets audHandle
     jr c, .fail
-    ld ix, audGameSfb
-    ld b, ESX_MODE_READ
-    call esx_fopen
-    jr c, .fail
-.partopened:
-    ld (audHandle), a
     call data_save
     ld a, AUD_PAGE_LO
     call data_map_page
@@ -3306,11 +3283,9 @@ audGameAys: db "GAME.AYS", 0
 audExtAky:  db ".AKY", 0
 audExtAys:  db ".AYS", 0
 audName:    ds 9
-; SP11 T5: PARTn\ prefixed scratch, overlay1-local, shared by all four
-; overlay1 probe sites (aud_load_wav, aud_load_song/aud_load_ays'
-; numbered branches, aud_load_sfb) exactly the way audName above is
-; already shared between them - never concurrently in flight, each
-; site fully rewrites it before use. Sized 6 ("PARTn\") + 9 (matches
+; SP11 T5: PARTn\ prefixed scratch, overlay1-local, built by aud_open for
+; all four loaders (song, wav, ays, sfb) - never concurrently in flight,
+; rewritten in full on every open. Sized 6 ("PARTn\") + 9 (matches
 ; audName's own size - every name this buffer ever holds, WAV/AKY/AYS/
 ; GAME.SFB alike, is <= 9 bytes with its own NUL) = 15.
 audNamePart: ds 15
@@ -3375,23 +3350,10 @@ aud_load_wav:
     ld (wavReqNum), a
     ld de, wavExt                ; ".WAV", 0
     call aud_name_num
-    ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open).
-    ; curPart == 1: skip straight to .rootonly - zero new opens,
-    ; byte-identical to pre-fold behavior.
     ld de, audName
-    call aud_part_open
-    jr nc, .partopened
-.rootonly:
-    call esx_getsetdrv
-    jp c, .fail
-    ld ix, audName
-    ld b, ESX_MODE_READ
-    call esx_fopen
+    call aud_open               ; sets audHandle
     jp c, .fail                 ; missing: any playing sample untouched
-                                 ; (open probed BEFORE the stop, same
-                                 ; rule as aud_load_song)
-.partopened:
-    ld (audHandle), a
+                                 ; (open probed BEFORE the stop)
     ld hl, 0
     ld (wavDataOff), hl         ; file position tracker: .read accumulates
                                 ; every byte it consumes, so the moment
@@ -3692,28 +3654,16 @@ aud_load_ays:
     ld de, audName
     ld bc, 9
     ldir
-    jr .open
+    ld de, audName
+    call aud_open_root          ; never prefixed
+    jr .opened
 .num:
     ld de, audExtAys            ; ".AYS", 0
     call aud_name_num
-    ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open).
-    ; curPart == 1: skip straight to .open - zero new opens, byte-
-    ; identical to pre-fold behavior. GAME.AYS (the $FF sentinel above)
-    ; is never prefixed - it reaches .open directly via its own jr,
-    ; before this block.
     ld de, audName
-    call aud_part_open
-    jr nc, .partopened
-.open:
-    call esx_getsetdrv
-    jp c, .fail
-    ld ix, audName
-    ld b, ESX_MODE_READ
-    call esx_fopen
-    jp c, .fail                 ; missing: current music untouched (open
-                                ; probed BEFORE the stop, as aud_load_song)
-.partopened:
-    ld (audHandle), a
+    call aud_open               ; PARTn\ then root; sets audHandle
+.opened:
+    jp c, .fail                 ; missing: current music untouched
     ; stop BOTH music kinds before the banks move / the stream restarts.
     ; res the start bits first so a pending, not-yet-consumed start of the
     ; OLD music cannot fire mid-load.
