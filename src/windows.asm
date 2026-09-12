@@ -124,6 +124,10 @@ win_cls:
 ; Out: CF set = the cursor wrapped past the right edge (curX reset to
 ; 0, curY NOT advanced - caller must call win_newline). CF clear = no
 ; wrap. Corrupts AF, BC, DE, HL.
+; The record walk below leaves HL -> WIN_CURY and steps by fixed
+; offsets afterwards; the ASSERTs pin the layout it assumes.
+    ASSERT WIN_CURY == WIN_CURX+1
+    ASSERT WIN_W == WIN_CURX-2
 win_putc:
     push af
     call win_attr               ; E = attr
@@ -142,17 +146,18 @@ win_putc:
     add a, b
     ld b, a                     ; screen row
     pop af
-    call tm_putc_at
-    ld a, WIN_CURX
-    call win_field
+    push hl                     ; HL -> WIN_CURY across tm_putc_at
+    call tm_putc_at             ; corrupts AF, HL only
+    pop hl
+    dec hl                      ; -> WIN_CURX
     ld a, (hl)
     inc a
     ld (hl), a
-    push hl
-    ld a, WIN_W
-    call win_field
+    dec hl
+    dec hl                      ; -> WIN_W
     ld a, (hl)
-    pop hl
+    inc hl
+    inc hl                      ; -> WIN_CURX again (.wrap stores here)
     cp (hl)                     ; w == new curX?
     jr z, .wrap
     or a                        ; CF clear
