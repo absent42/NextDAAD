@@ -1100,45 +1100,27 @@ h_display:
 ; discipline) - inline, resident dbg_* helpers only, mirrors h_sfx's
 ; unknown-sub idiom (SP7 Task 4, overlay1.asm). Corrupts everything.
 h_gfx:
-    ld a, c                     ; sub-command
-    cp 0
-    jp z, .backfront             ; out of jr range since the GFX 9/10 dispatch grew this chain
-    cp 1
-    jp z, .frontback
-    cp 2
-    jp z, .swap
-    cp 5
-    jp z, l2_clear
-    cp 6
-    jp z, l2_clear_back
-    cp 3
-    jr z, .toscreen
-    cp 4
-    jr z, .tobuffer
-    cp 11
-    jp z, .cycstart
-    cp 12
-    jp z, .cycstop
-    cp 9
-    jp z, .palset
-    cp 10
-    jp z, .palget
-    cp GFX_SUB_VID_ONCE
-    jp z, .vidonce
-    cp GFX_SUB_VID_LOOP
-    jp z, .vidloop
-    cp GFX_SUB_FONT
-    jp z, .font
-    cp GFX_SUB_LAYER
-    jr z, .layer
-    cp GFX_SUB_TXTMODE
-    jp z, .txtmode
-    cp GFX_SUB_SPR_START
-    jp z, .sprstart
-    cp GFX_SUB_SPR_FLAGS
-    jp z, .sprflags
-    cp GFX_SUB_SPR_STOP
-    jp z, .sprstop
+    ld a, c                     ; sub-command; B (P1) and C reach every sub
+    cp 22
+    jr nc, .unk
+    add a, a
+    ld hl, .tab
+    add hl, a                   ; carry is always cleared here, and unread
+    ld a, (hl)
+    inc hl
+    ld h, (hl)
+    ld l, a
+    jp (hl)
+.tab:                           ; sub 0-21; holes 7, 8, 15 -> .unk
+    dw .backfront, .frontback, .swap, .toscreen, .tobuffer
+    dw l2_clear, l2_clear_back, .unk, .unk, .palset, .palget
+    dw .cycstart, .cycstop, .vidonce, .vidloop, .unk
+    dw .font, .layer, .txtmode, .sprstart, .sprflags, .sprstop
+    ASSERT $ - .tab == 44
+    ASSERT GFX_SUB_VID_ONCE == 13 && GFX_SUB_VID_LOOP == 14 && GFX_SUB_FONT == 16
+    ASSERT GFX_SUB_LAYER == 17 && GFX_SUB_TXTMODE == 18
+    ASSERT GFX_SUB_SPR_START == 19 && GFX_SUB_SPR_FLAGS == 20 && GFX_SUB_SPR_STOP == 21
+.unk:
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
     push bc                     ; across dbg_puts (corrupts BC) for
