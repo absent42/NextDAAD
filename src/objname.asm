@@ -373,7 +373,7 @@ list_at:
     or a
     ret nz                      ; LISTOBJ prints nothing at all
     ld e, 53                    ; LISTAT: SM53 alone, no extra newline
-    ld a, 0
+    xor a
     jp print_msg
 .some:
     set 7, (hl)                 ; objects listed: set "listed" on BOTH
@@ -381,7 +381,7 @@ list_at:
     or a
     jr z, .body
     ld e, 1                     ; "I can also see:" - LISTOBJ only
-    ld a, 0
+    xor a
     call print_msg
     ld a, (flags+FLAG_OFLAGS)
     and 64
@@ -420,7 +420,7 @@ list_at:
     jr nz, .sep
     ld e, 47                    ; " and "
 .sep:
-    ld a, 0
+    xor a
     call print_msg
     jr .sepend
 .nl:
@@ -444,7 +444,7 @@ list_at:
     and 64
     jp z, prn_newline           ; one-per-line: close the last name's
     ld e, 48                    ; line; jDAAD emits no SM48 in this form
-    ld a, 0
+    xor a
     jp print_msg
 
 lstLoc:   db 0

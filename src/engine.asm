@@ -197,7 +197,7 @@ obj_ptr:
 ; case). PARSE blocks synchronously inside inp_edit, so this busy loop
 ; only advances once real input (or a timeout) is available.
 eng_run:
-    ld a, 0
+    xor a                       ; PRO 0; eng_push_proc reads no flags
     call eng_push_proc
 .loop:
     call eng_step

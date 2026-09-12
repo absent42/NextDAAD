@@ -263,7 +263,7 @@ prn_more_check:
     ld (moreLock), a
     ld (wrapLock), a            ; SM32 echoes immediately, never buffers -
                                 ; this protects the outer word in wrapBuf
-    ld a, 0                     ; SM32 through the normal pipeline
+    xor a                       ; SM32 through the normal pipeline
     ld e, 32
     call print_msg
     xor a

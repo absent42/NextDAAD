@@ -11,7 +11,7 @@
 tm_reserved_pairs:
     nextreg NR_PAL_CTRL, PAL_TM_FIRST
     nextreg NR_PAL_INDEX, 0
-    ld a, 0                     ; pair 0 paper
+    xor a                       ; pair 0 paper
     call tm_pal_write9
     ld a, 7                     ; pair 0 ink
     call tm_pal_write9
