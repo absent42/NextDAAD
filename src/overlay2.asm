@@ -29,6 +29,12 @@
 ; harmless, last writer wins with an identical value. Then the clip
 ; window and scroll offset via l2_clip_set. Remembers the mode in
 ; l2Mode for l2_clear/l2_testcard. Corrupts AF.
+; Flip the surface roles, then program the mode l2Mode already holds
+; (NR $70 + $12 back-to-back, l2_flip_swap's header). Corrupts AF, B.
+l2_flip_mode:
+    call l2_flip_swap
+    ld a, (l2Mode)
+    ; falls into l2_mode_set
 l2_mode_set:
     ld (l2Mode), a
     push af
@@ -994,10 +1000,8 @@ h_display:
     xor a
     ld (gfxRevealPend), a       ; an explicit clear-flip discards any
                                  ; pending deferred picture
-    call l2_flip_swap
-    ld a, (l2Mode)              ; flip via the mode the back clear was
-    call l2_mode_set            ; just sized for - NR $70 + $12 paired,
-    ret                         ; idempotent when the mode is unchanged
+    jp l2_flip_mode             ; flip via the mode the back clear was
+                                ; just sized for; idempotent when unchanged
 
 ; 87 GFX (action): C = sub-command (P2); B (P1 = n) is unused by every
 ; sub except 9, 10, 11, 13, 14, 16, 17, 18, 19, 20 and 21 - a flag
@@ -2446,9 +2450,7 @@ gfx_direct_stream:
     ; resolution and new front bank back-to-back (l2_flip_swap header),
     ; then the palette bank immediately after so pixels and colours
     ; arrive together
-    call l2_flip_swap
-    ld a, (gfxMode)
-    call l2_mode_set
+    call l2_flip_mode           ; l2Mode = gfxMode since the entry commit
     nextreg NR_PAL_CTRL, PAL_L2_SECOND
     ; bank 2 is live and correct; bank 1 still holds the previous
     ; picture, and a tilemap palette write would drag the display onto
@@ -3200,9 +3202,7 @@ gfx_blit:
     ; the palette bank immediately after. That last write trails NR $12
     ; by well under a scanline (~1800 T at 28MHz), so pixels and colours
     ; arrive together as far as the beam is concerned.
-    call l2_flip_swap
-    ld a, (stagedMode)
-    call l2_mode_set
+    call l2_flip_mode           ; l2Mode = stagedMode since the entry commit
     nextreg NR_PAL_CTRL, PAL_L2_SECOND
     ; bank 2 is live and correct; refill bank 1 behind it, then hand the
     ; display back so the standing "bank 1 is the live one" convention
@@ -3818,9 +3818,7 @@ title_blit:
     call data_restore
     ; flip: swap surface roles, then program resolution + new front
     ; bank back-to-back via l2_mode_set (see l2_flip_swap header)
-    call l2_flip_swap
-    ld a, (gfxMode)
-    call l2_mode_set
+    call l2_flip_mode           ; l2Mode = gfxMode since the entry commit
     jp l2_enable
 
 ; --- SP12 Task 1: custom font load (boot + part switch) ---
