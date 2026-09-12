@@ -228,17 +228,16 @@ h_doall:                        ; 85: B = location (255 = here). Error
     ld a, (procSP)
     ld (doallLevel), a
     call eng_top_ix
-    ld a, (ix+1)
-    ld (doallResE), a
-    ld a, (ix+2)
-    ld (doallResE+1), a
-    ld a, (ix+3)
-    ld (doallResC), a
-    ld a, (ix+4)
-    ld (doallResC+1), a
+    push ix                     ; IX+1..IX+4 = entryPtr, count word ->
+    pop hl                      ; doallResE, doallResC (contiguous,
+    inc hl                      ; engine.asm - asserted below)
+    ld de, doallResE
+    ld bc, 4
+    ldir
     ld a, $FF
     ld (doallObj), a
     jp eng_doall_next
+    ASSERT doallResC == doallResE+2
 
 h_at:                           ; 0: flags[38] == B
     ld a, (flags+FLAG_PLAYER)
