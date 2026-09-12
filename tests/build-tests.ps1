@@ -2360,6 +2360,11 @@ foreach ($c in @(@{ n = 'GFX 100 11';  b = [byte[]]@(87, 100, 11) },
                  @{ n = 'RAMSAVE';     b = [byte[]]@(62) },
                  @{ n = 'RAMLOAD 255'; b = [byte[]]@(63, 255) },
                  @{ n = 'RESTART';     b = [byte[]]@(117) },
+                 @{ n = 'EXTERN 22 30'; b = [byte[]]@(61, 22, 30) },
+                 @{ n = 'EXTERN 0 40';  b = [byte[]]@(61, 0, 40) },
+                 @{ n = 'EXTERN 0 41';  b = [byte[]]@(61, 0, 41) },
+                 @{ n = 'EXTERN 0 43';  b = [byte[]]@(61, 0, 43) },
+                 @{ n = 'GFX 2 19';     b = [byte[]]@(87, 2, 19) },
                  @{ n = 'PICTURE 1';   b = [byte[]]@(84, 1) },
                  @{ n = 'DISPLAY 0';   b = [byte[]]@(28, 0) })) {
     if ((Find-ByteRuns $cycleBytes $c.b).Count -lt 1) {
@@ -5192,6 +5197,18 @@ if ($Cycle) {
     if (-not (Test-Path $cycCardSrc)) { throw "mkpalcard.py produced no palcard.nx2" }
     Copy-Item $cycCardSrc (Join-Path $leg '001.NX2') -Force
     "staged palcard.nx2 -> $leg\001.NX2"
+    # S16 and S20 need the collection XBN (ticker fn 30, fade fns 40/41/43);
+    # S19 needs one sprite set. Copied when present, warned about when not.
+    $cycXbn = "$root\authoring-kit\externs\all\GAME.XBN"
+    if (Test-Path $cycXbn) {
+        Copy-Item $cycXbn (Join-Path $leg 'GAME.XBN') -Force
+        "staged authoring-kit\externs\all\GAME.XBN -> $leg\GAME.XBN"
+    } else { "WARNING: authoring-kit\externs\all\GAME.XBN missing - run sheet steps 16 and 20 cannot run" }
+    $cycAni = "$root\tests\out\anipack\002.ANI"
+    if (Test-Path $cycAni) {
+        Copy-Item $cycAni (Join-Path $leg '002.ANI') -Force
+        "staged 002.ANI -> $leg\002.ANI"
+    } else { "WARNING: tests\out\anipack\002.ANI missing (run -Sprites once) - run sheet step 19 cannot run" }
     # S15 (silicon only) plays 001.VID: reuse the smallest cached -Vid
     # leg encode, as the SFXLONG leg does. No encoder runs here.
     $cycVid = Get-ChildItem "$root\tests\out\*_leg_cache.vid" -ErrorAction SilentlyContinue | Sort-Object Length, Name | Select-Object -First 1

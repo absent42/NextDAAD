@@ -13,6 +13,12 @@
 /CTL
 _
 /VOC
+VID    50  verb
+XBN    51  verb
+SPR    52  verb
+FADE   53  verb
+CYC    54  verb
+STOPC  55  verb
 LOOK   4  verb
 /STX
 /0  "It's too dark to see anything."
@@ -97,6 +103,12 @@ LOOK   4  verb
 /17 "#n"
 /18 "X"
 /19 "S15 video, silicon only: clip, then the cycle resumes#n"
+/20 "verbs: VID XBN SPR FADE CYC STOPC#n"
+/21 "S16 ticker armed - type VID#n"
+/22 "the ticker runs from the interrupt hook and pauses for a clip"
+/23 "S19 sprite set 2 started#n"
+/24 "clip done#n"
+/25 "S20 fade done#n"
 /OTX
 /0 "a thing"
 /LTX
@@ -222,10 +234,9 @@ LOOK   4  verb
              LET 102 10
              GFX 100 11
              MESSAGE 19
-             ANYKEY
-             GFX 1 13
-             ANYKEY
-             REDO
+             LET 200 3
+> _ _        EQ 200 3
+             PROCESS 7
 /PRO 2
 > _ _        MESSAGE 14
              PRINT 120
@@ -388,5 +399,32 @@ LOOK   4  verb
              PAPER 111
              INK 175
              MES 18
+             DONE
+/PRO 7
+> VID   _    GFX 1 13
+             MESSAGE 24
+             DONE
+> XBN   _    EXTERN 22 30
+             MESSAGE 21
+             DONE
+> SPR   _    GFX 2 19
+             MESSAGE 23
+             DONE
+> FADE  _    GFX 0 12
+             EXTERN 0 40
+             EXTERN 0 43
+             EXTERN 0 41
+             EXTERN 0 43
+             GFX 100 11
+             MESSAGE 25
+             DONE
+> CYC   _    LET 100 16
+             LET 101 31
+             LET 102 10
+             GFX 100 11
+             DONE
+> STOPC _    GFX 0 12
+             DONE
+> _     _    MESSAGE 20
              DONE
 /END
