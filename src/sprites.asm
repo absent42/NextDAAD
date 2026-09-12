@@ -736,9 +736,9 @@ spr_stop_record:
     jr nz, .snap
     add hl, de
     djnz .live
-    ld a, (xbnIntOn)
-    and $FF-HOOK_SPR
-    ld (xbnIntOn), a
+    ld hl, xbnIntOn
+    res 1, (hl)                  ; no set left: disarm the tick
+    ASSERT HOOK_SPR == 1<<1
 .snap:
  IFDEF DEBUG
     call spr_dbg_snap
@@ -1764,9 +1764,8 @@ spr_start_body:
     ld a, (sprReqSet)
     ld (ix+SR_SET), a            ; publish last
     call spr_ident_recalc
-    ld a, (xbnIntOn)
-    or HOOK_SPR
-    ld (xbnIntOn), a
+    ld hl, xbnIntOn
+    set 1, (hl)                  ; arm the tick (HOOK_SPR, asserted at the disarm site)
  IFDEF DEBUG
     call spr_dbg_snap
  ENDIF

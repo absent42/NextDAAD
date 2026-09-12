@@ -1351,14 +1351,12 @@ h_gfx:
     dec a                        ; 255 -> 254: the transparent entry never moves
 .cycclamp:
     ld e, a
-    cp d
-    jr z, .cycbad3
-    jr c, .cycbad3               ; last must be above first
-    ld a, (xbnIntOn)             ; clear, write, set: a tick never sees a torn range
-    and $FF-HOOK_CYC
-    ld (xbnIntOn), a
     ld a, d
-    ld (cycFirst), a
+    cp e
+    jr nc, .cycbad3              ; last must be above first (CF = first < last)
+    ld hl, xbnIntOn              ; clear, write, set: a tick never sees a torn range
+    res 2, (hl)
+    ld (cycFirst), a             ; A = first from the compare above
     ld a, e
     ld (cycLast), a
     ld a, c
@@ -1366,9 +1364,8 @@ h_gfx:
     ld (cycCount), a
     xor a
     ld (palLock), a              ; no burst can be open in a condact: repair a lock a failed path left
-    ld a, (xbnIntOn)
-    or HOOK_CYC
-    ld (xbnIntOn), a
+    set 2, (hl)                  ; HL still xbnIntOn: nothing above touches it
+    ASSERT HOOK_CYC == 1<<2
  IFDEF DEBUG
     ld e, 0
     jr .cycsnap

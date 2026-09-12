@@ -1179,10 +1179,18 @@ function Assert-CycleStopSites {
     # xbnIntOn writer census. main: boot clear, spr_boot_init, cyc_stop.
     # overlay0: XBN unload, XBN arm/disarm. sprites: stop-all, arm.
     # overlay2: GFX 11's clear then set. video: the suspend, the OR-back.
+    # Two spellings count: `ld (xbnIntOn),a`, and `res/set n,(hl)` while
+    # the most recent `ld hl,` loaded xbnIntOn (sprites and GFX 11).
     $want = @{ 'src\main.asm' = 3; 'src\overlay0.asm' = 2; 'src\sprites.asm' = 2; 'src\overlay2.asm' = 2; 'src\video.asm' = 2 }
     foreach ($f in Get-ChildItem (Join-Path $root 'src\*.asm')) {
         $rel = 'src\' + $f.Name
-        $n = ([regex]::Matches((Strip-AsmComments (Get-Content -LiteralPath $f.FullName -Raw)), 'ld\s+\(xbnIntOn\),\s*a')).Count
+        $t = Strip-AsmComments (Get-Content -LiteralPath $f.FullName -Raw)
+        $n = ([regex]::Matches($t, 'ld\s+\(xbnIntOn\),\s*a')).Count
+        $hl = ''
+        foreach ($line in ($t -split "`n")) {
+            if ($line -match 'ld\s+hl,\s*(\S+)') { $hl = $Matches[1] }
+            elseif ($line -match '(?:res|set)\s+[0-7],\s*\(hl\)' -and $hl -eq 'xbnIntOn') { $n++ }
+        }
         $w = if ($want.ContainsKey($rel)) { $want[$rel] } else { 0 }
         if ($n -ne $w) {
             throw "$rel : $n write(s) to xbnIntOn, expected $w - a new hook-mask writer must be a sanctioned stop, arm or suspend site; update Assert-CycleStopSites's table only after deciding which"
