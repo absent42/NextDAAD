@@ -170,7 +170,7 @@ spr_pal_enter:
 spr_pal_leave:
     ld a, (sprPalSave)
     nextreg NR_PAL_CTRL, a
-    ld a, 0                      ; not xor: F preserved through the tail jumps below
+    xor a                        ; no caller reads F after the bracket closes
     ld (palLock), a
     ret
 
@@ -289,7 +289,8 @@ spr_map_find_high:
 .try:
     ld a, d
     or a
-    jr z, .none
+    scf                          ; Z survives scf: start 0 = no run fits
+    ret z
     call spr_map_run_clear
     jr z, .got
     dec d
@@ -297,9 +298,6 @@ spr_map_find_high:
 .got:
     ld a, d
     or a
-    ret
-.none:
-    scf
     ret
 
 ; Set (E = $FF) or clear (E = 0) bits D..D+C-1 of the map at HL. Preserves HL, DE. Corrupts AF, BC.
@@ -464,12 +462,10 @@ spr_tick:
     dec a
     ld (hl), a
     jr nz, .skip
-    pop hl
-    push hl
+    pop ix                       ; IX = record; the same stack shape as before
+    push ix
     push bc
     push de
-    push hl
-    pop ix
     ld a, (ix+SR_FRAME)
     inc a
     cp (ix+SR_FRAMES)
@@ -1279,9 +1275,7 @@ spr_cache_victim:
     ld a, e                      ; evict E
     call spr_cache_entry
     push hl
-    push de
-    call spr_cache_free_banks
-    pop de
+    call spr_cache_free_banks    ; corrupts AF, HL; bank_free keeps DE
     pop hl
     ld a, e
     ret
