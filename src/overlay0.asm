@@ -1867,11 +1867,10 @@ h_pause:                        ; 35: B frames, 0 = 256
     jp prn_reset_lines
 
 ; E = SM number -> D = first decoded character (token-aware).
+; rd_push, data_save and rd_pop preserve DE; data_restore corrupts A only.
 sm_first_char:
-    push de                     ; rd_push and data_save both preserve DE
-    call rd_push                ; now; bracket kept but redundant
+    call rd_push
     call data_save
-    pop de
     ld a, 0
     call msg_seek
     jr c, .none
@@ -1896,17 +1895,11 @@ sm_first_char:
 .plain:
     ld d, a
     call data_restore
-    push de
     call rd_pop
-    pop de
     ret
 .none:
-    ld d, 'Y'
-    call data_restore
-    push de
-    call rd_pop
-    pop de
-    ret
+    ld a, 'Y'                   ; missing SM: default to Y
+    jr .plain
 
 ; Read one LINE of confirmation input: echo each printable character,
 ; ENTER ends it, and the FIRST printable character is the answer.
