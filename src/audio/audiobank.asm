@@ -336,7 +336,8 @@ aud_music_stop:
     res 0, (hl)
     res 1, (hl)
     ; PSG 1/2 are music-only: silence them now (nothing rewrites them
-    ; until the next start-music)
+    ; until the next start-music). aud_ays_stop joins here.
+.park:
     ld a, $FF
     call aud_psg_silence
     ld a, $FE
@@ -1294,15 +1295,7 @@ aud_ays_start:
 aud_ays_stop:
     xor a
     ld (aysFlags), a
-    ld a, $FF                   ; PSG 1 and PSG 2 carry stream/music only:
-    call aud_psg_silence        ; silence them now (nothing else refreshes
-    ld a, $FE                   ; them once the stream is gone)
-    call aud_psg_silence
-    ld a, (audFlags)            ; PSG 3 may be owned by an effect (bit 2)
-    and %00001100               ; or a beep (bit 3): leave it to them, else
-    ret nz                      ; silence it (the same test aud_music_stop
-    ld a, $FD                   ; uses to protect PSG 3)
-    jp aud_psg_silence
+    jp aud_music_stop.park      ; PSG 1/2, then PSG 3 unless a beep/effect owns it
 
 ; aud_ays_tick: replay one frame. Called from aud_tick every tick (self-
 ; gated on aysFlags bit 0), regardless of audFlags. Slot 7 = AUD_PAGE_HI
