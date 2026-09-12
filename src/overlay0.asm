@@ -1998,6 +1998,8 @@ confirm:
     ret
 
 ; A = char. a-z folded to A-Z, anything else unchanged. Corrupts AF.
+; overlay1 has a byte-identical twin: both overlays share MMU slot 7 and
+; are never mapped together, so the two copies cannot be merged.
 fold_upper:
     cp 'a'
     ret c

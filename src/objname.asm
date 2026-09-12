@@ -432,7 +432,8 @@ lstMode:  db 0
 lstTotal: db 0
 
 ; B = object. Z = objTable[B].loc == lstLoc.
-; Preserves BC, DE; corrupts AF, HL.
+; Preserves BC, DE; corrupts AF, HL. DEBUG also ticks objScanCount once
+; per call, so the instrument counts one per object inspected.
 lst_match:
  IFDEF DEBUG
     call objscan_tick           ; SP14c gate follow-up: OBJ1 measurement

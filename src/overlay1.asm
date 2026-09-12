@@ -1312,7 +1312,7 @@ parse_order:
     ld (prnSeen), a
     ld a, (flags+FLAG_NOUN1)
     inc a
-    jp nz, .word                ; noun1 already set: pronoun ignored (jr range)
+    jp nz, .word                ; noun1 already set: pronoun ignored
     ld a, (flags+FLAG_CPNOUN)
     ld (flags+FLAG_NOUN1), a
     ld a, (flags+FLAG_CPADJ)
@@ -3366,8 +3366,7 @@ aud_load_wav:
     ld de, "mf"                  ; 'f','m' of "fmt "
     or a
     sbc hl, de
-    jp nz, .notfmt               ; jr: out of range once the short-read
-                                 ; checks above push .notfmt further away
+    jp nz, .notfmt
     ld hl, (wavHdr+2)
     ld de, " t"                  ; 't',' '
     or a
@@ -3559,7 +3558,8 @@ aud_load_wav:
     ret
 ; Read BC bytes into IX; wavDataOff += bytes read (reads are sequential from
 ; offset 0, so it is the file position, and the first payload byte's offset
-; once the data chunk header is in). CF = SD error or short read. Corrupts AF, HL.
+; once the data chunk header is in). CF = SD error or short read. Corrupts
+; AF, HL; BC returns the bytes actually read, not the count requested.
 .read:
     push bc
     ld a, (audHandle)
