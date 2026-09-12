@@ -4,6 +4,17 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.10.0 - Unreleased
 
+- Z80 review, wave 1 (no contract change): a peephole and dead-code
+  pass over the resident core, both condact overlays, the graphics
+  overlay, the sprite engine and the audio pages. Bytes freed in the
+  release build: resident pre-anchor 127, resident tail 19, overlay0
+  174, overlay1 117, overlay2 205, sprites 62, page 48 20, streamed
+  effects 55. The debug build frees more where debug-only code was
+  removed. Hot paths are cheaper by the amounts the review measured,
+  chiefly printed characters, condact dispatch and the Next register
+  read. The sprite hook mask is now set and cleared in one
+  read-modify-write, so a frame tick can no longer observe it
+  half-updated. No condact, save format or extern contract changed.
 - Loader intro: `intro.nex`, a standalone launcher the kit stages as
   `<GAME>.NEX` when `INTRO.TXT` exists. It plays a scripted slideshow of
   320x256 or 256x192 pictures (cut, fade to any colour, wipes, dissolve,

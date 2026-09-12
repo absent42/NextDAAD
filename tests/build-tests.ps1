@@ -1188,7 +1188,8 @@ function Assert-CycleStopSites {
         $n = ([regex]::Matches($t, 'ld\s+\(xbnIntOn\),\s*a')).Count
         $hl = ''
         foreach ($line in ($t -split "`n")) {
-            if ($line -match 'ld\s+hl,\s*(\S+)') { $hl = $Matches[1] }
+            if ($line -match '^[A-Za-z_]') { $hl = '' }   # global label ends the reach
+            elseif ($line -match 'ld\s+hl,\s*(\S+)') { $hl = $Matches[1] }
             elseif ($line -match '(?:res|set)\s+[0-7],\s*\(hl\)' -and $hl -eq 'xbnIntOn') { $n++ }
         }
         $w = if ($want.ContainsKey($rel)) { $want[$rel] } else { 0 }

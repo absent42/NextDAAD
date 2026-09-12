@@ -687,7 +687,7 @@ sfx_stream_open:
     ld l, (ix+SMPB_WINTAB)
     ld h, (ix+SMPB_WINTAB+1)
     add hl, SFXW_STIDX           ; Z80N: HL -> the descriptor's anchor bytes
-    ld (hl), c                   ; C = TABIDX since 684-688
+    ld (hl), c                   ; C = TABIDX, set just above
     inc hl
     ld (hl), e
     inc hl
