@@ -396,6 +396,26 @@ vm.runInContext(`
 sandbox.__mute = false;
 sandbox.__out = (s) => { if (!sandbox.__mute) out += s; };
 
+// jdaad.js's _DISPLAY() calls the window-clear helper as ClearCurrentWindow()
+// - capital C - on the branch taken when the condact's own parameter is not
+// zero (jdaad.js:2777), but the function is only ever DEFINED as
+// clearCurrentWindow, lowercase c (jdaad.js:2261). An upstream case-mismatch
+// bug: JavaScript is case-sensitive, so that branch throws "ReferenceError:
+// ClearCurrentWindow is not defined" and kills the whole leg before turn 0.
+// Rabenstein issues that form of DISPLAY during boot.
+//
+// Aliased, not reimplemented, so DISPLAY runs jDAAD's own window-clear - the
+// same one every other call site reaches by its correct lowercase name - and
+// not a no-op that would silently change reference behaviour. Taken here,
+// after the writeChar/clearCurrentWindow patch above, so the alias resolves
+// to THAT version and a DISPLAY-triggered clear still tees '---[CLS]---'
+// into the capture like any other clear. Guarded so a toolkit release that
+// fixes the spelling and defines ClearCurrentWindow itself is left alone.
+vm.runInContext(`
+  if (typeof ClearCurrentWindow === 'undefined')
+    ClearCurrentWindow = clearCurrentWindow;
+`, sandbox);
+
 // --- boot ------------------------------------------------------------------
 handlers.ready();
 
