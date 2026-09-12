@@ -530,19 +530,20 @@ aud_smp_start:
     ; early audio, bounded - so the resident cursor write below needs no
     ; DI bracket either way. Ring base and the cursor address are both
     ; channel-block members (SMPB_RINGH/PLAYPTR).
-    ld h, (ix+SMPB_RINGH)
-    ld l, 0                     ; HL = ring base
     ld e, (ix+SMPB_PLAYPTR)
     ld d, (ix+SMPB_PLAYPTR+1)   ; DE = &smpPlayPtr (this channel's resident cursor)
-    ld a, l
-    ld (de), a
-    inc de
-    ld a, h
-    ld (de), a
+    xor a
+    ld (de), a                  ; low byte 0 first, high byte second: the same
+    inc de                      ; torn-write order the comment above argues from
+    ld a, (ix+SMPB_RINGH)
+    ld (de), a                  ; smpPlayPtr = ring base
     ; fill the ring from the source (backpressure caps the copy at ring-1)
     call aud_smp_copy           ; advances SMPB_W
     ld l, (ix+SMPB_W)
     ld h, (ix+SMPB_W+1)
+    ld a, h
+    or l
+    ld c, a                     ; C = 0 iff nothing was staged (C dead until the CTC port load)
     ld d, (ix+SMPB_RINGH)
     ld e, 0                     ; DE = ring base
     add hl, de                  ; HL = ring base + bytes filled
@@ -553,11 +554,9 @@ aud_smp_start:
     inc de
     ld a, h
     ld (de), a                  ; write = ring base + bytes filled
-    ld l, (ix+SMPB_W)           ; nothing staged (zero-length sample): leave CTC off
-    ld h, (ix+SMPB_W+1)
-    ld a, h
-    or l
-    ret z
+    ld a, c
+    or a
+    ret z                       ; nothing staged (zero-length sample): leave CTC off
     ; program CTC channel 0: unknown-state reset, control word, time constant.
     ; The channel int is gated open in NR C5 by im2_init; loading the TC starts
     ; the timer and ctc_isr begins feeding the DAC at the sample rate. Port
