@@ -2515,22 +2515,15 @@ xbn_boot_load:
     sbc hl, de
     jp c, .reject                 ; fewer bytes than a header: truncated
     ld hl, DATA_WINDOW
-    ld a, (hl)
-    cp 'X'
+    ld de, .magic
+    ld b, 4
+.m:
+    ld a, (de)
+    cp (hl)                     ; "XBN",2 - HL lands on the ext word
     jp nz, .reject
     inc hl
-    ld a, (hl)
-    cp 'B'
-    jp nz, .reject
-    inc hl
-    ld a, (hl)
-    cp 'N'
-    jp nz, .reject
-    inc hl
-    ld a, (hl)
-    cp 2
-    jp nz, .reject
-    inc hl
+    inc de
+    djnz .m
     ld e, (hl)
     inc hl
     ld d, (hl)
@@ -2665,6 +2658,7 @@ xbn_boot_load:
 .hdrInt:    dw 0
 .hdrSize:   dw 0
 .hdrEnd:    dw 0
+.magic:     db "XBN", 2
 
 ; --- SP11 Task 3: part switch primitive (EXTERN n 4 / XPART) ---
 
