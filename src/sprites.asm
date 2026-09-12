@@ -991,8 +991,7 @@ spr_hw_stop:
     call spr_ei
     jr .group
 .done:
-    call spr_ei
-    ret
+    jp spr_ei
 
 ; IX = allocated, unpublished record; slot 6 = image page 0. Palettes under one
 ; NR $43 bracket, then the pattern upload. Leaves slot 6 on the last image

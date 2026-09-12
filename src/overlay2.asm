@@ -3906,8 +3906,7 @@ font_load:
  ENDIF                              ; Release stays silent here, as it does on
                                     ; every other failure on this path.
     ld a, (fontHandle)
-    call esx_fclose
-    ret                            ; no free bank: silent, table untouched
+    jp esx_fclose                  ; no free bank: silent, table untouched
 .haveBank:
     ld (fontBank), a
     call data_save
@@ -3954,8 +3953,7 @@ font_load:
     call bank_free
     call data_restore
     ld a, (fontHandle)
-    call esx_fclose
-    ret
+    jp esx_fclose
 
 ; Part-switch tail: reload the (possibly per-part) font, then chain to
 ; the SFB re-probe in overlay1; eng_run is already on the stack (pushed
@@ -4055,12 +4053,10 @@ l2_bareprobe_draw:
     or a
     jr nz, .tc320
     call tc_gradient_256
-    call tc_mark_256
-    ret
+    jp tc_mark_256
 .tc320:
     call tc_gradient_320
-    call tc_mark_320
-    ret
+    jp tc_mark_320
 
 ; A = ladder stage (0-3). Draws (stage+1) filled 16x16-pixel blocks,
 ; TC_MARK_COLOUR, side by side (20px stride) in the top-left corner -
@@ -4101,8 +4097,7 @@ l2_bareprobe_marker:
     dec a
     ld (l2BpBlockCnt), a
     jr nz, .block
-    call data_restore
-    ret
+    jp data_restore
 
 l2BpBlockCnt: db 0
 l2BpRowCnt:   db 0
@@ -4161,8 +4156,7 @@ tc_gradient_256:
     ld hl, l2PageCur
     inc (hl)
     djnz .page
-    call data_restore
-    ret
+    jp data_restore
 
 ; 320x256: 10 x 8K pages, column-major (guide 310: upper byte X, lower
 ; byte Y; 8K page holds 32 columns). Every column (D = $C0..$DF, the
@@ -4206,8 +4200,7 @@ tc_gradient_320:
     ld hl, l2PageCur
     inc (hl)
     djnz .page
-    call data_restore
-    ret
+    jp data_restore
 
 l2GradCol: db 0
 
@@ -4264,8 +4257,7 @@ tc_mark_256:
     ld hl, DATA_WINDOW+28*256+252        ; BR
     ld c, TC_MARK_COLOUR
     call tc_mark
-    call data_restore
-    ret
+    jp data_restore
 
 ; 320x256 corners (column-major: page = X>>5, offset = (X&31)*256 + Y).
 ; TL (X0-3,Y0-3) and BL (X0-3,Y236-239) fall in page 0; TR (X316-319,
@@ -4301,8 +4293,7 @@ tc_mark_320:
     ld hl, DATA_WINDOW+28*256+236        ; BR
     ld c, TC_MARK_COLOUR
     call tc_mark
-    call data_restore
-    ret
+    jp data_restore
 
 ; Card #6 SNAP=03/00 sitting follow-up (.superpowers/sdd/sp14a-task-4-
 ; report.md section 41): EXTERN vector 8 (debug.asm's
