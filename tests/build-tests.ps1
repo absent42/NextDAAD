@@ -4401,12 +4401,47 @@ if ($Aud) {
     if (Test-Path $audSrc) {
         $audFiles = @(Get-ChildItem "$audSrc\*.AKY", "$audSrc\GAME.SFB", "$audSrc\*.WAV", "$audSrc\*.AYS" -ErrorAction SilentlyContinue)
     }
-    if ($audFiles.Count -eq 0) {
-        "WARNING: -Aud given but $audSrc has no assets (run the audio export script first) - skipped"
+    if ($audFiles.Count -gt 0) {
+        $audFiles | ForEach-Object { Copy-Item $_.FullName "$leg\$($_.Name)" -Force }
+        "staged $($audFiles.Count) audio asset(s) from tools\audio_assets -> sd\$legName\ ($(($audFiles | ForEach-Object Name) -join ', '))"
     }
     else {
-        $audFiles | ForEach-Object { Copy-Item $_.FullName "$leg\$($_.Name)" -Force }
-        "staged $($audFiles.Count) audio asset(s) -> sd\$legName\ ($(($audFiles | ForEach-Object Name) -join ', '))"
+        # tools\audio_assets is the audio export's output directory and does
+        # not exist on every machine. Rather than stage nothing, fall back to
+        # the equivalent material already in this repo, under the names the
+        # template fixture's SFX verbs ask for, so the hardware audio sheets
+        # need no files copied in by hand.
+        "no tools\audio_assets on this machine - staging the equivalent set from this repo"
+        # 001.WAV is generated, never committed: 48 KB of sine that is a
+        # byte-exact function of four constants, as the SfxDi leg does it.
+        $audTone = Join-Path $root 'tests\out\tone440_16k.wav'
+        if (-not (Test-Path $audTone)) {
+            & python (Join-Path $PSScriptRoot 'audio\mktone.py') (Join-Path $root 'tests\out')
+            if ($LASTEXITCODE -ne 0) { throw "mktone.py failed" }
+        }
+        $audFallback = [ordered]@{
+            '001.AKY'  = @((Join-Path $root 'tests\audio\L9.AKY'), 'MUSIC = SFX 1 7 needs it; 9 channels, so every PSG silence runs')
+            'GAME.SFB' = @((Join-Path $root 'authoring-kit\RELEASE\GAME.SFB'), 'AYFX = SFX 2 1 needs it; regenerate with the kit audio script')
+            '001.WAV'  = @($audTone, 'SAMP = SFX 1 1 and SAMPL = SFX 1 2 need it; regenerate with the mktone script')
+            '002.AYS'  = @((Join-Path $root 'tests\out\intro\out-011b-stream\MUSIC.AYS'), 'TUNE2 = SFX 2 7 needs it, the only route into the AYS stop; regenerate with the kit aysconv script')
+        }
+        foreach ($dest in $audFallback.Keys) {
+            $asrc = $audFallback[$dest][0]
+            if (Test-Path $asrc) {
+                Copy-Item $asrc (Join-Path $leg $dest) -Force
+                $note = ''
+                if ($dest -eq '001.WAV') {
+                    # The rate is taken verbatim from the fmt chunk and nothing
+                    # resamples, so read it back rather than trust the name.
+                    $wb = [System.IO.File]::ReadAllBytes($asrc)
+                    $note = " $([System.BitConverter]::ToUInt32($wb, 24)) Hz"
+                }
+                "  staged $(Split-Path $asrc -Leaf) -> sd\$legName\$dest ($((Get-Item $asrc).Length) bytes$note)"
+            }
+            else {
+                "  WARNING: no $dest - $asrc is missing. $($audFallback[$dest][1])"
+            }
+        }
     }
 }
 
