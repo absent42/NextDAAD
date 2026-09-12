@@ -2819,6 +2819,34 @@ aud_part_open:
     scf
     ret
 
+; A = number 0-255, DE -> ".EXT",0 (5 bytes). Builds "NNN.EXT",0 in
+; audName (repeated-subtraction decade idiom). Corrupts AF, BC, DE, HL.
+aud_name_num:
+    ld hl, audName
+    ld b, '0'-1
+.hund:
+    inc b
+    sub 100
+    jr nc, .hund
+    add a, 100
+    ld (hl), b
+    inc hl
+    ld b, '0'-1
+.tens:
+    inc b
+    sub 10
+    jr nc, .tens
+    add a, 10
+    ld (hl), b
+    inc hl
+    add a, '0'
+    ld (hl), a
+    inc hl
+    ex de, hl
+    ld bc, 5
+    ldir
+    ret
+
 ; aud_load_song: A = song number ($FF = GAME.AKY). Loads NNN.AKY into
 ; AUD_SONG_ORG through slot-6 windows: the song area spans the tail of
 ; page 48 (bank offset $1800-$1FFF = file bytes 0-$7FF) and the first
@@ -2841,32 +2869,8 @@ aud_load_song:
     ldir
     jr .open
 .num:
-    ; "NNN.AKY" - 3-digit zero-padded decimal, the project's
-    ; repeated-subtraction decade idiom (see gfx_open_chain)
-    ld hl, audName
-    ld b, '0'-1
-.hund:
-    inc b
-    sub 100
-    jr nc, .hund
-    add a, 100
-    ld (hl), b
-    inc hl
-    ld b, '0'-1
-.tens:
-    inc b
-    sub 10
-    jr nc, .tens
-    add a, 10
-    ld (hl), b
-    inc hl
-    add a, '0'
-    ld (hl), a
-    inc hl
     ld de, audExtAky            ; ".AKY", 0
-    ex de, hl
-    ld bc, 5
-    ldir
+    call aud_name_num
     ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open,
     ; above) - was an inlined ~55-byte block, identical in shape at all
     ; four song/sample/effects-bank loader sites. curPart == 1: skip
@@ -3369,31 +3373,8 @@ sfxSel:     db 0                ; h_sfx: the allocator's verdict - bit 0 =
 ; Corrupts everything.
 aud_load_wav:
     ld (wavReqNum), a
-    ; build "NNN.WAV" (decade idiom, same as aud_load_song)
-    ld hl, audName
-    ld b, '0'-1
-.hund:
-    inc b
-    sub 100
-    jr nc, .hund
-    add a, 100
-    ld (hl), b
-    inc hl
-    ld b, '0'-1
-.tens:
-    inc b
-    sub 10
-    jr nc, .tens
-    add a, 10
-    ld (hl), b
-    inc hl
-    add a, '0'
-    ld (hl), a
-    inc hl
     ld de, wavExt                ; ".WAV", 0
-    ex de, hl
-    ld bc, 5
-    ldir
+    call aud_name_num
     ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open).
     ; curPart == 1: skip straight to .rootonly - zero new opens,
     ; byte-identical to pre-fold behavior.
@@ -3713,30 +3694,8 @@ aud_load_ays:
     ldir
     jr .open
 .num:
-    ld hl, audName              ; "NNN.AYS" - the 3-digit decade idiom
-    ld b, '0'-1
-.hund:
-    inc b
-    sub 100
-    jr nc, .hund
-    add a, 100
-    ld (hl), b
-    inc hl
-    ld b, '0'-1
-.tens:
-    inc b
-    sub 10
-    jr nc, .tens
-    add a, 10
-    ld (hl), b
-    inc hl
-    add a, '0'
-    ld (hl), a
-    inc hl
     ld de, audExtAys            ; ".AYS", 0
-    ex de, hl
-    ld bc, 5
-    ldir
+    call aud_name_num
     ; SP14c OV1-5: shared PARTn\ prefix-build-and-probe (aud_part_open).
     ; curPart == 1: skip straight to .open - zero new opens, byte-
     ; identical to pre-fold behavior. GAME.AYS (the $FF sentinel above)
