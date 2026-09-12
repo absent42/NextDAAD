@@ -45,18 +45,14 @@ txt_init:
 ; Corrupts AF; preserves BC, DE, HL.
 tm_pal_write9:
     push hl
-    push de
     add a, a                    ; *2 (two bytes per entry)
-    ld e, a
-    ld d, 0
     ld hl, dadPalette
-    add hl, de
+    add hl, a                   ; Z80N; DE never touched
     ld a, (hl)                  ; byte 0 = RRRGGGBB
     nextreg NR_PAL_VALUE9, a
     inc hl
     ld a, (hl)                  ; byte 1 = blue LSB (bit 0)
     nextreg NR_PAL_VALUE9, a
-    pop de
     pop hl
     ret
 

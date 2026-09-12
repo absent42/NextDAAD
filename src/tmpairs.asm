@@ -53,10 +53,8 @@ pal_colour:
     cp 16
     jr nc, .computed
     add a, a                    ; classic: two bytes per entry
-    ld l, a
-    ld h, 0
-    ld de, dadPalette
-    add hl, de
+    ld hl, dadPalette
+    add hl, a                   ; Z80N
     ld d, (hl)                  ; byte 0 = RRRGGGBB
     inc hl
     ld e, (hl)                  ; byte 1 = blue LSB
