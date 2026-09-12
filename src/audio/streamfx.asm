@@ -458,7 +458,7 @@ sfx_stream_open:
                                  ; 33+ extents land here
     ld de, sfxColdMap
     or a
-    sbc hl, de                   ; HL = bytes written (an exact x6)
+    sbc hl, de                   ; HL = the byte span esx_filemap reported; the loop below refuses a non-x6 span
     jp z, .refuse                ; empty map: nothing to stream
     ld b, 0
     ld de, 6

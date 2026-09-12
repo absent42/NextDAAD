@@ -152,11 +152,9 @@ im2_init:
                                          ; MMU slot, no register-select pair, no
                                          ; banked memory and never the DMA port,
                                          ; the sole condition of admission stated
-                                         ; above. Nothing drives channel 2 yet
-                                         ; (Task 11 wires the pump/mailbox), so
-                                         ; this permission is armed ahead of use,
-                                         ; exactly as channel 0's already is
-                                         ; before the first sample plays.
+                                         ; above. Channel 2 is driven by the
+                                         ; sfxChan1 pump: aud_tick audRequest2
+                                         ; bits 2/3 (SP18 item 7 Task 11).
     nextreg NR_DMA_INT_EN_3, 0           ; $CE = 0: no UART source may interrupt
                                          ; a DMA. Nothing here uses the UARTs
                                          ; and $C6 is never written, so this
@@ -488,8 +486,8 @@ smpWritePtr: dw AUD_STAGE0
 ; at W on drain, exactly as channel 1's tick does). Cost ~167T body,
 ; same shape as ctc_isr; ei precedes reti so the body is non-reentrant
 ; against a second CTC edge on this same channel.
-; Nothing starts channel 2 yet (Task 11 wires the pump/mailbox) - this
-; ISR is wired and armable but its ring stays at rest until then.
+; Started by aud_smp_start on sfxChan1 (aud_tick, audRequest2 bit 3);
+; the ring rests until the first channel-2 sample.
 ctc2_isr:
     push af
     push hl

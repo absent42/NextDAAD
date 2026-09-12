@@ -79,9 +79,9 @@ audio_init:
     ; SP18 item 7 Task 10: mirror the same double soft-reset for channel 2's
     ; CTC. Same reasoning as channel 1 above - reached from boot and every
     ; teardown, each of which then DIs indefinitely, so this is what stops
-    ; those DI sections from starving an active channel-2 feed too. Nothing
-    ; drives channel 2 yet (Task 11), but the reset is unconditional and
-    ; harmless either way, exactly like channel 1's at boot. AUD_CTC2_PORT
+    ; those DI sections from starving an active channel-2 feed too. The
+    ; channel is driven by the sfxChan1 pump (aud_tick, audRequest2 bits
+    ; 2/3); the reset is unconditional, as channel 1's is. AUD_CTC2_PORT
     ; is AUD_CTC_PORT with B+1 ($183B -> $193B, same low byte) - inc b
     ; instead of a fresh ld bc reload; A still holds AUD_CTC_RESET.
     inc b                            ; depends on AUD_CTC2_PORT == AUD_CTC_PORT

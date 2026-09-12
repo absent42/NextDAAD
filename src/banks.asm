@@ -118,8 +118,8 @@ bank_alloc:
 ; read flags on return (grepped every call site: debug.asm's two are
 ; followed by an unrelated bank_alloc/cp pair; overlay1.asm/video.asm
 ; sites are followed by an unconditional jump or an unrelated call;
-; overlay2.asm's three djnz-loop sites test B, not any flag) - ADD
-; HL,A's undefined carry is safe here.
+; overlay2.asm's three djnz-loop sites test B, not any flag) - and
+; ADD HL,A leaves carry CLEAR in any case (core RTL).
 bank_free:
     push hl
     ld hl, bankTable

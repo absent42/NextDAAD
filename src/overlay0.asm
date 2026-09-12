@@ -2359,9 +2359,9 @@ ext_xmes:
     ; NextZXOS dot command supplies through its own wrapper. The
     ; previous comment's defrag.asm/fragmentation.asm citation was a
     ; category error - those ARE dot commands, so they exercise the L
-    ; convention, not this one; SP11 T4's sav_append_part (overlay1.asm)
-    ; is the correct raw-caller precedent, cross-confirmed against
-    ; tools/NextZXOS's bundled bmp2spr.asm (same "ld ix,0" idiom).
+    ; convention, not this one; main.asm's svc_fseek and video.asm's
+    ; vid_raw_seek0 set IX the same way (sav_append_part, once cited
+    ; here, is gone), as does tools/NextZXOS's bmp2spr.asm ("ld ix,0").
     ; Fixed per SP11 T5 rider (opus-review finding M2): IXL now set
     ; explicitly; L kept too, belt-and-braces (harmless - unread on
     ; this path). This worked on CSpect before possibly by register
@@ -2738,7 +2738,7 @@ xbn_boot_load:
 ; ext_build_contract); the ret simply returns to h_extern's caller
 ; (eng_exec's post-dispatch code)
 ; via the same return address h_extern's own jp-tail-chain left on the
-; stack, exactly as if EXTERN had dispatched to ext_stub. curPart is
+; stack, exactly as if EXTERN had taken the ext_forward -> h_unimpl fallback. curPart is
 ; not written until switch_to_part has a confirmed-successful probe,
 ; so both failure exits here leave the current part fully untouched.
 ; Out-of-range n gets a DEBUG marker (author diagnostics, same idiom

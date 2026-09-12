@@ -735,8 +735,9 @@ vid_fetch_ram:
 ; BC = count (vid_run_body also A = colour). Each iteration:
 ; normalize the dest (hop a finished column / cross a window seam),
 ; size a chunk against every binding room, run the kernel sized by
-; the derived crossovers (RUN >= 71B and COPY >= 74B go DMA, capped
-; at 256B per DI bracket - contracts noted in the file header).
+; the derived crossovers (RUN >= NXV2_RUN_DMA_MIN 71B and COPY >=
+; NXV2_COPY_DMA_MIN 81B go DMA, chunks <= NXV2_DMA_CHUNK 240B, run
+; unbracketed - see the zxnDMA kernel header).
 ; ---------------------------------------------------------------------
 vid_skip_body:
     ld (vidRemain), bc
@@ -2313,8 +2314,8 @@ vid_run:
     ; and a stop clears SMPB_FLAGS bits 0/1, so which channels were
     ; looping has to be recorded before that happens.
     ;
-    ; Recorded HERE, hot, rather than at the abort itself: VID_PAGE2 has
-    ; 25 bytes free against this page's 114, and the two sites are
+    ; Recorded HERE, hot, rather than at the abort itself: page budgets
+    ; at the time chose the placement, and the two sites are
     ; equivalent - they are separated only by the hop into the
     ; orchestrator, and nothing between them can change a LOOPING
     ; channel's active bit (mainline is this code; the only self-stop in
@@ -2493,16 +2494,14 @@ vid_run:
 ; writer that funds the low-fps floor) and (streaming) produces SD
 ; blocks. Then: force-finish the feed (normally a no-op) -> ring
 ; gate -> decode/paint -> present -> STAGE frame f+1's audio + pump
-; what fits (aBytes <= 1280: everything, the pre-T10 shape; loop
+; what fits (aBytes <= NXV_AUD_FRAME_MAX 3072, open rejects more; loop
 ; mode rewinds the cursors first, so pass N+1's frame-0 audio feeds
 ; seamlessly; play-once skips staging on the last frame and the
 ; drain tail waits the audio out) -> key check -> frame accounting.
 ; DEBUG: 5-phase stamps, one per transition. TIMELINE SEMANTICS
-; (T10): AUDIO brackets the stage + initial pump after present; for
-; aBytes > 1280 files the trickled remainder lands in PACE (pace is
-; idle-wait + feed-chase now). For every pre-T10-legal file (aBytes
-; <= 1280) the initial pump completes at once and the phase split
-; reads exactly as before. TOT is unchanged.
+; (T10): AUDIO brackets the stage + initial pump after present; the ring
+; holds two whole frames (ASSERT 2*NXV_AUD_FRAME_MAX <= ring-guard), so
+; the pump completes in one pass, PACE is a backstop, TOT is unchanged.
 ; ---------------------------------------------------------------------
 .frameloop:
  IFDEF DEBUG
@@ -2618,9 +2617,9 @@ vid_run:
     call vid_loop_rewind
 .qnext:
     call vid_aud_stage           ; arm the feed, then pump what fits
-    ld bc, $FFFF                 ; now (aBytes <= 1280: all of it -
-    call vid_aud_pump            ; the pre-T10 shape; bigger frames
-                                 ; trickle from the .pace spin)
+    ld bc, $FFFF                 ; ask for the whole staged feed: it fits in
+    call vid_aud_pump            ; one pass for every legal file
+                                 ; (2*NXV_AUD_FRAME_MAX <= ring-guard)
 .qskip:
     call vid_key_any             ; any key ends playback (<= 1 frame
     jr nz, .restore              ; latency; the frame just presented)
