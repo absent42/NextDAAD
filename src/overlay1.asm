@@ -1992,6 +1992,7 @@ h_save:                         ; 25: condition-typed like LOAD; done
     jr c, .fail                 ; so the game's catch-all stays quiet;
     call sav_write_v2           ; SP11 T4 fix: single-pass v2 write -
     jr nc, .ok                  ; failure aborts the entry so SM59/57
+.io:                            ; shared with h_load: SM57, done, false
     ld e, 57                    ; "I/O Error"          survive the redraw
     ld a, 0
     call print_msg
@@ -2023,16 +2024,9 @@ h_load:                         ; 26: condition-typed (cprops row 26).
                                 ; success - "cross-part LOAD is a part-
                                 ; entry, not a resume" (brief).
     call sav_prompt
-    jr c, .fail                 ; name error: fail the entry
+    jr c, h_save.fail           ; name error: done, fail the entry
     call sav_read_v2
-    jr nc, .ok
-    ld e, 57
-    ld a, 0
-    call print_msg
-    call prn_newline
-.fail:
-    call eng_set_done           ; done on every outcome (jdaad _LOADB)
-    jp ovl1_false               ; abort the entry, session survives
+    jr c, h_save.io             ; SM57, done, fail (jdaad _LOADB)
 .ok:
     xor a                       ; same-part LOAD clears the transient
     call gfx_drawtarget_clear   ; GFX 87/4 draw-target state; the layer
