@@ -540,8 +540,7 @@ sfx_stream_open:
     ; payload in a 1000-byte file would stage COMPLETE and the pump would
     ; play 99000 bytes of stale window content. Refuse, exactly as
     ; before, which reaches the caller's AY fallback.
-    ld l, (iy+SFXS_DATAOFF)
-    ld h, (iy+SFXS_DATAOFF+1)
+    add hl, de                   ; HL = dataOff again (DE still SFX_WIN_BYTES)
     ld bc, (sfxPayLen)
     add hl, bc
     ld a, (sfxPayLenHi)
@@ -567,7 +566,7 @@ sfx_stream_open:
     or a
     sbc hl, de
     jr nc, .partial              ; fileBytes > SFX_WIN_BYTES
-    ld hl, (sfxFstatBuf+7)
+    add hl, de                   ; HL = fileBytes again (DE still SFX_WIN_BYTES+1)
     ld a, 1                      ; whole file: the free-hybrid path
     jr .setstage
 .partial:
@@ -604,10 +603,10 @@ sfx_stream_open:
     or a
     sbc hl, de
     jr nc, .fullwin
-    ld hl, (sfxStageRem)         ; partial final page
+    add hl, de                   ; partial final page: the remainder back
     jr .setwin
 .fullwin:
-    ld hl, $2000
+    ex de, hl                    ; HL = $2000; DE is dead (reloaded before any read)
 .setwin:
     ld (sfxStgWin), hl
     ld hl, sfxWinPg
@@ -625,9 +624,8 @@ sfx_stream_open:
     sbc hl, bc                   ; requested - actually read
     jp nz, .refusemap            ; short read: the file lied about its
                                  ; own size between F_FSTAT and here
-    ld hl, (sfxStageRem)
-    ld bc, (sfxStgWin)
-    or a
+    ld hl, (sfxStageRem)         ; BC = bytes read = sfxStgWin (proved just above;
+    or a                         ; cardBusy_clear touches only HL)
     sbc hl, bc
     ld (sfxStageRem), hl
     ld hl, sfxStgIdx
@@ -652,9 +650,7 @@ sfx_stream_open:
     ; the anchor sits INSIDE is counted: it is debited when the consumer
     ; crosses the next 512 boundary, exactly like any other block. See
     ; the invariant stated in full at aud_smp_copy's debit site.
-    ld e, (iy+SFXS_DATAOFF)
-    ld d, (iy+SFXS_DATAOFF+1)
-    ld a, d
+    ld a, (iy+SFXS_DATAOFF+1)
     srl a                        ; A = dataOff >> 9 = whole blocks
     ld e, a                      ;     skipped ((H:L) >> 9 == H >> 1)
     ld d, 0
@@ -690,10 +686,8 @@ sfx_stream_open:
     ld (ix+SMPB_OFF+1), d
     ld l, (ix+SMPB_WINTAB)
     ld h, (ix+SMPB_WINTAB+1)
-    ld bc, SFXW_STIDX
-    add hl, bc                   ; HL -> the descriptor's anchor bytes
-    ld a, (ix+SMPB_TABIDX)
-    ld (hl), a
+    add hl, SFXW_STIDX           ; Z80N: HL -> the descriptor's anchor bytes
+    ld (hl), c                   ; C = TABIDX since 684-688
     inc hl
     ld (hl), e
     inc hl
@@ -888,11 +882,8 @@ msgSfxFrag: db "SFX FRAG?", 0
 ;      the effect. h_sfx implements exactly that retry shape.
 ; Corrupts everything.
 sfx_stream_rewind:
-    rrca                             ; bit 0 -> CF
-    ld ix, sfxChan0
-    jr nc, .chosen
-    ld ix, sfxChan1
-.chosen:
+    ld e, a
+    call sfx_chan_block              ; IX = the channel A bit 0 names
     ld (sfxChanPtr), ix
     ld l, (ix+SMPB_STRM)
     ld h, (ix+SMPB_STRM+1)
@@ -941,10 +932,8 @@ aud_ctc_params:
     ld l, a
     add a, a
     add a, l                    ; A = mode * 3 (3 bytes per clk16 entry)
-    ld l, a
-    ld h, 0
-    ld bc, aud_clk16_tab
-    add hl, bc                  ; HL -> clk16[mode] (24-bit little-endian)
+    ld hl, aud_clk16_tab
+    add hl, a                   ; Z80N: HL -> clk16[mode] (24-bit little-endian)
     ld a, (hl)                  ; byte0 (low)
     inc hl
     ld b, (hl)                  ; byte1 (mid)
@@ -967,18 +956,12 @@ aud_ctc_params:
     jr z, .p16                  ; rate == crossover -> /16 (TC 256 -> clamps to 255)
     ld a, AUD_CTC_CW256         ; /256: control word + dividend = clk16 >> 4
     ld (audReqSmpCtrl), a
-    srl c                       ; clk16 >> 4 (24-bit C:HL), four right shifts
-    rr h
-    rr l
+    ld b, 4                     ; clk16 >> 4 (24-bit C:HL); B is re-seeded at .divide
+.sh4:
     srl c
     rr h
     rr l
-    srl c
-    rr h
-    rr l
-    srl c
-    rr h
-    rr l
+    djnz .sh4
     jr .divide
 .p16:
     ld a, AUD_CTC_CW16
@@ -1169,9 +1152,7 @@ sfx_alloc:
 .explicit:
     dec a                            ; 0 = channel 1, 1 = channel 2
     ld e, a
-    ld ix, sfxChan0
-    jr z, .expin
-    ld ix, sfxChan1
+    call sfx_chan_block
 .expin:
     set 5, (ix+SMPB_FLAGS)           ; the reservation. An explicit pin
                                      ; always takes its channel, so there
@@ -1372,7 +1353,7 @@ sfx_vid_resume:
 
 ; One channel. E = channel index (0 = channel 1), preserved.
 .chan:
-    call .block                      ; IX = this channel's block
+    call sfx_chan_block                      ; IX = this channel's block
     ld b, (ix+SMPB_KEEP)             ; the number its window holds
     ld a, b
     or a
@@ -1403,7 +1384,7 @@ sfx_vid_resume:
     call sfx_alloc                   ; other one, or the same one twice
     pop de
     ld c, a                          ; bit 7 free rewind / bit 6 cached
-    call .block
+    call sfx_chan_block
     ld a, (sfxResPin)
     or a
     jr nz, .pinned
@@ -1429,8 +1410,8 @@ sfx_vid_resume:
     ld hl, audRequest2
     set 3, (hl)                      ; channel 2's start, the mirror
     ret
-; IX = the block E names. Corrupts AF, IX.
-.block:
+; IX = the block E bit 0 names (0 = channel 1). Corrupts F, IX.
+sfx_chan_block:
     ld ix, sfxChan0
     bit 0, e
     ret z
@@ -1740,8 +1721,7 @@ sfx_chan_body:
     ; loop rewind raises bit 4 and the servicing above re-arms bit 2.
     res 2, (ix+SMPB_FLAGS)
 .done:
-    call sfx_win_close           ; the window NEVER outlives the tick
-    ret
+    jp sfx_win_close             ; the window NEVER outlives the tick
 .shortfile:
     ; the run list ran out with blocks still owed: the filemap and the
     ; F_FSTAT block count disagree (a stale map, or the file shrank).
@@ -1810,10 +1790,7 @@ sfx_anchor_blk:
     ld de, SFXW_STIDX
     add hl, de
     ld a, (hl)
-    add a, a
-    add a, a
-    add a, a
-    add a, a                     ; STIDX * 16
+    swapnib                      ; STIDX * 16 (STIDX is 0..2: high nibble 0)
     inc hl
     inc hl                       ; -> SFXW_STOFF high byte
     ld e, (hl)
