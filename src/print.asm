@@ -152,7 +152,7 @@ prn_glyph:
     ld a, c
     call win_putc
     ret nc                      ; no wrap
-    call win_newline_only       ; complete the wrap's line advance
+    call win_newline            ; complete the wrap's line advance
     jr prn_more_check
 
 ; Emit the buffered word through prn_glyph. If the word overflows the
@@ -211,13 +211,8 @@ prn_flush:
 prn_newline:
     call prn_flush
 prn_newline_raw:
-    call win_newline_only
+    call win_newline            ; windows.asm: column 0, next row, scroll
     jr prn_more_check
-
-; The raw window newline (windows.asm's win_newline), named for
-; clarity at call sites in this module.
-win_newline_only:
-    jp win_newline
 
 ; $0B cls escape: flush the pending word, then clear the window.
 prn_cls:
@@ -318,19 +313,6 @@ prn_more_check:
     ld a, (morePhysMMU6)
     nextreg NR_MMU6, a
     ret
-
-; HL = resident encoded string (255-complemented), terminated by an
-; encoded $0A (byte $F5). Same escapes as messages, no tokens.
-prn_encoded:
-    ld a, (hl)
-    inc hl
-    cpl
-    cp $0A
-    jp z, prn_flush             ; terminator: flush the pending word, ret
-    push hl
-    call prn_decoded
-    pop hl
-    jr prn_encoded
 
 ; Z = no key down, NZ = some key down. Corrupts AF.
 key_down:
