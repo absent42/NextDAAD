@@ -1004,18 +1004,18 @@ spr_hw_stop:
 ; NR $43 bracket, then the pattern upload. Leaves slot 6 on the last image
 ; page read; the caller remaps SPR_TAB_PAGE. Cannot fail.
 spr_hw_load:
-    ld a, (ix+SR_KIND)
-    or a
-    jr z, .upload
-    ld iy, DATA_WINDOW           ; block palettes: after header, table, block bytes
-    ld hl, DATA_WINDOW+ANI_HDR
+    ld iy, DATA_WINDOW
+    ld hl, DATA_WINDOW+ANI_HDR   ; 8-bit patterns follow the header + table
     ld e, (iy+ANI_TLEN)
     ld d, (iy+ANI_TLEN+1)
     add hl, de
-    ld a, (ix+SR_PATS)
-    add hl, a
+    ld a, (ix+SR_KIND)
+    or a
+    jr z, .src
+    ld a, (ix+SR_PATS)           ; 4-bit: block bytes, then nblk 32-byte palettes,
+    add hl, a                    ; then the patterns - HL walks through them
     ld b, (ix+SR_NBLK)
-    call spr_pal_enter           ; before DE is built: it corrupts E
+    call spr_pal_enter           ; before DE is built: it corrupts E, never HL
     push ix
     pop de
     ld a, SR_BLOCKS
@@ -1029,25 +1029,8 @@ spr_hw_load:
     pop bc
     inc de
     djnz .pal
-    call spr_pal_leave
-.upload:
-    ld iy, DATA_WINDOW           ; pattern offset = 16 + tlen + (4-bit: pats + nblk*32), under 8K
-    ld hl, ANI_HDR
-    ld e, (iy+ANI_TLEN)
-    ld d, (iy+ANI_TLEN+1)
-    add hl, de
-    ld a, (ix+SR_KIND)
-    or a
-    jr z, .src
-    ld a, (ix+SR_PATS)
-    add hl, a
-    ld d, (ix+SR_NBLK)
-    ld e, 32
-    mul d, e
-    add hl, de
+    call spr_pal_leave           ; HL = past the palettes = the pattern source
 .src:
-    ld de, DATA_WINDOW
-    add hl, de                   ; HL = source in page 0
     xor a
     ld (sprUpPage), a
     ld d, (ix+SR_PATS)           ; bytes = pats * 256 (8-bit) or * 128 (4-bit)
