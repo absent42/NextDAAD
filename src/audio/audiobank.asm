@@ -1043,12 +1043,10 @@ aud_smp_copy:
     ld de, (smpCpDst)
     add hl, de
     ex de, hl                   ; DE = dest abs
-    ld a, (smpCpIdx)            ; slot 7 <- window page list[idx]; the
-    ld l, a                     ; list is this channel's own (page 48,
-    ld h, 0                     ; slot 6), reached through SMPB_WINTAB
-    ld c, (ix+SMPB_WINTAB)
-    ld b, (ix+SMPB_WINTAB+1)
-    add hl, bc
+    ld l, (ix+SMPB_WINTAB)      ; slot 7 <- window page list[idx]; the
+    ld h, (ix+SMPB_WINTAB+1)    ; list is this channel's own (page 48,
+    ld a, (smpCpIdx)            ; slot 6), reached through SMPB_WINTAB
+    add hl, a                   ; Z80N; idx < SFX_WIN_PAGES
     ld a, (hl)
     nextreg $57, a              ; window the source page at $E000
     ld hl, (smpCpOff)           ; source abs = $E000 + off -> HL
@@ -1335,10 +1333,8 @@ aud_ays_tick:
     ld (aysSup), a
     ; slot 7 -> the current source page
     ld a, (aysTabIdx)
-    ld e, a
-    ld d, 0
     ld hl, aysPageTab
-    add hl, de
+    add hl, a                   ; Z80N; DE is rebuilt at .mask
     ld a, (hl)
     nextreg $57, a
     ; frame read setup
@@ -1458,7 +1454,6 @@ aud_ays_rdb:
     jr nz, .cross
     ret                         ; no cross: A still holds the byte
 .cross:
-    push de
     ld hl, 0
     ld (aysOff), hl             ; offset wraps to 0 in the next page
     ld hl, aysTabIdx
@@ -1466,15 +1461,12 @@ aud_ays_rdb:
     ld a, (hl)                  ; new table index
     ld hl, aysPageCnt
     cp (hl)
-    jr nc, .crosspop            ; index reached the count: stream end, no map
-    ld e, a
-    ld d, 0
+    jr nc, .crossend            ; index reached the count: stream end, no map
     ld hl, aysPageTab
-    add hl, de
+    add hl, a                   ; Z80N: DE (the tick's live mask) untouched
     ld a, (hl)                  ; next source page
     nextreg $57, a
-.crosspop:
-    pop de
+.crossend:
     ld a, (aysByte)             ; A = the stream byte read above
     ret
 
