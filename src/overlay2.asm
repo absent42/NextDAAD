@@ -2359,18 +2359,14 @@ gfx_direct_stream:
     jp nz, .fail                ; 257th row on the 320-wide surface
     ld a, (gfxMode)
     or a
-    jr nz, .fits
+    jr nz, .scatter
     ld a, (gfxRowY)
     cp 192
     jp nc, .fail                ; 193rd row on the 256-wide surface
-.fits:
-    ld a, (gfxMode)
-    or a
-    jr z, .linear
-    call gfx_row_scatter320
-    jr .wrote
-.linear:
     call gfx_row_copy256
+    jr .wrote
+.scatter:
+    call gfx_row_scatter320
 .wrote:
     ld hl, gfxRowY
     inc (hl)
