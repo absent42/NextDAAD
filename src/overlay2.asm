@@ -1724,12 +1724,21 @@ gfx_open_chain:
     dec a
     jr z, .rootonly
     call gfx_open_chain_part
-    ret nc                       ; opened under PARTn\: gfxHandle/
-                                  ; gfxMode/gfxWidth/gfxCompressed
-                                  ; already set by gfx_open_chain_part
+    ret nc                       ; opened under PARTn\
 .rootonly:
     ld a, (gfxPicNum)
     ld hl, gfxName
+    call gfx_digits3
+    ld hl, gfxName+4            ; past "NNN."
+    ld (gfxExtDst), hl
+    ld hl, gfxName
+    ld (gfxOpenPath), hl
+    jr gfx_chain_walk
+
+; A = number 0-255, HL = destination. Writes three decimal digits
+; (repeated-subtraction decade idiom). Out: HL = destination+2.
+; Corrupts AF, B, HL.
+gfx_digits3:
     ld b, '0'-1
 .hund:
     inc b
@@ -1748,20 +1757,46 @@ gfx_open_chain:
     inc hl
     add a, '0'
     ld (hl), a
+    ret
+
+; gfx_open_chain_part: PARTn\ prefixed pass (curPart 2-9 only - the
+; caller above gates part 1 before ever reaching here). Shares
+; gfx_digits3 and gfx_chain_walk with the root pass, so it carries the
+; same output contract (CF clear + gfxHandle/gfxMode/gfxWidth/
+; gfxCompressed set; CF set = chain exhausted under PARTn\, caller
+; falls back to the unchanged root pass) - but writing/probing
+; gfxNamePart instead of gfxName.
+; Runs the WHOLE chain before giving up. Corrupts everything.
+gfx_open_chain_part:
+    ld a, (curPart)
+    add a, '0'
+    ld (gfxNamePart+4), a        ; "PART", digit, 92 and "." are baked; only the digit moves
+    ld a, (gfxPicNum)
+    ld hl, gfxNamePart+6         ; -> NNN
+    call gfx_digits3             ; the '.' at +9 is baked
+    ld hl, gfxNamePart+10        ; past "PARTn\NNN."
+    ld (gfxExtDst), hl
+    ld hl, gfxNamePart
+    ld (gfxOpenPath), hl
+    ; falls into gfx_chain_walk
+
+; Walk gfxExtTab: per row copy the extension to (gfxExtDst), take the row's
+; mode/compressed bytes, probe (gfxOpenPath). Out: NC + gfxHandle/gfxMode/
+; gfxCompressed/gfxWidth set, or CF = chain exhausted. Corrupts everything.
+gfx_chain_walk:
     ld hl, gfxExtTab
 .row:
     ld (gfxExtPtr), hl
-    ld de, gfxName+4            ; past "NNN."
-    ld bc, GFX_EXT_NAME         ; 7 NUL-padded extension characters -
-    ldir                        ; a short extension carries its own
-                                ; terminator; gfxName's final NUL backs
-                                ; the full-length "NX2.ZX0" rows
-    ld a, (hl)                  ; row's mode byte
-    ld (gfxMode), a
+    ld de, (gfxExtDst)
+    ld bc, GFX_EXT_NAME         ; 7 NUL-padded extension characters; a short
+    ldir                        ; one carries its own terminator, and the
+                                ; buffer's final NUL backs "NX2.ZX0"
     inc hl
     ld a, (hl)                  ; row's compressed flag
     ld (gfxCompressed), a
-    ld a, (gfxMode)
+    dec hl
+    ld a, (hl)                  ; row's mode byte
+    ld (gfxMode), a
     or a
     ld de, 256
     jr z, .width
@@ -1770,7 +1805,7 @@ gfx_open_chain:
     ld (gfxWidth), de
     call esx_getsetdrv          ; A = default drive for esx_fopen
     jr c, .next
-    ld ix, gfxName
+    ld ix, (gfxOpenPath)
     ld b, ESX_MODE_READ
     call esx_fopen
     jr nc, .opened
@@ -1785,79 +1820,6 @@ gfx_open_chain:
     pop hl
     jr nz, .row
     scf                         ; chain exhausted
-    ret
-.opened:
-    ld (gfxHandle), a
-    or a
-    ret
-
-; gfx_open_chain_part: PARTn\ prefixed pass (curPart 2-9 only - the
-; caller above gates part 1 before ever reaching here). Textually
-; parallel to gfx_open_chain's own root-pass body just above: same
-; gfxPicNum digit-build, same gfxExtTab row walk, same output contract
-; (CF clear + gfxHandle/gfxMode/gfxWidth/gfxCompressed set; CF set =
-; chain exhausted under PARTn\, caller falls back to the unchanged
-; root pass) - but writing/probing gfxNamePart instead of gfxName.
-; Runs the WHOLE chain before giving up. Corrupts everything.
-gfx_open_chain_part:
-    ld a, (curPart)
-    add a, '0'
-    ld (gfxNamePart+4), a        ; "PART", digit, 92 and "." are baked; only the digit moves
-    ld a, (gfxPicNum)
-    ld hl, gfxNamePart+6         ; -> NNN
-    ld b, '0'-1
-.hund:
-    inc b
-    sub 100
-    jr nc, .hund
-    add a, 100
-    ld (hl), b
-    inc hl
-    ld b, '0'-1
-.tens:
-    inc b
-    sub 10
-    jr nc, .tens
-    add a, 10
-    ld (hl), b
-    inc hl
-    add a, '0'
-    ld (hl), a                   ; the '.' at +9 is baked
-    ld hl, gfxExtTab
-.row:
-    ld (gfxExtPtr), hl
-    ld de, gfxNamePart+10        ; past "PARTn\NNN."
-    ld bc, GFX_EXT_NAME
-    ldir
-    ld a, (hl)                   ; row's mode byte
-    ld (gfxMode), a
-    inc hl
-    ld a, (hl)                   ; row's compressed flag
-    ld (gfxCompressed), a
-    ld a, (gfxMode)
-    or a
-    ld de, 256
-    jr z, .width
-    ld de, 320
-.width:
-    ld (gfxWidth), de
-    call esx_getsetdrv           ; A = default drive for esx_fopen
-    jr c, .next
-    ld ix, gfxNamePart
-    ld b, ESX_MODE_READ
-    call esx_fopen
-    jr nc, .opened
-.next:
-    ld hl, (gfxExtPtr)
-    ld de, GFX_EXT_ROW
-    add hl, de
-    push hl
-    ld de, gfxExtEnd
-    or a
-    sbc hl, de
-    pop hl
-    jr nz, .row
-    scf                          ; chain exhausted
     ret
 .opened:
     ld (gfxHandle), a
@@ -3413,6 +3375,8 @@ gfxSizeLo:     dw 0              ; 24-bit byte total: gfxSizeHi:gfxSizeLo
 gfxSizeHi:     db 0
 gfxHeight:     db 0              ; derived rows (0 encodes 256)
 gfxExtPtr:     dw 0              ; chain walk cursor
+gfxExtDst:     dw 0              ; chain walk: where a row's extension lands
+gfxOpenPath:   dw 0              ; chain walk: the name esx_fopen probes
 gfxSrcIdx:     db 0              ; blit source: arena index of current bank
 gfxSrcHalf:    db 0              ; 0 = lower 8K page, 1 = upper
 gfxSrcPtr:     dw 0              ; blit source: window-relative read cursor
@@ -3521,12 +3485,12 @@ title_probe:
     inc hl
     ld d, (hl)                    ; DE = name pointer
     inc hl
-    ld a, (hl)                    ; row's mode byte
-    ld (gfxMode), a
     inc hl
     ld a, (hl)                    ; row's compressed byte
     ld (gfxCompressed), a
-    ld a, (gfxMode)
+    dec hl
+    ld a, (hl)                    ; row's mode byte
+    ld (gfxMode), a
     ld hl, 256
     or a
     jr z, .width
