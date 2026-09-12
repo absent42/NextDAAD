@@ -462,10 +462,10 @@ sfx_stream_open:
     jp z, .refuse                ; empty map: nothing to stream
     ld b, 0
     ld de, 6
-.count:
+.count:                          ; CF is clear here: the sbc above did not borrow
     inc b
-    or a
-    sbc hl, de
+    sbc hl, de                   ; and a non-borrow pass leaves it clear
+    jp c, .frag                  ; count not a multiple of 6: refuse, never spin
     jr nz, .count                ; B = run count (1..SFX_COLD_ENT)
     ld a, b
     cp SFX_HOT_ENT+1
