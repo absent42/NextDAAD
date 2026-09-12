@@ -3282,36 +3282,23 @@ h_mouse:
     ld a, b                     ; reposition the sprite (harmless if
     ld (mouseP1), a             ; it's currently hidden)
     call mouse_poll
-    ; col80 = mouseX/8, clamped 0-79 (word >> 3)
-    ld hl, (mouseX)
-    srl h
-    rr l
-    srl h
-    rr l
-    srl h
-    rr l
+    ; col80 = mouseX/8, clamped to tmCols-1 (word >> 3)
+    ld de, (mouseX)
+    ld b, 3
+    bsrl de, b                  ; Z80N barrel shift (core v2+; nex demands 3)
     ld a, (tmCols)
     dec a                       ; highest valid column
-    cp l                        ; L = mouseX>>3 low byte
+    cp e                        ; E = mouseX>>3 (mouseX <= 319, so D = 0)
     jr c, .c80ok                ; over: A already = max
-    ld a, l
+    ld a, e
 .c80ok:
     ld (mouseCol80), a
-    ; row32 = mouseY/8, clamped 0-31 (byte, zero-extended >> 3)
+    ; row32 = mouseY/8: a byte >> 3 is 0-31, no clamp needed
     ld a, (mouseY)
-    ld l, a
-    ld h, 0
-    srl h
-    rr l
-    srl h
-    rr l
-    srl h
-    rr l
-    ld a, l
-    cp 32
-    jr c, .r32ok
-    ld a, 31
-.r32ok:
+    rrca
+    rrca
+    rrca
+    and $1F
     ld (mouseRow32), a
     ; col53 = mouseX/6, clamped 0-53 (repeated subtraction: quotient
     ; never exceeds 53, cheap enough for a condact handler)
