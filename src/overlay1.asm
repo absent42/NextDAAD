@@ -2851,6 +2851,29 @@ aud_name_num:
     ldir
     ret
 
+; Stop both music kinds, halt-wait until the ISR consumed both stops. res the
+; start bits first: a pending OLD start must not fire mid-load (set/res are
+; atomic vs the ISR). audEnable = 0: nothing plays, no wait. Corrupts AF, HL.
+aud_music_stop_wait:
+    ld a, (audEnable)
+    or a
+    ret z
+    ld hl, audRequest
+    res 4, (hl)                 ; drop a pending AKY start
+    set 3, (hl)                 ; stop AKY music
+    ld hl, audRequest2
+    res 1, (hl)                 ; drop a pending stream start
+    set 0, (hl)                 ; stop the stream
+.wait:
+    halt
+    ld a, (audRequest)
+    and %00001000
+    jr nz, .wait
+    ld a, (audRequest2)
+    and %00000001
+    jr nz, .wait
+    ret
+
 ; aud_load_song: A = song number ($FF = GAME.AKY). Loads NNN.AKY into
 ; AUD_SONG_ORG through slot-6 windows: the song area spans the tail of
 ; page 48 (bank offset $1800-$1FFF = file bytes 0-$7FF) and the first
@@ -2881,34 +2904,9 @@ aud_load_song:
     call aud_open               ; PARTn\ then root; sets audHandle
 .opened:
     jp c, .fail                 ; missing: playing music untouched
-    ; stop the music before overwriting the song area - BOTH kinds:
-    ; an AYS stream must not survive an AKY load (mutual exclusion is
-    ; two-way; aud_load_ays mirrors this in the other direction).
-    ; audEnable = 0 means the ISR never reaches aud_tick - nothing is
-    ; playing and the requests would never be consumed, so skip the
-    ; wait. res first: a pending not-yet-consumed start of the OLD
-    ; song/stream must not fire mid-load (each set/res is a single
-    ; instruction, atomic against the ISR).
-    ld a, (audEnable)
-    or a
-    jr z, .stopped
-    ld hl, audRequest
-    res 4, (hl)
-    set 3, (hl)
-    ld hl, audRequest2
-    res 1, (hl)
-    set 0, (hl)
-.waitstop:
-    halt
-    ld a, (audRequest)
-    and %00001000
-    jr nz, .waitstop
-.waitstop2:
-    halt
-    ld a, (audRequest2)
-    and %00000001
-    jr nz, .waitstop2
-.stopped:
+    ; stop BOTH music kinds before the song area is overwritten (mutual
+    ; exclusion is two-way; aud_load_ays mirrors it)
+    call aud_music_stop_wait
     call data_save
     ; window 1: page 48, file bytes 0-$7FF at window offset $1800
     ld a, AUD_PAGE_LO
@@ -3664,27 +3662,8 @@ aud_load_ays:
     call aud_open               ; PARTn\ then root; sets audHandle
 .opened:
     jp c, .fail                 ; missing: current music untouched
-    ; stop BOTH music kinds before the banks move / the stream restarts.
-    ; res the start bits first so a pending, not-yet-consumed start of the
-    ; OLD music cannot fire mid-load.
-    ld a, (audEnable)
-    or a
-    jr z, .stopped
-    ld hl, audRequest
-    res 4, (hl)                 ; drop a pending AKY start
-    set 3, (hl)                 ; stop AKY music
-    ld hl, audRequest2
-    res 1, (hl)                 ; drop a pending stream start
-    set 0, (hl)                 ; stop the stream
-.waitstop:
-    halt
-    ld a, (audRequest)
-    and %00001000               ; AKY stop still pending?
-    jr nz, .waitstop
-    ld a, (audRequest2)
-    and %00000001               ; stream stop still pending?
-    jr nz, .waitstop
-.stopped:
+    ; stop BOTH music kinds before the banks move / the stream restarts
+    call aud_music_stop_wait
     ; release any previous stream's banks now the engine is provably idle
     ; and BEFORE the new claim. page 48 into slot 6 for aysPageTab/Cnt.
     call data_save
