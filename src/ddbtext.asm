@@ -13,14 +13,7 @@ rd_seek:
     rlca
     and 7                       ; offset >> 13 (0..7)
     add a, DDB_PAGE_FIRST
-    ld (rdPage), a
-    call data_map_page
-    ld a, h
-    and $1F
-    or high DATA_WINDOW         ; $C0 | (offset>>8 AND $1F)
-    ld h, a
-    ld (rdPtr), hl
-    ret
+    ; falls into rd_seek_page: A = page, HL = offset, same tail
 
 ; Point the stream reader at arbitrary banked memory: A = 8K page,
 ; HL = offset within the page (0-$1FFF). rd_next's page-crossing
