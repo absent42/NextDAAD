@@ -28,9 +28,9 @@
 ; txt_init programs the same register/value for the tilemap - shared,
 ; harmless, last writer wins with an identical value. Then the clip
 ; window and scroll offset via l2_clip_set. Remembers the mode in
-; l2Mode for l2_clear/l2_testcard. Corrupts AF.
+; l2Mode for l2_clear/l2_testcard. Corrupts AF, HL.
 ; Flip the surface roles, then program the mode l2Mode already holds
-; (NR $70 + $12 back-to-back, l2_flip_swap's header). Corrupts AF, B.
+; (NR $70 + $12 back-to-back, l2_flip_swap's header). Corrupts AF, B, HL.
 l2_flip_mode:
     call l2_flip_swap
     ld a, (l2Mode)
@@ -55,23 +55,16 @@ l2_mode_set:
 ; NR $18 cannot be read back for a diagnostic - per wiki.specnext.dev/
 ; NextReg:$18 a WRITE auto-increments the index (guide 658) but a READ
 ; does not - so the shadow is the only reliable source of the window
-; state. Corrupts AF.
+; state. Corrupts AF, HL.
 l2_clip_set:
-    ; X1/Y1 are always 0; X2/Y2 depend on the mode in A. Fill the shadow,
-    ; then program the hardware from it - one shared write sequence.
+    ; X1/Y1 are always 0; X2/Y2 depend on the mode in A. L = X2, H = Y2
+    ; go to the shadow as one word and to the hardware from L and H.
     or a
-    jr nz, .m320
-    ld a, 255                     ; 256x192: X2 = 255
-    ld (l2ClipX2), a
-    ld a, 191                     ; Y2 = 191
-    ld (l2ClipY2), a
-    jr .prog
-.m320:
-    ld a, 159                     ; 320x256: X2 = 159 (X in 2-pixel units)
-    ld (l2ClipX2), a
-    ld a, 255                     ; Y2 = 255
-    ld (l2ClipY2), a
-.prog:
+    ld hl, 191*256+255            ; 256x192: X2 = 255, Y2 = 191
+    jr z, .w
+    ld hl, 255*256+159            ; 320x256: X2 = 159 (2-pixel units), Y2 = 255
+.w:
+    ld (l2ClipX2), hl             ; l2ClipY2 follows l2ClipX2 (ASSERT below)
  IFDEF DEBUG                      ; the X1/Y1 shadow exists only for l2dbg_status2;
     xor a                         ; only l2scr_clip_inset (DEBUG) ever sets it non-zero
     ld (l2ClipX1), a
@@ -79,10 +72,10 @@ l2_clip_set:
  ENDIF
     nextreg NR_CLIP_IDX, 1        ; bit0: reset the Layer 2 clip index
     nextreg NR_L2_CLIP, 0         ; X1
-    ld a, (l2ClipX2)
+    ld a, l
     nextreg NR_L2_CLIP, a         ; X2
     nextreg NR_L2_CLIP, 0         ; Y1
-    ld a, (l2ClipY2)
+    ld a, h
     nextreg NR_L2_CLIP, a         ; Y2
     ; NR $16/$17: X/Y pixel scroll offset (guide 623-639), zeroed so a
     ; stale offset can't shift/wrap the image.
@@ -91,13 +84,12 @@ l2_clip_set:
     ret
 
  IFDEF DEBUG
-l2ClipX1: db 0                    ; DEBUG shadow cells (see .prog above)
- ENDIF
-l2ClipX2: db 0
- IFDEF DEBUG
+l2ClipX1: db 0                    ; DEBUG shadow cells
 l2ClipY1: db 0
  ENDIF
+l2ClipX2: db 0                    ; written as one word with l2ClipY2
 l2ClipY2: db 0
+    ASSERT l2ClipY2 == l2ClipX2+1
 
 ; Enable Layer 2 display (NR $69 bit 7, guide 713-723) via read-modify-
 ; write, so bits 6-0 (ULA shadow / Timex video-mode aliases, all 0 from
