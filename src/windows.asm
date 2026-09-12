@@ -54,14 +54,10 @@ win_select:
     pop af                      ; before the switch (wrapBuf is window-
     and 7                       ; relative); no-op when nothing buffered
     ld hl, winTable
-    or a
-    jr z, .done
-    ; SP14c batch B WIN1: Z80N MUL D,E replaces the DJNZ-counted add
-    ld d, WIN_SIZE
-    ld e, a
+    ld d, WIN_SIZE              ; window 0: MUL gives 0, add hl,0 is
+    ld e, a                     ; harmless, so no zero test is needed
     mul d, e
     add hl, de
-.done:
     ld (curWin), hl
     ret
 
