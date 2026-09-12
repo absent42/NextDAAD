@@ -1690,7 +1690,7 @@ gfx_find_empty:
     ld b, 0
 .scan:
     ld a, (hl)
-    cp GFX_EMPTY
+    inc a
     jr z, .got
     add hl, de
     inc b
@@ -2141,7 +2141,7 @@ cache_evict_lru:
     ld d, 0                      ; D = victim tick (valid once C set)
 .scan:
     ld a, (hl)                   ; GCE_PIC
-    cp GFX_EMPTY
+    inc a
     jr z, .next                  ; empty slot
     ld a, (stagedEntry)
     cp b
@@ -2152,7 +2152,7 @@ cache_evict_lru:
     ld e, (hl)                   ; E = candidate tick
     pop hl
     ld a, c
-    cp GFX_EMPTY
+    inc a                        ; 255 -> 0: no victim yet
     jr z, .take                  ; first candidate is provisional victim
     ld a, e
     cp d
@@ -3068,7 +3068,7 @@ gfx_blit:
     ld (dmaMeasT0), hl
  ENDIF
     ld a, (stagedEntry)
-    cp GFX_EMPTY
+    inc a                        ; GFX_EMPTY -> 0: nothing staged
     ret z
     ld a, (stagedMode)
     ld (l2Mode), a              ; variable only - sizes l2_clear_back's

@@ -126,7 +126,7 @@ spr_ident_recalc:
     ld b, SPR_CHANS
 .rec:
     ld a, (hl)
-    cp SPR_SET_NONE
+    inc a
     jr z, .next
     inc hl
     ld a, (hl)                  ; SR_KIND
@@ -451,7 +451,7 @@ spr_tick:
     ld de, SR_SIZE
 .chan:
     ld a, (hl)
-    cp SPR_SET_NONE
+    inc a
     jr z, .next
     push hl
     ld a, SR_COUNT
@@ -712,7 +712,7 @@ spr_stop_all_body:
 .n:
     push bc
     ld a, (ix+SR_SET)
-    cp SPR_SET_NONE
+    inc a
     call nz, spr_stop_record
     ld de, SR_SIZE
     add ix, de
@@ -732,7 +732,7 @@ spr_stop_record:
     ld de, SR_SIZE
 .live:
     ld a, (hl)
-    cp SPR_SET_NONE
+    inc a
     jr nz, .snap
     add hl, de
     djnz .live
@@ -1227,7 +1227,7 @@ spr_cache_inuse:
     ld de, SR_SIZE
 .n:
     ld a, (ix+SR_SET)
-    cp SPR_SET_NONE
+    inc a
     jr z, .skip
     ld a, (ix+SR_CACHE)
     cp c
@@ -1250,7 +1250,7 @@ spr_cache_victim:
     ld e, 0                      ; best index
 .n:
     ld a, (hl)
-    cp SPR_SET_NONE
+    inc a
     jr z, .free
     ld a, c                      ; an entry a live record's SR_CACHE names is
     push bc                      ; not evictable: its banks are still in use.
@@ -1295,7 +1295,7 @@ spr_cache_evict:
     ld e, 255                    ; best index, 255 = nothing evictable
 .n:
     ld a, (hl)
-    cp SPR_SET_NONE
+    inc a
     jr z, .next
     ld a, (sprLdEntry)
     cp c
@@ -1373,7 +1373,7 @@ spr_cache_flush:
     push bc
     push hl
     ld a, (hl)
-    cp SPR_SET_NONE
+    inc a
     call nz, spr_cache_free_banks
     pop hl
     ld a, CE_SIZE
