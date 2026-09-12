@@ -2119,12 +2119,9 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 ; asked for, routing any shortfall to the same .errclose fail-loud path
 ; as a CF failure - a disk-full mid-write (or any other partial write)
 ; now fails SAVE outright instead of silently landing a truncated file
-; while still reporting OK. The 256-byte flags write compares BC as one
-; 16-bit value (sav_read_v2's own short-read idiom, reused here for a
-; short WRITE); the three sub-256 counts (6, numObj, 1) compare C
-; against the count and B against zero instead - cheaper for a value
-; that always fits in one byte, and BC's high byte is never assumed
-; zero without checking it.
+; while still reporting OK. Every count check below folds both bytes of
+; BC into one zero test (sub n / or b; dec a / or c for 256; dec bc /
+; or c for 1), so a nonzero high byte can never pass.
 sav_write_v2:
     call esx_getsetdrv
     jp c, .err
@@ -2147,10 +2144,8 @@ sav_write_v2:
     call esx_fwrite
     jp c, .errclose
     ld a, c
-    cp 6
-    jp nz, .errclose
-    ld a, b
-    or a
+    sub 6
+    or b                        ; zero only when BC == 6
     jp nz, .errclose
     ; flags (256 bytes)
     ld a, (savHandle)
@@ -2158,9 +2153,9 @@ sav_write_v2:
     ld bc, 256
     call esx_fwrite
     jp c, .errclose
-    ld hl, 256
-    or a
-    sbc hl, bc
+    ld a, b
+    dec a
+    or c                        ; zero only when BC == $0100
     jp nz, .errclose
     ; object locations (numObj bytes)
     call sav_gather_locs           ; resident (file.asm): fills savLocs,
@@ -2170,10 +2165,8 @@ sav_write_v2:
     call esx_fwrite
     jp c, .errclose
     ld a, (numObj)
-    cp c
-    jp nz, .errclose
-    ld a, b
-    or a
+    sub c
+    or b                        ; zero only when BC == numObj
     jp nz, .errclose
     ; trailing part byte - the ONLY new write versus sav_write, same
     ; open/close session, same call shape as the three writes above
@@ -2182,11 +2175,9 @@ sav_write_v2:
     ld bc, 1
     call esx_fwrite
     jp c, .errclose
-    ld a, c
-    cp 1
-    jp nz, .errclose
+    dec bc
     ld a, b
-    or a
+    or c                        ; zero only when BC was 1
     jp nz, .errclose
     ld a, (savHandle)
     call esx_fclose
@@ -2216,9 +2207,9 @@ sav_read_v2:
     ld bc, 6
     call esx_fread
     jp c, .errclose
-    ld hl, 6                     ; short/EOF header read: truncated or
-    or a                         ; garbage file
-    sbc hl, bc
+    ld a, c                      ; short/EOF header read: truncated or
+    sub 6                        ; garbage file
+    or b
     jp nz, .errclose
     ld hl, savHdr
     ld de, savRdHdr
@@ -2235,9 +2226,9 @@ sav_read_v2:
     ld bc, 256
     call esx_fread
     jp c, .errclose
-    ld hl, 256
-    or a
-    sbc hl, bc
+    ld a, b
+    dec a
+    or c
     jp nz, .errclose
     ld a, (savRdHdr+5)           ; the FILE's own declared object count -
                                   ; NOT compared against live numObj here
@@ -2253,10 +2244,8 @@ sav_read_v2:
     call esx_fread
     jp c, .errclose
     ld a, (savRdHdr+5)
-    ld h, 0
-    ld l, a
-    or a
-    sbc hl, bc
+    sub c
+    or b
     jp nz, .errclose
 .objsdone:
     ld a, (savHandle)            ; probe for a trailing v2 part byte
