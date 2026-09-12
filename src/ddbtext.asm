@@ -183,10 +183,9 @@ txt_next_decoded:
     cpl                         ; decode = 255 - byte
     cp $0A
     jr z, .end
-    bit 7, a
-    jr nz, .tokref
-    or a                        ; cp left CF set for chars $00-$09
-    ret                         ; plain char, CF now clear
+    or a                        ; S = bit 7, CF clear (cp left CF set
+    jp m, .tokref               ; for chars $00-$09)
+    ret                         ; plain char, CF clear
 .tokref:
     ; token reference: skip (index+1) entries, first entry is unused
     and $7F
@@ -218,8 +217,7 @@ txt_next_decoded:
     pop bc
     pop af
 .have:
-    and $7F
-    or a                        ; CF clear
+    and $7F                     ; AND clears CF
     ret
 .end:
     scf
