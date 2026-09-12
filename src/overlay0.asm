@@ -2036,10 +2036,7 @@ h_end:                          ; 21: a reply starting with N (SM31) =
     ld (procSP), a
     ret
 .off:
-    di                          ; no ISR tick may re-voice a note
-    call audio_init             ; between the silence and the reset
-    nextreg 2, 1
-    jr $
+    jr h_exit.hard              ; same silence-then-reset tail
 h_exit:                         ; 110: 0 = hard reset, else full restart
     ld a, b
     or a
