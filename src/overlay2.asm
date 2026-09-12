@@ -2161,10 +2161,8 @@ cache_evict_lru:
     ld c, b
     ld d, e
 .next:
-    push de
-    ld de, GFX_ENTRY_SIZE
-    add hl, de
-    pop de
+    ld a, GFX_ENTRY_SIZE
+    add hl, a                    ; Z80N: DE (victim tick/index) untouched, CF cleared
     inc b
     ld a, b
     cp GFX_CACHE_MAX
@@ -2222,10 +2220,8 @@ cache_evict_lru:
     sub d
     ld (hl), a
 .keep:
-    push de
-    ld de, GFX_ENTRY_SIZE
-    add hl, de
-    pop de
+    ld a, GFX_ENTRY_SIZE
+    add hl, a                    ; Z80N: DE (first/count) untouched
     djnz .rebase
     ld a, (gfxBankNext)
     sub d
