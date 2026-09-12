@@ -7623,6 +7623,9 @@ vid_tl_report_body:
     ; pixels would otherwise show through the tilemap's transparency)
     ld e, NR_DISPLAY_CTRL
     call nr_read
+    ld (vidTlNr69), a            ; re-asserted at .done: since the SP15
+                                 ; snapshot the restore has already
+                                 ; repainted the game picture
     and %01111111
     nextreg NR_DISPLAY_CTRL, a
     ; copy the hot instrument block across (rubric 3)
@@ -7732,6 +7735,8 @@ vid_tl_report_body:
     call dbg_hex16
     jr .done
 .done:
+    ld a, (vidTlNr69)            ; hand the picture back
+    nextreg NR_DISPLAY_CTRL, a
     ld hl, vid_tl_report_ret
     push hl
     ld a, VID_PAGE
@@ -7781,6 +7786,8 @@ msgTlChk:  db " CHK=", 0
 vidSnapCntL: db 0                ; SNAP= mirror - written at open (the
                                  ; live vidSnapCnt is zeroed by the
                                  ; teardown free before the report)
+
+vidTlNr69:        db 0    ; NR $69 as the report found it
 
 ; Page-local mirror of the hot instrument block (same order/sizes -
 ; one LDIR; the length is computed so it can never drift).
