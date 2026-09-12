@@ -723,7 +723,7 @@ inp_edit:
     jp z, .loop
     dec a
     ld (inpCur), a
-    call inp_col_back
+    call inp_place_cursor
     jp .loop
 .right:
     ld a, (inpCur)
@@ -734,7 +734,7 @@ inp_edit:
     ld a, e
     inc a
     ld (inpCur), a
-    call inp_col_fwd
+    call inp_place_cursor
     jp .loop
 .recall:
     call inp_clear_line         ; wipe echo + buffer
@@ -857,11 +857,6 @@ inp_place_cursor:
     ld (hl), b
     ret
     ASSERT WIN_CURY == WIN_CURX+1
-
-; Cursor left/right just re-place after inpCur changed - aliases.
-inp_col_back:
-inp_col_fwd:
-    jp inp_place_cursor
 
 ; Echo inpLine[inpCur..end] from inpCur's cell, adjusting inpStartY if
 ; the echo scrolled the window at its bottom row.
@@ -1041,8 +1036,7 @@ inp_cursor_put:
     ld a, GLYPH_SPACE
 .g:
     pop de                      ; E = attr
-    call tm_putc_at             ; B row, C col, E attr, A glyph
-    ret
+    jp tm_putc_at               ; tail call: B row, C col, E attr, A glyph
 
 ; --- vocabulary ---
 ; In: inpWord = 5 chars, uppercase, space-padded, NUL at [5].
@@ -1074,8 +1068,7 @@ voc_find:
     ; consume the rest of this entry: we have read (6-B) chars so far
     ; including the mismatch; read the remaining (B-1) chars + id + type
     ld a, b
-    dec a
-    add a, 2                    ; remaining chars + id + type
+    inc a                       ; (B-1)+2 = remaining chars + id + type
     ld b, a
 .drain:
     call rd_next
@@ -1554,7 +1547,6 @@ h_parse:                        ; 73: condition-like. B = option.
     ld a, b
     or a
     jp nz, .quoted              ; PARSE 1+ (B21) lives past .valid
-.p0:
     ; pending buffer empty?
     ld a, (inpPending)
     or a
@@ -1582,7 +1574,7 @@ h_parse:                        ; 73: condition-like. B = option.
     ld a, e
 .prompt:
     ld e, a
-    ld a, 0
+    xor a
     call print_msg
 .prompt33:
     ; The classic DAAD input prompt is SM33 (jdaad getPlayerOrders ->
@@ -1595,7 +1587,7 @@ h_parse:                        ; 73: condition-like. B = option.
     cp 34                       ; SM33 present only when numSys > 33
     jr c, .edit
     ld e, 33
-    ld a, 0
+    xor a
     call print_msg
 .edit:
     call inp_edit
@@ -1713,16 +1705,24 @@ h_parse:                        ; 73: condition-like. B = option.
 ; and PARSE 1 (jdaad parseEnd clears the same seven for both; the
 ; pronoun memory 46/47 is deliberately NOT among them - msx2daad
 ; PRP015 INC-02 and jdaad both persist it across sentences).
-ls_reset:
+ls_reset:                       ; flags is ALIGN 256: INC L walks it
     ld a, 255
-    ld (flags+FLAG_VERB), a
-    ld (flags+FLAG_NOUN1), a
-    ld (flags+FLAG_ADJ1), a
-    ld (flags+FLAG_ADVERB), a
-    ld (flags+FLAG_PREP), a
-    ld (flags+FLAG_NOUN2), a
-    ld (flags+FLAG_ADJ2), a
+    ld hl, flags+FLAG_VERB
+    ld (hl), a                  ; 33 VERB
+    inc l
+    ld (hl), a                  ; 34 NOUN1
+    inc l
+    ld (hl), a                  ; 35 ADJ1
+    inc l
+    ld (hl), a                  ; 36 ADVERB
+    ld l, FLAG_PREP
+    ld (hl), a                  ; 43 PREP
+    inc l
+    ld (hl), a                  ; 44 NOUN2
+    inc l
+    ld (hl), a                  ; 45 ADJ2
     ret
+    ASSERT FLAG_NOUN1 == FLAG_VERB+1 && FLAG_ADJ1 == FLAG_VERB+2 && FLAG_ADVERB == FLAG_VERB+3 && FLAG_NOUN2 == FLAG_PREP+1 && FLAG_ADJ2 == FLAG_PREP+2
 
 ; SP16 B21. Lift a quoted section out of the order at (inpPtr) into
 ; inpQuoted (ASCIIZ, empty when there is no quote), blanking it - both
@@ -1920,7 +1920,7 @@ sav_prompt:
     xor a
     ld (flags+FLAG_TIMEOUT), a
     ld e, 60                    ; "Type in name of file."
-    ld a, 0
+    xor a
     call print_msg
     call inp_edit               ; CF (timeout) impossible: flag 48 = 0
     ld a, (savTimeStash)
@@ -1936,7 +1936,7 @@ sav_prompt:
     ret                         ; itself carry a fail contract)
 .fname_err:
     ld e, 59                    ; "File name error."
-    ld a, 0
+    xor a
     call print_msg
     call prn_newline
     scf                         ; prn_newline corrupts flags - re-assert
@@ -1989,7 +1989,7 @@ h_save:                         ; 25: condition-typed like LOAD; done
     jr nc, .ok                  ; failure aborts the entry so SM59/57
 .io:                            ; shared with h_load: SM57, done, false
     ld e, 57                    ; "I/O Error"          survive the redraw
-    ld a, 0
+    xor a
     call print_msg
     call prn_newline
 .fail:
@@ -2923,9 +2923,9 @@ aud_load_song:
     call esx_fread
     jr c, .failclose
     ld (audLoaded), bc
-    ld hl, $0800
-    or a
-    sbc hl, bc
+    ld a, b
+    sub 8
+    or c                        ; BC == $0800?
     jr nz, .loaded              ; short read: whole file in
     ; window 2: page 49, up to $1FE0 bytes at window offset 0
     ld a, AUD_PAGE_HI
@@ -3028,9 +3028,9 @@ aud_load_sfb:
     ld bc, $0800
     call esx_fread
     jr c, .failclose
-    ld hl, $0800
-    or a
-    sbc hl, bc
+    ld a, b
+    sub 8
+    or c                        ; BC == $0800?
     jr nz, .ok                  ; short read: fits
     ld a, (audHandle)           ; full 2K: an extra byte = oversize
     ld ix, audProbe
@@ -3791,9 +3791,9 @@ aud_load_ays:
     ld bc, 16
     call .read
     jp c, .failclose
-    ld hl, 16
-    or a
-    sbc hl, bc
+    ld a, c
+    sub 16
+    or b                        ; BC == 16?
     jp nz, .failclose           ; short header: reject
     ld hl, (aysHdr)             ; magic "AYS1"
     ld de, "YA"                 ; 'A','Y' little-endian
@@ -4015,17 +4015,12 @@ aud_banks_claim:
     ld hl, 16383
     add hl, de
     adc a, 0                    ; A:HL = bytes + 16383 (24-bit)
-    ; banks = (A:HL) >> 14 = (A << 2) | (H >> 6)
-    ld c, a                     ; C = high byte
-    ld a, h
-    rlca
-    rlca
-    and 3                       ; A = H >> 6 (0..3)
-    ld b, a
-    ld a, c
-    add a, a
-    add a, a                    ; A = high byte * 4
-    add a, b                    ; A = bank count
+    ; banks = (A:HL) >> 14 = (A:H) >> 6, low byte
+    ld e, h
+    ld d, a                     ; DE = A:H
+    ld b, 6
+    bsrl de, b                  ; Z80N (core v2+; nex demands core 3)
+    ld a, e                     ; A = bank count (same 8-bit result)
     cp AUD_STRTAB_MAX/2 + 1     ; more than 64 banks (1MB)?
     jr nc, .capfail
     ld (smpClaimBanks), a       ; banks still to claim
