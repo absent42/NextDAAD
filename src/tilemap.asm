@@ -101,10 +101,9 @@ tmStride equ $+1
                                 ; operand patched by tm_width_apply only
     mul d, e                    ; DE = row*stride
     ex de, hl                    ; HL = row*160
-    ld e, c
-    ld d, 0
-    add hl, de
-    add hl, de                  ; + col*2
+    ld a, c
+    add a, a                    ; col*2 (col <= 79, fits a byte)
+    add hl, a                   ; Z80N
     add hl, TM_MAP
     pop de
     ret
