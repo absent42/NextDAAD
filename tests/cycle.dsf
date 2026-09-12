@@ -236,7 +236,9 @@ LOOK   4  verb
              MESSAGE 19
              LET 200 3
 > _ _        EQ 200 3
+             PARSE 0
              PROCESS 7
+             REDO
 /PRO 2
 > _ _        MESSAGE 14
              PRINT 120
