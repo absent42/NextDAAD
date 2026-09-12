@@ -122,12 +122,9 @@ prn_char:
     ; then append the final glyph to wrapBuf[wrapLen]
     call prn_shift
     ld a, (wrapLen)
-    ld e, a
-    ld d, 0
     ld hl, wrapBuf
-    add hl, de
+    add hl, a                   ; A survives (Z80N ADD HL,A)
     ld (hl), c
-    ld a, (wrapLen)
     inc a
     ld (wrapLen), a
     ld c, a                     ; C = new wrapLen (win_field preserves BC)
@@ -198,12 +195,9 @@ prn_flush:
     ld hl, wrapLen
     cp (hl)
     jr nc, .edone
-    ld e, a
-    ld d, 0
     ld hl, wrapBuf
-    add hl, de
+    add hl, a                   ; A = wrapIdx still
     ld c, (hl)
-    ld a, (wrapIdx)
     inc a
     ld (wrapIdx), a
     call prn_glyph              ; wrapBuf holds final glyphs, no re-shift
