@@ -1076,22 +1076,12 @@ sfx_alloc:
     or a
     jp nz, .explicit
     ; ---- (a) a channel that already caches this number ---------------
-    ld ix, sfxChan0
-    ld e, 0
-    call .cached
-    jp z, .take
-    ld ix, sfxChan1
-    inc e
-    call .cached
+    ld hl, .cached
+    call .both
     jp z, .take
     ; ---- (b) an idle, unpinned channel -------------------------------
-    ld ix, sfxChan0
-    ld e, 0
-    call .idle
-    jp z, .take
-    ld ix, sfxChan1
-    inc e
-    call .idle
+    ld hl, .idle
+    call .both
     jp z, .take
     ; ---- (c) steal ---------------------------------------------------
     ld d, 0                          ; D = the stealable mask
@@ -1279,6 +1269,17 @@ sfx_alloc:
     ld a, (ix+SMPB_FLAGS)
     and %00100001
     ret
+; HL = predicate (.cached / .idle). Probe channel 1 (E = 0) then channel 2
+; (E = 1). Out: Z with IX/E = the hit; NZ = neither. Corrupts AF, E, IX.
+.both:
+    ld ix, sfxChan0
+    ld e, 0
+    call .jphl
+    ret z
+    ld ix, sfxChan1
+    inc e
+.jphl:
+    jp (hl)                     ; second probe: the predicate's ret returns to the site
 
  IFDEF DEBUG
 msgSfxBusy: db "SFX BUSY?", 0
