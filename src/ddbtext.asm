@@ -45,8 +45,9 @@ rd_seek_page:
 ; (once per 8K of stream) still brackets AF around its housekeeping.
 rd_next:
     push hl
-    ld hl, (rdPtr)
-    ld a, (hl)
+rdPtr equ $+1                   ; the reader pointer IS this operand:
+    ld hl, 0                    ; resident, never paged, ISR-free, and the
+    ld a, (hl)                  ; store below runs two instructions later
     inc hl
     ld (rdPtr), hl
     bit 5, h                    ; wrapped past $DFFF? (H == $E0)
@@ -233,7 +234,6 @@ txt_next_decoded:
 ; callable from objname.asm's post-anchor position.
 
 rdPage:       db 0
-rdPtr:        dw 0
 rdSaveSP:     db 0
 rdSave:       ds 12             ; 4 levels x (page, ptr lo, ptr hi)
 tokActive:    db 0              ; txt_next_decoded: inside a token
