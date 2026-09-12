@@ -2474,11 +2474,10 @@ h_beep:                         ; 64: B = arg1 = tone, C = arg2 = duration (cs)
     ld b, 0                     ; (the +1 covers the pickup frame)
     add hl, bc
     inc hl
-    ld (bpTarget), hl
+    ex de, hl                   ; DE = target; both ISRs preserve DE
 .wait:
     halt
     ld hl, (frameCounter)
-    ld de, (bpTarget)
     or a
     sbc hl, de
     jr c, .wait
@@ -3324,7 +3323,6 @@ audLoaded:  dw 0                ; bytes of song actually loaded
 audStride:  db 0                ; linker entry stride for the walk
 audWalkVal: dw 0                ; word scratch for the split windows
 audProbe:   db 0                ; oversize one-byte probe target
-bpTarget:   dw 0                ; h_beep frameCounter target
 sfxReq:     db 0                ; h_sfx: the allocator request code for
                                 ; this trigger (0 auto, 1/2 pin a channel)
 sfxSel:     db 0                ; h_sfx: the allocator's verdict - bit 0 =
