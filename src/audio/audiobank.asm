@@ -162,12 +162,12 @@ aud_tick:
     bit 2, (hl)
     jr z, .no2
     res 2, (hl)
-    xor a
-    call PLY_AKY_STOPSOUNDEFFECTFROMCHANNEL
-    ld a, 1
-    call PLY_AKY_STOPSOUNDEFFECTFROMCHANNEL
-    ld a, 2
-    call PLY_AKY_STOPSOUNDEFFECTFROMCHANNEL
+    ld b, 3                         ; channels 2, 1, 0
+.stopch:
+    ld a, b
+    dec a
+    call PLY_AKY_STOPSOUNDEFFECTFROMCHANNEL   ; touches A, DE, HL only (generated player:
+    djnz .stopch                    ; re-check B survives after any regeneration)
     ld hl, audFlags
     res 2, (hl)
     ; An explicit stop must silence PSG 3 now. The player only re-asserts
@@ -313,10 +313,9 @@ aud_tick:
     ld a, h
     or l
     ret nz
-    call aud_beep_silence
     ld hl, audFlags
-    res 3, (hl)
-    ret
+    res 3, (hl)                     ; bit 3 is read only from this ISR chain: order-free
+    jp aud_beep_silence
 
 ; Stop the music: re-point the player at the built-in silence song
 ; (so a later effect-only PLY_AKY_PLAY cannot resume the old song),
