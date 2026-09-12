@@ -100,8 +100,6 @@ main:
     ld a, OVL1_PAGE
     call ovl_map_page
     call aud_boot_probe
-    ld hl, objname_print
-    ld (objname_hook), hl
     ld c, 0
     call eng_init_game
     call eng_run
