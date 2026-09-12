@@ -606,6 +606,7 @@ cyc_tick:
     ld d, a                      ; D = index
     ld a, (cycLast)
     sub d
+    ld c, a                      ; C = count-1 for the write loop (nr_read keeps BC)
     inc a
     ld b, a                      ; B = count, 2..255 (h_gfx pins last > first)
     ld hl, cycScratch
@@ -625,10 +626,7 @@ cyc_tick:
     djnz .rd
     ld a, (cycFirst)
     nextreg NR_PAL_INDEX, a
-    ld d, a
-    ld a, (cycLast)
-    sub d
-    ld b, a                      ; B = count-1: entries first..last-1
+    ld b, c                      ; B = count-1: entries first..last-1
     ld hl, cycScratch+2
 .wr:
     ld a, (hl)
