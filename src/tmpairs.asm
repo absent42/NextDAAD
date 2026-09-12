@@ -121,29 +121,20 @@ pair_read:
 ; A = pair number 0-127. Sets its bit in pairUsed.
 ; Corrupts AF, BC, DE, HL.
 pair_mark:
-    push af
+    ld c, a
     and 7
     ld b, a
-    inc b
-    ld a, 1
-.sh:
-    dec b
-    jr z, .mask
-    add a, a
-    jr .sh
-.mask:
-    ld c, a                     ; C = 1 << (pair AND 7)
-    pop af
+    ld de, 1
+    bsla de, b                  ; E = 1 << (pair AND 7) (Z80N, core 2+)
+    ld a, c
     rrca
     rrca
     rrca
     and 15                      ; byte index = pair >> 3 (pair < 128)
-    ld l, a
-    ld h, 0
-    ld de, pairUsed
-    add hl, de
+    ld hl, pairUsed
+    add hl, a                   ; carry cleared, unread
     ld a, (hl)
-    or c
+    or e
     ld (hl), a
     ret
 
