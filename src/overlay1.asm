@@ -5,14 +5,6 @@
 
     MMU 7, OVL1_PAGE, OVL_ORG
 
-; condition result helpers (CF contract, local to this overlay)
-ovl1_true:
-    or a
-    ret
-ovl1_false:
-    scf
-    ret
-
 h_time:                         ; 83: flags 48/49 (semantics live in
     ld a, b                     ; the editor/waits that read them)
     ld (flags+FLAG_TIMEOUT), a
@@ -1614,7 +1606,8 @@ h_parse:                        ; 73: condition-like. B = option.
     ; timeout path too. The two option bits do NOT run here; that is
     ; pre-existing behaviour and B22 leaves it alone.
     call inp_stream_pop
-    jp ovl1_true
+    or a                        ; CF clear = PARSE passes (timeout)
+    ret
 .got:
     ; post-edit input options (flag 49): bit 3 clear window,
     ; bit 4 reprint the line in the current stream.
@@ -1663,10 +1656,12 @@ h_parse:                        ; 73: condition-like. B = option.
     ld a, (flags+FLAG_NOUN1)
     inc a
     jr nz, .valid
-    jp ovl1_true                ; unparseable: run the entry remainder
+    or a                        ; unparseable: run the entry remainder
+    ret
 .valid:
     call eng_set_done
-    jp ovl1_false
+    scf
+    ret
 .quoted:
     ; SP16 B21 - PARSE 1+ re-runs the logical-sentence fill over the
     ; quoted section lifted from the order by quote_split. No prompt,
@@ -1706,8 +1701,8 @@ h_parse:                        ; 73: condition-like. B = option.
     ; Both references deviate; NextDAAD follows the machine it is a
     ; port of. Falling into .verdict is what implements the second rule.
     ld a, (inpQuoted)
-    or a
-    jp z, ovl1_true             ; no quoted section at all: flags stay
+    or a                        ; clears CF
+    ret z                       ; no quoted section at all: flags stay, pass
     ld hl, inpQuoted
     ld (inpPtr), hl
     call ls_reset
@@ -1999,10 +1994,12 @@ h_save:                         ; 25: condition-typed like LOAD; done
     call prn_newline
 .fail:
     call eng_set_done
-    jp ovl1_false
+    scf
+    ret
 .ok:
     call eng_set_done
-    jp ovl1_true
+    or a
+    ret
 
 h_load:                         ; 26: condition-typed (cprops row 26).
                                 ; sav_read_v2 is ATOMIC (staged commit),
@@ -2035,7 +2032,8 @@ h_load:                         ; 26: condition-typed (cprops row 26).
                                 ; NR $15 (cross-part goes through
                                 ; eng_init_game via switch_to_part)
     call eng_set_done
-    jp ovl1_true
+    or a
+    ret
 
 ; --- SP11 Task 4: part-aware SAVE/LOAD helpers -----------------------
 ; .SAV v2 = the v1 payload (unchanged byte-for-byte) + ONE trailing part
