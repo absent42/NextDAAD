@@ -29,7 +29,7 @@ def t1_symbols_known_addresses():
     syms = symbols.load_symbols(ROOT / "build" / "nextdaad.map")
     assert syms["FLAGS"] == 0xA200, hex(syms["FLAGS"])
     assert syms["OBJTABLE"] == 0xA300, hex(syms["OBJTABLE"])
-    assert syms["RNGSTATE"] == 0xA94A, hex(syms["RNGSTATE"])
+    assert syms["RNGSTATE"] == 0xA948, hex(syms["RNGSTATE"])
 
 
 @case
