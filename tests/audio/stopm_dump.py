@@ -130,14 +130,15 @@ class Zrcp:
         self.cmd("send-keys-ascii 150 13", wait=wait, deadline=wait + 20)
 
 
-def stage(workdir):
+def stage(workdir, leg):
     sd = os.path.join(os.path.abspath(workdir), "sd")
     if os.path.isdir(sd):
         shutil.rmtree(sd)
     os.makedirs(sd)
-    # Whatever -AudLad staged, verbatim: GAME.DDB, GAME.AKY, 001..005.AKY.
-    for name in os.listdir(SD):
-        src = os.path.join(SD, name)
+    # Whatever build-tests.ps1 staged for this leg, verbatim: GAME.DDB, GAME.AKY, NNN.AKY.
+    src_dir = os.path.join(SD, leg)
+    for name in os.listdir(src_dir):
+        src = os.path.join(src_dir, name)
         if os.path.isfile(src) and (name.upper().endswith(".AKY")
                                     or name.upper() == "GAME.DDB"):
             shutil.copyfile(src, os.path.join(sd, name))
@@ -402,6 +403,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--port", type=int, default=10077)
+    ap.add_argument("--leg", default="AUDLAD",
+                    help="leg subfolder under sd\\ staged by build-tests.ps1 "
+                         "(default AUDLAD, written by -AudLad)")
     ap.add_argument("--restart", default="LADR",
                     help="verb that restarts the music after STOPM. "
                          "LADR (default) is the kit's real 9-channel tune "
@@ -415,9 +419,11 @@ def main():
         sys.exit("ZEsarUX not found at %s" % ZESARUX)
     if not os.path.exists(NEX):
         sys.exit("build/nextdaad.nex missing - run .\\build.ps1 (DEBUG)")
+    if not os.path.isfile(os.path.join(SD, args.leg, "GAME.DDB")):
+        sys.exit("sd\\%s\\GAME.DDB missing - run tests\\build-tests.ps1 -AudLad" % args.leg)
     out = os.path.abspath(args.out)
     os.makedirs(out, exist_ok=True)
-    sd = stage(out)
+    sd = stage(out, args.leg)
 
     if args.ladder:
         log = ["=== LADDER RUNG VERIFICATION (emulator model, not a fidelity verdict) ==="]
