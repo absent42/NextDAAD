@@ -178,24 +178,8 @@ dbg_engage_tilemap:
     call boot_banner
     call ram_diag
     call bank_selftest_show
-    call ddb_diag
-    xor a                       ; chrStatus is gone; branch removed next
-    or a
-    ret z
-    push af                     ; dbg_at leaves A = C, preserve chrStatus
-    ld b, 11
-    call dbg_at0
-    pop af
-    dec a
-    jr nz, .bad
-    ld hl, msgChrOverride
-    jp dbg_puts
-.bad:
-    ld hl, msgChrBad
-    jp dbg_puts
+    jp ddb_diag
 
-msgChrOverride: db "CHR OVERRIDE", 0
-msgChrBad:      db "CHR BAD", 0
 dbgTilemap:     db 0
 bankSelfRes:    db 255      ; bank_selftest verdict: 0 = OK,
                             ; 1-8 = failing check, 255 = not run
@@ -462,47 +446,6 @@ ddb_diag:
     djnz .ptr
     ret
 
-; ZF set if T was seen held on any of up to 10 consecutive frame ticks
-; (row $FB, bit 4 - see kbRows/keyRows in overlay0/overlay1 for the
-; same matrix layout). A single-shot port read is timing-sensitive -
-; it can land on a frame where the matrix read races the border/
-; interrupt work CSpect or real hardware are doing that instant, and a
-; boot-time check only gets one shot at a key the owner is holding
-; from power-on. Polling across ~10 frames (roughly 200ms at 50Hz),
-; returning the instant a held frame is seen, makes a false "not
-; held" verdict far less likely while a genuinely-released key still
-; correctly reports not held (it never samples as pressed on any of
-; the 10 frames). Corrupts AF, BC, DE.
-l2dbg_t_held:
-    ld d, 10
-.frame:
-    ld bc, $FBFE
-    in a, (c)
-    bit 4, a
-    ret z                        ; held on this sample: done, ZF set
-    ld a, (frameCounter)
-    ld e, a
-.tick:
-    ld a, (frameCounter)
-    cp e
-    jr z, .tick                  ; wait for the next frame before resampling
-    dec d
-    jr nz, .frame
-    ld a, 1
-    or a                         ; guarantee ZF clear: not held on any sample
-    ret
-
-; Frame-paced wait for T to be released, then pressed again, built on
-; l2dbg_t_held above.
-l2dbg_wait_release:
-    call l2dbg_t_held
-    jr z, l2dbg_wait_release
-    ret
-l2dbg_wait_press:
-    call l2dbg_t_held
-    jr nz, l2dbg_wait_press
-    ret
-
 ; Blank the bottom tilemap row (TM_ROWS-1, left opaque by overlay2's
 ; l2_testcard) with plain white-on-black spaces, then print the
 ; ASCIIZ string at HL there via the existing dbg_puts/dbg_at console -
@@ -605,10 +548,7 @@ l2dbg_status2:
     call l2_peek_marker
     jp dbg_hex8
 
-msgTestcardHold: db "TESTCARD - HOLD T", 0
 msgTestcard256:  db "TESTCARD 256x192 - RELEASE THEN PRESS T FOR NEXT", 0
-msgTestcard320:  db "TESTCARD 320x256 - RELEASE THEN PRESS T TO EXIT", 0
-msgTestcardDone: db "TESTCARD DONE", 0
 msgRegDump:      db " 69/70/12/15=", 0
 msgReg14:        db "14=", 0
 msgClipW:        db " clipW=", 0
@@ -642,7 +582,7 @@ msgPx:           db " px=", 0
 ; ZF set if P is currently held (row $DF, bit 0 - see keyRows in
 ; overlay0.asm for the same matrix layout). Samples up to 10 times
 ; with a short busy-wait between samples rather than a single read,
-; for the same reason l2dbg_t_held polls repeatedly - except this
+; for the same reason a frame-counted poll would - except this
 ; runs BEFORE im2_init, so frameCounter isn't ticking yet and the
 ; pacing has to be a plain busy-wait, not frame-synced. Corrupts
 ; AF, BC, DE.
@@ -665,11 +605,9 @@ l2dbg_p_held:
     or a                          ; guarantee ZF clear: not held
     ret
 
-; Raw busy-wait press/release detection (row $DF, bit 0) - used
-; throughout the ladder instead of l2dbg_t_held/wait_release/press
-; because stage 0 has no ISR to pace against; kept the same in later
-; stages too, for one consistent key-handling path across the whole
-; ladder. Corrupts AF, BC.
+; Raw busy-wait press/release detection (row $DF, bit 0): stage 0 has
+; no ISR to pace a frame-counted poll against, and one key path serves
+; the whole ladder. Corrupts AF, BC.
 l2dbg_p_wait_release:
     ld bc, $DFFE
     in a, (c)

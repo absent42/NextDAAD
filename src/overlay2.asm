@@ -4596,7 +4596,7 @@ l2scr_clip_inset:
 
 ; ZF CLEAR if any key is down: B = 0 selects all eight half-rows at
 ; once, bits 4-0 are the key lines (1 = up). Raw port read for the
-; same reason debug.asm's l2dbg_t_held uses one - the matrix helpers
+; same reason debug.asm's key polls do - the matrix helpers
 ; live in an overlay this code has no reason to page in. Corrupts
 ; AF, BC.
 l2scr_anykey:
