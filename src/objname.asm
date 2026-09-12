@@ -346,17 +346,7 @@ list_at:
     ld a, (numObj)
     cp b
     jr z, .counted
- IFDEF DEBUG
-    call objscan_tick           ; SP14c gate follow-up: OBJ1 measurement
- ENDIF
-    ld a, b
-    push bc
-    push de
-    call obj_ptr
-    ld a, (lstLoc)
-    cp (hl)
-    pop de
-    pop bc
+    call lst_match
     jr nz, .cnext
     inc d
 .cnext:
@@ -393,17 +383,7 @@ list_at:
     ld a, (numObj)
     cp b
     jr z, .done
- IFDEF DEBUG
-    call objscan_tick           ; SP14c gate follow-up: OBJ1 measurement
- ENDIF
-    ld a, b
-    push bc
-    push de
-    call obj_ptr
-    ld a, (lstLoc)
-    cp (hl)
-    pop de
-    pop bc
+    call lst_match
     jr nz, .enext
     ld a, d
     or a
@@ -450,3 +430,19 @@ list_at:
 lstLoc:   db 0
 lstMode:  db 0
 lstTotal: db 0
+
+; B = object. Z = objTable[B].loc == lstLoc.
+; Preserves BC, DE; corrupts AF, HL.
+lst_match:
+ IFDEF DEBUG
+    call objscan_tick           ; SP14c gate follow-up: OBJ1 measurement
+ ENDIF
+    ld a, b
+    push bc
+    push de
+    call obj_ptr
+    ld a, (lstLoc)
+    cp (hl)
+    pop de
+    pop bc
+    ret
