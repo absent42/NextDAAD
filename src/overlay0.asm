@@ -882,11 +882,9 @@ obj_find_pass:
     call objscan_tick           ; SP14c gate follow-up: OV0-3 measurement
  ENDIF
     ld a, b
-    push bc
-    push de
+    push de                     ; obj_ptr corrupts DE, preserves BC
     call obj_ptr
     pop de
-    pop bc
     ld a, d
     cp OBJ_ANYLOC
     jr z, .anyloc
@@ -1007,9 +1005,7 @@ hands_room:
 ; run the identical test in both).
 weight_bust:
     ld a, b
-    push bc
-    call obj_weight_of
-    pop bc
+    call obj_weight_of          ; preserves BC; E comes back as 10, dead here
     ld d, a
     push bc
     push de
@@ -1270,21 +1266,17 @@ h_dropall:                      ; 30
     call objscan_tick           ; SP14c gate follow-up: OV0-3 measurement
  ENDIF
     ld a, b
-    push bc
     call obj_ptr
     ld a, (hl)
-    pop bc
     cp OBJ_CARRIED
     jr z, .drop
     cp OBJ_WORN
     jr nz, .next
 .drop:
-    push bc
     ld a, (flags+FLAG_PLAYER)
-    ld c, a
+    ld c, a                     ; C is dead in h_dropall (B is the counter)
     ld a, b
-    call obj_move
-    pop bc
+    call obj_move               ; A, E, HL and flags; B untouched
 .next:
     inc b
     jr .scan
@@ -1424,12 +1416,10 @@ owf_core:
     call objscan_tick           ; SP14c gate follow-up: OV0-3 measurement
  ENDIF
     ld a, d
-    push bc
-    push de
+    push de                     ; D = child index, E = depth; BC survives obj_ptr
     call obj_ptr
     ld a, (hl)
     pop de
-    pop bc
     cp c                        ; located "at" this container's number?
     jr nz, .next
     push bc
@@ -1463,19 +1453,15 @@ weight_total:
     call objscan_tick           ; SP14c gate follow-up: OV0-3 measurement
  ENDIF
     ld a, b
-    push bc
     call obj_ptr
     ld a, (hl)
-    pop bc
     cp OBJ_CARRIED
     jr z, .add
     cp OBJ_WORN
     jr nz, .next
 .add:
-    push bc
     ld a, b
-    call obj_weight_of
-    pop bc
+    call obj_weight_of          ; preserves BC (owf_core brackets)
     add a, c
     jr nc, .st
     ld a, 255
@@ -1490,9 +1476,7 @@ weight_total:
 
 h_weigh:                        ; 89: flags[C] = weight of obj B
     ld a, b
-    push bc
-    call obj_weight_of
-    pop bc
+    call obj_weight_of          ; preserves BC; C = flag number, read below
     ld d, a
     ld b, c
     call fptr
