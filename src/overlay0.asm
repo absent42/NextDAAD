@@ -1078,6 +1078,7 @@ h_get:                          ; 40
     ld a, (flags+FLAG_PLAYER)
     cp e
     jr nz, .nothere
+.wtest:                         ; B = object. Shared with TAKEOUT (h_takeout)
     call weight_bust            ; SP16 B3: WEIGHT is tested BEFORE the
     jr nc, .cap                 ; hands-full count, not after it - the
     ld e, 43                    ; order both references use
@@ -1337,22 +1338,7 @@ h_takeout:                      ; 91: obj B out of container loc C
     cp c
     ld e, 52                    ; nowhere near the container: "There
     jr nz, .named               ; isn't one of those in the <name>."
-    call weight_bust            ; restored: TAKEOUT had no weight test
-    jr nc, .cap
-    ld e, 43
-    jp refuse
-.cap:
-    call hands_room
-    jr c, .take
-    call doall_cancel           ; SM27 refusal cancels any DOALL
-    ld e, 27
-    jp refuse
-.take:
-    ld a, b
-    ld c, OBJ_CARRIED
-    call obj_move
-    ld e, 36                    ; SP16 B1: "I now have the _."
-    jp sysmsg
+    jp h_get.wtest              ; weight, hands, take: byte-identical to GET's tail
 .named:
     call msg_in_obj
     jp refuse_tail              ; composite already printed: newline,
