@@ -1106,12 +1106,37 @@ h_gfx:
 .tab:                           ; sub 0-21; holes 7, 8, 15 -> .unk
     dw .backfront, .frontback, .swap, .toscreen, .tobuffer
     dw l2_clear, l2_clear_back, .unk, .unk, .palset, .palget
-    dw .cycstart, .cycstop, .vidonce, .vidloop, .unk
-    dw .font, .layer, .txtmode, .sprstart, .sprflags, .sprstop
+    dw .cycstart, .cycstop
+    ASSERT $ - .tab == 2*GFX_SUB_VID_ONCE
+    dw .vidonce
+    ASSERT $ - .tab == 2*GFX_SUB_VID_LOOP
+    dw .vidloop, .unk
+    ASSERT $ - .tab == 2*GFX_SUB_FONT
+    dw .font
+    ASSERT $ - .tab == 2*GFX_SUB_LAYER
+    dw .layer
+    ASSERT $ - .tab == 2*GFX_SUB_TXTMODE
+    dw .txtmode
+    ASSERT $ - .tab == 2*GFX_SUB_SPR_START
+    dw .sprstart
+    ASSERT $ - .tab == 2*GFX_SUB_SPR_FLAGS
+    dw .sprflags
+    ASSERT $ - .tab == 2*GFX_SUB_SPR_STOP
+    dw .sprstop
     ASSERT $ - .tab == 44
-    ASSERT GFX_SUB_VID_ONCE == 13 && GFX_SUB_VID_LOOP == 14 && GFX_SUB_FONT == 16
-    ASSERT GFX_SUB_LAYER == 17 && GFX_SUB_TXTMODE == 18
-    ASSERT GFX_SUB_SPR_START == 19 && GFX_SUB_SPR_FLAGS == 20 && GFX_SUB_SPR_STOP == 21
+    ; Offset ASSERTs miss a swapped label: read every slot back.
+    ASSERT {.tab+2*0} == .backfront && {.tab+2*1} == .frontback && {.tab+2*2} == .swap
+    ASSERT {.tab+2*3} == .toscreen && {.tab+2*4} == .tobuffer
+    ASSERT {.tab+2*5} == l2_clear && {.tab+2*6} == l2_clear_back
+    ASSERT {.tab+2*7} == .unk && {.tab+2*8} == .unk && {.tab+2*15} == .unk
+    ASSERT {.tab+2*9} == .palset && {.tab+2*10} == .palget
+    ASSERT {.tab+2*11} == .cycstart && {.tab+2*12} == .cycstop
+    ASSERT {.tab+2*GFX_SUB_VID_ONCE} == .vidonce && {.tab+2*GFX_SUB_VID_LOOP} == .vidloop
+    ASSERT {.tab+2*GFX_SUB_FONT} == .font
+    ASSERT {.tab+2*GFX_SUB_LAYER} == .layer
+    ASSERT {.tab+2*GFX_SUB_TXTMODE} == .txtmode
+    ASSERT {.tab+2*GFX_SUB_SPR_START} == .sprstart && {.tab+2*GFX_SUB_SPR_FLAGS} == .sprflags
+    ASSERT {.tab+2*GFX_SUB_SPR_STOP} == .sprstop
 .unk:
  IFDEF DEBUG                    ; no NextDAAD analogue: marker only.
     push bc                     ; Second push keeps C (the sub) safe
@@ -1686,7 +1711,7 @@ gfx_find_empty:
 ; the WHOLE chain under PARTn\ first (gfx_open_chain_part below);
 ; root (shared pool) fallback below runs the WHOLE chain again,
 ; unchanged. curPart == 1: skip straight to the root pass - zero new
-; opens, byte-identical to pre-T5 code.
+; opens.
 gfx_open_chain:
     ld a, (curPart)
     dec a
@@ -3680,7 +3705,7 @@ title_blit:
     ld b, 1                       ; format 1 = 256 x 2-byte 9-bit entries
     call l2_palette_load
     call data_restore
-    call l2_flip_mode             ; swap roles, program resolution + front bank
+    call l2_flip_mode           ; l2Mode = gfxMode since the entry commit
     jp l2_enable
 
 ; --- SP12 Task 1: custom font load (boot + part switch) ---

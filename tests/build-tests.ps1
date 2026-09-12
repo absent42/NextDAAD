@@ -1119,8 +1119,8 @@ function Assert-LayerOrderReset {
     if ($en -notmatch 'gfx_layer_apply') {
         throw "src\overlay2.asm : l2_enable must delegate to gfx_layer_apply - one composer, so the byte and NR `$15 cannot disagree"
     }
-    if ($ovl2 -notmatch '(?m)^\.tab:[^\r\n]*\r?\n(?:\s+dw[^\r\n]*\r?\n)*?\s+dw[^\r\n]*\.layer\b' -or $ovl2 -notmatch 'ASSERT GFX_SUB_LAYER == 17') {
-        throw "src\overlay2.asm : h_gfx's .tab does not dispatch .layer at GFX_SUB_LAYER (17)"
+    if ($ovl2 -notmatch '(?m)^[ \t]+ASSERT[ \t]+\$[ \t]*-[ \t]*\.tab[ \t]*==[ \t]*2\*GFX_SUB_LAYER[ \t]*\r?\n[ \t]+dw[ \t]+\.layer\b' -or $ovl2 -notmatch '\{\.tab\+2\*GFX_SUB_LAYER\}[ \t]*==[ \t]*\.layer\b') {
+        throw "src\overlay2.asm : h_gfx's .tab must keep dw .layer directly under its GFX_SUB_LAYER offset ASSERT and read that slot back"
     }
     $inc = Get-Content -LiteralPath (Join-Path $root 'src\nextdaad.inc') -Raw
     if ($inc -notmatch 'GFX_SUB_LAYER\s+equ\s+17') {
