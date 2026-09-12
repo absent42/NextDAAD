@@ -2024,9 +2024,7 @@ h_end:                          ; 21: a reply starting with N (SM31) =
     call confirm
     jr z, .off
     ld c, 0
-    call eng_init_game
-    xor a
-    ld (procSP), a
+    call eng_init_game          ; clears procSP itself (engine.asm)
     ret
 .off:
     jr h_exit.hard              ; same silence-then-reset tail
@@ -2304,16 +2302,10 @@ ext_xmes:
     ; convention, not this one; main.asm's svc_fseek and video.asm's
     ; vid_raw_seek0 set IX the same way (sav_append_part, once cited
     ; here, is gone), as does tools/NextZXOS's bmp2spr.asm ("ld ix,0").
-    ; Fixed per SP11 T5 rider (opus-review finding M2): IXL now set
-    ; explicitly; L kept too, belt-and-braces (harmless - unread on
-    ; this path). This worked on CSpect before possibly by register
-    ; coincidence; the hardware sweep re-verifies.
+    ; IXL is the mode register for a raw rst $08 caller; L is not read.
     ld bc, 0
     ld de, (xmsOff)
-    ld l, 0                     ; mode 0 = from start (belt-and-braces
-                                 ; only - see comment above)
-    ld ix, 0                    ; mode 0 = from start (the register
-                                 ; that actually matters - see above)
+    ld ix, 0                    ; mode 0 = from start
     ld a, (xmsHandle)
     call esx_fseek
     jr c, .failclose
@@ -2995,9 +2987,6 @@ xpart_load_entry:
     push hl
     ld a, OVL1_PAGE
     jp ovl_map_page
-
-ext_stub:
-    jp h_unimpl
 
 ; EXTERN forwarding: fn not claimed natively, XBN loaded with a live
 ; extEntry -> classic-contract dispatch. Else exactly the old stub.
