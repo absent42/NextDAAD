@@ -297,35 +297,23 @@ gfx_pal_rewind:
 ;   never calls l2_palette_load - it runs on the reset identity
 ;   palette, where 255 is white - so the invariant is untouched by it.
 ; C = the NR $43 value to program before loading, i.e. WHICH BANK the
-; entries land in and which bank stays on screen while they do. The
-; plain entry below keeps the standing convention (edit and display
-; both bank 1); gfx_blit passes an "edit the other bank" value so a
+; entries land in and which bank stays on screen while they do.
+; l2_palette_load presets C = PAL_L2_FIRST and falls in; gfx_blit
+; passes an "edit the other bank" value so a
 ; picture's palette can be built where nobody can see it and swapped
 ; in atomically. See PAL_L2_* in nextdaad.inc.
+l2_palette_load:
+    ld c, PAL_L2_FIRST           ; edit and display bank 1 (the standing convention)
 l2_palette_load_ctl:
     ld a, 1
     ld (palLock), a
-    ld a, b
-    push af
     ld a, c
     nextreg NR_PAL_CTRL, a
     nextreg NR_PAL_INDEX, 0
-    pop af
-    jr l2_palette_load.fmt
-
-l2_palette_load:
-    ld a, 1
-    ld (palLock), a
     ld a, b
-    push af
-    nextreg NR_PAL_CTRL, PAL_L2_FIRST
-    nextreg NR_PAL_INDEX, 0
-    pop af
-.fmt:
     or a
     jr nz, .fmt9
-    ld b, 0                      ; B=0 -> djnz runs 256 times
-.l8:
+.l8:                             ; B is 0 here: djnz runs 256 times
     ld a, (hl)
     inc hl
     cp L2_TRANSP_COLOUR          ; colour collision with the reserved
@@ -352,7 +340,7 @@ l2_pal9_stamp:
                                  ; PRIORITY (chapter-next-palette.tex:279)
                                  ; and a priority bit on the transparent
                                  ; entry would be actively harmful.
-    ld a, 0                      ; not xor: F preserved, the contract is unchanged
+    xor a                        ; no caller reads F after the stamp
     ld (palLock), a              ; every palette-programming path ends here
     ret
 
