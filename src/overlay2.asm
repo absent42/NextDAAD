@@ -1566,13 +1566,7 @@ gfx_load:
     ld (gfxEntryIdx), a
     call gfx_open_chain
     jp c, .failclean
-    call gfx_read_banks         ; closes the file on every path
-    jr c, .failbanks
-    ld a, (gfxCompressed)
-    or a                        ; also clears CF for the skip case
-    call nz, gfx_depack         ; scratch banks -> decompressed run
-    jr c, .failbanks
-    call gfx_derive_height
+    call gfx_fetch_run          ; read banks, depack if needed, derive height
     jr c, .failbanks
     ; everything verified: commit the cache entry
     ld a, (gfxEntryIdx)
@@ -1799,6 +1793,18 @@ gfx_chain_walk:
     ld (gfxHandle), a
     or a
     ret
+
+; gfx_read_banks (closes the file on every path), then gfx_depack when
+; gfxCompressed, then gfx_derive_height. Out: CF = the first failing
+; stage's CF; banks left for gfx_load_rollback. Corrupts everything.
+gfx_fetch_run:
+    call gfx_read_banks
+    ret c
+    ld a, (gfxCompressed)
+    or a                        ; also clears CF for the skip case
+    call nz, gfx_depack
+    ret c
+    jp gfx_derive_height
 
 ; Stream the open gfxHandle file into freshly allocated 16K cache
 ; banks through slot 6, 8K per esx_fread. Every read is count-checked
@@ -3601,15 +3607,7 @@ introDatName: db "INTRO", 92, "INTRO.DAT", 0
 title_boot:
     call title_probe
     jr c, .noTitle                ; no DAAD.* staged: silent, normal boot
-    call gfx_read_banks            ; -> scratch banks (closes the
-                                   ; handle on every path)
-    jr c, .rollback
-    ld a, (gfxCompressed)
-    or a                          ; also clears CF for the skip case
-    call nz, gfx_depack            ; scratch -> fresh decompressed run
-                                   ; (skipped for a raw hit)
-    jr c, .rollback
-    call gfx_derive_height
+    call gfx_fetch_run             ; read banks, depack if needed, derive height
     jr c, .rollback
     call title_blit                ; run -> BACK surface, flip (never
                                    ; fails, see its header)
