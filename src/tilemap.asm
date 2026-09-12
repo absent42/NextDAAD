@@ -56,24 +56,10 @@ tm_pal_write9:
     pop hl
     ret
 
-; Copy the embedded font to TM_DEFS. SP12 T1 rider: the GAME.CHR disk
-; probe that used to run here (open/read/validate a root-only override,
-; esxDOS-dependent) has been retired - it was an undocumented mechanism
-; nobody remembered, never wired into any docs, and is now superseded by
-; the owner-unified FONT.CHR path (font_load, overlay2.asm), which loads
-; later, is PARTn-aware, and is the only supported custom-font route
-; going forward. chrStatus is still zeroed here (kept 0, never set
-; non-zero again) so debug.asm's dbg_engage_tilemap - which still reads
-; it and is out of scope for this file-only change - stays silent
-; instead of showing a stale CHR OVERRIDE/CHR BAD banner. Both callers'
-; contracts are preserved: main.asm's boot call and errors.asm's fatal()
-; re-arm (file.asm ~154, txt_init's embedded-font fallback needs no DDB/
-; SD state) both just need TM_DEFS filled unconditionally on return -
-; this is now even more robust than before, since there is no longer any
-; esxDOS dependency at all on this path. Corrupts all registers.
+; Copy the embedded font to TM_DEFS. The GAME.CHR probe that lived here
+; was retired (FONT.CHR via font_load, overlay2.asm, is the only custom
+; font route); callers need only TM_DEFS filled. Corrupts all registers.
 tm_font_init:
-    xor a
-    ld (chrStatus), a
     ld hl, fontData
     ld de, TM_DEFS
     ld bc, 2048
@@ -233,10 +219,6 @@ tmAttr:        db TM_ATTR_DEFAULT
 tmFillGlyph:   db 0
 tmScrollW:     db 0
 tmScrollH:     db 0
-; SP14c batch B TM2: chrHandle/chrScratch removed - dead (batch A's
-; M1 removed the last write, main.asm; zero readers anywhere in the
-; tree, confirmed by grep before removal).
-chrStatus:     db 0             ; 0 none, 1 override loaded, 2 rejected
 
  IFNDEF DEBUG
 ; SP14c batch B accounting note: TM1+TM2+TM3's combined -10 bytes

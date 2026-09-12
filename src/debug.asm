@@ -179,7 +179,7 @@ dbg_engage_tilemap:
     call ram_diag
     call bank_selftest_show
     call ddb_diag
-    ld a, (chrStatus)
+    xor a                       ; chrStatus is gone; branch removed next
     or a
     ret z
     push af                     ; dbg_at leaves A = C, preserve chrStatus
