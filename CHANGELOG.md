@@ -4,6 +4,17 @@ All notable changes to NextDAAD are recorded here.
 
 ## v0.10.0 - Unreleased
 
+- Z80 review, wave 2 (same-page helpers): repeated sequences within a
+  page moved into one shared routine each, with no contract change.
+  Bytes freed in the release build: resident 73, overlay0 5, overlay1
+  223, overlay2 218, page 48 34, streamed effects 12. The extern
+  memory-map save and restore, the audio loaders' name, open, stop-wait
+  and end-of-file steps, the save and load gather and scatter, and the
+  graphics row blit, chain walk, picture fetch and GFX sub-command
+  dispatch now share code. A wav file that ends inside a skipped chunk
+  is refused at the first short read instead of after reading out the
+  rest of the chunk. The extern interface, the save format and every
+  condact are unchanged.
 - Z80 review, wave 1 (no contract change): a peephole and dead-code
   pass over the resident core, both condact overlays, the graphics
   overlay, the sprite engine and the audio pages. Bytes freed in the
