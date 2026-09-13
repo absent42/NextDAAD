@@ -188,56 +188,43 @@ vid_stub:
 
 ; ---------------------------------------------------------------------
 ; RUN fill kernel, CPU: computed-entry unrolled ld (hl),e stores
-; (graduated NXBEN nxb_fill_unrolled - doc 04 block shape, doc 05
-; ADD BC,nn; 17.0 T/B body + the ~230T entry the settlement's 387T
-; RUN envelope carries). In: A = colour, DE = dest, BC = chunk
-; (1..8192). Out: DE += chunk, BC corrupt. Preserves HL (src).
-; The low-byte SMC is same-page (MMU7 pinned - doc 08 / rubric 3).
+; (graduated NXBEN nxb_fill_unrolled - doc 04 block shape, doc 10
+; SWAPNIB; 17.0 T/B body + the ~230T entry the settlement's 387T
+; RUN envelope carries). In: A = colour, DE = dest, C = chunk
+; (0..240, B ignored). Out: DE += chunk, BC and IYL corrupt.
+; Preserves HL (src). The entry jumps through IY (IYH = high vid_stub).
 ; ---------------------------------------------------------------------
-vid_fill_cpu:
+vid_fill_cpu:                    ; A colour, DE dest, C chunk 0..240 (B ignored)
     push hl                      ; src
     ex de, hl                    ; HL = dest
     ld e, a                      ; E = colour
     ld a, c
-    and 15
-    jr z, .full
-    add a, a                     ; rem * 2 (store+inc = 2 bytes)
     neg
-    add a, low (vid_fill_blk + 32)
-    jr .set
-.full:
-    ld a, low vid_fill_blk
-.set:
-    ld (.fe+1), a                ; low-byte SMC (page-asserted below)
-    add bc, 15                   ; Z80N ADD BC,nn (doc 05)
-    srl b
-    rr c
-    srl b
-    rr c
-    srl b
-    rr c
-    srl b
-    rr c                         ; BC = passes = (chunk+15)/16
-    ld a, b
-    or c
+    and 15
+    add a, a
+    add a, low vid_fill_blk
+    ld iyl, a                    ; computed entry (vid_copy_ldi's shape)
+    ld a, c
+    add a, 15
+    swapnib
+    and 15                       ; A = passes = (C+15)>>4, Z if 0
+    ld b, a
     jr z, vid_fill_done          ; structural: zero chunk is a no-op
-.fe:
-    jp vid_fill_blk              ; low byte SMC-patched
+    jp (iy)
     ALIGN 64
 vid_fill_blk:
     DUP 16
       ld (hl), e
       inc hl
     EDUP
-    dec bc
-    ld a, b
-    or c
-    jr nz, vid_fill_blk
+    djnz vid_fill_blk
 vid_fill_done:                   ; global: the ALIGNed block label
     ex de, hl                    ; above rescopes dot-locals
     pop hl                       ; src
     ret
     ASSERT (low vid_fill_blk) <= 256-40
+    ASSERT (high vid_fill_blk) == (high vid_stub)
+    ASSERT NXV2_DMA_CHUNK <= 240 && NXV2_RUN_DMA_MIN <= 241
 
 ; ---------------------------------------------------------------------
 ; COPY kernel, CPU: computed-entry unrolled LDI (graduated NXBEN
