@@ -1277,10 +1277,7 @@ vid_op_kflip:
 
 ; FEND: frame end - terminal. Mid-span hold frames spill the dest
 ; cursor so the span CONTINUES across the chunk-frame boundary
-; (nxv2dec's span_cursor rule); the untouched frame tail persists by
-; construction (contract 2 - nothing here writes the surface).
-; Both terminals leave through vid_term_exit: RAM delivery falls into
-; vid_dec_done, direct-serve takes the patched operand to vid_ds_done.
+; (nxv2dec's span_cursor rule); nothing here writes the surface (contract 2).
 vid_op_fend:
     ld a, (vidInSpan)
     or a
@@ -3290,9 +3287,9 @@ vid_loop_rewind:
 ; Composition: the whole decode runs the ALWAYS-SLOW op path
 ; (vid_fetch vectored to vid_ds_byte; SKIP/RUN reuse the shared
 ; dest-side chunked bodies via the SMC exits; COPY literals through
-; the unrolled-ini transport port->surface below; PAL/KSTART via the
-; per-session stub slot patches, FEND/KFLIP through vid_term_exit's
-; patched operand). HL is the open block's remaining byte count for the
+; the unrolled-ini transport port->surface below; PAL via its stub slot,
+; KSTART's exit via vid_op_kstart.next, FEND/KFLIP's via vid_term_exit, all
+; patched per session). HL is the open block's remaining byte count for the
 ; entire armed session phase (frame sections are 512-aligned, so it
 ; is 0 at every section boundary). The CMD18 window is hot property
 ; exactly as in streaming (THIRD RULE); the filemap runs/fragment
@@ -3614,7 +3611,7 @@ vid_ds_pal:
     pop de
     jp vid_ds_next
 
-; Direct terminal tail: the RAM KFLIP/FEND handlers reach here through
+; Direct terminal tail: the shared KFLIP/FEND handlers reach here through
 ; vid_term_exit; discards the section pad, A = terminal op.
 vid_ds_done:
     push af
@@ -4077,8 +4074,8 @@ nxb_reclaim:
     ld (audEnable), a
     ret
 
-; The bench's frame terminal: vid_term_exit is patched here instead
-; of to vid_dec_done. The op loop keeps the stack level between ops,
+; The bench's frame terminal: vid_term_exit's operand points here
+; instead of vid_dec_done. The op loop keeps the stack level between ops,
 ; so this ret returns straight to nxb_row's `call nxb_body`.
 nxb_term:
     ret

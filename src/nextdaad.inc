@@ -1171,7 +1171,7 @@ NXV_NATIVE_H_MODE0 equ 192  ; mode-0 line count
 ;    same ISR, so both sides scale together and the crossover is
 ;    unchanged. The unarmed coefficients are therefore the correct ones.
 ;  - WINDOW SEAMS. Every 49152-byte solve row carries the same
-;    +0.129 T/B seam term (6 seams x ~1055 T / 49152 B) in BOTH its CPU
+;    seam term in BOTH its CPU
 ;    and DMA per-byte figure, and it cancels in (body - per_b). Using
 ;    the do-not-regress anchors 17.0 / 20.2 with seam-free DMA rates
 ;    gives the same differences, hence the same crossovers.
@@ -1422,9 +1422,9 @@ NXV_AUD_GUARD    equ 16     ; writer keeps this many bytes clear of
 ; at open). It is NO LONGER ring-guard: the ring grew past the point
 ; where this bound is what limits the feed, and the binding constraint
 ; moved to the streaming/direct gates' BLOCK arithmetic. Those are
-; 8-bit adds over 512-byte blocks (nxv2_open_body: need = cap + apad
-; + 1, and the ring-fit test need + apad + 2), and with the header cap
-; at its own maximum NXV2_STRM_CAP_MAX = 240 they hold iff
+; 8-bit adds over 512-byte blocks (vid_strm_validate: need = cap + apad
+; + 1; nxv2_open_body's ring-fit test: need + apad + 2), and with the
+; header cap at its own maximum NXV2_STRM_CAP_MAX = 240 they hold iff
 ; apad <= 6 blocks, i.e. iff the padded audio section is <= 3072 B.
 ; That is a proven invariant with zero headroom today ("<= 247: no
 ; carry", "<= 255"), so the declarable bound is pinned to it rather
