@@ -984,11 +984,9 @@ cdisp:
 ; the pad runs out, at which point flags snaps to $A300 and the ASSERT
 ; below fires. That makes it worth printing, because the number is
 ; invisible otherwise and two budgets now compete: this pad, and the
-; post-anchor headroom. objname_article/objname_untok (objname.asm) are
-; deliberate ballast between them - move that pair either way to
-; rebalance (2026-08-05: moved IN to ddbtext.asm, pre-anchor, DEBUG pad
-; 139 -> 36; 2026-08-09 SP18 item 7 T4: moved back OUT to objname.asm,
-; post-anchor, to fund T4's cardBusy bracket, DEBUG pad 36 -> 96).
+; post-anchor headroom. Code moved pre-anchor in 2026-09 with the
+; sav_write/sav_read deletion is deliberate ballast, marked "pre-anchor
+; ballast" where it now sits - move any of it back here to rebalance.
 ; READ THE DEBUG FIGURE: DEBUG carries the most pre-anchor code and is
 ; always the tightest variant (2026-08-09: DEBUG 96, Force1MB 133,
 ; Release 185), so a Release-only check will read 2x too generous.
