@@ -878,7 +878,7 @@ objscan_tick:
 ; msgTitle above so the two builds cannot drift apart) at row 0, col 0
 ; on the tilemap, then returns. This runs BEFORE main.asm's own
 ; txt_init call (which follows a successful DDB load), so txt_init is
-; forced here first - the same pattern errors.asm's fatal() already
+; forced here first - the same pattern file.asm's fatal() already
 ; relies on to make tm_putc_at safe this early in boot; re-running
 ; txt_init a second time later is harmless (same idempotent register/
 ; palette/font programming + full clear DEBUG already pays for once

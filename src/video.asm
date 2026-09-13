@@ -6910,7 +6910,7 @@ vidExtVid: db ".VID", 0
 ; MMU2/MMU3 are captured, never remapped, pre-arm. Row 23 col 0 is the
 ; position the old DEBUG dbg_at path used; pair 7 (white ink on black
 ; paper, attr 14) is txt_init's palette - the same attr dbg_putc_tm
-; and errors.asm's Release fatal path already rely on. The game
+; and file.asm's Release fatal path already rely on. The game
 ; continues after the print (non-fatal, unchanged) and its own window
 ; scrolling may later overwrite the text - a diagnostic, not a HUD.
  IFDEF DEBUG
