@@ -9,7 +9,7 @@
 ;     everything that can execute while the video CTC ISR is armed.
 ;     $E000        vid_stub - 64-byte 256-aligned dispatch block (16
 ;                  4-byte JP slots; the wire opcode IS the offset;
-;                  3c: FEND/PAL/KFLIP slots are per-session SMC too)
+;                  3c: the PAL slot is per-session SMC too)
 ;     $E040..      decode kernels (computed-entry fill/LDI blocks,
 ;                  ALIGN 64), fast op handlers (flat + gapped sets,
 ;                  3c inline column hop), central dispatch, chunked
@@ -1270,7 +1270,7 @@ vid_op_kflip:
     xor a
     ld (vidInSpan), a
     ld a, VOP_KFLIP
-    jr vid_dec_done
+    jr vid_term_exit
 .stray:
     ld a, VID_ERR_OP
     jp vid_dec_abort
@@ -1279,6 +1279,8 @@ vid_op_kflip:
 ; cursor so the span CONTINUES across the chunk-frame boundary
 ; (nxv2dec's span_cursor rule); the untouched frame tail persists by
 ; construction (contract 2 - nothing here writes the surface).
+; Both terminals leave through vid_term_exit: RAM delivery falls into
+; vid_dec_done, direct-serve takes the patched operand to vid_ds_done.
 vid_op_fend:
     ld a, (vidInSpan)
     or a
@@ -1288,7 +1290,8 @@ vid_op_fend:
     ld (vidSpanDE), de
 .plain:
     ld a, VOP_FEND
-    ; falls into vid_dec_done
+vid_term_exit:
+    jp vid_dec_done              ; SMC: vid_ds_done when direct
 ; Shared terminal tail: advance vidFramePos past this frame's payload
 ; (consumed bytes rounded up to the 512-byte block - valid absolute
 ; rounding because every frame section is block-aligned), bounds-check
@@ -1714,8 +1717,9 @@ vid_dst_setup:
 ; needed). Ops parse through the always-slow path (vid_fetch is
 ; vectored to vid_ds_byte); COPY literals ride vid_ds_copy_body's
 ; unrolled-ini transport straight to the surface; SKIP/RUN reuse the shared
-; dest-side bodies; FEND/PAL/KFLIP land on the ds handlers via the
-; per-session stub slot patches. Terminal handlers ret to our caller.
+; dest-side bodies; PAL lands on the ds handler via its per-session
+; stub slot, FEND/KFLIP through vid_term_exit's patched operand.
+; Terminal handlers ret to our caller.
 vid_decode_frame_ds:
     xor a
     ld (vidDsFrmBlk), a          ; per-frame section bound reset
@@ -3286,9 +3290,9 @@ vid_loop_rewind:
 ; Composition: the whole decode runs the ALWAYS-SLOW op path
 ; (vid_fetch vectored to vid_ds_byte; SKIP/RUN reuse the shared
 ; dest-side chunked bodies via the SMC exits; COPY literals through
-; the unrolled-ini transport port->surface below; FEND/PAL/KFLIP/
-; KSTART via the per-session stub
-; slot patches). HL is the open block's remaining byte count for the
+; the unrolled-ini transport port->surface below; PAL/KSTART via the
+; per-session stub slot patches, FEND/KFLIP through vid_term_exit's
+; patched operand). HL is the open block's remaining byte count for the
 ; entire armed session phase (frame sections are 512-aligned, so it
 ; is 0 at every section boundary). The CMD18 window is hot property
 ; exactly as in streaming (THIRD RULE); the filemap runs/fragment
@@ -3610,29 +3614,8 @@ vid_ds_pal:
     pop de
     jp vid_ds_next
 
-; Direct terminals: the span logic mirrors the RAM handlers; the
-; section pad is discarded to the block boundary before returning to
-; the frame loop (vid_decode_frame_ds's caller).
-vid_ds_kflip:
-    ld a, (vidInSpan)
-    or a
-    jr z, .stray
-    xor a
-    ld (vidInSpan), a
-    ld a, VOP_KFLIP
-    jr vid_ds_done
-.stray:
-    ld a, VID_ERR_OP
-    jp vid_dec_abort
-vid_ds_fend:
-    ld a, (vidInSpan)
-    or a
-    jr z, .plain
-    ld a, (vidDstPage)           ; span hold frame: spill the cursor
-    ld (vidSpanDstPage), a       ; (parity with the RAM handler; the
-    ld (vidSpanDE), de           ; direct preset emits single-frame
-.plain:                          ; spans, but the format allows more)
-    ld a, VOP_FEND
+; Direct terminal tail: the RAM KFLIP/FEND handlers reach here through
+; vid_term_exit; discards the section pad, A = terminal op.
 vid_ds_done:
     push af
     call vid_ds_pad              ; discard to the block boundary
@@ -3977,9 +3960,9 @@ nxb_entry:
 ; Standalone setup: two pool banks (source stream / paint target), the
 ; decode loop's session cells staged flat, the per-session SMC slots
 ; pointed at the RAM+flat set (a previous video session may have left
-; the direct-serve set), the FEND stub slot diverted to nxb_term (the
-; shipping vid_op_fend runs vid_dec_done's file-position accounting,
-; which is meaningless with no session), and the zxnDMA WR2/WR5
+; the direct-serve set), the terminal exit diverted to nxb_term
+; (vid_dec_done's file-position accounting is meaningless with no
+; session; vid_op_fend's plain path still runs), and the zxnDMA WR2/WR5
 ; one-time program sent (the shipping vidDmaInit lives on VID_PAGE2,
 ; unreachable from here - nxbDmaInit below is its 4-byte twin).
 ; CF set = no free bank. Corrupts everything.
@@ -4043,21 +4026,21 @@ nxb_ops_setup:
     ld (vid_stub + VOP_RUN8 + 1), hl
     ld hl, vf_op_copy8
     ld (vid_stub + VOP_COPY8 + 1), hl
-    ld hl, nxb_term              ; FEND -> the bench terminal
-    ld (vid_stub + VOP_FEND + 1), hl
+    ld hl, nxb_term              ; FEND -> the bench terminal (through
+    ld (vid_term_exit + 1), hl   ; vid_op_fend's plain path, vidInSpan = 0)
     ld hl, nxbDmaInit
     ld bc, (nxbDmaInit_len << 8) | DMA_PORT
     otir
     or a
     ret
 
-; Undo the setup: FEND stub back to the shipping handler, then the
+; Undo the setup: the terminal exit back to vid_dec_done, then the
 ; shared reclaim. The other SMC slots are re-patched by every video
 ; open, so they are left as staged (the same rule the player's own
 ; vid_stage_common follows).
 nxb_ops_restore:
-    ld hl, vid_op_fend
-    ld (vid_stub + VOP_FEND + 1), hl
+    ld hl, vid_dec_done
+    ld (vid_term_exit + 1), hl
     ; falls into nxb_reclaim
 
 ; Shared standalone reclaim - called on the CLEAN exit above and from
@@ -4094,8 +4077,8 @@ nxb_reclaim:
     ld (audEnable), a
     ret
 
-; The bench's frame terminal: FEND lands here instead of the shipping
-; vid_dec_done chain. The op loop keeps the stack level between ops,
+; The bench's frame terminal: vid_term_exit is patched here instead
+; of to vid_dec_done. The op loop keeps the stack level between ops,
 ; so this ret returns straight to nxb_row's `call nxb_body`.
 nxb_term:
     ret
@@ -5684,8 +5667,8 @@ vid_stage_common:
 .vec:
     ; --- per-session decode vectoring (3c direct-serve): the fetch
     ; vector, the shared bodies' exit jumps, slow-op's COPY body
-    ; target and the FEND/PAL/KFLIP stub slots all point at the RAM
-    ; decode (resident/streaming) or the SD-stream decode (direct).
+    ; target, the PAL stub slot and the terminal exit all point at the
+    ; RAM decode (resident/streaming) or the SD-stream decode (direct).
     ; Patched EVERY open - a previous session may have left the other
     ; set. Same doc-08/rubric-3 bracket as the stub patches above. ---
     ld a, (vidDeliverDir)
@@ -5700,12 +5683,10 @@ vid_stage_common:
     ld (vid_op_kstart.next + 1 + DATA_WINDOW - OVL_ORG), hl
     ld hl, vid_copy_body
     ld (vid_slow_op.cj + 1 + DATA_WINDOW - OVL_ORG), hl
-    ld hl, vid_op_fend
-    ld (vid_stub + VOP_FEND + 1 + DATA_WINDOW - OVL_ORG), hl
     ld hl, vid_op_pal
     ld (vid_stub + VOP_PAL + 1 + DATA_WINDOW - OVL_ORG), hl
-    ld hl, vid_op_kflip
-    ld (vid_stub + VOP_KFLIP + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_dec_done
+    ld (vid_term_exit + 1 + DATA_WINDOW - OVL_ORG), hl
     ret
 .dsvec:
     ld hl, vid_ds_byte
@@ -5716,12 +5697,10 @@ vid_stage_common:
     ld (vid_op_kstart.next + 1 + DATA_WINDOW - OVL_ORG), hl
     ld hl, vid_ds_copy_body
     ld (vid_slow_op.cj + 1 + DATA_WINDOW - OVL_ORG), hl
-    ld hl, vid_ds_fend
-    ld (vid_stub + VOP_FEND + 1 + DATA_WINDOW - OVL_ORG), hl
     ld hl, vid_ds_pal
     ld (vid_stub + VOP_PAL + 1 + DATA_WINDOW - OVL_ORG), hl
-    ld hl, vid_ds_kflip
-    ld (vid_stub + VOP_KFLIP + 1 + DATA_WINDOW - OVL_ORG), hl
+    ld hl, vid_ds_done
+    ld (vid_term_exit + 1 + DATA_WINDOW - OVL_ORG), hl
     ret
 
 ; ---------------------------------------------------------------------
