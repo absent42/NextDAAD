@@ -3325,11 +3325,13 @@ gfx_row_scatter320:
     ld d, high DATA_WINDOW
     ld b, 32
 .px:
-    ld a, (hl)
-    inc hl
-    ld (de), a
-    inc d
+    ldws                        ; Z80N: ld (de),(hl) / inc l / inc d
     djnz .px
+    ld a, l                     ; LDWS increments L only: a 32-aligned run
+    or a                        ; cannot wrap inside itself, only at its
+    jr nz, .ok                  ; end - carry that one wrap into H
+    inc h
+.ok:
     ld a, (gfxDstPage)
     inc a
     ld (gfxDstPage), a
@@ -3403,6 +3405,8 @@ gfxRowFull:    db 0              ; direct stream: the 256th row was
 gfxModeSave:   db 0              ; direct stream: front surface's mode
                                  ; at entry, restored to l2Mode on the
                                  ; failure funnel (no flip happened)
+    ALIGN 32                     ; gfx_row_scatter320's LDWS runs: a 32-
+                                 ; aligned start keeps INC L inside the page
 gfxRowBuf:     ds 320            ; row bounce buffer: slot 6 can only hold
                                  ; source OR dest, so each row stages here
                                  ; (in this overlay page - both users above
@@ -3412,6 +3416,7 @@ gfxRowBuf:     ds 320            ; row bounce buffer: slot 6 can only hold
                                  ; source chunk buffer (zx0_chunk_refill) -
                                  ; loads and blits never overlap
     ASSERT GFX_ZX0_CHUNK <= 320
+    ASSERT (gfxRowBuf & 31) == 0
 
 ; ZX0 depack state (all cursors in memory: the registers belong to the
 ; vendored dzx0 loop)
