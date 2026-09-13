@@ -871,9 +871,13 @@ DMA_CHUNK_MAX   equ 256     ; zxnDMA one-shot cap per arm - dma_copy splits
                             ; still serviced on time. The row copy and the
                             ; surface copy hand dma_copy exactly 256 bytes,
                             ; one chunk each; gfx_row_fetch hands a whole
-                            ; 320-byte row (two chunks) or a 64/128/192/256
-                            ; leftover, a multiple of 64 whose shortest
-                            ; equals GFX_DMA_MIN_LEN (one chunk). 256 still
+                            ; row: 256 bytes for 256-wide art (one chunk,
+                            ; never split), or 320 bytes for 320-wide art
+                            ; (two chunks). A 320-wide row cut at a page
+                            ; edge instead hands the leftover part: 64, 128,
+                            ; 192 or 256 bytes, a multiple of 64 whose
+                            ; shortest equals GFX_DMA_MIN_LEN (one chunk).
+                            ; 256 still
                             ; cuts the two 256-byte calls from two chunks
                             ; to one: ~780 T saved per call, about
                             ; -5.4 ms on a location DISPLAY 0 and -10.7 ms

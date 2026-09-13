@@ -411,8 +411,11 @@ def main():
     # The lengths that matter: two shipped callers hand dma_copy
     # exactly 256 bytes, one chunk each (gfx_row_copy256's row,
     # l2_copy_back_front's GFX_COPY_CHUNK); gfx_row_fetch hands a whole
-    # 320-byte row (two chunks) or a 64/128/192/256 leftover (a
-    # multiple of 64, shortest = GFX_DMA_MIN_LEN, one chunk); also the
+    # row: 256 bytes for 256-wide art (one chunk, never split), or 320
+    # bytes for 320-wide art (two chunks); a 320-wide row cut at a page
+    # edge instead hands the leftover: 64, 128, 192 or 256 bytes, a
+    # multiple of 64 whose shortest equals GFX_DMA_MIN_LEN (one chunk);
+    # also the
     # cap itself and its neighbours, the 320-wide row width, a multi-
     # chunk length, and 107 = DMA_PORT, the length the register-clobber
     # regression produced.

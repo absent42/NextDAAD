@@ -586,8 +586,10 @@ l2_flip_swap:
 ; feed is now serviced INSIDE the transfer, so the window's length no
 ; longer buys anything and the 128 was pure cost. The row copy and
 ; the surface copy hand this routine exactly 256 bytes, one chunk
-; each; gfx_row_fetch hands a whole 320-byte row (two chunks) or a
-; 64/128/192/256 leftover, a multiple of 64 whose shortest equals
+; each; gfx_row_fetch hands a whole row: 256 bytes for 256-wide art
+; (one chunk, never split), or 320 bytes for 320-wide art (two chunks).
+; A 320-wide row cut at a page edge instead hands the leftover part:
+; 64, 128, 192 or 256 bytes, a multiple of 64 whose shortest equals
 ; GFX_DMA_MIN_LEN (one chunk). 256 still makes the 256-byte pair's
 ; call ONE chunk instead
 ; of two, saving per call one arm upload (209 T), one zxnDMA sequencing
