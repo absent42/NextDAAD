@@ -2994,13 +2994,22 @@ zx0_ref_read:
     ret
 
 ; In: l2Mode = mode, gfxSrcIdx = the run's first bank index, gfxRowsLeft =
-; height (0 = 256). Clears the BACK surface, opens data_save (the caller
-; closes it after its palette load), streams every row. Corrupts everything.
+; height (0 = 256). Clears the BACK surface unless the picture fills it,
+; opens data_save (the caller closes it after its palette load), streams
+; every row. Corrupts everything.
 gfx_rows_blit:
     ld a, (l2BackBank)
     add a, a
     ld (gfxSurfPage), a         ; render target = the back surface
-    call l2_clear_back          ; own data_save/restore - run BEFORE ours
+    ld a, (l2Mode)
+    or a                        ; the LD below leaves this Z alone
+    ld a, (gfxRowsLeft)         ; 0 encodes 256 rows
+    jr nz, .full                ; 320-wide: full iff the height byte is 0
+    sub 192                     ; 256-wide: full iff 192 rows
+.full:
+    or a                        ; Z = the picture covers every page
+    call nz, l2_clear_back      ; short picture: clear the remainder
+                                ; (own data_save/restore - run BEFORE ours)
     call data_save
     xor a
     ld (gfxSrcHalf), a
