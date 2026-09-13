@@ -451,15 +451,3 @@ wrapBuf:      ds 80             ; pending word (word-wrap), max = WIN_W
 wrapLen:      db 0             ; chars buffered in wrapBuf
 wrapLock:     db 0             ; non-zero: bypass buffering (editor/SM32)
 wrapIdx:      db 0             ; prn_flush emit-loop cursor
-
- IFNDEF DEBUG
-; SP14c batch B accounting note (same class as tilemap.asm's, see
-; that file's comment for the full mechanism): Release's pre-flags
-; ALIGN(256) margin was down to 7 bytes by the time this module's
-; PRN1 (-8 bytes) landed - measured via CDISP+384 vs the 0xA100/
-; 0xA200 boundary pair. This pad cancels PRN1's Release-side effect
-; so `flags` stays at 0xA200; DEBUG keeps the full saving (its own
-; slack is unaffected). Re-measure before assuming this still
-; applies if more pre-flags code changes upstream.
-    ds 8
- ENDIF

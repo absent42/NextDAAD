@@ -220,23 +220,8 @@ tmFillGlyph:   db 0
 tmScrollW:     db 0
 tmScrollH:     db 0
 
- IFNDEF DEBUG
-; SP14c batch B accounting note: TM1+TM2+TM3's combined -10 bytes
-; landed this module's pre-flags code exactly ON the ALIGN(256)
-; boundary from below in the RELEASE variant only (measured via the
-; map-address technique: CDISP+384 dropped from 0xA10A to exactly
-; 0xA100, so `flags` snapped from 0xA200 to 0xA100 instead of staying
-; put - Release's pre-flags slack at this boundary was only 10 bytes,
-; far tighter than DEBUG's 158+). This 10-byte pad restores Release's
-; original margin so `flags` stays at 0xA200 (the hard constraint) -
-; DEBUG is unaffected (its own ALIGN slack absorbed the same -10
-; bytes with over a hundred bytes to spare) and keeps the full
-; tracked-headroom benefit of TM1-3. Costs nothing meaningful here
-; (Release headroom is >3700 bytes) - if a future Release-side
-; pre-flags reduction elsewhere changes this margin, re-measure and
-; adjust/remove this pad rather than assuming it still applies.
-    ds 10
- ENDIF
+; SP14c's Release-only ALIGN pads (10 here, 8 in print.asm) went 2026-09:
+; the R1 rebalance left Release far clear of the $A100 boundary.
 
 fontData:
     INCBIN "font.chr"           ; 2048 bytes, path relative to src/
