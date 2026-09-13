@@ -14,7 +14,8 @@ All notable changes to NextDAAD are recorded here.
   dispatch now share code. A wav file that ends inside a skipped chunk
   is refused at the first short read instead of after reading out the
   rest of the chunk. The extern interface, the save format and every
-  condact are unchanged.
+  condact are unchanged. Hardware pass H1 complete: waves 1 and 2
+  passed on Next hardware.
 - Z80 review, wave 1 (no contract change): a peephole and dead-code
   pass over the resident core, both condact overlays, the graphics
   overlay, the sprite engine and the audio pages. Bytes freed in the
