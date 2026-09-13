@@ -868,9 +868,14 @@ DMA_CHUNK_MAX   equ 256     ; zxnDMA one-shot cap per arm - dma_copy splits
                             ; feed is admitted INSIDE a running transfer by
                             ; nextreg $CD bit 0 (im2_init), so a longer
                             ; chunk simply admits more CTC edges and each is
-                            ; still serviced on time. All three callers hand
-                            ; dma_copy at most 256 bytes, so 256 makes every
-                            ; call ONE chunk: ~780 T saved per call, about
+                            ; still serviced on time. The row copy and the
+                            ; surface copy hand dma_copy exactly 256 bytes,
+                            ; one chunk each; gfx_row_fetch hands a whole
+                            ; 320-byte row (two chunks) or a 64/128/192/256
+                            ; leftover, a multiple of 64 whose shortest
+                            ; equals GFX_DMA_MIN_LEN (one chunk). 256 still
+                            ; cuts the two 256-byte calls from two chunks
+                            ; to one: ~780 T saved per call, about
                             ; -5.4 ms on a location DISPLAY 0 and -10.7 ms
                             ; on GFX 0/1 at 256x192. A ONE-CONSTANT KNOB
                             ; NOW, but it did not use to be one - dma_copy

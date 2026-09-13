@@ -584,8 +584,12 @@ l2_flip_swap:
 ; shorten the blocking window, on the model that a window longer than
 ; one CTC period cost a tick. That model is dead (see above): the DAC
 ; feed is now serviced INSIDE the transfer, so the window's length no
-; longer buys anything and the 128 was pure cost. All three callers
-; hand this routine at most 256 bytes, so 256 makes every call ONE chunk instead
+; longer buys anything and the 128 was pure cost. The row copy and
+; the surface copy hand this routine exactly 256 bytes, one chunk
+; each; gfx_row_fetch hands a whole 320-byte row (two chunks) or a
+; 64/128/192/256 leftover, a multiple of 64 whose shortest equals
+; GFX_DMA_MIN_LEN (one chunk). 256 still makes the 256-byte pair's
+; call ONE chunk instead
 ; of two, saving per call one arm upload (209 T), one zxnDMA sequencing
 ; residual (183 T) and one pass of the loop glue (~390 T) - about 780 T,
 ; or 27.9 us at 28 MHz. On the model that priced cap 128 at DISPLAY 0
