@@ -351,6 +351,148 @@ objname_article:
     res 5, a
     ret
 
+; A = location value, C = 0 LISTAT / 1 LISTOBJ.
+;
+; SP16 B16. The listing FORM is selected by flag 53 (fOFlags) bit 6 on
+; both references (jdaad.js:2379 listObjects' continuousListing,
+; daad_condacts.c:1922 _internal_listat's contList); NextDAAD forced the
+; continuous form and never read the bit.
+;   bit 6 set   - continuous: "a, b and c." (SM46 / SM47 / SM48), the
+;                 SM1 header running straight into the first name.
+;   bit 6 clear - ONE OBJECT PER LINE, which is the DEFAULT (flag 53
+;                 starts at 0). jDAAD emits a newline after EVERY name
+;                 and no SM48 terminator at all in this form, and gives
+;                 the SM1 header its own line; that is what is
+;                 reproduced here - the separator slot before each name
+;                 after the first becomes a newline, and the tail
+;                 emits a newline instead of SM48.
+; Bit 7 ("objects were listed") is maintained on BOTH condact paths -
+; set when at least one object was listed, cleared when none were.
+; NextDAAD's own tail message was already set on both paths but only
+; from LISTOBJ, and the LISTAT path never cleared it.
+; Empty LISTAT prints SM53 ALONE: jDAAD appends nothing after it and
+; msx2daad's SM53 carries its own newline, so NextDAAD's extra
+; prn_newline was a third line neither reference produces.
+; The terminator stays SM48 for LISTAT as well as LISTOBJ (jDAAD's
+; choice; msx2daad uses SM51 there) - reference disagreement recorded
+; in docs/daad-compliance-report.md, not this task's to move.
+; The referenced object (flag 51) is NOT written - see objname_print_n.
+list_at:
+    cp LOC_HERE
+    jr nz, .fixed
+    ld a, (flags+FLAG_PLAYER)
+.fixed:
+    ld (lstLoc), a
+    ld a, c
+    ld (lstMode), a
+    ld b, 0
+    ld d, 0
+.count:
+    ld a, (numObj)
+    cp b
+    jr z, .counted
+    call lst_match
+    jr nz, .cnext
+    inc d
+.cnext:
+    inc b
+    jr .count
+.counted:
+    ld a, d
+    ld (lstTotal), a
+    ld hl, flags+FLAG_OFLAGS    ; hoisted here so both arms can use it;
+    or a                        ; LD does not touch F, so the OR still
+    jr nz, .some                ; tests the object count in A (doc 02)
+    res 7, (hl)                 ; nothing here: clear "listed" on BOTH
+    ld a, (lstMode)             ; paths (LISTAT never cleared it)
+    or a
+    ret nz                      ; LISTOBJ prints nothing at all
+    ld e, 53                    ; LISTAT: SM53 alone, no extra newline
+    xor a
+    jp print_msg
+.some:
+    set 7, (hl)                 ; objects listed: set "listed" on BOTH
+    ld a, (lstMode)             ; paths (LISTAT never set it)
+    or a
+    jr z, .body
+    ld e, 1                     ; "I can also see:" - LISTOBJ only
+    xor a
+    call print_msg
+    ld a, (flags+FLAG_OFLAGS)
+    and 64
+    call z, prn_newline         ; one-per-line: the header owns its line
+.body:
+    ld b, 0
+    ld d, 0                     ; emitted count
+.emit:
+    ld a, (numObj)
+    cp b
+    jr z, .done
+    call lst_match
+    jr nz, .enext
+    ld a, d
+    or a
+    jr z, .name
+    push bc
+    push de
+    ld a, (flags+FLAG_OFLAGS)
+    and 64
+    jr z, .nl                   ; one-per-line: the separator is a
+    ld a, (lstTotal)            ; newline before every name but the
+    dec a                       ; first, which is jDAAD's "newline
+    cp d                        ; after every name" shifted by one
+    ld e, 46                    ; ", "
+    jr nz, .sep
+    ld e, 47                    ; " and "
+.sep:
+    xor a
+    call print_msg
+    jr .sepend
+.nl:
+    call prn_newline
+.sepend:
+    pop de
+    pop bc
+.name:
+    push bc
+    push de
+    xor a                       ; list output: no E3 dot truncation.
+    call objname_print_n        ; B = object number; flag 51 untouched
+    pop de
+    pop bc
+    inc d
+.enext:
+    inc b
+    jr .emit
+.done:
+    ld a, (flags+FLAG_OFLAGS)
+    and 64
+    jp z, prn_newline           ; one-per-line: close the last name's
+    ld e, 48                    ; line; jDAAD emits no SM48 in this form
+    xor a
+    jp print_msg
+
+lstLoc:   db 0
+lstMode:  db 0
+lstTotal: db 0
+
+; B = object. Z = objTable[B].loc == lstLoc.
+; Preserves BC, DE; corrupts AF, HL. DEBUG also ticks objScanCount once
+; per call, so the instrument counts one per object inspected.
+lst_match:
+ IFDEF DEBUG
+    call objscan_tick           ; SP14c gate follow-up: OBJ1 measurement
+ ENDIF
+    ld a, b
+    push bc
+    push de
+    call obj_ptr
+    ld a, (lstLoc)
+    cp (hl)
+    pop de
+    pop bc
+    ret
+
 rdPage:       db 0
 rdSaveSP:     db 0
 rdSave:       ds 12             ; 4 levels x (page, ptr lo, ptr hi)
