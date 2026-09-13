@@ -1049,12 +1049,10 @@ vid_chunk_dst_nocap:
     push hl
     ld hl, $6000
     or a
-    sbc hl, de                   ; HL = window room (1..$2000)
-    or a
-    push hl
-    sbc hl, bc
-    pop hl
+    sbc hl, de                   ; HL = window room (1..$2000), CF clear
+    sbc hl, bc                   ; room - count
     jr nc, .keep                 ; room >= count: keep BC
+    add hl, bc                   ; HL = room
     ld b, h
     ld c, l
 .keep:
@@ -1068,12 +1066,10 @@ vid_chunk_src:
     ex de, hl                    ; DE = src
     ld hl, $E000
     or a
-    sbc hl, de                   ; HL = src room (1..$2000)
-    or a
-    push hl
-    sbc hl, bc
-    pop hl
+    sbc hl, de                   ; HL = src room (1..$2000), CF clear
+    sbc hl, bc                   ; room - count
     jr nc, .keep
+    add hl, bc                   ; HL = room
     ld b, h
     ld c, l
 .keep:
