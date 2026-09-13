@@ -276,15 +276,7 @@ prn_more_check:
     ld a, WIN_CURX
     call win_field
     ld (hl), 0
-    call win_attr
-    ld a, e
-    ld (tmAttr), a
-    ld hl, (curWin)
-    ld c, (hl)                  ; window x
-    inc hl
-    ld b, (hl)                  ; window y
-    inc hl
-    ld e, (hl)                  ; width
+    call win_rect               ; C = x, B = y, E = w; D = h, overwritten below
     push de
     ld a, WIN_CURY
     call win_field

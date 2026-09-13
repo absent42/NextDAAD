@@ -4,43 +4,16 @@
 ; to advance (print.asm routes it through the More...-aware newline).
 
 windows_init:
-    ld b, WINDOW_COUNT
-    ld hl, winTable
-.win:
-    xor a
-    ld (hl), a                  ; x
-    inc hl
-    ld (hl), a                  ; y
-    inc hl
     ld a, (tmCols)
-    ld (hl), a                  ; w
-    inc hl
-    ld a, TM_ROWS
-    ld (hl), a                  ; h
-    inc hl
-    xor a
-    ld (hl), a                  ; curX
-    inc hl
-    ld (hl), a                  ; curY
-    inc hl
-    ld (hl), a                  ; flags
-    inc hl
-    ld a, 7
-    ld (hl), a                  ; ink (hardware 7 = white)
-    inc hl
-    xor a
-    ld (hl), a                  ; paper
-    inc hl
-    ld (hl), a                  ; lastPicture
-    inc hl
-    ld (hl), a                  ; lines
-    inc hl
-    ld a, TM_ATTR_DEFAULT
-    ld (hl), a                  ; attr - reserved pair 0 until a condact
-    inc hl                      ; changes ink or paper
-    ld a, TM_ATTR_CURSOR
-    ld (hl), a                  ; attrInv - reserved pair 2, the cursor's
-    inc hl                      ; boot inverse, until ink or paper change
+    ld (winTpl+WIN_W), a        ; the template is resident RAM: a plain store
+    ld de, winTable
+    ld b, WINDOW_COUNT
+.win:
+    push bc
+    ld hl, winTpl
+    ld bc, WIN_SIZE
+    ldir
+    pop bc
     djnz .win
     xor a
     ; fall through to win_select
@@ -86,7 +59,9 @@ win_attr:
     ld e, (hl)
     ret
 
-win_cls:
+; Out: C = x, B = y, E = w, D = h (tm_fill_rect's order), tmAttr = the
+; window's attr. Corrupts AF, HL.
+win_rect:
     call win_attr
     ld a, e
     ld (tmAttr), a
@@ -98,6 +73,10 @@ win_cls:
     ld e, (hl)                  ; w
     inc hl
     ld d, (hl)                  ; h
+    ret
+
+win_cls:
+    call win_rect
     ld a, GLYPH_SPACE
     call tm_fill_rect
     jr win_home
@@ -170,18 +149,26 @@ win_newline:
     ld (hl), a
     ret
 .scroll:                        ; cursor stays on the last row
-    call win_attr
-    ld a, e
-    ld (tmAttr), a
-    ld hl, (curWin)
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
-    inc hl
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
+    call win_rect
     jp tm_scroll_rect
 
+; One window record at boot; WIN_W is patched from tmCols by windows_init.
+winTpl:
+    db 0                        ; WIN_X
+    db 0                        ; WIN_Y
+    db 80                       ; WIN_W (patched)
+    db TM_ROWS                  ; WIN_H
+    db 0                        ; WIN_CURX
+    db 0                        ; WIN_CURY
+    db 0                        ; WIN_FLAGS
+    db 7                        ; WIN_INK (hardware 7 = white)
+    db 0                        ; WIN_PAPER
+    db 0                        ; WIN_LASTPIC
+    db 0                        ; WIN_LINES
+    db TM_ATTR_DEFAULT          ; WIN_ATTR - reserved pair 0 until ink/paper change
+    db TM_ATTR_CURSOR           ; WIN_ATTRINV - reserved pair 2, the boot inverse
+    ASSERT $ - winTpl == WIN_SIZE
+    ASSERT WIN_X == 0 && WIN_Y == 1 && WIN_W == 2 && WIN_H == 3 && WIN_INK == 7
+    ASSERT WIN_ATTR == WIN_SIZE-2 && WIN_ATTRINV == WIN_SIZE-1
 curWin:   dw winTable
 winTable: ds WINDOW_COUNT * WIN_SIZE
