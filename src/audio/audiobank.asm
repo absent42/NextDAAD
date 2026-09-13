@@ -875,14 +875,10 @@ aud_smp_copy:
     ld e, (ix+SMPB_P)
     ld d, (ix+SMPB_P+1)
     or a
-    sbc hl, de                  ; W - P
-    jr nc, .occ
-    ld a, (ix+SMPB_RINGM)
-    inc a
-    ld d, a
-    ld e, 0                      ; DE = ring size
-    add hl, de                  ; wrapped: + ring
-.occ:
+    sbc hl, de                  ; W - P (mod 64K)
+    ld a, h
+    and (ix+SMPB_RINGM)         ; mod ring: RINGM = (ring-1)>>8, the ring
+    ld h, a                     ; a 256-aligned power of two
     ex de, hl                   ; DE = occupied
     ld h, (ix+SMPB_RINGM)
     ld l, $FF                    ; HL = ring-1 (RINGM:$FF - ring is 256-aligned)
@@ -1114,21 +1110,13 @@ aud_smp_copy:
 .noroll:
     ld bc, (smpCpSeg)
     ld hl, (smpCpDst)
-    add hl, bc                  ; dstOff += seg
-    ld a, (ix+SMPB_RINGM)
-    inc a
-    ld d, a
-    ld e, 0                      ; DE = ring size
-    or a
-    sbc hl, de
-    jr nc, .dstwrap             ; dstOff >= ring: wrapped to HL-ring
-    add hl, de                  ; else restore (< ring)
-.dstwrap:
+    add hl, bc                  ; dstOff += seg (<= ring: seg is capped
+    ld a, h                     ; to dstRoom at .fill)
+    and (ix+SMPB_RINGM)         ; ring itself -> 0, below ring unchanged
+    ld h, a
     ld (smpCpDst), hl
-    ld bc, (smpCpSeg)
-    ld hl, (smpCpTo)
-    or a
-    sbc hl, bc
+    ld hl, (smpCpTo)            ; BC = seg still
+    sbc hl, bc                  ; CF clear from the AND
     ld (smpCpTo), hl            ; toFill -= seg
     ld hl, (smpCpRemLo)
     or a

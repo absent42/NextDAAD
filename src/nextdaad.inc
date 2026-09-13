@@ -703,6 +703,7 @@ AUD_STAGE_RING  equ 1024    ; power-of-two ring $7C00-$7FFF: the CTC ISR plays
                             ; page-table source. 1K = 51ms at 20kHz - ample vs
                             ; the 20ms refill period. Base $7C00 is 1K-aligned so
                             ; the ISR wraps with a branchless AND/OR mask on H.
+    ASSERT AUD_STAGE_RING >= 256 && (AUD_STAGE_RING & (AUD_STAGE_RING-1)) == 0   ; power of two, multiple of 256: wrap masks are (ring-1)>>8
     ASSERT AUD_STAGE0 + AUD_STAGE_RING == $8000   ; ISR wrap tests H == $80
     ASSERT AUD_STAGE_RING >= 2*(AUD_RATE_MAX/50)  ; ring > 1 frame of consumption
                             ; so a tick always refills before the ISR underruns
@@ -716,6 +717,7 @@ AUD_STAGE_RING  equ 1024    ; power-of-two ring $7C00-$7FFF: the CTC ISR plays
 ; range regardless, and nothing DRIVES channel 2 until Task 11.
 AUD_STAGE2      equ $4400   ; candidate - OP1/V1 gate before shipping
 AUD_STAGE2_RING equ 1024    ; same power-of-two ring shape as AUD_STAGE_RING
+    ASSERT AUD_STAGE2_RING >= 256 && (AUD_STAGE2_RING & (AUD_STAGE2_RING-1)) == 0   ; power of two, multiple of 256: wrap masks are (ring-1)>>8
     ASSERT (AUD_STAGE2 & (AUD_STAGE2_RING-1)) == 0
     ASSERT AUD_STAGE2_RING >= 2*(AUD_RATE_MAX/50)
 
