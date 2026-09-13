@@ -3282,7 +3282,7 @@ gfx_row_fetch:
     ld (gfxSrcPtr), hl          ; may land exactly on GFX_SRC_END -
     ret                         ; the next fetch's .chunk check handles it
 
-; Write the staged row to the row-major 256-wide surface: one LDIR to
+; Write the staged row to the row-major 256-wide surface: one dma_copy to
 ; the linear destination stream, advancing the dest page every 32
 ; rows (8192/256; a 256-byte row never splits across pages). Corrupts
 ; AF, BC, DE, HL.
