@@ -310,28 +310,4 @@ pair_alloc:
     add a, a
     ret
 
-; Re-resolve the current window's attribute and the cursor's inverted
-; attribute from its ink and paper. Called whenever either changes.
-; Corrupts all registers.
-win_attr_resolve:
-    ld a, WIN_INK
-    call win_field
-    ld c, (hl)                  ; ink
-    inc hl
-    ld b, (hl)                  ; paper
-    push bc
-    call pair_get
-    ld e, a
-    ld a, WIN_ATTR
-    call win_field
-    ld (hl), e
-    pop bc
-    ld a, b                     ; swap the roles for the block cursor
-    ld b, c
-    ld c, a
-    call pair_get
-    ld e, a
-    ld a, WIN_ATTRINV
-    call win_field
-    ld (hl), e
-    ret
+; win_attr_resolve moved pre-anchor to windows.asm 2026-09 (ballast).

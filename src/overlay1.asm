@@ -1996,9 +1996,8 @@ h_load:                         ; 26: condition-typed (cprops row 26).
                                 ; failure existed because a failed
                                 ; physical load had already trashed
                                 ; state; staging makes it obsolete.
-                                ; SP11 T4: sav_read_v2 replaces sav_read
-                                ; (resident file.asm, FROZEN - see its
-                                ; own header comment below) with the
+                                ; SP11 T4: sav_read_v2 replaced sav_read
+                                ; (file.asm, deleted 2026-09) with the
                                 ; same CF contract, so this handler's
                                 ; shape is otherwise unchanged. A cross-
                                 ; part file hands off to switch_to_part
@@ -2031,8 +2030,8 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 ; fork identically (h_ramsave/h_ramload below) against a stored curPart
 ; snapshot instead of a file byte.
 ;
-; sav_read_v2 cannot reuse the resident sav_read (file.asm, FROZEN -
-; HARD RULES): sav_read rejects any file whose header numObj differs
+; sav_read_v2 could not reuse the resident sav_read (file.asm, deleted
+; 2026-09): sav_read rejected any file whose header numObj differed
 ; from the LIVE numObj as "wrong game" (error 3). Correct for same-part
 ; loads, but wrong for a legitimate v2 cross-part save, which by
 ; construction has a DIFFERENT numObj than whatever part is currently
@@ -2088,12 +2087,9 @@ h_load:                         ; 26: condition-typed (cprops row 26).
 ; on the resident primitives" precedent), the exact same call shape as
 ; the header/flags/objects writes immediately before it, which the
 ; owner's own evidence proves already write reliably. No second open,
-; no seek, no write-extend edge case. sav_write (file.asm, resident,
-; FROZEN) and the former sav_append_part are both now unreachable from
-; h_save - sav_write cannot be removed (frozen), and sav_append_part's
-; code was deleted rather than left in place (leaving 350+ dead-and-
-; buggy-in-spirit bytes in an already-tight overlay budget serves no
-; one); this comment is the record of the removal.
+; no seek, no write-extend edge case. sav_write and sav_read (file.asm)
+; became unreachable from h_save and were deleted 2026-09 with zero
+; callers; sav_append_part's code went the same way, for the same reason.
 ;
 ; Post-fix hardening (owner-approved pre-tag review): CF alone is not
 ; sufficient either - the SAME root-cause lesson applies to every write

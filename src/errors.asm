@@ -5,7 +5,7 @@
 ; engine display is active (owner-discovered). The border write is
 ; kept for completeness. Both build types also print a legible
 ; "NextDAAD: RUNTIME ERROR - E<n>" into that same row-0 bar (via
-; fatal_puts below) - previously that text was DEBUG-only, so a
+; fatal_puts, file.asm) - previously that text was DEBUG-only, so a
 ; release build showed nothing but the bar. Never returns.
 ; Codes raised in SP3: 0 (obj_ptr), 2 (obj_move to 255), 3 (PROCESS
 ; depth), 4 (nested DOALL), 5 (illegal opcode), 6 (bad process),
@@ -123,37 +123,8 @@ msgErrN: db " N", 0
 msgErrC: db " C", 0
  ENDIF
 
-; HL = ASCIIZ message. Prints at row 0 from col 0, using the current
-; tmAttr - fatal() and err_raise both set tmAttr and paint the row-0
-; bar with it just before calling this, so the text lands on that same
-; background. Release-safe: no DEBUG gate, no windows_init/tmUp
-; dependency, just tm_putc_at (always resident) - the only precondition
-; is txt_init having run at least once (fatal() forces this itself;
-; err_raise only ever runs post-boot, long after boot's txt_init).
-; Leaves B=0, C=column right after the last character, E=tmAttr, so a
-; caller can chain a raw tm_putc_at immediately after (err_raise
-; appends the error digit this way). Corrupts AF, HL.
-fatal_puts:
-    ; msgRuntimeErr/msgRdStack now live in overlay0.asm's free space (no
-    ; post-flags room here - see there), so HL below needs overlay0's
-    ; page mapped at MMU7 to be dereferenceable. No restore needed -
-    ; both funnels (fatal/err_raise) are terminal and never return.
-    nextreg NR_MMU7, OVL0_PAGE
-    ld a, (tmAttr)
-    ld e, a
-    ld bc, 0                    ; SP14c batch B ERR1
-.loop:
-    ld a, (hl)
-    or a
-    ret z
-    push hl
-    call tm_putc_at
-    pop hl
-    inc hl
-    inc c
-    jr .loop
-
 ; msgRuntimeErr and msgRdStack relocated to overlay0.asm's free space
 ; (post-flags resident here had no room to grow) - see fatal_puts's
-; MMU7 map above. Call sites (here and ddbtext.asm's rd_stack_fatal)
-; are unchanged pointer-loads; only fatal_puts ever dereferences them.
+; MMU7 map (file.asm). Call sites (here and ddbtext.asm's
+; rd_stack_fatal) are unchanged pointer-loads; only fatal_puts
+; dereferences them.

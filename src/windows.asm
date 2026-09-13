@@ -152,6 +152,34 @@ win_newline:
     call win_rect
     jp tm_scroll_rect
 
+; Pre-anchor ballast (engine.asm's flags ALIGN note): moved in from
+; tmpairs.asm 2026-09, beside the win_field it calls three times.
+; Re-resolve the current window's attribute and the cursor's inverted
+; attribute from its ink and paper. Called whenever either changes.
+; Corrupts all registers.
+win_attr_resolve:
+    ld a, WIN_INK
+    call win_field
+    ld c, (hl)                  ; ink
+    inc hl
+    ld b, (hl)                  ; paper
+    push bc
+    call pair_get
+    ld e, a
+    ld a, WIN_ATTR
+    call win_field
+    ld (hl), e
+    pop bc
+    ld a, b                     ; swap the roles for the block cursor
+    ld b, c
+    ld c, a
+    call pair_get
+    ld e, a
+    ld a, WIN_ATTRINV
+    call win_field
+    ld (hl), e
+    ret
+
 ; One window record at boot; WIN_W is patched from tmCols by windows_init.
 winTpl:
     db 0                        ; WIN_X

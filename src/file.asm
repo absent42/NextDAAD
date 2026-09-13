@@ -283,7 +283,7 @@ dbgDdbFallbackDir: db DBG_DDB_FALLBACK_DIR, 0
 
 ; A = border colour, HL = ASCIIZ message. Never returns.
 ; Un-gated in both builds: dbg_puts/dbg_at are release stubs (debug.asm),
-; so the message goes through fatal_puts (errors.asm) via the tilemap
+; so the message goes through fatal_puts (below) via the tilemap
 ; primitives instead - those are always resident, never stubbed.
 fatal:
     out ($FE), a
@@ -321,10 +321,41 @@ fatal:
     call tm_fill_rect
     pop hl                       ; message ptr back, now that both
                                  ; corrupting calls are done
-    call fatal_puts              ; release-safe (errors.asm)
+    call fatal_puts              ; release-safe (below)
 .halt:
     di
     jr .halt
+
+; Pre-anchor ballast (engine.asm's flags ALIGN note): moved in from
+; errors.asm 2026-09, beside its own fatal() caller.
+; HL = ASCIIZ message. Prints at row 0 from col 0, using the current
+; tmAttr - fatal() and err_raise both set tmAttr and paint the row-0
+; bar with it just before calling this, so the text lands on that same
+; background. Release-safe: no DEBUG gate, no windows_init/tmUp
+; dependency, just tm_putc_at (always resident) - the only precondition
+; is txt_init having run at least once (fatal() forces this itself;
+; err_raise only ever runs post-boot, long after boot's txt_init).
+; Leaves B=0, C=column right after the last character, E=tmAttr, so a
+; caller can chain a raw tm_putc_at immediately after (err_raise
+; appends the error digit this way). Corrupts AF, HL.
+fatal_puts:
+    ; msgRuntimeErr/msgRdStack live in overlay0.asm's free space, so HL
+    ; below needs overlay0's page at MMU7. No restore: both funnels
+    ; (fatal/err_raise) are terminal and never return.
+    nextreg NR_MMU7, OVL0_PAGE
+    ld a, (tmAttr)
+    ld e, a
+    ld bc, 0                    ; SP14c batch B ERR1
+.loop:
+    ld a, (hl)
+    or a
+    ret z
+    push hl
+    call tm_putc_at
+    pop hl
+    inc hl
+    inc c
+    jr .loop
 
 ; ddbName relocated to errors.asm (SP11 Task 3 review fix 3): it needs
 ; 10 bytes now (see there) and file.asm's pre-flags region has none to
@@ -400,48 +431,6 @@ sav_fname:
 savHdr:   db "NDSV", 1
 savNObj:  db 0
 savRdHdr: ds 6                  ; read-side scratch; never overwrites savHdr
-
-; Write flags + object locations to savName. A = 0 OK / 1 io-error.
-sav_write:
-    call esx_getsetdrv
-    jr c, .err
-    ld ix, savName
-    ld b, ESX_MODE_W
-    call esx_fopen
-    jr c, .err
-    ld (savHandle), a
-    ld a, (numObj)
-    ld (savNObj), a
-    ; header (6 bytes)
-    ld a, (savHandle)
-    ld ix, savHdr
-    ld bc, 6
-    call esx_fwrite
-    jr c, .errclose
-    ; flags (256 bytes)
-    ld a, (savHandle)
-    ld ix, flags
-    ld bc, 256
-    call esx_fwrite
-    jr c, .errclose
-    ; object locations: gather the +0 byte of each 6-byte entry into
-    ; savLocs, then write numObj bytes
-    call sav_gather_locs        ; fills savLocs, BC = numObj
-    ld ix, savLocs
-    ld a, (savHandle)
-    call esx_fwrite
-    jr c, .errclose
-    ld a, (savHandle)
-    call esx_fclose
-    xor a
-    ret
-.errclose:
-    ld a, (savHandle)
-    call esx_fclose
-.err:
-    ld a, 1
-    scf
-    ret
 
 ; Copy objTable[i].loc -> savLocs[i]. Out: BC = numObj. Corrupts A,HL,DE.
 sav_gather_locs:
