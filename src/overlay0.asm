@@ -541,7 +541,7 @@ h_chance:                       ; 10: true B% of the time
 ; bytes), and 7 and 9 are each one move plus one shift (doc 06a
 ; "Shift Left 7" fastest form, "Shift Right 9").
 ;
-; Byte-level identities used below, with x = (H,L):
+; Byte-level identities used by rng_step (main.asm), with x = (H,L):
 ;   x<<7 = ( (H&1)<<7 | L>>1 , (L&1)<<7 )   -> the SRL H/RR L/RRA form
 ;   x>>9 = ( 0 , H>>1 )                     -> low byte only
 ;   x<<8 = ( L , 0 )                        -> high byte only
@@ -560,32 +560,8 @@ rng_next:
     push bc
     push de
     push hl
-    ld hl, (rngState)
-    ; --- x ^= x << 7 ---
-    ld d, h
-    ld e, l                     ; DE = x
-    xor a
-    srl h
-    rr l
-    rra                         ; HL = x << 7 (doc 06a shift-left-7)
-    ld h, l
-    ld l, a
-    ld a, h
-    xor d
-    ld h, a
-    ld a, l
-    xor e
-    ld l, a                     ; HL = x ^ (x << 7)
-    ; --- x ^= x >> 9 --- (high byte of x>>9 is always 0)
-    ld a, h
-    srl a
-    xor l
-    ld l, a
-    ; --- x ^= x << 8 --- (low byte of x<<8 is always 0)
-    ld a, h
-    xor l
-    ld h, a
-    ld (rngState), hl
+    call rng_step               ; resident, DI-bracketed: atomic vs a
+                                ; hook's svc_random (same stream)
     ; --- A = (HL * 100) >> 16, then +1 -> 1..100 ---
     ld d, 100
     ld e, h

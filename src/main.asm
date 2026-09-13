@@ -571,10 +571,8 @@ svc_version:
 
 ; xorshift on rngState (engine.asm), sharing the one stream h_random /
 ; rng_next (overlay0.asm:502-592) already advances for CHANCE/RANDOM.
-; rng_next itself is overlay-bound and unreachable here (the extern bank
-; occupies slots 6+7 during a service call, not overlay0), so the state
-; transform is duplicated verbatim from overlay0.asm:549-574 rather than
-; called - both streams still share the one algorithm and the one
+; rng_next (overlay0.asm) calls rng_step below, so the transform lives
+; here once and both streams share the one algorithm and the one
 ; rngState cell. Unlike rng_next this does NOT scale to 1..100: xbn.inc
 ; documents "SVC_RANDOM: out A = random byte", a raw full-range byte for
 ; extern use, not the CHANCE-specific 1..100 scaling.
@@ -591,6 +589,17 @@ svc_version:
 svc_random:
     push de
     push hl
+    call rng_step
+    ld a, l                       ; out A = random byte
+    pop hl
+    pop de
+    or a                          ; CF clear
+    ret
+
+; One xorshift step on rngState, DI-bracketed (IFF2 sampled twice, then
+; restored), so a foreground draw and a hook draw cannot interleave their
+; RMW. Out HL = new state (L = random byte). Corrupts AF, DE.
+rng_step:
     ld a, i
     jp pe, .sampled
     ld a, i                       ; erratum re-sample (nr_read idiom)
@@ -627,10 +636,6 @@ svc_random:
     jp po, .noei                  ; interrupts were off: leave them off
     ei
 .noei:
-    ld a, l                       ; out A = random byte
-    pop hl
-    pop de
-    or a                          ; CF clear
     ret
 
 ; Third MMU save/restore cell (svcSaved) for the shared mmu_save_hl/
