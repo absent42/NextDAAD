@@ -1132,9 +1132,7 @@ vid_src_next:
 .map:
     ld (vidSrcCurPage), a
     nextreg NR_MMU6, a           ; data_map_page inlined (banks.asm:8)
-    ld a, h
-    sub $20
-    ld h, a
+    res 5, h                     ; H = $E0 at every seam -> $C0
     pop bc
     ret
 .ovr:
@@ -1145,19 +1143,15 @@ vid_src_next:
 ; BC, HL; corrupts AF; DE rebased by -$2000.
 vid_dst_next:
     push bc
+    ld a, (vidDstEnd)
+    ld c, a
     ld a, (vidDstPage)
     inc a
     ld (vidDstPage), a
-    ld c, a
-    ld a, (vidDstEnd)
     cp c
-    jr z, .ovr                   ; page == end: past the surface
-    jr c, .ovr
-    ld a, c
+    jr nc, .ovr                  ; page >= end: past the surface
     nextreg NR_MMU2, a
-    ld a, d
-    sub $20
-    ld d, a
+    res 5, d                     ; D = $60 at every seam -> $40
     pop bc
     ret
 .ovr:
