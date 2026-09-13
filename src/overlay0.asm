@@ -28,40 +28,39 @@ h_unimpl:
     scf
     ret
 
-; B = flag number helper: HL -> flags[B]
-fptr:
+h_zero:                         ; 11: flags[B] == 0
     ld h, high flags
     ld l, b
-    ret
-
-h_zero:                         ; 11: flags[B] == 0
-    call fptr
     ld a, (hl)
     or a
     jp z, c_true
     jp c_false
 
 h_notzero:                      ; 12
-    call fptr
+    ld h, high flags
+    ld l, b
     ld a, (hl)
     or a
     jp nz, c_true
     jp c_false
 
 h_eq:                           ; 13: flags[B] == C
-    call fptr
+    ld h, high flags
+    ld l, b
     ld a, (hl)
     cp c
     jp z, c_true
     jp c_false
 
 h_let:                          ; 51: flags[B] = C
-    call fptr
+    ld h, high flags
+    ld l, b
     ld (hl), c
     ret
 
 h_plus:                         ; 49: flags[B] += C, saturate 255
-    call fptr
+    ld h, high flags
+    ld l, b
     ld a, (hl)
     add a, c
     jr nc, .st
@@ -71,7 +70,8 @@ h_plus:                         ; 49: flags[B] += C, saturate 255
     ret
 
 h_minus:                        ; 50: flags[B] -= C, floor 0
-    call fptr
+    ld h, high flags
+    ld l, b
     ld a, (hl)
     sub c
     jr nc, .st
@@ -258,57 +258,60 @@ h_atlt:                         ; 3: player < B
     jp c, c_true
     jp c_false
 h_gt:                           ; 14: flags[B] > C
-    call fptr
+    ld h, high flags
+    ld l, b
     ld a, (hl)
     cp c
     jr z, cfalse_j
     jp nc, c_true
     jp c_false
 h_lt:                           ; 15: flags[B] < C
-    call fptr
+    ld h, high flags
+    ld l, b
     ld a, (hl)
     cp c
     jp c, c_true
     jp c_false
 h_noteq:                        ; 79
-    call fptr
+    ld h, high flags
+    ld l, b
     ld a, (hl)
     cp c
     jp nz, c_true
     jp c_false
 h_same:                         ; 76: flags[B] == flags[C]
-    call fptr
+    ld h, high flags
+    ld l, b
     ld d, (hl)
-    ld b, c
-    call fptr
+    ld l, c
     ld a, (hl)
     cp d
     jp z, c_true
     jp c_false
 h_notsame:                      ; 80
-    call fptr
+    ld h, high flags
+    ld l, b
     ld d, (hl)
-    ld b, c
-    call fptr
+    ld l, c
     ld a, (hl)
     cp d
     jp nz, c_true
     jp c_false
 h_bigger:                       ; 112: flags[B] > flags[C]
-    call fptr
+    ld h, high flags
+    ld l, b
     ld d, (hl)
-    ld b, c
-    call fptr
+    ld l, c
     ld a, d
     cp (hl)
     jr z, cfalse_j
     jp nc, c_true
     jp c_false
 h_smaller:                      ; 113: flags[B] < flags[C]
-    call fptr
+    ld h, high flags
+    ld l, b
     ld d, (hl)
-    ld b, c
-    call fptr
+    ld l, c
     ld a, d
     cp (hl)
     jp c, c_true
@@ -339,18 +342,20 @@ h_adject2:                      ; 70
     jp z, c_true
     jp c_false
 h_set:                          ; 47: flags[B] = 255
-    call fptr
+    ld h, high flags
+    ld l, b
     ld (hl), 255
     ret
 h_clear:                        ; 48
-    call fptr
+    ld h, high flags
+    ld l, b
     ld (hl), 0
     ret
 h_add:                          ; 71: flags[C] += flags[B], sat 255
-    call fptr
+    ld h, high flags
+    ld l, b
     ld d, (hl)
-    ld b, c
-    call fptr
+    ld l, c
     ld a, (hl)
     add a, d
     jr nc, .st
@@ -359,10 +364,10 @@ h_add:                          ; 71: flags[C] += flags[B], sat 255
     ld (hl), a
     ret
 h_sub:                          ; 72: flags[C] -= flags[B], floor 0
-    call fptr
+    ld h, high flags
+    ld l, b
     ld d, (hl)
-    ld b, c
-    call fptr
+    ld l, c
     ld a, (hl)
     sub d
     jr nc, .st
@@ -371,28 +376,28 @@ h_sub:                          ; 72: flags[C] -= flags[B], floor 0
     ld (hl), a
     ret
 h_copyff:                       ; 125: flags[C] = flags[B]
-    call fptr
+    ld h, high flags
+    ld l, b
     ld d, (hl)
-    ld b, c
-    call fptr
+    ld l, c
     ld (hl), d
     ret
 h_copybf:                       ; 126: flags[B] = flags[C]
-    ld e, b
-    ld b, c
-    call fptr
+    ld h, high flags
+    ld l, c
     ld d, (hl)
-    ld b, e
-    call fptr
+    ld l, b
     ld (hl), d
     ret
 h_print:                        ; 53: flags[B] as decimal
-    call fptr
+    ld h, high flags
+    ld l, b
     ld a, (hl)
     call prn_dec8
     jp prn_flush
 h_dprint:                       ; 27: 16-bit from flags[B], flags[B+1]
-    call fptr
+    ld h, high flags
+    ld l, b
     ld a, (hl)
     inc l                       ; flags is 256-aligned: L wrap-safe
     ld h, (hl)
@@ -449,8 +454,8 @@ hasat_ptr:
     ld a, 91                    ; alternative bank: flags 60-91
 .base:
     sub b
-    ld b, a                     ; B = base - B/8
-    call fptr
+    ld l, a                     ; HL = flags + (base - B/8)
+    ld h, high flags
     ld a, 1
 .shift:
     dec e
@@ -503,7 +508,8 @@ h_indir:                        ; 122: B = flag number
     ; parameter byte of the following condact in the database image;
     ; NextDAAD's bytecode lives behind a banked read window, so nothing
     ; is written to it here.
-    call fptr
+    ld h, high flags
+    ld l, b
     ld a, (hl)
     ld (indirArg2), a
     ld a, 1
@@ -511,7 +517,8 @@ h_indir:                        ; 122: B = flag number
     ret
 h_random:                       ; 95: flags[B] = 1..100
     call rng_next
-    call fptr
+    ld h, high flags
+    ld l, b
     ld (hl), a
     ret
 h_chance:                       ; 10: true B% of the time
@@ -778,8 +785,8 @@ h_copyof:                       ; 119: flags[C] = loc(obj B)
     ld a, b
     call obj_ptr
     ld d, (hl)
-    ld b, c
-    call fptr
+    ld h, high flags
+    ld l, c
     ld (hl), d
     ret
 h_copyoo:                       ; 121: loc(obj C) = loc(obj B)
@@ -794,7 +801,8 @@ h_copyoo:                       ; 121: loc(obj C) = loc(obj B)
     jp obj_set_refs             ; routes COPYOO through _PLACE, which does
                                 ; adjust flag 1 (jdaad.js:4198)
 h_copyfo:                       ; 123: loc(obj C) = flags[B]
-    call fptr
+    ld h, high flags
+    ld l, b
     ld d, (hl)
     ld a, c
     ld c, d
@@ -1473,8 +1481,8 @@ h_weigh:                        ; 89: flags[C] = weight of obj B
     ld a, b
     call obj_weight_of          ; preserves BC; C = flag number, read below
     ld d, a
-    ld b, c
-    call fptr
+    ld h, high flags
+    ld l, c
     ld (hl), d
     ret
 h_weight:                       ; 94: flags[B] = carried+worn total
@@ -1482,7 +1490,8 @@ h_weight:                       ; 94: flags[B] = carried+worn total
     call weight_total
     pop bc
     ld d, a
-    call fptr
+    ld h, high flags
+    ld l, b
     ld (hl), d
     ret
 h_ability:                      ; 93
@@ -2103,7 +2112,7 @@ h_move:                         ; 106: condition-like action. B = flag
                                  ; Stamped at ENTRY rather than three
                                  ; times: nothing between here and the
                                  ; three exits can abort the handler (the
-                                 ; readers and fptr all return normally,
+                                 ; readers all return normally,
                                  ; and no path pushes a process, which is
                                  ; the only thing that CLEARS isDone), so
                                  ; entry-once and exit-thrice are the same
@@ -2116,7 +2125,8 @@ h_move:                         ; 106: condition-like action. B = flag
     cp 14
     jp nc, c_false
     ld (moveVerb), a
-    call fptr                   ; HL = flags + B
+    ld h, high flags
+    ld l, b                     ; HL = flags + B
     ld a, (hl)                  ; A = flags[B] (location to search)
     push hl                     ; save flags+B pointer for the write-back
     ld hl, (ddbHeader+HDR_CONLST)
