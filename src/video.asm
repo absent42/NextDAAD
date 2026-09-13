@@ -5316,46 +5316,8 @@ nxv2_open_body:
     ; prefill fills the ENTIRE ring, which is >= any margin the ring
     ; could honor (a margin larger than the ring itself is served
     ; best-effort by the same full fill - documented in the report).
-    call vid_file_blocks         ; size -> vidTotalBlkC (24-bit BLOCKS,
-    jp c, .badc                  ; the file unit); CF = not whole blocks
-    ld hl, (vidHdrCapC)
-    ld a, h
-    or a
-    jp nz, .badc
-    ld a, l
-    or a
-    jp z, .badc
-    cp NXV2_STRM_CAP_MAX+1
-    jp nc, .badc
-    ld (vidCapBlkC), a
-    ; advisory start-margin range check: this player never reads the
-    ; margin as a fill target (full-ring prefill dominates any margin
-    ; the ring could honor), but a margin claiming more blocks than
-    ; the whole file is a corrupt header - reject it cheaply
-    ld a, (vidTotalBlkC+2)       ; > 65535 blocks: any 16-bit margin
-    or a                         ; is inside the file by construction
-    jr nz, .marok
-    ld hl, (vidTotalBlkC)
-    ld de, (vidHdrMarginC)
-    or a
-    sbc hl, de
-    jp c, .badc                  ; margin > file blocks
-.marok:
-    ; gate need = audio-pad blocks + cap + 1 (the loop-pass header
-    ; block rides between passes)
-    ld hl, (vidP_ABytesPad)
-    ld a, h
-    srl a                        ; pad >> 9 (pad <= 3072: 1..6 blocks
-                                 ; - NXV_AUD_FRAME_MAX is PINNED at
-                                 ; 3072 to hold exactly that, because
-                                 ; this add and the ring-fit add below
-                                 ; are 8-bit and cap tops out at 240)
-    ld (vidApadBlkC), a
-    ld b, a
-    ld a, (vidCapBlkC)
-    add a, b
-    inc a                        ; <= 247: no carry possible
-    ld (vidNeedBlkC), a
+    call vid_strm_validate       ; header cap, margin, apad/need, filemap
+    jp c, .fail                  ; fit + entry count; B = verdict on CF
     ; ring geometry from the allocated count
     ld a, (vidRingCntC)
     ld l, a
@@ -5386,23 +5348,6 @@ nxv2_open_body:
     or a
     sbc hl, bc
     jp c, .toobig                ; ring too small to stream this file
-    ; the filemap must fit the hot copy (fragment ceiling)
-    ld hl, (vidStrmEntryEnd)
-    ld de, vidFilemapBuf
-    or a
-    sbc hl, de                   ; HL = entries * 6 (<= 192)
-    ld a, l
-    cp VID_STRM_HOT_ENT*6+1
-    jp nc, .toofrag
-    ld b, 0
-.entdiv:
-    sub 6
-    jr c, .entdivd
-    inc b
-    jr .entdiv
-.entdivd:
-    ld a, b
-    ld (vidEntCntC), a
     jp .loadgo
 
 .strm_loaded:
@@ -5534,59 +5479,8 @@ nxv2_open_body:
     ; leaving the window open at frame 0's audio for the handoff. ---
     ld a, 1
     ld (vidDeliverDir), a
-    call vid_file_blocks         ; size -> vidTotalBlkC (24-bit BLOCKS,
-    jp c, .badc                  ; the file unit); CF = not whole
-                                 ; blocks. CEILING LIFT: the >= 16MB
-                                 ; refusal that used to sit here (and
-                                 ; folded into VID FMT?) is GONE
-    ld hl, (vidHdrCapC)
-    ld a, h
-    or a
-    jp nz, .badc
-    ld a, l
-    or a
-    jp z, .badc
-    cp NXV2_STRM_CAP_MAX+1
-    jp nc, .badc
-    ld (vidCapBlkC), a
-    ld hl, (vidP_ABytesPad)
-    ld a, h
-    srl a                        ; pad >> 9 (1..6 blocks - the
-                                 ; NXV_AUD_FRAME_MAX 3072 pin, see
-                                 ; .strm_setup's copy of this add)
-    ld (vidApadBlkC), a
-    ld b, a
-    ld a, (vidCapBlkC)
-    add a, b
-    inc a                        ; <= 247: no carry
-    ld (vidNeedBlkC), a          ; the per-frame section bound
-    ; advisory margin range check against the file blocks
-    ld a, (vidTotalBlkC+2)       ; > 65535 blocks: any 16-bit margin
-    or a                         ; is inside the file by construction
-    jr nz, .dmarok
-    ld hl, (vidTotalBlkC)
-    ld de, (vidHdrMarginC)
-    or a
-    sbc hl, de
-    jp c, .badc                  ; margin > file blocks: corrupt
-.dmarok:
-    ; filemap must fit the hot copy
-    ld hl, (vidStrmEntryEnd)
-    ld de, vidFilemapBuf
-    or a
-    sbc hl, de
-    ld a, l
-    cp VID_STRM_HOT_ENT*6+1
-    jp nc, .toofrag
-    ld b, 0
-.dentdiv:
-    sub 6
-    jr c, .dentdivd
-    inc b
-    jr .dentdiv
-.dentdivd:
-    ld a, b
-    ld (vidEntCntC), a
+    call vid_strm_validate
+    jp c, .fail
     ; rewind to file start + consume the header block cold (the
     ; armed session then starts exactly at frame 0's audio)
     call vid_win_close
@@ -5670,9 +5564,6 @@ nxv2_open_body:
 .badc:
     ld b, 1                      ; verdict: bad header / bad read
     jr .fail
-.toofrag:
-    ld b, 4                      ; verdict: too fragmented to stream
-    jr .fail
 .toobig:
     ld b, 3                      ; verdict: no ring fits (pool below
                                  ; one streamed frame's need - the old
@@ -5688,6 +5579,67 @@ nxv2_open_body:
 .backhop:
     ret                          ; 3c: plain return to the cold
                                  ; orchestrator (B = verdict)
+
+; Shared contract validation (streaming + direct). CF set = refuse,
+; B = verdict (1 bad header/read, 4 too fragmented); CF clear = Total/
+; Cap/Apad/Need/EntCnt staged. Corrupts AF, B, DE, HL.
+vid_strm_validate:
+    call vid_file_blocks         ; size -> vidTotalBlkC (blocks); CF =
+    jr c, .bad                   ; not whole blocks
+    ld hl, (vidHdrCapC)
+    ld a, h
+    or a
+    jr nz, .bad
+    ld a, l
+    or a
+    jr z, .bad
+    cp NXV2_STRM_CAP_MAX+1
+    jr nc, .bad
+    ld (vidCapBlkC), a
+    ld hl, (vidP_ABytesPad)
+    ld a, h
+    srl a                        ; pad >> 9 (1..6 blocks; the 3072 pin)
+    ld (vidApadBlkC), a
+    ld b, a
+    ld a, (vidCapBlkC)
+    add a, b
+    inc a                        ; <= 247: no carry
+    ld (vidNeedBlkC), a
+    ld a, (vidTotalBlkC+2)       ; > 65535 blocks: any 16-bit margin
+    or a                         ; is inside the file by construction
+    jr nz, .marok
+    ld hl, (vidTotalBlkC)
+    ld de, (vidHdrMarginC)
+    or a
+    sbc hl, de
+    jr c, .bad                   ; margin > file blocks: corrupt header
+.marok:
+    ld hl, (vidStrmEntryEnd)     ; the filemap must fit the hot copy
+    ld de, vidFilemapBuf
+    or a
+    sbc hl, de                   ; HL = entries * 6 (<= 192)
+    ld a, l
+    cp VID_STRM_HOT_ENT*6+1
+    jr nc, .frag
+    ld b, 0
+.div:
+    sub 6
+    jr c, .divd
+    inc b
+    jr .div
+.divd:
+    ld a, b
+    ld (vidEntCntC), a
+    or a                         ; the loop exits with CF set - clear it
+    ret
+.bad:
+    ld b, 1
+    scf
+    ret
+.frag:
+    ld b, 4
+    scf
+    ret
 
 ; Common hot staging (both deliveries): fileEnd, the parameter block,
 ; ring count + bank list, DEBUG fill row, per-file SMC patches (stub
