@@ -1111,7 +1111,7 @@ aud_smp_copy:
     ld bc, (smpCpSeg)
     ld hl, (smpCpDst)
     add hl, bc                  ; dstOff += seg (<= ring: seg is capped
-    ld a, h                     ; to dstRoom at .fill)
+    ld a, h                     ; to dstRoom at .seg)
     and (ix+SMPB_RINGM)         ; ring itself -> 0, below ring unchanged
     ld h, a
     ld (smpCpDst), hl
