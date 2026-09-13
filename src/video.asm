@@ -101,9 +101,8 @@
 ;      with AND $C3 and rejects nonzero (VID_ERR_OP) - only offsets
 ;      $00-$3C, multiples of 4, can reach the stub block, whose $24/
 ;      $2C/$30/$34-$3C slots are error stubs. Cost: +14T per op (AND 7T +
-;      untaken JR 7T; ~+16T at 28MHz with wait states) = 3.6-5.2% of
-;      the settled 267-387T per-op envelopes (and ~0.5% of a
-;      transfer-dominated real frame), bounded by design.
+;      untaken JR 7T; ~+16T at 28MHz with wait states) = ~0.5% of a
+;      transfer-dominated real frame, bounded by design.
 ;   2. Early-FEND tail semantics: the decoder only writes what ops
 ;      write - no surface clears anywhere - so an early FEND leaves
 ;      the untouched frame tail exactly as it stands (patch-in-place).
@@ -188,11 +187,10 @@ vid_stub:
 
 ; ---------------------------------------------------------------------
 ; RUN fill kernel, CPU: computed-entry unrolled ld (hl),e stores
-; (graduated NXBEN nxb_fill_unrolled - doc 04 block shape, doc 10
-; SWAPNIB; 17.0 T/B body + the ~230T entry the settlement's 387T
-; RUN envelope carries). In: A = colour, DE = dest, C = chunk
-; (0..240, B ignored). Out: DE += chunk, BC and IYL corrupt.
-; Preserves HL (src). The entry jumps through IY (IYH = high vid_stub).
+; (graduated NXBEN nxb_fill_unrolled - unrolled store block, pass count
+; by SWAPNIB). In: A = colour, DE = dest, C = chunk (0..240, B ignored).
+; Out: DE += chunk; AF, BC and IYL corrupt. Preserves HL (src).
+; The entry jumps through IY (IYH = high vid_stub).
 ; ---------------------------------------------------------------------
 vid_fill_cpu:                    ; A colour, DE dest, C chunk 0..240 (B ignored)
     push hl                      ; src
@@ -230,8 +228,8 @@ vid_fill_done:                   ; global: the ALIGNed block label
 ; COPY kernel, CPU: computed-entry unrolled LDI (graduated NXBEN
 ; nxb_copy_ldi - doc 04; rubric 2: LDI's own BC countdown is the only
 ; counter). In: HL = src, DE = dest, BC = chunk (both windows valid).
-; Out: HL/DE advanced, BC = 0; corrupts AF, IYL. 20.25 T/B body + 267T
-; envelope (settlement C8/C16 joint solve). Zero-count guarded.
+; Out: HL/DE advanced, BC = 0; corrupts AF, IYL. 20.25 T/B body
+; (settlement C8/C16 joint solve). Zero-count guarded.
 ; ---------------------------------------------------------------------
 vid_copy_ldi:
     ld a, b
@@ -481,8 +479,8 @@ vg_op_run8:
     inc hl
     ld a, c
     cp NXV2_RUN_DMA_MIN
-    jr nc, .slow                 ; at/over the crossover: the body's DMA
-                                 ; kernel, crossing or not
+    jr nc, .slow                 ; at/over the crossover: the body, which
+                                 ; selects the kernel per chunk
     ld a, e
     add a, c
     jr c, .slow
@@ -3472,7 +3470,7 @@ vid_ds_pad:
 ; block shape at 19.55 T/B - the transport is CPU-bound, not
 ; wire-bound, so this is the doc 08/04 computed-entry kernel idiom
 ; (vid_fill_cpu/vid_copy_ldi's own shape) pointed at the SD port:
-; ini 16T/B + 14T per 32-byte pass + ~60T arm entry ~= 16.4 T/B.
+; ini 16T/B + 14T per 32-byte pass + the arm entry.
 ; ~5.1KB payload + ~28.5KB raw-equivalent frames make this the
 ; measured 7.19 ms/frame recovery.
 vid_ds_xfer:
@@ -4590,9 +4588,8 @@ nxb_ds_d:
 ; count runs the fast handler and NOTHING else, so it IS the dispatch
 ; cost. The RU01/RU17 and CP01/CP17 pairs are the settlement's own
 ; joint-solve shape - the 16-byte difference gives the kernel's T/B
-; and back-solves the per-op envelope against the settled 387 (RUN8)
-; / 267 (COPY8/16). S160/R161/C161 price the 16-bit-operand ops,
-; which take the slow parser and the chunked bodies.
+; and back-solves the per-op envelope. S160/R161/C161 price the
+; 16-bit-operand ops, which take the slow parser and the chunked bodies.
 nxbTabOpd:
     dw nxbTagSK00
     db VOP_SKIP8
