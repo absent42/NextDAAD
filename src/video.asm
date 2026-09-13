@@ -243,26 +243,20 @@ vid_fill_done:                   ; global: the ALIGNed block label
 ; COPY kernel, CPU: computed-entry unrolled LDI (graduated NXBEN
 ; nxb_copy_ldi - doc 04; rubric 2: LDI's own BC countdown is the only
 ; counter). In: HL = src, DE = dest, BC = chunk (both windows valid).
-; Out: HL/DE advanced, BC = 0. 20.25 T/B body + 267T envelope
-; (settlement C8/C16 joint solve). Zero-count guarded.
+; Out: HL/DE advanced, BC = 0; corrupts AF, IYL. 20.25 T/B body + 267T
+; envelope (settlement C8/C16 joint solve). Zero-count guarded.
 ; ---------------------------------------------------------------------
 vid_copy_ldi:
     ld a, b
     or c
     ret z                        ; zero count: structural no-op
     ld a, c
-    and 15
-    jr z, .full
-    add a, a                     ; rem * 2 (LDI = 2 bytes)
     neg
-    add a, 32 + low vid_ldi_blk
-    jr .set
-.full:
-    ld a, low vid_ldi_blk
-.set:
-    ld (.ce+1), a
-.ce:
-    jp vid_ldi_blk               ; low byte SMC-patched
+    and 15                       ; (16 - r) & 15: r = 0 -> 0 -> full block
+    add a, a                     ; entry = blk + 2 * (16 - r): r = 1 lands
+    add a, low vid_ldi_blk       ; on the 16th LDI, r = 15 on the 2nd
+    ld iyl, a
+    jp (iy)                      ; IYH = high vid_stub = high vid_ldi_blk
     ALIGN 64
 vid_ldi_blk:
     DUP 16
@@ -271,6 +265,7 @@ vid_ldi_blk:
     jp pe, vid_ldi_blk           ; P/V set = BC != 0
     ret
     ASSERT (low vid_ldi_blk) <= 256-36
+    ASSERT (high vid_ldi_blk) == (high vid_stub)
 
 ; ---------------------------------------------------------------------
 ; Fast op handlers - FLAT set (mode-0 any height, mode-1 at native
