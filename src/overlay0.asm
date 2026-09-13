@@ -522,7 +522,7 @@ h_chance:                       ; 10: true B% of the time
     call rng_next
     ld c, a
     ld a, b
-    cp c
+    cp c                        ; B - rand: carry clear (true) when rand <= B
     ret
 ; 16-bit xorshift, seeded at eng_init_game. Out A = 1..100.
 ; Preserves BC.
