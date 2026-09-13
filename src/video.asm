@@ -5437,6 +5437,18 @@ nxv2_open_body:
 .eidxd:
     ld a, c
     ld (vidStrmEntryIdx + DATA_WINDOW - OVL_ORG), a
+ IFDEF DEBUG
+    ld hl, (vidRingCapBlkC)
+    dec hl                       ; vidRingMin seed = cap - 1
+ ENDIF
+.handoff:                        ; DEBUG: HL = vidRingMin seed. Bracket open.
+ IFDEF DEBUG
+    ld (vidRingMin + DATA_WINDOW - OVL_ORG), hl
+    ld hl, 0
+    ld (vidRingUnder + DATA_WINDOW - OVL_ORG), hl
+    xor a
+    ld (vidDepthClip + DATA_WINDOW - OVL_ORG), a
+ ENDIF                           ; (099 throttle lever RETIRED in 3c)
     ld hl, (vidStrmRunBlocks)
     ld (vidStrmRunBlkH + DATA_WINDOW - OVL_ORG), hl
     ld hl, (vidStrmRunAddrLo)
@@ -5453,20 +5465,11 @@ nxv2_open_body:
     ld de, vidHotMap + DATA_WINDOW - OVL_ORG
     ld bc, VID_STRM_HOT_ENT*6
     ldir
- IFDEF DEBUG
-    ld hl, (vidRingCapBlkC)
-    dec hl
-    ld (vidRingMin + DATA_WINDOW - OVL_ORG), hl
-    ld hl, 0
-    ld (vidRingUnder + DATA_WINDOW - OVL_ORG), hl
-    xor a
-    ld (vidDepthClip + DATA_WINDOW - OVL_ORG), a
- ENDIF                           ; (099 throttle lever RETIRED in 3c)
     call data_restore
     xor a                        ; window ownership is HOT now
     ld (vidStrmWinOpen), a
-    ld b, 0                      ; verdict: loaded (streaming)
-    jp .backhop
+    ld b, 0                      ; verdict: loaded (streaming or direct)
+    ret
 
 .direct_setup:
     ; --- 3c DIRECT-SERVE setup: no ring, no prefill - the armed
@@ -5530,34 +5533,10 @@ nxv2_open_body:
     ld (vidStrmEntryCnt + DATA_WINDOW - OVL_ORG), a
     ld a, 1
     ld (vidStrmEntryIdx + DATA_WINDOW - OVL_ORG), a
-    ld hl, (vidStrmRunBlocks)
-    ld (vidStrmRunBlkH + DATA_WINDOW - OVL_ORG), hl
-    ld hl, (vidStrmRunAddrLo)
-    ld (vidRunAddrLoH + DATA_WINDOW - OVL_ORG), hl
-    ld hl, (vidStrmRunAddrHi)
-    ld (vidRunAddrHiH + DATA_WINDOW - OVL_ORG), hl
-    ld a, (vidCardFlags)
-    ld (vidCardFlagsH + DATA_WINDOW - OVL_ORG), a
-    ld a, (vidMfSave)
-    ld (vidMfSaveH + DATA_WINDOW - OVL_ORG), a
-    ld a, (vidStrmWinOpen)
-    ld (vidWinOpenH + DATA_WINDOW - OVL_ORG), a
-    ld hl, vidFilemapBuf
-    ld de, vidHotMap + DATA_WINDOW - OVL_ORG
-    ld bc, VID_STRM_HOT_ENT*6
-    ldir
  IFDEF DEBUG
-    ld hl, 0
-    ld (vidRingMin + DATA_WINDOW - OVL_ORG), hl
-    ld (vidRingUnder + DATA_WINDOW - OVL_ORG), hl
-    xor a
-    ld (vidDepthClip + DATA_WINDOW - OVL_ORG), a
+    ld hl, 0                     ; vidRingMin seed (no ring)
  ENDIF
-    call data_restore
-    xor a                        ; window ownership is HOT now
-    ld (vidStrmWinOpen), a
-    ld b, 0                      ; verdict: loaded (direct)
-    jp .backhop
+    jp .handoff                  ; same local scope (nxv2_open_body)
 
 .badu:
     call data_restore            ; the parse bracket was open
