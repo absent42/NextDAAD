@@ -4,14 +4,6 @@
 ; applied), C = arg2; conditions return CF clear (true) / set (false).
     MMU 7, OVL0_PAGE, OVL_ORG
 
-; --- shared condition returns ---
-c_true:
-    or a
-    ret
-c_false:
-    scf
-    ret
-
 ; Unimplemented / future-sub-project condact: debug marker, no-op.
 ; Returns CF SET so stub conditions (INKEY until Task 8) fail
 ; safely; harmless for actions (the engine ignores CF on actions).
@@ -33,24 +25,25 @@ h_zero:                         ; 11: flags[B] == 0
     ld l, b
     ld a, (hl)
     or a
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 
 h_notzero:                      ; 12
     ld h, high flags
     ld l, b
     ld a, (hl)
-    or a
-    jp nz, c_true
-    jp c_false
+    sub 1
+    ret
 
 h_eq:                           ; 13: flags[B] == C
     ld h, high flags
     ld l, b
     ld a, (hl)
     cp c
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 
 h_let:                          ; 51: flags[B] = C
     ld h, high flags
@@ -151,14 +144,14 @@ h_skip:                         ; 116: jump B (signed) + 1 entries on.
 
 h_isdone:                       ; 114: anything done since this table
     ld a, (isDone)              ; was entered - a PROCESS push is what
-    or a                        ; clears isDone, so after PROCESS n the
-    jp nz, c_true               ; answer is that sub-process's alone
-    jp c_false
+    sub 1                       ; clears isDone, so after PROCESS n the
+    ret                         ; answer is that sub-process's alone
 h_isndone:                      ; 115: the complement of ISDONE
     ld a, (isDone)
     or a
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 
 h_redo:                         ; 108: restart the top table from its
     call eng_top_ix             ; first entry (own process number)
@@ -238,47 +231,45 @@ h_doall:                        ; 85: B = location (255 = here). Error
 h_at:                           ; 0: flags[38] == B
     ld a, (flags+FLAG_PLAYER)
     cp b
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_notat:                        ; 1
     ld a, (flags+FLAG_PLAYER)
-    cp b
-    jp nz, c_true
-    jp c_false
+    sub b
+    sub 1
+    ret
 h_atgt:                         ; 2: player > B
     ld a, (flags+FLAG_PLAYER)
-    cp b
-    jr z, cfalse_j
-    jp nc, c_true
-cfalse_j:
-    jp c_false
+    scf
+    sbc a, b
+    ret
 h_atlt:                         ; 3: player < B
     ld a, (flags+FLAG_PLAYER)
     cp b
-    jp c, c_true
-    jp c_false
+    ccf
+    ret
 h_gt:                           ; 14: flags[B] > C
     ld h, high flags
     ld l, b
     ld a, (hl)
-    cp c
-    jr z, cfalse_j
-    jp nc, c_true
-    jp c_false
+    scf
+    sbc a, c
+    ret
 h_lt:                           ; 15: flags[B] < C
     ld h, high flags
     ld l, b
     ld a, (hl)
     cp c
-    jp c, c_true
-    jp c_false
+    ccf
+    ret
 h_noteq:                        ; 79
     ld h, high flags
     ld l, b
     ld a, (hl)
-    cp c
-    jp nz, c_true
-    jp c_false
+    sub c
+    sub 1
+    ret
 h_same:                         ; 76: flags[B] == flags[C]
     ld h, high flags
     ld l, b
@@ -286,27 +277,27 @@ h_same:                         ; 76: flags[B] == flags[C]
     ld l, c
     ld a, (hl)
     cp d
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_notsame:                      ; 80
     ld h, high flags
     ld l, b
     ld d, (hl)
     ld l, c
     ld a, (hl)
-    cp d
-    jp nz, c_true
-    jp c_false
+    sub d
+    sub 1
+    ret
 h_bigger:                       ; 112: flags[B] > flags[C]
     ld h, high flags
     ld l, b
     ld d, (hl)
     ld l, c
     ld a, d
-    cp (hl)
-    jr z, cfalse_j
-    jp nc, c_true
-    jp c_false
+    scf
+    sbc a, (hl)
+    ret
 h_smaller:                      ; 113: flags[B] < flags[C]
     ld h, high flags
     ld l, b
@@ -314,33 +305,38 @@ h_smaller:                      ; 113: flags[B] < flags[C]
     ld l, c
     ld a, d
     cp (hl)
-    jp c, c_true
-    jp c_false
+    ccf
+    ret
 h_adject1:                      ; 16
     ld a, (flags+FLAG_ADJ1)
     cp b
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_adverb:                       ; 17
     ld a, (flags+FLAG_ADVERB)
     cp b
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_prep:                         ; 68
     ld a, (flags+FLAG_PREP)
     cp b
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_noun2:                        ; 69
     ld a, (flags+FLAG_NOUN2)
     cp b
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_adject2:                      ; 70
     ld a, (flags+FLAG_ADJ2)
     cp b
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_set:                          ; 47: flags[B] = 255
     ld h, high flags
     ld l, b
@@ -410,13 +406,14 @@ h_space:                        ; 57
 h_hasat:                        ; 58: bit (B mod 8) of flags[B/8]
     call hasat_ptr
     and (hl)
-    jp nz, c_true
-    jp c_false
+    sub 1
+    ret
 h_hasnat:                       ; 59
     call hasat_ptr
     and (hl)
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 ; B = param -> HL = flags + (base - B/8), A = 1 << (B mod 8).
 ; DAAD numbers attributes DOWN from flag 59: attr 0-7 -> flag 59,
 ; 8-15 -> flag 58, WEARABLE 23 -> flag 57 bit 7, MOUSE 240 -> flag 29
@@ -523,10 +520,10 @@ h_random:                       ; 95: flags[B] = 1..100
     ret
 h_chance:                       ; 10: true B% of the time
     call rng_next
-    cp b
-    jp c, c_true
-    jp z, c_true
-    jp c_false
+    ld c, a
+    ld a, b
+    cp c
+    ret
 ; 16-bit xorshift, seeded at eng_init_game. Out A = 1..100.
 ; Preserves BC.
 ;
@@ -687,14 +684,15 @@ h_present:                      ; 4
     call obj_ptr
     ld a, (hl)
     cp OBJ_CARRIED
-    jp z, c_true
+    ret z
     cp OBJ_WORN
-    jp z, c_true
+    ret z
     ld e, a
     ld a, (flags+FLAG_PLAYER)
     cp e
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_absent:                       ; 5
     call h_present
     ccf
@@ -704,8 +702,9 @@ h_worn:                         ; 6
     call obj_ptr
     ld a, (hl)
     cp OBJ_WORN
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_notworn:                      ; 7
     call h_worn
     ccf
@@ -715,8 +714,9 @@ h_carried:                      ; 8
     call obj_ptr
     ld a, (hl)
     cp OBJ_CARRIED
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_notcarr:                      ; 9
     call h_carried
     ccf
@@ -730,8 +730,9 @@ h_isat:                         ; 55: obj B at loc C (255 = player's)
     ld a, (flags+FLAG_PLAYER)
 .fixed:
     cp (hl)
-    jp z, c_true
-    jp c_false
+    ret z
+    scf
+    ret
 h_isnotat:                      ; 88
     call h_isat
     ccf
@@ -1834,9 +1835,8 @@ h_inkey:                        ; 111: condition; key -> flag 60
     ld (hl), a                  ; the pair is one INC L apart and the
     inc l                       ; store leaves A and F alone for the
     ld (hl), 0                  ; condition test below
-    or a
-    jp nz, c_true
-    jp c_false
+    sub 1
+    ret
 h_anykey:                       ; 24
     ld e, 16
     xor a
@@ -2021,9 +2021,11 @@ h_quit:                         ; 20: condition - Y (SM30) confirms quit
     ld e, 12
     ld c, 30
     call confirm
-    jp nz, c_false
+    scf
+    ret nz
     call eng_set_done
-    jp c_true
+    or a
+    ret
 h_end:                          ; 21: a reply starting with N (SM31) =
     ld e, 13                    ; exit to OS, anything else = restart.
                                  ; The manual (2004-2010) describes this
@@ -2123,7 +2125,8 @@ h_move:                         ; 106: condition-like action. B = flag
     call eng_set_done
     ld a, (flags+FLAG_VERB)
     cp 14
-    jp nc, c_false
+    ccf
+    ret c
     ld (moveVerb), a
     ld h, high flags
     ld l, b                     ; HL = flags + B
@@ -2156,11 +2159,13 @@ h_move:                         ; 106: condition-like action. B = flag
     call data_restore
     pop hl                      ; HL = flags+B pointer
     ld (hl), c
-    jp c_true                   ; (done already stamped at entry)
+    or a                        ; (done already stamped at entry)
+    ret
 .nomatch:
     call data_restore
     pop hl
-    jp c_false
+    scf
+    ret
 ; SYNONYM verb noun (36). SP16 T6 / PRP019 V3-12: the substitution is
 ; version-independent, the done-marking is not. Z80 and 6502 DAAD V2
 ; mark DONE; the 68k sources had already stopped, and V3 makes that
@@ -2171,7 +2176,7 @@ h_move:                         ; 106: condition-like action. B = flag
 ; row has the dispatcher stamp the table done before the handler runs,
 ; and the handler cannot un-stamp it without also wiping a done that an
 ; EARLIER condact in the same entry set. Marking it here instead is
-; exact. Both arms return c_true, so the entry continues either way -
+; exact. Both arms return CF clear, so the entry continues either way -
 ; identical to the action row's post-dispatch path.
 ;
 ; ISDONE now reads the accumulating isDone cell, so the V2/V3 split is
@@ -2191,11 +2196,13 @@ h_synonym:                      ; 36
     jr z, .done
     ld (flags+FLAG_NOUN1), a
 .done:
-    ld hl, ddbVer
-    bit 0, (hl)
-    jp nz, c_true               ; V3: SYNONYM does not mark done
+    ld a, (ddbVer)
+    rra
+    ccf
+    ret nc                      ; V3: SYNONYM does not mark done
     call eng_set_done
-    jp c_true
+    or a
+    ret
 h_newtext:                      ; 92: discard pending input orders so a
     xor a                       ; rejected order's compound tail dies
     ld (inpPending), a          ; (inpPending is resident)

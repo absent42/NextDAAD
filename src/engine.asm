@@ -778,7 +778,7 @@ cprops:
                                 ; dispatcher stamp done BEFORE the
                                 ; handler could decide. h_synonym now
                                 ; calls eng_set_done itself on the V2
-                                ; path and always returns c_true, which
+                                ; path and always returns CF clear, which
                                 ; is what the action row did.
     db $81,$81,$81,$81,$82,$82  ; 41-46 DROP WEAR DESTROY CREATE SWAP PLACE
     db $81,$81,$82,$82,$82      ; 47-51 SET CLEAR PLUS MINUS LET
