@@ -26,9 +26,10 @@
 # SIZE. 320x128 as .NX2: 320-wide covers the same screen area as the
 # 80x32 text grid (1 cell = 4x8 picture pixels), so the card occupies
 # tilemap rows 0-15 across all 80 columns, top-aligned, text window at
-# row 16. .NX2 also routes the blit through gfx_row_scatter320 (a CPU
-# column scatter) instead of the .NXI cards' gfx_row_copy256/DMA path,
-# so this card exercises the scatter path specifically.
+# row 16. .NX2 still fetches each row via dma_copy (gfx_row_fetch), but
+# its write goes through gfx_row_scatter320's CPU column scatter, not
+# gfx_row_copy256's second DMA call, so this card exercises the scatter
+# path specifically.
 #
 # Generated, not committed - a byte-exact function of the constants
 # below, the same rule tests\art\mkl2card.py follows.

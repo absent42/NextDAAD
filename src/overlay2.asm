@@ -150,8 +150,9 @@ l2_disable:
 ; points - all corrupt AF, BC, DE, HL:
 ;   l2_clear      - the FRONT (displayed) surface: DEBUG diagnostics,
 ;                   which have no flip step;
-;   l2_clear_back - the BACK (render target) surface: gfx_blit's
-;                   pre-clear and h_display's instant clear, both
+;   l2_clear_back - the BACK (render target) surface: h_display's
+;                   instant clear, gfx_direct_stream, GFX 87/6, and
+;                   gfx_rows_blit's conditional pre-clear - all
 ;                   invisible until the flip;
 ;   l2_clear_at   - A = first 8K page of any surface (internal).
 l2_clear:
@@ -583,8 +584,8 @@ l2_flip_swap:
 ; shorten the blocking window, on the model that a window longer than
 ; one CTC period cost a tick. That model is dead (see above): the DAC
 ; feed is now serviced INSIDE the transfer, so the window's length no
-; longer buys anything and the 128 was pure cost. Both callers hand this
-; routine exactly 256 bytes, so 256 makes every call ONE chunk instead
+; longer buys anything and the 128 was pure cost. All three callers
+; hand this routine at most 256 bytes, so 256 makes every call ONE chunk instead
 ; of two, saving per call one arm upload (209 T), one zxnDMA sequencing
 ; residual (183 T) and one pass of the loop glue (~390 T) - about 780 T,
 ; or 27.9 us at 28 MHz. On the model that priced cap 128 at DISPLAY 0
@@ -596,8 +597,9 @@ l2_flip_swap:
 ;
 ; and all three are UPPER bounds, because the model still prices the
 ; transfer at 5.082 T/B where silicon bounds this path under 4.21.
-; 320-wide LOCATION art is untouched either way: gfx_blit routes it to
-; gfx_row_scatter320, a CPU column scatter that never had a DMA branch
+; 320-wide LOCATION art now reaches this routine too, through
+; gfx_row_fetch's .fits path: only gfx_row_scatter320's own
+; scatter still has no DMA branch
 ; (see its own header). The owner's ruling that made the 128 acceptable
 ; - "for sampled sound effects and location picture drawing the audio
 ; quality shouldn't suffer for a slight slow down in picture drawing" -
@@ -3050,9 +3052,9 @@ gfx_rows_blit:
 ; front throughout), then the surfaces flip. Sequence: stage the mode
 ; in l2Mode (variable only - the hardware keeps displaying the old
 ; picture in the old mode), clear the back surface to the transparent
-; INDEX (l2_clear fills with L2_TRANSP_INDEX, the reserved pixel value
-; 255 - not a colour; that also pre-clears the remainder below a short
-; picture), copy the pixel rows top-aligned, load the file's embedded
+; INDEX for a short picture (l2_clear fills with L2_TRANSP_INDEX, pixel 255,
+; not a colour; skipped when the picture fills the surface), copy the
+; pixel rows top-aligned, load the file's embedded
 ; 512-byte 9-bit palette (deliberately LAST before the flip: the
 ; palette is global, so the old picture wears the new colours only
 ; for the ~1ms the load takes instead of the whole render), then
@@ -3068,7 +3070,7 @@ gfx_rows_blit:
 ;                   8K page every 8192/320 = 25.6 rows, +1 then) +
 ;                   10 dest remaps (page = x>>5 changes every 32
 ;                   pixels) = ~11.04; 200 rows -> ~2210 remaps, and
-;                   both the fetch (LDIR) and the scatter (fixed row
+;                   both the fetch (DMA) and the scatter (fixed row
 ;                   in E, INC D per pixel) are straight-line walks.
 ;   columns-gather: per column a stride-320 walk of the whole 64000-
 ;                   byte pixel area = ceil(64000/8192) = 8 src remaps
@@ -3099,7 +3101,7 @@ gfx_blit:
     ld (gfxSrcIdx), a
     ld a, (stagedHeight)
     ld (gfxRowsLeft), a         ; 0 = 256 rows (djnz-style wrap)
-    call gfx_rows_blit          ; clears BACK, opens data_save, all rows
+    call gfx_rows_blit          ; clears BACK unless full, opens data_save, all rows
     ; Rows done. The palette goes into the Layer 2 bank that is NOT on
     ; screen, so none of it is visible while it loads, and the flip
     ; below swaps surface and palette together.
@@ -3318,8 +3320,8 @@ gfx_row_copy256:
 ; longer than one byte to hand to dma_copy - the
 ; only "batching" possible would be one DMA chunk per PIXEL, and a
 ; length-1 chunk costs ~600T of program+dispatch overhead to move one
-; byte the CPU's own per-pixel loop body moves for ~37T (ld/inc/ld/inc/
-; djnz) - more than an order of magnitude worse, not just a wash. See
+; byte the CPU's own per-pixel loop body moves for ~27T (ldws/djnz) -
+; more than an order of magnitude worse, not just a wash. See
 ; sp11-task-2-report.md "320 scatter" for the full T-state comparison.
 gfx_row_scatter320:
     ld hl, gfxRowBuf

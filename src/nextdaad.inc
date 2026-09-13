@@ -849,7 +849,7 @@ SFXW_SIZE     equ SFX_WIN_PAGES+5
 
 ; --- DMA picture copies (SP11 Task 2) ---
 ; zxnDMA one-shot mem-to-mem chunk copies for Layer 2 picture work
-; (overlay2.asm: dma_copy, l2_copy_back_front, gfx_row_copy256),
+; (overlay2.asm: dma_copy, l2_copy_back_front, gfx_row_copy256, gfx_row_fetch),
 ; unconditional since SP14a T4's follow-up wave retired the -NoDmaGfx
 ; CPU-only A/B lever (owner hardware test, 2026-07-21 - see dma_copy's
 ; own header, overlay2.asm). DMA_PORT ($6B, above) is the same physical
@@ -868,8 +868,8 @@ DMA_CHUNK_MAX   equ 256     ; zxnDMA one-shot cap per arm - dma_copy splits
                             ; feed is admitted INSIDE a running transfer by
                             ; nextreg $CD bit 0 (im2_init), so a longer
                             ; chunk simply admits more CTC edges and each is
-                            ; still serviced on time. Both callers hand
-                            ; dma_copy exactly 256 bytes, so 256 makes every
+                            ; still serviced on time. All three callers hand
+                            ; dma_copy at most 256 bytes, so 256 makes every
                             ; call ONE chunk: ~780 T saved per call, about
                             ; -5.4 ms on a location DISPLAY 0 and -10.7 ms
                             ; on GFX 0/1 at 256x192. A ONE-CONSTANT KNOB

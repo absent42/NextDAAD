@@ -2,8 +2,9 @@
 """Host-side contract check for overlay2's dma_copy.
 
 WHY THIS EXISTS. dma_copy (src/overlay2.asm) is the block mover behind
-every 256-wide picture row (gfx_row_copy256) and behind GFX 0/1
-(l2_copy_back_front). Nothing host-side renders a picture, so the only
+every 256-wide picture row (gfx_row_copy256), GFX 0/1
+(l2_copy_back_front), and 320-wide picture row fetches (gfx_row_fetch).
+Nothing host-side renders a picture, so the only
 way this routine was ever exercised was on silicon, by eye - and it has
 broken invisibly to build checks before, so it is now executed and
 asserted host-side instead of trusted by inspection.
@@ -407,8 +408,9 @@ def main():
 
     page_img = read_page(ovl2_page)
 
-    # The lengths that matter: both shipped callers hand exactly 256
+    # The lengths that matter: two shipped callers hand exactly 256
     # (gfx_row_copy256's row, l2_copy_back_front's GFX_COPY_CHUNK), the
+    # third (gfx_row_fetch) a 64/128/192/256 row or leftover; also the
     # cap itself and its neighbours, the 320-wide row width, a multi-
     # chunk length, and 107 = DMA_PORT, the length the register-clobber
     # regression produced.

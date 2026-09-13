@@ -35,11 +35,12 @@
 #     card, so they take the smallest damage first.
 #
 # GEOMETRY. 256 wide, 128 rows.
-#   256 WIDE IS MANDATORY, not cosmetic. gfx_blit routes 256-wide art
-#     to gfx_row_copy256, which calls dma_copy once per row; 320-wide
-#     art goes to gfx_row_scatter320, a CPU column scatter with no DMA
-#     branch at all (see its header). A 320-wide card would exercise
-#     nothing. The .NXI extension is what selects mode 0 / width 256 in
+#   256 WIDE IS MANDATORY, not cosmetic. Only gfx_row_copy256's
+#     dma_copy writes straight into Layer 2 pages; 320-wide art's
+#     dma_copy (gfx_row_fetch) lands in gfxRowBuf, and
+#     gfx_row_scatter320's CPU loop is what actually reaches Layer 2
+#     (see its header). A 320-wide card would exercise nothing there.
+#     The .NXI extension is what selects mode 0 / width 256 in
 #     gfxExtTab - the file's own bytes carry no width.
 #   128 ROWS puts the card on tilemap rows 4..19 and leaves rows 20..31
 #     for the fixture's text window. Layer 2 in 256x192 mode is inset 32

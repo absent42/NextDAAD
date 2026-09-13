@@ -4161,11 +4161,12 @@ if ($SfxDi) {
     # generates as 001.NXI.
     #
     # THE CARD IS NOT OPTIONAL AND MUST BE .NXI. gfx_blit routes
-    # 256-wide art to gfx_row_copy256 -> dma_copy (one DMA call per
-    # row) and 320-wide art to gfx_row_scatter320, a CPU column scatter
-    # with no DMA branch at all. gfxExtTab is what decides which: NX2
-    # rows are mode 1 / width 320, NXI rows mode 0 / width 256, and the
-    # NX2 variants probe FIRST. A leftover 001.NX2 from an earlier
+    # 256-wide art to gfx_row_copy256, whose dma_copy writes straight
+    # into Layer 2 pages; 320-wide art's dma_copy (gfx_row_fetch) lands
+    # in gfxRowBuf, and gfx_row_scatter320's CPU loop is what actually
+    # reaches Layer 2. gfxExtTab is what decides which: NX2 rows are
+    # mode 1 / width 320, NXI rows mode 0 / width 256, and the NX2
+    # variants probe FIRST. A leftover 001.NX2 from an earlier
     # -Rab/-GMode stage winning the chain, drawing through the scatter
     # path and leaving the fixture exercising nothing IS WHAT HAPPENED
     # (2026-08-03, the vacuous run that motivated the leg folders).
@@ -4799,9 +4800,10 @@ if ($Palette) {
     # section, so nothing else of number 001 is reachable.
     #
     # 320-wide art also takes a different blit path from the .NXI cards
-    # elsewhere in the suite: gfx_blit routes it to gfx_row_scatter320,
-    # a CPU column scatter, rather than gfx_row_copy256 and one DMA call
-    # per row. Damage specific to the scatter path shows up here.
+    # elsewhere in the suite: gfx_blit still fetches each row via
+    # dma_copy (gfx_row_fetch), but writes it through
+    # gfx_row_scatter320's CPU column loop, not gfx_row_copy256's second
+    # DMA call. Damage specific to the scatter path shows up here.
     & python "$PSScriptRoot\art\mkpalcard.py" "$root\tests\out"
     if ($LASTEXITCODE -ne 0) { throw "tests\art\mkpalcard.py failed" }
     $palCardSrc = "$root\tests\out\palcard.nx2"
