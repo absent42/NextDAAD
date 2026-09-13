@@ -3266,7 +3266,8 @@ gfx_row_fetch:
     jr .chunk
 .fits:
     pop hl                      ; HL = src
-    ldir
+    call dma_copy               ; LDIR-equivalent end state (HL = src+BC);
+                                ; a row or split tail is >= GFX_DMA_MIN_LEN
     ld (gfxSrcPtr), hl          ; may land exactly on GFX_SRC_END -
     ret                         ; the next fetch's .chunk check handles it
 

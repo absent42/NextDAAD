@@ -883,9 +883,8 @@ DMA_CHUNK_MAX   equ 256     ; zxnDMA one-shot cap per arm - dma_copy splits
                             ; header before changing it anyway.
 GFX_DMA_MIN_LEN equ 64      ; design threshold: below this LDIR wins on
                             ; programming overhead (documentation only -
-                            ; both current call sites move a fixed 256
-                            ; bytes, comfortably over the line, so neither
-                            ; needs a runtime length check)
+                            ; no call site moves fewer bytes than this, so
+                            ; none needs a runtime length check)
 
 ; --- Window system (sub-project 2) ---
 WIN_X           equ 0
