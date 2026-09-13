@@ -3529,15 +3529,10 @@ vid_ds_xfer:
     ex (sp), hl                  ; HL = block remain, TOS = remaining
     ; --- the computed-entry unrolled-ini arm (header note) ---
     ld c, a                      ; C = n low, scratch across the entry
-    and 31
-    jr z, .ifull
-    add a, a                     ; rem * 2 (ini = 2 bytes)
     neg
-    add a, low (vid_ds_iblk + 64)
-    jr .iset
-.ifull:
-    ld a, low vid_ds_iblk
-.iset:
+    and 31                       ; (32 - r) & 31: r = 0 -> full block
+    add a, a                     ; entry = blk + 2 * (32 - r)
+    add a, low vid_ds_iblk
     ld (.ie+1), a                ; low-byte SMC (page-asserted below)
     ld a, c
     dec a
